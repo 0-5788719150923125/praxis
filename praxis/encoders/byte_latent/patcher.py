@@ -1,5 +1,6 @@
 """Byte-level patching utilities for sequence compression."""
 
+import logging
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Tuple
@@ -7,6 +8,8 @@ from typing import Optional, Tuple
 import torch
 import torch.nn.functional as F
 from torch import nn
+
+logger = logging.getLogger(__name__)
 
 from .constants import BOE_ID, BPE_ID, EOS_ID, OFFSET, PAD_ID
 
@@ -89,10 +92,10 @@ class Patcher:
         elif self.config.patching_mode == PatchingMode.space:
             return self._space_patching(tokens, include_next_token)
         elif self.config.patching_mode == PatchingMode.static:
-            return self._static_patching(tokens, self.config.patch_size)
+            return self._static_patching(tokens, self.config.patch_size, include_next_token)
         else:
             # Default to static patching
-            return self._static_patching(tokens, self.config.patch_size)
+            return self._static_patching(tokens, self.config.patch_size, include_next_token)
 
     def _entropy_patching(
         self,
@@ -118,10 +121,15 @@ class Patcher:
         # Create boundaries where entropy exceeds threshold
         boundaries = entropies > threshold
 
-        # Ensure monotonicity if configured
+        # Ensure monotonicity if configured (BLT reference logic)
         if self.config.monotonicity:
-            # Once a boundary is set, all following positions are boundaries
-            boundaries = boundaries.cummax(dim=1)[0]
+            # Boundaries only at positions where entropy *increases* by more than threshold
+            differences = entropies[:, 1:] - entropies[:, :-1]
+            monotonic_boundaries = differences > threshold
+            # Prepend the first position's boundary (unchanged)
+            boundaries = torch.cat(
+                [boundaries[:, :1], monotonic_boundaries | boundaries[:, 1:]], dim=1
+            )
 
         # Calculate patch lengths from boundaries
         patch_lengths = self._boundaries_to_lengths(boundaries, include_next_token)
@@ -248,7 +256,7 @@ class Patcher:
         return False
 
     def _static_patching(
-        self, tokens: torch.Tensor, patch_size: int
+        self, tokens: torch.Tensor, patch_size: int, include_next_token: bool = True
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Create fixed-size patches.
@@ -256,6 +264,7 @@ class Patcher:
         Args:
             tokens: Input tokens [batch_size, seq_len]
             patch_size: Size of each patch
+            include_next_token: Whether to include next token in patches
 
         Returns:
             Tuple of patch lengths and boundaries
@@ -496,8 +505,11 @@ def cross_attn_mask(
     Returns:
         Cross-attention mask tensor or None
     """
-    # Simplified implementation - return None for now
-    # Full implementation would create proper attention masks
+    # Not yet implemented - cross-attention mode is non-functional
+    logger.warning(
+        "cross_attn_mask() is a stub and returns None. "
+        "Cross-attention encoder/decoder mode is not yet implemented."
+    )
     return None
 
 

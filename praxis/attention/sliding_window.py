@@ -126,30 +126,36 @@ class SlidingWindowFlexAttention(HexAttention):
         k = k.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         v = v.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
 
+        # Apply positional encoding
+        if self.pos_type == "rope":
+            q, k = self._apply_rope(q, k)
+
         # Determine if we're using GQA
         is_gqa = self.num_queries > 1
 
         # Create sliding window + causal mask
         block_mask = self._create_sliding_window_causal_mask(seq_len, inputs.device)
 
-        # Create ALiBi score modification function
-        alibi_slopes = self.alibi_slopes.to(inputs.device)
+        # Create score modification function based on positional encoding type
+        if self.pos_type == "rope":
+            score_mod = None
+        else:  # alibi
+            alibi_slopes = self.alibi_slopes.to(inputs.device)
 
-        def alibi_score_mod(score, b, h, q_idx, kv_idx):
-            """Apply ALiBi positional bias to attention scores."""
-            # Calculate position difference (q_idx - kv_idx)
-            # This will be negative or zero for causal attention
-            bias = alibi_slopes[h] * (kv_idx - q_idx)
-            return score + bias
+            def alibi_score_mod(score, b, h, q_idx, kv_idx):
+                """Apply ALiBi positional bias to attention scores."""
+                bias = alibi_slopes[h] * (kv_idx - q_idx)
+                return score + bias
 
-        # Apply FlexAttention with sliding window mask, ALiBi, and GQA support
-        # Note: scale defaults to 1/sqrt(head_dim) which is what we want
+            score_mod = alibi_score_mod
+
+        # Apply FlexAttention with sliding window mask and GQA support
         attn_output = self.flex_attention(
             q,
             k,
             v,
             block_mask=block_mask,
-            score_mod=alibi_score_mod,
+            score_mod=score_mod,
             enable_gqa=is_gqa,
             scale=None,  # Use default: 1.0 / sqrt(head_dim)
         )

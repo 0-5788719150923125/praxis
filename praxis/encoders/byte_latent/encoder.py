@@ -187,7 +187,7 @@ class ByteLatentEncoder(nn.Module):
             )
 
         # Setup local encoder/decoder based on architecture
-        # ByteLatent always uses its internal vocab size (262 = 256 bytes + 6 special tokens)
+        # ByteLatent always uses its internal vocab size (260 = 256 bytes + 4 special tokens)
         if local_architecture == "conv":
             self.encoder = ConvEncoder(self.byte_config)
             self.decoder = ConvDecoder(self.byte_config)
@@ -791,21 +791,10 @@ def mask_entropy_preds_at_special_tokens(
     )
     special_token_mask = torch.isin(input_ids, special_tokens_tensor)
 
-    # Create a mask for all vocab positions corresponding to special tokens
-    # Initialize with zeros (will be set to 1 where special tokens are)
-    full_mask = torch.zeros_like(entropy_preds, dtype=torch.bool)
-
-    # For each position in the sequence that contains a special token,
-    # we need to zero out all corresponding vocab entries
-    for batch_idx in range(batch_size):
-        for seq_idx in range(seq_len):
-            if special_token_mask[batch_idx, seq_idx]:
-                # Calculate the starting and ending indices for this position in the flattened tensor
-                start_idx = seq_idx * vocab_size
-                end_idx = start_idx + vocab_size
-
-                # Set the mask to True for all vocab entries at this position
-                full_mask[batch_idx, start_idx:end_idx] = True
+    # Expand the per-position mask to cover all vocab entries per position
+    # special_token_mask: [batch_size, seq_len] -> [batch_size, seq_len, 1]
+    # then expand to [batch_size, seq_len, vocab_size] and flatten
+    full_mask = special_token_mask.unsqueeze(-1).expand(-1, -1, vocab_size).reshape_as(entropy_preds)
 
     # Apply the mask - set to zero where special tokens exist
     masked_entropy_preds = torch.where(
@@ -1539,6 +1528,7 @@ class TransformerBlock(nn.Module):
                 self.dropout = base_config.dropout
                 self.causal = True
                 self.head_size = None  # Will use default: hidden_size // num_heads
+                self.encoding = getattr(base_config, "encoding", "rope")
 
         # Sliding window attention
         attn_config = AttentionConfig(config, window_size)

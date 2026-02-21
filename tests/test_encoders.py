@@ -40,7 +40,7 @@ def test_forward_pass(module_setup):
     # Create sample input
     batch_size = 32
     seq_len = 16  # Should be less than max_seq_len (512)
-    # For ByteLatent encoder, vocab_size is 262 (256 bytes + 6 special tokens)
+    # For ByteLatent encoder, vocab_size is 260 (256 bytes + 4 special tokens)
     # Use a smaller value for input_ids to avoid out of bounds
     input_vocab_size = 256  # Max value for input IDs
     input_ids = torch.randint(0, input_vocab_size, (batch_size, seq_len))
@@ -63,7 +63,7 @@ def test_forward_pass(module_setup):
     assert len(decoder_output.shape) == 3, "Expected 3D output from decoder"
     assert decoder_output.shape[0] == batch_size, "Batch size mismatch in output"
     # The output vocab size depends on the encoder configuration
-    # ByteLatent has vocab_size = 262 (256 + 6 special tokens)
+    # ByteLatent has vocab_size = 260 (256 + 4 special tokens)
     expected_vocab_size = (
         module.byte_config.vocab_size if hasattr(module, "byte_config") else 260
     )

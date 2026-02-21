@@ -22,7 +22,7 @@ try:
     from praxis.encoders.byte_latent.constants import OFFSET
 except ImportError:
     # Fallback if the encoder module isn't available
-    OFFSET = 6
+    OFFSET = 4
 
 
 class ByteLevelTokenizer(PreTrainedTokenizerFast):
@@ -194,9 +194,10 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast):
                     break
 
             if not found_special:
-                # Regular character - convert to byte and add offset
-                byte_val = ord(text[i]) if ord(text[i]) < 256 else ord("?")
-                tokens.append(byte_val + OFFSET)
+                # Convert character to UTF-8 bytes and add offset for each byte
+                char_bytes = text[i].encode("utf-8")
+                for b in char_bytes:
+                    tokens.append(b + OFFSET)
                 i += 1
 
         # Add BOS/EOS if requested (and not already present)
@@ -244,16 +245,25 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast):
         }
 
         result = []
+        byte_buffer = bytearray()
         for tok in token_ids:
             # Check if it's a special token (0-3)
             if tok in special_id_map:
+                # Flush any pending bytes before the special token
+                if byte_buffer:
+                    result.append(byte_buffer.decode("utf-8", errors="replace"))
+                    byte_buffer = bytearray()
                 if not skip_special_tokens:
                     result.append(special_id_map[tok])
             else:
                 # Regular byte token - reverse the offset
                 byte_val = tok - OFFSET
                 if 0 <= byte_val < 256:
-                    result.append(chr(byte_val))
+                    byte_buffer.append(byte_val)
+
+        # Flush remaining bytes
+        if byte_buffer:
+            result.append(byte_buffer.decode("utf-8", errors="replace"))
 
         return "".join(result)
 
@@ -283,10 +293,10 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast):
             if token_id in special_id_map:
                 tokens.append(special_id_map[token_id])
             else:
-                # Regular byte token - reverse the offset to get char
+                # Regular byte token - represent as hex byte string
                 byte_val = token_id - OFFSET
                 if 0 <= byte_val < 256:
-                    tokens.append(chr(byte_val))
+                    tokens.append(f"<0x{byte_val:02X}>")
 
         return tokens
 
