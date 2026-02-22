@@ -3,7 +3,7 @@
 import os
 import subprocess
 
-from flask import Blueprint, Response, request, stream_with_context
+from flask import Blueprint, Response, request
 
 from ..config import GIT_ALLOWED_SERVICES, GIT_READ_ONLY_SERVICE
 
@@ -41,15 +41,15 @@ def git_http_backend(git_path=None):
     # Handle info/refs request (git discovery)
     if (git_path == "info/refs" or git_path == "") and service:
         if not service.startswith("git-"):
-            return "Invalid service", 400
+            return Response("Invalid service", status=400)
 
         service_name = service.replace("git-", "")
         if service not in GIT_ALLOWED_SERVICES:
-            return "Service not allowed", 403
+            return Response("Service not allowed", status=403)
 
         # Only allow upload-pack for read-only access
         if service != GIT_READ_ONLY_SERVICE:
-            return "Only read access is allowed", 403
+            return Response("Only read access is allowed", status=403)
 
         try:
             # Run git command to get refs
@@ -64,7 +64,7 @@ def git_http_backend(git_path=None):
             # Check for errors
             if result.returncode != 0:
                 error_msg = result.stderr.decode("utf-8", errors="replace")
-                return f"Git error: {error_msg}", 500
+                return Response(f"Git error: {error_msg}", status=500)
 
             # Format response for git HTTP protocol
             response_data = f"001e# service={service}\n0000" + result.stdout.decode(
@@ -81,7 +81,7 @@ def git_http_backend(git_path=None):
             )
         except Exception as e:
             import traceback
-            return f"Git error: {str(e)}\n{traceback.format_exc()}", 500
+            return Response(f"Git error: {str(e)}\n{traceback.format_exc()}", status=500)
 
     # Handle git-upload-pack request (actual clone/fetch)
     elif git_path == "git-upload-pack" and request.method == "POST":
@@ -100,7 +100,7 @@ def git_http_backend(git_path=None):
             # Check for errors
             if result.returncode != 0:
                 error_msg = result.stderr.decode("utf-8", errors="replace")
-                return f"Git error: {error_msg}", 500
+                return Response(f"Git error: {error_msg}", status=500)
 
             return Response(
                 result.stdout,
@@ -112,7 +112,7 @@ def git_http_backend(git_path=None):
             )
         except Exception as e:
             import traceback
-            return f"Git error: {str(e)}\n{traceback.format_exc()}", 500
+            return Response(f"Git error: {str(e)}\n{traceback.format_exc()}", status=500)
 
     # Return 404 for other paths
-    return "Not found", 404
+    return Response("Not found", status=404)
