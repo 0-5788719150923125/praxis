@@ -55,14 +55,10 @@ class ArgumentProcessor:
             "byte_latent"
         )
 
-        # Adjust block_size for byte_latent encoders
-        if processed["byte_latent"] and "block_size" in processed:
-            # Byte-level encoders need 8x the sequence length for UTF-8 sequences
-            processed["block_size"] = processed["block_size"] * 8
-
         # Set terminal_output_length
         if "block_size" in processed:
             if processed["byte_latent"]:
+                # Bytes ≈ characters, so block_size is already close to readable length
                 processed["terminal_output_length"] = processed["block_size"] // 2
             else:
                 processed["terminal_output_length"] = processed["block_size"] * 2
