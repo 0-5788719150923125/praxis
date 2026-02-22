@@ -295,20 +295,7 @@ def initialize_lazy_modules(model, device):
         # Create dummy batch for initialization
         dummy_input = torch.ones((batch_size, seq_length), dtype=torch.long).to(device)
 
-        # Check if model uses ByteLatent encoder (no label shifting needed)
-        encoder = None
-        if hasattr(model, "encoder"):
-            encoder = model.encoder
-        elif hasattr(model, "model") and hasattr(model.model, "encoder"):
-            encoder = model.model.encoder
-
-        is_bytelatent = (
-            encoder is not None
-            and hasattr(encoder, "__class__")
-            and "ByteLatent" in encoder.__class__.__name__
-        )
-
-        # Standard autoregressive shifting for all models (including ByteLatent)
+        # Standard autoregressive shifting for all models
         dummy_labels = dummy_input[..., 1:].contiguous()
 
         # Do a dummy forward pass to initialize lazy parameters
