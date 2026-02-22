@@ -145,4 +145,3 @@ class WeightedIterableDataset(IterableDataset):
                 else:
                     # Return regular tensor for backward compatibility
                     yield batch_tensor
-                    yield batch_tensor

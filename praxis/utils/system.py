@@ -308,10 +308,8 @@ def initialize_lazy_modules(model, device):
             and "ByteLatent" in encoder.__class__.__name__
         )
 
-        if is_bytelatent:
-            dummy_labels = dummy_input.contiguous()  # No shifting for ByteLatent
-        else:
-            dummy_labels = dummy_input[..., 1:].contiguous()  # Standard shifting
+        # Standard autoregressive shifting for all models (including ByteLatent)
+        dummy_labels = dummy_input[..., 1:].contiguous()
 
         # Do a dummy forward pass to initialize lazy parameters
         model.train()

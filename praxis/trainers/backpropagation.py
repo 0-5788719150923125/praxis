@@ -26,10 +26,10 @@ class BackpropagationTrainer(LightningModule):
         self.train_step_ema = None
         self.tokenizer = tokenizer
         # Check if model has an encoder with aligned outputs
-        self.outputs_are_aligned = (
-            hasattr(model, "encoder")
-            and getattr(model.encoder, "outputs_are_aligned", False)
-        ) or byte_latent  # Keep byte_latent for backward compatibility
+        self.outputs_are_aligned = hasattr(model, "encoder") and getattr(
+            model.encoder, "outputs_are_aligned", False
+        )
+        self.byte_latent = byte_latent  # Track byte-level for metrics (bits_per_byte)
         self.last_logged_step = -1  # Track last step we logged a document
         self.save_hyperparameters(
             ignore=["model", "optimizer", "scheduler", "tokenizer"]
@@ -403,7 +403,7 @@ class BackpropagationTrainer(LightningModule):
         loss = outputs.loss
         stats["val_loss"] = loss
 
-        if self.outputs_are_aligned:
+        if self.byte_latent:
             stats["val_bits_per_byte"] = self._compute_bits_per_byte(input_ids, loss)
         else:
             # Detach logits to prevent memory accumulation from computation graph

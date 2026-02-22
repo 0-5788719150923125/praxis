@@ -228,10 +228,15 @@ class ByteLatentEncoder(nn.Module):
     @property
     def outputs_are_aligned(self) -> bool:
         """
-        Indicates that ByteLatent outputs are already aligned for loss computation.
-        The decoder handles sequence alignment internally, so no shifting is needed.
+        ByteLatent outputs are NOT pre-aligned: the decoder at position t predicts
+        byte[t+1], matching standard autoregressive LM convention. Labels must be
+        shifted by 1 (i.e., labels = input_ids[..., 1:]).
+
+        This is critical for convergence: the encoder embed at position t already
+        contains byte[t], so if labels = input_ids (no shift), the model trivially
+        copies the encoder output instead of learning the decompression task.
         """
-        return True
+        return False
 
     @property
     def sequence_length_multiplier(self) -> int:
@@ -437,15 +442,14 @@ class ByteLatentEncoder(nn.Module):
             patch_lengths, self.nb_boe, local_decoder_tokens.shape[-1]
         )
 
-        # CRITICAL BLT ALIGNMENT: decoder uses patches 1, 2, 3, ... (skipping patch 0)
-        # The decoder_patch_ids are already calculated for the reduced patch set,
-        # but we need to gather from the correct patches in h (which includes patch 0)
-        h_for_decoder = h[:, 1:, :]  # Skip first patch following BLT reference
-
-        # Ensure patch IDs are within bounds (check against reduced patch set)
+        # Gather from full h — decoder_patch_ids are 0-indexed from
+        # patch_lengths[:, 1:], so index 0 maps to global patch 0 (the
+        # BOE/first-byte patch).  Removing h[:, 1:, :] here was an off-by-one
+        # that leaked future context (every byte group received the *next*
+        # patch instead of the current one).
         assert (
-            torch.max(decoder_patch_ids) + 1 <= h_for_decoder.shape[1]
-        ), f"{torch.max(decoder_patch_ids) + 1} > {h_for_decoder.shape[1]}"
+            torch.max(decoder_patch_ids) + 1 <= h.shape[1]
+        ), f"{torch.max(decoder_patch_ids) + 1} > {h.shape[1]}"
         assert (
             decoder_patch_ids.shape[1] == dec_embeds.shape[1]
         ), f"{decoder_patch_ids.shape[1]} != {dec_embeds.shape[1]}"
@@ -464,11 +468,11 @@ class ByteLatentEncoder(nn.Module):
                 block_mask=False,
             )
         else:
-            # Gather patch embeddings for each byte position from the reduced patch set
+            # Gather patch embeddings for each byte position from full global output
             h_aligned = torch.gather(
-                h_for_decoder,
+                h,
                 1,
-                decoder_patch_ids.unsqueeze(-1).expand(-1, -1, h_for_decoder.shape[-1]),
+                decoder_patch_ids.unsqueeze(-1).expand(-1, -1, h.shape[-1]),
             )
             assert (
                 local_decoder_tokens.shape == h_aligned.shape[:-1]
@@ -951,7 +955,7 @@ class RecurrentBlock(nn.Module):
             Output tensor of shape [batch_size, seq_len, dim]
         """
         out = packed_rnn_block(
-            self.gru, self.norm(x), input_ids=input_ids, eos_token_id=0
+            self.gru, self.norm(x), input_ids=input_ids, eos_token_id=EOS_ID
         )
         return out + x
 
