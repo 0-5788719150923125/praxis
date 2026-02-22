@@ -125,13 +125,13 @@
     display: flex;
     align-items: center;
     gap: 0.3125rem;
-    padding: 0.625rem 0.875rem;
+    padding: 0.625rem 0.5rem;
     border-radius: var(--radius-small);
     transition: background-color 0.2s;
 }
 
 .theme-toggle-button {
-    margin-right: 0.5rem;
+    margin-right: 0.125rem;
 }
 
 .settings-button:hover,
