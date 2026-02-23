@@ -4,25 +4,9 @@ services:
       context: .
       args:
         BASE_IMAGE: ubuntu:24.04
-    stdin_open: true
-    tty: true
-    ipc: host
-    working_dir: /workspace
-    command: ["./launch"]
-    volumes:
-      - .:/workspace:rw
-      - venv:/workspace/.venv
-      - cache:/root/.cache
-    ports:
-      - "2100:2100"
-      - "29500:29500"
-    env_file:
-      - path: ./.env
-        required: false
+    runtime: runc
     environment:
+      NVIDIA_VISIBLE_DEVICES: ""
+      NVIDIA_DRIVER_CAPABILITIES: ""
       PYTHONUNBUFFERED: 1
       DEBIAN_FRONTEND: noninteractive
-
-volumes:
-  venv:
-  cache:
