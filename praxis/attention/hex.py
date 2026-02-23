@@ -46,7 +46,7 @@ class HexAttention(nn.Module):
         self.num_queries = config.num_queries
         self.num_query_heads = self.num_heads * self.num_queries
         self.head_dim = getattr(config, "head_size") or hidden_size // self.num_heads
-        self.dropout = config.dropout
+        self.dropout_p = config.dropout
         self.causal = config.causal
 
         # QKV projection - separate sizes for Q (with num_queries) and K/V
@@ -64,7 +64,7 @@ class HexAttention(nn.Module):
         )
 
         # Dropout layers
-        self.dropout = nn.Dropout(self.dropout)
+        self.dropout = nn.Dropout(self.dropout_p)
 
         # Try to import FlexAttention components
         self.flex_attention = None
@@ -287,7 +287,7 @@ class HexAttention(nn.Module):
             k,
             v,
             attn_mask=attn_mask,
-            dropout_p=self.dropout if self.training else 0.0,
+            dropout_p=self.dropout_p if self.training else 0.0,
             is_causal=is_causal and attn_mask is None,  # Only use is_causal if no attn_mask
         )
 
