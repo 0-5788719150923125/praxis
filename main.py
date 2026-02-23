@@ -327,7 +327,11 @@ def main():
     # Training config
     train_params = dict(
         accelerator=f"cpu" if device == "cpu" else "gpu",
-        strategy="ddp_find_unused_parameters_true" if (num_nodes > 1 or device == "cuda") else "auto",
+        strategy=(
+            "ddp_find_unused_parameters_true"
+            if (num_nodes > 1 or device == "cuda")
+            else "auto"
+        ),
         num_nodes=num_nodes,
         devices=[int(device.split(":")[1])] if device.startswith("cuda:") else "auto",
         max_steps=max_steps if max_steps is not None else -1,
@@ -353,7 +357,11 @@ def main():
         detect_anomaly=EnvironmentFeatures.is_enabled("detect_anomaly"),
         val_check_interval=1024 * hparams["target_batch_size"] // hparams["batch_size"],
         num_sanity_val_steps=0,
-        limit_val_batches=16384 // hparams["batch_size"],
+        limit_val_batches=(
+            16384 // hparams["batch_size"]
+            if device != "cpu"
+            else 256 // hparams["batch_size"]
+        ),  # Reduced from 16384 // batch_size to prevent hanging in multi-node setups
         log_every_n_steps=10,
         logger=None,  # Will be set below based on integrations
         callbacks=[],
@@ -528,7 +536,9 @@ def main():
     trainer_caps = get_trainer_capabilities(trainer_type)
     if trainer_caps.supports_accumulation_schedule:
         train_params["callbacks"].append(
-            AccumulationSchedule(hparams["batch_size"] * num_nodes, hparams["target_batch_size"])
+            AccumulationSchedule(
+                hparams["batch_size"] * num_nodes, hparams["target_batch_size"]
+            )
         )
 
     # Add evaluation callback
@@ -670,7 +680,11 @@ def main():
     )
     if api_server:
         addr = api_server.get_api_addr()
-        url = f"{addr}/" if addr.startswith(("http://", "https://")) else f"http://{addr}/"
+        url = (
+            f"{addr}/"
+            if addr.startswith(("http://", "https://"))
+            else f"http://{addr}/"
+        )
         print(f"[TRAINING] API available at {url}")
 
     # Install a simple signal handler for post-training cleanup
@@ -719,7 +733,9 @@ def main():
     update_license_timestamp()
 
     try:
-        trainer.fit(train_model, dataintegration, ckpt_path=ckpt_path, weights_only=False)
+        trainer.fit(
+            train_model, dataintegration, ckpt_path=ckpt_path, weights_only=False
+        )
 
         # Training completed successfully
         print("[TRAIN] Completed successfully")

@@ -205,26 +205,28 @@ class MessageQueueManager:
                 refill_attempts += 1
                 if refill_attempts > max_refill_attempts:
                     print(
-                        f"[ERROR] MessageQueue.get_batch: Unable to refill token buffer after {max_refill_attempts} attempts"
+                        f"[WARN] MessageQueue.get_batch: Unable to refill token buffer after {max_refill_attempts} attempts"
                     )
                     print(
-                        f"[ERROR] Buffer size: {len(self.token_buffer)}, needed: {tokens_needed}"
+                        f"[WARN] Buffer size: {len(self.token_buffer)}, needed: {tokens_needed}"
                     )
-                    print(f"[ERROR] Message queue size: {len(self.message_queue)}")
-                    raise RuntimeError(
-                        "Failed to refill token buffer - possible data loading issue"
-                    )
+                    print(f"[WARN] Message queue size: {len(self.message_queue)}")
+                    # Instead of raising error, break and pad with zeros below
+                    # This prevents one node from crashing while others wait in multi-node training
+                    break
 
             # Check if we've run out of data
             if len(self.message_queue) == 0 and len(self.token_buffer) < tokens_needed:
-                # Pad with zeros if we don't have enough data
-                padding_needed = tokens_needed - len(self.token_buffer)
-                self.token_buffer = torch.cat(
-                    [self.token_buffer, torch.zeros(padding_needed, dtype=torch.long)]
-                )
-                # Add empty metadata for padding
-                self.metadata_buffer.extend([{}] * padding_needed)
                 break
+
+        # Pad with zeros if we still don't have enough tokens after refills
+        if len(self.token_buffer) < tokens_needed:
+            padding_needed = tokens_needed - len(self.token_buffer)
+            self.token_buffer = torch.cat(
+                [self.token_buffer, torch.zeros(padding_needed, dtype=torch.long)]
+            )
+            # Add empty metadata for padding
+            self.metadata_buffer.extend([{}] * padding_needed)
 
         sequences = []
         batch_metadata = []

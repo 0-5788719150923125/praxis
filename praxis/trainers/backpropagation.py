@@ -418,7 +418,7 @@ class BackpropagationTrainer(LightningModule):
             logger=True,
             batch_size=input_ids.size(0),
             prog_bar=True,
-            sync_dist=True,
+            sync_dist=False,  # Disable sync during validation to prevent deadlocks in multi-node setups
         )
 
     def on_validation_end(self):
