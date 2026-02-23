@@ -11,9 +11,19 @@ if [ "$1" = "compose" ]; then
 
     echo "[DOCKER] Starting Praxis in Docker Compose environment..."
 
+    # Detect architecture and set compose file flags
+    ARCH=$(uname -m)
+    if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+        echo "[DOCKER] Detected ARM64 architecture - using CPU-only configuration"
+        COMPOSE_FILES="-f $SCRIPT_DIR/compose.yml -f $SCRIPT_DIR/compose.ARM.yml"
+    else
+        echo "[DOCKER] Detected x86_64 architecture - using GPU configuration"
+        COMPOSE_FILES="-f $SCRIPT_DIR/compose.yml"
+    fi
+
     # Run in Docker Compose with all remaining arguments
     # Include port publishing for API server access
-    docker compose -f "$SCRIPT_DIR/compose.yml" run --rm --remove-orphans --service-ports agent ./launch "$@"
+    docker compose $COMPOSE_FILES run --rm --remove-orphans --service-ports agent ./launch "$@"
     exit $?
 fi
 
