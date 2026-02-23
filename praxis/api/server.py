@@ -292,6 +292,9 @@ class APIServer:
         """Get the API server address.
 
         Returns:
-            Server address as host:port string
+            Server address as host:port string, or just host if it is an
+            https:// URL (port 443 implied, appending would be incorrect).
         """
+        if self.host.startswith("https://"):
+            return self.host
         return f"{self.host}:{self.port}"
