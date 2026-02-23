@@ -84,11 +84,16 @@ class HexAttention(nn.Module):
             )
 
     def _import_flex_attention(self) -> None:
-        """Import FlexAttention components."""
-        from torch.nn.attention.flex_attention import create_block_mask, flex_attention
+        """Import FlexAttention components (GPU only - falls back to SDPA on CPU)."""
+        try:
+            from torch.nn.attention.flex_attention import create_block_mask, flex_attention
 
-        self.flex_attention = flex_attention
-        self.create_block_mask = create_block_mask
+            self.flex_attention = flex_attention
+            self.create_block_mask = create_block_mask
+        except ImportError:
+            print("[HexAttention] FlexAttention not available, using SDPA fallback")
+            self.flex_attention = None
+            self.create_block_mask = None
 
     def _get_alibi_slopes(self, num_heads: int) -> torch.Tensor:
         """
@@ -215,6 +220,79 @@ class HexAttention(nn.Module):
 
         return block_mask
 
+    def _use_cpu_fallback(self, device: torch.device) -> bool:
+        """
+        Determine if we should use CPU fallback instead of flex_attention.
+
+        FlexAttention uses torch.compile internally, which doesn't support CPU.
+
+        Args:
+            device: The device tensors are on
+
+        Returns:
+            True if we should use SDPA fallback, False if we can use flex_attention
+        """
+        # Use fallback if flex_attention isn't available
+        if self.flex_attention is None:
+            return True
+
+        # Use fallback on CPU (flex_attention compilation fails on CPU)
+        if device.type == "cpu":
+            return True
+
+        return False
+
+    def _sdpa_fallback(
+        self,
+        q: Tensor,
+        k: Tensor,
+        v: Tensor,
+        is_causal: bool = True,
+    ) -> Tensor:
+        """
+        Fallback attention using F.scaled_dot_product_attention.
+
+        Used when flex_attention is not available or on CPU.
+
+        Args:
+            q: Query tensor [batch, num_heads, seq_len, head_dim]
+            k: Key tensor [batch, num_heads, kv_len, head_dim]
+            v: Value tensor [batch, num_heads, kv_len, head_dim]
+            is_causal: Whether to use causal masking
+
+        Returns:
+            Attention output [batch, num_heads, seq_len, head_dim]
+        """
+        # Apply ALiBi bias if needed
+        attn_mask = None
+        if self.pos_type == "alibi" and hasattr(self, "alibi_slopes"):
+            batch_size, num_heads, seq_len, _ = q.shape
+            kv_len = k.shape[2]
+
+            # Create position differences matrix
+            q_pos = torch.arange(seq_len, device=q.device).unsqueeze(1)
+            k_pos = torch.arange(kv_len, device=k.device).unsqueeze(0)
+            pos_diff = k_pos - q_pos  # [seq_len, kv_len]
+
+            # Apply ALiBi slopes: [num_heads, 1, 1] * [1, seq_len, kv_len]
+            alibi_bias = self.alibi_slopes.to(q.device).view(-1, 1, 1) * pos_diff.unsqueeze(0)
+
+            # Expand for batch: [1, num_heads, seq_len, kv_len] -> [batch, num_heads, seq_len, kv_len]
+            attn_mask = alibi_bias.unsqueeze(0).expand(batch_size, -1, -1, -1)
+
+        # Use PyTorch's scaled_dot_product_attention
+        # Note: This handles causal masking, dropout, and is memory-efficient
+        attn_output = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=attn_mask,
+            dropout_p=self.dropout if self.training else 0.0,
+            is_causal=is_causal and attn_mask is None,  # Only use is_causal if no attn_mask
+        )
+
+        return attn_output
+
     def forward(
         self,
         inputs: Tensor,
@@ -311,23 +389,39 @@ class HexAttention(nn.Module):
         # Determine if we're using GQA
         is_gqa = self.num_queries > 1
 
-        # Handle masking: use causal block_mask with ghost token support
-        if self.causal:
-            # Create causal block_mask that allows ghost access
-            block_mask = self._create_causal_mask(seq_len, kv_len, inputs.device)
-        else:
-            block_mask = None
+        # Check if we should use CPU fallback
+        use_fallback = self._use_cpu_fallback(inputs.device)
 
-        # Apply FlexAttention with causal mask and GQA support
-        attn_output = self.flex_attention(
-            q,
-            k,
-            v,
-            block_mask=block_mask,
-            score_mod=score_mod,
-            enable_gqa=is_gqa,
-            scale=None,  # Use default: 1.0 / sqrt(head_dim)
-        )
+        if use_fallback:
+            if not hasattr(self, "_cpu_fallback_warned"):
+                print("[HexAttention] Using SDPA fallback (CPU device - flex_attention not supported)")
+                self._cpu_fallback_warned = True
+            # Use SDPA fallback (doesn't support ghostmax or custom score_mod)
+            # Remove ghost tokens since SDPA fallback doesn't support them
+            k = k[:, :, 1:, :]  # Remove ghost token from K
+            v = v[:, :, 1:, :]  # Remove ghost token from V
+
+            # Note: GQA is handled automatically by SDPA if q and k have different num_heads
+            attn_output = self._sdpa_fallback(q, k, v, is_causal=self.causal)
+        else:
+            # Use FlexAttention (GPU only)
+            # Handle masking: use causal block_mask with ghost token support
+            if self.causal:
+                # Create causal block_mask that allows ghost access
+                block_mask = self._create_causal_mask(seq_len, kv_len, inputs.device)
+            else:
+                block_mask = None
+
+            # Apply FlexAttention with causal mask and GQA support
+            attn_output = self.flex_attention(
+                q,
+                k,
+                v,
+                block_mask=block_mask,
+                score_mod=score_mod,
+                enable_gqa=is_gqa,
+                scale=None,  # Use default: 1.0 / sqrt(head_dim)
+            )
 
         # Reshape back: (B, num_heads, T, head_dim) -> (B, T, num_heads * head_dim)
         attn_output = attn_output.transpose(1, 2).contiguous()

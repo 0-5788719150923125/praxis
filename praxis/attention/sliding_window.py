@@ -133,32 +133,46 @@ class SlidingWindowFlexAttention(HexAttention):
         # Determine if we're using GQA
         is_gqa = self.num_queries > 1
 
-        # Create sliding window + causal mask
-        block_mask = self._create_sliding_window_causal_mask(seq_len, inputs.device)
+        # Check if we should use CPU fallback
+        use_fallback = self._use_cpu_fallback(inputs.device)
 
-        # Create score modification function based on positional encoding type
-        if self.pos_type == "rope":
-            score_mod = None
-        else:  # alibi
-            alibi_slopes = self.alibi_slopes.to(inputs.device)
+        if use_fallback:
+            if not hasattr(self, "_cpu_fallback_warned"):
+                print(
+                    "[SlidingWindowFlexAttention] Using SDPA fallback (CPU device - no sliding window support)"
+                )
+                self._cpu_fallback_warned = True
+            # Use SDPA fallback (doesn't support custom sliding window or score_mod)
+            # Note: Standard SDPA will use full causal attention, not sliding window
+            attn_output = self._sdpa_fallback(q, k, v, is_causal=True)
+        else:
+            # Use FlexAttention with sliding window (GPU only)
+            # Create sliding window + causal mask
+            block_mask = self._create_sliding_window_causal_mask(seq_len, inputs.device)
 
-            def alibi_score_mod(score, b, h, q_idx, kv_idx):
-                """Apply ALiBi positional bias to attention scores."""
-                bias = alibi_slopes[h] * (kv_idx - q_idx)
-                return score + bias
+            # Create score modification function based on positional encoding type
+            if self.pos_type == "rope":
+                score_mod = None
+            else:  # alibi
+                alibi_slopes = self.alibi_slopes.to(inputs.device)
 
-            score_mod = alibi_score_mod
+                def alibi_score_mod(score, b, h, q_idx, kv_idx):
+                    """Apply ALiBi positional bias to attention scores."""
+                    bias = alibi_slopes[h] * (kv_idx - q_idx)
+                    return score + bias
 
-        # Apply FlexAttention with sliding window mask and GQA support
-        attn_output = self.flex_attention(
-            q,
-            k,
-            v,
-            block_mask=block_mask,
-            score_mod=score_mod,
-            enable_gqa=is_gqa,
-            scale=None,  # Use default: 1.0 / sqrt(head_dim)
-        )
+                score_mod = alibi_score_mod
+
+            # Apply FlexAttention with sliding window mask and GQA support
+            attn_output = self.flex_attention(
+                q,
+                k,
+                v,
+                block_mask=block_mask,
+                score_mod=score_mod,
+                enable_gqa=is_gqa,
+                scale=None,  # Use default: 1.0 / sqrt(head_dim)
+            )  # type: ignore
 
         # Reshape back: (B, num_heads, T, head_dim) -> (B, T, num_heads * head_dim)
         attn_output = attn_output.transpose(1, 2).contiguous()

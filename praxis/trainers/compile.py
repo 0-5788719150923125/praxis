@@ -27,6 +27,12 @@ def try_compile_model(model, hparams):
         print("[COMPILER] Skipping compilation (skip_compilation feature enabled)")
         return model
 
+    # Check if running on CPU - torch.compile has limited CPU support
+    device = getattr(hparams, "device", "cpu")
+    if isinstance(device, str) and device.startswith("cpu"):
+        print("[COMPILER] Skipping compilation (CPU device - limited torch.compile support)")
+        return model
+
     try:
         print("[COMPILER] Generating optimized kernel...")
         return torch.compile(model, **COMPILE_KWARGS)
