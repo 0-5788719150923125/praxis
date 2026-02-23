@@ -443,7 +443,20 @@ class TerminalInterface(Callback):
         if not self.generator:
             return
 
-        if not self._is_trigger_passed(self.last_time, self.interval):
+        # Warmup: start with 120s interval at step 0, linearly decrease to
+        # base interval over 250 steps so early-training inference (which is
+        # slow and unpredictable) doesn't dominate wall-clock time.
+        warmup_steps = 250
+        trainer = lm.trainer if hasattr(lm, "trainer") else None
+        accum = trainer.accumulate_grad_batches if trainer else 1
+        step = batch_idx // accum
+        if step < warmup_steps:
+            progress = step / warmup_steps
+            effective_interval = 120 - (120 - self.interval) * progress
+        else:
+            effective_interval = self.interval
+
+        if not self._is_trigger_passed(self.last_time, effective_interval):
             return
 
         # Check if we should reset based on previous inference times
