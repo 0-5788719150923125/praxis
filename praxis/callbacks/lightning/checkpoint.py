@@ -29,6 +29,10 @@ class TimeBasedCheckpoint(ModelCheckpoint):
         batch,
         batch_idx,
     ):
+        # Only save checkpoints on rank 0 to avoid DDP deadlocks
+        if trainer.global_rank != 0:
+            return
+
         # Get current time
         current_time = time.monotonic()
 
