@@ -360,8 +360,8 @@ def main():
         limit_val_batches=(
             16384 // hparams["batch_size"]
             if device != "cpu"
-            else 256 // hparams["batch_size"]
-        ),  # Reduced from 16384 // batch_size to prevent hanging in multi-node setups
+            else 0
+        ),  # Disabled on CPU to prevent stalling multi-node swarms
         log_every_n_steps=10,
         logger=None,  # Will be set below based on integrations
         callbacks=[],
