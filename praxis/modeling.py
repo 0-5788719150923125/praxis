@@ -80,6 +80,7 @@ class PraxisModel(PreTrainedModel):
             current_state=new_state,
             h_encoder=h_encoder,
             patch_lengths=patch_lengths,
+            patch_embeds=inputs if self.encoder else None,
             local_decoder_tokens=local_decoder_tokens,
             losses=losses,
         )
@@ -124,6 +125,20 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             self.backward_head = HEAD_REGISTRY.get(config.head_type, "forward")(config)
         else:
             self.backward_head = None
+
+        # Initialize MTP if requested
+        # Two execution paths:
+        #   Standard (token-level): embeds from nn.Embedding, CE loss vs token IDs
+        #   Encoder (patch-level): patch embeds projected to embed_size, MSE loss
+        #     vs target patch representations — the patcher acts as the "tokenizer"
+        #     and patch positions in the global transformer are the prediction targets.
+        self.mtp = None
+        if getattr(config, "mtp_type", None) is not None:
+            if config.bidirectional:
+                raise ValueError("MTP cannot be combined with --bidirectional")
+            from praxis.heads.mtp import MultiTokenPrediction
+
+            self.mtp = MultiTokenPrediction(config)
 
         # Initialize RL policy if requested
         self.policy = None
@@ -378,14 +393,28 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 )
                 loss = outputs.losses.add_loss("main", main_loss)
 
+        # MTP auxiliary loss (training only)
+        if self.mtp is not None and self.training and labels is not None:
+            mtp_inputs = self.mtp.prepare_inputs(
+                hidden_states=hidden_states,
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                embed_fn=self.get_input_embeddings(),
+                head=self.head,
+                patch_embeds=outputs.patch_embeds if self.encoder else None,
+            )
+            mtp_losses = self.mtp(mtp_inputs)
+            outputs.losses.add_loss_container(mtp_losses)
+
         # We omit auxiliary losses during validation and inference
         if self.training and labels is not None:
-            if loss == 0 and len(outputs.losses.get_loss_values()) > 0:
-                # For any decoder that adds layer-wise losses, we need special handling
-                loss = self.strategy(outputs.losses.get_loss_values())
-            else:
-                # If we already have a loss from the main path, use it
-                pass
+            loss_values = outputs.losses.get_loss_values()
+            if len(loss_values) > 1:
+                # Multiple tagged losses — let the strategy combine them
+                loss = self.strategy(loss_values)
+            elif loss == 0 and len(loss_values) > 0:
+                # Only auxiliary losses (no main) — combine via strategy
+                loss = self.strategy(loss_values)
 
         return CausalLMOutputWithPast(
             loss=loss,
@@ -394,6 +423,129 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
+
+    def generate(self, inputs=None, generation_config=None, **kwargs):
+        """Generate tokens, using MTP speculative decoding when available."""
+        if (
+            self.mtp is not None
+            and not self.encoder
+            and not self.training
+            and generation_config is not None
+            and getattr(generation_config, "num_beams", 1) == 1
+        ):
+            return self._speculative_generate(inputs, generation_config, **kwargs)
+        return super().generate(
+            inputs, generation_config=generation_config, **kwargs
+        )
+
+    @torch.no_grad()
+    def _speculative_generate(self, input_ids, generation_config, **kwargs):
+        """MTP-based speculative decoding for faster inference.
+
+        For each step:
+        1. Run main model forward to get hidden states and next-token logits
+        2. Draft N additional tokens greedily via MTP modules
+        3. Verify all N+1 candidates in a single main model forward pass
+        4. Accept the longest prefix where main model agrees with draft
+        """
+        from types import SimpleNamespace
+
+        max_new_tokens = getattr(generation_config, "max_new_tokens", 100)
+        do_sample = getattr(generation_config, "do_sample", False)
+        temperature = getattr(generation_config, "temperature", 1.0) or 1.0
+        eos_token_id = getattr(generation_config, "eos_token_id", None)
+        return_dict = kwargs.get("return_dict_in_generate", False)
+
+        eos_set = set()
+        if isinstance(eos_token_id, int):
+            eos_set = {eos_token_id}
+        elif isinstance(eos_token_id, (list, tuple)):
+            eos_set = set(eos_token_id)
+
+        generated = input_ids
+        embed_fn = self.get_input_embeddings()
+        num_new = 0
+
+        while num_new < max_new_tokens:
+            # Main model forward pass to get hidden states
+            base_out = PraxisModel.forward(self, input_ids=generated)
+            hidden_states = base_out.last_hidden_state
+            main_logits = self.head(hidden_states)
+
+            # Sample first token from main model
+            last_logits = main_logits[:, -1, :]
+            token_0 = self._sample_token(last_logits, do_sample, temperature)
+            token_0_2d = token_0.unsqueeze(1)
+
+            if token_0.item() in eos_set:
+                generated = torch.cat([generated, token_0_2d], dim=1)
+                num_new += 1
+                break
+
+            # Draft additional tokens with MTP
+            draft_ids = self.mtp.draft_next_tokens(
+                hidden_states[:, -1:, :], token_0_2d, embed_fn, self.head
+            )
+
+            # Combine: main prediction + drafts → [batch, 1+N]
+            candidates = torch.cat([token_0_2d, draft_ids], dim=1)
+            n_candidates = candidates.size(1)
+
+            # Verify all candidates in one forward pass
+            verify_input = torch.cat([generated, candidates], dim=1)
+            verify_out = PraxisModel.forward(self, input_ids=verify_input)
+            verify_logits = self.head(verify_out.last_hidden_state)
+
+            # Check agreement at each position
+            gen_len = generated.size(1)
+            accepted = 0
+
+            for i in range(n_candidates):
+                v_logits = verify_logits[:, gen_len - 1 + i, :]
+                v_token = self._sample_token(v_logits, do_sample, temperature)
+
+                if v_token.item() == candidates[:, i].item():
+                    accepted += 1
+                    if v_token.item() in eos_set:
+                        generated = torch.cat(
+                            [generated, candidates[:, :accepted]], dim=1
+                        )
+                        num_new += accepted
+                        if return_dict:
+                            return SimpleNamespace(sequences=generated)
+                        return generated
+                else:
+                    # Divergence: keep accepted prefix + verified token
+                    parts = [generated]
+                    if accepted > 0:
+                        parts.append(candidates[:, :accepted])
+                    parts.append(v_token.unsqueeze(1))
+                    generated = torch.cat(parts, dim=1)
+                    num_new += accepted + 1
+                    break
+            else:
+                # All candidates accepted — also take a bonus token
+                generated = torch.cat([generated, candidates], dim=1)
+                num_new += n_candidates
+
+                if num_new < max_new_tokens:
+                    bonus_logits = verify_logits[:, gen_len - 1 + n_candidates, :]
+                    bonus = self._sample_token(bonus_logits, do_sample, temperature)
+                    generated = torch.cat([generated, bonus.unsqueeze(1)], dim=1)
+                    num_new += 1
+                    if bonus.item() in eos_set:
+                        break
+
+        if return_dict:
+            return SimpleNamespace(sequences=generated)
+        return generated
+
+    def _sample_token(self, logits, do_sample, temperature):
+        """Sample or greedily select a single token from logits."""
+        if do_sample and temperature > 0:
+            probs = F.softmax(logits / temperature, dim=-1)
+            return torch.multinomial(probs, 1).squeeze(-1)
+        return logits.argmax(dim=-1)
 
     def get_input_embeddings(self) -> nn.Module:
         """Get the input embeddings module."""
@@ -454,5 +606,6 @@ class PraxisModelOutput(BaseModelOutputWithPast):
     current_state: Optional[torch.LongTensor] = None
     h_encoder: Optional[torch.FloatTensor] = None
     patch_lengths: Optional[torch.LongTensor] = None
+    patch_embeds: Optional[torch.FloatTensor] = None
     local_decoder_tokens: Optional[torch.LongTensor] = None
     losses: List[torch.LongTensor] = None

@@ -124,6 +124,8 @@ class PraxisConfig(PretrainedConfig):
         self.causal = False
         self.bidirectional = bidirectional
         self.forward_weight = kwargs.get("forward_weight", 0.666666)
+        self.mtp_type = kwargs.get("mtp_type", None)
+        self.mtp_depth = kwargs.get("mtp_depth", 1)
         self.tie_word_embeddings = tie_weights
         self.rl_type = kwargs.get(
             "rl_type", None

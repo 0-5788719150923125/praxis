@@ -13,6 +13,7 @@ from praxis import (
     ENCODING_REGISTRY,
     EXPERT_REGISTRY,
     HEAD_REGISTRY,
+    MTP_REGISTRY,
     NORMALIZATION_REGISTRY,
     RESIDUAL_REGISTRY,
     ROUTER_REGISTRY,
@@ -324,4 +325,19 @@ class ArchitectureGroup:
             action="store_true",
             default=False,
             help="Tie embedding and output projection weights to reduce parameters",
+        )
+
+        group.add_argument(
+            "--mtp-type",
+            type=str,
+            choices=list(MTP_REGISTRY.keys()),
+            default=None,
+            help="MTP module type (omit to disable MTP)",
+        )
+
+        group.add_argument(
+            "--mtp-depth",
+            type=int,
+            default=1,
+            help="Number of Multi-Token Prediction depths",
         )
