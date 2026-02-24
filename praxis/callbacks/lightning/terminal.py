@@ -150,11 +150,16 @@ class TerminalInterface(Callback):
         super().on_train_batch_start(trainer, lm, batch, batch_idx)
         if self.dashboard and hasattr(self.dashboard, "set_mode"):
             self.dashboard.set_mode("train")
+        if hasattr(self, "live_metrics"):
+            self.live_metrics.state.set_mode("train")
 
     def on_validation_start(self, trainer, lm):
         super().on_validation_start(trainer, lm)
         if self.dashboard and hasattr(self.dashboard, "set_mode"):
             self.dashboard.set_mode("validation")
+        if hasattr(self, "live_metrics"):
+            self.live_metrics.state.set_mode("validation")
+            self.live_metrics._update_count += 1
 
     def on_validation_batch_end(self, trainer, lm, outputs, batch, batch_idx):
         super().on_validation_batch_end(trainer, lm, outputs, batch, batch_idx)
@@ -165,6 +170,9 @@ class TerminalInterface(Callback):
         super().on_validation_end(trainer, lm)
         if self.dashboard and hasattr(self.dashboard, "set_mode"):
             self.dashboard.set_mode("train")
+        if hasattr(self, "live_metrics"):
+            self.live_metrics.state.set_mode("train")
+            self.live_metrics._update_count += 1
 
     def on_train_batch_end(self, trainer, lm, outputs, batch, batch_idx):
         super().on_train_batch_end(trainer, lm, outputs, batch, batch_idx)
