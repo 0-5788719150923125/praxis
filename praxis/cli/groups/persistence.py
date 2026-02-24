@@ -17,3 +17,10 @@ class PersistenceGroup:
             default="build",
             help="Paths to a directory where artifacts will be saved",
         )
+
+        group.add_argument(
+            "--no-checkpoints",
+            action="store_true",
+            default=False,
+            help="Disable periodic checkpointing",
+        )

@@ -251,6 +251,7 @@ def main():
     node_rank = processed_args.get("node_rank", 0)
     master_addr = processed_args.get("master_addr", "localhost")
     master_port = processed_args.get("master_port", 29500)
+    no_checkpoints = processed_args.get("no_checkpoints", False)
 
     # Set distributed env vars before Lightning initializes the process group.
     # We only set them when num_nodes > 1 to avoid interfering with single-node runs.
@@ -351,7 +352,7 @@ def main():
         ),
         benchmark=True,
         deterministic=False,
-        enable_checkpointing=True,
+        enable_checkpointing=not no_checkpoints,
         enable_progress_bar=not use_dashboard and not headless,
         enable_model_summary=False,
         detect_anomaly=EnvironmentFeatures.is_enabled("detect_anomaly"),
@@ -529,8 +530,9 @@ def main():
     # Configure callbacks list - always include core callbacks
     train_params["callbacks"] = [
         SignalHandlerCallback(),  # Handle signals gracefully
-        checkpoint_callback,
     ]
+    if not no_checkpoints:
+        train_params["callbacks"].append(checkpoint_callback)
 
     # Add AccumulationSchedule only if trainer supports it
     trainer_caps = get_trainer_capabilities(trainer_type)

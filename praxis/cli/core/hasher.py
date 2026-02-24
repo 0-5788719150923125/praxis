@@ -15,6 +15,7 @@ DEFAULT_EXCLUDE_FROM_HASH = [
     "--no-dashboard",
     "--headless",
     "--quiet",
+    "--no-checkpoints",
     # Multi-node infra args: do not affect model architecture or training config
     "--num-nodes",
     "--node-rank",
