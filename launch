@@ -4,6 +4,27 @@
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Check if first argument is 'stop' to tear down a running instance
+if [ "$1" = "stop" ]; then
+    echo "[STOP] Stopping Praxis..."
+
+    # Detect architecture for compose file selection
+    ARCH=$(uname -m)
+    if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+        COMPOSE_FILES="-f $SCRIPT_DIR/compose.yml -f $SCRIPT_DIR/compose.ARM.yml"
+    else
+        COMPOSE_FILES="-f $SCRIPT_DIR/compose.yml"
+    fi
+
+    # Stop Docker Compose containers
+    if command -v docker &>/dev/null && [ -f "$SCRIPT_DIR/compose.yml" ]; then
+        docker compose $COMPOSE_FILES down --remove-orphans
+    fi
+
+    echo "[STOP] Done."
+    exit 0
+fi
+
 # Check if first argument is 'compose' for Docker Compose execution
 # We short-circuit, if using Docker, to re-run the script within our container
 if [ "$1" = "compose" ]; then
