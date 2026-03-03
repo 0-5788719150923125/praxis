@@ -26,6 +26,7 @@ class TerminalInterface(Callback):
         quiet=False,
         headless=False,
         terminal_output_length=512,
+        infer_every=3,
         byte_latent=False,
         debug=False,
         get_memory_info=None,
@@ -42,7 +43,7 @@ class TerminalInterface(Callback):
         self.generator = generator
         self.initial_text = tokenizer.bos_token if tokenizer else "<s>"
         self.text = self.initial_text
-        self.interval = 3
+        self.interval = infer_every
         self.url = url
         self.use_dashboard = use_dashboard
         self.dashboard = dashboard  # Use existing dashboard if provided

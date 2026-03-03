@@ -375,17 +375,7 @@ class ByteLatentEncoder(nn.Module):
         )
 
         # Downsampling to create patch representations
-        if self.byte_config.cross_attn_encoder:
-            h = h_cross.view(bs, patch_lengths.shape[1], -1)
-        else:
-            h = downsample(
-                h_encoder,
-                patch_lengths.shape[1],
-                patch_lengths,
-                patch_ids,
-                downsampling_by_pooling=self.byte_config.downsampling_by_pooling,
-                patch_size=self.byte_config.patch_size,
-            )
+        h = self._downsample(h_encoder, h_cross, bs, patch_lengths, patch_ids)
 
         # Create global tokens exactly like BLT reference
         # Note: global_tokens shape matches h.shape (patch-level, not token-level)
@@ -404,9 +394,29 @@ class ByteLatentEncoder(nn.Module):
         if self.token_proj is not None:
             h = self.token_proj(h)
 
+        # Post-downsample hook (e.g. VQ bottleneck in subclasses)
+        h, aux_loss = self._post_downsample(h, aux_loss)
+
         # Return patch embeddings for PraxisModel to process as global transformer
         # PraxisModel will process these patch embeddings like a regular sequence
         return h, h_encoder, patch_lengths, block_ids, aux_loss, local_decoder_tokens
+
+    def _downsample(self, h_encoder, h_cross, bs, patch_lengths, patch_ids):
+        """Downsample byte-level representations to patch-level. Override for custom pooling."""
+        if self.byte_config.cross_attn_encoder:
+            return h_cross.view(bs, patch_lengths.shape[1], -1)
+        return downsample(
+            h_encoder,
+            patch_lengths.shape[1],
+            patch_lengths,
+            patch_ids,
+            downsampling_by_pooling=self.byte_config.downsampling_by_pooling,
+            patch_size=self.byte_config.patch_size,
+        )
+
+    def _post_downsample(self, h, aux_loss):
+        """Hook for post-downsample processing (e.g. VQ). Returns (h, aux_loss)."""
+        return h, aux_loss
 
     def decode(
         self,

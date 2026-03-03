@@ -42,9 +42,33 @@ if [ "$1" = "compose" ]; then
         COMPOSE_FILES="-f $SCRIPT_DIR/compose.yml"
     fi
 
+    # Resolve --data-path arguments to absolute host paths and add as volume mounts.
+    # Inside the container these are mounted at the same absolute path.
+    EXTRA_VOLUMES=""
+    RESOLVED_ARGS=()
+    NEXT_IS_DATA_PATH=false
+    for arg in "$@"; do
+        if $NEXT_IS_DATA_PATH; then
+            NEXT_IS_DATA_PATH=false
+            # arg may be one or more space-separated paths (nargs="+")
+            RESOLVED_PATHS=()
+            for p in $arg; do
+                abs_path="$(cd "$SCRIPT_DIR" && realpath -m "$p" 2>/dev/null || echo "$p")"
+                EXTRA_VOLUMES="$EXTRA_VOLUMES -v $abs_path:$abs_path:ro"
+                RESOLVED_PATHS+=("$abs_path")
+            done
+            RESOLVED_ARGS+=("${RESOLVED_PATHS[*]}")
+        elif [ "$arg" = "--data-path" ]; then
+            NEXT_IS_DATA_PATH=true
+            RESOLVED_ARGS+=("$arg")
+        else
+            RESOLVED_ARGS+=("$arg")
+        fi
+    done
+
     # Run in Docker Compose with all remaining arguments
     # Include port publishing for API server access
-    docker compose $COMPOSE_FILES run --rm --remove-orphans --service-ports agent ./launch "$@"
+    docker compose $COMPOSE_FILES run --rm --remove-orphans --service-ports $EXTRA_VOLUMES agent ./launch "${RESOLVED_ARGS[@]}"
     exit $?
 fi
 

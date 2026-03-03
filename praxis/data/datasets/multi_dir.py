@@ -33,11 +33,8 @@ class MultiDirectoryDataset(PraxisSampler):
             directories = [directories]
         self.directories = []
         for d in directories:
-            # If path is absolute, use it as-is; otherwise make it relative to CWD
-            if os.path.isabs(d):
-                normalized = os.path.normpath(d)
-            else:
-                normalized = os.path.normpath(os.path.join(self.cwd, d))
+            # Resolve relative paths against CWD, following symlinks and ..
+            normalized = os.path.realpath(os.path.join(self.cwd, d))
             self.directories.append(normalized)
 
         # Remove root directory if accidentally included

@@ -191,28 +191,30 @@ class NoveltyTracker:
     def get_target_weights(self, static_weights: List[float]) -> List[float]:
         """Compute target sampling weights from novelty scores.
 
+        Uses a uniform prior so that novelty alone determines sampling.
+        Static weights are only used during the warmup blend.
+
         Args:
-            static_weights: Base/static weights for each dataset.
+            static_weights: Base/static weights for each dataset (used during warmup only).
 
         Returns:
-            Normalized target weights adjusted by novelty.
+            Normalized target weights determined by novelty.
         """
         n = len(static_weights)
-        raw = np.array(static_weights, dtype=np.float64)
 
-        # Scale by novelty^exponent (sqrt by default to dampen extremes)
+        # Uniform prior: novelty scores alone determine weights
         novelty_factor = self.dataset_novelty[:n] ** self.novelty_exponent
-        raw = raw * novelty_factor
+        raw = novelty_factor.copy()
 
-        # Warmup blend: linearly blend from static to novelty weights
+        # Warmup blend: linearly transition from uniform to novelty weights
         if self.total_docs < self.warmup_samples:
             blend = self.total_docs / self.warmup_samples
-            static = np.array(static_weights, dtype=np.float64)
-            static = static / static.sum()
-            raw = (1.0 - blend) * static + blend * raw
+            uniform = np.ones(n, dtype=np.float64) / n
+            raw_norm = raw / raw.sum() if raw.sum() > 0 else uniform
+            raw = (1.0 - blend) * uniform + blend * raw_norm
 
-        # Floor clamp: no dataset drops below 1% of its static weight
-        floor = 0.01 * np.array(static_weights, dtype=np.float64)
+        # Floor clamp: no dataset drops below 1/N * 1%
+        floor = 0.01 / n
         raw = np.maximum(raw, floor)
 
         # Normalize to sum=1.0

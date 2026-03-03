@@ -33,6 +33,13 @@ class LoggingGroup:
         )
 
         group.add_argument(
+            "--infer-every",
+            type=int,
+            default=3,
+            help="Seconds between inference token generation during training (default: 3)",
+        )
+
+        group.add_argument(
             "--debug",
             action="store_true",
             default=False,

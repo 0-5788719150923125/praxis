@@ -584,6 +584,7 @@ def main():
     # Add TerminalInterface which handles dashboard/console output routing
     # TerminalInterface creates and manages the dashboard internally when use_dashboard=True
     quiet = processed_args.get("quiet", False)
+    infer_every = processed_args.get("infer_every", 3)
     terminal_output_length = processed_args.get(
         "terminal_output_length", block_size * 2
     )
@@ -619,6 +620,7 @@ def main():
             quiet=quiet,
             headless=headless,
             terminal_output_length=terminal_output_length,
+            infer_every=infer_every,
             byte_latent=byte_latent,
             debug=debug,
             get_memory_info=get_memory_info,

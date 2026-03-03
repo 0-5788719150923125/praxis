@@ -1,6 +1,7 @@
 from functools import partial
 
 from praxis.encoders.byte_latent import ByteLatentEncoder
+from praxis.encoders.abstractinator import AbstractinatorEncoder
 
 # ByteLatent Encoder Profiles
 # These provide convenient presets for different use cases
@@ -28,12 +29,26 @@ ByteLatentTransformer = partial(
     hash_group_sizes=[3, 4, 5],
 )
 
+# BLT + residual VQ bottleneck (abstractinator defaults)
+Abstractinator = partial(
+    AbstractinatorEncoder,
+    local_architecture="conv",
+    patching_mode="space",
+    n_layers_encoder=3,
+    n_layers_decoder=3,
+    use_hash_embeddings=True,
+    hash_functions=1,
+    hash_group_sizes=[3, 4, 5],
+)
+
 ENCODER_REGISTRY = dict(
     # Base class (use with explicit arguments)
     byte_latent=ByteLatentEncoder,
     # Recommended profiles
     byte_latent_conv=ByteLatentConv,
     byte_latent_transformer=ByteLatentTransformer,
+    # BLT + residual VQ bottleneck
+    abstractinator=Abstractinator,
     # # Entropy-based patching
     # byte_latent_transformer_entropy=ByteLatentTransformerEntropy,
     # # Lightweight variants
