@@ -17,8 +17,9 @@ class DataGroup:
             "--data-path",
             type=str,
             nargs="+",
+            action="extend",
             default=None,
-            help="Paths to a directory of files to use as training data",
+            help="Paths to directories of files to use as training data (can be specified multiple times)",
         )
 
         group.add_argument(

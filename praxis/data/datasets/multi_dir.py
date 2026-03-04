@@ -55,6 +55,11 @@ class MultiDirectoryDataset(PraxisSampler):
             ".pytest_cache",
             ".mypy_cache",
             ".tox",
+            ".terraform",
+            ".cargo",
+            ".gradle",
+            "target",
+            "vendor",
         }
         user_exclusions = set(excluded_dirs) if excluded_dirs else set()
         self.excluded_dirs = default_exclusions.union(user_exclusions)

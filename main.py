@@ -88,6 +88,21 @@ except Exception as e:
     print("[INIT] Your system does not support low-precision kernels.")
 
 
+def _is_byte_latent_encoder(encoder_type: str) -> bool:
+    """Check if an encoder type is a ByteLatentEncoder or subclass."""
+    try:
+        from praxis.encoders import ENCODER_REGISTRY
+        from praxis.encoders.byte_latent import ByteLatentEncoder
+
+        encoder_cls = ENCODER_REGISTRY.get(encoder_type)
+        if encoder_cls is None:
+            return False
+        actual_cls = getattr(encoder_cls, "func", encoder_cls)
+        return issubclass(actual_cls, ByteLatentEncoder)
+    except ImportError:
+        return "byte_latent" in encoder_type
+
+
 def setup_environment():
     """Set up the environment and configurations."""
 
@@ -237,7 +252,7 @@ def main():
     # Automatically set byte_latent if using any ByteLatent encoder variant
     encoder_type = processed_args.get("encoder_type")
     byte_latent = processed_args.get("byte_latent", False) or (
-        encoder_type and "byte_latent" in encoder_type
+        encoder_type and _is_byte_latent_encoder(encoder_type)
     )
     host_name = processed_args.get("host_name", "localhost")
     port = processed_args.get("port", 2100)

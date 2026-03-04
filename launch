@@ -44,22 +44,30 @@ if [ "$1" = "compose" ]; then
 
     # Resolve --data-path arguments to absolute host paths and add as volume mounts.
     # Inside the container these are mounted at the same absolute path.
+    # Handles: --data-path p1 p2 --data-path p3 (nargs="+" with action="extend")
     EXTRA_VOLUMES=""
     RESOLVED_ARGS=()
-    NEXT_IS_DATA_PATH=false
+    CONSUMING_DATA_PATHS=false
     for arg in "$@"; do
-        if $NEXT_IS_DATA_PATH; then
-            NEXT_IS_DATA_PATH=false
-            # arg may be one or more space-separated paths (nargs="+")
-            RESOLVED_PATHS=()
-            for p in $arg; do
-                abs_path="$(cd "$SCRIPT_DIR" && realpath -m "$p" 2>/dev/null || echo "$p")"
+        if $CONSUMING_DATA_PATHS; then
+            # Stop consuming if we hit another flag
+            if [[ "$arg" == -* ]]; then
+                CONSUMING_DATA_PATHS=false
+                if [ "$arg" = "--data-path" ]; then
+                    # Another --data-path flag: keep consuming
+                    CONSUMING_DATA_PATHS=true
+                    RESOLVED_ARGS+=("$arg")
+                else
+                    RESOLVED_ARGS+=("$arg")
+                fi
+            else
+                # This arg is a data path value — resolve it
+                abs_path="$(cd "$SCRIPT_DIR" && realpath -m "$arg" 2>/dev/null || echo "$arg")"
                 EXTRA_VOLUMES="$EXTRA_VOLUMES -v $abs_path:$abs_path:ro"
-                RESOLVED_PATHS+=("$abs_path")
-            done
-            RESOLVED_ARGS+=("${RESOLVED_PATHS[*]}")
+                RESOLVED_ARGS+=("$abs_path")
+            fi
         elif [ "$arg" = "--data-path" ]; then
-            NEXT_IS_DATA_PATH=true
+            CONSUMING_DATA_PATHS=true
             RESOLVED_ARGS+=("$arg")
         else
             RESOLVED_ARGS+=("$arg")

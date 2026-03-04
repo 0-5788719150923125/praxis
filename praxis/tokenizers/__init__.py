@@ -19,6 +19,27 @@ except ImportError:
     ByteLevelTokenizer = None
 
 
+def _needs_byte_level_tokenizer(encoder_type: str) -> bool:
+    """Check if an encoder type requires the ByteLevel tokenizer.
+
+    Inspects the encoder registry to see if the encoder class is a
+    ByteLatentEncoder or a subclass of it (e.g. AbstractinatorEncoder).
+    """
+    try:
+        from praxis.encoders import ENCODER_REGISTRY
+        from praxis.encoders.byte_latent import ByteLatentEncoder
+
+        encoder_cls = ENCODER_REGISTRY.get(encoder_type)
+        if encoder_cls is None:
+            return False
+        # functools.partial wraps the real class in .func
+        actual_cls = getattr(encoder_cls, "func", encoder_cls)
+        return issubclass(actual_cls, ByteLatentEncoder)
+    except ImportError:
+        # Fallback: prefix match
+        return encoder_type.startswith("byte_latent")
+
+
 def create_tokenizer(
     vocab_size: int = 32768,
     encoder_type: Optional[str] = None,
@@ -42,8 +63,9 @@ def create_tokenizer(
     Returns:
         Tokenizer instance
     """
-    # 1. Special case: byte_latent encoders use ByteLevelTokenizer
-    if encoder_type and encoder_type.startswith("byte_latent"):
+    # 1. Special case: byte-level encoders use ByteLevelTokenizer
+    #    This includes byte_latent variants and any subclass (e.g. abstractinator)
+    if encoder_type and _needs_byte_level_tokenizer(encoder_type):
         if HAS_BYTE_LEVEL:
             return ByteLevelTokenizer(**kwargs)
         else:
