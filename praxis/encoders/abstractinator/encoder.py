@@ -7,6 +7,8 @@ _post_downsample hooks — no encode()/decode() duplication.
 Codebook size defaults to config.vocab_size. Other defaults aligned with
 the abstractinator project (beta=0.1, decay=0.999, EMA enabled, dead-code
 resets every 250 steps).
+
+Based on: https://github.com/OilProducts/abstractinator
 """
 
 from typing import List, Optional, TypeVar
