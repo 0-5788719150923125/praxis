@@ -487,11 +487,11 @@ class TerminalInterface(Callback):
                             None  # Reset timing after context reset
                         )
 
-        max_new_tokens = 1 if not self.byte_latent else self._biased_randint(1, 7)
+        max_new_tokens = 4 if self.byte_latent else 1
 
         # Chance to generate extra tokens
         while random.random() < 0.1:
-            max_new_tokens += 1 if not self.byte_latent else self._biased_randint(1, 7)
+            max_new_tokens += 1
 
         # Time the inference call
         inference_start = time.time()
@@ -603,13 +603,6 @@ class TerminalInterface(Callback):
             self.live_metrics.status_text = self.text
 
         self.last_time = datetime.now()
-
-    def _biased_randint(self, low, high):
-        # Take average of multiple random numbers to create center bias
-        # Using 3 numbers gives a nice bell curve shape
-        avg = sum(random.randint(low, high) for _ in range(3)) / 3
-        # Round to nearest integer since we want whole numbers
-        return round(avg)
 
     def _detect_repetition(self, top_n, threshold, excluded_ngrams=None):
         text = self.text

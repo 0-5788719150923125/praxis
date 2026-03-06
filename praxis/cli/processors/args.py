@@ -56,7 +56,9 @@ class ArgumentProcessor:
         )
 
         # Set terminal_output_length
-        if "block_size" in processed:
+        if processed.get("infer_context") is not None:
+            processed["terminal_output_length"] = processed["infer_context"]
+        elif "block_size" in processed:
             if processed["byte_latent"]:
                 # Bytes ≈ characters, so block_size is already close to readable length
                 processed["terminal_output_length"] = processed["block_size"] // 2

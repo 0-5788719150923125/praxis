@@ -40,6 +40,13 @@ class LoggingGroup:
         )
 
         group.add_argument(
+            "--infer-context",
+            type=int,
+            default=None,
+            help="Max context length (in tokens/bytes) for inference during training",
+        )
+
+        group.add_argument(
             "--debug",
             action="store_true",
             default=False,
