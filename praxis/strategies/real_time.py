@@ -15,5 +15,5 @@ class RealTime(nn.Module):
     """
 
     def forward(self, losses: List[Tensor]):
-        # Normalize losses and combine them
-        return sum([loss / loss.detach() for loss in losses])
+        # Normalize losses and combine them, skipping zeros to avoid nan
+        return sum([loss / loss.detach() for loss in losses if loss.detach() != 0])
