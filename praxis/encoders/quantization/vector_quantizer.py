@@ -267,16 +267,17 @@ class VectorQuantizer(nn.Module):
             new_sum = torch.where(apply_rows.unsqueeze(1), cand_new, old_sum)
             self.ema_weight_sum.index_copy_(0, rand_idx, new_sum)
 
-        # Console log: how many codes were reset vs eligible (among sampled)
+        # Console log: how many codes were reset
         resets = int(apply_rows.to(torch.int64).sum().item())
         if resets > 0:
-            eligible = int(dead_mask[rand_idx].to(torch.int64).sum().item())
+            total_dead = int(dead_mask.to(torch.int64).sum().item())
             logging.getLogger(__name__).info(
-                "VQ reset: %d codes reset out of %d eligible (R_MAX=%d, K=%d)",
-                resets,
-                eligible,
+                "VQ reset: %d/%d sampled codes were dead, reset %d (K=%d, %d dead total)",
+                int(dead_mask[rand_idx].to(torch.int64).sum().item()),
                 int(self.R_MAX),
+                resets,
                 int(self.K),
+                total_dead,
             )
 
         # Zero the step counter when reset actually fired
@@ -385,6 +386,7 @@ class MultiStageResidualVQ(nn.Module):
         bos_token_id: int = -1,
         eos_token_id: int = -1,
         padding_token_id: int = -1,
+        stale_after: int = 1000,
     ) -> None:
         super().__init__()
 
@@ -420,6 +422,7 @@ class MultiStageResidualVQ(nn.Module):
             bos_token_id=bos_token_id,
             eos_token_id=eos_token_id,
             padding_token_id=padding_token_id,
+            stale_after=stale_after,
         )
         self.stages = nn.ModuleList(
             [VectorQuantizer(K=self.K, D=self.D, **vq_kwargs) for _ in range(self.depth)]

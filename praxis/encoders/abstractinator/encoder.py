@@ -57,9 +57,11 @@ class AbstractinatorEncoder(ByteLatentEncoder):
         vq_depth: int = 2,
         vq_beta: float = 0.1,
         vq_ema: bool = True,
-        vq_decay: float = 0.999,
+        vq_decay: float = 0.99,
         vq_reset_codes: bool = True,
         vq_reset_interval: int = 250,
+        vq_max_reset_pct: float = 0.1,
+        vq_stale_after: int = 2000,
         # Learned query pooling
         use_learned_queries: bool = False,
         num_queries_per_segment: int = 1,
@@ -83,7 +85,7 @@ class AbstractinatorEncoder(ByteLatentEncoder):
         )
 
         D = config.hidden_size
-        K = vq_codebook_size if vq_codebook_size is not None else config.vocab_size // 2
+        K = vq_codebook_size if vq_codebook_size is not None else 1024
 
         self.quantizer = MultiStageResidualVQ(
             K=K,
@@ -94,6 +96,8 @@ class AbstractinatorEncoder(ByteLatentEncoder):
             decay=vq_decay,
             reset_codes=vq_reset_codes,
             reset_interval=vq_reset_interval,
+            max_codes_to_reset_pct=vq_max_reset_pct,
+            stale_after=vq_stale_after,
         )
 
         # Optional learned query pooling

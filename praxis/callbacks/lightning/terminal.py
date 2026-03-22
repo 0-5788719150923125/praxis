@@ -371,9 +371,7 @@ class TerminalInterface(Callback):
         lm_state.update_batch(batch.item() if hasattr(batch, "item") else batch)
         lm_state.update_step(step.item() if hasattr(step, "item") else step)
         lm_state.update_rate(rate.item() if hasattr(rate, "item") else rate)
-        lm_state.update_tokens(
-            tokens.item() if hasattr(tokens, "item") else tokens
-        )
+        lm_state.update_tokens(tokens.item() if hasattr(tokens, "item") else tokens)
         lm_state.update_loss(self.ema_loss)
         lm_state.update_expert_count(local_experts, remote_experts)
 
@@ -487,7 +485,7 @@ class TerminalInterface(Callback):
                             None  # Reset timing after context reset
                         )
 
-        max_new_tokens = 4 if self.byte_latent else 1
+        max_new_tokens = 1
 
         # Chance to generate extra tokens
         while random.random() < 0.1:
