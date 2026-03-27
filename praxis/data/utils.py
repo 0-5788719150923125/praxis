@@ -1,5 +1,6 @@
 """Utility functions for data loading and dataset management."""
 
+import os
 from typing import Any, Dict, List, Optional
 
 from praxis.data.config import (
@@ -31,6 +32,7 @@ def get_datamodules(
     data_metrics_log_interval: int = 50,
     enable_chat_validation: bool = True,
     strict_chat_validation: bool = False,
+    weighting_mode: str = "novelty",
     *args,
 ):
     """Create and configure data modules for training and validation.
@@ -136,6 +138,7 @@ def get_datamodules(
         data_metrics_log_interval=data_metrics_log_interval,
         enable_chat_validation=enable_chat_validation,
         strict_chat_validation=strict_chat_validation,
+        weighting_mode=weighting_mode,
     )
 
     return train_dataloader
@@ -179,8 +182,11 @@ def get_dataset(format, tokenizer, seed, *args, **kwargs):
         dataset.weight = args[0].get("weight", 1.0)
         return dataset
     elif format == "directory":
+        directories = kwargs.get("data_path")
+        first = directories[0] if isinstance(directories, list) else directories
+        name = os.path.basename(first.rstrip("/\\")) if first else "custom-files"
         dataset = MultiDirectoryDataset(
-            tokenizer, directories=kwargs.get("data_path"), name="custom-files"
+            tokenizer, directories=directories, name=name
         )
         dataset.weight = DIR_WEIGHT
         return dataset

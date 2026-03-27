@@ -1225,11 +1225,11 @@ class ConvBlock(nn.Module):
         # Causal padding to match sequence length
         self.padding = padding
 
+        # Project to 2*dim for GLU gating
         self.conv = nn.Conv1d(
-            dim, dim, kernel_size=kernel_size, dilation=dilation, padding=padding
+            dim, dim * 2, kernel_size=kernel_size, dilation=dilation, padding=padding
         )
-
-        self.activation = nn.ReLU()
+        self.proj = nn.Linear(dim, dim, bias=False)
 
     def forward(
         self, x: torch.Tensor, input_ids: Optional[torch.Tensor] = None, *args, **kwargs
@@ -1254,12 +1254,17 @@ class ConvBlock(nn.Module):
         conv_out = self.conv(conv_in)
 
         # Remove extra padding to maintain causality
-        conv_out = conv_out[..., : -self.padding]
+        if self.padding > 0:
+            conv_out = conv_out[..., : -self.padding]
 
-        # Reshape back
-        out = conv_out.transpose(1, 2)  # [batch, seq_len, dim]
+        # Reshape back to [batch, seq_len, dim * 2]
+        out = conv_out.transpose(1, 2)
 
-        return self.activation(out) + x
+        # GLU gating: split channels, gate with sigmoid
+        content, gate = out.chunk(2, dim=-1)
+        gated = content * torch.sigmoid(gate)
+
+        return self.proj(gated) + x
 
 
 class ConvEncoder(nn.Module):

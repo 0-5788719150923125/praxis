@@ -96,6 +96,7 @@ class NoveltyTracker:
         decay_factor: float = 0.95,
         decay_interval: int = 1000,
         warmup_samples: int = 50,
+        penalty_strength: float = 0.5,
         numeric_token_ids: Optional[Set[int]] = None,
     ):
         self.num_datasets = num_datasets
@@ -104,6 +105,7 @@ class NoveltyTracker:
         self.decay_factor = decay_factor
         self.decay_interval = decay_interval
         self.warmup_samples = warmup_samples
+        self.penalty_strength = penalty_strength
         self._numeric_ids = numeric_token_ids or set()
 
         # Global CMS tracking all bigrams across all datasets
@@ -117,6 +119,9 @@ class NoveltyTracker:
 
         # Per-dataset EMA novelty scores (start at 1.0 = maximally novel)
         self.dataset_novelty = np.ones(num_datasets, dtype=np.float64)
+
+        # Per-dataset sample counts for over-representation penalty
+        self.sample_counts = np.zeros(num_datasets, dtype=np.int64)
 
         # Total documents processed (for decay scheduling and warmup)
         self.total_docs = 0
@@ -179,6 +184,9 @@ class NoveltyTracker:
         self.global_cms.add_batch(bigram_keys)
         self.dataset_cms[dataset_idx].add_batch(bigram_keys)
 
+        # Track sample counts for over-representation penalty
+        self.sample_counts[dataset_idx] += 1
+
         # Periodic decay to forget old patterns
         self.total_docs += 1
         if self.total_docs % self.decay_interval == 0:
@@ -205,6 +213,18 @@ class NoveltyTracker:
         # Uniform prior: novelty scores alone determine weights
         novelty_factor = self.dataset_novelty[:n] ** self.novelty_exponent
         raw = novelty_factor.copy()
+
+        # Over-representation penalty: dampen datasets sampled more than their
+        # uniform share. A dataset at 4x its expected rate gets multiplied by
+        # (1/4)^penalty_strength; at 16x it gets (1/16)^penalty_strength.
+        if self.total_docs > self.warmup_samples and self.penalty_strength > 0:
+            total_samples = self.sample_counts[:n].sum()
+            if total_samples > 0:
+                actual = self.sample_counts[:n].astype(np.float64) / total_samples
+                uniform = 1.0 / n
+                overrep = actual / np.maximum(uniform, 1e-8)
+                penalty = 1.0 / np.maximum(overrep, 1.0) ** self.penalty_strength
+                raw = raw * penalty
 
         # Warmup blend: linearly transition from uniform to novelty weights
         if self.total_docs < self.warmup_samples:

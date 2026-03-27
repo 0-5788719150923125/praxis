@@ -30,6 +30,7 @@ class WeightedIterableDataset(IterableDataset):
         data_metrics_log_interval: int = 50,
         enable_chat_validation: bool = True,
         strict_chat_validation: bool = False,
+        weighting_mode: str = "novelty",
     ):
         # Always use the new message queue system
         self.data_manager = InterleaveDataManager(
@@ -42,6 +43,7 @@ class WeightedIterableDataset(IterableDataset):
             data_metrics_log_interval=data_metrics_log_interval,
             enable_chat_validation=enable_chat_validation,
             strict_chat_validation=strict_chat_validation,
+            weighting_mode=weighting_mode,
         )
 
         self.batch_size = batch_size

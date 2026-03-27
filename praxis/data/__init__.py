@@ -1,5 +1,12 @@
 """Praxis data loading and processing utilities."""
 
+# Sampler (weighting mode) registry
+SAMPLER_REGISTRY = {
+    "novelty": "novelty",
+    "dynamic": "dynamic",
+    "static": "static",
+}
+
 # Core data structures and configuration
 from praxis.data.config import (
     DATASET_COLLECTIONS,
@@ -66,6 +73,8 @@ from praxis.data.utils import (
 )
 
 __all__ = [
+    # Registries
+    "SAMPLER_REGISTRY",
     # Configuration
     "DataFormat",
     "DataFormatEnum",

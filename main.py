@@ -246,6 +246,7 @@ def main():
     no_source = processed_args.get("no_source", False)
     pile = processed_args.get("pile", False)
     phi = processed_args.get("phi", False)
+    weighting_mode = processed_args.get("sampler_mode", "novelty")
     data_path = processed_args.get("data_path")
     rl_type = processed_args.get("rl_type")
     no_compile = processed_args.get("no_compile", False)
@@ -506,6 +507,7 @@ def main():
         data_metrics_log_interval=50,
         enable_chat_validation=True,  # Always enabled
         strict_chat_validation=False,  # Warning mode (skip invalid docs)
+        weighting_mode=weighting_mode,
     )
 
     # create the optimizer

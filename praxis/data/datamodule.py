@@ -29,6 +29,7 @@ class PraxisDataModule(LightningDataModule):
         data_metrics_log_interval: int = 50,
         enable_chat_validation: bool = True,
         strict_chat_validation: bool = False,  # Set to True to halt on validation failures
+        weighting_mode: str = "novelty",
     ):
         super().__init__()
         self.rl_type = rl_type
@@ -36,6 +37,7 @@ class PraxisDataModule(LightningDataModule):
         self.data_metrics_log_interval = data_metrics_log_interval
         self.enable_chat_validation = enable_chat_validation
         self.strict_chat_validation = strict_chat_validation
+        self.weighting_mode = weighting_mode
         self.dataloader_manager = DataLoaderManager()  # Track dataloaders for shutdown
         self.train_datasets = self.create_datasets(
             train_datasets,
@@ -90,6 +92,7 @@ class PraxisDataModule(LightningDataModule):
             data_metrics_log_interval=self.data_metrics_log_interval,
             enable_chat_validation=self.enable_chat_validation,
             strict_chat_validation=self.strict_chat_validation,
+            weighting_mode=self.weighting_mode,
         )
 
     def train_dataloader(self):

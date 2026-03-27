@@ -13,6 +13,7 @@ from praxis.losses import LOSS_REGISTRY
 from praxis.modeling import PraxisForCausalLM, PraxisModel
 from praxis.normalization import NORMALIZATION_REGISTRY
 from praxis.orchestration import EXPERT_REGISTRY
+from praxis.data import SAMPLER_REGISTRY
 from praxis.policies import RL_POLICIES_REGISTRY
 from praxis.residuals import RESIDUAL_REGISTRY
 from praxis.routers import ROUTER_REGISTRY

@@ -64,6 +64,27 @@ class MultiDirectoryDataset(PraxisSampler):
         user_exclusions = set(excluded_dirs) if excluded_dirs else set()
         self.excluded_dirs = default_exclusions.union(user_exclusions)
 
+        # Default excluded file suffixes (generated, high-entropy, or binary files)
+        self.excluded_suffixes = {
+            ".tfstate",
+            ".tfstate.backup",
+            ".terraform.lock.hcl",
+            ".log",
+            ".pyc",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".ico",
+            ".zip",
+            ".gz",
+            ".tar",
+            ".bin",
+            ".exe",
+            ".so",
+            ".wasm",
+        }
+
         print(f"[DATA] Working directory: {self.cwd}")
         print(f"[DATA] Scanning directories: {self.directories}")
 
@@ -138,6 +159,14 @@ class MultiDirectoryDataset(PraxisSampler):
                         if not path_ok and real_path.startswith(self.cwd):
                             path_ok = True
                         if not path_ok:
+                            continue
+
+                        # Skip excluded file types (high-entropy, generated, binary)
+                        filename_lower = filename.lower()
+                        if any(
+                            filename_lower.endswith(s)
+                            for s in self.excluded_suffixes
+                        ):
                             continue
 
                         # Check if file extension is allowed

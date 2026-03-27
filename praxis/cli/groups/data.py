@@ -1,6 +1,6 @@
 """Data-related CLI arguments."""
 
-from praxis import RL_POLICIES_REGISTRY
+from praxis import RL_POLICIES_REGISTRY, SAMPLER_REGISTRY
 
 
 class DataGroup:
@@ -51,4 +51,13 @@ class DataGroup:
             help="Enable reinforcement learning with specified algorithm. "
             "Note: Current GRPO implementation uses static dataset rewards (not true RL). "
             "True RL with generation will be added in a future update.",
+        )
+
+        group.add_argument(
+            "--sampler-mode",
+            type=str,
+            default="novelty",
+            choices=SAMPLER_REGISTRY.keys(),
+            help="Dataset sampling weighting mode: 'novelty' (bigram novelty via Count-Min Sketch), "
+            "'dynamic' (EMA of token counts), or 'static' (fixed weights, no adaptation).",
         )

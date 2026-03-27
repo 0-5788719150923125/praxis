@@ -28,8 +28,6 @@ class InterleaveDataManager:
         "novelty" — adjust weights based on bigram novelty (Count-Min Sketch)
     """
 
-    # Weighting mode: "static", "dynamic", or "novelty"
-    weighting_mode = "novelty"
     ema_alpha = 0.3  # EMA smoothing factor (used by dynamic and novelty modes)
 
     # Class variable to store shared weights across all instances
@@ -47,6 +45,7 @@ class InterleaveDataManager:
         data_metrics_log_interval=50,
         enable_chat_validation=True,
         strict_chat_validation=False,
+        weighting_mode: str = "novelty",
     ):
         """
         Initialize the data manager with message queue.
@@ -67,6 +66,7 @@ class InterleaveDataManager:
         self.tokenizer = tokenizer
         self.block_size = block_size
         self.rl_type = rl_type
+        self.weighting_mode = weighting_mode
 
         # Initialize message queue manager with validation settings
         self.message_queue = MessageQueueManager(
@@ -262,18 +262,10 @@ class InterleaveDataManager:
                         elif reward > 0:
                             _rl_logger.log_reward_found(reward, dataset_name)
 
-                    # Add to message queue
-                    self.message_queue.add_document(document_data)
-
-                    # Update adaptive weights if enabled
-                    if self.weighting_mode == "dynamic":
-                        doc_length = (
-                            len(document_data.get("messages", [])) * 50
-                        )  # Rough estimate
-                        self._update_weights_after_sample(
-                            sampler_idx, doc_length=doc_length
-                        )
-                    elif self.weighting_mode == "novelty":
+                    # For novelty mode, score the document before queuing.
+                    # If the chat template fails we skip the document entirely
+                    # rather than silently poisoning the novelty tracker.
+                    if self.weighting_mode == "novelty":
                         try:
                             messages = document_data["messages"]
                             text = self.tokenizer.apply_chat_template(
@@ -284,11 +276,26 @@ class InterleaveDataManager:
                             token_ids = self.tokenizer.encode(
                                 text, add_special_tokens=False
                             )
-                            self.novelty_tracker.score_and_update(
-                                sampler_idx, token_ids
+                        except Exception as e:
+                            print(
+                                f"[WARNING] Skipping document from '{dataset_name}': "
+                                f"chat template failed: {e}"
                             )
-                        except Exception:
-                            pass  # Never break the data pipeline
+                            continue
+                        self.novelty_tracker.score_and_update(sampler_idx, token_ids)
+
+                    # Add to message queue
+                    self.message_queue.add_document(document_data)
+
+                    # Update adaptive weights
+                    if self.weighting_mode == "dynamic":
+                        doc_length = (
+                            len(document_data.get("messages", [])) * 50
+                        )  # Rough estimate
+                        self._update_weights_after_sample(
+                            sampler_idx, doc_length=doc_length
+                        )
+                    elif self.weighting_mode == "novelty":
                         self._update_weights_after_sample(sampler_idx)
 
     def _update_weights_after_sample(self, sampler_idx: int, doc_length: int = 0):
