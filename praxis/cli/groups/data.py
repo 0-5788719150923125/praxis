@@ -56,8 +56,9 @@ class DataGroup:
         group.add_argument(
             "--sampler-mode",
             type=str,
-            default="novelty",
+            default="loss",
             choices=SAMPLER_REGISTRY.keys(),
-            help="Dataset sampling weighting mode: 'novelty' (bigram novelty via Count-Min Sketch), "
+            help="Dataset sampling weighting mode: 'loss' (upsample high-loss datasets via per-sequence CE), "
+            "'novelty' (bigram novelty via Count-Min Sketch), "
             "'dynamic' (EMA of token counts), or 'static' (fixed weights, no adaptation).",
         )

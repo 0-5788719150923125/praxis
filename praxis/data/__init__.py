@@ -5,6 +5,7 @@ SAMPLER_REGISTRY = {
     "novelty": "novelty",
     "dynamic": "dynamic",
     "static": "static",
+    "loss": "loss",
 }
 
 # Core data structures and configuration

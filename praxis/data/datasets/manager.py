@@ -29,10 +29,33 @@ class InterleaveDataManager:
     """
 
     ema_alpha = 0.3  # EMA smoothing factor (used by dynamic and novelty modes)
+    loss_ema_alpha = 0.05  # Slower EMA for loss-based mode (training signal is noisy)
 
     # Class variable to store shared weights across all instances
     shared_weights = None
     shared_weights_initialized = False
+
+    # Per-dataset EMA losses for loss-based mode (dataset_name -> float)
+    # None when not in loss mode; empty dict before first loss report
+    shared_losses = None
+
+    @classmethod
+    def update_losses(cls, losses: dict):
+        """Report per-dataset losses from the trainer for loss-based weight adaptation.
+
+        Args:
+            losses: Dict mapping dataset name to average loss for the current batch.
+        """
+        if cls.shared_losses is None:
+            return
+        for name, val in losses.items():
+            if name in cls.shared_losses:
+                cls.shared_losses[name] = (
+                    cls.loss_ema_alpha * val
+                    + (1.0 - cls.loss_ema_alpha) * cls.shared_losses[name]
+                )
+            else:
+                cls.shared_losses[name] = float(val)
 
     def __init__(
         self,
@@ -81,7 +104,7 @@ class InterleaveDataManager:
         self.data_metrics_log_interval = data_metrics_log_interval
         self.samples_since_last_log = 0
 
-        adaptive = self.weighting_mode in ("dynamic", "novelty")
+        adaptive = self._adaptive
 
         if run_dir is not None and adaptive:
             try:
@@ -105,6 +128,10 @@ class InterleaveDataManager:
                     metrics["avg_doc_length"] = None
                     metrics["total_tokens"] = 0
                 self.sampler_metrics[i] = metrics
+
+            # Loss mode: initialise the shared loss registry
+            if self.weighting_mode == "loss":
+                InterleaveDataManager.shared_losses = {}
 
             # Novelty tracker (only for novelty mode)
             if self.weighting_mode == "novelty":
@@ -150,7 +177,7 @@ class InterleaveDataManager:
 
     @property
     def _adaptive(self):
-        return self.weighting_mode in ("dynamic", "novelty")
+        return self.weighting_mode in ("dynamic", "novelty", "loss")
 
     def get_batch(
         self,
@@ -295,7 +322,7 @@ class InterleaveDataManager:
                         self._update_weights_after_sample(
                             sampler_idx, doc_length=doc_length
                         )
-                    elif self.weighting_mode == "novelty":
+                    elif self.weighting_mode in ("novelty", "loss"):
                         self._update_weights_after_sample(sampler_idx)
 
     def _update_weights_after_sample(self, sampler_idx: int, doc_length: int = 0):
@@ -352,6 +379,28 @@ class InterleaveDataManager:
         """Calculate target weights based on current weighting mode."""
         if self.weighting_mode == "novelty":
             return self.novelty_tracker.get_target_weights(self.static_weights)
+
+        if self.weighting_mode == "loss":
+            losses = InterleaveDataManager.shared_losses
+            if not losses:
+                # No loss reports yet — use uniform weights during warmup
+                n = len(self.samplers)
+                return [1.0 / n] * n
+            raw = []
+            for i in range(len(self.samplers)):
+                name = self.sampler_metrics[i]["name"]
+                # Default to a high loss for datasets not yet observed so they
+                # get sampled at least once before being de-prioritised
+                raw.append(losses.get(name, float("inf")))
+            # Replace inf with the max observed loss so unseen datasets are
+            # treated as maximally under-learned, not infinitely so
+            finite = [v for v in raw if v != float("inf")]
+            fallback = max(finite) if finite else 1.0
+            raw = [v if v != float("inf") else fallback for v in raw]
+            total = sum(raw)
+            if total > 0:
+                return [v / total for v in raw]
+            return self.static_weights
 
         # Dynamic mode: balance by document length and token consumption
         if not self.sampler_metrics:
@@ -412,6 +461,10 @@ class InterleaveDataManager:
                 stats["novelty"] = round(
                     float(self.novelty_tracker.dataset_novelty[i]), 6
                 )
+            elif self.weighting_mode == "loss":
+                losses = InterleaveDataManager.shared_losses or {}
+                if dataset_name in losses:
+                    stats["loss"] = round(float(losses[dataset_name]), 6)
             dataset_stats[dataset_name] = stats
 
         # Log to file

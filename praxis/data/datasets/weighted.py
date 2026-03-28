@@ -143,6 +143,7 @@ class WeightedIterableDataset(IterableDataset):
                     yield {
                         "input_ids": batch_tensor,
                         "sampler_weights": sampler_weights,
+                        "metadata": metadata,
                     }
                 else:
                     # Return regular tensor for backward compatibility

@@ -4,9 +4,11 @@ import re
 from datetime import datetime
 
 import torch
+import torch.nn.functional as F
 from lightning.pytorch import LightningModule
 from torcheval.metrics.functional import perplexity
 
+from praxis.data.datasets.manager import InterleaveDataManager
 from praxis.trainers.compile import try_compile
 
 
@@ -64,6 +66,9 @@ class BackpropagationTrainer(LightningModule):
     def training_step(self, batch, batch_idx):
         current_time = datetime.now()
 
+        # Capture metadata before _handle_batch_format (it only returns input_ids)
+        batch_metadata = batch.get("metadata", []) if isinstance(batch, dict) else []
+
         input_ids, rewards, token_weights, should_skip = self._handle_batch_format(
             batch, batch_idx, is_training=True
         )
@@ -85,6 +90,32 @@ class BackpropagationTrainer(LightningModule):
         )
         loss = outputs.loss
         softmax_collapse = self._compute_softmax_collapse(outputs.logits)
+
+        # Report per-dataset losses for loss-based sampling mode
+        if batch_metadata and InterleaveDataManager.shared_losses is not None:
+            with torch.no_grad():
+                # Per-token CE loss using standard causal-LM shift
+                shift_logits = outputs.logits[:, :-1, :].contiguous()
+                shift_labels = input_ids[:, 1:].contiguous()
+                per_token = F.cross_entropy(
+                    shift_logits.view(-1, shift_logits.size(-1)),
+                    shift_labels.view(-1),
+                    reduction="none",
+                ).view(input_ids.size(0), -1)
+                per_seq_loss = per_token.mean(dim=-1)  # (batch_size,)
+            dataset_losses = {}
+            for i, meta in enumerate(batch_metadata):
+                if i >= len(per_seq_loss):
+                    break
+                dname = meta.get("dataset", "")
+                if dname:
+                    if dname not in dataset_losses:
+                        dataset_losses[dname] = []
+                    dataset_losses[dname].append(per_seq_loss[i].item())
+            if dataset_losses:
+                InterleaveDataManager.update_losses(
+                    {k: sum(v) / len(v) for k, v in dataset_losses.items()}
+                )
 
         batch_size, num_tokens = input_ids.shape
         self.num_tokens += batch_size * num_tokens
