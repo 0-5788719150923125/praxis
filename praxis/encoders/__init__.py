@@ -1,7 +1,7 @@
 from functools import partial
 
-from praxis.encoders.byte_latent import ByteLatentEncoder
 from praxis.encoders.abstractinator import AbstractinatorEncoder
+from praxis.encoders.byte_latent import ByteLatentEncoder
 
 # ByteLatent Encoder Profiles
 # These provide convenient presets for different use cases
@@ -39,6 +39,7 @@ Abstractinator = partial(
     use_hash_embeddings=True,
     hash_functions=1,
     hash_group_sizes=[3, 4, 5],
+    vq_codebook_size=16384,
 )
 
 ENCODER_REGISTRY = dict(

@@ -1,5 +1,6 @@
 """Data interleaving and management with message queue for efficient deduplication."""
 
+import math
 import random
 from typing import Any, Dict, List, Optional
 
@@ -30,6 +31,8 @@ class InterleaveDataManager:
 
     ema_alpha = 0.3  # EMA smoothing factor (used by dynamic and novelty modes)
     loss_ema_alpha = 0.05  # Slower EMA for loss-based mode (training signal is noisy)
+    loss_temperature = 2.0  # Softmax temperature for loss weights (higher = flatter)
+    loss_uniform_mix = 0.2  # Fraction of uniform prior mixed into loss weights
 
     # Class variable to store shared weights across all instances
     shared_weights = None
@@ -127,6 +130,8 @@ class InterleaveDataManager:
                 if self.weighting_mode == "dynamic":
                     metrics["avg_doc_length"] = None
                     metrics["total_tokens"] = 0
+                if self.weighting_mode == "loss":
+                    metrics["avg_sequences_per_doc"] = 1.0
                 self.sampler_metrics[i] = metrics
 
             # Loss mode: initialise the shared loss registry
@@ -289,10 +294,11 @@ class InterleaveDataManager:
                         elif reward > 0:
                             _rl_logger.log_reward_found(reward, dataset_name)
 
-                    # For novelty mode, score the document before queuing.
-                    # If the chat template fails we skip the document entirely
-                    # rather than silently poisoning the novelty tracker.
-                    if self.weighting_mode == "novelty":
+                    # For novelty and loss modes, tokenize at fetch time
+                    # so we can score novelty / measure document length.
+                    # If the chat template fails we skip the document.
+                    token_ids = None
+                    if self.weighting_mode in ("novelty", "loss"):
                         try:
                             messages = document_data["messages"]
                             text = self.tokenizer.apply_chat_template(
@@ -309,7 +315,10 @@ class InterleaveDataManager:
                                 f"chat template failed: {e}"
                             )
                             continue
-                        self.novelty_tracker.score_and_update(sampler_idx, token_ids)
+                        if self.weighting_mode == "novelty":
+                            self.novelty_tracker.score_and_update(
+                                sampler_idx, token_ids
+                            )
 
                     # Add to message queue
                     self.message_queue.add_document(document_data)
@@ -322,10 +331,20 @@ class InterleaveDataManager:
                         self._update_weights_after_sample(
                             sampler_idx, doc_length=doc_length
                         )
-                    elif self.weighting_mode in ("novelty", "loss"):
+                    elif self.weighting_mode == "loss":
+                        sequences_produced = max(
+                            1, len(token_ids) // self.block_size
+                        )
+                        self._update_weights_after_sample(
+                            sampler_idx,
+                            sequences_produced=sequences_produced,
+                        )
+                    elif self.weighting_mode == "novelty":
                         self._update_weights_after_sample(sampler_idx)
 
-    def _update_weights_after_sample(self, sampler_idx: int, doc_length: int = 0):
+    def _update_weights_after_sample(
+        self, sampler_idx: int, doc_length: int = 0, sequences_produced: int = 1
+    ):
         """Update metrics and weights with EMA after each sample."""
         if not self._adaptive:
             return
@@ -344,6 +363,13 @@ class InterleaveDataManager:
                     self.ema_alpha * doc_length
                     + (1 - self.ema_alpha) * metrics["avg_doc_length"]
                 )
+
+        # Loss mode: track average sequences per document for length normalization
+        if self.weighting_mode == "loss":
+            metrics["avg_sequences_per_doc"] = (
+                self.ema_alpha * sequences_produced
+                + (1 - self.ema_alpha) * metrics["avg_sequences_per_doc"]
+            )
 
         # Calculate target weights based on current mode
         target_weights = self._calculate_target_weights()
@@ -389,17 +415,42 @@ class InterleaveDataManager:
             raw = []
             for i in range(len(self.samplers)):
                 name = self.sampler_metrics[i]["name"]
-                # Default to a high loss for datasets not yet observed so they
-                # get sampled at least once before being de-prioritised
                 raw.append(losses.get(name, float("inf")))
             # Replace inf with the max observed loss so unseen datasets are
             # treated as maximally under-learned, not infinitely so
             finite = [v for v in raw if v != float("inf")]
             fallback = max(finite) if finite else 1.0
             raw = [v if v != float("inf") else fallback for v in raw]
-            total = sum(raw)
+
+            # --- Problem 1 fix: temperature-softmax + uniform floor ---
+            # Prevents a single high-loss dataset from capturing all weight.
+            T = self.loss_temperature
+            n = len(raw)
+            # Numerically stable softmax: subtract max before exp
+            max_val = max(raw)
+            exps = [math.exp((v - max_val) / T) for v in raw]
+            exp_sum = sum(exps)
+            weights = [e / exp_sum for e in exps]
+            # Mix with uniform prior to guarantee a minimum floor
+            alpha = self.loss_uniform_mix
+            uniform = 1.0 / n
+            weights = [(1 - alpha) * w + alpha * uniform for w in weights]
+
+            # --- Problem 2 fix: length-normalize by sequences per document ---
+            # A dataset whose documents produce N sequences per fetch should be
+            # fetched ~1/N as often to keep training-sequence proportions aligned
+            # with the target weights.
+            seq_per_doc = [
+                self.sampler_metrics[i]["avg_sequences_per_doc"]
+                for i in range(n)
+            ]
+            mean_spd = sum(seq_per_doc) / n
+            # Divide each weight by its relative fan-out
+            weights = [w / (spd / mean_spd) for w, spd in zip(weights, seq_per_doc)]
+            # Re-normalize
+            total = sum(weights)
             if total > 0:
-                return [v / total for v in raw]
+                return [w / total for w in weights]
             return self.static_weights
 
         # Dynamic mode: balance by document length and token consumption
