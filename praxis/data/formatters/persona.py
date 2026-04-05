@@ -6,7 +6,12 @@ from typing import Dict, List
 from transformers import PreTrainedTokenizer
 
 from praxis.data.config import SYSTEM_PROMPT, sample_developer_prompt
-from praxis.data.formatters.base import simple_truecase, text_formatter
+from praxis.data.formatters.base import (
+    repair_broken_emoticons,
+    repair_text_punctuation,
+    simple_truecase,
+    text_formatter,
+)
 
 
 def format_personachat(
@@ -33,9 +38,6 @@ def format_personachat(
     num_utterances = random.randint(1, len(utterances))
     selected_utterance = utterances[num_utterances - 1]  # Get the selected utterance
 
-    # Decide whether to apply truecasing (50% chance, applies to entire conversation)
-    apply_truecase = random.random() < 0.5
-
     # Build personality description for developer message
     # Always include personality when available (it's the assistant's personality)
     developer_message = ""
@@ -52,7 +54,7 @@ def format_personachat(
 
         for trait in selected_traits:
             # Always truecase personality traits (they're for the assistant)
-            trait_text = simple_truecase(trait) if trait else trait
+            trait_text = repair_broken_emoticons(repair_text_punctuation(simple_truecase(trait))) if trait else trait
             developer_message += f"- {trait_text}\n"
         developer_message = developer_message.strip()
     else:
@@ -72,15 +74,7 @@ def format_personachat(
     # Add history messages with proper role alternation (user starts)
     for i, hist_msg in enumerate(history):
         role = "user" if i % 2 == 0 else "assistant"
-        # Apply truecasing based on role and setting
-        if role == "assistant":
-            # Assistant always uses proper casing
-            content = simple_truecase(hist_msg) if hist_msg else hist_msg
-        else:
-            # User uses truecasing only if apply_truecase is True
-            content = (
-                simple_truecase(hist_msg) if (apply_truecase and hist_msg) else hist_msg
-            )
+        content = repair_broken_emoticons(repair_text_punctuation(simple_truecase(hist_msg))) if hist_msg else hist_msg
         messages.append({"role": role, "content": text_formatter(content)})
 
     # Pick one candidate as the final assistant response
@@ -110,8 +104,7 @@ def format_personachat(
         candidates_to_use = filtered_candidates if filtered_candidates else candidates
         response = random.choice(candidates_to_use)
 
-        # Assistant always uses proper casing
-        response = simple_truecase(response) if response else response
+        response = repair_broken_emoticons(repair_text_punctuation(simple_truecase(response))) if response else response
         messages.append({"role": "assistant", "content": text_formatter(response)})
 
     return {
