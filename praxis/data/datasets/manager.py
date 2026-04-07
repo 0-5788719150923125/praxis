@@ -31,7 +31,7 @@ class InterleaveDataManager:
 
     ema_alpha = 0.3  # EMA smoothing factor (used by dynamic and novelty modes)
     loss_ema_alpha = 0.05  # Slower EMA for loss-based mode (training signal is noisy)
-    loss_temperature = 2.0  # Softmax temperature for loss weights (higher = flatter)
+    loss_temperature = 4.0  # Softmax temperature for loss weights (higher = flatter)
     loss_uniform_mix = 0.2  # Fraction of uniform prior mixed into loss weights
 
     # Class variable to store shared weights across all instances
@@ -145,9 +145,7 @@ class InterleaveDataManager:
                 numeric_ids = set()
                 for token_id in range(len(self.tokenizer)):
                     try:
-                        token_str = self.tokenizer.convert_ids_to_tokens(
-                            token_id
-                        )
+                        token_str = self.tokenizer.convert_ids_to_tokens(token_id)
                         if token_str is not None:
                             cleaned = token_str.replace("\u0120", "").replace(
                                 "\u2581", ""
@@ -332,9 +330,7 @@ class InterleaveDataManager:
                             sampler_idx, doc_length=doc_length
                         )
                     elif self.weighting_mode == "loss":
-                        sequences_produced = max(
-                            1, len(token_ids) // self.block_size
-                        )
+                        sequences_produced = max(1, len(token_ids) // self.block_size)
                         self._update_weights_after_sample(
                             sampler_idx,
                             sequences_produced=sequences_produced,
@@ -441,8 +437,7 @@ class InterleaveDataManager:
             # fetched ~1/N as often to keep training-sequence proportions aligned
             # with the target weights.
             seq_per_doc = [
-                self.sampler_metrics[i]["avg_sequences_per_doc"]
-                for i in range(n)
+                self.sampler_metrics[i]["avg_sequences_per_doc"] for i in range(n)
             ]
             mean_spd = sum(seq_per_doc) / n
             # Divide each weight by its relative fan-out

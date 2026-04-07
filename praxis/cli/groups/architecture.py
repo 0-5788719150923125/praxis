@@ -242,6 +242,13 @@ class ArchitectureGroup:
             help="Set this value to factorize key/value projections, making them low-rank. A value of 1 is lowest.",
         )
 
+        group.add_argument(
+            "--window-size",
+            type=int,
+            default=None,
+            help="Sliding window size for attention (None = full attention). Only used with hex attention.",
+        )
+
         # Boolean architecture flags
         group.add_argument(
             "--linear",

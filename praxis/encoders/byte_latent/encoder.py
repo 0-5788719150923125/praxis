@@ -1535,10 +1535,10 @@ class TransformerBlock(nn.Module):
         super().__init__()
 
         # Import proper components from praxis
-        from praxis.attention import SlidingWindowFlexAttention
+        from praxis.attention import HexAttention
         from praxis.dense import MultiLayerPerceptron
 
-        # Create attention config
+        # Create attention config with window_size for sliding window support
         class AttentionConfig:
             def __init__(self, base_config, window_size):
                 self.hidden_size = base_config.dim_token_emb
@@ -1548,12 +1548,11 @@ class TransformerBlock(nn.Module):
                 self.causal = True
                 self.head_size = None  # Will use default: hidden_size // num_heads
                 self.encoding = getattr(base_config, "encoding", "rope")
+                self.window_size = window_size
 
-        # Sliding window attention
+        # HexAttention with sliding window
         attn_config = AttentionConfig(config, window_size)
-        self.attention = SlidingWindowFlexAttention(
-            attn_config, window_size=window_size
-        )
+        self.attention = HexAttention(attn_config)
 
         # Layer normalization
         self.norm1 = nn.LayerNorm(config.dim_token_emb, eps=config.norm_eps)

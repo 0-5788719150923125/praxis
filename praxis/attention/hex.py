@@ -20,6 +20,7 @@ class HexAttention(nn.Module):
     """
     Causal self-attention using PyTorch's FlexAttention API.
     Provides efficient attention computation with customizable block masking.
+    Supports optional sliding window for efficient long-sequence inference.
     """
 
     def __init__(self, config) -> None:
@@ -29,6 +30,7 @@ class HexAttention(nn.Module):
         Args:
             config: Configuration object containing attention parameters
                    (config.encoding should be "alibi" or "rope")
+                   Optional config.window_size (int) enables sliding window attention.
         """
         super().__init__()
 
@@ -48,6 +50,7 @@ class HexAttention(nn.Module):
         self.head_dim = getattr(config, "head_size") or hidden_size // self.num_heads
         self.dropout_p = config.dropout
         self.causal = config.causal
+        self.window_size = getattr(config, "window_size", None)
 
         # QKV projection - separate sizes for Q (with num_queries) and K/V
         # Q: num_query_heads * head_dim
@@ -69,10 +72,11 @@ class HexAttention(nn.Module):
         # Try to import FlexAttention components
         self.flex_attention = None
         self.create_block_mask = None
+        self.and_masks = None
         self._import_flex_attention()
 
         # Cache for block masks at different sequence lengths
-        # Key is (seq_len, device_str) tuple
+        # Key is (seq_len, kv_len, device_str) tuple
         self.block_mask_cache = {}
 
         # ALiBi slopes (only if using ALiBi)
@@ -86,14 +90,20 @@ class HexAttention(nn.Module):
     def _import_flex_attention(self) -> None:
         """Import FlexAttention components (GPU only - falls back to SDPA on CPU)."""
         try:
-            from torch.nn.attention.flex_attention import create_block_mask, flex_attention
+            from torch.nn.attention.flex_attention import (
+                and_masks,
+                create_block_mask,
+                flex_attention,
+            )
 
             self.flex_attention = flex_attention
             self.create_block_mask = create_block_mask
+            self.and_masks = and_masks
         except ImportError:
             print("[HexAttention] FlexAttention not available, using SDPA fallback")
             self.flex_attention = None
             self.create_block_mask = None
+            self.and_masks = None
 
     def _get_alibi_slopes(self, num_heads: int) -> torch.Tensor:
         """
@@ -171,17 +181,37 @@ class HexAttention(nn.Module):
 
         return q_rotated, k_rotated
 
+    def _build_mask_mod(self):
+        """Build a mask_mod closure following the FlexAttention pattern.
+
+        Captures primitive values (not self) so the resulting function is
+        compatible with torch.compile tracing inside create_block_mask.
+        """
+        window_size = self.window_size  # capture as plain int or None
+
+        def ghost_causal_mask(b, h, q_idx, kv_idx):
+            # Ghost token (kv_idx=0) is always accessible.
+            # Actual tokens: kv_idx=1 is position 0, so q_idx + 1 >= kv_idx.
+            return (kv_idx == 0) | (q_idx + 1 >= kv_idx)
+
+        if window_size is None:
+            return ghost_causal_mask
+
+        def ghost_sliding_window_mask(b, h, q_idx, kv_idx):
+            # Ghost token must also pass here, otherwise and_masks kills it.
+            # Actual tokens: limit to window_size positions (ghost-shifted).
+            return (kv_idx == 0) | (q_idx - (kv_idx - 1) <= window_size)
+
+        return self.and_masks(ghost_causal_mask, ghost_sliding_window_mask)
+
     def _create_causal_mask(
         self, q_len: int, kv_len: int, device: torch.device
     ) -> torch.Tensor:
         """
-        Create a causal block mask with ghostmax support.
+        Create a block mask with ghostmax support, optional sliding window.
 
-        Ghost token at kv_idx=0 is always accessible.
-        For actual tokens (kv_idx >= 1), apply causal masking with ghost shift:
-        - kv_idx=1 corresponds to position 0
-        - kv_idx=2 corresponds to position 1, etc.
-        - Causal constraint: q_idx >= actual_position, i.e., q_idx >= kv_idx - 1
+        Uses composable mask_mod functions per the FlexAttention API:
+        causal and sliding window constraints are composed via and_masks.
 
         Args:
             q_len: Query sequence length (number of actual positions)
@@ -189,35 +219,23 @@ class HexAttention(nn.Module):
             device: Device to create mask on
 
         Returns:
-            Block mask for causal attention with ghostmax
+            Block mask for attention with ghostmax
         """
-
-        # Create cache key using device string representation
         cache_key = (q_len, kv_len, str(device))
 
-        # Check cache first
         if cache_key in self.block_mask_cache:
             return self.block_mask_cache[cache_key]
 
-        def causal_mask(b, h, q_idx, kv_idx):
-            # Ghost token (kv_idx=0) is always accessible
-            # Actual tokens: kv_idx=1 is position 0, so causal becomes q_idx >= kv_idx - 1
-            # Equivalently: q_idx + 1 >= kv_idx
-            return (kv_idx == 0) | (q_idx + 1 >= kv_idx)
-
-        # Create block mask (broadcasting over batch and heads)
         block_mask = self.create_block_mask(
-            causal_mask,
-            B=None,  # Broadcast over batch
-            H=None,  # Broadcast over heads
+            self._build_mask_mod(),
+            B=None,
+            H=None,
             Q_LEN=q_len,
             KV_LEN=kv_len,
             device=device,
         )
 
-        # Cache the mask with device-specific key
         self.block_mask_cache[cache_key] = block_mask
-
         return block_mask
 
     def _use_cpu_fallback(self, device: torch.device) -> bool:

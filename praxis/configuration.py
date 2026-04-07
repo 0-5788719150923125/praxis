@@ -47,6 +47,7 @@ class PraxisConfig(PretrainedConfig):
         mla: bool = False,
         hivemind: bool = False,
         tie_weights: bool = False,
+        window_size: Optional[int] = None,
         bidirectional: bool = False,
         initial_peers: List[str] = [],
         checkpoint_every: int = 0,
@@ -122,6 +123,7 @@ class PraxisConfig(PretrainedConfig):
         self.debug = debug
         self.meta = meta
         self.causal = False
+        self.window_size = window_size
         self.bidirectional = bidirectional
         self.forward_weight = kwargs.get("forward_weight", 0.666666)
         self.mtp_type = kwargs.get("mtp_type", None)
