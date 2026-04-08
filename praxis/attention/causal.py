@@ -1,5 +1,5 @@
 """
-HexAttention module for causal language modeling using PyTorch's FlexAttention.
+CausalAttention module for causal language modeling using PyTorch's FlexAttention.
 Based on the efficient attention implementation with block masking support.
 """
 
@@ -16,7 +16,7 @@ from torch import Tensor
 os.environ["TORCHDYNAMO_EXTENDED_ADVICE"] = "0"
 
 
-class HexAttention(nn.Module):
+class CausalAttention(nn.Module):
     """
     Causal self-attention using PyTorch's FlexAttention API.
     Provides efficient attention computation with customizable block masking.
@@ -25,7 +25,7 @@ class HexAttention(nn.Module):
 
     def __init__(self, config) -> None:
         """
-        Initialize HexAttention module.
+        Initialize CausalAttention module.
 
         Args:
             config: Configuration object containing attention parameters
@@ -39,7 +39,7 @@ class HexAttention(nn.Module):
 
         if pos_type not in ["alibi", "rope"]:
             raise ValueError(
-                f"config.encoding must be 'alibi' or 'rope' for HexAttention, got '{pos_type}'"
+                f"config.encoding must be 'alibi' or 'rope' for CausalAttention, got '{pos_type}'"
             )
 
         self.pos_type = pos_type
@@ -100,7 +100,7 @@ class HexAttention(nn.Module):
             self.create_block_mask = create_block_mask
             self.and_masks = and_masks
         except ImportError:
-            print("[HexAttention] FlexAttention not available, using SDPA fallback")
+            print("[CausalAttention] FlexAttention not available, using SDPA fallback")
             self.flex_attention = None
             self.create_block_mask = None
             self.and_masks = None
@@ -412,7 +412,7 @@ class HexAttention(nn.Module):
 
         if use_fallback:
             if not hasattr(self, "_cpu_fallback_warned"):
-                print("[HexAttention] Using SDPA fallback (CPU device - flex_attention not supported)")
+                print("[CausalAttention] Using SDPA fallback (CPU device - flex_attention not supported)")
                 self._cpu_fallback_warned = True
             # Use SDPA fallback (doesn't support ghostmax or custom score_mod)
             # Remove ghost tokens since SDPA fallback doesn't support them

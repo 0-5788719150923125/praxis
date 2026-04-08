@@ -1,8 +1,8 @@
 """
-InfiniAttention: HexAttention with segment-level compressive memory.
+InfiniAttention: CausalAttention with segment-level compressive memory.
 
 Processes sequences in segments, computing local attention within each
-segment (via HexAttention mechanics) while maintaining a compressive memory
+segment (via CausalAttention mechanics) while maintaining a compressive memory
 that accumulates context across segments. Later segments retrieve from
 memory to access a summary of all prior segments, providing global context
 even with bounded local attention.
@@ -18,14 +18,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from praxis.attention.hex import HexAttention
+from praxis.attention.causal import CausalAttention
 
 _DEFAULT_SEGMENT_SIZE = 256
 
 
-class InfiniAttention(HexAttention):
+class InfiniAttention(CausalAttention):
     """
-    HexAttention subclass that adds segment-level compressive memory.
+    CausalAttention subclass that adds segment-level compressive memory.
 
     The sequence is split into segments. Each segment gets local causal
     attention (with ghostmax, RoPE/ALiBi, GQA from the parent). Between
@@ -41,6 +41,16 @@ class InfiniAttention(HexAttention):
         # each segment (the segmentation itself provides locality).
         self.segment_size = self.window_size or _DEFAULT_SEGMENT_SIZE
         self.window_size = None
+
+        # Override parent's bias-free projections with biased versions
+        hidden_size = config.hidden_size
+        qkv_dim = (
+            self.num_query_heads * self.head_dim + 2 * self.num_heads * self.head_dim
+        )
+        self.qkv = nn.Linear(hidden_size, qkv_dim, bias=True)
+        self.output = nn.Linear(
+            self.num_query_heads * self.head_dim, hidden_size, bias=True
+        )
 
         # Learned blending gate
         self.betas = nn.Parameter(
@@ -227,7 +237,3 @@ class InfiniAttention(HexAttention):
         output = self.dropout(output)
 
         return output, past_key_values, 0.0
-
-    def reset_memory(self) -> None:
-        """Clear any persisted memory state."""
-        pass

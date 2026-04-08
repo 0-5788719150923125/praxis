@@ -10,7 +10,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from praxis.attention.hex import HexAttention
+from praxis.attention.causal import CausalAttention
 from praxis.configuration import PraxisConfig
 from praxis.routers.prismatic import Prismatic
 
@@ -31,11 +31,11 @@ def config():
 class TestArchitecturalDiversity:
     """Test architectural diversity through RoPE vs ALiBi."""
 
-    def test_hex_attention_with_rope(self, config):
-        """Test HexAttention with RoPE positional encoding."""
+    def test_causal_attention_with_rope(self, config):
+        """Test CausalAttention with RoPE positional encoding."""
         rope_config = copy.copy(config)
         rope_config.encoding = "rope"
-        attention = HexAttention(rope_config)
+        attention = CausalAttention(rope_config)
 
         batch_size = 2
         seq_len = 16
@@ -46,11 +46,11 @@ class TestArchitecturalDiversity:
         assert output.shape == inputs.shape
         assert loss == 0.0
 
-    def test_hex_attention_with_alibi(self, config):
-        """Test HexAttention with ALiBi positional encoding."""
+    def test_causal_attention_with_alibi(self, config):
+        """Test CausalAttention with ALiBi positional encoding."""
         alibi_config = copy.copy(config)
         alibi_config.encoding = "alibi"
-        attention = HexAttention(alibi_config)
+        attention = CausalAttention(alibi_config)
 
         batch_size = 2
         seq_len = 16
@@ -68,8 +68,8 @@ class TestArchitecturalDiversity:
         alibi_config = copy.copy(config)
         alibi_config.encoding = "alibi"
 
-        attention_rope = HexAttention(rope_config)
-        attention_alibi = HexAttention(alibi_config)
+        attention_rope = CausalAttention(rope_config)
+        attention_alibi = CausalAttention(alibi_config)
 
         # Use same input
         batch_size = 2
@@ -93,8 +93,8 @@ class TestArchitecturalDiversity:
         rope_config = copy.copy(config)
         rope_config.encoding = "rope"
 
-        expert_alibi = HexAttention(alibi_config)
-        expert_rope = HexAttention(rope_config)
+        expert_alibi = CausalAttention(alibi_config)
+        expert_rope = CausalAttention(rope_config)
         experts = [expert_alibi, expert_rope]
 
         prismatic = Prismatic(config, experts=experts)
@@ -110,8 +110,8 @@ class TestArchitecturalDiversity:
         rope_config = copy.copy(config)
         rope_config.encoding = "rope"
 
-        expert_alibi = HexAttention(alibi_config)
-        expert_rope = HexAttention(rope_config)
+        expert_alibi = CausalAttention(alibi_config)
+        expert_rope = CausalAttention(rope_config)
         experts = [expert_alibi, expert_rope]
 
         prismatic = Prismatic(config, experts=experts)
@@ -133,8 +133,8 @@ class TestArchitecturalDiversity:
         rope_config = copy.copy(config)
         rope_config.encoding = "rope"
 
-        expert_alibi = HexAttention(alibi_config)
-        expert_rope = HexAttention(rope_config)
+        expert_alibi = CausalAttention(alibi_config)
+        expert_rope = CausalAttention(rope_config)
         experts = [expert_alibi, expert_rope]
 
         prismatic = Prismatic(config, experts=experts)
@@ -165,8 +165,8 @@ class TestArchitecturalDiversity:
         rope_config = copy.copy(config)
         rope_config.encoding = "rope"
 
-        expert_alibi = HexAttention(alibi_config)
-        expert_rope = HexAttention(rope_config)
+        expert_alibi = CausalAttention(alibi_config)
+        expert_rope = CausalAttention(rope_config)
         experts = [expert_alibi, expert_rope]
 
         prismatic = Prismatic(config, experts=experts)
@@ -189,8 +189,8 @@ class TestArchitecturalDiversity:
         rope_config = copy.copy(config)
         rope_config.encoding = "rope"
 
-        expert_alibi = HexAttention(alibi_config)
-        expert_rope = HexAttention(rope_config)
+        expert_alibi = CausalAttention(alibi_config)
+        expert_rope = CausalAttention(rope_config)
         experts = [expert_alibi, expert_rope]
 
         prismatic = Prismatic(config, experts=experts)
@@ -217,8 +217,8 @@ class TestArchitecturalDiversity:
         rope_config = copy.copy(config)
         rope_config.encoding = "rope"
 
-        expert_alibi = HexAttention(alibi_config)
-        expert_rope = HexAttention(rope_config)
+        expert_alibi = CausalAttention(alibi_config)
+        expert_rope = CausalAttention(rope_config)
         experts = [expert_alibi, expert_rope]
 
         prismatic = Prismatic(config, experts=experts)

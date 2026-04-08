@@ -57,7 +57,7 @@ class TestArchitecturalDiversity:
         )
 
         # Create experts with different encodings
-        from praxis.attention.hex import HexAttention
+        from praxis.attention.causal import CausalAttention
 
         # Create config copies with different encodings
         alibi_config = copy.copy(config)
@@ -65,8 +65,8 @@ class TestArchitecturalDiversity:
         rope_config = copy.copy(config)
         rope_config.encoding = "rope"
 
-        alibi_expert = HexAttention(alibi_config)
-        rope_expert = HexAttention(rope_config)
+        alibi_expert = CausalAttention(alibi_config)
+        rope_expert = CausalAttention(rope_config)
 
         router = Prismatic(config, experts=[alibi_expert, rope_expert])
 
@@ -86,15 +86,15 @@ class TestArchitecturalDiversity:
             causal=True
         )
 
-        from praxis.attention.hex import HexAttention
+        from praxis.attention.causal import CausalAttention
 
         alibi_config = copy.copy(config)
         alibi_config.encoding = "alibi"
         rope_config = copy.copy(config)
         rope_config.encoding = "rope"
 
-        alibi_attn = HexAttention(alibi_config)
-        rope_attn = HexAttention(rope_config)
+        alibi_attn = CausalAttention(alibi_config)
+        rope_attn = CausalAttention(rope_config)
 
         # Same input
         inputs = torch.randn(1, 8, config.hidden_size)
@@ -119,7 +119,7 @@ class TestArchitecturalDiversity:
             causal=True
         )
 
-        from praxis.attention.hex import HexAttention
+        from praxis.attention.causal import CausalAttention
 
         # Create 4 experts with cycling architectures
         experts = []
@@ -127,7 +127,7 @@ class TestArchitecturalDiversity:
         for i in range(4):
             expert_config = copy.copy(config)
             expert_config.encoding = encodings[i % len(encodings)]
-            expert = HexAttention(expert_config)
+            expert = CausalAttention(expert_config)
             experts.append(expert)
 
         router = Prismatic(config, experts=experts)

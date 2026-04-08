@@ -1535,7 +1535,7 @@ class TransformerBlock(nn.Module):
         super().__init__()
 
         # Import proper components from praxis
-        from praxis.attention import HexAttention
+        from praxis.attention import CausalAttention
         from praxis.dense import MultiLayerPerceptron
 
         # Create attention config with window_size for sliding window support
@@ -1550,9 +1550,9 @@ class TransformerBlock(nn.Module):
                 self.encoding = getattr(base_config, "encoding", "rope")
                 self.window_size = window_size
 
-        # HexAttention with sliding window
+        # CausalAttention with sliding window
         attn_config = AttentionConfig(config, window_size)
-        self.attention = HexAttention(attn_config)
+        self.attention = CausalAttention(attn_config)
 
         # Layer normalization
         self.norm1 = nn.LayerNorm(config.dim_token_emb, eps=config.norm_eps)
