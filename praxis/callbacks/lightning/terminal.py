@@ -308,25 +308,22 @@ class TerminalInterface(Callback):
 
         info_dict = {
             "device": self.device,
-            "ram": f"{memory_info.get('ram_percent', 'N/A')}",
+            "ram": memory_info.get("ram_total", "N/A"),
         }
 
         # Add GPU memory info if available
         if self.device and self.device.startswith("cuda:"):
             gpu_idx = int(self.device.split(":")[1])
-            gpu_percent_key = f"gpu{gpu_idx}_percent"
             gpu_reserved_key = f"gpu{gpu_idx}_reserved"
             gpu_total_key = f"gpu{gpu_idx}_total"
-            if gpu_percent_key in memory_info:
-                info_dict["vram"] = f"{memory_info[gpu_percent_key]}"
-                if gpu_reserved_key in memory_info and gpu_total_key in memory_info:
-                    info_dict["vram_gb"] = (
-                        f"{memory_info[gpu_reserved_key]}/{memory_info[gpu_total_key]}"
-                    )
+            if gpu_reserved_key in memory_info and gpu_total_key in memory_info:
+                info_dict["vram"] = (
+                    f"{memory_info[gpu_reserved_key]}/{memory_info[gpu_total_key]}"
+                )
             elif "gpu_status" in memory_info:
                 info_dict["vram"] = memory_info["gpu_status"]
             else:
-                info_dict["vram"] = "0%"
+                info_dict["vram"] = "N/A"
 
         info_dict["optimizer"] = self.optimizer_config.get("optimizer_name", "Unknown")
         info_dict["strategy"] = self.strategy
@@ -396,24 +393,21 @@ class TerminalInterface(Callback):
 
         info_dict = {
             "device": self.device,
-            "ram": f"{memory_info.get('ram_percent', 'N/A')}",
+            "ram": memory_info.get("ram_total", "N/A"),
         }
 
         if self.device and self.device.startswith("cuda:"):
             gpu_idx = int(self.device.split(":")[1])
-            gpu_percent_key = f"gpu{gpu_idx}_percent"
             gpu_reserved_key = f"gpu{gpu_idx}_reserved"
             gpu_total_key = f"gpu{gpu_idx}_total"
-            if gpu_percent_key in memory_info:
-                info_dict["vram"] = f"{memory_info[gpu_percent_key]}"
-                if gpu_reserved_key in memory_info and gpu_total_key in memory_info:
-                    info_dict["vram_gb"] = (
-                        f"{memory_info[gpu_reserved_key]}/{memory_info[gpu_total_key]}"
-                    )
+            if gpu_reserved_key in memory_info and gpu_total_key in memory_info:
+                info_dict["vram"] = (
+                    f"{memory_info[gpu_reserved_key]}/{memory_info[gpu_total_key]}"
+                )
             elif "gpu_status" in memory_info:
                 info_dict["vram"] = memory_info["gpu_status"]
             else:
-                info_dict["vram"] = "0%"
+                info_dict["vram"] = "N/A"
 
         info_dict["optimizer"] = self.optimizer_config.get("optimizer_name", "Unknown")
         info_dict["strategy"] = self.strategy

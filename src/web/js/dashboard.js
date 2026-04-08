@@ -62,7 +62,7 @@ function renderInfoPanel(info) {
     }
 
     const displayKeys = [
-        'device', 'rank', 'node', 'ram', 'vram', 'vram_gb',
+        'device', 'rank', 'node', 'ram', 'vram',
         'optimizer', 'strategy', 'policy',
         'vocab_size', 'block_size', 'batch_size', 'target_batch',
         'depth', 'local_layers', 'remote_layers',
