@@ -56,16 +56,11 @@ export const CLICK_HANDLERS = [
         action: () => ({ type: 'RESET_SETTINGS' })
     },
     {
-        selector: '#agent-selector-btn',
-        match: 'closest',
-        action: () => ({ type: 'TOGGLE_AGENT_SELECTOR' })
-    },
-    {
-        selector: '.run-selector-item input[type="checkbox"]',
+        selector: '.run-selector-item input[data-run-hash]',
         match: 'closest',
         action: (e) => ({
-            type: 'TOGGLE_AGENT',
-            payload: e.target.dataset.agentName
+            type: 'TOGGLE_RUN',
+            payload: e.target.dataset.runHash
         })
     },
     {
@@ -76,6 +71,11 @@ export const CLICK_HANDLERS = [
             payload: e.target.dataset.command,
             meta: { button: e.target }
         })
+    },
+    {
+        selector: '#run-selector-btn',
+        match: 'closest',
+        action: () => ({ type: 'TOGGLE_RUN_SELECTOR' })
     },
     {
         selector: '#refresh-metrics-btn',

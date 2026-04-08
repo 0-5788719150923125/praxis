@@ -65,7 +65,8 @@ function renderInfoPanel(info) {
         'device', 'rank', 'node', 'ram', 'vram', 'vram_gb',
         'optimizer', 'strategy', 'policy',
         'vocab_size', 'block_size', 'batch_size', 'target_batch',
-        'depth', 'num_layers', 'hidden_size', 'embed_size', 'dropout'
+        'depth', 'local_layers', 'remote_layers',
+        'hidden_size', 'embed_size', 'dropout'
     ];
 
     return displayKeys
@@ -158,10 +159,6 @@ export function renderLiveDashboard(m) {
     const container = document.getElementById('terminal-display');
     if (!container) return;
 
-    const expertStr = (m.local_experts || m.remote_experts)
-        ? `${m.local_experts || 0} local, ${m.remote_experts || 0} remote`
-        : 'none';
-
     // Check if dashboard already exists so we can update in-place
     const existing = container.querySelector('.live-dashboard');
     if (existing) {
@@ -221,8 +218,6 @@ export function renderLiveDashboard(m) {
             <span class="ld-footer-item">STEP ${m.step || 0}</span>
             <span class="ld-footer-sep">|</span>
             <span class="ld-footer-item">RATE ${fmt(m.rate, 2, '0.00')}s</span>
-            <span class="ld-footer-sep">|</span>
-            <span class="ld-footer-item">EXPERTS ${expertStr}</span>
             <span class="ld-footer-sep">|</span>
             <span class="ld-footer-item ld-url">${escapeHtml(m.url || 'N/A')}</span>
         `;
@@ -285,8 +280,6 @@ export function renderLiveDashboard(m) {
                 <span class="ld-footer-item">STEP ${m.step || 0}</span>
                 <span class="ld-footer-sep">|</span>
                 <span class="ld-footer-item">RATE ${fmt(m.rate, 2, '0.00')}s</span>
-                <span class="ld-footer-sep">|</span>
-                <span class="ld-footer-item">EXPERTS ${expertStr}</span>
                 <span class="ld-footer-sep">|</span>
                 <span class="ld-footer-item ld-url">${escapeHtml(m.url || 'N/A')}</span>
             </div>

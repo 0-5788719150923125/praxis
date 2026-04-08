@@ -92,91 +92,199 @@ export function updateChartColors() {
 }
 
 /**
- * Load available agents for multi-agent comparison
+ * Load available runs (local on-disk + remote agents) into a unified list
  */
-export async function loadAvailableAgents() {
+export async function loadAvailableRuns() {
     try {
-        const data = await fetchAPI('agents');
+        // Fetch local runs and agents in parallel
+        const [runsResponse, agentsResponse] = await Promise.all([
+            fetch('/api/runs').catch(() => null),
+            fetchAPI('agents').catch(() => null)
+        ]);
 
-        if (data.agents) {
-            // Filter to only online agents (active instances)
-            state.agents.availableAgents = data.agents.filter(a => a.status === 'online');
-
-            // Auto-select all online agents by default
-            if (state.agents.selectedAgents.length === 0) {
-                state.agents.selectedAgents = state.agents.availableAgents.map(a => a.name);
+        const localRuns = [];
+        if (runsResponse && runsResponse.ok) {
+            const data = await runsResponse.json();
+            if (data.runs) {
+                data.runs.forEach(run => {
+                    localRuns.push({
+                        ...run,
+                        source: 'local'
+                    });
+                });
             }
         }
 
-        return state.agents.availableAgents;
+        // Build a set of local run hashes for dedup
+        const localHashes = new Set(localRuns.map(r => r.hash));
+
+        // Add online remote agents (skip self-* since they duplicate local runs)
+        const remoteAgents = [];
+        if (agentsResponse && agentsResponse.agents) {
+            for (const agent of agentsResponse.agents) {
+                if (agent.status !== 'online') continue;
+                if (agent.name.startsWith('self-')) continue;
+
+                // Fetch the agent's truncated_hash from its spec endpoint
+                let argsHash = null;
+                try {
+                    const baseUrl = agent.url.replace(/\/praxis(\.git)?$/, '');
+                    const specResp = await fetch(`${baseUrl}/api/spec`);
+                    if (specResp.ok) {
+                        const spec = await specResp.json();
+                        argsHash = spec.truncated_hash;
+                    }
+                } catch { /* skip if unreachable */ }
+
+                // Skip if this agent's args hash already exists as a local run
+                if (argsHash && localHashes.has(argsHash)) {
+                    // Annotate the local run with the agent name instead
+                    const localRun = localRuns.find(r => r.hash === argsHash);
+                    if (localRun) localRun.agentName = agent.name;
+                    continue;
+                }
+
+                remoteAgents.push({
+                    hash: argsHash || agent.short_hash || agent.name,
+                    agentName: agent.name,
+                    agentUrl: agent.url.replace(/\/praxis(\.git)?$/, ''),
+                    is_current: false,
+                    num_steps: 0,
+                    metrics_updated: agent.commit_timestamp || 0,
+                    source: 'remote'
+                });
+            }
+        }
+
+        state.research.historicalRuns = [...localRuns, ...remoteAgents];
+
+        // Auto-select the current (active) run on first load
+        if (state.research.selectedHistoricalRuns.length === 0) {
+            const currentRun = localRuns.find(r => r.is_current);
+            if (currentRun) {
+                state.research.selectedHistoricalRuns = [currentRun.hash];
+            }
+        }
+
+        return state.research.historicalRuns;
     } catch (error) {
-        console.error('[Charts] Error loading agents:', error);
+        console.error('[Charts] Error loading runs:', error);
         return [];
     }
 }
 
 /**
- * Load data metrics for selected agents (sampling weights, etc.)
+ * Fetch metrics for all selected runs (local and remote)
  */
-async function loadAgentDataMetrics(agentName) {
-    const agent = state.agents.availableAgents.find(a => a.name === agentName);
-    if (!agent || agent.status === 'archived') return null;
+async function fetchSelectedRunMetrics() {
+    const selected = state.research.selectedHistoricalRuns;
+    if (selected.length === 0) return [];
 
-    try {
-        let baseUrl = agent.url.replace(/\/praxis(\.git)?$/, '');
-        const response = await fetch(`${baseUrl}/api/data-metrics?since=0&limit=1000&downsample=lttb`);
+    // Split selected into local and remote
+    const localHashes = [];
+    const remoteEntries = [];
 
-        if (!response.ok) return null;
+    for (const hash of selected) {
+        const entry = state.research.historicalRuns.find(r => r.hash === hash);
+        if (!entry) continue;
+        if (entry.source === 'remote' && entry.agentUrl) {
+            remoteEntries.push(entry);
+        } else {
+            localHashes.push(hash);
+        }
+    }
 
-        const data = await response.json();
+    const results = [];
 
-        if (data.status === 'no_data' || !data.runs || data.runs.length === 0) {
+    // Fetch local runs in a single batch
+    if (localHashes.length > 0) {
+        try {
+            const runsParam = localHashes.join(',');
+            const response = await fetch(`/api/metrics?since=0&limit=1000&downsample=lttb&runs=${runsParam}`);
+            if (response.ok) {
+                const data = await response.json();
+                if (data.runs) {
+                    data.runs.forEach(run => {
+                        results.push({
+                            name: run.hash,
+                            hash: run.hash,
+                            is_current: run.is_current,
+                            metrics: run.metrics,
+                            metadata: run.metadata
+                        });
+                    });
+                }
+            }
+        } catch (error) {
+            console.error('[Charts] Error loading local run metrics:', error);
+        }
+    }
+
+    // Fetch remote agent metrics individually
+    const remotePromises = remoteEntries.map(async (entry) => {
+        try {
+            const response = await fetch(`${entry.agentUrl}/api/metrics?since=0&limit=1000&downsample=lttb`);
+            if (!response.ok) return null;
+            const data = await response.json();
+            if (data.status === 'no_data' || !data.runs || data.runs.length === 0) return null;
+            return {
+                name: entry.hash,
+                hash: entry.hash,
+                is_current: false,
+                metrics: data.runs[0].metrics,
+                metadata: data.runs[0].metadata
+            };
+        } catch {
             return null;
         }
+    });
 
-        return {
-            name: agentName,
-            url: agent.url,
-            data_metrics: data.runs[0].data_metrics,
-            metadata: data.runs[0].metadata
-        };
-    } catch (error) {
-        // Silently handle errors (CORS, network, etc.)
-        return null;
-    }
+    const remoteResults = await Promise.all(remotePromises);
+    remoteResults.forEach(r => { if (r) results.push(r); });
+
+    return results;
 }
 
 /**
- * Toggle agent selector dropdown
+ * Toggle historical run selector dropdown
  */
-export function toggleAgentSelector() {
-    state.agents.selectorOpen = !state.agents.selectorOpen;
-    const dropdown = document.getElementById('agent-selector-dropdown');
+export function toggleRunSelector() {
+    state.research.runSelectorOpen = !state.research.runSelectorOpen;
+    const dropdown = document.getElementById('run-selector-dropdown');
     if (dropdown) {
-        dropdown.style.display = state.agents.selectorOpen ? 'block' : 'none';
+        dropdown.style.display = state.research.runSelectorOpen ? 'block' : 'none';
     }
 }
 
 /**
- * Toggle agent selection
+ * Toggle historical run selection
  */
-export function toggleAgentSelection(name) {
-    const index = state.agents.selectedAgents.indexOf(name);
+export function toggleRunSelection(hash) {
+    const index = state.research.selectedHistoricalRuns.indexOf(hash);
 
     if (index > -1) {
-        state.agents.selectedAgents.splice(index, 1);
+        state.research.selectedHistoricalRuns.splice(index, 1);
     } else {
-        state.agents.selectedAgents.push(name);
+        state.research.selectedHistoricalRuns.push(hash);
     }
 
-    // Update checkbox state
-    const checkbox = document.querySelector(`input[data-agent-name="${name}"]`);
-    if (checkbox) {
-        checkbox.checked = state.agents.selectedAgents.includes(name);
-    }
-
-    // Reload metrics with new selection
+    // Reload charts only (header stays intact)
     loadResearchMetricsWithCharts(true);
+}
+
+/**
+ * Format a relative time string from a timestamp
+ */
+function formatRelativeTime(timestamp) {
+    if (!timestamp) return 'unknown';
+    const now = Date.now() / 1000;
+    const diff = now - timestamp;
+
+    if (diff < 60) return 'just now';
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
+    return new Date(timestamp * 1000).toLocaleDateString();
 }
 
 /**
@@ -188,106 +296,38 @@ export async function loadResearchMetricsWithCharts(force = false) {
     const container = document.getElementById('research-container');
     if (!container) return;
 
-    container.innerHTML = '<div class="loading-placeholder">Loading metrics...</div>';
+    // On first load, replace entire container; on refresh, only show loading in charts area
+    const chartsArea = document.getElementById('metrics-charts-area');
+    if (chartsArea) {
+        chartsArea.innerHTML = '<div class="loading-placeholder">Loading metrics...</div>';
+    } else {
+        container.innerHTML = '<div class="loading-placeholder">Loading metrics...</div>';
+    }
 
     try {
-        // Load available agents first
-        await loadAvailableAgents();
+        // Load available runs
+        await loadAvailableRuns();
 
-        if (state.agents.selectedAgents.length === 0) {
-            container.innerHTML = `
-                <div class="empty-state">
-                    <h3>No Agents Selected</h3>
-                    <p>Select at least one agent to display metrics.</p>
-                </div>
-            `;
-            return;
-        }
+        // Fetch metrics for selected runs (local + remote)
+        const runs = await fetchSelectedRunMetrics();
 
-        // Fetch metrics from each selected agent
-        const agentMetricsPromises = state.agents.selectedAgents.map(async (agentName) => {
-            const agent = state.agents.availableAgents.find(a => a.name === agentName);
-            if (!agent) return null;
-
-            // Skip archived agents - backend already categorizes git hosts as "archived"
-            // This trusts backend's single source of truth instead of duplicating logic
-            if (agent.status === 'archived') {
-                return null;
-            }
-
-            // Try to fetch metrics - errors are caught gracefully below
-            // No need to preemptively filter URLs; let CORS/network errors happen naturally
-            try {
-                let baseUrl = agent.url.replace(/\/praxis(\.git)?$/, '');
-                const response = await fetch(`${baseUrl}/api/metrics?since=0&limit=1000&downsample=lttb`);
-
-                if (!response.ok) {
-                    console.warn(`[Charts] Metrics fetch failed for ${agentName}: ${response.status}`);
-                    return null;
-                }
-
-                const data = await response.json();
-
-                if (data.status === 'no_data' || !data.runs || data.runs.length === 0) {
-                    console.warn(`[Charts] No metrics data for ${agentName}`);
-                    return null;
-                }
-
-                console.log(`[Charts] Loaded ${data.runs[0].metadata?.num_points || 0} metrics for ${agentName}`);
-
-                return {
-                    name: agentName,
-                    url: agent.url,
-                    metrics: data.runs[0].metrics,
-                    metadata: data.runs[0].metadata
-                };
-            } catch (error) {
-                // Log errors for debugging large dataset issues
-                console.error(`[Charts] Error loading metrics for ${agentName}:`, error);
-                return null;
-            }
-        });
-
-        const results = await Promise.all(agentMetricsPromises);
-        const agentMetrics = results.filter(r => r !== null);
-
-        if (agentMetrics.length === 0) {
-            container.innerHTML = `
-                <div class="empty-state">
-                    <h3>No Metrics Available</h3>
-                    <p>Selected agents have no training metrics.</p>
-                </div>
-            `;
-            return;
-        }
-
-        // Also fetch data metrics (sampling weights, etc.) for each agent
-        const dataMetricsPromises = state.agents.selectedAgents.map(agentName =>
-            loadAgentDataMetrics(agentName)
-        );
-        const dataMetricsResults = await Promise.all(dataMetricsPromises);
-        const agentDataMetrics = dataMetricsResults.filter(r => r !== null);
-
-        renderMetricsCharts({ agents: agentMetrics, dataMetrics: agentDataMetrics }, container);
+        renderMetricsCharts({ runs }, container);
         state.research.loaded = true;
-
-        // Set up refresh button event listener (manual reload)
-        const refreshBtn = document.getElementById('refresh-metrics-btn');
-        if (refreshBtn) {
-            refreshBtn.onclick = () => {
-                console.log('[Charts] Manual refresh triggered');
-                loadResearchMetricsWithCharts(true);  // Force reload
-            };
-        }
 
     } catch (error) {
         console.error('[Charts] Error loading metrics:', error);
-        container.innerHTML = `
+        const errorHTML = `
             <div class="error-message">
                 <h3>Error Loading Metrics</h3>
                 <p>${error.message}</p>
             </div>
         `;
+        const chartsAreaEl = document.getElementById('metrics-charts-area');
+        if (chartsAreaEl) {
+            chartsAreaEl.innerHTML = errorHTML;
+        } else {
+            container.innerHTML = errorHTML;
+        }
     }
 }
 
@@ -295,104 +335,59 @@ export async function loadResearchMetricsWithCharts(force = false) {
  * Render full metrics charts
  */
 function renderMetricsCharts(data, container) {
-    const agents = data.agents || [];
-    const dataMetrics = data.dataMetrics || [];
+    const runs = data.runs || [];
 
-    if (agents.length === 0) {
-        container.innerHTML = `<div class="empty-state"><p>No data available</p></div>`;
+    // Render header only once — subsequent calls only rebuild charts
+    if (!document.getElementById('metrics-charts-area')) {
+        renderMetricsHeader(container, runs);
+    } else {
+        updateMetricsMetadata(runs);
+    }
+
+    let chartsArea = document.getElementById('metrics-charts-area');
+    if (!chartsArea) return;
+
+    if (runs.length === 0) {
+        chartsArea.innerHTML = `
+            <div class="empty-state" style="margin-top: 2rem;">
+                <h3>No Metrics Available</h3>
+                <p>Select runs above to display metrics.</p>
+            </div>
+        `;
         return;
     }
 
-    // Build agent selector
-    let selectorHTML = '';
-    if (state.agents.availableAgents.length > 0) {
-        selectorHTML = `
-            <div class="run-selector-wrapper">
-                <button class="run-selector-button" id="agent-selector-btn">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                        <path d="M3 9.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z"/>
-                    </svg>
-                    Agents (${state.agents.selectedAgents.length}/${state.agents.availableAgents.length})
-                </button>
-                <div class="run-selector-dropdown" id="agent-selector-dropdown" style="display: none;">
-                    <div class="run-selector-header">Select Agents to Compare</div>
-                    <div class="run-selector-list">
-                        ${state.agents.availableAgents.map((agent, idx) => {
-                            const isSelected = state.agents.selectedAgents.includes(agent.name);
-                            const color = CONSTANTS.RUN_COLORS[idx % CONSTANTS.RUN_COLORS.length];
-                            return `
-                                <label class="run-selector-item">
-                                    <input type="checkbox" ${isSelected ? 'checked' : ''} data-agent-name="${agent.name}">
-                                    <span class="run-color-indicator" style="background: ${color};"></span>
-                                    <span class="run-label">${agent.name}</span>
-                                    <span class="run-steps">online</span>
-                                </label>
-                            `;
-                        }).join('')}
-                    </div>
-                </div>
-            </div>
-        `;
-    }
-
-    // Build refresh button icon
-    const refreshIcon = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-            <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
-            <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
-        </svg>
-    `;
-
-    // Create metadata subtitle
-    const metadataHTML = `
-        <span><strong>Comparing:</strong> ${agents.length} agent${agents.length > 1 ? 's' : ''}</span>
-        <span><strong>Total Points:</strong> ${agents.reduce((sum, a) => sum + (a.metadata?.num_points || 0), 0)}</span>
-    `;
-
-    // Header using new component
-    const headerHTML = createTabHeader({
-        title: 'Metrics',
-        additionalContent: selectorHTML,
-        buttons: [{
-            id: 'refresh-metrics-btn',
-            label: 'Refresh',
-            icon: refreshIcon,
-            className: 'tab-header-button'
-        }],
-        metadata: metadataHTML
-    });
-
-    // Data-driven metric detection - filter configs to find available metrics
+    // Data-driven metric detection
     const availableMetrics = CONSTANTS.METRIC_CONFIGS.filter(config => {
-        if (config.source === 'data_metrics') {
-            // Check data metrics (e.g., sampling weights)
-            return dataMetrics.some(a =>
-                a.data_metrics?.[config.key] &&
-                Object.keys(a.data_metrics[config.key]).length > 0
-            );
-        } else if (config.isComposite && config.key === 'expert_routing_weights') {
-            // Check for expert routing weight metrics: layer_*_expert_*_routing_weight
-            return agents.some(a =>
-                Object.keys(a.metrics).some(k =>
+        // Skip data_metrics source — no longer fetched via agents
+        if (config.source === 'data_metrics') return false;
+        if (config.isComposite && config.key === 'expert_routing_weights') {
+            return runs.some(r =>
+                Object.keys(r.metrics).some(k =>
                     k.match(/^layer_\d+_expert_\d+_routing_weight$/)
                 )
             );
         } else if (config.isComposite && config.keyPattern) {
-            // Check if ANY metrics match the keyPattern
-            return agents.some(a =>
-                Object.keys(a.metrics).some(k => k.match(config.keyPattern))
+            return runs.some(r =>
+                Object.keys(r.metrics).some(k => k.match(config.keyPattern))
             );
         } else {
-            // Check regular agent metrics
-            return agents.some(a => a.metrics[config.key]?.some(v => v !== null));
+            return runs.some(r => r.metrics[config.key]?.some(v => v !== null));
         }
     });
 
-    // Build chart cards with spacing - data-driven loop
-    let chartsHTML = '<div style="display: flex; flex-direction: column; gap: 2rem; margin-top: 2rem;">';
+    // Destroy existing chart instances before rebuilding
+    availableMetrics.forEach(config => {
+        if (charts[config.canvasId]) {
+            charts[config.canvasId].destroy();
+            delete charts[config.canvasId];
+        }
+    });
+
+    // Build chart cards
+    let chartsHTML = '<div style="display: flex; flex-direction: column; gap: 2rem;">';
 
     chartsHTML += availableMetrics.map(config => {
-        // Add step slider container for expert routing heatmap
         const stepSliderHTML = (config.key === 'expert_routing_weights') ?
             `<div id="layer-toggles-${config.canvasId}" class="layer-toggles" style="margin-bottom: 1rem; padding: 0.5rem; display: flex; gap: 1rem; flex-wrap: wrap; align-items: center;">
             </div>` : '';
@@ -410,72 +405,159 @@ function renderMetricsCharts(data, container) {
 
     chartsHTML += '</div>';
 
-    container.innerHTML = headerHTML + chartsHTML;
+    chartsArea.innerHTML = chartsHTML;
 
-    // Render charts after DOM update - data-driven loop
+    // Render charts after DOM update
     setTimeout(() => {
         availableMetrics.forEach(config => {
             if (config.type === 'bar') {
-                createTokensBarChart(config.canvasId, config.label, agents, config.key);
-            } else if (config.type === 'sampling') {
-                createSamplingWeightsChart(config.canvasId, dataMetrics);
+                createTokensBarChart(config.canvasId, config.label, runs, config.key);
             } else if (config.type === 'multi_expert_line') {
-                // Expert routing or architecture selection chart
                 if (config.keyPattern) {
-                    createMultiExpertChart(config.canvasId, config.title, config.label, agents, config.keyPattern, config);
+                    createMultiExpertChart(config.canvasId, config.title, config.label, runs, config.keyPattern, config);
                 } else {
-                    createExpertRoutingChart(config.canvasId, agents);
+                    createExpertRoutingChart(config.canvasId, runs);
                 }
             } else {
-                // Default: line chart
-                createMultiAgentChart(config.canvasId, config.label, agents, config.key);
+                createRunComparisonChart(config.canvasId, config.label, runs, config.key);
             }
         });
     }, 10);
 }
 
 /**
+ * Render the metrics header (title, selectors, refresh button) once
+ */
+function renderMetricsHeader(container, runs) {
+    let selectorHTML = '';
+
+    // Build run selector
+    if (state.research.historicalRuns.length > 0) {
+        const selectedCount = state.research.selectedHistoricalRuns.length;
+        const totalCount = state.research.historicalRuns.length;
+
+        selectorHTML = `
+            <div class="run-selector-wrapper">
+                <button class="run-selector-button" id="run-selector-btn">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                        <path d="M8.515 1.019A7 7 0 0 0 8 1V0a8 8 0 0 1 .589.022l-.074.997zm2.004.45a7.003 7.003 0 0 0-.985-.299l.219-.976c.383.086.76.2 1.126.342l-.36.933zm1.37.71a7.01 7.01 0 0 0-.439-.27l.493-.87a8.025 8.025 0 0 1 .979.654l-.615.789a6.996 6.996 0 0 0-.418-.302zm1.834 1.79a6.99 6.99 0 0 0-.653-.796l.724-.69c.27.285.52.59.747.91l-.818.576zm.744 1.352a7.08 7.08 0 0 0-.214-.468l.893-.45a7.976 7.976 0 0 1 .45 1.088l-.95.313a7.023 7.023 0 0 0-.179-.483zm.53 2.507a6.991 6.991 0 0 0-.1-1.025l.985-.17c.067.386.106.778.116 1.17l-1 .025zm-.131 1.538c.033-.17.06-.339.081-.51l.993.123a7.957 7.957 0 0 1-.23 1.155l-.964-.267c.046-.165.086-.332.12-.501zm-.952 2.379c.184-.29.346-.594.486-.908l.914.405c-.16.36-.345.706-.555 1.038l-.845-.535zm-.964 1.205c.122-.122.239-.248.35-.378l.758.653a8.073 8.073 0 0 1-.401.432l-.707-.707z"/>
+                        <path d="M8 1a7 7 0 1 0 4.95 11.95l.707.707A8.001 8.001 0 1 1 8 0v1z"/>
+                        <path d="M7.5 3a.5.5 0 0 1 .5.5v5.21l3.248 1.856a.5.5 0 0 1-.496.868l-3.5-2A.5.5 0 0 1 7 9V3.5a.5.5 0 0 1 .5-.5z"/>
+                    </svg>
+                    Runs (${selectedCount}/${totalCount})
+                </button>
+                <div class="run-selector-dropdown" id="run-selector-dropdown" style="display: none;">
+                    <div class="run-selector-header">Compare Runs</div>
+                    <div class="run-selector-list">
+                        ${state.research.historicalRuns.map((run, idx) => {
+                            const isSelected = state.research.selectedHistoricalRuns.includes(run.hash);
+                            const color = CONSTANTS.RUN_COLORS[idx % CONSTANTS.RUN_COLORS.length];
+                            const timeLabel = formatRelativeTime(run.metrics_updated);
+                            const badges = [];
+                            if (run.is_current) badges.push('active');
+                            if (run.agentName) badges.push(run.agentName);
+                            if (run.source === 'remote') badges.push('remote');
+                            const badgeHTML = badges.length > 0
+                                ? ` <span style="opacity: 0.6; font-size: 0.8em;">(${badges.join(', ')})</span>`
+                                : '';
+                            const stepsLabel = run.source === 'remote'
+                                ? timeLabel
+                                : `${run.num_steps} steps &middot; ${timeLabel}`;
+                            return `
+                                <label class="run-selector-item">
+                                    <input type="checkbox" ${isSelected ? 'checked' : ''} data-run-hash="${run.hash}">
+                                    <span class="run-color-indicator" style="background: ${color};"></span>
+                                    <span class="run-label">${run.hash}${badgeHTML}</span>
+                                    <span class="run-steps">${stepsLabel}</span>
+                                </label>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    const refreshIcon = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+            <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
+            <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
+        </svg>
+    `;
+
+    const totalPoints = runs.reduce((sum, r) => sum + (r.metadata?.num_points || 0), 0);
+
+    const metadataHTML = `
+        <span id="metrics-metadata-comparing"><strong>Comparing:</strong> ${runs.length} run${runs.length !== 1 ? 's' : ''}</span>
+        <span id="metrics-metadata-points"><strong>Total Points:</strong> ${totalPoints}</span>
+    `;
+
+    const headerHTML = createTabHeader({
+        title: 'Metrics',
+        additionalContent: selectorHTML,
+        buttons: [{
+            id: 'refresh-metrics-btn',
+            label: 'Refresh',
+            icon: refreshIcon,
+            className: 'tab-header-button'
+        }],
+        metadata: metadataHTML
+    });
+
+    container.innerHTML = headerHTML + '<div id="metrics-charts-area" style="margin-top: 2rem;"></div>';
+}
+
+/**
+ * Update the metadata subtitle without rebuilding the header
+ */
+function updateMetricsMetadata(runs) {
+    const totalPoints = runs.reduce((sum, r) => sum + (r.metadata?.num_points || 0), 0);
+
+    const comparingEl = document.getElementById('metrics-metadata-comparing');
+    const pointsEl = document.getElementById('metrics-metadata-points');
+    if (comparingEl) comparingEl.innerHTML = `<strong>Comparing:</strong> ${runs.length} run${runs.length !== 1 ? 's' : ''}`;
+    if (pointsEl) pointsEl.innerHTML = `<strong>Total Points:</strong> ${totalPoints}`;
+}
+
+/**
  * Create multi-agent comparison chart
  */
-function createMultiAgentChart(canvasId, label, agents, metricKey) {
+function createRunComparisonChart(canvasId, label, runs, metricKey) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
 
-    // Destroy existing
     if (charts[canvasId]) {
         charts[canvasId].destroy();
     }
 
-    // Get colors for the appropriate theme context (hybrid overlay or normal)
     const theme = getContextTheme(ctx);
     const { textColor, gridColor, tooltipBg } = getThemeColors(theme);
 
-    // Build datasets
-    const datasets = agents.map((agent) => {
-        const metrics = agent.metrics;
+    const datasets = runs.map((run, idx) => {
+        const metrics = run.metrics;
         const steps = metrics.steps || [];
         const values = metrics[metricKey] || [];
+
+        if (!values.some(v => v !== null)) return null;
 
         let data = steps.map((step, i) => ({
             x: step,
             y: values[i]
         })).filter(point => point.y !== null)
-          .sort((a, b) => a.x - b.x);  // Ensure monotonic x-values
+          .sort((a, b) => a.x - b.x);
 
         // For validation metrics, remove consecutive duplicate values
-        // This prevents "staircase" rendering when validation only updates every N steps
         if (metricKey === 'val_loss' || metricKey === 'val_perplexity') {
             data = data.filter((point, i) => {
-                if (i === 0) return true;  // Always keep first point
-                return point.y !== data[i - 1].y;  // Keep only when value changes
+                if (i === 0) return true;
+                return point.y !== data[i - 1].y;
             });
         }
 
-        const agentIdx = state.agents.availableAgents.findIndex(a => a.name === agent.name);
-        const color = CONSTANTS.RUN_COLORS[agentIdx % CONSTANTS.RUN_COLORS.length];
+        const color = CONSTANTS.RUN_COLORS[idx % CONSTANTS.RUN_COLORS.length];
 
         return {
-            label: agent.name,
+            label: run.hash,
             data: data,
             borderColor: color,
             backgroundColor: color + '20',
@@ -485,10 +567,10 @@ function createMultiAgentChart(canvasId, label, agents, metricKey) {
             pointHoverBackgroundColor: color,
             pointHoverBorderColor: '#fff',
             pointHoverBorderWidth: 2,
-            tension: 0,  // Use straight lines, no Bezier interpolation
+            tension: 0,
             fill: false
         };
-    });
+    }).filter(d => d !== null);
 
     charts[canvasId] = new Chart(ctx, {
         type: 'line',
@@ -502,7 +584,7 @@ function createMultiAgentChart(canvasId, label, agents, metricKey) {
             },
             plugins: {
                 legend: {
-                    display: agents.length > 1,
+                    display: runs.length > 1,
                     position: 'top',
                     labels: {
                         color: textColor,
@@ -566,25 +648,21 @@ function createMultiAgentChart(canvasId, label, agents, metricKey) {
 /**
  * Create bar chart for token counts
  */
-function createTokensBarChart(canvasId, label, agents, metricKey) {
+function createTokensBarChart(canvasId, label, runs, metricKey) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
 
-    // Destroy existing
     if (charts[canvasId]) {
         charts[canvasId].destroy();
     }
 
-    // Get colors for the appropriate theme context (hybrid overlay or normal)
     const theme = getContextTheme(ctx);
     const { textColor, gridColor, tooltipBg } = getThemeColors(theme);
 
-    // Extract latest token count for each agent
-    const data = agents.map((agent) => {
-        const metrics = agent.metrics;
-        const values = metrics[metricKey] || [];
+    // Extract latest value for each run
+    const data = runs.map((run, idx) => {
+        const values = run.metrics[metricKey] || [];
 
-        // Get the last non-null value (latest token count)
         let latestValue = null;
         for (let i = values.length - 1; i >= 0; i--) {
             if (values[i] !== null) {
@@ -593,11 +671,10 @@ function createTokensBarChart(canvasId, label, agents, metricKey) {
             }
         }
 
-        const agentIdx = state.agents.availableAgents.findIndex(a => a.name === agent.name);
-        const color = CONSTANTS.RUN_COLORS[agentIdx % CONSTANTS.RUN_COLORS.length];
+        const color = CONSTANTS.RUN_COLORS[idx % CONSTANTS.RUN_COLORS.length];
 
         return {
-            label: agent.name,
+            label: run.hash,
             value: latestValue,
             color: color
         };

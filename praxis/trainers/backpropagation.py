@@ -157,7 +157,7 @@ class BackpropagationTrainer(LightningModule):
             # Extract expert convergence metrics and add to logging
             for key, value in model_metrics.items():
                 if key not in metrics and key not in [
-                    "experts"
+                    "layers"
                 ]:  # Skip duplicate keys and nested dicts
                     metrics[key] = value
 

@@ -6,7 +6,7 @@
 import { state } from './state.js';
 import { render } from './render.js';
 import { storage, readFormValues, FORM_FIELDS } from './config.js';
-import { toggleAgentSelector, toggleAgentSelection } from './charts.js';
+import { toggleRunSelector, toggleRunSelection } from './charts.js';
 import { loadResearchMetrics, loadDynamics } from './tabs.js';
 import { sendMessage, testApiConnection } from './api.js';
 
@@ -277,18 +277,18 @@ export const ACTION_HANDLERS = {
     },
 
     /**
-     * Toggle agent selector dropdown
+     * Toggle run selector dropdown
      */
-    TOGGLE_AGENT_SELECTOR: () => {
-        toggleAgentSelector();
+    TOGGLE_RUN_SELECTOR: () => {
+        toggleRunSelector();
     },
 
     /**
-     * Toggle agent selection checkbox
-     * @param {string} agentName - Name of agent to toggle
+     * Toggle historical run selection checkbox
+     * @param {string} runHash - Hash of run to toggle
      */
-    TOGGLE_AGENT: (agentName) => {
-        toggleAgentSelection(agentName);
+    TOGGLE_RUN: (runHash) => {
+        toggleRunSelection(runHash);
     },
 
     /**

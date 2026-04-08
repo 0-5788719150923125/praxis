@@ -309,8 +309,8 @@ class TerminalDashboard:
     def update_context_tokens(self, context_tokens):
         self.state.update_context_tokens(context_tokens)
 
-    def update_expert_count(self, num_local, num_remote):
-        self.state.update_expert_count(num_local, num_remote)
+    def update_layer_count(self, num_local, num_remote):
+        self.state.update_layer_count(num_local, num_remote)
 
     def update_url(self, url):
         self.state.update_url(url)
@@ -562,8 +562,7 @@ class TerminalDashboard:
             footer_text = (
                 f" PRAXIS:{str(self.state.seed)} | {self.state.total_params} | MODE: {self.state.mode} | "
                 f"AGE: {elapsed:.2f}h | TOKENS: {self.state.num_tokens:.2f}B | BATCH: {int(self.state.batch)}, STEP: {int(self.state.step)}, "
-                f"RATE: {self.state.rate:.2f}s | {self.state.local_experts} local experts, "
-                f"{self.state.remote_experts} remote | {self.state.url}"
+                f"RATE: {self.state.rate:.2f}s | {self.state.url}"
             )
             # Truncate and pad the footer text to fit the width
             footer_text = self.text_utils.truncate_to_width(footer_text, width + 1)

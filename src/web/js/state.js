@@ -194,7 +194,11 @@ export const state = {
         charts: {},
         etag: null,
         lastStep: 0,
-        error: null
+        error: null,
+        // Historical run comparison
+        historicalRuns: [],       // All available runs from /api/runs
+        selectedHistoricalRuns: [], // Hashes the user has checked
+        runSelectorOpen: false    // Dropdown open/closed
     },
 
     // Dynamics/gradient data (loaded async)

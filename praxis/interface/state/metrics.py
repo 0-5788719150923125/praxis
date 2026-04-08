@@ -28,8 +28,8 @@ class MetricsState:
 
         # Model info
         self.total_params = "0M"
-        self.local_experts = 0
-        self.remote_experts = 0
+        self.local_layers = 0
+        self.remote_layers = 0
 
         # Status
         self.mode = "train"
@@ -98,11 +98,11 @@ class MetricsState:
         with self.lock:
             self.context_tokens = context_tokens
 
-    def update_expert_count(self, num_local, num_remote):
-        """Update expert counts."""
+    def update_layer_count(self, num_local, num_remote):
+        """Update layer counts."""
         with self.lock:
-            self.local_experts = num_local
-            self.remote_experts = num_remote
+            self.local_layers = num_local
+            self.remote_layers = num_remote
 
     def update_url(self, url):
         """Update URL."""

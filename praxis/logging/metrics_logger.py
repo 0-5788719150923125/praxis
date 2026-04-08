@@ -40,8 +40,8 @@ class MetricsLogger:
         "softmax_collapse",
         "val_perplexity",
         "batch",
-        "local_experts",
-        "remote_experts",
+        "local_layers",
+        "remote_layers",
     ]
 
     SCHEMA = """
@@ -56,8 +56,8 @@ class MetricsLogger:
         softmax_collapse REAL,
         val_perplexity REAL,
         batch REAL,
-        local_experts REAL,
-        remote_experts REAL,
+        local_layers REAL,
+        remote_layers REAL,
         extra_metrics TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_metrics_ts ON metrics(ts);

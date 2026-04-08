@@ -238,7 +238,7 @@ def _read_metrics_file(
                 cursor.execute(
                     f"""SELECT step, ts, loss, val_loss, learning_rate, num_tokens,
                               avg_step_time, softmax_collapse, val_perplexity, batch,
-                              local_experts, remote_experts, extra_metrics
+                              local_layers, remote_layers, extra_metrics
                        FROM metrics
                        WHERE step >= ? AND (rowid % {sample_interval}) = 0
                        ORDER BY step
@@ -250,7 +250,7 @@ def _read_metrics_file(
                 cursor.execute(
                     """SELECT step, ts, loss, val_loss, learning_rate, num_tokens,
                               avg_step_time, softmax_collapse, val_perplexity, batch,
-                              local_experts, remote_experts, extra_metrics
+                              local_layers, remote_layers, extra_metrics
                        FROM metrics
                        WHERE step >= ?
                        ORDER BY step""",
@@ -261,7 +261,7 @@ def _read_metrics_file(
             cursor.execute(
                 """SELECT step, ts, loss, val_loss, learning_rate, num_tokens,
                           avg_step_time, softmax_collapse, val_perplexity, batch,
-                          local_experts, remote_experts, extra_metrics
+                          local_layers, remote_layers, extra_metrics
                    FROM metrics
                    WHERE step >= ?
                    ORDER BY step""",
@@ -286,8 +286,8 @@ def _read_metrics_file(
                 "softmax_collapse",
                 "val_perplexity",
                 "batch",
-                "local_experts",
-                "remote_experts",
+                "local_layers",
+                "remote_layers",
             ]:
                 if row[col] is not None:
                     entry[col] = row[col]

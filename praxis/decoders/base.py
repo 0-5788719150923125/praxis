@@ -214,7 +214,7 @@ class BaseDecoder(nn.Module):
                         extras.update(router_metrics)
 
         return {
-            "experts": dict(
+            "layers": dict(
                 local=len(self.locals),
                 remote=len(self.remotes),
             ),

@@ -192,8 +192,8 @@ class TerminalInterface(Callback):
 
         # Get metrics from the model (handles compiled models too)
         swarm_info = None
-        local_experts = 0
-        remote_experts = 0
+        local_layers = 0
+        remote_layers = 0
 
         # Get metrics from the trainer (which handles compiled/uncompiled models)
         if hasattr(lm, "get_metrics"):
@@ -202,15 +202,15 @@ class TerminalInterface(Callback):
             except Exception:
                 pass
 
-        # Extract expert counts if we got metrics
-        if swarm_info and "experts" in swarm_info:
-            local_experts = swarm_info["experts"].get("local", 0)
-            remote_experts = swarm_info["experts"].get("remote", 0)
+        # Extract layer counts if we got metrics
+        if swarm_info and "layers" in swarm_info:
+            local_layers = swarm_info["layers"].get("local", 0)
+            remote_layers = swarm_info["layers"].get("remote", 0)
 
         data = {
             "step": int(batch_idx // trainer.accumulate_grad_batches),
-            "local_experts": int(local_experts),
-            "remote_experts": int(remote_experts),
+            "local_layers": int(local_layers),
+            "remote_layers": int(remote_layers),
         }
 
         if swarm_info is not None:
@@ -245,8 +245,8 @@ class TerminalInterface(Callback):
                 batch_idx,
                 batch_size,
                 seq_length,
-                local_experts,
-                remote_experts,
+                local_layers,
+                remote_layers,
                 data,
             )
 
@@ -258,8 +258,8 @@ class TerminalInterface(Callback):
                 batch_idx,
                 batch_size,
                 seq_length,
-                local_experts,
-                remote_experts,
+                local_layers,
+                remote_layers,
                 data,
             )
 
@@ -270,8 +270,8 @@ class TerminalInterface(Callback):
         batch_idx,
         batch_size,
         seq_length,
-        local_experts,
-        remote_experts,
+        local_layers,
+        remote_layers,
         data,
     ):
         """Update dashboard with current metrics."""
@@ -286,7 +286,7 @@ class TerminalInterface(Callback):
             tokens.item() if hasattr(tokens, "item") else tokens
         )
         self.dashboard.update_loss(self.ema_loss)
-        self.dashboard.update_expert_count(local_experts, remote_experts)
+        self.dashboard.update_layer_count(local_layers, remote_layers)
 
         val_loss = trainer.callback_metrics.get("val_loss", None)
         if val_loss is not None:
@@ -338,7 +338,8 @@ class TerminalInterface(Callback):
             lm.hparams, "target_batch_size", batch_size
         )
         info_dict["depth"] = self.depth
-        info_dict["num_layers"] = self.num_layers
+        info_dict["local_layers"] = local_layers
+        info_dict["remote_layers"] = remote_layers
         info_dict["hidden_size"] = self.hidden_size
         info_dict["embed_size"] = self.embed_size
         info_dict["dropout"] = self.dropout
@@ -358,8 +359,8 @@ class TerminalInterface(Callback):
         batch_idx,
         batch_size,
         seq_length,
-        local_experts,
-        remote_experts,
+        local_layers,
+        remote_layers,
         data,
     ):
         """Update live metrics for web streaming."""
@@ -373,7 +374,7 @@ class TerminalInterface(Callback):
         lm_state.update_rate(rate.item() if hasattr(rate, "item") else rate)
         lm_state.update_tokens(tokens.item() if hasattr(tokens, "item") else tokens)
         lm_state.update_loss(self.ema_loss)
-        lm_state.update_expert_count(local_experts, remote_experts)
+        lm_state.update_layer_count(local_layers, remote_layers)
 
         val_loss = trainer.callback_metrics.get("val_loss", None)
         if val_loss is not None:
@@ -424,7 +425,8 @@ class TerminalInterface(Callback):
             lm.hparams, "target_batch_size", batch_size
         )
         info_dict["depth"] = self.depth
-        info_dict["num_layers"] = self.num_layers
+        info_dict["local_layers"] = local_layers
+        info_dict["remote_layers"] = remote_layers
         info_dict["hidden_size"] = self.hidden_size
         info_dict["embed_size"] = self.embed_size
         info_dict["dropout"] = self.dropout
