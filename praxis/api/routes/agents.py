@@ -262,11 +262,9 @@ def get_agents():
                         except:
                             pass
 
-                    # Check if this is a Praxis instance
-                    is_praxis = False
                     if url.startswith(("http://", "https://")):
                         base_url = url.replace(".git", "").rstrip("/")
-                        # If it's a known git hosting service, mark as archived
+                        # Known git hosting services are always archived
                         if (
                             "github.com" in base_url
                             or "gitlab.com" in base_url
@@ -274,23 +272,22 @@ def get_agents():
                         ):
                             agent["status"] = "archived"
                         else:
-                            # Try to check for Praxis API endpoint
+                            # Ping the remote to check if it's a live Praxis instance
                             try:
-                                api_url = f"{base_url}/api/agents"
+                                ping_url = f"{base_url}/api/ping"
                                 req = urllib.request.Request(
-                                    api_url,
+                                    ping_url,
                                     headers={"User-Agent": "Praxis-Agent-Check"},
                                 )
-                                with urllib.request.urlopen(req, timeout=2) as response:
+                                with urllib.request.urlopen(req, timeout=5) as response:
                                     if response.status == 200:
-                                        is_praxis = True
                                         agent["status"] = "online"
                                     else:
-                                        agent["status"] = "archived"
-                            except:
-                                agent["status"] = "archived"
+                                        agent["status"] = "offline"
+                            except Exception:
+                                agent["status"] = "offline"
                     else:
-                        # For SSH/git protocol URLs, mark as archived
+                        # SSH/git protocol URLs can't be pinged
                         agent["status"] = "archived"
 
             except subprocess.TimeoutExpired:

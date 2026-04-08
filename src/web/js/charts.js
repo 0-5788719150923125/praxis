@@ -246,7 +246,28 @@ async function fetchSelectedRunMetrics() {
 }
 
 /**
- * Toggle historical run selector dropdown
+ * Fetch data metrics (sampling weights, etc.) from the local server
+ */
+async function fetchDataMetrics() {
+    try {
+        const response = await fetch('/api/data-metrics?since=0&limit=1000&downsample=lttb');
+        if (!response.ok) return [];
+
+        const data = await response.json();
+        if (data.status === 'no_data' || !data.runs || data.runs.length === 0) return [];
+
+        return data.runs.map(run => ({
+            name: run.hash || 'local',
+            data_metrics: run.data_metrics || run.metrics,
+            metadata: run.metadata
+        }));
+    } catch {
+        return [];
+    }
+}
+
+/**
+ * Toggle run selector dropdown
  */
 export function toggleRunSelector() {
     state.research.runSelectorOpen = !state.research.runSelectorOpen;
@@ -308,10 +329,13 @@ export async function loadResearchMetricsWithCharts(force = false) {
         // Load available runs
         await loadAvailableRuns();
 
-        // Fetch metrics for selected runs (local + remote)
-        const runs = await fetchSelectedRunMetrics();
+        // Fetch metrics for selected runs and data metrics in parallel
+        const [runs, dataMetrics] = await Promise.all([
+            fetchSelectedRunMetrics(),
+            fetchDataMetrics()
+        ]);
 
-        renderMetricsCharts({ runs }, container);
+        renderMetricsCharts({ runs, dataMetrics }, container);
         state.research.loaded = true;
 
     } catch (error) {
@@ -336,6 +360,7 @@ export async function loadResearchMetricsWithCharts(force = false) {
  */
 function renderMetricsCharts(data, container) {
     const runs = data.runs || [];
+    const dataMetrics = data.dataMetrics || [];
 
     // Render header only once — subsequent calls only rebuild charts
     if (!document.getElementById('metrics-charts-area')) {
@@ -359,8 +384,12 @@ function renderMetricsCharts(data, container) {
 
     // Data-driven metric detection
     const availableMetrics = CONSTANTS.METRIC_CONFIGS.filter(config => {
-        // Skip data_metrics source — no longer fetched via agents
-        if (config.source === 'data_metrics') return false;
+        if (config.source === 'data_metrics') {
+            return dataMetrics.some(a =>
+                a.data_metrics?.[config.key] &&
+                Object.keys(a.data_metrics[config.key]).length > 0
+            );
+        }
         if (config.isComposite && config.key === 'expert_routing_weights') {
             return runs.some(r =>
                 Object.keys(r.metrics).some(k =>
@@ -412,6 +441,8 @@ function renderMetricsCharts(data, container) {
         availableMetrics.forEach(config => {
             if (config.type === 'bar') {
                 createTokensBarChart(config.canvasId, config.label, runs, config.key);
+            } else if (config.type === 'sampling') {
+                createSamplingWeightsChart(config.canvasId, dataMetrics);
             } else if (config.type === 'multi_expert_line') {
                 if (config.keyPattern) {
                     createMultiExpertChart(config.canvasId, config.title, config.label, runs, config.keyPattern, config);
