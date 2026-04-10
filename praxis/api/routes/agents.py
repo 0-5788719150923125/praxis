@@ -263,18 +263,18 @@ def get_agents():
                             pass
 
                     if url.startswith(("http://", "https://")):
-                        base_url = url.replace(".git", "").rstrip("/")
+                        parsed = urllib.parse.urlparse(url)
                         # Known git hosting services are always archived
                         if (
-                            "github.com" in base_url
-                            or "gitlab.com" in base_url
-                            or "bitbucket.org" in base_url
+                            "github.com" in parsed.netloc
+                            or "gitlab.com" in parsed.netloc
+                            or "bitbucket.org" in parsed.netloc
                         ):
                             agent["status"] = "archived"
                         else:
                             # Ping the remote to check if it's a live Praxis instance
                             try:
-                                ping_url = f"{base_url}/api/ping"
+                                ping_url = f"{parsed.scheme}://{parsed.netloc}/api/ping"
                                 req = urllib.request.Request(
                                     ping_url,
                                     headers={"User-Agent": "Praxis-Agent-Check"},

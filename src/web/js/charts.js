@@ -564,7 +564,7 @@ function createRunComparisonChart(canvasId, label, runs, metricKey) {
     const theme = getContextTheme(ctx);
     const { textColor, gridColor, tooltipBg } = getThemeColors(theme);
 
-    const datasets = runs.map((run, idx) => {
+    const datasets = runs.map((run) => {
         const metrics = run.metrics;
         const steps = metrics.steps || [];
         const values = metrics[metricKey] || [];
@@ -585,7 +585,11 @@ function createRunComparisonChart(canvasId, label, runs, metricKey) {
             });
         }
 
-        const color = CONSTANTS.RUN_COLORS[idx % CONSTANTS.RUN_COLORS.length];
+        // Color by the run's position in the full historical list, so it
+        // stays consistent with the Runs selector regardless of which subset
+        // is currently selected.
+        const colorIdx = state.research.historicalRuns.findIndex(r => r.hash === run.hash);
+        const color = CONSTANTS.RUN_COLORS[((colorIdx >= 0 ? colorIdx : 0)) % CONSTANTS.RUN_COLORS.length];
 
         return {
             label: run.hash,
@@ -691,7 +695,7 @@ function createTokensBarChart(canvasId, label, runs, metricKey) {
     const { textColor, gridColor, tooltipBg } = getThemeColors(theme);
 
     // Extract latest value for each run
-    const data = runs.map((run, idx) => {
+    const data = runs.map((run) => {
         const values = run.metrics[metricKey] || [];
 
         let latestValue = null;
@@ -702,7 +706,11 @@ function createTokensBarChart(canvasId, label, runs, metricKey) {
             }
         }
 
-        const color = CONSTANTS.RUN_COLORS[idx % CONSTANTS.RUN_COLORS.length];
+        // Color by the run's position in the full historical list, so it
+        // stays consistent with the Runs selector regardless of which subset
+        // is currently selected.
+        const colorIdx = state.research.historicalRuns.findIndex(r => r.hash === run.hash);
+        const color = CONSTANTS.RUN_COLORS[((colorIdx >= 0 ? colorIdx : 0)) % CONSTANTS.RUN_COLORS.length];
 
         return {
             label: run.hash,
