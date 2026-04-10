@@ -256,8 +256,8 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 
 <summary>community</summary>
 
-- [Demo](https://gym.src.eco/jD866BRv0pef_WLa-p75csE0Lhoqt1DF)
-- [Discord](https://discord.gg/8ZmHP8CqUX)
+- [Demo](https://arc.src.eco)
+- [Discord](https://discord.gg/bp3SuFae5M)
 - [Youtube](https://youtube.com/@The-Arc)
 - [The Source](https://src.eco)
 
