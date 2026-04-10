@@ -308,7 +308,7 @@ class TerminalInterface(Callback):
 
         info_dict = {
             "device": self.device,
-            "ram": memory_info.get("ram_total", "N/A"),
+            "ram": f"{memory_info.get('ram_used', 'N/A')}/{memory_info.get('ram_total', 'N/A')}",
         }
 
         # Add GPU memory info if available
@@ -393,7 +393,7 @@ class TerminalInterface(Callback):
 
         info_dict = {
             "device": self.device,
-            "ram": memory_info.get("ram_total", "N/A"),
+            "ram": f"{memory_info.get('ram_used', 'N/A')}/{memory_info.get('ram_total', 'N/A')}",
         }
 
         if self.device and self.device.startswith("cuda:"):

@@ -72,9 +72,10 @@ class HuggingfaceDataset(PraxisSampler):
         self.dataset = load_dataset_smart(dataset_args)
 
         # Initial shuffle with base seed
+        self.buffer_size = config.get("buffer_size", 100)
         shuffle_args = {"seed": self.base_seed}
         if self.is_streaming:
-            shuffle_args["buffer_size"] = 1000
+            shuffle_args["buffer_size"] = self.buffer_size
         self.shuffled_dataset = self.dataset.shuffle(**shuffle_args)
         self.dataset_iterator = iter(self.shuffled_dataset)
 
@@ -129,7 +130,7 @@ class HuggingfaceDataset(PraxisSampler):
                     new_seed = self.base_seed + self.restart_count
                     shuffle_args = {"seed": new_seed}
                     if self.is_streaming:
-                        shuffle_args["buffer_size"] = 1000
+                        shuffle_args["buffer_size"] = self.buffer_size
                     self.shuffled_dataset = self.dataset.shuffle(**shuffle_args)
                     self.dataset_iterator = iter(self.shuffled_dataset)
                     document = next(self.dataset_iterator)
@@ -201,7 +202,7 @@ class HuggingfaceDataset(PraxisSampler):
             new_seed = self.base_seed + self.restart_count
             shuffle_args = {"seed": new_seed}
             if self.is_streaming:
-                shuffle_args["buffer_size"] = 1000
+                shuffle_args["buffer_size"] = self.buffer_size
             self.shuffled_dataset = self.dataset.shuffle(**shuffle_args)
             self.dataset_iterator = iter(self.shuffled_dataset)
 

@@ -107,6 +107,7 @@ HUGGINGFACE_DATASETS = {
         path="open-phi/textbooks",
         keys=["markdown"],
         format=DataFormat.SIMPLE,
+        buffer_size=10,
     ),
     "cosmopedia-v2": dict(
         path="HuggingFaceTB/smollm-corpus",
@@ -230,6 +231,7 @@ HUGGINGFACE_DATASETS = {
         split="train",
         keys=["text"],
         format=DataFormat.SIMPLE,
+        buffer_size=10,
     ),
     "intellect-rl": dict(
         path="PrimeIntellect/INTELLECT-2-RL-Dataset",
