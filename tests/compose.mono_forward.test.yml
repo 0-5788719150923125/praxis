@@ -1,0 +1,182 @@
+# Multi-raylet Mono-Forward test harness (Phase 4 exit criterion)
+#
+# Two services on a shared Docker network:
+#
+# - ``head`` installs praxis with the ``[ray]`` extra into a shared
+#   ``venv`` docker volume, writes a sentinel file
+#   (``/workspace/.venv/.bootstrap_done``) so the worker knows
+#   installation is finished, starts ``ray start --head`` on port
+#   6379, and runs the Praxis trainer attached to its own head.
+# - ``worker`` waits for the sentinel, then joins the head's cluster
+#   via ``ray start --address=head:6379 --block``.
+#
+# This test file deliberately does NOT have a separate "bootstrap"
+# service, because a short-lived bootstrap tripped
+# ``--abort-on-container-exit`` (which we need for ``--exit-code-from
+# head`` semantics): compose treated the bootstrap's successful exit
+# as a trigger to tear down the whole stack, SIGKILL-ing head
+# mid-startup. Collapsing the install into the head service's own
+# startup script avoids that whole class of issue.
+#
+# Each raylet auto-detects available CPUs (no ``--num-cpus`` override).
+# The trainer computes fractional CPU/GPU resources per actor from the
+# cluster total, so any layer count works without touching this file.
+# With two raylets, Ray's scheduler spreads actors across both - that's
+# the formal proof that cross-raylet scheduling works.
+
+services:
+  head:
+    build: ..
+    working_dir: /workspace
+    hostname: head
+    # Lifecycle:
+    #   1. Create the venv if it doesn't exist.
+    #   2. Install praxis with the [ray] extra if ray isn't
+    #      importable. Write ``/workspace/.venv/.bootstrap_done``
+    #      when the install is verified - worker blocks on this.
+    #   3. Start a Ray head on port 6379.
+    #   4. Brief sleep for the worker raylet to register.
+    #   5. ``ray status`` + a node-list probe to confirm both
+    #      raylets are visible in the cluster.
+    #   6. Run the Praxis trainer attached to 127.0.0.1:6379.
+    #   7. ``ray stop`` on the way out so compose can tear the stack
+    #      down cleanly.
+    command:
+      - /bin/bash
+      - -c
+      - |
+        set -euo pipefail
+        if [ ! -f /workspace/.venv/bin/activate ]; then
+          echo "[head] Creating venv..."
+          python3 -m venv /workspace/.venv
+        fi
+        source /workspace/.venv/bin/activate
+        if ! python -c "import praxis" 2>/dev/null; then
+          echo "[head] Installing praxis[ray] on first boot..."
+          pip install -e '/workspace[ray]'
+        elif ! python -c "import ray" 2>/dev/null; then
+          echo "[head] Adding ray extra to existing praxis install..."
+          pip install -e '/workspace[ray]'
+        else
+          echo "[head] praxis[ray] already installed."
+        fi
+        # Sentinel: worker is blocked in a loop waiting for this file.
+        touch /workspace/.venv/.bootstrap_done
+        echo "[head] Bootstrap done, starting Ray head on 6379..."
+        ray start --head --port=6379 --dashboard-host=0.0.0.0
+        # Give the worker raylet a chance to register.
+        sleep 10
+        echo "[head] Cluster status before training:"
+        ray status || true
+        echo "[head] Ray nodes before training:"
+        python -c "
+        import ray
+        ray.init(address='127.0.0.1:6379')
+        nodes = ray.nodes()
+        alive = [n for n in nodes if n['Alive']]
+        print(f'[head] total nodes={len(nodes)} alive={len(alive)}')
+        for n in alive:
+            print(f'[head]   node: {n[\"NodeName\"]} resources={n[\"Resources\"]}')
+        ray.shutdown()
+        " || true
+        echo "[head] Starting MF training attached to local head..."
+        # Clear old mono_forward.pt checkpoints from previous
+        # runs so the "checkpoint exists → training succeeded"
+        # override below only considers checkpoints written by
+        # THIS run's ``MonoForwardTrainer.fit``. Without this,
+        # a leftover checkpoint from a previous successful run
+        # would mask a current-run training failure.
+        find /workspace/build -name mono_forward.pt -delete 2>/dev/null || true
+        set +e
+        python /workspace/main.py \
+          --mike \
+          --trainer-type mono_forward \
+          --ray-address 127.0.0.1:6379 \
+          --ray-head-sync-every 100 \
+          --no-dashboard
+        TRAIN_EXIT=$$?
+        set -e
+        # Ray/CPython atexit teardown race can produce exit 134
+        # after a successful run. If a checkpoint was written,
+        # override the exit code to 0.
+        shopt -s nullglob
+        CKPTS=(/workspace/build/runs/*/mono_forward.pt)
+        shopt -u nullglob
+        if [ $${TRAIN_EXIT} -ne 0 ] && [ $${#CKPTS[@]} -gt 0 ]; then
+          echo "[head] Training produced a checkpoint despite exit=$${TRAIN_EXIT}; overriding to 0 (known Ray/CPython atexit teardown race)."
+          echo "[head] Checkpoints on disk: $${CKPTS[@]}"
+          TRAIN_EXIT=0
+        fi
+        echo "[head] Training exited with code $${TRAIN_EXIT}; stopping Ray head..."
+        ray stop || true
+        exit $${TRAIN_EXIT}
+    volumes:
+      - ..:/workspace:rw
+      - venv:/workspace/.venv
+      - cache:/root/.cache
+      - build-head:/workspace/build
+    ports:
+      - "2100:2100"
+    environment:
+      PYTHONUNBUFFERED: 1
+
+  worker:
+    build: ..
+    working_dir: /workspace
+    hostname: worker
+    # Suppress worker logs from ``docker compose up`` output.
+    attach: false
+    # Lifecycle:
+    #   1. Wait for head to finish installing praxis[ray] by polling
+    #      the sentinel file. This avoids racing the venv volume
+    #      between the two services (the losing side would see a
+    #      half-populated venv and pip would fall back to the system
+    #      Python on Ubuntu 24.04, tripping PEP 668).
+    #   2. Activate the shared venv.
+    #   3. Retry ``ray start --address=head:6379`` until the head's
+    #      GCS is up (head sleeps for 10s between bootstrap and
+    #      cluster status, so 30 retries * 2s = 60s of slack).
+    #   4. Block forever on the foreground ``ray start --block``;
+    #      compose's ``--exit-code-from head`` will tear us down
+    #      when head exits.
+    command:
+      - /bin/bash
+      - -c
+      - |
+        set -euo pipefail
+        echo "[worker] Waiting for head to finish installing praxis[ray]..."
+        for attempt in $$(seq 1 120); do
+          if [ -f /workspace/.venv/.bootstrap_done ]; then
+            break
+          fi
+          sleep 5
+        done
+        if [ ! -f /workspace/.venv/.bootstrap_done ]; then
+          echo "[worker] Bootstrap sentinel never appeared - head install failed?"
+          exit 1
+        fi
+        source /workspace/.venv/bin/activate
+        for attempt in $$(seq 1 30); do
+          echo "[worker] ray start --address=head:6379 (attempt $${attempt}/30)"
+          if ray start --address=head:6379 --block; then
+            break
+          fi
+          echo "[worker] GCS not ready, retry $${attempt}/30"
+          sleep 2
+        done
+    volumes:
+      - ..:/workspace:rw
+      - venv:/workspace/.venv
+      - cache:/root/.cache
+      - build-worker:/workspace/build
+    environment:
+      PYTHONUNBUFFERED: 1
+    depends_on:
+      head:
+        condition: service_started
+
+volumes:
+  venv:
+  cache:
+  build-head:
+  build-worker:

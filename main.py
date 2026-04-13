@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
 """Main training script for Praxis language models."""
 
-import warnings
-
-# CRITICAL: Set multiprocessing start method before ANY imports that might use CUDA
-# This is required for MonoForward pipeline parallelism with CUDA
-import torch.multiprocessing as mp
-
-# Suppress multiprocessing resource tracker warnings early
-warnings.filterwarnings(
-    "ignore", category=UserWarning, module="multiprocessing.resource_tracker"
-)
+# CRITICAL: Set multiprocessing start method before ANY imports that
+# might use CUDA. Fork-based workers deadlock when CUDA is initialized
+# before the fork; "spawn" avoids this by re-importing from scratch in
+# each worker. The DataModule reads this setting to decide num_workers:
+# spawn -> 0 workers (main process), fork -> 1 worker (child process).
+# Without this, the DataLoader times out after 60 seconds on any
+# CUDA-capable host.
+import torch.multiprocessing as _mp
 
 try:
-    mp.set_start_method("spawn", force=True)
+    _mp.set_start_method("spawn", force=True)
 except RuntimeError:
     pass  # Already set
 
@@ -86,6 +84,64 @@ try:
 except Exception as e:
     print(e)
     print("[INIT] Your system does not support low-precision kernels.")
+
+
+def _bos_prompt(tokenizer):
+    """Build a BOS-seed prompt for the MF live-inference hook.
+
+    Returns a ``[1, 1]`` id tensor when the tokenizer has a concrete
+    BOS id, or the plain string ``bos_token`` as a fallback (the
+    trainer's hook will encode it via its own tokenizer reference).
+    Returns ``None`` when the tokenizer has neither, which disables
+    the hook cleanly. Only used by ``--trainer-type mono_forward``.
+    """
+    if tokenizer is None:
+        return None
+    bos_id = getattr(tokenizer, "bos_token_id", None)
+    if bos_id is not None:
+        return torch.tensor([[int(bos_id)]], dtype=torch.long)
+    bos_token = getattr(tokenizer, "bos_token", None)
+    return bos_token if isinstance(bos_token, str) and bos_token else None
+
+
+def _maybe_swap_inference_generator(trainer, tokenizer, api_server):
+    """Swap the API server's generator for :class:`MonoForwardGenerator`
+    when running under ``--trainer-type mono_forward``.
+
+    The backprop flow creates a standard :class:`Generator(model, tokenizer)`
+    before the trainer is known. That Generator wraps ``model.generate()``
+    running on the driver's CPU copy of the model - correct for backprop,
+    wrong for Mono-Forward (the trained weights live on Ray actors). This
+    helper runs right after ``create_trainer_with_module`` and swaps the
+    live generator reference for an MF adapter so the ``/messages`` and
+    ``/input`` routes Just Work without any route-level branching.
+
+    Non-MF trainer types early-return and the backprop path stays
+    untouched.
+    """
+    if api_server is None:
+        return
+    try:
+        from praxis.trainers.mono_forward import MonoForwardTrainer
+    except ImportError:
+        # Ray isn't installed in this environment; the factory would
+        # have raised earlier if the user asked for --trainer-type
+        # mono_forward, so reaching this branch means they didn't.
+        return
+    if not isinstance(trainer, MonoForwardTrainer):
+        return
+
+    from praxis.api.app import app
+    from praxis.generation import MonoForwardGenerator
+
+    mf_generator = MonoForwardGenerator(trainer=trainer, tokenizer=tokenizer)
+    api_server.generator = mf_generator
+    # ``app.config["generator"]`` and ``app.config["api_server"]`` are
+    # both read by generation routes; the api_server reference was
+    # updated in-place above, but ``app.config["generator"]`` is a
+    # separate slot and needs the explicit assignment.
+    app.config["generator"] = mf_generator
+    print("[MF] Routed API server through MonoForwardGenerator")
 
 
 def _is_byte_latent_encoder(encoder_type: str) -> bool:
@@ -239,6 +295,7 @@ def main():
     block_size = processed_args["block_size"]
     device = processed_args["device"]
     max_steps = processed_args.get("max_steps")
+    val_every = processed_args.get("val_every", 1024)
     use_dashboard = processed_args.get("use_dashboard", False)
     headless = processed_args.get("headless", False)
     reset = processed_args.get("reset", False)
@@ -262,6 +319,16 @@ def main():
     dropout = processed_args.get("dropout", 0.0)
     trainer_type = processed_args.get("trainer_type", "backpropagation")
     pipeline_depth = processed_args.get("pipeline_depth", 4)
+    # Ray Mono-Forward specific flags. These are registered by
+    # praxis/cli/groups/training.py and read here so the factory's
+    # mono_forward branch can forward them into the trainer's
+    # __init__. Non-mono_forward trainer types ignore them
+    # entirely. See PROJECT_PLAN.md Phase 3 step 4 for the rationale
+    # behind threading these through main.py.
+    ray_address = processed_args.get("ray_address")
+    ray_num_replicas_per_layer = processed_args.get("ray_num_replicas_per_layer", 1)
+    ray_head_sync_every = processed_args.get("ray_head_sync_every", 50)
+    ray_pipeline_api = processed_args.get("ray_pipeline_api", "manual")
     preserve = processed_args.get("preserve", False)
     num_nodes = processed_args.get("num_nodes", 1)
     node_rank = processed_args.get("node_rank", 0)
@@ -372,13 +439,9 @@ def main():
         enable_progress_bar=not use_dashboard and not headless,
         enable_model_summary=False,
         detect_anomaly=EnvironmentFeatures.is_enabled("detect_anomaly"),
-        val_check_interval=1024 * hparams["target_batch_size"] // hparams["batch_size"],
+        val_check_interval=val_every * hparams["target_batch_size"] // hparams["batch_size"],
         num_sanity_val_steps=0,
-        limit_val_batches=(
-            16384 // hparams["batch_size"]
-            if device != "cpu"
-            else 0
-        ),  # Disabled on CPU to prevent stalling multi-node swarms
+        limit_val_batches=16384 // hparams["batch_size"],
         log_every_n_steps=10,
         logger=None,  # Will be set below based on integrations
         callbacks=[],
@@ -622,6 +685,7 @@ def main():
         "seed": seed,
         "truncated_hash": truncated_hash,
         "total_params": total_params,
+        "batch_size": batch_size,
         "target_batch_size": target_batch_size,
     }
 
@@ -690,7 +754,48 @@ def main():
         byte_latent=byte_latent,
         pipeline_depth=pipeline_depth,
         device=device,
+        # Ray Mono-Forward flags - ignored by non-mono_forward
+        # trainer types thanks to the factory's ``**kwargs`` absorber.
+        ray_address=ray_address,
+        ray_num_replicas_per_layer=ray_num_replicas_per_layer,
+        ray_head_sync_every=ray_head_sync_every,
+        ray_pipeline_api=ray_pipeline_api,
+        # Generic settings - read by any trainer that supports them.
+        # The factory merges trainer_params + kwargs into one dict for
+        # the MF path; the backprop path ignores unknown kwargs via
+        # Lightning's own param handling.
+        inference_prompt=_bos_prompt(tokenizer),
+        inference_every_seconds=infer_every,
+        model_info=model_info,
+        dashboard_url=api_server.get_api_addr() if api_server else None,
+        accumulate_grad_batches=(
+            1
+            if batch_size >= target_batch_size
+            else -(-target_batch_size // batch_size)
+        ),
+        optimizer_config=optimizer_config,
+        optimizer_wrappers={
+            "trac": trac,
+            "ortho": ortho,
+            "lookahead": lookahead,
+            "schedule_free": schedule_free,
+        },
+        warmup_steps=warmup_steps,
+        disable_schedule=disable_schedule,
+        # ``val_every`` is in effective steps (same unit as
+        # ``--val-every``). The trainer converts to raw batches
+        # internally using ``accumulate_grad_batches``.
+        val_every=val_every,
+        dynamics_log_freq=10,
     )
+
+    # Phase 6: if the trainer is Mono-Forward, swap the API server's
+    # backprop-shaped Generator for an MF adapter that routes through
+    # ``trainer.generate()`` (the Ray actor chain). The backprop path
+    # is untouched: ``_maybe_swap_inference_generator`` early-returns
+    # for any non-MF trainer type. See praxis/generation/mono_forward_generator.py
+    # for the rationale.
+    _maybe_swap_inference_generator(trainer, tokenizer, api_server)
 
     # Show launch animation just before training begins
     show_launch_animation(model, truncated_hash)
@@ -745,8 +850,9 @@ def main():
 
         # Update line 3 with the current year and timestamp
         if len(lines) >= 3 and "Copyright (c)" in lines[2]:
-            # Format: "Copyright (c) YEAR FLOAT\n"
-            lines[2] = f"Copyright (c) {current_year} {year_progress}\n"
+            # Format: "Copyright (c) YEAR.FRACTION\n"
+            fraction = str(year_progress).split(".", 1)[1]
+            lines[2] = f"Copyright (c) {current_year}.{fraction}\n"
 
             with open("LICENSE", "w") as f:
                 f.writelines(lines)

@@ -153,6 +153,51 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         if config.tie_word_embeddings and self.head is not None:
             self.tie_weights()
 
+    def compute_loss(
+        self,
+        hidden_states: torch.Tensor,
+        labels: torch.Tensor,
+        layer_idx: Optional[int] = None,
+        aux_losses: Optional[list] = None,
+        input_ids: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Sugar around :func:`praxis.losses.compute_layer_wise_loss`.
+
+        Convenience wrapper for callers that have a live ``PraxisForCausalLM``
+        reference and want to compute a single layer's local loss using
+        the model's own criterion / strategy / head. The module-level
+        :func:`compute_layer_wise_loss` stays canonical for
+        framework-agnostic code paths (Ray actors, Hivemind peers,
+        ``torch.distributed.rpc`` nodes); this method is purely sugar for
+        in-process callers.
+
+        Args:
+            hidden_states: Post-layer activations for the layer being
+                supervised.
+            labels: Next-token labels, already shifted
+                (``input_ids[..., 1:]``).
+            layer_idx: Optional layer index - currently unused by the
+                helper but accepted for future per-layer dispatching
+                (different heads per depth, etc.).
+            aux_losses: Optional list of router/controller aux losses
+                to fold into the local objective via
+                ``self.strategy`` (D5).
+            input_ids: Optional unshifted input_ids to hand to
+                cut-CE / dedup criteria.
+        """
+        from praxis.losses.layer_wise import compute_layer_wise_loss
+
+        del layer_idx  # reserved for future use
+        return compute_layer_wise_loss(
+            hidden_states=hidden_states,
+            labels=labels,
+            head=self.head,
+            criterion=self.criterion,
+            strategy=self.strategy,
+            aux_losses=aux_losses,
+            input_ids=input_ids,
+        )
+
     def _compute_loss(
         self,
         logits: torch.Tensor,

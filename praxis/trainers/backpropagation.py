@@ -1,7 +1,7 @@
 """Backpropagation training module for Praxis models."""
 
 import re
-from datetime import datetime
+import time
 
 import torch
 import torch.nn.functional as F
@@ -40,8 +40,15 @@ class BackpropagationTrainer(LightningModule):
         # Try to compile the model automatically with fallback
         self.model = try_compile(model, hparams)
 
-        # Try to compile the optimizer as well
-        self.optimizer = try_compile(optimizer, hparams)
+        # Don't compile the optimizer. ``torch.compile`` on the
+        # optimizer's step() drags Lightning's post-closure callbacks
+        # (gradient clipping, on_before_optimizer_step, etc.) into
+        # the dynamo trace, and dynamo can't guard on Lightning's
+        # ``GradClipAlgorithmType.lower()`` or other framework
+        # internals. The model compilation is where the real forward/
+        # backward speedup lives; optimizer step is just param updates
+        # and doesn't benefit meaningfully from compilation.
+        self.optimizer = optimizer
 
     def forward(self, **kwargs):
         """Forward pass that accepts keyword arguments directly."""
@@ -61,10 +68,10 @@ class BackpropagationTrainer(LightningModule):
 
     def on_train_start(self):
         super().on_train_start()
-        self.last_train_step_time = datetime.now()
+        self.last_train_step_time = time.monotonic()
 
     def training_step(self, batch, batch_idx):
-        current_time = datetime.now()
+        current_time = time.monotonic()
 
         # Capture metadata before _handle_batch_format (it only returns input_ids)
         batch_metadata = batch.get("metadata", []) if isinstance(batch, dict) else []
@@ -454,7 +461,7 @@ class BackpropagationTrainer(LightningModule):
 
     def on_validation_end(self):
         super().on_validation_end()
-        self.last_train_step_time = datetime.now()
+        self.last_train_step_time = time.monotonic()
 
         # Clear CUDA cache after validation to free memory from logits and intermediate tensors
         if torch.cuda.is_available():
@@ -497,9 +504,9 @@ class BackpropagationTrainer(LightningModule):
 
     def _update_ema(self, ema, new_value):
         if ema is None:
-            return new_value.total_seconds()
+            return new_value
         alpha = 0.1
-        return alpha * new_value.total_seconds() + (1 - alpha) * ema
+        return alpha * new_value + (1 - alpha) * ema
 
     def _compute_bits_per_byte(self, batch, loss):
         """
@@ -514,6 +521,7 @@ class BackpropagationTrainer(LightningModule):
         # Calculate bits per byte using sum loss
         return sum_loss / (torch.log(torch.tensor(2.0)) * num_bytes)
 
+    @torch.compiler.disable
     def _compute_softmax_collapse(self, output):
         """
         From "Grokking at the Edge of Stability".
@@ -522,6 +530,5 @@ class BackpropagationTrainer(LightningModule):
         output_off = output - output.amax(dim=1, keepdim=True)
         exp_output = torch.exp(output_off)
         sum_exp = torch.sum(exp_output, dim=-1, keepdim=True)
-        log_softmax = output_off.amax(dim=1, keepdim=True) - torch.log(sum_exp)
         softmax_collapse = (sum_exp == 1).float().mean().item()
         return softmax_collapse

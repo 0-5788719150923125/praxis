@@ -24,7 +24,7 @@ wandb
 !*/wandb
 !integrations/wandb*
 
-# Experiments - only commit alpha.yml, ignore user custom experiments
+# Experiments - commit canonical reference experiments, ignore user custom experiments
 experiments/*.yml
 !experiments/alpha.yml
 

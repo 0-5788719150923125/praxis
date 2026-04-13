@@ -40,12 +40,20 @@ TRAINER_CAPABILITIES: Dict[str, TrainerCapabilities] = {
         is_lightning_module=True,
     ),
     "mono_forward": TrainerCapabilities(
+        # MF runs its own per-actor optimizers and explicitly does not
+        # use Lightning's automatic optimization or gradient clipping.
         supports_automatic_optimization=False,
         supports_gradient_clipping=False,
         supports_accumulation_schedule=False,
+        # ``requires_custom_init=True`` signals main.py/factory callers
+        # that this trainer type wants special handling rather than the
+        # generic LightningModule wrap. We read it in factory.py above.
         requires_custom_init=True,
-        requires_optimizer_config=True,
-        uses_manual_optimization=True,
+        requires_optimizer_config=False,
+        # Framework-agnostic; not a LightningModule and does not use
+        # Lightning's manual optimization hooks either.
+        is_lightning_module=False,
+        uses_manual_optimization=False,
     ),
     "pipeline": TrainerCapabilities(
         supports_automatic_optimization=False,

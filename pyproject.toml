@@ -45,6 +45,14 @@ dependencies = [
     "zstandard",
 ]
 
+[project.optional-dependencies]
+# Ray is only required for --trainer-type mono_forward. It is kept as
+# an optional extra rather than a hard dependency because Ray publishes no
+# wheels for Python >= 3.14, and many Praxis contributors are on
+# bleeding-edge distributions (e.g. Arch) where python3.14 is the system
+# Python version.
+ray = ["ray[default]>=2.30"]
+
 [tool.setuptools]
 packages = ["praxis"]
 

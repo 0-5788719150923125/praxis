@@ -1,0 +1,34 @@
+services:
+  head:
+    extends:
+      file: ./compose.mono_forward.test.yml
+      service: head
+    runtime: nvidia
+    stdin_open: true
+    tty: true
+    ipc: host
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      PYTHONUNBUFFERED: 1
+      DEBIAN_FRONTEND: noninteractive
+
+  worker:
+    extends:
+      file: ./compose.mono_forward.test.yml
+      service: worker
+    runtime: nvidia
+    stdin_open: true
+    tty: true
+    ipc: host
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      PYTHONUNBUFFERED: 1
+      DEBIAN_FRONTEND: noninteractive
+
+volumes:
+  venv:
+  cache:
+  build-head:
+  build-worker:

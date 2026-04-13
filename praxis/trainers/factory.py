@@ -193,35 +193,7 @@ def create_trainer_with_module(
     # Handle different trainer types based on capabilities
     capabilities = get_trainer_capabilities(trainer_type)
 
-    if capabilities.requires_custom_init and trainer_type == "mono_forward":
-        from praxis.trainers.mono_forward_pipeline import MonoForwardPipelineModule
-        from praxis.trainers.trainer import Trainer
-
-        # Extract optimizer config from model
-        optimizer_config = {}
-        if hasattr(model, "config") and hasattr(model.config, "optimizer_config"):
-            optimizer_config = model.config.optimizer_config
-
-        # Create the Lightning module - properly get device string
-        device_str = str(kwargs.get("device", "cpu"))
-        if hasattr(device_str, "type"):
-            # If it's a torch.device object, get the string representation
-            device_str = str(device_str)
-
-        lightning_module = MonoForwardPipelineModule(
-            model=model,
-            optimizer_config=optimizer_config,
-            pipeline_depth=kwargs.get("pipeline_depth", 4),
-            device=device_str,
-            prediction_mode=hparams.get("mono_forward_prediction_mode", "bp"),
-        )
-
-        # Create Lightning Trainer
-        trainer = Trainer(**(trainer_params or {}))
-
-        return trainer, lightning_module
-
-    elif trainer_type == "backpropagation":
+    if trainer_type == "backpropagation":
         # BackpropagationTrainer is a LightningModule, needs special handling
         from praxis.trainers.backpropagation import BackpropagationTrainer
 
@@ -249,6 +221,31 @@ def create_trainer_with_module(
 
         # Return trainer and the module to be passed to fit()
         return trainer, lightning_module
+
+    elif trainer_type == "mono_forward":
+        # MonoForwardTrainer is framework-agnostic: it IS the trainer
+        # (not a LightningModule wrapped by a Trainer). It reads what
+        # it needs from ``trainer_params`` and silently ignores
+        # Lightning-specific keys (accelerator, devices, precision,
+        # etc.). We merge ``trainer_params`` + ``kwargs`` into one
+        # flat dict so everything the trainer might want is
+        # accessible by name, then inject ``cache_dir`` and
+        # ``tokenizer`` which come from separate factory args.
+        merged: Dict[str, Any] = dict(trainer_params or {})
+        merged["cache_dir"] = cache_dir
+        if tokenizer is not None:
+            merged["tokenizer"] = tokenizer
+        for key, value in kwargs.items():
+            if value is not None:
+                merged[key] = value
+
+        trainer = trainer_class(**merged)
+        # Return the raw PraxisForCausalLM as the training module - the
+        # MonoForwardTrainer's ``fit`` method reaches into
+        # ``model.decoder.locals``, ``model.embeds``, and ``model.head``
+        # directly, so it wants the unwrapped model, not a Lightning
+        # wrapper around it.
+        return trainer, model
 
     else:
         # Standard trainer initialization

@@ -97,15 +97,86 @@ fi
 echo "[SYSTEM] Activated virtual environment."
 . "$SCRIPT_DIR/.venv/bin/activate"
 
+# Ray is an optional Praxis extra (see pyproject.toml). Ray publishes no
+# wheels for Python >= 3.14 upstream, so we only request the '[ray]'
+# extra on interpreters where it can actually install. This single piece
+# of logic runs in both environments we care about:
+#
+#   - the host venv on a bleeding-edge distro (e.g. Arch's python3.14):
+#       RAY_SUPPORTED=false  -> installs praxis without ray, and the
+#       mono_forward guard below will fail loud if selected.
+#   - the Docker compose container (ubuntu:24.04 -> python3.12):
+#       RAY_SUPPORTED=true   -> installs praxis with the [ray] extra,
+#       so the Ray trainer path is ready to run.
+#
+# There is no separate Docker install path; both live here.
+RAY_SUPPORTED=false
+PY_MAJOR_MINOR=$(python -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")' 2>/dev/null || echo "unknown")
+case "$PY_MAJOR_MINOR" in
+    3.10|3.11|3.12|3.13) RAY_SUPPORTED=true ;;
+esac
+
 # Install praxis package if not already installed
 if [ -f "$SCRIPT_DIR/pyproject.toml" ]; then
     if ! python -c "import praxis" 2>/dev/null; then
-        echo "[ENV] Installing Praxis in development mode..."
-        pip install -e "$SCRIPT_DIR"
+        if $RAY_SUPPORTED; then
+            echo "[ENV] Installing Praxis with Ray extra (Python ${PY_MAJOR_MINOR})..."
+            # `pip install -e "$DIR[ray]"` is the standard way to install a
+            # local editable project with extras. Quoted to keep `[` and `]`
+            # out of bash's glob expansion.
+            pip install -e "${SCRIPT_DIR}[ray]"
+        else
+            echo "[ENV] Installing Praxis in development mode (Python ${PY_MAJOR_MINOR} has no Ray wheels; skipping '[ray]' extra)..."
+            pip install -e "$SCRIPT_DIR"
+        fi
         echo "[ENV] Praxis installation complete"
+    elif $RAY_SUPPORTED && ! python -c "import ray" 2>/dev/null; then
+        # Existing praxis install on a Ray-capable interpreter, but Ray
+        # itself was never added. This is the first-boot path inside the
+        # Docker container after the Phase 1 pivot: the container's
+        # named `venv` volume pre-dates the [ray] extra, so we catch up
+        # lazily the first time launch runs here.
+        echo "[ENV] Adding Ray extra to existing Praxis install (Python ${PY_MAJOR_MINOR})..."
+        pip install -e "${SCRIPT_DIR}[ray]"
+        echo "[ENV] Ray extra installation complete"
     else
         echo "[ENV] Praxis is installed."
     fi
+fi
+
+# Guard: the Mono-Forward trainer's current worker backend is Ray,
+# which is an optional extra ('ray') with no wheels on Python >= 3.14.
+# Rather than forcing every contributor to install an older Python
+# system-wide, Ray-requiring runs live in the Docker compose
+# environment (Ubuntu 24.04 + Python 3.12). Detect the Ray-requiring
+# trainer here and fail loud with an actionable message instead of
+# producing an opaque ImportError mid-training.
+NEEDS_RAY=false
+for arg in "$@"; do
+    if [ "$arg" = "mono_forward" ]; then
+        NEEDS_RAY=true
+        break
+    fi
+done
+if $NEEDS_RAY && ! python -c "import ray" 2>/dev/null; then
+    cat >&2 <<'EOF'
+[ERROR] --trainer-type mono_forward requires the optional 'ray' extra,
+        which is not installed in this virtual environment.
+
+        Ray publishes no wheels for Python >= 3.14, so the typical path
+        is to run inside the Docker compose environment (Ubuntu 24.04 +
+        Python 3.12, where Ray installs cleanly):
+
+            ./launch compose --mike --trainer-type mono_forward ...
+
+        To install Ray in this local venv instead (only works on
+        Python 3.10-3.13):
+
+            source .venv/bin/activate
+            pip install -e '.[ray]'
+            deactivate
+EOF
+    exit 1
 fi
 
 # Pass all arguments directly to main.py

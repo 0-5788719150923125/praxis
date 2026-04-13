@@ -48,17 +48,21 @@ except ImportError:
     LightningTrainerWrapper = None
 
 
-# Registry for trainers with lazy loading for MonoForward
-def _get_mono_forward_module():
-    """Lazy load MonoForwardPipelineModule to avoid multiprocessing issues during import."""
-    from praxis.trainers.mono_forward_pipeline import MonoForwardPipelineModule
+# Registry for trainers. ``mono_forward`` is lazy-loaded so that
+# selecting ``backpropagation`` does not import the Mono-Forward
+# package or its (currently Ray-backed) worker runtime. The Ray
+# runtime is only started when the mono_forward trainer path is
+# actually selected - see praxis/trainers/mono_forward/__init__.py.
+def _get_mono_forward_trainer():
+    """Lazy load the Mono-Forward trainer."""
+    from praxis.trainers.mono_forward import MonoForwardTrainer
 
-    return MonoForwardPipelineModule
+    return MonoForwardTrainer
 
 
 TRAINER_REGISTRY = {
     "backpropagation": BackpropagationTrainer,
-    "mono_forward": _get_mono_forward_module,
+    "mono_forward": _get_mono_forward_trainer,
 }
 
 # Lightning wrapper is not exposed as a separate trainer type
@@ -101,7 +105,6 @@ __all__ = [
     "try_compile",
     # Trainers
     "BackpropagationTrainer",
-    "MonoForwardPipelineModule",
     "Trainer",
     # Factory functions
     "create_trainer",

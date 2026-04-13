@@ -231,16 +231,25 @@ def _read_metrics_file(
             total_count = cursor.fetchone()[0]
 
             # If dataset is larger than max_rows, use SQL-level sampling
-            # Sample every Nth row to reduce memory overhead
+            # Sample every Nth row to reduce memory overhead.
+            # IMPORTANT: rows carrying val_loss or val_perplexity MUST
+            # survive the downsampling, because validation fires very
+            # infrequently (once per val_check_interval batches) and a
+            # naive modulo sample almost always drops them. The OR
+            # clause ensures validation rows are always included
+            # regardless of the sample interval; the LIMIT still caps
+            # total output so the client doesn't get a huge payload.
             if total_count > max_rows * 2:
-                # Use modulo sampling for efficiency - samples evenly across the dataset
                 sample_interval = max(1, total_count // max_rows)
                 cursor.execute(
                     f"""SELECT step, ts, loss, val_loss, learning_rate, num_tokens,
                               avg_step_time, softmax_collapse, val_perplexity, batch,
                               local_layers, remote_layers, extra_metrics
                        FROM metrics
-                       WHERE step >= ? AND (rowid % {sample_interval}) = 0
+                       WHERE step >= ?
+                         AND ((rowid % {sample_interval}) = 0
+                              OR val_loss IS NOT NULL
+                              OR val_perplexity IS NOT NULL)
                        ORDER BY step
                        LIMIT ?""",
                     (since_step, max_rows),
