@@ -89,9 +89,16 @@ def get_data_metrics():
             if not data_metrics_file.exists():
                 continue
 
-            # Calculate ETag component
+            # Calculate ETag component. Include WAL mtime so the
+            # ETag invalidates when new data lands in the WAL file
+            # (SQLite WAL mode doesn't update the main .db mtime
+            # until a checkpoint).
             stat = data_metrics_file.stat()
-            etag_parts.append(f"{run_hash}:{stat.st_mtime}:{stat.st_size}")
+            wal_file = data_metrics_file.parent / (data_metrics_file.name + "-wal")
+            wal_mtime = ""
+            if wal_file.exists():
+                wal_mtime = f":{wal_file.stat().st_mtime}"
+            etag_parts.append(f"{run_hash}:{stat.st_mtime}:{stat.st_size}{wal_mtime}")
 
             # Read and parse data metrics with SQL-level sampling
             raw_metrics = _read_data_metrics_file(

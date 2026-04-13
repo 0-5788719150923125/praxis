@@ -343,7 +343,7 @@ class TerminalInterface(Callback):
         info_dict["debug"] = self.debug
         info_dict["meta"] = [
             item
-            for item, condition in [("src", self.use_source_code), ("dev", self.dev)]
+            for item, condition in [("praxis", self.use_source_code), ("dev", self.dev)]
             if condition
         ]
 

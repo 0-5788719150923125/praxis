@@ -185,16 +185,14 @@ def get_dataset(format, tokenizer, seed, *args, **kwargs):
         directories = kwargs.get("data_path")
         first = directories[0] if isinstance(directories, list) else directories
         name = os.path.basename(first.rstrip("/\\")) if first else "custom-files"
-        dataset = MultiDirectoryDataset(
-            tokenizer, directories=directories, name=name
-        )
+        dataset = MultiDirectoryDataset(tokenizer, directories=directories, name=name)
         dataset.weight = DIR_WEIGHT
         return dataset
     elif format == "self":
         dataset = MultiDirectoryDataset(
             tokenizer,
             directories="./",
-            name="src",
+            name="praxis",
             allowed_extensions=[
                 ".bib",
                 ".cfg",

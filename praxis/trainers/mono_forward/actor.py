@@ -61,25 +61,25 @@ def _deep_to(module: nn.Module, device: torch.device) -> nn.Module:
 
 
 class _ActorParamShim(nn.Module):
-    """Minimal ``nn.Module`` wrapper over one actor's (layer, head) pair.
+    """Minimal ``nn.Module`` wrapper over one actor's (layer, projection) pair.
 
     :func:`praxis.optimizers.get_optimizer` calls
     :func:`pytorch_optimizer.create_optimizer`, which takes an
     ``nn.Module`` and walks ``named_parameters`` / ``named_modules``
     to apply the weight-decay ban list (LayerNorm, bias, etc.). Under
-    MF each actor owns its layer and a replicated copy of the shared
-    output head, so we can't just pass either submodule - we need an
-    intermediate container that exposes both as registered children.
+    MF each actor owns its layer and its per-layer projection matrix
+    ``M_i``, so we need an intermediate container that exposes both
+    as registered children.
 
     This is the smallest possible such wrapper: it doesn't define
     a ``forward``, doesn't need one, and never participates in any
     forward pass. The optimizer only reads parameters off it.
     """
 
-    def __init__(self, layer: nn.Module, head: nn.Module) -> None:
+    def __init__(self, layer: nn.Module, projection: nn.Module) -> None:
         super().__init__()
         self.layer = layer
-        self.head = head
+        self.projection = projection
 
 
 def _build_optimizer(
@@ -213,8 +213,9 @@ class LayerActor:
         self,
         layer_idx: int,
         layer: nn.Module,
-        head: nn.Module,
         criterion: nn.Module,
+        hidden_size: int,
+        vocab_size: int,
         strategy: Optional[Any] = None,
         optimizer_config: Optional[Dict[str, Any]] = None,
         optimizer_wrappers: Optional[Dict[str, bool]] = None,
@@ -222,6 +223,7 @@ class LayerActor:
         disable_schedule: bool = False,
         lr: float = 1e-3,
         num_layers: int = 1,
+        accumulate_grad_batches: int = 1,
     ) -> None:
         self.layer_idx = layer_idx
 
@@ -239,7 +241,6 @@ class LayerActor:
             self.device = torch.device("cpu")
 
         self.layer = _deep_to(copy.deepcopy(layer), self.device)
-        self.head = _deep_to(copy.deepcopy(head), self.device)
         self.criterion = _deep_to(copy.deepcopy(criterion), self.device)
         if strategy is not None:
             s = copy.deepcopy(strategy)
@@ -248,19 +249,25 @@ class LayerActor:
             )
         else:
             self.strategy = None
-        self.layer.train()
-        self.head.train()
 
-        # Build the optimizer. The actor owns per-layer+head params via
-        # a thin ``nn.Module`` shim so that
+        # Per-layer projection matrix M_i (paper Section 3.1). Each
+        # layer gets its own independent projection - there is no
+        # weight sharing or synchronisation between layers. The
+        # goodness score is G_i = a_i @ M_i^T and the layer loss is
+        # L_i = CE(softmax(G_i), labels). This is a fresh random
+        # init, not a copy of the model's output head.
+        from praxis.trainers.mono_forward.projection import ProjectionMatrix
+
+        self.projection = ProjectionMatrix(hidden_size, vocab_size).to(self.device)
+        self.layer.train()
+        self.projection.train()
+
+        # Build the optimizer. The actor owns per-layer + projection
+        # params via a thin ``nn.Module`` shim so that
         # :func:`praxis.optimizers.get_optimizer` sees the same
         # ``named_parameters`` / ``named_modules`` surface it uses for
-        # weight-decay banning under the backprop path. If no
-        # ``optimizer_config`` is supplied (direct-construction tests
-        # that don't go through main.py), fall back to vanilla Adam
-        # at ``lr`` to preserve the Phase 2/3 behaviour those tests
-        # were written against.
-        self._param_shim = _ActorParamShim(self.layer, self.head)
+        # weight-decay banning under the backprop path.
+        self._param_shim = _ActorParamShim(self.layer, self.projection)
         self.optimizer = _build_optimizer(
             shim=self._param_shim,
             optimizer_config=optimizer_config,
@@ -290,6 +297,17 @@ class LayerActor:
         # collapse signal).
         self.num_layers = int(num_layers)
         self.is_last_layer = bool(layer_idx == self.num_layers - 1)
+
+        # Gradient accumulation. The paper doesn't discuss it
+        # explicitly, but with batch_size=4 and target_batch_size=256,
+        # stepping after every single batch produces a very noisy
+        # training signal. Accumulating over ``accumulate_grad_batches``
+        # mini-batches before stepping matches the effective batch size
+        # the backprop trainer uses, giving each layer the same
+        # gradient signal quality. Loss is scaled by 1/N during
+        # backward so the accumulated gradient is the mean over the
+        # accumulation window (same as a single batch of size N).
+        self.accumulate_grad_batches = max(int(accumulate_grad_batches), 1)
 
         # Stats, mostly for operational visibility in ray dashboard logs.
         self.batches_processed = 0
@@ -354,37 +372,37 @@ class LayerActor:
         loss = compute_layer_wise_loss(
             hidden_states=h_out,
             labels=labels_dev,
-            head=self.head,
+            head=self.projection,
             criterion=self.criterion,
             strategy=self.strategy,
             aux_losses=[aux_loss] if aux_loss is not None else None,
             input_ids=input_ids_dev,
         )
 
-        # (4) Local update scoped to this actor's params.
-        self.optimizer.zero_grad()
-        loss.backward()
+        # (4) Gradient accumulation. Scale the loss by 1/N so the
+        # accumulated gradient over N mini-batches is the mean (same
+        # as a single batch of size N). Backward accumulates into
+        # the existing .grad tensors. Only zero_grad + step at the
+        # accumulation boundary.
+        scaled_loss = loss / self.accumulate_grad_batches
+        scaled_loss.backward()
 
-        # (4a) Capture dynamics metrics BEFORE optimizer.step() so
-        # gradients are still populated. Mirrors the backprop
-        # ``DynamicsLoggerCallback.on_before_optimizer_step`` hook.
-        # Driver only requests this at the configured log cadence
-        # (capture_dynamics=True) to avoid the per-batch overhead of
-        # walking every parameter.
+        # (4a) Capture dynamics metrics while gradients are populated
+        # (before the potential zero_grad at the step boundary).
         dynamics = self._capture_dynamics() if capture_dynamics else None
 
-        self.optimizer.step()
-        # Advance the LR schedule. Scheduler is ``None`` when no
-        # optimizer_config was supplied (direct-construction tests).
-        if self.scheduler is not None:
-            try:
-                self.scheduler.step()
-            except Exception:
-                # Lookahead / TRAC / ScheduleFreeWrapper can hide the
-                # underlying param_groups in ways that trip some
-                # schedulers. If a step fails, swallow it and keep
-                # training - LR just stays put for this batch.
-                pass
+        # (4b) Step only at accumulation boundaries.
+        is_accum_boundary = (
+            (self.batches_processed + 1) % self.accumulate_grad_batches == 0
+        )
+        if is_accum_boundary:
+            self.optimizer.step()
+            self.optimizer.zero_grad()
+            if self.scheduler is not None:
+                try:
+                    self.scheduler.step()
+                except Exception:
+                    pass
 
         # (5) Final-layer softmax collapse. Only the last actor
         # computes this, matching the backprop trainer where
@@ -450,7 +468,7 @@ class LayerActor:
             loss = compute_layer_wise_loss(
                 hidden_states=h_detached,
                 labels=labels_dev,
-                head=self.head,
+                head=self.projection,
                 criterion=self.criterion,
                 strategy=self.strategy,
                 aux_losses=[aux_loss] if aux_loss is not None else None,
@@ -475,7 +493,7 @@ class LayerActor:
         """
         try:
             with torch.no_grad():
-                logits = self.head(hidden_states.detach())
+                logits = self.projection(hidden_states.detach())
                 output_off = logits - logits.amax(dim=1, keepdim=True)
                 exp_output = torch.exp(output_off)
                 sum_exp = torch.sum(exp_output, dim=-1, keepdim=True)
@@ -612,31 +630,35 @@ class LayerActor:
         canonical copy for consistency with what it trained on.
         """
         with torch.no_grad():
-            return self.head(hidden_states.to(self.device)).detach().cpu()
+            return self.projection(hidden_states.to(self.device)).detach().cpu()
 
     def get_layer_state(self) -> Dict[str, Any]:
         """Return this actor's layer parameters (for checkpointing)."""
         return {k: v.detach().cpu() for k, v in self.layer.state_dict().items()}
 
-    def get_head_state(self) -> Dict[str, Any]:
-        """Return this actor's head parameters (for checkpointing / head sync).
-
-        The trainer averages these across actors and broadcasts back via
-        ``set_head_state``.
-        """
-        return {k: v.detach().cpu() for k, v in self.head.state_dict().items()}
+    def get_projection_state(self) -> Dict[str, Any]:
+        """Return this actor's projection matrix M_i state (for checkpointing)."""
+        return {k: v.detach().cpu() for k, v in self.projection.state_dict().items()}
 
     def load_layer_state(self, state_dict: Dict[str, Any]) -> None:
-        """Reload layer params from a state dict. Stub hook for Phase 4+."""
-        # State dicts arrive from the driver on CPU; map to the
-        # actor's device so weights land in the right place.
+        """Reload layer params from a state dict."""
         mapped = {k: v.to(self.device) for k, v in state_dict.items()}
         self.layer.load_state_dict(mapped)
 
-    def set_head_state(self, state_dict: Dict[str, Any]) -> None:
-        """Reload head params from a state dict - used by head sync."""
-        mapped = {k: v.to(self.device) for k, v in state_dict.items()}
-        self.head.load_state_dict(mapped)
+    def set_optimizer_eval(self) -> None:
+        """Switch optimizer to eval mode (ScheduleFreeWrapper).
+
+        Exposes internally-averaged parameters for more stable
+        validation / inference. No-op for optimizers without an
+        ``eval`` method.
+        """
+        if hasattr(self.optimizer, "eval"):
+            self.optimizer.eval()
+
+    def set_optimizer_train(self) -> None:
+        """Restore optimizer to training mode after validation."""
+        if hasattr(self.optimizer, "train"):
+            self.optimizer.train()
 
     def ping(self) -> int:
         """Cheap liveness / scheduling verification probe."""

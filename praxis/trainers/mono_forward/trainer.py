@@ -26,19 +26,17 @@ A brief tour of the internals:
   raises ``NotImplementedError`` with a clear pointer at the manual
   variant.
 
-- **Head synchronization** (``_sync_head``): every
-  ``ray_head_sync_every`` batches the driver drains the pipeline,
-  gathers each actor's head state dict, averages them elementwise, and
-  broadcasts the result back into every actor. The drain barrier is
-  load-bearing - without it, an in-flight batch would be using an old
-  head copy at some layer and the new copy at another, producing an
-  inconsistent forward pass.
+- **Per-layer projection matrices**: each actor owns its own
+  independent projection matrix ``M_i`` (per the Mono-Forward paper,
+  Section 3.1). There is no shared output head and no head
+  synchronisation. Each layer computes its own goodness score
+  ``G_i = a_i @ M_i^T`` and local cross-entropy loss independently.
 
 - **MetricsLogger emission**: ``avg_step_time``, ``loss``,
   ``num_tokens``, and ``learning_rate`` land in the corresponding
   native columns (the existing web dashboard already knows how to
-  read these). ``layer_{i}_loss``, ``pipeline_in_flight``, and
-  ``head_syncs_completed`` go into the ``extra_metrics`` JSON blob.
+  read these). ``layer_{i}_loss`` and ``pipeline_in_flight`` go
+  into the ``extra_metrics`` JSON blob.
 
 - **CLI flag plumbing** (``--ray-address``, ``--ray-num-replicas-per-layer``,
   ``--ray-head-sync-every``, ``--ray-pipeline-api``): main.py reads
@@ -204,9 +202,11 @@ class MonoForwardTrainer:
         self.ray_num_replicas_per_layer: int = int(
             trainer_params.get("ray_num_replicas_per_layer", 1) or 1
         )
-        self.ray_head_sync_every: int = int(
-            trainer_params.get("ray_head_sync_every", 50) or 50
-        )
+        # ray_head_sync_every is no longer used - each layer has its
+        # own independent projection matrix M_i per the paper, so
+        # there is no shared head to synchronise. Kept as a silent
+        # no-op so old compose files that pass the flag don't crash.
+        _ = trainer_params.get("ray_head_sync_every")
         self.ray_pipeline_api: str = str(
             trainer_params.get("ray_pipeline_api", "manual") or "manual"
         )
@@ -498,7 +498,6 @@ class MonoForwardTrainer:
             torch.cuda.empty_cache()
         embeds = model_host.embeds
         layers: List[Any] = list(model_host.decoder.locals)
-        head = model_host.head
         criterion = model_host.criterion
         strategy = getattr(model_host, "strategy", None)
         num_layers = len(layers)
@@ -511,7 +510,6 @@ class MonoForwardTrainer:
         self._log(
             f"[MF] Pipelined training: num_layers={num_layers}, "
             f"max_steps={self.max_steps}, api={self.ray_pipeline_api}, "
-            f"head_sync_every={self.ray_head_sync_every}, "
             f"val_check_interval={self.val_check_interval}"
         )
 
@@ -588,14 +586,16 @@ class MonoForwardTrainer:
                 ).remote(
                     layer_idx=i,
                     layer=copy.deepcopy(layers[i]),
-                    head=copy.deepcopy(head),
                     criterion=copy.deepcopy(criterion),
+                    hidden_size=model_host.config.hidden_size,
+                    vocab_size=model_host.config.vocab_size,
                     strategy=copy.deepcopy(strategy) if strategy is not None else None,
                     optimizer_config=self.optimizer_config,
                     optimizer_wrappers=self.optimizer_wrappers,
                     warmup_steps=self.warmup_steps,
                     disable_schedule=self.disable_schedule,
                     num_layers=num_layers,
+                    accumulate_grad_batches=self.accumulate_grad_batches,
                 )
                 for i in range(num_layers)
             ]
@@ -721,7 +721,6 @@ class MonoForwardTrainer:
             "pipeline_in_flight_max": 0,
             "batches_started": 0,
             "completed_batches": 0,
-            "head_syncs_done": 0,
             "dataloader_exhausted": False,
             "num_tokens_total": 0,
             "avg_step_time_ema": None,
@@ -904,31 +903,32 @@ class MonoForwardTrainer:
                     f"layers=[{per_layer_str}]"
                 )
 
-            # Tokens are reported in BILLIONS, matching the convention
-            # in praxis/trainers/backpropagation.py (which divides its
-            # running token count by 1e9 before logging). The Research
-            # tab, the Terminal tab's tokens field, and any external
-            # chart consumer all expect the billions scale. We divide
-            # here once and reuse the value for both metrics.db and
-            # the LiveMetrics push below.
             num_tokens_billions = state["num_tokens_total"] / 1_000_000_000
 
-            if metrics_logger is not None:
+            # Only write to metrics.db at accumulation boundaries -
+            # one row per effective step, not per raw batch. This
+            # matches Lightning's ``global_step`` convention where the
+            # backprop MetricsLoggerCallback writes once per optimizer
+            # step, not once per micro-batch. The ``step`` key is the
+            # effective step number so the Research tab charts align
+            # with the backprop trainer's x-axis.
+            effective_step = state["completed_batches"] // self.accumulate_grad_batches
+            is_accum_boundary = (
+                state["completed_batches"] % self.accumulate_grad_batches == 0
+            )
+
+            if metrics_logger is not None and is_accum_boundary:
                 extras: Dict[str, Any] = {
                     "pipeline_in_flight": len(in_flight),
-                    "head_syncs_completed": state["head_syncs_done"],
                 }
                 for i, li_loss in layer_losses.items():
                     extras[f"layer_{i}_loss"] = float(li_loss)
-                # Final-layer softmax collapse (same metric the
-                # backprop trainer writes). Only meaningful when the
-                # last-layer actor computed it during this batch.
                 batch_collapse = state.get("last_softmax_collapse")
                 collapse_kwarg: Dict[str, Any] = {}
                 if batch_collapse is not None:
                     collapse_kwarg["softmax_collapse"] = float(batch_collapse)
                 metrics_logger.log(
-                    step=batch_idx,
+                    step=effective_step,
                     loss=float(avg_loss),
                     num_tokens=float(num_tokens_billions),
                     avg_step_time=float(state["avg_step_time_ema"]),
@@ -955,7 +955,7 @@ class MonoForwardTrainer:
                     for key, value in dyn.items():
                         flat_dynamics[f"layer_{li}_{key}"] = float(value)
                 try:
-                    dynamics_logger.log(step=batch_idx, dynamics=flat_dynamics)
+                    dynamics_logger.log(step=effective_step, dynamics=flat_dynamics)
                 except Exception as exc:  # pragma: no cover - defensive
                     self._log(f"[MF] dynamics logger failed: {exc}")
 
@@ -1032,26 +1032,6 @@ class MonoForwardTrainer:
             )
 
             if is_final_hop:
-                # Head sync at every ``ray_head_sync_every`` completed
-                # batch boundary. We do it here (not on layer-0 refill)
-                # so we always have a well-defined "batches completed"
-                # count - easier to reason about than "batches started".
-                # The sync fires at the very last batch boundary too,
-                # which is correct: it averages every actor's head into
-                # a single copy that the subsequent checkpoint save can
-                # use as a canonical "shared head" value.
-                if (
-                    self.ray_head_sync_every > 0
-                    and state["completed_batches"] % self.ray_head_sync_every == 0
-                ):
-                    self._log(
-                        f"[MF] Head sync #{state['head_syncs_done'] + 1}: "
-                        f"draining pipeline ({len(in_flight)} futures in flight)"
-                    )
-                    _drain_pipeline()
-                    self._sync_head(ray=ray, actors=actors)
-                    state["head_syncs_done"] += 1
-
                 # Periodic validation sweep. Uses a threshold check
                 # (``>=``) rather than modulo (``%``) because the
                 # head-sync drain above can process multiple batches
@@ -1102,8 +1082,7 @@ class MonoForwardTrainer:
             f"[MF] Pipeline finished: {state['completed_batches']} batches in "
             f"{total_wall:.1f}s, start={state['first_loss']}, "
             f"end={state['last_loss']}, "
-            f"max_pipeline_in_flight={state['pipeline_in_flight_max']}, "
-            f"head_syncs={state['head_syncs_done']}"
+            f"max_pipeline_in_flight={state['pipeline_in_flight_max']}"
         )
 
         return {
@@ -1114,7 +1093,6 @@ class MonoForwardTrainer:
             "loss_history": state["loss_history"],
             "per_layer_loss_history": state["per_layer_loss_history"],
             "pipeline_in_flight_max": state["pipeline_in_flight_max"],
-            "head_syncs_done": state["head_syncs_done"],
         }
 
     # ------------------------------------------------------------------
@@ -1179,40 +1157,6 @@ class MonoForwardTrainer:
     # head synchronization
     # ------------------------------------------------------------------
 
-    def _sync_head(self, ray: Any, actors: List[Any]) -> None:
-        """Average head weights across actors and broadcast back.
-
-        The caller must have already drained the pipeline via
-        ``_drain_pipeline`` before invoking this method - without a
-        clean drain, a batch could be halfway through the pipeline
-        when the head mutation happens, producing an inconsistent
-        forward pass (earlier layers would see the old head; later
-        layers would see the new one).
-
-        This method itself is pure gather + average + broadcast; it
-        does not touch ``in_flight`` or any loss bookkeeping.
-        """
-        head_states = self._safe_ray_get(
-            [actor.get_head_state.remote() for actor in actors], ray
-        )
-        if head_states is None:
-            return
-
-        averaged: Dict[str, torch.Tensor] = {}
-        keys = list(head_states[0].keys())
-        num_actors = len(head_states)
-        for key in keys:
-            stacked = torch.stack([hs[key] for hs in head_states], dim=0)
-            averaged[key] = stacked.mean(dim=0)
-
-        self._log(
-            f"[MF] Head sync: broadcasting averaged head ({len(keys)} tensors) "
-            f"to {num_actors} actor(s)"
-        )
-        self._safe_ray_get(
-            [actor.set_head_state.remote(averaged) for actor in actors], ray
-        )
-
     # ------------------------------------------------------------------
     # validation sweep
     # ------------------------------------------------------------------
@@ -1258,6 +1202,16 @@ class MonoForwardTrainer:
                 self._live_metrics._update_count += 1
             except Exception:
                 pass
+
+        # Switch all actors' optimizers to eval mode so
+        # ScheduleFreeWrapper exposes its internally-averaged
+        # parameters during validation. Restored to train mode
+        # by ``_restore_train_mode`` at every exit point.
+        import ray as _ray
+
+        self._safe_ray_get(
+            [actor.set_optimizer_eval.remote() for actor in actors], _ray
+        )
 
         val_loader_fn = getattr(datamodule, "val_dataloader", None)
         if val_loader_fn is None:
@@ -1386,13 +1340,25 @@ class MonoForwardTrainer:
         self._restore_train_mode()
 
     def _restore_train_mode(self) -> None:
-        """Switch the Terminal tab mode indicator back to "train".
+        """Restore training mode after validation.
 
-        Called at every exit point of ``_run_validation`` so the
-        dashboard never gets stuck showing "validation" after the
-        sweep ends. Mirrors ``TerminalInterface.on_validation_end``
-        under backprop.
+        Called at every exit point of ``_run_validation`` so:
+        1. The Terminal tab mode switches back to "train".
+        2. ScheduleFreeWrapper (if active) switches back to training
+           parameters (from the averaged eval parameters).
         """
+        # Restore optimizer train mode on all actors.
+        if self._actors is not None:
+            try:
+                import ray as _ray
+
+                self._safe_ray_get(
+                    [actor.set_optimizer_train.remote() for actor in self._actors],
+                    _ray,
+                )
+            except Exception:
+                pass
+
         if self._live_metrics is not None:
             try:
                 self._live_metrics.state.set_mode("train")
@@ -1947,12 +1913,13 @@ class MonoForwardTrainer:
     def _save_checkpoint(self, model_host: Any, actors: List[Any]) -> None:
         """Gather actor state and save a monolithic torch state_dict.
 
-        Phase 2 wrote actor 0's head as the canonical head copy. Phase 3
-        uses the averaged head produced by the last ``_sync_head`` call
-        implicitly - every actor's head is identical right after a head
-        sync. For checkpoints taken between sync boundaries, actor 0's
-        head is still the right choice because the drift between actors
-        over ``ray_head_sync_every`` batches is bounded by design.
+        Each layer's trained weights are gathered from their actor. The
+        last layer's projection matrix M_N is saved as the checkpoint's
+        output head (``model.head.lm_head.weight``) so the checkpoint
+        loads into a vanilla ``PraxisForCausalLM`` for inference. The
+        other layers' projections are training-only state and are not
+        persisted in the monolithic checkpoint (Phase 7 will add
+        per-layer projection save for MF checkpoint resume).
         """
         import ray
 
@@ -1967,14 +1934,28 @@ class MonoForwardTrainer:
         if layer_states is None:
             self._log("[MF] Checkpoint save aborted (actors unavailable)")
             return
-        head_state = self._safe_ray_get(actors[0].get_head_state.remote(), ray)
-        if head_state is None:
+        # Use the last layer's projection matrix as the checkpoint's
+        # output head. Each layer has its own independent projection
+        # M_i (per the paper), but the standard PraxisForCausalLM
+        # checkpoint format expects a single head. The last layer's
+        # projection is the natural choice since it sees the most
+        # refined hidden states (closest to what backprop's single
+        # head would see). This enables loading MF checkpoints into
+        # vanilla PraxisForCausalLM for inference.
+        last_projection_state = self._safe_ray_get(
+            actors[-1].get_projection_state.remote(), ray
+        )
+        if last_projection_state is None:
             self._log("[MF] Checkpoint save aborted (actors unavailable)")
             return
 
         for i, layer_state in enumerate(layer_states):
             model_host.decoder.locals[i].load_state_dict(layer_state)
-        model_host.head.load_state_dict(head_state)
+        # Map projection matrix weight → head.lm_head.weight for
+        # checkpoint compat. The projection's weight has the same
+        # shape as ForwardHead's lm_head (vocab_size × hidden_size).
+        head_mapped = {"lm_head." + k: v for k, v in last_projection_state.items()}
+        model_host.head.load_state_dict(head_mapped)
 
         os.makedirs(self.cache_dir, exist_ok=True)
         checkpoint_path = os.path.join(self.cache_dir, "mono_forward.pt")

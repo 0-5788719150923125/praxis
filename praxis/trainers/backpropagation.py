@@ -410,6 +410,13 @@ class BackpropagationTrainer(LightningModule):
 
         return input_ids, rewards, token_weights, False
 
+    def on_validation_start(self):
+        super().on_validation_start()
+        # ScheduleFreeWrapper uses eval mode to expose its internally
+        # averaged parameters, giving more stable validation metrics.
+        if hasattr(self.optimizer, "eval"):
+            self.optimizer.eval()
+
     def validation_step(self, batch, batch_idx):
         # Check if we should stop early
         if hasattr(self.trainer, "should_stop") and self.trainer.should_stop:
@@ -462,6 +469,9 @@ class BackpropagationTrainer(LightningModule):
     def on_validation_end(self):
         super().on_validation_end()
         self.last_train_step_time = time.monotonic()
+        # Restore training mode for ScheduleFreeWrapper.
+        if hasattr(self.optimizer, "train"):
+            self.optimizer.train()
 
         # Clear CUDA cache after validation to free memory from logits and intermediate tensors
         if torch.cuda.is_available():

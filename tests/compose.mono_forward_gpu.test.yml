@@ -1,8 +1,8 @@
+include:
+  - compose.mono_forward.test.yml
+
 services:
   head:
-    extends:
-      file: ./compose.mono_forward.test.yml
-      service: head
     runtime: nvidia
     stdin_open: true
     tty: true
@@ -14,9 +14,6 @@ services:
       DEBIAN_FRONTEND: noninteractive
 
   worker:
-    extends:
-      file: ./compose.mono_forward.test.yml
-      service: worker
     runtime: nvidia
     stdin_open: true
     tty: true

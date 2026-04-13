@@ -10,5 +10,11 @@ Tracked work items for the Praxis research framework. These range from near-term
 - [x] **Relocate web assets under `praxis/web/`**
   Moved `src/web/` (JS/CSS sources + build.py), `templates/`, and `static/` image assets into `praxis/web/`. Renamed the package from `praxis.api` to `praxis.web` since it serves both the API and the dashboard frontend. The build script now lives at `praxis/web/src/build.py` and outputs to `praxis/web/static/`.
 
+- [ ] **Multi-path `--data-path` support in experiment YAMLs**
+  Allow experiment YAML files to specify `data_path` as a list of strings (e.g. `data_path: [/data/a, /data/b]`). The CLI and `MultiDirectoryDataset` already handle multiple paths, but the experiment loader needs to normalize scalar values to a list, define merge-vs-replace semantics when both YAML and CLI provide paths, and the `launch` script needs to discover YAML-sourced paths so it can create the corresponding Docker volume mounts.
+
+- [ ] **Fix metrics loading performance for long runs**
+  As training progresses, the `/api/metrics` endpoint gets progressively slower because it re-reads and re-downsamples (LTTB) the full metrics history from SQLite on every request. Investigate server-side caching of the downsampled response (invalidated on new writes), pre-materialized summary tables, or incremental approaches where only new rows since the last request need processing. The frontend's ETag/304 caching helps with repeated identical requests but does nothing for the first fetch after new data arrives.
+
 - [ ] **Finish retraining tokenizers at varied sizes**
   Complete the in-progress work of retraining the project's tokenizers across a range of vocabulary sizes so each model scale has a tokenizer that actually fits it, rather than reusing a single vocab across small, medium, and large configurations. Varied sizes let us study the interaction between vocab size, embedding parameter count, and downstream loss without confounding it against the tokenizer's training corpus. Tracked in [0-5788719150923125/praxis#50](https://github.com/0-5788719150923125/praxis/issues/50).

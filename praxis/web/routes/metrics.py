@@ -94,9 +94,18 @@ def get_metrics():
             if not metrics_file.exists():
                 continue
 
-            # Calculate ETag component
+            # Calculate ETag component. Include the WAL file's mtime
+            # if it exists, because in WAL mode new writes land in
+            # the WAL before the main .db file's mtime/size change.
+            # Without this, the ETag stays stale and the browser's
+            # If-None-Match cache returns 304 even though there's
+            # new data waiting in the WAL.
             stat = metrics_file.stat()
-            etag_parts.append(f"{run_hash}:{stat.st_mtime}:{stat.st_size}")
+            wal_file = metrics_file.parent / (metrics_file.name + "-wal")
+            wal_mtime = ""
+            if wal_file.exists():
+                wal_mtime = f":{wal_file.stat().st_mtime}"
+            etag_parts.append(f"{run_hash}:{stat.st_mtime}:{stat.st_size}{wal_mtime}")
 
             # Read and parse metrics with SQL-level sampling for efficiency
             # Pass limit * 3 to give LTTB algorithm enough data points to work with
