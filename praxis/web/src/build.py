@@ -12,9 +12,9 @@ import shutil
 import time
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent
-SRC_DIR = PROJECT_ROOT / "src" / "web"
-STATIC_DIR = PROJECT_ROOT / "static"
+API_DIR = Path(__file__).parent.parent
+SRC_DIR = API_DIR / "src"
+STATIC_DIR = API_DIR / "static"
 
 
 def build_dev():
@@ -124,7 +124,7 @@ def build_css():
 
     with output.open("w", encoding="utf-8") as out:
         out.write("/* Praxis Web - Compiled Styles */\n")
-        out.write("/* Auto-generated - edit src/web/css/ instead */\n\n")
+        out.write("/* Auto-generated - edit praxis/web/src/css/ instead */\n\n")
 
         for file in files:
             if not file.exists():
@@ -180,7 +180,7 @@ def watch_and_build(mode="dev"):
     observer.schedule(handler, str(SRC_DIR), recursive=True)
     observer.start()
 
-    print(f"\n👀 Watching src/web/ for changes ({mode} mode)...")
+    print(f"\n👀 Watching praxis/web/src/ for changes ({mode} mode)...")
     print("   Press Ctrl+C to stop\n")
 
     try:

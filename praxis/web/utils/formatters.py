@@ -4,7 +4,7 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
-api_logger = logging.getLogger("praxis.api")
+api_logger = logging.getLogger("praxis.web")
 
 
 def generate_from_messages(

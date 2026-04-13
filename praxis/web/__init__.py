@@ -1,6 +1,7 @@
-"""Praxis API module.
+"""Praxis web module.
 
-This module provides a clean, modular API server implementation.
+This module provides a clean, modular web server implementation
+for both the API and the dashboard frontend.
 """
 
 from .app import api_logger, app, socketio, werkzeug_logger

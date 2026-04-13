@@ -38,6 +38,6 @@ CLAUDE.md
 GEMINI.md
 
 # Static - ignore build artifacts
-static
-!static/*.png
-!static/*.webp
+praxis/web/static
+!praxis/web/static/*.png
+!praxis/web/static/*.webp

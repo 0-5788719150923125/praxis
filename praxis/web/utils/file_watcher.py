@@ -8,6 +8,13 @@ from typing import Optional
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
+# Resolve paths relative to the api package, not CWD
+_API_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+_TEMPLATES_DIR = os.path.join(_API_DIR, "templates")
+_STATIC_DIR = os.path.join(_API_DIR, "static")
+_SRC_DIR = os.path.join(_API_DIR, "src")
+_BUILD_SCRIPT = os.path.join(_SRC_DIR, "build.py")
+
 
 class TemplateChangeHandler(FileSystemEventHandler):
     """Watch for changes in template and static files and emit live-reload events."""
@@ -25,13 +32,9 @@ class TemplateChangeHandler(FileSystemEventHandler):
     def on_modified(self, event):
         """Handle file modification events."""
         if not event.is_directory:
-            templates_dir = os.path.abspath("templates")
-            static_dir = os.path.abspath("static")
-            src_web_dir = os.path.abspath("src/web")
-
             # Check if the file is in templates or static directory
-            if event.src_path.startswith(templates_dir) or event.src_path.startswith(
-                static_dir
+            if event.src_path.startswith(_TEMPLATES_DIR) or event.src_path.startswith(
+                _STATIC_DIR
             ):
                 # Emit reload event to all connected clients
                 try:
@@ -39,15 +42,14 @@ class TemplateChangeHandler(FileSystemEventHandler):
                 except Exception as e:
                     print(f"Error sending reload signal: {str(e)}")
 
-            # Check if the file is in src/web directory
-            elif event.src_path.startswith(src_web_dir):
+            # Check if the file is in src directory
+            elif event.src_path.startswith(_SRC_DIR):
                 # Rebuild web frontend when source files change
                 try:
                     print(f"[WEB] Detected change in {event.src_path}, rebuilding...")
-                    build_script = Path("src/web/build.py")
-                    if build_script.exists():
+                    if os.path.exists(_BUILD_SCRIPT):
                         result = subprocess.run(
-                            ["python", str(build_script)],
+                            ["python", _BUILD_SCRIPT],
                             capture_output=True,
                             text=True,
                             timeout=30,
@@ -73,9 +75,9 @@ class TemplateWatcher:
             namespace: WebSocket namespace for live reload
         """
         self.observer: Optional[Observer] = None
-        self.template_dir = os.path.abspath("templates")
-        self.static_dir = os.path.abspath("static")
-        self.src_web_dir = os.path.abspath("src/web")
+        self.template_dir = _TEMPLATES_DIR
+        self.static_dir = _STATIC_DIR
+        self.src_web_dir = _SRC_DIR
         self.socketio = socketio
         self.namespace = namespace
 
@@ -91,7 +93,7 @@ class TemplateWatcher:
             # Only watch src/web if it exists
             if os.path.exists(self.src_web_dir):
                 self.observer.schedule(event_handler, self.src_web_dir, recursive=True)
-                print("[WEB] Auto-rebuild enabled: watching src/web/ for changes")
+                print("[WEB] Auto-rebuild enabled: watching praxis/web/src/ for changes")
 
             self.observer.start()
         except Exception as e:

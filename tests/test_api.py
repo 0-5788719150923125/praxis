@@ -14,7 +14,7 @@ import requests
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from praxis.api import APIServer, app
+from praxis.web import APIServer, app
 
 
 class MockGenerator:
@@ -319,7 +319,7 @@ class TestMiddleware:
 
     def test_custom_middleware_registration(self):
         """Test custom middleware can be registered."""
-        from praxis.api import register_request_middleware, register_response_header
+        from praxis.web import register_request_middleware, register_response_header
 
         # Register a test header
         register_response_header("X-Test-Header", "test-value")
@@ -333,7 +333,7 @@ class TestMiddleware:
         register_request_middleware(test_middleware)
 
         # Headers should be registered
-        from praxis.api.middleware import get_response_headers
+        from praxis.web.middleware import get_response_headers
 
         headers = get_response_headers()
         assert ("X-Test-Header", "test-value") in headers

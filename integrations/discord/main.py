@@ -196,7 +196,7 @@ class DiscordBot:
 
     def _call_generator(self, messages: list) -> Optional[str]:
         """Call the generator synchronously (runs in thread pool)."""
-        from praxis.api.utils import generate_from_messages
+        from praxis.web.utils import generate_from_messages
 
         try:
             result = generate_from_messages(

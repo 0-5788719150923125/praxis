@@ -131,7 +131,7 @@ def _maybe_swap_inference_generator(trainer, tokenizer, api_server):
     if not isinstance(trainer, MonoForwardTrainer):
         return
 
-    from praxis.api.app import app
+    from praxis.web.app import app
     from praxis.generation import MonoForwardGenerator
 
     mf_generator = MonoForwardGenerator(trainer=trainer, tokenizer=tokenizer)
@@ -512,13 +512,13 @@ def main():
                 dashboard = None
 
         # Force reload of api integration to pick up any recent changes
-        from praxis import api
+        from praxis import web
 
-        importlib.reload(api)
-        from praxis.api import APIServer
+        importlib.reload(web)
+        from praxis.web import APIServer
 
         # Build web frontend before starting API server
-        from src.web.build import build_dev
+        from praxis.web.src.build import build_dev
 
         print("[WEB] Building frontend...")
         build_dev()

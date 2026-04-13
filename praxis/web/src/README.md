@@ -15,7 +15,7 @@ Events → Update State → render(state) → DOM
 ## Structure
 
 ```
-src/web/
+praxis/web/src/
 ├── js/
 │   ├── state.js          # Single source of truth
 │   ├── components.js     # Pure functions: data → HTML
@@ -53,9 +53,9 @@ No manual build needed.
 ### Manual
 
 ```bash
-python src/web/build.py          # Build once
-python src/web/build.py --watch  # Watch mode
-python src/web/build.py --prod   # Production (concatenated)
+python praxis/web/src/build.py          # Build once
+python praxis/web/src/build.py --watch  # Watch mode
+python praxis/web/src/build.py --prod   # Production (concatenated)
 ```
 
 **No bundler needed!** Modern browsers support ES6 modules natively.
@@ -78,7 +78,7 @@ python src/web/build.py --prod   # Production (concatenated)
 
 ```bash
 ./launch --dev              # Auto-builds on startup
-# Edit src/web/js/state.js
+# Edit praxis/web/src/js/state.js
 ./launch --dev              # Rebuilds on next startup
 ```
 
@@ -86,7 +86,7 @@ python src/web/build.py --prod   # Production (concatenated)
 
 ```bash
 # Terminal 1
-python src/web/build.py --watch
+python praxis/web/src/build.py --watch
 
 # Terminal 2
 ./launch --dev

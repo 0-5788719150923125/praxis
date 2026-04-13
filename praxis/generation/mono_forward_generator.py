@@ -61,7 +61,7 @@ import torch
 
 from praxis.generation.request import GenerationRequest
 
-_api_logger = logging.getLogger("praxis.api")
+_api_logger = logging.getLogger("praxis.web")
 
 
 class MonoForwardGenerator:
@@ -72,7 +72,7 @@ class MonoForwardGenerator:
     trainer (which exposes ``generate(...)``) and the tokenizer (which
     exposes ``encode`` / ``decode`` / ``apply_chat_template``).
 
-    The Flask routes in ``praxis/api/routes/generation.py`` only call
+    The Flask routes in ``praxis/web/routes/generation.py`` only call
     ``request_generation`` and ``get_result``, in a simple
     submit-then-poll loop. This class implements both methods with
     synchronous-under-the-hood semantics: the submit call actually
@@ -284,7 +284,7 @@ class MonoForwardGenerator:
 
         Chat message lists are folded via ``apply_chat_template`` (same
         behaviour the backprop path uses in
-        :func:`praxis.api.utils.formatters.generate_from_messages`); a
+        :func:`praxis.web.utils.formatters.generate_from_messages`); a
         failing template call falls back to a simple ``role: content``
         join so the caller always gets *something*.
         """

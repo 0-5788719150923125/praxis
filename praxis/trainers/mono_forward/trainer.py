@@ -985,7 +985,10 @@ class MonoForwardTrainer:
                 ready, _ = ray.wait(list(in_flight.keys()), num_returns=1)
                 future = ready[0]
                 meta = in_flight.pop(future)
-                result = ray.get(future)
+                result = self._safe_ray_get(future, ray)
+                if result is None:
+                    in_flight.clear()
+                    return
                 _handle_completion(
                     layer_idx=meta["layer_idx"],
                     batch_idx=meta["batch_idx"],
@@ -1007,10 +1010,16 @@ class MonoForwardTrainer:
             )
 
             # Block until any one future in the pipeline has a result.
+            # ``_safe_ray_get`` catches shutdown errors (actor death,
+            # cluster teardown, Ctrl+C) and returns None so we exit
+            # the loop cleanly instead of crashing.
             ready, _ = ray.wait(list(in_flight.keys()), num_returns=1)
             future = ready[0]
             meta = in_flight.pop(future)
-            result = ray.get(future)
+            result = self._safe_ray_get(future, ray)
+            if result is None:
+                in_flight.clear()
+                break
 
             is_final_hop = _handle_completion(
                 layer_idx=meta["layer_idx"],
@@ -1139,6 +1148,34 @@ class MonoForwardTrainer:
         )
 
     # ------------------------------------------------------------------
+    # Ray shutdown safety
+    # ------------------------------------------------------------------
+
+    _RAY_SHUTDOWN_ERRORS: tuple = ()  # populated lazily below
+
+    def _safe_ray_get(self, refs, ray):
+        """``ray.get`` wrapper that returns ``None`` on shutdown errors.
+
+        Every ``ray.get`` in the trainer goes through this so a Ctrl+C
+        or worker death during any phase (head sync, validation,
+        checkpoint save, inference) exits cleanly instead of crashing
+        with a C++ stack trace.
+        """
+        if not self._RAY_SHUTDOWN_ERRORS:
+            # Populate once; avoids import at module level.
+            MonoForwardTrainer._RAY_SHUTDOWN_ERRORS = (
+                ray.exceptions.RayActorError,
+                ray.exceptions.ActorUnavailableError,
+                ray.exceptions.RayError,
+                KeyboardInterrupt,
+            )
+        try:
+            return ray.get(refs)
+        except self._RAY_SHUTDOWN_ERRORS:
+            self._log("[MF] Shutting down (actor lost or interrupted)")
+            return None
+
+    # ------------------------------------------------------------------
     # head synchronization
     # ------------------------------------------------------------------
 
@@ -1155,14 +1192,16 @@ class MonoForwardTrainer:
         This method itself is pure gather + average + broadcast; it
         does not touch ``in_flight`` or any loss bookkeeping.
         """
-        head_states = ray.get([actor.get_head_state.remote() for actor in actors])
+        head_states = self._safe_ray_get(
+            [actor.get_head_state.remote() for actor in actors], ray
+        )
+        if head_states is None:
+            return
+
         averaged: Dict[str, torch.Tensor] = {}
         keys = list(head_states[0].keys())
         num_actors = len(head_states)
         for key in keys:
-            # Stack to a [num_actors, ...] tensor and mean along dim 0.
-            # Using .stack is clearer than a manual running sum and
-            # tolerates CPU/GPU placement transparently.
             stacked = torch.stack([hs[key] for hs in head_states], dim=0)
             averaged[key] = stacked.mean(dim=0)
 
@@ -1170,7 +1209,9 @@ class MonoForwardTrainer:
             f"[MF] Head sync: broadcasting averaged head ({len(keys)} tensors) "
             f"to {num_actors} actor(s)"
         )
-        ray.get([actor.set_head_state.remote(averaged) for actor in actors])
+        self._safe_ray_get(
+            [actor.set_head_state.remote(averaged) for actor in actors], ray
+        )
 
     # ------------------------------------------------------------------
     # validation sweep
@@ -1275,14 +1316,18 @@ class MonoForwardTrainer:
             last_loss: Optional[float] = None
             for layer_idx in range(num_layers):
                 try:
-                    result = ray.get(
+                    result = self._safe_ray_get(
                         actors[layer_idx].val_batch.remote(
                             activations,
                             labels,
                             input_ids,
                             block_ids,
-                        )
+                        ),
+                        ray,
                     )
+                    if result is None:
+                        self._restore_train_mode()
+                        return
                 except Exception as exc:  # pragma: no cover - defensive
                     self._log(
                         f"[MF] validation: actor {layer_idx} failed: {exc}"
@@ -1916,8 +1961,16 @@ class MonoForwardTrainer:
             return
 
         self._log("[MF] Gathering actor state for checkpoint")
-        layer_states = ray.get([actor.get_layer_state.remote() for actor in actors])
-        head_state = ray.get(actors[0].get_head_state.remote())
+        layer_states = self._safe_ray_get(
+            [actor.get_layer_state.remote() for actor in actors], ray
+        )
+        if layer_states is None:
+            self._log("[MF] Checkpoint save aborted (actors unavailable)")
+            return
+        head_state = self._safe_ray_get(actors[0].get_head_state.remote(), ray)
+        if head_state is None:
+            self._log("[MF] Checkpoint save aborted (actors unavailable)")
+            return
 
         for i, layer_state in enumerate(layer_states):
             model_host.decoder.locals[i].load_state_dict(layer_state)

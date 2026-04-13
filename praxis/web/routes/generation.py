@@ -8,7 +8,7 @@ from flask import Blueprint, current_app, jsonify, request
 from ..utils import generate_from_messages
 
 generation_bp = Blueprint("generation", __name__)
-api_logger = logging.getLogger("praxis.api")
+api_logger = logging.getLogger("praxis.web")
 
 
 @generation_bp.route("/messages/", methods=["POST", "OPTIONS"])

@@ -18,7 +18,7 @@ logging.basicConfig(
 )
 
 # Create loggers
-api_logger = logging.getLogger("praxis.api")
+api_logger = logging.getLogger("praxis.web")
 api_logger.setLevel(logging.WARNING)
 
 werkzeug_logger = logging.getLogger("werkzeug")
@@ -33,11 +33,11 @@ logging.getLogger("engineio.server").setLevel(logging.ERROR)
 # Create Flask app with proper template and static paths
 import os
 
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+_api_dir = os.path.dirname(__file__)
 app = Flask(
     __name__,
-    template_folder=os.path.join(project_root, "templates"),
-    static_folder=os.path.join(project_root, "static"),
+    template_folder=os.path.join(_api_dir, "templates"),
+    static_folder=os.path.join(_api_dir, "static"),
 )
 app.debug = False
 
