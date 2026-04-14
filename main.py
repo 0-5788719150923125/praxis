@@ -27,6 +27,7 @@ from datetime import datetime
 
 # Third-party imports
 import torch
+from lightning.pytorch.callbacks import ModelCheckpoint
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
 from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
 
@@ -41,7 +42,6 @@ from praxis.callbacks import (
     PeriodicEvaluation,
     SignalHandlerCallback,
     TerminalInterface,
-    TimeBasedCheckpoint,
     create_printing_progress_bar,
 )
 from praxis.cli import (
@@ -335,6 +335,7 @@ def main():
     master_addr = processed_args.get("master_addr", "localhost")
     master_port = processed_args.get("master_port", 29500)
     no_checkpoints = processed_args.get("no_checkpoints", False)
+    save_every = int(processed_args.get("save_every", 256))
 
     # Set distributed env vars before Lightning initializes the process group.
     # We only set them when num_nodes > 1 to avoid interfering with single-node runs.
@@ -456,7 +457,8 @@ def main():
     )
 
     # Define checkpointing behavior
-    checkpoint_callback = TimeBasedCheckpoint(
+    checkpoint_callback = ModelCheckpoint(
+        every_n_train_steps=save_every,
         save_top_k=3,
         save_last="link",
         monitor="batch",
@@ -464,7 +466,6 @@ def main():
         dirpath=os.path.join(cache_dir, "model"),
         filename="model-{batch}",
         enable_version_counter=False,
-        save_interval=3600,
     )
 
     # Bootstrap the model and trainer
@@ -797,6 +798,7 @@ def main():
         # internally using ``accumulate_grad_batches``.
         val_every=val_every,
         dynamics_log_freq=10,
+        save_every=save_every,
     )
 
     # Phase 6: if the trainer is Mono-Forward, swap the API server's

@@ -22,7 +22,6 @@ try:
         MetricsLoggerCallback,
         PeriodicEvaluation,
         TerminalInterface,
-        TimeBasedCheckpoint,
     )
     from praxis.callbacks.lightning.signal_handler import SignalHandlerCallback
 
@@ -78,7 +77,6 @@ if _HAS_LIGHTNING:
             "MetricsLoggerCallback",
             "PeriodicEvaluation",
             "TerminalInterface",
-            "TimeBasedCheckpoint",
             "SignalHandlerCallback",
         ]
     )

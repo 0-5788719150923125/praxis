@@ -295,8 +295,8 @@ class MonoForwardTrainer:
         self.byte_latent: bool = bool(
             trainer_params.get("byte_latent") or False
         )
-        self.checkpoint_every_seconds: float = float(
-            trainer_params.get("checkpoint_every_seconds", 3600) or 3600
+        self.save_every: int = int(
+            trainer_params.get("save_every", 256) or 256
         )
         self._live_metrics: Optional[Any] = None
         self._live_metrics_ema_loss: Optional[float] = None
@@ -805,7 +805,7 @@ class MonoForwardTrainer:
             "avg_step_time_ema": None,
             "last_softmax_collapse": None,
             "last_val_step": 0,
-            "last_checkpoint_time": time.monotonic(),
+            "last_checkpoint_step": restored_batches,
         }
         max_in_flight = num_layers  # pipeline steady-state capacity
         wall_clock_start = time.monotonic()
@@ -1052,12 +1052,12 @@ class MonoForwardTrainer:
                 completed_batches=state["completed_batches"],
             )
 
-            # Periodic mid-training checkpoint. Only fires when
-            # model_host is available (i.e. the caller passed it).
+            # Periodic mid-training checkpoint every ``save_every``
+            # batches. Step-based to avoid drift under distribution.
             if model_host is not None:
-                now_ckpt = time.monotonic()
-                if now_ckpt - state["last_checkpoint_time"] >= self.checkpoint_every_seconds:
-                    state["last_checkpoint_time"] = now_ckpt
+                batches_since = state["completed_batches"] - state["last_checkpoint_step"]
+                if batches_since >= self.save_every:
+                    state["last_checkpoint_step"] = state["completed_batches"]
                     self._save_checkpoint(
                         model_host,
                         actors,
@@ -2254,6 +2254,4 @@ class MonoForwardTrainer:
         raise NotImplementedError(
             "mono_forward.predict is not implemented - inference uses "
             "the standard PraxisForCausalLM.forward path (decision D6)."
-        )
-        )
         )
