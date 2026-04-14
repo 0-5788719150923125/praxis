@@ -287,7 +287,12 @@ def test_fit_reduces_loss_and_checkpoint_roundtrips(tmp_path):
         trained_logits = model(input_ids=probe).logits.detach().clone()
 
     reloaded = PraxisForCausalLM(_mf_config(num_layers=2))
-    state = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    # Structured checkpoint format: model weights live under "model_state_dict".
+    assert "model_state_dict" in checkpoint, "expected structured checkpoint format"
+    assert "completed_batches" in checkpoint
+    assert "projection_states" in checkpoint
+    state = checkpoint["model_state_dict"]
     _missing, unexpected = reloaded.load_state_dict(state, strict=False)
     assert not unexpected, f"unexpected keys in MF checkpoint: {unexpected}"
 

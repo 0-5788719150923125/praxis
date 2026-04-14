@@ -295,6 +295,9 @@ class MonoForwardTrainer:
         self.byte_latent: bool = bool(
             trainer_params.get("byte_latent") or False
         )
+        self.checkpoint_every_seconds: float = float(
+            trainer_params.get("checkpoint_every_seconds", 3600) or 3600
+        )
         self._live_metrics: Optional[Any] = None
         self._live_metrics_ema_loss: Optional[float] = None
 
@@ -350,6 +353,10 @@ class MonoForwardTrainer:
         self._actors: Optional[List[Any]] = None
         self._embeds: Optional[torch.nn.Module] = None
         self._config: Optional[Any] = None
+        # Shutdown flag. Signal handlers set this to True so the
+        # pipeline loop can break promptly instead of waiting for
+        # actor-death detection via ray.get timeouts.
+        self._shutdown_requested = False
 
     # ------------------------------------------------------------------
     # validation
@@ -464,15 +471,39 @@ class MonoForwardTrainer:
     ) -> Dict[str, Any]:
         """Train ``model`` against ``datamodule`` using pipelined MF via Ray.
 
-        ``ckpt_path`` and ``weights_only`` are accepted for signature
-        compatibility with the backpropagation path in ``main.py`` but
-        are not used in Phase 3 (checkpoint resume is a Phase 4+ concern).
+        When ``ckpt_path`` points to an existing checkpoint, layer
+        weights, per-actor projection/optimizer/scheduler state,
+        training counters, and datamodule positions are restored so
+        training resumes where it left off. ``weights_only`` is
+        accepted for signature compatibility but not used (MF
+        checkpoints always load with ``weights_only=False``).
+
         Returns a small summary dict for callers that want to introspect
         the run.
         """
+        import signal
+
         import ray
 
         from praxis.trainers.mono_forward.actor import LayerActor
+
+        # Install a signal handler so SIGINT/SIGTERM sets the shutdown
+        # flag instead of raising KeyboardInterrupt at an arbitrary
+        # point. The pipeline loop checks ``_shutdown_requested`` each
+        # tick and breaks cleanly, giving the finally block a chance to
+        # save a checkpoint before exit.
+        self._shutdown_requested = False
+        prev_sigint = signal.getsignal(signal.SIGINT)
+        prev_sigterm = signal.getsignal(signal.SIGTERM)
+
+        def _shutdown_handler(signum, frame):
+            self._shutdown_requested = True
+            self._log(
+                f"[MF] Received signal {signum}, requesting graceful shutdown"
+            )
+
+        signal.signal(signal.SIGINT, _shutdown_handler)
+        signal.signal(signal.SIGTERM, _shutdown_handler)
 
         self._validate_model(model)
 
@@ -611,6 +642,16 @@ class MonoForwardTrainer:
             self._embeds = embeds
             self._config = model_host.config
 
+            # Load checkpoint into actors if resuming.
+            restored = {"completed_batches": 0, "num_tokens_total": 0}
+            if ckpt_path is not None:
+                restored = self._load_checkpoint(
+                    ckpt_path=ckpt_path,
+                    actors=actors,
+                    num_layers=num_layers,
+                    datamodule=datamodule,
+                )
+
             if self.ray_pipeline_api == "manual":
                 result = self._run_manual_pipeline(
                     ray=ray,
@@ -621,6 +662,9 @@ class MonoForwardTrainer:
                     num_layers=num_layers,
                     metrics_logger=metrics_logger,
                     dynamics_logger=dynamics_logger,
+                    model_host=model_host,
+                    restored_batches=restored["completed_batches"],
+                    restored_tokens=restored["num_tokens_total"],
                 )
             else:  # "compiled"
                 result = self._run_compiled_pipeline(
@@ -632,8 +676,19 @@ class MonoForwardTrainer:
                     metrics_logger=metrics_logger,
                 )
 
-            if result["completed_batches"] > 0:
-                self._save_checkpoint(model_host, actors)
+            # Save a final checkpoint unless the pipeline exited due
+            # to shutdown or actor death - in that case the actors'
+            # CUDA contexts may be poisoned and gathering state would
+            # just produce more errors. Periodic mid-training saves
+            # ensure we still have a recent checkpoint.
+            if result["completed_batches"] > 0 and not self._shutdown_requested:
+                self._save_checkpoint(
+                    model_host,
+                    actors,
+                    completed_batches=result["completed_batches"],
+                    num_tokens_total=result.get("num_tokens_total", 0),
+                    datamodule=datamodule,
+                )
 
             return result
 
@@ -641,6 +696,10 @@ class MonoForwardTrainer:
             self._actors = None
             self._embeds = None
             self._config = None
+            # Restore the previous signal handlers so callers (main.py)
+            # get their own handlers back after fit() returns.
+            signal.signal(signal.SIGINT, prev_sigint)
+            signal.signal(signal.SIGTERM, prev_sigterm)
             if metrics_logger is not None:
                 try:
                     metrics_logger.close()
@@ -656,8 +715,25 @@ class MonoForwardTrainer:
                     ray.kill(actor)
                 except Exception:
                     pass
-            ray.shutdown()
-            self._log("[MF] Ray shutdown complete")
+            # ray.shutdown() can deadlock when Arrow/Parquet threads
+            # try to acquire the GIL during pthread_exit (common when
+            # a compose worker container is stopped mid-training). Run
+            # it in a daemon thread with a timeout so the process can
+            # exit cleanly even if Ray's internal cleanup hangs.
+            import threading
+
+            shutdown_thread = threading.Thread(
+                target=ray.shutdown, daemon=True
+            )
+            shutdown_thread.start()
+            shutdown_thread.join(timeout=10)
+            if shutdown_thread.is_alive():
+                self._log(
+                    "[MF] Ray shutdown timed out after 10s, "
+                    "forcing exit"
+                )
+            else:
+                self._log("[MF] Ray shutdown complete")
 
     # ------------------------------------------------------------------
     # manual pipeline driver
@@ -673,6 +749,9 @@ class MonoForwardTrainer:
         num_layers: int,
         metrics_logger: Optional[Any],
         dynamics_logger: Optional[Any] = None,
+        model_host: Any = None,
+        restored_batches: int = 0,
+        restored_tokens: int = 0,
     ) -> Dict[str, Any]:
         """Drive the pipeline via ``ray.wait`` on in-flight futures.
 
@@ -719,13 +798,14 @@ class MonoForwardTrainer:
             "loss_history": [],
             "per_layer_loss_history": {i: [] for i in range(num_layers)},
             "pipeline_in_flight_max": 0,
-            "batches_started": 0,
-            "completed_batches": 0,
+            "batches_started": restored_batches,
+            "completed_batches": restored_batches,
             "dataloader_exhausted": False,
-            "num_tokens_total": 0,
+            "num_tokens_total": restored_tokens,
             "avg_step_time_ema": None,
             "last_softmax_collapse": None,
             "last_val_step": 0,
+            "last_checkpoint_time": time.monotonic(),
         }
         max_in_flight = num_layers  # pipeline steady-state capacity
         wall_clock_start = time.monotonic()
@@ -756,6 +836,7 @@ class MonoForwardTrainer:
                     or state["batches_started"] < self.max_steps
                 )
                 and not state["dataloader_exhausted"]
+                and not self._shutdown_requested
             ):
                 try:
                     batch = next(dataloader_iter)
@@ -971,6 +1052,20 @@ class MonoForwardTrainer:
                 completed_batches=state["completed_batches"],
             )
 
+            # Periodic mid-training checkpoint. Only fires when
+            # model_host is available (i.e. the caller passed it).
+            if model_host is not None:
+                now_ckpt = time.monotonic()
+                if now_ckpt - state["last_checkpoint_time"] >= self.checkpoint_every_seconds:
+                    state["last_checkpoint_time"] = now_ckpt
+                    self._save_checkpoint(
+                        model_host,
+                        actors,
+                        completed_batches=state["completed_batches"],
+                        num_tokens_total=state["num_tokens_total"],
+                        datamodule=datamodule,
+                    )
+
             return True
 
         def _drain_pipeline() -> None:
@@ -1005,6 +1100,12 @@ class MonoForwardTrainer:
         _refill_layer0()
 
         while in_flight:
+            # Check for graceful shutdown request (SIGINT/SIGTERM).
+            if self._shutdown_requested:
+                self._log("[MF] Shutdown requested, draining pipeline")
+                in_flight.clear()
+                break
+
             state["pipeline_in_flight_max"] = max(
                 state["pipeline_in_flight_max"], len(in_flight)
             )
@@ -1088,6 +1189,7 @@ class MonoForwardTrainer:
         return {
             "steps": state["completed_batches"],
             "completed_batches": state["completed_batches"],
+            "num_tokens_total": state["num_tokens_total"],
             "first_loss": state["first_loss"],
             "final_loss": state["last_loss"],
             "loss_history": state["loss_history"],
@@ -1801,7 +1903,7 @@ class MonoForwardTrainer:
         # reset fired (for optional logging).
         try:
             decoded = self.tokenizer.decode(
-                full_ids[0].tolist(), skip_special_tokens=True
+                full_ids[0].tolist(), skip_special_tokens=False
             )
         except Exception as exc:  # pragma: no cover - defensive
             print(
@@ -1910,16 +2012,162 @@ class MonoForwardTrainer:
     # checkpointing
     # ------------------------------------------------------------------
 
-    def _save_checkpoint(self, model_host: Any, actors: List[Any]) -> None:
-        """Gather actor state and save a monolithic torch state_dict.
+    def _load_checkpoint(
+        self,
+        ckpt_path: str,
+        actors: List[Any],
+        num_layers: int,
+        datamodule: Any = None,
+    ) -> Dict[str, Any]:
+        """Load a mono-forward checkpoint and distribute state to actors.
 
-        Each layer's trained weights are gathered from their actor. The
-        last layer's projection matrix M_N is saved as the checkpoint's
-        output head (``model.head.lm_head.weight``) so the checkpoint
-        loads into a vanilla ``PraxisForCausalLM`` for inference. The
-        other layers' projections are training-only state and are not
-        persisted in the monolithic checkpoint (Phase 7 will add
-        per-layer projection save for MF checkpoint resume).
+        Memory-efficient: the full model is never reconstructed on the
+        driver. Instead, the checkpoint's ``model_state_dict`` is sliced
+        by layer-index prefix and each slice is sent directly to its
+        actor via ``load_layer_state``.
+
+        Returns a dict with ``completed_batches`` and
+        ``num_tokens_total`` so the pipeline loop can offset its
+        counters for correct resume.
+
+        Handles two checkpoint formats:
+        - **Structured** (new): dict with ``model_state_dict``,
+          ``projection_states``, ``optimizer_states``, etc.
+        - **Legacy**: a plain ``state_dict()`` with no wrapper keys.
+          Only layer weights are restored; projections, optimizers,
+          and counters start fresh.
+        """
+        import ray
+
+        self._log(f"[MF] Loading checkpoint from {ckpt_path}")
+        checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+
+        # Detect format: structured checkpoints have a
+        # "model_state_dict" key; legacy ones are a flat state_dict.
+        is_structured = isinstance(checkpoint, dict) and "model_state_dict" in checkpoint
+        if is_structured:
+            model_sd = checkpoint["model_state_dict"]
+        else:
+            model_sd = checkpoint
+            self._log("[MF] Legacy checkpoint format detected (model weights only)")
+
+        # Slice the flat state_dict into per-layer chunks and
+        # distribute to actors. Layer keys look like
+        # "decoder.locals.{i}.rest_of_key".
+        layer_prefix = "decoder.locals."
+        layer_state_dicts: Dict[int, Dict[str, Any]] = {}
+        for key, value in model_sd.items():
+            if not key.startswith(layer_prefix):
+                continue
+            # Extract layer index from "decoder.locals.{i}.xxx"
+            rest = key[len(layer_prefix):]
+            dot_pos = rest.index(".")
+            layer_idx = int(rest[:dot_pos])
+            inner_key = rest[dot_pos + 1:]
+            if layer_idx not in layer_state_dicts:
+                layer_state_dicts[layer_idx] = {}
+            layer_state_dicts[layer_idx][inner_key] = value
+
+        # Send layer weights to each actor.
+        load_futs = []
+        for i in range(num_layers):
+            if i in layer_state_dicts:
+                load_futs.append(
+                    actors[i].load_layer_state.remote(layer_state_dicts[i])
+                )
+        if load_futs:
+            self._safe_ray_get(load_futs, ray)
+            self._log(f"[MF] Distributed layer weights to {len(load_futs)} actor(s)")
+
+        # Free the large state dict now that layers are distributed.
+        del model_sd
+        del layer_state_dicts
+
+        # Restore per-actor projection, optimizer, and scheduler state
+        # (structured format only).
+        if is_structured:
+            proj_states = checkpoint.get("projection_states")
+            if proj_states and len(proj_states) == num_layers:
+                proj_futs = [
+                    actors[i].load_projection_state.remote(proj_states[i])
+                    for i in range(num_layers)
+                ]
+                self._safe_ray_get(proj_futs, ray)
+                self._log("[MF] Restored per-actor projection states")
+
+            opt_states = checkpoint.get("optimizer_states")
+            if opt_states and len(opt_states) == num_layers:
+                opt_futs = [
+                    actors[i].load_optimizer_state.remote(opt_states[i])
+                    for i in range(num_layers)
+                ]
+                self._safe_ray_get(opt_futs, ray)
+                self._log("[MF] Restored per-actor optimizer states")
+
+            sched_states = checkpoint.get("scheduler_states")
+            if sched_states and len(sched_states) == num_layers:
+                sched_futs = [
+                    actors[i].load_scheduler_state.remote(sched_states[i])
+                    for i in range(num_layers)
+                ]
+                self._safe_ray_get(sched_futs, ray)
+                self._log("[MF] Restored per-actor scheduler states")
+
+            # Restore datamodule state (dataset positions).
+            dm_state = checkpoint.get("datamodule_state")
+            if dm_state is not None and datamodule is not None:
+                if hasattr(datamodule, "load_state_dict"):
+                    try:
+                        datamodule.load_state_dict(dm_state)
+                        self._log(
+                            "[MF] Restored datamodule state "
+                            "(dataset positions)"
+                        )
+                    except Exception as exc:
+                        self._log(
+                            f"[MF] Warning: could not restore "
+                            f"datamodule state: {exc}"
+                        )
+
+        restored_batches = 0
+        restored_tokens = 0
+        if is_structured:
+            restored_batches = checkpoint.get("completed_batches", 0)
+            restored_tokens = checkpoint.get("num_tokens_total", 0)
+
+        # Free the full checkpoint dict.
+        del checkpoint
+
+        self._log(
+            f"[MF] Checkpoint loaded (resuming from batch "
+            f"{restored_batches}, {restored_tokens} tokens)"
+        )
+        return {
+            "completed_batches": restored_batches,
+            "num_tokens_total": restored_tokens,
+        }
+
+    def _save_checkpoint(
+        self,
+        model_host: Any,
+        actors: List[Any],
+        completed_batches: int = 0,
+        num_tokens_total: int = 0,
+        datamodule: Any = None,
+    ) -> None:
+        """Gather actor state and save a structured checkpoint.
+
+        The checkpoint contains:
+        - ``model_state_dict``: full model weights (layers + head) in
+          the standard ``PraxisForCausalLM`` layout so the checkpoint
+          loads for vanilla inference.
+        - ``projection_states``: per-actor projection matrix M_i state
+          dicts, needed for MF training resume.
+        - ``optimizer_states`` / ``scheduler_states``: per-actor
+          optimizer and LR scheduler state for momentum continuity.
+        - ``completed_batches`` / ``num_tokens_total``: training
+          counters so metrics pick up where they left off.
+        - ``datamodule_state``: dataset positions for data continuity.
         """
         import ray
 
@@ -1928,39 +2176,64 @@ class MonoForwardTrainer:
             return
 
         self._log("[MF] Gathering actor state for checkpoint")
+        # Gather each category of state sequentially rather than
+        # submitting all futures up front. If actors are dead or
+        # CUDA-poisoned, early categories fail fast and we skip the
+        # rest - no orphaned futures left to produce unhandled errors.
         layer_states = self._safe_ray_get(
             [actor.get_layer_state.remote() for actor in actors], ray
         )
         if layer_states is None:
             self._log("[MF] Checkpoint save aborted (actors unavailable)")
             return
-        # Use the last layer's projection matrix as the checkpoint's
-        # output head. Each layer has its own independent projection
-        # M_i (per the paper), but the standard PraxisForCausalLM
-        # checkpoint format expects a single head. The last layer's
-        # projection is the natural choice since it sees the most
-        # refined hidden states (closest to what backprop's single
-        # head would see). This enables loading MF checkpoints into
-        # vanilla PraxisForCausalLM for inference.
-        last_projection_state = self._safe_ray_get(
-            actors[-1].get_projection_state.remote(), ray
+        projection_states = self._safe_ray_get(
+            [actor.get_projection_state.remote() for actor in actors], ray
         )
-        if last_projection_state is None:
+        if projection_states is None:
             self._log("[MF] Checkpoint save aborted (actors unavailable)")
             return
+        optimizer_states = self._safe_ray_get(
+            [actor.get_optimizer_state.remote() for actor in actors], ray
+        )
+        scheduler_states = self._safe_ray_get(
+            [actor.get_scheduler_state.remote() for actor in actors], ray
+        )
 
+        # Reconstruct model_host weights from actor state for the
+        # model_state_dict (needed for vanilla inference loading).
         for i, layer_state in enumerate(layer_states):
             model_host.decoder.locals[i].load_state_dict(layer_state)
-        # Map projection matrix weight → head.lm_head.weight for
-        # checkpoint compat. The projection's weight has the same
-        # shape as ForwardHead's lm_head (vocab_size × hidden_size).
-        head_mapped = {"lm_head." + k: v for k, v in last_projection_state.items()}
+        # Use the last layer's projection as the checkpoint's output
+        # head - same rationale as before (closest to backprop's head).
+        last_proj = projection_states[-1]
+        head_mapped = {"lm_head." + k: v for k, v in last_proj.items()}
         model_host.head.load_state_dict(head_mapped)
+
+        # Datamodule state (dataset positions).
+        datamodule_state = None
+        if datamodule is not None and hasattr(datamodule, "state_dict"):
+            try:
+                datamodule_state = datamodule.state_dict()
+            except Exception as exc:
+                self._log(f"[MF] Warning: could not save datamodule state: {exc}")
+
+        checkpoint = {
+            "model_state_dict": model_host.state_dict(),
+            "projection_states": projection_states,
+            "optimizer_states": optimizer_states,
+            "scheduler_states": scheduler_states,
+            "completed_batches": completed_batches,
+            "num_tokens_total": num_tokens_total,
+            "datamodule_state": datamodule_state,
+        }
 
         os.makedirs(self.cache_dir, exist_ok=True)
         checkpoint_path = os.path.join(self.cache_dir, "mono_forward.pt")
-        torch.save(model_host.state_dict(), checkpoint_path)
-        self._log(f"[MF] Saved checkpoint to {checkpoint_path}")
+        torch.save(checkpoint, checkpoint_path)
+        self._log(
+            f"[MF] Saved checkpoint to {checkpoint_path} "
+            f"(batch {completed_batches}, {num_tokens_total} tokens)"
+        )
 
     # ------------------------------------------------------------------
     # unused BaseTrainer-ish methods (kept for future parity; explicit
@@ -1981,4 +2254,6 @@ class MonoForwardTrainer:
         raise NotImplementedError(
             "mono_forward.predict is not implemented - inference uses "
             "the standard PraxisForCausalLM.forward path (decision D6)."
+        )
+        )
         )

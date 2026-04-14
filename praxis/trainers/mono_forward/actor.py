@@ -645,6 +645,48 @@ class LayerActor:
         mapped = {k: v.to(self.device) for k, v in state_dict.items()}
         self.layer.load_state_dict(mapped)
 
+    def load_projection_state(self, state_dict: Dict[str, Any]) -> None:
+        """Reload projection matrix M_i from a state dict."""
+        mapped = {k: v.to(self.device) for k, v in state_dict.items()}
+        self.projection.load_state_dict(mapped)
+
+    def get_optimizer_state(self) -> Dict[str, Any]:
+        """Return this actor's optimizer state (for checkpointing).
+
+        Moves all tensors to CPU to avoid device mismatch on restore.
+        """
+        raw = self.optimizer.state_dict()
+        # Optimizer state dicts can contain nested tensors in the
+        # "state" sub-dict. Walk them to CPU for safe serialization.
+        cpu_state: Dict[str, Any] = {}
+        for k, v in raw.items():
+            if k == "state":
+                cpu_state[k] = {
+                    param_id: {
+                        sk: sv.detach().cpu() if isinstance(sv, torch.Tensor) else sv
+                        for sk, sv in param_state.items()
+                    }
+                    for param_id, param_state in v.items()
+                }
+            else:
+                cpu_state[k] = v
+        return cpu_state
+
+    def load_optimizer_state(self, state_dict: Dict[str, Any]) -> None:
+        """Restore optimizer state from a checkpoint."""
+        self.optimizer.load_state_dict(state_dict)
+
+    def get_scheduler_state(self) -> Optional[Dict[str, Any]]:
+        """Return this actor's LR scheduler state, or None if no scheduler."""
+        if self.scheduler is None:
+            return None
+        return self.scheduler.state_dict()
+
+    def load_scheduler_state(self, state_dict: Dict[str, Any]) -> None:
+        """Restore LR scheduler state from a checkpoint."""
+        if self.scheduler is not None and state_dict is not None:
+            self.scheduler.load_state_dict(state_dict)
+
     def set_optimizer_eval(self) -> None:
         """Switch optimizer to eval mode (ScheduleFreeWrapper).
 

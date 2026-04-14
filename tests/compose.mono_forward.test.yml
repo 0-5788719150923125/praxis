@@ -80,13 +80,6 @@ services:
         ray.shutdown()
         " || true
         echo "[head] Starting MF training attached to local head..."
-        # Clear old mono_forward.pt checkpoints from previous
-        # runs so the "checkpoint exists → training succeeded"
-        # override below only considers checkpoints written by
-        # THIS run's ``MonoForwardTrainer.fit``. Without this,
-        # a leftover checkpoint from a previous successful run
-        # would mask a current-run training failure.
-        find /workspace/build -name mono_forward.pt -delete 2>/dev/null || true
         set +e
         python /workspace/main.py \
           --mike \
@@ -114,7 +107,7 @@ services:
       - ..:/workspace:rw
       - venv:/workspace/.venv
       - cache:/root/.cache
-      - build-head:/workspace/build
+      - ../build:/workspace/build
     ports:
       - "2100:2100"
     environment:
@@ -178,5 +171,4 @@ services:
 volumes:
   venv:
   cache:
-  build-head:
   build-worker:

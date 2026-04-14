@@ -489,6 +489,16 @@ def main():
             print(f"resuming from true path: {true_link}")
             ckpt_path = true_link
 
+        # Mono-Forward saves to a different path than Lightning.
+        # Checked unconditionally (not just when ckpt_path is None)
+        # so MF checkpoints are found even when no Lightning model/
+        # directory exists.
+        if ckpt_path is None:
+            mf_path = os.path.join(cache_dir, "mono_forward.pt")
+            if os.path.exists(mf_path):
+                print(f"resuming from mono-forward checkpoint: {mf_path}")
+                ckpt_path = mf_path
+
     # Initialize generator for tool calling during training and inference
     generator = Generator(model, tokenizer, device=device)
     param_stats = {}

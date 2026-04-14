@@ -238,6 +238,9 @@ def find_latest_checkpoint(cache_dir):
     # Construct the checkpoint directory path
     ckpt_dir = os.path.join(cache_dir, "model")
 
+    if not os.path.isdir(ckpt_dir):
+        return None
+
     # Get all checkpoint files
     ckpt_files = [f for f in os.listdir(ckpt_dir) if f.endswith(".ckpt")]
 
