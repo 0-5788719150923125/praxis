@@ -103,7 +103,7 @@ class AbstractinatorEncoder(ByteLatentEncoder):
         # Optional learned query pooling
         self.use_learned_queries = use_learned_queries
         if use_learned_queries:
-            max_queries = config.max_length // patch_size
+            max_queries = config.max_position_embeddings // patch_size
             # Ensure max_queries is a multiple of num_queries_per_segment
             max_queries = (
                 max_queries // num_queries_per_segment

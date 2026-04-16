@@ -77,14 +77,9 @@ class ConfigBuilder:
         if byte_latent and "byte_latent" in valid_config_params:
             config_kwargs["byte_latent"] = True
 
-        # Handle max_length based on block_size
-        if hasattr(args, "block_size") and "max_length" in valid_config_params:
-            if byte_latent:
-                # For byte_latent, block_size is the byte sequence length directly
-                config_kwargs["max_length"] = args.block_size
-            else:
-                # For token-level models, expand for positional encoding headroom
-                config_kwargs["max_length"] = args.block_size * 8
+        # Set positional encoding capacity from block_size
+        if hasattr(args, "block_size") and "max_position_embeddings" in valid_config_params:
+            config_kwargs["max_position_embeddings"] = args.block_size
 
         # Handle tokenizer IDs if tokenizer is provided
         if tokenizer is not None:

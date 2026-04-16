@@ -98,7 +98,7 @@ def create_base_config(praxis_config) -> ByteLatentConfig:
         norm_eps=praxis_config.epsilon,
         downsampling_by_pooling=downsampling_method,
         encoder_hash_byte_group_vocab=praxis_config.vocab_size,  # Use external vocab_size for hash space
-        max_seqlen=praxis_config.max_length,
+        max_seqlen=praxis_config.max_position_embeddings,
     )
 
 

@@ -11,6 +11,7 @@ from praxis import (
     DECODER_REGISTRY,
     ENCODER_REGISTRY,
     ENCODING_REGISTRY,
+    EXIT_REGISTRY,
     EXPERT_REGISTRY,
     HEAD_REGISTRY,
     MTP_REGISTRY,
@@ -93,6 +94,14 @@ class ArchitectureGroup:
             choices=ROUTER_REGISTRY.keys(),
             default=None,
             help="How to route tokens at every layer",
+        )
+
+        group.add_argument(
+            "--exit-type",
+            type=str,
+            choices=EXIT_REGISTRY.keys(),
+            default=None,
+            help="Early exit strategy for recurrent depth loops",
         )
 
         group.add_argument(

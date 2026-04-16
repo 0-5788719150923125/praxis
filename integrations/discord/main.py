@@ -319,15 +319,15 @@ class Integration(BaseIntegration):
 
         # Get generator and tokenizer from Flask app
         try:
-            from praxis import api
+            from praxis.web import app
 
-            generator = api.app.config.get("api_server")
+            generator = app.config.get("api_server")
             if generator:
                 generator = generator.generator
             else:
-                generator = api.app.config.get("generator")
+                generator = app.config.get("generator")
 
-            tokenizer = api.app.config.get("tokenizer")
+            tokenizer = app.config.get("tokenizer")
 
             if not generator:
                 print("Discord error: Generator not available")

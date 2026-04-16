@@ -10,6 +10,7 @@ from praxis.activations import ACT2FN
 from praxis.blocks import BLOCK_REGISTRY
 from praxis.compression import COMPRESSION_REGISTRY
 from praxis.controllers import CONTROLLER_REGISTRY
+from praxis.exits import EXIT_REGISTRY
 from praxis.experimental.evolution import GenomicBottleneck
 from praxis.layers import LocalLayer, RemoteLayer
 from praxis.orchestration import EXPERT_REGISTRY
@@ -38,6 +39,11 @@ class BaseDecoder(nn.Module):
         self.compressor = COMPRESSION_REGISTRY.get(config.compression_type)(config)
         self.manager = False
         self.order = SORTING_REGISTRY.get(config.sorting_type)(config)
+        exit_type = getattr(config, "exit_type", None)
+        if exit_type is not None:
+            self.exit_strategy = EXIT_REGISTRY[exit_type](config)
+        else:
+            self.exit_strategy = None
         self.locals = nn.ModuleList()
         self.remotes: List[nn.Module] = []
 

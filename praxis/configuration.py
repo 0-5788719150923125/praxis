@@ -21,7 +21,7 @@ class PraxisConfig(PretrainedConfig):
         dropout: float = 0.0,
         epsilon: float = 1e-5,
         vocab_size: int = 8192,
-        max_length: int = 4096,
+        max_position_embeddings: int = 32768,
         activation: str = "mish",
         block_type: str = "transformer",
         expert: str = "glu",
@@ -94,7 +94,7 @@ class PraxisConfig(PretrainedConfig):
         self.dropout = dropout
         self.epsilon = epsilon
         self.vocab_size = vocab_size
-        self.max_length = max_length
+        self.max_position_embeddings = max_position_embeddings
         self.activation = activation
         self.block_type = block_type
         self.expert = expert
@@ -129,6 +129,7 @@ class PraxisConfig(PretrainedConfig):
         self.mtp_type = kwargs.get("mtp_type", None)
         self.mtp_depth = kwargs.get("mtp_depth", 1)
         self.tie_word_embeddings = tie_weights
+        self.exit_type = kwargs.get("exit_type", None)
         self.rl_type = kwargs.get(
             "rl_type", None
         )  # "reinforce", "grpo", "ppo", or None

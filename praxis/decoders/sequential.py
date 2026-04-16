@@ -57,6 +57,11 @@ class SequentialDecoder(BaseDecoder):
 
         _, seq_len, _ = hidden_states.shape
 
+        if self.exit_strategy is not None:
+            self.exit_strategy.reset()
+            head = getattr(self, "_exit_head", None)
+            self.exit_strategy.seed(hidden_states, head)
+
         current_route: List[int] = []
 
         controller_state = None
@@ -128,6 +133,12 @@ class SequentialDecoder(BaseDecoder):
                 losses.add_loss_container(decoder_loss)
             else:
                 losses.add_loss("decoder", decoder_loss)
+
+            # Check exit strategy at loop boundaries
+            if self.exit_strategy is not None:
+                head = getattr(self, "_exit_head", None)
+                if self.exit_strategy.check(hidden_states, current_depth, head):
+                    break
 
             # Check for Taxus early exit signal (passed directly, not through LossContainer)
             if exit_signal is not None:
