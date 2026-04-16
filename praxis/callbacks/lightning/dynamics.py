@@ -3,6 +3,7 @@
 from lightning.pytorch.callbacks import Callback
 
 from praxis.logging.dynamics_logger import DynamicsLogger
+from praxis.metrics import extract_layer_dynamics
 
 
 class DynamicsLoggerCallback(Callback):
@@ -86,10 +87,9 @@ class DynamicsLoggerCallback(Callback):
     def _extract_layer_dynamics(self, model, optimizer) -> dict:
         """Extract universal per-layer gradient dynamics from decoder layers.
 
-        Computes for each layer:
-          - grad_norm: L2 norm of all parameter gradients
-          - grad_var: mean variance of gradient values
-          - update_ratio: ||grad|| * lr / ||weight|| (relative update magnitude)
+        Delegates per-layer computation to
+        :func:`~praxis.metrics.extract_layer_dynamics` and prefixes the
+        returned keys with ``layer_{idx}_``.
         """
         if not hasattr(model, "decoder") or not hasattr(model.decoder, "locals"):
             return {}
@@ -105,26 +105,10 @@ class DynamicsLoggerCallback(Callback):
 
         dynamics = {}
         for layer_idx, layer in enumerate(model.decoder.locals):
-            grad_norms_sq = []
-            grad_vars = []
-            weight_norms_sq = []
-
-            for param in layer.parameters():
-                if param.grad is None:
-                    continue
-                grad_norms_sq.append(param.grad.norm().item() ** 2)
-                grad_vars.append(param.grad.var().item())
-                weight_norms_sq.append(param.norm().item() ** 2)
-
-            if grad_norms_sq:
-                grad_norm = sum(grad_norms_sq) ** 0.5
-                weight_norm = sum(weight_norms_sq) ** 0.5
-                grad_var = sum(grad_vars) / len(grad_vars)
-                update_ratio = (grad_norm * lr) / max(weight_norm, 1e-8)
-
-                dynamics[f"layer_{layer_idx}_grad_norm"] = grad_norm
-                dynamics[f"layer_{layer_idx}_grad_var"] = grad_var
-                dynamics[f"layer_{layer_idx}_update_ratio"] = update_ratio
+            layer_dyn = extract_layer_dynamics(layer, lr)
+            if layer_dyn is not None:
+                for key, value in layer_dyn.items():
+                    dynamics[f"layer_{layer_idx}_{key}"] = value
 
         return dynamics
 

@@ -5,6 +5,7 @@ import time
 
 import torch
 import torch.nn.functional as F
+from praxis.metrics import compute_softmax_collapse
 from lightning.pytorch import LightningModule
 from torcheval.metrics.functional import perplexity
 
@@ -533,12 +534,4 @@ class BackpropagationTrainer(LightningModule):
 
     @torch.compiler.disable
     def _compute_softmax_collapse(self, output):
-        """
-        From "Grokking at the Edge of Stability".
-        https://github.com/LucasPrietoAl/grokking-at-the-edge-of-numerical-stability/blob/0cc9e8dc62ce5ed66d29d80eebbaf14da2f71c67/logger.py#L154
-        """
-        output_off = output - output.amax(dim=1, keepdim=True)
-        exp_output = torch.exp(output_off)
-        sum_exp = torch.sum(exp_output, dim=-1, keepdim=True)
-        softmax_collapse = (sum_exp == 1).float().mean().item()
-        return softmax_collapse
+        return compute_softmax_collapse(output)

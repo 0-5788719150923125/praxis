@@ -15,11 +15,10 @@ same loop:
        pattern, all-whitespace) and reset to the seed, rather than
        letting the buffer lock into a pathological loop.
 
-The backprop path currently inlines all of this in
-``TerminalInterface._generate_text`` / ``_detect_*``. Until both paths
-are fully unified, the MF trainer uses this helper and the Lightning
-callback keeps its inline copy; the heuristics are identical in
-spirit so the two views of progress look the same.
+Both trainers now use this shared helper: the Lightning
+``TerminalInterface`` callback (backprop path) and the Ray
+Mono-Forward ``_maybe_run_inference_hook`` delegate stuck-output
+tracking and degeneracy detection to :class:`StreamingContext`.
 """
 
 from __future__ import annotations

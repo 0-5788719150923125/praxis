@@ -36,28 +36,8 @@ import torch
 import torch.nn as nn
 
 from praxis.losses.layer_wise import compute_layer_wise_loss
-
-
-def _deep_to(module: nn.Module, device: torch.device) -> nn.Module:
-    """Move a module to ``device``, including non-registered tensor attrs.
-
-    ``nn.Module.to(device)`` only moves parameters and buffers
-    registered via ``register_parameter`` / ``register_buffer``. Some
-    submodules store tensors as plain instance attributes (RoPE
-    ``inv_freq``, cached cos/sin tables, pre-computed masks, etc.)
-    that survive ``.to()`` on whatever device they were created on.
-
-    This helper does ``.to(device)`` first (covers the common case),
-    then sweeps every sub-module's ``__dict__`` for stray tensors on
-    the wrong device. Mirrors ``_force_cpu`` on the trainer/driver
-    side but parameterised on the target device.
-    """
-    module = module.to(device)
-    for submodule in module.modules():
-        for attr_name, attr_value in list(vars(submodule).items()):
-            if isinstance(attr_value, torch.Tensor) and attr_value.device != device:
-                setattr(submodule, attr_name, attr_value.to(device))
-    return module
+from praxis.metrics import compute_softmax_collapse, extract_layer_dynamics
+from praxis.trainers.mono_forward.device import deep_to as _deep_to
 
 
 class _ActorParamShim(nn.Module):
@@ -244,9 +224,7 @@ class LayerActor:
         self.criterion = _deep_to(copy.deepcopy(criterion), self.device)
         if strategy is not None:
             s = copy.deepcopy(strategy)
-            self.strategy = (
-                _deep_to(s, self.device) if isinstance(s, nn.Module) else s
-            )
+            self.strategy = _deep_to(s, self.device) if isinstance(s, nn.Module) else s
         else:
             self.strategy = None
 
@@ -296,8 +274,6 @@ class LayerActor:
         # logits matter for the "Grokking at the Edge of Stability"
         # collapse signal).
         self.num_layers = int(num_layers)
-        self.is_last_layer = bool(layer_idx == self.num_layers - 1)
-
         # Gradient accumulation. The paper doesn't discuss it
         # explicitly, but with batch_size=4 and target_batch_size=256,
         # stepping after every single batch produces a very noisy
@@ -320,6 +296,7 @@ class LayerActor:
         input_ids: Optional[torch.Tensor] = None,
         block_ids: Optional[torch.Tensor] = None,
         capture_dynamics: bool = False,
+        is_last_step: bool = False,
     ) -> Dict[str, Any]:
         """Run one MF forward/local-update pass on this layer.
 
@@ -393,8 +370,8 @@ class LayerActor:
 
         # (4b) Step only at accumulation boundaries.
         is_accum_boundary = (
-            (self.batches_processed + 1) % self.accumulate_grad_batches == 0
-        )
+            self.batches_processed + 1
+        ) % self.accumulate_grad_batches == 0
         if is_accum_boundary:
             self.optimizer.step()
             self.optimizer.zero_grad()
@@ -412,7 +389,7 @@ class LayerActor:
         # the logits are never materialized by the loss helper so
         # this is the only place they exist.
         softmax_collapse: Optional[float] = None
-        if self.is_last_layer:
+        if is_last_step:
             softmax_collapse = self._compute_softmax_collapse(h_out)
 
         # (6) Hand the detached post-layer activations to the driver.
@@ -481,62 +458,29 @@ class LayerActor:
         }
 
     def _compute_softmax_collapse(self, hidden_states: torch.Tensor) -> Optional[float]:
-        """Compute the softmax_collapse metric from final-layer logits.
+        """Compute softmax collapse from final-layer hidden states.
 
-        From "Grokking at the Edge of Stability"
-        (https://github.com/LucasPrietoAl/grokking-at-the-edge-of-numerical-stability/blob/main/logger.py#L154).
-        Mirrors :meth:`BackpropagationTrainer._compute_softmax_collapse`
-        exactly so a dashboard client reading this column gets the
-        same units under either trainer. Returns ``None`` on any
-        failure rather than raising - this is a metrics-only path
-        and should never interrupt training.
+        Projects to logits via ``self.projection`` then delegates to the
+        shared :func:`~praxis.metrics.compute_softmax_collapse`. Returns
+        ``None`` on any failure - metrics must never interrupt training.
         """
         try:
             with torch.no_grad():
                 logits = self.projection(hidden_states.detach())
-                output_off = logits - logits.amax(dim=1, keepdim=True)
-                exp_output = torch.exp(output_off)
-                sum_exp = torch.sum(exp_output, dim=-1, keepdim=True)
-                return float((sum_exp == 1).float().mean().item())
+                return compute_softmax_collapse(logits)
         except Exception:
             return None
 
     def _capture_dynamics(self) -> Optional[Dict[str, float]]:
         """Capture grad_norm / grad_var / update_ratio for this layer.
 
-        Mirrors ``DynamicsLoggerCallback._extract_layer_dynamics`` in
-        the backprop path, but scoped to *this actor's* ``self.layer``
-        only. The driver aggregates per-layer dicts from every actor
-        into a single ``{layer_{i}_grad_norm: ..., layer_{i}_grad_var:
-        ..., layer_{i}_update_ratio: ...}`` dict and writes it to
-        ``dynamics.db`` via :class:`DynamicsLogger` (the same class
-        the backprop callback uses, framework-agnostic writer).
-
-        Returns ``None`` when no grads are populated (shouldn't
-        happen mid-train_batch but defensive for edge cases).
+        Delegates to :func:`~praxis.metrics.extract_layer_dynamics`.
+        The driver aggregates per-layer dicts from every actor into a
+        single ``{layer_{i}_grad_norm: ...}`` dict and writes it to
+        ``dynamics.db`` via :class:`DynamicsLogger`.
         """
         try:
-            grad_norms_sq: List[float] = []
-            grad_vars: List[float] = []
-            weight_norms_sq: List[float] = []
-            for param in self.layer.parameters():
-                if param.grad is None:
-                    continue
-                grad_norms_sq.append(param.grad.norm().item() ** 2)
-                grad_vars.append(param.grad.var().item())
-                weight_norms_sq.append(param.norm().item() ** 2)
-            if not grad_norms_sq:
-                return None
-            grad_norm = sum(grad_norms_sq) ** 0.5
-            weight_norm = sum(weight_norms_sq) ** 0.5
-            grad_var = sum(grad_vars) / len(grad_vars)
-            lr = self._current_lr()
-            update_ratio = (grad_norm * lr) / max(weight_norm, 1e-8)
-            return {
-                "grad_norm": float(grad_norm),
-                "grad_var": float(grad_var),
-                "update_ratio": float(update_ratio),
-            }
+            return extract_layer_dynamics(self.layer, self._current_lr())
         except Exception:
             return None
 

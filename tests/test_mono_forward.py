@@ -306,15 +306,15 @@ def test_fit_reduces_loss_and_checkpoint_roundtrips(tmp_path):
 
 
 @requires_ray
-def test_recurrent_depth_hard_errors():
-    """D1: depth != num_layers must hard-error at fit time."""
+def test_depth_less_than_num_layers_hard_errors():
+    """depth < num_layers must hard-error at fit time."""
     torch.manual_seed(0)
     bad_config = PraxisConfig(
         vocab_size=256,
         hidden_size=32,
         embed_size=32,
         num_heads=4,
-        depth=4,  # recurrent: more forward calls than layers
+        depth=1,  # fewer forward steps than layers
         num_layers=2,
         max_length=64,
         decoder_type="sequential",
@@ -327,7 +327,7 @@ def test_recurrent_depth_hard_errors():
         vocab_size=bad_config.vocab_size, batch_size=1, seq_len=8, seed=2
     )
     trainer = MonoForwardTrainer(max_steps=1, cache_dir=None)
-    with pytest.raises(RuntimeError, match="depth == num_layers"):
+    with pytest.raises(RuntimeError, match="depth >= num_layers"):
         trainer.fit(model, _SyntheticDataModule(dataset))
 
 

@@ -62,34 +62,11 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import torch
 
+from praxis.metrics.ema import LOSS_EMA_ALPHA, STEP_TIME_EMA_ALPHA, compute_ema
 from praxis.utils import create_block_ids
 
 
-def _force_cpu(module: torch.nn.Module) -> torch.nn.Module:
-    """Move a module to CPU, including non-registered tensor attributes.
-
-    ``nn.Module.cpu()`` only touches parameters and buffers registered
-    via ``register_parameter`` / ``register_buffer``. Some submodules
-    store tensors as plain instance attributes (common examples: RoPE
-    frequency caches, pre-computed causal masks, cached cos/sin
-    tables). Those survive ``.cpu()`` on whatever device they were
-    created on. When Ray pickles the module for transport to a worker
-    raylet, those CUDA tensors are serialized with their original
-    device metadata and the worker's ``torch.load`` fails if it
-    doesn't have CUDA.
-
-    This helper does a belt-and-braces sweep: call ``.cpu()`` first
-    (cheap, covers the common case), then walk every sub-module's
-    ``__dict__`` looking for stray ``torch.Tensor`` instances on
-    non-CPU devices and force them over. Modifies the module in
-    place and returns it for chaining convenience.
-    """
-    module = module.cpu()
-    for submodule in module.modules():
-        for attr_name, attr_value in list(vars(submodule).items()):
-            if isinstance(attr_value, torch.Tensor) and attr_value.device.type != "cpu":
-                setattr(submodule, attr_name, attr_value.cpu())
-    return module
+from praxis.trainers.mono_forward.device import force_cpu as _force_cpu
 
 
 _RAY_MISSING_MSG = (
@@ -142,7 +119,6 @@ class MonoForwardTrainer:
       ``MonoForwardGenerator`` adapter (Phase 5 / Phase 6)
 
     Not supported, hard-errors at trainer init:
-    - ``depth != num_layers`` (recurrent depth; decision D1)
     - ``router_type in {smear, distance, prismatic, scatter}``
       (shared LocalLayer instances; decision D4)
     - ``tie_word_embeddings=True`` (unregistered parameter in the
@@ -289,6 +265,10 @@ class MonoForwardTrainer:
         self.val_check_interval: Optional[int] = (
             int(raw_val_every) if raw_val_every else None
         )
+        raw_limit_val = trainer_params.get("limit_val_batches")
+        self._limit_val_batches: int = (
+            int(raw_limit_val) if raw_limit_val else 64
+        )
         self.dynamics_log_freq: int = int(
             trainer_params.get("dynamics_log_freq") or 10
         )
@@ -353,6 +333,7 @@ class MonoForwardTrainer:
         self._actors: Optional[List[Any]] = None
         self._embeds: Optional[torch.nn.Module] = None
         self._config: Optional[Any] = None
+        self._route_table: Optional[List[int]] = None
         # Shutdown flag. Signal handlers set this to True so the
         # pipeline loop can break promptly instead of waiting for
         # actor-death detection via ray.get timeouts.
@@ -374,13 +355,10 @@ class MonoForwardTrainer:
         """
         config = model.config
 
-        if config.depth != config.num_layers:
+        if config.depth < config.num_layers:
             raise RuntimeError(
-                f"mono_forward requires depth == num_layers "
-                f"(got depth={config.depth}, num_layers={config.num_layers}). "
-                "Recurrent depth is out of scope for Mono-Forward "
-                "(decision D1 in PLAN.md). Set --depth == --num-layers, "
-                "or use --trainer-type backpropagation."
+                f"mono_forward requires depth >= num_layers "
+                f"(got depth={config.depth}, num_layers={config.num_layers})."
             )
 
         blocked_routers = {"smear", "distance", "prismatic", "scatter"}
@@ -532,6 +510,13 @@ class MonoForwardTrainer:
         criterion = model_host.criterion
         strategy = getattr(model_host, "strategy", None)
         num_layers = len(layers)
+        depth = model_host.config.depth
+
+        # Build the depth-to-actor routing table. When depth == num_layers
+        # (the common case), this is just [0, 1, ..., N-1]. When
+        # depth > num_layers (recurrent depth), layers are revisited:
+        # e.g. depth=8, num_layers=4 gives [0, 1, 2, 3, 0, 1, 2, 3].
+        self._route_table = [i % num_layers for i in range(depth)]
 
         # Phase 6: bridge into the LiveMetrics singleton FIRST, so the
         # subsequent startup banners and initialization logs get
@@ -539,7 +524,7 @@ class MonoForwardTrainer:
         self._init_live_metrics(num_layers=num_layers)
 
         self._log(
-            f"[MF] Pipelined training: num_layers={num_layers}, "
+            f"[MF] Pipelined training: num_layers={num_layers}, depth={depth}, "
             f"max_steps={self.max_steps}, api={self.ray_pipeline_api}, "
             f"val_check_interval={self.val_check_interval}"
         )
@@ -660,6 +645,7 @@ class MonoForwardTrainer:
                     config=model_host.config,
                     datamodule=datamodule,
                     num_layers=num_layers,
+                    depth=depth,
                     metrics_logger=metrics_logger,
                     dynamics_logger=dynamics_logger,
                     model_host=model_host,
@@ -747,7 +733,8 @@ class MonoForwardTrainer:
         config: Any,
         datamodule: Any,
         num_layers: int,
-        metrics_logger: Optional[Any],
+        depth: Optional[int] = None,
+        metrics_logger: Optional[Any] = None,
         dynamics_logger: Optional[Any] = None,
         model_host: Any = None,
         restored_batches: int = 0,
@@ -773,21 +760,23 @@ class MonoForwardTrainer:
         final-layer hop would silently skip the finalize path and drop
         a completed batch from ``completed_batches`` / metrics.
         """
+        depth = depth if depth is not None else num_layers
+        route_table = self._route_table
+
         dataloader = datamodule.train_dataloader()
         dataloader_iter = iter(dataloader)
 
-        # ObjectRef -> dict with {layer_idx, batch_idx, labels, input_ids,
-        # block_ids, start_time}. Per-batch state (input_ids, block_ids)
-        # stays pinned on the driver so every hop passes the same tensor
-        # into the next actor - re-computing block_ids per hop would be
-        # wasteful and risks drift if the input ever changed.
+        # ObjectRef -> dict with {step_idx, batch_idx, labels, input_ids,
+        # block_ids, start_time}. ``step_idx`` is the position in the
+        # depth chain (0..depth-1), NOT the actor index. The actor for
+        # a given step is ``actors[route_table[step_idx]]``.
         in_flight: Dict[Any, Dict[str, Any]] = {}
-        # batch_idx -> {layer_idx: loss_value}
+        # batch_idx -> {step_idx: loss_value}
         loss_accumulator: Dict[int, Dict[int, float]] = {}
-        # batch_idx -> {layer_idx: {grad_norm, grad_var, update_ratio}}
+        # batch_idx -> {step_idx: {grad_norm, grad_var, update_ratio}}
         # Populated only on batches where ``_should_capture_dynamics``
-        # returned True; flushed into dynamics.db when the final-layer
-        # hop completes for the batch.
+        # returned True; flushed into dynamics.db when the final step
+        # completes for the batch.
         dynamics_accumulator: Dict[int, Dict[int, Dict[str, float]]] = {}
 
         # Mutable state captured by the nested helpers. Kept as a single
@@ -796,7 +785,7 @@ class MonoForwardTrainer:
             "first_loss": None,
             "last_loss": None,
             "loss_history": [],
-            "per_layer_loss_history": {i: [] for i in range(num_layers)},
+            "per_layer_loss_history": {i: [] for i in range(depth)},
             "pipeline_in_flight_max": 0,
             "batches_started": restored_batches,
             "completed_batches": restored_batches,
@@ -809,7 +798,7 @@ class MonoForwardTrainer:
         }
         max_in_flight = num_layers  # pipeline steady-state capacity
         wall_clock_start = time.monotonic()
-        ema_alpha = 0.1  # smoothing for avg_step_time emission
+        ema_alpha = STEP_TIME_EMA_ALPHA
 
         def _should_capture_dynamics(batch_idx: int) -> bool:
             """Decide whether to ask actors to capture dynamics this batch.
@@ -861,16 +850,17 @@ class MonoForwardTrainer:
 
                 batch_idx = state["batches_started"]
                 start_time = time.monotonic()
-                future = actors[0].train_batch.remote(
+                future = actors[route_table[0]].train_batch.remote(
                     activations,
                     labels,
                     batch_idx,
                     input_ids,
                     block_ids,
                     _should_capture_dynamics(batch_idx),
+                    depth == 1,  # is_last_step
                 )
                 in_flight[future] = {
-                    "layer_idx": 0,
+                    "step_idx": 0,
                     "batch_idx": batch_idx,
                     "labels": labels,
                     "input_ids": input_ids,
@@ -882,7 +872,7 @@ class MonoForwardTrainer:
                 state["batches_started"] += 1
 
         def _handle_completion(
-            layer_idx: int,
+            step_idx: int,
             batch_idx: int,
             labels: torch.Tensor,
             input_ids: torch.Tensor,
@@ -892,21 +882,10 @@ class MonoForwardTrainer:
         ) -> bool:
             """Process one completed future.
 
-            Returns ``True`` if the completion was a final-layer hop
+            Returns ``True`` if the completion was a final-depth-step
             (i.e. the batch finished and a pipeline slot is now free);
             ``False`` if the completion was an interior hop and a new
-            future has been submitted to the next layer. Shared between
-            the main driver loop and the head-sync drain path so the
-            "batch done" finalize logic fires consistently.
-
-            ``result`` is the dict returned by ``LayerActor.train_batch``.
-            It carries the hidden-states tensor plus every per-batch
-            metric we want to land in metrics.db / dynamics.db:
-            ``loss``, ``lr``, ``softmax_collapse``, and ``dynamics``.
-            When a new metric is added to the backprop trainer,
-            adding it to ``train_batch``'s return dict AND to the
-            ``metrics_logger.log(...)`` call below is all it takes -
-            no tuple re-unpacking, no position tracking.
+            future has been submitted to the next step.
             """
             activations = result["hidden_states"]
             loss_value = result["loss"]
@@ -914,37 +893,28 @@ class MonoForwardTrainer:
             softmax_collapse = result.get("softmax_collapse")
             layer_dynamics = result.get("dynamics")
 
-            loss_accumulator[batch_idx][layer_idx] = loss_value
-            state["per_layer_loss_history"][layer_idx].append(loss_value)
-            # Track the last-layer softmax_collapse we saw so it
-            # can be logged to metrics.db when the batch finalizes.
+            loss_accumulator[batch_idx][step_idx] = loss_value
+            state["per_layer_loss_history"][step_idx].append(loss_value)
             if softmax_collapse is not None:
                 state["last_softmax_collapse"] = softmax_collapse
-            # Stash any layer-scoped dynamics into a batch-keyed
-            # accumulator so ``finalize`` can write one merged row
-            # per batch to dynamics.db.
             if layer_dynamics is not None:
-                dynamics_accumulator.setdefault(batch_idx, {})[layer_idx] = layer_dynamics
+                dynamics_accumulator.setdefault(batch_idx, {})[step_idx] = layer_dynamics
 
-            if layer_idx + 1 < num_layers:
-                # Interior hop: forward to the next layer with the
-                # same labels (every layer supervises against the same
-                # next-token target per decision D3). input_ids and
-                # block_ids are the per-batch constants the driver
-                # computed in ``_refill_layer0`` and reuses unchanged
-                # across every hop. ``capture_dynamics`` propagates so
-                # the next-layer actor uses the same cadence decision
-                # this layer did.
-                next_future = actors[layer_idx + 1].train_batch.remote(
+            if step_idx + 1 < depth:
+                # Interior hop: forward to the next step's actor.
+                next_step = step_idx + 1
+                next_actor = actors[route_table[next_step]]
+                next_future = next_actor.train_batch.remote(
                     activations,
                     labels,
                     batch_idx,
                     input_ids,
                     block_ids,
                     _should_capture_dynamics(batch_idx),
+                    next_step + 1 == depth,  # is_last_step
                 )
                 in_flight[next_future] = {
-                    "layer_idx": layer_idx + 1,
+                    "step_idx": next_step,
                     "batch_idx": batch_idx,
                     "labels": labels,
                     "input_ids": input_ids,
@@ -953,7 +923,7 @@ class MonoForwardTrainer:
                 }
                 return False
 
-            # Final-layer hop: compute averaged loss, log metrics,
+            # Final depth step: compute averaged loss, log metrics,
             # bump counters, free the slot.
             state["completed_batches"] += 1
             layer_losses = loss_accumulator.pop(batch_idx)
@@ -1029,7 +999,7 @@ class MonoForwardTrainer:
             if (
                 dynamics_logger is not None
                 and batch_layer_dynamics
-                and len(batch_layer_dynamics) == num_layers
+                and len(batch_layer_dynamics) == depth
             ):
                 flat_dynamics: Dict[str, float] = {}
                 for li, dyn in batch_layer_dynamics.items():
@@ -1085,7 +1055,7 @@ class MonoForwardTrainer:
                     in_flight.clear()
                     return
                 _handle_completion(
-                    layer_idx=meta["layer_idx"],
+                    step_idx=meta["step_idx"],
                     batch_idx=meta["batch_idx"],
                     labels=meta["labels"],
                     input_ids=meta["input_ids"],
@@ -1123,7 +1093,7 @@ class MonoForwardTrainer:
                 break
 
             is_final_hop = _handle_completion(
-                layer_idx=meta["layer_idx"],
+                step_idx=meta["step_idx"],
                 batch_idx=meta["batch_idx"],
                 labels=meta["labels"],
                 input_ids=meta["input_ids"],
@@ -1330,7 +1300,7 @@ class MonoForwardTrainer:
             self._restore_train_mode()
             return
 
-        max_val_batches = 64  # match Lightning's ``limit_val_batches`` default scale
+        max_val_batches = int(self._limit_val_batches)
         losses: List[float] = []
 
         self._log(
@@ -1366,14 +1336,16 @@ class MonoForwardTrainer:
             labels = input_ids[..., 1:].contiguous()
             block_ids = create_block_ids(input_ids, config.eos_token_id)
 
-            # Hop through every actor sequentially. Each val_batch
+            # Hop through every depth step sequentially. Each val_batch
             # call is a single ``ray.get`` - this is intentionally
             # un-pipelined, see docstring.
             last_loss: Optional[float] = None
-            for layer_idx in range(num_layers):
+            route = self._route_table
+            for step_idx in range(len(route)):
+                actor = actors[route[step_idx]]
                 try:
                     result = self._safe_ray_get(
-                        actors[layer_idx].val_batch.remote(
+                        actor.val_batch.remote(
                             activations,
                             labels,
                             input_ids,
@@ -1386,7 +1358,7 @@ class MonoForwardTrainer:
                         return
                 except Exception as exc:  # pragma: no cover - defensive
                     self._log(
-                        f"[MF] validation: actor {layer_idx} failed: {exc}"
+                        f"[MF] validation: step {step_idx} failed: {exc}"
                     )
                     last_loss = None
                     break
@@ -1467,6 +1439,11 @@ class MonoForwardTrainer:
                 self._live_metrics._update_count += 1
             except Exception:
                 pass
+
+        # Free cached GPU memory after validation, matching the backprop
+        # path's on_validation_end behaviour.
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     # ------------------------------------------------------------------
     # web dashboard bridge (Phase 6)
@@ -1576,14 +1553,9 @@ class MonoForwardTrainer:
         if self._live_metrics is None:
             return
         try:
-            alpha = 0.01
-            if self._live_metrics_ema_loss is None:
-                self._live_metrics_ema_loss = float(avg_loss)
-            else:
-                self._live_metrics_ema_loss = (
-                    alpha * float(avg_loss)
-                    + (1 - alpha) * self._live_metrics_ema_loss
-                )
+            self._live_metrics_ema_loss = compute_ema(
+                float(avg_loss), self._live_metrics_ema_loss, LOSS_EMA_ALPHA
+            )
             state = self._live_metrics.state
             state.update_loss(self._live_metrics_ema_loss)
             # Dashboard UX convention: ``batch`` is the raw counter,
@@ -1761,17 +1733,17 @@ class MonoForwardTrainer:
             import ray  # local import to avoid hard dep at module load
 
             hidden = activations
-            for layer_idx, actor in enumerate(actors):
+            route = self._route_table
+            for step_idx in range(len(route)):
+                actor = actors[route[step_idx]]
                 future = actor.infer_batch.remote(
-                    hidden, layer_idx, block_ids, None
+                    hidden, step_idx, block_ids, None
                 )
                 hidden, _kv = ray.get(future)
 
-            # Project the final layer's hidden state through its head.
-            # We use the final actor's head for now (the "use as-is"
-            # branch of the open question in PHASE_5.md); measuring
-            # consistency vs. a forced head-sync barrier is Phase 6+.
-            logits = ray.get(actors[-1].project_logits.remote(hidden))
+            # Project through the final depth step's actor head.
+            last_actor = actors[route[-1]]
+            logits = ray.get(last_actor.project_logits.remote(hidden))
 
             # Decode the *last* position - we do a prefill each step so
             # the "next-token" logits live at index -1. Greedy by
