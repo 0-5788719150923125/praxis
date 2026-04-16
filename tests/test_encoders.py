@@ -51,7 +51,7 @@ def test_forward_pass(module_setup):
     )
 
     # Step 2: Decode
-    decoder_output = module.decode(
+    decoder_output, _ = module.decode(
         h,
         h_encoder,
         input_ids,

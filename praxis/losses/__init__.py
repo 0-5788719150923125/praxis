@@ -6,6 +6,7 @@ import torch.nn as nn
 from praxis.losses.contrastive_token import ContrastiveTokenLoss
 from praxis.losses.cross_entropy import CrossEntropyLoss
 from praxis.losses.focal import FocalLoss
+from praxis.losses.halo import HALOLoss
 from praxis.losses.layer_wise import compute_layer_wise_loss
 from praxis.losses.mile import MiLeLoss
 from praxis.losses.stablemax import StableMaxCrossEntropyLoss
@@ -29,6 +30,7 @@ LOSS_REGISTRY = {
     "mile": MiLeLoss,
     "stablemax": StableMaxCrossEntropyLoss,
     "contrastive_token": ContrastiveTokenLoss,
+    "halo": HALOLoss,
 }
 
 

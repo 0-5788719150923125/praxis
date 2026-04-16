@@ -226,6 +226,11 @@ class ByteLatentEncoder(nn.Module):
         )
 
     @property
+    def classifier(self) -> nn.Module:
+        """Return the decoder's output projection for loss functions that need it."""
+        return self.decoder.output
+
+    @property
     def outputs_are_aligned(self) -> bool:
         """
         ByteLatent outputs are NOT pre-aligned: the decoder at position t predicts
@@ -490,7 +495,7 @@ class ByteLatentEncoder(nn.Module):
             h = h_aligned
 
         # Local decoder forward pass
-        output, _ = self.decoder(
+        output, decoder_embeds = self.decoder(
             tokens=local_decoder_tokens,
             embeds=dec_embeds,
             patch_embeds=h,
@@ -498,7 +503,7 @@ class ByteLatentEncoder(nn.Module):
             mask=None,
         )
 
-        return output
+        return output, decoder_embeds
 
     def _find_safe_threshold(
         self, input_ids: torch.Tensor, entropy_scores: torch.Tensor
@@ -1134,9 +1139,9 @@ class RecurrentDecoder(nn.Module):
 
         h_preds = self.norm(h)
         h_preds = F.dropout(h_preds, p=self.dropout, training=self.training)
-        h_preds = self.output(h_preds)
-        h_preds = h_preds.float()
-        return h_preds, None
+        logits = self.output(h_preds)
+        logits = logits.float()
+        return logits, h_preds
 
 
 class RecurrentEntropyModel(nn.Module):
@@ -1430,9 +1435,9 @@ class ConvDecoder(nn.Module):
 
         h_preds = self.norm(h)
         h_preds = self.dropout(h_preds)
-        h_preds = self.output(h_preds)
-        h_preds = h_preds.float()
-        return h_preds, None
+        logits = self.output(h_preds)
+        logits = logits.float()
+        return logits, h_preds
 
 
 class ConvEntropyModel(nn.Module):
@@ -1755,9 +1760,9 @@ class TransformerDecoder(nn.Module):
 
         h_preds = self.norm(h)
         h_preds = F.dropout(h_preds, p=self.dropout, training=self.training)
-        h_preds = self.output(h_preds)
-        h_preds = h_preds.float()
-        return h_preds, None
+        logits = self.output(h_preds)
+        logits = logits.float()
+        return logits, h_preds
 
 
 class TransformerEntropyModel(nn.Module):

@@ -1,0 +1,204 @@
+import math
+from typing import Any
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch import Tensor
+
+
+class HALOLoss(nn.Module):
+    """
+    Hyperspherical Active Learning Objective (HALO) loss adapted for language modeling.
+    https://github.com/4rtemi5/halo
+
+    Instead of standard cross-entropy over logits, HALO operates in embedding space
+    using distance-based scoring against centroid vectors. The classifier's weight
+    matrix serves as the centroids - one per vocab token.
+
+    Key components:
+    - Gamma-scaled distance metric with learnable temperature
+    - Abstain class acting as an origin sink at the theoretically ideal equilibrium
+    - Geometric regularizer encouraging embeddings toward the hyperspherical shell
+    - Distillation-based label smoothing using margin-aware soft targets
+    """
+
+    def __init__(
+        self,
+        vocab_size: int = 1024,
+        learn_gamma: bool = True,
+        distill: bool = True,
+        label_smoothing: float = 0.1,
+        reduction: str = "mean",
+        *args: Any,
+        **kwargs: Any,
+    ):
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.learn_gamma = learn_gamma
+        self.distill = distill
+        self.label_smoothing = label_smoothing
+        self.reduction = reduction
+
+        # D (embedding dim) is unknown until the first forward pass
+        self._initialized = False
+        self.gamma = nn.Parameter(
+            torch.tensor([0.0], dtype=torch.float32),
+            requires_grad=learn_gamma,
+        )
+        self.abstain_bias = 0.0
+
+    def _lazy_init(self, emb_dims: int) -> None:
+        """Initialize gamma and abstain bias once we know the embedding dimension."""
+        D = float(emb_dims)
+        K = float(self.vocab_size)
+        r_sq_target = 1.0 - (2.0 / D)
+
+        r_sq_init = 2.0
+        init_gamma = 20.0 / (r_sq_init - r_sq_target)
+
+        if self.label_smoothing > 0:
+            max_prob = 1.0 - self.label_smoothing + (self.label_smoothing / K)
+            min_prob = self.label_smoothing / K
+        else:
+            max_prob = 0.99
+            min_prob = 0.01 / K
+
+        margin_ce = math.log(max_prob / min_prob)
+        t_ideal = init_gamma * (1.0 - r_sq_target)
+        self.abstain_bias = t_ideal - margin_ce
+
+        # Inverse softplus for gamma initialization
+        if init_gamma > 20.0:
+            gamma_start = init_gamma
+        else:
+            gamma_start = math.log(math.expm1(init_gamma))
+
+        with torch.no_grad():
+            self.gamma.fill_(gamma_start)
+
+        self._D = D
+        self._initialized = True
+
+    def forward(
+        self,
+        logits: Tensor,
+        labels: Tensor,
+        embeddings: Tensor = None,
+        classifier: nn.Module = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Tensor:
+        if embeddings is None or classifier is None:
+            raise RuntimeError(
+                "HALOLoss requires both `embeddings` and `classifier` kwargs. "
+                "It cannot operate on logits alone."
+            )
+
+        # Caller already shifts logits/embeddings to [:-1] and labels to [1:],
+        # so everything arrives aligned - just flatten.
+        flat_labels = labels.view(-1)
+        emb_dims = embeddings.shape[-1]
+
+        if not self._initialized:
+            self._lazy_init(emb_dims)
+
+        flat_emb = embeddings.contiguous().view(-1, emb_dims)
+        centroids = classifier.weight
+        return self._halo_forward(flat_emb, flat_labels, centroids)
+
+    def _halo_forward(
+        self,
+        pos: Tensor,
+        target: Tensor,
+        centroids: Tensor,
+    ) -> Tensor:
+        D = self._D
+        pos = pos.to(torch.float32)
+        cen = centroids.to(torch.float32)
+
+        # Mask out padding tokens before computing HALO
+        valid_mask = target != -100
+        if not valid_mask.any():
+            return pos.new_zeros((), requires_grad=True)
+
+        pos = pos[valid_mask]
+        target = target[valid_mask]
+
+        x_sq = pos.pow(2).mean(dim=-1, keepdim=True)
+        y_sq = cen.pow(2).mean(dim=-1, keepdim=True)
+        dot_product = (pos @ cen.T) / D
+
+        gamma = F.softplus(self.gamma)
+
+        # Softmax is shift-invariant, so we factor out -(x_sq * gamma).
+        # This leaves standard dot-product similarity with an L2 penalty on keys.
+        logits_k_shifted = gamma * (2.0 * dot_product - y_sq.T)
+
+        # The abstain class acts as an origin sink
+        logit_abstain_shifted = torch.full(
+            (pos.size(0), 1), self.abstain_bias, dtype=pos.dtype, device=pos.device
+        )
+
+        # Shape: N x (K+1)
+        logits_k_plus_1 = torch.cat([logits_k_shifted, logit_abstain_shifted], dim=-1)
+
+        # True absolute distances for distillation and regularizer
+        logits_k_true = torch.clamp(logits_k_shifted - (gamma * x_sq), max=0.0)
+
+        # Cross-entropy on K+1 classes
+        if self.distill:
+            centroid_targets = torch.arange(
+                cen.size(0), device=pos.device, dtype=target.dtype
+            )
+            mask = target.unsqueeze(1) == centroid_targets.unsqueeze(0)
+            with torch.no_grad():
+                margin = logits_k_true / self.label_smoothing
+                target_logits = torch.where(mask, 0.0, margin)
+                target_probs_k = F.softmax(target_logits, dim=-1)
+
+                zeros = torch.zeros(
+                    (pos.size(0), 1), device=pos.device, dtype=pos.dtype
+                )
+                target_probs = torch.cat([target_probs_k, zeros], dim=-1)
+
+            loss_ce = F.cross_entropy(
+                logits_k_plus_1,
+                target_probs,
+                reduction=self.reduction,
+            )
+        else:
+            with torch.no_grad():
+                K = logits_k_shifted.size(1)
+                target_probs = torch.full_like(
+                    logits_k_plus_1,
+                    self.label_smoothing / K,
+                    dtype=pos.dtype,
+                    device=pos.device,
+                )
+                target_probs.scatter_(
+                    1,
+                    target.unsqueeze(1),
+                    1.0 - self.label_smoothing + (self.label_smoothing / K),
+                )
+                target_probs[:, -1] = 0.0
+
+            loss_ce = F.cross_entropy(
+                logits_k_plus_1,
+                target_probs,
+                reduction=self.reduction,
+            )
+
+        # Geometric regularizer
+        diff_true = pos - cen[target]
+        r_sq_true = diff_true.pow(2).mean(dim=-1).to(pos.dtype)
+
+        volume_coeff = 0.5 - 1.0 / D
+        volume_term = volume_coeff * torch.log(r_sq_true)
+        gaussian_term = -0.5 * r_sq_true
+        radial_nll = -(volume_term + gaussian_term)
+
+        if self.reduction == "mean":
+            radial_nll = radial_nll.mean()
+
+        return loss_ce + radial_nll

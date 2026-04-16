@@ -344,13 +344,15 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         if self.encoder:
             """Needs encoding:"""
 
-            logits = self.encoder.decode(
+            logits, decoder_embeds = self.encoder.decode(
                 hidden_states,
                 outputs.h_encoder,
                 input_ids,
                 outputs.patch_lengths,
                 outputs.local_decoder_tokens,
             )
+            hidden_states = decoder_embeds
+            classifier = self.encoder.classifier
         elif hidden_states.size(-1) != self.config.vocab_size:
             """Needs projection/classification:"""
 

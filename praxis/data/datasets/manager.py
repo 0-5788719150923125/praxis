@@ -31,7 +31,7 @@ class InterleaveDataManager:
 
     ema_alpha = 0.3  # EMA smoothing factor (used by dynamic and novelty modes)
     loss_ema_alpha = 0.05  # Slower EMA for loss-based mode (training signal is noisy)
-    loss_temperature = 4.0  # Softmax temperature for loss weights (higher = flatter)
+    loss_temperature = 8.0  # Softmax temperature for loss weights (higher = flatter)
     loss_uniform_mix = 0.2  # Fraction of uniform prior mixed into loss weights
 
     # Class variable to store shared weights across all instances
