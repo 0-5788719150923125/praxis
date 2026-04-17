@@ -10,7 +10,12 @@ from .core import (
     log_command,
 )
 from .groups import OtherGroup, add_all_argument_groups, process_all_arguments
-from .loaders import EnvironmentLoader, ExperimentLoader, IntegrationBridge
+from .loaders import (
+    EnvironmentLoader,
+    EnvVarLoader,
+    ExperimentLoader,
+    IntegrationBridge,
+)
 from .processors import ArgumentProcessor, ConfigBuilder
 
 # Global state (for backward compatibility)
@@ -62,6 +67,11 @@ def initialize_cli():
 
     # Apply experiments
     args = experiment_loader.apply_experiments(args, explicitly_provided)
+
+    # Apply PRAXIS_* environment variable overrides (override experiment YAML,
+    # overridden by explicit CLI flags and active environment files below).
+    env_var_loader = EnvVarLoader()
+    args = env_var_loader.apply_env_vars(parser, args, explicitly_provided)
 
     # Apply environments (highest priority)
     args, active_env, env_features = environment_loader.apply_environments(args)
