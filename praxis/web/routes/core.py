@@ -198,6 +198,8 @@ def get_config():
 
         from flask import current_app
 
+        from praxis.cli.loaders.experiments import load_rendered_config
+
         # Get the config file path from app config
         config_file = current_app.config.get("config_file")
 
@@ -209,9 +211,8 @@ def get_config():
         if not config_path.exists():
             return Response(f"Config file not found: {config_file}", status=404)
 
-        # Load YAML and sort keys recursively
-        with open(config_path, "r") as f:
-            config_data = yaml.safe_load(f)
+        # Resolve `extends` chain so published config is fully rendered
+        config_data = load_rendered_config(config_path)
 
         def sort_dict_recursively(obj):
             """Recursively sort dictionary keys alphabetically."""
