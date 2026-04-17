@@ -8,17 +8,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ "$1" = "stop" ]; then
     echo "[STOP] Stopping Praxis..."
 
-    # Detect architecture for compose file selection
     ARCH=$(uname -m)
     if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
-        COMPOSE_FILES="-f $SCRIPT_DIR/compose.yml -f $SCRIPT_DIR/compose.ARM.yml"
+        COMPOSE_FILE="$SCRIPT_DIR/compose.ARM.yml"
     else
-        COMPOSE_FILES="-f $SCRIPT_DIR/compose.yml"
+        COMPOSE_FILE="$SCRIPT_DIR/compose.yml"
     fi
 
-    # Stop Docker Compose containers
-    if command -v docker &>/dev/null && [ -f "$SCRIPT_DIR/compose.yml" ]; then
-        docker compose $COMPOSE_FILES down --remove-orphans
+    if command -v docker &>/dev/null && [ -f "$COMPOSE_FILE" ]; then
+        docker compose -f "$COMPOSE_FILE" down --remove-orphans
     fi
 
     echo "[STOP] Done."
@@ -32,14 +30,13 @@ if [ "$1" = "compose" ]; then
 
     echo "[DOCKER] Starting Praxis in Docker Compose environment..."
 
-    # Detect architecture and set compose file flags
     ARCH=$(uname -m)
     if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
         echo "[DOCKER] Detected ARM64 architecture - using CPU-only configuration"
-        COMPOSE_FILES="-f $SCRIPT_DIR/compose.yml -f $SCRIPT_DIR/compose.ARM.yml"
+        COMPOSE_FILE="$SCRIPT_DIR/compose.ARM.yml"
     else
         echo "[DOCKER] Detected x86_64 architecture - using GPU configuration"
-        COMPOSE_FILES="-f $SCRIPT_DIR/compose.yml"
+        COMPOSE_FILE="$SCRIPT_DIR/compose.yml"
     fi
 
     # Resolve --data-path arguments to absolute host paths and add as volume mounts.
@@ -76,7 +73,7 @@ if [ "$1" = "compose" ]; then
 
     # Run in Docker Compose with all remaining arguments
     # Include port publishing for API server access
-    docker compose $COMPOSE_FILES run --rm --remove-orphans --service-ports $EXTRA_VOLUMES agent ./launch "${RESOLVED_ARGS[@]}"
+    docker compose -f "$COMPOSE_FILE" run --rm --remove-orphans --service-ports $EXTRA_VOLUMES agent ./launch "${RESOLVED_ARGS[@]}"
     exit $?
 fi
 
