@@ -39,11 +39,8 @@ class BaseDecoder(nn.Module):
         self.compressor = COMPRESSION_REGISTRY.get(config.compression_type)(config)
         self.manager = False
         self.order = SORTING_REGISTRY.get(config.sorting_type)(config)
-        exit_type = getattr(config, "exit_type", None)
-        if exit_type is not None:
-            self.exit_strategy = EXIT_REGISTRY[exit_type](config)
-        else:
-            self.exit_strategy = None
+        exit_type = getattr(config, "exit_type", None) or "none"
+        self.exit_strategy = EXIT_REGISTRY[exit_type](config)
         self.locals = nn.ModuleList()
         self.remotes: List[nn.Module] = []
 

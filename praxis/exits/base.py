@@ -7,16 +7,21 @@ ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
 class BaseExit(nn.Module):
-    """No-op exit strategy. Never signals early exit."""
+    """No-op exit strategy. Always runs full depth, never exits early."""
 
     def __init__(self, config: ConfigType) -> None:
         super().__init__()
         self.num_layers = getattr(config, "num_layers", config.depth)
         self.depth = config.depth
 
-    def reset(self) -> None:
-        """Called at the start of each forward pass to clear state."""
-        pass
+    def get_depth(self) -> int:
+        """Return the effective depth for this forward pass.
+
+        Called once before the decoder loop begins. Subclasses may
+        return a value smaller than self.depth to shorten the loop
+        (e.g. randomized depth during training).
+        """
+        return self.depth
 
     def seed(
         self,
@@ -27,6 +32,7 @@ class BaseExit(nn.Module):
 
         Called once before the decoder loop begins, giving the exit
         strategy a "loop 0" reference point (e.g. raw embeddings).
+        No-op during training.
 
         Args:
             hidden_states: Pre-loop hidden states [batch, seq_len, hidden_size]
@@ -42,8 +48,8 @@ class BaseExit(nn.Module):
     ) -> bool:
         """Check whether the decoder should exit early.
 
-        Called after each depth step during inference. Returns True to
-        signal that the remaining depth steps should be skipped.
+        Called after each depth step. Returns True to signal that the
+        remaining depth steps should be skipped. No-op during training.
 
         Args:
             hidden_states: Current hidden states [batch, seq_len, hidden_size]

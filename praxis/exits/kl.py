@@ -1,3 +1,4 @@
+import math
 from typing import Optional, TypeVar
 
 import torch
@@ -11,31 +12,54 @@ ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
 class KLDivergenceExit(BaseExit):
-    """Exit when the output distribution stabilizes between recurrence loops.
+    """Randomized depth during training, KL-based early exit at inference.
 
-    Monitors KL-divergence between the model's output distribution at
-    successive loop boundaries (every num_layers steps). Rather than
-    comparing against a static threshold, this tracks the rate of change
-    between consecutive KL measurements. When the divergence shrinks
-    sufficiently relative to the previous boundary's divergence, the
-    model has converged and remaining loops are skipped.
+    Training: each forward pass gets a random number of recurrence loops
+    sampled from a log-normal Poisson distribution. This forces the model
+    to front-load useful computation, since it never knows how many loops
+    it will receive.
 
-    This requires no training changes and no learned parameters - the
-    convergence behavior emerges naturally from recurrent architectures.
+    Inference: runs full depth but monitors KL-divergence between output
+    distributions at successive loop boundaries. When the divergence
+    drops below a threshold, the model has converged and remaining loops
+    are skipped.
 
     Reference: Geiping et al., "Scaling up Test-Time Compute with Latent
     Reasoning: A Recurrent Depth Approach" (arXiv 2502.05171)
     """
 
-    def __init__(self, config: ConfigType, convergence_ratio: float = 0.1) -> None:
+    def __init__(
+        self,
+        config: ConfigType,
+        threshold: float = 5e-4,
+        sigma: float = 0.5,
+    ) -> None:
         super().__init__(config)
-        self.convergence_ratio = convergence_ratio
+        self.threshold = threshold
+        self.sigma = sigma
+        self.max_loops = self.depth // self.num_layers
         self._prev_log_probs: Optional[Tensor] = None
-        self._prev_kl: Optional[float] = None
 
-    def reset(self) -> None:
+    def _sample_loop_count(self) -> int:
+        """Sample from log-normal Poisson distribution (paper eqs. 1-2).
+
+        tau ~ N(log(r_bar) - 0.5 * sigma^2, sigma)
+        r ~ Poisson(e^tau) + 1
+        """
+        r_bar = self.max_loops
+        tau = torch.distributions.Normal(
+            math.log(r_bar) - 0.5 * self.sigma**2,
+            self.sigma,
+        ).sample()
+        r = torch.distributions.Poisson(tau.exp()).sample().int().item() + 1
+        return max(1, min(r, self.max_loops))
+
+    def get_depth(self) -> int:
         self._prev_log_probs = None
-        self._prev_kl = None
+        if self.training:
+            loops = self._sample_loop_count()
+            return loops * self.num_layers
+        return self.depth
 
     @torch.no_grad()
     def seed(
@@ -43,7 +67,7 @@ class KLDivergenceExit(BaseExit):
         hidden_states: Tensor,
         head: Optional[nn.Module] = None,
     ) -> None:
-        if head is None:
+        if self.training or head is None:
             return
         logits = head(hidden_states)
         self._prev_log_probs = F.log_softmax(logits, dim=-1)
@@ -59,26 +83,27 @@ class KLDivergenceExit(BaseExit):
         current_depth: int,
         head: Optional[nn.Module] = None,
     ) -> bool:
+        if self.training:
+            return False
+
         if not self._is_loop_boundary(current_depth):
             return False
 
-        # Need the head to compute output distributions
         if head is None:
             return False
 
         logits = head(hidden_states)
         current_log_probs = F.log_softmax(logits, dim=-1)
 
-        # First loop boundary - store baseline, can't compute KL yet
+        # First boundary without a baseline - store and continue
         if self._prev_log_probs is None:
             self._prev_log_probs = current_log_probs
             return False
 
-        # Last step - no point exiting, we'd run it anyway
+        # Last step - no point exiting
         if current_depth >= self.depth - 1:
             return False
 
-        # KL(current || previous) averaged over batch and sequence
         kl = F.kl_div(
             self._prev_log_probs,
             current_log_probs.exp(),
@@ -88,14 +113,4 @@ class KLDivergenceExit(BaseExit):
 
         self._prev_log_probs = current_log_probs
 
-        # Second boundary - we have a KL but no previous KL to compare against
-        if self._prev_kl is None:
-            self._prev_kl = kl
-            return False
-
-        # Exit when KL has dropped to a small fraction of the previous KL,
-        # meaning the model's outputs are barely changing anymore
-        converged = self._prev_kl > 0 and kl / self._prev_kl < self.convergence_ratio
-        self._prev_kl = kl
-
-        return converged
+        return kl < self.threshold

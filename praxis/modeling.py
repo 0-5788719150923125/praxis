@@ -157,11 +157,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # computing output distributions.  We bypass nn.Module.__setattr__
         # so the head is NOT registered as a submodule of the decoder
         # (it already lives on this model).
-        if (
-            self.head is not None
-            and hasattr(self.decoder, "exit_strategy")
-            and self.decoder.exit_strategy is not None
-        ):
+        if self.head is not None:
             object.__setattr__(self.decoder, "_exit_head", self.head)
 
     def compute_loss(

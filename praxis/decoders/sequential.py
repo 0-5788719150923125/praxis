@@ -57,10 +57,9 @@ class SequentialDecoder(BaseDecoder):
 
         _, seq_len, _ = hidden_states.shape
 
-        if self.exit_strategy is not None:
-            self.exit_strategy.reset()
-            head = getattr(self, "_exit_head", None)
-            self.exit_strategy.seed(hidden_states, head)
+        effective_depth = self.exit_strategy.get_depth()
+        head = getattr(self, "_exit_head", None)
+        self.exit_strategy.seed(hidden_states, head)
 
         current_route: List[int] = []
 
@@ -71,10 +70,10 @@ class SequentialDecoder(BaseDecoder):
         )
 
         for total_calls, (reason_step, current_depth) in enumerate(
-            product(range(self.steps), range(self.depth))
+            product(range(self.steps), range(effective_depth))
         ):
             # Enforce depth budget - exit if we've made enough expert calls
-            if total_calls >= self.depth:
+            if total_calls >= effective_depth:
                 break
 
             hidden_states, controller_state, controller_loss, next_expert_idx = (
@@ -135,10 +134,8 @@ class SequentialDecoder(BaseDecoder):
                 losses.add_loss("decoder", decoder_loss)
 
             # Check exit strategy at loop boundaries
-            if self.exit_strategy is not None:
-                head = getattr(self, "_exit_head", None)
-                if self.exit_strategy.check(hidden_states, current_depth, head):
-                    break
+            if self.exit_strategy.check(hidden_states, current_depth, head):
+                break
 
             # Check for Taxus early exit signal (passed directly, not through LossContainer)
             if exit_signal is not None:
