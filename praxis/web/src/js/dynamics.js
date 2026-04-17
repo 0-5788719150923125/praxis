@@ -167,6 +167,33 @@ function detectExpertLayers(dynamics) {
     };
 }
 
+/**
+ * Detect halting histogram buckets. Returns {rs, maxLoops} or null if
+ * no halting metrics are present (non-KL strategies, or not yet logged).
+ */
+function detectHaltingBuckets(dynamics) {
+    const rs = new Set();
+    Object.keys(dynamics).forEach(k => {
+        const m = k.match(/^halting\/(train|eval)_r_(\d+)$/);
+        if (m) rs.add(parseInt(m[2]));
+    });
+    if (rs.size === 0) return null;
+    const sorted = Array.from(rs).sort((a, b) => a - b);
+    return { rs: sorted, maxLoops: sorted[sorted.length - 1] };
+}
+
+/**
+ * Pull the latest non-null value from a metric series.
+ */
+function latestValue(series) {
+    if (!Array.isArray(series)) return null;
+    for (let i = series.length - 1; i >= 0; i--) {
+        const v = series[i];
+        if (v !== null && v !== undefined) return v;
+    }
+    return null;
+}
+
 // ─── Main render ────────────────────────────────────────────────────────────
 
 /**
@@ -186,6 +213,8 @@ function renderDynamicsCharts(runData, container) {
     const { layers: expertLayers, experts: expertsList } = detectExpertLayers(dynamics);
     const hasUniversal = universalLayers.length > 0;
     const hasExperts = expertLayers.length > 0 && expertsList.length > 0;
+    const haltingBuckets = detectHaltingBuckets(dynamics);
+    const hasHalting = haltingBuckets !== null;
 
     // Layer toggle state — use universal layers, fall back to expert layers
     const allLayers = hasUniversal ? universalLayers :
@@ -277,6 +306,21 @@ function renderDynamicsCharts(runData, container) {
         `;
     }
 
+    // Halting distribution (conditional - only when a halting strategy is in use)
+    if (hasHalting) {
+        chartsHTML += `
+            <div style="margin-top: 2rem;">
+                <div class="chart-card">
+                    <div class="chart-title">Halting Distribution</div>
+                    <div class="chart-subtitle">Loop counts used per forward pass. Training = random samples (log-normal Poisson); inference = where KL-halting actually fired.</div>
+                    <div class="chart-wrapper" style="height: 400px;">
+                        <canvas id="dynamics-halting-hist"></canvas>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
     container.innerHTML = headerHTML + chartsHTML;
 
     // Layer toggles
@@ -292,6 +336,9 @@ function renderDynamicsCharts(runData, container) {
             if (hasExperts) {
                 createExpertGradNormsChart('dynamics-grad-norms', dynamics, dynamicsLayerState.layers);
                 createExpertGradVarsChart('dynamics-grad-vars', dynamics, dynamicsLayerState.layers);
+            }
+            if (hasHalting) {
+                createHaltingHistogramChart('dynamics-halting-hist', dynamics, haltingBuckets);
             }
         } catch (error) {
             console.error('[Dynamics] Chart creation failed:', error);
@@ -396,6 +443,11 @@ function rebuildAllCharts() {
     }
     if (document.getElementById('dynamics-grad-vars')) {
         createExpertGradVarsChart('dynamics-grad-vars', dynamics, layers);
+    }
+    // Halting (doesn't depend on layer toggles, but refresh on rebuild)
+    const halting = detectHaltingBuckets(dynamics);
+    if (halting && document.getElementById('dynamics-halting-hist')) {
+        createHaltingHistogramChart('dynamics-halting-hist', dynamics, halting);
     }
 }
 
@@ -598,6 +650,96 @@ function createExpertGradVarsChart(canvasId, dynamics, layers) {
     });
 
     renderChart(canvasId, datasets, 'Gradient Variance (Log Scale)', 'logarithmic');
+}
+
+// ─── Halting histogram ──────────────────────────────────────────────────────
+
+/**
+ * Halting loop-count distribution: grouped vertical bar chart. Training series
+ * shows the log-normal Poisson samples; eval series shows where KL-halting
+ * actually cut the loop short (or max_loops when it ran to full depth).
+ */
+function createHaltingHistogramChart(canvasId, dynamics, buckets) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return;
+
+    if (dynamicsCharts[canvasId]) {
+        dynamicsCharts[canvasId].destroy();
+    }
+
+    const { textColor, gridColor, tooltipBg } = getThemeColors();
+
+    const labels = buckets.rs.map(r => `r=${r}`);
+    const trainCounts = buckets.rs.map(r => latestValue(dynamics[`halting/train_r_${r}`]) || 0);
+    const evalCounts = buckets.rs.map(r => latestValue(dynamics[`halting/eval_r_${r}`]) || 0);
+
+    const trainTotal = trainCounts.reduce((a, b) => a + b, 0);
+    const evalTotal = evalCounts.reduce((a, b) => a + b, 0);
+    const trainFreq = trainTotal > 0 ? trainCounts.map(c => c / trainTotal) : trainCounts;
+    const evalFreq = evalTotal > 0 ? evalCounts.map(c => c / evalTotal) : evalCounts;
+
+    const datasets = [];
+    if (trainTotal > 0) {
+        datasets.push({
+            label: `Training (random, n=${trainTotal})`,
+            data: trainFreq,
+            backgroundColor: '#4A90E280',
+            borderColor: '#4A90E2',
+            borderWidth: 2
+        });
+    }
+    if (evalTotal > 0) {
+        datasets.push({
+            label: `Inference (learned, n=${evalTotal})`,
+            data: evalFreq,
+            backgroundColor: '#FF6B6B80',
+            borderColor: '#FF6B6B',
+            borderWidth: 2
+        });
+    }
+
+    dynamicsCharts[canvasId] = new Chart(ctx, {
+        type: 'bar',
+        data: { labels, datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: { color: textColor, usePointStyle: true, padding: 12 }
+                },
+                tooltip: {
+                    backgroundColor: tooltipBg,
+                    titleColor: textColor,
+                    bodyColor: textColor,
+                    borderColor: gridColor,
+                    borderWidth: 1,
+                    padding: 12,
+                    callbacks: {
+                        label: (tctx) => `${tctx.dataset.label}: ${(tctx.parsed.y * 100).toFixed(1)}%`
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    title: { display: true, text: 'Recurrence Loops', color: textColor },
+                    ticks: { color: textColor },
+                    grid: { display: false }
+                },
+                y: {
+                    title: { display: true, text: 'Frequency', color: textColor },
+                    ticks: {
+                        color: textColor,
+                        callback: (v) => `${(v * 100).toFixed(0)}%`
+                    },
+                    grid: { color: gridColor },
+                    beginAtZero: true
+                }
+            }
+        }
+    });
 }
 
 // ─── Cleanup ────────────────────────────────────────────────────────────────

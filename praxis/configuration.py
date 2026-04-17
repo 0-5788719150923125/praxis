@@ -129,7 +129,7 @@ class PraxisConfig(PretrainedConfig):
         self.mtp_type = kwargs.get("mtp_type", None)
         self.mtp_depth = kwargs.get("mtp_depth", 1)
         self.tie_word_embeddings = tie_weights
-        self.exit_type = kwargs.get("exit_type", None)
+        self.halting_type = kwargs.get("halting_type", None)
         self.rl_type = kwargs.get(
             "rl_type", None
         )  # "reinforce", "grpo", "ppo", or None

@@ -11,8 +11,8 @@ from praxis import (
     DECODER_REGISTRY,
     ENCODER_REGISTRY,
     ENCODING_REGISTRY,
-    EXIT_REGISTRY,
     EXPERT_REGISTRY,
+    HALTING_REGISTRY,
     HEAD_REGISTRY,
     MTP_REGISTRY,
     NORMALIZATION_REGISTRY,
@@ -97,11 +97,11 @@ class ArchitectureGroup:
         )
 
         group.add_argument(
-            "--exit-type",
+            "--halting-type",
             type=str,
-            choices=EXIT_REGISTRY.keys(),
+            choices=HALTING_REGISTRY.keys(),
             default=None,
-            help="Early exit strategy for recurrent depth loops",
+            help="Halting strategy for recurrent depth loops",
         )
 
         group.add_argument(

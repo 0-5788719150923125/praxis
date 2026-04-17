@@ -1,4 +1,4 @@
-from typing import Optional, TypeVar
+from typing import Any, Dict, Optional, TypeVar
 
 import torch.nn as nn
 from torch import Tensor
@@ -6,8 +6,8 @@ from torch import Tensor
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
-class BaseExit(nn.Module):
-    """No-op exit strategy. Always runs full depth, never exits early."""
+class BaseHalting(nn.Module):
+    """No-op halting strategy. Always runs full depth, never halts early."""
 
     def __init__(self, config: ConfigType) -> None:
         super().__init__()
@@ -30,7 +30,7 @@ class BaseExit(nn.Module):
     ) -> None:
         """Capture a baseline from the pre-loop hidden states.
 
-        Called once before the decoder loop begins, giving the exit
+        Called once before the decoder loop begins, giving the halting
         strategy a "loop 0" reference point (e.g. raw embeddings).
         No-op during training.
 
@@ -46,7 +46,7 @@ class BaseExit(nn.Module):
         current_depth: int,
         head: Optional[nn.Module] = None,
     ) -> bool:
-        """Check whether the decoder should exit early.
+        """Check whether the decoder should halt early.
 
         Called after each depth step. Returns True to signal that the
         remaining depth steps should be skipped. No-op during training.
@@ -57,3 +57,7 @@ class BaseExit(nn.Module):
             head: The LM head, for computing output distributions
         """
         return False
+
+    def get_metrics(self) -> Dict[str, Any]:
+        """Return metrics for dashboards / logging. No-op by default."""
+        return {}

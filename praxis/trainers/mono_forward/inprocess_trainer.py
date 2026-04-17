@@ -304,19 +304,19 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                     disable_schedule=self.disable_schedule,
                 )
                 self._encoder_optimizer.zero_grad()
-            # Stash a reference to the decoder's exit strategy (e.g.
-            # ``exit_type: kl`` builds a ``KLDivergenceExit`` with
+            # Stash a reference to the decoder's halting strategy (e.g.
+            # ``halting_type: kl`` builds a ``KLDivergenceHalting`` with
             # randomized loop count during training and KL-based early
-            # exit at inference). The base "none" exit always returns
+            # halting at inference). The base "none" halting always returns
             # ``config.depth`` so MF behavior is unchanged when
-            # ``exit_type`` is not set. See PROJECT_PLAN's exit work.
-            self._exit_strategy = getattr(
-                model.decoder, "exit_strategy", None
+            # ``halting_type`` is not set.
+            self._halting_strategy = getattr(
+                model.decoder, "halting_strategy", None
             )
-            if self._exit_strategy is not None:
+            if self._halting_strategy is not None:
                 self._log(
-                    f"[MF] Exit strategy in use: "
-                    f"{type(self._exit_strategy).__name__}"
+                    f"[MF] Halting strategy in use: "
+                    f"{type(self._halting_strategy).__name__}"
                 )
 
             restored = {"completed_batches": 0, "num_tokens_total": 0}
@@ -361,7 +361,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
             self._encoder = None
             self._encoder_optimizer = None
             self._encoder_scheduler = None
-            self._exit_strategy = None
+            self._halting_strategy = None
             self._config = None
             signal.signal(signal.SIGINT, prev_sigint)
             signal.signal(signal.SIGTERM, prev_sigterm)
@@ -487,13 +487,13 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
         wall_clock_start = time.monotonic()
         ema_alpha = STEP_TIME_EMA_ALPHA
 
-        # Put the exit strategy in train mode so KL-style strategies
+        # Put the halting strategy in train mode so KL-style strategies
         # randomize their loop count per batch (vs. always-full-depth
         # eval mode). Restored to eval before validation / generate
         # below.
-        exit_strategy = self._exit_strategy
-        if exit_strategy is not None:
-            exit_strategy.train()
+        halting_strategy = self._halting_strategy
+        if halting_strategy is not None:
+            halting_strategy.train()
 
         def _should_capture_dynamics(batch_idx: int) -> bool:
             if dynamics_logger is None:
@@ -556,14 +556,14 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
             current_lr = 0.0
             last_softmax_collapse: Optional[float] = None
 
-            # Per-batch effective depth. With ``exit_type: kl`` this
+            # Per-batch effective depth. With ``halting_type: kl`` this
             # samples a random loop count from a log-normal Poisson
             # (paper eqs. 1-2), so each batch may visit only a subset
-            # of the full ``depth`` chain. With ``exit_type: none``
+            # of the full ``depth`` chain. With ``halting_type: none``
             # (the default) ``get_depth`` returns ``config.depth`` and
             # behavior is unchanged.
             effective_depth = (
-                exit_strategy.get_depth() if exit_strategy is not None else depth
+                halting_strategy.get_depth() if halting_strategy is not None else depth
             )
 
             for step_idx in range(effective_depth):
@@ -811,13 +811,13 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
 
         for worker in workers:
             worker.set_optimizer_eval()
-        # KL-style exit strategies switch behavior between train (random
-        # loop count) and eval (KL early-exit + full-depth ceiling).
+        # KL-style halting strategies switch behavior between train (random
+        # loop count) and eval (KL halting + full-depth ceiling).
         # Validation runs at full depth; flip to eval mode here and
         # back to train when validation finishes.
-        exit_strategy = getattr(self, "_exit_strategy", None)
-        if exit_strategy is not None:
-            exit_strategy.eval()
+        halting_strategy = getattr(self, "_halting_strategy", None)
+        if halting_strategy is not None:
+            halting_strategy.eval()
         # Encoder shares dropout/noise plumbing with the rest of the
         # model; flip to eval for the validation sweep so the loss is
         # measured against deterministic encoder output.
@@ -946,9 +946,9 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                 worker.set_optimizer_train()
             except Exception:
                 pass
-        exit_strategy = getattr(self, "_exit_strategy", None)
-        if exit_strategy is not None:
-            exit_strategy.train()
+        halting_strategy = getattr(self, "_halting_strategy", None)
+        if halting_strategy is not None:
+            halting_strategy.train()
         encoder = getattr(self, "_encoder", None)
         if encoder is not None:
             encoder.train()
@@ -1046,7 +1046,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                     with torch.no_grad():
                         activations = embeds(prefix)
 
-                # KL-style early exit at inference: ``seed`` captures the
+                # KL-style halting at inference: ``seed`` captures the
                 # baseline distribution from the pre-loop activations,
                 # ``check`` is consulted after each layer hop and may
                 # short-circuit the chain when the per-loop KL drop falls
@@ -1054,16 +1054,16 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                 # is the last worker's projection M_i - any consistent
                 # vocab projection works since check() is just measuring
                 # distribution stability across consecutive loop boundaries.
-                exit_strategy = getattr(self, "_exit_strategy", None)
-                if exit_strategy is not None:
-                    exit_strategy.eval()
+                halting_strategy = getattr(self, "_halting_strategy", None)
+                if halting_strategy is not None:
+                    halting_strategy.eval()
 
                 route = self._route_table
                 last_worker = workers[route[-1]]
                 kl_head = last_worker.projection
-                if exit_strategy is not None:
+                if halting_strategy is not None:
                     with torch.no_grad():
-                        exit_strategy.seed(activations, kl_head)
+                        halting_strategy.seed(activations, kl_head)
 
                 hidden = activations
                 visited_route: List[int] = []
@@ -1073,14 +1073,14 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                         hidden, step_idx, block_ids, None
                     )
                     visited_route.append(route[step_idx])
-                    if exit_strategy is not None and exit_strategy.check(
+                    if halting_strategy is not None and halting_strategy.check(
                         hidden, step_idx, kl_head
                     ):
                         break
 
                 # Mirror BaseController.post_forward's debug print so users
                 # can see which layers a token actually traversed - critical
-                # for verifying that an exit strategy (e.g. KL) is firing.
+                # for verifying that a halting strategy (e.g. KL) is firing.
                 # Gated on batch_size == 1 to match the standard path.
                 if (
                     getattr(config, "debug", False)

@@ -436,7 +436,10 @@ def _read_routing_weights_from_metrics(
                 routing_data_by_step[step] = {
                     k: v
                     for k, v in extra_metrics.items()
-                    if "routing" in k or "cosine" in k or "weight_angle" in k
+                    if "routing" in k
+                    or "cosine" in k
+                    or "weight_angle" in k
+                    or k.startswith("halting/")
                 }
             except json.JSONDecodeError:
                 continue
