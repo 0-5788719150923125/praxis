@@ -222,15 +222,14 @@ def create_trainer_with_module(
         # Return trainer and the module to be passed to fit()
         return trainer, lightning_module
 
-    elif trainer_type == "mono_forward":
-        # MonoForwardTrainer is framework-agnostic: it IS the trainer
-        # (not a LightningModule wrapped by a Trainer). It reads what
-        # it needs from ``trainer_params`` and silently ignores
-        # Lightning-specific keys (accelerator, devices, precision,
-        # etc.). We merge ``trainer_params`` + ``kwargs`` into one
-        # flat dict so everything the trainer might want is
-        # accessible by name, then inject ``cache_dir`` and
-        # ``tokenizer`` which come from separate factory args.
+    elif trainer_type in ("mono_forward", "mono_forward_ray"):
+        # Both Mono-Forward profiles share the same factory contract:
+        # they ARE the trainer (not a LightningModule wrapped by a
+        # Trainer), they read what they need from ``trainer_params``,
+        # and they silently ignore Lightning-specific keys
+        # (accelerator, devices, precision, etc.). The only thing that
+        # changes between the profiles is which trainer class
+        # ``TRAINER_REGISTRY`` resolved to above.
         merged: Dict[str, Any] = dict(trainer_params or {})
         merged["cache_dir"] = cache_dir
         if tokenizer is not None:

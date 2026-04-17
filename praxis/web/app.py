@@ -21,8 +21,38 @@ logging.basicConfig(
 api_logger = logging.getLogger("praxis.web")
 api_logger.setLevel(logging.WARNING)
 
+
+class _SuppressWriteBeforeStartResponse(logging.Filter):
+    """Drop werkzeug's 'write() before start_response' AssertionError.
+
+    Flask-SocketIO in threading mode on werkzeug's dev server raises this
+    assertion when a browser drops a long-poll mid-flight (new session,
+    page reload, tab close). The connection is already gone, so the error
+    is cosmetic but floods logs on every web session open/close.
+
+    Attached as a logger-level filter (not handler-level) so it survives
+    the `logger.handlers = []` reassignment in server.py _configure_logging
+    when dashboard mode swaps in a DashboardStreamHandler.
+    """
+
+    _NEEDLE = "write() before start_response"
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+        except Exception:
+            message = str(record.msg)
+        if self._NEEDLE in message:
+            return False
+        exc_info = record.exc_info
+        if exc_info and exc_info[1] is not None and self._NEEDLE in str(exc_info[1]):
+            return False
+        return True
+
+
 werkzeug_logger = logging.getLogger("werkzeug")
 werkzeug_logger.setLevel(logging.WARNING)
+werkzeug_logger.addFilter(_SuppressWriteBeforeStartResponse())
 
 # Set SocketIO/EngineIO logging to ERROR only
 logging.getLogger("socketio").setLevel(logging.ERROR)

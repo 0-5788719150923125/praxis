@@ -37,126 +37,13 @@ import torch.nn as nn
 
 from praxis.losses.layer_wise import compute_layer_wise_loss
 from praxis.metrics import compute_softmax_collapse, extract_layer_dynamics
+from praxis.trainers.mono_forward._worker_common import \
+    ActorParamShim as _ActorParamShim
+from praxis.trainers.mono_forward._worker_common import \
+    build_optimizer as _build_optimizer
+from praxis.trainers.mono_forward._worker_common import \
+    build_scheduler as _build_scheduler
 from praxis.trainers.mono_forward.device import deep_to as _deep_to
-
-
-class _ActorParamShim(nn.Module):
-    """Minimal ``nn.Module`` wrapper over one actor's (layer, projection) pair.
-
-    :func:`praxis.optimizers.get_optimizer` calls
-    :func:`pytorch_optimizer.create_optimizer`, which takes an
-    ``nn.Module`` and walks ``named_parameters`` / ``named_modules``
-    to apply the weight-decay ban list (LayerNorm, bias, etc.). Under
-    MF each actor owns its layer and its per-layer projection matrix
-    ``M_i``, so we need an intermediate container that exposes both
-    as registered children.
-
-    This is the smallest possible such wrapper: it doesn't define
-    a ``forward``, doesn't need one, and never participates in any
-    forward pass. The optimizer only reads parameters off it.
-    """
-
-    def __init__(self, layer: nn.Module, projection: nn.Module) -> None:
-        super().__init__()
-        self.layer = layer
-        self.projection = projection
-
-
-def _build_optimizer(
-    shim: _ActorParamShim,
-    optimizer_config: Optional[Dict[str, Any]],
-    wrappers: Dict[str, bool],
-    fallback_lr: float,
-    criterion: nn.Module,
-    strategy: Optional[Any],
-) -> torch.optim.Optimizer:
-    """Construct an optimizer for this actor's (layer, head) params.
-
-    When an ``optimizer_config`` dict is provided (i.e. the trainer
-    was constructed via main.py), this routes through
-    :func:`praxis.optimizers.get_optimizer` with the same args the
-    backprop path would use, so --optimizer / --trac / --lookahead /
-    --schedule-free / etc. all honor their CLI flags under MF.
-
-    When no config is provided (direct-construction unit tests),
-    falls back to ``torch.optim.Adam(params, lr=fallback_lr)`` so the
-    existing Phase 2/3 tests that instantiate LayerActor without
-    touching main.py continue to pass.
-    """
-    if optimizer_config is None:
-        # Phase 2/3 fallback path: the criterion and strategy rarely
-        # have trainable parameters but we include them defensively so
-        # anything they do contribute is actually updated.
-        params = list(shim.parameters())
-        params += list(criterion.parameters())
-        if strategy is not None and isinstance(strategy, nn.Module):
-            params += list(strategy.parameters())
-        return torch.optim.Adam(params, lr=fallback_lr)
-
-    from praxis.optimizers import get_optimizer
-
-    optimizer = get_optimizer(
-        shim,
-        trac=bool(wrappers.get("trac", False)),
-        ortho=bool(wrappers.get("ortho", False)),
-        lookahead=bool(wrappers.get("lookahead", False)),
-        schedule_free=bool(wrappers.get("schedule_free", False)),
-        **optimizer_config,
-    )
-    # If criterion or strategy have trainable parameters (rare but
-    # possible for future loss functions), ``get_optimizer`` didn't
-    # see them. Attach them as an extra param group so they still
-    # get updates. Uses the same ``lr`` the base optimizer was
-    # constructed with so all params move together.
-    extras: list = []
-    extras += [p for p in criterion.parameters() if p.requires_grad]
-    if strategy is not None and isinstance(strategy, nn.Module):
-        extras += [p for p in strategy.parameters() if p.requires_grad]
-    if extras:
-        try:
-            base_lr = optimizer.param_groups[0]["lr"]
-            optimizer.add_param_group({"params": extras, "lr": base_lr})
-        except Exception:
-            # Optimizer wrappers (TRAC, Lookahead) may not expose a
-            # writable ``add_param_group``; swallow rather than crash
-            # actor init on an edge case no test currently exercises.
-            pass
-    return optimizer
-
-
-def _build_scheduler(
-    optimizer: torch.optim.Optimizer,
-    optimizer_config: Optional[Dict[str, Any]],
-    warmup_steps: int,
-    disable_schedule: bool,
-) -> Optional[Any]:
-    """Construct an LR scheduler for this actor's optimizer.
-
-    Reconstructs :func:`praxis.schedulers.get_scheduler_func` locally
-    from the same config main.py feeds the backprop path's scheduler,
-    then applies the resulting partial to this actor's optimizer.
-    Returns ``None`` when there's nothing to schedule (no config, or
-    construction fails) - ``train_batch`` no-ops the ``.step()`` call
-    in that case so the loop stays correct.
-    """
-    if optimizer_config is None:
-        return None
-    try:
-        from praxis.schedulers import get_scheduler_func
-
-        scheduler_func = get_scheduler_func(
-            optimizer_config=optimizer_config,
-            disable_schedule=disable_schedule,
-            warmup_steps=max(int(warmup_steps), 1),
-        )
-        return scheduler_func(optimizer)
-    except Exception:
-        # Some optimizer wrappers (e.g. ScheduleFreeWrapper) don't
-        # expose a standard ``param_groups`` shape the scheduler
-        # expects. Rather than crash actor init, we log-then-skip
-        # so training still runs (at a fixed LR). A future pass can
-        # teach the scheduler to handle these wrappers natively.
-        return None
 
 
 @ray.remote(num_cpus=1, max_restarts=0)

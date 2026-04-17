@@ -40,7 +40,7 @@ TRAINER_CAPABILITIES: Dict[str, TrainerCapabilities] = {
         is_lightning_module=True,
     ),
     "mono_forward": TrainerCapabilities(
-        # MF runs its own per-actor optimizers and explicitly does not
+        # MF runs its own per-worker optimizers and explicitly does not
         # use Lightning's automatic optimization or gradient clipping.
         supports_automatic_optimization=False,
         supports_gradient_clipping=False,
@@ -52,6 +52,17 @@ TRAINER_CAPABILITIES: Dict[str, TrainerCapabilities] = {
         requires_optimizer_config=False,
         # Framework-agnostic; not a LightningModule and does not use
         # Lightning's manual optimization hooks either.
+        is_lightning_module=False,
+        uses_manual_optimization=False,
+    ),
+    "mono_forward_ray": TrainerCapabilities(
+        # Same MF math + factory contract as the in-process profile;
+        # the only difference is which worker backend hosts each layer.
+        supports_automatic_optimization=False,
+        supports_gradient_clipping=False,
+        supports_accumulation_schedule=False,
+        requires_custom_init=True,
+        requires_optimizer_config=False,
         is_lightning_module=False,
         uses_manual_optimization=False,
     ),

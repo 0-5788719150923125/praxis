@@ -233,12 +233,16 @@ class TestTrainerFactory:
         """Test that trainer registry contains expected trainers."""
         assert "backpropagation" in TRAINER_REGISTRY
         assert "mono_forward" in TRAINER_REGISTRY
+        assert "mono_forward_ray" in TRAINER_REGISTRY
 
         # Test that backpropagation trainer is directly accessible
         assert TRAINER_REGISTRY["backpropagation"] == BackpropagationTrainer
 
-        # Test that mono_forward is a callable (lazy loader)
+        # Both Mono-Forward profiles are lazy loaders so the package
+        # (and Ray) only get imported when the profile is actually
+        # selected.
         assert callable(TRAINER_REGISTRY["mono_forward"])
+        assert callable(TRAINER_REGISTRY["mono_forward_ray"])
 
 
 if __name__ == "__main__":

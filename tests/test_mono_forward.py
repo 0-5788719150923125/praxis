@@ -46,6 +46,9 @@ if HAS_RAY:
 else:
     MonoForwardTrainer = None  # type: ignore[assignment]
 
+# The in-process trainer never imports Ray, so it loads everywhere.
+from praxis.trainers.mono_forward import InProcessMonoForwardTrainer
+
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -732,3 +735,143 @@ def test_mono_forward_generator_fulfill_requests_is_noop():
     gen.request_generation("x", {"max_new_tokens": 1})
     assert gen.fulfill_requests() == 0
     assert gen.fulfill_requests(max_requests=10) == 0
+
+
+# ---------------------------------------------------------------------------
+# In-process backend (no Ray). These run anywhere - the whole point of the
+# in-process backend is that it has zero Ray dependency.
+# ---------------------------------------------------------------------------
+
+
+def test_inprocess_fit_reduces_loss_and_checkpoint_roundtrips(tmp_path):
+    """End-to-end smoke for the in-process backend.
+
+    Mirrors :func:`test_fit_reduces_loss_and_checkpoint_roundtrips` for
+    the Ray path: training reduces loss, a structured checkpoint lands on
+    disk, and reloading the model_state_dict into a fresh
+    ``PraxisForCausalLM`` reproduces the trained-model logits exactly.
+    """
+    torch.manual_seed(0)
+    config = _mf_config(num_layers=2)
+    model = PraxisForCausalLM(config)
+
+    dataset = _FixedBatchDataset(
+        vocab_size=config.vocab_size, batch_size=2, seq_len=16, seed=1
+    )
+    trainer = InProcessMonoForwardTrainer(
+        max_steps=20,
+        log_every_n_steps=10,
+        cache_dir=str(tmp_path),
+        device="cpu",
+    )
+    result = trainer.fit(model, _SyntheticDataModule(dataset))
+
+    assert result["steps"] == 20
+    assert result["final_loss"] < result["first_loss"], (
+        f"In-process MF did not reduce loss "
+        f"(start={result['first_loss']:.4f}, end={result['final_loss']:.4f})"
+    )
+
+    checkpoint_path = tmp_path / "mono_forward.pt"
+    assert checkpoint_path.exists()
+
+    model.eval()
+    probe = torch.randint(
+        0, config.vocab_size, (1, 8), generator=torch.Generator().manual_seed(42)
+    )
+    with torch.no_grad():
+        trained_logits = model(input_ids=probe).logits.detach().clone()
+
+    reloaded = PraxisForCausalLM(_mf_config(num_layers=2))
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    assert "model_state_dict" in checkpoint
+    assert "completed_batches" in checkpoint
+    assert "projection_states" in checkpoint
+    state = checkpoint["model_state_dict"]
+    _missing, unexpected = reloaded.load_state_dict(state, strict=False)
+    assert not unexpected, f"unexpected keys in MF checkpoint: {unexpected}"
+
+    reloaded.eval()
+    with torch.no_grad():
+        reloaded_logits = reloaded(input_ids=probe).logits
+    torch.testing.assert_close(
+        reloaded_logits, trained_logits, rtol=1e-5, atol=1e-5,
+        msg="MF in-process checkpoint logits do not match reloaded vanilla model",
+    )
+
+
+def test_inprocess_recurrent_depth_routes_through_layers():
+    """depth > num_layers must cycle through the worker set.
+
+    Mirrors the Ray trainer's recurrent-depth contract: with depth=4
+    and num_layers=2 the depth chain hits each worker twice. The
+    in-process trainer's per-layer-loss history therefore has one entry
+    per depth step, not one per worker.
+    """
+    torch.manual_seed(0)
+    config = PraxisConfig(
+        vocab_size=128,
+        hidden_size=16,
+        embed_size=16,
+        num_heads=4,
+        depth=4,
+        num_layers=2,
+        max_length=32,
+        decoder_type="sequential",
+        attention_type="standard",
+        encoder_type=None,
+        tie_weights=False,
+    )
+    model = PraxisForCausalLM(config)
+    dataset = _FixedBatchDataset(
+        vocab_size=config.vocab_size, batch_size=2, seq_len=16, seed=3
+    )
+    trainer = InProcessMonoForwardTrainer(
+        max_steps=5, cache_dir=None, device="cpu", log_every_n_steps=10
+    )
+    result = trainer.fit(model, _SyntheticDataModule(dataset))
+
+    per_layer = result["per_layer_loss_history"]
+    # depth=4 means 4 entries, one per depth step (not per worker).
+    assert set(per_layer.keys()) == {0, 1, 2, 3}
+    for step_idx, losses in per_layer.items():
+        assert len(losses) == 5, (
+            f"depth step {step_idx} should have one loss per batch, got {len(losses)}"
+        )
+
+
+def test_inprocess_does_not_require_ray():
+    """The in-process backend must construct without ray installed.
+
+    Regression guard against accidentally re-introducing a top-level
+    ``import ray`` in the in-process import graph - that would defeat
+    the whole point of the backend.
+    """
+    import sys
+
+    # If Ray is currently importable we can't actually simulate its
+    # absence cleanly inside an already-running interpreter; skipping
+    # is fine because the static-import surface check below is the
+    # real guard.
+    seen = set()
+    for mod_name, mod in list(sys.modules.items()):
+        if mod_name.startswith("praxis.trainers.mono_forward"):
+            seen.add(mod_name)
+    # The actor module pulls Ray; the in-process surface must not.
+    inprocess_modules = {
+        m for m in seen
+        if "inprocess" in m or m.endswith("._worker_common")
+    }
+    assert inprocess_modules, "in-process backend modules were not imported"
+    for m in inprocess_modules:
+        # No imported module on the in-process path may have pulled ray.
+        # (We can't reliably detect transitive ray imports across the
+        # whole tree, but the worker / trainer / common modules must
+        # not import it directly.)
+        src = sys.modules[m].__file__
+        with open(src) as f:
+            text = f.read()
+        assert "import ray" not in text, (
+            f"{src} contains a top-level 'import ray'; "
+            "this defeats the in-process backend's no-Ray guarantee."
+        )

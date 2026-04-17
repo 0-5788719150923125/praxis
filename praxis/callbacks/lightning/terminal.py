@@ -340,11 +340,16 @@ class TerminalInterface(Callback):
         # Add GPU memory info if available
         if self.device and self.device.startswith("cuda:"):
             gpu_idx = int(self.device.split(":")[1])
-            gpu_reserved_key = f"gpu{gpu_idx}_reserved"
+            # Driver-level GPU usage (mem_get_info) matches what
+            # nvidia-smi shows: the full per-device VRAM consumption,
+            # CUDA context overhead included. The PyTorch
+            # caching-allocator's ``reserved`` counter only sees its
+            # own pool and undercounts everything else.
+            gpu_actual_key = f"gpu{gpu_idx}_actual_used"
             gpu_total_key = f"gpu{gpu_idx}_total"
-            if gpu_reserved_key in memory_info and gpu_total_key in memory_info:
+            if gpu_actual_key in memory_info and gpu_total_key in memory_info:
                 info_dict["vram"] = (
-                    f"{memory_info[gpu_reserved_key]}/{memory_info[gpu_total_key]}"
+                    f"{memory_info[gpu_actual_key]}/{memory_info[gpu_total_key]}"
                 )
             elif "gpu_status" in memory_info:
                 info_dict["vram"] = memory_info["gpu_status"]
@@ -424,11 +429,16 @@ class TerminalInterface(Callback):
 
         if self.device and self.device.startswith("cuda:"):
             gpu_idx = int(self.device.split(":")[1])
-            gpu_reserved_key = f"gpu{gpu_idx}_reserved"
+            # Driver-level GPU usage (mem_get_info) matches what
+            # nvidia-smi shows: the full per-device VRAM consumption,
+            # CUDA context overhead included. The PyTorch
+            # caching-allocator's ``reserved`` counter only sees its
+            # own pool and undercounts everything else.
+            gpu_actual_key = f"gpu{gpu_idx}_actual_used"
             gpu_total_key = f"gpu{gpu_idx}_total"
-            if gpu_reserved_key in memory_info and gpu_total_key in memory_info:
+            if gpu_actual_key in memory_info and gpu_total_key in memory_info:
                 info_dict["vram"] = (
-                    f"{memory_info[gpu_reserved_key]}/{memory_info[gpu_total_key]}"
+                    f"{memory_info[gpu_actual_key]}/{memory_info[gpu_total_key]}"
                 )
             elif "gpu_status" in memory_info:
                 info_dict["vram"] = memory_info["gpu_status"]

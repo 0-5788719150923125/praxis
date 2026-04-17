@@ -20,10 +20,14 @@ class TrainingGroup:
             default="backpropagation",
             help=(
                 "Training strategy to use. 'backpropagation' is standard "
-                "gradient descent; 'mono_forward' is the pipelined "
-                "Mono-Forward trainer (each layer trains locally against "
-                "a shared output head, O(1) activation memory in depth, "
-                "Ray-backed workers today)."
+                "gradient descent. The Mono-Forward profiles share the "
+                "same training math (each layer trains locally against a "
+                "per-layer projection matrix, O(1) activation memory in "
+                "depth) and differ only in worker backend: 'mono_forward' "
+                "runs every layer in the driver process under a single "
+                "CUDA context (single host, low VRAM overhead), while "
+                "'mono_forward_ray' spawns one Ray actor per layer "
+                "(multi-host capable, ~300-500 MB CUDA context per actor)."
             ),
         )
 
@@ -98,6 +102,7 @@ class TrainingGroup:
                 "Whether to drive the Mono-Forward pipeline with Ray's "
                 "experimental_compile() DAG API ('compiled') or with a "
                 "manual ray.wait()-based driver loop ('manual'). Default is "
-                "'manual' because it only uses stable Ray APIs."
+                "'manual' because it only uses stable Ray APIs. Only "
+                "applies to --trainer-type mono_forward_ray."
             ),
         )

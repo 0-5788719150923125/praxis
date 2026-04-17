@@ -83,7 +83,7 @@ services:
         set +e
         python /workspace/main.py \
           --mike \
-          --trainer-type mono_forward \
+          --trainer-type mono_forward_ray \
           --ray-address 127.0.0.1:6379 \
           --ray-head-sync-every 100 \
           --no-dashboard

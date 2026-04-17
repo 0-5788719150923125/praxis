@@ -48,13 +48,30 @@ except ImportError:
     LightningTrainerWrapper = None
 
 
-# Registry for trainers. ``mono_forward`` is lazy-loaded so that
-# selecting ``backpropagation`` does not import the Mono-Forward
-# package or its (currently Ray-backed) worker runtime. The Ray
-# runtime is only started when the mono_forward trainer path is
-# actually selected - see praxis/trainers/mono_forward/__init__.py.
-def _get_mono_forward_trainer():
-    """Lazy load the Mono-Forward trainer."""
+# Registry for trainers. Each ``mono_forward*`` entry is a profile
+# that picks a worker backend in addition to the trainer math:
+#
+# - ``mono_forward``: in-process, single CUDA context, single host.
+#   The default Mono-Forward profile - no Ray dependency, suitable
+#   for iterating on very deep models on one GPU.
+# - ``mono_forward_ray``: one Ray actor per layer. Multi-host /
+#   multi-raylet capable, but pays ~300-500 MB of CUDA context per
+#   actor; use this when you actually need multiple machines.
+#
+# Both are lazy-loaded so selecting ``backpropagation`` doesn't
+# import the Mono-Forward package or its (Ray-backed) worker
+# runtime; ``mono_forward_ray`` additionally defers ``import ray``
+# until ``fit()`` so the in-process profile loads on Python builds
+# where Ray has no wheels.
+def _get_mono_forward_inprocess_trainer():
+    """Lazy load the in-process Mono-Forward trainer."""
+    from praxis.trainers.mono_forward import InProcessMonoForwardTrainer
+
+    return InProcessMonoForwardTrainer
+
+
+def _get_mono_forward_ray_trainer():
+    """Lazy load the Ray-backed Mono-Forward trainer."""
     from praxis.trainers.mono_forward import MonoForwardTrainer
 
     return MonoForwardTrainer
@@ -62,7 +79,8 @@ def _get_mono_forward_trainer():
 
 TRAINER_REGISTRY = {
     "backpropagation": BackpropagationTrainer,
-    "mono_forward": _get_mono_forward_trainer,
+    "mono_forward": _get_mono_forward_inprocess_trainer,
+    "mono_forward_ray": _get_mono_forward_ray_trainer,
 }
 
 # Lightning wrapper is not exposed as a separate trainer type

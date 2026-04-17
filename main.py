@@ -104,6 +104,72 @@ def _bos_prompt(tokenizer):
     return bos_token if isinstance(bos_token, str) and bos_token else None
 
 
+def _graceful_shutdown(
+    api_server: object,
+    exit_code: int = 0,
+    reason: str = "training complete",
+) -> None:
+    """Explicit teardown before Python finalization to avoid GIL races.
+
+    Background daemon threads (Flask/Werkzeug API server, Lightning
+    dataloader workers, integration clients like Discord / Wandb) can
+    still be executing C-extension code when the main thread's
+    ``return`` starts Python's shutdown. If one of them calls
+    ``PyGILState_Release`` on an interpreter that's already finalizing,
+    the process dies with a fatal error even after a successful run -
+    the symptom the user hit after a clean ``Ctrl+C``-drained training.
+
+    Mirroring the Ray MF trainer's ``ray.shutdown`` pattern, we stop
+    each known background resource with a short per-component timeout
+    (so a hung subsystem can't stall the whole process) and then
+    bypass normal Python finalization via ``os._exit``. Metrics DBs
+    and checkpoints are already flushed inside ``trainer.fit``'s own
+    ``finally`` block by the time we get here, so skipping the
+    interpreter's atexit / gc pass is safe.
+    """
+    import threading
+
+    print(f"[SHUTDOWN] {reason}; stopping background services...")
+
+    def _stop_with_timeout(name: str, fn, timeout: float) -> None:
+        try:
+            t = threading.Thread(
+                target=fn, daemon=True, name=f"shutdown_{name}"
+            )
+            t.start()
+            t.join(timeout=timeout)
+            if t.is_alive():
+                print(
+                    f"[SHUTDOWN] {name} stop timed out after {timeout:.0f}s; "
+                    "continuing teardown"
+                )
+        except Exception as exc:
+            print(f"[SHUTDOWN] {name} stop raised: {exc!r}")
+
+    if api_server is not None:
+        _stop_with_timeout("api_server", api_server.stop, 5.0)
+
+    try:
+        _stop_with_timeout(
+            "integrations", integration_loader.run_cleanup_hooks, 5.0
+        )
+    except Exception as exc:
+        print(f"[SHUTDOWN] integration cleanup failed to dispatch: {exc!r}")
+
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+    # ``os._exit`` skips atexit handlers, finalizers, stdio buffers
+    # (already flushed), and the module-teardown pass where GIL races
+    # happen. This is the same exit-path ``cleanup_signal_handler``
+    # takes on Ctrl+C during the cleanup phase; using it here means
+    # the successful-completion path gets the same guarantees.
+    os._exit(exit_code)
+
+
 def _maybe_swap_inference_generator(trainer, tokenizer, api_server):
     """Swap the API server's generator for :class:`MonoForwardGenerator`
     when running under ``--trainer-type mono_forward``.
@@ -879,16 +945,31 @@ def main():
         # Training completed successfully
         print("[TRAIN] Completed successfully")
 
-        # Install aggressive signal handler for cleanup phase
+        # Swap to the aggressive signal handler before we start the
+        # cleanup phase - a Ctrl+C during teardown should just exit
+        # fast, not stall in another graceful path.
         signal.signal(signal.SIGINT, cleanup_signal_handler)
         signal.signal(signal.SIGTERM, cleanup_signal_handler)
-
-        # Set a flag to skip most cleanup since training is done
         cleanup_interrupted = False  # Reset flag
 
-        return 0
+        # Explicit shutdown bypassing Python finalization; prevents
+        # the ``PyGILState_Release`` race we see from Flask / dataloader
+        # daemon threads during interpreter teardown. Does not return.
+        _graceful_shutdown(api_server, exit_code=0, reason="training complete")
+        return 0  # unreachable, kept for static analysis
 
-    except Exception as e:
+    except KeyboardInterrupt:
+        # Lightning's own SIGINT handler usually drains the trainer
+        # and returns cleanly (that path lands in the success branch
+        # above). This branch runs only when the interrupt escapes
+        # the trainer, e.g. during dataset setup or between runs.
+        print("\n[TRAIN] Interrupted by user")
+        signal.signal(signal.SIGINT, cleanup_signal_handler)
+        signal.signal(signal.SIGTERM, cleanup_signal_handler)
+        _graceful_shutdown(api_server, exit_code=130, reason="interrupted")
+        return 130  # unreachable
+
+    except Exception:
         # If we have a dashboard running, force crash it to show the error
         if (
             "progress_bar" in locals()
@@ -899,17 +980,20 @@ def main():
 
             error_text = traceback.format_exc()
             progress_bar.dashboard.crash_with_error(error_text)
+            # Dashboard-crash path still wants fast teardown of
+            # background services to stop the GIL race; bubble the
+            # exit through _graceful_shutdown so the exit code
+            # reflects the failure.
+            _graceful_shutdown(api_server, exit_code=1, reason="fatal error")
+            return 1  # unreachable
         else:
-            # No dashboard, just re-raise the exception normally
-            raise
+            # No dashboard - print traceback, then explicit shutdown
+            # before Python tries to clean up on its own.
+            import traceback
 
-    except KeyboardInterrupt:
-        # Lightning handles Ctrl+C gracefully
-        print("\n[TRAIN] Interrupted by user")
-        # Install handler for cleanup
-        signal.signal(signal.SIGINT, cleanup_signal_handler)
-        signal.signal(signal.SIGTERM, cleanup_signal_handler)
-        return 130  # Standard exit code for SIGINT
+            traceback.print_exc()
+            _graceful_shutdown(api_server, exit_code=1, reason="fatal error")
+            return 1  # unreachable
 
 
 if __name__ == "__main__":

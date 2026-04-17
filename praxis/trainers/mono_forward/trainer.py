@@ -63,21 +63,20 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 import torch
 
 from praxis.metrics.ema import LOSS_EMA_ALPHA, STEP_TIME_EMA_ALPHA, compute_ema
+from praxis.trainers.mono_forward.device import force_cpu as _force_cpu
 from praxis.utils import create_block_ids
 
-
-from praxis.trainers.mono_forward.device import force_cpu as _force_cpu
-
-
 _RAY_MISSING_MSG = (
-    "mono_forward requires the optional 'ray' extra, which is not "
+    "mono_forward_ray requires the optional 'ray' extra, which is not "
     "installed in this environment.\n\n"
     "Ray publishes no wheels for Python >= 3.14. The typical path is to "
     "run inside the Docker compose environment (Ubuntu 24.04 + Python 3.12, "
     "where Ray installs cleanly):\n"
-    "    ./launch compose --mike --trainer-type mono_forward ...\n\n"
+    "    ./launch compose --mike --trainer-type mono_forward_ray ...\n\n"
     "To install Ray in a local venv instead (only works on Python 3.10-3.13):\n"
     "    pip install -e '.[ray]'\n\n"
+    "For single-host training without Ray, use --trainer-type mono_forward "
+    "(the in-process profile).\n"
 )
 
 
@@ -144,14 +143,10 @@ class MonoForwardTrainer:
     """
 
     def __init__(self, **trainer_params: Any) -> None:
-        # Verify Ray is importable *before* we do any other setup, and
-        # raise a clean actionable error if not. The ``./launch`` bash
-        # guard already handles this for most users; this branch catches
-        # the ``python main.py`` direct-invocation case.
-        try:
-            import ray  # noqa: F401
-        except ImportError as exc:
-            raise ImportError(_RAY_MISSING_MSG) from exc
+        # Ray is an implementation detail of this particular trainer;
+        # the import check has been moved to ``fit`` so subclasses that
+        # override ``fit`` (e.g. the in-process backend) can inherit
+        # ``__init__`` without forcing Ray into their dependency graph.
 
         # Ingest the Lightning-flavoured params dict. ``-1`` / ``None``
         # mean "unbounded" in Lightning conventions; we normalize to a
@@ -425,12 +420,29 @@ class MonoForwardTrainer:
                 "mono_forward expected model.decoder.locals to be a ModuleList "
                 "of LocalLayers, but the model does not expose that attribute."
             )
-        if not hasattr(model, "embeds") or model.embeds is None:
+
+        # The model exposes either ``embeds`` (token-level path: id ->
+        # hidden via an embedding lookup) or ``encoder`` (encoder path:
+        # id -> hidden via a learned encode() that may also do byte->
+        # patch downsampling and emit aux state). Exactly one is set,
+        # depending on ``config.encoder_type``. Both are valid MF inputs
+        # so long as the in-process pipeline knows how to call the right
+        # one - the Ray pipeline currently only knows ``embeds``, the
+        # in-process pipeline below handles both.
+        has_embeds = hasattr(model, "embeds") and model.embeds is not None
+        has_encoder = bool(getattr(model, "encoder", False))
+        if not (has_embeds or has_encoder):
             raise RuntimeError(
-                "mono_forward expected model.embeds to be set "
-                "(encoder-based models are not yet supported under MF)."
+                "mono_forward expected model to expose either model.embeds "
+                "(token embedding) or model.encoder (encoder-based model)."
             )
-        if not hasattr(model, "head") or model.head is None:
+        # Encoder-based models do not allocate a top-level ``model.head``
+        # (the encoder owns its own decode() projection). The MF
+        # per-layer projection M_i replaces that for the local loss, so
+        # we don't actually need ``model.head`` either way - only
+        # require it for the embeds path so checkpoint round-trip into a
+        # vanilla model still works.
+        if has_embeds and (not hasattr(model, "head") or model.head is None):
             raise RuntimeError(
                 "mono_forward expected model.head to be set "
                 "(shared-head projection D2b needs a real head module)."
@@ -461,7 +473,14 @@ class MonoForwardTrainer:
         """
         import signal
 
-        import ray
+        # Verify Ray is importable *before* we do any other setup, and
+        # raise a clean actionable error if not. The ``./launch`` bash
+        # guard already handles this for most users; this branch catches
+        # the ``python main.py`` direct-invocation case.
+        try:
+            import ray
+        except ImportError as exc:
+            raise ImportError(_RAY_MISSING_MSG) from exc
 
         from praxis.trainers.mono_forward.actor import LayerActor
 
@@ -484,6 +503,20 @@ class MonoForwardTrainer:
         signal.signal(signal.SIGTERM, _shutdown_handler)
 
         self._validate_model(model)
+
+        # Encoder-based models are supported by the in-process backend
+        # only - the Ray pipeline doesn't yet thread the patch metadata
+        # through ``train_batch.remote`` calls. Surface that as a clear
+        # error here instead of failing later on a missing
+        # ``model_host.embeds``.
+        if bool(getattr(model, "encoder", False)):
+            raise RuntimeError(
+                "mono_forward_ray does not yet support encoder-based "
+                "models (config.encoder_type is set). Use "
+                "--trainer-type mono_forward (the in-process profile) "
+                "for encoder runs, or set encoder_type to null to fall "
+                "back to the token-embedding path."
+            )
 
         # Force EVERYTHING to CPU before Ray touches it. ``model.cpu()``
         # moves registered parameters and buffers, but some modules
@@ -1589,11 +1622,21 @@ class MonoForwardTrainer:
                 }
                 if self.device and self.device.startswith("cuda:"):
                     gpu_idx = int(self.device.split(":")[1])
-                    gpu_reserved = f"gpu{gpu_idx}_reserved"
+                    # Prefer the driver's view of VRAM usage
+                    # (``mem_get_info``) over the PyTorch allocator's
+                    # reserved counter. For the in-process MF backend
+                    # this captures everything: layer weights, the
+                    # CUDA context, optimizer state, cuDNN workspaces.
+                    # For the Ray backend the driver's process holds
+                    # only its own context, so the number is small,
+                    # but it's at least an honest read of what the
+                    # driver is using - per-actor usage is logged
+                    # separately by Ray's own dashboard.
+                    gpu_actual = f"gpu{gpu_idx}_actual_used"
                     gpu_total = f"gpu{gpu_idx}_total"
-                    if gpu_reserved in memory_info and gpu_total in memory_info:
+                    if gpu_actual in memory_info and gpu_total in memory_info:
                         mem_update["vram"] = (
-                            f"{memory_info[gpu_reserved]}/{memory_info[gpu_total]}"
+                            f"{memory_info[gpu_actual]}/{memory_info[gpu_total]}"
                         )
                     elif "gpu_status" in memory_info:
                         mem_update["vram"] = memory_info["gpu_status"]
