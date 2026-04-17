@@ -16,7 +16,7 @@ import pandas as pd
 
 def load_config(config_path: str = "config.yaml") -> Dict[str, Any]:
     """Load configuration from YAML file."""
-    with open(config_path, 'r') as f:
+    with open(config_path, "r") as f:
         return yaml.safe_load(f)
 
 
@@ -25,13 +25,13 @@ def save_json(data: Any, filepath: str) -> None:
     dirname = os.path.dirname(filepath)
     if dirname:  # Only create directory if there is a parent directory
         os.makedirs(dirname, exist_ok=True)
-    with open(filepath, 'w') as f:
+    with open(filepath, "w") as f:
         json.dump(data, f, indent=2)
 
 
 def load_json(filepath: str) -> Any:
     """Load data from JSON file."""
-    with open(filepath, 'r') as f:
+    with open(filepath, "r") as f:
         return json.load(f)
 
 
@@ -42,35 +42,39 @@ def get_video_info(video_path: str) -> Dict[str, Any]:
     Returns dict with: width, height, fps, duration, total_frames
     """
     cmd = [
-        'ffprobe',
-        '-v', 'error',
-        '-select_streams', 'v:0',
-        '-show_entries', 'stream=width,height,r_frame_rate,duration,nb_frames',
-        '-of', 'json',
-        video_path
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=width,height,r_frame_rate,duration,nb_frames",
+        "-of",
+        "json",
+        video_path,
     ]
 
     result = subprocess.run(cmd, capture_output=True, text=True, check=True)
     data = json.loads(result.stdout)
 
-    stream = data['streams'][0]
+    stream = data["streams"][0]
 
     # Parse frame rate (format: "60000/1001" or "30/1")
-    fps_parts = stream['r_frame_rate'].split('/')
+    fps_parts = stream["r_frame_rate"].split("/")
     fps = float(fps_parts[0]) / float(fps_parts[1])
 
     # Calculate total frames if not provided
-    duration = float(stream.get('duration', 0))
-    total_frames = int(stream.get('nb_frames', 0))
+    duration = float(stream.get("duration", 0))
+    total_frames = int(stream.get("nb_frames", 0))
     if total_frames == 0 and duration > 0:
         total_frames = int(duration * fps)
 
     return {
-        'width': int(stream['width']),
-        'height': int(stream['height']),
-        'fps': fps,
-        'duration': duration,
-        'total_frames': total_frames
+        "width": int(stream["width"]),
+        "height": int(stream["height"]),
+        "fps": fps,
+        "duration": duration,
+        "total_frames": total_frames,
     }
 
 
@@ -109,19 +113,13 @@ DEFAULT_TASK_CONFIG = {
     "task_name": "binary_classification",
     "task_description": "Generic binary classification task",
     "labels": {
-        "positive": {
-            "display_name": "true",
-            "description": "Positive class"
-        },
-        "negative": {
-            "display_name": "false",
-            "description": "Negative class"
-        }
-    }
+        "positive": {"display_name": "true", "description": "Positive class"},
+        "negative": {"display_name": "false", "description": "Negative class"},
+    },
 }
 
 
-def load_task_config(config_path: str = 'task_config.json') -> Dict[str, Any]:
+def load_task_config(config_path: str = "task_config.json") -> Dict[str, Any]:
     """
     Load task configuration from JSON file.
 
@@ -154,10 +152,10 @@ def internal_to_display(label: str, task_config: Dict[str, Any]) -> str:
     Returns:
         Display label (e.g., 'touching', 'not_touching')
     """
-    if label == 'true':
-        return task_config['labels']['positive']['display_name']
-    elif label == 'false':
-        return task_config['labels']['negative']['display_name']
+    if label == "true":
+        return task_config["labels"]["positive"]["display_name"]
+    elif label == "false":
+        return task_config["labels"]["negative"]["display_name"]
     return label
 
 
@@ -174,25 +172,27 @@ def display_to_internal(label: str, task_config: Dict[str, Any]) -> str:
     Returns:
         Internal label ('true' or 'false')
     """
-    pos_name = task_config['labels']['positive']['display_name']
-    neg_name = task_config['labels']['negative']['display_name']
+    pos_name = task_config["labels"]["positive"]["display_name"]
+    neg_name = task_config["labels"]["negative"]["display_name"]
 
     # Check current task labels
     if label == pos_name:
-        return 'true'
+        return "true"
     elif label == neg_name:
-        return 'false'
+        return "false"
 
     # Legacy support for old hardcoded labels (backward compatibility)
-    if label == 'touching':
-        return 'true'
-    elif label == 'not_touching':
-        return 'false'
+    if label == "touching":
+        return "true"
+    elif label == "not_touching":
+        return "false"
 
     return label
 
 
-def migrate_labels_to_internal(df: pd.DataFrame, backup: bool = True, backup_path: str = None) -> pd.DataFrame:
+def migrate_labels_to_internal(
+    df: pd.DataFrame, backup: bool = True, backup_path: str = None
+) -> pd.DataFrame:
     """
     Migrate labels from old formats to internal format ('true'/'false').
 
@@ -209,14 +209,17 @@ def migrate_labels_to_internal(df: pd.DataFrame, backup: bool = True, backup_pat
     Returns:
         DataFrame with migrated labels
     """
-    if 'label' not in df.columns:
+    if "label" not in df.columns:
         return df
 
     # Convert label column to string type to handle any boolean values
-    df['label'] = df['label'].astype(str)
+    df["label"] = df["label"].astype(str)
 
-    unique_labels = df['label'].unique()
-    needs_migration = any(label in ['touching', 'not_touching', 'True', 'False'] for label in unique_labels)
+    unique_labels = df["label"].unique()
+    needs_migration = any(
+        label in ["touching", "not_touching", "True", "False"]
+        for label in unique_labels
+    )
 
     if not needs_migration:
         return df
@@ -233,21 +236,23 @@ def migrate_labels_to_internal(df: pd.DataFrame, backup: bool = True, backup_pat
 
     # Migrate labels
     label_map = {
-        'touching': 'true',
-        'not_touching': 'false',
-        'True': 'true',     # Python boolean string
-        'False': 'false',   # Python boolean string
+        "touching": "true",
+        "not_touching": "false",
+        "True": "true",  # Python boolean string
+        "False": "false",  # Python boolean string
     }
 
-    df['label'] = df['label'].map(lambda x: label_map.get(x, x))
+    df["label"] = df["label"].map(lambda x: label_map.get(x, x))
 
-    migrated_count = (df['label'].isin(['true', 'false'])).sum()
+    migrated_count = (df["label"].isin(["true", "false"])).sum()
     print(f"    ✓ Migrated {migrated_count}/{len(df)} labels")
 
     return df
 
 
-def create_task_config_from_labels(labels_csv: str, config_path: str = 'task_config.json') -> Dict[str, Any]:
+def create_task_config_from_labels(
+    labels_csv: str, config_path: str = "task_config.json"
+) -> Dict[str, Any]:
     """
     Create task_config.json from detected labels in CSV (if missing).
 
@@ -274,10 +279,10 @@ def create_task_config_from_labels(labels_csv: str, config_path: str = 'task_con
     else:
         try:
             df = pd.read_csv(labels_csv)
-            unique_labels = df['label'].unique() if 'label' in df.columns else []
+            unique_labels = df["label"].unique() if "label" in df.columns else []
 
             # Detect if this uses legacy hardcoded labels
-            if 'touching' in unique_labels or 'not_touching' in unique_labels:
+            if "touching" in unique_labels or "not_touching" in unique_labels:
                 task_config = {
                     "version": "1.0",
                     "task_name": "nose_touch_detection",
@@ -285,15 +290,15 @@ def create_task_config_from_labels(labels_csv: str, config_path: str = 'task_con
                     "labels": {
                         "positive": {
                             "display_name": "touching",
-                            "description": "Subject is touching their nose"
+                            "description": "Subject is touching their nose",
                         },
                         "negative": {
                             "display_name": "not_touching",
-                            "description": "Subject is not touching their nose"
-                        }
+                            "description": "Subject is not touching their nose",
+                        },
                     },
                     "created_at": datetime.now().isoformat(),
-                    "last_modified": datetime.now().isoformat()
+                    "last_modified": datetime.now().isoformat(),
                 }
             else:
                 # Unknown labels - use generic config

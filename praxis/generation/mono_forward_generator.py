@@ -59,7 +59,9 @@ class MonoForwardGenerator:
     # ------------------------------------------------------------------
 
     def request_generation(
-        self, prompt: Union[str, List[Dict[str, str]]], kwargs: Optional[Dict[str, Any]] = None
+        self,
+        prompt: Union[str, List[Dict[str, str]]],
+        kwargs: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Submit a generation request synchronously, return a request id."""
         kwargs = dict(kwargs or {})
@@ -71,7 +73,9 @@ class MonoForwardGenerator:
             result = self._run_sync(request)
             result = self._handle_tool_calls(result, request)
         except Exception as exc:
-            _api_logger.error(f"MonoForwardGenerator request {request_id} failed: {exc}")
+            _api_logger.error(
+                f"MonoForwardGenerator request {request_id} failed: {exc}"
+            )
             result = prompt if isinstance(prompt, str) else str(prompt)
 
         try:
@@ -175,9 +179,9 @@ class MonoForwardGenerator:
             tool_args = tool_call.get("arguments", {})
 
             if tool_name is None:
-                tool_name = tool_call.get("tool") or tool_call.get(
-                    "function", {}
-                ).get("name")
+                tool_name = tool_call.get("tool") or tool_call.get("function", {}).get(
+                    "name"
+                )
                 if tool_name is None:
                     _api_logger.warning(
                         f"Could not extract tool name from: {tool_call}"
@@ -202,9 +206,7 @@ class MonoForwardGenerator:
                 break
 
             tool_output_tag = format_tool_output(result)
-            text_with_result = (
-                text[:tin_end_pos] + tool_output_tag + text[tin_end_pos:]
-            )
+            text_with_result = text[:tin_end_pos] + tool_output_tag + text[tin_end_pos:]
 
             input_ids = self._encode_prompt(text_with_result)
             if input_ids is None:

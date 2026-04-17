@@ -173,7 +173,9 @@ class TestArchitecturalDiversity:
 
         batch_size = 2
         seq_len = 16
-        inputs = torch.randn(batch_size, seq_len, config.hidden_size, requires_grad=True)
+        inputs = torch.randn(
+            batch_size, seq_len, config.hidden_size, requires_grad=True
+        )
 
         output, _, _ = prismatic(inputs, None)
         loss = output.sum()
@@ -244,7 +246,9 @@ class TestArchitecturalDiversity:
         assert metrics["arch/total_selections"] == 10
 
         # Exactly one expert should be marked as selected (binary)
-        selected_sum = metrics["arch/expert_0_selected"] + metrics["arch/expert_1_selected"]
+        selected_sum = (
+            metrics["arch/expert_0_selected"] + metrics["arch/expert_1_selected"]
+        )
         assert selected_sum == 100.0
 
         # Counts should sum to total

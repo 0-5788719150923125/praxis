@@ -239,9 +239,13 @@ class HuggingfaceDataset(PraxisSampler):
                 )
                 # Create minimal valid message instead of empty string
                 from praxis.data.config import SYSTEM_PROMPT
+
                 error_messages = [
                     {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "assistant", "content": f"Dataset {self.dataset_path} unavailable."},
+                    {
+                        "role": "assistant",
+                        "content": f"Dataset {self.dataset_path} unavailable.",
+                    },
                 ]
                 formatted_error = self.tokenizer.apply_chat_template(
                     error_messages, tokenize=False, add_generation_prompt=False

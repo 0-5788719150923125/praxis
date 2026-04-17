@@ -216,7 +216,11 @@ class APIServer:
             raise RuntimeError("Server failed to start within the timeout period")
 
         addr = self.get_api_addr()
-        url = f"{addr}/" if addr.startswith(("http://", "https://")) else f"http://{addr}/"
+        url = (
+            f"{addr}/"
+            if addr.startswith(("http://", "https://"))
+            else f"http://{addr}/"
+        )
         api_logger.info(f"API Server started at {url}")
         print(f"[API] Server started at {url}")
 

@@ -35,7 +35,7 @@ class VideoFrameExtractor:
 
         # Get video metadata
         self.video_info = get_video_info(video_path)
-        self.source_fps = self.video_info['fps']
+        self.source_fps = self.video_info["fps"]
         self.frame_interval = int(self.source_fps / target_fps)
 
     def get_frame_at_timestamp(self, timestamp: float) -> np.ndarray:
@@ -106,7 +106,7 @@ class VideoFrameExtractor:
         Returns:
             Total number of frames at target FPS
         """
-        return int(self.video_info['duration'] * self.target_fps)
+        return int(self.video_info["duration"] * self.target_fps)
 
     def iter_frames(self) -> Iterator[Tuple[int, float, np.ndarray]]:
         """
@@ -149,8 +149,7 @@ class VideoFrameExtractor:
             cap.release()
 
     def extract_batch_at_timestamps(
-        self,
-        timestamps: list[float]
+        self, timestamps: list[float]
     ) -> list[Tuple[float, np.ndarray]]:
         """
         Extract multiple frames at specific timestamps (optimized for batch extraction).

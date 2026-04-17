@@ -17,7 +17,7 @@ from transformers import (
     AutoModelForImageClassification,
     TrainingArguments,
     Trainer,
-    EarlyStoppingCallback
+    EarlyStoppingCallback,
 )
 from peft import LoraConfig, get_peft_model
 from datasets import load_dataset
@@ -26,7 +26,8 @@ from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 
 # Add parent directory to path to import from main praxis
 import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 from praxis.losses.focal import FocalLoss
 
 from utils import load_config, ensure_dir, load_task_config
@@ -39,15 +40,10 @@ def compute_metrics(eval_pred):
 
     accuracy = accuracy_score(labels, predictions)
     precision, recall, f1, _ = precision_recall_fscore_support(
-        labels, predictions, average='binary'
+        labels, predictions, average="binary"
     )
 
-    return {
-        'accuracy': accuracy,
-        'precision': precision,
-        'recall': recall,
-        'f1': f1
-    }
+    return {"accuracy": accuracy, "precision": precision, "recall": recall, "f1": f1}
 
 
 def collate_fn(examples):
@@ -57,7 +53,13 @@ def collate_fn(examples):
     return {"pixel_values": pixel_values, "labels": labels}
 
 
-def train_model(dataset_dir: str, output_dir: str, config: dict, model_name: str = None, gui_mode: bool = False):
+def train_model(
+    dataset_dir: str,
+    output_dir: str,
+    config: dict,
+    model_name: str = None,
+    gui_mode: bool = False,
+):
     """
     Fine-tune image classification model.
 
@@ -70,12 +72,12 @@ def train_model(dataset_dir: str, output_dir: str, config: dict, model_name: str
     """
     # Load task config
     task_config = load_task_config()
-    pos_label = task_config['labels']['positive']['display_name']
-    neg_label = task_config['labels']['negative']['display_name']
+    pos_label = task_config["labels"]["positive"]["display_name"]
+    neg_label = task_config["labels"]["negative"]["display_name"]
 
     # Model configuration
-    model_id = model_name if model_name else config['model']['name']
-    image_size = config['model']['image_size']
+    model_id = model_name if model_name else config["model"]["name"]
+    image_size = config["model"]["image_size"]
 
     print(f"Training configuration:")
     print(f"  Model: {model_id}")
@@ -86,11 +88,7 @@ def train_model(dataset_dir: str, output_dir: str, config: dict, model_name: str
 
     # Load dataset
     print("Loading dataset...")
-    dataset = load_dataset(
-        "imagefolder",
-        data_dir=dataset_dir,
-        drop_labels=False
-    )
+    dataset = load_dataset("imagefolder", data_dir=dataset_dir, drop_labels=False)
 
     print(f"Dataset loaded:")
     print(f"  Train: {len(dataset['train'])} samples")
@@ -99,7 +97,7 @@ def train_model(dataset_dir: str, output_dir: str, config: dict, model_name: str
     print()
 
     # Get label mapping
-    labels = dataset['train'].features['label'].names
+    labels = dataset["train"].features["label"].names
     label2id = {label: i for i, label in enumerate(labels)}
     id2label = {i: label for label, i in label2id.items()}
 
@@ -109,11 +107,13 @@ def train_model(dataset_dir: str, output_dir: str, config: dict, model_name: str
 
     # Calculate class weights if configured
     class_weights = None
-    if config['training'].get('use_class_weights', False):
-        train_labels = [example['label'] for example in dataset['train']]
+    if config["training"].get("use_class_weights", False):
+        train_labels = [example["label"] for example in dataset["train"]]
         class_counts = np.bincount(train_labels)
         total = len(train_labels)
-        class_weights = torch.FloatTensor([total / (len(class_counts) * count) for count in class_counts])
+        class_weights = torch.FloatTensor(
+            [total / (len(class_counts) * count) for count in class_counts]
+        )
         print(f"Class weights: {class_weights.tolist()}")
         print()
 
@@ -122,36 +122,48 @@ def train_model(dataset_dir: str, output_dir: str, config: dict, model_name: str
     image_processor = AutoImageProcessor.from_pretrained(model_id)
 
     # Define data augmentation
-    train_transforms = transforms.Compose([
-        transforms.RandomResizedCrop(image_size),
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomRotation(5),
-        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=image_processor.image_mean, std=image_processor.image_std),
-    ])
+    train_transforms = transforms.Compose(
+        [
+            transforms.RandomResizedCrop(image_size),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomRotation(5),
+            transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=image_processor.image_mean, std=image_processor.image_std
+            ),
+        ]
+    )
 
-    val_transforms = transforms.Compose([
-        transforms.Resize((image_size, image_size)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=image_processor.image_mean, std=image_processor.image_std),
-    ])
+    val_transforms = transforms.Compose(
+        [
+            transforms.Resize((image_size, image_size)),
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=image_processor.image_mean, std=image_processor.image_std
+            ),
+        ]
+    )
 
     def preprocess_train(examples):
         """Preprocess training examples with augmentation."""
-        examples['pixel_values'] = [train_transforms(image.convert("RGB")) for image in examples['image']]
+        examples["pixel_values"] = [
+            train_transforms(image.convert("RGB")) for image in examples["image"]
+        ]
         return examples
 
     def preprocess_val(examples):
         """Preprocess validation examples without augmentation."""
-        examples['pixel_values'] = [val_transforms(image.convert("RGB")) for image in examples['image']]
+        examples["pixel_values"] = [
+            val_transforms(image.convert("RGB")) for image in examples["image"]
+        ]
         return examples
 
     # Apply preprocessing
     print("Preprocessing dataset...")
-    dataset['train'].set_transform(preprocess_train)
-    dataset['validation'].set_transform(preprocess_val)
-    dataset['test'].set_transform(preprocess_val)
+    dataset["train"].set_transform(preprocess_train)
+    dataset["validation"].set_transform(preprocess_val)
+    dataset["test"].set_transform(preprocess_val)
 
     # Load model
     print(f"Loading model: {model_id}")
@@ -160,14 +172,14 @@ def train_model(dataset_dir: str, output_dir: str, config: dict, model_name: str
         num_labels=len(labels),
         id2label=id2label,
         label2id=label2id,
-        ignore_mismatched_sizes=True
+        ignore_mismatched_sizes=True,
     )
 
     # Apply PEFT (LoRA) if configured
-    use_peft = config['training'].get('use_peft', False)
+    use_peft = config["training"].get("use_peft", False)
     if use_peft:
         print("\nApplying PEFT (LoRA) for parameter-efficient fine-tuning...")
-        peft_config = config['training']['peft']
+        peft_config = config["training"]["peft"]
 
         # Scan model to show all available linear layer types
         print("Scanning model architecture...")
@@ -176,7 +188,7 @@ def train_model(dataset_dir: str, output_dir: str, config: dict, model_name: str
         all_linear_names = set()
         for name, module in model.named_modules():
             if isinstance(module, torch.nn.Linear):
-                parts = name.split('.')
+                parts = name.split(".")
                 if len(parts) > 0:
                     all_linear_names.add(parts[-1])
 
@@ -185,7 +197,7 @@ def train_model(dataset_dir: str, output_dir: str, config: dict, model_name: str
             print(f"  - {layer_name}")
 
         # Get configured target modules
-        target_modules = peft_config.get('target_modules')
+        target_modules = peft_config.get("target_modules")
 
         if not target_modules:
             raise ValueError(
@@ -207,12 +219,12 @@ def train_model(dataset_dir: str, output_dir: str, config: dict, model_name: str
         print(f"✓ All target modules are valid\n")
 
         lora_config = LoraConfig(
-            r=peft_config['r'],
-            lora_alpha=peft_config['lora_alpha'],
-            lora_dropout=peft_config['lora_dropout'],
+            r=peft_config["r"],
+            lora_alpha=peft_config["lora_alpha"],
+            lora_dropout=peft_config["lora_dropout"],
             target_modules=target_modules,
-            bias=peft_config['bias'],
-            modules_to_save=['classifier'],  # Always train the classifier head
+            bias=peft_config["bias"],
+            modules_to_save=["classifier"],  # Always train the classifier head
         )
 
         model = get_peft_model(model, lora_config)
@@ -225,7 +237,7 @@ def train_model(dataset_dir: str, output_dir: str, config: dict, model_name: str
         print("\nModules with LoRA adapters:")
         lora_modules = []
         for name, module in model.named_modules():
-            if 'lora' in name.lower():
+            if "lora" in name.lower():
                 lora_modules.append(name)
 
         if lora_modules:
@@ -244,7 +256,9 @@ def train_model(dataset_dir: str, output_dir: str, config: dict, model_name: str
             if param.requires_grad:
                 trainable_params_with_grad.append(name)
 
-        print(f"\nTotal parameters requiring gradients: {len(trainable_params_with_grad)}")
+        print(
+            f"\nTotal parameters requiring gradients: {len(trainable_params_with_grad)}"
+        )
         if len(trainable_params_with_grad) > 0:
             print("Sample trainable parameters:")
             for name in trainable_params_with_grad[:3]:
@@ -265,18 +279,18 @@ def train_model(dataset_dir: str, output_dir: str, config: dict, model_name: str
     # Training arguments (ensure numeric values are proper types)
     training_args = TrainingArguments(
         output_dir=output_dir,
-        num_train_epochs=int(config['training']['epochs']),
-        per_device_train_batch_size=int(config['training']['batch_size']),
-        per_device_eval_batch_size=int(config['training']['batch_size']) * 2,
-        learning_rate=float(config['training']['learning_rate']),
-        weight_decay=float(config['training']['weight_decay']),
-        warmup_steps=int(config['training']['warmup_steps']),
+        num_train_epochs=int(config["training"]["epochs"]),
+        per_device_train_batch_size=int(config["training"]["batch_size"]),
+        per_device_eval_batch_size=int(config["training"]["batch_size"]) * 2,
+        learning_rate=float(config["training"]["learning_rate"]),
+        weight_decay=float(config["training"]["weight_decay"]),
+        warmup_steps=int(config["training"]["warmup_steps"]),
         eval_strategy="epoch",
         save_strategy="epoch",
         load_best_model_at_end=True,
         metric_for_best_model="f1",
         greater_is_better=True,
-        logging_dir=os.path.join(output_dir, 'logs'),
+        logging_dir=os.path.join(output_dir, "logs"),
         logging_steps=10 if not gui_mode else 1000,  # Less frequent logging in GUI mode
         logging_strategy="steps",
         save_total_limit=3,
@@ -295,9 +309,13 @@ def train_model(dataset_dir: str, output_dir: str, config: dict, model_name: str
             super().__init__(*args, **kwargs)
             self.focal_alpha = focal_alpha
             self.focal_gamma = focal_gamma
-            self.loss_fct = FocalLoss(alpha=focal_alpha, gamma=focal_gamma, reduction='mean')
+            self.loss_fct = FocalLoss(
+                alpha=focal_alpha, gamma=focal_gamma, reduction="mean"
+            )
 
-        def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+        def compute_loss(
+            self, model, inputs, return_outputs=False, num_items_in_batch=None
+        ):
             labels = inputs.pop("labels")
             outputs = model(**inputs)
             logits = outputs.logits
@@ -308,25 +326,31 @@ def train_model(dataset_dir: str, output_dir: str, config: dict, model_name: str
             return (loss, outputs) if return_outputs else loss
 
     # Get Focal Loss parameters from config
-    focal_alpha = config['training'].get('focal_alpha', 1.0)
-    focal_gamma = config['training'].get('focal_gamma', 2.0)
+    focal_alpha = config["training"].get("focal_alpha", 1.0)
+    focal_gamma = config["training"].get("focal_gamma", 2.0)
 
     print(f"Using Focal Loss:")
     print(f"  alpha: {focal_alpha} (class weighting)")
-    print(f"  gamma: {focal_gamma} (focusing parameter - higher = more focus on hard examples)")
+    print(
+        f"  gamma: {focal_gamma} (focusing parameter - higher = more focus on hard examples)"
+    )
     print()
 
     # Initialize trainer with Focal Loss
     trainer = FocalLossTrainer(
         model=model,
         args=training_args,
-        train_dataset=dataset['train'],
-        eval_dataset=dataset['validation'],
+        train_dataset=dataset["train"],
+        eval_dataset=dataset["validation"],
         compute_metrics=compute_metrics,
         data_collator=collate_fn,
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=config['training']['early_stopping_patience'])],
+        callbacks=[
+            EarlyStoppingCallback(
+                early_stopping_patience=config["training"]["early_stopping_patience"]
+            )
+        ],
         focal_alpha=focal_alpha,
-        focal_gamma=focal_gamma
+        focal_gamma=focal_gamma,
     )
 
     # Train
@@ -335,7 +359,9 @@ def train_model(dataset_dir: str, output_dir: str, config: dict, model_name: str
     print("=" * 80)
     if gui_mode:
         print(f"Training for up to {config['training']['epochs']} epochs...")
-        print(f"Dataset: {len(dataset['train'])} train, {len(dataset['validation'])} val, {len(dataset['test'])} test")
+        print(
+            f"Dataset: {len(dataset['train'])} train, {len(dataset['validation'])} val, {len(dataset['test'])} test"
+        )
         print()
 
     train_result = trainer.train()
@@ -353,23 +379,25 @@ def train_model(dataset_dir: str, output_dir: str, config: dict, model_name: str
     print("=" * 80)
     print("EVALUATING ON TEST SET")
     print("=" * 80)
-    test_results = trainer.evaluate(dataset['test'])
+    test_results = trainer.evaluate(dataset["test"])
 
     print("\nTest Results:")
     for key, value in test_results.items():
         print(f"  {key}: {value:.4f}")
 
     # Check model performance and give feedback
-    test_f1 = test_results.get('eval_f1', 0)
-    test_acc = test_results.get('eval_accuracy', 0)
+    test_f1 = test_results.get("eval_f1", 0)
+    test_acc = test_results.get("eval_accuracy", 0)
 
     print("\n" + "=" * 80)
     if test_f1 < 0.7 or test_acc < 0.7:
         print("⚠ WARNING: Model performance is low!")
         print()
-        if len(dataset['train']) < 500:
+        if len(dataset["train"]) < 500:
             print(f"  Your training set has only {len(dataset['train'])} samples.")
-            print("  Recommendation: Label at least 500-1000 frames for better results.")
+            print(
+                "  Recommendation: Label at least 500-1000 frames for better results."
+            )
         print()
         print("  Tips to improve performance:")
         print("  - Label more frames from diverse sections of videos")
@@ -381,7 +409,7 @@ def train_model(dataset_dir: str, output_dir: str, config: dict, model_name: str
     print("=" * 80)
 
     # Save final model
-    final_model_dir = os.path.join(output_dir, 'final')
+    final_model_dir = os.path.join(output_dir, "final")
 
     if use_peft:
         # For PEFT models, save only the adapter
@@ -393,24 +421,32 @@ def train_model(dataset_dir: str, output_dir: str, config: dict, model_name: str
         model.save_pretrained(final_model_dir)
 
         # Verify adapter files were created
-        adapter_files = ['adapter_config.json', 'adapter_model.safetensors', 'adapter_model.bin']
-        found_adapters = [f for f in adapter_files if os.path.exists(os.path.join(final_model_dir, f))]
+        adapter_files = [
+            "adapter_config.json",
+            "adapter_model.safetensors",
+            "adapter_model.bin",
+        ]
+        found_adapters = [
+            f for f in adapter_files if os.path.exists(os.path.join(final_model_dir, f))
+        ]
         if found_adapters:
             print(f"    ✓ Adapter files created: {found_adapters}")
         else:
-            print(f"    ⚠ WARNING: No adapter files found! Expected one of: {adapter_files}")
+            print(
+                f"    ⚠ WARNING: No adapter files found! Expected one of: {adapter_files}"
+            )
 
         # Save the base model ID so we know which model to load during inference
-        base_model_id_path = os.path.join(final_model_dir, 'base_model_id.txt')
+        base_model_id_path = os.path.join(final_model_dir, "base_model_id.txt")
         print(f"  Saving base model ID: {model_id}")
-        with open(base_model_id_path, 'w') as f:
+        with open(base_model_id_path, "w") as f:
             f.write(model_id)
         print(f"    ✓ Base model ID saved")
 
         # Save marker file
-        marker_path = os.path.join(final_model_dir, 'is_peft_model')
-        with open(marker_path, 'w') as f:
-            f.write('true')
+        marker_path = os.path.join(final_model_dir, "is_peft_model")
+        with open(marker_path, "w") as f:
+            f.write("true")
         print(f"    ✓ PEFT marker created")
 
         # List all saved files for verification
@@ -436,35 +472,41 @@ def train_model(dataset_dir: str, output_dir: str, config: dict, model_name: str
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Train binary classifier')
-    parser.add_argument('--dataset', required=True, help='Dataset directory')
-    parser.add_argument('--output', help='Output directory (default: models/<model>-<task>)')
-    parser.add_argument('--model', help='HuggingFace model ID (default: from config)')
-    parser.add_argument('--config', default='config.yaml', help='Config file path')
-    parser.add_argument('--gui-mode', action='store_true', help='Enable GUI-friendly output (less verbose)')
+    parser = argparse.ArgumentParser(description="Train binary classifier")
+    parser.add_argument("--dataset", required=True, help="Dataset directory")
+    parser.add_argument(
+        "--output", help="Output directory (default: models/<model>-<task>)"
+    )
+    parser.add_argument("--model", help="HuggingFace model ID (default: from config)")
+    parser.add_argument("--config", default="config.yaml", help="Config file path")
+    parser.add_argument(
+        "--gui-mode",
+        action="store_true",
+        help="Enable GUI-friendly output (less verbose)",
+    )
 
     args = parser.parse_args()
 
     # Set environment variable for GUI mode to suppress progress bars
     if args.gui_mode:
-        os.environ['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = '1'
-        os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+        os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "1"
+        os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
     # Load config
     config = load_config(args.config)
 
     # Load task config for naming
     task_config = load_task_config()
-    task_name = task_config['task_name']
+    task_name = task_config["task_name"]
 
     # Determine output directory
     if args.output:
         output_dir = args.output
     else:
-        model_name = args.model if args.model else config['model']['name']
-        safe_name = model_name.replace('/', '-')
+        model_name = args.model if args.model else config["model"]["name"]
+        safe_name = model_name.replace("/", "-")
         # Use dynamic task name from config
-        output_dir = os.path.join(config['paths']['models'], f"{safe_name}-{task_name}")
+        output_dir = os.path.join(config["paths"]["models"], f"{safe_name}-{task_name}")
 
     ensure_dir(output_dir)
 
@@ -472,5 +514,5 @@ def main():
     results = train_model(args.dataset, output_dir, config, args.model, args.gui_mode)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

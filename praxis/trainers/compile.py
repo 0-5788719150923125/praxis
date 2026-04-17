@@ -30,7 +30,9 @@ def try_compile_model(model, hparams):
     # Check if running on CPU - torch.compile has limited CPU support
     device = getattr(hparams, "device", "cpu")
     if isinstance(device, str) and device.startswith("cpu"):
-        print("[COMPILER] Skipping compilation (CPU device - limited torch.compile support)")
+        print(
+            "[COMPILER] Skipping compilation (CPU device - limited torch.compile support)"
+        )
         return model
 
     try:

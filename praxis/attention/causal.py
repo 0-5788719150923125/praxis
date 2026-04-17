@@ -293,7 +293,9 @@ class CausalAttention(nn.Module):
             pos_diff = k_pos - q_pos  # [seq_len, kv_len]
 
             # Apply ALiBi slopes: [num_heads, 1, 1] * [1, seq_len, kv_len]
-            alibi_bias = self.alibi_slopes.to(q.device).view(-1, 1, 1) * pos_diff.unsqueeze(0)
+            alibi_bias = self.alibi_slopes.to(q.device).view(
+                -1, 1, 1
+            ) * pos_diff.unsqueeze(0)
 
             # Expand for batch: [1, num_heads, seq_len, kv_len] -> [batch, num_heads, seq_len, kv_len]
             attn_mask = alibi_bias.unsqueeze(0).expand(batch_size, -1, -1, -1)
@@ -306,7 +308,8 @@ class CausalAttention(nn.Module):
             v,
             attn_mask=attn_mask,
             dropout_p=self.dropout_p if self.training else 0.0,
-            is_causal=is_causal and attn_mask is None,  # Only use is_causal if no attn_mask
+            is_causal=is_causal
+            and attn_mask is None,  # Only use is_causal if no attn_mask
         )
 
         return attn_output
@@ -412,7 +415,9 @@ class CausalAttention(nn.Module):
 
         if use_fallback:
             if not hasattr(self, "_cpu_fallback_warned"):
-                print("[CausalAttention] Using SDPA fallback (CPU device - flex_attention not supported)")
+                print(
+                    "[CausalAttention] Using SDPA fallback (CPU device - flex_attention not supported)"
+                )
                 self._cpu_fallback_warned = True
             # Use SDPA fallback (doesn't support ghostmax or custom score_mod)
             # Remove ghost tokens since SDPA fallback doesn't support them

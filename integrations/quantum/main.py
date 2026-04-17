@@ -450,17 +450,16 @@ def get_quantum_examples(num_examples: int = 10) -> List[Dict[str, str]]:
             tool_call_content = format_tool_call_with_result(
                 tool_name="read_file",
                 arguments={"file_path": relative_path},
-                result=content
+                result=content,
             )
 
             # Add the assistant's analysis after reading the file
             analysis = _generate_quantum_analysis(content, file_path, file_ext)
 
             # Combine tool call with analysis in a single assistant message
-            messages.append({
-                "role": "assistant",
-                "content": f"{tool_call_content} {analysis}"
-            })
+            messages.append(
+                {"role": "assistant", "content": f"{tool_call_content} {analysis}"}
+            )
 
             examples.append(
                 {"messages": messages, "source": f"quantum:{relative_path}"}

@@ -164,8 +164,7 @@ class MultiDirectoryDataset(PraxisSampler):
                         # Skip excluded file types (high-entropy, generated, binary)
                         filename_lower = filename.lower()
                         if any(
-                            filename_lower.endswith(s)
-                            for s in self.excluded_suffixes
+                            filename_lower.endswith(s) for s in self.excluded_suffixes
                         ):
                             continue
 
@@ -325,10 +324,15 @@ class MultiDirectoryDataset(PraxisSampler):
                         # Create minimal valid message structure
                         fallback_messages = [
                             {"role": "system", "content": SYSTEM_PROMPT},
-                            {"role": "assistant", "content": content[:1000]},  # Truncate to prevent issues
+                            {
+                                "role": "assistant",
+                                "content": content[:1000],
+                            },  # Truncate to prevent issues
                         ]
                         simple_content = self.tokenizer.apply_chat_template(
-                            fallback_messages, tokenize=False, add_generation_prompt=False
+                            fallback_messages,
+                            tokenize=False,
+                            add_generation_prompt=False,
                         )
                         self.sequence_cache.append(simple_content)
                         return

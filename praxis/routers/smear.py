@@ -277,7 +277,10 @@ class SMEAR(nn.Module):
         return getattr(submodule, parts[-1], None)
 
     def _log_routing_metrics(
-        self, expert_weights: torch.Tensor, routing_probs: torch.Tensor, current_depth: int = 0
+        self,
+        expert_weights: torch.Tensor,
+        routing_probs: torch.Tensor,
+        current_depth: int = 0,
     ) -> None:
         """
         Store routing metrics for expert convergence tracking.
@@ -303,7 +306,9 @@ class SMEAR(nn.Module):
             # Per-expert routing weights (mean across batch)
             # These show individual expert convergence trajectories
             for i, weight in enumerate(expert_weights):
-                self._metrics[f"{layer_prefix}expert_{i}_routing_weight"] = weight.item()
+                self._metrics[f"{layer_prefix}expert_{i}_routing_weight"] = (
+                    weight.item()
+                )
 
             # Entropy: H = -Σ(p_i * log(p_i))
             # Measures routing balance: high = balanced, low = collapsed
@@ -363,9 +368,9 @@ class SMEAR(nn.Module):
 
             # Aggregate across all parameters
             if grad_norms:
-                metrics[f"expert_{expert_idx}_grad_norm"] = sum(
-                    g**2 for g in grad_norms
-                ) ** 0.5
+                metrics[f"expert_{expert_idx}_grad_norm"] = (
+                    sum(g**2 for g in grad_norms) ** 0.5
+                )
             if grad_vars:
                 metrics[f"expert_{expert_idx}_grad_var"] = sum(grad_vars) / len(
                     grad_vars

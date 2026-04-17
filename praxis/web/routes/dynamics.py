@@ -239,7 +239,11 @@ def _downsample_dynamics_lttb(
                     range(
                         curr_bucket_start,
                         min(curr_bucket_end, len(steps)),
-                        max(1, (curr_bucket_end - curr_bucket_start) // (target_size - len(selected_indices))),
+                        max(
+                            1,
+                            (curr_bucket_end - curr_bucket_start)
+                            // (target_size - len(selected_indices)),
+                        ),
                     )
                 )
                 continue
@@ -508,7 +512,9 @@ def _compute_expert_metadata(
         return {"num_experts": int(stored_num_experts)}
 
     # Detect from grad_norm metrics
-    expert_keys = [k for k in metrics.keys() if k.startswith("expert_") and "_grad_norm" in k]
+    expert_keys = [
+        k for k in metrics.keys() if k.startswith("expert_") and "_grad_norm" in k
+    ]
 
     if not expert_keys:
         return {"num_experts": 0}

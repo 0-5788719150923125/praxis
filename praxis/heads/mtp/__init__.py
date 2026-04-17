@@ -55,7 +55,9 @@ class MultiTokenPrediction(nn.Module):
         self.mtp_type = config.mtp_type
         self.encoder_path = config.encoder_type is not None
         module_cls = MTP_REGISTRY[config.mtp_type]
-        self.depths = nn.ModuleList([module_cls(config) for _ in range(self.num_depths)])
+        self.depths = nn.ModuleList(
+            [module_cls(config) for _ in range(self.num_depths)]
+        )
 
         # Encoder path owns its own projection and head for patch-level MTP
         if self.encoder_path:
@@ -73,7 +75,15 @@ class MultiTokenPrediction(nn.Module):
             f"depths={self.num_depths})"
         )
 
-    def prepare_inputs(self, hidden_states, input_ids, attention_mask, embed_fn, head, patch_embeds=None):
+    def prepare_inputs(
+        self,
+        hidden_states,
+        input_ids,
+        attention_mask,
+        embed_fn,
+        head,
+        patch_embeds=None,
+    ):
         """Build path-appropriate MTPInputs for the current execution path.
 
 

@@ -218,7 +218,9 @@ def test_truncated_tool_call_tag():
     assert "</tin>" in fixed_text
     assert "</tin\n" not in fixed_text
     # Separator tokens after </tin> should be cleaned up
-    assert "[SEP]" not in fixed_text or fixed_text.find("[SEP]") < fixed_text.find("</tin>")
+    assert "[SEP]" not in fixed_text or fixed_text.find("[SEP]") < fixed_text.find(
+        "</tin>"
+    )
 
     # Test case 2: Generation stopped at just "</"
     malformed_text2 = """<tin>
@@ -274,7 +276,9 @@ def test_tool_tag_utilities():
     assert tool_output == "<tout>42</tout>"
 
     # Test format_tool_call_with_result
-    complete_call = format_tool_call_with_result("calc", {"values": [1, 2], "op": "add"}, 3)
+    complete_call = format_tool_call_with_result(
+        "calc", {"values": [1, 2], "op": "add"}, 3
+    )
     assert "<tin>" in complete_call
     assert "</tin>" in complete_call
     assert "<tout>3</tout>" in complete_call
@@ -461,7 +465,7 @@ def test_complete_tool_call_inline_format():
     clean_format = format_tool_call_with_result(
         tool_name="calc",
         arguments={"values": [999, 5], "op": "exp"},
-        result="995009990004999.0"
+        result="995009990004999.0",
     )
 
     # Verify structure
@@ -553,8 +557,12 @@ def test_fix_truncated_tags_multiple_tool_calls():
 <tin>{"name": "calc", "arguments": {"op": "div"}}</"""
 
     result1 = fix_truncated_tags(two_complete_third_tin_truncated)
-    assert result1.count("</tin>") == 3, f"Expected 3 </tin>, got {result1.count('</tin>')}"
-    assert result1.count("</tout>") == 2, f"Expected 2 </tout>, got {result1.count('</tout>')}"
+    assert (
+        result1.count("</tin>") == 3
+    ), f"Expected 3 </tin>, got {result1.count('</tin>')}"
+    assert (
+        result1.count("</tout>") == 2
+    ), f"Expected 2 </tout>, got {result1.count('</tout>')}"
     assert result1.rstrip().endswith("</tin>")
 
     # Case 2: Two complete calls, third call's <tout> truncated
@@ -563,8 +571,12 @@ def test_fix_truncated_tags_multiple_tool_calls():
 <tin>{"name": "calc"}</tin><tout>30</"""
 
     result2 = fix_truncated_tags(two_complete_third_tout_truncated)
-    assert result2.count("</tin>") == 3, f"Expected 3 </tin>, got {result2.count('</tin>')}"
-    assert result2.count("</tout>") == 3, f"Expected 3 </tout>, got {result2.count('</tout>')}"
+    assert (
+        result2.count("</tin>") == 3
+    ), f"Expected 3 </tin>, got {result2.count('</tin>')}"
+    assert (
+        result2.count("</tout>") == 3
+    ), f"Expected 3 </tout>, got {result2.count('</tout>')}"
     assert result2.rstrip().endswith("</tout>")
 
     # Case 3: Three complete calls - nothing to fix
@@ -581,4 +593,4 @@ def test_fix_truncated_tags_multiple_tool_calls():
 
     result4 = fix_truncated_tags(one_complete_second_partial)
     assert result4.count("</tin>") == 2
-    assert "</ti\n" not in result4 and "</ti\"" not in result4  # Partial tag fixed
+    assert "</ti\n" not in result4 and '</ti"' not in result4  # Partial tag fixed

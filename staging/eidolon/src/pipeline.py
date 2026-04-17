@@ -17,7 +17,9 @@ from utils import load_config, load_json, load_task_config
 from naming import get_experiment_path
 
 
-def run_pipeline(video_path: str, model_path: str, config: dict, output_mlt: str = None):
+def run_pipeline(
+    video_path: str, model_path: str, config: dict, output_mlt: str = None
+):
     """
     Run complete pipeline: inference + event detection + MLT generation.
 
@@ -29,7 +31,7 @@ def run_pipeline(video_path: str, model_path: str, config: dict, output_mlt: str
     """
     # Load task config
     task_config = load_task_config()
-    pos_label = task_config['labels']['positive']['display_name']
+    pos_label = task_config["labels"]["positive"]["display_name"]
 
     print("=" * 80)
     print(f"EIDOLON PIPELINE - {task_config['task_description']}")
@@ -41,7 +43,7 @@ def run_pipeline(video_path: str, model_path: str, config: dict, output_mlt: str
     # Step 1: Run inference
     print("STEP 1: Running raw inference on video...")
     print("-" * 80)
-    predictions_data = infer_video(video_path, model_path, config, 'outputs')
+    predictions_data = infer_video(video_path, model_path, config, "outputs")
 
     print()
     print("=" * 80)
@@ -50,18 +52,18 @@ def run_pipeline(video_path: str, model_path: str, config: dict, output_mlt: str
     print("STEP 2: Processing predictions to detect events...")
     print("-" * 80)
 
-    predictions_file = predictions_data['predictions_file']
-    threshold = config['inference']['threshold']
-    min_duration = config['inference'].get('min_event_duration', 0.0)
+    predictions_file = predictions_data["predictions_file"]
+    threshold = config["inference"]["threshold"]
+    min_duration = config["inference"].get("min_event_duration", 0.0)
 
     events_data = process_events_from_predictions(
         predictions_file=predictions_file,
         threshold=threshold,
         min_duration=min_duration,
-        config=config
+        config=config,
     )
 
-    if events_data['num_events'] == 0:
+    if events_data["num_events"] == 0:
         print("\n" + "!" * 80)
         print("WARNING: No events detected!")
         print("!" * 80)
@@ -86,21 +88,21 @@ def run_pipeline(video_path: str, model_path: str, config: dict, output_mlt: str
 
     # Load events data
     data = load_json(events_file)
-    marker_buffer = config.get('mlt', {}).get('marker_buffer', 2.0)
-    post_buffer = config.get('mlt', {}).get('post_buffer', 1.0)
-    mode = 'cut_markers'  # Default mode for pipeline
-    mute_audio = config.get('mlt', {}).get('mute_audio', False)
-    add_benny_hill = config.get('mlt', {}).get('add_benny_hill', False)
+    marker_buffer = config.get("mlt", {}).get("marker_buffer", 2.0)
+    post_buffer = config.get("mlt", {}).get("post_buffer", 1.0)
+    mode = "cut_markers"  # Default mode for pipeline
+    mute_audio = config.get("mlt", {}).get("mute_audio", False)
+    add_benny_hill = config.get("mlt", {}).get("add_benny_hill", False)
     create_mlt_project(
-        data['video_path'],
-        data['events'],
-        data['video_info']['fps'],
+        data["video_path"],
+        data["events"],
+        data["video_info"]["fps"],
         output_mlt,
         marker_buffer,
         post_buffer,
         mode,
         mute_audio,
-        add_benny_hill
+        add_benny_hill,
     )
 
     print()
@@ -120,22 +122,38 @@ def run_pipeline(video_path: str, model_path: str, config: dict, output_mlt: str
     print(f"  3. Export: File → Export")
     print()
     print("To re-generate with different parameters:")
-    print(f"  python src/process_events.py --predictions {predictions_file} --threshold 0.3")
+    print(
+        f"  python src/process_events.py --predictions {predictions_file} --threshold 0.3"
+    )
     print(f"  python src/generate_mlt.py --events {events_file} --marker-buffer 3.0")
     print()
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Run complete pipeline: inference + event detection + MLT generation'
+        description="Run complete pipeline: inference + event detection + MLT generation"
     )
-    parser.add_argument('--video', required=True, help='Path to video file')
-    parser.add_argument('--model', required=True, help='Path to trained model')
-    parser.add_argument('--output', help='Output MLT path (default: outputs/projects/<video>.mlt)')
-    parser.add_argument('--threshold', type=float, help='Classification threshold (default: from config)')
-    parser.add_argument('--min-duration', type=float, help='Minimum event duration in seconds (default: from config)')
-    parser.add_argument('--marker-buffer', type=float, help='Marker buffer in seconds (default: from config)')
-    parser.add_argument('--config', default='config.yaml', help='Config file path')
+    parser.add_argument("--video", required=True, help="Path to video file")
+    parser.add_argument("--model", required=True, help="Path to trained model")
+    parser.add_argument(
+        "--output", help="Output MLT path (default: outputs/projects/<video>.mlt)"
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        help="Classification threshold (default: from config)",
+    )
+    parser.add_argument(
+        "--min-duration",
+        type=float,
+        help="Minimum event duration in seconds (default: from config)",
+    )
+    parser.add_argument(
+        "--marker-buffer",
+        type=float,
+        help="Marker buffer in seconds (default: from config)",
+    )
+    parser.add_argument("--config", default="config.yaml", help="Config file path")
 
     args = parser.parse_args()
 
@@ -144,15 +162,15 @@ def main():
 
     # Override parameters if specified
     if args.threshold is not None:
-        config['inference']['threshold'] = args.threshold
+        config["inference"]["threshold"] = args.threshold
     if args.min_duration is not None:
-        config['inference']['min_event_duration'] = args.min_duration
+        config["inference"]["min_event_duration"] = args.min_duration
     if args.marker_buffer is not None:
-        config['mlt']['marker_buffer'] = args.marker_buffer
+        config["mlt"]["marker_buffer"] = args.marker_buffer
 
     # Run pipeline
     run_pipeline(args.video, args.model, config, args.output)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

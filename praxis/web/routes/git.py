@@ -55,10 +55,19 @@ def git_http_backend(git_path=None):
             # Run git command to get refs
             # Get repository root from Flask config (set at server startup)
             from flask import current_app
+
             repo_root = current_app.config.get("repo_root", os.getcwd())
 
             # Disable git safe.directory check for this operation
-            cmd = ["git", "-c", "safe.directory=*", "upload-pack", "--stateless-rpc", "--advertise-refs", repo_root]
+            cmd = [
+                "git",
+                "-c",
+                "safe.directory=*",
+                "upload-pack",
+                "--stateless-rpc",
+                "--advertise-refs",
+                repo_root,
+            ]
             result = subprocess.run(cmd, capture_output=True)
 
             # Check for errors
@@ -81,7 +90,10 @@ def git_http_backend(git_path=None):
             )
         except Exception as e:
             import traceback
-            return Response(f"Git error: {str(e)}\n{traceback.format_exc()}", status=500)
+
+            return Response(
+                f"Git error: {str(e)}\n{traceback.format_exc()}", status=500
+            )
 
     # Handle git-upload-pack request (actual clone/fetch)
     elif git_path == "git-upload-pack" and request.method == "POST":
@@ -89,13 +101,19 @@ def git_http_backend(git_path=None):
             # Run git upload-pack with the request data
             # Get repository root from Flask config (set at server startup)
             from flask import current_app
+
             repo_root = current_app.config.get("repo_root", os.getcwd())
 
             # Disable git safe.directory check for this operation
-            cmd = ["git", "-c", "safe.directory=*", "upload-pack", "--stateless-rpc", repo_root]
-            result = subprocess.run(
-                cmd, input=request.data, capture_output=True
-            )
+            cmd = [
+                "git",
+                "-c",
+                "safe.directory=*",
+                "upload-pack",
+                "--stateless-rpc",
+                repo_root,
+            ]
+            result = subprocess.run(cmd, input=request.data, capture_output=True)
 
             # Check for errors
             if result.returncode != 0:
@@ -112,7 +130,10 @@ def git_http_backend(git_path=None):
             )
         except Exception as e:
             import traceback
-            return Response(f"Git error: {str(e)}\n{traceback.format_exc()}", status=500)
+
+            return Response(
+                f"Git error: {str(e)}\n{traceback.format_exc()}", status=500
+            )
 
     # Return 404 for other paths
     return Response("Not found", status=404)

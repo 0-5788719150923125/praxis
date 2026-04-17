@@ -22,7 +22,7 @@ from utils import (
     internal_to_display,
     display_to_internal,
     migrate_labels_to_internal,
-    create_task_config_from_labels
+    create_task_config_from_labels,
 )
 from video_frame_extractor import VideoFrameExtractor
 
@@ -38,7 +38,7 @@ def find_video_file(video_name: str) -> Optional[str]:
         Absolute path to video file, or None if not found
     """
     videos_dir = "videos"
-    for ext in ['.mp4', '.mkv', '.avi', '.mov', '.webm']:
+    for ext in [".mp4", ".mkv", ".avi", ".mov", ".webm"]:
         video_path = os.path.join(videos_dir, video_name + ext)
         if os.path.exists(video_path):
             return os.path.abspath(video_path)
@@ -60,12 +60,12 @@ def migrate_old_labels_schema(df: pd.DataFrame) -> pd.DataFrame:
     new_rows = []
 
     for _, row in df.iterrows():
-        frame_path = row['frame_path']
+        frame_path = row["frame_path"]
 
         # Extract video name from path: "data/frames/@EphemeralRift.../frame_000099.jpg"
         parts = Path(frame_path).parts
-        if 'frames' in parts:
-            idx = parts.index('frames')
+        if "frames" in parts:
+            idx = parts.index("frames")
             if idx + 1 < len(parts):
                 video_name = parts[idx + 1]
 
@@ -74,15 +74,17 @@ def migrate_old_labels_schema(df: pd.DataFrame) -> pd.DataFrame:
 
                 if video_path:
                     # Extract frame index from filename: frame_000099.jpg
-                    filename = row['filename']
-                    frame_idx = int(filename.split('_')[1].split('.')[0])
+                    filename = row["filename"]
+                    frame_idx = int(filename.split("_")[1].split(".")[0])
 
-                    new_rows.append({
-                        'video_path': video_path,
-                        'frame_index': frame_idx,
-                        'label': row['label'],
-                        'timestamp': row['timestamp']
-                    })
+                    new_rows.append(
+                        {
+                            "video_path": video_path,
+                            "frame_index": frame_idx,
+                            "label": row["label"],
+                            "timestamp": row["timestamp"],
+                        }
+                    )
                 else:
                     print(f"  WARNING: Video not found for: {video_name}")
         else:
@@ -105,8 +107,8 @@ def prepare_dataset(labels_csv: str, output_dir: str, config: dict):
     """
     # Load task config
     task_config = load_task_config()
-    pos_label = task_config['labels']['positive']['display_name']
-    neg_label = task_config['labels']['negative']['display_name']
+    pos_label = task_config["labels"]["positive"]["display_name"]
+    neg_label = task_config["labels"]["negative"]["display_name"]
 
     # Load labels
     print(f"Loading labels from: {labels_csv}")
@@ -119,35 +121,35 @@ def prepare_dataset(labels_csv: str, output_dir: str, config: dict):
     df.to_csv(labels_csv, index=False)
 
     # Create task_config.json if missing (infer from detected labels)
-    if not os.path.exists('task_config.json'):
+    if not os.path.exists("task_config.json"):
         create_task_config_from_labels(labels_csv)
 
     # Detect and handle old schema if needed
-    if 'frame_path' in df.columns and 'video_path' not in df.columns:
+    if "frame_path" in df.columns and "video_path" not in df.columns:
         print("\nDetected old labels.csv schema")
         df = migrate_old_labels_schema(df)
         if df.empty:
             raise ValueError("Migration failed - no labels could be migrated")
 
     # Verify required columns
-    required_cols = ['video_path', 'timestamp', 'label']
+    required_cols = ["video_path", "timestamp", "label"]
     if not all(col in df.columns for col in required_cols):
         raise ValueError(f"labels.csv missing required columns: {required_cols}")
 
     # Remove skipped frames (only keep binary labeled samples)
-    df = df[df['label'].isin(['true', 'false'])]  # Use internal labels
+    df = df[df["label"].isin(["true", "false"])]  # Use internal labels
 
     print(f"\nDataset statistics:")
     print(f"  Total samples: {len(df)}")
     print(f"\nClass distribution:")
 
     # Convert to display labels for user output
-    display_labels = df['label'].map(lambda x: internal_to_display(x, task_config))
+    display_labels = df["label"].map(lambda x: internal_to_display(x, task_config))
     print(display_labels.value_counts())
     print(display_labels.value_counts(normalize=True))
 
     # Check class balance
-    class_counts = df['label'].value_counts()
+    class_counts = df["label"].value_counts()
     if len(class_counts) < 2:
         raise ValueError(f"Need at least 2 classes ({pos_label} and {neg_label})")
 
@@ -157,9 +159,9 @@ def prepare_dataset(labels_csv: str, output_dir: str, config: dict):
         print("Consider using class weights during training")
 
     # Get split ratios from config
-    train_ratio = config['training']['train_split']
-    val_ratio = config['training']['val_split']
-    test_ratio = config['training']['test_split']
+    train_ratio = config["training"]["train_split"]
+    val_ratio = config["training"]["val_split"]
+    test_ratio = config["training"]["test_split"]
 
     # Verify ratios sum to 1.0
     total = train_ratio + val_ratio + test_ratio
@@ -168,19 +170,13 @@ def prepare_dataset(labels_csv: str, output_dir: str, config: dict):
 
     # First split: train vs (val + test)
     train_df, temp_df = train_test_split(
-        df,
-        test_size=(val_ratio + test_ratio),
-        stratify=df['label'],
-        random_state=42
+        df, test_size=(val_ratio + test_ratio), stratify=df["label"], random_state=42
     )
 
     # Second split: val vs test
     val_size = val_ratio / (val_ratio + test_ratio)
     val_df, test_df = train_test_split(
-        temp_df,
-        test_size=(1 - val_size),
-        stratify=temp_df['label'],
-        random_state=42
+        temp_df, test_size=(1 - val_size), stratify=temp_df["label"], random_state=42
     )
 
     print(f"\nSplit sizes:")
@@ -189,7 +185,7 @@ def prepare_dataset(labels_csv: str, output_dir: str, config: dict):
     print(f"  Test:  {len(test_df)} ({len(test_df)/len(df)*100:.1f}%)")
 
     # Create directory structure (use display labels for directories)
-    for split in ['train', 'val', 'test']:
+    for split in ["train", "val", "test"]:
         for label in [pos_label, neg_label]:
             split_dir = os.path.join(output_dir, split, label)
             ensure_dir(split_dir)
@@ -200,7 +196,7 @@ def prepare_dataset(labels_csv: str, output_dir: str, config: dict):
         print(f"\nExtracting {split_name} set...")
 
         # Group by video to minimize video reopening
-        for video_path, group in split_df.groupby('video_path'):
+        for video_path, group in split_df.groupby("video_path"):
             if not os.path.exists(video_path):
                 print(f"  WARNING: Video not found: {video_path}")
                 print(f"    Skipping {len(group)} labels from this video")
@@ -219,15 +215,17 @@ def prepare_dataset(labels_csv: str, output_dir: str, config: dict):
             for _, row in group.iterrows():
                 try:
                     # Extract frame at timestamp
-                    timestamp = row['timestamp']
+                    timestamp = row["timestamp"]
                     frame = extractor.get_frame_at_timestamp(timestamp)
 
                     # Convert internal label to display label for directory name
-                    internal_label = row['label']  # 'true' or 'false'
+                    internal_label = row["label"]  # 'true' or 'false'
                     display_label = internal_to_display(internal_label, task_config)
 
                     # Use timestamp-based filename for uniqueness
-                    filename = f"{Path(video_path).stem}_frame_{int(timestamp*1000):08d}.jpg"
+                    filename = (
+                        f"{Path(video_path).stem}_frame_{int(timestamp*1000):08d}.jpg"
+                    )
                     dst = os.path.join(output_dir, split_name, display_label, filename)
 
                     # Write frame
@@ -237,19 +235,15 @@ def prepare_dataset(labels_csv: str, output_dir: str, config: dict):
                     print(f"    WARNING: Failed to extract frame at {timestamp}s: {e}")
                     continue
 
-    extract_and_save_split(train_df, 'train')
-    extract_and_save_split(val_df, 'val')
-    extract_and_save_split(test_df, 'test')
+    extract_and_save_split(train_df, "train")
+    extract_and_save_split(val_df, "val")
+    extract_and_save_split(test_df, "test")
 
     # Save split metadata
-    splits = {
-        'train': train_df,
-        'val': val_df,
-        'test': test_df
-    }
+    splits = {"train": train_df, "val": val_df, "test": test_df}
 
     for split_name, split_df in splits.items():
-        csv_path = os.path.join(output_dir, f'{split_name}.csv')
+        csv_path = os.path.join(output_dir, f"{split_name}.csv")
         split_df.to_csv(csv_path, index=False)
         print(f"Saved {split_name} metadata to: {csv_path}")
 
@@ -269,10 +263,10 @@ def prepare_dataset(labels_csv: str, output_dir: str, config: dict):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Prepare labeled dataset')
-    parser.add_argument('--labels', required=True, help='Path to labels CSV')
-    parser.add_argument('--output', help='Output directory (default: data/dataset)')
-    parser.add_argument('--config', default='config.yaml', help='Config file path')
+    parser = argparse.ArgumentParser(description="Prepare labeled dataset")
+    parser.add_argument("--labels", required=True, help="Path to labels CSV")
+    parser.add_argument("--output", help="Output directory (default: data/dataset)")
+    parser.add_argument("--config", default="config.yaml", help="Config file path")
 
     args = parser.parse_args()
 
@@ -280,11 +274,11 @@ def main():
     config = load_config(args.config)
 
     # Determine output directory
-    output_dir = args.output if args.output else config['paths']['dataset']
+    output_dir = args.output if args.output else config["paths"]["dataset"]
 
     # Prepare dataset
     prepare_dataset(args.labels, output_dir, config)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

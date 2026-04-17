@@ -51,9 +51,7 @@ class LiveMetrics:
         with self.state.lock:
             return {
                 "loss": (
-                    self.state.train_losses[-1]
-                    if self.state.train_losses
-                    else None
+                    self.state.train_losses[-1] if self.state.train_losses else None
                 ),
                 "loss_history": list(self.state.train_losses)[-50:],
                 "val_loss": self.state.val_loss,

@@ -90,7 +90,9 @@ class DiscordBot:
             if not bot_self.nickname:
                 # display_name returns global_name if set, otherwise username
                 bot_self.nickname = bot_self.client.user.display_name
-            print(f"Discord bot '{bot_self.nickname}' connected as {bot_self.client.user}")
+            print(
+                f"Discord bot '{bot_self.nickname}' connected as {bot_self.client.user}"
+            )
 
         @self.client.event
         async def on_message(message):
@@ -133,6 +135,7 @@ class DiscordBot:
                     # Split long messages (Discord limit is 2000 chars)
                     # 33% chance to reply, 66% chance to send regular message
                     import random
+
                     use_reply = random.random() < 0.33
 
                     for i in range(0, len(response), 2000):
@@ -143,7 +146,9 @@ class DiscordBot:
                             await message.channel.send(chunk)
             except Exception as e:
                 print(f"Error generating response: {e}")
-                await message.channel.send("Sorry, I encountered an error generating a response.")
+                await message.channel.send(
+                    "Sorry, I encountered an error generating a response."
+                )
 
     async def _generate_response(self, message) -> Optional[str]:
         """Generate a response using the Praxis generator."""
@@ -171,9 +176,7 @@ class DiscordBot:
         for msg in history:
             if msg.author == self.client.user:
                 # Bot's own messages are "assistant"
-                formatted_messages.append(
-                    {"role": "assistant", "content": msg.content}
-                )
+                formatted_messages.append({"role": "assistant", "content": msg.content})
             else:
                 # Other users' messages include username for context
                 content = f"{msg.author.display_name}: {msg.content}"

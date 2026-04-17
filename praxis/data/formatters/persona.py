@@ -54,7 +54,11 @@ def format_personachat(
 
         for trait in selected_traits:
             # Always truecase personality traits (they're for the assistant)
-            trait_text = repair_broken_emoticons(repair_text_punctuation(simple_truecase(trait))) if trait else trait
+            trait_text = (
+                repair_broken_emoticons(repair_text_punctuation(simple_truecase(trait)))
+                if trait
+                else trait
+            )
             developer_message += f"- {trait_text}\n"
         developer_message = developer_message.strip()
     else:
@@ -74,7 +78,11 @@ def format_personachat(
     # Add history messages with proper role alternation (user starts)
     for i, hist_msg in enumerate(history):
         role = "user" if i % 2 == 0 else "assistant"
-        content = repair_broken_emoticons(repair_text_punctuation(simple_truecase(hist_msg))) if hist_msg else hist_msg
+        content = (
+            repair_broken_emoticons(repair_text_punctuation(simple_truecase(hist_msg)))
+            if hist_msg
+            else hist_msg
+        )
         messages.append({"role": role, "content": text_formatter(content)})
 
     # Pick one candidate as the final assistant response
@@ -104,7 +112,11 @@ def format_personachat(
         candidates_to_use = filtered_candidates if filtered_candidates else candidates
         response = random.choice(candidates_to_use)
 
-        response = repair_broken_emoticons(repair_text_punctuation(simple_truecase(response))) if response else response
+        response = (
+            repair_broken_emoticons(repair_text_punctuation(simple_truecase(response)))
+            if response
+            else response
+        )
         messages.append({"role": "assistant", "content": text_formatter(response)})
 
     return {

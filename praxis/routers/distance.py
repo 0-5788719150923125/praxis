@@ -75,7 +75,13 @@ class Distance(SMEAR):
         """Router mode forward pass with diversity loss."""
         # Call parent's router forward
         output, pkv, state, aux_loss = super()._router_forward(
-            layer, inputs, attention_mask, past_key_values, current_state, current_depth, block_ids
+            layer,
+            inputs,
+            attention_mask,
+            past_key_values,
+            current_state,
+            current_depth,
+            block_ids,
         )
 
         # Compute and add diversity loss

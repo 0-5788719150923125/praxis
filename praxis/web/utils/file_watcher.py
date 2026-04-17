@@ -93,7 +93,9 @@ class TemplateWatcher:
             # Only watch src/web if it exists
             if os.path.exists(self.src_web_dir):
                 self.observer.schedule(event_handler, self.src_web_dir, recursive=True)
-                print("[WEB] Auto-rebuild enabled: watching praxis/web/src/ for changes")
+                print(
+                    "[WEB] Auto-rebuild enabled: watching praxis/web/src/ for changes"
+                )
 
             self.observer.start()
         except Exception as e:

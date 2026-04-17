@@ -92,10 +92,14 @@ class Patcher:
         elif self.config.patching_mode == PatchingMode.space:
             return self._space_patching(tokens, include_next_token)
         elif self.config.patching_mode == PatchingMode.static:
-            return self._static_patching(tokens, self.config.patch_size, include_next_token)
+            return self._static_patching(
+                tokens, self.config.patch_size, include_next_token
+            )
         else:
             # Default to static patching
-            return self._static_patching(tokens, self.config.patch_size, include_next_token)
+            return self._static_patching(
+                tokens, self.config.patch_size, include_next_token
+            )
 
     def _entropy_patching(
         self,

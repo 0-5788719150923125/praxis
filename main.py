@@ -133,9 +133,7 @@ def _graceful_shutdown(
 
     def _stop_with_timeout(name: str, fn, timeout: float) -> None:
         try:
-            t = threading.Thread(
-                target=fn, daemon=True, name=f"shutdown_{name}"
-            )
+            t = threading.Thread(target=fn, daemon=True, name=f"shutdown_{name}")
             t.start()
             t.join(timeout=timeout)
             if t.is_alive():
@@ -150,9 +148,7 @@ def _graceful_shutdown(
         _stop_with_timeout("api_server", api_server.stop, 5.0)
 
     try:
-        _stop_with_timeout(
-            "integrations", integration_loader.run_cleanup_hooks, 5.0
-        )
+        _stop_with_timeout("integrations", integration_loader.run_cleanup_hooks, 5.0)
     except Exception as exc:
         print(f"[SHUTDOWN] integration cleanup failed to dispatch: {exc!r}")
 
@@ -410,7 +406,7 @@ def main():
         os.environ["MASTER_PORT"] = str(master_port)
         os.environ["NODE_RANK"] = str(node_rank)
 
-    (full_command, args_hash, truncated_hash) = log_command()
+    full_command, args_hash, truncated_hash = log_command()
 
     # Initialize RunManager
     run_manager = RunManager(base_cache_dir)
@@ -506,7 +502,9 @@ def main():
         enable_progress_bar=not use_dashboard and not headless,
         enable_model_summary=False,
         detect_anomaly=EnvironmentFeatures.is_enabled("detect_anomaly"),
-        val_check_interval=val_every * hparams["target_batch_size"] // hparams["batch_size"],
+        val_check_interval=val_every
+        * hparams["target_batch_size"]
+        // hparams["batch_size"],
         num_sanity_val_steps=0,
         limit_val_batches=16384 // hparams["batch_size"],
         log_every_n_steps=10,

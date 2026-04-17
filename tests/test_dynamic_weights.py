@@ -6,7 +6,6 @@ from unittest.mock import Mock
 
 from praxis.data.datasets.novelty import CountMinSketch, NoveltyTracker
 
-
 # ---------------------------------------------------------------------------
 # Count-Min Sketch unit tests
 # ---------------------------------------------------------------------------
@@ -83,18 +82,16 @@ class TestNoveltyTracker:
         tracker.score_and_update(1, list(range(100, 200)))
 
         weights = tracker.get_target_weights(static)
-        assert abs(weights[0] - 0.7) < 0.1, (
-            f"Weight[0]={weights[0]:.4f} should be near 0.7 during warmup"
-        )
-        assert abs(weights[1] - 0.3) < 0.1, (
-            f"Weight[1]={weights[1]:.4f} should be near 0.3 during warmup"
-        )
+        assert (
+            abs(weights[0] - 0.7) < 0.1
+        ), f"Weight[0]={weights[0]:.4f} should be near 0.7 during warmup"
+        assert (
+            abs(weights[1] - 0.3) < 0.1
+        ), f"Weight[1]={weights[1]:.4f} should be near 0.3 during warmup"
 
     def test_weight_floor(self):
         """No dataset weight should drop below 1% of its static weight."""
-        tracker = NoveltyTracker(
-            num_datasets=2, cms_width=4096, warmup_samples=0
-        )
+        tracker = NoveltyTracker(num_datasets=2, cms_width=4096, warmup_samples=0)
 
         same_tokens = [1, 2, 3, 4, 5] * 40
         for _ in range(200):
@@ -126,11 +123,15 @@ class TestNoveltyTracker:
         numeric_ids = set(range(10, 20))
 
         tracker_with = NoveltyTracker(
-            num_datasets=2, cms_width=4096,
-            warmup_samples=0, numeric_token_ids=numeric_ids,
+            num_datasets=2,
+            cms_width=4096,
+            warmup_samples=0,
+            numeric_token_ids=numeric_ids,
         )
         tracker_without = NoveltyTracker(
-            num_datasets=2, cms_width=4096, warmup_samples=0,
+            num_datasets=2,
+            cms_width=4096,
+            warmup_samples=0,
         )
 
         rng = np.random.RandomState(99)

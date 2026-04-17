@@ -47,9 +47,7 @@ def format_file_as_messages(
 
     # Format the tool call with inline result
     tool_call_content = format_tool_call_with_result(
-        tool_name="read_file",
-        arguments={"file_path": sample_path},
-        result=content
+        tool_name="read_file", arguments={"file_path": sample_path}, result=content
     )
 
     # Single assistant message with inline tool call and result

@@ -101,12 +101,8 @@ class LearnedQueryAttention(nn.Module):
         seg_id must be contiguous non-decreasing integers starting at 0.
         """
         if key_padding_mask is not None:
-            kseg_real = torch.where(
-                key_padding_mask, seg_id.new_full((), -1), seg_id
-            )
-            return (kseg_real.amax(dim=1).clamp(min=-1) + 1).to(
-                torch.long
-            )  # (B,)
+            kseg_real = torch.where(key_padding_mask, seg_id.new_full((), -1), seg_id)
+            return (kseg_real.amax(dim=1).clamp(min=-1) + 1).to(torch.long)  # (B,)
         return (seg_id.amax(dim=1) + 1).to(torch.long)
 
     def forward(
@@ -205,25 +201,25 @@ class LearnedQueryAttention(nn.Module):
             scores = scores.masked_fill(mismatch[:, None, :, :], float("-inf"))
 
             # drop invalid trailing queries: q >= nseg[b]*L
-            valid_q = torch.arange(self.Q_max, device=x.device)[None, :] < (
-                nseg * self.L
-            )[:, None]  # (B,Q)
+            valid_q = (
+                torch.arange(self.Q_max, device=x.device)[None, :]
+                < (nseg * self.L)[:, None]
+            )  # (B,Q)
             scores = scores.masked_fill(~valid_q[:, None, :, None], float("-inf"))
 
             attn = torch.softmax(scores, dim=-1)  # (B,H,Q,S)
             ctx = torch.matmul(attn, v)  # (B,H,Q,d)
-            attn_weights = (
-                attn.mean(dim=1) if return_attn else queries.new_empty(0)
-            )
+            attn_weights = attn.mean(dim=1) if return_attn else queries.new_empty(0)
 
         out = ctx.permute(0, 2, 1, 3).reshape(B, self.Q_max, self.d_model)
         out = self.out_norm(out)
         out = self.out_proj(out)
 
         # Zero out invalid query slots so downstream components can be statically-shaped
-        valid_q_mask = torch.arange(self.Q_max, device=x.device)[None, :] < (
-            nseg * self.L
-        )[:, None]  # (B,Q)
+        valid_q_mask = (
+            torch.arange(self.Q_max, device=x.device)[None, :]
+            < (nseg * self.L)[:, None]
+        )  # (B,Q)
         out = out * valid_q_mask.to(out.dtype).unsqueeze(-1)
 
         return out, (attn_weights if return_attn else out.new_empty(()))

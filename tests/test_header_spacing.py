@@ -37,8 +37,7 @@ def test_research_tab_header_spacing(page: Page):
             print(f"\n.tab-buttons bounding box: {tab_buttons_box}")
 
             # Get computed styles
-            tab_buttons_styles = page.evaluate(
-                """() => {
+            tab_buttons_styles = page.evaluate("""() => {
                 const el = document.querySelector('.tab-buttons');
                 const styles = window.getComputedStyle(el);
                 return {
@@ -46,8 +45,7 @@ def test_research_tab_header_spacing(page: Page):
                     paddingBottom: styles.paddingBottom,
                     height: styles.height
                 };
-            }"""
-            )
+            }""")
             print(f".tab-buttons computed styles:")
             for key, value in tab_buttons_styles.items():
                 print(f"  {key}: {value}")
@@ -56,8 +54,7 @@ def test_research_tab_header_spacing(page: Page):
             tab_nav_box = tab_nav.bounding_box()
             print(f"\n.tab-nav bounding box: {tab_nav_box}")
 
-            tab_nav_styles = page.evaluate(
-                """() => {
+            tab_nav_styles = page.evaluate("""() => {
                 const el = document.querySelector('.tab-nav');
                 const styles = window.getComputedStyle(el);
                 return {
@@ -65,8 +62,7 @@ def test_research_tab_header_spacing(page: Page):
                     paddingBottom: styles.paddingBottom,
                     borderBottom: styles.borderBottom
                 };
-            }"""
-            )
+            }""")
             print(f".tab-nav computed styles:")
             for key, value in tab_nav_styles.items():
                 print(f"  {key}: {value}")
@@ -75,16 +71,14 @@ def test_research_tab_header_spacing(page: Page):
             research_content_box = research_content.bounding_box()
             print(f"\n#research-content bounding box: {research_content_box}")
 
-            research_content_styles = page.evaluate(
-                """() => {
+            research_content_styles = page.evaluate("""() => {
                 const el = document.getElementById('research-content');
                 const styles = window.getComputedStyle(el);
                 return {
                     paddingTop: styles.paddingTop,
                     marginTop: styles.marginTop
                 };
-            }"""
-            )
+            }""")
             print(f"#research-content computed styles:")
             for key, value in research_content_styles.items():
                 print(f"  {key}: {value}")
@@ -93,8 +87,7 @@ def test_research_tab_header_spacing(page: Page):
             tab_header_box = tab_header.bounding_box()
             print(f"\n.tab-header bounding box: {tab_header_box}")
 
-            tab_header_styles = page.evaluate(
-                """() => {
+            tab_header_styles = page.evaluate("""() => {
                 const el = document.querySelector('.tab-header');
                 const styles = window.getComputedStyle(el);
                 return {
@@ -105,8 +98,7 @@ def test_research_tab_header_spacing(page: Page):
                     top: styles.top,
                     position: styles.position
                 };
-            }"""
-            )
+            }""")
             print(f".tab-header computed styles:")
             for key, value in tab_header_styles.items():
                 print(f"  {key}: {value}")

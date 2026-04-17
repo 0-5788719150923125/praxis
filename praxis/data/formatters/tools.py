@@ -157,28 +157,30 @@ def format_tool_calling(
 
         # Format tool call with inline result using new tag format
         tool_call_content = format_tool_call_with_result(
-            tool_name="get_tools",
-            arguments={},
-            result=tools_json
+            tool_name="get_tools", arguments={}, result=tools_json
         )
 
-        messages.append({
-            "role": "assistant",
-            "content": tool_call_content,
-        })
+        messages.append(
+            {
+                "role": "assistant",
+                "content": tool_call_content,
+            }
+        )
 
     # Always call calc tool - inline format with result and response
     tool_call_content = format_tool_call_with_result(
         tool_name="calc",
         arguments={"values": values, "op": operation},
-        result=str(float(result))
+        result=str(float(result)),
     )
 
     # Append the result phrase right after the tool output in the same message
-    messages.append({
-        "role": "assistant",
-        "content": f"{tool_call_content} {result_phrase}",
-    })
+    messages.append(
+        {
+            "role": "assistant",
+            "content": f"{tool_call_content} {result_phrase}",
+        }
+    )
 
     # Return messages and metadata
     return {

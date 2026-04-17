@@ -89,7 +89,9 @@ class BaseDecoder(nn.Module):
                     block = BLOCK_REGISTRY[config.block_type](config)
                 expert_blocks.append(block)
 
-                print(f"[PRISMATIC v7.0] Created expert {expert_idx} with encoding={config.encoding}")
+                print(
+                    f"[PRISMATIC v7.0] Created expert {expert_idx} with encoding={config.encoding}"
+                )
 
             print(f"[PRISMATIC v7.0] Architectural diversity: ALiBi vs RoPE")
             print(f"  Expert 0: ALiBi (linear distance bias)")

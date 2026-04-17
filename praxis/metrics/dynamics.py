@@ -5,9 +5,7 @@ from typing import Dict, Optional
 import torch.nn as nn
 
 
-def extract_layer_dynamics(
-    layer: nn.Module, lr: float
-) -> Optional[Dict[str, float]]:
+def extract_layer_dynamics(layer: nn.Module, lr: float) -> Optional[Dict[str, float]]:
     """Compute gradient norm, variance, and update ratio for a single layer.
 
     Returns a dict with keys ``grad_norm``, ``grad_var``, and

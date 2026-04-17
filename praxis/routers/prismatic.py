@@ -193,7 +193,7 @@ class Prismatic(nn.Module):
 
         for expert_idx in range(self.num_experts):
             # Find which samples selected this expert (in any of their top-k positions)
-            expert_mask = (expert_indices == expert_idx)  # [batch, k]
+            expert_mask = expert_indices == expert_idx  # [batch, k]
 
             if not expert_mask.any():
                 continue
@@ -269,9 +269,7 @@ class Prismatic(nn.Module):
         expert_mask = F.one_hot(
             expert_indices, num_classes=self.num_experts
         ).float()  # [batch, k, num_experts]
-        load = expert_mask.sum(dim=[0, 1]) / (
-            batch_size * self.top_k
-        )  # [num_experts]
+        load = expert_mask.sum(dim=[0, 1]) / (batch_size * self.top_k)  # [num_experts]
 
         # Switch Transformers loss: scale by num_experts to maintain magnitude
         balance_loss = self.num_experts * (importance * load).sum()

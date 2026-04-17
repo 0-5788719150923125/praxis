@@ -131,9 +131,7 @@ class StreamingContext:
             threshold=self.repetition_frequency,
         ):
             return True
-        if self._detect_sequential_repetition(
-            text, threshold=5, min_segment_length=8
-        ):
+        if self._detect_sequential_repetition(text, threshold=5, min_segment_length=8):
             return True
         if self._is_bracket_pipe_pattern(text):
             return True

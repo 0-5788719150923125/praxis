@@ -59,8 +59,7 @@ class InfiniAttention(CausalAttention):
 
         # Learnable initial memory state
         self.init_mem = nn.Parameter(
-            torch.randn(1, self.num_query_heads, self.head_dim, self.head_dim)
-            * 0.01
+            torch.randn(1, self.num_query_heads, self.head_dim, self.head_dim) * 0.01
         )
         self.init_z = nn.Parameter(
             torch.ones(1, self.num_query_heads, self.head_dim, 1) / self.head_dim
@@ -109,12 +108,20 @@ class InfiniAttention(CausalAttention):
 
         # Ghostmax: prepend zero token to K and V
         zero_k = torch.zeros(
-            batch_size, self.num_heads, 1, self.head_dim,
-            device=device, dtype=k.dtype,
+            batch_size,
+            self.num_heads,
+            1,
+            self.head_dim,
+            device=device,
+            dtype=k.dtype,
         )
         zero_v = torch.zeros(
-            batch_size, self.num_heads, 1, self.head_dim,
-            device=device, dtype=v.dtype,
+            batch_size,
+            self.num_heads,
+            1,
+            self.head_dim,
+            device=device,
+            dtype=v.dtype,
         )
         k_ghost = torch.cat([zero_k, k], dim=2)
         v_ghost = torch.cat([zero_v, v], dim=2)
@@ -154,7 +161,9 @@ class InfiniAttention(CausalAttention):
             block_mask = None
 
         return self.flex_attention(
-            q, k_ghost, v_ghost,
+            q,
+            k_ghost,
+            v_ghost,
             block_mask=block_mask,
             score_mod=score_mod,
             enable_gqa=is_gqa,

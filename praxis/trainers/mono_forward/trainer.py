@@ -239,9 +239,7 @@ class MonoForwardTrainer:
         self.optimizer_wrappers: Dict[str, bool] = dict(
             trainer_params.get("optimizer_wrappers") or {}
         )
-        self.warmup_steps: int = int(
-            trainer_params.get("warmup_steps") or 0
-        )
+        self.warmup_steps: int = int(trainer_params.get("warmup_steps") or 0)
         self.disable_schedule: bool = bool(
             trainer_params.get("disable_schedule") or False
         )
@@ -261,18 +259,10 @@ class MonoForwardTrainer:
             int(raw_val_every) if raw_val_every else None
         )
         raw_limit_val = trainer_params.get("limit_val_batches")
-        self._limit_val_batches: int = (
-            int(raw_limit_val) if raw_limit_val else 64
-        )
-        self.dynamics_log_freq: int = int(
-            trainer_params.get("dynamics_log_freq") or 10
-        )
-        self.byte_latent: bool = bool(
-            trainer_params.get("byte_latent") or False
-        )
-        self.save_every: int = int(
-            trainer_params.get("save_every", 256) or 256
-        )
+        self._limit_val_batches: int = int(raw_limit_val) if raw_limit_val else 64
+        self.dynamics_log_freq: int = int(trainer_params.get("dynamics_log_freq") or 10)
+        self.byte_latent: bool = bool(trainer_params.get("byte_latent") or False)
+        self.save_every: int = int(trainer_params.get("save_every", 256) or 256)
         self._live_metrics: Optional[Any] = None
         self._live_metrics_ema_loss: Optional[float] = None
 
@@ -495,9 +485,7 @@ class MonoForwardTrainer:
 
         def _shutdown_handler(signum, frame):
             self._shutdown_requested = True
-            self._log(
-                f"[MF] Received signal {signum}, requesting graceful shutdown"
-            )
+            self._log(f"[MF] Received signal {signum}, requesting graceful shutdown")
 
         signal.signal(signal.SIGINT, _shutdown_handler)
         signal.signal(signal.SIGTERM, _shutdown_handler)
@@ -616,7 +604,9 @@ class MonoForwardTrainer:
             num_cpus_per_actor = cluster_cpus / num_layers
             num_gpus_per_actor = cluster_gpus / num_layers if use_gpu else 0
 
-            resource_parts = [f"{cluster_cpus} CPU(s) -> {num_cpus_per_actor:.2f}/actor"]
+            resource_parts = [
+                f"{cluster_cpus} CPU(s) -> {num_cpus_per_actor:.2f}/actor"
+            ]
             if use_gpu:
                 resource_parts.append(
                     f"{cluster_gpus} GPU(s) -> {num_gpus_per_actor:.2f}/actor"
@@ -741,16 +731,11 @@ class MonoForwardTrainer:
             # exit cleanly even if Ray's internal cleanup hangs.
             import threading
 
-            shutdown_thread = threading.Thread(
-                target=ray.shutdown, daemon=True
-            )
+            shutdown_thread = threading.Thread(target=ray.shutdown, daemon=True)
             shutdown_thread.start()
             shutdown_thread.join(timeout=10)
             if shutdown_thread.is_alive():
-                self._log(
-                    "[MF] Ray shutdown timed out after 10s, "
-                    "forcing exit"
-                )
+                self._log("[MF] Ray shutdown timed out after 10s, " "forcing exit")
             else:
                 self._log("[MF] Ray shutdown complete")
 
@@ -854,8 +839,7 @@ class MonoForwardTrainer:
             while (
                 len(in_flight) < max_in_flight
                 and (
-                    self.max_steps is None
-                    or state["batches_started"] < self.max_steps
+                    self.max_steps is None or state["batches_started"] < self.max_steps
                 )
                 and not state["dataloader_exhausted"]
                 and not self._shutdown_requested
@@ -931,7 +915,9 @@ class MonoForwardTrainer:
             if softmax_collapse is not None:
                 state["last_softmax_collapse"] = softmax_collapse
             if layer_dynamics is not None:
-                dynamics_accumulator.setdefault(batch_idx, {})[step_idx] = layer_dynamics
+                dynamics_accumulator.setdefault(batch_idx, {})[
+                    step_idx
+                ] = layer_dynamics
 
             if step_idx + 1 < depth:
                 # Interior hop: forward to the next step's actor.
@@ -1058,7 +1044,9 @@ class MonoForwardTrainer:
             # Periodic mid-training checkpoint every ``save_every``
             # batches. Step-based to avoid drift under distribution.
             if model_host is not None:
-                batches_since = state["completed_batches"] - state["last_checkpoint_step"]
+                batches_since = (
+                    state["completed_batches"] - state["last_checkpoint_step"]
+                )
                 if batches_since >= self.save_every:
                     state["last_checkpoint_step"] = state["completed_batches"]
                     self._save_checkpoint(
@@ -1144,7 +1132,9 @@ class MonoForwardTrainer:
                 # boundary entirely; the threshold catches any
                 # crossing regardless of how many batches the drain
                 # consumed.
-                current_step = state["completed_batches"] // self.accumulate_grad_batches
+                current_step = (
+                    state["completed_batches"] // self.accumulate_grad_batches
+                )
                 next_val_at = state["last_val_step"] + (self.val_check_interval or 0)
                 if (
                     self.val_check_interval is not None
@@ -1156,7 +1146,9 @@ class MonoForwardTrainer:
                     # to metrics.db is a clean multiple of val_every
                     # (e.g. 1024, 2048, 3072) rather than wherever
                     # completed_batches happened to land.
-                    val_step = (current_step // self.val_check_interval) * self.val_check_interval
+                    val_step = (
+                        current_step // self.val_check_interval
+                    ) * self.val_check_interval
                     state["last_val_step"] = val_step
                     _drain_pipeline()
                     self._run_validation(
@@ -1390,9 +1382,7 @@ class MonoForwardTrainer:
                         self._restore_train_mode()
                         return
                 except Exception as exc:  # pragma: no cover - defensive
-                    self._log(
-                        f"[MF] validation: step {step_idx} failed: {exc}"
-                    )
+                    self._log(f"[MF] validation: step {step_idx} failed: {exc}")
                     last_loss = None
                     break
                 activations = result["hidden_states"]
@@ -1779,9 +1769,7 @@ class MonoForwardTrainer:
             route = self._route_table
             for step_idx in range(len(route)):
                 actor = actors[route[step_idx]]
-                future = actor.infer_batch.remote(
-                    hidden, step_idx, block_ids, None
-                )
+                future = actor.infer_batch.remote(hidden, step_idx, block_ids, None)
                 hidden, _kv = ray.get(future)
 
             # Project through the final depth step's actor head.
@@ -1935,8 +1923,7 @@ class MonoForwardTrainer:
             )
         else:
             message = (
-                f"[MF] Inference hook @ batch {completed_batches}: "
-                f"{context.text!r}"
+                f"[MF] Inference hook @ batch {completed_batches}: " f"{context.text!r}"
             )
         self._log(message)
 
@@ -2059,7 +2046,9 @@ class MonoForwardTrainer:
 
         # Detect format: structured checkpoints have a
         # "model_state_dict" key; legacy ones are a flat state_dict.
-        is_structured = isinstance(checkpoint, dict) and "model_state_dict" in checkpoint
+        is_structured = (
+            isinstance(checkpoint, dict) and "model_state_dict" in checkpoint
+        )
         if is_structured:
             model_sd = checkpoint["model_state_dict"]
         else:
@@ -2075,10 +2064,10 @@ class MonoForwardTrainer:
             if not key.startswith(layer_prefix):
                 continue
             # Extract layer index from "decoder.locals.{i}.xxx"
-            rest = key[len(layer_prefix):]
+            rest = key[len(layer_prefix) :]
             dot_pos = rest.index(".")
             layer_idx = int(rest[:dot_pos])
-            inner_key = rest[dot_pos + 1:]
+            inner_key = rest[dot_pos + 1 :]
             if layer_idx not in layer_state_dicts:
                 layer_state_dicts[layer_idx] = {}
             layer_state_dicts[layer_idx][inner_key] = value
@@ -2135,8 +2124,7 @@ class MonoForwardTrainer:
                     try:
                         datamodule.load_state_dict(dm_state)
                         self._log(
-                            "[MF] Restored datamodule state "
-                            "(dataset positions)"
+                            "[MF] Restored datamodule state " "(dataset positions)"
                         )
                     except Exception as exc:
                         self._log(

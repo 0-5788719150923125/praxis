@@ -151,7 +151,10 @@ class DynamicsLogger:
 
                 # Build UPSERT query
                 placeholders = ", ".join(["?"] * len(columns))
-                update_clauses = ["ts = excluded.ts", "num_experts = excluded.num_experts"]
+                update_clauses = [
+                    "ts = excluded.ts",
+                    "num_experts = excluded.num_experts",
+                ]
                 for col in columns[3:]:
                     update_clauses.append(
                         f"{col} = COALESCE(excluded.{col}, dynamics.{col})"

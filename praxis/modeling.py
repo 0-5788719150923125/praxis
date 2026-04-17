@@ -488,9 +488,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             and getattr(generation_config, "num_beams", 1) == 1
         ):
             return self._speculative_generate(inputs, generation_config, **kwargs)
-        return super().generate(
-            inputs, generation_config=generation_config, **kwargs
-        )
+        return super().generate(inputs, generation_config=generation_config, **kwargs)
 
     @torch.no_grad()
     def _speculative_generate(self, input_ids, generation_config, **kwargs):

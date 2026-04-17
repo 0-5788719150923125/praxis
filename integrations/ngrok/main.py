@@ -467,7 +467,7 @@ class Integration(BaseIntegration):
         # Strip the ngrok secret prefix if present to check the actual path
         path_without_secret = path
         if ngrok_secret and path.startswith(f"/{ngrok_secret}/"):
-            path_without_secret = path[len(f"/{ngrok_secret}"):]
+            path_without_secret = path[len(f"/{ngrok_secret}") :]
 
         # Allow git-specific paths without authentication
         # Git clients need these exact paths to work

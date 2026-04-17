@@ -8,13 +8,14 @@ import json
 import re
 from typing import Any, Dict, Optional, Tuple
 
-
 # Tag constants - change these to update all tool call formatting
 TOOL_INPUT_TAG = "tin"
 TOOL_OUTPUT_TAG = "tout"
 
 
-def format_tool_input(tool_name: str, arguments: Dict[str, Any], indent: int = 2) -> str:
+def format_tool_input(
+    tool_name: str, arguments: Dict[str, Any], indent: int = 2
+) -> str:
     """Format a tool call as <tin>JSON</tin>.
 
     Args:
@@ -149,7 +150,7 @@ def get_unprocessed_tool_call(text: str) -> Optional[Tuple[Dict[str, Any], int]]
 
     for match in matches:
         # Look for <tout> immediately after this </tin>
-        text_after = text[match.end():]
+        text_after = text[match.end() :]
 
         # If this tool call doesn't have an output, it's unprocessed
         if not re.match(output_pattern, text_after):
@@ -334,9 +335,15 @@ def fix_truncated_tags(text: str) -> str:
     # Log warning if fixes were applied (helps detect gaps in generation logic)
     if text != original_text:
         # Show a snippet of what changed (last 100 chars of each)
-        original_snippet = repr(original_text[-100:]) if len(original_text) > 100 else repr(original_text)
+        original_snippet = (
+            repr(original_text[-100:])
+            if len(original_text) > 100
+            else repr(original_text)
+        )
         fixed_snippet = repr(text[-100:]) if len(text) > 100 else repr(text)
-        print(f"[TOOL_TAGS] fix_truncated_tags applied: {original_snippet} -> {fixed_snippet}")
+        print(
+            f"[TOOL_TAGS] fix_truncated_tags applied: {original_snippet} -> {fixed_snippet}"
+        )
 
     return text
 

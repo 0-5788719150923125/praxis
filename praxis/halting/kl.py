@@ -42,7 +42,9 @@ class KLDivergenceHalting(BaseHalting):
         # Poisson rate target. The sampler returns Poisson(e^tau) + 1, so
         # the mean of an uncensored draw is r_bar + 1. Default picks the
         # middle of [1, max_loops] to keep both tails off the clamps.
-        self.r_bar = float(r_bar) if r_bar is not None else max(1.0, (self.max_loops - 1) / 2)
+        self.r_bar = (
+            float(r_bar) if r_bar is not None else max(1.0, (self.max_loops - 1) / 2)
+        )
         self._prev_log_probs: Optional[Tensor] = None
 
         # Running stats for dashboards.
@@ -161,9 +163,7 @@ class KLDivergenceHalting(BaseHalting):
         }
         if self._train_calls > 0:
             metrics["halting/train_calls"] = self._train_calls
-            metrics["halting/mean_loops"] = (
-                self._train_loops_sum / self._train_calls
-            )
+            metrics["halting/mean_loops"] = self._train_loops_sum / self._train_calls
             if self._last_train_loops is not None:
                 metrics["halting/last_loops"] = self._last_train_loops
             for r, count in self._train_hist.items():
@@ -172,12 +172,8 @@ class KLDivergenceHalting(BaseHalting):
             metrics["halting/eval_checks"] = self._eval_checks
             metrics["halting/eval_halts"] = self._eval_halts
             if self._eval_checks > 0:
-                metrics["halting/halt_rate"] = (
-                    self._eval_halts / self._eval_checks
-                )
-                metrics["halting/eval_mean_kl"] = (
-                    self._eval_kl_sum / self._eval_checks
-                )
+                metrics["halting/halt_rate"] = self._eval_halts / self._eval_checks
+                metrics["halting/eval_mean_kl"] = self._eval_kl_sum / self._eval_checks
             for r, count in self._eval_hist.items():
                 metrics[f"halting/eval_r_{r}"] = count
         return metrics

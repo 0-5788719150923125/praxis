@@ -54,8 +54,12 @@ class ConvMTPModule(nn.Module):
             config.hidden_size + config.embed_size, config.hidden_size, bias=False
         )
         self.convs = nn.Sequential(
-            CausalConvLayer(config.hidden_size, kernel_size=3, dilation=1, eps=config.epsilon),
-            CausalConvLayer(config.hidden_size, kernel_size=3, dilation=2, eps=config.epsilon),
+            CausalConvLayer(
+                config.hidden_size, kernel_size=3, dilation=1, eps=config.epsilon
+            ),
+            CausalConvLayer(
+                config.hidden_size, kernel_size=3, dilation=2, eps=config.epsilon
+            ),
         )
 
     def forward(self, hidden_states, token_embeds, attention_mask):

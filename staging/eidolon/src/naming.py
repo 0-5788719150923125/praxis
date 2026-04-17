@@ -26,7 +26,7 @@ def get_next_experiment_number() -> int:
 
     # Read current number or default to 1
     try:
-        with open(counter_file, 'r') as f:
+        with open(counter_file, "r") as f:
             current = int(f.read().strip())
     except (FileNotFoundError, ValueError):
         current = 0
@@ -36,7 +36,7 @@ def get_next_experiment_number() -> int:
 
     # Save back to file
     Path(counter_file).parent.mkdir(parents=True, exist_ok=True)
-    with open(counter_file, 'w') as f:
+    with open(counter_file, "w") as f:
         f.write(str(next_num))
 
     return next_num
@@ -67,7 +67,7 @@ def generate_experiment_title(seed_text: str) -> str:
 
     # Helper to generate N words
     def generate_words(n):
-        return ' '.join(fake.word().title() for _ in range(n))
+        return " ".join(fake.word().title() for _ in range(n))
 
     # Generate semi-coherent title patterns
     # Mix and match different Faker providers for variety
@@ -84,9 +84,9 @@ def generate_experiment_title(seed_text: str) -> str:
     random_part = patterns[pattern_idx]()
 
     # Sanitize random part for filesystem (remove special chars, limit length)
-    random_part = random_part.replace('/', '-').replace('\\', '-')
-    random_part = ''.join(c for c in random_part if c.isalnum() or c in ' -')
-    random_part = ' '.join(random_part.split())  # Normalize whitespace
+    random_part = random_part.replace("/", "-").replace("\\", "-")
+    random_part = "".join(c for c in random_part if c.isalnum() or c in " -")
+    random_part = " ".join(random_part.split())  # Normalize whitespace
     random_part = random_part[:50]  # Limit length for filesystem compatibility
 
     # Prepend "ASMR" to every title
@@ -95,7 +95,9 @@ def generate_experiment_title(seed_text: str) -> str:
     return title
 
 
-def format_experiment_filename(exp_number: int, exp_title: str, username: str = None) -> str:
+def format_experiment_filename(
+    exp_number: int, exp_title: str, username: str = None
+) -> str:
     """
     Format experiment filename with number and title.
     Filename matches exact YouTube title format.
@@ -137,19 +139,21 @@ def get_experiment_path(video_name: str) -> str:
 
     # Extract username from video_name (format: "@UserName - Video Title (quality)")
     username = None
-    if video_name.startswith('@') and ' - ' in video_name:
-        username = video_name.split(' - ')[0]  # Extract "@UserName"
+    if video_name.startswith("@") and " - " in video_name:
+        username = video_name.split(" - ")[0]  # Extract "@UserName"
 
     # Get existing project titles (without the "Experiment #N:" prefix)
     existing_titles = set()
     if os.path.exists(projects_dir):
         for filename in os.listdir(projects_dir):
-            if filename.endswith('.mlt'):
+            if filename.endswith(".mlt"):
                 # Extract title part after "Experiment #N: "
-                if ': ' in filename:
-                    title_part = filename.split(': ', 1)[1]  # Get everything after first ": "
+                if ": " in filename:
+                    title_part = filename.split(": ", 1)[
+                        1
+                    ]  # Get everything after first ": "
                     # Remove .mlt extension
-                    title_part = title_part.rsplit('.mlt', 1)[0]
+                    title_part = title_part.rsplit(".mlt", 1)[0]
                     existing_titles.add(title_part)
 
     # Generate unique title by appending suffix to seed if needed

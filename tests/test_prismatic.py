@@ -35,7 +35,7 @@ class SimpleDenseBlock(nn.Module):
         current_state=None,
         current_depth=0,
         block_ids=None,
-        **kwargs
+        **kwargs,
     ):
         x = self.linear(inputs)
         x = self.norm(x)
@@ -53,7 +53,7 @@ class TestArchitecturalDiversity:
             num_queries=1,
             num_experts=2,
             router_type="prismatic",
-            causal=True
+            causal=True,
         )
 
         # Create experts with different encodings
@@ -79,11 +79,7 @@ class TestArchitecturalDiversity:
     def test_different_architectures_produce_different_outputs(self):
         """Verify ALiBi and RoPE produce different outputs on same input."""
         config = PraxisConfig(
-            hidden_size=64,
-            num_heads=4,
-            num_queries=1,
-            dropout=0.0,
-            causal=True
+            hidden_size=64, num_heads=4, num_queries=1, dropout=0.0, causal=True
         )
 
         from praxis.attention.causal import CausalAttention
@@ -103,8 +99,9 @@ class TestArchitecturalDiversity:
         out_alibi, _, _ = alibi_attn(inputs)
         out_rope, _, _ = rope_attn(inputs)
 
-        assert not torch.allclose(out_alibi, out_rope, atol=1e-3), \
-            "ALiBi and RoPE should produce different outputs"
+        assert not torch.allclose(
+            out_alibi, out_rope, atol=1e-3
+        ), "ALiBi and RoPE should produce different outputs"
 
         print("[TEST] ✓ Architectural diversity creates different representations")
 
@@ -116,7 +113,7 @@ class TestArchitecturalDiversity:
             num_queries=1,
             num_experts=4,
             router_type="prismatic",
-            causal=True
+            causal=True,
         )
 
         from praxis.attention.causal import CausalAttention
@@ -152,7 +149,7 @@ class TestSparseRouting:
             num_heads=4,
             num_queries=1,
             num_experts=2,
-            router_type="prismatic"
+            router_type="prismatic",
         )
 
         experts = [SimpleDenseBlock(config.hidden_size) for _ in range(2)]
@@ -183,7 +180,7 @@ class TestSparseRouting:
             num_heads=4,
             num_queries=1,
             num_experts=2,
-            router_type="prismatic"
+            router_type="prismatic",
         )
 
         experts = [SimpleDenseBlock(config.hidden_size) for _ in range(2)]
@@ -192,15 +189,17 @@ class TestSparseRouting:
         inputs = torch.randn(2, 4, config.hidden_size)
 
         from praxis.layers.local import LocalLayer
+
         layer = LocalLayer(config, block=experts[0], expert_blocks=experts)
 
         output, _, _, aux_loss = router._router_forward(
-            layer, inputs,
+            layer,
+            inputs,
             attention_mask=None,
             past_key_values=None,
             current_state=None,
             current_depth=0,
-            block_ids=None
+            block_ids=None,
         )
 
         loss = output.sum() + aux_loss
@@ -222,7 +221,7 @@ class TestLoadBalancing:
             num_heads=4,
             num_queries=1,
             num_experts=2,
-            router_type="prismatic"
+            router_type="prismatic",
         )
 
         experts = [SimpleDenseBlock(config.hidden_size) for _ in range(2)]
@@ -234,14 +233,20 @@ class TestLoadBalancing:
         balanced_probs = torch.tensor([[0.5, 0.5], [0.5, 0.5]])
         balanced_indices = torch.tensor([[0, 1], [1, 0]])  # [batch, k=2]
         balanced_loss = router._compute_balance_loss(balanced_probs, balanced_indices)
-        assert abs(balanced_loss.item() - 1.0) < 0.01  # Should be close to 1.0 for perfect balance
+        assert (
+            abs(balanced_loss.item() - 1.0) < 0.01
+        )  # Should be close to 1.0 for perfect balance
 
         # Imbalanced probs and imbalanced selections
         # importance=[0.9, 0.1], load=[1.0, 0.0]
         # Loss = 2 * (0.9*1.0 + 0.1*0.0) = 1.8
         imbalanced_probs = torch.tensor([[0.9, 0.1], [0.9, 0.1]])
-        imbalanced_indices = torch.tensor([[0, 0], [0, 0]])  # [batch, k=2] all selecting expert 0
-        imbalanced_loss = router._compute_balance_loss(imbalanced_probs, imbalanced_indices)
+        imbalanced_indices = torch.tensor(
+            [[0, 0], [0, 0]]
+        )  # [batch, k=2] all selecting expert 0
+        imbalanced_loss = router._compute_balance_loss(
+            imbalanced_probs, imbalanced_indices
+        )
         assert imbalanced_loss.item() > balanced_loss.item()
 
         print("[TEST] ✓ Load balancing loss prevents collapse")
@@ -257,7 +262,7 @@ class TestMetrics:
             num_heads=4,
             num_queries=1,
             num_experts=2,
-            router_type="prismatic"
+            router_type="prismatic",
         )
 
         experts = [SimpleDenseBlock(config.hidden_size) for _ in range(2)]
@@ -284,11 +289,15 @@ class TestMetrics:
         assert "architecture/rope_usage" in metrics
 
         # Verify expert weights sum to 1.0
-        total_weight = metrics["routing/expert_0_weight"] + metrics["routing/expert_1_weight"]
+        total_weight = (
+            metrics["routing/expert_0_weight"] + metrics["routing/expert_1_weight"]
+        )
         assert abs(total_weight - 1.0) < 0.01
 
         # Verify architecture usage sums to 100%
-        total_usage = metrics["architecture/alibi_usage"] + metrics["architecture/rope_usage"]
+        total_usage = (
+            metrics["architecture/alibi_usage"] + metrics["architecture/rope_usage"]
+        )
         assert abs(total_usage - 100.0) < 0.01
 
         print("[TEST] ✓ All metrics logged correctly (web app compatible)")
@@ -300,7 +309,7 @@ class TestMetrics:
             num_heads=4,
             num_queries=1,
             num_experts=2,
-            router_type="prismatic"
+            router_type="prismatic",
         )
 
         experts = [SimpleDenseBlock(config.hidden_size) for _ in range(2)]

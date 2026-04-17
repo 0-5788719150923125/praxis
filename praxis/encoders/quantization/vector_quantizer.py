@@ -166,9 +166,7 @@ class VectorQuantizer(nn.Module):
         self.ema_weight_sum.mul_(self.decay).add_(dw, alpha=1 - self.decay)
 
         n = self.ema_cluster_size.sum()
-        stabilized = (
-            (self.ema_cluster_size + self.eps) / (n + self.K * self.eps)
-        ) * n
+        stabilized = ((self.ema_cluster_size + self.eps) / (n + self.K * self.eps)) * n
         new_cb_f32 = self.ema_weight_sum / stabilized.unsqueeze(1)  # (K,D) float32
         self.codebook.data.copy_(new_cb_f32.to(self.codebook.dtype))
 
@@ -205,9 +203,7 @@ class VectorQuantizer(nn.Module):
         has_source = valid_count > 0  # 0-dim bool
 
         # Sample R_MAX candidate code rows (constant shape)
-        rand_idx = torch.randint(
-            0, self.K, (self.R_MAX,), device=self.codebook.device
-        )
+        rand_idx = torch.randint(0, self.K, (self.R_MAX,), device=self.codebook.device)
 
         # Which of those candidates are dead? (exclude specials) and stale
         if self.ema:
@@ -425,7 +421,10 @@ class MultiStageResidualVQ(nn.Module):
             stale_after=stale_after,
         )
         self.stages = nn.ModuleList(
-            [VectorQuantizer(K=self.K, D=self.D, **vq_kwargs) for _ in range(self.depth)]
+            [
+                VectorQuantizer(K=self.K, D=self.D, **vq_kwargs)
+                for _ in range(self.depth)
+            ]
         )
 
         # Sentinel pad vector in the D-space
@@ -499,9 +498,7 @@ class ComposedIndexCodec:
         return mask
 
     @dynamo.disable()
-    def decompose(
-        self, x: torch.Tensor
-    ) -> Tuple[List[torch.Tensor], torch.Tensor]:
+    def decompose(self, x: torch.Tensor) -> Tuple[List[torch.Tensor], torch.Tensor]:
         """
         x: (B, L) nonnegative composed ids
         returns:
@@ -513,9 +510,7 @@ class ComposedIndexCodec:
         base = self.K ** torch.arange(
             0, self.depth, device=device, dtype=torch.long
         )  # (D,)
-        q = torch.div(
-            x.unsqueeze(-1), base, rounding_mode="trunc"
-        )  # (B,L,D) long
+        q = torch.div(x.unsqueeze(-1), base, rounding_mode="trunc")  # (B,L,D) long
         digits = torch.remainder(q, self.K)  # (B,L,D) long
         out = [digits[..., d] for d in range(self.depth)]  # list of (B,L) long
         special = self.is_special(x)
@@ -546,9 +541,7 @@ class ComposedIndexCodec:
         return idx
 
 
-def embed_rvq_indices(
-    vq: "MultiStageResidualVQ", idx: torch.Tensor
-) -> torch.Tensor:
+def embed_rvq_indices(vq: "MultiStageResidualVQ", idx: torch.Tensor) -> torch.Tensor:
     """Embed composed RVQ indices by summing stage code vectors in model space D."""
 
     idx = idx.long()

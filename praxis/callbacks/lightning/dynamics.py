@@ -98,7 +98,9 @@ class DynamicsLoggerCallback(Callback):
         lr = 1.0
         actual_opt = optimizer
         # Unwrap pytorch-optimizer wrappers
-        while hasattr(actual_opt, "optimizer") and actual_opt.optimizer is not actual_opt:
+        while (
+            hasattr(actual_opt, "optimizer") and actual_opt.optimizer is not actual_opt
+        ):
             actual_opt = actual_opt.optimizer
         if hasattr(actual_opt, "param_groups") and actual_opt.param_groups:
             lr = actual_opt.param_groups[0].get("lr", 1.0)

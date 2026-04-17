@@ -34,9 +34,11 @@ import torch.nn as nn
 
 from praxis.losses.layer_wise import compute_layer_wise_loss
 from praxis.metrics import compute_softmax_collapse, extract_layer_dynamics
-from praxis.trainers.mono_forward._worker_common import (ActorParamShim,
-                                                         build_optimizer,
-                                                         build_scheduler)
+from praxis.trainers.mono_forward._worker_common import (
+    ActorParamShim,
+    build_optimizer,
+    build_scheduler,
+)
 from praxis.trainers.mono_forward.device import deep_to
 from praxis.trainers.mono_forward.projection import ProjectionMatrix
 
@@ -274,7 +276,9 @@ class LocalLayerWorker:
     def project_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
         """Project hidden states through this worker's projection M_i."""
         with torch.no_grad():
-            return self.projection(hidden_states.to(self.device, non_blocking=True)).detach()
+            return self.projection(
+                hidden_states.to(self.device, non_blocking=True)
+            ).detach()
 
     # ------------------------------------------------------------------
     # metrics helpers (shared with LayerActor semantics)

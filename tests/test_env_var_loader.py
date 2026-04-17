@@ -9,11 +9,7 @@ import pytest
 # Load the module directly so importing praxis.cli (which auto-parses sys.argv)
 # doesn't fight with pytest's own argv.
 _MODULE_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "praxis"
-    / "cli"
-    / "loaders"
-    / "env_vars.py"
+    Path(__file__).resolve().parents[1] / "praxis" / "cli" / "loaders" / "env_vars.py"
 )
 _spec = importlib.util.spec_from_file_location("_env_var_loader", _MODULE_PATH)
 _env_vars = importlib.util.module_from_spec(_spec)
@@ -125,9 +121,7 @@ def test_cli_explicit_wins_over_env(monkeypatch):
     args = _parse(parser, ["--batch-size", "64"])
     monkeypatch.setenv("PRAXIS_BATCH_SIZE", "32")
 
-    EnvVarLoader().apply_env_vars(
-        parser, args, explicitly_provided={"batch-size"}
-    )
+    EnvVarLoader().apply_env_vars(parser, args, explicitly_provided={"batch-size"})
     assert args.batch_size == 64
 
 
@@ -137,9 +131,7 @@ def test_cli_explicit_underscore_form(monkeypatch):
     monkeypatch.setenv("PRAXIS_BATCH_SIZE", "32")
 
     # Explicit set may be recorded as either form; loader must honour both.
-    EnvVarLoader().apply_env_vars(
-        parser, args, explicitly_provided={"batch_size"}
-    )
+    EnvVarLoader().apply_env_vars(parser, args, explicitly_provided={"batch_size"})
     assert args.batch_size == 1
 
 

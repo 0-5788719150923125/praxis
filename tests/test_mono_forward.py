@@ -49,7 +49,6 @@ else:
 # The in-process trainer never imports Ray, so it loads everywhere.
 from praxis.trainers.mono_forward import InProcessMonoForwardTrainer
 
-
 # ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------
@@ -137,7 +136,9 @@ def _mono_forward_step(
     labels = input_ids[..., 1:].contiguous()
 
     layer_losses: list = []
-    for layer_idx, (layer, head, optimizer) in enumerate(zip(layers, heads, optimizers)):
+    for layer_idx, (layer, head, optimizer) in enumerate(
+        zip(layers, heads, optimizers)
+    ):
         h = activations.detach().requires_grad_(True)
         h_out, _kv, _state, aux_loss, _exit = layer(
             h,
@@ -193,7 +194,9 @@ def test_mf_step_reduces_loss_on_fixed_batch():
     input_ids = torch.randint(0, config.vocab_size, (2, 16))
 
     loss_history = [
-        _mono_forward_step(input_ids, embeds, layers, heads, optimizers, criterion, strategy)
+        _mono_forward_step(
+            input_ids, embeds, layers, heads, optimizers, criterion, strategy
+        )
         for _ in range(10)
     ]
 
@@ -204,9 +207,9 @@ def test_mf_step_reduces_loss_on_fixed_batch():
 
     first, last = loss_history[0], loss_history[-1]
     for layer_idx, (start, end) in enumerate(zip(first, last)):
-        assert end < start, (
-            f"layer {layer_idx} did not reduce loss: start={start:.4f}, end={end:.4f}"
-        )
+        assert (
+            end < start
+        ), f"layer {layer_idx} did not reduce loss: start={start:.4f}, end={end:.4f}"
 
 
 def test_mf_activations_do_not_leak_gradients():
@@ -303,7 +306,10 @@ def test_fit_reduces_loss_and_checkpoint_roundtrips(tmp_path):
     with torch.no_grad():
         reloaded_logits = reloaded(input_ids=probe).logits
     torch.testing.assert_close(
-        reloaded_logits, trained_logits, rtol=1e-5, atol=1e-5,
+        reloaded_logits,
+        trained_logits,
+        rtol=1e-5,
+        atol=1e-5,
         msg="MF checkpoint logits do not match reloaded vanilla model",
     )
 
@@ -367,9 +373,9 @@ def test_pipeline_fills_and_logs_metrics(tmp_path):
 
     assert result["completed_batches"] == num_batches
     for layer_idx in range(config.num_layers):
-        assert len(result["per_layer_loss_history"][layer_idx]) > 0, (
-            f"layer {layer_idx} produced no loss values"
-        )
+        assert (
+            len(result["per_layer_loss_history"][layer_idx]) > 0
+        ), f"layer {layer_idx} produced no loss values"
     assert result["pipeline_in_flight_max"] >= config.num_layers - 1, (
         f"pipeline never filled up (max={result['pipeline_in_flight_max']}, "
         f"expected >= {config.num_layers - 1})"
@@ -495,9 +501,9 @@ def test_inference_hook_fires_during_training(tmp_path):
 
     # Every final-layer completion fires the hook under the recorder,
     # so captured count equals num_batches.
-    assert len(captured) == num_batches, (
-        f"expected {num_batches} hook fires, got {len(captured)}"
-    )
+    assert (
+        len(captured) == num_batches
+    ), f"expected {num_batches} hook fires, got {len(captured)}"
     for sample in captured:
         assert len(sample["tokens"]) == 5  # max_new_tokens
         for tok in sample["tokens"]:
@@ -795,7 +801,10 @@ def test_inprocess_fit_reduces_loss_and_checkpoint_roundtrips(tmp_path):
     with torch.no_grad():
         reloaded_logits = reloaded(input_ids=probe).logits
     torch.testing.assert_close(
-        reloaded_logits, trained_logits, rtol=1e-5, atol=1e-5,
+        reloaded_logits,
+        trained_logits,
+        rtol=1e-5,
+        atol=1e-5,
         msg="MF in-process checkpoint logits do not match reloaded vanilla model",
     )
 
@@ -835,9 +844,9 @@ def test_inprocess_recurrent_depth_routes_through_layers():
     # depth=4 means 4 entries, one per depth step (not per worker).
     assert set(per_layer.keys()) == {0, 1, 2, 3}
     for step_idx, losses in per_layer.items():
-        assert len(losses) == 5, (
-            f"depth step {step_idx} should have one loss per batch, got {len(losses)}"
-        )
+        assert (
+            len(losses) == 5
+        ), f"depth step {step_idx} should have one loss per batch, got {len(losses)}"
 
 
 def test_inprocess_does_not_require_ray():
@@ -859,8 +868,7 @@ def test_inprocess_does_not_require_ray():
             seen.add(mod_name)
     # The actor module pulls Ray; the in-process surface must not.
     inprocess_modules = {
-        m for m in seen
-        if "inprocess" in m or m.endswith("._worker_common")
+        m for m in seen if "inprocess" in m or m.endswith("._worker_common")
     }
     assert inprocess_modules, "in-process backend modules were not imported"
     for m in inprocess_modules:

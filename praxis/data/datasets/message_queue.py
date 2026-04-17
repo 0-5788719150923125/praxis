@@ -124,6 +124,7 @@ class MessageQueueManager:
                 print("=" * 80)
 
                 import traceback
+
                 traceback.print_exc()
 
                 # Skip this document
@@ -136,7 +137,7 @@ class MessageQueueManager:
                 add_special_tokens=False,
                 return_tensors="pt",
                 padding=False,
-                truncation=False
+                truncation=False,
             )["input_ids"].squeeze(0)
 
             # Validate chat template if enabled

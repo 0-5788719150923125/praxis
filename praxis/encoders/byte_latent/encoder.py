@@ -813,7 +813,11 @@ def mask_entropy_preds_at_special_tokens(
     # Expand the per-position mask to cover all vocab entries per position
     # special_token_mask: [batch_size, seq_len] -> [batch_size, seq_len, 1]
     # then expand to [batch_size, seq_len, vocab_size] and flatten
-    full_mask = special_token_mask.unsqueeze(-1).expand(-1, -1, vocab_size).reshape_as(entropy_preds)
+    full_mask = (
+        special_token_mask.unsqueeze(-1)
+        .expand(-1, -1, vocab_size)
+        .reshape_as(entropy_preds)
+    )
 
     # Apply the mask - set to zero where special tokens exist
     masked_entropy_preds = torch.where(

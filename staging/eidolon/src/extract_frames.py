@@ -15,7 +15,9 @@ from tqdm import tqdm
 from utils import load_config, save_json, get_video_info, ensure_dir, format_timestamp
 
 
-def extract_frames(video_path: str, output_dir: str, target_fps: int, quality: int = 95) -> dict:
+def extract_frames(
+    video_path: str, output_dir: str, target_fps: int, quality: int = 95
+) -> dict:
     """
     Extract frames from video at specified FPS.
 
@@ -33,9 +35,9 @@ def extract_frames(video_path: str, output_dir: str, target_fps: int, quality: i
 
     # Get video information
     video_info = get_video_info(video_path)
-    source_fps = video_info['fps']
-    duration = video_info['duration']
-    total_frames = video_info['total_frames']
+    source_fps = video_info["fps"]
+    duration = video_info["duration"]
+    total_frames = video_info["total_frames"]
 
     print(f"Video info:")
     print(f"  Resolution: {video_info['width']}x{video_info['height']}")
@@ -48,7 +50,9 @@ def extract_frames(video_path: str, output_dir: str, target_fps: int, quality: i
     frame_interval = int(source_fps / target_fps)
     if frame_interval < 1:
         frame_interval = 1
-        print(f"Warning: Target FPS ({target_fps}) is higher than source FPS ({source_fps:.2f})")
+        print(
+            f"Warning: Target FPS ({target_fps}) is higher than source FPS ({source_fps:.2f})"
+        )
 
     # Open video
     cap = cv2.VideoCapture(video_path)
@@ -80,12 +84,14 @@ def extract_frames(video_path: str, output_dir: str, target_fps: int, quality: i
             cv2.imwrite(frame_path, frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
 
             # Store metadata
-            metadata.append({
-                'frame_id': extracted_count,
-                'source_frame': frame_count,
-                'timestamp': timestamp,
-                'filename': frame_filename
-            })
+            metadata.append(
+                {
+                    "frame_id": extracted_count,
+                    "source_frame": frame_count,
+                    "timestamp": timestamp,
+                    "filename": frame_filename,
+                }
+            )
 
             extracted_count += 1
 
@@ -99,30 +105,30 @@ def extract_frames(video_path: str, output_dir: str, target_fps: int, quality: i
 
     # Parse channel from video filename
     video_name = Path(video_path).stem
-    if video_name.startswith('@'):
+    if video_name.startswith("@"):
         # Format: @username - Title ...
-        parts = video_name.split(' - ', 1)
+        parts = video_name.split(" - ", 1)
         channel = parts[0][1:] if len(parts) >= 1 else "Unknown"
     else:
         # Legacy format: Title - Display Name (resolution)
-        parts = video_name.split(' - ')
+        parts = video_name.split(" - ")
         if len(parts) >= 2:
-            channel = parts[-1].split(' (')[0]
+            channel = parts[-1].split(" (")[0]
         else:
             channel = "Unknown"
 
     # Save metadata
     metadata_dict = {
-        'video_path': os.path.abspath(video_path),
-        'channel': channel,
-        'video_info': video_info,
-        'extraction_fps': target_fps,
-        'frame_interval': frame_interval,
-        'total_extracted': extracted_count,
-        'frames': metadata
+        "video_path": os.path.abspath(video_path),
+        "channel": channel,
+        "video_info": video_info,
+        "extraction_fps": target_fps,
+        "frame_interval": frame_interval,
+        "total_extracted": extracted_count,
+        "frames": metadata,
     }
 
-    metadata_path = os.path.join(output_dir, 'metadata.json')
+    metadata_path = os.path.join(output_dir, "metadata.json")
     save_json(metadata_dict, metadata_path)
     print(f"Metadata saved to: {metadata_path}")
 
@@ -130,12 +136,18 @@ def extract_frames(video_path: str, output_dir: str, target_fps: int, quality: i
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Extract frames from video')
-    parser.add_argument('--video', required=True, help='Path to video file')
-    parser.add_argument('--output', help='Output directory (default: data/frames/<video_name>)')
-    parser.add_argument('--fps', type=int, help='Target FPS (default: from config.yaml)')
-    parser.add_argument('--quality', type=int, default=95, help='JPEG quality 1-100 (default: 95)')
-    parser.add_argument('--config', default='config.yaml', help='Config file path')
+    parser = argparse.ArgumentParser(description="Extract frames from video")
+    parser.add_argument("--video", required=True, help="Path to video file")
+    parser.add_argument(
+        "--output", help="Output directory (default: data/frames/<video_name>)"
+    )
+    parser.add_argument(
+        "--fps", type=int, help="Target FPS (default: from config.yaml)"
+    )
+    parser.add_argument(
+        "--quality", type=int, default=95, help="JPEG quality 1-100 (default: 95)"
+    )
+    parser.add_argument("--config", default="config.yaml", help="Config file path")
 
     args = parser.parse_args()
 
@@ -147,11 +159,11 @@ def main():
         output_dir = args.output
     else:
         video_name = Path(args.video).stem
-        frames_dir = config['paths']['frames']
+        frames_dir = config["paths"]["frames"]
         output_dir = os.path.join(frames_dir, video_name)
 
     # Determine FPS
-    fps = args.fps if args.fps else config['extraction']['fps']
+    fps = args.fps if args.fps else config["extraction"]["fps"]
 
     # Extract frames
     print(f"Input video: {args.video}")
@@ -163,5 +175,5 @@ def main():
     print(f"\nDone! Frames saved to: {output_dir}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

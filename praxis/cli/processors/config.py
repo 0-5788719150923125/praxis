@@ -78,7 +78,10 @@ class ConfigBuilder:
             config_kwargs["byte_latent"] = True
 
         # Set positional encoding capacity from block_size
-        if hasattr(args, "block_size") and "max_position_embeddings" in valid_config_params:
+        if (
+            hasattr(args, "block_size")
+            and "max_position_embeddings" in valid_config_params
+        ):
             config_kwargs["max_position_embeddings"] = args.block_size
 
         # Handle tokenizer IDs if tokenizer is provided

@@ -124,9 +124,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
 
         def _shutdown_handler(signum, frame):
             self._shutdown_requested = True
-            self._log(
-                f"[MF] Received signal {signum}, requesting graceful shutdown"
-            )
+            self._log(f"[MF] Received signal {signum}, requesting graceful shutdown")
 
         signal.signal(signal.SIGINT, _shutdown_handler)
         signal.signal(signal.SIGTERM, _shutdown_handler)
@@ -281,7 +279,9 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
             self._encoder_scheduler = None
             if encoder is not None:
                 from praxis.trainers.mono_forward._worker_common import (
-                    build_optimizer, build_scheduler)
+                    build_optimizer,
+                    build_scheduler,
+                )
 
                 class _EncoderShim(torch.nn.Module):
                     def __init__(self, enc: torch.nn.Module) -> None:
@@ -310,9 +310,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
             # halting at inference). The base "none" halting always returns
             # ``config.depth`` so MF behavior is unchanged when
             # ``halting_type`` is not set.
-            self._halting_strategy = getattr(
-                model.decoder, "halting_strategy", None
-            )
+            self._halting_strategy = getattr(model.decoder, "halting_strategy", None)
             if self._halting_strategy is not None:
                 self._log(
                     f"[MF] Halting strategy in use: "
@@ -524,14 +522,12 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                 input_ids = batch
 
             input_ids_dev = input_ids.to(target_device, non_blocking=True)
-            activations, labels, block_ids, aux_loss, decode_aux = (
-                self._prepare_inputs(
-                    input_ids_dev,
-                    embeds,
-                    encoder,
-                    config,
-                    train_encoder=encoder is not None,
-                )
+            activations, labels, block_ids, aux_loss, decode_aux = self._prepare_inputs(
+                input_ids_dev,
+                embeds,
+                encoder,
+                config,
+                train_encoder=encoder is not None,
             )
 
             # Bring encoder aux_loss into the gradient stream that
@@ -567,7 +563,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
             )
 
             for step_idx in range(effective_depth):
-                is_last_step = (step_idx + 1 == effective_depth)
+                is_last_step = step_idx + 1 == effective_depth
                 worker = workers[route_table[step_idx]]
                 result = worker.train_batch(
                     current_activations,
@@ -619,9 +615,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                     .contiguous()
                     .view(-1, decode_logits.size(-1))
                 )
-                decode_loss = F.cross_entropy(
-                    decode_logits_flat, decode_targets
-                )
+                decode_loss = F.cross_entropy(decode_logits_flat, decode_targets)
                 (decode_loss / self.accumulate_grad_batches).backward()
                 decode_loss_value = float(decode_loss.detach().item())
 
@@ -887,9 +881,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                         activations, labels, input_ids_dev, block_ids
                     )
                 except Exception as exc:
-                    self._log(
-                        f"[MF] validation: step {step_idx} failed: {exc}"
-                    )
+                    self._log(f"[MF] validation: step {step_idx} failed: {exc}")
                     last_loss = None
                     break
                 activations = result["hidden_states"]
@@ -937,9 +929,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
 
         self._restore_train_mode_inprocess(workers)
 
-    def _restore_train_mode_inprocess(
-        self, workers: List[LocalLayerWorker]
-    ) -> None:
+    def _restore_train_mode_inprocess(self, workers: List[LocalLayerWorker]) -> None:
         """Flip workers back to training mode after validation."""
         for worker in workers:
             try:
@@ -1069,9 +1059,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                 visited_route: List[int] = []
                 for step_idx in range(len(route)):
                     worker = workers[route[step_idx]]
-                    hidden, _kv = worker.infer_batch(
-                        hidden, step_idx, block_ids, None
-                    )
+                    hidden, _kv = worker.infer_batch(hidden, step_idx, block_ids, None)
                     visited_route.append(route[step_idx])
                     if halting_strategy is not None and halting_strategy.check(
                         hidden, step_idx, kl_head
@@ -1082,10 +1070,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                 # can see which layers a token actually traversed - critical
                 # for verifying that a halting strategy (e.g. KL) is firing.
                 # Gated on batch_size == 1 to match the standard path.
-                if (
-                    getattr(config, "debug", False)
-                    and prefix.size(0) == 1
-                ):
+                if getattr(config, "debug", False) and prefix.size(0) == 1:
                     route_str = " -> ".join(str(r) for r in visited_route)
                     print(f"DEBUG: inferencing through:  {route_str}")
 
@@ -1149,9 +1134,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
             model_sd = checkpoint["model_state_dict"]
         else:
             model_sd = checkpoint
-            self._log(
-                "[MF] Legacy checkpoint format detected (model weights only)"
-            )
+            self._log("[MF] Legacy checkpoint format detected (model weights only)")
 
         layer_prefix = "decoder.locals."
         layer_state_dicts: Dict[int, Dict[str, Any]] = {}
@@ -1206,10 +1189,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                         f"[MF] Warning: could not restore encoder optimizer: {exc}"
                     )
             enc_sched_state = checkpoint.get("encoder_scheduler_state")
-            if (
-                enc_sched_state is not None
-                and self._encoder_scheduler is not None
-            ):
+            if enc_sched_state is not None and self._encoder_scheduler is not None:
                 try:
                     self._encoder_scheduler.load_state_dict(enc_sched_state)
                 except Exception:
@@ -1220,9 +1200,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                 if hasattr(datamodule, "load_state_dict"):
                     try:
                         datamodule.load_state_dict(dm_state)
-                        self._log(
-                            "[MF] Restored datamodule state (dataset positions)"
-                        )
+                        self._log("[MF] Restored datamodule state (dataset positions)")
                     except Exception as exc:
                         self._log(
                             f"[MF] Warning: could not restore datamodule state: {exc}"
@@ -1289,9 +1267,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
             try:
                 datamodule_state = datamodule.state_dict()
             except Exception as exc:
-                self._log(
-                    f"[MF] Warning: could not save datamodule state: {exc}"
-                )
+                self._log(f"[MF] Warning: could not save datamodule state: {exc}")
 
         encoder_optimizer_state = None
         encoder_scheduler_state = None
@@ -1303,8 +1279,11 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                     if k == "state":
                         encoder_optimizer_state[k] = {
                             pid: {
-                                sk: (sv.detach().cpu()
-                                     if isinstance(sv, torch.Tensor) else sv)
+                                sk: (
+                                    sv.detach().cpu()
+                                    if isinstance(sv, torch.Tensor)
+                                    else sv
+                                )
                                 for sk, sv in pstate.items()
                             }
                             for pid, pstate in v.items()

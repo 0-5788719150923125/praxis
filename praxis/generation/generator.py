@@ -278,7 +278,11 @@ class Generator:
                 if new_token_count > 0 and new_token_count <= 2:
                     # Only check for the tool output case - SEP after </tout>
                     # Decode to check if we're in that specific scenario
-                    prompt_text = return_text if isinstance(request.prompt, list) else request.prompt
+                    prompt_text = (
+                        return_text
+                        if isinstance(request.prompt, list)
+                        else request.prompt
+                    )
                     if prompt_text.rstrip().endswith("</tout>"):
                         new_tokens = generated_tokens[0][-new_token_count:]
                         # Check if ALL new tokens are stop tokens
@@ -498,14 +502,22 @@ class Generator:
 
                 # Check if continuation generated only noise/separators
                 # Decode ONLY the newly generated tokens (after tool injection)
-                new_tokens_only = continuation_output.sequences[0][new_input_ids.shape[1]:]
+                new_tokens_only = continuation_output.sequences[0][
+                    new_input_ids.shape[1] :
+                ]
                 if len(new_tokens_only) > 0:
                     continuation_only = self.tokenizer.decode(
                         new_tokens_only,
                         skip_special_tokens=skip_special_tokens,
                     )
                     # If continuation is just whitespace or common separators, don't use it
-                    if continuation_only.strip() in ['', '[SEP]', '[BOS]', 'assistant', '>']:
+                    if continuation_only.strip() in [
+                        "",
+                        "[SEP]",
+                        "[BOS]",
+                        "assistant",
+                        ">",
+                    ]:
                         # Model generated nothing meaningful, return the tool result
                         return text_with_result
 

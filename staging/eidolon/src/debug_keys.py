@@ -7,6 +7,7 @@ Press keys to see their codes. Press ESC to exit.
 import cv2
 import numpy as np
 
+
 def main():
     print("Key Code Debugger")
     print("=" * 50)
@@ -17,8 +18,15 @@ def main():
 
     # Create a simple window
     img = np.zeros((300, 600, 3), dtype=np.uint8)
-    cv2.putText(img, "Press keys to see codes", (50, 150),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+    cv2.putText(
+        img,
+        "Press keys to see codes",
+        (50, 150),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (255, 255, 255),
+        2,
+    )
 
     window_name = "Key Debugger"
     cv2.namedWindow(window_name)
@@ -42,5 +50,6 @@ def main():
 
     cv2.destroyAllWindows()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

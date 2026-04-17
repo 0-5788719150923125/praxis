@@ -26,19 +26,23 @@ def progress_hook(d):
 
     This output is captured by the GUI's run_command() for real-time display.
     """
-    if d['status'] == 'downloading':
-        percent = d.get('_percent_str', 'N/A').strip()
-        speed = d.get('_speed_str', 'N/A').strip()
-        eta = d.get('_eta_str', 'N/A').strip()
+    if d["status"] == "downloading":
+        percent = d.get("_percent_str", "N/A").strip()
+        speed = d.get("_speed_str", "N/A").strip()
+        eta = d.get("_eta_str", "N/A").strip()
         print(f"Downloading: {percent} at {speed}, ETA: {eta}", flush=True)
 
-    elif d['status'] == 'finished':
-        filename = os.path.basename(d.get('filename', 'unknown'))
+    elif d["status"] == "finished":
+        filename = os.path.basename(d.get("filename", "unknown"))
         print(f"Download complete: {filename}", flush=True)
         print("Processing video...", flush=True)
 
 
-def download_video(url: str, output_dir: str, format_spec: str = 'bestvideo[height<=1080][vcodec^=avc1]+bestaudio[acodec^=mp4a]/best[height<=1080]'):
+def download_video(
+    url: str,
+    output_dir: str,
+    format_spec: str = "bestvideo[height<=1080][vcodec^=avc1]+bestaudio[acodec^=mp4a]/best[height<=1080]",
+):
     """
     Download video from URL using yt-dlp.
 
@@ -60,14 +64,16 @@ def download_video(url: str, output_dir: str, format_spec: str = 'bestvideo[heig
 
     # Configure yt-dlp options
     ydl_opts = {
-        'format': format_spec,
+        "format": format_spec,
         # Use uploader_id without @ prefix - normalization step will add it correctly
-        'outtmpl': os.path.join(output_dir, '%(uploader_id)s - %(title)s (%(height)sp, %(vcodec)s).%(ext)s'),
-        'progress_hooks': [progress_hook],
-        'quiet': False,
-        'no_warnings': False,
-        'ignoreerrors': False,
-        'extract_flat': False,
+        "outtmpl": os.path.join(
+            output_dir, "%(uploader_id)s - %(title)s (%(height)sp, %(vcodec)s).%(ext)s"
+        ),
+        "progress_hooks": [progress_hook],
+        "quiet": False,
+        "no_warnings": False,
+        "ignoreerrors": False,
+        "extract_flat": False,
     }
 
     try:
@@ -77,16 +83,16 @@ def download_video(url: str, output_dir: str, format_spec: str = 'bestvideo[heig
             info = ydl.extract_info(url, download=False)
 
             # Show video details
-            title = info.get('title', 'Unknown')
-            duration = info.get('duration', 0)
-            uploader = info.get('uploader', 'Unknown')
-            uploader_id = info.get('uploader_id', uploader)
+            title = info.get("title", "Unknown")
+            duration = info.get("duration", 0)
+            uploader = info.get("uploader", "Unknown")
+            uploader_id = info.get("uploader_id", uploader)
 
             # Strip @ prefix if already present
-            if uploader_id.startswith('@'):
+            if uploader_id.startswith("@"):
                 uploader_id = uploader_id[1:]
 
-            height = info.get('height', 0)
+            height = info.get("height", 0)
 
             print(f"\nVideo: {title}")
             print(f"Channel: @{uploader_id}")
@@ -104,28 +110,30 @@ def download_video(url: str, output_dir: str, format_spec: str = 'bestvideo[heig
 
             # Normalize codec name: avc1.* → h264, hev1.*/hvc1.* → h265, etc.
             if os.path.exists(filename):
-                vcodec = info.get('vcodec', 'unknown')
+                vcodec = info.get("vcodec", "unknown")
 
                 # Map codec strings to friendly names
-                codec_normalized = 'unknown'
+                codec_normalized = "unknown"
                 if vcodec and isinstance(vcodec, str):
-                    if vcodec.startswith('avc1'):
-                        codec_normalized = 'h264'
-                    elif vcodec.startswith('hev1') or vcodec.startswith('hvc1'):
-                        codec_normalized = 'h265'
-                    elif vcodec.startswith('vp9'):
-                        codec_normalized = 'vp9'
-                    elif vcodec.startswith('av01'):
-                        codec_normalized = 'av1'
+                    if vcodec.startswith("avc1"):
+                        codec_normalized = "h264"
+                    elif vcodec.startswith("hev1") or vcodec.startswith("hvc1"):
+                        codec_normalized = "h265"
+                    elif vcodec.startswith("vp9"):
+                        codec_normalized = "vp9"
+                    elif vcodec.startswith("av01"):
+                        codec_normalized = "av1"
                     else:
-                        codec_normalized = vcodec.split('.')[0]  # Take first part
+                        codec_normalized = vcodec.split(".")[0]  # Take first part
 
                 # Build proper filename: @<username> - <Title> (<resolution>, <codec>).ext
-                title_clean = info.get('title', 'video')
-                uploader_id_clean = info.get('uploader_id', info.get('uploader', 'Unknown'))
+                title_clean = info.get("title", "video")
+                uploader_id_clean = info.get(
+                    "uploader_id", info.get("uploader", "Unknown")
+                )
 
                 # Strip @ prefix if already present
-                if uploader_id_clean.startswith('@'):
+                if uploader_id_clean.startswith("@"):
                     uploader_id_clean = uploader_id_clean[1:]
 
                 ext = os.path.splitext(filename)[1]
@@ -141,7 +149,9 @@ def download_video(url: str, output_dir: str, format_spec: str = 'bestvideo[heig
 
                     # Handle existing file
                     if os.path.exists(new_filename):
-                        print(f"  Target file already exists, removing temporary download...")
+                        print(
+                            f"  Target file already exists, removing temporary download..."
+                        )
                         os.remove(filename)
                         filename = new_filename
                     else:
@@ -170,23 +180,15 @@ def download_video(url: str, output_dir: str, format_spec: str = 'bestvideo[heig
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='Download video from URL using yt-dlp'
+    parser = argparse.ArgumentParser(description="Download video from URL using yt-dlp")
+    parser.add_argument("--url", required=True, help="Video URL (YouTube, Vimeo, etc.)")
+    parser.add_argument(
+        "--output", required=True, help="Output directory for downloaded video"
     )
     parser.add_argument(
-        '--url',
-        required=True,
-        help='Video URL (YouTube, Vimeo, etc.)'
-    )
-    parser.add_argument(
-        '--output',
-        required=True,
-        help='Output directory for downloaded video'
-    )
-    parser.add_argument(
-        '--format',
-        default='bestvideo[height<=1080][vcodec^=avc1]+bestaudio[acodec^=mp4a]/best[height<=1080]',
-        help='Format specifier (default: 1080p max, h264 video + AAC audio)'
+        "--format",
+        default="bestvideo[height<=1080][vcodec^=avc1]+bestaudio[acodec^=mp4a]/best[height<=1080]",
+        help="Format specifier (default: 1080p max, h264 video + AAC audio)",
     )
 
     args = parser.parse_args()
@@ -198,5 +200,5 @@ def main():
         sys.exit(1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

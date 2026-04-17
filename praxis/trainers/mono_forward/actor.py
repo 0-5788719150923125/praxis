@@ -37,12 +37,15 @@ import torch.nn as nn
 
 from praxis.losses.layer_wise import compute_layer_wise_loss
 from praxis.metrics import compute_softmax_collapse, extract_layer_dynamics
-from praxis.trainers.mono_forward._worker_common import \
-    ActorParamShim as _ActorParamShim
-from praxis.trainers.mono_forward._worker_common import \
-    build_optimizer as _build_optimizer
-from praxis.trainers.mono_forward._worker_common import \
-    build_scheduler as _build_scheduler
+from praxis.trainers.mono_forward._worker_common import (
+    ActorParamShim as _ActorParamShim,
+)
+from praxis.trainers.mono_forward._worker_common import (
+    build_optimizer as _build_optimizer,
+)
+from praxis.trainers.mono_forward._worker_common import (
+    build_scheduler as _build_scheduler,
+)
 from praxis.trainers.mono_forward.device import deep_to as _deep_to
 
 
