@@ -6,7 +6,7 @@ overrides:
   num_layers: 3
   batch_size: 1
   target_batch_size: 16
-  phi: false
+  train_datasets: [dev]
   quantum: false
   ngrok: false
   wandb: false
@@ -16,4 +16,3 @@ features:
   force_reset: true # Always start from a new model (skip checkpoint loading)
   detect_anomaly: true # Enable PyTorch anomaly detection for debugging
   skip_compilation: true # Skip torch.compile for faster startup
-  minimal_data: true # Use minimal datasets for quick testing

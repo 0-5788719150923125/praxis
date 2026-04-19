@@ -38,31 +38,38 @@ def format_personachat(
     num_utterances = random.randint(1, len(utterances))
     selected_utterance = utterances[num_utterances - 1]  # Get the selected utterance
 
-    # Build personality description for developer message
-    # Always include personality when available (it's the assistant's personality)
+    # Build personality description for developer message as a shuffled
+    # paragraph; bulleted lists biased the model toward list-shaped outputs.
     developer_message = ""
     if personality:
-        developer_message = "You have the following personality traits:\n"
-        # Randomly select subset of personality traits (or all)
         if random.random() < 0.5:
-            # 50% chance to use all traits
-            selected_traits = personality
+            selected_traits = list(personality)
         else:
-            # 50% chance to use a random subset
             num_traits = random.randint(1, len(personality))
             selected_traits = random.sample(personality, num_traits)
 
+        random.shuffle(selected_traits)
+
+        sentences = []
         for trait in selected_traits:
-            # Always truecase personality traits (they're for the assistant)
-            trait_text = (
-                repair_broken_emoticons(repair_text_punctuation(simple_truecase(trait)))
-                if trait
-                else trait
+            if not trait:
+                continue
+            cleaned = repair_broken_emoticons(
+                repair_text_punctuation(simple_truecase(trait))
             )
-            developer_message += f"- {trait_text}\n"
-        developer_message = developer_message.strip()
-    else:
-        # Use default persona chat prompt if no personality provided
+            if not cleaned:
+                continue
+            if not cleaned.rstrip().endswith((".", "!", "?")):
+                cleaned = cleaned.rstrip() + "."
+            sentences.append(cleaned)
+
+        if sentences:
+            developer_message = (
+                "You have the following personality traits: " + " ".join(sentences)
+            )
+
+    if not developer_message:
+        # Fallback if no personality provided or all traits were empty
         developer_message = sample_developer_prompt("persona_chat")
 
     # Build messages list

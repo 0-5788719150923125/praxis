@@ -11,11 +11,10 @@ SAMPLER_REGISTRY = {
 # Core data structures and configuration
 from praxis.data.config import (
     DATASET_COLLECTIONS,
+    DATASETS,
     DEFAULT_WEIGHT,
     DEVELOPER_PROMPTS,
     DIR_WEIGHT,
-    HUGGINGFACE_DATASETS,
-    SRC_WEIGHT,
     SYSTEM_PROMPT,
     TOOLS_WEIGHT,
     DataFormat,
@@ -80,12 +79,11 @@ __all__ = [
     "DataFormat",
     "DataFormatEnum",
     "DATASET_COLLECTIONS",
-    "HUGGINGFACE_DATASETS",
+    "DATASETS",
     "SYSTEM_PROMPT",
     "DEVELOPER_PROMPTS",  # Now returns lists of keywords
     "sample_developer_prompt",  # Use this to sample from keyword lists
     "DEFAULT_WEIGHT",
-    "SRC_WEIGHT",
     "DIR_WEIGHT",
     "TOOLS_WEIGHT",
     # Format detection

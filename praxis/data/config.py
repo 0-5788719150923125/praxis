@@ -4,53 +4,6 @@ import random
 
 from praxis.data.formats import DataFormat
 
-# Dataset weight constants
-DEFAULT_WEIGHT = 1.0
-SRC_WEIGHT = 1.0
-DIR_WEIGHT = 1.0
-TOOLS_WEIGHT = 1.0
-
-# Dataset collections with weights
-DATASET_COLLECTIONS = dict(
-    base={
-        "fineweb-edu-350bt": DEFAULT_WEIGHT,
-    },
-    phi={
-        "fineweb": 0.75,
-        "finepdfs": 0.01,
-        "textbooks": 0.002,
-        "tinystories": 0.01,
-        "wikipedia": 0.02,
-        "persona-chat": 0.1,
-        "soda": 0.1,
-        "wildchat": 0.1,
-        "natural-instructions": 0.5,
-        "cosmopedia-v2": 0.2,
-        "smoltalk": 0.1,
-        "nextcoder": 0.05,
-        "nextcoder-conversational": 0.1,
-        "hermes-3-dataset": 0.1,
-    },
-    pile={
-        "minipile-train": DEFAULT_WEIGHT,
-    },
-    validation={
-        "refinedweb": DEFAULT_WEIGHT,
-    },
-    dev={
-        "textbooks": DEFAULT_WEIGHT,
-    },
-    slimpajama={
-        "slimpajama": DEFAULT_WEIGHT,
-    },
-    rl={
-        "intellect-rl": DEFAULT_WEIGHT,
-    },
-    cot={
-        "chain-of-thought": DEFAULT_WEIGHT * 0.1,
-    },
-)
-
 # System and developer prompts
 SYSTEM_PROMPT = "Write thy wrong."
 
@@ -87,8 +40,69 @@ def sample_developer_prompt(prompt_type: str, fallback: str = "") -> str:
     return random.choice(prompt_list)
 
 
-# HuggingFace dataset configurations
-HUGGINGFACE_DATASETS = {
+# Dataset weight constants
+DEFAULT_WEIGHT = 1.0
+DIR_WEIGHT = 1.0
+TOOLS_WEIGHT = 1.0
+
+# Dataset collections with weights
+DATASET_COLLECTIONS = dict(
+    base={
+        "fineweb-edu-350bt": DEFAULT_WEIGHT,
+        "praxis": DIR_WEIGHT,
+    },
+    focused={
+        "praxis": DIR_WEIGHT,
+        "synthetic-tool-calling": TOOLS_WEIGHT,
+        "fineweb-edu-350bt": DEFAULT_WEIGHT,
+        "fineweb": DEFAULT_WEIGHT,
+        "finepdfs": DEFAULT_WEIGHT,
+        "persona-chat": DEFAULT_WEIGHT,
+        "wildchat": DEFAULT_WEIGHT,
+        "natural-instructions": DEFAULT_WEIGHT,
+        "cosmopedia-v2": DEFAULT_WEIGHT,
+        "smoltalk": DEFAULT_WEIGHT,
+    },
+    phi={
+        "fineweb": 0.75,
+        "finepdfs": 0.01,
+        "textbooks": 0.002,
+        "tinystories": 0.01,
+        "wikipedia": 0.02,
+        "persona-chat": 0.1,
+        "soda": 0.1,
+        "wildchat": 0.1,
+        "natural-instructions": 0.5,
+        "cosmopedia-v2": 0.2,
+        "smoltalk": 0.1,
+        "nextcoder": 0.05,
+        "nextcoder-conversational": 0.1,
+        "hermes-3-dataset": 0.1,
+        "synthetic-tool-calling": TOOLS_WEIGHT,
+    },
+    pile={
+        "minipile-train": DEFAULT_WEIGHT,
+    },
+    validation={
+        "refinedweb": DEFAULT_WEIGHT,
+    },
+    dev={
+        "textbooks": DEFAULT_WEIGHT,
+    },
+    slimpajama={
+        "slimpajama": DEFAULT_WEIGHT,
+    },
+    rl={
+        "intellect-rl": DEFAULT_WEIGHT,
+    },
+    cot={
+        "chain-of-thought": DEFAULT_WEIGHT * 0.1,
+    },
+)
+
+# Dataset configurations. Each entry has a `type` (default "huggingface");
+# other fields are type-specific.
+DATASETS = {
     "minipile-train": dict(
         path="JeanKaddour/minipile",
         split="train",
@@ -249,5 +263,36 @@ HUGGINGFACE_DATASETS = {
         format=DataFormat.COT,
         streaming=True,
         trust_remote_code=False,
+    ),
+    "synthetic-tool-calling": dict(
+        type="synthetic-tool-calling",
+    ),
+    "praxis": dict(
+        type="directory",
+        path="./",
+        name="praxis",
+        allowed_extensions=[
+            ".bib",
+            ".cfg",
+            ".css",
+            ".gd",
+            ".godot",
+            ".html",
+            ".ini",
+            ".js",
+            ".md",
+            ".mjs",
+            ".py",
+            ".sh",
+            ".tex",
+            ".toml",
+            ".ts",
+            ".tscn",
+            ".txt",
+            ".yaml",
+            ".yml",
+            "LICENSE",
+            "launch",
+        ],
     ),
 }

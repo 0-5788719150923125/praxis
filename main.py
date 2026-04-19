@@ -362,9 +362,19 @@ def main():
     headless = processed_args.get("headless", False)
     reset = processed_args.get("reset", False)
     local_rank = processed_args.get("local_rank", 0)
-    no_source = processed_args.get("no_source", False)
-    pile = processed_args.get("pile", False)
-    phi = processed_args.get("phi", False)
+    train_datasets_raw = processed_args.get("train_datasets") or ["base"]
+    validation_datasets_raw = processed_args.get("validation_datasets") or ["validation"]
+
+    def _split_commas(items):
+        return [
+            name.strip()
+            for item in items
+            for name in str(item).split(",")
+            if name.strip()
+        ]
+
+    train_datasets = _split_commas(train_datasets_raw)
+    validation_datasets = _split_commas(validation_datasets_raw)
     weighting_mode = processed_args.get("sampler_mode", "novelty")
     data_path = processed_args.get("data_path")
     rl_type = processed_args.get("rl_type")
@@ -629,14 +639,10 @@ def main():
     )
 
     # Load datasets
-    use_source_code = not no_source
-    # Pass minimal_data feature flag instead of old dev variable
     dataintegration = get_datamodules(
         seed,
-        EnvironmentFeatures.is_enabled("minimal_data"),
-        pile,
-        phi,
-        use_source_code,
+        train_datasets,
+        validation_datasets,
         tokenizer,
         hparams,
         data_path,
@@ -755,7 +761,6 @@ def main():
         "hidden_size": config.hidden_size,
         "embed_size": config.embed_size,
         "dropout": dropout,
-        "use_source_code": use_source_code,
         "dev": EnvironmentFeatures.get_active_environment() == "dev",
         "seed": seed,
         "truncated_hash": truncated_hash,

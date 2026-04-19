@@ -8,7 +8,7 @@ from transformers import AutoTokenizer
 from praxis.controllers import CONTROLLER_REGISTRY
 from praxis.controllers.base import BaseController
 from praxis.data import (
-    HUGGINGFACE_DATASETS,
+    DATASETS,
     HuggingfaceDataset,
     InterleaveDataManager,
     text_formatter,
@@ -328,7 +328,7 @@ def test_huggingface_dataset_determinism():
     )
 
     # Choose a small dataset from the available ones
-    dataset_config = HUGGINGFACE_DATASETS["minipile-validation"].copy()
+    dataset_config = DATASETS["minipile-validation"].copy()
     dataset_config["streaming"] = False  # Set streaming to False for testing
 
     # Set all random sources before first run
@@ -380,7 +380,7 @@ def test_interleave_data_manager_determinism():
     )
 
     # Use a small dataset
-    dataset_config = HUGGINGFACE_DATASETS["minipile-validation"].copy()
+    dataset_config = DATASETS["minipile-validation"].copy()
     dataset_config["streaming"] = False
 
     # Create two datasets with the same seed - set all random sources

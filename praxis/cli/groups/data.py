@@ -1,6 +1,7 @@
 """Data-related CLI arguments."""
 
 from praxis import RL_POLICIES_REGISTRY, SAMPLER_REGISTRY
+from praxis.data.config import DATASET_COLLECTIONS
 
 
 class DataGroup:
@@ -23,24 +24,29 @@ class DataGroup:
         )
 
         group.add_argument(
-            "--pile",
-            action="store_true",
-            default=False,
-            help="Train exclusively on the minipile challenge dataset",
+            "--train-datasets",
+            type=str,
+            nargs="+",
+            action="extend",
+            default=None,
+            help=(
+                "Named dataset collections to train on. Space- or comma-separated "
+                "(e.g. '--train-datasets base phi' or '--train-datasets base,phi'). "
+                f"Available: {', '.join(sorted(DATASET_COLLECTIONS.keys()))}. "
+                "Defaults to 'base' when unspecified."
+            ),
         )
 
         group.add_argument(
-            "--phi",
-            action="store_true",
-            default=False,
-            help="Supplement training with a mix of expert data",
-        )
-
-        group.add_argument(
-            "--no-source",
-            action="store_true",
-            default=False,
-            help="Disable training on the model's own source code",
+            "--validation-datasets",
+            type=str,
+            nargs="+",
+            action="extend",
+            default=None,
+            help=(
+                "Named dataset collections to use for validation. Same format "
+                "as --train-datasets. Defaults to 'validation' when unspecified."
+            ),
         )
 
         group.add_argument(

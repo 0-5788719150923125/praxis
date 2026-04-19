@@ -70,7 +70,6 @@ class TerminalInterface(Callback):
         self.hidden_size = model_info.get("hidden_size")
         self.embed_size = model_info.get("embed_size")
         self.dropout = model_info.get("dropout")
-        self.use_source_code = model_info.get("use_source_code", False)
         self.dev = model_info.get("dev", False)
         self.seed = model_info.get("seed")
         self.truncated_hash = model_info.get("truncated_hash")
@@ -372,11 +371,7 @@ class TerminalInterface(Callback):
         info_dict["embed_size"] = self.embed_size
         info_dict["dropout"] = self.dropout
         info_dict["debug"] = self.debug
-        info_dict["meta"] = [
-            item
-            for item, condition in [("praxis", self.use_source_code), ("dev", self.dev)]
-            if condition
-        ]
+        info_dict["meta"] = [item for item, condition in [("dev", self.dev)] if condition]
 
         self.dashboard.update_info(info_dict)
 

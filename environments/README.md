@@ -16,10 +16,10 @@ Each `.yml` file in this directory becomes a CLI flag:
 overrides:       # Parameter overrides
   depth: 3
   batch_size: 1
-  
-features:        # Behavioral flags  
+  train_datasets: [dev]
+
+features:        # Behavioral flags
   skip_compilation: true
-  minimal_data: true
 ```
 
 ## Creating Custom Environments
