@@ -82,9 +82,7 @@ def get_datamodules(
     try:
         from praxis.cli import integration_loader
 
-        available_datasets = integration_loader.integration_registry.get(
-            "datasets", {}
-        )
+        available_datasets = integration_loader.integration_registry.get("datasets", {})
         for dataset_name in available_datasets:
             print(f"[INTEGRATIONS] Checking dataset: {dataset_name}")
             dataset = get_dataset(dataset_name, tokenizer, seed)
@@ -257,9 +255,9 @@ def get_dataset_configs(
         config = add_collection(config, name, "validation")
 
     if rl_type:
-        rl_count = len(
-            [e for e in config["primary"] if "RL" in e.get("path", "")]
+        rl_count = len([e for e in config["primary"] if "RL" in e.get("path", "")])
+        print(
+            f"[RL] RL enabled with algorithm '{rl_type}', {rl_count} RL datasets in config"
         )
-        print(f"[RL] RL enabled with algorithm '{rl_type}', {rl_count} RL datasets in config")
 
     return config

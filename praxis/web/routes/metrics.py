@@ -349,7 +349,8 @@ def _downsample_metrics(
     # Pull val rows aside so LTTB runs on the dense loss curve and can't
     # accidentally lose them. They go back in after downsampling.
     val_rows = [
-        m for m in metrics
+        m
+        for m in metrics
         if m.get("val_loss") is not None or m.get("val_perplexity") is not None
     ]
 

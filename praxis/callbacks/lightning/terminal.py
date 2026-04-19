@@ -371,7 +371,9 @@ class TerminalInterface(Callback):
         info_dict["embed_size"] = self.embed_size
         info_dict["dropout"] = self.dropout
         info_dict["debug"] = self.debug
-        info_dict["meta"] = [item for item, condition in [("dev", self.dev)] if condition]
+        info_dict["meta"] = [
+            item for item, condition in [("dev", self.dev)] if condition
+        ]
 
         self.dashboard.update_info(info_dict)
 

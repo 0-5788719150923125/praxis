@@ -153,7 +153,6 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         if config.tie_word_embeddings and self.head is not None:
             self.tie_weights()
 
-
     def compute_loss(
         self,
         hidden_states: torch.Tensor,

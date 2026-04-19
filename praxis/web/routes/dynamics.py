@@ -640,9 +640,7 @@ def _short_module_path(name: str) -> str:
     return trimmed or name or "root"
 
 
-def _compute_activation_curves(
-    model, x_min: float, x_max: float, num_points: int
-):
+def _compute_activation_curves(model, x_min: float, x_max: float, num_points: int):
     """Walk the model, sample forward + derivative for each activation module.
 
     Returns (curves, activation_type) where curves is a list of dicts with

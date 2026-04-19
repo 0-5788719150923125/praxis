@@ -92,8 +92,10 @@ X = torch.tensor([[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]])
 Y = torch.tensor([[0.0], [1.0], [1.0], [0.0]])
 
 dims = [2, 8, 8, 1]
-Ws = [torch.randn(dims[i + 1], dims[i]) * math.sqrt(1.0 / dims[i])
-      for i in range(len(dims) - 1)]
+Ws = [
+    torch.randn(dims[i + 1], dims[i]) * math.sqrt(1.0 / dims[i])
+    for i in range(len(dims) - 1)
+]
 bs = [torch.zeros(d) for d in dims[1:]]
 
 print("training 2-8-8-1 MLP on XOR via prospective configuration")

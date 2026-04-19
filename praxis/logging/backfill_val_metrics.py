@@ -37,7 +37,9 @@ def backfill_db(db_path: Path, dry_run: bool = False) -> dict:
     conn = sqlite3.connect(db_path, timeout=30.0)
     try:
         cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='metrics'")
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='metrics'"
+        )
         if not cursor.fetchone():
             result["skipped"] = "no metrics table"
             return result
@@ -57,8 +59,7 @@ def backfill_db(db_path: Path, dry_run: bool = False) -> dict:
             before = cursor.fetchone()[0]
 
             # Find steps whose value equals the previous non-null step's value.
-            cursor.execute(
-                f"""
+            cursor.execute(f"""
                 WITH ordered AS (
                     SELECT step, {col},
                            LAG({col}) OVER (ORDER BY step) AS prev_val
@@ -66,8 +67,7 @@ def backfill_db(db_path: Path, dry_run: bool = False) -> dict:
                     WHERE {col} IS NOT NULL
                 )
                 SELECT step FROM ordered WHERE prev_val = {col}
-                """
-            )
+                """)
             redundant_steps = [row[0] for row in cursor.fetchall()]
 
             if not dry_run and redundant_steps:

@@ -363,7 +363,9 @@ def main():
     reset = processed_args.get("reset", False)
     local_rank = processed_args.get("local_rank", 0)
     train_datasets_raw = processed_args.get("train_datasets") or ["base"]
-    validation_datasets_raw = processed_args.get("validation_datasets") or ["validation"]
+    validation_datasets_raw = processed_args.get("validation_datasets") or [
+        "validation"
+    ]
 
     def _split_commas(items):
         return [
