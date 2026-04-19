@@ -27,13 +27,11 @@ class DataGroup:
             "--train-datasets",
             type=str,
             nargs="+",
-            action="extend",
-            default=None,
+            default=["base"],
             help=(
                 "Named dataset collections to train on. Space- or comma-separated "
                 "(e.g. '--train-datasets base phi' or '--train-datasets base,phi'). "
-                f"Available: {', '.join(sorted(DATASET_COLLECTIONS.keys()))}. "
-                "Defaults to 'base' when unspecified."
+                f"Available: {', '.join(sorted(DATASET_COLLECTIONS.keys()))}."
             ),
         )
 
@@ -41,11 +39,10 @@ class DataGroup:
             "--validation-datasets",
             type=str,
             nargs="+",
-            action="extend",
-            default=None,
+            default=["validation"],
             help=(
                 "Named dataset collections to use for validation. Same format "
-                "as --train-datasets. Defaults to 'validation' when unspecified."
+                "as --train-datasets."
             ),
         )
 
