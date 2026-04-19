@@ -885,6 +885,20 @@ function renderActivationChart(canvasId, curves, field, yLabel) {
     if (!options.plugins.tooltip.filter) {
         options.plugins.tooltip.filter = (tctx) => !tctx.dataset.label.startsWith('__band_');
     }
+    options.plugins.legend.onClick = (e, legendItem, legend) => {
+        const chart = legend.chart;
+        const idx = legendItem.datasetIndex;
+        const label = chart.data.datasets[idx].label;
+        const visible = chart.isDatasetVisible(idx);
+        const pair = [idx];
+        chart.data.datasets.forEach((ds, i) => {
+            if (ds.label === `__band_low__${label}` || ds.label === `__band_high__${label}`) {
+                pair.push(i);
+            }
+        });
+        pair.forEach(i => visible ? chart.hide(i) : chart.show(i));
+        legendItem.hidden = visible;
+    };
 
     dynamicsCharts[canvasId] = new Chart(ctx, {
         type: 'line',
