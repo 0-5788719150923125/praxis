@@ -135,7 +135,29 @@ function renderEmptyState(container, message) {
             <h3>No Gradient Dynamics Yet</h3>
             <p>${message || 'Start training to see gradient dynamics'}</p>
         </div>
+
+        <div style="margin-top: 2rem;">
+            <div class="chart-card">
+                <div class="chart-title">Activation Forward</div>
+                <div class="chart-subtitle" id="activation-forward-subtitle">Forward curve per activation module (mean across features, using live parameters)</div>
+                <div class="chart-wrapper" style="height: 400px;">
+                    <canvas id="dynamics-activation-forward"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div style="margin-top: 2rem;">
+            <div class="chart-card">
+                <div class="chart-title">Activation Derivative</div>
+                <div class="chart-subtitle">dy/dx per activation module via autograd (mean across features)</div>
+                <div class="chart-wrapper" style="height: 400px;">
+                    <canvas id="dynamics-activation-backward"></canvas>
+                </div>
+            </div>
+        </div>
     `;
+
+    setTimeout(() => loadActivationCurves(), 10);
 }
 
 // ─── Metric detection helpers ───────────────────────────────────────────────
@@ -321,6 +343,29 @@ function renderDynamicsCharts(runData, container) {
         `;
     }
 
+    // Activation curves (always rendered; placeholder if endpoint returns empty)
+    chartsHTML += `
+        <div style="margin-top: 2rem;">
+            <div class="chart-card">
+                <div class="chart-title">Activation Forward</div>
+                <div class="chart-subtitle" id="activation-forward-subtitle">Forward curve per activation module (mean across features, using live parameters)</div>
+                <div class="chart-wrapper" style="height: 400px;">
+                    <canvas id="dynamics-activation-forward"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div style="margin-top: 2rem;">
+            <div class="chart-card">
+                <div class="chart-title">Activation Derivative</div>
+                <div class="chart-subtitle">dy/dx per activation module via autograd (mean across features)</div>
+                <div class="chart-wrapper" style="height: 400px;">
+                    <canvas id="dynamics-activation-backward"></canvas>
+                </div>
+            </div>
+        </div>
+    `;
+
     container.innerHTML = headerHTML + chartsHTML;
 
     // Layer toggles
@@ -340,6 +385,7 @@ function renderDynamicsCharts(runData, container) {
             if (hasHalting) {
                 createHaltingHistogramChart('dynamics-halting-hist', dynamics, haltingBuckets);
             }
+            loadActivationCurves();
         } catch (error) {
             console.error('[Dynamics] Chart creation failed:', error);
         }
@@ -739,6 +785,77 @@ function createHaltingHistogramChart(canvasId, dynamics, buckets) {
                 }
             }
         }
+    });
+}
+
+// ─── Activation curves ──────────────────────────────────────────────────────
+
+/**
+ * Fetch activation curves from the API and render forward + derivative charts.
+ */
+async function loadActivationCurves() {
+    const forwardCanvas = document.getElementById('dynamics-activation-forward');
+    const backwardCanvas = document.getElementById('dynamics-activation-backward');
+    if (!forwardCanvas || !backwardCanvas) return;
+
+    try {
+        const response = await fetch('/api/activation_curves');
+        if (!response.ok) throw new Error(`API returned ${response.status}`);
+        const data = await response.json();
+
+        const curves = data.curves || [];
+        const subtitle = document.getElementById('activation-forward-subtitle');
+        if (subtitle) {
+            const uniqueTypes = [...new Set(curves.map(c => c.type).filter(Boolean))];
+            const typeStr = uniqueTypes.length === 1
+                ? uniqueTypes[0]
+                : uniqueTypes.length > 1
+                    ? `${uniqueTypes.length} types: ${uniqueTypes.join(', ')}`
+                    : '';
+            subtitle.textContent = typeStr
+                ? `${typeStr} - per-module curves using live parameters (mean across features)`
+                : 'Per-module curves using live parameters (mean across features)';
+        }
+
+        if (curves.length === 0) {
+            [forwardCanvas, backwardCanvas].forEach(canvas => {
+                const ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            });
+            return;
+        }
+
+        renderActivationChart('dynamics-activation-forward', curves, 'forward', 'Output');
+        renderActivationChart('dynamics-activation-backward', curves, 'backward', 'dy/dx');
+    } catch (error) {
+        console.error('[Dynamics] Activation curves failed to load:', error);
+    }
+}
+
+function renderActivationChart(canvasId, curves, field, yLabel) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return;
+
+    if (dynamicsCharts[canvasId]) {
+        dynamicsCharts[canvasId].destroy();
+    }
+
+    const { textColor, gridColor, tooltipBg } = getThemeColors();
+
+    const datasets = curves.map((curve, idx) => {
+        const color = LAYER_COLORS[idx % LAYER_COLORS.length];
+        const data = curve.x.map((x, i) => ({ x, y: curve[field][i] }));
+        const label = curve.type ? `${curve.name} (${curve.type})` : curve.name;
+        return makeLineDataset(label, data, color);
+    });
+
+    const options = baseChartOptions(yLabel, 'linear', textColor, gridColor, tooltipBg);
+    options.scales.x.title.text = 'Input';
+
+    dynamicsCharts[canvasId] = new Chart(ctx, {
+        type: 'line',
+        data: { datasets },
+        options
     });
 }
 

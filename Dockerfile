@@ -1,7 +1,7 @@
 # Base image can be overridden via build arg for different architectures
 # Default: NVIDIA CUDA for x86_64 GPU
 # ARM64 CPU: ubuntu:24.04
-ARG BASE_IMAGE=nvidia/cuda:13.0.1-devel-ubuntu24.04
+ARG BASE_IMAGE=nvidia/cuda:13.2.0-devel-ubuntu24.04
 FROM ${BASE_IMAGE}
 
 # Install Python and dependencies once

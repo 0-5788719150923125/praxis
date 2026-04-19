@@ -1,6 +1,7 @@
 """Gradient dynamics API routes for Expert learning visualization."""
 
 import math
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -530,3 +531,216 @@ def _compute_expert_metadata(
                 continue
 
     return {"num_experts": len(expert_indices)}
+
+
+# ─── Activation curves ──────────────────────────────────────────────────────
+
+
+@dynamics_bp.route("/api/activation_curves", methods=["GET", "OPTIONS"])
+def get_activation_curves():
+    """Sample forward and derivative curves for every activation module in the
+    live model, using their actual (learned) parameters.
+    """
+    if request.method == "OPTIONS":
+        response = jsonify({"status": "ok"})
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add("Access-Control-Allow-Headers", "Content-Type")
+        response.headers.add("Access-Control-Allow-Methods", "GET, OPTIONS")
+        return response
+
+    from ..app import api_logger
+
+    try:
+        generator = current_app.config.get("generator")
+        model = getattr(generator, "model", None) if generator else None
+        if model is None:
+            response = jsonify(
+                {
+                    "status": "no_data",
+                    "message": "Model not available",
+                    "curves": [],
+                }
+            )
+            response.headers.add("Access-Control-Allow-Origin", "*")
+            return response
+
+        try:
+            x_min = float(request.args.get("x_min", -6.0))
+            x_max = float(request.args.get("x_max", 6.0))
+            num_points = int(request.args.get("points", 256))
+        except ValueError:
+            x_min, x_max, num_points = -6.0, 6.0, 256
+        num_points = max(32, min(num_points, 1024))
+
+        curves, activation_type = _compute_activation_curves(
+            model, x_min, x_max, num_points
+        )
+
+        response = jsonify(
+            {
+                "status": "ok" if curves else "no_data",
+                "activation_type": activation_type,
+                "x_range": [x_min, x_max],
+                "curves": curves,
+            }
+        )
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add("Cache-Control", "max-age=5")
+        return response
+
+    except Exception as e:
+        api_logger.error(f"Error in get_activation_curves: {e}")
+        import traceback
+
+        traceback.print_exc()
+        response = jsonify({"status": "error", "message": str(e), "curves": []})
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.status_code = 500
+        return response
+
+
+def _activation_classes() -> tuple:
+    """Set of nn.Module subclasses considered activation functions.
+
+    Combines the Praxis/transformers ACT2FN registry with common stock
+    torch.nn activations that might appear in attention gates etc.
+    """
+    import torch.nn as nn
+
+    import praxis.activations  # ensure Praxis registrations land in ACT2CLS
+    from transformers.activations import ACT2CLS
+
+    classes: set = set()
+    for v in ACT2CLS.values():
+        cls = v[0] if isinstance(v, tuple) else v
+        classes.add(cls)
+
+    classes.update(
+        {
+            nn.ReLU,
+            nn.LeakyReLU,
+            nn.PReLU,
+            nn.ELU,
+            nn.SELU,
+            nn.GELU,
+            nn.SiLU,
+            nn.Mish,
+            nn.Tanh,
+            nn.Sigmoid,
+            nn.Softsign,
+            nn.Softplus,
+        }
+    )
+    return tuple(classes)
+
+
+def _short_module_path(name: str) -> str:
+    """Strip common prefixes to make module paths more readable in labels."""
+    trimmed = re.sub(r"^(decoder\.|model\.|module\.)+", "", name)
+    return trimmed or name or "root"
+
+
+def _compute_activation_curves(
+    model, x_min: float, x_max: float, num_points: int
+):
+    """Walk the model, sample forward + derivative for each activation module.
+
+    Returns (curves, activation_type) where curves is a list of dicts with
+    keys: name, x, forward, backward.
+    """
+    import torch
+
+    device = next(model.parameters()).device
+    dtype = torch.float32
+
+    activation_types = _activation_classes()
+
+    was_training = model.training
+    model.eval()
+
+    curves: List[Dict[str, Any]] = []
+    type_counts: Dict[str, int] = {}
+
+    try:
+        for name, module in model.named_modules():
+            if not isinstance(module, activation_types):
+                continue
+
+            type_name = type(module).__name__
+            type_counts[type_name] = type_counts.get(type_name, 0) + 1
+
+            sample = _sample_activation(module, x_min, x_max, num_points, device, dtype)
+            if sample is None:
+                continue
+
+            curves.append(
+                {
+                    "name": _short_module_path(name),
+                    "type": type_name,
+                    "x": sample["x"],
+                    "forward": sample["forward"],
+                    "backward": sample["backward"],
+                }
+            )
+    finally:
+        if was_training:
+            model.train()
+
+    activation_type = max(type_counts, key=type_counts.get) if type_counts else None
+    return curves, activation_type
+
+
+def _sample_activation(
+    module, x_min: float, x_max: float, num_points: int, device, dtype
+) -> Optional[Dict[str, List[float]]]:
+    """Run a forward + backward pass over a linspace for one activation module.
+
+    Activations with feature-dim params (e.g. Snake) need a 2D input so
+    parameters broadcast; we tile across the param's feature size and average
+    over features to get a single representative curve per module.
+    """
+    import torch
+    from torch.nn.parameter import UninitializedParameter
+
+    param_dim = 1
+    for p in module.parameters(recurse=False):
+        if p is None:
+            continue
+        if isinstance(p, UninitializedParameter):
+            return None
+        try:
+            numel = p.numel()
+        except Exception:
+            numel = 1
+        if numel > param_dim:
+            param_dim = numel
+
+    try:
+        x_base = torch.linspace(
+            x_min, x_max, num_points, device=device, dtype=dtype, requires_grad=True
+        )
+        if param_dim > 1:
+            x = x_base.unsqueeze(-1).expand(num_points, param_dim).contiguous()
+            x = x.detach().requires_grad_(True)
+        else:
+            x = x_base
+
+        with torch.enable_grad():
+            y = module(x)
+            if y.shape != x.shape:
+                return None
+            grad = torch.autograd.grad(y.sum(), x, create_graph=False)[0]
+
+        if x.dim() == 2:
+            forward = y.detach().mean(dim=-1).cpu().tolist()
+            backward = grad.detach().mean(dim=-1).cpu().tolist()
+            xs = x.detach()[:, 0].cpu().tolist()
+        else:
+            forward = y.detach().cpu().tolist()
+            backward = grad.detach().cpu().tolist()
+            xs = x.detach().cpu().tolist()
+
+        return {"x": xs, "forward": forward, "backward": backward}
+
+    except Exception:
+        return None
