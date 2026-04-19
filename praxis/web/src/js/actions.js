@@ -6,7 +6,7 @@
 import { state } from './state.js';
 import { render } from './render.js';
 import { storage, readFormValues, FORM_FIELDS } from './config.js';
-import { toggleRunSelector, toggleRunSelection, stopResearchAutoRefresh } from './charts.js';
+import { toggleRunSelector, toggleRunSelection } from './charts.js';
 import { loadResearchMetrics, loadDynamics } from './tabs.js';
 import { sendMessage, testApiConnection } from './api.js';
 
@@ -25,8 +25,7 @@ const getLifecycleFunction = async (name) => {
         loadSpec,
         loadAgents,
         loadResearchMetrics,
-        loadDynamics,
-        stopResearchAutoRefresh
+        loadDynamics
     };
 
     return lifecycleFunctions[name] || null;

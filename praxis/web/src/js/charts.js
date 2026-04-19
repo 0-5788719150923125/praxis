@@ -13,10 +13,8 @@ export const charts = {};
 // Layer selection state for per-layer metrics
 const layerSelectionState = {};
 
-// Auto-refresh: poll the Research tab on an interval while it's active.
-// ETag caching on the server side means a 304 short-circuits re-render.
-const AUTO_REFRESH_INTERVAL_MS = 5000;
-let autoRefreshTimer = null;
+// ETag caches for the metrics endpoints so a 304 Not Modified on a manual
+// refresh can short-circuit re-render.
 let lastMetricsEtag = null;
 let lastDataMetricsEtag = null;
 
@@ -347,26 +345,23 @@ function formatRelativeTime(timestamp) {
 /**
  * Load and render research metrics with full Chart.js integration.
  *
- * @param {boolean} force - If true, always re-render (e.g. user clicked Refresh).
- * @param {boolean} silent - If true, skip the loading placeholder. Used by the
- *   auto-refresh poller so charts don't flicker on every tick.
+ * Fetches run on tab activation and on explicit user-initiated refreshes
+ * (refresh button, run-selector change). There is no background polling;
+ * charts only rebuild when the user asks for it.
+ *
+ * @param {boolean} force - If true, re-fetch even if already loaded.
  */
-export async function loadResearchMetricsWithCharts(force = false, silent = false) {
-    if (state.research.loaded && !force) {
-        startResearchAutoRefresh();
-        return;
-    }
+export async function loadResearchMetricsWithCharts(force = false) {
+    if (state.research.loaded && !force) return;
 
     const container = document.getElementById('research-container');
     if (!container) return;
 
-    if (!silent) {
-        const chartsArea = document.getElementById('metrics-charts-area');
-        if (chartsArea) {
-            chartsArea.innerHTML = '<div class="loading-placeholder">Loading metrics...</div>';
-        } else {
-            container.innerHTML = '<div class="loading-placeholder">Loading metrics...</div>';
-        }
+    const chartsArea = document.getElementById('metrics-charts-area');
+    if (chartsArea) {
+        chartsArea.innerHTML = '<div class="loading-placeholder">Loading metrics...</div>';
+    } else {
+        container.innerHTML = '<div class="loading-placeholder">Loading metrics...</div>';
     }
 
     try {
@@ -377,15 +372,9 @@ export async function loadResearchMetricsWithCharts(force = false, silent = fals
             fetchDataMetrics()
         ]);
 
-        // Both endpoints returned 304 Not Modified - no render needed.
+        // Normalize 304-unchanged sentinels back to the previous render's data.
         const runsUnchanged = runs && runs.unchanged === true;
         const dataUnchanged = dataMetrics && dataMetrics.unchanged === true;
-        if (silent && runsUnchanged && dataUnchanged) {
-            startResearchAutoRefresh();
-            return;
-        }
-
-        // Normalize unchanged sentinels back to the previous render's data.
         const runsToRender = runsUnchanged ? (state.research.lastRuns || []) : runs;
         const dataToRender = dataUnchanged ? (state.research.lastDataMetrics || []) : dataMetrics;
 
@@ -394,11 +383,9 @@ export async function loadResearchMetricsWithCharts(force = false, silent = fals
 
         renderMetricsCharts({ runs: runsToRender, dataMetrics: dataToRender }, container);
         state.research.loaded = true;
-        startResearchAutoRefresh();
 
     } catch (error) {
         console.error('[Charts] Error loading metrics:', error);
-        if (silent) return;  // Don't blow away existing charts on a transient error
         const errorHTML = `
             <div class="error-message">
                 <h3>Error Loading Metrics</h3>
@@ -411,31 +398,6 @@ export async function loadResearchMetricsWithCharts(force = false, silent = fals
         } else {
             container.innerHTML = errorHTML;
         }
-    }
-}
-
-/**
- * Start the Research-tab auto-refresh timer (idempotent).
- * Polling is paused when the page is hidden to avoid wasted work.
- */
-export function startResearchAutoRefresh() {
-    if (autoRefreshTimer) return;
-    autoRefreshTimer = setInterval(() => {
-        if (document.hidden) return;
-        // Only poll while the Research tab is actually mounted.
-        const container = document.getElementById('research-container');
-        if (!container) return;
-        loadResearchMetricsWithCharts(true, true);
-    }, AUTO_REFRESH_INTERVAL_MS);
-}
-
-/**
- * Stop the Research-tab auto-refresh timer.
- */
-export function stopResearchAutoRefresh() {
-    if (autoRefreshTimer) {
-        clearInterval(autoRefreshTimer);
-        autoRefreshTimer = null;
     }
 }
 

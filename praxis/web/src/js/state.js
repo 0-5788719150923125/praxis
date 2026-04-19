@@ -104,7 +104,7 @@ export const state = {
             onActivate: 'loadResearchMetrics',
             activateDelay: 0,
             activateParams: [false],  // Don't force refresh - user clicks reload button
-            onDeactivate: 'stopResearchAutoRefresh'
+            onDeactivate: null
         },
         {
             id: 'dynamics',
