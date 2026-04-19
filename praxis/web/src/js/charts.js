@@ -13,6 +13,13 @@ export const charts = {};
 // Layer selection state for per-layer metrics
 const layerSelectionState = {};
 
+// Auto-refresh: poll the Research tab on an interval while it's active.
+// ETag caching on the server side means a 304 short-circuits re-render.
+const AUTO_REFRESH_INTERVAL_MS = 5000;
+let autoRefreshTimer = null;
+let lastMetricsEtag = null;
+let lastDataMetricsEtag = null;
+
 /**
  * Detect if an element is within a hybrid overlay (light theme context)
  * @param {HTMLElement} element - The element to check
@@ -196,12 +203,27 @@ async function fetchSelectedRunMetrics() {
 
     const results = [];
 
-    // Fetch local runs in a single batch
+    // Fetch local runs in a single batch. Send If-None-Match so the
+    // server can short-circuit with 304 when nothing has changed; on 304
+    // we reuse the last render's local-run data.
+    let localUnchanged = false;
     if (localHashes.length > 0) {
         try {
             const runsParam = localHashes.join(',');
-            const response = await fetch(`/api/metrics?since=0&limit=1000&downsample=lttb&runs=${runsParam}`);
-            if (response.ok) {
+            const headers = lastMetricsEtag ? { 'If-None-Match': lastMetricsEtag } : {};
+            const response = await fetch(
+                `/api/metrics?since=0&limit=1000&downsample=lttb&runs=${runsParam}`,
+                { headers, cache: 'no-cache' }
+            );
+            if (response.status === 304) {
+                localUnchanged = true;
+                const previousLocal = (state.research.lastRuns || []).filter(
+                    r => localHashes.includes(r.hash)
+                );
+                results.push(...previousLocal);
+            } else if (response.ok) {
+                const newEtag = response.headers.get('ETag');
+                if (newEtag) lastMetricsEtag = newEtag;
                 const data = await response.json();
                 if (data.runs) {
                     data.runs.forEach(run => {
@@ -242,6 +264,12 @@ async function fetchSelectedRunMetrics() {
     const remoteResults = await Promise.all(remotePromises);
     remoteResults.forEach(r => { if (r) results.push(r); });
 
+    // Signal "nothing changed" only when local was unchanged AND there are
+    // no remote runs to re-fetch (remotes aren't etag-tracked yet).
+    if (localUnchanged && remoteEntries.length === 0) {
+        results.unchanged = true;
+    }
+
     return results;
 }
 
@@ -250,8 +278,16 @@ async function fetchSelectedRunMetrics() {
  */
 async function fetchDataMetrics() {
     try {
-        const response = await fetch('/api/data-metrics?since=0&limit=1000&downsample=lttb');
+        const headers = lastDataMetricsEtag ? { 'If-None-Match': lastDataMetricsEtag } : {};
+        const response = await fetch(
+            '/api/data-metrics?since=0&limit=1000&downsample=lttb',
+            { headers, cache: 'no-cache' }
+        );
+        if (response.status === 304) return { unchanged: true };
         if (!response.ok) return [];
+
+        const newEtag = response.headers.get('ETag');
+        if (newEtag) lastDataMetricsEtag = newEtag;
 
         const data = await response.json();
         if (data.status === 'no_data' || !data.runs || data.runs.length === 0) return [];
@@ -309,37 +345,60 @@ function formatRelativeTime(timestamp) {
 }
 
 /**
- * Load and render research metrics with full Chart.js integration
+ * Load and render research metrics with full Chart.js integration.
+ *
+ * @param {boolean} force - If true, always re-render (e.g. user clicked Refresh).
+ * @param {boolean} silent - If true, skip the loading placeholder. Used by the
+ *   auto-refresh poller so charts don't flicker on every tick.
  */
-export async function loadResearchMetricsWithCharts(force = false) {
-    if (state.research.loaded && !force) return;
+export async function loadResearchMetricsWithCharts(force = false, silent = false) {
+    if (state.research.loaded && !force) {
+        startResearchAutoRefresh();
+        return;
+    }
 
     const container = document.getElementById('research-container');
     if (!container) return;
 
-    // On first load, replace entire container; on refresh, only show loading in charts area
-    const chartsArea = document.getElementById('metrics-charts-area');
-    if (chartsArea) {
-        chartsArea.innerHTML = '<div class="loading-placeholder">Loading metrics...</div>';
-    } else {
-        container.innerHTML = '<div class="loading-placeholder">Loading metrics...</div>';
+    if (!silent) {
+        const chartsArea = document.getElementById('metrics-charts-area');
+        if (chartsArea) {
+            chartsArea.innerHTML = '<div class="loading-placeholder">Loading metrics...</div>';
+        } else {
+            container.innerHTML = '<div class="loading-placeholder">Loading metrics...</div>';
+        }
     }
 
     try {
-        // Load available runs
         await loadAvailableRuns();
 
-        // Fetch metrics for selected runs and data metrics in parallel
         const [runs, dataMetrics] = await Promise.all([
             fetchSelectedRunMetrics(),
             fetchDataMetrics()
         ]);
 
-        renderMetricsCharts({ runs, dataMetrics }, container);
+        // Both endpoints returned 304 Not Modified - no render needed.
+        const runsUnchanged = runs && runs.unchanged === true;
+        const dataUnchanged = dataMetrics && dataMetrics.unchanged === true;
+        if (silent && runsUnchanged && dataUnchanged) {
+            startResearchAutoRefresh();
+            return;
+        }
+
+        // Normalize unchanged sentinels back to the previous render's data.
+        const runsToRender = runsUnchanged ? (state.research.lastRuns || []) : runs;
+        const dataToRender = dataUnchanged ? (state.research.lastDataMetrics || []) : dataMetrics;
+
+        state.research.lastRuns = runsToRender;
+        state.research.lastDataMetrics = dataToRender;
+
+        renderMetricsCharts({ runs: runsToRender, dataMetrics: dataToRender }, container);
         state.research.loaded = true;
+        startResearchAutoRefresh();
 
     } catch (error) {
         console.error('[Charts] Error loading metrics:', error);
+        if (silent) return;  // Don't blow away existing charts on a transient error
         const errorHTML = `
             <div class="error-message">
                 <h3>Error Loading Metrics</h3>
@@ -352,6 +411,31 @@ export async function loadResearchMetricsWithCharts(force = false) {
         } else {
             container.innerHTML = errorHTML;
         }
+    }
+}
+
+/**
+ * Start the Research-tab auto-refresh timer (idempotent).
+ * Polling is paused when the page is hidden to avoid wasted work.
+ */
+export function startResearchAutoRefresh() {
+    if (autoRefreshTimer) return;
+    autoRefreshTimer = setInterval(() => {
+        if (document.hidden) return;
+        // Only poll while the Research tab is actually mounted.
+        const container = document.getElementById('research-container');
+        if (!container) return;
+        loadResearchMetricsWithCharts(true, true);
+    }, AUTO_REFRESH_INTERVAL_MS);
+}
+
+/**
+ * Stop the Research-tab auto-refresh timer.
+ */
+export function stopResearchAutoRefresh() {
+    if (autoRefreshTimer) {
+        clearInterval(autoRefreshTimer);
+        autoRefreshTimer = null;
     }
 }
 

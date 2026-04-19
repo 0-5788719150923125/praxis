@@ -104,7 +104,7 @@ export const state = {
             onActivate: 'loadResearchMetrics',
             activateDelay: 0,
             activateParams: [false],  // Don't force refresh - user clicks reload button
-            onDeactivate: null
+            onDeactivate: 'stopResearchAutoRefresh'
         },
         {
             id: 'dynamics',
@@ -195,6 +195,10 @@ export const state = {
         etag: null,
         lastStep: 0,
         error: null,
+        // Cached data from the most recent successful fetch. Used by the
+        // auto-refresh path to keep charts up when the server returns 304.
+        lastRuns: [],
+        lastDataMetrics: [],
         // Historical run comparison
         historicalRuns: [],       // All available runs from /api/runs
         selectedHistoricalRuns: [], // Hashes the user has checked

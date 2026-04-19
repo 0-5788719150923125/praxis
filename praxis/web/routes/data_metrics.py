@@ -209,23 +209,25 @@ def _read_data_metrics_file(
         conn.row_factory = sqlite3.Row  # Access columns by name
         cursor = conn.cursor()
 
-        # If max_rows specified, check total count and sample intelligently
+        # Uniform modulo sampling spans the full step range. No LIMIT:
+        # LIMIT + ORDER BY step truncates newer rows, which made the
+        # Research charts stop at the earliest ~N steps.
         if max_rows:
             cursor.execute(
                 "SELECT COUNT(*) FROM data_metrics WHERE step >= ?", (since_step,)
             )
             total_count = cursor.fetchone()[0]
 
-            # If dataset is larger than max_rows, use SQL-level sampling
             if total_count > max_rows * 2:
                 sample_interval = max(1, total_count // max_rows)
                 cursor.execute(
-                    f"""SELECT step, ts, sampling_weights, dataset_stats, extra_metrics
+                    """SELECT step, ts, sampling_weights, dataset_stats, extra_metrics
                        FROM data_metrics
-                       WHERE step >= ? AND (rowid % {sample_interval}) = 0
-                       ORDER BY step
-                       LIMIT ?""",
-                    (since_step, max_rows),
+                       WHERE step >= ?
+                         AND ((rowid % ?) = 0
+                              OR step = (SELECT MAX(step) FROM data_metrics WHERE step >= ?))
+                       ORDER BY step""",
+                    (since_step, sample_interval, since_step),
                 )
             else:
                 cursor.execute(

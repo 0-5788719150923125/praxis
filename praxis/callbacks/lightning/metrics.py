@@ -25,19 +25,23 @@ class MetricsLoggerCallback(Callback):
         self.metrics_logger = MetricsLogger(run_dir)
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
-        """Log metrics after each training batch."""
-        # Extract ALL metrics from trainer.callback_metrics
+        """Log training metrics after each training batch.
+
+        Skips val_* keys: Lightning retains validation metrics in
+        callback_metrics after validation ends, so logging them here would
+        re-write the last val value on every training step, bloating the DB
+        and flattening the validation chart.
+        """
         metrics = {}
 
         for key, value in trainer.callback_metrics.items():
-            # Skip 'step' as we pass it explicitly
             if key == "step":
                 continue
+            if key.startswith("val_"):
+                continue
             try:
-                # Convert tensor to float
                 metrics[key] = float(value)
             except (TypeError, ValueError):
-                # Skip non-numeric values
                 pass
 
         if metrics:

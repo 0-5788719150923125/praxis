@@ -43,8 +43,10 @@ def get_metrics():
         Cache-Control: max-age=5 (cache for 5 seconds)
 
     Downsampling:
-        Uses LTTB (Largest Triangle Three Buckets) algorithm which preserves
-        visual fidelity by selecting points that maintain curve shape.
+        Two-stage: SQL rowid-modulo sampling narrows the dataset to a
+        manageable size, then LTTB (Largest Triangle Three Buckets) picks
+        the final points by loss-curve shape. Validation rows are always
+        preserved because LTTB scores by 'loss' alone.
 
     Returns:
         200: Metrics data
@@ -107,8 +109,10 @@ def get_metrics():
                 wal_mtime = f":{wal_file.stat().st_mtime}"
             etag_parts.append(f"{run_hash}:{stat.st_mtime}:{stat.st_size}{wal_mtime}")
 
-            # Read and parse metrics with SQL-level sampling for efficiency
-            # Pass limit * 3 to give LTTB algorithm enough data points to work with
+            # Two-stage: SQL narrows the dataset so LTTB has enough to
+            # work with without loading the whole table. Pass limit * 3
+            # so LTTB can pick its 1000 most-informative points from
+            # ~3000 candidates.
             raw_metrics = _read_metrics_file(
                 metrics_file, since_step, max_rows=limit * 3
             )
@@ -121,7 +125,9 @@ def get_metrics():
                 f"Loaded {len(raw_metrics)} raw metrics for run {run_hash}"
             )
 
-            # Downsample with LTTB if we still have more points than needed
+            # LTTB for visual fidelity on long, dense loss curves. The
+            # function skips itself when the dataset is already under
+            # the target size, so this is a no-op for short runs.
             if len(raw_metrics) > limit:
                 raw_metrics = _downsample_metrics(raw_metrics, limit, downsample_method)
                 api_logger.debug(
@@ -232,39 +238,33 @@ def _read_metrics_file(
         conn.row_factory = sqlite3.Row  # Access columns by name
         cursor = conn.cursor()
 
-        # If max_rows specified, check total count and sample intelligently
+        # If max_rows specified, check total count and sample intelligently.
+        # Uniform modulo sampling spans the full step range; rows carrying
+        # validation metrics are always kept so sparse val points survive.
+        # No LIMIT: an ORDER BY step LIMIT would truncate newer rows, which
+        # is exactly the bug this file used to have.
         if max_rows:
             cursor.execute(
                 "SELECT COUNT(*) FROM metrics WHERE step >= ?", (since_step,)
             )
             total_count = cursor.fetchone()[0]
 
-            # If dataset is larger than max_rows, use SQL-level sampling
-            # Sample every Nth row to reduce memory overhead.
-            # IMPORTANT: rows carrying val_loss or val_perplexity MUST
-            # survive the downsampling, because validation fires very
-            # infrequently (once per val_check_interval batches) and a
-            # naive modulo sample almost always drops them. The OR
-            # clause ensures validation rows are always included
-            # regardless of the sample interval; the LIMIT still caps
-            # total output so the client doesn't get a huge payload.
             if total_count > max_rows * 2:
                 sample_interval = max(1, total_count // max_rows)
                 cursor.execute(
-                    f"""SELECT step, ts, loss, val_loss, learning_rate, num_tokens,
+                    """SELECT step, ts, loss, val_loss, learning_rate, num_tokens,
                               avg_step_time, softmax_collapse, val_perplexity, batch,
                               local_layers, remote_layers, extra_metrics
                        FROM metrics
                        WHERE step >= ?
-                         AND ((rowid % {sample_interval}) = 0
+                         AND ((rowid % ?) = 0
                               OR val_loss IS NOT NULL
-                              OR val_perplexity IS NOT NULL)
-                       ORDER BY step
-                       LIMIT ?""",
-                    (since_step, max_rows),
+                              OR val_perplexity IS NOT NULL
+                              OR step = (SELECT MAX(step) FROM metrics WHERE step >= ?))
+                       ORDER BY step""",
+                    (since_step, sample_interval, since_step),
                 )
             else:
-                # Dataset is small enough, just query normally
                 cursor.execute(
                     """SELECT step, ts, loss, val_loss, learning_rate, num_tokens,
                               avg_step_time, softmax_collapse, val_perplexity, batch,
@@ -275,7 +275,6 @@ def _read_metrics_file(
                     (since_step,),
                 )
         else:
-            # No limit specified, query all rows
             cursor.execute(
                 """SELECT step, ts, loss, val_loss, learning_rate, num_tokens,
                           avg_step_time, softmax_collapse, val_perplexity, batch,
@@ -334,116 +333,84 @@ def _downsample_metrics(
 ) -> List[Dict[str, Any]]:
     """Downsample metrics using LTTB (Largest Triangle Three Buckets).
 
-    LTTB preserves visual fidelity by selecting points that maintain the shape
-    of the time-series curve, avoiding the temporal distortion of index-based sampling.
+    LTTB preserves the shape of the training-loss curve by selecting, per
+    bucket, the point that forms the largest triangle with its neighbors.
+    This matters on long runs where `loss` has hundreds of thousands of
+    points and uniform sampling would smooth away real spikes.
 
-    Args:
-        metrics: List of metric dictionaries
-        target_size: Target number of points
-        method: Downsampling method (only 'lttb' supported now)
-
-    Returns:
-        Downsampled list of metrics using LTTB algorithm
+    Validation rows (val_loss / val_perplexity) are force-included after
+    the LTTB pass: LTTB scores purely on the `loss` curve, so sparse
+    val-only rows virtually never win a bucket and would otherwise be
+    dropped from the chart.
     """
     if len(metrics) <= target_size:
         return metrics
 
-    # LTTB Algorithm (Largest Triangle Three Buckets)
-    # Select points that maximize the area of triangles formed with neighbors
-    # This preserves visual shape and trends better than uniform sampling
+    # Pull val rows aside so LTTB runs on the dense loss curve and can't
+    # accidentally lose them. They go back in after downsampling.
+    val_rows = [
+        m for m in metrics
+        if m.get("val_loss") is not None or m.get("val_perplexity") is not None
+    ]
 
     if target_size < 3:
-        # For very small target sizes, just return first, middle, last
-        if target_size == 1:
-            return [metrics[-1]]
-        return [metrics[0], metrics[-1]]
+        downsampled = [metrics[-1]] if target_size == 1 else [metrics[0], metrics[-1]]
+    else:
+        selected_indices = [0]  # First point
+        bucket_size = (len(metrics) - 2) / (target_size - 2)
 
-    # Store selected indices instead of points directly
-    selected_indices = [0]  # Always include first point
+        for bucket_idx in range(target_size - 2):
+            bucket_start = int(bucket_idx * bucket_size) + 1
+            bucket_end = int((bucket_idx + 1) * bucket_size) + 1
 
-    # Bucket size (average number of points per bucket)
-    bucket_size = (len(metrics) - 2) / (target_size - 2)
+            # Average point of the next bucket (one vertex of the triangle).
+            next_bucket_end = min(int((bucket_idx + 2) * bucket_size) + 1, len(metrics))
+            next_avg_x = next_avg_y = 0.0
+            next_count = 0
+            for i in range(bucket_end, next_bucket_end):
+                next_avg_x += metrics[i].get("step", i)
+                next_avg_y += metrics[i].get("loss", metrics[i].get("val_loss", 0))
+                next_count += 1
+            if next_count > 0:
+                next_avg_x /= next_count
+                next_avg_y /= next_count
 
-    for bucket_idx in range(target_size - 2):
-        # Calculate bucket range
-        bucket_start = int((bucket_idx + 0) * bucket_size) + 1
-        bucket_end = int((bucket_idx + 1) * bucket_size) + 1
+            prev_idx = selected_indices[-1]
+            prev_point = metrics[prev_idx]
+            prev_x = prev_point.get("step", prev_idx)
+            prev_y = prev_point.get("loss", prev_point.get("val_loss", 0))
 
-        # Calculate the next bucket's average point (for triangle calculation)
-        next_bucket_start = int((bucket_idx + 1) * bucket_size) + 1
-        next_bucket_end = min(int((bucket_idx + 2) * bucket_size) + 1, len(metrics))
-
-        # Calculate average point in next bucket
-        next_avg_x = 0
-        next_avg_y = 0
-        next_count = 0
-
-        for i in range(next_bucket_start, next_bucket_end):
-            if i >= len(metrics):
-                break
-            next_avg_x += metrics[i].get("step", i)
-            # Use 'loss' as primary metric for area calculation
-            next_avg_y += metrics[i].get("loss", metrics[i].get("val_loss", 0))
-            next_count += 1
-
-        if next_count > 0:
-            next_avg_x /= next_count
-            next_avg_y /= next_count
-
-        # Find point in current bucket that maximizes triangle area
-        prev_idx = selected_indices[-1]
-        prev_point = metrics[prev_idx]
-        prev_x = prev_point.get("step", prev_idx)
-        prev_y = prev_point.get("loss", prev_point.get("val_loss", 0))
-
-        max_area = -1
-        max_area_point = None
-
-        for i in range(bucket_start, bucket_end):
-            if i >= len(metrics):
-                break
-
-            curr_x = metrics[i].get("step", i)
-            curr_y = metrics[i].get("loss", metrics[i].get("val_loss", 0))
-
-            # Calculate triangle area
-            area = (
-                abs(
-                    (prev_x - next_avg_x) * (curr_y - prev_y)
-                    - (prev_x - curr_x) * (next_avg_y - prev_y)
+            max_area = -1
+            max_area_point = None
+            for i in range(bucket_start, bucket_end):
+                if i >= len(metrics):
+                    break
+                curr_x = metrics[i].get("step", i)
+                curr_y = metrics[i].get("loss", metrics[i].get("val_loss", 0))
+                area = (
+                    abs(
+                        (prev_x - next_avg_x) * (curr_y - prev_y)
+                        - (prev_x - curr_x) * (next_avg_y - prev_y)
+                    )
+                    * 0.5
                 )
-                * 0.5
-            )
+                if area > max_area:
+                    max_area = area
+                    max_area_point = i
 
-            if area > max_area:
-                max_area = area
-                max_area_point = i
+            if max_area_point is not None:
+                selected_indices.append(max_area_point)
 
-        if max_area_point is not None:
-            selected_indices.append(max_area_point)
+        selected_indices.append(len(metrics) - 1)  # Last point
+        selected_indices.sort()
+        downsampled = [metrics[i] for i in selected_indices]
 
-    selected_indices.append(len(metrics) - 1)  # Always include last point
-
-    # Sort indices to maintain chronological order, then extract points
-    selected_indices.sort()
-    downsampled = [metrics[i] for i in selected_indices]
-
-    # CRITICAL: Sort by actual step values to ensure monotonic time progression
-    # This prevents Chart.js from drawing backwards/zigzag lines
-    downsampled.sort(key=lambda m: m.get("step", 0))
-
-    # CRITICAL: Deduplicate by step - keep only the last occurrence of each step
-    # This prevents vertical lines when multiple points share the same step value
-    seen_steps = {}
-    for metric in downsampled:
-        step = metric.get("step", 0)
-        seen_steps[step] = metric  # Overwrites earlier occurrences
-
-    # Return deduplicated list, sorted by step
-    deduplicated = list(seen_steps.values())
-    deduplicated.sort(key=lambda m: m.get("step", 0))
-
-    return deduplicated
+    # Merge val rows back and dedupe by step. Dedupe also protects against
+    # Chart.js drawing zigzag lines when two points share a step.
+    by_step = {m.get("step", 0): m for m in downsampled}
+    for m in val_rows:
+        by_step[m.get("step", 0)] = m  # val rows win ties
+    return sorted(by_step.values(), key=lambda m: m.get("step", 0))
 
 
 def _transform_metrics(raw_metrics: List[Dict[str, Any]]) -> Dict[str, List[Any]]:
