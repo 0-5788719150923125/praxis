@@ -38,8 +38,9 @@ def format_personachat(
     num_utterances = random.randint(1, len(utterances))
     selected_utterance = utterances[num_utterances - 1]  # Get the selected utterance
 
-    # Build personality description for developer message as a shuffled
-    # paragraph; bulleted lists biased the model toward list-shaped outputs.
+    # When personality traits are available, use them (shuffled into a
+    # paragraph) as the developer message directly. Lists biased the model
+    # toward list-shaped outputs, and a sampled keyword prefix added noise.
     developer_message = ""
     if personality:
         if random.random() < 0.5:
@@ -64,12 +65,10 @@ def format_personachat(
             sentences.append(cleaned)
 
         if sentences:
-            developer_message = (
-                "You have the following personality traits: " + " ".join(sentences)
-            )
+            developer_message = " ".join(sentences)
 
     if not developer_message:
-        # Fallback if no personality provided or all traits were empty
+        # Fallback when persona is missing or all traits were empty.
         developer_message = sample_developer_prompt("persona_chat")
 
     # Build messages list
