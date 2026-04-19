@@ -153,12 +153,6 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         if config.tie_word_embeddings and self.head is not None:
             self.tie_weights()
 
-        # Give the halting strategy a reference to the LM head for
-        # computing output distributions.  We bypass nn.Module.__setattr__
-        # so the head is NOT registered as a submodule of the decoder
-        # (it already lives on this model).
-        if self.head is not None:
-            object.__setattr__(self.decoder, "_halting_head", self.head)
 
     def compute_loss(
         self,

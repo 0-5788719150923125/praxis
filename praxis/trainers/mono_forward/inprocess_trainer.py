@@ -310,7 +310,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
             # halting at inference). The base "none" halting always returns
             # ``config.depth`` so MF behavior is unchanged when
             # ``halting_type`` is not set.
-            self._halting_strategy = getattr(model.decoder, "halting_strategy", None)
+            self._halting_strategy = getattr(model.decoder, "halting", None)
             if self._halting_strategy is not None:
                 self._log(
                     f"[MF] Halting strategy in use: "
@@ -1037,24 +1037,16 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                         activations = embeds(prefix)
 
                 # KL-style halting at inference: ``seed`` captures the
-                # baseline distribution from the pre-loop activations,
-                # ``check`` is consulted after each layer hop and may
-                # short-circuit the chain when the per-loop KL drop falls
-                # below threshold. The "head" used for output distribution
-                # is the last worker's projection M_i - any consistent
-                # vocab projection works since check() is just measuring
-                # distribution stability across consecutive loop boundaries.
+                # baseline hidden state, ``check`` is consulted after
+                # each layer hop and may short-circuit the chain when
+                # latent convergence is detected.
                 halting_strategy = getattr(self, "_halting_strategy", None)
                 if halting_strategy is not None:
                     halting_strategy.eval()
+                    with torch.no_grad():
+                        halting_strategy.seed(activations)
 
                 route = self._route_table
-                last_worker = workers[route[-1]]
-                kl_head = last_worker.projection
-                if halting_strategy is not None:
-                    with torch.no_grad():
-                        halting_strategy.seed(activations, kl_head)
-
                 hidden = activations
                 visited_route: List[int] = []
                 for step_idx in range(len(route)):
@@ -1062,7 +1054,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                     hidden, _kv = worker.infer_batch(hidden, step_idx, block_ids, None)
                     visited_route.append(route[step_idx])
                     if halting_strategy is not None and halting_strategy.check(
-                        hidden, step_idx, kl_head
+                        hidden, step_idx
                     ):
                         break
 

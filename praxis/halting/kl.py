@@ -2,7 +2,6 @@ import math
 from typing import Any, Dict, Optional, TypeVar
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
@@ -19,10 +18,12 @@ class KLDivergenceHalting(BaseHalting):
     to front-load useful computation, since it never knows how many loops
     it will receive.
 
-    Inference: runs full depth but monitors KL-divergence between output
-    distributions at successive loop boundaries. When the divergence
-    drops below a threshold, the model has converged and remaining loops
-    are skipped.
+    Inference: runs up to full depth but monitors KL-divergence between
+    hidden states at successive loop boundaries. When the divergence
+    drops below a threshold, the latent representation has converged and
+    remaining loops are skipped. KL is computed directly on the hidden
+    states (softmax over the hidden dim) - no LM head required, so this
+    works uniformly for head-based and encoder-based models.
 
     Reference: Geiping et al., "Scaling up Test-Time Compute with Latent
     Reasoning: A Recurrent Depth Approach" (arXiv 2502.05171)
@@ -39,15 +40,11 @@ class KLDivergenceHalting(BaseHalting):
         self.threshold = threshold
         self.sigma = sigma
         self.max_loops = self.depth // self.num_layers
-        # Poisson rate target. The sampler returns Poisson(e^tau) + 1, so
-        # the mean of an uncensored draw is r_bar + 1. Default picks the
-        # middle of [1, max_loops] to keep both tails off the clamps.
         self.r_bar = (
             float(r_bar) if r_bar is not None else max(1.0, (self.max_loops - 1) / 2)
         )
         self._prev_log_probs: Optional[Tensor] = None
 
-        # Running stats for dashboards.
         self._train_calls = 0
         self._train_loops_sum = 0
         self._last_train_loops: Optional[int] = None
@@ -55,9 +52,6 @@ class KLDivergenceHalting(BaseHalting):
         self._eval_halts = 0
         self._eval_kl_sum = 0.0
 
-        # Per-r histograms of loops used. Training = sampled distribution;
-        # eval = the r at which halting actually fired (or max_loops when
-        # the pass ran to full depth). Buckets are 1-indexed.
         self._train_hist: Dict[int, int] = {i: 0 for i in range(1, self.max_loops + 1)}
         self._eval_hist: Dict[int, int] = {i: 0 for i in range(1, self.max_loops + 1)}
         self._inflight_halt_r: Optional[int] = None
@@ -66,14 +60,16 @@ class KLDivergenceHalting(BaseHalting):
         """Sample from log-normal Poisson distribution (paper eqs. 1-2).
 
         tau ~ N(log(r_bar) - 0.5 * sigma^2, sigma)
-        r ~ Poisson(e^tau) + 1, clamped to [1, max_loops]
+        r ~ Poisson(e^tau) + 1, truncated to [1, max_loops] via
+        rejection (clamping would pile tail mass onto max_loops).
         """
-        tau = torch.distributions.Normal(
-            math.log(self.r_bar) - 0.5 * self.sigma**2,
-            self.sigma,
-        ).sample()
-        r = torch.distributions.Poisson(tau.exp()).sample().int().item() + 1
-        return max(1, min(r, self.max_loops))
+        mu = math.log(self.r_bar) - 0.5 * self.sigma**2
+        for _ in range(32):
+            tau = torch.distributions.Normal(mu, self.sigma).sample()
+            r = torch.distributions.Poisson(tau.exp()).sample().int().item() + 1
+            if r <= self.max_loops:
+                return r
+        return self.max_loops
 
     def get_depth(self) -> int:
         self._prev_log_probs = None
@@ -88,18 +84,12 @@ class KLDivergenceHalting(BaseHalting):
         return self.depth
 
     @torch.no_grad()
-    def seed(
-        self,
-        hidden_states: Tensor,
-        head: Optional[nn.Module] = None,
-    ) -> None:
-        if self.training or head is None:
+    def seed(self, hidden_states: Tensor) -> None:
+        if self.training:
             return
-        logits = head(hidden_states)
-        self._prev_log_probs = F.log_softmax(logits, dim=-1)
+        self._prev_log_probs = F.log_softmax(hidden_states, dim=-1)
 
     def _is_loop_boundary(self, current_depth: int) -> bool:
-        """True after completing a full pass through all blocks."""
         return (current_depth + 1) % self.num_layers == 0
 
     def _record_eval_r(self, r: int) -> None:
@@ -109,34 +99,23 @@ class KLDivergenceHalting(BaseHalting):
         self._eval_hist[r] = self._eval_hist.get(r, 0) + 1
 
     @torch.no_grad()
-    def check(
-        self,
-        hidden_states: Tensor,
-        current_depth: int,
-        head: Optional[nn.Module] = None,
-    ) -> bool:
+    def check(self, hidden_states: Tensor, current_depth: int) -> bool:
         if self.training:
             return False
 
         if not self._is_loop_boundary(current_depth):
             return False
 
-        if head is None:
-            return False
-
         loop_r = (current_depth + 1) // self.num_layers
 
-        logits = head(hidden_states)
-        current_log_probs = F.log_softmax(logits, dim=-1)
-
-        # First boundary without a baseline - store and continue
-        if self._prev_log_probs is None:
-            self._prev_log_probs = current_log_probs
-            return False
-
-        # Last step - no point halting, but record that this pass went full depth
         if current_depth >= self.depth - 1:
             self._record_eval_r(self.max_loops)
+            return False
+
+        current_log_probs = F.log_softmax(hidden_states, dim=-1)
+
+        if self._prev_log_probs is None:
+            self._prev_log_probs = current_log_probs
             return False
 
         kl = F.kl_div(

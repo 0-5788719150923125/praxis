@@ -199,11 +199,9 @@ class BaseDecoder(nn.Module):
         if self.genome:
             extras = {**extras, **self.genome.get_metrics()}
 
-        # Halting strategy stats (e.g. KL: mean sampled loops during training,
-        # halt rate at inference). Lets the dashboard confirm random-depth
-        # sampling is actually firing.
-        if hasattr(self, "halting_strategy") and hasattr(self.halting, "get_metrics"):
-            extras.update(self.halting.get_metrics())
+        halting = getattr(self, "halting", None)
+        if halting is not None and hasattr(halting, "get_metrics"):
+            extras.update(halting.get_metrics())
 
         # Collect metrics from routers (expert convergence tracking)
         # Routers accumulate per-layer metrics internally using current_depth
