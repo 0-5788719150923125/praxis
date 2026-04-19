@@ -812,7 +812,7 @@ async function loadActivationCurves() {
                 : uniqueTypes.length > 1
                     ? `${uniqueTypes.length} types: ${uniqueTypes.join(', ')}`
                     : '';
-            const suffix = 'line = mean across features; shaded band = 10-90 percentile spread.';
+            const suffix = 'line = representative feature (median of primary param); shaded band = 10-90 percentile across all features.';
             subtitle.textContent = typeStr
                 ? `${typeStr} - ${suffix}`
                 : `Per-module curves using live parameters. ${suffix}`;

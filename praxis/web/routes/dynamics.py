@@ -731,8 +731,9 @@ def _sample_activation(
         g_d = grad.detach()
 
         if x.dim() == 2 and param_dim > 1:
-            forward = y_d.mean(dim=-1).cpu().tolist()
-            backward = g_d.mean(dim=-1).cpu().tolist()
+            k = _representative_feature_index(module, param_dim)
+            forward = y_d[:, k].cpu().tolist()
+            backward = g_d[:, k].cpu().tolist()
             q = torch.tensor([0.1, 0.9], device=y_d.device, dtype=y_d.dtype)
             fwd_lo, fwd_hi = torch.quantile(y_d, q, dim=-1)
             bwd_lo, bwd_hi = torch.quantile(g_d, q, dim=-1)
@@ -744,8 +745,8 @@ def _sample_activation(
             }
             xs = x.detach()[:, 0].cpu().tolist()
         elif x.dim() == 2:
-            forward = y_d.mean(dim=-1).cpu().tolist()
-            backward = g_d.mean(dim=-1).cpu().tolist()
+            forward = y_d[:, 0].cpu().tolist()
+            backward = g_d[:, 0].cpu().tolist()
             band = {}
             xs = x.detach()[:, 0].cpu().tolist()
         else:
@@ -758,3 +759,22 @@ def _sample_activation(
 
     except Exception:
         return None
+
+
+def _representative_feature_index(module, param_dim: int) -> int:
+    """Pick a feature index whose primary parameter sits at the median.
+
+    Averaging curves across features collapses periodic structure (phase
+    cancellation). Instead, index into a single "typical" feature so the
+    plotted curve preserves the actual shape.
+    """
+    import torch
+
+    for p in module.parameters(recurse=False):
+        if p is None or p.dim() == 0:
+            continue
+        if p.numel() != param_dim:
+            continue
+        sorted_idx = torch.argsort(p.detach().flatten())
+        return int(sorted_idx[param_dim // 2].item())
+    return 0
