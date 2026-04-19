@@ -139,7 +139,7 @@ function renderEmptyState(container, message) {
         <div style="margin-top: 2rem;">
             <div class="chart-card">
                 <div class="chart-title">Activation Forward</div>
-                <div class="chart-subtitle" id="activation-forward-subtitle">Forward curve per activation module (mean across features, using live parameters)</div>
+                <div class="chart-subtitle" id="activation-forward-subtitle">Forward curve per activation module. Line = mean across features; shaded band = 10-90 percentile spread.</div>
                 <div class="chart-wrapper" style="height: 400px;">
                     <canvas id="dynamics-activation-forward"></canvas>
                 </div>
@@ -348,7 +348,7 @@ function renderDynamicsCharts(runData, container) {
         <div style="margin-top: 2rem;">
             <div class="chart-card">
                 <div class="chart-title">Activation Forward</div>
-                <div class="chart-subtitle" id="activation-forward-subtitle">Forward curve per activation module (mean across features, using live parameters)</div>
+                <div class="chart-subtitle" id="activation-forward-subtitle">Forward curve per activation module. Line = mean across features; shaded band = 10-90 percentile spread.</div>
                 <div class="chart-wrapper" style="height: 400px;">
                     <canvas id="dynamics-activation-forward"></canvas>
                 </div>
@@ -358,7 +358,7 @@ function renderDynamicsCharts(runData, container) {
         <div style="margin-top: 2rem;">
             <div class="chart-card">
                 <div class="chart-title">Activation Derivative</div>
-                <div class="chart-subtitle">dy/dx per activation module via autograd (mean across features)</div>
+                <div class="chart-subtitle">dy/dx per activation module via autograd. Line = mean across features; shaded band = 10-90 percentile spread.</div>
                 <div class="chart-wrapper" style="height: 400px;">
                     <canvas id="dynamics-activation-backward"></canvas>
                 </div>
@@ -812,9 +812,10 @@ async function loadActivationCurves() {
                 : uniqueTypes.length > 1
                     ? `${uniqueTypes.length} types: ${uniqueTypes.join(', ')}`
                     : '';
+            const suffix = 'line = mean across features; shaded band = 10-90 percentile spread.';
             subtitle.textContent = typeStr
-                ? `${typeStr} - per-module curves using live parameters (mean across features)`
-                : 'Per-module curves using live parameters (mean across features)';
+                ? `${typeStr} - ${suffix}`
+                : `Per-module curves using live parameters. ${suffix}`;
         }
 
         if (curves.length === 0) {
@@ -842,15 +843,48 @@ function renderActivationChart(canvasId, curves, field, yLabel) {
 
     const { textColor, gridColor, tooltipBg } = getThemeColors();
 
-    const datasets = curves.map((curve, idx) => {
+    const datasets = [];
+    const lowKey = `${field}_low`;
+    const highKey = `${field}_high`;
+
+    curves.forEach((curve, idx) => {
         const color = LAYER_COLORS[idx % LAYER_COLORS.length];
-        const data = curve.x.map((x, i) => ({ x, y: curve[field][i] }));
         const label = curve.type ? `${curve.name} (${curve.type})` : curve.name;
-        return makeLineDataset(label, data, color);
+        const meanData = curve.x.map((x, i) => ({ x, y: curve[field][i] }));
+
+        if (Array.isArray(curve[lowKey]) && Array.isArray(curve[highKey])) {
+            const lowData = curve.x.map((x, i) => ({ x, y: curve[lowKey][i] }));
+            const highData = curve.x.map((x, i) => ({ x, y: curve[highKey][i] }));
+            datasets.push({
+                label: `__band_low__${label}`,
+                data: lowData,
+                borderColor: 'transparent',
+                backgroundColor: 'transparent',
+                pointRadius: 0,
+                fill: false,
+                showLine: true
+            });
+            datasets.push({
+                label: `__band_high__${label}`,
+                data: highData,
+                borderColor: 'transparent',
+                backgroundColor: color + '25',
+                pointRadius: 0,
+                fill: '-1',
+                showLine: true
+            });
+        }
+
+        datasets.push(makeLineDataset(label, meanData, color));
     });
 
     const options = baseChartOptions(yLabel, 'linear', textColor, gridColor, tooltipBg);
     options.scales.x.title.text = 'Input';
+    if (!options.plugins.legend.labels) options.plugins.legend.labels = {};
+    options.plugins.legend.labels.filter = (item) => !item.text.startsWith('__band_');
+    if (!options.plugins.tooltip.filter) {
+        options.plugins.tooltip.filter = (tctx) => !tctx.dataset.label.startsWith('__band_');
+    }
 
     dynamicsCharts[canvasId] = new Chart(ctx, {
         type: 'line',

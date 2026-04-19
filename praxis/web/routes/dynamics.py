@@ -677,9 +677,7 @@ def _compute_activation_curves(
                 {
                     "name": _short_module_path(name),
                     "type": type_name,
-                    "x": sample["x"],
-                    "forward": sample["forward"],
-                    "backward": sample["backward"],
+                    **sample,
                 }
             )
     finally:
@@ -731,16 +729,34 @@ def _sample_activation(
                 return None
             grad = torch.autograd.grad(y.sum(), x, create_graph=False)[0]
 
-        if x.dim() == 2:
-            forward = y.detach().mean(dim=-1).cpu().tolist()
-            backward = grad.detach().mean(dim=-1).cpu().tolist()
+        y_d = y.detach()
+        g_d = grad.detach()
+
+        if x.dim() == 2 and param_dim > 1:
+            forward = y_d.mean(dim=-1).cpu().tolist()
+            backward = g_d.mean(dim=-1).cpu().tolist()
+            q = torch.tensor([0.1, 0.9], device=y_d.device, dtype=y_d.dtype)
+            fwd_lo, fwd_hi = torch.quantile(y_d, q, dim=-1)
+            bwd_lo, bwd_hi = torch.quantile(g_d, q, dim=-1)
+            band = {
+                "forward_low": fwd_lo.cpu().tolist(),
+                "forward_high": fwd_hi.cpu().tolist(),
+                "backward_low": bwd_lo.cpu().tolist(),
+                "backward_high": bwd_hi.cpu().tolist(),
+            }
+            xs = x.detach()[:, 0].cpu().tolist()
+        elif x.dim() == 2:
+            forward = y_d.mean(dim=-1).cpu().tolist()
+            backward = g_d.mean(dim=-1).cpu().tolist()
+            band = {}
             xs = x.detach()[:, 0].cpu().tolist()
         else:
-            forward = y.detach().cpu().tolist()
-            backward = grad.detach().cpu().tolist()
+            forward = y_d.cpu().tolist()
+            backward = g_d.cpu().tolist()
+            band = {}
             xs = x.detach().cpu().tolist()
 
-        return {"x": xs, "forward": forward, "backward": backward}
+        return {"x": xs, "forward": forward, "backward": backward, **band}
 
     except Exception:
         return None

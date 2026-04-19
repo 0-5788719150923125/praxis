@@ -118,4 +118,5 @@ WD_BAN_LIST = [
     "PReLU",
     "SinLU",
     "NMDA",
+    "SnakeBeta",
 ]
