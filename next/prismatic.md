@@ -140,7 +140,7 @@ config = PraxisConfig(
 - `routing/variance`: Routing stability
 - `routing/balance`: Distance from uniform (1.0 = perfect)
 
-### Gradient Dynamics (Dynamics Tab)
+### Learning Dynamics (Dynamics Tab)
 
 - `expert_0_grad_norm`: ALiBi gradient norm
 - `expert_0_grad_var`: ALiBi gradient variance

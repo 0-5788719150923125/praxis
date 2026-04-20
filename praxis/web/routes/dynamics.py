@@ -1,4 +1,4 @@
-"""Gradient dynamics API routes for Expert learning visualization."""
+"""Learning dynamics API routes for Expert learning visualization."""
 
 import math
 import re
@@ -13,7 +13,7 @@ dynamics_bp = Blueprint("dynamics", __name__)
 
 @dynamics_bp.route("/api/dynamics", methods=["GET", "OPTIONS"])
 def get_dynamics():
-    """Get gradient dynamics data for expert learning visualization.
+    """Get learning dynamics data for expert learning visualization.
 
     Query Parameters:
         since: Only return dynamics after this step (default: 0)
@@ -77,7 +77,7 @@ def get_dynamics():
             response = jsonify(
                 {
                     "status": "no_data",
-                    "message": "Gradient dynamics not logged. Enable by calling router.log_gradient_dynamics() during training.",
+                    "message": "Learning dynamics not logged. Enable by calling router.log_gradient_dynamics() during training.",
                     "runs": [],
                 }
             )
