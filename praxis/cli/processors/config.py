@@ -99,6 +99,22 @@ class ConfigBuilder:
                 ):
                     config_kwargs[config_param] = getattr(tokenizer, tokenizer_attr)
 
+            # The tokenizer is the source of truth for vocab_size. The
+            # CLI flag is a hint for tokenizer selection/training; once a
+            # concrete tokenizer is in hand, its vocab determines the
+            # embedding layout. Write back to args as well so every
+            # ``vars(args)`` consumer (Identity tab, config.json, etc.)
+            # reports the size the model actually uses.
+            tok_vocab = getattr(tokenizer, "vocab_size", None)
+            if (
+                isinstance(tok_vocab, int)
+                and tok_vocab > 0
+                and "vocab_size" in valid_config_params
+            ):
+                config_kwargs["vocab_size"] = tok_vocab
+                if args is not None:
+                    setattr(args, "vocab_size", tok_vocab)
+
         # Handle optimizer configuration
         if hasattr(args, "optimizer") and args.optimizer:
             from praxis.optimizers import get_optimizer_profile

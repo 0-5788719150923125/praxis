@@ -452,10 +452,14 @@ class BackpropagationTrainer(LightningModule):
         if self.byte_latent:
             stats["val_bits_per_byte"] = self._compute_bits_per_byte(input_ids, loss)
         else:
-            # Detach logits to prevent memory accumulation from computation graph
-            stats["val_perplexity"] = perplexity(
-                outputs.logits[..., :-1, :].detach(), labels
+            # Detach logits to prevent memory accumulation from computation graph.
+            # For aligned encoders (CALM) labels stay full-length, so don't chop.
+            val_logits = (
+                outputs.logits.detach()
+                if self.outputs_are_aligned
+                else outputs.logits[..., :-1, :].detach()
             )
+            stats["val_perplexity"] = perplexity(val_logits, labels)
 
         self.log_dict(
             stats,

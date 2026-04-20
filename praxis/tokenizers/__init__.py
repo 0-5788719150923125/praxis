@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional, Type, Union
 from transformers import AutoTokenizer, PreTrainedTokenizer
 
 from .base import PraxisTokenizerBase
+from .char_level import CharLevelTokenizer
 from .standard import StandardTokenizer
 
 # Check if ByteLevelTokenizer is available
@@ -43,28 +44,31 @@ def _needs_byte_level_tokenizer(encoder_type: str) -> bool:
 def create_tokenizer(
     vocab_size: int = 32768,
     encoder_type: Optional[str] = None,
+    tokenizer_type: Optional[str] = None,
     cache_dir: Optional[str] = None,
     **kwargs,
 ) -> PreTrainedTokenizer:
     """
     Create a tokenizer instance based on vocab_size.
 
-    Simple logic:
-    1. If encoder_type is "byte_latent", use ByteLevelTokenizer
-    2. Try to load existing tokenizer for vocab_size
-    3. Create new StandardTokenizer if needed
-
-    Args:
-        vocab_size: Vocabulary size for tokenizer
-        encoder_type: Encoder type (if "byte_latent", uses ByteLevel tokenizer)
-        cache_dir: Cache directory for downloading tokenizers
-        **kwargs: Additional arguments passed to tokenizer constructor
-
-    Returns:
-        Tokenizer instance
+    Dispatch order:
+    1. Explicit ``tokenizer_type`` ("char", "byte") overrides everything.
+    2. byte_latent encoders force ByteLevelTokenizer.
+    3. Try to load an existing trained tokenizer for ``vocab_size``.
+    4. Fall back to a fresh StandardTokenizer.
     """
-    # 1. Special case: byte-level encoders use ByteLevelTokenizer
-    #    This includes byte_latent variants and any subclass (e.g. abstractinator)
+    if tokenizer_type == "char":
+        return CharLevelTokenizer(**kwargs)
+
+    if tokenizer_type == "byte":
+        if HAS_BYTE_LEVEL:
+            return ByteLevelTokenizer(**kwargs)
+        raise ImportError(
+            "ByteLevelTokenizer requires bytelatent package. "
+            "Please install it with: pip install bytelatent"
+        )
+
+    # byte_latent variants and any subclass (e.g. abstractinator) need bytes
     if encoder_type and _needs_byte_level_tokenizer(encoder_type):
         if HAS_BYTE_LEVEL:
             return ByteLevelTokenizer(**kwargs)
@@ -171,6 +175,7 @@ __all__ = [
     # Base classes
     "PraxisTokenizerBase",
     "ByteLevelTokenizer",
+    "CharLevelTokenizer",
     "StandardTokenizer",
     # Factory functions
     "create_tokenizer",

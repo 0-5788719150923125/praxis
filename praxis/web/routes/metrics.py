@@ -253,13 +253,14 @@ def _read_metrics_file(
                 sample_interval = max(1, total_count // max_rows)
                 cursor.execute(
                     """SELECT step, ts, loss, val_loss, learning_rate, num_tokens,
-                              avg_step_time, softmax_collapse, val_perplexity, batch,
-                              local_layers, remote_layers, extra_metrics
+                              avg_step_time, softmax_collapse, val_perplexity, val_brierlm,
+                              batch, local_layers, remote_layers, extra_metrics
                        FROM metrics
                        WHERE step >= ?
                          AND ((rowid % ?) = 0
                               OR val_loss IS NOT NULL
                               OR val_perplexity IS NOT NULL
+                              OR val_brierlm IS NOT NULL
                               OR step = (SELECT MAX(step) FROM metrics WHERE step >= ?))
                        ORDER BY step""",
                     (since_step, sample_interval, since_step),
@@ -267,8 +268,8 @@ def _read_metrics_file(
             else:
                 cursor.execute(
                     """SELECT step, ts, loss, val_loss, learning_rate, num_tokens,
-                              avg_step_time, softmax_collapse, val_perplexity, batch,
-                              local_layers, remote_layers, extra_metrics
+                              avg_step_time, softmax_collapse, val_perplexity, val_brierlm,
+                              batch, local_layers, remote_layers, extra_metrics
                        FROM metrics
                        WHERE step >= ?
                        ORDER BY step""",
@@ -277,8 +278,8 @@ def _read_metrics_file(
         else:
             cursor.execute(
                 """SELECT step, ts, loss, val_loss, learning_rate, num_tokens,
-                          avg_step_time, softmax_collapse, val_perplexity, batch,
-                          local_layers, remote_layers, extra_metrics
+                          avg_step_time, softmax_collapse, val_perplexity, val_brierlm,
+                          batch, local_layers, remote_layers, extra_metrics
                    FROM metrics
                    WHERE step >= ?
                    ORDER BY step""",
@@ -302,6 +303,7 @@ def _read_metrics_file(
                 "avg_step_time",
                 "softmax_collapse",
                 "val_perplexity",
+                "val_brierlm",
                 "batch",
                 "local_layers",
                 "remote_layers",

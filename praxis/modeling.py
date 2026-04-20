@@ -353,6 +353,14 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             )
             hidden_states = decoder_embeds
             classifier = self.encoder.classifier
+
+            # Encoders that manage their own losses (e.g. CALM) may emit
+            # side-channel losses during decode(); fold them into the
+            # shared loss container so the strategy can combine them.
+            consume = getattr(self.encoder, "consume_pending_losses", None)
+            if callable(consume):
+                for key, value in consume().items():
+                    outputs.losses.add_loss(key, value)
         elif hidden_states.size(-1) != self.config.vocab_size:
             """Needs projection/classification:"""
 
@@ -420,6 +428,10 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 ]
                 if layer_losses:
                     loss = self.strategy(layer_losses)
+            elif self.encoder and getattr(self.encoder, "handles_loss", False):
+                # Encoder owns its loss bookkeeping (see CALMEncoder).
+                # Registered losses will be combined by the strategy below.
+                pass
             elif self.config.bidirectional:
                 main_loss = self._compute_bidirectional_loss(
                     logits=logits,
@@ -472,7 +484,15 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         )
 
     def generate(self, inputs=None, generation_config=None, **kwargs):
-        """Generate tokens, using MTP speculative decoding when available."""
+        """Generate tokens, dispatching to specialised paths when applicable."""
+        from praxis.encoders.calm import CALMEncoder
+
+        if (
+            self.encoder
+            and isinstance(self.encoder, CALMEncoder)
+            and not self.training
+        ):
+            return self._calm_generate(inputs, generation_config, **kwargs)
         if (
             self.mtp is not None
             and not self.encoder
@@ -482,6 +502,82 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         ):
             return self._speculative_generate(inputs, generation_config, **kwargs)
         return super().generate(inputs, generation_config=generation_config, **kwargs)
+
+    @torch.no_grad()
+    def _calm_generate(self, input_ids, generation_config=None, **kwargs):
+        """CALM generation path: latent LM -> energy head -> VAE decode.
+
+        Each iteration:
+          1. Run the global transformer over the latent prefix.
+          2. Sample a new latent from the energy head conditioned on the
+             last hidden state (with LF-temperature if T != 1).
+          3. Decode that latent through the VAE to K tokens.
+          4. Append the K tokens and loop.
+
+        Stopping: EOS in any generated token, or ``max_new_tokens``.
+        """
+        from types import SimpleNamespace
+
+        from praxis.generation.lf_temperature import (
+            lf_temperature_sample_batched,
+        )
+
+        if input_ids is None:
+            raise ValueError("CALM generate requires an input_ids prompt")
+
+        max_new_tokens = getattr(generation_config, "max_new_tokens", 100) or 100
+        temperature = getattr(generation_config, "temperature", 1.0) or 1.0
+        eos_token_id = getattr(generation_config, "eos_token_id", None)
+        return_dict = kwargs.get("return_dict_in_generate", False)
+
+        eos_set = set()
+        if isinstance(eos_token_id, int):
+            eos_set = {eos_token_id}
+        elif isinstance(eos_token_id, (list, tuple)):
+            eos_set = set(eos_token_id)
+
+        encoder = self.encoder
+        K = encoder.K
+
+        generated = input_ids
+        num_new = 0
+        done = False
+
+        while num_new < max_new_tokens and not done:
+            base_out = PraxisModel.forward(self, input_ids=generated)
+            h_last = base_out.last_hidden_state[:, -1, :]  # [B, hidden]
+
+            def sampler(n: int, _h=h_last) -> torch.Tensor:
+                # Draw n latents from the energy head for batch-index 0;
+                # generation is single-stream for now.
+                return encoder.energy_head.sample(_h[0], num_samples=n)
+
+            z_new = lf_temperature_sample_batched(
+                sampler, temperature=float(temperature), num_candidates=64
+            )  # [latent_dim]
+            z_new = z_new.view(1, 1, -1)
+
+            recon_logits, _ = encoder.vae.decode(z_new)  # [1, K, V]
+            # Greedy token choice per position inside the patch; the
+            # stochasticity lives in the latent draw, not the tokens.
+            new_tokens = recon_logits.argmax(dim=-1).view(1, K)
+
+            # Expand batch dim if the prompt had batch > 1 (rare for CLI).
+            if generated.size(0) > 1:
+                new_tokens = new_tokens.expand(generated.size(0), -1)
+
+            generated = torch.cat([generated, new_tokens], dim=1)
+            num_new += K
+
+            if eos_set:
+                for t in new_tokens.view(-1).tolist():
+                    if t in eos_set:
+                        done = True
+                        break
+
+        if return_dict:
+            return SimpleNamespace(sequences=generated)
+        return generated
 
     @torch.no_grad()
     def _speculative_generate(self, input_ids, generation_config, **kwargs):

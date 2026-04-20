@@ -391,6 +391,7 @@ export const CONSTANTS = {
         { key: 'loss', canvasId: 'chart-train-loss', title: 'Training Loss', label: 'Training Loss', type: 'line' },
         { key: 'val_loss', canvasId: 'chart-val-loss', title: 'Validation Loss', label: 'Validation Loss', type: 'line' },
         { key: 'val_perplexity', canvasId: 'chart-perplexity', title: 'Perplexity', label: 'Perplexity', type: 'line' },
+        { key: 'val_brierlm', canvasId: 'chart-brierlm', title: 'BrierLM', label: 'BrierLM', type: 'line' },
         { key: 'learning_rate', canvasId: 'chart-lr', title: 'Learning Rate', label: 'Learning Rate', type: 'line' },
         { key: 'num_tokens', canvasId: 'chart-tokens', title: 'Tokens (Billions)', label: 'Tokens (B)', type: 'bar' },
         { key: 'avg_step_time', canvasId: 'chart-avg-step-time', title: 'Average Step Time', label: 'Avg Step Time (s)', type: 'line' },

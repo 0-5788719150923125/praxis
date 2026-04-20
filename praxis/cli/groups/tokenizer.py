@@ -12,6 +12,14 @@ class TokenizerGroup:
         group = parser.add_argument_group(cls.name)
 
         group.add_argument(
+            "--tokenizer-type",
+            type=str,
+            choices=["char", "byte"],
+            default=None,
+            help="Force a specific tokenizer implementation (char=lazy Unicode BMP, byte=256-byte). Overrides vocab-size-based selection.",
+        )
+
+        group.add_argument(
             "--train-tokenizer",
             action="store_true",
             default=False,

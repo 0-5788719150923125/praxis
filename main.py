@@ -37,6 +37,7 @@ from praxis import PraxisConfig, PraxisForCausalLM, PraxisModel
 # APIServer is imported locally where needed to avoid starting Flask/SocketIO at import time
 from praxis.callbacks import (
     AccumulationSchedule,
+    BrierLMCallback,
     DynamicsLoggerCallback,
     MetricsLoggerCallback,
     PeriodicEvaluation,
@@ -449,11 +450,16 @@ def main():
     tokenizer = create_tokenizer(
         vocab_size=vocab_size,
         encoder_type=encoder_type,
+        tokenizer_type=processed_args.get("tokenizer_type"),
         cache_dir=cache_dir,
     )
 
-    # Create Transformers config from CLI args
+    # Create Transformers config from CLI args. The tokenizer owns
+    # vocab_size, so create_praxis_config reconciles args with the
+    # tokenizer's actual size.
     config = create_praxis_config(args, tokenizer)
+    vocab_size = config.vocab_size
+    processed_args["vocab_size"] = vocab_size
 
     # Add optimizer configuration
     optimizer_config, disable_schedule_from_optimizer = get_optimizer_profile(
@@ -717,6 +723,12 @@ def main():
             debug=debug,
         )
     )
+
+    # BrierLM (sample-based proper scoring rule) at validation time.
+    # Cheap on small val batches; safe for both CALM and discrete LMs.
+    # Must be registered BEFORE MetricsLoggerCallback so val_brierlm is in
+    # callback_metrics by the time MetricsLogger drains them.
+    train_params["callbacks"].append(BrierLMCallback(tokenizer=tokenizer))
 
     # Add metrics logger callback for web visualization
     train_params["callbacks"].append(MetricsLoggerCallback(run_dir=cache_dir))

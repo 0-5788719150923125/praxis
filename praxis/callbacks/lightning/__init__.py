@@ -4,6 +4,7 @@ These callbacks are designed to work with PyTorch Lightning training framework.
 """
 
 from praxis.callbacks.lightning.accumulation import AccumulationSchedule
+from praxis.callbacks.lightning.brier_lm import BrierLMCallback
 from praxis.callbacks.lightning.dynamics import DynamicsLoggerCallback
 from praxis.callbacks.lightning.evaluation import PeriodicEvaluation
 from praxis.callbacks.lightning.metrics import MetricsLoggerCallback
@@ -16,6 +17,7 @@ LIGHTNING_CALLBACK_REGISTRY = {
     "accumulation_schedule": AccumulationSchedule,
     "metrics_logger": MetricsLoggerCallback,
     "dynamics_logger": DynamicsLoggerCallback,
+    "brier_lm": BrierLMCallback,
 }
 
 __all__ = [
@@ -24,5 +26,6 @@ __all__ = [
     "AccumulationSchedule",
     "MetricsLoggerCallback",
     "DynamicsLoggerCallback",
+    "BrierLMCallback",
     "LIGHTNING_CALLBACK_REGISTRY",
 ]

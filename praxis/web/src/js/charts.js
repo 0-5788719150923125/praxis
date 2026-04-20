@@ -624,7 +624,7 @@ function createRunComparisonChart(canvasId, label, runs, metricKey) {
           .sort((a, b) => a.x - b.x);
 
         // For validation metrics, remove consecutive duplicate values
-        if (metricKey === 'val_loss' || metricKey === 'val_perplexity') {
+        if (metricKey === 'val_loss' || metricKey === 'val_perplexity' || metricKey === 'val_brierlm') {
             data = data.filter((point, i) => {
                 if (i === 0) return true;
                 return point.y !== data[i - 1].y;

@@ -39,6 +39,7 @@ class MetricsLogger:
         "avg_step_time",
         "softmax_collapse",
         "val_perplexity",
+        "val_brierlm",
         "batch",
         "local_layers",
         "remote_layers",
@@ -55,6 +56,7 @@ class MetricsLogger:
         avg_step_time REAL,
         softmax_collapse REAL,
         val_perplexity REAL,
+        val_brierlm REAL,
         batch REAL,
         local_layers REAL,
         remote_layers REAL,
@@ -92,6 +94,24 @@ class MetricsLogger:
         # Create schema
         self.conn.executescript(self.SCHEMA)
         self.conn.commit()
+
+        # Forward-compat: make sure any metric added after the table was
+        # first created gets back-filled as a REAL column on an existing DB.
+        self._ensure_columns_exist(self.KNOWN_METRICS)
+
+    def _ensure_columns_exist(self, column_names):
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("PRAGMA table_info(metrics)")
+            existing = {row[1] for row in cursor.fetchall()}
+            for col in column_names:
+                if col not in existing:
+                    self.conn.execute(
+                        f"ALTER TABLE metrics ADD COLUMN {col} REAL"
+                    )
+            self.conn.commit()
+        except Exception as e:
+            print(f"[MetricsLogger] Warning: Error ensuring columns exist: {e}")
 
     def log(self, step: int, **metrics: Any) -> None:
         """Log metrics for a training step.
