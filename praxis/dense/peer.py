@@ -7,11 +7,12 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from praxis.activations import ACT2FN
+from praxis.dense.base import BaseDense
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
-class ParameterEfficientExpertRetrieval(nn.Module):
+class ParameterEfficientExpertRetrieval(BaseDense):
     """
     This class implements the Parameter-Efficient Expert Retrieval (PEER) mechanism:
     https://arxiv.org/abs/2407.04153v1

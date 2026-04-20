@@ -7,11 +7,12 @@ import torch.nn as nn
 from torch import Tensor
 
 from praxis.activations import ACT2CLS, ACT2FN
+from praxis.dense.base import BaseDense
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
-class PolynomialExpansionMLP(nn.Module):
+class PolynomialExpansionMLP(BaseDense):
     """
     A novel dense layer based on explicit polynomial feature expansions.
     Learns combinations of features up to a specified degree while maintaining

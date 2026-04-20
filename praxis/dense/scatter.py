@@ -7,11 +7,12 @@ import torch.nn as nn
 from torch import Tensor
 
 from praxis.activations import ACT2CLS, ACT2FN
+from praxis.dense.base import BaseDense
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
-class ScatterMLP(nn.Module):
+class ScatterMLP(BaseDense):
     """
     A scatter-based neural network layer that dynamically modifies weights
     during the forward pass based on input features.

@@ -8,11 +8,12 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from praxis.activations import ACT2FN
+from praxis.dense.base import BaseDense
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
-class KolmogorovArnoldNetwork(nn.Module):
+class KolmogorovArnoldNetwork(BaseDense):
     """
     An implementation of an approximate Kolmogorov-Arnold Network, of which is
     a theoretical alternative to the traditional Multi-Layer Perceptron. We use

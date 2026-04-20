@@ -1,5 +1,5 @@
 /**
- * Praxis Web - Gradient Dynamics Visualization
+ * Praxis Web - Learning Dynamics Visualization
  * Tracks per-layer gradient flow, update ratios, and per-expert dynamics.
  */
 
@@ -59,7 +59,7 @@ export function updateDynamicsChartColors() {
 }
 
 /**
- * Load and render gradient dynamics
+ * Load and render learning dynamics
  */
 export async function loadDynamicsWithCharts(force = false) {
     if (state.dynamics.loaded && !force) {
@@ -69,7 +69,7 @@ export async function loadDynamicsWithCharts(force = false) {
     const container = document.getElementById('dynamics-container');
     if (!container) return;
 
-    container.innerHTML = '<div class="loading-placeholder">Loading gradient dynamics...</div>';
+    container.innerHTML = '<div class="loading-placeholder">Loading learning dynamics...</div>';
 
     try {
         const response = await fetch(`/api/dynamics?since=0&limit=1000`);
@@ -119,7 +119,7 @@ function renderEmptyState(container, message) {
     `;
 
     const headerHTML = createTabHeader({
-        title: 'Gradient Dynamics',
+        title: 'Learning Dynamics',
         buttons: [{
             id: 'refresh-dynamics-btn',
             label: 'Refresh',
@@ -132,8 +132,8 @@ function renderEmptyState(container, message) {
     container.innerHTML = `
         ${headerHTML}
         <div class="empty-state" style="margin-top: 2rem;">
-            <h3>No Gradient Dynamics Yet</h3>
-            <p>${message || 'Start training to see gradient dynamics'}</p>
+            <h3>No Learning Dynamics Yet</h3>
+            <p>${message || 'Start training to see learning dynamics'}</p>
         </div>
 
         <div style="margin-top: 2rem;">
@@ -143,6 +143,7 @@ function renderEmptyState(container, message) {
                 <div class="chart-wrapper" style="height: 400px;">
                     <canvas id="dynamics-activation-forward"></canvas>
                 </div>
+                <div class="chart-legend" id="dynamics-activation-forward-legend"></div>
             </div>
         </div>
 
@@ -153,6 +154,7 @@ function renderEmptyState(container, message) {
                 <div class="chart-wrapper" style="height: 400px;">
                     <canvas id="dynamics-activation-backward"></canvas>
                 </div>
+                <div class="chart-legend" id="dynamics-activation-backward-legend"></div>
             </div>
         </div>
     `;
@@ -261,7 +263,7 @@ function renderDynamicsCharts(runData, container) {
     }
 
     const headerHTML = createTabHeader({
-        title: 'Gradient Dynamics',
+        title: 'Learning Dynamics',
         buttons: [{
             id: 'refresh-dynamics-btn',
             label: 'Refresh',
@@ -288,6 +290,7 @@ function renderDynamicsCharts(runData, container) {
                     <div class="chart-wrapper" style="height: 400px;">
                         <canvas id="dynamics-layer-grad-norms"></canvas>
                     </div>
+                    <div class="chart-legend" id="dynamics-layer-grad-norms-legend"></div>
                 </div>
             </div>
 
@@ -298,6 +301,7 @@ function renderDynamicsCharts(runData, container) {
                     <div class="chart-wrapper" style="height: 400px;">
                         <canvas id="dynamics-layer-update-ratio"></canvas>
                     </div>
+                    <div class="chart-legend" id="dynamics-layer-update-ratio-legend"></div>
                 </div>
             </div>
         `;
@@ -313,6 +317,7 @@ function renderDynamicsCharts(runData, container) {
                     <div class="chart-wrapper" style="height: 400px;">
                         <canvas id="dynamics-grad-norms"></canvas>
                     </div>
+                    <div class="chart-legend" id="dynamics-grad-norms-legend"></div>
                 </div>
             </div>
 
@@ -323,6 +328,7 @@ function renderDynamicsCharts(runData, container) {
                     <div class="chart-wrapper" style="height: 400px;">
                         <canvas id="dynamics-grad-vars"></canvas>
                     </div>
+                    <div class="chart-legend" id="dynamics-grad-vars-legend"></div>
                 </div>
             </div>
         `;
@@ -352,6 +358,7 @@ function renderDynamicsCharts(runData, container) {
                 <div class="chart-wrapper" style="height: 400px;">
                     <canvas id="dynamics-activation-forward"></canvas>
                 </div>
+                <div class="chart-legend" id="dynamics-activation-forward-legend"></div>
             </div>
         </div>
 
@@ -362,6 +369,7 @@ function renderDynamicsCharts(runData, container) {
                 <div class="chart-wrapper" style="height: 400px;">
                     <canvas id="dynamics-activation-backward"></canvas>
                 </div>
+                <div class="chart-legend" id="dynamics-activation-backward-legend"></div>
             </div>
         </div>
     `;
@@ -576,12 +584,19 @@ function renderChart(canvasId, datasets, yLabel, yType) {
     }
 
     const { textColor, gridColor, tooltipBg } = getThemeColors();
+    const options = baseChartOptions(yLabel, yType, textColor, gridColor, tooltipBg);
+    // Defer legend rendering to the scrollable HTML legend so clicks don't
+    // block on a Chart.js redraw and Show/Hide-all is available.
+    options.plugins.legend.display = false;
 
-    dynamicsCharts[canvasId] = new Chart(ctx, {
+    const chart = new Chart(ctx, {
         type: 'line',
         data: { datasets },
-        options: baseChartOptions(yLabel, yType, textColor, gridColor, tooltipBg)
+        options
     });
+    dynamicsCharts[canvasId] = chart;
+
+    renderScrollableLegend(`${canvasId}-legend`, chart);
 }
 
 // ─── Universal charts ───────────────────────────────────────────────────────
@@ -880,31 +895,125 @@ function renderActivationChart(canvasId, curves, field, yLabel) {
 
     const options = baseChartOptions(yLabel, 'linear', textColor, gridColor, tooltipBg);
     options.scales.x.title.text = 'Input';
-    if (!options.plugins.legend.labels) options.plugins.legend.labels = {};
-    options.plugins.legend.labels.filter = (item) => !item.text.startsWith('__band_');
+    // Chart.js's built-in legend can't scroll and consumes a lot of vertical
+    // space with many curves; we render a scrollable custom legend instead.
+    options.plugins.legend.display = false;
     if (!options.plugins.tooltip.filter) {
         options.plugins.tooltip.filter = (tctx) => !tctx.dataset.label.startsWith('__band_');
     }
-    options.plugins.legend.onClick = (e, legendItem, legend) => {
-        const chart = legend.chart;
-        const idx = legendItem.datasetIndex;
-        const label = chart.data.datasets[idx].label;
-        const visible = chart.isDatasetVisible(idx);
-        const pair = [idx];
-        chart.data.datasets.forEach((ds, i) => {
-            if (ds.label === `__band_low__${label}` || ds.label === `__band_high__${label}`) {
-                pair.push(i);
-            }
-        });
-        pair.forEach(i => visible ? chart.hide(i) : chart.show(i));
-        legendItem.hidden = visible;
-    };
 
-    dynamicsCharts[canvasId] = new Chart(ctx, {
+    const chart = new Chart(ctx, {
         type: 'line',
         data: { datasets },
         options
     });
+    dynamicsCharts[canvasId] = chart;
+
+    renderScrollableLegend(`${canvasId}-legend`, chart);
+}
+
+/**
+ * Render a scrollable HTML legend with Show/Hide-all controls.
+ *
+ * - Skips `__band_*` band datasets (activation charts use these for the
+ *   shaded percentile envelope) and pairs visibility toggles so hiding a
+ *   row also hides its band siblings.
+ * - Visibility changes flow through `chart.setDatasetVisibility` (no
+ *   internal render) and are flushed once via `chart.update('none')` inside
+ *   `requestAnimationFrame`, so the click handler returns immediately and
+ *   the row's muted-class repaint isn't blocked by Chart.js's canvas
+ *   redraw. "Hide all" of N series becomes one frame, not N.
+ */
+function renderScrollableLegend(legendId, chart) {
+    const container = document.getElementById(legendId);
+    if (!container) return;
+
+    container.innerHTML = '';
+
+    const controls = document.createElement('div');
+    controls.className = 'chart-legend-controls';
+
+    const items = document.createElement('div');
+    items.className = 'chart-legend-items';
+
+    const rowsByIdx = new Map();
+
+    const flushVisibility = (changes) => {
+        requestAnimationFrame(() => {
+            changes.forEach(({ idx, visible }) => {
+                chart.setDatasetVisibility(idx, visible);
+            });
+            chart.update('none');
+        });
+    };
+
+    const pairedIndices = (ds, idx) => {
+        const out = [idx];
+        chart.data.datasets.forEach((peer, i) => {
+            if (
+                peer.label === `__band_low__${ds.label}` ||
+                peer.label === `__band_high__${ds.label}`
+            ) {
+                out.push(i);
+            }
+        });
+        return out;
+    };
+
+    chart.data.datasets.forEach((ds, idx) => {
+        if (ds.label && ds.label.startsWith('__band_')) return;
+
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'chart-legend-item';
+        row.dataset.idx = String(idx);
+
+        const swatch = document.createElement('span');
+        swatch.className = 'chart-legend-swatch';
+        swatch.style.background = ds.borderColor || '#888';
+
+        const label = document.createElement('span');
+        label.className = 'chart-legend-label';
+        label.textContent = ds.label;
+
+        row.appendChild(swatch);
+        row.appendChild(label);
+
+        row.addEventListener('click', () => {
+            const nextVisible = !chart.isDatasetVisible(idx);
+            row.classList.toggle('muted', !nextVisible);
+            flushVisibility(
+                pairedIndices(ds, idx).map((i) => ({ idx: i, visible: nextVisible }))
+            );
+        });
+
+        rowsByIdx.set(idx, row);
+        items.appendChild(row);
+    });
+
+    const toggleAll = (visible) => {
+        const changes = [];
+        chart.data.datasets.forEach((_, i) => {
+            changes.push({ idx: i, visible });
+        });
+        rowsByIdx.forEach((row) => row.classList.toggle('muted', !visible));
+        flushVisibility(changes);
+    };
+
+    const makeControlButton = (text, onClick) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'chart-legend-control';
+        btn.textContent = text;
+        btn.addEventListener('click', onClick);
+        return btn;
+    };
+
+    controls.appendChild(makeControlButton('Show all', () => toggleAll(true)));
+    controls.appendChild(makeControlButton('Hide all', () => toggleAll(false)));
+
+    container.appendChild(controls);
+    container.appendChild(items);
 }
 
 // ─── Cleanup ────────────────────────────────────────────────────────────────

@@ -266,6 +266,47 @@ def find_latest_checkpoint(cache_dir):
     return latest_checkpoint
 
 
+def _materialize_skipped_lazy_modules(model, device):
+    """Probe any LazyModule left uninitialized after the main dummy forward.
+
+    Per-depth ``nn.ModuleList`` branches (e.g. ``ArcGLU.act``) only see a
+    forward at ``current_depth=0``, so siblings keep their
+    ``UninitializedParameter`` and break any subsequent ``numel()`` call.
+    For each such list we borrow the feature dim from an already-
+    initialized sibling and run each skipped entry once.
+    """
+    import torch
+    from torch.nn import ModuleList
+    from torch.nn.modules.lazy import LazyModuleMixin
+
+    for module in model.modules():
+        if not isinstance(module, ModuleList):
+            continue
+        lazy_entries = [m for m in module if isinstance(m, LazyModuleMixin)]
+        if not lazy_entries:
+            continue
+        initialized = next(
+            (m for m in lazy_entries if not m.has_uninitialized_params()),
+            None,
+        )
+        if initialized is None:
+            continue  # nothing ran; leave it for the error path to surface
+
+        feat_dim = None
+        for p in initialized.parameters(recurse=False):
+            if p.dim() >= 1:
+                feat_dim = p.shape[-1]
+                break
+        if feat_dim is None:
+            continue
+
+        dummy = torch.zeros(1, feat_dim, device=device)
+        with torch.no_grad():
+            for entry in lazy_entries:
+                if entry.has_uninitialized_params():
+                    entry(dummy)
+
+
 def initialize_lazy_modules(model, device):
     """Initialize lazy modules in a model by doing a dummy forward pass.
 
@@ -307,6 +348,14 @@ def initialize_lazy_modules(model, device):
         # Use no_grad to speed up initialization (we don't need gradients here)
         with torch.no_grad():
             outputs = model(input_ids=dummy_input, labels=dummy_labels)
+
+        # Second pass: any LazyModule living inside a ModuleList whose
+        # siblings were skipped by the main forward (e.g. ArcGLU's
+        # per-depth activation list, where only self.act[current_depth]
+        # runs) still has UninitializedParameter. Probe each skipped
+        # entry directly, borrowing its initialized sibling's feature
+        # dim so the dummy tensor lines up.
+        _materialize_skipped_lazy_modules(model, device)
 
         # Clear any cached memory immediately
         if torch.cuda.is_available():

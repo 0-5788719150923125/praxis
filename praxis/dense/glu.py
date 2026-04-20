@@ -7,11 +7,12 @@ import torch.nn as nn
 from torch import Tensor
 
 from praxis.activations import ACT2CLS, ACT2FN
+from praxis.dense.base import BaseDense
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
-class GatedLinearMLP(nn.Module):
+class GatedLinearMLP(BaseDense):
     """
     A standard MLP, augmented with Gated Linear Units.
     """

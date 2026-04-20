@@ -1,3 +1,5 @@
+from praxis.dense.arc import ArcGLU
+from praxis.dense.base import BaseDense
 from praxis.dense.glu import GatedLinearMLP
 from praxis.dense.kan import KolmogorovArnoldNetwork
 from praxis.dense.mlp import MultiLayerPerceptron
@@ -8,6 +10,7 @@ from praxis.dense.scatter import ScatterMLP
 DENSE_REGISTRY = dict(
     mlp=MultiLayerPerceptron,
     glu=GatedLinearMLP,
+    arc=ArcGLU,
     poly=PolynomialExpansionMLP,
     scatter=ScatterMLP,
     kan=KolmogorovArnoldNetwork,

@@ -1366,6 +1366,101 @@
     overflow: hidden;
 }
 
+/* Scrollable custom legend used by the activation charts, where the raw
+   curve count (one per depth pass, per block) blows past what Chart.js's
+   built-in legend can fit without stealing chart height. Controls stay
+   pinned; only the label list scrolls. */
+.chart-legend {
+    margin-top: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    border: 1px solid var(--border-color, #e0e0e0);
+    border-radius: var(--radius-small, 4px);
+    background: var(--background);
+    font-size: 0.75rem;
+    color: var(--text);
+}
+
+.chart-legend:empty {
+    display: none;
+}
+
+.chart-legend-controls {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.chart-legend-control {
+    padding: 0.25rem 0.6rem;
+    border: 1px solid color-mix(in srgb, var(--text) 25%, transparent);
+    border-radius: var(--radius-small, 4px);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 0.7rem;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.chart-legend-control:hover {
+    background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.chart-legend-items {
+    max-height: 9rem;
+    overflow-y: auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.5rem;
+}
+
+.chart-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.15rem 0.5rem;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-small, 4px);
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    transition: background 0.15s ease, opacity 0.15s ease;
+}
+
+.chart-legend-item:hover {
+    background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.chart-legend-item.muted {
+    opacity: 0.4;
+    text-decoration: line-through;
+}
+
+.chart-legend-swatch {
+    display: inline-block;
+    width: 0.75rem;
+    height: 0.75rem;
+    border-radius: 2px;
+    flex: 0 0 auto;
+}
+
+.chart-legend-label {
+    white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+    .chart-legend {
+        font-size: 0.7rem;
+    }
+    .chart-legend-items {
+        max-height: 7rem;
+    }
+}
+
 /* ==================== Copy Fallback Modal ==================== */
 .copy-fallback-content {
     background-color: var(--background);

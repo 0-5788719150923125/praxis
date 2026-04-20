@@ -8,12 +8,12 @@ from torch.nn.modules.lazy import LazyModuleMixin
 from torch.nn.parameter import UninitializedParameter
 
 
-class SnakeBeta(LazyModuleMixin, Module):
-    """Snake activation with added secondary oscillation:
+class Serpent(LazyModuleMixin, Module):
+    """Praxis' extended Snake activation with a second oscillation term:
 
         y = x + (1/α)·sin²(αx) + γ·sin(βx)
 
-    α controls the primary squared-sine frequency (same as vanilla Snake).
+    α controls the primary squared-sine frequency (original Snake term).
     β and γ add a secondary sine with its own frequency and amplitude.
     All three are per-feature learnable parameters.
     """

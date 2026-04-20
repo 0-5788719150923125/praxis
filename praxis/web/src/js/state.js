@@ -116,7 +116,7 @@ export const state = {
             template: () => createSimpleTabContent(
                 'dynamics-container',
                 'dynamics-container',
-                'Loading gradient dynamics...'
+                'Loading learning dynamics...'
             ),
             onActivate: 'loadDynamics',
             activateDelay: 0,

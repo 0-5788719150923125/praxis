@@ -57,11 +57,11 @@ class ArchitectureGroup:
         )
 
         group.add_argument(
-            "--expert-type",
+            "--ffn-type",
             type=str,
             choices=EXPERT_REGISTRY.keys(),
             default="glu",
-            help="The integration to use for feedforward networks",
+            help="The feedforward-network implementation to use within each block",
         )
 
         group.add_argument(

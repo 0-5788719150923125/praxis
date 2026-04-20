@@ -8,8 +8,8 @@ from praxis.activations.serf import SERF
 from praxis.activations.sin import Sine
 from praxis.activations.sin_cos import SineCosine
 from praxis.activations.sinlu import SinLU
+from praxis.activations.serpent import Serpent
 from praxis.activations.snake import Snake
-from praxis.activations.snake_beta import SnakeBeta
 
 ACTIVATION_MAP = dict(
     jagged_sin=JaggedSine,
@@ -17,11 +17,11 @@ ACTIVATION_MAP = dict(
     periodic_relu=PeriodicReLU,
     prelu=PReLU,
     serf=SERF,
+    serpent=Serpent,
     sin=Sine,
     sin_cos=SineCosine,
     sinlu=SinLU,
     snake=Snake,
-    snake_beta=SnakeBeta,
 )
 
 for k, v in ACTIVATION_MAP.items():

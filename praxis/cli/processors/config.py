@@ -33,7 +33,7 @@ class ConfigBuilder:
 
         # Mapping of CLI argument names to config parameter names (for renamed parameters)
         arg_to_config_mapping = {
-            "expert_type": "expert",
+            "ffn_type": "expert",
             "encoding_type": "encoding",
         }
 
