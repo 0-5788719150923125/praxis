@@ -39,6 +39,14 @@ function getLifecycleFunction(name) {
  * Initialize the application
  */
 function init() {
+    // Disable Chart.js tooltips on touch devices: the tap-triggered labels
+    // cover the chart and can't be dismissed. Taps synthesize mouse/click
+    // events too, so we strip all events on hover-less devices.
+    if (window.Chart) {
+        const isTouch = window.matchMedia('(hover: none)').matches;
+        Chart.defaults.events = isTouch ? [] : ['mousemove', 'mouseout', 'click'];
+    }
+
     // Set API URL
     const pathPrefix = window.location.pathname.endsWith('/')
         ? window.location.pathname.slice(0, -1)
