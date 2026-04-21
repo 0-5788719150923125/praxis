@@ -20,12 +20,20 @@ class TextUtils:
         """
         Sanitize text by replacing problematic characters with safe alternatives.
         Returns sanitized text with consistent character widths.
+
+        Standard whitespace (\\n, \\r, \\t) is preserved verbatim:
+        ``wcwidth`` returns -1 for control chars, but these are valid layout
+        characters that downstream code (``wrap_text`` for CLI, the browser
+        for web) is expected to handle.
         """
         if not text:
             return ""
 
         result = []
         for char in text:
+            if char in ("\n", "\r", "\t"):
+                result.append(char)
+                continue
             width = wcwidth.wcwidth(char)
             if width < 0 or width > 1:  # Problematic character detected
                 result.append("�")  # Using an emoji as a safe replacement

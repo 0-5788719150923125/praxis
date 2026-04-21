@@ -7,10 +7,7 @@ from datetime import datetime, timedelta
 from lightning.pytorch.callbacks import Callback
 
 from praxis.generation.streaming import StreamingContext
-from praxis.interface.rendering.utils import TextUtils
 from praxis.metrics.ema import LOSS_EMA_ALPHA, compute_ema
-
-_text_utils = TextUtils()
 
 
 class TerminalInterface(Callback):
@@ -572,11 +569,11 @@ class TerminalInterface(Callback):
         elif not self.headless:
             self.print(self.text)
 
-        # Always update live metrics status text for web streaming. Apply
-        # the same sanitization the CLI uses so zero-width/invalid chars
-        # render as U+FFFD in the browser instead of silently disappearing.
+        # Always update live metrics status text for web streaming.
+        # Pass through untouched - the browser renders Unicode natively
+        # and doesn't need the CLI's fixed-width sanitization.
         if hasattr(self, "live_metrics"):
-            self.live_metrics.status_text = _text_utils.sanitize_text(self.text)
+            self.live_metrics.status_text = self.text
 
         self.last_time = datetime.now()
 
