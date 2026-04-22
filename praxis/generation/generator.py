@@ -68,20 +68,41 @@ class Generator:
             self.model.train(training)
 
     def _has_unclosed_tool_tag(self, text: str) -> bool:
-        """Check if there's an open <tin> tag without matching </tin>.
+        """Check if generation halted mid-tag and should keep going.
 
-        This is used to determine if we should suppress [SEP] as a stop token
-        to allow the model to complete the tool call tag.
+        Two cases trigger recovery:
+
+        1. A complete ``<tin>`` opening exists without a matching
+           ``</tin>`` closing - the model needs to finish the tool call.
+        2. The text ends with an unambiguous partial tag prefix
+           (``<tin``, ``</tin``, ``<tout``, ``</tout``) - the model was
+           emitting a tag name when SEP/EOS halted it. Without this, a
+           SEP sample one byte before the closing ``>`` truncates the
+           tag for good and the recovery loop never engages.
 
         Args:
             text: The generated text to check
 
         Returns:
-            True if there's an unclosed <tin> tag
+            True if the generator should switch to EOS-only mode and
+            keep generating to give the model a chance to complete a tag.
         """
-        open_count = text.count("<tin>")
-        close_count = text.count("</tin>")
-        return open_count > close_count
+        if text.count("<tin>") > text.count("</tin>"):
+            return True
+        # Unambiguous partial-tag suffixes. Any partial tag-name prefix
+        # of <tin>/<tout>/</tin>/</tout> qualifies, as long as it's
+        # long enough to distinguish the two tag families (i.e. past
+        # the shared '<t' / '</t' prefix). Trailing whitespace is
+        # ignored so '<tin\n' and '</tou ' both qualify.
+        stripped = text.rstrip()
+        partials = (
+            "<tin", "<tou", "<tout",
+            "</tin", "</tou", "</tout",
+        )
+        for partial in partials:
+            if stripped.endswith(partial):
+                return True
+        return False
 
     def request_generation(self, prompt, kwargs={}) -> str:
         """
