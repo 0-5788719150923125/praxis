@@ -507,6 +507,14 @@ class BackpropagationTrainer(LightningModule):
         super().on_load_checkpoint(checkpoint)
         self.num_tokens = checkpoint.get("num_tokens", 0)
 
+        # Pad any vocab-sized weights in the checkpoint to match the
+        # model's current shapes. Needed after adding the tool-control
+        # special tokens (and any future vocab-additive change): old
+        # checkpoints carry V-row embeddings / output projections but
+        # the model is now V+4. New rows are initialised with small
+        # normal noise so they start untrained but don't blow up.
+        self._pad_vocab_weights(checkpoint)
+
         # Explicitly load DataModule state if it exists
         if hasattr(self.trainer, "datamodule") and self.trainer.datamodule is not None:
             if "datamodule_state" in checkpoint and hasattr(
@@ -516,6 +524,48 @@ class BackpropagationTrainer(LightningModule):
                 print(
                     "[Checkpoint] Restored DataModule state including dataset positions"
                 )
+
+    def _pad_vocab_weights(self, checkpoint: dict) -> None:
+        """Grow too-small checkpoint tensors to match current model shapes.
+
+        Compares every parameter in ``checkpoint["state_dict"]`` against
+        the current ``self.state_dict()``. When a checkpoint tensor has
+        the same number of non-leading dimensions but strictly fewer
+        rows than the live model, the missing rows are appended with
+        small random noise. Other shape mismatches are left for Lightning
+        / PyTorch to surface as the usual load error.
+        """
+        ckpt_sd = checkpoint.get("state_dict")
+        if not isinstance(ckpt_sd, dict):
+            return
+        live_sd = self.state_dict()
+        patched = []
+        for key, ckpt_tensor in ckpt_sd.items():
+            live_tensor = live_sd.get(key)
+            if not torch.is_tensor(ckpt_tensor) or not torch.is_tensor(live_tensor):
+                continue
+            if ckpt_tensor.shape == live_tensor.shape:
+                continue
+            if ckpt_tensor.dim() != live_tensor.dim():
+                continue
+            # Only handle the "grew along dim 0" case (vocab-like).
+            if ckpt_tensor.shape[1:] != live_tensor.shape[1:]:
+                continue
+            if ckpt_tensor.shape[0] >= live_tensor.shape[0]:
+                continue
+            delta = live_tensor.shape[0] - ckpt_tensor.shape[0]
+            pad_shape = (delta,) + tuple(ckpt_tensor.shape[1:])
+            pad = torch.empty(
+                pad_shape, dtype=ckpt_tensor.dtype, device=ckpt_tensor.device
+            )
+            torch.nn.init.normal_(pad, mean=0.0, std=0.02)
+            ckpt_sd[key] = torch.cat([ckpt_tensor, pad], dim=0)
+            patched.append((key, tuple(ckpt_tensor.shape), tuple(live_tensor.shape)))
+        if patched:
+            print(
+                f"[Checkpoint] Grew {len(patched)} vocab-sized tensor(s) to match "
+                f"current vocab size; sample: {patched[0]}"
+            )
 
     def _update_ema(self, ema, new_value):
         if ema is None:

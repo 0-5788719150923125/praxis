@@ -54,7 +54,6 @@ class CutCrossEntropyLoss(nn.Module):
             embeddings,
             classifier.weight,
             targets,
-            bias=getattr(classifier, "bias", None),
             impl="cce",
             shift=1,
             reduction="mean",

@@ -42,7 +42,7 @@ def format_file_as_messages(
     if isinstance(sample_path, Path):
         sample_path = str(sample_path)
 
-    # Create tool-calling format using inline <tin>/<tout> tags
+    # Create tool-calling format using inline special-token tags
     messages = []
 
     # Format the tool call with inline result

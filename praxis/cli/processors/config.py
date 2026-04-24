@@ -99,12 +99,12 @@ class ConfigBuilder:
                 ):
                     config_kwargs[config_param] = getattr(tokenizer, tokenizer_attr)
 
-            # The tokenizer is the source of truth for vocab_size. The
-            # CLI flag is a hint for tokenizer selection/training; once a
-            # concrete tokenizer is in hand, its vocab determines the
-            # embedding layout. Write back to args as well so every
-            # ``vars(args)`` consumer (Identity tab, config.json, etc.)
-            # reports the size the model actually uses.
+            # Sync the tokenizer's reported vocab_size into the model
+            # config and args. For Standard tokenizers this captures the
+            # actual trained vocab (may differ from the CLI target).
+            # For byte/char tokenizers ``vocab_size`` is the model-facing
+            # value already (the byte-level alphabet is exposed
+            # separately as ``byte_alphabet_size``), so this is a no-op.
             tok_vocab = getattr(tokenizer, "vocab_size", None)
             if (
                 isinstance(tok_vocab, int)

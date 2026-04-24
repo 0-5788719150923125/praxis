@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .constants import BYTE_UNITS, OFFSET
+from .constants import BYTE_UNITS, NUM_TOOL_TOKENS, OFFSET
 
 
 class EmbeddingType(Enum):
@@ -22,8 +22,9 @@ class EmbeddingType(Enum):
 class ByteLatentConfig:
     """Simplified configuration for byte-latent models."""
 
-    # Core dimensions
-    vocab_size: int = BYTE_UNITS + OFFSET
+    # Local byte-level table size (256 bytes + named specials + tool specials).
+    # Distinct from the model's external vocab_size (used for hash embeddings).
+    local_vocab_size: int = BYTE_UNITS + OFFSET + NUM_TOOL_TOKENS
     dim: int = 512
     dim_token_emb: int = 128
     dim_global: int = 512
@@ -88,7 +89,8 @@ def create_base_config(praxis_config) -> ByteLatentConfig:
             )
 
     return ByteLatentConfig(
-        vocab_size=BYTE_UNITS + OFFSET,  # 256 bytes + 4 special tokens = 260 (internal)
+        local_vocab_size=BYTE_UNITS + OFFSET + NUM_TOOL_TOKENS,
+        # 256 bytes + 4 named specials + 4 tool-control specials = 264
         dim=praxis_config.hidden_size,
         dim_token_emb=praxis_config.embed_size,
         dim_global=praxis_config.hidden_size,

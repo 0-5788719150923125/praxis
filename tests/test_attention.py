@@ -1,4 +1,6 @@
 import itertools
+import os
+import random
 from enum import Enum
 from typing import Dict, List, NamedTuple
 
@@ -7,9 +9,16 @@ import torch
 
 from praxis import PraxisConfig
 from praxis.attention import ATTENTION_REGISTRY
+from praxis.attention.causal import CausalAttention
 from praxis.encoding import ENCODING_REGISTRY
 
 MODULE_CLASSES = list(ATTENTION_REGISTRY.values())
+
+# Full Cartesian product is ~22k cases; sample a stratified subset so every
+# module class still gets coverage but the suite finishes in seconds.
+# Override with PRAXIS_ATTENTION_FULL=1 to run the full grid.
+SAMPLES_PER_MODULE = int(os.environ.get("PRAXIS_ATTENTION_SAMPLES", "20"))
+SAMPLE_SEED = 0xA77E
 
 
 class AttentionMode(Enum):
@@ -65,7 +74,25 @@ def get_attention_configs() -> List[PraxisConfig]:
     ]
 
 
-@pytest.fixture(params=list(itertools.product(MODULE_CLASSES, get_attention_configs())))
+def _sampled_module_configs():
+    """Stratified sample: take SAMPLES_PER_MODULE configs per module class.
+
+    Set PRAXIS_ATTENTION_FULL=1 to fall back to the full Cartesian product.
+    """
+    configs = get_attention_configs()
+    if os.environ.get("PRAXIS_ATTENTION_FULL"):
+        return list(itertools.product(MODULE_CLASSES, configs))
+
+    rng = random.Random(SAMPLE_SEED)
+    sampled = []
+    for module_class in MODULE_CLASSES:
+        pool = list(configs)
+        rng.shuffle(pool)
+        sampled.extend((module_class, c) for c in pool[:SAMPLES_PER_MODULE])
+    return sampled
+
+
+@pytest.fixture(params=_sampled_module_configs())
 def module_setup(request, config):
     """
     Parametrized fixture that provides module and its configuration.
@@ -78,6 +105,15 @@ def module_setup(request, config):
         tuple: (module instance, config)
     """
     module_class, attention_config = request.param
+
+    if issubclass(module_class, CausalAttention):
+        if attention_config.encoding == "nope":
+            pytest.skip("CausalAttention requires a positional encoding (alibi or rope)")
+        if (
+            attention_config.encoding == "rope"
+            and (attention_config.hidden_size // attention_config.num_heads) % 2 != 0
+        ):
+            pytest.skip("CausalAttention with RoPE requires an even head_dim")
 
     setattr(config, "hidden_size", attention_config.hidden_size)
     setattr(config, "num_heads", attention_config.num_heads)

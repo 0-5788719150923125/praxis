@@ -62,7 +62,7 @@ def create_tokenizer(
 
     if tokenizer_type == "byte":
         if HAS_BYTE_LEVEL:
-            return ByteLevelTokenizer(**kwargs)
+            return ByteLevelTokenizer(vocab_size=vocab_size, **kwargs)
         raise ImportError(
             "ByteLevelTokenizer requires bytelatent package. "
             "Please install it with: pip install bytelatent"
@@ -71,7 +71,7 @@ def create_tokenizer(
     # byte_latent variants and any subclass (e.g. abstractinator) need bytes
     if encoder_type and _needs_byte_level_tokenizer(encoder_type):
         if HAS_BYTE_LEVEL:
-            return ByteLevelTokenizer(**kwargs)
+            return ByteLevelTokenizer(vocab_size=vocab_size, **kwargs)
         else:
             raise ImportError(
                 "ByteLevelTokenizer requires bytelatent package. "

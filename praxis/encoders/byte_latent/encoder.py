@@ -126,21 +126,21 @@ class ByteLatentEncoder(nn.Module):
             self.byte_config.monotonicity = True
             if local_architecture == "conv":
                 self.entropy_model = ConvEntropyModel(
-                    self.byte_config.vocab_size,
+                    self.byte_config.local_vocab_size,
                     config.hidden_size,
                     config.dropout,
                     n_layers=entropy_model_layers,
                 )
             elif local_architecture == "transformer":
                 self.entropy_model = TransformerEntropyModel(
-                    self.byte_config.vocab_size,
+                    self.byte_config.local_vocab_size,
                     config.hidden_size,
                     config.dropout,
                     n_layers=entropy_model_layers,
                 )
             else:
                 self.entropy_model = RecurrentEntropyModel(
-                    self.byte_config.vocab_size,
+                    self.byte_config.local_vocab_size,
                     config.hidden_size,
                     config.dropout,
                     n_layers=entropy_model_layers,
@@ -187,7 +187,8 @@ class ByteLatentEncoder(nn.Module):
             )
 
         # Setup local encoder/decoder based on architecture
-        # ByteLatent always uses its internal vocab size (260 = 256 bytes + 4 special tokens)
+        # ByteLatent uses its local byte-level vocab (byte_config.local_vocab_size)
+        # which covers 256 bytes + 4 named specials + 4 tool specials.
         if local_architecture == "conv":
             self.encoder = ConvEncoder(self.byte_config)
             self.decoder = ConvDecoder(self.byte_config)
@@ -1015,7 +1016,7 @@ class RecurrentEncoder(nn.Module):
         self.training = False
 
         # Token embeddings
-        self.tok_emb = nn.Embedding(config.vocab_size, config.dim_token_emb)
+        self.tok_emb = nn.Embedding(config.local_vocab_size, config.dim_token_emb)
 
         self.layers = nn.ModuleList(
             [
@@ -1081,7 +1082,7 @@ class RecurrentDecoder(nn.Module):
 
         # Output projection and normalization
         self.norm = nn.LayerNorm(config.dim_token_emb, eps=config.norm_eps)
-        self.output = nn.Linear(config.dim_token_emb, config.vocab_size, bias=False)
+        self.output = nn.Linear(config.dim_token_emb, config.local_vocab_size, bias=False)
 
         # Patch embedding projection
         self.patch_embedding_projection = None
@@ -1296,7 +1297,7 @@ class ConvEncoder(nn.Module):
         self.config = config
 
         # Token embeddings
-        self.tok_emb = nn.Embedding(config.vocab_size, config.dim_token_emb)
+        self.tok_emb = nn.Embedding(config.local_vocab_size, config.dim_token_emb)
 
         self.layers = nn.ModuleList()
         for i in range(config.n_layers_local_encoder):
@@ -1368,7 +1369,7 @@ class ConvDecoder(nn.Module):
 
         # Output projection and normalization
         self.norm = nn.LayerNorm(config.dim_token_emb, eps=config.norm_eps)
-        self.output = nn.Linear(config.dim_token_emb, config.vocab_size, bias=False)
+        self.output = nn.Linear(config.dim_token_emb, config.local_vocab_size, bias=False)
 
         # Patch embedding projection
         self.patch_embedding_projection = None
@@ -1628,7 +1629,7 @@ class TransformerEncoder(nn.Module):
         self.training = False
 
         # Token embeddings
-        self.tok_emb = nn.Embedding(config.vocab_size, config.dim_token_emb)
+        self.tok_emb = nn.Embedding(config.local_vocab_size, config.dim_token_emb)
 
         # Transformer layers with sliding window attention
         window_size = getattr(config, "sliding_window_size", 512)
@@ -1698,7 +1699,7 @@ class TransformerDecoder(nn.Module):
 
         # Output projection and normalization
         self.norm = nn.LayerNorm(config.dim_token_emb, eps=config.norm_eps)
-        self.output = nn.Linear(config.dim_token_emb, config.vocab_size, bias=False)
+        self.output = nn.Linear(config.dim_token_emb, config.local_vocab_size, bias=False)
 
         # Patch embedding projection
         self.patch_embedding_projection = None

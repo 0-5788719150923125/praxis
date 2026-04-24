@@ -1,5 +1,9 @@
 """Test tab header spacing and layout."""
 
+import pytest
+
+pytest.importorskip("pytest_playwright")
+
 from playwright.sync_api import Page
 
 

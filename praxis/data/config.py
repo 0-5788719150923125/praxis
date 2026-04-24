@@ -80,6 +80,9 @@ DATASET_COLLECTIONS = dict(
         "hermes-3-dataset": 0.1,
         "synthetic-tool-calling": TOOLS_WEIGHT,
     },
+    tools={
+        "synthetic-tool-calling": TOOLS_WEIGHT,
+    },
     pile={
         "minipile-train": DEFAULT_WEIGHT,
     },

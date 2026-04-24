@@ -73,8 +73,8 @@ class TestNoveltyTracker:
             f"repetitive dataset weight ({weights[1]:.4f})"
         )
 
-    def test_cold_start_stays_near_static(self):
-        """During warmup, weights should stay close to static weights."""
+    def test_cold_start_stays_near_uniform(self):
+        """During warmup, weights blend from uniform toward novelty-driven weights."""
         tracker = NoveltyTracker(num_datasets=2, warmup_samples=50)
         static = [0.7, 0.3]
 
@@ -82,12 +82,13 @@ class TestNoveltyTracker:
         tracker.score_and_update(1, list(range(100, 200)))
 
         weights = tracker.get_target_weights(static)
+        # With only 2/50 docs processed, blend factor is ~0.04 — weights should be near uniform.
         assert (
-            abs(weights[0] - 0.7) < 0.1
-        ), f"Weight[0]={weights[0]:.4f} should be near 0.7 during warmup"
+            abs(weights[0] - 0.5) < 0.1
+        ), f"Weight[0]={weights[0]:.4f} should be near 0.5 (uniform) during warmup"
         assert (
-            abs(weights[1] - 0.3) < 0.1
-        ), f"Weight[1]={weights[1]:.4f} should be near 0.3 during warmup"
+            abs(weights[1] - 0.5) < 0.1
+        ), f"Weight[1]={weights[1]:.4f} should be near 0.5 (uniform) during warmup"
 
     def test_weight_floor(self):
         """No dataset weight should drop below 1% of its static weight."""
@@ -225,27 +226,22 @@ class TestStaticMode:
         from praxis.data.datasets.manager import InterleaveDataManager
 
         tokenizer = _make_tokenizer()
-        original_mode = InterleaveDataManager.weighting_mode
-        InterleaveDataManager.weighting_mode = "static"
+        sampler = _make_sampler("ds", lambda: _simple_doc())
+        manager = InterleaveDataManager(
+            samplers=[sampler, sampler],
+            weights=[0.8, 0.2],
+            tokenizer=tokenizer,
+            block_size=128,
+            weighting_mode="static",
+        )
 
-        try:
-            sampler = _make_sampler("ds", lambda: _simple_doc())
-            manager = InterleaveDataManager(
-                samplers=[sampler, sampler],
-                weights=[0.8, 0.2],
-                tokenizer=tokenizer,
-                block_size=128,
-            )
+        assert not manager._adaptive
+        assert not hasattr(manager, "novelty_tracker")
+        assert manager.weights == [0.8, 0.2]
 
-            assert not manager._adaptive
-            assert not hasattr(manager, "novelty_tracker")
-            assert manager.weights == [0.8, 0.2]
-
-            # Fetching a batch should not change weights
-            manager.get_batch(batch_size=1)
-            assert manager.weights == [0.8, 0.2]
-        finally:
-            InterleaveDataManager.weighting_mode = original_mode
+        # Fetching a batch should not change weights
+        manager.get_batch(batch_size=1)
+        assert manager.weights == [0.8, 0.2]
 
 
 class TestDynamicMode:
@@ -257,47 +253,42 @@ class TestDynamicMode:
         from praxis.data.datasets.manager import InterleaveDataManager
 
         tokenizer = _make_tokenizer()
-        original_mode = InterleaveDataManager.weighting_mode
-        InterleaveDataManager.weighting_mode = "dynamic"
+        call_count = [0, 0]
 
-        try:
-            call_count = [0, 0]
+        def small_doc():
+            call_count[0] += 1
+            return _simple_doc(f"Short {call_count[0]}")
 
-            def small_doc():
-                call_count[0] += 1
-                return _simple_doc(f"Short {call_count[0]}")
+        def huge_doc():
+            call_count[1] += 1
+            messages = []
+            for j in range(50):
+                messages.append({"role": "user", "content": f"Part {j}"})
+                messages.append({"role": "assistant", "content": f"Reply {j}"})
+            return {"messages": messages, "metadata": {"source": "huge"}}
 
-            def huge_doc():
-                call_count[1] += 1
-                messages = []
-                for j in range(50):
-                    messages.append({"role": "user", "content": f"Part {j}"})
-                    messages.append({"role": "assistant", "content": f"Reply {j}"})
-                return {"messages": messages, "metadata": {"source": "huge"}}
+        manager = InterleaveDataManager(
+            samplers=[
+                _make_sampler("small", small_doc),
+                _make_sampler("huge", huge_doc),
+            ],
+            weights=[0.5, 0.5],
+            tokenizer=tokenizer,
+            block_size=128,
+            weighting_mode="dynamic",
+        )
 
-            manager = InterleaveDataManager(
-                samplers=[
-                    _make_sampler("small", small_doc),
-                    _make_sampler("huge", huge_doc),
-                ],
-                weights=[0.5, 0.5],
-                tokenizer=tokenizer,
-                block_size=128,
-            )
+        assert manager._adaptive
+        assert not hasattr(manager, "novelty_tracker")
 
-            assert manager._adaptive
-            assert not hasattr(manager, "novelty_tracker")
+        for _ in range(10):
+            manager.get_batch(batch_size=2)
 
-            for _ in range(10):
-                manager.get_batch(batch_size=2)
-
-            # Small-doc dataset should have higher weight
-            assert manager.weights[0] > manager.weights[1], (
-                f"small={manager.weights[0]:.4f} should exceed "
-                f"huge={manager.weights[1]:.4f}"
-            )
-        finally:
-            InterleaveDataManager.weighting_mode = original_mode
+        # Small-doc dataset should have higher weight
+        assert manager.weights[0] > manager.weights[1], (
+            f"small={manager.weights[0]:.4f} should exceed "
+            f"huge={manager.weights[1]:.4f}"
+        )
 
 
 class TestNoveltyMode:
@@ -309,23 +300,18 @@ class TestNoveltyMode:
         from praxis.data.datasets.manager import InterleaveDataManager
 
         tokenizer = _make_tokenizer()
-        original_mode = InterleaveDataManager.weighting_mode
-        InterleaveDataManager.weighting_mode = "novelty"
+        sampler = _make_sampler("ds", lambda: _simple_doc())
+        manager = InterleaveDataManager(
+            samplers=[sampler],
+            weights=[1.0],
+            tokenizer=tokenizer,
+            block_size=128,
+            weighting_mode="novelty",
+        )
 
-        try:
-            sampler = _make_sampler("ds", lambda: _simple_doc())
-            manager = InterleaveDataManager(
-                samplers=[sampler],
-                weights=[1.0],
-                tokenizer=tokenizer,
-                block_size=128,
-            )
+        assert manager._adaptive
+        assert hasattr(manager, "novelty_tracker")
+        assert isinstance(manager.novelty_tracker, NoveltyTracker)
 
-            assert manager._adaptive
-            assert hasattr(manager, "novelty_tracker")
-            assert isinstance(manager.novelty_tracker, NoveltyTracker)
-
-            batch = manager.get_batch(batch_size=1)
-            assert batch is not None
-        finally:
-            InterleaveDataManager.weighting_mode = original_mode
+        batch = manager.get_batch(batch_size=1)
+        assert batch is not None

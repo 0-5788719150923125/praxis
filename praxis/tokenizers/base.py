@@ -8,6 +8,63 @@ import torch
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 
+class PraxisToolTokensMixin:
+    """Mixin that adds atomic tool-call control tokens to any tokenizer.
+
+    The mixin contributes:
+
+    - The canonical list of 4 control token strings (``TOOL_SPECIAL_TOKEN_STRINGS``).
+    - Named id properties (``tool_call_token_id`` etc.) that resolve via
+      HuggingFace's ``convert_tokens_to_ids``, so subclasses only need to
+      make sure the tokens are registered somewhere the HF machinery can
+      find them.
+    - A ``_inject_tool_tokens_kwargs`` helper that appends the tool
+      strings to ``additional_special_tokens`` in the kwargs dict passed
+      to ``PreTrainedTokenizer[Fast].__init__``. Subclasses call this
+      before ``super().__init__``.
+
+    Subclasses are still responsible for *where in the vocab* the tokens
+    land (char- and byte-level tokenizers pin specific high ids so
+    existing checkpoints stay valid; the standard HF tokenizer lets HF
+    pick the next free ids). The mixin only provides the naming and
+    lookup surface.
+    """
+
+    TOOL_SPECIAL_TOKEN_STRINGS = [
+        "[TOOL_CALL]",
+        "[/TOOL_CALL]",
+        "[TOOL_RESULT]",
+        "[/TOOL_RESULT]",
+    ]
+
+    @classmethod
+    def _inject_tool_tokens_kwargs(cls, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """Append tool token strings to ``additional_special_tokens`` in
+        place (and return the dict for call-site convenience)."""
+        existing = list(kwargs.get("additional_special_tokens") or [])
+        for tok in cls.TOOL_SPECIAL_TOKEN_STRINGS:
+            if tok not in existing:
+                existing.append(tok)
+        kwargs["additional_special_tokens"] = existing
+        return kwargs
+
+    @property
+    def tool_call_token_id(self) -> int:
+        return int(self.convert_tokens_to_ids("[TOOL_CALL]"))
+
+    @property
+    def tool_call_end_token_id(self) -> int:
+        return int(self.convert_tokens_to_ids("[/TOOL_CALL]"))
+
+    @property
+    def tool_result_token_id(self) -> int:
+        return int(self.convert_tokens_to_ids("[TOOL_RESULT]"))
+
+    @property
+    def tool_result_end_token_id(self) -> int:
+        return int(self.convert_tokens_to_ids("[/TOOL_RESULT]"))
+
+
 class PraxisTokenizerBase(ABC):
     """
     Abstract mixin for all Praxis tokenizers.

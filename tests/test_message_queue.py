@@ -137,23 +137,26 @@ def test_per_document_tokenization():
     queue_manager.add_document(doc1)
     queue_manager.add_document(doc2)
 
-    # Refill token buffer
-    queue_manager._refill_token_buffer()
+    # Pack into a batch (triggers per-doc tokenization)
+    result = queue_manager.get_batch(batch_size=1, sequence_multiplier=1)
+    packed = torch.cat([result["batch"][0]])
 
-    # Decode the entire token buffer
-    full_text = tokenizer.decode(queue_manager.token_buffer, skip_special_tokens=False)
+    # Decode the packed sequence
+    full_text = tokenizer.decode(packed, skip_special_tokens=False)
 
-    print("\nFull token buffer:")
+    print("\nFull packed sequence:")
     print(full_text)
 
     # Verify both documents are present
     assert "DOCUMENT_ONE" in full_text, "Document 1 content missing"
     assert "DOCUMENT_TWO" in full_text, "Document 2 content missing"
 
-    # Count BOS tokens - should have at least 4 (2 per document minimum)
+    # Count BOS tokens. Doc 1 contributes 2 (one per message). Doc 2's leading
+    # BOS is stripped (mid-sequence), so it contributes 1 (assistant message).
+    # Expect at least 3 BOS tokens total.
     bos_count = full_text.count("[BOS]")
     print(f"\nBOS token count: {bos_count}")
-    assert bos_count >= 4, f"Expected at least 4 BOS tokens, found {bos_count}"
+    assert bos_count >= 3, f"Expected at least 3 BOS tokens, found {bos_count}"
 
     print("\nPer-document tokenization test passed!")
 

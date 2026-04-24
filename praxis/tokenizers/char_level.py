@@ -27,7 +27,7 @@ from transformers import PreTrainedTokenizer
 
 from praxis.configuration import PraxisConfig
 
-from .base import PraxisTokenizerBase
+from .base import PraxisTokenizerBase, PraxisToolTokensMixin
 from .chat_templates import get_chat_template
 
 BMP_SIZE = 0x10000  # 65,536
@@ -61,12 +61,24 @@ def _praxis_default(name: str) -> int:
     return inspect.signature(PraxisConfig.__init__).parameters[name].default
 
 
-class CharLevelTokenizer(PreTrainedTokenizer, PraxisTokenizerBase):
+def _tool_token_persist_key(token_str: str) -> str:
+    """Derive a JSON-friendly key from a bracketed token string."""
+    stripped = token_str.strip("[]").replace("/", "end_")
+    return stripped.lower() + "_token_id"
+
+
+class CharLevelTokenizer(PreTrainedTokenizer, PraxisToolTokensMixin, PraxisTokenizerBase):
     """Character-level tokenizer with fixed-shape BMP vocab.
 
     Token id layout:
-        special_ids               -> the 4 special tokens (from config)
-        offset..offset+BMP_SIZE-1 -> BMP codepoints (id - offset)
+        special_ids                     -> the 4 named specials (from config)
+        offset..offset+BMP_SIZE-1       -> BMP codepoints (id - offset)
+        offset+BMP_SIZE..+BMP_SIZE+3    -> 4 tool-control tokens (appended)
+
+    Tool-control tokens are appended at the high end of the vocab so
+    that adding them does not shift any existing byte/char ids - saved
+    checkpoints from before this change remain loadable (modulo an
+    embedding-row grow on load, handled in the model loader).
     """
 
     SPECIAL_TOKEN_STRINGS = {
@@ -118,15 +130,36 @@ class CharLevelTokenizer(PreTrainedTokenizer, PraxisTokenizerBase):
             self.SPECIAL_TOKEN_STRINGS["eos_token"]: self.EOS_ID,
             self.SPECIAL_TOKEN_STRINGS["sep_token"]: self.SEP_ID,
         }
-        self._id_to_special = {v: k for k, v in self._special_id_map.items()}
 
-        # Characters start one past the largest special id to avoid collision.
+        # Characters start one past the largest named-special id to avoid collision.
         self._offset = max(self._special_id_map.values()) + 1
+
+        # Tool control tokens appended past the BMP range. Any persisted
+        # ids from save_vocabulary take precedence so reloads are stable.
+        persisted_tool_ids: Dict[str, int] = {}
+        if persisted_ids:
+            persisted_tool_ids = {
+                k: int(v)
+                for k, v in persisted_ids.items()
+                if k.endswith("_token_id")
+                and k not in ("pad_token_id", "bos_token_id", "eos_token_id", "sep_token_id")
+            }
+        self._tool_special_id_map: Dict[str, int] = {}
+        next_tool_id = self._offset + BMP_SIZE
+        for idx, tok in enumerate(self.TOOL_SPECIAL_TOKEN_STRINGS):
+            key = _tool_token_persist_key(tok)
+            self._tool_special_id_map[tok] = persisted_tool_ids.get(key, next_tool_id + idx)
+
+        # Unified lookup tables.
+        self._special_id_map.update(self._tool_special_id_map)
+        self._id_to_special = {v: k for k, v in self._special_id_map.items()}
 
         for name, value in self.SPECIAL_TOKEN_STRINGS.items():
             kwargs.setdefault(name, value)
-        # HF requires an unk_token; reuse PAD rather than add a 5th special.
+        # HF requires an unk_token; reuse PAD rather than add a 5th named special.
         kwargs.setdefault("unk_token", self.SPECIAL_TOKEN_STRINGS["pad_token"])
+        # Register tool tokens so skip_special_tokens strips them at decode time.
+        self._inject_tool_tokens_kwargs(kwargs)
 
         self.add_bos = add_bos
         self.add_eos = add_eos
@@ -144,7 +177,7 @@ class CharLevelTokenizer(PreTrainedTokenizer, PraxisTokenizerBase):
 
     @property
     def vocab_size(self) -> int:
-        return BMP_SIZE + self._offset
+        return BMP_SIZE + self._offset + len(self.TOOL_SPECIAL_TOKEN_STRINGS)
 
     @property
     def offset(self) -> int:
@@ -259,17 +292,21 @@ class CharLevelTokenizer(PreTrainedTokenizer, PraxisTokenizerBase):
         save_path.mkdir(parents=True, exist_ok=True)
         name = (filename_prefix + "-" if filename_prefix else "") + "char_vocab.json"
         out = save_path / name
+        special_token_ids = {
+            "pad_token_id": self.PAD_ID,
+            "bos_token_id": self.BOS_ID,
+            "eos_token_id": self.EOS_ID,
+            "sep_token_id": self.SEP_ID,
+        }
+        for tok, tid in self._tool_special_id_map.items():
+            special_token_ids[_tool_token_persist_key(tok)] = tid
         payload = {
             "vocab_size": self.vocab_size,
             "bmp_size": BMP_SIZE,
             "offset": self._offset,
             "special_token_strings": self.SPECIAL_TOKEN_STRINGS,
-            "special_token_ids": {
-                "pad_token_id": self.PAD_ID,
-                "bos_token_id": self.BOS_ID,
-                "eos_token_id": self.EOS_ID,
-                "sep_token_id": self.SEP_ID,
-            },
+            "tool_special_token_strings": self.TOOL_SPECIAL_TOKEN_STRINGS,
+            "special_token_ids": special_token_ids,
             "observed_codepoints": sorted(self._observed),
         }
         with open(out, "w", encoding="utf-8") as f:

@@ -2,6 +2,7 @@
 
 from praxis.data.formatters.base import (
     add_newline_before_lists,
+    normalize_escaped_whitespace,
     repair_broken_emoticons,
     repair_text_punctuation,
     simple_truecase,
@@ -26,6 +27,7 @@ from praxis.data.formatters.wiki import format_wiki
 __all__ = [
     # Base utilities
     "text_formatter",
+    "normalize_escaped_whitespace",
     "add_newline_before_lists",
     "repair_text_punctuation",
     "repair_broken_emoticons",

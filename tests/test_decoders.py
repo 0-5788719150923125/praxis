@@ -1,4 +1,6 @@
 import itertools
+import os
+import random
 from typing import List
 
 import pytest
@@ -28,6 +30,12 @@ TEST_PARAMS = {
 }
 PARAM_KEYS = list(TEST_PARAMS.keys())
 
+# Full Cartesian product is ~34k cases; sample a stratified subset so every
+# (decoder_type, block_type) pair still gets coverage but the suite finishes
+# in seconds. Override with PRAXIS_DECODER_FULL=1 to run the full grid.
+SAMPLES_PER_PAIR = int(os.environ.get("PRAXIS_DECODER_SAMPLES", "2"))
+SAMPLE_SEED = 0xDEC0
+
 
 def get_decoder_configs() -> List[PraxisConfig]:
     """Generate valid configurations."""
@@ -42,7 +50,29 @@ def get_decoder_configs() -> List[PraxisConfig]:
     return configs
 
 
-@pytest.fixture(params=get_decoder_configs())
+def _sampled_decoder_configs() -> List[PraxisConfig]:
+    """Stratified sample: SAMPLES_PER_PAIR configs per (decoder_type, block_type).
+
+    Set PRAXIS_DECODER_FULL=1 to fall back to the full Cartesian product.
+    """
+    configs = get_decoder_configs()
+    if os.environ.get("PRAXIS_DECODER_FULL"):
+        return configs
+
+    buckets: dict = {}
+    for cfg in configs:
+        buckets.setdefault((cfg.decoder_type, cfg.block_type), []).append(cfg)
+
+    rng = random.Random(SAMPLE_SEED)
+    sampled = []
+    for key in sorted(buckets):
+        pool = buckets[key]
+        rng.shuffle(pool)
+        sampled.extend(pool[:SAMPLES_PER_PAIR])
+    return sampled
+
+
+@pytest.fixture(params=_sampled_decoder_configs())
 def module_setup(request):
     config = request.param
     decoder = DECODER_REGISTRY.get(config.decoder_type)(config)

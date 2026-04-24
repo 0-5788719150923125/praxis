@@ -18,7 +18,7 @@ class ChatTemplateValidator:
     """
 
     # Valid role names that can appear after BOS tokens
-    ALLOWED_ROLES = ["system", "developer", "user", "assistant"]
+    ALLOWED_ROLES = ["system", "developer", "user", "assistant", "tool"]
 
     def __init__(self, tokenizer: PreTrainedTokenizer, strict_mode: bool = False):
         """Initialize the validator.

@@ -17,16 +17,19 @@ from tokenizers import (
 )
 from transformers import PreTrainedTokenizerFast
 
-from .base import PraxisTokenizerBase
+from .base import PraxisTokenizerBase, PraxisToolTokensMixin
 from .chat_templates import get_chat_template
 
 
-class StandardTokenizer(PreTrainedTokenizerFast, PraxisTokenizerBase):
+class StandardTokenizer(PreTrainedTokenizerFast, PraxisToolTokensMixin, PraxisTokenizerBase):
     """
     Standard tokenizer supporting BPE and Unigram models.
 
     This tokenizer can be trained on text corpora and supports
     the full HuggingFace tokenizer interface.
+
+    Tool-control tokens come from ``PraxisToolTokensMixin``; HuggingFace
+    assigns them fresh ids at vocab-expansion time.
     """
 
     SPECIAL_TOKENS = {
@@ -61,10 +64,14 @@ class StandardTokenizer(PreTrainedTokenizerFast, PraxisTokenizerBase):
         self._vocab_size = vocab_size
         self.dropout = dropout
 
-        # Initialize special tokens
+        # Initialize named special tokens
         for token_name, token_value in self.SPECIAL_TOKENS.items():
             if token_name not in kwargs:
                 kwargs[token_name] = token_value
+
+        # Register tool tokens so skip_special_tokens strips them and
+        # the underlying tokenizer encodes them as single ids.
+        self._inject_tool_tokens_kwargs(kwargs)
 
         # Create or use provided tokenizer object
         if tokenizer_object is None:
@@ -73,6 +80,12 @@ class StandardTokenizer(PreTrainedTokenizerFast, PraxisTokenizerBase):
         # Initialize PreTrainedTokenizerFast
         PreTrainedTokenizerFast.__init__(
             self, tokenizer_object=tokenizer_object, **kwargs
+        )
+
+        # Ensure the underlying tokenizer has the tool tokens even when
+        # constructed from a preloaded tokenizer_object.
+        self.add_special_tokens(
+            {"additional_special_tokens": list(self.TOOL_SPECIAL_TOKEN_STRINGS)}
         )
 
         # Set chat template
@@ -105,8 +118,10 @@ class StandardTokenizer(PreTrainedTokenizerFast, PraxisTokenizerBase):
         tokenizer.decoder = decoders.ByteLevel()
         tokenizer.post_processor = processors.ByteLevel()
 
-        # Add special tokens
-        all_special_tokens = list(self.SPECIAL_TOKENS.values())
+        # Add special tokens (named + tool-control)
+        all_special_tokens = list(self.SPECIAL_TOKENS.values()) + list(
+            self.TOOL_SPECIAL_TOKEN_STRINGS
+        )
         tokenizer.add_special_tokens(all_special_tokens)
 
         return tokenizer
@@ -130,8 +145,10 @@ class StandardTokenizer(PreTrainedTokenizerFast, PraxisTokenizerBase):
         if vocab_size is None:
             vocab_size = self._vocab_size
 
-        # Get all special tokens
-        all_special_tokens = list(self.SPECIAL_TOKENS.values())
+        # Get all special tokens (named + tool-control + caller-provided)
+        all_special_tokens = list(self.SPECIAL_TOKENS.values()) + list(
+            self.TOOL_SPECIAL_TOKEN_STRINGS
+        )
         additional_special_tokens = kwargs.get("additional_special_tokens", [])
         all_special_tokens = list(set(all_special_tokens + additional_special_tokens))
 

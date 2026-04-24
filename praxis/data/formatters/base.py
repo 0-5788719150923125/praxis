@@ -7,6 +7,49 @@ from transformers import PreTrainedTokenizer
 
 from praxis.data.config import DEVELOPER_PROMPTS, SYSTEM_PROMPT
 
+_ESCAPE_MAP = {"n": "\n", "t": "\t", "r": "\r"}
+
+
+def normalize_escaped_whitespace(text: str) -> str:
+    """Convert literal whitespace escape sequences to real characters.
+
+    Some upstream datasets flatten strings during export, storing
+    "paragraph one\\n\\nparagraph two" as 23 characters of literal text
+    rather than two paragraphs. Without this step the tokenizer encodes
+    those backslash-n pairs verbatim and the model learns to emit them
+    instead of real newlines.
+
+    No-op when the text already contains a real newline - mixed content
+    is ambiguous (often code snippets discussing escape sequences), so
+    we leave it alone. Preserves ``\\\\n`` (escaped backslash followed
+    by n) intact.
+    """
+    if not text or "\n" in text:
+        return text
+    if not any(esc in text for esc in ("\\n", "\\t", "\\r")):
+        return text
+
+    out: List[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == "\\" and i + 1 < n:
+            nxt = text[i + 1]
+            if nxt == "\\":
+                # Leave \\ untouched so an intentional literal backslash
+                # followed by n/t/r survives unchanged.
+                out.append("\\\\")
+                i += 2
+                continue
+            if nxt in _ESCAPE_MAP:
+                out.append(_ESCAPE_MAP[nxt])
+                i += 2
+                continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
 
 def text_formatter(text):
     """
@@ -29,6 +72,7 @@ def text_formatter(text):
         str: Reformatted text with appropriate double newlines
     """
 
+    text = normalize_escaped_whitespace(text)
     text = add_newline_before_lists(text)
 
     # First, preserve existing multiple newlines (2 or more)

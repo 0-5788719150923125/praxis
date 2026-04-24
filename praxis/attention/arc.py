@@ -23,9 +23,13 @@ class ArcAttention(InfiniAttention):
     Each recurrent depth pass gets its own additive bias on Q, K, V, and O
     projections via nn.Embedding lookups. Zero-initialized so the model
     starts identical to InfiniAttention and gradually specializes.
+
+    Optionally applies head-specific elementwise sigmoid gating to the SDPA
+    output (Qiu et al. 2025, arXiv:2505.06708), which introduces non-linearity
+    and input-dependent sparsity between the attention output and W_o.
     """
 
-    def __init__(self, config) -> None:
+    def __init__(self, config, attention_gating: bool = True) -> None:
         super().__init__(config)
 
         self.depth = config.depth
@@ -41,6 +45,13 @@ class ArcAttention(InfiniAttention):
         out_dim = config.hidden_size
         self.depth_output_bias = nn.Embedding(self.depth, out_dim)
         nn.init.zeros_(self.depth_output_bias.weight)
+
+        # Head-specific elementwise sigmoid gate on SDPA output.
+        # Score shape: (n, num_query_heads * head_dim), computed from input X.
+        self.attention_gating = attention_gating
+        if self.attention_gating:
+            gate_dim = self.num_query_heads * self.head_dim
+            self.gate = nn.Linear(config.hidden_size, gate_dim, bias=True)
 
     def forward(
         self,
@@ -111,6 +122,9 @@ class ArcAttention(InfiniAttention):
         output = torch.cat(segment_outputs, dim=2)
         output = output.transpose(1, 2).contiguous()
         output = output.view(batch_size, seq_len, -1)
+
+        if self.attention_gating:
+            output = output * torch.sigmoid(self.gate(inputs))
 
         output = self.output(output)
         output = output + self.depth_output_bias(depth_idx)

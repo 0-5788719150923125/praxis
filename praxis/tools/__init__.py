@@ -206,40 +206,125 @@ def get_tools_json_schema() -> List[Dict[str, Any]]:
     return tools_schema
 
 
+class ToolValidationError(ValueError):
+    """Raised when a tool call fails schema validation.
+
+    Subclasses ValueError so existing ``except ValueError`` callers still
+    catch it, but distinct enough to recognize where that matters.
+    """
+
+
+def _find_tool(name: str) -> Optional[Any]:
+    for t in get_all_tools():
+        tool_name = t.name if isinstance(t, Tool) else getattr(t, "__name__", None)
+        if tool_name == name:
+            return t
+    return None
+
+
+def _type_matches(value: Any, expected: str) -> bool:
+    """Lightweight JSON-shape check. Coarse on purpose - we only know
+    the primitive types that ``_extract_parameters`` assigns."""
+    if expected == "string":
+        return isinstance(value, str)
+    if expected == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if expected == "boolean":
+        return isinstance(value, bool)
+    if expected == "array":
+        return isinstance(value, list)
+    if expected == "object":
+        return isinstance(value, dict)
+    return True  # Unknown type specifier - don't reject.
+
+
+def validate_tool_arguments(name: str, arguments: Any) -> None:
+    """Validate ``arguments`` against the named tool's declared schema.
+
+    Raises ``ToolValidationError`` with a short explanation on:
+    ``arguments`` not being an object, unknown tool, unknown parameter(s),
+    missing required parameter(s), or wrong primitive type. Required
+    parameters are those whose schema ``default`` is ``None`` (the
+    convention used by ``Tool._extract_parameters``).
+    """
+    if not isinstance(arguments, dict):
+        raise ToolValidationError(
+            f"'arguments' must be an object, got {type(arguments).__name__}"
+        )
+
+    tool = _find_tool(name)
+    if tool is None:
+        available = sorted(
+            t.name if isinstance(t, Tool) else getattr(t, "__name__", "?")
+            for t in get_all_tools()
+        )
+        raise ToolValidationError(
+            f"Unknown tool '{name}'. Available: {available}"
+        )
+
+    if not isinstance(tool, Tool):
+        return  # Raw callable - no schema to check against.
+
+    schema = tool.inputs
+    unknown = sorted(set(arguments) - set(schema))
+    if unknown:
+        raise ToolValidationError(
+            f"Unknown parameter(s) for '{name}': {unknown}. "
+            f"Allowed: {sorted(schema)}"
+        )
+
+    missing = sorted(
+        pname
+        for pname, pspec in schema.items()
+        if pspec.get("default") is None and pname not in arguments
+    )
+    if missing:
+        raise ToolValidationError(
+            f"Missing required parameter(s) for '{name}': {missing}"
+        )
+
+    for pname, value in arguments.items():
+        expected = schema[pname].get("type")
+        if expected and not _type_matches(value, expected):
+            raise ToolValidationError(
+                f"Parameter '{pname}' of '{name}' expected type "
+                f"'{expected}', got {type(value).__name__}"
+            )
+
+
 def call_tool(name: str, arguments: Dict[str, Any]) -> Any:
-    """Call a tool by name with arguments (backward compatibility)."""
+    """Call a tool by name with arguments.
+
+    Raises ``ToolValidationError`` if the call doesn't match the tool's
+    declared schema (unknown name, bad args, wrong types). Any exception
+    raised by the tool itself propagates unchanged.
+    """
     if name is None:
         raise ValueError("Tool name cannot be None")
 
-    tools = get_all_tools()
-    available_names = []
-    for tool in tools:
-        tool_name = (
-            tool.name if isinstance(tool, Tool) else getattr(tool, "__name__", None)
-        )
-        available_names.append(tool_name)
-        if tool_name == name:
-            if isinstance(tool, Tool):
-                return tool(**arguments)
-            elif callable(tool):
-                return tool(**arguments)
-
-    # Provide helpful error message with available tools
-    raise ValueError(f"Tool '{name}' not found. Available tools: {available_names}")
+    validate_tool_arguments(name, arguments)
+    tool = _find_tool(name)
+    return tool(**arguments)
 
 
 # Export tag utilities for use across the codebase
 from praxis.tools.tags import (
-    TOOL_INPUT_TAG,
-    TOOL_OUTPUT_TAG,
+    TOOL_CALL_CLOSE,
+    TOOL_CALL_OPEN,
+    TOOL_RESULT_CLOSE,
+    TOOL_RESULT_OPEN,
+    build_result_splice_ids,
+    find_unprocessed_tool_call_ids,
+    format_tool_call_with_result,
     format_tool_input,
     format_tool_output,
-    format_tool_call_with_result,
     get_tool_input_pattern,
     get_tool_output_pattern,
-    parse_tool_call,
     get_unprocessed_tool_call,
-    fix_truncated_tags,
     has_complete_tool_call,
+    has_complete_tool_call_ids,
     has_tool_output,
+    has_tool_output_ids,
+    parse_tool_call,
+    tool_token_ids,
 )

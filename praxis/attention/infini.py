@@ -153,7 +153,9 @@ class InfiniAttention(CausalAttention):
                 self._cpu_fallback_warned = True
             k_local = k_ghost[:, :, 1:, :]
             v_local = v_ghost[:, :, 1:, :]
-            return self._sdpa_fallback(q, k_local, v_local, is_causal=self.causal)
+            return self._sdpa_fallback(
+                q, k_local, v_local, is_causal=self.causal, enable_gqa=is_gqa
+            )
 
         if self.causal:
             block_mask = self._create_causal_mask(seg_len, kv_len, device)

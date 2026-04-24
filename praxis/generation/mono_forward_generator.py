@@ -24,11 +24,10 @@ import torch
 
 from praxis.generation.request import GenerationRequest
 from praxis.tools import (
+    build_result_splice_ids,
     call_tool,
-    fix_truncated_tags,
-    format_tool_output,
+    find_unprocessed_tool_call_ids,
     get_tools_json_schema,
-    get_unprocessed_tool_call,
 )
 
 _api_logger = logging.getLogger("praxis.web")
@@ -159,59 +158,75 @@ class MonoForwardGenerator:
             return prompt_text
 
     def _handle_tool_calls(self, text: str, request: GenerationRequest) -> str:
-        """Scan for <tin>...</tin> tags, execute tools, inject <tout>, continue."""
+        """Execute any unprocessed tool calls in ``text`` and splice in
+        real ``[TOOL_RESULT]`` tokens. Uses explicit position tracking,
+        so the model's hallucinated result blocks don't fool the loop
+        into skipping a real call.
+        """
         if not self.tools or not self.call_tool:
             return text
 
-        text = fix_truncated_tags(text)
         start_time = time.time()
         tool_history: List[tuple] = []
         kwargs = request.kwargs or {}
         skip_special_tokens = bool(kwargs.get("skip_special_tokens", False))
 
-        for depth in range(self.max_tool_calls_per_request):
-            unprocessed = get_unprocessed_tool_call(text)
+        try:
+            token_ids = list(self.tokenizer.encode(text))
+        except Exception as exc:
+            _api_logger.error(f"MonoForwardGenerator encode failed: {exc}")
+            return text
+
+        depth = 0
+
+        while depth < self.max_tool_calls_per_request:
+            unprocessed = find_unprocessed_tool_call_ids(token_ids, self.tokenizer)
             if not unprocessed:
                 break
 
-            tool_call, tin_end_pos = unprocessed
-            tool_name = tool_call.get("name")
-            tool_args = tool_call.get("arguments", {})
-
-            if tool_name is None:
-                tool_name = tool_call.get("tool") or tool_call.get("function", {}).get(
-                    "name"
-                )
-                if tool_name is None:
-                    _api_logger.warning(
-                        f"Could not extract tool name from: {tool_call}"
-                    )
-                    break
+            tool_call, call_end_index = unprocessed
 
             if time.time() - start_time > self.max_tool_call_time:
                 _api_logger.info(f"[TOOL_SAFETY] Timeout after {depth} tool call(s).")
                 break
 
-            sig = (tool_name, json.dumps(tool_args, sort_keys=True))
-            if sig in tool_history:
-                _api_logger.info(f"[TOOL_SAFETY] Duplicate tool call: {tool_name}")
-                break
-            tool_history.append(sig)
+            if tool_call.get("_malformed"):
+                err = tool_call.get("_error", "malformed tool call")
+                _api_logger.warning(f"Malformed tool call: {err}")
+                result_payload = f"Error: {err}"
+            else:
+                tool_name = tool_call.get("name") or tool_call.get("tool") or (
+                    tool_call.get("function", {}) or {}
+                ).get("name")
+                tool_args = tool_call.get("arguments", {})
 
-            try:
-                result = self.call_tool(tool_name, tool_args)
-                _api_logger.info(f"Tool {tool_name}({tool_args}) -> {result}")
-            except Exception as exc:
-                _api_logger.error(f"Tool {tool_name} failed: {exc}")
-                break
+                if tool_name is None:
+                    _api_logger.warning(f"Could not extract tool name from: {tool_call}")
+                    result_payload = "Error: tool call is missing the 'name' field."
+                else:
+                    sig = (tool_name, json.dumps(tool_args, sort_keys=True))
+                    if sig in tool_history:
+                        _api_logger.info(f"[TOOL_SAFETY] Duplicate tool call: {tool_name}")
+                        break
+                    tool_history.append(sig)
 
-            tool_output_tag = format_tool_output(result)
-            text_with_result = text[:tin_end_pos] + tool_output_tag + text[tin_end_pos:]
+                    try:
+                        result = self.call_tool(tool_name, tool_args)
+                        _api_logger.info(f"Tool {tool_name}({tool_args}) -> {result}")
+                        result_payload = result
+                    except Exception as exc:
+                        _api_logger.error(f"Tool {tool_name} failed: {exc}")
+                        result_payload = f"Error: {exc}"
 
-            input_ids = self._encode_prompt(text_with_result)
-            if input_ids is None:
-                return text_with_result
+            depth += 1
+            result_ids = build_result_splice_ids(self.tokenizer, result_payload)
+            token_ids = (
+                token_ids[:call_end_index]
+                + list(result_ids)
+                + token_ids[call_end_index:]
+            )
 
+            input_ids = torch.as_tensor([token_ids], dtype=torch.long)
             max_new_tokens = int(kwargs.get("max_new_tokens", 128))
             eos_token_id = getattr(self.tokenizer, "eos_token_id", None)
 
@@ -226,22 +241,17 @@ class MonoForwardGenerator:
             ):
                 new_tokens.append(tok)
 
-            if not new_tokens:
-                return text_with_result
+            if new_tokens:
+                new_ids = torch.stack(new_tokens, dim=-1)
+                full_ids = torch.cat([input_ids, new_ids], dim=-1)
+                token_ids = full_ids[0].tolist()
 
-            new_ids = torch.stack(new_tokens, dim=-1)
-            full_ids = torch.cat([input_ids, new_ids], dim=-1)
-            try:
-                text = self.tokenizer.decode(
-                    full_ids[0].tolist(),
-                    skip_special_tokens=skip_special_tokens,
-                )
-            except Exception:
-                return text_with_result
-
-            text = fix_truncated_tags(text)
-
-        return text
+        try:
+            return self.tokenizer.decode(
+                token_ids, skip_special_tokens=skip_special_tokens
+            )
+        except Exception:
+            return text
 
     def _prompt_as_text(self, prompt: Union[str, List[Dict[str, str]]]) -> str:
         """Normalise prompt to a plain string, applying chat template if needed."""

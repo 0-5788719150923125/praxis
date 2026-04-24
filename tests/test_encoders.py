@@ -62,10 +62,10 @@ def test_forward_pass(module_setup):
     # Basic shape assertions
     assert len(decoder_output.shape) == 3, "Expected 3D output from decoder"
     assert decoder_output.shape[0] == batch_size, "Batch size mismatch in output"
-    # ByteLatent emits its 260-entry internal vocab; other encoders
+    # ByteLatent emits its local byte-level vocab; other encoders
     # (CALM, etc.) emit the shared PraxisConfig vocab_size.
     if hasattr(module, "byte_config"):
-        expected_vocab_size = module.byte_config.vocab_size
+        expected_vocab_size = module.byte_config.local_vocab_size
     else:
         expected_vocab_size = config.vocab_size
     assert decoder_output.shape == (batch_size, seq_len, expected_vocab_size)

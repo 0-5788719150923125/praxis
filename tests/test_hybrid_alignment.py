@@ -1,6 +1,9 @@
 """Test hybrid mode layout alignment between light and dark themes."""
 
 import pytest
+
+pytest.importorskip("pytest_playwright")
+
 from playwright.sync_api import Page, expect
 
 

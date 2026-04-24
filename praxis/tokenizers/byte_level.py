@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Union
 from tokenizers import Tokenizer, decoders, models, normalizers, pre_tokenizers
 from transformers import PreTrainedTokenizerFast
 
-from .base import PraxisTokenizerBase
+from .base import PraxisToolTokensMixin
 from .chat_templates import get_chat_template
 
 # Try to import BltTokenizer, but make it optional
@@ -25,15 +25,19 @@ except ImportError:
     OFFSET = 4
 
 
-class ByteLevelTokenizer(PreTrainedTokenizerFast):
+class ByteLevelTokenizer(PreTrainedTokenizerFast, PraxisToolTokensMixin):
     """
     ByteLevel tokenizer that operates on raw bytes.
 
     This tokenizer provides byte-level tokenization with full HuggingFace
     compatibility including chat template support.
+
+    Tool-control tokens (see ``PraxisToolTokensMixin``) are appended
+    past the byte range so existing byte ids (OFFSET..OFFSET+255) stay
+    valid in saved checkpoints.
     """
 
-    # Only 4 unique special tokens matching BLT IDs exactly
+    # Only 4 unique named special tokens matching BLT IDs exactly
     # PAD_ID/BOE_ID = 0, BOS_ID = 1, EOS_ID = 2, SEP_ID = 3
     SPECIAL_TOKENS = {
         "pad_token": "[PAD]",  # ID: 0
@@ -53,6 +57,7 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast):
         self,
         tokenizer_object: Optional[Tokenizer] = None,
         vocab_size_unit_1: int = 256,
+        vocab_size: Optional[int] = None,
         bpe_delim: bool = False,
         add_bos: bool = False,  # Don't add BOS by default for byte-level
         add_eos: bool = False,  # Don't add EOS by default for byte-level
@@ -65,6 +70,12 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast):
         Args:
             tokenizer_object: Pre-built tokenizer object
             vocab_size_unit_1: Size of the byte vocabulary (default 256)
+            vocab_size: External (model) vocab size reported by the
+                ``vocab_size`` property. The byte-level tokenizer only emits
+                ids in ``byte_alphabet_size`` (256 bytes + named specials +
+                tool specials), but downstream code (hash embeddings,
+                dashboards) treats ``vocab_size`` as the model's logical
+                vocabulary. If unset, falls back to the byte alphabet size.
             bpe_delim: Whether to use BPE delimiter (requires BLT)
             add_bos: Whether to add BOS token automatically
             add_eos: Whether to add EOS token automatically
@@ -72,11 +83,19 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast):
             **kwargs: Additional arguments passed to parent class
         """
         self.vocab_size_unit_1 = vocab_size_unit_1
+        self._configured_vocab_size = vocab_size
         self.bpe_delim = bpe_delim
         self.add_bos = add_bos
         self.add_eos = add_eos
 
-        # Initialize special tokens from kwargs or use defaults
+        # Tool-control token ids land immediately past the byte range.
+        self._tool_token_start_id = vocab_size_unit_1 + OFFSET
+        self._tool_special_id_map: Dict[str, int] = {
+            tok: self._tool_token_start_id + idx
+            for idx, tok in enumerate(self.TOOL_SPECIAL_TOKEN_STRINGS)
+        }
+
+        # Initialize named-special tokens from kwargs or use defaults
         for token_name, token_value in self.SPECIAL_TOKENS.items():
             if token_name not in kwargs:
                 kwargs[token_name] = token_value
@@ -84,6 +103,9 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast):
         # HuggingFace expects unk_token - use PAD as fallback
         if "unk_token" not in kwargs:
             kwargs["unk_token"] = "[PAD]"  # Use PAD as unknown token
+
+        # Register tool tokens so ``skip_special_tokens`` recognises them.
+        self._inject_tool_tokens_kwargs(kwargs)
 
         # Create or use provided tokenizer object
         if tokenizer_object is None:
@@ -124,7 +146,7 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast):
         vocab = {}
         merges = []
 
-        # Special tokens use IDs 0-3
+        # Named special tokens use IDs 0-3
         vocab["[PAD]"] = self.PAD_ID
         vocab["[BOS]"] = self.BOS_ID
         vocab["[EOS]"] = self.EOS_ID
@@ -134,6 +156,10 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast):
         for i in range(vocab_size):
             byte_char = chr(i) if i < 256 else f"<unk>"
             vocab[byte_char] = i + OFFSET
+
+        # Tool-control tokens appended past the byte range.
+        for tok, tid in self._tool_special_id_map.items():
+            vocab[tok] = tid
 
         # Create BPE model with vocab and empty merges
         tokenizer = Tokenizer(
@@ -179,6 +205,7 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast):
             "[BOS]": self.BOS_ID,
             "[EOS]": self.EOS_ID,
             "[SEP]": self.SEP_ID,
+            **self._tool_special_id_map,
         }
 
         tokens = []
@@ -236,18 +263,18 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast):
         elif isinstance(token_ids, int):
             token_ids = [token_ids]
 
-        # Special token ID to string mapping (for testing)
+        # Special token ID to string mapping (named specials + tool specials)
         special_id_map = {
             self.PAD_ID: "[PAD]",
             self.BOS_ID: "[BOS]",
             self.EOS_ID: "[EOS]",
             self.SEP_ID: "[SEP]",
+            **{tid: tok for tok, tid in self._tool_special_id_map.items()},
         }
 
         result = []
         byte_buffer = bytearray()
         for tok in token_ids:
-            # Check if it's a special token (0-3)
             if tok in special_id_map:
                 # Flush any pending bytes before the special token
                 if byte_buffer:
@@ -280,12 +307,13 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast):
         """
         token_ids = self.encode(text, add_special_tokens=False)
 
-        # Map special token IDs to strings
+        # Map special token IDs to strings (named + tool specials)
         special_id_map = {
             self.PAD_ID: "[PAD]",
             self.BOS_ID: "[BOS]",
             self.EOS_ID: "[EOS]",
             self.SEP_ID: "[SEP]",
+            **{tid: tok for tok, tid in self._tool_special_id_map.items()},
         }
 
         tokens = []
@@ -302,17 +330,42 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast):
 
     def convert_tokens_to_string(self, tokens: List[str]) -> str:
         """
-        Convert a list of tokens back to a string.
-
-        Args:
-            tokens: List of token strings
-
-        Returns:
-            Reconstructed string
+        Convert a list of tokens back to a string. Hex byte tokens
+        (e.g. ``<0x48>``) are decoded back to their original UTF-8 bytes.
         """
-        return "".join(tokens)
+        byte_buf = bytearray()
+        out: List[str] = []
+
+        def flush() -> None:
+            if byte_buf:
+                out.append(byte_buf.decode("utf-8", errors="replace"))
+                byte_buf.clear()
+
+        for tok in tokens:
+            if len(tok) == 6 and tok.startswith("<0x") and tok.endswith(">"):
+                try:
+                    byte_buf.append(int(tok[3:5], 16))
+                    continue
+                except ValueError:
+                    pass
+            flush()
+            out.append(tok)
+
+        flush()
+        return "".join(out)
+
+    @property
+    def byte_alphabet_size(self) -> int:
+        """Number of distinct ids the tokenizer can emit (bytes + named
+        specials + tool specials). Use this to size byte-level embedding
+        tables; ``vocab_size`` is the model's external vocab and may be
+        much larger (e.g. for hash-embedding bucket counts)."""
+        return self.vocab_size_unit_1 + OFFSET + len(self.TOOL_SPECIAL_TOKEN_STRINGS)
 
     @property
     def vocab_size(self) -> int:
-        """Get the vocabulary size (matching BLT: 256 + offset)."""
-        return self.vocab_size_unit_1 + OFFSET  # 256 + 4 = 260
+        """Model-facing vocabulary size. Defaults to the byte alphabet
+        when no external vocab was configured."""
+        if self._configured_vocab_size is not None:
+            return int(self._configured_vocab_size)
+        return self.byte_alphabet_size

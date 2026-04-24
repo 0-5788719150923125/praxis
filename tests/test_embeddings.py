@@ -19,7 +19,7 @@ class MockConfig:
     vocab_size: int = 1000
     embed_size: int = 64
     hidden_size: int = 128
-    max_length: int = 512
+    max_position_embeddings: int = 512
     dropout: float = 0.1
 
 
@@ -40,7 +40,7 @@ class TestPositionalEmbedding:
         # Check dimensions
         assert embedding.wte.num_embeddings == config.vocab_size
         assert embedding.wte.embedding_dim == config.embed_size
-        assert embedding.wpe.num_embeddings == config.max_length
+        assert embedding.wpe.num_embeddings == config.max_position_embeddings
         assert embedding.wpe.embedding_dim == config.embed_size
         assert embedding.reduction.in_features == config.embed_size
         assert embedding.reduction.out_features == config.hidden_size
@@ -119,7 +119,7 @@ class TestPositionalEmbedding:
 
     def test_max_length_constraint(self):
         """Test behavior at maximum sequence length."""
-        config = MockConfig(max_length=10)
+        config = MockConfig(max_position_embeddings=10)
         embedding = PositionalEmbedding(config)
 
         # This should work
@@ -341,7 +341,7 @@ class TestEmbeddingIntegration:
     )
     def test_various_input_sizes(self, batch_size, seq_len):
         """Test embeddings with various input sizes."""
-        config = MockConfig(max_length=4096)
+        config = MockConfig(max_position_embeddings=4096)
         embedding = PositionalEmbedding(config)
 
         x = torch.randint(0, config.vocab_size, (batch_size, seq_len))

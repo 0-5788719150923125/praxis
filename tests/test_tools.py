@@ -1,596 +1,438 @@
-"""Test tool-calling functionality."""
+"""Tool-calling tests.
+
+Tool-call boundaries are atomic special tokens
+(``[TOOL_CALL]``/``[/TOOL_CALL]``/``[TOOL_RESULT]``/``[/TOOL_RESULT]``).
+The tests exercise both the string-form helpers (format, parse, regex
+patterns) and the token-ID helpers used by the generator at runtime.
+"""
 
 import json
-import re
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 import torch
 
-from praxis import PraxisConfig, PraxisForCausalLM
+from praxis.tokenizers.byte_level import ByteLevelTokenizer
+from praxis.tokenizers.char_level import CharLevelTokenizer
 from praxis.tools import (
+    TOOL_CALL_CLOSE,
+    TOOL_CALL_OPEN,
+    TOOL_RESULT_CLOSE,
+    TOOL_RESULT_OPEN,
+    ToolValidationError,
+    build_result_splice_ids,
     calc,
+    call_tool,
+    find_unprocessed_tool_call_ids,
     format_tool_call_with_result,
     format_tool_input,
     format_tool_output,
-    get_tool_input_pattern,
     get_tools,
+    get_unprocessed_tool_call,
+    has_complete_tool_call,
+    has_complete_tool_call_ids,
+    has_tool_output,
+    has_tool_output_ids,
     parse_tool_call,
+    tool_token_ids,
+    validate_tool_arguments,
 )
 
 
-def test_calc_tool_basic():
-    """Test the calc tool basic functionality."""
-    # Test addition
-    result = calc.forward(values=[10, 20, 30], op="add")
-    assert result == 60
-
-    # Test subtraction
-    result = calc.forward(values=[100, 25], op="sub")
-    assert result == 75
-
-    # Test multiplication
-    result = calc.forward(values=[5, 6], op="mul")
-    assert result == 30.0
-
-    # Test division
-    result = calc.forward(values=[50, 2], op="div")
-    assert result == 25.0
-
-    # Test square root
-    result = calc.forward(values=[9], op="sqrt")
-    assert result == 3.0
-
-    # Test exponentiation
-    result = calc.forward(values=[2, 3], op="exp")
-    assert result == 8.0
+# ---------------------------------------------------------------------------
+# Tool functions themselves (unchanged by the conversion).
+# ---------------------------------------------------------------------------
 
 
-def test_calc_tool_via_forward():
-    """Test calling the calc tool through the forward method."""
-    result = calc.forward(values=[1, 2, 3, 4, 5], op="add")
-    assert result == 15
-
-    # Test with default operation (add)
-    result = calc.forward(values=[10, 10])
-    assert result == 20
-
-
-def test_get_tools():
-    """Test that tools can be retrieved."""
-    tools = get_tools()
-
-    # Should have at least the calc tool
-    assert len(tools) >= 1
-
-    # Check that calc is in the tools
-    tool_names = [tool.name for tool in tools]
-    assert "calc" in tool_names
-
-    # Get the calc tool
-    calc_tool = next(tool for tool in tools if tool.name == "calc")
-    assert calc_tool.description
-    assert hasattr(calc_tool, "forward")
-    assert hasattr(calc_tool, "inputs")
-    assert hasattr(calc_tool, "output_type")
+def test_calc_basic_ops():
+    assert calc.forward(values=[10, 20, 30], op="add") == 60
+    assert calc.forward(values=[100, 25], op="sub") == 75
+    assert calc.forward(values=[5, 6], op="mul") == 30.0
+    assert calc.forward(values=[50, 2], op="div") == 25.0
+    assert calc.forward(values=[9], op="sqrt") == 3.0
+    assert calc.forward(values=[2, 3], op="exp") == 8.0
 
 
-def test_tool_properties():
-    """Test that the decorated tool has the expected properties."""
-    assert hasattr(calc, "name")
-    assert calc.name == "calc"
-
-    assert hasattr(calc, "description")
-    assert "algebraic operation" in calc.description.lower()
-
-    assert hasattr(calc, "forward")
-    assert hasattr(calc, "inputs")
-    assert hasattr(calc, "output_type")
-
-
-def test_tool_error_handling():
-    """Test error handling in tool execution."""
-    # Test division by zero
+def test_calc_error_handling():
     with pytest.raises(ValueError, match="Division by zero"):
         calc.forward(values=[10, 0], op="div")
-
-    # Test sqrt of negative number
     with pytest.raises(ValueError, match="negative number"):
         calc.forward(values=[-4], op="sqrt")
-
-    # Test empty values
     with pytest.raises(ValueError, match="values list cannot be empty"):
         calc.forward(values=[], op="add")
-
-    # Test unknown operation
     with pytest.raises(ValueError, match="Unknown operation"):
         calc.forward(values=[1, 2], op="unknown_op")
 
-    # Test calling non-existent tool - now we just check it's not in the list
+
+def test_get_tools_registry():
     tools = get_tools()
-    tool_names = [tool.name for tool in tools]
-    assert "nonexistent_tool" not in tool_names
+    assert len(tools) >= 1
+    names = [t.name for t in tools]
+    assert "calc" in names
 
 
-def test_tool_calling_during_inference():
-    """Test that tools can be used during model inference."""
-    # Create a minimal config for testing
-    config = PraxisConfig(
-        hidden_size=64,
-        num_heads=2,
-        depth=2,
-        vocab_size=1000,
-    )
-
-    # Create model
-    model = PraxisForCausalLM(config)
-    model.eval()
-
-    # Mock tokenizer
-    tokenizer = MagicMock()
-    tokenizer.encode = MagicMock(return_value=[1, 2, 3])
-    tokenizer.decode = MagicMock(return_value="Test output")
-    tokenizer.bos_token = "<bos>"
-    tokenizer.eos_token = "<eos>"
-    tokenizer.sep_token = "<sep>"
-    tokenizer.pad_token_id = 0
-
-    # Test that we can use tools
-    from praxis.tools import get_tools
-
-    # Get available tools
-    tools = get_tools()
-    assert len(tools) > 0
-
-    # Call a tool directly
-    result = calc.forward(values=[10, 20], op="add")
-    assert result == 30
-
-    # Parse a tool call from text using new <tin> tag format
-    tool_call_text = format_tool_input("calc", {"values": [10, 20], "op": "add"})
-
-    # Parse using the utility function
-    tool_data = parse_tool_call(tool_call_text)
-
-    assert tool_data is not None
-    assert tool_data["name"] == "calc"
-    assert tool_data["arguments"]["values"] == [10, 20]
-
-    # Execute the parsed tool call via calc
-    if tool_data["name"] == "calc":
-        result = calc.forward(**tool_data["arguments"])
-        assert result == 30
+# ---------------------------------------------------------------------------
+# String-form format/parse helpers.
+# ---------------------------------------------------------------------------
 
 
-def test_model_with_tools():
-    """Test that model can work with tools."""
-    config = PraxisConfig(
-        hidden_size=64,
-        num_heads=2,
-        depth=2,
-        vocab_size=1000,
-    )
-
-    model = PraxisForCausalLM(config)
-
-    # Get tools
-    tools = get_tools()
-    assert len(tools) > 0
-
-    # Create a prompt that mentions tools
-    tool_names = [tool.name for tool in tools]
-    prompt = f"""System: You have access to the following tools: {', '.join(tool_names)}
-
-User: Calculate 15 + 25
-Assistant: I'll calculate that for you."""
-
-    # Verify the prompt includes tool information
-    assert "calc" in prompt
-
-    # Simulate a tool call response using new tag format
-    tool_response = format_tool_input("calc", {"values": [15, 25], "op": "add"})
-
-    # Parse and execute using utility function
-    tool_data = parse_tool_call(tool_response)
-    assert tool_data is not None
-
-    # Execute via the calc tool directly
-    if tool_data["name"] == "calc":
-        result = calc.forward(**tool_data["arguments"])
-        assert result == 40
+def test_format_tool_input_uses_atomic_strings():
+    out = format_tool_input("calc", {"values": [1, 2], "op": "add"})
+    assert out.startswith(TOOL_CALL_OPEN)
+    assert out.rstrip().endswith(TOOL_CALL_CLOSE)
+    assert '"name": "calc"' in out
+    # Legacy inline string forms must be gone.
+    assert "<tin>" not in out and "</tin>" not in out
 
 
-def test_truncated_tool_call_tag():
-    """Test that truncated tool input tags are properly fixed."""
-    from praxis.tools import fix_truncated_tags
-
-    # Test case 1: Truncated </tin tag
-    malformed_text = """[BOS]assistant
-<tin>
-{"name": "calc", "arguments": {"values": [103253, 757695], "op": "add"}}
-</tin
-[SEP]
-[BOS]assistant
->
-[SEP]"""
-
-    fixed_text = fix_truncated_tags(malformed_text)
-    assert "</tin>" in fixed_text
-    assert "</tin\n" not in fixed_text
-    # Separator tokens after </tin> should be cleaned up
-    assert "[SEP]" not in fixed_text or fixed_text.find("[SEP]") < fixed_text.find(
-        "</tin>"
-    )
-
-    # Test case 2: Generation stopped at just "</"
-    malformed_text2 = """<tin>
-{"name": "calc", "arguments": {"values": [1, 2], "op": "add"}}
-</
-[SEP]
-[BOS]assistant
-"""
-
-    fixed_text2 = fix_truncated_tags(malformed_text2)
-    assert "</tin>" in fixed_text2
-    assert "</" + "\n[SEP]" not in fixed_text2  # Should be fixed and cleaned
-
-    # Test case 3: Partial tag name
-    malformed_text3 = """<tin>{"name": "calc", "arguments": {}}
-</t"""
-
-    fixed_text3 = fix_truncated_tags(malformed_text3)
-    assert "</tin>" in fixed_text3
-    assert "</t" not in fixed_text3 or "</tin>" in fixed_text3
-
-    # Test case 4: Complete tag but with separator artifacts
-    malformed_text4 = """<tin>{"name": "calc", "arguments": {}}
-</tin>[SEP][BOS]assistant>[SEP]"""
-
-    fixed_text4 = fix_truncated_tags(malformed_text4)
-    assert "</tin>" in fixed_text4
-    # Artifacts should be cleaned
-    assert not fixed_text4.endswith("[SEP][BOS]assistant>[SEP]")
-    assert fixed_text4.rstrip().endswith("</tin>")
+def test_format_tool_output_uses_atomic_strings():
+    out = format_tool_output(42)
+    assert out == f"{TOOL_RESULT_OPEN}\n42\n{TOOL_RESULT_CLOSE}"
+    assert "<tout>" not in out
 
 
-def test_tool_tag_utilities():
-    """Test the new tool tag utility functions."""
-    from praxis.tools import (
-        format_tool_call_with_result,
-        format_tool_input,
-        format_tool_output,
-        get_unprocessed_tool_call,
-        has_complete_tool_call,
-        has_tool_output,
-        parse_tool_call,
-    )
-
-    # Test format_tool_input
-    tool_input = format_tool_input("calc", {"values": [1, 2], "op": "add"})
-    assert "<tin>" in tool_input
-    assert "</tin>" in tool_input
-    assert '"name": "calc"' in tool_input
-
-    # Test format_tool_output
-    tool_output = format_tool_output(42)
-    assert tool_output == "<tout>42</tout>"
-
-    # Test format_tool_call_with_result
-    complete_call = format_tool_call_with_result(
+def test_format_tool_call_with_result_separates_special_tokens():
+    s = format_tool_call_with_result(
         "calc", {"values": [1, 2], "op": "add"}, 3
     )
-    assert "<tin>" in complete_call
-    assert "</tin>" in complete_call
-    assert "<tout>3</tout>" in complete_call
+    # Adjacent special tokens must be separated by whitespace, never butted up.
+    assert TOOL_CALL_CLOSE + TOOL_RESULT_OPEN not in s
+    assert f"{TOOL_CALL_CLOSE}\n{TOOL_RESULT_OPEN}" in s
+    assert f"{TOOL_RESULT_OPEN}\n3\n{TOOL_RESULT_CLOSE}" in s
 
-    # Test parse_tool_call
-    parsed = parse_tool_call(tool_input)
+
+def test_parse_tool_call_extracts_last_valid():
+    text = format_tool_input("calc", {"values": [10, 20], "op": "add"})
+    parsed = parse_tool_call(text)
     assert parsed is not None
     assert parsed["name"] == "calc"
-    assert parsed["arguments"]["values"] == [1, 2]
-
-    # Test has_complete_tool_call
-    assert has_complete_tool_call(tool_input) is True
-    assert has_complete_tool_call("no tool call here") is False
-
-    # Test has_tool_output
-    assert has_tool_output(tool_output) is True
-    assert has_tool_output("no output here") is False
-
-    # Test get_unprocessed_tool_call
-    # Tool call without output should be detected as unprocessed
-    unprocessed = get_unprocessed_tool_call(tool_input)
-    assert unprocessed is not None
-    assert unprocessed[0]["name"] == "calc"
-
-    # Tool call with output should not be unprocessed
-    processed = get_unprocessed_tool_call(complete_call)
-    assert processed is None  # Has output, so it's processed
+    assert parsed["arguments"] == {"values": [10, 20], "op": "add"}
 
 
-def test_multiple_tool_calls_in_sequence():
-    """Test that multiple tool calls are processed in order."""
-    from praxis.tools import get_unprocessed_tool_call
-
-    # Test case 1: Two unprocessed calls - should return the FIRST one
-    text_two_unprocessed = """<tin>
-{"name": "calc", "arguments": {"values": [1, 2], "op": "add"}}
-</tin>
-Some text here
-<tin>
-{"name": "calc", "arguments": {"values": [3, 4], "op": "mul"}}
-</tin>"""
-
-    result = get_unprocessed_tool_call(text_two_unprocessed)
-    assert result is not None
-    assert result[0]["arguments"]["values"] == [1, 2]  # First call, not second
-    assert result[0]["arguments"]["op"] == "add"
-
-    # Test case 2: First call has output, second doesn't - should return second
-    text_first_processed = """<tin>
-{"name": "calc", "arguments": {"values": [1, 2], "op": "add"}}
-</tin><tout>3</tout>
-<tin>
-{"name": "calc", "arguments": {"values": [5, 6], "op": "sub"}}
-</tin>"""
-
-    result2 = get_unprocessed_tool_call(text_first_processed)
-    assert result2 is not None
-    assert result2[0]["arguments"]["values"] == [5, 6]  # Second call
-    assert result2[0]["arguments"]["op"] == "sub"
-
-    # Test case 3: Both calls have outputs - should return None
-    text_both_processed = """<tin>
-{"name": "calc", "arguments": {"values": [1, 2], "op": "add"}}
-</tin><tout>3</tout>
-<tin>
-{"name": "calc", "arguments": {"values": [5, 6], "op": "sub"}}
-</tin><tout>-1</tout>"""
-
-    result3 = get_unprocessed_tool_call(text_both_processed)
-    assert result3 is None  # All processed
-
-    # Test case 4: Three calls, middle one unprocessed - should return middle
-    text_middle_unprocessed = """<tin>
-{"name": "calc", "arguments": {"values": [1, 1], "op": "add"}}
-</tin><tout>2</tout>
-<tin>
-{"name": "calc", "arguments": {"values": [2, 2], "op": "add"}}
-</tin>
-<tin>
-{"name": "calc", "arguments": {"values": [3, 3], "op": "add"}}
-</tin>"""
-
-    result4 = get_unprocessed_tool_call(text_middle_unprocessed)
-    assert result4 is not None
-    assert result4[0]["arguments"]["values"] == [2, 2]  # Middle call
+def test_has_complete_and_has_output_text_helpers():
+    call_only = format_tool_input("calc", {"values": [1, 1], "op": "add"})
+    complete = format_tool_call_with_result(
+        "calc", {"values": [1, 1], "op": "add"}, 2
+    )
+    assert has_complete_tool_call(call_only) is True
+    assert has_tool_output(call_only) is False
+    assert has_complete_tool_call(complete) is True
+    assert has_tool_output(complete) is True
+    assert has_complete_tool_call("no tool here") is False
 
 
-def test_generator_has_unclosed_tool_tag():
-    """Test the _has_unclosed_tool_tag helper method in Generator."""
-    from unittest.mock import MagicMock
+def test_get_unprocessed_tool_call_text_helper():
+    call_only = format_tool_input("calc", {"values": [1, 1], "op": "add"})
+    result = get_unprocessed_tool_call(call_only)
+    assert result is not None and result[0]["name"] == "calc"
 
+    resolved = format_tool_call_with_result(
+        "calc", {"values": [1, 1], "op": "add"}, 2
+    )
+    assert get_unprocessed_tool_call(resolved) is None
+
+
+def test_multiple_calls_unprocessed_scan_order():
+    # First call resolved, second pending: should surface the second.
+    first = format_tool_call_with_result(
+        "calc", {"values": [1, 1], "op": "add"}, 2
+    )
+    second_open = format_tool_input("calc", {"values": [3, 4], "op": "mul"})
+    text = f"{first}\n{second_open}"
+    got = get_unprocessed_tool_call(text)
+    assert got is not None
+    assert got[0]["arguments"] == {"values": [3, 4], "op": "mul"}
+
+
+def test_regex_patterns_escape_brackets_correctly():
+    # Both literal '[' characters must be escaped for the regex to match.
+    from praxis.tools.tags import get_tool_input_pattern, get_tool_output_pattern
+
+    import re
+
+    tin = format_tool_input("calc", {"values": [1], "op": "add"})
+    assert re.search(get_tool_input_pattern(), tin, re.DOTALL) is not None
+
+    tout = format_tool_output(7)
+    assert re.search(get_tool_output_pattern(), tout, re.DOTALL) is not None
+
+
+# ---------------------------------------------------------------------------
+# Token-ID helpers - the generator's runtime path.
+# ---------------------------------------------------------------------------
+
+
+def test_tokenizer_encodes_tool_tokens_as_single_ids_byte_level():
+    tok = ByteLevelTokenizer()
+    for marker in (TOOL_CALL_OPEN, TOOL_CALL_CLOSE, TOOL_RESULT_OPEN, TOOL_RESULT_CLOSE):
+        ids = tok.encode(marker, add_special_tokens=False)
+        assert len(ids) == 1, f"{marker} not atomic: {ids}"
+
+
+def test_tokenizer_encodes_tool_tokens_as_single_ids_char_level():
+    tok = CharLevelTokenizer()
+    for marker in (TOOL_CALL_OPEN, TOOL_CALL_CLOSE, TOOL_RESULT_OPEN, TOOL_RESULT_CLOSE):
+        ids = tok.encode(marker, add_special_tokens=False)
+        assert len(ids) == 1, f"{marker} not atomic: {ids}"
+
+
+def test_tool_token_ids_lookup_returns_ints():
+    tok = ByteLevelTokenizer()
+    mapping = tool_token_ids(tok)
+    for key in ("call_open", "call_close", "result_open", "result_close"):
+        assert isinstance(mapping[key], int)
+    # All four ids must be distinct.
+    assert len(set(mapping.values())) == 4
+
+
+def test_skip_special_tokens_strips_tool_markers():
+    tok = ByteLevelTokenizer()
+    text = f"hello {TOOL_CALL_OPEN}body{TOOL_CALL_CLOSE} done"
+    ids = tok.encode(text, add_special_tokens=False)
+    with_specials = tok.decode(ids, skip_special_tokens=False)
+    without_specials = tok.decode(ids, skip_special_tokens=True)
+    assert TOOL_CALL_OPEN in with_specials
+    assert TOOL_CALL_OPEN not in without_specials
+
+
+def test_find_unprocessed_tool_call_ids_locates_pending_call():
+    tok = ByteLevelTokenizer()
+    s = format_tool_input("calc", {"values": [1, 2], "op": "add"})
+    ids = list(tok.encode(s, add_special_tokens=False))
+    found = find_unprocessed_tool_call_ids(ids, tok)
+    assert found is not None
+    call, end_idx = found
+    assert call == {"name": "calc", "arguments": {"values": [1, 2], "op": "add"}}
+    # end_idx points one past the close token.
+    assert ids[end_idx - 1] == tok.tool_call_end_token_id
+
+
+def test_find_unprocessed_tool_call_ids_skips_resolved_calls():
+    """A call followed by a *complete* [TOOL_RESULT]...[/TOOL_RESULT]
+    block is treated as already handled - eos halting at [/TOOL_CALL]
+    means the model never gets to fully complete a result block before
+    we splice ours in, so a complete block is reliably ours."""
+    tok = ByteLevelTokenizer()
+    resolved = format_tool_call_with_result(
+        "calc", {"values": [1, 1], "op": "add"}, 2
+    )
+    ids = list(tok.encode(resolved, add_special_tokens=False))
+    assert find_unprocessed_tool_call_ids(ids, tok) is None
+
+
+def test_find_unprocessed_tool_call_ids_returns_none_on_no_tool():
+    tok = ByteLevelTokenizer()
+    ids = list(tok.encode("just some chatter", add_special_tokens=False))
+    assert find_unprocessed_tool_call_ids(ids, tok) is None
+
+
+def test_has_complete_tool_call_and_output_ids():
+    tok = ByteLevelTokenizer()
+    open_only = list(
+        tok.encode(
+            format_tool_input("calc", {"values": [1], "op": "add"}),
+            add_special_tokens=False,
+        )
+    )
+    complete = list(
+        tok.encode(
+            format_tool_call_with_result(
+                "calc", {"values": [1], "op": "add"}, 1
+            ),
+            add_special_tokens=False,
+        )
+    )
+    assert has_complete_tool_call_ids(open_only, tok) is True
+    assert has_tool_output_ids(open_only, tok) is False
+    assert has_complete_tool_call_ids(complete, tok) is True
+    assert has_tool_output_ids(complete, tok) is True
+
+
+def test_build_result_splice_ids_separates_markers_with_newlines():
+    tok = ByteLevelTokenizer()
+    spliced = build_result_splice_ids(tok, 42)
+    # Splice begins with a leading newline so it doesn't butt up against
+    # the preceding [/TOOL_CALL]; the result markers themselves stay
+    # atomic and the body is wrapped in newlines.
+    assert spliced[-1] == tok.tool_result_end_token_id
+    assert tok.tool_result_token_id in spliced
+    open_pos = spliced.index(tok.tool_result_token_id)
+    assert open_pos > 0  # leading newline before [TOOL_RESULT]
+    body_text = tok.decode(spliced[open_pos + 1 : -1], skip_special_tokens=True)
+    assert body_text.strip() == "42"
+    assert body_text.startswith("\n") and body_text.endswith("\n")
+
+
+def test_roundtrip_splice_preserves_pending_call_detection():
+    tok = ByteLevelTokenizer()
+    # Start with a pending tool call.
+    call_text = format_tool_input("calc", {"values": [5, 5], "op": "mul"})
+    ids = list(tok.encode(call_text, add_special_tokens=False))
+    found = find_unprocessed_tool_call_ids(ids, tok)
+    assert found is not None
+    call, end_idx = found
+
+    # Splice the result in; the call is now resolved.
+    result_ids = build_result_splice_ids(tok, 25)
+    spliced = ids[:end_idx] + result_ids + ids[end_idx:]
+    assert find_unprocessed_tool_call_ids(spliced, tok) is None
+
+
+def test_find_unprocessed_skips_malformed_call_then_finds_valid_one():
+    """A malformed earlier call must not swallow a later valid one.
+
+    Regression for the case where the model emits a broken
+    [TOOL_CALL]...[/TOOL_RESULT] (wrong close), then later emits a
+    well-formed [TOOL_CALL]...[/TOOL_CALL]. The parser used to greedily
+    extend the first open's match all the way to the second close, fail
+    JSON parsing on the merged body, and skip past both calls.
+    """
+    tok = ByteLevelTokenizer()
+    malformed = (
+        f"{TOOL_CALL_OPEN}\nnot json at all{TOOL_RESULT_CLOSE}\n"
+    )
+    valid = format_tool_input("calc", {"values": [4971, 242], "op": "div"})
+    ids = list(tok.encode(malformed + valid, add_special_tokens=False))
+    found = find_unprocessed_tool_call_ids(ids, tok)
+    assert found is not None
+    call, _ = found
+    assert call["name"] == "calc"
+    assert call["arguments"]["op"] == "div"
+
+
+def test_find_unprocessed_executes_call_with_partial_hallucinated_result():
+    """A bare [TOOL_RESULT] open with no matching close is a model
+    mid-hallucination - the call should still be surfaced for execution."""
+    tok = ByteLevelTokenizer()
+    call_text = format_tool_input("calc", {"values": [3, 4], "op": "mul"})
+    # Model started hallucinating a result but never closed it.
+    partial = call_text + TOOL_RESULT_OPEN + "12"
+    ids = list(tok.encode(partial, add_special_tokens=False))
+    found = find_unprocessed_tool_call_ids(ids, tok)
+    assert found is not None
+    call, _ = found
+    assert call["name"] == "calc"
+
+
+def test_find_unprocessed_streaming_call_open_in_prompt():
+    """In streaming, the [TOOL_CALL] open lives in the prompt and only
+    [/TOOL_CALL] is freshly emitted. Scanning from position 0 must
+    still find the call even though the open is far before the new
+    tokens."""
+    tok = ByteLevelTokenizer()
+    call_text = format_tool_input("calc", {"values": [7, 8], "op": "add"})
+    ids = list(tok.encode(call_text, add_special_tokens=False))
+    found = find_unprocessed_tool_call_ids(ids, tok)
+    assert found is not None
+    call, _ = found
+    assert call["arguments"]["op"] == "add"
+
+
+# ---------------------------------------------------------------------------
+# Generator plumbing.
+# ---------------------------------------------------------------------------
+
+
+def test_generator_eos_token_id_list_includes_tool_close():
+    """The generator must halt on [/TOOL_CALL] via the eos list."""
     from praxis.generation.generator import Generator
 
-    # Create a mock model and tokenizer
     mock_model = MagicMock()
     mock_model.training = False
     mock_model.parameters.return_value = iter([torch.zeros(1)])
+    tok = ByteLevelTokenizer()
 
-    mock_tokenizer = MagicMock()
-    mock_tokenizer.eos_token_id = 1
-    mock_tokenizer.sep_token_id = 2
-
-    # Create generator instance
-    generator = Generator(mock_model, mock_tokenizer, device="cpu")
-
-    # Test cases for unclosed tool tags
-    # Case 1: No tool tags
-    assert generator._has_unclosed_tool_tag("Hello world") is False
-
-    # Case 2: Complete tool tag (closed)
-    closed_tag = "<tin>{}</tin>"
-    assert generator._has_unclosed_tool_tag(closed_tag) is False
-
-    # Case 3: Unclosed tool tag
-    unclosed_tag = "<tin>{"
-    assert generator._has_unclosed_tool_tag(unclosed_tag) is True
-
-    # Case 4: Multiple tags, all closed
-    multiple_closed = "<tin>{}</tin> text <tin>{}</tin>"
-    assert generator._has_unclosed_tool_tag(multiple_closed) is False
-
-    # Case 5: Multiple tags, last one unclosed
-    multiple_last_unclosed = "<tin>{}</tin> text <tin>{"
-    assert generator._has_unclosed_tool_tag(multiple_last_unclosed) is True
-
-    # Case 6: Truncated closing tag (still counts as unclosed)
-    truncated_close = "<tin>{}< "
-    assert generator._has_unclosed_tool_tag(truncated_close) is True
-
-    # Case 7: Nested content with complete tags
-    nested_complete = """<tin>
-{"name": "calc", "arguments": {"values": [1, 2]}}
-</tin><tout>3</tout>"""
-    assert generator._has_unclosed_tool_tag(nested_complete) is False
+    gen = Generator(mock_model, tok, device="cpu")
+    eos_list = gen._eos_token_id_list()
+    assert eos_list is not None
+    assert tok.eos_token_id in eos_list
+    assert tok.sep_token_id in eos_list
+    assert tok.tool_call_end_token_id in eos_list
 
 
-def test_fix_truncated_tags_logs_warning(capsys):
-    """Test that fix_truncated_tags logs when fixes are applied."""
-    from praxis.tools import fix_truncated_tags
-
-    # Test with text that needs fixing
-    malformed = """<tin>{"name": "calc"}
-</tin>[SEP][BOS]assistant>[SEP]"""
-
-    fixed = fix_truncated_tags(malformed)
-
-    # Check that warning was logged
-    captured = capsys.readouterr()
-    assert "[TOOL_TAGS]" in captured.out
-    assert "fix_truncated_tags applied" in captured.out
-
-    # Check that fixing worked
-    assert fixed.rstrip().endswith("</tin>")
+# ---------------------------------------------------------------------------
+# Synthetic training data.
+# ---------------------------------------------------------------------------
 
 
-def test_fix_truncated_tags_no_warning_when_clean(capsys):
-    """Test that fix_truncated_tags doesn't log when no fixes needed."""
-    from praxis.tools import fix_truncated_tags
-
-    # Test with clean text
-    clean = """<tin>{"name": "calc", "arguments": {}}</tin><tout>42</tout>"""
-
-    result = fix_truncated_tags(clean)
-
-    # Check that no warning was logged
-    captured = capsys.readouterr()
-    assert "[TOOL_TAGS]" not in captured.out
-
-    # Text should be unchanged
-    assert result == clean
+# ---------------------------------------------------------------------------
+# Schema validation. Guards the tool-call path against the model emitting
+# calls that don't match the declared schema, so bad calls resolve to an
+# error result instead of letting the model fabricate a [TOOL_RESULT].
+# ---------------------------------------------------------------------------
 
 
-def test_complete_tool_call_inline_format():
-    """Test the complete inline tool call format expected after the fix."""
-    from praxis.tools import (
-        format_tool_call_with_result,
-        get_unprocessed_tool_call,
-        has_complete_tool_call,
-        has_tool_output,
-    )
-
-    # The expected clean format after the fix:
-    # <tin>JSON</tin><tout>result</tout> (inline, no [BOS]assistant in between)
-    clean_format = format_tool_call_with_result(
-        tool_name="calc",
-        arguments={"values": [999, 5], "op": "exp"},
-        result="995009990004999.0",
-    )
-
-    # Verify structure
-    assert "<tin>" in clean_format
-    assert "</tin>" in clean_format
-    assert "<tout>" in clean_format
-    assert "</tout>" in clean_format
-
-    # Verify no malformed patterns
-    assert "[BOS]assistant" not in clean_format
-    assert "[SEP]" not in clean_format
-
-    # Verify the tags are adjacent (no content between </tin> and <tout>)
-    tin_close_idx = clean_format.find("</tin>")
-    tout_open_idx = clean_format.find("<tout>")
-    assert tout_open_idx == tin_close_idx + len("</tin>")
-
-    # Verify it's recognized as complete (no unprocessed calls)
-    assert has_complete_tool_call(clean_format) is True
-    assert has_tool_output(clean_format) is True
-    assert get_unprocessed_tool_call(clean_format) is None
+def test_validate_accepts_valid_call():
+    validate_tool_arguments("calc", {"values": [1, 2], "op": "add"})
 
 
-def test_fix_truncated_tout_not_tin():
-    """Test that truncated </tout> is NOT incorrectly fixed as </tin>.
-
-    This was the bug: when text had both <tin>...</tin> and <tout>...</, the
-    fix_truncated_tags function would incorrectly complete it as </tin> instead
-    of </tout>.
-    """
-    from praxis.tools import fix_truncated_tags
-
-    # Simulate the exact bug scenario from the screenshot:
-    # Text has complete <tin>...</tin> but truncated <tout>...</
-    malformed = """<tin>
-{"name": "calc", "arguments": {"values": [922583, 622541], "op": "add"}}
-</tin><tout>-1234563.0</"""
-
-    fixed = fix_truncated_tags(malformed)
-
-    # The </tout> should be completed, not turned into </tin>
-    assert "</tout>" in fixed, f"Expected </tout> in fixed text, got: {fixed}"
-    # Should NOT have duplicate </tin> closing tags
-    assert fixed.count("</tin>") == 1, f"Expected exactly 1 </tin>, got: {fixed}"
-    # Should have exactly one </tout>
-    assert fixed.count("</tout>") == 1, f"Expected exactly 1 </tout>, got: {fixed}"
+def test_validate_accepts_missing_optional():
+    # ``op`` has a default - omitting it is fine.
+    validate_tool_arguments("calc", {"values": [1, 2]})
 
 
-def test_fix_truncated_tags_respects_unclosed_tag_type():
-    """Test that fix_truncated_tags correctly identifies which tag is unclosed."""
-    from praxis.tools import fix_truncated_tags
-
-    # Case 1: <tin> is unclosed, truncated at </
-    tin_unclosed = "<tin>{"
-    # Just checking it doesn't crash - no truncation to fix here
-    result1 = fix_truncated_tags(tin_unclosed)
-    assert "<tin>" in result1
-
-    # Case 2: <tin> is unclosed and truncated
-    tin_truncated = """<tin>
-{"name": "calc"}
-</"""
-    result2 = fix_truncated_tags(tin_truncated)
-    assert "</tin>" in result2
-
-    # Case 3: <tout> is unclosed and truncated (the bug case)
-    tout_truncated = """<tin>{"name": "calc"}</tin><tout>42</"""
-    result3 = fix_truncated_tags(tout_truncated)
-    assert "</tout>" in result3
-    assert result3.count("</tin>") == 1  # Only one </tin>
-
-    # Case 4: Both tags properly closed - no changes needed
-    both_closed = """<tin>{"name": "calc"}</tin><tout>42</tout>"""
-    result4 = fix_truncated_tags(both_closed)
-    assert result4 == both_closed
+def test_validate_rejects_unknown_tool():
+    with pytest.raises(ToolValidationError, match="Unknown tool"):
+        validate_tool_arguments("nonexistent_tool", {})
 
 
-def test_fix_truncated_tags_multiple_tool_calls():
-    """Test fix_truncated_tags with multiple sequential tool calls.
+def test_validate_rejects_missing_required():
+    with pytest.raises(ToolValidationError, match="Missing required"):
+        validate_tool_arguments("calc", {"op": "add"})
 
-    Ensures the counting logic works correctly when there are many
-    complete tool call pairs before a truncated one.
-    """
-    from praxis.tools import fix_truncated_tags
 
-    # Case 1: Two complete calls, third call's <tin> truncated
-    two_complete_third_tin_truncated = """<tin>{"name": "calc", "arguments": {"op": "add"}}</tin><tout>10</tout>
-<tin>{"name": "calc", "arguments": {"op": "mul"}}</tin><tout>20</tout>
-<tin>{"name": "calc", "arguments": {"op": "div"}}</"""
+def test_validate_rejects_unknown_param():
+    with pytest.raises(ToolValidationError, match="Unknown parameter"):
+        validate_tool_arguments("calc", {"values": [1], "op": "add", "extra": 1})
 
-    result1 = fix_truncated_tags(two_complete_third_tin_truncated)
-    assert (
-        result1.count("</tin>") == 3
-    ), f"Expected 3 </tin>, got {result1.count('</tin>')}"
-    assert (
-        result1.count("</tout>") == 2
-    ), f"Expected 2 </tout>, got {result1.count('</tout>')}"
-    assert result1.rstrip().endswith("</tin>")
 
-    # Case 2: Two complete calls, third call's <tout> truncated
-    two_complete_third_tout_truncated = """<tin>{"name": "calc"}</tin><tout>10</tout>
-<tin>{"name": "calc"}</tin><tout>20</tout>
-<tin>{"name": "calc"}</tin><tout>30</"""
+def test_validate_rejects_wrong_type():
+    # ``values`` must be an array, not a string.
+    with pytest.raises(ToolValidationError, match="expected type 'array'"):
+        validate_tool_arguments("calc", {"values": "not a list", "op": "add"})
 
-    result2 = fix_truncated_tags(two_complete_third_tout_truncated)
-    assert (
-        result2.count("</tin>") == 3
-    ), f"Expected 3 </tin>, got {result2.count('</tin>')}"
-    assert (
-        result2.count("</tout>") == 3
-    ), f"Expected 3 </tout>, got {result2.count('</tout>')}"
-    assert result2.rstrip().endswith("</tout>")
 
-    # Case 3: Three complete calls - nothing to fix
-    three_complete = """<tin>{"name": "a"}</tin><tout>1</tout>
-<tin>{"name": "b"}</tin><tout>2</tout>
-<tin>{"name": "c"}</tin><tout>3</tout>"""
+def test_validate_rejects_non_dict_arguments():
+    with pytest.raises(ToolValidationError, match="must be an object"):
+        validate_tool_arguments("calc", [1, 2, 3])
 
-    result3 = fix_truncated_tags(three_complete)
-    assert result3 == three_complete  # No changes
 
-    # Case 4: One complete, second truncated at </ti
-    one_complete_second_partial = """<tin>{"name": "first"}</tin><tout>done</tout>
-<tin>{"name": "second"}</ti"""
+def test_call_tool_raises_validation_error_on_bad_args():
+    with pytest.raises(ToolValidationError):
+        call_tool("calc", {"op": "add"})  # missing 'values'
 
-    result4 = fix_truncated_tags(one_complete_second_partial)
-    assert result4.count("</tin>") == 2
-    assert "</ti\n" not in result4 and '</ti"' not in result4  # Partial tag fixed
+
+def test_find_unprocessed_returns_malformed_for_bad_json_body():
+    """Bad JSON inside a well-formed bracket pair must surface as a
+    ``_malformed`` sentinel so the generator can splice an error result
+    instead of letting the model hallucinate one."""
+    tok = ByteLevelTokenizer()
+    bad = f"{TOOL_CALL_OPEN}\nnot valid json\n{TOOL_CALL_CLOSE}"
+    ids = list(tok.encode(bad, add_special_tokens=False))
+    found = find_unprocessed_tool_call_ids(ids, tok)
+    assert found is not None
+    call, _ = found
+    assert call.get("_malformed") is True
+    assert "JSON" in call.get("_error", "")
+
+
+def test_synthetic_formatter_emits_atomic_tool_boundaries_in_tokens():
+    """format_tool_calling's output must produce atomic tool-token ids."""
+    import random
+
+    random.seed(7)
+    from praxis.data.formatters.tools import format_tool_calling
+
+    tok = ByteLevelTokenizer()
+    doc = format_tool_calling({}, [], tok)
+    content = doc["messages"][-1]["content"]
+    assert TOOL_CALL_OPEN in content
+    assert TOOL_CALL_CLOSE in content
+    assert TOOL_RESULT_OPEN in content
+    assert TOOL_RESULT_CLOSE in content
+
+    ids = tok.encode(content, add_special_tokens=False)
+    assert tok.tool_call_token_id in ids
+    assert tok.tool_call_end_token_id in ids
+    assert tok.tool_result_token_id in ids
+    assert tok.tool_result_end_token_id in ids

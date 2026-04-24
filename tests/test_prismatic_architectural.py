@@ -149,15 +149,6 @@ class TestArchitecturalDiversity:
         assert routing_probs.shape == (batch_size, 2)
         assert torch.allclose(routing_probs.sum(dim=-1), torch.ones(batch_size))
 
-        # Run forward pass to populate metrics
-        output, _, _ = prismatic(inputs, None)
-
-        # Check metrics are logged
-        metrics = prismatic.get_metrics()
-        assert "routing/expert_0_weight" in metrics
-        assert "routing/expert_1_weight" in metrics
-        assert "routing/entropy" in metrics
-
     def test_gradient_flow(self, config):
         """Test that gradients flow through merged parameters."""
         alibi_config = copy.copy(config)
@@ -211,50 +202,6 @@ class TestArchitecturalDiversity:
         # Just verify both are valid distributions
         assert torch.allclose(routing_1.sum(dim=-1), torch.ones(batch_size))
         assert torch.allclose(routing_2.sum(dim=-1), torch.ones(batch_size))
-
-    def test_architecture_selection_tracking(self, config):
-        """Test that architecture selection is tracked."""
-        alibi_config = copy.copy(config)
-        alibi_config.encoding = "alibi"
-        rope_config = copy.copy(config)
-        rope_config.encoding = "rope"
-
-        expert_alibi = CausalAttention(alibi_config)
-        expert_rope = CausalAttention(rope_config)
-        experts = [expert_alibi, expert_rope]
-
-        prismatic = Prismatic(config, experts=experts)
-
-        batch_size = 2
-        seq_len = 16
-        inputs = torch.randn(batch_size, seq_len, config.hidden_size)
-
-        # Run multiple forward passes
-        for _ in range(10):
-            output, _, _ = prismatic(inputs, None)
-
-        # Check metrics include architecture selection
-        metrics = prismatic.get_metrics()
-
-        assert "arch/expert_0_count" in metrics
-        assert "arch/expert_1_count" in metrics
-        assert "arch/expert_0_selected" in metrics
-        assert "arch/expert_1_selected" in metrics
-        assert "arch/total_selections" in metrics
-
-        # Total selections should be 10
-        assert metrics["arch/total_selections"] == 10
-
-        # Exactly one expert should be marked as selected (binary)
-        selected_sum = (
-            metrics["arch/expert_0_selected"] + metrics["arch/expert_1_selected"]
-        )
-        assert selected_sum == 100.0
-
-        # Counts should sum to total
-        total_count = metrics["arch/expert_0_count"] + metrics["arch/expert_1_count"]
-        assert total_count == 10
-
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

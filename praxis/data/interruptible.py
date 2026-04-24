@@ -17,10 +17,10 @@ class InterruptibleDataLoader(DataLoader):
         # Force some parameters for better shutdown behavior
         kwargs["persistent_workers"] = False  # Ensure clean worker termination
 
-        # Only set timeout if we have workers (timeout not allowed with num_workers=0)
-        num_workers = kwargs.get("num_workers", 0)
-        if num_workers > 0 and "timeout" not in kwargs:
-            kwargs["timeout"] = 60  # Default timeout for worker operations
+        # Do not impose a worker-queue timeout by default: workers intentionally
+        # block indefinitely on network errors (see network_retry) so dataloader
+        # order stays reproducible across connectivity gaps. Callers can still
+        # pass timeout= explicitly if they want a bound.
 
         super().__init__(*args, **kwargs)
 

@@ -217,17 +217,17 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
         # out-of-range embedding lookup. For the embeds path, that's
         # ``config.vocab_size`` (the full tokenizer vocab). For the
         # encoder path, the encoder's ``tok_emb`` is sized for the
-        # internal byte vocab (256 bytes + 4 special tokens = 260),
-        # which is what ``encoder.byte_config.vocab_size`` exposes -
-        # use that here so M_i's argmax can never produce an id
-        # outside what ``encoder.encode`` can re-consume on the next
+        # local byte-level vocab (256 bytes + named specials + tool
+        # specials), which is what ``encoder.byte_config.local_vocab_size``
+        # exposes - use that here so M_i's argmax can never produce an
+        # id outside what ``encoder.encode`` can re-consume on the next
         # inference-hook fire.
         if encoder is not None:
             byte_config = getattr(encoder, "byte_config", None)
             projection_vocab_size = (
-                int(byte_config.vocab_size)
+                int(byte_config.local_vocab_size)
                 if byte_config is not None
-                and getattr(byte_config, "vocab_size", None) is not None
+                and getattr(byte_config, "local_vocab_size", None) is not None
                 else int(model.config.vocab_size)
             )
             self._log(

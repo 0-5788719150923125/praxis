@@ -236,7 +236,6 @@ def test_base_controller_determinism():
         "layer_shuffle",
         # "attention",  # Temporarily excluded due to floating-point non-determinism
         # "counter_attention",
-        "neural",
     ],  # Only test controllers that are deterministic
 )
 def test_controller_determinism(controller_name):

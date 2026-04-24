@@ -48,6 +48,12 @@ class CausalAttention(nn.Module):
         self.num_queries = config.num_queries
         self.num_query_heads = self.num_heads * self.num_queries
         self.head_dim = getattr(config, "head_size") or hidden_size // self.num_heads
+
+        if pos_type == "rope" and self.head_dim % 2 != 0:
+            raise ValueError(
+                f"RoPE requires an even head_dim, got {self.head_dim} "
+                f"(hidden_size={hidden_size}, num_heads={self.num_heads})"
+            )
         self.dropout_p = config.dropout
         self.causal = config.causal
         self.window_size = getattr(config, "window_size", None)
@@ -266,6 +272,7 @@ class CausalAttention(nn.Module):
         k: Tensor,
         v: Tensor,
         is_causal: bool = True,
+        enable_gqa: bool = False,
     ) -> Tensor:
         """
         Fallback attention using F.scaled_dot_product_attention.
@@ -310,6 +317,7 @@ class CausalAttention(nn.Module):
             dropout_p=self.dropout_p if self.training else 0.0,
             is_causal=is_causal
             and attn_mask is None,  # Only use is_causal if no attn_mask
+            enable_gqa=enable_gqa,
         )
 
         return attn_output
@@ -424,8 +432,9 @@ class CausalAttention(nn.Module):
             k = k[:, :, 1:, :]  # Remove ghost token from K
             v = v[:, :, 1:, :]  # Remove ghost token from V
 
-            # Note: GQA is handled automatically by SDPA if q and k have different num_heads
-            attn_output = self._sdpa_fallback(q, k, v, is_causal=self.causal)
+            attn_output = self._sdpa_fallback(
+                q, k, v, is_causal=self.causal, enable_gqa=is_gqa
+            )
         else:
             # Use FlexAttention (GPU only)
             # Handle masking: use causal block_mask with ghost token support

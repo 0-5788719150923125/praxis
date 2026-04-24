@@ -6,8 +6,13 @@
 # https://cookbook.openai.com/articles/openai-harmony
 #
 # All roles use identical formatting: BOS + role + content + SEP
+#
+# When `omit_leading_bos` is passed and truthy, the first message's leading
+# BOS is skipped. The packer uses this to drop the redundant BOS at doc-to-doc
+# boundaries that fall mid-sequence, so every sequence's position 0 is a real
+# BOS + role transition (matching inference) without discarding tokens.
 DEFAULT_CHAT_TEMPLATE = """{% for message in messages %}
-{{ bos_token }}{{ message['role'] }}
+{% if not (loop.first and (omit_leading_bos is defined) and omit_leading_bos) %}{{ bos_token }}{% endif %}{{ message['role'] }}
 {{ message['content'] }}
 {{ sep_token }}
 {% endfor %}

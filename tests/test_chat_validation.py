@@ -26,11 +26,12 @@ def test_validator_initialization(tokenizer):
     validator = ChatTemplateValidator(tokenizer)
     assert validator.tokenizer == tokenizer
     assert validator.bos_token_id is not None
-    assert len(validator.ALLOWED_ROLES) == 4  # system, developer, user, assistant
+    assert len(validator.ALLOWED_ROLES) == 5  # system, developer, user, assistant, tool
     assert "system" in validator.ALLOWED_ROLES
     assert "developer" in validator.ALLOWED_ROLES
     assert "user" in validator.ALLOWED_ROLES
     assert "assistant" in validator.ALLOWED_ROLES
+    assert "tool" in validator.ALLOWED_ROLES
 
 
 def test_valid_system_message(tokenizer, validator):
@@ -196,8 +197,8 @@ def test_message_queue_integration(tokenizer):
 
     queue.add_document(valid_doc)
 
-    # Process the queue
-    queue._refill_token_buffer()
+    # Process the queue (packing triggers tokenization + validation)
+    queue.get_batch(batch_size=1, sequence_multiplier=1)
 
     # Check validation stats
     stats = queue.get_validation_stats()
@@ -221,7 +222,7 @@ def test_message_queue_validation_disabled(tokenizer):
     # Add document
     doc = {"messages": [{"role": "user", "content": "test"}], "metadata": {}}
     queue.add_document(doc)
-    queue._refill_token_buffer()
+    queue.get_batch(batch_size=1, sequence_multiplier=1)
 
     # Stats should show no validation happened
     stats = queue.get_validation_stats()

@@ -152,7 +152,11 @@ def get_processed_args(args_override=None):
 
 
 def get_cli_args():
-    """Get the parsed CLI arguments."""
+    """Get the parsed CLI arguments, or an empty Namespace if CLI was never initialized."""
+    if args is None:
+        import argparse
+
+        return argparse.Namespace()
     return args
 
 

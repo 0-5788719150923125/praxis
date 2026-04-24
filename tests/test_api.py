@@ -143,7 +143,7 @@ class TestCoreRoutes:
     def test_spec_endpoint(self, api_url):
         """Test /api/spec endpoint."""
         response = requests.get(f"{api_url}/api/spec")
-        assert response.status_code == 200
+        assert response.status_code == 200, response.text
         data = response.json()
 
         # Check required fields

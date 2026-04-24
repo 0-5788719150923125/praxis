@@ -11,3 +11,9 @@ BPE_ID: int = 3  # BPE marker (same as SEP_ID, matching BLT reference)
 # Vocabulary constants
 BYTE_UNITS: int = 256  # Number of byte values (0-255)
 OFFSET: int = 4  # Offset for special tokens (same as original BLT)
+
+# Atomic tool-control tokens live at ids (BYTE_UNITS + OFFSET) through
+# (BYTE_UNITS + OFFSET + NUM_TOOL_TOKENS - 1). Kept here so both the
+# byte-latent internal vocab_size and the ByteLevelTokenizer agree on
+# where these tokens land without duplicating constants.
+NUM_TOOL_TOKENS: int = 4

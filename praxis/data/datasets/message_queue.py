@@ -11,9 +11,15 @@ from praxis.data.validators import ChatTemplateValidator
 
 class MessageQueueManager:
     """
-    Manages a queue of messages and efficiently batches them.
+    Manages a queue of messages and packs them into training sequences.
 
-    Simply queues and tokenizes messages without modifying their structure.
+    Packs documents doc-by-doc into sequences of length `block_size`. The
+    leading BOS of each document is kept only when that doc begins a fresh
+    sequence; when a doc is appended mid-sequence its leading BOS is omitted
+    (via the chat template's `omit_leading_bos` flag). This keeps every
+    sequence's position 0 a real BOS -> role transition, matching inference,
+    without discarding tokens. A doc that overflows the sequence boundary
+    has its tail carried over to the next sequence.
     """
 
     def __init__(
@@ -38,23 +44,20 @@ class MessageQueueManager:
         self.enable_chat_validation = enable_chat_validation
         self.strict_chat_validation = strict_chat_validation
 
-        # Message queue stores structured message data
+        # Structured message queue (docs not yet tokenized).
         self.message_queue = deque()
 
-        # Token buffer stores already tokenized content
-        self.token_buffer = torch.tensor([], dtype=torch.long)
+        # Overflow from the previous sequence's packing: the tail of a doc that
+        # didn't fit. Kept so no tokens are discarded at sequence boundaries.
+        self._carry_tokens: Optional[torch.Tensor] = None
+        self._carry_metadata: List[Dict] = []
 
-        # Metadata buffer parallel to token buffer
-        self.metadata_buffer = []
-
-        # Initialize chat template validator if enabled
         self.chat_validator = None
         if self.enable_chat_validation:
             self.chat_validator = ChatTemplateValidator(
                 tokenizer=tokenizer, strict_mode=strict_chat_validation
             )
 
-        # Statistics for validation
         self.validation_stats = {
             "documents_validated": 0,
             "documents_failed": 0,
@@ -75,108 +78,72 @@ class MessageQueueManager:
         if not messages:
             return
 
-        # Simply add the messages as-is, no filtering or modification
         self.message_queue.append({"messages": messages, "metadata": metadata})
 
-    def _refill_token_buffer(self):
-        """Refill the token buffer from the message queue."""
-        # Process documents individually to preserve BOS -> role constraints
-        documents_to_process = []
+    def _tokenize_doc(
+        self, doc: Dict[str, Any], omit_leading_bos: bool
+    ) -> Optional[torch.Tensor]:
+        """Tokenize one document, optionally dropping the leading BOS.
 
-        # Collect up to 50 documents or until queue is empty
-        while len(documents_to_process) < 50 and self.message_queue:
-            doc = self.message_queue.popleft()
-            documents_to_process.append(doc)
+        Returns None if chat-template application fails or per-doc validation
+        rejects the document (and strict mode is off).
+        """
+        messages = doc["messages"]
+        metadata = doc["metadata"]
 
-        if not documents_to_process:
-            return
+        if not messages:
+            return None
 
-        # Tokenize each document separately, then concatenate
-        all_tokens = []
-        all_metadata = []
+        try:
+            text = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=False,
+                omit_leading_bos=omit_leading_bos,
+            )
+        except Exception as e:
+            self.validation_stats["template_application_errors"] += 1
 
-        for doc in documents_to_process:
-            messages = doc["messages"]
-            metadata = doc["metadata"]
+            print("=" * 80)
+            print("[CRITICAL ERROR] Failed to apply chat template!")
+            print(f"Error: {e}")
+            print(f"Document metadata: {metadata}")
+            print(f"Messages structure:")
+            for i, msg in enumerate(messages):
+                role = msg.get("role", "MISSING_ROLE")
+                content_preview = str(msg.get("content", "MISSING_CONTENT"))[:200]
+                print(f"  [{i}] role={role}, content={content_preview}...")
+            print("=" * 80)
 
-            if not messages:
-                continue
+            import traceback
 
-            # Apply chat template to this document only
-            try:
-                text = self.tokenizer.apply_chat_template(
-                    messages, tokenize=False, add_generation_prompt=False
-                )
-            except Exception as e:
-                # Track template application errors
-                self.validation_stats["template_application_errors"] += 1
+            traceback.print_exc()
+            return None
 
-                # Log detailed error information
-                print("=" * 80)
-                print("[CRITICAL ERROR] Failed to apply chat template!")
-                print(f"Error: {e}")
-                print(f"Document metadata: {metadata}")
-                print(f"Messages structure:")
-                for i, msg in enumerate(messages):
-                    role = msg.get("role", "MISSING_ROLE")
-                    content_preview = str(msg.get("content", "MISSING_CONTENT"))[:200]
-                    print(f"  [{i}] role={role}, content={content_preview}...")
-                print("=" * 80)
+        # add_special_tokens=False: the chat template already emits all special tokens.
+        doc_tokens = self.tokenizer(
+            text,
+            add_special_tokens=False,
+            return_tensors="pt",
+            padding=False,
+            truncation=False,
+        )["input_ids"].squeeze(0)
 
-                import traceback
+        if self.chat_validator is not None:
+            self.validation_stats["documents_validated"] += 1
+            is_valid, report = self.chat_validator.validate_and_report(
+                doc_tokens, messages=messages, formatted_text=text
+            )
+            if not is_valid:
+                self.validation_stats["documents_failed"] += 1
+                if self.strict_chat_validation:
+                    raise ValueError(f"Chat template validation failed:\n{report}")
+                print("[WARNING] Chat template validation failed, skipping document:")
+                print(report)
+                self.validation_stats["documents_skipped"] += 1
+                return None
 
-                traceback.print_exc()
-
-                # Skip this document
-                continue
-
-            # Tokenize this document
-            # Use add_special_tokens=False because chat template already includes all special tokens
-            doc_tokens = self.tokenizer(
-                text,
-                add_special_tokens=False,
-                return_tensors="pt",
-                padding=False,
-                truncation=False,
-            )["input_ids"].squeeze(0)
-
-            # Validate chat template if enabled
-            if self.chat_validator is not None:
-                self.validation_stats["documents_validated"] += 1
-                is_valid, report = self.chat_validator.validate_and_report(
-                    doc_tokens, messages=messages, formatted_text=text
-                )
-
-                if not is_valid:
-                    self.validation_stats["documents_failed"] += 1
-
-                    if self.strict_chat_validation:
-                        # Raise exception and halt training
-                        raise ValueError(f"Chat template validation failed:\n{report}")
-                    else:
-                        # Log warning and skip this document
-                        print(
-                            f"[WARNING] Chat template validation failed, skipping document:"
-                        )
-                        print(report)
-                        self.validation_stats["documents_skipped"] += 1
-                        continue
-
-            all_tokens.append(doc_tokens)
-
-            # Add metadata for each token in this document
-            for _ in range(len(doc_tokens)):
-                all_metadata.append(metadata)
-
-        if not all_tokens:
-            return
-
-        # Concatenate all document tokens
-        new_tokens = torch.cat(all_tokens)
-
-        # Append to buffers
-        self.token_buffer = torch.cat([self.token_buffer, new_tokens])
-        self.metadata_buffer.extend(all_metadata)
+        return doc_tokens
 
     def get_batch(
         self, batch_size: int, sequence_multiplier: int = 1
@@ -186,79 +153,93 @@ class MessageQueueManager:
 
         Args:
             batch_size: Number of sequences in the batch
-            sequence_multiplier: Factor to multiply the sequence length by (for oversampling)
+            sequence_multiplier: Factor to multiply the sequence length by
 
         Returns:
-            Dictionary with 'batch' tensor and metadata
+            Dictionary with 'batch' (list of tensors) and 'metadata' (list of dicts)
         """
         effective_block_size = self.block_size * sequence_multiplier
-        tokens_needed = batch_size * effective_block_size
 
-        # Ensure we have enough tokens
-        refill_attempts = 0
-        max_refill_attempts = 100
-        while len(self.token_buffer) < tokens_needed:
-            prev_buffer_size = len(self.token_buffer)
-            self._refill_token_buffer()
+        sequences: List[torch.Tensor] = []
+        batch_metadata: List[Dict] = []
 
-            # Check if buffer didn't grow (no new tokens added)
-            if len(self.token_buffer) == prev_buffer_size:
-                refill_attempts += 1
-                if refill_attempts > max_refill_attempts:
-                    print(
-                        f"[WARN] MessageQueue.get_batch: Unable to refill token buffer after {max_refill_attempts} attempts"
-                    )
-                    print(
-                        f"[WARN] Buffer size: {len(self.token_buffer)}, needed: {tokens_needed}"
-                    )
-                    print(f"[WARN] Message queue size: {len(self.message_queue)}")
-                    # Instead of raising error, break and pad with zeros below
-                    # This prevents one node from crashing while others wait in multi-node training
+        for _ in range(batch_size):
+            seq_parts: List[torch.Tensor] = []
+            seq_meta: List[Dict] = []
+            seq_len = 0
+
+            # Drain any carryover from the previous sequence first. Carryover
+            # means we're continuing mid-doc, so this sequence does not start
+            # with a fresh BOS -- the next appended doc must still strip its
+            # leading BOS (it's mid-sequence).
+            if self._carry_tokens is not None:
+                seq_parts.append(self._carry_tokens)
+                seq_meta.extend(self._carry_metadata)
+                seq_len += len(self._carry_tokens)
+                self._carry_tokens = None
+                self._carry_metadata = []
+                first_doc_in_seq = False
+            else:
+                first_doc_in_seq = True
+
+            # Safety cap: if every doc the queue hands us fails validation,
+            # bail so we don't spin forever.
+            failed_attempts = 0
+            max_failed_attempts = 100
+
+            while seq_len < effective_block_size:
+                if not self.message_queue:
+                    # Queue drained. The parent InterleaveDataManager only
+                    # refills once per get_batch, so we fall through to
+                    # zero-padding below. (This matches prior behavior.)
                     break
 
-            # Check if we've run out of data
-            if len(self.message_queue) == 0 and len(self.token_buffer) < tokens_needed:
-                break
-
-        # Pad with zeros if we still don't have enough tokens after refills
-        if len(self.token_buffer) < tokens_needed:
-            padding_needed = tokens_needed - len(self.token_buffer)
-            self.token_buffer = torch.cat(
-                [self.token_buffer, torch.zeros(padding_needed, dtype=torch.long)]
-            )
-            # Add empty metadata for padding
-            self.metadata_buffer.extend([{}] * padding_needed)
-
-        sequences = []
-        batch_metadata = []
-
-        for i in range(batch_size):
-            # Extract tokens for this sequence
-            start_idx = i * effective_block_size
-            end_idx = start_idx + effective_block_size
-            sequence = self.token_buffer[start_idx:end_idx]
-
-            # Ensure exactly effective_block_size tokens
-            if len(sequence) < effective_block_size:
-                padding = torch.zeros(
-                    effective_block_size - len(sequence), dtype=torch.long
+                doc = self.message_queue.popleft()
+                doc_tokens = self._tokenize_doc(
+                    doc, omit_leading_bos=not first_doc_in_seq
                 )
-                sequence = torch.cat([sequence, padding])
+                if doc_tokens is None:
+                    failed_attempts += 1
+                    if failed_attempts > max_failed_attempts:
+                        print(
+                            f"[WARN] MessageQueue.get_batch: {max_failed_attempts} "
+                            f"consecutive doc tokenizations/validations failed"
+                        )
+                        break
+                    continue
 
+                remaining = effective_block_size - seq_len
+                if len(doc_tokens) <= remaining:
+                    seq_parts.append(doc_tokens)
+                    seq_meta.extend([doc["metadata"]] * len(doc_tokens))
+                    seq_len += len(doc_tokens)
+                    first_doc_in_seq = False
+                else:
+                    fitting = doc_tokens[:remaining]
+                    overflow = doc_tokens[remaining:]
+                    seq_parts.append(fitting)
+                    seq_meta.extend([doc["metadata"]] * len(fitting))
+                    seq_len += len(fitting)
+                    # Preserve the tail for the next sequence rather than
+                    # discarding it.
+                    self._carry_tokens = overflow
+                    self._carry_metadata = [doc["metadata"]] * len(overflow)
+                    break
+
+            # Pad with zeros if starvation leaves us short. Matches prior
+            # behavior; the underlying refill path is the place to fix this
+            # for real.
+            if seq_len < effective_block_size:
+                pad = effective_block_size - seq_len
+                seq_parts.append(torch.zeros(pad, dtype=torch.long))
+                seq_meta.extend([{}] * pad)
+
+            sequence = torch.cat(seq_parts)[:effective_block_size]
             sequences.append(sequence)
-
-            # Collect metadata for this sequence (from the dominant source)
-            if start_idx < len(self.metadata_buffer):
-                batch_metadata.append(self.metadata_buffer[start_idx])
-            else:
-                batch_metadata.append({})
-
-        # Remove consumed tokens and metadata
-        self.token_buffer = self.token_buffer[tokens_needed:]
-        self.metadata_buffer = self.metadata_buffer[tokens_needed:]
+            batch_metadata.append(seq_meta[0] if seq_meta else {})
 
         return {
-            "batch": sequences,  # Return as list for WeightedIterableDataset to stack
+            "batch": sequences,
             "metadata": batch_metadata,
         }
 
@@ -270,14 +251,13 @@ class MessageQueueManager:
 
         Args:
             batch_size: Number of sequences in the batch
-            sequence_multiplier: Factor to multiply the sequence length by (for oversampling)
+            sequence_multiplier: Factor to multiply the sequence length by
 
         Returns:
             Dictionary with batch, rewards, and metadata
         """
         result = self.get_batch(batch_size, sequence_multiplier)
 
-        # Extract rewards from metadata if available
         rewards = []
         for meta in result["metadata"]:
             reward = meta.get("reward", 0.0)
@@ -290,13 +270,5 @@ class MessageQueueManager:
         return result
 
     def get_validation_stats(self) -> Dict[str, int]:
-        """Get chat template validation statistics.
-
-        Returns:
-            Dictionary with validation statistics:
-            - documents_validated: Total documents validated
-            - documents_failed: Documents that failed validation
-            - documents_skipped: Documents skipped due to validation failure
-            - template_application_errors: Documents where chat template failed to apply
-        """
+        """Get chat template validation statistics."""
         return self.validation_stats.copy()

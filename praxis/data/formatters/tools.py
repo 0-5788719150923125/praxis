@@ -11,6 +11,18 @@ from praxis.data.config import SYSTEM_PROMPT, sample_developer_prompt
 from praxis.tools import format_tool_call_with_result
 
 
+def _log_weighted_int(lo: int, hi: int) -> int:
+    """Sample an int in [lo, hi] with weights proportional to 1/n.
+
+    Smaller counts dominate (expected value grows like log(hi/lo)), but
+    the full range is still reachable - so the model sees many 2-value
+    calls and occasional long ones, without flipping the distribution.
+    """
+    choices = list(range(lo, hi + 1))
+    weights = [1.0 / n for n in choices]
+    return random.choices(choices, weights=weights, k=1)[0]
+
+
 def format_tool_calling(
     document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
 ) -> Dict:
@@ -31,8 +43,7 @@ def format_tool_calling(
     operation = random.choice(["add", "sub", "mul", "div", "sqrt", "exp"])
 
     if operation == "add":
-        # Generate 2-4 numbers for addition
-        num_values = random.randint(2, 4)
+        num_values = _log_weighted_int(2, 16)
         values = [random.randint(1, 100_000_000) for _ in range(num_values)]
         result = sum(values)
 
@@ -54,8 +65,7 @@ def format_tool_calling(
             result_phrase = f"The sum of {', '.join(map(str, values))} is {result}."
 
     elif operation == "sub":
-        # Generate 2-3 numbers for subtraction
-        num_values = random.randint(2, 3)
+        num_values = _log_weighted_int(2, 12)
         values = [random.randint(1, 100_000_000) for _ in range(num_values)]
         result = values[0]
         for v in values[1:]:
@@ -77,9 +87,10 @@ def format_tool_calling(
             result_phrase = f"The result of {values_str} is {result}."
 
     elif operation == "mul":
-        # Generate 2-3 numbers for multiplication
-        num_values = random.randint(2, 3)
-        values = [random.randint(1, 10000) for _ in range(num_values)]
+        # Per-value range capped at 1000 because products blow up fast with
+        # many factors; 1000^6 is already 18 digits.
+        num_values = _log_weighted_int(2, 6)
+        values = [random.randint(1, 1000) for _ in range(num_values)]
         result = 1
         for v in values:
             result *= v

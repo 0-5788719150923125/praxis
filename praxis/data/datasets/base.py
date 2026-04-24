@@ -4,6 +4,8 @@ from typing import Any, Dict, List
 
 from transformers import PreTrainedTokenizer
 
+from praxis.data.datasets.network_retry import retry_on_network_error
+
 
 class PraxisSampler:
     """Base class for all dataset samplers."""
@@ -54,11 +56,17 @@ def load_dataset_smart(dataset_args: Dict) -> Any:
             "train": "hf://datasets/microsoft/NextCoderDataset-Conversational/data-00000-of-00001.arrow"
         }
 
-        return load_dataset(**fixed_args)
+        return retry_on_network_error(
+            lambda: load_dataset(**fixed_args),
+            label=f"load_dataset {dataset_path}",
+        )
 
     # For all other datasets, try normal loading
     try:
-        return load_dataset(**dataset_args)
+        return retry_on_network_error(
+            lambda: load_dataset(**dataset_args),
+            label=f"load_dataset {dataset_path}",
+        )
     except Exception as e:
         if ".METADATA" in str(e) or "splits" in str(e):
             # Try with explicitly specified split
@@ -66,7 +74,10 @@ def load_dataset_smart(dataset_args: Dict) -> Any:
                 # If no split specified, try train
                 dataset_args = dataset_args.copy()
                 dataset_args["split"] = "train"
-                return load_dataset(**dataset_args)
+                return retry_on_network_error(
+                    lambda: load_dataset(**dataset_args),
+                    label=f"load_dataset {dataset_path} (split=train)",
+                )
             else:
                 # If split already specified, re-raise original error
                 raise

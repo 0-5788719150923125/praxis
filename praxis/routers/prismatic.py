@@ -136,6 +136,13 @@ class Prismatic(nn.Module):
         output, cache, aux_loss = self.experts[0](inputs, attention_mask)
         return output, cache, aux_loss
 
+    def _compute_routing(self, inputs: torch.Tensor) -> torch.Tensor:
+        """Compute per-sequence routing probabilities over experts."""
+        seq_repr = inputs.mean(dim=1)
+        seq_repr = self.router_norm(seq_repr)
+        logits = self.router(seq_repr)
+        return F.softmax(logits, dim=-1)
+
     def _router_forward(
         self,
         layer: nn.Module,
@@ -172,11 +179,7 @@ class Prismatic(nn.Module):
         batch_size, seq_len, _ = inputs.shape
 
         # Compute routing probabilities per sequence
-        # Use mean pooling to get sequence-level representation
-        seq_repr = inputs.mean(dim=1)  # [batch, hidden_size]
-        seq_repr = self.router_norm(seq_repr)
-        logits = self.router(seq_repr)  # [batch, num_experts]
-        probs = F.softmax(logits, dim=-1)  # [batch, num_experts]
+        probs = self._compute_routing(inputs)  # [batch, num_experts]
 
         # Top-k expert selection (sparse)
         top_k_probs, expert_indices = torch.topk(

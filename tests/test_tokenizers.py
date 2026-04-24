@@ -206,7 +206,8 @@ def test_char_level_tokenizer_round_trip():
     from praxis.tokenizers import CharLevelTokenizer
 
     t = CharLevelTokenizer()
-    assert t.vocab_size == 65540
+    # 4 named specials + 65_536 BMP + 4 tool-control specials.
+    assert t.vocab_size == 65544
 
     cases = [
         "Hello, world!",

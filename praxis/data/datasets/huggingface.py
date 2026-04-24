@@ -6,6 +6,7 @@ from typing import Dict
 from transformers import PreTrainedTokenizer
 
 from praxis.data.datasets.base import PraxisSampler, load_dataset_smart
+from praxis.data.datasets.network_retry import is_network_error, retry_on_network_error
 from praxis.data.formats import DataFormat
 from praxis.data.formatters import (
     _rl_logger,
@@ -123,7 +124,10 @@ class HuggingfaceDataset(PraxisSampler):
                         f"[RL DEBUG] Not using simple math (should_use={getattr(self, 'simple_math', None) and self.simple_math.should_use_simple() if hasattr(self, 'simple_math') else 'no simple_math'})"
                     )
                 try:
-                    document = next(self.dataset_iterator)
+                    document = retry_on_network_error(
+                        lambda: next(self.dataset_iterator),
+                        label=f"stream next from {self.dataset_path}",
+                    )
                 except StopIteration:
                     # Restart the dataset
                     self.restart_count += 1
@@ -133,7 +137,10 @@ class HuggingfaceDataset(PraxisSampler):
                         shuffle_args["buffer_size"] = self.buffer_size
                     self.shuffled_dataset = self.dataset.shuffle(**shuffle_args)
                     self.dataset_iterator = iter(self.shuffled_dataset)
-                    document = next(self.dataset_iterator)
+                    document = retry_on_network_error(
+                        lambda: next(self.dataset_iterator),
+                        label=f"stream next from {self.dataset_path} (post-reshuffle)",
+                    )
 
             # Debug what keys the document has
             if not hasattr(self, "_debug_printed"):
