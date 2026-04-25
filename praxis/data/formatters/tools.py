@@ -160,8 +160,12 @@ def format_tool_calling(
         {"role": "user", "content": user_prompt},
     ]
 
-    # 50% chance to call get_tools() first before using calc
-    if random.random() < 0.5:
+    # Rare get_tools() probe - the schema dump is byte-identical across
+    # samples, so a high frequency makes it the most-memorized chunk in
+    # this corpus and leaks (without its [TOOL_RESULT] tags) when packing
+    # splits the doc mid-dump. 1% is enough to teach "you can introspect
+    # your tools" without dominating the loss surface.
+    if random.random() < 0.01:
         from praxis.tools import get_tools_json_schema
 
         tools_json = json.dumps(get_tools_json_schema(), indent=2)
