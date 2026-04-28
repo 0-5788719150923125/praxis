@@ -6,6 +6,10 @@ SAMPLER_REGISTRY = {
     "dynamic": "dynamic",
     "static": "static",
     "loss": "loss",
+    # `uniform` overrides per-dataset weights from DATASET_COLLECTIONS,
+    # forcing every sampler to 1.0 (then normalized). Pair with
+    # --task-weights for source biasing at the loss level instead.
+    "uniform": "uniform",
 }
 
 # Core data structures and configuration

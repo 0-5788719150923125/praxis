@@ -42,8 +42,14 @@ class TerminalInterface(Callback):
         self.last_logged_weights = None  # Track weights for change detection
         self.tokenizer = tokenizer
         self.generator = generator
-        self.initial_text = tokenizer.bos_token if tokenizer else "<s>"
-        self.text = self.initial_text
+        # Build the seed factory before the streaming context — see the
+        # call to StreamingContext below. Each reset re-rolls a fresh
+        # random non-special vocab token and uses its decoded form as
+        # the buffer's seed, so the dashboard never forces a specific
+        # priming token across the lifetime of a run.
+        self._seed_factory = self._make_random_seed_factory(tokenizer)
+        self.text = self._seed_factory()
+        self.initial_text = self.text
         self.interval = infer_every
         self.url = url
         self.use_dashboard = use_dashboard
@@ -103,13 +109,64 @@ class TerminalInterface(Callback):
                 if t is not None
             ]
         self._streaming = StreamingContext(
-            initial_text=self.initial_text,
+            initial_text=self._seed_factory,
             max_length=terminal_output_length,
             unchanged_threshold=30,
             ignored_n_grams=ignored_n_grams,
             repetition_n_gram_size=13 if byte_latent else 7,
             repetition_frequency=50 if byte_latent else 20,
         )
+        # Sync local state with whatever the streaming context picked.
+        self.text = self._streaming.text
+        self.initial_text = self._streaming.initial_text
+
+    @staticmethod
+    def _make_random_seed_factory(tokenizer):
+        """Closure that returns a single random non-special token's text.
+
+        The model has to attend to *something* at position 0, but using
+        a fixed seed (BOS or otherwise) imprints that choice on every
+        sample. Re-rolling on each reset spreads the starting condition
+        across the vocabulary so the dashboard reflects what the model
+        does from arbitrary priming, not just one privileged token.
+
+        The candidate IDs come from ``tokenizer.get_vocab()`` rather
+        than ``range(vocab_size)`` because some tokenizers (notably the
+        byte-level one) report ``vocab_size`` as the model's external
+        embedding dim, far larger than the set of IDs the tokenizer can
+        actually emit. Sampling outside that real set produces empty
+        decodes and an empty seed text, which then crashes downstream
+        encoders that need at least one input token.
+        """
+        if tokenizer is None:
+            return lambda: ""
+
+        special_ids = set(getattr(tokenizer, "all_special_ids", None) or [])
+        try:
+            vocab = tokenizer.get_vocab()
+            valid_ids = [int(v) for v in vocab.values() if int(v) not in special_ids]
+        except Exception:
+            try:
+                size = int(getattr(tokenizer, "vocab_size", 0)) or len(tokenizer)
+            except Exception:
+                size = 0
+            valid_ids = [i for i in range(size) if i not in special_ids]
+
+        if not valid_ids:
+            return lambda: ""
+
+        def _factory() -> str:
+            for _ in range(32):
+                tid = random.choice(valid_ids)
+                try:
+                    txt = tokenizer.decode([tid], skip_special_tokens=False)
+                except Exception:
+                    continue
+                if txt:
+                    return txt
+            return ""
+
+        return _factory
 
     def on_fit_start(self, trainer, lm):
         super().on_fit_start(trainer, lm)

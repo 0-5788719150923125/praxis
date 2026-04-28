@@ -12,8 +12,8 @@ from praxis.data.datasets.novelty import NoveltyTracker
 from praxis.data.formatters import _rl_logger
 from praxis.logging.data_metrics_logger import DataMetricsLogger
 
-# Valid weighting modes
-WEIGHTING_MODES = ("static", "dynamic", "novelty")
+# Valid weighting modes (kept in sync with SAMPLER_REGISTRY).
+WEIGHTING_MODES = ("static", "dynamic", "novelty", "loss", "uniform")
 
 
 class InterleaveDataManager:
@@ -180,7 +180,10 @@ class InterleaveDataManager:
 
     @property
     def _adaptive(self):
-        return self.weighting_mode in ("dynamic", "novelty", "loss")
+        # `uniform` doesn't adapt weights at runtime, but it still wants
+        # the per-sample bookkeeping + DataMetricsLogger so the Research
+        # tab's sampling chart has data to render.
+        return self.weighting_mode in ("dynamic", "novelty", "loss", "uniform")
 
     def get_batch(
         self,
@@ -283,6 +286,9 @@ class InterleaveDataManager:
                         sampler, "dataset_path", f"sampler_{sampler_idx}"
                     )
                     document_data["metadata"]["dataset"] = dataset_name
+                    document_data["metadata"]["task_type"] = getattr(
+                        sampler, "task_type", 0
+                    )
 
                     # Handle RL rewards if present
                     if self.rl_type and "reward" in document_data.get("metadata", {}):
@@ -337,6 +343,10 @@ class InterleaveDataManager:
                         )
                     elif self.weighting_mode == "novelty":
                         self._update_weights_after_sample(sampler_idx)
+                    elif self.weighting_mode == "uniform":
+                        # No weight adaptation, but still track per-sampler
+                        # counts and trigger the periodic metrics flush.
+                        self._update_weights_after_sample(sampler_idx)
 
     def _update_weights_after_sample(
         self, sampler_idx: int, doc_length: int = 0, sequences_produced: int = 1
@@ -367,28 +377,30 @@ class InterleaveDataManager:
                 + (1 - self.ema_alpha) * metrics["avg_sequences_per_doc"]
             )
 
-        # Calculate target weights based on current mode
-        target_weights = self._calculate_target_weights()
+        # Uniform mode logs counts but never adapts weights.
+        if self.weighting_mode != "uniform":
+            # Calculate target weights based on current mode
+            target_weights = self._calculate_target_weights()
 
-        # Update dynamic weights with EMA towards target
-        for i in range(len(self.dynamic_weights)):
-            self.dynamic_weights[i] = (
-                self.ema_alpha * target_weights[i]
-                + (1 - self.ema_alpha) * self.dynamic_weights[i]
-            )
+            # Update dynamic weights with EMA towards target
+            for i in range(len(self.dynamic_weights)):
+                self.dynamic_weights[i] = (
+                    self.ema_alpha * target_weights[i]
+                    + (1 - self.ema_alpha) * self.dynamic_weights[i]
+                )
 
-        # Normalize to ensure weights sum to 1
-        total = sum(self.dynamic_weights)
-        if total > 0:
-            self.dynamic_weights = [w / total for w in self.dynamic_weights]
+            # Normalize to ensure weights sum to 1
+            total = sum(self.dynamic_weights)
+            if total > 0:
+                self.dynamic_weights = [w / total for w in self.dynamic_weights]
 
-        # Update shared weights
-        if (
-            len(self.samplers) == len(InterleaveDataManager.shared_weights)
-            if InterleaveDataManager.shared_weights
-            else True
-        ):
-            InterleaveDataManager.shared_weights = self.dynamic_weights.copy()
+            # Update shared weights
+            if (
+                len(self.samplers) == len(InterleaveDataManager.shared_weights)
+                if InterleaveDataManager.shared_weights
+                else True
+            ):
+                InterleaveDataManager.shared_weights = self.dynamic_weights.copy()
 
         # Log data metrics periodically
         if self.data_metrics_logger is not None:

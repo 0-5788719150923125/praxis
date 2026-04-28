@@ -8,6 +8,7 @@ from praxis.data.config import (
     DATASETS,
     DIR_WEIGHT,
     TOOLS_WEIGHT,
+    resolve_task_type,
 )
 from praxis.data.datamodule import PraxisDataModule
 from praxis.data.datasets import (
@@ -160,6 +161,7 @@ def get_dataset(format, tokenizer, seed, *args, **kwargs):
     if format == "huggingface":
         dataset = HuggingfaceDataset(tokenizer, seed, *args)
         dataset.weight = args[0].get("weight", 1.0)
+        dataset.task_type = resolve_task_type(args[0])
         return dataset
     elif format == "directory":
         if args and isinstance(args[0], dict):
@@ -175,6 +177,7 @@ def get_dataset(format, tokenizer, seed, *args, **kwargs):
                 tokenizer, directories=directories, name=name, **extra
             )
             dataset.weight = cfg.get("weight", DIR_WEIGHT)
+            dataset.task_type = resolve_task_type(cfg)
             return dataset
         directories = kwargs.get("data_path")
         first = directories[0] if isinstance(directories, list) else directories
@@ -186,6 +189,7 @@ def get_dataset(format, tokenizer, seed, *args, **kwargs):
         dataset_config = args[0] if args else {}
         dataset = SyntheticToolCallingDataset(tokenizer, seed, dataset_config)
         dataset.weight = dataset_config.get("weight", TOOLS_WEIGHT)
+        dataset.task_type = resolve_task_type(dataset_config)
         return dataset
 
 

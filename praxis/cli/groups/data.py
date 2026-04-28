@@ -63,5 +63,6 @@ class DataGroup:
             choices=SAMPLER_REGISTRY.keys(),
             help="Dataset sampling weighting mode: 'loss' (upsample high-loss datasets via per-sequence CE), "
             "'novelty' (bigram novelty via Count-Min Sketch), "
-            "'dynamic' (EMA of token counts), or 'static' (fixed weights, no adaptation).",
+            "'dynamic' (EMA of token counts), 'static' (use weights from DATASET_COLLECTIONS as-is), "
+            "or 'uniform' (force every dataset to 1.0, ignoring DATASET_COLLECTIONS).",
         )

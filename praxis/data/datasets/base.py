@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 from transformers import PreTrainedTokenizer
 
 from praxis.data.datasets.network_retry import retry_on_network_error
+from praxis.tasks import DEFAULT_TASK
 
 
 class PraxisSampler:
@@ -12,6 +13,7 @@ class PraxisSampler:
 
     def __init__(self, tokenizer: PreTrainedTokenizer):
         self.weight = 1.0
+        self.task_type = int(DEFAULT_TASK)
         self.tokenizer = tokenizer
         self.sequence_cache = []  # Store raw text sequences
 

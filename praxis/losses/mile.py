@@ -5,6 +5,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
+from praxis.losses.reduction import weighted_reduce
+
 
 class MiLeLoss(nn.Module):
     """
@@ -48,6 +50,7 @@ class MiLeLoss(nn.Module):
         self,
         logits: Tensor,
         labels: Tensor,
+        loss_weights: Optional[Tensor] = None,
         *args: Any,
         **kwargs: Any,
     ) -> Tensor:
@@ -57,9 +60,7 @@ class MiLeLoss(nn.Module):
         Args:
             logits: Predicted logits
             labels: Target labels
-
-        Returns:
-            MiLe loss value
+            loss_weights: Optional per-token weights for task-aware reduction.
         """
         shift_logits = logits.view(-1, logits.shape[-1])
         shift_labels = labels.view(-1)
@@ -78,9 +79,9 @@ class MiLeLoss(nn.Module):
             )
         # Use EMA alpha for loss calculation; simulates the multi-GPU normalization used in the original code
         loss = self.ema_alpha * scale * ce_loss
-        if self.reduction == "mean":
-            return loss.mean()
-        elif self.reduction == "sum":
-            return loss.sum()
-        else:
-            return loss
+        return weighted_reduce(
+            loss,
+            labels=shift_labels,
+            loss_weights=loss_weights,
+            reduction=self.reduction,
+        )

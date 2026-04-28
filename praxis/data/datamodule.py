@@ -61,6 +61,22 @@ class PraxisDataModule(LightningDataModule):
                 enable_data_metrics_logging=False,  # Don't log validation metrics
             )
 
+    def active_task_ids(self) -> set:
+        """Task IDs actually represented in the training samplers.
+
+        Drops telemetry clutter for task types no active dataset produces.
+        """
+        out = set()
+        ds = getattr(self, "train_datasets", None)
+        manager = getattr(ds, "data_manager", None) if ds is not None else None
+        if manager is None:
+            return out
+        for sampler in getattr(manager, "samplers", []):
+            tid = getattr(sampler, "task_type", None)
+            if tid is not None:
+                out.add(int(tid))
+        return out
+
     def create_datasets(
         self,
         datasets,
@@ -72,9 +88,14 @@ class PraxisDataModule(LightningDataModule):
         hypersample_chance=0,
         enable_data_metrics_logging=True,
     ):
-        # Get weights and normalize them while preserving relative magnitudes
-        raw_weights = [dataset.weight for dataset in datasets]
-        weights = [w / sum(raw_weights) for w in raw_weights]
+        # `uniform` forces every dataset to 1.0 regardless of what
+        # DATASET_COLLECTIONS declared, so we just count datasets here.
+        if self.weighting_mode == "uniform":
+            raw_weights = [1.0] * len(datasets)
+        else:
+            raw_weights = [dataset.weight for dataset in datasets]
+        total = sum(raw_weights) or 1.0
+        weights = [w / total for w in raw_weights]
 
         # Debug log
 

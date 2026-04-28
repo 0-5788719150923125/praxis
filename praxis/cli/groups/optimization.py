@@ -2,6 +2,7 @@
 
 from praxis import LOSS_REGISTRY, STRATEGIES_REGISTRY
 from praxis.optimizers import OPTIMIZER_PROFILES
+from praxis.tasks import TASK_WEIGHTER_REGISTRY
 
 
 class OptimizationGroup:
@@ -36,6 +37,19 @@ class OptimizationGroup:
             choices=STRATEGIES_REGISTRY.keys(),
             default="naive",
             help="The multitask objective strategy to use for loss combination",
+        )
+
+        group.add_argument(
+            "--task-weights",
+            type=str,
+            default=None,
+            choices=sorted(TASK_WEIGHTER_REGISTRY.keys()),
+            help=(
+                "Named per-task loss weighting strategy from "
+                "TASK_WEIGHTER_REGISTRY. Unset = identity (every task at 1.0). "
+                "Fixed variants use constant scalars; learnable variants use a "
+                "sigmoid-gated per-task parameter with an L2 anchor."
+            ),
         )
 
         # Optimizer wrappers

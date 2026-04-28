@@ -743,12 +743,18 @@ def main():
         else 0
     )
     log_freq = 10  # Log gradients every 10 steps (reduce overhead)
+    active_task_ids = None
+    if hasattr(dataintegration, "active_task_ids"):
+        active_task_ids = dataintegration.active_task_ids() or None
     print(
-        f"[Setup] Adding DynamicsLoggerCallback (router_type={config.router_type}, num_experts={num_experts}, log_freq={log_freq})"
+        f"[Setup] Adding DynamicsLoggerCallback (router_type={config.router_type}, num_experts={num_experts}, log_freq={log_freq}, active_tasks={active_task_ids})"
     )
     train_params["callbacks"].append(
         DynamicsLoggerCallback(
-            run_dir=cache_dir, num_experts=num_experts, log_freq=log_freq
+            run_dir=cache_dir,
+            num_experts=num_experts,
+            log_freq=log_freq,
+            active_task_ids=active_task_ids,
         )
     )
 

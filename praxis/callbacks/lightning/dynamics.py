@@ -4,6 +4,7 @@ from lightning.pytorch.callbacks import Callback
 
 from praxis.logging.dynamics_logger import DynamicsLogger
 from praxis.metrics import extract_layer_dynamics
+from praxis.tasks import TASK_NAMES, LearnableTaskLossWeighter
 
 
 class DynamicsLoggerCallback(Callback):
@@ -21,10 +22,19 @@ class DynamicsLoggerCallback(Callback):
         log_freq: Log gradients every N steps (default: 10)
     """
 
-    def __init__(self, run_dir: str, num_experts: int = 0, log_freq: int = 10):
+    def __init__(
+        self,
+        run_dir: str,
+        num_experts: int = 0,
+        log_freq: int = 10,
+        active_task_ids=None,
+    ):
         super().__init__()
         self.dynamics_logger = DynamicsLogger(run_dir, num_experts=num_experts)
         self.log_freq = log_freq
+        self.active_task_ids = (
+            set(active_task_ids) if active_task_ids is not None else None
+        )
         self._success_count = 0
         self._failure_logged = False
         print(
@@ -52,6 +62,9 @@ class DynamicsLoggerCallback(Callback):
 
             # Expert dynamics: per-expert gradients (only when routers exist)
             dynamics.update(self._extract_expert_dynamics(model))
+
+            # Task weights: per-task scalars from learnable TaskLossWeighter.
+            dynamics.update(self._extract_task_weights(model))
 
             if dynamics:
                 self._success_count += 1
@@ -138,6 +151,26 @@ class DynamicsLoggerCallback(Callback):
                     all_dynamics[f"layer_{layer_idx}_{key}"] = value
 
         return all_dynamics
+
+    def _extract_task_weights(self, model) -> dict:
+        """Expose live effective task weights from a learnable weighter.
+
+        Fixed weighters (``flat``, ``bias_pretrain``) return an empty dict
+        so the Dynamics chart only appears when there's something to watch.
+        When ``active_task_ids`` was passed at construction, only those
+        tasks are reported -- keeps the chart free of noise for task types
+        no live dataset produces.
+        """
+        weighter = getattr(model, "taskmaster", None)
+        if not isinstance(weighter, LearnableTaskLossWeighter):
+            return {}
+        effective = weighter.effective_weights().cpu().tolist()
+        out = {}
+        for idx, (name, value) in enumerate(zip(TASK_NAMES, effective)):
+            if self.active_task_ids is not None and idx not in self.active_task_ids:
+                continue
+            out[f"task_weight_{name}"] = float(value)
+        return out
 
     def on_train_end(self, trainer, pl_module):
         """Close logger on training end."""

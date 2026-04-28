@@ -118,6 +118,9 @@ class PraxisConfig(PretrainedConfig):
         self.checkpoint_every = checkpoint_every
         self.loss_func = loss_func
         self.strategy = strategy
+        # Per-task loss weighting profile name (see TASK_WEIGHT_PROFILES
+        # in praxis.tasks). None means identity: all task IDs get weight 1.0.
+        self.task_weights = kwargs.get("task_weights", None)
         self.device_map = device_map
         self.seed = seed
         self.debug = debug

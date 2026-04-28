@@ -17,6 +17,40 @@ def get_optimizer_profile(name="AdamW", disable_schedule=False):
     return profile, disable_schedule
 
 
+def _promote_taskmaster_lr(optimizer, model) -> None:
+    """Move taskmaster.raw to its own param group with a boosted LR.
+
+    Weighted-mean loss reduction cancels most of the gradient flowing to
+    the per-task weights, so the default transformer LR leaves them
+    visually frozen. This splits ``raw`` off after ``create_optimizer``
+    has already placed it in whichever group (it normally lands in the
+    no-weight-decay group because it's 1-D). Skips silently for fixed
+    weighters or when taskmaster is absent.
+    """
+    tm = getattr(model, "taskmaster", None)
+    raw = getattr(tm, "raw", None)
+    multiplier = float(getattr(tm, "lr_multiplier", 0.0) or 0.0)
+    if raw is None or multiplier <= 0 or multiplier == 1.0:
+        return
+
+    for group in optimizer.param_groups:
+        for i, p in enumerate(group["params"]):
+            if p is raw:
+                group["params"].pop(i)
+                new_group = {
+                    **group,
+                    "params": [raw],
+                    "lr": float(group["lr"]) * multiplier,
+                    "weight_decay": 0.0,
+                }
+                optimizer.add_param_group(new_group)
+                print(
+                    f"[Optimizer] taskmaster.raw promoted to dedicated group: "
+                    f"lr={new_group['lr']:.4g} (x{multiplier:g})"
+                )
+                return
+
+
 def get_optimizer(
     model,
     trac=False,
@@ -31,6 +65,7 @@ def get_optimizer(
         kwargs["lr"] *= 2.0  # Increase the learning rate by 2-10x
         kwargs["weight_decay"] = 0.0  # Disable weight decay in the base optimizer
     optimizer = create_optimizer(model, *args, **kwargs)
+    _promote_taskmaster_lr(optimizer, model)
     if trac:
         optimizer = TRAC(optimizer, num_coefs=128)
     if ortho:

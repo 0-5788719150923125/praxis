@@ -16,6 +16,12 @@ from praxis.heads import HEAD_REGISTRY
 from praxis.losses import get_loss_function
 from praxis.policies import RL_POLICIES_REGISTRY
 from praxis.strategies import STRATEGIES_REGISTRY
+from praxis.tasks import (
+    LearnableTaskLossWeighter,
+    TASK_NAMES,
+    TaskLossWeighter,
+    resolve_task_weighter,
+)
 from praxis.utils import create_block_ids
 
 
@@ -147,11 +153,27 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             self.policy = RL_POLICIES_REGISTRY[rl_type](config)
 
         self.criterion = get_loss_function(config.loss_func, config.vocab_size)
+
+        # Per-task loss weighting. Identity (no-op) unless --task-weights
+        # is set; the assistant mask from the chat template is always
+        # applied when present. Learnable variants expose an anchor_loss
+        # that gets folded into the combined objective by the strategy below.
+        self.taskmaster = resolve_task_weighter(config.task_weights)
+
         self.strategy = STRATEGIES_REGISTRY.get(config.strategy, "naive")()
 
         # Tie weights if requested
         if config.tie_word_embeddings and self.head is not None:
             self.tie_weights()
+
+    def get_metrics(self) -> dict:
+        metrics = super().get_metrics()
+        # Surface learnable task weights so runs can see them drift.
+        if isinstance(self.taskmaster, LearnableTaskLossWeighter):
+            eff = self.taskmaster.effective_weights().cpu().tolist()
+            for name, value in zip(TASK_NAMES, eff):
+                metrics[f"task_weight_{name}"] = float(value)
+        return metrics
 
     def compute_loss(
         self,
@@ -198,6 +220,41 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             input_ids=input_ids,
         )
 
+    def _build_loss_weights(
+        self,
+        labels: torch.Tensor,
+        task_type_ids: Optional[torch.Tensor],
+        assistant_mask: Optional[torch.Tensor],
+    ) -> Optional[torch.Tensor]:
+        """Compose per-token weights from task IDs and the assistant mask.
+
+        Returns None when neither signal is provided. The returned tensor
+        is shifted to align with ``labels`` -- positions in
+        ``input_ids[t+1]`` set the weight on the loss for the prediction
+        at ``labels[t]``.
+        """
+        if task_type_ids is None and assistant_mask is None:
+            return None
+
+        # Both inputs cover input_ids positions [0..T-1]. Labels are usually
+        # the trailing T-1 tokens, so the weight aligned to label[t] comes
+        # from position t+1. When labels is full-length (e.g. aligned encoder),
+        # there's no shift to do.
+        target_len = labels.size(-1)
+
+        weights = None
+        if task_type_ids is not None:
+            shifted_task = task_type_ids[..., -target_len:]
+            weights = self.taskmaster(shifted_task.long())
+
+        if assistant_mask is not None:
+            shifted_mask = assistant_mask[..., -target_len:].to(
+                weights.dtype if weights is not None else torch.float32
+            )
+            weights = shifted_mask if weights is None else weights * shifted_mask
+
+        return weights
+
     def _compute_loss(
         self,
         logits: torch.Tensor,
@@ -205,6 +262,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         embeddings: torch.Tensor,
         classifier: Optional[nn.Module],
         input_ids: torch.Tensor,
+        loss_weights: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Compute the main loss using the criterion."""
         # cut_cross_entropy needs FULL UNSHIFTED embeddings to avoid materializing shifted tensors
@@ -219,6 +277,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 classifier=classifier,
                 labels=labels,
                 input_ids=input_ids,
+                loss_weights=loss_weights,
             )
         else:
             return self.criterion(
@@ -229,6 +288,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 classifier=classifier,
                 labels=labels,
                 input_ids=input_ids,
+                loss_weights=loss_weights,
             )
 
     def _compute_bidirectional_loss(
@@ -317,6 +377,8 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         return_dict: Optional[bool] = None,
         rewards: Optional[torch.FloatTensor] = None,
         token_weights: Optional[torch.FloatTensor] = None,
+        task_type_ids: Optional[torch.LongTensor] = None,
+        assistant_mask: Optional[torch.Tensor] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
 
         outputs = super().forward(
@@ -418,6 +480,11 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
         loss = 0
         if labels is not None:
+            loss_weights = self._build_loss_weights(
+                labels=labels,
+                task_type_ids=task_type_ids,
+                assistant_mask=assistant_mask,
+            )
             # Check if trainer already computed layer-wise losses (e.g., MonoForward trainer)
             if "_layer_wise_complete" in outputs.losses.loss_dict:
                 # Trainer handled its own training, use strategy to combine losses
@@ -449,8 +516,16 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                     embeddings=hidden_states,
                     classifier=classifier,
                     input_ids=input_ids,
+                    loss_weights=loss_weights,
                 )
                 loss = outputs.losses.add_loss("main", main_loss)
+
+        # Task-weight anchor loss (learnable weighters only). Folds in
+        # alongside MTP / RL / encoder aux losses so the strategy sees it.
+        if self.training and labels is not None:
+            anchor = self.taskmaster.anchor_loss()
+            if anchor is not None:
+                outputs.losses.add_loss("task_weight_anchor", anchor)
 
         # MTP auxiliary loss (training only)
         if self.mtp is not None and self.training and labels is not None:

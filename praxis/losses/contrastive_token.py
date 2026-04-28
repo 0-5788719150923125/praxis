@@ -1,9 +1,11 @@
-from typing import Union
+from typing import Optional, Union
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+
+from praxis.losses.reduction import weighted_reduce
 
 
 class ContrastiveTokenLoss(nn.Module):
@@ -42,13 +44,20 @@ class ContrastiveTokenLoss(nn.Module):
         self,
         logits: torch.Tensor,
         labels: torch.Tensor,
+        loss_weights: Optional[torch.Tensor] = None,
         *args,
         **kwargs,
     ):
+        # The contrastive auxiliary keeps its native per-position structure;
+        # only the CE component is reweighted, since CT operates over a
+        # truncated window with its own normalization.
         shift_logits_flat = logits.view(-1, logits.shape[-1])
         shift_labels_flat = labels.view(-1)
-        ce_loss = F.cross_entropy(
-            shift_logits_flat, shift_labels_flat, reduction="mean", ignore_index=-100
+        ce_per_token = F.cross_entropy(
+            shift_logits_flat, shift_labels_flat, reduction="none", ignore_index=-100
+        )
+        ce_loss = weighted_reduce(
+            ce_per_token, labels=shift_labels_flat, loss_weights=loss_weights
         )
         ct_loss = contrastive_token_loss(
             logits,

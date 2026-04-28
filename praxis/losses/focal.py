@@ -1,8 +1,10 @@
-from typing import Any, Union
+from typing import Any, Optional, Union
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from praxis.losses.reduction import weighted_reduce
 
 
 class FocalLoss(nn.Module):
@@ -29,7 +31,12 @@ class FocalLoss(nn.Module):
             self.register_buffer("alpha_vector", alpha)
 
     def forward(
-        self, logits: torch.Tensor, labels: torch.Tensor, *args: Any, **kwargs: Any
+        self,
+        logits: torch.Tensor,
+        labels: torch.Tensor,
+        loss_weights: Optional[torch.Tensor] = None,
+        *args: Any,
+        **kwargs: Any,
     ) -> torch.Tensor:
         # 1. Shift inputs for next-token prediction and reshape
         shift_logits = logits.view(-1, logits.shape[-1])
@@ -52,10 +59,6 @@ class FocalLoss(nn.Module):
         # 4. Compute loss per token
         loss = -alpha_factor * focal_weight * log_p_t  # Shape: (N,)
 
-        # 5. Apply reduction
-        if self.reduction == "mean":
-            return loss.mean()
-        elif self.reduction == "sum":
-            return loss.sum()
-        # else: # reduction == "none"
-        return loss  # Shape (N,)
+        return weighted_reduce(
+            loss, labels=labels, loss_weights=loss_weights, reduction=self.reduction
+        )

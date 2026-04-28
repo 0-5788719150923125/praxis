@@ -3,6 +3,35 @@
 import random
 
 from praxis.data.formats import DataFormat
+from praxis.tasks import DEFAULT_TASK, TaskType, coerce_task
+
+# Default task type for each data format. Datasets can override by setting
+# `task_type` explicitly in their DATASETS entry.
+FORMAT_TO_TASK = {
+    DataFormat.SIMPLE: TaskType.PRETRAIN,
+    DataFormat.WIKI: TaskType.PRETRAIN,
+    DataFormat.INSTRUCTION: TaskType.INSTRUCTION,
+    DataFormat.CONVERSATION: TaskType.CONVERSATION,
+    DataFormat.MESSAGES: TaskType.CONVERSATION,
+    DataFormat.PERSONACHAT: TaskType.CONVERSATION,
+    DataFormat.SODA: TaskType.CONVERSATION,
+    DataFormat.TOOL_CALLING: TaskType.TOOL_CALL,
+    DataFormat.COT: TaskType.REASONING,
+    DataFormat.RL: TaskType.RL,
+    DataFormat.CUSTOM: DEFAULT_TASK,
+}
+
+
+def resolve_task_type(dataset_config: dict) -> int:
+    """Pick a task ID for a dataset, honoring an explicit override.
+
+    Synthetic / directory-typed datasets that don't declare `format` fall
+    back to ``DEFAULT_TASK`` unless they set `task_type`.
+    """
+    if "task_type" in dataset_config:
+        return coerce_task(dataset_config["task_type"])
+    fmt = dataset_config.get("format")
+    return int(FORMAT_TO_TASK.get(fmt, DEFAULT_TASK))
 
 # System and developer prompts
 SYSTEM_PROMPT = "Write thy wrong."
@@ -269,6 +298,7 @@ DATASETS = {
     ),
     "synthetic-tool-calling": dict(
         type="synthetic-tool-calling",
+        task_type=TaskType.TOOL_CALL,
     ),
     "praxis": dict(
         type="directory",

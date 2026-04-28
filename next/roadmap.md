@@ -13,6 +13,12 @@ Tracked work items for the Praxis research framework. These range from near-term
 - [x] **Relocate web assets under `praxis/web/`**
       Moved `src/web/` (JS/CSS sources + build.py), `templates/`, and `static/` image assets into `praxis/web/`. Renamed the package from `praxis.api` to `praxis.web` since it serves both the API and the dashboard frontend. The build script now lives at `praxis/web/src/build.py` and outputs to `praxis/web/static/`.
 
+- [ ] **Unify metrics logging into a single pipeline**
+      The codebase has accumulated ~3 parallel metrics writers: `MetricsLogger` (metrics.db, native + `extra_metrics` JSON), `DynamicsLogger` (dynamics.db, dynamically ALTER TABLE'd columns), and `DataMetricsLogger` (log file). In practice the `extra_metrics` JSON column has stayed empty across every run in `build/runs/` -- the Lightning `callback_metrics` → MetricsLoggerCallback path isn't propagating non-KNOWN keys. That's why the new learnable `task_weight_*` metrics had to be wired straight into `DynamicsLogger` via `DynamicsLoggerCallback._extract_task_weights` instead of flowing through `model.get_metrics()`. Consolidate to one logger + one db with a single `"everything not in KNOWN_METRICS goes into extra"` path, and have the dynamics endpoint read from that uniformly.
+
+- [ ] **Propagate task-weighted loss into layer-wise training**
+      The new `loss_weights` channel is plumbed through `praxis.losses.cross_entropy`, `focal`, `mile`, `stablemax`, `halo`, and `contrastive_token` via `weighted_reduce`, but `praxis/losses/layer_wise.py` and the layer-wise / MonoForward training paths still call the criterion without forwarding `loss_weights`. Update `compute_layer_wise_loss()` to accept and pass through the per-token weights, and have the trainer thread `task_type_ids` / `assistant_mask` into each layer's local objective. Until then, layer-wise runs see uniform weighting regardless of `--task-weights` or `--mask-prompts`.
+
 - [ ] **Multi-path `--data-path` support in experiment YAMLs**
       Allow experiment YAML files to specify `data_path` as a list of strings (e.g. `data_path: [/data/a, /data/b]`). The CLI and `MultiDirectoryDataset` already handle multiple paths, but the experiment loader needs to normalize scalar values to a list, define merge-vs-replace semantics when both YAML and CLI provide paths, and the `launch` script needs to discover YAML-sourced paths so it can create the corresponding Docker volume mounts.
 

@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from typing import List, Optional, Sequence
+from typing import Callable, List, Optional, Sequence, Union
 
 
 class StreamingContext:
@@ -43,27 +43,43 @@ class StreamingContext:
     exceeds that, the oldest characters are dropped. This keeps the
     prompt-encode cost bounded even if the model produces a clean
     passage for hours.
+
+    ``initial_text`` may be either a fixed string or a zero-arg callable
+    that returns one. Callable seeds are invoked on every ``reset()``,
+    which lets callers re-roll a random first token each time the
+    buffer goes degenerate without re-instantiating the context.
     """
 
     def __init__(
         self,
-        initial_text: str = "",
+        initial_text: Union[str, Callable[[], str]] = "",
         max_length: int = 512,
         unchanged_threshold: int = 30,
         ignored_n_grams: Optional[Sequence[str]] = None,
         repetition_n_gram_size: int = 7,
         repetition_frequency: int = 20,
     ) -> None:
-        self.initial_text = initial_text
+        if callable(initial_text):
+            self._seed_factory: Callable[[], str] = initial_text
+        else:
+            _fixed = initial_text
+            self._seed_factory = lambda: _fixed
         self.max_length = max_length
         self.unchanged_threshold = unchanged_threshold
         self.ignored_n_grams: List[str] = list(ignored_n_grams or [])
         self.repetition_n_gram_size = repetition_n_gram_size
         self.repetition_frequency = repetition_frequency
 
-        self.text: str = initial_text
+        # Snapshot of the most recent seed; refreshed by reset().
+        self._initial_text: str = self._seed_factory()
+        self.text: str = self._initial_text
         self._previous_texts: List[str] = []
         self._unchanged_count: int = 0
+
+    @property
+    def initial_text(self) -> str:
+        """Most recent seed (the value reset() snaps back to)."""
+        return self._initial_text
 
     # ------------------------------------------------------------------
     # public API
@@ -107,8 +123,12 @@ class StreamingContext:
         return False
 
     def reset(self) -> None:
-        """Snap the buffer back to the seed, clearing all history."""
-        self.text = self.initial_text
+        """Snap the buffer back to a fresh seed, clearing all history.
+
+        With a callable seed factory this re-rolls a new starting text.
+        """
+        self._initial_text = self._seed_factory()
+        self.text = self._initial_text
         self._previous_texts = []
         self._unchanged_count = 0
 

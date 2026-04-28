@@ -1,10 +1,12 @@
 import math
-from typing import Any
+from typing import Any, Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+
+from praxis.losses.reduction import weighted_reduce
 
 
 class HALOLoss(nn.Module):
@@ -86,6 +88,7 @@ class HALOLoss(nn.Module):
         labels: Tensor,
         embeddings: Tensor = None,
         classifier: nn.Module = None,
+        loss_weights: Optional[Tensor] = None,
         *args: Any,
         **kwargs: Any,
     ) -> Tensor:
@@ -104,14 +107,18 @@ class HALOLoss(nn.Module):
             self._lazy_init(emb_dims)
 
         flat_emb = embeddings.contiguous().view(-1, emb_dims)
+        flat_weights = (
+            loss_weights.reshape(-1) if loss_weights is not None else None
+        )
         centroids = classifier.weight
-        return self._halo_forward(flat_emb, flat_labels, centroids)
+        return self._halo_forward(flat_emb, flat_labels, centroids, flat_weights)
 
     def _halo_forward(
         self,
         pos: Tensor,
         target: Tensor,
         centroids: Tensor,
+        loss_weights: Optional[Tensor] = None,
     ) -> Tensor:
         D = self._D
         pos = pos.to(torch.float32)
@@ -124,6 +131,10 @@ class HALOLoss(nn.Module):
 
         pos = pos[valid_mask]
         target = target[valid_mask]
+        # Filter weights to match the post-mask token set so per-token
+        # alignment is preserved end-to-end.
+        if loss_weights is not None:
+            loss_weights = loss_weights[valid_mask]
 
         x_sq = pos.pow(2).mean(dim=-1, keepdim=True)
         y_sq = cen.pow(2).mean(dim=-1, keepdim=True)
@@ -146,7 +157,7 @@ class HALOLoss(nn.Module):
         # True absolute distances for distillation and regularizer
         logits_k_true = torch.clamp(logits_k_shifted - (gamma * x_sq), max=0.0)
 
-        # Cross-entropy on K+1 classes
+        # Cross-entropy on K+1 classes - keep per-token so we can weight.
         if self.distill:
             centroid_targets = torch.arange(
                 cen.size(0), device=pos.device, dtype=target.dtype
@@ -162,10 +173,8 @@ class HALOLoss(nn.Module):
                 )
                 target_probs = torch.cat([target_probs_k, zeros], dim=-1)
 
-            loss_ce = F.cross_entropy(
-                logits_k_plus_1,
-                target_probs,
-                reduction=self.reduction,
+            loss_ce_per_token = F.cross_entropy(
+                logits_k_plus_1, target_probs, reduction="none"
             )
         else:
             with torch.no_grad():
@@ -183,13 +192,11 @@ class HALOLoss(nn.Module):
                 )
                 target_probs[:, -1] = 0.0
 
-            loss_ce = F.cross_entropy(
-                logits_k_plus_1,
-                target_probs,
-                reduction=self.reduction,
+            loss_ce_per_token = F.cross_entropy(
+                logits_k_plus_1, target_probs, reduction="none"
             )
 
-        # Geometric regularizer
+        # Geometric regularizer (per-token)
         diff_true = pos - cen[target]
         r_sq_true = diff_true.pow(2).mean(dim=-1).to(pos.dtype)
 
@@ -198,7 +205,9 @@ class HALOLoss(nn.Module):
         gaussian_term = -0.5 * r_sq_true
         radial_nll = -(volume_term + gaussian_term)
 
-        if self.reduction == "mean":
-            radial_nll = radial_nll.mean()
-
-        return loss_ce + radial_nll
+        per_token = loss_ce_per_token + radial_nll
+        # target was already filtered by valid_mask; pass labels=None so
+        # weighted_reduce doesn't try to filter again.
+        return weighted_reduce(
+            per_token, labels=None, loss_weights=loss_weights, reduction=self.reduction
+        )

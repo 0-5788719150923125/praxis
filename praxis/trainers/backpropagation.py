@@ -77,9 +77,14 @@ class BackpropagationTrainer(LightningModule):
         # Capture metadata before _handle_batch_format (it only returns input_ids)
         batch_metadata = batch.get("metadata", []) if isinstance(batch, dict) else []
 
-        input_ids, rewards, token_weights, should_skip = self._handle_batch_format(
-            batch, batch_idx, is_training=True
-        )
+        (
+            input_ids,
+            rewards,
+            token_weights,
+            task_type_ids,
+            assistant_mask,
+            should_skip,
+        ) = self._handle_batch_format(batch, batch_idx, is_training=True)
 
         if should_skip:
             return torch.tensor(0.0, requires_grad=True)
@@ -95,6 +100,8 @@ class BackpropagationTrainer(LightningModule):
             labels=labels,
             rewards=rewards,
             token_weights=token_weights,
+            task_type_ids=task_type_ids,
+            assistant_mask=assistant_mask,
         )
         loss = outputs.loss
         softmax_collapse = self._compute_softmax_collapse(outputs.logits)
@@ -369,7 +376,7 @@ class BackpropagationTrainer(LightningModule):
         ensuring consistent handling of RL generation, CoT token weights, and other batch formats.
 
         Returns:
-            input_ids, rewards, token_weights, should_skip
+            input_ids, rewards, token_weights, task_type_ids, assistant_mask, should_skip
         """
         step_type = "Training" if is_training else "Validation"
 
@@ -378,6 +385,8 @@ class BackpropagationTrainer(LightningModule):
             input_ids = batch["input_ids"]
             rewards = batch.get("rewards", None)
             token_weights = batch.get("token_weights", None)
+            task_type_ids = batch.get("task_type_ids", None)
+            assistant_mask = batch.get("assistant_mask", None)
 
             # Log interesting batch events (only for generation batches to avoid spam)
             if batch.get("needs_generation", False):
@@ -401,15 +410,17 @@ class BackpropagationTrainer(LightningModule):
                     print(
                         f"[RL] {step_type} - Generation failed for batch {batch_idx}, skipping..."
                     )
-                    return None, None, None, True
+                    return None, None, None, None, None, True
 
         else:
             # Regular batch format (just tensor of input_ids)
             input_ids = batch
             rewards = None
             token_weights = None
+            task_type_ids = None
+            assistant_mask = None
 
-        return input_ids, rewards, token_weights, False
+        return input_ids, rewards, token_weights, task_type_ids, assistant_mask, False
 
     def on_validation_start(self):
         super().on_validation_start()
@@ -424,9 +435,14 @@ class BackpropagationTrainer(LightningModule):
             # Return minimal tensor to avoid errors
             return torch.tensor(0.0, device=self.device)
 
-        input_ids, rewards, token_weights, should_skip = self._handle_batch_format(
-            batch, batch_idx, is_training=False
-        )
+        (
+            input_ids,
+            rewards,
+            token_weights,
+            task_type_ids,
+            assistant_mask,
+            should_skip,
+        ) = self._handle_batch_format(batch, batch_idx, is_training=False)
 
         if should_skip:
             return torch.tensor(0.0, requires_grad=True)
@@ -442,6 +458,8 @@ class BackpropagationTrainer(LightningModule):
             labels=labels,
             rewards=rewards,
             token_weights=token_weights,
+            task_type_ids=task_type_ids,
+            assistant_mask=assistant_mask,
         )
 
         stats = {}

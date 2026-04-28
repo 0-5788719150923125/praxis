@@ -195,6 +195,12 @@ function detectExpertLayers(dynamics) {
  * Detect halting histogram buckets. Returns {rs, maxLoops} or null if
  * no halting metrics are present (non-KL strategies, or not yet logged).
  */
+function detectTaskWeightKeys(dynamics) {
+    return Object.keys(dynamics)
+        .filter(k => k.startsWith('task_weight_'))
+        .sort();
+}
+
 function detectHaltingBuckets(dynamics) {
     const rs = new Set();
     Object.keys(dynamics).forEach(k => {
@@ -239,6 +245,8 @@ function renderDynamicsCharts(runData, container) {
     const hasExperts = expertLayers.length > 0 && expertsList.length > 0;
     const haltingBuckets = detectHaltingBuckets(dynamics);
     const hasHalting = haltingBuckets !== null;
+    const taskWeightKeys = detectTaskWeightKeys(dynamics);
+    const hasTaskWeights = taskWeightKeys.length > 0;
 
     // Layer toggle state — use universal layers, fall back to expert layers
     const allLayers = hasUniversal ? universalLayers :
@@ -334,6 +342,22 @@ function renderDynamicsCharts(runData, container) {
         `;
     }
 
+    // Task weights (conditional - only when a learnable task weighter is in use)
+    if (hasTaskWeights) {
+        chartsHTML += `
+            <div style="margin-top: 2rem;">
+                <div class="chart-card">
+                    <div class="chart-title">Task Loss Weights</div>
+                    <div class="chart-subtitle">Per-task scalar multipliers applied to the loss. Learnable variants drift under gradient pressure; an L2 anchor pulls raw toward 0 so they stay near their starting targets.</div>
+                    <div class="chart-wrapper" style="height: 400px;">
+                        <canvas id="dynamics-task-weights"></canvas>
+                    </div>
+                    <div class="chart-legend" id="dynamics-task-weights-legend"></div>
+                </div>
+            </div>
+        `;
+    }
+
     // Halting distribution (conditional - only when a halting strategy is in use)
     if (hasHalting) {
         chartsHTML += `
@@ -389,6 +413,9 @@ function renderDynamicsCharts(runData, container) {
             if (hasExperts) {
                 createExpertGradNormsChart('dynamics-grad-norms', dynamics, dynamicsLayerState.layers);
                 createExpertGradVarsChart('dynamics-grad-vars', dynamics, dynamicsLayerState.layers);
+            }
+            if (hasTaskWeights) {
+                createTaskWeightsChart('dynamics-task-weights', dynamics, taskWeightKeys);
             }
             if (hasHalting) {
                 createHaltingHistogramChart('dynamics-halting-hist', dynamics, haltingBuckets);
@@ -502,6 +529,11 @@ function rebuildAllCharts() {
     const halting = detectHaltingBuckets(dynamics);
     if (halting && document.getElementById('dynamics-halting-hist')) {
         createHaltingHistogramChart('dynamics-halting-hist', dynamics, halting);
+    }
+    // Task weights (independent of layer selection)
+    const taskWeightKeys = detectTaskWeightKeys(dynamics);
+    if (taskWeightKeys.length > 0 && document.getElementById('dynamics-task-weights')) {
+        createTaskWeightsChart('dynamics-task-weights', dynamics, taskWeightKeys);
     }
 }
 
@@ -645,6 +677,32 @@ function createLayerUpdateRatioChart(canvasId, dynamics, layers) {
     });
 
     renderChart(canvasId, datasets, 'Update Ratio (Log Scale)', 'logarithmic');
+}
+
+// ─── Task weights (conditional) ─────────────────────────────────────────────
+
+/**
+ * Task Loss Weights: per-task scalar weights over time.
+ * Keys arrive as `task_weight_<name>` (e.g. task_weight_pretrain).
+ */
+function createTaskWeightsChart(canvasId, dynamics, keys) {
+    const steps = dynamics.steps || [];
+    const datasets = [];
+
+    keys.forEach((key, idx) => {
+        const values = dynamics[key];
+        if (!values) return;
+
+        const data = steps.map((step, i) => ({
+            x: step, y: values[i]
+        })).filter(p => p.y !== null && p.y !== undefined);
+
+        const label = key.replace(/^task_weight_/, '');
+        const color = EXPERT_COLORS[idx % EXPERT_COLORS.length];
+        datasets.push(makeLineDataset(label, data, color));
+    });
+
+    renderChart(canvasId, datasets, 'Effective Weight', 'linear');
 }
 
 // ─── Expert charts (conditional) ────────────────────────────────────────────
