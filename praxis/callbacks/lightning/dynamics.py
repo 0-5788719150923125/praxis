@@ -66,6 +66,9 @@ class DynamicsLoggerCallback(Callback):
             # Task weights: per-task scalars from learnable TaskLossWeighter.
             dynamics.update(self._extract_task_weights(model))
 
+            # Harmonic head: amplitude norm and grad ratio (when present).
+            dynamics.update(self._extract_harmonic_dynamics(model))
+
             if dynamics:
                 self._success_count += 1
                 if self._success_count <= 3:
@@ -171,6 +174,49 @@ class DynamicsLoggerCallback(Callback):
                 continue
             out[f"task_weight_{name}"] = float(value)
         return out
+
+    def _extract_harmonic_dynamics(self, model) -> dict:
+        """Diagnostics for the harmonic head: is it being used or routed around?
+
+        - ``harmonic_amplitudes_norm``: L2 norm of the field's amplitude grid.
+          Stable near init = no structure being learned. Growing = real signal.
+        - ``harmonic_grad_ratio``: ``||grad(amplitudes)|| / ||grad(lm_head)||``.
+          Vanishing means the model is routing learning past the field.
+        """
+        field = getattr(model, "harmonic_field", None)
+        if field is None:
+            head = getattr(model, "head", None)
+            field = getattr(head, "field", None) if head is not None else None
+        if field is None or not hasattr(field, "amplitudes"):
+            return {}
+
+        out = {}
+        amps = field.amplitudes
+        out["harmonic_amplitudes_norm"] = float(amps.detach().norm().item())
+
+        amps_grad = amps.grad
+        lm_head = self._find_lm_head(model)
+        head_grad = (
+            lm_head.weight.grad if lm_head is not None else None
+        )
+        if amps_grad is not None and head_grad is not None:
+            head_norm = float(head_grad.detach().norm().item())
+            if head_norm > 0:
+                out["harmonic_grad_ratio"] = (
+                    float(amps_grad.detach().norm().item()) / head_norm
+                )
+        return out
+
+    def _find_lm_head(self, model):
+        """Return the learnable projection that the field feeds into."""
+        encoder = getattr(model, "encoder", None)
+        classifier = (
+            getattr(encoder, "classifier", None) if encoder else None
+        )
+        if classifier is not None and hasattr(classifier, "weight"):
+            return classifier
+        head = getattr(model, "head", None)
+        return getattr(head, "lm_head", None) if head is not None else None
 
     def on_train_end(self, trainer, pl_module):
         """Close logger on training end."""

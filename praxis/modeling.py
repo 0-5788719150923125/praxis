@@ -12,7 +12,7 @@ from transformers.modeling_outputs import (
 
 from praxis import DECODER_REGISTRY, EMBEDDING_REGISTRY, ENCODER_REGISTRY, PraxisConfig
 from praxis.containers import LossContainer
-from praxis.heads import HEAD_REGISTRY
+from praxis.heads import HEAD_REGISTRY, HarmonicField
 from praxis.losses import get_loss_function
 from praxis.policies import RL_POLICIES_REGISTRY
 from praxis.strategies import STRATEGIES_REGISTRY
@@ -125,6 +125,24 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 self.head = HEAD_REGISTRY.get(config.head_type, "forward")(config)
         else:
             self.head = None
+
+        # Harmonic head with an encoder: attach a 2D irrational-rotation field
+        # that multiplicatively modulates decoder_embeds before re-projection.
+        self.harmonic_field = None
+        if config.encoder_type is not None and config.head_type == "harmonic":
+            classifier = getattr(self.encoder, "classifier", None)
+            if classifier is not None and hasattr(classifier, "weight"):
+                feature_dim = classifier.weight.shape[1]
+            else:
+                feature_dim = config.hidden_size
+            base_positions = int(
+                getattr(config, "max_position_embeddings", 32768) or 32768
+            )
+            if "byte" in str(config.encoder_type):
+                base_positions = max(base_positions, base_positions * 8)
+            self.harmonic_field = HarmonicField(
+                hidden_dim=feature_dim, max_positions=base_positions
+            )
 
         # Initialize separate backward head if requested
         if config.bidirectional and config.encoder_type is None:
@@ -413,8 +431,19 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 outputs.patch_lengths,
                 outputs.local_decoder_tokens,
             )
-            hidden_states = decoder_embeds
             classifier = self.encoder.classifier
+            if self.harmonic_field is not None:
+                # Modulate decoder_embeds *before* binding hidden_states so the
+                # cut_cross_entropy path (which projects embeddings @ classifier
+                # internally and ignores the materialized logits) runs through
+                # the field. Otherwise amplitudes sit in a dead branch.
+                decoder_embeds = self.harmonic_field(decoder_embeds)
+                logits = F.linear(
+                    decoder_embeds,
+                    classifier.weight,
+                    getattr(classifier, "bias", None),
+                ).to(logits.dtype)
+            hidden_states = decoder_embeds
 
             # Encoders that manage their own losses (e.g. CALM) may emit
             # side-channel losses during decode(); fold them into the

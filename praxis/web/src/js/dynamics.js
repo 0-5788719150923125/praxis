@@ -201,6 +201,12 @@ function detectTaskWeightKeys(dynamics) {
         .sort();
 }
 
+function detectHarmonicKeys(dynamics) {
+    return Object.keys(dynamics)
+        .filter(k => k.startsWith('harmonic_'))
+        .sort();
+}
+
 function detectHaltingBuckets(dynamics) {
     const rs = new Set();
     Object.keys(dynamics).forEach(k => {
@@ -247,6 +253,8 @@ function renderDynamicsCharts(runData, container) {
     const hasHalting = haltingBuckets !== null;
     const taskWeightKeys = detectTaskWeightKeys(dynamics);
     const hasTaskWeights = taskWeightKeys.length > 0;
+    const harmonicKeys = detectHarmonicKeys(dynamics);
+    const hasHarmonic = harmonicKeys.length > 0;
 
     // Layer toggle state — use universal layers, fall back to expert layers
     const allLayers = hasUniversal ? universalLayers :
@@ -358,6 +366,36 @@ function renderDynamicsCharts(runData, container) {
         `;
     }
 
+    // Harmonic head diagnostics (conditional - only when the field is present)
+    if (hasHarmonic) {
+        if (harmonicKeys.includes('harmonic_amplitudes_norm')) {
+            chartsHTML += `
+                <div style="margin-top: 2rem;">
+                    <div class="chart-card">
+                        <div class="chart-title">Harmonic Field Amplitudes</div>
+                        <div class="chart-subtitle">L2 norm of the 2D amplitude grid. Stable near init = no structure learned; growing trajectory = the field is shaping itself.</div>
+                        <div class="chart-wrapper" style="height: 400px;">
+                            <canvas id="dynamics-harmonic-amplitudes"></canvas>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        if (harmonicKeys.includes('harmonic_grad_ratio')) {
+            chartsHTML += `
+                <div style="margin-top: 2rem;">
+                    <div class="chart-card">
+                        <div class="chart-title">Harmonic Gradient Ratio</div>
+                        <div class="chart-subtitle">||grad(amplitudes)|| / ||grad(lm_head)||. Vanishing means the model is routing learning past the field rather than through it.</div>
+                        <div class="chart-wrapper" style="height: 400px;">
+                            <canvas id="dynamics-harmonic-grad-ratio"></canvas>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+    }
+
     // Halting distribution (conditional - only when a halting strategy is in use)
     if (hasHalting) {
         chartsHTML += `
@@ -419,6 +457,20 @@ function renderDynamicsCharts(runData, container) {
             }
             if (hasHalting) {
                 createHaltingHistogramChart('dynamics-halting-hist', dynamics, haltingBuckets);
+            }
+            if (hasHarmonic) {
+                if (document.getElementById('dynamics-harmonic-amplitudes')) {
+                    createHarmonicScalarChart(
+                        'dynamics-harmonic-amplitudes', dynamics,
+                        'harmonic_amplitudes_norm', 'Amplitudes ||L2||', 'logarithmic'
+                    );
+                }
+                if (document.getElementById('dynamics-harmonic-grad-ratio')) {
+                    createHarmonicScalarChart(
+                        'dynamics-harmonic-grad-ratio', dynamics,
+                        'harmonic_grad_ratio', 'Grad Ratio (Log Scale)', 'logarithmic'
+                    );
+                }
             }
             loadActivationCurves();
         } catch (error) {
@@ -534,6 +586,19 @@ function rebuildAllCharts() {
     const taskWeightKeys = detectTaskWeightKeys(dynamics);
     if (taskWeightKeys.length > 0 && document.getElementById('dynamics-task-weights')) {
         createTaskWeightsChart('dynamics-task-weights', dynamics, taskWeightKeys);
+    }
+    // Harmonic head diagnostics (independent of layer selection)
+    if (document.getElementById('dynamics-harmonic-amplitudes')) {
+        createHarmonicScalarChart(
+            'dynamics-harmonic-amplitudes', dynamics,
+            'harmonic_amplitudes_norm', 'Amplitudes ||L2||', 'logarithmic'
+        );
+    }
+    if (document.getElementById('dynamics-harmonic-grad-ratio')) {
+        createHarmonicScalarChart(
+            'dynamics-harmonic-grad-ratio', dynamics,
+            'harmonic_grad_ratio', 'Grad Ratio (Log Scale)', 'logarithmic'
+        );
     }
 }
 
@@ -703,6 +768,38 @@ function createTaskWeightsChart(canvasId, dynamics, keys) {
     });
 
     renderChart(canvasId, datasets, 'Effective Weight', 'linear');
+}
+
+// ─── Harmonic head diagnostics (conditional) ────────────────────────────────
+
+/**
+ * Single-series scalar over training steps (no legend needed).
+ */
+function createHarmonicScalarChart(canvasId, dynamics, key, yLabel, yType) {
+    const steps = dynamics.steps || [];
+    const values = dynamics[key];
+    if (!values) return;
+
+    const data = steps.map((step, idx) => ({
+        x: step, y: values[idx]
+    })).filter(p => p.y !== null && p.y !== undefined);
+
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return;
+
+    if (dynamicsCharts[canvasId]) {
+        dynamicsCharts[canvasId].destroy();
+    }
+
+    const { textColor, gridColor, tooltipBg } = getThemeColors();
+    const options = baseChartOptions(yLabel, yType, textColor, gridColor, tooltipBg);
+    options.plugins.legend.display = false;
+
+    dynamicsCharts[canvasId] = new Chart(ctx, {
+        type: 'line',
+        data: { datasets: [makeLineDataset(yLabel, data, '#B388FF')] },
+        options
+    });
 }
 
 // ─── Expert charts (conditional) ────────────────────────────────────────────
