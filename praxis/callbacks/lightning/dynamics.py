@@ -4,7 +4,7 @@ from lightning.pytorch.callbacks import Callback
 
 from praxis.logging.dynamics_logger import DynamicsLogger
 from praxis.metrics import extract_layer_dynamics
-from praxis.tasks import TASK_NAMES, LearnableTaskLossWeighter
+from praxis.tasks import TASK_NAMES
 
 
 class DynamicsLoggerCallback(Callback):
@@ -156,7 +156,7 @@ class DynamicsLoggerCallback(Callback):
         return all_dynamics
 
     def _extract_task_weights(self, model) -> dict:
-        """Expose live effective task weights from a learnable weighter.
+        """Expose live effective task weights from a dynamic weighter.
 
         Fixed weighters (``flat``, ``bias_pretrain``) return an empty dict
         so the Dynamics chart only appears when there's something to watch.
@@ -165,7 +165,7 @@ class DynamicsLoggerCallback(Callback):
         no live dataset produces.
         """
         weighter = getattr(model, "taskmaster", None)
-        if not isinstance(weighter, LearnableTaskLossWeighter):
+        if not getattr(weighter, "is_dynamic", False):
             return {}
         effective = weighter.effective_weights().cpu().tolist()
         out = {}

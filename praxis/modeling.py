@@ -17,7 +17,6 @@ from praxis.losses import get_loss_function
 from praxis.policies import RL_POLICIES_REGISTRY
 from praxis.strategies import STRATEGIES_REGISTRY
 from praxis.tasks import (
-    LearnableTaskLossWeighter,
     TASK_NAMES,
     TaskLossWeighter,
     resolve_task_weighter,
@@ -186,8 +185,9 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
     def get_metrics(self) -> dict:
         metrics = super().get_metrics()
-        # Surface learnable task weights so runs can see them drift.
-        if isinstance(self.taskmaster, LearnableTaskLossWeighter):
+        # Surface dynamic task weights (learnable or difficulty-EMA) so
+        # runs can see them drift. Fixed weighters are skipped.
+        if getattr(self.taskmaster, "is_dynamic", False):
             eff = self.taskmaster.effective_weights().cpu().tolist()
             for name, value in zip(TASK_NAMES, eff):
                 metrics[f"task_weight_{name}"] = float(value)

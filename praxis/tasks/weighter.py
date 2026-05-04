@@ -28,6 +28,10 @@ def _targets_to_tensor(targets: Optional[Dict]) -> torch.Tensor:
 class TaskLossWeighter(nn.Module):
     """Base class: maps task IDs to per-token scalar weights."""
 
+    # Dynamic weighters drift over training and are worth charting.
+    # Fixed weighters return a constant and are excluded from dynamics logs.
+    is_dynamic: bool = False
+
     def forward(self, task_type_ids: torch.Tensor) -> torch.Tensor:  # pragma: no cover
         raise NotImplementedError
 
@@ -71,7 +75,14 @@ class LearnableTaskLossWeighter(TaskLossWeighter):
     anchor on ``raw`` pulls it back to 0 so the optimizer can't collapse
     every weight to zero just to minimize the weighted-mean loss. Tune
     ``anchor_weight`` to control stiffness: smaller = more drift allowed.
+
+    Caveat: gradient descent on a multiplier in front of a positive
+    loss always wants to shrink that multiplier, which makes this
+    variant *down*weight high-loss tasks. Use
+    :class:`DifficultyTaskLossWeighter` if you want the opposite.
     """
+
+    is_dynamic = True
 
     def __init__(
         self,
@@ -100,6 +111,88 @@ class LearnableTaskLossWeighter(TaskLossWeighter):
         if self.anchor_weight <= 0:
             return None
         return self.anchor_weight * self.raw.pow(2).mean()
+
+    def effective_weights(self) -> torch.Tensor:
+        with torch.no_grad():
+            return self._effective().detach()
+
+
+class DifficultyTaskLossWeighter(TaskLossWeighter):
+    """Upweight hard tasks via a stop-gradient EMA of per-task loss.
+
+    No gradient flows through the weights, so the optimizer can't
+    collapse high-loss tasks the way the multiplicative-learnable
+    variants (this codebase's ``LearnableTaskLossWeighter`` and
+    Kendall-style uncertainty weighting) do. Call
+    :meth:`observe` after each forward to feed in detached per-token
+    losses and their task IDs.
+
+    Effective weight per task::
+
+        ratio_t = ema_loss_t / mean(ema_loss)
+        weight_t = target_t * clamp(ratio_t ** gamma, floor, ceiling)
+
+    ``gamma=1`` is gentle, ``gamma=2`` is focal-style aggressive.
+    Unobserved tasks fall back to ``target_t`` (ratio = 1).
+    """
+
+    is_dynamic = True
+
+    def __init__(
+        self,
+        targets: Optional[Dict] = None,
+        gamma: float = 1.0,
+        ema_alpha: float = 0.05,
+        floor: float = 0.1,
+        ceiling: float = 4.0,
+    ):
+        super().__init__()
+        self.register_buffer("targets", _targets_to_tensor(targets), persistent=False)
+        # NaN sentinel marks "unobserved" so the first observation seeds
+        # the EMA without being pulled toward an arbitrary prior.
+        self.register_buffer(
+            "ema_loss",
+            torch.full((len(TaskType),), float("nan")),
+            persistent=True,
+        )
+        self.gamma = float(gamma)
+        self.ema_alpha = float(ema_alpha)
+        self.floor = float(floor)
+        self.ceiling = float(ceiling)
+
+    @torch.no_grad()
+    def observe(
+        self, task_type_ids: torch.Tensor, per_token_loss: torch.Tensor
+    ) -> None:
+        if task_type_ids.shape != per_token_loss.shape:
+            return
+        flat_ids = task_type_ids.reshape(-1).long()
+        flat_loss = per_token_loss.reshape(-1).detach().float().to(self.ema_loss.device)
+        for tid in flat_ids.unique().tolist():
+            mask = flat_ids == tid
+            if not mask.any():
+                continue
+            mean_t = flat_loss[mask].mean()
+            prev = self.ema_loss[tid]
+            if torch.isnan(prev):
+                self.ema_loss[tid] = mean_t
+            else:
+                self.ema_loss[tid] = (
+                    self.ema_alpha * mean_t + (1.0 - self.ema_alpha) * prev
+                )
+
+    def _effective(self) -> torch.Tensor:
+        ema = torch.where(
+            torch.isnan(self.ema_loss),
+            torch.ones_like(self.ema_loss),
+            self.ema_loss,
+        )
+        ratio = ema / ema.mean().clamp(min=1e-6)
+        scale = ratio.pow(self.gamma).clamp(self.floor, self.ceiling)
+        return self.targets * scale
+
+    def forward(self, task_type_ids: torch.Tensor) -> torch.Tensor:
+        return self._effective()[task_type_ids.long()]
 
     def effective_weights(self) -> torch.Tensor:
         with torch.no_grad():

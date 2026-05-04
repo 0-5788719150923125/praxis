@@ -23,6 +23,7 @@ from praxis.tasks.types import (
     task_name,
 )
 from praxis.tasks.weighter import (
+    DifficultyTaskLossWeighter,
     FixedTaskLossWeighter,
     LearnableTaskLossWeighter,
     TaskLossWeighter,
@@ -52,6 +53,13 @@ TASK_WEIGHTER_REGISTRY: Dict[str, callable] = {
         LearnableTaskLossWeighter,
         targets=BIAS_PRETRAIN_TARGETS,
         anchor_weight=0.01,
+    ),
+    # Stop-gradient EMA-driven curriculum: upweights hard tasks,
+    # downweights easy ones, capped by floor/ceiling. No anchor needed
+    # because no gradient flows through the multiplier.
+    "difficulty_bias_pretrain": partial(
+        DifficultyTaskLossWeighter,
+        targets=BIAS_PRETRAIN_TARGETS,
     ),
 }
 
@@ -85,6 +93,7 @@ __all__ = [
     "TaskLossWeighter",
     "FixedTaskLossWeighter",
     "LearnableTaskLossWeighter",
+    "DifficultyTaskLossWeighter",
     "coerce_task",
     "resolve_task_weighter",
     "task_id",

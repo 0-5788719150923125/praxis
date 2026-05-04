@@ -106,10 +106,17 @@ class BackpropagationTrainer(LightningModule):
         loss = outputs.loss
         softmax_collapse = self._compute_softmax_collapse(outputs.logits)
 
-        # Report per-dataset losses for loss-based sampling mode
-        if batch_metadata and InterleaveDataManager.shared_losses is not None:
+        # Per-token CE is needed for both loss-based dataset sampling and
+        # the difficulty task weighter. Compute once if either consumer
+        # is active.
+        inner_model = getattr(self.model, "_orig_mod", self.model)
+        weighter = getattr(inner_model, "taskmaster", None)
+        weighter_observes = weighter is not None and hasattr(weighter, "observe")
+        report_dataset_losses = (
+            bool(batch_metadata) and InterleaveDataManager.shared_losses is not None
+        )
+        if report_dataset_losses or (weighter_observes and task_type_ids is not None):
             with torch.no_grad():
-                # Per-token CE loss using standard causal-LM shift
                 shift_logits = outputs.logits[:, :-1, :].contiguous()
                 shift_labels = input_ids[:, 1:].contiguous()
                 per_token = F.cross_entropy(
@@ -117,20 +124,28 @@ class BackpropagationTrainer(LightningModule):
                     shift_labels.view(-1),
                     reduction="none",
                 ).view(input_ids.size(0), -1)
+
+            if report_dataset_losses:
                 per_seq_loss = per_token.mean(dim=-1)  # (batch_size,)
-            dataset_losses = {}
-            for i, meta in enumerate(batch_metadata):
-                if i >= len(per_seq_loss):
-                    break
-                dname = meta.get("dataset", "")
-                if dname:
-                    if dname not in dataset_losses:
-                        dataset_losses[dname] = []
-                    dataset_losses[dname].append(per_seq_loss[i].item())
-            if dataset_losses:
-                InterleaveDataManager.update_losses(
-                    {k: sum(v) / len(v) for k, v in dataset_losses.items()}
-                )
+                dataset_losses = {}
+                for i, meta in enumerate(batch_metadata):
+                    if i >= len(per_seq_loss):
+                        break
+                    dname = meta.get("dataset", "")
+                    if dname:
+                        if dname not in dataset_losses:
+                            dataset_losses[dname] = []
+                        dataset_losses[dname].append(per_seq_loss[i].item())
+                if dataset_losses:
+                    InterleaveDataManager.update_losses(
+                        {k: sum(v) / len(v) for k, v in dataset_losses.items()}
+                    )
+
+            if weighter_observes and task_type_ids is not None:
+                # Align task IDs with shifted per-token loss: weight on
+                # label[t] comes from the task at input position t+1.
+                shifted_task = task_type_ids[:, -per_token.size(-1):].contiguous()
+                weighter.observe(shifted_task, per_token)
 
         batch_size, num_tokens = input_ids.shape
         self.num_tokens += batch_size * num_tokens
