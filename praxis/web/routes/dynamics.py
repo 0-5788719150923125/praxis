@@ -138,6 +138,17 @@ def get_dynamics():
             dynamics_data["metrics"], dynamics_data.get("metadata"), stored_num_experts
         )
 
+        # Pull live metric descriptions from whichever components the active
+        # model exposes them on. Frontend uses these as chart subtitles, so
+        # the description never drifts from the implementation.
+        from praxis.metrics import get_metric_descriptions
+
+        generator = current_app.config.get("generator")
+        live_model = (
+            getattr(generator, "model", None) if generator else None
+        )
+        descriptions = get_metric_descriptions(live_model)
+
         # Format response
         response_data = {
             "status": "ok",
@@ -150,6 +161,7 @@ def get_dynamics():
                         **expert_metadata,  # Add expert count, pi_phases, pi_seeds
                     },
                     "dynamics": dynamics_data["metrics"],
+                    "descriptions": descriptions,
                 }
             ],
         }
@@ -759,6 +771,74 @@ def _sample_activation(
 
     except Exception:
         return None
+
+
+@dynamics_bp.route("/api/harmonic_spectrum", methods=["GET", "OPTIONS"])
+def get_harmonic_spectrum():
+    """Live snapshot of the harmonic field's amplitude grid magnitudes.
+
+    Returns ``|amp[f_t, f_d]|`` as a 2D array, plus the irrationals used to
+    seed phases. Frontend renders this as a heatmap so the user can see
+    whether energy is concentrating in particular frequency bands.
+    """
+    if request.method == "OPTIONS":
+        response = jsonify({"status": "ok"})
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add("Access-Control-Allow-Headers", "Content-Type")
+        response.headers.add("Access-Control-Allow-Methods", "GET, OPTIONS")
+        return response
+
+    from ..app import api_logger
+
+    try:
+        generator = current_app.config.get("generator")
+        model = getattr(generator, "model", None) if generator else None
+        if model is None:
+            response = jsonify(
+                {"status": "no_data", "message": "Model not available"}
+            )
+            response.headers.add("Access-Control-Allow-Origin", "*")
+            return response
+
+        field = getattr(model, "harmonic_field", None)
+        if field is None:
+            head = getattr(model, "head", None)
+            field = getattr(head, "field", None) if head is not None else None
+        if field is None or not hasattr(field, "amplitudes"):
+            response = jsonify(
+                {"status": "no_data", "message": "No harmonic field on model"}
+            )
+            response.headers.add("Access-Control-Allow-Origin", "*")
+            return response
+
+        amps = field.amplitudes.detach().abs().to("cpu", dtype=__import__("torch").float32)
+        spectrum = amps.tolist()
+
+        from praxis.heads.harmonic import IRR_T, IRR_D
+
+        response = jsonify(
+            {
+                "status": "ok",
+                "spectrum": spectrum,
+                "F_t": int(amps.shape[0]),
+                "F_d": int(amps.shape[1]),
+                "max": float(amps.max().item()) if amps.numel() else 0.0,
+                "irrationals": {"t": float(IRR_T), "d": float(IRR_D)},
+            }
+        )
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add("Cache-Control", "max-age=5")
+        return response
+
+    except Exception as e:
+        api_logger.error(f"Error in get_harmonic_spectrum: {e}")
+        import traceback
+
+        traceback.print_exc()
+        response = jsonify({"status": "error", "message": str(e)})
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.status_code = 500
+        return response
 
 
 def _representative_feature_index(module, param_dim: int) -> int:

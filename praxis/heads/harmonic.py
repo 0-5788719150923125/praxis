@@ -52,6 +52,23 @@ def _spectrum_2d(
 class HarmonicField(nn.Module):
     """2D irrational-rotation field, applied multiplicatively to hidden states."""
 
+    metric_descriptions = {
+        "harmonic_amplitudes_norm": (
+            "L2 norm of the 2D amplitude grid. Stable near init = no "
+            "structure being learned; growing or rearranging = the field is "
+            "shaping itself."
+        ),
+        "harmonic_grad_ratio": (
+            "||grad(amplitudes)|| / ||grad(lm_head)||. Vanishing means the "
+            "model is routing learning past the field rather than through it."
+        ),
+        "harmonic_spectrum": (
+            "Live snapshot of |amp[f_t, f_d]|. Concentration in specific "
+            "bands means corpus rhythms are being learned; uniform mass means "
+            "the field is still noise."
+        ),
+    }
+
     def __init__(
         self,
         hidden_dim: int,

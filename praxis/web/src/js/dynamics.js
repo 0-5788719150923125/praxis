@@ -238,6 +238,10 @@ function latestValue(series) {
 function renderDynamicsCharts(runData, container) {
     const dynamics = runData.dynamics || {};
     const steps = dynamics.steps || dynamics.step || [];
+    // Backend-driven descriptions: each chart subtitle reads from this map
+    // (key = metric or chart-group name) and falls back to the inline text.
+    const descriptions = runData.descriptions || {};
+    const desc = (key, fallback) => descriptions[key] || fallback;
 
     if (steps.length === 0) {
         renderEmptyState(container, "No dynamics data points found");
@@ -302,7 +306,7 @@ function renderDynamicsCharts(runData, container) {
             <div style="margin-top: 2rem;">
                 <div class="chart-card">
                     <div class="chart-title">Gradient Flow</div>
-                    <div class="chart-subtitle">L2 norm of gradients per decoder layer</div>
+                    <div class="chart-subtitle">${desc('layer_grad_norms', 'L2 norm of gradients per decoder layer')}</div>
                     <div class="chart-wrapper" style="height: 400px;">
                         <canvas id="dynamics-layer-grad-norms"></canvas>
                     </div>
@@ -313,7 +317,7 @@ function renderDynamicsCharts(runData, container) {
             <div style="margin-top: 2rem;">
                 <div class="chart-card">
                     <div class="chart-title">Update-to-Weight Ratio</div>
-                    <div class="chart-subtitle">Relative update magnitude per layer (||grad|| &times; lr / ||weight||)</div>
+                    <div class="chart-subtitle">${desc('layer_update_ratio', 'Relative update magnitude per layer (||grad|| &times; lr / ||weight||)')}</div>
                     <div class="chart-wrapper" style="height: 400px;">
                         <canvas id="dynamics-layer-update-ratio"></canvas>
                     </div>
@@ -356,7 +360,7 @@ function renderDynamicsCharts(runData, container) {
             <div style="margin-top: 2rem;">
                 <div class="chart-card">
                     <div class="chart-title">Task Loss Weights</div>
-                    <div class="chart-subtitle">Per-task scalar multipliers applied to the loss. Learnable variants drift under gradient pressure; an L2 anchor pulls raw toward 0 so they stay near their starting targets.</div>
+                    <div class="chart-subtitle">${desc('task_weights', 'Per-task scalar multipliers applied to the loss.')}</div>
                     <div class="chart-wrapper" style="height: 400px;">
                         <canvas id="dynamics-task-weights"></canvas>
                     </div>
@@ -373,7 +377,7 @@ function renderDynamicsCharts(runData, container) {
                 <div style="margin-top: 2rem;">
                     <div class="chart-card">
                         <div class="chart-title">Harmonic Field Amplitudes</div>
-                        <div class="chart-subtitle">L2 norm of the 2D amplitude grid. Stable near init = no structure learned; growing trajectory = the field is shaping itself.</div>
+                        <div class="chart-subtitle">${desc('harmonic_amplitudes_norm', 'L2 norm of the 2D amplitude grid.')}</div>
                         <div class="chart-wrapper" style="height: 400px;">
                             <canvas id="dynamics-harmonic-amplitudes"></canvas>
                         </div>
@@ -386,7 +390,7 @@ function renderDynamicsCharts(runData, container) {
                 <div style="margin-top: 2rem;">
                     <div class="chart-card">
                         <div class="chart-title">Harmonic Gradient Ratio</div>
-                        <div class="chart-subtitle">||grad(amplitudes)|| / ||grad(lm_head)||. Vanishing means the model is routing learning past the field rather than through it.</div>
+                        <div class="chart-subtitle">${desc('harmonic_grad_ratio', '||grad(amplitudes)|| / ||grad(lm_head)||')}</div>
                         <div class="chart-wrapper" style="height: 400px;">
                             <canvas id="dynamics-harmonic-grad-ratio"></canvas>
                         </div>
@@ -394,6 +398,18 @@ function renderDynamicsCharts(runData, container) {
                 </div>
             `;
         }
+        // Live spectrum heatmap pulled from /api/harmonic_spectrum on render.
+        chartsHTML += `
+            <div style="margin-top: 2rem;">
+                <div class="chart-card">
+                    <div class="chart-title">Harmonic Spectrum</div>
+                    <div class="chart-subtitle">${desc('harmonic_spectrum', 'Heatmap of |amp[f_t, f_d]|.')}</div>
+                    <div class="chart-wrapper" style="height: 400px;">
+                        <canvas id="dynamics-harmonic-spectrum"></canvas>
+                    </div>
+                </div>
+            </div>
+        `;
     }
 
     // Halting distribution (conditional - only when a halting strategy is in use)
@@ -470,6 +486,9 @@ function renderDynamicsCharts(runData, container) {
                         'dynamics-harmonic-grad-ratio', dynamics,
                         'harmonic_grad_ratio', 'Grad Ratio (Log Scale)', 'logarithmic'
                     );
+                }
+                if (document.getElementById('dynamics-harmonic-spectrum')) {
+                    loadHarmonicSpectrum('dynamics-harmonic-spectrum');
                 }
             }
             loadActivationCurves();
@@ -771,6 +790,99 @@ function createTaskWeightsChart(canvasId, dynamics, keys) {
 }
 
 // ─── Harmonic head diagnostics (conditional) ────────────────────────────────
+
+/**
+ * Magma-ish gradient: black -> purple -> red -> yellow. Cheap colormap that
+ * reads well in both themes without depending on a JS color library.
+ */
+function magma(t) {
+    t = Math.max(0, Math.min(1, t));
+    const r = Math.round(255 * Math.pow(t, 0.5));
+    const g = Math.round(255 * Math.pow(Math.max(0, t - 0.3) / 0.7, 1.4));
+    const b = Math.round(255 * (0.4 * (1 - Math.abs(t - 0.5) * 2)));
+    return [r, g, Math.max(0, b)];
+}
+
+/**
+ * Fetch the live amplitude spectrum and render as a canvas heatmap.
+ */
+async function loadHarmonicSpectrum(canvasId) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+
+    try {
+        const response = await fetch('/api/harmonic_spectrum');
+        if (!response.ok) throw new Error(`API returned ${response.status}`);
+        const data = await response.json();
+        if (data.status !== 'ok' || !Array.isArray(data.spectrum)) return;
+
+        renderHarmonicSpectrum(canvas, data);
+    } catch (error) {
+        console.error('[Dynamics] Spectrum failed to load:', error);
+    }
+}
+
+function renderHarmonicSpectrum(canvas, data) {
+    const F_t = data.F_t, F_d = data.F_d;
+    const spectrum = data.spectrum;
+    const peak = data.max || 1.0;
+
+    // The chart wrapper is 400px tall; size the canvas backing store to match
+    // the wrapper while drawing a F_t x F_d image scaled to fill it.
+    const wrapper = canvas.parentElement;
+    const w = wrapper.clientWidth || 800;
+    const h = wrapper.clientHeight || 400;
+    canvas.width = w;
+    canvas.height = h;
+
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+
+    // Build an offscreen ImageData at native (F_t, F_d) resolution. Rows are
+    // f_t (time-axis frequencies) drawn vertically, columns are f_d (feature
+    // -axis frequencies). We then draw the offscreen canvas scaled to fill.
+    const off = document.createElement('canvas');
+    off.width = F_d;
+    off.height = F_t;
+    const offCtx = off.getContext('2d');
+    const img = offCtx.createImageData(F_d, F_t);
+
+    for (let i = 0; i < F_t; i++) {
+        const row = spectrum[i];
+        for (let j = 0; j < F_d; j++) {
+            const v = peak > 0 ? row[j] / peak : 0;
+            const [r, g, b] = magma(v);
+            const idx = (i * F_d + j) * 4;
+            img.data[idx] = r;
+            img.data[idx + 1] = g;
+            img.data[idx + 2] = b;
+            img.data[idx + 3] = 255;
+        }
+    }
+    offCtx.putImageData(img, 0, 0);
+
+    const { textColor, gridColor } = getThemeColors();
+    ctx.fillStyle = gridColor;
+    ctx.fillRect(0, 0, w, h);
+
+    // Reserve a left/bottom margin for axis labels.
+    const ml = 60, mb = 30, mt = 8, mr = 16;
+    const drawW = Math.max(1, w - ml - mr);
+    const drawH = Math.max(1, h - mt - mb);
+    ctx.drawImage(off, ml, mt, drawW, drawH);
+
+    ctx.fillStyle = textColor;
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`f_d (1..${F_d})`, ml + drawW / 2, h - 8);
+    ctx.save();
+    ctx.translate(16, mt + drawH / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText(`f_t (1..${F_t})`, 0, 0);
+    ctx.restore();
+    ctx.textAlign = 'right';
+    ctx.fillText(`peak ${peak.toExponential(2)}`, w - 4, mt + 12);
+}
 
 /**
  * Single-series scalar over training steps (no legend needed).

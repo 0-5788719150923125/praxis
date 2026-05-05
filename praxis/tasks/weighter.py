@@ -83,6 +83,14 @@ class LearnableTaskLossWeighter(TaskLossWeighter):
     """
 
     is_dynamic = True
+    metric_description = (
+        "Per-task scalar multipliers applied to the loss. Values are "
+        "2 * target * sigmoid(raw); raw drifts under gradient pressure "
+        "and an L2 anchor pulls it toward 0 so weights stay near their "
+        "starting targets. Note this variant tends to downweight high-loss "
+        "tasks - the multiplier in front of a positive loss always wants "
+        "to shrink."
+    )
 
     def __init__(
         self,
@@ -137,6 +145,13 @@ class DifficultyTaskLossWeighter(TaskLossWeighter):
     """
 
     is_dynamic = True
+    metric_description = (
+        "Per-task scalar multipliers driven by EMA of per-task loss. "
+        "Hard tasks (above-mean EMA loss) get upweighted, easy tasks "
+        "downweighted, clamped to [floor, ceiling]. No gradient flows "
+        "through the weights - the optimizer can't game them by collapsing "
+        "high-loss tasks the way the learnable variant tends to."
+    )
 
     def __init__(
         self,
