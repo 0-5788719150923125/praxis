@@ -4,6 +4,9 @@ Tracked work items for the Praxis research framework. These range from near-term
 
 ---
 
+- [ ] **Build a shared human/AI toolbox at `tools/`**
+      Create a top-level `tools/` directory for small CLI utilities both the human and the assistant can call directly, instead of asking each other to read/copy/paste data between contexts. First candidate: a metrics-API client that hits the running web app's `/api/dynamics`, `/api/metrics`, and `/api/harmonic_spectrum` endpoints and returns summary stats (latest values, recent slopes, NaN/missing counts, spectrum band concentration) so the assistant can self-diagnose training runs without the human having to relay numbers off charts. Each tool should be small, single-purpose, and run via `python tools/<name>.py`. Long-term: a place for shared tooling that lowers the cost of collaboration on every task.
+
 - [ ] **Finish retraining tokenizers at varied sizes**
       Complete the in-progress work of retraining the project's tokenizers across a range of vocabulary sizes so each model scale has a tokenizer that actually fits it, rather than reusing a single vocab across small, medium, and large configurations. Varied sizes let us study the interaction between vocab size, embedding parameter count, and downstream loss without confounding it against the tokenizer's training corpus. Tracked in [0-5788719150923125/praxis#50](https://github.com/0-5788719150923125/praxis/issues/50).
 

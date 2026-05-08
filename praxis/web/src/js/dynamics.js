@@ -20,8 +20,8 @@ function getThemeColors(forceTheme) {
     const theme = forceTheme || state.theme;
     const isDark = theme === 'dark';
     return {
-        textColor: isDark ? '#e0e0e0' : '#1a1a1a',
-        gridColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.15)',
+        textColor: isDark ? '#e0e0e0' : '#1f1f1f',
+        gridColor: isDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.12)',
         tooltipBg: isDark ? '#1e1e1e' : '#ffffff'
     };
 }

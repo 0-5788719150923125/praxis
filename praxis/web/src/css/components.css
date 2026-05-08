@@ -1686,8 +1686,8 @@ body.hybrid-active .prism-logo {
 /* Explicitly define light theme variables on hybrid overlay */
 .hybrid-overlay[data-theme="light"] {
     --background: #f9f9f9;
-    --text: #333333;
-    --light-text: #666666;
+    --text: #1f1f1f;
+    --light-text: #4f4f4f;
     --user-message-bg: #e8f5e9;
     --assistant-message-bg: #ffffff;
     --border: #d0d0d0;
@@ -1718,14 +1718,14 @@ body.hybrid-active .prism-logo {
 .hybrid-overlay[data-theme="light"] input,
 .hybrid-overlay[data-theme="light"] textarea {
     background-color: #ffffff !important;
-    color: #333333 !important;
+    color: #1f1f1f !important;
     border: 1px solid #d0d0d0 !important;
 }
 
 /* Tab buttons - light theme colors */
 .hybrid-overlay[data-theme="light"] .tab-button {
     background: #ffffff !important;
-    color: #666666 !important;
+    color: #4f4f4f !important;
     border: 1px solid transparent !important;
 }
 
@@ -1737,19 +1737,19 @@ body.hybrid-active .prism-logo {
 
 /* All text should be dark in light theme */
 .hybrid-overlay[data-theme="light"] {
-    color: #333333 !important;
+    color: #1f1f1f !important;
 }
 
 .hybrid-overlay[data-theme="light"] .message-content {
-    color: #333333 !important;
+    color: #1f1f1f !important;
 }
 
 .hybrid-overlay[data-theme="light"] .message-header {
-    color: #666666 !important;
+    color: #4f4f4f !important;
 }
 
 .hybrid-overlay[data-theme="light"] .terminal-line {
-    color: #333333 !important;
+    color: #1f1f1f !important;
 }
 
 /* Chart backgrounds */
@@ -1783,12 +1783,12 @@ body.hybrid-active .prism-logo {
 
 /* Fix header text colors in light zone - use darker colors for visibility */
 .hybrid-overlay[data-theme="light"] .system-prompt-header {
-    color: #666666 !important;
+    color: #4f4f4f !important;
 }
 
 .hybrid-overlay[data-theme="light"] .settings-button,
 .hybrid-overlay[data-theme="light"] .theme-toggle-button {
-    color: #666666 !important;
+    color: #4f4f4f !important;
 }
 
 /* Chart text and labels - use proper light theme colors */

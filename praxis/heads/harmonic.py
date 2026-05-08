@@ -123,7 +123,8 @@ class HarmonicField(nn.Module):
             device=hidden_states.device,
             dtype=hidden_states.dtype,
         )
-        return hidden_states * (1.0 + b)
+        # tanh keeps (1 + b) in (0, 2): no sign flips, no multiplicative blow-up.
+        return hidden_states * (1.0 + torch.tanh(b))
 
 
 class HarmonicHead(BaseHead):
