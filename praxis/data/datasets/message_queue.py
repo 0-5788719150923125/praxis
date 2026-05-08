@@ -8,6 +8,7 @@ from transformers import PreTrainedTokenizer
 
 from praxis.data.validators import ChatTemplateValidator
 from praxis.tasks import DEFAULT_TASK
+from praxis.tools import zero_tool_result_regions
 
 
 class MessageQueueManager:
@@ -153,6 +154,11 @@ class MessageQueueManager:
                     f"!= input_ids shape {tuple(doc_tokens.shape)}; skipping doc"
                 )
                 return None
+            # Tool results are runtime-injected, so they shouldn't contribute
+            # to the SFT loss. Zero the mask over [TOOL_RESULT]...[/TOOL_RESULT].
+            assistant_mask = zero_tool_result_regions(
+                doc_tokens, assistant_mask, self.tokenizer
+            )
 
         if self.chat_validator is not None:
             self.validation_stats["documents_validated"] += 1

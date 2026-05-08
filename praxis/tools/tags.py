@@ -259,6 +259,50 @@ def find_unprocessed_tool_call_ids(
     return None
 
 
+def zero_tool_result_regions(token_ids, assistant_mask, tokenizer):
+    """Zero ``assistant_mask`` over every ``[TOOL_RESULT]...[/TOOL_RESULT]``
+    span (markers included).
+
+    Tool results are runtime-injected at inference, so any loss spent on
+    predicting their tokens is wasted at best and trains the model to
+    fabricate plausible-looking results at worst. The open and close
+    markers are also injected, so the masked range covers both.
+
+    Returns the mask unchanged when the tokenizer doesn't expose the
+    tool-result special tokens (older checkpoints). On a span with no
+    matching close (malformed / truncated mid-doc), the range is zeroed
+    from the open through end-of-sequence as a defensive measure.
+    """
+    ids = tool_token_ids(tokenizer)
+    open_id, close_id = ids["result_open"], ids["result_close"]
+    if open_id is None or close_id is None:
+        return assistant_mask
+
+    if hasattr(token_ids, "tolist"):
+        ids_list = token_ids.tolist()
+    else:
+        ids_list = list(token_ids)
+
+    out = assistant_mask.clone() if hasattr(assistant_mask, "clone") else list(assistant_mask)
+    n = len(ids_list)
+    i = 0
+    while i < n:
+        if ids_list[i] != open_id:
+            i += 1
+            continue
+        j = i + 1
+        while j < n and ids_list[j] != close_id:
+            j += 1
+        end = j if j < n else n - 1
+        if hasattr(out, "clone"):
+            out[i : end + 1] = 0
+        else:
+            for k in range(i, end + 1):
+                out[k] = 0
+        i = end + 1
+    return out
+
+
 def has_complete_tool_call_ids(token_ids: Sequence[int], tokenizer) -> bool:
     """True iff the token stream contains a complete ``[TOOL_CALL]...[/TOOL_CALL]``."""
     ids = tool_token_ids(tokenizer)
