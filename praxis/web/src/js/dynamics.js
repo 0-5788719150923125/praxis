@@ -398,6 +398,32 @@ function renderDynamicsCharts(runData, container) {
                 </div>
             `;
         }
+        if (harmonicKeys.includes('harmonic_concentration')) {
+            chartsHTML += `
+                <div style="margin-top: 2rem;">
+                    <div class="chart-card">
+                        <div class="chart-title">Spectral Concentration</div>
+                        <div class="chart-subtitle">${desc('harmonic_concentration', 'Hoyer sparsity of |amp|. Diagnostic for cell commitment.')}</div>
+                        <div class="chart-wrapper" style="height: 400px;">
+                            <canvas id="dynamics-harmonic-concentration"></canvas>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        if (harmonicKeys.includes('harmonic_smoothness')) {
+            chartsHTML += `
+                <div style="margin-top: 2rem;">
+                    <div class="chart-card">
+                        <div class="chart-title">Forward-Shift Smoothness</div>
+                        <div class="chart-subtitle">${desc('harmonic_smoothness', 'E[(b_t - b_{t+1})^2] in [0,1]. Falling = aux loss working.')}</div>
+                        <div class="chart-wrapper" style="height: 400px;">
+                            <canvas id="dynamics-harmonic-smoothness"></canvas>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
         // Live spectrum heatmap pulled from /api/harmonic_spectrum on render.
         chartsHTML += `
             <div style="margin-top: 2rem;">
@@ -485,6 +511,18 @@ function renderDynamicsCharts(runData, container) {
                     createHarmonicScalarChart(
                         'dynamics-harmonic-grad-ratio', dynamics,
                         'harmonic_grad_ratio', 'Grad Ratio (Log Scale)', 'logarithmic'
+                    );
+                }
+                if (document.getElementById('dynamics-harmonic-concentration')) {
+                    createHarmonicScalarChart(
+                        'dynamics-harmonic-concentration', dynamics,
+                        'harmonic_concentration', 'Hoyer Sparsity', 'linear'
+                    );
+                }
+                if (document.getElementById('dynamics-harmonic-smoothness')) {
+                    createHarmonicScalarChart(
+                        'dynamics-harmonic-smoothness', dynamics,
+                        'harmonic_smoothness', 'Forward-Shift Smoothness', 'linear'
                     );
                 }
                 if (document.getElementById('dynamics-harmonic-spectrum')) {
@@ -617,6 +655,18 @@ function rebuildAllCharts() {
         createHarmonicScalarChart(
             'dynamics-harmonic-grad-ratio', dynamics,
             'harmonic_grad_ratio', 'Grad Ratio (Log Scale)', 'logarithmic'
+        );
+    }
+    if (document.getElementById('dynamics-harmonic-concentration')) {
+        createHarmonicScalarChart(
+            'dynamics-harmonic-concentration', dynamics,
+            'harmonic_concentration', 'Hoyer Sparsity', 'linear'
+        );
+    }
+    if (document.getElementById('dynamics-harmonic-smoothness')) {
+        createHarmonicScalarChart(
+            'dynamics-harmonic-smoothness', dynamics,
+            'harmonic_smoothness', 'Forward-Shift Smoothness', 'linear'
         );
     }
 }

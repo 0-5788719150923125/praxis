@@ -30,6 +30,17 @@ IRR_T: float = math.pi
 IRR_D: float = math.e
 ALPHA: float = 1.0  # radial 1/f^alpha pink-noise decay
 AMPLITUDE_INIT_STD: float = 1.0
+# Forward-shift smoothness aux loss weight. The closed-form prior for
+# "b_t predicts b_{t+1}" in our 2D Fourier basis with frozen Weyl phases
+# reduces to a quadratic penalty on temporal frequency, normalized by
+# amplitude norm. Replaces the prior Hoyer-sparsity loss, which rewarded
+# sparsity but said nothing about which cells should win. Set to 0 to
+# disable. See next/harmony.md for the derivation.
+SMOOTHNESS_LAMBDA: float = 0.01
+# Coupling depth: forward is h * (1 + COUPLING_DEPTH * tanh(b)), so the
+# field range is (1 - COUPLING_DEPTH, 1 + COUPLING_DEPTH). Bounded away
+# from 0 so saturating cells cannot zero out features.
+COUPLING_DEPTH: float = 0.5
 
 
 def _spectrum_2d(
@@ -66,6 +77,19 @@ class HarmonicField(nn.Module):
             "Live snapshot of |amp[f_t, f_d]|. Concentration in specific "
             "bands means corpus rhythms are being learned; uniform mass means "
             "the field is still noise."
+        ),
+        "harmonic_concentration": (
+            "Hoyer sparsity of the amplitude grid in [0, 1]. 1 = all energy "
+            "in a single (f_t, f_d) cell, 0 = perfectly uniform. Diagnostic "
+            "only - no longer the loss target. Reading the rise here is "
+            "evidence the field is committing to specific harmonics."
+        ),
+        "harmonic_smoothness": (
+            "Forward-shift smoothness in [0, 1]. Closed-form expected "
+            "(b_t - b_{t+1})^2 for the field, normalized by amplitude norm. "
+            "Low = field varies predictably across positions; high = field "
+            "is dominated by fast temporal modes. Pushed downward by the "
+            "smoothness aux loss."
         ),
     }
 
@@ -123,8 +147,50 @@ class HarmonicField(nn.Module):
             device=hidden_states.device,
             dtype=hidden_states.dtype,
         )
-        # tanh keeps (1 + b) in (0, 2): no sign flips, no multiplicative blow-up.
-        return hidden_states * (1.0 + torch.tanh(b))
+        # Bounded away from 0 so a saturating cell cannot zero features.
+        return hidden_states * (1.0 + COUPLING_DEPTH * torch.tanh(b))
+
+    def concentration(self) -> Tensor:
+        """Hoyer sparsity of the amplitude grid in [0, 1].
+
+        H = (sqrt(N) - ||a||_1 / ||a||_2) / (sqrt(N) - 1).
+        1 = all energy in a single cell, 0 = perfectly uniform. Scale-invariant.
+        Diagnostic only - no longer the aux-loss target.
+        """
+        a = self.amplitudes.abs()
+        N = a.numel()
+        sqrt_N = math.sqrt(N)
+        l1 = a.sum()
+        l2 = torch.sqrt((a * a).sum() + 1e-12)
+        return (sqrt_N - l1 / l2) / (sqrt_N - 1)
+
+    def smoothness(self) -> Tensor:
+        """Forward-shift smoothness in [0, 1].
+
+        Expected (b_t - b_{t+1})^2 for our 2D Fourier basis with frozen Weyl
+        phases reduces, in the F_t << T regime, to a quadratic penalty on
+        temporal frequency. Normalized by amplitude norm so the value is
+        scale-invariant: it asks where the amplitude variance lives, not how
+        much of it there is. Low = predictable across positions.
+        """
+        a2 = self.amplitudes.pow(2)
+        f_t = torch.arange(
+            1, self.F_t + 1, device=a2.device, dtype=a2.dtype
+        ).view(-1, 1)
+        w = (f_t / self.F_t).pow(2)
+        return (a2 * w).sum() / (a2.sum() + 1e-12)
+
+    def aux_loss(self) -> Optional[Tensor]:
+        """Forward-shift smoothness loss: lambda * smoothness.
+
+        CCA-flavored prior: ask the field at position t to be predictable
+        from the field at t+1. For our basis, this reduces to "low temporal
+        frequency mass." Replaces the prior Hoyer loss, which knew nothing
+        about which cells should win.
+        """
+        if SMOOTHNESS_LAMBDA <= 0.0:
+            return None
+        return SMOOTHNESS_LAMBDA * self.smoothness()
 
 
 class HarmonicHead(BaseHead):

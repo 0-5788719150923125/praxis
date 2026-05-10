@@ -556,6 +556,21 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             if anchor is not None:
                 outputs.losses.add_loss("task_weight_anchor", anchor)
 
+        # Harmonic forward-shift smoothness loss: closed-form CCA prior that
+        # rewards low-temporal-frequency amplitude mass, i.e. fields where
+        # b_t predicts b_{t+1}. NLL has no notion of harmonic structure;
+        # this is the pressure that picks the predictable end of the spectrum.
+        if self.training and labels is not None:
+            field = self.harmonic_field
+            if field is None:
+                head = self.head
+                if head is not None and hasattr(head, "field"):
+                    field = head.field
+            if field is not None and hasattr(field, "aux_loss"):
+                aux = field.aux_loss()
+                if aux is not None:
+                    outputs.losses.add_loss("harmonic_smoothness", aux)
+
         # MTP auxiliary loss (training only)
         if self.mtp is not None and self.training and labels is not None:
             mtp_inputs = self.mtp.prepare_inputs(

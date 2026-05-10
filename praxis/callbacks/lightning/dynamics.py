@@ -182,6 +182,10 @@ class DynamicsLoggerCallback(Callback):
           Stable near init = no structure being learned. Growing = real signal.
         - ``harmonic_grad_ratio``: ``||grad(amplitudes)|| / ||grad(lm_head)||``.
           Vanishing means the model is routing learning past the field.
+        - ``harmonic_concentration``: Hoyer sparsity in [0, 1]; diagnostic for
+          whether the field is committing to specific (f_t, f_d) cells.
+        - ``harmonic_smoothness``: forward-shift smoothness in [0, 1]; falls
+          as the aux loss pushes amplitude mass toward low temporal frequencies.
         """
         field = getattr(model, "harmonic_field", None)
         if field is None:
@@ -193,6 +197,22 @@ class DynamicsLoggerCallback(Callback):
         out = {}
         amps = field.amplitudes
         out["harmonic_amplitudes_norm"] = float(amps.detach().norm().item())
+
+        if hasattr(field, "concentration"):
+            try:
+                out["harmonic_concentration"] = float(
+                    field.concentration().detach().item()
+                )
+            except Exception:
+                pass
+
+        if hasattr(field, "smoothness"):
+            try:
+                out["harmonic_smoothness"] = float(
+                    field.smoothness().detach().item()
+                )
+            except Exception:
+                pass
 
         amps_grad = amps.grad
         lm_head = self._find_lm_head(model)
