@@ -186,6 +186,9 @@ class DynamicsLoggerCallback(Callback):
           whether the field is committing to specific (f_t, f_d) cells.
         - ``harmonic_smoothness``: forward-shift smoothness in [0, 1]; falls
           as the aux loss pushes amplitude mass toward low temporal frequencies.
+        - ``harmonic_delta_norm``: RMS of the per-input amplitude delta
+          relative to the static baseline; reads how much the MLP is adapting
+          the field per sequence.
         """
         field = getattr(model, "harmonic_field", None)
         if field is None:
@@ -210,6 +213,14 @@ class DynamicsLoggerCallback(Callback):
             try:
                 out["harmonic_smoothness"] = float(
                     field.smoothness().detach().item()
+                )
+            except Exception:
+                pass
+
+        if hasattr(field, "delta_norm"):
+            try:
+                out["harmonic_delta_norm"] = float(
+                    field.delta_norm().detach().item()
                 )
             except Exception:
                 pass

@@ -178,6 +178,102 @@ What to watch in the next run:
 
 ---
 
+## 2026-05-11 — Static amplitudes were the ceiling. Promoting input-conditional.
+
+Confirmed the predicted failure. With smoothness loss active, the spectrum heatmap developed clean directional structure (distinct low-`f_t` band, dark high-`f_t` band, even the corpus-driven wavy boundary we hoped for) and the headline charts started rebounding from their monotonic growth - all signs of the field finding a useful equilibrium. But inference still degenerated. The new attractor is `U+FFFD` repetition (Unicode replacement character, the renderer's way of saying "model is emitting byte tokens that do not form valid UTF-8"). Different attractor, same underlying mode collapse.
+
+**The structural diagnosis is now clean.** A static amplitude grid produces the *same* `b[t, d]` for every input. Learned amplitudes, frozen phases, smoothness prior - it is all still mathematically just a position-dependent bias multiplier with no input awareness. For a corpus that mixes registers (dialogue, code, prose), one static field has to compromise across all distributions, and the compromise inevitably becomes a content-blind side channel that the rest of the model has to absorb or route around. The mode collapses we have seen (`[TOOL_CALL]` repetition, now `U+FFFD` repetition) are the model's "route around" answer.
+
+### Change applied: static baseline + input-conditional delta
+
+Implementing deferred-item-2 with the Takens-flavored conditioning structure we agreed in the deferred queue:
+
+```python
+ctx = pool_with_delays(hidden_states)     # [B, D * 4]
+delta = amplitude_mlp(ctx)                # [B, F_t, F_d], MLP output zeroed at init
+amps  = self.amplitudes + delta           # baseline + per-sequence perturbation
+field = irfft2(amps * complex_spec, ...)  # [B, T, D]
+```
+
+Design choices and why:
+
+- **Static baseline + delta**, not full replacement. `self.amplitudes` is kept as a learned parameter; the MLP predicts a *delta* on top. The MLP output layer is zero-initialized so the field starts as today's trained static field and *anneals* into input dependence. Preserves the smoothness loss's gains and avoids a cold-start regression.
+- **Per-sequence granularity**, not per-position. One amplitude grid per input sequence, applied uniformly to all positions in that sequence. Per-position would force an IRFFT2 at every token (much bigger architectural shift); per-sequence answers the more tractable question: "is this sequence dialogue vs. code vs. prose, and what rhythms should the field commit to for this input?"
+- **Conditioning input: recency-biased multi-scale pooling.** Pool the last `T // f` tokens for `f in [1, 2, 4, 8]` (full, half, quarter, eighth) and concatenate. Four views at increasing temporal resolution. The Takens "delayed observations at multiple scales" intuition adapted to per-sequence pooling. Not literal scalar-delay embedding (the theorem does not strictly apply here) but the transferable spirit.
+- **MLP shape**: `Linear(D * 4, D * MLP_WIDTH_MULT) -> GELU -> Linear(D * MLP_WIDTH_MULT, F_t * F_d)`. `MLP_WIDTH_MULT = 1` by default so hidden width scales with experiment hidden_dim. Output layer zero-init.
+- **Delta L2 regularizer**: aux loss now combines smoothness (on baseline) + `DELTA_LAMBDA * mean(delta^2)` (on perturbation). `DELTA_LAMBDA = 0.001` to start. Keeps the static baseline load-bearing so the MLP cannot grow into a content side-channel.
+
+New diagnostic: `harmonic_delta_norm = rms(delta) / rms(baseline)`. Reads how much the MLP is adapting the field per sequence. 0 = static; rising = input dependence is real.
+
+What to watch in the next run:
+
+1. **Inference quality recovers**. This is the gate. If the model produces coherent text where the static field collapsed, the architecture finally has a path that doesn't require static feature gating.
+2. **`harmonic_delta_norm` rises off zero but stays bounded** (target: ~0.01-0.1). At zero, the MLP is still doing nothing; if it grows to ~1, the perturbation is the same size as the baseline and the delta L2 may need bumping.
+3. **Spectrum heatmap stays directional** (low-`f_t` band, dark high-`f_t` band). The static baseline keeps shaping the long-run spectrum; only the per-input modulation is dynamic.
+4. **Update-to-Weight Ratio finally fills in** (still a separate concern, but if it persists with input-conditional amplitudes that points firmly at the measurement-side NaN explanation rather than training instability).
+
+If this works, the natural next move is varying the conditioning structure (deferred-item-4's learnable frequency offsets, or richer pooling like dilated 1D convs). If it does *not* work, we have run out of cheap moves and the next step is the larger architectural rethink (per-position amplitudes, replacing the multiplicative coupling, or abandoning the harmonic head structure entirely).
+
+---
+
+## 2026-05-12 — Mode collapse traced to Serpent, not the harmonic head
+
+The input-conditional amplitudes trained stably, then degenerated again into garbage-character outputs (`;`␛^���...`). Headline charts looked clean except for `Update-to-Weight Ratio` which appeared sparse on the dashboard.
+
+**The dashboard sparsity was a perception artifact, not a NaN problem.** Pulling the live dynamics SQLite (`bf4b9cc88`, 922 rows, max step 9210), every column was fully populated - zero NaN/null/inf values across all 9,210 steps. What looked like "missing points" was the chart's log-scale y-axis spanning 5+ orders of magnitude: dense baseline values around 1e-8 collapsed to a near-flat line at the bottom while occasional spikes up to 5e-4 sat alone at the top.
+
+**The real symptom: intermittent gradient spikes, getting more frequent before the collapse.**
+
+```
+spike rate (>100x median) in layer_1_grad_norm, by 1000-step bins:
+  0-999:    9%   (initialization noise)
+  1k-7k:   0-3%  (clean training)
+  7k-8k:   15%   (something changed)
+  8k-9k:    4%
+  9k-9.2k: 17%   (collapse imminent)
+```
+
+Crucially, `harmonic_grad_ratio` had **zero spikes**. The field we have been working on for two weeks is innocent.
+
+### Smoking gun: Serpent's `1/α` term
+
+The decoder uses Serpent activation (`x + sin²(αx)/α + γ·sin(βx)`, per-feature learnable α, β, γ). Inspecting the live checkpoint, the smallest `|α|` values across all layers and recurrent passes:
+
+- Layer 0 act.1.a: `|α|_min = 6.5e-04`  → `1/α = 1,538`
+- Layer 0 act.3.a: `|α|_min = 1.66e-03` → `1/α = 602`
+- Layer 1 act.1.a: `|α|_min = 2.87e-03` → `1/α = 348`
+
+α is initialized from `Exponential(rate=1.0)`, which has nontrivial mass near 0 (P[a < 0.01] ≈ 1%). Across 170 features × 4 passes × 2 layers = 1,360 `α` values, ~10-14 features start in the danger zone, and NLL pressure pushes a few even lower over training.
+
+Mechanism: for *typical* `|x| ~ O(1)` and typical α, `sin²(αx)/α ≈ αx²` (small, well-behaved). But when a single outlier `x` for one of those tiny-α features hits the regime `|αx| ~ π/2`, the term emits `~1/α = 1500+`. The gradient `∂f/∂α` has a `1/α²` denominator; on a typical batch it stays bounded (numerator ~ α²x²), but on a batch containing the right outlier it produces a one-step gradient explosion. Each spike is recoverable by gradient clipping, but the cumulative damage across many spiky steps eventually destroys coherence.
+
+### Change applied: smooth-rectified inverse
+
+Replace `1/α` with `α / (α² + ε²)` in `praxis/activations/serpent.py`, `ε = 0.1`:
+
+```python
+INV_FLOOR_EPS = 0.1
+inv_a = a / (a * a + INV_FLOOR_EPS ** 2)
+snake = x + torch.sin(a * x).square() * inv_a
+```
+
+Properties:
+
+- `|α| >> ε`: matches original `1/α` exactly (the healthy regime is unchanged).
+- `|α| << ε`: bounded by `1/ε = 10`, well below the 1538 we were seeing.
+- Smooth and differentiable everywhere - no branch, no clamp boundary.
+- One-line change. No re-init, no checkpoint surgery. Existing α values in the healthy range are unaffected; the dangerous ones are gently neutralized.
+
+Sanity-tested: previously dangerous `α = 6.5e-4` with `x = 2415` now outputs `~2415.07` (bounded) instead of `~3953` (blown up). Gradient `|∂f/∂α|` max with the same tiny α drops from potentially millions to ~42.
+
+### What this means for the harmonic work
+
+The previous "the static field is the ceiling" diagnosis was probably *partially* wrong. The static field genuinely was insufficient (the input-conditional change still stands), but the *proximate* cause of the collapses we attributed to the field may have been Serpent spikes corrupting the model independently. We will know which after re-training with both changes active.
+
+Re-training should be done with both the input-conditional amplitudes *and* the Serpent fix. If the model trains stably to coherent inference, we cannot cleanly attribute the win to either change individually - but at this point getting a stable run matters more than ablation.
+
+---
+
 ## Deferred: items to revisit if spectral concentration is not enough
 
 ### 1. Soft anchor on amplitude scale
@@ -192,7 +288,7 @@ with `sigma_target` around 0.3-0.5. This gives the field a fixed energy budget. 
 
 Why this comes after bounding: anchoring scale on top of an unbounded multiplicative pathway just adds a hyperparameter; bounding first removes the failure mode and then anchoring controls drift within a stable regime.
 
-### 2. Input-conditional amplitudes
+### 2. Input-conditional amplitudes — *promoted, now active (see 2026-05-11 section)*
 
 If concentration rises but inference quality still degrades, the field is committing to cells but the *content* of those cells is not coupled to the actual corpus. The fix is to make amplitudes depend on the input rather than be static parameters:
 

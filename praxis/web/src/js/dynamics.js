@@ -424,6 +424,19 @@ function renderDynamicsCharts(runData, container) {
                 </div>
             `;
         }
+        if (harmonicKeys.includes('harmonic_delta_norm')) {
+            chartsHTML += `
+                <div style="margin-top: 2rem;">
+                    <div class="chart-card">
+                        <div class="chart-title">Amplitude Delta Norm</div>
+                        <div class="chart-subtitle">${desc('harmonic_delta_norm', 'rms(delta) / rms(baseline). Rising = MLP adapting field per input.')}</div>
+                        <div class="chart-wrapper" style="height: 400px;">
+                            <canvas id="dynamics-harmonic-delta-norm"></canvas>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
         // Live spectrum heatmap pulled from /api/harmonic_spectrum on render.
         chartsHTML += `
             <div style="margin-top: 2rem;">
@@ -523,6 +536,12 @@ function renderDynamicsCharts(runData, container) {
                     createHarmonicScalarChart(
                         'dynamics-harmonic-smoothness', dynamics,
                         'harmonic_smoothness', 'Forward-Shift Smoothness', 'linear'
+                    );
+                }
+                if (document.getElementById('dynamics-harmonic-delta-norm')) {
+                    createHarmonicScalarChart(
+                        'dynamics-harmonic-delta-norm', dynamics,
+                        'harmonic_delta_norm', 'Delta / Baseline RMS', 'linear'
                     );
                 }
                 if (document.getElementById('dynamics-harmonic-spectrum')) {
@@ -667,6 +686,12 @@ function rebuildAllCharts() {
         createHarmonicScalarChart(
             'dynamics-harmonic-smoothness', dynamics,
             'harmonic_smoothness', 'Forward-Shift Smoothness', 'linear'
+        );
+    }
+    if (document.getElementById('dynamics-harmonic-delta-norm')) {
+        createHarmonicScalarChart(
+            'dynamics-harmonic-delta-norm', dynamics,
+            'harmonic_delta_norm', 'Delta / Baseline RMS', 'linear'
         );
     }
 }

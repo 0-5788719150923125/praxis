@@ -7,15 +7,26 @@ from torch.nn import Module
 from torch.nn.modules.lazy import LazyModuleMixin
 from torch.nn.parameter import UninitializedParameter
 
+# Floor for the rectified inverse `a / (a^2 + INV_FLOOR_EPS^2)`. Caps the
+# effective `1/alpha` factor at `1/INV_FLOOR_EPS` so tiny alpha values can
+# no longer produce outlier activations that trigger intermittent gradient
+# spikes. See next/harmony.md for the diagnosis.
+INV_FLOOR_EPS: float = 0.1
+
 
 class Serpent(LazyModuleMixin, Module):
     """Praxis' extended Snake activation with a second oscillation term:
 
-        y = x + (1/α)·sin²(αx) + γ·sin(βx)
+        y = x + sin^2(α·x) · α / (α^2 + ε^2) + γ·sin(βx)
 
     α controls the primary squared-sine frequency (original Snake term).
     β and γ add a secondary sine with its own frequency and amplitude.
     All three are per-feature learnable parameters.
+
+    The `1/α` factor in the original Snake is replaced by the smooth-rectified
+    `α / (α^2 + ε^2)`: matches `1/α` for `|α| >> ε`, bounded by `1/ε` for
+    `|α| ~ 0`. Prevents the tiny-α feature explosion that produces
+    intermittent gradient spikes during training.
     """
 
     def __init__(
@@ -89,5 +100,6 @@ class Serpent(LazyModuleMixin, Module):
             b = b.view(shape)
             g = g.view(shape)
 
-        snake = torch.where(a == 0, x, x + torch.sin(a * x).square() / a)
+        inv_a = a / (a * a + INV_FLOOR_EPS * INV_FLOOR_EPS)
+        snake = x + torch.sin(a * x).square() * inv_a
         return snake + g * torch.sin(b * x)
