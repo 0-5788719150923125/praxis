@@ -57,14 +57,8 @@ class BackpropagationTrainer(LightningModule):
 
     def get_metrics(self):
         """Get metrics from the underlying model if available."""
-        # Check if the model has get_metrics (handles both compiled and uncompiled)
         if hasattr(self.model, "get_metrics"):
             return self.model.get_metrics()
-        # For torch.compile wrapped models, check _orig_mod
-        elif hasattr(self.model, "_orig_mod") and hasattr(
-            self.model._orig_mod, "get_metrics"
-        ):
-            return self.model._orig_mod.get_metrics()
         return {}
 
     def on_train_start(self):
@@ -109,8 +103,7 @@ class BackpropagationTrainer(LightningModule):
         # Per-token CE is needed for both loss-based dataset sampling and
         # the difficulty task weighter. Compute once if either consumer
         # is active.
-        inner_model = getattr(self.model, "_orig_mod", self.model)
-        weighter = getattr(inner_model, "taskmaster", None)
+        weighter = getattr(self.model, "taskmaster", None)
         weighter_observes = weighter is not None and hasattr(weighter, "observe")
         report_dataset_losses = (
             bool(batch_metadata) and InterleaveDataManager.shared_losses is not None
@@ -210,14 +203,9 @@ class BackpropagationTrainer(LightningModule):
         This is where we apply gradient modifications for Prismatic routers,
         enabling diverse optimization trajectories across experts.
         """
-        # Apply gradient modifications for all Prismatic modules
         for module in self.model.modules():
-            # Handle both compiled and uncompiled models
-            actual_module = module._orig_mod if hasattr(module, "_orig_mod") else module
-
-            # Check if this is a Prismatic router
-            if hasattr(actual_module, "modify_expert_gradients"):
-                actual_module.modify_expert_gradients()
+            if hasattr(module, "modify_expert_gradients"):
+                module.modify_expert_gradients()
 
     def _generate_and_evaluate_rl_batch(self, prompt_ids, metadata):
         """

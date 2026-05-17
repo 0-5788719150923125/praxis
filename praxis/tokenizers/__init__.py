@@ -1,16 +1,17 @@
 """Praxis tokenizer implementations and registry."""
 
-import os
+from functools import partial
 from pathlib import Path
-from typing import Any, Dict, Optional, Type, Union
+from typing import Any, Dict, Optional
 
 from transformers import AutoTokenizer, PreTrainedTokenizer
 
 from .base import PraxisTokenizerBase
 from .char_level import CharLevelTokenizer
+from .chat_templates import get_chat_template
 from .standard import StandardTokenizer
 
-# Check if ByteLevelTokenizer is available
+# ByteLevel depends on the byte-latent stack; tolerate its absence.
 try:
     from .byte_level import ByteLevelTokenizer
 
@@ -20,11 +21,27 @@ except ImportError:
     ByteLevelTokenizer = None
 
 
-def _needs_byte_level_tokenizer(encoder_type: str) -> bool:
-    """Check if an encoder type requires the ByteLevel tokenizer.
+# Registry of named tokenizer implementations. Each entry is a callable
+# that accepts ``vocab_size=...`` and ``**kwargs``. BPE / unigram are
+# partials over StandardTokenizer so both names dispatch to the same
+# class with different training models.
+TOKENIZER_REGISTRY: Dict[str, Any] = {
+    "char_level": CharLevelTokenizer,
+    "bpe": partial(StandardTokenizer, tokenizer_type="bpe"),
+    "unigram": partial(StandardTokenizer, tokenizer_type="unigram"),
+}
+if HAS_BYTE_LEVEL:
+    TOKENIZER_REGISTRY["byte_level"] = ByteLevelTokenizer
 
-    Inspects the encoder registry to see if the encoder class is a
-    ByteLatentEncoder or a subclass of it (e.g. AbstractinatorEncoder).
+# Default tokenizer when ``tokenizer_type`` is unset.
+DEFAULT_TOKENIZER: str = "bpe"
+
+
+def _needs_byte_level_tokenizer(encoder_type: str) -> bool:
+    """Whether ``encoder_type`` requires the byte-level tokenizer.
+
+    Used only to emit a warning when the user's encoder/tokenizer pair
+    is incompatible; selection itself is now explicit.
     """
     try:
         from praxis.encoders import ENCODER_REGISTRY
@@ -33,12 +50,42 @@ def _needs_byte_level_tokenizer(encoder_type: str) -> bool:
         encoder_cls = ENCODER_REGISTRY.get(encoder_type)
         if encoder_cls is None:
             return False
-        # functools.partial wraps the real class in .func
         actual_cls = getattr(encoder_cls, "func", encoder_cls)
         return issubclass(actual_cls, ByteLatentEncoder)
     except ImportError:
-        # Fallback: prefix match
         return encoder_type.startswith("byte_latent")
+
+
+def _try_load_trained_tokenizer(
+    vocab_size: int,
+    tokenizer_type: str,
+    cache_dir: Optional[str],
+    **kwargs,
+) -> Optional[PreTrainedTokenizer]:
+    """Look for a pre-trained ``praxis-{vocab_size}-{tokenizer_type}`` on
+    disk first, then on the Hub. Returns ``None`` if neither exists.
+    """
+    local_path = Path(f"build/tokenizers/praxis-{vocab_size}-{tokenizer_type}")
+    if local_path.exists():
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(
+                local_path, cache_dir=cache_dir, **kwargs
+            )
+            tokenizer.chat_template = get_chat_template("default")
+            return tokenizer
+        except Exception:
+            pass
+
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(
+            f"UNSAFE/praxis-{vocab_size}-{tokenizer_type}",
+            cache_dir=cache_dir,
+            **kwargs,
+        )
+        tokenizer.chat_template = get_chat_template("default")
+        return tokenizer
+    except Exception:
+        return None
 
 
 def create_tokenizer(
@@ -48,75 +95,49 @@ def create_tokenizer(
     cache_dir: Optional[str] = None,
     **kwargs,
 ) -> PreTrainedTokenizer:
-    """
-    Create a tokenizer instance based on vocab_size.
+    """Create a tokenizer instance from :data:`TOKENIZER_REGISTRY`.
 
-    Dispatch order:
-    1. Explicit ``tokenizer_type`` ("char", "byte") overrides everything.
-    2. byte_latent encoders force ByteLevelTokenizer.
-    3. Try to load an existing trained tokenizer for ``vocab_size``.
-    4. Fall back to a fresh StandardTokenizer.
+    Dispatch is explicit: an unrecognized ``tokenizer_type`` is a hard
+    error. When ``tokenizer_type`` is unset, defaults to
+    :data:`DEFAULT_TOKENIZER` (BPE). ``encoder_type`` is only inspected
+    to emit a compatibility warning when the chosen tokenizer can't
+    produce the byte ids the encoder expects - there is no implicit
+    override.
     """
-    if tokenizer_type == "char":
-        return CharLevelTokenizer(**kwargs)
+    if tokenizer_type is None:
+        tokenizer_type = DEFAULT_TOKENIZER
 
-    if tokenizer_type == "byte":
-        if HAS_BYTE_LEVEL:
-            return ByteLevelTokenizer(vocab_size=vocab_size, **kwargs)
-        raise ImportError(
-            "ByteLevelTokenizer requires bytelatent package. "
-            "Please install it with: pip install bytelatent"
+    if tokenizer_type not in TOKENIZER_REGISTRY:
+        raise ValueError(
+            f"Unknown tokenizer_type={tokenizer_type!r}. "
+            f"Valid choices: {sorted(TOKENIZER_REGISTRY)}"
         )
 
-    # byte_latent variants and any subclass (e.g. abstractinator) need bytes
-    if encoder_type and _needs_byte_level_tokenizer(encoder_type):
-        if HAS_BYTE_LEVEL:
-            return ByteLevelTokenizer(vocab_size=vocab_size, **kwargs)
-        else:
-            raise ImportError(
-                "ByteLevelTokenizer requires bytelatent package. "
-                "Please install it with: pip install bytelatent"
-            )
-
-    # 2. Try to load existing tokenizer for this vocab_size
-    # First check local path
-    local_path = Path(f"build/tokenizers/praxis-{vocab_size}-unigram")
-    if local_path.exists():
-        try:
-            tokenizer = AutoTokenizer.from_pretrained(
-                local_path, cache_dir=cache_dir, **kwargs
-            )
-            # Override with our updated chat template
-            from .chat_templates import get_chat_template
-
-            tokenizer.chat_template = get_chat_template("default")
-            return tokenizer
-        except Exception:
-            pass
-
-    # Try HuggingFace repo
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(
-            f"UNSAFE/praxis-{vocab_size}", cache_dir=cache_dir, **kwargs
+    if (
+        encoder_type
+        and _needs_byte_level_tokenizer(encoder_type)
+        and tokenizer_type != "byte_level"
+    ):
+        print(
+            f"[WARNING] encoder_type={encoder_type!r} expects "
+            f"tokenizer_type='byte_level', got {tokenizer_type!r}. "
+            "This will produce incompatible token IDs."
         )
-        # Override with our updated chat template
-        from .chat_templates import get_chat_template
 
-        tokenizer.chat_template = get_chat_template("default")
-        return tokenizer
-    except Exception:
-        pass
+    # Trained tokenizers: try loading a pre-trained one for the requested
+    # vocab_size before instantiating a fresh untrained instance.
+    if tokenizer_type in {"bpe", "unigram"}:
+        loaded = _try_load_trained_tokenizer(
+            vocab_size=vocab_size,
+            tokenizer_type=tokenizer_type,
+            cache_dir=cache_dir,
+            **kwargs,
+        )
+        if loaded is not None:
+            return loaded
 
-    # 3. Create new StandardTokenizer if nothing found
-    # print(
-    #     f"No tokenizer found for vocab_size={vocab_size}, creating new unigram tokenizer"
-    # )
-    # return StandardTokenizer(
-    #     tokenizer_type="unigram",
-    #     vocab_size=vocab_size,
-    #     model_max_length=kwargs.get("model_max_length", 2048),
-    #     **kwargs,
-    # )
+    factory = TOKENIZER_REGISTRY[tokenizer_type]
+    return factory(vocab_size=vocab_size, **kwargs)
 
 
 def train_tokenizer(
@@ -126,23 +147,18 @@ def train_tokenizer(
     save: bool = True,
     **kwargs,
 ) -> StandardTokenizer:
-    """
-    Train a new tokenizer from a dataset.
-
-    This function provides the functionality of train_tokenizer.py
-    as a callable function.
+    """Train a new tokenizer from a dataset.
 
     Args:
-        tokenizer_type: Type of tokenizer ("bpe" or "unigram")
-        vocab_size: Target vocabulary size
-        num_examples: Number of examples to use for training
-        save: Whether to save the tokenizer to disk
-        **kwargs: Additional arguments passed to train_from_dataset
+        tokenizer_type: ``"bpe"`` or ``"unigram"``.
+        vocab_size: Target vocabulary size.
+        num_examples: Number of examples to use for training.
+        save: Whether to save the tokenizer to disk.
+        **kwargs: Additional arguments passed to ``train_from_dataset``.
 
     Returns:
-        Trained tokenizer instance
+        Trained tokenizer instance.
     """
-    # Train the tokenizer
     tokenizer = StandardTokenizer.train_from_dataset(
         tokenizer_type=tokenizer_type,
         vocab_size=vocab_size,
@@ -150,14 +166,9 @@ def train_tokenizer(
         **kwargs,
     )
 
-    # Save to deterministic locations
     if save:
         base_path = Path("build/tokenizers")
-
-        # Main save path: build/tokenizers/praxis-{vocab_size}-{type}
         save_path = base_path / f"praxis-{vocab_size}-{tokenizer_type}"
-
-        # Also save to a generic "model" folder for backward compatibility
         generic_path = base_path / "model"
 
         save_path.mkdir(parents=True, exist_ok=True)
@@ -177,6 +188,9 @@ __all__ = [
     "ByteLevelTokenizer",
     "CharLevelTokenizer",
     "StandardTokenizer",
+    # Registry
+    "TOKENIZER_REGISTRY",
+    "DEFAULT_TOKENIZER",
     # Factory functions
     "create_tokenizer",
     "train_tokenizer",

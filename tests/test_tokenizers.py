@@ -270,8 +270,8 @@ def test_char_level_tokenizer_persistence(tmp_path):
     assert ord("é") in loaded._observed
 
 
-def test_create_tokenizer_dispatch_char():
+def test_create_tokenizer_dispatch_char_level():
     from praxis.tokenizers import CharLevelTokenizer, create_tokenizer
 
-    t = create_tokenizer(tokenizer_type="char")
+    t = create_tokenizer(tokenizer_type="char_level")
     assert isinstance(t, CharLevelTokenizer)

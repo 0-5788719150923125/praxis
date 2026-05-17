@@ -143,12 +143,14 @@ class CALMEncoder(nn.Module):
         return torch.cat([input_ids, pad], dim=1)
 
     def encode(
-        self, input_ids: torch.Tensor
+        self,
+        input_ids: torch.Tensor,
+        block_ids: Optional[torch.LongTensor] = None,
     ) -> Tuple[
         torch.Tensor,
         Optional[torch.Tensor],
         torch.Tensor,
-        torch.Tensor,
+        Optional[torch.Tensor],
         torch.Tensor,
         torch.Tensor,
     ]:
@@ -156,7 +158,10 @@ class CALMEncoder(nn.Module):
 
         Returns ``(patch_embeds, h_encoder, patch_lengths, block_ids,
         encoder_loss, local_decoder_tokens)``. ``h_encoder`` is ``None``
-        because CALM does not have a byte-level local encoder.
+        because CALM does not have a byte-level local encoder. The
+        ``block_ids`` argument is accepted for API parity but unused -
+        CALM compresses K tokens into one latent and has no byte-level
+        path that would benefit from per-token isolation.
         """
         padded = self._pad_to_chunk(input_ids)
         B, L = padded.shape
@@ -184,10 +189,11 @@ class CALMEncoder(nn.Module):
         # Global transformer inputs: one token per patch.
         patch_embeds = self.latent_in(z)  # [B, N, hidden_size]
         patch_lengths = padded.new_full((B, N), self.K, dtype=torch.long)
-        # No per-patch sequence boundaries in v1.
-        block_ids = padded.new_zeros((B, N), dtype=torch.long) + 1
 
-        return patch_embeds, None, patch_lengths, block_ids, encoder_loss, padded
+        # Return None for block_ids: patch-level boundaries do not map
+        # cleanly back to the original token-level sequence boundaries
+        # once K-token compression has been applied.
+        return patch_embeds, None, patch_lengths, None, encoder_loss, padded
 
     def decode(
         self,
@@ -196,6 +202,7 @@ class CALMEncoder(nn.Module):
         input_ids: Optional[torch.Tensor] = None,
         patch_lengths: Optional[torch.Tensor] = None,
         local_decoder_tokens: Optional[torch.Tensor] = None,
+        block_ids: Optional[torch.LongTensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Compute reconstructed token logits and register the energy loss.
 

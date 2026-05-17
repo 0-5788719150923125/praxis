@@ -52,6 +52,14 @@ class PraxisModel(PreTrainedModel):
         h_encoder = None
         patch_lengths = None
 
+        # Compute EOS-aware block_ids on the raw input_ids regardless of
+        # encoder presence, so the local byte-level encoder can isolate
+        # packed documents. Encoders compress the sequence (patches),
+        # which destroys these boundaries, so they return None for the
+        # global decoder's block_ids - the patch-level "block" labels are
+        # noisy and shouldn't gate the global attention.
+        token_block_ids = create_block_ids(input_ids, self.config.eos_token_id)
+
         if self.encoder:
             (
                 inputs,
@@ -60,10 +68,10 @@ class PraxisModel(PreTrainedModel):
                 block_ids,
                 encoder_loss,
                 local_decoder_tokens,
-            ) = self.encoder.encode(input_ids)
+            ) = self.encoder.encode(input_ids, block_ids=token_block_ids)
             losses.add_loss("encoder", encoder_loss)
         else:
-            block_ids = create_block_ids(input_ids, self.config.eos_token_id)
+            block_ids = token_block_ids
             inputs = self.embeds(input_ids)
             local_decoder_tokens = None
 
@@ -87,6 +95,7 @@ class PraxisModel(PreTrainedModel):
             patch_lengths=patch_lengths,
             patch_embeds=inputs if self.encoder else None,
             local_decoder_tokens=local_decoder_tokens,
+            token_block_ids=token_block_ids,
             losses=losses,
         )
 
@@ -251,6 +260,11 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         ``input_ids[t+1]`` set the weight on the loss for the prediction
         at ``labels[t]``.
         """
+        # Honor --no-mask-prompts: drop the assistant_mask before composing
+        # so every token contributes to the loss. Task weights still apply.
+        if getattr(self.config, "no_mask_prompts", False):
+            assistant_mask = None
+
         if task_type_ids is None and assistant_mask is None:
             return None
 
@@ -430,6 +444,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 input_ids,
                 outputs.patch_lengths,
                 outputs.local_decoder_tokens,
+                block_ids=outputs.token_block_ids,
             )
             classifier = self.encoder.classifier
             if self.harmonic_field is not None:
@@ -868,4 +883,5 @@ class PraxisModelOutput(BaseModelOutputWithPast):
     patch_lengths: Optional[torch.LongTensor] = None
     patch_embeds: Optional[torch.FloatTensor] = None
     local_decoder_tokens: Optional[torch.LongTensor] = None
+    token_block_ids: Optional[torch.LongTensor] = None
     losses: List[torch.LongTensor] = None

@@ -266,6 +266,75 @@ class CausalAttention(nn.Module):
 
         return False
 
+    def _ghost_aware_attention(
+        self,
+        q: Tensor,
+        k_ghost: Tensor,
+        v_ghost: Tensor,
+        seq_len: int,
+        is_gqa: bool,
+    ) -> Tensor:
+        """Manual masked attention preserving the ghost column.
+
+        Inputs already include the zero ghost at kv index 0
+        (``k_ghost`` / ``v_ghost`` have shape ``[B, H, seq_len+1, D]``).
+        Implements softmax1 by leaving the ghost in the softmax denominator
+        - the ghost's zero V contributes nothing to the output but adds an
+        extra ``exp(0)=1`` term to the sum, exactly matching
+        :func:`~praxis.functional.ghostmax`.
+
+        Args:
+            q: Query tensor ``[B, num_query_heads, seq_len, head_dim]``.
+            k_ghost: Key tensor including ghost at index 0
+                ``[B, num_heads, seq_len+1, head_dim]``.
+            v_ghost: Value tensor including ghost at index 0.
+            seq_len: Number of real (non-ghost) positions.
+            is_gqa: Whether to expand K/V across query-head groups.
+        """
+        device = q.device
+        batch_size, _, _, head_dim = q.shape
+
+        if is_gqa:
+            k_exp = k_ghost.repeat_interleave(self.num_queries, dim=1)
+            v_exp = v_ghost.repeat_interleave(self.num_queries, dim=1)
+        else:
+            k_exp, v_exp = k_ghost, v_ghost
+
+        scale = 1.0 / (head_dim**0.5)
+        scores = (q @ k_exp.transpose(-2, -1)) * scale  # [B, Hq, S, S+1]
+
+        # ALiBi positional bias if not using RoPE.
+        if self.pos_type != "rope" and hasattr(self, "alibi_slopes"):
+            alibi_bias = self.alibi_slopes.to(device)
+            q_pos = torch.arange(seq_len, device=device).unsqueeze(-1)
+            kv_pos = torch.arange(seq_len + 1, device=device).unsqueeze(0)
+            is_not_ghost = (kv_pos > 0).float()
+            actual_kv = kv_pos - 1
+            bias = alibi_bias.view(-1, 1, 1) * (actual_kv - q_pos) * is_not_ghost
+            scores = scores + bias.unsqueeze(0)
+
+        # Build mask: ghost (kv_idx=0) always reachable; real keys
+        # gated by causal + optional sliding window.
+        q_pos = torch.arange(seq_len, device=device)
+        kv_pos_real = torch.arange(seq_len + 1, device=device) - 1
+        if self.causal:
+            allowed = q_pos.unsqueeze(-1) >= kv_pos_real.unsqueeze(0)
+        else:
+            allowed = torch.ones(seq_len, seq_len + 1, dtype=torch.bool, device=device)
+        if self.window_size is not None:
+            within_window = (
+                q_pos.unsqueeze(-1) - kv_pos_real.unsqueeze(0)
+            ) <= self.window_size
+            allowed = allowed & within_window
+        # Ghost column always passes.
+        allowed[:, 0] = True
+        scores = scores.masked_fill(~allowed.view(1, 1, seq_len, seq_len + 1), -1e9)
+
+        weights = F.softmax(scores, dim=-1)
+        if self.training and self.dropout_p > 0:
+            weights = F.dropout(weights, p=self.dropout_p)
+        return weights @ v_exp
+
     def _sdpa_fallback(
         self,
         q: Tensor,
@@ -424,16 +493,14 @@ class CausalAttention(nn.Module):
         if use_fallback:
             if not hasattr(self, "_cpu_fallback_warned"):
                 print(
-                    "[CausalAttention] Using SDPA fallback (CPU device - flex_attention not supported)"
+                    "[CausalAttention] Using manual ghost-aware SDPA fallback "
+                    "(CPU device - flex_attention not supported)"
                 )
                 self._cpu_fallback_warned = True
-            # Use SDPA fallback (doesn't support ghostmax or custom score_mod)
-            # Remove ghost tokens since SDPA fallback doesn't support them
-            k = k[:, :, 1:, :]  # Remove ghost token from K
-            v = v[:, :, 1:, :]  # Remove ghost token from V
-
-            attn_output = self._sdpa_fallback(
-                q, k, v, is_causal=self.causal, enable_gqa=is_gqa
+            # Manual masked attention that preserves the ghost column so
+            # softmax1/ghostmax behavior matches the flex_attention path.
+            attn_output = self._ghost_aware_attention(
+                q, k, v, seq_len=seq_len, is_gqa=is_gqa
             )
         else:
             # Use FlexAttention (GPU only)

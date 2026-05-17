@@ -121,6 +121,10 @@ class PraxisConfig(PretrainedConfig):
         # Per-task loss weighting profile name (see TASK_WEIGHT_PROFILES
         # in praxis.tasks). None means identity: all task IDs get weight 1.0.
         self.task_weights = kwargs.get("task_weights", None)
+        # When True, drop the assistant_mask so every token contributes
+        # to the loss (the pre-2bc2cd4 LM objective). Toggle via
+        # ``--no-mask-prompts``. Default False keeps the SFT-style mask on.
+        self.no_mask_prompts = kwargs.get("no_mask_prompts", False)
         self.device_map = device_map
         self.seed = seed
         self.debug = debug

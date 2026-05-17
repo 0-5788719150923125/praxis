@@ -458,17 +458,7 @@ def show_launch_animation(model, truncated_hash):
         model: The model to display
         truncated_hash: The hash identifying this instance
     """
-    # Extract the actual model from torch.compile wrapper if present
-    display_model = model
-    if hasattr(model, "_orig_mod"):
-        # torch.compile OptimizedModule wrapper
-        display_model = model._orig_mod
-    elif hasattr(model, "_torchdynamo_orig_callable"):
-        # Alternative torch.compile wrapper
-        display_model = model._torchdynamo_orig_callable
-
-    # Get the repr and process it
-    full_repr = repr(display_model)
+    full_repr = repr(model)
     repr_lines = full_repr.splitlines()
 
     # Filter out wrapper-related lines that might still be present

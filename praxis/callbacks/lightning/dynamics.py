@@ -93,12 +93,8 @@ class DynamicsLoggerCallback(Callback):
             traceback.print_exc()
 
     def _unwrap_model(self, pl_module):
-        """Get the actual model from Lightning module, handling torch.compile."""
-        model = getattr(pl_module, "model", pl_module)
-        # Handle torch.compile wrapper
-        if hasattr(model, "_orig_mod"):
-            model = model._orig_mod
-        return model
+        """Return the inner model that holds the actual decoder/locals."""
+        return getattr(pl_module, "model", pl_module)
 
     def _extract_layer_dynamics(self, model, optimizer) -> dict:
         """Extract universal per-layer gradient dynamics from decoder layers.
@@ -211,25 +207,19 @@ class DynamicsLoggerCallback(Callback):
 
         if hasattr(field, "smoothness"):
             try:
-                out["harmonic_smoothness"] = float(
-                    field.smoothness().detach().item()
-                )
+                out["harmonic_smoothness"] = float(field.smoothness().detach().item())
             except Exception:
                 pass
 
         if hasattr(field, "delta_norm"):
             try:
-                out["harmonic_delta_norm"] = float(
-                    field.delta_norm().detach().item()
-                )
+                out["harmonic_delta_norm"] = float(field.delta_norm().detach().item())
             except Exception:
                 pass
 
         amps_grad = amps.grad
         lm_head = self._find_lm_head(model)
-        head_grad = (
-            lm_head.weight.grad if lm_head is not None else None
-        )
+        head_grad = lm_head.weight.grad if lm_head is not None else None
         if amps_grad is not None and head_grad is not None:
             head_norm = float(head_grad.detach().norm().item())
             if head_norm > 0:
@@ -241,9 +231,7 @@ class DynamicsLoggerCallback(Callback):
     def _find_lm_head(self, model):
         """Return the learnable projection that the field feeds into."""
         encoder = getattr(model, "encoder", None)
-        classifier = (
-            getattr(encoder, "classifier", None) if encoder else None
-        )
+        classifier = getattr(encoder, "classifier", None) if encoder else None
         if classifier is not None and hasattr(classifier, "weight"):
             return classifier
         head = getattr(model, "head", None)

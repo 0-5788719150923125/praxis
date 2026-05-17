@@ -400,6 +400,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
         train the encoder's output head).
         """
         if encoder is not None:
+            token_block_ids = create_block_ids(input_ids_dev, config.eos_token_id)
             if train_encoder:
                 (
                     activations,
@@ -408,7 +409,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                     block_ids,
                     aux_loss,
                     local_decoder_tokens,
-                ) = encoder.encode(input_ids_dev)
+                ) = encoder.encode(input_ids_dev, block_ids=token_block_ids)
             else:
                 with torch.no_grad():
                     (
@@ -418,7 +419,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                         block_ids,
                         aux_loss,
                         local_decoder_tokens,
-                    ) = encoder.encode(input_ids_dev)
+                    ) = encoder.encode(input_ids_dev, block_ids=token_block_ids)
             labels = _patch_level_labels(input_ids_dev, patch_lengths)
             if not isinstance(aux_loss, torch.Tensor) or not aux_loss.requires_grad:
                 aux_loss = None
@@ -426,6 +427,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                 "h_encoder": h_encoder,
                 "patch_lengths": patch_lengths,
                 "local_decoder_tokens": local_decoder_tokens,
+                "token_block_ids": token_block_ids,
             }
             return activations, labels, block_ids, aux_loss, decode_aux
 
@@ -608,6 +610,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                     input_ids_dev,
                     decode_aux["patch_lengths"],
                     decode_aux["local_decoder_tokens"],
+                    block_ids=decode_aux.get("token_block_ids"),
                 )
                 decode_targets = input_ids_dev[..., 1:].reshape(-1)
                 decode_logits_flat = (
@@ -1022,6 +1025,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                 # patch" logits, which is exactly the next-byte prediction
                 # we want at generation time.
                 if encoder is not None:
+                    prefix_block_ids = create_block_ids(prefix, config.eos_token_id)
                     with torch.no_grad():
                         (
                             activations,
@@ -1030,7 +1034,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                             block_ids,
                             _aux_loss,
                             _local_decoder_tokens,
-                        ) = encoder.encode(prefix)
+                        ) = encoder.encode(prefix, block_ids=prefix_block_ids)
                 else:
                     block_ids = create_block_ids(prefix, config.eos_token_id)
                     with torch.no_grad():

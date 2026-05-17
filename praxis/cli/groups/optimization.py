@@ -52,6 +52,19 @@ class OptimizationGroup:
             ),
         )
 
+        group.add_argument(
+            "--no-mask-prompts",
+            action="store_true",
+            default=False,
+            help=(
+                "Drop the assistant_mask before composing loss weights so "
+                "every token contributes (the pre-2bc2cd4 language-modeling "
+                "objective). Default off, meaning prompts are masked. "
+                "Useful for small models that lack the capacity for the "
+                "SFT-style prompt-conditional split."
+            ),
+        )
+
         # Optimizer wrappers
         group.add_argument(
             "--trac",

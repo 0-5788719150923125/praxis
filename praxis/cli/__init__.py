@@ -152,11 +152,14 @@ def get_processed_args(args_override=None):
 
 
 def get_cli_args():
-    """Get the parsed CLI arguments, or an empty Namespace if CLI was never initialized."""
-    if args is None:
-        import argparse
+    """Get the parsed CLI arguments, or None if CLI was never initialized.
 
-        return argparse.Namespace()
+    Returning None (rather than an empty Namespace) lets callers like
+    main() detect "not yet parsed" and trigger ``initialize_cli()``
+    themselves. The skipped-at-import case (``--help`` / ``-h`` in argv)
+    relies on this: argparse must run inside ``initialize_cli()`` so it
+    can print help and exit cleanly.
+    """
     return args
 
 

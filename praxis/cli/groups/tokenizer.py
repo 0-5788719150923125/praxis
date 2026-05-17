@@ -1,5 +1,7 @@
 """Tokenizer training CLI arguments."""
 
+from praxis.tokenizers import DEFAULT_TOKENIZER, TOKENIZER_REGISTRY
+
 
 class TokenizerGroup:
     """Tokenizer training configuration arguments."""
@@ -14,9 +16,12 @@ class TokenizerGroup:
         group.add_argument(
             "--tokenizer-type",
             type=str,
-            choices=["char", "byte"],
+            choices=sorted(TOKENIZER_REGISTRY),
             default=None,
-            help="Force a specific tokenizer implementation (char=lazy Unicode BMP, byte=256-byte). Overrides vocab-size-based selection.",
+            help=(
+                f"Tokenizer implementation from TOKENIZER_REGISTRY. "
+                f"Unset = default ({DEFAULT_TOKENIZER!r})."
+            ),
         )
 
         group.add_argument(

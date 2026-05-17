@@ -255,27 +255,46 @@ class ByteLatentEncoder(nn.Module):
         return 8
 
     def encode(
-        self, input_ids: torch.Tensor
+        self,
+        input_ids: torch.Tensor,
+        block_ids: Optional[torch.LongTensor] = None,
     ) -> Tuple[
-        torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, float, torch.Tensor
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        Optional[torch.Tensor],
+        float,
+        torch.Tensor,
     ]:
         """
         Encode input tokens into latent representation using BLT reference logic.
 
         Args:
             input_ids: Input token IDs of shape [batch_size, seq_len]
+            block_ids: Optional EOS-aware block IDs for the byte-level local
+                encoder so packed documents don't bleed across boundaries.
 
         Returns:
             Tuple containing:
                 - Patch embeddings (for global transformer processing)
                 - Encoder output hidden states (for decoder, token-level)
                 - Patch lengths tensor
-                - Block IDs tensor
+                - Block IDs (always None - boundaries are smeared by patching
+                  and shouldn't gate the global decoder)
                 - Auxiliary loss value
                 - Local decoder tokens (for proper decode alignment)
         """
         bs, N = input_ids.shape
         aux_loss: float = 0
+
+        # Extend block_ids to cover the BOE prefix the patcher prepends. BOE
+        # bytes belong to the first sequence in their row.
+        if block_ids is not None and self.nb_boe > 0:
+            local_block_ids = torch.cat(
+                [block_ids[:, :1].expand(-1, self.nb_boe), block_ids], dim=1
+            )
+        else:
+            local_block_ids = block_ids
 
         # Create proper token streams following BLT reference
         local_encoder_tokens, global_tokens, local_decoder_tokens = get_blt_input(
@@ -301,31 +320,25 @@ class ByteLatentEncoder(nn.Module):
                 device=self.device_map,
                 enable_grad=True,
             )
-            modified_entropy_scores = patch_entropies_for_special_tokens(
-                local_encoder_tokens, entropy_scores
-            )
             if self.training:
-                # Find optimal threshold
+                # Find optimal threshold from raw entropies - matches BLT's
+                # entropy-mode behavior (no special-token entropy hacking).
                 safe_threshold = self._find_safe_threshold(
-                    local_encoder_tokens, modified_entropy_scores
+                    local_encoder_tokens, entropy_scores
                 )
-                # Simplified threshold optimization for now
                 patch_lengths, scores = self.patcher.patch(
                     local_encoder_tokens,
                     include_next_token=True,
                     threshold=safe_threshold,
-                    entropies=modified_entropy_scores,
+                    entropies=entropy_scores,
                 )
 
-                # Compute entropy loss (simplified)
-                modified_entropy_preds = mask_entropy_preds_at_special_tokens(
-                    local_encoder_tokens, entropy_preds
-                )
+                # Entropy training loss on raw predictions.
                 batch_size, seq_len = local_encoder_tokens.shape
-                _, total_size = modified_entropy_preds.shape
+                _, total_size = entropy_preds.shape
                 vocab_size = total_size // seq_len
 
-                reshaped_preds = modified_entropy_preds.view(
+                reshaped_preds = entropy_preds.view(
                     batch_size, seq_len, vocab_size
                 )
                 flattened_preds = reshaped_preds[:, :-1].reshape(-1, vocab_size)
@@ -336,12 +349,12 @@ class ByteLatentEncoder(nn.Module):
                     * self.loss_scale
                 )
             else:
-                # During inference, use stored optimal threshold
+                # During inference, use stored optimal threshold on raw entropies.
                 patch_lengths, scores = self.patcher.patch(
                     local_encoder_tokens,
                     include_next_token=True,
                     threshold=self.optimal_threshold.float(),
-                    entropies=modified_entropy_scores,
+                    entropies=entropy_scores,
                 )
 
         # Create patch IDs from encoder token length
@@ -378,6 +391,7 @@ class ByteLatentEncoder(nn.Module):
             num_patches=patch_lengths.shape[1],
             patch_ids=patch_ids,
             mask=None,
+            block_ids=local_block_ids,
         )
 
         # Downsampling to create patch representations
@@ -393,9 +407,6 @@ class ByteLatentEncoder(nn.Module):
             eos_patch_ids = patch_ids[rows, cols]
             global_tokens[rows, eos_patch_ids] = EOS_ID
 
-        # Create block IDs for attention (based on original input_ids)
-        block_ids = create_patch_block_ids(input_ids, patch_lengths, patch_ids)
-
         # Project to global dimension if needed
         if self.token_proj is not None:
             h = self.token_proj(h)
@@ -403,9 +414,10 @@ class ByteLatentEncoder(nn.Module):
         # Post-downsample hook (e.g. VQ bottleneck in subclasses)
         h, aux_loss = self._post_downsample(h, aux_loss)
 
-        # Return patch embeddings for PraxisModel to process as global transformer
-        # PraxisModel will process these patch embeddings like a regular sequence
-        return h, h_encoder, patch_lengths, block_ids, aux_loss, local_decoder_tokens
+        # Returning None for block_ids: token-level boundaries don't cleanly
+        # survive patching, so the global decoder should run unrestricted
+        # rather than gating attention by noisy patch-level labels.
+        return h, h_encoder, patch_lengths, None, aux_loss, local_decoder_tokens
 
     def _downsample(self, h_encoder, h_cross, bs, patch_lengths, patch_ids):
         """Downsample byte-level representations to patch-level. Override for custom pooling."""
@@ -431,6 +443,7 @@ class ByteLatentEncoder(nn.Module):
         input_ids: torch.Tensor,
         patch_lengths: torch.Tensor,
         local_decoder_tokens: torch.Tensor,
+        block_ids: Optional[torch.LongTensor] = None,
     ) -> torch.Tensor:
         """
         Decode latent representation back to token space using BLT reference logic.
@@ -441,6 +454,7 @@ class ByteLatentEncoder(nn.Module):
             input_ids: Original input token IDs
             patch_lengths: Lengths of patches
             local_decoder_tokens: Decoder token sequence from encode()
+            block_ids: Optional EOS-aware block IDs at the byte level
 
         Returns:
             Decoded output tensor
@@ -502,6 +516,7 @@ class ByteLatentEncoder(nn.Module):
             patch_embeds=h,
             cross_mask=cross_mask,
             mask=None,
+            block_ids=block_ids,
         )
 
         return output, decoder_embeds
@@ -892,37 +907,48 @@ def create_patch_block_ids(
 
 
 def packed_rnn_block(
-    rnn: nn.Module, x: torch.Tensor, input_ids: torch.Tensor, eos_token_id: int = 0
+    rnn: nn.Module,
+    x: torch.Tensor,
+    input_ids: torch.Tensor,
+    eos_token_id: int = 0,
+    block_ids: Optional[torch.LongTensor] = None,
 ) -> torch.Tensor:
     """
     Efficiently use packed sequences within transformer architecture.
 
-    This function identifies sequence lengths based on EOS tokens, creates packed
-    sequences for efficient RNN processing, and then unpacks back to regular tensors.
+    Sequence lengths come from ``block_ids`` when provided (preferred), and
+    fall back to scanning ``input_ids`` for ``eos_token_id`` otherwise. Both
+    paths truncate at the first sequence end - pack_padded_sequence cannot
+    represent multiple sub-sequences inside a single batch row.
 
     Args:
         rnn: nn.RNN module (or compatible RNN type like GRU, LSTM)
-        x: Feature tensor from transformer of shape [batch_size, seq_len, features]
-        input_ids: Token IDs to identify EOS positions of shape [batch_size, seq_len]
-        eos_token_id: ID of EOS token to split on
+        x: Feature tensor of shape [batch_size, seq_len, features]
+        input_ids: Token IDs of shape [batch_size, seq_len]
+        eos_token_id: Fallback ID to split on when block_ids is None
+        block_ids: Optional block IDs of shape [batch_size, seq_len]
 
     Returns:
-        Processed tensor of shape [batch_size, seq_len, hidden_size] with same sequence length as input
+        Processed tensor of shape [batch_size, seq_len, hidden_size]
     """
     batch_size, seq_len = input_ids.size()
     device = x.device
 
-    # Find lengths based on EOS tokens
     lengths = torch.full((batch_size,), seq_len, device=device)
 
-    # Find first EOS in each sequence
-    for i in range(batch_size):
-        eos_positions = (input_ids[i] == eos_token_id).nonzero(as_tuple=True)[0]
-        if len(eos_positions) > 0:
-            # +1 to include the EOS token in the sequence
-            lengths[i] = min(
-                int(eos_positions[0]) + 1, seq_len
-            )  # Avoid .item() for torch.compile
+    if block_ids is not None:
+        # create_block_ids increments AFTER an EOS, so positions in block 1
+        # already include the EOS. Counting them gives the same length the
+        # legacy EOS scan produced (``first_EOS_pos + 1``).
+        first_block = block_ids[:, :1]
+        in_first = (block_ids == first_block).long()
+        lengths = in_first.sum(dim=1).clamp(min=1, max=seq_len)
+    else:
+        for i in range(batch_size):
+            eos_positions = (input_ids[i] == eos_token_id).nonzero(as_tuple=True)[0]
+            if len(eos_positions) > 0:
+                # +1 to include the EOS token in the sequence
+                lengths[i] = min(int(eos_positions[0]) + 1, seq_len)
 
     # Create packed sequence
     packed_x = nn.utils.rnn.pack_padded_sequence(
@@ -962,20 +988,30 @@ class RecurrentBlock(nn.Module):
         self.gru = nn.GRU(input_size=dim, hidden_size=dim, batch_first=True)
 
     def forward(
-        self, x: torch.Tensor, input_ids: Optional[torch.Tensor] = None, *args, **kwargs
+        self,
+        x: torch.Tensor,
+        input_ids: Optional[torch.Tensor] = None,
+        block_ids: Optional[torch.LongTensor] = None,
+        *args,
+        **kwargs,
     ) -> torch.Tensor:
         """
         Process input through RMSNorm, GRU and residual connection.
 
         Args:
             x: Input tensor of shape [batch_size, seq_len, dim]
-            input_ids: Token IDs for sequence delimiting of shape [batch_size, seq_len]
+            input_ids: Token IDs for sequence delimiting (used when block_ids is None)
+            block_ids: Optional block IDs for sequence isolation
 
         Returns:
             Output tensor of shape [batch_size, seq_len, dim]
         """
         out = packed_rnn_block(
-            self.gru, self.norm(x), input_ids=input_ids, eos_token_id=EOS_ID
+            self.gru,
+            self.norm(x),
+            input_ids=input_ids,
+            eos_token_id=EOS_ID,
+            block_ids=block_ids,
         )
         return out + x
 
@@ -1029,6 +1065,7 @@ class RecurrentEncoder(nn.Module):
         self,
         tokens: torch.Tensor,
         embeds: Optional[torch.Tensor] = None,
+        block_ids: Optional[torch.LongTensor] = None,
         *args,
         **kwargs,
     ) -> Tuple[Tuple[torch.Tensor, None], None]:
@@ -1038,6 +1075,7 @@ class RecurrentEncoder(nn.Module):
         Args:
             tokens: Input token IDs of shape [batch_size, seq_len]
             embeds: Optional pre-computed embeddings
+            block_ids: Optional block IDs for sequence isolation
 
         Returns:
             Tuple containing:
@@ -1052,7 +1090,7 @@ class RecurrentEncoder(nn.Module):
 
         h = F.dropout(h, p=self.dropout, training=self.training)
         for i, layer in enumerate(self.layers):
-            h = layer(h, input_ids=tokens)
+            h = layer(h, input_ids=tokens, block_ids=block_ids)
 
         return (h, None), None
 
@@ -1103,6 +1141,7 @@ class RecurrentDecoder(nn.Module):
         tokens: torch.Tensor,
         embeds: torch.Tensor,
         patch_embeds: Optional[torch.Tensor] = None,
+        block_ids: Optional[torch.LongTensor] = None,
         *args,
         **kwargs,
     ) -> Tuple[torch.Tensor, None]:
@@ -1113,6 +1152,7 @@ class RecurrentDecoder(nn.Module):
             tokens: Input token IDs of shape [batch_size, seq_len]
             embeds: Pre-computed embeddings from encoder
             patch_embeds: Optional patch embeddings
+            block_ids: Optional block IDs for sequence isolation
 
         Returns:
             Tuple containing:
@@ -1140,7 +1180,7 @@ class RecurrentDecoder(nn.Module):
 
         h = F.dropout(h, p=self.dropout, training=self.training)
         for i, layer in enumerate(self.layers):
-            h = layer(h, input_ids=tokens)
+            h = layer(h, input_ids=tokens, block_ids=block_ids)
 
         h_preds = self.norm(h)
         h_preds = F.dropout(h_preds, p=self.dropout, training=self.training)
@@ -1242,7 +1282,12 @@ class ConvBlock(nn.Module):
         self.proj = nn.Linear(dim, dim, bias=False)
 
     def forward(
-        self, x: torch.Tensor, input_ids: Optional[torch.Tensor] = None, *args, **kwargs
+        self,
+        x: torch.Tensor,
+        input_ids: Optional[torch.Tensor] = None,
+        block_ids: Optional[torch.LongTensor] = None,
+        *args,
+        **kwargs,
     ) -> torch.Tensor:
         """
         Process input through normalization, causal convolution, and residual connection.
@@ -1250,6 +1295,9 @@ class ConvBlock(nn.Module):
         Args:
             x: Input tensor of shape [batch_size, seq_len, dim]
             input_ids: Token IDs (unused, kept for API compatibility)
+            block_ids: Currently ignored. Dilated causal conv kernels span
+                fixed strides; per-position block masking would require
+                per-block reshape, which is not implemented here.
 
         Returns:
             Output tensor of shape [batch_size, seq_len, dim]
@@ -1319,6 +1367,7 @@ class ConvEncoder(nn.Module):
         self,
         tokens: torch.Tensor,
         embeds: Optional[torch.Tensor] = None,
+        block_ids: Optional[torch.LongTensor] = None,
         *args,
         **kwargs,
     ) -> Tuple[Tuple[torch.Tensor, None], None]:
@@ -1328,6 +1377,7 @@ class ConvEncoder(nn.Module):
         Args:
             tokens: Input token IDs of shape [batch_size, seq_len]
             embeds: Optional pre-computed embeddings
+            block_ids: Accepted for API parity; not honored by dilated conv.
 
         Returns:
             Tuple containing:
@@ -1342,7 +1392,7 @@ class ConvEncoder(nn.Module):
 
         for layer in self.layers:
             h = self.dropout(h)
-            h = layer(h, input_ids=tokens)
+            h = layer(h, input_ids=tokens, block_ids=block_ids)
 
         return (h, None), None
 
@@ -1399,6 +1449,7 @@ class ConvDecoder(nn.Module):
         tokens: torch.Tensor,
         embeds: torch.Tensor,
         patch_embeds: Optional[torch.Tensor] = None,
+        block_ids: Optional[torch.LongTensor] = None,
         *args,
         **kwargs,
     ) -> Tuple[torch.Tensor, None]:
@@ -1409,6 +1460,7 @@ class ConvDecoder(nn.Module):
             tokens: Input token IDs of shape [batch_size, seq_len]
             embeds: Pre-computed embeddings from encoder
             patch_embeds: Optional patch embeddings
+            block_ids: Accepted for API parity; not honored by dilated conv.
 
         Returns:
             Tuple containing:
@@ -1436,7 +1488,7 @@ class ConvDecoder(nn.Module):
 
         for layer in self.layers:
             h = self.dropout(h)
-            h = layer(h, input_ids=tokens)
+            h = layer(h, input_ids=tokens, block_ids=block_ids)
 
         h_preds = self.norm(h)
         h_preds = self.dropout(h_preds)
@@ -1583,7 +1635,12 @@ class TransformerBlock(nn.Module):
         )
 
     def forward(
-        self, x: torch.Tensor, input_ids: Optional[torch.Tensor] = None, *args, **kwargs
+        self,
+        x: torch.Tensor,
+        input_ids: Optional[torch.Tensor] = None,
+        block_ids: Optional[torch.LongTensor] = None,
+        *args,
+        **kwargs,
     ) -> torch.Tensor:
         """
         Process input through sliding window attention and feed-forward.
@@ -1591,13 +1648,15 @@ class TransformerBlock(nn.Module):
         Args:
             x: Input tensor of shape [batch_size, seq_len, dim]
             input_ids: Token IDs (unused, kept for API compatibility)
+            block_ids: Optional block IDs forwarded to CausalAttention so it
+                can build block-diagonal masks when supported.
 
         Returns:
             Output tensor of shape [batch_size, seq_len, dim]
         """
         # Self-attention with residual connection
         norm_x = self.norm1(x)
-        attn_output, _, _ = self.attention(norm_x)
+        attn_output, _, _ = self.attention(norm_x, block_ids=block_ids)
         attn_output = x + attn_output
 
         # Feed-forward with residual connection
@@ -1645,6 +1704,7 @@ class TransformerEncoder(nn.Module):
         self,
         tokens: torch.Tensor,
         embeds: Optional[torch.Tensor] = None,
+        block_ids: Optional[torch.LongTensor] = None,
         *args,
         **kwargs,
     ) -> Tuple[Tuple[torch.Tensor, None], None]:
@@ -1654,6 +1714,7 @@ class TransformerEncoder(nn.Module):
         Args:
             tokens: Input token IDs of shape [batch_size, seq_len]
             embeds: Optional pre-computed embeddings
+            block_ids: Optional block IDs for sequence isolation
 
         Returns:
             Tuple containing:
@@ -1669,7 +1730,7 @@ class TransformerEncoder(nn.Module):
         h = F.dropout(h, p=self.dropout, training=self.training)
 
         for layer in self.layers:
-            h = layer(h, input_ids=tokens)
+            h = layer(h, input_ids=tokens, block_ids=block_ids)
 
         return (h, None), None
 
@@ -1723,6 +1784,7 @@ class TransformerDecoder(nn.Module):
         tokens: torch.Tensor,
         embeds: torch.Tensor,
         patch_embeds: Optional[torch.Tensor] = None,
+        block_ids: Optional[torch.LongTensor] = None,
         *args,
         **kwargs,
     ) -> Tuple[torch.Tensor, None]:
@@ -1733,6 +1795,7 @@ class TransformerDecoder(nn.Module):
             tokens: Input token IDs of shape [batch_size, seq_len]
             embeds: Pre-computed embeddings from encoder
             patch_embeds: Optional patch embeddings
+            block_ids: Optional block IDs for sequence isolation
 
         Returns:
             Tuple containing:
@@ -1761,7 +1824,7 @@ class TransformerDecoder(nn.Module):
         h = F.dropout(h, p=self.dropout, training=self.training)
 
         for layer in self.layers:
-            h = layer(h, input_ids=tokens)
+            h = layer(h, input_ids=tokens, block_ids=block_ids)
 
         h_preds = self.norm(h)
         h_preds = F.dropout(h_preds, p=self.dropout, training=self.training)

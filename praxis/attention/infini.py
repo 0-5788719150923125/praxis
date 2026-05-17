@@ -22,6 +22,49 @@ from praxis.attention.causal import CausalAttention
 
 _DEFAULT_SEGMENT_SIZE = 256
 
+# One-shot NaN/inf detection inside the compressive-memory path. Helps
+# pinpoint whether memory state explodes between segments. Remove once
+# the Infini/Arc training stability story is settled.
+_MEMORY_DIAG_FIRED = False
+
+
+def _check_memory_finite(name: str, **tensors: Tensor) -> None:
+    """Print a one-shot diagnostic if any tensor contains NaN/inf.
+
+    Intentionally cheap (single ``.isfinite().all()`` per tensor) and
+    bounded (only the first hit prints, then it's a no-op). The values
+    inspected are the actual memory-update inputs/outputs so the print
+    points directly at where the explosion started.
+    """
+    global _MEMORY_DIAG_FIRED
+    if _MEMORY_DIAG_FIRED:
+        return
+    for label, t in tensors.items():
+        if not torch.isfinite(t).all():
+            _MEMORY_DIAG_FIRED = True
+            n_nan = torch.isnan(t).sum().item()
+            n_inf = torch.isinf(t).sum().item()
+            finite = t[torch.isfinite(t)]
+            max_abs = finite.abs().max().item() if finite.numel() > 0 else float("nan")
+            print(
+                f"[InfiniMem #diag] non-finite detected in {name}: "
+                f"tensor={label} shape={tuple(t.shape)} "
+                f"nan={n_nan} inf={n_inf} max_abs_finite={max_abs:.4e}"
+            )
+            # Also report companions so we can see which input caused it.
+            for other_label, other_t in tensors.items():
+                if other_label == label:
+                    continue
+                ot_finite = other_t[torch.isfinite(other_t)]
+                ot_max = (
+                    ot_finite.abs().max().item() if ot_finite.numel() > 0 else float("nan")
+                )
+                print(
+                    f"  - companion {other_label} shape={tuple(other_t.shape)} "
+                    f"max_abs_finite={ot_max:.4e}"
+                )
+            return
+
 
 class InfiniAttention(CausalAttention):
     """
@@ -57,18 +100,23 @@ class InfiniAttention(CausalAttention):
             torch.zeros(1, self.num_query_heads, 1, self.head_dim)
         )
 
-        # Learnable initial memory state
-        self.init_mem = nn.Parameter(
-            torch.randn(1, self.num_query_heads, self.head_dim, self.head_dim) * 0.01
+        # Initial memory state. Registered as buffers (no grad) to match
+        # the reference Infini-Attention - memory init shouldn't accumulate
+        # gradients through the recurrent across-segment chain, which would
+        # turn the segment loop into an exploding-gradient RNN.
+        self.register_buffer(
+            "init_mem",
+            torch.zeros(1, self.num_query_heads, self.head_dim, self.head_dim),
         )
-        self.init_z = nn.Parameter(
-            torch.ones(1, self.num_query_heads, self.head_dim, 1) / self.head_dim
+        self.register_buffer(
+            "init_z",
+            torch.zeros(1, self.num_query_heads, self.head_dim, 1),
         )
 
     def _init_memory(
         self, batch_size: int, device: torch.device
     ) -> Tuple[Tensor, Tensor]:
-        """Initialize memory from learned parameters."""
+        """Initialize memory from zero-valued buffers (no grad)."""
         return (
             self.init_mem.expand(batch_size, -1, -1, -1).to(device),
             self.init_z.expand(batch_size, -1, -1, -1).to(device),
@@ -79,7 +127,15 @@ class InfiniAttention(CausalAttention):
     ) -> Tensor:
         """Retrieve from memory using ELU+1 kernel on queries."""
         sigma_q = F.elu(q) + 1.0
-        return (sigma_q @ memory_states) / (sigma_q @ memory_z + 1e-6)
+        out = (sigma_q @ memory_states) / (sigma_q @ memory_z + 1e-6)
+        _check_memory_finite(
+            "_retrieve_memory",
+            sigma_q=sigma_q,
+            memory_states=memory_states,
+            memory_z=memory_z,
+            out=out,
+        )
+        return out
 
     def _update_memory(
         self, k: Tensor, v: Tensor, memory_states: Tensor, memory_z: Tensor
@@ -93,6 +149,15 @@ class InfiniAttention(CausalAttention):
 
         new_states = memory_states + sigma_k.transpose(-2, -1) @ value_delta
         new_z = memory_z + sigma_k.sum(dim=-2, keepdim=True).transpose(-2, -1)
+        _check_memory_finite(
+            "_update_memory",
+            sigma_k=sigma_k,
+            memory_states=memory_states,
+            memory_z=memory_z,
+            value_delta=value_delta,
+            new_states=new_states,
+            new_z=new_z,
+        )
         return new_states, new_z
 
     def _local_attention(
@@ -102,8 +167,17 @@ class InfiniAttention(CausalAttention):
         v: Tensor,
         seg_len: int,
         device: torch.device,
+        seg_block_ids: Optional[Tensor] = None,
     ) -> Tensor:
-        """Compute local causal attention with ghostmax for one segment."""
+        """Compute local causal attention with ghostmax for one segment.
+
+        When ``seg_block_ids`` is provided, attention is additionally
+        gated so queries can only attend to keys in the same block - this
+        keeps packed documents from leaking across EOS boundaries inside
+        a segment. The fast flex_attention path doesn't carry block_ids
+        through its cached mask, so the block-aware branch drops to a
+        manual masked-SDPA implementation.
+        """
         batch_size = q.size(0)
 
         # Ghostmax: prepend zero token to K and V
@@ -127,6 +201,11 @@ class InfiniAttention(CausalAttention):
         v_ghost = torch.cat([zero_v, v], dim=2)
         kv_len = seg_len + 1
 
+        if seg_block_ids is not None:
+            return self._local_attention_blocked(
+                q, k_ghost, v_ghost, seg_len, device, seg_block_ids
+            )
+
         # Score modification for ALiBi
         if self.pos_type == "rope":
             score_mod = None
@@ -147,14 +226,19 @@ class InfiniAttention(CausalAttention):
         if use_fallback:
             if not hasattr(self, "_cpu_fallback_warned"):
                 print(
-                    "[InfiniAttention] Using SDPA fallback "
+                    "[InfiniAttention] Using manual masked-SDPA fallback "
                     "(CPU device - flex_attention not supported)"
                 )
                 self._cpu_fallback_warned = True
-            k_local = k_ghost[:, :, 1:, :]
-            v_local = v_ghost[:, :, 1:, :]
-            return self._sdpa_fallback(
-                q, k_local, v_local, is_causal=self.causal, enable_gqa=is_gqa
+            # Reuse the block-aware path with a dummy single-block mask so
+            # ghostmax (softmax1 via the zero ghost column) is preserved.
+            # The previous code stripped the ghost before SDPA, which
+            # silently downgraded to plain softmax in the CPU path.
+            dummy_blocks = torch.zeros(
+                batch_size, seg_len, device=device, dtype=torch.long
+            )
+            return self._local_attention_blocked(
+                q, k_ghost, v_ghost, seg_len, device, dummy_blocks
             )
 
         if self.causal:
@@ -171,6 +255,68 @@ class InfiniAttention(CausalAttention):
             enable_gqa=is_gqa,
             scale=None,
         )
+
+    def _local_attention_blocked(
+        self,
+        q: Tensor,
+        k_ghost: Tensor,
+        v_ghost: Tensor,
+        seg_len: int,
+        device: torch.device,
+        seg_block_ids: Tensor,
+    ) -> Tensor:
+        """Manual local attention that honors per-segment block_ids.
+
+        Ghost token at ``kv_idx == 0`` is always reachable (preserving the
+        ghostmax / softmax1 behavior); real keys are reachable only when
+        same-block AND causal.
+        """
+        batch_size, _, _, head_dim = q.shape
+
+        # Expand K, V for GQA so we can multiply directly.
+        if self.num_queries > 1:
+            k_exp = k_ghost.repeat_interleave(self.num_queries, dim=1)
+            v_exp = v_ghost.repeat_interleave(self.num_queries, dim=1)
+        else:
+            k_exp, v_exp = k_ghost, v_ghost
+
+        scale = 1.0 / (head_dim**0.5)
+        scores = (q @ k_exp.transpose(-2, -1)) * scale  # [B, Hq, S, S+1]
+
+        # ALiBi bias (only when not using RoPE).
+        if self.pos_type != "rope":
+            alibi_bias = self.alibi_slopes.to(device)  # [Hq]
+            q_pos = torch.arange(seg_len, device=device).unsqueeze(-1)  # [S, 1]
+            kv_pos = torch.arange(seg_len + 1, device=device).unsqueeze(0)  # [1, S+1]
+            is_not_ghost = (kv_pos > 0).float()
+            actual_kv = kv_pos - 1
+            bias = alibi_bias.view(-1, 1, 1) * (actual_kv - q_pos) * is_not_ghost
+            scores = scores + bias.unsqueeze(0)  # [1, Hq, S, S+1]
+
+        # Build mask: ghost (kv_idx=0) always allowed; real keys must be
+        # in the same block as the query AND causal.
+        q_pos = torch.arange(seg_len, device=device)
+        kv_pos_real = torch.arange(seg_len + 1, device=device) - 1  # -1 = ghost
+        causal = q_pos.unsqueeze(-1) >= kv_pos_real.unsqueeze(0)  # [S, S+1]
+        # Pad block_ids on the left with a sentinel for the ghost slot.
+        sentinel = torch.full(
+            (batch_size, 1), -1, device=device, dtype=seg_block_ids.dtype
+        )
+        kv_block_ids = torch.cat([sentinel, seg_block_ids], dim=1)  # [B, S+1]
+        same_block = seg_block_ids.unsqueeze(-1) == kv_block_ids.unsqueeze(-2)
+        # Ghost is always reachable regardless of block.
+        ghost_col = torch.zeros(seg_len + 1, dtype=torch.bool, device=device)
+        ghost_col[0] = True
+        allowed = ghost_col.view(1, 1, -1) | (
+            same_block & causal.unsqueeze(0)
+        )  # [B, S, S+1]
+        allowed = allowed.unsqueeze(1)  # [B, 1, S, S+1] - broadcast over heads
+        scores = scores.masked_fill(~allowed, -1e9)
+
+        weights = F.softmax(scores, dim=-1)
+        if self.training and self.dropout_p > 0:
+            weights = F.dropout(weights, p=self.dropout_p)
+        return weights @ v_exp  # [B, Hq, S, head_dim]
 
     def forward(
         self,
@@ -222,13 +368,21 @@ class InfiniAttention(CausalAttention):
             seg_mem_k = mem_k[:, :, start:end]
             seg_mem_v = mem_v[:, :, start:end]
             seg_len = end - start
+            seg_block_ids = (
+                block_ids[:, start:end] if block_ids is not None else None
+            )
 
             # Retrieve from memory (context from all prior segments)
             memory_output = self._retrieve_memory(seg_q, memory_states, memory_z)
 
             # Local causal attention within this segment
             attn_output = self._local_attention(
-                seg_q, seg_k, seg_v, seg_len, inputs.device
+                seg_q,
+                seg_k,
+                seg_v,
+                seg_len,
+                inputs.device,
+                seg_block_ids=seg_block_ids,
             )
 
             # Blend memory with local attention
