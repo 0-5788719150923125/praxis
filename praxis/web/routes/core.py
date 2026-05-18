@@ -50,18 +50,23 @@ def get_spec():
 
         # Try to get CLI args, but handle the case where they're not available
         try:
-            from praxis.cli import get_cli_args
+            from praxis.cli import get_cli_args, get_loader_flag_attrs
 
             args = get_cli_args()
+            excluded_attrs = get_loader_flag_attrs()
         except:
             # If CLI args aren't available (e.g., in tests), use empty namespace
             import argparse
 
             args = argparse.Namespace()
+            excluded_attrs = set()
 
-        # Convert args to dict, filtering out non-serializable items
+        # Convert args to dict, filtering out experiment/environment activator
+        # flags (one boolean per YAML file) and non-serializable items.
         args_dict = {}
         for key, value in vars(args).items():
+            if key in excluded_attrs:
+                continue
             try:
                 json.dumps(value)
                 args_dict[key] = value

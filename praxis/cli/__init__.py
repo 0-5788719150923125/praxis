@@ -163,6 +163,21 @@ def get_cli_args():
     return args
 
 
+def get_loader_flag_attrs():
+    """Return the set of attribute names for experiment/environment toggles.
+
+    These are the boolean flags added by ExperimentLoader/EnvironmentLoader
+    (one per YAML file). They are activators, not config values, so callers
+    that surface or pass through the parsed args should usually exclude them.
+    Names are returned in attribute form (kebab-case hyphens replaced with
+    underscores) to match ``argparse.Namespace`` attributes.
+    """
+    return {
+        name.replace("-", "_")
+        for name in list(experiment_configs.keys()) + list(environment_configs.keys())
+    }
+
+
 # Initialize CLI on module import (for backward compatibility)
 if __name__ != "__main__":
     # Only auto-initialize if imported as a module
@@ -178,6 +193,7 @@ __all__ = [
     "create_praxis_config",
     "get_processed_args",
     "get_cli_args",
+    "get_loader_flag_attrs",
     "log_command",
     "compute_args_hash",
     # Global state (for backward compatibility)

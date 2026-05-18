@@ -37,11 +37,19 @@ class ConfigBuilder:
             "encoding_type": "encoding",
         }
 
+        # Experiment/environment activator flags should not leak into PraxisConfig.
+        from praxis.cli import get_loader_flag_attrs
+
+        loader_flag_attrs = get_loader_flag_attrs()
+
         # Experimental kwargs (from experiment files, not in PraxisConfig signature)
         experimental_kwargs = {}
 
         # Process all arguments from CLI
         for arg_name in vars(args):
+            if arg_name in loader_flag_attrs:
+                continue
+
             arg_value = getattr(args, arg_name)
 
             # Skip None values
