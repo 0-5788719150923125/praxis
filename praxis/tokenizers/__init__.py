@@ -33,8 +33,13 @@ TOKENIZER_REGISTRY: Dict[str, Any] = {
 if HAS_BYTE_LEVEL:
     TOKENIZER_REGISTRY["byte_level"] = ByteLevelTokenizer
 
-# Default tokenizer when ``tokenizer_type`` is unset.
-DEFAULT_TOKENIZER: str = "bpe"
+# Default tokenizer when ``tokenizer_type`` is unset. Stays at unigram
+# because that's the only flavor we actually publish pre-trained
+# checkpoints for; switching the default to "bpe" before the BPE
+# tokenizers are trained and uploaded produces a fresh, untrained
+# StandardTokenizer (vocab_size = number of special tokens), which then
+# tokenizes every input into noise and collapses the SFT loss to zero.
+DEFAULT_TOKENIZER: str = "unigram"
 
 
 def _needs_byte_level_tokenizer(encoder_type: str) -> bool:
@@ -62,11 +67,21 @@ def _try_load_trained_tokenizer(
     cache_dir: Optional[str],
     **kwargs,
 ) -> Optional[PreTrainedTokenizer]:
-    """Look for a pre-trained ``praxis-{vocab_size}-{tokenizer_type}`` on
-    disk first, then on the Hub. Returns ``None`` if neither exists.
+    """Look for a pre-trained tokenizer on disk first, then on the Hub.
+
+    Tries the type-suffixed location first (``praxis-{vocab_size}-{type}``)
+    so a future BPE checkpoint will resolve cleanly, then falls back to
+    the legacy location (``praxis-{vocab_size}``, no suffix) which is
+    where the unigram tokenizers actually live. Returns ``None`` if no
+    candidate resolves.
     """
-    local_path = Path(f"build/tokenizers/praxis-{vocab_size}-{tokenizer_type}")
-    if local_path.exists():
+    candidates_local = [
+        Path(f"build/tokenizers/praxis-{vocab_size}-{tokenizer_type}"),
+        Path(f"build/tokenizers/praxis-{vocab_size}"),
+    ]
+    for local_path in candidates_local:
+        if not local_path.exists():
+            continue
         try:
             tokenizer = AutoTokenizer.from_pretrained(
                 local_path, cache_dir=cache_dir, **kwargs
@@ -74,18 +89,23 @@ def _try_load_trained_tokenizer(
             tokenizer.chat_template = get_chat_template("default")
             return tokenizer
         except Exception:
-            pass
+            continue
 
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(
-            f"UNSAFE/praxis-{vocab_size}-{tokenizer_type}",
-            cache_dir=cache_dir,
-            **kwargs,
-        )
-        tokenizer.chat_template = get_chat_template("default")
-        return tokenizer
-    except Exception:
-        return None
+    candidates_hub = [
+        f"UNSAFE/praxis-{vocab_size}-{tokenizer_type}",
+        f"UNSAFE/praxis-{vocab_size}",
+    ]
+    for repo in candidates_hub:
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(
+                repo, cache_dir=cache_dir, **kwargs
+            )
+            tokenizer.chat_template = get_chat_template("default")
+            return tokenizer
+        except Exception:
+            continue
+
+    return None
 
 
 def create_tokenizer(

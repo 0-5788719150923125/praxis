@@ -5,7 +5,7 @@ import random
 from pathlib import Path
 from typing import Any, Dict, List
 
-from praxis.tools import format_tool_call_with_result
+from praxis.tools import format_tool_input, format_tool_output
 
 
 def format_file_as_messages(
@@ -42,15 +42,21 @@ def format_file_as_messages(
     if isinstance(sample_path, Path):
         sample_path = str(sample_path)
 
-    # Create tool-calling format using inline special-token tags
-    messages = []
-
-    # Format the tool call with inline result
-    tool_call_content = format_tool_call_with_result(
-        tool_name="read_file", arguments={"file_path": sample_path}, result=content
-    )
-
-    # Single assistant message with inline tool call and result
-    messages.append({"role": "assistant", "content": tool_call_content})
+    # Two messages: assistant calls the read_file tool, tool returns
+    # the file content. Keeping the result in a separate `tool` role
+    # message (outside the assistant_mask region) prevents the model
+    # from being trained to memorize file content as if it generated it.
+    messages = [
+        {
+            "role": "assistant",
+            "content": format_tool_input(
+                tool_name="read_file", arguments={"file_path": sample_path}
+            ),
+        },
+        {
+            "role": "tool",
+            "content": format_tool_output(content),
+        },
+    ]
 
     return messages

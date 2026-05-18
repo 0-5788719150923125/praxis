@@ -8,7 +8,7 @@ from typing import Dict, List
 from transformers import PreTrainedTokenizer
 
 from praxis.data.config import SYSTEM_PROMPT, sample_developer_prompt
-from praxis.tools import format_tool_call_with_result
+from praxis.tools import format_tool_input, format_tool_output
 
 
 def _log_weighted_int(lo: int, hi: int) -> int:
@@ -162,38 +162,49 @@ def format_tool_calling(
 
     # Rare get_tools() probe - the schema dump is byte-identical across
     # samples, so a high frequency makes it the most-memorized chunk in
-    # this corpus and leaks (without its [TOOL_RESULT] tags) when packing
-    # splits the doc mid-dump. 1% is enough to teach "you can introspect
-    # your tools" without dominating the loss surface.
+    # this corpus. 1% is enough to teach "you can introspect your tools"
+    # without dominating the loss surface.
     if random.random() < 0.01:
         from praxis.tools import get_tools_json_schema
 
         tools_json = json.dumps(get_tools_json_schema(), indent=2)
-
-        # Format tool call with inline result using new tag format
-        tool_call_content = format_tool_call_with_result(
-            tool_name="get_tools", arguments={}, result=tools_json
-        )
-
         messages.append(
             {
                 "role": "assistant",
-                "content": tool_call_content,
+                "content": format_tool_input(tool_name="get_tools", arguments={}),
+            }
+        )
+        messages.append(
+            {
+                "role": "tool",
+                "content": format_tool_output(tools_json),
             }
         )
 
-    # Always call calc tool - inline format with result and response
-    tool_call_content = format_tool_call_with_result(
-        tool_name="calc",
-        arguments={"values": values, "op": operation},
-        result=str(float(result)),
-    )
-
-    # Append the result phrase right after the tool output in the same message
+    # Calc tool call. Three messages: assistant emits the call, tool
+    # emits the result, assistant emits the natural-language phrase.
+    # Splitting the tool result into its own role keeps it outside the
+    # assistant_mask region so the model isn't trained to predict
+    # runtime-injected content.
     messages.append(
         {
             "role": "assistant",
-            "content": f"{tool_call_content} {result_phrase}",
+            "content": format_tool_input(
+                tool_name="calc",
+                arguments={"values": values, "op": operation},
+            ),
+        }
+    )
+    messages.append(
+        {
+            "role": "tool",
+            "content": format_tool_output(str(float(result))),
+        }
+    )
+    messages.append(
+        {
+            "role": "assistant",
+            "content": result_phrase,
         }
     )
 

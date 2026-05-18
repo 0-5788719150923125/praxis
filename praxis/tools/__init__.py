@@ -327,5 +327,4 @@ from praxis.tools.tags import (
     has_tool_output_ids,
     parse_tool_call,
     tool_token_ids,
-    zero_tool_result_regions,
 )

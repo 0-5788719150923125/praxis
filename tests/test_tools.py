@@ -36,7 +36,6 @@ from praxis.tools import (
     parse_tool_call,
     tool_token_ids,
     validate_tool_arguments,
-    zero_tool_result_regions,
 )
 
 
@@ -249,73 +248,6 @@ def test_has_complete_tool_call_and_output_ids():
     assert has_tool_output_ids(complete, tok) is True
 
 
-def test_zero_tool_result_regions_masks_marker_inclusive_span():
-    """[TOOL_RESULT]...[/TOOL_RESULT] (markers included) must be zeroed
-    in the assistant_mask. The runtime injects the markers and body at
-    inference, so any loss spent there is wasted."""
-    tok = ByteLevelTokenizer()
-    # An assistant turn shaped like our training data:
-    # call -> result -> trailing response. Loss should fire on the call
-    # and the response, but not the result block.
-    call = format_tool_input("calc", {"values": [2, 3], "op": "add"})
-    result = format_tool_output(5)
-    response = " The sum is 5."
-    text = call + "\n" + result + response
-    ids = list(tok.encode(text, add_special_tokens=False))
-    mask = torch.ones(len(ids), dtype=torch.uint8)
-
-    out = zero_tool_result_regions(torch.as_tensor(ids), mask, tok)
-
-    open_pos = ids.index(tok.tool_result_token_id)
-    close_pos = ids.index(tok.tool_result_end_token_id)
-    # The full inclusive span is masked.
-    assert out[open_pos : close_pos + 1].sum() == 0
-    # Nothing outside the span was touched.
-    assert out[:open_pos].sum() == open_pos
-    assert out[close_pos + 1 :].sum() == len(ids) - (close_pos + 1)
-
-
-def test_zero_tool_result_regions_noop_without_result_block():
-    tok = ByteLevelTokenizer()
-    text = format_tool_input("calc", {"values": [1], "op": "sqrt"}) + " hello"
-    ids = list(tok.encode(text, add_special_tokens=False))
-    mask = torch.ones(len(ids), dtype=torch.uint8)
-    out = zero_tool_result_regions(torch.as_tensor(ids), mask, tok)
-    assert torch.equal(out, mask)
-
-
-def test_zero_tool_result_regions_open_without_close_zeros_to_end():
-    """A truncated/malformed result block (open with no close) zeros
-    from the open through end-of-sequence. This protects training when
-    a doc gets split across a packing boundary mid-result."""
-    tok = ByteLevelTokenizer()
-    text = f"hello {TOOL_RESULT_OPEN}\nbody with no close..."
-    ids = list(tok.encode(text, add_special_tokens=False))
-    mask = torch.ones(len(ids), dtype=torch.uint8)
-    out = zero_tool_result_regions(torch.as_tensor(ids), mask, tok)
-    open_pos = ids.index(tok.tool_result_token_id)
-    assert out[:open_pos].sum() == open_pos
-    assert out[open_pos:].sum() == 0
-
-
-def test_zero_tool_result_regions_handles_multiple_spans():
-    tok = ByteLevelTokenizer()
-    block = format_tool_call_with_result(
-        "calc", {"values": [1, 2], "op": "add"}, 3
-    )
-    text = block + "\n" + block
-    ids = list(tok.encode(text, add_special_tokens=False))
-    mask = torch.ones(len(ids), dtype=torch.uint8)
-    out = zero_tool_result_regions(torch.as_tensor(ids), mask, tok)
-    # Both [TOOL_RESULT] open positions and both [/TOOL_RESULT] close
-    # positions must be inside masked regions.
-    open_id = tok.tool_result_token_id
-    close_id = tok.tool_result_end_token_id
-    for i, tid in enumerate(ids):
-        if tid in (open_id, close_id):
-            assert out[i] == 0
-
-
 def test_build_result_splice_ids_separates_markers_with_newlines():
     tok = ByteLevelTokenizer()
     spliced = build_result_splice_ids(tok, 42)
@@ -485,7 +417,14 @@ def test_find_unprocessed_returns_malformed_for_bad_json_body():
 
 
 def test_synthetic_formatter_emits_atomic_tool_boundaries_in_tokens():
-    """format_tool_calling's output must produce atomic tool-token ids."""
+    """format_tool_calling's output must produce atomic tool-token ids.
+
+    After the tool-role refactor, the call and result live in separate
+    messages: an ``assistant`` message holds ``[TOOL_CALL]...[/TOOL_CALL]``
+    and a ``tool`` message holds ``[TOOL_RESULT]...[/TOOL_RESULT]``. This
+    test verifies all four atomic ids are present across the conversation,
+    just not within a single message anymore.
+    """
     import random
 
     random.seed(7)
@@ -493,14 +432,23 @@ def test_synthetic_formatter_emits_atomic_tool_boundaries_in_tokens():
 
     tok = ByteLevelTokenizer()
     doc = format_tool_calling({}, [], tok)
-    content = doc["messages"][-1]["content"]
-    assert TOOL_CALL_OPEN in content
-    assert TOOL_CALL_CLOSE in content
-    assert TOOL_RESULT_OPEN in content
-    assert TOOL_RESULT_CLOSE in content
 
-    ids = tok.encode(content, add_special_tokens=False)
-    assert tok.tool_call_token_id in ids
-    assert tok.tool_call_end_token_id in ids
-    assert tok.tool_result_token_id in ids
-    assert tok.tool_result_end_token_id in ids
+    # Find the assistant message with the tool call and the tool message
+    # with the result. Earlier system / developer / user messages skip past.
+    call_msg = next(
+        m for m in doc["messages"]
+        if m["role"] == "assistant" and TOOL_CALL_OPEN in m["content"]
+    )
+    result_msg = next(m for m in doc["messages"] if m["role"] == "tool")
+
+    assert TOOL_CALL_OPEN in call_msg["content"]
+    assert TOOL_CALL_CLOSE in call_msg["content"]
+    assert TOOL_RESULT_OPEN in result_msg["content"]
+    assert TOOL_RESULT_CLOSE in result_msg["content"]
+
+    call_ids = tok.encode(call_msg["content"], add_special_tokens=False)
+    result_ids = tok.encode(result_msg["content"], add_special_tokens=False)
+    assert tok.tool_call_token_id in call_ids
+    assert tok.tool_call_end_token_id in call_ids
+    assert tok.tool_result_token_id in result_ids
+    assert tok.tool_result_end_token_id in result_ids
