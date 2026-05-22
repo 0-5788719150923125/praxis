@@ -330,7 +330,7 @@ export function toggleRunSelection(hash) {
 /**
  * Format a relative time string from a timestamp
  */
-function formatRelativeTime(timestamp) {
+export function formatRelativeTime(timestamp) {
     if (!timestamp) return 'unknown';
     const now = Date.now() / 1000;
     const diff = now - timestamp;

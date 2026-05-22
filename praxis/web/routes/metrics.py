@@ -524,6 +524,7 @@ def get_runs():
                     "metrics_updated": stat.st_mtime,
                     "num_steps": num_steps,
                     "has_metrics": metrics_file.exists(),
+                    "has_dynamics": (run_path / "dynamics.db").exists(),
                 }
             )
 

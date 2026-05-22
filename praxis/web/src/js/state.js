@@ -210,7 +210,11 @@ export const state = {
         loaded: false,
         data: null,
         lastStep: 0,  // Track last loaded step for incremental updates
-        error: null
+        error: null,
+        // Run picker (single-select; current run by default)
+        availableRuns: [],     // runs with has_dynamics=true
+        selectedRun: null,     // hash; null => current run
+        runSelectorOpen: false
     }
 };
 

@@ -62,12 +62,20 @@ def get_dynamics():
         # Get query parameters
         since_step = int(request.args.get("since", 0))
         limit = int(request.args.get("limit", 1000))
+        runs_param = request.args.get("runs", "")
 
-        api_logger.debug(f"Dynamics request: since={since_step}, limit={limit}")
-
-        # Get current run directory
         current_hash = current_app.config.get("truncated_hash", "unknown")
-        run_dir = Path("build/runs") / current_hash
+        if runs_param:
+            requested = [h.strip() for h in runs_param.split(",") if h.strip()]
+            target_hash = requested[0] if requested else current_hash
+        else:
+            target_hash = current_hash
+
+        api_logger.debug(
+            f"Dynamics request: since={since_step}, limit={limit}, run={target_hash}"
+        )
+
+        run_dir = Path("build/runs") / target_hash
         dynamics_file = run_dir / "dynamics.db"
 
         # Check if dynamics data exists
@@ -143,6 +151,8 @@ def get_dynamics():
         # the description never drifts from the implementation.
         from praxis.metrics import get_metric_descriptions
 
+        # Descriptions come from the live model; for historical runs we still
+        # serve them (chart subtitles fall back to inline text per-key).
         generator = current_app.config.get("generator")
         live_model = (
             getattr(generator, "model", None) if generator else None
@@ -154,7 +164,7 @@ def get_dynamics():
             "status": "ok",
             "runs": [
                 {
-                    "hash": current_hash,
+                    "hash": target_hash,
                     "metadata": {
                         "num_points": dynamics_data["num_points"],
                         "last_step": dynamics_data.get("last_step", 0),

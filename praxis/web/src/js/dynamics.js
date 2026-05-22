@@ -6,6 +6,7 @@
 import { state, CONSTANTS } from './state.js';
 import { fetchAPI } from './api.js';
 import { createTabHeader } from './components.js';
+import { formatRelativeTime } from './charts.js';
 
 // Chart instances
 export const dynamicsCharts = {};
@@ -59,6 +60,45 @@ export function updateDynamicsChartColors() {
 }
 
 /**
+ * Load the list of runs that have dynamics data, for the picker dropdown.
+ * Filters /api/runs to entries with has_dynamics=true. Idempotent.
+ */
+async function loadAvailableDynamicsRuns() {
+    try {
+        const response = await fetch('/api/runs');
+        if (!response.ok) return [];
+        const data = await response.json();
+        const all = data.runs || [];
+        state.dynamics.availableRuns = all.filter(r => r.has_dynamics);
+        return state.dynamics.availableRuns;
+    } catch (error) {
+        console.error('[Dynamics] Failed to load run list:', error);
+        return [];
+    }
+}
+
+/**
+ * Toggle the dropdown open/closed.
+ */
+export function toggleDynamicsRunSelector() {
+    state.dynamics.runSelectorOpen = !state.dynamics.runSelectorOpen;
+    const dropdown = document.getElementById('dynamics-run-selector-dropdown');
+    if (dropdown) {
+        dropdown.style.display = state.dynamics.runSelectorOpen ? 'block' : 'none';
+    }
+}
+
+/**
+ * Select a run (single-select); null = current run.
+ */
+export function selectDynamicsRun(hash) {
+    state.dynamics.selectedRun = hash || null;
+    state.dynamics.runSelectorOpen = false;
+    state.dynamics.loaded = false;
+    loadDynamicsWithCharts(true);
+}
+
+/**
  * Load and render learning dynamics
  */
 export async function loadDynamicsWithCharts(force = false) {
@@ -72,7 +112,11 @@ export async function loadDynamicsWithCharts(force = false) {
     container.innerHTML = '<div class="loading-placeholder">Loading learning dynamics...</div>';
 
     try {
-        const response = await fetch(`/api/dynamics?since=0&limit=1000`);
+        await loadAvailableDynamicsRuns();
+        const runQuery = state.dynamics.selectedRun
+            ? `&runs=${encodeURIComponent(state.dynamics.selectedRun)}`
+            : '';
+        const response = await fetch(`/api/dynamics?since=0&limit=1000${runQuery}`);
 
         if (!response.ok) {
             throw new Error(`API returned ${response.status}`);
@@ -108,6 +152,51 @@ export async function loadDynamicsWithCharts(force = false) {
 }
 
 /**
+ * Build the single-select runs dropdown (HTML string). Uses the same
+ * .run-selector-* CSS as the Research tab, scoped via a #dynamics- prefix
+ * so events can target the dynamics picker specifically.
+ */
+function renderDynamicsRunSelector() {
+    const runs = state.dynamics.availableRuns || [];
+    if (runs.length === 0) return '';
+
+    const selected = state.dynamics.selectedRun;
+    const activeRun = runs.find(r => r.hash === selected)
+        || runs.find(r => r.is_current)
+        || runs[0];
+    const label = activeRun ? activeRun.hash : 'Run';
+
+    return `
+        <div class="run-selector-wrapper">
+            <button class="run-selector-button" id="dynamics-run-selector-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                    <path d="M8 1a7 7 0 1 0 4.95 11.95l.707.707A8.001 8.001 0 1 1 8 0v1z"/>
+                    <path d="M7.5 3a.5.5 0 0 1 .5.5v5.21l3.248 1.856a.5.5 0 0 1-.496.868l-3.5-2A.5.5 0 0 1 7 9V3.5a.5.5 0 0 1 .5-.5z"/>
+                </svg>
+                Run: ${label}
+            </button>
+            <div class="run-selector-dropdown" id="dynamics-run-selector-dropdown" style="display: none;">
+                <div class="run-selector-header">Select Run</div>
+                <div class="run-selector-list">
+                    ${runs.map(run => {
+                        const isActive = run.hash === (activeRun ? activeRun.hash : null);
+                        const time = formatRelativeTime(run.metrics_updated);
+                        const badge = run.is_current ? ' <span style="opacity: 0.6; font-size: 0.8em;">(active)</span>' : '';
+                        return `
+                            <label class="run-selector-item">
+                                <input type="radio" name="dynamics-run" ${isActive ? 'checked' : ''} data-dynamics-run-hash="${run.hash}">
+                                <span class="run-label">${run.hash}${badge}</span>
+                                <span class="run-steps">${run.num_steps} steps &middot; ${time}</span>
+                            </label>
+                        `;
+                    }).join('')}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+/**
  * Render empty state
  */
 function renderEmptyState(container, message) {
@@ -120,6 +209,7 @@ function renderEmptyState(container, message) {
 
     const headerHTML = createTabHeader({
         title: 'Learning Dynamics',
+        additionalContent: renderDynamicsRunSelector(),
         buttons: [{
             id: 'refresh-dynamics-btn',
             label: 'Refresh',
@@ -284,6 +374,7 @@ function renderDynamicsCharts(runData, container) {
 
     const headerHTML = createTabHeader({
         title: 'Learning Dynamics',
+        additionalContent: renderDynamicsRunSelector(),
         buttons: [{
             id: 'refresh-dynamics-btn',
             label: 'Refresh',

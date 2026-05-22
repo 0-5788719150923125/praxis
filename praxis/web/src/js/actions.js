@@ -7,6 +7,7 @@ import { state } from './state.js';
 import { render } from './render.js';
 import { storage, readFormValues, FORM_FIELDS } from './config.js';
 import { toggleRunSelector, toggleRunSelection } from './charts.js';
+import { toggleDynamicsRunSelector, selectDynamicsRun } from './dynamics.js';
 import { loadResearchMetrics, loadDynamics } from './tabs.js';
 import { sendMessage, testApiConnection } from './api.js';
 
@@ -289,6 +290,20 @@ export const ACTION_HANDLERS = {
      */
     TOGGLE_RUN: (runHash) => {
         toggleRunSelection(runHash);
+    },
+
+    /**
+     * Toggle the Dynamics tab run selector dropdown
+     */
+    TOGGLE_DYNAMICS_RUN_SELECTOR: () => {
+        toggleDynamicsRunSelector();
+    },
+
+    /**
+     * Select a single run for the Dynamics tab (single-select)
+     */
+    SELECT_DYNAMICS_RUN: (runHash) => {
+        selectDynamicsRun(runHash);
     },
 
     /**
