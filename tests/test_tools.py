@@ -251,16 +251,29 @@ def test_has_complete_tool_call_and_output_ids():
 def test_build_result_splice_ids_separates_markers_with_newlines():
     tok = ByteLevelTokenizer()
     spliced = build_result_splice_ids(tok, 42)
-    # Splice begins with a leading newline so it doesn't butt up against
-    # the preceding [/TOOL_CALL]; the result markers themselves stay
-    # atomic and the body is wrapped in newlines.
-    assert spliced[-1] == tok.tool_result_end_token_id
+    # The splice mirrors the chat-template's multi-turn structure:
+    #   \n[SEP]\n[BOS]tool\n[TOOL_RESULT]\n42\n[/TOOL_RESULT]\n[SEP]\n[BOS]assistant\n
+    # The result markers stay atomic, the body is wrapped in newlines,
+    # and the splice ends with a fresh [BOS]assistant role transition
+    # so the model is in the same context it was supervised in.
     assert tok.tool_result_token_id in spliced
+    assert tok.tool_result_end_token_id in spliced
+
     open_pos = spliced.index(tok.tool_result_token_id)
-    assert open_pos > 0  # leading newline before [TOOL_RESULT]
-    body_text = tok.decode(spliced[open_pos + 1 : -1], skip_special_tokens=True)
+    close_pos = spliced.index(tok.tool_result_end_token_id)
+    body_text = tok.decode(spliced[open_pos + 1 : close_pos], skip_special_tokens=True)
     assert body_text.strip() == "42"
     assert body_text.startswith("\n") and body_text.endswith("\n")
+
+    # SEP appears both before and after the tool turn; BOS appears for
+    # both the tool role and the trailing assistant role.
+    assert spliced.count(tok.sep_token_id) == 2
+    assert spliced.count(tok.bos_token_id) == 2
+
+    # The trailing role marker is `assistant`, so the model picks up in
+    # the right turn for its natural-language follow-up.
+    tail = tok.decode(spliced[-len(b"assistant\n") :], skip_special_tokens=True)
+    assert tail.strip() == "assistant"
 
 
 def test_roundtrip_splice_preserves_pending_call_detection():

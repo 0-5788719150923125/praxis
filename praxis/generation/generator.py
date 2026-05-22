@@ -1,28 +1,37 @@
 """Text generation with request queuing and inline tool calling support.
 
 Tool calls are marked by atomic special tokens ``[TOOL_CALL]`` /
-``[/TOOL_CALL]``. The generator halts on ``[/TOOL_CALL]`` via the
-tokenizer's eos_token_id set, executes the tool, and splices
-``[TOOL_RESULT] result [/TOOL_RESULT]`` as tokens (not text) before
-continuing.
+``[/TOOL_CALL]``. Both boundaries sit in the tokenizer's
+``eos_token_id`` set so generation halts at each one:
+
+- On ``[TOOL_CALL]`` open, we switch to deterministic decoding (greedy,
+  no temperature/top-k/top-p) for the JSON body - any sampling noise in
+  there breaks the downstream parse.
+- On ``[/TOOL_CALL]`` close, we execute the tool, splice the real
+  ``[TOOL_RESULT]`` block (with role transitions matching the chat
+  template), restore the caller's sampling params, and resume.
 """
 
 import contextlib
-import json
+import logging
 import time
 import uuid
 from queue import Queue
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import torch
 from transformers import GenerationConfig
 
 from praxis.generation.request import GenerationRequest
 from praxis.tools import (
+    STOP_TOOL_LOOP,
     build_result_splice_ids,
+    execute_tool_call,
     find_unprocessed_tool_call_ids,
     tool_token_ids,
 )
+
+_log = logging.getLogger("praxis.generation")
 
 
 class Generator:
@@ -71,10 +80,11 @@ class Generator:
     def _eos_token_id_list(self) -> Optional[list]:
         """Build the eos_token_id list for a chat-style generation.
 
-        The model halts on any of these token ids. The tool-call close
-        token is always included when the tokenizer knows about it -
-        that way generation halts cleanly at ``[/TOOL_CALL]`` so the
-        tool can be executed.
+        Generation halts on any of these. Both tool-call boundaries are
+        included when the tokenizer knows about them: halting on
+        ``[TOOL_CALL]`` open lets us switch to deterministic decoding for
+        the JSON body, halting on ``[/TOOL_CALL]`` close lets us execute
+        the tool before resuming.
         """
         ids = []
         eos = getattr(self.tokenizer, "eos_token_id", None)
@@ -83,9 +93,11 @@ class Generator:
         sep = getattr(self.tokenizer, "sep_token_id", None)
         if sep is not None:
             ids.append(int(sep))
-        tool_close = tool_token_ids(self.tokenizer).get("call_close")
-        if tool_close is not None and tool_close not in ids:
-            ids.append(int(tool_close))
+        tt = tool_token_ids(self.tokenizer)
+        for key in ("call_open", "call_close"):
+            tid = tt.get(key)
+            if tid is not None and tid not in ids:
+                ids.append(int(tid))
         return ids or None
 
     def request_generation(self, prompt, kwargs={}) -> str:
@@ -132,174 +144,163 @@ class Generator:
         )
         return self._process_single_request(request)
 
-    def _process_single_request(self, request: GenerationRequest):
-        """Process a generation request, executing any tool calls in line.
+    def _prepare_inputs(
+        self, request: GenerationRequest
+    ) -> Tuple[torch.Tensor, Dict[str, Any], int, bool]:
+        """Resolve a request into model-ready inputs and generation kwargs.
 
-        The flow is a single loop:
-          1. Generate up to the next stop token (eos / sep / ``[/TOOL_CALL]``).
-          2. Look for an unprocessed tool call past ``processed_position``.
-          3. If found, execute it, splice the real ``[TOOL_RESULT]`` ids,
-             advance ``processed_position`` past the splice, and continue
-             generating.
-          4. If not found, return the decoded text.
-
-        ``processed_position`` is the only way the loop knows a call has
-        been handled - the model's own ``[TOOL_RESULT]`` output is treated
-        as text, not as proof of execution. This stops the model from
-        fooling us with a hallucinated result block.
+        Returns ``(input_ids, gen_kwargs, max_new_tokens, skip_special_tokens)``.
+        ``gen_kwargs`` is the per-step kwargs dict (already merged with
+        defaults and stripped of our own non-HF keys like ``truncate_to``).
         """
-        start_time = time.time()
-        tool_call_history: list = []
-
         if isinstance(request.prompt, list):
             try:
                 prompt_text = self.tokenizer.apply_chat_template(
                     request.prompt, tokenize=False, add_generation_prompt=True
                 )
             except Exception as e:
-                print(f"[ERROR] Failed to apply chat template: {e}")
+                _log.error(f"Failed to apply chat template: {e}")
                 prompt_text = "\n".join(
                     [f"{m['role']}: {m['content']}" for m in request.prompt]
                 )
-            input_ids = self.tokenizer.encode(prompt_text)
-            return_text = prompt_text
         else:
             prompt_text = request.prompt
-            input_ids = self.tokenizer.encode(request.prompt)
-            return_text = request.prompt
 
+        ids = self.tokenizer.encode(prompt_text)
         model_device = next(self.model.parameters()).device
-        if isinstance(input_ids, list):
-            input_ids = torch.tensor([input_ids], dtype=torch.long, device=model_device)
-        elif input_ids.device != model_device:
-            input_ids = input_ids.to(model_device)
+        if isinstance(ids, list):
+            input_ids = torch.tensor([ids], dtype=torch.long, device=model_device)
+        else:
+            input_ids = ids.to(model_device) if ids.device != model_device else ids
 
-        defaults = dict(
-            do_sample=True,
-            renormalize_logits=True,
-            remove_invalid_values=True,
-        )
+        gen_kwargs: Dict[str, Any] = {
+            "do_sample": True,
+            "renormalize_logits": True,
+            "remove_invalid_values": True,
+        }
         eos_list = self._eos_token_id_list()
         if eos_list:
-            defaults["eos_token_id"] = eos_list
-        combined = {**defaults, **request.kwargs}
+            gen_kwargs["eos_token_id"] = eos_list
+        # Caller overrides win, except for our own keys handled below.
+        gen_kwargs.update(request.kwargs)
 
-        if "prompt" in combined:
-            del combined["prompt"]
-        skip_special_tokens = True
-        if "skip_special_tokens" in combined:
-            if combined["skip_special_tokens"] is False:
-                skip_special_tokens = False
-            del combined["skip_special_tokens"]
-        if "truncate_to" in combined:
-            truncate_to = combined["truncate_to"]
-            if input_ids.size(1) > truncate_to:
-                input_ids = input_ids[:, -truncate_to:]
-            del combined["truncate_to"]
+        gen_kwargs.pop("prompt", None)
+        skip_special_tokens = not (gen_kwargs.pop("skip_special_tokens", True) is False)
+        truncate_to = gen_kwargs.pop("truncate_to", None)
+        if truncate_to is not None and input_ids.size(1) > truncate_to:
+            input_ids = input_ids[:, -truncate_to:]
 
-        original_max_tokens = int(combined.get("max_new_tokens", 100))
-        original_prompt_length = input_ids.shape[1]
-        generated_tokens = input_ids
+        max_new_tokens = int(gen_kwargs.get("max_new_tokens", 100))
+        return input_ids, gen_kwargs, max_new_tokens, skip_special_tokens
+
+    def _process_single_request(self, request: GenerationRequest) -> str:
+        """Process a request, halting at tool-call boundaries to (a) switch
+        into deterministic decoding for the JSON body and (b) execute the
+        tool when it closes.
+
+        The state machine has three halt-token cases:
+          - ``[TOOL_CALL]`` open  -> enter deterministic mode and keep going
+          - ``[/TOOL_CALL]`` close -> execute, splice the real result, exit
+            deterministic mode and keep going
+          - ``[EOS]`` / ``[SEP]`` / max_new_tokens hit -> done
+
+        ``[TOOL_RESULT]`` blocks the model emits itself are ignored: a call
+        is only marked "processed" after we splice a real result for it.
+        """
+        input_ids, gen_kwargs, max_new_tokens, skip_special_tokens = (
+            self._prepare_inputs(request)
+        )
+
+        tt = tool_token_ids(self.tokenizer)
+        call_open_id = tt.get("call_open")
+        call_close_id = tt.get("call_close")
+        tools_enabled = bool(self.tools and self.call_tool and call_close_id is not None)
+
+        start_time = time.time()
+        history: list = []
+        tokens = input_ids
+        initial_len = tokens.shape[1]
+        in_tool_call = False
         tool_call_depth = 0
 
         with self._eval_mode():
             while True:
-                tokens_used = generated_tokens.shape[1] - original_prompt_length
-                remaining_tokens = max(0, original_max_tokens - tokens_used)
-                if remaining_tokens <= 0:
+                remaining = max_new_tokens - (tokens.shape[1] - initial_len)
+                if remaining <= 0:
                     break
 
-                step_kwargs = dict(combined)
-                step_kwargs["max_new_tokens"] = remaining_tokens
-                generation_config = GenerationConfig(**step_kwargs)
+                step_kwargs = dict(gen_kwargs)
+                step_kwargs["max_new_tokens"] = remaining
+                if in_tool_call:
+                    # Tool-call JSON is a parsing target, not creative
+                    # output: any sampling noise breaks the downstream
+                    # decode. Greedy is the right policy here.
+                    step_kwargs["do_sample"] = False
+                    for key in ("temperature", "top_k", "top_p", "renormalize_logits"):
+                        step_kwargs.pop(key, None)
+
                 outputs = self.model.generate(
-                    generated_tokens,
-                    generation_config=generation_config,
+                    tokens,
+                    generation_config=GenerationConfig(**step_kwargs),
                     tokenizer=self.tokenizer,
                     return_dict_in_generate=True,
                 )
-                new_generated = outputs.sequences
-                if new_generated.shape[1] <= generated_tokens.shape[1]:
-                    generated_tokens = new_generated
+                if outputs.sequences.shape[1] <= tokens.shape[1]:
+                    tokens = outputs.sequences
                     break
-                generated_tokens = new_generated
+                tokens = outputs.sequences
+                last_token = int(tokens[0, -1].item())
 
-                # Scan from position 0: in streaming mode the [TOOL_CALL]
-                # open may live in the prompt (added on a prior tick) and
-                # only [/TOOL_CALL] is fresh. The parser's complete-result
-                # heuristic skips calls we've already spliced for.
-                token_list = generated_tokens[0].tolist()
-                unprocessed = (
-                    find_unprocessed_tool_call_ids(token_list, self.tokenizer)
-                    if self.tools and self.call_tool is not None
-                    else None
-                )
-                if unprocessed is None:
-                    break
+                if tools_enabled and last_token == call_open_id:
+                    in_tool_call = True
+                    continue
 
-                if tool_call_depth >= self.max_tool_calls_per_request:
-                    print(
-                        f"[TOOL_SAFETY] Maximum tool call depth "
-                        f"({self.max_tool_calls_per_request}) reached."
+                if tools_enabled and last_token == call_close_id:
+                    if tool_call_depth >= self.max_tool_calls_per_request:
+                        _log.info(
+                            f"[TOOL_SAFETY] Max tool-call depth "
+                            f"({self.max_tool_calls_per_request}) reached."
+                        )
+                        break
+                    if time.time() - start_time > self.max_tool_call_time:
+                        _log.info(
+                            f"[TOOL_SAFETY] Tool-call timeout "
+                            f"({self.max_tool_call_time}s) exceeded."
+                        )
+                        break
+
+                    token_list = tokens[0].tolist()
+                    unprocessed = find_unprocessed_tool_call_ids(
+                        token_list, self.tokenizer
                     )
-                    break
-                if time.time() - start_time > self.max_tool_call_time:
-                    print(
-                        f"[TOOL_SAFETY] Tool calling timeout "
-                        f"({self.max_tool_call_time}s) exceeded."
+                    if unprocessed is None:
+                        in_tool_call = False
+                        break
+
+                    tool_call, call_end_index = unprocessed
+                    payload = execute_tool_call(
+                        tool_call, history, self.call_tool, log=_log.info
                     )
-                    break
+                    if payload is STOP_TOOL_LOOP:
+                        break
 
-                tool_call, call_end_index = unprocessed
+                    result_ids = build_result_splice_ids(self.tokenizer, payload)
+                    spliced = (
+                        token_list[:call_end_index]
+                        + list(result_ids)
+                        + token_list[call_end_index:]
+                    )
+                    tokens = torch.tensor(
+                        [spliced], dtype=torch.long, device=tokens.device
+                    )
+                    tool_call_depth += 1
+                    in_tool_call = False
+                    continue
 
-                if tool_call.get("_malformed"):
-                    err = tool_call.get("_error", "malformed tool call")
-                    print(f"Error: {err}")
-                    result_payload = f"Error: {err}"
-                else:
-                    tool_name = tool_call.get("name") or tool_call.get("tool") or (
-                        tool_call.get("function", {}) or {}
-                    ).get("name")
-                    tool_args = tool_call.get("arguments", {})
+                # EOS / SEP / max-tokens halt: done.
+                break
 
-                    if tool_name is None:
-                        print(f"Error: Could not extract tool name from: {tool_call}")
-                        result_payload = "Error: tool call is missing the 'name' field."
-                    else:
-                        signature = (tool_name, json.dumps(tool_args, sort_keys=True))
-                        if signature in tool_call_history:
-                            print(
-                                f"[TOOL_SAFETY] Duplicate tool call detected: "
-                                f"{tool_name}({tool_args}); stopping."
-                            )
-                            break
-                        tool_call_history.append(signature)
-
-                        try:
-                            tool_result = self.call_tool(tool_name, tool_args)
-                            print(f"Called tool: {tool_name} with args: {tool_args}")
-                            print(f"Tool result: {tool_result}")
-                            result_payload = tool_result
-                        except Exception as e:
-                            print(f"Error calling tool {tool_name}: {e}")
-                            result_payload = f"Error: {e}"
-
-                tool_call_depth += 1
-
-                result_ids = build_result_splice_ids(self.tokenizer, result_payload)
-                spliced = (
-                    list(token_list[:call_end_index])
-                    + list(result_ids)
-                    + list(token_list[call_end_index:])
-                )
-                generated_tokens = torch.tensor(
-                    [spliced], dtype=torch.long, device=model_device
-                )
-
-        return_text = self.tokenizer.decode(
-            generated_tokens[0], skip_special_tokens=skip_special_tokens
-        )
-        return return_text
+        return self.tokenizer.decode(tokens[0], skip_special_tokens=skip_special_tokens)
 
     def fulfill_requests(self, max_requests: int = None) -> int:
         """

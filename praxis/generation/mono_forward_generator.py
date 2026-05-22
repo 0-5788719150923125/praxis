@@ -13,7 +13,6 @@ consistent weight snapshot without explicit locking.
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 import uuid
@@ -24,8 +23,10 @@ import torch
 
 from praxis.generation.request import GenerationRequest
 from praxis.tools import (
+    STOP_TOOL_LOOP,
     build_result_splice_ids,
     call_tool,
+    execute_tool_call,
     find_unprocessed_tool_call_ids,
     get_tools_json_schema,
 )
@@ -179,47 +180,27 @@ class MonoForwardGenerator:
 
         depth = 0
 
+        # TODO: add deterministic decoding inside [TOOL_CALL] regions
+        # here too. The trainer.generate path streams tokens via a
+        # yielding loop rather than halt-and-resume, so it needs a
+        # different control-flow shape than Generator.
         while depth < self.max_tool_calls_per_request:
             unprocessed = find_unprocessed_tool_call_ids(token_ids, self.tokenizer)
             if not unprocessed:
                 break
-
-            tool_call, call_end_index = unprocessed
-
             if time.time() - start_time > self.max_tool_call_time:
                 _api_logger.info(f"[TOOL_SAFETY] Timeout after {depth} tool call(s).")
                 break
 
-            if tool_call.get("_malformed"):
-                err = tool_call.get("_error", "malformed tool call")
-                _api_logger.warning(f"Malformed tool call: {err}")
-                result_payload = f"Error: {err}"
-            else:
-                tool_name = tool_call.get("name") or tool_call.get("tool") or (
-                    tool_call.get("function", {}) or {}
-                ).get("name")
-                tool_args = tool_call.get("arguments", {})
-
-                if tool_name is None:
-                    _api_logger.warning(f"Could not extract tool name from: {tool_call}")
-                    result_payload = "Error: tool call is missing the 'name' field."
-                else:
-                    sig = (tool_name, json.dumps(tool_args, sort_keys=True))
-                    if sig in tool_history:
-                        _api_logger.info(f"[TOOL_SAFETY] Duplicate tool call: {tool_name}")
-                        break
-                    tool_history.append(sig)
-
-                    try:
-                        result = self.call_tool(tool_name, tool_args)
-                        _api_logger.info(f"Tool {tool_name}({tool_args}) -> {result}")
-                        result_payload = result
-                    except Exception as exc:
-                        _api_logger.error(f"Tool {tool_name} failed: {exc}")
-                        result_payload = f"Error: {exc}"
+            tool_call, call_end_index = unprocessed
+            payload = execute_tool_call(
+                tool_call, tool_history, self.call_tool, log=_api_logger.info
+            )
+            if payload is STOP_TOOL_LOOP:
+                break
 
             depth += 1
-            result_ids = build_result_splice_ids(self.tokenizer, result_payload)
+            result_ids = build_result_splice_ids(self.tokenizer, payload)
             token_ids = (
                 token_ids[:call_end_index]
                 + list(result_ids)

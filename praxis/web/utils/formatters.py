@@ -1,10 +1,26 @@
 """Message formatting utilities."""
 
 import logging
+import re
 import time
 from typing import Any, Dict, List, Optional
 
+from praxis.tools import get_tool_input_pattern, get_tool_output_pattern
+
 api_logger = logging.getLogger("praxis.web")
+
+# Combined regex that matches either a [TOOL_CALL]...[/TOOL_CALL] or a
+# [TOOL_RESULT]...[/TOOL_RESULT] block, including any trailing newline so
+# stripping doesn't leave a blank line behind.
+_TOOL_BLOCK_RE = re.compile(
+    rf"(?:{get_tool_input_pattern()}|{get_tool_output_pattern()})\n?",
+    re.DOTALL,
+)
+
+# Shown when the assistant turn contains only tool plumbing - the model
+# invoked tools but never spoke. Surfaces the empty case so it doesn't
+# look like a silent success.
+_EMPTY_REPLY_PLACEHOLDER = "(model invoked tools but did not reply)"
 
 
 def generate_from_messages(
@@ -159,5 +175,13 @@ def extract_assistant_reply(generated_text: str, tokenizer: Any) -> str:
     if assistant_reply.startswith("#RESPONSE"):
         # Remove '#RESPONSE' and any following whitespace/newlines
         assistant_reply = assistant_reply[len("#RESPONSE") :].lstrip()
+
+    # Drop inline tool plumbing - chat clients should only see the
+    # model's natural-language reply, not the runtime call/result
+    # exchange. If that leaves nothing, surface the empty case rather
+    # than silently returning ''.
+    assistant_reply = _TOOL_BLOCK_RE.sub("", assistant_reply).strip()
+    if not assistant_reply:
+        assistant_reply = _EMPTY_REPLY_PLACEHOLDER
 
     return assistant_reply

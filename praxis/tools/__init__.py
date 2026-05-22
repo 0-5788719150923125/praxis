@@ -307,6 +307,57 @@ def call_tool(name: str, arguments: Dict[str, Any]) -> Any:
     return tool(**arguments)
 
 
+# Sentinel returned by ``execute_tool_call`` when the caller should
+# break out of its loop instead of splicing another result.
+STOP_TOOL_LOOP = object()
+
+
+def execute_tool_call(
+    tool_call: Dict[str, Any],
+    history: List[tuple],
+    call_tool_fn: Any = call_tool,
+    log: Any = print,
+) -> Any:
+    """Run a parsed tool call dict and return what to splice as the result.
+
+    Centralises the malformed / missing-name / duplicate / exception
+    branching that both generators were repeating. ``history`` is mutated
+    in place to track executed (name, args) signatures across calls.
+
+    Returns:
+        - ``str`` payload to splice back as ``[TOOL_RESULT]``, OR
+        - ``STOP_TOOL_LOOP`` to signal the caller should break.
+    """
+    if tool_call.get("_malformed"):
+        err = tool_call.get("_error", "malformed tool call")
+        log(f"Malformed tool call: {err}")
+        return f"Error: {err}"
+
+    tool_name = (
+        tool_call.get("name")
+        or tool_call.get("tool")
+        or (tool_call.get("function", {}) or {}).get("name")
+    )
+    if tool_name is None:
+        log(f"Could not extract tool name from: {tool_call}")
+        return "Error: tool call is missing the 'name' field."
+
+    tool_args = tool_call.get("arguments", {})
+    signature = (tool_name, json.dumps(tool_args, sort_keys=True))
+    if signature in history:
+        log(f"[TOOL_SAFETY] Duplicate tool call: {tool_name}({tool_args})")
+        return STOP_TOOL_LOOP
+    history.append(signature)
+
+    try:
+        result = call_tool_fn(tool_name, tool_args)
+        log(f"Tool {tool_name}({tool_args}) -> {result}")
+        return result
+    except Exception as exc:
+        log(f"Tool {tool_name} failed: {exc}")
+        return f"Error: {exc}"
+
+
 # Export tag utilities for use across the codebase
 from praxis.tools.tags import (
     TOOL_CALL_CLOSE,

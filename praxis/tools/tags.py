@@ -220,14 +220,22 @@ def find_unprocessed_tool_call_ids(
             i = j
             continue
         # If a complete [TOOL_RESULT]...[/TOOL_RESULT] block follows
-        # (allowing whitespace between adjacent special tokens), treat
-        # this call as already handled. A bare [TOOL_RESULT] open
-        # without a matching close is the model mid-hallucinating - the
-        # call still needs real execution.
+        # before the next [TOOL_CALL], treat this call as already
+        # handled. The splice emitted by build_result_splice_ids puts
+        # SEP/BOS/role-name tokens between [/TOOL_CALL] and
+        # [TOOL_RESULT] to match the chat template, so the gap is no
+        # longer whitespace-only - scan past any non-special tokens
+        # until we hit either the result open or a new call open. A
+        # bare [TOOL_RESULT] open without a matching close is the
+        # model mid-hallucinating - the call still needs real
+        # execution.
         if result_open is not None and result_close is not None:
-            ws = _whitespace_token_ids(tokenizer)
             k = j + 1
-            while k < n and token_ids[k] in ws:
+            while (
+                k < n
+                and token_ids[k] != result_open
+                and token_ids[k] != call_open
+            ):
                 k += 1
             if k < n and token_ids[k] == result_open:
                 m = k + 1
@@ -288,23 +296,53 @@ def has_tool_output_ids(token_ids: Sequence[int], tokenizer) -> bool:
 
 
 def build_result_splice_ids(tokenizer, result: Any) -> List[int]:
-    """Encode ``\\n[TOOL_RESULT]\\n<result>\\n[/TOOL_RESULT]`` as a list of
-    token ids.
+    """Encode the post-tool-call splice as a list of token ids.
 
-    The leading newline separates the splice from the preceding
-    ``[/TOOL_CALL]``; the inner newlines keep the markers on their own
-    lines around the body. Open/close markers are single atomic tokens;
-    the body and surrounding whitespace are encoded as ordinary text.
+    The splice mirrors the multi-turn structure the chat template
+    produces at training time so inference stays in-distribution:
+
+        \\n[SEP]\\n[BOS]tool\\n
+        [TOOL_RESULT]\\n<result>\\n[/TOOL_RESULT]
+        \\n[SEP]\\n[BOS]assistant\\n
+
+    Matching the training format here is critical: the original inline
+    splice left the model in a context it had never been supervised in,
+    so it tended to emit EOS instead of a natural-language reply.
+
+    Falls back to a plain-text encoding when the tokenizer is missing
+    any of the required special-token ids (e.g. an older checkpoint).
     """
     result_open_id = _token_id_or_none(tokenizer, TOOL_RESULT_OPEN)
     result_close_id = _token_id_or_none(tokenizer, TOOL_RESULT_CLOSE)
-    if result_open_id is None or result_close_id is None:
+    sep_id = getattr(tokenizer, "sep_token_id", None)
+    bos_id = getattr(tokenizer, "bos_token_id", None)
+    if None in (result_open_id, result_close_id, sep_id, bos_id):
         return list(
             tokenizer.encode("\n" + format_tool_output(result), add_special_tokens=False)
         )
-    leading_ids = list(tokenizer.encode("\n", add_special_tokens=False))
+
+    nl_ids = list(tokenizer.encode("\n", add_special_tokens=False))
+    tool_role_ids = list(tokenizer.encode("tool", add_special_tokens=False))
+    assistant_role_ids = list(tokenizer.encode("assistant", add_special_tokens=False))
     body_ids = list(tokenizer.encode(f"\n{result}\n", add_special_tokens=False))
-    return [*leading_ids, result_open_id, *body_ids, result_close_id]
+
+    return [
+        *nl_ids,
+        int(sep_id),
+        *nl_ids,
+        int(bos_id),
+        *tool_role_ids,
+        *nl_ids,
+        result_open_id,
+        *body_ids,
+        result_close_id,
+        *nl_ids,
+        int(sep_id),
+        *nl_ids,
+        int(bos_id),
+        *assistant_role_ids,
+        *nl_ids,
+    ]
 
 
 def _whitespace_token_ids(tokenizer) -> set:
