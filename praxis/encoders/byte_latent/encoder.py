@@ -231,6 +231,17 @@ class ByteLatentEncoder(nn.Module):
         """Return the decoder's output projection for loss functions that need it."""
         return self.decoder.output
 
+    def get_regularizable_embeddings(self) -> List[torch.Tensor]:
+        """Embedding weight tensors that the model-level RMS regularizer
+        should bound. We expose the hash-embedding tables here since
+        those carry the bulk of the byte-latent vocabulary signal; the
+        local encoder/decoder byte embeddings are small (256-row) and
+        left alone.
+        """
+        if self.hash_embeds is None:
+            return []
+        return [emb.weight for emb in self.hash_embeds.embeddings]
+
     @property
     def outputs_are_aligned(self) -> bool:
         """

@@ -1,6 +1,7 @@
 """Agent discovery routes."""
 
 import concurrent.futures
+import json
 import os
 import subprocess
 import urllib.parse
@@ -21,21 +22,9 @@ from ..config import (
 agents_bp = Blueprint("agents", __name__)
 
 
-def handle_cors_preflight():
-    """Handle CORS preflight requests."""
-    response = jsonify({"status": "ok"})
-    response.headers.add("Access-Control-Allow-Origin", "*")
-    response.headers.add("Access-Control-Allow-Headers", "Content-Type")
-    response.headers.add("Access-Control-Allow-Methods", "GET, OPTIONS")
-    return response
-
-
-@agents_bp.route("/api/agents", methods=["GET", "OPTIONS"])
+@agents_bp.route("/api/agents", methods=["GET"])
 def get_agents():
     """Get git remotes as peer agents with their online/offline status."""
-    if request.method == "OPTIONS":
-        return handle_cors_preflight()
-
     agents = []
     self_instances = []  # Collect all self instances first
 
@@ -120,8 +109,6 @@ def get_agents():
 
             def check_local_port(port):
                 try:
-                    import json
-
                     spec_url = f"http://localhost:{port}/api/spec"
                     req = urllib.request.Request(spec_url)
                     with urllib.request.urlopen(
@@ -326,6 +313,4 @@ def get_agents():
         return jsonify({"agents": [], "error": str(e)}), 200
 
     response = jsonify({"agents": agents})
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
     return response

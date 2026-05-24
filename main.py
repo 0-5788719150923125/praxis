@@ -222,11 +222,19 @@ def _is_byte_latent_encoder(encoder_type: str) -> bool:
         return "byte_latent" in encoder_type
 
 
-def setup_environment():
+def setup_environment(no_docs: bool = False):
     """Set up the environment and configurations."""
 
     # Check for updates at startup
     check_for_updates()
+
+    if not no_docs:
+        try:
+            from praxis.docs import regenerate_docs
+
+            regenerate_docs()
+        except Exception as e:
+            print(f"[DOCS] Skipped auto-regeneration: {e}")
 
     # Configure environment variables
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -264,7 +272,7 @@ def main():
     processed_args = get_processed_args(args)
 
     # Set up environment (after arg parsing, so --help doesn't trigger heavy operations)
-    setup_environment()
+    setup_environment(no_docs=processed_args.get("no_docs", False))
 
     # Extract all processed arguments as local variables
     locals().update(processed_args)

@@ -1,17 +1,26 @@
 """Learning dynamics API routes for Expert learning visualization."""
 
+import json
 import math
 import re
 import sqlite3
+import traceback
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import torch
+import torch.nn as nn
 from flask import Blueprint, current_app, jsonify, request
+from torch.nn.parameter import UninitializedParameter
+
+from praxis.activations import ACT2CLS
+from praxis.metrics import get_metric_descriptions
+from praxis.web.app import api_logger
 
 dynamics_bp = Blueprint("dynamics", __name__)
 
 
-@dynamics_bp.route("/api/dynamics", methods=["GET", "OPTIONS"])
+@dynamics_bp.route("/api/dynamics", methods=["GET"])
 def get_dynamics():
     """Get learning dynamics data for expert learning visualization.
 
@@ -49,16 +58,7 @@ def get_dynamics():
 
         See docs/gradient_visualization_proposals.md for integration details.
     """
-    if request.method == "OPTIONS":
-        response = jsonify({"status": "ok"})
-        response.headers.add("Access-Control-Allow-Origin", "*")
-        response.headers.add("Access-Control-Allow-Headers", "Content-Type")
-        response.headers.add("Access-Control-Allow-Methods", "GET, OPTIONS")
-        return response
-
     try:
-        from ..app import api_logger
-
         # Get query parameters
         since_step = int(request.args.get("since", 0))
         limit = int(request.args.get("limit", 1000))
@@ -89,7 +89,6 @@ def get_dynamics():
                     "runs": [],
                 }
             )
-            response.headers.add("Access-Control-Allow-Origin", "*")
             return response
 
         api_logger.info(
@@ -102,8 +101,6 @@ def get_dynamics():
             dynamics_data = _read_dynamics_from_db(dynamics_file, since_step, limit * 3)
         except Exception as read_error:
             api_logger.error(f"Error reading dynamics database: {read_error}")
-            import traceback
-
             traceback.print_exc()
             response = jsonify(
                 {
@@ -112,7 +109,6 @@ def get_dynamics():
                     "runs": [],
                 }
             )
-            response.headers.add("Access-Control-Allow-Origin", "*")
             response.status_code = 500
             return response
 
@@ -125,7 +121,6 @@ def get_dynamics():
                     "runs": [],
                 }
             )
-            response.headers.add("Access-Control-Allow-Origin", "*")
             return response
 
         # Apply LTTB downsampling if we have more points than requested
@@ -149,8 +144,6 @@ def get_dynamics():
         # Pull live metric descriptions from whichever components the active
         # model exposes them on. Frontend uses these as chart subtitles, so
         # the description never drifts from the implementation.
-        from praxis.metrics import get_metric_descriptions
-
         # Descriptions come from the live model; for historical runs we still
         # serve them (chart subtitles fall back to inline text per-key).
         generator = current_app.config.get("generator")
@@ -177,18 +170,14 @@ def get_dynamics():
         }
 
         response = jsonify(response_data)
-        response.headers.add("Access-Control-Allow-Origin", "*")
         response.headers.add("Cache-Control", "max-age=5")
 
         return response
 
     except Exception as e:
-        from ..app import api_logger
-
         api_logger.error(f"Error in get_dynamics: {str(e)}")
 
         response = jsonify({"status": "error", "message": str(e), "runs": []})
-        response.headers.add("Access-Control-Allow-Origin", "*")
         response.status_code = 500
         return response
 
@@ -430,8 +419,6 @@ def _read_routing_weights_from_metrics(
         Dict with routing weight arrays keyed by expert_i_routing_weight
     """
     try:
-        import json
-
         conn = sqlite3.connect(f"file:{metrics_db_path}?mode=ro", uri=True)
         cursor = conn.cursor()
 
@@ -508,8 +495,6 @@ def _read_routing_weights_from_metrics(
 
     except Exception as e:
         print(f"Error reading routing weights from metrics: {e}")
-        import traceback
-
         traceback.print_exc()
         return None
 
@@ -558,20 +543,11 @@ def _compute_expert_metadata(
 # ─── Activation curves ──────────────────────────────────────────────────────
 
 
-@dynamics_bp.route("/api/activation_curves", methods=["GET", "OPTIONS"])
+@dynamics_bp.route("/api/activation_curves", methods=["GET"])
 def get_activation_curves():
     """Sample forward and derivative curves for every activation module in the
     live model, using their actual (learned) parameters.
     """
-    if request.method == "OPTIONS":
-        response = jsonify({"status": "ok"})
-        response.headers.add("Access-Control-Allow-Origin", "*")
-        response.headers.add("Access-Control-Allow-Headers", "Content-Type")
-        response.headers.add("Access-Control-Allow-Methods", "GET, OPTIONS")
-        return response
-
-    from ..app import api_logger
-
     try:
         generator = current_app.config.get("generator")
         model = getattr(generator, "model", None) if generator else None
@@ -583,7 +559,6 @@ def get_activation_curves():
                     "curves": [],
                 }
             )
-            response.headers.add("Access-Control-Allow-Origin", "*")
             return response
 
         try:
@@ -606,53 +581,28 @@ def get_activation_curves():
                 "curves": curves,
             }
         )
-        response.headers.add("Access-Control-Allow-Origin", "*")
         response.headers.add("Cache-Control", "max-age=5")
         return response
 
     except Exception as e:
         api_logger.error(f"Error in get_activation_curves: {e}")
-        import traceback
-
         traceback.print_exc()
         response = jsonify({"status": "error", "message": str(e), "curves": []})
-        response.headers.add("Access-Control-Allow-Origin", "*")
         response.status_code = 500
         return response
 
 
 def _activation_classes() -> tuple:
-    """Set of nn.Module subclasses considered activation functions.
+    """Module subclasses we treat as activations when walking a model.
 
-    Combines the Praxis/transformers ACT2FN registry with common stock
-    torch.nn activations that might appear in attention gates etc.
+    ``praxis.activations.ACT2CLS`` is the canonical registry (transformers
+    stock + our custom additions). We additionally include a few stock
+    ``nn.*`` classes that the registry stores under wrapper classes (e.g.
+    transformers registers ``gelu`` -> ``GELUActivation``, not ``nn.GELU``),
+    so direct uses of ``nn.GELU`` / ``nn.Mish`` in model code are matched.
     """
-    import torch.nn as nn
-
-    import praxis.activations  # ensure Praxis registrations land in ACT2CLS
-    from transformers.activations import ACT2CLS
-
-    classes: set = set()
-    for v in ACT2CLS.values():
-        cls = v[0] if isinstance(v, tuple) else v
-        classes.add(cls)
-
-    classes.update(
-        {
-            nn.ReLU,
-            nn.LeakyReLU,
-            nn.PReLU,
-            nn.ELU,
-            nn.SELU,
-            nn.GELU,
-            nn.SiLU,
-            nn.Mish,
-            nn.Tanh,
-            nn.Sigmoid,
-            nn.Softsign,
-            nn.Softplus,
-        }
-    )
+    classes = {v[0] if isinstance(v, tuple) else v for v in ACT2CLS.values()}
+    classes.update({nn.GELU, nn.Mish})
     return tuple(classes)
 
 
@@ -668,8 +618,6 @@ def _compute_activation_curves(model, x_min: float, x_max: float, num_points: in
     Returns (curves, activation_type) where curves is a list of dicts with
     keys: name, x, forward, backward.
     """
-    import torch
-
     device = next(model.parameters()).device
     dtype = torch.float32
 
@@ -717,9 +665,6 @@ def _sample_activation(
     parameters broadcast; we tile across the param's feature size and average
     over features to get a single representative curve per module.
     """
-    import torch
-    from torch.nn.parameter import UninitializedParameter
-
     param_dim = 1
     for p in module.parameters(recurse=False):
         if p is None:
@@ -783,72 +728,40 @@ def _sample_activation(
         return None
 
 
-@dynamics_bp.route("/api/harmonic_spectrum", methods=["GET", "OPTIONS"])
-def get_harmonic_spectrum():
-    """Live snapshot of the harmonic field's amplitude grid magnitudes.
+@dynamics_bp.route("/api/head_snapshots", methods=["GET"])
+def get_head_snapshots():
+    """Live non-scalar snapshots from the active model's LM head.
 
-    Returns ``|amp[f_t, f_d]|`` as a 2D array, plus the irrationals used to
-    seed phases. Frontend renders this as a heatmap so the user can see
-    whether energy is concentrating in particular frequency bands.
+    Delegates to ``head.dashboard_snapshots()``; returns a dict keyed by
+    snapshot name (e.g. ``harmonic_spectrum``, ``crystal_pca``) so the
+    frontend can dispatch on the key. Each value's inner shape is the
+    head's own contract with whatever renderer consumes it.
     """
-    if request.method == "OPTIONS":
-        response = jsonify({"status": "ok"})
-        response.headers.add("Access-Control-Allow-Origin", "*")
-        response.headers.add("Access-Control-Allow-Headers", "Content-Type")
-        response.headers.add("Access-Control-Allow-Methods", "GET, OPTIONS")
-        return response
-
-    from ..app import api_logger
-
     try:
         generator = current_app.config.get("generator")
         model = getattr(generator, "model", None) if generator else None
-        if model is None:
-            response = jsonify(
-                {"status": "no_data", "message": "Model not available"}
-            )
-            response.headers.add("Access-Control-Allow-Origin", "*")
-            return response
+        head = getattr(model, "head", None) if model is not None else None
+        if head is None:
+            return jsonify({"status": "no_data", "snapshots": {}})
 
-        field = getattr(model, "harmonic_field", None)
-        if field is None:
-            head = getattr(model, "head", None)
-            field = getattr(head, "field", None) if head is not None else None
-        if field is None or not hasattr(field, "amplitudes"):
-            response = jsonify(
-                {"status": "no_data", "message": "No harmonic field on model"}
-            )
-            response.headers.add("Access-Control-Allow-Origin", "*")
-            return response
+        # Some snapshots (e.g. crystal's PCA density) need access to the
+        # model's input-embedding weights; we hand them over here the
+        # same way ``aux_losses`` receives them at training time.
+        weights_getter = getattr(model, "input_embedding_weights", None)
+        embedding_weights = weights_getter() if callable(weights_getter) else []
 
-        amps = field.amplitudes.detach().abs().to("cpu", dtype=__import__("torch").float32)
-        spectrum = amps.tolist()
-
-        from praxis.heads.harmonic import IRR_T, IRR_D
-
-        response = jsonify(
-            {
-                "status": "ok",
-                "spectrum": spectrum,
-                "F_t": int(amps.shape[0]),
-                "F_d": int(amps.shape[1]),
-                "max": float(amps.max().item()) if amps.numel() else 0.0,
-                "irrationals": {"t": float(IRR_T), "d": float(IRR_D)},
-            }
-        )
-        response.headers.add("Access-Control-Allow-Origin", "*")
+        snapshots = head.dashboard_snapshots(embedding_weights=embedding_weights) or {}
+        response = jsonify({"status": "ok", "snapshots": snapshots})
         response.headers.add("Cache-Control", "max-age=5")
         return response
 
     except Exception as e:
-        api_logger.error(f"Error in get_harmonic_spectrum: {e}")
-        import traceback
-
+        api_logger.error(f"Error in get_head_snapshots: {e}")
         traceback.print_exc()
-        response = jsonify({"status": "error", "message": str(e)})
-        response.headers.add("Access-Control-Allow-Origin", "*")
-        response.status_code = 500
-        return response
+        return (
+            jsonify({"status": "error", "message": str(e), "snapshots": {}}),
+            500,
+        )
 
 
 def _representative_feature_index(module, param_dim: int) -> int:
@@ -858,8 +771,6 @@ def _representative_feature_index(module, param_dim: int) -> int:
     cancellation). Instead, index into a single "typical" feature so the
     plotted curve preserves the actual shape.
     """
-    import torch
-
     for p in module.parameters(recurse=False):
         if p is None or p.dim() == 0:
             continue

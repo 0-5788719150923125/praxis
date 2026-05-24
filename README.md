@@ -16,20 +16,34 @@ The Praxis platform is an ever-evolving, local-first, peer-to-peer, flexible, mo
 
 <summary>features</summary>
 
-- A [Mixture of Depths](https://arxiv.org/abs/2404.02258) allows us to route just a subset of all tokens in a sequence through a layer, and to remote peers - reducing the time required for remote computation. All other tokens bypass the layer via a residual connection.
-- We implement [Multihead Latent Attention](https://arxiv.org/abs/2405.04434), originally discovered by DeepSeek-V2.
-- [LayerShuffle](https://arxiv.org/abs/2407.04513) proved that transformers can maintain coherence, even when every layer is shuffled at every forward pass. We take this a step further, and implement the `PraxisController`, which teaches the model how to predict an optimal route through expert layers during inference. The ability to work with out-of-order layers is crucial in a decentralized architecture, where some peers may fail, others may disappear, some may be overloaded, or undertrained, or are otherwise penalized for some reason or another...
-- As an alternative to LayerShuffle's controller, we have an experiment that implements elements from [Graphformer](https://arxiv.org/abs/2105.02605), teaching the model to route through layers as if they were nodes in a graph.
-- In addition to the shuffling, we implement a simplified version of [CALM](https://arxiv.org/abs/2207.07061), which allows the model to early-exit from computation.
-- We implement RoPE, ALiBi and NoPE as options for positional encoding, because they're easy, work well at sane contexts lengths, and require little to no trainable parameters.
-- [Differential Attention](https://arxiv.org/abs/2410.05258) is used to improve hallucination performance, reduce parameter counts required for attention, and filter-out noise in attention maps. Alternatively (and perhaps in-addition to, in the future), we implement an option for [Stickbreaking Attention](https://arxiv.org/abs/2306.04640), which naturally-encodes positional information, uses a Sigmoid-based mechanism, instead of a Softmax (i.e. parameters "work together", instead of "competing" against each other). We also implement various methods from [MEGA](https://arxiv.org/abs/2209.10655), including the Exponential Moving Average-based attention gating, and Gated Single-Head Attention modules.
-- Parameter-Efficient Expert Retrieval (PEER) from the [Mixture of a Million Experts](https://arxiv.org/abs/2407.04153) paper. Here, feedforward layers are replaced with a swarm of singleton MLP networks.
-- While simple, a [Soft-Merging of Experts with Adaptive Routing](https://arxiv.org/abs/2306.03745) class allows us to dynamically-route through a dense feedforward layer, while maintaining differentiability and enhancing expressivity.
-- We support Infini-Attention, from [Leave No Context Behind](https://arxiv.org/abs/2404.07143), to reduce the O(n^2) memory complexity of transformer attention to O(n). This is the same technique that Google uses in Gemini.
-- We have a [Kolmogorov-Arnold Networks](https://arxiv.org/abs/2404.19756) experiment, which replaces MLPs with KANs.
-- We implement an optional [Byte Latent Tokenizer](https://github.com/facebookresearch/blt), which allows us to represent tokens as patches of byte-sequences, instead of discrete tokens. This way, we can remove the tokenizer - and represent data in much more interesting ways, within the latent space.
-- We support [Hyper-Connections](https://arxiv.org/abs/2409.19606), which are an alternative to residual connections.
-- There's also a mobile app, and a remote controller, called "Axis". We used [Godot](https://godotengine.org/) for that.
+<!-- AUTODOC:FEATURES:BEGIN -->
+
+Praxis is organized as ~20 pluggable registries. Each category below
+links to a docs page listing the concrete implementations and their
+source. See [docs/index.md](docs/index.md) for the full map.
+
+- [Activation functions](docs/activations.md) (31)
+- [Attention mechanisms](docs/attention.md) (7)
+- [Decoder block layouts](docs/blocks.md) (8)
+- [Sequence compression](docs/compression.md) (3)
+- [Layer-routing controllers](docs/controllers.md) (7)
+- [Data sampler strategies](docs/data.md) (5)
+- [Block-stacking decoders](docs/decoders.md) (4)
+- [Token embeddings](docs/embeddings.md) (8)
+- [Input encoders](docs/encoders.md) (8)
+- [Positional encoding](docs/encoding.md) (3)
+- [Halting / early exit](docs/halting.md) (2)
+- [Output heads](docs/heads.md) (6)
+- [Loss functions](docs/losses.md) (8)
+- [Normalization layers](docs/normalization.md) (5)
+- [Expert orchestration](docs/orchestration.md) (7)
+- [RL policies](docs/policies.md) (3)
+- [Residual connections](docs/residuals.md) (2)
+- [Token routers](docs/routers.md) (11)
+- [Sequence sorting](docs/sorting.md) (3)
+- [Training strategies](docs/strategies.md) (4)
+
+<!-- AUTODOC:FEATURES:END -->
 
 </details>
 
@@ -55,10 +69,21 @@ For development with quick iteration:
 ./launch --dev --no-dashboard
 ```
 
+To run inside Docker (auto-detects ARM vs x86_64; forwards all subsequent flags):
+
+```sh
+./launch compose --alpha
+```
+
+To tear a running compose stack back down:
+
+```sh
+./launch stop
+```
+
 To run unit testing:
 
 ```sh
-. .venv/bin/activate
 pytest tests -x
 ```
 
@@ -190,58 +215,6 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 # --> The quick brown fox jumped over a lazy dog.
 ```
 
-</details>
-
-<details>
-
-<summary>notes, goals, and observations</summary>
-
-- a global swarm
-- [self-modeling](https://arxiv.org/abs/2407.10188) makes peers less-complex, and easier to model (for other AI)
-- layers as experts; a marketplace of expert, composable "blocks"
-- commit to yourself
-- cascade-style token routing (ping -> pang -> pong -> ping) via a Mixture of Depths; cyclical graph computation
-- treat every peer as an experiment in hyperparameter search; publish results to the DHT, and ensure that well-performing hparams are assigned more often
-- build adapters/connectors, allowing people to integrate their nodes with external data sources
-- a proper and robust DHT
-- central and persistent relay peers, to act as global bootstrap nodes
-- helix, octopi, pyramids
-- multi-block, heirarchical experts
-- peer validation (zero knowledge proofs, differential privacy)
-- [T-FREE Tokenizer](https://github.com/aleph-alpha/trigrams)
-- [Mini-Sequence Transformer](https://github.com/wdlctc/mini-s/tree/main) (probably not worth it on the smaller scale; this is basically the same thing as Infini-Attention, but implemented in a more-naive way)
-- embed training code within the model architecture itself, such that loading a model automatically starts the training, as well
-- cascading assistant models via hivemind (speculative decoding)
-- [TokenMonster](https://github.com/alasdairforsythe/tokenmonster)
-- [Linear Recurrent Units](https://arxiv.org/abs/2303.06349) (not recommended; they are extremely slow without specialized kernels)
-- [DualFormer](https://arxiv.org/html/2410.09918v1) (this one would be tough to do, because it seems to require detailed reasoning steps and structured trace dropping; i.e. data we don't have); [this dataset might work](https://huggingface.co/datasets/thesven/gsm8k-reasoning)
-- [novel activations](https://gist.github.com/ronaldoaf/427887efe44f12d4bdccc46ad73404eb)
-- [xLSTM](https://github.com/NX-AI/xlstm)
-- Denny Zhou (Founded & lead reasoning team at Google DeepMind) - "We have mathematically proven that transformers can solve any problem, provided they are allowed to generate as many intermediate reasoning tokens as needed. Remarkably, constant depth is sufficient." [source](https://www.reddit.com/r/mlscaling/comments/1fijajw/denny_zhou_founded_lead_reasoning_team_at_google/) At first pass, this may sound stupid, because everyone knows that transformers are "universal function approximators" already; the problem is that the search space becomes so large as to be computationally infeasible. However, the more-meaningful takeaway here is this: with human guidance (i.e. prompting, iteration, development, persistence, re-focusing), a human/AI duo could solve any problem... including AGI.
-- [Differentiable Lambda Calculus](https://github.com/neurallambda/neurallambda) (i.e. symbolic reasoning)
-- the way that Mixture of Depths token indices interact with ALiBi is potentially interesting and worth evaluating.
-- [Simple Recurrent Units](https://gist.github.com/calclavia/bb64b2f9dd3920ff6ad9546a606718e1)
-- [Forward-mode automatic differentiation](https://pytorch.org/tutorials/intermediate/forward_ad_usage.html), and [Gradients without Backpropagation](https://arxiv.org/abs/2202.08587)
-- [Human-like Episodic Memory for Infinite Context LLMs](https://arxiv.org/abs/2407.09450) (we tried a version of this, located at misc/episodic_memory.py, but it was terrible, slow, didn't work, used a ton of memory, and was horribly complex)
-- [Facts as Experts: Adaptable and Interpretable Neural Memory over Symbolic Knowledge](https://arxiv.org/abs/2007.00849)
-- https://github.com/timurgepard/nanoFFT (a somewhat novel idea)
-- [TokenFormer](https://arxiv.org/abs/2410.23168)
-- [Funnel Transformers](https://arxiv.org/pdf/2006.03236) for sequence compression
-- [Language Models are Hidden Reasoners: Unlocking Latent Reasoning Capabilities via Self-Rewarding](https://arxiv.org/abs/2411.04282)
-- https://github.com/jinyeom/lsh-knn/tree/main
-- [Training Large Language Models to Reason in a Continuous Latent Space](https://arxiv.org/abs/2412.06769)
-- [tons of useful Pytorch modules from Fairseq](https://github.com/facebookresearch/mega/blob/main/fairseq/modules)
-- [Multimodal Latent Language Modeling with Next-Token Diffusion](https://arxiv.org/abs/2412.08635)
-- [Transformers Struggle to Learn to Search](https://arxiv.org/abs/2412.04703)
-- [Survey on Memory-Augmented Neural Networks: Cognitive Insights to AI Applications](https://arxiv.org/abs/2312.06141)
-- Explore "Scheduled Sampling", where the model is trained on it's own predictions.
-- Explore contrastive learning, to mitigate text repetition, by showing the model good and bad examples during training, create embeddings compute similarities, and calculate contrastive loss.
-- [Titans: Learning to Memorize at Test Time](https://arxiv.org/abs/2501.00663) (a possible alternative to Infini-Attention, which is closer to the Human-Like Episodic Memory project)
-- [Guidance](https://github.com/guidance-ai/guidance)
-- [NoProp: Training Neural Networks without Back-propagation or Forward-propagation](https://arxiv.org/abs/2503.24322)
-- [The Belief State Transformer](https://arxiv.org/abs/2410.23506)
-- [Inner Thinking Transformer: Leveraging Dynamic Depth Scaling to Foster Adaptive Internal Thinking](https://arxiv.org/abs/2502.13842)
-- [Scaling up Test-Time Compute with Latent Reasoning: A Recurrent Depth Approach](https://arxiv.org/abs/2502.05171), https://huggingface.co/tomg-group-umd/huginn-0125/blob/main/raven_modeling_minimal.py
 </details>
 
 <details open>

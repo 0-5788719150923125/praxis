@@ -4,6 +4,12 @@ Tracked work items for the Praxis research framework. These range from near-term
 
 ---
 
+- [ ] **Scheduled sampling at training time**
+      Train the model on its own predictions for a fraction of positions: instead of always feeding the ground-truth previous token, occasionally substitute the model's sampled token. This closes the train/inference distribution gap that drives exposure bias (Bengio et al. 2015). Hook in at the trainer's input-id construction step; expose the schedule (start at 0%, ramp to ~25% over training) as a CLI knob. Natural A/B against the existing `contrastive_token` loss, which targets the same failure mode from a different angle.
+
+- [ ] **Cyclic Mixture-of-Depths routing (ping -> pang -> pong -> ping)**
+      The current MoD routers route a fraction of tokens through each layer in the forward direction only. A cyclic variant would let tokens revisit earlier layers, turning the depth dimension from a chain into a graph - the substrate for "hard tokens loop back through heavy layers while easy tokens take the short path." Cheapest first probe: add a new entry to `ROUTER_REGISTRY` that, after a layer's normal selection, sends some fraction of the surviving tokens back to a randomly-chosen earlier layer. Measure whether the cyclic paths concentrate on high-entropy positions, code, or structured output.
+
 - [ ] **Region-conditional sampling parameters (low temp inside `[TOOL_CALL]`)**
       Production tool-using LLMs commonly switch to deterministic or low-temperature sampling inside structured-output regions, since tool calls have strict syntax (special tokens + nested JSON) where any sampling noise breaks parsing downstream. Add per-region sampling overrides keyed off the open/close special tokens: when the generator emits `[TOOL_CALL]`, drop temperature to ~0 (or apply grammar-constrained decoding) until `[/TOOL_CALL]`. The same hook would let us experiment with raised temperature in narrative regions, lowered temperature in code blocks, etc. Cleanest entry point is the `MonoForwardGenerator` token loop where `find_unprocessed_tool_call_ids` already detects the relevant span boundaries.
 

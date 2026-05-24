@@ -291,12 +291,6 @@ function detectTaskWeightKeys(dynamics) {
         .sort();
 }
 
-function detectHarmonicKeys(dynamics) {
-    return Object.keys(dynamics)
-        .filter(k => k.startsWith('harmonic_'))
-        .sort();
-}
-
 function detectHaltingBuckets(dynamics) {
     const rs = new Set();
     Object.keys(dynamics).forEach(k => {
@@ -311,6 +305,147 @@ function detectHaltingBuckets(dynamics) {
 /**
  * Pull the latest non-null value from a metric series.
  */
+// ─── Scalar-metric manifest (data-driven dashboard) ────────────────────────
+//
+// Entries in ``descriptions`` whose value is an object with a ``chart`` hint
+// opt the metric into auto-rendering. Each chart hint may carry:
+//   title:    chart title text
+//   y_label:  y-axis label
+//   y_scale:  'linear' (default) or 'logarithmic'
+//   group:    section key used to cluster related metrics together
+//   order:    integer ordering within the group (default 0)
+//
+// Bespoke chart types (heatmaps, histograms, stacked-per-task series) stay
+// hardcoded - the manifest only handles scalar time-series.
+
+function buildScalarMetricManifest(descriptions) {
+    const groups = new Map();
+    for (const [key, entry] of Object.entries(descriptions || {})) {
+        if (!entry || typeof entry !== 'object') continue;
+        const chart = entry.chart;
+        if (!chart || typeof chart !== 'object') continue;
+        const groupName = chart.group || 'misc';
+        if (!groups.has(groupName)) groups.set(groupName, []);
+        groups.get(groupName).push({ key, chart, description: entry.description });
+    }
+    for (const entries of groups.values()) {
+        entries.sort((a, b) => (a.chart.order ?? 0) - (b.chart.order ?? 0));
+    }
+    return groups;
+}
+
+function canvasIdForMetric(key) {
+    return `dynamics-${key.replace(/_/g, '-')}`;
+}
+
+function buildManifestSectionsHTML(manifest, getDesc) {
+    let html = '';
+    for (const [, entries] of manifest) {
+        for (const { key, chart, description } of entries) {
+            const canvasId = canvasIdForMetric(key);
+            html += `
+                <div style="margin-top: 2rem;">
+                    <div class="chart-card">
+                        <div class="chart-title">${chart.title || key}</div>
+                        <div class="chart-subtitle">${getDesc(key, description || '')}</div>
+                        <div class="chart-wrapper" style="height: 400px;">
+                            <canvas id="${canvasId}"></canvas>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+    }
+    return html;
+}
+
+function mountManifestCharts(manifest, dynamics) {
+    for (const [, entries] of manifest) {
+        for (const { key, chart } of entries) {
+            const canvasId = canvasIdForMetric(key);
+            if (!document.getElementById(canvasId)) continue;
+            createScalarMetricChart(
+                canvasId,
+                dynamics,
+                key,
+                chart.y_label || key,
+                chart.y_scale || 'linear'
+            );
+        }
+    }
+}
+
+// ─── Snapshot dispatcher (heatmaps, PCA grids, etc.) ───────────────────────
+//
+// Snapshot entries in ``descriptions`` carry a ``snapshot`` hint that picks
+// a renderer from SNAPSHOT_RENDERERS. Backend payloads come from a single
+// /api/head_snapshots fetch, keyed by metric name. New snapshot types add
+// one entry to SNAPSHOT_RENDERERS and one entry to the head's
+// ``dashboard_snapshots()``.
+
+function snapshotEntries(descriptions) {
+    const out = [];
+    for (const [key, entry] of Object.entries(descriptions || {})) {
+        if (!entry?.snapshot) continue;
+        out.push({ key, snap: entry.snapshot, description: entry.description });
+    }
+    out.sort((a, b) => (a.snap.order ?? 0) - (b.snap.order ?? 0));
+    return out;
+}
+
+function buildSnapshotSectionsHTML(descriptions, getDesc) {
+    let html = '';
+    for (const { key, snap, description } of snapshotEntries(descriptions)) {
+        const canvasId = canvasIdForMetric(key);
+        html += `
+            <div style="margin-top: 2rem;">
+                <div class="chart-card">
+                    <div class="chart-title">${snap.title || key}</div>
+                    <div class="chart-subtitle">${getDesc(key, description || '')}</div>
+                    <div class="chart-wrapper" style="height: 400px;">
+                        <canvas id="${canvasId}"></canvas>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+    return html;
+}
+
+async function mountSnapshotCharts(descriptions) {
+    const entries = snapshotEntries(descriptions);
+    if (entries.length === 0) return;
+
+    let snapshots;
+    try {
+        const response = await fetch('/api/head_snapshots');
+        if (!response.ok) throw new Error(`API returned ${response.status}`);
+        const data = await response.json();
+        if (data.status !== 'ok') return;
+        snapshots = data.snapshots || {};
+    } catch (e) {
+        console.error('[Dynamics] Snapshots failed to load:', e);
+        return;
+    }
+
+    for (const { key, snap } of entries) {
+        const renderer = SNAPSHOT_RENDERERS[snap.renderer];
+        if (!renderer) {
+            console.warn(`[Dynamics] No renderer for snapshot "${key}" (renderer=${snap.renderer})`);
+            continue;
+        }
+        const payload = snapshots[key];
+        if (!payload) continue;
+        const canvas = document.getElementById(canvasIdForMetric(key));
+        if (!canvas) continue;
+        try {
+            renderer(canvas, payload, snap);
+        } catch (e) {
+            console.error(`[Dynamics] Snapshot "${key}" render failed:`, e);
+        }
+    }
+}
+
 function latestValue(series) {
     if (!Array.isArray(series)) return null;
     for (let i = series.length - 1; i >= 0; i--) {
@@ -330,8 +465,15 @@ function renderDynamicsCharts(runData, container) {
     const steps = dynamics.steps || dynamics.step || [];
     // Backend-driven descriptions: each chart subtitle reads from this map
     // (key = metric or chart-group name) and falls back to the inline text.
+    // Entries may be plain strings (legacy) or rich objects of shape
+    // {description, chart?}; ``desc()`` accepts both forms.
     const descriptions = runData.descriptions || {};
-    const desc = (key, fallback) => descriptions[key] || fallback;
+    const desc = (key, fallback) => {
+        const entry = descriptions[key];
+        if (typeof entry === 'string') return entry;
+        return entry?.description || fallback;
+    };
+    const manifest = buildScalarMetricManifest(descriptions);
 
     if (steps.length === 0) {
         renderEmptyState(container, "No dynamics data points found");
@@ -347,8 +489,6 @@ function renderDynamicsCharts(runData, container) {
     const hasHalting = haltingBuckets !== null;
     const taskWeightKeys = detectTaskWeightKeys(dynamics);
     const hasTaskWeights = taskWeightKeys.length > 0;
-    const harmonicKeys = detectHarmonicKeys(dynamics);
-    const hasHarmonic = harmonicKeys.length > 0;
 
     // Layer toggle state — use universal layers, fall back to expert layers
     const allLayers = hasUniversal ? universalLayers :
@@ -461,86 +601,15 @@ function renderDynamicsCharts(runData, container) {
         `;
     }
 
-    // Harmonic head diagnostics (conditional - only when the field is present)
-    if (hasHarmonic) {
-        if (harmonicKeys.includes('harmonic_amplitudes_norm')) {
-            chartsHTML += `
-                <div style="margin-top: 2rem;">
-                    <div class="chart-card">
-                        <div class="chart-title">Harmonic Field Amplitudes</div>
-                        <div class="chart-subtitle">${desc('harmonic_amplitudes_norm', 'L2 norm of the 2D amplitude grid.')}</div>
-                        <div class="chart-wrapper" style="height: 400px;">
-                            <canvas id="dynamics-harmonic-amplitudes"></canvas>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-        if (harmonicKeys.includes('harmonic_grad_ratio')) {
-            chartsHTML += `
-                <div style="margin-top: 2rem;">
-                    <div class="chart-card">
-                        <div class="chart-title">Harmonic Gradient Ratio</div>
-                        <div class="chart-subtitle">${desc('harmonic_grad_ratio', '||grad(amplitudes)|| / ||grad(lm_head)||')}</div>
-                        <div class="chart-wrapper" style="height: 400px;">
-                            <canvas id="dynamics-harmonic-grad-ratio"></canvas>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-        if (harmonicKeys.includes('harmonic_concentration')) {
-            chartsHTML += `
-                <div style="margin-top: 2rem;">
-                    <div class="chart-card">
-                        <div class="chart-title">Spectral Concentration</div>
-                        <div class="chart-subtitle">${desc('harmonic_concentration', 'Hoyer sparsity of |amp|. Diagnostic for cell commitment.')}</div>
-                        <div class="chart-wrapper" style="height: 400px;">
-                            <canvas id="dynamics-harmonic-concentration"></canvas>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-        if (harmonicKeys.includes('harmonic_smoothness')) {
-            chartsHTML += `
-                <div style="margin-top: 2rem;">
-                    <div class="chart-card">
-                        <div class="chart-title">Forward-Shift Smoothness</div>
-                        <div class="chart-subtitle">${desc('harmonic_smoothness', 'E[(b_t - b_{t+1})^2] in [0,1]. Falling = aux loss working.')}</div>
-                        <div class="chart-wrapper" style="height: 400px;">
-                            <canvas id="dynamics-harmonic-smoothness"></canvas>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-        if (harmonicKeys.includes('harmonic_delta_norm')) {
-            chartsHTML += `
-                <div style="margin-top: 2rem;">
-                    <div class="chart-card">
-                        <div class="chart-title">Amplitude Delta Norm</div>
-                        <div class="chart-subtitle">${desc('harmonic_delta_norm', 'rms(delta) / rms(baseline). Rising = MLP adapting field per input.')}</div>
-                        <div class="chart-wrapper" style="height: 400px;">
-                            <canvas id="dynamics-harmonic-delta-norm"></canvas>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-        // Live spectrum heatmap pulled from /api/harmonic_spectrum on render.
-        chartsHTML += `
-            <div style="margin-top: 2rem;">
-                <div class="chart-card">
-                    <div class="chart-title">Harmonic Spectrum</div>
-                    <div class="chart-subtitle">${desc('harmonic_spectrum', 'Heatmap of |amp[f_t, f_d]|.')}</div>
-                    <div class="chart-wrapper" style="height: 400px;">
-                        <canvas id="dynamics-harmonic-spectrum"></canvas>
-                    </div>
-                </div>
-            </div>
-        `;
-    }
+    // Head-driven scalar metrics (harmonic, crystal, future heads). The
+    // manifest is built from descriptions whose values carry a ``chart``
+    // hint - new heads opt in just by tagging their metric_descriptions.
+    chartsHTML += buildManifestSectionsHTML(manifest, desc);
+
+    // Non-scalar snapshot charts (heatmaps, PCA density grids, etc.).
+    // Like the scalar manifest, snapshots are discovered via descriptions
+    // whose values carry a ``snapshot`` hint.
+    chartsHTML += buildSnapshotSectionsHTML(descriptions, desc);
 
     // Halting distribution (conditional - only when a halting strategy is in use)
     if (hasHalting) {
@@ -604,41 +673,8 @@ function renderDynamicsCharts(runData, container) {
             if (hasHalting) {
                 createHaltingHistogramChart('dynamics-halting-hist', dynamics, haltingBuckets);
             }
-            if (hasHarmonic) {
-                if (document.getElementById('dynamics-harmonic-amplitudes')) {
-                    createHarmonicScalarChart(
-                        'dynamics-harmonic-amplitudes', dynamics,
-                        'harmonic_amplitudes_norm', 'Amplitudes ||L2||', 'logarithmic'
-                    );
-                }
-                if (document.getElementById('dynamics-harmonic-grad-ratio')) {
-                    createHarmonicScalarChart(
-                        'dynamics-harmonic-grad-ratio', dynamics,
-                        'harmonic_grad_ratio', 'Grad Ratio (Log Scale)', 'logarithmic'
-                    );
-                }
-                if (document.getElementById('dynamics-harmonic-concentration')) {
-                    createHarmonicScalarChart(
-                        'dynamics-harmonic-concentration', dynamics,
-                        'harmonic_concentration', 'Hoyer Sparsity', 'linear'
-                    );
-                }
-                if (document.getElementById('dynamics-harmonic-smoothness')) {
-                    createHarmonicScalarChart(
-                        'dynamics-harmonic-smoothness', dynamics,
-                        'harmonic_smoothness', 'Forward-Shift Smoothness', 'linear'
-                    );
-                }
-                if (document.getElementById('dynamics-harmonic-delta-norm')) {
-                    createHarmonicScalarChart(
-                        'dynamics-harmonic-delta-norm', dynamics,
-                        'harmonic_delta_norm', 'Delta / Baseline RMS', 'linear'
-                    );
-                }
-                if (document.getElementById('dynamics-harmonic-spectrum')) {
-                    loadHarmonicSpectrum('dynamics-harmonic-spectrum');
-                }
-            }
+            mountManifestCharts(manifest, dynamics);
+            mountSnapshotCharts(descriptions);
             loadActivationCurves();
         } catch (error) {
             console.error('[Dynamics] Chart creation failed:', error);
@@ -754,37 +790,10 @@ function rebuildAllCharts() {
     if (taskWeightKeys.length > 0 && document.getElementById('dynamics-task-weights')) {
         createTaskWeightsChart('dynamics-task-weights', dynamics, taskWeightKeys);
     }
-    // Harmonic head diagnostics (independent of layer selection)
-    if (document.getElementById('dynamics-harmonic-amplitudes')) {
-        createHarmonicScalarChart(
-            'dynamics-harmonic-amplitudes', dynamics,
-            'harmonic_amplitudes_norm', 'Amplitudes ||L2||', 'logarithmic'
-        );
-    }
-    if (document.getElementById('dynamics-harmonic-grad-ratio')) {
-        createHarmonicScalarChart(
-            'dynamics-harmonic-grad-ratio', dynamics,
-            'harmonic_grad_ratio', 'Grad Ratio (Log Scale)', 'logarithmic'
-        );
-    }
-    if (document.getElementById('dynamics-harmonic-concentration')) {
-        createHarmonicScalarChart(
-            'dynamics-harmonic-concentration', dynamics,
-            'harmonic_concentration', 'Hoyer Sparsity', 'linear'
-        );
-    }
-    if (document.getElementById('dynamics-harmonic-smoothness')) {
-        createHarmonicScalarChart(
-            'dynamics-harmonic-smoothness', dynamics,
-            'harmonic_smoothness', 'Forward-Shift Smoothness', 'linear'
-        );
-    }
-    if (document.getElementById('dynamics-harmonic-delta-norm')) {
-        createHarmonicScalarChart(
-            'dynamics-harmonic-delta-norm', dynamics,
-            'harmonic_delta_norm', 'Delta / Baseline RMS', 'linear'
-        );
-    }
+    // Head scalar metrics (independent of layer selection). Source of
+    // truth is the descriptions manifest in the run payload.
+    const descriptions = state.dynamics.data?.descriptions || {};
+    mountManifestCharts(buildScalarMetricManifest(descriptions), dynamics);
 }
 
 // ─── Shared chart helpers ───────────────────────────────────────────────────
@@ -970,31 +979,27 @@ function magma(t) {
 }
 
 /**
- * Fetch the live amplitude spectrum and render as a canvas heatmap.
+ * Generic 2D heatmap renderer for non-scalar snapshots.
+ *
+ * Payload contract: ``data.grid`` is a 2D array (rows x cols of numbers),
+ * ``data.max_count`` sets the color-scale ceiling. Optional fields:
+ * ``x_range``, ``y_range`` for axis-range labels.
+ *
+ * Snapshot options (from the description's ``snapshot`` hint): ``color_scale``
+ * is ``'linear'`` (default) or ``'log'`` - log is right for heavy-tailed
+ * distributions like PCA density counts.
  */
-async function loadHarmonicSpectrum(canvasId) {
-    const canvas = document.getElementById(canvasId);
-    if (!canvas) return;
+function renderHeatmap2D(canvas, data, options = {}) {
+    const grid = data.grid;
+    if (!Array.isArray(grid) || grid.length === 0) return;
+    const rows = grid.length;
+    const cols = Array.isArray(grid[0]) ? grid[0].length : 0;
+    if (cols === 0) return;
 
-    try {
-        const response = await fetch('/api/harmonic_spectrum');
-        if (!response.ok) throw new Error(`API returned ${response.status}`);
-        const data = await response.json();
-        if (data.status !== 'ok' || !Array.isArray(data.spectrum)) return;
+    const peak = data.max_count || 1.0;
+    const scaleFn = options.color_scale === 'log' ? (v) => Math.log1p(Math.max(0, v)) : (v) => Math.max(0, v);
+    const peakScaled = Math.max(scaleFn(peak), 1e-12);
 
-        renderHarmonicSpectrum(canvas, data);
-    } catch (error) {
-        console.error('[Dynamics] Spectrum failed to load:', error);
-    }
-}
-
-function renderHarmonicSpectrum(canvas, data) {
-    const F_t = data.F_t, F_d = data.F_d;
-    const spectrum = data.spectrum;
-    const peak = data.max || 1.0;
-
-    // The chart wrapper is 400px tall; size the canvas backing store to match
-    // the wrapper while drawing a F_t x F_d image scaled to fill it.
     const wrapper = canvas.parentElement;
     const w = wrapper.clientWidth || 800;
     const h = wrapper.clientHeight || 400;
@@ -1004,21 +1009,19 @@ function renderHarmonicSpectrum(canvas, data) {
     const ctx = canvas.getContext('2d');
     ctx.imageSmoothingEnabled = false;
 
-    // Build an offscreen ImageData at native (F_t, F_d) resolution. Rows are
-    // f_t (time-axis frequencies) drawn vertically, columns are f_d (feature
-    // -axis frequencies). We then draw the offscreen canvas scaled to fill.
+    // Render at native grid resolution offscreen, then scale to fill.
     const off = document.createElement('canvas');
-    off.width = F_d;
-    off.height = F_t;
+    off.width = cols;
+    off.height = rows;
     const offCtx = off.getContext('2d');
-    const img = offCtx.createImageData(F_d, F_t);
+    const img = offCtx.createImageData(cols, rows);
 
-    for (let i = 0; i < F_t; i++) {
-        const row = spectrum[i];
-        for (let j = 0; j < F_d; j++) {
-            const v = peak > 0 ? row[j] / peak : 0;
+    for (let i = 0; i < rows; i++) {
+        const row = grid[i];
+        for (let j = 0; j < cols; j++) {
+            const v = scaleFn(row[j]) / peakScaled;
             const [r, g, b] = magma(v);
-            const idx = (i * F_d + j) * 4;
+            const idx = (i * cols + j) * 4;
             img.data[idx] = r;
             img.data[idx + 1] = g;
             img.data[idx + 2] = b;
@@ -1031,7 +1034,6 @@ function renderHarmonicSpectrum(canvas, data) {
     ctx.fillStyle = gridColor;
     ctx.fillRect(0, 0, w, h);
 
-    // Reserve a left/bottom margin for axis labels.
     const ml = 60, mb = 30, mt = 8, mr = 16;
     const drawW = Math.max(1, w - ml - mr);
     const drawH = Math.max(1, h - mt - mb);
@@ -1040,20 +1042,38 @@ function renderHarmonicSpectrum(canvas, data) {
     ctx.fillStyle = textColor;
     ctx.font = '12px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(`f_d (1..${F_d})`, ml + drawW / 2, h - 8);
+
+    const xLabel = formatAxisRange(data.x_range, cols);
+    const yLabel = formatAxisRange(data.y_range, rows);
+    ctx.fillText(xLabel, ml + drawW / 2, h - 8);
     ctx.save();
     ctx.translate(16, mt + drawH / 2);
     ctx.rotate(-Math.PI / 2);
-    ctx.fillText(`f_t (1..${F_t})`, 0, 0);
+    ctx.fillText(yLabel, 0, 0);
     ctx.restore();
+
     ctx.textAlign = 'right';
-    ctx.fillText(`peak ${peak.toExponential(2)}`, w - 4, mt + 12);
+    const peakLabel = options.color_scale === 'log' ? `log peak ${peak.toExponential(2)}` : `peak ${peak.toExponential(2)}`;
+    ctx.fillText(peakLabel, w - 4, mt + 12);
 }
+
+function formatAxisRange(range, fallback) {
+    if (Array.isArray(range) && range.length === 2) {
+        const lo = range[0], hi = range[1];
+        const fmt = (v) => Number.isInteger(v) ? String(v) : v.toFixed(2);
+        return `${fmt(lo)} .. ${fmt(hi)}`;
+    }
+    return `1..${fallback}`;
+}
+
+const SNAPSHOT_RENDERERS = {
+    heatmap_2d: renderHeatmap2D,
+};
 
 /**
  * Single-series scalar over training steps (no legend needed).
  */
-function createHarmonicScalarChart(canvasId, dynamics, key, yLabel, yType) {
+function createScalarMetricChart(canvasId, dynamics, key, yLabel, yType) {
     const steps = dynamics.steps || [];
     const values = dynamics[key];
     if (!values) return;

@@ -7,7 +7,17 @@ from datetime import datetime
 from pathlib import Path
 
 import yaml
-from flask import Blueprint, Response, jsonify, make_response, render_template, request
+from flask import (
+    Blueprint,
+    Response,
+    current_app,
+    jsonify,
+    make_response,
+    render_template,
+    request,
+)
+from praxis.optimizers import get_parameter_stats
+from praxis.utils import mask_git_url
 
 from ..config import CSP_POLICY
 from ..spec_data import build_spec_payload, load_run_spec
@@ -49,30 +59,17 @@ def home():
     return response
 
 
-@core_bp.route("/api/ping", methods=["GET", "POST", "OPTIONS"])
+@core_bp.route("/api/ping", methods=["GET", "POST"])
 def ping():
     """Simple endpoint to test if API is accessible."""
     response = jsonify({"status": "ok", "message": "Praxis API server is running"})
-    response.headers.add("Access-Control-Allow-Origin", "*")
-    response.headers.add("Access-Control-Allow-Headers", "Content-Type")
-    response.headers.add("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
     return response
 
 
-@core_bp.route("/api/spec", methods=["GET", "OPTIONS"])
+@core_bp.route("/api/spec", methods=["GET"])
 def get_spec():
     """Get model specification including hashes and CLI arguments."""
-    if request.method == "OPTIONS":
-        response = jsonify({"status": "ok"})
-        response.headers.add("Access-Control-Allow-Origin", "*")
-        response.headers.add("Access-Control-Allow-Headers", "Content-Type")
-        response.headers.add("Access-Control-Allow-Methods", "GET, OPTIONS")
-        return response
-
     try:
-        from flask import current_app
-        from praxis.utils import mask_git_url
-
         current_hash = current_app.config.get("truncated_hash")
         requested_hash = request.args.get("runs") or None
 
@@ -97,7 +94,6 @@ def get_spec():
             spec["is_snapshot"] = True
             spec["is_current"] = False
             response = jsonify(spec)
-            response.headers.add("Access-Control-Allow-Origin", "*")
             return response
 
         # Live path: build a fresh payload from app state and attach
@@ -112,8 +108,6 @@ def get_spec():
         generator = current_app.config.get("generator")
         if not param_stats:
             try:
-                from praxis.optimizers import get_parameter_stats
-
                 if generator and hasattr(generator, "model"):
                     param_stats = get_parameter_stats(generator.model)
             except Exception:
@@ -136,36 +130,21 @@ def get_spec():
         spec["is_current"] = True
 
         response = jsonify(spec)
-        response.headers.add("Access-Control-Allow-Origin", "*")
         return response
 
     except Exception as e:
         error_response = jsonify({"error": str(e)})
-        error_response.headers.add("Access-Control-Allow-Origin", "*")
         return error_response, 500
 
 
-@core_bp.route("/api/config", methods=["GET", "OPTIONS"])
+@core_bp.route("/api/config", methods=["GET"])
 def get_config():
     """Get current experiment configuration as YAML.
 
     Returns the active, running experiment config file from disk.
     No parameters accepted - returns only the current published config.
     """
-    if request.method == "OPTIONS":
-        response = Response()
-        response.headers.add("Access-Control-Allow-Origin", "*")
-        response.headers.add("Access-Control-Allow-Headers", "Content-Type")
-        response.headers.add("Access-Control-Allow-Methods", "GET, OPTIONS")
-        return response
-
     try:
-        from pathlib import Path
-
-        from flask import current_app
-
-        from praxis.cli.loaders.experiments import load_rendered_config
-
         # Get the config file path from app config
         config_file = current_app.config.get("config_file")
 
@@ -197,7 +176,6 @@ def get_config():
         )
 
         response = Response(yaml_content, mimetype="text/yaml")
-        response.headers.add("Access-Control-Allow-Origin", "*")
         response.headers.add(
             "Content-Disposition", f"attachment; filename={config_path.name}"
         )
@@ -205,5 +183,4 @@ def get_config():
 
     except Exception as e:
         error_response = Response(f"Error reading config: {str(e)}", status=500)
-        error_response.headers.add("Access-Control-Allow-Origin", "*")
         return error_response

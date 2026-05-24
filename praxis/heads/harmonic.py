@@ -17,11 +17,12 @@ See ``proofs/harmonic_pi.md``.
 """
 
 import math
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch import Tensor
 
 from praxis.heads.base import BaseHead
@@ -59,33 +60,82 @@ class HarmonicField(nn.Module):
     """2D irrational-rotation field, applied multiplicatively to hidden states."""
 
     metric_descriptions = {
-        "harmonic_amplitudes_norm": (
-            "L2 norm of the 2D amplitude grid. Stable near init = no "
-            "structure being learned; growing or rearranging = the field is "
-            "shaping itself."
-        ),
-        "harmonic_grad_ratio": (
-            "||grad(amplitudes)|| / ||grad(lm_head)||. Vanishing means the "
-            "model is routing learning past the field rather than through it."
-        ),
-        "harmonic_spectrum": (
-            "Live snapshot of |amp[f_t, f_d]|. Concentration in specific "
-            "bands means corpus rhythms are being learned; uniform mass means "
-            "the field is still noise."
-        ),
-        "harmonic_concentration": (
-            "Hoyer sparsity of the amplitude grid in [0, 1]. 1 = all energy "
-            "in a single (f_t, f_d) cell, 0 = perfectly uniform. Diagnostic "
-            "only - no longer the loss target. Reading the rise here is "
-            "evidence the field is committing to specific harmonics."
-        ),
-        "harmonic_smoothness": (
-            "Forward-shift smoothness in [0, 1]. Closed-form expected "
-            "(b_t - b_{t+1})^2 for the field, normalized by amplitude norm. "
-            "Low = field varies predictably across positions; high = field "
-            "is dominated by fast temporal modes. Pushed downward by the "
-            "smoothness aux loss."
-        ),
+        "harmonic_amplitudes_norm": {
+            "description": (
+                "L2 norm of the 2D amplitude grid. Stable near init = no "
+                "structure being learned; growing or rearranging = the field "
+                "is shaping itself."
+            ),
+            "chart": {
+                "title": "Harmonic Field Amplitudes",
+                "y_label": "Amplitudes ||L2||",
+                "y_scale": "logarithmic",
+                "group": "harmonic_head",
+                "order": 10,
+            },
+        },
+        "harmonic_grad_ratio": {
+            "description": (
+                "||grad(amplitudes)|| / ||grad(lm_head)||. Vanishing means "
+                "the model is routing learning past the field rather than "
+                "through it."
+            ),
+            "chart": {
+                "title": "Harmonic Gradient Ratio",
+                "y_label": "Grad Ratio (Log Scale)",
+                "y_scale": "logarithmic",
+                "group": "harmonic_head",
+                "order": 20,
+            },
+        },
+        "harmonic_concentration": {
+            "description": (
+                "Hoyer sparsity of the amplitude grid in [0, 1]. 1 = all "
+                "energy in a single (f_t, f_d) cell, 0 = perfectly uniform. "
+                "Diagnostic only - no longer the loss target. Reading the "
+                "rise here is evidence the field is committing to specific "
+                "harmonics."
+            ),
+            "chart": {
+                "title": "Spectral Concentration",
+                "y_label": "Hoyer Sparsity",
+                "y_scale": "linear",
+                "group": "harmonic_head",
+                "order": 30,
+            },
+        },
+        "harmonic_smoothness": {
+            "description": (
+                "Forward-shift smoothness in [0, 1]. Closed-form expected "
+                "(b_t - b_{t+1})^2 for the field, normalized by amplitude "
+                "norm. Low = field varies predictably across positions; "
+                "high = field is dominated by fast temporal modes. Pushed "
+                "downward by the smoothness aux loss."
+            ),
+            "chart": {
+                "title": "Forward-Shift Smoothness",
+                "y_label": "Forward-Shift Smoothness",
+                "y_scale": "linear",
+                "group": "harmonic_head",
+                "order": 40,
+            },
+        },
+        # Spectrum is a bespoke heatmap snapshot, not a scalar chart -
+        # the snapshot hint routes it through the heatmap_2d renderer.
+        "harmonic_spectrum": {
+            "description": (
+                "Live snapshot of |amp[f_t, f_d]|. Concentration in specific "
+                "bands means corpus rhythms are being learned; uniform mass "
+                "means the field is still noise."
+            ),
+            "snapshot": {
+                "title": "Harmonic Spectrum",
+                "renderer": "heatmap_2d",
+                "color_scale": "linear",
+                "group": "harmonic_head",
+                "order": 100,
+            },
+        },
     }
 
     def __init__(
@@ -182,24 +232,123 @@ class HarmonicField(nn.Module):
 
 
 class HarmonicHead(BaseHead):
-    """Learnable lm_head with a 2D harmonic field modulating features."""
+    """Learnable lm_head with a 2D harmonic field modulating features.
 
-    def __init__(self, config: Any) -> None:
-        super().__init__(config)
-        self.lm_head = nn.Linear(self.hidden_size, self.vocab_size, bias=False)
-        self.lm_head.weight.data.normal_(mean=0.0, std=0.02)
+    In encoder-attached mode the head owns a field sized to the
+    encoder's classifier feature dim and modulates ``decoder_embeds``
+    before re-projecting through the encoder's classifier weight.
+    The encoder still owns the classifier itself.
+    """
 
+    def __init__(self, config: Any, encoder: Optional[nn.Module] = None) -> None:
+        super().__init__(config, encoder)
         max_positions = int(
             getattr(config, "max_position_embeddings", 32768) or 32768
         )
 
-        self.field = HarmonicField(
-            hidden_dim=self.hidden_size, max_positions=max_positions
-        )
+        if self.has_encoder:
+            classifier = getattr(encoder, "classifier", None)
+            if classifier is not None and hasattr(classifier, "weight"):
+                feature_dim = classifier.weight.shape[1]
+            else:
+                feature_dim = self.hidden_size
+            if "byte" in str(getattr(config, "encoder_type", "")):
+                max_positions = max(max_positions, max_positions * 8)
+            self.field = HarmonicField(
+                hidden_dim=feature_dim, max_positions=max_positions
+            )
+            self.lm_head = None
+        else:
+            self.lm_head = nn.Linear(self.hidden_size, self.vocab_size, bias=False)
+            self.lm_head.weight.data.normal_(mean=0.0, std=0.02)
+            self.field = HarmonicField(
+                hidden_dim=self.hidden_size, max_positions=max_positions
+            )
 
     def forward(self, hidden_states: Tensor, **kwargs: Any) -> Tensor:
         return self.lm_head(self.field(hidden_states))
 
     @property
-    def classifier(self) -> nn.Module:
+    def classifier(self) -> Optional[nn.Module]:
         return self.lm_head
+
+    def process_encoder_output(
+        self,
+        decoder_embeds: Tensor,
+        encoder_logits: Tensor,
+        encoder_classifier: nn.Module,
+    ) -> Tuple[Tensor, Tensor, nn.Module]:
+        # Modulate decoder_embeds *before* binding them as hidden_states
+        # so that cut_cross_entropy (which projects embeddings @ classifier
+        # internally and discards the materialized logits) sees the field.
+        decoder_embeds = self.field(decoder_embeds)
+        logits = F.linear(
+            decoder_embeds,
+            encoder_classifier.weight,
+            getattr(encoder_classifier, "bias", None),
+        ).to(encoder_logits.dtype)
+        return logits, decoder_embeds, encoder_classifier
+
+    def aux_losses(self, embedding_weights: Optional[list] = None) -> dict:
+        del embedding_weights  # harmonic head doesn't regularize embeddings
+        aux = self.field.aux_loss()
+        return {"harmonic_smoothness": aux} if aux is not None else {}
+
+    def _downstream_classifier(self) -> Optional[nn.Module]:
+        """The learnable projection the field's output feeds into.
+
+        Encoder mode: the encoder's own classifier (the field modulates
+        decoder_embeds, which then get re-projected through it).
+        Standalone: our own lm_head.
+        """
+        if self._encoder is not None:
+            return getattr(self._encoder, "classifier", None)
+        return self.lm_head
+
+    def dashboard_snapshots(
+        self, embedding_weights: Optional[list] = None
+    ) -> dict:
+        """Amplitude grid magnitudes for the spectrum heatmap.
+
+        Returns the field's ``|amp[f_t, f_d]|`` matrix and the
+        irrationals used to seed phases, packaged for the generic
+        ``heatmap_2d`` renderer (grid + axis ranges + max).
+        """
+        del embedding_weights  # harmonic head doesn't visualize embeddings
+        amps = self.field.amplitudes.detach().abs().to("cpu", dtype=torch.float32)
+        F_t, F_d = int(amps.shape[0]), int(amps.shape[1])
+        return {
+            "harmonic_spectrum": {
+                "grid": amps.tolist(),
+                "grid_rows": F_t,
+                "grid_cols": F_d,
+                "x_range": [1, F_d],
+                "y_range": [1, F_t],
+                "max_count": float(amps.max().item()) if amps.numel() else 0.0,
+                "irrationals": {"t": float(IRR_T), "d": float(IRR_D)},
+            }
+        }
+
+    def training_metrics(self) -> dict:
+        amps = self.field.amplitudes
+        out = {
+            "harmonic_amplitudes_norm": float(amps.detach().norm().item()),
+            "harmonic_concentration": float(self.field.concentration().item()),
+            "harmonic_smoothness": float(self.field.smoothness().item()),
+        }
+
+        # grad_ratio reads whether learning is flowing into the field or
+        # past it through the downstream classifier. Skip silently if
+        # gradients aren't available yet (pre-first-step) or if the
+        # downstream classifier doesn't expose a .weight.
+        amps_grad = amps.grad
+        classifier = self._downstream_classifier()
+        head_weight = getattr(classifier, "weight", None) if classifier else None
+        head_grad = head_weight.grad if head_weight is not None else None
+        if amps_grad is not None and head_grad is not None:
+            head_norm = float(head_grad.detach().norm().item())
+            if head_norm > 0:
+                out["harmonic_grad_ratio"] = (
+                    float(amps_grad.detach().norm().item()) / head_norm
+                )
+        return out

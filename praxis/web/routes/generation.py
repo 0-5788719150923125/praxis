@@ -11,24 +11,16 @@ generation_bp = Blueprint("generation", __name__)
 api_logger = logging.getLogger("praxis.web")
 
 
-@generation_bp.route("/messages/", methods=["POST", "OPTIONS"])
-@generation_bp.route("/messages", methods=["POST", "OPTIONS"])
+@generation_bp.route("/messages/", methods=["POST"])
+@generation_bp.route("/messages", methods=["POST"])
 def generate_messages():
     """Handle message-based generation."""
-    if request.method == "OPTIONS":
-        response = jsonify({"status": "ok"})
-        response.headers.add("Access-Control-Allow-Origin", "*")
-        response.headers.add("Access-Control-Allow-Headers", "Content-Type")
-        response.headers.add("Access-Control-Allow-Methods", "POST, OPTIONS")
-        return response
-
     try:
         data = request.get_json()
         messages = data.get("messages", [])
 
         if not messages:
             response = jsonify({"error": "Please provide 'messages' for generation."})
-            response.headers.add("Access-Control-Allow-Origin", "*")
             return response, 400
 
         # Get generator and tokenizer
@@ -42,13 +34,11 @@ def generate_messages():
                     "error": "Generator not initialized yet. Please wait for training to start."
                 }
             )
-            error_response.headers.add("Access-Control-Allow-Origin", "*")
             return error_response, 503
 
         tokenizer = current_app.config.get("tokenizer")
         if not tokenizer:
             error_response = jsonify({"error": "Tokenizer not available"})
-            error_response.headers.add("Access-Control-Allow-Origin", "*")
             return error_response, 503
 
         # Use unified generation function
@@ -66,27 +56,18 @@ def generate_messages():
             raise Exception("Failed to generate an output from this API.")
 
         response = jsonify({"response": assistant_reply})
-        response.headers.add("Access-Control-Allow-Origin", "*")
         return response, 200
 
     except Exception as e:
         api_logger.error(f"Error in /messages endpoint: {e}")
         error_response = jsonify({"error": str(e)})
-        error_response.headers.add("Access-Control-Allow-Origin", "*")
         return error_response, 500
 
 
-@generation_bp.route("/input/", methods=["GET", "POST", "OPTIONS"])
-@generation_bp.route("/input", methods=["GET", "POST", "OPTIONS"])
+@generation_bp.route("/input/", methods=["GET", "POST"])
+@generation_bp.route("/input", methods=["GET", "POST"])
 def generate():
     """Handle string-based prompt generation."""
-    if request.method == "OPTIONS":
-        response = jsonify({"status": "ok"})
-        response.headers.add("Access-Control-Allow-Origin", "*")
-        response.headers.add("Access-Control-Allow-Headers", "Content-Type")
-        response.headers.add("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        return response
-
     try:
         kwargs = request.get_json()
         prompt = kwargs.get("prompt")
@@ -95,14 +76,12 @@ def generate():
             response = jsonify(
                 {"error": "Please provide 'prompt' for string-based generation."}
             )
-            response.headers.add("Access-Control-Allow-Origin", "*")
             return response, 400
 
         if "messages" in kwargs:
             response = jsonify(
                 {"error": "Use /messages endpoint for message-based generation."}
             )
-            response.headers.add("Access-Control-Allow-Origin", "*")
             return response, 400
 
         # Get generator
@@ -116,7 +95,6 @@ def generate():
                     "error": "Generator not initialized yet. Please wait for training to start."
                 }
             )
-            error_response.headers.add("Access-Control-Allow-Origin", "*")
             return error_response, 503
 
         request_id = generator.request_generation(prompt, kwargs)
@@ -135,9 +113,7 @@ def generate():
     except Exception as e:
         api_logger.error(e)
         error_response = jsonify({"error": str(e)})
-        error_response.headers.add("Access-Control-Allow-Origin", "*")
         return error_response, 400
 
     final_response = jsonify(response)
-    final_response.headers.add("Access-Control-Allow-Origin", "*")
     return final_response, 200

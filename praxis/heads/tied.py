@@ -17,15 +17,28 @@ class TiedWeights(BaseHead):
     the embedding weights for the output layer.
     """
 
-    def __init__(self, config: Any, embedding_weight: Optional[Tensor] = None) -> None:
+    def __init__(
+        self,
+        config: Any,
+        encoder: Optional[nn.Module] = None,
+        embedding_weight: Optional[Tensor] = None,
+    ) -> None:
         """
         Initialize the tied head.
 
         Args:
             config: Model configuration
+            encoder: Optional encoder reference. TiedWeights does not
+                support encoder mode - the encoder owns its own
+                classifier and tying semantics. Raises if both are set.
             embedding_weight: The embedding weight tensor to tie to
         """
-        super().__init__(config)
+        super().__init__(config, encoder)
+        if self.has_encoder:
+            raise ValueError(
+                "TiedWeights head is not supported with an encoder; the "
+                "encoder owns its own output projection."
+            )
         self.embedding_weight = embedding_weight
 
         # If embed_size != hidden_size, we need a projection before using embeddings

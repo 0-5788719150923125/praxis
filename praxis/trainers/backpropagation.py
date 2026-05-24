@@ -103,7 +103,7 @@ class BackpropagationTrainer(LightningModule):
         # Per-token CE is needed for both loss-based dataset sampling and
         # the difficulty task weighter. Compute once if either consumer
         # is active.
-        weighter = getattr(self.model, "taskmaster", None)
+        weighter = getattr(self.model, "tasker", None)
         weighter_observes = weighter is not None and hasattr(weighter, "observe")
         report_dataset_losses = (
             bool(batch_metadata) and InterleaveDataManager.shared_losses is not None

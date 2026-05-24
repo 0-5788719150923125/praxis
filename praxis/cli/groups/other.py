@@ -64,6 +64,13 @@ class OtherGroup:
             help="List all available runs and exit",
         )
 
+        group.add_argument(
+            "--no-docs",
+            action="store_true",
+            default=False,
+            help="Skip auto-regeneration of docs/ from praxis registries at launch",
+        )
+
     @classmethod
     def add_dev_argument_if_needed(cls, parser):
         """Add --dev argument if it wasn't already added by environment loading."""

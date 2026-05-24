@@ -2,16 +2,20 @@
 
 import os
 
-from flask import Blueprint, abort, current_app, request, send_from_directory
-
+from flask import (
+    Blueprint,
+    abort,
+    current_app,
+    make_response,
+    request,
+    send_from_directory,
+)
 static_bp = Blueprint("static_files", __name__)
 
 
 @static_bp.route("/favicon.ico")
 def favicon():
     """Serve favicon.ico from static folder if it exists."""
-    from flask import make_response
-
     if os.path.exists(os.path.join(current_app.static_folder, "favicon.ico")):
         return send_from_directory(current_app.static_folder, "favicon.ico")
     else:
@@ -24,19 +28,14 @@ def favicon():
 def serve_static_files(filename):
     """Serve static files with proper headers for CORS."""
     response = send_from_directory(current_app.static_folder, filename)
-    response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Cache-Control"] = "public, max-age=3600"
     return response
 
 
-@static_bp.route("/<path:filename>", methods=["GET", "POST", "OPTIONS", "HEAD"])
+@static_bp.route("/<path:filename>", methods=["GET", "POST", "HEAD"])
 def serve_static(filename):
     """Catch-all route for serving static files and handling special cases."""
-    from flask import make_response
-
     # Import generation routes to handle special cases
-    from .generation import generate, generate_messages
-
     # Don't intercept API routes — let dedicated blueprints handle them
     if filename.startswith("api/"):
         abort(404)
@@ -50,13 +49,6 @@ def serve_static(filename):
         return generate_messages()
 
     # Handle OPTIONS properly
-    if request.method == "OPTIONS":
-        response = make_response("", 204)
-        response.headers["Access-Control-Allow-Origin"] = "*"
-        response.headers["Access-Control-Allow-Methods"] = "GET, HEAD, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
-        return response
-
     # Otherwise, serve static files only for GET/HEAD
     if request.method not in ["GET", "HEAD"]:
         abort(405)

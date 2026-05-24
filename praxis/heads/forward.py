@@ -1,6 +1,6 @@
 """Standard forward (causal) language modeling head."""
 
-from typing import Any
+from typing import Any, Optional
 
 import torch.nn as nn
 from torch import Tensor
@@ -9,44 +9,25 @@ from praxis.heads.base import BaseHead
 
 
 class ForwardHead(BaseHead):
+    """Standard next-token prediction head.
+
+    In encoder-attached mode the encoder owns the classifier, so this
+    head allocates nothing and stays out of the way - the default
+    pass-through ``process_encoder_output`` lets the encoder's logits
+    flow through unchanged.
     """
-    Standard forward (causal) language modeling head.
-    This is the traditional next-token prediction head.
-    """
 
-    def __init__(self, config: Any) -> None:
-        """
-        Initialize the forward head.
-
-        Args:
-            config: Model configuration
-        """
-        super().__init__(config)
-        self.lm_head = nn.Linear(self.hidden_size, self.vocab_size, bias=False)
-
-        # Initialize weights
-        self.lm_head.weight.data.normal_(mean=0.0, std=0.02)
+    def __init__(self, config: Any, encoder: Optional[nn.Module] = None) -> None:
+        super().__init__(config, encoder)
+        if self.has_encoder:
+            self.lm_head = None
+        else:
+            self.lm_head = nn.Linear(self.hidden_size, self.vocab_size, bias=False)
+            self.lm_head.weight.data.normal_(mean=0.0, std=0.02)
 
     def forward(self, hidden_states: Tensor, **kwargs: Any) -> Tensor:
-        """
-        Forward pass for next-token prediction.
-
-        Args:
-            hidden_states: Hidden states from the model [batch, seq_len, hidden_size]
-            **kwargs: Additional arguments (ignored)
-
-        Returns:
-            Logits tensor [batch, seq_len, vocab_size]
-        """
-        # Project hidden states to vocabulary
         return self.lm_head(hidden_states)
 
     @property
-    def classifier(self) -> nn.Module:
-        """
-        Get the classifier module for loss computation.
-
-        Returns:
-            The linear layer used as classifier
-        """
+    def classifier(self) -> Optional[nn.Module]:
         return self.lm_head

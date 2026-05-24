@@ -66,8 +66,9 @@ class DynamicsLoggerCallback(Callback):
             # Task weights: per-task scalars from learnable TaskLossWeighter.
             dynamics.update(self._extract_task_weights(model))
 
-            # Harmonic head: amplitude norm and grad ratio (when present).
-            dynamics.update(self._extract_harmonic_dynamics(model))
+            # Head-specific diagnostics (harmonic field, crystal centers,
+            # etc.). Each BaseHead may opt in via training_metrics().
+            dynamics.update(self._extract_head_dynamics(model))
 
             if dynamics:
                 self._success_count += 1
@@ -160,7 +161,7 @@ class DynamicsLoggerCallback(Callback):
         tasks are reported -- keeps the chart free of noise for task types
         no live dataset produces.
         """
-        weighter = getattr(model, "taskmaster", None)
+        weighter = getattr(model, "tasker", None)
         if not getattr(weighter, "is_dynamic", False):
             return {}
         effective = weighter.effective_weights().cpu().tolist()
@@ -171,71 +172,21 @@ class DynamicsLoggerCallback(Callback):
             out[f"task_weight_{name}"] = float(value)
         return out
 
-    def _extract_harmonic_dynamics(self, model) -> dict:
-        """Diagnostics for the harmonic head: is it being used or routed around?
+    def _extract_head_dynamics(self, model) -> dict:
+        """Delegate to the LM head's own diagnostics.
 
-        - ``harmonic_amplitudes_norm``: L2 norm of the field's amplitude grid.
-          Stable near init = no structure being learned. Growing = real signal.
-        - ``harmonic_grad_ratio``: ``||grad(amplitudes)|| / ||grad(lm_head)||``.
-          Vanishing means the model is routing learning past the field.
-        - ``harmonic_concentration``: Hoyer sparsity in [0, 1]; diagnostic for
-          whether the field is committing to specific (f_t, f_d) cells.
-        - ``harmonic_smoothness``: forward-shift smoothness in [0, 1]; falls
-          as the aux loss pushes amplitude mass toward low temporal frequencies.
-        - ``harmonic_delta_norm``: RMS of the per-input amplitude delta
-          relative to the static baseline; reads how much the MLP is adapting
-          the field per sequence.
+        Heads opt in by overriding ``BaseHead.training_metrics``; we
+        wrap the call in a try/except so a buggy metric in one head
+        doesn't kill the whole dynamics log.
         """
-        field = getattr(model, "harmonic_field", None)
-        if field is None:
-            head = getattr(model, "head", None)
-            field = getattr(head, "field", None) if head is not None else None
-        if field is None or not hasattr(field, "amplitudes"):
-            return {}
-
-        out = {}
-        amps = field.amplitudes
-        out["harmonic_amplitudes_norm"] = float(amps.detach().norm().item())
-
-        if hasattr(field, "concentration"):
-            try:
-                out["harmonic_concentration"] = float(
-                    field.concentration().detach().item()
-                )
-            except Exception:
-                pass
-
-        if hasattr(field, "smoothness"):
-            try:
-                out["harmonic_smoothness"] = float(field.smoothness().detach().item())
-            except Exception:
-                pass
-
-        if hasattr(field, "delta_norm"):
-            try:
-                out["harmonic_delta_norm"] = float(field.delta_norm().detach().item())
-            except Exception:
-                pass
-
-        amps_grad = amps.grad
-        lm_head = self._find_lm_head(model)
-        head_grad = lm_head.weight.grad if lm_head is not None else None
-        if amps_grad is not None and head_grad is not None:
-            head_norm = float(head_grad.detach().norm().item())
-            if head_norm > 0:
-                out["harmonic_grad_ratio"] = (
-                    float(amps_grad.detach().norm().item()) / head_norm
-                )
-        return out
-
-    def _find_lm_head(self, model):
-        """Return the learnable projection that the field feeds into."""
-        encoder = getattr(model, "encoder", None)
-        classifier = getattr(encoder, "classifier", None) if encoder else None
-        if classifier is not None and hasattr(classifier, "weight"):
-            return classifier
         head = getattr(model, "head", None)
-        return getattr(head, "lm_head", None) if head is not None else None
+        if head is None:
+            return {}
+        try:
+            return head.training_metrics()
+        except Exception as e:
+            print(f"[DynamicsLogger] head.training_metrics() failed: {e}")
+            return {}
 
     def on_train_end(self, trainer, pl_module):
         """Close logger on training end."""

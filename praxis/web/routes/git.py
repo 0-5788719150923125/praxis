@@ -2,8 +2,9 @@
 
 import os
 import subprocess
+import traceback
 
-from flask import Blueprint, Response, request
+from flask import Blueprint, Response, current_app, request
 
 from ..config import GIT_ALLOWED_SERVICES, GIT_READ_ONLY_SERVICE
 
@@ -54,8 +55,6 @@ def git_http_backend(git_path=None):
         try:
             # Run git command to get refs
             # Get repository root from Flask config (set at server startup)
-            from flask import current_app
-
             repo_root = current_app.config.get("repo_root", os.getcwd())
 
             # Disable git safe.directory check for this operation
@@ -83,14 +82,9 @@ def git_http_backend(git_path=None):
             return Response(
                 response_data,
                 content_type=f"application/x-{service}-advertisement",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Access-Control-Allow-Origin": "*",
-                },
+                headers={"Cache-Control": "no-cache"},
             )
         except Exception as e:
-            import traceback
-
             return Response(
                 f"Git error: {str(e)}\n{traceback.format_exc()}", status=500
             )
@@ -100,8 +94,6 @@ def git_http_backend(git_path=None):
         try:
             # Run git upload-pack with the request data
             # Get repository root from Flask config (set at server startup)
-            from flask import current_app
-
             repo_root = current_app.config.get("repo_root", os.getcwd())
 
             # Disable git safe.directory check for this operation
@@ -123,14 +115,9 @@ def git_http_backend(git_path=None):
             return Response(
                 result.stdout,
                 content_type="application/x-git-upload-pack-result",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Access-Control-Allow-Origin": "*",
-                },
+                headers={"Cache-Control": "no-cache"},
             )
         except Exception as e:
-            import traceback
-
             return Response(
                 f"Git error: {str(e)}\n{traceback.format_exc()}", status=500
             )

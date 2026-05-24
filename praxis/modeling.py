@@ -12,7 +12,7 @@ from transformers.modeling_outputs import (
 
 from praxis import DECODER_REGISTRY, EMBEDDING_REGISTRY, ENCODER_REGISTRY, PraxisConfig
 from praxis.containers import LossContainer
-from praxis.heads import HEAD_REGISTRY, HarmonicField
+from praxis.heads import HEAD_REGISTRY
 from praxis.losses import get_loss_function
 from praxis.policies import RL_POLICIES_REGISTRY
 from praxis.strategies import STRATEGIES_REGISTRY
@@ -123,38 +123,24 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         config.causal = True
         super().__init__(config)
 
-        # Initialize the language modeling head based on head_type
-        if config.encoder_type is None:
-            if config.tie_word_embeddings:
-                # Use tied head and get embedding weight reference
-                self.head = HEAD_REGISTRY["tied"](config)
-                # Weight will be tied after model initialization
-            else:
-                self.head = HEAD_REGISTRY.get(config.head_type, "forward")(config)
+        # Build the LM head, passing the encoder reference so heads that
+        # participate in encoder-mode forward (harmonic, crystal) can
+        # size their own submodules. Encoder-agnostic heads (forward,
+        # tied) ignore the reference and skip allocating an lm_head.
+        encoder_ref = self.encoder if self.encoder else None
+        if encoder_ref is None and config.tie_word_embeddings:
+            head_type = "tied"
         else:
-            self.head = None
-
-        # Harmonic head with an encoder: attach a 2D irrational-rotation field
-        # that multiplicatively modulates decoder_embeds before re-projection.
-        self.harmonic_field = None
-        if config.encoder_type is not None and config.head_type == "harmonic":
-            classifier = getattr(self.encoder, "classifier", None)
-            if classifier is not None and hasattr(classifier, "weight"):
-                feature_dim = classifier.weight.shape[1]
-            else:
-                feature_dim = config.hidden_size
-            base_positions = int(
-                getattr(config, "max_position_embeddings", 32768) or 32768
-            )
-            if "byte" in str(config.encoder_type):
-                base_positions = max(base_positions, base_positions * 8)
-            self.harmonic_field = HarmonicField(
-                hidden_dim=feature_dim, max_positions=base_positions
-            )
+            head_type = config.head_type
+        head_cls = HEAD_REGISTRY.get(head_type, HEAD_REGISTRY["forward"])
+        self.head = head_cls(config, encoder=encoder_ref)
 
         # Initialize separate backward head if requested
         if config.bidirectional and config.encoder_type is None:
-            self.backward_head = HEAD_REGISTRY.get(config.head_type, "forward")(config)
+            backward_cls = HEAD_REGISTRY.get(
+                config.head_type, HEAD_REGISTRY["forward"]
+            )
+            self.backward_head = backward_cls(config, encoder=None)
         else:
             self.backward_head = None
 
@@ -184,7 +170,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # is set; the assistant mask from the chat template is always
         # applied when present. Learnable variants expose an anchor_loss
         # that gets folded into the combined objective by the strategy below.
-        self.taskmaster = resolve_task_weighter(config.task_weights)
+        self.tasker = resolve_task_weighter(config.task_weights)
 
         self.strategy = STRATEGIES_REGISTRY.get(config.strategy, "naive")()
 
@@ -196,8 +182,8 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         metrics = super().get_metrics()
         # Surface dynamic task weights (learnable or difficulty-EMA) so
         # runs can see them drift. Fixed weighters are skipped.
-        if getattr(self.taskmaster, "is_dynamic", False):
-            eff = self.taskmaster.effective_weights().cpu().tolist()
+        if getattr(self.tasker, "is_dynamic", False):
+            eff = self.tasker.effective_weights().cpu().tolist()
             for name, value in zip(TASK_NAMES, eff):
                 metrics[f"task_weight_{name}"] = float(value)
         return metrics
@@ -277,7 +263,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         weights = None
         if task_type_ids is not None:
             shifted_task = task_type_ids[..., -target_len:]
-            weights = self.taskmaster(shifted_task.long())
+            weights = self.tasker(shifted_task.long())
 
         if assistant_mask is not None:
             shifted_mask = assistant_mask[..., -target_len:].to(
@@ -447,17 +433,12 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 block_ids=outputs.token_block_ids,
             )
             classifier = self.encoder.classifier
-            if self.harmonic_field is not None:
-                # Modulate decoder_embeds *before* binding hidden_states so the
-                # cut_cross_entropy path (which projects embeddings @ classifier
-                # internally and ignores the materialized logits) runs through
-                # the field. Otherwise amplitudes sit in a dead branch.
-                decoder_embeds = self.harmonic_field(decoder_embeds)
-                logits = F.linear(
-                    decoder_embeds,
-                    classifier.weight,
-                    getattr(classifier, "bias", None),
-                ).to(logits.dtype)
+            # Heads opt into encoder-mode processing via this hook
+            # (default is pass-through). Harmonic modulates + re-projects;
+            # crystal swaps in a distance-based classifier.
+            logits, decoder_embeds, classifier = self.head.process_encoder_output(
+                decoder_embeds, logits, classifier
+            )
             hidden_states = decoder_embeds
 
             # Encoders that manage their own losses (e.g. CALM) may emit
@@ -567,24 +548,21 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # Task-weight anchor loss (learnable weighters only). Folds in
         # alongside MTP / RL / encoder aux losses so the strategy sees it.
         if self.training and labels is not None:
-            anchor = self.taskmaster.anchor_loss()
+            anchor = self.tasker.anchor_loss()
             if anchor is not None:
                 outputs.losses.add_loss("task_weight_anchor", anchor)
 
-        # Harmonic forward-shift smoothness loss: closed-form CCA prior that
-        # rewards low-temporal-frequency amplitude mass, i.e. fields where
-        # b_t predicts b_{t+1}. NLL has no notion of harmonic structure;
-        # this is the pressure that picks the predictable end of the spectrum.
-        if self.training and labels is not None:
-            field = self.harmonic_field
-            if field is None:
-                head = self.head
-                if head is not None and hasattr(head, "field"):
-                    field = head.field
-            if field is not None and hasattr(field, "aux_loss"):
-                aux = field.aux_loss()
-                if aux is not None:
-                    outputs.losses.add_loss("harmonic_smoothness", aux)
+        # Heads can emit named aux losses (e.g., HarmonicHead's
+        # forward-shift smoothness loss, CrystalHead's embedding-RMS
+        # regularizer). We pass the model's input-embedding weights
+        # along so heads that want to regularize them can; heads that
+        # don't ignore the arg.
+        if self.training and labels is not None and self.head is not None:
+            aux = self.head.aux_losses(
+                embedding_weights=self.input_embedding_weights()
+            )
+            for name, value in aux.items():
+                outputs.losses.add_loss(name, value)
 
         # MTP auxiliary loss (training only)
         if self.mtp is not None and self.training and labels is not None:
@@ -830,6 +808,27 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 return self.embeds.tokens
             return self.embeds
         return None
+
+    def input_embedding_weights(self) -> list:
+        """Input-embedding weight tensors exposed to interested heads.
+
+        For token paths, this is the input embedding's weight. For
+        encoder paths, the encoder may expose its own list via
+        ``get_regularizable_embeddings()`` (e.g. byte-latent's hash
+        tables) - we defer to the encoder rather than trying to
+        introspect its internals. Heads that don't care (forward,
+        harmonic) ignore the result; heads that do (crystal) use it
+        in ``aux_losses()`` to compute their regularization.
+        """
+        if self.encoder:
+            get = getattr(self.encoder, "get_regularizable_embeddings", None)
+            if callable(get):
+                return list(get())
+            return []
+        embeds = self.get_input_embeddings()
+        if embeds is not None and hasattr(embeds, "weight"):
+            return [embeds.weight]
+        return []
 
     def get_output_embeddings(self) -> nn.Module:
         """Get the output embeddings (lm_head) module."""

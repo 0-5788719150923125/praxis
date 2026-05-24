@@ -4,11 +4,14 @@ import hashlib
 import json
 import math
 import sqlite3
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from flask import Blueprint, current_app, jsonify, request
+
+from praxis.web.app import api_logger
 
 metrics_bp = Blueprint("metrics", __name__)
 
@@ -29,7 +32,7 @@ def _sanitize_for_json(obj):
     return obj
 
 
-@metrics_bp.route("/api/metrics", methods=["GET", "OPTIONS"])
+@metrics_bp.route("/api/metrics", methods=["GET"])
 def get_metrics():
     """Get training metrics with LTTB downsampling and caching.
 
@@ -54,18 +57,7 @@ def get_metrics():
         404: No metrics file found
         500: Server error
     """
-    if request.method == "OPTIONS":
-        response = jsonify({"status": "ok"})
-        response.headers.add("Access-Control-Allow-Origin", "*")
-        response.headers.add(
-            "Access-Control-Allow-Headers", "Content-Type, If-None-Match"
-        )
-        response.headers.add("Access-Control-Allow-Methods", "GET, OPTIONS")
-        return response
-
     try:
-        from ..app import api_logger
-
         # Get query parameters
         since_step = int(request.args.get("since", 0))
         limit = int(request.args.get("limit", 1000))
@@ -190,8 +182,6 @@ def get_metrics():
 
         # Log response size for debugging
         try:
-            import sys
-
             response_size = sys.getsizeof(json.dumps(response_data))
             api_logger.debug(
                 f"Metrics response size: {response_size} bytes ({len(all_runs_data)} runs)"
@@ -202,18 +192,14 @@ def get_metrics():
         response = jsonify(response_data)
         response.headers["ETag"] = etag
         response.headers["Cache-Control"] = "max-age=5"  # Cache for 5 seconds
-        response.headers.add("Access-Control-Allow-Origin", "*")
         return response
 
     except Exception as e:
-        from ..app import api_logger
-
         api_logger.error(f"Error in get_metrics endpoint: {e}", exc_info=True)
 
         error_response = jsonify(
             {"error": str(e), "status": "error", "error_type": type(e).__name__}
         )
-        error_response.headers.add("Access-Control-Allow-Origin", "*")
         return error_response, 500
 
 
@@ -324,8 +310,6 @@ def _read_metrics_file(
         return metrics
 
     except Exception as e:
-        from ..app import api_logger
-
         api_logger.error(f"Error reading metrics from {db_path}: {e}", exc_info=True)
         return []
 
@@ -454,7 +438,7 @@ def _transform_metrics(raw_metrics: List[Dict[str, Any]]) -> Dict[str, List[Any]
     return result
 
 
-@metrics_bp.route("/api/runs", methods=["GET", "OPTIONS"])
+@metrics_bp.route("/api/runs", methods=["GET"])
 def get_runs():
     """Get list of available training runs.
 
@@ -462,13 +446,6 @@ def get_runs():
         200: List of runs with metadata
         500: Server error
     """
-    if request.method == "OPTIONS":
-        response = jsonify({"status": "ok"})
-        response.headers.add("Access-Control-Allow-Origin", "*")
-        response.headers.add("Access-Control-Allow-Headers", "Content-Type")
-        response.headers.add("Access-Control-Allow-Methods", "GET, OPTIONS")
-        return response
-
     try:
         runs_dir = Path("build/runs")
 
@@ -534,16 +511,12 @@ def get_runs():
         response_data = {"status": "ok", "runs": runs, "current_hash": current_hash}
 
         response = jsonify(response_data)
-        response.headers.add("Access-Control-Allow-Origin", "*")
         return response
 
     except Exception as e:
-        from ..app import api_logger
-
         api_logger.error(f"Error in get_runs endpoint: {e}", exc_info=True)
 
         error_response = jsonify(
             {"error": str(e), "status": "error", "error_type": type(e).__name__}
         )
-        error_response.headers.add("Access-Control-Allow-Origin", "*")
         return error_response, 500
