@@ -13,6 +13,7 @@ To skip generation: ``./launch --no-docs``.
 
 from __future__ import annotations
 
+import functools
 import inspect
 import textwrap
 from pathlib import Path
@@ -312,7 +313,7 @@ def _render_entry(
         if override:
             out.append(textwrap.fill(override, width=88, replace_whitespace=True))
         else:
-            out.append(f"Value: `{value!r}`")
+            out.append(f"Value: `{_format_value(value)}`")
         return out
 
     qualname = getattr(value, "__qualname__", value.__name__)
@@ -603,6 +604,27 @@ class _Link:
     def __init__(self, display: str, url: str) -> None:
         self.display = display
         self.url = url
+
+
+def _format_value(value: Any) -> str:
+    """Deterministic repr for a non-class registry entry. Stripping the
+    ``<function foo at 0x...>`` address means docs/*.md stays stable
+    across launches even when Python relocates the function in memory."""
+    if isinstance(value, functools.partial):
+        parts = [_format_value(value.func)]
+        parts.extend(_format_value(a) for a in value.args)
+        parts.extend(
+            f"{k}={_format_value(v)}" for k, v in sorted(value.keywords.items())
+        )
+        return f"functools.partial({', '.join(parts)})"
+    if inspect.isclass(value):
+        module = getattr(value, "__module__", "") or ""
+        return f"<class '{module}.{value.__qualname__}'>" if module else f"<class '{value.__qualname__}'>"
+    if inspect.isfunction(value) or inspect.ismethod(value) or inspect.isbuiltin(value):
+        module = getattr(value, "__module__", "") or ""
+        qualname = getattr(value, "__qualname__", value.__name__)
+        return f"<function {module}.{qualname}>" if module else f"<function {qualname}>"
+    return repr(value)
 
 
 def _source_link(cls: type, repo_root: Path) -> Optional[_Link]:

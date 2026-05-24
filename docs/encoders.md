@@ -7,7 +7,7 @@ Registry: ``praxis.ENCODER_REGISTRY`` (8 entries)
 
 ## `abstractinator`
 
-Value: `functools.partial(<class 'praxis.encoders.abstractinator.encoder.AbstractinatorEncoder'>, local_architecture='conv', patching_mode='space', n_layers_encoder=3, n_layers_decoder=3, use_hash_embeddings=True, hash_functions=1, hash_group_sizes=[3, 4, 5], vq_codebook_size=16384)`
+Value: `functools.partial(<class 'praxis.encoders.abstractinator.encoder.AbstractinatorEncoder'>, hash_functions=1, hash_group_sizes=[3, 4, 5], local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', use_hash_embeddings=True, vq_codebook_size=16384)`
 
 ## `byte_latent` - ByteLatentEncoder
 
@@ -21,24 +21,24 @@ Source: [praxis/encoders/byte_latent/encoder.py:47](../praxis/encoders/byte_late
 
 ## `byte_latent_conv`
 
-Value: `functools.partial(<class 'praxis.encoders.byte_latent.encoder.ByteLatentEncoder'>, local_architecture='conv', patching_mode='space', n_layers_encoder=3, n_layers_decoder=3, use_hash_embeddings=True, hash_functions=1, hash_group_sizes=[3, 4, 5])`
+Value: `functools.partial(<class 'praxis.encoders.byte_latent.encoder.ByteLatentEncoder'>, hash_functions=1, hash_group_sizes=[3, 4, 5], local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', use_hash_embeddings=True)`
 
 ## `byte_latent_transformer`
 
-Value: `functools.partial(<class 'praxis.encoders.byte_latent.encoder.ByteLatentEncoder'>, local_architecture='transformer', patching_mode='space', n_layers_encoder=1, n_layers_decoder=1, use_hash_embeddings=True, hash_functions=1, hash_group_sizes=[3, 4, 5])`
+Value: `functools.partial(<class 'praxis.encoders.byte_latent.encoder.ByteLatentEncoder'>, hash_functions=1, hash_group_sizes=[3, 4, 5], local_architecture='transformer', n_layers_decoder=1, n_layers_encoder=1, patching_mode='space', use_hash_embeddings=True)`
 
 ## `calm`
 
-Value: `functools.partial(<class 'praxis.encoders.calm.encoder.CALMEncoder'>, chunk_size=8, latent_dim=128, ae_hidden=512, kl_beta=0.001, kl_clip=0.5, ae_dropout=0.15, noise_dim=128, energy_blocks=3, energy_samples_n=8, energy_samples_m=100, energy_alpha=1.0)`
+Value: `functools.partial(<class 'praxis.encoders.calm.encoder.CALMEncoder'>, ae_dropout=0.15, ae_hidden=512, chunk_size=8, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=128, noise_dim=128)`
 
 ## `calm_bpe`
 
-Value: `functools.partial(<class 'praxis.encoders.calm.encoder.CALMEncoder'>, chunk_size=4, latent_dim=128, ae_hidden=512, kl_beta=0.001, kl_clip=0.5, ae_dropout=0.15, noise_dim=128, energy_blocks=3, energy_samples_n=8, energy_samples_m=100, energy_alpha=1.0)`
+Value: `functools.partial(<class 'praxis.encoders.calm.encoder.CALMEncoder'>, ae_dropout=0.15, ae_hidden=512, chunk_size=4, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=128, noise_dim=128)`
 
 ## `calm_byte`
 
-Value: `functools.partial(<class 'praxis.encoders.calm.encoder.CALMEncoder'>, chunk_size=16, latent_dim=128, ae_hidden=512, kl_beta=0.001, kl_clip=0.5, ae_dropout=0.15, noise_dim=128, energy_blocks=3, energy_samples_n=8, energy_samples_m=100, energy_alpha=1.0)`
+Value: `functools.partial(<class 'praxis.encoders.calm.encoder.CALMEncoder'>, ae_dropout=0.15, ae_hidden=512, chunk_size=16, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=128, noise_dim=128)`
 
 ## `calm_small`
 
-Value: `functools.partial(<class 'praxis.encoders.calm.encoder.CALMEncoder'>, chunk_size=8, latent_dim=64, ae_hidden=256, kl_beta=0.001, kl_clip=0.5, ae_dropout=0.1, noise_dim=64, energy_blocks=2, energy_samples_n=8, energy_samples_m=100, energy_alpha=1.0)`
+Value: `functools.partial(<class 'praxis.encoders.calm.encoder.CALMEncoder'>, ae_dropout=0.1, ae_hidden=256, chunk_size=8, energy_alpha=1.0, energy_blocks=2, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=64, noise_dim=64)`

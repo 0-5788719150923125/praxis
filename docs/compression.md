@@ -7,11 +7,11 @@ Registry: ``praxis.COMPRESSION_REGISTRY`` (3 entries)
 
 ## `linear`
 
-Value: `functools.partial(<class 'praxis.compression.sequence_interpolation.SequenceInterpolation'>, method='linear', factor=0.9)`
+Value: `functools.partial(<class 'praxis.compression.sequence_interpolation.SequenceInterpolation'>, factor=0.9, method='linear')`
 
 ## `nearest`
 
-Value: `functools.partial(<class 'praxis.compression.sequence_interpolation.SequenceInterpolation'>, method='nearest', factor=0.9)`
+Value: `functools.partial(<class 'praxis.compression.sequence_interpolation.SequenceInterpolation'>, factor=0.9, method='nearest')`
 
 ## `none` - NoCompression
 

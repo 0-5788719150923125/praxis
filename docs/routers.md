@@ -80,12 +80,12 @@ Source: [praxis/routers/smear.py:22](../praxis/routers/smear.py#L22)
 
 ## `taxus`
 
-Value: `<function create_taxus_with_dynamic_budget at 0x7efcf8cdce00>`
+Value: `<function praxis.routers.create_taxus_with_dynamic_budget>`
 
 ## `taxus_aggressive`
 
-Value: `functools.partial(<function create_taxus_with_dynamic_budget at 0x7efcf8cdce00>, target_depth_ratio=0.25, budget_ratio=0.3, temperature=0.2)`
+Value: `functools.partial(<function praxis.routers.create_taxus_with_dynamic_budget>, budget_ratio=0.3, target_depth_ratio=0.25, temperature=0.2)`
 
 ## `taxus_balanced`
 
-Value: `functools.partial(<function create_taxus_with_dynamic_budget at 0x7efcf8cdce00>, target_depth_ratio=0.5, budget_ratio=0.6, temperature=0.5)`
+Value: `functools.partial(<function praxis.routers.create_taxus_with_dynamic_budget>, budget_ratio=0.6, target_depth_ratio=0.5, temperature=0.5)`
