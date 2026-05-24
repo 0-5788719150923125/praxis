@@ -91,6 +91,19 @@ export const CLICK_HANDLERS = [
         action: () => ({ type: 'TOGGLE_DYNAMICS_RUN_SELECTOR' })
     },
     {
+        selector: '.run-selector-item input[data-spec-run-hash]',
+        match: 'closest',
+        action: (e) => ({
+            type: 'SELECT_SPEC_RUN',
+            payload: e.target.dataset.specRunHash
+        })
+    },
+    {
+        selector: '#spec-run-selector-btn',
+        match: 'closest',
+        action: () => ({ type: 'TOGGLE_SPEC_RUN_SELECTOR' })
+    },
+    {
         selector: '#refresh-metrics-btn',
         match: 'closest',
         action: () => ({ type: 'REFRESH_TAB_DATA' })

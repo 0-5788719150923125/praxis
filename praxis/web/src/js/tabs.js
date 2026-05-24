@@ -6,6 +6,7 @@
 import { state, getAgentFreshnessColor } from './state.js';
 import { fetchAPI } from './api.js';
 import { loadResearchMetricsWithCharts } from './charts.js';
+import { formatRelativeTime } from './charts.js';
 import {
     createSection,
     createCodeBlock,
@@ -67,16 +68,73 @@ async function loadTabData(config) {
 }
 
 /**
- * Load Spec tab content
+ * Load the list of runs (for the Identity-tab run picker dropdown).
+ * Idempotent; safe to call on every spec load.
  */
-export async function loadSpec() {
-    await loadTabData({
-        stateKey: 'spec',
-        containerId: 'spec-container',
-        loadingMessage: 'Loading specification...',
-        fetchFn: () => fetchAPI('spec'),
-        renderFn: renderSpec
-    });
+async function loadAvailableSpecRuns() {
+    try {
+        const response = await fetch('/api/runs');
+        if (!response.ok) return [];
+        const data = await response.json();
+        state.spec.availableRuns = data.runs || [];
+        return state.spec.availableRuns;
+    } catch (error) {
+        console.error('[Spec] Failed to load run list:', error);
+        return [];
+    }
+}
+
+/**
+ * Toggle the Identity-tab run picker dropdown.
+ */
+export function toggleSpecRunSelector() {
+    state.spec.runSelectorOpen = !state.spec.runSelectorOpen;
+    const dropdown = document.getElementById('spec-run-selector-dropdown');
+    if (dropdown) {
+        dropdown.style.display = state.spec.runSelectorOpen ? 'block' : 'none';
+    }
+}
+
+/**
+ * Select a run for the Identity tab (single-select; null = current run).
+ */
+export function selectSpecRun(hash) {
+    state.spec.selectedRun = hash || null;
+    state.spec.runSelectorOpen = false;
+    state.spec.loaded = false;
+    loadSpec(true);
+}
+
+/**
+ * Load Spec tab content. When a non-current run is selected we fetch the
+ * persisted snapshot via /api/spec?runs=<hash>.
+ */
+export async function loadSpec(force = false) {
+    if (state.spec.loaded && !force) return;
+
+    const container = document.getElementById('spec-container');
+    if (!container) return;
+
+    container.innerHTML = '<div class="loading-placeholder">Loading specification...</div>';
+
+    try {
+        await loadAvailableSpecRuns();
+        const runQuery = state.spec.selectedRun
+            ? `?runs=${encodeURIComponent(state.spec.selectedRun)}`
+            : '';
+        const response = await fetch(`/api/spec${runQuery}`);
+        if (!response.ok) throw new Error(`API returned ${response.status}`);
+        const data = await response.json();
+
+        state.spec.data = data;
+        state.spec.loaded = true;
+        state.spec.error = null;
+
+        renderSpec(data, container);
+    } catch (error) {
+        state.spec.error = error.message;
+        container.innerHTML = `<div class="loading-placeholder" style="color: #cc0000;">Error: ${error.message}</div>`;
+    }
 }
 
 /**
@@ -135,6 +193,51 @@ const renderSpecSections = {
 };
 
 /**
+ * Build the run selector dropdown (HTML string) for the Identity tab.
+ * Mirrors the Dynamics-tab picker; events target #spec-* IDs and the
+ * data-spec-run-hash attribute on inputs.
+ */
+function renderSpecRunSelector() {
+    const runs = state.spec.availableRuns || [];
+    if (runs.length === 0) return '';
+
+    const selected = state.spec.selectedRun;
+    const activeRun = runs.find(r => r.hash === selected)
+        || runs.find(r => r.is_current)
+        || runs[0];
+    const label = activeRun ? activeRun.hash : 'Run';
+
+    return `
+        <div class="run-selector-wrapper">
+            <button class="run-selector-button" id="spec-run-selector-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                    <path d="M8 1a7 7 0 1 0 4.95 11.95l.707.707A8.001 8.001 0 1 1 8 0v1z"/>
+                    <path d="M7.5 3a.5.5 0 0 1 .5.5v5.21l3.248 1.856a.5.5 0 0 1-.496.868l-3.5-2A.5.5 0 0 1 7 9V3.5a.5.5 0 0 1 .5-.5z"/>
+                </svg>
+                Run: ${label}
+            </button>
+            <div class="run-selector-dropdown" id="spec-run-selector-dropdown" style="display: none;">
+                <div class="run-selector-header">Select Run</div>
+                <div class="run-selector-list">
+                    ${runs.map(run => {
+                        const isActive = run.hash === (activeRun ? activeRun.hash : null);
+                        const time = formatRelativeTime(run.metrics_updated);
+                        const badge = run.is_current ? ' <span style="opacity: 0.6; font-size: 0.8em;">(active)</span>' : '';
+                        return `
+                            <label class="run-selector-item">
+                                <input type="radio" name="spec-run" ${isActive ? 'checked' : ''} data-spec-run-hash="${run.hash}">
+                                <span class="run-label">${run.hash}${badge}</span>
+                                <span class="run-steps">${run.num_steps} steps &middot; ${time}</span>
+                            </label>
+                        `;
+                    }).join('')}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+/**
  * Render spec tab content using generic components
  * Pure functional approach - configuration drives rendering
  */
@@ -144,22 +247,43 @@ function renderSpec(data, container) {
         return;
     }
 
-    // Create peer button for header
-    const gitRemoteCmd = `git remote add ${data.truncated_hash} ${data.git_url}`;
-    const peerButton = {
-        id: 'peer-button',
-        label: 'Peer with agent',
-        icon: '',
-        className: 'tab-header-button copy-git-remote-btn',
-        dataAttrs: `data-command="${escapeHtml(gitRemoteCmd)}"`
-    };
+    // Peer button only makes sense for the live run (snapshots lack git_url).
+    const buttons = [];
+    if (data.git_url) {
+        const gitRemoteCmd = `git remote add ${data.truncated_hash} ${data.git_url}`;
+        buttons.push({
+            id: 'peer-button',
+            label: 'Peer with agent',
+            icon: '',
+            className: 'tab-header-button copy-git-remote-btn',
+            dataAttrs: `data-command="${escapeHtml(gitRemoteCmd)}"`
+        });
+    }
 
-    // Create header with button
+    const metaParts = [];
+    if (data.timestamp) {
+        metaParts.push(`<span><strong>Created:</strong> ${data.timestamp}</span>`);
+    }
+    if (data.is_snapshot) {
+        metaParts.push('<span><strong>Source:</strong> snapshot</span>');
+    }
+
     const headerHTML = createTabHeader({
         title: 'Configuration',
-        buttons: [peerButton],
-        metadata: data.timestamp ? `<span><strong>Created:</strong> ${data.timestamp}</span>` : ''
+        additionalContent: renderSpecRunSelector(),
+        buttons,
+        metadata: metaParts.join('\n')
     });
+
+    if (data.snapshot_missing) {
+        container.innerHTML = headerHTML + `
+            <div class="empty-state" style="margin-top: 2rem;">
+                <h3>No Snapshot Available</h3>
+                <p>This run was created before per-run spec snapshots were captured. Re-launch the run to populate its identity.</p>
+            </div>
+        `;
+        return;
+    }
 
     // Filter and sort sections based on configuration
     const visibleSections = SPEC_CONFIG.sections

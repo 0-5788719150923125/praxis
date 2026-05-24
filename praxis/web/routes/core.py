@@ -1,19 +1,43 @@
 """Core API routes."""
 
 import hashlib
-import io
 import json
 import os
-import subprocess
-from contextlib import redirect_stdout
 from datetime import datetime
+from pathlib import Path
 
 import yaml
 from flask import Blueprint, Response, jsonify, make_response, render_template, request
 
 from ..config import CSP_POLICY
+from ..spec_data import build_spec_payload, load_run_spec
 
 core_bp = Blueprint("core", __name__)
+
+
+def _compute_git_url(app_config) -> str | None:
+    """Build the git URL for the *current* run based on the request host."""
+    ngrok_url = app_config.get("ngrok_url")
+    ngrok_secret = app_config.get("ngrok_secret")
+    configured_host = app_config.get("configured_host")
+    configured_port = app_config.get("configured_port")
+
+    if ngrok_url and ngrok_secret:
+        return f"{ngrok_url}/{ngrok_secret}/praxis"
+    if configured_host and configured_host != "localhost":
+        if configured_host.startswith(("https://", "http://")):
+            return f"{configured_host}/praxis"
+        return f"http://{configured_host}:{configured_port}/praxis"
+
+    host = request.host.split(":")[0] if ":" in request.host else request.host
+    if (
+        host.endswith(".ngrok-free.app")
+        or host.endswith(".ngrok.io")
+        or host.endswith(".src.eco")
+    ):
+        return f"https://{host}/praxis"
+    port = request.host.split(":")[1] if ":" in request.host else "80"
+    return f"http://{host}:{port}/praxis"
 
 
 @core_bp.route("/", methods=["GET"])
@@ -47,132 +71,69 @@ def get_spec():
 
     try:
         from flask import current_app
+        from praxis.utils import mask_git_url
 
-        # Try to get CLI args, but handle the case where they're not available
-        try:
-            from praxis.cli import get_cli_args, get_loader_flag_attrs
+        current_hash = current_app.config.get("truncated_hash")
+        requested_hash = request.args.get("runs") or None
 
-            args = get_cli_args()
-            excluded_attrs = get_loader_flag_attrs()
-        except:
-            # If CLI args aren't available (e.g., in tests), use empty namespace
-            import argparse
+        # Snapshot path: serve a saved spec from build/runs/<hash>/spec.json
+        # so the Identity tab can inspect runs other than the live one.
+        if requested_hash and requested_hash != current_hash:
+            run_dir = Path("build/runs") / requested_hash
+            spec = load_run_spec(str(run_dir))
+            if spec is None:
+                spec = {
+                    "truncated_hash": requested_hash,
+                    "full_hash": None,
+                    "args": {},
+                    "model_architecture": None,
+                    "param_stats": {},
+                    "timestamp": None,
+                    "command": None,
+                    "seed": None,
+                    "commit_timestamp": None,
+                    "snapshot_missing": True,
+                }
+            spec["is_snapshot"] = True
+            spec["is_current"] = False
+            response = jsonify(spec)
+            response.headers.add("Access-Control-Allow-Origin", "*")
+            return response
 
-            args = argparse.Namespace()
-            excluded_attrs = set()
-
-        # Convert args to dict, filtering out experiment/environment activator
-        # flags (one boolean per YAML file) and non-serializable items.
-        args_dict = {}
-        for key, value in vars(args).items():
-            if key in excluded_attrs:
-                continue
-            try:
-                json.dumps(value)
-                args_dict[key] = value
-            except (TypeError, ValueError):
-                args_dict[key] = str(value)
-
-        # Use the hashes from app config
-        truncated_hash = current_app.config.get("truncated_hash")
+        # Live path: build a fresh payload from app state and attach
+        # request-dependent fields (git_url) on top.
+        if not current_hash:
+            current_hash = "unknown"
         full_hash = current_app.config.get("full_hash")
+        if current_hash != "unknown" and not full_hash:
+            full_hash = hashlib.sha256(current_hash.encode()).hexdigest()
 
-        # Fallback for backward compatibility
-        if truncated_hash and not full_hash:
-            full_hash = hashlib.sha256(truncated_hash.encode()).hexdigest()
-
-        if not truncated_hash:
-            truncated_hash = "unknown"
-            full_hash = "unknown"
-
-        # Get the model architecture string
-        model_arch = None
-        try:
-            generator = current_app.config.get("generator")
-            if generator and hasattr(generator, "model"):
-                model = generator.model
-                f = io.StringIO()
-                with redirect_stdout(f):
-                    print(model)
-                model_arch = f.getvalue()
-        except Exception as e:
-            model_arch = f"Error getting model architecture: {str(e)}"
-
-        # Use the simplified param_stats from the app config
         param_stats = current_app.config.get("param_stats", {})
-
-        # If not available, try to calculate it
+        generator = current_app.config.get("generator")
         if not param_stats:
             try:
                 from praxis.optimizers import get_parameter_stats
 
-                generator = current_app.config.get("generator")
                 if generator and hasattr(generator, "model"):
-                    model = generator.model
-                    param_stats = get_parameter_stats(model)
-            except:
+                    param_stats = get_parameter_stats(generator.model)
+            except Exception:
                 param_stats = {}
 
-        # Get the launch command and timestamp
-        command = current_app.config.get("launch_command")
-        timestamp = current_app.config.get("launch_timestamp")
+        spec = build_spec_payload(
+            generator=generator,
+            truncated_hash=current_hash,
+            full_hash=full_hash or "unknown",
+            param_stats=param_stats,
+            command=current_app.config.get("launch_command"),
+            timestamp=current_app.config.get("launch_timestamp"),
+            seed=current_app.config.get("seed"),
+        )
 
-        # Get the appropriate git URL
-        git_url = None
-        ngrok_url = current_app.config.get("ngrok_url")
-        ngrok_secret = current_app.config.get("ngrok_secret")
-        configured_host = current_app.config.get("configured_host")
-        configured_port = current_app.config.get("configured_port")
-
-        if ngrok_url and ngrok_secret:
-            git_url = f"{ngrok_url}/{ngrok_secret}/praxis"
-        elif configured_host and configured_host != "localhost":
-            # If host includes a scheme (e.g., https://host.example.com), use it directly
-            if configured_host.startswith(("https://", "http://")):
-                git_url = f"{configured_host}/praxis"
-            else:
-                git_url = f"http://{configured_host}:{configured_port}/praxis"
-        else:
-            host = request.host.split(":")[0] if ":" in request.host else request.host
-            if (
-                host.endswith(".ngrok-free.app")
-                or host.endswith(".ngrok.io")
-                or host.endswith(".src.eco")
-            ):
-                git_url = f"https://{host}/praxis"
-            else:
-                port = request.host.split(":")[1] if ":" in request.host else "80"
-                git_url = f"http://{host}:{port}/praxis"
-
-        from praxis.utils import mask_git_url
-
-        # Get commit timestamp
-        commit_timestamp = None
-        try:
-            timestamp_result = subprocess.run(
-                ["git", "show", "-s", "--format=%ct", "HEAD"],
-                capture_output=True,
-                text=True,
-                cwd=os.getcwd(),
-            )
-            if timestamp_result.returncode == 0:
-                commit_timestamp = int(timestamp_result.stdout.strip())
-        except:
-            pass
-
-        spec = {
-            "truncated_hash": truncated_hash,
-            "full_hash": full_hash,
-            "args": args_dict,
-            "model_architecture": model_arch,
-            "param_stats": param_stats,
-            "timestamp": timestamp,
-            "command": command,
-            "git_url": git_url,
-            "masked_git_url": mask_git_url(git_url) if git_url else None,
-            "seed": current_app.config.get("seed"),
-            "commit_timestamp": commit_timestamp,
-        }
+        git_url = _compute_git_url(current_app.config)
+        spec["git_url"] = git_url
+        spec["masked_git_url"] = mask_git_url(git_url) if git_url else None
+        spec["is_snapshot"] = False
+        spec["is_current"] = True
 
         response = jsonify(spec)
         response.headers.add("Access-Control-Allow-Origin", "*")

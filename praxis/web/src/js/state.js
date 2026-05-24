@@ -174,7 +174,11 @@ export const state = {
     spec: {
         loaded: false,
         data: null,
-        error: null
+        error: null,
+        // Run picker (single-select; current run by default)
+        availableRuns: [],
+        selectedRun: null,
+        runSelectorOpen: false
     },
 
     // Agents data (loaded async)

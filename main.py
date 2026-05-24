@@ -683,6 +683,27 @@ def main():
     except Exception as e:
         pass
 
+    # Snapshot this run's spec so the Identity tab can inspect it later
+    # even after the process has exited.
+    if local_rank == 0:
+        try:
+            from praxis.web.spec_data import build_spec_payload, save_run_spec
+
+            snapshot = build_spec_payload(
+                generator=generator,
+                truncated_hash=truncated_hash,
+                full_hash=args_hash,
+                param_stats=param_stats,
+                command=full_command,
+                timestamp=(
+                    api_server.launch_timestamp if api_server is not None else None
+                ),
+                seed=seed,
+            )
+            save_run_spec(cache_dir, snapshot)
+        except Exception:
+            pass
+
     # create the scheduler
     scheduler = scheduler_func(optimizer)
 
