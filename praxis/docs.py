@@ -498,6 +498,25 @@ def _build_cli_parser():
     return parser
 
 
+# Subcommands handled by the `./launch` bash wrapper before Python runs, so
+# they never reach argparse and can't be introspected. Maintained by hand;
+# the launch script changes rarely.
+_LAUNCH_COMMANDS_SECTION = [
+    "### launch script",
+    "",
+    "Handled by the `./launch` wrapper itself (before Python), so they do not "
+    "appear in `--help`. Maintained by hand.",
+    "",
+    "| Command | Description |",
+    "| --- | --- |",
+    "| `./launch` | Set up / reuse the virtualenv and start a normal training run. |",
+    "| `./launch stop` | Tear down a running Docker Compose stack. |",
+    "| `./launch compose [args...]` | Run inside Docker Compose (auto-detects ARM vs x86_64); forwards all remaining args to a containerized `./launch`. |",
+    "| `./launch test [pytest args...]` | Run the test suite via pytest; forwards all remaining args (e.g. `./launch test -x`). |",
+    "",
+]
+
+
 def _render_cli_doc() -> str:
     """docs/cli.md: every ./launch flag, grouped as in --help."""
     import argparse
@@ -535,6 +554,7 @@ def _render_cli_doc() -> str:
         "active in your setup.",
         "",
     ]
+    lines.extend(_LAUNCH_COMMANDS_SECTION)
     for group in parser._action_groups:
         actions = [
             a

@@ -6,6 +6,17 @@ Each flag is also settable via a `PRAXIS_<DEST>` environment variable (e.g. `--b
 
 > Experiment YAMLs (`experiments/`) and environment YAMLs (`environments/`) each add their own `--<name>` toggle flag, and integrations add their own arguments. Those are local to your checkout and so are not listed here - run `./launch --help` to see everything active in your setup.
 
+### launch script
+
+Handled by the `./launch` wrapper itself (before Python), so they do not appear in `--help`. Maintained by hand.
+
+| Command | Description |
+| --- | --- |
+| `./launch` | Set up / reuse the virtualenv and start a normal training run. |
+| `./launch stop` | Tear down a running Docker Compose stack. |
+| `./launch compose [args...]` | Run inside Docker Compose (auto-detects ARM vs x86_64); forwards all remaining args to a containerized `./launch`. |
+| `./launch test [pytest args...]` | Run the test suite via pytest; forwards all remaining args (e.g. `./launch test -x`). |
+
 ### hardware
 
 | Flag | Type | Default | Description |
@@ -30,13 +41,13 @@ Each flag is also settable via a `PRAXIS_<DEST>` environment variable (e.g. `--b
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
-| `--activation` | str | `mish` | The primary activation function to use (choices: gelu, gelu_10, gelu_accurate, gelu_fast, gelu_new, gelu_python, gelu_python_tanh, gelu_pytorch_tanh, hardswish, jagged_sin, laplace, leaky_relu, linear, mish, nmda, periodic_relu, prelu, quick_gelu, relu, relu2, relu6, serf, serpent, sigmoid, silu, sin, sin_cos, sinlu, snake, sqrtsoftplus, swish, tanh, xielu) |
+| `--activation` | str | `mish` | The primary activation function to use (choices: gelu, gelu_10, gelu_accurate, gelu_fast, gelu_new, gelu_python, gelu_python_tanh, gelu_pytorch_tanh, jagged_sin, laplace, leaky_relu, linear, mish, nmda, periodic_relu, prelu, quick_gelu, relu, relu2, relu6, serf, serpent, sigmoid, silu, sin, sin_cos, sinlu, snake, swish, tanh, xielu) |
 | `--attention-type` | str | `standard` | The base attention implementation to use (choices: standard, vanilla, pk, syntaxes, causal, infini, arc) |
 | `--bidirectional` | bool | `False` | Enable bidirectional language modeling (forward and backward prediction) |
 | `--block-size` | int | `512` | The base sequence length to train with |
 | `--block-type` | str | `transformer` | The type of block to use for every intermediate decoder layer (choices: conv, gru, mru, min, nano, recurrent, ssm, transformer) |
 | `--compression-type` | str | `none` | The type of sequence compression to use (choices: none, linear, nearest) |
-| `--controller-type` | str | `base` | Various methods used to route inputs through experts in the decoder (choices: base, layer_shuffle, graph, pathfinder, shortcutter, attention, counter_attention, neural) |
+| `--controller-type` | str | `base` | Various methods used to route inputs through experts in the decoder (choices: base, layer_shuffle, graph, pathfinder, shortcutter, attention, counter_attention) |
 | `--decoder-type` | str | `sequential` | How to process layers in the decoder (choices: sequential, parallel_mean, parallel_variance, parallel_weighted) |
 | `--depth` | int | `None` | The max number of experts to route through (defaults to num_layers) |
 | `--differential` | bool | `False` | Use a Differential Attention mechanism |
@@ -94,7 +105,7 @@ Each flag is also settable via a `PRAXIS_<DEST>` environment variable (e.g. `--b
 | --- | --- | --- | --- |
 | `--fixed-schedule` | bool | `False` | Use a fixed (constant) learning rate schedule |
 | `--lookahead` | bool | `False` | Wrap the optimizer in Lookahead |
-| `--loss-func` | str | `cross_entropy` | The loss function to use (choices: cross_entropy, dedup, focal, focal_alpha, mile, stablemax, contrastive_token, halo, cut_cross_entropy) |
+| `--loss-func` | str | `cross_entropy` | The loss function to use (choices: cross_entropy, dedup, focal, focal_alpha, mile, stablemax, contrastive_token, halo) |
 | `--no-mask-prompts` | bool | `False` | Drop the assistant_mask before composing loss weights so every token contributes (the pre-2bc2cd4 language-modeling objective). Default off, meaning prompts are masked. Useful for small models that lack the capacity for the SFT-style prompt-conditional split. |
 | `--optimizer` | str | `Lion` | The optimizer profile to use (choices: AdamW, Lion, MARS, Muon, Prodigy) |
 | `--ortho` | bool | `False` | Wrap the optimizer in OrthoGrad, projecting gradients to be orthogonal to parameters |
