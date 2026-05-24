@@ -11,22 +11,10 @@ from praxis.encoding import ENCODING_REGISTRY
 
 
 class SyntaxesAttention(nn.Module):
-    """
-    Syntaxes Attention: All queries attend to reduced K/V context.
-
-    This attention mechanism uses asymmetric processing:
-    - Queries: All positions in the sequence generate queries
-    - Keys/Values: Limited to recent tokens for memory efficiency
-
-    Every query position attends to the same reduced context,
-    focusing computation on the most relevant recent information.
-
-    Key features:
-    - Full query coverage preserves all positional information
-    - Reduced K/V context focuses on recent tokens
-    - Simple and efficient - no compression/reconstruction needed
-    - Reduces complexity from O(n²) to O(n * c) where c is context size
-    - Maintains causality through recent context attention
+    """Asymmetric attention where every query attends to a fixed-size window
+    of the most recent tokens, instead of the full causal prefix. All queries
+    share the same reduced K/V context, dropping complexity from O(n^2) to
+    O(n * c) where ``c`` is ``syntaxes_context_size`` (default 128).
     """
 
     def __init__(self, config) -> None:

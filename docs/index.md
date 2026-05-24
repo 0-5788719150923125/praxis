@@ -8,24 +8,28 @@ links to a page listing the registered implementations and their source.
 
 - [Activation functions](activations.md) (31) - Pointwise nonlinearities used inside blocks and heads.
 - [Attention mechanisms](attention.md) (7) - Self-attention variants, from vanilla causal MHA to compressive-memory and per-depth-biased variants.
-- [Decoder block layouts](blocks.md) (8) - Top-level layer types the decoder stacks. Mix attention-based and recurrent designs freely.
-- [Sequence compression](compression.md) (3) - Strategies for reducing sequence length between layers.
-- [Layer-routing controllers](controllers.md) (7) - Decide which expert / block a token visits at each depth. Enables out-of-order layers and graph-style routing.
-- [Data sampler strategies](data.md) (5) - Curriculum and difficulty-weighting strategies for batch sampling.
 - [Block-stacking decoders](decoders.md) (4) - How the stack of blocks is composed (sequential, parallel, weighted, ...).
-- [Token embeddings](embeddings.md) (8) - Input embedding layers, paired with the corresponding block type.
-- [Input encoders](encoders.md) (8) - Front-end encoders, including the byte-latent and abstractinator variants.
-- [Positional encoding](encoding.md) (3) - RoPE, ALiBi, NoPE and friends - the rotational / additive position priors injected into attention.
+- [Data sampler strategies](data.md) (5) - How datasets are interleaved during training. Praxis trains on multiple datasets at once: at every step the trainer picks a dataset, draws a document, and tokenizes it (see ``InterleaveDataManager`` in ``praxis/data/datasets/manager.py``). The sampler chosen here decides *how* that pick is biased - either statically from configured weights, or adaptively based on document length, novelty, or per-dataset loss. Set with ``--sampler``; default is ``novelty``.
+- [Decoder block layouts](blocks.md) (8) - Top-level layer types the decoder stacks. Mix attention-based and recurrent designs freely.
+- [Expert orchestration](orchestration.md) (7) - How a block's feedforward path is realized: MLP, GLU, KAN, PEER, ...
 - [Halting / early exit](halting.md) (2) - Per-token mechanisms for early exit from recurrent depth loops.
-- [Output heads](heads.md) (6) - LM heads (tied/untied, harmonic, crystal) and multi-token-prediction wrappers.
+- [Input encoders](encoders.md) (8) - Front-end encoders, including the byte-latent and abstractinator variants.
+- [Layer-routing controllers](controllers.md) (7) - Decide which expert / block a token visits at each depth. Enables out-of-order layers and graph-style routing.
 - [Loss functions](losses.md) (8) - Per-token criteria. Most accept optional ``loss_weights`` for task-weighted training.
 - [Normalization layers](normalization.md) (5) - LayerNorm/RMSNorm variants, including SandwichNorm (required for stable recurrent-depth bias).
-- [Expert orchestration](orchestration.md) (7) - How a block's feedforward path is realized: MLP, GLU, KAN, PEER, ...
-- [RL policies](policies.md) (3) - Reinforcement-learning policy losses (REINFORCE, GRPO, ...) for post-training.
+- [Output heads](heads.md) (6) - LM heads (tied/untied, harmonic, crystal) and multi-token-prediction wrappers.
+- [Positional encoding](encoding.md) (3) - RoPE, ALiBi, NoPE and friends - the rotational / additive position priors injected into attention.
 - [Residual connections](residuals.md) (2) - Standard residuals vs. hyper-connections.
-- [Token routers](routers.md) (11) - Token-routing mechanisms, including the Mixture-of-Depths family that skips a fraction of tokens per layer.
+- [RL policies](policies.md) (3) - Reinforcement-learning policy losses (REINFORCE, GRPO, ...) for post-training.
+- [Sequence compression](compression.md) (3) - Strategies for reducing sequence length between layers.
 - [Sequence sorting](sorting.md) (3) - Optional reordering operations applied to the sequence.
+- [Token embeddings](embeddings.md) (8) - Input embedding layers, paired with the corresponding block type.
+- [Token routers](routers.md) (11) - Token-routing mechanisms, including the Mixture-of-Depths family that skips a fraction of tokens per layer.
 - [Training strategies](strategies.md) (4) - Multi-task / task-weighting strategies used by the trainer.
+
+## Subsystems
+
+- [Web stack](web.md) - dashboard, JSON API routes, and inference endpoints.
 
 ## Core infrastructure
 

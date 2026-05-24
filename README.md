@@ -24,26 +24,53 @@ source. See [docs/index.md](docs/index.md) for the full map.
 
 - [Activation functions](docs/activations.md) (31)
 - [Attention mechanisms](docs/attention.md) (7)
-- [Decoder block layouts](docs/blocks.md) (8)
-- [Sequence compression](docs/compression.md) (3)
-- [Layer-routing controllers](docs/controllers.md) (7)
-- [Data sampler strategies](docs/data.md) (5)
 - [Block-stacking decoders](docs/decoders.md) (4)
-- [Token embeddings](docs/embeddings.md) (8)
-- [Input encoders](docs/encoders.md) (8)
-- [Positional encoding](docs/encoding.md) (3)
+- [Data sampler strategies](docs/data.md) (5)
+- [Decoder block layouts](docs/blocks.md) (8)
+- [Expert orchestration](docs/orchestration.md) (7)
 - [Halting / early exit](docs/halting.md) (2)
-- [Output heads](docs/heads.md) (6)
+- [Input encoders](docs/encoders.md) (8)
+- [Layer-routing controllers](docs/controllers.md) (7)
 - [Loss functions](docs/losses.md) (8)
 - [Normalization layers](docs/normalization.md) (5)
-- [Expert orchestration](docs/orchestration.md) (7)
-- [RL policies](docs/policies.md) (3)
+- [Output heads](docs/heads.md) (6)
+- [Positional encoding](docs/encoding.md) (3)
 - [Residual connections](docs/residuals.md) (2)
-- [Token routers](docs/routers.md) (11)
+- [RL policies](docs/policies.md) (3)
+- [Sequence compression](docs/compression.md) (3)
 - [Sequence sorting](docs/sorting.md) (3)
+- [Token embeddings](docs/embeddings.md) (8)
+- [Token routers](docs/routers.md) (11)
 - [Training strategies](docs/strategies.md) (4)
 
 <!-- AUTODOC:FEATURES:END -->
+
+</details>
+
+<details>
+
+<summary>layout</summary>
+
+<!-- AUTODOC:LAYOUT:BEGIN -->
+
+Top-level directories, with detail sourced from each one's README
+where present.
+
+- **[`axis/`](axis/)** - Mobile companion app, built with Godot.
+- **[`docs/`](docs/)** - Auto-generated per-registry docs. Regenerated at every launch.
+- **[`environments/`](environments/README.md)** - Environment configurations override all other settings (defaults, experiments, and CLI args) to provide controlled presets for different use cases.
+- **[`evaluation/`](evaluation/)** - Evaluation harnesses and helpers.
+- **[`experiments/`](experiments/README.md)** - This directory contains experiment configurations for Praxis. Each `.yml` file defines a preset combination of CLI arguments.
+- **[`integrations/`](integrations/README.md)** - This directory contains optional integrations that extend Praxis with additional functionality. Each integration is self-contained and can be automatically loaded based on CLI flags or conditions.
+- **[`next/`](next/)** - Long-form research notes, exploratory writing, and the project [roadmap](next/roadmap.md).
+- **[`praxis/`](praxis/)** - The model framework itself. See [docs/index.md](docs/index.md) for the per-registry feature map.
+- **[`proofs/`](proofs/)** - Math / derivation notes backing the more unusual designs (harmonic head, ghostmax).
+- **[`research/`](research/)** - The research paper, in LaTeX.
+- **[`staging/`](staging/README.md)** - Welcome to the junkyard! This is where we dump experimental code that doesn't belong in core Praxis.
+- **[`static/`](static/)** - Images used in the README and the web dashboard.
+- **[`tests/`](tests/)** - Unit tests. Run with ``pytest tests -x``.
+
+<!-- AUTODOC:LAYOUT:END -->
 
 </details>
 
@@ -115,68 +142,9 @@ To apply [dev](environments/dev.yml) settings within your [environment](environm
 
 <summary>showcase</summary>
 
-## do inference
+## web stack
 
-### String-based generation
-
-For simple string prompts, send a JSON-encoded payload via POST to:
-
-```
-http://localhost:2100/input
-```
-
-Example request:
-
-```py
-import requests
-
-url = "http://localhost:2100/input"
-payload = {"prompt": "Once upon a time, ", "do_sample": True, "temperature": 0.7}
-
-response = requests.post(url, json=payload)
-
-print(response.status_code)
-print(response.json())
-```
-
-### Message-based generation (recommended)
-
-For conversation-style generation with support for system prompts and tool calls, use:
-
-```
-http://localhost:2100/messages
-```
-
-Example request:
-
-```py
-import requests
-
-url = "http://localhost:2100/messages"
-payload = {
-    "messages": [
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": "Hello, how are you?"}
-    ],
-    "do_sample": True,
-    "temperature": 0.7
-}
-
-response = requests.post(url, json=payload)
-
-print(response.status_code)
-print(response.json())
-```
-
-Both endpoints support all arguments in the [Transformers text generation API](https://huggingface.co/docs/transformers/en/main_classes/text_generation).
-
-## local web chat
-
-Chat and swarm management interface is available here:
-
-```
-http://localhost:2100
-```
+The dashboard and chat interface live at <http://localhost:2100>, backed by a JSON API for inference, metrics, and run management. See [docs/web.md](docs/web.md) for the architecture, the full route table (auto-generated from the live Flask app), and Python examples for the `/input` and `/messages` endpoints.
 
 ![Praxis Chat](./static/chat.png)
 

@@ -9,6 +9,14 @@ Registry: ``praxis.ATTENTION_REGISTRY`` (7 entries)
 
 InfiniAttention subclass that adds per-depth learned biases.
 
+Each recurrent depth pass gets its own additive bias on Q, K, V, and O projections via
+nn.Embedding lookups. Zero-initialized so the model starts identical to InfiniAttention
+and gradually specializes.
+
+Optionally applies head-specific elementwise sigmoid gating to the SDPA output (Qiu et
+al. 2025, arXiv:2505.06708), which introduces non-linearity and input-dependent sparsity
+between the attention output and W_o.
+
 Source: [praxis/attention/arc.py:19](../praxis/attention/arc.py#L19)
 
 ## `causal` - CausalAttention
@@ -23,12 +31,20 @@ Source: [praxis/attention/causal.py:19](../praxis/attention/causal.py#L19)
 
 CausalAttention subclass that adds segment-level compressive memory.
 
+The sequence is split into segments. Each segment gets local causal attention (with
+ghostmax, RoPE/ALiBi, GQA from the parent). Between segments, an ELU+1 kernel memory
+accumulates key-value context and a learned gate blends memory retrieval with local
+attention output.
+
 Source: [praxis/attention/infini.py:69](../praxis/attention/infini.py#L69)
 
 ## `pk` - ProductKeyAttention
 
-Basically stolen from here: https://github.com/lucidrains/PEER-
-pytorch/blob/main/PEER_pytorch/PK.py
+Attention where K/V are selected via product-key lookup over an ``EmbeddingBag``, rather
+than projected from the input sequence. The keys/values become a global learned memory
+bank queried at every step, decoupling memory size from sequence length.
+
+Adapted from lucidrains/PEER-pytorch (``PEER_pytorch/PK.py``).
 
 Source: [praxis/attention/pk_attention.py:20](../praxis/attention/pk_attention.py#L20)
 
@@ -42,7 +58,10 @@ Source: [praxis/attention/base.py:29](../praxis/attention/base.py#L29)
 
 ## `syntaxes` - SyntaxesAttention
 
-Syntaxes Attention: All queries attend to reduced K/V context.
+Asymmetric attention where every query attends to a fixed-size window of the most recent
+tokens, instead of the full causal prefix. All queries share the same reduced K/V
+context, dropping complexity from O(n^2) to O(n * c) where ``c`` is
+``syntaxes_context_size`` (default 128).
 
 Source: [praxis/attention/syntaxes.py:13](../praxis/attention/syntaxes.py#L13)
 

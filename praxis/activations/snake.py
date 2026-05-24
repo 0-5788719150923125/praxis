@@ -39,6 +39,10 @@ class SnakeFunction(Function):
 
 
 class Snake(LazyModuleMixin, Module):
+    """Snake activation ``x + sin^2(a*x) / a`` with a learnable per-feature
+    frequency ``a`` (https://arxiv.org/abs/2006.08195). ``a`` is lazily
+    materialized on first forward to match the input's feature dimension."""
+
     def __init__(
         self,
         a: Optional[float] = None,

@@ -19,9 +19,13 @@ ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
 class GraphRouter(BaseController):
-    """
-    Graph-based expert routing, inspired by Graphformer.
-    https://arxiv.org/abs/2209.10655
+    """Treats the set of expert layers as nodes in a graph and learns to
+    walk that graph at inference. Each layer carries a learned node
+    embedding, centrality embedding (depth), and a learned spatial bias on
+    transition distances - the same trio Graphformer
+    (https://arxiv.org/abs/2209.10655) uses for graph structure. The next
+    expert is selected by attention over remaining nodes conditioned on the
+    current hidden state and the path so far.
     """
 
     def __init__(self, config: ConfigType):

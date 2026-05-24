@@ -3,6 +3,9 @@ from torch import Tensor, nn
 
 
 class SineCosine(nn.Module):
+    """``scale * (sin(x) + cos(x))`` - a phase-shifted sinusoid that gives
+    the network a non-zero gradient at the origin, unlike pure ``sin``."""
+
     def __init__(self, scale: float = 1.0):
         super().__init__()
         self.scale = scale

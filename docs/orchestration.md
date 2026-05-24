@@ -9,6 +9,12 @@ Registry: ``praxis.EXPERT_REGISTRY`` (7 entries)
 
 GLU with per-depth activation specialization.
 
+Mirrors GatedLinearMLP's up -> a*act(b) -> down structure, but each block owns a
+ModuleList sized to the number of recurrent passes *this* block will receive: ceil(depth
+/ num_layers). The decoder routes depth via current_depth % num_layers, so each block
+sees current_depth values {i, i + num_layers, i + 2*num_layers, ...}; we index the
+activation list by current_depth // num_layers so each pass gets its own instance.
+
 Source: [praxis/dense/arc.py:13](../praxis/dense/arc.py#L13)
 
 ## `glu` - GatedLinearMLP
@@ -36,6 +42,10 @@ Source: [praxis/dense/mlp.py:14](../praxis/dense/mlp.py#L14)
 
 This class implements the Parameter-Efficient Expert Retrieval (PEER) mechanism:
 https://arxiv.org/abs/2407.04153v1
+
+PEER combines aspects of product key memory and mixture of experts, using factorized
+keys for efficient expert retrieval. It enables each token to select its own set of
+experts for processing.
 
 Source: [praxis/dense/peer.py:15](../praxis/dense/peer.py#L15)
 

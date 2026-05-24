@@ -5,7 +5,7 @@ Input embedding layers, paired with the corresponding block type.
 
 Registry: ``praxis.EMBEDDING_REGISTRY`` (8 entries)
 
-## `conv` - ProjectedEmbedding
+## `conv`, `gru`, `min`, `nano`, `recurrent`, `ssm`, `transformer` - ProjectedEmbedding
 
 An embeddings module with optional projection layer and dropout. If embed_size differs
 from hidden_size, a linear projection layer is added to map the embeddings to the
@@ -13,58 +13,9 @@ required hidden dimension.
 
 Source: [praxis/embeddings/projected.py:11](../praxis/embeddings/projected.py#L11)
 
-## `gru` - ProjectedEmbedding
+## `mru` - PositionalEmbedding
 
-An embeddings module with optional projection layer and dropout. If embed_size differs
-from hidden_size, a linear projection layer is added to map the embeddings to the
-required hidden dimension.
+Praxis embeddings with learned positional encodings (GPT2-style). Uses Sequential
+organization of layers.
 
-Source: [praxis/embeddings/projected.py:11](../praxis/embeddings/projected.py#L11)
-
-## `min` - ProjectedEmbedding
-
-An embeddings module with optional projection layer and dropout. If embed_size differs
-from hidden_size, a linear projection layer is added to map the embeddings to the
-required hidden dimension.
-
-Source: [praxis/embeddings/projected.py:11](../praxis/embeddings/projected.py#L11)
-
-## `mru` - ProjectedEmbedding
-
-An embeddings module with optional projection layer and dropout. If embed_size differs
-from hidden_size, a linear projection layer is added to map the embeddings to the
-required hidden dimension.
-
-Source: [praxis/embeddings/projected.py:11](../praxis/embeddings/projected.py#L11)
-
-## `nano` - ProjectedEmbedding
-
-An embeddings module with optional projection layer and dropout. If embed_size differs
-from hidden_size, a linear projection layer is added to map the embeddings to the
-required hidden dimension.
-
-Source: [praxis/embeddings/projected.py:11](../praxis/embeddings/projected.py#L11)
-
-## `recurrent` - ProjectedEmbedding
-
-An embeddings module with optional projection layer and dropout. If embed_size differs
-from hidden_size, a linear projection layer is added to map the embeddings to the
-required hidden dimension.
-
-Source: [praxis/embeddings/projected.py:11](../praxis/embeddings/projected.py#L11)
-
-## `ssm` - ProjectedEmbedding
-
-An embeddings module with optional projection layer and dropout. If embed_size differs
-from hidden_size, a linear projection layer is added to map the embeddings to the
-required hidden dimension.
-
-Source: [praxis/embeddings/projected.py:11](../praxis/embeddings/projected.py#L11)
-
-## `transformer` - ProjectedEmbedding
-
-An embeddings module with optional projection layer and dropout. If embed_size differs
-from hidden_size, a linear projection layer is added to map the embeddings to the
-required hidden dimension.
-
-Source: [praxis/embeddings/projected.py:11](../praxis/embeddings/projected.py#L11)
+Source: [praxis/embeddings/positional.py:11](../praxis/embeddings/positional.py#L11)

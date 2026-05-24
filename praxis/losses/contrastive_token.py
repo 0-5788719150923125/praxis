@@ -9,9 +9,12 @@ from praxis.losses.reduction import weighted_reduce
 
 
 class ContrastiveTokenLoss(nn.Module):
-    """A Pytorch Module wrapper for the contrastive_token_loss function.
-    https://arxiv.org/abs/2205.02517
-    https://github.com/ShaojieJiang/CT-Loss/tree/main
+    """Anti-repetition objective. Treats each token's recent predecessors as
+    in-batch negatives and pushes their logits down, reducing the high-rank
+    degenerate-repetition failure mode of MLE-trained LMs.
+
+    From "Reducing Sentence-Level Repetition" (arxiv 2205.02517); adapted
+    from https://github.com/ShaojieJiang/CT-Loss.
 
     Args:
         ignore_index (int, optional): Default padding token id. Defaults to -100.

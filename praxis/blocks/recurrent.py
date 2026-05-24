@@ -11,8 +11,9 @@ ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
 class RecurrentBlock(nn.Module):
-    """
-    A recurrent block type.
+    """A min-GRU block wrapped in SMEAR soft routing across ``num_experts``
+    parallel min-GRU instances. Threads a recurrent ``current_state`` across
+    forward calls, so this block carries state between sequence chunks.
     """
 
     __version__ = "0.1.0"

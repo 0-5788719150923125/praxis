@@ -38,9 +38,14 @@ MOD_LAYOUT: Dict[str, Callable[[ConfigType], List[float]]] = {
 
 
 class MixtureOfDepths(nn.Linear):
-    """
-    This uses expert-choice routing, which was greatly preferred by the
-    original authors of this research: https://arxiv.org/abs/2404.02258
+    """At each layer, route only a fraction of tokens through the heavy
+    computation; the rest pass through via the residual. Uses expert-choice
+    routing (the layer picks its top-k tokens by score) rather than
+    token-choice, per the original paper's recommendation.
+
+    The ``layout`` controls how per-layer capacity varies with depth - flat,
+    decayed, U-shaped, ramped, or skip-every-N. See
+    https://arxiv.org/abs/2404.02258.
     """
 
     __version__ = "0.1.0"

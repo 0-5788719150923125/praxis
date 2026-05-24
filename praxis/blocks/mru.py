@@ -13,10 +13,12 @@ ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
 class MRUBlock(nn.Module):
-    """
-    A recurrent model with efficient parallel scan.
-    Based upon Matrix Recurrent Units:
-    https://github.com/mikayahlevi/mru-lm/tree/main
+    """Matrix Recurrent Units: each step's state is a matrix multiplied into
+    the running state, which makes the recurrence associative and thus
+    parallel-scannable. State head size must be a perfect square so the
+    flat state can be reshaped into a square matrix per head.
+
+    Based on https://github.com/mikayahlevi/mru-lm.
     """
 
     __version__ = "0.1.0"

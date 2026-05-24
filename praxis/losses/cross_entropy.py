@@ -9,6 +9,11 @@ from praxis.losses.reduction import weighted_reduce
 
 
 class CrossEntropyLoss(nn.Module):
+    """Standard cross-entropy with two optional extras: an anti-duplication
+    penalty (``penalty_weight``) that up-weights tokens the model is about
+    to predict equal to one already in the prompt, and per-token
+    ``loss_weights`` for task-weighted training."""
+
     def __init__(self, penalty_weight: float = 0.0, *args: Any, **kwargs: Any) -> None:
         super().__init__()
         self.penalty_weight = penalty_weight

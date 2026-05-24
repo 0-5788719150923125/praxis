@@ -13,11 +13,14 @@ ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
 class LayerShuffle(BaseController):
-    """
-    This module implements a basic form of LayerShuffle-Position, though we use it
-    as a differentiable "context token" and input-manipulation/preparation mechanism,
-    rather than a positional encoder.
-    https://arxiv.org/abs/2407.04513
+    """Randomizes the order in which expert layers are visited during the
+    forward pass, training the model to be invariant to layer order. The
+    original paper (https://arxiv.org/abs/2407.04513) used per-layer
+    position embeddings; we instead prepend differentiable "context tokens"
+    to the sequence so the model can attend over its own routing history.
+
+    Order-invariance matters in a decentralized setting where peer layers
+    may be missing, slow, or out of their usual position.
     """
 
     def __init__(self, config: ConfigType, num_context_tokens: int = 0):

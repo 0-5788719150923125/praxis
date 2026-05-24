@@ -13,6 +13,12 @@ ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
 class SequentialDecoder(BaseDecoder):
+    """The default decoder. Walks layers one at a time, with the controller
+    picking the next expert at each step and the halting strategy deciding
+    when to stop. Supports multi-cycle "reasoning" passes through the expert
+    pool when ``meta`` contains ``use_reason``.
+    """
+
     def __init__(self, config: ConfigType) -> None:
         # Heuristically determine reasoning steps based on depth and num_experts
         if "use_reason" in config.meta:

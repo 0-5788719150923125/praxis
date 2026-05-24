@@ -18,8 +18,8 @@ Every transformer layer contains:
 
 ```python
 # Attention mechanism
-scores = Q @ K^T / sqrt(d_k)           # Dot product
-attention = softmax(scores)             # EXPONENTIAL!
+scores = Q @ K^T / sqrt(d_k)  # Dot product
+attention = softmax(scores)   # EXPONENTIAL!
            = exp(scores_i) / Σ exp(scores_j)
 
 output = attention @ V
@@ -176,7 +176,7 @@ logits_1 = W_1 @ x_1    # mean=0, std=√d
 
 # Layer 2
 x_2 = x_1 + attention_1(x_1)  # std grows
-logits_2 = W_2 @ x_2           # std = √d * std(x_2) → growing!
+logits_2 = W_2 @ x_2          # std = √d * std(x_2) → growing!
 
 # Layer 8
 logits_8 = W_8 @ x_8    # std = huge!
@@ -342,10 +342,10 @@ This connects:
 **In Prismatic:**
 
 ```python
-softmax uses: exp(x)                    # e
-focal_length = π × 100                  # π
-helical_wavelength = π × 1000           # π
-Gaussian lens: exp(-distance/π×100)     # e and π together!
+softmax uses: exp(x)                   # e
+focal_length = π × 100                 # π
+helical_wavelength = π × 1000          # π
+Gaussian lens: exp(-distance/π×100)    # e and π together!
 Radial-helical: exp(...) × cos(2π...)  # e and π combined
 ```
 

@@ -9,12 +9,25 @@ Registry: ``praxis.ROUTER_REGISTRY`` (11 entries)
 
 Distance Router: SMEAR with Parameter Diversity Loss.
 
+Extends SMEAR's soft parameter merging with an auxiliary loss that encourages experts to
+maintain distinct parameters from the base expert. This prevents expert collapse and
+enables better gradient manipulation.
+
+The diversity loss is:     L_div = -Σ ||θ_i - θ_0||_2 for i in [1, num_experts)
+
+Where θ_i are the parameters of expert i and θ_0 are base expert parameters. The
+negative sign encourages distance (higher loss = more similar).
+
 Source: [praxis/routers/distance.py:21](../praxis/routers/distance.py#L21)
 
 ## `mixture_of_depths` - MixtureOfDepths
 
-This uses expert-choice routing, which was greatly preferred by the original authors of
-this research: https://arxiv.org/abs/2404.02258
+At each layer, route only a fraction of tokens through the heavy computation; the rest
+pass through via the residual. Uses expert-choice routing (the layer picks its top-k
+tokens by score) rather than token-choice, per the original paper's recommendation.
+
+The ``layout`` controls how per-layer capacity varies with depth - flat, decayed,
+U-shaped, ramped, or skip-every-N. See https://arxiv.org/abs/2404.02258.
 
 Source: [praxis/routers/mixture_of_depths.py:40](../praxis/routers/mixture_of_depths.py#L40)
 
@@ -38,6 +51,20 @@ Value: `functools.partial(<class 'praxis.routers.mixture_of_depths.MixtureOfDept
 
 Prismatic router with architectural diversity (ALiBi vs RoPE).
 
+Routes entire sequences to k=2 experts with different positional encodings:
+- Expert 0: ALiBi (linear distance bias)
+- Expert 1: RoPE (rotational encoding)
+- Expert 2: ALiBi
+- Expert 3: RoPE
+
+The router:
+1. Computes routing probabilities per sequence
+2. Selects TOP-2 experts per sequence (sparse, top-k)
+3. Executes selected experts and blends outputs
+4. Applies load balancing loss to encourage balanced usage
+
+Key design: Clean ...
+
 Source: [praxis/routers/prismatic.py:29](../praxis/routers/prismatic.py#L29)
 
 ## `smear` - SMEAR
@@ -45,16 +72,20 @@ Source: [praxis/routers/prismatic.py:29](../praxis/routers/prismatic.py#L29)
 This module implements Soft-Merging of Experts with Adaptive Routing (SMEAR):
 https://arxiv.org/abs/2306.03745
 
+SMEAR dynamically merges expert parameters based on routing probabilities, rather than
+routing inputs to multiple experts. This enables more efficient parameter sharing and
+adaptation to input patterns.
+
 Source: [praxis/routers/smear.py:22](../praxis/routers/smear.py#L22)
 
 ## `taxus`
 
-Value: `<function create_taxus_with_dynamic_budget at 0x7fb289e54250>`
+Value: `<function create_taxus_with_dynamic_budget at 0x7efb65a48300>`
 
 ## `taxus_aggressive`
 
-Value: `functools.partial(<function create_taxus_with_dynamic_budget at 0x7fb289e54250>, target_depth_ratio=0.25, budget_ratio=0.3, temperature=0.2)`
+Value: `functools.partial(<function create_taxus_with_dynamic_budget at 0x7efb65a48300>, target_depth_ratio=0.25, budget_ratio=0.3, temperature=0.2)`
 
 ## `taxus_balanced`
 
-Value: `functools.partial(<function create_taxus_with_dynamic_budget at 0x7fb289e54250>, target_depth_ratio=0.5, budget_ratio=0.6, temperature=0.5)`
+Value: `functools.partial(<function create_taxus_with_dynamic_budget at 0x7efb65a48300>, target_depth_ratio=0.5, budget_ratio=0.6, temperature=0.5)`

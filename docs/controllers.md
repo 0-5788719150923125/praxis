@@ -24,15 +24,25 @@ Value: `functools.partial(<class 'praxis.controllers.attention.AttentionChannele
 
 ## `graph` - GraphRouter
 
-Graph-based expert routing, inspired by Graphformer. https://arxiv.org/abs/2209.10655
+Treats the set of expert layers as nodes in a graph and learns to walk that graph at
+inference. Each layer carries a learned node embedding, centrality embedding (depth),
+and a learned spatial bias on transition distances - the same trio Graphformer
+(https://arxiv.org/abs/2209.10655) uses for graph structure. The next expert is selected
+by attention over remaining nodes conditioned on the current hidden state and the path
+so far.
 
 Source: [praxis/controllers/graph.py:21](../praxis/controllers/graph.py#L21)
 
 ## `layer_shuffle` - LayerShuffle
 
-This module implements a basic form of LayerShuffle-Position, though we use it as a
-differentiable "context token" and input-manipulation/preparation mechanism, rather than
-a positional encoder. https://arxiv.org/abs/2407.04513
+Randomizes the order in which expert layers are visited during the forward pass,
+training the model to be invariant to layer order. The original paper
+(https://arxiv.org/abs/2407.04513) used per-layer position embeddings; we instead
+prepend differentiable "context tokens" to the sequence so the model can attend over its
+own routing history.
+
+Order-invariance matters in a decentralized setting where peer layers may be missing,
+slow, or out of their usual position.
 
 Source: [praxis/controllers/layer_shuffle.py:15](../praxis/controllers/layer_shuffle.py#L15)
 

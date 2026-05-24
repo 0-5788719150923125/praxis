@@ -14,6 +14,9 @@ Value: `functools.partial(<class 'praxis.encoders.abstractinator.encoder.Abstrac
 An implementation of the Byte Latent Encoder/Decoder, from:
 https://arxiv.org/abs/2412.09871
 
+TODO: This code is an absolute mess. Both this repo and BLT are in active development,
+so it has been difficult to standardize. This could be a lot cleaner.
+
 Source: [praxis/encoders/byte_latent/encoder.py:47](../praxis/encoders/byte_latent/encoder.py#L47)
 
 ## `byte_latent_conv`

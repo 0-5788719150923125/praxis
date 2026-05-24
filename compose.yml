@@ -12,8 +12,8 @@ services:
       - venv:/workspace/.venv
       - cache:/root/.cache
     ports:
-      - "2100:2100"
-      - "29500:29500"
+      - "${PRAXIS_PORT:-2100}:${PRAXIS_PORT:-2100}"
+      - "${PRAXIS_MASTER_PORT:-29500}:${PRAXIS_MASTER_PORT:-29500}"
     env_file:
       - path: ./.env
         required: false

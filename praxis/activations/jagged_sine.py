@@ -5,6 +5,12 @@ from torch import Tensor, nn
 
 
 class JaggedSine(nn.Module):
+    """Sum of sines at fixed frequencies and amplitudes.
+
+    Returns ``sum(a_i * sin(f_i * x))`` for buffer-registered ``(f_i, a_i)``
+    pairs. A cheap fixed-spectrum periodic activation - no learnable params.
+    """
+
     def __init__(
         self,
         frequencies: List[float] = [1.0, 3.0, 5.0],

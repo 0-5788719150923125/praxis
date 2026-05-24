@@ -13,8 +13,10 @@ ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
 class MinGRUBlock(nn.Module):
-    """
-    A minimally-recurrent network.
+    """A block built around min-GRU (Were RNNs All We Needed?,
+    arxiv 2410.01201): a stripped-down GRU with no hidden-state dependence
+    in the gates, which makes it amenable to parallel scan. Pairs the min-GRU
+    with a standard MLP and pre-norm residual.
     """
 
     __version__ = "0.1.0"

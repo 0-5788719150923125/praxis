@@ -1,15 +1,52 @@
 """Praxis data loading and processing utilities."""
 
-# Sampler (weighting mode) registry
+# Sampler (weighting mode) registry. Each mode is a string consumed by
+# InterleaveDataManager (see praxis/data/datasets/manager.py), which holds
+# the actual logic. The registry exists so the CLI can validate --sampler.
 SAMPLER_REGISTRY = {
     "novelty": "novelty",
     "dynamic": "dynamic",
     "static": "static",
     "loss": "loss",
-    # `uniform` overrides per-dataset weights from DATASET_COLLECTIONS,
-    # forcing every sampler to 1.0 (then normalized). Pair with
-    # --task-weights for source biasing at the loss level instead.
     "uniform": "uniform",
+}
+
+# Surfaced in docs/data.md. Keep these tight - the implementation in
+# manager.py is the source of truth for behavior.
+SAMPLER_DESCRIPTIONS = {
+    "static": (
+        "Use the per-dataset weights from ``DATASET_COLLECTIONS`` as configured "
+        "and never adapt them. Predictable, no feedback loop. Pick this when "
+        "you want full control of the data mix."
+    ),
+    "dynamic": (
+        "Balance datasets by document length, tracked via EMA "
+        "(``ema_alpha=0.3``). A dataset that produces longer documents gets "
+        "sampled less often so the per-token mix matches the configured "
+        "weights. Useful when sources have very different document sizes."
+    ),
+    "novelty": (
+        "Bias sampling toward datasets that are still producing novel content. "
+        "A Count-Min Sketch tracks bigram frequencies per dataset (see "
+        "``NoveltyTracker`` in ``praxis/data/datasets/novelty.py``); datasets "
+        "whose bigrams are mostly already-seen get down-weighted. Good for "
+        "noisy or repetitive corpora. The default."
+    ),
+    "loss": (
+        "Bias sampling toward datasets the model is currently doing worst on. "
+        "The trainer reports per-dataset losses via "
+        "``InterleaveDataManager.update_losses``; weights are computed by "
+        "temperature-softmax (``T=8``) over EMA-smoothed losses, mixed with a "
+        "uniform floor (``alpha=0.2``) so no single high-loss source captures "
+        "everything, then length-normalized so a dataset that produces N "
+        "sequences per document is fetched ~1/N as often."
+    ),
+    "uniform": (
+        "Ignore the per-dataset weights from ``DATASET_COLLECTIONS`` - every "
+        "sampler is weighted 1.0 (then normalized) and never adapts. If you "
+        "want source biasing without changing the data mix, pair this with "
+        "``--task-weights`` to bias at the loss level instead."
+    ),
 }
 
 # Core data structures and configuration
@@ -79,6 +116,7 @@ from praxis.data.utils import (
 __all__ = [
     # Registries
     "SAMPLER_REGISTRY",
+    "SAMPLER_DESCRIPTIONS",
     # Configuration
     "DataFormat",
     "DataFormatEnum",

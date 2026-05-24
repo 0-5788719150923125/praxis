@@ -18,9 +18,12 @@ def default(v: Any, d: Any) -> Any:
 
 
 class ProductKeyAttention(Module):
-    """
-    Basically stolen from here:
-    https://github.com/lucidrains/PEER-pytorch/blob/main/PEER_pytorch/PK.py
+    """Attention where K/V are selected via product-key lookup over an
+    ``EmbeddingBag``, rather than projected from the input sequence. The
+    keys/values become a global learned memory bank queried at every step,
+    decoupling memory size from sequence length.
+
+    Adapted from lucidrains/PEER-pytorch (``PEER_pytorch/PK.py``).
     """
 
     def __init__(

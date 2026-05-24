@@ -8,9 +8,13 @@ from praxis.losses.reduction import weighted_reduce
 
 
 class StableMaxCrossEntropyLoss(nn.Module):
-    """
-    From "Grokking at the Edge of Numerical Stability":
-    https://arxiv.org/abs/2501.04697
+    """Cross-entropy with softmax replaced by ``stablemax``, a piecewise
+    rational function (``1/(1-x)`` for negatives, ``x+1`` for non-negatives)
+    that avoids the floating-point underflow softmax hits at large
+    logit-magnitudes. Computed in float64 for the same reason.
+
+    From "Grokking at the Edge of Numerical Stability"
+    (https://arxiv.org/abs/2501.04697).
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:

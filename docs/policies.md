@@ -9,16 +9,40 @@ Registry: ``praxis.RL_POLICIES_REGISTRY`` (3 entries)
 
 Chain of Thought training policy.
 
+This is a simplified approach that:
+- Uses supervised learning on CoT examples
+- Rewards structured reasoning (presence of thinking tags)
+- Applies higher weight to reasoning steps vs final answer
+
+Key features:
+- No complex RL needed initially - supervised learning works well for CoT
+- Gradually introduces rewards for reasoning structure
+- Can be extended with REINFORCE for more complex scenarios
+
 Source: [praxis/policies/cot.py:26](../praxis/policies/cot.py#L26)
 
 ## `grpo` - GRPO
 
 Group Relative Policy Optimization module.
 
+Key features:
+- No value network (memory efficient)
+- Outcome-level rewards only (same reward for entire sequence)
+- Group-based advantage estimation for variance reduction
+- KL divergence regularization to prevent reward hacking
+
+Implementation notes:
+- Uses static rewards from dataset (solve_rate) rather than learned reward model
+- Applies same reward to all tokens in a sequence (outcome-level)
+- Group normalization provides implicit baseline ...
+
 Source: [praxis/policies/grpo.py:19](../praxis/policies/grpo.py#L19)
 
 ## `reinforce` - REINFORCE
 
 Reinforcement Learning policy module for chain-of-thought reasoning.
+
+This module learns to generate better reasoning traces by using rewards from the
+INTELLECT-2-RL dataset's solve_rate scores.
 
 Source: [praxis/policies/reinforce.py:12](../praxis/policies/reinforce.py#L12)

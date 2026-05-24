@@ -9,6 +9,14 @@ Registry: ``praxis.HALTING_REGISTRY`` (2 entries)
 
 Randomized depth during training, KL-based halting at inference.
 
+Training: each forward pass gets a random number of recurrence loops sampled from a log-
+normal Poisson distribution. This forces the model to front-load useful computation,
+since it never knows how many loops it will receive.
+
+Inference: runs up to full depth but monitors KL-divergence between hidden states at
+successive loop boundaries. When the divergence drops below a threshold, the latent
+representation has converged ...
+
 Source: [praxis/halting/kl.py:13](../praxis/halting/kl.py#L13)
 
 ## `none` - BaseHalting

@@ -24,6 +24,8 @@ Value: `(<class 'transformers.activations.ClippedGELUActivation'>, {'min': -10, 
 Applies GELU approximation that is faster than default and more accurate than QuickGELU.
 See: https://github.com/hendrycks/GELUs
 
+Implemented along with MEGA (Moving Average Equipped Gated Attention)
+
 Source: [.venv/lib/python3.14/site-packages/transformers/activations.py:151](../.venv/lib/python3.14/site-packages/transformers/activations.py#L151)
 
 ## `gelu_fast` - FastGELUActivation
@@ -54,11 +56,17 @@ Value: `(<class 'transformers.activations.GELUTanh'>, {'use_gelu_tanh_python': T
 A fast C implementation of the tanh approximation of the GeLU activation function. See
 https://huggingface.co/papers/1606.08415.
 
+This implementation is equivalent to NewGELU and FastGELU but much faster. However, it
+is not an exact numerical match due to rounding errors.
+
 Source: [.venv/lib/python3.14/site-packages/transformers/activations.py:30](../.venv/lib/python3.14/site-packages/transformers/activations.py#L30)
 
 ## `jagged_sin` - JaggedSine
 
-Base class for all neural network modules.
+Sum of sines at fixed frequencies and amplitudes.
+
+Returns ``sum(a_i * sin(f_i * x))`` for buffer-registered ``(f_i, a_i)`` pairs. A cheap
+fixed-spectrum periodic activation - no learnable params.
 
 Source: [praxis/activations/jagged_sine.py:7](../praxis/activations/jagged_sine.py#L7)
 
@@ -67,11 +75,20 @@ Source: [praxis/activations/jagged_sine.py:7](../praxis/activations/jagged_sine.
 Applies elementwise activation based on Laplace function, introduced in MEGA as an
 attention activation. See https://huggingface.co/papers/2209.10655
 
+Inspired by squared relu, but with bounded range and gradient for better stability
+
 Source: [.venv/lib/python3.14/site-packages/transformers/activations.py:193](../.venv/lib/python3.14/site-packages/transformers/activations.py#L193)
 
 ## `leaky_relu` - LeakyReLU
 
 Applies the LeakyReLU function element-wise.
+
+.. math::     \text{LeakyReLU}(x) = \max(0, x) + \text{negative\_slope} * \min(0, x)
+
+or
+
+.. math::     \text{LeakyReLU}(x) =     \begin{cases}     x, & \text{ if } x \geq 0 \\
+\text{negative\_slope} \times x, & \text{ otherwise }     \end{cases}
 
 Source: [.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py:873](../.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py#L873)
 
@@ -108,6 +125,19 @@ Source: [praxis/activations/periodic_relu.py:9](../praxis/activations/periodic_r
 
 Applies the element-wise PReLU function.
 
+.. math::     \text{PReLU}(x) = \max(0,x) + a * \min(0,x)
+
+or
+
+.. math::     \text{PReLU}(x) =     \begin{cases}     x, & \text{ if } x \ge 0 \\
+ax, & \text{ otherwise }     \end{cases}
+
+Here :math:`a` is a learnable parameter. When called without arguments, `nn.PReLU()`
+uses a single parameter :math:`a` across all input channels. If called with
+`nn.PReLU(nChannels)`, a separate :math:`a` is used for each input channel.
+
+.. note::     weight decay ...
+
 Source: [.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py:1568](../.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py#L1568)
 
 ## `quick_gelu` - QuickGELUActivation
@@ -121,6 +151,8 @@ Source: [.venv/lib/python3.14/site-packages/transformers/activations.py:116](../
 
 Applies the rectified linear unit function element-wise.
 
+:math:`\text{ReLU}(x) = (x)^+ = \max(0, x)`
+
 Source: [.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py:104](../.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py#L104)
 
 ## `relu2` - ReLUSquaredActivation
@@ -132,6 +164,8 @@ Source: [.venv/lib/python3.14/site-packages/transformers/activations.py:206](../
 ## `relu6` - ReLU6
 
 Applies the ReLU6 function element-wise.
+
+.. math::     \text{ReLU6}(x) = \min(\max(0,x), 6)
 
 Source: [.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py:301](../.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py#L301)
 
@@ -146,11 +180,33 @@ Source: [praxis/activations/serf.py:6](../praxis/activations/serf.py#L6)
 
 Praxis' extended Snake activation with a second oscillation term:
 
+y = x + sin^2(α·x) · α / (α^2 + ε^2) + γ·sin(βx)
+
+α controls the primary squared-sine frequency (original Snake term). β and γ add a
+secondary sine with its own frequency and amplitude. All three are per-feature learnable
+parameters.
+
+The `1/α` factor in the original Snake is replaced by the smooth-rectified `α / (α^2 +
+ε^2)`: matches `1/α` for `|α| >> ε`, bounded by `1/ε` for `|α| ~ 0`. Prevents the tiny-α
+feature explosion ...
+
 Source: [praxis/activations/serpent.py:17](../praxis/activations/serpent.py#L17)
 
 ## `sigmoid` - Sigmoid
 
 Applies the Sigmoid function element-wise.
+
+.. math::     \text{Sigmoid}(x) = \sigma(x) = \frac{1}{1 + \exp(-x)}
+
+Shape:
+    - Input: :math:`(*)`, where :math:`*` means any number of dimensions.
+    - Output: :math:`(*)`, same shape as the input.
+
+.. image:: ../scripts/activation_images/Sigmoid.png
+
+Examples::
+
+>>> m = nn.Sigmoid()     >>> input = torch.randn(2)     >>> output = m(input)
 
 Source: [.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py:334](../.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py#L334)
 
@@ -167,13 +223,15 @@ Source: [.venv/lib/python3.14/site-packages/transformers/activations.py:92](../.
 
 ## `sin` - Sine
 
-Base class for all neural network modules.
+Plain ``sqrt(2) * sin(x)`` activation. The constant preserves unit output variance for
+unit-variance input, matching SIREN's init scheme.
 
 Source: [praxis/activations/sin.py:7](../praxis/activations/sin.py#L7)
 
 ## `sin_cos` - SineCosine
 
-Base class for all neural network modules.
+``scale * (sin(x) + cos(x))`` - a phase-shifted sinusoid that gives the network a non-
+zero gradient at the origin, unlike pure ``sin``.
 
 Source: [praxis/activations/sin_cos.py:5](../praxis/activations/sin_cos.py#L5)
 
@@ -186,7 +244,9 @@ Source: [praxis/activations/sinlu.py:6](../praxis/activations/sinlu.py#L6)
 
 ## `snake` - Snake
 
-A mixin for modules that lazily initialize parameters, also known as "lazy modules".
+Snake activation ``x + sin^2(a*x) / a`` with a learnable per-feature frequency ``a``
+(https://arxiv.org/abs/2006.08195). ``a`` is lazily materialized on first forward to
+match the input's feature dimension.
 
 Source: [praxis/activations/snake.py:41](../praxis/activations/snake.py#L41)
 
@@ -194,16 +254,43 @@ Source: [praxis/activations/snake.py:41](../praxis/activations/snake.py#L41)
 
 Applies the Sigmoid Linear Unit (SiLU) function, element-wise.
 
+The SiLU function is also known as the swish function.
+
+.. math::     \text{silu}(x) = x * \sigma(x), \text{where } \sigma(x) \text{ is the
+logistic sigmoid.}
+
+.. note::     See `Gaussian Error Linear Units (GELUs)
+<https://arxiv.org/abs/1606.08415>`_     where the SiLU (Sigmoid Linear Unit) was
+originally coined, and see     `Sigmoid-Weighted Linear Units for Neural Network
+Function Approximation     in Reinforcement Learning ...
+
 Source: [.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py:432](../.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py#L432)
 
 ## `tanh` - Tanh
 
 Applies the Hyperbolic Tangent (Tanh) function element-wise.
 
+Tanh is defined as:
+
+.. math::     \text{Tanh}(x) = \tanh(x) = \frac{\exp(x) - \exp(-x)} {\exp(x) + \exp(-x)}
+
+Shape:
+    - Input: :math:`(*)`, where :math:`*` means any number of dimensions.
+    - Output: :math:`(*)`, same shape as the input.
+
+.. image:: ../scripts/activation_images/Tanh.png
+
+Examples::
+
+>>> m = nn.Tanh()     >>> input = torch.randn(2)     >>> output = m(input)
+
 Source: [.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py:404](../.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py#L404)
 
 ## `xielu` - XIELUActivation
 
 Applies the xIELU activation function introduced in https://arxiv.org/abs/2411.13010
+
+If the user has installed the nickjbrowning/XIELU wheel, we import xIELU CUDA Otherwise,
+we emit a single warning and use xIELU Python
 
 Source: [.venv/lib/python3.14/site-packages/transformers/activations.py:224](../.venv/lib/python3.14/site-packages/transformers/activations.py#L224)

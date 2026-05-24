@@ -9,11 +9,19 @@ Registry: ``praxis.HEAD_REGISTRY + MTP_REGISTRY`` (6 entries)
 
 Single MTP depth module using causal convolutions.
 
+Same front-end as TransformerMTPModule (norm + concat + project), but replaces the
+transformer block with 2 stacked dilated causal conv layers (dilation 1 and 2,
+kernel_size=3) for a ~7-position receptive field.
+
 Source: [praxis/heads/mtp/conv.py:37](../praxis/heads/mtp/conv.py#L37)
 
 ## `crystal` - CrystalHead
 
 LM head with a distance-based classifier (harmonic loss).
+
+In encoder-attached mode the head sizes its centers to match the encoder's classifier
+(so the distance computation lives in the encoder's feature space) and replaces the
+encoder's dot-product projection at the loss boundary.
 
 Source: [praxis/heads/crystal.py:223](../praxis/heads/crystal.py#L223)
 
@@ -21,11 +29,19 @@ Source: [praxis/heads/crystal.py:223](../praxis/heads/crystal.py#L223)
 
 Standard next-token prediction head.
 
+In encoder-attached mode the encoder owns the classifier, so this head allocates nothing
+and stays out of the way - the default pass-through ``process_encoder_output`` lets the
+encoder's logits flow through unchanged.
+
 Source: [praxis/heads/forward.py:11](../praxis/heads/forward.py#L11)
 
 ## `harmonic` - HarmonicHead
 
 Learnable lm_head with a 2D harmonic field modulating features.
+
+In encoder-attached mode the head owns a field sized to the encoder's classifier feature
+dim and modulates ``decoder_embeds`` before re-projecting through the encoder's
+classifier weight. The encoder still owns the classifier itself.
 
 Source: [praxis/heads/harmonic.py:234](../praxis/heads/harmonic.py#L234)
 
@@ -39,5 +55,9 @@ Source: [praxis/heads/tied.py:13](../praxis/heads/tied.py#L13)
 ## `transformer` - TransformerMTPModule
 
 Single MTP depth module using a transformer block.
+
+Takes hidden states from the previous depth and ground-truth position embeddings,
+normalizes both, concatenates, projects back to hidden_size, and runs through a
+transformer block.
 
 Source: [praxis/heads/mtp/transformer.py:13](../praxis/heads/mtp/transformer.py#L13)

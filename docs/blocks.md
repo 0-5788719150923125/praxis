@@ -21,14 +21,19 @@ Source: [praxis/blocks/gru.py:13](../praxis/blocks/gru.py#L13)
 
 ## `min` - MinGRUBlock
 
-A minimally-recurrent network.
+A block built around min-GRU (Were RNNs All We Needed?, arxiv 2410.01201): a stripped-
+down GRU with no hidden-state dependence in the gates, which makes it amenable to
+parallel scan. Pairs the min-GRU with a standard MLP and pre-norm residual.
 
 Source: [praxis/blocks/min.py:15](../praxis/blocks/min.py#L15)
 
 ## `mru` - MRUBlock
 
-A recurrent model with efficient parallel scan. Based upon Matrix Recurrent Units:
-https://github.com/mikayahlevi/mru-lm/tree/main
+Matrix Recurrent Units: each step's state is a matrix multiplied into the running state,
+which makes the recurrence associative and thus parallel-scannable. State head size must
+be a perfect square so the flat state can be reshaped into a square matrix per head.
+
+Based on https://github.com/mikayahlevi/mru-lm.
 
 Source: [praxis/blocks/mru.py:15](../praxis/blocks/mru.py#L15)
 
@@ -43,13 +48,20 @@ Source: [praxis/blocks/nano.py:14](../praxis/blocks/nano.py#L14)
 
 ## `recurrent` - RecurrentBlock
 
-A recurrent block type.
+A min-GRU block wrapped in SMEAR soft routing across ``num_experts`` parallel min-GRU
+instances. Threads a recurrent ``current_state`` across forward calls, so this block
+carries state between sequence chunks.
 
 Source: [praxis/blocks/recurrent.py:13](../praxis/blocks/recurrent.py#L13)
 
 ## `ssm` - SSMBlock
 
 A simplified State Space Model (SSM) block for causal language modeling.
+
+This implements a basic S4-style architecture with:
+- Discretized state space dynamics
+- Causal convolution
+- Gated architecture similar to Mamba
 
 Source: [praxis/blocks/ssm.py:14](../praxis/blocks/ssm.py#L14)
 

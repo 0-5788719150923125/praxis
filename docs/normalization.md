@@ -15,6 +15,9 @@ Source: [praxis/normalization/layer_norm.py:11](../praxis/normalization/layer_no
 
 Base normalization class that provides a no-op implementation.
 
+Other normalization classes should inherit from this and override the forward method to
+implement their specific normalization logic.
+
 Source: [praxis/normalization/base.py:10](../praxis/normalization/base.py#L10)
 
 ## `post_rms_norm` - PostRMSNorm

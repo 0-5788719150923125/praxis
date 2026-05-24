@@ -7,14 +7,20 @@ Registry: ``praxis.LOSS_REGISTRY`` (8 entries)
 
 ## `contrastive_token` - ContrastiveTokenLoss
 
-A Pytorch Module wrapper for the contrastive_token_loss function.
-https://arxiv.org/abs/2205.02517 https://github.com/ShaojieJiang/CT-Loss/tree/main
+Anti-repetition objective. Treats each token's recent predecessors as in-batch negatives
+and pushes their logits down, reducing the high-rank degenerate-repetition failure mode
+of MLE-trained LMs.
+
+From "Reducing Sentence-Level Repetition" (arxiv 2205.02517); adapted from
+https://github.com/ShaojieJiang/CT-Loss.
 
 Source: [praxis/losses/contrastive_token.py:11](../praxis/losses/contrastive_token.py#L11)
 
 ## `cross_entropy` - CrossEntropyLoss
 
-Base class for all neural network modules.
+Standard cross-entropy with two optional extras: an anti-duplication penalty
+(``penalty_weight``) that up-weights tokens the model is about to predict equal to one
+already in the prompt, and per-token ``loss_weights`` for task-weighted training.
 
 Source: [praxis/losses/cross_entropy.py:11](../praxis/losses/cross_entropy.py#L11)
 
@@ -28,12 +34,21 @@ Value: `functools.partial(<class 'praxis.losses.focal.FocalLoss'>, alpha=1.0, ga
 
 ## `focal_alpha`
 
-Value: `functools.partial(<function alpha_vector_factory at 0x7fb0769ecb40>, cls=<class 'praxis.losses.focal.FocalLoss'>, alpha_start=0.5, alpha_end=1.5, gamma=2.0)`
+Value: `functools.partial(<function alpha_vector_factory at 0x7ef9525d4b40>, cls=<class 'praxis.losses.focal.FocalLoss'>, alpha_start=0.5, alpha_end=1.5, gamma=2.0)`
 
 ## `halo` - HALOLoss
 
 Hyperspherical Active Learning Objective (HALO) loss adapted for language modeling.
 https://github.com/4rtemi5/halo
+
+Instead of standard cross-entropy over logits, HALO operates in embedding space using
+distance-based scoring against centroid vectors. The classifier's weight matrix serves
+as the centroids - one per vocab token.
+
+Key components:
+- Gamma-scaled distance metric with learnable temperature
+- Abstain class acting as an origin sink at the theoretically ideal equilibrium
+- Geometric ...
 
 Source: [praxis/losses/halo.py:12](../praxis/losses/halo.py#L12)
 
@@ -47,6 +62,11 @@ Source: [praxis/losses/mile.py:11](../praxis/losses/mile.py#L11)
 
 ## `stablemax` - StableMaxCrossEntropyLoss
 
-From "Grokking at the Edge of Numerical Stability": https://arxiv.org/abs/2501.04697
+Cross-entropy with softmax replaced by ``stablemax``, a piecewise rational function
+(``1/(1-x)`` for negatives, ``x+1`` for non-negatives) that avoids the floating-point
+underflow softmax hits at large logit-magnitudes. Computed in float64 for the same
+reason.
+
+From "Grokking at the Edge of Numerical Stability" (https://arxiv.org/abs/2501.04697).
 
 Source: [praxis/losses/stablemax.py:10](../praxis/losses/stablemax.py#L10)

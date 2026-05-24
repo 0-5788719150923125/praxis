@@ -12,7 +12,7 @@ EMBEDDING_REGISTRY: Dict[str, Type[nn.Module]] = {
     "conv": ProjectedEmbedding,
     "gru": ProjectedEmbedding,
     "min": ProjectedEmbedding,
-    "mru": ProjectedEmbedding,
+    "mru": PositionalEmbedding,
     "nano": ProjectedEmbedding,
     "recurrent": ProjectedEmbedding,
     "ssm": ProjectedEmbedding,

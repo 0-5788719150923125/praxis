@@ -7,7 +7,8 @@ Registry: ``praxis.STRATEGIES_REGISTRY`` (4 entries)
 
 ## `naive` - NaiveSummation
 
-Base class for all neural network modules.
+Sum all per-task losses with equal weight. The baseline strategy: works fine when tasks
+are well-scaled, breaks when they aren't.
 
 Source: [praxis/strategies/naive.py:7](../praxis/strategies/naive.py#L7)
 
@@ -25,6 +26,16 @@ Source: [praxis/strategies/real_time.py:7](../praxis/strategies/real_time.py#L7)
 ## `weighted` - UncertaintyWeighted
 
 Use homoscedastic uncertainty to balance multi-task losses.
+
+This implementation handles both positive losses (to minimize) and negative losses (from
+RL rewards/maximization objectives) by applying the uncertainty weighting to absolute
+values while preserving the optimization direction.
+
+Adapted from: https://arxiv.org/abs/1705.07115
+https://medium.com/@baicenxiao/strategies-for-balancing-multiple-loss-functions-in-deep-
+learning-e1a641e0bcc0
+
+Note: Negative loss values are treated as reward ...
 
 Source: [praxis/strategies/uncertainty_weighted.py:9](../praxis/strategies/uncertainty_weighted.py#L9)
 

@@ -39,40 +39,66 @@ if [ "$1" = "compose" ]; then
         COMPOSE_FILE="$SCRIPT_DIR/compose.yml"
     fi
 
-    # Resolve --data-path arguments to absolute host paths and add as volume mounts.
-    # Inside the container these are mounted at the same absolute path.
-    # Handles: --data-path p1 p2 --data-path p3 (nargs="+" with action="extend")
+    # Parse args for special handling:
+    #  --data-path (nargs="+"): resolve to absolute host paths and bind-mount
+    #    them into the container at the same path.
+    #  --port / --master-port: capture so we can publish the matching host
+    #    ports (the compose file reads PRAXIS_PORT / PRAXIS_MASTER_PORT).
     EXTRA_VOLUMES=""
+    PRAXIS_PORT_OVERRIDE=""
+    PRAXIS_MASTER_PORT_OVERRIDE=""
     RESOLVED_ARGS=()
     CONSUMING_DATA_PATHS=false
+    EXPECT_PORT=false
+    EXPECT_MASTER_PORT=false
     for arg in "$@"; do
-        if $CONSUMING_DATA_PATHS; then
-            # Stop consuming if we hit another flag
-            if [[ "$arg" == -* ]]; then
-                CONSUMING_DATA_PATHS=false
-                if [ "$arg" = "--data-path" ]; then
-                    # Another --data-path flag: keep consuming
-                    CONSUMING_DATA_PATHS=true
-                    RESOLVED_ARGS+=("$arg")
-                else
-                    RESOLVED_ARGS+=("$arg")
-                fi
-            else
-                # This arg is a data path value — resolve it
-                abs_path="$(cd "$SCRIPT_DIR" && realpath -m "$arg" 2>/dev/null || echo "$arg")"
-                EXTRA_VOLUMES="$EXTRA_VOLUMES -v $abs_path:$abs_path:ro"
-                RESOLVED_ARGS+=("$abs_path")
-            fi
-        elif [ "$arg" = "--data-path" ]; then
-            CONSUMING_DATA_PATHS=true
+        if $EXPECT_PORT; then
+            PRAXIS_PORT_OVERRIDE="$arg"
+            EXPECT_PORT=false
             RESOLVED_ARGS+=("$arg")
-        else
-            RESOLVED_ARGS+=("$arg")
+            continue
         fi
+        if $EXPECT_MASTER_PORT; then
+            PRAXIS_MASTER_PORT_OVERRIDE="$arg"
+            EXPECT_MASTER_PORT=false
+            RESOLVED_ARGS+=("$arg")
+            continue
+        fi
+        # A new flag ends any in-progress --data-path value capture.
+        if $CONSUMING_DATA_PATHS && [[ "$arg" == -* ]]; then
+            CONSUMING_DATA_PATHS=false
+        fi
+        if $CONSUMING_DATA_PATHS; then
+            abs_path="$(cd "$SCRIPT_DIR" && realpath -m "$arg" 2>/dev/null || echo "$arg")"
+            EXTRA_VOLUMES="$EXTRA_VOLUMES -v $abs_path:$abs_path:ro"
+            RESOLVED_ARGS+=("$abs_path")
+            continue
+        fi
+        case "$arg" in
+            --data-path)
+                CONSUMING_DATA_PATHS=true
+                RESOLVED_ARGS+=("$arg")
+                ;;
+            --port)
+                EXPECT_PORT=true
+                RESOLVED_ARGS+=("$arg")
+                ;;
+            --master-port)
+                EXPECT_MASTER_PORT=true
+                RESOLVED_ARGS+=("$arg")
+                ;;
+            *)
+                RESOLVED_ARGS+=("$arg")
+                ;;
+        esac
     done
 
-    # Run in Docker Compose with all remaining arguments
-    # Include port publishing for API server access
+    # Export port overrides so compose.yml's ${PRAXIS_PORT}/${PRAXIS_MASTER_PORT}
+    # substitution publishes the right host ports. Unset means compose falls
+    # back to its own defaults (2100 / 29500).
+    [ -n "$PRAXIS_PORT_OVERRIDE" ] && export PRAXIS_PORT="$PRAXIS_PORT_OVERRIDE"
+    [ -n "$PRAXIS_MASTER_PORT_OVERRIDE" ] && export PRAXIS_MASTER_PORT="$PRAXIS_MASTER_PORT_OVERRIDE"
+
     docker compose -f "$COMPOSE_FILE" run --rm --remove-orphans --service-ports $EXTRA_VOLUMES agent ./launch "${RESOLVED_ARGS[@]}"
     exit $?
 fi
@@ -139,6 +165,17 @@ if [ -f "$SCRIPT_DIR/pyproject.toml" ]; then
     else
         echo "[ENV] Praxis is installed."
     fi
+fi
+
+# If first argument is 'test', route remaining args to pytest instead of main.py.
+# Works standalone or via `./launch compose test ...` (the compose branch
+# re-invokes this script inside the container with the remaining args).
+if [ "$1" = "test" ]; then
+    shift
+    pytest "$@"
+    EXIT_CODE=$?
+    deactivate
+    exit $EXIT_CODE
 fi
 
 # Guard: the Mono-Forward trainer's current worker backend is Ray,
