@@ -5,11 +5,11 @@ import time
 
 import torch
 import torch.nn.functional as F
-from praxis.metrics import compute_softmax_collapse
 from lightning.pytorch import LightningModule
 from torcheval.metrics.functional import perplexity
 
 from praxis.data.datasets.manager import InterleaveDataManager
+from praxis.metrics import compute_softmax_collapse
 from praxis.trainers.compile import try_compile
 
 
@@ -137,7 +137,7 @@ class BackpropagationTrainer(LightningModule):
             if weighter_observes and task_type_ids is not None:
                 # Align task IDs with shifted per-token loss: weight on
                 # label[t] comes from the task at input position t+1.
-                shifted_task = task_type_ids[:, -per_token.size(-1):].contiguous()
+                shifted_task = task_type_ids[:, -per_token.size(-1) :].contiguous()
                 weighter.observe(shifted_task, per_token)
 
         batch_size, num_tokens = input_ids.shape

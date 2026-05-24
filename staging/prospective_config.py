@@ -24,6 +24,7 @@ This script trains a 2-8-8-1 MLP on XOR using only these two phases.
 """
 
 import math
+
 import torch
 
 torch.manual_seed(0)

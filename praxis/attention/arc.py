@@ -105,9 +105,7 @@ class ArcAttention(InfiniAttention):
             seg_mem_k = mem_k[:, :, start:end]
             seg_mem_v = mem_v[:, :, start:end]
             seg_len = end - start
-            seg_block_ids = (
-                block_ids[:, start:end] if block_ids is not None else None
-            )
+            seg_block_ids = block_ids[:, start:end] if block_ids is not None else None
 
             memory_output = self._retrieve_memory(seg_q, memory_states, memory_z)
 

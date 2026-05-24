@@ -67,7 +67,9 @@ def _tool_token_persist_key(token_str: str) -> str:
     return stripped.lower() + "_token_id"
 
 
-class CharLevelTokenizer(PreTrainedTokenizer, PraxisToolTokensMixin, PraxisTokenizerBase):
+class CharLevelTokenizer(
+    PreTrainedTokenizer, PraxisToolTokensMixin, PraxisTokenizerBase
+):
     """Character-level tokenizer with fixed-shape BMP vocab.
 
     Token id layout:
@@ -142,13 +144,16 @@ class CharLevelTokenizer(PreTrainedTokenizer, PraxisToolTokensMixin, PraxisToken
                 k: int(v)
                 for k, v in persisted_ids.items()
                 if k.endswith("_token_id")
-                and k not in ("pad_token_id", "bos_token_id", "eos_token_id", "sep_token_id")
+                and k
+                not in ("pad_token_id", "bos_token_id", "eos_token_id", "sep_token_id")
             }
         self._tool_special_id_map: Dict[str, int] = {}
         next_tool_id = self._offset + BMP_SIZE
         for idx, tok in enumerate(self.TOOL_SPECIAL_TOKEN_STRINGS):
             key = _tool_token_persist_key(tok)
-            self._tool_special_id_map[tok] = persisted_tool_ids.get(key, next_tool_id + idx)
+            self._tool_special_id_map[tok] = persisted_tool_ids.get(
+                key, next_tool_id + idx
+            )
 
         # Unified lookup tables.
         self._special_id_map.update(self._tool_special_id_map)
@@ -256,8 +261,14 @@ class CharLevelTokenizer(PreTrainedTokenizer, PraxisToolTokensMixin, PraxisToken
             if len(tok) == 1:
                 cp = ord(tok)
                 if _is_high_surrogate(cp):
-                    if i + 1 < len(tokens) and len(tokens[i + 1]) == 1 and _is_low_surrogate(ord(tokens[i + 1])):
-                        out.append(chr(_surrogates_to_codepoint(cp, ord(tokens[i + 1]))))
+                    if (
+                        i + 1 < len(tokens)
+                        and len(tokens[i + 1]) == 1
+                        and _is_low_surrogate(ord(tokens[i + 1]))
+                    ):
+                        out.append(
+                            chr(_surrogates_to_codepoint(cp, ord(tokens[i + 1])))
+                        )
                         i += 2
                         continue
                     out.append(unk)

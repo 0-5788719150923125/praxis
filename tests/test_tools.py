@@ -38,7 +38,6 @@ from praxis.tools import (
     validate_tool_arguments,
 )
 
-
 # ---------------------------------------------------------------------------
 # Tool functions themselves (unchanged by the conversion).
 # ---------------------------------------------------------------------------
@@ -92,9 +91,7 @@ def test_format_tool_output_uses_atomic_strings():
 
 
 def test_format_tool_call_with_result_separates_special_tokens():
-    s = format_tool_call_with_result(
-        "calc", {"values": [1, 2], "op": "add"}, 3
-    )
+    s = format_tool_call_with_result("calc", {"values": [1, 2], "op": "add"}, 3)
     # Adjacent special tokens must be separated by whitespace, never butted up.
     assert TOOL_CALL_CLOSE + TOOL_RESULT_OPEN not in s
     assert f"{TOOL_CALL_CLOSE}\n{TOOL_RESULT_OPEN}" in s
@@ -111,9 +108,7 @@ def test_parse_tool_call_extracts_last_valid():
 
 def test_has_complete_and_has_output_text_helpers():
     call_only = format_tool_input("calc", {"values": [1, 1], "op": "add"})
-    complete = format_tool_call_with_result(
-        "calc", {"values": [1, 1], "op": "add"}, 2
-    )
+    complete = format_tool_call_with_result("calc", {"values": [1, 1], "op": "add"}, 2)
     assert has_complete_tool_call(call_only) is True
     assert has_tool_output(call_only) is False
     assert has_complete_tool_call(complete) is True
@@ -126,17 +121,13 @@ def test_get_unprocessed_tool_call_text_helper():
     result = get_unprocessed_tool_call(call_only)
     assert result is not None and result[0]["name"] == "calc"
 
-    resolved = format_tool_call_with_result(
-        "calc", {"values": [1, 1], "op": "add"}, 2
-    )
+    resolved = format_tool_call_with_result("calc", {"values": [1, 1], "op": "add"}, 2)
     assert get_unprocessed_tool_call(resolved) is None
 
 
 def test_multiple_calls_unprocessed_scan_order():
     # First call resolved, second pending: should surface the second.
-    first = format_tool_call_with_result(
-        "calc", {"values": [1, 1], "op": "add"}, 2
-    )
+    first = format_tool_call_with_result("calc", {"values": [1, 1], "op": "add"}, 2)
     second_open = format_tool_input("calc", {"values": [3, 4], "op": "mul"})
     text = f"{first}\n{second_open}"
     got = get_unprocessed_tool_call(text)
@@ -146,9 +137,9 @@ def test_multiple_calls_unprocessed_scan_order():
 
 def test_regex_patterns_escape_brackets_correctly():
     # Both literal '[' characters must be escaped for the regex to match.
-    from praxis.tools.tags import get_tool_input_pattern, get_tool_output_pattern
-
     import re
+
+    from praxis.tools.tags import get_tool_input_pattern, get_tool_output_pattern
 
     tin = format_tool_input("calc", {"values": [1], "op": "add"})
     assert re.search(get_tool_input_pattern(), tin, re.DOTALL) is not None
@@ -164,14 +155,24 @@ def test_regex_patterns_escape_brackets_correctly():
 
 def test_tokenizer_encodes_tool_tokens_as_single_ids_byte_level():
     tok = ByteLevelTokenizer()
-    for marker in (TOOL_CALL_OPEN, TOOL_CALL_CLOSE, TOOL_RESULT_OPEN, TOOL_RESULT_CLOSE):
+    for marker in (
+        TOOL_CALL_OPEN,
+        TOOL_CALL_CLOSE,
+        TOOL_RESULT_OPEN,
+        TOOL_RESULT_CLOSE,
+    ):
         ids = tok.encode(marker, add_special_tokens=False)
         assert len(ids) == 1, f"{marker} not atomic: {ids}"
 
 
 def test_tokenizer_encodes_tool_tokens_as_single_ids_char_level():
     tok = CharLevelTokenizer()
-    for marker in (TOOL_CALL_OPEN, TOOL_CALL_CLOSE, TOOL_RESULT_OPEN, TOOL_RESULT_CLOSE):
+    for marker in (
+        TOOL_CALL_OPEN,
+        TOOL_CALL_CLOSE,
+        TOOL_RESULT_OPEN,
+        TOOL_RESULT_CLOSE,
+    ):
         ids = tok.encode(marker, add_special_tokens=False)
         assert len(ids) == 1, f"{marker} not atomic: {ids}"
 
@@ -213,9 +214,7 @@ def test_find_unprocessed_tool_call_ids_skips_resolved_calls():
     means the model never gets to fully complete a result block before
     we splice ours in, so a complete block is reliably ours."""
     tok = ByteLevelTokenizer()
-    resolved = format_tool_call_with_result(
-        "calc", {"values": [1, 1], "op": "add"}, 2
-    )
+    resolved = format_tool_call_with_result("calc", {"values": [1, 1], "op": "add"}, 2)
     ids = list(tok.encode(resolved, add_special_tokens=False))
     assert find_unprocessed_tool_call_ids(ids, tok) is None
 
@@ -236,9 +235,7 @@ def test_has_complete_tool_call_and_output_ids():
     )
     complete = list(
         tok.encode(
-            format_tool_call_with_result(
-                "calc", {"values": [1], "op": "add"}, 1
-            ),
+            format_tool_call_with_result("calc", {"values": [1], "op": "add"}, 1),
             add_special_tokens=False,
         )
     )
@@ -301,9 +298,7 @@ def test_find_unprocessed_skips_malformed_call_then_finds_valid_one():
     JSON parsing on the merged body, and skip past both calls.
     """
     tok = ByteLevelTokenizer()
-    malformed = (
-        f"{TOOL_CALL_OPEN}\nnot json at all{TOOL_RESULT_CLOSE}\n"
-    )
+    malformed = f"{TOOL_CALL_OPEN}\nnot json at all{TOOL_RESULT_CLOSE}\n"
     valid = format_tool_input("calc", {"values": [4971, 242], "op": "div"})
     ids = list(tok.encode(malformed + valid, add_special_tokens=False))
     found = find_unprocessed_tool_call_ids(ids, tok)
@@ -449,7 +444,8 @@ def test_synthetic_formatter_emits_atomic_tool_boundaries_in_tokens():
     # Find the assistant message with the tool call and the tool message
     # with the result. Earlier system / developer / user messages skip past.
     call_msg = next(
-        m for m in doc["messages"]
+        m
+        for m in doc["messages"]
         if m["role"] == "assistant" and TOOL_CALL_OPEN in m["content"]
     )
     result_msg = next(m for m in doc["messages"] if m["role"] == "tool")

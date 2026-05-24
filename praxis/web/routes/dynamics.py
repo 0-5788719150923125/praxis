@@ -147,9 +147,7 @@ def get_dynamics():
         # Descriptions come from the live model; for historical runs we still
         # serve them (chart subtitles fall back to inline text per-key).
         generator = current_app.config.get("generator")
-        live_model = (
-            getattr(generator, "model", None) if generator else None
-        )
+        live_model = getattr(generator, "model", None) if generator else None
         descriptions = get_metric_descriptions(live_model)
 
         # Format response

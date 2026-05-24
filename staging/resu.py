@@ -53,7 +53,7 @@ def fit_resu(y: torch.Tensor, m: int, h: int, k: int, eps: float = 1e-4):
     K = Wp @ Cpf @ Wf
 
     U, S, _ = torch.linalg.svd(K, full_matrices=False)
-    W = (U[:, :k].T @ Wp)
+    W = U[:, :k].T @ Wp
     return W, S[:k]
 
 
@@ -84,7 +84,7 @@ def ar2_oscillator(T: int, freq: float = 0.05, decay: float = 0.97, seed: int = 
     """AR(2) tuned to oscillate near `freq` cycles/sample - tests if ReSU picks it up."""
     torch.manual_seed(seed)
     phi1 = 2 * decay * math.cos(2 * math.pi * freq)
-    phi2 = -decay ** 2
+    phi2 = -(decay**2)
     y = torch.zeros(T)
     for t in range(2, T):
         y[t] = phi1 * y[t - 1] + phi2 * y[t - 2] + 0.3 * torch.randn(1)

@@ -231,11 +231,7 @@ def find_unprocessed_tool_call_ids(
         # execution.
         if result_open is not None and result_close is not None:
             k = j + 1
-            while (
-                k < n
-                and token_ids[k] != result_open
-                and token_ids[k] != call_open
-            ):
+            while k < n and token_ids[k] != result_open and token_ids[k] != call_open:
                 k += 1
             if k < n and token_ids[k] == result_open:
                 m = k + 1
@@ -318,7 +314,9 @@ def build_result_splice_ids(tokenizer, result: Any) -> List[int]:
     bos_id = getattr(tokenizer, "bos_token_id", None)
     if None in (result_open_id, result_close_id, sep_id, bos_id):
         return list(
-            tokenizer.encode("\n" + format_tool_output(result), add_special_tokens=False)
+            tokenizer.encode(
+                "\n" + format_tool_output(result), add_special_tokens=False
+            )
         )
 
     nl_ids = list(tokenizer.encode("\n", add_special_tokens=False))

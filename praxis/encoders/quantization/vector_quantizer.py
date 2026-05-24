@@ -7,8 +7,8 @@ Ported from abstractinator with adaptations for praxis:
 - Compile-friendly design (no .item() in forward path)
 """
 
-from typing import Dict, List, Optional, Tuple
 import logging
+from typing import Dict, List, Optional, Tuple
 
 import torch
 import torch._dynamo as dynamo

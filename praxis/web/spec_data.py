@@ -13,7 +13,6 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any, Optional
 
-
 SPEC_SNAPSHOT_FILENAME = "spec.json"
 
 

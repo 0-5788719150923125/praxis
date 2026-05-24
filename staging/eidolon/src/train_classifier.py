@@ -7,30 +7,31 @@ Usage:
     python src/train_classifier.py --dataset data/dataset --model facebook/convnext-tiny-224
 """
 
-import os
 import argparse
-import torch
-import numpy as np
-from pathlib import Path
-from transformers import (
-    AutoImageProcessor,
-    AutoModelForImageClassification,
-    TrainingArguments,
-    Trainer,
-    EarlyStoppingCallback,
-)
-from peft import LoraConfig, get_peft_model
-from datasets import load_dataset
-from torchvision import transforms
-from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+import os
 
 # Add parent directory to path to import from main praxis
 import sys
+from pathlib import Path
+
+import numpy as np
+import torch
+from datasets import load_dataset
+from peft import LoraConfig, get_peft_model
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from torchvision import transforms
+from transformers import (
+    AutoImageProcessor,
+    AutoModelForImageClassification,
+    EarlyStoppingCallback,
+    Trainer,
+    TrainingArguments,
+)
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
-from praxis.losses.focal import FocalLoss
+from utils import ensure_dir, load_config, load_task_config
 
-from utils import load_config, ensure_dir, load_task_config
+from praxis.losses.focal import FocalLoss
 
 
 def compute_metrics(eval_pred):

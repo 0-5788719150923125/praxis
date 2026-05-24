@@ -75,9 +75,7 @@ class BaseHead(nn.Module, ABC):
         """
         return encoder_logits, decoder_embeds, encoder_classifier
 
-    def aux_losses(
-        self, embedding_weights: Optional[list] = None
-    ) -> Dict[str, Tensor]:
+    def aux_losses(self, embedding_weights: Optional[list] = None) -> Dict[str, Tensor]:
         """Named auxiliary losses to fold into the main objective.
 
         Each entry's key becomes the loss name in the model's loss

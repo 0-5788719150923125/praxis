@@ -5,11 +5,11 @@ Provides utilities for extracting frames from video files without bulk extractio
 """
 
 import os
+from pathlib import Path
+from typing import Any, Dict, Iterator, Tuple
+
 import cv2
 import numpy as np
-from pathlib import Path
-from typing import Iterator, Tuple, Dict, Any
-
 from utils import get_video_info
 
 

@@ -107,9 +107,7 @@ class HALOLoss(nn.Module):
             self._lazy_init(emb_dims)
 
         flat_emb = embeddings.contiguous().view(-1, emb_dims)
-        flat_weights = (
-            loss_weights.reshape(-1) if loss_weights is not None else None
-        )
+        flat_weights = loss_weights.reshape(-1) if loss_weights is not None else None
         centroids = classifier.weight
         return self._halo_forward(flat_emb, flat_labels, centroids, flat_weights)
 

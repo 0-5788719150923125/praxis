@@ -248,9 +248,7 @@ class MessageQueueManager:
                     task_id_val = int(raw_task)
                 except (TypeError, ValueError):
                     task_id_val = int(DEFAULT_TASK)
-                doc_task = torch.full(
-                    doc_tokens.shape, task_id_val, dtype=torch.uint8
-                )
+                doc_task = torch.full(doc_tokens.shape, task_id_val, dtype=torch.uint8)
 
                 remaining = effective_block_size - seq_len
                 if len(doc_tokens) <= remaining:

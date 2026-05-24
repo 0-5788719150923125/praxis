@@ -57,7 +57,9 @@ def _check_memory_finite(name: str, **tensors: Tensor) -> None:
                     continue
                 ot_finite = other_t[torch.isfinite(other_t)]
                 ot_max = (
-                    ot_finite.abs().max().item() if ot_finite.numel() > 0 else float("nan")
+                    ot_finite.abs().max().item()
+                    if ot_finite.numel() > 0
+                    else float("nan")
                 )
                 print(
                     f"  - companion {other_label} shape={tuple(other_t.shape)} "
@@ -368,9 +370,7 @@ class InfiniAttention(CausalAttention):
             seg_mem_k = mem_k[:, :, start:end]
             seg_mem_v = mem_v[:, :, start:end]
             seg_len = end - start
-            seg_block_ids = (
-                block_ids[:, start:end] if block_ids is not None else None
-            )
+            seg_block_ids = block_ids[:, start:end] if block_ids is not None else None
 
             # Retrieve from memory (context from all prior segments)
             memory_output = self._retrieve_memory(seg_q, memory_states, memory_z)

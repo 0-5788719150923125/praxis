@@ -109,7 +109,9 @@ class BrierLMCallback(Callback):
                 continue
 
             prompts = input_ids[:, : self.prompt_len]
-            refs = input_ids[:, self.prompt_len : self.prompt_len + self.continuation_len]
+            refs = input_ids[
+                :, self.prompt_len : self.prompt_len + self.continuation_len
+            ]
 
             gen_config = GenerationConfig(
                 max_new_tokens=self.continuation_len,

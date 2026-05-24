@@ -11,8 +11,8 @@ CALM can sit on top of any tokenizer (BPE, char, byte).
 from typing import Tuple
 
 import torch
-from torch import nn
 import torch.nn.functional as F
+from torch import nn
 
 
 class CALMVAE(nn.Module):

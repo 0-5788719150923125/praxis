@@ -108,7 +108,9 @@ def module_setup(request, config):
 
     if issubclass(module_class, CausalAttention):
         if attention_config.encoding == "nope":
-            pytest.skip("CausalAttention requires a positional encoding (alibi or rope)")
+            pytest.skip(
+                "CausalAttention requires a positional encoding (alibi or rope)"
+            )
         if (
             attention_config.encoding == "rope"
             and (attention_config.hidden_size // attention_config.num_heads) % 2 != 0

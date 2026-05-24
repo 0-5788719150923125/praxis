@@ -10,6 +10,7 @@ from flask import (
     request,
     send_from_directory,
 )
+
 static_bp = Blueprint("static_files", __name__)
 
 

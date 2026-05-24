@@ -207,15 +207,24 @@ NON_REGISTRY_PACKAGES: List[Tuple[str, str]] = [
 # Each tuple: (directory name, fallback description if no README is present).
 # Order is the rendering order in the README "project layout" block.
 TOP_LEVEL_DIRS: List[Tuple[str, str]] = [
-    ("praxis", "The model framework itself. See [docs/index.md](docs/index.md) for the per-registry feature map."),
+    (
+        "praxis",
+        "The model framework itself. See [docs/index.md](docs/index.md) for the per-registry feature map.",
+    ),
     ("experiments", ""),
     ("environments", ""),
     ("integrations", ""),
     ("staging", ""),
     ("tests", "Unit tests. Run with ``pytest tests -x``."),
-    ("next", "Long-form research notes, exploratory writing, and the project [roadmap](next/roadmap.md)."),
+    (
+        "next",
+        "Long-form research notes, exploratory writing, and the project [roadmap](next/roadmap.md).",
+    ),
     ("evaluation", "Evaluation harnesses and helpers."),
-    ("proofs", "Math / derivation notes backing the more unusual designs (harmonic head, ghostmax)."),
+    (
+        "proofs",
+        "Math / derivation notes backing the more unusual designs (harmonic head, ghostmax).",
+    ),
     ("research", "The research paper, in LaTeX."),
     ("axis", "Mobile companion app, built with Godot."),
     ("docs", "Auto-generated per-registry docs. Regenerated at every launch."),
@@ -368,46 +377,48 @@ def _render_web_doc(repo_root: Path) -> str:
         "",
     ]
     lines.extend(_render_route_table(repo_root))
-    lines.extend([
-        "",
-        "## Sending prompts",
-        "",
-        "Both endpoints accept any argument from the [Transformers text generation API](https://huggingface.co/docs/transformers/en/main_classes/text_generation).",
-        "",
-        "### String-based generation",
-        "",
-        "```py",
-        "import requests",
-        "",
-        'url = "http://localhost:2100/input"',
-        'payload = {"prompt": "Once upon a time, ", "do_sample": True, "temperature": 0.7}',
-        "",
-        "response = requests.post(url, json=payload)",
-        "print(response.json())",
-        "```",
-        "",
-        "### Message-based generation (recommended)",
-        "",
-        "Supports system prompts and tool calls.",
-        "",
-        "```py",
-        "import requests",
-        "",
-        'url = "http://localhost:2100/messages"',
-        "payload = {",
-        '    "messages": [',
-        '        {"role": "system", "content": "You are a helpful assistant."},',
-        '        {"role": "user", "content": "Hello, how are you?"},',
-        "    ],",
-        '    "do_sample": True,',
-        '    "temperature": 0.7,',
-        "}",
-        "",
-        "response = requests.post(url, json=payload)",
-        "print(response.json())",
-        "```",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            "## Sending prompts",
+            "",
+            "Both endpoints accept any argument from the [Transformers text generation API](https://huggingface.co/docs/transformers/en/main_classes/text_generation).",
+            "",
+            "### String-based generation",
+            "",
+            "```py",
+            "import requests",
+            "",
+            'url = "http://localhost:2100/input"',
+            'payload = {"prompt": "Once upon a time, ", "do_sample": True, "temperature": 0.7}',
+            "",
+            "response = requests.post(url, json=payload)",
+            "print(response.json())",
+            "```",
+            "",
+            "### Message-based generation (recommended)",
+            "",
+            "Supports system prompts and tool calls.",
+            "",
+            "```py",
+            "import requests",
+            "",
+            'url = "http://localhost:2100/messages"',
+            "payload = {",
+            '    "messages": [',
+            '        {"role": "system", "content": "You are a helpful assistant."},',
+            '        {"role": "user", "content": "Hello, how are you?"},',
+            "    ],",
+            '    "do_sample": True,',
+            '    "temperature": 0.7,',
+            "}",
+            "",
+            "response = requests.post(url, json=payload)",
+            "print(response.json())",
+            "```",
+            "",
+        ]
+    )
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -434,12 +445,15 @@ def _render_route_table(repo_root: Path) -> List[str]:
         if not view:
             continue
         methods = set(rule.methods) - {"HEAD", "OPTIONS"}
-        entry = by_view.setdefault(rule.endpoint, {
-            "blueprint": blueprint,
-            "paths": set(),
-            "methods": set(),
-            "view": view,
-        })
+        entry = by_view.setdefault(
+            rule.endpoint,
+            {
+                "blueprint": blueprint,
+                "paths": set(),
+                "methods": set(),
+                "view": view,
+            },
+        )
         entry["paths"].add(rule.rule)
         entry["methods"] |= methods
 
@@ -480,12 +494,14 @@ def _render_index(written: List[Tuple[str, str, int, str]]) -> str:
     ]
     for slug, title, count, description in sorted(written, key=lambda e: e[1].lower()):
         lines.append(f"- [{title}]({slug}.md) ({count}) - {description}")
-    lines.extend([
-        "",
-        "## Subsystems",
-        "",
-        "- [Web stack](web.md) - dashboard, JSON API routes, and inference endpoints.",
-    ])
+    lines.extend(
+        [
+            "",
+            "## Subsystems",
+            "",
+            "- [Web stack](web.md) - dashboard, JSON API routes, and inference endpoints.",
+        ]
+    )
     lines.extend(["", "## Core infrastructure", ""])
     lines.append(
         "These packages don't expose a registry yet, but they're the load-bearing"
@@ -603,8 +619,18 @@ def _source_link(cls: type, repo_root: Path) -> Optional[_Link]:
     return _Link(display=f"{rel}:{line}", url=f"{rel_from_docs.as_posix()}#L{line}")
 
 
-_SECTION_HEADERS = ("Args:", "Arguments:", "Returns:", "Raises:", "Yields:",
-                    "Example:", "Examples:", "Note:", "Notes:", "Attributes:")
+_SECTION_HEADERS = (
+    "Args:",
+    "Arguments:",
+    "Returns:",
+    "Raises:",
+    "Yields:",
+    "Example:",
+    "Examples:",
+    "Note:",
+    "Notes:",
+    "Attributes:",
+)
 
 
 def _extract_summary(cls: type) -> str:

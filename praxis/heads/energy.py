@@ -59,7 +59,10 @@ class EnergyHead(nn.Module):
         self.cond_proj = nn.Linear(cond_dim, hidden_dim, bias=False)
         self.noise_proj = nn.Linear(noise_dim, hidden_dim, bias=False)
         self.blocks = nn.ModuleList(
-            [EnergyBlock(hidden_dim, hidden_dim * mlp_mult, dropout) for _ in range(num_blocks)]
+            [
+                EnergyBlock(hidden_dim, hidden_dim * mlp_mult, dropout)
+                for _ in range(num_blocks)
+            ]
         )
         self.norm = nn.RMSNorm(hidden_dim)
         self.to_z = nn.Linear(hidden_dim, latent_dim, bias=False)
@@ -98,7 +101,5 @@ class EnergyHead(nn.Module):
         """
         shape = h.shape[:-1] + (self.noise_dim,)
         expanded = h.unsqueeze(0).expand(num_samples, *h.shape)
-        noise = torch.randn(
-            num_samples, *shape, device=h.device, dtype=noise_dtype
-        )
+        noise = torch.randn(num_samples, *shape, device=h.device, dtype=noise_dtype)
         return self(expanded, noise)

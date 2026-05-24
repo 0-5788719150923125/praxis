@@ -258,9 +258,7 @@ def validate_tool_arguments(name: str, arguments: Any) -> None:
             t.name if isinstance(t, Tool) else getattr(t, "__name__", "?")
             for t in get_all_tools()
         )
-        raise ToolValidationError(
-            f"Unknown tool '{name}'. Available: {available}"
-        )
+        raise ToolValidationError(f"Unknown tool '{name}'. Available: {available}")
 
     if not isinstance(tool, Tool):
         return  # Raw callable - no schema to check against.

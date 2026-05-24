@@ -63,8 +63,16 @@ def _pca_density_grid(weights: list, grid_size: int = PCA_GRID_SIZE) -> dict:
     x_span = max(x_max - x_min, 1e-12)
     y_span = max(y_max - y_min, 1e-12)
 
-    xb = ((proj[:, 0] - x_min) / x_span * (grid_size - 1)).long().clamp_(0, grid_size - 1)
-    yb = ((proj[:, 1] - y_min) / y_span * (grid_size - 1)).long().clamp_(0, grid_size - 1)
+    xb = (
+        ((proj[:, 0] - x_min) / x_span * (grid_size - 1))
+        .long()
+        .clamp_(0, grid_size - 1)
+    )
+    yb = (
+        ((proj[:, 1] - y_min) / y_span * (grid_size - 1))
+        .long()
+        .clamp_(0, grid_size - 1)
+    )
     flat = yb * grid_size + xb
     counts = torch.bincount(flat, minlength=grid_size * grid_size)
     grid = counts.view(grid_size, grid_size)
@@ -248,9 +256,7 @@ class CrystalHead(BaseHead):
                 )
             v_dim, f_dim = classifier.weight.shape
             n = float(n_cfg) if n_cfg is not None else math.sqrt(f_dim)
-            self.lm_head = CrystalClassifier(
-                hidden_size=f_dim, vocab_size=v_dim, n=n
-            )
+            self.lm_head = CrystalClassifier(hidden_size=f_dim, vocab_size=v_dim, n=n)
         else:
             n = float(n_cfg) if n_cfg is not None else math.sqrt(self.hidden_size)
             self.lm_head = CrystalClassifier(
@@ -287,9 +293,7 @@ class CrystalHead(BaseHead):
             out["crystal_centers_grad_norm"] = float(grad.detach().norm().item())
         return out
 
-    def dashboard_snapshots(
-        self, embedding_weights: Optional[list] = None
-    ) -> dict:
+    def dashboard_snapshots(self, embedding_weights: Optional[list] = None) -> dict:
         """Top-2 PCA density grid of the regularized embeddings.
 
         Visual companion to the ``embedding_rms`` aux loss: if the

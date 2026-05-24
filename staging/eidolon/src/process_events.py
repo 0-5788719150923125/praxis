@@ -13,19 +13,20 @@ Usage:
         --min-duration 0.4
 """
 
-import os
 import argparse
-import numpy as np
+import os
 from pathlib import Path
+
+import numpy as np
 from scipy.ndimage import median_filter
 from utils import (
-    load_config,
-    load_json,
-    save_json,
     ensure_dir,
     format_timestamp,
     get_video_info,
+    load_config,
+    load_json,
     load_task_config,
+    save_json,
 )
 
 

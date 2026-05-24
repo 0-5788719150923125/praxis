@@ -6,26 +6,27 @@ Usage:
     python src/eidolon_gui.py
 """
 
-import os
-import sys
 import json
+import os
 import subprocess
+import sys
 import threading
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, scrolledtext
-from pathlib import Path
-import pandas as pd
 from datetime import datetime
+from pathlib import Path
+from tkinter import filedialog, messagebox, scrolledtext, ttk
+
+import pandas as pd
 from utils import (
+    DEFAULT_TASK_CONFIG,
+    create_task_config_from_labels,
+    get_video_info,
+    internal_to_display,
     load_config,
     load_json,
-    save_json,
-    get_video_info,
     load_task_config,
     migrate_labels_to_internal,
-    create_task_config_from_labels,
-    internal_to_display,
-    DEFAULT_TASK_CONFIG,
+    save_json,
 )
 
 

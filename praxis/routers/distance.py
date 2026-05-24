@@ -10,7 +10,7 @@ The distance loss computes L2 distance between each expert's parameters
 and the base expert's parameters, encouraging divergence.
 """
 
-from typing import Any, Dict, Optional, Tuple, Union, List
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn

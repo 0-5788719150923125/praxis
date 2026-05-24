@@ -21,9 +21,7 @@ Ray backend is actually used, so ``import praxis`` still works on
 Python builds where Ray has no wheels.
 """
 
-from praxis.trainers.mono_forward.inprocess_trainer import (
-    InProcessMonoForwardTrainer,
-)
+from praxis.trainers.mono_forward.inprocess_trainer import InProcessMonoForwardTrainer
 from praxis.trainers.mono_forward.inprocess_worker import LocalLayerWorker
 from praxis.trainers.mono_forward.projection import ProjectionMatrix
 from praxis.trainers.mono_forward.trainer import MonoForwardTrainer

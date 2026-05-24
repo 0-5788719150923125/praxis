@@ -8,21 +8,22 @@ Usage:
     python src/prepare_dataset.py --labels data/labels.csv
 """
 
-import os
-import cv2
 import argparse
-import pandas as pd
-from sklearn.model_selection import train_test_split
+import os
 from pathlib import Path
 from typing import Optional
+
+import cv2
+import pandas as pd
+from sklearn.model_selection import train_test_split
 from utils import (
-    load_config,
-    ensure_dir,
-    load_task_config,
-    internal_to_display,
-    display_to_internal,
-    migrate_labels_to_internal,
     create_task_config_from_labels,
+    display_to_internal,
+    ensure_dir,
+    internal_to_display,
+    load_config,
+    load_task_config,
+    migrate_labels_to_internal,
 )
 from video_frame_extractor import VideoFrameExtractor
 

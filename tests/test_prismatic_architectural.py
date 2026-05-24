@@ -203,5 +203,6 @@ class TestArchitecturalDiversity:
         assert torch.allclose(routing_1.sum(dim=-1), torch.ones(batch_size))
         assert torch.allclose(routing_2.sum(dim=-1), torch.ones(batch_size))
 
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

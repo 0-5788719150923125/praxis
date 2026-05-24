@@ -103,9 +103,7 @@ class WeightedIterableDataset(IterableDataset):
 
             # Stack batch tensors
             batch_tensor = torch.stack(batch)
-            task_type_tensor = (
-                torch.stack(task_type_ids) if task_type_ids else None
-            )
+            task_type_tensor = torch.stack(task_type_ids) if task_type_ids else None
             assistant_mask_tensor = (
                 torch.stack(assistant_mask) if assistant_mask else None
             )

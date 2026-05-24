@@ -6,17 +6,18 @@ Usage:
     python src/infer_video.py --video videos/my_video.mp4 --model models/<task>-model/final
 """
 
-import os
-import cv2
-import torch
 import argparse
-import numpy as np
+import os
 from pathlib import Path
-from tqdm import tqdm
-from PIL import Image
-from transformers import AutoImageProcessor, AutoModelForImageClassification
+
+import cv2
+import numpy as np
+import torch
 from peft import PeftModel
-from utils import load_config, save_json, get_video_info, ensure_dir, format_timestamp
+from PIL import Image
+from tqdm import tqdm
+from transformers import AutoImageProcessor, AutoModelForImageClassification
+from utils import ensure_dir, format_timestamp, get_video_info, load_config, save_json
 
 
 def infer_video(video_path: str, model_path: str, config: dict, output_dir: str):

@@ -15,8 +15,8 @@ from typing import Dict
 
 from praxis.tasks.types import (
     DEFAULT_TASK,
-    TASK_NAMES,
     TASK_NAME_TO_ID,
+    TASK_NAMES,
     TaskType,
     coerce_task,
     task_id,

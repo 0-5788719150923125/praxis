@@ -49,8 +49,14 @@ def test_calm_forward_backward():
     assert out.loss.requires_grad
     out.loss.backward()
     # Energy head and VAE both get gradients.
-    assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in model.encoder.vae.parameters())
-    assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in model.encoder.energy_head.parameters())
+    assert any(
+        p.grad is not None and p.grad.abs().sum() > 0
+        for p in model.encoder.vae.parameters()
+    )
+    assert any(
+        p.grad is not None and p.grad.abs().sum() > 0
+        for p in model.encoder.energy_head.parameters()
+    )
 
 
 def test_calm_handles_loss_skips_main_ce():
@@ -71,6 +77,7 @@ def test_calm_generate_advances_in_K_steps():
     model = PraxisForCausalLM(cfg)
     model.eval()
     from transformers import GenerationConfig
+
     gc = GenerationConfig(max_new_tokens=12, temperature=1.0, do_sample=True)
     input_ids = torch.randint(4, 200, (1, 8), dtype=torch.long)
     out = model.generate(input_ids, generation_config=gc)
@@ -82,7 +89,9 @@ def test_calm_generate_advances_in_K_steps():
 
 
 def test_energy_head_shapes():
-    head = EnergyHead(cond_dim=32, noise_dim=16, latent_dim=8, hidden_dim=32, num_blocks=2)
+    head = EnergyHead(
+        cond_dim=32, noise_dim=16, latent_dim=8, hidden_dim=32, num_blocks=2
+    )
     h = torch.randn(3, 5, 32)
     samples = head.sample(h, num_samples=4)
     assert samples.shape == (4, 3, 5, 8)

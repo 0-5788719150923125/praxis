@@ -3,10 +3,10 @@ from typing import Any, Dict, List, Optional, Tuple, Type, Union
 import torch
 from torch import nn
 
-from praxis.attention.base import ModularAttention
-from praxis.attention.components import VanillaMHA
-from praxis.attention.causal import CausalAttention
 from praxis.attention.arc import ArcAttention
+from praxis.attention.base import ModularAttention
+from praxis.attention.causal import CausalAttention
+from praxis.attention.components import VanillaMHA
 from praxis.attention.infini import InfiniAttention
 from praxis.attention.pk_attention import ProductKeyAttention
 from praxis.attention.syntaxes import SyntaxesAttention

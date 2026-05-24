@@ -106,9 +106,7 @@ class MetricsLogger:
             existing = {row[1] for row in cursor.fetchall()}
             for col in column_names:
                 if col not in existing:
-                    self.conn.execute(
-                        f"ALTER TABLE metrics ADD COLUMN {col} REAL"
-                    )
+                    self.conn.execute(f"ALTER TABLE metrics ADD COLUMN {col} REAL")
             self.conn.commit()
         except Exception as e:
             print(f"[MetricsLogger] Warning: Error ensuring columns exist: {e}")

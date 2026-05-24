@@ -349,9 +349,7 @@ class ByteLatentEncoder(nn.Module):
                 _, total_size = entropy_preds.shape
                 vocab_size = total_size // seq_len
 
-                reshaped_preds = entropy_preds.view(
-                    batch_size, seq_len, vocab_size
-                )
+                reshaped_preds = entropy_preds.view(batch_size, seq_len, vocab_size)
                 flattened_preds = reshaped_preds[:, :-1].reshape(-1, vocab_size)
                 flattened_targets = local_encoder_tokens[:, 1:].reshape(-1)
 
@@ -1131,7 +1129,9 @@ class RecurrentDecoder(nn.Module):
 
         # Output projection and normalization
         self.norm = nn.LayerNorm(config.dim_token_emb, eps=config.norm_eps)
-        self.output = nn.Linear(config.dim_token_emb, config.local_vocab_size, bias=False)
+        self.output = nn.Linear(
+            config.dim_token_emb, config.local_vocab_size, bias=False
+        )
 
         # Patch embedding projection
         self.patch_embedding_projection = None
@@ -1430,7 +1430,9 @@ class ConvDecoder(nn.Module):
 
         # Output projection and normalization
         self.norm = nn.LayerNorm(config.dim_token_emb, eps=config.norm_eps)
-        self.output = nn.Linear(config.dim_token_emb, config.local_vocab_size, bias=False)
+        self.output = nn.Linear(
+            config.dim_token_emb, config.local_vocab_size, bias=False
+        )
 
         # Patch embedding projection
         self.patch_embedding_projection = None
@@ -1771,7 +1773,9 @@ class TransformerDecoder(nn.Module):
 
         # Output projection and normalization
         self.norm = nn.LayerNorm(config.dim_token_emb, eps=config.norm_eps)
-        self.output = nn.Linear(config.dim_token_emb, config.local_vocab_size, bias=False)
+        self.output = nn.Linear(
+            config.dim_token_emb, config.local_vocab_size, bias=False
+        )
 
         # Patch embedding projection
         self.patch_embedding_projection = None

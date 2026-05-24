@@ -194,8 +194,8 @@ def _maybe_swap_inference_generator(trainer, tokenizer, api_server):
     if not isinstance(trainer, MonoForwardTrainer):
         return
 
-    from praxis.web.app import app
     from praxis.generation import MonoForwardGenerator
+    from praxis.web.app import app
 
     mf_generator = MonoForwardGenerator(trainer=trainer, tokenizer=tokenizer)
     api_server.generator = mf_generator

@@ -8,9 +8,9 @@ Usage:
     python src/download_video.py --url "https://youtube.com/watch?v=..." --output videos/
 """
 
+import argparse
 import os
 import sys
-import argparse
 from pathlib import Path
 
 try:

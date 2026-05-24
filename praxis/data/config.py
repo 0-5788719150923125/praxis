@@ -33,6 +33,7 @@ def resolve_task_type(dataset_config: dict) -> int:
     fmt = dataset_config.get("format")
     return int(FORMAT_TO_TASK.get(fmt, DEFAULT_TASK))
 
+
 # System and developer prompts
 SYSTEM_PROMPT = "Write thy wrong."
 

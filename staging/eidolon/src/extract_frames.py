@@ -7,12 +7,13 @@ Usage:
     python src/extract_frames.py --video videos/my_video.mp4 --fps 10
 """
 
-import os
-import cv2
 import argparse
+import os
 from pathlib import Path
+
+import cv2
 from tqdm import tqdm
-from utils import load_config, save_json, get_video_info, ensure_dir, format_timestamp
+from utils import ensure_dir, format_timestamp, get_video_info, load_config, save_json
 
 
 def extract_frames(

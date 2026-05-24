@@ -7,12 +7,13 @@ Usage:
     python src/generate_mlt.py --events outputs/events/my_video_events.json --output project.mlt
 """
 
-import os
 import argparse
+import os
 from pathlib import Path
+
 from lxml import etree
-from utils import load_json, get_absolute_path, get_video_info, ensure_dir, load_config
 from naming import get_experiment_path
+from utils import ensure_dir, get_absolute_path, get_video_info, load_config, load_json
 
 
 def format_timecode(seconds: float, fps: float) -> str:

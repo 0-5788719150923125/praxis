@@ -214,7 +214,9 @@ class Generator:
         tt = tool_token_ids(self.tokenizer)
         call_open_id = tt.get("call_open")
         call_close_id = tt.get("call_close")
-        tools_enabled = bool(self.tools and self.call_tool and call_close_id is not None)
+        tools_enabled = bool(
+            self.tools and self.call_tool and call_close_id is not None
+        )
 
         start_time = time.time()
         history: list = []

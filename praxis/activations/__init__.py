@@ -5,10 +5,10 @@ from praxis.activations.jagged_sine import JaggedSine
 from praxis.activations.nmda import NMDA
 from praxis.activations.periodic_relu import PeriodicReLU
 from praxis.activations.serf import SERF
+from praxis.activations.serpent import Serpent
 from praxis.activations.sin import Sine
 from praxis.activations.sin_cos import SineCosine
 from praxis.activations.sinlu import SinLU
-from praxis.activations.serpent import Serpent
 from praxis.activations.snake import Snake
 
 ACTIVATION_MAP = dict(

@@ -21,7 +21,9 @@ from .base import PraxisTokenizerBase, PraxisToolTokensMixin
 from .chat_templates import get_chat_template
 
 
-class StandardTokenizer(PreTrainedTokenizerFast, PraxisToolTokensMixin, PraxisTokenizerBase):
+class StandardTokenizer(
+    PreTrainedTokenizerFast, PraxisToolTokensMixin, PraxisTokenizerBase
+):
     """
     Standard tokenizer supporting BPE and Unigram models.
 

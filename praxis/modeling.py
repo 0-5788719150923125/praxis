@@ -16,11 +16,7 @@ from praxis.heads import HEAD_REGISTRY
 from praxis.losses import get_loss_function
 from praxis.policies import RL_POLICIES_REGISTRY
 from praxis.strategies import STRATEGIES_REGISTRY
-from praxis.tasks import (
-    TASK_NAMES,
-    TaskLossWeighter,
-    resolve_task_weighter,
-)
+from praxis.tasks import TASK_NAMES, TaskLossWeighter, resolve_task_weighter
 from praxis.utils import create_block_ids
 
 
@@ -137,9 +133,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
         # Initialize separate backward head if requested
         if config.bidirectional and config.encoder_type is None:
-            backward_cls = HEAD_REGISTRY.get(
-                config.head_type, HEAD_REGISTRY["forward"]
-            )
+            backward_cls = HEAD_REGISTRY.get(config.head_type, HEAD_REGISTRY["forward"])
             self.backward_head = backward_cls(config, encoder=None)
         else:
             self.backward_head = None
@@ -558,9 +552,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # along so heads that want to regularize them can; heads that
         # don't ignore the arg.
         if self.training and labels is not None and self.head is not None:
-            aux = self.head.aux_losses(
-                embedding_weights=self.input_embedding_weights()
-            )
+            aux = self.head.aux_losses(embedding_weights=self.input_embedding_weights())
             for name, value in aux.items():
                 outputs.losses.add_loss(name, value)
 
@@ -599,11 +591,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         """Generate tokens, dispatching to specialised paths when applicable."""
         from praxis.encoders.calm import CALMEncoder
 
-        if (
-            self.encoder
-            and isinstance(self.encoder, CALMEncoder)
-            and not self.training
-        ):
+        if self.encoder and isinstance(self.encoder, CALMEncoder) and not self.training:
             return self._calm_generate(inputs, generation_config, **kwargs)
         if (
             self.mtp is not None
@@ -630,9 +618,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         """
         from types import SimpleNamespace
 
-        from praxis.generation.lf_temperature import (
-            lf_temperature_sample_batched,
-        )
+        from praxis.generation.lf_temperature import lf_temperature_sample_batched
 
         if input_ids is None:
             raise ValueError("CALM generate requires an input_ids prompt")

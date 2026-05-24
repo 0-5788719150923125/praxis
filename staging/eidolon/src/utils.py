@@ -6,12 +6,12 @@ import json
 import os
 import shutil
 import subprocess
-import yaml
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import pandas as pd
+import yaml
 
 
 def load_config(config_path: str = "config.yaml") -> Dict[str, Any]:

@@ -242,9 +242,7 @@ class HarmonicHead(BaseHead):
 
     def __init__(self, config: Any, encoder: Optional[nn.Module] = None) -> None:
         super().__init__(config, encoder)
-        max_positions = int(
-            getattr(config, "max_position_embeddings", 32768) or 32768
-        )
+        max_positions = int(getattr(config, "max_position_embeddings", 32768) or 32768)
 
         if self.has_encoder:
             classifier = getattr(encoder, "classifier", None)
@@ -305,9 +303,7 @@ class HarmonicHead(BaseHead):
             return getattr(self._encoder, "classifier", None)
         return self.lm_head
 
-    def dashboard_snapshots(
-        self, embedding_weights: Optional[list] = None
-    ) -> dict:
+    def dashboard_snapshots(self, embedding_weights: Optional[list] = None) -> dict:
         """Amplitude grid magnitudes for the spectrum heatmap.
 
         Returns the field's ``|amp[f_t, f_d]|`` matrix and the

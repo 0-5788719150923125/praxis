@@ -1,8 +1,9 @@
 """Tests for data sampling weight modes: static, dynamic, and novelty."""
 
+from unittest.mock import Mock
+
 import numpy as np
 import pytest
-from unittest.mock import Mock
 
 from praxis.data.datasets.novelty import CountMinSketch, NoveltyTracker
 
@@ -173,6 +174,7 @@ class TestNoveltyTracker:
 def _make_tokenizer():
     """Create a minimal GPT-2 tokenizer with chat template."""
     from transformers import AutoTokenizer
+
     from praxis.tokenizers.chat_templates import DEFAULT_CHAT_TEMPLATE
 
     tokenizer = AutoTokenizer.from_pretrained("gpt2")

@@ -19,8 +19,8 @@ See ``PLAN.md`` for the full architecture rationale. Briefly:
 from typing import Dict, Optional, Tuple
 
 import torch
-from torch import nn
 import torch.nn.functional as F
+from torch import nn
 
 from praxis.heads.energy import EnergyHead
 from praxis.losses.energy_score import energy_score_loss
@@ -237,9 +237,7 @@ class CALMEncoder(nn.Module):
         logvar_t = self._last_logvar[:, 1:, :].detach()
         M = self.energy_samples_m
         std_t = (0.5 * logvar_t).exp()
-        eps_t = torch.randn(
-            M, *mean_t.shape, device=mean_t.device, dtype=mean_t.dtype
-        )
+        eps_t = torch.randn(M, *mean_t.shape, device=mean_t.device, dtype=mean_t.dtype)
         # [M, B, N-1, L] -> [B, N-1, M, L]
         target_samples = (mean_t.unsqueeze(0) + std_t.unsqueeze(0) * eps_t).permute(
             1, 2, 0, 3

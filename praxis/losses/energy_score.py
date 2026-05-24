@@ -17,7 +17,9 @@ predicts.
 import torch
 
 
-def _pairwise_distance(a: torch.Tensor, b: torch.Tensor, eps: float = 1e-4) -> torch.Tensor:
+def _pairwise_distance(
+    a: torch.Tensor, b: torch.Tensor, eps: float = 1e-4
+) -> torch.Tensor:
     """Euclidean distances between rows of ``a`` and rows of ``b``.
 
     ``a``: ``[..., N, D]``.

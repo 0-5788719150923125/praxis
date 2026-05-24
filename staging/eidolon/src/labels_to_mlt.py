@@ -7,21 +7,22 @@ Usage:
     python src/labels_to_mlt.py --video videos/my_video.mp4 --output project.mlt
 """
 
-import os
 import argparse
-import pandas as pd
-import numpy as np
+import os
 from pathlib import Path
-from utils import (
-    load_config,
-    get_video_info,
-    ensure_dir,
-    load_task_config,
-    internal_to_display,
-    migrate_labels_to_internal,
-)
+
+import numpy as np
+import pandas as pd
 from generate_mlt import create_mlt_project
 from naming import get_experiment_path
+from utils import (
+    ensure_dir,
+    get_video_info,
+    internal_to_display,
+    load_config,
+    load_task_config,
+    migrate_labels_to_internal,
+)
 
 
 def labels_to_events(

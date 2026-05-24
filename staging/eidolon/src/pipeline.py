@@ -7,14 +7,15 @@ Usage:
     python src/pipeline.py --video videos/my_video.mp4 --model models/model/final --threshold 0.3 --min-duration 0.5
 """
 
-import os
 import argparse
+import os
 from pathlib import Path
-from infer_video import infer_video
-from process_events import process_events_from_predictions
+
 from generate_mlt import create_mlt_project
-from utils import load_config, load_json, load_task_config
+from infer_video import infer_video
 from naming import get_experiment_path
+from process_events import process_events_from_predictions
+from utils import load_config, load_json, load_task_config
 
 
 def run_pipeline(
