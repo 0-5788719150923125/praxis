@@ -22,7 +22,6 @@ head-side metrics. Each entry's ``chart`` hint may carry:
 
 from typing import Any, Dict
 
-
 TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     "loss": {
         "description": "Per-step training cross-entropy loss.",

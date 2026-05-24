@@ -331,9 +331,7 @@ def _grouped_entries(registry: Dict[str, Any]) -> List[Dict[str, Any]]:
             group["presets"].append((key, config))
         else:
             others.append({"keys": [key], "value": value})
-    return sorted(
-        list(class_groups.values()) + others, key=lambda e: e["keys"][0]
-    )
+    return sorted(list(class_groups.values()) + others, key=lambda e: e["keys"][0])
 
 
 def _render_class_entry(entry: Dict[str, Any], repo_root: Path) -> List[str]:
@@ -789,7 +787,11 @@ def _format_value(value: Any) -> str:
         return f"functools.partial({', '.join(parts)})"
     if inspect.isclass(value):
         module = getattr(value, "__module__", "") or ""
-        return f"<class '{module}.{value.__qualname__}'>" if module else f"<class '{value.__qualname__}'>"
+        return (
+            f"<class '{module}.{value.__qualname__}'>"
+            if module
+            else f"<class '{value.__qualname__}'>"
+        )
     if inspect.isfunction(value) or inspect.ismethod(value) or inspect.isbuiltin(value):
         module = getattr(value, "__module__", "") or ""
         qualname = getattr(value, "__qualname__", value.__name__)

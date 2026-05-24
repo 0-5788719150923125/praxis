@@ -181,17 +181,25 @@ class CrystalClassifier(nn.Module):
         self.n = float(n)
         self.eps = float(eps)
         self.centers = nn.Parameter(torch.empty(vocab_size, hidden_size))
-        nn.init.normal_(self.centers, mean=0.0, std=0.02)
+        # Paper's 1/sqrt(D) init (Baek et al. used 1/28 = 1/sqrt(784) for MNIST).
+        # 0.02 was way too small relative to LayerNorm'd decoder embeddings,
+        # which suppressed the cross-term that carries per-class signal at init.
+        nn.init.normal_(self.centers, mean=0.0, std=1.0 / math.sqrt(hidden_size))
 
     def forward(self, x: Tensor) -> Tensor:
         orig_shape = x.shape
-        x_flat = x.reshape(-1, orig_shape[-1])
-        cc = (self.centers * self.centers).sum(-1)
+        out_dtype = x.dtype
+        # Distance computation in fp32: with n ~ sqrt(D), pseudo_logits sit
+        # around -n*log(D), where bf16 resolution loses the per-class spread
+        # and argmax collapses to a fixed token.
+        x_flat = x.reshape(-1, orig_shape[-1]).float()
+        centers = self.centers.float()
+        cc = (centers * centers).sum(-1)
         xx = (x_flat * x_flat).sum(-1, keepdim=True)
-        cx = x_flat @ self.centers.T
+        cx = x_flat @ centers.T
         dist_sq = (cc.unsqueeze(0) + xx - 2.0 * cx).clamp_min(self.eps)
         pseudo_logits = -self.n * torch.log(dist_sq)
-        return pseudo_logits.view(*orig_shape[:-1], self.vocab_size)
+        return pseudo_logits.view(*orig_shape[:-1], self.vocab_size).to(out_dtype)
 
     @torch.no_grad()
     def centers_norm_mean(self) -> Tensor:
@@ -302,10 +310,14 @@ class CrystalHead(BaseHead):
     def aux_losses(self, embedding_weights: Optional[list] = None) -> dict:
         """Mean-column-RMS embedding regularizer (Baek et al.).
 
-        Penalizes ``mean(sqrt(mean(W**2, dim=0)))`` averaged across
-        whatever embedding tables the model exposes (token embedding or
-        byte-latent hash tables), so the geometry stays bounded the way
-        the paper's harmonic-loss training expects. Specific to the
+        Penalizes ``mean(sqrt(mean(W**2, dim=0)))`` - per-column RMS
+        averaged across columns - matching the exact formula in the
+        ``grow-crystals`` reference (``src/utils/model.py``). The paper
+        text just calls this "L2 regularization on embeddings"; the
+        code is what defines the precise penalty.
+
+        We average across whatever embedding tables the model exposes
+        (token embedding or byte-latent hash tables). Specific to the
         crystal head: standard CE heads benefit from unbounded weight
         growth and we don't want to suppress it for them.
         """
