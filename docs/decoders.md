@@ -5,17 +5,16 @@ How the stack of blocks is composed (sequential, parallel, weighted, ...).
 
 Registry: ``praxis.DECODER_REGISTRY`` (4 entries)
 
-## `parallel_mean`
+## `parallel_mean`, `parallel_variance`, `parallel_weighted` - ParallelDecoder
 
-Value: `functools.partial(<class 'praxis.decoders.parallel.ParallelDecoder'>, mode='mean')`
+A module that wraps decoder operations.
 
-## `parallel_variance`
+Source: [praxis/decoders/parallel.py:15](../praxis/decoders/parallel.py#L15)
 
-Value: `functools.partial(<class 'praxis.decoders.parallel.ParallelDecoder'>, mode='variance')`
-
-## `parallel_weighted`
-
-Value: `functools.partial(<class 'praxis.decoders.parallel.ParallelDecoder'>, mode='weighted')`
+Presets:
+- `parallel_mean` - `mode='mean'`
+- `parallel_variance` - `mode='variance'`
+- `parallel_weighted` - `mode='weighted'`
 
 ## `sequential` - SequentialDecoder
 

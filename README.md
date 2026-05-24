@@ -76,6 +76,21 @@ where present.
 
 <details>
 
+<summary>subsystems</summary>
+
+<!-- AUTODOC:SUBSYSTEMS:BEGIN -->
+
+Standalone subsystems, documented outside the registry map.
+
+- [CLI arguments](docs/cli.md) - every `./launch` flag, grouped as in `--help`.
+- [Web stack](docs/web.md) - dashboard, JSON API routes, and inference endpoints.
+
+<!-- AUTODOC:SUBSYSTEMS:END -->
+
+</details>
+
+<details>
+
 <summary>installation, configuration, and usage</summary>
 
 ## commands

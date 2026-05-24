@@ -5,22 +5,22 @@ Decide which expert / block a token visits at each depth. Enables out-of-order l
 
 Registry: ``praxis.CONTROLLER_REGISTRY`` (7 entries)
 
-## `attention` - AttentionChanneler
+## `attention`, `counter_attention` - AttentionChanneler
 
 An attention-based controller that makes routing decisions by attending to the history
 of previously-selected layers while minimally modifying hidden states.
 
 Source: [praxis/controllers/attention.py:16](../praxis/controllers/attention.py#L16)
 
+Presets:
+- `attention` - class defaults
+- `counter_attention` - `initial_queries=3, max_tokens=5`
+
 ## `base` - BaseController
 
 A no-op controller.
 
 Source: [praxis/controllers/base.py:13](../praxis/controllers/base.py#L13)
-
-## `counter_attention`
-
-Value: `functools.partial(<class 'praxis.controllers.attention.AttentionChanneler'>, initial_queries=3, max_tokens=5)`
 
 ## `graph` - GraphRouter
 
@@ -46,7 +46,7 @@ slow, or out of their usual position.
 
 Source: [praxis/controllers/layer_shuffle.py:15](../praxis/controllers/layer_shuffle.py#L15)
 
-## `pathfinder` - Pathfinder
+## `pathfinder`, `shortcutter` - Pathfinder
 
 Implements a gating mechanism for dynamic layer selection in transformer models. Each
 layer uses a gating network to decide which layer to process next based on the current
@@ -54,6 +54,6 @@ hidden state.
 
 Source: [praxis/controllers/pathfinder.py:14](../praxis/controllers/pathfinder.py#L14)
 
-## `shortcutter`
-
-Value: `functools.partial(<class 'praxis.controllers.pathfinder.Pathfinder'>, allow_early_exits=True)`
+Presets:
+- `pathfinder` - class defaults
+- `shortcutter` - `allow_early_exits=True`

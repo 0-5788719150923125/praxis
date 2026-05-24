@@ -5,13 +5,24 @@ Strategies for reducing sequence length between layers.
 
 Registry: ``praxis.COMPRESSION_REGISTRY`` (3 entries)
 
-## `linear`
+## `linear`, `nearest` - SequenceInterpolation
 
-Value: `functools.partial(<class 'praxis.compression.sequence_interpolation.SequenceInterpolation'>, factor=0.9, method='linear')`
+A module for interpolation-based sequence reduction and expansion in language models.
 
-## `nearest`
+This module provides methods to reduce a sequence of token embeddings to a shorter
+length using interpolation, and then expand it back to its original length. This can be
+used to reduce the computational complexity of processing long sequences while
+preserving the essential patterns in the data.
 
-Value: `functools.partial(<class 'praxis.compression.sequence_interpolation.SequenceInterpolation'>, factor=0.9, method='nearest')`
+Also provides methods to handle block IDs for packed sequences.
+
+Uses torch.nn.functional.interpolate for ...
+
+Source: [praxis/compression/sequence_interpolation.py:14](../praxis/compression/sequence_interpolation.py#L14)
+
+Presets:
+- `linear` - `factor=0.9, method='linear'`
+- `nearest` - `factor=0.9, method='nearest'`
 
 ## `none` - NoCompression
 

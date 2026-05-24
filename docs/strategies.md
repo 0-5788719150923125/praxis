@@ -23,7 +23,7 @@ functions-in-deep-learning-e1a641e0bcc0
 
 Source: [praxis/strategies/real_time.py:7](../praxis/strategies/real_time.py#L7)
 
-## `weighted` - UncertaintyWeighted
+## `weighted`, `weighted_clamped` - UncertaintyWeighted
 
 Use homoscedastic uncertainty to balance multi-task losses.
 
@@ -39,6 +39,6 @@ Note: Negative loss values are treated as reward ...
 
 Source: [praxis/strategies/uncertainty_weighted.py:9](../praxis/strategies/uncertainty_weighted.py#L9)
 
-## `weighted_clamped`
-
-Value: `functools.partial(<class 'praxis.strategies.uncertainty_weighted.UncertaintyWeighted'>, clamped=True)`
+Presets:
+- `weighted` - class defaults
+- `weighted_clamped` - `clamped=True`

@@ -16,7 +16,7 @@ https://github.com/ShaojieJiang/CT-Loss.
 
 Source: [praxis/losses/contrastive_token.py:11](../praxis/losses/contrastive_token.py#L11)
 
-## `cross_entropy` - CrossEntropyLoss
+## `cross_entropy`, `dedup` - CrossEntropyLoss
 
 Standard cross-entropy with two optional extras: an anti-duplication penalty
 (``penalty_weight``) that up-weights tokens the model is about to predict equal to one
@@ -24,13 +24,18 @@ already in the prompt, and per-token ``loss_weights`` for task-weighted training
 
 Source: [praxis/losses/cross_entropy.py:11](../praxis/losses/cross_entropy.py#L11)
 
-## `dedup`
+Presets:
+- `cross_entropy` - class defaults
+- `dedup` - `penalty_weight=0.1`
 
-Value: `functools.partial(<class 'praxis.losses.cross_entropy.CrossEntropyLoss'>, penalty_weight=0.1)`
+## `focal` - FocalLoss
 
-## `focal`
+Focal loss for multi-class classification.
 
-Value: `functools.partial(<class 'praxis.losses.focal.FocalLoss'>, alpha=1.0, gamma=2.0)`
+Source: [praxis/losses/focal.py:10](../praxis/losses/focal.py#L10)
+
+Presets:
+- `focal` - `alpha=1.0, gamma=2.0`
 
 ## `focal_alpha`
 

@@ -206,6 +206,15 @@ NON_REGISTRY_PACKAGES: List[Tuple[str, str]] = [
 ]
 
 
+# Standalone subsystem docs (not registry-backed). Each tuple is
+# (title, doc filename under docs/, one-line description). Single source of
+# truth for both docs/index.md and the README "subsystems" block.
+SUBSYSTEMS: List[Tuple[str, str, str]] = [
+    ("CLI arguments", "cli.md", "every `./launch` flag, grouped as in `--help`."),
+    ("Web stack", "web.md", "dashboard, JSON API routes, and inference endpoints."),
+]
+
+
 # Each tuple: (directory name, fallback description if no README is present).
 # Order is the rendering order in the README "project layout" block.
 TOP_LEVEL_DIRS: List[Tuple[str, str]] = [
@@ -257,6 +266,7 @@ def regenerate_docs(repo_root: Optional[Path] = None) -> None:
     readme_path = repo_root / "README.md"
     _patch_readme_block(readme_path, "FEATURES", _render_features_block(written))
     _patch_readme_block(readme_path, "LAYOUT", _render_layout_block(repo_root))
+    _patch_readme_block(readme_path, "SUBSYSTEMS", _render_subsystems_block())
 
 
 def _render_registry(
@@ -276,53 +286,63 @@ def _render_registry(
         f"Registry: ``praxis.{_registry_attr(slug)}`` ({len(registry)} entries)",
         "",
     ]
-    for keys, value in _grouped_entries(registry):
-        override = overrides.get(keys[0]) if overrides else None
-        lines.extend(_render_entry(keys, value, repo_root, override))
+    for entry in _grouped_entries(registry):
+        if "cls" in entry:
+            lines.extend(_render_class_entry(entry, repo_root))
+        else:
+            key = entry["keys"][0]
+            override = overrides.get(key) if overrides else None
+            lines.extend(_render_value_entry(entry["keys"], entry["value"], override))
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _grouped_entries(registry: Dict[str, Any]) -> List[Tuple[List[str], Any]]:
-    """Collapse multiple keys that point to the same class into a single
-    entry. Non-class values (partials, strings) stay one-per-key, since
-    they may differ even when wrapping the same target."""
-    class_groups: Dict[int, Tuple[Any, List[str]]] = {}
-    others: List[Tuple[List[str], Any]] = []
+def _resolve_class(value: Any) -> Tuple[Optional[type], Optional[str]]:
+    """Unwrap a ``functools.partial`` chain to the underlying class, if any.
+    Returns ``(cls, config)`` where config is a string of the bound args
+    (``None`` for a bare class). Returns ``(None, None)`` when the target
+    isn't a class - e.g. a partial wrapping a plain factory function."""
+    config_parts: List[str] = []
+    while isinstance(value, functools.partial):
+        config_parts.extend(_format_value(a) for a in value.args)
+        config_parts.extend(
+            f"{k}={_format_value(v)}" for k, v in sorted(value.keywords.items())
+        )
+        value = value.func
+    if inspect.isclass(value):
+        return value, ", ".join(config_parts) if config_parts else None
+    return None, None
+
+
+def _grouped_entries(registry: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Group entries by the class they resolve to - including ``partial``
+    presets that share a base class. Values that don't resolve to a class
+    (plain functions, factories, string enums) stay one-per-key."""
+    class_groups: Dict[int, Dict[str, Any]] = {}
+    others: List[Dict[str, Any]] = []
     for key in sorted(registry):
         value = registry[key]
-        if inspect.isclass(value):
-            existing = class_groups.get(id(value))
-            if existing:
-                existing[1].append(key)
-            else:
-                class_groups[id(value)] = (value, [key])
+        cls, config = _resolve_class(value)
+        if cls is not None:
+            group = class_groups.setdefault(
+                id(cls), {"cls": cls, "keys": [], "presets": []}
+            )
+            group["keys"].append(key)
+            group["presets"].append((key, config))
         else:
-            others.append(([key], value))
-    grouped = [(keys, cls) for cls, keys in class_groups.values()]
-    return sorted(grouped + others, key=lambda entry: entry[0][0])
+            others.append({"keys": [key], "value": value})
+    return sorted(
+        list(class_groups.values()) + others, key=lambda e: e["keys"][0]
+    )
 
 
-def _render_entry(
-    keys: List[str],
-    value: Any,
-    repo_root: Path,
-    override: Optional[str] = None,
-) -> List[str]:
+def _render_class_entry(entry: Dict[str, Any], repo_root: Path) -> List[str]:
+    cls = entry["cls"]
+    keys = entry["keys"]
     header = ", ".join(f"`{k}`" for k in keys)
-    if not inspect.isclass(value):
-        out = [f"## {header}", ""]
-        if override:
-            out.append(textwrap.fill(override, width=88, replace_whitespace=True))
-        else:
-            out.append(f"Value: `{_format_value(value)}`")
-        return out
-
-    qualname = getattr(value, "__qualname__", value.__name__)
-    summary = override or _extract_summary(value)
-    if override:
-        summary = textwrap.fill(summary, width=88, replace_whitespace=True)
-    link = _source_link(value, repo_root)
+    qualname = getattr(cls, "__qualname__", cls.__name__)
+    summary = _extract_summary(cls)
+    link = _source_link(cls, repo_root)
 
     out = [f"## {header} - {qualname}", ""]
     if summary:
@@ -331,6 +351,24 @@ def _render_entry(
         out.append(f"Source: [{link.display}]({link.url})")
     else:
         out.append("Source: (unknown)")
+
+    # Only show a presets list when at least one key binds extra config.
+    if any(config for _, config in entry["presets"]):
+        out.extend(["", "Presets:"])
+        for key, config in entry["presets"]:
+            out.append(f"- `{key}` - {f'`{config}`' if config else 'class defaults'}")
+    return out
+
+
+def _render_value_entry(
+    keys: List[str], value: Any, override: Optional[str] = None
+) -> List[str]:
+    header = ", ".join(f"`{k}`" for k in keys)
+    out = [f"## {header}", ""]
+    if override:
+        out.append(textwrap.fill(override, width=88, replace_whitespace=True))
+    else:
+        out.append(f"Value: `{_format_value(value)}`")
     return out
 
 
@@ -622,15 +660,9 @@ def _render_index(written: List[Tuple[str, str, int, str]]) -> str:
     ]
     for slug, title, count, description in sorted(written, key=lambda e: e[1].lower()):
         lines.append(f"- [{title}]({slug}.md) ({count}) - {description}")
-    lines.extend(
-        [
-            "",
-            "## Subsystems",
-            "",
-            "- [CLI arguments](cli.md) - every `./launch` flag, grouped as in `--help`.",
-            "- [Web stack](web.md) - dashboard, JSON API routes, and inference endpoints.",
-        ]
-    )
+    lines.extend(["", "## Subsystems", ""])
+    for title, filename, description in SUBSYSTEMS:
+        lines.append(f"- [{title}]({filename}) - {description}")
     lines.extend(["", "## Core infrastructure", ""])
     lines.append(
         "These packages don't expose a registry yet, but they're the load-bearing"
@@ -680,6 +712,16 @@ def _render_features_block(written: List[Tuple[str, str, int, str]]) -> str:
     ]
     for slug, title, count, _description in sorted(written, key=lambda e: e[1].lower()):
         lines.append(f"- [{title}](docs/{slug}.md) ({count})")
+    return "\n".join(lines)
+
+
+def _render_subsystems_block() -> str:
+    lines = [
+        "Standalone subsystems, documented outside the registry map.",
+        "",
+    ]
+    for title, filename, description in SUBSYSTEMS:
+        lines.append(f"- [{title}](docs/{filename}) - {description}")
     return "\n".join(lines)
 
 

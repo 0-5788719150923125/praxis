@@ -20,7 +20,7 @@ negative sign encourages distance (higher loss = more similar).
 
 Source: [praxis/routers/distance.py:21](../praxis/routers/distance.py#L21)
 
-## `mixture_of_depths` - MixtureOfDepths
+## `mixture_of_depths`, `mixture_of_depths_decayed`, `mixture_of_depths_ramped`, `mixture_of_depths_skip_2`, `mixture_of_depths_u` - MixtureOfDepths
 
 At each layer, route only a fraction of tokens through the heavy computation; the rest
 pass through via the residual. Uses expert-choice routing (the layer picks its top-k
@@ -31,21 +31,12 @@ U-shaped, ramped, or skip-every-N. See https://arxiv.org/abs/2404.02258.
 
 Source: [praxis/routers/mixture_of_depths.py:40](../praxis/routers/mixture_of_depths.py#L40)
 
-## `mixture_of_depths_decayed`
-
-Value: `functools.partial(<class 'praxis.routers.mixture_of_depths.MixtureOfDepths'>, layout='decayed')`
-
-## `mixture_of_depths_ramped`
-
-Value: `functools.partial(<class 'praxis.routers.mixture_of_depths.MixtureOfDepths'>, layout='ramped')`
-
-## `mixture_of_depths_skip_2`
-
-Value: `functools.partial(<class 'praxis.routers.mixture_of_depths.MixtureOfDepths'>, layout='skip_2')`
-
-## `mixture_of_depths_u`
-
-Value: `functools.partial(<class 'praxis.routers.mixture_of_depths.MixtureOfDepths'>, layout='u')`
+Presets:
+- `mixture_of_depths` - class defaults
+- `mixture_of_depths_decayed` - `layout='decayed'`
+- `mixture_of_depths_ramped` - `layout='ramped'`
+- `mixture_of_depths_skip_2` - `layout='skip_2'`
+- `mixture_of_depths_u` - `layout='u'`
 
 ## `prismatic` - Prismatic
 

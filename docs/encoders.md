@@ -5,11 +5,21 @@ Front-end encoders, including the byte-latent and abstractinator variants.
 
 Registry: ``praxis.ENCODER_REGISTRY`` (8 entries)
 
-## `abstractinator`
+## `abstractinator` - AbstractinatorEncoder
 
-Value: `functools.partial(<class 'praxis.encoders.abstractinator.encoder.AbstractinatorEncoder'>, hash_functions=1, hash_group_sizes=[3, 4, 5], local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', use_hash_embeddings=True, vq_codebook_size=16384)`
+BLT encoder with a multi-stage residual VQ bottleneck between the local encoder and the
+global transformer.
 
-## `byte_latent` - ByteLatentEncoder
+After downsampling byte-level representations to patch-level and projecting to
+hidden_size, vectors are quantized through a residual VQ. The VQ loss is added to the
+existing encoder aux_loss, requiring no changes to the training loop.
+
+Source: [praxis/encoders/abstractinator/encoder.py:25](../praxis/encoders/abstractinator/encoder.py#L25)
+
+Presets:
+- `abstractinator` - `hash_functions=1, hash_group_sizes=[3, 4, 5], local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', use_hash_embeddings=True, vq_codebook_size=16384`
+
+## `byte_latent`, `byte_latent_conv`, `byte_latent_transformer` - ByteLatentEncoder
 
 An implementation of the Byte Latent Encoder/Decoder, from:
 https://arxiv.org/abs/2412.09871
@@ -19,26 +29,21 @@ so it has been difficult to standardize. This could be a lot cleaner.
 
 Source: [praxis/encoders/byte_latent/encoder.py:47](../praxis/encoders/byte_latent/encoder.py#L47)
 
-## `byte_latent_conv`
+Presets:
+- `byte_latent` - class defaults
+- `byte_latent_conv` - `hash_functions=1, hash_group_sizes=[3, 4, 5], local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', use_hash_embeddings=True`
+- `byte_latent_transformer` - `hash_functions=1, hash_group_sizes=[3, 4, 5], local_architecture='transformer', n_layers_decoder=1, n_layers_encoder=1, patching_mode='space', use_hash_embeddings=True`
 
-Value: `functools.partial(<class 'praxis.encoders.byte_latent.encoder.ByteLatentEncoder'>, hash_functions=1, hash_group_sizes=[3, 4, 5], local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', use_hash_embeddings=True)`
+## `calm`, `calm_bpe`, `calm_byte`, `calm_small` - CALMEncoder
 
-## `byte_latent_transformer`
+CALM autoencoder + energy head, plugged into the encoder slot.
 
-Value: `functools.partial(<class 'praxis.encoders.byte_latent.encoder.ByteLatentEncoder'>, hash_functions=1, hash_group_sizes=[3, 4, 5], local_architecture='transformer', n_layers_decoder=1, n_layers_encoder=1, patching_mode='space', use_hash_embeddings=True)`
+The encoder owns its loss bookkeeping; see ``handles_loss``.
 
-## `calm`
+Source: [praxis/encoders/calm/encoder.py:31](../praxis/encoders/calm/encoder.py#L31)
 
-Value: `functools.partial(<class 'praxis.encoders.calm.encoder.CALMEncoder'>, ae_dropout=0.15, ae_hidden=512, chunk_size=8, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=128, noise_dim=128)`
-
-## `calm_bpe`
-
-Value: `functools.partial(<class 'praxis.encoders.calm.encoder.CALMEncoder'>, ae_dropout=0.15, ae_hidden=512, chunk_size=4, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=128, noise_dim=128)`
-
-## `calm_byte`
-
-Value: `functools.partial(<class 'praxis.encoders.calm.encoder.CALMEncoder'>, ae_dropout=0.15, ae_hidden=512, chunk_size=16, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=128, noise_dim=128)`
-
-## `calm_small`
-
-Value: `functools.partial(<class 'praxis.encoders.calm.encoder.CALMEncoder'>, ae_dropout=0.1, ae_hidden=256, chunk_size=8, energy_alpha=1.0, energy_blocks=2, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=64, noise_dim=64)`
+Presets:
+- `calm` - `ae_dropout=0.15, ae_hidden=512, chunk_size=8, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=128, noise_dim=128`
+- `calm_bpe` - `ae_dropout=0.15, ae_hidden=512, chunk_size=4, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=128, noise_dim=128`
+- `calm_byte` - `ae_dropout=0.15, ae_hidden=512, chunk_size=16, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=128, noise_dim=128`
+- `calm_small` - `ae_dropout=0.1, ae_hidden=256, chunk_size=8, energy_alpha=1.0, energy_blocks=2, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=64, noise_dim=64`
