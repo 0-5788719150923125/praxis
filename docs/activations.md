@@ -3,7 +3,7 @@
 
 Pointwise nonlinearities used inside blocks and heads.
 
-Registry: ``praxis.ACTIVATION_REGISTRY`` (31 entries)
+Registry: ``praxis.ACTIVATION_REGISTRY`` (33 entries)
 
 ## `gelu` - GELUActivation
 
@@ -13,7 +13,7 @@ slightly different results): 0.5 * x * (1 + torch.tanh(math.sqrt(2 / math.pi) * 
 0.044715 * torch.pow(x, 3)))) This is now written in C in nn.functional Also see the
 Gaussian Error Linear Units paper: https://huggingface.co/papers/1606.08415
 
-Source: [.venv/lib/python3.14/site-packages/transformers/activations.py:69](../.venv/lib/python3.14/site-packages/transformers/activations.py#L69)
+Source: [.venv/lib/python3.12/site-packages/transformers/activations.py:69](../.venv/lib/python3.12/site-packages/transformers/activations.py#L69)
 
 ## `gelu_10`
 
@@ -26,14 +26,14 @@ See: https://github.com/hendrycks/GELUs
 
 Implemented along with MEGA (Moving Average Equipped Gated Attention)
 
-Source: [.venv/lib/python3.14/site-packages/transformers/activations.py:151](../.venv/lib/python3.14/site-packages/transformers/activations.py#L151)
+Source: [.venv/lib/python3.12/site-packages/transformers/activations.py:151](../.venv/lib/python3.12/site-packages/transformers/activations.py#L151)
 
 ## `gelu_fast` - FastGELUActivation
 
 Applies GELU approximation that is slower than QuickGELU but more accurate. See:
 https://github.com/hendrycks/GELUs
 
-Source: [.venv/lib/python3.14/site-packages/transformers/activations.py:106](../.venv/lib/python3.14/site-packages/transformers/activations.py#L106)
+Source: [.venv/lib/python3.12/site-packages/transformers/activations.py:106](../.venv/lib/python3.12/site-packages/transformers/activations.py#L106)
 
 ## `gelu_new` - NewGELUActivation
 
@@ -41,7 +41,7 @@ Implementation of the GELU activation function currently in Google BERT repo (id
 to OpenAI GPT). Also see the Gaussian Error Linear Units paper:
 https://huggingface.co/papers/1606.08415
 
-Source: [.venv/lib/python3.14/site-packages/transformers/activations.py:58](../.venv/lib/python3.14/site-packages/transformers/activations.py#L58)
+Source: [.venv/lib/python3.12/site-packages/transformers/activations.py:58](../.venv/lib/python3.12/site-packages/transformers/activations.py#L58)
 
 ## `gelu_python`
 
@@ -59,7 +59,22 @@ https://huggingface.co/papers/1606.08415.
 This implementation is equivalent to NewGELU and FastGELU but much faster. However, it
 is not an exact numerical match due to rounding errors.
 
-Source: [.venv/lib/python3.14/site-packages/transformers/activations.py:30](../.venv/lib/python3.14/site-packages/transformers/activations.py#L30)
+Source: [.venv/lib/python3.12/site-packages/transformers/activations.py:30](../.venv/lib/python3.12/site-packages/transformers/activations.py#L30)
+
+## `hardswish` - Hardswish
+
+Applies the Hardswish function, element-wise.
+
+Method described in the paper: `Searching for MobileNetV3
+<https://arxiv.org/abs/1905.02244>`_.
+
+Hardswish is defined as:
+
+.. math::     \text{Hardswish}(x) = \begin{cases}         0 & \text{if~} x \le -3, \\
+x & \text{if~} x \ge +3, \\         x \cdot (x + 3) /6 & \text{otherwise}
+\end{cases}
+
+Source: [.venv/lib/python3.12/site-packages/torch/nn/modules/activation.py:530](../.venv/lib/python3.12/site-packages/torch/nn/modules/activation.py#L530)
 
 ## `jagged_sin` - JaggedSine
 
@@ -77,7 +92,7 @@ attention activation. See https://huggingface.co/papers/2209.10655
 
 Inspired by squared relu, but with bounded range and gradient for better stability
 
-Source: [.venv/lib/python3.14/site-packages/transformers/activations.py:193](../.venv/lib/python3.14/site-packages/transformers/activations.py#L193)
+Source: [.venv/lib/python3.12/site-packages/transformers/activations.py:193](../.venv/lib/python3.12/site-packages/transformers/activations.py#L193)
 
 ## `leaky_relu` - LeakyReLU
 
@@ -90,13 +105,13 @@ or
 .. math::     \text{LeakyReLU}(x) =     \begin{cases}     x, & \text{ if } x \geq 0 \\
 \text{negative\_slope} \times x, & \text{ otherwise }     \end{cases}
 
-Source: [.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py:873](../.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py#L873)
+Source: [.venv/lib/python3.12/site-packages/torch/nn/modules/activation.py:874](../.venv/lib/python3.12/site-packages/torch/nn/modules/activation.py#L874)
 
 ## `linear` - LinearActivation
 
 Applies the linear activation function, i.e. forwarding input directly to output.
 
-Source: [.venv/lib/python3.14/site-packages/transformers/activations.py:184](../.venv/lib/python3.14/site-packages/transformers/activations.py#L184)
+Source: [.venv/lib/python3.12/site-packages/transformers/activations.py:184](../.venv/lib/python3.12/site-packages/transformers/activations.py#L184)
 
 ## `mish` - MishActivation
 
@@ -104,7 +119,7 @@ See Mish: A Self-Regularized Non-Monotonic Activation Function (Misra.,
 https://huggingface.co/papers/1908.08681). Also visit the official repository for the
 paper: https://github.com/digantamisra98/Mish
 
-Source: [.venv/lib/python3.14/site-packages/transformers/activations.py:167](../.venv/lib/python3.14/site-packages/transformers/activations.py#L167)
+Source: [.venv/lib/python3.12/site-packages/transformers/activations.py:167](../.venv/lib/python3.12/site-packages/transformers/activations.py#L167)
 
 ## `nmda` - NMDA
 
@@ -138,14 +153,14 @@ uses a single parameter :math:`a` across all input channels. If called with
 
 .. note::     weight decay ...
 
-Source: [.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py:1568](../.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py#L1568)
+Source: [.venv/lib/python3.12/site-packages/torch/nn/modules/activation.py:1575](../.venv/lib/python3.12/site-packages/torch/nn/modules/activation.py#L1575)
 
 ## `quick_gelu` - QuickGELUActivation
 
 Applies GELU approximation that is fast but somewhat inaccurate. See:
 https://github.com/hendrycks/GELUs
 
-Source: [.venv/lib/python3.14/site-packages/transformers/activations.py:116](../.venv/lib/python3.14/site-packages/transformers/activations.py#L116)
+Source: [.venv/lib/python3.12/site-packages/transformers/activations.py:116](../.venv/lib/python3.12/site-packages/transformers/activations.py#L116)
 
 ## `relu` - ReLU
 
@@ -153,13 +168,13 @@ Applies the rectified linear unit function element-wise.
 
 :math:`\text{ReLU}(x) = (x)^+ = \max(0, x)`
 
-Source: [.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py:104](../.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py#L104)
+Source: [.venv/lib/python3.12/site-packages/torch/nn/modules/activation.py:104](../.venv/lib/python3.12/site-packages/torch/nn/modules/activation.py#L104)
 
 ## `relu2` - ReLUSquaredActivation
 
 Applies the relu^2 activation introduced in https://huggingface.co/papers/2109.08668
 
-Source: [.venv/lib/python3.14/site-packages/transformers/activations.py:206](../.venv/lib/python3.14/site-packages/transformers/activations.py#L206)
+Source: [.venv/lib/python3.12/site-packages/transformers/activations.py:206](../.venv/lib/python3.12/site-packages/transformers/activations.py#L206)
 
 ## `relu6` - ReLU6
 
@@ -167,7 +182,7 @@ Applies the ReLU6 function element-wise.
 
 .. math::     \text{ReLU6}(x) = \min(\max(0,x), 6)
 
-Source: [.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py:301](../.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py#L301)
+Source: [.venv/lib/python3.12/site-packages/torch/nn/modules/activation.py:304](../.venv/lib/python3.12/site-packages/torch/nn/modules/activation.py#L304)
 
 ## `serf` - SERF
 
@@ -208,7 +223,7 @@ Examples::
 
 >>> m = nn.Sigmoid()     >>> input = torch.randn(2)     >>> output = m(input)
 
-Source: [.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py:334](../.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py#L334)
+Source: [.venv/lib/python3.12/site-packages/torch/nn/modules/activation.py:337](../.venv/lib/python3.12/site-packages/torch/nn/modules/activation.py#L337)
 
 ## `silu` - SiLUActivation
 
@@ -219,7 +234,7 @@ Learning (Elfwing et al., https://arxiv.org/abs/1702.03118) and Swish: a Self-Ga
 Activation Function (Ramachandran et al., https://arxiv.org/abs/1710.05941v1) where the
 SiLU was experimented with later.
 
-Source: [.venv/lib/python3.14/site-packages/transformers/activations.py:92](../.venv/lib/python3.14/site-packages/transformers/activations.py#L92)
+Source: [.venv/lib/python3.12/site-packages/transformers/activations.py:92](../.venv/lib/python3.12/site-packages/transformers/activations.py#L92)
 
 ## `sin` - Sine
 
@@ -250,6 +265,12 @@ match the input's feature dimension.
 
 Source: [praxis/activations/snake.py:41](../praxis/activations/snake.py#L41)
 
+## `sqrtsoftplus` - SqrtSoftplusActivation
+
+sqrt(softplus(x)) — the router scoring function used by DeepSeek V4.
+
+Source: [.venv/lib/python3.12/site-packages/transformers/activations.py:217](../.venv/lib/python3.12/site-packages/transformers/activations.py#L217)
+
 ## `swish` - SiLU
 
 Applies the Sigmoid Linear Unit (SiLU) function, element-wise.
@@ -264,7 +285,7 @@ logistic sigmoid.}
 originally coined, and see     `Sigmoid-Weighted Linear Units for Neural Network
 Function Approximation     in Reinforcement Learning ...
 
-Source: [.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py:432](../.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py#L432)
+Source: [.venv/lib/python3.12/site-packages/torch/nn/modules/activation.py:435](../.venv/lib/python3.12/site-packages/torch/nn/modules/activation.py#L435)
 
 ## `tanh` - Tanh
 
@@ -284,7 +305,7 @@ Examples::
 
 >>> m = nn.Tanh()     >>> input = torch.randn(2)     >>> output = m(input)
 
-Source: [.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py:404](../.venv/lib/python3.14/site-packages/torch/nn/modules/activation.py#L404)
+Source: [.venv/lib/python3.12/site-packages/torch/nn/modules/activation.py:407](../.venv/lib/python3.12/site-packages/torch/nn/modules/activation.py#L407)
 
 ## `xielu` - XIELUActivation
 
@@ -293,4 +314,4 @@ Applies the xIELU activation function introduced in https://arxiv.org/abs/2411.1
 If the user has installed the nickjbrowning/XIELU wheel, we import xIELU CUDA Otherwise,
 we emit a single warning and use xIELU Python
 
-Source: [.venv/lib/python3.14/site-packages/transformers/activations.py:224](../.venv/lib/python3.14/site-packages/transformers/activations.py#L224)
+Source: [.venv/lib/python3.12/site-packages/transformers/activations.py:231](../.venv/lib/python3.12/site-packages/transformers/activations.py#L231)

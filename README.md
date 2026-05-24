@@ -22,7 +22,7 @@ Praxis is organized as ~20 pluggable registries. Each category below
 links to a docs page listing the concrete implementations and their
 source. See [docs/index.md](docs/index.md) for the full map.
 
-- [Activation functions](docs/activations.md) (31)
+- [Activation functions](docs/activations.md) (33)
 - [Attention mechanisms](docs/attention.md) (7)
 - [Block-stacking decoders](docs/decoders.md) (4)
 - [Data sampler strategies](docs/data.md) (5)
@@ -30,8 +30,8 @@ source. See [docs/index.md](docs/index.md) for the full map.
 - [Expert orchestration](docs/orchestration.md) (7)
 - [Halting / early exit](docs/halting.md) (2)
 - [Input encoders](docs/encoders.md) (8)
-- [Layer-routing controllers](docs/controllers.md) (7)
-- [Loss functions](docs/losses.md) (8)
+- [Layer-routing controllers](docs/controllers.md) (8)
+- [Loss functions](docs/losses.md) (9)
 - [Normalization layers](docs/normalization.md) (5)
 - [Output heads](docs/heads.md) (6)
 - [Positional encoding](docs/encoding.md) (3)
@@ -68,7 +68,7 @@ where present.
 - **[`research/`](research/)** - The research paper, in LaTeX.
 - **[`staging/`](staging/README.md)** - Welcome to the junkyard! This is where we dump experimental code that doesn't belong in core Praxis.
 - **[`static/`](static/)** - Images used in the README and the web dashboard.
-- **[`tests/`](tests/)** - Unit tests. Run with ``pytest tests -x``.
+- **[`tests/`](tests/)** - Unit tests. Run with `pytest tests -x`.
 
 <!-- AUTODOC:LAYOUT:END -->
 
@@ -77,6 +77,8 @@ where present.
 <details>
 
 <summary>installation, configuration, and usage</summary>
+
+## commands
 
 The launch script will automatically manage the virtual environment. To start, simply run:
 
@@ -108,10 +110,10 @@ To tear a running compose stack back down:
 ./launch stop
 ```
 
-To run unit testing:
+To run unit testing (accepts pytest arguments):
 
 ```sh
-pytest tests -x
+./launch test -x
 ```
 
 ## recommendations

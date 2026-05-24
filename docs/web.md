@@ -29,10 +29,10 @@ Introspected from the live Flask app at every launch. Each summary is the first 
 
 ### Core
 
-- **GET** `/` - Serve the main page. ([source](../praxis/web/routes/core.py#L53))
-- **GET** `/api/config` - Get current experiment configuration as YAML. ([source](../praxis/web/routes/core.py#L140))
-- **GET, POST** `/api/ping` - Simple endpoint to test if API is accessible. ([source](../praxis/web/routes/core.py#L62))
-- **GET** `/api/spec` - Get model specification including hashes and CLI arguments. ([source](../praxis/web/routes/core.py#L69))
+- **GET** `/` - Serve the main page. ([source](../praxis/web/routes/core.py#L54))
+- **GET** `/api/config` - Get current experiment configuration as YAML. ([source](../praxis/web/routes/core.py#L141))
+- **GET, POST** `/api/ping` - Simple endpoint to test if API is accessible. ([source](../praxis/web/routes/core.py#L63))
+- **GET** `/api/spec` - Get model specification including hashes and CLI arguments. ([source](../praxis/web/routes/core.py#L70))
 
 ### Data metrics
 
@@ -40,9 +40,9 @@ Introspected from the live Flask app at every launch. Each summary is the first 
 
 ### Dynamics
 
-- **GET** `/api/activation_curves` - Sample forward and derivative curves for every activation module in the ([source](../praxis/web/routes/dynamics.py#L546))
+- **GET** `/api/activation_curves` - Sample forward and derivative curves for every activation module in the ([source](../praxis/web/routes/dynamics.py#L544))
 - **GET** `/api/dynamics` - Get learning dynamics data for expert learning visualization. ([source](../praxis/web/routes/dynamics.py#L23))
-- **GET** `/api/head_snapshots` - Live non-scalar snapshots from the active model's LM head. ([source](../praxis/web/routes/dynamics.py#L731))
+- **GET** `/api/head_snapshots` - Live non-scalar snapshots from the active model's LM head. ([source](../praxis/web/routes/dynamics.py#L729))
 
 ### Generation
 

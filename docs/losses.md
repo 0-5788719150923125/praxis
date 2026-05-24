@@ -3,7 +3,7 @@
 
 Per-token criteria. Most accept optional ``loss_weights`` for task-weighted training.
 
-Registry: ``praxis.LOSS_REGISTRY`` (8 entries)
+Registry: ``praxis.LOSS_REGISTRY`` (9 entries)
 
 ## `contrastive_token` - ContrastiveTokenLoss
 
@@ -24,6 +24,25 @@ already in the prompt, and per-token ``loss_weights`` for task-weighted training
 
 Source: [praxis/losses/cross_entropy.py:11](../praxis/losses/cross_entropy.py#L11)
 
+## `cut_cross_entropy` - CutCrossEntropyLoss
+
+Base class for all neural network modules.
+
+Your models should also subclass this class.
+
+Modules can also contain other Modules, allowing them to be nested in a tree structure.
+You can assign the submodules as regular attributes::
+
+import torch.nn as nn     import torch.nn.functional as F
+
+class Model(nn.Module):         def __init__(self) -> None:
+super().__init__()             self.conv1 = nn.Conv2d(1, 20, 5)             self.conv2 =
+nn.Conv2d(20, 20, 5)
+
+def ...
+
+Source: [integrations/cut_cross_entropy/main.py:13](../integrations/cut_cross_entropy/main.py#L13)
+
 ## `dedup`
 
 Value: `functools.partial(<class 'praxis.losses.cross_entropy.CrossEntropyLoss'>, penalty_weight=0.1)`
@@ -34,7 +53,7 @@ Value: `functools.partial(<class 'praxis.losses.focal.FocalLoss'>, alpha=1.0, ga
 
 ## `focal_alpha`
 
-Value: `functools.partial(<function alpha_vector_factory at 0x7ef9525d4b40>, cls=<class 'praxis.losses.focal.FocalLoss'>, alpha_start=0.5, alpha_end=1.5, gamma=2.0)`
+Value: `functools.partial(<function alpha_vector_factory at 0x7efcf8a4b880>, cls=<class 'praxis.losses.focal.FocalLoss'>, alpha_start=0.5, alpha_end=1.5, gamma=2.0)`
 
 ## `halo` - HALOLoss
 

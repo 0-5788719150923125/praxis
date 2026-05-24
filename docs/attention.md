@@ -36,7 +36,7 @@ ghostmax, RoPE/ALiBi, GQA from the parent). Between segments, an ELU+1 kernel me
 accumulates key-value context and a learned gate blends memory retrieval with local
 attention output.
 
-Source: [praxis/attention/infini.py:69](../praxis/attention/infini.py#L69)
+Source: [praxis/attention/infini.py:71](../praxis/attention/infini.py#L71)
 
 ## `pk` - ProductKeyAttention
 
