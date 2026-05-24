@@ -168,6 +168,13 @@ class ArchitectureGroup:
         )
 
         group.add_argument(
+            "--max-position-embeddings",
+            type=int,
+            default=None,
+            help="Maximum positional capacity (defaults to block_size when unset)",
+        )
+
+        group.add_argument(
             "--vocab-size",
             type=int,
             choices=[1024, 2048, 4096, 8192, 16384, 32768, 65536],
