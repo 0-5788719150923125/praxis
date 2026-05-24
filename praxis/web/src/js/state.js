@@ -203,6 +203,11 @@ export const state = {
         // auto-refresh path to keep charts up when the server returns 304.
         lastRuns: [],
         lastDataMetrics: [],
+        // Scalar-metric registry (key -> {description, chart}) served by
+        // /api/metrics. Source of truth for chart titles/labels/scale;
+        // adding a metric to praxis.metrics.training_metrics makes it
+        // appear here automatically.
+        metricRegistry: {},
         // Historical run comparison
         historicalRuns: [],       // All available runs from /api/runs
         selectedHistoricalRuns: [], // Hashes the user has checked
@@ -396,14 +401,6 @@ export const CONSTANTS = {
     },
     // Chart metrics configuration - data-driven chart rendering
     METRIC_CONFIGS: [
-        { key: 'loss', canvasId: 'chart-train-loss', title: 'Training Loss', label: 'Training Loss', type: 'line' },
-        { key: 'val_loss', canvasId: 'chart-val-loss', title: 'Validation Loss', label: 'Validation Loss', type: 'line' },
-        { key: 'val_perplexity', canvasId: 'chart-perplexity', title: 'Perplexity', label: 'Perplexity', type: 'line' },
-        { key: 'val_brierlm', canvasId: 'chart-brierlm', title: 'BrierLM', label: 'BrierLM', type: 'line' },
-        { key: 'learning_rate', canvasId: 'chart-lr', title: 'Learning Rate', label: 'Learning Rate', type: 'line' },
-        { key: 'num_tokens', canvasId: 'chart-tokens', title: 'Tokens (Billions)', label: 'Tokens (B)', type: 'bar' },
-        { key: 'avg_step_time', canvasId: 'chart-avg-step-time', title: 'Average Step Time', label: 'Avg Step Time (s)', type: 'line' },
-        { key: 'softmax_collapse', canvasId: 'chart-softmax', title: 'Softmax Collapse', label: 'Softmax Collapse', type: 'line' },
         { key: 'sampling_weights', canvasId: 'chart-sampling-weights', title: 'Task Sampling Weights', label: 'Sampling Weights', type: 'sampling', source: 'data_metrics' },
         // Expert convergence metrics (SMEAR & Prismatic routers)
         { key: 'expert_routing_weights', canvasId: 'chart-expert-routing', title: 'Expert Routing Weights (Convergence)', label: 'Routing Weight', type: 'multi_expert_line', isComposite: true },

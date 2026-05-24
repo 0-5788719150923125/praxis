@@ -12,10 +12,6 @@ training examples) rather than arbitrary direction vectors, giving the
 "crystal" geometry the paper is named for. Weights stay bounded under
 training because the minimum of ``-log p_target`` lives at finite norm.
 
-Cut-cross-entropy is incompatible with this head - cut-CE assumes the
-classifier is a linear projection, but the centers are L2 anchors, not
-dot-product weights. Use ``loss_func: cross_entropy``.
-
 Reference: Baek et al., "Harmonic Loss Trains Interpretable AI Models"
 (arXiv:2502.01628). Naming follows the authors' "grow-crystals" repo.
 """

@@ -17,7 +17,11 @@ import sqlite3
 import sys
 from pathlib import Path
 
-VAL_COLUMNS = ("val_loss", "val_perplexity")
+from praxis.metrics.training_metrics import validation_metric_names
+
+# Derived from the training-metric registry: any metric flagged as
+# ``is_validation`` gets the same consecutive-duplicate prune treatment.
+VAL_COLUMNS = tuple(validation_metric_names())
 
 
 def _count(cursor, col: str) -> int:
@@ -128,10 +132,8 @@ def main(argv=None) -> int:
             line_parts.append(f"skipped ({summary['skipped']})")
         print("  " + "  ".join(line_parts))
 
-    print(
-        f"Total nulled: val_loss=-{total_nulled['val_loss']} "
-        f"val_perplexity=-{total_nulled['val_perplexity']}"
-    )
+    summary_parts = [f"{col}=-{total_nulled[col]}" for col in VAL_COLUMNS]
+    print("Total nulled: " + " ".join(summary_parts))
     return 0
 
 

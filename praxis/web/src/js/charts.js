@@ -234,6 +234,10 @@ async function fetchSelectedRunMetrics() {
                         });
                     });
                 }
+                // Stash the registry so callers can build chart configs
+                // from it. Riding alongside as an array property keeps
+                // the function signature unchanged.
+                if (data.registry) results.registry = data.registry;
             }
         } catch (error) {
             console.error('[Charts] Error loading local run metrics:', error);
@@ -378,10 +382,21 @@ export async function loadResearchMetricsWithCharts(force = false) {
         const runsToRender = runsUnchanged ? (state.research.lastRuns || []) : runs;
         const dataToRender = dataUnchanged ? (state.research.lastDataMetrics || []) : dataMetrics;
 
+        // Registry only refreshes when local runs do (the 304 path reuses
+        // whatever was cached). Remote-only refreshes also fall back to
+        // the cached registry since remotes aren't etag-tracked.
+        if (runs && runs.registry) {
+            state.research.metricRegistry = runs.registry;
+        }
+
         state.research.lastRuns = runsToRender;
         state.research.lastDataMetrics = dataToRender;
 
-        renderMetricsCharts({ runs: runsToRender, dataMetrics: dataToRender }, container);
+        renderMetricsCharts({
+            runs: runsToRender,
+            dataMetrics: dataToRender,
+            registry: state.research.metricRegistry,
+        }, container);
         state.research.loaded = true;
 
     } catch (error) {
@@ -404,9 +419,32 @@ export async function loadResearchMetricsWithCharts(force = false) {
 /**
  * Render full metrics charts
  */
+/**
+ * Translate the backend training-metric registry into chart configs.
+ *
+ * Each registry entry with a ``chart`` hint becomes a scalar chart on
+ * the Research tab. Chartless entries (e.g. ``batch``, ``local_layers``)
+ * are persisted as columns but don't render. Sorted by ``chart.order``
+ * so backend declares display ordering.
+ */
+function buildScalarConfigsFromRegistry(registry) {
+    const entries = Object.entries(registry || {})
+        .filter(([, v]) => v && v.chart)
+        .sort(([, a], [, b]) => (a.chart.order ?? 0) - (b.chart.order ?? 0));
+
+    return entries.map(([key, entry]) => ({
+        key,
+        canvasId: `chart-metric-${key.replace(/_/g, '-')}`,
+        title: entry.chart.title || key,
+        label: entry.chart.y_label || entry.chart.title || key,
+        type: entry.chart.type || 'line',
+    }));
+}
+
 function renderMetricsCharts(data, container) {
     const runs = data.runs || [];
     const dataMetrics = data.dataMetrics || [];
+    const registry = data.registry || {};
 
     // Render header only once — subsequent calls only rebuild charts
     if (!document.getElementById('metrics-charts-area')) {
@@ -428,8 +466,17 @@ function renderMetricsCharts(data, container) {
         return;
     }
 
+    // Scalar entries come from the backend registry; composite/specialty
+    // entries (multi-expert, sampling, arch selection) live in the
+    // frontend METRIC_CONFIGS. Adding a scalar metric is a one-entry
+    // change in praxis/metrics/training_metrics.py - no JS edits.
+    const allConfigs = [
+        ...buildScalarConfigsFromRegistry(registry),
+        ...CONSTANTS.METRIC_CONFIGS,
+    ];
+
     // Data-driven metric detection
-    const availableMetrics = CONSTANTS.METRIC_CONFIGS.filter(config => {
+    const availableMetrics = allConfigs.filter(config => {
         if (config.source === 'data_metrics') {
             return dataMetrics.some(a =>
                 a.data_metrics?.[config.key] &&
@@ -623,8 +670,12 @@ function createRunComparisonChart(canvasId, label, runs, metricKey) {
         })).filter(point => point.y !== null)
           .sort((a, b) => a.x - b.x);
 
-        // For validation metrics, remove consecutive duplicate values
-        if (metricKey === 'val_loss' || metricKey === 'val_perplexity' || metricKey === 'val_brierlm') {
+        // For validation metrics, remove consecutive duplicate values.
+        // ``is_validation`` is set by the backend registry, so new
+        // validation metrics get the same treatment without a JS edit.
+        const isVal =
+            state.research.metricRegistry?.[metricKey]?.chart?.is_validation;
+        if (isVal) {
             data = data.filter((point, i) => {
                 if (i === 0) return true;
                 return point.y !== data[i - 1].y;

@@ -11,9 +11,24 @@ from typing import Any, Dict, List, Optional
 
 from flask import Blueprint, current_app, jsonify, request
 
+from praxis.metrics import (
+    TRAINING_METRIC_REGISTRY,
+    metric_names,
+    validation_metric_names,
+)
 from praxis.web.app import api_logger
 
 metrics_bp = Blueprint("metrics", __name__)
+
+# Build SQL fragments once at import time so the SELECT statements and
+# validation-preserve clauses stay in sync with the registry without any
+# per-request work.
+_METRIC_COLS = metric_names()
+_METRIC_COLS_SQL = ", ".join(_METRIC_COLS)
+_BASE_SELECT_SQL = f"step, ts, {_METRIC_COLS_SQL}, extra_metrics"
+_VAL_PRESERVE_SQL = " OR ".join(
+    f"{col} IS NOT NULL" for col in validation_metric_names()
+)
 
 
 def _sanitize_for_json(obj):
@@ -165,11 +180,15 @@ def get_metrics():
             response.headers["ETag"] = etag
             return response, 304
 
-        # Build response
+        # Build response. ``registry`` rides alongside the run data so
+        # the frontend can build scalar chart configs from it - the
+        # source of truth for which metrics exist and how to render
+        # them is the backend, not duplicated JS arrays.
         response_data = {
             "status": "ok",
             "source": "metrics_logger",
             "runs": all_runs_data,
+            "registry": TRAINING_METRIC_REGISTRY,
             "metadata": {
                 "total_params": current_app.config.get("total_params", "N/A"),
                 "current_hash": current_hash,
@@ -238,37 +257,29 @@ def _read_metrics_file(
             if total_count > max_rows * 2:
                 sample_interval = max(1, total_count // max_rows)
                 cursor.execute(
-                    """SELECT step, ts, loss, val_loss, learning_rate, num_tokens,
-                              avg_step_time, softmax_collapse, val_perplexity, val_brierlm,
-                              batch, local_layers, remote_layers, extra_metrics
-                       FROM metrics
-                       WHERE step >= ?
-                         AND ((rowid % ?) = 0
-                              OR val_loss IS NOT NULL
-                              OR val_perplexity IS NOT NULL
-                              OR val_brierlm IS NOT NULL
-                              OR step = (SELECT MAX(step) FROM metrics WHERE step >= ?))
-                       ORDER BY step""",
+                    f"""SELECT {_BASE_SELECT_SQL}
+                        FROM metrics
+                        WHERE step >= ?
+                          AND ((rowid % ?) = 0
+                               OR {_VAL_PRESERVE_SQL}
+                               OR step = (SELECT MAX(step) FROM metrics WHERE step >= ?))
+                        ORDER BY step""",
                     (since_step, sample_interval, since_step),
                 )
             else:
                 cursor.execute(
-                    """SELECT step, ts, loss, val_loss, learning_rate, num_tokens,
-                              avg_step_time, softmax_collapse, val_perplexity, val_brierlm,
-                              batch, local_layers, remote_layers, extra_metrics
-                       FROM metrics
-                       WHERE step >= ?
-                       ORDER BY step""",
+                    f"""SELECT {_BASE_SELECT_SQL}
+                        FROM metrics
+                        WHERE step >= ?
+                        ORDER BY step""",
                     (since_step,),
                 )
         else:
             cursor.execute(
-                """SELECT step, ts, loss, val_loss, learning_rate, num_tokens,
-                          avg_step_time, softmax_collapse, val_perplexity, val_brierlm,
-                          batch, local_layers, remote_layers, extra_metrics
-                   FROM metrics
-                   WHERE step >= ?
-                   ORDER BY step""",
+                f"""SELECT {_BASE_SELECT_SQL}
+                    FROM metrics
+                    WHERE step >= ?
+                    ORDER BY step""",
                 (since_step,),
             )
 
@@ -280,20 +291,10 @@ def _read_metrics_file(
                 "ts": datetime.fromtimestamp(row["ts"]).isoformat(),
             }
 
-            # Add non-null native columns
-            for col in [
-                "loss",
-                "val_loss",
-                "learning_rate",
-                "num_tokens",
-                "avg_step_time",
-                "softmax_collapse",
-                "val_perplexity",
-                "val_brierlm",
-                "batch",
-                "local_layers",
-                "remote_layers",
-            ]:
+            # Add non-null native columns (registry-driven; new metrics
+            # show up here automatically when added to
+            # praxis.metrics.training_metrics).
+            for col in _METRIC_COLS:
                 if row[col] is not None:
                     entry[col] = row[col]
 
@@ -334,11 +335,8 @@ def _downsample_metrics(
 
     # Pull val rows aside so LTTB runs on the dense loss curve and can't
     # accidentally lose them. They go back in after downsampling.
-    val_rows = [
-        m
-        for m in metrics
-        if m.get("val_loss") is not None or m.get("val_perplexity") is not None
-    ]
+    val_keys = validation_metric_names()
+    val_rows = [m for m in metrics if any(m.get(k) is not None for k in val_keys)]
 
     if target_size < 3:
         downsampled = [metrics[-1]] if target_size == 1 else [metrics[0], metrics[-1]]

@@ -7,6 +7,8 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
+from praxis.metrics.training_metrics import metric_names
+
 
 class MetricsLogger:
     """Logs training metrics to SQLite database for web visualization.
@@ -30,40 +32,21 @@ class MetricsLogger:
             logger.log(step=0, loss=2.45, lr=0.0003)
     """
 
-    # Known metrics as native columns for better performance
-    KNOWN_METRICS = [
-        "loss",
-        "val_loss",
-        "learning_rate",
-        "num_tokens",
-        "avg_step_time",
-        "softmax_collapse",
-        "val_perplexity",
-        "val_brierlm",
-        "batch",
-        "local_layers",
-        "remote_layers",
-    ]
+    # Native columns derive from the training-metric registry. Adding a
+    # new scalar metric is a one-entry change in
+    # ``praxis.metrics.training_metrics``; the column lands here
+    # automatically and ``_ensure_columns_exist`` backfills old dbs.
+    KNOWN_METRICS = metric_names()
 
-    SCHEMA = """
-    CREATE TABLE IF NOT EXISTS metrics (
-        step INTEGER PRIMARY KEY,
-        ts REAL NOT NULL,
-        loss REAL,
-        val_loss REAL,
-        learning_rate REAL,
-        num_tokens REAL,
-        avg_step_time REAL,
-        softmax_collapse REAL,
-        val_perplexity REAL,
-        val_brierlm REAL,
-        batch REAL,
-        local_layers REAL,
-        remote_layers REAL,
-        extra_metrics TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_metrics_ts ON metrics(ts);
-    """
+    SCHEMA = (
+        "CREATE TABLE IF NOT EXISTS metrics (\n"
+        "    step INTEGER PRIMARY KEY,\n"
+        "    ts REAL NOT NULL,\n"
+        + "".join(f"    {col} REAL,\n" for col in KNOWN_METRICS)
+        + "    extra_metrics TEXT\n"
+        ");\n"
+        "CREATE INDEX IF NOT EXISTS idx_metrics_ts ON metrics(ts);\n"
+    )
 
     def __init__(self, run_dir: str, filename: str = "metrics.db"):
         """Initialize the metrics logger.

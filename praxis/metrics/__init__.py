@@ -5,6 +5,11 @@ from praxis.metrics.collapse import compute_softmax_collapse
 from praxis.metrics.descriptions import get_metric_descriptions
 from praxis.metrics.dynamics import extract_layer_dynamics
 from praxis.metrics.ema import LOSS_EMA_ALPHA, STEP_TIME_EMA_ALPHA, compute_ema
+from praxis.metrics.training_metrics import (
+    TRAINING_METRIC_REGISTRY,
+    metric_names,
+    validation_metric_names,
+)
 
 __all__ = [
     "compute_brier_lm",
@@ -14,4 +19,7 @@ __all__ = [
     "get_metric_descriptions",
     "LOSS_EMA_ALPHA",
     "STEP_TIME_EMA_ALPHA",
+    "TRAINING_METRIC_REGISTRY",
+    "metric_names",
+    "validation_metric_names",
 ]

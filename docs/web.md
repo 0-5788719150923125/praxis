@@ -55,8 +55,8 @@ Introspected from the live Flask app at every launch. Each summary is the first 
 
 ### Metrics
 
-- **GET** `/api/metrics` - Get training metrics with LTTB downsampling and caching. ([source](../praxis/web/routes/metrics.py#L35))
-- **GET** `/api/runs` - Get list of available training runs. ([source](../praxis/web/routes/metrics.py#L441))
+- **GET** `/api/metrics` - Get training metrics with LTTB downsampling and caching. ([source](../praxis/web/routes/metrics.py#L50))
+- **GET** `/api/runs` - Get list of available training runs. ([source](../praxis/web/routes/metrics.py#L439))
 
 
 ## Sending prompts
