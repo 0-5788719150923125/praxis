@@ -42,17 +42,17 @@ class MemoryBase(nn.Module):
 
     @staticmethod
     def collect_training_metrics(root: nn.Module) -> dict:
-        """Average ``memory_surprise`` across the active memory modules under
+        """Average each memory metric across the active memory modules under
         ``root`` (empty when none are active)."""
-        surprises = []
+        sums: dict = {}
+        counts: dict = {}
         for module in root.modules():
             if isinstance(module, MemoryBase):
-                surprise = module.training_metrics().get("memory_surprise")
-                if surprise is not None:
-                    surprises.append(surprise)
-        if not surprises:
-            return {}
-        return {"memory_surprise": sum(surprises) / len(surprises)}
+                for key, value in module.training_metrics().items():
+                    if value is not None:
+                        sums[key] = sums.get(key, 0.0) + value
+                        counts[key] = counts.get(key, 0) + 1
+        return {key: sums[key] / counts[key] for key in sums}
 
     @staticmethod
     def collect_metric_descriptions(root: nn.Module) -> dict:
@@ -75,8 +75,9 @@ class MemorySurfacing(MemoryBase):
         "memory_surprise": {
             "description": (
                 "Mean reconstruction loss of the Titans memory on the stored "
-                "sequence, averaged across memory layers. Falling = the memory "
-                "is memorizing inputs better."
+                "sequence at the cold init weights, averaged across memory "
+                "layers. This is pre-update surprise (novelty to the cold "
+                "memory), not a measure of the test-time update."
             ),
             "chart": {
                 "title": "Memory Surprise",
@@ -84,6 +85,34 @@ class MemorySurfacing(MemoryBase):
                 "y_scale": "linear",
                 "group": "memory",
                 "order": 10,
+            },
+        },
+        "memory_gain": {
+            "description": (
+                "Memory output magnitude relative to the residual stream "
+                "(||retrieved|| / ||stream||), averaged across memory layers. "
+                "Decaying toward 0 means the model is routing around the memory."
+            ),
+            "chart": {
+                "title": "Memory Gain",
+                "y_label": "retrieved / stream",
+                "y_scale": "linear",
+                "group": "memory",
+                "order": 11,
+            },
+        },
+        "memory_write": {
+            "description": (
+                "Relative size of the per-sequence test-time weight update "
+                "(||W_T - W0|| / ||W0||), averaged across memory layers. Near 0 "
+                "means the update is inert (the memory is not memorizing)."
+            ),
+            "chart": {
+                "title": "Memory Write",
+                "y_label": "delta-W / W0",
+                "y_scale": "linear",
+                "group": "memory",
+                "order": 12,
             },
         },
     }
@@ -102,9 +131,15 @@ class MemorySurfacing(MemoryBase):
         raise NotImplementedError
 
     def training_metrics(self) -> dict:
-        if self.mem.last_surprise is None:
-            return {}
-        return {"memory_surprise": float(self.mem.last_surprise)}
+        m = self.mem
+        out = {}
+        if m.last_surprise is not None:
+            out["memory_surprise"] = float(m.last_surprise)
+        if m.last_gain is not None:
+            out["memory_gain"] = float(m.last_gain)
+        if m.last_write is not None:
+            out["memory_write"] = float(m.last_write)
+        return out
 
 
 class MemoryAsLayer(MemorySurfacing):

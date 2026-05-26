@@ -156,8 +156,12 @@ class NeuralMemory(nn.Module):
             self.to_momentum = nn.Linear(dim, 1)
             self.to_decay = nn.Linear(dim, 1)
 
-        # Mean reconstruction loss from the last store pass; logged as a metric.
+        # Diagnostics from the last store pass, logged as metrics: cold-start
+        # surprise, the memory's output magnitude relative to the stream, and
+        # the relative size of the test-time weight update.
         self.last_surprise: Optional[Tensor] = None
+        self.last_gain: Optional[Tensor] = None
+        self.last_write: Optional[Tensor] = None
 
     def _activation_name(self) -> str:
         for module in self.memory_model.modules():
@@ -336,7 +340,19 @@ class NeuralMemory(nn.Module):
         retrieved = retrieved.reshape(b, num_chunks * c, d)
         retrieved = self.combine(self.out_norm(retrieved))[:, :n]
 
-        self.last_surprise = per_token.mean().detach()
+        with torch.no_grad():
+            self.last_surprise = per_token.mean()
+            # Output magnitude relative to the stream: catches the model routing
+            # around the memory (combine -> 0). Per-sequence write magnitude:
+            # confirms the test-time update is doing real work (not collapsing).
+            eps = 1e-8
+            self.last_gain = retrieved.norm() / (seq[:, :n].norm() + eps)
+            wnum = sum(
+                (new_weights[p] - weights[p]).pow(2).sum() for p in self._param_names
+            )
+            wden = sum(weights[p].pow(2).sum() for p in self._param_names)
+            self.last_write = (wnum / (wden + eps)).sqrt()
+
         new_state = NeuralMemState(
             state.seq_index + n, new_weights, new_momentum, new_second
         )

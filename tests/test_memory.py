@@ -162,6 +162,16 @@ def test_energy_mode_still_memorizes():
     assert mem.memory_loss(seq, warm.weights) < mem.memory_loss(seq, cold.weights)
 
 
+def test_reports_gain_and_write():
+    """A store pass records the gain (output vs stream) and write (relative
+    weight update) diagnostics, with a positive write (the update did work)."""
+    mem = _energy_mem()
+    mem(torch.randn(2, 32, 64))
+    assert mem.last_gain is not None and torch.isfinite(mem.last_gain)
+    assert mem.last_write is not None and torch.isfinite(mem.last_write)
+    assert mem.last_write > 0
+
+
 # --- surfacing integration (MAL / MAG) --------------------------------------
 
 SURFACINGS = ["mal", "mal_energy", "mag"]
@@ -252,9 +262,10 @@ def test_surprise_metric_surfaced(memory_type):
     model(input_ids=torch.randint(0, 256, (2, 16)))
 
     metrics = MemoryBase.collect_training_metrics(model)
-    surprise = metrics.get("memory_surprise")
-    assert surprise is not None and torch.isfinite(torch.as_tensor(surprise))
-    assert "memory_surprise" in MemoryBase.collect_metric_descriptions(model)
+    descriptions = MemoryBase.collect_metric_descriptions(model)
+    for key in ("memory_surprise", "memory_gain", "memory_write"):
+        assert key in metrics and torch.isfinite(torch.as_tensor(metrics[key]))
+        assert key in descriptions
 
     plain = PraxisForCausalLM(_block_config("none"))
     plain(input_ids=torch.randint(0, 256, (2, 16)))
