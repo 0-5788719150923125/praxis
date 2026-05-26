@@ -40,9 +40,9 @@ Introspected from the live Flask app at every launch. Each summary is the first 
 
 ### Dynamics
 
-- **GET** `/api/activation_curves` - Sample forward and derivative curves for every activation module in the ([source](../praxis/web/routes/dynamics.py#L544))
+- **GET** `/api/activation_curves` - Sample forward and derivative curves for every activation module in the ([source](../praxis/web/routes/dynamics.py#L546))
 - **GET** `/api/dynamics` - Get learning dynamics data for expert learning visualization. ([source](../praxis/web/routes/dynamics.py#L23))
-- **GET** `/api/head_snapshots` - Live non-scalar snapshots from the active model's LM head. ([source](../praxis/web/routes/dynamics.py#L729))
+- **GET** `/api/head_snapshots` - Live non-scalar snapshots from the active model's LM head. ([source](../praxis/web/routes/dynamics.py#L731))
 
 ### Generation
 
@@ -55,8 +55,8 @@ Introspected from the live Flask app at every launch. Each summary is the first 
 
 ### Metrics
 
-- **GET** `/api/metrics` - Get training metrics with LTTB downsampling and caching. ([source](../praxis/web/routes/metrics.py#L50))
-- **GET** `/api/runs` - Get list of available training runs. ([source](../praxis/web/routes/metrics.py#L439))
+- **GET** `/api/metrics` - Get training metrics with LTTB downsampling and caching. ([source](../praxis/web/routes/metrics.py#L51))
+- **GET** `/api/runs` - Get list of available training runs. ([source](../praxis/web/routes/metrics.py#L441))
 
 
 ## Sending prompts

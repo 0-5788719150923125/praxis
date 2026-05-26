@@ -124,7 +124,14 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # size their own submodules. Encoder-agnostic heads (forward,
         # tied) ignore the reference and skip allocating an lm_head.
         encoder_ref = self.encoder if self.encoder else None
-        if encoder_ref is None and config.tie_word_embeddings:
+        # Standard-mode tying normally routes to the dedicated "tied" head;
+        # heads that implement their own tying (crystal) keep their type and
+        # tie themselves in tie_weights().
+        if (
+            encoder_ref is None
+            and config.tie_word_embeddings
+            and config.head_type != "crystal"
+        ):
             head_type = "tied"
         else:
             head_type = config.head_type
@@ -166,6 +173,10 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # that gets folded into the combined objective by the strategy below.
         self.tasker = resolve_task_weighter(config.task_weights)
 
+        # Set by the trainer to the task indices a live dataset produces;
+        # get_metrics() uses it to skip charting weights for absent tasks.
+        self.active_task_ids = None
+
         self.strategy = STRATEGIES_REGISTRY.get(config.strategy, "naive")()
 
         # Tie weights if requested
@@ -175,10 +186,13 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
     def get_metrics(self) -> dict:
         metrics = super().get_metrics()
         # Surface dynamic task weights (learnable or difficulty-EMA) so
-        # runs can see them drift. Fixed weighters are skipped.
+        # runs can see them drift. Fixed weighters are skipped; tasks with
+        # no live dataset are skipped when active_task_ids is set.
         if getattr(self.tasker, "is_dynamic", False):
             eff = self.tasker.effective_weights().cpu().tolist()
-            for name, value in zip(TASK_NAMES, eff):
+            for idx, (name, value) in enumerate(zip(TASK_NAMES, eff)):
+                if self.active_task_ids is not None and idx not in self.active_task_ids:
+                    continue
                 metrics[f"task_weight_{name}"] = float(value)
         return metrics
 
@@ -418,7 +432,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         if self.encoder:
             """Needs encoding:"""
 
-            logits, decoder_embeds = self.encoder.decode(
+            enc_logits, decoder_embeds = self.encoder.decode(
                 hidden_states,
                 outputs.h_encoder,
                 input_ids,
@@ -426,13 +440,18 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 outputs.local_decoder_tokens,
                 block_ids=outputs.token_block_ids,
             )
-            classifier = self.encoder.classifier
-            # Heads opt into encoder-mode processing via this hook
-            # (default is pass-through). Harmonic modulates + re-projects;
-            # crystal swaps in a distance-based classifier.
-            logits, decoder_embeds, classifier = self.head.process_encoder_output(
-                decoder_embeds, logits, classifier
-            )
+            if enc_logits is not None:
+                # Encoder owns its full output pipeline (e.g. CALM): use its
+                # logits and classifier directly.
+                logits = enc_logits
+                classifier = self.encoder.classifier
+            else:
+                # Encoder produced features; the head classifies them - the
+                # same path as standalone mode. Skip materializing logits
+                # under cut-CE training (the loss projects internally).
+                if not skip_logits_for_training:
+                    logits = self.head(decoder_embeds)
+                classifier = self.head.classifier
             hidden_states = decoder_embeds
 
             # Encoders that manage their own losses (e.g. CALM) may emit
@@ -801,16 +820,41 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             return self.head
         return None
 
+    def _tieable_input_weight(self) -> Optional[torch.Tensor]:
+        """Input-embedding weight to share with a tying-capable output head.
+
+        Standard mode exposes it via ``get_input_embeddings()``; encoder
+        (byte-latent) mode keeps the per-byte embedding inside the local
+        encoder (``tok_emb``), which is what we tie to there.
+        """
+        emb = self.get_input_embeddings()
+        if emb is not None and hasattr(emb, "weight"):
+            return emb.weight
+        if self.encoder:
+            local = getattr(self.encoder, "encoder", None)
+            tok_emb = getattr(local, "tok_emb", None)
+            if tok_emb is not None and hasattr(tok_emb, "weight"):
+                return tok_emb.weight
+        return None
+
     def tie_weights(self) -> None:
-        """Tie the input and output embeddings weights."""
-        if self.config.tie_word_embeddings and self.head is not None:
-            input_embeddings = self.get_input_embeddings()
-            if input_embeddings is not None and hasattr(self.head, "embedding_weight"):
-                # For TiedWeights, set the embedding weight reference
-                self.head.embedding_weight = input_embeddings.weight
-            elif input_embeddings is not None and hasattr(self.head, "lm_head"):
-                # For regular heads, tie the weights directly
-                self.head.lm_head.weight = input_embeddings.weight
+        """Tie the input and output embedding weights."""
+        if not (self.config.tie_word_embeddings and self.head is not None):
+            return
+        weight = self._tieable_input_weight()
+        if weight is None:
+            return
+        if hasattr(self.head, "embedding_weight"):
+            # TiedWeights head: hold the reference; it projects internally.
+            self.head.embedding_weight = weight
+        elif hasattr(self.head, "lm_head"):
+            lm = self.head.lm_head
+            # Crystal stores centers (not weight); both are [vocab, dim].
+            # Only share when shapes line up so a misconfig fails loud-free.
+            attr = "centers" if hasattr(lm, "centers") else "weight"
+            target = getattr(lm, attr, None)
+            if target is not None and target.shape == weight.shape:
+                setattr(lm, attr, weight)
 
     def state_dict(self, *args, **kwargs):
         """Override to ensure only tensors are in the state dict for HuggingFace compatibility."""

@@ -227,9 +227,14 @@ class ByteLatentEncoder(nn.Module):
         )
 
     @property
-    def classifier(self) -> nn.Module:
-        """Return the decoder's output projection for loss functions that need it."""
-        return self.decoder.output
+    def output_dim(self) -> int:
+        """Feature dim the LM head classifies (the decoder's output features)."""
+        return self.byte_config.dim_token_emb
+
+    @property
+    def output_vocab_size(self) -> int:
+        """Vocab the LM head targets (local byte vocab, not the global vocab)."""
+        return self.byte_config.local_vocab_size
 
     @property
     def outputs_are_aligned(self) -> bool:
@@ -507,8 +512,9 @@ class ByteLatentEncoder(nn.Module):
             ), f"Shape mismatch: {local_decoder_tokens.shape} != {h_aligned.shape[:-1]}"
             h = h_aligned
 
-        # Local decoder forward pass
-        output, decoder_embeds = self.decoder(
+        # Local decoder forward pass. Returns features only; the LM head
+        # owns classification, so there are no encoder-side logits.
+        decoder_embeds = self.decoder(
             tokens=local_decoder_tokens,
             embeds=dec_embeds,
             patch_embeds=h,
@@ -517,7 +523,7 @@ class ByteLatentEncoder(nn.Module):
             block_ids=block_ids,
         )
 
-        return output, decoder_embeds
+        return None, decoder_embeds
 
     def _find_safe_threshold(
         self, input_ids: torch.Tensor, entropy_scores: torch.Tensor
@@ -1116,11 +1122,9 @@ class RecurrentDecoder(nn.Module):
         self.cross_attn_k = config.cross_attn_k if config.cross_attn_decoder else None
         self.dim = config.dim_token_emb
 
-        # Output projection and normalization
+        # Final feature norm. The LM head owns classification, so the
+        # decoder no longer carries an output projection.
         self.norm = nn.LayerNorm(config.dim_token_emb, eps=config.norm_eps)
-        self.output = nn.Linear(
-            config.dim_token_emb, config.local_vocab_size, bias=False
-        )
 
         # Patch embedding projection
         self.patch_embedding_projection = None
@@ -1184,9 +1188,7 @@ class RecurrentDecoder(nn.Module):
 
         h_preds = self.norm(h)
         h_preds = F.dropout(h_preds, p=self.dropout, training=self.training)
-        logits = self.output(h_preds)
-        logits = logits.float()
-        return logits, h_preds
+        return h_preds
 
 
 class RecurrentEntropyModel(nn.Module):
@@ -1417,11 +1419,9 @@ class ConvDecoder(nn.Module):
         self.cross_attn_decoder = config.cross_attn_decoder
         self.cross_attn_k = config.cross_attn_k if config.cross_attn_decoder else None
 
-        # Output projection and normalization
+        # Final feature norm. The LM head owns classification, so the
+        # decoder no longer carries an output projection.
         self.norm = nn.LayerNorm(config.dim_token_emb, eps=config.norm_eps)
-        self.output = nn.Linear(
-            config.dim_token_emb, config.local_vocab_size, bias=False
-        )
 
         # Patch embedding projection
         self.patch_embedding_projection = None
@@ -1494,9 +1494,7 @@ class ConvDecoder(nn.Module):
 
         h_preds = self.norm(h)
         h_preds = self.dropout(h_preds)
-        logits = self.output(h_preds)
-        logits = logits.float()
-        return logits, h_preds
+        return h_preds
 
 
 class ConvEntropyModel(nn.Module):
@@ -1760,11 +1758,9 @@ class TransformerDecoder(nn.Module):
         self.cross_attn_k = config.cross_attn_k if config.cross_attn_decoder else None
         self.dim = config.dim_token_emb
 
-        # Output projection and normalization
+        # Final feature norm. The LM head owns classification, so the
+        # decoder no longer carries an output projection.
         self.norm = nn.LayerNorm(config.dim_token_emb, eps=config.norm_eps)
-        self.output = nn.Linear(
-            config.dim_token_emb, config.local_vocab_size, bias=False
-        )
 
         # Patch embedding projection
         self.patch_embedding_projection = None
@@ -1832,9 +1828,7 @@ class TransformerDecoder(nn.Module):
 
         h_preds = self.norm(h)
         h_preds = F.dropout(h_preds, p=self.dropout, training=self.training)
-        logits = self.output(h_preds)
-        logits = logits.float()
-        return logits, h_preds
+        return h_preds
 
 
 class TransformerEntropyModel(nn.Module):

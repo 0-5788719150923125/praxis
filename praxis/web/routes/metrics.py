@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from flask import Blueprint, current_app, jsonify, request
 
 from praxis.metrics import (
+    COMPOSITE_METRIC_REGISTRY,
     TRAINING_METRIC_REGISTRY,
     metric_names,
     validation_metric_names,
@@ -189,6 +190,7 @@ def get_metrics():
             "source": "metrics_logger",
             "runs": all_runs_data,
             "registry": TRAINING_METRIC_REGISTRY,
+            "composite_registry": COMPOSITE_METRIC_REGISTRY,
             "metadata": {
                 "total_params": current_app.config.get("total_params", "N/A"),
                 "current_hash": current_hash,

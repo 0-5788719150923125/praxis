@@ -13,16 +13,14 @@ ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 class BaseHead(nn.Module, ABC):
     """Abstract base class for language modeling heads.
 
-    Heads have two execution modes:
-
-    Standalone (no encoder): ``forward(hidden_states)`` produces logits
-    and ``classifier`` exposes the projection module for cut-CE.
-
-    Encoder-attached: the encoder owns the byte/patch decode and produces
-    its own ``(logits, decoder_embeds)``. The head's
-    :meth:`process_encoder_output` hook can inspect, modulate, or replace
-    those outputs - that's how harmonic / crystal heads participate in
-    byte-latent runs without ``modeling.py`` knowing their internals.
+    A head always owns its classifier and produces logits from features
+    via ``forward(hidden_states)``; ``classifier`` exposes the projection
+    module for cut-CE. The only difference between standalone and
+    encoder-attached modes is the classifier's size: standalone uses
+    ``(hidden_size, vocab_size)``; with an encoder the head sizes itself
+    to the encoder's declared output layout (see :meth:`output_dims`),
+    so byte-latent decode produces *features* and the head classifies
+    them - same as the standalone path.
     """
 
     def __init__(self, config: ConfigType, encoder: Optional[nn.Module] = None) -> None:
@@ -35,6 +33,22 @@ class BaseHead(nn.Module, ABC):
     @property
     def has_encoder(self) -> bool:
         return self._encoder is not None
+
+    def output_dims(self) -> Optional[Tuple[int, int]]:
+        """Resolve ``(feature_dim, vocab_size)`` for this head's classifier.
+
+        Standalone: ``(hidden_size, vocab_size)`` from config. Encoder
+        mode: the encoder declares its output layout via ``output_dim`` /
+        ``output_vocab_size``. If the encoder owns its full output pipeline
+        (``handles_loss``, e.g. CALM), returns ``None`` - the head builds
+        no classifier.
+        """
+        enc = self._encoder
+        if enc is None:
+            return (self.hidden_size, self.vocab_size)
+        if getattr(enc, "handles_loss", False):
+            return None
+        return (int(enc.output_dim), int(enc.output_vocab_size))
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(hidden_size={self.hidden_size}, vocab_size={self.vocab_size})"
@@ -57,23 +71,6 @@ class BaseHead(nn.Module, ABC):
         """The classifier module used downstream (e.g., by cut-CE)."""
         pass
 
-    def process_encoder_output(
-        self,
-        decoder_embeds: Tensor,
-        encoder_logits: Tensor,
-        encoder_classifier: nn.Module,
-    ) -> Tuple[Tensor, Tensor, nn.Module]:
-        """Encoder-attached hook. Default: pass through unchanged.
-
-        Override to participate in the encoder path (modulate embeds,
-        replace the classifier, etc.).
-
-        Returns:
-            (logits, decoder_embeds, classifier) - whatever the model
-            should bind as ``logits``, ``hidden_states``, and the
-            ``classifier`` passed to the loss criterion.
-        """
-        return encoder_logits, decoder_embeds, encoder_classifier
 
     def aux_losses(self) -> Dict[str, Tensor]:
         """Named auxiliary losses to fold into the main objective.

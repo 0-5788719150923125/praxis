@@ -17,12 +17,11 @@ See ``proofs/harmonic_pi.md``.
 """
 
 import math
-from typing import Any, Optional, Tuple
+from typing import Any, Optional
 
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch import Tensor
 
 from praxis.heads.base import BaseHead
@@ -234,34 +233,31 @@ class HarmonicField(nn.Module):
 class HarmonicHead(BaseHead):
     """Learnable lm_head with a 2D harmonic field modulating features.
 
-    In encoder-attached mode the head owns a field sized to the
-    encoder's classifier feature dim and modulates ``decoder_embeds``
-    before re-projecting through the encoder's classifier weight.
-    The encoder still owns the classifier itself.
+    Owns both the field and the classifier, sized to :meth:`output_dims`
+    (the encoder's declared byte-output layout in encoder mode, else
+    ``(hidden_size, vocab_size)``). ``forward`` modulates the features
+    with the field, then projects through ``lm_head`` - identical in
+    standalone and encoder modes.
     """
 
     def __init__(self, config: Any, encoder: Optional[nn.Module] = None) -> None:
         super().__init__(config, encoder)
         max_positions = int(getattr(config, "max_position_embeddings", 32768) or 32768)
+        if "byte" in str(getattr(config, "encoder_type", "")):
+            max_positions = max(max_positions, max_positions * 8)
 
-        if self.has_encoder:
-            classifier = getattr(encoder, "classifier", None)
-            if classifier is not None and hasattr(classifier, "weight"):
-                feature_dim = classifier.weight.shape[1]
-            else:
-                feature_dim = self.hidden_size
-            if "byte" in str(getattr(config, "encoder_type", "")):
-                max_positions = max(max_positions, max_positions * 8)
-            self.field = HarmonicField(
-                hidden_dim=feature_dim, max_positions=max_positions
-            )
+        dims = self.output_dims()
+        if dims is None:
+            # Encoder owns its full output pipeline (handles_loss, e.g. CALM):
+            # nothing for this head to build.
+            self.field = None
             self.lm_head = None
-        else:
-            self.lm_head = nn.Linear(self.hidden_size, self.vocab_size, bias=False)
-            self.lm_head.weight.data.normal_(mean=0.0, std=0.02)
-            self.field = HarmonicField(
-                hidden_dim=self.hidden_size, max_positions=max_positions
-            )
+            return
+
+        feature_dim, vocab_size = dims
+        self.field = HarmonicField(hidden_dim=feature_dim, max_positions=max_positions)
+        self.lm_head = nn.Linear(feature_dim, vocab_size, bias=False)
+        self.lm_head.weight.data.normal_(mean=0.0, std=0.02)
 
     def forward(self, hidden_states: Tensor, **kwargs: Any) -> Tensor:
         return self.lm_head(self.field(hidden_states))
@@ -270,36 +266,13 @@ class HarmonicHead(BaseHead):
     def classifier(self) -> Optional[nn.Module]:
         return self.lm_head
 
-    def process_encoder_output(
-        self,
-        decoder_embeds: Tensor,
-        encoder_logits: Tensor,
-        encoder_classifier: nn.Module,
-    ) -> Tuple[Tensor, Tensor, nn.Module]:
-        # Modulate decoder_embeds *before* binding them as hidden_states
-        # so that cut_cross_entropy (which projects embeddings @ classifier
-        # internally and discards the materialized logits) sees the field.
-        decoder_embeds = self.field(decoder_embeds)
-        logits = F.linear(
-            decoder_embeds,
-            encoder_classifier.weight,
-            getattr(encoder_classifier, "bias", None),
-        ).to(encoder_logits.dtype)
-        return logits, decoder_embeds, encoder_classifier
-
     def aux_losses(self) -> dict:
         aux = self.field.aux_loss()
         return {"harmonic_smoothness": aux} if aux is not None else {}
 
     def _downstream_classifier(self) -> Optional[nn.Module]:
-        """The learnable projection the field's output feeds into.
-
-        Encoder mode: the encoder's own classifier (the field modulates
-        decoder_embeds, which then get re-projected through it).
-        Standalone: our own lm_head.
-        """
-        if self._encoder is not None:
-            return getattr(self._encoder, "classifier", None)
+        """The learnable projection the field's output feeds into - now
+        always our own ``lm_head`` (the head owns its classifier)."""
         return self.lm_head
 
     def dashboard_snapshots(self) -> dict:

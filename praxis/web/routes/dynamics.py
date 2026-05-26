@@ -14,7 +14,7 @@ from flask import Blueprint, current_app, jsonify, request
 from torch.nn.parameter import UninitializedParameter
 
 from praxis.activations import ACT2CLS
-from praxis.metrics import get_metric_descriptions
+from praxis.metrics import DYNAMICS_CHART_REGISTRY, get_metric_descriptions
 from praxis.web.app import api_logger
 
 dynamics_bp = Blueprint("dynamics", __name__)
@@ -163,6 +163,7 @@ def get_dynamics():
                     },
                     "dynamics": dynamics_data["metrics"],
                     "descriptions": descriptions,
+                    "chart_registry": DYNAMICS_CHART_REGISTRY,
                 }
             ],
         }
@@ -452,6 +453,7 @@ def _read_routing_weights_from_metrics(
                     or "cosine" in k
                     or "weight_angle" in k
                     or k.startswith("halting/")
+                    or k.startswith("task_weight_")
                 }
             except json.JSONDecodeError:
                 continue

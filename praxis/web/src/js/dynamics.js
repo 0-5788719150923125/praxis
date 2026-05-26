@@ -255,41 +255,95 @@ function renderEmptyState(container, message) {
 // ─── Metric detection helpers ───────────────────────────────────────────────
 
 /**
- * Detect universal per-layer metrics (layer_X_grad_norm, without "expert")
+ * Compile the backend Dynamics chart registry into family configs:
+ * key_pattern -> RegExp, derived canvas id, sorted by order.
  */
-function detectUniversalLayers(dynamics) {
-    const keys = Object.keys(dynamics).filter(k =>
-        k.match(/^layer_\d+_grad_norm$/)
-    );
-    return Array.from(new Set(
-        keys.map(k => parseInt(k.match(/^layer_(\d+)_/)[1]))
-    )).sort((a, b) => a - b);
+function buildDynamicsFamilyConfigs(registry) {
+    return (registry || [])
+        .slice()
+        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+        .map(e => ({
+            key: e.key,
+            type: e.type,
+            title: e.title || e.key,
+            subtitle: e.subtitle || '',
+            keyPattern: e.key_pattern ? new RegExp(e.key_pattern) : null,
+            layerToggles: !!e.layer_toggles,
+            legend: !!e.legend,
+            order: e.order ?? 0,
+            canvasId: `dynamics-${e.key.replace(/_/g, '-')}`,
+        }));
+}
+
+/** A family is present when any dynamics key matches its pattern. */
+function familyPresent(config, dynamics) {
+    return !!config.keyPattern &&
+        Object.keys(dynamics).some(k => config.keyPattern.test(k));
 }
 
 /**
- * Detect expert metrics (layer_X_expert_Y_grad_norm)
+ * Layer indices for the toggle UI: the union of layer numbers across every
+ * present layer-toggle family, read from the registry patterns rather than
+ * hardcoded metric names.
  */
-function detectExpertLayers(dynamics) {
-    const keys = Object.keys(dynamics).filter(k =>
-        k.match(/^layer_\d+_expert_\d+_grad_norm$/)
-    );
-    const layers = new Set(keys.map(k => parseInt(k.match(/layer_(\d+)_/)[1])));
-    const experts = new Set(keys.map(k => parseInt(k.match(/expert_(\d+)_/)[1])));
-    return {
-        layers: Array.from(layers).sort((a, b) => a - b),
-        experts: Array.from(experts).sort((a, b) => a - b)
-    };
+function detectLayerIndices(dynamics, configs) {
+    const layerFamilies = configs.filter(c => c.layerToggles);
+    const layers = new Set();
+    Object.keys(dynamics).forEach(k => {
+        if (!layerFamilies.some(c => c.keyPattern.test(k))) return;
+        const m = k.match(/layer_(\d+)/);
+        if (m) layers.add(parseInt(m[1]));
+    });
+    return Array.from(layers).sort((a, b) => a - b);
+}
+
+// type -> builder adapter. Builders are declared below (hoisted); each
+// takes (canvasId, dynamics). Layer-dependent ones read the live toggle
+// selection from dynamicsLayerState.
+const DYNAMICS_FAMILY_RENDERERS = {
+    layer_grad_norms: (id, dyn) => createLayerGradNormsChart(id, dyn, dynamicsLayerState.layers),
+    layer_update_ratio: (id, dyn) => createLayerUpdateRatioChart(id, dyn, dynamicsLayerState.layers),
+    expert_grad_norms: (id, dyn) => createExpertGradNormsChart(id, dyn, dynamicsLayerState.layers),
+    expert_grad_vars: (id, dyn) => createExpertGradVarsChart(id, dyn, dynamicsLayerState.layers),
+    task_weights: (id, dyn) => createTaskWeightsChart(id, dyn, detectTaskWeightKeys(dyn)),
+    halting_hist: (id, dyn) => createHaltingHistogramChart(id, dyn, detectHaltingBuckets(dyn)),
+};
+
+function buildDynamicsFamilyCard(config, desc) {
+    const legendHTML = config.legend
+        ? `<div class="chart-legend" id="${config.canvasId}-legend"></div>`
+        : '';
+    return `
+        <div style="margin-top: 2rem;">
+            <div class="chart-card">
+                <div class="chart-title">${config.title}</div>
+                <div class="chart-subtitle">${desc(config.key, config.subtitle)}</div>
+                <div class="chart-wrapper" style="height: 400px;">
+                    <canvas id="${config.canvasId}"></canvas>
+                </div>
+                ${legendHTML}
+            </div>
+        </div>
+    `;
+}
+
+function mountDynamicsFamily(config, dynamics) {
+    if (!document.getElementById(config.canvasId)) return;
+    const render = DYNAMICS_FAMILY_RENDERERS[config.type];
+    if (render) render(config.canvasId, dynamics);
+}
+
+/** Task-weight series arrive as `task_weight_<name>` keys. */
+function detectTaskWeightKeys(dynamics) {
+    return Object.keys(dynamics)
+        .filter(k => k.startsWith('task_weight_'))
+        .sort();
 }
 
 /**
  * Detect halting histogram buckets. Returns {rs, maxLoops} or null if
  * no halting metrics are present (non-KL strategies, or not yet logged).
  */
-function detectTaskWeightKeys(dynamics) {
-    return Object.keys(dynamics)
-        .filter(k => k.startsWith('task_weight_'))
-        .sort();
-}
 
 function detectHaltingBuckets(dynamics) {
     const rs = new Set();
@@ -480,19 +534,20 @@ function renderDynamicsCharts(runData, container) {
         return;
     }
 
-    // Detect what data is available
-    const universalLayers = detectUniversalLayers(dynamics);
-    const { layers: expertLayers, experts: expertsList } = detectExpertLayers(dynamics);
-    const hasUniversal = universalLayers.length > 0;
-    const hasExperts = expertLayers.length > 0 && expertsList.length > 0;
-    const haltingBuckets = detectHaltingBuckets(dynamics);
-    const hasHalting = haltingBuckets !== null;
-    const taskWeightKeys = detectTaskWeightKeys(dynamics);
-    const hasTaskWeights = taskWeightKeys.length > 0;
+    // Build the present chart families from the backend registry, and stash
+    // them so the layer-toggle handler re-renders exactly this set.
+    const familyConfigs = buildDynamicsFamilyConfigs(runData.chart_registry)
+        .filter(c => familyPresent(c, dynamics));
+    dynamicsLayerState.familyConfigs = familyConfigs;
 
-    // Layer toggle state — use universal layers, fall back to expert layers
-    const allLayers = hasUniversal ? universalLayers :
-                      hasExperts ? expertLayers : [];
+    const allLayers = detectLayerIndices(dynamics, familyConfigs);
+    const expertCount = new Set(
+        Object.keys(dynamics)
+            .map(k => k.match(/expert_(\d+)/))
+            .filter(Boolean)
+            .map(m => parseInt(m[1]))
+    ).size;
+
     if (!dynamicsLayerState.layers) {
         dynamicsLayerState.layers = [...allLayers];
         dynamicsLayerState.allLayers = [...allLayers];
@@ -508,8 +563,8 @@ function renderDynamicsCharts(runData, container) {
 
     const metaParts = [`<span><strong>Points:</strong> ${steps.length}</span>`];
     metaParts.push(`<span><strong>Layers:</strong> ${allLayers.length}</span>`);
-    if (hasExperts) {
-        metaParts.push(`<span><strong>Experts:</strong> ${expertsList.length}</span>`);
+    if (expertCount > 0) {
+        metaParts.push(`<span><strong>Experts:</strong> ${expertCount}</span>`);
     }
 
     const headerHTML = createTabHeader({
@@ -531,75 +586,12 @@ function renderDynamicsCharts(runData, container) {
         </div>
     `;
 
-    // Universal charts (always first when available)
-    if (hasUniversal) {
-        chartsHTML += `
-            <div style="margin-top: 2rem;">
-                <div class="chart-card">
-                    <div class="chart-title">Gradient Flow</div>
-                    <div class="chart-subtitle">${desc('layer_grad_norms', 'L2 norm of gradients per decoder layer')}</div>
-                    <div class="chart-wrapper" style="height: 400px;">
-                        <canvas id="dynamics-layer-grad-norms"></canvas>
-                    </div>
-                    <div class="chart-legend" id="dynamics-layer-grad-norms-legend"></div>
-                </div>
-            </div>
-
-            <div style="margin-top: 2rem;">
-                <div class="chart-card">
-                    <div class="chart-title">Update-to-Weight Ratio</div>
-                    <div class="chart-subtitle">${desc('layer_update_ratio', 'Relative update magnitude per layer (||grad|| &times; lr / ||weight||)')}</div>
-                    <div class="chart-wrapper" style="height: 400px;">
-                        <canvas id="dynamics-layer-update-ratio"></canvas>
-                    </div>
-                    <div class="chart-legend" id="dynamics-layer-update-ratio-legend"></div>
-                </div>
-            </div>
-        `;
-    }
-
-    // Expert charts (conditional, after universal)
-    if (hasExperts) {
-        chartsHTML += `
-            <div style="margin-top: 2rem;">
-                <div class="chart-card">
-                    <div class="chart-title">Gradient Norms per Expert</div>
-                    <div class="chart-subtitle">L2 norm of gradients across all parameters</div>
-                    <div class="chart-wrapper" style="height: 400px;">
-                        <canvas id="dynamics-grad-norms"></canvas>
-                    </div>
-                    <div class="chart-legend" id="dynamics-grad-norms-legend"></div>
-                </div>
-            </div>
-
-            <div style="margin-top: 2rem;">
-                <div class="chart-card">
-                    <div class="chart-title">Gradient Variance per Expert</div>
-                    <div class="chart-subtitle">Variance of gradient values across all parameters</div>
-                    <div class="chart-wrapper" style="height: 400px;">
-                        <canvas id="dynamics-grad-vars"></canvas>
-                    </div>
-                    <div class="chart-legend" id="dynamics-grad-vars-legend"></div>
-                </div>
-            </div>
-        `;
-    }
-
-    // Task weights (conditional - only when a learnable task weighter is in use)
-    if (hasTaskWeights) {
-        chartsHTML += `
-            <div style="margin-top: 2rem;">
-                <div class="chart-card">
-                    <div class="chart-title">Task Loss Weights</div>
-                    <div class="chart-subtitle">${desc('task_weights', 'Per-task scalar multipliers applied to the loss.')}</div>
-                    <div class="chart-wrapper" style="height: 400px;">
-                        <canvas id="dynamics-task-weights"></canvas>
-                    </div>
-                    <div class="chart-legend" id="dynamics-task-weights-legend"></div>
-                </div>
-            </div>
-        `;
-    }
+    // Families ordered before the head-metric sections (gradient flow,
+    // expert charts, task weights), rendered straight from the registry.
+    chartsHTML += familyConfigs
+        .filter(c => c.order < 100)
+        .map(c => buildDynamicsFamilyCard(c, desc))
+        .join('');
 
     // Head-driven scalar metrics (harmonic, crystal, future heads). The
     // manifest is built from descriptions whose values carry a ``chart``
@@ -611,20 +603,11 @@ function renderDynamicsCharts(runData, container) {
     // whose values carry a ``snapshot`` hint.
     chartsHTML += buildSnapshotSectionsHTML(descriptions, desc);
 
-    // Halting distribution (conditional - only when a halting strategy is in use)
-    if (hasHalting) {
-        chartsHTML += `
-            <div style="margin-top: 2rem;">
-                <div class="chart-card">
-                    <div class="chart-title">Halting Distribution</div>
-                    <div class="chart-subtitle">Loop counts used per forward pass. Training = random samples (log-normal Poisson); inference = where KL-halting actually fired.</div>
-                    <div class="chart-wrapper" style="height: 400px;">
-                        <canvas id="dynamics-halting-hist"></canvas>
-                    </div>
-                </div>
-            </div>
-        `;
-    }
+    // Families ordered after the head sections (e.g. halting distribution).
+    chartsHTML += familyConfigs
+        .filter(c => c.order >= 100)
+        .map(c => buildDynamicsFamilyCard(c, desc))
+        .join('');
 
     // Activation curves (always rendered; placeholder if endpoint returns empty)
     chartsHTML += `
@@ -659,20 +642,7 @@ function renderDynamicsCharts(runData, container) {
     // Create charts after DOM is ready
     setTimeout(() => {
         try {
-            if (hasUniversal) {
-                createLayerGradNormsChart('dynamics-layer-grad-norms', dynamics, dynamicsLayerState.layers);
-                createLayerUpdateRatioChart('dynamics-layer-update-ratio', dynamics, dynamicsLayerState.layers);
-            }
-            if (hasExperts) {
-                createExpertGradNormsChart('dynamics-grad-norms', dynamics, dynamicsLayerState.layers);
-                createExpertGradVarsChart('dynamics-grad-vars', dynamics, dynamicsLayerState.layers);
-            }
-            if (hasTaskWeights) {
-                createTaskWeightsChart('dynamics-task-weights', dynamics, taskWeightKeys);
-            }
-            if (hasHalting) {
-                createHaltingHistogramChart('dynamics-halting-hist', dynamics, haltingBuckets);
-            }
+            familyConfigs.forEach(c => mountDynamicsFamily(c, dynamics));
             mountManifestCharts(manifest, dynamics);
             mountSnapshotCharts(descriptions);
             loadActivationCurves();
@@ -764,32 +734,12 @@ function updateDynamicsLayerToggles() {
  */
 function rebuildAllCharts() {
     const dynamics = state.dynamics.data?.dynamics || {};
-    const layers = dynamicsLayerState.layers;
 
-    // Universal
-    if (document.getElementById('dynamics-layer-grad-norms')) {
-        createLayerGradNormsChart('dynamics-layer-grad-norms', dynamics, layers);
-    }
-    if (document.getElementById('dynamics-layer-update-ratio')) {
-        createLayerUpdateRatioChart('dynamics-layer-update-ratio', dynamics, layers);
-    }
-    // Expert
-    if (document.getElementById('dynamics-grad-norms')) {
-        createExpertGradNormsChart('dynamics-grad-norms', dynamics, layers);
-    }
-    if (document.getElementById('dynamics-grad-vars')) {
-        createExpertGradVarsChart('dynamics-grad-vars', dynamics, layers);
-    }
-    // Halting (doesn't depend on layer toggles, but refresh on rebuild)
-    const halting = detectHaltingBuckets(dynamics);
-    if (halting && document.getElementById('dynamics-halting-hist')) {
-        createHaltingHistogramChart('dynamics-halting-hist', dynamics, halting);
-    }
-    // Task weights (independent of layer selection)
-    const taskWeightKeys = detectTaskWeightKeys(dynamics);
-    if (taskWeightKeys.length > 0 && document.getElementById('dynamics-task-weights')) {
-        createTaskWeightsChart('dynamics-task-weights', dynamics, taskWeightKeys);
-    }
+    // Re-render the same families that were mounted initially. Layer-toggle
+    // families pick up the new selection from dynamicsLayerState; the rest
+    // simply refresh.
+    (dynamicsLayerState.familyConfigs || []).forEach(c => mountDynamicsFamily(c, dynamics));
+
     // Head scalar metrics (independent of layer selection). Source of
     // truth is the descriptions manifest in the run payload.
     const descriptions = state.dynamics.data?.descriptions || {};

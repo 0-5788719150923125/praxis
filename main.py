@@ -760,6 +760,12 @@ def main():
     train_params["callbacks"].append(BrierLMCallback(tokenizer=tokenizer))
 
     # Add metrics logger callback for web visualization
+    # Restrict charted task-loss weights to task types a live dataset
+    # produces. A learnable weighter still drifts weights for absent tasks,
+    # which is pure telemetry noise; get_metrics() reads this to skip them.
+    if hasattr(dataintegration, "active_task_ids"):
+        model.active_task_ids = dataintegration.active_task_ids() or None
+
     train_params["callbacks"].append(MetricsLoggerCallback(run_dir=cache_dir))
 
     # Add dynamics logger callback for gradient visualization
@@ -772,18 +778,14 @@ def main():
         else 0
     )
     log_freq = 10  # Log gradients every 10 steps (reduce overhead)
-    active_task_ids = None
-    if hasattr(dataintegration, "active_task_ids"):
-        active_task_ids = dataintegration.active_task_ids() or None
     print(
-        f"[Setup] Adding DynamicsLoggerCallback (router_type={config.router_type}, num_experts={num_experts}, log_freq={log_freq}, active_tasks={active_task_ids})"
+        f"[Setup] Adding DynamicsLoggerCallback (router_type={config.router_type}, num_experts={num_experts}, log_freq={log_freq})"
     )
     train_params["callbacks"].append(
         DynamicsLoggerCallback(
             run_dir=cache_dir,
             num_experts=num_experts,
             log_freq=log_freq,
-            active_task_ids=active_task_ids,
         )
     )
 

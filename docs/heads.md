@@ -23,15 +23,16 @@ In encoder-attached mode the head sizes its centers to match the encoder's class
 (so the distance computation lives in the encoder's feature space) and replaces the
 encoder's dot-product projection at the loss boundary.
 
-Source: [praxis/heads/crystal.py:244](../praxis/heads/crystal.py#L244)
+Source: [praxis/heads/crystal.py:262](../praxis/heads/crystal.py#L262)
 
 ## `forward` - ForwardHead
 
 Standard next-token prediction head.
 
-In encoder-attached mode the encoder owns the classifier, so this head allocates nothing
-and stays out of the way - the default pass-through ``process_encoder_output`` lets the
-encoder's logits flow through unchanged.
+Owns a single linear classifier sized to :meth:`output_dims` - ``(hidden_size,
+vocab_size)`` standalone, or the encoder's declared byte-output layout in encoder mode.
+Builds nothing only when the encoder owns its full output pipeline (``handles_loss``,
+e.g. CALM).
 
 Source: [praxis/heads/forward.py:11](../praxis/heads/forward.py#L11)
 
@@ -39,11 +40,12 @@ Source: [praxis/heads/forward.py:11](../praxis/heads/forward.py#L11)
 
 Learnable lm_head with a 2D harmonic field modulating features.
 
-In encoder-attached mode the head owns a field sized to the encoder's classifier feature
-dim and modulates ``decoder_embeds`` before re-projecting through the encoder's
-classifier weight. The encoder still owns the classifier itself.
+Owns both the field and the classifier, sized to :meth:`output_dims` (the encoder's
+declared byte-output layout in encoder mode, else ``(hidden_size, vocab_size)``).
+``forward`` modulates the features with the field, then projects through ``lm_head`` -
+identical in standalone and encoder modes.
 
-Source: [praxis/heads/harmonic.py:234](../praxis/heads/harmonic.py#L234)
+Source: [praxis/heads/harmonic.py:233](../praxis/heads/harmonic.py#L233)
 
 ## `tied` - TiedWeights
 

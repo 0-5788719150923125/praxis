@@ -136,6 +136,184 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
 }
 
 
+# Composite / specialty Research-tab charts. Unlike the scalars above,
+# these aren't single named columns: some are families of router-emitted
+# keys matched by ``key_pattern`` (one series per expert/layer), and some
+# come from a different endpoint (``source``). Declaring them here keeps
+# the frontend free of hardcoded chart configs - it builds every chart
+# from what these registries serve. Each entry's fields:
+#
+# * ``key``: logical id. For ``line`` charts this is the literal metric
+#   name; for family charts it's just an identifier and ``key_pattern``
+#   selects the underlying series.
+# * ``type``: renderer the frontend dispatches on - ``line``, ``bar``,
+#   ``sampling``, ``multi_expert_line``, or ``expert_routing_heatmap``.
+# * ``title`` / ``y_label``: chart title and y-axis label.
+# * ``source``: ``"metrics"`` (default) or ``"data_metrics"`` - which
+#   endpoint the series come from.
+# * ``key_pattern``: regex (string) matching a family of metric names.
+# * ``stepped``: draw as a step plot (cumulative counts).
+# * ``order``: ordering within the Research tab, after the scalars above.
+COMPOSITE_METRIC_REGISTRY: list = [
+    {
+        "key": "sampling_weights",
+        "type": "sampling",
+        "title": "Task Sampling Weights",
+        "y_label": "Sampling Weights",
+        "source": "data_metrics",
+        "order": 100,
+    },
+    {
+        "key": "expert_routing_weights",
+        "type": "expert_routing_heatmap",
+        "title": "Expert Routing Weights (Convergence)",
+        "y_label": "Routing Weight",
+        "key_pattern": r"^layer_\d+_expert_\d+_routing_weight$",
+        "stepped": True,
+        "order": 110,
+    },
+    {
+        "key": "expert_selection",
+        "type": "multi_expert_line",
+        "title": "Expert Selection (Actual k_experts Usage)",
+        "y_label": "Selection Count",
+        "key_pattern": r"^expert_selection/expert_\d+_count$",
+        "stepped": True,
+        "order": 120,
+    },
+    {
+        "key": "routing/entropy",
+        "type": "line",
+        "title": "Routing Entropy (Balance)",
+        "y_label": "Entropy",
+        "order": 130,
+    },
+    {
+        "key": "routing/concentration",
+        "type": "line",
+        "title": "Routing Concentration (Collapse)",
+        "y_label": "Max Weight",
+        "order": 140,
+    },
+    {
+        "key": "routing/variance",
+        "type": "line",
+        "title": "Routing Variance (Stability)",
+        "y_label": "Variance",
+        "order": 150,
+    },
+    {
+        "key": "routing/balance",
+        "type": "line",
+        "title": "Routing Balance",
+        "y_label": "Balance",
+        "order": 160,
+    },
+    {
+        "key": "expert_importance",
+        "type": "multi_expert_line",
+        "title": "Expert Importance (Soft Routing Probabilities)",
+        "y_label": "Importance",
+        "key_pattern": r"^routing/expert_\d+_importance$",
+        "order": 170,
+    },
+    {
+        "key": "expert_load",
+        "type": "multi_expert_line",
+        "title": "Expert Load (Hard Routing Decisions)",
+        "y_label": "Load",
+        "key_pattern": r"^routing/expert_\d+_load$",
+        "order": 180,
+    },
+    {
+        "key": "routing/diversity_loss",
+        "type": "line",
+        "title": "Parameter Diversity Loss (Distance Router)",
+        "y_label": "Diversity Loss",
+        "order": 190,
+    },
+]
+
+
+# Dynamics-tab chart families. These render gradient/halting/task-weight
+# series logged to dynamics.db (and merged routing keys). Each is a family
+# of per-layer / per-expert / per-bucket keys matched by ``key_pattern``;
+# the frontend detects presence, extracts layer indices, and dispatches to
+# a bespoke builder by ``type`` - all from this list, so the metric-name
+# regexes no longer live in JS. Fields:
+#
+# * ``key`` / ``type``: identifier and the renderer the frontend selects.
+# * ``title`` / ``subtitle``: card title and subtitle. The subtitle is a
+#   fallback - a live ``metric_descriptions`` entry for ``key`` overrides it.
+# * ``key_pattern``: regex (string) selecting the family's series.
+# * ``layer_toggles``: series are per-layer and respond to the layer toggles.
+# * ``legend``: render a scrollable legend under the chart.
+# * ``order``: ordering within the Dynamics tab.
+DYNAMICS_CHART_REGISTRY: list = [
+    {
+        "key": "layer_grad_norms",
+        "type": "layer_grad_norms",
+        "title": "Gradient Flow",
+        "subtitle": "L2 norm of gradients per decoder layer",
+        "key_pattern": r"^layer_\d+_grad_norm$",
+        "layer_toggles": True,
+        "legend": True,
+        "order": 10,
+    },
+    {
+        "key": "layer_update_ratio",
+        "type": "layer_update_ratio",
+        "title": "Update-to-Weight Ratio",
+        "subtitle": "Relative update magnitude per layer (||grad|| &times; lr / ||weight||)",
+        "key_pattern": r"^layer_\d+_update_ratio$",
+        "layer_toggles": True,
+        "legend": True,
+        "order": 20,
+    },
+    {
+        "key": "expert_grad_norms",
+        "type": "expert_grad_norms",
+        "title": "Gradient Norms per Expert",
+        "subtitle": "L2 norm of gradients across all parameters",
+        "key_pattern": r"^layer_\d+_expert_\d+_grad_norm$",
+        "layer_toggles": True,
+        "legend": True,
+        "order": 30,
+    },
+    {
+        "key": "expert_grad_vars",
+        "type": "expert_grad_vars",
+        "title": "Gradient Variance per Expert",
+        "subtitle": "Variance of gradient values across all parameters",
+        "key_pattern": r"^layer_\d+_expert_\d+_grad_var$",
+        "layer_toggles": True,
+        "legend": True,
+        "order": 40,
+    },
+    {
+        "key": "task_weights",
+        "type": "task_weights",
+        "title": "Task Loss Weights",
+        "subtitle": "Per-task scalar multipliers applied to the loss.",
+        "key_pattern": r"^task_weight_",
+        "legend": True,
+        "order": 50,
+    },
+    {
+        "key": "halting_hist",
+        "type": "halting_hist",
+        "title": "Halting Distribution",
+        "subtitle": (
+            "Loop counts used per forward pass. Training = random samples "
+            "(log-normal Poisson); inference = where KL-halting actually fired."
+        ),
+        "key_pattern": r"^halting/(train|eval)_r_\d+$",
+        # Rendered after the head-metric sections (manifest + snapshots).
+        "order": 110,
+    },
+]
+
+
 def metric_names() -> list:
     """Ordered list of column names backing the registry."""
     return list(TRAINING_METRIC_REGISTRY.keys())

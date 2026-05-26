@@ -51,29 +51,30 @@ function fmt(value, decimals = 4, fallback = '---') {
     return Number(value).toFixed(decimals);
 }
 
+// Internal flags streamed for the TUI dashboard but not surfaced in the web
+// System panel. Everything else the backend sends is rendered, in the order
+// it arrives - so a new info field shows up without any frontend edit.
+const INTERNAL_INFO_KEYS = new Set(['debug', 'meta']);
+
 /**
- * Render the info panel as key-value rows
+ * Render the info panel as key-value rows, driven entirely by what the
+ * backend puts in ``m.info`` (the training process owns the field list).
  * @param {Object} info
  * @returns {string}
  */
 function renderInfoPanel(info) {
-    if (!info || Object.keys(info).length === 0) {
+    const entries = Object.entries(info || {}).filter(([key, value]) =>
+        !INTERNAL_INFO_KEYS.has(key) && value !== undefined && value !== null
+    );
+
+    if (entries.length === 0) {
         return '<div class="ld-info-row"><span class="ld-info-key">status</span><span class="ld-info-val">waiting for data...</span></div>';
     }
 
-    const displayKeys = [
-        'device', 'rank', 'node', 'ram', 'vram',
-        'optimizer', 'strategy', 'policy',
-        'vocab_size', 'block_size', 'batch_size', 'target_batch',
-        'depth', 'local_layers', 'remote_layers',
-        'hidden_size', 'embed_size', 'dropout'
-    ];
-
-    return displayKeys
-        .filter(key => info[key] !== undefined && info[key] !== null)
-        .map(key => {
+    return entries
+        .map(([key, value]) => {
             const label = key.replace(/_/g, ' ');
-            return `<div class="ld-info-row"><span class="ld-info-key">${escapeHtml(label)}</span><span class="ld-info-val">${escapeHtml(String(info[key]))}</span></div>`;
+            return `<div class="ld-info-row"><span class="ld-info-key">${escapeHtml(label)}</span><span class="ld-info-val">${escapeHtml(String(value))}</span></div>`;
         })
         .join('');
 }

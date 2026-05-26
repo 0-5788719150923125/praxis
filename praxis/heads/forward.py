@@ -11,18 +11,20 @@ from praxis.heads.base import BaseHead
 class ForwardHead(BaseHead):
     """Standard next-token prediction head.
 
-    In encoder-attached mode the encoder owns the classifier, so this
-    head allocates nothing and stays out of the way - the default
-    pass-through ``process_encoder_output`` lets the encoder's logits
-    flow through unchanged.
+    Owns a single linear classifier sized to :meth:`output_dims` -
+    ``(hidden_size, vocab_size)`` standalone, or the encoder's declared
+    byte-output layout in encoder mode. Builds nothing only when the
+    encoder owns its full output pipeline (``handles_loss``, e.g. CALM).
     """
 
     def __init__(self, config: Any, encoder: Optional[nn.Module] = None) -> None:
         super().__init__(config, encoder)
-        if self.has_encoder:
+        dims = self.output_dims()
+        if dims is None:
             self.lm_head = None
         else:
-            self.lm_head = nn.Linear(self.hidden_size, self.vocab_size, bias=False)
+            feature_dim, vocab_size = dims
+            self.lm_head = nn.Linear(feature_dim, vocab_size, bias=False)
             self.lm_head.weight.data.normal_(mean=0.0, std=0.02)
 
     def forward(self, hidden_states: Tensor, **kwargs: Any) -> Tensor:

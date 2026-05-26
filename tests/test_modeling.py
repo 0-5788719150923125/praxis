@@ -248,7 +248,10 @@ def test_praxis_causal_lm_with_encoder_init(encoder_config):
     # Check model attributes
     assert model.encoder is not False
     assert model.decoder is not None
-    assert model.head is None  # Head should be None when using encoder
+    # The head owns the classifier in every mode now (the encoder produces
+    # features; the head classifies them), so it exists even with an encoder.
+    assert model.head is not None
+    assert model.head.lm_head is not None
     assert model.criterion is not None
     assert model.strategy is not None
     assert encoder_config.causal is True

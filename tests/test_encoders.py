@@ -51,7 +51,7 @@ def test_forward_pass(module_setup):
     )
 
     # Step 2: Decode
-    decoder_output, _ = module.decode(
+    logits, decoder_embeds = module.decode(
         h,
         h_encoder,
         input_ids,
@@ -59,16 +59,16 @@ def test_forward_pass(module_setup):
         local_decoder_tokens,
     )
 
-    # Basic shape assertions
-    assert len(decoder_output.shape) == 3, "Expected 3D output from decoder"
-    assert decoder_output.shape[0] == batch_size, "Batch size mismatch in output"
-    # ByteLatent emits its local byte-level vocab; other encoders
-    # (CALM, etc.) emit the shared PraxisConfig vocab_size.
+    # ByteLatent decode now returns features only (the LM head owns
+    # classification, so logits is None); its features are dim_token_emb.
+    # Encoders that own their output (CALM, etc.) still emit aligned logits.
     if hasattr(module, "byte_config"):
-        expected_vocab_size = module.byte_config.local_vocab_size
+        assert logits is None, "Byte-latent decode should not emit logits"
+        out, expected_dim = decoder_embeds, module.byte_config.dim_token_emb
     else:
-        expected_vocab_size = config.vocab_size
-    assert decoder_output.shape == (batch_size, seq_len, expected_vocab_size)
+        out, expected_dim = logits, config.vocab_size
+    assert len(out.shape) == 3, "Expected 3D output from decoder"
+    assert out.shape == (batch_size, seq_len, expected_dim)
 
 
 def test_create_patch_block_ids():

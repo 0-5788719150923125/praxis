@@ -208,6 +208,11 @@ export const state = {
         // adding a metric to praxis.metrics.training_metrics makes it
         // appear here automatically.
         metricRegistry: {},
+        // Composite/specialty chart registry (multi-expert, sampling,
+        // heatmap) served by /api/metrics alongside metricRegistry. Same
+        // deal: declare a chart in praxis.metrics.training_metrics and it
+        // renders here, no JS edit.
+        compositeRegistry: [],
         // Historical run comparison
         historicalRuns: [],       // All available runs from /api/runs
         selectedHistoricalRuns: [], // Hashes the user has checked
@@ -398,23 +403,5 @@ export const CONSTANTS = {
     THEME_ICONS: {
         sun: `<path d="M8 11a3 3 0 1 1 0-6 3 3 0 0 1 0 6zm0 1a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM8 0a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 0zm0 13a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 13zm8-5a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2a.5.5 0 0 1 .5.5zM3 8a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2A.5.5 0 0 1 3 8zm10.657-5.657a.5.5 0 0 1 0 .707l-1.414 1.415a.5.5 0 1 1-.707-.708l1.414-1.414a.5.5 0 0 1 .707 0zm-9.193 9.193a.5.5 0 0 1 0 .707L3.05 13.657a.5.5 0 0 1-.707-.707l1.414-1.414a.5.5 0 0 1 .707 0zm9.193 2.121a.5.5 0 0 1-.707 0l-1.414-1.414a.5.5 0 0 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .707zM4.464 4.465a.5.5 0 0 1-.707 0L2.343 3.05a.5.5 0 1 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .708z"/>`,
         moon: `<path d="M6 .278a.768.768 0 0 1 .08.858 7.208 7.208 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277.527 0 1.04-.055 1.533-.16a.787.787 0 0 1 .81.316.733.733 0 0 1-.031.893A8.349 8.349 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.752.752 0 0 1 6 .278z"/>`
-    },
-    // Chart metrics configuration - data-driven chart rendering
-    METRIC_CONFIGS: [
-        { key: 'sampling_weights', canvasId: 'chart-sampling-weights', title: 'Task Sampling Weights', label: 'Sampling Weights', type: 'sampling', source: 'data_metrics' },
-        // Expert convergence metrics (SMEAR & Prismatic routers)
-        { key: 'expert_routing_weights', canvasId: 'chart-expert-routing', title: 'Expert Routing Weights (Convergence)', label: 'Routing Weight', type: 'multi_expert_line', isComposite: true },
-        { key: 'expert_selection', canvasId: 'chart-expert-selection', title: 'Expert Selection (Actual k_experts Usage)', label: 'Selection Count', type: 'multi_expert_line', isComposite: true, keyPattern: /^expert_selection\/expert_\d+_count$/, stepped: true },
-        { key: 'routing/entropy', canvasId: 'chart-routing-entropy', title: 'Routing Entropy (Balance)', label: 'Entropy', type: 'line' },
-        { key: 'routing/concentration', canvasId: 'chart-routing-concentration', title: 'Routing Concentration (Collapse)', label: 'Max Weight', type: 'line' },
-        { key: 'routing/variance', canvasId: 'chart-routing-variance', title: 'Routing Variance (Stability)', label: 'Variance', type: 'line' },
-        { key: 'routing/balance', canvasId: 'chart-routing-balance', title: 'Routing Balance', label: 'Balance', type: 'line' },
-        // Prismatic v8.1 - Switch Transformers loss metrics
-        { key: 'expert_importance', canvasId: 'chart-expert-importance', title: 'Expert Importance (Soft Routing Probabilities)', label: 'Importance', type: 'multi_expert_line', isComposite: true, keyPattern: /^routing\/expert_\d+_importance$/ },
-        { key: 'expert_load', canvasId: 'chart-expert-load', title: 'Expert Load (Hard Routing Decisions)', label: 'Load', type: 'multi_expert_line', isComposite: true, keyPattern: /^routing\/expert_\d+_load$/ },
-        // Distance router - Parameter diversity loss
-        { key: 'routing/diversity_loss', canvasId: 'chart-diversity-loss', title: 'Parameter Diversity Loss (Distance Router)', label: 'Diversity Loss', type: 'line' },
-        // Architecture selection metrics (Prismatic v3.0)
-        { key: 'arch_selection', canvasId: 'chart-arch-selection', title: 'Architecture Selection (Cumulative Counts)', label: 'Tool Call Count', type: 'multi_expert_line', isComposite: true, keyPattern: /^arch\/expert_\d+_count$/, stepped: true }
-    ]
+    }
 };

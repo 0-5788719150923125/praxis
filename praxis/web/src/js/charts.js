@@ -234,10 +234,11 @@ async function fetchSelectedRunMetrics() {
                         });
                     });
                 }
-                // Stash the registry so callers can build chart configs
-                // from it. Riding alongside as an array property keeps
+                // Stash the registries so callers can build chart configs
+                // from them. Riding alongside as array properties keeps
                 // the function signature unchanged.
                 if (data.registry) results.registry = data.registry;
+                if (data.composite_registry) results.compositeRegistry = data.composite_registry;
             }
         } catch (error) {
             console.error('[Charts] Error loading local run metrics:', error);
@@ -388,6 +389,9 @@ export async function loadResearchMetricsWithCharts(force = false) {
         if (runs && runs.registry) {
             state.research.metricRegistry = runs.registry;
         }
+        if (runs && runs.compositeRegistry) {
+            state.research.compositeRegistry = runs.compositeRegistry;
+        }
 
         state.research.lastRuns = runsToRender;
         state.research.lastDataMetrics = dataToRender;
@@ -396,6 +400,7 @@ export async function loadResearchMetricsWithCharts(force = false) {
             runs: runsToRender,
             dataMetrics: dataToRender,
             registry: state.research.metricRegistry,
+            compositeRegistry: state.research.compositeRegistry,
         }, container);
         state.research.loaded = true;
 
@@ -441,10 +446,52 @@ function buildScalarConfigsFromRegistry(registry) {
     }));
 }
 
+/**
+ * Translate the backend composite-metric registry into chart configs.
+ *
+ * These are the multi-expert / sampling / heatmap charts that used to be
+ * hardcoded in state.js. The backend declares each one's type, title,
+ * key pattern, and source; here we just compile the pattern to a RegExp
+ * and derive a canvas id. Adding a composite chart is now a one-entry
+ * change in praxis/metrics/training_metrics.py - no JS edits.
+ */
+function buildCompositeConfigsFromRegistry(registry) {
+    return (registry || [])
+        .slice()
+        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+        .map(entry => ({
+            key: entry.key,
+            canvasId: `chart-metric-${entry.key.replace(/[/_]/g, '-')}`,
+            title: entry.title || entry.key,
+            label: entry.y_label || entry.title || entry.key,
+            type: entry.type || 'line',
+            source: entry.source || 'metrics',
+            stepped: entry.stepped || false,
+            keyPattern: entry.key_pattern ? new RegExp(entry.key_pattern) : null,
+        }));
+}
+
+// Maps a config's `type` to a renderer. Each takes (config, { runs,
+// dataMetrics }); the underlying chart builders are declared below and
+// hoisted. Add a renderer here to support a new backend chart `type`.
+const METRIC_RENDERERS = {
+    bar: (config, { runs }) =>
+        createTokensBarChart(config.canvasId, config.label, runs, config.key),
+    sampling: (config, { dataMetrics }) =>
+        createSamplingWeightsChart(config.canvasId, dataMetrics),
+    multi_expert_line: (config, { runs }) =>
+        createMultiExpertChart(config.canvasId, config.title, config.label, runs, config.keyPattern, config),
+    expert_routing_heatmap: (config, { runs }) =>
+        createExpertRoutingChart(config.canvasId, runs),
+    line: (config, { runs }) =>
+        createRunComparisonChart(config.canvasId, config.label, runs, config.key),
+};
+
 function renderMetricsCharts(data, container) {
     const runs = data.runs || [];
     const dataMetrics = data.dataMetrics || [];
     const registry = data.registry || {};
+    const compositeRegistry = data.compositeRegistry || [];
 
     // Render header only once — subsequent calls only rebuild charts
     if (!document.getElementById('metrics-charts-area')) {
@@ -466,13 +513,12 @@ function renderMetricsCharts(data, container) {
         return;
     }
 
-    // Scalar entries come from the backend registry; composite/specialty
-    // entries (multi-expert, sampling, arch selection) live in the
-    // frontend METRIC_CONFIGS. Adding a scalar metric is a one-entry
-    // change in praxis/metrics/training_metrics.py - no JS edits.
+    // Both scalar and composite chart configs come from the backend
+    // registries - there are no hardcoded JS metric lists. Adding any
+    // chart is a one-entry change in praxis/metrics/training_metrics.py.
     const allConfigs = [
         ...buildScalarConfigsFromRegistry(registry),
-        ...CONSTANTS.METRIC_CONFIGS,
+        ...buildCompositeConfigsFromRegistry(compositeRegistry),
     ];
 
     // Data-driven metric detection
@@ -483,19 +529,12 @@ function renderMetricsCharts(data, container) {
                 Object.keys(a.data_metrics[config.key]).length > 0
             );
         }
-        if (config.isComposite && config.key === 'expert_routing_weights') {
+        if (config.keyPattern) {
             return runs.some(r =>
-                Object.keys(r.metrics).some(k =>
-                    k.match(/^layer_\d+_expert_\d+_routing_weight$/)
-                )
+                Object.keys(r.metrics).some(k => config.keyPattern.test(k))
             );
-        } else if (config.isComposite && config.keyPattern) {
-            return runs.some(r =>
-                Object.keys(r.metrics).some(k => k.match(config.keyPattern))
-            );
-        } else {
-            return runs.some(r => r.metrics[config.key]?.some(v => v !== null));
         }
+        return runs.some(r => r.metrics[config.key]?.some(v => v !== null));
     });
 
     // Destroy existing chart instances before rebuilding
@@ -510,7 +549,7 @@ function renderMetricsCharts(data, container) {
     let chartsHTML = '<div style="display: flex; flex-direction: column; gap: 2rem;">';
 
     chartsHTML += availableMetrics.map(config => {
-        const stepSliderHTML = (config.key === 'expert_routing_weights') ?
+        const stepSliderHTML = (config.type === 'expert_routing_heatmap') ?
             `<div id="layer-toggles-${config.canvasId}" class="layer-toggles" style="margin-bottom: 1rem; padding: 0.5rem; display: flex; gap: 1rem; flex-wrap: wrap; align-items: center;">
             </div>` : '';
 
@@ -529,22 +568,12 @@ function renderMetricsCharts(data, container) {
 
     chartsArea.innerHTML = chartsHTML;
 
-    // Render charts after DOM update
+    // Render charts after DOM update. Each config's `type` selects a
+    // renderer from the registry; unknown types fall back to a line chart.
     setTimeout(() => {
+        const ctx = { runs, dataMetrics };
         availableMetrics.forEach(config => {
-            if (config.type === 'bar') {
-                createTokensBarChart(config.canvasId, config.label, runs, config.key);
-            } else if (config.type === 'sampling') {
-                createSamplingWeightsChart(config.canvasId, dataMetrics);
-            } else if (config.type === 'multi_expert_line') {
-                if (config.keyPattern) {
-                    createMultiExpertChart(config.canvasId, config.title, config.label, runs, config.keyPattern, config);
-                } else {
-                    createExpertRoutingChart(config.canvasId, runs);
-                }
-            } else {
-                createRunComparisonChart(config.canvasId, config.label, runs, config.key);
-            }
+            (METRIC_RENDERERS[config.type] || METRIC_RENDERERS.line)(config, ctx);
         });
     }, 10);
 }

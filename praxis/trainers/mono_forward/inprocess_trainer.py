@@ -283,12 +283,19 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                     build_scheduler,
                 )
 
+                # Include the head: it now owns the byte classifier (moved
+                # off the encoder), so the decode pass below must train it
+                # alongside encoder.decoder.
                 class _EncoderShim(torch.nn.Module):
-                    def __init__(self, enc: torch.nn.Module) -> None:
+                    def __init__(
+                        self, enc: torch.nn.Module, head: Optional[torch.nn.Module]
+                    ) -> None:
                         super().__init__()
                         self.encoder = enc
+                        if head is not None:
+                            self.head = head
 
-                encoder_shim = _EncoderShim(encoder)
+                encoder_shim = _EncoderShim(encoder, getattr(model, "head", None))
                 self._encoder_optimizer = build_optimizer(
                     shim=encoder_shim,
                     optimizer_config=self.optimizer_config,
@@ -604,7 +611,8 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
 
                 final_hidden = current_activations.detach()
                 h_encoder_detached = decode_aux["h_encoder"].detach()
-                decode_logits, _ = encoder.decode(
+                # decode() returns features; the head owns classification.
+                _, decode_embeds = encoder.decode(
                     final_hidden,
                     h_encoder_detached,
                     input_ids_dev,
@@ -612,6 +620,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                     decode_aux["local_decoder_tokens"],
                     block_ids=decode_aux.get("token_block_ids"),
                 )
+                decode_logits = model_host.head(decode_embeds)
                 decode_targets = input_ids_dev[..., 1:].reshape(-1)
                 decode_logits_flat = (
                     decode_logits[..., :-1, :]

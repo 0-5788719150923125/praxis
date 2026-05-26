@@ -5,9 +5,9 @@ class centers. Probabilities follow ``p_i ∝ 1 / d_i^(2n)`` (i.e.
 ``(d_i²)^(-n)``) where ``d_i = ||c_i - x||_2`` and ``n`` is the harmonic
 exponent - matching the grow-crystals ``DistLayer``, which raises ``d²``
 to ``-n`` directly. The head returns ``pseudo_logits = -n * log(d²)``,
-offset so the nearest center's logit is 0; ``softmax`` over them
-reproduces those probabilities, so the standard CE pipeline consumes the
-output unchanged.
+offset so the nearest center's logit is 0, then label-smoothed
+(``prob + alpha/V``); ``softmax`` over them reproduces those probabilities,
+so the standard CE pipeline consumes the output unchanged.
 
 The output-layer weights become *class centers* (convex combinations of
 training examples) rather than arbitrary direction vectors, giving the
@@ -19,7 +19,7 @@ Reference: Baek et al., "Harmonic Loss Trains Interpretable AI Models"
 """
 
 import math
-from typing import Any, Optional, Tuple
+from typing import Any, Optional
 
 import torch
 import torch.nn as nn
@@ -33,6 +33,11 @@ EPS: float = 1e-4
 # The crystal head reads this when computing its centers_rms aux loss.
 # Override per-experiment via YAML by setting ``embedding_rms_lambda``.
 DEFAULT_EMBEDDING_RMS_LAMBDA: float = 0.01
+
+# Label-smoothing weight: mixes the harmonic distribution with uniform
+# (``prob + alpha/V``), matching the grow-crystals ``model_l2loss`` LM head.
+# Caps the loss and curbs overconfidence. Override via ``crystal_label_smoothing``.
+DEFAULT_LABEL_SMOOTHING: float = 0.01
 
 # Resolution of the PCA density heatmap. 64 keeps the payload small
 # (~16KB of ints) while resolving enough structure to read.
@@ -174,12 +179,14 @@ class CrystalClassifier(nn.Module):
         vocab_size: int,
         n: float,
         eps: float = EPS,
+        label_smoothing: float = 0.0,
     ) -> None:
         super().__init__()
         self.hidden_size = hidden_size
         self.vocab_size = vocab_size
         self.n = float(n)
         self.eps = float(eps)
+        self.label_smoothing = float(label_smoothing)
         self.centers = nn.Parameter(torch.empty(vocab_size, hidden_size))
         # std = 1/sqrt(D), matching the grow-crystals tied-embedding init
         # (`std=1/np.sqrt(embd_dim)`). Centers inflate toward the feature
@@ -197,6 +204,9 @@ class CrystalClassifier(nn.Module):
         xx = (x_flat * x_flat).sum(-1, keepdim=True)
         cx = x_flat @ centers.T
         dist_sq = (cc.unsqueeze(0) + xx - 2.0 * cx).clamp_min(self.eps)
+        # A non-finite distance (upstream NaN/inf in x) would poison the
+        # softmax; treat it as "far" so that class collapses to ~0 prob.
+        dist_sq = torch.nan_to_num(dist_sq, nan=1e9, posinf=1e9)
         # Normalize by the nearest center: scale-invariance makes this a
         # no-op for softmax/CE, but it pins the top logit at 0 instead of a
         # large negative offset. That offset is invisible to training yet
@@ -208,6 +218,14 @@ class CrystalClassifier(nn.Module):
         # (`(dist_sq)**(-n)`). n applies to d², not d: this sharp exponent is
         # what drives the centers to organize - halving it stalls them.
         pseudo_logits = -self.n * torch.log(dist_sq)
+        # Label smoothing (grow-crystals model_l2loss): mix the harmonic
+        # distribution with uniform via ``prob + alpha/V``, then re-log.
+        # log_softmax/softmax downstream renormalizes, so this stays a valid
+        # logit tensor (top still ~0) for both CE and inference sampling.
+        if self.label_smoothing > 0.0:
+            prob = torch.softmax(pseudo_logits, dim=-1)
+            prob = prob + self.label_smoothing / self.vocab_size
+            pseudo_logits = torch.log(prob)
         return pseudo_logits.view(*orig_shape[:-1], self.vocab_size).to(out_dtype)
 
     @torch.no_grad()
@@ -260,41 +278,58 @@ class CrystalHead(BaseHead):
             )
 
         n_cfg = getattr(config, "crystal_n", None)
-        if self.has_encoder:
-            classifier = getattr(encoder, "classifier", None)
-            if classifier is None or not hasattr(classifier, "weight"):
-                raise ValueError(
-                    "head_type='crystal' with an encoder requires the encoder "
-                    "to expose a `.classifier` with a `.weight` attribute"
-                )
-            v_dim, f_dim = classifier.weight.shape
-            # Default n = feature dim, matching the grow-crystals DistLayer
-            # (`n=embd_dim`). Override with crystal_n for a softer exponent.
-            n = float(n_cfg) if n_cfg is not None else float(f_dim)
-            self.lm_head = CrystalClassifier(hidden_size=f_dim, vocab_size=v_dim, n=n)
-        else:
-            n = float(n_cfg) if n_cfg is not None else float(self.hidden_size)
-            self.lm_head = CrystalClassifier(
-                hidden_size=self.hidden_size,
-                vocab_size=self.vocab_size,
-                n=n,
+        # The reference lists pow_n in {1, sqrt(D), D} as a hyperparameter.
+        # We default to sqrt(D): n=D collapsed the center PCA (too sharp,
+        # winner-take-all), while sqrt(D) gives the spread "crystal"
+        # structure. Override via crystal_n.
+        smoothing = float(
+            getattr(config, "crystal_label_smoothing", DEFAULT_LABEL_SMOOTHING)
+            or 0.0
+        )
+        # Projects hidden states down to the centers' space before the
+        # distance. Only needed for standard-mode tying, where the centers
+        # live in embed_size (to share the token embedding) but hidden
+        # states are hidden_size. Mirrors the TiedWeights head.
+        self.pre_projection: Optional[nn.Module] = None
+        dims = self.output_dims()
+        if dims is None:
+            raise ValueError(
+                "head_type='crystal' needs an encoder that declares an output "
+                "layout; it can't pair with a loss-owning encoder (handles_loss)."
             )
+        feature_dim, vocab_size = dims
+        if self.has_encoder:
+            # Encoder emits features at feature_dim (== embed_size), so the
+            # centers match and distances need no projection. Tying to the
+            # local tok_emb is likewise projection-free.
+            center_dim = feature_dim
+        else:
+            # Standard mode: tie -> centers in embed_size (share the token
+            # embedding [V, embed_size]) with a hidden->embed projection;
+            # else centers in hidden_size (== feature_dim here).
+            tie = bool(getattr(config, "tie_word_embeddings", False))
+            embed_size = getattr(config, "embed_size", self.hidden_size)
+            center_dim = embed_size if tie else feature_dim
+            if tie and embed_size != self.hidden_size:
+                self.pre_projection = nn.Linear(
+                    self.hidden_size, embed_size, bias=False
+                )
+        n = float(n_cfg) if n_cfg is not None else math.sqrt(center_dim)
+        self.lm_head = CrystalClassifier(
+            hidden_size=center_dim,
+            vocab_size=vocab_size,
+            n=n,
+            label_smoothing=smoothing,
+        )
 
     def forward(self, hidden_states: Tensor, **kwargs: Any) -> Tensor:
+        if self.pre_projection is not None:
+            hidden_states = self.pre_projection(hidden_states)
         return self.lm_head(hidden_states)
 
     @property
     def classifier(self) -> nn.Module:
         return self.lm_head
-
-    def process_encoder_output(
-        self,
-        decoder_embeds: Tensor,
-        encoder_logits: Tensor,
-        encoder_classifier: nn.Module,
-    ) -> Tuple[Tensor, Tensor, nn.Module]:
-        logits = self.lm_head(decoder_embeds).to(encoder_logits.dtype)
-        return logits, decoder_embeds, self.lm_head
 
     def training_metrics(self) -> dict:
         c = self.lm_head
