@@ -16,8 +16,6 @@ class CompressiveMemory(nn.Module):
     https://arxiv.org/abs/2404.07143
     """
 
-    __version__ = "0.1.0"
-
     def __init__(self, config: ConfigType) -> None:
         """
         Initialize compressive memory module.

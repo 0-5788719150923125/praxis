@@ -6,16 +6,19 @@ from praxis.configuration import PraxisConfig
 from praxis.controllers import CONTROLLER_REGISTRY
 from praxis.data import SAMPLER_REGISTRY
 from praxis.decoders import DECODER_REGISTRY
+from praxis.dense import DENSE_REGISTRY
 from praxis.embeddings import EMBEDDING_REGISTRY
 from praxis.encoders import ENCODER_REGISTRY
 from praxis.encoding import ENCODING_REGISTRY
 from praxis.halting import HALTING_REGISTRY
 from praxis.heads import HEAD_REGISTRY, MTP_REGISTRY
 from praxis.losses import LOSS_REGISTRY
+from praxis.memory import MEMORY_PROFILE_DESCRIPTIONS, MEMORY_REGISTRY
 from praxis.modeling import PraxisForCausalLM, PraxisModel
 from praxis.normalization import NORMALIZATION_REGISTRY
 from praxis.orchestration import EXPERT_REGISTRY
 from praxis.policies import RL_POLICIES_REGISTRY
+from praxis.recurrent import RECURRENT_REGISTRY
 from praxis.residuals import RESIDUAL_REGISTRY
 from praxis.routers import ROUTER_REGISTRY
 from praxis.sorting import SORTING_REGISTRY

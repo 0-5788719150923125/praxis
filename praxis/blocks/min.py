@@ -19,8 +19,6 @@ class MinGRUBlock(nn.Module):
     with a standard MLP and pre-norm residual.
     """
 
-    __version__ = "0.1.0"
-
     def __init__(self, config: ConfigType, *args: Any, **kwargs: Any) -> None:
         super().__init__()
         self.norm = nn.LayerNorm(config.hidden_size)

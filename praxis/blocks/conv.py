@@ -19,8 +19,6 @@ class ConvolutionalBlock(nn.Module):
     of causal convolutional layers and periodic activations.
     """
 
-    __version__ = "0.1.0"
-
     def __init__(self, config: ConfigType, *args: Any, **kwargs: Any) -> None:
         """
         Initialize ConvolutionalBlock block.

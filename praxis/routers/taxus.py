@@ -22,8 +22,6 @@ class Taxus(nn.Module):
     confident and deeper processing when needed.
     """
 
-    __version__ = "0.1.0"
-
     def __init__(
         self,
         config: ConfigType,

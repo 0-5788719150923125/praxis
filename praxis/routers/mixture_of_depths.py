@@ -48,8 +48,6 @@ class MixtureOfDepths(nn.Linear):
     https://arxiv.org/abs/2404.02258.
     """
 
-    __version__ = "0.1.0"
-
     def __init__(
         self, config: ConfigType, layout: str = "standard", *args: Any, **kwargs: Any
     ) -> None:

@@ -33,8 +33,6 @@ class ModularAttention(nn.Module):
     essentially blend components from various kinds of attention.
     """
 
-    __version__ = "0.1.0"
-
     def __init__(self, config: ConfigType) -> None:
         """
         Initialize ModularAttention module with configuration.

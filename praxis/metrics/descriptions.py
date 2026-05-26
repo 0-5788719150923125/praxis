@@ -23,6 +23,8 @@ the frontend always sees ``{description, chart}`` per entry.
 
 from typing import Any, Dict, Iterable, Optional
 
+from praxis.memory.surfacings import MemoryBase
+
 
 def _normalize(value: Any) -> Optional[Dict[str, Any]]:
     """Coerce a raw description value into ``{description, chart, snapshot}``.
@@ -70,6 +72,11 @@ def _candidates(model: Any) -> Iterable[Dict[str, Any]]:
         single = getattr(weighter, "metric_description", None)
         if isinstance(single, str):
             yield {"task_weights": single}
+
+    if hasattr(model, "modules"):
+        memory_descs = MemoryBase.collect_metric_descriptions(model)
+        if memory_descs:
+            yield memory_descs
 
 
 def get_metric_descriptions(model: Any) -> Dict[str, Dict[str, Any]]:

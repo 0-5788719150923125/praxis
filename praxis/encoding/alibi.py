@@ -17,8 +17,6 @@ class ALiBi(NoPE):
     https://arxiv.org/abs/2108.12409
     """
 
-    __version__ = "0.1.0"
-
     def __init__(self, config: ConfigType, *args, **kwargs):
         """
         Initialize ALiBi positional encoding.

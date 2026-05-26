@@ -15,8 +15,6 @@ class ScaledDotProduct(nn.Module):
     https://paperswithcode.com/method/scaled
     """
 
-    __version__ = "0.1.0"
-
     def __init__(self, config) -> None:
         """
         Initialize scaled dot-product attention module.
@@ -163,8 +161,6 @@ class Differential(ScaledDotProduct):
     https://arxiv.org/abs/2410.05258
     """
 
-    __version__ = "0.1.0"
-
     def __init__(self, config) -> None:
         """
         Initialize differential attention module.
@@ -267,8 +263,6 @@ class Linear(ScaledDotProduct):
     Implements Linear Attention with efficient operations.
     Based on kernelized attention patterns which have O(L) instead of O(L²) complexity.
     """
-
-    __version__ = "0.1.0"
 
     def __init__(self, config) -> None:
         """
@@ -408,8 +402,6 @@ class Stickbreaking(ScaledDotProduct):
     Implements Stickbreaking Attention mechanism.
     https://github.com/IBM/ModuleFormer
     """
-
-    __version__ = "0.1.0"
 
     def __init__(self, config) -> None:
         """

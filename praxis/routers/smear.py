@@ -29,8 +29,6 @@ class SMEAR(nn.Module):
     parameter sharing and adaptation to input patterns.
     """
 
-    __version__ = "0.3.0"
-
     def __init__(
         self, config: Any, layout: str = "standard", *args: Any, **kwargs: Any
     ):

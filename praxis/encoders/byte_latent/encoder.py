@@ -53,8 +53,6 @@ class ByteLatentEncoder(nn.Module):
     it has been difficult to standardize. This could be a lot cleaner.
     """
 
-    __version__ = "0.1.0"
-
     def __init__(
         self,
         config: ConfigType,

@@ -46,8 +46,6 @@ class Prismatic(nn.Module):
     everything else identical. Blends complementary architectural strengths.
     """
 
-    __version__ = "8.1.0"
-
     def __init__(
         self, config: Any, layout: str = "standard", *args: Any, **kwargs: Any
     ):
@@ -412,8 +410,4 @@ class Prismatic(nn.Module):
         return metrics if metrics else None
 
     def __repr__(self) -> str:
-        return (
-            f"Prismatic(num_experts={self.num_experts}, "
-            f"top_k={self.top_k}, "
-            f"version={self.__version__})"
-        )
+        return f"Prismatic(num_experts={self.num_experts}, " f"top_k={self.top_k})"

@@ -11,14 +11,16 @@ links to a page listing the registered implementations and their source.
 - [Block-stacking decoders](decoders.md) (4) - How the stack of blocks is composed (sequential, parallel, weighted, ...).
 - [Data sampler strategies](data.md) (5) - How datasets are interleaved during training. Praxis trains on multiple datasets at once: at every step the trainer picks a dataset, draws a document, and tokenizes it (see ``InterleaveDataManager`` in ``praxis/data/datasets/manager.py``). The sampler chosen here decides *how* that pick is biased - either statically from configured weights, or adaptively based on document length, novelty, or per-dataset loss. Set with ``--sampler``; default is ``novelty``.
 - [Decoder block layouts](blocks.md) (8) - Top-level layer types the decoder stacks. Mix attention-based and recurrent designs freely.
-- [Expert orchestration](orchestration.md) (7) - How a block's feedforward path is realized: MLP, GLU, KAN, PEER, ...
+- [Feedforward experts](dense.md) (7) - How a block's feedforward path is realized: MLP, GLU, KAN, polynomial, scatter, PEER, ... Selected with ``--ffn-type``; default is ``glu``.
 - [Halting / early exit](halting.md) (2) - Per-token mechanisms for early exit from recurrent depth loops.
 - [Input encoders](encoders.md) (8) - Front-end encoders, including the byte-latent and abstractinator variants.
 - [Layer-routing controllers](controllers.md) (8) - Decide which expert / block a token visits at each depth. Enables out-of-order layers and graph-style routing.
+- [Long-term memory](memory.md) (3) - Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced as a layer (MAL) or a gate (MAG). Selected with ``--memory-type``; default is ``none``.
 - [Loss functions](losses.md) (9) - Per-token criteria. Most accept optional ``loss_weights`` for task-weighted training.
 - [Normalization layers](normalization.md) (5) - LayerNorm/RMSNorm variants, including SandwichNorm (required for stable recurrent-depth bias).
 - [Output heads](heads.md) (6) - LM heads (tied/untied, harmonic, crystal) and multi-token-prediction wrappers.
 - [Positional encoding](encoding.md) (3) - RoPE, ALiBi, NoPE and friends - the rotational / additive position priors injected into attention.
+- [Recurrent cells](recurrent.md) (2) - Minimal gated recurrent cells (GRU, MinGRU). Used by the recurrent block types and as a sequence mixer inside the byte-latent encoder.
 - [Residual connections](residuals.md) (2) - Standard residuals vs. hyper-connections.
 - [RL policies](policies.md) (3) - Reinforcement-learning policy losses (REINFORCE, GRPO, ...) for post-training.
 - [Sequence compression](compression.md) (3) - Strategies for reducing sequence length between layers.
@@ -53,7 +55,6 @@ the package directory for details.
 - `praxis/metrics/` - Metrics descriptions and bookkeeping for the dashboards.
 - `praxis/modeling/` - ``PraxisModel`` / ``PraxisForCausalLM`` - the top-level transformers-compatible wrappers.
 - `praxis/optimizers/` - Optimizer registry and parameter-grouping helpers.
-- `praxis/recurrent/` - Recurrent-depth utilities (looped layer execution).
 - `praxis/schedulers/` - Learning-rate schedulers.
 - `praxis/tasks/` - Training task abstractions used by ``strategies``.
 - `praxis/tokenizers/` - Tokenizer creation and registry.

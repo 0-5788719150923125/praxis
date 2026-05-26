@@ -33,8 +33,6 @@ class Distance(SMEAR):
     The negative sign encourages distance (higher loss = more similar).
     """
 
-    __version__ = "1.0.0"
-
     def __init__(
         self, config: Any, layout: str = "standard", *args: Any, **kwargs: Any
     ):
@@ -52,7 +50,7 @@ class Distance(SMEAR):
         # Diversity loss coefficient - controls strength of parameter distance loss
         self.diversity_loss_coef = getattr(config, "diversity_loss_coef", 0.01)
 
-        print(f"[DISTANCE v{self.__version__}] Parameter diversity loss enabled")
+        print("[DISTANCE] Parameter diversity loss enabled")
         print(f"  Num experts: {len(self.experts)}")
         print(f"  Diversity coefficient: {self.diversity_loss_coef}")
         print(f"  Base expert: 0, comparing against experts 1-{len(self.experts)-1}")
@@ -149,6 +147,5 @@ class Distance(SMEAR):
     def __repr__(self) -> str:
         return (
             f"Distance(num_experts={len(self.experts)}, "
-            f"diversity_coef={self.diversity_loss_coef}, "
-            f"version={self.__version__})"
+            f"diversity_coef={self.diversity_loss_coef})"
         )

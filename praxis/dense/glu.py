@@ -17,8 +17,6 @@ class GatedLinearMLP(BaseDense):
     A standard MLP, augmented with Gated Linear Units.
     """
 
-    __version__ = "0.1.0"
-
     def __init__(
         self,
         config: ConfigType,

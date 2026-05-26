@@ -16,8 +16,6 @@ class RoPE(NoPE):
     Supports Grouped Query Attention and odd head dimensions.
     """
 
-    __version__ = "0.2.0"
-
     def __init__(self, config: ConfigType, *args, **kwargs):
         """
         Initialize Rotary Position Embeddings.

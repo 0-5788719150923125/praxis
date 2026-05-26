@@ -21,8 +21,6 @@ class MRUBlock(nn.Module):
     Based on https://github.com/mikayahlevi/mru-lm.
     """
 
-    __version__ = "0.1.0"
-
     def __init__(self, config: ConfigType, *args, **kwargs):
         super().__init__()
 
@@ -86,10 +84,9 @@ class MRUBlock(nn.Module):
         # Regularization
         self.dropout = nn.Dropout(self.dropout_rate)
 
-        # MLP block
+        # MLP block, output projection scaled down for residual stability.
         self.ffn = DENSE_REGISTRY.get("mlp")(config)
-        nn.init.normal_(self.ffn.up.weight, mean=0, std=0.02)
-        nn.init.normal_(self.ffn.down.weight, mean=0, std=0.02 / math.sqrt(self.depth))
+        self.ffn.init_weights(in_std=0.02, out_std=0.02 / math.sqrt(self.depth))
 
     def forward(
         self,

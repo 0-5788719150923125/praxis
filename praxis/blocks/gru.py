@@ -16,8 +16,6 @@ class GRUBlock(nn.Module):
     Cleaner implementation without complex masking.
     """
 
-    __version__ = "0.1.0"
-
     def __init__(self, config: ConfigType, *args: Any, **kwargs: Any) -> None:
         """
         Initialize GRU block.

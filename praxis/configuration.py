@@ -29,6 +29,7 @@ class PraxisConfig(PretrainedConfig):
         router_type: Optional[str] = None,
         controller_type: str = "base",
         attention_type: str = "standard",
+        memory_type: str = "none",
         encoder_type: Optional[str] = None,
         decoder_type: str = "sequential",
         residual_type: str = "standard",
@@ -81,11 +82,10 @@ class PraxisConfig(PretrainedConfig):
         self.k_heads = k_heads
         self.kv_rank = kv_rank
         self.num_experts = num_experts
-        # num_layers represents the number of layer-specific components controllers should create
         self.num_layers = num_layers
-        # depth defaults to num_layers if not explicitly provided
         self.depth = depth if depth is not None else num_layers
         self.attention_type = attention_type
+        self.memory_type = memory_type
         self.encoder_type = encoder_type
         self.decoder_type = decoder_type
         self.linear = linear
@@ -118,12 +118,7 @@ class PraxisConfig(PretrainedConfig):
         self.checkpoint_every = checkpoint_every
         self.loss_func = loss_func
         self.strategy = strategy
-        # Per-task loss weighting profile name (see TASK_WEIGHT_PROFILES
-        # in praxis.tasks). None means identity: all task IDs get weight 1.0.
         self.task_weights = kwargs.get("task_weights", None)
-        # When True, drop the assistant_mask so every token contributes
-        # to the loss (the pre-2bc2cd4 LM objective). Toggle via
-        # ``--no-mask-prompts``. Default False keeps the SFT-style mask on.
         self.no_mask_prompts = kwargs.get("no_mask_prompts", False)
         self.device_map = device_map
         self.seed = seed

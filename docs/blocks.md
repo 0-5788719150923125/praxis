@@ -69,4 +69,4 @@ Source: [praxis/blocks/ssm.py:14](../praxis/blocks/ssm.py#L14)
 
 A standard transformer block, with adjustable feedforward "experts".
 
-Source: [praxis/blocks/transformer.py:34](../praxis/blocks/transformer.py#L34)
+Source: [praxis/blocks/transformer.py:35](../praxis/blocks/transformer.py#L35)

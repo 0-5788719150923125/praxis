@@ -22,8 +22,6 @@ class KolmogorovArnoldNetwork(BaseDense):
     https://github.com/ZiyaoLi/fast-kan
     """
 
-    __version__ = "0.1.0"
-
     def __init__(
         self,
         config: ConfigType,

@@ -1,0 +1,131 @@
+"""Titans memory surfacings: how a learned long-term memory branch is
+combined with the residual stream.
+
+``MemoryBase`` is a concrete no-op (identity forward, no metrics) and the
+parent of the real surfacings, so a memory-free block carries a real object
+instead of ``None`` - the block and decoder never branch on whether memory is
+present. Each real surfacing wraps the shared ``NeuralMemory`` core:
+- MAL applies memory as its own residual sub-layer.
+- MAG blends a parallel memory branch with attention through a learned gate.
+"""
+
+from typing import Optional, Tuple, TypeVar
+
+import torch.nn as nn
+from torch import Tensor
+
+from praxis.memory.models import build_memory_model
+from praxis.memory.neural_memory import NeuralMemory, NeuralMemState
+
+ConfigType = TypeVar("ConfigType", bound="AutoConfig")
+
+
+class MemoryBase(nn.Module):
+    """No-op memory and base for the real surfacings. Passes the stream
+    through unchanged and reports no metrics."""
+
+    def __init__(self, config: ConfigType) -> None:
+        super().__init__()
+        self.hidden_size = config.hidden_size
+
+    def forward(
+        self,
+        stream: Tensor,
+        attn_output: Tensor,
+        state: Optional[NeuralMemState] = None,
+    ) -> Tuple[Tensor, Optional[NeuralMemState]]:
+        return stream, state
+
+    def training_metrics(self) -> dict:
+        """Diagnostic scalars surfaced each logging step (no-op by default)."""
+        return {}
+
+    @staticmethod
+    def collect_training_metrics(root: nn.Module) -> dict:
+        """Average ``memory_surprise`` across the active memory modules under
+        ``root`` (empty when none are active)."""
+        surprises = []
+        for module in root.modules():
+            if isinstance(module, MemoryBase):
+                surprise = module.training_metrics().get("memory_surprise")
+                if surprise is not None:
+                    surprises.append(surprise)
+        if not surprises:
+            return {}
+        return {"memory_surprise": sum(surprises) / len(surprises)}
+
+    @staticmethod
+    def collect_metric_descriptions(root: nn.Module) -> dict:
+        """Gather ``metric_descriptions`` from memory modules under ``root``."""
+        out: dict = {}
+        for module in root.modules():
+            if isinstance(module, MemoryBase):
+                descs = getattr(type(module), "metric_descriptions", None)
+                if isinstance(descs, dict):
+                    out.update(descs)
+        return out
+
+
+class MemorySurfacing(MemoryBase):
+    """Base for surfacings that own a ``NeuralMemory`` core."""
+
+    # Declared here so the metric's definition lives with the component; the
+    # dynamics callback and metric-description walker discover it.
+    metric_descriptions = {
+        "memory_surprise": {
+            "description": (
+                "Mean reconstruction loss of the Titans memory on the stored "
+                "sequence, averaged across memory layers. Falling = the memory "
+                "is memorizing inputs better."
+            ),
+            "chart": {
+                "title": "Memory Surprise",
+                "y_label": "Surprise",
+                "y_scale": "linear",
+                "group": "memory",
+                "order": 10,
+            },
+        },
+    }
+
+    def __init__(self, config: ConfigType, spec: dict) -> None:
+        super().__init__(config)
+        self.mem = NeuralMemory(
+            dim=self.hidden_size,
+            model=build_memory_model(config, spec),
+            chunk_size=spec.get("chunk_size", 64),
+            momentum=spec.get("momentum", True),
+        )
+
+    def forward(self, stream, attn_output, state=None):
+        raise NotImplementedError
+
+    def training_metrics(self) -> dict:
+        if self.mem.last_surprise is None:
+            return {}
+        return {"memory_surprise": float(self.mem.last_surprise)}
+
+
+class MemoryAsLayer(MemorySurfacing):
+    """MAL: memory as its own residual sub-layer within the block."""
+
+    def forward(self, stream, attn_output, state=None):
+        retrieved, state = self.mem(stream, state)
+        return stream + retrieved, state
+
+
+class MemoryAsGate(MemorySurfacing):
+    """MAG: a memory branch blended with the attention-carrying stream through
+    a learned per-channel gate. The gate starts near the stream so memory eases
+    in during training."""
+
+    def __init__(self, config, spec):
+        super().__init__(config, spec)
+        self.gate = nn.Linear(self.hidden_size, self.hidden_size)
+        nn.init.zeros_(self.gate.weight)
+        nn.init.constant_(self.gate.bias, -3.0)
+
+    def forward(self, stream, attn_output, state=None):
+        retrieved, state = self.mem(stream, state)
+        g = self.gate(stream).sigmoid()
+        return g * retrieved + (1 - g) * stream, state

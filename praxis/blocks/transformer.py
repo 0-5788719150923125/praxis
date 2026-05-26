@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from praxis.attention import ATTENTION_REGISTRY
+from praxis.memory import build_memory
 from praxis.normalization import NORMALIZATION_REGISTRY
 from praxis.orchestration import EXPERT_REGISTRY
 from praxis.residuals import RESIDUAL_REGISTRY
@@ -45,6 +46,8 @@ class TransformerBlock(nn.Module):
             config.hidden_size, eps=config.epsilon
         )
         self.attn = ATTENTION_REGISTRY[config.attention_type](config)
+        # Titans long-term memory (a no-op when --memory-type none)
+        self.memory = build_memory(config)
 
         self.ffn_res = RESIDUAL_REGISTRY.get(config.residual_type)(config.hidden_size)
         self.ffn_norm = NORMALIZATION_REGISTRY[config.norm_type](
@@ -104,6 +107,13 @@ class TransformerBlock(nn.Module):
 
         attn_merged = self.attn_res.connect_depth(residual, attn_output, beta)
 
+        # =========== Long-term Memory ============
+        # current_state carries the per-sequence NeuralMemState across depth;
+        # a no-op memory passes both through unchanged.
+        attn_merged, current_state = self.memory(
+            attn_merged, attn_output, current_state
+        )
+
         # =========== FeedForward Block ===========
         residual, beta_ffn = self.ffn_res.connect_width(
             self.ffn_res.format_state(attn_merged)
@@ -124,7 +134,12 @@ class TransformerBlock(nn.Module):
 
         # Merge expansions
         final_output = self.ffn_res.connect_depth(residual, ffn_output, beta_ffn)
-        return self.ffn_res.format_state(final_output), past_key_values, None, aux_loss
+        return (
+            self.ffn_res.format_state(final_output),
+            past_key_values,
+            current_state,
+            aux_loss,
+        )
 
     def _is_zero_tensor(self, tensor: Tensor, tolerance: float = 1e-10) -> bool:
         """

@@ -1,22 +1,19 @@
-import math
-from collections import OrderedDict
-from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, Union
+from typing import Any, Optional, TypeVar
 
-import torch
 import torch.nn as nn
 from torch import Tensor
 
-from praxis.activations import ACT2CLS, ACT2FN
+from praxis.activations import ACT2CLS
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
 class MultiLayerPerceptron(nn.Sequential):
-    """
-    A standard Multi-Layer Perceptron.
-    """
+    """A multi-layer perceptron mapping ``input_dim -> input_dim``.
 
-    __version__ = "0.1.0"
+    ``num_layers`` is the number of linear layers (default 2). Deeper stacks add
+    ``hidden_dim``-wide layers, with an activation and dropout between linears.
+    """
 
     def __init__(
         self,
@@ -24,44 +21,35 @@ class MultiLayerPerceptron(nn.Sequential):
         activation: Optional[str] = None,
         input_dim: Optional[int] = None,
         hidden_dim: Optional[int] = None,
+        num_layers: int = 2,
         *args: Any,
         **kwargs: Any,
     ) -> None:
-        """
-        Initialize a standard MLP module.
-
-        Args:
-            config: Configuration object with model parameters
-            activation: Activation function name (from ACT2FN registry)
-            input_dim: Input dimension size
-            hidden_dim: Hidden dimension size
-            *args: Additional positional arguments
-            **kwargs: Additional keyword arguments
-        """
         activation = activation or config.activation
         input_dim = input_dim or config.hidden_size
         hidden_dim = hidden_dim or input_dim * 4
-        super().__init__(
-            OrderedDict(
-                [
-                    ("up", nn.Linear(input_dim, hidden_dim)),
-                    ("act", ACT2FN[activation]),
-                    ("dropout", nn.Dropout(config.dropout)),
-                    ("down", nn.Linear(hidden_dim, input_dim)),
-                ]
-            )
+        num_layers = max(2, num_layers)
+
+        widths = [input_dim] + [hidden_dim] * (num_layers - 1) + [input_dim]
+        layers: list = []
+        for i in range(num_layers):
+            layers.append(nn.Linear(widths[i], widths[i + 1]))
+            if i < num_layers - 1:
+                layers.append(ACT2CLS[activation]())
+                layers.append(nn.Dropout(config.dropout))
+
+        super().__init__(*layers)
+
+    def init_weights(
+        self, in_std: float = 0.02, out_std: Optional[float] = None
+    ) -> None:
+        """Normal-init the first and last linear weights (e.g. a depth-scaled
+        output projection), without callers reaching into layer internals."""
+        linears = [m for m in self if isinstance(m, nn.Linear)]
+        nn.init.normal_(linears[0].weight, mean=0.0, std=in_std)
+        nn.init.normal_(
+            linears[-1].weight, mean=0.0, std=in_std if out_std is None else out_std
         )
 
     def forward(self, inputs: Tensor, *args: Any, **kwargs: Any) -> Tensor:
-        """
-        Forward pass through the MLP.
-
-        Args:
-            inputs: Input tensor
-            *args: Additional positional arguments
-            **kwargs: Additional keyword arguments
-
-        Returns:
-            Output tensor after MLP processing
-        """
         return super().forward(inputs)

@@ -21,8 +21,6 @@ class ArcGLU(BaseDense):
     by current_depth // num_layers so each pass gets its own instance.
     """
 
-    __version__ = "0.2.0"
-
     def __init__(
         self,
         config: ConfigType,

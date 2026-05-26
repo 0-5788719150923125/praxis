@@ -14,8 +14,6 @@ class NoPE(nn.Module):
     https://arxiv.org/abs/2404.12224
     """
 
-    __version__ = "0.1.0"
-
     def __init__(self, config: ConfigType):
         """
         Initialize NoPE with head-wise attention scaling.

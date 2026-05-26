@@ -283,8 +283,7 @@ class CrystalHead(BaseHead):
         # winner-take-all), while sqrt(D) gives the spread "crystal"
         # structure. Override via crystal_n.
         smoothing = float(
-            getattr(config, "crystal_label_smoothing", DEFAULT_LABEL_SMOOTHING)
-            or 0.0
+            getattr(config, "crystal_label_smoothing", DEFAULT_LABEL_SMOOTHING) or 0.0
         )
         # Projects hidden states down to the centers' space before the
         # distance. Only needed for standard-mode tying, where the centers

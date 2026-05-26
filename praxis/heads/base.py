@@ -71,7 +71,6 @@ class BaseHead(nn.Module, ABC):
         """The classifier module used downstream (e.g., by cut-CE)."""
         pass
 
-
     def aux_losses(self) -> Dict[str, Tensor]:
         """Named auxiliary losses to fold into the main objective.
 

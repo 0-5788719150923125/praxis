@@ -24,8 +24,6 @@ class BaseDecoder(nn.Module):
     A module that wraps decoder operations.
     """
 
-    __version__ = "0.1.0"
-
     def __init__(self, config: ConfigType) -> None:
         super().__init__()
         self.debug = config.debug

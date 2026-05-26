@@ -41,8 +41,6 @@ class HivemindOrchestrator:
     Essentially, Hivemind experts have static inputs/outputs - in contrast to the "dynamic" nature of Pytorch.
     """
 
-    __version__ = "0.1.0"
-
     def __init__(self, config: ConfigType) -> None:
         """
         Initialize hivemind management system.

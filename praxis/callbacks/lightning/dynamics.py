@@ -62,6 +62,9 @@ class DynamicsLoggerCallback(Callback):
             # etc.). Each BaseHead may opt in via training_metrics().
             dynamics.update(self._extract_head_dynamics(model))
 
+            # Titans memory diagnostics (surprise), averaged across layers.
+            dynamics.update(self._extract_memory_dynamics(model))
+
             if dynamics:
                 self._success_count += 1
                 if self._success_count <= 3:
@@ -158,6 +161,20 @@ class DynamicsLoggerCallback(Callback):
             return head.training_metrics()
         except Exception as e:
             print(f"[DynamicsLogger] head.training_metrics() failed: {e}")
+            return {}
+
+    def _extract_memory_dynamics(self, model) -> dict:
+        """Collect Titans memory diagnostics, averaged across memory layers.
+
+        Memory modules opt in via ``MemorySurfacing.training_metrics``; wrapped
+        in try/except so one bad metric doesn't kill the dynamics log.
+        """
+        from praxis.memory.surfacings import MemoryBase
+
+        try:
+            return MemoryBase.collect_training_metrics(model)
+        except Exception as e:
+            print(f"[DynamicsLogger] memory training_metrics failed: {e}")
             return {}
 
     def on_train_end(self, trainer, pl_module):

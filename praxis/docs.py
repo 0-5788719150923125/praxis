@@ -79,6 +79,13 @@ def _registries() -> List[Tuple]:
             "How the stack of blocks is composed (sequential, parallel, weighted, ...).",
         ),
         (
+            "dense",
+            "Feedforward experts",
+            praxis.DENSE_REGISTRY,
+            "How a block's feedforward path is realized: MLP, GLU, KAN, polynomial, "
+            "scatter, PEER, ... Selected with ``--ffn-type``; default is ``glu``.",
+        ),
+        (
             "embeddings",
             "Token embeddings",
             praxis.EMBEDDING_REGISTRY,
@@ -115,22 +122,32 @@ def _registries() -> List[Tuple]:
             "Per-token criteria. Most accept optional ``loss_weights`` for task-weighted training.",
         ),
         (
+            "memory",
+            "Long-term memory",
+            praxis.MEMORY_REGISTRY,
+            "Titans-style test-time-learned memory modules (Behrouz et al. 2024), "
+            "surfaced as a layer (MAL) or a gate (MAG). Selected with "
+            "``--memory-type``; default is ``none``.",
+            praxis.MEMORY_PROFILE_DESCRIPTIONS,
+        ),
+        (
             "normalization",
             "Normalization layers",
             praxis.NORMALIZATION_REGISTRY,
             "LayerNorm/RMSNorm variants, including SandwichNorm (required for stable recurrent-depth bias).",
         ),
         (
-            "orchestration",
-            "Expert orchestration",
-            praxis.EXPERT_REGISTRY,
-            "How a block's feedforward path is realized: MLP, GLU, KAN, PEER, ...",
-        ),
-        (
             "policies",
             "RL policies",
             praxis.RL_POLICIES_REGISTRY,
             "Reinforcement-learning policy losses (REINFORCE, GRPO, ...) for post-training.",
+        ),
+        (
+            "recurrent",
+            "Recurrent cells",
+            praxis.RECURRENT_REGISTRY,
+            "Minimal gated recurrent cells (GRU, MinGRU). Used by the recurrent block "
+            "types and as a sequence mixer inside the byte-latent encoder.",
         ),
         (
             "residuals",
@@ -189,7 +206,6 @@ NON_REGISTRY_PACKAGES: List[Tuple[str, str]] = [
         "``PraxisModel`` / ``PraxisForCausalLM`` - the top-level transformers-compatible wrappers.",
     ),
     ("optimizers", "Optimizer registry and parameter-grouping helpers."),
-    ("recurrent", "Recurrent-depth utilities (looped layer execution)."),
     ("schedulers", "Learning-rate schedulers."),
     ("tasks", "Training task abstractions used by ``strategies``."),
     ("tokenizers", "Tokenizer creation and registry."),
@@ -873,15 +889,17 @@ def _registry_attr(slug: str) -> str:
         "controllers": "CONTROLLER_REGISTRY",
         "data": "SAMPLER_REGISTRY",
         "decoders": "DECODER_REGISTRY",
+        "dense": "DENSE_REGISTRY",
         "embeddings": "EMBEDDING_REGISTRY",
         "encoders": "ENCODER_REGISTRY",
         "encoding": "ENCODING_REGISTRY",
         "halting": "HALTING_REGISTRY",
         "heads": "HEAD_REGISTRY + MTP_REGISTRY",
         "losses": "LOSS_REGISTRY",
+        "memory": "MEMORY_REGISTRY",
         "normalization": "NORMALIZATION_REGISTRY",
-        "orchestration": "EXPERT_REGISTRY",
         "policies": "RL_POLICIES_REGISTRY",
+        "recurrent": "RECURRENT_REGISTRY",
         "residuals": "RESIDUAL_REGISTRY",
         "routers": "ROUTER_REGISTRY",
         "sorting": "SORTING_REGISTRY",

@@ -14,6 +14,7 @@ from praxis import (
     EXPERT_REGISTRY,
     HALTING_REGISTRY,
     HEAD_REGISTRY,
+    MEMORY_REGISTRY,
     MTP_REGISTRY,
     NORMALIZATION_REGISTRY,
     RESIDUAL_REGISTRY,
@@ -70,6 +71,14 @@ class ArchitectureGroup:
             choices=ATTENTION_REGISTRY.keys(),
             default="standard",
             help="The base attention implementation to use",
+        )
+
+        group.add_argument(
+            "--memory-type",
+            type=str,
+            choices=MEMORY_REGISTRY.keys(),
+            default="none",
+            help="Titans-style long-term memory profile (default: none)",
         )
 
         group.add_argument(

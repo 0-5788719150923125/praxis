@@ -20,8 +20,6 @@ class NanoBlock(nn.Module):
     https://arxiv.org/abs/2105.01601
     """
 
-    __version__ = "0.1.0"
-
     def __init__(self, config: ConfigType, *args: Any, **kwargs: Any) -> None:
         super().__init__()
         hidden_dim = config.hidden_size

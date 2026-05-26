@@ -17,8 +17,6 @@ class LocalLayer(nn.Module):
     A module for handling local layers in a mixture-of-experts architecture.
     """
 
-    __version__ = "0.2.0"
-
     def __init__(
         self,
         config: ConfigType,

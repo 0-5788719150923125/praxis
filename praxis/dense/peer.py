@@ -22,8 +22,6 @@ class ParameterEfficientExpertRetrieval(BaseDense):
     to select its own set of experts for processing.
     """
 
-    __version__ = "0.1.0"
-
     def __init__(
         self,
         config: ConfigType,
