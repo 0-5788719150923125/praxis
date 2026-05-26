@@ -23,7 +23,7 @@ In encoder-attached mode the head sizes its centers to match the encoder's class
 (so the distance computation lives in the encoder's feature space) and replaces the
 encoder's dot-product projection at the loss boundary.
 
-Source: [praxis/heads/crystal.py:235](../praxis/heads/crystal.py#L235)
+Source: [praxis/heads/crystal.py:244](../praxis/heads/crystal.py#L244)
 
 ## `forward` - ForwardHead
 

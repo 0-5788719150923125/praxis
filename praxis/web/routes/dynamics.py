@@ -742,13 +742,7 @@ def get_head_snapshots():
         if head is None:
             return jsonify({"status": "no_data", "snapshots": {}})
 
-        # Some snapshots (e.g. crystal's PCA density) need access to the
-        # model's input-embedding weights; we hand them over here the
-        # same way ``aux_losses`` receives them at training time.
-        weights_getter = getattr(model, "input_embedding_weights", None)
-        embedding_weights = weights_getter() if callable(weights_getter) else []
-
-        snapshots = head.dashboard_snapshots(embedding_weights=embedding_weights) or {}
+        snapshots = head.dashboard_snapshots() or {}
         response = jsonify({"status": "ok", "snapshots": snapshots})
         response.headers.add("Cache-Control", "max-age=5")
         return response

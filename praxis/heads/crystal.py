@@ -1,11 +1,13 @@
 """Crystal head: distance-based classifier (harmonic loss).
 
 Replaces the standard ``W @ x`` logits with Euclidean-distance logits to
-class centers. Probabilities follow ``p_i ∝ 1 / d_i^(2n)`` where
-``d_i = ||c_i - x||_2`` and ``n`` is the harmonic exponent. The head
-returns ``pseudo_logits = -n * log(d²)`` so that ``softmax`` over them
-reproduces those probabilities - meaning the standard CE pipeline can
-consume the output unchanged.
+class centers. Probabilities follow ``p_i ∝ 1 / d_i^(2n)`` (i.e.
+``(d_i²)^(-n)``) where ``d_i = ||c_i - x||_2`` and ``n`` is the harmonic
+exponent - matching the grow-crystals ``DistLayer``, which raises ``d²``
+to ``-n`` directly. The head returns ``pseudo_logits = -n * log(d²)``,
+offset so the nearest center's logit is 0; ``softmax`` over them
+reproduces those probabilities, so the standard CE pipeline consumes the
+output unchanged.
 
 The output-layer weights become *class centers* (convex combinations of
 training examples) rather than arbitrary direction vectors, giving the
@@ -27,8 +29,8 @@ from praxis.heads.base import BaseHead
 
 EPS: float = 1e-4
 
-# Paper default for the mean-column-RMS embedding regularizer (Baek et al.).
-# The crystal head reads this when computing its embedding_rms aux loss.
+# Paper default for the mean-column-RMS centers regularizer (Baek et al.).
+# The crystal head reads this when computing its centers_rms aux loss.
 # Override per-experiment via YAML by setting ``embedding_rms_lambda``.
 DEFAULT_EMBEDDING_RMS_LAMBDA: float = 0.01
 
@@ -39,12 +41,11 @@ PCA_GRID_SIZE: int = 64
 
 @torch.no_grad()
 def _pca_density_grid(weights: list, grid_size: int = PCA_GRID_SIZE) -> dict:
-    """Project stacked embedding weights to 2D PCA, bin into a density grid.
+    """Project stacked row vectors to 2D PCA, bin into a density grid.
 
-    Weights are stacked row-wise so the PCA sees the union of all
-    embedding tables (e.g., byte-latent's 3 hash tables become one
-    ``[3*V, D]`` matrix). Uses ``svd_lowrank`` to grab only the top-2
-    PCs - cheap regardless of vocab size.
+    Rows are stacked so the PCA sees every input table at once (the
+    crystal head passes its ``[V, D]`` centers). Uses ``svd_lowrank`` to
+    grab only the top-2 PCs - cheap regardless of vocab size.
     """
     if not weights:
         return {}
@@ -149,17 +150,16 @@ class CrystalClassifier(nn.Module):
                 "order": 40,
             },
         },
-        "crystal_embedding_pca": {
+        "crystal_centers_pca": {
             "description": (
-                "Top-2 PCA projection of the embedding tables the crystal "
-                "head regularizes (token embedding or byte-latent hash "
-                "tables, stacked), binned to a density grid. Visual "
-                "companion to ``embedding_rms``: structure here means the "
-                "regularizer has shaped the embedding geometry into "
-                "interpretable patterns."
+                "Top-2 PCA projection of the vocabulary centers, binned to "
+                "a density grid. The paper's 'crystal' view: as harmonic "
+                "loss pulls centers into class prototypes this should "
+                "develop structure (clusters, bands) rather than staying an "
+                "isotropic blob."
             ),
             "snapshot": {
-                "title": "Embedding PCA Density",
+                "title": "Center PCA Density",
                 "renderer": "heatmap_2d",
                 "color_scale": "log",
                 "group": "crystal_head",
@@ -181,23 +181,32 @@ class CrystalClassifier(nn.Module):
         self.n = float(n)
         self.eps = float(eps)
         self.centers = nn.Parameter(torch.empty(vocab_size, hidden_size))
-        # Paper's 1/sqrt(D) init (Baek et al. used 1/28 = 1/sqrt(784) for MNIST).
-        # 0.02 was way too small relative to LayerNorm'd decoder embeddings,
-        # which suppressed the cross-term that carries per-class signal at init.
+        # std = 1/sqrt(D), matching the grow-crystals tied-embedding init
+        # (`std=1/np.sqrt(embd_dim)`). Centers inflate toward the feature
+        # scale through the harmonic gradient during training.
         nn.init.normal_(self.centers, mean=0.0, std=1.0 / math.sqrt(hidden_size))
 
     def forward(self, x: Tensor) -> Tensor:
         orig_shape = x.shape
         out_dtype = x.dtype
-        # Distance computation in fp32: with n ~ sqrt(D), pseudo_logits sit
-        # around -n*log(D), where bf16 resolution loses the per-class spread
-        # and argmax collapses to a fixed token.
+        # Distance math in fp32: the per-class spread rides on a large
+        # ~||x||^2 baseline, which low precision would quantize away.
         x_flat = x.reshape(-1, orig_shape[-1]).float()
         centers = self.centers.float()
         cc = (centers * centers).sum(-1)
         xx = (x_flat * x_flat).sum(-1, keepdim=True)
         cx = x_flat @ centers.T
         dist_sq = (cc.unsqueeze(0) + xx - 2.0 * cx).clamp_min(self.eps)
+        # Normalize by the nearest center: scale-invariance makes this a
+        # no-op for softmax/CE, but it pins the top logit at 0 instead of a
+        # large negative offset. That offset is invisible to training yet
+        # breaks sign-sensitive inference processors like repetition_penalty
+        # (it multiplies negatives, suppressing correct recurring tokens as
+        # context grows). Matches the grow-crystals DistLayer.
+        dist_sq = dist_sq / dist_sq.amin(dim=-1, keepdim=True)
+        # p_i ∝ (d²)^(-n) = d^(-2n), matching the grow-crystals DistLayer
+        # (`(dist_sq)**(-n)`). n applies to d², not d: this sharp exponent is
+        # what drives the centers to organize - halving it stalls them.
         pseudo_logits = -self.n * torch.log(dist_sq)
         return pseudo_logits.view(*orig_shape[:-1], self.vocab_size).to(out_dtype)
 
@@ -259,10 +268,12 @@ class CrystalHead(BaseHead):
                     "to expose a `.classifier` with a `.weight` attribute"
                 )
             v_dim, f_dim = classifier.weight.shape
-            n = float(n_cfg) if n_cfg is not None else math.sqrt(f_dim)
+            # Default n = feature dim, matching the grow-crystals DistLayer
+            # (`n=embd_dim`). Override with crystal_n for a softer exponent.
+            n = float(n_cfg) if n_cfg is not None else float(f_dim)
             self.lm_head = CrystalClassifier(hidden_size=f_dim, vocab_size=v_dim, n=n)
         else:
-            n = float(n_cfg) if n_cfg is not None else math.sqrt(self.hidden_size)
+            n = float(n_cfg) if n_cfg is not None else float(self.hidden_size)
             self.lm_head = CrystalClassifier(
                 hidden_size=self.hidden_size,
                 vocab_size=self.vocab_size,
@@ -297,40 +308,33 @@ class CrystalHead(BaseHead):
             out["crystal_centers_grad_norm"] = float(grad.detach().norm().item())
         return out
 
-    def dashboard_snapshots(self, embedding_weights: Optional[list] = None) -> dict:
-        """Top-2 PCA density grid of the regularized embeddings.
+    def dashboard_snapshots(self) -> dict:
+        """Top-2 PCA density grid of the vocabulary centers.
 
-        Visual companion to the ``embedding_rms`` aux loss: if the
-        regularizer is shaping geometry, this heatmap should develop
-        structure (peaks, bands, clusters) rather than staying uniform.
+        The paper's 'crystal' view: as harmonic loss pulls centers into
+        class prototypes this heatmap should develop structure (peaks,
+        bands, clusters) rather than staying an isotropic blob.
         """
-        grid = _pca_density_grid(embedding_weights or [])
-        return {"crystal_embedding_pca": grid} if grid else {}
+        grid = _pca_density_grid([self.lm_head.centers])
+        return {"crystal_centers_pca": grid} if grid else {}
 
-    def aux_losses(self, embedding_weights: Optional[list] = None) -> dict:
-        """Mean-column-RMS embedding regularizer (Baek et al.).
+    def aux_losses(self) -> dict:
+        """Mean-column-RMS regularizer on the centers (Baek et al.).
 
-        Penalizes ``mean(sqrt(mean(W**2, dim=0)))`` - per-column RMS
+        Penalizes ``mean(sqrt(mean(c**2, dim=0)))`` - per-column RMS
         averaged across columns - matching the exact formula in the
-        ``grow-crystals`` reference (``src/utils/model.py``). The paper
-        text just calls this "L2 regularization on embeddings"; the
-        code is what defines the precise penalty.
-
-        We average across whatever embedding tables the model exposes
-        (token embedding or byte-latent hash tables). Specific to the
-        crystal head: standard CE heads benefit from unbounded weight
-        growth and we don't want to suppress it for them.
+        ``grow-crystals`` reference (``src/utils/model.py``). There the
+        regularized embedding *is* the unembedding (weight-tied), so the
+        penalty lands on the centers. Our centers are untied, so we
+        regularize them directly; the input embeddings play no role in
+        the distance geometry.
         """
-        if not embedding_weights:
-            return {}
         lam = float(
             getattr(self.config, "embedding_rms_lambda", DEFAULT_EMBEDDING_RMS_LAMBDA)
             or 0.0
         )
         if lam <= 0.0:
             return {}
-        per_table = [
-            W.pow(2).mean(dim=0).clamp_min(1e-12).sqrt().mean()
-            for W in embedding_weights
-        ]
-        return {"embedding_rms": lam * torch.stack(per_table).mean()}
+        c = self.lm_head.centers
+        rms = c.pow(2).mean(dim=0).clamp_min(1e-12).sqrt().mean()
+        return {"centers_rms": lam * rms}

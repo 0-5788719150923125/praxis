@@ -547,12 +547,10 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 outputs.losses.add_loss("task_weight_anchor", anchor)
 
         # Heads can emit named aux losses (e.g., HarmonicHead's
-        # forward-shift smoothness loss, CrystalHead's embedding-RMS
-        # regularizer). We pass the model's input-embedding weights
-        # along so heads that want to regularize them can; heads that
-        # don't ignore the arg.
+        # forward-shift smoothness loss, CrystalHead's centers-RMS
+        # regularizer).
         if self.training and labels is not None and self.head is not None:
-            aux = self.head.aux_losses(embedding_weights=self.input_embedding_weights())
+            aux = self.head.aux_losses()
             for name, value in aux.items():
                 outputs.losses.add_loss(name, value)
 
@@ -794,27 +792,6 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 return self.embeds.tokens
             return self.embeds
         return None
-
-    def input_embedding_weights(self) -> list:
-        """Input-embedding weight tensors exposed to interested heads.
-
-        For token paths, this is the input embedding's weight. For
-        encoder paths, the encoder may expose its own list via
-        ``get_regularizable_embeddings()`` (e.g. byte-latent's hash
-        tables) - we defer to the encoder rather than trying to
-        introspect its internals. Heads that don't care (forward,
-        harmonic) ignore the result; heads that do (crystal) use it
-        in ``aux_losses()`` to compute their regularization.
-        """
-        if self.encoder:
-            get = getattr(self.encoder, "get_regularizable_embeddings", None)
-            if callable(get):
-                return list(get())
-            return []
-        embeds = self.get_input_embeddings()
-        if embeds is not None and hasattr(embeds, "weight"):
-            return [embeds.weight]
-        return []
 
     def get_output_embeddings(self) -> nn.Module:
         """Get the output embeddings (lm_head) module."""

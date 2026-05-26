@@ -75,19 +75,12 @@ class BaseHead(nn.Module, ABC):
         """
         return encoder_logits, decoder_embeds, encoder_classifier
 
-    def aux_losses(self, embedding_weights: Optional[list] = None) -> Dict[str, Tensor]:
+    def aux_losses(self) -> Dict[str, Tensor]:
         """Named auxiliary losses to fold into the main objective.
 
         Each entry's key becomes the loss name in the model's loss
         container (and surfaces as a dashboard metric), so use stable,
         descriptive keys.
-
-        Args:
-            embedding_weights: Input-embedding weight tensors the model
-                exposes for heads that want to regularize them (e.g.,
-                the crystal head's column-RMS penalty). May be ``None``
-                or empty if the model has no exposed embeddings. Heads
-                that don't use embedding weights can ignore this arg.
 
         Default: no aux losses.
         """
@@ -104,9 +97,7 @@ class BaseHead(nn.Module, ABC):
         """
         return {}
 
-    def dashboard_snapshots(
-        self, embedding_weights: Optional[list] = None
-    ) -> Dict[str, Any]:
+    def dashboard_snapshots(self) -> Dict[str, Any]:
         """Non-scalar live snapshots for dashboard visualizations
         (heatmaps, scatters, etc.).
 
@@ -114,13 +105,6 @@ class BaseHead(nn.Module, ABC):
         name so the frontend can dispatch on the key. Scalars belong in
         ``training_metrics()``; this is the place for matrices, PCA
         projections, and similar non-scalar shapes.
-
-        Args:
-            embedding_weights: Input-embedding weight tensors the model
-                exposes for heads that want to visualize them (e.g.,
-                crystal's PCA density grid of regularized embeddings).
-                ``None`` or empty if unavailable. Heads that don't
-                consume embeddings can ignore this arg.
 
         Default: no snapshots.
         """

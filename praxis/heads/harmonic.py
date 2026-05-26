@@ -287,8 +287,7 @@ class HarmonicHead(BaseHead):
         ).to(encoder_logits.dtype)
         return logits, decoder_embeds, encoder_classifier
 
-    def aux_losses(self, embedding_weights: Optional[list] = None) -> dict:
-        del embedding_weights  # harmonic head doesn't regularize embeddings
+    def aux_losses(self) -> dict:
         aux = self.field.aux_loss()
         return {"harmonic_smoothness": aux} if aux is not None else {}
 
@@ -303,14 +302,13 @@ class HarmonicHead(BaseHead):
             return getattr(self._encoder, "classifier", None)
         return self.lm_head
 
-    def dashboard_snapshots(self, embedding_weights: Optional[list] = None) -> dict:
+    def dashboard_snapshots(self) -> dict:
         """Amplitude grid magnitudes for the spectrum heatmap.
 
         Returns the field's ``|amp[f_t, f_d]|`` matrix and the
         irrationals used to seed phases, packaged for the generic
         ``heatmap_2d`` renderer (grid + axis ranges + max).
         """
-        del embedding_weights  # harmonic head doesn't visualize embeddings
         amps = self.field.amplitudes.detach().abs().to("cpu", dtype=torch.float32)
         F_t, F_d = int(amps.shape[0]), int(amps.shape[1])
         return {
