@@ -2,6 +2,7 @@
 
 import sys
 
+from .config import RunConfig
 from .core import (
     DEFAULT_EXCLUDE_FROM_HASH,
     CustomHelpFormatter,
@@ -151,6 +152,18 @@ def get_processed_args(args_override=None):
     return ArgumentProcessor.process_arguments(args_override)
 
 
+def parse_cli():
+    """Parse CLI arguments and return ``(args, processed_args)``.
+
+    Initializes the CLI on demand (the ``--help`` path skips auto-init at
+    import time, so we may have to run ``initialize_cli`` here).
+    """
+    parsed = get_cli_args()
+    if parsed is None:
+        _parser, parsed, _loader = initialize_cli()
+    return parsed, get_processed_args(parsed)
+
+
 def get_cli_args():
     """Get the parsed CLI arguments, or None if CLI was never initialized.
 
@@ -192,6 +205,8 @@ __all__ = [
     "apply_defaults_and_parse",
     "create_praxis_config",
     "get_processed_args",
+    "parse_cli",
+    "RunConfig",
     "get_cli_args",
     "get_loader_flag_attrs",
     "log_command",

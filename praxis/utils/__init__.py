@@ -20,15 +20,19 @@ from praxis.utils.naming import (
 )
 from praxis.utils.system import (
     check_for_updates,
+    configure_multiprocessing,
     find_latest_checkpoint,
+    graceful_shutdown,
     initialize_lazy_modules,
     is_shutting_down,
     perform_reset,
     register_child_process,
     register_cleanup_function,
+    resolve_resume_checkpoint,
     show_launch_animation,
     shutdown_manager,
     sigint_handler,
+    update_license_timestamp,
 )
 from praxis.utils.tensors import create_block_ids, norm_scaling
 
@@ -56,7 +60,11 @@ __all__ = [
     "register_child_process",
     "is_shutting_down",
     "check_for_updates",
+    "configure_multiprocessing",
     "find_latest_checkpoint",
+    "resolve_resume_checkpoint",
+    "graceful_shutdown",
+    "update_license_timestamp",
     "initialize_lazy_modules",
     "perform_reset",
     "show_launch_animation",

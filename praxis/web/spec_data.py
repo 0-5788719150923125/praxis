@@ -105,6 +105,29 @@ def save_run_spec(run_dir: str, payload: dict) -> None:
         json.dump(payload, f, indent=2)
 
 
+def snapshot_run_spec(cfg, run, generator, param_stats, services) -> None:
+    """Snapshot this run's spec to <run_dir>/spec.json (rank 0, best-effort).
+
+    Lets the Identity tab inspect the run later, after the process exits.
+    """
+    if cfg.local_rank != 0:
+        return
+    try:
+        api_server = services.api_server
+        payload = build_spec_payload(
+            generator=generator,
+            truncated_hash=run.truncated_hash,
+            full_hash=run.full_hash,
+            param_stats=param_stats,
+            command=run.full_command,
+            timestamp=(api_server.launch_timestamp if api_server is not None else None),
+            seed=cfg.seed,
+        )
+        save_run_spec(run.cache_dir, payload)
+    except Exception:
+        pass
+
+
 def load_run_spec(run_dir: str) -> Optional[dict]:
     """Read <run_dir>/spec.json if present."""
     path = Path(run_dir) / SPEC_SNAPSHOT_FILENAME

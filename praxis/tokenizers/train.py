@@ -18,6 +18,43 @@ from transformers import PreTrainedTokenizerFast
 from .standard import StandardTokenizer
 
 
+def run_train_tokenizer_cli(cfg) -> int:
+    """Train a tokenizer from the CLI (the ``--train-tokenizer`` shortcut).
+
+    Trains on a fixed FineWeb sample, saves under build/tokenizers, then
+    runs the chat-template check and offers a Hub upload. Returns exit code.
+    """
+    tokenizer_type = cfg.tokenizer_train_type
+    num_examples = cfg.tokenizer_num_examples
+    vocab_size = cfg.tokenizer_train_vocab_size
+
+    dataset_name = "HuggingFaceFW/fineweb"
+    dataset_config = "sample-350BT"
+
+    print(f"Training {tokenizer_type} tokenizer with vocab_size={vocab_size}...")
+    print(f"Using {num_examples:,} examples from {dataset_name}")
+
+    tokenizer = StandardTokenizer.train_from_dataset(
+        dataset_name=dataset_name,
+        dataset_config=dataset_config,
+        num_examples=num_examples,
+        vocab_size=vocab_size,
+        tokenizer_type=tokenizer_type,
+        dropout=0.1,
+    )
+
+    save_path = Path("build/tokenizers") / f"praxis-{vocab_size}-{tokenizer_type}"
+    os.makedirs(save_path, exist_ok=True)
+    tokenizer.save_pretrained(save_path)
+
+    print(f"\n✓ Tokenizer saved to:")
+    print(f"  - {save_path}")
+
+    test_chat_template(tokenizer)
+    upload_to_hub(tokenizer, vocab_size, tokenizer_type)
+    return 0
+
+
 def test_chat_template(tokenizer: PreTrainedTokenizerFast):
     """Test the chat template with a sample conversation."""
     print("\n" + "=" * 60)

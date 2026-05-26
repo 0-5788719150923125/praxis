@@ -20,7 +20,21 @@ from praxis.trainers.factory import (
 )
 from praxis.trainers.module import BaseTrainingModule
 from praxis.trainers.progress import BaseProgressBar, get_progress_bar_base
+from praxis.trainers.runtime import (
+    assemble_trainer,
+    print_training_banner,
+    resolve_training_logger,
+    run_training,
+)
 from praxis.trainers.seed import reset_seed, seed_everything
+from praxis.trainers.setup import (
+    ModelBundle,
+    assemble_model,
+    build_model_info,
+    configure_torch_precision,
+    register_praxis_models,
+    setup_environment,
+)
 from praxis.trainers.trainer import Trainer
 
 # Framework-specific imports with graceful fallback
@@ -121,6 +135,17 @@ __all__ = [
     "seed_everything",
     "reset_seed",
     "try_compile",
+    # Run setup / lifecycle
+    "setup_environment",
+    "register_praxis_models",
+    "configure_torch_precision",
+    "assemble_model",
+    "build_model_info",
+    "ModelBundle",
+    "assemble_trainer",
+    "resolve_training_logger",
+    "print_training_banner",
+    "run_training",
     # Trainers
     "BackpropagationTrainer",
     "Trainer",

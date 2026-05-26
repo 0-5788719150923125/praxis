@@ -203,8 +203,12 @@ class NeuralMemory(nn.Module):
         return NeuralMemState(0, weights, zeros(), zeros())
 
     def _adam_update(
-        self, weights: Weights, momentum: Weights, second_moment: Weights,
-        surprise: Weights, num_chunks: int,
+        self,
+        weights: Weights,
+        momentum: Weights,
+        second_moment: Weights,
+        surprise: Weights,
+        num_chunks: int,
     ) -> Tuple[Weights, Weights, Weights, Weights]:
         """Detached Adam-style test-time update. Per-chunk EMAs of the surprise
         (1st/2nd moment, bias-corrected) give a scale-invariant step, so the
@@ -215,8 +219,8 @@ class NeuralMemory(nn.Module):
         beta2 = ref.new_full((b, num_chunks), self.beta2)
         keep = ref.new_full((b, num_chunks), 1.0 - self.weight_decay)
         t = torch.arange(1, num_chunks + 1, device=ref.device)
-        c1 = (1.0 - self.beta1**t)  # bias-correction, (nc,)
-        c2 = (1.0 - self.beta2**t)
+        c1 = 1.0 - self.beta1**t  # bias-correction, (nc,)
+        c2 = 1.0 - self.beta2**t
 
         chunk_weights, new_weights, new_m, new_v = {}, {}, {}, {}
         for name in self._param_names:
@@ -324,8 +328,10 @@ class NeuralMemory(nn.Module):
 
             new_second = second_moment
             if self.use_energy:
-                chunk_weights, new_weights, new_momentum, new_second = self._adam_update(
-                    weights, momentum, second_moment, surprise, num_chunks
+                chunk_weights, new_weights, new_momentum, new_second = (
+                    self._adam_update(
+                        weights, momentum, second_moment, surprise, num_chunks
+                    )
                 )
             else:
                 # Learned momentum then weight-decay, each a scan over chunks.
@@ -341,7 +347,9 @@ class NeuralMemory(nn.Module):
                     w_t = _affine_scan(1 - alpha, s, weights[name])  # (b, nc, *p)
                     chunk_weights[name] = w_t
                     new_weights[name] = w_t[:, -1]
-                    new_momentum[name] = s[:, -1] if self.use_momentum else momentum[name]
+                    new_momentum[name] = (
+                        s[:, -1] if self.use_momentum else momentum[name]
+                    )
 
         # Retrieve: each chunk reads the state *before* its own writes (causal),
         # i.e. W0 for chunk 0 and the previous chunk's weights thereafter.

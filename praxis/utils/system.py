@@ -14,6 +14,22 @@ import weakref
 from glob import glob
 
 
+def configure_multiprocessing():
+    """Force the ``spawn`` multiprocessing start method.
+
+    Fork-based workers deadlock when CUDA is initialized before the fork;
+    ``spawn`` avoids this by re-importing from scratch in each worker. Must
+    run before any CUDA work or DataLoader worker is created, so main.py
+    calls this first.
+    """
+    import torch.multiprocessing as mp
+
+    try:
+        mp.set_start_method("spawn", force=True)
+    except RuntimeError:
+        pass  # Already set
+
+
 class ShutdownManager:
     """Centralized shutdown manager for graceful termination."""
 
@@ -266,6 +282,36 @@ def find_latest_checkpoint(cache_dir):
     return latest_checkpoint
 
 
+def resolve_resume_checkpoint(cache_dir, reset=False):
+    """Find a checkpoint to resume from, or None to start fresh.
+
+    Prefers Lightning's ``last.ckpt`` symlink, then the latest batch
+    checkpoint, then a Mono-Forward ``mono_forward.pt`` (saved to a
+    different path than Lightning). Honors --reset and the force_reset
+    environment feature.
+    """
+    from praxis.environments import EnvironmentFeatures
+
+    if reset or EnvironmentFeatures.is_enabled("force_reset"):
+        return None
+
+    symlink = os.path.join(cache_dir, "model", "last.ckpt")
+    true_link = find_latest_checkpoint(cache_dir)
+    if os.path.exists(symlink):
+        print(f"resuming from symbolic path: {symlink}")
+        return symlink
+    if true_link is not None and os.path.exists(true_link):
+        print(f"resuming from true path: {true_link}")
+        return true_link
+
+    mf_path = os.path.join(cache_dir, "mono_forward.pt")
+    if os.path.exists(mf_path):
+        print(f"resuming from mono-forward checkpoint: {mf_path}")
+        return mf_path
+
+    return None
+
+
 def _materialize_skipped_lazy_modules(model, device):
     """Probe any LazyModule left uninitialized after the main dummy forward.
 
@@ -504,3 +550,71 @@ def show_launch_animation(model, truncated_hash):
     elapsed_time = time.time() - start_time
     print(f"[RATE] {elapsed_time:.3f}s")
     time.sleep(1)
+
+
+def graceful_shutdown(api_server, exit_code=0, reason="training complete"):
+    """Explicit teardown before Python finalization to avoid GIL races.
+
+    Background daemon threads (Flask/Werkzeug, dataloader workers,
+    integration clients) can still be in C-extension code when the main
+    thread returns. If one calls ``PyGILState_Release`` on an interpreter
+    that's already finalizing, the process dies with a fatal error even
+    after a clean run. We stop each known resource with a short per-
+    component timeout, then bypass finalization via ``os._exit``. Metrics
+    DBs and checkpoints are already flushed by ``trainer.fit`` by now.
+    """
+    from praxis.cli import integration_loader
+
+    print(f"[SHUTDOWN] {reason}; stopping background services...")
+
+    def _stop_with_timeout(name, fn, timeout):
+        try:
+            t = threading.Thread(target=fn, daemon=True, name=f"shutdown_{name}")
+            t.start()
+            t.join(timeout=timeout)
+            if t.is_alive():
+                print(
+                    f"[SHUTDOWN] {name} stop timed out after {timeout:.0f}s; "
+                    "continuing teardown"
+                )
+        except Exception as exc:
+            print(f"[SHUTDOWN] {name} stop raised: {exc!r}")
+
+    if api_server is not None:
+        _stop_with_timeout("api_server", api_server.stop, 5.0)
+
+    try:
+        _stop_with_timeout("integrations", integration_loader.run_cleanup_hooks, 5.0)
+    except Exception as exc:
+        print(f"[SHUTDOWN] integration cleanup failed to dispatch: {exc!r}")
+
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+    # os._exit skips atexit handlers, finalizers, and the module-teardown
+    # pass where the GIL races happen. Buffers are already flushed above.
+    os._exit(exit_code)
+
+
+def update_license_timestamp():
+    """Update the LICENSE file's copyright line with year progress (0-1)."""
+    from datetime import datetime
+
+    now = datetime.now()
+    year_start = datetime(now.year, 1, 1)
+    year_end = datetime(now.year + 1, 1, 1)
+    year_progress = (now - year_start).total_seconds() / (
+        year_end - year_start
+    ).total_seconds()
+
+    with open("LICENSE", "r") as f:
+        lines = f.readlines()
+
+    if len(lines) >= 3 and "Copyright (c)" in lines[2]:
+        fraction = str(year_progress).split(".", 1)[1]
+        lines[2] = f"Copyright (c) {now.year}.{fraction}\n"
+        with open("LICENSE", "w") as f:
+            f.writelines(lines)

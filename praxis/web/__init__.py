@@ -12,10 +12,13 @@ from .middleware import (
     register_wsgi_middleware,
 )
 from .server import APIServer
+from .services import Services, start_services
 
 # Export the main interface
 __all__ = [
     "APIServer",
+    "Services",
+    "start_services",
     "app",
     "socketio",
     "api_logger",

@@ -7,6 +7,7 @@ from praxis.generation.lf_temperature import (
 )
 from praxis.generation.mono_forward_generator import MonoForwardGenerator
 from praxis.generation.request import GenerationRequest
+from praxis.generation.runtime import bos_prompt, swap_inference_generator
 from praxis.generation.streaming import StreamingContext, random_char_seed
 
 __all__ = [
@@ -17,4 +18,6 @@ __all__ = [
     "random_char_seed",
     "lf_temperature_sample_batched",
     "lf_temperature_sample_exact",
+    "bos_prompt",
+    "swap_inference_generator",
 ]

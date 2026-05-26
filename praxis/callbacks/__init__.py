@@ -8,6 +8,7 @@ import warnings
 from typing import Any, Dict, Type
 
 # Generic callbacks (framework-agnostic)
+from praxis.callbacks.builder import build_training_callbacks
 from praxis.callbacks.printing_progress import (
     PrintingProgressBar,
     create_printing_progress_bar,
@@ -67,6 +68,7 @@ __all__ = [
     "get_callback_registry",
     "PrintingProgressBar",
     "create_printing_progress_bar",
+    "build_training_callbacks",
 ]
 
 # Re-export Lightning callbacks for backward compatibility

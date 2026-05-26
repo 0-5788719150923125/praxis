@@ -81,6 +81,59 @@ def get_optimizer(
     return optimizer
 
 
+def safe_parameter_stats(model, optimizer=None):
+    """Compute parameter statistics, returning {} if anything goes wrong."""
+    try:
+        if optimizer is not None:
+            return get_parameter_stats(model, optimizer)
+        return get_parameter_stats(model)
+    except Exception:
+        return {}
+
+
+def build_optimizer_and_scheduler(
+    model,
+    cfg,
+    optimizer_config,
+    disable_schedule,
+    warmup_steps,
+    services=None,
+    param_stats=None,
+):
+    """Create the optimizer and scheduler, refreshing param stats.
+
+    Returns ``(optimizer, scheduler, param_stats)``. On a stats failure the
+    passed-in ``param_stats`` is kept so the API server isn't cleared.
+    """
+    from praxis.schedulers import get_scheduler_func
+
+    scheduler_func = get_scheduler_func(
+        optimizer_config=optimizer_config,
+        disable_schedule=disable_schedule,
+        warmup_steps=warmup_steps,
+    )
+
+    optimizer = get_optimizer(
+        model,
+        trac=cfg.trac,
+        ortho=cfg.ortho,
+        lookahead=cfg.lookahead,
+        schedule_free=cfg.schedule_free,
+        **optimizer_config,
+    )
+
+    api_server = getattr(services, "api_server", None)
+    try:
+        param_stats = get_parameter_stats(model, optimizer)
+        if api_server and hasattr(api_server, "update_param_stats"):
+            api_server.update_param_stats(param_stats)
+    except Exception:
+        pass
+
+    scheduler = scheduler_func(optimizer)
+    return optimizer, scheduler, param_stats
+
+
 # Most optimizer settings can be found here:
 # https://pytorch-optimizers.readthedocs.io/en/latest/optimizer
 OPTIMIZER_PROFILES = {

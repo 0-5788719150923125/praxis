@@ -106,6 +106,16 @@ CALMBpe = partial(
     energy_alpha=1.0,
 )
 
+
+def is_byte_latent_encoder(encoder_type: str) -> bool:
+    """Check if an encoder type is a ByteLatentEncoder or subclass."""
+    encoder_cls = ENCODER_REGISTRY.get(encoder_type)
+    if encoder_cls is None:
+        return False
+    actual_cls = getattr(encoder_cls, "func", encoder_cls)
+    return issubclass(actual_cls, ByteLatentEncoder)
+
+
 ENCODER_REGISTRY = dict(
     # Base class (use with explicit arguments)
     byte_latent=ByteLatentEncoder,

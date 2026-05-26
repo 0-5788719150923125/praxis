@@ -3,9 +3,78 @@
 import json
 import os
 import shutil
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+
+@dataclass
+class RunContext:
+    """Identifies a prepared run directory and its hashes."""
+
+    cache_dir: str  # the namespaced run directory
+    run_dir: Path
+    truncated_hash: str
+    full_hash: str
+    full_command: str
+    is_existing_run: bool
+
+
+def print_runs(base_cache_dir: str) -> int:
+    """Print all known runs (the ``--list-runs`` shortcut). Returns exit code."""
+    runs = RunManager(base_cache_dir).list_runs()
+    if not runs:
+        print("No runs found.")
+        return 0
+
+    print("\nAvailable runs:")
+    for run in runs:
+        status = "[CURRENT]" if run.get("is_current") else ""
+        preserved = "[PRESERVED]" if run.get("preserve") else ""
+        created = run.get("created", "Unknown")
+        size = run.get("size_human", "Unknown")
+        print(
+            f"  {run['truncated_hash']} - {size} - Created: {created} {preserved} {status}"
+        )
+    return 0
+
+
+def setup_training_run(cfg) -> RunContext:
+    """Resolve this run's directory, handle --reset, and seed RNGs.
+
+    Mirrors the original main.py preamble: log the command, reset the run
+    when asked (explicit resets ignore the preserve flag), set up the
+    namespaced directory, then seed everything.
+    """
+    from praxis.cli import log_command
+    from praxis.trainers import seed_everything
+
+    full_command, args_hash, truncated_hash = log_command()
+
+    run_manager = RunManager(cfg.cache_dir)
+    if cfg.reset:
+        run_manager.reset_run(truncated_hash, force=True)
+
+    run_dir, is_existing_run = run_manager.setup_run(
+        truncated_hash, full_command, args_hash, cfg.preserve
+    )
+
+    if is_existing_run:
+        print(f"[RUN] Resuming existing run: {truncated_hash}")
+    else:
+        print(f"[RUN] Starting new run: {truncated_hash}")
+
+    seed_everything(cfg.seed, workers=True)
+
+    return RunContext(
+        cache_dir=str(run_dir),
+        run_dir=run_dir,
+        truncated_hash=truncated_hash,
+        full_hash=args_hash,
+        full_command=full_command,
+        is_existing_run=is_existing_run,
+    )
 
 
 class RunManager:
