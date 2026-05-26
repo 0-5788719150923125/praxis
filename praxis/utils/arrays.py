@@ -1,8 +1,40 @@
 """Array and list generation utilities."""
 
-from typing import List
+import json
+from typing import Any, List
 
 import numpy as np
+
+
+def coerce_to_list(value: Any) -> List[str]:
+    """Normalize a scalar, comma-separated string, JSON array, or list into a
+    flat list of stripped, non-empty strings.
+
+    Each element may itself be comma-separated or a JSON array, so values that
+    arrive as `"a,b"`, `'["a","b"]'`, `["a", "b,c"]`, or `None` ([]) all flatten
+    the same way. Handy for CLI/env/YAML inputs that may be a scalar or a list.
+    """
+    if value is None:
+        return []
+    items = value if isinstance(value, (list, tuple)) else [value]
+
+    result: List[str] = []
+    for item in items:
+        if item is None:
+            continue
+        text = str(item).strip()
+        if not text:
+            continue
+        if text.startswith("[") and text.endswith("]"):
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, list):
+                result.extend(str(x).strip() for x in parsed if str(x).strip())
+                continue
+        result.extend(p.strip() for p in text.split(",") if p.strip())
+    return result
 
 
 def generate_alternating_values(

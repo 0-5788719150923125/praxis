@@ -69,9 +69,15 @@ if [ "$1" = "compose" ]; then
             CONSUMING_DATA_PATHS=false
         fi
         if $CONSUMING_DATA_PATHS; then
-            abs_path="$(cd "$SCRIPT_DIR" && realpath -m "$arg" 2>/dev/null || echo "$arg")"
-            EXTRA_VOLUMES="$EXTRA_VOLUMES -v $abs_path:$abs_path:ro"
-            RESOLVED_ARGS+=("$abs_path")
+            # A single value may itself be comma-separated (mirrors the
+            # comma-or-list handling on the Python side); mount each path.
+            IFS=',' read -ra _paths <<< "$arg"
+            for _p in "${_paths[@]}"; do
+                [ -z "$_p" ] && continue
+                abs_path="$(cd "$SCRIPT_DIR" && realpath -m "$_p" 2>/dev/null || echo "$_p")"
+                EXTRA_VOLUMES="$EXTRA_VOLUMES -v $abs_path:$abs_path:ro"
+                RESOLVED_ARGS+=("$abs_path")
+            done
             continue
         fi
         case "$arg" in

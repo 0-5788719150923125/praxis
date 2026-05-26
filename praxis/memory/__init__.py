@@ -31,6 +31,16 @@ MEMORY_REGISTRY: Dict[str, Optional[dict]] = {
         momentum=True,
         activation="mish",
     ),
+    "mal_energy": dict(
+        surfacing="mal",
+        dense="mlp",
+        layers=2,
+        expansion=1.0,
+        chunk_size=64,
+        momentum=True,
+        activation="mish",
+        use_energy=True,
+    ),
     "mag": dict(
         surfacing="mag",
         dense="mlp",
@@ -49,6 +59,14 @@ MEMORY_PROFILE_DESCRIPTIONS: Dict[str, str] = {
     "mal": (
         "Memory-as-Layer (Titans): a test-time-learned memory MLP applied as "
         "its own residual sub-layer within each transformer block."
+    ),
+    "mal_energy": (
+        "Memory-as-Layer with a detached (energy-based) test-time update: the "
+        "memory learns by a local surprise rule with no second-order graph, for "
+        "much lower VRAM. The update uses a fixed Adam-style adaptive rule (EMA "
+        "1st/2nd moment, constant lr) in place of learned gates; the key "
+        "projection is tied to the query projection (so addressing trains on the "
+        "task) and the value side is fixed to identity."
     ),
     "mag": (
         "Memory-as-Gate (Titans): a memory branch run parallel to attention "

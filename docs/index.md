@@ -15,7 +15,7 @@ links to a page listing the registered implementations and their source.
 - [Halting / early exit](halting.md) (2) - Per-token mechanisms for early exit from recurrent depth loops.
 - [Input encoders](encoders.md) (8) - Front-end encoders, including the byte-latent and abstractinator variants.
 - [Layer-routing controllers](controllers.md) (8) - Decide which expert / block a token visits at each depth. Enables out-of-order layers and graph-style routing.
-- [Long-term memory](memory.md) (3) - Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced as a layer (MAL) or a gate (MAG). Selected with ``--memory-type``; default is ``none``.
+- [Long-term memory](memory.md) (4) - Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced as a layer (MAL) or a gate (MAG). Selected with ``--memory-type``; default is ``none``.
 - [Loss functions](losses.md) (9) - Per-token criteria. Most accept optional ``loss_weights`` for task-weighted training.
 - [Normalization layers](normalization.md) (5) - LayerNorm/RMSNorm variants, including SandwichNorm (required for stable recurrent-depth bias).
 - [Output heads](heads.md) (6) - LM heads (tied/untied, harmonic, crystal) and multi-token-prediction wrappers.

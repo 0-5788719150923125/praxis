@@ -14,9 +14,10 @@ Value coercion handles the common argparse action types:
 """
 
 import argparse
-import json
 import os
 from typing import Any, Optional
+
+from praxis.utils import coerce_to_list
 
 DEFAULT_PREFIX = "PRAXIS_"
 
@@ -31,23 +32,6 @@ def _parse_bool(raw: str) -> bool:
     if lowered in _FALSE_STRINGS:
         return False
     raise ValueError(f"invalid boolean value '{raw}'")
-
-
-def _split_list(raw: str) -> list:
-    """Split a raw env string into list items.
-
-    Accepts either a JSON array (`[1, 2, 3]`) or a comma-separated string.
-    Empty items are dropped so trailing commas are tolerated.
-    """
-    stripped = raw.strip()
-    if stripped.startswith("[") and stripped.endswith("]"):
-        try:
-            data = json.loads(stripped)
-            if isinstance(data, list):
-                return [str(x) for x in data]
-        except json.JSONDecodeError:
-            pass
-    return [p.strip() for p in stripped.split(",") if p.strip()]
 
 
 def _coerce(action: argparse.Action, raw: str) -> Any:
@@ -70,7 +54,7 @@ def _coerce(action: argparse.Action, raw: str) -> Any:
     )
 
     if is_list:
-        parts = _split_list(raw)
+        parts = coerce_to_list(raw)
         converted = [type_fn(p) for p in parts]
         if action.choices is not None:
             for item in converted:

@@ -96,9 +96,75 @@ def test_meta_params_receive_gradient(mem):
     assert all(g is not None and torch.isfinite(g).all() for g in grads)
 
 
+def test_standard_mode_trains_store_projections(mem):
+    """In the default mode the differentiable update gives the store-side
+    projections a gradient (contrast with energy mode below)."""
+    out, _ = mem(torch.randn(2, 16, 64))
+    out.sum().backward()
+    assert mem.to_keys.weight.grad is not None
+
+
+# --- energy (detached) mode -------------------------------------------------
+
+
+def _energy_mem():
+    torch.manual_seed(0)
+    model = nn.Sequential(nn.Linear(64, 128), nn.GELU(), nn.Linear(128, 64))
+    return NeuralMemory(dim=64, model=model, chunk_size=8, use_energy=True)
+
+
+def test_energy_mode_ties_keys_and_fixes_values():
+    """Energy mode ties the key projection to the query projection (and the
+    store norm to the retrieve norm) and fixes the value side to identity, so
+    addressing learns on the task while the encoder can't collapse the energy."""
+    mem = _energy_mem()
+    assert mem.to_keys is mem.to_queries
+    assert mem.store_norm is mem.retrieve_norm
+    assert isinstance(mem.to_values, nn.Identity)
+
+
+def test_energy_mode_has_no_frozen_params():
+    """Every parameter in energy mode receives a gradient (nothing is left
+    untrained), so the module is DDP-clean."""
+    mem = _energy_mem()
+    out, _ = mem(torch.randn(2, 16, 64))
+    out.sum().backward()
+    missing = [n for n, p in mem.named_parameters() if p.grad is None]
+    assert not missing, missing
+
+
+def test_energy_mode_has_no_learned_gate_heads():
+    """Energy mode replaces the learned lr/momentum/decay gates with the
+    Adam-style rule, so it carries no untrained gate heads."""
+    mem = _energy_mem()
+    assert not hasattr(mem, "to_lr")
+    assert not hasattr(mem, "to_momentum")
+    assert not hasattr(mem, "to_decay")
+
+
+def test_energy_mode_detaches_update_but_trains_readout():
+    """The detached update keeps the fast weights off the graph, while the tied
+    addressing projection and the memory net still train through retrieval."""
+    mem = _energy_mem()
+    out, _ = mem(torch.randn(2, 16, 64))
+    out.sum().backward()
+
+    assert mem.to_queries.weight.grad is not None
+    assert all(p.grad is not None for p in mem.memory_model.parameters())
+
+
+def test_energy_mode_still_memorizes():
+    """The detached update still adapts the fast weights at test time."""
+    mem = _energy_mem()
+    seq = torch.randn(2, 64, 64)
+    cold = mem.init_state(batch=2)
+    _, warm = mem(seq)
+    assert mem.memory_loss(seq, warm.weights) < mem.memory_loss(seq, cold.weights)
+
+
 # --- surfacing integration (MAL / MAG) --------------------------------------
 
-SURFACINGS = ["mal", "mag"]
+SURFACINGS = ["mal", "mal_energy", "mag"]
 
 
 def _block_config(memory_type):

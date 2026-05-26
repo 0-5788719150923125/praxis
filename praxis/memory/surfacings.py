@@ -95,6 +95,7 @@ class MemorySurfacing(MemoryBase):
             model=build_memory_model(config, spec),
             chunk_size=spec.get("chunk_size", 64),
             momentum=spec.get("momentum", True),
+            use_energy=spec.get("use_energy", False),
         )
 
     def forward(self, stream, attn_output, state=None):

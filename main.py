@@ -69,6 +69,7 @@ from praxis.trainers import (
 from praxis.trainers.capabilities import get_trainer_capabilities
 from praxis.utils import (
     check_for_updates,
+    coerce_to_list,
     find_latest_checkpoint,
     get_memory_info,
     initialize_lazy_modules,
@@ -376,18 +377,10 @@ def main():
         "validation"
     ]
 
-    def _split_commas(items):
-        return [
-            name.strip()
-            for item in items
-            for name in str(item).split(",")
-            if name.strip()
-        ]
-
-    train_datasets = _split_commas(train_datasets_raw)
-    validation_datasets = _split_commas(validation_datasets_raw)
+    train_datasets = coerce_to_list(train_datasets_raw)
+    validation_datasets = coerce_to_list(validation_datasets_raw)
     weighting_mode = processed_args.get("sampler_mode", "novelty")
-    data_path = processed_args.get("data_path")
+    data_path = coerce_to_list(processed_args.get("data_path"))
     rl_type = processed_args.get("rl_type")
     no_compile = processed_args.get("no_compile", False)
     # Automatically set byte_latent if using any ByteLatent encoder variant

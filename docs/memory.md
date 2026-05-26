@@ -3,7 +3,7 @@
 
 Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced as a layer (MAL) or a gate (MAG). Selected with ``--memory-type``; default is ``none``.
 
-Registry: ``praxis.MEMORY_REGISTRY`` (3 entries)
+Registry: ``praxis.MEMORY_REGISTRY`` (4 entries)
 
 ## `mag`
 
@@ -14,6 +14,13 @@ through a learned gate.
 
 Memory-as-Layer (Titans): a test-time-learned memory MLP applied as its own residual
 sub-layer within each transformer block.
+
+## `mal_energy`
+
+Memory-as-Layer with a detached (energy-based) test-time update: the memory learns by a
+local surprise rule with no second-order graph, for much lower VRAM. The key projection
+is tied to the query projection (so addressing trains on the task) and the value side is
+fixed to identity.
 
 ## `none`
 

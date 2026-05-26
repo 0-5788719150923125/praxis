@@ -31,7 +31,7 @@ source. See [docs/index.md](docs/index.md) for the full map.
 - [Halting / early exit](docs/halting.md) (2)
 - [Input encoders](docs/encoders.md) (8)
 - [Layer-routing controllers](docs/controllers.md) (8)
-- [Long-term memory](docs/memory.md) (3)
+- [Long-term memory](docs/memory.md) (4)
 - [Loss functions](docs/losses.md) (9)
 - [Normalization layers](docs/normalization.md) (5)
 - [Output heads](docs/heads.md) (6)

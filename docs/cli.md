@@ -68,7 +68,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--max-position-embeddings` | int | `None` | Maximum positional capacity (defaults to block_size when unset) |
 | `--mega` | bool | `False` | Equip the attention mechanism with exponentially-moving average-based gating |
 | `--memory` | bool | `False` | Use a long-term episodic memory module |
-| `--memory-type` | str | `none` | Titans-style long-term memory profile (choices: none, mal, mag) |
+| `--memory-type` | str | `none` | Titans-style long-term memory profile (choices: none, mal, mal_energy, mag) |
 | `--mla` | bool | `False` | Use Multi-Head Latent Attention (MLA) |
 | `--mta` | bool | `False` | Use Multi-Token Attention (MTA) |
 | `--mtp-depth` | int | `1` | Number of Multi-Token Prediction depths |
