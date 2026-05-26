@@ -17,113 +17,68 @@ export function setupTabCarousel() {
 
     function updateScrollIndicators() {
         const scrollLeft = tabButtons.scrollLeft;
-        const scrollWidth = tabButtons.scrollWidth;
-        const clientWidth = tabButtons.clientWidth;
+        const maxScroll = tabButtons.scrollWidth - tabButtons.clientWidth;
 
-        // Show left fade if scrolled right
-        if (scrollLeft > 5) {
-            tabNav.classList.add('has-scroll-left');
-        } else {
-            tabNav.classList.remove('has-scroll-left');
-        }
-
-        // Show right fade if more content to the right
-        if (scrollLeft < scrollWidth - clientWidth - 5) {
-            tabNav.classList.add('has-scroll-right');
-        } else {
-            tabNav.classList.remove('has-scroll-right');
-        }
+        tabNav.classList.toggle('has-scroll-left', scrollLeft > 5);
+        tabNav.classList.toggle('has-scroll-right', scrollLeft < maxScroll - 5);
     }
 
-    // Scroll clicked/active tab to left-most position (fixed anchor)
+    // Scroll a tab so it sits at the container's left edge (fixed anchor)
     function scrollTabToLeft(button) {
         if (!button) return;
-
-        // Get fresh positions - button should already have .active class
-        const containerRect = tabButtons.getBoundingClientRect();
-        const buttonRect = button.getBoundingClientRect();
-
-        // Calculate distance from button to container's left edge
-        const offset = buttonRect.left - containerRect.left;
-
-        // Instant scroll to exact position (no smooth animation)
-        tabButtons.scrollLeft = tabButtons.scrollLeft + offset;
+        const offset = button.getBoundingClientRect().left - tabButtons.getBoundingClientRect().left;
+        tabButtons.scrollLeft += offset;
     }
 
-    // Update indicators on scroll
-    tabButtons.addEventListener('scroll', () => {
-        updateScrollIndicators();
-    });
+    tabButtons.addEventListener('scroll', updateScrollIndicators);
 
-    // Track which tab was touched
-    let touchedButton = null;
+    // Remember where a touch began so we can tell a tap from a scroll gesture
+    let touchStart = null;
 
-    // Track touchstart - just remember which button
     tabButtons.addEventListener('touchstart', (e) => {
-        touchedButton = e.target.closest('.tab-button');
+        const button = e.target.closest('.tab-button');
+        touchStart = button ? { button, x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
     }, { passive: true });
 
-    // On touchend - wait for the clicked button to become active, then scroll it
     tabButtons.addEventListener('touchend', (e) => {
-        if (!touchedButton) return;
+        if (!touchStart) return;
+        const { button, x, y } = touchStart;
+        touchStart = null;
 
-        const clickedButton = touchedButton;
-        touchedButton = null;
+        // A finger that moved was scrolling the carousel, not pressing a tab
+        const touch = e.changedTouches[0];
+        if (Math.abs(touch.clientX - x) > 10 || Math.abs(touch.clientY - y) > 10) return;
 
-        // Use MutationObserver to wait for the active class to actually change
-        const observer = new MutationObserver(() => {
-            if (clickedButton.classList.contains('active')) {
-                observer.disconnect();
-                scrollTabToLeft(clickedButton);
-            }
-        });
-
-        // Watch for class changes on the clicked button
-        observer.observe(clickedButton, {
-            attributes: true,
-            attributeFilter: ['class']
-        });
-
-        // Fallback timeout in case the button was already active
-        setTimeout(() => {
+        // Snap once, after the press has switched the active tab
+        let snapped = false;
+        const snap = () => {
+            if (snapped || !button.classList.contains('active')) return;
+            snapped = true;
             observer.disconnect();
-            if (clickedButton.classList.contains('active')) {
-                scrollTabToLeft(clickedButton);
-            }
-        }, 50);
+            scrollTabToLeft(button);
+        };
+        const observer = new MutationObserver(snap);
+        observer.observe(button, { attributes: true, attributeFilter: ['class'] });
+        setTimeout(() => { observer.disconnect(); snap(); }, 50);
     }, { passive: true });
 
     // Fallback for non-touch devices (desktop)
     tabButtons.addEventListener('click', (e) => {
-        // Only handle click if not a touch device (avoid double-trigger)
-        if (!('ontouchstart' in window)) {
-            const button = e.target.closest('.tab-button');
-            if (button) {
-                requestAnimationFrame(() => {
-                    const activeButton = tabButtons.querySelector('.tab-button.active');
-                    if (activeButton) {
-                        scrollTabToLeft(activeButton);
-                    }
-                });
-            }
-        }
+        if ('ontouchstart' in window) return;
+        if (!e.target.closest('.tab-button')) return;
+        requestAnimationFrame(() => scrollTabToLeft(tabButtons.querySelector('.tab-button.active')));
     });
 
-    // Initial state
     updateScrollIndicators();
+    scrollTabToLeft(tabButtons.querySelector('.tab-button.active'));
 
-    // Scroll active button to left on load
-    const activeButton = tabButtons.querySelector('.tab-button.active');
-    if (activeButton) {
-        scrollTabToLeft(activeButton);
-    }
-
-    // Re-calculate on window resize
+    // Re-snap only on real width changes - the URL bar showing/hiding during a
+    // scroll fires resize and would otherwise jerk the active tab to the left
+    let lastWidth = window.innerWidth;
     window.addEventListener('resize', () => {
-        if (window.innerWidth <= 768) {
-            updateScrollIndicators();
-            const active = tabButtons.querySelector('.tab-button.active');
-            if (active) scrollTabToLeft(active);
-        }
+        if (window.innerWidth > 768 || window.innerWidth === lastWidth) return;
+        lastWidth = window.innerWidth;
+        updateScrollIndicators();
+        scrollTabToLeft(tabButtons.querySelector('.tab-button.active'));
     });
 }

@@ -110,7 +110,13 @@
     .tab-buttons::-webkit-scrollbar {
         display: none;
     }
-    
+
+    /* Trailing runway so the last tab can scroll clear of the status indicator */
+    .tab-buttons::after {
+        content: '';
+        flex: 0 0 2.5rem;
+    }
+
     .tab-button {
         padding: 0.625rem 0.75rem;
         font-size: 0.8125rem;
