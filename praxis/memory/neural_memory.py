@@ -22,6 +22,9 @@ energy would collapse (value -> 0), so instead the key projection is tied to the
 query projection - the shared addressing map learns on the task through
 retrieval - and the value side is fixed to identity, leaving ``combine`` to adapt
 content. The backbone connects through that retrieval and the residual skip.
+The reconstruction is measured on RMS-normalized vectors (matching the
+out_norm'd readout), so the memory net's free output-scale mode can't dominate
+the energy.
 """
 
 import contextlib
@@ -160,6 +163,7 @@ class NeuralMemory(nn.Module):
         # surprise, the memory's output magnitude relative to the stream, and
         # the relative size of the test-time weight update.
         self.last_surprise: Optional[Tensor] = None
+        self.last_surprise_norm: Optional[Tensor] = None
         self.last_gain: Optional[Tensor] = None
         self.last_write: Optional[Tensor] = None
 
@@ -234,24 +238,37 @@ class NeuralMemory(nn.Module):
 
     # --- functional grad of the surprise loss --------------------------------
 
+    def _recon_per_token(self, pred: Tensor, v: Tensor, normalize: bool) -> Tensor:
+        """Per-token reconstruction loss. Energy mode compares RMS-normalized
+        (directional) vectors - matching the out_norm'd readout - so the memory
+        net's free output-scale mode can't dominate; standard mode uses raw MSE.
+        """
+        if normalize:
+            pred = pred * torch.rsqrt(pred.pow(2).mean(-1, keepdim=True) + self.eps)
+            v = v * torch.rsqrt(v.pow(2).mean(-1, keepdim=True) + self.eps)
+        return ((pred - v) ** 2).mean(dim=-1)
+
     def _surprise_grads(
         self, weights: Weights, keys: Tensor, values: Tensor, lr: Tensor
-    ) -> Tuple[Weights, Tensor]:
+    ) -> Tuple[Weights, Tensor, Tensor]:
         """Per-sequence gradient of the lr-weighted reconstruction loss.
 
-        keys/values: (b, c, d); lr: (b, c); weights leaves: (b, ...).
-        Returns grads (batched like weights) and per-token loss (b, c).
+        keys/values: (b, c, d); lr: (b, c); weights leaves: (b, ...). Returns
+        grads (batched like weights), the per-token loss that drives them
+        (normalized in energy mode), and the raw per-token loss (for the
+        scale-sensitive metric).
         """
 
         def loss_single(w: Weights, k: Tensor, v: Tensor, step: Tensor):
             pred = functional_call(self.memory_model, w, (k,))
-            per_token = ((pred - v) ** 2).mean(dim=-1)  # (c,)
-            return (step * per_token).sum(), per_token
+            driver = self._recon_per_token(pred, v, self.use_energy)  # (c,)
+            raw = self._recon_per_token(pred, v, False)
+            return (step * driver).sum(), (driver, raw)
 
-        grads, (_, per_token) = vmap(grad_and_value(loss_single, has_aux=True))(
+        grads, (_, (driver, raw)) = vmap(grad_and_value(loss_single, has_aux=True))(
             weights, keys, values, lr
         )
-        return grads, per_token
+        return grads, driver, raw
 
     # --- forward -------------------------------------------------------------
 
@@ -295,7 +312,7 @@ class NeuralMemory(nn.Module):
             w0_rep = {
                 k: v.repeat_interleave(num_chunks, dim=0) for k, v in weights.items()
             }
-            grads, per_token = self._surprise_grads(
+            grads, per_token, per_token_raw = self._surprise_grads(
                 w0_rep,
                 keys.reshape(bn, c, d),
                 values.reshape(bn, c, d),
@@ -341,17 +358,19 @@ class NeuralMemory(nn.Module):
         retrieved = self.combine(self.out_norm(retrieved))[:, :n]
 
         with torch.no_grad():
-            self.last_surprise = per_token.mean()
+            # Raw surprise (scale-sensitive, kept for continuity) and, in energy
+            # mode, the scale-free surprise the update actually optimizes.
+            self.last_surprise = per_token_raw.mean()
+            self.last_surprise_norm = per_token.mean() if self.use_energy else None
             # Output magnitude relative to the stream: catches the model routing
             # around the memory (combine -> 0). Per-sequence write magnitude:
             # confirms the test-time update is doing real work (not collapsing).
-            eps = 1e-8
-            self.last_gain = retrieved.norm() / (seq[:, :n].norm() + eps)
+            self.last_gain = retrieved.norm() / (seq[:, :n].norm() + self.eps)
             wnum = sum(
                 (new_weights[p] - weights[p]).pow(2).sum() for p in self._param_names
             )
             wden = sum(weights[p].pow(2).sum() for p in self._param_names)
-            self.last_write = (wnum / (wden + eps)).sqrt()
+            self.last_write = (wnum / (wden + self.eps)).sqrt()
 
         new_state = NeuralMemState(
             state.seq_index + n, new_weights, new_momentum, new_second
@@ -362,14 +381,13 @@ class NeuralMemory(nn.Module):
 
     @torch.no_grad()
     def memory_loss(self, seq: Tensor, weights: Weights) -> Tensor:
-        """Mean reconstruction loss of ``weights`` on ``seq``'s associations.
-
-        Lower means the memory has better memorized the sequence; doubles as
-        the per-step "surprise" signal once we wire metrics in Phase 2.
+        """Mean reconstruction loss of ``weights`` on ``seq``'s associations,
+        in the same (normalized in energy mode) space the update optimizes.
+        Lower means the memory has better memorized the sequence.
         """
         stored = self.store_norm(seq)
         keys, values = self.to_keys(stored), self.to_values(stored)
         pred = vmap(lambda w, k: functional_call(self.memory_model, w, (k,)))(
             weights, keys
         )
-        return ((pred - values) ** 2).mean()
+        return self._recon_per_token(pred, values, self.use_energy).mean()

@@ -74,17 +74,34 @@ class MemorySurfacing(MemoryBase):
     metric_descriptions = {
         "memory_surprise": {
             "description": (
-                "Mean reconstruction loss of the Titans memory on the stored "
-                "sequence at the cold init weights, averaged across memory "
-                "layers. This is pre-update surprise (novelty to the cold "
-                "memory), not a measure of the test-time update."
+                "Mean RAW reconstruction loss at the cold init weights, averaged "
+                "across memory layers. Pre-update novelty to the cold memory and "
+                "scale-sensitive (it can be dominated by the memory net's free "
+                "output scale); read Memory Surprise (norm) for the scale-free "
+                "quantity the update optimizes."
             ),
             "chart": {
-                "title": "Memory Surprise",
+                "title": "Memory Surprise (raw)",
                 "y_label": "Surprise",
-                "y_scale": "linear",
+                "y_scale": "logarithmic",
                 "group": "memory",
                 "order": 10,
+            },
+        },
+        "memory_surprise_norm": {
+            "description": (
+                "Reconstruction loss in RMS-normalized (directional) space, "
+                "which is what the readout's out_norm consumes - the scale-free "
+                "quantity the energy update actually optimizes. Unlike the raw "
+                "surprise it isn't dominated by output-scale drift; falling = "
+                "the memory is learning directional associations."
+            ),
+            "chart": {
+                "title": "Memory Surprise (norm)",
+                "y_label": "Surprise (normalized)",
+                "y_scale": "linear",
+                "group": "memory",
+                "order": 11,
             },
         },
         "memory_gain": {
@@ -98,7 +115,7 @@ class MemorySurfacing(MemoryBase):
                 "y_label": "retrieved / stream",
                 "y_scale": "linear",
                 "group": "memory",
-                "order": 11,
+                "order": 12,
             },
         },
         "memory_write": {
@@ -112,7 +129,7 @@ class MemorySurfacing(MemoryBase):
                 "y_label": "delta-W / W0",
                 "y_scale": "linear",
                 "group": "memory",
-                "order": 12,
+                "order": 13,
             },
         },
     }
@@ -135,6 +152,8 @@ class MemorySurfacing(MemoryBase):
         out = {}
         if m.last_surprise is not None:
             out["memory_surprise"] = float(m.last_surprise)
+        if m.last_surprise_norm is not None:
+            out["memory_surprise_norm"] = float(m.last_surprise_norm)
         if m.last_gain is not None:
             out["memory_gain"] = float(m.last_gain)
         if m.last_write is not None:

@@ -172,6 +172,22 @@ def test_reports_gain_and_write():
     assert mem.last_write > 0
 
 
+def test_energy_surprise_is_scale_free():
+    """The normalized surprise is bounded/O(1) even when the memory net's
+    output scale is large, where the raw surprise blows up. This is the fix for
+    the runaway raw surprise: the update optimizes the scale-free quantity."""
+    mem = _energy_mem()
+    # Blow up the memory net's output scale, mimicking trained scale drift.
+    with torch.no_grad():
+        for p in mem.memory_model.parameters():
+            p.mul_(50.0)
+    mem(torch.randn(2, 32, 64))
+    assert mem.last_surprise_norm is not None
+    # Normalized surprise stays small; raw is dominated by the inflated scale.
+    assert mem.last_surprise_norm < 10.0
+    assert mem.last_surprise > 100.0 * mem.last_surprise_norm
+
+
 # --- surfacing integration (MAL / MAG) --------------------------------------
 
 SURFACINGS = ["mal", "mal_energy", "mag"]
@@ -266,6 +282,12 @@ def test_surprise_metric_surfaced(memory_type):
     for key in ("memory_surprise", "memory_gain", "memory_write"):
         assert key in metrics and torch.isfinite(torch.as_tensor(metrics[key]))
         assert key in descriptions
+    # The scale-free surprise is energy-mode only.
+    if memory_type == "mal_energy":
+        assert torch.isfinite(torch.as_tensor(metrics["memory_surprise_norm"]))
+    else:
+        assert "memory_surprise_norm" not in metrics
+    assert "memory_surprise_norm" in descriptions  # chart declared for all
 
     plain = PraxisForCausalLM(_block_config("none"))
     plain(input_ids=torch.randint(0, 256, (2, 16)))
