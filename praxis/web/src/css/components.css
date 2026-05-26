@@ -656,10 +656,6 @@
     color: #555;
 }
 
-.ld-sep {
-    color: #333;
-}
-
 .ld-header-metrics {
     display: flex;
     gap: 1rem;
@@ -709,6 +705,17 @@
 
 .ld-panel-status {
     overflow: hidden;
+}
+
+.ld-panel-status .ld-panel-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+}
+
+.ld-context-tokens {
+    color: #fff;
+    text-transform: none;
 }
 
 .ld-status-text {

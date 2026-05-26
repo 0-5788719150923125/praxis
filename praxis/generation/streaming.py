@@ -23,9 +23,30 @@ tracking and degeneracy detection to :class:`StreamingContext`.
 
 from __future__ import annotations
 
+import random
 import re
+import string
 from collections import Counter
 from typing import Callable, List, Optional, Sequence, Union
+
+# Predictable, always-decodable seed pool: letters, digits, punctuation.
+# Sampling real characters (rather than random vocab tokens) avoids the
+# replacement-character (U+FFFD) seeds that byte-latent and similar
+# tokenizers emit for unmapped IDs.
+SEED_CHARS = string.ascii_letters + string.digits + string.punctuation
+
+
+def random_char_seed() -> str:
+    """Return a single random printable character to seed a buffer.
+
+    The model must attend to *something* at position 0; a fixed seed
+    imprints that choice on every sample. Re-rolling a real character
+    spreads the starting condition without ever producing an invalid
+    (un-decodable) seed. Usable directly as ``initial_text`` so each
+    ``reset()`` draws a fresh character. Shared by every streaming path
+    (Lightning backprop callback and Ray mono-forward hook).
+    """
+    return random.choice(SEED_CHARS)
 
 
 class StreamingContext:
@@ -33,7 +54,7 @@ class StreamingContext:
 
     Caller pattern:
 
-        ctx = StreamingContext(initial_text=tokenizer.bos_token or "")
+        ctx = StreamingContext()  # seeds with a random printable char
         # ... in inference hook:
         new_text = decode(encode(ctx.text) + generated_tokens)
         ctx.update(new_text)  # returns True if a reset fired
@@ -46,13 +67,14 @@ class StreamingContext:
 
     ``initial_text`` may be either a fixed string or a zero-arg callable
     that returns one. Callable seeds are invoked on every ``reset()``,
-    which lets callers re-roll a random first token each time the
-    buffer goes degenerate without re-instantiating the context.
+    which lets callers re-roll a fresh first character each time the
+    buffer goes degenerate without re-instantiating the context. It
+    defaults to :func:`random_char_seed`.
     """
 
     def __init__(
         self,
-        initial_text: Union[str, Callable[[], str]] = "",
+        initial_text: Union[str, Callable[[], str]] = random_char_seed,
         max_length: int = 512,
         unchanged_threshold: int = 30,
         ignored_n_grams: Optional[Sequence[str]] = None,

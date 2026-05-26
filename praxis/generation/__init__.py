@@ -7,13 +7,14 @@ from praxis.generation.lf_temperature import (
 )
 from praxis.generation.mono_forward_generator import MonoForwardGenerator
 from praxis.generation.request import GenerationRequest
-from praxis.generation.streaming import StreamingContext
+from praxis.generation.streaming import StreamingContext, random_char_seed
 
 __all__ = [
     "Generator",
     "GenerationRequest",
     "MonoForwardGenerator",
     "StreamingContext",
+    "random_char_seed",
     "lf_temperature_sample_batched",
     "lf_temperature_sample_exact",
 ]

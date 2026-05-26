@@ -167,7 +167,11 @@ export function renderLiveDashboard(m) {
 
         // Header
         const headerLeft = existing.querySelector('.ld-header-left');
-        if (headerLeft) headerLeft.innerHTML = `<span class="ld-label">HASH:</span> <span class="ld-hash">${escapeHtml(m.arg_hash || '------')}</span> <span class="ld-sep">||</span> <span class="ld-label">CONTEXT:</span> ${m.context_tokens || 0} tokens`;
+        if (headerLeft) headerLeft.innerHTML = `<span class="ld-label">HASH:</span> <span class="ld-hash">${escapeHtml(m.arg_hash || '------')}</span>`;
+
+        // Context token count now lives in the Context panel title
+        const contextTokens = existing.querySelector('.ld-context-tokens');
+        if (contextTokens) contextTokens.textContent = `${m.context_tokens || 0} tokens`;
 
         const headerMetrics = existing.querySelector('.ld-header-metrics');
         if (headerMetrics) headerMetrics.innerHTML = `
@@ -234,7 +238,7 @@ export function renderLiveDashboard(m) {
     container.innerHTML = `
         <div class="live-dashboard">
             <div class="ld-header">
-                <span class="ld-header-left"><span class="ld-label">HASH:</span> <span class="ld-hash">${escapeHtml(m.arg_hash || '------')}</span> <span class="ld-sep">||</span> <span class="ld-label">CONTEXT:</span> ${m.context_tokens || 0} tokens</span>
+                <span class="ld-header-left"><span class="ld-label">HASH:</span> <span class="ld-hash">${escapeHtml(m.arg_hash || '------')}</span></span>
                 <span class="ld-header-metrics">
                     <span class="ld-metric">ERROR <span class="ld-val">${fmt(m.loss)}</span></span>
                     ${m.val_loss !== null ? `<span class="ld-metric">VALIDATION <span class="ld-val">${fmt(m.val_loss)}</span></span>` : ''}
@@ -244,7 +248,7 @@ export function renderLiveDashboard(m) {
             </div>
             <div class="ld-body">
                 <div class="ld-panel ld-panel-status">
-                    <div class="ld-panel-title">Status</div>
+                    <div class="ld-panel-title">Context <span class="ld-context-tokens">${m.context_tokens || 0} tokens</span></div>
                     <div class="ld-status-text">${escapeHtml(m.status_text || '_initializing')}</div>
                 </div>
                 <div class="ld-panel ld-panel-chart">

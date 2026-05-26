@@ -89,13 +89,14 @@ except Exception as e:
 
 
 def _bos_prompt(tokenizer):
-    """Build a BOS-seed prompt for the MF live-inference hook.
+    """Build the enable-prompt for the MF live-inference hook.
 
-    Returns a ``[1, 1]`` id tensor when the tokenizer has a concrete
-    BOS id, or the plain string ``bos_token`` as a fallback (the
-    trainer's hook will encode it via its own tokenizer reference).
-    Returns ``None`` when the tokenizer has neither, which disables
-    the hook cleanly. Only used by ``--trainer-type mono_forward``.
+    The hook seeds its streaming buffer from ``random_char_seed`` (same
+    as the backprop TerminalInterface), so this value is only the
+    on/off gate: a non-``None`` return enables the hook, ``None``
+    disables it. Returns a ``[1, 1]`` BOS id tensor, the plain
+    ``bos_token`` string as a fallback, or ``None`` when the tokenizer
+    has neither. Only used by ``--trainer-type mono_forward``.
     """
     if tokenizer is None:
         return None

@@ -1938,21 +1938,14 @@ class MonoForwardTrainer:
 
         Needs the tokenizer to be available (otherwise there's no way
         to encode the growing text buffer back into prompt ids each
-        step). Returns ``None`` when the tokenizer is missing or when
-        the prompt can't be resolved to any initial seed text.
+        step). Returns ``None`` when the tokenizer is missing.
         """
         if self._inference_context is not None:
             return self._inference_context
         if self.tokenizer is None:
             return None
 
-        from praxis.generation import StreamingContext
-
-        # Resolve the seed text from whatever shape the prompt came in
-        # as. Strings pass through; id tensors get decoded.
-        seed = self._resolve_prompt_as_text(self.inference_prompt)
-        if seed is None:
-            return None
+        from praxis.generation import StreamingContext, random_char_seed
 
         # Build the list of ignored n-grams the same way the backprop
         # TerminalInterface does - special tokens shouldn't count
@@ -1964,33 +1957,15 @@ class MonoForwardTrainer:
             if tok:
                 ignored_n_grams.append(tok)
 
+        # Seed from the shared random-character factory rather than the
+        # BOS prompt: re-rolls a real, always-decodable character on
+        # each degeneracy reset, matching the backprop TerminalInterface.
         self._inference_context = StreamingContext(
-            initial_text=seed,
+            initial_text=random_char_seed,
             max_length=self.inference_max_context_chars,
             ignored_n_grams=ignored_n_grams,
         )
         return self._inference_context
-
-    def _resolve_prompt_as_text(self, prompt: Any) -> Optional[str]:
-        """Convert any of the accepted prompt shapes to a plain string.
-
-        Used to seed the ``StreamingContext``. Accepts strings, ``[seq]``
-        / ``[batch, seq]`` id tensors, or plain lists of ids.
-        """
-        if isinstance(prompt, str):
-            return prompt
-        if self.tokenizer is None:
-            return None
-        if not isinstance(prompt, torch.Tensor):
-            prompt = torch.as_tensor(prompt, dtype=torch.long)
-        if prompt.dim() == 1:
-            ids = prompt.tolist()
-        else:
-            ids = prompt[0].tolist()
-        try:
-            return self.tokenizer.decode(ids, skip_special_tokens=False)
-        except Exception:  # pragma: no cover - defensive
-            return None
 
     def _encode_context_text(self, text: str) -> Optional[torch.Tensor]:
         """Encode the growing text buffer into a ``[1, seq]`` id tensor."""
