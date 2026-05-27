@@ -234,15 +234,17 @@ def test_segment_helper_boundaries():
 
 
 def test_segment_events_bounded_and_surfaced():
-    """Event sizes never exceed the cap and the metrics are populated."""
+    """Event sizes are reported at grid granularity, so they stay bounded by
+    [segment_block, chunk_size] even when the sequence is not block-aligned
+    (200 % 16 != 0): the padded trailing block never reports below one block."""
     torch.manual_seed(1)
     mem = _segment_mem()
-    seq = torch.randn(2, 200, 64)
+    seq = torch.randn(2, 200, 64)  # not a multiple of segment_block (16)
     seq[:, 100:] += 8.0  # context shift -> surprise spike
     mem(seq)
     assert mem.last_event_mean is not None
     assert float(mem.last_event_max) <= 64.0
-    assert float(mem.last_event_min) >= 1.0
+    assert float(mem.last_event_min) >= 16.0
 
 
 def test_segment_still_memorizes():

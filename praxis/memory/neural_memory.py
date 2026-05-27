@@ -464,14 +464,16 @@ class NeuralMemory(nn.Module):
             wden = sum(weights[p].pow(2).sum() for p in self._param_names)
             self.last_write = (wnum / (wden + self.eps)).sqrt()
 
-            # Event sizes (tokens): inter-boundary spans, last block sheds pad.
+            # Event sizes: inter-boundary spans at the base-block grid, reported
+            # in tokens (whole blocks * segment_block), so they're bounded by
+            # [segment_block, chunk_size]. A padded trailing block still counts
+            # as a full grid block - the update masks its pad, but the segment
+            # granularity is the grid, so min never dips below one block.
             if self.segment and reset_mask is not None:
-                vtc = [float(c)] * num_chunks
-                vtc[-1] = c - pad
                 sizes = []
                 for bi in range(b):
                     bounds = reset_mask[bi].nonzero().flatten().tolist() + [num_chunks]
-                    sizes += [sum(vtc[a:e]) for a, e in zip(bounds, bounds[1:])]
+                    sizes += [(e - a) * c for a, e in zip(bounds, bounds[1:])]
                 sizes = seq.new_tensor(sizes)
                 self.last_event_mean = sizes.mean()
                 self.last_event_min = sizes.min()
