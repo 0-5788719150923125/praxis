@@ -3,7 +3,7 @@
 
 Decide which expert / block a token visits at each depth. Enables out-of-order layers and graph-style routing.
 
-Registry: ``praxis.CONTROLLER_REGISTRY`` (8 entries)
+Registry: ``praxis.CONTROLLER_REGISTRY`` (7 entries)
 
 ## `attention`, `counter_attention` - AttentionChanneler
 
@@ -45,16 +45,6 @@ Order-invariance matters in a decentralized setting where peer layers may be mis
 slow, or out of their usual position.
 
 Source: [praxis/controllers/layer_shuffle.py:15](../praxis/controllers/layer_shuffle.py#L15)
-
-## `neural` - NeuralController
-
-A neural routing module that uses NeuralLambda's stack to maintain memory of routing
-decisions while being compatible with the Pathfinder interface.
-
-This version includes both fixed activation functions and trainable neural network tools
-to provide a more flexible routing mechanism.
-
-Source: [integrations/neurallambda/neural.py:32](../integrations/neurallambda/neural.py#L32)
 
 ## `pathfinder`, `shortcutter` - Pathfinder
 

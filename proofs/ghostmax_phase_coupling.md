@@ -2,7 +2,7 @@
 
 ## Setup
 
-Ghostmax (`praxis/attention/causal.py`) prepends a zero key/value slot before the real sequence, so attention runs on `kv_idx ∈ {0, 1, ..., T}` while queries stay at `q_idx ∈ {0, ..., T-1}`. The ghost at `kv_idx = 0` absorbs probability mass without contributing to the output (softmax1, Miller 2023).
+Ghostmax (`praxis/attention/causal.py`) prepends a zero key/value slot before the real sequence, so attention runs on `kv_idx ∈ {0, 1, ..., T}` while queries stay at `q_idx ∈ {0, ..., T-1}`. The ghost at `kv_idx = 0` absorbs probability mass without contributing to the output (softmax1, [Miller 2023](https://www.evanmiller.org/attention-is-off-by-one.html)).
 
 The LM head sees unshifted positions `t ∈ {0, ..., T-1}`. Attention indexing and head indexing are off by one.
 
@@ -33,3 +33,9 @@ If the coupling is real, three things should hold:
 - That ghostmax causes the field to learn faster. They might be additive, multiplicative, or interfering - empirical.
 - That π and e are uniquely necessary. Any pair of irrationals linearly independent with 1 over Q works (see `harmonic_pi.md`).
 - That this is a proof. It's a hypothesis about *why* the architecture should work, with three falsifiable predictions.
+
+## On provenance
+
+The softmax1 / off-by-one idea comes from Evan Miller's blog post, [Attention Is Off By One](https://www.evanmiller.org/attention-is-off-by-one.html) (2023). It was never published as a paper, and the community largely passed on it - which is worth flagging, because the idea is sound. The likeliest reason for the cold reception is the implicit assumption that `no paper == not proven`. But publishing has real barriers to entry, especially for someone who isn't an ML academic by trade, and "unpublished" is not the same as "wrong." We adopt it here on its merits.
+
+Worth noting too: PyTorch's [`nn.MultiheadAttention`](https://docs.pytorch.org/docs/2.12/generated/torch.nn.MultiheadAttention.html) has long carried an `add_zero_attn` flag that appends a zero key/value slot to the sequence - mechanically identical to ghostmax / softmax1. It was inherited from [fairseq](https://fairseq.readthedocs.io/en/v0.9.0/_modules/fairseq/modules/multihead_attention.html), whose implementation does the same `torch.cat([k, k.new_zeros(...)])`. Tellingly, neither codebase documents *why* it exists - there is no comment or doc string giving a rationale in either place. The generally-understood purpose is mechanical rather than numerical: the zero slot gives a query somewhere to "attend to nothing" (output near zero) and guards against a fully-masked row collapsing softmax to `NaN`. That is a different motivation than Miller's: he argues the standard softmax is *forced* to spend attention mass it doesn't want, inflating outlier activations, and the extra slot is the release valve. Same trick, arrived at from the opposite direction - and never, in the library, framed as the numerical fix Miller later named.

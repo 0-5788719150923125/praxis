@@ -22,7 +22,7 @@ Praxis is organized as ~20 pluggable registries. Each category below
 links to a docs page listing the concrete implementations and their
 source. See [docs/index.md](docs/index.md) for the full map.
 
-- [Activation functions](docs/activations.md) (33)
+- [Activation functions](docs/activations.md) (31)
 - [Attention mechanisms](docs/attention.md) (7)
 - [Block-stacking decoders](docs/decoders.md) (4)
 - [Data sampler strategies](docs/data.md) (5)
@@ -30,9 +30,9 @@ source. See [docs/index.md](docs/index.md) for the full map.
 - [Feedforward experts](docs/dense.md) (7)
 - [Halting / early exit](docs/halting.md) (2)
 - [Input encoders](docs/encoders.md) (8)
-- [Layer-routing controllers](docs/controllers.md) (8)
+- [Layer-routing controllers](docs/controllers.md) (7)
 - [Long-term memory](docs/memory.md) (4)
-- [Loss functions](docs/losses.md) (9)
+- [Loss functions](docs/losses.md) (8)
 - [Normalization layers](docs/normalization.md) (5)
 - [Output heads](docs/heads.md) (6)
 - [Positional encoding](docs/encoding.md) (3)
@@ -58,7 +58,7 @@ source. See [docs/index.md](docs/index.md) for the full map.
 Top-level directories, with detail sourced from each one's README
 where present.
 
-- **[`axis/`](axis/)** - Mobile companion app, built with Godot.
+- **[`axis/`](axis/README.md)** - Axis is a mobile companion app for controlling Praxis, built with [Godot](https://godotengine.org/) 4.3. It is an older, archived experiment: the app still runs, but the model-prompting flow almost certainly no longer talks to the current Praxis API.
 - **[`docs/`](docs/)** - Auto-generated per-registry docs. Regenerated at every launch.
 - **[`environments/`](environments/README.md)** - Environment configurations override all other settings (defaults, experiments, and CLI args) to provide controlled presets for different use cases.
 - **[`evaluation/`](evaluation/)** - Evaluation harnesses and helpers.
@@ -86,6 +86,7 @@ Standalone subsystems, documented outside the registry map.
 
 - [CLI arguments](docs/cli.md) - every `./launch` flag, grouped as in `--help`.
 - [Web stack](docs/web.md) - dashboard, JSON API routes, and inference endpoints.
+- [Axis mobile app](axis/README.md) - archived Godot companion app for controlling Praxis.
 
 <!-- AUTODOC:SUBSYSTEMS:END -->
 
@@ -171,7 +172,7 @@ The dashboard and chat interface live at <http://localhost:2100>, backed by a JS
 
 ## mobile app
 
-We're building a mobile app, to control your experts! You can see that code in the [./axis](./axis) directory.
+[Axis](./axis/README.md) is an older Godot mobile app for controlling Praxis. It still runs, though the model-prompting likely no longer works - see its [README](./axis/README.md) for details.
 
 ## to register with transformers
 

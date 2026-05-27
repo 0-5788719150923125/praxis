@@ -6,7 +6,7 @@ links to a page listing the registered implementations and their source.
 
 ## Feature registries
 
-- [Activation functions](activations.md) (33) - Pointwise nonlinearities used inside blocks and heads.
+- [Activation functions](activations.md) (31) - Pointwise nonlinearities used inside blocks and heads.
 - [Attention mechanisms](attention.md) (7) - Self-attention variants, from vanilla causal MHA to compressive-memory and per-depth-biased variants.
 - [Block-stacking decoders](decoders.md) (4) - How the stack of blocks is composed (sequential, parallel, weighted, ...).
 - [Data sampler strategies](data.md) (5) - How datasets are interleaved during training. Praxis trains on multiple datasets at once: at every step the trainer picks a dataset, draws a document, and tokenizes it (see ``InterleaveDataManager`` in ``praxis/data/datasets/manager.py``). The sampler chosen here decides *how* that pick is biased - either statically from configured weights, or adaptively based on document length, novelty, or per-dataset loss. Set with ``--sampler``; default is ``novelty``.
@@ -14,9 +14,9 @@ links to a page listing the registered implementations and their source.
 - [Feedforward experts](dense.md) (7) - How a block's feedforward path is realized: MLP, GLU, KAN, polynomial, scatter, PEER, ... Selected with ``--ffn-type``; default is ``glu``.
 - [Halting / early exit](halting.md) (2) - Per-token mechanisms for early exit from recurrent depth loops.
 - [Input encoders](encoders.md) (8) - Front-end encoders, including the byte-latent and abstractinator variants.
-- [Layer-routing controllers](controllers.md) (8) - Decide which expert / block a token visits at each depth. Enables out-of-order layers and graph-style routing.
+- [Layer-routing controllers](controllers.md) (7) - Decide which expert / block a token visits at each depth. Enables out-of-order layers and graph-style routing.
 - [Long-term memory](memory.md) (4) - Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced as a layer (MAL) or a gate (MAG). Selected with ``--memory-type``; default is ``none``.
-- [Loss functions](losses.md) (9) - Per-token criteria. Most accept optional ``loss_weights`` for task-weighted training.
+- [Loss functions](losses.md) (8) - Per-token criteria. Most accept optional ``loss_weights`` for task-weighted training.
 - [Normalization layers](normalization.md) (5) - LayerNorm/RMSNorm variants, including SandwichNorm (required for stable recurrent-depth bias).
 - [Output heads](heads.md) (6) - LM heads (tied/untied, harmonic, crystal) and multi-token-prediction wrappers.
 - [Positional encoding](encoding.md) (3) - RoPE, ALiBi, NoPE and friends - the rotational / additive position priors injected into attention.
@@ -33,6 +33,26 @@ links to a page listing the registered implementations and their source.
 
 - [CLI arguments](cli.md) - every `./launch` flag, grouped as in `--help`.
 - [Web stack](web.md) - dashboard, JSON API routes, and inference endpoints.
+- [Axis mobile app](../axis/README.md) - archived Godot companion app for controlling Praxis.
+
+## Project layout
+
+Top-level directories, with detail sourced from each one's README
+where present.
+
+- **[`axis/`](../axis/README.md)** - Axis is a mobile companion app for controlling Praxis, built with [Godot](https://godotengine.org/) 4.3. It is an older, archived experiment: the app still runs, but the model-prompting flow almost certainly no longer talks to the current Praxis API.
+- **[`docs/`](../docs/)** - Auto-generated per-registry docs. Regenerated at every launch.
+- **[`environments/`](../environments/README.md)** - Environment configurations override all other settings (defaults, experiments, and CLI args) to provide controlled presets for different use cases.
+- **[`evaluation/`](../evaluation/)** - Evaluation harnesses and helpers.
+- **[`experiments/`](../experiments/README.md)** - This directory contains experiment configurations for Praxis. Each `.yml` file defines a preset combination of CLI arguments.
+- **[`integrations/`](../integrations/README.md)** - This directory contains optional integrations that extend Praxis with additional functionality. Each integration is self-contained and can be automatically loaded based on CLI flags or conditions.
+- **[`next/`](../next/)** - Long-form research notes, exploratory writing, and the project [roadmap](../next/roadmap.md).
+- **[`praxis/`](../praxis/)** - The model framework itself. See [docs/index.md](../docs/index.md) for the per-registry feature map.
+- **[`proofs/`](../proofs/)** - Math / derivation notes backing the more unusual designs (harmonic head, ghostmax).
+- **[`research/`](../research/)** - The research paper, in LaTeX.
+- **[`staging/`](../staging/README.md)** - Welcome to the junkyard! This is where we dump experimental code that doesn't belong in core Praxis.
+- **[`static/`](../static/)** - Images used in the README and the web dashboard.
+- **[`tests/`](../tests/)** - Unit tests. Run with ``pytest tests -x``.
 
 ## Core infrastructure
 
