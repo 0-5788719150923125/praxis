@@ -6,6 +6,7 @@ from praxis.blocks.nano import NanoBlock
 from praxis.blocks.recurrent import RecurrentBlock
 from praxis.blocks.ssm import SSMBlock
 from praxis.blocks.transformer import TransformerBlock
+from praxis.blocks.wavelet import WaveletBlock
 
 BLOCK_REGISTRY = {
     "conv": ConvolutionalBlock,
@@ -16,4 +17,5 @@ BLOCK_REGISTRY = {
     "recurrent": RecurrentBlock,
     "ssm": SSMBlock,
     "transformer": TransformerBlock,
+    "wavelet": WaveletBlock,
 }

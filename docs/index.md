@@ -6,11 +6,11 @@ links to a page listing the registered implementations and their source.
 
 ## Feature registries
 
-- [Activation functions](activations.md) (33) - Pointwise nonlinearities used inside blocks and heads.
+- [Activation functions](activations.md) (31) - Pointwise nonlinearities used inside blocks and heads.
 - [Attention mechanisms](attention.md) (7) - Self-attention variants, from vanilla causal MHA to compressive-memory and per-depth-biased variants.
 - [Block-stacking decoders](decoders.md) (4) - How the stack of blocks is composed (sequential, parallel, weighted, ...).
 - [Data sampler strategies](data.md) (5) - How datasets are interleaved during training. Praxis trains on multiple datasets at once: at every step the trainer picks a dataset, draws a document, and tokenizes it (see ``InterleaveDataManager`` in ``praxis/data/datasets/manager.py``). The sampler chosen here decides *how* that pick is biased - either statically from configured weights, or adaptively based on document length, novelty, or per-dataset loss. Set with ``--sampler``; default is ``novelty``.
-- [Decoder block layouts](blocks.md) (8) - Top-level layer types the decoder stacks. Mix attention-based and recurrent designs freely.
+- [Decoder block layouts](blocks.md) (9) - Top-level layer types the decoder stacks. Mix attention-based and recurrent designs freely.
 - [Feedforward experts](dense.md) (7) - How a block's feedforward path is realized: MLP, GLU, KAN, polynomial, scatter, PEER, ... Selected with ``--ffn-type``; default is ``glu``.
 - [Halting / early exit](halting.md) (2) - Per-token mechanisms for early exit from recurrent depth loops.
 - [Input encoders](encoders.md) (8) - Front-end encoders, including the byte-latent and abstractinator variants.
@@ -25,7 +25,7 @@ links to a page listing the registered implementations and their source.
 - [RL policies](policies.md) (3) - Reinforcement-learning policy losses (REINFORCE, GRPO, ...) for post-training.
 - [Sequence compression](compression.md) (3) - Strategies for reducing sequence length between layers.
 - [Sequence sorting](sorting.md) (3) - Optional reordering operations applied to the sequence.
-- [Token embeddings](embeddings.md) (12) - Input embedding layers, paired with the corresponding block type.
+- [Token embeddings](embeddings.md) (13) - Input embedding layers, paired with the corresponding block type.
 - [Token routers](routers.md) (11) - Token-routing mechanisms, including the Mixture-of-Depths family that skips a fraction of tokens per layer.
 - [Training strategies](strategies.md) (4) - Multi-task / task-weighting strategies used by the trainer.
 

@@ -3,7 +3,7 @@
 
 Input embedding layers, paired with the corresponding block type.
 
-Registry: ``praxis.EMBEDDING_REGISTRY`` (12 entries)
+Registry: ``praxis.EMBEDDING_REGISTRY`` (13 entries)
 
 ## `byte`
 
@@ -13,7 +13,7 @@ Value: `functools.partial(<function praxis.embeddings._compose>, [('tok', {})])`
 
 Value: `functools.partial(<function praxis.embeddings._compose>, [('tok', {}), ('hash', {'group_sizes': [3, 4, 5], 'functions': 1})])`
 
-## `conv`, `gru`, `min`, `nano`, `recurrent`, `ssm`, `transformer` - ProjectedEmbedding
+## `conv`, `gru`, `min`, `nano`, `recurrent`, `ssm`, `transformer`, `wavelet` - ProjectedEmbedding
 
 An embeddings module with optional projection layer and dropout. If embed_size differs
 from hidden_size, a linear projection layer is added to map the embeddings to the

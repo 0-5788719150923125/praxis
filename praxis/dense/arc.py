@@ -110,9 +110,7 @@ class ArcGLU(BaseDense):
         rows = []
         for act in self.act:
             params = list(act.parameters())
-            if not params or any(
-                isinstance(p, UninitializedParameter) for p in params
-            ):
+            if not params or any(isinstance(p, UninitializedParameter) for p in params):
                 return {}
             rows.append(torch.cat([p.detach().reshape(-1) for p in params]))
 

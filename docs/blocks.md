@@ -3,7 +3,7 @@
 
 Top-level layer types the decoder stacks. Mix attention-based and recurrent designs freely.
 
-Registry: ``praxis.BLOCK_REGISTRY`` (8 entries)
+Registry: ``praxis.BLOCK_REGISTRY`` (9 entries)
 
 ## `conv` - ConvolutionalBlock
 
@@ -70,3 +70,13 @@ Source: [praxis/blocks/ssm.py:14](../praxis/blocks/ssm.py#L14)
 A standard transformer block, with adjustable feedforward "experts".
 
 Source: [praxis/blocks/transformer.py:35](../praxis/blocks/transformer.py#L35)
+
+## `wavelet` - WaveletBlock
+
+Attention-free block: a causal lifting-wavelet mixer with per-scale gated spectral
+mixing, then a standard FFN. Ports the core ideas of WaveletLM
+(github.com/ramongougis/WaveletLM) onto Praxis primitives.
+
+Stateless: it returns no cache/state and recomputes over the full context.
+
+Source: [praxis/blocks/wavelet.py:87](../praxis/blocks/wavelet.py#L87)

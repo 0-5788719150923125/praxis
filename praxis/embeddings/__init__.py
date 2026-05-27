@@ -38,6 +38,7 @@ EMBEDDING_REGISTRY: Dict[str, Callable[..., nn.Module]] = {
     "recurrent": ProjectedEmbedding,
     "ssm": ProjectedEmbedding,
     "transformer": ProjectedEmbedding,
+    "wavelet": ProjectedEmbedding,
     # Byte-latent primitives.
     "tok": ByteEmbedding,
     "hash": HashEmbedding,

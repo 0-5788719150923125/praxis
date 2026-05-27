@@ -372,7 +372,15 @@ class NeuralMemory(nn.Module):
 
         if not self.parallel_scan:
             return self._forward_sequential(
-                seq, weights, momentum, second_moment, state.seq_index, n, c, num_chunks, pad
+                seq,
+                weights,
+                momentum,
+                second_moment,
+                state.seq_index,
+                n,
+                c,
+                num_chunks,
+                pad,
             )
 
         bn = b * num_chunks
@@ -551,7 +559,9 @@ class NeuralMemory(nn.Module):
                 # Event boundary for this chunk, from causal stats over prior
                 # blocks (matches _segment). Resets the EMAs and re-bases t_event.
                 if self.segment:
-                    s_block = (driver * valid[i]).sum(-1) / valid[i].sum().clamp(min=1.0)
+                    s_block = (driver * valid[i]).sum(-1) / valid[i].sum().clamp(
+                        min=1.0
+                    )
                     mean = csum / max(i, 1)
                     std = (csq / max(i, 1) - mean * mean).clamp(min=0.0).sqrt()
                     if i == 0:
@@ -577,7 +587,9 @@ class NeuralMemory(nn.Module):
 
         with torch.no_grad():
             self.last_surprise = raw_sum / max(raw_cnt, 1)
-            self.last_surprise_norm = drv_sum / max(drv_cnt, 1) if self.use_energy else None
+            self.last_surprise_norm = (
+                drv_sum / max(drv_cnt, 1) if self.use_energy else None
+            )
             self.last_gain = retrieved.norm() / (seq[:, :n].norm() + self.eps)
             wnum = sum((w[p] - W0[p]).pow(2).sum() for p in self._param_names)
             wden = sum(W0[p].pow(2).sum() for p in self._param_names)

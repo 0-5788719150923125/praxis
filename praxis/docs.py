@@ -440,7 +440,9 @@ def _render_integration_entry(spec: Any, repo_root: Path) -> List[str]:
     capabilities = _integration_capabilities(spec)
     if capabilities:
         out.append(f"- Provides: {capabilities}")
-    out.append(f"- Source: [`integrations/{spec.path.name}/`]({_integration_link(spec, repo_root)})")
+    out.append(
+        f"- Source: [`integrations/{spec.path.name}/`]({_integration_link(spec, repo_root)})"
+    )
     return out
 
 
