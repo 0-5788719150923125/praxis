@@ -360,6 +360,14 @@ class ArchitectureGroup:
         )
 
         group.add_argument(
+            "--no-contrastive-isotropy",
+            action="store_false",
+            dest="contrastive_isotropy",
+            default=True,
+            help="Disable the SimCTG contrastive isotropy loss (on by default)",
+        )
+
+        group.add_argument(
             "--mtp-type",
             type=str,
             choices=list(MTP_REGISTRY.keys()),

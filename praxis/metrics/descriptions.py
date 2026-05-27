@@ -78,6 +78,12 @@ def _candidates(model: Any) -> Iterable[Dict[str, Any]]:
         if memory_descs:
             yield memory_descs
 
+    iso = getattr(model, "contrastive_isotropy", None)
+    if iso is not None:
+        descs = getattr(type(iso), "metric_descriptions", None)
+        if isinstance(descs, dict):
+            yield descs
+
 
 def get_metric_descriptions(model: Any) -> Dict[str, Dict[str, Any]]:
     """Return ``{key: {description, chart}}`` for the live model."""

@@ -65,6 +65,9 @@ class DynamicsLoggerCallback(Callback):
             # Titans memory diagnostics (surprise), averaged across layers.
             dynamics.update(self._extract_memory_dynamics(model))
 
+            # Contrastive isotropy diagnostics (loss + repr anisotropy).
+            dynamics.update(self._extract_contrastive_dynamics(model))
+
             if dynamics:
                 self._success_count += 1
                 if self._success_count <= 3:
@@ -161,6 +164,21 @@ class DynamicsLoggerCallback(Callback):
             return head.training_metrics()
         except Exception as e:
             print(f"[DynamicsLogger] head.training_metrics() failed: {e}")
+            return {}
+
+    def _extract_contrastive_dynamics(self, model) -> dict:
+        """Delegate to the contrastive isotropy loss's own diagnostics.
+
+        The module opts in via ``training_metrics()``; wrapped in try/except
+        so a buggy metric doesn't kill the whole dynamics log.
+        """
+        iso = getattr(model, "contrastive_isotropy", None)
+        if iso is None:
+            return {}
+        try:
+            return iso.training_metrics()
+        except Exception as e:
+            print(f"[DynamicsLogger] contrastive training_metrics() failed: {e}")
             return {}
 
     def _extract_memory_dynamics(self, model) -> dict:

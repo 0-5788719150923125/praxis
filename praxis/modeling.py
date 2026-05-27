@@ -14,6 +14,7 @@ from praxis import DECODER_REGISTRY, EMBEDDING_REGISTRY, ENCODER_REGISTRY, Praxi
 from praxis.containers import LossContainer
 from praxis.heads import HEAD_REGISTRY
 from praxis.losses import get_loss_function
+from praxis.losses.contrastive_isotropy import ContrastiveIsotropyLoss
 from praxis.policies import RL_POLICIES_REGISTRY
 from praxis.strategies import STRATEGIES_REGISTRY
 from praxis.tasks import TASK_NAMES, TaskLossWeighter, resolve_task_weighter
@@ -178,6 +179,13 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         self.active_task_ids = None
 
         self.strategy = STRATEGIES_REGISTRY.get(config.strategy, "naive")()
+
+        # SimCTG isotropy regularizer (additive; see forward). On by default.
+        self.contrastive_isotropy = None
+        if getattr(config, "contrastive_isotropy", True):
+            self.contrastive_isotropy = ContrastiveIsotropyLoss(
+                pad_id=config.pad_token_id
+            )
 
         # Tie weights if requested
         if config.tie_word_embeddings and self.head is not None:
@@ -585,6 +593,17 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             )
             mtp_losses = self.mtp(mtp_inputs)
             outputs.losses.add_loss_container(mtp_losses)
+
+        # Contrastive isotropy (SimCTG): additive regularizer on the last-layer
+        # representations to keep the space discriminative for contrastive-search
+        # decoding. Leaves the main objective untouched.
+        if (
+            self.contrastive_isotropy is not None
+            and self.training
+            and labels is not None
+        ):
+            iso_loss = self.contrastive_isotropy(hidden_states, input_ids)
+            outputs.losses.add_loss("contrastive", iso_loss)
 
         # We omit auxiliary losses during validation and inference
         if self.training and labels is not None:

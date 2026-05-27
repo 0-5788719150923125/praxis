@@ -35,6 +35,7 @@ import ray
 import torch
 import torch.nn as nn
 
+from praxis.losses.contrastive_isotropy import ContrastiveIsotropyLoss
 from praxis.losses.layer_wise import compute_layer_wise_loss
 from praxis.metrics import compute_softmax_collapse, extract_layer_dynamics
 from praxis.trainers.mono_forward._worker_common import (
@@ -47,6 +48,7 @@ from praxis.trainers.mono_forward._worker_common import (
     build_scheduler as _build_scheduler,
 )
 from praxis.trainers.mono_forward.device import deep_to as _deep_to
+from praxis.trainers.mono_forward.projection import ProjectionMatrix
 
 
 @ray.remote(num_cpus=1, max_restarts=0)
@@ -94,6 +96,8 @@ class LayerActor:
         lr: float = 1e-3,
         num_layers: int = 1,
         accumulate_grad_batches: int = 1,
+        contrastive_isotropy: bool = False,
+        pad_id: int = 0,
     ) -> None:
         self.layer_idx = layer_idx
 
@@ -118,14 +122,22 @@ class LayerActor:
         else:
             self.strategy = None
 
+        # Per-layer SimCTG isotropy regularizer. Mono-Forward trains each
+        # layer locally, so (unlike the backprop path's single final-layer
+        # term) this regularizes every layer's own output - the natural,
+        # if imperfect, analog. Folded as an aux loss below.
+        self.contrastive_isotropy = None
+        if contrastive_isotropy:
+            self.contrastive_isotropy = _deep_to(
+                ContrastiveIsotropyLoss(pad_id=pad_id), self.device
+            )
+
         # Per-layer projection matrix M_i (paper Section 3.1). Each
         # layer gets its own independent projection - there is no
         # weight sharing or synchronisation between layers. The
         # goodness score is G_i = a_i @ M_i^T and the layer loss is
         # L_i = CE(softmax(G_i), labels). This is a fresh random
         # init, not a copy of the model's output head.
-        from praxis.trainers.mono_forward.projection import ProjectionMatrix
-
         self.projection = ProjectionMatrix(hidden_size, vocab_size).to(self.device)
         self.layer.train()
         self.projection.train()
@@ -235,14 +247,18 @@ class LayerActor:
 
         # (3) Compute the local loss via the framework-agnostic helper.
         # This routes through self.criterion (so cut-CE fires correctly)
-        # and folds aux losses via self.strategy (D5).
+        # and folds aux losses via self.strategy (D5). The contrastive
+        # isotropy term, when enabled, joins the fold as another aux loss.
+        aux = [aux_loss] if aux_loss is not None else []
+        if self.contrastive_isotropy is not None:
+            aux.append(self.contrastive_isotropy(h_out, input_ids_dev))
         loss = compute_layer_wise_loss(
             hidden_states=h_out,
             labels=labels_dev,
             head=self.projection,
             criterion=self.criterion,
             strategy=self.strategy,
-            aux_losses=[aux_loss] if aux_loss is not None else None,
+            aux_losses=aux if aux else None,
             input_ids=input_ids_dev,
         )
 
@@ -370,7 +386,10 @@ class LayerActor:
         ``dynamics.db`` via :class:`DynamicsLogger`.
         """
         try:
-            return extract_layer_dynamics(self.layer, self._current_lr())
+            dyn = extract_layer_dynamics(self.layer, self._current_lr()) or {}
+            if self.contrastive_isotropy is not None:
+                dyn.update(self.contrastive_isotropy.training_metrics())
+            return dyn or None
         except Exception:
             return None
 

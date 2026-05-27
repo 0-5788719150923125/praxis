@@ -48,6 +48,7 @@ class PraxisConfig(PretrainedConfig):
         mla: bool = False,
         hivemind: bool = False,
         tie_weights: bool = False,
+        contrastive_isotropy: bool = True,
         window_size: Optional[int] = None,
         bidirectional: bool = False,
         initial_peers: List[str] = [],
@@ -118,6 +119,7 @@ class PraxisConfig(PretrainedConfig):
         self.checkpoint_every = checkpoint_every
         self.loss_func = loss_func
         self.strategy = strategy
+        self.contrastive_isotropy = contrastive_isotropy
         self.task_weights = kwargs.get("task_weights", None)
         self.no_mask_prompts = kwargs.get("no_mask_prompts", False)
         self.device_map = device_map

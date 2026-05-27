@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Main training script for Praxis language models.
+"""Main entrypoint script for Praxis language models.
 
 main() reads top-to-bottom as the training pipeline; each step lives in
 its domain package (cli, data, trainers, callbacks, web, ...).
