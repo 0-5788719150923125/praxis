@@ -21,7 +21,7 @@ The backend mirrors this: each Flask blueprint is a thin shim over a data source
 
 ## API routes
 
-Introspected from the live Flask app at every launch. Each summary is the first line of the view function's docstring.
+Introspected from the live Flask app at every launch. Each summary is the first paragraph of the view function's docstring.
 
 ### Agents
 
@@ -40,7 +40,7 @@ Introspected from the live Flask app at every launch. Each summary is the first 
 
 ### Dynamics
 
-- **GET** `/api/activation_curves` - Sample forward and derivative curves for every activation module in the ([source](../praxis/web/routes/dynamics.py#L546))
+- **GET** `/api/activation_curves` - Sample forward and derivative curves for every activation module in the live model, using their actual (learned) parameters. ([source](../praxis/web/routes/dynamics.py#L546))
 - **GET** `/api/dynamics` - Get learning dynamics data for expert learning visualization. ([source](../praxis/web/routes/dynamics.py#L23))
 - **GET** `/api/head_snapshots` - Live non-scalar snapshots from the active model's LM head. ([source](../praxis/web/routes/dynamics.py#L731))
 
@@ -51,7 +51,7 @@ Introspected from the live Flask app at every launch. Each summary is the first 
 
 ### Git HTTP backend
 
-- **GET, POST** `/git-upload-pack` / `/info/refs` / `/praxis` / `/praxis.git` / `/praxis.git/<path:git_path>` / `/praxis/<path:git_path>` / `/src/<path:git_path>` - Simple Git HTTP backend for read-only access to the repository. ([source](../praxis/web/routes/git.py#L15))
+- **GET, POST** `/git-upload-pack` / `/info/refs` / `/praxis` / `/praxis.git` / `/praxis.git/<path:git_path>` / `/praxis/<path:git_path>` / `/src/<path:git_path>` - Simple Git HTTP backend for read-only access to the repository. Supports git clone and fetch operations. ([source](../praxis/web/routes/git.py#L15))
 
 ### Metrics
 

@@ -534,7 +534,7 @@ def _render_web_doc(repo_root: Path) -> str:
         "",
         "## API routes",
         "",
-        "Introspected from the live Flask app at every launch. Each summary is the first line of the view function's docstring.",
+        "Introspected from the live Flask app at every launch. Each summary is the first paragraph of the view function's docstring.",
         "",
     ]
     lines.extend(_render_route_table(repo_root))
@@ -630,7 +630,9 @@ def _render_route_table(repo_root: Path) -> List[str]:
         for info in sorted(groups[bp], key=lambda i: sorted(i["paths"])[0]):
             paths = " / ".join(f"`{p}`" for p in sorted(info["paths"]))
             methods = ", ".join(sorted(info["methods"]))
-            doc = (inspect.getdoc(info["view"]) or "").split("\n")[0].strip()
+            # First paragraph, collapsed to one line - so a summary that
+            # wraps across source lines isn't cut mid-sentence.
+            doc = " ".join((inspect.getdoc(info["view"]) or "").split("\n\n", 1)[0].split())
             link = _source_link(info["view"], repo_root)
             row = f"- **{methods}** {paths}"
             if doc:
