@@ -3,7 +3,7 @@
 
 Front-end encoders, including the byte-latent and abstractinator variants.
 
-Registry: ``praxis.ENCODER_REGISTRY`` (8 entries)
+Registry: ``praxis.ENCODER_REGISTRY`` (9 entries)
 
 ## `abstractinator` - AbstractinatorEncoder
 
@@ -19,7 +19,7 @@ Source: [praxis/encoders/abstractinator/encoder.py:22](../praxis/encoders/abstra
 Presets:
 - `abstractinator` - `embeddings='byte_hash', local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', vq_codebook_size=16384`
 
-## `byte_latent`, `byte_latent_conv`, `byte_latent_transformer` - ByteLatentEncoder
+## `byte_latent`, `byte_latent_conv`, `byte_latent_conv_small`, `byte_latent_transformer` - ByteLatentEncoder
 
 An implementation of the Byte Latent Encoder/Decoder, from:
 https://arxiv.org/abs/2412.09871
@@ -32,6 +32,7 @@ Source: [praxis/encoders/byte_latent/encoder.py:38](../praxis/encoders/byte_late
 Presets:
 - `byte_latent` - class defaults
 - `byte_latent_conv` - `embeddings='byte_hash', local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space'`
+- `byte_latent_conv_small` - `embeddings='byte_hash', local_architecture='conv', n_layers_decoder=2, n_layers_encoder=2, patching_mode='space'`
 - `byte_latent_transformer` - `embeddings='byte_hash', local_architecture='transformer', n_layers_decoder=1, n_layers_encoder=1, patching_mode='space'`
 
 ## `calm`, `calm_bpe`, `calm_byte`, `calm_small` - CALMEncoder

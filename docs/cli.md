@@ -41,19 +41,19 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
-| `--activation` | str | `mish` | The primary activation function to use (choices: gelu, gelu_10, gelu_accurate, gelu_fast, gelu_new, gelu_python, gelu_python_tanh, gelu_pytorch_tanh, jagged_sin, laplace, leaky_relu, linear, mish, nmda, periodic_relu, prelu, quick_gelu, relu, relu2, relu6, serf, serpent, sigmoid, silu, sin, sin_cos, sinlu, snake, swish, tanh, xielu) |
+| `--activation` | str | `mish` | The primary activation function to use (choices: gelu, gelu_10, gelu_accurate, gelu_fast, gelu_new, gelu_python, gelu_python_tanh, gelu_pytorch_tanh, hardswish, jagged_sin, laplace, leaky_relu, linear, mish, nmda, periodic_relu, prelu, quick_gelu, relu, relu2, relu6, serf, serpent, sigmoid, silu, sin, sin_cos, sinlu, snake, sqrtsoftplus, swish, tanh, xielu) |
 | `--attention-type` | str | `modular` | The base attention implementation to use (choices: modular, vanilla, pk, syntaxes, causal, infini, arc) |
 | `--bidirectional` | bool | `False` | Enable bidirectional language modeling (forward and backward prediction) |
 | `--block-size` | int | `512` | The base sequence length to train with |
 | `--block-type` | str | `transformer` | The type of block to use for every intermediate decoder layer (choices: conv, gru, mru, min, nano, recurrent, ssm, transformer, wavelet) |
 | `--compression-type` | str | `none` | The type of sequence compression to use (choices: none, linear, nearest) |
-| `--controller-type` | str | `base` | Various methods used to route inputs through experts in the decoder (choices: base, layer_shuffle, graph, pathfinder, shortcutter, attention, counter_attention) |
+| `--controller-type` | str | `base` | Various methods used to route inputs through experts in the decoder (choices: base, layer_shuffle, graph, pathfinder, shortcutter, attention, counter_attention, neural) |
 | `--decoder-type` | str | `sequential` | How to process layers in the decoder (choices: sequential, parallel_mean, parallel_variance, parallel_weighted) |
 | `--depth` | int | `None` | The max number of experts to route through (defaults to num_layers) |
 | `--differential` | bool | `False` | Use a Differential Attention mechanism |
 | `--dropout` | float | `0.0` | The percentage of neurons to drop-out during training |
 | `--embed-size` | int | `192` | The size of the model's embedding dimension (if applicable) |
-| `--encoder-type` | str | `None` | Encoder integration to use (choices: byte_latent, byte_latent_conv, byte_latent_transformer, abstractinator, calm, calm_small, calm_byte, calm_bpe) |
+| `--encoder-type` | str | `None` | Encoder integration to use (choices: byte_latent, byte_latent_conv, byte_latent_conv_small, byte_latent_transformer, abstractinator, calm, calm_small, calm_byte, calm_bpe) |
 | `--encoding-type` | str | `rope` | The positional encoding to use for sequence length extrapolation (choices: nope, alibi, rope) |
 | `--evolve` | bool | `False` | Use a genomic bottleneck |
 | `--ffn-type` | str | `glu` | The feedforward-network implementation to use within each block (choices: mlp, glu, arc, poly, scatter, kan, peer) |
@@ -108,7 +108,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | --- | --- | --- | --- |
 | `--fixed-schedule` | bool | `False` | Use a fixed (constant) learning rate schedule |
 | `--lookahead` | bool | `False` | Wrap the optimizer in Lookahead |
-| `--loss-func` | str | `cross_entropy` | The loss function to use (choices: cross_entropy, dedup, focal, focal_alpha, mile, stablemax, contrastive_token, halo) |
+| `--loss-func` | str | `cross_entropy` | The loss function to use (choices: cross_entropy, dedup, focal, focal_alpha, mile, stablemax, contrastive_token, halo, cut_cross_entropy) |
 | `--no-mask-prompts` | bool | `False` | Drop the assistant_mask before composing loss weights so every token contributes (the pre-2bc2cd4 language-modeling objective). Default off, meaning prompts are masked. Useful for small models that lack the capacity for the SFT-style prompt-conditional split. |
 | `--optimizer` | str | `Lion` | The optimizer profile to use (choices: AdamW, Lion, MARS, Muon, Prodigy) |
 | `--ortho` | bool | `False` | Wrap the optimizer in OrthoGrad, projecting gradients to be orthogonal to parameters |
@@ -131,7 +131,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--data-path` | str | `None` | Paths to directories of files to use as training data (can be specified multiple times) |
 | `--rl-type` | str | `None` | Enable reinforcement learning with specified algorithm. Note: Current GRPO implementation uses static dataset rewards (not true RL). True RL with generation will be added in a future update. (choices: reinforce, grpo, cot) |
 | `--sampler-mode` | str | `loss` | Dataset sampling weighting mode: 'loss' (upsample high-loss datasets via per-sequence CE), 'novelty' (bigram novelty via Count-Min Sketch), 'dynamic' (EMA of token counts), 'static' (use weights from DATASET_COLLECTIONS as-is), or 'uniform' (force every dataset to 1.0, ignoring DATASET_COLLECTIONS). (choices: novelty, dynamic, static, loss, uniform) |
-| `--train-datasets` | str | `['base']` | Named dataset collections to train on. Space- or comma-separated (e.g. '--train-datasets base phi' or '--train-datasets base,phi'). Available: base, cot, dev, focused, phi, pile, rl, slimpajama, tools, validation. |
+| `--train-datasets` | str | `['base']` | Named dataset collections to train on. Space- or comma-separated (e.g. '--train-datasets base phi' or '--train-datasets base,phi'). Available: base, chat, cot, dev, focused, phi, pile, rl, slimpajama, tools, validation. |
 | `--validation-datasets` | str | `['validation']` | Named dataset collections to use for validation. Same format as --train-datasets. |
 
 ### logging

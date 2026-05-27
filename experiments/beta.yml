@@ -7,7 +7,7 @@ batch_size: 1
 target_batch_size: 64
 block_size: 256
 infer_context: 512
-depth: 8
+depth: 6
 num_layers: 2
 vocab_size: 4096
 hidden_size: 96
