@@ -12,7 +12,7 @@ num_layers: 2
 vocab_size: 4096
 hidden_size: 96
 embed_size: 64
-# ffn_type: arc
+ffn_type: arc
 attention_type: arc
 num_heads: 4
 num_queries: 1
