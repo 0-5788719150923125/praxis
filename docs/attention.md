@@ -38,6 +38,14 @@ attention output.
 
 Source: [praxis/attention/infini.py:71](../praxis/attention/infini.py#L71)
 
+## `modular` - ModularAttention
+
+This class is akin to a wrapper, which implements a number of interesting attention
+mechanisms, and makes them optional with feature flags. By toggling features, one can
+essentially blend components from various kinds of attention.
+
+Source: [praxis/attention/modular.py:29](../praxis/attention/modular.py#L29)
+
 ## `pk` - ProductKeyAttention
 
 Attention where K/V are selected via product-key lookup over an ``EmbeddingBag``, rather
@@ -48,14 +56,6 @@ Adapted from lucidrains/PEER-pytorch (``PEER_pytorch/PK.py``).
 
 Source: [praxis/attention/pk_attention.py:20](../praxis/attention/pk_attention.py#L20)
 
-## `standard` - ModularAttention
-
-This class is akin to a wrapper, which implements a number of interesting attention
-mechanisms, and makes them optional with feature flags. By toggling features, one can
-essentially blend components from various kinds of attention.
-
-Source: [praxis/attention/base.py:29](../praxis/attention/base.py#L29)
-
 ## `syntaxes` - SyntaxesAttention
 
 Asymmetric attention where every query attends to a fixed-size window of the most recent
@@ -63,7 +63,7 @@ tokens, instead of the full causal prefix. All queries share the same reduced K/
 context, dropping complexity from O(n^2) to O(n * c) where ``c`` is
 ``syntaxes_context_size`` (default 128).
 
-Source: [praxis/attention/syntaxes.py:13](../praxis/attention/syntaxes.py#L13)
+Source: [praxis/attention/syntaxes.py:14](../praxis/attention/syntaxes.py#L14)
 
 ## `vanilla` - VanillaMHA
 

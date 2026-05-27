@@ -7,7 +7,7 @@ batch_size: 16
 depth: 6
 num_layers: 6
 vocab_size: 4096
-attention_type: standard
+attention_type: modular
 strategy: naive
 tie_weights: true
 schedule_free: true

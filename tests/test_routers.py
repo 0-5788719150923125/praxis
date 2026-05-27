@@ -39,7 +39,7 @@ class TestSMEARRouter:
             depth=4,
             dropout=0.1,
             residual_type="standard",
-            attention_type="standard",
+            attention_type="modular",
             expert_type="mlp",
             activation="gelu",
         )

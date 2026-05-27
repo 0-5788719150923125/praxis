@@ -1,4 +1,5 @@
 import math
+from copy import copy
 from typing import Optional, Tuple, Union
 
 import torch
@@ -45,7 +46,7 @@ class SyntaxesAttention(nn.Module):
         self.scale = 1.0 / math.sqrt(self.head_dim)
 
         # Create a modified config for the encoding that reflects the actual number of heads
-        encoding_config = type(config)(**vars(config))
+        encoding_config = copy(config)
         encoding_config.num_heads = self.num_heads
         # Keep num_queries as 1 to maintain the same total query heads
         encoding_config.num_queries = 1

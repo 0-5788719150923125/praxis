@@ -43,7 +43,7 @@ def _toy_config(vocab_size: int = 32, hidden_size: int = 16) -> PraxisConfig:
         num_layers=1,
         max_length=32,
         decoder_type="sequential",
-        attention_type="standard",
+        attention_type="modular",
         encoder_type=None,
         tie_weights=False,
     )

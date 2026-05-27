@@ -4,7 +4,7 @@ import torch
 from torch import nn
 
 from praxis.attention.arc import ArcAttention
-from praxis.attention.base import ModularAttention
+from praxis.attention.modular import ModularAttention
 from praxis.attention.causal import CausalAttention
 from praxis.attention.components import VanillaMHA
 from praxis.attention.infini import InfiniAttention
@@ -13,7 +13,7 @@ from praxis.attention.syntaxes import SyntaxesAttention
 
 # Registry of available attention mechanisms
 ATTENTION_REGISTRY: Dict[str, Type[nn.Module]] = {
-    "standard": ModularAttention,
+    "modular": ModularAttention,
     "vanilla": VanillaMHA,
     "pk": ProductKeyAttention,
     "syntaxes": SyntaxesAttention,

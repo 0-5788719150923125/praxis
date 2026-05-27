@@ -68,6 +68,9 @@ class DynamicsLoggerCallback(Callback):
             # Contrastive isotropy diagnostics (loss + repr anisotropy).
             dynamics.update(self._extract_contrastive_dynamics(model))
 
+            # Arc per-depth bias specialization, averaged across Arc modules.
+            dynamics.update(self._extract_arc_dynamics(model))
+
             if dynamics:
                 self._success_count += 1
                 if self._success_count <= 3:
@@ -179,6 +182,20 @@ class DynamicsLoggerCallback(Callback):
             return iso.training_metrics()
         except Exception as e:
             print(f"[DynamicsLogger] contrastive training_metrics() failed: {e}")
+            return {}
+
+    def _extract_arc_dynamics(self, model) -> dict:
+        """Collect Arc per-depth specialization, averaged across Arc modules.
+
+        ArcAttention/ArcGLU opt in via ``training_metrics()``; wrapped in
+        try/except so one bad metric doesn't kill the dynamics log.
+        """
+        from praxis.metrics.specialization import collect_arc_metrics
+
+        try:
+            return collect_arc_metrics(model)
+        except Exception as e:
+            print(f"[DynamicsLogger] arc training_metrics failed: {e}")
             return {}
 
     def _extract_memory_dynamics(self, model) -> dict:

@@ -28,6 +28,7 @@ the frontend always sees ``{description, chart}`` per entry.
 from typing import Any, Dict, Iterable, Optional
 
 from praxis.memory.surfacings import MemoryBase
+from praxis.metrics.specialization import collect_arc_descriptions
 
 
 def _normalize(value: Any) -> Optional[Dict[str, Any]]:
@@ -81,6 +82,10 @@ def _candidates(model: Any) -> Iterable[Dict[str, Any]]:
         memory_descs = MemoryBase.collect_metric_descriptions(model)
         if memory_descs:
             yield memory_descs
+
+        arc_descs = collect_arc_descriptions(model)
+        if arc_descs:
+            yield arc_descs
 
     iso = getattr(model, "contrastive_isotropy", None)
     if iso is not None:

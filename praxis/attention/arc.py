@@ -29,6 +29,75 @@ class ArcAttention(InfiniAttention):
     and input-dependent sparsity between the attention output and W_o.
     """
 
+    # Depth-specialization diagnostics (see praxis.metrics.specialization),
+    # averaged across ArcAttention layers and surfaced to the Dynamics tab.
+    metric_descriptions = {
+        "arc_qkv_specialization": {
+            "description": (
+                "Depth-specific fraction of the per-depth QKV bias "
+                "(1 - ||mean||^2 / mean||row||^2). 0 = every recurrent depth "
+                "learned the same bias (collapsed, no benefit over a shared "
+                "bias); rising = each depth is specializing its QKV projection."
+            ),
+            "chart": {
+                "title": "Arc Depth Specialization",
+                "y_label": "Specialized fraction",
+                "y_scale": "linear",
+                "group": "arc",
+                "order": 10,
+                "series_group": "arc_specialization",
+                "series_label": "qkv bias",
+            },
+        },
+        "arc_output_specialization": {
+            "description": (
+                "Depth-specific fraction of the per-depth output-projection "
+                "bias. 0 = collapsed to a shared bias; rising = each recurrent "
+                "depth specializes its output bias."
+            ),
+            "chart": {
+                "title": "Arc Depth Specialization",
+                "y_label": "Specialized fraction",
+                "y_scale": "linear",
+                "group": "arc",
+                "order": 11,
+                "series_group": "arc_specialization",
+                "series_label": "output bias",
+            },
+        },
+        "arc_qkv_similarity": {
+            "description": (
+                "Mean pairwise cosine between the per-depth QKV biases. ~1 = "
+                "all depths point the same way (collapsed); falling = bias "
+                "directions diverging across depth."
+            ),
+            "chart": {
+                "title": "Arc Depth Similarity",
+                "y_label": "Mean pairwise cosine",
+                "y_scale": "linear",
+                "group": "arc",
+                "order": 20,
+                "series_group": "arc_similarity",
+                "series_label": "qkv bias",
+            },
+        },
+        "arc_output_similarity": {
+            "description": (
+                "Mean pairwise cosine between the per-depth output biases. "
+                "~1 = collapsed to one direction; falling = diverging."
+            ),
+            "chart": {
+                "title": "Arc Depth Similarity",
+                "y_label": "Mean pairwise cosine",
+                "y_scale": "linear",
+                "group": "arc",
+                "order": 21,
+                "series_group": "arc_similarity",
+                "series_label": "output bias",
+            },
+        },
+    }
+
     def __init__(self, config, attention_gating: bool = True) -> None:
         super().__init__(config)
 
@@ -137,3 +206,18 @@ class ArcAttention(InfiniAttention):
         output = self.dropout(output)
 
         return output, past_key_values, 0.0
+
+    def training_metrics(self) -> dict:
+        """Whether the per-depth biases are specializing or collapsing."""
+        from praxis.metrics.specialization import depth_dispersion
+
+        out = {}
+        qkv = depth_dispersion(self.depth_qkv_bias.weight)
+        if qkv is not None:
+            out["arc_qkv_specialization"] = qkv["specialization"]
+            out["arc_qkv_similarity"] = qkv["similarity"]
+        outp = depth_dispersion(self.depth_output_bias.weight)
+        if outp is not None:
+            out["arc_output_specialization"] = outp["specialization"]
+            out["arc_output_similarity"] = outp["similarity"]
+        return out

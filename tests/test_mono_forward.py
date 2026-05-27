@@ -72,7 +72,7 @@ def _mf_config(num_layers: int = 4) -> PraxisConfig:
         num_layers=num_layers,
         max_length=64,
         decoder_type="sequential",
-        attention_type="standard",
+        attention_type="modular",
         encoder_type=None,
         tie_weights=False,
     )
@@ -327,7 +327,7 @@ def test_depth_less_than_num_layers_hard_errors():
         num_layers=2,
         max_length=64,
         decoder_type="sequential",
-        attention_type="standard",
+        attention_type="modular",
         encoder_type=None,
         tie_weights=False,
     )
@@ -827,7 +827,7 @@ def test_inprocess_recurrent_depth_routes_through_layers():
         num_layers=2,
         max_length=32,
         decoder_type="sequential",
-        attention_type="standard",
+        attention_type="modular",
         encoder_type=None,
         tie_weights=False,
     )

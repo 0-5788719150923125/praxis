@@ -63,6 +63,20 @@ the package directory for details.
 - `praxis/utils/` - Misc helpers (system info, launch animation, lazy-module init, ...).
 - `praxis/web/` - Flask + SocketIO dashboard and ``/input`` / ``/messages`` inference API.
 
+## Integrations
+
+Third-party, non-core add-ons that live in the repo but are not part
+of the framework. Optional and off by default - see [integrations](integrations.md).
+
+- `cut_cross_entropy` - Apple's memory-efficient cut cross-entropy loss integration for Praxis
+- `discord` - Discord bot integration for chat
+- `gun` - Gun.js decentralized data adapter for live chat integration
+- `hivemind` - Decentralized deep learning integration for distributed training across the Hivemind swarm
+- `neurallambda` - Differentiable stack-based memory and neural reasoning tools for advanced routing
+- `ngrok` - Ngrok tunnel integration for exposing API server
+- `quantum` - Quantum computing code dataset from qoblib
+- `wandb` - Weights & Biases integration for Praxis
+
 ---
 
 This index is regenerated on every launch. To opt out, pass `--no-docs`.

@@ -15,7 +15,7 @@ ModuleList sized to the number of recurrent passes *this* block will receive: ce
 sees current_depth values {i, i + num_layers, i + 2*num_layers, ...}; we index the
 activation list by current_depth // num_layers so each pass gets its own instance.
 
-Source: [praxis/dense/arc.py:13](../praxis/dense/arc.py#L13)
+Source: [praxis/dense/arc.py:15](../praxis/dense/arc.py#L15)
 
 ## `glu` - GatedLinearMLP
 

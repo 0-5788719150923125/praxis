@@ -28,7 +28,7 @@ class PraxisConfig(PretrainedConfig):
         encoding: str = "rope",
         router_type: Optional[str] = None,
         controller_type: str = "base",
-        attention_type: str = "standard",
+        attention_type: str = "modular",
         memory_type: str = "none",
         encoder_type: Optional[str] = None,
         decoder_type: str = "sequential",
@@ -36,6 +36,16 @@ class PraxisConfig(PretrainedConfig):
         compression_type: str = "none",
         sorting_type: str = "none",
         norm_type: str = "rms_norm",
+        head_type: str = "forward",
+        halting_type: Optional[str] = None,
+        mtp_type: Optional[str] = None,
+        mtp_depth: int = 1,
+        rl_type: Optional[str] = None,  # "reinforce", "grpo", "ppo", or None
+        rl_weight: float = 0.1,
+        grpo_group_size: int = 8,
+        forward_weight: float = 0.666666,
+        task_weights: Optional[dict] = None,
+        no_mask_prompts: bool = False,
         linear: bool = False,
         differential: bool = False,
         stickbreaking: bool = False,
@@ -65,80 +75,25 @@ class PraxisConfig(PretrainedConfig):
         meta: List[str] = [],
         **kwargs,
     ):
+        # Snapshot the declared arguments so each can be assigned automatically.
+        declared = dict(locals())
 
-        # Pass all kwargs to parent (PretrainedConfig stores them as attributes)
         super().__init__(
             pad_token_id=pad_token_id,
             bos_token_id=bos_token_id,
             eos_token_id=eos_token_id,
             sep_token_id=sep_token_id,
+            tie_word_embeddings=tie_weights,  # HF's name for tie_weights
             **kwargs,
         )
 
-        self.embed_size = embed_size
-        self.hidden_size = hidden_size
-        self.num_heads = num_heads
-        self.num_queries = num_queries
-        self.head_size = head_size
-        self.k_heads = k_heads
-        self.kv_rank = kv_rank
-        self.num_experts = num_experts
-        self.num_layers = num_layers
-        self.depth = depth if depth is not None else num_layers
-        self.attention_type = attention_type
-        self.memory_type = memory_type
-        self.encoder_type = encoder_type
-        self.decoder_type = decoder_type
-        self.linear = linear
-        self.differential = differential
-        self.stickbreaking = stickbreaking
-        self.dropout = dropout
-        self.epsilon = epsilon
-        self.vocab_size = vocab_size
-        self.max_position_embeddings = max_position_embeddings
-        self.activation = activation
-        self.block_type = block_type
-        self.expert = expert
-        self.encoding = encoding
-        self.router_type = router_type
-        self.controller_type = controller_type
-        self.residual_type = residual_type
-        self.compression_type = compression_type
-        self.sorting_type = sorting_type
-        self.norm_type = norm_type
-        self.head_type = kwargs.get("head_type", "forward")
-        self.memory = memory
-        self.mla = mla
-        self.mta = mta
-        self.mega = mega
-        self.gated = gated
-        self.evolve = evolve
-        self.scaled = scaled
-        self.hivemind = hivemind
-        self.initial_peers = initial_peers
-        self.checkpoint_every = checkpoint_every
-        self.loss_func = loss_func
-        self.strategy = strategy
-        self.contrastive_isotropy = contrastive_isotropy
-        self.task_weights = kwargs.get("task_weights", None)
-        self.no_mask_prompts = kwargs.get("no_mask_prompts", False)
-        self.device_map = device_map
-        self.seed = seed
-        self.debug = debug
-        self.meta = meta
-        self.causal = False
-        self.window_size = window_size
-        self.bidirectional = bidirectional
-        self.forward_weight = kwargs.get("forward_weight", 0.666666)
-        self.mtp_type = kwargs.get("mtp_type", None)
-        self.mtp_depth = kwargs.get("mtp_depth", 1)
-        self.tie_word_embeddings = tie_weights
-        self.halting_type = kwargs.get("halting_type", None)
-        self.rl_type = kwargs.get(
-            "rl_type", None
-        )  # "reinforce", "grpo", "ppo", or None
-        self.rl_weight = kwargs.get("rl_weight", 0.1)
-        self.grpo_group_size = kwargs.get("grpo_group_size", 8)  # For GRPO sampling
+        # Every declared argument becomes a same-named attribute.
+        skip = {"self", "kwargs", "__class__", "tie_weights"}
+        for name, value in declared.items():
+            if name not in skip:
+                setattr(self, name, value)
 
-        # Compatibility with HuggingFace transformers
-        self.num_hidden_layers = self.depth  # Map depth to num_hidden_layers for cache
+        # Derived / constant attributes that aren't direct argument copies.
+        self.depth = depth if depth is not None else num_layers
+        self.num_hidden_layers = self.depth  # HF cache expects this name
+        self.causal = False

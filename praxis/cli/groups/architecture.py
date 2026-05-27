@@ -69,7 +69,7 @@ class ArchitectureGroup:
             "--attention-type",
             type=str,
             choices=ATTENTION_REGISTRY.keys(),
-            default="standard",
+            default="modular",
             help="The base attention implementation to use",
         )
 
