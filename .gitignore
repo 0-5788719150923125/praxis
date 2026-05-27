@@ -27,6 +27,7 @@ wandb
 # Experiments - commit canonical reference experiments, ignore user custom experiments
 experiments/*.yml
 !experiments/alpha.yml
+!experiments/beta.yml
 
 # Environments - only commit dev.yml, ignore user custom environments
 environments/*.yml
