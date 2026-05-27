@@ -32,6 +32,7 @@ CORS_HEADERS = ["Content-Type"]
 # Content Security Policy
 CSP_POLICY = (
     "default-src 'self' https:; "
+    # TODO: implement an interface for users to add their own trusted domains, so that integrations can be added without modifying this config file.
     "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://*.ngrok-free.app https://*.ngrok.io; "
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
     "font-src 'self' https://fonts.gstatic.com; "

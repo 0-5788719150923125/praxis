@@ -58,7 +58,8 @@
     color: var(--light-text);
     font-style: italic;
     cursor: text;
-    padding: 0.25rem 0.5rem 0.25rem 0;
+    padding: 0.25rem 0.5rem 0.25rem 0.875rem;
+    position: relative;
     border-radius: var(--radius-small);
     transition: background-color 0.2s, max-width 0.2s;
     outline: none;
@@ -82,12 +83,14 @@
 
 .system-prompt-header.default-prompt::before {
     content: '|';
+    position: absolute;
+    left: 0.125rem;
+    top: 0.25rem;
+    line-height: 1.225rem;
     font-style: normal;
     font-size: 1.125rem;
     font-weight: 300;
     color: var(--border);
-    margin-right: 0.375rem;
-    vertical-align: middle;
     animation: prompt-cursor-blink 1s step-end infinite;
 }
 
