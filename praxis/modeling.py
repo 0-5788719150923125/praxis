@@ -187,12 +187,13 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # get_metrics() uses it to skip charting weights for absent tasks.
         self.active_task_ids = None
 
-        self.strategy = STRATEGIES_REGISTRY.get(config.strategy, "naive")()
-
         # SimCTG isotropy regularizer (additive; see forward). On by default.
         self.aux = None
         if getattr(config, "contrastive_isotropy", True):
             self.aux = ContrastiveIsotropyLoss(pad_id=config.pad_token_id)
+
+        # The strategy for combining multiple losses into a single scalar objective.
+        self.strategy = STRATEGIES_REGISTRY.get(config.strategy, "naive")()
 
         # Tie weights if requested
         if config.tie_word_embeddings and self.head is not None:

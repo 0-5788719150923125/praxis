@@ -22,7 +22,7 @@ Praxis is organized as ~20 pluggable registries. Each category below
 links to a docs page listing the concrete implementations and their
 source. See [docs/index.md](docs/index.md) for the full map.
 
-- [Activation functions](docs/activations.md) (31)
+- [Activation functions](docs/activations.md) (33)
 - [Attention mechanisms](docs/attention.md) (7)
 - [Block-stacking decoders](docs/decoders.md) (4)
 - [Data sampler strategies](docs/data.md) (5)
