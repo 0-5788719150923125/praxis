@@ -21,7 +21,9 @@ Memory-as-Layer with a detached (energy-based) test-time update: the memory lear
 local surprise rule with no second-order graph, for much lower VRAM. The update uses a
 fixed Adam-style adaptive rule (EMA 1st/2nd moment, constant lr) in place of learned
 gates; the key projection is tied to the query projection (so addressing trains on the
-task) and the value side is fixed to identity.
+task) and the value side is fixed to identity. The update grid is segmented at surprise
+spikes (EM-LLM-style events, capped at chunk_size) so a context shift starts a fresh
+memory write.
 
 ## `none`
 

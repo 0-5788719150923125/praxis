@@ -14,9 +14,7 @@ ByteLatentConv = partial(
     patching_mode="space",
     n_layers_encoder=3,
     n_layers_decoder=3,
-    use_hash_embeddings=True,
-    hash_functions=1,
-    hash_group_sizes=[3, 4, 5],
+    embeddings="byte_hash",
 )
 
 ByteLatentTransformer = partial(
@@ -25,9 +23,7 @@ ByteLatentTransformer = partial(
     patching_mode="space",
     n_layers_encoder=1,
     n_layers_decoder=1,
-    use_hash_embeddings=True,
-    hash_functions=1,
-    hash_group_sizes=[3, 4, 5],
+    embeddings="byte_hash",
 )
 
 # BLT + residual VQ bottleneck (abstractinator defaults)
@@ -37,9 +33,7 @@ Abstractinator = partial(
     patching_mode="space",
     n_layers_encoder=3,
     n_layers_decoder=3,
-    use_hash_embeddings=True,
-    hash_functions=1,
-    hash_group_sizes=[3, 4, 5],
+    embeddings="byte_hash",
     vq_codebook_size=16384,
 )
 

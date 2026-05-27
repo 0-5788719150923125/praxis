@@ -3,7 +3,15 @@
 
 Input embedding layers, paired with the corresponding block type.
 
-Registry: ``praxis.EMBEDDING_REGISTRY`` (8 entries)
+Registry: ``praxis.EMBEDDING_REGISTRY`` (12 entries)
+
+## `byte`
+
+Value: `functools.partial(<function praxis.embeddings._compose>, [('tok', {})])`
+
+## `byte_hash`
+
+Value: `functools.partial(<function praxis.embeddings._compose>, [('tok', {}), ('hash', {'group_sizes': [3, 4, 5], 'functions': 1})])`
 
 ## `conv`, `gru`, `min`, `nano`, `recurrent`, `ssm`, `transformer` - ProjectedEmbedding
 
@@ -13,9 +21,26 @@ required hidden dimension.
 
 Source: [praxis/embeddings/projected.py:11](../praxis/embeddings/projected.py#L11)
 
+## `hash` - HashEmbedding
+
+N-gram hash embedding: sums table lookups over byte windows of several sizes and hash
+functions, computing vectors from byte n-grams rather than retrieving a per-token row.
+Has no single tie-able table by design.
+
+Source: [praxis/embeddings/hash.py:41](../praxis/embeddings/hash.py#L41)
+
 ## `mru` - PositionalEmbedding
 
 Praxis embeddings with learned positional encodings (GPT2-style). Uses Sequential
 organization of layers.
 
 Source: [praxis/embeddings/positional.py:11](../praxis/embeddings/positional.py#L11)
+
+## `tok` - ByteEmbedding
+
+Per-byte token table for byte-latent encoders; the weight-tying target.
+
+Sizes itself from the encoder's declared input layout (``input_dim`` /
+``input_vocab_size``) when present, else from the global config.
+
+Source: [praxis/embeddings/byte.py:4](../praxis/embeddings/byte.py#L4)

@@ -110,6 +110,9 @@ class NeuralMemory(nn.Module):
         max_lr: float = 1e-2,
         momentum: bool = True,
         use_energy: bool = False,
+        segment: bool = False,
+        segment_block: int = 16,
+        segment_gamma: float = 1.0,
         beta1: float = 0.9,
         beta2: float = 0.999,
         eps: float = 1e-8,
@@ -121,6 +124,20 @@ class NeuralMemory(nn.Module):
         self.max_lr = max_lr
         self.use_momentum = momentum
         self.use_energy = use_energy
+        # Surprise-based event segmentation (EM-LLM, Fountas et al. 2024), energy
+        # mode only: split the update grid at surprise spikes instead of fixed
+        # chunks. The grid becomes segment_block tokens; consecutive blocks merge
+        # into an event until surprise exceeds mu+gamma*sigma (causal window) or
+        # the event reaches chunk_size (the cap, bounding VRAM). Boundaries reset
+        # the update's momentum so a context shift starts a fresh memory write.
+        self.segment = segment and use_energy
+        self.segment_block = segment_block
+        self.segment_gamma = segment_gamma
+        if self.segment:
+            assert (
+                chunk_size % segment_block == 0
+            ), "chunk_size must be a multiple of segment_block"
+        self._cap_blocks = chunk_size // segment_block
         # Energy mode: Adam-style adaptive update constants (replace the learned
         # gates). 1st/2nd-moment EMAs make the step scale-invariant, so the fixed
         # max_lr stays safe; weight_decay is optional forgetting.
@@ -166,6 +183,10 @@ class NeuralMemory(nn.Module):
         self.last_surprise_norm: Optional[Tensor] = None
         self.last_gain: Optional[Tensor] = None
         self.last_write: Optional[Tensor] = None
+        # Event-size stats from the last segmented store pass (tokens per event).
+        self.last_event_mean: Optional[Tensor] = None
+        self.last_event_min: Optional[Tensor] = None
+        self.last_event_max: Optional[Tensor] = None
 
     def _activation_name(self) -> str:
         for module in self.memory_model.modules():
@@ -180,7 +201,7 @@ class NeuralMemory(nn.Module):
             f"{type(self).__name__}(dim={self.dim}, chunk_size={self.chunk_size}, "
             f"model={type(self.memory_model).__name__}, "
             f"activation={self._activation_name()}, momentum={self.use_momentum}, "
-            f"energy={self.use_energy})"
+            f"energy={self.use_energy}, segment={self.segment})"
         )
 
     def _update_ctx(self):
@@ -202,6 +223,42 @@ class NeuralMemory(nn.Module):
         zeros = lambda: {n: torch.zeros_like(w) for n, w in weights.items()}
         return NeuralMemState(0, weights, zeros(), zeros())
 
+    def _segment(self, s_blocks: Tensor) -> Tuple[Tensor, Tensor]:
+        """Surprise-based event boundaries over the block axis (EM-LLM rule).
+
+        ``s_blocks`` is the per-block surprise ``(b, nb)``. A block starts a new
+        event when its surprise exceeds a causal ``mu + gamma*sigma`` threshold
+        (running stats over prior blocks) or the running event reaches the cap.
+        Returns a boolean ``reset_mask`` and the 1-indexed per-event position
+        ``t_event`` (both ``(b, nb)``), for resetting the Adam EMAs.
+        """
+        b, nb = s_blocks.shape
+        # Causal running mean/std over strictly prior blocks (parameter-free
+        # window). Block 0 has no history, so it can only be a forced start.
+        idx = torch.arange(nb, device=s_blocks.device)
+        csum = s_blocks.cumsum(1) - s_blocks
+        csq = (s_blocks * s_blocks).cumsum(1) - s_blocks * s_blocks
+        count = idx.clamp(min=1).to(s_blocks.dtype)
+        mean = csum / count
+        var = (csq / count - mean * mean).clamp(min=0.0)
+        spike = s_blocks > mean + self.segment_gamma * var.sqrt()
+        spike[:, 0] = False  # no history at block 0
+
+        # Walk the blocks to apply the cap, which is a stateful recurrence
+        # (a spike resets the counter, shifting later forced boundaries). Cheap:
+        # nb vector ops over (b,), no autograd, no model calls.
+        reset = torch.zeros_like(spike)
+        t_event = torch.ones(b, nb, dtype=torch.long, device=s_blocks.device)
+        run = torch.zeros(b, dtype=torch.long, device=s_blocks.device)
+        for j in range(nb):
+            is_b = spike[:, j] | (run >= self._cap_blocks)
+            if j == 0:
+                is_b = torch.ones_like(is_b)
+            reset[:, j] = is_b
+            run = torch.where(is_b, torch.ones_like(run), run + 1)
+            t_event[:, j] = run
+        return reset, t_event
+
     def _adam_update(
         self,
         weights: Weights,
@@ -209,23 +266,33 @@ class NeuralMemory(nn.Module):
         second_moment: Weights,
         surprise: Weights,
         num_chunks: int,
+        reset_mask: Optional[Tensor] = None,
+        t_event: Optional[Tensor] = None,
     ) -> Tuple[Weights, Weights, Weights, Weights]:
         """Detached Adam-style test-time update. Per-chunk EMAs of the surprise
         (1st/2nd moment, bias-corrected) give a scale-invariant step, so the
-        fixed ``max_lr`` is safe; the parallel scans run over the chunk axis."""
+        fixed ``max_lr`` is safe; the parallel scans run over the chunk axis.
+
+        With segmentation, ``reset_mask`` zeroes the EMA carry at event starts
+        (fresh moments) and ``t_event`` re-bases the bias correction per event;
+        the weights themselves persist across events (long-term memory)."""
         ref = surprise[self._param_names[0]]
         b = ref.shape[0]
         beta1 = ref.new_full((b, num_chunks), self.beta1)
         beta2 = ref.new_full((b, num_chunks), self.beta2)
         keep = ref.new_full((b, num_chunks), 1.0 - self.weight_decay)
-        t = torch.arange(1, num_chunks + 1, device=ref.device)
-        c1 = 1.0 - self.beta1**t  # bias-correction, (nc,)
-        c2 = 1.0 - self.beta2**t
+        if reset_mask is not None:
+            beta1 = beta1.masked_fill(reset_mask, 0.0)
+            beta2 = beta2.masked_fill(reset_mask, 0.0)
+        if t_event is None:
+            t_event = torch.arange(1, num_chunks + 1, device=ref.device).expand(b, -1)
+        c1 = 1.0 - self.beta1 ** t_event.to(ref.dtype)  # bias-correction, (b, nc)
+        c2 = 1.0 - self.beta2 ** t_event.to(ref.dtype)
 
         chunk_weights, new_weights, new_m, new_v = {}, {}, {}, {}
         for name in self._param_names:
             s = surprise[name]
-            bshape = (1, num_chunks) + (1,) * (s.dim() - 2)
+            bshape = (b, num_chunks) + (1,) * (s.dim() - 2)
             v = _affine_scan(beta2, (1.0 - self.beta2) * s * s, second_moment[name])
             if self.use_momentum:
                 m = _affine_scan(beta1, (1.0 - self.beta1) * s, momentum[name])
@@ -281,7 +348,8 @@ class NeuralMemory(nn.Module):
     ) -> Tuple[Tensor, NeuralMemState]:
         """Store ``seq`` into memory and retrieve causally. Returns (out, state)."""
         b, n, d = seq.shape
-        c = self.chunk_size
+        # Segmentation runs the update on a finer base grid; events merge blocks.
+        c = self.segment_block if self.segment else self.chunk_size
 
         if state is None:
             state = self.init_state(b, seq.device)
@@ -327,10 +395,26 @@ class NeuralMemory(nn.Module):
             }
 
             new_second = second_moment
+            reset_mask = t_event = None
+            if self.segment:
+                # Per-block surprise (real tokens only), then event boundaries.
+                valid = per_token.new_ones(num_chunks * c)
+                if pad:
+                    valid[-pad:] = 0.0
+                valid = valid.reshape(num_chunks, c)
+                pt = per_token.reshape(b, num_chunks, c)
+                s_blocks = (pt * valid).sum(-1) / valid.sum(-1).clamp(min=1.0)
+                reset_mask, t_event = self._segment(s_blocks)
             if self.use_energy:
                 chunk_weights, new_weights, new_momentum, new_second = (
                     self._adam_update(
-                        weights, momentum, second_moment, surprise, num_chunks
+                        weights,
+                        momentum,
+                        second_moment,
+                        surprise,
+                        num_chunks,
+                        reset_mask,
+                        t_event,
                     )
                 )
             else:
@@ -379,6 +463,19 @@ class NeuralMemory(nn.Module):
             )
             wden = sum(weights[p].pow(2).sum() for p in self._param_names)
             self.last_write = (wnum / (wden + self.eps)).sqrt()
+
+            # Event sizes (tokens): inter-boundary spans, last block sheds pad.
+            if self.segment and reset_mask is not None:
+                vtc = [float(c)] * num_chunks
+                vtc[-1] = c - pad
+                sizes = []
+                for bi in range(b):
+                    bounds = reset_mask[bi].nonzero().flatten().tolist() + [num_chunks]
+                    sizes += [sum(vtc[a:e]) for a, e in zip(bounds, bounds[1:])]
+                sizes = seq.new_tensor(sizes)
+                self.last_event_mean = sizes.mean()
+                self.last_event_min = sizes.min()
+                self.last_event_max = sizes.max()
 
         new_state = NeuralMemState(
             state.seq_index + n, new_weights, new_momentum, new_second

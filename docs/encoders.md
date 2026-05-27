@@ -14,10 +14,10 @@ After downsampling byte-level representations to patch-level and projecting to
 hidden_size, vectors are quantized through a residual VQ. The VQ loss is added to the
 existing encoder aux_loss, requiring no changes to the training loop.
 
-Source: [praxis/encoders/abstractinator/encoder.py:25](../praxis/encoders/abstractinator/encoder.py#L25)
+Source: [praxis/encoders/abstractinator/encoder.py:22](../praxis/encoders/abstractinator/encoder.py#L22)
 
 Presets:
-- `abstractinator` - `hash_functions=1, hash_group_sizes=[3, 4, 5], local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', use_hash_embeddings=True, vq_codebook_size=16384`
+- `abstractinator` - `embeddings='byte_hash', local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', vq_codebook_size=16384`
 
 ## `byte_latent`, `byte_latent_conv`, `byte_latent_transformer` - ByteLatentEncoder
 
@@ -27,12 +27,12 @@ https://arxiv.org/abs/2412.09871
 TODO: This code is an absolute mess. Both this repo and BLT are in active development,
 so it has been difficult to standardize. This could be a lot cleaner.
 
-Source: [praxis/encoders/byte_latent/encoder.py:47](../praxis/encoders/byte_latent/encoder.py#L47)
+Source: [praxis/encoders/byte_latent/encoder.py:38](../praxis/encoders/byte_latent/encoder.py#L38)
 
 Presets:
 - `byte_latent` - class defaults
-- `byte_latent_conv` - `hash_functions=1, hash_group_sizes=[3, 4, 5], local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', use_hash_embeddings=True`
-- `byte_latent_transformer` - `hash_functions=1, hash_group_sizes=[3, 4, 5], local_architecture='transformer', n_layers_decoder=1, n_layers_encoder=1, patching_mode='space', use_hash_embeddings=True`
+- `byte_latent_conv` - `embeddings='byte_hash', local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space'`
+- `byte_latent_transformer` - `embeddings='byte_hash', local_architecture='transformer', n_layers_decoder=1, n_layers_encoder=1, patching_mode='space'`
 
 ## `calm`, `calm_bpe`, `calm_byte`, `calm_small` - CALMEncoder
 
@@ -40,7 +40,7 @@ CALM autoencoder + energy head, plugged into the encoder slot.
 
 The encoder owns its loss bookkeeping; see ``handles_loss``.
 
-Source: [praxis/encoders/calm/encoder.py:31](../praxis/encoders/calm/encoder.py#L31)
+Source: [praxis/encoders/calm/encoder.py:32](../praxis/encoders/calm/encoder.py#L32)
 
 Presets:
 - `calm` - `ae_dropout=0.15, ae_hidden=512, chunk_size=8, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=128, noise_dim=128`

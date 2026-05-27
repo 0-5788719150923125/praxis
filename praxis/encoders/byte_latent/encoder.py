@@ -1,7 +1,6 @@
 import math
 import os
-import random
-from typing import List, Optional, Tuple, TypeVar, Union
+from typing import List, Optional, Tuple, TypeVar
 
 os.environ["BLT_SUPPRESS_ATTN_ERROR"] = "1"
 os.environ["BLT_ALLOW_MISSING_FLEX_ATTENTION"] = "1"
@@ -11,17 +10,9 @@ import torch.nn.functional as F
 import torch.nn.utils.rnn as rnn_utils
 from torch import nn
 
-from .config import (
-    ByteLatentConfig,
-    EmbeddingType,
-    compute_hash_embeddings,
-    create_base_config,
-    get_decoder_dim_token_emb,
-    get_encoder_dim_patch_emb,
-    get_encoder_dim_token_emb,
-    init_embeddings,
-)
-from .constants import BOE_ID, BYTE_UNITS, EOS_ID, OFFSET
+from ..base import BaseEncoder
+from .config import ByteLatentConfig, create_base_config
+from .constants import BOE_ID, EOS_ID
 from .patcher import (
     Patcher,
     PatcherConfig,
@@ -44,7 +35,7 @@ except ImportError:
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
-class ByteLatentEncoder(nn.Module):
+class ByteLatentEncoder(BaseEncoder):
     """
     An implementation of the Byte Latent Encoder/Decoder, from:
     https://arxiv.org/abs/2412.09871
@@ -66,10 +57,8 @@ class ByteLatentEncoder(nn.Module):
         local_architecture: str = "recurrent",
         n_layers_encoder: int = 3,
         n_layers_decoder: int = 3,
-        # Hash embeddings
-        use_hash_embeddings: bool = True,
-        hash_functions: int = 1,
-        hash_group_sizes: Optional[List[int]] = None,
+        # Input embeddings (EMBEDDING_REGISTRY profile key)
+        embeddings: str = "byte_hash",
         # Entropy model (for entropy patching)
         entropy_model_layers: int = 2,
         # Cross attention (advanced)
@@ -90,9 +79,7 @@ class ByteLatentEncoder(nn.Module):
             local_architecture: Architecture for local encoder/decoder ("recurrent", "conv")
             n_layers_encoder: Number of layers in local encoder
             n_layers_decoder: Number of layers in local decoder
-            use_hash_embeddings: Whether to use hash-based embeddings
-            hash_functions: Number of hash functions to use
-            hash_group_sizes: List of n-gram sizes for hashing
+            embeddings: EMBEDDING_REGISTRY profile key for the input embeddings
             entropy_model_layers: Number of layers in entropy model
             cross_attn_encoder: Enable cross-attention in encoder
             cross_attn_decoder: Enable cross-attention in decoder
@@ -114,9 +101,11 @@ class ByteLatentEncoder(nn.Module):
         self.byte_config.cross_attn_encoder = cross_attn_encoder
         self.byte_config.cross_attn_decoder = cross_attn_decoder
         self.byte_config.downsampling_by_pooling = downsampling_method
-        self.byte_config.encoder_hash_byte_group_nb_functions = hash_functions
-        if hash_group_sizes is not None:
-            self.byte_config.encoder_hash_byte_group_size = hash_group_sizes
+
+        # Input embeddings: a profile key resolved against EMBEDDING_REGISTRY.
+        # The model builds the module (sized via the input_* properties below)
+        # and injects it through set_embeddings().
+        self.embedding_profile = embeddings
 
         # Setup entropy model for entropy-based patching
         self.entropy_model: Optional[nn.Module] = None
@@ -165,15 +154,9 @@ class ByteLatentEncoder(nn.Module):
         )
         self.patcher.entropy_model = self.entropy_model
 
-        # Setup hash embeddings
-        self.hash_embeds: Optional[nn.Module] = None
-        if use_hash_embeddings:
-            self.hash_embeds = init_embeddings(
-                self.byte_config,
-                EmbeddingType.HASH_TOK,
-                local_encoder_dim=self.byte_config.dim_token_emb,
-                encoder_hash_byte_group_size=self.byte_config.encoder_hash_byte_group_size,
-            )
+        # Input embeddings live in the standard registry; the model injects
+        # them via set_embeddings() after construction.
+        self.embeddings: Optional[nn.Module] = None
 
         # Setup token projection if needed
         self.token_proj: Optional[nn.Linear] = None
@@ -233,6 +216,20 @@ class ByteLatentEncoder(nn.Module):
     def output_vocab_size(self) -> int:
         """Vocab the LM head targets (local byte vocab, not the global vocab)."""
         return self.byte_config.local_vocab_size
+
+    @property
+    def input_dim(self) -> int:
+        """Embedding dim the injected input embeddings must produce."""
+        return self.byte_config.dim_token_emb
+
+    @property
+    def input_vocab_size(self) -> int:
+        """Vocab the per-byte input table covers (local byte vocab)."""
+        return self.byte_config.local_vocab_size
+
+    def set_embeddings(self, module: nn.Module) -> None:
+        """Receive the input embedding module built from EMBEDDING_REGISTRY."""
+        self.embeddings = module
 
     @property
     def outputs_are_aligned(self) -> bool:
@@ -376,17 +373,19 @@ class ByteLatentEncoder(nn.Module):
                 block_mask=False,
             )
 
-        # Compute hash embeddings
-        hash_embeds = compute_hash_embeddings(
-            local_encoder_tokens=local_encoder_tokens,
-            local_encoder=self.encoder,
-            encoder_hash_tok_embedding=self.hash_embeds,
-        )
+        # Input embeddings (base byte table + optional n-gram hash), computed
+        # on the byte stream before patching.
+        if self.embeddings is None:
+            raise RuntimeError(
+                "Input embeddings not set; the model injects them from "
+                "EMBEDDING_REGISTRY via set_embeddings()."
+            )
+        embeds = self.embeddings(local_encoder_tokens)
 
         # Local encoder
         (h_encoder, h_cross), _ = self.encoder(
             tokens=local_encoder_tokens,
-            embeds=hash_embeds,
+            embeds=embeds,
             patch_embeds=None,
             cross_mask=cross_attn_mask_enc,
             num_patches=patch_lengths.shape[1],
@@ -1053,9 +1052,6 @@ class RecurrentEncoder(nn.Module):
         self.dropout = config.dropout
         self.training = False
 
-        # Token embeddings
-        self.tok_emb = nn.Embedding(config.local_vocab_size, config.dim_token_emb)
-
         self.layers = nn.ModuleList(
             [
                 RecurrentBlock(dim=config.dim_token_emb)
@@ -1084,11 +1080,8 @@ class RecurrentEncoder(nn.Module):
                 - Tuple of (hidden states, None)
                 - None (for API compatibility)
         """
-        # Apply embeddings
-        if embeds is not None:
-            h = embeds
-        else:
-            h = self.tok_emb(tokens)
+        # Input embeddings are always supplied by the encoder.
+        h = embeds
 
         h = F.dropout(h, p=self.dropout, training=self.training)
         for i, layer in enumerate(self.layers):
@@ -1344,9 +1337,6 @@ class ConvEncoder(nn.Module):
         super().__init__()
         self.config = config
 
-        # Token embeddings
-        self.tok_emb = nn.Embedding(config.local_vocab_size, config.dim_token_emb)
-
         self.layers = nn.ModuleList()
         for i in range(config.n_layers_local_encoder):
             kernel_size = 3
@@ -1384,11 +1374,8 @@ class ConvEncoder(nn.Module):
                 - Tuple of (hidden states, None)
                 - None (for API compatibility)
         """
-        # Apply embeddings
-        if embeds is not None:
-            h = embeds
-        else:
-            h = self.tok_emb(tokens)
+        # Input embeddings are always supplied by the encoder.
+        h = embeds
 
         for layer in self.layers:
             h = self.dropout(h)
@@ -1685,9 +1672,6 @@ class TransformerEncoder(nn.Module):
         self.dropout = config.dropout
         self.training = False
 
-        # Token embeddings
-        self.tok_emb = nn.Embedding(config.local_vocab_size, config.dim_token_emb)
-
         # Transformer layers with sliding window attention
         window_size = getattr(config, "sliding_window_size", 512)
 
@@ -1719,11 +1703,8 @@ class TransformerEncoder(nn.Module):
                 - Tuple of (hidden states, None)
                 - None (for API compatibility)
         """
-        # Apply embeddings
-        if embeds is not None:
-            h = embeds
-        else:
-            h = self.tok_emb(tokens)
+        # Input embeddings are always supplied by the encoder.
+        h = embeds
 
         h = F.dropout(h, p=self.dropout, training=self.training)
 

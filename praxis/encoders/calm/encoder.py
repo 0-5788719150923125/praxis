@@ -25,10 +25,11 @@ from torch import nn
 from praxis.heads.energy import EnergyHead
 from praxis.losses.energy_score import energy_score_loss
 
+from ..base import BaseEncoder
 from .vae import CALMVAE
 
 
-class CALMEncoder(nn.Module):
+class CALMEncoder(BaseEncoder):
     """CALM autoencoder + energy head, plugged into the encoder slot.
 
     The encoder owns its loss bookkeeping; see ``handles_loss``.
@@ -123,11 +124,8 @@ class CALMEncoder(nn.Module):
         """Skip the default CE path; we register losses internally."""
         return True
 
-    @property
-    def sequence_length_multiplier(self) -> int:
-        """Global transformer sees patches, not tokens, so the decoder
-        side is not a multiplier of the user-supplied ``block_size``."""
-        return 1
+    # sequence_length_multiplier defaults to 1 (BaseEncoder): the global
+    # transformer sees patches, not tokens.
 
     # ------------------------------------------------------------------
     # Core
@@ -154,7 +152,7 @@ class CALMEncoder(nn.Module):
         torch.Tensor,
         torch.Tensor,
     ]:
-        """See ``EncoderInterface``.
+        """See ``BaseEncoder``.
 
         Returns ``(patch_embeds, h_encoder, patch_lengths, block_ids,
         encoder_loss, local_decoder_tokens)``. ``h_encoder`` is ``None``
@@ -262,3 +260,82 @@ class CALMEncoder(nn.Module):
         out = self._pending_losses
         self._pending_losses = {}
         return out
+
+    # ------------------------------------------------------------------
+    # Generation
+    # ------------------------------------------------------------------
+
+    @torch.no_grad()
+    def custom_generate(
+        self,
+        inputs: Optional[torch.Tensor] = None,
+        *,
+        base_forward,
+        generation_config=None,
+        **kwargs,
+    ):
+        """CALM generation: latent LM -> energy head -> VAE decode.
+
+        Each step runs the global transformer over the latent prefix
+        (``base_forward``), samples a latent from the energy head conditioned
+        on the last hidden state (LF-temperature if T != 1), decodes it
+        through the VAE to K tokens, and appends. Stops on EOS or
+        ``max_new_tokens``.
+        """
+        from types import SimpleNamespace
+
+        from praxis.generation.lf_temperature import lf_temperature_sample_batched
+
+        if inputs is None:
+            raise ValueError("CALM generate requires an input_ids prompt")
+
+        max_new_tokens = getattr(generation_config, "max_new_tokens", 100) or 100
+        temperature = getattr(generation_config, "temperature", 1.0) or 1.0
+        eos_token_id = getattr(generation_config, "eos_token_id", None)
+        return_dict = kwargs.get("return_dict_in_generate", False)
+
+        eos_set = set()
+        if isinstance(eos_token_id, int):
+            eos_set = {eos_token_id}
+        elif isinstance(eos_token_id, (list, tuple)):
+            eos_set = set(eos_token_id)
+
+        generated = inputs
+        num_new = 0
+        done = False
+
+        while num_new < max_new_tokens and not done:
+            base_out = base_forward(generated)
+            h_last = base_out.last_hidden_state[:, -1, :]  # [B, hidden]
+
+            def sampler(n: int, _h=h_last) -> torch.Tensor:
+                # Draw n latents from the energy head for batch-index 0;
+                # generation is single-stream for now.
+                return self.energy_head.sample(_h[0], num_samples=n)
+
+            z_new = lf_temperature_sample_batched(
+                sampler, temperature=float(temperature), num_candidates=64
+            )  # [latent_dim]
+            z_new = z_new.view(1, 1, -1)
+
+            recon_logits, _ = self.vae.decode(z_new)  # [1, K, V]
+            # Greedy token choice per position inside the patch; the
+            # stochasticity lives in the latent draw, not the tokens.
+            new_tokens = recon_logits.argmax(dim=-1).view(1, self.K)
+
+            # Expand batch dim if the prompt had batch > 1 (rare for CLI).
+            if generated.size(0) > 1:
+                new_tokens = new_tokens.expand(generated.size(0), -1)
+
+            generated = torch.cat([generated, new_tokens], dim=1)
+            num_new += self.K
+
+            if eos_set:
+                for t in new_tokens.view(-1).tolist():
+                    if t in eos_set:
+                        done = True
+                        break
+
+        if return_dict:
+            return SimpleNamespace(sequences=generated)
+        return generated

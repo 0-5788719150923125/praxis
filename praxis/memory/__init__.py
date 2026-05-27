@@ -40,6 +40,8 @@ MEMORY_REGISTRY: Dict[str, Optional[dict]] = {
         momentum=True,
         activation="mish",
         use_energy=True,
+        segment=True,
+        segment_block=16,
     ),
     "mag": dict(
         surfacing="mag",
@@ -66,7 +68,9 @@ MEMORY_PROFILE_DESCRIPTIONS: Dict[str, str] = {
         "much lower VRAM. The update uses a fixed Adam-style adaptive rule (EMA "
         "1st/2nd moment, constant lr) in place of learned gates; the key "
         "projection is tied to the query projection (so addressing trains on the "
-        "task) and the value side is fixed to identity."
+        "task) and the value side is fixed to identity. The update grid is "
+        "segmented at surprise spikes (EM-LLM-style events, capped at "
+        "chunk_size) so a context shift starts a fresh memory write."
     ),
     "mag": (
         "Memory-as-Gate (Titans): a memory branch run parallel to attention "

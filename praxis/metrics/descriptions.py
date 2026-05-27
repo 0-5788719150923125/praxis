@@ -16,6 +16,10 @@ The ``chart`` sub-dict may contain:
 * ``group``: a stable section key (e.g., ``"harmonic_head"``) used to
   cluster related metrics into a single dashboard section
 * ``order``: integer ordering within the group (default 0)
+* ``series_group``: optional key; metrics sharing it render as multiple
+  lines on ONE chart (the lowest-``order`` member supplies the title,
+  axis and subtitle). Use for same-scale companions (e.g. min/mean/max).
+* ``series_label``: this metric's legend label within its ``series_group``
 
 The walker normalizes both forms into the rich shape on the wire, so
 the frontend always sees ``{description, chart}`` per entry.

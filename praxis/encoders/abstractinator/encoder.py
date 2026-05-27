@@ -11,10 +11,7 @@ resets every 250 steps).
 Based on: https://github.com/OilProducts/abstractinator
 """
 
-from typing import List, Optional, TypeVar
-
-import torch
-from torch import nn
+from typing import Optional, TypeVar
 
 from praxis.encoders.byte_latent.encoder import ByteLatentEncoder
 from praxis.encoders.quantization import LearnedQueryAttention, MultiStageResidualVQ
@@ -45,9 +42,7 @@ class AbstractinatorEncoder(ByteLatentEncoder):
         local_architecture: str = "conv",
         n_layers_encoder: int = 3,
         n_layers_decoder: int = 3,
-        use_hash_embeddings: bool = True,
-        hash_functions: int = 1,
-        hash_group_sizes: Optional[List[int]] = None,
+        embeddings: str = "byte_hash",
         entropy_model_layers: int = 2,
         cross_attn_encoder: bool = False,
         cross_attn_decoder: bool = False,
@@ -75,9 +70,7 @@ class AbstractinatorEncoder(ByteLatentEncoder):
             local_architecture=local_architecture,
             n_layers_encoder=n_layers_encoder,
             n_layers_decoder=n_layers_decoder,
-            use_hash_embeddings=use_hash_embeddings,
-            hash_functions=hash_functions,
-            hash_group_sizes=hash_group_sizes,
+            embeddings=embeddings,
             entropy_model_layers=entropy_model_layers,
             cross_attn_encoder=cross_attn_encoder,
             cross_attn_decoder=cross_attn_decoder,

@@ -132,6 +132,50 @@ class MemorySurfacing(MemoryBase):
                 "order": 13,
             },
         },
+        # Event sizes share one chart (mean/min/max are the same scale) via a
+        # series_group; the lowest-order member supplies the title/axis/subtitle.
+        "memory_event_size": {
+            "description": (
+                "Event lengths (tokens) from surprise-based segmentation (energy "
+                "mode), averaged across memory layers: mean, min and max across "
+                "the events in a store pass. Events split at surprise spikes and "
+                "are capped at chunk_size; mean below the cap means the memory is "
+                "finding boundaries."
+            ),
+            "chart": {
+                "title": "Memory Event Size",
+                "y_label": "tokens / event",
+                "y_scale": "linear",
+                "group": "memory",
+                "order": 14,
+                "series_group": "memory_event",
+                "series_label": "mean",
+            },
+        },
+        "memory_event_min": {
+            "description": "Smallest event length (tokens) in the store pass.",
+            "chart": {
+                "title": "Memory Event Size",
+                "y_label": "tokens / event",
+                "y_scale": "linear",
+                "group": "memory",
+                "order": 15,
+                "series_group": "memory_event",
+                "series_label": "min",
+            },
+        },
+        "memory_event_max": {
+            "description": "Largest event length (tokens) in the store pass (caps at chunk_size).",
+            "chart": {
+                "title": "Memory Event Size",
+                "y_label": "tokens / event",
+                "y_scale": "linear",
+                "group": "memory",
+                "order": 16,
+                "series_group": "memory_event",
+                "series_label": "max",
+            },
+        },
     }
 
     def __init__(self, config: ConfigType, spec: dict) -> None:
@@ -142,6 +186,8 @@ class MemorySurfacing(MemoryBase):
             chunk_size=spec.get("chunk_size", 64),
             momentum=spec.get("momentum", True),
             use_energy=spec.get("use_energy", False),
+            segment=spec.get("segment", False),
+            segment_block=spec.get("segment_block", 16),
         )
 
     def forward(self, stream, attn_output, state=None):
@@ -158,6 +204,10 @@ class MemorySurfacing(MemoryBase):
             out["memory_gain"] = float(m.last_gain)
         if m.last_write is not None:
             out["memory_write"] = float(m.last_write)
+        if m.last_event_mean is not None:
+            out["memory_event_size"] = float(m.last_event_mean)
+            out["memory_event_min"] = float(m.last_event_min)
+            out["memory_event_max"] = float(m.last_event_max)
         return out
 
 

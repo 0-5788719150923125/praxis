@@ -188,6 +188,72 @@ def test_energy_surprise_is_scale_free():
     assert mem.last_surprise > 100.0 * mem.last_surprise_norm
 
 
+# --- surprise-based segmentation (EM-LLM) -----------------------------------
+
+
+def _segment_mem():
+    torch.manual_seed(0)
+    model = nn.Sequential(nn.Linear(64, 128), nn.GELU(), nn.Linear(128, 64))
+    return NeuralMemory(
+        dim=64,
+        model=model,
+        chunk_size=64,
+        use_energy=True,
+        segment=True,
+        segment_block=16,
+    )
+
+
+def test_segment_requires_energy():
+    """Segmentation only takes effect in energy mode; off otherwise."""
+    model = nn.Sequential(nn.Linear(64, 64))
+    mem = NeuralMemory(dim=64, model=model, segment=True, use_energy=False)
+    assert mem.segment is False
+
+
+def test_segment_cap_without_spikes():
+    """A uniform stream has no surprise spikes, so events are forced only at the
+    chunk_size cap: every event is exactly chunk_size tokens."""
+    mem = _segment_mem()
+    pattern = torch.randn(2, 1, 64)
+    seq = pattern.repeat(1, 128, 1)  # 128 = 2 * chunk_size, no variation
+    mem(seq)
+    assert float(mem.last_event_max) == 64.0
+    assert float(mem.last_event_mean) == 64.0
+
+
+def test_segment_helper_boundaries():
+    """A surprise spike forces an event boundary; the cap forces one regardless;
+    the per-event position resets at each boundary."""
+    mem = _segment_mem()  # cap = 64 / 16 = 4 blocks
+    s = torch.tensor([[1.0, 1.0, 1.0, 1.0, 1.0, 10.0, 1.0, 1.0]])
+    reset, t_event = mem._segment(s)
+    # Boundaries: block 0 (forced start), block 4 (cap), block 5 (spike).
+    assert reset[0].tolist() == [1, 0, 0, 0, 1, 1, 0, 0]
+    assert t_event[0].tolist() == [1, 2, 3, 4, 1, 1, 2, 3]
+
+
+def test_segment_events_bounded_and_surfaced():
+    """Event sizes never exceed the cap and the metrics are populated."""
+    torch.manual_seed(1)
+    mem = _segment_mem()
+    seq = torch.randn(2, 200, 64)
+    seq[:, 100:] += 8.0  # context shift -> surprise spike
+    mem(seq)
+    assert mem.last_event_mean is not None
+    assert float(mem.last_event_max) <= 64.0
+    assert float(mem.last_event_min) >= 1.0
+
+
+def test_segment_still_memorizes():
+    """Segmented updates still adapt the fast weights at test time."""
+    mem = _segment_mem()
+    seq = torch.randn(2, 128, 64)
+    cold = mem.init_state(batch=2)
+    _, warm = mem(seq)
+    assert mem.memory_loss(seq, warm.weights) < mem.memory_loss(seq, cold.weights)
+
+
 # --- surfacing integration (MAL / MAG) --------------------------------------
 
 SURFACINGS = ["mal", "mal_energy", "mag"]
@@ -282,12 +348,18 @@ def test_surprise_metric_surfaced(memory_type):
     for key in ("memory_surprise", "memory_gain", "memory_write"):
         assert key in metrics and torch.isfinite(torch.as_tensor(metrics[key]))
         assert key in descriptions
-    # The scale-free surprise is energy-mode only.
+    # The scale-free surprise and event-size stats are energy/segment only.
+    event_keys = ("memory_event_size", "memory_event_min", "memory_event_max")
     if memory_type == "mal_energy":
         assert torch.isfinite(torch.as_tensor(metrics["memory_surprise_norm"]))
+        for key in event_keys:
+            assert torch.isfinite(torch.as_tensor(metrics[key]))
     else:
         assert "memory_surprise_norm" not in metrics
-    assert "memory_surprise_norm" in descriptions  # chart declared for all
+        assert all(key not in metrics for key in event_keys)
+    # Charts are declared for all memory modules regardless of mode.
+    assert "memory_surprise_norm" in descriptions
+    assert all(key in descriptions for key in event_keys)
 
     plain = PraxisForCausalLM(_block_config("none"))
     plain(input_ids=torch.randint(0, 256, (2, 16)))

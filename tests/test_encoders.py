@@ -4,7 +4,7 @@ import pytest
 import torch
 from torch import nn
 
-from praxis import ENCODER_REGISTRY
+from praxis import EMBEDDING_REGISTRY, ENCODER_REGISTRY
 from praxis.encoders.byte_latent.encoder import (
     create_patch_block_ids,
     mask_entropy_preds_at_special_tokens,
@@ -31,6 +31,11 @@ def module_setup(request, config):
     setattr(config, "meta", meta_mode)
     setattr(config, "device_map", "cpu")
     module = module_class(config)
+    # Mirror PraxisModel: build and inject input embeddings from the registry
+    # for encoders that name an embedding profile.
+    profile = getattr(module, "embedding_profile", None)
+    if profile:
+        module.set_embeddings(EMBEDDING_REGISTRY[profile](config, encoder=module))
     return module, config
 
 

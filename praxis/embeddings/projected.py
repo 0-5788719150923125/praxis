@@ -15,12 +15,13 @@ class ProjectedEmbedding(nn.Sequential):
     to map the embeddings to the required hidden dimension.
     """
 
-    def __init__(self, config: ConfigType) -> None:
+    def __init__(self, config: ConfigType, encoder=None) -> None:
         """
         Initialize embeddings module.
 
         Args:
             config: Configuration object with model parameters
+            encoder: Unused; accepted for a uniform registry signature
         """
         layers = OrderedDict()
 

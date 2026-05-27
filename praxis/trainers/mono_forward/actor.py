@@ -126,11 +126,9 @@ class LayerActor:
         # layer locally, so (unlike the backprop path's single final-layer
         # term) this regularizes every layer's own output - the natural,
         # if imperfect, analog. Folded as an aux loss below.
-        self.contrastive_isotropy = None
+        self.aux = None
         if contrastive_isotropy:
-            self.contrastive_isotropy = _deep_to(
-                ContrastiveIsotropyLoss(pad_id=pad_id), self.device
-            )
+            self.aux = _deep_to(ContrastiveIsotropyLoss(pad_id=pad_id), self.device)
 
         # Per-layer projection matrix M_i (paper Section 3.1). Each
         # layer gets its own independent projection - there is no
@@ -250,8 +248,8 @@ class LayerActor:
         # and folds aux losses via self.strategy (D5). The contrastive
         # isotropy term, when enabled, joins the fold as another aux loss.
         aux = [aux_loss] if aux_loss is not None else []
-        if self.contrastive_isotropy is not None:
-            aux.append(self.contrastive_isotropy(h_out, input_ids_dev))
+        if self.aux is not None:
+            aux.append(self.aux(h_out, input_ids_dev))
         loss = compute_layer_wise_loss(
             hidden_states=h_out,
             labels=labels_dev,
@@ -387,8 +385,8 @@ class LayerActor:
         """
         try:
             dyn = extract_layer_dynamics(self.layer, self._current_lr()) or {}
-            if self.contrastive_isotropy is not None:
-                dyn.update(self.contrastive_isotropy.training_metrics())
+            if self.aux is not None:
+                dyn.update(self.aux.training_metrics())
             return dyn or None
         except Exception:
             return None

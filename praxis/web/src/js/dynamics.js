@@ -368,6 +368,9 @@ function detectHaltingBuckets(dynamics) {
 //   y_scale:  'linear' (default) or 'logarithmic'
 //   group:    section key used to cluster related metrics together
 //   order:    integer ordering within the group (default 0)
+//   series_group: metrics sharing this key render as lines on ONE chart
+//                 (lowest-order member supplies title/axis/subtitle)
+//   series_label: this metric's legend label within its series_group
 //
 // Bespoke chart types (heatmaps, histograms, stacked-per-task series) stay
 // hardcoded - the manifest only handles scalar time-series.
@@ -392,22 +395,67 @@ function canvasIdForMetric(key) {
     return `dynamics-${key.replace(/_/g, '-')}`;
 }
 
+// Collapse a section's entries into render items: entries sharing a
+// ``series_group`` become one multi-line chart (its lowest-order member,
+// which appears first since entries are pre-sorted, leads the title/axis);
+// the rest stay as single-series charts.
+function seriesItemsFor(entries) {
+    const items = [];
+    const byGroup = new Map();
+    for (const entry of entries) {
+        const sg = entry.chart.series_group;
+        if (!sg) {
+            items.push({ kind: 'single', ...entry });
+            continue;
+        }
+        const label = entry.chart.series_label || entry.chart.title || entry.key;
+        if (byGroup.has(sg)) {
+            items[byGroup.get(sg)].series.push({ key: entry.key, label });
+        } else {
+            byGroup.set(sg, items.length);
+            items.push({
+                kind: 'multi',
+                canvasId: `dynamics-series-${sg.replace(/_/g, '-')}`,
+                lead: entry,
+                series: [{ key: entry.key, label }],
+            });
+        }
+    }
+    return items;
+}
+
+function metricCardHTML(canvasId, title, subtitle) {
+    return `
+        <div style="margin-top: 2rem;">
+            <div class="chart-card">
+                <div class="chart-title">${title}</div>
+                <div class="chart-subtitle">${subtitle}</div>
+                <div class="chart-wrapper" style="height: 400px;">
+                    <canvas id="${canvasId}"></canvas>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
 function buildManifestSectionsHTML(manifest, getDesc) {
     let html = '';
     for (const [, entries] of manifest) {
-        for (const { key, chart, description } of entries) {
-            const canvasId = canvasIdForMetric(key);
-            html += `
-                <div style="margin-top: 2rem;">
-                    <div class="chart-card">
-                        <div class="chart-title">${chart.title || key}</div>
-                        <div class="chart-subtitle">${getDesc(key, description || '')}</div>
-                        <div class="chart-wrapper" style="height: 400px;">
-                            <canvas id="${canvasId}"></canvas>
-                        </div>
-                    </div>
-                </div>
-            `;
+        for (const item of seriesItemsFor(entries)) {
+            if (item.kind === 'multi') {
+                const c = item.lead.chart;
+                html += metricCardHTML(
+                    item.canvasId,
+                    c.title || item.lead.key,
+                    getDesc(item.lead.key, item.lead.description || '')
+                );
+            } else {
+                html += metricCardHTML(
+                    canvasIdForMetric(item.key),
+                    item.chart.title || item.key,
+                    getDesc(item.key, item.description || '')
+                );
+            }
         }
     }
     return html;
@@ -415,16 +463,28 @@ function buildManifestSectionsHTML(manifest, getDesc) {
 
 function mountManifestCharts(manifest, dynamics) {
     for (const [, entries] of manifest) {
-        for (const { key, chart } of entries) {
-            const canvasId = canvasIdForMetric(key);
-            if (!document.getElementById(canvasId)) continue;
-            createScalarMetricChart(
-                canvasId,
-                dynamics,
-                key,
-                chart.y_label || key,
-                chart.y_scale || 'linear'
-            );
+        for (const item of seriesItemsFor(entries)) {
+            if (item.kind === 'multi') {
+                const c = item.lead.chart;
+                if (!document.getElementById(item.canvasId)) continue;
+                createMultiSeriesMetricChart(
+                    item.canvasId,
+                    dynamics,
+                    item.series,
+                    c.y_label || c.title || item.lead.key,
+                    c.y_scale || 'linear'
+                );
+            } else {
+                const canvasId = canvasIdForMetric(item.key);
+                if (!document.getElementById(canvasId)) continue;
+                createScalarMetricChart(
+                    canvasId,
+                    dynamics,
+                    item.key,
+                    item.chart.y_label || item.key,
+                    item.chart.y_scale || 'linear'
+                );
+            }
         }
     }
 }
@@ -1048,6 +1108,34 @@ function createScalarMetricChart(canvasId, dynamics, key, yLabel, yType) {
         data: { datasets: [makeLineDataset(yLabel, data, '#B388FF')] },
         options
     });
+}
+
+const SERIES_COLORS = ['#B388FF', '#4A90E2', '#00D9FF', '#FFD700', '#00FF9F', '#FF6B9D'];
+
+// Several same-scale metrics on one chart (e.g. min/mean/max), one line each.
+function createMultiSeriesMetricChart(canvasId, dynamics, series, yLabel, yType) {
+    const steps = dynamics.steps || [];
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return;
+
+    if (dynamicsCharts[canvasId]) {
+        dynamicsCharts[canvasId].destroy();
+    }
+
+    const datasets = [];
+    series.forEach(({ key, label }, idx) => {
+        const values = dynamics[key];
+        if (!values) return;
+        const data = steps.map((step, i) => ({ x: step, y: values[i] }))
+            .filter(p => p.y !== null && p.y !== undefined);
+        datasets.push(makeLineDataset(label, data, SERIES_COLORS[idx % SERIES_COLORS.length]));
+    });
+    if (datasets.length === 0) return;
+
+    const { textColor, gridColor, tooltipBg } = getThemeColors();
+    const options = baseChartOptions(yLabel, yType, textColor, gridColor, tooltipBg);
+
+    dynamicsCharts[canvasId] = new Chart(ctx, { type: 'line', data: { datasets }, options });
 }
 
 // ─── Expert charts (conditional) ────────────────────────────────────────────

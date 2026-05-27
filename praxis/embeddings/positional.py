@@ -14,12 +14,13 @@ class PositionalEmbedding(nn.Sequential):
     Uses Sequential organization of layers.
     """
 
-    def __init__(self, config: ConfigType) -> None:
+    def __init__(self, config: ConfigType, encoder=None) -> None:
         """
         Initialize learned positional embeddings module.
 
         Args:
             config: Configuration object with model parameters
+            encoder: Unused; accepted for a uniform registry signature
         """
         layers = OrderedDict(
             [
