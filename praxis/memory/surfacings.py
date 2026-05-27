@@ -188,6 +188,7 @@ class MemorySurfacing(MemoryBase):
             use_energy=spec.get("use_energy", False),
             segment=spec.get("segment", False),
             segment_block=spec.get("segment_block", 16),
+            parallel_scan=spec.get("parallel_scan", True),
         )
 
     def forward(self, stream, attn_output, state=None):

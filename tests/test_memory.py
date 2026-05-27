@@ -367,3 +367,33 @@ def test_surprise_metric_surfaced(memory_type):
     plain(input_ids=torch.randint(0, 256, (2, 16)))
     assert MemoryBase.collect_training_metrics(plain) == {}
     assert MemoryBase.collect_metric_descriptions(plain) == {}
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        dict(use_energy=True, segment=True),  # mal_energy (the default profile)
+        dict(use_energy=True, segment=False),
+        dict(use_energy=False, momentum=True),  # standard, differentiable update
+        dict(use_energy=False, momentum=False),
+    ],
+)
+def test_sequential_matches_parallel_scan(kwargs):
+    """The sequential loop must reproduce the parallel-scan path exactly (same
+    output and carried state), so ``parallel_scan`` is purely a perf knob."""
+    torch.manual_seed(1)
+    model = nn.Sequential(nn.Linear(32, 32), nn.GELU(), nn.Linear(32, 32))
+    mem = NeuralMemory(dim=32, model=model, chunk_size=32, segment_block=8, **kwargs)
+    seq = torch.randn(2, 96, 32)
+
+    def run(parallel):
+        mem.parallel_scan = parallel
+        return mem(seq, mem.init_state(2))
+
+    (out_p, st_p), (out_s, st_s) = run(True), run(False)
+    assert torch.allclose(out_p, out_s, atol=1e-4)
+    for field in ("weights", "momentum", "second_moment"):
+        for k in getattr(st_p, field):
+            assert torch.allclose(
+                getattr(st_p, field)[k], getattr(st_s, field)[k], atol=1e-4
+            )

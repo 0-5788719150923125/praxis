@@ -117,6 +117,7 @@ class NeuralMemory(nn.Module):
         beta2: float = 0.999,
         eps: float = 1e-8,
         weight_decay: float = 0.0,
+        parallel_scan: bool = True,
     ) -> None:
         super().__init__()
         self.dim = dim
@@ -124,6 +125,12 @@ class NeuralMemory(nn.Module):
         self.max_lr = max_lr
         self.use_momentum = momentum
         self.use_energy = use_energy
+        # True: differentiate every chunk in one batched pass and collapse the
+        # per-chunk recurrence to a parallel scan (fast, materializes the full
+        # (b, nc, *p) trajectory). False: a sequential loop carrying running
+        # state, so the trajectory never exists - lower peak VRAM (energy mode
+        # only), ~1.5x slower, same numerics.
+        self.parallel_scan = parallel_scan
         # Surprise-based event segmentation (EM-LLM, Fountas et al. 2024), energy
         # mode only: split the update grid at surprise spikes instead of fixed
         # chunks. The grid becomes segment_block tokens; consecutive blocks merge
@@ -201,7 +208,8 @@ class NeuralMemory(nn.Module):
             f"{type(self).__name__}(dim={self.dim}, chunk_size={self.chunk_size}, "
             f"model={type(self.memory_model).__name__}, "
             f"activation={self._activation_name()}, momentum={self.use_momentum}, "
-            f"energy={self.use_energy}, segment={self.segment})"
+            f"energy={self.use_energy}, segment={self.segment}, "
+            f"parallel_scan={self.parallel_scan})"
         )
 
     def _update_ctx(self):
@@ -361,6 +369,12 @@ class NeuralMemory(nn.Module):
         if pad:
             seq = F.pad(seq, (0, 0, 0, pad))
         num_chunks = seq.shape[1] // c
+
+        if not self.parallel_scan:
+            return self._forward_sequential(
+                seq, weights, momentum, second_moment, state.seq_index, n, c, num_chunks, pad
+            )
+
         bn = b * num_chunks
 
         # Test-time update. In energy mode the whole region is detached: no scan
@@ -483,6 +497,139 @@ class NeuralMemory(nn.Module):
             state.seq_index + n, new_weights, new_momentum, new_second
         )
         return retrieved, new_state
+
+    def _forward_sequential(
+        self, seq, weights, momentum, second_moment, seq_index, n, c, num_chunks, pad
+    ):
+        """Chunk-at-a-time equivalent of the parallel store+retrieve. Carries the
+        running weights/EMAs so the full (b, nc, *p) surprise and weight
+        trajectories are never materialized. Numerics match the parallel path:
+        every chunk's surprise is still taken against the frozen W0, retrieval
+        still reads the pre-write weights, and segmentation/Adam are the same
+        recurrence walked in order instead of scanned."""
+        b = seq.shape[0]
+        W0 = weights  # frozen segment-start weights; surprise grads taken against these
+        w = dict(weights)  # running weights (retrieval reads these pre-write)
+        m, v = dict(momentum), dict(second_moment)
+
+        valid = seq.new_ones(num_chunks * c).reshape(num_chunks, c)  # tail-pad mask
+        if pad:
+            valid.view(-1)[-pad:] = 0.0
+        queries = self.to_queries(self.retrieve_norm(seq)).unflatten(1, (num_chunks, c))
+
+        retrieved_chunks, reset_list = [], []
+        raw_sum = drv_sum = seq.new_zeros(())
+        raw_cnt = drv_cnt = 0
+        if self.segment:
+            csum, csq = seq.new_zeros(b), seq.new_zeros(b)
+            run = torch.zeros(b, dtype=torch.long, device=seq.device)
+
+        for i in range(num_chunks):
+            # Retrieve chunk i against the pre-write weights (W0 for i=0). Stays
+            # differentiable (query path always; the update path too in standard).
+            retrieved_chunks.append(
+                vmap(lambda wi, qi: functional_call(self.memory_model, wi, (qi,)))(
+                    w, queries[:, i]
+                )
+            )
+
+            with self._update_ctx():
+                stored = self.store_norm(seq[:, i * c : (i + 1) * c])
+                k_i, val_i = self.to_keys(stored), self.to_values(stored)
+                lr_i = (
+                    stored.new_ones(b, c)
+                    if self.use_energy
+                    else self.to_lr(stored).squeeze(-1).sigmoid() * self.max_lr
+                )
+                grads, driver, raw = self._surprise_grads(W0, k_i, val_i, lr_i)
+                surprise = {k: -g for k, g in grads.items()}
+                raw_sum = raw_sum + raw.sum()
+                drv_sum = drv_sum + driver.sum()
+                raw_cnt += raw.numel()
+                drv_cnt += driver.numel()
+
+                # Event boundary for this chunk, from causal stats over prior
+                # blocks (matches _segment). Resets the EMAs and re-bases t_event.
+                if self.segment:
+                    s_block = (driver * valid[i]).sum(-1) / valid[i].sum().clamp(min=1.0)
+                    mean = csum / max(i, 1)
+                    std = (csq / max(i, 1) - mean * mean).clamp(min=0.0).sqrt()
+                    if i == 0:
+                        is_b = torch.ones(b, dtype=torch.bool, device=seq.device)
+                    else:
+                        # Relative tolerance guards the per-block variance against
+                        # catastrophic cancellation: on a near-constant stream it
+                        # would otherwise round to a spurious spike.
+                        thresh = mean + self.segment_gamma * std + 1e-5 * mean.abs()
+                        is_b = (s_block > thresh) | (run >= self._cap_blocks)
+                    run = torch.where(is_b, torch.ones_like(run), run + 1)
+                    t_event = run
+                    csum, csq = csum + s_block, csq + s_block * s_block
+                    reset_list.append(is_b)
+                else:
+                    is_b = None
+                    t_event = torch.full((b,), i + 1, device=seq.device)
+
+                self._update_chunk(w, m, v, surprise, is_b, t_event, b, stored)
+
+        retrieved = torch.cat(retrieved_chunks, dim=1)
+        retrieved = self.combine(self.out_norm(retrieved))[:, :n]
+
+        with torch.no_grad():
+            self.last_surprise = raw_sum / max(raw_cnt, 1)
+            self.last_surprise_norm = drv_sum / max(drv_cnt, 1) if self.use_energy else None
+            self.last_gain = retrieved.norm() / (seq[:, :n].norm() + self.eps)
+            wnum = sum((w[p] - W0[p]).pow(2).sum() for p in self._param_names)
+            wden = sum(W0[p].pow(2).sum() for p in self._param_names)
+            self.last_write = (wnum / (wden + self.eps)).sqrt()
+            if self.segment and reset_list:
+                reset_mask = torch.stack(reset_list, dim=1)
+                sizes = []
+                for bi in range(b):
+                    bounds = reset_mask[bi].nonzero().flatten().tolist() + [num_chunks]
+                    sizes += [(e - a) * c for a, e in zip(bounds, bounds[1:])]
+                sizes = seq.new_tensor(sizes)
+                self.last_event_mean = sizes.mean()
+                self.last_event_min = sizes.min()
+                self.last_event_max = sizes.max()
+
+        return retrieved, NeuralMemState(seq_index + n, w, m, v)
+
+    def _update_chunk(self, w, m, v, surprise, is_b, t_event, b, stored):
+        """One chunk of the test-time weight update, in place on the running
+        ``w``/``m``/``v`` dicts. Energy mode = the Adam-style rule; standard mode
+        = learned momentum/decay gates. Mirrors ``_adam_update`` / the standard
+        branch for a single chunk."""
+        if self.use_energy:
+            beta1 = stored.new_full((b,), self.beta1)
+            beta2 = stored.new_full((b,), self.beta2)
+            if is_b is not None:  # fresh moments at an event start
+                beta1 = beta1.masked_fill(is_b, 0.0)
+                beta2 = beta2.masked_fill(is_b, 0.0)
+            c1 = 1.0 - self.beta1 ** t_event.to(stored.dtype)
+            c2 = 1.0 - self.beta2 ** t_event.to(stored.dtype)
+            for name in self._param_names:
+                s = surprise[name]
+                shp = (b,) + (1,) * (s.dim() - 1)
+                v[name] = beta2.reshape(shp) * v[name] + (1.0 - self.beta2) * s * s
+                if self.use_momentum:
+                    m[name] = beta1.reshape(shp) * m[name] + (1.0 - self.beta1) * s
+                    m_hat = m[name] / c1.reshape(shp)
+                else:
+                    m_hat = s
+                u = m_hat / ((v[name] / c2.reshape(shp)).sqrt() + self.eps)
+                w[name] = (1.0 - self.weight_decay) * w[name] + self.max_lr * u
+        else:
+            chunk_rep = stored.mean(dim=1)
+            eta = self.to_momentum(chunk_rep).sigmoid().squeeze(-1)
+            alpha = self.to_decay(chunk_rep).sigmoid().squeeze(-1)
+            for name in self._param_names:
+                s = surprise[name]
+                shp = (b,) + (1,) * (s.dim() - 1)
+                if self.use_momentum:
+                    m[name] = eta.reshape(shp) * m[name] + s
+                    s = m[name]
+                w[name] = (1.0 - alpha.reshape(shp)) * w[name] + s
 
     # --- introspection -------------------------------------------------------
 

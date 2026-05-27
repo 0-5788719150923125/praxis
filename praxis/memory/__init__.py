@@ -30,6 +30,7 @@ MEMORY_REGISTRY: Dict[str, Optional[dict]] = {
         chunk_size=64,
         momentum=True,
         activation="mish",
+        parallel_scan=False,
     ),
     "mal_energy": dict(
         surfacing="mal",
@@ -42,6 +43,7 @@ MEMORY_REGISTRY: Dict[str, Optional[dict]] = {
         use_energy=True,
         segment=True,
         segment_block=16,
+        parallel_scan=True,
     ),
     "mag": dict(
         surfacing="mag",
@@ -51,6 +53,7 @@ MEMORY_REGISTRY: Dict[str, Optional[dict]] = {
         chunk_size=64,
         momentum=True,
         activation="mish",
+        parallel_scan=False,
     ),
 }
 
