@@ -228,8 +228,16 @@ NON_REGISTRY_PACKAGES: List[Tuple[str, str]] = [
 # truth for both docs/index.md and the README "subsystems" block.
 SUBSYSTEMS: List[Tuple[str, str, str]] = [
     ("CLI arguments", "docs/cli.md", "every `./launch` flag, grouped as in `--help`."),
-    ("Web stack", "docs/web.md", "dashboard, JSON API routes, and inference endpoints."),
-    ("Axis mobile app", "axis/README.md", "archived Godot companion app for controlling Praxis."),
+    (
+        "Web stack",
+        "docs/web.md",
+        "dashboard, JSON API routes, and inference endpoints.",
+    ),
+    (
+        "Axis mobile app",
+        "axis/README.md",
+        "archived Godot companion app for controlling Praxis.",
+    ),
 ]
 
 
