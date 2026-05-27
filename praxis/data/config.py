@@ -81,6 +81,10 @@ DATASET_COLLECTIONS = dict(
         "fineweb-edu-350bt": DEFAULT_WEIGHT,
         "praxis": DIR_WEIGHT,
     },
+    chat={
+        "smoltalk": DEFAULT_WEIGHT,
+        "wildchat": DEFAULT_WEIGHT,
+    },
     focused={
         "praxis": DIR_WEIGHT,
         "synthetic-tool-calling": TOOLS_WEIGHT,

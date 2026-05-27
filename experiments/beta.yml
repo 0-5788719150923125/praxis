@@ -26,7 +26,7 @@ halting_type: kl
 strategy: naive
 tie_weights: true
 schedule_free: true
-train_datasets: [base]
+train_datasets: [base, chat]
 data_path: ["/opt/platformer"]
 sampler_mode: uniform
 task_weights: difficulty_bias_pretrain
