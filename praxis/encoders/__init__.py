@@ -17,6 +17,12 @@ ByteLatentConv = partial(
     embeddings="byte_hash",
 )
 
+ByteLatentConvSmall = partial(
+    ByteLatentConv,
+    n_layers_encoder=2,
+    n_layers_decoder=2,
+)
+
 ByteLatentTransformer = partial(
     ByteLatentEncoder,
     local_architecture="transformer",
@@ -115,6 +121,7 @@ ENCODER_REGISTRY = dict(
     byte_latent=ByteLatentEncoder,
     # Recommended profiles
     byte_latent_conv=ByteLatentConv,
+    byte_latent_conv_small=ByteLatentConvSmall,
     byte_latent_transformer=ByteLatentTransformer,
     # BLT + residual VQ bottleneck
     abstractinator=Abstractinator,
