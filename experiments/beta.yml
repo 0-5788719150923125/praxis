@@ -5,14 +5,14 @@ seed: 42
 device: cpu
 batch_size: 1
 target_batch_size: 64
-block_size: 512
+block_size: 256
 infer_context: 512
 depth: 4
 num_layers: 1
 vocab_size: 4096
-hidden_size: 128
-embed_size: 96
-ffn_type: arc
+hidden_size: 96
+embed_size: 64
+# ffn_type: arc
 attention_type: arc
 num_heads: 4
 num_queries: 1
@@ -26,7 +26,7 @@ halting_type: kl
 strategy: naive
 tie_weights: true
 schedule_free: true
-train_datasets: [focused]
+train_datasets: [base]
 data_path: ["/opt/platformer"]
 sampler_mode: uniform
 task_weights: difficulty_bias_pretrain
