@@ -111,6 +111,7 @@ def assemble_model(cfg, config) -> ModelBundle:
         "hypersample_chance": 0.001,  # octuple the block_size
         "device": cfg.device,
         "trainer_type": cfg.trainer_type,
+        "no_compile": cfg.no_compile,
     }
 
     model = AutoModelForCausalLM.from_config(config)

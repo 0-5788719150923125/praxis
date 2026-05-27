@@ -39,6 +39,13 @@ class TrainingGroup:
         )
 
         group.add_argument(
+            "--no-compile",
+            action="store_true",
+            default=False,
+            help="Disable torch.compile of the model (slower, but cleaner stack traces and lower memory)",
+        )
+
+        group.add_argument(
             "--val-every",
             type=int,
             default=1024,

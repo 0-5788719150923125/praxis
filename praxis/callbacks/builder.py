@@ -27,6 +27,7 @@ def build_training_callbacks(
         AccumulationSchedule,
         BrierLMCallback,
         DynamicsLoggerCallback,
+        MemoryProfilerCallback,
         MetricsLoggerCallback,
         PeriodicEvaluation,
         TerminalInterface,
@@ -99,6 +100,16 @@ def build_training_callbacks(
             run_dir=cache_dir, num_experts=num_experts, log_freq=log_freq
         )
     )
+
+    if cfg.profile_memory:
+        callbacks.append(
+            MemoryProfilerCallback(
+                run_dir=cache_dir,
+                start_step=cfg.profile_memory_start,
+                num_steps=cfg.profile_memory_steps,
+                max_entries=cfg.profile_memory_max_entries,
+            )
+        )
 
     if progress_bar is not None and not cfg.headless:
         callbacks.append(progress_bar)

@@ -20,6 +20,7 @@ from praxis.utils.naming import (
 )
 from praxis.utils.system import (
     check_for_updates,
+    configure_cuda_allocator,
     configure_multiprocessing,
     find_latest_checkpoint,
     graceful_shutdown,
@@ -60,6 +61,7 @@ __all__ = [
     "register_child_process",
     "is_shutting_down",
     "check_for_updates",
+    "configure_cuda_allocator",
     "configure_multiprocessing",
     "find_latest_checkpoint",
     "resolve_resume_checkpoint",

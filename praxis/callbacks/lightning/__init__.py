@@ -7,6 +7,7 @@ from praxis.callbacks.lightning.accumulation import AccumulationSchedule
 from praxis.callbacks.lightning.brier_lm import BrierLMCallback
 from praxis.callbacks.lightning.dynamics import DynamicsLoggerCallback
 from praxis.callbacks.lightning.evaluation import PeriodicEvaluation
+from praxis.callbacks.lightning.memory_profiler import MemoryProfilerCallback
 from praxis.callbacks.lightning.metrics import MetricsLoggerCallback
 from praxis.callbacks.lightning.terminal import TerminalInterface
 
@@ -18,6 +19,7 @@ LIGHTNING_CALLBACK_REGISTRY = {
     "metrics_logger": MetricsLoggerCallback,
     "dynamics_logger": DynamicsLoggerCallback,
     "brier_lm": BrierLMCallback,
+    "memory_profiler": MemoryProfilerCallback,
 }
 
 __all__ = [
@@ -27,5 +29,6 @@ __all__ = [
     "MetricsLoggerCallback",
     "DynamicsLoggerCallback",
     "BrierLMCallback",
+    "MemoryProfilerCallback",
     "LIGHTNING_CALLBACK_REGISTRY",
 ]

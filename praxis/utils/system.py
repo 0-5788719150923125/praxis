@@ -30,6 +30,18 @@ def configure_multiprocessing():
         pass  # Already set
 
 
+def configure_cuda_allocator():
+    """Default the CUDA caching allocator to expandable segments.
+
+    Variable-shape workloads (Titans segmentation, byte-latent patches) fragment
+    the default allocator: reserved VRAM balloons far past the live tensors.
+    Expandable segments grow/shrink in place instead of reserving a fixed block
+    per shape. The allocator reads this only at CUDA init, so main.py sets it
+    first; an explicit PYTORCH_CUDA_ALLOC_CONF in the environment still wins.
+    """
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
+
 class ShutdownManager:
     """Centralized shutdown manager for graceful termination."""
 

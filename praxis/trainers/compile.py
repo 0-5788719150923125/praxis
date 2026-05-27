@@ -11,6 +11,13 @@ COMPILE_KWARGS = dict(
 )
 
 
+def _hp(hparams, key, default=None):
+    """Read a hyperparameter whether ``hparams`` is a dict or an object."""
+    if isinstance(hparams, dict):
+        return hparams.get(key, default)
+    return getattr(hparams, key, default)
+
+
 def try_compile_model(model, hparams):
     """
     Attempt to compile a PyTorch model with torch.compile.
@@ -27,8 +34,12 @@ def try_compile_model(model, hparams):
         print("[COMPILER] Skipping compilation (skip_compilation feature enabled)")
         return model
 
+    if _hp(hparams, "no_compile", False):
+        print("[COMPILER] Skipping compilation (--no-compile)")
+        return model
+
     # Check if running on CPU - torch.compile has limited CPU support
-    device = getattr(hparams, "device", "cpu")
+    device = _hp(hparams, "device", "cpu")
     if isinstance(device, str) and device.startswith("cpu"):
         print(
             "[COMPILER] Skipping compilation (CPU device - limited torch.compile support)"

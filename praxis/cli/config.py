@@ -77,6 +77,12 @@ class RunConfig:
     terminal_output_length: int = 0
     debug: bool = False
 
+    # Memory profiling (diagnostic; off by default)
+    profile_memory: bool = False
+    profile_memory_start: int = 0
+    profile_memory_steps: int = 50
+    profile_memory_max_entries: int = 5_000_000
+
     # Web / API server
     host_name: str = "localhost"
     port: int = 2100
@@ -163,6 +169,10 @@ class RunConfig:
             infer_every=get("infer_every", 3),
             terminal_output_length=get("terminal_output_length", block_size * 2),
             debug=get("debug", False),
+            profile_memory=get("profile_memory", False),
+            profile_memory_start=get("profile_memory_start", 0),
+            profile_memory_steps=get("profile_memory_steps", 50),
+            profile_memory_max_entries=get("profile_memory_max_entries", 5_000_000),
             host_name=get("host_name", "localhost"),
             port=get("port", 2100),
             local_rank=get("local_rank", 0),

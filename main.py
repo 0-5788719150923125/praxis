@@ -5,11 +5,15 @@ main() reads top-to-bottom as the training pipeline; each step lives in
 its domain package (cli, data, trainers, callbacks, web, ...).
 """
 
-from praxis.utils import configure_multiprocessing
+from praxis.utils import configure_cuda_allocator, configure_multiprocessing
 
 # Force 'spawn' before importing anything that may touch CUDA or spawn a
 # DataLoader worker. The DataModule reads this to decide num_workers.
 configure_multiprocessing()
+
+# Default the CUDA allocator to expandable segments (curbs reserved-VRAM
+# fragmentation from variable-shape workloads). Must precede CUDA init.
+configure_cuda_allocator()
 
 import sys
 

@@ -52,3 +52,31 @@ class LoggingGroup:
             default=False,
             help="Print debug logs to the terminal",
         )
+
+        group.add_argument(
+            "--profile-memory",
+            action="store_true",
+            default=False,
+            help="Record a CUDA memory snapshot over a step window (load at https://pytorch.org/memory_viz)",
+        )
+
+        group.add_argument(
+            "--profile-memory-start",
+            type=int,
+            default=0,
+            help="Step to begin memory recording, to skip warmup (default: 0)",
+        )
+
+        group.add_argument(
+            "--profile-memory-steps",
+            type=int,
+            default=50,
+            help="Number of steps to record before dumping the snapshot (default: 50)",
+        )
+
+        group.add_argument(
+            "--profile-memory-max-entries",
+            type=int,
+            default=5_000_000,
+            help="Max allocation events retained in the trace ring buffer. Larger spans more steps but grows the pickle (default: 5M ~ 150 steps)",
+        )

@@ -94,6 +94,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | `--max-steps` | int | `None` | Maximum number of training steps (None for infinite training) |
+| `--no-compile` | bool | `False` | Disable torch.compile of the model (slower, but cleaner stack traces and lower memory) |
 | `--ray-address` | str | `None` | Ray cluster address for --trainer-type mono_forward. Default None means 'start a fresh in-process Ray cluster' - correct for both the single-host Phase 2/3 path and the Phase 4 multi-raylet compose test (which exports RAY_ADDRESS=127.0.0.1:6379 in the environment, taking precedence over this flag). Pass an explicit address like '127.0.0.1:6379' to join a pre-existing cluster. Do NOT pass 'auto' unless a cluster definitely exists - 'auto' errors loud if nothing is running. |
 | `--ray-head-sync-every` | int | `50` | Number of batches between shared-head synchronization rounds across actors (only meaningful for --trainer-type mono_forward). |
 | `--ray-num-replicas-per-layer` | int | `1` | Number of LayerActor replicas to spawn per Mono-Forward layer. Phase 3 keeps this at 1; replica-level data parallelism is a Phase 5+ concern. |
@@ -142,6 +143,9 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--infer-context` | int | `None` | Max context length (in tokens/bytes) for inference during training |
 | `--infer-every` | int | `3` | Seconds between inference token generation during training |
 | `--no-dashboard` | bool | `False` | Disable the terminal dashboard |
+| `--profile-memory` | bool | `False` | Record a CUDA memory snapshot over a step window (load at https://pytorch.org/memory_viz) |
+| `--profile-memory-start` | int | `0` | Step to begin memory recording, to skip warmup |
+| `--profile-memory-steps` | int | `50` | Number of steps to record before dumping the snapshot |
 | `--quiet` | bool | `False` | Suppress text generation in the terminal |
 
 ### tokenizer
