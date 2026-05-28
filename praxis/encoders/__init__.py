@@ -116,7 +116,7 @@ CALMBpe = partial(
 # energy hold and a ~1k-step KL anneal.
 CALMByteSmall = partial(
     CALMEncoder,
-    chunk_size=16,
+    chunk_size=8,
     latent_dim=0.25,
     ae_hidden=1.0,
     kl_beta=1e-3,

@@ -1,5 +1,5 @@
 import math
-from typing import Optional, Tuple, TypeVar
+from typing import Callable, Optional, Tuple, TypeVar
 
 import torch
 import torch.nn.functional as F
@@ -78,3 +78,23 @@ class NoPE(nn.Module):
             Unmodified attention scores
         """
         return scores
+
+    def build_score_mod(
+        self,
+        num_heads: int,
+        device: torch.device,
+        ghost_offset: int = 0,
+    ) -> Optional[Callable]:
+        """
+        Return a FlexAttention-compatible ``score_mod`` closure, or ``None``
+        when the encoding does not modify post-softmax scores. NoPE/RoPE/HoPE
+        return ``None`` because they work entirely through ``before_scores``;
+        ALiBi overrides this to inject its slope-based bias.
+
+        Args:
+            num_heads: Number of query heads (for slope sizing in subclasses).
+            device: Device to place captured tensors on.
+            ghost_offset: Number of ghost / sink tokens prepended to keys
+                (1 for the ghostmax convention in CausalAttention, else 0).
+        """
+        return None

@@ -208,19 +208,11 @@ class InfiniAttention(CausalAttention):
                 q, k_ghost, v_ghost, seg_len, device, seg_block_ids
             )
 
-        # Score modification for ALiBi
-        if self.pos_type == "rope":
-            score_mod = None
-        else:
-            alibi_bias = self.alibi_slopes.to(device)
-
-            def alibi_score_mod(score, b, h, q_idx, kv_idx):
-                is_not_ghost = (kv_idx > 0).float()
-                actual_kv = kv_idx - 1
-                bias = alibi_bias[h] * (actual_kv - q_idx) * is_not_ghost
-                return score + bias
-
-            score_mod = alibi_score_mod
+        # Score modification (no-op for RoPE/HoPE/NoPE; ALiBi supplies its
+        # ghost-aware closure).
+        score_mod = self.encoding.build_score_mod(
+            self.num_query_heads, device, ghost_offset=1
+        )
 
         is_gqa = self.num_queries > 1
         use_fallback = self._use_cpu_fallback(device)
@@ -285,15 +277,13 @@ class InfiniAttention(CausalAttention):
         scale = 1.0 / (head_dim**0.5)
         scores = (q @ k_exp.transpose(-2, -1)) * scale  # [B, Hq, S, S+1]
 
-        # ALiBi bias (only when not using RoPE).
-        if self.pos_type != "rope":
-            alibi_bias = self.alibi_slopes.to(device)  # [Hq]
-            q_pos = torch.arange(seg_len, device=device).unsqueeze(-1)  # [S, 1]
-            kv_pos = torch.arange(seg_len + 1, device=device).unsqueeze(0)  # [1, S+1]
-            is_not_ghost = (kv_pos > 0).float()
-            actual_kv = kv_pos - 1
-            bias = alibi_bias.view(-1, 1, 1) * (actual_kv - q_pos) * is_not_ghost
-            scores = scores + bias.unsqueeze(0)  # [1, Hq, S, S+1]
+        # Encoding's post-score bias (no-op for RoPE/HoPE/NoPE). Strip the
+        # ghost column, let the encoding rewrite the real-key portion, then
+        # restore the ghost so softmax1/ghostmax behavior is preserved.
+        if seg_len > 0:
+            ghost_col_scores = scores[..., :1]
+            real_scores = self.encoding.after_scores(scores[..., 1:])
+            scores = torch.cat([ghost_col_scores, real_scores], dim=-1)
 
         # Build mask: ghost (kv_idx=0) always allowed; real keys must be
         # in the same block as the query AND causal.
@@ -345,8 +335,7 @@ class InfiniAttention(CausalAttention):
         k = k.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         v = v.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
 
-        if self.pos_type == "rope":
-            q, k = self._apply_rope(q, k)
+        q, k, v = self.encoding.before_scores(q, k, v)
 
         # Expand K/V for GQA before memory operations
         if self.num_queries > 1:

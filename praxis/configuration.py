@@ -23,6 +23,7 @@ class PraxisConfig(PretrainedConfig):
         vocab_size: int = 8192,
         byte_vocab_size: Optional[int] = None,
         max_position_embeddings: int = 32768,
+        block_size: int = 512,
         activation: str = "mish",
         block_type: str = "transformer",
         expert: str = "glu",

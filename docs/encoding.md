@@ -3,7 +3,7 @@
 
 RoPE, ALiBi, NoPE and friends - the rotational / additive position priors injected into attention.
 
-Registry: ``praxis.ENCODING_REGISTRY`` (3 entries)
+Registry: ``praxis.ENCODING_REGISTRY`` (4 entries)
 
 ## `alibi` - ALiBi
 
@@ -12,6 +12,18 @@ extrapolation that does not require trainable parameters.
 https://arxiv.org/abs/2108.12409
 
 Source: [praxis/encoding/alibi.py:13](../praxis/encoding/alibi.py#L13)
+
+## `hope` - HoPE
+
+High-frequency rotary Position Embedding. https://arxiv.org/abs/2410.21216
+
+Drops RoPE bands slower than one full cycle over the training context length L (inv_freq
+< 2*pi/L) and leaves the matching head-dim slots unrotated. Those slots become a
+position-free content channel; the remaining high-frequency slots still carry relative
+position via the usual rotation. Authors report large length-extrapolation and in-
+context copying gains over RoPE at the same parameter count.
+
+Source: [praxis/encoding/hope.py:11](../praxis/encoding/hope.py#L11)
 
 ## `nope` - NoPE
 

@@ -3,7 +3,6 @@ CausalAttention module for causal language modeling using PyTorch's FlexAttentio
 Based on the efficient attention implementation with block masking support.
 """
 
-import math
 import os
 from typing import Optional, Tuple
 
@@ -11,6 +10,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+
+from praxis.encoding import ENCODING_REGISTRY
 
 # Suppress verbose compile-time logs
 os.environ["TORCHDYNAMO_EXTENDED_ADVICE"] = "0"
@@ -28,35 +29,31 @@ class CausalAttention(nn.Module):
         Initialize CausalAttention module.
 
         Args:
-            config: Configuration object containing attention parameters
-                   (config.encoding should be "alibi" or "rope")
-                   Optional config.window_size (int) enables sliding window attention.
+            config: Configuration object containing attention parameters.
+                ``config.encoding`` selects any entry from ENCODING_REGISTRY
+                (rope, alibi, hope, nope, ...). Optional ``config.window_size``
+                (int) enables sliding window attention.
         """
         super().__init__()
 
-        # Get positional encoding type from config
-        pos_type = config.encoding
-
-        if pos_type not in ["alibi", "rope"]:
-            raise ValueError(
-                f"config.encoding must be 'alibi' or 'rope' for CausalAttention, got '{pos_type}'"
-            )
-
-        self.pos_type = pos_type
         hidden_size = config.hidden_size
         self.num_heads = config.num_heads
         self.num_queries = config.num_queries
         self.num_query_heads = self.num_heads * self.num_queries
         self.head_dim = getattr(config, "head_size") or hidden_size // self.num_heads
-
-        if pos_type == "rope" and self.head_dim % 2 != 0:
-            raise ValueError(
-                f"RoPE requires an even head_dim, got {self.head_dim} "
-                f"(hidden_size={hidden_size}, num_heads={self.num_heads})"
-            )
         self.dropout_p = config.dropout
         self.causal = config.causal
         self.window_size = getattr(config, "window_size", None)
+
+        # Positional encoding lives entirely in the registry-built module:
+        # before_scores mutates Q/K (RoPE/HoPE), build_score_mod returns the
+        # FlexAttention closure (ALiBi), after_scores adds bias on materialized
+        # scores (the CPU/ghost-aware path). NoPE/RoPE/HoPE return None from
+        # build_score_mod, so the FlexAttention path skips the closure entirely.
+        self.encoding = ENCODING_REGISTRY[config.encoding](config)
+        # Plain-string introspection field (used by Prismatic router tests
+        # and diagnostics to check which encoding an expert was built with).
+        self.pos_type = config.encoding
 
         # QKV projection - separate sizes for Q (with num_queries) and K/V
         # Q: num_query_heads * head_dim
@@ -85,14 +82,6 @@ class CausalAttention(nn.Module):
         # Key is (seq_len, kv_len, device_str) tuple
         self.block_mask_cache = {}
 
-        # ALiBi slopes (only if using ALiBi)
-        if self.pos_type == "alibi":
-            self.register_buffer(
-                "alibi_slopes",
-                self._get_alibi_slopes(self.num_query_heads),
-                persistent=False,
-            )
-
     def _import_flex_attention(self) -> None:
         """Import FlexAttention components (GPU only - falls back to SDPA on CPU)."""
         try:
@@ -110,82 +99,6 @@ class CausalAttention(nn.Module):
             self.flex_attention = None
             self.create_block_mask = None
             self.and_masks = None
-
-    def _get_alibi_slopes(self, num_heads: int) -> torch.Tensor:
-        """
-        Compute ALiBi slopes for the given number of heads.
-
-        Args:
-            num_heads: Number of attention heads
-
-        Returns:
-            Tensor of slopes with shape (num_heads,)
-        """
-        # Get closest power of 2
-        closest_power_of_2 = 2 ** math.floor(math.log2(num_heads))
-
-        # Get slopes for the closest power of 2
-        base = 2 ** (-(2 ** -(math.log2(closest_power_of_2) - 3)))
-        powers = torch.arange(1, closest_power_of_2 + 1)
-        slopes = torch.pow(base, powers)
-
-        # If num_heads is not a power of 2, interpolate additional slopes
-        if closest_power_of_2 != num_heads:
-            extra_base = 2 ** (-(2 ** -(math.log2(2 * closest_power_of_2) - 3)))
-            num_remaining = num_heads - closest_power_of_2
-            extra_powers = torch.arange(1, 2 * num_remaining + 1, 2)
-            extra_slopes = torch.pow(extra_base, extra_powers)
-            slopes = torch.cat([slopes, extra_slopes], dim=0)
-
-        return slopes[:num_heads]
-
-    def _apply_rope(self, q: Tensor, k: Tensor) -> Tuple[Tensor, Tensor]:
-        """
-        Apply Rotary Position Embedding to queries and keys.
-
-        Args:
-            q: Query tensor [batch, num_heads, seq_len, head_dim]
-            k: Key tensor [batch, num_heads, seq_len, head_dim]
-
-        Returns:
-            Rotated (q, k) tensors
-        """
-        batch_size, num_heads, seq_len, head_dim = q.shape
-
-        # Generate position indices
-        pos = torch.arange(seq_len, device=q.device, dtype=q.dtype)
-
-        # Compute frequency bands: θ_i = 10000^(-2i/d)
-        dim_indices = torch.arange(0, head_dim, 2, device=q.device, dtype=q.dtype)
-        freqs = 1.0 / (10000.0 ** (dim_indices / head_dim))
-
-        # Outer product: [seq_len, head_dim/2]
-        angles = torch.outer(pos, freqs)
-
-        # Compute cos and sin
-        cos = angles.cos()
-        sin = angles.sin()
-
-        # Reshape for broadcasting: [1, 1, seq_len, head_dim/2]
-        cos = cos.unsqueeze(0).unsqueeze(0)
-        sin = sin.unsqueeze(0).unsqueeze(0)
-
-        # Split q and k into even/odd indices
-        q_even = q[..., 0::2]
-        q_odd = q[..., 1::2]
-        k_even = k[..., 0::2]
-        k_odd = k[..., 1::2]
-
-        # Apply rotation
-        q_rotated = torch.stack(
-            [q_even * cos - q_odd * sin, q_odd * cos + q_even * sin], dim=-1
-        ).flatten(-2)
-
-        k_rotated = torch.stack(
-            [k_even * cos - k_odd * sin, k_odd * cos + k_even * sin], dim=-1
-        ).flatten(-2)
-
-        return q_rotated, k_rotated
 
     def _build_mask_mod(self):
         """Build a mask_mod closure following the FlexAttention pattern.
@@ -303,15 +216,13 @@ class CausalAttention(nn.Module):
         scale = 1.0 / (head_dim**0.5)
         scores = (q @ k_exp.transpose(-2, -1)) * scale  # [B, Hq, S, S+1]
 
-        # ALiBi positional bias if not using RoPE.
-        if self.pos_type != "rope" and hasattr(self, "alibi_slopes"):
-            alibi_bias = self.alibi_slopes.to(device)
-            q_pos = torch.arange(seq_len, device=device).unsqueeze(-1)
-            kv_pos = torch.arange(seq_len + 1, device=device).unsqueeze(0)
-            is_not_ghost = (kv_pos > 0).float()
-            actual_kv = kv_pos - 1
-            bias = alibi_bias.view(-1, 1, 1) * (actual_kv - q_pos) * is_not_ghost
-            scores = scores + bias.unsqueeze(0)
+        # Apply the encoding's post-score bias (no-op for RoPE/HoPE/NoPE).
+        # Strip the ghost column (kv_idx=0) so it never receives bias, run
+        # after_scores on the real keys, then put the ghost column back.
+        if seq_len > 0:
+            ghost_col = scores[..., :1]
+            real_scores = self.encoding.after_scores(scores[..., 1:])
+            scores = torch.cat([ghost_col, real_scores], dim=-1)
 
         # Build mask: ghost (kv_idx=0) always reachable; real keys
         # gated by causal + optional sliding window.
@@ -334,62 +245,6 @@ class CausalAttention(nn.Module):
         if self.training and self.dropout_p > 0:
             weights = F.dropout(weights, p=self.dropout_p)
         return weights @ v_exp
-
-    def _sdpa_fallback(
-        self,
-        q: Tensor,
-        k: Tensor,
-        v: Tensor,
-        is_causal: bool = True,
-        enable_gqa: bool = False,
-    ) -> Tensor:
-        """
-        Fallback attention using F.scaled_dot_product_attention.
-
-        Used when flex_attention is not available or on CPU.
-
-        Args:
-            q: Query tensor [batch, num_heads, seq_len, head_dim]
-            k: Key tensor [batch, num_heads, kv_len, head_dim]
-            v: Value tensor [batch, num_heads, kv_len, head_dim]
-            is_causal: Whether to use causal masking
-
-        Returns:
-            Attention output [batch, num_heads, seq_len, head_dim]
-        """
-        # Apply ALiBi bias if needed
-        attn_mask = None
-        if self.pos_type == "alibi" and hasattr(self, "alibi_slopes"):
-            batch_size, num_heads, seq_len, _ = q.shape
-            kv_len = k.shape[2]
-
-            # Create position differences matrix
-            q_pos = torch.arange(seq_len, device=q.device).unsqueeze(1)
-            k_pos = torch.arange(kv_len, device=k.device).unsqueeze(0)
-            pos_diff = k_pos - q_pos  # [seq_len, kv_len]
-
-            # Apply ALiBi slopes: [num_heads, 1, 1] * [1, seq_len, kv_len]
-            alibi_bias = self.alibi_slopes.to(q.device).view(
-                -1, 1, 1
-            ) * pos_diff.unsqueeze(0)
-
-            # Expand for batch: [1, num_heads, seq_len, kv_len] -> [batch, num_heads, seq_len, kv_len]
-            attn_mask = alibi_bias.unsqueeze(0).expand(batch_size, -1, -1, -1)
-
-        # Use PyTorch's scaled_dot_product_attention
-        # Note: This handles causal masking, dropout, and is memory-efficient
-        attn_output = F.scaled_dot_product_attention(
-            q,
-            k,
-            v,
-            attn_mask=attn_mask,
-            dropout_p=self.dropout_p if self.training else 0.0,
-            is_causal=is_causal
-            and attn_mask is None,  # Only use is_causal if no attn_mask
-            enable_gqa=enable_gqa,
-        )
-
-        return attn_output
 
     def forward(
         self,
@@ -442,9 +297,10 @@ class CausalAttention(nn.Module):
         k = k.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         v = v.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
 
-        # Apply positional encoding (RoPE modifies q,k directly, must happen before ghostmax)
-        if self.pos_type == "rope":
-            q, k = self._apply_rope(q, k)
+        # Apply positional encoding to Q/K (no-op for ALiBi/NoPE, rotates
+        # for RoPE/HoPE). Must happen before ghostmax so the ghost token
+        # remains a pristine zero.
+        q, k, v = self.encoding.before_scores(q, k, v)
 
         # Ghostmax: Prepend zero token to K and V (after positional encoding)
         # This implements softmax1 by adding an implicit exp(0)=1 to the denominator
@@ -460,29 +316,12 @@ class CausalAttention(nn.Module):
         v = torch.cat([zero_v, v], dim=2)  # (B, H, T+1, D)
         kv_len = seq_len + 1
 
-        # Define score_mod for positional bias (after ghostmax, so it accounts for ghost at kv_idx=0)
-        if self.pos_type == "rope":
-            score_mod = None
-        else:  # alibi
-            alibi_bias = self.alibi_slopes.to(inputs.device)
-
-            def alibi_score_mod(score, b, h, q_idx, kv_idx):
-                """Apply ALiBi positional bias to attention scores.
-
-                Ghost token at kv_idx=0 receives no bias.
-                For actual tokens (kv_idx >= 1), apply standard ALiBi bias
-                accounting for the ghost shift: kv_idx=1 corresponds to position 0.
-
-                Uses tensor ops instead of if/else for torch.compile compatibility.
-                """
-                # For ghost token (kv_idx=0): is_not_ghost=0, so bias=0
-                # For actual tokens (kv_idx>=1): is_not_ghost=1, so bias is applied
-                is_not_ghost = (kv_idx > 0).float()
-                actual_kv = kv_idx - 1
-                bias = alibi_bias[h] * (actual_kv - q_idx) * is_not_ghost
-                return score + bias
-
-            score_mod = alibi_score_mod
+        # FlexAttention score modification (no-op for RoPE/HoPE/NoPE, ALiBi
+        # supplies its slope-based closure). ghost_offset=1 lets ALiBi
+        # leave the kv_idx=0 ghost column unbiased.
+        score_mod = self.encoding.build_score_mod(
+            self.num_query_heads, inputs.device, ghost_offset=1
+        )
 
         # Determine if we're using GQA
         is_gqa = self.num_queries > 1

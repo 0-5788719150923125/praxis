@@ -1,5 +1,5 @@
 import math
-from typing import Optional, Tuple, TypeVar
+from typing import Callable, Optional, Tuple, TypeVar
 
 import torch
 import torch.nn.functional as F
@@ -123,6 +123,36 @@ class ALiBi(NoPE):
         biases = slopes.view(1, num_heads, 1, 1) * pos_diff.unsqueeze(1)
 
         return scores - biases
+
+    def build_score_mod(
+        self,
+        num_heads: int,
+        device: torch.device,
+        ghost_offset: int = 0,
+    ) -> Callable:
+        """Build a FlexAttention score_mod that applies ALiBi bias.
+
+        Mirrors the inline closure previously hand-rolled in
+        ``CausalAttention`` / ``InfiniAttention``: when ``ghost_offset`` is
+        nonzero, the first ``ghost_offset`` key positions are sink/ghost
+        tokens and receive no bias.
+        """
+        slopes = self.compute_slopes(num_heads, device)
+        if ghost_offset > 0:
+            ghost = ghost_offset
+
+            def alibi_score_mod(score, b, h, q_idx, kv_idx):
+                is_not_ghost = (kv_idx >= ghost).float()
+                actual_kv = kv_idx - ghost
+                bias = slopes[h] * (actual_kv - q_idx) * is_not_ghost
+                return score + bias
+
+        else:
+
+            def alibi_score_mod(score, b, h, q_idx, kv_idx):
+                return score + slopes[h] * (kv_idx - q_idx)
+
+        return alibi_score_mod
 
     def _compute_relative_positions_vectorized(
         self, block_ids: torch.Tensor, device: torch.device

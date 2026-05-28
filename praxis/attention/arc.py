@@ -150,8 +150,7 @@ class ArcAttention(InfiniAttention):
         k = k.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         v = v.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
 
-        if self.pos_type == "rope":
-            q, k = self._apply_rope(q, k)
+        q, k, v = self.encoding.before_scores(q, k, v)
 
         # Expand K/V for GQA before memory operations
         if self.num_queries > 1:
