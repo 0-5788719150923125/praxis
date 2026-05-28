@@ -121,6 +121,17 @@ class ConfigBuilder:
                 if args is not None:
                     setattr(args, "vocab_size", tok_vocab)
 
+            # Encoders that own their embeddings (e.g. CALM) size to the
+            # tokenizer's true vocabulary, not the (hash-overloaded) vocab_size.
+            # Byte/char tokenizers expose it as byte_alphabet_size.
+            byte_vocab = getattr(tokenizer, "byte_alphabet_size", None)
+            if (
+                isinstance(byte_vocab, int)
+                and byte_vocab > 0
+                and "byte_vocab_size" in valid_config_params
+            ):
+                config_kwargs["byte_vocab_size"] = byte_vocab
+
         # Handle optimizer configuration
         if hasattr(args, "optimizer") and args.optimizer:
             from praxis.optimizers import get_optimizer_profile

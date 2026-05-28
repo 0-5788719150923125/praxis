@@ -148,6 +148,11 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         head_cls = HEAD_REGISTRY.get(head_type, HEAD_REGISTRY["forward"])
         self.head = head_cls(config, encoder=encoder_ref)
 
+        # Loss-owning encoders that borrow the head as their token classifier
+        # (e.g. CALM) take a reference to it; they apply it internally.
+        if self.encoder and hasattr(self.encoder, "set_head"):
+            self.encoder.set_head(self.head)
+
         # Initialize separate backward head if requested
         if config.bidirectional and config.encoder_type is None:
             backward_cls = HEAD_REGISTRY.get(config.head_type, HEAD_REGISTRY["forward"])
@@ -175,7 +180,12 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         if rl_type and rl_type in RL_POLICIES_REGISTRY:
             self.policy = RL_POLICIES_REGISTRY[rl_type](config)
 
-        self.criterion = get_loss_function(config.loss_func, config.vocab_size)
+        # Encoders that own their loss (e.g. CALM) bypass the main-CE path
+        # entirely, so don't build a criterion we'd never call.
+        if self.encoder and self.encoder.handles_loss:
+            self.criterion = None
+        else:
+            self.criterion = get_loss_function(config.loss_func, config.vocab_size)
 
         # Per-task loss weighting. Identity (no-op) unless --task-weights
         # is set; the assistant mask from the chat template is always
@@ -442,7 +452,10 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         logits = hidden_states
 
         # Check if we're using cut_cross_entropy to optimize logits computation
-        is_cut_ce = self.criterion.__class__.__name__ == "CutCrossEntropyLoss"
+        is_cut_ce = (
+            self.criterion is not None
+            and self.criterion.__class__.__name__ == "CutCrossEntropyLoss"
+        )
         skip_logits_for_training = is_cut_ce and self.training and labels is not None
 
         if self.encoder:

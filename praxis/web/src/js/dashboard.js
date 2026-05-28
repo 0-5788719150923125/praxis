@@ -210,7 +210,7 @@ export function renderLiveDashboard(m) {
         if (footer) footer.innerHTML = `
             <span class="ld-footer-item">PRAXIS:${m.seed || '?'}</span>
             <span class="ld-footer-sep">|</span>
-            <span class="ld-footer-item">${m.total_params || '0M'}</span>
+            <span class="ld-footer-item">${m.total_params || '0.00M'}</span>
             <span class="ld-footer-sep">|</span>
             <span class="ld-footer-item">${(m.mode || 'train').toUpperCase()}</span>
             <span class="ld-footer-sep">|</span>
@@ -272,7 +272,7 @@ export function renderLiveDashboard(m) {
             <div class="ld-footer">
                 <span class="ld-footer-item">PRAXIS:${m.seed || '?'}</span>
                 <span class="ld-footer-sep">|</span>
-                <span class="ld-footer-item">${m.total_params || '0M'}</span>
+                <span class="ld-footer-item">${m.total_params || '0.00M'}</span>
                 <span class="ld-footer-sep">|</span>
                 <span class="ld-footer-item">${(m.mode || 'train').toUpperCase()}</span>
                 <span class="ld-footer-sep">|</span>

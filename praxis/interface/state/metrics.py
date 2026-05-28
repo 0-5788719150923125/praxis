@@ -27,7 +27,7 @@ class MetricsState:
         self.context_tokens = 0
 
         # Model info
-        self.total_params = "0M"
+        self.total_params = "0.00M"
         self.local_layers = 0
         self.remote_layers = 0
 
@@ -122,8 +122,7 @@ class MetricsState:
     def update_params(self, total_params):
         """Update total parameters."""
         with self.lock:
-            reduced = int(total_params / 10**6)
-            self.total_params = f"{reduced}M"
+            self.total_params = f"{total_params / 10**6:.2f}M"
 
     def set_mode(self, mode):
         """Set current mode."""

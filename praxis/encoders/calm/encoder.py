@@ -1,6 +1,6 @@
 """CALM encoder: VAE + energy head, exposed via the Praxis encoder interface.
 
-See ``PLAN.md`` for the full architecture rationale. Briefly:
+See ``README.md`` for the full architecture rationale. Briefly:
 
 1. ``encode`` compresses K-token chunks to continuous latents. The
    posterior sample ``z`` is projected to ``hidden_size`` and fed to the
@@ -16,9 +16,10 @@ See ``PLAN.md`` for the full architecture rationale. Briefly:
    sets ``handles_loss=True`` to bypass the default CE path).
 """
 
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Union
 
 import torch
+import torch._dynamo as dynamo
 import torch.nn.functional as F
 from torch import nn
 
@@ -27,6 +28,13 @@ from praxis.losses.energy_score import energy_score_loss
 
 from ..base import BaseEncoder
 from .vae import CALMVAE
+
+
+def _resolve_dim(spec: Union[int, float], base: int) -> int:
+    """``float`` -> fraction of ``base`` (e.g. 0.5); ``int`` -> absolute size."""
+    if isinstance(spec, float):
+        return max(1, round(spec * base))
+    return int(spec)
 
 
 class CALMEncoder(BaseEncoder):
@@ -40,12 +48,12 @@ class CALMEncoder(BaseEncoder):
         config,
         *,
         chunk_size: int = 8,
-        latent_dim: int = 128,
-        ae_hidden: int = 512,
+        latent_dim: Union[int, float] = 128,
+        ae_hidden: Union[int, float] = 512,
         kl_beta: float = 1e-3,
         kl_clip: float = 0.5,
         ae_dropout: float = 0.15,
-        noise_dim: int = 128,
+        noise_dim: Union[int, float] = 128,
         energy_blocks: int = 3,
         energy_samples_n: int = 8,
         energy_samples_m: int = 100,
@@ -55,13 +63,17 @@ class CALMEncoder(BaseEncoder):
         self.config = config
 
         self.K = chunk_size
-        self.latent_dim = latent_dim
-        self.ae_hidden = ae_hidden
+        # latent/ae/noise dims may be given as fractions of hidden_size: the
+        # latent feeds (and projects to) the global transformer, so its width
+        # is the natural yardstick for these encoder dims.
+        base = config.hidden_size
+        self.latent_dim = _resolve_dim(latent_dim, base)
+        self.ae_hidden = _resolve_dim(ae_hidden, base)
         self.kl_beta = kl_beta
         self.kl_clip = kl_clip
         self.ae_dropout = ae_dropout
 
-        self.noise_dim = noise_dim
+        self.noise_dim = _resolve_dim(noise_dim, base)
         self.energy_blocks = energy_blocks
         self.energy_samples_n = energy_samples_n
         self.energy_samples_m = energy_samples_m
@@ -69,14 +81,27 @@ class CALMEncoder(BaseEncoder):
 
         self.pad_token_id = int(getattr(config, "pad_token_id", 0))
 
+        # CALM owns its embeddings, so it sizes to the tokenizer's true
+        # vocabulary (byte_vocab_size, e.g. 264 for byte-level) rather than
+        # vocab_size, which byte-latent overloads as the hash-bucket count.
+        self._output_vocab_size = (
+            getattr(config, "byte_vocab_size", None) or config.vocab_size
+        )
+
         self.vae = CALMVAE(
-            vocab_size=config.vocab_size,
+            vocab_size=self._output_vocab_size,
             embed_dim=config.embed_size,
             chunk_size=self.K,
             latent_dim=self.latent_dim,
             hidden_dim=self.ae_hidden,
             dropout=self.ae_dropout,
         )
+
+        # The token classifier (forward/crystal/...) is built from
+        # HEAD_REGISTRY and injected via set_head(); CALM applies it to the
+        # VAE decoder features. Stored as a bare ref (in a list) so the head
+        # stays owned by the model and isn't double-registered here.
+        self._head: list = []
 
         # Latent → hidden_size projection for the global transformer.
         self.latent_in = nn.Linear(self.latent_dim, config.hidden_size, bias=False)
@@ -108,10 +133,33 @@ class CALMEncoder(BaseEncoder):
     # Encoder-interface surface
     # ------------------------------------------------------------------
 
+    # Output layout the injected LM head sizes its classifier to: the VAE
+    # decoder emits features at ae_hidden over the true token vocabulary.
     @property
-    def classifier(self) -> nn.Module:
-        """LM head used by cut-cross-entropy paths."""
-        return self.vae.lm_head
+    def output_dim(self) -> int:
+        return self.ae_hidden
+
+    @property
+    def output_vocab_size(self) -> int:
+        return self._output_vocab_size
+
+    def set_head(self, head: nn.Module) -> None:
+        """Receive the LM head built from HEAD_REGISTRY. Held as a bare ref
+        (the model owns the parameters); CALM applies it to decoder features."""
+        self._head = [head]
+
+    def _classify(self, hidden: torch.Tensor) -> torch.Tensor:
+        """Project VAE decoder features to token logits via the injected head."""
+        if not self._head:
+            raise RuntimeError(
+                "CALMEncoder has no LM head; the model must call set_head()."
+            )
+        return self._head[0](hidden)
+
+    @property
+    def classifier(self) -> Optional[nn.Module]:
+        """Projection module of the injected head (used by cut-CE paths)."""
+        return self._head[0].classifier if self._head else None
 
     @property
     def outputs_are_aligned(self) -> bool:
@@ -168,7 +216,8 @@ class CALMEncoder(BaseEncoder):
         mean, logvar = self.vae.encode(padded)  # [B, N, latent_dim]
         z = self.vae.reparameterize(mean, logvar)
 
-        recon_logits, _ = self.vae.decode(z)  # [B, N*K, V]
+        recon_hidden = self.vae.decode(z)  # [B, N*K, ae_hidden]
+        recon_logits = self._classify(recon_hidden)  # [B, N*K, V]
         recon_loss = F.cross_entropy(
             recon_logits.reshape(-1, self.vae.vocab_size),
             padded.reshape(-1),
@@ -211,16 +260,24 @@ class CALMEncoder(BaseEncoder):
         them against posterior samples of patch ``[:, 1:]``.
         """
         z = self._last_z  # posterior sample used for recon logits
-        recon_logits, recon_hidden = self.vae.decode(z)
+        recon_hidden = self.vae.decode(z)
+        recon_logits = self._classify(recon_hidden)
 
         if self.training and h.size(1) >= 2:
             self._register_energy_loss(h)
 
         return recon_logits, recon_hidden
 
+    @dynamo.disable()
     def _register_energy_loss(self, h: torch.Tensor) -> None:
         """Energy-score loss between next-position model samples and
-        next-position posterior samples. See module docstring."""
+        next-position posterior samples. See module docstring.
+
+        Runs eager: the pairwise-distance reshapes over a dynamic patch
+        count produce symbolic kernels Inductor can't codegen (CantSplit
+        on ``M*L*(N-1)`` vs ``N_samples*(N-1)``). The global transformer
+        still compiles around this graph break.
+        """
         B, N = h.shape[0], h.shape[1]
         if N < 2:
             return
@@ -318,7 +375,8 @@ class CALMEncoder(BaseEncoder):
             )  # [latent_dim]
             z_new = z_new.view(1, 1, -1)
 
-            recon_logits, _ = self.vae.decode(z_new)  # [1, K, V]
+            recon_hidden = self.vae.decode(z_new)  # [1, K, ae_hidden]
+            recon_logits = self._classify(recon_hidden)  # [1, K, V]
             # Greedy token choice per position inside the patch; the
             # stochasticity lives in the latent draw, not the tokens.
             new_tokens = recon_logits.argmax(dim=-1).view(1, self.K)

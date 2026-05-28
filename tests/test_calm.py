@@ -88,6 +88,21 @@ def test_calm_generate_advances_in_K_steps():
     assert new >= 12
 
 
+def test_calm_with_crystal_head():
+    # CALM borrows a HEAD_REGISTRY head as its token classifier. Crystal
+    # (which previously refused loss-owning encoders) now sizes to the VAE
+    # decoder layout and trains through the reconstruction path.
+    cfg = _tiny_config(head_type="crystal")
+    model = PraxisForCausalLM(cfg)
+    model.train()
+    input_ids = torch.randint(4, 200, (2, 32), dtype=torch.long)
+    out = model(input_ids=input_ids, labels=input_ids[:, 1:].contiguous())
+    out.loss.backward()
+    centers = model.head.lm_head.centers
+    assert centers.shape == (model.encoder.output_vocab_size, model.encoder.output_dim)
+    assert centers.grad is not None and centers.grad.abs().sum() > 0
+
+
 def test_energy_head_shapes():
     head = EnergyHead(
         cond_dim=32, noise_dim=16, latent_dim=8, hidden_dim=32, num_blocks=2

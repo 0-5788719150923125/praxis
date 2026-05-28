@@ -21,6 +21,7 @@ class PraxisConfig(PretrainedConfig):
         dropout: float = 0.0,
         epsilon: float = 1e-5,
         vocab_size: int = 8192,
+        byte_vocab_size: Optional[int] = None,
         max_position_embeddings: int = 32768,
         activation: str = "mish",
         block_type: str = "transformer",

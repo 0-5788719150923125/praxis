@@ -6,17 +6,17 @@ links to a page listing the registered implementations and their source.
 
 ## Feature registries
 
-- [Activation functions](activations.md) (31) - Pointwise nonlinearities used inside blocks and heads.
+- [Activation functions](activations.md) (33) - Pointwise nonlinearities used inside blocks and heads.
 - [Attention mechanisms](attention.md) (7) - Self-attention variants, from vanilla causal MHA to compressive-memory and per-depth-biased variants.
 - [Block-stacking decoders](decoders.md) (4) - How the stack of blocks is composed (sequential, parallel, weighted, ...).
 - [Data sampler strategies](data.md) (5) - How datasets are interleaved during training. Praxis trains on multiple datasets at once: at every step the trainer picks a dataset, draws a document, and tokenizes it (see ``InterleaveDataManager`` in ``praxis/data/datasets/manager.py``). The sampler chosen here decides *how* that pick is biased - either statically from configured weights, or adaptively based on document length, novelty, or per-dataset loss. Set with ``--sampler``; default is ``novelty``.
 - [Decoder block layouts](blocks.md) (9) - Top-level layer types the decoder stacks. Mix attention-based and recurrent designs freely.
 - [Feedforward experts](dense.md) (7) - How a block's feedforward path is realized: MLP, GLU, KAN, polynomial, scatter, PEER, ... Selected with ``--ffn-type``; default is ``glu``.
 - [Halting / early exit](halting.md) (2) - Per-token mechanisms for early exit from recurrent depth loops.
-- [Input encoders](encoders.md) (9) - Front-end encoders, including the byte-latent and abstractinator variants.
-- [Layer-routing controllers](controllers.md) (7) - Decide which expert / block a token visits at each depth. Enables out-of-order layers and graph-style routing.
+- [Input encoders](encoders.md) (10) - Front-end encoders, including the byte-latent and abstractinator variants.
+- [Layer-routing controllers](controllers.md) (8) - Decide which expert / block a token visits at each depth. Enables out-of-order layers and graph-style routing.
 - [Long-term memory](memory.md) (4) - Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced as a layer (MAL) or a gate (MAG). Selected with ``--memory-type``; default is ``none``.
-- [Loss functions](losses.md) (8) - Per-token criteria. Most accept optional ``loss_weights`` for task-weighted training.
+- [Loss functions](losses.md) (9) - Per-token criteria. Most accept optional ``loss_weights`` for task-weighted training.
 - [Normalization layers](normalization.md) (5) - LayerNorm/RMSNorm variants, including SandwichNorm (required for stable recurrent-depth bias).
 - [Output heads](heads.md) (6) - LM heads (tied/untied, harmonic, crystal) and multi-token-prediction wrappers.
 - [Positional encoding](encoding.md) (3) - RoPE, ALiBi, NoPE and friends - the rotational / additive position priors injected into attention.

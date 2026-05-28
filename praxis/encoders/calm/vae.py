@@ -1,8 +1,9 @@
 """Token-chunk VAE for CALM.
 
 Compresses K contiguous tokens into a single continuous latent of size
-``latent_dim``, and decodes latents back to K token logits. This is the
-autoencoder described in section 3.2 of the CALM paper (arXiv 2510.27688).
+``latent_dim``, and decodes latents back to K per-token feature vectors
+(an external LM head turns those into logits). This is the autoencoder
+described in section 3.2 of the CALM paper (arXiv 2510.27688).
 
 The VAE is token-agnostic: it just sees token ids and vocab size, so
 CALM can sit on top of any tokenizer (BPE, char, byte).
@@ -63,7 +64,6 @@ class CALMVAE(nn.Module):
             nn.SiLU(),
             nn.Dropout(dropout),
         )
-        self.lm_head = nn.Linear(hidden_dim, vocab_size, bias=False)
 
     def encode(self, input_ids: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Encode token ids into posterior parameters.
@@ -95,25 +95,23 @@ class CALMVAE(nn.Module):
         std = (0.5 * logvar).exp()
         return mean + std * torch.randn_like(std)
 
-    def decode(self, z: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Decode latent to K token logits.
+    def decode(self, z: torch.Tensor) -> torch.Tensor:
+        """Decode latent to per-token decoder features.
 
         Args:
             z: ``[B, N, latent_dim]`` latent samples.
 
         Returns:
-            ``(logits, hidden)`` where logits are ``[B, N*K, vocab_size]``
-            and hidden is ``[B, N*K, hidden_dim]``. The token ordering in
-            the flattened dim follows patch-major order (all K tokens of
-            patch 0, then all K tokens of patch 1, ...).
+            ``[B, N*K, hidden_dim]`` decoder hidden states in patch-major
+            order (all K tokens of patch 0, then patch 1, ...). The token
+            classifier that turns these into logits is owned externally
+            (the injected LM head), so CALM can swap forward/crystal/etc.
         """
         B, N, _ = z.shape
         K = self.chunk_size
         h = self.decoder_mlp(z)  # [B, N, K*H]
         h = h.view(B, N, K, self.hidden_dim)
-        h = h.reshape(B, N * K, self.hidden_dim)
-        logits = self.lm_head(h)
-        return logits, h
+        return h.reshape(B, N * K, self.hidden_dim)
 
     @staticmethod
     def kl_divergence(

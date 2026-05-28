@@ -61,15 +61,18 @@ CALM = partial(
     energy_alpha=1.0,
 )
 
+# Small profiles scale relative to config.hidden_size (float dims), so the
+# encoder tracks the model instead of pinning absolute widths. Paper-scale
+# profiles below keep absolute ints to preserve the published capacities.
 CALMSmall = partial(
     CALMEncoder,
     chunk_size=8,
-    latent_dim=64,
-    ae_hidden=256,
+    latent_dim=0.25,
+    ae_hidden=1.0,
     kl_beta=1e-3,
     kl_clip=0.5,
     ae_dropout=0.1,
-    noise_dim=64,
+    noise_dim=0.25,
     energy_blocks=2,
     energy_samples_n=8,
     energy_samples_m=100,
@@ -106,6 +109,23 @@ CALMBpe = partial(
     energy_alpha=1.0,
 )
 
+# Byte K with a much smaller VAE + energy head, for compact experiments.
+# Dims are fractions of hidden_size (0.25/1.0/0.25 == 64/256/64 at hidden=256).
+CALMByteSmall = partial(
+    CALMEncoder,
+    chunk_size=16,
+    latent_dim=0.25,
+    ae_hidden=1.0,
+    kl_beta=1e-3,
+    kl_clip=0.5,
+    ae_dropout=0.1,
+    noise_dim=0.25,
+    energy_blocks=2,
+    energy_samples_n=4,
+    energy_samples_m=16,
+    energy_alpha=1.0,
+)
+
 
 def is_byte_latent_encoder(encoder_type: str) -> bool:
     """Check if an encoder type is a ByteLatentEncoder or subclass."""
@@ -131,6 +151,7 @@ ENCODER_REGISTRY = dict(
     calm=CALM,
     calm_small=CALMSmall,
     calm_byte=CALMByte,
+    calm_byte_small=CALMByteSmall,
     calm_bpe=CALMBpe,
     # # Entropy-based patching
     # byte_latent_transformer_entropy=ByteLatentTransformerEntropy,

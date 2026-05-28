@@ -1,7 +1,7 @@
 """CALM encoder package: token-chunk VAE + energy head.
 
 Paper: Continuous Autoregressive Language Models (arXiv 2510.27688).
-See ``PLAN.md`` for the high-level design and how each piece maps onto
+See ``README.md`` for the high-level design and how each piece maps onto
 the existing Praxis encoder interface.
 """
 

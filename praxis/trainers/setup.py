@@ -118,7 +118,7 @@ def assemble_model(cfg, config) -> ModelBundle:
     initialize_lazy_modules(model, cfg.device)
 
     total_params = sum(p.numel() for p in model.parameters())
-    num_params = str(int(total_params / 10**6)) + "M"
+    num_params = f"{total_params / 10**6:.2f}M"
     hparams["num_params"] = num_params
 
     return ModelBundle(

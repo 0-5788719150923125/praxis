@@ -39,16 +39,19 @@ class BaseHead(nn.Module, ABC):
 
         Standalone: ``(hidden_size, vocab_size)`` from config. Encoder
         mode: the encoder declares its output layout via ``output_dim`` /
-        ``output_vocab_size``. If the encoder owns its full output pipeline
-        (``handles_loss``, e.g. CALM), returns ``None`` - the head builds
-        no classifier.
+        ``output_vocab_size`` and the head sizes to it - this holds even when
+        the encoder owns its loss but borrows the head as its classifier
+        (CALM injects it). Returns ``None`` only when the encoder declares no
+        layout, in which case the head builds no classifier.
         """
         enc = self._encoder
         if enc is None:
             return (self.hidden_size, self.vocab_size)
-        if getattr(enc, "handles_loss", False):
-            return None
-        return (int(enc.output_dim), int(enc.output_vocab_size))
+        out_dim = getattr(enc, "output_dim", None)
+        out_vocab = getattr(enc, "output_vocab_size", None)
+        if out_dim is not None and out_vocab is not None:
+            return (int(out_dim), int(out_vocab))
+        return None
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(hidden_size={self.hidden_size}, vocab_size={self.vocab_size})"
