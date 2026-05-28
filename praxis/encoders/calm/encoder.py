@@ -4,9 +4,12 @@ See ``README.md`` for the full architecture rationale. Briefly:
 
 1. ``encode`` compresses K-token chunks to continuous latents. The
    posterior sample ``z`` is projected to ``hidden_size`` and fed to the
-   global transformer as the "patch embedding" sequence. The VAE's own
-   reconstruction + KL objective is returned as ``encoder_loss`` and
-   composes with the rest of the loss container.
+   global transformer as the "patch embedding" sequence; gradients from
+   the AR/energy path are stopped at this hand-off, so the VAE updates
+   from its own recon+KL only (the paper trains VAE → AR sequentially,
+   and this is the in-flight equivalent). The VAE's own reconstruction
+   + KL objective is returned as ``encoder_loss`` and composes with the
+   rest of the loss container.
 2. The global transformer autoregresses over latents.
 3. ``decode`` uses the LM hidden state at position ``p`` to drive an
    energy head that produces proposals for latent ``p+1``; those are
@@ -343,8 +346,10 @@ class CALMEncoder(BaseEncoder):
         if self.training:
             self._train_step += 1
 
-        # Global transformer inputs: one token per patch.
-        patch_embeds = self.latent_in(z)  # [B, N, hidden_size]
+        # Stop-grad at the encoder→AR hand-off: the AR/energy loss must not
+        # back-propagate into the VAE (paper trains the two stages
+        # sequentially). The VAE keeps learning from its own recon+KL above.
+        patch_embeds = self.latent_in(z.detach())  # [B, N, hidden_size]
         patch_lengths = padded.new_full((B, N), self.K, dtype=torch.long)
 
         # Return None for block_ids: patch-level boundaries do not map

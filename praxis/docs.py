@@ -259,6 +259,10 @@ TOP_LEVEL_DIRS: List[Tuple[str, str]] = [
     ),
     ("evaluation", "Evaluation harnesses and helpers."),
     (
+        "tools",
+        "Small CLI utilities, callable by both human and assistant. See [tools/README.md](tools/README.md).",
+    ),
+    (
         "proofs",
         "Math / derivation notes backing the more unusual designs (harmonic head, ghostmax).",
     ),
@@ -632,7 +636,9 @@ def _render_route_table(repo_root: Path) -> List[str]:
             methods = ", ".join(sorted(info["methods"]))
             # First paragraph, collapsed to one line - so a summary that
             # wraps across source lines isn't cut mid-sentence.
-            doc = " ".join((inspect.getdoc(info["view"]) or "").split("\n\n", 1)[0].split())
+            doc = " ".join(
+                (inspect.getdoc(info["view"]) or "").split("\n\n", 1)[0].split()
+            )
             link = _source_link(info["view"], repo_root)
             row = f"- **{methods}** {paths}"
             if doc:

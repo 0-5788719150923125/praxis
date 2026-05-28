@@ -38,7 +38,9 @@ def test_alibi_no_ghost_matches_simple_bias():
     for h, q_idx, kv_idx in [(0, 0, 0), (1, 5, 3), (3, 10, 12)]:
         score = torch.tensor(0.7)
         expected = score + slopes[h] * (kv_idx - q_idx)
-        got = mod(score, b=0, h=h, q_idx=torch.tensor(q_idx), kv_idx=torch.tensor(kv_idx))
+        got = mod(
+            score, b=0, h=h, q_idx=torch.tensor(q_idx), kv_idx=torch.tensor(kv_idx)
+        )
         torch.testing.assert_close(got, expected)
 
 
