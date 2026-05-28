@@ -220,7 +220,6 @@ class CALMEncoder(BaseEncoder):
             latent_dim=self.latent_dim,
             hidden_dim=max(config.hidden_size, self.latent_dim),
             num_blocks=self.energy_blocks,
-            dropout=self.ae_dropout,
         )
 
         # Loss side-channel: PraxisModel consumes these after decode().
@@ -333,7 +332,11 @@ class CALMEncoder(BaseEncoder):
         )
         kl = self.vae.kl_divergence(mean, logvar, per_dim_clip=self.kl_clip).mean()
         beta_t = self._current_kl_beta()
-        encoder_loss = recon_loss + beta_t * kl
+        # K-scaled recon to match the reference's stage-1 AE training: their
+        # objective is `loss * patch_size + kl_loss * kl_weight`, so β is K
+        # times softer relative to recon than a plain mean. Without this our
+        # effective β at K=4 is ~4x harder, biasing toward posterior collapse.
+        encoder_loss = self.K * recon_loss + beta_t * kl
 
         # Stash what decode() needs.
         self._last_padded = padded
@@ -378,8 +381,10 @@ class CALMEncoder(BaseEncoder):
         recon_hidden = self.vae.decode(z)
         recon_logits = self._classify(recon_hidden)
 
-        if self.training and h.size(1) >= 2:
-            self._register_energy_loss(h)
+        # Unconditional call: gating happens inside the dynamo-disabled body.
+        # Gating *here* puts the graph-break under a Python branch and
+        # produces SpeculationLogDivergence on dynamo retries.
+        self._register_energy_loss(h)
 
         return recon_logits, recon_hidden
 
@@ -391,8 +396,13 @@ class CALMEncoder(BaseEncoder):
         Runs eager: the pairwise-distance reshapes over a dynamic patch
         count produce symbolic kernels Inductor can't codegen (CantSplit
         on ``M*L*(N-1)`` vs ``N_samples*(N-1)``). The global transformer
-        still compiles around this graph break.
+        still compiles around this graph break. Gating lives *inside*
+        this function (rather than at the call site) so the graph break
+        isn't under a Python branch in the compiled caller, which
+        produces SpeculationLogDivergence on dynamo retries.
         """
+        if not self.training:
+            return
         B, N = h.shape[0], h.shape[1]
         if N < 2:
             return

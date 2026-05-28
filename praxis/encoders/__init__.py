@@ -115,7 +115,7 @@ CALMBpe = partial(
 # the warmup/anneal knobs aren't needed here (encoder still supports them).
 CALMByteSmall = partial(
     CALMEncoder,
-    chunk_size=8,
+    chunk_size=4,
     latent_dim=0.25,
     ae_hidden=1.0,
     kl_beta=1e-3,
