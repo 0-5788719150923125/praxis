@@ -908,7 +908,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
 
         val_loss = sum(losses) / len(losses)
         extra_val: Dict[str, Any] = {}
-        if self.byte_latent:
+        if self.byte_level:
             extra_val["val_bits_per_byte"] = val_loss / math.log(2.0)
         else:
             try:

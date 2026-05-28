@@ -129,7 +129,7 @@ def build_training_callbacks(
             headless=cfg.headless,
             terminal_output_length=cfg.terminal_output_length,
             infer_every=cfg.infer_every,
-            byte_latent=cfg.byte_latent,
+            byte_level=cfg.byte_level,
             debug=cfg.debug,
             get_memory_info=get_memory_info,
             api_server=api_server,

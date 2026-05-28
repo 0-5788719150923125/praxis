@@ -61,7 +61,7 @@ class RunConfig:
     strategy: Optional[str] = None
     trainer_type: str = "backpropagation"
     pipeline_depth: int = 4
-    byte_latent: bool = False
+    byte_level: bool = False
 
     # Data
     train_datasets: List[str] = field(default_factory=lambda: ["base"])
@@ -107,17 +107,16 @@ class RunConfig:
     @classmethod
     def from_args(cls, processed_args: Dict[str, Any], args: Any = None) -> "RunConfig":
         """Build a RunConfig from the dict returned by ``get_processed_args``."""
-        from praxis.encoders import is_byte_latent_encoder
-
         get = processed_args.get
         batch_size = processed_args["batch_size"]
         block_size = processed_args["block_size"]
         encoder_type = get("encoder_type")
 
-        # Any ByteLatent encoder variant implies byte-latent mode.
-        byte_latent = get("byte_latent", False) or bool(
-            encoder_type and is_byte_latent_encoder(encoder_type)
-        )
+        # The flag drives byte-token-specific behavior (bits-per-byte metric
+        # and friends). Pure tokenizer concern; byte-latent encoders force
+        # tokenizer_type='byte_level' upstream so this catches them too.
+        tokenizer_type = get("tokenizer_type")
+        byte_level = get("byte_level", False) or (tokenizer_type == "byte_level")
 
         return cls(
             seed=processed_args["seed"],
@@ -156,7 +155,7 @@ class RunConfig:
             strategy=get("strategy"),
             trainer_type=get("trainer_type", "backpropagation"),
             pipeline_depth=get("pipeline_depth", 4),
-            byte_latent=byte_latent,
+            byte_level=byte_level,
             train_datasets=coerce_to_list(get("train_datasets") or ["base"]),
             validation_datasets=coerce_to_list(
                 get("validation_datasets") or ["validation"]

@@ -138,11 +138,15 @@ def create_tokenizer(
         and _needs_byte_level_tokenizer(encoder_type)
         and tokenizer_type != "byte_level"
     ):
+        # Byte-latent encoders only operate on byte ids; any other tokenizer
+        # produces incompatible inputs. Override rather than warn so the run
+        # stays internally consistent.
         print(
-            f"[WARNING] encoder_type={encoder_type!r} expects "
-            f"tokenizer_type='byte_level', got {tokenizer_type!r}. "
-            "This will produce incompatible token IDs."
+            f"[INFO] encoder_type={encoder_type!r} requires byte-level "
+            f"tokenization; overriding tokenizer_type={tokenizer_type!r} "
+            f"-> 'byte_level'."
         )
+        tokenizer_type = "byte_level"
 
     # Trained tokenizers: try loading a pre-trained one for the requested
     # vocab_size before instantiating a fresh untrained instance.

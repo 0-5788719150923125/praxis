@@ -261,7 +261,7 @@ class MonoForwardTrainer:
         raw_limit_val = trainer_params.get("limit_val_batches")
         self._limit_val_batches: int = int(raw_limit_val) if raw_limit_val else 64
         self.dynamics_log_freq: int = int(trainer_params.get("dynamics_log_freq") or 10)
-        self.byte_latent: bool = bool(trainer_params.get("byte_latent") or False)
+        self.byte_level: bool = bool(trainer_params.get("byte_level") or False)
         self.save_every: int = int(trainer_params.get("save_every", 256) or 256)
         self._live_metrics: Optional[Any] = None
         self._live_metrics_ema_loss: Optional[float] = None
@@ -1282,7 +1282,7 @@ class MonoForwardTrainer:
         optimizer step), aggregates the last-layer loss into
         ``val_loss``, computes ``val_perplexity = exp(val_loss)``
         (or ``val_bits_per_byte`` when the trainer was constructed
-        with ``byte_latent=True``), and writes both to metrics.db
+        with ``byte_level=True``), and writes both to metrics.db
         at ``current_step``.
 
         The caller is responsible for draining the training pipeline
@@ -1400,11 +1400,11 @@ class MonoForwardTrainer:
             return
 
         val_loss = sum(losses) / len(losses)
-        # Perplexity = exp(val_loss) unless byte_latent mode, in which
+        # Perplexity = exp(val_loss) unless byte_level mode, in which
         # case we emit bits_per_byte instead (matching
         # BackpropagationTrainer.validation_step).
         extra_val: Dict[str, Any] = {}
-        if self.byte_latent:
+        if self.byte_level:
             extra_val["val_bits_per_byte"] = val_loss / math.log(2.0)
         else:
             try:

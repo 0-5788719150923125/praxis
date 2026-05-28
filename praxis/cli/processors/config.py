@@ -79,11 +79,13 @@ class ConfigBuilder:
         if "depth" not in config_kwargs or config_kwargs.get("depth") is None:
             config_kwargs["depth"] = num_layers
 
-        # Handle byte_latent encoding (check for any byte_latent variant)
-        encoder_type = getattr(args, "encoder_type", None)
-        byte_latent = encoder_type and encoder_type.startswith("byte_latent")
-        if byte_latent and "byte_latent" in valid_config_params:
-            config_kwargs["byte_latent"] = True
+        # Gate byte-token-specific behavior (bits-per-byte metric, readable
+        # terminal length, repetition defaults). Pure tokenizer concern;
+        # byte-latent encoders force tokenizer_type='byte_level' upstream.
+        tokenizer_type = getattr(args, "tokenizer_type", None)
+        byte_level = tokenizer_type == "byte_level"
+        if byte_level and "byte_level" in valid_config_params:
+            config_kwargs["byte_level"] = True
 
         if "max_position_embeddings" in valid_config_params:
             explicit = getattr(args, "max_position_embeddings", None)

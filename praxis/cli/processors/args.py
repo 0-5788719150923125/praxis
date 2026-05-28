@@ -48,18 +48,36 @@ class ArgumentProcessor:
         # Create a dict from args
         processed = vars(args).copy()
 
-        # Add computed values
-        # Check if encoder_type starts with "byte_latent" (covers all byte_latent variants)
+        # Byte-latent encoders only operate on byte ids; force the tokenizer
+        # to match so downstream reads (the byte_level flag, tokenizer
+        # construction) all see a consistent value.
         encoder_type = getattr(args, "encoder_type", None)
-        processed["byte_latent"] = encoder_type and encoder_type.startswith(
-            "byte_latent"
-        )
+        tokenizer_type = getattr(args, "tokenizer_type", None)
+        from praxis.encoders import is_byte_latent_encoder
+
+        if (
+            encoder_type
+            and is_byte_latent_encoder(encoder_type)
+            and tokenizer_type != "byte_level"
+        ):
+            print(
+                f"[INFO] encoder_type={encoder_type!r} requires byte-level "
+                f"tokenization; overriding tokenizer_type={tokenizer_type!r} "
+                f"-> 'byte_level'."
+            )
+            args.tokenizer_type = "byte_level"
+            tokenizer_type = "byte_level"
+            processed["tokenizer_type"] = "byte_level"
+
+        # Pure tokenizer concern: gates the bits-per-byte metric, readable
+        # terminal length, and repetition n-gram defaults.
+        processed["byte_level"] = tokenizer_type == "byte_level"
 
         # Set terminal_output_length
         if processed.get("infer_context") is not None:
             processed["terminal_output_length"] = processed["infer_context"]
         elif "block_size" in processed:
-            if processed["byte_latent"]:
+            if processed["byte_level"]:
                 # Bytes ≈ characters, so block_size is already close to readable length
                 processed["terminal_output_length"] = processed["block_size"] // 2
             else:

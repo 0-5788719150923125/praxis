@@ -197,14 +197,10 @@ def create_trainer_with_module(
         # BackpropagationTrainer is a LightningModule, needs special handling
         from praxis.trainers.backpropagation import BackpropagationTrainer
 
-        # Use byte_latent if provided, otherwise determine from encoder_type
-        if "byte_latent" in kwargs:
-            byte_latent = kwargs["byte_latent"]
-        else:
-            encoder_type = (
-                hparams.get("encoder_type", "passthrough") if hparams else "passthrough"
-            )
-            byte_latent = encoder_type == "byte_latent"
+        # Tokenizer-driven gate for byte-token-specific behavior; callers
+        # may pass it explicitly, otherwise default to False (the trainer
+        # itself does not derive from the encoder anymore).
+        byte_level = bool(kwargs.get("byte_level", False))
 
         # Create the LightningModule wrapper
         lightning_module = BackpropagationTrainer(
@@ -213,7 +209,7 @@ def create_trainer_with_module(
             scheduler=scheduler,
             hparams=hparams or {},
             tokenizer=tokenizer,
-            byte_latent=byte_latent,
+            byte_level=byte_level,
         )
 
         # Create the actual Lightning Trainer

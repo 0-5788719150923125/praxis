@@ -184,7 +184,6 @@ const renderSpecSections = {
 
     'arguments': (data) => {
         const content = [
-            renderIf(data.timestamp, () => createMetadata(`Created: ${data.timestamp}`)),
             renderIf(data.args, () => createPreBlock(formatJSON(data.args)))
         ].filter(Boolean).join('');
 

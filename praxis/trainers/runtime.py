@@ -115,7 +115,7 @@ def assemble_trainer(
         ckpt_path=ckpt_path,
         trainer_params=train_params,
         encoder_type=cfg.encoder_type,
-        byte_latent=cfg.byte_latent,
+        byte_level=cfg.byte_level,
         pipeline_depth=cfg.pipeline_depth,
         device=cfg.device,
         # Ray Mono-Forward flags - ignored by non-mono_forward trainers.

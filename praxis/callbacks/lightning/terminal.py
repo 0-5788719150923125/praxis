@@ -28,7 +28,7 @@ class TerminalInterface(Callback):
         headless=False,
         terminal_output_length=512,
         infer_every=3,
-        byte_latent=False,
+        byte_level=False,
         debug=False,
         get_memory_info=None,
         api_server=None,
@@ -57,7 +57,7 @@ class TerminalInterface(Callback):
         self.quiet = quiet
         self.headless = headless
         self.terminal_output_length = terminal_output_length
-        self.byte_latent = byte_latent
+        self.byte_level = byte_level
         self.debug = debug
         self.get_memory_info = get_memory_info
         self.api_server = api_server
@@ -111,8 +111,8 @@ class TerminalInterface(Callback):
             max_length=terminal_output_length,
             unchanged_threshold=30,
             ignored_n_grams=ignored_n_grams,
-            repetition_n_gram_size=13 if byte_latent else 7,
-            repetition_frequency=50 if byte_latent else 20,
+            repetition_n_gram_size=13 if byte_level else 7,
+            repetition_frequency=50 if byte_level else 20,
         )
         # Sync local state with whatever the streaming context picked.
         self.text = self._streaming.text

@@ -19,7 +19,7 @@ class BackpropagationTrainer(LightningModule):
     """
 
     def __init__(
-        self, model, optimizer, scheduler, hparams, tokenizer=None, byte_latent=False
+        self, model, optimizer, scheduler, hparams, tokenizer=None, byte_level=False
     ):
         super(BackpropagationTrainer, self).__init__()
         self.scheduler = scheduler
@@ -32,7 +32,7 @@ class BackpropagationTrainer(LightningModule):
         self.outputs_are_aligned = hasattr(model, "encoder") and getattr(
             model.encoder, "outputs_are_aligned", False
         )
-        self.byte_latent = byte_latent  # Track byte-level for metrics (bits_per_byte)
+        self.byte_level = byte_level  # Track byte-level for metrics (bits_per_byte)
         self.last_logged_step = -1  # Track last step we logged a document
         self.save_hyperparameters(
             ignore=["model", "optimizer", "scheduler", "tokenizer"]
@@ -470,7 +470,7 @@ class BackpropagationTrainer(LightningModule):
         loss = outputs.loss
         stats["val_loss"] = loss
 
-        if self.byte_latent:
+        if self.byte_level:
             stats["val_bits_per_byte"] = self._compute_bits_per_byte(input_ids, loss)
         else:
             # Detach logits to prevent memory accumulation from computation graph.
