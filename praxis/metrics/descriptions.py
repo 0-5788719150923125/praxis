@@ -93,6 +93,14 @@ def _candidates(model: Any) -> Iterable[Dict[str, Any]]:
         if isinstance(descs, dict):
             yield descs
 
+    # Loss-owning encoders (e.g. CALM) declare chart hints as a class attr;
+    # guard against ``model.encoder = False`` (the no-encoder sentinel).
+    encoder = getattr(model, "encoder", None)
+    if encoder:
+        descs = getattr(type(encoder), "metric_descriptions", None)
+        if isinstance(descs, dict):
+            yield descs
+
 
 def get_metric_descriptions(model: Any) -> Dict[str, Dict[str, Any]]:
     """Return ``{key: {description, chart}}`` for the live model."""

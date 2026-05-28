@@ -111,6 +111,9 @@ CALMBpe = partial(
 
 # Byte K with a much smaller VAE + energy head, for compact experiments.
 # Dims are fractions of hidden_size (0.25/1.0/0.25 == 64/256/64 at hidden=256).
+# Joint VAE+LM training is unstable without a warmup phase (the paper trains
+# the VAE first to convergence), so the small profile defaults to a ~2k-step
+# energy hold and a ~1k-step KL anneal.
 CALMByteSmall = partial(
     CALMEncoder,
     chunk_size=16,
@@ -118,12 +121,14 @@ CALMByteSmall = partial(
     ae_hidden=1.0,
     kl_beta=1e-3,
     kl_clip=0.5,
+    kl_warmup_steps=1000,
     ae_dropout=0.1,
     noise_dim=0.25,
     energy_blocks=2,
     energy_samples_n=4,
     energy_samples_m=16,
     energy_alpha=1.0,
+    energy_warmup_steps=2000,
 )
 
 

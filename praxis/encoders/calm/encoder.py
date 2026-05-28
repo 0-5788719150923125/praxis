@@ -43,6 +43,96 @@ class CALMEncoder(BaseEncoder):
     The encoder owns its loss bookkeeping; see ``handles_loss``.
     """
 
+    # Chart hints for diagnostics surfaced via ``training_metrics()``. Collected
+    # by ``praxis.metrics.descriptions.get_metric_descriptions`` and rendered on
+    # the Dynamics tab. Do NOT mirror these in TRAINING_METRIC_REGISTRY (that
+    # registry is for Research-tab trainer scalars).
+    metric_descriptions = {
+        "calm_latent_norm_mean": {
+            "description": (
+                "Mean L2 norm of posterior means ‖μ‖ across positions. Stable "
+                "training keeps this in a bounded range; runaway growth signals "
+                "latent-scale drift, persistent zero signals posterior collapse."
+            ),
+            "chart": {
+                "title": "Latent Mean Norm",
+                "y_label": "mean ‖μ‖",
+                "y_scale": "linear",
+                "group": "calm",
+                "order": 10,
+            },
+        },
+        "calm_latent_std_mean": {
+            "description": (
+                "Mean posterior σ = √exp(logvar) across positions and dims. "
+                "Collapse toward 0 = the encoder is becoming deterministic; "
+                "runaway growth = divergence."
+            ),
+            "chart": {
+                "title": "Latent Std",
+                "y_label": "mean σ",
+                "y_scale": "linear",
+                "group": "calm",
+                "order": 20,
+            },
+        },
+        "calm_kl_active_frac": {
+            "description": (
+                "Fraction of latent dims whose pre-clip per-dim KL exceeds the "
+                "free-bits floor (kl_clip). Posterior collapse drives this "
+                "toward 0; a healthy VAE keeps most dims active."
+            ),
+            "chart": {
+                "title": "Active Latent Dim Fraction",
+                "y_label": "frac > floor",
+                "y_scale": "linear",
+                "group": "calm",
+                "order": 30,
+            },
+        },
+        "calm_recon_kl_ratio": {
+            "description": (
+                "recon_loss / (β·KL). Above 1: reconstruction dominates the "
+                "encoder objective; below 1: KL regularization dominates. Watch "
+                "the trend rather than the absolute value."
+            ),
+            "chart": {
+                "title": "Recon / (β·KL)",
+                "y_label": "ratio",
+                "y_scale": "logarithmic",
+                "group": "calm",
+                "order": 40,
+            },
+        },
+        "calm_kl_beta": {
+            "description": (
+                "Effective KL coefficient β at this step. Linearly anneals from "
+                "0 to the configured kl_beta over kl_warmup_steps, then holds."
+            ),
+            "chart": {
+                "title": "KL β (annealed)",
+                "y_label": "β",
+                "y_scale": "linear",
+                "group": "calm",
+                "order": 50,
+            },
+        },
+        "calm_energy_loss": {
+            "description": (
+                "Energy-score loss between proposed next latents and posterior "
+                "samples. Zero during energy_warmup_steps (VAE-only phase); "
+                "should trend down once active."
+            ),
+            "chart": {
+                "title": "Energy Loss",
+                "y_label": "energy",
+                "y_scale": "linear",
+                "group": "calm",
+                "order": 60,
+            },
+        },
+    }
+
     def __init__(
         self,
         config,
@@ -52,12 +142,14 @@ class CALMEncoder(BaseEncoder):
         ae_hidden: Union[int, float] = 512,
         kl_beta: float = 1e-3,
         kl_clip: float = 0.5,
+        kl_warmup_steps: int = 0,
         ae_dropout: float = 0.15,
         noise_dim: Union[int, float] = 128,
         energy_blocks: int = 3,
         energy_samples_n: int = 8,
         energy_samples_m: int = 100,
         energy_alpha: float = 1.0,
+        energy_warmup_steps: int = 0,
     ) -> None:
         super().__init__()
         self.config = config
@@ -71,6 +163,7 @@ class CALMEncoder(BaseEncoder):
         self.ae_hidden = _resolve_dim(ae_hidden, base)
         self.kl_beta = kl_beta
         self.kl_clip = kl_clip
+        self.kl_warmup_steps = int(kl_warmup_steps)
         self.ae_dropout = ae_dropout
 
         self.noise_dim = _resolve_dim(noise_dim, base)
@@ -78,6 +171,18 @@ class CALMEncoder(BaseEncoder):
         self.energy_samples_n = energy_samples_n
         self.energy_samples_m = energy_samples_m
         self.energy_alpha = energy_alpha
+        self.energy_warmup_steps = int(energy_warmup_steps)
+
+        # Persistent step counter. Buffer so it survives checkpoint/resume:
+        # restarting the warmup after a resume would re-destabilize the model.
+        self.register_buffer(
+            "_train_step", torch.zeros((), dtype=torch.long), persistent=True
+        )
+
+        # Transient diagnostic stash for training_metrics(). Floats updated
+        # during encode() / _register_energy_loss; consumed by the dynamics
+        # callback. NaN signals "not yet observed this run."
+        self._diag: Dict[str, float] = {}
 
         self.pad_token_id = int(getattr(config, "pad_token_id", 0))
 
@@ -224,7 +329,8 @@ class CALMEncoder(BaseEncoder):
             ignore_index=self.pad_token_id,
         )
         kl = self.vae.kl_divergence(mean, logvar, per_dim_clip=self.kl_clip).mean()
-        encoder_loss = recon_loss + self.kl_beta * kl
+        beta_t = self._current_kl_beta()
+        encoder_loss = recon_loss + beta_t * kl
 
         # Stash what decode() needs.
         self._last_padded = padded
@@ -232,6 +338,10 @@ class CALMEncoder(BaseEncoder):
         self._last_logvar = logvar
         self._last_z = z
         self._last_N = N
+
+        self._stash_diagnostics(mean, logvar, recon_loss, kl, beta_t)
+        if self.training:
+            self._train_step += 1
 
         # Global transformer inputs: one token per patch.
         patch_embeds = self.latent_in(z)  # [B, N, hidden_size]
@@ -281,6 +391,10 @@ class CALMEncoder(BaseEncoder):
         B, N = h.shape[0], h.shape[1]
         if N < 2:
             return
+        # VAE warmup: skip energy loss until the codec has stabilized, so
+        # the energy head isn't chasing a wildly-moving target.
+        if int(self._train_step.item()) < self.energy_warmup_steps:
+            return
 
         # Position p predicts latent at p+1. h_cond: [B, N-1, hidden]
         h_cond = h[:, :-1, :]
@@ -306,7 +420,9 @@ class CALMEncoder(BaseEncoder):
         )
 
         loss = energy_score_loss(model_raw, target_samples)
-        self._pending_losses["energy"] = self.energy_alpha * loss
+        scaled = self.energy_alpha * loss
+        self._pending_losses["energy"] = scaled
+        self._diag["calm_energy_loss"] = float(scaled.detach())
 
     # ------------------------------------------------------------------
     # Loss side-channel
@@ -317,6 +433,57 @@ class CALMEncoder(BaseEncoder):
         out = self._pending_losses
         self._pending_losses = {}
         return out
+
+    # ------------------------------------------------------------------
+    # Warmup + diagnostics
+    # ------------------------------------------------------------------
+
+    def _current_kl_beta(self) -> float:
+        """Linearly annealed β: 0 → kl_beta over kl_warmup_steps, then held."""
+        if self.kl_warmup_steps <= 0:
+            return float(self.kl_beta)
+        progress = float(self._train_step.item()) / float(self.kl_warmup_steps)
+        return float(self.kl_beta) * min(1.0, max(0.0, progress))
+
+    @torch.no_grad()
+    def _stash_diagnostics(
+        self,
+        mean: torch.Tensor,
+        logvar: torch.Tensor,
+        recon_loss: torch.Tensor,
+        kl_mean: torch.Tensor,
+        beta_t: float,
+    ) -> None:
+        """Update transient values exposed via training_metrics().
+
+        Cheap reductions over the current batch; consumed by the dynamics
+        callback. Values are floats so they're trivially JSON-serializable
+        through the dynamics logger.
+        """
+        # Pre-clip per-dim KL: identifies dims still being squeezed to the
+        # free-bits floor (dead dims).
+        per_dim_raw = 0.5 * (mean.pow(2) + logvar.exp() - 1.0 - logvar)
+        active_frac = (per_dim_raw > self.kl_clip).float().mean()
+        std = (0.5 * logvar).exp()
+        denom = beta_t * float(kl_mean.detach()) + 1e-9
+        ratio = float(recon_loss.detach()) / denom
+
+        self._diag["calm_latent_norm_mean"] = float(mean.norm(dim=-1).mean())
+        self._diag["calm_latent_std_mean"] = float(std.mean())
+        self._diag["calm_kl_active_frac"] = float(active_frac)
+        self._diag["calm_recon_kl_ratio"] = ratio
+        self._diag["calm_kl_beta"] = float(beta_t)
+        # Energy loss is updated in _register_energy_loss; default 0.0 during
+        # warmup or eval (when it's not registered).
+        self._diag.setdefault("calm_energy_loss", 0.0)
+
+    def training_metrics(self) -> Dict[str, float]:
+        """Diagnostic scalars for the Dynamics tab. See ``metric_descriptions``.
+
+        Co-located with the math that produces them (per the project
+        convention); the DynamicsLogger callback picks them up.
+        """
+        return dict(self._diag)
 
     # ------------------------------------------------------------------
     # Generation

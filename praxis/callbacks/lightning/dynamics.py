@@ -71,6 +71,10 @@ class DynamicsLoggerCallback(Callback):
             # Arc per-depth bias specialization, averaged across Arc modules.
             dynamics.update(self._extract_arc_dynamics(model))
 
+            # Loss-owning encoder diagnostics (e.g. CALM: latent stats, KL β,
+            # energy loss). Encoders opt in via training_metrics().
+            dynamics.update(self._extract_encoder_dynamics(model))
+
             if dynamics:
                 self._success_count += 1
                 if self._success_count <= 3:
@@ -182,6 +186,22 @@ class DynamicsLoggerCallback(Callback):
             return iso.training_metrics()
         except Exception as e:
             print(f"[DynamicsLogger] contrastive training_metrics() failed: {e}")
+            return {}
+
+    def _extract_encoder_dynamics(self, model) -> dict:
+        """Delegate to a loss-owning encoder's own diagnostics (e.g. CALM).
+
+        Encoders opt in via ``training_metrics()`` (with chart hints declared
+        as a ``metric_descriptions`` class attr). Guard against
+        ``model.encoder = False`` (the no-encoder sentinel set in modeling.py).
+        """
+        encoder = getattr(model, "encoder", None)
+        if not encoder or not hasattr(encoder, "training_metrics"):
+            return {}
+        try:
+            return encoder.training_metrics()
+        except Exception as e:
+            print(f"[DynamicsLogger] encoder.training_metrics() failed: {e}")
             return {}
 
     def _extract_arc_dynamics(self, model) -> dict:
