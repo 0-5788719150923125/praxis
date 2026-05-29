@@ -109,10 +109,11 @@ CALMBpe = partial(
     energy_alpha=1.0,
 )
 
-# Byte K with a much smaller VAE + energy head, for compact experiments.
-# Dims are fractions of hidden_size (0.25/1.0/0.25 == 64/256/64 at hidden=256).
-# Stop-grad at the encoder→AR hand-off isolates the VAE from the AR loss, so
-# the warmup/anneal knobs aren't needed here (encoder still supports them).
+# Byte K with a smaller VAE for compact experiments; energy head uses the
+# paper's N/M/blocks so the gradient isn't sample-starved (the original 4/16
+# combo gave high-variance estimates and was the main throttle on the energy
+# head's learning curve). Dims are fractions of hidden_size
+# (0.25/1.0/0.25 == 64/256/64 at hidden=256).
 CALMByteSmall = partial(
     CALMEncoder,
     chunk_size=4,
@@ -122,10 +123,11 @@ CALMByteSmall = partial(
     kl_clip=0.5,
     ae_dropout=0.1,
     noise_dim=0.25,
-    energy_blocks=2,
-    energy_samples_n=4,
-    energy_samples_m=16,
+    energy_blocks=3,
+    energy_samples_n=8,
+    energy_samples_m=64,
     energy_alpha=1.0,
+    vote_num_samples=50,
 )
 
 

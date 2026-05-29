@@ -1,16 +1,16 @@
 """CALM encoder: VAE + energy head, exposed via the Praxis encoder interface.
 
-See ``README.md`` for the full architecture rationale. Briefly:
+Architecture (matches the reference at github.com/shaochenze/calm):
 
-1. ``encode`` compresses K-token chunks to continuous latents. The
-   posterior sample ``z`` is projected to ``hidden_size`` and fed to the
-   global transformer as the "patch embedding" sequence; gradients from
-   the AR/energy path are stopped at this hand-off, so the VAE updates
-   from its own recon+KL only (the paper trains VAE → AR sequentially,
-   and this is the in-flight equivalent). The VAE's own reconstruction
-   + KL objective is returned as ``encoder_loss`` and composes with the
-   rest of the loss container.
-2. The global transformer autoregresses over latents.
+1. ``encode`` builds the LM's per-patch input from raw token embeddings,
+   *not* from the VAE: ``embed_proj`` compresses K token embeddings into
+   one ``hidden_size`` vector per patch. The VAE encoder runs in
+   parallel to produce the energy-score's posterior targets, and the VAE
+   decoder + classifier produce the AE's own reconstruction loss
+   (composed into ``encoder_loss``). The LM input is decoupled from the
+   VAE's latent quality, mirroring the reference (where the AE is
+   frozen during LM training and only emits targets).
+2. The global transformer autoregresses over patch embeddings.
 3. ``decode`` uses the LM hidden state at position ``p`` to drive an
    energy head that produces proposals for latent ``p+1``; those are
    compared against the posterior samples of ``p+1`` under the
@@ -19,6 +19,9 @@ See ``README.md`` for the full architecture rationale. Briefly:
    sets ``handles_loss=True`` to bypass the default CE path).
 """
 
+import math
+import random
+from collections import Counter
 from typing import Dict, Optional, Tuple, Union
 
 import torch
@@ -153,6 +156,7 @@ class CALMEncoder(BaseEncoder):
         energy_samples_m: int = 100,
         energy_alpha: float = 1.0,
         energy_warmup_steps: int = 0,
+        vote_num_samples: int = 200,
     ) -> None:
         super().__init__()
         self.config = config
@@ -175,6 +179,7 @@ class CALMEncoder(BaseEncoder):
         self.energy_samples_m = energy_samples_m
         self.energy_alpha = energy_alpha
         self.energy_warmup_steps = int(energy_warmup_steps)
+        self.vote_num_samples = int(vote_num_samples)
 
         # Persistent step counter. Buffer so it survives checkpoint/resume:
         # restarting the warmup after a resume would re-destabilize the model.
@@ -211,8 +216,17 @@ class CALMEncoder(BaseEncoder):
         # stays owned by the model and isn't double-registered here.
         self._head: list = []
 
-        # Latent → hidden_size projection for the global transformer.
-        self.latent_in = nn.Linear(self.latent_dim, config.hidden_size, bias=False)
+        # LM input path (independent of the VAE, matching the reference):
+        # K token embeddings → embed_proj → one hidden_size vector per patch.
+        # Kept separate from the VAE's tok_emb so the AR/energy loss can't
+        # leak gradient into the codec via a shared embedding.
+        self.lm_tok_emb = nn.Embedding(self._output_vocab_size, config.embed_size)
+        self.embed_proj = nn.Sequential(
+            nn.Linear(self.K * config.embed_size, 2 * config.hidden_size),
+            nn.SiLU(),
+            nn.Linear(2 * config.hidden_size, config.hidden_size),
+            nn.LayerNorm(config.hidden_size, eps=1e-6),
+        )
 
         self.energy_head = EnergyHead(
             cond_dim=config.hidden_size,
@@ -344,15 +358,19 @@ class CALMEncoder(BaseEncoder):
         self._last_logvar = logvar
         self._last_z = z
         self._last_N = N
+        # Per-byte recon CE for val_bits_per_byte (training-objective loss is
+        # K-scaled per-patch and would give a K-times-too-large bpb).
+        self._last_recon_loss = recon_loss.detach()
 
         self._stash_diagnostics(mean, logvar, recon_loss, kl, beta_t)
         if self.training:
             self._train_step += 1
 
-        # Stop-grad at the encoder→AR hand-off: the AR/energy loss must not
-        # back-propagate into the VAE (paper trains the two stages
-        # sequentially). The VAE keeps learning from its own recon+KL above.
-        patch_embeds = self.latent_in(z.detach())  # [B, N, hidden_size]
+        # LM input = embed_proj(K token embeddings per patch). Independent
+        # of z, so the AR/energy loss naturally can't reach the VAE encoder.
+        tok_e = self.lm_tok_emb(padded)  # [B, N*K, embed_size]
+        tok_e = tok_e.reshape(B, N, self.K * tok_e.size(-1))
+        patch_embeds = self.embed_proj(tok_e)  # [B, N, hidden_size]
         patch_lengths = padded.new_full((B, N), self.K, dtype=torch.long)
 
         # Return None for block_ids: patch-level boundaries do not map
@@ -449,6 +467,16 @@ class CALMEncoder(BaseEncoder):
         self._pending_losses = {}
         return out
 
+    def per_byte_val_loss(self) -> Optional[torch.Tensor]:
+        """Most recent per-byte reconstruction CE for val_bits_per_byte.
+
+        The training-objective ``encoder_loss`` is K-scaled per-patch; using
+        it in ``_compute_bits_per_byte`` would over-report by a factor of K
+        and wouldn't be comparable to byte-latent's bpb. Codec recon CE is
+        the natural per-byte signal.
+        """
+        return getattr(self, "_last_recon_loss", None)
+
     # ------------------------------------------------------------------
     # Warmup + diagnostics
     # ------------------------------------------------------------------
@@ -505,6 +533,62 @@ class CALMEncoder(BaseEncoder):
     # ------------------------------------------------------------------
 
     @torch.no_grad()
+    def _patch_vote_sample(
+        self,
+        h_last: torch.Tensor,
+        temperature: float,
+        num_samples: int = 200,
+    ) -> torch.Tensor:
+        """Paper Algorithm 1 (temperature sampling for CALM).
+
+        ``temperature`` must be in (0, 1]; for T<1 we draw ``num_samples``
+        candidate latents, decode each to an argmax K-token patch, count
+        exact patch matches, and pick the most-supported patch via
+        combinatorial weighting (cascade from n_initial = round(1/T) down).
+        For T=1 a single latent is sampled - matching the reference.
+
+        Args:
+            h_last: ``[hidden_size]`` conditioning (single stream).
+            temperature: T in (0, 1]. Strict T = 1/integer in the paper;
+                we round 1/T to the nearest integer so any T in range works.
+            num_samples: pool size for voting.
+
+        Returns:
+            ``[K]`` selected token ids.
+        """
+        if temperature >= 1.0:
+            z = self.energy_head.sample(h_last, num_samples=1)  # [1, latent_dim]
+            z = z.view(1, 1, -1)
+            recon_hidden = self.vae.decode(z)
+            recon_logits = self._classify(recon_hidden)
+            return recon_logits.argmax(dim=-1).view(self.K)
+
+        n_initial = max(1, int(round(1.0 / max(temperature, 1e-6))))
+
+        # Pool of candidate patches: decode each candidate latent and take
+        # argmax tokens. Stochasticity lives in the latent draws; voting
+        # then concentrates on the patches the head agrees on most often.
+        z_pool = self.energy_head.sample(h_last, num_samples=num_samples)
+        z_pool = z_pool.view(num_samples, 1, -1)
+        recon_hidden = self.vae.decode(z_pool)  # [N, K, ae_hidden]
+        recon_logits = self._classify(recon_hidden)  # [N, K, V]
+        patches = recon_logits.argmax(dim=-1)  # [N, K]
+
+        counts = Counter(tuple(p.tolist()) for p in patches)
+
+        # Cascade: try n_initial, n_initial - 1, ..., 1. Pick from patches
+        # appearing >= n times, weighted by C(count, n).
+        for n in range(n_initial, 0, -1):
+            candidates = {p: c for p, c in counts.items() if c >= n}
+            if candidates:
+                weights = [math.comb(c, n) for c in candidates.values()]
+                chosen = random.choices(list(candidates.keys()), weights=weights, k=1)[0]
+                return torch.tensor(chosen, dtype=torch.long, device=h_last.device)
+
+        # Defensive fallback (n=1 must find a match unless num_samples=0).
+        return patches[0]
+
+    @torch.no_grad()
     def custom_generate(
         self,
         inputs: Optional[torch.Tensor] = None,
@@ -516,14 +600,13 @@ class CALMEncoder(BaseEncoder):
         """CALM generation: latent LM -> energy head -> VAE decode.
 
         Each step runs the global transformer over the latent prefix
-        (``base_forward``), samples a latent from the energy head conditioned
-        on the last hidden state (LF-temperature if T != 1), decodes it
-        through the VAE to K tokens, and appends. Stops on EOS or
+        (``base_forward``), then uses patch-vote temperature sampling
+        (paper Algorithm 1) to pick the next K-token patch: draw a pool
+        of candidate latents, decode each to an argmax patch, and select
+        by combinatorial voting on exact patch matches. Stops on EOS or
         ``max_new_tokens``.
         """
         from types import SimpleNamespace
-
-        from praxis.generation.lf_temperature import lf_temperature_sample_batched
 
         if inputs is None:
             raise ValueError("CALM generate requires an input_ids prompt")
@@ -531,6 +614,13 @@ class CALMEncoder(BaseEncoder):
         max_new_tokens = getattr(generation_config, "max_new_tokens", 100) or 100
         temperature = getattr(generation_config, "temperature", 1.0) or 1.0
         eos_token_id = getattr(generation_config, "eos_token_id", None)
+        # Pool size for patch-vote (T<1). Profile default lives in
+        # self.vote_num_samples (paper-scale = 200); generation_config can
+        # still override per-call. Smaller pools = faster but noisier votes.
+        num_samples = int(
+            getattr(generation_config, "calm_num_samples", None)
+            or self.vote_num_samples
+        )
         return_dict = kwargs.get("return_dict_in_generate", False)
 
         eos_set = set()
@@ -547,21 +637,10 @@ class CALMEncoder(BaseEncoder):
             base_out = base_forward(generated)
             h_last = base_out.last_hidden_state[:, -1, :]  # [B, hidden]
 
-            def sampler(n: int, _h=h_last) -> torch.Tensor:
-                # Draw n latents from the energy head for batch-index 0;
-                # generation is single-stream for now.
-                return self.energy_head.sample(_h[0], num_samples=n)
-
-            z_new = lf_temperature_sample_batched(
-                sampler, temperature=float(temperature), num_candidates=64
-            )  # [latent_dim]
-            z_new = z_new.view(1, 1, -1)
-
-            recon_hidden = self.vae.decode(z_new)  # [1, K, ae_hidden]
-            recon_logits = self._classify(recon_hidden)  # [1, K, V]
-            # Greedy token choice per position inside the patch; the
-            # stochasticity lives in the latent draw, not the tokens.
-            new_tokens = recon_logits.argmax(dim=-1).view(1, self.K)
+            new_tokens = self._patch_vote_sample(
+                h_last[0], temperature=float(temperature), num_samples=num_samples
+            )  # [K]
+            new_tokens = new_tokens.view(1, self.K)
 
             # Expand batch dim if the prompt had batch > 1 (rare for CLI).
             if generated.size(0) > 1:

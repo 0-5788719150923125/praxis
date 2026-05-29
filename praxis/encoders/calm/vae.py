@@ -54,6 +54,9 @@ class CALMVAE(nn.Module):
             nn.SiLU(),
             nn.Dropout(dropout),
         )
+        # Norm before posterior projection: keeps μ/logvar in a well-scaled
+        # range and matches the reference's LlamaRMSNorm in the AE encoder.
+        self.params_norm = nn.RMSNorm(hidden_dim)
         self.to_params = nn.Linear(hidden_dim, 2 * latent_dim)
 
         self.decoder_mlp = nn.Sequential(
@@ -64,6 +67,8 @@ class CALMVAE(nn.Module):
             nn.SiLU(),
             nn.Dropout(dropout),
         )
+        # Norm before the classifier consumes decoder features.
+        self.out_norm = nn.RMSNorm(hidden_dim)
 
     def encode(self, input_ids: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Encode token ids into posterior parameters.
@@ -83,6 +88,7 @@ class CALMVAE(nn.Module):
         emb = self.tok_emb(input_ids)  # [B, N*K, E]
         emb = emb.view(B, N, K * self.embed_dim)
         h = self.encoder_mlp(emb)  # [B, N, H]
+        h = self.params_norm(h)
         params = self.to_params(h)  # [B, N, 2L]
         mean, logvar = params.chunk(2, dim=-1)
         # Bound logvar to keep KL finite and prevent posterior collapse
@@ -111,7 +117,8 @@ class CALMVAE(nn.Module):
         K = self.chunk_size
         h = self.decoder_mlp(z)  # [B, N, K*H]
         h = h.view(B, N, K, self.hidden_dim)
-        return h.reshape(B, N * K, self.hidden_dim)
+        h = h.reshape(B, N * K, self.hidden_dim)
+        return self.out_norm(h)
 
     @staticmethod
     def kl_divergence(

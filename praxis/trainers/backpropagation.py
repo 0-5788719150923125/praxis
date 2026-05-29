@@ -471,7 +471,19 @@ class BackpropagationTrainer(LightningModule):
         stats["val_loss"] = loss
 
         if self.byte_level:
-            stats["val_bits_per_byte"] = self._compute_bits_per_byte(input_ids, loss)
+            # Some encoders (CALM) own their loss and report it in non-per-byte
+            # units (K-scaled per-patch). Prefer an encoder-exposed per-byte
+            # CE if present so val_bits_per_byte stays comparable to byte-
+            # latent's bpb.
+            bpb_loss = loss
+            encoder = getattr(self.model, "encoder", None)
+            if encoder and hasattr(encoder, "per_byte_val_loss"):
+                per_byte = encoder.per_byte_val_loss()
+                if per_byte is not None:
+                    bpb_loss = per_byte
+            stats["val_bits_per_byte"] = self._compute_bits_per_byte(
+                input_ids, bpb_loss
+            )
         else:
             # Detach logits to prevent memory accumulation from computation graph.
             # For aligned encoders (CALM) labels stay full-length, so don't chop.

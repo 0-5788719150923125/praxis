@@ -620,8 +620,15 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             iso_loss = self.aux(hidden_states, input_ids)
             outputs.losses.add_loss("contrastive", iso_loss)
 
-        # We omit auxiliary losses during validation and inference
-        if self.training and labels is not None:
+        # We omit auxiliary losses during validation and inference - except
+        # for handles_loss encoders (CALM), where the encoder owns the main
+        # loss and there's nothing else to fall back to. Without this their
+        # val_loss would stay at 0.
+        handles_loss_encoder = (
+            self.encoder is not False
+            and getattr(self.encoder, "handles_loss", False)
+        )
+        if labels is not None and (self.training or handles_loss_encoder):
             loss_values = outputs.losses.get_loss_values()
             if len(loss_values) > 1:
                 # Multiple tagged losses — let the strategy combine them
