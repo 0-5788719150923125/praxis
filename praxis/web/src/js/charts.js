@@ -731,6 +731,11 @@ function renderDeck(deck) {
     const arc = Math.sin(Math.PI * Math.max(0, Math.min(1, anchor)));
     const headBow = -DECK_BOW * arc;
     const headDip = 1 - DECK_SCALE_DIP * arc;
+    // The fan shows on whichever side has room: DOWN off the head when pinned at
+    // the top (A), UP off it when resting on the floor (B). It squares onto the
+    // head at mid-transition and re-fans on the far side - the 4-card fan rides
+    // the roll instead of being clipped.
+    const fanSign = 2 * anchor - 1;
 
     for (let i = 0; i < count; i++) {
         const card = cards[i];
@@ -745,9 +750,9 @@ function renderDeck(deck) {
         }
         const isHead = a < 0.5;
         const rank = a > DECK_MAX_FAN ? DECK_MAX_FAN : a;
-        // Upcoming cards (delta>0) peek UP off the head; previous (delta<0) slide
-        // DOWN past the floor and fade, like cards already dealt.
-        const top = headTop - delta * DECK_PEEK;
+        // Fan rides the anchor: downward off the head at the top (A), upward off
+        // it at the floor (B). Previous cards (delta<0) fan the other way + fade.
+        const top = headTop + delta * DECK_PEEK * fanSign;
         const scale = (1 - rank * DECK_SCALE_STEP) * (isHead ? headDip : 1);
         const bow = isHead ? headBow : 0;
         const opacity = delta >= 0 ? 1 : Math.max(0, 1 + delta);
