@@ -95,7 +95,7 @@ def main():
         weighting_mode=cfg.sampler_mode,
     )
 
-    warmup_steps = bundle.hparams["target_batch_size"] * 4
+    warmup_steps = config.warmup_steps or bundle.hparams["target_batch_size"] * 4
     optimizer, scheduler, param_stats = build_optimizer_and_scheduler(
         bundle.model,
         cfg,

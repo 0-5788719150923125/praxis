@@ -9,11 +9,44 @@ The VAE is token-agnostic: it just sees token ids and vocab size, so
 CALM can sit on top of any tokenizer (BPE, char, byte).
 """
 
+import math
 from typing import Tuple
 
 import torch
 import torch.nn.functional as F
 from torch import nn
+
+
+class HarmonicDropout(nn.Module):
+    """Dropout whose keep-rate is a standing-wave field, not a scalar.
+
+    The drop rate over a ``[..., N, C]`` activation is
+    ``base * (1 + sin(k·n)·sin(k·c))`` - a separable product of sinusoids
+    across the sequence/patch axis N and the channel axis C, i.e. a vibrating-
+    membrane eigenmode. ``n_cycles`` full periods span each axis, so the
+    frequency is attuned to the input's own extent rather than a fixed step
+    count. The field averages to ``base``, so mean regularization is preserved;
+    per-element inverted scaling keeps E[output] == input. Inactive in eval
+    (so it vanishes once the codec freezes) and identical to ``nn.Dropout``
+    when ``base == 0``.
+    """
+
+    def __init__(self, base: float, n_cycles: int = 2) -> None:
+        super().__init__()
+        self.base = float(base)
+        self.n_cycles = int(n_cycles)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if not self.training or self.base <= 0.0 or x.dim() < 2:
+            return x
+        N, C = x.shape[-2], x.shape[-1]
+        tau = 2.0 * math.pi * self.n_cycles
+        n = torch.linspace(0.0, 1.0, N, device=x.device, dtype=x.dtype)
+        c = torch.linspace(0.0, 1.0, C, device=x.device, dtype=x.dtype)
+        field = torch.sin(tau * n)[:, None] * torch.sin(tau * c)[None, :]  # [N,C]
+        keep = (1.0 - self.base * (1.0 + field)).clamp(1e-3, 1.0)
+        mask = torch.bernoulli(keep.expand_as(x))
+        return x * mask / keep
 
 
 class CALMVAE(nn.Module):
@@ -36,6 +69,8 @@ class CALMVAE(nn.Module):
         latent_dim: int,
         hidden_dim: int,
         dropout: float = 0.15,
+        dropout_mode: str = "scalar",
+        dropout_cycles: int = 2,
     ) -> None:
         super().__init__()
         self.vocab_size = vocab_size
@@ -44,15 +79,20 @@ class CALMVAE(nn.Module):
         self.latent_dim = latent_dim
         self.hidden_dim = hidden_dim
 
+        def _drop():
+            if dropout_mode == "harmonic":
+                return HarmonicDropout(dropout, n_cycles=dropout_cycles)
+            return nn.Dropout(dropout)
+
         self.tok_emb = nn.Embedding(vocab_size, embed_dim)
 
         self.encoder_mlp = nn.Sequential(
             nn.Linear(chunk_size * embed_dim, hidden_dim),
             nn.SiLU(),
-            nn.Dropout(dropout),
+            _drop(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.SiLU(),
-            nn.Dropout(dropout),
+            _drop(),
         )
         # Norm before posterior projection: keeps μ/logvar in a well-scaled
         # range and matches the reference's LlamaRMSNorm in the AE encoder.
@@ -62,10 +102,10 @@ class CALMVAE(nn.Module):
         self.decoder_mlp = nn.Sequential(
             nn.Linear(latent_dim, hidden_dim),
             nn.SiLU(),
-            nn.Dropout(dropout),
+            _drop(),
             nn.Linear(hidden_dim, chunk_size * hidden_dim),
             nn.SiLU(),
-            nn.Dropout(dropout),
+            _drop(),
         )
         # Norm before the classifier consumes decoder features.
         self.out_norm = nn.RMSNorm(hidden_dim)

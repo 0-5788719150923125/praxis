@@ -134,6 +134,18 @@ class ConfigBuilder:
             ):
                 config_kwargs["byte_vocab_size"] = byte_vocab
 
+        # Warmup horizon + accumulation factor, derived once here so the LR
+        # schedule (main.py) and the encoder share one definition. Mirrors the
+        # accumulate_grad_batches formula in trainers/runtime.py.
+        batch_size = getattr(args, "batch_size", 1) or 1
+        target_batch_size = getattr(args, "target_batch_size", None) or batch_size
+        config_kwargs["grad_accumulation"] = (
+            1
+            if batch_size >= target_batch_size
+            else -(-target_batch_size // batch_size)
+        )
+        config_kwargs["warmup_steps"] = target_batch_size * 4
+
         # Handle optimizer configuration
         if hasattr(args, "optimizer") and args.optimizer:
             from praxis.optimizers import get_optimizer_profile

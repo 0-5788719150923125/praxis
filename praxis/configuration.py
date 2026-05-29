@@ -75,6 +75,15 @@ class PraxisConfig(PretrainedConfig):
         seed: int = 42,
         debug: bool = False,
         meta: List[str] = [],
+        # LR warmup horizon (optimizer steps) and the microbatch->optimizer-step
+        # accumulation factor. Set by the CLI from batch/target_batch_size so the
+        # encoder can lock its schedules to the same boundary the LR peaks at.
+        warmup_steps: int = 0,
+        grad_accumulation: int = 1,
+        # CALM codec dropout: "scalar" (standard) or "harmonic" (standing-wave
+        # field over patch position x channel; n cycles span each axis).
+        ae_dropout_mode: str = "scalar",
+        ae_dropout_cycles: int = 2,
         **kwargs,
     ):
         # Snapshot the declared arguments so each can be assigned automatically.

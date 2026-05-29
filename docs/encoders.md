@@ -47,5 +47,5 @@ Presets:
 - `calm` - `ae_dropout=0.15, ae_hidden=512, chunk_size=8, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=128, noise_dim=128`
 - `calm_bpe` - `ae_dropout=0.15, ae_hidden=512, chunk_size=4, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=128, noise_dim=128`
 - `calm_byte` - `ae_dropout=0.15, ae_hidden=512, chunk_size=16, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=128, noise_dim=128`
-- `calm_byte_small` - `ae_dropout=0.1, ae_freeze_steps=2000, ae_hidden=1.0, chunk_size=4, energy_alpha=1.0, energy_blocks=3, energy_samples_m=64, energy_samples_n=8, kl_beta=0.01, kl_clip=0.5, kl_warmup_steps=2000, latent_dim=0.25, noise_dim=0.25, vote_num_samples=50`
+- `calm_byte_small` - `ae_dropout=0.1, ae_hidden=1.0, chunk_size=4, energy_alpha=1.0, energy_blocks=3, energy_samples_m=64, energy_samples_n=8, kl_beta=0.01, kl_clip=0.5, latent_dim=0.25, noise_dim=0.25, vote_num_samples=50`
 - `calm_small` - `ae_dropout=0.1, ae_hidden=1.0, chunk_size=8, energy_alpha=1.0, energy_blocks=2, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=0.25, noise_dim=0.25`

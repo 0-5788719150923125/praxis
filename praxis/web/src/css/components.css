@@ -1263,9 +1263,10 @@
     position: relative;
     width: 100%;
     margin: 0 auto;
-    touch-action: pan-x;
-    /* Contain the cards' high z-indices in their own stacking context so a tall
-       card scrolling up can't paint over the sticky tab header (z-index 10). */
+    /* The deck owns the vertical gesture (drag/momentum cycling); no native
+       scroll or pull-to-refresh interferes. */
+    touch-action: none;
+    /* Keep the cards' z-indices in their own stacking context. */
     isolation: isolate;
 }
 
@@ -1277,11 +1278,9 @@
     /* top origin so scaled-down upcoming cards keep their title strip aligned
        with the raised-stack offset (rolodex preview from the top). */
     transform-origin: top center;
-    /* Duration is phased by swipe energy (see setDeckTempo): long for a gentle
-       settle, short under a fast flick so rapid re-targets don't queue and
-       flicker against the translucent header blur. */
-    transition: transform var(--deck-trans, 0.32s) cubic-bezier(0.22, 1, 0.36, 1),
-                opacity var(--deck-trans, 0.28s) ease;
+    /* Motion is driven frame-by-frame from JS (1:1 drag + momentum coast); a CSS
+       ease is applied inline only for the final snap into a slot. */
+    transition: none;
     will-change: transform, opacity;
     backface-visibility: hidden;
 }

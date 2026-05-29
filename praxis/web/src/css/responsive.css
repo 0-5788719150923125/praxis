@@ -261,23 +261,51 @@
 }
 
 
-/* Mobile: the header stays in flow (sticky, its default) so the resting card
-   anchors BELOW it and its title/description/labels stay readable - that lower
-   spot is the anchor. It's translucent, so as you scroll, content slots under
-   the title band and shows through it (the header is conditionally visible).
-   Scoped to deck tabs and mobile; desktop and non-deck tabs are unchanged. */
+/* Mobile deck tabs - opaque-ceiling slotting. The top-level logo header and the
+   tab row form one SOLID, opaque chrome band; the scroll region clips directly
+   beneath the tab row. Engaging the deck lifts it (wallet 'A') so the active
+   card title tucks just under the tabs and the per-tab title strip hides cleanly
+   under that ceiling - no translucent seam, no content bleeding under the logo.
+   A downward swipe from the deck's top edge drops the lift back ('B') to reveal
+   the title strip. Scoped to deck tabs and mobile; desktop is unchanged. */
 @media (max-width: 768px) {
-    .tab-container:has(.chart-deck) .tab-header {
-        background: color-mix(in srgb, var(--background) 72%, transparent);
-        -webkit-backdrop-filter: blur(6px);
-                backdrop-filter: blur(6px);
+    /* The chrome is a solid, opaque layer that paints OVER the deck (positioned
+       + z-index, since a static z-index is inert). This is the ceiling: anything
+       that reaches it is occluded by an opaque band, not seamed against it. */
+    .header,
+    .tab-nav {
+        position: relative;
+        z-index: 30;
+        background: var(--background);
     }
-    /* Cards must render OVER the (translucent) header so the focused title is
-       always visible. The wallet-shift transform makes the deck its own
-       stacking context, so a z-index above the header (10) is what lifts it -
-       isolation alone wouldn't. The tab-content clip keeps it off the nav. */
+    /* Deck z-order, from back to front:
+         tab-header (run selector / title / metadata, sticky z-index:10)
+       < deck cards (z-index:20)        <- lifted cards render OVER that content
+       < chrome header + tab row (z-index:30)  <- the ceiling, cards anchor below.
+       The deck MUST outrank the sticky tab-header (10) or the run selector paints
+       over the lifted cards.
+       Clip the deck content at the deck's OWN top edge: the cards carry
+       will-change:transform, so they live on their own compositor layers and a
+       distant ancestor's overflow:hidden does NOT clip them on mobile - the clip
+       must be on their direct parent. In wallet 'A' the deck top sits at the tab
+       row, so exiting/transiting cards vanish there instead of sliding under the
+       chrome. contain:paint forces the compositor clip to follow suit. */
     .chart-deck {
         z-index: 20;
+        overflow: hidden;
+        contain: paint;
         transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    /* Cards must FULLY occlude whatever they lift over (the run selector, the
+       title strip), so drop the title-row translucency on mobile - the faint
+       card-behind bleed is a desktop orientation aid, not wanted over the chrome. */
+    .chart-deck .chart-card::before {
+        -webkit-mask-image: none;
+                mask-image: none;
+    }
+    /* Belt-and-suspenders: also clip the region so the deck can't overflow it. */
+    .tab-content.active:has(.chart-deck),
+    .tab-container:has(.chart-deck) {
+        overflow: hidden;
     }
 }

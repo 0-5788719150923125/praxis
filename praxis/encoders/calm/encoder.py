@@ -165,7 +165,7 @@ class CALMEncoder(BaseEncoder):
         ae_hidden: Union[int, float] = 512,
         kl_beta: float = 1e-3,
         kl_clip: float = 0.5,
-        kl_warmup_steps: int = 0,
+        kl_warmup_steps: Optional[int] = None,
         ae_dropout: float = 0.15,
         noise_dim: Union[int, float] = 128,
         energy_blocks: int = 3,
@@ -173,7 +173,7 @@ class CALMEncoder(BaseEncoder):
         energy_samples_m: int = 100,
         energy_alpha: float = 1.0,
         energy_warmup_steps: int = 0,
-        ae_freeze_steps: int = 0,
+        ae_freeze_steps: Optional[int] = None,
         vote_num_samples: int = 200,
     ) -> None:
         super().__init__()
@@ -188,8 +188,17 @@ class CALMEncoder(BaseEncoder):
         self.ae_hidden = _resolve_dim(ae_hidden, base)
         self.kl_beta = kl_beta
         self.kl_clip = kl_clip
-        self.kl_warmup_steps = int(kl_warmup_steps)
         self.ae_dropout = ae_dropout
+
+        # All schedules below are in optimizer-step units. _train_step counts
+        # encode() calls (microbatches), so the gates divide by grad_accumulation
+        # to convert - see _opt_step(). When kl_warmup/ae_freeze are left None,
+        # they lock to the LR warmup horizon: the codec trains entirely under the
+        # rising-LR phase and freezes at the LR peak, then the rest of the model
+        # adapts to a fixed codec during decay.
+        self._grad_accum = max(1, int(getattr(config, "grad_accumulation", 1) or 1))
+        warmup = int(getattr(config, "warmup_steps", 0) or 0)
+        self.kl_warmup_steps = warmup if kl_warmup_steps is None else int(kl_warmup_steps)
 
         self.noise_dim = _resolve_dim(noise_dim, base)
         self.energy_blocks = energy_blocks
@@ -197,10 +206,11 @@ class CALMEncoder(BaseEncoder):
         self.energy_samples_m = energy_samples_m
         self.energy_alpha = energy_alpha
         self.energy_warmup_steps = int(energy_warmup_steps)
-        # Two-stage boundary: >0 trains the codec alone until this step, then
-        # freezes it and trains only the LM/energy head (matching the
-        # reference's separate AE/LM scripts). 0 = legacy joint training.
-        self.ae_freeze_steps = int(ae_freeze_steps)
+        # Two-stage boundary (optimizer steps): trains the codec alone until
+        # this step, then freezes it and trains only the LM/energy head. None
+        # locks it to the warmup boundary (co-terminating with the KL anneal);
+        # 0 = legacy joint training.
+        self.ae_freeze_steps = warmup if ae_freeze_steps is None else int(ae_freeze_steps)
         # Set once when the codec is frozen, to log the transition a single
         # time. Not a buffer: re-deriving frozen-ness from _train_step on
         # resume is what re-applies the freeze, so this flag may reset freely.
@@ -227,6 +237,9 @@ class CALMEncoder(BaseEncoder):
             getattr(config, "byte_vocab_size", None) or config.vocab_size
         )
 
+        # "harmonic" swaps the codec's scalar dropout for a standing-wave field
+        # over (patch position, channel) - see HarmonicDropout. Stage-1 only;
+        # the field vanishes once the codec freezes (eval disables it).
         self.vae = CALMVAE(
             vocab_size=self._output_vocab_size,
             embed_dim=config.embed_size,
@@ -234,6 +247,8 @@ class CALMEncoder(BaseEncoder):
             latent_dim=self.latent_dim,
             hidden_dim=self.ae_hidden,
             dropout=self.ae_dropout,
+            dropout_mode=getattr(config, "ae_dropout_mode", "scalar"),
+            dropout_cycles=getattr(config, "ae_dropout_cycles", 2),
         )
 
         # The token classifier (forward/crystal/...) is built from
@@ -474,7 +489,7 @@ class CALMEncoder(BaseEncoder):
         if self.ae_freeze_steps > 0:
             energy_active = self._ae_is_frozen()
         else:
-            energy_active = int(self._train_step.item()) >= self.energy_warmup_steps
+            energy_active = self._opt_step() >= self.energy_warmup_steps
         if not energy_active:
             return
 
@@ -532,11 +547,15 @@ class CALMEncoder(BaseEncoder):
     # Warmup + diagnostics
     # ------------------------------------------------------------------
 
+    def _opt_step(self) -> int:
+        """Optimizer-step count. _train_step counts encode() forward calls
+        (microbatches); divide by the accumulation factor so the freeze/anneal
+        boundaries align with the LR schedule, which is in optimizer steps."""
+        return int(self._train_step.item()) // self._grad_accum
+
     def _ae_is_frozen(self) -> bool:
         """True in stage 2 of two-stage training (codec read-only)."""
-        return self.ae_freeze_steps > 0 and (
-            int(self._train_step.item()) >= self.ae_freeze_steps
-        )
+        return self.ae_freeze_steps > 0 and (self._opt_step() >= self.ae_freeze_steps)
 
     @dynamo.disable()
     def _set_codec_mode(self) -> bool:
@@ -547,6 +566,10 @@ class CALMEncoder(BaseEncoder):
         would otherwise re-enable codec dropout) and checkpoint resume
         (``requires_grad`` is not part of the state dict).
         """
+        # Seam for a soft landing: today this is a step-function freeze at the
+        # LR peak. A future blend would replace the hard requires_grad_(False)
+        # below with a codec-LR decay across the early decay phase, gated by how
+        # far _opt_step() is past ae_freeze_steps. The boolean gate stays here.
         frozen = self._ae_is_frozen()
         if not frozen:
             return False
@@ -563,7 +586,7 @@ class CALMEncoder(BaseEncoder):
         for p in self.vae.parameters():
             p.requires_grad_(False)
         if not self._ae_frozen_logged:
-            print(f"[CALM] codec frozen at step {int(self._train_step.item())}; "
+            print(f"[CALM] codec frozen at optimizer step {self._opt_step()}; "
                   f"stage 2 (energy head only) begins.")
             self._ae_frozen_logged = True
         return True
@@ -572,7 +595,7 @@ class CALMEncoder(BaseEncoder):
         """Linearly annealed β: 0 → kl_beta over kl_warmup_steps, then held."""
         if self.kl_warmup_steps <= 0:
             return float(self.kl_beta)
-        progress = float(self._train_step.item()) / float(self.kl_warmup_steps)
+        progress = float(self._opt_step()) / float(self.kl_warmup_steps)
         return float(self.kl_beta) * min(1.0, max(0.0, progress))
 
     @torch.no_grad()
