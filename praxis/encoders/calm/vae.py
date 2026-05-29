@@ -21,9 +21,9 @@ class HarmonicDropout(nn.Module):
     """Dropout whose keep-rate is a standing-wave field, not a scalar.
 
     The drop rate over a ``[..., N, C]`` activation is
-    ``base * (1 + sin(k·n)·sin(k·c))`` - a separable product of sinusoids
-    across the sequence/patch axis N and the channel axis C, i.e. a vibrating-
-    membrane eigenmode. ``n_cycles`` full periods span each axis, so the
+    ``base * (1 + (sin(k·n) + sin(k·c))/2)`` - superposed sinusoids across the
+    sequence/patch axis N and the channel axis C, so each axis modulates on its
+    own (non-flat marginals). ``n_cycles`` full periods span each axis, so the
     frequency is attuned to the input's own extent rather than a fixed step
     count. The field averages to ``base``, so mean regularization is preserved;
     per-element inverted scaling keeps E[output] == input. Inactive in eval
@@ -43,7 +43,7 @@ class HarmonicDropout(nn.Module):
         tau = 2.0 * math.pi * self.n_cycles
         n = torch.linspace(0.0, 1.0, N, device=x.device, dtype=x.dtype)
         c = torch.linspace(0.0, 1.0, C, device=x.device, dtype=x.dtype)
-        field = torch.sin(tau * n)[:, None] * torch.sin(tau * c)[None, :]  # [N,C]
+        field = 0.5 * (torch.sin(tau * n)[:, None] + torch.sin(tau * c)[None, :])  # [N,C]
         keep = (1.0 - self.base * (1.0 + field)).clamp(1e-3, 1.0)
         mask = torch.bernoulli(keep.expand_as(x))
         return x * mask / keep

@@ -758,6 +758,13 @@
     align-items: stretch;
 }
 
+/* System panel title carries the LOGS toggle, floated to its right. */
+.ld-info-panel .ld-panel-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
 .ld-info-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
@@ -781,13 +788,6 @@
     font-weight: bold;
 }
 
-.ld-log-bar {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.25rem;
-}
-
 .ld-log-toggle {
     background: none;
     border: 1px solid #333;
@@ -795,15 +795,23 @@
     color: #888;
     font-family: inherit;
     font-size: 0.625rem;
-    padding: 0.125rem 0.375rem;
+    padding: 0.125rem 0.5rem;
     cursor: pointer;
     text-transform: uppercase;
     letter-spacing: 0.05em;
+    flex-shrink: 0;
 }
 
 .ld-log-toggle:hover {
     color: #ccc;
     border-color: #555;
+}
+
+/* Logs open: the button turns blue and stays blue until toggled off. */
+.ld-log-toggle.active {
+    background: rgba(74, 144, 226, 0.15);
+    border-color: #4A90E2;
+    color: #6aa9ee;
 }
 
 .ld-log-count {
@@ -821,6 +829,18 @@
 
 .ld-log-panel.open {
     display: block;
+}
+
+.ld-log-panel-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.6875rem;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.375rem 0.5rem;
+    border-bottom: 1px solid #222;
 }
 
 .ld-log-content {

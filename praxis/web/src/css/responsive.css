@@ -193,12 +193,12 @@
     }
 
     .chart-card {
-        padding: 1rem;
+        padding: 0.65rem;
         width: 100%;
     }
 
     .chart-wrapper {
-        height: 18.75rem;
+        height: 17rem;
         width: 100%;
     }
 

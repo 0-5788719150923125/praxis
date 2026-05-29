@@ -14,7 +14,10 @@ export function toggleLogPanel() {
     const panel = document.getElementById('ld-log-panel');
     const btn = document.getElementById('ld-log-toggle');
     if (panel) panel.classList.toggle('open', logPanelOpen);
-    if (btn) btn.textContent = logPanelOpen ? 'LOGS [-]' : 'LOGS [+]';
+    if (btn) {
+        btn.textContent = logPanelOpen ? 'LOGS [-]' : 'LOGS [+]';
+        btn.classList.toggle('active', logPanelOpen);  // grey -> blue when open
+    }
     if (logPanelOpen) {
         requestAnimationFrame(() => {
             const logContent = panel && panel.querySelector('.ld-log-content');
@@ -246,6 +249,18 @@ export function renderLiveDashboard(m) {
                     ${m.accuracy ? `<span class="ld-metric">ACCURACY <span class="ld-val">${fmt(m.accuracy[0], 3)}</span></span>` : ''}
                 </span>
             </div>
+            <div class="ld-info-panel">
+                <div class="ld-panel-title">System
+                    <button id="ld-log-toggle" class="ld-log-toggle ${logPanelOpen ? 'active' : ''}" onclick="toggleLogPanel()">${logPanelOpen ? 'LOGS [-]' : 'LOGS [+]'}</button>
+                </div>
+                <div class="ld-info-grid">
+                    ${renderInfoPanel(m.info)}
+                </div>
+            </div>
+            <div id="ld-log-panel" class="ld-log-panel ${logPanelOpen ? 'open' : ''}">
+                <div class="ld-log-panel-title">Logs <span class="ld-log-count">${(m.log_lines || []).length} lines</span></div>
+                <div class="ld-log-content">${(m.log_lines || []).map(l => `<div class="ld-log-line">${escapeHtml(l)}</div>`).join('')}</div>
+            </div>
             <div class="ld-body">
                 <div class="ld-panel ld-panel-status">
                     <div class="ld-panel-title">Context <span class="ld-context-tokens">${m.context_tokens || 0} tokens</span></div>
@@ -255,19 +270,6 @@ export function renderLiveDashboard(m) {
                     <div class="ld-panel-title">Training Loss</div>
                     <canvas id="ld-sparkline-canvas" class="ld-sparkline-canvas"></canvas>
                 </div>
-            </div>
-            <div class="ld-info-panel">
-                <div class="ld-panel-title">System</div>
-                <div class="ld-info-grid">
-                    ${renderInfoPanel(m.info)}
-                </div>
-            </div>
-            <div class="ld-log-bar">
-                <button id="ld-log-toggle" class="ld-log-toggle" onclick="toggleLogPanel()">${logPanelOpen ? 'LOGS [-]' : 'LOGS [+]'}</button>
-                <span class="ld-log-count">${(m.log_lines || []).length} lines</span>
-            </div>
-            <div id="ld-log-panel" class="ld-log-panel ${logPanelOpen ? 'open' : ''}">
-                <div class="ld-log-content">${(m.log_lines || []).map(l => `<div class="ld-log-line">${escapeHtml(l)}</div>`).join('')}</div>
             </div>
             <div class="ld-footer">
                 <span class="ld-footer-item">PRAXIS:${m.seed || '?'}</span>
