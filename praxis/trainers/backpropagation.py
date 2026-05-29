@@ -98,6 +98,16 @@ class BackpropagationTrainer(LightningModule):
             assistant_mask=assistant_mask,
         )
         loss = outputs.loss
+        # A training-step loss with no grad path means the forward ran in eval
+        # mode (e.g. a background dashboard/inference thread flipped the shared
+        # model to eval()). In CALM stage 2 every grad-bearing term is gated on
+        # self.training, so that detaches the whole loss; fail loudly instead of
+        # backward()'s opaque "does not require grad" error.
+        if torch.is_tensor(loss) and not loss.requires_grad:
+            raise RuntimeError(
+                "Training loss has no grad_fn (requires_grad=False); the model "
+                "was likely in eval mode during the forward pass."
+            )
         softmax_collapse = self._compute_softmax_collapse(outputs.logits)
 
         # Per-token CE is needed for both loss-based dataset sampling and

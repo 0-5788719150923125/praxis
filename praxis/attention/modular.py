@@ -281,6 +281,7 @@ class ModularAttention(nn.Module):
                 current_chunk_size,
                 start_idx,
                 chunk_block_ids,
+                current_depth,
             )
 
             outputs.append(chunk_output)
@@ -306,6 +307,7 @@ class ModularAttention(nn.Module):
         chunk_size: int,
         offset: int = 0,
         block_ids: Optional[Tensor] = None,
+        current_depth: int = 0,
     ) -> Tensor:
         """
         Process a chunk of the attention computation.
@@ -333,7 +335,8 @@ class ModularAttention(nn.Module):
 
             # Apply RoPE only to the RoPE components
             q_r, k_r, _ = self.encoding.before_scores(
-                q_r, k_r, None, offset=offset, block_ids=block_ids
+                q_r, k_r, None, offset=offset, block_ids=block_ids,
+                current_depth=current_depth,
             )
 
             # Concatenate back
@@ -342,7 +345,8 @@ class ModularAttention(nn.Module):
         else:
             # Apply positional encoding with offset
             q, k, v = self.encoding.before_scores(
-                q, k, v, offset=offset, block_ids=block_ids
+                q, k, v, offset=offset, block_ids=block_ids,
+                current_depth=current_depth,
             )
 
         # Compute attention scores

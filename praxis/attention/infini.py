@@ -335,7 +335,7 @@ class InfiniAttention(CausalAttention):
         k = k.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         v = v.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
 
-        q, k, v = self.encoding.before_scores(q, k, v)
+        q, k, v = self.encoding.before_scores(q, k, v, current_depth=current_depth)
 
         # Expand K/V for GQA before memory operations
         if self.num_queries > 1:

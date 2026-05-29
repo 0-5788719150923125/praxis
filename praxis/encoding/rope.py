@@ -9,11 +9,27 @@ from praxis.encoding.nope import NoPE
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
+# Learned theta is bounded to this range via a sigmoid, so it can never
+# explode or collapse. THETA_MIN sits in the 50-200 band Huang & Chen (IEEE
+# Access 2025) found best. We init at THETA_INIT rather than the legacy
+# 10000: the same study found 400-800 optimal at small scale, and tuning
+# theta below 10000 is the whole point of this work.
+THETA_MIN: float = 100.0
+THETA_MAX: float = 1_000_000.0
+THETA_INIT: float = 500.0
+
 
 class RoPE(NoPE):
     """
     An implementation of Rotary Position Embeddings (RoPE).
     Supports Grouped Query Attention and odd head dimensions.
+
+    The base ``theta`` is learned rather than fixed at 10000, with a per-depth
+    log-theta delta so each recurrent-depth pass gets its own positional zoom
+    (coarse-to-fine across depths). Parameterized in a bounded log space:
+    theta = THETA_MIN * (THETA_MAX/THETA_MIN)^sigmoid(z_base + z_delta[depth]).
+    z_base inits theta to THETA_INIT; z_delta is zero-init so every depth
+    starts there and specializes from data.
     """
 
     def __init__(self, config: ConfigType, *args, **kwargs):
@@ -26,11 +42,51 @@ class RoPE(NoPE):
             **kwargs: Additional keyword arguments
         """
         super().__init__(config)
-        self.inv_freq: Optional[torch.Tensor] = None
-        self.theta: float = 10000.0
+        self.depth = config.depth
+        # Bounded log-theta: shared base + zero-init per-depth delta. z_base is
+        # the sigmoid logit that lands theta on THETA_INIT.
+        s = math.log(THETA_INIT / THETA_MIN) / math.log(THETA_MAX / THETA_MIN)
+        z_init = math.log(s / (1.0 - s))
+        self.log_theta_base = nn.Parameter(torch.full((1,), z_init))
+        self.depth_log_theta = nn.Embedding(self.depth, 1)
+        nn.init.zeros_(self.depth_log_theta.weight)
         self._cached_cos: Optional[torch.Tensor] = None
         self._cached_sin: Optional[torch.Tensor] = None
         self._cached_seq_length: Optional[int] = None
+
+    @property
+    def theta(self) -> float:
+        """Effective base theta (depth 0), for logging / inspection."""
+        with torch.no_grad():
+            return self._effective_theta(0).item()
+
+    def _effective_theta(self, current_depth: int) -> torch.Tensor:
+        """Bounded, learned theta for a given recurrent depth."""
+        idx = torch.tensor(current_depth, device=self.log_theta_base.device)
+        z = self.log_theta_base + self.depth_log_theta(idx).squeeze(-1)
+        span = THETA_MAX / THETA_MIN
+        return THETA_MIN * span ** torch.sigmoid(z)
+
+    def _compute_inv_freq(
+        self, head_dim: int, device: torch.device, current_depth: int
+    ) -> torch.Tensor:
+        """Inverse frequencies for every RoPE band (subclasses may subset)."""
+        theta = self._effective_theta(current_depth).to(device)
+        exponent = 2 * torch.arange(0, head_dim // 2, device=device).float() / head_dim
+        return 1.0 / (theta**exponent)
+
+    def _position_freqs(
+        self,
+        positions: torch.Tensor,
+        inv_freq: torch.Tensor,
+        current_depth: int,
+    ) -> torch.Tensor:
+        """Rotation angle per (position, band): linear in position for RoPE.
+
+        Seam for subclasses (ArcHoPE) that warp the phase. Returns a tensor
+        of shape [batch, seq_len, num_bands].
+        """
+        return torch.einsum("bi,j->bij", positions.float(), inv_freq)
 
     def before_scores(
         self,
@@ -39,6 +95,7 @@ class RoPE(NoPE):
         v: torch.Tensor,
         offset: int = 0,
         block_ids: Optional[torch.Tensor] = None,
+        current_depth: int = 0,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Apply rotary position embeddings to queries and keys.
@@ -49,6 +106,7 @@ class RoPE(NoPE):
             v: Value tensor of shape [batch_size, num_heads, seq_len, head_dim]
             offset: Position offset for continuous positions
             block_ids: Optional block IDs for segmented attention
+            current_depth: Recurrent depth pass, selects the per-depth theta
 
         Returns:
             Tuple of (rotated_queries, rotated_keys, values)
@@ -62,7 +120,7 @@ class RoPE(NoPE):
         # Compute embeddings using the longer sequence length
         max_seq_len = max(q_seq_len, k_seq_len)
         self._compute_rope_embeddings(
-            head_dim, max_seq_len, device, dtype, offset, block_ids
+            head_dim, max_seq_len, device, dtype, offset, block_ids, current_depth
         )
 
         # When using caching during inference
@@ -111,6 +169,7 @@ class RoPE(NoPE):
         dtype: torch.dtype,
         offset: int = 0,
         block_ids: Optional[torch.Tensor] = None,
+        current_depth: int = 0,
     ) -> None:
         """
         Compute rotary positional embeddings for the given parameters.
@@ -122,14 +181,10 @@ class RoPE(NoPE):
             dtype: Data type for the embeddings
             offset: Position offset for continuous positions
             block_ids: Optional block IDs for segmented attention
+            current_depth: Recurrent depth pass, selects the per-depth theta
         """
-        if self.inv_freq is None:
-            self.inv_freq = 1.0 / (
-                self.theta
-                ** (
-                    2 * torch.arange(0, head_dim // 2, device=device).float() / head_dim
-                )
-            )
+        # Recomputed each call: theta is learned, so inv_freq carries gradient.
+        inv_freq = self._compute_inv_freq(head_dim, device, current_depth)
 
         if block_ids is not None and block_ids.size(1) != 1:
             positions = self._compute_relative_positions_vectorized(
@@ -138,8 +193,7 @@ class RoPE(NoPE):
         else:
             positions = (torch.arange(seq_len, device=device) + offset).unsqueeze(0)
 
-        # Use batch dimension in einsum
-        freqs = torch.einsum("bi,j->bij", positions, self.inv_freq)
+        freqs = self._position_freqs(positions, inv_freq, current_depth)
 
         # Reshape for proper broadcasting
         cos = torch.cos(freqs)  # [batch_size, seq_len, head_dim//2]

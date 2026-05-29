@@ -3,7 +3,7 @@
 
 RoPE, ALiBi, NoPE and friends - the rotational / additive position priors injected into attention.
 
-Registry: ``praxis.ENCODING_REGISTRY`` (4 entries)
+Registry: ``praxis.ENCODING_REGISTRY`` (5 entries)
 
 ## `alibi` - ALiBi
 
@@ -12,6 +12,20 @@ extrapolation that does not require trainable parameters.
 https://arxiv.org/abs/2108.12409
 
 Source: [praxis/encoding/alibi.py:13](../praxis/encoding/alibi.py#L13)
+
+## `arc` - ArcHoPE
+
+HoPE whose rotary phase is a per-band Serpent warp over (position, depth).
+
+Mirrors ArcAttention / ArcGLU: each rotated band gets its own learned Serpent shape, and
+recurrent depth couples in through the phase. For band i at position p and depth t:
+
+u_i = p + rho_i * t     w_i = u_i + lambda_i * (sin^2(alpha_i * u_i) * inv(alpha_i)
++ gamma_i * sin(beta_i * u_i))     angle_i = inv_freq[i] * w_i
+
+The +u_i term keeps the phase monotone in position; the sine terms ...
+
+Source: [praxis/encoding/archope.py:13](../praxis/encoding/archope.py#L13)
 
 ## `hope` - HoPE
 
@@ -37,4 +51,10 @@ Source: [praxis/encoding/nope.py:11](../praxis/encoding/nope.py#L11)
 An implementation of Rotary Position Embeddings (RoPE). Supports Grouped Query Attention
 and odd head dimensions.
 
-Source: [praxis/encoding/rope.py:13](../praxis/encoding/rope.py#L13)
+The base ``theta`` is learned rather than fixed at 10000, with a per-depth log-theta
+delta so each recurrent-depth pass gets its own positional zoom (coarse-to-fine across
+depths). Parameterized in a bounded log space: theta = THETA_MIN *
+(THETA_MAX/THETA_MIN)^sigmoid(z_base + z_delta[depth]). z_base inits theta to
+THETA_INIT; z_delta is zero-init so every depth starts there and ...
+
+Source: [praxis/encoding/rope.py:22](../praxis/encoding/rope.py#L22)

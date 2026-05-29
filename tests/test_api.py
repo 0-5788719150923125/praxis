@@ -408,6 +408,30 @@ class TestServerManagement:
         server2.stop()
 
 
+def test_activation_curves_route_preserves_training_mode():
+    """The /api/activation_curves route runs on the API server thread against
+    the live training model. It must never flip the shared model's train/eval
+    mode: doing so races the training forward, and a CALM stage-2 forward
+    observed in eval mode detaches its entire loss (every grad-bearing term is
+    gated on self.training), crashing backward().
+    """
+    import torch.nn as nn
+
+    from praxis.web.routes.dynamics import _compute_activation_curves
+
+    model = nn.Sequential(nn.Linear(4, 4), nn.GELU())
+    model.train()
+
+    seen_training = []
+    model[1].register_forward_hook(lambda m, i, o: seen_training.append(model.training))
+
+    curves, _ = _compute_activation_curves(model, -6.0, 6.0, 64)
+
+    assert curves, "expected at least one activation curve (GELU)"
+    assert model.training is True, "route left the model out of train mode"
+    assert seen_training and all(seen_training), "model dropped out of train mode during sampling"
+
+
 if __name__ == "__main__":
     # Run tests with verbose output
     pytest.main([__file__, "-v", "-s"])

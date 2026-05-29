@@ -51,6 +51,7 @@ class ALiBi(NoPE):
         v: torch.Tensor,
         offset: int = 0,
         block_ids: Optional[torch.Tensor] = None,
+        current_depth: int = 0,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Pass through inputs unchanged (ALiBi applies biases after score computation).
@@ -61,6 +62,7 @@ class ALiBi(NoPE):
             v: Value tensor
             offset: Position offset
             block_ids: Optional block IDs for segmented attention
+            current_depth: Recurrent depth pass (unused in ALiBi)
 
         Returns:
             Unmodified (q, k, v) tensors

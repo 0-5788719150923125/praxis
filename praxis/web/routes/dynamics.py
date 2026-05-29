@@ -623,34 +623,31 @@ def _compute_activation_curves(model, x_min: float, x_max: float, num_points: in
 
     activation_types = _activation_classes()
 
-    was_training = model.training
-    model.eval()
-
+    # Read-only on the live training model (this runs on the API server
+    # thread). Must NOT flip train/eval mode: that races the training forward,
+    # and a CALM stage-2 forward seen in eval mode detaches its whole loss.
+    # Activation modules are mode-invariant, so sampling needs no mode change.
     curves: List[Dict[str, Any]] = []
     type_counts: Dict[str, int] = {}
 
-    try:
-        for name, module in model.named_modules():
-            if not isinstance(module, activation_types):
-                continue
+    for name, module in model.named_modules():
+        if not isinstance(module, activation_types):
+            continue
 
-            type_name = type(module).__name__
-            type_counts[type_name] = type_counts.get(type_name, 0) + 1
+        type_name = type(module).__name__
+        type_counts[type_name] = type_counts.get(type_name, 0) + 1
 
-            sample = _sample_activation(module, x_min, x_max, num_points, device, dtype)
-            if sample is None:
-                continue
+        sample = _sample_activation(module, x_min, x_max, num_points, device, dtype)
+        if sample is None:
+            continue
 
-            curves.append(
-                {
-                    "name": _short_module_path(name),
-                    "type": type_name,
-                    **sample,
-                }
-            )
-    finally:
-        if was_training:
-            model.train()
+        curves.append(
+            {
+                "name": _short_module_path(name),
+                "type": type_name,
+                **sample,
+            }
+        )
 
     activation_type = max(type_counts, key=type_counts.get) if type_counts else None
     return curves, activation_type

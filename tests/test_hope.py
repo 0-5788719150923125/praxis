@@ -38,6 +38,7 @@ def test_pos_dim_matches_threshold_512_head64():
     # i.e. i < ~15.29. Bands 0..15 pass (16 bands), 16..31 drop => pos_dim = 32.
     cfg = _make_config(context_length=512)
     enc = HoPE(cfg)
+    enc.log_theta_base.data.zero_()  # pin to theta=10000 for the documented math
     head_dim = 64
     enc._compute_rope_embeddings(
         head_dim=head_dim,
@@ -54,6 +55,7 @@ def test_pos_dim_drops_more_at_smaller_L():
     # so 11 bands pass => pos_dim = 22, 42 dims unrotated.
     cfg = _make_config(context_length=128)
     enc = HoPE(cfg)
+    enc.log_theta_base.data.zero_()  # pin to theta=10000 for the documented math
     enc._compute_rope_embeddings(
         head_dim=64,
         seq_len=32,

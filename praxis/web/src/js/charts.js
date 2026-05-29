@@ -545,16 +545,17 @@ function renderMetricsCharts(data, container) {
         }
     });
 
-    // Build chart cards
-    let chartsHTML = '<div style="display: flex; flex-direction: column; gap: 2rem;">';
+    // Build chart cards as a stacked deck (card-switcher carousel)
+    let chartsHTML = '<div class="chart-deck" id="chart-deck">';
+    chartsHTML += '<div class="chart-deck-counter" id="chart-deck-counter"></div>';
 
-    chartsHTML += availableMetrics.map(config => {
+    chartsHTML += availableMetrics.map((config, i) => {
         const stepSliderHTML = (config.type === 'expert_routing_heatmap') ?
             `<div id="layer-toggles-${config.canvasId}" class="layer-toggles" style="margin-bottom: 1rem; padding: 0.5rem; display: flex; gap: 1rem; flex-wrap: wrap; align-items: center;">
             </div>` : '';
 
         return `
-        <div class="chart-card">
+        <div class="chart-card" data-deck-index="${i}">
             <div class="chart-title">${config.title}</div>
             ${stepSliderHTML}
             <div class="chart-wrapper">
@@ -575,7 +576,224 @@ function renderMetricsCharts(data, container) {
         availableMetrics.forEach(config => {
             (METRIC_RENDERERS[config.type] || METRIC_RENDERERS.line)(config, ctx);
         });
+        initChartDeck('chart-deck');
     }, 10);
+}
+
+// ============================================================================
+// CARD-SWITCHER CAROUSEL
+// Chart cards are stacked in place; one is active (front, full size) while the
+// next few peek out behind it. Wheel/swipe/arrows cycle the deck without
+// growing the page. activeIndex persists across re-renders (deck DOM is
+// rebuilt on every metrics refresh).
+// ============================================================================
+
+// Per-deck state lives on the element (deck._deck). activeIndex also persists
+// in this module map keyed by deck id, so a card stays selected across the DOM
+// rebuilds that happen on every metrics refresh. Any number of decks can be
+// live (Research, Dynamics); the visible one wins keyboard/resize.
+const deckActive = {};
+const deckSlot = {};  // head slot per deck (0 = top .. DECK_MAX_FAN = bottom)
+
+const DECK_PEEK = 34;          // fan/title peek and the gap between the two head slots
+const DECK_SCALE_STEP = 0.04;
+const DECK_MAX_FAN = 3;        // ahead cards fanned below the head
+const DECK_STEP = 100;         // wheel px per card; accumulated -> momentum
+const DECK_MAX_PER_EVENT = 3;  // cap cards advanced per wheel event (inertia guard)
+const DECK_WHEEL_GAP = 140;    // ms idle before a new wheel gesture resets accumulation
+
+export function initChartDeck(deck) {
+    if (typeof deck === 'string') deck = document.getElementById(deck);
+    if (!deck) return;
+    const count = deck.querySelectorAll('.chart-card').length;
+    if (count === 0) return;
+
+    const prev = deckActive[deck.id] ?? 0;
+    deck._deck = { activeIndex: Math.max(0, Math.min(prev, count - 1)), count };
+    deck._headSlot = deckSlot[deck.id] ?? 0;  // 0 = top .. DECK_MAX_FAN = bottom
+
+    if (!deck._deckBound) {
+        bindDeckEvents(deck);
+        deck._deckBound = true;
+    }
+    ensureVisibleLayout(deck);
+
+    if (!window._deckGlobalBound) {
+        window.addEventListener('resize', onDeckResize);
+        window.addEventListener('keydown', onDeckKeydown);
+        window._deckGlobalBound = true;
+    }
+}
+
+// Lay out once the deck is actually visible/sized. On the Dynamics tab the
+// deck can be built a frame before its tab content is painted, so a hidden
+// deck (offsetParent null) defers to the next frame instead of silently
+// skipping layout and never fanning (Research recovers via its metric poll;
+// Dynamics inits once, so it needs this).
+function ensureVisibleLayout(deck, tries = 0) {
+    if (!deck || !deck._deck) return;
+    if (deck.offsetParent === null && tries < 60) {
+        requestAnimationFrame(() => ensureVisibleLayout(deck, tries + 1));
+        return;
+    }
+    layoutDeck(deck);
+}
+
+function layoutDeck(deck) {
+    if (!deck || deck.offsetParent === null) return;  // absent or hidden
+    const st = deck._deck;
+    if (!st) return;
+    const cards = Array.from(deck.querySelectorAll('.chart-card'));
+    if (cards.length === 0) return;
+
+    // The head rests at slot s (0 = top .. DECK_MAX_FAN = bottom); it walks one
+    // slot per scroll toward the direction's end. Cards before the head peek
+    // above it (titles, anchored to the head top); cards after peek below it
+    // (edges, anchored to the head BOTTOM so a tall head can't swallow the fan).
+    const s = Math.max(0, Math.min(deck._headSlot ?? 0, DECK_MAX_FAN));
+    // Batch-read heights first to avoid per-card read/write reflow churn; the
+    // below-fan needs each card's height to anchor its peek to the head bottom.
+    const heights = cards.map(c => c.offsetHeight);
+    const activeH = heights[st.activeIndex];
+    const headY = s * DECK_PEEK;
+    const headBottom = headY + activeH;
+    let belowDepth = 0;
+
+    cards.forEach((card, i) => {
+        const offset = i - st.activeIndex;
+        if (offset === 0) {
+            card.style.transformOrigin = 'top center';
+            card.style.transform = `translateY(${headY}px) scale(1)`;
+            card.style.opacity = '1';
+            card.style.zIndex = '100';
+            card.style.pointerEvents = 'auto';
+            return;
+        }
+        const slot = s + offset;  // behind -> above the head, ahead -> below
+        if (slot < 0 || slot > DECK_MAX_FAN) {
+            card.style.transformOrigin = 'top center';
+            card.style.transform = `translateY(${headY}px) scale(0.97)`;
+            card.style.opacity = '0';
+            card.style.zIndex = '90';
+            card.style.pointerEvents = 'none';
+            return;
+        }
+        const depth = Math.abs(offset);
+        let y;
+        if (offset < 0) {
+            // behind: peek above the head top by depth*PEEK (title shows)
+            y = headY - depth * DECK_PEEK;
+            card.style.transformOrigin = 'top center';
+        } else {
+            // ahead: peek depth*PEEK below the head BOTTOM, regardless of either
+            // card's height (anchor the card's bottom, not the deck top)
+            y = headBottom + depth * DECK_PEEK - heights[i];
+            card.style.transformOrigin = 'bottom center';
+            belowDepth = Math.max(belowDepth, depth);
+        }
+        card.style.transform = `translateY(${y}px) scale(${1 - depth * DECK_SCALE_STEP})`;
+        // Full opacity for any visible fan card - depth reads from scale and
+        // stacking, not transparency, so the peeking titles stay crisp white
+        // instead of fading to grey.
+        card.style.opacity = '1';
+        card.style.zIndex = String(100 - depth);
+        card.style.pointerEvents = 'none';
+    });
+
+    deck.style.height = `${headBottom + belowDepth * DECK_PEEK}px`;
+
+    const counter = deck.querySelector('.chart-deck-counter');
+    if (counter) counter.textContent = `${st.activeIndex + 1} / ${st.count}`;
+}
+
+// Coalesce rapid advances into one layout per animation frame: several wheel
+// events in a frame update activeIndex synchronously but re-target the
+// transition only once, which keeps fast scrolling smooth instead of janky.
+function scheduleLayout(deck) {
+    if (deck._layoutRAF) return;
+    deck._layoutRAF = requestAnimationFrame(() => {
+        deck._layoutRAF = 0;
+        layoutDeck(deck);
+    });
+}
+
+function advanceDeckBy(deck, delta) {
+    const st = deck._deck;
+    if (!st || delta === 0) return false;
+    const next = Math.max(0, Math.min(st.activeIndex + delta, st.count - 1));
+    if (next === st.activeIndex) return false;
+    // Walk the head one slot per card toward the scroll direction's end (top on
+    // up, bottom on down), so reversing direction cycles it through the
+    // in-between slots instead of jumping 1 <-> N.
+    const steps = Math.abs(delta);
+    const cur = deck._headSlot ?? 0;
+    deck._headSlot = delta > 0
+        ? Math.min(DECK_MAX_FAN, cur + steps)
+        : Math.max(0, cur - steps);
+    deckSlot[deck.id] = deck._headSlot;
+    st.activeIndex = next;
+    deckActive[deck.id] = next;
+    scheduleLayout(deck);
+    return true;
+}
+
+function bindDeckEvents(deck) {
+    // Momentum cycling: accumulate wheel delta and advance one card per
+    // DECK_STEP crossed - a fast flick rolls through several cards, a gentle
+    // nudge moves one, with no per-card settle lock.
+    let acc = 0, lastDir = 0, lastT = 0;
+    deck.addEventListener('wheel', (e) => {
+        const st = deck._deck;
+        if (!st) return;
+        const dir = e.deltaY > 0 ? 1 : -1;
+        // At the ends, release the wheel to normal page scroll.
+        const atEnd = (dir > 0 && st.activeIndex >= st.count - 1) ||
+                      (dir < 0 && st.activeIndex <= 0);
+        if (atEnd) { acc = 0; return; }
+        e.preventDefault();
+        // Normalize across scroll samples: a new gesture (or a reversal) starts
+        // from a clean accumulator so momentum is consistent, not cumulative.
+        if (dir !== lastDir || e.timeStamp - lastT > DECK_WHEEL_GAP) acc = 0;
+        lastDir = dir;
+        lastT = e.timeStamp;
+        acc += e.deltaY;
+        let steps = Math.trunc(Math.abs(acc) / DECK_STEP);
+        if (steps === 0) return;
+        steps = Math.min(steps, DECK_MAX_PER_EVENT);
+        acc -= dir * steps * DECK_STEP;
+        advanceDeckBy(deck, dir * steps);
+    }, { passive: false });
+
+    let touchY = null;
+    deck.addEventListener('touchstart', (e) => {
+        touchY = e.touches[0].clientY;
+    }, { passive: true });
+    deck.addEventListener('touchend', (e) => {
+        if (touchY === null) return;
+        const dy = e.changedTouches[0].clientY - touchY;
+        touchY = null;
+        if (Math.abs(dy) > 40) advanceDeckBy(deck, dy < 0 ? 1 : -1);  // swipe up -> next
+    }, { passive: true });
+}
+
+function visibleDeck() {
+    return Array.from(document.querySelectorAll('.chart-deck'))
+        .find(d => d.offsetParent !== null) || null;
+}
+
+function onDeckResize() {
+    document.querySelectorAll('.chart-deck').forEach(d => {
+        if (d.offsetParent !== null) layoutDeck(d);
+    });
+}
+
+function onDeckKeydown(e) {
+    const deck = visibleDeck();
+    if (!deck) return;
+    const tag = (document.activeElement && document.activeElement.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    if (e.key === 'ArrowDown') { if (advanceDeckBy(deck, 1)) e.preventDefault(); }
+    else if (e.key === 'ArrowUp') { if (advanceDeckBy(deck, -1)) e.preventDefault(); }
 }
 
 /**

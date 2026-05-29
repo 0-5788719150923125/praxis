@@ -28,50 +28,30 @@ class HoPE(RoPE):
         # actually produces sequences at.
         self.context_length: int = config.block_size
         self.target_freq: float = 2.0 * math.pi / self.context_length
-        # Number of rotated head-dim slots, resolved on first call once we
-        # know head_dim.
+        # Number of rotated head-dim slots and which bands are kept, frozen on
+        # the first call from the base theta. Per-depth theta deltas then only
+        # shift the magnitudes of these bands, never the rotated/unrotated
+        # split (see roadmap caveat).
         self._pos_dim: Optional[int] = None
+        self._kept_idx: Optional[torch.Tensor] = None
 
-    def _compute_rope_embeddings(
-        self,
-        head_dim: int,
-        seq_len: int,
-        device: torch.device,
-        dtype: torch.dtype,
-        offset: int = 0,
-        block_ids: Optional[torch.Tensor] = None,
-    ) -> None:
-        if self.inv_freq is None:
-            full_inv_freq = 1.0 / (
-                self.theta
-                ** (
-                    2 * torch.arange(0, head_dim // 2, device=device).float() / head_dim
-                )
-            )
-            mask = full_inv_freq > self.target_freq
-            kept = full_inv_freq[mask]
+    def _compute_inv_freq(
+        self, head_dim: int, device: torch.device, current_depth: int
+    ) -> torch.Tensor:
+        if self._kept_idx is None:
+            # Freeze the rotated/unrotated split from the base theta (depth 0).
+            base = super()._compute_inv_freq(head_dim, device, current_depth=0)
+            mask = base > self.target_freq
+            idx = mask.nonzero(as_tuple=True)[0]
             # If L is so large the threshold drops everything, fall back to
             # the highest-frequency band so we still encode some position.
-            if kept.numel() == 0:
-                kept = full_inv_freq[:1]
-            self.inv_freq = kept
-            self._pos_dim = 2 * self.inv_freq.numel()
+            if idx.numel() == 0:
+                idx = torch.tensor([0], device=device)
+            self._kept_idx = idx
+            self._pos_dim = 2 * idx.numel()
 
-        if block_ids is not None and block_ids.size(1) != 1:
-            positions = self._compute_relative_positions_vectorized(block_ids, device)
-        else:
-            positions = (torch.arange(seq_len, device=device) + offset).unsqueeze(0)
-
-        freqs = torch.einsum("bi,j->bij", positions, self.inv_freq)
-        cos = torch.cos(freqs)
-        sin = torch.sin(freqs)
-
-        cos = torch.stack([cos, cos], dim=-1).view(cos.size(0), 1, cos.size(1), -1)
-        sin = torch.stack([-sin, sin], dim=-1).view(sin.size(0), 1, sin.size(1), -1)
-
-        self._cached_cos = cos.to(dtype)
-        self._cached_sin = sin.to(dtype)
-        self._cached_seq_length = seq_len
+        full = super()._compute_inv_freq(head_dim, device, current_depth)
+        return full[self._kept_idx.to(full.device)]
 
     def _apply_rotary_pos_emb(
         self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor

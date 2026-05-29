@@ -70,6 +70,9 @@ class HuggingfaceDataset(PraxisSampler):
         )
         if "name" in config:
             dataset_args["name"] = config["name"]
+        # Pin a commit when provided: resolves from cache harder and keeps runs reproducible.
+        if "revision" in config:
+            dataset_args["revision"] = config["revision"]
         self.dataset = load_dataset_smart(dataset_args)
 
         # Initial shuffle with base seed

@@ -300,7 +300,7 @@ class CausalAttention(nn.Module):
         # Apply positional encoding to Q/K (no-op for ALiBi/NoPE, rotates
         # for RoPE/HoPE). Must happen before ghostmax so the ghost token
         # remains a pristine zero.
-        q, k, v = self.encoding.before_scores(q, k, v)
+        q, k, v = self.encoding.before_scores(q, k, v, current_depth=current_depth)
 
         # Ghostmax: Prepend zero token to K and V (after positional encoding)
         # This implements softmax1 by adding an implicit exp(0)=1 to the denominator

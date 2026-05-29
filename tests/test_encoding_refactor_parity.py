@@ -74,14 +74,12 @@ def test_rope_relative_position_invariance_through_encoding():
     v = torch.zeros_like(k)
 
     # No offset: rotated Q/K at positions 0..seq_len-1.
-    enc.inv_freq = None
     enc._cached_seq_length = None
     q0, k0, _ = enc.before_scores(q.clone(), k.clone(), v.clone(), offset=0)
     scores0 = q0 @ k0.transpose(-2, -1)
 
     # Shift both Q and K by the same offset. Relative positions unchanged,
     # so the score matrix between corresponding pairs must match.
-    enc.inv_freq = None
     enc._cached_seq_length = None
     q1, k1, _ = enc.before_scores(q.clone(), k.clone(), v.clone(), offset=5)
     scores1 = q1 @ k1.transpose(-2, -1)

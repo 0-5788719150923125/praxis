@@ -221,6 +221,26 @@ def add_collection(config, collection_name, target_key):
     return config
 
 
+def _rl_uses_datasets(rl_type: Optional[str]) -> bool:
+    """Whether ``rl_type`` is a dataset-RL method that needs RL data collections.
+
+    Weight-editing controllers (e.g. ``harmonic_weight``) are marked
+    ``is_weight_controller``; they reward loss-delta from a training callback
+    and use no RL datasets, so the data pipeline must ignore them - otherwise
+    setting their ``rl_type`` silently mixes RL/simple-math data into training.
+    Deferred import keeps data/ independent of policies/ at module load.
+    """
+    if not rl_type:
+        return False
+    try:
+        from praxis.policies import RL_POLICIES_REGISTRY
+
+        cls = RL_POLICIES_REGISTRY.get(rl_type)
+        return not bool(getattr(cls, "is_weight_controller", False))
+    except Exception:
+        return True  # fail open: behave as before if the registry isn't available
+
+
 def get_dataset_configs(
     train_datasets: List[str],
     validation_datasets: List[str],
@@ -251,14 +271,14 @@ def get_dataset_configs(
     for name in train_datasets:
         config = add_collection(config, name, "primary")
 
-    if rl_type:
+    if _rl_uses_datasets(rl_type):
         rl_collection = "cot" if rl_type in ["cot", "cot-reinforce"] else "rl"
         config = add_collection(config, rl_collection, "primary")
 
     for name in validation_datasets:
         config = add_collection(config, name, "validation")
 
-    if rl_type:
+    if _rl_uses_datasets(rl_type):
         rl_count = len([e for e in config["primary"] if "RL" in e.get("path", "")])
         print(
             f"[RL] RL enabled with algorithm '{rl_type}', {rl_count} RL datasets in config"

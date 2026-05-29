@@ -1219,6 +1219,49 @@
     background: #1e1e1e;
 }
 
+/* Card-switcher carousel: chart cards are stacked in place, the active one on
+   top at full size with the next few peeking out behind it. Cycling advances
+   the deck in place - the page never grows. JS sets per-card transforms and
+   the deck height (so compact cards stay compact). */
+.chart-deck {
+    position: relative;
+    width: 100%;
+    margin: 0 auto;
+    touch-action: pan-x;
+}
+
+.chart-deck .chart-card {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    /* top origin so scaled-down upcoming cards keep their title strip aligned
+       with the raised-stack offset (rolodex preview from the top). */
+    transform-origin: top center;
+    transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+                opacity 0.28s ease;
+    will-change: transform, opacity;
+    backface-visibility: hidden;
+}
+
+/* Position counter pill, bottom-right of the deck (the raised stack of
+   upcoming title strips now occupies the top). */
+.chart-deck-counter {
+    position: absolute;
+    bottom: 0.5rem;
+    right: 0.5rem;
+    z-index: 9999;
+    padding: 0.15rem 0.55rem;
+    border-radius: 0.75rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--light-text);
+    background: var(--background);
+    border: 1px solid var(--border);
+    pointer-events: none;
+}
+
 .chart-title {
     font-size: 1.2rem;
     font-weight: 600;

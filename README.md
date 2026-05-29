@@ -35,7 +35,7 @@ source. See [docs/index.md](docs/index.md) for the full map.
 - [Loss functions](docs/losses.md) (9)
 - [Normalization layers](docs/normalization.md) (5)
 - [Output heads](docs/heads.md) (7)
-- [Positional encoding](docs/encoding.md) (4)
+- [Positional encoding](docs/encoding.md) (5)
 - [Recurrent cells](docs/recurrent.md) (2)
 - [Residual connections](docs/residuals.md) (2)
 - [RL policies](docs/policies.md) (4)

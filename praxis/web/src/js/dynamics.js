@@ -6,7 +6,7 @@
 import { state, CONSTANTS } from './state.js';
 import { fetchAPI } from './api.js';
 import { createTabHeader } from './components.js';
-import { formatRelativeTime } from './charts.js';
+import { formatRelativeTime, initChartDeck } from './charts.js';
 
 // Chart instances
 export const dynamicsCharts = {};
@@ -696,6 +696,27 @@ function renderDynamicsCharts(runData, container) {
 
     container.innerHTML = headerHTML + chartsHTML;
 
+    // Stack the dynamics charts into the same card deck as the Research tab.
+    // Cards are a flat sequence (each already carries its own title), so we
+    // just move them into one deck and leave the layer-toggles control above.
+    const dCards = Array.from(container.querySelectorAll('.chart-card'));
+    if (dCards.length) {
+        const deck = document.createElement('div');
+        deck.className = 'chart-deck';
+        deck.id = 'dynamics-deck';
+        deck.innerHTML = '<div class="chart-deck-counter"></div>';
+        const firstWrapper = dCards[0].parentElement;
+        firstWrapper.parentNode.insertBefore(deck, firstWrapper);
+        dCards.forEach(card => deck.appendChild(card));
+        // Drop the now-empty margin-top wrappers the cards left behind.
+        Array.from(container.children).forEach(ch => {
+            if (ch !== deck && ch.tagName === 'DIV' && ch.children.length === 0) {
+                ch.remove();
+            }
+        });
+        initChartDeck(deck);
+    }
+
     // Layer toggles
     renderDynamicsLayerToggles();
 
@@ -706,6 +727,9 @@ function renderDynamicsCharts(runData, container) {
             mountManifestCharts(manifest, dynamics);
             mountSnapshotCharts(descriptions);
             loadActivationCurves();
+            // Re-layout once charts have real heights (deck height tracks the
+            // active card); activeIndex is preserved across the re-init.
+            initChartDeck('dynamics-deck');
         } catch (error) {
             console.error('[Dynamics] Chart creation failed:', error);
         }
