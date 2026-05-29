@@ -60,7 +60,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--gated` | bool | `False` | Add a gating network to attention outputs |
 | `--halting-type` | str | `None` | Halting strategy for recurrent depth loops (choices: none, kl) |
 | `--head-size` | int | `None` | Specify the inner head dimension |
-| `--head-type` | str | `forward` | The type of language modeling head to use (choices: forward, tied, harmonic, crystal) |
+| `--head-type` | str | `forward` | The type of language modeling head to use (choices: forward, tied, harmonic, crystal, crystal_harmonic) |
 | `--hidden-size` | int | `256` | The size of the model's hidden dimensions |
 | `--k-heads` | int | `None` | A sparse MoE, controlling the number of heads to sample. Should be smaller than num_heads to enable. |
 | `--kv-rank` | int | `None` | Set this value to factorize key/value projections, making them low-rank. A value of 1 is lowest. |
@@ -129,7 +129,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | `--data-path` | str | `None` | Paths to directories of files to use as training data (can be specified multiple times) |
-| `--rl-type` | str | `None` | Enable reinforcement learning with specified algorithm. Note: Current GRPO implementation uses static dataset rewards (not true RL). True RL with generation will be added in a future update. (choices: reinforce, grpo, cot) |
+| `--rl-type` | str | `None` | Enable reinforcement learning with specified algorithm. Note: Current GRPO implementation uses static dataset rewards (not true RL). True RL with generation will be added in a future update. (choices: reinforce, grpo, cot, harmonic_weight) |
 | `--sampler-mode` | str | `loss` | Dataset sampling weighting mode: 'loss' (upsample high-loss datasets via per-sequence CE), 'novelty' (bigram novelty via Count-Min Sketch), 'dynamic' (EMA of token counts), 'static' (use weights from DATASET_COLLECTIONS as-is), or 'uniform' (force every dataset to 1.0, ignoring DATASET_COLLECTIONS). (choices: novelty, dynamic, static, loss, uniform) |
 | `--train-datasets` | str | `['base']` | Named dataset collections to train on. Space- or comma-separated (e.g. '--train-datasets base phi' or '--train-datasets base,phi'). Available: base, chat, cot, dev, focused, phi, pile, rl, slimpajama, tools, validation. |
 | `--validation-datasets` | str | `['validation']` | Named dataset collections to use for validation. Same format as --train-datasets. |

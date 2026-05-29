@@ -471,19 +471,23 @@ class BackpropagationTrainer(LightningModule):
         stats["val_loss"] = loss
 
         if self.byte_level:
-            # Some encoders (CALM) own their loss and report it in non-per-byte
-            # units (K-scaled per-patch). Prefer an encoder-exposed per-byte
-            # CE if present so val_bits_per_byte stays comparable to byte-
-            # latent's bpb.
-            bpb_loss = loss
+            # Codec encoders (CALM) reconstruct tokens through an autoencoder.
+            # That recon CE is codec fidelity, NOT generation quality, and an
+            # energy-based head has no closed-form per-byte likelihood - so we
+            # report it as its own val_codec_bpb and do not let it masquerade
+            # as val_bits_per_byte (trust val_brierlm for the generative path).
             encoder = getattr(self.model, "encoder", None)
-            if encoder and hasattr(encoder, "per_byte_val_loss"):
-                per_byte = encoder.per_byte_val_loss()
-                if per_byte is not None:
-                    bpb_loss = per_byte
-            stats["val_bits_per_byte"] = self._compute_bits_per_byte(
-                input_ids, bpb_loss
-            )
+            codec_loss = None
+            if encoder is not None and hasattr(encoder, "codec_recon_loss"):
+                codec_loss = encoder.codec_recon_loss()
+            if codec_loss is not None:
+                stats["val_codec_bpb"] = self._compute_bits_per_byte(
+                    input_ids, codec_loss
+                )
+            else:
+                stats["val_bits_per_byte"] = self._compute_bits_per_byte(
+                    input_ids, loss
+                )
         else:
             # Detach logits to prevent memory accumulation from computation graph.
             # For aligned encoders (CALM) labels stay full-length, so don't chop.

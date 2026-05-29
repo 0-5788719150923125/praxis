@@ -18,11 +18,11 @@ links to a page listing the registered implementations and their source.
 - [Long-term memory](memory.md) (4) - Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced as a layer (MAL) or a gate (MAG). Selected with ``--memory-type``; default is ``none``.
 - [Loss functions](losses.md) (9) - Per-token criteria. Most accept optional ``loss_weights`` for task-weighted training.
 - [Normalization layers](normalization.md) (5) - LayerNorm/RMSNorm variants, including SandwichNorm (required for stable recurrent-depth bias).
-- [Output heads](heads.md) (6) - LM heads (tied/untied, harmonic, crystal) and multi-token-prediction wrappers.
+- [Output heads](heads.md) (7) - LM heads (tied/untied, harmonic, crystal) and multi-token-prediction wrappers.
 - [Positional encoding](encoding.md) (4) - RoPE, ALiBi, NoPE and friends - the rotational / additive position priors injected into attention.
 - [Recurrent cells](recurrent.md) (2) - Minimal gated recurrent cells (GRU, MinGRU). Used by the recurrent block types and as a sequence mixer inside the byte-latent encoder.
 - [Residual connections](residuals.md) (2) - Standard residuals vs. hyper-connections.
-- [RL policies](policies.md) (3) - Reinforcement-learning policy losses (REINFORCE, GRPO, ...) for post-training.
+- [RL policies](policies.md) (4) - Reinforcement-learning policy losses (REINFORCE, GRPO, ...) for post-training.
 - [Sequence compression](compression.md) (3) - Strategies for reducing sequence length between layers.
 - [Sequence sorting](sorting.md) (3) - Optional reordering operations applied to the sequence.
 - [Token embeddings](embeddings.md) (13) - Input embedding layers, paired with the corresponding block type.

@@ -3,7 +3,7 @@
 
 LM heads (tied/untied, harmonic, crystal) and multi-token-prediction wrappers.
 
-Registry: ``praxis.HEAD_REGISTRY + MTP_REGISTRY`` (6 entries)
+Registry: ``praxis.HEAD_REGISTRY + MTP_REGISTRY`` (7 entries)
 
 ## `conv` - ConvMTPModule
 
@@ -24,6 +24,12 @@ In encoder-attached mode the head sizes its centers to match the encoder's class
 encoder's dot-product projection at the loss boundary.
 
 Source: [praxis/heads/crystal.py:262](../praxis/heads/crystal.py#L262)
+
+## `crystal_harmonic` - StackedHead
+
+Harmonic field stacked in front of the crystal distance classifier.
+
+Source: [praxis/heads/stacked.py:28](../praxis/heads/stacked.py#L28)
 
 ## `forward` - ForwardHead
 

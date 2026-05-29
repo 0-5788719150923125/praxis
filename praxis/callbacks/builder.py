@@ -27,6 +27,7 @@ def build_training_callbacks(
         AccumulationSchedule,
         BrierLMCallback,
         DynamicsLoggerCallback,
+        HarmonicWeightRLCallback,
         MemoryProfilerCallback,
         MetricsLoggerCallback,
         PeriodicEvaluation,
@@ -75,6 +76,24 @@ def build_training_callbacks(
 
     # Sample-based proper scoring rule at validation; cheap on small batches.
     callbacks.append(BrierLMCallback(tokenizer=tokenizer))
+
+    # Weight-editing RL controller (rl_type=harmonic_weight). Driven here from
+    # the training loop, not the forward pass. Ordered before MetricsLogger so
+    # its rl_* scalars are in callback_metrics when MetricsLogger drains them.
+    if getattr(config, "rl_type", None) == "harmonic_weight":
+        from praxis.policies import RL_POLICIES_REGISTRY
+
+        rl_policy = RL_POLICIES_REGISTRY["harmonic_weight"](config)
+        callbacks.append(
+            HarmonicWeightRLCallback(
+                policy=rl_policy,
+                period=int(getattr(config, "rl_period", 50)),
+                horizon=int(getattr(config, "rl_horizon", 20)),
+                warmup_steps=int(getattr(config, "rl_warmup_steps", 200)),
+                edit_mode=str(getattr(config, "rl_edit_mode", "harmonic")),
+                selector=str(getattr(config, "rl_selector", "sinusoidal")),
+            )
+        )
 
     # Restrict charted task-loss weights to task types a live dataset
     # produces; a learnable weighter still drifts weights for absent tasks.

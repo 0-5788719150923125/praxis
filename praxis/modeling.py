@@ -140,7 +140,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         if (
             encoder_ref is None
             and config.tie_word_embeddings
-            and config.head_type != "crystal"
+            and config.head_type not in ("crystal", "crystal_harmonic")
         ):
             head_type = "tied"
         else:
@@ -178,7 +178,12 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         self.policy = None
         rl_type = getattr(config, "rl_type", None)
         if rl_type and rl_type in RL_POLICIES_REGISTRY:
-            self.policy = RL_POLICIES_REGISTRY[rl_type](config)
+            policy_cls = RL_POLICIES_REGISTRY[rl_type]
+            # Weight-editing controllers act on parameters from a training
+            # callback, not on hidden states in the forward pass - so they are
+            # not built as self.policy (the callback owns them).
+            if not getattr(policy_cls, "is_weight_controller", False):
+                self.policy = policy_cls(config)
 
         # Encoders that own their loss (e.g. CALM) bypass the main-CE path
         # entirely, so don't build a criterion we'd never call.

@@ -79,10 +79,15 @@ class WeightedIterableDataset(IterableDataset):
                 torch.stack(assistant_mask) if assistant_mask else None
             )
 
-            # Handle rewards if RL is enabled
-            if self.rl_type and rewards:
+            # Handle rewards if RL is enabled. rewards is None or a 1-D tensor,
+            # so test it explicitly - bool() on a multi-element tensor raises.
+            if self.rl_type and rewards is not None and len(rewards) > 0:
                 # Convert rewards to tensor
-                reward_tensor = torch.tensor(rewards, dtype=torch.float32)
+                reward_tensor = (
+                    rewards
+                    if torch.is_tensor(rewards)
+                    else torch.tensor(rewards, dtype=torch.float32)
+                )
 
                 # Check if this batch needs generation (rewards == -1)
                 needs_generation = (reward_tensor == -1).any()

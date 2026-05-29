@@ -9,7 +9,10 @@ Architecture (matches the reference at github.com/shaochenze/calm):
    decoder + classifier produce the AE's own reconstruction loss
    (composed into ``encoder_loss``). The LM input is decoupled from the
    VAE's latent quality, mirroring the reference (where the AE is
-   frozen during LM training and only emits targets).
+   frozen during LM training and only emits targets). With
+   ``ae_freeze_steps`` set, this freezing is real and two-staged: stage
+   1 trains only the codec, then the codec freezes and stage 2 trains
+   only the LM/energy head against a now-stationary latent target.
 2. The global transformer autoregresses over patch embeddings.
 3. ``decode`` uses the LM hidden state at position ``p`` to drive an
    energy head that produces proposals for latent ``p+1``; those are
@@ -126,8 +129,8 @@ class CALMEncoder(BaseEncoder):
         "calm_energy_loss": {
             "description": (
                 "Energy-score loss between proposed next latents and posterior "
-                "samples. Zero during energy_warmup_steps (VAE-only phase); "
-                "should trend down once active."
+                "samples. Zero during the codec-only stage; should trend down "
+                "once active."
             ),
             "chart": {
                 "title": "Energy Loss",
@@ -135,6 +138,20 @@ class CALMEncoder(BaseEncoder):
                 "y_scale": "linear",
                 "group": "calm",
                 "order": 60,
+            },
+        },
+        "calm_ae_frozen": {
+            "description": (
+                "1 once the codec is frozen and stage 2 (energy head only) "
+                "begins; 0 during the codec-training stage. Flat 0 means "
+                "two-stage training is off (legacy joint mode)."
+            ),
+            "chart": {
+                "title": "Codec Frozen (Stage 2)",
+                "y_label": "frozen",
+                "y_scale": "linear",
+                "group": "calm",
+                "order": 70,
             },
         },
     }
@@ -156,6 +173,7 @@ class CALMEncoder(BaseEncoder):
         energy_samples_m: int = 100,
         energy_alpha: float = 1.0,
         energy_warmup_steps: int = 0,
+        ae_freeze_steps: int = 0,
         vote_num_samples: int = 200,
     ) -> None:
         super().__init__()
@@ -179,6 +197,14 @@ class CALMEncoder(BaseEncoder):
         self.energy_samples_m = energy_samples_m
         self.energy_alpha = energy_alpha
         self.energy_warmup_steps = int(energy_warmup_steps)
+        # Two-stage boundary: >0 trains the codec alone until this step, then
+        # freezes it and trains only the LM/energy head (matching the
+        # reference's separate AE/LM scripts). 0 = legacy joint training.
+        self.ae_freeze_steps = int(ae_freeze_steps)
+        # Set once when the codec is frozen, to log the transition a single
+        # time. Not a buffer: re-deriving frozen-ness from _train_step on
+        # resume is what re-applies the freeze, so this flag may reset freely.
+        self._ae_frozen_logged = False
         self.vote_num_samples = int(vote_num_samples)
 
         # Persistent step counter. Buffer so it survives checkpoint/resume:
@@ -334,6 +360,10 @@ class CALMEncoder(BaseEncoder):
         B, L = padded.shape
         N = L // self.K
 
+        # Stage gate: in two-stage mode the codec freezes after stage 1 so
+        # the energy head trains against a stationary target.
+        frozen = self._set_codec_mode() if self.training else self._ae_is_frozen()
+
         mean, logvar = self.vae.encode(padded)  # [B, N, latent_dim]
         z = self.vae.reparameterize(mean, logvar)
 
@@ -350,19 +380,29 @@ class CALMEncoder(BaseEncoder):
         # objective is `loss * patch_size + kl_loss * kl_weight`, so β is K
         # times softer relative to recon than a plain mean. Without this our
         # effective β at K=4 is ~4x harder, biasing toward posterior collapse.
-        encoder_loss = self.K * recon_loss + beta_t * kl
+        if frozen:
+            # Stage 2: codec is read-only; contribute nothing to the loss so
+            # only the LM/energy head trains.
+            encoder_loss = recon_logits.new_zeros(())
+        else:
+            encoder_loss = self.K * recon_loss + beta_t * kl
 
-        # Stash what decode() needs.
+        # Stash what decode() needs. The energy gate re-derives frozen-ness
+        # from the _train_step buffer rather than a stashed Python flag: under
+        # torch.compile an attribute set here (compiled) isn't reliably visible
+        # to the dynamo-disabled _register_energy_loss() that reads it, so a
+        # stale read would drop the only stage-2 loss and break backward.
         self._last_padded = padded
         self._last_mean = mean
         self._last_logvar = logvar
         self._last_z = z
         self._last_N = N
-        # Per-byte recon CE for val_bits_per_byte (training-objective loss is
-        # K-scaled per-patch and would give a K-times-too-large bpb).
+        # Per-byte codec recon CE for val_codec_bpb (codec fidelity only;
+        # see codec_recon_loss). Detached: pure diagnostic.
         self._last_recon_loss = recon_loss.detach()
 
         self._stash_diagnostics(mean, logvar, recon_loss, kl, beta_t)
+        self._diag["calm_ae_frozen"] = 1.0 if frozen else 0.0
         if self.training:
             self._train_step += 1
 
@@ -424,9 +464,18 @@ class CALMEncoder(BaseEncoder):
         B, N = h.shape[0], h.shape[1]
         if N < 2:
             return
-        # VAE warmup: skip energy loss until the codec has stabilized, so
-        # the energy head isn't chasing a wildly-moving target.
-        if int(self._train_step.item()) < self.energy_warmup_steps:
+        # Skip energy loss until the codec is ready, so the energy head isn't
+        # chasing a wildly-moving target. Two-stage: active once the codec is
+        # frozen (stage 2). Legacy joint mode: after energy_warmup. Both gates
+        # read the _train_step buffer directly (not a stashed flag) so the gate
+        # survives torch.compile - see encode(). encode() increments the step
+        # before decode() runs, so _ae_is_frozen() here is True whenever encode
+        # zeroed encoder_loss, guaranteeing stage 2 always has a grad path.
+        if self.ae_freeze_steps > 0:
+            energy_active = self._ae_is_frozen()
+        else:
+            energy_active = int(self._train_step.item()) >= self.energy_warmup_steps
+        if not energy_active:
             return
 
         # Position p predicts latent at p+1. h_cond: [B, N-1, hidden]
@@ -467,19 +516,57 @@ class CALMEncoder(BaseEncoder):
         self._pending_losses = {}
         return out
 
-    def per_byte_val_loss(self) -> Optional[torch.Tensor]:
-        """Most recent per-byte reconstruction CE for val_bits_per_byte.
+    def codec_recon_loss(self) -> Optional[torch.Tensor]:
+        """Most recent per-byte codec reconstruction CE.
 
-        The training-objective ``encoder_loss`` is K-scaled per-patch; using
-        it in ``_compute_bits_per_byte`` would over-report by a factor of K
-        and wouldn't be comparable to byte-latent's bpb. Codec recon CE is
-        the natural per-byte signal.
+        This is teacher-forced autoencoder fidelity (encode true tokens,
+        decode them back), NOT generation quality - it is near-zero for a
+        working codec regardless of whether the LM can generate. The trainer
+        surfaces it as ``val_codec_bpb``; trust ``val_brierlm`` for the
+        generative path. An energy-based head has no closed-form per-byte
+        likelihood, so CALM intentionally does not report ``val_bits_per_byte``.
         """
         return getattr(self, "_last_recon_loss", None)
 
     # ------------------------------------------------------------------
     # Warmup + diagnostics
     # ------------------------------------------------------------------
+
+    def _ae_is_frozen(self) -> bool:
+        """True in stage 2 of two-stage training (codec read-only)."""
+        return self.ae_freeze_steps > 0 and (
+            int(self._train_step.item()) >= self.ae_freeze_steps
+        )
+
+    @dynamo.disable()
+    def _set_codec_mode(self) -> bool:
+        """Apply the stage gate during training; return True iff frozen.
+
+        Runs eager (param/eval mutation breaks dynamo). Re-applied every
+        step so it survives Lightning's per-step ``model.train()`` (which
+        would otherwise re-enable codec dropout) and checkpoint resume
+        (``requires_grad`` is not part of the state dict).
+        """
+        frozen = self._ae_is_frozen()
+        if not frozen:
+            return False
+        # eval() the VAE each step: kills codec dropout so the energy head's
+        # targets (the posterior mean/logvar) stop jittering. requires_grad_
+        # (False) means no optimizer updates, so the target distribution is
+        # stationary. Only the VAE is touched: the injected head holds a
+        # back-reference to this encoder as a submodule, so iterating its
+        # parameters() or calling its eval() would recurse back into the
+        # encoder and freeze the energy head too. The head needs no explicit
+        # freeze anyway - its sole gradient source (the recon CE) is zeroed
+        # out in stage 2, so it already stops learning.
+        self.vae.eval()
+        for p in self.vae.parameters():
+            p.requires_grad_(False)
+        if not self._ae_frozen_logged:
+            print(f"[CALM] codec frozen at step {int(self._train_step.item())}; "
+                  f"stage 2 (energy head only) begins.")
+            self._ae_frozen_logged = True
+        return True
 
     def _current_kl_beta(self) -> float:
         """Linearly annealed β: 0 → kl_beta over kl_warmup_steps, then held."""

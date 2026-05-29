@@ -114,19 +114,27 @@ CALMBpe = partial(
 # combo gave high-variance estimates and was the main throttle on the energy
 # head's learning curve). Dims are fractions of hidden_size
 # (0.25/1.0/0.25 == 64/256/64 at hidden=256).
+#
+# Two-stage like the reference: train the codec alone for ae_freeze_steps
+# (KL annealed in over the same window so the final latent is smooth), then
+# freeze it and train only the energy head against a stationary target. kl_beta
+# is 10x the old joint value - a near-zero KL leaves a recon-perfect but
+# unmodelable latent. Watch calm_kl_active_frac / calm_recon_kl_ratio.
 CALMByteSmall = partial(
     CALMEncoder,
     chunk_size=4,
     latent_dim=0.25,
     ae_hidden=1.0,
-    kl_beta=1e-3,
+    kl_beta=1e-2,
     kl_clip=0.5,
+    kl_warmup_steps=2000,
     ae_dropout=0.1,
     noise_dim=0.25,
     energy_blocks=3,
     energy_samples_n=8,
     energy_samples_m=64,
     energy_alpha=1.0,
+    ae_freeze_steps=2000,
     vote_num_samples=50,
 )
 

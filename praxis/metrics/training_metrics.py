@@ -72,13 +72,29 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     "val_bits_per_byte": {
         "description": (
             "val_loss / log(2). Byte-latent runs only - the comparable "
-            "metric to BPB reported by the BLT paper."
+            "metric to BPB reported by the BLT paper. Not emitted for codec "
+            "encoders (CALM); see val_codec_bpb and val_brierlm instead."
         ),
         "chart": {
             "title": "Bits per Byte",
             "y_label": "Bits per Byte",
             "y_scale": "linear",
             "order": 50,
+            "is_validation": True,
+        },
+    },
+    "val_codec_bpb": {
+        "description": (
+            "Codec reconstruction bits/byte for autoencoder encoders (CALM): "
+            "teacher-forced encode-then-decode fidelity. This is NOT "
+            "generation quality - it is near-zero for any working codec. "
+            "Judge the model with val_brierlm, not this."
+        ),
+        "chart": {
+            "title": "Codec Recon (bits/byte)",
+            "y_label": "Codec bits/byte",
+            "y_scale": "logarithmic",
+            "order": 55,
             "is_validation": True,
         },
     },
@@ -133,6 +149,136 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     "batch": {"description": "Current batch index."},
     "local_layers": {"description": "Number of layers on the local node."},
     "remote_layers": {"description": "Number of layers held on remote peers."},
+    # Harmonic-weight RL controller (rl_type=harmonic_weight). Sparse: emitted
+    # at each episode end, carried forward between episodes.
+    "rl_reward": {
+        "description": (
+            "Loss improvement (L_before - L_after) the controller earned from "
+            "its last harmonic weight edit. Positive = the edit helped."
+        ),
+        "chart": {
+            "title": "RL Reward",
+            "y_label": "reward (Δloss)",
+            "y_scale": "linear",
+            "order": 200,
+            "is_validation": False,
+        },
+    },
+    "rl_baseline": {
+        "description": (
+            "EMA reward baseline b; advantage = reward - b. Variance-reduction "
+            "reference for the REINFORCE update."
+        ),
+        "chart": {
+            "title": "RL Baseline",
+            "y_label": "baseline",
+            "y_scale": "linear",
+            "order": 210,
+            "is_validation": False,
+        },
+    },
+    "rl_advantage": {
+        "description": (
+            "reward - baseline, the signed learning signal. Watch its scale "
+            "and sign-flipping: wild swings are the credit-assignment problem."
+        ),
+        "chart": {
+            "title": "RL Advantage",
+            "y_label": "advantage",
+            "y_scale": "linear",
+            "order": 220,
+            "is_validation": False,
+        },
+    },
+    "rl_policy_loss": {
+        "description": "REINFORCE objective (-log_prob*advantage - entropy bonus).",
+        "chart": {
+            "title": "RL Policy Loss",
+            "y_label": "policy loss",
+            "y_scale": "linear",
+            "order": 230,
+            "is_validation": False,
+        },
+    },
+    "rl_entropy": {
+        "description": (
+            "Policy entropy. Collapsing toward 0 = exploration dying (the "
+            "policy is committing); staying high = it hasn't learned to act."
+        ),
+        "chart": {
+            "title": "RL Policy Entropy",
+            "y_label": "entropy (nats)",
+            "y_scale": "linear",
+            "order": 240,
+            "is_validation": False,
+        },
+    },
+    "rl_log_std_mean": {
+        "description": "Mean log-std of the Gaussian policy (exploration width).",
+        "chart": {
+            "title": "RL Policy log-std",
+            "y_label": "mean log-std",
+            "y_scale": "linear",
+            "order": 250,
+            "is_validation": False,
+        },
+    },
+    "rl_action_alpha": {
+        "description": "Last action: harmonic modulation depth applied to the row.",
+        "chart": {
+            "title": "RL Action: alpha",
+            "y_label": "alpha",
+            "y_scale": "linear",
+            "order": 260,
+            "is_validation": False,
+        },
+    },
+    "rl_action_omega": {
+        "description": "Last action: harmonic spatial frequency across the row.",
+        "chart": {
+            "title": "RL Action: omega",
+            "y_label": "omega",
+            "y_scale": "linear",
+            "order": 270,
+            "is_validation": False,
+        },
+    },
+    "rl_action_phi": {
+        "description": "Last action: harmonic phase offset.",
+        "chart": {
+            "title": "RL Action: phi",
+            "y_label": "phi",
+            "y_scale": "linear",
+            "order": 280,
+            "is_validation": False,
+        },
+    },
+    "rl_edit_kept": {
+        "description": (
+            "1 if the last edit was kept (it improved loss), 0 if rolled back. "
+            "The rolling fraction is how often the controller finds a useful edit."
+        ),
+        "chart": {
+            "title": "RL Edit Kept",
+            "y_label": "kept (0/1)",
+            "y_scale": "linear",
+            "order": 290,
+            "is_validation": False,
+        },
+    },
+    "rl_gate_frac": {
+        "description": (
+            "anchor_gate mode: fraction of the row's elements reset to the "
+            "frozen anchor on the last edit (the gate density the policy chose)."
+        ),
+        "chart": {
+            "title": "RL Gate Fraction",
+            "y_label": "fraction reset",
+            "y_scale": "linear",
+            "order": 295,
+            "is_validation": False,
+        },
+    },
 }
 
 

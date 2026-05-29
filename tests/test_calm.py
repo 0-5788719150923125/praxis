@@ -197,3 +197,103 @@ def test_brierlm_scores_range():
     a_rand = [[999] * 8 for _ in range(4)]
     b_rand = [[999] * 8 for _ in range(4)]
     assert compute_brier_lm(a_rand, b_rand, refs) == 0.0
+
+
+def test_calm_two_stage_freezes_codec_and_enables_energy():
+    """ae_freeze_steps > 0: codec trains in stage 1, then freezes while the
+    energy head takes over in stage 2 (against a stationary target)."""
+    cfg = _tiny_config()
+    model = PraxisForCausalLM(cfg)
+    model.train()
+    enc = model.encoder
+    enc.ae_freeze_steps = 2  # tiny boundary so the test crosses it quickly
+
+    input_ids = torch.randint(4, 200, (2, 32), dtype=torch.long)
+    labels = input_ids[:, 1:].contiguous()
+
+    # Stage 1: codec trainable and receiving gradient.
+    out = model(input_ids=input_ids, labels=labels)
+    out.loss.backward()
+    assert all(p.requires_grad for p in enc.vae.parameters())
+    assert any(
+        p.grad is not None and p.grad.abs().sum() > 0
+        for p in enc.vae.parameters()
+    )
+    model.zero_grad(set_to_none=True)
+
+    # Step past the boundary; the codec must freeze.
+    for _ in range(4):
+        out = model(input_ids=input_ids, labels=labels)
+        out.loss.backward()
+        model.zero_grad(set_to_none=True)
+
+    assert enc._ae_is_frozen()
+    assert all(not p.requires_grad for p in enc.vae.parameters())
+
+    # Stage 2: energy head still learns; frozen codec gets no gradient.
+    out = model(input_ids=input_ids, labels=labels)
+    out.loss.backward()
+    assert any(
+        p.grad is not None and p.grad.abs().sum() > 0
+        for p in enc.energy_head.parameters()
+    )
+    assert all(p.grad is None for p in enc.vae.parameters())
+
+
+def test_calm_legacy_joint_mode_trains_codec_throughout():
+    """ae_freeze_steps == 0: codec never freezes (back-compatible)."""
+    cfg = _tiny_config()
+    model = PraxisForCausalLM(cfg)
+    model.train()
+    enc = model.encoder
+    assert enc.ae_freeze_steps == 0  # calm_small default
+
+    input_ids = torch.randint(4, 200, (2, 32), dtype=torch.long)
+    labels = input_ids[:, 1:].contiguous()
+    for _ in range(3):
+        out = model(input_ids=input_ids, labels=labels)
+        out.loss.backward()
+        model.zero_grad(set_to_none=True)
+
+    assert not enc._ae_is_frozen()
+    assert all(p.requires_grad for p in enc.vae.parameters())
+
+
+def test_calm_with_stacked_crystal_harmonic_head():
+    # crystal_harmonic stacks the harmonic field in front of the crystal
+    # classifier; both mechanisms train through CALM's reconstruction path.
+    cfg = _tiny_config(head_type="crystal_harmonic")
+    model = PraxisForCausalLM(cfg)
+    model.train()
+    input_ids = torch.randint(4, 200, (2, 32), dtype=torch.long)
+    out = model(input_ids=input_ids, labels=input_ids[:, 1:].contiguous())
+    out.loss.backward()
+
+    head = model.head
+    centers = head.crystal.lm_head.centers
+    amps = head.field.amplitudes
+    assert centers.shape == (
+        model.encoder.output_vocab_size,
+        model.encoder.output_dim,
+    )
+    # Both mechanisms receive gradient (field modulates features, crystal
+    # classifies them - the recon path trains both).
+    assert centers.grad is not None and centers.grad.abs().sum() > 0
+    assert amps.grad is not None and amps.grad.abs().sum() > 0
+    # Both auxiliary losses are exposed and merged.
+    aux = head.aux_losses()
+    assert "centers_rms" in aux and "harmonic_smoothness" in aux
+
+
+def test_stacked_head_logits_match_manual_compose():
+    # forward == crystal(field(h)): the field is genuinely in the path.
+    cfg = _tiny_config(head_type="crystal_harmonic")
+    model = PraxisForCausalLM(cfg)
+    model.eval()
+    head = model.head
+    feat = torch.randn(2, 6, model.encoder.output_dim)
+    with torch.no_grad():
+        composed = head(feat)
+        manual = head.crystal(head.field(feat))
+    assert torch.allclose(composed, manual, atol=1e-5)
+    assert composed.shape == (2, 6, model.encoder.output_vocab_size)

@@ -3,7 +3,7 @@
 
 Reinforcement-learning policy losses (REINFORCE, GRPO, ...) for post-training.
 
-Registry: ``praxis.RL_POLICIES_REGISTRY`` (3 entries)
+Registry: ``praxis.RL_POLICIES_REGISTRY`` (4 entries)
 
 ## `cot` - ChainOfThought
 
@@ -37,6 +37,12 @@ Implementation notes:
 - Group normalization provides implicit baseline ...
 
 Source: [praxis/policies/grpo.py:19](../praxis/policies/grpo.py#L19)
+
+## `harmonic_weight` - HarmonicWeightPolicy
+
+Tiny Gaussian policy over harmonic edit parameters (alpha, omega, phi).
+
+Source: [praxis/policies/harmonic_weight_rl.py:56](../praxis/policies/harmonic_weight_rl.py#L56)
 
 ## `reinforce` - REINFORCE
 
