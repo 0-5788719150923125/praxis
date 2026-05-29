@@ -1219,6 +1219,42 @@
     background: #1e1e1e;
 }
 
+/* Deck cards: the body fill lives on a ::before so the title row can be masked
+   to ~78% opacity - the card behind bleeds through faintly at the title (an
+   orientation aid for the stack) while the chart body stays fully opaque and
+   the title text on top stays crisp. Only applies inside a deck. */
+.chart-deck .chart-card {
+    background: transparent;
+}
+.chart-deck .chart-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    border-radius: inherit;
+    background: var(--assistant-message-bg);
+    -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,0.78), rgba(0,0,0,0.78) 3rem, #000 3.3rem);
+            mask-image: linear-gradient(to bottom, rgba(0,0,0,0.78), rgba(0,0,0,0.78) 3rem, #000 3.3rem);
+}
+[data-theme="dark"] .chart-deck .chart-card::before {
+    background: #1e1e1e;
+}
+.chart-deck .chart-card > * {
+    position: relative;
+    z-index: 1;
+}
+
+/* Fan-down sheets (Identity) can be longer than the viewport. Cap the body to
+   ~viewport height and scroll it internally so the document never overflows the
+   deck or page; the soft top/bottom fade signals there's more to scroll. */
+.deck-card-scroll {
+    max-height: calc(100vh - 16rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 1.25rem, #000 calc(100% - 1.25rem), transparent 100%);
+            mask-image: linear-gradient(to bottom, transparent 0, #000 1.25rem, #000 calc(100% - 1.25rem), transparent 100%);
+}
+
 /* Card-switcher carousel: chart cards are stacked in place, the active one on
    top at full size with the next few peeking out behind it. Cycling advances
    the deck in place - the page never grows. JS sets per-card transforms and
@@ -1228,6 +1264,9 @@
     width: 100%;
     margin: 0 auto;
     touch-action: pan-x;
+    /* Contain the cards' high z-indices in their own stacking context so a tall
+       card scrolling up can't paint over the sticky tab header (z-index 10). */
+    isolation: isolate;
 }
 
 .chart-deck .chart-card {
@@ -1238,17 +1277,41 @@
     /* top origin so scaled-down upcoming cards keep their title strip aligned
        with the raised-stack offset (rolodex preview from the top). */
     transform-origin: top center;
-    transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1),
-                opacity 0.28s ease;
+    /* Duration is phased by swipe energy (see setDeckTempo): long for a gentle
+       settle, short under a fast flick so rapid re-targets don't queue and
+       flicker against the translucent header blur. */
+    transition: transform var(--deck-trans, 0.32s) cubic-bezier(0.22, 1, 0.36, 1),
+                opacity var(--deck-trans, 0.28s) ease;
     will-change: transform, opacity;
     backface-visibility: hidden;
 }
 
-/* Position counter pill, bottom-right of the deck (the raised stack of
-   upcoming title strips now occupies the top). */
+/* Per-card index, printed on each card's top-right corner (rides with the
+   card). Replaces the old single floating deck counter, which is retired. */
 .chart-deck-counter {
+    display: none;
+}
+/* Specific enough to beat `.chart-deck .chart-card > *` (which forces children
+   to position:relative); otherwise the number falls into flow as a full-width
+   block instead of a corner pill. */
+.chart-deck .chart-card .chart-card-number {
     position: absolute;
-    bottom: 0.5rem;
+    top: 0.6rem;
+    right: 0.6rem;
+    z-index: 2;
+    padding: 0.15rem 0.55rem;
+    border-radius: 0.75rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--light-text);
+    background: var(--background);
+    border: 1px solid var(--border);
+    pointer-events: none;
+}
+.chart-deck-counter-unused {
+    position: absolute;
+    top: 0.5rem;
     right: 0.5rem;
     z-index: 9999;
     padding: 0.15rem 0.55rem;

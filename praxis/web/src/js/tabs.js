@@ -5,7 +5,7 @@
 
 import { state, getAgentFreshnessColor } from './state.js';
 import { fetchAPI } from './api.js';
-import { loadResearchMetricsWithCharts } from './charts.js';
+import { loadResearchMetricsWithCharts, initChartDeck } from './charts.js';
 import { formatRelativeTime } from './charts.js';
 import {
     createSection,
@@ -284,17 +284,50 @@ function renderSpec(data, container) {
         return;
     }
 
-    // Filter and sort sections based on configuration
-    const visibleSections = SPEC_CONFIG.sections
-        .filter(section => section.condition(data))
-        .sort((a, b) => a.order - b.order);
-
-    // Render all visible sections using generic components
-    const sectionsHTML = visibleSections
-        .map(section => renderSpecSections[section.id](data))
+    // Filter sections based on configuration, then group them into three
+    // "sheets" so the Identity tab ripples through them as a card deck (same
+    // carousel as Research/Dynamics).
+    const present = id =>
+        SPEC_CONFIG.sections.some(s => s.id === id && s.condition(data));
+    // Each sheet gets a card title + a brief subtitle. Single-section sheets
+    // (Architecture, Arguments) render their content directly so the card
+    // title isn't duplicated by an identical inner section title.
+    const sheets = [
+        {
+            title: 'Identity & Commands',
+            subtitle: 'Run hashes, reproduce commands, parameter counts',
+            build: () => ['hashes', 'commands', 'parameters']
+                .filter(present)
+                .map(id => renderSpecSections[id](data))
+                .join(''),
+        },
+        {
+            title: 'Architecture',
+            subtitle: 'Instantiated model module tree',
+            build: () => present('architecture') ? createPreBlock(data.model_architecture) : '',
+        },
+        {
+            title: 'Arguments',
+            subtitle: 'Resolved run configuration',
+            build: () => present('arguments') && data.args ? createPreBlock(formatJSON(data.args)) : '',
+        },
+    ];
+    const cardsHTML = sheets
+        .map(sheet => {
+            const inner = sheet.build();
+            if (!inner || !inner.trim()) return '';
+            return `<div class="chart-card">
+                <div class="chart-title">${sheet.title}</div>
+                <div class="chart-subtitle">${sheet.subtitle}</div>
+                <div class="deck-card-scroll">${inner}</div>
+            </div>`;
+        })
+        .filter(Boolean)
         .join('');
 
-    container.innerHTML = headerHTML + sectionsHTML;
+    container.innerHTML = headerHTML +
+        `<div class="chart-deck" id="spec-deck"><div class="chart-deck-counter"></div>${cardsHTML}</div>`;
+    initChartDeck('spec-deck', { fanDown: true });
 }
 
 /**

@@ -443,6 +443,7 @@ function buildScalarConfigsFromRegistry(registry) {
         title: entry.chart.title || key,
         label: entry.chart.y_label || entry.chart.title || key,
         type: entry.chart.type || 'line',
+        description: entry.description || '',
     }));
 }
 
@@ -465,6 +466,7 @@ function buildCompositeConfigsFromRegistry(registry) {
             title: entry.title || entry.key,
             label: entry.y_label || entry.title || entry.key,
             type: entry.type || 'line',
+            description: entry.description || '',
             source: entry.source || 'metrics',
             stepped: entry.stepped || false,
             keyPattern: entry.key_pattern ? new RegExp(entry.key_pattern) : null,
@@ -557,6 +559,7 @@ function renderMetricsCharts(data, container) {
         return `
         <div class="chart-card" data-deck-index="${i}">
             <div class="chart-title">${config.title}</div>
+            ${config.description ? `<div class="chart-subtitle">${config.description}</div>` : ''}
             ${stepSliderHTML}
             <div class="chart-wrapper">
                 <canvas id="${config.canvasId}"></canvas>
@@ -599,14 +602,33 @@ const DECK_PEEK = 34;          // fan/title peek and the gap between the two hea
 const DECK_SCALE_STEP = 0.04;
 const DECK_MAX_FAN = 3;        // ahead cards fanned below the head
 const DECK_STEP = 100;         // wheel px per card; accumulated -> momentum
-const DECK_MAX_PER_EVENT = 3;  // cap cards advanced per wheel event (inertia guard)
-const DECK_WHEEL_GAP = 140;    // ms idle before a new wheel gesture resets accumulation
+const DECK_SWIPE_STEP = 55;    // touch px per card (more direct than the wheel)
+const DECK_MAX_PER_EVENT = 3;  // base per-event card cap (lifted as energy builds)
+const DECK_STICK_FACTOR = 3;   // toward-top stick reserve = this * step at zero energy
+const DECK_ENERGY_TAU = 220;   // ms EMA time-constant: swipe energy halves ~every 150ms idle
+const DECK_ENERGY_FULL = 3;    // step-units of accumulated motion that fully melts the stick
 
-export function initChartDeck(deck) {
+export function initChartDeck(deck, opts = {}) {
     if (typeof deck === 'string') deck = document.getElementById(deck);
     if (!deck) return;
-    const count = deck.querySelectorAll('.chart-card').length;
+    // fan-down decks (long documents) keep the head on top and let sheets hang
+    // below, so a tall card can't float up over the header.
+    deck._fanDown = !!opts.fanDown;
+    const cards = deck.querySelectorAll('.chart-card');
+    const count = cards.length;
     if (count === 0) return;
+
+    // Number each card on its own top-right corner (a "collector's" stamp) so
+    // the index rides with the card instead of floating in one fixed spot.
+    cards.forEach((card, i) => {
+        let num = card.querySelector('.chart-card-number');
+        if (!num) {
+            num = document.createElement('div');
+            num.className = 'chart-card-number';
+            card.appendChild(num);
+        }
+        num.textContent = `${i + 1} / ${count}`;
+    });
 
     const prev = deckActive[deck.id] ?? 0;
     deck._deck = { activeIndex: Math.max(0, Math.min(prev, count - 1)), count };
@@ -645,6 +667,64 @@ function layoutDeck(deck) {
     if (!st) return;
     const cards = Array.from(deck.querySelectorAll('.chart-card'));
     if (cards.length === 0) return;
+
+    applyWalletShift(deck);  // re-apply current latch w/ fresh header height
+
+    // Mobile always fans strictly downward (head pinned at top): the two-slot
+    // head-walk would slide the focused card down and fan earlier cards upward,
+    // which fights the latched focal anchor. Body-capping only touches
+    // .deck-card-scroll, so chart cards pass through untouched.
+    if (deck._fanDown || window.innerWidth <= 768) {
+        // Fan strictly downward: head on top, the rest hang below it as
+        // top-anchored sheets. Tall documents fall down (more weight) and can
+        // never rise over the header. No above-fan, no head shift.
+        //
+        // Cap each sheet's body from its real on-screen top down to the bottom
+        // of the viewport (minus the fan peek and a little padding), so a long
+        // document scrolls internally instead of running off-screen.
+        const activeBody = cards[st.activeIndex].querySelector('.deck-card-scroll');
+        if (activeBody) {
+            const top = activeBody.getBoundingClientRect().top;
+            const pad = 24 + DECK_MAX_FAN * DECK_PEEK;
+            const avail = Math.max(160, Math.round(window.innerHeight - top - pad));
+            cards.forEach(c => {
+                const b = c.querySelector('.deck-card-scroll');
+                if (b) b.style.maxHeight = `${avail}px`;
+            });
+        }
+        const heights = cards.map(c => c.offsetHeight);
+        const activeH = heights[st.activeIndex];
+        let maxRank = 0;
+        cards.forEach((card, i) => {
+            const offset = i - st.activeIndex;
+            if (offset === 0) {
+                card.style.transformOrigin = 'top center';
+                card.style.transform = 'translateY(0) scale(1)';
+                card.style.opacity = '1';
+                card.style.zIndex = '100';
+                card.style.pointerEvents = 'auto';
+                return;
+            }
+            const rank = Math.abs(offset);
+            if (rank > DECK_MAX_FAN) {
+                card.style.transform = 'translateY(0) scale(0.97)';
+                card.style.opacity = '0';
+                card.style.zIndex = '90';
+                card.style.pointerEvents = 'none';
+                return;
+            }
+            card.style.transformOrigin = 'top center';
+            card.style.transform = `translateY(${rank * DECK_PEEK}px) scale(${1 - rank * DECK_SCALE_STEP})`;
+            card.style.opacity = '1';
+            card.style.zIndex = String(100 - rank);
+            card.style.pointerEvents = 'none';
+            maxRank = Math.max(maxRank, rank);
+        });
+        deck.style.height = `${activeH + maxRank * DECK_PEEK}px`;
+        const c = deck.querySelector('.chart-deck-counter');
+        if (c) c.textContent = `${st.activeIndex + 1} / ${st.count}`;
+        return;
+    }
 
     // The head rests at slot s (0 = top .. DECK_MAX_FAN = bottom); it walks one
     // slot per scroll toward the direction's end. Cards before the head peek
@@ -686,8 +766,11 @@ function layoutDeck(deck) {
             card.style.transformOrigin = 'top center';
         } else {
             // ahead: peek depth*PEEK below the head BOTTOM, regardless of either
-            // card's height (anchor the card's bottom, not the deck top)
-            y = headBottom + depth * DECK_PEEK - heights[i];
+            // card's height (anchor the card's bottom, not the deck top). Clamp
+            // to >= 0 so a card taller than the head can't get a negative offset
+            // and rise above the deck top, overflowing over the Layers row /
+            // header above it - a tall card falls downward instead.
+            y = Math.max(0, headBottom + depth * DECK_PEEK - heights[i]);
             card.style.transformOrigin = 'bottom center';
             belowDepth = Math.max(belowDepth, depth);
         }
@@ -717,6 +800,42 @@ function scheduleLayout(deck) {
     });
 }
 
+// Sticky-edge step: how much scroll/swipe distance it takes to leave the
+// current card. A plain card uses the base step (a light stick); a card with a
+// long inner document sticks harder (up to 2.5x), so you decelerate and slot
+// instead of overshooting when its content loops out.
+function deckStep(deck, base) {
+    const st = deck._deck;
+    if (!st) return base;
+    const card = deck.querySelectorAll('.chart-card')[st.activeIndex];
+    const body = card && card.querySelector('.deck-card-scroll');
+    let factor = 1;
+    if (body && body.clientHeight > 0) {
+        factor = Math.max(1, Math.min(2.5, body.scrollHeight / body.clientHeight));
+    }
+    return base * factor;
+}
+
+// Mobile wallet shift, LATCHED: slot A (deck pulled up over the header, title
+// anchored at the focal point) stays latched once you move off the top - it
+// does NOT release just because cycling lands you back on the first card.
+// Release to slot B (header readable) only on a deliberate return to rest:
+// pulling back past the top of the first card. Desktop: no shift, no latch.
+function applyWalletShift(deck) {
+    if (!deck || !deck._deck) return;
+    if (typeof window === 'undefined' || window.innerWidth > 768) {
+        deck.style.transform = '';
+        return;
+    }
+    if (!deck._walletA) { deck.style.transform = ''; return; }  // slot B
+    const sc = deck.closest('.tab-content');
+    const header = sc && sc.querySelector('.tab-header');
+    const hH = header ? header.offsetHeight : 0;
+    deck.style.transform = `translateY(${-hH}px)`;  // slot A
+}
+function walletToA(deck) { deck._walletA = true; applyWalletShift(deck); }
+function walletToB(deck) { deck._walletA = false; deck.style.transform = ''; }
+
 function advanceDeckBy(deck, delta) {
     const st = deck._deck;
     if (!st || delta === 0) return false;
@@ -724,15 +843,32 @@ function advanceDeckBy(deck, delta) {
     if (next === st.activeIndex) return false;
     // Walk the head one slot per card toward the scroll direction's end (top on
     // up, bottom on down), so reversing direction cycles it through the
-    // in-between slots instead of jumping 1 <-> N.
-    const steps = Math.abs(delta);
-    const cur = deck._headSlot ?? 0;
-    deck._headSlot = delta > 0
-        ? Math.min(DECK_MAX_FAN, cur + steps)
-        : Math.max(0, cur - steps);
-    deckSlot[deck.id] = deck._headSlot;
+    // in-between slots instead of jumping 1 <-> N. Fan-down decks keep the head
+    // pinned to the top.
+    if (!deck._fanDown) {
+        const steps = Math.abs(delta);
+        const cur = deck._headSlot ?? 0;
+        deck._headSlot = delta > 0
+            ? Math.min(DECK_MAX_FAN, cur + steps)
+            : Math.max(0, cur - steps);
+        deckSlot[deck.id] = deck._headSlot;
+    }
     st.activeIndex = next;
     deckActive[deck.id] = next;
+    // Fan-down sheets are long: when the page got scrolled (reading a sheet),
+    // re-root the scroll so the newly-focused sheet's title lands in the same
+    // place instead of opening mid-document with only its tail in view.
+    if (deck._fanDown) {
+        const sc = deck.closest('.tab-content');
+        if (sc && sc.scrollTop !== 0) sc.scrollTop = 0;
+        // Enter the newly-focused sheet from the edge you're heading toward:
+        // scrolling down opens it at the top, scrolling up opens it at the
+        // bottom (you came from below) so reading flows continuously.
+        const activeCard = deck.querySelectorAll('.chart-card')[next];
+        const body = activeCard && activeCard.querySelector('.deck-card-scroll');
+        if (body) body.scrollTop = delta < 0 ? body.scrollHeight : 0;
+    }
+    walletToA(deck);  // any cycle latches the focal slot (mobile; no-op desktop)
     scheduleLayout(deck);
     return true;
 }
@@ -741,39 +877,143 @@ function bindDeckEvents(deck) {
     // Momentum cycling: accumulate wheel delta and advance one card per
     // DECK_STEP crossed - a fast flick rolls through several cards, a gentle
     // nudge moves one, with no per-card settle lock.
-    let acc = 0, lastDir = 0, lastT = 0;
+    let acc = 0, lastDir = 0;
+    // Swipe energy: a time-decayed EMA of recent motion (in step-units), shared
+    // by wheel and touch. It builds across a strong pull or several quick ones,
+    // melts the toward-top stick, lifts the per-event cap, and shortens the card
+    // transition - so effort, stick relief, and animation tempo all move
+    // together instead of fighting fixed rate-limits.
+    let energy = 0, energyT = 0;
+    function pumpEnergy(t, magSteps) {
+        if (energyT) { const dt = t - energyT; if (dt > 0) energy *= Math.exp(-dt / DECK_ENERGY_TAU); }
+        energyT = t;
+        energy += magSteps;
+        return Math.min(1, energy / DECK_ENERGY_FULL);  // relief 0..1
+    }
+    // Phase the transition duration with energy: long settle when gentle, short
+    // under a flick so rapid re-targets don't queue/flicker against the blur.
+    function setDeckTempo(relief) {
+        deck.style.setProperty('--deck-trans', (0.32 - relief * 0.24).toFixed(3) + 's');
+    }
+    // Advance as energy/accumulator allow: cap lifts from the base toward the
+    // whole deck as energy builds, and the toward-top reserve melts to zero.
+    function runAdvance(dir, base, getAcc, setAcc, relief) {
+        const baseStep = deckStep(deck, base);
+        const maxPer = Math.max(DECK_MAX_PER_EVENT, Math.round(relief * deck._deck.count));
+        let advanced = 0;
+        while (advanced < maxPer) {
+            const reserve = dir < 0 ? DECK_STICK_FACTOR * baseStep * (1 - relief) : 0;
+            const step = baseStep + reserve;
+            if (Math.abs(getAcc()) < step) break;
+            setAcc(getAcc() - dir * step);
+            if (!advanceDeckBy(deck, dir)) { setAcc(0); break; }
+            advanced++;
+        }
+    }
     deck.addEventListener('wheel', (e) => {
         const st = deck._deck;
         if (!st) return;
         const dir = e.deltaY > 0 ? 1 : -1;
+        // Fan-down decks: scroll the focused sheet's own body first; only fall
+        // through to cycling once it's scrolled to its top/bottom edge.
+        if (deck._fanDown) {
+            const activeCard = deck.querySelectorAll('.chart-card')[st.activeIndex];
+            const body = activeCard && activeCard.querySelector('.deck-card-scroll');
+            if (body) {
+                const canDown = body.scrollTop + body.clientHeight < body.scrollHeight - 1;
+                const canUp = body.scrollTop > 0;
+                if ((dir > 0 && canDown) || (dir < 0 && canUp)) {
+                    body.scrollTop += e.deltaY;
+                    walletToA(deck);  // reading the body -> latch focal slot A
+                    e.preventDefault();
+                    acc = 0;
+                    return;
+                }
+            }
+        }
         // At the ends, release the wheel to normal page scroll.
         const atEnd = (dir > 0 && st.activeIndex >= st.count - 1) ||
                       (dir < 0 && st.activeIndex <= 0);
-        if (atEnd) { acc = 0; return; }
+        // Pulling back past the first card is the deliberate return to rest:
+        // release the latch so the header (slot B) comes back.
+        if (atEnd) { if (dir < 0) walletToB(deck); acc = 0; return; }
         e.preventDefault();
-        // Normalize across scroll samples: a new gesture (or a reversal) starts
-        // from a clean accumulator so momentum is consistent, not cumulative.
-        if (dir !== lastDir || e.timeStamp - lastT > DECK_WHEEL_GAP) acc = 0;
+        // Only a direction reversal clears the accumulator - a same-direction
+        // pause must NOT, or slow steady scrolling (a notch every few hundred ms)
+        // would zero out before it ever crosses a step. All effort banks.
+        if (dir !== lastDir) acc = 0;
         lastDir = dir;
-        lastT = e.timeStamp;
         acc += e.deltaY;
-        let steps = Math.trunc(Math.abs(acc) / DECK_STEP);
-        if (steps === 0) return;
-        steps = Math.min(steps, DECK_MAX_PER_EVENT);
-        acc -= dir * steps * DECK_STEP;
-        advanceDeckBy(deck, dir * steps);
+        // Asymmetric stick: hold only toward the top (dir < 0) so earlier cards
+        // don't whip past; forward is free. The hold melts as energy builds, so
+        // a strong/sustained pull rolls through with no rate-limit.
+        const relief = pumpEnergy(e.timeStamp, Math.abs(e.deltaY) / deckStep(deck, DECK_STEP));
+        setDeckTempo(relief);
+        runAdvance(dir, DECK_STEP, () => acc, (v) => { acc = v; }, relief);
     }, { passive: false });
 
-    let touchY = null;
+    // Touch: live, distance-proportional cycling (multi-card), and manual body
+    // scroll for fan-down sheets - an ancestor's touch-action blocks native
+    // vertical scroll, so we drive it here. Mirrors the wheel's momentum feel.
+    let tActive = false, tLastY = 0, tAcc = 0, tLastDir = 0, tLastT = 0;
     deck.addEventListener('touchstart', (e) => {
-        touchY = e.touches[0].clientY;
+        tActive = true;
+        tLastY = e.touches[0].clientY;
+        tLastT = e.timeStamp;
+        tAcc = 0;
     }, { passive: true });
-    deck.addEventListener('touchend', (e) => {
-        if (touchY === null) return;
-        const dy = e.changedTouches[0].clientY - touchY;
-        touchY = null;
-        if (Math.abs(dy) > 40) advanceDeckBy(deck, dy < 0 ? 1 : -1);  // swipe up -> next
-    }, { passive: true });
+    deck.addEventListener('touchmove', (e) => {
+        if (!tActive) return;
+        const st = deck._deck;
+        if (!st) return;
+        const y = e.touches[0].clientY;
+        let dy = tLastY - y;            // finger up -> dy > 0 -> next sheet
+        tLastY = y;
+        if (dy === 0) return;
+        const dir = dy > 0 ? 1 : -1;
+        tLastT = e.timeStamp;
+
+        // fan-down: drag-scroll the focused sheet's body first; any overshoot
+        // past its top/bottom edge carries straight into cycling (continuous,
+        // no dead-zone "catch" at the document boundary).
+        if (deck._fanDown) {
+            const ac = deck.querySelectorAll('.chart-card')[st.activeIndex];
+            const body = ac && ac.querySelector('.deck-card-scroll');
+            if (body) {
+                const room = dir > 0
+                    ? (body.scrollHeight - body.clientHeight) - body.scrollTop
+                    : body.scrollTop;
+                if (room > 0) {
+                    const used = Math.min(Math.abs(dy), room);
+                    body.scrollTop += dir * used;
+                    walletToA(deck);        // reading the body -> latch focal slot A
+                    e.preventDefault();
+                    dy -= dir * used;       // leftover continues into cycling
+                    if (Math.abs(dy) < 1) return;
+                }
+            }
+        }
+
+        const atEnd = (dir > 0 && st.activeIndex >= st.count - 1) ||
+                      (dir < 0 && st.activeIndex <= 0);
+        if (atEnd) {
+            // Pulling back past the first card: release to rest (slot B) and
+            // swallow the gesture so it can't bubble into the page's
+            // pull-to-refresh. Refresh stays available from the header area,
+            // whose touches never reach this deck-scoped handler.
+            if (dir < 0) { walletToB(deck); e.preventDefault(); }
+            return;
+        }
+        e.preventDefault();
+        if (dir !== tLastDir) { tAcc = 0; tLastDir = dir; }
+        tAcc += dy;
+        // Same energy-melted stick as the wheel (toward-top only); a strong or
+        // repeated pull builds enough energy to roll through every card at once.
+        const relief = pumpEnergy(e.timeStamp, Math.abs(dy) / deckStep(deck, DECK_SWIPE_STEP));
+        setDeckTempo(relief);
+        runAdvance(dir, DECK_SWIPE_STEP, () => tAcc, (v) => { tAcc = v; }, relief);
+    }, { passive: false });
+    deck.addEventListener('touchend', () => { tActive = false; }, { passive: true });
 }
 
 function visibleDeck() {

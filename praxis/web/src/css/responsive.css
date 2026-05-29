@@ -260,3 +260,24 @@
     }
 }
 
+
+/* Mobile: the header stays in flow (sticky, its default) so the resting card
+   anchors BELOW it and its title/description/labels stay readable - that lower
+   spot is the anchor. It's translucent, so as you scroll, content slots under
+   the title band and shows through it (the header is conditionally visible).
+   Scoped to deck tabs and mobile; desktop and non-deck tabs are unchanged. */
+@media (max-width: 768px) {
+    .tab-container:has(.chart-deck) .tab-header {
+        background: color-mix(in srgb, var(--background) 72%, transparent);
+        -webkit-backdrop-filter: blur(6px);
+                backdrop-filter: blur(6px);
+    }
+    /* Cards must render OVER the (translucent) header so the focused title is
+       always visible. The wallet-shift transform makes the deck its own
+       stacking context, so a z-index above the header (10) is what lifts it -
+       isolation alone wouldn't. The tab-content clip keeps it off the nav. */
+    .chart-deck {
+        z-index: 20;
+        transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+}
