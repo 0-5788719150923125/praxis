@@ -633,6 +633,7 @@ export function initChartDeck(deck, opts = {}) {
     const prev = deckActive[deck.id] ?? 0;
     deck._deck = { activeIndex: Math.max(0, Math.min(prev, count - 1)), count };
     deck._headSlot = deckSlot[deck.id] ?? 0;  // 0 = top .. DECK_MAX_FAN = bottom
+    deck._wallet = deck._wallet || 'B';        // mobile A/B position state machine
 
     if (!deck._deckBound) {
         bindDeckEvents(deck);
@@ -816,25 +817,48 @@ function deckStep(deck, base) {
     return base * factor;
 }
 
-// Mobile wallet shift, LATCHED: slot A (deck pulled up over the header, title
-// anchored at the focal point) stays latched once you move off the top - it
-// does NOT release just because cycling lands you back on the first card.
-// Release to slot B (header readable) only on a deliberate return to rest:
-// pulling back past the top of the first card. Desktop: no shift, no latch.
+// Mobile wallet position is a 2-state machine on deck._wallet:
+//   'B' - rest: header/title visible, deck in natural flow (no transform).
+//   'A' - focal: deck lifted to sit just below the tab-nav and latched there.
+// Transitions: B->A on any cycle or body-scroll off the top (walletToA);
+// A->B only on a deliberate pull back past the first card (walletToB).
+//
+// PERF: the lift distance is MEASURED ONCE at the B->A edge (while the
+// transform is still cleared and layout is settled, so the read is correct)
+// and cached on deck._aShift. Every later layout just re-applies the cached
+// value - no per-frame getBoundingClientRect, no forced reflow. Re-measured
+// only on the next B->A or on resize.
+function isMobileDeck() {
+    return typeof window !== 'undefined' && window.innerWidth <= 768;
+}
+function measureWalletShift(deck) {
+    // Caller guarantees transform is cleared (state B) so the rect is natural.
+    const nav = document.querySelector('.tab-nav');
+    const navBottom = nav ? nav.getBoundingClientRect().bottom : 0;
+    return Math.max(0, Math.round(deck.getBoundingClientRect().top - navBottom));
+}
 function applyWalletShift(deck) {
     if (!deck || !deck._deck) return;
-    if (typeof window === 'undefined' || window.innerWidth > 768) {
-        deck.style.transform = '';
-        return;
-    }
-    if (!deck._walletA) { deck.style.transform = ''; return; }  // slot B
-    const sc = deck.closest('.tab-content');
-    const header = sc && sc.querySelector('.tab-header');
-    const hH = header ? header.offsetHeight : 0;
-    deck.style.transform = `translateY(${-hH}px)`;  // slot A
+    if (!isMobileDeck() || deck._wallet !== 'A') { deck.style.transform = ''; return; }
+    deck.style.transform = `translateY(${-(deck._aShift || 0)}px)`;
 }
-function walletToA(deck) { deck._walletA = true; applyWalletShift(deck); }
-function walletToB(deck) { deck._walletA = false; deck.style.transform = ''; }
+function walletToA(deck) {
+    if (!isMobileDeck() || deck._wallet === 'A') return;  // cheap no-op once latched
+    deck._wallet = 'A';
+    deck._aShift = measureWalletShift(deck);  // transform still '' here (was state B)
+    deck.style.transform = `translateY(${-deck._aShift}px)`;
+}
+function walletToB(deck) {
+    deck._wallet = 'B';
+    deck.style.transform = '';
+}
+// Orientation/layout change invalidates the cached lift: re-measure if latched.
+function remeasureWallet(deck) {
+    if (!isMobileDeck() || deck._wallet !== 'A') { applyWalletShift(deck); return; }
+    deck.style.transform = '';                  // to natural for an honest read
+    deck._aShift = measureWalletShift(deck);
+    deck.style.transform = `translateY(${-deck._aShift}px)`;
+}
 
 function advanceDeckBy(deck, delta) {
     const st = deck._deck;
@@ -1023,7 +1047,7 @@ function visibleDeck() {
 
 function onDeckResize() {
     document.querySelectorAll('.chart-deck').forEach(d => {
-        if (d.offsetParent !== null) layoutDeck(d);
+        if (d.offsetParent !== null) { remeasureWallet(d); layoutDeck(d); }
     });
 }
 
