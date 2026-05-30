@@ -17,6 +17,22 @@
     --border: #d0d0d0;
     --shadow: rgba(0, 0, 0, 0.05);
 
+    /* Terminal palette (light defaults; dark overrides below) */
+    --term-bg: #ffffff;
+    --term-panel: #f5f5f5;
+    --term-panel-alt: #fafafa;
+    --term-border: #d0d0d0;
+    --term-border-soft: #e0e0e0;
+    --term-border-faint: #ececec;
+    --term-text: #1f1f1f;
+    --term-bright: #000000;
+    --term-fg-strong: #222222;
+    --term-fg: #555555;
+    --term-dim: #6b6b6b;
+    --term-dim2: #888888;
+    --term-dim3: #9a9a9a;
+    --term-faint: #b5b5b5;
+
     /* Unified spacing variables - carefully calibrated */
     --spacing-xs: 0.25rem;
     --spacing-sm: 0.5rem;
@@ -59,4 +75,20 @@
     --shadow: rgba(0, 0, 0, 0.3);
     --input-bg: #1e1e1e;
     --input-text: #e0e0e0;
+
+    /* Terminal palette - dark */
+    --term-bg: #0d0d0d;
+    --term-panel: #111111;
+    --term-panel-alt: #0a0a0a;
+    --term-border: #333333;
+    --term-border-soft: #2a2a2a;
+    --term-border-faint: #222222;
+    --term-text: #d4d4d4;
+    --term-bright: #ffffff;
+    --term-fg-strong: #cccccc;
+    --term-fg: #aaaaaa;
+    --term-dim: #888888;
+    --term-dim2: #666666;
+    --term-dim3: #555555;
+    --term-faint: #444444;
 }

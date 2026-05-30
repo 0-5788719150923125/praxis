@@ -5,6 +5,11 @@ from praxis.generation.lf_temperature import (
     lf_temperature_sample_batched,
     lf_temperature_sample_exact,
 )
+from praxis.generation.context_blocks import (
+    DEFAULT_CONTEXT_BLOCKS,
+    ContextBlock,
+    ContextStreams,
+)
 from praxis.generation.mono_forward_generator import MonoForwardGenerator
 from praxis.generation.request import GenerationRequest
 from praxis.generation.runtime import bos_prompt, swap_inference_generator
@@ -16,6 +21,9 @@ __all__ = [
     "MonoForwardGenerator",
     "StreamingContext",
     "random_char_seed",
+    "ContextBlock",
+    "ContextStreams",
+    "DEFAULT_CONTEXT_BLOCKS",
     "lf_temperature_sample_batched",
     "lf_temperature_sample_exact",
     "bos_prompt",

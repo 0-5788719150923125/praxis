@@ -152,20 +152,14 @@ export const ACTION_HANDLERS = {
                 .catch(() => {}); // Ignore if module not loaded yet
         }
 
-        // Data-driven: check if current tab has charts via feature flag
-        const currentTab = state.tabs.find(t => t.active);
-        if (currentTab?.hasCharts) {
-            // Dynamically update chart colors without redrawing
-            import('./charts.js').then(({ updateChartColors }) => {
-                updateChartColors();
-            });
-            // Also update dynamics charts if on Dynamics tab
-            if (currentTab.id === 'dynamics') {
-                import('./dynamics.js').then(({ updateDynamicsChartColors }) => {
-                    updateDynamicsChartColors();
-                });
-            }
-        }
+        // Recolor every live chart, not just the active tab's: cards cached on an
+        // inactive chart tab don't rebuild on revisit, so they'd keep stale colors.
+        import('./charts.js').then(({ updateChartColors }) => {
+            updateChartColors();
+        });
+        import('./dynamics.js').then(({ updateDynamicsChartColors }) => {
+            updateDynamicsChartColors();
+        });
     },
 
     /**

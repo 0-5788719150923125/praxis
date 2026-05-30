@@ -173,10 +173,29 @@
     .live-dashboard {
         font-size: 0.6875rem;
         padding: 0.5rem;
+        /* Take full content height and overflow the terminal-container, which is the
+           touch-scroll surface. flex: none stops the flex column from shrinking the
+           dashboard to fit (which would compress the footer and kill scrolling). */
+        max-height: none;
+        min-height: 0;
+        flex: none;
     }
 
+    /* Cards expand to their content on mobile and the page scrolls as one surface,
+       rather than each card trapping touch in its own internal scroll area. */
     .ld-body {
-        grid-template-columns: 1fr;
+        grid-auto-rows: auto;
+        overflow: visible;
+        flex: 0 0 auto;
+    }
+
+    .ld-context {
+        overflow: visible;
+    }
+
+    .ld-status-text {
+        overflow: visible;
+        flex: 0 1 auto;
     }
 
     .ld-info-grid {

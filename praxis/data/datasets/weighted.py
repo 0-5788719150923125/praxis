@@ -51,6 +51,12 @@ class WeightedIterableDataset(IterableDataset):
         self.supersample_chance = supersample_chance
         self.hypersample_chance = hypersample_chance
         self.rl_type = rl_type
+        # Weight-edit controllers (e.g. harmonic_weight) reward via callback and
+        # use no RL datasets, so skip the dataset-reward path and its logging.
+        # Deferred import avoids a circular dependency with data.utils.
+        from praxis.data.utils import _rl_uses_datasets
+
+        self.rl_uses_datasets = _rl_uses_datasets(rl_type)
         self.tokenizer = tokenizer  # Store tokenizer for reward extraction
 
     def __iter__(self):
@@ -81,7 +87,7 @@ class WeightedIterableDataset(IterableDataset):
 
             # Handle rewards if RL is enabled. rewards is None or a 1-D tensor,
             # so test it explicitly - bool() on a multi-element tensor raises.
-            if self.rl_type and rewards is not None and len(rewards) > 0:
+            if self.rl_uses_datasets and rewards is not None and len(rewards) > 0:
                 # Convert rewards to tensor
                 reward_tensor = (
                     rewards

@@ -6,7 +6,7 @@
 import { state, CONSTANTS } from './state.js';
 import { fetchAPI } from './api.js';
 import { createTabHeader } from './components.js';
-import { formatRelativeTime, initChartDeck } from './charts.js';
+import { formatRelativeTime, initChartDeck, applyChartTheme } from './charts.js';
 
 // Chart instances
 export const dynamicsCharts = {};
@@ -31,32 +31,7 @@ function getThemeColors(forceTheme) {
  * Update chart colors for theme changes
  */
 export function updateDynamicsChartColors() {
-    const { textColor, gridColor, tooltipBg } = getThemeColors();
-
-    Object.values(dynamicsCharts).forEach(chart => {
-        if (!chart) return;
-
-        if (chart.options.scales) {
-            Object.values(chart.options.scales).forEach(scale => {
-                if (scale.title) scale.title.color = textColor;
-                if (scale.ticks) scale.ticks.color = textColor;
-                if (scale.grid) scale.grid.color = gridColor;
-            });
-        }
-
-        if (chart.options.plugins?.legend?.labels) {
-            chart.options.plugins.legend.labels.color = textColor;
-        }
-
-        if (chart.options.plugins?.tooltip) {
-            chart.options.plugins.tooltip.backgroundColor = tooltipBg;
-            chart.options.plugins.tooltip.titleColor = textColor;
-            chart.options.plugins.tooltip.bodyColor = textColor;
-            chart.options.plugins.tooltip.borderColor = gridColor;
-        }
-
-        chart.update('none');
-    });
+    Object.values(dynamicsCharts).forEach(applyChartTheme);
 }
 
 /**

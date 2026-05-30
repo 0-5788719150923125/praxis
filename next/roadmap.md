@@ -4,6 +4,9 @@ Tracked work items for the Praxis research framework. These range from near-term
 
 ---
 
+- [ ] **CALM produces noise: audit vs shaochenze/calm (2026-05-30)**
+      The port is faithful - VAE (free-bits KL), embed_proj patch input, energy head, energy_score (2·E‖X-Y‖ - E‖X-X'‖ over M=100 posterior samples), and patch-vote temperature generation all match the reference. The deviation is protocol, not math. Reference trains the autoencoder as a fully separate run (~30k steps / 15B tokens) to near-perfect reconstruction, saves it, then loads it frozen for CALM. Ours collapses both into one run with `ae_freeze_steps == warmup_steps`, so the codec freezes long before it reconstructs - stage 2 then learns to predict latents that decode to garbage. Direction: (1) verify codec fidelity first - decode posterior samples of real text and confirm it reconstructs (watch `val_codec_bpb`); (2) decouple stage 1 into its own checkpointed AE run, don't tie the freeze to LR warmup; (3) only after the AE is near-lossless, train the energy LM, and bump `energy_samples_n` (8 is a noisy repulsion estimate). Scale also matters: reference is 371M-1.8B params; tiny undertrained models may not reach fluency regardless.
+
 - [ ] **Scheduled sampling at training time**
       Train the model on its own predictions for a fraction of positions: instead of always feeding the ground-truth previous token, occasionally substitute the model's sampled token. This closes the train/inference distribution gap that drives exposure bias (Bengio et al. 2015). Hook in at the trainer's input-id construction step; expose the schedule (start at 0%, ramp to ~25% over training) as a CLI knob. Natural A/B against the existing `contrastive_token` loss, which targets the same failure mode from a different angle.
 

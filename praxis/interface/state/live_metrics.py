@@ -30,6 +30,7 @@ class LiveMetrics:
         self._initialized = True
         self.state = MetricsState(max_data_points=1000)
         self.status_text = "_initializing"
+        self.contexts = []  # rolling context blocks: [{name, description, temperature, chance, text}]
         self.info_dict = {}
         self.log_lines = deque(maxlen=200)
         self._log_lock = threading.Lock()
@@ -72,6 +73,7 @@ class LiveMetrics:
                 "url": self.state.url,
                 "hours_elapsed": self.state.hours_since(),
                 "status_text": self.status_text,
+                "contexts": list(self.contexts),
                 "info": self.info_dict,
                 "update_count": self._update_count,
                 "log_lines": list(self.log_lines)[-50:],

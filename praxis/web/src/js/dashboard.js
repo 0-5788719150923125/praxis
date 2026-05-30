@@ -139,7 +139,7 @@ function drawSparkline(data, canvasId) {
 
     // Draw min/max labels
     ctx.font = '9px monospace';
-    ctx.fillStyle = '#666';
+    ctx.fillStyle = getComputedStyle(canvas).getPropertyValue('--term-dim2').trim() || '#666';
     ctx.textAlign = 'left';
     ctx.fillText(fmt(max, 4), padding, 10);
     ctx.fillText(fmt(min, 4), padding, height - 2);
@@ -159,22 +159,69 @@ function isScrolledToBottom(el) {
     return el.scrollHeight - el.scrollTop - el.clientHeight < 8;
 }
 
+// Rolling contexts: the server sends `contexts` (one block per temperature
+// experiment). Fall back to the single status_text for the legacy single-context
+// path so older producers still render one block.
+function contextsOf(m) {
+    if (Array.isArray(m.contexts) && m.contexts.length) return m.contexts;
+    return [{ name: 'Context', description: '', temperature: null, chance: null, text: m.status_text }];
+}
+
+// Block meta line: "T0.5  ·10% | 42 tok". Chance shows only when < 1; every block
+// carries its own token count (falling back to the legacy global on block 0), set
+// off from the temperature/chance by a pipe divider.
+function ctxMetaHtml(c, m, i) {
+    const parts = [];
+    if (c.temperature != null) parts.push(`T${(+c.temperature).toFixed(1)}`);
+    if (c.chance != null && c.chance < 1) {
+        const p = c.chance * 100;
+        parts.push(`·${p < 1 ? p.toFixed(1) : Math.round(p)}%`);
+    }
+    // Prefer each block's own count; fall back to the global primary count for any
+    // block the producer didn't tokenize, so a seeded card never reads "0 tok".
+    const toks = c.tokens != null ? c.tokens : (m.context_tokens || 0);
+    const left = parts.length ? `${escapeHtml(parts.join('  '))}<span class="ld-meta-sep">|</span>` : '';
+    return `${left}<span class="ld-meta-tok">${toks} tok</span>`;
+}
+
+function renderContextBlock(c, i, m) {
+    return `
+        <div class="ld-panel ld-context" data-ctx-index="${i}">
+            <div class="ld-panel-title">${escapeHtml(c.name || 'Context')}<span class="ld-context-meta">${ctxMetaHtml(c, m, i)}</span></div>
+            ${c.description ? `<div class="ld-context-desc">${escapeHtml(c.description)}</div>` : ''}
+            <div class="ld-status-text">${escapeHtml(c.text || '_initializing')}</div>
+        </div>`;
+}
+
 export function renderLiveDashboard(m) {
     const container = document.getElementById('terminal-display');
     if (!container) return;
 
-    // Check if dashboard already exists so we can update in-place
+    const ctxs = contextsOf(m);
+
+    // Update in-place to preserve scroll positions - but only when the block count
+    // matches; if it changed (e.g. contexts arrived after a status_text-only frame)
+    // fall through to a full rebuild.
     const existing = container.querySelector('.live-dashboard');
-    if (existing) {
-        // Update in-place to preserve scroll positions
+    if (existing && existing.querySelectorAll('.ld-context').length === ctxs.length) {
+
+        // Per-context rolling text - auto-scroll only if already at bottom.
+        const blocks = existing.querySelectorAll('.ld-context');
+        ctxs.forEach((c, i) => {
+            const blk = blocks[i];
+            const st = blk && blk.querySelector('.ld-status-text');
+            if (st) {
+                const wasAtBottom = isScrolledToBottom(st);
+                st.textContent = c.text || '_initializing';
+                if (wasAtBottom) st.scrollTop = st.scrollHeight;
+            }
+            const meta = blk && blk.querySelector('.ld-context-meta');
+            if (meta) meta.innerHTML = ctxMetaHtml(c, m, i);
+        });
 
         // Header
         const headerLeft = existing.querySelector('.ld-header-left');
         if (headerLeft) headerLeft.innerHTML = `<span class="ld-label">HASH:</span> <span class="ld-hash">${escapeHtml(m.arg_hash || '------')}</span>`;
-
-        // Context token count now lives in the Context panel title
-        const contextTokens = existing.querySelector('.ld-context-tokens');
-        if (contextTokens) contextTokens.textContent = `${m.context_tokens || 0} tokens`;
 
         const headerMetrics = existing.querySelector('.ld-header-metrics');
         if (headerMetrics) headerMetrics.innerHTML = `
@@ -184,13 +231,7 @@ export function renderLiveDashboard(m) {
             ${m.accuracy ? `<span class="ld-metric">ACCURACY <span class="ld-val">${fmt(m.accuracy[0], 3)}</span></span>` : ''}
         `;
 
-        // Status text - auto-scroll only if already at bottom
-        const statusText = existing.querySelector('.ld-status-text');
-        if (statusText) {
-            const wasAtBottom = isScrolledToBottom(statusText);
-            statusText.textContent = m.status_text || '_initializing';
-            if (wasAtBottom) statusText.scrollTop = statusText.scrollHeight;
-        }
+        // (rolling-context text is updated per-block above)
 
         // Info panel
         const infoGrid = existing.querySelector('.ld-info-grid');
@@ -262,10 +303,7 @@ export function renderLiveDashboard(m) {
                 <div class="ld-log-content">${(m.log_lines || []).map(l => `<div class="ld-log-line">${escapeHtml(l)}</div>`).join('')}</div>
             </div>
             <div class="ld-body">
-                <div class="ld-panel ld-panel-status">
-                    <div class="ld-panel-title">Context <span class="ld-context-tokens">${m.context_tokens || 0} tokens</span></div>
-                    <div class="ld-status-text">${escapeHtml(m.status_text || '_initializing')}</div>
-                </div>
+                ${ctxs.map((c, i) => renderContextBlock(c, i, m)).join('')}
                 <div class="ld-panel ld-panel-chart">
                     <div class="ld-panel-title">Training Loss</div>
                     <canvas id="ld-sparkline-canvas" class="ld-sparkline-canvas"></canvas>
@@ -296,8 +334,7 @@ export function renderLiveDashboard(m) {
     // Draw sparkline and scroll to bottom on first render
     requestAnimationFrame(() => {
         drawSparkline(m.loss_history, 'ld-sparkline-canvas');
-        const statusText = container.querySelector('.ld-status-text');
-        if (statusText) statusText.scrollTop = statusText.scrollHeight;
+        container.querySelectorAll('.ld-status-text').forEach(st => { st.scrollTop = st.scrollHeight; });
         if (logPanelOpen) {
             const logContent = container.querySelector('.ld-log-content');
             if (logContent) logContent.scrollTop = logContent.scrollHeight;

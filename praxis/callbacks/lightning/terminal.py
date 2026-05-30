@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 
 from lightning.pytorch.callbacks import Callback
 
+from praxis.generation.context_blocks import ContextStreams
 from praxis.generation.streaming import StreamingContext, random_char_seed
 from praxis.metrics.ema import LOSS_EMA_ALPHA, compute_ema
 
@@ -106,14 +107,27 @@ class TerminalInterface(Callback):
                 ]
                 if t is not None
             ]
-        self._streaming = StreamingContext(
-            initial_text=self._seed_factory,
-            max_length=terminal_output_length,
-            unchanged_threshold=30,
-            ignored_n_grams=ignored_n_grams,
-            repetition_n_gram_size=13 if byte_level else 7,
-            repetition_frequency=50 if byte_level else 20,
-        )
+        # One rolling context per ContextBlock (default: 3 temperature experiments).
+        # The factory stamps each with this run's tuning; the primary (chance 1.0)
+        # context drives the CLI display + the back-compat status_text.
+        def _make_streaming(block):
+            return StreamingContext(
+                initial_text=self._seed_factory,
+                max_length=int(terminal_output_length * block.context_scale),
+                unchanged_threshold=30,
+                ignored_n_grams=ignored_n_grams,
+                repetition_n_gram_size=13 if byte_level else 7,
+                repetition_frequency=50 if byte_level else 20,
+            )
+
+        def _count_tokens(text):
+            return len(self.tokenizer.encode(text)) if self.tokenizer and text else 0
+
+        self._context_streams = ContextStreams(_make_streaming, token_counter=_count_tokens)
+        # Largest per-block scale; the shared generate path truncates prompts to
+        # this so a double-length block isn't clipped back to the base length.
+        self._max_context_scale = max(b.context_scale for b in self._context_streams.blocks)
+        self._streaming = self._context_streams.primary
         # Sync local state with whatever the streaming context picked.
         self.text = self._streaming.text
         self.initial_text = self._streaming.initial_text
@@ -526,7 +540,7 @@ class TerminalInterface(Callback):
         # Time the inference call
         inference_start = time.time()
 
-        # Count tokens in the prompt
+        # Count tokens in the (primary) prompt for the context-tokens chip.
         if self.tokenizer:
             prompt_tokens = len(self.tokenizer.encode(self.text))
             if self.dashboard and hasattr(self.dashboard, "update_context_tokens"):
@@ -534,30 +548,32 @@ class TerminalInterface(Callback):
             if hasattr(self, "live_metrics"):
                 self.live_metrics.state.update_context_tokens(prompt_tokens)
 
-        request_id = self.generator.request_generation(
-            self.text,
-            dict(
-                max_new_tokens=max_new_tokens,
-                temperature=0.4,
-                repetition_penalty=1.15,
-                skip_special_tokens=False,
-                truncate_to=self.max_length,
-                use_cache=False,
-            ),
-        )
-        while True:
-            time.sleep(0.1)
-            self.generator.fulfill_requests(max_requests=5)
-            result = self.generator.get_result(request_id)
-            if result is not None:
-                did_reset = self._streaming.update(result)
-                self.text = self._streaming.text
-                if did_reset:
-                    print(
-                        f"[WARNING] Context reset (stuck or degenerate), "
-                        f"reverting to seed."
-                    )
-                break
+        # Generate one block: request from its running text at its temperature and
+        # poll the queue until the result lands. Bounded (~30s) so a stuck block
+        # never hangs the others. Returns the new full passage, or None on timeout.
+        def _generate(prompt, temperature):
+            request_id = self.generator.request_generation(
+                prompt,
+                dict(
+                    max_new_tokens=max_new_tokens,
+                    temperature=temperature,
+                    repetition_penalty=1.15,
+                    skip_special_tokens=False,
+                    truncate_to=int(self.max_length * self._max_context_scale),
+                    use_cache=False,
+                ),
+            )
+            for _ in range(300):
+                time.sleep(0.1)
+                self.generator.fulfill_requests(max_requests=5)
+                result = self.generator.get_result(request_id)
+                if result is not None:
+                    return result
+            return None
+
+        # Each block rolls its `chance`; the always-on primary fires every time.
+        contexts = self._context_streams.step(_generate)
+        self.text = self._streaming.text
 
         # Track inference time
         inference_time = time.time() - inference_start
@@ -568,7 +584,7 @@ class TerminalInterface(Callback):
                 0.9 * self.inference_time_ema + 0.1 * inference_time
             )
 
-        # Update display
+        # Update display (the CLI shows the primary context)
         if self.dashboard and hasattr(self.dashboard, "update_status"):
             self.dashboard.update_status(self.text)
             if self._streaming.text == self._streaming.initial_text:
@@ -576,11 +592,11 @@ class TerminalInterface(Callback):
         elif not self.headless:
             self.print(self.text)
 
-        # Always update live metrics status text for web streaming.
-        # Pass through untouched - the browser renders Unicode natively
-        # and doesn't need the CLI's fixed-width sanitization.
+        # Web streaming: every block as `contexts`, plus the primary as the
+        # back-compat status_text. The browser renders Unicode natively.
         if hasattr(self, "live_metrics"):
             self.live_metrics.status_text = self.text
+            self.live_metrics.contexts = contexts
 
         self.last_time = datetime.now()
 

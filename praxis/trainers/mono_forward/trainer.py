@@ -303,12 +303,11 @@ class MonoForwardTrainer:
         # "at least ``inference_every_seconds`` after the very first
         # batch completes", not on process start.
         self._last_inference_time: Optional[float] = None
-        # Growing text buffer across hook fires, mirroring how the
-        # backprop ``TerminalInterface`` accumulates text between
-        # generations. Initialised lazily on the first fire once we
-        # know the prompt as decoded text. ``StreamingContext`` handles
-        # the reset-on-degeneracy path.
-        self._inference_context: Optional[Any] = None
+        # Rolling contexts (one per temperature ContextBlock) across hook fires,
+        # mirroring the backprop ``TerminalInterface``. Both producers share the
+        # ``ContextStreams`` abstraction; only the generate_fn differs. Initialised
+        # lazily on the first fire once the tokenizer is known.
+        self._context_streams: Optional[Any] = None
         # Internal cached reference to the live actor set for
         # ``generate()`` calls that happen *inside* ``fit()``. Set by
         # ``fit`` before the pipeline loop, cleared in the finally
@@ -1851,105 +1850,89 @@ class MonoForwardTrainer:
                 return
         self._last_inference_time = now
 
-        context = self._ensure_inference_context()
-        if context is None:
+        streams = self._ensure_context_streams()
+        if streams is None:
             return
 
-        # Encode the growing text buffer into ids as the prompt for
-        # this step. We intentionally re-encode every time rather than
-        # appending ids directly, so the buffer's character-level
-        # truncation and degeneracy resets all flow through cleanly.
-        prompt_ids = self._encode_context_text(context.text)
-        if prompt_ids is None:
-            return
-
-        # Push prompt token count into LiveMetrics so the Terminal
-        # tab's "CONTEXT: X tokens" chip updates. Mirrors what
-        # TerminalInterface._generate_text does at line 495-499.
-        if self._live_metrics is not None and prompt_ids is not None:
+        # Push the primary context's prompt token count into LiveMetrics so the
+        # Terminal tab's "tokens" chip updates (mirrors TerminalInterface).
+        primary_ids = self._encode_context_text(streams.primary.text)
+        if self._live_metrics is not None and primary_ids is not None:
             try:
-                prompt_tokens = prompt_ids.shape[1]
-                self._live_metrics.state.update_context_tokens(prompt_tokens)
+                self._live_metrics.state.update_context_tokens(primary_ids.shape[1])
             except Exception:
                 pass
 
-        # Match TerminalInterface._generate_text's token-count
-        # distribution: default 1 token per fire, with a 10% chance
-        # of drawing an extra (and compounding via the while loop),
-        # capped at ``inference_max_new_tokens`` so a lucky streak
-        # can't blow out the Terminal panel. Most fires emit exactly
-        # one new token, occasional fires emit 2-3, very rarely 4+.
+        # Match TerminalInterface's token-count distribution: 1 token per fire,
+        # 10% chance of an extra (compounding), capped at inference_max_new_tokens.
         import random
 
         draw = 1
         while random.random() < 0.1 and draw < self.inference_max_new_tokens:
             draw += 1
 
-        tokens: List[torch.Tensor] = []
-        # Sampling by default so an undertrained model doesn't collapse
-        # into a single repeated token for the entire sample (the
-        # pathological "5 5 5 5 5..." output under greedy decoding).
-        for tok in self.generate(
-            prompt_ids,
-            max_new_tokens=draw,
-            eos_token_id=getattr(config, "eos_token_id", None),
-            do_sample=True,
-            temperature=0.4,
-            top_k=50,
-        ):
-            tokens.append(tok)
-        if not tokens:
-            return
+        # One block's generation: encode its running text, sample `draw` tokens at
+        # the block's temperature, decode the full passage. Returns None to skip the
+        # update (encode/decode failure or empty output). Sampling (do_sample/top_k)
+        # so an undertrained model doesn't collapse into a single repeated token.
+        def _generate(prompt_text, temperature):
+            prompt_ids = self._encode_context_text(prompt_text)
+            if prompt_ids is None:
+                return None
+            tokens: List[torch.Tensor] = []
+            for tok in self.generate(
+                prompt_ids,
+                max_new_tokens=draw,
+                eos_token_id=getattr(config, "eos_token_id", None),
+                do_sample=True,
+                temperature=temperature,
+                top_k=50,
+            ):
+                tokens.append(tok)
+            if not tokens:
+                return None
+            full_ids = torch.cat([prompt_ids, torch.stack(tokens, dim=-1)], dim=-1)
+            try:
+                return self.tokenizer.decode(
+                    full_ids[0].tolist(), skip_special_tokens=False
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                print(
+                    f"[MF] Inference hook @ batch {completed_batches}: "
+                    f"<decode-failed: {exc!r}>"
+                )
+                return None
 
-        new_ids = torch.stack(tokens, dim=-1)
-        full_ids = torch.cat([prompt_ids, new_ids], dim=-1)
+        # Each block rolls its `chance` and generates at its own temperature.
+        contexts = streams.step(_generate)
+        self._log(
+            f"[MF] Inference hook @ batch {completed_batches}: {streams.primary.text!r}"
+        )
 
-        # Decode the full (prompt + continuation) sequence and feed
-        # it back into the streaming buffer. The context handles
-        # reset-on-degeneracy internally and returns True when a
-        # reset fired (for optional logging).
-        try:
-            decoded = self.tokenizer.decode(
-                full_ids[0].tolist(), skip_special_tokens=False
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            print(
-                f"[MF] Inference hook @ batch {completed_batches}: "
-                f"<decode-failed: {exc!r}>"
-            )
-            return
+        # Push every block into LiveMetrics for the web Terminal tab; the primary
+        # also feeds the back-compat status_text.
+        if self._live_metrics is not None:
+            self._live_metrics.contexts = contexts
+        self._push_live_metrics_status(streams.primary.text)
 
-        did_reset = context.update(decoded)
-        if did_reset:
-            message = (
-                f"[MF] Inference hook @ batch {completed_batches}: "
-                f"(context reset) {context.text!r}"
-            )
-        else:
-            message = (
-                f"[MF] Inference hook @ batch {completed_batches}: " f"{context.text!r}"
-            )
-        self._log(message)
+    def _ensure_context_streams(self):
+        """Lazily construct the ``ContextStreams`` (one StreamingContext per
+        temperature block) on first fire.
 
-        # Phase 6: push the growing-text buffer into LiveMetrics so
-        # the web Terminal tab's inference panel renders it. The
-        # backprop TerminalInterface pushes its own ``self.text``
-        # into ``live_metrics.status_text`` - same field here.
-        self._push_live_metrics_status(context.text)
-
-    def _ensure_inference_context(self):
-        """Lazily construct the ``StreamingContext`` on first fire.
-
-        Needs the tokenizer to be available (otherwise there's no way
-        to encode the growing text buffer back into prompt ids each
-        step). Returns ``None`` when the tokenizer is missing.
+        Needs the tokenizer to be available (otherwise there's no way to encode
+        the growing text buffer back into prompt ids each step). Returns ``None``
+        when the tokenizer is missing.
         """
-        if self._inference_context is not None:
-            return self._inference_context
+        if self._context_streams is not None:
+            return self._context_streams
         if self.tokenizer is None:
             return None
 
-        from praxis.generation import StreamingContext, random_char_seed
+        from praxis.generation import (
+            ContextStreams,
+            StreamingContext,
+            random_char_seed,
+        )
 
         # Build the list of ignored n-grams the same way the backprop
         # TerminalInterface does - special tokens shouldn't count
@@ -1964,12 +1947,19 @@ class MonoForwardTrainer:
         # Seed from the shared random-character factory rather than the
         # BOS prompt: re-rolls a real, always-decodable character on
         # each degeneracy reset, matching the backprop TerminalInterface.
-        self._inference_context = StreamingContext(
-            initial_text=random_char_seed,
-            max_length=self.inference_max_context_chars,
-            ignored_n_grams=ignored_n_grams,
-        )
-        return self._inference_context
+        def _make_streaming(block):
+            return StreamingContext(
+                initial_text=random_char_seed,
+                max_length=int(self.inference_max_context_chars * block.context_scale),
+                ignored_n_grams=ignored_n_grams,
+            )
+
+        def _count_tokens(text):
+            ids = self._encode_context_text(text)
+            return int(ids.shape[1]) if ids is not None else 0
+
+        self._context_streams = ContextStreams(_make_streaming, token_counter=_count_tokens)
+        return self._context_streams
 
     def _encode_context_text(self, text: str) -> Optional[torch.Tensor]:
         """Encode the growing text buffer into a ``[1, seq]`` id tensor."""
