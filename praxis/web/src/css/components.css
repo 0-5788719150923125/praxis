@@ -1264,15 +1264,24 @@
     z-index: 1;
 }
 
-/* Fan-down sheets (Identity) can be longer than the viewport. Cap the body to
-   ~viewport height and scroll it internally so the document never overflows the
-   deck or page; the soft top/bottom fade signals there's more to scroll. */
+/* Every deck card scrolls its own body. JS caps each card to the viewport (desktop
+   + mobile) so the deck never grows an outer scrollbar; tall content scrolls here. */
 .deck-card-scroll {
-    max-height: calc(100vh - 16rem);
     overflow-y: auto;
     overscroll-behavior: contain;
+}
+/* Fan-down sheets (Identity) fade the scroll edges to signal there's more; chart
+   cards skip the fade so chart axes/labels aren't clipped. Heights are JS-capped. */
+.deck-fan .deck-card-scroll {
     -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 1.25rem, #000 calc(100% - 1.25rem), transparent 100%);
             mask-image: linear-gradient(to bottom, transparent 0, #000 1.25rem, #000 calc(100% - 1.25rem), transparent 100%);
+}
+/* Card-switching is the ONLY outer navigation: the deck and its scroll region never
+   scroll as a whole (no page/outer scrollbar) - tall cards scroll their own body.
+   Applies on every viewport (the deck is JS-capped to fit). */
+.tab-content.active:has(.chart-deck),
+.tab-container:has(.chart-deck) {
+    overflow: hidden;
 }
 
 /* Card-switcher carousel: chart cards are stacked in place, the active one on
@@ -1298,8 +1307,8 @@
     /* top origin so scaled-down upcoming cards keep their title strip aligned
        with the raised-stack offset (rolodex preview from the top). */
     transform-origin: top center;
-    /* Motion is driven frame-by-frame from JS (1:1 drag + momentum coast); a CSS
-       ease is applied inline only for the final snap into a slot. */
+    /* Motion is driven frame-by-frame from JS (drag + momentum + lift); cards
+       never CSS-transition. */
     transition: none;
     will-change: transform, opacity;
     backface-visibility: hidden;

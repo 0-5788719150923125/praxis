@@ -294,7 +294,19 @@
         z-index: 20;
         overflow: hidden;
         contain: paint;
-        transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+        /* The deck box overlaps the title strip (lifted to the tab row) so cards can
+           ride OVER it at A. But at B the cards sit low and the strip shows through -
+           and its toggles must stay tappable. pointer-events:none lets touches in the
+           transparent regions fall through to the header beneath; the head card
+           re-enables them (JS sets pointer-events:auto on the head only), so you grab
+           the card to swipe/lift and tap the header to use its controls. */
+        pointer-events: none;
+    }
+    /* Cards drive the deck (JS narrows pointer-events to the head card); they must
+       block native pan so the JS 1:1 drag / inner-scroll owns the gesture. */
+    .chart-deck .chart-card,
+    .chart-deck .deck-card-scroll {
+        touch-action: none;
     }
     /* Cards must FULLY occlude whatever they lift over (the run selector, the
        title strip), so drop the title-row translucency on mobile - the faint
@@ -303,9 +315,6 @@
         -webkit-mask-image: none;
                 mask-image: none;
     }
-    /* Belt-and-suspenders: also clip the region so the deck can't overflow it. */
-    .tab-content.active:has(.chart-deck),
-    .tab-container:has(.chart-deck) {
-        overflow: hidden;
-    }
+    /* (The region overflow:hidden that kills the outer scrollbar is now a base rule
+       in components.css - it applies on every viewport, not just mobile.) */
 }

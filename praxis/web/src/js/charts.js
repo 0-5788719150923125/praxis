@@ -561,8 +561,10 @@ function renderMetricsCharts(data, container) {
             <div class="chart-title">${config.title}</div>
             ${config.description ? `<div class="chart-subtitle">${config.description}</div>` : ''}
             ${stepSliderHTML}
-            <div class="chart-wrapper">
-                <canvas id="${config.canvasId}"></canvas>
+            <div class="deck-card-scroll">
+                <div class="chart-wrapper">
+                    <canvas id="${config.canvasId}"></canvas>
+                </div>
             </div>
         </div>
         `;
@@ -612,21 +614,41 @@ const DECK_SNAP_VEL = 0.0009;    // cards/ms; below this the coast settles
 const DECK_SNAP_EASE = 0.2;      // per-frame approach when easing pos -> integer
 const DECK_WHEEL_SETTLE = 130;   // ms after the last wheel notch -> snap
 const DECK_FLOOR_MARGIN = 14;    // px between the floor and the screen bottom
-// A<->B anchor as a left-side C arc, driven by a spring (ramp + decay).
+// A<->B anchor: a monotonic vertical lift between the floor and the tab row.
 //   anchor 0 = card BOTTOM rests on the floor (slot B);
 //   anchor 1 = card TOP pinned just under the tab row (slot A).
-const DECK_ANCHOR_STIFF = 0.055; // spring pull toward the needed anchor (ramp)
-const DECK_ANCHOR_DAMP = 0.80;   // spring damping (decay)
-const DECK_BOW = 24;             // px the head bows left at mid-transition (the C)
-const DECK_SCALE_DIP = 0.06;     // head shrink at mid-transition (odometer roll)
+const DECK_ANCHOR_EASE = 0.22;   // per-frame approach of anchor -> target (monotonic; never overshoots)
 
 export function initChartDeck(deck, opts = {}) {
     if (typeof deck === 'string') deck = document.getElementById(deck);
     if (!deck) return;
     deck._fanDown = !!opts.fanDown;
+    deck._cycleDir = deck._cycleDir || 1;   // +1 forward / -1 backward; seats entering cards
+    deck.classList.toggle('deck-fan', deck._fanDown);   // fan-down sheets cap + fade their body
     const cards = Array.from(deck.querySelectorAll('.chart-card'));
     const count = cards.length;
     if (count === 0) return;
+
+    // Chart decks ship cards with no scroll body; give each a .deck-card-scroll
+    // (idempotent) so tall cards scroll internally on mobile like the fan-down sheets.
+    // Title/subtitle/toggles/number stay pinned outside; only the body content scrolls.
+    // Runs before measure; on the dynamics deck it runs before Chart.js mounts (the
+    // canvas is moved while still empty) and no-ops once wrapped, so a live canvas is
+    // never reparented.
+    if (!deck._fanDown) {
+        cards.forEach(card => {
+            if (card.querySelector(':scope > .deck-card-scroll')) return;
+            const body = document.createElement('div');
+            body.className = 'deck-card-scroll';
+            Array.from(card.children).forEach(ch => {
+                if (ch.classList.contains('chart-title') ||
+                    ch.classList.contains('chart-subtitle') ||
+                    ch.classList.contains('layer-toggles')) return;
+                body.appendChild(ch);
+            });
+            card.appendChild(body);
+        });
+    }
 
     // Number each card on its own top-right corner so the index rides with it.
     cards.forEach((card, i) => {
@@ -641,14 +663,15 @@ export function initChartDeck(deck, opts = {}) {
     });
 
     deck._cards = cards;
-    const start = Math.max(0, Math.min(deckActive[deck.id] ?? 0, count - 1));
-    deck._deck = { activeIndex: start, count };
-    deck._pos = start;
+    // Visiting order for the loop. Default is a linear loop over card index; a
+    // sort can replace this array (the loop runs over order positions, wrapping).
+    deck._order = cards.map((_, i) => i);
+    const start = (((deckActive[deck.id] ?? 0) % count) + count) % count;  // wrap-safe
+    deck._deck = { activeIndex: deck._order[start] ?? start, count };
+    deck._pos = start;   // position in order space, wraps [0, count)
     deck._raf = 0;
-    deck._anchorRAF = 0;
     deck._anchorTarget = deckAnchor[deck.id] ?? 0;   // 0 = rest on the floor (B)
     deck._anchor = deck._anchorTarget;
-    deck._anchorVel = 0;
 
     if (!deck._deckBound) {
         bindDeckEvents(deck);
@@ -684,26 +707,67 @@ function ensureVisibleLayout(deck, tries = 0) {
 function measureDeck(deck) {
     const cards = deck._cards || [];
     const mobile = isMobileDeck();
-    let bandH = 0;
+    // Clear any prior lift FIRST so the rect reads the deck's true flow top, not
+    // an already-lifted one - otherwise the lift would compound toward zero on
+    // each resize/rebuild. Desktop never lifts; clearing it keeps cross-breakpoint
+    // toggling clean.
+    deck.style.marginTop = '';
+    const top = deck.getBoundingClientRect().top;   // untransformed + unlifted -> natural flow top
+    // Floor = the bottom of the VISIBLE viewport, clamped to the scroll region. Use
+    // visualViewport (the actually-visible height, excludes the mobile URL bar) so
+    // the deck never extends below the screen.
+    const region = deck.closest('.tab-content');
+    const regionBottom = region ? region.getBoundingClientRect().bottom : window.innerHeight;
+    const visH = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+    const floorY = Math.min(window.innerHeight, regionBottom, visH) - DECK_FLOOR_MARGIN;
+    let lift = 0;
     if (mobile) {
-        const top = deck.getBoundingClientRect().top;   // deck is untransformed -> natural top
-        // Floor = screen bottom, clamped to the scroll region so the deck never
-        // spills past it (e.g. when a footer claims the bottom grid row).
-        const region = deck.closest('.tab-content');
-        const regionBottom = region ? region.getBoundingClientRect().bottom : window.innerHeight;
-        const floorY = Math.min(window.innerHeight, regionBottom) - DECK_FLOOR_MARGIN;
-        bandH = Math.max(140, Math.round(floorY - top));
-        deck._bandH = bandH;
+        // Ceiling = bottom edge of the tab row. Lift the deck's own top to the
+        // ceiling so a card pinned at slot A (headTop=0) rides OVER the per-tab
+        // title strip (cards z20 > sticky tab-header z10; contain:paint moves the
+        // clip box up with the margin). The deck is transparent, so at rest (B) -
+        // where the head sits BELOW the strip (headTop=lift) - the strip shows through.
+        const nav = (deck.closest('.app-container') || document).querySelector('.tab-nav');
+        const ceilY = nav ? nav.getBoundingClientRect().bottom : top;
+        lift = Math.max(0, Math.round(top - ceilY));
+        if (lift > 0) deck.style.marginTop = `${-lift}px`;
     }
+    const bandH = Math.max(140, Math.round(floorY - top + lift));   // ceiling -> floor
+    deck._bandH = bandH;
+    deck._lift = lift;
+    // Cap every card to the viewport so the deck NEVER grows a page/outer scrollbar -
+    // card-switching is the only outer navigation; tall content scrolls INSIDE the
+    // card. Mobile spans ceiling->floor (minus the lift); desktop grows the deck to
+    // (headH + fan), so reserve the fan's room here so the grown deck still fits.
+    const fanReserve = mobile ? 0 : Math.min(DECK_MAX_FAN, Math.max(0, cards.length - 1)) * DECK_PEEK;
+    const usableH = Math.max(140, bandH - lift - fanReserve);
     deck._cardH = cards.map(c => {
         const body = c.querySelector('.deck-card-scroll') || c;
-        body.style.maxHeight = '';                      // clear any prior cap to read natural height
-        body.style.overflowY = mobile ? 'auto' : '';
+        // Reset any prior cap/flex so we read the card's natural height.
+        c.style.maxHeight = ''; c.style.display = ''; c.style.flexDirection = '';
+        body.style.maxHeight = ''; body.style.flex = ''; body.style.minHeight = '';
+        body.style.overflowY = 'auto';
         const h = c.offsetHeight || 0;
-        if (mobile && h > bandH) body.style.maxHeight = `${bandH}px`;  // resize-to-fit + inner scroll
-        return mobile ? Math.min(h, bandH) : h;
+        if (h > usableH) {
+            // Pin the card to the usable height; the scroll body flexes to fill the
+            // space under the title and overflows -> scrolls. Letting the browser
+            // distribute the height is reliable across desktop + mobile.
+            c.style.maxHeight = `${usableH}px`;
+            if (body !== c) {
+                c.style.display = 'flex';
+                c.style.flexDirection = 'column';
+                body.style.flex = '1 1 auto';
+                body.style.minHeight = '0';
+                body.style.maxHeight = 'none';   // flex governs height; override any CSS cap
+            }
+        }
+        // _capped cards are re-sized per-frame by renderDeck: they grow from this rest
+        // (B) height to the full band as the card slots up to A (mobile only).
+        c._capped = h > usableH;
+        return Math.min(h, usableH);
     });
-    if (mobile) deck.style.height = `${bandH}px`;
+    deck._usableH = usableH;
+    if (mobile) deck.style.height = `${bandH}px`;   // desktop height = headH + fan (renderDeckDesktop)
 }
 
 // Render the deck at its current pos + anchor. Pure: cached heights + constants,
@@ -714,32 +778,27 @@ function renderDeck(deck) {
     if (!isMobileDeck()) { renderDeckDesktop(deck); return; }
 
     const cards = deck._cards;
-    const H = deck._cardH || [];
     const count = st.count;
+    const order = deck._order || cards.map((_, i) => i);
     const pos = deck._pos;
     const bandH = deck._bandH || deck.clientHeight || 0;
-    const anchor = deck._anchor;
+    const a01 = deck._anchor < 0 ? 0 : deck._anchor > 1 ? 1 : deck._anchor;
 
-    // Head height interpolated across the straddling pair, capped to the band.
-    const lo = Math.max(0, Math.min(count - 1, Math.floor(pos)));
-    const hi = Math.min(count - 1, lo + 1);
-    const f = pos - lo;
-    const headH = Math.min((H[lo] || 0) * (1 - f) + (H[hi] || 0) * f, bandH);
-    // Head top blends floor-rest (B) -> top-pin (A).
-    const headTop = (bandH - headH) * (1 - anchor);
-    // The C: head bows left and dips scale at mid-transition (odometer roll).
-    const arc = Math.sin(Math.PI * Math.max(0, Math.min(1, anchor)));
-    const headBow = -DECK_BOW * arc;
-    const headDip = 1 - DECK_SCALE_DIP * arc;
-    // The fan shows on whichever side has room: DOWN off the head when pinned at
-    // the top (A), UP off it when resting on the floor (B). It squares onto the
-    // head at mid-transition and re-fans on the far side - the 4-card fan rides
-    // the roll instead of being clipped.
-    const fanSign = 2 * anchor - 1;
+    // Head is TOP-anchored, like desktop: at rest (B) it sits just below the title
+    // strip (headTop = lift); engaging lifts it to the tab row (A, headTop = 0, over
+    // the strip). The fan always peeks DOWN off the head toward the floor, so it
+    // never rides up over the header; trailing cards fade out.
+    const headTop = (deck._lift || 0) * (1 - a01);
+    // The head's available height grows from its rest size (B, below the header) to
+    // the full band (A, over the header), so a card slotted up to A expands to
+    // min(natural, band) - removing inner scroll it doesn't need - instead of staying
+    // at its smaller B size. (Rounded + guarded so we only write on real changes.)
+    const availH = Math.round(bandH - headTop);
+    const usableH = deck._usableH || availH;
 
-    for (let i = 0; i < count; i++) {
-        const card = cards[i];
-        const delta = i - pos;
+    for (let k = 0; k < count; k++) {
+        const card = cards[order[k]];
+        const delta = cyclicDelta(k, pos, count);   // shortest path on the loop
         const a = delta < 0 ? -delta : delta;
         if (a > DECK_MAX_FAN + 1) {
             if (card.style.visibility !== 'hidden') {
@@ -750,25 +809,27 @@ function renderDeck(deck) {
         }
         const isHead = a < 0.5;
         const rank = a > DECK_MAX_FAN ? DECK_MAX_FAN : a;
-        // Fan rides the anchor: downward off the head at the top (A), upward off
-        // it at the floor (B). Previous cards (delta<0) fan the other way + fade.
-        const top = headTop + delta * DECK_PEEK * fanSign;
-        const scale = (1 - rank * DECK_SCALE_STEP) * (isHead ? headDip : 1);
-        const bow = isHead ? headBow : 0;
+        const top = headTop + delta * DECK_PEEK;   // fan DOWN; never up into the header
+        const scale = 1 - rank * DECK_SCALE_STEP;
         const opacity = delta >= 0 ? 1 : Math.max(0, 1 + delta);
+        if (card._capped) {
+            const mh = `${isHead ? availH : usableH}px`;   // head grows toward A; others stay at B size
+            if (card.style.maxHeight !== mh) card.style.maxHeight = mh;
+        }
         card.style.visibility = 'visible';
-        card.style.transform = `translate(${bow.toFixed(2)}px, ${top.toFixed(2)}px) scale(${scale.toFixed(4)})`;
+        card.style.transform = `translateY(${top.toFixed(2)}px) scale(${scale.toFixed(4)})`;
         card.style.opacity = opacity >= 1 ? '1' : opacity.toFixed(3);
         card.style.zIndex = String(100 - Math.round(rank));
         card.style.pointerEvents = isHead ? 'auto' : 'none';
     }
     deck.style.height = `${bandH}px`;
 
-    const idx = Math.round(pos);
+    const k = ((Math.round(pos) % count) + count) % count;
+    const idx = order[k];
     if (idx !== st.activeIndex) {
         st.activeIndex = idx;
-        deckActive[deck.id] = idx;
-        if (deck._fanDown) rerootFanDown(deck, idx);
+        deckActive[deck.id] = k;   // persist the order slot (wrap-safe across rebuilds)
+        seatEntering(deck, idx);
     }
 }
 
@@ -779,11 +840,12 @@ function renderDeckDesktop(deck) {
     const cards = deck._cards;
     const H = deck._cardH || [];
     const count = st.count;
+    const order = deck._order || cards.map((_, i) => i);
     const pos = deck._pos;
 
-    for (let i = 0; i < count; i++) {
-        const card = cards[i];
-        const delta = i - pos;
+    for (let k = 0; k < count; k++) {
+        const card = cards[order[k]];
+        const delta = cyclicDelta(k, pos, count);
         const a = delta < 0 ? -delta : delta;
         if (a > DECK_MAX_FAN + 1) {
             if (card.style.visibility !== 'hidden') {
@@ -802,54 +864,85 @@ function renderDeckDesktop(deck) {
         card.style.zIndex = String(100 - Math.round(capped));
         card.style.pointerEvents = a < 0.5 ? 'auto' : 'none';
     }
-    const lo = Math.max(0, Math.min(count - 1, Math.floor(pos)));
-    const hi = Math.min(count - 1, lo + 1);
-    const f = pos - lo;
-    const headH = (H[lo] || 0) * (1 - f) + (H[hi] || 0) * f;
-    const below = Math.max(0, Math.min(DECK_MAX_FAN, (count - 1) - pos));
+    const k0 = ((Math.floor(pos) % count) + count) % count;
+    const k1 = (k0 + 1) % count;
+    const f = pos - Math.floor(pos);
+    const headH = (H[order[k0]] || 0) * (1 - f) + (H[order[k1]] || 0) * f;
+    const below = Math.min(DECK_MAX_FAN, count - 1);   // the loop always has a fan below
     deck.style.height = `${(headH + below * DECK_PEEK).toFixed(1)}px`;
 
-    const idx = Math.round(pos);
+    const k = ((Math.round(pos) % count) + count) % count;
+    const idx = order[k];
     if (idx !== st.activeIndex) {
         st.activeIndex = idx;
-        deckActive[deck.id] = idx;
-        if (deck._fanDown) rerootFanDown(deck, idx);
+        deckActive[deck.id] = k;
+        if (deck._fanDown) seatEntering(deck, idx);
     }
 }
 
-// Fan-down sheets are long: when a new sheet becomes active, open it from the
-// top so it doesn't appear mid-document with only its tail in view.
-function rerootFanDown(deck, idx) {
-    const sc = deck.closest('.tab-content');
-    if (sc && sc.scrollTop !== 0) sc.scrollTop = 0;
-    const body = deck._cards[idx] && deck._cards[idx].querySelector('.deck-card-scroll');
-    if (body) body.scrollTop = 0;
+// Seat a newly-active card's scroll body on the edge it enters from: the TOP when
+// advancing forward, the BOTTOM when going backward, so reverse scrolling flows up
+// through the previous card instead of jumping to its top. Runs once per slot
+// crossing (not per frame), so the scrollHeight read here is off the hot path.
+function seatEntering(deck, idx) {
+    const card = deck._cards[idx];
+    if (!card) return;
+    if (deck._fanDown) {
+        // Fan-down sheets live in a scrollable tab-content (desktop); pin it to the
+        // top. Mobile deck tabs are overflow:hidden, so this is a no-op there.
+        const sc = deck.closest('.tab-content');
+        if (sc && sc.scrollTop !== 0) sc.scrollTop = 0;
+    }
+    const body = card.querySelector('.deck-card-scroll') || card;
+    body.scrollTop = deck._cycleDir < 0 ? body.scrollHeight : 0;
+}
+
+// Shortest signed distance from order-slot k to pos on the loop (in [-n/2, n/2]).
+function cyclicDelta(k, pos, n) {
+    if (n <= 1) return k - pos;
+    let d = (k - pos) % n;
+    if (d > n / 2) d -= n;
+    else if (d < -n / 2) d += n;
+    return d;
 }
 
 function setPos(deck, p) {
-    deck._pos = Math.max(0, Math.min(deck._deck.count - 1, p));
+    const n = deck._deck.count;
+    deck._pos = n > 0 ? ((p % n) + n) % n : 0;   // wrap: the loop has no ends
     renderDeck(deck);
 }
 
 function cancelMomentum(deck) {
-    if (deck._raf) { cancelAnimationFrame(deck._raf); deck._raf = 0; }
+    deck._posMode = null;   // halt pos motion; the shared rAF keeps any anchor lift alive
+    deck._posVel = 0;
+}
+
+function isMobileDeck() {
+    return typeof window !== 'undefined' && window.innerWidth <= 768;
 }
 
 // pos motion: free coast under friction, then ease into the nearest integer.
-// On final settle the anchor is released to B so the card rolls down to rest.
+// The anchor (A/B) is independent and set by gesture direction, not by the settle.
 function startMomentum(deck, vel) {
-    cancelMomentum(deck);
     deck._posVel = vel;
     deck._posMode = 'coast';
-    runPosRAF(deck);
+    runDeckRAF(deck);
 }
 function easePos(deck, target) {
-    cancelMomentum(deck);
-    deck._posTarget = Math.max(0, Math.min(target, deck._deck.count - 1));
+    const n = deck._deck.count;
+    deck._posTarget = n > 0 ? ((target % n) + n) % n : 0;
     deck._posMode = 'ease';
-    runPosRAF(deck);
+    runDeckRAF(deck);
 }
-function runPosRAF(deck) {
+
+// ── One rAF drives both axes ────────────────────────────────────────────────
+// A single loop advances pos (coast under friction, then ease into the nearest
+// slot) and, on mobile, eases the anchor toward its target (0 = floor/B, 1 =
+// top/A). Both are monotonic first-order eases, so neither overshoots; cards
+// render transition-free, so nothing fights a CSS transition. The loop runs
+// while either axis is moving and stops itself when both rest. Pure style
+// writes, no layout reads -> no forced reflow.
+function runDeckRAF(deck) {
     if (deck._raf) return;
     let last = 0;
     const tick = (t) => {
@@ -857,73 +950,58 @@ function runPosRAF(deck) {
         if (!last) last = t;
         let dt = t - last; last = t;
         if (dt > 32) dt = 32;
+        const k = dt / 16.67;
+        const n = deck._deck.count;
+        const wrap = p => n > 0 ? ((p % n) + n) % n : 0;
+        let moving = false;
+
         if (deck._posMode === 'coast') {
             deck._posVel *= Math.exp(-dt / DECK_FRICTION_TAU);
-            setPos(deck, deck._pos + deck._posVel * dt);
-            const atBound = deck._pos <= 0 || deck._pos >= deck._deck.count - 1;
-            if (Math.abs(deck._posVel) <= DECK_SNAP_VEL || atBound) {
+            deck._cycleDir = deck._posVel > 0 ? 1 : -1;   // seat entering cards during the fling
+            deck._pos = wrap(deck._pos + deck._posVel * dt);   // wraps; the loop has no ends
+            if (Math.abs(deck._posVel) <= DECK_SNAP_VEL) {
                 deck._posMode = 'ease';
-                deck._posTarget = Math.max(0, Math.min(Math.round(deck._pos), deck._deck.count - 1));
+                deck._posTarget = wrap(Math.round(deck._pos));
+            } else {
+                moving = true;
             }
         }
         if (deck._posMode === 'ease') {
-            const k = dt / 16.67;
-            const d = deck._posTarget - deck._pos;
+            const d = cyclicDelta(deck._posTarget, deck._pos, n);   // shortest path to the slot
             if (Math.abs(d) < 0.002) {
-                setPos(deck, deck._posTarget);
-                deck._raf = 0;
-                deck._deck.activeIndex = deck._posTarget;
-                deckActive[deck.id] = deck._posTarget;
-                setAnchor(deck, 0);   // settled: roll the card down to rest on the floor
-                return;
+                deck._pos = deck._posTarget;
+                deck._posMode = null;   // anchor persists; A/B is set by gesture direction, not reset on settle
+            } else {
+                deck._cycleDir = d >= 0 ? 1 : -1;   // seat entering cards toward the snap target
+                deck._pos = wrap(deck._pos + d * (1 - Math.pow(1 - DECK_SNAP_EASE, k)));
+                moving = true;
             }
-            setPos(deck, deck._pos + d * (1 - Math.pow(1 - DECK_SNAP_EASE, k)));
         }
-        deck._raf = requestAnimationFrame(tick);
+
+        if (isMobileDeck()) {
+            const da = deck._anchorTarget - deck._anchor;
+            if (Math.abs(da) < 0.002) {
+                deck._anchor = deck._anchorTarget;
+            } else {
+                deck._anchor += da * (1 - Math.pow(1 - DECK_ANCHOR_EASE, k));   // monotonic; no overshoot
+                moving = true;
+            }
+        }
+
+        renderDeck(deck);
+        deck._raf = moving ? requestAnimationFrame(tick) : 0;
     };
     deck._raf = requestAnimationFrame(tick);
 }
 
-// ── Anchor (A<->B) spring ───────────────────────────────────────────────────
-// A separate rAF springs deck._anchor toward the "needed" target (0 = floor/B,
-// 1 = top/A) with a ramp (stiffness) and decay (damping). It is the only thing
-// that drives the C arc; pos cycling is independent, and both render the same
-// transition-free cards, so the curves never fight a CSS transition.
-function isMobileDeck() {
-    return typeof window !== 'undefined' && window.innerWidth <= 768;
-}
-function stepAnchor(deck) {
-    if (deck._anchorRAF) return;
-    let last = 0;
-    const tick = (t) => {
-        if (!deck.isConnected || !deck._deck) { deck._anchorRAF = 0; return; }
-        if (!last) last = t;
-        let dt = t - last; last = t;
-        if (dt > 32) dt = 32;
-        const k = dt / 16.67;
-        const target = deck._anchorTarget;
-        deck._anchorVel = (deck._anchorVel + (target - deck._anchor) * DECK_ANCHOR_STIFF) * Math.pow(DECK_ANCHOR_DAMP, k);
-        deck._anchor += deck._anchorVel * k;
-        if (Math.abs(target - deck._anchor) < 0.0015 && Math.abs(deck._anchorVel) < 0.0015) {
-            deck._anchor = target;
-            deck._anchorVel = 0;
-            deck._anchorRAF = 0;
-            renderDeck(deck);
-            return;
-        }
-        renderDeck(deck);
-        deck._anchorRAF = requestAnimationFrame(tick);
-    };
-    deck._anchorRAF = requestAnimationFrame(tick);
-}
 // "needed" anchor flip. Desktop stays pinned to the top (no floor model).
 function setAnchor(deck, target) {
     if (!isMobileDeck()) { deck._anchor = deck._anchorTarget = 1; return; }
     target = target ? 1 : 0;
     deckAnchor[deck.id] = target;
-    if (deck._anchorTarget === target && !deck._anchorRAF) return;
+    if (deck._anchorTarget === target && deck._anchor === target) return;
     deck._anchorTarget = target;
-    stepAnchor(deck);
+    runDeckRAF(deck);
 }
 
 function bindDeckEvents(deck) {
@@ -932,39 +1010,46 @@ function bindDeckEvents(deck) {
         const st = deck._deck;
         if (!st) return;
         const dir = e.deltaY > 0 ? 1 : -1;
+        const body = deck._cards[st.activeIndex] && deck._cards[st.activeIndex].querySelector('.deck-card-scroll');
+        const roomIn = b => !b ? 0 : (dir > 0 ? b.scrollHeight - b.clientHeight - b.scrollTop : b.scrollTop);
 
-        // Fan-down: scroll the focused sheet's own body first; only fall through
-        // to cycling once it's at its top/bottom edge.
-        if (deck._fanDown) {
-            const body = deck._cards[st.activeIndex] && deck._cards[st.activeIndex].querySelector('.deck-card-scroll');
-            if (body) {
-                const canDown = body.scrollTop + body.clientHeight < body.scrollHeight - 1;
-                const canUp = body.scrollTop > 0;
-                if ((dir > 0 && canDown) || (dir < 0 && canUp)) {
-                    body.scrollTop += e.deltaY;
-                    setAnchor(deck, 1);
-                    e.preventDefault();
-                    return;
-                }
-            }
+        // A wheel "session" runs until DECK_WHEEL_SETTLE ms after the last notch
+        // (deck._wheelT pending = session live). Lock it to scroll or cycle on its
+        // FIRST notch by whether the focused card can scroll in this direction, so a
+        // scroll session reaches the card's edge and STOPS - it never bleeds into
+        // cycling. Re-wheel from the edge to cycle.
+        if (!deck._wheelT) {
+            deck._wheelMode = roomIn(body) > 1 ? 'scroll' : 'cycle';
         }
-        const atEnd = (dir > 0 && deck._pos >= st.count - 1) ||
-                      (dir < 0 && deck._pos <= 0);
-        if (atEnd) return;
+
+        if (deck._wheelMode === 'scroll' && body) {
+            const room = roomIn(body);
+            if (room > 0) body.scrollTop += Math.sign(e.deltaY) * Math.min(Math.abs(e.deltaY), room);
+            setAnchor(deck, dir > 0 ? 1 : 0);   // forward lifts (A), backward reveals header (B)
+            e.preventDefault();
+            clearTimeout(deck._wheelT);
+            deck._wheelT = setTimeout(() => { deck._wheelT = 0; }, DECK_WHEEL_SETTLE);
+            return;
+        }
+
         e.preventDefault();
         cancelMomentum(deck);
-        setAnchor(deck, 1);   // engaged: lift toward the top
-        setPos(deck, deck._pos + e.deltaY / DECK_WHEEL_STEP);
+        setAnchor(deck, dir > 0 ? 1 : 0);   // forward lifts to A, backward drops to B
+        deck._cycleDir = dir;   // set before pos crosses so the entering card seats right
+        setPos(deck, deck._pos + e.deltaY / DECK_WHEEL_STEP);   // wraps; loops past the ends
         clearTimeout(deck._wheelT);
-        deck._wheelT = setTimeout(() => easePos(deck, Math.round(deck._pos)), DECK_WHEEL_SETTLE);
+        deck._wheelT = setTimeout(() => { easePos(deck, Math.round(deck._pos)); deck._wheelT = 0; }, DECK_WHEEL_SETTLE);
     }, { passive: false });
 
-    // ── Touch: 1:1 drag, release -> momentum -> snap; anchor springs alongside ──
-    let dragging = false, lastY = 0, lastT = 0, vel = 0, travel = 0;
+    // ── Touch: 1:1 drag, release -> momentum -> snap; anchor eases alongside ──
+    // gestureMode locks each drag to scroll-the-card OR cycle-the-deck on its first
+    // move, so a scroll reaches the card's edge and stops instead of cycling early.
+    let dragging = false, lastY = 0, lastT = 0, vel = 0, travel = 0, gestureMode = null;
     deck.addEventListener('touchstart', (e) => {
         cancelMomentum(deck);
-        clearTimeout(deck._wheelT);
+        clearTimeout(deck._wheelT); deck._wheelT = 0;
         dragging = true;
+        gestureMode = null;
         lastY = e.touches[0].clientY;
         lastT = e.timeStamp;
         vel = 0;
@@ -980,36 +1065,30 @@ function bindDeckEvents(deck) {
         lastY = y;
         if (dy === 0) return;
         travel += dy < 0 ? -dy : dy;
+        const dir = dy > 0 ? 1 : -1;
+        deck._cycleDir = dir;   // set before any pos cross so the entering card seats right
+        const body = deck._cards[st.activeIndex] && deck._cards[st.activeIndex].querySelector('.deck-card-scroll');
+        const roomIn = b => !b ? 0 : (dir > 0 ? b.scrollHeight - b.clientHeight - b.scrollTop : b.scrollTop);
 
-        // Fan-down: drive the focused sheet's own scroll first; surplus cycles.
-        if (deck._fanDown) {
-            const body = deck._cards[st.activeIndex] && deck._cards[st.activeIndex].querySelector('.deck-card-scroll');
-            if (body) {
-                const dir = dy > 0 ? 1 : -1;
-                const room = dir > 0
-                    ? (body.scrollHeight - body.clientHeight) - body.scrollTop
-                    : body.scrollTop;
-                if (room > 0) {
-                    const used = Math.min(Math.abs(dy), room);
-                    body.scrollTop += dir * used;
-                    setAnchor(deck, 1);
-                    e.preventDefault();
-                    dy -= dir * used;
-                    if (Math.abs(dy) < 1) { lastT = e.timeStamp; return; }
-                }
-            }
+        // Lock the gesture on its first move: if the focused card can scroll in this
+        // direction it's a SCROLL gesture (reaches the edge and stops, never cycles);
+        // otherwise it CYCLES. Backward at the body top still cycles to the previous
+        // card (entered at its bottom).
+        if (gestureMode === null) {
+            gestureMode = roomIn(body) > 1 ? 'scroll' : 'cycle';
         }
 
-        const atEnd = (dy > 0 && deck._pos >= st.count - 1) ||
-                      (dy < 0 && deck._pos <= 0);
-        if (atEnd) {
-            if (dy < 0 && deck._pos <= 0) e.preventDefault();  // swallow pull-to-refresh
+        if (gestureMode === 'scroll') {
+            const room = roomIn(body);
+            if (room > 0) body.scrollTop += dir * Math.min(Math.abs(dy), room);
+            setAnchor(deck, dir > 0 ? 1 : 0);   // forward lifts (A), backward reveals header (B)
+            e.preventDefault();
             lastT = e.timeStamp;
-            vel = 0;
             return;
         }
-        e.preventDefault();
-        if (travel > 6) setAnchor(deck, 1);   // a real swipe: lift the card up (A)
+
+        e.preventDefault();   // the loop has no ends; every swipe cycles + wraps
+        if (travel > 6) setAnchor(deck, dir > 0 ? 1 : 0);   // forward swipe lifts to A, backward drops to B
         setPos(deck, deck._pos + dy / DECK_SWIPE_STEP);
         const dt = Math.max(1, e.timeStamp - lastT);
         vel = (dy / DECK_SWIPE_STEP) / dt;   // cards per ms
@@ -1019,7 +1098,9 @@ function bindDeckEvents(deck) {
     deck.addEventListener('touchend', () => {
         if (!dragging) return;
         dragging = false;
-        if (travel < 6) return;        // a tap, not a swipe - leave pos/anchor alone
+        const mode = gestureMode; gestureMode = null;
+        if (mode === 'scroll') return;   // a scroll gesture never coasts the deck into a cycle
+        if (travel < 6) return;          // a tap, not a swipe - leave pos/anchor alone
         if (Math.abs(vel) > DECK_SNAP_VEL) startMomentum(deck, vel);
         else easePos(deck, Math.round(deck._pos));
     }, { passive: true });
@@ -1048,11 +1129,10 @@ function onDeckKeydown(e) {
     if (e.key === 'ArrowDown') target = cur + 1;
     else if (e.key === 'ArrowUp') target = cur - 1;
     else return;
-    target = Math.max(0, Math.min(target, deck._deck.count - 1));
-    if (target === cur) return;
     e.preventDefault();
-    setAnchor(deck, 1);
-    easePos(deck, target);
+    deck._cycleDir = (e.key === 'ArrowDown') ? 1 : -1;
+    setAnchor(deck, deck._cycleDir > 0 ? 1 : 0);   // ArrowDown lifts to A, ArrowUp drops to B
+    easePos(deck, target);   // wraps at the ends
 }
 
 /**

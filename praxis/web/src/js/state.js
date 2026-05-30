@@ -58,7 +58,7 @@ export const state = {
         },
         {
             id: 'agents',
-            label: 'Agency',
+            label: 'Stage',
             active: false,
             containerClass: 'agents-container',
             customClasses: [],
