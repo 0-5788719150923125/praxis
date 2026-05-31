@@ -838,9 +838,9 @@ function renderDeck(deck) {
         const rank = a > DECK_MAX_FAN ? DECK_MAX_FAN : a;
         const top = headTop + delta * DECK_PEEK;   // fan DOWN; never up into the header
         const scale = 1 - rank * DECK_SCALE_STEP;
-        // Symmetric falloff: the head fades out as it leaves in EITHER direction
-        // while the arriving card fades in - a true crossfade, not a one-sided ghost.
-        const opacity = Math.max(0, 1 - a);
+        // Downward fan: upcoming cards (delta >= 0) stay opaque and peek below the
+        // head as a preview; the passed card (delta < 0) fades out as it leaves.
+        const opacity = delta >= 0 ? 1 : Math.max(0, 1 + delta);
         // transform + opacity change every frame; the rest flip only on boundary
         // crossings, so write them on-change only (cuts ~70% of the per-frame writes).
         card.style.transform = `translateY(${top.toFixed(2)}px) scale(${scale.toFixed(4)})`;
@@ -866,8 +866,11 @@ function renderDeck(deck) {
     }
 }
 
-// Desktop: top-anchored fan that peeks downward; the deck grows to fit. No
-// floor/anchor model (that's the mobile, in-viewport treatment).
+// Desktop: floor-anchored UPWARD fan (rolodex / file cabinet). Every head plants
+// its bottom on a fixed floor, so cards of different heights share one baseline;
+// upcoming cards peek their tops UP above the head, and the leaving card sinks
+// below the floor and fades. The deck height is constant (tallest card + fan), so
+// cycling never reflows the page.
 function renderDeckDesktop(deck) {
     const st = deck._deck;
     const cards = deck._cards;
@@ -875,6 +878,18 @@ function renderDeckDesktop(deck) {
     const count = st.count;
     const order = deck._order || cards.map((_, i) => i);
     const pos = deck._pos;
+
+    const below = Math.min(DECK_MAX_FAN, count - 1);   // cards fanned above the head
+    // Interpolated head height (between the two cards pos straddles) - the head's
+    // top rides up/down with it while its bottom stays planted on the floor.
+    const k0 = ((Math.floor(pos) % count) + count) % count;
+    const k1 = (k0 + 1) % count;
+    const f = pos - Math.floor(pos);
+    const headH = (H[order[k0]] || 0) * (1 - f) + (H[order[k1]] || 0) * f;
+    let maxH = 0;
+    for (let i = 0; i < count; i++) if (H[i] > maxH) maxH = H[i];
+    const floor = maxH + below * DECK_PEEK;   // fixed baseline; fan room reserved above
+    const headTop = floor - headH;            // head bottom sits on the floor
 
     for (let k = 0; k < count; k++) {
         const card = cards[order[k]];
@@ -886,11 +901,11 @@ function renderDeckDesktop(deck) {
             continue;
         }
         const capped = a > DECK_MAX_FAN ? DECK_MAX_FAN : a;
-        const y = delta * DECK_PEEK;
+        // Upcoming cards (delta > 0) lift UP off the floor to peek above the head;
+        // passed cards (delta < 0) drop below and fade out (the leaving ghost).
+        const y = headTop - delta * DECK_PEEK;
         const scale = 1 - capped * DECK_SCALE_STEP;
-        // Symmetric crossfade (see renderDeck): fade with absolute distance so the
-        // outgoing card ghosts away the same way in both scroll directions.
-        const opacity = Math.max(0, 1 - a);
+        const opacity = delta >= 0 ? 1 : Math.max(0, 1 + delta);
         card.style.transform = `translateY(${y.toFixed(2)}px) scale(${scale.toFixed(4)})`;
         card.style.opacity = opacity >= 1 ? '1' : opacity.toFixed(3);
         if (card._vis !== 'v') { card.style.visibility = 'visible'; card._vis = 'v'; }
@@ -899,12 +914,7 @@ function renderDeckDesktop(deck) {
         const pe = a < 0.5 ? 'auto' : 'none';
         if (card._pe !== pe) { card.style.pointerEvents = pe; card._pe = pe; }
     }
-    const k0 = ((Math.floor(pos) % count) + count) % count;
-    const k1 = (k0 + 1) % count;
-    const f = pos - Math.floor(pos);
-    const headH = (H[order[k0]] || 0) * (1 - f) + (H[order[k1]] || 0) * f;
-    const below = Math.min(DECK_MAX_FAN, count - 1);   // the loop always has a fan below
-    deck.style.height = `${(headH + below * DECK_PEEK).toFixed(1)}px`;
+    if (deck._h !== floor) { deck.style.height = `${floor.toFixed(1)}px`; deck._h = floor; }
 
     const k = ((Math.round(pos) % count) + count) % count;
     const idx = order[k];
