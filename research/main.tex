@@ -268,19 +268,19 @@ We began with scale and ended with geometry. The patterns a model can learn are 
 \emph{This appendix is generated.} The figure is built from training logs by \texttt{tools/export\_runs.py}; the paper itself is a template the tool populates. The chart leads with the most recently launched experiment that has logged validation data, and fixes the y-metric to that run's family - here \paperMetricName{} (\texttt{\paperMetricKey}), as of the last export (\paperUpdated). Only experiments that report the \emph{same} metric are drawn alongside it; the rest are listed as omitted below. This is the smallest living slice of the document: one metric, the current experiment against its compatible predecessors.
 
 \ifx\paperCurrentNote\empty\else
-\par\smallskip\noindent\emph{Note:} \paperCurrentNote
+    \par\smallskip\noindent\emph{Note:} \paperCurrentNote
 \fi
 
 \begin{figure}[h]
     \centering
     \begin{tikzpicture}
         \begin{axis}[
-            width=0.86\linewidth, height=6cm,
-            xlabel={Training step}, ylabel={\paperMetricYlabel},
-            legend pos=north east, grid=both, grid style={gray!18},
-            tick label style={font=\footnotesize}, label style={font=\small},
-            legend style={font=\footnotesize, fill opacity=0.85},
-        ]
+                width=0.86\linewidth, height=6cm,
+                xlabel={Training step}, ylabel={\paperMetricYlabel},
+                legend pos=north east, grid=both, grid style={gray!18},
+                tick label style={font=\footnotesize}, label style={font=\small},
+                legend style={font=\footnotesize, fill opacity=0.85},
+            ]
             \paperValPlots
         \end{axis}
     \end{tikzpicture}
@@ -290,11 +290,11 @@ We began with scale and ended with geometry. The patterns a model can learn are 
 
 The current experiment, \runOneName{} (\texttt{\runOneHash}), reached \paperMetricName{} \runOneFinal{} by step \runOneSteps{}. Recent experiments whose families report a different validation metric are omitted rather than plotted on an incomparable axis: \paperSkipped{}.
 
-    % Ensure bibliography data is written even if some tools don't see citations
-    \nocite{*}
-    {\small
-        \bibliographystyle{plain}
-        \bibliography{citations}
-    }
+% Ensure bibliography data is written even if some tools don't see citations
+\nocite{*}
+{\small
+    \bibliographystyle{plain}
+    \bibliography{citations}
+}
 
 \end{document}
