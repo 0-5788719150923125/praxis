@@ -866,11 +866,10 @@ function renderDeck(deck) {
     }
 }
 
-// Desktop: floor-anchored UPWARD fan (rolodex / file cabinet). Every head plants
-// its bottom on a fixed floor, so cards of different heights share one baseline;
-// upcoming cards peek their tops UP above the head, and the leaving card sinks
-// below the floor and fades. The deck height is constant (tallest card + fan), so
-// cycling never reflows the page.
+// Desktop: UPWARD fan (rolodex / file cabinet). The title rides a fixed track so it
+// never bounces with card size; the head's base rests on the floor (the deck bottom
+// follows the head height). Upcoming cards peek their tops UP above the head, and the
+// leaving card sinks below and fades.
 function renderDeckDesktop(deck) {
     const st = deck._deck;
     const cards = deck._cards;
@@ -880,16 +879,15 @@ function renderDeckDesktop(deck) {
     const pos = deck._pos;
 
     const below = Math.min(DECK_MAX_FAN, count - 1);   // cards fanned above the head
-    // Interpolated head height (between the two cards pos straddles) - the head's
-    // top rides up/down with it while its bottom stays planted on the floor.
+    // The title rides a FIXED track: headTop never depends on card height, so it
+    // doesn't bounce as differently-sized cards take the head. The deck bottom then
+    // hugs the interpolated head height, so the head still rests its base on the floor.
+    const headTop = below * DECK_PEEK;                  // constant fan reserve above
     const k0 = ((Math.floor(pos) % count) + count) % count;
     const k1 = (k0 + 1) % count;
     const f = pos - Math.floor(pos);
     const headH = (H[order[k0]] || 0) * (1 - f) + (H[order[k1]] || 0) * f;
-    let maxH = 0;
-    for (let i = 0; i < count; i++) if (H[i] > maxH) maxH = H[i];
-    const floor = maxH + below * DECK_PEEK;   // fixed baseline; fan room reserved above
-    const headTop = floor - headH;            // head bottom sits on the floor
+    const floor = headTop + headH;                     // head base sits on the floor
 
     for (let k = 0; k < count; k++) {
         const card = cards[order[k]];
