@@ -82,7 +82,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--residual-type` | str | `standard` | The style of residual connection to use (choices: standard, hyper) |
 | `--router-type` | str | `None` | How to route tokens at every layer (choices: mixture_of_depths, mixture_of_depths_u, mixture_of_depths_decayed, mixture_of_depths_ramped, mixture_of_depths_skip_2, smear, distance, prismatic, taxus, taxus_aggressive, taxus_balanced) |
 | `--scaled` | bool | `False` | Scale the output of each layer by the inverse square root of its depth |
-| `--sorting-type` | str | `none` | The type of feature sorting to use (choices: none, native, sinkhorn) |
+| `--sorting-type` | str | `none` | The type of feature sorting to use (choices: none, amplitude_field, decay_bias, native, sinkhorn) |
 | `--stickbreaking` | bool | `False` | Use a Stickbreaking Attention mechanism |
 | `--target-batch-size` | int | `256` | The actual batch size to use, including accumulation steps |
 | `--tie-weights` | bool | `False` | Tie embedding and output projection weights to reduce parameters |

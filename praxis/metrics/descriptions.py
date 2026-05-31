@@ -109,4 +109,8 @@ def get_metric_descriptions(model: Any) -> Dict[str, Dict[str, Any]]:
     out: Dict[str, Dict[str, Any]] = {}
     for raw in _candidates(model):
         out.update(_collect_from(raw))
+    # Optimizer telemetry is universal (not model-attached); always include it.
+    from praxis.metrics.optimizer import OPTIMIZER_METRIC_DESCRIPTIONS
+
+    out.update(_collect_from(OPTIMIZER_METRIC_DESCRIPTIONS))
     return out

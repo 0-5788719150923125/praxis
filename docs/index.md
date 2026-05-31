@@ -24,7 +24,7 @@ links to a page listing the registered implementations and their source.
 - [Residual connections](residuals.md) (2) - Standard residuals vs. hyper-connections.
 - [RL policies](policies.md) (4) - Reinforcement-learning policy losses (REINFORCE, GRPO, ...) for post-training.
 - [Sequence compression](compression.md) (3) - Strategies for reducing sequence length between layers.
-- [Sequence sorting](sorting.md) (3) - Optional reordering operations applied to the sequence.
+- [Sequence sorting](sorting.md) (5) - Optional reordering operations applied to the sequence.
 - [Token embeddings](embeddings.md) (13) - Input embedding layers, paired with the corresponding block type.
 - [Token routers](routers.md) (11) - Token-routing mechanisms, including the Mixture-of-Depths family that skips a fraction of tokens per layer.
 - [Training strategies](strategies.md) (4) - Multi-task / task-weighting strategies used by the trainer.

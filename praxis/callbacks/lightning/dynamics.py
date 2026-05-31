@@ -55,6 +55,10 @@ class DynamicsLoggerCallback(Callback):
             # Universal dynamics: per-layer gradient flow (always available)
             dynamics.update(self._extract_layer_dynamics(model, optimizer))
 
+            # Optimizer-state telemetry (lr, update size, momentum/grad cosine,
+            # Adam SNR + second moment, schedule-free spread + gate).
+            dynamics.update(self._extract_optimizer_dynamics(optimizer))
+
             # Expert dynamics: per-expert gradients (only when routers exist)
             dynamics.update(self._extract_expert_dynamics(model))
 
@@ -131,6 +135,18 @@ class DynamicsLoggerCallback(Callback):
                     dynamics[f"layer_{layer_idx}_{key}"] = value
 
         return dynamics
+
+    def _extract_optimizer_dynamics(self, optimizer) -> dict:
+        """Optimizer-state telemetry; owns its computation + chart hints in
+        :mod:`praxis.metrics.optimizer`. Wrapped so a buggy read can't take
+        down dynamics logging."""
+        try:
+            from praxis.metrics.optimizer import extract_optimizer_dynamics
+
+            return extract_optimizer_dynamics(optimizer)
+        except Exception as e:
+            print(f"[DynamicsLogger] optimizer dynamics failed: {e}")
+            return {}
 
     def _extract_expert_dynamics(self, model) -> dict:
         """Extract per-expert gradient dynamics from routers (Prismatic/SMEAR).

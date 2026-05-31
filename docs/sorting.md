@@ -3,7 +3,36 @@
 
 Optional reordering operations applied to the sequence.
 
-Registry: ``praxis.SORTING_REGISTRY`` (3 entries)
+Registry: ``praxis.SORTING_REGISTRY`` (5 entries)
+
+## `amplitude_field` - AmplitudeFieldSort
+
+Amplitude modulation coupled through BOTH axes (sequence and feature).
+
+Two complementary, norm-surviving components, identity at init:
+
+* additive positional decay bias (sequence): ``+ g(t)*v``, ``g(t)=1-t/T`` -
+  strong absolute-position shaping on the oldest context, ~0 at the tail
+  (same as ``decay_bias``; additive, so a per-position norm can't divide it
+  out, and the predictive tail keeps its content).
+* multiplicative per-feature frequency modulation (feature x sequence):
+  ``* (1 + ...
+
+Source: [praxis/sorting/amplitude.py:14](../praxis/sorting/amplitude.py#L14)
+
+## `decay_bias` - DecayBiasSort
+
+Additive rank-1 positional bias with a tail-decay amplitude envelope.
+
+Not a sort - a differentiable positional bias that reuses the sorting slot. Adds ``g(t)
+* v`` to each position, where ``v`` is a learnable ``[H]`` bias direction (zero-init, so
+it starts as identity) and ``g(t) = 1 - t/T`` is a monotone decay: strong bias on the
+oldest context (head), fading to ~0 at the tail so the recent, predictive tokens stay
+closest to their raw form.
+
+Why additive: unlike a scalar amplitude scale ...
+
+Source: [praxis/sorting/decay.py:7](../praxis/sorting/decay.py#L7)
 
 ## `native` - NativeSort
 
