@@ -346,3 +346,15 @@
     /* (The region overflow:hidden that kills the outer scrollbar is now a base rule
        in components.css - it applies on every viewport, not just mobile.) */
 }
+
+/* Reclaim system-prompt width on mobile: let the header actions wrap so the
+   Settings button keeps the top row and the icon buttons (bell, theme, donation)
+   drop beneath it, instead of all four crowding to the left of Settings. */
+@media (max-width: 768px) {
+    /* Collapse Settings to its gear icon so the action cluster is icon-width,
+       leaving the system prompt the rest of the row. */
+    .settings-button {
+        font-size: 0;
+        gap: 0;
+    }
+}
