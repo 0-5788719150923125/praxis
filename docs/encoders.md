@@ -41,7 +41,7 @@ CALM autoencoder + energy head, plugged into the encoder slot.
 
 The encoder owns its loss bookkeeping; see ``handles_loss``.
 
-Source: [praxis/encoders/calm/encoder.py:49](../praxis/encoders/calm/encoder.py#L49)
+Source: [praxis/encoders/calm/encoder.py:62](../praxis/encoders/calm/encoder.py#L62)
 
 Presets:
 - `calm` - `ae_dropout=0.15, ae_hidden=512, chunk_size=8, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=128, noise_dim=128`

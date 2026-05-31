@@ -659,13 +659,18 @@ const DECK_SCALE_STEP = 0.045;   // scale shrink per rank behind the head
 const DECK_MAX_FAN = 3;          // cards drawn behind the head
 const DECK_MIN_CHART_H = 192;    // px; smallest a chart shrinks to under mobile pressure (keeps it readable)
 const DECK_SWIPE_STEP = 70;      // finger px that advance one card (1:1 during the drag)
+const DECK_DROP_THRESHOLD = 96;  // px of SUSTAINED downward pull before the deck drops to B
+                                 // (reveals the header). Higher = harder to trigger by accident.
+const DECK_SEAM = 88;            // finger px to flip one card AT the content edge (the "seam").
+                                 // Eased slow-fast-slow so it pauses at the content end + anchor.
+const DECK_SEAM_FLING = 0.5;     // px/ms finger speed that commits a partial seam on release
+const DECK_FLICK_VEL = 0.85;     // px/ms; a swipe this fast advances the carousel even if the
+                                 // card still has scroll room (so a long card never blocks nav)
 const DECK_WHEEL_STEP = 120;     // wheel px that advance one card
 // Release motion: NO free coast. The release projects ONE target slot from the fling
 // direction, then a fixed-duration easeOutCubic slide lands on it - monotonic, so it
 // can never reverse (no bounce) and has no asymptotic tail (decisive, weighty).
 const DECK_CYCLE_DUR = 220;      // ms; slot-slide duration on release
-const DECK_FLING_VEL = 0.0016;   // cards/ms; above this a release commits one slot in the fling dir; else nearest
-const DECK_CHAIN_MAX = 4;        // most EXTRA cards a single fast flick can chain past the first
 const DECK_WHEEL_SETTLE = 130;   // ms after the last wheel notch -> snap
 const DECK_FLOOR_MARGIN = 14;    // px between the floor and the screen bottom
 // A<->B anchor: a vertical lift between the floor (B) and the tab row (A), eased over
@@ -792,11 +797,11 @@ function measureDeck(deck) {
     const bandH = Math.max(140, Math.round(floorY - top + lift));   // ceiling -> floor
     deck._bandH = bandH;
     deck._lift = lift;
-    // Cap every card to the viewport so the deck NEVER grows a page/outer scrollbar -
-    // card-switching is the only outer navigation; tall content scrolls INSIDE the
-    // card. Mobile spans ceiling->floor (minus the lift); desktop grows the deck to
-    // (headH + fan), so reserve the fan's room here so the grown deck still fits.
-    const fanReserve = mobile ? 0 : Math.min(DECK_MAX_FAN, Math.max(0, cards.length - 1)) * DECK_PEEK;
+    // Cap every card to a single UNIFORM slot height (the fan floor reserves the bottom
+    // room on both platforms) so cards of any content size sit on the same fan spectrum
+    // and none overshoots. Tall content scrolls inside; the carousel advances via flick
+    // (see touchmove) so a long card never blocks navigation.
+    const fanReserve = Math.min(DECK_MAX_FAN, Math.max(0, cards.length - 1)) * DECK_PEEK;
     const usableH = Math.max(140, bandH - lift - fanReserve);
     deck._cardH = cards.map(c => {
         const body = c.querySelector('.deck-card-scroll') || c;
@@ -835,7 +840,15 @@ function measureDeck(deck) {
         return Math.min(h, usableH);
     });
     deck._usableH = usableH;
-    if (mobile) deck.style.height = `${bandH}px`;   // desktop height = headH + fan (renderDeckDesktop)
+    if (mobile) {
+        deck.style.height = `${bandH}px`;
+        // Clip at the floor (band bottom): the downward fan bottoms out here, so a card
+        // taller than the floor is simply cut off at it instead of overshooting past the
+        // fan. Purely visual - the scroll/seam mechanism is untouched.
+        deck.style.overflow = 'hidden';
+    } else {
+        deck.style.overflow = '';   // desktop grows the deck + peeks upward; no clip
+    }
 }
 
 // Render the deck at its current pos + anchor. Pure: cached heights + constants,
@@ -843,6 +856,13 @@ function measureDeck(deck) {
 function renderDeck(deck) {
     const st = deck._deck;
     if (!st || !deck._cards) return;
+    // First time the deck is actually positioned: fade it in (the CSS keeps it hidden
+    // until now so the unpositioned card shape never flashes). rAF lets the final
+    // transforms paint before the opacity transition starts.
+    if (!deck._ready) {
+        deck._ready = true;
+        requestAnimationFrame(() => deck.classList.add('deck-ready'));
+    }
     if (!isMobileDeck()) { renderDeckDesktop(deck); return; }
 
     const cards = deck._cards;
@@ -850,30 +870,20 @@ function renderDeck(deck) {
     const order = deck._order || cards.map((_, i) => i);
     const pos = deck._pos;
     const bandH = deck._bandH || deck.clientHeight || 0;
-    // Lift is a C-shaped arc of the card position: at rest on a card (frac 0) it sits
-    // dropped on the floor (B, header strip shows); mid-transition (frac ~0.5) it
-    // peaks lifted at the tab row (A); it settles back to B on the next card. So one
-    // advance lifts and re-seats in a single arc. The scroll-read anchor (deck._anchor,
-    // set while flicking a tall card body) can independently hold it lifted.
-    const frac = pos - Math.floor(pos);
-    const hump = Math.sin(Math.PI * frac);
-    const a01raw = Math.max(deck._anchor, hump);
-    const a01 = a01raw < 0 ? 0 : a01raw > 1 ? 1 : a01raw;
+    // Lift is the A/B anchor only (eased), NOT a per-card bob: the head holds a stable
+    // vertical position while cycling so cards don't bounce. At rest (B) it sits below
+    // the title strip (headTop = lift); engaging lifts it to the tab row (A, headTop=0).
+    const a01 = deck._anchor < 0 ? 0 : deck._anchor > 1 ? 1 : deck._anchor;
 
-    // Head is TOP-anchored, like desktop: at rest (B) it sits just below the title
-    // strip (headTop = lift); engaging lifts it to the tab row (A, headTop = 0, over
-    // the strip). The fan always peeks DOWN off the head toward the floor, so it
-    // never rides up over the header; trailing cards fade out.
+    // Head is TOP-anchored, like desktop. The fan always peeks DOWN off the head toward
+    // the floor, so it never rides up over the header; trailing cards fade out.
     const headTop = (deck._lift || 0) * (1 - a01);
-    // Sizing tracks ONLY the scroll-read anchor, never the cycle hump: the head grows
-    // to the full band when held lifted for reading, but during a swipe its height is
-    // constant (so capped chart cards don't re-fit every frame as the arc lifts). The
-    // arc just MOVES the head; it doesn't resize it.
-    const sizeA01 = deck._anchor < 0 ? 0 : deck._anchor > 1 ? 1 : deck._anchor;
-    const sizeTop = (deck._lift || 0) * (1 - sizeA01);
-    const availH = Math.round((bandH - sizeTop) / 2) * 2;
-    const usableH = deck._usableH || availH;
-    const headMH = `${availH}px`, fanMH = `${usableH}px`;
+    const availH = Math.round((bandH - headTop) / 2) * 2;
+    // UNIFORM slot height: every card renders to the same measured cap (which already
+    // reserves the fan floor). So cards of any content size are the same height, sit on
+    // the same fan spectrum, and none overshoots the floor. The fan offset below steps
+    // each card down by DECK_PEEK as it lifts into slot A.
+    const cardMH = `${Math.max(120, deck._usableH || availH)}px`;
 
     for (let k = 0; k < count; k++) {
         const card = cards[order[k]];
@@ -886,8 +896,12 @@ function renderDeck(deck) {
         }
         const isHead = a < 0.5;
         const rank = a > DECK_MAX_FAN ? DECK_MAX_FAN : a;
-        const top = headTop + delta * DECK_PEEK;   // fan DOWN; never up into the header
-        const scale = 1 - rank * DECK_SCALE_STEP;
+        // The fan is gated by the anchor: fully stacked in B (a01=0, every card's title
+        // aligned on the same top-left point), fanning DOWN as it lifts into A (a01=1).
+        const top = headTop + delta * DECK_PEEK * a01;   // fan DOWN into the reserved floor
+        // No scale shrink on mobile: scaling from the top origin would eat the DOWNWARD
+        // peek. The offset alone gives the stacked fan, so each card's edge stays visible.
+        const scale = 1;
         // Downward fan: upcoming cards (delta >= 0) stay opaque and peek below the
         // head as a preview; the passed card (delta < 0) fades out as it leaves.
         const opacity = delta >= 0 ? 1 : Math.max(0, 1 + delta);
@@ -897,8 +911,7 @@ function renderDeck(deck) {
         card.style.opacity = opacity >= 1 ? '1' : opacity.toFixed(3);
         if (card._vis !== 'v') { card.style.visibility = 'visible'; card._vis = 'v'; }
         if (card._capped) {
-            const mh = isHead ? headMH : fanMH;   // head grows toward A; others stay at B size
-            if (card._mh !== mh) { card.style.maxHeight = mh; card._mh = mh; }
+            if (card._mh !== cardMH) { card.style.maxHeight = cardMH; card._mh = cardMH; }
         }
         const zi = 100 - Math.round(rank);
         if (card._zi !== zi) { card.style.zIndex = String(zi); card._zi = zi; }
@@ -994,13 +1007,17 @@ function seatEntering(deck, idx) {
     body.scrollTop = deck._cycleDir < 0 ? body.scrollHeight : 0;
 }
 
-// Shortest signed distance from order-slot k to pos on the loop (in [-n/2, n/2]).
+// Signed distance from order-slot k to pos on the loop, biased toward the FORWARD
+// (fan) side so small decks still fill the fan. The wrap point is the larger of n/2
+// and the fan depth: on big decks this is n/2 (shortest path, unchanged); on small
+// decks (e.g. the 3-sheet Identity deck) it keeps the upcoming cards on the positive
+// side instead of letting them fall to the faded leaving side - so all of them show.
 function cyclicDelta(k, pos, n) {
     if (n <= 1) return k - pos;
-    let d = (k - pos) % n;
-    if (d > n / 2) d -= n;
-    else if (d < -n / 2) d += n;
-    return d;
+    const fan = Math.min(DECK_MAX_FAN, n - 1);
+    const t = Math.max(n / 2, fan);
+    const fd = ((k - pos) % n + n) % n;   // forward distance in [0, n)
+    return fd > t ? fd - n : fd;
 }
 
 function setPos(deck, p) {
@@ -1018,37 +1035,39 @@ function isMobileDeck() {
     return typeof window !== 'undefined' && window.innerWidth <= 768;
 }
 
+// Smoothstep: slow at both ends, fast in the middle. Drives the card-transition seam
+// so it pauses leaving the content edge and arriving at the next anchor, flipping
+// quickly in between - the non-linear "wave" that couples scrolling to card-switching.
+function smoothstep(t) {
+    if (t <= 0) return 0;
+    if (t >= 1) return 1;
+    return t * t * (3 - 2 * t);
+}
+
+// Advance the card-to-card seam by `dy` finger px. pos eases base -> base+dir across
+// DECK_SEAM via smoothstep; completing seats the next card, reversing returns to base.
+function advanceSeam(deck, dy) {
+    deck._seamAccum += dy;
+    const dir = deck._seamDir;
+    const mag = deck._seamAccum * dir;   // forward progress along the seam
+    if (mag <= 0) { deck._seamAccum = 0; setPos(deck, deck._seamBase); return; }
+    deck._cycleDir = dir;
+    if (mag >= DECK_SEAM) { deck._seamAccum = 0; setPos(deck, deck._seamBase + dir); return; }
+    setPos(deck, deck._seamBase + dir * smoothstep(mag / DECK_SEAM));
+}
+
+// A/B lift: cycling forward lifts to A (fan opens); a sustained backward pull drops to B.
+function seamAnchor(deck, dy) {
+    if (dy > 0) { deck._backAccum = 0; setAnchor(deck, 1); }
+    else { deck._backAccum += -dy; if (deck._backAccum > DECK_DROP_THRESHOLD) setAnchor(deck, 0); }
+}
+
 // Monotonic ease-out: fast then firmly decelerating, no overshoot, no tail.
 function easeOutCubic(t) {
     if (t <= 0) return 0;
     if (t >= 1) return 1;
     const u = 1 - t;
     return 1 - u * u * u;
-}
-
-// Detent shaping (mobile drag): within each card step the position eases - slow to
-// leave the rest slot (effort to detach from B), fast through the middle, slow into
-// the next slot. Identity at integers, so the finger travel that completes a card is
-// unchanged; only the feel along the way is shaped (sticky at rest, quick latch).
-function shapeDetent(x) {
-    const n = Math.floor(x);
-    const f = x - n;
-    return n + f * f * (3 - 2 * f);   // smoothstep within the unit
-}
-
-// Pick the slot a release commits to. A slow release snaps to the nearest slot (the
-// detent past the 50% mark decides advance vs. fall back to B). A fling commits at
-// least one slot in its direction and chains more the faster it is, so a hard flick
-// carries through several cards before settling. Monotonic toward the target slot.
-function projectTarget(deck, vel) {
-    const pos = deck._pos;
-    if (Math.abs(vel) > DECK_FLING_VEL) {
-        const dir = vel > 0 ? 1 : -1;
-        const extra = Math.min(DECK_CHAIN_MAX, Math.floor(Math.abs(vel) / DECK_FLING_VEL) - 1);
-        const cards = 1 + Math.max(0, extra);
-        return dir > 0 ? Math.floor(pos) + cards : Math.ceil(pos) - cards;
-    }
-    return Math.round(pos);
 }
 
 // Slide pos to a target slot over DECK_CYCLE_DUR via easeOutCubic. The target is kept
@@ -1177,7 +1196,7 @@ function bindDeckEvents(deck) {
         if (deck._wheelMode === 'scroll' && body) {
             const room = roomIn(body);
             if (room > 0) body.scrollTop += Math.sign(e.deltaY) * Math.min(Math.abs(e.deltaY), room);
-            setAnchor(deck, dir > 0 ? 1 : 0);   // forward lifts (A), backward reveals header (B)
+            // Inner scroll never shifts A/B - only an outer-container cycle does.
             e.preventDefault();
             clearTimeout(deck._wheelT);
             deck._wheelT = setTimeout(() => { deck._wheelT = 0; }, DECK_WHEEL_SETTLE);
@@ -1186,28 +1205,34 @@ function bindDeckEvents(deck) {
 
         e.preventDefault();
         cancelMomentum(deck);
-        setAnchor(deck, dir > 0 ? 1 : 0);   // forward lifts to A, backward drops to B
-        deck._cycleDir = dir;   // set before pos crosses so the entering card seats right
-        setPos(deck, deck._pos + e.deltaY / DECK_WHEEL_STEP);   // wraps; loops past the ends
+        // Desktop fans UP, so scrolling UP advances toward the cards fanned above (you
+        // scroll TOWARD a card, not away from it). Mobile fans down: conventional sign.
+        const cycleSign = isMobileDeck() ? 1 : -1;
+        setAnchor(deck, dir > 0 ? 1 : 0);
+        deck._cycleDir = cycleSign * dir;   // pos direction; seats the entering card right
+        setPos(deck, deck._pos + cycleSign * e.deltaY / DECK_WHEEL_STEP);   // wraps
         clearTimeout(deck._wheelT);
         deck._wheelT = setTimeout(() => { slideTo(deck, Math.round(deck._pos)); deck._wheelT = 0; }, DECK_WHEEL_SETTLE);
     }, { passive: false });
 
     // ── Touch: 1:1 drag, release -> momentum -> snap; anchor eases alongside ──
-    // gestureMode locks each drag to scroll-the-card OR cycle-the-deck on its first
-    // move, so a scroll reaches the card's edge and stops instead of cycling early.
-    let dragging = false, lastY = 0, lastT = 0, vel = 0, travel = 0, gestureMode = null;
+    // One continuous, non-linear axis. Each move does EITHER inner scroll OR a card
+    // seam - never both. While the head card has content room, the swipe scrolls it and
+    // STOPS at the edge (a wall = pause at the content end). Past the edge it drives a
+    // smoothstep seam to the next card (slow-flip-slow = pause, flip, pause at anchor),
+    // then the new card scrolls. So the order is: scroll -> pause -> flip -> pause ->
+    // scroll, all from one finger axis.
+    let dragging = false, lastY = 0, lastT = 0, fvel = 0, travel = 0;
     deck.addEventListener('touchstart', (e) => {
         cancelMomentum(deck);
         clearTimeout(deck._wheelT); deck._wheelT = 0;
         dragging = true;
-        gestureMode = null;
         lastY = e.touches[0].clientY;
         lastT = e.timeStamp;
-        vel = 0;
+        fvel = 0;
         travel = 0;
-        deck._dragBase = deck._pos;   // rest slot this pull is measured from
-        deck._dragRaw = 0;            // raw (un-shaped) finger advance in card units
+        deck._seamAccum = 0;       // 0 = seated on a card; non-zero = mid card-transition
+        deck._backAccum = 0;       // sustained downward travel, gating the drop to B
         deck._scrollVel = 0;       // reset inner-scroll velocity for this gesture
         deck._scrollBody = null;
     }, { passive: true });
@@ -1217,62 +1242,62 @@ function bindDeckEvents(deck) {
         const st = deck._deck;
         if (!st) return;
         const y = e.touches[0].clientY;
-        let dy = lastY - y;            // finger up -> dy > 0 -> advance
+        let dy = lastY - y;            // finger up -> dy > 0 -> advance / scroll content down
         lastY = y;
         if (dy === 0) return;
         travel += dy < 0 ? -dy : dy;
-        const dir = dy > 0 ? 1 : -1;
-        deck._cycleDir = dir;   // set before any pos cross so the entering card seats right
-        const body = deck._cards[st.activeIndex] && deck._cards[st.activeIndex].querySelector('.deck-card-scroll');
-        const roomIn = b => !b ? 0 : (dir > 0 ? b.scrollHeight - b.clientHeight - b.scrollTop : b.scrollTop);
+        const dt = Math.max(1, e.timeStamp - lastT);
+        lastT = e.timeStamp;
+        fvel = dy / dt;               // px/ms finger speed (for the fling-commit on release)
+        e.preventDefault();           // the deck owns the gesture (touch-action: none)
 
-        // Lock the gesture on its first move: if the focused card can scroll in this
-        // direction it's a SCROLL gesture (reaches the edge and stops, never cycles);
-        // otherwise it CYCLES. Backward at the body top still cycles to the previous
-        // card (entered at its bottom).
-        if (gestureMode === null) {
-            gestureMode = roomIn(body) > 1 ? 'scroll' : 'cycle';
-            // Entering a cycle pull: release any scroll-read lift so this gesture
-            // starts from the resting state (B) and the arc owns the lift.
-            if (gestureMode === 'cycle') setAnchor(deck, 0);
-        }
-
-        if (gestureMode === 'scroll') {
-            const room = roomIn(body);
-            if (room > 0) {
-                const used = dir * Math.min(Math.abs(dy), room);
-                body.scrollTop += used;
-                const sdt = Math.max(1, e.timeStamp - lastT);
-                deck._scrollVel = deck._scrollVel * 0.6 + (used / sdt) * 0.4;   // EMA px/ms for release momentum
-                deck._scrollBody = body;
-            }
-            setAnchor(deck, dir > 0 ? 1 : 0);   // forward lifts (A), backward reveals header (B)
-            e.preventDefault();
-            lastT = e.timeStamp;
+        // Mid card-transition: the seam owns this move (no inner scroll until it settles).
+        if (deck._seamAccum !== 0) {
+            seamAnchor(deck, dy);
+            advanceSeam(deck, dy);
             return;
         }
 
-        e.preventDefault();   // the loop has no ends; every swipe cycles + wraps
-        // Accumulate the raw finger advance and shape it through the detent: the card
-        // resists leaving its rest slot (B), then latches quickly through the middle
-        // (A) - the lift arc follows from the position in renderDeck.
-        deck._dragRaw += dy / DECK_SWIPE_STEP;
-        setPos(deck, deck._dragBase + shapeDetent(deck._dragRaw));
-        const dt = Math.max(1, e.timeStamp - lastT);
-        vel = (dy / DECK_SWIPE_STEP) / dt;   // cards per ms
-        lastT = e.timeStamp;
+        // Seated: a slow drag scrolls the head card's content to its edge; a FLICK skips
+        // straight to advancing the carousel (so a long card can never block navigation).
+        const flick = Math.abs(fvel) > DECK_FLICK_VEL;
+        const body = deck._cards[st.activeIndex] && deck._cards[st.activeIndex].querySelector('.deck-card-scroll');
+        const room = body
+            ? (dy > 0 ? Math.max(0, body.scrollHeight - body.clientHeight - body.scrollTop)
+                      : Math.max(0, body.scrollTop))
+            : 0;
+        if (!flick && room > 0) {
+            const take = dy > 0 ? Math.min(dy, room) : -Math.min(-dy, room);
+            const before = body.scrollTop;
+            body.scrollTop += take;
+            if (body.scrollTop !== before) {   // actually scrolled -> reading the card
+                deck._scrollVel = deck._scrollVel * 0.6 + (take / dt) * 0.4;   // EMA px/ms
+                deck._scrollBody = body;
+                return;
+            }
+            // Body wouldn't move despite reported room (stuck card) -> fall through to seam.
+        }
+
+        // Flick, content edge, or a stuck card: begin the seam to the next/previous card.
+        deck._seamBase = ((Math.round(deck._pos) % st.count) + st.count) % st.count;
+        deck._seamDir = dy > 0 ? 1 : -1;
+        seamAnchor(deck, dy);
+        advanceSeam(deck, dy);
     }, { passive: false });
 
     deck.addEventListener('touchend', () => {
         if (!dragging) return;
         dragging = false;
-        const mode = gestureMode; gestureMode = null;
-        if (mode === 'scroll') {   // flick-to-scroll: coast the card body, never cycle
-            if (deck._scrollBody && Math.abs(deck._scrollVel) > DECK_SCROLL_MIN_VEL) startScrollMomentum(deck);
-            return;
+        if (deck._seamAccum !== 0) {
+            // Settle the seam: commit the flip past the midpoint or on a flick, else snap back.
+            const dir = deck._seamDir;
+            const mag = deck._seamAccum * dir;
+            const commit = mag > DECK_SEAM * 0.5 || fvel * dir > DECK_SEAM_FLING;
+            deck._seamAccum = 0;
+            slideTo(deck, deck._seamBase + (commit ? dir : 0));
+        } else if (travel >= 6 && deck._scrollBody && Math.abs(deck._scrollVel) > DECK_SCROLL_MIN_VEL) {
+            startScrollMomentum(deck);   // pure inner scroll -> coast the card body
         }
-        if (travel < 6) return;    // a tap, not a swipe - leave pos/anchor alone
-        slideTo(deck, projectTarget(deck, vel));   // decisive one-card slide; never reverses
     }, { passive: true });
 }
 
@@ -1295,13 +1320,16 @@ function onDeckKeydown(e) {
     const tag = (document.activeElement && document.activeElement.tagName) || '';
     if (tag === 'INPUT' || tag === 'TEXTAREA') return;
     const cur = Math.round(deck._pos);
+    // Desktop fans UP: ArrowUp advances toward the cards above. Mobile fans down.
+    const fwdKey = isMobileDeck() ? 'ArrowDown' : 'ArrowUp';
+    const backKey = isMobileDeck() ? 'ArrowUp' : 'ArrowDown';
     let target = cur;
-    if (e.key === 'ArrowDown') target = cur + 1;
-    else if (e.key === 'ArrowUp') target = cur - 1;
+    if (e.key === fwdKey) target = cur + 1;
+    else if (e.key === backKey) target = cur - 1;
     else return;
     e.preventDefault();
-    deck._cycleDir = (e.key === 'ArrowDown') ? 1 : -1;
-    setAnchor(deck, 0);      // rest at B; the slide's lift arc owns the engagement
+    deck._cycleDir = (e.key === fwdKey) ? 1 : -1;
+    setAnchor(deck, deck._cycleDir > 0 ? 1 : 0);
     slideTo(deck, target);   // wraps at the ends
 }
 

@@ -539,7 +539,6 @@ function renderDynamicsCharts(runData, container) {
     `;
 
     const metaParts = [`<span><strong>Points:</strong> ${steps.length}</span>`];
-    metaParts.push(`<span><strong>Layers:</strong> ${allLayers.length}</span>`);
     if (expertCount > 0) {
         metaParts.push(`<span><strong>Experts:</strong> ${expertCount}</span>`);
     }

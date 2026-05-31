@@ -117,11 +117,14 @@ CALMBpe = partial(
 #
 # Two-stage like the reference: train the codec alone until the freeze, with
 # the KL annealed in over the same window so the final latent is smooth, then
-# freeze it and train only the energy head against a stationary target. Both
-# schedules are left unset so they lock to the LR warmup boundary - the codec
-# trains under rising LR and freezes at the peak. kl_beta is 10x the old joint
-# value - a near-zero KL leaves a recon-perfect but unmodelable latent. Watch
-# calm_kl_active_frac / calm_recon_kl_ratio.
+# freeze it and train only the energy head against a stationary target. The
+# freeze is convergence-driven: schedules are left unset, so the codec trains
+# until its reconstruction plateaus (relative improvement over the window
+# < 5e-3), then freezes - capped by ae_max_pretrain_steps as a backstop. Watch
+# calm_recon_ce / calm_pretrain_rel_delta descend and calm_ae_frozen flip at
+# the boundary. kl_beta is 10x the old joint value - a near-zero KL leaves a
+# recon-perfect but unmodelable latent. Watch calm_kl_active_frac /
+# calm_recon_kl_ratio.
 CALMByteSmall = partial(
     CALMEncoder,
     chunk_size=4,

@@ -16,6 +16,10 @@ def compute_softmax_collapse(logits: Tensor) -> float:
     Rising values during training signal loss of entropy in the output
     distribution.
     """
+    # No token logits this step (e.g. CALM's codec-only pretraining phase
+    # returns logits=None); the metric doesn't apply, report 0.
+    if logits is None:
+        return 0.0
     with torch.no_grad():
         output_off = logits - logits.amax(dim=1, keepdim=True)
         exp_output = torch.exp(output_off)

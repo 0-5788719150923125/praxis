@@ -1342,6 +1342,15 @@
     touch-action: none;
     /* Keep the cards' z-indices in their own stacking context. */
     isolation: isolate;
+    /* Hidden until the cards are measured + positioned (and charts mounted), so the
+       unpositioned card shape never flashes at the top. JS adds .deck-ready to fade
+       the stack in once it's laid out in its final place. */
+    opacity: 0;
+    transition: opacity 0.25s ease;
+}
+
+.chart-deck.deck-ready {
+    opacity: 1;
 }
 
 .chart-deck .chart-card {

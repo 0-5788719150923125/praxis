@@ -204,13 +204,19 @@ def test_brierlm_scores_range():
 
 
 def test_calm_two_stage_freezes_codec_and_enables_energy():
-    """ae_freeze_steps > 0: codec trains in stage 1, then freezes while the
-    energy head takes over in stage 2 (against a stationary target)."""
+    """Legacy two-stage (ae_freeze_steps > 0, no AE pretraining phase): codec
+    and LM train jointly in stage 1, then the codec freezes while the energy
+    head takes over in stage 2 (against a stationary target). The default mode
+    is now convergence-driven pretraining; see
+    test_calm_pretraining_phase_freezes_on_cap."""
     cfg = _tiny_config()
     model = PraxisForCausalLM(cfg)
     model.train()
     enc = model.encoder
-    enc.ae_freeze_steps = 2  # tiny boundary so the test crosses it quickly
+    # Opt into legacy mode: disable the pretraining phase and set an explicit
+    # tiny freeze boundary the test crosses quickly.
+    enc.requires_pretraining = False
+    enc.ae_freeze_steps = 2
 
     input_ids = torch.randint(4, 200, (2, 32), dtype=torch.long)
     labels = input_ids[:, 1:].contiguous()

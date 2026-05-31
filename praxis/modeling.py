@@ -423,6 +423,46 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             "current_state": current_state,
         }
 
+    def _has_uninitialized_params(self) -> bool:
+        """True if any parameter is still a lazy UninitializedParameter.
+
+        Used to defer the pretraining short-circuit until the lazy-init dummy
+        forward has materialized every module.
+        """
+        from torch.nn.parameter import is_lazy
+
+        return any(is_lazy(p) for p in self.parameters())
+
+    def _set_pretraining_lock(self, active: bool) -> None:
+        """Lock/unlock the model around an encoder's pretraining phase.
+
+        When ``active``, only the encoder's ``pretraining_parameters()`` stay
+        trainable (everything else is frozen so the optimizer leaves it alone).
+        On the transition back, restore exactly what we disabled and fire the
+        encoder's one-shot ``freeze_after_pretraining`` (e.g. freeze the codec).
+        """
+        if active:
+            if getattr(self, "_pretrain_locked", False):
+                return
+            warm = {id(p) for p in self.encoder.pretraining_parameters()}
+            disabled = []
+            for p in self.parameters():
+                if id(p) not in warm and p.requires_grad:
+                    p.requires_grad_(False)
+                    disabled.append(p)
+            for p in self.encoder.pretraining_parameters():
+                p.requires_grad_(True)
+            self._pretrain_disabled = disabled
+            self._pretrain_locked = True
+        else:
+            if not getattr(self, "_pretrain_locked", False):
+                return
+            for p in getattr(self, "_pretrain_disabled", []):
+                p.requires_grad_(True)
+            self._pretrain_disabled = []
+            self.encoder.freeze_after_pretraining()
+            self._pretrain_locked = False
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -437,6 +477,29 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         task_type_ids: Optional[torch.LongTensor] = None,
         assistant_mask: Optional[torch.Tensor] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
+
+        # Encoder-owned self-supervised warmup (e.g. CALM's autoencoder). While
+        # active, train ONLY the encoder's objective and skip the global
+        # transformer + head entirely; the rest of the model stays locked. This
+        # is what makes "train the codec first, then freeze it" real - without
+        # it the transformer trains alongside the codec.
+        #
+        # Skipped while any parameter is still lazy: the lazy-init dummy forward
+        # must run the FULL path so the transformer/head materialize. Locking
+        # (requires_grad_) an UninitializedParameter raises; deferring also
+        # leaves the trunk uninitialized. Once materialized this is a no-op.
+        if (
+            self.training
+            and self.encoder
+            and self.encoder.in_pretraining()
+            and not self._has_uninitialized_params()
+        ):
+            self._set_pretraining_lock(True)
+            return CausalLMOutputWithPast(
+                loss=self.encoder.pretraining_loss(input_ids)
+            )
+        if self.training and self.encoder:
+            self._set_pretraining_lock(False)
 
         outputs = super().forward(
             input_ids=input_ids,

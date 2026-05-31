@@ -44,6 +44,12 @@ from .vae import CALMVAE
 # max-steps cap is hit as a backstop.
 PRETRAIN_WINDOW = 256
 PRETRAIN_SLOPE_EPS = 5e-3
+# Start emitting / computing the convergence Δ once this many recon samples
+# exist, so the chart tracks the descent from early on instead of staying blank
+# (then flat) until the full window fills. The freeze decision still waits for
+# the full window - an early, small-sample Δ is informative but too noisy to
+# latch on.
+PRETRAIN_MIN_SAMPLES = 16
 
 
 def _resolve_dim(spec: Union[int, float], base: int) -> int:
@@ -159,6 +165,37 @@ class CALMEncoder(BaseEncoder):
                 "y_scale": "linear",
                 "group": "calm",
                 "order": 70,
+            },
+        },
+        "calm_recon_ce": {
+            "description": (
+                "Raw per-step codec reconstruction CE during AE pretraining. "
+                "Its plateau is what the convergence detector watches; once the "
+                "codec freezes this stops updating."
+            ),
+            "chart": {
+                "title": "Codec Recon CE (pretrain)",
+                "y_label": "recon CE",
+                "y_scale": "logarithmic",
+                "group": "calm",
+                "order": 80,
+            },
+        },
+        "calm_pretrain_rel_delta": {
+            "description": (
+                "Relative recon improvement across the convergence window - the "
+                "value compared to the fixed freeze threshold (5e-3). Tracked "
+                "from the first few samples (latch waits for the full window). "
+                "Watch it descend toward the threshold; the codec freezes when "
+                "it crosses. Stays high while recon keeps dropping; falls only "
+                "as the recon curve flattens."
+            ),
+            "chart": {
+                "title": "Pretrain Convergence Δ",
+                "y_label": "rel. Δ (window)",
+                "y_scale": "logarithmic",
+                "group": "calm",
+                "order": 90,
             },
         },
     }
@@ -379,16 +416,46 @@ class CALMEncoder(BaseEncoder):
         ``pretraining_loss`` - the global transformer never runs."""
         return self.requires_pretraining and not bool(self._pretrain_done.item())
 
+    def _codec_parameters(self):
+        """The full autoencoder: VAE + the head's reconstruction-path params
+        (token classifier, and any feature field like crystal_harmonic).
+
+        These train during AE pretraining and ONLY then - in phase 2 the recon
+        CE is zeroed, so a classifier left at random init here would stay there
+        and emit garbage tokens forever. The head's own params are included, but
+        the LM-side encoder modules (energy head, embed_proj, lm_tok_emb) are
+        excluded by id so a head->encoder back-ref can't drag them in (see
+        reference_head_encoder_backref); iterating head.parameters() can recurse
+        into this encoder, so we filter rather than trust the boundary.
+        """
+        exclude = set()
+        for m in (self.energy_head, self.embed_proj, self.lm_tok_emb):
+            for p in m.parameters():
+                exclude.add(id(p))
+        seen = set()
+        for p in self.vae.parameters():
+            if id(p) not in seen:
+                seen.add(id(p))
+                yield p
+        if self._head:
+            for p in self._head[0].parameters():
+                if id(p) in exclude or id(p) in seen:
+                    continue
+                seen.add(id(p))
+                yield p
+
     def pretraining_parameters(self):
-        """Only the VAE trains during the AE warmup phase."""
-        return self.vae.parameters()
+        """Codec params (VAE + head recon path) train during the AE warmup."""
+        return self._codec_parameters()
 
     def freeze_after_pretraining(self) -> None:
         """One-shot codec freeze at the phase transition. ``_set_codec_mode``
-        re-applies it every step in phase 2 (surviving Lightning's per-step
-        train() and checkpoint resume)."""
+        re-applies the VAE freeze every step in phase 2 (surviving Lightning's
+        per-step train() and checkpoint resume). We eval() only the VAE (the
+        recon-path dropout lives there); calling head.eval() would recurse into
+        this encoder via the back-ref and wrongly eval the global transformer."""
         self.vae.eval()
-        for p in self.vae.parameters():
+        for p in self._codec_parameters():
             p.requires_grad_(False)
 
     def pretraining_loss(self, input_ids: torch.Tensor) -> torch.Tensor:
@@ -424,11 +491,12 @@ class CALMEncoder(BaseEncoder):
         self._recon_hist.append(recon)
         if len(self._recon_hist) > PRETRAIN_WINDOW:
             self._recon_hist.pop(0)
+        self._diag["calm_recon_ce"] = recon
         step = self._opt_step()
         if step >= self.ae_max_pretrain_steps:
             self._mark_pretrain_done(step, "max-steps cap")
             return
-        if len(self._recon_hist) >= PRETRAIN_WINDOW:
+        if len(self._recon_hist) >= PRETRAIN_MIN_SAMPLES:
             n = len(self._recon_hist)
             mean_x = (n - 1) / 2.0
             mean_y = sum(self._recon_hist) / n
@@ -437,8 +505,13 @@ class CALMEncoder(BaseEncoder):
             )
             var = sum((i - mean_x) ** 2 for i in range(n))
             slope = cov / var if var > 0 else 0.0
+            # Relative recon improvement across the (growing) window; the value
+            # the freeze gate compares to PRETRAIN_SLOPE_EPS. Computed from
+            # PRETRAIN_MIN_SAMPLES onward so the chart tracks the descent early;
+            # the latch waits for the full window so it can't fire on noise.
             rel = abs(slope * n) / (mean_y + 1e-9)
-            if rel < PRETRAIN_SLOPE_EPS:
+            self._diag["calm_pretrain_rel_delta"] = rel
+            if len(self._recon_hist) >= PRETRAIN_WINDOW and rel < PRETRAIN_SLOPE_EPS:
                 self._mark_pretrain_done(step, f"converged (rel d={rel:.4f})")
 
     def _mark_pretrain_done(self, step: int, reason: str) -> None:

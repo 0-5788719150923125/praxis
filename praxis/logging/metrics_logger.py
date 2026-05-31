@@ -1,7 +1,10 @@
 """SQLite-based metrics logger for web visualization."""
 
+import csv
 import json
+import os
 import sqlite3
+import time
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
@@ -48,18 +51,33 @@ class MetricsLogger:
         "CREATE INDEX IF NOT EXISTS idx_metrics_ts ON metrics(ts);\n"
     )
 
-    def __init__(self, run_dir: str, filename: str = "metrics.db"):
+    def __init__(
+        self,
+        run_dir: str,
+        filename: str = "metrics.db",
+        csv_mirror: bool = True,
+        csv_interval_s: float = 30.0,
+    ):
         """Initialize the metrics logger.
 
         Args:
             run_dir: Directory for the current run (e.g., "build/runs/83492c812")
             filename: Name of the database file (default: "metrics.db")
+            csv_mirror: Also mirror the table to ``metrics.csv`` so tools that
+                don't speak SQLite (LaTeX/pgfplots, the paper exporter) always
+                have fresh data without the running web server.
+            csv_interval_s: Minimum seconds between CSV rewrites; the mirror is
+                also flushed on close, so a finished run is always complete.
         """
         self.run_dir = Path(run_dir)
         self.filepath = self.run_dir / filename
         self.lock = Lock()
         self._write_counter = 0
         self._commit_interval = 5  # Commit every 5 writes (optimized for small models)
+        self._csv_mirror = csv_mirror
+        self._csv_path = self.filepath.with_suffix(".csv")
+        self._csv_interval = csv_interval_s
+        self._csv_last = 0.0
 
         # Ensure directory exists
         self.run_dir.mkdir(parents=True, exist_ok=True)
@@ -166,6 +184,34 @@ class MetricsLogger:
                 self.conn.commit()
                 self._write_counter = 10  # Reset but keep the "past first 10" state
 
+            # Mirror to CSV on an interval (lock already held).
+            if (
+                self._csv_mirror
+                and time.monotonic() - self._csv_last >= self._csv_interval
+            ):
+                self._write_csv()
+
+    def _write_csv(self) -> None:
+        """Atomically mirror the metrics table to ``metrics.csv``.
+
+        Assumes ``self.lock`` is held. A bad CSV write must never take down
+        training, so failures are warned and swallowed.
+        """
+        try:
+            cols = ["step", "ts"] + self.KNOWN_METRICS
+            rows = self.conn.execute(
+                f"SELECT {', '.join(cols)} FROM metrics ORDER BY step"
+            ).fetchall()
+            tmp = self._csv_path.with_suffix(".csv.tmp")
+            with open(tmp, "w", newline="") as fh:
+                writer = csv.writer(fh)
+                writer.writerow(cols)
+                writer.writerows(rows)
+            os.replace(tmp, self._csv_path)  # atomic; readers never see a partial file
+            self._csv_last = time.monotonic()
+        except Exception as e:
+            print(f"[MetricsLogger] Warning: CSV mirror failed: {e}")
+
     def close(self) -> None:
         """Close the database connection."""
         with self.lock:
@@ -173,6 +219,8 @@ class MetricsLogger:
                 # Commit any pending writes before closing
                 if self._write_counter > 0:
                     self.conn.commit()
+                if self._csv_mirror:
+                    self._write_csv()  # final flush: a finished run's CSV is complete
                 self.conn.close()
 
     def __enter__(self):
