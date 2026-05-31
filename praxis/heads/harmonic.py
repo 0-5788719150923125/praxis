@@ -171,22 +171,41 @@ class HarmonicField(nn.Module):
                 "order": 100,
             },
         },
-        # Epicycle trace of the field's top-2 PCA path over one period - the
-        # real signal behind the old fake "correlation" animation. Deterministic
-        # given the frozen Weyl phases, so its shape fingerprints the model.
+        # The field's PCA cross-section unrolled along the position axis into a
+        # rising spiral ribbon - the real signal behind the old fake
+        # "correlation" animation. Deterministic given the frozen Weyl phases,
+        # so its shape fingerprints the model.
+        "harmonic_spiral": {
+            "description": (
+                "Top-2 PCA cross-section of the harmonic field unrolled along "
+                "the sequence axis into a 3D spiral. Ribbon width is the field "
+                "energy left outside the plane (what the flat view hides): a "
+                "tight spiral = low effective dimension (consensus), a wide "
+                "fuzzy ribbon = high dimension (interference)."
+            ),
+            "snapshot": {
+                "title": "Harmonic Spiral",
+                "renderer": "harmonic_spiral",
+                "group": "harmonic_head",
+                "order": 101,
+            },
+        },
+        # Same PCA projection as the spiral, but kept as a closed planar loop
+        # and drawn as a Fourier epicycle. A second lens on the same field.
         "harmonic_curve": {
             "description": (
                 "Top-2 PCA trajectory of the harmonic field across one period, "
-                "drawn as a Fourier epicycle. The shape is set by the learned "
-                "amplitudes over frozen irrational phases, so each model traces "
-                "its own closed curve. A tight loop = low effective dimension "
-                "(consensus); a space-filling rosette = interference."
+                "drawn as a Fourier epicycle: nested rotating vectors whose tip "
+                "traces the loop. The arms are generic Fourier scaffolding - the "
+                "real signal is the loop shape and how energy spreads across the "
+                "harmonics. A tight loop = low effective dimension, a "
+                "space-filling rosette = interference."
             ),
             "snapshot": {
-                "title": "Harmonic Curve",
+                "title": "Harmonic Epicycle",
                 "renderer": "harmonic_curve",
                 "group": "harmonic_head",
-                "order": 101,
+                "order": 102,
             },
         },
     }
@@ -288,18 +307,68 @@ class HarmonicField(nn.Module):
         env = self._envelope()
         return 0.0 if env is None else float((env.max() - env.min()).detach().item())
 
-    def curve(self, n_points: int = 720, n_modes: int = 32) -> dict:
-        """Top-2 PCA trajectory of the field over one period, as epicycle modes.
+    def spiral(self, n_points: int = 720) -> dict:
+        """The field's top-2 PCA cross-section unrolled along the position axis.
 
         The field is band-limited to F_t temporal frequencies, so sampling at
         Tp >= 2*F_t+1 points is exact (no aliasing) and far cheaper than the
         full-T irfft. We project each position's feature vector onto the top-2
-        principal axes - a closed planar curve - then return its dominant
-        Fourier components so the dashboard can redraw it as an epicycle. The
-        Weyl phases are frozen, so the shape is a deterministic fingerprint of
-        the learned amplitudes. ``participation_ratio`` reads effective
-        dimensionality: ~1 = one mode wins (consensus), high = spread
-        (interference).
+        principal axes (``x``, ``y``) and let position itself be the third axis
+        (``z``) - so the periodic loop unrolls into a rising spiral. ``band`` is
+        the field energy left outside that plane (what the flat shadow hides),
+        the analogue of the activation-curve percentile band. The Weyl phases
+        are frozen, so the shape is a deterministic fingerprint of the learned
+        amplitudes; ``participation_ratio`` reads effective dimensionality (~1 =
+        one mode wins / consensus, high = spread / interference).
+        """
+        with torch.no_grad():
+            Tp = max(int(n_points), 2 * self.F_t + 1)
+            rfft_D = self.D // 2 + 1
+            spec = torch.zeros(Tp, rfft_D, dtype=torch.complex64)
+            amps = self.amplitudes.detach().cpu()
+            env = self._envelope()
+            if env is not None:
+                amps = amps * env.detach().cpu().unsqueeze(1)
+            scaled = torch.complex(self.spec_real.cpu(), self.spec_imag.cpu()) * amps
+            spec[1 : self.F_t + 1, 1 : self.F_d + 1] = scaled
+            spec[Tp - self.F_t : Tp, 1 : self.F_d + 1] = scaled.flip(0).conj()
+            field = torch.fft.irfft2(spec, s=(Tp, self.D), norm="ortho")  # [Tp, D]
+            field = field - field.mean(dim=0, keepdim=True)
+
+            _, S, Vh = torch.linalg.svd(field, full_matrices=False)
+            xy = field @ Vh[:2].T  # [Tp, 2] in-plane shape
+            row_sq = (field * field).sum(dim=1)
+            resid = (row_sq - (xy * xy).sum(dim=1)).clamp_min(0.0).sqrt()  # off-plane spread
+
+            scale = xy.abs().max().clamp_min(1e-8)  # scale is arbitrary post-PCA
+            xy = xy / scale
+            band = resid / scale
+
+            s2 = S * S
+            part = float((s2.sum() ** 2 / (s2 * s2).sum().clamp_min(1e-12)).item())
+
+            step = max(1, Tp // n_points)
+            xy = xy[::step]
+            band = band[::step]
+            n = xy.shape[0]
+            z = torch.linspace(0.0, 1.0, n)
+            path = torch.stack([xy[:, 0], xy[:, 1], z], dim=1).to(torch.float32).tolist()
+            band = band.to(torch.float32).tolist()
+        return {
+            "path": path,
+            "band": band,
+            "n": int(n),
+            "participation_ratio": part,
+        }
+
+    def curve(self, n_points: int = 720, n_modes: int = 32) -> dict:
+        """Top-2 PCA trajectory of the field over one period, as epicycle modes.
+
+        Companion to :meth:`spiral`: same projection, but the period stays a
+        closed planar loop and we return its dominant Fourier components so the
+        dashboard can redraw it as a classic epicycle (nested rotating vectors
+        whose tip traces the curve). Frozen Weyl phases make the shape a
+        deterministic fingerprint of the learned amplitudes.
         """
         with torch.no_grad():
             Tp = max(int(n_points), 2 * self.F_t + 1)
@@ -484,6 +553,7 @@ class HarmonicHead(BaseHead):
                 "max_count": float(amps.max().item()) if amps.numel() else 0.0,
                 "irrationals": {"t": float(IRR_T), "d": float(IRR_D)},
             },
+            "harmonic_spiral": self.field.spiral(),
             "harmonic_curve": self.field.curve(),
         }
 

@@ -63,8 +63,44 @@ class HarmonicWeightRLCallback(Callback):
         self._metrics: dict = {}
         self._editable = None  # cached candidate params
         self._anchor: dict = {}  # name -> frozen weight snapshot (anchor_gate)
+        self._sf = None  # cached ScheduleFreeWrapper (see _schedulefree)
+        self._sf_resolved = False
 
     # ------------------------------------------------------------------
+
+    def _schedulefree(self, trainer):
+        """The ScheduleFreeWrapper in the optimizer stack, or None (cached).
+
+        Under schedule-free the model weight ``p.data`` is a derived quantity,
+        reconstructed each step from the base iterate ``z`` and the running
+        average ``x``. So an in-place edit to ``p.data`` alone is smeared by the
+        x/z bookkeeping rather than applied cleanly - we must edit ``z`` too.
+        """
+        if not self._sf_resolved:
+            self._sf_resolved = True
+            for opt in getattr(trainer, "optimizers", None) or []:
+                o, depth = opt, 0
+                while o is not None and depth < 6:  # unwrap Lightning/other wrappers
+                    if type(o).__name__ == "ScheduleFreeWrapper":
+                        self._sf = o
+                        break
+                    o = getattr(o, "optimizer", None)
+                    depth += 1
+                if self._sf is not None:
+                    break
+        return self._sf
+
+    def _sf_z(self, trainer, param):
+        """The base iterate ``z`` schedule-free carries for ``param``, or None.
+
+        Editing both ``p.data`` and ``z`` by the same op scales the whole
+        (y, x, z) triple consistently (x = (y - (1-m)z)/m is linear in both),
+        so the edit is a clean, revertible weight change under schedule-free.
+        """
+        sf = self._schedulefree(trainer)
+        if sf is None:
+            return None
+        return sf.state.get(param, {}).get("z")
 
     def _candidate_params(self, model):
         # Editable chunks = rows of 2D weight matrices (one neuron's fan-in).
@@ -107,19 +143,27 @@ class HarmonicWeightRLCallback(Callback):
         )
 
     @torch.no_grad()
-    def _apply_edit(self, param, row, alpha, omega, phi):
+    def _apply_edit(self, param, row, alpha, omega, phi, z=None):
         n = param.shape[1]
         idx = torch.arange(n, device=param.device, dtype=param.dtype)
         mod = 1.0 + alpha * torch.sin(omega * idx + phi)
         original = param.data[row].clone()
         param.data[row].mul_(mod)
-        return original
+        z_original = None
+        if z is not None:  # mirror the edit onto the schedule-free iterate
+            z_original = z[row].clone()
+            z[row].mul_(mod)
+        return original, z_original
 
     @torch.no_grad()
-    def _apply_anchor_gate(self, param, row, mask, anchor_row):
+    def _apply_anchor_gate(self, param, row, mask, anchor_row, z=None):
         original = param.data[row].clone()
         param.data[row][mask] = anchor_row[mask]
-        return original
+        z_original = None
+        if z is not None:
+            z_original = z[row].clone()
+            z[row][mask] = anchor_row[mask]
+        return original, z_original
 
     @torch.no_grad()
     def _snapshot_anchor(self, model):
@@ -167,7 +211,7 @@ class HarmonicWeightRLCallback(Callback):
 
             if self._episode is None:
                 if self._step >= self.warmup_steps and self._step % self.period == 0:
-                    self._start_episode(model)
+                    self._start_episode(trainer, model)
             elif self._step >= self._episode["end_step"]:
                 self._finish_episode()
 
@@ -177,7 +221,7 @@ class HarmonicWeightRLCallback(Callback):
             trainer.callback_metrics[k] = torch.tensor(float(v))
 
     @torch.no_grad()
-    def _start_episode(self, model):
+    def _start_episode(self, trainer, model):
         cands = self._candidate_params(model)
         if not cands:
             return
@@ -190,11 +234,14 @@ class HarmonicWeightRLCallback(Callback):
         state = self._make_state(self._loss_ema or 0.0, row_grad_norm)
         raw, harmonic = self.policy.act(state)
 
+        # Under schedule-free, mirror the edit onto the carried iterate z too.
+        z = self._sf_z(trainer, param)
         ep = {
             "state": state,
             "raw": raw,
             "param": param,
             "row": row,
+            "z": z,  # schedule-free base iterate (None if not wrapped)
             "L_before": self._loss_ema,
             "reward_ema": None,  # EMA return, accumulated over the horizon
             "end_step": self._step + self.horizon,
@@ -213,11 +260,15 @@ class HarmonicWeightRLCallback(Callback):
             mask = build_gate_mask(
                 self.selector, n, threshold, omega, phi, seed, param.device
             )
-            ep["original"] = self._apply_anchor_gate(param, row, mask, anchor[row])
+            ep["original"], ep["z_original"] = self._apply_anchor_gate(
+                param, row, mask, anchor[row], z=z
+            )
             ep["meta"] = {"rl_gate_frac": float(mask.float().mean())}
         else:
             alpha, omega, phi = harmonic
-            ep["original"] = self._apply_edit(param, row, alpha, omega, phi)
+            ep["original"], ep["z_original"] = self._apply_edit(
+                param, row, alpha, omega, phi, z=z
+            )
             ep["meta"] = {
                 "rl_action_alpha": alpha,
                 "rl_action_omega": omega,
@@ -235,10 +286,13 @@ class HarmonicWeightRLCallback(Callback):
         instant = float((ep["L_before"] or 0.0) - (self._loss_ema or 0.0))
 
         # Pin only better weights: keep the edit if the return is positive, else
-        # undo. (Using the integrated return, not just the endpoint.)
+        # undo. (Using the integrated return, not just the endpoint.) Restore
+        # both p.data and the schedule-free iterate z so the rollback is clean.
         if reward < self.keep_threshold:
             with torch.no_grad():
                 ep["param"].data[ep["row"]] = ep["original"]
+                if ep.get("z") is not None:
+                    ep["z"][ep["row"]] = ep["z_original"]
             kept = 0.0
         else:
             kept = 1.0

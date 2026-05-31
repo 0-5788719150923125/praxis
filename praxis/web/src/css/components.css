@@ -210,6 +210,32 @@
     padding: 0.25rem;
 }
 
+/* Desktop: the pop-out shows on hover of the bell OR the panel itself, and lingers a
+   beat after the mouse leaves so brushing past the gap (or a small mis-move) doesn't
+   snap it shut. A click does nothing - hover is the whole interaction. */
+@media (hover: hover) {
+    .notification-panel {
+        opacity: 0;
+        visibility: hidden;
+        transform: translateY(-0.25rem);
+        transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s ease;
+        transition-delay: 0.45s;   /* linger before hiding */
+    }
+    .notification-wrapper:hover .notification-panel,
+    .notification-panel:hover {
+        opacity: 1;
+        visibility: visible;
+        transform: translateY(0);
+        transition-delay: 0s;       /* appear immediately */
+    }
+}
+
+/* Touch: no hover, so a tap toggles .open (see TOGGLE_NOTIFICATIONS). */
+@media (hover: none) {
+    .notification-panel { display: none; }
+    .notification-panel.open { display: block; }
+}
+
 .notification-item {
     display: flex;
     justify-content: space-between;

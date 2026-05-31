@@ -3,6 +3,8 @@
  * Renders a terminal-styled dashboard from streamed metrics data
  */
 
+import { statusLabel } from './state.js';
+
 // Persistent UI state across re-renders (survives tab switches; resets on reload).
 let logPanelOpen = false;
 
@@ -269,7 +271,7 @@ export function renderLiveDashboard(m) {
             <span class="ld-footer-sep">|</span>
             <span class="ld-footer-item">${m.total_params || '0.00M'}</span>
             <span class="ld-footer-sep">|</span>
-            <span class="ld-footer-item">${(m.mode || 'train').toUpperCase()}</span>
+            <span class="ld-footer-item">${statusLabel(m)}</span>
             <span class="ld-footer-sep">|</span>
             <span class="ld-footer-item">AGE ${fmt(m.hours_elapsed, 2, '0.00')}h</span>
             <span class="ld-footer-sep">|</span>
@@ -327,7 +329,7 @@ export function renderLiveDashboard(m) {
                 <span class="ld-footer-sep">|</span>
                 <span class="ld-footer-item">${m.total_params || '0.00M'}</span>
                 <span class="ld-footer-sep">|</span>
-                <span class="ld-footer-item">${(m.mode || 'train').toUpperCase()}</span>
+                <span class="ld-footer-item">${statusLabel(m)}</span>
                 <span class="ld-footer-sep">|</span>
                 <span class="ld-footer-item">AGE ${fmt(m.hours_elapsed, 2, '0.00')}h</span>
                 <span class="ld-footer-sep">|</span>

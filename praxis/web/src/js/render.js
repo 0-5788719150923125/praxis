@@ -59,32 +59,47 @@ export function renderNotifications() {
     const panel = document.getElementById('notification-panel');
     if (!panel) return;
 
-    panel.hidden = !state.notifications.panelOpen;
-    if (!state.notifications.panelOpen) return;
-
+    // The pop-out shows on hover (desktop) or tap (touch, via .open) - so the content is
+    // ALWAYS rendered and ready; visibility is owned by CSS, not the `hidden` attribute.
     const items = state.notifications.items;
     if (!items.length) {
         panel.innerHTML = '<div class="notification-empty">No events yet.</div>';
-        return;
+    } else {
+        // Newest first.
+        panel.innerHTML = items
+            .slice()
+            .reverse()
+            .map((ev) => {
+                const age = typeof ev.hours_elapsed === 'number'
+                    ? `${ev.hours_elapsed.toFixed(2)}h`
+                    : '';
+                const level = ev.level || 'info';
+                return `
+                    <div class="notification-item notification-${level}">
+                        <span class="notification-message">${escapeNotification(ev.message)}</span>
+                        <span class="notification-age">${age}</span>
+                    </div>
+                `;
+            })
+            .join('');
     }
 
-    // Newest first.
-    panel.innerHTML = items
-        .slice()
-        .reverse()
-        .map((ev) => {
-            const age = typeof ev.hours_elapsed === 'number'
-                ? `${ev.hours_elapsed.toFixed(2)}h`
-                : '';
-            const level = ev.level || 'info';
-            return `
-                <div class="notification-item notification-${level}">
-                    <span class="notification-message">${escapeNotification(ev.message)}</span>
-                    <span class="notification-age">${age}</span>
-                </div>
-            `;
-        })
-        .join('');
+    // Touch devices toggle the pop-out open with .open; hover-capable devices ignore it.
+    panel.classList.toggle('open', state.notifications.panelOpen);
+
+    // Desktop: hovering the bell counts as reading - clear the unread badge. Bind once
+    // per (re)rendered wrapper.
+    const wrapper = panel.closest('.notification-wrapper');
+    if (wrapper && !wrapper._notifHoverBound) {
+        wrapper._notifHoverBound = true;
+        wrapper.addEventListener('mouseenter', () => {
+            if (state.notifications.unread !== 0) {
+                state.notifications.unread = 0;
+                const b = document.getElementById('notification-badge');
+                if (b) b.hidden = true;
+            }
+        });
+    }
 }
 
 /** Minimal HTML escaping for event text. */

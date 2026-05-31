@@ -1028,11 +1028,139 @@ function readAccentColor() {
 }
 
 /**
- * Harmonic curve renderer: the real signal behind the old fake "correlation"
- * animation. The head sends the top-2 PCA trajectory of its field over one
- * period plus its dominant Fourier modes; we redraw it as a classic epicycle
- * (nested rotating vectors whose tip traces the curve). Pure client-side
- * animation off a tiny cached seed - the model is never touched per frame.
+ * Harmonic spiral renderer: the real signal behind the old fake "correlation"
+ * animation. The head sends the field's top-2 PCA cross-section (x, y) with
+ * position as the third axis (z), so the periodic loop unrolls into a rising
+ * spiral; ``band`` is the energy left outside the plane, drawn as ribbon width
+ * projected radially ("planes from the center"). The only motion is real - a
+ * tracer climbing the sequence plus a slow camera spin for depth. No spinning
+ * scaffolding, no per-frame model calls.
+ */
+function renderHarmonicSpiral(canvas, data) {
+    if (canvas._harmonicRAF) cancelAnimationFrame(canvas._harmonicRAF);
+    const path = Array.isArray(data.path) ? data.path : [];
+    const band = Array.isArray(data.band) ? data.band : [];
+    if (path.length < 2) return;
+
+    const ctx = canvas.getContext('2d');
+    const TILT = 26 * Math.PI / 180;  // camera elevation
+    const HEIGHT = 2.4;               // tower height in world units
+    const BAND_GAIN = 0.6;
+    const PERIOD = 720;               // frames for the tracer to climb once
+    let frame = 0, cachedTheme = null, accent = 'rgb(26, 161, 121)';
+
+    const draw = () => {
+        if (!canvas.isConnected) { canvas._harmonicRAF = null; return; }
+        if (cachedTheme !== state.theme) { cachedTheme = state.theme; accent = readAccentColor(); }
+
+        const wrapper = canvas.parentElement;
+        const w = wrapper.clientWidth || 800, h = wrapper.clientHeight || 400;
+        if (w < 2 || h < 2) { canvas._harmonicRAF = requestAnimationFrame(draw); return; }
+        if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+
+        const { textColor, gridColor } = getThemeColors();
+        ctx.clearRect(0, 0, w, h);
+        ctx.fillStyle = gridColor;
+        ctx.fillRect(0, 0, w, h);
+
+        const cx = w / 2, cy = h / 2;
+        const scale = Math.min(w, h) * 0.30;
+        const cosA = Math.cos(frame * 0.005), sinA = Math.sin(frame * 0.005);  // slow spin
+        const cosE = Math.cos(TILT), sinE = Math.sin(TILT);
+
+        // Spin about the vertical (z) axis, tilt toward the viewer, project.
+        const project = (x, y, z01) => {
+            const Z = (z01 - 0.5) * HEIGHT;
+            const Xs = x * cosA - y * sinA;
+            const Ys = x * sinA + y * cosA;
+            return {
+                sx: cx + Xs * scale,
+                sy: cy - (Z * cosE - Ys * sinE) * scale,
+                depth: Ys * cosE + Z * sinE,
+            };
+        };
+
+        // Build ribbon quads (radial offset) and spine segments, depth-sorted.
+        const prims = [];
+        let prev = null;
+        for (let i = 0; i < path.length; i++) {
+            const [x, y, z] = path[i];
+            const r = Math.hypot(x, y) || 1e-6;
+            const wdt = (band[i] || 0) * BAND_GAIN;
+            const center = project(x, y, z);
+            const cur = {
+                center,
+                outer: project(x + (x / r) * wdt, y + (y / r) * wdt, z),
+                inner: project(x - (x / r) * wdt, y - (y / r) * wdt, z),
+            };
+            if (prev) {
+                prims.push({
+                    type: 'quad', depth: (prev.center.depth + center.depth) / 2,
+                    pts: [prev.inner, prev.outer, cur.outer, cur.inner],
+                });
+                prims.push({
+                    type: 'spine', depth: (prev.center.depth + center.depth) / 2,
+                    a: prev.center, b: center,
+                });
+            }
+            prev = cur;
+        }
+        let dmin = Infinity, dmax = -Infinity;
+        for (const p of prims) { if (p.depth < dmin) dmin = p.depth; if (p.depth > dmax) dmax = p.depth; }
+        const drange = (dmax - dmin) || 1;
+        prims.sort((p, q) => p.depth - q.depth);  // painter's algorithm: far first
+
+        for (const p of prims) {
+            const near = (p.depth - dmin) / drange;  // 0 far .. 1 near
+            if (p.type === 'quad') {
+                ctx.beginPath();
+                ctx.moveTo(p.pts[0].sx, p.pts[0].sy);
+                for (let k = 1; k < 4; k++) ctx.lineTo(p.pts[k].sx, p.pts[k].sy);
+                ctx.closePath();
+                ctx.fillStyle = withAlpha(accent, 0.08 + 0.24 * near);
+                ctx.fill();
+            } else {
+                ctx.beginPath();
+                ctx.moveTo(p.a.sx, p.a.sy);
+                ctx.lineTo(p.b.sx, p.b.sy);
+                ctx.strokeStyle = withAlpha(accent, 0.4 + 0.5 * near);
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+            }
+        }
+
+        // Tracer climbing the sequence axis.
+        const ti = Math.min(path.length - 1, Math.floor(((frame % PERIOD) / PERIOD) * path.length));
+        const tp = project(path[ti][0], path[ti][1], path[ti][2]);
+        ctx.beginPath();
+        ctx.arc(tp.sx, tp.sy, 4, 0, 2 * Math.PI);
+        ctx.fillStyle = accent;
+        ctx.shadowColor = accent;
+        ctx.shadowBlur = 12;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        const pr = data.participation_ratio;
+        if (typeof pr === 'number') {
+            ctx.fillStyle = textColor;
+            ctx.font = '12px sans-serif';
+            ctx.textAlign = 'right';
+            ctx.fillText(`eff. dim ${pr.toFixed(1)} · band = spread off-plane`, w - 6, 16);
+        }
+
+        frame++;
+        canvas._harmonicRAF = requestAnimationFrame(draw);
+    };
+
+    canvas._harmonicRAF = requestAnimationFrame(draw);
+}
+
+/**
+ * Harmonic epicycle renderer: a second lens on the field. The head sends the
+ * top-2 PCA loop plus its dominant Fourier modes; we redraw it as nested
+ * rotating vectors whose tip traces the curve. The spinning arms are generic
+ * Fourier scaffolding (true of any closed curve); the loop shape and the arm
+ * lengths are the real per-model signal. Pure client-side off a cached seed.
  */
 function renderHarmonicCurve(canvas, data) {
     if (canvas._harmonicRAF) cancelAnimationFrame(canvas._harmonicRAF);
@@ -1143,6 +1271,7 @@ function renderHarmonicCurve(canvas, data) {
 
 const SNAPSHOT_RENDERERS = {
     heatmap_2d: renderHeatmap2D,
+    harmonic_spiral: renderHarmonicSpiral,
     harmonic_curve: renderHarmonicCurve,
 };
 

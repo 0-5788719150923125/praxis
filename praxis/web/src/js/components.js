@@ -303,7 +303,7 @@ export function createHeader(state) {
                         </svg>
                         <span class="notification-badge" id="notification-badge" hidden></span>
                     </button>
-                    <div class="notification-panel" id="notification-panel" hidden></div>
+                    <div class="notification-panel" id="notification-panel"></div>
                 </div>
                 <button class="theme-toggle-button" id="theme-toggle">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" id="theme-icon">

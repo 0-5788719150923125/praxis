@@ -4,7 +4,7 @@
  */
 
 import { state } from './state.js';
-import { render } from './render.js';
+import { render, renderNotifications } from './render.js';
 import { storage, readFormValues, FORM_FIELDS } from './config.js';
 import { toggleRunSelector, toggleRunSelection } from './charts.js';
 import { toggleDynamicsRunSelector, selectDynamicsRun } from './dynamics.js';
@@ -286,6 +286,19 @@ export const ACTION_HANDLERS = {
         if (meta.button.dataset.tool === 'evaluate') {
             document.documentElement.toggleAttribute('data-eval', meta.button.classList.contains('active'));
         }
+    },
+
+    /**
+     * Notification bell. On desktop the pop-out is hover-driven (CSS), so a click does
+     * nothing. On touch devices there's no hover, so a tap toggles it open/closed (and
+     * opening clears the unread badge).
+     */
+    TOGGLE_NOTIFICATIONS: () => {
+        const isTouch = window.matchMedia('(hover: none)').matches;
+        if (!isTouch) return;
+        state.notifications.panelOpen = !state.notifications.panelOpen;
+        if (state.notifications.panelOpen) state.notifications.unread = 0;
+        renderNotifications();
     },
 
     TOGGLE_RUN_SELECTOR: () => {

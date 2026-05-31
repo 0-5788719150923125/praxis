@@ -135,6 +135,66 @@ def test_callback_rolls_back_unhelpful_edit():
     assert all(torch.equal(b, a) for b, a in zip(before, after))
 
 
+def _schedulefree(model):
+    # Outermost wrapper, as praxis builds it; one step to create the z iterate.
+    from pytorch_optimizer.optimizer import ScheduleFreeWrapper
+
+    base = torch.optim.SGD(model.parameters(), lr=1e-3)
+    sf = ScheduleFreeWrapper(base, momentum=0.98)
+    sf.train()
+    model(torch.randn(2, 8)).sum().backward()
+    sf.step()
+    sf.zero_grad(set_to_none=True)
+    return sf
+
+
+def test_schedulefree_edit_mirrors_onto_z():
+    # Under schedule-free the edit must also land on the carried iterate z, not
+    # just p.data - else it gets smeared by the x/z reconstruction. Dropping
+    # loss -> edit kept -> the chosen param's z row changed.
+    torch.manual_seed(0)
+    policy = HarmonicWeightPolicy(_cfg(rl_alpha_scale=0.3))
+    cb = HarmonicWeightRLCallback(
+        policy, period=3, horizon=2, warmup_steps=3, keep_threshold=0.0
+    )
+    model = nn.Sequential(nn.Linear(8, 8), nn.Linear(8, 4))
+    sf = _schedulefree(model)
+    z_before = {p: sf.state[p]["z"].clone() for p in model.parameters()}
+
+    tr, pl = _Trainer(), _PL(model)
+    tr.optimizers = [sf]
+    for ls in [5.0, 5.0, 5.0, 4.0, 2.0]:  # loss drops -> kept
+        cb.on_train_batch_end(tr, pl, torch.tensor(ls), None, 0)
+
+    assert cb._metrics["rl_edit_kept"] == 1.0
+    # The callback found schedule-free and a z row was edited (and kept).
+    assert cb._schedulefree(tr) is sf
+    changed = any(not torch.equal(sf.state[p]["z"], z_before[p]) for p in model.parameters())
+    assert changed, "a schedule-free z iterate row should have been edited"
+
+
+def test_schedulefree_rollback_restores_both_weight_and_z():
+    # Rising loss -> edit rolled back -> both p.data and z restored exactly.
+    torch.manual_seed(0)
+    policy = HarmonicWeightPolicy(_cfg(rl_alpha_scale=0.3))
+    cb = HarmonicWeightRLCallback(
+        policy, period=3, horizon=2, warmup_steps=3, keep_threshold=0.0
+    )
+    model = nn.Sequential(nn.Linear(8, 8), nn.Linear(8, 4))
+    sf = _schedulefree(model)
+    z_before = {p: sf.state[p]["z"].clone() for p in model.parameters()}
+    w_before = [p.detach().clone() for p in model.parameters()]
+
+    tr, pl = _Trainer(), _PL(model)
+    tr.optimizers = [sf]
+    for ls in [3.0, 3.0, 3.0, 4.0, 6.0]:  # loss rises -> rolled back
+        cb.on_train_batch_end(tr, pl, torch.tensor(ls), None, 0)
+
+    assert cb._metrics["rl_edit_kept"] == 0.0
+    assert all(torch.equal(sf.state[p]["z"], z_before[p]) for p in model.parameters())
+    assert all(torch.equal(b, p) for b, p in zip(w_before, model.parameters()))
+
+
 def test_gate_mask_selectors_are_deterministic():
     from praxis.policies.harmonic_weight_rl import build_gate_mask
 
