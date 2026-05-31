@@ -44,6 +44,7 @@ class APIServer:
         dashboard=None,
         launch_command=None,
         config_file=None,
+        donations="",
     ):
         """Initialize the API server.
 
@@ -75,6 +76,7 @@ class APIServer:
         self.full_hash = full_hash
         self.launch_command = launch_command
         self.config_file = config_file
+        self.donations = donations
         self.dev_mode = dev_mode
         self.launch_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -199,6 +201,7 @@ class APIServer:
         app.config["launch_timestamp"] = self.launch_timestamp
         app.config["param_stats"] = self.param_stats
         app.config["config_file"] = self.config_file
+        app.config["donations"] = self.donations
         app.config["repo_root"] = os.getcwd()  # Store the repository root at startup
 
         # Start the server thread

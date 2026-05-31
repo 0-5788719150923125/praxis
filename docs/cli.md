@@ -121,6 +121,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
+| `--donations` | str | `https://buymeacoffee.com/vectorrent` | URL the web app's donations icon links to (empty string hides it) |
 | `--host-name` | str | `localhost` | Serve the local API at this CNAME |
 | `--port` | int | `2100` | Serve the local API at this port |
 

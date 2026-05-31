@@ -24,3 +24,10 @@ class NetworkingGroup:
             default=2100,
             help="Serve the local API at this port",
         )
+
+        group.add_argument(
+            "--donations",
+            type=str,
+            default="https://buymeacoffee.com/vectorrent",
+            help="URL the web app's donations icon links to (empty string hides it)",
+        )

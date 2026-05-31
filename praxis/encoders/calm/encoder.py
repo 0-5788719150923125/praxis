@@ -40,8 +40,10 @@ from .vae import CALMVAE
 
 # AE pretraining-phase convergence detector. Fixed and model-agnostic (per the
 # no-per-experiment-tuning rule): the phase ends when reconstruction stops
-# improving - the relative drop across the window falls below EPS - or the
-# max-steps cap is hit as a backstop.
+# improving - the relative drop across the window falls below EPS, sustained for
+# PRETRAIN_PATIENCE readings and only after the LR warmup horizon - or the
+# max-steps cap is hit as a backstop. The warmup floor matters: during the LR
+# ramp a flat recon curve is just the low LR, not convergence.
 PRETRAIN_WINDOW = 256
 PRETRAIN_SLOPE_EPS = 5e-3
 # Start emitting / computing the convergence Δ once this many recon samples
@@ -50,6 +52,11 @@ PRETRAIN_SLOPE_EPS = 5e-3
 # the full window - an early, small-sample Δ is informative but too noisy to
 # latch on.
 PRETRAIN_MIN_SAMPLES = 16
+# Consecutive below-threshold readings required before convergence latches. The
+# window slides one sample per microbatch, so this demands the plateau hold for
+# a sustained stretch (a full extra window) rather than ending the phase on a
+# single lucky read at the moment the window first fills.
+PRETRAIN_PATIENCE = PRETRAIN_WINDOW
 
 
 def _resolve_dim(spec: Union[int, float], base: int) -> int:
@@ -245,6 +252,11 @@ class CALMEncoder(BaseEncoder):
         self._grad_accum = max(1, int(getattr(config, "grad_accumulation", 1) or 1))
         warmup = int(getattr(config, "warmup_steps", 0) or 0)
         self.kl_warmup_steps = warmup if kl_warmup_steps is None else int(kl_warmup_steps)
+        # Convergence can't latch until the LR warmup horizon has elapsed: while
+        # the LR is still ramping from ~0, a flat recon curve is just the low LR,
+        # not real convergence. Without this floor the codec "converges" in a few
+        # dozen steps the moment the window first fills. Optimizer-step units.
+        self._pretrain_min_steps = warmup
 
         self.noise_dim = _resolve_dim(noise_dim, base)
         self.energy_blocks = energy_blocks
@@ -274,6 +286,10 @@ class CALMEncoder(BaseEncoder):
             self.ae_freeze_steps = warmup
         self.ae_max_pretrain_steps = int(ae_max_pretrain_steps)
         self._recon_hist: list = []
+        # Consecutive below-threshold readings so far (see PRETRAIN_PATIENCE).
+        # Plain attribute, not a buffer: resetting to 0 on resume is safe - it
+        # just re-requires the plateau to re-establish, which is conservative.
+        self._pretrain_patience = 0
         # Set once when the codec is frozen, to log the transition a single
         # time. Not a buffer: re-deriving frozen-ness from _train_step on
         # resume is what re-applies the freeze, so this flag may reset freely.
@@ -516,8 +532,19 @@ class CALMEncoder(BaseEncoder):
             # the latch waits for the full window so it can't fire on noise.
             rel = abs(slope * n) / (mean_y + 1e-9)
             self._diag["calm_pretrain_rel_delta"] = rel
-            if len(self._recon_hist) >= PRETRAIN_WINDOW and rel < PRETRAIN_SLOPE_EPS:
-                self._mark_pretrain_done(step, f"converged (rel d={rel:.4f})")
+            # Latch only after the LR warmup floor, with a full window, once the
+            # plateau has held for PRETRAIN_PATIENCE consecutive readings.
+            converging = (
+                len(self._recon_hist) >= PRETRAIN_WINDOW
+                and step >= self._pretrain_min_steps
+                and rel < PRETRAIN_SLOPE_EPS
+            )
+            if converging:
+                self._pretrain_patience += 1
+                if self._pretrain_patience >= PRETRAIN_PATIENCE:
+                    self._mark_pretrain_done(step, f"converged (rel d={rel:.4f})")
+            else:
+                self._pretrain_patience = 0
 
     def _mark_pretrain_done(self, step: int, reason: str) -> None:
         self._pretrain_done.fill_(True)

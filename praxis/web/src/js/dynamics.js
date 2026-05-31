@@ -1269,10 +1269,144 @@ function renderHarmonicCurve(canvas, data) {
     canvas._harmonicRAF = requestAnimationFrame(draw);
 }
 
+/**
+ * Field traces renderer: the time-domain view. The head sends b(t, d) sampled
+ * over one period as per-feature lines; we overlay them (hue ramped around the
+ * brand accent) so the harmonics' interference reads as a moiré. Static data,
+ * so it draws once - the tick loop only re-renders on resize or theme change.
+ */
+function renderFieldTraces(canvas, data) {
+    if (canvas._harmonicRAF) cancelAnimationFrame(canvas._harmonicRAF);
+    const traces = Array.isArray(data.traces) ? data.traces : [];
+    const nFeat = traces.length;
+    const nTime = nFeat ? traces[0].length : 0;
+    if (nTime < 2) return;
+
+    const ctx = canvas.getContext('2d');
+    let lastW = 0, lastH = 0, lastTheme = null;
+
+    const render = (w, h) => {
+        const { textColor, gridColor } = getThemeColors();
+        const baseHue = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--accent-hue')) || 161;
+        ctx.clearRect(0, 0, w, h);
+        ctx.fillStyle = gridColor;
+        ctx.fillRect(0, 0, w, h);
+
+        const ml = 8, mr = 8, mt = 8, mb = 8;
+        const drawW = w - ml - mr, drawH = h - mt - mb;
+        const midY = mt + drawH / 2, amp = (drawH / 2) * 0.92;
+        const denom = nFeat - 1 || 1;
+        const xAt = (j) => ml + (j / (nTime - 1)) * drawW;
+        const yAt = (v) => midY - v * amp;
+
+        for (let i = 0; i < nFeat; i++) {
+            const tr = traces[i];
+            ctx.beginPath();
+            for (let j = 0; j < nTime; j++) {
+                const X = xAt(j), Y = yAt(tr[j]);
+                j === 0 ? ctx.moveTo(X, Y) : ctx.lineTo(X, Y);
+            }
+            ctx.strokeStyle = `hsla(${baseHue - 70 + (i / denom) * 140}, 60%, 55%, 0.4)`;
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+
+        ctx.fillStyle = textColor;
+        ctx.font = '12px sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText(`${nFeat} features · b(t,d) over one period`, w - 6, 16);
+    };
+
+    const tick = () => {
+        if (!canvas.isConnected) { canvas._harmonicRAF = null; return; }
+        const wrapper = canvas.parentElement;
+        const w = wrapper.clientWidth || 800, h = wrapper.clientHeight || 400;
+        if (w >= 2 && h >= 2 && (w !== lastW || h !== lastH || state.theme !== lastTheme)) {
+            lastW = w; lastH = h; lastTheme = state.theme;
+            if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+            render(w, h);
+        }
+        canvas._harmonicRAF = requestAnimationFrame(tick);
+    };
+    canvas._harmonicRAF = requestAnimationFrame(tick);
+}
+
+/**
+ * Diverging correlation-matrix renderer. Grid values are cosine similarities
+ * in [-1, 1]: red = positive, blue = negative, white = zero. Static; only
+ * re-renders on resize or theme change.
+ */
+function renderCorrMatrix(canvas, data) {
+    if (canvas._harmonicRAF) cancelAnimationFrame(canvas._harmonicRAF);
+    const grid = data.grid;
+    if (!Array.isArray(grid) || grid.length === 0) return;
+    const rows = grid.length;
+    const cols = Array.isArray(grid[0]) ? grid[0].length : 0;
+    if (cols === 0) return;
+
+    const ctx = canvas.getContext('2d');
+    let lastW = 0, lastH = 0, lastTheme = null;
+
+    // White-centered diverging map: -1 blue, 0 white, +1 red.
+    const diverge = (v) => {
+        const a = Math.min(1, Math.abs(v)) * 0.75;
+        const lo = Math.round(255 * (1 - a));
+        return v >= 0 ? [255, lo, lo] : [lo, lo, 255];
+    };
+
+    const render = (w, h) => {
+        const off = document.createElement('canvas');
+        off.width = cols; off.height = rows;
+        const offCtx = off.getContext('2d');
+        const img = offCtx.createImageData(cols, rows);
+        for (let i = 0; i < rows; i++) {
+            for (let j = 0; j < cols; j++) {
+                const [r, g, b] = diverge(grid[i][j]);
+                const idx = (i * cols + j) * 4;
+                img.data[idx] = r; img.data[idx + 1] = g; img.data[idx + 2] = b; img.data[idx + 3] = 255;
+            }
+        }
+        offCtx.putImageData(img, 0, 0);
+
+        const { textColor, gridColor } = getThemeColors();
+        ctx.fillStyle = gridColor;
+        ctx.fillRect(0, 0, w, h);
+        ctx.imageSmoothingEnabled = false;
+        const ml = 50, mb = 28, mt = 8, mr = 12;
+        const drawW = Math.max(1, w - ml - mr), drawH = Math.max(1, h - mt - mb);
+        ctx.drawImage(off, ml, mt, drawW, drawH);
+
+        ctx.fillStyle = textColor;
+        ctx.font = '12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(`feature j (1..${cols})`, ml + drawW / 2, h - 8);
+        ctx.save();
+        ctx.translate(16, mt + drawH / 2);
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillText(`feature i (1..${rows})`, 0, 0);
+        ctx.restore();
+    };
+
+    const tick = () => {
+        if (!canvas.isConnected) { canvas._harmonicRAF = null; return; }
+        const wrapper = canvas.parentElement;
+        const w = wrapper.clientWidth || 800, h = wrapper.clientHeight || 400;
+        if (w >= 2 && h >= 2 && (w !== lastW || h !== lastH || state.theme !== lastTheme)) {
+            lastW = w; lastH = h; lastTheme = state.theme;
+            if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+            render(w, h);
+        }
+        canvas._harmonicRAF = requestAnimationFrame(tick);
+    };
+    canvas._harmonicRAF = requestAnimationFrame(tick);
+}
+
 const SNAPSHOT_RENDERERS = {
     heatmap_2d: renderHeatmap2D,
     harmonic_spiral: renderHarmonicSpiral,
     harmonic_curve: renderHarmonicCurve,
+    field_traces: renderFieldTraces,
+    corr_matrix: renderCorrMatrix,
 };
 
 /**

@@ -55,7 +55,8 @@ def _compute_git_url(app_config) -> str | None:
 @core_bp.route("/", methods=["GET"])
 def home():
     """Serve the main page."""
-    response = make_response(render_template("index.html"))
+    donations = current_app.config.get("donations", "")
+    response = make_response(render_template("index.html", donations=donations))
     response.headers["Content-Security-Policy"] = CSP_POLICY
     response.headers["ngrok-skip-browser-warning"] = "true"
     return response

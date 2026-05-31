@@ -286,6 +286,21 @@ export function createAppStructure(state) {
  * @returns {string} HTML string
  */
 export function createHeader(state) {
+    // Donations URL injected by the backend (--donations) via a meta tag; empty hides it.
+    const donations = (document.querySelector('meta[name="praxis-donations"]')?.content || '').trim();
+    const donationButton = donations ? `
+                <a class="donation-button" href="${escapeHtml(donations)}" target="_blank" rel="noopener noreferrer" title="Support Praxis" aria-label="Support Praxis">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round">
+                        <path d="M4.4 4.3 3.3 1.7 6 3.1"/>
+                        <path d="M11.6 4.3 12.7 1.7 10 3.1"/>
+                        <circle cx="8" cy="8.7" r="5.3"/>
+                        <ellipse cx="8" cy="9.7" rx="2.4" ry="1.7"/>
+                        <circle cx="7.3" cy="9.7" r="0.45" fill="currentColor" stroke="none"/>
+                        <circle cx="8.7" cy="9.7" r="0.45" fill="currentColor" stroke="none"/>
+                        <circle cx="5.9" cy="6.7" r="0.7" fill="currentColor" stroke="none"/>
+                        <text x="10.1" y="8.1" font-size="4" font-weight="700" fill="currentColor" stroke="none" text-anchor="middle">$</text>
+                    </svg>
+                </a>` : '';
     return `
         <header class="header">
             <div class="logo">
@@ -305,6 +320,7 @@ export function createHeader(state) {
                     </button>
                     <div class="notification-panel" id="notification-panel"></div>
                 </div>
+                ${donationButton}
                 <button class="theme-toggle-button" id="theme-toggle">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" id="theme-icon">
                         ${state.theme === 'dark' ? CONSTANTS.THEME_ICONS.sun : CONSTANTS.THEME_ICONS.moon}

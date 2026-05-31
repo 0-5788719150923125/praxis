@@ -208,6 +208,40 @@ class HarmonicField(nn.Module):
                 "order": 102,
             },
         },
+        # Time domain: the raw field as per-feature traces over the period.
+        # Complements the spectrum (frequency) and spiral/epicycle (PCA shape).
+        "harmonic_traces": {
+            "description": (
+                "Raw field b(t, d) over one period: each line is one feature's "
+                "value flowing timestep to timestep, sampled across evenly "
+                "spaced features. The overlay is the harmonics interfering - a "
+                "moiré of phase-shifted waves; the playhead reads the whole "
+                "feature column at one position."
+            ),
+            "snapshot": {
+                "title": "Harmonic Field Traces",
+                "renderer": "field_traces",
+                "group": "harmonic_head",
+                "order": 103,
+            },
+        },
+        # The real "correlation": cosine similarity between feature trajectories.
+        # Amplitude-invariant, so it reads pure co-evolution - the honest
+        # successor to the fake terminal "CORRELATION" panel.
+        "harmonic_correlation": {
+            "description": (
+                "Cosine similarity between feature trajectories over one period "
+                "(amplitude removed). Red = rise/fall together, blue = "
+                "anti-correlated, white = unrelated. Blocks of warm cells are "
+                "feature groups locked into the same harmonic rhythm."
+            ),
+            "snapshot": {
+                "title": "Feature Correlation",
+                "renderer": "corr_matrix",
+                "group": "harmonic_head",
+                "order": 104,
+            },
+        },
     }
 
     def __init__(
@@ -307,6 +341,25 @@ class HarmonicField(nn.Module):
         env = self._envelope()
         return 0.0 if env is None else float((env.max() - env.min()).detach().item())
 
+    def _sample_field(self, Tp: int) -> Tensor:
+        """Real field [Tp, D] sampled over one period, mean-centered over time.
+
+        Alias-free for Tp >= 2*F_t+1 (the field is band-limited to F_t temporal
+        frequencies), and far cheaper than the full-T irfft. Shared by every
+        snapshot view below.
+        """
+        rfft_D = self.D // 2 + 1
+        spec = torch.zeros(Tp, rfft_D, dtype=torch.complex64)
+        amps = self.amplitudes.detach().cpu()
+        env = self._envelope()
+        if env is not None:
+            amps = amps * env.detach().cpu().unsqueeze(1)
+        scaled = torch.complex(self.spec_real.cpu(), self.spec_imag.cpu()) * amps
+        spec[1 : self.F_t + 1, 1 : self.F_d + 1] = scaled
+        spec[Tp - self.F_t : Tp, 1 : self.F_d + 1] = scaled.flip(0).conj()
+        field = torch.fft.irfft2(spec, s=(Tp, self.D), norm="ortho")
+        return field - field.mean(dim=0, keepdim=True)
+
     def spiral(self, n_points: int = 720) -> dict:
         """The field's top-2 PCA cross-section unrolled along the position axis.
 
@@ -323,17 +376,7 @@ class HarmonicField(nn.Module):
         """
         with torch.no_grad():
             Tp = max(int(n_points), 2 * self.F_t + 1)
-            rfft_D = self.D // 2 + 1
-            spec = torch.zeros(Tp, rfft_D, dtype=torch.complex64)
-            amps = self.amplitudes.detach().cpu()
-            env = self._envelope()
-            if env is not None:
-                amps = amps * env.detach().cpu().unsqueeze(1)
-            scaled = torch.complex(self.spec_real.cpu(), self.spec_imag.cpu()) * amps
-            spec[1 : self.F_t + 1, 1 : self.F_d + 1] = scaled
-            spec[Tp - self.F_t : Tp, 1 : self.F_d + 1] = scaled.flip(0).conj()
-            field = torch.fft.irfft2(spec, s=(Tp, self.D), norm="ortho")  # [Tp, D]
-            field = field - field.mean(dim=0, keepdim=True)
+            field = self._sample_field(Tp)
 
             _, S, Vh = torch.linalg.svd(field, full_matrices=False)
             xy = field @ Vh[:2].T  # [Tp, 2] in-plane shape
@@ -372,18 +415,8 @@ class HarmonicField(nn.Module):
         """
         with torch.no_grad():
             Tp = max(int(n_points), 2 * self.F_t + 1)
-            rfft_D = self.D // 2 + 1
-            spec = torch.zeros(Tp, rfft_D, dtype=torch.complex64)
-            amps = self.amplitudes.detach().cpu()
-            env = self._envelope()
-            if env is not None:
-                amps = amps * env.detach().cpu().unsqueeze(1)
-            scaled = torch.complex(self.spec_real.cpu(), self.spec_imag.cpu()) * amps
-            spec[1 : self.F_t + 1, 1 : self.F_d + 1] = scaled
-            spec[Tp - self.F_t : Tp, 1 : self.F_d + 1] = scaled.flip(0).conj()
-            field = torch.fft.irfft2(spec, s=(Tp, self.D), norm="ortho")  # [Tp, D]
+            field = self._sample_field(Tp)
 
-            field = field - field.mean(dim=0, keepdim=True)
             _, S, Vh = torch.linalg.svd(field, full_matrices=False)
             traj = field @ Vh[:2].T  # [Tp, 2]
 
@@ -413,6 +446,66 @@ class HarmonicField(nn.Module):
             "points": points,
             "n_points": int(len(points)),
             "participation_ratio": part,
+        }
+
+    def traces(self, n_time: int = 192, n_feat: int = 64) -> dict:
+        """Per-feature temporal traces of the field b(t, d), normalized + ordered.
+
+        Time-domain companion to the spectrum (frequency domain) and the spiral
+        (PCA shape). Amplitude carries little here, so each trace is scaled to
+        unit range and features are ordered by their phase at the dominant
+        temporal frequency - turning a chaotic overlay into a traveling
+        wavefront where the harmonics' interference reads as a clean moiré.
+        """
+        with torch.no_grad():
+            Tp = max(int(n_time), 2 * self.F_t + 1)
+            field = self._sample_field(Tp)
+
+            n_feat = min(int(n_feat), self.D)
+            f_idx = torch.linspace(0, self.D - 1, n_feat).round().long()
+            sub = field[:, f_idx]  # [Tp, n_feat]
+
+            # Order features by phase at the dominant shared temporal frequency.
+            spec = torch.fft.rfft(sub, dim=0)  # [Tp//2+1, n_feat]
+            mag = spec.abs().sum(dim=1)
+            mag[0] = 0.0  # ignore DC
+            f0 = int(torch.argmax(mag).item())
+            order = torch.argsort(torch.angle(spec[f0]))
+            sub = sub[:, order]
+
+            sub = sub / sub.abs().amax(dim=0, keepdim=True).clamp_min(1e-8)  # amplitude out
+            t_idx = torch.linspace(0, Tp - 1, int(n_time)).round().long()
+            series = sub[t_idx].t().to(torch.float32).tolist()  # [n_feat][n_time]
+        return {
+            "traces": series,
+            "n_time": int(len(t_idx)),
+            "n_feat": int(n_feat),
+        }
+
+    def correlation(self, n_feat: int = 64) -> dict:
+        """Cosine similarity between feature trajectories over one period.
+
+        ``C[i,j] = cos(b(:,i), b(:,j))`` across position - amplitude-invariant,
+        so it reads pure co-evolution structure. This is the honest version of
+        the old fake "correlation" panel: block/diagonal structure marks groups
+        of features that rise and fall together. Packaged for the diverging
+        ``corr_matrix`` renderer (values in [-1, 1]).
+        """
+        with torch.no_grad():
+            Tp = max(2 * self.F_t + 1, int(n_feat))
+            field = self._sample_field(Tp)
+            n_feat = min(int(n_feat), self.D)
+            f_idx = torch.linspace(0, self.D - 1, n_feat).round().long()
+            sub = field[:, f_idx]  # [Tp, n_feat]
+            sub = sub / sub.norm(dim=0, keepdim=True).clamp_min(1e-8)
+            corr = (sub.t() @ sub).clamp(-1.0, 1.0)  # [n_feat, n_feat] cosine sim
+        return {
+            "grid": corr.to(torch.float32).tolist(),
+            "grid_rows": int(n_feat),
+            "grid_cols": int(n_feat),
+            "x_range": [0, int(n_feat)],
+            "y_range": [0, int(n_feat)],
+            "max_count": 1.0,
         }
 
     def concentration(self) -> Tensor:
@@ -555,6 +648,8 @@ class HarmonicHead(BaseHead):
             },
             "harmonic_spiral": self.field.spiral(),
             "harmonic_curve": self.field.curve(),
+            "harmonic_traces": self.field.traces(),
+            "harmonic_correlation": self.field.correlation(),
         }
 
     def training_metrics(self) -> dict:

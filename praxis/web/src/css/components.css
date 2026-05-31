@@ -179,6 +179,31 @@
     display: block;
 }
 
+/* Donations link (pig icon) - styled like the other header icon buttons. */
+.donation-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--light-text);
+    padding: 0.625rem 0.5rem;
+    border-radius: var(--radius-small);
+    transition: background-color 0.2s, color 0.2s;
+    text-decoration: none;
+}
+
+.donation-button:hover {
+    background-color: rgba(0, 0, 0, 0.05);
+    color: var(--accent);
+}
+
+[data-theme="dark"] .donation-button:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.donation-button svg {
+    display: block;
+}
+
 .notification-badge {
     position: absolute;
     top: 0.125rem;

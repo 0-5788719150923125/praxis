@@ -30,9 +30,9 @@ Introspected from the live Flask app at every launch. Each summary is the first 
 ### Core
 
 - **GET** `/` - Serve the main page. ([source](../praxis/web/routes/core.py#L55))
-- **GET** `/api/config` - Get current experiment configuration as YAML. ([source](../praxis/web/routes/core.py#L142))
-- **GET, POST** `/api/ping` - Simple endpoint to test if API is accessible. ([source](../praxis/web/routes/core.py#L64))
-- **GET** `/api/spec` - Get model specification including hashes and CLI arguments. ([source](../praxis/web/routes/core.py#L71))
+- **GET** `/api/config` - Get current experiment configuration as YAML. ([source](../praxis/web/routes/core.py#L143))
+- **GET, POST** `/api/ping` - Simple endpoint to test if API is accessible. ([source](../praxis/web/routes/core.py#L65))
+- **GET** `/api/spec` - Get model specification including hashes and CLI arguments. ([source](../praxis/web/routes/core.py#L72))
 
 ### Data metrics
 
