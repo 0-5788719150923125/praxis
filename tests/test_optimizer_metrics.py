@@ -96,3 +96,38 @@ def test_descriptions_in_dynamics_manifest():
 
 def test_handles_none():
     assert extract_optimizer_dynamics(None) == {}
+
+
+def test_descriptions_stamp_producing_caller():
+    """Each entry carries the class name of the module that raised it."""
+    from praxis.metrics.descriptions import get_metric_descriptions
+
+    class Field(nn.Module):
+        metric_descriptions = {"field_amp": "amplitude"}
+
+    class Head(nn.Module):
+        metric_descriptions = {"head_loss": "aux loss"}
+
+        def __init__(self):
+            super().__init__()
+            self.field = Field()
+
+        def all_metric_descriptions(self):
+            out = {}
+            for mod in self.modules():
+                descs = getattr(type(mod), "metric_descriptions", None)
+                if isinstance(descs, dict):
+                    out.update(descs)
+            return out
+
+    class Model(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.head = Head()
+
+    descs = get_metric_descriptions(Model())
+    assert descs["field_amp"]["caller"] == "Field"
+    assert descs["head_loss"]["caller"] == "Head"
+    # Optimizer telemetry is universal and attributed generically.
+    for k in OPTIMIZER_METRIC_DESCRIPTIONS:
+        assert descs[k]["caller"] == "Optimizer"

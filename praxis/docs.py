@@ -138,6 +138,43 @@ def _registries() -> List[Tuple]:
             "LayerNorm/RMSNorm variants, including SandwichNorm (required for stable recurrent-depth bias).",
         ),
         (
+            "optimizers",
+            "Optimizer profiles",
+            praxis.OPTIMIZER_PROFILES,
+            "Named optimizer presets (built on pytorch-optimizer). Selected with "
+            "``--optimizer``; default is ``Lion``. Each entry shows its concrete "
+            "settings (lr, betas, weight decay, ...).",
+        ),
+        (
+            "wrappers",
+            "Optimizer wrappers",
+            praxis.WRAPPER_REGISTRY,
+            "Composable wrappers layered onto the base optimizer with "
+            "``--optimizer-wrappers`` (a list, applied innermost-first). The "
+            "schedule-free family runs without an LR schedule; the others keep it.",
+            {
+                "trac": "TRAC - tunes a per-parameter learning-rate scale online to "
+                "mitigate loss of plasticity over long training runs.",
+                "ortho": "OrthoGrad - projects each gradient orthogonal to the "
+                "current weights before the base step (a grokking/regularization aid).",
+                "lookahead": "Lookahead - keeps slow weights and pulls the fast "
+                "iterate toward them every k steps (k=5, alpha=0.5).",
+                "schedule_free": "Schedule-Free - primal averaging in place of an LR "
+                "schedule; deploys the running average x at eval, the iterate z while training.",
+                "gated_schedule_free": "Schedule-Free with a per-coordinate gradient-SNR "
+                "gate on the averaging weight, so each coordinate picks its own "
+                "bias-variance point (no knob).",
+                "wave_schedule_free": "Schedule-Free whose averaging weight is a standing "
+                "wave over the flattened parameter index (frozen ~pi cycles); RL-drivable.",
+                "half_lion": "Blends the live weights with a frozen copy of their init "
+                "via a traveling standing wave over the parameter index; eval deploys "
+                "100% current weights. Cannot stack with wave_schedule_free.",
+                "low_rank_moment": "Passthrough telemetry: tracks an Adafactor-style "
+                "factored second moment of the gradient (O(out+in)) so the second-moment "
+                "dashboard cards populate even under Lion. Does not change the update.",
+            },
+        ),
+        (
             "policies",
             "RL policies",
             praxis.RL_POLICIES_REGISTRY,
@@ -206,7 +243,6 @@ NON_REGISTRY_PACKAGES: List[Tuple[str, str]] = [
         "modeling",
         "``PraxisModel`` / ``PraxisForCausalLM`` - the top-level transformers-compatible wrappers.",
     ),
-    ("optimizers", "Optimizer registry and parameter-grouping helpers."),
     ("schedulers", "Learning-rate schedulers."),
     ("tasks", "Training task abstractions used by ``strategies``."),
     ("tokenizers", "Tokenizer creation and registry."),
@@ -1053,6 +1089,8 @@ def _registry_attr(slug: str) -> str:
         "losses": "LOSS_REGISTRY",
         "memory": "MEMORY_REGISTRY",
         "normalization": "NORMALIZATION_REGISTRY",
+        "optimizers": "OPTIMIZER_PROFILES",
+        "wrappers": "WRAPPER_REGISTRY",
         "policies": "RL_POLICIES_REGISTRY",
         "recurrent": "RECURRENT_REGISTRY",
         "residuals": "RESIDUAL_REGISTRY",

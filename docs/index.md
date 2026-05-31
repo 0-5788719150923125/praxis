@@ -18,6 +18,8 @@ links to a page listing the registered implementations and their source.
 - [Long-term memory](memory.md) (4) - Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced as a layer (MAL) or a gate (MAG). Selected with ``--memory-type``; default is ``none``.
 - [Loss functions](losses.md) (9) - Per-token criteria. Most accept optional ``loss_weights`` for task-weighted training.
 - [Normalization layers](normalization.md) (5) - LayerNorm/RMSNorm variants, including SandwichNorm (required for stable recurrent-depth bias).
+- [Optimizer profiles](optimizers.md) (5) - Named optimizer presets (built on pytorch-optimizer). Selected with ``--optimizer``; default is ``Lion``. Each entry shows its concrete settings (lr, betas, weight decay, ...).
+- [Optimizer wrappers](wrappers.md) (8) - Composable wrappers layered onto the base optimizer with ``--optimizer-wrappers`` (a list, applied innermost-first). The schedule-free family runs without an LR schedule; the others keep it.
 - [Output heads](heads.md) (9) - LM heads (tied/untied, harmonic, crystal) and multi-token-prediction wrappers.
 - [Positional encoding](encoding.md) (5) - RoPE, ALiBi, NoPE and friends - the rotational / additive position priors injected into attention.
 - [Recurrent cells](recurrent.md) (2) - Minimal gated recurrent cells (GRU, MinGRU). Used by the recurrent block types and as a sequence mixer inside the byte-latent encoder.
@@ -75,7 +77,6 @@ the package directory for details.
 - `praxis/logging/` - Logging utilities and formatters.
 - `praxis/metrics/` - Metrics descriptions and bookkeeping for the dashboards.
 - `praxis/modeling/` - ``PraxisModel`` / ``PraxisForCausalLM`` - the top-level transformers-compatible wrappers.
-- `praxis/optimizers/` - Optimizer registry and parameter-grouping helpers.
 - `praxis/schedulers/` - Learning-rate schedulers.
 - `praxis/tasks/` - Training task abstractions used by ``strategies``.
 - `praxis/tokenizers/` - Tokenizer creation and registry.

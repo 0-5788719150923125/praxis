@@ -16,6 +16,8 @@ from typing import Iterable, List
 from pytorch_optimizer.optimizer import TRAC, Lookahead, OrthoGrad, ScheduleFreeWrapper
 
 from praxis.optimizers.gated_schedule_free import GatedScheduleFree
+from praxis.optimizers.half_lion import HalfLion
+from praxis.optimizers.low_rank_moment import LowRankSecondMoment
 from praxis.optimizers.wave_schedule_free import WaveScheduleFree
 
 SCHEDULE_FREE_MOMENTUM = 0.98
@@ -68,21 +70,29 @@ _gated_schedule_free.disables_schedule = True
 
 def _wave_schedule_free(optimizer):
     wd = _schedule_free_prep(optimizer)
-    return WaveScheduleFree(
-        optimizer, momentum=SCHEDULE_FREE_MOMENTUM, weight_decay=wd
-    )
+    return WaveScheduleFree(optimizer, momentum=SCHEDULE_FREE_MOMENTUM, weight_decay=wd)
 
 
 _wave_schedule_free.disables_schedule = True
 
 
+def _half_lion(optimizer):
+    return HalfLion(optimizer)
+
+
+def _low_rank_moment(optimizer):
+    return LowRankSecondMoment(optimizer)
+
+
 WRAPPER_REGISTRY = {
-    "trac": _trac,                              # mitigate plasticity loss over time
-    "ortho": _ortho,                            # gradients orthogonal to params
-    "lookahead": _lookahead,                    # slow/fast weight interpolation
-    "schedule_free": _schedule_free,            # Polyak averaging, no LR schedule
+    "trac": _trac,  # mitigate plasticity loss over time
+    "ortho": _ortho,  # gradients orthogonal to params
+    "lookahead": _lookahead,  # slow/fast weight interpolation
+    "schedule_free": _schedule_free,  # Polyak averaging, no LR schedule
     "gated_schedule_free": _gated_schedule_free,  # per-coordinate SNR-gated averaging
     "wave_schedule_free": _wave_schedule_free,  # standing-wave gate over param index
+    "half_lion": _half_lion,  # blend live weights with frozen init
+    "low_rank_moment": _low_rank_moment,  # factored second-moment telemetry
 }
 
 

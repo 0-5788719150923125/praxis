@@ -68,12 +68,13 @@ class HarmonicWeightRLCallback(Callback):
     # ------------------------------------------------------------------
 
     def _schedulefree(self, trainer):
-        """The ScheduleFreeWrapper in the optimizer stack, or None (cached).
+        """The wave-bearing optimizer in the stack, or None (cached).
 
-        Under schedule-free the model weight ``p.data`` is a derived quantity,
-        reconstructed each step from the base iterate ``z`` and the running
-        average ``x``. So an in-place edit to ``p.data`` alone is smeared by the
-        x/z bookkeeping rather than applied cleanly - we must edit ``z`` too.
+        Wave mode needs an optimizer exposing ``set_wave`` (WaveScheduleFree or
+        HalfLion). For z-mirroring: under schedule-free the model weight
+        ``p.data`` is reconstructed each step from the base iterate ``z`` and the
+        running average ``x``, so an in-place edit to ``p.data`` alone is smeared
+        - we must edit ``z`` too (HalfLion has no ``z``, so ``_sf_z`` no-ops).
         """
         if self._sf is not None:
             return self._sf
@@ -85,8 +86,9 @@ class HarmonicWeightRLCallback(Callback):
         for opt in getattr(trainer, "optimizers", None) or []:
             o, depth = opt, 0
             while o is not None and depth < 6:  # unwrap Lightning/other wrappers
-                # isinstance catches GatedScheduleFree/WaveScheduleFree subclasses.
-                if isinstance(o, ScheduleFreeWrapper):
+                # isinstance catches GatedScheduleFree/WaveScheduleFree subclasses;
+                # set_wave catches HalfLion (a frozen-anchor wave, not schedule-free).
+                if isinstance(o, ScheduleFreeWrapper) or hasattr(o, "set_wave"):
                     self._sf = o
                     return self._sf
                 o = getattr(o, "optimizer", None)

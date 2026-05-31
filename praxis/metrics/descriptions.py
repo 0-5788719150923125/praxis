@@ -102,8 +102,41 @@ def _candidates(model: Any) -> Iterable[Dict[str, Any]]:
             yield descs
 
 
+def _stamp_callers(out: Dict[str, Dict[str, Any]], model: Any) -> None:
+    """Annotate each entry with the class name of the module that raised it.
+
+    Lets the dashboard show which component owns a metric. We walk the live
+    model (parents before children, first declarer wins) then fill in the
+    non-module sources. A key with no identifiable owner is left unstamped.
+    """
+
+    def claim(descriptions: Any, caller: str) -> None:
+        if not isinstance(descriptions, dict):
+            return
+        for key in descriptions:
+            entry = out.get(str(key))
+            if entry is not None and "caller" not in entry:
+                entry["caller"] = caller
+
+    if hasattr(model, "modules"):
+        for mod in model.modules():
+            claim(getattr(type(mod), "metric_descriptions", None), type(mod).__name__)
+
+    iso = getattr(model, "contrastive_isotropy", None)
+    if iso is not None:
+        claim(getattr(type(iso), "metric_descriptions", None), type(iso).__name__)
+
+    weighter = getattr(model, "tasker", None)
+    if weighter is not None and getattr(weighter, "is_dynamic", False):
+        claim({"task_weights": None}, type(weighter).__name__)
+
+    from praxis.metrics.optimizer import OPTIMIZER_METRIC_DESCRIPTIONS
+
+    claim(OPTIMIZER_METRIC_DESCRIPTIONS, "Optimizer")
+
+
 def get_metric_descriptions(model: Any) -> Dict[str, Dict[str, Any]]:
-    """Return ``{key: {description, chart}}`` for the live model."""
+    """Return ``{key: {description, chart, caller}}`` for the live model."""
     if model is None:
         return {}
     out: Dict[str, Dict[str, Any]] = {}
@@ -113,4 +146,5 @@ def get_metric_descriptions(model: Any) -> Dict[str, Dict[str, Any]]:
     from praxis.metrics.optimizer import OPTIMIZER_METRIC_DESCRIPTIONS
 
     out.update(_collect_from(OPTIMIZER_METRIC_DESCRIPTIONS))
+    _stamp_callers(out, model)
     return out

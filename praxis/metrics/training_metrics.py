@@ -422,6 +422,8 @@ DYNAMICS_CHART_REGISTRY: list = [
         "layer_toggles": True,
         "legend": True,
         "order": 10,
+        "caller": "LocalLayer",
+        "caller_et_al": True,
     },
     {
         "key": "layer_update_ratio",
@@ -432,6 +434,8 @@ DYNAMICS_CHART_REGISTRY: list = [
         "layer_toggles": True,
         "legend": True,
         "order": 20,
+        "caller": "LocalLayer",
+        "caller_et_al": True,
     },
     {
         "key": "expert_grad_norms",
@@ -442,6 +446,8 @@ DYNAMICS_CHART_REGISTRY: list = [
         "layer_toggles": True,
         "legend": True,
         "order": 30,
+        "caller": "Router",
+        "caller_et_al": True,
     },
     {
         "key": "expert_grad_vars",
@@ -452,6 +458,8 @@ DYNAMICS_CHART_REGISTRY: list = [
         "layer_toggles": True,
         "legend": True,
         "order": 40,
+        "caller": "Router",
+        "caller_et_al": True,
     },
     {
         "key": "task_weights",
@@ -461,6 +469,7 @@ DYNAMICS_CHART_REGISTRY: list = [
         "key_pattern": r"^task_weight_",
         "legend": True,
         "order": 50,
+        "caller": "TaskLossWeighter",
     },
     {
         "key": "halting_hist",
@@ -473,6 +482,7 @@ DYNAMICS_CHART_REGISTRY: list = [
         "key_pattern": r"^halting/(train|eval)_r_\d+$",
         # Rendered after the head-metric sections (manifest + snapshots).
         "order": 110,
+        "caller": "Halting",
     },
 ]
 

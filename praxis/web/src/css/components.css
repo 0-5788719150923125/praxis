@@ -1567,6 +1567,12 @@
     margin-bottom: 1rem;
 }
 
+.chart-caller {
+    font-size: 0.8rem;
+    font-weight: 400;
+    color: var(--light-text);
+}
+
 .empty-state, .error-message {
     text-align: center;
     padding: 4rem 2rem;

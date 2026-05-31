@@ -61,24 +61,27 @@ OPTIMIZER_METRIC_DESCRIPTIONS = {
     },
     "opt_update_rms": {
         "description": (
-            "RMS of the per-coordinate Adam update lr*m/(sqrt(v)+eps) - the "
-            "step size taken. Adam-family only (needs a second moment)."
+            "RMS of the implied Adam update lr*m/(sqrt(v)+eps). Needs a second "
+            "moment (Adam-family, or a tracked low-rank estimate); under a sign "
+            "optimizer like Lion this is the reference step, not the one taken."
         ),
         "chart": {"title": "Update RMS", "y_label": "||update|| RMS",
                   "y_scale": "logarithmic", "group": "optimizer", "order": 50},
     },
     "opt_update_weight_ratio": {
         "description": (
-            "Update RMS / weight RMS - the relative step size. Healthy training "
-            "sits near 1e-3. Adam-family only (needs a second moment)."
+            "Implied-update RMS / weight RMS - the relative step size. Healthy "
+            "Adam training sits near 1e-3. Needs a second moment (Adam-family or "
+            "a tracked low-rank estimate)."
         ),
         "chart": {"title": "Update / Weight Ratio", "y_label": "ratio",
                   "y_scale": "logarithmic", "group": "optimizer", "order": 55},
     },
     "opt_second_moment_rms": {
         "description": (
-            "sqrt(mean(exp_avg_sq)) - the optimizer's running estimate of the "
-            "gradient scale. Adam-family only."
+            "sqrt(mean(v)) - the running estimate of the gradient scale. From "
+            "exp_avg_sq (Adam-family) or a factored low-rank estimate tracked "
+            "over any base optimizer."
         ),
         "chart": {"title": "Second-Moment RMS", "y_label": "sqrt(v) RMS",
                   "y_scale": "logarithmic", "group": "optimizer", "order": 60},
@@ -108,10 +111,14 @@ _MOMENTUM_KEYS = ("exp_avg", "momentum_buffer")
 
 
 def _unwrap(optimizer):
-    """Return (innermost base optimizer, schedule-free wrapper or None)."""
+    """Return (innermost base optimizer, gate-bearing wrapper or None).
+
+    The wrapper is schedule-free (z/x averaging, drives the spread + gate
+    metrics) or HalfLion (a frozen-anchor wave that only carries ``gate_mean``;
+    the schedule-free spread path no-ops for it - no ``momentum``/``z``)."""
     base, sf, o = optimizer, None, optimizer
     for _ in range(8):
-        if isinstance(o, ScheduleFreeWrapper):
+        if isinstance(o, ScheduleFreeWrapper) or hasattr(o, "set_wave"):
             sf = o
         base = o
         nxt = getattr(o, "optimizer", None)
@@ -119,6 +126,18 @@ def _unwrap(optimizer):
             break
         o = nxt
     return base, sf
+
+
+def _second_moment_provider(optimizer):
+    """A wrapper in the stack that reconstructs a factored second moment
+    (``get_second_moment``), or None."""
+    o, depth = optimizer, 0
+    while o is not None and depth < 8:
+        if hasattr(o, "get_second_moment"):
+            return o
+        o = getattr(o, "optimizer", None)
+        depth += 1
+    return None
 
 
 def _momentum(state):
@@ -137,6 +156,7 @@ def extract_optimizer_dynamics(optimizer) -> dict:
     if optimizer is None:
         return {}
     base, sf = _unwrap(optimizer)
+    moment = _second_moment_provider(optimizer)  # factored estimate, if tracked
     pgs = getattr(base, "param_groups", None) or getattr(optimizer, "param_groups", [])
     if not pgs:
         return {}
@@ -162,6 +182,8 @@ def extract_optimizer_dynamics(optimizer) -> dict:
             st = base.state.get(p, {})
             m1 = _momentum(st)
             v = st.get("exp_avg_sq")
+            if v is None and moment is not None:  # reconstruct a factored estimate
+                v = moment.get_second_moment(p)
             if m1 is not None and m1.shape == g.shape:
                 have_m = True
                 s_m12 += float((m1 * m1).sum())

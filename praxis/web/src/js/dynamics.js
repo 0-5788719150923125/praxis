@@ -177,6 +177,22 @@ function renderDynamicsRunSelector() {
 // ─── Metric detection helpers ───────────────────────────────────────────────
 
 /**
+ * Caller tag for a card title: which component raised the metric. Takes the
+ * producing class names feeding the card and renders " (Primary, et al)".
+ * "et al" appears only when 2+ distinct producers contribute (or when a
+ * family explicitly aggregates many instances of one class via forceEtAl).
+ */
+function callerTag(callers, forceEtAl = false) {
+    const list = (callers || []).filter(Boolean);
+    if (!list.length) return '';
+    const counts = {};
+    list.forEach(n => { counts[n] = (counts[n] || 0) + 1; });
+    const primary = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0];
+    const etAl = forceEtAl || new Set(list).size > 1;
+    return ` <span class="chart-caller">(${primary}${etAl ? ', et al' : ''})</span>`;
+}
+
+/**
  * Compile the backend Dynamics chart registry into family configs:
  * key_pattern -> RegExp, derived canvas id, sorted by order.
  */
@@ -193,6 +209,8 @@ function buildDynamicsFamilyConfigs(registry) {
             layerToggles: !!e.layer_toggles,
             legend: !!e.legend,
             order: e.order ?? 0,
+            caller: e.caller || '',
+            callerEtAl: !!e.caller_et_al,
             canvasId: `dynamics-${e.key.replace(/_/g, '-')}`,
         }));
 }
@@ -250,7 +268,7 @@ function buildDynamicsFamilyCard(config, desc, allLayers) {
     return `
         <div style="margin-top: 2rem;">
             <div class="chart-card">
-                <div class="chart-title">${config.title}</div>
+                <div class="chart-title">${config.title}${callerTag(config.caller ? [config.caller] : [], config.callerEtAl)}</div>
                 <div class="chart-subtitle">${desc(config.key, config.subtitle)}</div>
                 ${togglesHTML}
                 <div class="chart-wrapper" style="height: 400px;">
@@ -318,12 +336,31 @@ function buildScalarMetricManifest(descriptions) {
         if (!chart || typeof chart !== 'object') continue;
         const groupName = chart.group || 'misc';
         if (!groups.has(groupName)) groups.set(groupName, []);
-        groups.get(groupName).push({ key, chart, description: entry.description });
+        groups.get(groupName).push({ key, chart, description: entry.description, caller: entry.caller });
     }
     for (const entries of groups.values()) {
         entries.sort((a, b) => (a.chart.order ?? 0) - (b.chart.order ?? 0));
     }
     return groups;
+}
+
+// A scalar metric is "present" only if the run logged a finite value for it.
+// The manifest declares more metrics than any single setup emits (e.g. the
+// Adam-only second-moment optimizer cards stay empty under Lion), so prune to
+// what has data before rendering rather than showing dead cards.
+function metricHasData(dynamics, key) {
+    const series = dynamics[key];
+    return Array.isArray(series) &&
+        series.some(v => v !== null && v !== undefined && Number.isFinite(v));
+}
+
+function pruneManifestToData(manifest, dynamics) {
+    const pruned = new Map();
+    for (const [group, entries] of manifest) {
+        const kept = entries.filter(e => metricHasData(dynamics, e.key));
+        if (kept.length) pruned.set(group, kept);
+    }
+    return pruned;
 }
 
 function canvasIdForMetric(key) {
@@ -345,7 +382,9 @@ function seriesItemsFor(entries) {
         }
         const label = entry.chart.series_label || entry.chart.title || entry.key;
         if (byGroup.has(sg)) {
-            items[byGroup.get(sg)].series.push({ key: entry.key, label });
+            const item = items[byGroup.get(sg)];
+            item.series.push({ key: entry.key, label });
+            item.callers.push(entry.caller);
         } else {
             byGroup.set(sg, items.length);
             items.push({
@@ -353,6 +392,7 @@ function seriesItemsFor(entries) {
                 canvasId: `dynamics-series-${sg.replace(/_/g, '-')}`,
                 lead: entry,
                 series: [{ key: entry.key, label }],
+                callers: [entry.caller],
             });
         }
     }
@@ -381,13 +421,13 @@ function buildManifestSectionsHTML(manifest, getDesc) {
                 const c = item.lead.chart;
                 html += metricCardHTML(
                     item.canvasId,
-                    c.title || item.lead.key,
+                    (c.title || item.lead.key) + callerTag(item.callers),
                     getDesc(item.lead.key, item.lead.description || '')
                 );
             } else {
                 html += metricCardHTML(
                     canvasIdForMetric(item.key),
-                    item.chart.title || item.key,
+                    (item.chart.title || item.key) + callerTag([item.caller]),
                     getDesc(item.key, item.description || '')
                 );
             }
@@ -436,7 +476,7 @@ function snapshotEntries(descriptions) {
     const out = [];
     for (const [key, entry] of Object.entries(descriptions || {})) {
         if (!entry?.snapshot) continue;
-        out.push({ key, snap: entry.snapshot, description: entry.description });
+        out.push({ key, snap: entry.snapshot, description: entry.description, caller: entry.caller });
     }
     out.sort((a, b) => (a.snap.order ?? 0) - (b.snap.order ?? 0));
     return out;
@@ -444,12 +484,12 @@ function snapshotEntries(descriptions) {
 
 function buildSnapshotSectionsHTML(descriptions, getDesc) {
     let html = '';
-    for (const { key, snap, description } of snapshotEntries(descriptions)) {
+    for (const { key, snap, description, caller } of snapshotEntries(descriptions)) {
         const canvasId = canvasIdForMetric(key);
         html += `
             <div style="margin-top: 2rem;">
                 <div class="chart-card">
-                    <div class="chart-title">${snap.title || key}</div>
+                    <div class="chart-title">${snap.title || key}${callerTag([caller])}</div>
                     <div class="chart-subtitle">${getDesc(key, description || '')}</div>
                     <div class="chart-wrapper" style="height: 400px;">
                         <canvas id="${canvasId}"></canvas>
@@ -522,7 +562,8 @@ function renderDynamicsCharts(runData, container) {
         if (typeof entry === 'string') return entry;
         return entry?.description || fallback;
     };
-    const manifest = buildScalarMetricManifest(descriptions);
+    const manifest = pruneManifestToData(
+        buildScalarMetricManifest(descriptions), dynamics);
 
     // Build the present chart families from the backend registry, and stash
     // them so the layer-toggle handler re-renders exactly this set.
@@ -597,7 +638,7 @@ function renderDynamicsCharts(runData, container) {
     chartsHTML += `
         <div style="margin-top: 2rem;">
             <div class="chart-card">
-                <div class="chart-title">Activation Forward</div>
+                <div class="chart-title" id="activation-forward-title">Activation Forward</div>
                 <div class="chart-subtitle" id="activation-forward-subtitle">Forward curve per activation module. Line = mean across features; shaded band = 10-90 percentile spread.</div>
                 <div class="chart-wrapper" style="height: 400px;">
                     <canvas id="dynamics-activation-forward"></canvas>
@@ -608,7 +649,7 @@ function renderDynamicsCharts(runData, container) {
 
         <div style="margin-top: 2rem;">
             <div class="chart-card">
-                <div class="chart-title">Activation Derivative</div>
+                <div class="chart-title" id="activation-backward-title">Activation Derivative</div>
                 <div class="chart-subtitle">dy/dx per activation module via autograd. Line = mean across features; shaded band = 10-90 percentile spread.</div>
                 <div class="chart-wrapper" style="height: 400px;">
                     <canvas id="dynamics-activation-backward"></canvas>
@@ -1792,6 +1833,15 @@ async function loadActivationCurves() {
         const data = await response.json();
 
         const curves = data.curves || [];
+        // Caller tag: the activation module class(es) that produced these curves.
+        const callers = curves.map(c => c.type).filter(Boolean);
+        ['activation-forward-title', 'activation-backward-title'].forEach((id, i) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const base = i === 0 ? 'Activation Forward' : 'Activation Derivative';
+            el.innerHTML = base + callerTag(callers, callers.length > 1);
+        });
+
         const subtitle = document.getElementById('activation-forward-subtitle');
         if (subtitle) {
             const uniqueTypes = [...new Set(curves.map(c => c.type).filter(Boolean))];
