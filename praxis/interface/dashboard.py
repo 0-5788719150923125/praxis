@@ -266,6 +266,10 @@ class TerminalDashboard:
         self.state.set_mode(mode)
         self.force_redraw()
 
+    def set_stage(self, stage="pretrain"):
+        self.state.set_stage(stage)
+        self.force_redraw()
+
     def set_start_time(self, time):
         self.state.set_start_time(time)
 
@@ -560,7 +564,7 @@ class TerminalDashboard:
         with self.lock:
             elapsed = self.hours_since()
             footer_text = (
-                f" PRAXIS:{str(self.state.seed)} | {self.state.total_params} | MODE: {self.state.mode} | "
+                f" PRAXIS:{str(self.state.seed)} | {self.state.total_params} | STAGE: {self.state.stage} | "
                 f"AGE: {elapsed:.2f}h | TOKENS: {self.state.num_tokens:.2f}B | BATCH: {int(self.state.batch)}, STEP: {int(self.state.step)}, "
                 f"RATE: {self.state.rate:.2f}s | {self.state.url}"
             )

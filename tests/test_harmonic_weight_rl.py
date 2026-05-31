@@ -3,6 +3,7 @@
 import math
 from types import SimpleNamespace
 
+import pytest
 import torch
 import torch.nn as nn
 
@@ -87,6 +88,29 @@ def test_callback_keeps_helpful_edit_and_updates_policy():
     assert changed
     # rl_* scalars were published to callback_metrics for the logger.
     assert "rl_reward" in tr.callback_metrics and "rl_edit_kept" in tr.callback_metrics
+
+
+def test_reward_is_ema_return_over_horizon():
+    # The per-edit reward is an EMA-integrated return over the horizon, not the
+    # one-step endpoint delta. With loss_ema_decay=0 the smoothed loss equals
+    # the raw loss, so the arithmetic is exact.
+    torch.manual_seed(0)
+    policy = HarmonicWeightPolicy(_cfg(rl_alpha_scale=0.3))
+    cb = HarmonicWeightRLCallback(
+        policy, period=3, horizon=3, warmup_steps=3,
+        keep_threshold=0.0, loss_ema_decay=0.0, reward_decay=0.5,
+    )
+    model = nn.Sequential(nn.Linear(8, 8), nn.Linear(8, 4))
+    pl, tr = _PL(model), _Trainer()
+
+    # Episode starts at step 3 (L_before=5), edit takes effect on steps 4..6.
+    # Post-edit improvements vs L_before=5 are 1, 2, 3; EMA(d=0.5): 1 -> 1.5 -> 2.25.
+    for ls in [5.0, 5.0, 5.0, 4.0, 3.0, 2.0]:
+        cb.on_train_batch_end(tr, pl, torch.tensor(ls), None, 0)
+
+    assert cb._metrics["rl_reward"] == pytest.approx(2.25)        # EMA return
+    assert cb._metrics["rl_reward_instant"] == pytest.approx(3.0)  # endpoint delta
+    assert cb._metrics["rl_edit_kept"] == 1.0
 
 
 def test_callback_rolls_back_unhelpful_edit():

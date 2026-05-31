@@ -153,14 +153,31 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     # at each episode end, carried forward between episodes.
     "rl_reward": {
         "description": (
-            "Loss improvement (L_before - L_after) the controller earned from "
-            "its last harmonic weight edit. Positive = the edit helped."
+            "EMA-integrated return over the horizon: the loss improvement vs "
+            "L_before, accumulated per post-edit step with a slow-decay EMA so "
+            "a benefit that ramps in slowly still counts. Positive = the edit "
+            "helped. Compare with rl_reward_instant (the one-step endpoint "
+            "delta) to see delayed credit appear."
         ),
         "chart": {
             "title": "RL Reward",
-            "y_label": "reward (Δloss)",
+            "y_label": "reward (return)",
             "y_scale": "linear",
             "order": 200,
+            "is_validation": False,
+        },
+    },
+    "rl_reward_instant": {
+        "description": (
+            "Endpoint delta L_before - L_after at the horizon's end - the old "
+            "one-step reward, kept as a diagnostic. When it lags rl_reward, the "
+            "edit's benefit is manifesting slowly (the reason for the EMA return)."
+        ),
+        "chart": {
+            "title": "RL Reward (Endpoint)",
+            "y_label": "Δloss (endpoint)",
+            "y_scale": "linear",
+            "order": 201,
             "is_validation": False,
         },
     },

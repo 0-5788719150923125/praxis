@@ -19,6 +19,11 @@ export const CLICK_HANDLERS = [
         action: () => ({ type: 'TOGGLE_THEME' })
     },
     {
+        selector: '#notifications-btn',
+        match: 'closest',
+        action: () => ({ type: 'TOGGLE_NOTIFICATIONS' })
+    },
+    {
         selector: '.tool-toggle[data-toggleable]',
         match: 'closest',
         action: (e) => ({

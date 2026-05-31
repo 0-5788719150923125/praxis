@@ -797,12 +797,14 @@ function measureDeck(deck) {
     const bandH = Math.max(140, Math.round(floorY - top + lift));   // ceiling -> floor
     deck._bandH = bandH;
     deck._lift = lift;
-    // Cap every card to a single UNIFORM slot height (the fan floor reserves the bottom
-    // room on both platforms) so cards of any content size sit on the same fan spectrum
-    // and none overshoots. Tall content scrolls inside; the carousel advances via flick
-    // (see touchmove) so a long card never blocks navigation.
+    // Cap every card to a single UNIFORM slot height: the full band (ceiling -> floor)
+    // minus only the fan trail. NOT minus the lift - in slot A the head sits at the
+    // ceiling, so it gets the whole band; sizing to the dropped (B) height would collapse
+    // cards early and force inner scrolling that needn't exist. Tall content still scrolls;
+    // the carousel advances via flick so a long card never blocks navigation. (Desktop
+    // lift is 0, so this is unchanged there.)
     const fanReserve = Math.min(DECK_MAX_FAN, Math.max(0, cards.length - 1)) * DECK_PEEK;
-    const usableH = Math.max(140, bandH - lift - fanReserve);
+    const usableH = Math.max(140, bandH - fanReserve);
     deck._cardH = cards.map(c => {
         const body = c.querySelector('.deck-card-scroll') || c;
         // Reset any prior cap/flex so we read the card's natural height. We just

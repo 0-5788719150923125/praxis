@@ -77,15 +77,10 @@
     color: var(--text);
 }
 
-/* Active tool: the same blue as the Terminal LOGS toggle (deliberately not theme-tinted). */
+/* Every active tool follows the brand accent (green; blue while the LOGS easter egg is
+   on), so Read and Evaluate are always the same color when selected - one source, no
+   second hardcoded blue. */
 .tool-toggle.active {
-    background: rgba(74, 144, 226, 0.15);
-    border-color: #4A90E2;
-    color: #6aa9ee;
-}
-
-/* Read defaults on, tinted with the brand green rather than the blue. */
-.tool-toggle[data-tool="read"].active {
     background: hsl(var(--accent-hue) var(--accent-sat) var(--accent-lum) / 0.15);
     border-color: var(--accent);
     color: var(--accent);

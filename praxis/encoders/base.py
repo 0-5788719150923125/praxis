@@ -82,6 +82,14 @@ class BaseEncoder(nn.Module, ABC):
         The rest of the model stays locked until this returns False."""
         return False
 
+    def training_stage(self) -> Optional[str]:
+        """Semantic label for the current training stage, surfaced to the
+        dashboard (e.g. "preflight" while the encoder pretrains, "pretrain"
+        once standard LM training is underway). None lets the caller fall back
+        to its default label. Generic on purpose: an encoder with more discrete
+        phases can name each one here."""
+        return None
+
     def pretraining_loss(self, input_ids: torch.Tensor) -> torch.Tensor:
         """Self-supervised objective for the pretraining phase. Only called
         while ``in_pretraining()`` is True; the global transformer is skipped."""

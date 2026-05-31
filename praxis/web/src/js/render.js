@@ -41,6 +41,58 @@ export function render() {
     renderModal();
     renderSystemPrompt();
     renderAgentsTitle();
+    renderNotifications();
+}
+
+/**
+ * Render the header notification bell: unread badge + dropdown panel.
+ * Pure projection of state.notifications onto the DOM.
+ */
+export function renderNotifications() {
+    const badge = document.getElementById('notification-badge');
+    if (badge) {
+        const unread = state.notifications.unread;
+        badge.textContent = unread > 9 ? '9+' : String(unread);
+        badge.hidden = unread === 0;
+    }
+
+    const panel = document.getElementById('notification-panel');
+    if (!panel) return;
+
+    panel.hidden = !state.notifications.panelOpen;
+    if (!state.notifications.panelOpen) return;
+
+    const items = state.notifications.items;
+    if (!items.length) {
+        panel.innerHTML = '<div class="notification-empty">No events yet.</div>';
+        return;
+    }
+
+    // Newest first.
+    panel.innerHTML = items
+        .slice()
+        .reverse()
+        .map((ev) => {
+            const age = typeof ev.hours_elapsed === 'number'
+                ? `${ev.hours_elapsed.toFixed(2)}h`
+                : '';
+            const level = ev.level || 'info';
+            return `
+                <div class="notification-item notification-${level}">
+                    <span class="notification-message">${escapeNotification(ev.message)}</span>
+                    <span class="notification-age">${age}</span>
+                </div>
+            `;
+        })
+        .join('');
+}
+
+/** Minimal HTML escaping for event text. */
+function escapeNotification(str) {
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
 }
 
 /**

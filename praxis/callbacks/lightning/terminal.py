@@ -193,19 +193,49 @@ class TerminalInterface(Callback):
         else:
             self.print = print
 
+    def _current_stage(self, lm):
+        """Semantic training stage from the model's encoder, if it names one.
+
+        Defaults to "pretrain" (standard LM training). An encoder may report a
+        finer stage (e.g. CALM's "preflight" while its codec pretrains)."""
+        model = getattr(lm, "model", None)
+        model = getattr(model, "_orig_mod", model)  # unwrap torch.compile
+        encoder = getattr(model, "encoder", None)
+        if encoder is not None and hasattr(encoder, "training_stage"):
+            try:
+                stage = encoder.training_stage()
+            except Exception:
+                stage = None
+            if stage:
+                return stage
+        return "pretrain"
+
     def on_train_batch_start(self, trainer, lm, batch, batch_idx):
         super().on_train_batch_start(trainer, lm, batch, batch_idx)
+        stage = self._current_stage(lm)
         if self.dashboard and hasattr(self.dashboard, "set_mode"):
             self.dashboard.set_mode("train")
+            self.dashboard.set_stage(stage)
         if hasattr(self, "live_metrics"):
             self.live_metrics.state.set_mode("train")
+            self.live_metrics.state.set_stage(stage)
+            # Announce stage transitions (e.g. preflight -> pretrain) once.
+            last = getattr(self, "_last_stage", None)
+            if last is not None and stage != last:
+                msg = f"Training stage: {last} → {stage}"
+                self.live_metrics.add_event(msg)
+                if self.dashboard:
+                    self.dashboard.add_log(msg)
+            self._last_stage = stage
 
     def on_validation_start(self, trainer, lm):
         super().on_validation_start(trainer, lm)
         if self.dashboard and hasattr(self.dashboard, "set_mode"):
             self.dashboard.set_mode("validation")
+            self.dashboard.set_stage("validation")
         if hasattr(self, "live_metrics"):
             self.live_metrics.state.set_mode("validation")
+            self.live_metrics.state.set_stage("validation")
             self.live_metrics._update_count += 1
 
     def on_validation_batch_end(self, trainer, lm, outputs, batch, batch_idx):
@@ -215,10 +245,13 @@ class TerminalInterface(Callback):
 
     def on_validation_end(self, trainer, lm):
         super().on_validation_end(trainer, lm)
+        stage = self._current_stage(lm)
         if self.dashboard and hasattr(self.dashboard, "set_mode"):
             self.dashboard.set_mode("train")
+            self.dashboard.set_stage(stage)
         if hasattr(self, "live_metrics"):
             self.live_metrics.state.set_mode("train")
+            self.live_metrics.state.set_stage(stage)
             self.live_metrics._update_count += 1
 
     def on_train_batch_end(self, trainer, lm, outputs, batch, batch_idx):

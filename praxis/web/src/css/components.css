@@ -147,6 +147,102 @@
     background-color: rgba(255, 255, 255, 0.1);
 }
 
+/* Notification bell + dropdown panel (header, left of theme toggle). */
+.notification-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.notification-button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--light-text);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.625rem 0.5rem;
+    border-radius: var(--radius-small);
+    transition: background-color 0.2s;
+}
+
+.notification-button:hover {
+    background-color: rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="dark"] .notification-button:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.notification-button svg {
+    display: block;
+}
+
+.notification-badge {
+    position: absolute;
+    top: 0.125rem;
+    right: 0.125rem;
+    min-width: 0.875rem;
+    height: 0.875rem;
+    padding: 0 0.1875rem;
+    border-radius: 0.4375rem;
+    background: var(--primary, #0b9a6d);
+    color: #fff;
+    font-size: 0.625rem;
+    font-weight: 700;
+    line-height: 0.875rem;
+    text-align: center;
+}
+
+.notification-panel {
+    position: absolute;
+    top: calc(100% + 0.5rem);
+    right: 0;
+    width: 20rem;
+    max-height: 22.5rem;
+    overflow-y: auto;
+    background: var(--background);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-medium);
+    box-shadow: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.25);
+    z-index: 50;
+    padding: 0.25rem;
+}
+
+.notification-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.5rem;
+    padding: 0.5rem 0.625rem;
+    border-radius: var(--radius-small);
+    font-size: 0.8125rem;
+}
+
+.notification-item + .notification-item {
+    border-top: 1px solid var(--border);
+}
+
+.notification-item .notification-message {
+    flex: 1;
+    word-break: break-word;
+}
+
+.notification-item .notification-age {
+    flex-shrink: 0;
+    font-size: 0.6875rem;
+    color: var(--light-text);
+    font-variant-numeric: tabular-nums;
+}
+
+.notification-empty {
+    padding: 0.75rem 0.625rem;
+    font-size: 0.8125rem;
+    color: var(--light-text);
+    text-align: center;
+}
+
 /* ==================== Messages ==================== */
 .message {
     margin-bottom: var(--spacing-md);

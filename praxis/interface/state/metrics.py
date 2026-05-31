@@ -33,6 +33,9 @@ class MetricsState:
 
         # Status
         self.mode = "train"
+        # Semantic training stage (preflight/pretrain/validation/...). Distinct
+        # from `mode`, which is just the Lightning train|validation phase.
+        self.stage = "pretrain"
         self.status_text = "_initializing"
         self.url = "N/A"
         self.seed = None
@@ -128,6 +131,11 @@ class MetricsState:
         """Set current mode."""
         with self.lock:
             self.mode = mode
+
+    def set_stage(self, stage):
+        """Set the semantic training stage label."""
+        with self.lock:
+            self.stage = stage
 
     def set_start_time(self, time):
         """Set start time."""

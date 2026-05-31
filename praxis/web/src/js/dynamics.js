@@ -1003,8 +1003,147 @@ function formatAxisRange(range, fallback) {
     return `1..${fallback}`;
 }
 
+/** Apply an alpha to a hex/rgb/hsl color string for canvas strokes. */
+function withAlpha(color, a) {
+    color = (color || '').trim();
+    if (color.startsWith('#')) {
+        let h = color.slice(1);
+        if (h.length === 3) h = h.split('').map(c => c + c).join('');
+        const n = parseInt(h, 16);
+        return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+    }
+    if (color.startsWith('hsl(')) return color.replace(')', ` / ${a})`);
+    if (color.startsWith('rgb(')) return color.replace('rgb(', 'rgba(').replace(')', `, ${a})`);
+    return color;
+}
+
+/** Resolve the brand accent to a concrete rgb() via a throwaway probe. */
+function readAccentColor() {
+    const probe = document.createElement('span');
+    probe.style.cssText = 'color: var(--accent); display: none;';
+    document.body.appendChild(probe);
+    const c = getComputedStyle(probe).color;
+    probe.remove();
+    return c || 'rgb(26, 161, 121)';
+}
+
+/**
+ * Harmonic curve renderer: the real signal behind the old fake "correlation"
+ * animation. The head sends the top-2 PCA trajectory of its field over one
+ * period plus its dominant Fourier modes; we redraw it as a classic epicycle
+ * (nested rotating vectors whose tip traces the curve). Pure client-side
+ * animation off a tiny cached seed - the model is never touched per frame.
+ */
+function renderHarmonicCurve(canvas, data) {
+    if (canvas._harmonicRAF) cancelAnimationFrame(canvas._harmonicRAF);
+    const modes = Array.isArray(data.modes) ? data.modes : [];
+    const points = Array.isArray(data.points) ? data.points : [];
+    if (!points.length && !modes.length) return;
+
+    const ctx = canvas.getContext('2d');
+    const PERIOD = 600; // frames per full sweep (~10s at 60fps)
+    let frame = 0;
+    let cachedTheme = null, accent = 'rgb(26, 161, 121)';
+
+    const draw = () => {
+        if (!canvas.isConnected) { canvas._harmonicRAF = null; return; }
+        if (cachedTheme !== state.theme) {
+            cachedTheme = state.theme;
+            accent = readAccentColor();
+        }
+
+        const wrapper = canvas.parentElement;
+        const w = wrapper.clientWidth || 800;
+        const h = wrapper.clientHeight || 400;
+        if (w < 2 || h < 2) { canvas._harmonicRAF = requestAnimationFrame(draw); return; }
+        if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+
+        const { textColor, gridColor } = getThemeColors();
+        ctx.clearRect(0, 0, w, h);
+        ctx.fillStyle = gridColor;
+        ctx.fillRect(0, 0, w, h);
+
+        const cx = w / 2, cy = h / 2;
+        const scale = Math.min(w, h) * 0.4;
+        const tau = (frame % PERIOD) / PERIOD;
+
+        // Faint full closed curve for context.
+        if (points.length) {
+            ctx.beginPath();
+            points.forEach((p, i) => {
+                const X = cx + p[0] * scale, Y = cy - p[1] * scale;
+                i === 0 ? ctx.moveTo(X, Y) : ctx.lineTo(X, Y);
+            });
+            ctx.closePath();
+            ctx.strokeStyle = withAlpha(accent, 0.18);
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+
+        // Epicycle scaffolding: nested rotating vectors at the current phase.
+        let px = cx, py = cy;
+        for (const m of modes) {
+            const ang = 2 * Math.PI * m.f * tau;
+            const c = Math.cos(ang), s = Math.sin(ang);
+            const dx = m.re * c - m.im * s;
+            const dy = m.re * s + m.im * c;
+            const nx = px + dx * scale, ny = py - dy * scale;
+            const r = Math.hypot(dx, dy) * scale;
+            if (r > 1.5) {
+                ctx.beginPath();
+                ctx.arc(px, py, r, 0, 2 * Math.PI);
+                ctx.strokeStyle = withAlpha(textColor, 0.08);
+                ctx.lineWidth = 1;
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(px, py);
+                ctx.lineTo(nx, ny);
+                ctx.strokeStyle = withAlpha(textColor, 0.22);
+                ctx.stroke();
+            }
+            px = nx; py = ny;
+        }
+
+        // Bright arc traced so far this sweep.
+        if (points.length) {
+            const upto = Math.max(1, Math.floor(tau * points.length));
+            ctx.beginPath();
+            for (let i = 0; i <= upto; i++) {
+                const X = cx + points[i][0] * scale, Y = cy - points[i][1] * scale;
+                i === 0 ? ctx.moveTo(X, Y) : ctx.lineTo(X, Y);
+            }
+            ctx.strokeStyle = accent;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+
+        // Glowing tip at the end of the epicycle chain.
+        ctx.beginPath();
+        ctx.arc(px, py, 3.5, 0, 2 * Math.PI);
+        ctx.fillStyle = accent;
+        ctx.shadowColor = accent;
+        ctx.shadowBlur = 12;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        const pr = data.participation_ratio;
+        if (typeof pr === 'number') {
+            ctx.fillStyle = textColor;
+            ctx.font = '12px sans-serif';
+            ctx.textAlign = 'right';
+            ctx.fillText(`eff. dim ${pr.toFixed(1)} · ${modes.length} modes`, w - 6, 16);
+        }
+
+        frame++;
+        canvas._harmonicRAF = requestAnimationFrame(draw);
+    };
+
+    canvas._harmonicRAF = requestAnimationFrame(draw);
+}
+
 const SNAPSHOT_RENDERERS = {
     heatmap_2d: renderHeatmap2D,
+    harmonic_curve: renderHarmonicCurve,
 };
 
 /**

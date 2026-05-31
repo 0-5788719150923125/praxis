@@ -153,6 +153,15 @@ export const state = {
         data: null
     },
 
+    // Backend event feed (stage transitions, milestones) shown in the header
+    // notification bell. Items arrive via the metrics_snapshot stream and are
+    // deduped by their monotonic id.
+    notifications: {
+        items: [],
+        unread: 0,
+        panelOpen: false
+    },
+
     // Settings/Generation params
     settings: {
         systemPrompt: 'Write thy wrong.',

@@ -296,6 +296,15 @@ export function createHeader(state) {
                 <span class="system-prompt-header${state.settings.systemPrompt === DEFAULT_SYSTEM_PROMPT ? ' default-prompt' : ''}" id="developer-prompt" contenteditable="true" spellcheck="false">${escapeHtml(state.settings.systemPrompt)}</span>
             </div>
             <div class="header-actions">
+                <div class="notification-wrapper">
+                    <button class="notification-button" id="notifications-btn" title="Notifications" aria-label="Notifications">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                            <path d="M8 16a2 2 0 0 0 2-2H6a2 2 0 0 0 2 2zm.995-14.901a1 1 0 1 0-1.99 0A5.002 5.002 0 0 0 3 6c0 1.098-.5 6-2 7h14c-1.5-1-2-5.902-2-7 0-2.42-1.72-4.44-4.005-4.901z"/>
+                        </svg>
+                        <span class="notification-badge" id="notification-badge" hidden></span>
+                    </button>
+                    <div class="notification-panel" id="notification-panel" hidden></div>
+                </div>
                 <button class="theme-toggle-button" id="theme-toggle">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" id="theme-icon">
                         ${state.theme === 'dark' ? CONSTANTS.THEME_ICONS.sun : CONSTANTS.THEME_ICONS.moon}

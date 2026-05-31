@@ -279,7 +279,13 @@ export const ACTION_HANDLERS = {
      * Local UI state only - does not touch the theme/accent.
      */
     TOGGLE_TOOL: (_payload, meta) => {
-        if (meta && meta.button) meta.button.classList.toggle('active');
+        if (!meta || !meta.button) return;
+        meta.button.classList.toggle('active');
+        // Mirror the Gymnasium "Evaluate" tool onto <html> so the Prism animation can see
+        // it (easter egg: with the LOGS blue mode also on, the flying logo becomes a cross).
+        if (meta.button.dataset.tool === 'evaluate') {
+            document.documentElement.toggleAttribute('data-eval', meta.button.classList.contains('active'));
+        }
     },
 
     TOGGLE_RUN_SELECTOR: () => {

@@ -60,7 +60,7 @@ declared byte-output layout in encoder mode, else ``(hidden_size, vocab_size)``)
 ``forward`` modulates the features with the field, then projects through ``lm_head`` -
 identical in standalone and encoder modes.
 
-Source: [praxis/heads/harmonic.py:316](../praxis/heads/harmonic.py#L316)
+Source: [praxis/heads/harmonic.py:392](../praxis/heads/harmonic.py#L392)
 
 ## `tied` - TiedWeights
 

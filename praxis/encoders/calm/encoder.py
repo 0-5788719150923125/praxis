@@ -444,6 +444,11 @@ class CALMEncoder(BaseEncoder):
                 seen.add(id(p))
                 yield p
 
+    def training_stage(self) -> str:
+        """"preflight" while the codec pretrains in isolation, then "pretrain"
+        once the codec is frozen and the energy LM trains."""
+        return "preflight" if self.in_pretraining() else "pretrain"
+
     def pretraining_parameters(self):
         """Codec params (VAE + head recon path) train during the AE warmup."""
         return self._codec_parameters()

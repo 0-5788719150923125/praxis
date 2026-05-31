@@ -2,10 +2,12 @@
 
 Episode loop: every ``period`` steps, summarize the current dynamics
 (state), sample a harmonic edit for one weight row (action), apply it, let
-training run ``horizon`` steps, then reward the controller by the loss
-improvement and either keep the edit (it helped) or roll it back. The
-reward is intentionally delayed and confounded by the model's own
-optimizer - the point is to watch REINFORCE cope (or not).
+training run ``horizon`` steps while integrating an EMA return from the loss
+improvement, then reward the controller by that return and either keep the
+edit (it helped) or roll it back. The reward is intentionally delayed and
+confounded by the model's own optimizer - the point is to watch REINFORCE
+cope (or not). The EMA return is a partial answer to the delay: it credits a
+benefit that ramps in over the horizon, not just the endpoint.
 
 Metrics (rl_reward, rl_baseline, rl_action_*, rl_edit_kept, ...) are
 written to ``trainer.callback_metrics`` so MetricsLogger drains them; this
@@ -30,6 +32,7 @@ class HarmonicWeightRLCallback(Callback):
         warmup_steps: int = 200,
         keep_threshold: float = 0.0,
         loss_ema_decay: float = 0.9,
+        reward_decay: float = 0.9,
         edit_mode: str = "harmonic",
         selector: str = "sinusoidal",
     ) -> None:
@@ -40,6 +43,14 @@ class HarmonicWeightRLCallback(Callback):
         self.warmup_steps = int(warmup_steps)
         self.keep_threshold = float(keep_threshold)
         self.loss_ema_decay = float(loss_ema_decay)
+        # A weight edit's benefit ramps in over many steps (weights are slow to
+        # adjust, slower to converge), so a one-step endpoint delta under-credits
+        # it. Instead the reward is an EMA-integrated return over the horizon:
+        # each post-edit step folds its improvement-vs-L_before into an EMA,
+        # which - read at the horizon's end - weights the latest (most-manifested)
+        # steps most while smoothing noise. This is a discounted return; the
+        # decay sets its effective memory within the horizon.
+        self.reward_decay = float(reward_decay)
         # "harmonic": modulate a row with a sinusoid (default, unchanged).
         # "anchor_gate": gate-replace a hash-selected subset of a row with a
         # frozen anchor copy (see next/hash_gated_anchor.md).
@@ -134,6 +145,17 @@ class HarmonicWeightRLCallback(Callback):
             )
             self._step += 1
 
+            # While an edit is live, integrate its post-edit improvement into an
+            # EMA return (the edit took effect on the step after _start_episode,
+            # so this only runs on post-edit steps).
+            if self._episode is not None:
+                instant = (self._episode["L_before"] or 0.0) - self._loss_ema
+                prev = self._episode["reward_ema"]
+                d = self.reward_decay
+                self._episode["reward_ema"] = (
+                    instant if prev is None else d * prev + (1.0 - d) * instant
+                )
+
             # Capture the frozen anchor once, post-warmup, so the live weights
             # have something to drift away from before gating starts.
             if (
@@ -174,6 +196,7 @@ class HarmonicWeightRLCallback(Callback):
             "param": param,
             "row": row,
             "L_before": self._loss_ema,
+            "reward_ema": None,  # EMA return, accumulated over the horizon
             "end_step": self._step + self.horizon,
         }
 
@@ -206,9 +229,13 @@ class HarmonicWeightRLCallback(Callback):
     def _finish_episode(self):
         ep = self._episode
         self._episode = None
-        reward = float((ep["L_before"] or 0.0) - (self._loss_ema or 0.0))
+        # The EMA return over the horizon is the reward; the endpoint delta is
+        # kept as a diagnostic so the two can be watched diverge.
+        reward = float(ep["reward_ema"] or 0.0)
+        instant = float((ep["L_before"] or 0.0) - (self._loss_ema or 0.0))
 
-        # Pin only better weights: keep the edit if loss improved, else undo.
+        # Pin only better weights: keep the edit if the return is positive, else
+        # undo. (Using the integrated return, not just the endpoint.)
         if reward < self.keep_threshold:
             with torch.no_grad():
                 ep["param"].data[ep["row"]] = ep["original"]
@@ -219,4 +246,5 @@ class HarmonicWeightRLCallback(Callback):
         metrics = self.policy.update(ep["state"], ep["raw"], reward)
         metrics.update(ep["meta"])
         metrics["rl_edit_kept"] = kept
+        metrics["rl_reward_instant"] = instant
         self._metrics = metrics

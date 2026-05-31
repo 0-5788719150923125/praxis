@@ -984,6 +984,58 @@
         ];
     }
 
+    // Easter egg: bolt a horizontal cross-bar onto the vertical 2x4 board to form a "t"
+    // / Christian cross. Only ever drawn in LIGHT mode while BOTH the LOGS easter egg
+    // (data-accent="blue") and the Gymnasium "Evaluate" tool (data-eval) are engaged.
+    function shouldDrawCross() {
+        const root = document.documentElement;
+        return isLightMode()
+            && root.getAttribute('data-accent') === 'blue'
+            && root.hasAttribute('data-eval');
+    }
+
+    // The cross-bar is the same board laid across, bolted onto the upper third of the
+    // vertical 2x4 - same beam thickness (w x d), so the original board's proportions are
+    // unchanged; this only ADDS the second axis. Local space, so it rotates with the board.
+    function getCrossBarEdges(morphFactor = 0) {
+        const morph1 = Math.sin(morphPhase) * morphFactor;
+        const morph2 = Math.cos(morphPhase * 1.3) * morphFactor;
+        const morph3 = Math.sin(morphPhase * 0.7) * morphFactor;
+
+        const w = 0.45, d = 0.225;   // match the 2x4 beam's width + depth
+        const cw = 0.95;             // arm span (x) of the cross-bar
+        const ch = w;                // thickness (y) - same as the beam
+        const crossY = -0.2625;      // upper third (board spans y in [-h/2, h/2], top = -h/2)
+        const x0 = -cw / 2, x1 = cw / 2;
+        const y0 = crossY - ch / 2, y1 = crossY + ch / 2;
+
+        const vertices = {
+            ftl: {x: x0 + morph1 * 0.03, y: y0 + morph2 * 0.03, z: d / 2},
+            ftr: {x: x1 + morph2 * 0.03, y: y0 + morph3 * 0.03, z: d / 2},
+            fbl: {x: x0 + morph3 * 0.03, y: y1 + morph1 * 0.03, z: d / 2},
+            fbr: {x: x1 + morph1 * 0.03, y: y1 + morph2 * 0.03, z: d / 2},
+            btl: {x: x0 + morph2 * 0.03, y: y0 + morph1 * 0.03, z: -d / 2},
+            btr: {x: x1 + morph3 * 0.03, y: y0 + morph2 * 0.03, z: -d / 2},
+            bbl: {x: x0 + morph1 * 0.03, y: y1 + morph3 * 0.03, z: -d / 2},
+            bbr: {x: x1 + morph2 * 0.03, y: y1 + morph1 * 0.03, z: -d / 2}
+        };
+
+        return [
+            {start: vertices.ftl, end: vertices.ftr, type: 'top'},
+            {start: vertices.ftr, end: vertices.fbr, type: 'side'},
+            {start: vertices.fbr, end: vertices.fbl, type: 'bottom'},
+            {start: vertices.fbl, end: vertices.ftl, type: 'side'},
+            {start: vertices.btl, end: vertices.btr, type: 'top'},
+            {start: vertices.btr, end: vertices.bbr, type: 'side'},
+            {start: vertices.bbr, end: vertices.bbl, type: 'bottom'},
+            {start: vertices.bbl, end: vertices.btl, type: 'side'},
+            {start: vertices.ftl, end: vertices.btl, type: 'depth'},
+            {start: vertices.ftr, end: vertices.btr, type: 'depth'},
+            {start: vertices.fbl, end: vertices.bbl, type: 'depth'},
+            {start: vertices.fbr, end: vertices.bbr, type: 'depth'}
+        ];
+    }
+
     // Tetrahedron edge definitions with morphing (for dark mode)
     function getPyramidEdges(morphFactor = 0) {
         // Morphing distortion factors
@@ -1500,8 +1552,10 @@
         // Get morphed shape edges (2x4 board in light mode, tetrahedron in dark mode)
         // Reuse lightMode variable already declared above
         const shapeEdges = lightMode ?
-            get2x4Edges(0.15) :      // 2x4 board - "We build during the day"
-            getPyramidEdges(0.15);   // Tetrahedron - for dark mode
+            (shouldDrawCross()
+                ? get2x4Edges(0.15).concat(getCrossBarEdges(0.15))   // easter egg: "t" / cross
+                : get2x4Edges(0.15)) :   // 2x4 board - "We build during the day"
+            getPyramidEdges(0.15);       // Tetrahedron - for dark mode
 
         // SHADOW PASS: Draw shadows first if in light mode
         if (lightMode) {

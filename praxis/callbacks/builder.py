@@ -90,6 +90,7 @@ def build_training_callbacks(
                 period=int(getattr(config, "rl_period", 50)),
                 horizon=int(getattr(config, "rl_horizon", 20)),
                 warmup_steps=int(getattr(config, "rl_warmup_steps", 200)),
+                reward_decay=float(getattr(config, "rl_reward_decay", 0.9)),
                 edit_mode=str(getattr(config, "rl_edit_mode", "harmonic")),
                 selector=str(getattr(config, "rl_selector", "sinusoidal")),
             )

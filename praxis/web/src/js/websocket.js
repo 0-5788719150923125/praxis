@@ -4,8 +4,30 @@
  */
 
 import { state } from './state.js';
-import { render } from './render.js';
+import { render, renderNotifications } from './render.js';
 import { renderLiveDashboard } from './dashboard.js';
+
+/**
+ * Merge backend events from a metrics snapshot into the notification feed.
+ * Deduped by monotonic id; bumps unread while the panel is closed.
+ */
+function mergeNotifications(events) {
+    if (!Array.isArray(events) || events.length === 0) return;
+    const known = new Set(state.notifications.items.map((e) => e.id));
+    let added = 0;
+    for (const ev of events) {
+        if (!known.has(ev.id)) {
+            state.notifications.items.push(ev);
+            added++;
+        }
+    }
+    if (added === 0) return;
+    state.notifications.items = state.notifications.items.slice(-100);
+    if (!state.notifications.panelOpen) {
+        state.notifications.unread += added;
+    }
+    renderNotifications();
+}
 
 // Live reload socket
 let liveReloadSocket = null;
@@ -78,6 +100,9 @@ export function connectMetricsLive() {
 
     metricsSocket.on('metrics_snapshot', (data) => {
         state.liveMetrics.data = data;
+
+        // Surface any backend events in the notification bell.
+        mergeNotifications(data.events);
 
         // Only render if the Terminal tab is active
         if (state.currentTab === 'terminal') {
