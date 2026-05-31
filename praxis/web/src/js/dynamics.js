@@ -100,7 +100,9 @@ export async function loadDynamicsWithCharts(force = false) {
         const data = await response.json();
 
         if (data.status === 'no_data' || !data.runs || data.runs.length === 0) {
-            renderEmptyState(container, data.message);
+            // No run yet: still render the tab (activation curves load on their own);
+            // just show whatever cards have data, never a "no data" banner.
+            renderDynamicsCharts({}, container);
             return;
         }
 
@@ -171,61 +173,6 @@ function renderDynamicsRunSelector() {
     `;
 }
 
-/**
- * Render empty state
- */
-function renderEmptyState(container, message) {
-    const refreshIcon = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-            <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
-            <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
-        </svg>
-    `;
-
-    const headerHTML = createTabHeader({
-        title: 'Learning Dynamics',
-        additionalContent: renderDynamicsRunSelector(),
-        buttons: [{
-            id: 'refresh-dynamics-btn',
-            label: 'Refresh',
-            icon: refreshIcon,
-            className: 'tab-header-button'
-        }],
-        metadata: '<span><strong>Status:</strong> No data</span>'
-    });
-
-    container.innerHTML = `
-        ${headerHTML}
-        <div class="empty-state" style="margin-top: 2rem;">
-            <h3>No Learning Dynamics Yet</h3>
-            <p>${message || 'Start training to see learning dynamics'}</p>
-        </div>
-
-        <div style="margin-top: 2rem;">
-            <div class="chart-card">
-                <div class="chart-title">Activation Forward</div>
-                <div class="chart-subtitle" id="activation-forward-subtitle">Forward curve per activation module. Line = mean across features; shaded band = 10-90 percentile spread.</div>
-                <div class="chart-wrapper" style="height: 400px;">
-                    <canvas id="dynamics-activation-forward"></canvas>
-                </div>
-                <div class="chart-legend" id="dynamics-activation-forward-legend"></div>
-            </div>
-        </div>
-
-        <div style="margin-top: 2rem;">
-            <div class="chart-card">
-                <div class="chart-title">Activation Derivative</div>
-                <div class="chart-subtitle">dy/dx per activation module via autograd (mean across features)</div>
-                <div class="chart-wrapper" style="height: 400px;">
-                    <canvas id="dynamics-activation-backward"></canvas>
-                </div>
-                <div class="chart-legend" id="dynamics-activation-backward-legend"></div>
-            </div>
-        </div>
-    `;
-
-    setTimeout(() => loadActivationCurves(), 10);
-}
 
 // ─── Metric detection helpers ───────────────────────────────────────────────
 
@@ -563,11 +510,6 @@ function renderDynamicsCharts(runData, container) {
         return entry?.description || fallback;
     };
     const manifest = buildScalarMetricManifest(descriptions);
-
-    if (steps.length === 0) {
-        renderEmptyState(container, "No dynamics data points found");
-        return;
-    }
 
     // Build the present chart families from the backend registry, and stash
     // them so the layer-toggle handler re-renders exactly this set.

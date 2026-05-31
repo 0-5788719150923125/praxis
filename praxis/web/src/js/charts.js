@@ -901,7 +901,11 @@ function renderDeckDesktop(deck) {
         const capped = a > DECK_MAX_FAN ? DECK_MAX_FAN : a;
         // Upcoming cards (delta > 0) lift UP off the floor to peek above the head;
         // passed cards (delta < 0) drop below and fade out (the leaving ghost).
-        const y = headTop - delta * DECK_PEEK;
+        // Clamp the upward peek to the reserved band so the deepest card's title
+        // sits at the deck's top edge and never pops out above it - keeping the
+        // title track smooth and every title aligned (the bottom may run longer).
+        const peekUnits = delta < below ? delta : below;
+        const y = headTop - peekUnits * DECK_PEEK;
         const scale = 1 - capped * DECK_SCALE_STEP;
         const opacity = delta >= 0 ? 1 : Math.max(0, 1 + delta);
         card.style.transform = `translateY(${y.toFixed(2)}px) scale(${scale.toFixed(4)})`;
