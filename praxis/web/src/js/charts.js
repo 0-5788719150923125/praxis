@@ -1007,6 +1007,21 @@ function seatEntering(deck, idx) {
     body.scrollTop = deck._cycleDir < 0 ? body.scrollHeight : 0;
 }
 
+// Reset the card at an order slot to the edge we're entering it from (TOP when going
+// forward, BOTTOM when going back) - called the moment a transition BEGINS, before the
+// card slides in. Looping a short carousel re-enters the same cards, so without this
+// they'd peek/arrive at their stale scroll position.
+function seatTarget(deck, slot, dir) {
+    const st = deck._deck;
+    if (!st || !deck._cards) return;
+    const order = deck._order || deck._cards.map((_, i) => i);
+    const idx = order[((Math.round(slot) % st.count) + st.count) % st.count];
+    const card = deck._cards[idx];
+    if (!card) return;
+    const body = card.querySelector('.deck-card-scroll') || card;
+    body.scrollTop = dir < 0 ? body.scrollHeight : 0;
+}
+
 // Signed distance from order-slot k to pos on the loop, biased toward the FORWARD
 // (fan) side so small decks still fill the fan. The wrap point is the larger of n/2
 // and the fan depth: on big decks this is n/2 (shortest path, unchanged); on small
@@ -1078,6 +1093,12 @@ function slideTo(deck, target) {
     deck._posTargetRaw = target;                   // unwrapped; wrap only on read/settle
     deck._posDist = target - deck._pos;
     deck._cycleDir = deck._posDist >= 0 ? 1 : -1;  // seat entering cards on the right edge
+    // Reset the entering card's scroll up front (only when actually changing cards) so it
+    // arrives at the edge we came from, not its stale position - matters for short loops.
+    const n = deck._deck.count;
+    const fromSlot = ((Math.round(deck._pos) % n) + n) % n;
+    const toSlot = ((Math.round(target) % n) + n) % n;
+    if (toSlot !== fromSlot) seatTarget(deck, target, deck._cycleDir);
     // Longer slide for chained flicks so each card still reads as it passes (the lift
     // arc pulses once per card), but bounded so it never feels sluggish.
     const mag = Math.abs(deck._posDist);
@@ -1281,6 +1302,7 @@ function bindDeckEvents(deck) {
         // Flick, content edge, or a stuck card: begin the seam to the next/previous card.
         deck._seamBase = ((Math.round(deck._pos) % st.count) + st.count) % st.count;
         deck._seamDir = dy > 0 ? 1 : -1;
+        seatTarget(deck, deck._seamBase + deck._seamDir, deck._seamDir);   // reset before it slides in
         seamAnchor(deck, dy);
         advanceSeam(deck, dy);
     }, { passive: false });

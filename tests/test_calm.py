@@ -323,13 +323,16 @@ def test_calm_with_stacked_crystal_harmonic_head():
     out = model(input_ids=input_ids, labels=input_ids[:, 1:].contiguous())
     out.loss.backward()
 
-    head = model.head
-    centers = head.crystal.lm_head.centers
-    amps = head.field.amplitudes
+    head = model.head  # SequentialHead([HarmonicHead(transform-only), CrystalHead])
+    harmonic, crystal = head.heads[0], head.heads[1]
+    centers = crystal.lm_head.centers
+    amps = harmonic.field.amplitudes
     assert centers.shape == (
         model.encoder.output_vocab_size,
         model.encoder.output_dim,
     )
+    # The transform-only harmonic stage builds no classifier of its own.
+    assert harmonic.lm_head is None
     # Both mechanisms receive gradient (field modulates features, crystal
     # classifies them - the recon path trains both).
     assert centers.grad is not None and centers.grad.abs().sum() > 0
@@ -339,15 +342,35 @@ def test_calm_with_stacked_crystal_harmonic_head():
     assert "centers_rms" in aux and "harmonic_smoothness" in aux
 
 
+def test_calm_with_prismatic_head_learns_envelope():
+    # prismatic = SequentialHead([HarmonicHead(learned wave), CrystalHead]); the
+    # envelope coefficients train through CALM's reconstruction path.
+    cfg = _tiny_config(head_type="prismatic")
+    model = PraxisForCausalLM(cfg)
+    field = model.head.heads[0].field
+    assert field.amp_modulation == "learned"
+    assert field.envelope_depth() > 0.0
+
+    model.train()
+    input_ids = torch.randint(4, 200, (2, 32), dtype=torch.long)
+    out = model(input_ids=input_ids, labels=input_ids[:, 1:].contiguous())
+    out.loss.backward()
+    # The envelope's coefficients are trainable and get gradient via recon.
+    assert field.amp_coeffs.requires_grad
+    assert field.amp_coeffs.grad is not None
+    assert field.amp_coeffs.grad.abs().sum() > 0
+
+
 def test_stacked_head_logits_match_manual_compose():
-    # forward == crystal(field(h)): the field is genuinely in the path.
+    # forward == terminal(transform(h)): the field is genuinely in the path.
     cfg = _tiny_config(head_type="crystal_harmonic")
     model = PraxisForCausalLM(cfg)
     model.eval()
     head = model.head
+    harmonic, crystal = head.heads[0], head.heads[1]
     feat = torch.randn(2, 6, model.encoder.output_dim)
     with torch.no_grad():
         composed = head(feat)
-        manual = head.crystal(head.field(feat))
+        manual = crystal(harmonic.transform(feat))
     assert torch.allclose(composed, manual, atol=1e-5)
     assert composed.shape == (2, 6, model.encoder.output_vocab_size)

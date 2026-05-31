@@ -3,7 +3,7 @@
 
 LM heads (tied/untied, harmonic, crystal) and multi-token-prediction wrappers.
 
-Registry: ``praxis.HEAD_REGISTRY + MTP_REGISTRY`` (7 entries)
+Registry: ``praxis.HEAD_REGISTRY + MTP_REGISTRY`` (9 entries)
 
 ## `conv` - ConvMTPModule
 
@@ -25,11 +25,20 @@ encoder's dot-product projection at the loss boundary.
 
 Source: [praxis/heads/crystal.py:262](../praxis/heads/crystal.py#L262)
 
-## `crystal_harmonic` - StackedHead
+## `crystal_harmonic`, `crystal_harmonic_static`, `prismatic` - SequentialHead
 
-Harmonic field stacked in front of the crystal distance classifier.
+Chain of heads: transforms compose, the last one classifies.
 
-Source: [praxis/heads/stacked.py:28](../praxis/heads/stacked.py#L28)
+``heads`` is a list of builders (head class / ``partial`` over one) that are
+instantiated with ``(config, encoder)``; already-built heads are accepted too (for
+direct use).
+
+Source: [praxis/heads/stacked.py:34](../praxis/heads/stacked.py#L34)
+
+Presets:
+- `crystal_harmonic` - `heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='off', build_classifier=False), <class 'praxis.heads.crystal.CrystalHead'>]`
+- `crystal_harmonic_static` - `heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='static', build_classifier=False), <class 'praxis.heads.crystal.CrystalHead'>]`
+- `prismatic` - `heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='learned', build_classifier=False), <class 'praxis.heads.crystal.CrystalHead'>]`
 
 ## `forward` - ForwardHead
 
@@ -51,7 +60,7 @@ declared byte-output layout in encoder mode, else ``(hidden_size, vocab_size)``)
 ``forward`` modulates the features with the field, then projects through ``lm_head`` -
 identical in standalone and encoder modes.
 
-Source: [praxis/heads/harmonic.py:233](../praxis/heads/harmonic.py#L233)
+Source: [praxis/heads/harmonic.py:316](../praxis/heads/harmonic.py#L316)
 
 ## `tied` - TiedWeights
 

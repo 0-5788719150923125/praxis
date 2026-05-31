@@ -1,102 +1,102 @@
-"""Stacked head: harmonic field feeding the crystal classifier.
+"""SequentialHead: compose standardized Praxis heads like ``nn.Sequential``.
 
-Composes the two mechanisms. ``HarmonicField`` modulates the incoming
-features multiplicatively (``h * (1 + b)``), then ``CrystalClassifier``
-turns the modulated features into distance-based, min-normalized logits.
-One coherent logit stream - harmonics shape the features, crystal
-geometry classifies them - so crystal's sign structure (which inference
-processors like repetition_penalty depend on) is preserved.
+Each non-terminal head contributes its ``transform`` (a feature -> feature map,
+identity by default); the terminal head classifies. So a sequence of
+``[HarmonicHead(transform-only), CrystalHead]`` runs the harmonic field's
+multiplicative modulation, then the crystal distance classifier - one coherent
+logit stream, with crystal's sign structure (which inference processors like
+``repetition_penalty`` depend on) preserved.
 
-Only the harmonic *field* is borrowed; harmonic's own linear projection
-is intentionally not built (the classifier is crystal's). Both auxiliary
-losses (smoothness + centers_rms) stay active, and the per-head charts
-surface automatically because the field and crystal classifier are
+The sub-heads are passed as *builders* - callables ``(config, encoder) -> head``
+(a head class, or a ``functools.partial`` over one) - so a registry entry can
+compose a stack dynamically without a bespoke subclass, e.g.::
+
+    prismatic = partial(SequentialHead, heads=[
+        partial(HarmonicHead, amp_modulation="learned", build_classifier=False),
+        CrystalHead,
+    ])
+
+Auxiliary losses, training metrics, and dashboard snapshots merge across the
+sub-heads, and per-head charts surface automatically because the sub-heads are
 submodules (see ``BaseHead.all_metric_descriptions``).
 """
 
-from typing import Any, Optional
+from typing import Any, Callable, List, Optional, Union
 
-import torch
 import torch.nn as nn
 from torch import Tensor
 
 from praxis.heads.base import BaseHead
-from praxis.heads.crystal import CrystalHead
-from praxis.heads.harmonic import IRR_D, IRR_T, HarmonicField
+
+HeadSpec = Union[BaseHead, Callable[..., BaseHead]]
 
 
-class StackedHead(BaseHead):
-    """Harmonic field stacked in front of the crystal distance classifier."""
+class SequentialHead(BaseHead):
+    """Chain of heads: transforms compose, the last one classifies.
 
-    def __init__(self, config: Any, encoder: Optional[nn.Module] = None) -> None:
+    ``heads`` is a list of builders (head class / ``partial`` over one) that are
+    instantiated with ``(config, encoder)``; already-built heads are accepted
+    too (for direct use).
+    """
+
+    # A composed head manages its own output via its terminal head (crystal
+    # self-ties), so the model keeps it under tie_word_embeddings rather than
+    # swapping in the generic TiedWeights head.
+    self_ties = True
+
+    def __init__(
+        self,
+        config: Any,
+        encoder: Optional[nn.Module] = None,
+        *,
+        heads: List[HeadSpec],
+    ) -> None:
         super().__init__(config, encoder)
-
-        dims = self.output_dims()
-        if dims is None:
-            raise ValueError(
-                "head_type='crystal_harmonic' needs an encoder that declares "
-                "an output layout (same requirement as crystal)."
-            )
-        feature_dim, _ = dims
-
-        # Field period: same sizing as HarmonicHead. It must cover the
-        # positions actually seen; bound max_position_embeddings to block_size
-        # in config to keep the field's irfft2 tractable under the byte *8.
-        max_positions = int(getattr(config, "max_position_embeddings", 32768) or 32768)
-        if "byte" in str(getattr(config, "encoder_type", "")):
-            max_positions = max(max_positions, max_positions * 8)
-
-        # Field modulates features at their incoming width; crystal then
-        # classifies. Build the field directly (not a full HarmonicHead) so we
-        # don't allocate harmonic's unused linear projection.
-        self.field = HarmonicField(hidden_dim=feature_dim, max_positions=max_positions)
-        self.crystal = CrystalHead(config, encoder=encoder)
+        if not heads:
+            raise ValueError("SequentialHead needs at least one head.")
+        built = [
+            h if isinstance(h, BaseHead) else h(config, encoder=encoder)
+            for h in heads
+        ]
+        self.heads = nn.ModuleList(built)
+        # Point each transform stage's grad-ratio at the terminal classifier it
+        # actually feeds (heads that don't track it just ignore the call).
+        terminal = self.heads[-1].classifier
+        for head in self.heads[:-1]:
+            if hasattr(head, "set_downstream"):
+                head.set_downstream(terminal)
 
     def forward(self, hidden_states: Tensor, **kwargs: Any) -> Tensor:
-        return self.crystal(self.field(hidden_states))
+        h = hidden_states
+        for head in self.heads[:-1]:
+            h = head.transform(h)
+        return self.heads[-1](h, **kwargs)
+
+    def transform(self, hidden_states: Tensor) -> Tensor:
+        # Composable itself: every stage's transform, terminal included.
+        h = hidden_states
+        for head in self.heads:
+            h = head.transform(h)
+        return h
 
     @property
     def classifier(self) -> Optional[nn.Module]:
-        # The field is applied in forward(); the downstream projection is
-        # crystal's distance classifier.
-        return self.crystal.classifier
+        return self.heads[-1].classifier
 
     def aux_losses(self) -> dict:
-        out = dict(self.crystal.aux_losses())
-        smooth = self.field.aux_loss()
-        if smooth is not None:
-            out["harmonic_smoothness"] = smooth
+        out: dict = {}
+        for head in self.heads:
+            out.update(head.aux_losses())
         return out
 
     def training_metrics(self) -> dict:
-        out = dict(self.crystal.training_metrics())
-        amps = self.field.amplitudes
-        out["harmonic_amplitudes_norm"] = float(amps.detach().norm().item())
-        out["harmonic_concentration"] = float(self.field.concentration().item())
-        out["harmonic_smoothness"] = float(self.field.smoothness().item())
-        # Reads whether learning flows into the field or past it into the
-        # crystal centers (the downstream classifier here).
-        amps_grad = amps.grad
-        centers_grad = self.crystal.lm_head.centers.grad
-        if amps_grad is not None and centers_grad is not None:
-            centers_norm = float(centers_grad.detach().norm().item())
-            if centers_norm > 0:
-                out["harmonic_grad_ratio"] = (
-                    float(amps_grad.detach().norm().item()) / centers_norm
-                )
+        out: dict = {}
+        for head in self.heads:
+            out.update(head.training_metrics())
         return out
 
     def dashboard_snapshots(self) -> dict:
-        out = dict(self.crystal.dashboard_snapshots())
-        amps = self.field.amplitudes.detach().abs().to("cpu", dtype=torch.float32)
-        F_t, F_d = int(amps.shape[0]), int(amps.shape[1])
-        out["harmonic_spectrum"] = {
-            "grid": amps.tolist(),
-            "grid_rows": F_t,
-            "grid_cols": F_d,
-            "x_range": [1, F_d],
-            "y_range": [1, F_t],
-            "max_count": float(amps.max().item()) if amps.numel() else 0.0,
-            "irrationals": {"t": float(IRR_T), "d": float(IRR_D)},
-        }
+        out: dict = {}
+        for head in self.heads:
+            out.update(head.dashboard_snapshots())
         return out

@@ -231,15 +231,28 @@ const DYNAMICS_FAMILY_RENDERERS = {
     halting_hist: (id, dyn) => createHaltingHistogramChart(id, dyn, detectHaltingBuckets(dyn)),
 };
 
-function buildDynamicsFamilyCard(config, desc) {
+/** Layer filter buttons, scoped to a single layer-aware card. */
+function layerTogglesHTML(allLayers) {
+    if (!allLayers.length) return '';
+    const buttons = [
+        '<button class="layer-toggle-btn" data-layer="all">All</button>',
+        '<button class="layer-toggle-btn" data-layer="none">None</button>',
+        ...allLayers.map(l => `<button class="layer-toggle-btn" data-layer="${l}">L${l}</button>`)
+    ].join('');
+    return `<div class="dynamics-layer-toggles"><strong>Layers:</strong> ${buttons}</div>`;
+}
+
+function buildDynamicsFamilyCard(config, desc, allLayers) {
     const legendHTML = config.legend
         ? `<div class="chart-legend" id="${config.canvasId}-legend"></div>`
         : '';
+    const togglesHTML = config.layerToggles ? layerTogglesHTML(allLayers) : '';
     return `
         <div style="margin-top: 2rem;">
             <div class="chart-card">
                 <div class="chart-title">${config.title}</div>
                 <div class="chart-subtitle">${desc(config.key, config.subtitle)}</div>
+                ${togglesHTML}
                 <div class="chart-wrapper" style="height: 400px;">
                     <canvas id="${config.canvasId}"></canvas>
                 </div>
@@ -525,9 +538,9 @@ function renderDynamicsCharts(runData, container) {
             .map(m => parseInt(m[1]))
     ).size;
 
+    dynamicsLayerState.allLayers = [...allLayers];
     if (!dynamicsLayerState.layers) {
         dynamicsLayerState.layers = [...allLayers];
-        dynamicsLayerState.allLayers = [...allLayers];
     }
 
     // ── Header ──────────────────────────────────────────────────────────
@@ -556,17 +569,12 @@ function renderDynamicsCharts(runData, container) {
     });
 
     // ── Chart cards ─────────────────────────────────────────────────────
-    let chartsHTML = `
-        <div style="margin-top: 2rem;">
-            <div id="dynamics-layer-toggles"></div>
-        </div>
-    `;
-
     // Families ordered before the head-metric sections (gradient flow,
     // expert charts, task weights), rendered straight from the registry.
-    chartsHTML += familyConfigs
+    // Layer-aware families carry their own inline layer filter.
+    let chartsHTML = familyConfigs
         .filter(c => c.order < 100)
-        .map(c => buildDynamicsFamilyCard(c, desc))
+        .map(c => buildDynamicsFamilyCard(c, desc, allLayers))
         .join('');
 
     // Head-driven scalar metrics (harmonic, crystal, future heads). The
@@ -582,7 +590,7 @@ function renderDynamicsCharts(runData, container) {
     // Families ordered after the head sections (e.g. halting distribution).
     chartsHTML += familyConfigs
         .filter(c => c.order >= 100)
-        .map(c => buildDynamicsFamilyCard(c, desc))
+        .map(c => buildDynamicsFamilyCard(c, desc, allLayers))
         .join('');
 
     // Activation curves (always rendered; placeholder if endpoint returns empty)
@@ -614,7 +622,7 @@ function renderDynamicsCharts(runData, container) {
 
     // Stack the dynamics charts into the same card deck as the Research tab.
     // Cards are a flat sequence (each already carries its own title), so we
-    // just move them into one deck and leave the layer-toggles control above.
+    // just move them into one deck; layer-aware cards carry their own filter.
     const dCards = Array.from(container.querySelectorAll('.chart-card'));
     if (dCards.length) {
         const deck = document.createElement('div');
@@ -655,34 +663,20 @@ function renderDynamicsCharts(runData, container) {
 // ─── Layer toggles ──────────────────────────────────────────────────────────
 
 /**
- * Render layer toggles
+ * Wire the per-card layer filters. The buttons are emitted inline by
+ * buildDynamicsFamilyCard; here we just bind clicks and sync active states.
+ * Selection is shared, so every card's filter stays in step.
  */
 function renderDynamicsLayerToggles() {
-    const container = document.getElementById('dynamics-layer-toggles');
+    const container = document.getElementById('dynamics-container');
     if (!container) return;
-
-    const allLayers = dynamicsLayerState.allLayers || [];
-    if (allLayers.length === 0) return;
-
-    const buttons = [
-        '<button class="layer-toggle-btn" data-layer="all">All</button>',
-        '<button class="layer-toggle-btn" data-layer="none">None</button>',
-        ...allLayers.map(layer =>
-            `<button class="layer-toggle-btn" data-layer="${layer}">L${layer}</button>`
-        )
-    ].join('');
-
-    container.innerHTML = `
-        <div style="margin-bottom: 1rem;">
-            <strong>Layers:</strong> ${buttons}
-        </div>
-    `;
+    if ((dynamicsLayerState.allLayers || []).length === 0) return;
 
     updateDynamicsLayerToggles();
 
     container.querySelectorAll('.layer-toggle-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
-            const layer = e.target.dataset.layer;
+            const layer = e.currentTarget.dataset.layer;
 
             if (layer === 'all') {
                 dynamicsLayerState.layers = [...dynamicsLayerState.allLayers];
@@ -706,10 +700,10 @@ function renderDynamicsLayerToggles() {
 }
 
 /**
- * Update layer toggle button states
+ * Sync active states across every card's layer filter.
  */
 function updateDynamicsLayerToggles() {
-    const container = document.getElementById('dynamics-layer-toggles');
+    const container = document.getElementById('dynamics-container');
     if (!container) return;
 
     const allLayers = dynamicsLayerState.allLayers || [];

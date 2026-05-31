@@ -1,3 +1,4 @@
+import functools
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
 
@@ -135,13 +136,15 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # tied) ignore the reference and skip allocating an lm_head.
         encoder_ref = self.encoder if self.encoder else None
         # Standard-mode tying normally routes to the dedicated "tied" head;
-        # heads that implement their own tying (crystal) keep their type and
-        # tie themselves in tie_weights().
-        if (
-            encoder_ref is None
-            and config.tie_word_embeddings
-            and config.head_type not in ("crystal", "crystal_harmonic")
-        ):
+        # heads that tie their own weights (crystal, and compositions ending in
+        # it) keep their type and tie themselves in tie_weights(). Read the flag
+        # off the registered class, unwrapping any functools.partial variant.
+        entry = HEAD_REGISTRY.get(config.head_type)
+        head_cls_decl = entry
+        while isinstance(head_cls_decl, functools.partial):
+            head_cls_decl = head_cls_decl.func
+        self_ties = bool(getattr(head_cls_decl, "self_ties", False))
+        if encoder_ref is None and config.tie_word_embeddings and not self_ties:
             head_type = "tied"
         else:
             head_type = config.head_type

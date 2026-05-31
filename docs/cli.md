@@ -60,7 +60,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--gated` | bool | `False` | Add a gating network to attention outputs |
 | `--halting-type` | str | `None` | Halting strategy for recurrent depth loops (choices: none, kl) |
 | `--head-size` | int | `None` | Specify the inner head dimension |
-| `--head-type` | str | `forward` | The type of language modeling head to use (choices: forward, tied, harmonic, crystal, crystal_harmonic) |
+| `--head-type` | str | `forward` | The type of language modeling head to use (choices: forward, tied, harmonic, crystal, crystal_harmonic, crystal_harmonic_static, prismatic) |
 | `--hidden-size` | int | `256` | The size of the model's hidden dimensions |
 | `--k-heads` | int | `None` | A sparse MoE, controlling the number of heads to sample. Should be smaller than num_heads to enable. |
 | `--kv-rank` | int | `None` | Set this value to factorize key/value projections, making them low-rank. A value of 1 is lowest. |

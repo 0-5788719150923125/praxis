@@ -23,6 +23,12 @@ class BaseHead(nn.Module, ABC):
     them - same as the standalone path.
     """
 
+    # True if the head ties its own output weights in ``tie_weights()`` (e.g.
+    # crystal shares its centers with the input embedding). Such heads keep
+    # their type under ``tie_word_embeddings`` instead of being swapped for the
+    # generic TiedWeights head. Compositions inherit it from their terminal.
+    self_ties: bool = False
+
     def __init__(self, config: ConfigType, encoder: Optional[nn.Module] = None) -> None:
         super().__init__()
         self.config = config
@@ -67,6 +73,17 @@ class BaseHead(nn.Module, ABC):
             Logits tensor [batch, seq_len, vocab_size]
         """
         pass
+
+    def transform(self, hidden_states: Tensor) -> Tensor:
+        """Feature-space contribution when this head is a non-terminal stage
+        of a :class:`SequentialHead`.
+
+        Default is identity: a pure classifier head passes features through
+        untouched, so only the terminal head's ``forward`` produces logits.
+        Heads that reshape features (e.g. the harmonic field's multiplicative
+        modulation) override this to apply their transform.
+        """
+        return hidden_states
 
     @property
     @abstractmethod

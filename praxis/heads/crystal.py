@@ -268,6 +268,9 @@ class CrystalHead(BaseHead):
     projection at the loss boundary.
     """
 
+    # Crystal shares its centers with the input embedding in tie_weights().
+    self_ties = True
+
     def __init__(self, config: Any, encoder: Optional[nn.Module] = None) -> None:
         super().__init__(config, encoder)
         if config.loss_func == "cut_cross_entropy":

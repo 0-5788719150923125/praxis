@@ -274,6 +274,14 @@ export const ACTION_HANDLERS = {
     /**
      * Toggle run selector dropdown
      */
+    /**
+     * Toggle a conversation tool button on/off (blue when active).
+     * Local UI state only - does not touch the theme/accent.
+     */
+    TOGGLE_TOOL: (_payload, meta) => {
+        if (meta && meta.button) meta.button.classList.toggle('active');
+    },
+
     TOGGLE_RUN_SELECTOR: () => {
         toggleRunSelector();
     },

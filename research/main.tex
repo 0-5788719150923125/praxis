@@ -96,7 +96,7 @@ The point is that these are \textit{separate parameters with separate gradients}
 
 Sampling temperature is usually described as noise injection. On the bias-variance manifold it is better described as a position dial. At low temperature the model commits to the learned rhythm - the high-bias corner. As temperature rises it explores within the basin the harmonic constraints define - structured variance. Past a critical point it begins to violate those constraints, which reads as either failure or discovery depending on what you were hoping for. CALM makes this literal: rather than perturbing a latent continuously, it votes over decoded patches~\cite{calm2025}, so temperature selects how many candidate latents must agree before a patch is emitted. Temperature is not adding randomness to a fixed distribution; it is choosing where on the manifold to stand.
 
-\begin{figure}[h]
+\begin{figure}[ht]
     \centering
     \begin{tikzpicture}[scale=0.95]
         % Axes: bias (x) vs variance (y)
@@ -163,7 +163,7 @@ A model that represents its corpus as a \textit{mean} - a consensus, an average 
 
 A model that represents its corpus as \textit{interference} - a superposition of $K$ frequency components - addresses a combinatorially larger space. $K$ components with learnable amplitudes and frozen, equidistributed phases produce a field whose distinguishable configurations grow exponentially in $K$, because it is the \textit{pattern of constructive and destructive interference} across components that carries information, not the components individually. To express $N$ configurations you need on the order of $\log N$ components. This is the logarithmic regime. The same asymmetry shows up in time: the transform that builds the field is $O(n \log n)$, and a single transform realizes the whole interference pattern at once rather than enumerating its parts.
 
-\begin{figure}[h]
+\begin{figure}[ht]
     \centering
     \begin{tikzpicture}[scale=0.92]
         % Axes
@@ -290,6 +290,8 @@ We began with scale and ended with geometry. The patterns a model can learn are 
 
 The current experiment, \runOneName{} (\texttt{\runOneHash}), reached \paperMetricName{} \runOneFinal{} by step \runOneSteps{}. Recent experiments whose families report a different validation metric are omitted rather than plotted on an incomparable axis: \paperSkipped{}.
 
+    % Ensure bibliography data is written even if some tools don't see citations
+    \nocite{*}
     {\small
         \bibliographystyle{plain}
         \bibliography{citations}

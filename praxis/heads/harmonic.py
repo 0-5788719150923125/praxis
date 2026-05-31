@@ -37,6 +37,27 @@ AMPLITUDE_INIT_STD: float = 1.0
 # See next/harmony.md for the derivation.
 SMOOTHNESS_LAMBDA: float = 0.01
 
+# Amplitude modulation: an envelope over the temporal-frequency (f_t) axis,
+# applied as ``amp[f_t, :] *= env[f_t]``. "static" seeds a single mid-band
+# oscillation; "learned" makes the envelope a handful of learnable cosine
+# coefficients so the wave adapts. The envelope's basis is zero at f_t -> 0,
+# so it cannot reintroduce the flat (constant-over-position) mode that the bare
+# grid settles into. See ``HarmonicField`` and ``next/harmony.md``.
+AMP_MOD_DEPTH: float = 0.5   # peak envelope modulation, tanh-bounded
+AMP_MOD_BASIS_K: int = 6     # learned envelope = K low-frequency f_t modes
+
+
+def _envelope_basis(F_t: int, K: int) -> torch.Tensor:
+    """``[F_t, K]`` sine modes over the f_t axis.
+
+    Mode ``k`` is ``sin(pi*k*f_t/F_t)`` - a smooth wave that vanishes at
+    ``f_t -> 0``, so any combination of modes leaves the flat DC component
+    untouched. Mode 1 is a single hump peaking mid-band.
+    """
+    ft = np.arange(1, F_t + 1, dtype=np.float64).reshape(-1, 1)
+    k = np.arange(1, K + 1, dtype=np.float64).reshape(1, -1)
+    return torch.from_numpy(np.sin(np.pi * ft * k / F_t)).to(torch.float32)
+
 
 def _spectrum_2d(
     F_t: int, F_d: int, irr_t: float, irr_d: float, alpha: float
@@ -119,6 +140,21 @@ class HarmonicField(nn.Module):
                 "order": 40,
             },
         },
+        "harmonic_env_depth": {
+            "description": (
+                "Peak-to-trough of the f_t amplitude envelope. 0 = no "
+                "modulation (the flat grid); >0 = a wave over temporal "
+                "frequency. With learned modulation this moves as the "
+                "envelope adapts; static holds it fixed."
+            ),
+            "chart": {
+                "title": "Amplitude Envelope Depth",
+                "y_label": "Envelope Depth",
+                "y_scale": "linear",
+                "group": "harmonic_head",
+                "order": 45,
+            },
+        },
         # Spectrum is a bespoke heatmap snapshot, not a scalar chart -
         # the snapshot hint routes it through the heatmap_2d renderer.
         "harmonic_spectrum": {
@@ -143,6 +179,7 @@ class HarmonicField(nn.Module):
         max_positions: int,
         F_t: Optional[int] = None,
         F_d: Optional[int] = None,
+        amp_modulation: str = "off",
     ) -> None:
         super().__init__()
         self.T = max_positions
@@ -157,6 +194,25 @@ class HarmonicField(nn.Module):
         self.amplitudes = nn.Parameter(torch.empty(self.F_t, self.F_d))
         nn.init.normal_(self.amplitudes, mean=0.0, std=AMPLITUDE_INIT_STD)
 
+        # Amplitude envelope over f_t. "static" and "learned" share one formula
+        # (so they are identical at init); only "learned" lets the coefficients
+        # move. Init = a single mid-band oscillation (coeff 0 = 1, rest 0).
+        if amp_modulation not in ("off", "static", "learned"):
+            raise ValueError(
+                f"amp_modulation must be off|static|learned, got {amp_modulation!r}"
+            )
+        self.amp_modulation = amp_modulation
+        if amp_modulation != "off":
+            self.register_buffer(
+                "amp_basis", _envelope_basis(self.F_t, AMP_MOD_BASIS_K), persistent=False
+            )
+            coeffs = torch.zeros(AMP_MOD_BASIS_K)
+            coeffs[0] = 1.0
+            if amp_modulation == "learned":
+                self.amp_coeffs = nn.Parameter(coeffs)
+            else:
+                self.register_buffer("amp_coeffs", coeffs, persistent=False)
+
     def _field(
         self,
         seq_len: int,
@@ -165,9 +221,13 @@ class HarmonicField(nn.Module):
     ) -> Tensor:
         rfft_D = self.D // 2 + 1
         spec = torch.zeros(self.T, rfft_D, dtype=torch.complex64, device=device)
+        amps = self.amplitudes
+        env = self._envelope()
+        if env is not None:
+            amps = amps * env.unsqueeze(1)  # modulate each f_t row by env[f_t]
         scaled = (
             torch.complex(self.spec_real.to(device), self.spec_imag.to(device))
-            * self.amplitudes
+            * amps
         )
         spec[1 : self.F_t + 1, 1 : self.F_d + 1] = scaled
         # Hermitian symmetry on the T axis so irfft2 yields a real field.
@@ -186,6 +246,29 @@ class HarmonicField(nn.Module):
             dtype=hidden_states.dtype,
         )
         return hidden_states * (1.0 + b)
+
+    def _envelope(self) -> Optional[Tensor]:
+        """``[F_t]`` amplitude envelope over the temporal-frequency axis, or
+        None when modulation is off. ``1 + depth*tanh(basis @ coeffs)`` stays
+        positive (a true amplitude envelope) and bounded."""
+        if self.amp_modulation == "off":
+            return None
+        return 1.0 + AMP_MOD_DEPTH * torch.tanh(self.amp_basis @ self.amp_coeffs)
+
+    def effective_amplitudes(self) -> Tensor:
+        """The amplitude grid after the envelope - what the spectrum heatmap
+        should show so the modulation is visible (equals ``amplitudes`` when
+        modulation is off)."""
+        amps = self.amplitudes.detach()
+        env = self._envelope()
+        if env is not None:
+            amps = amps * env.detach().unsqueeze(1)
+        return amps
+
+    def envelope_depth(self) -> float:
+        """Peak-to-trough of the f_t envelope; 0 when modulation is off."""
+        env = self._envelope()
+        return 0.0 if env is None else float((env.max() - env.min()).detach().item())
 
     def concentration(self) -> Tensor:
         """Hoyer sparsity of the amplitude grid in [0, 1].
@@ -240,8 +323,15 @@ class HarmonicHead(BaseHead):
     standalone and encoder modes.
     """
 
-    def __init__(self, config: Any, encoder: Optional[nn.Module] = None) -> None:
+    def __init__(
+        self,
+        config: Any,
+        encoder: Optional[nn.Module] = None,
+        amp_modulation: str = "off",
+        build_classifier: bool = True,
+    ) -> None:
         super().__init__(config, encoder)
+        self._downstream = None  # injectable downstream classifier (grad-ratio)
         max_positions = int(getattr(config, "max_position_embeddings", 32768) or 32768)
         if "byte" in str(getattr(config, "encoder_type", "")):
             max_positions = max(max_positions, max_positions * 8)
@@ -255,25 +345,47 @@ class HarmonicHead(BaseHead):
             return
 
         feature_dim, vocab_size = dims
-        self.field = HarmonicField(hidden_dim=feature_dim, max_positions=max_positions)
-        self.lm_head = nn.Linear(feature_dim, vocab_size, bias=False)
-        self.lm_head.weight.data.normal_(mean=0.0, std=0.02)
+        self.field = HarmonicField(
+            hidden_dim=feature_dim,
+            max_positions=max_positions,
+            amp_modulation=amp_modulation,
+        )
+        # Transform-only stages (in a SequentialHead) skip the classifier - the
+        # terminal head classifies, so the vocab projection would be dead.
+        if build_classifier:
+            self.lm_head = nn.Linear(feature_dim, vocab_size, bias=False)
+            self.lm_head.weight.data.normal_(mean=0.0, std=0.02)
+        else:
+            self.lm_head = None
+
+    def transform(self, hidden_states: Tensor) -> Tensor:
+        """The field modulation - this head's contribution as a non-terminal
+        SequentialHead stage."""
+        return self.field(hidden_states) if self.field is not None else hidden_states
 
     def forward(self, hidden_states: Tensor, **kwargs: Any) -> Tensor:
-        return self.lm_head(self.field(hidden_states))
+        h = self.transform(hidden_states)
+        return self.lm_head(h) if self.lm_head is not None else h
 
     @property
     def classifier(self) -> Optional[nn.Module]:
         return self.lm_head
 
+    def set_downstream(self, classifier: Optional[nn.Module]) -> None:
+        """Point grad-ratio at the classifier this field actually feeds, when
+        used transform-only in a SequentialHead (else it has none of its own)."""
+        self._downstream = classifier
+
     def aux_losses(self) -> dict:
+        if self.field is None:
+            return {}
         aux = self.field.aux_loss()
         return {"harmonic_smoothness": aux} if aux is not None else {}
 
     def _downstream_classifier(self) -> Optional[nn.Module]:
-        """The learnable projection the field's output feeds into - now
-        always our own ``lm_head`` (the head owns its classifier)."""
-        return self.lm_head
+        """The learnable projection the field feeds into: our own ``lm_head``
+        when terminal, else the injected downstream classifier."""
+        return self.lm_head if self.lm_head is not None else self._downstream
 
     def dashboard_snapshots(self) -> dict:
         """Amplitude grid magnitudes for the spectrum heatmap.
@@ -282,7 +394,9 @@ class HarmonicHead(BaseHead):
         irrationals used to seed phases, packaged for the generic
         ``heatmap_2d`` renderer (grid + axis ranges + max).
         """
-        amps = self.field.amplitudes.detach().abs().to("cpu", dtype=torch.float32)
+        if self.field is None:
+            return {}
+        amps = self.field.effective_amplitudes().abs().to("cpu", dtype=torch.float32)
         F_t, F_d = int(amps.shape[0]), int(amps.shape[1])
         return {
             "harmonic_spectrum": {
@@ -297,20 +411,22 @@ class HarmonicHead(BaseHead):
         }
 
     def training_metrics(self) -> dict:
+        if self.field is None:
+            return {}
         amps = self.field.amplitudes
         out = {
             "harmonic_amplitudes_norm": float(amps.detach().norm().item()),
             "harmonic_concentration": float(self.field.concentration().item()),
             "harmonic_smoothness": float(self.field.smoothness().item()),
+            "harmonic_env_depth": self.field.envelope_depth(),
         }
 
         # grad_ratio reads whether learning is flowing into the field or
         # past it through the downstream classifier. Skip silently if
-        # gradients aren't available yet (pre-first-step) or if the
-        # downstream classifier doesn't expose a .weight.
+        # gradients aren't available yet (pre-first-step) or the classifier
+        # exposes no readable weight tensor.
         amps_grad = amps.grad
-        classifier = self._downstream_classifier()
-        head_weight = getattr(classifier, "weight", None) if classifier else None
+        head_weight = _classifier_weight(self._downstream_classifier())
         head_grad = head_weight.grad if head_weight is not None else None
         if amps_grad is not None and head_grad is not None:
             head_norm = float(head_grad.detach().norm().item())
@@ -319,3 +435,15 @@ class HarmonicHead(BaseHead):
                     float(amps_grad.detach().norm().item()) / head_norm
                 )
         return out
+
+
+def _classifier_weight(mod: Optional[nn.Module]) -> Optional[Tensor]:
+    """Primary weight tensor of a downstream classifier: ``weight`` for a
+    Linear, ``centers`` for the crystal classifier."""
+    if mod is None:
+        return None
+    for attr in ("weight", "centers"):
+        w = getattr(mod, attr, None)
+        if isinstance(w, torch.Tensor):
+            return w
+    return None

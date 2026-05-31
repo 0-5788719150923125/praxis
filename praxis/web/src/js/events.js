@@ -19,6 +19,14 @@ export const CLICK_HANDLERS = [
         action: () => ({ type: 'TOGGLE_THEME' })
     },
     {
+        selector: '.tool-toggle[data-toggleable]',
+        match: 'closest',
+        action: (e) => ({
+            type: 'TOGGLE_TOOL',
+            meta: { button: e.target.closest('.tool-toggle') }
+        })
+    },
+    {
         selector: '.tab-button',
         match: 'exact',
         action: (e) => ({

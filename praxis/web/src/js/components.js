@@ -235,6 +235,12 @@ export const createContainerWithContent = (containerClass, containerId, initialC
  * @returns {string} HTML string
  */
 export const createChatTabContent = (config) => `
+    <div class="conversation-toolbar">
+        <button class="tool-toggle active" data-tool="read" data-toggleable>Read</button>
+        <button class="tool-toggle" data-tool="evaluate" data-toggleable>Evaluate</button>
+        <button class="tool-toggle" data-tool="print">Print</button>
+        <button class="tool-toggle" data-tool="loop">Loop</button>
+    </div>
     <div class="chat-container" id="${config.chatContainerId}">
         <!-- Messages rendered dynamically -->
     </div>

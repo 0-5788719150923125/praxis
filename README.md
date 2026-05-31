@@ -34,7 +34,7 @@ source. See [docs/index.md](docs/index.md) for the full map.
 - [Long-term memory](docs/memory.md) (4)
 - [Loss functions](docs/losses.md) (9)
 - [Normalization layers](docs/normalization.md) (5)
-- [Output heads](docs/heads.md) (7)
+- [Output heads](docs/heads.md) (9)
 - [Positional encoding](docs/encoding.md) (5)
 - [Recurrent cells](docs/recurrent.md) (2)
 - [Residual connections](docs/residuals.md) (2)

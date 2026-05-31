@@ -1725,6 +1725,16 @@
     display: none; /* Chrome/Safari */
 }
 
+/* In-card layer filter: sits between a chart's subtitle and its canvas. */
+.dynamics-layer-toggles {
+    margin: 0.75rem 0 1rem;
+    font-size: 0.875rem;
+}
+
+.dynamics-layer-toggles strong {
+    margin-right: 0.5rem;
+}
+
 .layer-toggle-btn {
     padding: 0.375rem 0.75rem;
     margin-right: 0.5rem;
