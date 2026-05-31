@@ -3,14 +3,24 @@
  * Renders a terminal-styled dashboard from streamed metrics data
  */
 
-// Persistent UI state across re-renders
+// Persistent UI state across re-renders (survives tab switches; resets on reload).
 let logPanelOpen = false;
+
+// Opening the logs flips the whole app to the blue accent (the "hidden mode"). The
+// flag lives on <html> so every tab + the Praxis animation re-tint, and it persists
+// across tab navigation because we never clear it on re-render.
+function applyLogAccent() {
+    if (typeof document === 'undefined') return;
+    if (logPanelOpen) document.documentElement.setAttribute('data-accent', 'blue');
+    else document.documentElement.removeAttribute('data-accent');
+}
 
 /**
  * Toggle the log panel open/closed
  */
 export function toggleLogPanel() {
     logPanelOpen = !logPanelOpen;
+    applyLogAccent();
     const panel = document.getElementById('ld-log-panel');
     const btn = document.getElementById('ld-log-toggle');
     if (panel) panel.classList.toggle('open', logPanelOpen);
@@ -103,6 +113,9 @@ function drawSparkline(data, canvasId) {
     const height = rect.height;
     const padding = 4;
 
+    // Brand accent (green, or blue in logs mode) - follows the central --accent.
+    const accent = getComputedStyle(canvas).getPropertyValue('--accent').trim() || '#0B9A6D';
+
     // Clear
     ctx.clearRect(0, 0, width, height);
 
@@ -113,7 +126,7 @@ function drawSparkline(data, canvasId) {
 
     // Draw line
     ctx.beginPath();
-    ctx.strokeStyle = '#0B9A6D';
+    ctx.strokeStyle = accent;
     ctx.lineWidth = 1.5;
     ctx.lineJoin = 'round';
 
@@ -133,7 +146,7 @@ function drawSparkline(data, canvasId) {
         const y = height - padding - ((lastVal - min) / range) * (height - 2 * padding);
         ctx.beginPath();
         ctx.arc(x, y, 3, 0, 2 * Math.PI);
-        ctx.fillStyle = '#0B9A6D';
+        ctx.fillStyle = accent;
         ctx.fill();
     }
 
@@ -167,15 +180,15 @@ function contextsOf(m) {
     return [{ name: 'Context', description: '', temperature: null, chance: null, text: m.status_text }];
 }
 
-// Block meta line: "T0.5  ·10% | 42 tok". Chance shows only when < 1; every block
-// carries its own token count (falling back to the legacy global on block 0), set
-// off from the temperature/chance by a pipe divider.
+// Block meta line: "T0.5  10% | 42 tok". Chance always shows as a positive percent
+// (100% for the always-on block); every block carries its own token count (falling
+// back to the legacy global on block 0), set off from temperature/chance by a pipe.
 function ctxMetaHtml(c, m, i) {
     const parts = [];
     if (c.temperature != null) parts.push(`T${(+c.temperature).toFixed(1)}`);
-    if (c.chance != null && c.chance < 1) {
+    if (c.chance != null) {
         const p = c.chance * 100;
-        parts.push(`·${p < 1 ? p.toFixed(1) : Math.round(p)}%`);
+        parts.push(`${p < 1 ? p.toFixed(1) : Math.round(p)}%`);
     }
     // Prefer each block's own count; fall back to the global primary count for any
     // block the producer didn't tokenize, so a seeded card never reads "0 tok".

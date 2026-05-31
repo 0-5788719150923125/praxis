@@ -43,6 +43,10 @@ def test_calm_forward_backward():
     cfg = _tiny_config()
     model = PraxisForCausalLM(cfg)
     model.train()
+    # Force joint mode so the energy head trains from step 0. The default is
+    # now an AE pretraining phase, where energy is gated until the codec
+    # freezes (see test_calm_pretraining_phase_freezes_on_cap).
+    model.encoder.requires_pretraining = False
     input_ids = torch.randint(4, 200, (2, 32), dtype=torch.long)
     labels = input_ids[:, 1:].contiguous()
     out = model(input_ids=input_ids, labels=labels)
@@ -257,6 +261,50 @@ def test_calm_legacy_joint_mode_trains_codec_throughout():
 
     assert not enc._ae_is_frozen()
     assert all(p.requires_grad for p in enc.vae.parameters())
+
+
+def test_calm_pretraining_phase_freezes_on_cap():
+    """Default mode: the codec trains alone in an AE pretraining phase (energy
+    gated off), then freezes once convergence - or the max-steps cap - is hit,
+    after which the energy head activates."""
+    cfg = _tiny_config()
+    model = PraxisForCausalLM(cfg)
+    model.train()
+    enc = model.encoder
+    assert enc.requires_pretraining  # default, no explicit ae_freeze_steps
+    assert enc.in_pretraining()
+    assert not enc._ae_is_frozen()
+    enc.ae_max_pretrain_steps = 2  # tiny cap backstop so the test converges fast
+
+    input_ids = torch.randint(4, 200, (2, 32), dtype=torch.long)
+    labels = input_ids[:, 1:].contiguous()
+
+    # Phase 1: codec trains, energy stays off.
+    out = model(input_ids=input_ids, labels=labels)
+    out.loss.backward()
+    enc.consume_pending_losses()  # clear
+    assert any(
+        p.grad is not None and p.grad.abs().sum() > 0 for p in enc.vae.parameters()
+    )
+    model.zero_grad(set_to_none=True)
+
+    # Cross the cap; the codec freezes and pretraining ends.
+    for _ in range(3):
+        out = model(input_ids=input_ids, labels=labels)
+        out.loss.backward()
+        model.zero_grad(set_to_none=True)
+
+    assert enc._ae_is_frozen()
+    assert not enc.in_pretraining()
+    assert all(not p.requires_grad for p in enc.vae.parameters())
+
+    # Phase 2: energy head now learns against the frozen codec.
+    out = model(input_ids=input_ids, labels=labels)
+    out.loss.backward()
+    assert any(
+        p.grad is not None and p.grad.abs().sum() > 0
+        for p in enc.energy_head.parameters()
+    )
 
 
 def test_calm_with_stacked_crystal_harmonic_head():

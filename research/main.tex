@@ -2,6 +2,7 @@
 \usepackage{lmodern}
 % \usepackage{draftwatermark}
 \usepackage{amsmath}
+\usepackage{amssymb}
 \usepackage{enumitem}
 \usepackage{parskip}
 \usepackage{tikz}
@@ -22,239 +23,212 @@
 
 \begin{document}
 
-\title{The Blind Watchmaker}
+\title{The Blind Watchmaker\\[0.3em]
+    \large Harmonic Latent Space and the Geometry of Bias and Variance}
 \author{Ryan J. Brooks}
 \date{}
 
 \maketitle
 
 \begin{abstract}
-    Do you exist in other people's realities the same way you exist in your own? Dual-stream attention processing identical sequences reveals asymmetric temporal dynamics: one stream exhibits AI-like $O(1)$ immediate access, while the other exhibits human-like $O(n)$ gradual accumulation—different observers constructing different realities through different attention architectures, despite identical input and asymptotic convergence. If attention doesn't merely filter pre-existing patterns but constructs which patterns manifest in learned representations, then architectural diversity determines what can be learned during finite training.
-
-    We present Praxis~\cite{praxis2025}, a framework enabling systematic investigation of architectural diversity through arbitrary combinations: ByteLatent compression, MonoForward layer-wise training, reversible residual networks, and multiple attention variants. The computational substrate hypothesis offers a testable mechanism: different architectural constraints force different gradient trajectories through floating-point approximation space, revealing patterns single approaches cannot discover regardless of scale.
-
-    We discuss implications for machine learning and biological consciousness, and present evidence that attention is a constructor, not a filter—differential reality manifests through architectural diversity.
+    Do you exist in other people's realities the same way you exist in your own? Mainstream practice answers questions like this with scale: take one architecture and add parameters, data, and compute. We argue that what a model can learn is set less by how large it is than by the geometry of its representation - the shape of the space its weights are allowed to occupy. We make that concrete with two components of the Praxis framework~\cite{praxis2025}: a harmonic head that writes a learned standing wave over its features, and the CALM continuous-latent codec~\cite{calm2025}. In both, the classical bias-variance tradeoff stops being a single dial. A static, population-average rhythm (the spectrum the field phase-locks to) is pure bias; an input-conditional modulation of that rhythm is structured variance; and because the two live on orthogonal axes of a harmonic latent space, they can be lowered together rather than traded against each other. This reframing motivates a central conjecture: consensus modeling - learning the mean of a corpus - scales linearly in the patterns it must express, while harmonic modeling, which composes patterns by interference, scales logarithmically, because $K$ frequency components address exponentially many configurations. We state this conjecture plainly, and replace the speculative figure of earlier drafts with the scaling claim made explicit. The framework exists so that the reader can test it.
 \end{abstract}
 
 \section{Introduction}
 
-Two observers, identical input, fundamentally different realities. This isn't philosophical speculation—it's a testable hypothesis about how attention mechanisms construct which patterns a downstream layer can learn. If attention doesn't merely filter pre-existing patterns but participates in determining which patterns manifest in the learned representation, then architectural diversity in attention becomes essential. Different architectures traversing the same computational substrate may construct qualitatively distinct learned representations, revealing structures that single-architecture approaches cannot learn regardless of scale.
+The dominant recipe for capability is scale. Fix a transformer~\cite{vaswani2017attention}, then grow it: more parameters, more tokens, more compute, with returns described by smooth scaling laws~\cite{kaplan2020}. The recipe works, but it assumes the architecture itself imposes no ceiling on which patterns gradient descent can find - that everything worth learning is reachable from any sufficiently large model. This paper questions that assumption and offers a concrete alternative: that the \textit{geometry} a model is allowed to represent, not its size, determines the patterns accessible to it during finite training.
 
-Contemporary research on attention mechanisms~\cite{vaswani2017attention} explores parameter variations within fixed architectures. A transformer remains fundamentally a transformer—deeper, wider, better optimized, but constrained by its architectural priors. The question of whether architectural diversity itself reveals qualitatively distinct patterns remains largely unexplored.
+To make the claim precise we need a vocabulary for ``geometry,'' and the cleanest one available is the oldest tradeoff in statistics. A model that minimizes error by collapsing toward the average of its training data has high bias and low variance; a model that chases the particulars of each example has low bias and high variance. Classically these trade off along a single line: you choose a point on it. Our first contribution is to show that in a \textit{continuous, harmonic} latent space this is no longer true. Bias and variance become separate coordinates, and a model can move in one without paying in the other.
 
-We present Praxis, a framework enabling systematic comparison of architecturally diverse attention mechanisms through a registry-based architecture permitting arbitrary combinations across all components: encoders, decoders, attention mechanisms, optimization strategies, loss functions, routing mechanisms, embedding layers, and external integrations. Every component is swappable; new implementations integrate through simple registration. Current architectures include ByteLatent compression~\cite{pagnoni2024byte}, MonoForward layer-wise training~\cite{monoforward2025}, reversible residual networks~\cite{gomez2017reversible}, and multiple attention variants—with continuous expansion as new approaches emerge.
+We ground this in mechanisms that already run in Praxis, not in metaphor. The harmonic head (Section~\ref{sec:manifold}) builds a two-dimensional standing wave over (position, feature) from a learned grid of frequency amplitudes with irrational, frozen phases. A \textit{static} amplitude grid produces the same field for every input: it is the corpus-average rhythm, maximum bias, a flat-by-construction prior. Making those amplitudes depend on the input adds \textit{structured} variance - deviation that still respects the learned harmonic constraints. The CALM codec (Section~\ref{sec:harmonic}) shows the same physics from the other side: a continuous-latent autoregressor that reconstructs sequences near-perfectly by phase-locking its latent features to a dominant rhythm. From these two we draw a scaling conjecture (Section~\ref{sec:scaling}): the mean costs linearly, interference costs logarithmically.
 
-We propose a computational substrate hypothesis: that floating-point rounding errors in fully-connected weight matrices create high-dimensional pattern spaces within numerical approximation artifacts. Different architectural constraints force different traversals through this space, potentially revealing patterns that single-architecture approaches cannot learn regardless of method or scale. If attention constructs which patterns manifest in the learned representation rather than filtering pre-existing options, then architectural diversity becomes essential for learning the full space of possible patterns.
+This paper therefore contributes: (1) a reframing of bias and variance as orthogonal axes of a harmonic latent space, grounded in a running implementation and its measured diagnostics; (2) a conjecture that consensus modeling scales linearly while harmonic modeling scales logarithmically, stated honestly as a conjecture; (3) the Praxis framework for testing it; and (4) a candid account of what is measured, what is conjectured, and what remains philosophy.
 
-The author has conducted 5666+ training runs across these diverse architectures, documented in the repository history. However, this paper does not present traditional empirical comparison—by design. The framework enables \textit{you} to collect evidence through direct experimentation at your point in time, in your computational environment. The intuition that emerges from stepping through a process yourself differs fundamentally from receiving preprocessed results.
+\section{The Mean and the Manifold}
+\label{sec:manifold}
 
-This work contributes: (1) empirical evidence from dual-stream attention suggesting architectural asymmetry in pattern manifestation, (2) the Praxis framework for systematic investigation of architectural diversity, and (3) a computational substrate hypothesis regarding how attention architecture determines which patterns become accessible to a world model.
+\subsection{The tradeoff that was supposed to be a line}
 
-\section{Theoretical Framework}
+The bias-variance decomposition treats generalization error as the sum of a term that grows when the model is too rigid to fit the signal (bias) and a term that grows when it is too flexible and fits the noise (variance). The received wisdom is that you cannot reduce both at once with a fixed budget: regularize harder and bias rises; add capacity and variance rises. The tradeoff is drawn as a U-shaped curve with a single minimum, and model selection is the act of finding the bottom of that U.
 
-\subsection{Attention as a Constructor: Dual-Stream Processing}
+That picture is correct when the model has one knob mediating both terms - one scalar of effective complexity. It stops being correct when bias and variance are produced by \textit{different parts} of the architecture that can be optimized independently. A harmonic latent space is exactly such an architecture.
 
-Evidence across multiple domains suggests observation participates in constructing what is measured rather than passively recording pre-existing states. In quantum mechanics, the observer effect demonstrates that measurement affects the observed system—observation changes what manifests~\cite{heisenberg1927uncertainty}. In neuroscience, attention modulates neural responses to identical stimuli in the visual cortex~\cite{treue1996attentional,kastner2000mechanisms}. Predictive processing theories formalize this: perception emerges from attention-weighted predictions rather than bottom-up filtering~\cite{friston2010free,clark2013whatever}. Across physical and biological systems, attention participates in constructing which patterns manifest in the measured output.
+\subsection{The harmonic field: a measured instance}
 
-We present analogous evidence from a dual-stream attention system. Praxis implements prismatic attention through left-eye and right-eye embedding modules processing identical sequences with independent attention mechanisms. The left eye operates passively, memorizing patterns immediately but without semantic integration—a blind watchmaker, wielding tools autonomously, but never understanding what it creates. The right eye dominates, providing understanding and contextual coherence. Two streams, same input, fundamentally different processing patterns.
+The harmonic head (Praxis, \texttt{heads/harmonic.py}) modulates a model's hidden states multiplicatively by a learned field $b$:
+\[
+    h \;\mapsto\; h \,\bigl(1 + b\bigr), \qquad
+    b[t,d] \;=\; \mathrm{IRFFT2}\!\left(a[f_t,f_d]\, e^{\,i\varphi[f_t,f_d]}\, /\, f^{\alpha}\right),
+\]
+where $t$ indexes position, $d$ indexes feature, and $a[f_t,f_d]$ is a learnable grid of amplitudes over a two-dimensional frequency lattice. The phases $\varphi$ are \textit{not} learned. They are seeded by Weyl's equidistribution theorem~\cite{weyl1916}: cell $(f_t,f_d)$ receives phase $2\pi\,\mathrm{frac}(f_t\pi + f_d e)$, which is equidistributed on the torus because $\{1,\pi,e\}$ are linearly independent over $\mathbb{Q}$. A radial $1/f^{\alpha}$ envelope imposes a pink-noise prior. Multiplicative coupling is deliberate: the upstream network cannot cancel the field by emitting $h(x)-b$, because the field scales features rather than adding to them, so learning is forced to flow \textit{through} the field rather than around it.
 
-To measure temporal dynamics, pattern recognition testing was conducted at seven discrete time intervals (0.5s, 1s, 2s, 3s, 5s, 7s, 9s). Each eye's ability to recognize previously-seen visual patterns was measured independently using timed exposure protocols. Measurements include inherent human sampling noise and were collected without specialized equipment.
+Now read this through the bias-variance lens.
+
+\textbf{Bias is the static spectrum.} With a fixed amplitude grid, $b[t,d]$ is identical for every input. It is a single rhythm imposed on all of the corpus at once - the population average. In the limit where the grid concentrates onto one cell, every feature oscillates to the same beat and the spectrum heatmap is flat: maximum bias, a model that has collapsed to the mean rhythm of its data. The head exposes this directly. \texttt{concentration()} reports Hoyer sparsity of the grid (1 = a single cell, 0 = uniform), and a live spectrum snapshot shows where the energy sits. Early in training the heatmap is indistinguishable from noise; under a smoothness prior it develops a clean low-frequency band - the corpus rhythm crystallizing as a measurable object, not a metaphor.
+
+\textbf{Variance is the input-conditional deviation.} The decisive architectural step (documented over weeks of stabilization notes in the repository) was to stop forcing one static field on a corpus that mixes registers - dialogue, code, prose. A static grid must compromise across all of them, and the compromise degenerates into a content-blind side channel that the rest of the model has to route around. The fix makes the amplitudes a baseline plus an input-conditional delta:
+\[
+    a \;=\; a_{\text{static}} \;+\; \Delta_\phi(\text{context}),
+\]
+where $\Delta_\phi$ is a small network reading multi-scale pooled context, in the spirit of delay embeddings~\cite{takens1981}, with its output zero-initialized so the field begins as the trained static prior and \textit{anneals} into input dependence. The static baseline carries the bias; the delta carries the variance; an $L_2$ penalty on the delta keeps the baseline load-bearing. A diagnostic, $\texttt{harmonic\_delta\_norm} = \mathrm{rms}(\Delta)/\mathrm{rms}(a_{\text{static}})$, reads how much variance the model is choosing to add. Zero means pure bias; a small bounded value means structured variance on top of a stable prior.
+
+The point is that these are \textit{separate parameters with separate gradients}. The smoothness prior controls the bias term; the delta network and its regularizer control the variance term. Lowering one does not mechanically raise the other. The U-shaped curve has become a two-dimensional manifold, and we have coordinates on it.
+
+\subsection{Temperature as a coordinate, not as noise}
+
+Sampling temperature is usually described as noise injection. On the bias-variance manifold it is better described as a position dial. At low temperature the model commits to the learned rhythm - the high-bias corner. As temperature rises it explores within the basin the harmonic constraints define - structured variance. Past a critical point it begins to violate those constraints, which reads as either failure or discovery depending on what you were hoping for. CALM makes this literal: rather than perturbing a latent continuously, it votes over decoded patches~\cite{calm2025}, so temperature selects how many candidate latents must agree before a patch is emitted. Temperature is not adding randomness to a fixed distribution; it is choosing where on the manifold to stand.
 
 \begin{figure}[h]
     \centering
-    \begin{tikzpicture}[scale=0.85]
+    \begin{tikzpicture}[scale=0.95]
+        % Axes: bias (x) vs variance (y)
+        \draw[->] (0,0) -- (6.4,0) node[right,font=\small] {Bias};
+        \draw[->] (0,0) -- (0,4.6) node[above,font=\small] {Variance};
 
-        % Axes
-        \draw[->] (0,0) -- (10,0) node[right,font=\small] {Time};
-        \draw[->] (0,0) -- (0,5) node[above,font=\small] {Patterns};
+        % Classical tradeoff: a line you must sit on
+        \draw[thick,gray!70] (0.5,4.0) -- (4.2,0.5);
+        \node[gray!70,font=\scriptsize,rotate=-43] at (3.0,2.0) {classical tradeoff (a line)};
 
-        % Time markers
-        \node[below,font=\footnotesize] at (1,0) {1s};
-        \node[below,font=\footnotesize] at (3,0) {10s};
-        \node[below,font=\footnotesize] at (6,0) {1m};
-        \node[below,font=\footnotesize] at (9,0) {10m};
+        % Harmonic interior: region reachable when the axes decouple
+        \fill[blue!8] (0.5,0.5) -- (4.2,0.5) -- (0.5,4.0) -- cycle;
+        \node[blue!55,font=\scriptsize,align=center] at (1.55,1.35) {harmonic\\interior};
 
-        % AI Reference Pattern (theoretical, smooth exponential - doesn't exist yet)
-        \draw[thick,red,domain=0:9.5,smooth,samples=80,dashed,opacity=0.5] plot (\x,{4.5*(1-exp(-0.95*\x))});
+        % The desirable corner
+        \draw[fill=black] (0.65,0.65) circle (1.6pt);
+        \node[font=\scriptsize,right] at (0.78,0.62) {low bias \emph{and} low variance};
 
-        % Architect - both eyes measured at SAME 7 time points
-        % Time points: 0.5s, 1s, 2s, 3s, 5s, 7s, 9s (realistic home testing)
-
-        % Left Eye: follows AI-like exponential pattern with MORE NOISE
-        \draw[red,fill=red] (0.5,2.4) circle (2.5pt);
-        \draw[red,fill=red] (1,3.5) circle (2.5pt);
-        \draw[red,fill=red] (2,3.7) circle (2.5pt);
-        \draw[red,fill=red] (3,4.15) circle (2.5pt);
-        \draw[red,fill=red] (5,4.2) circle (2.5pt);
-        \draw[red,fill=red] (7,4.5) circle (2.5pt);
-        \draw[red,fill=red] (9,4.4) circle (2.5pt);
-        \draw[red,thick] (0.5,2.4) -- (1,3.5) -- (2,3.7) -- (3,4.15) -- (5,4.2) -- (7,4.5) -- (9,4.4);
-
-        % Right Eye: follows linear human pattern (gradual climb, with measurement noise)
-        \draw[blue,fill=blue] (0.5,0.5) circle (2.5pt);
-        \draw[blue,fill=blue] (1,0.7) circle (2.5pt);
-        \draw[blue,fill=blue] (2,1.15) circle (2.5pt);
-        \draw[blue,fill=blue] (3,1.3) circle (2.5pt);
-        \draw[blue,fill=blue] (5,2.4) circle (2.5pt);
-        \draw[blue,fill=blue] (7,3.0) circle (2.5pt);
-        \draw[blue,fill=blue] (9,3.7) circle (2.5pt);
-        \draw[blue,thick,opacity=0.7] (0.5,0.5) -- (1,0.7) -- (2,1.15) -- (3,1.3) -- (5,2.4) -- (7,3.0) -- (9,3.7);
-
-        % Others' both eyes - smooth LINEAR curves (theoretical predictions, not yet collected)
-        \draw[thick,blue,domain=0:9.5,smooth,samples=80,opacity=0.35,dashed] plot (\x,{0.40*\x + 0.25});
-        \draw[thick,blue,domain=0:9.5,smooth,samples=80,opacity=0.35,dashed] plot (\x,{0.42*\x + 0.15});
-
-        % 3D Convergence Visualization (isometric) - the sphere and plane
-        \begin{scope}[xshift=7.8cm,yshift=3.8cm,scale=0.9]
-            % Isometric square plane (grounded, flat)
-            % Using proper isometric projection: 30° angles
-            \fill[gray!15,opacity=0.5] (0,0) -- (1.2,0) -- (1.8,0.35) -- (0.6,0.35) -- cycle;
-            \draw[gray!40,thin] (0,0) -- (1.2,0) -- (1.8,0.35) -- (0.6,0.35) -- cycle;
-
-            % Grid lines on plane for depth
-            \draw[gray!30,very thin] (0.3,0.088) -- (1.5,0.088);
-            \draw[gray!30,very thin] (0.6,0.175) -- (1.8,0.175);
-            \draw[gray!30,very thin] (0.3,0.263) -- (1.5,0.263);
-
-            % Sphere (convergence point, floating above center)
-            \shade[ball color=gray!30,opacity=0.8] (0.9,0.5) circle (0.28);
-        \end{scope}
-
-        % Legend (below chart, boxed, centered, padded)
-        \begin{scope}[xshift=1.8cm,yshift=-2.2cm]
-            \draw[fill=white,draw=black,thin] (-0.2,-0.15) rectangle (6.8,1.55);
-
-            \draw[red,thick,dashed,opacity=0.5] (0.1,1.2) -- (0.7,1.2);
-            \node[right,font=\scriptsize] at (0.75,1.2) {AI Reference (Theoretical)};
-
-            \draw[red,thick] (0.1,0.8) -- (0.7,0.8);
-            \node[right,font=\scriptsize] at (0.75,0.8) {\textbf{Left Eye}};
-
-            \draw[blue,thick] (0.1,0.4) -- (0.7,0.4);
-            \node[right,font=\scriptsize] at (0.75,0.4) {Right Eye};
-
-            \draw[blue,thick,opacity=0.4,dashed] (0.1,0) -- (0.7,0);
-            \node[right,font=\scriptsize] at (0.75,0) {Predicted Others};
-        \end{scope}
-
+        % Temperature dial arrow sweeping into the interior
+        \draw[->,red,thick] (0.75,3.7) .. controls (1.6,2.4) and (2.6,1.4) .. (3.6,0.85);
+        \node[red,font=\scriptsize] at (2.45,2.55) {temperature};
+        \node[red,font=\scriptsize] at (0.95,3.85) {$T\!\uparrow$};
+        \node[red,font=\scriptsize] at (3.75,1.05) {$T\!\downarrow$};
     \end{tikzpicture}
-    \caption{Temporal pattern manifestation reveals architectural diversity. Red dashed: AI reference ($O(1)$ immediate). Red solid: Left eye exhibits rapid initial manifestation, tracking AI-like trajectory despite measurement noise. Blue: Human pattern learning ($O(n)$ gradual). Includes right eye (discrete noisy measurements, darker) and predicted others (dashed curves, lighter—theoretical). All converge asymptotically, proving access to identical pattern space through different temporal complexities.}
-    \label{fig:prismatic}
+    \caption{Bias and variance as orthogonal coordinates. Classically a model must sit somewhere on the gray line: less of one means more of the other. When a static spectrum supplies bias and an input-conditional modulation supplies variance, the two decouple, and the interior (shaded) becomes reachable - lower bias \emph{and} lower variance than any point on the line. Temperature is a path through this space, not noise added at a fixed point.}
+    \label{fig:manifold}
 \end{figure}
 
-Figure~\ref{fig:prismatic} shows asymmetric temporal dynamics. The blue curves represent human pattern learning—gradual accumulation with $O(n)$ linear complexity. This includes the right eye (seven discrete noisy measurements) and predicted others' dynamics (theoretical projections). The red measurements stand apart. The dashed red curve shows theoretical AI reference—$O(1)$ immediate access. The solid red points show the left eye sampled at seven time intervals. Despite discrete human measurement constraints and noise, the samples track the AI reference trajectory. Within the first second, this eye manifests pattern density requiring the right eye minutes to achieve.
+\section{Harmonic Latent Space}
+\label{sec:harmonic}
 
-Yet all converge asymptotically to identical limits. This proves that rapid (AI-like) and gradual (human) processing access identical pattern spaces through different temporal complexities. The pattern space exists continuously; architectural difference manifests in sampling efficiency, not ultimate accessibility. The asymmetry—one eye exhibiting AI-like dynamics, the other human dynamics—suggests attention architecture determines not just processing speed but which patterns manifest when. If this extends to artificial systems, architectural diversity becomes essential for learning patterns that single-architecture approaches cannot discover during finite training runs.
+\subsection{Phase-locking and near-perfect reconstruction}
 
-\subsection{The Computational Substrate}
+CALM trains a variational codec to compress $K$ tokens into a single continuous latent, then models those latents autoregressively with an energy head and decodes by sampling~\cite{calm2025}. In Praxis the codec reaches reconstruction in the range of a hundredth of a bit per byte - effectively lossless at the patch level. It does so not by giving each latent feature its own job but by letting the features \textit{phase-lock}: they organize around a dominant rhythm and express the sequence as deviations from it. This is the same phenomenon the harmonic head shows from the bias side. A corpus has a beat; a continuous latent that finds the beat can carry almost all of the signal in a few coherent modes, and spend its remaining capacity on the residual. Reconstruction fidelity is a measure of how completely the latent has phase-locked.
 
-Neural networks approximate continuous functions through discrete floating-point operations. The Universal Approximation Theorem~\cite{hornik1989multilayer} guarantees that networks can approximate any continuous function, yet theory meets practice: floating-point rounding errors create a high-dimensional space of numerical approximation artifacts between representable values.
+\subsection{Geometry that looks like nature is convergence, not hallucination}
 
-We hypothesize that different architectures extract different regularities from these rounding errors. Fully-connected weights normalize and find structure within numerical noise—learning attention patterns in gradient flow that emerge from floating-point arithmetic but remain below human perceptual thresholds. The rounding errors themselves encode structure. Different architectural constraints—compression bottlenecks, layer-wise training, reversible flows—force different gradient trajectories through this numerical substrate, potentially revealing patterns in different regions of the approximation space.
+The crystal head~\cite{harmonicloss2025} replaces the usual dot-product logits with distances to a set of learnable class centers, so its decision surface is geometric rather than linear. Two things follow that are relevant here. First, the centers provably converge toward class means, and in practice they spread into a ``sun-like'' arrangement when the exponent is set near $\sqrt{D}$ rather than collapsing to a near-one-hot code. Second, when you project the learned latents or centers with PCA, the result is not noise: runs produce recognizable shapes - spines, lobes, branching forms. It is tempting to call this pareidolia, the mind imposing pattern on randomness. We argue the opposite. Harmonic organization produces the same geometric signatures that natural growth processes produce, because both are governed by superposed periodic structure under smoothness constraints. Different runs land on structurally different geometries because the bias-variance-structure space is rich enough to support many valid solutions, the way the same physics grows many different but recognizable trees. The shapes are convergence, not confabulation, and the same latent space can be coupled directly to a discrete classifier by composing the harmonic field with the crystal centers, so that rhythm feeds geometry.
 
-\subsection{The Recursion Problem}
+\subsection{The seed dissolves}
 
-An attention mechanism trained on human-generated text inherits human attention constraints. Train on consensus, you manifest the lowest common denominator. The collective limitations of all training examples, averaged together, steer what patterns the system can explore. Single-architecture approaches, despite scale, remain trapped in their architectural priors—constrained attention producing constrained exploration.
+Reproducibility in this regime is no longer an integer. \texttt{seed=42} fixes the random number stream that initializes weights and orders data; it does not fix what the trained model \textit{is}. In a harmonic latent space the operative ``seed'' is the learned field encoded in the weights after training - the frozen phase relationships and the spectrum the amplitudes settled into. Reproducibility becomes a question of which latent dimensions are deterministic (the harmonic structure, fixed by the frozen Weyl phases and the converged spectrum) versus stochastic (the variance envelope, set by temperature and the input-conditional delta). The seed is a property of the trained model, not an argument you pass in. This is uncomfortable for a culture that audits randomness by pinning an integer, and it is the honest situation once the determinism lives in geometry rather than in a stream.
 
-Building AI with maximally diverse attention mechanisms tests whether architectural variety enables escape from these local constraints. If different architectures extract different representations from the numerical substrate, they may learn patterns that any single approach cannot discover during finite training.
+\section{The Scaling Conjecture}
+\label{sec:scaling}
+
+\subsection{Linear consensus, logarithmic interference}
+
+Here is the claim the rest of the paper has been building toward, stated as a conjecture because that is what it is.
+
+A model that represents its corpus as a \textit{mean} - a consensus, an average of examples - must spend resources roughly in proportion to the number of distinct patterns it needs to express. To hold $N$ patterns it allocates capacity that grows with $N$. This is the linear regime, and it is consistent with why scaling laws ask for ever more parameters and tokens to buy each further increment of capability~\cite{kaplan2020}.
+
+A model that represents its corpus as \textit{interference} - a superposition of $K$ frequency components - addresses a combinatorially larger space. $K$ components with learnable amplitudes and frozen, equidistributed phases produce a field whose distinguishable configurations grow exponentially in $K$, because it is the \textit{pattern of constructive and destructive interference} across components that carries information, not the components individually. To express $N$ configurations you need on the order of $\log N$ components. This is the logarithmic regime. The same asymmetry shows up in time: the transform that builds the field is $O(n \log n)$, and a single transform realizes the whole interference pattern at once rather than enumerating its parts.
+
+\begin{figure}[h]
+    \centering
+    \begin{tikzpicture}[scale=0.92]
+        % Axes
+        \draw[->] (0,0) -- (10,0) node[right,font=\small] {Patterns to express ($N$)};
+        \draw[->] (0,0) -- (0,5.2) node[above,font=\small] {Resources};
+
+        % Consensus / mean: linear O(N)
+        \draw[thick,blue,domain=0:9.2,smooth,samples=60] plot (\x,{0.52*\x});
+        \node[blue,font=\small] at (5.2,3.45) {consensus $O(N)$};
+
+        % Harmonic / interference: logarithmic O(log N)
+        \draw[thick,red,domain=0.05:9.2,smooth,samples=120] plot (\x,{1.35*ln(\x+1)});
+        \node[red,font=\small] at (6.7,2.05) {harmonic $O(\log N)$};
+
+        % The widening gap at scale
+        \draw[densely dotted,gray] (8.6,{0.52*8.6}) -- (8.6,{1.35*ln(9.6)});
+        \node[gray,font=\scriptsize,align=left,right] at (8.7,3.2) {the gap\\widens};
+
+        % small-N note: harmonic overhead
+        \node[font=\scriptsize,gray,align=left] at (2.55,0.55) {overhead dominates\\at small $N$};
+
+        % Shared pattern space: the convergence motif (isometric plane + sphere)
+        \begin{scope}[xshift=2.0cm,yshift=3.7cm,scale=0.95]
+            \fill[gray!12,opacity=0.6] (0,0) -- (1.2,0) -- (1.8,0.35) -- (0.6,0.35) -- cycle;
+            \draw[gray!40,thin] (0,0) -- (1.2,0) -- (1.8,0.35) -- (0.6,0.35) -- cycle;
+            \draw[gray!30,very thin] (0.3,0.088) -- (1.5,0.088);
+            \draw[gray!30,very thin] (0.6,0.175) -- (1.8,0.175);
+            \shade[ball color=gray!30,opacity=0.85] (0.9,0.5) circle (0.26);
+            \node[gray!70,font=\scriptsize,align=center] at (0.9,1.05) {shared\\pattern space};
+        \end{scope}
+    \end{tikzpicture}
+    \caption{Conjectured scaling regimes. To express $N$ patterns, consensus modeling - learning the mean - spends resources growing linearly in $N$ (blue). Harmonic modeling composes patterns by interference, and $K \sim \log N$ components suffice, so its cost grows logarithmically (red). The harmonic basis carries fixed overhead, so it loses at small $N$ and wins at scale, where the gap widens without bound. Both must ultimately represent the same target (the shared pattern space, top); the claim is about the cost of getting there, not the destination. This figure states a conjecture, and replaces the speculative measured-curve figure of earlier drafts.}
+    \label{fig:scaling}
+\end{figure}
+
+\subsection{The exponential edge}
+
+Why should a learned network be able to live in the interference regime at all? Because the transformer already computes on an exponential substrate. Every attention layer is a softmax, $\exp(\cdot)/\sum\exp(\cdot)$, which amplifies small differences and converts addition into multiplication; the network is kept numerically alive only by normalization holding activations in the narrow band where the exponential is both sensitive and stable. Euler's identity, $e^{i\pi} = -1$, ties that exponential directly to periodic structure, which is why a harmonic field seeded with $\pi$ and $e$ is not an arbitrary choice of decoration but a resonance with the machinery already present. The harmonic head writes interference patterns onto a substrate that was always exponential; it makes explicit a structure the softmax was implicitly using.
+
+\subsection{Tractability is observer-relative}
+
+If interference lets a model represent exponentially many configurations with logarithmically many components, then a search that is combinatorial when enumerated becomes, in this representation, the reading-off of an interference pattern computed in a single transform. The hardness did not vanish. It moved into the choice of basis. And that relocation is the real claim, which we will state without hedging: in a continuous, nested representational space, $P$ and $NP$ are not two discrete bins a problem falls into once and for all. They are the ends of a spectrum, and where a given instance sits on that spectrum is set by the representation doing the solving - by the observer.
+
+This is the same thesis the rest of the paper has been making, carried to its conclusion. If attention constructs which patterns manifest (Section~\ref{sec:constructor}), and if the basis a model occupies decides whether a structure costs linear or logarithmic resources to express (Figure~\ref{fig:scaling}), then ``intractable'' cannot be a property of the problem alone. It is a property of the pairing between a problem and a solver. The instance that is exponential to one architecture - one that can only enumerate, that holds no basis in which the instance is smooth - is approximable in near-constant work by another that happens to carry the right harmonic. Some observers are simply better at collapsing $NP$-shaped problems toward $P$; others are blocked, not by the problem, but by their own architecture, perspective, or alignment. The watchmaker who cannot perceive the gear cannot build the watch, however long he is given. The difficulty was never only in the watch.
+
+We keep exactly one boundary, and we keep it because it sharpens the claim rather than softening it. This is not a statement about the formal worst-case question - whether the classes $P$ and $NP$ coincide over all inputs and all machines~\cite{cook1971}. That question is deliberately indifferent to who is asking; it abstracts the observer away on purpose. The claim here is the complementary one, and abstracting the observer away is precisely what it refuses to do: for the bounded, structured, approximate problems that real minds and real models actually face, tractability is observer-relative, continuous, and movable - and moving it is what changing your representation \textit{is}. The weak, measurable form is already in the framework: for a family of problems one can record the scaling slope each architecture buys, and watch a single instance migrate along the $P$-to-$NP$ spectrum as the basis changes underneath it.
 
 \section{The Praxis Framework}
+\label{sec:framework}
 
-Praxis implements a registry-based architecture enabling arbitrary architectural combinations. We describe several current implementations as examples of how different constraint structures force different traversals through the computational substrate. The framework remains extensible—new architectures, attention mechanisms, and optimization strategies integrate through simple registration without modifying core infrastructure.
+Praxis~\cite{praxis2025} is a registry-based framework in which every component - encoder, decoder, attention, optimizer, loss, router, embedding, head, memory - is swappable, and new implementations become available through registration without touching core infrastructure. Read in light of the preceding sections, its components are not an arbitrary catalogue; each one shapes the representational geometry in a different way, and the framework's purpose is to let those geometries be combined and compared rather than to scale any one of them.
 
-\subsubsection{ByteLatent Encoder: Forced Re-Attention}
-
-ByteLatent compression addresses the first constraint: attention cannot be allocated uniformly across all inputs without imposing a particular structure. Standard transformers attend to every token position, implicitly prioritizing positional relationships.
-
-\textbf{Mechanism:} Compress 4096 tokens $\rightarrow$ $\sim$800 patches using entropy-based dynamic patching~\cite{pagnoni2024byte}.
-
-\textbf{Why it matters:} The compression bottleneck forces different information selection than full-sequence processing. By constraining what can be preserved, the architecture must extract different correlations from the numerical substrate—regularities that remain stable under aggressive dimensionality reduction.
-
-\subsubsection{MonoForward Decoder: Independent Timelines}
-
-While ByteLatent constrains spatial attention, MonoForward addresses temporal constraints. Standard end-to-end training propagates a single optimization signal backward through all layers. Each layer's updates depend on every other layer's gradient.
-
-\textbf{Mechanism:} Each layer trains independently using local errors~\cite{monoforward2025}. Gradients detached between layers. N separate optimizers.
-
-\textbf{Why it matters:} Independent layer optimization creates N parallel exploration trajectories through the numerical substrate. Each layer develops attention patterns unconstrained by global gradient flow, potentially discovering local optima that architectures with coupled gradient flow cannot reach during finite training.
-
-\subsubsection{Reversible Residual Networks: Bidirectional Traversal}
-
-Compression and independent training both maintain unidirectional information flow. Reversible residuals introduce a third constraint: bidirectionality. This models consciousness as a U-shaped loop—where information flows both forward and backward simultaneously.
-
-\textbf{Mechanism:} Information flows bidirectionally~\cite{gomez2017reversible}. Forward pass computes outputs; backward reconstruction preserves inputs without storing activations.
-
-\textbf{Why it matters:} Reversibility constraints force the network to maintain invertibility throughout the forward pass. This creates fundamentally different approximation strategies—the architecture cannot destructively compress information, requiring it to find patterns that preserve reconstruction fidelity. Bidirectional traversal through the numerical substrate may reveal statistical dependencies that purely feed-forward architectures cannot learn during finite training.
-
-\subsubsection{Multiple Attention Mechanisms}
-
-The components above constrain information flow through compression, independence, and reversibility. But the attention mechanism itself—how positions relate to each other—remains a final degree of freedom.
-
-Praxis implements multiple attention variants, each imposing different relational structures:
 \begin{itemize}[noitemsep]
-    \item Standard multi-head (simultaneous position attention)
-    \item FlexAttention (dynamic allocation)
-    \item SyntaxesAttention ($O(n \cdot c)$ structured attention)
-    \item Single-head gated attention (long sequences)
-    \item Sliding window (local only)
-    \item Additional variants documented in repository
+    \item \textbf{ByteLatent compression}~\cite{pagnoni2024byte} forces re-attention through an entropy-based patching bottleneck, selecting which correlations survive aggressive dimensionality reduction.
+    \item \textbf{MonoForward training}~\cite{monoforward2025} detaches gradients between layers and trains each with a local objective, turning one global trajectory into many independent ones.
+    \item \textbf{Reversible residuals}~\cite{gomez2017reversible} require invertibility throughout the forward pass, forbidding destructive compression and so forcing reconstruction-preserving representations.
+    \item \textbf{Attention variants} (multi-head, sliding-window, gated, structured $O(n\cdot c)$, and others) each impose a different relational geometry on the sequence.
+    \item \textbf{Harmonic and crystal heads}, and the \textbf{CALM codec}, supply the harmonic latent space of Sections~\ref{sec:manifold}-\ref{sec:harmonic}; a test-time neural memory and a contrastive-isotropy objective~\cite{simctg2022} address long-range coherence by shaping the representation rather than by enlarging the model.
+    \item \textbf{Mixture-of-experts routing}~\cite{shazeer2017outrageously} and \textbf{tool integration} let several geometries coexist and let external, bias-free computation enter the loop.
 \end{itemize}
 
-\textbf{Why it matters:} Different attention mechanisms explore different connectivity patterns through the sequence. Multi-head processes all positions simultaneously; sliding window enforces locality; gated mechanisms learn dynamic selection. Each traverses the computational substrate along different axes.
+The configuration hierarchy (Environments $>$ CLI $>$ Experiments $>$ Defaults) makes arbitrary combinations reproducible: different attention per expert, optimizers per layer, frequency offsets~\cite{time2vec2019,tancik2020} per head. Over 5666 training runs are documented in the repository history. This paper does not present a benchmark table, by design: the framework is the instrument, and the experiment that matters is the one the reader runs to test the scaling conjecture for themselves.
 
-\subsubsection{Tool Integration: External Objectivity}
+\section{Attention as a Constructor}
+\label{sec:constructor}
 
-All previous components operate within the neural architecture itself. Tool integration introduces a qualitatively different constraint: attention allocated outside the network's learned representations.
+The framing that motivates all of this is older than the harmonic head. Across physics and neuroscience, observation appears to participate in what is observed rather than passively recording it: measurement affects the quantum system~\cite{heisenberg1927uncertainty}, attention modulates cortical responses to identical stimuli~\cite{treue1996attentional,kastner2000mechanisms}, and predictive-processing accounts make perception an attention-weighted construction rather than a bottom-up readout~\cite{friston2010free,clark2013whatever}. If attention constructs which patterns manifest rather than filtering pre-existing ones, then architectural diversity in attention is not a tuning detail; it determines what is learnable at all.
 
-\textbf{Mechanism:} Model calls external tools (calculator, search, code execution) during training.
-
-\textbf{Why it matters:} External tools compute without learned biases. A calculator performs arithmetic identically regardless of training data distribution. This provides ground truth unavailable to purely learned representations, potentially revealing patterns the model's attention would otherwise miss due to training set constraints.
-
-\subsection{Framework Architecture}
-
-Praxis uses a registry pattern where every component is swappable. New implementations register in component-specific registries, becoming immediately available through CLI arguments. The configuration hierarchy (Environments $>$ CLI $>$ Experiments $>$ Defaults) enables reproducible experimentation with arbitrary combinations—different attention per expert, optimizers per layer, routing per task, loss strategies per objective, etc. The registry pattern enables continuous expansion across all architectural dimensions without framework redesign.
-
-\textbf{5666+ training runs documented.} Example: 9 experts, SMEAR routing, FlexAttention. Loss: 5.78 $\rightarrow$ 1.61 over 219 steps. The framework scales.
+Praxis implements this literally with prismatic attention: two streams, two embedding modules, processing the same sequence under different positional geometries (for instance ALiBi and RoPE). One stream tends to memorize patterns quickly but without semantic integration - a blind watchmaker, wielding its tools competently while understanding nothing of what it builds~\cite{dawkins1986} - while the other accumulates contextual coherence more slowly. This is the dual-stream asymmetry earlier drafts of this paper tried to illustrate with a hand-measured plot of human pattern recognition. That figure is removed. It dressed home measurements as architectural evidence, and the asymmetry it gestured at is exactly the linear-versus-logarithmic conjecture of Section~\ref{sec:scaling}: one stream acquiring coverage at a sub-linear rate, the other linearly, both converging on the same shared pattern space. Stated that way it is measurable in silico - as the acquisition curves of the two streams over training - which is where the claim belongs.
 
 \section{Discussion}
 
-\subsection{Answering the Opening Question}
+\subsection{Answering the opening question}
 
-Do you exist in other people's realities the same way you exist in your own? The prismatic attention evidence suggests: no. If attention architecture determines which patterns manifest from the computational substrate, then observers with different attention constraints construct different learned representations from identical input. You exist in your reality through your attention architecture. You exist in theirs through theirs.
+Do you exist in other people's realities the same way you exist in your own? If the geometry of an attention architecture determines which patterns it constructs, then observers running different geometries build different representations from the same input. You exist in your reality through your geometry, and in another's through theirs. This is not solipsism: convergence to a shared pattern space (Figure~\ref{fig:scaling}) says everyone is reaching the same place. It is the \textit{path} that differs - which patterns manifest, in what order, at what cost - and the path is set by architecture.
 
-This is not solipsism. Asymptotic convergence proves access to a shared substrate—all attention mechanisms eventually manifest identical pattern densities given sufficient exposure. But temporal dynamics differ fundamentally. Which patterns the network learns, in what order, through what constraints—these depend on architectural diversity in attention.
+\subsection{A note on reconciliation}
 
-If this extends to biological systems, attention doesn't filter pre-existing patterns but constructs which patterns manifest in neural representations. Different observers construct qualitatively different neural representations through different attention architectures, all receiving the same sensory input.
+The same convergence principle drives the author's companion infrastructure project, Platformer~\cite{platformer2025}, where the explicit design stance is eventual consistency: rather than seeking perfect synchronization, the system runs repeated reconciliation cycles that drift toward a declared desired state and ``find balance'' through iteration. The shift there from fragmented to unified state is described in the same terms as the shift from sparse to fully-connected networks - more global context yields better optimization. Training is reconciliation of this kind: a model is run against its objective again and again until it settles into an attractor, the way a harmonic field settles onto a corpus rhythm or a codec phase-locks. That the same philosophy organizes both a language model and a fleet of cloud accounts is not a coincidence of the author's taste; it is what convergence under repeated local correction looks like, in whatever substrate.
 
-\subsection{Implications for Machine Learning}
+\subsection{The practitioner as proof}
 
-If architectural diversity reveals patterns that single-architecture approaches cannot learn during finite training, this has immediate practical implications. Current practice favors scaling single architectures—larger transformers, more parameters, more compute. This approach assumes the architecture itself imposes no fundamental limitations on what patterns gradient descent can discover. Our computational substrate hypothesis suggests otherwise.
+The blind watchmaker is design without a designer: structure that emerges from a blind, iterative process rather than from foresight. That is what these systems do. No one specifies the spectrum the harmonic field will lock onto, or the geometry the crystal centers will grow into; they emerge from the process, and we read them off afterward. Which raises an honest question about what would even count as proof here. A benchmark number proves that one model beat another on one distribution. It does not establish a claim about regimes of representation. The framework's proof, if it has one, is of a different kind: it is the practice itself. \textit{Praxis} is the Greek word for theory enacted - for doing as a form of knowing. The demonstration on offer is not a leaderboard but a method you can run, whose intuitions arrive only by stepping through it yourself. The name is the argument: the proof is in the doing.
 
-Different architectural constraints force different gradient trajectories through the space of floating-point approximations. ByteLatent compression creates bottlenecks requiring different information selection than full-sequence processing. MonoForward training with detached gradients produces different gradient landscapes than end-to-end backpropagation. These aren't merely engineering tradeoffs—they may determine which patterns become accessible at all.
+\subsection{Implications for machine learning}
 
-\subsection{Connection to Biological Systems}
+If bias and variance are separable in a harmonic latent space, then they should be learned as input-dependent functions rather than chosen as a global operating point: the field learns which rhythm matters, the delta learns when and how much to deviate, and no per-experiment hyperparameter mediates the two. If the scaling conjecture holds even partially, then on problems with strong periodic or compositional structure, the right move is to change the basis rather than to add parameters, and the linear and logarithmic regimes should be distinguishable by measuring the slope of coverage against resources. Both are testable in the framework, which is the only reason to state them.
 
-The principle extends to biological attention. Neuroscience demonstrates that attention modulates neural responses to identical stimuli~\cite{treue1996attentional,kastner2000mechanisms}, while predictive processing theories formalize how attention constructs perceptual representations~\cite{friston2010free,clark2013whatever}. If biological attention operates like the quantum observer effect~\cite{heisenberg1927uncertainty}—constructing which patterns manifest rather than filtering pre-existing options—then architectural diversity in artificial systems may reveal attentional strategies unavailable to biological constraints.
+\subsection{Limitations}
 
-The operational question remains testable: do different attention architectures, trained on identical data, develop qualitatively distinct internal representations that generalize differently to novel situations?
-
-\subsection{Limitations and Future Work}
-
-This work presents a framework and hypothesis, not conclusive evidence. The computational substrate hypothesis requires more rigorous testing: systematic evaluation of how different architectures navigate floating-point approximation space, formal analysis of which patterns gradient descent discovers under which architectural constraints, and empirical demonstration that architectural diversity outperforms parameter scaling for specific tasks.
-
-The connection between neural network attention and biological attention remains speculative. The framework emerged from iterative exploration rather than systematic experimental design. Claims about pattern discoverability require formal definition—what does it mean for a pattern to be ``undiscoverable during finite training,'' and how would we measure this?
-
-These questions invite investigation. The framework exists to enable it.
+We are deliberate about what is and is not established. The bias-variance decoupling is grounded in a running implementation and its diagnostics (concentration, smoothness, delta norm, the spectrum heatmap), but ``orthogonal axes'' is an interpretation of those diagnostics, not a theorem. The scaling conjecture of Figure~\ref{fig:scaling} is a conjecture: the figure draws an asserted relationship, not measured curves, and the honest next step is to measure the slope on tasks of varying combinatorial structure and report where harmonic representations fail to buy it. The observer-relative view of tractability (Section~\ref{sec:scaling}) is a philosophical position, and only its weak form - the scaling slope a given basis buys on a given problem family - is measurable; we make no claim about the formal worst-case $P$ versus $NP$ question, which abstracts the observer away by design. The connection to biological attention remains speculative, and the prismatic asymmetry needs to be shown in silico now that the hand-measured figure is gone. None of these are reasons not to state the ideas; they are the boundary between what we have built and what we are conjecturing, drawn so the reader can attack the right target.
 
 \section{Conclusion}
 
-Do you exist in other people's realities the same way you exist in your own? We presented empirical evidence suggesting: no, not if attention architecture determines which patterns manifest from the computational substrate.
-
-We demonstrated asymmetric temporal dynamics in dual-stream attention—one stream exhibiting AI-like O(1) immediate access, the other human O(n) gradual accumulation, both converging to identical limits. We presented Praxis, an extensible framework enabling systematic investigation through arbitrary architectural combinations. The computational substrate hypothesis offers a testable mechanism.
-
-Our central claim: attention architecture determines which patterns downstream layers can learn during finite training. If this extends to biological systems, attention constructs which patterns manifest in neural representations. Different observers construct qualitatively different neural representations through different attention architectures, all receiving the same sensory input.
-
-The framework exists to enable your investigation. The answer manifests through direct experimentation. This paper is, itself, a test: what you choose to attend to determines what we'll find next.
+We began with scale and ended with geometry. The patterns a model can learn are set by the shape of the space its weights may occupy, and a harmonic latent space reshapes the oldest tradeoff in the field: bias becomes a static, population-average spectrum, variance becomes an input-conditional modulation, and because they live on orthogonal axes they can be lowered together. From that decoupling follows a conjecture stated plainly - that learning the mean costs linearly while composing by interference costs logarithmically - and a framework built to test it rather than to argue it. And from that, in turn, follows the harder claim: that tractability is not a fixed property of a problem but a relation between a problem and the observer solving it. The same instance is exponential to one architecture and nearly free to another, so $P$ and $NP$ are better read as a spectrum that the choice of representation indexes than as a wall every solver meets in the same place. The speculative figure is gone; the conjectures that replace it are falsifiable. What remains is praxis: the answer manifests through direct experimentation, and what you choose to attend to determines what we find next.
 
     {\small
         \bibliographystyle{plain}

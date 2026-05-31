@@ -3,16 +3,26 @@
  */
 
 :root {
-    /* Brand Colors */
-    --primary: #18453B;
-    --primary-light: #0B9A6D;
-    --primary-dark: #18453B;
+    /* Brand accent - ONE hue knob drives every brand color. Flip [data-accent] on
+       <html> to re-tint the whole app (both themes); the logs panel sets it to "blue".
+       --accent is the bright brand color (was #0B9A6D); --accent-deep the dark one
+       (was #18453B). Adjust --accent-hue to re-theme from a single place. */
+    --accent-hue: 161;
+    --accent-sat: 87%;
+    --accent-lum: 32%;
+    --accent: hsl(var(--accent-hue) var(--accent-sat) var(--accent-lum));
+    --accent-deep: hsl(var(--accent-hue) 49% 18%);
+
+    /* Brand Colors (derived from the accent) */
+    --primary: var(--accent-deep);
+    --primary-light: var(--accent);
+    --primary-dark: var(--accent-deep);
 
     /* Light Theme */
     --background: #f9f9f9;
     --text: #1f1f1f;
     --light-text: #4f4f4f;
-    --user-message-bg: #e8f5e9;
+    --user-message-bg: hsl(var(--accent-hue) 45% 92%);
     --assistant-message-bg: #ffffff;
     --border: #d0d0d0;
     --shadow: rgba(0, 0, 0, 0.05);
@@ -63,13 +73,13 @@
 
 /* Dark Theme Overrides */
 [data-theme="dark"] {
-    --primary: #18453B;
-    --primary-light: #0B9A6D;
-    --primary-dark: #0B9A6D;
+    --primary: var(--accent-deep);
+    --primary-light: var(--accent);
+    --primary-dark: var(--accent);
     --background: #121212;
     --text: #e0e0e0;
     --light-text: #b0b0b0;
-    --user-message-bg: #18453B;
+    --user-message-bg: var(--accent-deep);
     --assistant-message-bg: #1e1e1e;
     --border: #333333;
     --shadow: rgba(0, 0, 0, 0.3);
@@ -91,4 +101,13 @@
     --term-dim2: #666666;
     --term-dim3: #555555;
     --term-faint: #444444;
+}
+
+/* Logs mode: shift the entire accent to blue (applies to both light + dark themes).
+   Set on <html> while the logs panel is open; everything derived from --accent /
+   --accent-hue (lines, links, accents, the Praxis animation) re-tints to blue. */
+[data-accent="blue"] {
+    --accent-hue: 212;
+    --accent-sat: 72%;
+    --accent-lum: 50%;
 }

@@ -401,7 +401,7 @@
 }
 
 .status-indicator.connected {
-    background-color: #18453B;
+    background-color: var(--accent-deep);
     box-shadow: 0 0 0.25rem rgba(24, 69, 59, 0.4);
 }
 
@@ -993,7 +993,7 @@
 }
 
 .spec-link {
-    color: #0B9A6D;
+    color: var(--accent);
     font-weight: 600;
     text-decoration: none;
 }
@@ -1003,13 +1003,13 @@
 }
 
 .spec-link-primary {
-    color: #0B9A6D;
+    color: var(--accent);
     font-weight: 600;
     text-decoration: none;
 }
 
 .spec-value-highlight {
-    color: #0B9A6D;
+    color: var(--accent);
     font-weight: 600;
 }
 
@@ -1682,14 +1682,14 @@
 }
 
 .copy-fallback-input:focus {
-    outline: 2px solid #0B9A6D;
+    outline: 2px solid var(--accent);
     outline-offset: 2px;
 }
 
 .copy-fallback-close {
     width: 100%;
     padding: 0.75rem;
-    background: #0B9A6D;
+    background: var(--accent);
     color: white;
     border: none;
     border-radius: var(--radius-small);
@@ -1966,7 +1966,7 @@ body.hybrid-active .prism-logo {
 
 .hybrid-overlay[data-theme="light"] .spec-peer-button,
 .hybrid-overlay[data-theme="light"] button[type="submit"] {
-    background-color: #0B9A6D !important;
+    background-color: var(--accent) !important;
     color: #ffffff !important;
 }
 

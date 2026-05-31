@@ -13,6 +13,7 @@ import { setupTabCarousel } from './mobile.js';
 import { storage, FORM_FIELDS, readFormValues, updateRangeDisplay } from './config.js';
 import { CLICK_HANDLERS, delegateClick } from './events.js';
 import { executeAction } from './actions.js';
+import { setupAccentRetint } from './charts.js';
 import './prism.js';
 
 /**
@@ -46,6 +47,9 @@ function init() {
         const isTouch = window.matchMedia('(hover: none)').matches;
         Chart.defaults.events = isTouch ? [] : ['mousemove', 'mouseout', 'click'];
     }
+
+    // Charts auto-recolor when the accent (logs blue mode) flips - no Refresh needed.
+    setupAccentRetint();
 
     // Set API URL
     const pathPrefix = window.location.pathname.endsWith('/')

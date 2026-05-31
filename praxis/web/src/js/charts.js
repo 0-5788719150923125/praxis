@@ -3,12 +3,53 @@
  * Full Chart.js implementation for Research tab
  */
 
-import { state, CONSTANTS } from './state.js';
+import { state, CONSTANTS, chartLineColor, currentAccentHue, rotateHexHue } from './state.js';
 import { fetchAPI } from './api.js';
 import { createTabHeader } from './components.js';
 
 // Chart instances storage (exported for hybrid mode)
 export const charts = {};
+
+// ── Accent auto-retint ──────────────────────────────────────────────────────
+// Chart.js caches dataset colors at creation, so flipping the accent (the logs
+// "blue mode") wouldn't recolor live charts. A plugin stamps each chart with the
+// hue it was built at; a MutationObserver on <html data-accent> then rotates every
+// chart's line colors by the hue delta - no rebuild/Refresh needed.
+const _accentCharts = new Set();
+let _accentRetintReady = false;
+
+function retintAccentCharts() {
+    const hue = currentAccentHue();
+    _accentCharts.forEach(chart => {
+        const from = chart.$accentHue == null ? hue : chart.$accentHue;
+        const delta = hue - from;
+        if (!delta) return;
+        let changed = false;
+        (chart.data?.datasets || []).forEach(ds => {
+            const b = rotateHexHue(ds.borderColor, delta);
+            if (b !== ds.borderColor) { ds.borderColor = b; changed = true; }
+            const g = rotateHexHue(ds.backgroundColor, delta);
+            if (g !== ds.backgroundColor) { ds.backgroundColor = g; changed = true; }
+        });
+        chart.$accentHue = hue;
+        if (changed) chart.update('none');
+    });
+}
+
+export function setupAccentRetint() {
+    if (_accentRetintReady || typeof document === 'undefined') return;
+    _accentRetintReady = true;
+    if (window.Chart) {
+        window.Chart.register({
+            id: 'accentRetint',
+            afterInit(chart) { chart.$accentHue = currentAccentHue(); _accentCharts.add(chart); },
+            afterDestroy(chart) { _accentCharts.delete(chart); },
+        });
+    }
+    new MutationObserver(retintAccentCharts).observe(document.documentElement, {
+        attributes: true, attributeFilter: ['data-accent'],
+    });
+}
 
 // Layer selection state for per-layer metrics
 const layerSelectionState = {};
@@ -624,6 +665,7 @@ const DECK_WHEEL_STEP = 120;     // wheel px that advance one card
 // can never reverse (no bounce) and has no asymptotic tail (decisive, weighty).
 const DECK_CYCLE_DUR = 220;      // ms; slot-slide duration on release
 const DECK_FLING_VEL = 0.0016;   // cards/ms; above this a release commits one slot in the fling dir; else nearest
+const DECK_CHAIN_MAX = 4;        // most EXTRA cards a single fast flick can chain past the first
 const DECK_WHEEL_SETTLE = 130;   // ms after the last wheel notch -> snap
 const DECK_FLOOR_MARGIN = 14;    // px between the floor and the screen bottom
 // A<->B anchor: a vertical lift between the floor (B) and the tab row (A), eased over
@@ -808,20 +850,28 @@ function renderDeck(deck) {
     const order = deck._order || cards.map((_, i) => i);
     const pos = deck._pos;
     const bandH = deck._bandH || deck.clientHeight || 0;
-    const a01 = deck._anchor < 0 ? 0 : deck._anchor > 1 ? 1 : deck._anchor;
+    // Lift is a C-shaped arc of the card position: at rest on a card (frac 0) it sits
+    // dropped on the floor (B, header strip shows); mid-transition (frac ~0.5) it
+    // peaks lifted at the tab row (A); it settles back to B on the next card. So one
+    // advance lifts and re-seats in a single arc. The scroll-read anchor (deck._anchor,
+    // set while flicking a tall card body) can independently hold it lifted.
+    const frac = pos - Math.floor(pos);
+    const hump = Math.sin(Math.PI * frac);
+    const a01raw = Math.max(deck._anchor, hump);
+    const a01 = a01raw < 0 ? 0 : a01raw > 1 ? 1 : a01raw;
 
     // Head is TOP-anchored, like desktop: at rest (B) it sits just below the title
     // strip (headTop = lift); engaging lifts it to the tab row (A, headTop = 0, over
     // the strip). The fan always peeks DOWN off the head toward the floor, so it
     // never rides up over the header; trailing cards fade out.
     const headTop = (deck._lift || 0) * (1 - a01);
-    // The head's available height grows from its rest size (B, below the header) to
-    // the full band (A, over the header), so a card slotted up to A expands to
-    // min(natural, band) - removing inner scroll it doesn't need - instead of staying
-    // at its smaller B size. (Rounded + guarded so we only write on real changes.)
-    // Coarsen availH to a 2px step so the guarded max-height write skips ~half the
-    // frames of an anchor slide; precompute the two cap strings (no per-card alloc).
-    const availH = Math.round((bandH - headTop) / 2) * 2;
+    // Sizing tracks ONLY the scroll-read anchor, never the cycle hump: the head grows
+    // to the full band when held lifted for reading, but during a swipe its height is
+    // constant (so capped chart cards don't re-fit every frame as the arc lifts). The
+    // arc just MOVES the head; it doesn't resize it.
+    const sizeA01 = deck._anchor < 0 ? 0 : deck._anchor > 1 ? 1 : deck._anchor;
+    const sizeTop = (deck._lift || 0) * (1 - sizeA01);
+    const availH = Math.round((bandH - sizeTop) / 2) * 2;
     const usableH = deck._usableH || availH;
     const headMH = `${availH}px`, fanMH = `${usableH}px`;
 
@@ -976,13 +1026,27 @@ function easeOutCubic(t) {
     return 1 - u * u * u;
 }
 
-// Pick the slot a release commits to. A fling commits ONE slot in its direction
-// (from anywhere within the current cell); a slow release snaps to the nearest. The
-// target is always an adjacent slot, so the slide can never travel/reverse > 1 card.
+// Detent shaping (mobile drag): within each card step the position eases - slow to
+// leave the rest slot (effort to detach from B), fast through the middle, slow into
+// the next slot. Identity at integers, so the finger travel that completes a card is
+// unchanged; only the feel along the way is shaped (sticky at rest, quick latch).
+function shapeDetent(x) {
+    const n = Math.floor(x);
+    const f = x - n;
+    return n + f * f * (3 - 2 * f);   // smoothstep within the unit
+}
+
+// Pick the slot a release commits to. A slow release snaps to the nearest slot (the
+// detent past the 50% mark decides advance vs. fall back to B). A fling commits at
+// least one slot in its direction and chains more the faster it is, so a hard flick
+// carries through several cards before settling. Monotonic toward the target slot.
 function projectTarget(deck, vel) {
     const pos = deck._pos;
     if (Math.abs(vel) > DECK_FLING_VEL) {
-        return vel > 0 ? Math.floor(pos) + 1 : Math.ceil(pos) - 1;
+        const dir = vel > 0 ? 1 : -1;
+        const extra = Math.min(DECK_CHAIN_MAX, Math.floor(Math.abs(vel) / DECK_FLING_VEL) - 1);
+        const cards = 1 + Math.max(0, extra);
+        return dir > 0 ? Math.floor(pos) + cards : Math.ceil(pos) - cards;
     }
     return Math.round(pos);
 }
@@ -995,6 +1059,10 @@ function slideTo(deck, target) {
     deck._posTargetRaw = target;                   // unwrapped; wrap only on read/settle
     deck._posDist = target - deck._pos;
     deck._cycleDir = deck._posDist >= 0 ? 1 : -1;  // seat entering cards on the right edge
+    // Longer slide for chained flicks so each card still reads as it passes (the lift
+    // arc pulses once per card), but bounded so it never feels sluggish.
+    const mag = Math.abs(deck._posDist);
+    deck._posDur = DECK_CYCLE_DUR * Math.min(2.5, Math.max(1, Math.sqrt(mag)));
     deck._posT0 = performance.now();
     deck._posMode = 'slide';
     runDeckRAF(deck);
@@ -1031,7 +1099,7 @@ function runDeckRAF(deck) {
         let moving = false, render = false;
 
         if (deck._posMode === 'slide') {
-            const e = (t - deck._posT0) / DECK_CYCLE_DUR;
+            const e = (t - deck._posT0) / (deck._posDur || DECK_CYCLE_DUR);
             if (e >= 1) {
                 deck._pos = wrap(deck._posTargetRaw);
                 deck._posMode = null;
@@ -1138,6 +1206,8 @@ function bindDeckEvents(deck) {
         lastT = e.timeStamp;
         vel = 0;
         travel = 0;
+        deck._dragBase = deck._pos;   // rest slot this pull is measured from
+        deck._dragRaw = 0;            // raw (un-shaped) finger advance in card units
         deck._scrollVel = 0;       // reset inner-scroll velocity for this gesture
         deck._scrollBody = null;
     }, { passive: true });
@@ -1162,6 +1232,9 @@ function bindDeckEvents(deck) {
         // card (entered at its bottom).
         if (gestureMode === null) {
             gestureMode = roomIn(body) > 1 ? 'scroll' : 'cycle';
+            // Entering a cycle pull: release any scroll-read lift so this gesture
+            // starts from the resting state (B) and the arc owns the lift.
+            if (gestureMode === 'cycle') setAnchor(deck, 0);
         }
 
         if (gestureMode === 'scroll') {
@@ -1180,8 +1253,11 @@ function bindDeckEvents(deck) {
         }
 
         e.preventDefault();   // the loop has no ends; every swipe cycles + wraps
-        if (travel > 6) setAnchor(deck, dir > 0 ? 1 : 0);   // forward swipe lifts to A, backward drops to B
-        setPos(deck, deck._pos + dy / DECK_SWIPE_STEP);
+        // Accumulate the raw finger advance and shape it through the detent: the card
+        // resists leaving its rest slot (B), then latches quickly through the middle
+        // (A) - the lift arc follows from the position in renderDeck.
+        deck._dragRaw += dy / DECK_SWIPE_STEP;
+        setPos(deck, deck._dragBase + shapeDetent(deck._dragRaw));
         const dt = Math.max(1, e.timeStamp - lastT);
         vel = (dy / DECK_SWIPE_STEP) / dt;   // cards per ms
         lastT = e.timeStamp;
@@ -1225,7 +1301,7 @@ function onDeckKeydown(e) {
     else return;
     e.preventDefault();
     deck._cycleDir = (e.key === 'ArrowDown') ? 1 : -1;
-    setAnchor(deck, deck._cycleDir > 0 ? 1 : 0);   // ArrowDown lifts to A, ArrowUp drops to B
+    setAnchor(deck, 0);      // rest at B; the slide's lift arc owns the engagement
     slideTo(deck, target);   // wraps at the ends
 }
 
@@ -1255,7 +1331,7 @@ function renderMetricsHeader(container, runs) {
                     <div class="run-selector-list">
                         ${state.research.historicalRuns.map((run, idx) => {
                             const isSelected = state.research.selectedHistoricalRuns.includes(run.hash);
-                            const color = CONSTANTS.RUN_COLORS[idx % CONSTANTS.RUN_COLORS.length];
+                            const color = chartLineColor(idx);
                             const timeLabel = formatRelativeTime(run.metrics_updated);
                             const badges = [];
                             if (run.is_current) badges.push('active');
@@ -1366,7 +1442,7 @@ function createRunComparisonChart(canvasId, label, runs, metricKey) {
         // stays consistent with the Runs selector regardless of which subset
         // is currently selected.
         const colorIdx = state.research.historicalRuns.findIndex(r => r.hash === run.hash);
-        const color = CONSTANTS.RUN_COLORS[((colorIdx >= 0 ? colorIdx : 0)) % CONSTANTS.RUN_COLORS.length];
+        const color = chartLineColor(colorIdx >= 0 ? colorIdx : 0);
 
         return {
             label: run.hash,
@@ -1487,7 +1563,7 @@ function createTokensBarChart(canvasId, label, runs, metricKey) {
         // stays consistent with the Runs selector regardless of which subset
         // is currently selected.
         const colorIdx = state.research.historicalRuns.findIndex(r => r.hash === run.hash);
-        const color = CONSTANTS.RUN_COLORS[((colorIdx >= 0 ? colorIdx : 0)) % CONSTANTS.RUN_COLORS.length];
+        const color = chartLineColor(colorIdx >= 0 ? colorIdx : 0);
 
         return {
             label: run.hash,
@@ -1598,7 +1674,7 @@ function createSamplingWeightsChart(canvasId, dataMetrics) {
 
             if (latestWeight !== null) {
                 const agentLabel = dataMetrics.length > 1 ? ` (${agent.name})` : '';
-                const color = CONSTANTS.RUN_COLORS[docIdx % CONSTANTS.RUN_COLORS.length];
+                const color = chartLineColor(docIdx);
 
                 documentData.push({
                     label: `${docName}${agentLabel}`,
@@ -2206,7 +2282,7 @@ function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern,
 
             console.log(`[createMultiExpertChart] Data points after filtering: ${data.length}, First x: ${data[0]?.x}, Last x: ${data[data.length-1]?.x}`);
 
-            const color = CONSTANTS.RUN_COLORS[parseInt(expertNum) % CONSTANTS.RUN_COLORS.length];
+            const color = chartLineColor(parseInt(expertNum));
             const label = agents.length > 1 ? `${agent.name} - Expert ${expertNum}` : `Expert ${expertNum}`;
 
             allDatasets.push({

@@ -390,7 +390,7 @@ export const ACTION_HANDLERS = {
                 top: ${top}px;
                 left: ${left}px;
                 padding: 0.5rem 1rem;
-                background: #0B9A6D;
+                background: var(--accent);
                 color: white;
                 border-radius: 4px;
                 font-size: 14px;

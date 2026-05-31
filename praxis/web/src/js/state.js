@@ -300,6 +300,104 @@ export function hexToRgb(hex) {
 }
 
 /**
+ * Convert HSL (h in degrees, s/l in 0-1) to an [r, g, b] array.
+ */
+export function hslToRgb(h, s, l) {
+    h = (((h % 360) + 360) % 360) / 360;
+    if (s === 0) { const v = Math.round(l * 255); return [v, v, v]; }
+    const hue2rgb = (p, q, t) => {
+        if (t < 0) t += 1;
+        if (t > 1) t -= 1;
+        if (t < 1 / 6) return p + (q - p) * 6 * t;
+        if (t < 1 / 2) return q;
+        if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+        return p;
+    };
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    return [
+        Math.round(hue2rgb(p, q, h + 1 / 3) * 255),
+        Math.round(hue2rgb(p, q, h) * 255),
+        Math.round(hue2rgb(p, q, h - 1 / 3) * 255),
+    ];
+}
+
+/**
+ * The brand accent as [r, g, b], following the central --accent-hue (green, or blue
+ * in logs mode). Falls back to the green default off-DOM.
+ */
+export function accentRgb() {
+    return hslToRgb(currentAccentHue(), 0.82, 0.40);
+}
+
+/** Read the central accent hue (degrees) off <html>; 161 (green) by default. */
+export function currentAccentHue() {
+    if (typeof document !== 'undefined') {
+        const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--accent-hue'));
+        if (!Number.isNaN(v)) return v;
+    }
+    return CHART_PALETTE_REF_HUE;
+}
+
+// One shared chart-line palette for BOTH the Research and Dynamics tabs: an ordered,
+// distinct set of colors spread around the wheel and anchored on the brand green
+// (index 0 = the accent). The whole scheme rotates with --accent-hue, so it follows
+// the green->blue logs toggle. Index cycles continuously (modulo) for any series count.
+const CHART_PALETTE_REF_HUE = 161;  // hue the palette is authored at (matches green accent)
+const CHART_PALETTE_BASE = [
+    [161, 68, 42],  // green (accent anchor)
+    [205, 70, 54],  // blue
+    [38, 85, 55],   // amber
+    [330, 68, 62],  // magenta
+    [188, 62, 44],  // teal
+    [272, 58, 66],  // purple
+    [20, 82, 58],   // orange
+    [104, 52, 47],  // leaf green
+    [242, 56, 65],  // indigo
+    [312, 54, 60],  // violet
+];
+
+/** The i-th chart-line color as a hex string (wraps; rotates with the accent hue). */
+export function chartLineColor(index) {
+    const n = CHART_PALETTE_BASE.length;
+    const [h, s, l] = CHART_PALETTE_BASE[((index % n) + n) % n];
+    const rot = currentAccentHue() - CHART_PALETTE_REF_HUE;
+    const [r, g, b] = hslToRgb(h + rot, s / 100, l / 100);
+    return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+}
+
+/** RGB (0-255) to HSL ([h degrees, s 0-1, l 0-1]). */
+export function rgbToHsl(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    const l = (max + min) / 2, d = max - min;
+    let h = 0, s = 0;
+    if (d !== 0) {
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+        else if (max === g) h = (b - r) / d + 2;
+        else h = (r - g) / d + 4;
+        h *= 60;
+    }
+    return [h, s, l];
+}
+
+/** Rotate the hue of a "#rrggbb" or "#rrggbbaa" color by `deg`, preserving alpha.
+ *  Non-hex values (arrays, "transparent", gradients) pass through unchanged. */
+export function rotateHexHue(color, deg) {
+    if (!deg || typeof color !== 'string' || color[0] !== '#') return color;
+    const hex = color.slice(1);
+    if (hex.length !== 6 && hex.length !== 8) return color;
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    const a = hex.length === 8 ? hex.slice(6, 8) : '';
+    const [h, s, l] = rgbToHsl(r, g, b);
+    const [nr, ng, nb] = hslToRgb(h + deg, s, l);
+    return '#' + [nr, ng, nb].map(x => x.toString(16).padStart(2, '0')).join('') + a;
+}
+
+/**
  * Calculate commit freshness from timestamp
  * Pure function: (timestamp, oldest, newest) → freshness (0-1)
  * @param {number} timestamp - Unix timestamp of commit
@@ -325,7 +423,7 @@ export function getStatusBaseColor(status, theme) {
 
     switch (status) {
         case 'online':
-            return hexToRgb('#0B9A6D'); // green
+            return accentRgb(); // brand accent (green, or blue in logs mode)
         case 'archived':
             return isDark ? hexToRgb('#5b8fc9') : hexToRgb('#00274c'); // blue
         case 'offline':

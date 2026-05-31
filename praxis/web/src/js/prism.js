@@ -543,7 +543,7 @@
                 { r: 144, g: 238, b: 144 },  // Light green
                 { r: 152, g: 251, b: 152 },  // Pale green
             ];
-            return colors[Math.floor(Math.random() * colors.length)];
+            return tintForAccent(colors[Math.floor(Math.random() * colors.length)]);
         }
 
         // Detect proximity to 2x4 board edges for enhanced glow (light mode)
@@ -1149,13 +1149,13 @@
 
                     // Edge type affects color
                     if (edge.type === 'apex') {
-                        gradient.addColorStop(0, `rgba(50, 205, 50, ${baseOpacity})`);
-                        gradient.addColorStop(0.5, `rgba(144, 238, 144, ${baseOpacity * 1.2})`);
-                        gradient.addColorStop(1, `rgba(152, 251, 152, ${baseOpacity})`);
+                        gradient.addColorStop(0, tintRgba(50, 205, 50, baseOpacity));
+                        gradient.addColorStop(0.5, tintRgba(144, 238, 144, baseOpacity * 1.2));
+                        gradient.addColorStop(1, tintRgba(152, 251, 152, baseOpacity));
                     } else {
-                        gradient.addColorStop(0, `rgba(34, 139, 34, ${baseOpacity})`);
-                        gradient.addColorStop(0.5, `rgba(50, 205, 50, ${baseOpacity * 1.2})`);
-                        gradient.addColorStop(1, `rgba(34, 139, 34, ${baseOpacity})`);
+                        gradient.addColorStop(0, tintRgba(34, 139, 34, baseOpacity));
+                        gradient.addColorStop(0.5, tintRgba(50, 205, 50, baseOpacity * 1.2));
+                        gradient.addColorStop(1, tintRgba(34, 139, 34, baseOpacity));
                     }
 
                     ctx.strokeStyle = gradient;
@@ -1163,7 +1163,7 @@
 
                     // Add glow effect
                     ctx.shadowBlur = 5 + illumination * 15;
-                    ctx.shadowColor = `rgba(144, 238, 144, ${glowOpacity})`;
+                    ctx.shadowColor = tintRgba(144, 238, 144, glowOpacity);
 
                     ctx.stroke();
                 }
@@ -1176,6 +1176,58 @@
     // Check if we're in light mode
     function isLightMode() {
         return document.documentElement.getAttribute('data-theme') !== 'dark';
+    }
+
+    // Accent re-tint: the green palette is the default; the logs panel's blue accent
+    // rotates every bolt's hue so the whole animation goes blue. Green mode = no-op
+    // (rotation 0), so the normal look is unchanged. Read off <html>, like the theme.
+    function accentHueRotation() {
+        return document.documentElement.getAttribute('data-accent') === 'blue' ? 100 : 0;
+    }
+    function tintForAccent(c) {
+        const rot = accentHueRotation();
+        if (!rot) return c;
+        const [h, s, l] = rgbToHsl(c.r, c.g, c.b);
+        const [r, g, b] = hslToRgb(h + rot, s, l);
+        return { r, g, b };
+    }
+    // Tint a green rgb and return an rgba() string (for the structural-line gradients).
+    function tintRgba(r, g, b, a) {
+        const c = tintForAccent({ r, g, b });
+        return `rgba(${c.r}, ${c.g}, ${c.b}, ${a})`;
+    }
+    function rgbToHsl(r, g, b) {
+        r /= 255; g /= 255; b /= 255;
+        const max = Math.max(r, g, b), min = Math.min(r, g, b);
+        const l = (max + min) / 2, d = max - min;
+        let h = 0, s = 0;
+        if (d !== 0) {
+            s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+            if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+            else if (max === g) h = (b - r) / d + 2;
+            else h = (r - g) / d + 4;
+            h *= 60;
+        }
+        return [h, s, l];
+    }
+    function hslToRgb(h, s, l) {
+        h = (((h % 360) + 360) % 360) / 360;
+        if (s === 0) { const v = Math.round(l * 255); return [v, v, v]; }
+        const hue2rgb = (p, q, t) => {
+            if (t < 0) t += 1;
+            if (t > 1) t -= 1;
+            if (t < 1 / 6) return p + (q - p) * 6 * t;
+            if (t < 1 / 2) return q;
+            if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+            return p;
+        };
+        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        const p = 2 * l - q;
+        return [
+            Math.round(hue2rgb(p, q, h + 1 / 3) * 255),
+            Math.round(hue2rgb(p, q, h) * 255),
+            Math.round(hue2rgb(p, q, h - 1 / 3) * 255),
+        ];
     }
 
     // Select next random behavior with weighted probabilities
@@ -1491,9 +1543,9 @@
 
         const coreGradient = ctx.createRadialGradient(coreCenterX, coreCenterY, 0, coreCenterX, coreCenterY, coreSize * 1.5);
         coreGradient.addColorStop(0, `rgba(255, 255, 255, ${coreGlow})`);
-        coreGradient.addColorStop(0.3, `rgba(200, 255, 200, ${coreGlow * 0.8})`);
-        coreGradient.addColorStop(0.6, `rgba(50, 205, 50, ${coreGlow * 0.5})`);
-        coreGradient.addColorStop(1, 'rgba(34, 139, 34, 0.05)');
+        coreGradient.addColorStop(0.3, tintRgba(200, 255, 200, coreGlow * 0.8));
+        coreGradient.addColorStop(0.6, tintRgba(50, 205, 50, coreGlow * 0.5));
+        coreGradient.addColorStop(1, tintRgba(34, 139, 34, 0.05));
 
         ctx.beginPath();
         ctx.arc(coreCenterX, coreCenterY, coreSize, 0, Math.PI * 2);
@@ -1503,7 +1555,7 @@
         // Core glow during surges
         if (surgeMultiplier > 5) {
             ctx.shadowBlur = 20;
-            ctx.shadowColor = `rgba(144, 238, 144, 0.5)`;
+            ctx.shadowColor = tintRgba(144, 238, 144, 0.5);
             ctx.fill();
             ctx.shadowBlur = 0;
         }

@@ -3,7 +3,7 @@
  * Tracks per-layer gradient flow, update ratios, and per-expert dynamics.
  */
 
-import { state, CONSTANTS } from './state.js';
+import { state, CONSTANTS, chartLineColor } from './state.js';
 import { fetchAPI } from './api.js';
 import { createTabHeader } from './components.js';
 import { formatRelativeTime, initChartDeck, applyChartTheme } from './charts.js';
@@ -748,15 +748,8 @@ function rebuildAllCharts() {
 }
 
 // ─── Shared chart helpers ───────────────────────────────────────────────────
-
-const LAYER_COLORS = [
-    '#4A90E2', '#FF6B6B', '#00D9FF', '#FFD700', '#00FF9F', '#FF6B9D',
-    '#B388FF', '#FF8A65', '#81C784', '#4DD0E1', '#FFB74D', '#CE93D8'
-];
-
-const EXPERT_COLORS = [
-    '#4A90E2', '#FF6B6B', '#00D9FF', '#FFD700', '#00FF9F', '#FF6B9D'
-];
+// Line colors come from the shared, accent-anchored palette (chartLineColor) so the
+// Research and Dynamics tabs match and re-tint with the hue toggle.
 
 function baseChartOptions(yLabel, yType, textColor, gridColor, tooltipBg) {
     return {
@@ -859,7 +852,7 @@ function createLayerGradNormsChart(canvasId, dynamics, layers) {
             x: step, y: values[idx]
         })).filter(p => p.y !== null && p.y !== undefined);
 
-        const color = LAYER_COLORS[layer % LAYER_COLORS.length];
+        const color = chartLineColor(layer);
         datasets.push(makeLineDataset(`L${layer}`, data, color));
     });
 
@@ -882,7 +875,7 @@ function createLayerUpdateRatioChart(canvasId, dynamics, layers) {
             x: step, y: values[idx]
         })).filter(p => p.y !== null && p.y !== undefined);
 
-        const color = LAYER_COLORS[layer % LAYER_COLORS.length];
+        const color = chartLineColor(layer);
         datasets.push(makeLineDataset(`L${layer}`, data, color));
     });
 
@@ -908,7 +901,7 @@ function createTaskWeightsChart(canvasId, dynamics, keys) {
         })).filter(p => p.y !== null && p.y !== undefined);
 
         const label = key.replace(/^task_weight_/, '');
-        const color = EXPERT_COLORS[idx % EXPERT_COLORS.length];
+        const color = chartLineColor(idx);
         datasets.push(makeLineDataset(label, data, color));
     });
 
@@ -1046,12 +1039,10 @@ function createScalarMetricChart(canvasId, dynamics, key, yLabel, yType) {
 
     dynamicsCharts[canvasId] = new Chart(ctx, {
         type: 'line',
-        data: { datasets: [makeLineDataset(yLabel, data, '#B388FF')] },
+        data: { datasets: [makeLineDataset(yLabel, data, chartLineColor(0))] },
         options
     });
 }
-
-const SERIES_COLORS = ['#B388FF', '#4A90E2', '#00D9FF', '#FFD700', '#00FF9F', '#FF6B9D'];
 
 // Several same-scale metrics on one chart (e.g. min/mean/max), one line each.
 function createMultiSeriesMetricChart(canvasId, dynamics, series, yLabel, yType) {
@@ -1069,7 +1060,7 @@ function createMultiSeriesMetricChart(canvasId, dynamics, series, yLabel, yType)
         if (!values) return;
         const data = steps.map((step, i) => ({ x: step, y: values[i] }))
             .filter(p => p.y !== null && p.y !== undefined);
-        datasets.push(makeLineDataset(label, data, SERIES_COLORS[idx % SERIES_COLORS.length]));
+        datasets.push(makeLineDataset(label, data, chartLineColor(idx)));
     });
     if (datasets.length === 0) return;
 
@@ -1105,7 +1096,7 @@ function createExpertGradNormsChart(canvasId, dynamics, layers) {
                 x: step, y: values[idx]
             })).filter(p => p.y !== null && p.y !== undefined);
 
-            const color = EXPERT_COLORS[expert % EXPERT_COLORS.length];
+            const color = chartLineColor(expert);
             datasets.push(makeLineDataset(`L${layer} E${expert}`, data, color));
         });
     });
@@ -1137,7 +1128,7 @@ function createExpertGradVarsChart(canvasId, dynamics, layers) {
                 x: step, y: values[idx]
             })).filter(p => p.y !== null && p.y !== undefined);
 
-            const color = EXPERT_COLORS[expert % EXPERT_COLORS.length];
+            const color = chartLineColor(expert);
             datasets.push(makeLineDataset(`L${layer} E${expert}`, data, color));
         });
     });
@@ -1176,8 +1167,8 @@ function createHaltingHistogramChart(canvasId, dynamics, buckets) {
         datasets.push({
             label: `Training (random, n=${trainTotal})`,
             data: trainFreq,
-            backgroundColor: '#4A90E280',
-            borderColor: '#4A90E2',
+            backgroundColor: chartLineColor(0) + '80',
+            borderColor: chartLineColor(0),
             borderWidth: 2
         });
     }
@@ -1185,8 +1176,8 @@ function createHaltingHistogramChart(canvasId, dynamics, buckets) {
         datasets.push({
             label: `Inference (learned, n=${evalTotal})`,
             data: evalFreq,
-            backgroundColor: '#FF6B6B80',
-            borderColor: '#FF6B6B',
+            backgroundColor: chartLineColor(1) + '80',
+            borderColor: chartLineColor(1),
             borderWidth: 2
         });
     }
@@ -1295,7 +1286,7 @@ function renderActivationChart(canvasId, curves, field, yLabel) {
     const highKey = `${field}_high`;
 
     curves.forEach((curve, idx) => {
-        const color = LAYER_COLORS[idx % LAYER_COLORS.length];
+        const color = chartLineColor(idx);
         const label = curve.type ? `${curve.name} (${curve.type})` : curve.name;
         const meanData = curve.x.map((x, i) => ({ x, y: curve[field][i] }));
 

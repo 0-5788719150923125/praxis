@@ -182,8 +182,10 @@
     }
 
     /* Cards expand to their content on mobile and the page scrolls as one surface,
-       rather than each card trapping touch in its own internal scroll area. */
+       rather than each card trapping touch in its own internal scroll area. Stack to
+       a single column so the context/loss cards don't force side-by-side and overflow. */
     .ld-body {
+        grid-template-columns: 1fr;
         grid-auto-rows: auto;
         overflow: visible;
         flex: 0 0 auto;
@@ -196,6 +198,13 @@
     .ld-status-text {
         overflow: visible;
         flex: 0 1 auto;
+    }
+
+    /* The loss sparkline has no intrinsic height (flex:1 canvas), so with auto rows it
+       would collapse flat. Give the chart card a real height so it keeps its true size
+       and the canvas can fill it; the page scrolls past it via terminal-container. */
+    .ld-panel-chart {
+        min-height: 12rem;
     }
 
     .ld-info-grid {

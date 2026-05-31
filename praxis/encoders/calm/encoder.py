@@ -38,6 +38,13 @@ from praxis.losses.energy_score import energy_score_loss
 from ..base import BaseEncoder
 from .vae import CALMVAE
 
+# AE pretraining-phase convergence detector. Fixed and model-agnostic (per the
+# no-per-experiment-tuning rule): the phase ends when reconstruction stops
+# improving - the relative drop across the window falls below EPS - or the
+# max-steps cap is hit as a backstop.
+PRETRAIN_WINDOW = 256
+PRETRAIN_SLOPE_EPS = 5e-3
+
 
 def _resolve_dim(spec: Union[int, float], base: int) -> int:
     """``float`` -> fraction of ``base`` (e.g. 0.5); ``int`` -> absolute size."""
@@ -174,6 +181,8 @@ class CALMEncoder(BaseEncoder):
         energy_alpha: float = 1.0,
         energy_warmup_steps: int = 0,
         ae_freeze_steps: Optional[int] = None,
+        requires_pretraining: bool = True,
+        ae_max_pretrain_steps: int = 20000,
         vote_num_samples: int = 200,
     ) -> None:
         super().__init__()
@@ -210,7 +219,24 @@ class CALMEncoder(BaseEncoder):
         # this step, then freezes it and trains only the LM/energy head. None
         # locks it to the warmup boundary (co-terminating with the KL anneal);
         # 0 = legacy joint training.
-        self.ae_freeze_steps = warmup if ae_freeze_steps is None else int(ae_freeze_steps)
+        # When True (default), the codec trains until its reconstruction
+        # converges, then freezes; the energy LM trains after. Convergence is
+        # the boundary - ae_freeze_steps stays 0 (no fixed cut) unless given
+        # explicitly. ae_max_pretrain_steps caps the phase as a backstop.
+        # False = legacy joint mode, where the freeze cuts at ae_freeze_steps
+        # (defaulting to the LR warmup horizon).
+        self.requires_pretraining = bool(requires_pretraining)
+        if ae_freeze_steps is not None:
+            # Explicit boundary opts into legacy behavior (joint mode when 0,
+            # staged-at-step when >0); the convergence detector is disabled.
+            self.ae_freeze_steps = int(ae_freeze_steps)
+            self.requires_pretraining = False
+        elif self.requires_pretraining:
+            self.ae_freeze_steps = 0  # convergence-driven freeze
+        else:
+            self.ae_freeze_steps = warmup
+        self.ae_max_pretrain_steps = int(ae_max_pretrain_steps)
+        self._recon_hist: list = []
         # Set once when the codec is frozen, to log the transition a single
         # time. Not a buffer: re-deriving frozen-ness from _train_step on
         # resume is what re-applies the freeze, so this flag may reset freely.
@@ -221,6 +247,12 @@ class CALMEncoder(BaseEncoder):
         # restarting the warmup after a resume would re-destabilize the model.
         self.register_buffer(
             "_train_step", torch.zeros((), dtype=torch.long), persistent=True
+        )
+
+        # Latched once AE pretraining converges (persistent so resume does not
+        # restart the phase). Drives the codec freeze and the energy-loss gate.
+        self.register_buffer(
+            "_pretrain_done", torch.zeros((), dtype=torch.bool), persistent=True
         )
 
         # Transient diagnostic stash for training_metrics(). Floats updated
@@ -338,6 +370,85 @@ class CALMEncoder(BaseEncoder):
     # transformer sees patches, not tokens.
 
     # ------------------------------------------------------------------
+    # Autoencoder pretraining phase (BaseEncoder contract)
+    # ------------------------------------------------------------------
+
+    def in_pretraining(self) -> bool:
+        """True until the codec's reconstruction converges (or the cap is hit).
+        While True the model locks everything but the VAE and trains only
+        ``pretraining_loss`` - the global transformer never runs."""
+        return self.requires_pretraining and not bool(self._pretrain_done.item())
+
+    def pretraining_parameters(self):
+        """Only the VAE trains during the AE warmup phase."""
+        return self.vae.parameters()
+
+    def freeze_after_pretraining(self) -> None:
+        """One-shot codec freeze at the phase transition. ``_set_codec_mode``
+        re-applies it every step in phase 2 (surviving Lightning's per-step
+        train() and checkpoint resume)."""
+        self.vae.eval()
+        for p in self.vae.parameters():
+            p.requires_grad_(False)
+
+    def pretraining_loss(self, input_ids: torch.Tensor) -> torch.Tensor:
+        """Codec-only objective: K-scaled reconstruction CE + annealed
+        free-bits KL. The global transformer and energy head are not run."""
+        padded = self._pad_to_chunk(input_ids)
+        mean, logvar = self.vae.encode(padded)
+        z = self.vae.reparameterize(mean, logvar)
+        recon_hidden = self.vae.decode(z)
+        recon_logits = self._classify(recon_hidden)
+        recon_loss = F.cross_entropy(
+            recon_logits.reshape(-1, self.vae.vocab_size),
+            padded.reshape(-1),
+            ignore_index=self.pad_token_id,
+        )
+        kl = self.vae.kl_divergence(mean, logvar, per_dim_clip=self.kl_clip).mean()
+        beta_t = self._current_kl_beta()
+        loss = self.K * recon_loss + beta_t * kl
+
+        self._train_step += 1
+        self._last_recon_loss = recon_loss.detach()
+        self._stash_diagnostics(mean, logvar, recon_loss, kl, beta_t)
+        self._diag["calm_ae_frozen"] = 0.0
+        self._update_pretrain_convergence(float(recon_loss.detach()))
+        return loss
+
+    @dynamo.disable()
+    def _update_pretrain_convergence(self, recon: float) -> None:
+        """Latch ``_pretrain_done`` when recon stops improving or the cap is
+        reached. Convergence = relative drop across the window below EPS."""
+        if bool(self._pretrain_done.item()):
+            return
+        self._recon_hist.append(recon)
+        if len(self._recon_hist) > PRETRAIN_WINDOW:
+            self._recon_hist.pop(0)
+        step = self._opt_step()
+        if step >= self.ae_max_pretrain_steps:
+            self._mark_pretrain_done(step, "max-steps cap")
+            return
+        if len(self._recon_hist) >= PRETRAIN_WINDOW:
+            n = len(self._recon_hist)
+            mean_x = (n - 1) / 2.0
+            mean_y = sum(self._recon_hist) / n
+            cov = sum(
+                (i - mean_x) * (v - mean_y) for i, v in enumerate(self._recon_hist)
+            )
+            var = sum((i - mean_x) ** 2 for i in range(n))
+            slope = cov / var if var > 0 else 0.0
+            rel = abs(slope * n) / (mean_y + 1e-9)
+            if rel < PRETRAIN_SLOPE_EPS:
+                self._mark_pretrain_done(step, f"converged (rel d={rel:.4f})")
+
+    def _mark_pretrain_done(self, step: int, reason: str) -> None:
+        self._pretrain_done.fill_(True)
+        print(
+            f"[CALM] AE pretraining complete at optimizer step {step} "
+            f"({reason}); freezing codec, energy LM begins."
+        )
+
+    # ------------------------------------------------------------------
     # Core
     # ------------------------------------------------------------------
 
@@ -420,6 +531,13 @@ class CALMEncoder(BaseEncoder):
         self._diag["calm_ae_frozen"] = 1.0 if frozen else 0.0
         if self.training:
             self._train_step += 1
+            # Drive the pretraining-phase convergence detector from the
+            # always-run codec path: freeze once reconstruction stops
+            # improving. (The model-side hard lock that also skips the global
+            # transformer during this phase is an optional optimization layered
+            # on top via the BaseEncoder pretraining hooks.)
+            if self.requires_pretraining and not frozen:
+                self._update_pretrain_convergence(float(recon_loss.detach()))
 
         # LM input = embed_proj(K token embeddings per patch). Independent
         # of z, so the AR/energy loss naturally can't reach the VAE encoder.
@@ -486,7 +604,7 @@ class CALMEncoder(BaseEncoder):
         # survives torch.compile - see encode(). encode() increments the step
         # before decode() runs, so _ae_is_frozen() here is True whenever encode
         # zeroed encoder_loss, guaranteeing stage 2 always has a grad path.
-        if self.ae_freeze_steps > 0:
+        if self.requires_pretraining or self.ae_freeze_steps > 0:
             energy_active = self._ae_is_frozen()
         else:
             energy_active = self._opt_step() >= self.energy_warmup_steps
@@ -554,7 +672,13 @@ class CALMEncoder(BaseEncoder):
         return int(self._train_step.item()) // self._grad_accum
 
     def _ae_is_frozen(self) -> bool:
-        """True in stage 2 of two-stage training (codec read-only)."""
+        """True once the codec is read-only: after pretraining converges (new
+        path), or past the step boundary (legacy joint mode)."""
+        if self.requires_pretraining:
+            if bool(self._pretrain_done.item()):
+                return True
+            # Optional explicit boundary (manual override / tests). Normally 0.
+            return self.ae_freeze_steps > 0 and self._opt_step() >= self.ae_freeze_steps
         return self.ae_freeze_steps > 0 and (self._opt_step() >= self.ae_freeze_steps)
 
     @dynamo.disable()

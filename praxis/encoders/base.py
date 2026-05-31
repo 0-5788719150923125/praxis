@@ -70,6 +70,33 @@ class BaseEncoder(nn.Module, ABC):
         """Pop side-channel losses registered during the last decode()."""
         return {}
 
+    # ------------------------------------------------------------------
+    # Optional self-supervised pretraining phase (e.g. CALM's autoencoder
+    # warmup). Defaults make this a no-op, so standard encoders are
+    # unaffected. While in_pretraining() is True the model locks everything
+    # except pretraining_parameters() and trains only pretraining_loss().
+    # ------------------------------------------------------------------
+
+    def in_pretraining(self) -> bool:
+        """True while the encoder still needs its isolated pretraining phase.
+        The rest of the model stays locked until this returns False."""
+        return False
+
+    def pretraining_loss(self, input_ids: torch.Tensor) -> torch.Tensor:
+        """Self-supervised objective for the pretraining phase. Only called
+        while ``in_pretraining()`` is True; the global transformer is skipped."""
+        raise NotImplementedError
+
+    def pretraining_parameters(self):
+        """Parameters that remain trainable during the pretraining phase.
+        Everything else in the model is locked. Defaults to none."""
+        return ()
+
+    def freeze_after_pretraining(self) -> None:
+        """Fired once when the pretraining phase ends (e.g. freeze the codec).
+        The rest of the model is unlocked immediately afterward."""
+        return None
+
     def custom_generate(
         self,
         inputs: Optional[torch.Tensor] = None,
