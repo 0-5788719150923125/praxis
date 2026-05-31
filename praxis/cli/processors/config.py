@@ -148,13 +148,19 @@ class ConfigBuilder:
 
         # Handle optimizer configuration
         if hasattr(args, "optimizer") and args.optimizer:
-            from praxis.optimizers import get_optimizer_profile
+            from praxis.optimizers import (
+                get_optimizer_profile,
+                wrappers_disable_schedule,
+            )
 
-            # Check for schedule-related flags
+            wrappers = list(getattr(args, "optimizer_wrappers", None) or [])
+
+            # Schedule-free-family wrappers (and --fixed-schedule) run with no
+            # LR schedule.
             disable_schedule = any(
                 [
                     getattr(args, "fixed_schedule", False),
-                    getattr(args, "schedule_free", False),
+                    wrappers_disable_schedule(wrappers),
                 ]
             )
 
@@ -165,14 +171,8 @@ class ConfigBuilder:
             if "optimizer_config" in valid_config_params:
                 config_kwargs["optimizer_config"] = optimizer_config
 
-            # Add optimizer wrappers if they're valid config params
             if "optimizer_wrappers" in valid_config_params:
-                config_kwargs["optimizer_wrappers"] = {
-                    "trac": getattr(args, "trac", False),
-                    "ortho": getattr(args, "ortho", False),
-                    "lookahead": getattr(args, "lookahead", False),
-                    "schedule_free": getattr(args, "schedule_free", False),
-                }
+                config_kwargs["optimizer_wrappers"] = wrappers
 
         # Filter out any kwargs that aren't valid for PraxisConfig
         filtered_kwargs = {

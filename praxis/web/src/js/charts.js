@@ -146,6 +146,23 @@ export function updateChartColors() {
     Object.values(charts).forEach(applyChartTheme);
 }
 
+// A theme toggle only changes CSS-variable colors, but the deck cards are GPU-composited
+// (will-change: transform, opacity), and a composited layer does NOT re-rasterize its
+// text on a pure variable change - so the fan cards behind the head keep stale font
+// colors (card 1 updates, 2-4 don't). A layout flush isn't enough; we have to dirty an
+// actual PAINT property. Nudge each card's background this frame (forces a repaint, which
+// re-rasterizes the text with the now-current --text), then clear it next frame. The
+// nudge value is invisible (0.001 alpha) so nothing flickers.
+export function repaintDeckCards() {
+    if (typeof document === 'undefined') return;
+    const cards = document.querySelectorAll('.chart-deck .chart-card');
+    if (!cards.length) return;
+    cards.forEach((c) => { c.style.backgroundColor = 'rgba(0, 0, 0, 0.001)'; });
+    requestAnimationFrame(() => {
+        cards.forEach((c) => { c.style.backgroundColor = ''; });
+    });
+}
+
 /**
  * Load available runs (local on-disk + remote agents) into a unified list
  */

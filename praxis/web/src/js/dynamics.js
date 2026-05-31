@@ -1401,12 +1401,167 @@ function renderCorrMatrix(canvas, data) {
     canvas._harmonicRAF = requestAnimationFrame(tick);
 }
 
+/** 2D convex hull (monotone chain) of {x, y} points - a block's silhouette. */
+function convexHull2D(pts) {
+    const p = pts.slice().sort((a, b) => a.x - b.x || a.y - b.y);
+    if (p.length < 3) return p;
+    const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+    const lower = [];
+    for (const q of p) {
+        while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], q) <= 0) lower.pop();
+        lower.push(q);
+    }
+    const upper = [];
+    for (let i = p.length - 1; i >= 0; i--) {
+        const q = p[i];
+        while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], q) <= 0) upper.pop();
+        upper.push(q);
+    }
+    lower.pop(); upper.pop();
+    return lower.concat(upper);
+}
+
+/**
+ * Harmonic staircase renderer: the frequency-domain sibling of the spiral. The
+ * head sends one block per harmonic (amplitude + Weyl phase); we stack them by
+ * energy rank, fan them around a column by phase, size them by amplitude, and
+ * draw shaded 3D boxes. A faint silhouette under each block keeps it from
+ * blinking out edge-on. Slow camera spin for depth; no fake data motion.
+ */
+function renderHarmonicStaircase(canvas, data) {
+    if (canvas._harmonicRAF) cancelAnimationFrame(canvas._harmonicRAF);
+    const steps = Array.isArray(data.steps) ? data.steps : [];
+    if (!steps.length) return;
+
+    const ctx = canvas.getContext('2d');
+    const TILT = 24 * Math.PI / 180, HEIGHT = 2.4;
+    const LIGHT = [0.4, -0.4, 0.82];
+    const n = steps.length;
+    let frame = 0, cachedTheme = null, accent = [26, 161, 121];
+    const parseRGB = (s) => { const m = (s || '').match(/\d+/g); return m ? [+m[0], +m[1], +m[2]] : [26, 161, 121]; };
+
+    const draw = () => {
+        if (!canvas.isConnected) { canvas._harmonicRAF = null; return; }
+        if (cachedTheme !== state.theme) { cachedTheme = state.theme; accent = parseRGB(readAccentColor()); }
+
+        const wrapper = canvas.parentElement;
+        const w = wrapper.clientWidth || 800, h = wrapper.clientHeight || 400;
+        if (w < 2 || h < 2) { canvas._harmonicRAF = requestAnimationFrame(draw); return; }
+        if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+
+        const { textColor, gridColor } = getThemeColors();
+        ctx.clearRect(0, 0, w, h);
+        ctx.fillStyle = gridColor;
+        ctx.fillRect(0, 0, w, h);
+
+        const cx = w / 2, cy = h / 2, scale = Math.min(w, h) * 0.22;
+        const cosA = Math.cos(frame * 0.0022), sinA = Math.sin(frame * 0.0022);
+        const cosE = Math.cos(TILT), sinE = Math.sin(TILT);
+        const project = (x, y, z) => {
+            const Xs = x * cosA - y * sinA, Ys = x * sinA + y * cosA;
+            return { sx: cx + Xs * scale, sy: cy - (z * cosE - Ys * sinE) * scale, depth: Ys * cosE + z * sinE, wx: Xs, wy: Ys, wz: z };
+        };
+
+        const faces = [];
+        for (let i = 0; i < n; i++) {
+            const s = steps[i];
+            const a = Math.max(0, Math.min(1, s.a));
+            const fnorm = Math.max(0, Math.min(1, s.fnorm || 0));
+            const wz = (n > 1 ? i / (n - 1) : 0.5) * HEIGHT - HEIGHT / 2;
+            // Position around the column by phase; radius spread by frequency
+            // (a real per-plank value), with a base so nothing piles at center.
+            const ang = s.phase, rad = 0.8 + 1.2 * fnorm;
+            const ccx = rad * Math.cos(ang), ccy = rad * Math.sin(ang);
+            // Long 2x4 plank: length dominates; width by amplitude, thickness by
+            // frequency (low freq = thicker). Oriented along its frequency dir.
+            const L = 0.5 + 0.25 * a;
+            const hx = L / 2, hy = L * (0.08 + 0.06 * a), hz = L * (0.04 + 0.05 * (1 - fnorm));
+            const alpha = s.yaw;
+            const ca = Math.cos(alpha), sa = Math.sin(alpha);
+            const corners = [];
+            for (const sz of [-hz, hz])
+                for (const sy of [-hy, hy])
+                    for (const sx of [-hx, hx]) {
+                        const lx = sx * ca - sy * sa, ly = sx * sa + sy * ca;
+                        corners.push(project(ccx + lx, ccy + ly, wz + sz));
+                    }
+            let bx = 0, by = 0, bz = 0;  // block center (post-spin) for outward test
+            for (const c of corners) { bx += c.wx; by += c.wy; bz += c.wz; }
+            bx /= 8; by /= 8; bz /= 8;
+            // Faint silhouette so the plank never blinks out when seen edge-on.
+            faces.push({ type: 'hull', depth: by * cosE + bz * sinE, hull: convexHull2D(corners.map(c => ({ x: c.sx, y: c.sy }))) });
+            const C = (ix, iy, iz) => corners[iz * 4 + iy * 2 + ix];
+            const facedefs = [
+                [[0,0,1],[1,0,1],[1,1,1],[0,1,1]], [[0,0,0],[0,1,0],[1,1,0],[1,0,0]],
+                [[0,0,0],[1,0,0],[1,0,1],[0,0,1]], [[0,1,0],[0,1,1],[1,1,1],[1,1,0]],
+                [[0,0,0],[0,0,1],[0,1,1],[0,1,0]], [[1,0,0],[1,1,0],[1,1,1],[1,0,1]],
+            ];
+            for (const fd of facedefs) {
+                const p = fd.map(([ix, iy, iz]) => C(ix, iy, iz));
+                const e1 = [p[1].wx - p[0].wx, p[1].wy - p[0].wy, p[1].wz - p[0].wz];
+                const e2 = [p[2].wx - p[0].wx, p[2].wy - p[0].wy, p[2].wz - p[0].wz];
+                let nx = e1[1]*e2[2]-e1[2]*e2[1], ny = e1[2]*e2[0]-e1[0]*e2[2], nz = e1[0]*e2[1]-e1[1]*e2[0];
+                const nl = Math.hypot(nx, ny, nz) || 1;
+                nx /= nl; ny /= nl; nz /= nl;
+                // orient normal outward, then cull faces pointing away from camera
+                const fcx = (p[0].wx+p[1].wx+p[2].wx+p[3].wx)/4;
+                const fcy = (p[0].wy+p[1].wy+p[2].wy+p[3].wy)/4;
+                const fcz = (p[0].wz+p[1].wz+p[2].wz+p[3].wz)/4;
+                if (nx*(fcx-bx) + ny*(fcy-by) + nz*(fcz-bz) < 0) { nx = -nx; ny = -ny; nz = -nz; }
+                if (ny*cosE + nz*sinE <= 0) continue;  // back-face: camera views along (0, cosE, sinE)
+                const ndl = Math.max(0, nx*LIGHT[0]+ny*LIGHT[1]+nz*LIGHT[2]);
+                faces.push({ type: 'face', p, bright: 0.42 + 0.58 * ndl, depth: (p[0].depth+p[1].depth+p[2].depth+p[3].depth)/4 });
+            }
+        }
+        faces.sort((u, v) => u.depth - v.depth);  // painter's: far first
+
+        // central column behind the blocks
+        const c0 = project(0, 0, -HEIGHT/2), c1 = project(0, 0, HEIGHT/2);
+        ctx.strokeStyle = withAlpha(textColor, 0.15);
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(c0.sx, c0.sy); ctx.lineTo(c1.sx, c1.sy); ctx.stroke();
+
+        for (const f of faces) {
+            if (f.type === 'hull') {
+                if (f.hull.length < 2) continue;
+                ctx.beginPath();
+                ctx.moveTo(f.hull[0].x, f.hull[0].y);
+                for (let k = 1; k < f.hull.length; k++) ctx.lineTo(f.hull[k].x, f.hull[k].y);
+                ctx.closePath();
+                ctx.fillStyle = withAlpha(`rgb(${accent[0]}, ${accent[1]}, ${accent[2]})`, 0.1);
+                ctx.fill();
+                continue;
+            }
+            ctx.beginPath();
+            ctx.moveTo(f.p[0].sx, f.p[0].sy);
+            for (let k = 1; k < 4; k++) ctx.lineTo(f.p[k].sx, f.p[k].sy);
+            ctx.closePath();
+            const b = f.bright;
+            ctx.fillStyle = `rgb(${Math.round(accent[0]*b)}, ${Math.round(accent[1]*b)}, ${Math.round(accent[2]*b)})`;
+            ctx.fill();
+            ctx.strokeStyle = withAlpha(textColor, 0.12);
+            ctx.lineWidth = 0.5;
+            ctx.stroke();
+        }
+
+        ctx.fillStyle = textColor;
+        ctx.font = '12px sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText(`${n} harmonics · height = energy, angle = phase, plank = frequency`, w - 6, 16);
+
+        frame++;
+        canvas._harmonicRAF = requestAnimationFrame(draw);
+    };
+    canvas._harmonicRAF = requestAnimationFrame(draw);
+}
+
 const SNAPSHOT_RENDERERS = {
     heatmap_2d: renderHeatmap2D,
     harmonic_spiral: renderHarmonicSpiral,
     harmonic_curve: renderHarmonicCurve,
     field_traces: renderFieldTraces,
     corr_matrix: renderCorrMatrix,
+    harmonic_staircase: renderHarmonicStaircase,
 };
 
 /**

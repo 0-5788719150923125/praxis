@@ -64,7 +64,6 @@ class HarmonicWeightRLCallback(Callback):
         self._editable = None  # cached candidate params
         self._anchor: dict = {}  # name -> frozen weight snapshot (anchor_gate)
         self._sf = None  # cached ScheduleFreeWrapper (see _schedulefree)
-        self._sf_resolved = False
 
     # ------------------------------------------------------------------
 
@@ -76,19 +75,23 @@ class HarmonicWeightRLCallback(Callback):
         average ``x``. So an in-place edit to ``p.data`` alone is smeared by the
         x/z bookkeeping rather than applied cleanly - we must edit ``z`` too.
         """
-        if not self._sf_resolved:
-            self._sf_resolved = True
-            for opt in getattr(trainer, "optimizers", None) or []:
-                o, depth = opt, 0
-                while o is not None and depth < 6:  # unwrap Lightning/other wrappers
-                    if type(o).__name__ == "ScheduleFreeWrapper":
-                        self._sf = o
-                        break
-                    o = getattr(o, "optimizer", None)
-                    depth += 1
-                if self._sf is not None:
-                    break
-        return self._sf
+        if self._sf is not None:
+            return self._sf
+        # Cache only on success and retry otherwise: trainer.optimizers may not
+        # be populated at the first episode, and caching None would silently
+        # disable wave mode (and z-mirroring) for the whole run.
+        from pytorch_optimizer.optimizer import ScheduleFreeWrapper
+
+        for opt in getattr(trainer, "optimizers", None) or []:
+            o, depth = opt, 0
+            while o is not None and depth < 6:  # unwrap Lightning/other wrappers
+                # isinstance catches GatedScheduleFree/WaveScheduleFree subclasses.
+                if isinstance(o, ScheduleFreeWrapper):
+                    self._sf = o
+                    return self._sf
+                o = getattr(o, "optimizer", None)
+                depth += 1
+        return None
 
     def _sf_z(self, trainer, param):
         """The base iterate ``z`` schedule-free carries for ``param``, or None.
@@ -221,7 +224,47 @@ class HarmonicWeightRLCallback(Callback):
             trainer.callback_metrics[k] = torch.tensor(float(v))
 
     @torch.no_grad()
+    def _start_wave_episode(self, trainer, model):
+        """Wave mode: the action drives the WaveScheduleFree optimizer's
+        standing-wave gate (amp, cycles, phase) instead of editing weights.
+        Rollback just restores the three scalars - no weight surgery."""
+        sf = self._schedulefree(trainer)
+        if sf is None or not hasattr(sf, "set_wave"):
+            return  # needs a WaveScheduleFree optimizer (optimizer_wrappers)
+
+        # Global grad-norm summary feeds the state's third feature.
+        gnorm, n = 0.0, 0
+        for _, p in self._candidate_params(model):
+            if p.grad is not None:
+                gnorm += float(p.grad.norm())
+                n += 1
+        state = self._make_state(self._loss_ema or 0.0, gnorm / max(n, 1))
+        raw, _ = self.policy.act(state)
+        amp, cycles, phase = (float(x) for x in self.policy.map_wave_action(raw))
+
+        prev = (sf.wave_amp, sf.wave_cycles, sf.wave_phase)
+        sf.set_wave(amp=amp, cycles=cycles, phase=phase)
+        self._episode = {
+            "state": state,
+            "raw": raw,
+            "sf": sf,
+            "wave_prev": prev,
+            "L_before": self._loss_ema,
+            "reward_ema": None,
+            "end_step": self._step + self.horizon,
+            # Reuse the registered rl_action_* keys (amp/cycles/phase).
+            "meta": {
+                "rl_action_alpha": amp,
+                "rl_action_omega": cycles,
+                "rl_action_phi": phase,
+            },
+        }
+
+    @torch.no_grad()
     def _start_episode(self, trainer, model):
+        if self.edit_mode == "wave":
+            self._start_wave_episode(trainer, model)
+            return
         cands = self._candidate_params(model)
         if not cands:
             return
@@ -290,9 +333,13 @@ class HarmonicWeightRLCallback(Callback):
         # both p.data and the schedule-free iterate z so the rollback is clean.
         if reward < self.keep_threshold:
             with torch.no_grad():
-                ep["param"].data[ep["row"]] = ep["original"]
-                if ep.get("z") is not None:
-                    ep["z"][ep["row"]] = ep["z_original"]
+                if "param" in ep:  # weight-edit modes: restore the row (and z)
+                    ep["param"].data[ep["row"]] = ep["original"]
+                    if ep.get("z") is not None:
+                        ep["z"][ep["row"]] = ep["z_original"]
+                elif "wave_prev" in ep:  # wave mode: restore the wave scalars
+                    amp, cycles, phase = ep["wave_prev"]
+                    ep["sf"].set_wave(amp=amp, cycles=cycles, phase=phase)
             kept = 0.0
         else:
             kept = 1.0

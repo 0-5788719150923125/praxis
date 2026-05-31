@@ -10,4 +10,4 @@ vocab_size: 4096
 attention_type: modular
 strategy: naive
 tie_weights: true
-schedule_free: true
+optimizer_wrappers: [schedule_free]

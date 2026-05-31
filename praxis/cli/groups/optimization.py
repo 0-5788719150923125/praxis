@@ -2,6 +2,7 @@
 
 from praxis import LOSS_REGISTRY, STRATEGIES_REGISTRY
 from praxis.optimizers import OPTIMIZER_PROFILES
+from praxis.optimizers.wrappers import WRAPPER_REGISTRY
 from praxis.tasks import TASK_WEIGHTER_REGISTRY
 
 
@@ -65,26 +66,20 @@ class OptimizationGroup:
             ),
         )
 
-        # Optimizer wrappers
+        # Optimizer wrappers: an ordered, stackable list of registry keys
+        # (applied innermost-first), replacing the old --trac/--ortho/
+        # --lookahead/--schedule-free booleans.
         group.add_argument(
-            "--trac",
-            action="store_true",
-            default=False,
-            help="Wrap the optimizer in TRAC, which can mitigate the loss of plasticity over time",
-        )
-
-        group.add_argument(
-            "--ortho",
-            action="store_true",
-            default=False,
-            help="Wrap the optimizer in OrthoGrad, projecting gradients to be orthogonal to parameters",
-        )
-
-        group.add_argument(
-            "--lookahead",
-            action="store_true",
-            default=False,
-            help="Wrap the optimizer in Lookahead",
+            "--optimizer-wrappers",
+            nargs="*",
+            default=[],
+            choices=sorted(WRAPPER_REGISTRY.keys()),
+            metavar="WRAPPER",
+            help=(
+                "Optimizer wrappers to stack, in order. Choices: "
+                + ", ".join(sorted(WRAPPER_REGISTRY.keys()))
+                + ". E.g. --optimizer-wrappers ortho gated_schedule_free"
+            ),
         )
 
         group.add_argument(
@@ -92,11 +87,4 @@ class OptimizationGroup:
             action="store_true",
             default=False,
             help="Use a fixed (constant) learning rate schedule",
-        )
-
-        group.add_argument(
-            "--schedule-free",
-            action="store_true",
-            default=False,
-            help="Use the Schedule-Free optimizer wrapper",
         )

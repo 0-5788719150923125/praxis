@@ -242,6 +242,23 @@ class HarmonicField(nn.Module):
                 "order": 104,
             },
         },
+        # Frequency-domain sibling of the spiral: the harmonic ladder as a tower
+        # of blocks, ranked by energy and placed by frozen Weyl phase.
+        "harmonic_staircase": {
+            "description": (
+                "Each block is one harmonic: stacked by energy (biggest at the "
+                "base, tapering into the sky), angled around the column by its "
+                "frozen Weyl phase, sized by amplitude. Where the spiral walks "
+                "position, this walks frequency - a tall narrow climb means a "
+                "few harmonics dominate; a broad scattered one means many do."
+            ),
+            "snapshot": {
+                "title": "Harmonic Staircase",
+                "renderer": "harmonic_staircase",
+                "group": "harmonic_head",
+                "order": 105,
+            },
+        },
     }
 
     def __init__(
@@ -508,6 +525,49 @@ class HarmonicField(nn.Module):
             "max_count": 1.0,
         }
 
+    def staircase(self, n_steps: int = 48) -> dict:
+        """The harmonic ladder as ascending planks: each step is one harmonic.
+
+        Where the spiral walks position, this walks the frequency/phase
+        structure. Harmonics are ranked by energy (biggest at the base, tapering
+        upward) and placed around a column by their frozen Weyl ``phase``. Each
+        plank is oriented (``yaw``) along its own frequency direction
+        ``atan2(f_d, f_t)`` rather than toward the center, and ``fnorm`` (radial
+        frequency) plus amplitude drive its cross-section. Deterministic, and
+        distinctly non-spiral.
+        """
+        with torch.no_grad():
+            amps = self.amplitudes.detach().cpu()
+            env = self._envelope()
+            if env is not None:
+                amps = amps * env.detach().cpu().unsqueeze(1)
+            c = torch.complex(self.spec_real.cpu(), self.spec_imag.cpu()) * amps
+            mag = c.abs().flatten()
+            phase = torch.angle(c).flatten()
+            n = min(int(n_steps), mag.numel())
+            order = torch.argsort(mag, descending=True)[:n]
+            sel = mag[order] / mag[order].max().clamp_min(1e-8)
+            sel_phase = phase[order]
+            # recover (f_t, f_d) per harmonic: orientation along its own
+            # frequency direction, thickness from its radial frequency.
+            ft = (order // self.F_d + 1).float()
+            fd = (order % self.F_d + 1).float()
+            yaw = 2.0 * torch.atan2(fd, ft)  # x2 so planks span a full half-turn
+            # radial frequency, min-maxed over the shown set so thickness varies
+            # (the top harmonics are all low-freq; a global norm would be flat).
+            r = torch.sqrt(ft * ft + fd * fd)
+            fnorm = (r - r.min()) / (r.max() - r.min()).clamp_min(1e-8)
+            steps = [
+                {
+                    "a": float(sel[i].item()),
+                    "phase": float(sel_phase[i].item()),
+                    "yaw": float(yaw[i].item()),
+                    "fnorm": float(fnorm[i].item()),
+                }
+                for i in range(n)
+            ]
+        return {"steps": steps, "n": int(n)}
+
     def concentration(self) -> Tensor:
         """Hoyer sparsity of the amplitude grid in [0, 1].
 
@@ -650,6 +710,7 @@ class HarmonicHead(BaseHead):
             "harmonic_curve": self.field.curve(),
             "harmonic_traces": self.field.traces(),
             "harmonic_correlation": self.field.correlation(),
+            "harmonic_staircase": self.field.staircase(),
         }
 
     def training_metrics(self) -> dict:

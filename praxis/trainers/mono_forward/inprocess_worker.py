@@ -62,7 +62,7 @@ class LocalLayerWorker:
         device: torch.device,
         strategy: Optional[Any] = None,
         optimizer_config: Optional[Dict[str, Any]] = None,
-        optimizer_wrappers: Optional[Dict[str, bool]] = None,
+        optimizer_wrappers: Optional[list] = None,
         warmup_steps: int = 0,
         disable_schedule: bool = False,
         lr: float = 1e-3,
@@ -91,7 +91,7 @@ class LocalLayerWorker:
         self.optimizer = build_optimizer(
             shim=self._param_shim,
             optimizer_config=optimizer_config,
-            wrappers=optimizer_wrappers or {},
+            wrappers=optimizer_wrappers or [],
             fallback_lr=lr,
             criterion=self.criterion,
             strategy=self.strategy,

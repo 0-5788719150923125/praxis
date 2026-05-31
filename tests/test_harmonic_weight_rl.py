@@ -195,6 +195,59 @@ def test_schedulefree_rollback_restores_both_weight_and_z():
     assert all(torch.equal(b, p) for b, p in zip(w_before, model.parameters()))
 
 
+def test_wave_mode_drives_and_rolls_back_the_optimizer_wave():
+    # edit_mode="wave": the controller's action sets the WaveScheduleFree wave
+    # (amp, cycles, phase); a non-helpful change restores the three scalars.
+    from praxis.optimizers.wave_schedule_free import WaveScheduleFree
+
+    torch.manual_seed(0)
+    policy = HarmonicWeightPolicy(_cfg())
+    cb = HarmonicWeightRLCallback(
+        policy, period=3, horizon=2, warmup_steps=3, keep_threshold=0.0,
+        edit_mode="wave",
+    )
+    model = nn.Sequential(nn.Linear(8, 8), nn.Linear(8, 4))
+    sf = WaveScheduleFree(torch.optim.SGD(model.parameters(), lr=1e-3), momentum=0.9)
+    sf.train()
+    model(torch.randn(2, 8)).sum().backward()  # populate grads for the state
+    wave_before = (sf.wave_amp, sf.wave_cycles, sf.wave_phase)
+
+    tr, pl = _Trainer(), _PL(model)
+    tr.optimizers = [sf]
+    # Rising loss -> negative return -> the wave change is rolled back.
+    for ls in [3.0, 3.0, 3.0, 4.0, 6.0]:
+        cb.on_train_batch_end(tr, pl, torch.tensor(ls), None, 0)
+
+    assert cb._metrics["rl_edit_kept"] == 0.0
+    assert (sf.wave_amp, sf.wave_cycles, sf.wave_phase) == wave_before
+    # The action was published under the reused rl_action_* keys.
+    assert "rl_action_alpha" in cb._metrics  # = amp
+
+
+def test_wave_mode_keeps_helpful_wave_change():
+    from praxis.optimizers.wave_schedule_free import WaveScheduleFree
+
+    torch.manual_seed(0)
+    policy = HarmonicWeightPolicy(_cfg())
+    cb = HarmonicWeightRLCallback(
+        policy, period=3, horizon=2, warmup_steps=3, keep_threshold=0.0,
+        edit_mode="wave",
+    )
+    model = nn.Sequential(nn.Linear(8, 8), nn.Linear(8, 4))
+    sf = WaveScheduleFree(torch.optim.SGD(model.parameters(), lr=1e-3), momentum=0.9)
+    sf.train()
+    model(torch.randn(2, 8)).sum().backward()
+    wave_before = (sf.wave_amp, sf.wave_cycles, sf.wave_phase)
+
+    tr, pl = _Trainer(), _PL(model)
+    tr.optimizers = [sf]
+    for ls in [5.0, 5.0, 5.0, 4.0, 2.0]:  # dropping loss -> kept
+        cb.on_train_batch_end(tr, pl, torch.tensor(ls), None, 0)
+
+    assert cb._metrics["rl_edit_kept"] == 1.0
+    assert (sf.wave_amp, sf.wave_cycles, sf.wave_phase) != wave_before  # wave moved
+
+
 def test_gate_mask_selectors_are_deterministic():
     from praxis.policies.harmonic_weight_rl import build_gate_mask
 

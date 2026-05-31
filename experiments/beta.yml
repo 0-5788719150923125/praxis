@@ -25,7 +25,7 @@ norm_type: sandwich
 halting_type: kl
 strategy: naive
 tie_weights: true
-schedule_free: true
+optimizer_wrappers: [schedule_free]
 train_datasets: [base, chat]
 data_path: ["/opt/platformer"]
 sampler_mode: uniform

@@ -236,8 +236,8 @@ class MonoForwardTrainer:
         self.optimizer_config: Optional[Dict[str, Any]] = trainer_params.get(
             "optimizer_config"
         )
-        self.optimizer_wrappers: Dict[str, bool] = dict(
-            trainer_params.get("optimizer_wrappers") or {}
+        self.optimizer_wrappers: list = list(
+            trainer_params.get("optimizer_wrappers") or []
         )
         self.warmup_steps: int = int(trainer_params.get("warmup_steps") or 0)
         self.disable_schedule: bool = bool(

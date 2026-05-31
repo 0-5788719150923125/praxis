@@ -129,12 +129,7 @@ def assemble_trainer(
         dashboard_url=api_server.get_api_addr() if api_server else None,
         accumulate_grad_batches=accumulate_grad_batches,
         optimizer_config=bundle.optimizer_config,
-        optimizer_wrappers={
-            "trac": cfg.trac,
-            "ortho": cfg.ortho,
-            "lookahead": cfg.lookahead,
-            "schedule_free": cfg.schedule_free,
-        },
+        optimizer_wrappers=list(cfg.optimizer_wrappers),
         warmup_steps=warmup_steps,
         disable_schedule=bundle.disable_schedule,
         # val_every is in effective steps; the trainer converts to raw

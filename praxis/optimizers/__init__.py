@@ -1,10 +1,14 @@
 from pytorch_optimizer import create_optimizer
-from pytorch_optimizer.optimizer import TRAC, Lookahead, OrthoGrad, ScheduleFreeWrapper
 
 from praxis.optimizers.param_counter import (
     count_model_parameters,
     count_optimizer_parameters,
     get_parameter_stats,
+)
+from praxis.optimizers.wrappers import (
+    WRAPPER_REGISTRY,
+    SequentialWrapper,
+    wrappers_disable_schedule,
 )
 
 
@@ -51,31 +55,17 @@ def _promote_tasker_lr(optimizer, model) -> None:
                 return
 
 
-def get_optimizer(
-    model,
-    trac=False,
-    ortho=False,
-    lookahead=False,
-    schedule_free=False,
-    *args,
-    **kwargs,
-):
-    weight_decay = kwargs.get("weight_decay", 0.0)
-    if schedule_free:
-        kwargs["lr"] *= 2.0  # Increase the learning rate by 2-10x
-        kwargs["weight_decay"] = 0.0  # Disable weight decay in the base optimizer
+def get_optimizer(model, wrappers=(), *args, **kwargs):
+    """Build the base optimizer and apply a sequence of registry wrappers.
+
+    ``wrappers`` is an ordered list of WRAPPER_REGISTRY keys (e.g.
+    ``["ortho", "schedule_free"]``), applied innermost-first. Schedule-free
+    wrappers handle their own lr/weight-decay prep, so nothing here is
+    special-cased.
+    """
     optimizer = create_optimizer(model, *args, **kwargs)
     _promote_tasker_lr(optimizer, model)
-    if trac:
-        optimizer = TRAC(optimizer, num_coefs=128)
-    if ortho:
-        optimizer = OrthoGrad(optimizer)
-    if lookahead:
-        optimizer = Lookahead(optimizer, k=5, alpha=0.5, pullback_momentum="none")
-    if schedule_free:
-        optimizer = ScheduleFreeWrapper(
-            optimizer, momentum=0.98, r=0, weight_decay=weight_decay
-        )
+    optimizer = SequentialWrapper(wrappers)(optimizer)
     if hasattr(optimizer, "train"):
         optimizer.train()
     return optimizer
@@ -115,10 +105,7 @@ def build_optimizer_and_scheduler(
 
     optimizer = get_optimizer(
         model,
-        trac=cfg.trac,
-        ortho=cfg.ortho,
-        lookahead=cfg.lookahead,
-        schedule_free=cfg.schedule_free,
+        wrappers=cfg.optimizer_wrappers,
         **optimizer_config,
     )
 

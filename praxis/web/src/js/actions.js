@@ -6,7 +6,7 @@
 import { state } from './state.js';
 import { render, renderNotifications } from './render.js';
 import { storage, readFormValues, FORM_FIELDS } from './config.js';
-import { toggleRunSelector, toggleRunSelection } from './charts.js';
+import { toggleRunSelector, toggleRunSelection, repaintDeckCards } from './charts.js';
 import { toggleDynamicsRunSelector, selectDynamicsRun } from './dynamics.js';
 import { loadResearchMetrics, loadDynamics, toggleSpecRunSelector, selectSpecRun } from './tabs.js';
 import { sendMessage, testApiConnection } from './api.js';
@@ -160,6 +160,11 @@ export const ACTION_HANDLERS = {
         import('./dynamics.js').then(({ updateDynamicsChartColors }) => {
             updateDynamicsChartColors();
         });
+
+        // Force the composited fan cards to re-rasterize so their font colors follow the
+        // new theme (a CSS-var change alone leaves cards 2-4 stale). Next frame, after the
+        // DOM has settled.
+        requestAnimationFrame(repaintDeckCards);
     },
 
     /**

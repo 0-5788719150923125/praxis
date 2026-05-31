@@ -13,6 +13,19 @@ from typing import Any, Dict, List, Optional
 from praxis.utils import coerce_to_list
 
 
+def _resolve_optimizer_wrappers(get) -> List[str]:
+    """Ordered optimizer-wrapper keys. An explicit ``optimizer_wrappers`` list
+    wins; otherwise the legacy --trac/--ortho/--lookahead/--schedule-free
+    booleans are translated (deprecated, for un-migrated configs)."""
+    wrappers = list(coerce_to_list(get("optimizer_wrappers", [])) or [])
+    if wrappers:
+        return wrappers
+    for legacy in ("trac", "ortho", "lookahead", "schedule_free"):
+        if get(legacy, False):
+            wrappers.append(legacy)
+    return wrappers
+
+
 @dataclass
 class RunConfig:
     """All per-run settings, resolved from processed CLI arguments."""
@@ -38,12 +51,11 @@ class RunConfig:
     tokenizer_num_examples: int = 5_000_000
     tokenizer_train_vocab_size: int = 16384
 
-    # Optimizer wrappers / schedule
+    # Optimizer wrappers / schedule. optimizer_wrappers is an ordered list of
+    # WRAPPER_REGISTRY keys (e.g. ["schedule_free"]); the old --trac/--ortho/
+    # --lookahead/--schedule-free flags collapsed into it.
     fixed_schedule: bool = False
-    schedule_free: bool = False
-    trac: bool = False
-    ortho: bool = False
-    lookahead: bool = False
+    optimizer_wrappers: List[str] = field(default_factory=list)
     disable_schedule: bool = False
 
     # Training loop
@@ -136,10 +148,7 @@ class RunConfig:
             tokenizer_num_examples=get("tokenizer_num_examples", 5_000_000),
             tokenizer_train_vocab_size=get("tokenizer_train_vocab_size", 16384),
             fixed_schedule=get("fixed_schedule", False),
-            schedule_free=get("schedule_free", False),
-            trac=get("trac", False),
-            ortho=get("ortho", False),
-            lookahead=get("lookahead", False),
+            optimizer_wrappers=_resolve_optimizer_wrappers(get),
             disable_schedule=get("disable_schedule", False),
             max_steps=get("max_steps"),
             val_every=get("val_every", 1024),

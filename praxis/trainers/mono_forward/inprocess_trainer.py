@@ -299,7 +299,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                 self._encoder_optimizer = build_optimizer(
                     shim=encoder_shim,
                     optimizer_config=self.optimizer_config,
-                    wrappers=self.optimizer_wrappers or {},
+                    wrappers=self.optimizer_wrappers or [],
                     fallback_lr=1e-3,
                     criterion=torch.nn.Identity(),
                     strategy=None,

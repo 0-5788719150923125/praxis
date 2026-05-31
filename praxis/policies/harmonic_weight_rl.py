@@ -129,6 +129,19 @@ class HarmonicWeightPolicy(nn.Module):
         phi = math.pi * torch.tanh(raw[..., 2])
         return threshold, omega, phi
 
+    def map_wave_action(self, raw: torch.Tensor):
+        """Map the raw action to WaveScheduleFree's wave: (amp, cycles, phase).
+
+        ``amp`` in [0, 1] is the gate depth; ``cycles`` in [0, 2*omega_max]
+        is the number of oscillations across each tensor (the zero-action
+        midpoint is ``omega_max``, matching the optimizer's frozen default of
+        ``pi`` cycles); ``phase`` in [-pi, pi]. Same 3-D action and policy.
+        """
+        amp = torch.sigmoid(raw[..., 0])
+        cycles = 2.0 * self.omega_max * torch.sigmoid(raw[..., 1])
+        phase = math.pi * torch.tanh(raw[..., 2])
+        return amp, cycles, phase
+
     def update(
         self, state: torch.Tensor, raw_action: torch.Tensor, reward: float
     ) -> Dict[str, float]:

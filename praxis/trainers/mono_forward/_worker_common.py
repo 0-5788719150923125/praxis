@@ -36,7 +36,7 @@ class ActorParamShim(nn.Module):
 def build_optimizer(
     shim: ActorParamShim,
     optimizer_config: Optional[Dict[str, Any]],
-    wrappers: Dict[str, bool],
+    wrappers: list,
     fallback_lr: float,
     criterion: nn.Module,
     strategy: Optional[Any],
@@ -45,9 +45,9 @@ def build_optimizer(
 
     When an ``optimizer_config`` dict is provided (i.e. the trainer
     was constructed via main.py), this routes through
-    :func:`praxis.optimizers.get_optimizer` with the same args the
-    backprop path would use, so --optimizer / --trac / --lookahead /
-    --schedule-free / etc. all honor their CLI flags under MF.
+    :func:`praxis.optimizers.get_optimizer` with the same wrapper keys the
+    backprop path would use (``--optimizer`` / ``--optimizer-wrappers``), so
+    they all honor their CLI selection under MF.
 
     When no config is provided (direct-construction unit tests),
     falls back to ``torch.optim.Adam(params, lr=fallback_lr)``.
@@ -61,14 +61,7 @@ def build_optimizer(
 
     from praxis.optimizers import get_optimizer
 
-    optimizer = get_optimizer(
-        shim,
-        trac=bool(wrappers.get("trac", False)),
-        ortho=bool(wrappers.get("ortho", False)),
-        lookahead=bool(wrappers.get("lookahead", False)),
-        schedule_free=bool(wrappers.get("schedule_free", False)),
-        **optimizer_config,
-    )
+    optimizer = get_optimizer(shim, wrappers=list(wrappers or []), **optimizer_config)
     extras: list = []
     extras += [p for p in criterion.parameters() if p.requires_grad]
     if strategy is not None and isinstance(strategy, nn.Module):
