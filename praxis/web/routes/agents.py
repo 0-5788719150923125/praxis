@@ -343,37 +343,116 @@ def get_agents():
     return response
 
 
+# Joined-expert lifecycle: browser AGREEs add experts tied to a browser session
+# id and stamped with a last-seen time. They are NOT permanent - a sweep prunes
+# any whose session hasn't pinged within this TTL, so closing/refreshing the tab
+# eventually reclaims them instead of leaking experts into the pool forever.
+_JOIN_TTL_SECONDS = 30.0
+
+
+def _prune_joined(pool) -> int:
+    """Drop joined experts whose owning session has gone silent past the TTL."""
+    import time
+
+    now = time.monotonic()
+    removed = 0
+    for e in list(pool.experts):
+        seen = getattr(e, "_join_last_seen", None)
+        if seen is not None and (now - seen) > _JOIN_TTL_SECONDS:
+            pool.remove(e.uid)
+            removed += 1
+    return removed
+
+
 @agents_bp.route("/api/swarm/join", methods=["POST"])
 def swarm_join():
-    """Add N experts to the live remote-expert pool (a browser AGREE joins here).
+    """Add experts to the live pool for a browser session (an AGREE joins here).
 
-    Grows the in-process pool so the count rises on both dashboards and in
-    /api/agents. No-op (404) when no pool is active.
+    Idempotent per session: re-AGREEing from the same tab refreshes the session's
+    heartbeat and tops its experts up to ``count`` rather than stacking new ones,
+    so refreshes don't inflate the pool. Experts are TTL-pruned (see
+    ``_prune_joined``). No-op (404) when no pool is active.
     """
+    import time
+
+    from torch import nn
+
+    from praxis.orchestration import LocalExpert
     from praxis.orchestration import status as pool_status
 
     pool = pool_status.get_pool()
     if pool is None:
         return jsonify({"joined": 0, "error": "no active pool"}), 404
 
-    count = 1
+    body = request.get_json(silent=True) or {}
     try:
-        body = request.get_json(silent=True) or {}
         count = max(1, min(64, int(body.get("count", 1))))
     except Exception:
         count = 1
+    session = str(body.get("session", "") or "anon")
 
-    from torch import nn
+    # Reclaim stale experts first so a long-running pool doesn't drift upward.
+    _prune_joined(pool)
 
-    from praxis.orchestration import LocalExpert
-
+    now = time.monotonic()
     dim = int(getattr(pool, "_join_dim", 14))
     vocab = int(getattr(pool, "_join_vocab", 16))
-    base = len(pool.experts)
-    for i in range(count):
+    # Experts already owned by this session - refresh their heartbeat.
+    mine = [e for e in pool.experts if getattr(e, "_join_session", None) == session]
+    for e in mine:
+        e._join_last_seen = now
+    # Top up to the requested count for this session (don't stack on refresh).
+    for i in range(max(0, count - len(mine))):
         block = nn.Sequential(nn.Linear(dim, dim), nn.SiLU())
-        pool.add(
-            LocalExpert(f"joined-{base + i}", block, hidden_size=dim, vocab_size=vocab)
+        exp = LocalExpert(
+            f"joined-{session[:6]}-{len(mine) + i}",
+            block, hidden_size=dim, vocab_size=vocab,
         )
+        exp._join_session = session
+        exp._join_last_seen = now
+        pool.add(exp)
     cap = pool.capacity()  # republish so dashboards update immediately
-    return jsonify({"joined": count, "experts_total": cap["experts_total"]})
+    return jsonify({"session": session, "experts_total": cap["experts_total"]})
+
+
+@agents_bp.route("/api/swarm/heartbeat", methods=["POST"])
+def swarm_heartbeat():
+    """Keep a browser session's joined experts alive (called periodically by the
+    tab). Also runs the prune sweep so silent sessions are reclaimed."""
+    import time
+
+    from praxis.orchestration import status as pool_status
+
+    pool = pool_status.get_pool()
+    if pool is None:
+        return jsonify({"ok": False}), 404
+    body = request.get_json(silent=True) or {}
+    session = str(body.get("session", "") or "anon")
+    now = time.monotonic()
+    for e in pool.experts:
+        if getattr(e, "_join_session", None) == session:
+            e._join_last_seen = now
+    _prune_joined(pool)
+    pool.capacity()
+    return jsonify({"ok": True})
+
+
+@agents_bp.route("/api/swarm/batch", methods=["GET"])
+def swarm_batch():
+    """The latest real training batch (token-id rows over the swarm's tiny vocab)
+    for a browser agent to train on. Bounded depth 1: always the freshest batch,
+    so a slow browser never falls behind a growing queue - it just skips ahead.
+    Clients pass ``?since=<seq>`` to avoid re-training the same batch; returns
+    ``{batch: null}`` when nothing newer is available."""
+    from praxis.orchestration import status as pool_status
+
+    batch = pool_status.latest_batch()
+    if batch is None:
+        return jsonify({"batch": None})
+    try:
+        since = int(request.args.get("since", -1))
+    except Exception:
+        since = -1
+    if batch["seq"] <= since:
+        return jsonify({"batch": None})  # nothing newer; client stays put
+    return jsonify({"batch": batch})

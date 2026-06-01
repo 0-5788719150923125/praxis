@@ -26,7 +26,9 @@ Introspected from the live Flask app at every launch. Each summary is the first 
 ### Agents
 
 - **GET** `/api/agents` - Get git remotes as peer agents with their online/offline status. ([source](../praxis/web/routes/agents.py#L25))
-- **POST** `/api/swarm/join` - Add N experts to the live remote-expert pool (a browser AGREE joins here). ([source](../praxis/web/routes/agents.py#L346))
+- **GET** `/api/swarm/batch` - The latest real training batch (token-id rows over the swarm's tiny vocab) for a browser agent to train on. Bounded depth 1: always the freshest batch, so a slow browser never falls behind a growing queue - it just skips ahead. Clients pass ``?since=<seq>`` to avoid re-training the same batch; returns ``{batch: null}`` when nothing newer is available. ([source](../praxis/web/routes/agents.py#L440))
+- **POST** `/api/swarm/heartbeat` - Keep a browser session's joined experts alive (called periodically by the tab). Also runs the prune sweep so silent sessions are reclaimed. ([source](../praxis/web/routes/agents.py#L418))
+- **POST** `/api/swarm/join` - Add experts to the live pool for a browser session (an AGREE joins here). ([source](../praxis/web/routes/agents.py#L367))
 
 ### Core
 

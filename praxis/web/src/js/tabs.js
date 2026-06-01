@@ -357,10 +357,41 @@ export function toggleContractsView() {
     if (btn) btn.classList.toggle('active', state.contracts.open);
 }
 
+// Stable per-tab session id, so this browser's backend experts are owned by it
+// and reclaimed (TTL-pruned) when the tab goes away - joins don't leak across
+// refreshes or accumulate on every AGREE.
+let _swarmSession = null;
+function swarmSession() {
+    if (!_swarmSession) {
+        _swarmSession = `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+        startSwarmHeartbeat();
+    }
+    return _swarmSession;
+}
+
+// Keep this session's backend experts alive while the tab is open. The backend
+// prunes sessions that stop pinging, so closing the tab frees its experts.
+let _swarmHeartbeatTimer = null;
+function startSwarmHeartbeat() {
+    if (_swarmHeartbeatTimer) return;
+    _swarmHeartbeatTimer = setInterval(() => {
+        if (!_swarmSession) return;
+        fetch('/api/swarm/heartbeat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session: _swarmSession }),
+        }).catch(() => {});
+    }, 10000);
+}
+
 /**
  * Agree to a contract: spawn a browser ship locally AND join the backend pool
- * (so the expert-pool count / remote_layers grow), then re-render the fleet.
- * Leaves the contracts panel open.
+ * for this tab's session (so the expert-pool count / remote_layers grow), then
+ * re-render the fleet. Leaves the contracts panel open.
+ *
+ * The join is idempotent per session: it tops the backend up to the number of
+ * browser ships this tab holds rather than stacking a new expert each click, so
+ * the pool reflects the tab's real agent count and never inflates on refresh.
  */
 export async function agreeContract(contractId) {
     const contract = state.contracts.available.find(c => c.id === contractId);
@@ -373,7 +404,10 @@ export async function agreeContract(contractId) {
         const res = await fetch('/api/swarm/join', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ count: 1 }),
+            body: JSON.stringify({
+                session: swarmSession(),
+                count: state.contracts.agents.length,  // top up to this tab's ships
+            }),
         });
         if (res.ok) {
             const data = await fetchAPI('agents');

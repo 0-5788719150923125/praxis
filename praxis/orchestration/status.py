@@ -18,6 +18,24 @@ _status: Dict[str, Any] = {}
 _experts: list = []
 _metrics: Dict[str, Any] = {}  # sampled pool-wide training metrics
 _pool = None  # the live ExpertPool, registered by ExpertPoolCallback
+_batch: Optional[Dict[str, Any]] = None  # latest real batch for browser agents
+_batch_seq = 0  # monotonic id so streamers/clients can skip already-seen batches
+
+
+def publish_batch(ids: list, targets: list) -> None:
+    """Publish the latest real training batch (token-id rows, downsampled to the
+    swarm's tiny vocab/seq) for browser agents to train on. Bounded depth 1:
+    each call overwrites the previous, so a slow consumer simply trains on the
+    freshest batch and never builds a backlog - the drop-the-stale policy."""
+    global _batch, _batch_seq
+    with _lock:
+        _batch_seq += 1
+        _batch = {"seq": _batch_seq, "ids": ids, "targets": targets}
+
+
+def latest_batch() -> Optional[Dict[str, Any]]:
+    with _lock:
+        return None if _batch is None else dict(_batch)
 
 
 def publish_metrics(metrics: Dict[str, Any]) -> None:
@@ -59,12 +77,13 @@ def publish(capacity: Dict[str, Any], experts: Optional[list] = None) -> None:
 
 
 def clear() -> None:
-    global _status, _experts, _metrics, _pool
+    global _status, _experts, _metrics, _pool, _batch
     with _lock:
         _status = {}
         _experts = []
         _metrics = {}
         _pool = None
+        _batch = None
 
 
 def snapshot() -> Dict[str, Any]:

@@ -32,6 +32,10 @@ from torch import nn
 from praxis.orchestration import ExpertPool, LocalExpert, SidecarManager
 from praxis.orchestration import status as pool_status
 
+# Browser agents train on short id sequences over the tiny swarm vocab; the
+# backend publishes real batches downsampled to this shape (matches swarm.js SEQ).
+SEQ = 8
+
 
 def _make_local_expert(uid: str, dim: int, vocab: int) -> LocalExpert:
     """A dependency-free in-process expert (one tiny block + projection)."""
@@ -111,6 +115,24 @@ class ExpertPoolCallback(Callback):
             acts = self._embed(inp)
         return acts, tgt
 
+    def _publish_browser_batch(self, batch) -> None:
+        """Publish one real batch as token-id rows for browser agents to train on.
+
+        Browser agents carry their own embedding over the swarm's tiny vocab, so
+        they want *ids* (not activations), folded into [0, vocab) and capped to a
+        short sequence. Bounded depth 1 (newest wins) - the queue can never grow.
+        """
+        ids = batch["input_ids"] if isinstance(batch, dict) else batch
+        if ids is None or getattr(ids, "dim", lambda: 0)() != 2 or ids.shape[1] < 2:
+            return
+        # One row, capped length, folded into the tiny vocab via modulo (a stable
+        # surjection - real token structure survives, just wrapped).
+        row = ids[0, : SEQ + 1].detach().to("cpu").long()
+        row = (row % self.vocab).tolist()
+        if len(row) < 2:
+            return
+        pool_status.publish_batch(row[:-1], row[1:])
+
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx) -> None:
         if trainer.local_rank != 0:
             return
@@ -130,6 +152,13 @@ class ExpertPoolCallback(Callback):
                     self.pool.infer(acts)
                 except Exception:
                     pass
+        # Publish the real batch (as ids) for browser agents - every drive step,
+        # newest-wins, so remote peers train on the actual data the model sees.
+        if batch_idx % self.drive_every == 0:
+            try:
+                self._publish_browser_batch(batch)
+            except Exception:
+                pass
         # Sample the pool cheaply at logging intervals (read each expert's
         # already-computed EMAs - no recompute), publish for the live dashboards,
         # and log scalars so they flow to the metrics DB -> /api/metrics -> the

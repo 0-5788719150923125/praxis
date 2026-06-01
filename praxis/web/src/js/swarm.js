@@ -86,29 +86,50 @@ export class SwarmAgent {
     }
 
     /**
-     * Begin participating. The agent runs observer-mode training on locally
-     * generated batches - real Mono-Forward updates, detached, not contributing
-     * back to any model - so it reports OBSERVE (blue) like its backend siblings.
-     * (The seam to feed it the backend's actual batches over the wire is the same
-     * stub noted on tick(); locally generated data keeps it genuinely learning
-     * and live until then.)
+     * Begin participating. The agent pulls the backend's REAL training batches
+     * (downsampled to the swarm's tiny vocab) and runs observer-mode Mono-Forward
+     * updates on them - detached, not contributing back - so it reports OBSERVE
+     * (blue) on real data, like its backend siblings.
+     *
+     * Backpressure / drop policy: the backend buffer is depth 1 (newest wins),
+     * and here a `_busy` guard skips any tick whose fetch or training step is
+     * still running. So if the model trains faster than this tab can keep up,
+     * stale batches are simply dropped - the queue can never grow unbounded.
+     * If no new batch is available (or the backend has no pool), it falls back to
+     * a local heartbeat so the agent stays alive.
      */
     start() {
         if (this._timer) return;
-        const step = () => {
-            // A locally generated id-batch: input ids and next-token targets.
-            const ids = Array.from({ length: SEQ }, () => Math.floor(Math.random() * VOCAB));
-            this.tick(ids.slice(0, -1), ids.slice(1));
+        this._busy = false;
+        this._lastSeq = -1;
+        const step = async () => {
+            if (this._busy) return; // drop: previous step still in flight
+            this._busy = true;
+            try {
+                const res = await fetch(`/api/swarm/batch?since=${this._lastSeq}`);
+                const data = res.ok ? await res.json() : null;
+                const b = data && data.batch;
+                if (b && Array.isArray(b.ids) && b.ids.length >= 1) {
+                    this._lastSeq = b.seq;
+                    this.tick(b.ids, b.targets); // train on the REAL batch -> OBSERVE
+                } else {
+                    this.heartbeat(); // nothing new -> stay alive, don't flip OBSERVE
+                }
+            } catch (e) {
+                this.heartbeat(); // offline / no backend -> heartbeat only
+            } finally {
+                this._busy = false;
+            }
         };
-        step(); // one immediately so the row shows OBSERVE right away
+        step();
         this._timer = setInterval(step, TRAIN_MS);
     }
 
     /**
      * One heartbeat: a real forward pass through the model (greedy 1-token
-     * continuation), with NO backprop - proof of life and a pass to count. When
-     * a transport starts driving the agent, work flows through the same counter
-     * and tick() adds the layer-wise update.
+     * continuation), with NO backprop - proof of life when no real batch is
+     * available. Keeps the agent alive (counts a pass) but does not flip it to
+     * OBSERVE; only training on a real batch (tick) does that.
      */
     heartbeat() {
         this.model.generate(HEARTBEAT_IDS, 1); // forward only; result discarded
