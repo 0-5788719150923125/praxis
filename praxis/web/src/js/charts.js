@@ -1213,7 +1213,13 @@ function setAnchor(deck, target) {
     if (!isMobileDeck()) { deck._anchor = deck._anchorTarget = 1; return; }
     target = target ? 1 : 0;
     deckAnchor[deck.id] = target;
-    if (deck._anchorTarget === target && deck._anchor === target) return;
+    // Already heading there? Let the in-flight ease finish UNINTERRUPTED.
+    // seamAnchor calls this every touchmove; without this guard each frame
+    // rebased _anchorFrom/_anchorT0, restarting the 240ms curve continuously so
+    // the lift crept along with the finger instead of running its own ease. We
+    // only (re)start the curve when the target actually flips (a direction
+    // reversal past the threshold), so A<->B is a smooth curve, not input-coupled.
+    if (deck._anchorTarget === target) return;
     deck._anchorTarget = target;
     deck._anchorFrom = deck._anchor;
     deck._anchorT0 = performance.now();
