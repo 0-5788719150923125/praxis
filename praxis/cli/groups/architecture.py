@@ -17,6 +17,7 @@ from praxis import (
     MEMORY_REGISTRY,
     MTP_REGISTRY,
     NORMALIZATION_REGISTRY,
+    ORCHESTRATION_REGISTRY,
     RESIDUAL_REGISTRY,
     ROUTER_REGISTRY,
     SORTING_REGISTRY,
@@ -95,6 +96,15 @@ class ArchitectureGroup:
             choices=CONTROLLER_REGISTRY.keys(),
             default="base",
             help="Various methods used to route inputs through experts in the decoder",
+        )
+
+        group.add_argument(
+            "--orchestration-type",
+            type=str,
+            choices=ORCHESTRATION_REGISTRY.keys(),
+            default="none",
+            help="Remote-expert pool profile: backend sidecar of tiny experts "
+            "(joinable from the web Stage tab) + a mixing strategy. Default none.",
         )
 
         group.add_argument(

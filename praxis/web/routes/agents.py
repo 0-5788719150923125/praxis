@@ -312,5 +312,68 @@ def get_agents():
     except Exception as e:
         return jsonify({"agents": [], "error": str(e)}), 200
 
+    # Backend-hosted swarm experts (orchestration sidecar). These join the same
+    # Hangar/Wire list as the git-remote peers and the browser ships. The
+    # frontend applies the type's naming convention (arc-N) - names label the
+    # agent *type* (the unified tiny transformer), not unique identities, so they
+    # may repeat across backend/browser. An expert that has taken local steps on
+    # real batches is a passive OBSERVE-r (blue); one that hasn't is IDLE. (They
+    # never contribute back to the model yet - see the RemoteLayer stub.)
+    try:
+        from praxis.orchestration import status as pool_status
+
+        for exp in pool_status.experts():
+            steps = int(exp.get("steps", 0) or 0)
+            agents.append(
+                {
+                    "uid": exp.get("uid"),
+                    "url": "sidecar://localhost",
+                    "status": "observe" if steps > 0 else "idle",
+                    "type": "expert",
+                    "kind": "backend",
+                    "rank": exp.get("rank"),
+                    "passes": exp.get("passes"),
+                    "steps": steps,
+                }
+            )
+    except Exception:
+        pass
+
     response = jsonify({"agents": agents})
     return response
+
+
+@agents_bp.route("/api/swarm/join", methods=["POST"])
+def swarm_join():
+    """Add N experts to the live remote-expert pool (a browser AGREE joins here).
+
+    Grows the in-process pool so the count rises on both dashboards and in
+    /api/agents. No-op (404) when no pool is active.
+    """
+    from praxis.orchestration import status as pool_status
+
+    pool = pool_status.get_pool()
+    if pool is None:
+        return jsonify({"joined": 0, "error": "no active pool"}), 404
+
+    count = 1
+    try:
+        body = request.get_json(silent=True) or {}
+        count = max(1, min(64, int(body.get("count", 1))))
+    except Exception:
+        count = 1
+
+    from torch import nn
+
+    from praxis.orchestration import LocalExpert
+
+    dim = int(getattr(pool, "_join_dim", 14))
+    vocab = int(getattr(pool, "_join_vocab", 16))
+    base = len(pool.experts)
+    for i in range(count):
+        block = nn.Sequential(nn.Linear(dim, dim), nn.SiLU())
+        pool.add(
+            LocalExpert(f"joined-{base + i}", block, hidden_size=dim, vocab_size=vocab)
+        )
+    cap = pool.capacity()  # republish so dashboards update immediately
+    return jsonify({"joined": count, "experts_total": cap["experts_total"]})

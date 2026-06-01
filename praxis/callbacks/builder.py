@@ -134,6 +134,25 @@ def build_training_callbacks(
     if progress_bar is not None and not cfg.headless:
         callbacks.append(progress_bar)
 
+    # Remote-expert pool (orchestration): spins up the Node sidecar of tiny
+    # experts and drives the pool each step. Added before TerminalInterface so
+    # the pool status is fresh when the terminal callback paints remote_layers.
+    # Profile-driven (--orchestration-type); None disables it.
+    from praxis.orchestration import get_orchestration_profile
+
+    _orch = get_orchestration_profile(getattr(config, "orchestration_type", "none"))
+    if _orch:
+        from praxis.callbacks.lightning import ExpertPoolCallback
+
+        callbacks.append(
+            ExpertPoolCallback(
+                mixing=_orch.get("mixing", "vote"),
+                sidecar=_orch.get("sidecar", True),
+                init_experts=int(_orch.get("init_experts", 4)),
+                vocab=int(getattr(config, "vocab_size", 16) or 16),
+            )
+        )
+
     # TerminalInterface routes dashboard/console output and manages the
     # dashboard internally when use_dashboard=True.
     callbacks.append(

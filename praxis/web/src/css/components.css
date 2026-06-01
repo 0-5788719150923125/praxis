@@ -1333,24 +1333,20 @@
 
 /* ==================== Stage: Swarm Contracts ==================== */
 
-/* The CONTRACTS toggle reads as a neutral chip until active, when it adopts the
-   accent - matching the SYSTEM/LOGS switcher idiom on the Terminal tab. */
-.contracts-toggle {
-    background: none;
-    border: 1px solid var(--border);
-    color: var(--light-text);
-}
-
-.contracts-toggle:hover {
-    border-color: var(--accent);
-    color: var(--text);
-    background: none;
-}
-
+/* The CONTRACTS toggle is solid green (the brand accent) by default, and
+   collapses to a neutral grey chip once active/open. Inherits the generic
+   .tab-header-button look at rest; the active rule overrides it to grey. */
 .contracts-toggle.active {
-    background: hsl(var(--accent-hue) var(--accent-sat) var(--accent-lum) / 0.15);
+    background: none !important;
+    border: 1px solid var(--border);
+    color: var(--light-text) !important;
+    transform: none;
+}
+
+.contracts-toggle.active:hover {
     border-color: var(--accent);
-    color: var(--accent);
+    color: var(--text) !important;
+    background: none !important;
 }
 
 /* Slide-out contracts panel: collapsed by default, expands above the fleet list
@@ -1478,6 +1474,27 @@
     background-color: var(--light-text);
 }
 
+/* OBSERVE status badge (blue): passively training on real backend batches but
+   not contributing back to the model's activations. Pulses to read as "live". */
+.agent-status.observe {
+    background-color: rgba(47, 111, 208, 0.12);
+    color: #2f6fd0;
+}
+
+[data-theme="dark"] .agent-status.observe {
+    background-color: rgba(106, 169, 238, 0.18);
+    color: #6aa9ee;
+}
+
+.status-dot.observe {
+    background-color: #2f6fd0;
+    animation: pulse 2s infinite;
+}
+
+[data-theme="dark"] .status-dot.observe {
+    background-color: #6aa9ee;
+}
+
 /* Spawned-agent status doubles as a SEVER button: shows the status at rest,
    flips to red SEVER on hover/focus (clicking tears down the connection). */
 .agent-sever {
@@ -1494,29 +1511,36 @@
     letter-spacing: 0.05em;
 }
 
+/* `.armed` mirrors hover for touch devices: the first tap arms (reveals SEVER),
+   the second confirms (see SEVER_AGENT in actions.js). */
 .agent-sever:hover,
-.agent-sever:focus-visible {
+.agent-sever:focus-visible,
+.agent-sever.armed {
     background-color: rgba(204, 0, 0, 0.12);
     color: #cc0000;
     outline: none;
 }
 
 [data-theme="dark"] .agent-sever:hover,
-[data-theme="dark"] .agent-sever:focus-visible {
+[data-theme="dark"] .agent-sever:focus-visible,
+[data-theme="dark"] .agent-sever.armed {
     background-color: rgba(204, 0, 0, 0.2);
     color: #ff5b5b;
 }
 
-/* On hover/focus, swap the status (dot + label) for the SEVER label. */
+/* On hover/focus/armed, swap the status (dot + label) for the SEVER label. */
 .agent-sever:hover .status-dot,
 .agent-sever:focus-visible .status-dot,
+.agent-sever.armed .status-dot,
 .agent-sever:hover .agent-status-label,
-.agent-sever:focus-visible .agent-status-label {
+.agent-sever:focus-visible .agent-status-label,
+.agent-sever.armed .agent-status-label {
     display: none;
 }
 
 .agent-sever:hover .agent-sever-label,
-.agent-sever:focus-visible .agent-sever-label {
+.agent-sever:focus-visible .agent-sever-label,
+.agent-sever.armed .agent-sever-label {
     display: inline;
 }
 

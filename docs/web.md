@@ -26,6 +26,7 @@ Introspected from the live Flask app at every launch. Each summary is the first 
 ### Agents
 
 - **GET** `/api/agents` - Get git remotes as peer agents with their online/offline status. ([source](../praxis/web/routes/agents.py#L25))
+- **POST** `/api/swarm/join` - Add N experts to the live remote-expert pool (a browser AGREE joins here). ([source](../praxis/web/routes/agents.py#L346))
 
 ### Core
 

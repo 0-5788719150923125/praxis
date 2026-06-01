@@ -42,6 +42,23 @@ class BaseDecoder(nn.Module):
         self.locals = nn.ModuleList()
         self.remotes: List[nn.Module] = []
 
+        # Remote-expert pool (orchestration). A registered submodule so the swarm
+        # has a visible home in the model blueprint, alongside ``locals``. Passive
+        # observer for now - identity in forward, NOT added to the routing experts
+        # (see ExpertPoolLayer). Only present when --orchestration-type is set.
+        from praxis.orchestration import get_orchestration_profile
+
+        _orch = get_orchestration_profile(getattr(config, "orchestration_type", "none"))
+        if _orch:
+            from praxis.orchestration.layer import ExpertPoolLayer
+
+            self.swarm = ExpertPoolLayer(
+                profile_name=config.orchestration_type,
+                mixing=_orch.get("mixing", "vote"),
+                sidecar=_orch.get("sidecar", True),
+                init_experts=int(_orch.get("init_experts", 4)),
+            )
+
         # Call integration hooks for decoder initialization
         # This allows integrations like Hivemind to inject their management systems
         self._call_integration_hooks(config)
@@ -220,10 +237,18 @@ class BaseDecoder(nn.Module):
                         # Metrics already have layer prefixes from router
                         extras.update(router_metrics)
 
+        # The remote count includes the live expert pool (orchestration), so the
+        # dashboards' remote_layers reflects the swarm growing as peers join.
+        remote_count = len(self.remotes)
+        if getattr(self, "swarm", None) is not None:
+            from praxis.orchestration import status as _pool_status
+
+            remote_count += int(_pool_status.snapshot().get("experts_alive", 0))
+
         return {
             "layers": dict(
                 local=len(self.locals),
-                remote=len(self.remotes),
+                remote=remote_count,
             ),
             **extras,
         }

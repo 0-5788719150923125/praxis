@@ -456,6 +456,8 @@ export function getStatusBaseColor(status, theme) {
             return accentRgb(); // brand accent (green, or blue in logs mode)
         case 'archived':
             return isDark ? hexToRgb('#5b8fc9') : hexToRgb('#00274c'); // blue
+        case 'observe':
+            return isDark ? hexToRgb('#6aa9ee') : hexToRgb('#2f6fd0'); // blue (passive observer)
         case 'offline':
             return isDark ? hexToRgb('#b0b0b0') : hexToRgb('#666666'); // grey
         case 'ambiguous':

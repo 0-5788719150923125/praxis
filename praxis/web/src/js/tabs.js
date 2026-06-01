@@ -358,14 +358,30 @@ export function toggleContractsView() {
 }
 
 /**
- * Agree to a contract: spawn a browser ship and re-render the Stage so it
- * appears among the fleet. Leaves the contracts panel open.
+ * Agree to a contract: spawn a browser ship locally AND join the backend pool
+ * (so the expert-pool count / remote_layers grow), then re-render the fleet.
+ * Leaves the contracts panel open.
  */
-export function agreeContract(contractId) {
+export async function agreeContract(contractId) {
     const contract = state.contracts.available.find(c => c.id === contractId);
     if (!contract) return;
     spawnAgent(contract);
     renderAgents(state.agents.availableAgents, document.getElementById('agents-container'));
+    // Join the live backend pool. Best-effort: if no pool is active (404) the
+    // local browser ship still stands on its own.
+    try {
+        const res = await fetch('/api/swarm/join', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ count: 1 }),
+        });
+        if (res.ok) {
+            const data = await fetchAPI('agents');
+            renderAgents(data.agents || [], document.getElementById('agents-container'));
+        }
+    } catch (e) {
+        /* offline / no pool - the local ship is enough */
+    }
 }
 
 /**
@@ -389,6 +405,9 @@ const renderAgentCard = (agent, allAgents) => {
     // Browser-spawned ships render with their own info line (dim/layers/passes)
     // and a SEVER button instead of the freshness-colored remote-actor badge.
     if (agent.kind === 'browser') return renderBrowserShipCard(agent);
+    // Backend sidecar experts: same unified tiny transformer, but the app's own
+    // (no SEVER) - a plain OBSERVE/IDLE status badge.
+    if (agent.kind === 'backend') return renderBackendExpertCard(agent);
 
     const statusClass = agent.status || 'offline';
     const statusText = statusClass.charAt(0).toUpperCase() + statusClass.slice(1);
@@ -453,6 +472,29 @@ const renderBrowserShipCard = (agent) => {
 };
 
 /**
+ * Render a backend sidecar expert: the unified tiny transformer hosted by the
+ * app itself (not severable). Reports its rank + forward-pass count and an
+ * OBSERVE (blue) / IDLE status badge.
+ */
+const renderBackendExpertCard = (agent) => {
+    const statusText = (agent.status || 'idle').toUpperCase();
+    const rank = agent.rank != null ? `${agent.rank}x${agent.rank}` : '?';
+    const info = `dim: ${rank} | layers: 1 | passes: ${agent.passes ?? 0}`;
+    return `
+        <div class="agent-row">
+            <div class="agent-info">
+                <div class="agent-name">${escapeHtml(agent.name)} <span class="agent-kind-tag">backend</span></div>
+                <div class="agent-url">${info}</div>
+            </div>
+            <div class="agent-status ${agent.status || 'idle'}">
+                <span class="status-dot ${agent.status || 'idle'}"></span>
+                <span>${statusText}</span>
+            </div>
+        </div>
+    `;
+};
+
+/**
  * Render a single contract row: description + a single AGREE button.
  */
 const renderContractCard = (contract) => `
@@ -495,6 +537,16 @@ export function renderAgents(agents, container) {
     const title = state.theme === 'dark' ? 'Hangar' : 'Wire';
     const ships = agentViews();
     const fleet = [...ships, ...state.agents.availableAgents]; // own ships first
+    // Apply the per-type naming convention here (the frontend owns names; they
+    // label the agent *type*, not identity, so they repeat across sources). All
+    // unified tiny-transformer experts - browser ships and backend sidecar
+    // experts alike - are arc-1, arc-2, ... in list order.
+    let _arc = 0;
+    for (const a of fleet) {
+        if (a.kind === 'browser' || a.kind === 'backend') {
+            a.name = `arc-${++_arc}`;
+        }
+    }
     const headerHTML = createTabHeader({
         title: title,
         buttons: [contractsToggleButton()],
@@ -519,24 +571,52 @@ export function renderAgents(agents, container) {
         <div class="agents-list">${agentsHtml}</div>
     `;
 
-    if (ships.length > 0) ensureFleetRefresh();
+    ensureFleetRefresh();
 }
 
-// Surgically refresh the live counters on browser ships (pass/step count) WITHOUT
-// rebuilding the list - rebuilding mid-hover made the hover highlight flicker to
-// the heartbeat. Started lazily; stops itself when the tab/ships are gone.
+// Keep the Stage fleet live while it's on screen. Two cadences:
+//   - every tick: surgically update browser-ship counters in place (no rebuild,
+//     so a hovered row never flickers to the heartbeat).
+//   - slower: re-fetch /api/agents so backend-spawned experts (arc-N) appear and
+//     update their status/count as the swarm grows.
+// Runs whenever the Stage tab is active (a backend swarm can exist with zero
+// browser ships); stops itself when you leave the tab.
 let _fleetRefreshTimer = null;
+let _fleetTicks = 0;
 function ensureFleetRefresh() {
     if (_fleetRefreshTimer) return;
-    _fleetRefreshTimer = setInterval(() => {
-        if (state.currentTab !== 'agents' || state.contracts.agents.length === 0) {
+    _fleetTicks = 0;
+    _fleetRefreshTimer = setInterval(async () => {
+        if (state.currentTab !== 'agents') {
             clearInterval(_fleetRefreshTimer);
             _fleetRefreshTimer = null;
             return;
         }
+        _fleetTicks += 1;
+        // Surgical browser-ship counter update (cheap, every 2s).
         for (const agent of agentViews()) {
             const el = document.getElementById(`ship-info-${agent.id}`);
             if (el) el.textContent = shipInfoLine(agent);
+        }
+        // Re-fetch the discovered fleet (backend experts) every ~6s and re-render
+        // if the roster changed, so arc-N experts show up as they spawn.
+        if (_fleetTicks % 3 === 0) {
+            try {
+                const data = await fetchAPI('agents');
+                const next = data.agents || [];
+                const prev = state.agents.availableAgents || [];
+                // Compare on identity-ish fields (uid/url + status), since names
+                // are assigned at render time and would always look "changed".
+                const key = (a) => `${a.uid || a.url || ''}:${a.status || ''}`;
+                const changed =
+                    next.length !== prev.length ||
+                    next.some((a, i) => !prev[i] || key(prev[i]) !== key(a));
+                if (changed) {
+                    renderAgents(next, document.getElementById('agents-container'));
+                }
+            } catch (e) {
+                /* transient fetch error - try again next tick */
+            }
         }
     }, 2000);
 }

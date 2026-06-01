@@ -19,13 +19,19 @@
 import { state } from './state.js';
 import { Nanoformer, Adam } from './nanoformer.js';
 
-// Agent lifecycle states. IDLE = spawned and heartbeating, but not yet wired
-// into a live swarm. The rest become reachable once a transport drives work.
+// Agent lifecycle states.
+//   IDLE    - spawned and heartbeating only (no real work). Grey.
+//   OBSERVE - training on real backend batches, but passively: it does the
+//             computation and learns locally, yet does NOT contribute back to
+//             the main model's activations. The current "observer" mode. Blue.
+//   TRAINING- reserved: contributing back into the model forward (the seam is
+//             stubbed; see ExpertPoolCallback / RemoteLayer). Not reachable yet.
 export const AGENT_STATUS = {
-    IDLE: 'idle',             // spawned, heartbeating, awaiting real work
-    CONNECTING: 'connecting', // joining the mesh (future)
-    TRAINING: 'training',     // running online updates (future)
-    SERVING: 'serving',       // answering activation requests (future)
+    IDLE: 'idle',
+    OBSERVE: 'observe',
+    CONNECTING: 'connecting',
+    TRAINING: 'training',
+    SERVING: 'serving',
     PAUSED: 'paused',
     ERROR: 'error',
 };
@@ -38,6 +44,7 @@ const LAYERS = 1;
 const VOCAB = 16;
 const HEARTBEAT_MS = 2000; // how often an idle agent runs a heartbeat pass
 const SEQ = 8;             // sequence length for the heartbeat pass
+const TRAIN_DECAY_MS = 4000; // no training within this window -> decay to IDLE
 
 let _seq = 0;
 
@@ -66,6 +73,7 @@ export class SwarmAgent {
         this.lastBeat = null;     // timestamp of the most recent pass
         this.steps = 0;           // online-update (backprop) steps - 0 while idle
         this.lastLoss = null;     // most recent layer-wise loss (once training)
+        this.lastTrained = null;  // timestamp of the most recent tick() (for decay)
         // A real transformer; same model used by the Mono-Forward training path.
         this.model = new Nanoformer({
             vocab: VOCAB, d: HIDDEN, hidden: HIDDEN_FFN, layers: LAYERS, maxT: SEQ,
@@ -97,17 +105,39 @@ export class SwarmAgent {
     }
 
     /**
-     * One online-update step: a real Mono-Forward layer-wise update over a batch
-     * of (ids, targets). Counts as a forward pass too. This is the hook a live
-     * swarm transport calls once it has work; idle agents never reach it.
+     * One observer-mode update: a real Mono-Forward layer-wise step over a batch
+     * of (ids, targets) sent by the backend. The agent learns locally but its
+     * output does NOT feed back into the main model's activations (passive
+     * observer). Counts as a forward pass; drives the OBSERVE (blue) status.
+     *
+     * STUB (next step): a contribute() that folds the agent's vote back into the
+     * decoder forward - the RemoteLayer seam in praxis/layers/remote.py - would
+     * raise the agent to TRAINING. Not wired yet; today every driven agent is an
+     * observer.
      */
     tick(ids, targets) {
-        this.status = AGENT_STATUS.TRAINING;
         this.lastLoss = this.model.trainLayerWise(ids, targets, this.opts);
         this.steps++;
         this.passes++;
         this.lastBeat = Date.now();
+        this.lastTrained = this.lastBeat;
         return this.lastLoss;
+    }
+
+    /**
+     * Effective status: OBSERVE while it has been fed a real batch within the
+     * decay window (passively training), otherwise it decays back to IDLE. (The
+     * backend keeps calling tick(); when it stops sending batches, the agent
+     * goes quiet again.)
+     */
+    effectiveStatus() {
+        if (this.status === AGENT_STATUS.PAUSED || this.status === AGENT_STATUS.ERROR) {
+            return this.status;
+        }
+        if (this.lastTrained && Date.now() - this.lastTrained < TRAIN_DECAY_MS) {
+            return AGENT_STATUS.OBSERVE;
+        }
+        return AGENT_STATUS.IDLE;
     }
 
     stop() {
@@ -125,7 +155,7 @@ export class SwarmAgent {
             kind: 'browser',
             id: this.id,
             name: this.name,
-            status: this.status,
+            status: this.effectiveStatus(),
             contract: this.contractTitle,
             hidden: this.hidden,
             layers: this.layers,
@@ -137,16 +167,12 @@ export class SwarmAgent {
     }
 }
 
-// Consistent ship name for browser agents. Two-letter NATO-ish prefix + index,
-// so they read as a fleet alongside the discovered actors (e.g. "SHIP-AB-03").
-const SHIP_TAGS = [
-    'ARC', 'BIT', 'CAL', 'DYN', 'ECHO', 'FVN', 'GUN', 'HEX', 'ION', 'JET',
-    'KEL', 'LUX', 'MON', 'NOVA', 'ORB', 'PRX', 'QBIT', 'RHO', 'SOL', 'TAU',
-];
+// Consistent ship name for browser agents: a single tag + incrementing index
+// (e.g. "arc-1", "arc-2"), mirroring the "self-1" convention the discovered
+// actors use, so they read as one fleet.
+const SHIP_TAG = 'arc';
 function shipName(n) {
-    const tag = SHIP_TAGS[n % SHIP_TAGS.length];
-    const idx = String(Math.floor(n / SHIP_TAGS.length) + 1).padStart(2, '0');
-    return `SHIP-${tag}-${idx}`;
+    return `${SHIP_TAG}-${n + 1}`;
 }
 
 /** Spawn an agent for a contract into the live registry and start its heartbeat. */

@@ -10,6 +10,7 @@ from praxis.callbacks.lightning.evaluation import PeriodicEvaluation
 from praxis.callbacks.lightning.harmonic_weight_rl import HarmonicWeightRLCallback
 from praxis.callbacks.lightning.memory_profiler import MemoryProfilerCallback
 from praxis.callbacks.lightning.metrics import MetricsLoggerCallback
+from praxis.callbacks.lightning.orchestration import ExpertPoolCallback
 from praxis.callbacks.lightning.terminal import TerminalInterface
 
 # Registry for Lightning callbacks
@@ -22,6 +23,7 @@ LIGHTNING_CALLBACK_REGISTRY = {
     "brier_lm": BrierLMCallback,
     "memory_profiler": MemoryProfilerCallback,
     "harmonic_weight_rl": HarmonicWeightRLCallback,
+    "expert_pool": ExpertPoolCallback,
 }
 
 __all__ = [
@@ -33,5 +35,6 @@ __all__ = [
     "BrierLMCallback",
     "MemoryProfilerCallback",
     "HarmonicWeightRLCallback",
+    "ExpertPoolCallback",
     "LIGHTNING_CALLBACK_REGISTRY",
 ]

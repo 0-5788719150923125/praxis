@@ -79,6 +79,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--num-heads` | int | `4` | Number of attention heads |
 | `--num-layers` | int | `2` | Number of layer components for controllers |
 | `--num-queries` | int | `2` | Number of queries per attention head (for GQA/MQA) |
+| `--orchestration-type` | str | `none` | Remote-expert pool profile: backend sidecar of tiny experts (joinable from the web Stage tab) + a mixing strategy. Default none. (choices: none, swarm, swarm_mean, swarm_wave, swarm_sidecar, frontend_only) |
 | `--residual-type` | str | `standard` | The style of residual connection to use (choices: standard, hyper) |
 | `--router-type` | str | `None` | How to route tokens at every layer (choices: mixture_of_depths, mixture_of_depths_u, mixture_of_depths_decayed, mixture_of_depths_ramped, mixture_of_depths_skip_2, smear, distance, prismatic, taxus, taxus_aggressive, taxus_balanced) |
 | `--scaled` | bool | `False` | Scale the output of each layer by the inverse square root of its depth |

@@ -212,9 +212,20 @@ export const ACTION_HANDLERS = {
     },
 
     /**
-     * Sever a spawned swarm agent's connection.
+     * Sever a spawned swarm agent's connection. On touch devices (no hover)
+     * this is two-tap: the first tap arms the button (revealing SEVER), the
+     * second confirms. On hover-capable devices SEVER is already shown on
+     * hover, so a single click confirms.
      */
-    SEVER_AGENT: (agentId) => {
+    SEVER_AGENT: (agentId, meta) => {
+        const btn = meta && meta.button;
+        const canHover = window.matchMedia && window.matchMedia('(hover: hover)').matches;
+        if (btn && !canHover && !btn.classList.contains('armed')) {
+            // First tap: arm this button, disarm any others.
+            document.querySelectorAll('.agent-sever.armed').forEach(b => b.classList.remove('armed'));
+            btn.classList.add('armed');
+            return;
+        }
         severSwarmAgent(agentId);
     },
 

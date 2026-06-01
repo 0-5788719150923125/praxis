@@ -49,7 +49,8 @@ export const CLICK_HANDLERS = [
         match: 'closest',
         action: (e) => ({
             type: 'SEVER_AGENT',
-            payload: e.target.closest('.agent-sever').dataset.agentId
+            payload: e.target.closest('.agent-sever').dataset.agentId,
+            meta: { button: e.target.closest('.agent-sever') }
         })
     },
     {

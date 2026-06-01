@@ -15,6 +15,15 @@ class RemoteLayer(LocalLayer):
     """
     A module for handling remote layers in a mixture-of-experts architecture.
     This extends LocalLayer with additional functionality for remote execution.
+
+    STUB - orchestration contribute-back seam (not implemented yet):
+        This is the intended integration point for praxis.orchestration. A future
+        forward() would call ``ExpertPool.infer(hidden_states)`` (the live pool
+        from ExpertPoolCallback) and mix the swarm vote back into the residual
+        stream here, turning the observer-only pool into a real model layer.
+        Browser/sidecar agents that contribute through this path would flip from
+        OBSERVE (blue) to TRAINING. Today the pool is observer-only and this
+        layer's forward does not touch it.
     """
 
     def __init__(

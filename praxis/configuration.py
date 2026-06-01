@@ -29,6 +29,7 @@ class PraxisConfig(PretrainedConfig):
         expert: str = "glu",
         encoding: str = "rope",
         router_type: Optional[str] = None,
+        orchestration_type: str = "none",
         controller_type: str = "base",
         attention_type: str = "modular",
         memory_type: str = "none",

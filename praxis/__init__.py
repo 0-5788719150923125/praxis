@@ -17,7 +17,11 @@ from praxis.memory import MEMORY_PROFILE_DESCRIPTIONS, MEMORY_REGISTRY
 from praxis.modeling import PraxisForCausalLM, PraxisModel
 from praxis.normalization import NORMALIZATION_REGISTRY
 from praxis.optimizers import OPTIMIZER_PROFILES, WRAPPER_REGISTRY
-from praxis.orchestration import EXPERT_REGISTRY
+from praxis.orchestration import (
+    EXPERT_REGISTRY,
+    MIXING_REGISTRY,
+    ORCHESTRATION_REGISTRY,
+)
 from praxis.policies import RL_POLICIES_REGISTRY
 from praxis.recurrent import RECURRENT_REGISTRY
 from praxis.residuals import RESIDUAL_REGISTRY
