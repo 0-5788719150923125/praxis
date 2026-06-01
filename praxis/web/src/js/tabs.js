@@ -477,9 +477,19 @@ const renderAgentCard = (agent, allAgents) => {
     `;
 };
 
-/** The live info line for a ship (dim / layers / passes). */
-const shipInfoLine = (agent) =>
-    `dim: ${agent.hidden}x${agent.hidden} | layers: ${agent.layers} | passes: ${agent.passes}`;
+/** Atomic metric chips for an expert's info line - each is one unbreakable unit
+ * so a narrow screen wraps whole metrics to the next line instead of chopping
+ * one mid-word. Returns inner HTML for the .agent-metrics container. */
+const expertMetricsHtml = (metrics) =>
+    metrics.map(m => `<span class="agent-metric">${m}</span>`).join('');
+
+/** The live metric chips for a ship (dim / layers / passes). */
+const shipMetrics = (agent) =>
+    expertMetricsHtml([
+        `dim ${agent.hidden}x${agent.hidden}`,
+        `layers ${agent.layers}`,
+        `passes ${agent.passes}`,
+    ]);
 
 /**
  * Render a browser-spawned ship: a first-class actor reporting its dims, layer
@@ -493,7 +503,7 @@ const renderBrowserShipCard = (agent) => {
         <div class="agent-row">
             <div class="agent-info">
                 <div class="agent-name">${escapeHtml(agent.name)} <span class="agent-kind-tag">browser</span></div>
-                <div class="agent-url" id="ship-info-${escapeHtml(agent.id)}">${shipInfoLine(agent)}</div>
+                <div class="agent-metrics" id="ship-info-${escapeHtml(agent.id)}">${shipMetrics(agent)}</div>
             </div>
             <button class="agent-status agent-sever ${agent.status}" data-agent-id="${escapeHtml(agent.id)}"
                     title="Sever this agent's connection" aria-label="Sever agent ${escapeHtml(agent.name)}">
@@ -513,12 +523,14 @@ const renderBrowserShipCard = (agent) => {
 const renderBackendExpertCard = (agent) => {
     const statusText = (agent.status || 'idle').toUpperCase();
     const rank = agent.rank != null ? `${agent.rank}x${agent.rank}` : '?';
-    const info = `dim: ${rank} | layers: 1 | passes: ${agent.passes ?? 0}`;
+    const metrics = expertMetricsHtml([
+        `dim ${rank}`, 'layers 1', `passes ${agent.passes ?? 0}`,
+    ]);
     return `
         <div class="agent-row">
             <div class="agent-info">
                 <div class="agent-name">${escapeHtml(agent.name)} <span class="agent-kind-tag">backend</span></div>
-                <div class="agent-url">${info}</div>
+                <div class="agent-metrics">${metrics}</div>
             </div>
             <div class="agent-status ${agent.status || 'idle'}">
                 <span class="status-dot ${agent.status || 'idle'}"></span>
@@ -630,7 +642,7 @@ function ensureFleetRefresh() {
         // Surgical browser-ship counter update (cheap, every 2s).
         for (const agent of agentViews()) {
             const el = document.getElementById(`ship-info-${agent.id}`);
-            if (el) el.textContent = shipInfoLine(agent);
+            if (el) el.innerHTML = shipMetrics(agent);
         }
         // Re-fetch the discovered fleet (backend experts) every ~6s and re-render
         // if the roster changed, so arc-N experts show up as they spawn.

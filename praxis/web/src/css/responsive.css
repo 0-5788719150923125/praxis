@@ -250,6 +250,24 @@
         max-width: none;
         width: auto;
     }
+
+    /* Agent rows: keep the status badge intact on the right and let the info
+       column take the remaining width, wrapping whole metric chips beneath the
+       name rather than colliding with the badge. Tighter padding + a gap give
+       the cramped mobile width room to breathe. */
+    .agent-row {
+        padding: 0.75rem 0.875rem;
+        gap: 0.625rem;
+        align-items: flex-start;
+    }
+
+    .agent-info {
+        min-width: 0;          /* allow the column to shrink so chips wrap */
+    }
+
+    .agent-status {
+        margin-top: 0.125rem;  /* align with the name's cap height */
+    }
 }
 
 /* Ultra-compact mode for very small screens */

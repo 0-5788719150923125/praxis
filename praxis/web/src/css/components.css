@@ -1254,6 +1254,33 @@
     word-break: break-all;
 }
 
+/* Expert metric line: pipe-separated chips, each (with its trailing separator)
+   an unbreakable unit so a narrow screen wraps whole metrics instead of chopping
+   one mid-word. */
+.agent-metrics {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: 0.4rem;
+    row-gap: 0.15rem;
+    font-size: 0.8125rem;
+    color: var(--light-text);
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+}
+
+.agent-metric {
+    white-space: nowrap;
+}
+
+/* Pipe separator hangs off each chip (except the last); the container column-gap
+   spaces the next chip, so the pipe never starts a wrapped line and disappears
+   at the end of a row. */
+.agent-metric:not(:last-child)::after {
+    content: '|';
+    margin-left: 0.4rem;
+    color: var(--border);
+}
+
 .agent-status {
     display: flex;
     align-items: center;
@@ -1262,6 +1289,8 @@
     border-radius: var(--radius-medium);
     font-size: 0.8125rem;
     font-weight: 500;
+    flex-shrink: 0;        /* the badge keeps its size; the info column wraps */
+    white-space: nowrap;
 }
 
 .agent-status.online {
