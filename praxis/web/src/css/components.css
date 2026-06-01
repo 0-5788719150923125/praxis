@@ -961,6 +961,10 @@
     gap: 0.125rem 1rem;
 }
 
+.ld-info-grid[hidden] {
+    display: none;
+}
+
 .ld-info-row {
     display: flex;
     justify-content: space-between;
@@ -978,30 +982,37 @@
     font-weight: bold;
 }
 
-.ld-log-toggle {
+/* SYSTEM / LOGS card switcher - tabs styled like the Gymnasium tool toggles. */
+.ld-card-tabs {
+    display: flex;
+    gap: 0.375rem;
+    margin-bottom: 0.5rem;
+}
+
+.ld-card-tab {
     background: none;
     border: 1px solid var(--term-border);
-    border-radius: 3px;
+    border-radius: var(--radius-small);
     color: var(--term-dim);
     font-family: inherit;
-    font-size: 0.625rem;
-    padding: 0.125rem 0.5rem;
+    font-size: 0.75rem;
+    font-weight: bold;
+    padding: 0.375rem 0.875rem;
     cursor: pointer;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    flex-shrink: 0;
+    letter-spacing: 0.03em;
 }
 
-.ld-log-toggle:hover {
+.ld-card-tab:hover {
+    border-color: var(--accent);
     color: var(--term-fg-strong);
-    border-color: var(--term-dim3);
 }
 
-/* Logs open: the button turns blue and stays blue until toggled off. */
-.ld-log-toggle.active {
-    background: rgba(74, 144, 226, 0.15);
-    border-color: #4A90E2;
-    color: #6aa9ee;
+/* Active tab follows the brand accent, matching .tool-toggle.active: accent in
+   the border + faint fill, neutral text. */
+.ld-card-tab.active {
+    background: hsl(var(--accent-hue) var(--accent-sat) var(--accent-lum) / 0.15);
+    border-color: var(--accent);
+    color: var(--term-fg-strong);
 }
 
 .ld-log-count {
@@ -1009,17 +1020,14 @@
     color: var(--term-faint);
 }
 
-.ld-log-panel {
-    display: none;
+.ld-log-view {
     border: 1px solid var(--term-border-soft);
     border-radius: 4px;
     background: var(--term-panel-alt);
-    margin-bottom: 0.75rem;
-    flex-shrink: 0;   /* pinned */
 }
 
-.ld-log-panel.open {
-    display: block;
+.ld-log-view[hidden] {
+    display: none;
 }
 
 .ld-log-panel-title {

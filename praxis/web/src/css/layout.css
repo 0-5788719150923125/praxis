@@ -80,10 +80,12 @@
 /* Every active tool follows the brand accent (green; blue while the LOGS easter egg is
    on), so Read and Evaluate are always the same color when selected - one source, no
    second hardcoded blue. */
+/* Accent lives in the border (and a faint fill); text stays neutral so the
+   active state reads as a subtle highlight, not a bright label. */
 .tool-toggle.active {
     background: hsl(var(--accent-hue) var(--accent-sat) var(--accent-lum) / 0.15);
     border-color: var(--accent);
-    color: var(--accent);
+    color: var(--text);
 }
 
 /* Chat Layout - Special: messages grow naturally, input floats below */

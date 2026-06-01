@@ -18,29 +18,31 @@ function applyLogAccent() {
 }
 
 /**
- * Toggle the log panel open/closed
+ * Switch the System/Logs card view. The two tabs swap which inner card shows;
+ * landing on Logs also flips the app to the blue accent (the hidden mode).
  */
-export function toggleLogPanel() {
-    logPanelOpen = !logPanelOpen;
+export function switchDashCard(view) {
+    logPanelOpen = view === 'logs';
     applyLogAccent();
-    const panel = document.getElementById('ld-log-panel');
-    const btn = document.getElementById('ld-log-toggle');
-    if (panel) panel.classList.toggle('open', logPanelOpen);
-    if (btn) {
-        btn.textContent = logPanelOpen ? 'LOGS [-]' : 'LOGS [+]';
-        btn.classList.toggle('active', logPanelOpen);  // grey -> blue when open
-    }
-    if (logPanelOpen) {
+    const panel = document.querySelector('.ld-info-panel');
+    if (!panel) return;
+    const grid = panel.querySelector('.ld-info-grid');
+    const logs = panel.querySelector('.ld-log-view');
+    if (grid) grid.hidden = logPanelOpen;
+    if (logs) logs.hidden = !logPanelOpen;
+    panel.querySelectorAll('.ld-card-tab').forEach(t =>
+        t.classList.toggle('active', t.dataset.view === view));
+    if (logPanelOpen && logs) {
         requestAnimationFrame(() => {
-            const logContent = panel && panel.querySelector('.ld-log-content');
-            if (logContent) logContent.scrollTop = logContent.scrollHeight;
+            const c = logs.querySelector('.ld-log-content');
+            if (c) c.scrollTop = c.scrollHeight;
         });
     }
 }
 
 // Expose globally so the onclick works from innerHTML
 if (typeof window !== 'undefined') {
-    window.toggleLogPanel = toggleLogPanel;
+    window.switchDashCard = switchDashCard;
 }
 
 /**
@@ -306,16 +308,17 @@ export function renderLiveDashboard(m) {
                 </span>
             </div>
             <div class="ld-info-panel">
-                <div class="ld-panel-title">System
-                    <button id="ld-log-toggle" class="ld-log-toggle ${logPanelOpen ? 'active' : ''}" onclick="toggleLogPanel()">${logPanelOpen ? 'LOGS [-]' : 'LOGS [+]'}</button>
+                <div class="ld-card-tabs">
+                    <button class="ld-card-tab ${logPanelOpen ? '' : 'active'}" data-view="system" onclick="switchDashCard('system')">SYSTEM</button>
+                    <button class="ld-card-tab ${logPanelOpen ? 'active' : ''}" data-view="logs" onclick="switchDashCard('logs')">LOGS</button>
                 </div>
-                <div class="ld-info-grid">
+                <div class="ld-info-grid" ${logPanelOpen ? 'hidden' : ''}>
                     ${renderInfoPanel(m.info)}
                 </div>
-            </div>
-            <div id="ld-log-panel" class="ld-log-panel ${logPanelOpen ? 'open' : ''}">
-                <div class="ld-log-panel-title">Logs <span class="ld-log-count">${(m.log_lines || []).length} lines</span></div>
-                <div class="ld-log-content">${(m.log_lines || []).map(l => `<div class="ld-log-line">${escapeHtml(l)}</div>`).join('')}</div>
+                <div class="ld-log-view" ${logPanelOpen ? '' : 'hidden'}>
+                    <div class="ld-log-panel-title">Logs <span class="ld-log-count">${(m.log_lines || []).length} lines</span></div>
+                    <div class="ld-log-content">${(m.log_lines || []).map(l => `<div class="ld-log-line">${escapeHtml(l)}</div>`).join('')}</div>
+                </div>
             </div>
             <div class="ld-body">
                 ${ctxs.map((c, i) => renderContextBlock(c, i, m)).join('')}
