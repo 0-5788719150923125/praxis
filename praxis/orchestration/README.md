@@ -100,3 +100,8 @@ Next (transport): a `RemoteExpert` subclass that forwards `forward`/`train_step`
 over a wire - first to the browser swarm (GUN/websocket to `swarm.js`), reusing
 the existing Hivemind integration (`integrations/hivemind/`) as the discovery
 reference. The pool math does not change; only the expert's transport does.
+
+Next (population regime): at thousands of experts the pool becomes a *population*
+- particle-swarm / ant-colony controllers, wave-phase specialization, and a
+binned low-count vote approximation that folds back into the model as structured
+variance. See the "Swarm dynamics" item in `next/roadmap.md`.
