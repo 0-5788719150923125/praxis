@@ -226,8 +226,7 @@ def test_calm_two_stage_freezes_codec_and_enables_energy():
     out.loss.backward()
     assert all(p.requires_grad for p in enc.vae.parameters())
     assert any(
-        p.grad is not None and p.grad.abs().sum() > 0
-        for p in enc.vae.parameters()
+        p.grad is not None and p.grad.abs().sum() > 0 for p in enc.vae.parameters()
     )
     model.zero_grad(set_to_none=True)
 

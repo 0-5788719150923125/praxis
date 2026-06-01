@@ -43,7 +43,9 @@ class HarmonicDropout(nn.Module):
         tau = 2.0 * math.pi * self.n_cycles
         n = torch.linspace(0.0, 1.0, N, device=x.device, dtype=x.dtype)
         c = torch.linspace(0.0, 1.0, C, device=x.device, dtype=x.dtype)
-        field = 0.5 * (torch.sin(tau * n)[:, None] + torch.sin(tau * c)[None, :])  # [N,C]
+        field = 0.5 * (
+            torch.sin(tau * n)[:, None] + torch.sin(tau * c)[None, :]
+        )  # [N,C]
         keep = (1.0 - self.base * (1.0 + field)).clamp(1e-3, 1.0)
         mask = torch.bernoulli(keep.expand_as(x))
         return x * mask / keep

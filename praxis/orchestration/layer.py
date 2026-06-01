@@ -22,7 +22,9 @@ from torch import Tensor, nn
 
 
 class ExpertPoolLayer(nn.Module):
-    def __init__(self, profile_name: str, mixing: str, sidecar: bool, init_experts: int) -> None:
+    def __init__(
+        self, profile_name: str, mixing: str, sidecar: bool, init_experts: int
+    ) -> None:
         super().__init__()
         self.profile = profile_name
         self.mixing = mixing

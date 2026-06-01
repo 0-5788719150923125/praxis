@@ -107,6 +107,7 @@ class TerminalInterface(Callback):
                 ]
                 if t is not None
             ]
+
         # One rolling context per ContextBlock (default: 3 temperature experiments).
         # The factory stamps each with this run's tuning; the primary (chance 1.0)
         # context drives the CLI display + the back-compat status_text.
@@ -123,10 +124,14 @@ class TerminalInterface(Callback):
         def _count_tokens(text):
             return len(self.tokenizer.encode(text)) if self.tokenizer and text else 0
 
-        self._context_streams = ContextStreams(_make_streaming, token_counter=_count_tokens)
+        self._context_streams = ContextStreams(
+            _make_streaming, token_counter=_count_tokens
+        )
         # Largest per-block scale; the shared generate path truncates prompts to
         # this so a double-length block isn't clipped back to the base length.
-        self._max_context_scale = max(b.context_scale for b in self._context_streams.blocks)
+        self._max_context_scale = max(
+            b.context_scale for b in self._context_streams.blocks
+        )
         self._streaming = self._context_streams.primary
         # Sync local state with whatever the streaming context picked.
         self.text = self._streaming.text

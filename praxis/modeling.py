@@ -517,9 +517,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             and not self._has_uninitialized_params()
         ):
             self._set_pretraining_lock(True)
-            return CausalLMOutputWithPast(
-                loss=self.encoder.pretraining_loss(input_ids)
-            )
+            return CausalLMOutputWithPast(loss=self.encoder.pretraining_loss(input_ids))
         if self.training and self.encoder:
             self._set_pretraining_lock(False)
 
@@ -714,9 +712,8 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # for handles_loss encoders (CALM), where the encoder owns the main
         # loss and there's nothing else to fall back to. Without this their
         # val_loss would stay at 0.
-        handles_loss_encoder = (
-            self.encoder is not False
-            and getattr(self.encoder, "handles_loss", False)
+        handles_loss_encoder = self.encoder is not False and getattr(
+            self.encoder, "handles_loss", False
         )
         if labels is not None and (self.training or handles_loss_encoder):
             loss_values = outputs.losses.get_loss_values()

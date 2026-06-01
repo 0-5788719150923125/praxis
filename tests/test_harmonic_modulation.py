@@ -72,8 +72,10 @@ def test_head_type_keys_compose_sequential_heads():
     from praxis.heads import CrystalHead, HarmonicHead
     from praxis.heads.stacked import SequentialHead
 
-    for key, mode in [("crystal_harmonic", "off"),
-                      ("crystal_harmonic_static", "static")]:
+    for key, mode in [
+        ("crystal_harmonic", "off"),
+        ("crystal_harmonic_static", "static"),
+    ]:
         entry = HEAD_REGISTRY[key]
         assert isinstance(entry, functools.partial)
         assert entry.func is SequentialHead

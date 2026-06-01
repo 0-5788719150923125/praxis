@@ -255,7 +255,9 @@ class CALMEncoder(BaseEncoder):
         # adapts to a fixed codec during decay.
         self._grad_accum = max(1, int(getattr(config, "grad_accumulation", 1) or 1))
         warmup = int(getattr(config, "warmup_steps", 0) or 0)
-        self.kl_warmup_steps = warmup if kl_warmup_steps is None else int(kl_warmup_steps)
+        self.kl_warmup_steps = (
+            warmup if kl_warmup_steps is None else int(kl_warmup_steps)
+        )
         # Convergence can't latch until the LR warmup horizon has elapsed: while
         # the LR is still ramping from ~0, a flat recon curve is just the low LR,
         # not real convergence. Without this floor the codec "converges" in a few
@@ -465,7 +467,7 @@ class CALMEncoder(BaseEncoder):
                 yield p
 
     def training_stage(self) -> str:
-        """"preflight" while the codec pretrains in isolation, then "pretrain"
+        """ "preflight" while the codec pretrains in isolation, then "pretrain"
         once the codec is frozen and the energy LM trains."""
         return "preflight" if self.in_pretraining() else "pretrain"
 
@@ -819,8 +821,10 @@ class CALMEncoder(BaseEncoder):
         for p in self.vae.parameters():
             p.requires_grad_(False)
         if not self._ae_frozen_logged:
-            print(f"[CALM] codec frozen at optimizer step {self._opt_step()}; "
-                  f"stage 2 (energy head only) begins.")
+            print(
+                f"[CALM] codec frozen at optimizer step {self._opt_step()}; "
+                f"stage 2 (energy head only) begins."
+            )
             self._ae_frozen_logged = True
         return True
 
@@ -925,7 +929,9 @@ class CALMEncoder(BaseEncoder):
             candidates = {p: c for p, c in counts.items() if c >= n}
             if candidates:
                 weights = [math.comb(c, n) for c in candidates.values()]
-                chosen = random.choices(list(candidates.keys()), weights=weights, k=1)[0]
+                chosen = random.choices(list(candidates.keys()), weights=weights, k=1)[
+                    0
+                ]
                 return torch.tensor(chosen, dtype=torch.long, device=h_last.device)
 
         # Defensive fallback (n=1 must find a match unless num_samples=0).

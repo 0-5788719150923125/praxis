@@ -55,8 +55,18 @@ METRIC_LABELS = {
 
 # Command flags that are not experiment selectors.
 DENY_FLAGS = {
-    "reset", "dev", "no-compile", "compile", "profile-memory", "device",
-    "max-steps", "batch-size", "debug", "seed", "host", "port",
+    "reset",
+    "dev",
+    "no-compile",
+    "compile",
+    "profile-memory",
+    "device",
+    "max-steps",
+    "batch-size",
+    "debug",
+    "seed",
+    "host",
+    "port",
 }
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -95,8 +105,9 @@ def metric_series(run: dict, metric: str, min_points: int = 2):
     standard part of logging, so the CSV is the fast, lock-free, server-free
     source. Fall back to the SQLite DB for older runs that predate the mirror.
     """
-    return read_csv_series(run.get("csv", ""), metric, min_points) \
-        or read_series(run.get("db", ""), metric, min_points)
+    return read_csv_series(run.get("csv", ""), metric, min_points) or read_series(
+        run.get("db", ""), metric, min_points
+    )
 
 
 def read_csv_series(csv_path: str, metric: str, min_points: int = 2):
@@ -149,8 +160,7 @@ def read_series(db_path: str, metric: str, min_points: int = 2):
         return []
     finally:
         conn.close()
-    out = [(int(s), float(v)) for s, v in rows
-           if v is not None and math.isfinite(v)]
+    out = [(int(s), float(v)) for s, v in rows if v is not None and math.isfinite(v)]
     return _clean(out, min_points)
 
 
@@ -166,16 +176,18 @@ def discover_runs(stems: set):
         created = cfg.get("created") or ""
         if not created:  # fall back to file mtime as an ISO-ish sort key
             created = str(os.path.getmtime(cfg_path))
-        runs.append({
-            "dir": run_dir,
-            "hash": cfg.get("truncated_hash", os.path.basename(run_dir)),
-            "command": cfg.get("command", ""),
-            "name": experiment_name(cfg.get("command", ""), stems),
-            "created": created,
-            "updated": cfg.get("last_updated", created),
-            "db": os.path.join(run_dir, "metrics.db"),
-            "csv": os.path.join(run_dir, "metrics.csv"),
-        })
+        runs.append(
+            {
+                "dir": run_dir,
+                "hash": cfg.get("truncated_hash", os.path.basename(run_dir)),
+                "command": cfg.get("command", ""),
+                "name": experiment_name(cfg.get("command", ""), stems),
+                "created": created,
+                "updated": cfg.get("last_updated", created),
+                "db": os.path.join(run_dir, "metrics.db"),
+                "csv": os.path.join(run_dir, "metrics.csv"),
+            }
+        )
     runs.sort(key=lambda r: r["created"], reverse=True)
     newest_per_exp, seen = [], set()
     for r in runs:
@@ -190,8 +202,14 @@ NUM_WORDS = ["Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven"]
 
 
 def latex_escape(s: str) -> str:
-    for a, b in [("\\", r"\textbackslash{}"), ("_", r"\_"), ("&", r"\&"),
-                 ("%", r"\%"), ("#", r"\#"), ("$", r"\$")]:
+    for a, b in [
+        ("\\", r"\textbackslash{}"),
+        ("_", r"\_"),
+        ("&", r"\&"),
+        ("%", r"\%"),
+        ("#", r"\#"),
+        ("$", r"\$"),
+    ]:
         s = s.replace(a, b)
     return s
 
@@ -213,8 +231,9 @@ def export_once(n: int, metric_arg: str):
         m = next((x for x in METRIC_PRIORITY if metric_series(run, x, 1)), None)
         if m:
             return m
-        best = max(ALL_METRICS, key=lambda x: len(metric_series(run, x, 1)),
-                   default=None)
+        best = max(
+            ALL_METRICS, key=lambda x: len(metric_series(run, x, 1)), default=None
+        )
         return best if best and metric_series(run, best, 1) else None
 
     window = runs[: max(n * 3, 12)]
@@ -232,8 +251,7 @@ def export_once(n: int, metric_arg: str):
             anchor, metric = r, m
             break
     if not anchor:
-        print("No recent experiment has usable validation data yet.",
-              file=sys.stderr)
+        print("No recent experiment has usable validation data yet.", file=sys.stderr)
         return None
 
     # Leader first; then the most recent experiments reporting the SAME metric
@@ -259,12 +277,14 @@ def export_once(n: int, metric_arg: str):
         current_note = (
             f"The current experiment ({cur_name}) has not logged usable "
             f"validation metrics yet; the chart leads with the most recent "
-            f"experiment that has ({latex_escape(anchor['name'])}).")
+            f"experiment that has ({latex_escape(anchor['name'])})."
+        )
     elif len(lead_series) < 2:
         current_note = (
             f"The current experiment ({cur_name}) has logged only one "
             f"validation point so far, so it appears as a single marker; its "
-            f"curve fills in as training proceeds.")
+            f"curve fills in as training proceeds."
+        )
     else:
         current_note = ""
 
@@ -278,7 +298,9 @@ def export_once(n: int, metric_arg: str):
     var_lines.append(f"\\newcommand{{\\paperMetricYlabel}}{{{latex_escape(ylabel)}}}")
     var_lines.append(f"\\newcommand{{\\paperRunCount}}{{{len(selected)}}}")
     var_lines.append(f"\\newcommand{{\\paperUpdated}}{{{selected[0]['updated'][:10]}}}")
-    var_lines.append(f"\\newcommand{{\\paperSkipped}}{{{latex_escape(', '.join(skipped))}}}")
+    var_lines.append(
+        f"\\newcommand{{\\paperSkipped}}{{{latex_escape(', '.join(skipped))}}}"
+    )
     # Empty when the current experiment leads with a full curve; otherwise a
     # ready-to-print sentence on why the leader differs / shows as a marker.
     var_lines.append(f"\\newcommand{{\\paperCurrentNote}}{{{current_note}}}")
@@ -302,19 +324,33 @@ def export_once(n: int, metric_arg: str):
         # visible; comparison runs are plain lines.
         opts = "thick, mark=*, mark size=2pt" if i == 0 else "mark=none"
         plot_lines.append(
-            f"\\addplot[{opts}] table[x=step,y=val,col sep=comma]{{{rel}}};")
+            f"\\addplot[{opts}] table[x=step,y=val,col sep=comma]{{{rel}}};"
+        )
         plot_lines.append(f"\\addlegendentry{{{latex_escape(r['name'])}}}")
-        summary.append({"rank": i + 1, "name": r["name"], "hash": r["hash"],
-                        "points": len(r["series"]), "final": final_val,
-                        "final_step": final_step, "leader": i == 0})
+        summary.append(
+            {
+                "rank": i + 1,
+                "name": r["name"],
+                "hash": r["hash"],
+                "points": len(r["series"]),
+                "final": final_val,
+                "final_step": final_step,
+                "leader": i == 0,
+            }
+        )
 
     body = " ".join(plot_lines)
     var_lines.append(f"\\newcommand{{\\paperValPlots}}{{{body}}}")
     with open(os.path.join(OUT_DIR, "variables.tex"), "w") as fh:
         fh.write("\n".join(var_lines) + "\n")
 
-    return {"metric": metric, "metric_name": title, "current": current["name"],
-            "selected": summary, "skipped": skipped}
+    return {
+        "metric": metric,
+        "metric_name": title,
+        "current": current["name"],
+        "selected": summary,
+        "skipped": skipped,
+    }
 
 
 def report(result: dict, as_json: bool) -> None:
@@ -325,8 +361,10 @@ def report(result: dict, as_json: bool) -> None:
     print(f"metric: {result['metric']} ({result['metric_name']})")
     for s in result["selected"]:
         tag = " (leader)" if s["leader"] else ""
-        print(f"  {s['rank']}. {s['name']:<12} {s['hash']}  "
-              f"n={s['points']:<4} final={s['final']:.4g} @ step {s['final_step']}{tag}")
+        print(
+            f"  {s['rank']}. {s['name']:<12} {s['hash']}  "
+            f"n={s['points']:<4} final={s['final']:.4g} @ step {s['final_step']}{tag}"
+        )
     if result["skipped"]:
         print(f"  skipped (incompatible metric): {', '.join(result['skipped'])}")
     print(f"wrote {OUT_DIR}/variables.tex and {len(result['selected'])} data/run_*.csv")
@@ -334,14 +372,25 @@ def report(result: dict, as_json: bool) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--n", type=int, default=4, help="experiments to include (default 4)")
-    ap.add_argument("--metric", default="auto",
-                    help="metric column, or 'auto' (default) to pick per family")
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "--n", type=int, default=4, help="experiments to include (default 4)"
+    )
+    ap.add_argument(
+        "--metric",
+        default="auto",
+        help="metric column, or 'auto' (default) to pick per family",
+    )
     ap.add_argument("--json", action="store_true", help="machine-readable summary")
-    ap.add_argument("--watch", type=float, default=0.0, metavar="SECONDS",
-                    help="regenerate every N seconds (decoupled interval render); "
-                         "Ctrl-C to stop")
+    ap.add_argument(
+        "--watch",
+        type=float,
+        default=0.0,
+        metavar="SECONDS",
+        help="regenerate every N seconds (decoupled interval render); "
+        "Ctrl-C to stop",
+    )
     args = ap.parse_args()
 
     if args.watch > 0:

@@ -67,8 +67,11 @@ class ExpertPoolCallback(Callback):
         # The Node sidecar is optional extra peers; the pool's baseline experts
         # are in-process so the count is real even without Node.
         self.manager: Optional[SidecarManager] = (
-            SidecarManager(self.pool, port=port, init_experts=init_experts, dim=dim, vocab=vocab)
-            if sidecar else None
+            SidecarManager(
+                self.pool, port=port, init_experts=init_experts, dim=dim, vocab=vocab
+            )
+            if sidecar
+            else None
         )
         # Fixed random embedding: real token ids -> the experts' tiny dim. Frozen
         # and shared, so every expert sees the same compressed view of the REAL
@@ -84,7 +87,9 @@ class ExpertPoolCallback(Callback):
         self._started = True
         # Size the input embedding to the model's real vocab so it can ingest
         # actual token ids; keep it frozen (it's a fixed projection, not learned).
-        model_vocab = int(getattr(getattr(pl_module, "config", None), "vocab_size", 0) or 0)
+        model_vocab = int(
+            getattr(getattr(pl_module, "config", None), "vocab_size", 0) or 0
+        )
         self._embed_vocab = max(self.vocab, model_vocab, 256)
         self._embed = nn.Embedding(self._embed_vocab, self.dim)
         self._embed.weight.requires_grad_(False)
@@ -143,7 +148,11 @@ class ExpertPoolCallback(Callback):
         # into the experts' tiny dim and run a detached local update + vote. Each
         # expert folds its own loss/accuracy EMAs along the way. (Observer mode:
         # gradients never leave an expert; the model is untouched.)
-        if batch_idx % self.drive_every == 0 and self.pool.alive() and self._embed is not None:
+        if (
+            batch_idx % self.drive_every == 0
+            and self.pool.alive()
+            and self._embed is not None
+        ):
             embedded = self._embed_batch(batch)
             if embedded is not None:
                 acts, tgt = embedded
@@ -175,7 +184,9 @@ class ExpertPoolCallback(Callback):
                 if m.get("acc_mean") is not None:
                     scalars["swarm_acc"] = float(m["acc_mean"])
                 try:
-                    pl_module.log_dict(scalars, on_step=True, on_epoch=False, logger=True)
+                    pl_module.log_dict(
+                        scalars, on_step=True, on_epoch=False, logger=True
+                    )
                 except Exception:
                     pass
         self.pool.capacity()

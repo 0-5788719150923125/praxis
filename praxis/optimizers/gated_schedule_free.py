@@ -102,12 +102,20 @@ class GatedScheduleFree(ScheduleFreeWrapper):
 
                 z = state["z"]
                 self.apply_weight_decay(
-                    z, grad, lr=group["lr"], weight_decay=self.weight_decay,
-                    weight_decouple=True, fixed_decay=False,
+                    z,
+                    grad,
+                    lr=group["lr"],
+                    weight_decay=self.weight_decay,
+                    weight_decouple=True,
+                    fixed_decay=False,
                 )
                 self.apply_weight_decay(
-                    p, grad, lr=group["lr"], weight_decay=self.weight_decay,
-                    weight_decouple=True, fixed_decay=False,
+                    p,
+                    grad,
+                    lr=group["lr"],
+                    weight_decay=self.weight_decay,
+                    weight_decouple=True,
+                    fixed_decay=False,
                     ratio=1.0 - self.momentum,
                 )
                 p.lerp_(end=z, weight=1.0 - 1.0 / self.momentum)
@@ -120,7 +128,7 @@ class GatedScheduleFree(ScheduleFreeWrapper):
             group["step"] = group["step"] + 1 if "step" in group else 1
             lr = group["lr"] * group.get("d", 1.0)
             lr_max = group["lr_max"] = max(lr, group.get("lr_max", 0))
-            weight = (group["step"] ** group["lr"]) * (lr_max ** self.weight_lr_power)
+            weight = (group["step"] ** group["lr"]) * (lr_max**self.weight_lr_power)
             weight_sum = group["weight_sum"] = group.get("weight_sum", 0.0) + weight
             checkpoint = weight / weight_sum if weight_sum != 0.0 else 0.0
 

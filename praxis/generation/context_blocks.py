@@ -31,7 +31,9 @@ class ContextBlock:
     description: str
     temperature: float
     chance: float = 1.0  # per-step probability this block runs inference (1.0 = always)
-    context_scale: float = 1.0  # multiplies the producer's base max_length for this block
+    context_scale: float = (
+        1.0  # multiplies the producer's base max_length for this block
+    )
 
 
 # Default Terminal contexts. Temperature rises (more exploratory) as the call
@@ -39,9 +41,15 @@ class ContextBlock:
 # rarely-fired blocks grow a double-length buffer since their cost is amortized
 # across far fewer inference steps.
 DEFAULT_CONTEXT_BLOCKS: List[ContextBlock] = [
-    ContextBlock("Focused", "Low temperature - the most likely continuation.", 0.5, 1.0),
-    ContextBlock("Balanced", "Mid temperature - samples about 1 step in 10.", 0.7, 0.1, 2.0),
-    ContextBlock("Wild", "High temperature - samples about 1 step in 100.", 1.0, 0.01, 2.0),
+    ContextBlock(
+        "Focused", "Low temperature - the most likely continuation.", 0.5, 1.0
+    ),
+    ContextBlock(
+        "Balanced", "Mid temperature - samples about 1 step in 10.", 0.7, 0.1, 2.0
+    ),
+    ContextBlock(
+        "Wild", "High temperature - samples about 1 step in 100.", 1.0, 0.01, 2.0
+    ),
 ]
 
 
@@ -63,7 +71,9 @@ class ContextStreams:
         token_counter: Optional[Callable[[str], int]] = None,
     ) -> None:
         self.blocks: List[ContextBlock] = list(blocks or DEFAULT_CONTEXT_BLOCKS)
-        self.contexts: List[StreamingContext] = [context_factory(b) for b in self.blocks]
+        self.contexts: List[StreamingContext] = [
+            context_factory(b) for b in self.blocks
+        ]
         self._token_counter = token_counter
 
     @property

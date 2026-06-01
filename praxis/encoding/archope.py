@@ -58,9 +58,8 @@ class ArcHoPE(HoPE):
         # positions [b, p] -> u [b, p, bands]; depth shifts the diagonal phase.
         u = positions.float().unsqueeze(-1) + self.warp_rho * float(current_depth)
         inv_alpha = self.warp_alpha / (self.warp_alpha**2 + INV_FLOOR_EPS**2)
-        warp = (
-            torch.sin(self.warp_alpha * u).square() * inv_alpha
-            + self.warp_gamma * torch.sin(self.warp_beta * u)
-        )
+        warp = torch.sin(
+            self.warp_alpha * u
+        ).square() * inv_alpha + self.warp_gamma * torch.sin(self.warp_beta * u)
         w = u + self.warp_lambda * warp
         return w * inv_freq

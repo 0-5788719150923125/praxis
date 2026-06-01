@@ -48,8 +48,8 @@ class RemoteExpert(ABC):
 
     def __init__(self, uid: str) -> None:
         self.uid = uid
-        self.passes = 0          # forward passes served (liveness + load)
-        self.steps = 0           # local update steps performed
+        self.passes = 0  # forward passes served (liveness + load)
+        self.steps = 0  # local update steps performed
         self.last_loss: Optional[float] = None
         self.last_beat: Optional[float] = None
         self._alive = True
@@ -62,9 +62,13 @@ class RemoteExpert(ABC):
         """Fold one step's loss (and optional next-token accuracy) into the EMAs.
         Cheap (two mul-adds); called by subclasses inside their train_step."""
         a = self._METRIC_EMA
-        self.ema_loss = loss if self.ema_loss is None else a * self.ema_loss + (1 - a) * loss
+        self.ema_loss = (
+            loss if self.ema_loss is None else a * self.ema_loss + (1 - a) * loss
+        )
         if acc is not None:
-            self.ema_acc = acc if self.ema_acc is None else a * self.ema_acc + (1 - a) * acc
+            self.ema_acc = (
+                acc if self.ema_acc is None else a * self.ema_acc + (1 - a) * acc
+            )
 
     # -- the wire ------------------------------------------------------------
 
@@ -179,7 +183,9 @@ class LocalExpert(RemoteExpert):
         # Cheap next-token accuracy on this batch (argmax == label), folded into
         # the running EMAs so the pool can be sampled without recomputation.
         with torch.no_grad():
-            acc = float((flat_logits.argmax(dim=-1) == flat_labels).float().mean().item())
+            acc = float(
+                (flat_logits.argmax(dim=-1) == flat_labels).float().mean().item()
+            )
         self._track(self.last_loss, acc)
         self._stamp()
         return self.last_loss

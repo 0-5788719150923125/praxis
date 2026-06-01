@@ -118,9 +118,8 @@ class BackpropagationTrainer(LightningModule):
         report_dataset_losses = (
             bool(batch_metadata) and InterleaveDataManager.shared_losses is not None
         )
-        if (
-            outputs.logits is not None
-            and (report_dataset_losses or (weighter_observes and task_type_ids is not None))
+        if outputs.logits is not None and (
+            report_dataset_losses or (weighter_observes and task_type_ids is not None)
         ):
             with torch.no_grad():
                 shift_logits = outputs.logits[:, :-1, :].contiguous()

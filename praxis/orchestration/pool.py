@@ -58,10 +58,10 @@ class ExpertPool:
         self._pool = cf.ThreadPoolExecutor(max_workers=max_workers)
         # Cumulative routing telemetry (inference): how heavily the pool is
         # actually leaning on its experts, and how many forwards land.
-        self.infer_rounds = 0       # inference forwards driven through the pool
-        self.routed = 0             # expert-forwards dispatched (sum over rounds)
-        self.routed_ok = 0          # expert-forwards that returned successfully
-        self.last_routed = 0        # experts routed to in the most recent round
+        self.infer_rounds = 0  # inference forwards driven through the pool
+        self.routed = 0  # expert-forwards dispatched (sum over rounds)
+        self.routed_ok = 0  # expert-forwards that returned successfully
+        self.last_routed = 0  # experts routed to in the most recent round
 
     # -- membership ----------------------------------------------------------
 
@@ -96,8 +96,8 @@ class ExpertPool:
             "mixing": self.mixing_name,
             # Inference routing telemetry.
             "infer_rounds": self.infer_rounds,
-            "routed": self.routed,            # cumulative expert-forwards dispatched
-            "routed_ok": self.routed_ok,      # cumulative successful forwards
+            "routed": self.routed,  # cumulative expert-forwards dispatched
+            "routed_ok": self.routed_ok,  # cumulative successful forwards
             "last_routed": self.last_routed,  # experts in the most recent round
         }
         status.publish(cap, experts=self.expert_infos())
@@ -127,7 +127,7 @@ class ExpertPool:
         out = {
             "sampled": n,
             "loss_mean": mean_loss,
-            "loss_std": var_loss ** 0.5,
+            "loss_std": var_loss**0.5,
         }
         if accs:
             out["acc_mean"] = sum(accs) / len(accs)
@@ -143,9 +143,7 @@ class ExpertPool:
         wait for all). Each expert updates only itself - nothing to synchronize.
         """
         alive = self.alive()
-        futs = {
-            self._pool.submit(e.train_step, activations, labels): e for e in alive
-        }
+        futs = {self._pool.submit(e.train_step, activations, labels): e for e in alive}
         losses: Dict[str, float] = {}
         try:
             for fut in cf.as_completed(futs, timeout=timeout):

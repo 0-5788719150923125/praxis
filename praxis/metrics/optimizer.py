@@ -31,24 +31,39 @@ EPS = 1e-8
 OPTIMIZER_METRIC_DESCRIPTIONS = {
     "opt_lr": {
         "description": "Current scheduled learning rate (group 0).",
-        "chart": {"title": "Learning Rate", "y_label": "lr",
-                  "y_scale": "logarithmic", "group": "optimizer", "order": 10},
+        "chart": {
+            "title": "Learning Rate",
+            "y_label": "lr",
+            "y_scale": "logarithmic",
+            "group": "optimizer",
+            "order": 10,
+        },
     },
     "opt_grad_rms": {
         "description": (
             "RMS of the raw gradient aggregated over all params - the global "
             "gradient magnitude the optimizer is working from."
         ),
-        "chart": {"title": "Gradient RMS", "y_label": "||grad|| RMS",
-                  "y_scale": "logarithmic", "group": "optimizer", "order": 20},
+        "chart": {
+            "title": "Gradient RMS",
+            "y_label": "||grad|| RMS",
+            "y_scale": "logarithmic",
+            "group": "optimizer",
+            "order": 20,
+        },
     },
     "opt_momentum_rms": {
         "description": (
             "RMS of the optimizer's momentum buffer (exp_avg / momentum_buffer)."
             " The smoothed direction the optimizer is actually following."
         ),
-        "chart": {"title": "Momentum RMS", "y_label": "||momentum|| RMS",
-                  "y_scale": "logarithmic", "group": "optimizer", "order": 30},
+        "chart": {
+            "title": "Momentum RMS",
+            "y_label": "||momentum|| RMS",
+            "y_scale": "logarithmic",
+            "group": "optimizer",
+            "order": 30,
+        },
     },
     "opt_momentum_grad_cos": {
         "description": (
@@ -56,8 +71,13 @@ OPTIMIZER_METRIC_DESCRIPTIONS = {
             "~1 = consistent descent; near 0 / negative = the optimizer is "
             "turning or thrashing. (Any momentum optimizer.)"
         ),
-        "chart": {"title": "Momentum-Gradient Cosine", "y_label": "cosine",
-                  "y_scale": "linear", "group": "optimizer", "order": 40},
+        "chart": {
+            "title": "Momentum-Gradient Cosine",
+            "y_label": "cosine",
+            "y_scale": "linear",
+            "group": "optimizer",
+            "order": 40,
+        },
     },
     "opt_update_rms": {
         "description": (
@@ -65,8 +85,13 @@ OPTIMIZER_METRIC_DESCRIPTIONS = {
             "moment (Adam-family, or a tracked low-rank estimate); under a sign "
             "optimizer like Lion this is the reference step, not the one taken."
         ),
-        "chart": {"title": "Update RMS", "y_label": "||update|| RMS",
-                  "y_scale": "logarithmic", "group": "optimizer", "order": 50},
+        "chart": {
+            "title": "Update RMS",
+            "y_label": "||update|| RMS",
+            "y_scale": "logarithmic",
+            "group": "optimizer",
+            "order": 50,
+        },
     },
     "opt_update_weight_ratio": {
         "description": (
@@ -74,8 +99,13 @@ OPTIMIZER_METRIC_DESCRIPTIONS = {
             "Adam training sits near 1e-3. Needs a second moment (Adam-family or "
             "a tracked low-rank estimate)."
         ),
-        "chart": {"title": "Update / Weight Ratio", "y_label": "ratio",
-                  "y_scale": "logarithmic", "group": "optimizer", "order": 55},
+        "chart": {
+            "title": "Update / Weight Ratio",
+            "y_label": "ratio",
+            "y_scale": "logarithmic",
+            "group": "optimizer",
+            "order": 55,
+        },
     },
     "opt_second_moment_rms": {
         "description": (
@@ -83,8 +113,13 @@ OPTIMIZER_METRIC_DESCRIPTIONS = {
             "exp_avg_sq (Adam-family) or a factored low-rank estimate tracked "
             "over any base optimizer."
         ),
-        "chart": {"title": "Second-Moment RMS", "y_label": "sqrt(v) RMS",
-                  "y_scale": "logarithmic", "group": "optimizer", "order": 60},
+        "chart": {
+            "title": "Second-Moment RMS",
+            "y_label": "sqrt(v) RMS",
+            "y_scale": "logarithmic",
+            "group": "optimizer",
+            "order": 60,
+        },
     },
     "opt_sf_spread": {
         "description": (
@@ -92,8 +127,13 @@ OPTIMIZER_METRIC_DESCRIPTIONS = {
             "the responsive iterate has diverged from the deployed average - "
             "the bias-variance gap in weight space."
         ),
-        "chart": {"title": "Schedule-Free Spread", "y_label": "||z-x||/||x||",
-                  "y_scale": "logarithmic", "group": "optimizer", "order": 70},
+        "chart": {
+            "title": "Schedule-Free Spread",
+            "y_label": "||z-x||/||x||",
+            "y_scale": "logarithmic",
+            "group": "optimizer",
+            "order": 70,
+        },
     },
     "opt_gate_mean": {
         "description": (
@@ -101,8 +141,13 @@ OPTIMIZER_METRIC_DESCRIPTIONS = {
             "(SNR gate or standing wave). Tracks how much the iterate is "
             "admitted into the average per coordinate."
         ),
-        "chart": {"title": "Averaging Gate (mean)", "y_label": "gate",
-                  "y_scale": "linear", "group": "optimizer", "order": 80},
+        "chart": {
+            "title": "Averaging Gate (mean)",
+            "y_label": "gate",
+            "y_scale": "linear",
+            "group": "optimizer",
+            "order": 80,
+        },
     },
 }
 

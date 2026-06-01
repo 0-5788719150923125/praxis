@@ -97,8 +97,13 @@ def test_reward_is_ema_return_over_horizon():
     torch.manual_seed(0)
     policy = HarmonicWeightPolicy(_cfg(rl_alpha_scale=0.3))
     cb = HarmonicWeightRLCallback(
-        policy, period=3, horizon=3, warmup_steps=3,
-        keep_threshold=0.0, loss_ema_decay=0.0, reward_decay=0.5,
+        policy,
+        period=3,
+        horizon=3,
+        warmup_steps=3,
+        keep_threshold=0.0,
+        loss_ema_decay=0.0,
+        reward_decay=0.5,
     )
     model = nn.Sequential(nn.Linear(8, 8), nn.Linear(8, 4))
     pl, tr = _PL(model), _Trainer()
@@ -108,7 +113,7 @@ def test_reward_is_ema_return_over_horizon():
     for ls in [5.0, 5.0, 5.0, 4.0, 3.0, 2.0]:
         cb.on_train_batch_end(tr, pl, torch.tensor(ls), None, 0)
 
-    assert cb._metrics["rl_reward"] == pytest.approx(2.25)        # EMA return
+    assert cb._metrics["rl_reward"] == pytest.approx(2.25)  # EMA return
     assert cb._metrics["rl_reward_instant"] == pytest.approx(3.0)  # endpoint delta
     assert cb._metrics["rl_edit_kept"] == 1.0
 
@@ -142,8 +147,12 @@ def test_edit_kept_reports_rolling_rate_not_binary():
     torch.manual_seed(0)
     policy = HarmonicWeightPolicy(_cfg(rl_alpha_scale=0.3))
     cb = HarmonicWeightRLCallback(
-        policy, period=3, horizon=2, warmup_steps=3,
-        keep_threshold=0.0, loss_ema_decay=0.0,
+        policy,
+        period=3,
+        horizon=2,
+        warmup_steps=3,
+        keep_threshold=0.0,
+        loss_ema_decay=0.0,
     )
     pl, tr = _PL(nn.Sequential(nn.Linear(8, 8), nn.Linear(8, 4))), _Trainer()
 
@@ -191,7 +200,9 @@ def test_schedulefree_edit_mirrors_onto_z():
     assert cb._metrics["rl_edit_kept"] == 1.0
     # The callback found schedule-free and a z row was edited (and kept).
     assert cb._schedulefree(tr) is sf
-    changed = any(not torch.equal(sf.state[p]["z"], z_before[p]) for p in model.parameters())
+    changed = any(
+        not torch.equal(sf.state[p]["z"], z_before[p]) for p in model.parameters()
+    )
     assert changed, "a schedule-free z iterate row should have been edited"
 
 
@@ -225,7 +236,11 @@ def test_wave_mode_drives_and_rolls_back_the_optimizer_wave():
     torch.manual_seed(0)
     policy = HarmonicWeightPolicy(_cfg())
     cb = HarmonicWeightRLCallback(
-        policy, period=3, horizon=2, warmup_steps=3, keep_threshold=0.0,
+        policy,
+        period=3,
+        horizon=2,
+        warmup_steps=3,
+        keep_threshold=0.0,
         edit_mode="wave",
     )
     model = nn.Sequential(nn.Linear(8, 8), nn.Linear(8, 4))
@@ -252,7 +267,11 @@ def test_wave_mode_keeps_helpful_wave_change():
     torch.manual_seed(0)
     policy = HarmonicWeightPolicy(_cfg())
     cb = HarmonicWeightRLCallback(
-        policy, period=3, horizon=2, warmup_steps=3, keep_threshold=0.0,
+        policy,
+        period=3,
+        horizon=2,
+        warmup_steps=3,
+        keep_threshold=0.0,
         edit_mode="wave",
     )
     model = nn.Sequential(nn.Linear(8, 8), nn.Linear(8, 4))

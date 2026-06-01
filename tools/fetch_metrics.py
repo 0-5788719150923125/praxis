@@ -62,8 +62,15 @@ def summarize(steps, values):
     pairs = [(s, v) for s, v in zip(steps, values) if s is not None and _is_num(v)]
     missing = sum(1 for v in values if v is None)
     if not pairs:
-        return {"n": 0, "first": None, "latest": None, "min": None,
-                "max": None, "missing": missing, "slope_per_1k": None}
+        return {
+            "n": 0,
+            "first": None,
+            "latest": None,
+            "min": None,
+            "max": None,
+            "missing": missing,
+            "slope_per_1k": None,
+        }
     ss, vs = zip(*pairs)
     n = len(pairs)
     tail_n = max(2, math.ceil(n * SLOPE_TAIL_FRACTION))
@@ -87,9 +94,7 @@ def sparkline(values, width=SPARK_WIDTH):
     if hi == lo:
         return SPARK_GLYPHS[4] * len(pts)
     last = len(SPARK_GLYPHS) - 1
-    return "".join(
-        SPARK_GLYPHS[int(round((v - lo) / (hi - lo) * last))] for v in pts
-    )
+    return "".join(SPARK_GLYPHS[int(round((v - lo) / (hi - lo) * last))] for v in pts)
 
 
 def fmt(v):
@@ -126,28 +131,45 @@ def build_rows(series_iter):
     rows = []
     for name, steps, values in series_iter:
         s = summarize(steps, values)
-        rows.append([
-            name, s["n"],
-            fmt(s["latest"]), fmt(s["first"]),
-            fmt(s["min"]), fmt(s["max"]),
-            fmt(s["slope_per_1k"]), s["missing"],
-            sparkline(values),
-        ])
+        rows.append(
+            [
+                name,
+                s["n"],
+                fmt(s["latest"]),
+                fmt(s["first"]),
+                fmt(s["min"]),
+                fmt(s["max"]),
+                fmt(s["slope_per_1k"]),
+                s["missing"],
+                sparkline(values),
+            ]
+        )
     return rows
 
 
 def render(rows, title):
     if not rows:
         return
-    headers = ["metric", "n", "latest", "first", "min", "max",
-               "slope/1k", "missing", "spark"]
+    headers = [
+        "metric",
+        "n",
+        "latest",
+        "first",
+        "min",
+        "max",
+        "slope/1k",
+        "missing",
+        "spark",
+    ]
     cols = [headers] + [[str(c) for c in r] for r in rows]
     widths = [max(len(row[i]) for row in cols) for i in range(len(headers))]
 
     def fmt_row(r):
         out = []
         for i, (c, w) in enumerate(zip(r, widths)):
-            out.append(str(c).ljust(w) if i in (0, len(headers) - 1) else str(c).rjust(w))
+            out.append(
+                str(c).ljust(w) if i in (0, len(headers) - 1) else str(c).rjust(w)
+            )
         return "  ".join(out)
 
     print()
@@ -183,14 +205,15 @@ def _print_recent_runs(host):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--host", default=DEFAULT_HOST,
-                   help=f"server host:port (default: {DEFAULT_HOST})")
+    p.add_argument(
+        "--host",
+        default=DEFAULT_HOST,
+        help=f"server host:port (default: {DEFAULT_HOST})",
+    )
     p.add_argument("--run", help="run hash (default: current)")
-    p.add_argument("--dynamics", action="store_true",
-                   help="also fetch /api/dynamics")
+    p.add_argument("--dynamics", action="store_true", help="also fetch /api/dynamics")
     p.add_argument("--filter", help="regex on series names")
-    p.add_argument("--json", action="store_true", dest="as_json",
-                   help="emit JSON")
+    p.add_argument("--json", action="store_true", dest="as_json", help="emit JSON")
     args = p.parse_args()
 
     name_re = re.compile(args.filter) if args.filter else None

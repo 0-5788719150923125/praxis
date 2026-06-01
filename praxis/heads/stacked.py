@@ -55,8 +55,7 @@ class SequentialHead(BaseHead):
         if not heads:
             raise ValueError("SequentialHead needs at least one head.")
         built = [
-            h if isinstance(h, BaseHead) else h(config, encoder=encoder)
-            for h in heads
+            h if isinstance(h, BaseHead) else h(config, encoder=encoder) for h in heads
         ]
         self.heads = nn.ModuleList(built)
         # Mirror the terminal head's resolved layout (it sized itself to the

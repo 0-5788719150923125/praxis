@@ -41,8 +41,13 @@ def test_always_emits_lr_and_grad_rms():
 def test_adam_emits_full_suite():
     model, opt = _build("AdamW")
     m = extract_optimizer_dynamics(_stepped(opt, model))
-    for k in ["opt_momentum_rms", "opt_momentum_grad_cos", "opt_update_rms",
-              "opt_update_weight_ratio", "opt_second_moment_rms"]:
+    for k in [
+        "opt_momentum_rms",
+        "opt_momentum_grad_cos",
+        "opt_update_rms",
+        "opt_update_weight_ratio",
+        "opt_second_moment_rms",
+    ]:
         assert k in m, k
     assert -1.0 <= m["opt_momentum_grad_cos"] <= 1.0
     assert m["opt_update_rms"] > 0

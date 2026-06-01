@@ -335,7 +335,11 @@ class ModularAttention(nn.Module):
 
             # Apply RoPE only to the RoPE components
             q_r, k_r, _ = self.encoding.before_scores(
-                q_r, k_r, None, offset=offset, block_ids=block_ids,
+                q_r,
+                k_r,
+                None,
+                offset=offset,
+                block_ids=block_ids,
                 current_depth=current_depth,
             )
 
@@ -345,7 +349,11 @@ class ModularAttention(nn.Module):
         else:
             # Apply positional encoding with offset
             q, k, v = self.encoding.before_scores(
-                q, k, v, offset=offset, block_ids=block_ids,
+                q,
+                k,
+                v,
+                offset=offset,
+                block_ids=block_ids,
                 current_depth=current_depth,
             )
 

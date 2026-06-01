@@ -406,7 +406,9 @@ def swarm_join():
         block = nn.Sequential(nn.Linear(dim, dim), nn.SiLU())
         exp = LocalExpert(
             f"joined-{session[:6]}-{len(mine) + i}",
-            block, hidden_size=dim, vocab_size=vocab,
+            block,
+            hidden_size=dim,
+            vocab_size=vocab,
         )
         exp._join_session = session
         exp._join_last_seen = now

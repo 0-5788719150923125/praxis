@@ -97,7 +97,9 @@ class HarmonicWeightPolicy(nn.Module):
         return torch.distributions.Normal(mean, std)
 
     @torch.no_grad()
-    def act(self, state: torch.Tensor) -> Tuple[torch.Tensor, Tuple[float, float, float]]:
+    def act(
+        self, state: torch.Tensor
+    ) -> Tuple[torch.Tensor, Tuple[float, float, float]]:
         """Sample a raw action; return (raw_action, mapped (alpha, omega, phi))."""
         raw = self._dist(state).sample()
         alpha, omega, phi = self.map_action(raw)

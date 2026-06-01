@@ -298,9 +298,7 @@ class HarmonicWeightRLCallback(Callback):
         }
 
         if self.edit_mode == "anchor_gate":
-            threshold, omega, phi = (
-                float(x) for x in self.policy.map_gate_action(raw)
-            )
+            threshold, omega, phi = (float(x) for x in self.policy.map_gate_action(raw))
             anchor = self._anchor.get(name)
             if anchor is None:  # fallback: snapshot now (gate is identity once)
                 anchor = param.detach().clone()

@@ -1958,7 +1958,9 @@ class MonoForwardTrainer:
             ids = self._encode_context_text(text)
             return int(ids.shape[1]) if ids is not None else 0
 
-        self._context_streams = ContextStreams(_make_streaming, token_counter=_count_tokens)
+        self._context_streams = ContextStreams(
+            _make_streaming, token_counter=_count_tokens
+        )
         return self._context_streams
 
     def _encode_context_text(self, text: str) -> Optional[torch.Tensor]:

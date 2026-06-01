@@ -43,8 +43,8 @@ SMOOTHNESS_LAMBDA: float = 0.01
 # coefficients so the wave adapts. The envelope's basis is zero at f_t -> 0,
 # so it cannot reintroduce the flat (constant-over-position) mode that the bare
 # grid settles into. See ``HarmonicField`` and ``next/harmony.md``.
-AMP_MOD_DEPTH: float = 0.5   # peak envelope modulation, tanh-bounded
-AMP_MOD_BASIS_K: int = 6     # learned envelope = K low-frequency f_t modes
+AMP_MOD_DEPTH: float = 0.5  # peak envelope modulation, tanh-bounded
+AMP_MOD_BASIS_K: int = 6  # learned envelope = K low-frequency f_t modes
 
 
 def _envelope_basis(F_t: int, K: int) -> torch.Tensor:
@@ -292,7 +292,9 @@ class HarmonicField(nn.Module):
         self.amp_modulation = amp_modulation
         if amp_modulation != "off":
             self.register_buffer(
-                "amp_basis", _envelope_basis(self.F_t, AMP_MOD_BASIS_K), persistent=False
+                "amp_basis",
+                _envelope_basis(self.F_t, AMP_MOD_BASIS_K),
+                persistent=False,
             )
             coeffs = torch.zeros(AMP_MOD_BASIS_K)
             coeffs[0] = 1.0
@@ -314,8 +316,7 @@ class HarmonicField(nn.Module):
         if env is not None:
             amps = amps * env.unsqueeze(1)  # modulate each f_t row by env[f_t]
         scaled = (
-            torch.complex(self.spec_real.to(device), self.spec_imag.to(device))
-            * amps
+            torch.complex(self.spec_real.to(device), self.spec_imag.to(device)) * amps
         )
         spec[1 : self.F_t + 1, 1 : self.F_d + 1] = scaled
         # Hermitian symmetry on the T axis so irfft2 yields a real field.
@@ -398,7 +399,9 @@ class HarmonicField(nn.Module):
             _, S, Vh = torch.linalg.svd(field, full_matrices=False)
             xy = field @ Vh[:2].T  # [Tp, 2] in-plane shape
             row_sq = (field * field).sum(dim=1)
-            resid = (row_sq - (xy * xy).sum(dim=1)).clamp_min(0.0).sqrt()  # off-plane spread
+            resid = (
+                (row_sq - (xy * xy).sum(dim=1)).clamp_min(0.0).sqrt()
+            )  # off-plane spread
 
             scale = xy.abs().max().clamp_min(1e-8)  # scale is arbitrary post-PCA
             xy = xy / scale
@@ -412,7 +415,9 @@ class HarmonicField(nn.Module):
             band = band[::step]
             n = xy.shape[0]
             z = torch.linspace(0.0, 1.0, n)
-            path = torch.stack([xy[:, 0], xy[:, 1], z], dim=1).to(torch.float32).tolist()
+            path = (
+                torch.stack([xy[:, 0], xy[:, 1], z], dim=1).to(torch.float32).tolist()
+            )
             band = band.to(torch.float32).tolist()
         return {
             "path": path,
@@ -440,7 +445,9 @@ class HarmonicField(nn.Module):
             s2 = S * S
             part = float((s2.sum() ** 2 / (s2 * s2).sum().clamp_min(1e-12)).item())
 
-            traj = traj / traj.abs().max().clamp_min(1e-8)  # scale is arbitrary post-PCA
+            traj = traj / traj.abs().max().clamp_min(
+                1e-8
+            )  # scale is arbitrary post-PCA
 
             # Epicycle decomposition: dominant Fourier modes of the complex curve.
             z = torch.complex(traj[:, 0].contiguous(), traj[:, 1].contiguous())
@@ -490,7 +497,9 @@ class HarmonicField(nn.Module):
             order = torch.argsort(torch.angle(spec[f0]))
             sub = sub[:, order]
 
-            sub = sub / sub.abs().amax(dim=0, keepdim=True).clamp_min(1e-8)  # amplitude out
+            sub = sub / sub.abs().amax(dim=0, keepdim=True).clamp_min(
+                1e-8
+            )  # amplitude out
             t_idx = torch.linspace(0, Tp - 1, int(n_time)).round().long()
             series = sub[t_idx].t().to(torch.float32).tolist()  # [n_feat][n_time]
         return {

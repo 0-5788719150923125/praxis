@@ -429,7 +429,9 @@ def test_activation_curves_route_preserves_training_mode():
 
     assert curves, "expected at least one activation curve (GELU)"
     assert model.training is True, "route left the model out of train mode"
-    assert seen_training and all(seen_training), "model dropped out of train mode during sampling"
+    assert seen_training and all(
+        seen_training
+    ), "model dropped out of train mode during sampling"
 
 
 if __name__ == "__main__":

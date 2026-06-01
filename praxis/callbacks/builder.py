@@ -87,6 +87,7 @@ def build_training_callbacks(
     _rl_profile = get_rl_profile(getattr(config, "rl_type", None))
     if _rl_profile is not None:
         rl_policy = RL_POLICIES_REGISTRY[_rl_profile["policy"]](config)
+
         # Profile supplies the defaults; an explicit rl_* config key still wins.
         def _rl(key, cast):
             v = getattr(config, f"rl_{key}", None)

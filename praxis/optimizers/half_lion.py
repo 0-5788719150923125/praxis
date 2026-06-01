@@ -27,8 +27,8 @@ import torch
 from pytorch_optimizer.base.optimizer import BaseOptimizer
 
 WAVE_CYCLES = math.pi  # frozen spatial frequency (~pi bands across each tensor)
-WAVE_AMP = 0.5         # frozen blend depth; mix in [0, 0.5] keeps a current core
-WAVE_DRIFT = 0.05      # rad/step: smooth temporal travel of the bands
+WAVE_AMP = 0.5  # frozen blend depth; mix in [0, 0.5] keeps a current core
+WAVE_DRIFT = 0.05  # rad/step: smooth temporal travel of the bands
 
 
 class HalfLion(BaseOptimizer):

@@ -72,8 +72,14 @@ def test_train_eval_swap_is_reversible_at_init():
 
 
 def test_registry_keys_and_disable_schedule():
-    for k in ["trac", "ortho", "lookahead", "schedule_free",
-              "gated_schedule_free", "wave_schedule_free"]:
+    for k in [
+        "trac",
+        "ortho",
+        "lookahead",
+        "schedule_free",
+        "gated_schedule_free",
+        "wave_schedule_free",
+    ]:
         assert k in WRAPPER_REGISTRY
     # Only the schedule-free family runs without an LR schedule.
     assert wrappers_disable_schedule(["schedule_free"]) is True

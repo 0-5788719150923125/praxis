@@ -37,9 +37,7 @@ from torch import Tensor
 
 from praxis.orchestration.base import RemoteExpert
 
-_SIDECAR_JS = (
-    Path(__file__).resolve().parents[1] / "web" / "src" / "js" / "sidecar.js"
-)
+_SIDECAR_JS = Path(__file__).resolve().parents[1] / "web" / "src" / "js" / "sidecar.js"
 
 
 def _pdeathsig_preexec():
@@ -65,10 +63,14 @@ def _pdeathsig_preexec():
     return _set_pdeathsig
 
 
-def _http(url: str, payload: Optional[dict] = None, method: str = "GET", timeout: float = 10.0):
+def _http(
+    url: str, payload: Optional[dict] = None, method: str = "GET", timeout: float = 10.0
+):
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(
-        url, data=data, method=method,
+        url,
+        data=data,
+        method=method,
         headers={"Content-Type": "application/json"} if data else {},
     )
     with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -102,7 +104,8 @@ class SidecarExpert(RemoteExpert):
         try:
             out = _http(
                 f"{self.base_url}/expert/{self.uid}/forward",
-                {"ids": self._ids_from(activations)}, method="POST",
+                {"ids": self._ids_from(activations)},
+                method="POST",
             )
             return torch.tensor(out["logits"], dtype=torch.float32)
         except Exception:
@@ -115,7 +118,8 @@ class SidecarExpert(RemoteExpert):
         try:
             out = _http(
                 f"{self.base_url}/expert/{self.uid}/train",
-                {"ids": ids, "targets": tgt}, method="POST",
+                {"ids": ids, "targets": tgt},
+                method="POST",
             )
         except Exception:
             self._alive = False
@@ -133,7 +137,14 @@ class SidecarExpert(RemoteExpert):
 class SidecarManager:
     """Owns the Node sidecar process and proxies its experts into a pool."""
 
-    def __init__(self, pool, port: int = 7777, init_experts: int = 4, dim: int = 14, vocab: int = 16):
+    def __init__(
+        self,
+        pool,
+        port: int = 7777,
+        init_experts: int = 4,
+        dim: int = 14,
+        vocab: int = 16,
+    ):
         self.pool = pool
         self.port = port
         self.init_experts = init_experts
@@ -157,14 +168,26 @@ class SidecarManager:
           3. An ``atexit`` hook calls ``stop()`` on normal interpreter exit.
         """
         if not self.available():
-            print("[orchestration] node sidecar unavailable; pool runs without backend experts")
+            print(
+                "[orchestration] node sidecar unavailable; pool runs without backend experts"
+            )
             return False
         self.proc = subprocess.Popen(
-            ["node", str(_SIDECAR_JS),
-             "--port", str(self.port), "--experts", str(self.init_experts),
-             "--dim", str(self.dim), "--vocab", str(self.vocab)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            start_new_session=True,           # own process group for group-kill
+            [
+                "node",
+                str(_SIDECAR_JS),
+                "--port",
+                str(self.port),
+                "--experts",
+                str(self.init_experts),
+                "--dim",
+                str(self.dim),
+                "--vocab",
+                str(self.vocab),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,  # own process group for group-kill
             preexec_fn=_pdeathsig_preexec(),  # kernel kills child if parent dies
         )
         # Belt-and-suspenders: also clean up on normal interpreter exit.
@@ -174,7 +197,9 @@ class SidecarManager:
             try:
                 _http(f"{self.base_url}/capacity", timeout=1.0)
                 self.sync()
-                print(f"[orchestration] sidecar up on {self.base_url}; synced {len(self.pool.experts)} experts")
+                print(
+                    f"[orchestration] sidecar up on {self.base_url}; synced {len(self.pool.experts)} experts"
+                )
                 return True
             except Exception:
                 time.sleep(0.2)

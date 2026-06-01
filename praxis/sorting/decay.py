@@ -31,7 +31,9 @@ class DecayBiasSort(NoSort):
         seq_len = hidden_states.shape[-2]
         if seq_len == 0 or self.bias.shape[-1] != hidden_states.shape[-1]:
             return hidden_states  # defensive: only apply when the dim matches
-        t = torch.arange(seq_len, device=hidden_states.device, dtype=hidden_states.dtype)
+        t = torch.arange(
+            seq_len, device=hidden_states.device, dtype=hidden_states.dtype
+        )
         g = 1.0 - t / seq_len  # [T]: 1 at the head -> ~0 at the tail
         bias = g.unsqueeze(-1) * self.bias.to(hidden_states.dtype)  # [T, H]
         return hidden_states + bias

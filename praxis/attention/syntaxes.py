@@ -105,7 +105,11 @@ class SyntaxesAttention(nn.Module):
             q, q, q, offset=offset, block_ids=block_ids, current_depth=current_depth
         )
         k, v, _ = self.encoding.before_scores(
-            k, k, v, offset=context_offset, block_ids=block_ids,
+            k,
+            k,
+            v,
+            offset=context_offset,
+            block_ids=block_ids,
             current_depth=current_depth,
         )
 

@@ -26,8 +26,13 @@ RL_POLICIES_REGISTRY = {
 # matching rl_* config key (the builder falls back to the profile value).
 RL_PROFILES = {
     "harmonic_weight": dict(
-        policy="harmonic_weight", edit_mode="harmonic", selector="sinusoidal",
-        period=50, horizon=20, warmup_steps=200, reward_decay=0.9,
+        policy="harmonic_weight",
+        edit_mode="harmonic",
+        selector="sinusoidal",
+        period=50,
+        horizon=20,
+        warmup_steps=200,
+        reward_decay=0.9,
     ),
     # Drives HalfLion's wave gate (amp, cycles, phase) per episode instead of
     # editing weight rows (calm-c). A non-helpful change restores the three
@@ -36,13 +41,23 @@ RL_PROFILES = {
     # matched ~100-step EMA (1/(1-0.99)=100) accumulates the delayed effect
     # rather than snapshotting a noisy endpoint.
     "harmonic_weight_wave": dict(
-        policy="harmonic_weight", edit_mode="wave", selector="sinusoidal",
-        period=50, horizon=100, warmup_steps=200, reward_decay=0.99,
+        policy="harmonic_weight",
+        edit_mode="wave",
+        selector="sinusoidal",
+        period=50,
+        horizon=100,
+        warmup_steps=200,
+        reward_decay=0.99,
     ),
     # Hash-gated frozen-anchor weight replacement (see next/hash_gated_anchor.md).
     "harmonic_weight_anchor": dict(
-        policy="harmonic_weight", edit_mode="anchor_gate", selector="sinusoidal",
-        period=50, horizon=20, warmup_steps=200, reward_decay=0.9,
+        policy="harmonic_weight",
+        edit_mode="anchor_gate",
+        selector="sinusoidal",
+        period=50,
+        horizon=20,
+        warmup_steps=200,
+        reward_decay=0.9,
     ),
 }
 

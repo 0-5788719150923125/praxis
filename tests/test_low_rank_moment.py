@@ -38,7 +38,9 @@ def test_update_is_passthrough():
     m1, X, Y = _problem()
     m2, _, _ = _problem()  # identical seed => identical init
     base = torch.optim.SGD(m1.parameters(), lr=0.1, momentum=0.9)
-    wrapped = LowRankSecondMoment(torch.optim.SGD(m2.parameters(), lr=0.1, momentum=0.9))
+    wrapped = LowRankSecondMoment(
+        torch.optim.SGD(m2.parameters(), lr=0.1, momentum=0.9)
+    )
     for _ in range(50):
         _step(base, m1, X, Y)
         _step(wrapped, m2, X, Y)
@@ -59,7 +61,9 @@ def test_full_vector_for_non_2d():
     model = nn.Sequential(nn.Linear(4, 4))  # bias is 1D
     opt = LowRankSecondMoment(torch.optim.SGD(model.parameters(), lr=0.1))
     X = torch.randn(16, 4)
-    opt.zero_grad(); (model(X) ** 2).mean().backward(); opt.step()
+    opt.zero_grad()
+    (model(X) ** 2).mean().backward()
+    opt.step()
     bias = model[0].bias
     assert "v" in opt.state[bias] and opt.state[bias]["v"].shape == bias.shape
 

@@ -46,7 +46,9 @@ class AmplitudeFieldSort(NoSort):
         freqs = np.geomspace(MIN_CYCLES, MAX_CYCLES, h)  # per-feature spectrum
         phases = 2.0 * math.pi * (d * GOLDEN - np.floor(d * GOLDEN))  # Weyl phases
         self.register_buffer("freqs", torch.from_numpy(freqs).float(), persistent=False)
-        self.register_buffer("phases", torch.from_numpy(phases).float(), persistent=False)
+        self.register_buffer(
+            "phases", torch.from_numpy(phases).float(), persistent=False
+        )
 
     def forward(self, hidden_states: torch.Tensor, **kwargs) -> torch.Tensor:
         seq_len = hidden_states.shape[-2]
