@@ -312,6 +312,54 @@ def test_calm_pretraining_phase_freezes_on_cap():
     )
 
 
+def test_calm_convergence_latches_on_low_recon_plateau():
+    """The freeze must fire when recon plateaus, even at a tiny absolute value.
+    Trend-vs-noise: a relative-to-mean delta would explode as recon CE -> 0 and
+    never latch (the bug this fixes). Drives the detector directly with a
+    crafted recon curve (descend, then a noisy plateau near zero)."""
+    import random
+
+    from praxis.encoders.calm.encoder import (
+        PRETRAIN_FLAT_EPS,
+        PRETRAIN_PATIENCE,
+        PRETRAIN_WINDOW,
+    )
+
+    enc = PraxisForCausalLM(_tiny_config()).encoder
+    enc._pretrain_min_steps = 0  # _opt_step() is 0 here; clear the warmup floor
+    enc.ae_max_pretrain_steps = 10**9  # disable the cap so only convergence can latch
+    assert enc.in_pretraining()
+
+    # Steady descent fills the window with a clear trend -> must NOT latch.
+    for k in range(PRETRAIN_WINDOW):
+        enc._update_pretrain_convergence(5.0 - k * (5.0 - 0.006) / PRETRAIN_WINDOW)
+    assert enc.in_pretraining()
+    assert enc._diag["calm_pretrain_flatness"] > PRETRAIN_FLAT_EPS
+
+    # Plateau near a TINY value with small noise - exactly where the old
+    # relative-to-mean delta blew up. Trend-vs-noise reads it as flat and latches.
+    rng = random.Random(0)
+    for _ in range(2 * PRETRAIN_WINDOW + PRETRAIN_PATIENCE):
+        enc._update_pretrain_convergence(0.006 + rng.uniform(-3e-4, 3e-4))
+    assert not enc.in_pretraining()  # froze
+    assert enc._diag["calm_pretrain_flatness"] < PRETRAIN_FLAT_EPS
+
+
+def test_calm_convergence_does_not_latch_during_steady_descent():
+    """A steady downward trend keeps flatness above threshold, so the codec
+    never freezes while it is still meaningfully improving."""
+    from praxis.encoders.calm.encoder import PRETRAIN_FLAT_EPS, PRETRAIN_WINDOW
+
+    enc = PraxisForCausalLM(_tiny_config()).encoder
+    enc._pretrain_min_steps = 0
+    enc.ae_max_pretrain_steps = 10**9
+
+    for k in range(3 * PRETRAIN_WINDOW):  # well past window + patience, still trending
+        enc._update_pretrain_convergence(10.0 - 0.01 * k)
+    assert enc.in_pretraining()  # trend dominates the noise -> not converged
+    assert enc._diag["calm_pretrain_flatness"] > PRETRAIN_FLAT_EPS
+
+
 def test_calm_with_stacked_crystal_harmonic_head():
     # crystal_harmonic stacks the harmonic field in front of the crystal
     # classifier; both mechanisms train through CALM's reconstruction path.

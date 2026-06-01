@@ -119,9 +119,9 @@ CALMBpe = partial(
 # the KL annealed in over the same window so the final latent is smooth, then
 # freeze it and train only the energy head against a stationary target. The
 # freeze is convergence-driven: schedules are left unset, so the codec trains
-# until its reconstruction plateaus (relative improvement over the window
-# < 5e-3), then freezes - capped by ae_max_pretrain_steps as a backstop. Watch
-# calm_recon_ce / calm_pretrain_rel_delta descend and calm_ae_frozen flip at
+# until its reconstruction plateaus (the window's linear trend drops below its
+# own noise), then freezes - capped by ae_max_pretrain_steps as a backstop. Watch
+# calm_recon_ce / calm_pretrain_flatness descend and calm_ae_frozen flip at
 # the boundary. kl_beta is 10x the old joint value - a near-zero KL leaves a
 # recon-perfect but unmodelable latent. Watch calm_kl_active_frac /
 # calm_recon_kl_ratio.

@@ -40,12 +40,19 @@ from .vae import CALMVAE
 
 # AE pretraining-phase convergence detector. Fixed and model-agnostic (per the
 # no-per-experiment-tuning rule): the phase ends when reconstruction stops
-# improving - the relative drop across the window falls below EPS, sustained for
-# PRETRAIN_PATIENCE readings and only after the LR warmup horizon - or the
-# max-steps cap is hit as a backstop. The warmup floor matters: during the LR
-# ramp a flat recon curve is just the low LR, not convergence.
+# improving - the recon curve's linear trend across the window shrinks below the
+# window's own noise, sustained for PRETRAIN_PATIENCE readings and only after the
+# LR warmup horizon - or the max-steps cap is hit as a backstop. The warmup floor
+# matters: during the LR ramp a flat recon curve is just the low LR, not convergence.
+#
+# Trend-vs-noise, NOT relative-to-mean. The gate is |slope*n| / std(recon) over
+# the window: the total linear drift in units of the per-sample noise. A
+# relative-to-mean delta (the old form) exploded as recon CE -> 0 - the noise
+# floor stays put while the mean vanishes, so it could never read "converged" on
+# a good codec. Trend-vs-noise is bounded (drift and noise shrink together) and
+# self-normalizes against outliers (a spike inflates the denominator too).
 PRETRAIN_WINDOW = 256
-PRETRAIN_SLOPE_EPS = 5e-3
+PRETRAIN_FLAT_EPS = 1.0  # converged when the window's drift < one noise std
 # Start emitting / computing the convergence Δ once this many recon samples
 # exist, so the chart tracks the descent from early on instead of staying blank
 # (then flat) until the full window fills. The freeze decision still waits for
@@ -192,18 +199,19 @@ class CALMEncoder(BaseEncoder):
                 "order": 80,
             },
         },
-        "calm_pretrain_rel_delta": {
+        "calm_pretrain_flatness": {
             "description": (
-                "Relative recon improvement across the convergence window - the "
-                "value compared to the fixed freeze threshold (5e-3). Tracked "
-                "from the first few samples (latch waits for the full window). "
-                "Watch it descend toward the threshold; the codec freezes when "
-                "it crosses. Stays high while recon keeps dropping; falls only "
-                "as the recon curve flattens."
+                "Codec convergence detector: the recon curve's linear trend "
+                "across the window in units of the window's own noise "
+                "(|slope*n| / std). Scale-free and bounded as recon CE -> 0. "
+                "Tracked from the first few samples; the latch waits for a full "
+                "window. The codec freezes once this holds below the flat "
+                "threshold (1.0 = trend smaller than one noise std - the trend "
+                "is lost in the noise) for a full patience window."
             ),
             "chart": {
-                "title": "Pretrain Convergence Δ",
-                "y_label": "rel. Δ (window)",
+                "title": "Pretrain Convergence (trend/noise)",
+                "y_label": "|trend| / noise",
                 "y_scale": "logarithmic",
                 "group": "calm",
                 "order": 90,
@@ -532,23 +540,26 @@ class CALMEncoder(BaseEncoder):
             )
             var = sum((i - mean_x) ** 2 for i in range(n))
             slope = cov / var if var > 0 else 0.0
-            # Relative recon improvement across the (growing) window; the value
-            # the freeze gate compares to PRETRAIN_SLOPE_EPS. Computed from
+            # The window's linear drift measured in units of its own noise:
+            # |slope*n| / std(recon). Scale-free and, unlike a relative-to-mean
+            # delta, bounded as recon CE -> 0 (drift and noise shrink together),
+            # so a true plateau reads "trend lost in the noise". Computed from
             # PRETRAIN_MIN_SAMPLES onward so the chart tracks the descent early;
             # the latch waits for the full window so it can't fire on noise.
-            rel = abs(slope * n) / (mean_y + 1e-9)
-            self._diag["calm_pretrain_rel_delta"] = rel
+            std_y = (sum((v - mean_y) ** 2 for v in self._recon_hist) / n) ** 0.5
+            flat = abs(slope * n) / (std_y + 1e-9)
+            self._diag["calm_pretrain_flatness"] = flat
             # Latch only after the LR warmup floor, with a full window, once the
             # plateau has held for PRETRAIN_PATIENCE consecutive readings.
             converging = (
                 len(self._recon_hist) >= PRETRAIN_WINDOW
                 and step >= self._pretrain_min_steps
-                and rel < PRETRAIN_SLOPE_EPS
+                and flat < PRETRAIN_FLAT_EPS
             )
             if converging:
                 self._pretrain_patience += 1
                 if self._pretrain_patience >= PRETRAIN_PATIENCE:
-                    self._mark_pretrain_done(step, f"converged (rel d={rel:.4f})")
+                    self._mark_pretrain_done(step, f"converged (flat={flat:.3f})")
             else:
                 self._pretrain_patience = 0
 
