@@ -65,6 +65,12 @@ class BaseHead(nn.Module, ABC):
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(hidden_size={self.hidden_size}, vocab_size={self.vocab_size})"
 
+    def compose_repr(self) -> str:
+        """Short structural label used when a head appears inside a composed
+        head's repr (e.g. ``Parallel(Sequential(HarmonicField), ...)``).
+        Wrappers override to nest; leaf heads to name their function."""
+        return type(self).__name__
+
     @abstractmethod
     def forward(self, hidden_states: Tensor, **kwargs: Any) -> Tensor:
         """Standalone forward pass (no encoder).

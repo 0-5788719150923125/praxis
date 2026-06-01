@@ -32,6 +32,27 @@ export const CLICK_HANDLERS = [
         })
     },
     {
+        selector: '#contracts-toggle',
+        match: 'closest',
+        action: () => ({ type: 'TOGGLE_CONTRACTS_VIEW' })
+    },
+    {
+        selector: '.contract-agree-btn',
+        match: 'closest',
+        action: (e) => ({
+            type: 'AGREE_CONTRACT',
+            payload: e.target.closest('.contract-agree-btn').dataset.contractId
+        })
+    },
+    {
+        selector: '.agent-sever',
+        match: 'closest',
+        action: (e) => ({
+            type: 'SEVER_AGENT',
+            payload: e.target.closest('.agent-sever').dataset.agentId
+        })
+    },
+    {
         selector: '.tab-button',
         match: 'exact',
         action: (e) => ({

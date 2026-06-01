@@ -333,6 +333,9 @@ class CrystalHead(BaseHead):
     def classifier(self) -> nn.Module:
         return self.lm_head
 
+    def compose_repr(self) -> str:
+        return "CrystalClassifier"
+
     def training_metrics(self) -> dict:
         c = self.lm_head
         out = {

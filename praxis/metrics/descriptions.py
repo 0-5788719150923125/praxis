@@ -46,11 +46,17 @@ def _normalize(value: Any) -> Optional[Dict[str, Any]]:
             return None
         chart = value.get("chart")
         snapshot = value.get("snapshot")
-        return {
+        entry: Dict[str, Any] = {
             "description": desc,
             "chart": chart if isinstance(chart, dict) else None,
             "snapshot": snapshot if isinstance(snapshot, dict) else None,
         }
+        # A producer may pin its own caller (e.g. ParallelHead's namespaced
+        # per-branch keys, which the model walk in _stamp_callers can't reach).
+        caller = value.get("caller")
+        if isinstance(caller, str):
+            entry["caller"] = caller
+        return entry
     return None
 
 
@@ -102,37 +108,56 @@ def _candidates(model: Any) -> Iterable[Dict[str, Any]]:
             yield descs
 
 
+def resolve_callers(root: Any) -> Dict[str, str]:
+    """Map each metric key to the class name of the module that declares it.
+
+    Walks ``root.modules()`` parents-first, first declarer wins. Used to stamp
+    the live model and, by ``ParallelHead``, to attribute its per-branch keys
+    to the owning leaf class (e.g. ``HarmonicField``, not its head wrapper).
+    """
+    out: Dict[str, str] = {}
+    if not hasattr(root, "modules"):
+        return out
+    for mod in root.modules():
+        descs = getattr(type(mod), "metric_descriptions", None)
+        if isinstance(descs, dict):
+            for key in descs:
+                out.setdefault(str(key), type(mod).__name__)
+    return out
+
+
 def _stamp_callers(out: Dict[str, Dict[str, Any]], model: Any) -> None:
     """Annotate each entry with the class name of the module that raised it.
 
     Lets the dashboard show which component owns a metric. We walk the live
     model (parents before children, first declarer wins) then fill in the
-    non-module sources. A key with no identifiable owner is left unstamped.
+    non-module sources. Entries that already carry a pinned ``caller`` (e.g.
+    ParallelHead's namespaced keys) are left untouched; unowned keys stay bare.
     """
 
-    def claim(descriptions: Any, caller: str) -> None:
-        if not isinstance(descriptions, dict):
-            return
-        for key in descriptions:
-            entry = out.get(str(key))
-            if entry is not None and "caller" not in entry:
-                entry["caller"] = caller
+    def claim(key: str, caller: str) -> None:
+        entry = out.get(str(key))
+        if entry is not None and "caller" not in entry:
+            entry["caller"] = caller
 
-    if hasattr(model, "modules"):
-        for mod in model.modules():
-            claim(getattr(type(mod), "metric_descriptions", None), type(mod).__name__)
+    for key, caller in resolve_callers(model).items():
+        claim(key, caller)
 
     iso = getattr(model, "contrastive_isotropy", None)
     if iso is not None:
-        claim(getattr(type(iso), "metric_descriptions", None), type(iso).__name__)
+        descs = getattr(type(iso), "metric_descriptions", None)
+        if isinstance(descs, dict):
+            for key in descs:
+                claim(key, type(iso).__name__)
 
     weighter = getattr(model, "tasker", None)
     if weighter is not None and getattr(weighter, "is_dynamic", False):
-        claim({"task_weights": None}, type(weighter).__name__)
+        claim("task_weights", type(weighter).__name__)
 
     from praxis.metrics.optimizer import OPTIMIZER_METRIC_DESCRIPTIONS
 
-    claim(OPTIMIZER_METRIC_DESCRIPTIONS, "Optimizer")
+    for key in OPTIMIZER_METRIC_DESCRIPTIONS:
+        claim(key, "Optimizer")
 
 
 def get_metric_descriptions(model: Any) -> Dict[str, Dict[str, Any]]:

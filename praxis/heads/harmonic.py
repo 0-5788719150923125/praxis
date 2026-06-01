@@ -656,6 +656,9 @@ class HarmonicHead(BaseHead):
         else:
             self.lm_head = None
 
+    def compose_repr(self) -> str:
+        return "HarmonicField"
+
     def transform(self, hidden_states: Tensor) -> Tensor:
         """The field modulation - this head's contribution as a non-terminal
         SequentialHead stage."""
@@ -671,8 +674,13 @@ class HarmonicHead(BaseHead):
 
     def set_downstream(self, classifier: Optional[nn.Module]) -> None:
         """Point grad-ratio at the classifier this field actually feeds, when
-        used transform-only in a SequentialHead (else it has none of its own)."""
-        self._downstream = classifier
+        used transform-only in a SequentialHead (else it has none of its own).
+
+        Held in a tuple so it is *not* registered as a submodule: the
+        downstream is owned elsewhere (the terminal head), and registering it
+        would duplicate its params in our state_dict and leak its metric
+        descriptions into this stage's module walk."""
+        self._downstream = (classifier,) if classifier is not None else None
 
     def aux_losses(self) -> dict:
         if self.field is None:
@@ -683,7 +691,9 @@ class HarmonicHead(BaseHead):
     def _downstream_classifier(self) -> Optional[nn.Module]:
         """The learnable projection the field feeds into: our own ``lm_head``
         when terminal, else the injected downstream classifier."""
-        return self.lm_head if self.lm_head is not None else self._downstream
+        if self.lm_head is not None:
+            return self.lm_head
+        return self._downstream[0] if self._downstream else None
 
     def dashboard_snapshots(self) -> dict:
         """Amplitude grid magnitudes for the spectrum heatmap.

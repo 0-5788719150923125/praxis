@@ -343,22 +343,30 @@ def test_calm_with_stacked_crystal_harmonic_head():
 
 
 def test_calm_with_prismatic_head_learns_envelope():
-    # prismatic = SequentialHead([HarmonicHead(learned wave), CrystalHead]); the
-    # envelope coefficients train through CALM's reconstruction path.
+    # prismatic = ParallelHead([Sequential(field+linear), Sequential(field, crystal)]):
+    # a top-level gate balances the two arms' logits per token. Both envelopes and
+    # the gate train through CALM's reconstruction path.
     cfg = _tiny_config(head_type="prismatic")
     model = PraxisForCausalLM(cfg)
-    field = model.head.heads[0].field
-    assert field.amp_modulation == "learned"
-    assert field.envelope_depth() > 0.0
+    parallel = model.head  # ParallelHead is the top head
+    fields = [arm.heads[0].field for arm in parallel.branches]
+    assert len(fields) == 2
+    for field in fields:
+        assert field.amp_modulation == "learned"
+        assert field.envelope_depth() > 0.0
 
     model.train()
     input_ids = torch.randint(4, 200, (2, 32), dtype=torch.long)
     out = model(input_ids=input_ids, labels=input_ids[:, 1:].contiguous())
     out.loss.backward()
-    # The envelope's coefficients are trainable and get gradient via recon.
-    assert field.amp_coeffs.requires_grad
-    assert field.amp_coeffs.grad is not None
-    assert field.amp_coeffs.grad.abs().sum() > 0
+    # Both envelopes' coefficients are trainable and get gradient via recon.
+    for field in fields:
+        assert field.amp_coeffs.requires_grad
+        assert field.amp_coeffs.grad is not None
+        assert field.amp_coeffs.grad.abs().sum() > 0
+    # The per-token gate that balances the two fields also learns.
+    assert parallel.gate.weight.grad is not None
+    assert parallel.gate.weight.grad.abs().sum() > 0
 
 
 def test_stacked_head_logits_match_manual_compose():

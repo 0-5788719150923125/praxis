@@ -8,7 +8,7 @@ import { render, renderNotifications } from './render.js';
 import { storage, readFormValues, FORM_FIELDS } from './config.js';
 import { toggleRunSelector, toggleRunSelection, repaintDeckCards } from './charts.js';
 import { toggleDynamicsRunSelector, selectDynamicsRun } from './dynamics.js';
-import { loadResearchMetrics, loadDynamics, toggleSpecRunSelector, selectSpecRun } from './tabs.js';
+import { loadResearchMetrics, loadDynamics, toggleSpecRunSelector, selectSpecRun, toggleContractsView, agreeContract, severSwarmAgent } from './tabs.js';
 import { sendMessage, testApiConnection } from './api.js';
 
 /**
@@ -195,6 +195,27 @@ export const ACTION_HANDLERS = {
         if (newTab.onActivate) {
             await callLifecycleHook(newTab.onActivate, newTab);
         }
+    },
+
+    /**
+     * Toggle the Stage tab between discovered actors and the CONTRACTS view.
+     */
+    TOGGLE_CONTRACTS_VIEW: () => {
+        toggleContractsView();
+    },
+
+    /**
+     * Agree to a contract: spawn an in-page swarm agent (IDLE for now).
+     */
+    AGREE_CONTRACT: (contractId) => {
+        agreeContract(contractId);
+    },
+
+    /**
+     * Sever a spawned swarm agent's connection.
+     */
+    SEVER_AGENT: (agentId) => {
+        severSwarmAgent(agentId);
     },
 
     /**

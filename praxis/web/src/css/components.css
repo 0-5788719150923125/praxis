@@ -1331,6 +1331,195 @@
     color: var(--light-text);
 }
 
+/* ==================== Stage: Swarm Contracts ==================== */
+
+/* The CONTRACTS toggle reads as a neutral chip until active, when it adopts the
+   accent - matching the SYSTEM/LOGS switcher idiom on the Terminal tab. */
+.contracts-toggle {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--light-text);
+}
+
+.contracts-toggle:hover {
+    border-color: var(--accent);
+    color: var(--text);
+    background: none;
+}
+
+.contracts-toggle.active {
+    background: hsl(var(--accent-hue) var(--accent-sat) var(--accent-lum) / 0.15);
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+/* Slide-out contracts panel: collapsed by default, expands above the fleet list
+   when CONTRACTS is pressed. The 0fr->1fr grid row animates height without a
+   hardcoded max-height. */
+.contracts-panel {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 0.28s ease, margin-bottom 0.28s ease, opacity 0.2s ease;
+    opacity: 0;
+    margin-bottom: 0;
+}
+
+.contracts-panel.open {
+    grid-template-rows: 1fr;
+    opacity: 1;
+    margin-bottom: 1.5rem;
+}
+
+.contracts-panel-inner {
+    overflow: hidden;   /* required for the grid-row collapse to clip content */
+    min-height: 0;
+}
+
+.contracts-panel-label {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--light-text);
+    margin-bottom: 0.625rem;
+}
+
+.contracts-list {
+    background-color: var(--assistant-message-bg);
+    border-radius: var(--radius-small);
+    overflow: hidden;
+    box-shadow: 0 0.125rem 0.625rem var(--shadow);
+}
+
+.contract-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.contract-row:last-child {
+    border-bottom: none;
+}
+
+.contract-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+}
+
+.contract-name {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.contract-guarantee {
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--accent);
+}
+
+.contract-desc {
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    color: var(--light-text);
+    max-width: 46rem;
+}
+
+.contract-agree-btn {
+    flex-shrink: 0;
+    padding: 0.5rem 1.25rem;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: var(--radius-small);
+    font-size: 0.8125rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    transition: filter 0.2s, transform 0.1s;
+}
+
+.contract-agree-btn:hover {
+    filter: brightness(1.1);
+}
+
+.contract-agree-btn:active {
+    transform: translateY(1px);
+}
+
+/* "browser" tag next to a ship's name in the fleet list. */
+.agent-kind-tag {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-small);
+    padding: 0.05rem 0.35rem;
+    margin-left: 0.4rem;
+    vertical-align: middle;
+}
+
+/* IDLE status badge (no live data yet - a calm neutral, not a pulse). */
+.agent-status.idle {
+    background-color: rgba(102, 102, 102, 0.1);
+    color: var(--light-text);
+}
+
+[data-theme="dark"] .agent-status.idle {
+    background-color: rgba(176, 176, 176, 0.1);
+}
+
+.status-dot.idle {
+    background-color: var(--light-text);
+}
+
+/* Spawned-agent status doubles as a SEVER button: shows the status at rest,
+   flips to red SEVER on hover/focus (clicking tears down the connection). */
+.agent-sever {
+    position: relative;
+    font-family: inherit;
+    border: none;
+    cursor: pointer;
+    transition: background-color 0.15s, color 0.15s;
+}
+
+.agent-sever .agent-sever-label {
+    display: none;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+}
+
+.agent-sever:hover,
+.agent-sever:focus-visible {
+    background-color: rgba(204, 0, 0, 0.12);
+    color: #cc0000;
+    outline: none;
+}
+
+[data-theme="dark"] .agent-sever:hover,
+[data-theme="dark"] .agent-sever:focus-visible {
+    background-color: rgba(204, 0, 0, 0.2);
+    color: #ff5b5b;
+}
+
+/* On hover/focus, swap the status (dot + label) for the SEVER label. */
+.agent-sever:hover .status-dot,
+.agent-sever:focus-visible .status-dot,
+.agent-sever:hover .agent-status-label,
+.agent-sever:focus-visible .agent-status-label {
+    display: none;
+}
+
+.agent-sever:hover .agent-sever-label,
+.agent-sever:focus-visible .agent-sever-label {
+    display: inline;
+}
+
 /* ==================== Tab Headers (Generic & Reusable) ==================== */
 
 /* Remove top padding from containers that have headers */

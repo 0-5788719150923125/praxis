@@ -71,9 +71,11 @@ class SequentialHead(BaseHead):
             if hasattr(head, "set_downstream"):
                 head.set_downstream(terminal)
 
+    def compose_repr(self) -> str:
+        return "Sequential(" + ", ".join(h.compose_repr() for h in self.heads) + ")"
+
     def __repr__(self) -> str:
-        inner = ", ".join(h.__class__.__name__ for h in self.heads)
-        return f"{self.__class__.__name__}([{inner}])"
+        return self.compose_repr()
 
     def forward(self, hidden_states: Tensor, **kwargs: Any) -> Tensor:
         h = hidden_states
@@ -108,4 +110,13 @@ class SequentialHead(BaseHead):
         out: dict = {}
         for head in self.heads:
             out.update(head.dashboard_snapshots())
+        return out
+
+    def all_metric_descriptions(self) -> dict:
+        # Delegate to each sub-head rather than the default flat module walk, so
+        # a nested ParallelHead's namespaced (``p{i}_``) per-branch descriptions
+        # propagate instead of colliding on shared class-level keys.
+        out: dict = {}
+        for head in self.heads:
+            out.update(head.all_metric_descriptions())
         return out

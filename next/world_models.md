@@ -184,13 +184,14 @@ only the app the user opened, and the mesh is serverless from our side.
 ### The in-browser agent
 
 A tiny layer-expert that trains its local loss and serves rank-`r` activations.
-**Open question: framework.** At `hidden_dim = 16`, a full framework (TensorFlow.js,
-as used at `../src.eco` and `../ode`) may be overkill - a hand-written pure-JS
-forward/backward for one layer could be smaller, auditable, and dependency-free.
-Prototype both: TF.js for speed-to-first-result, pure-JS to learn the true cost.
-(This squarely hits the "weigh new dependencies heavily" rule - a framework that
-owns the agent's whole runtime is a big commitment for a 16-dim layer.) The
-persistence/health model can borrow directly from `../fvn`.
+**Resolved: pure JS, no framework.** The framework question is settled - a
+hand-written reverse-mode autograd + transformer (exact SiLU/RMSNorm/softmax,
+verified against finite differences) is small, auditable, and dependency-free,
+which is exactly what we want for a ~14-dim layer. It now lives in the app at
+`praxis/web/src/js/nanoformer.js` (regression test in `__tests__/gradcheck.js`),
+and the Stage-tab swarm agents (`swarm.js`) run it: a heartbeat forward pass
+while idle, and a real Mono-Forward `trainLayerWise` step once a transport drives
+work. TF.js was not needed. The persistence/health model can borrow from `../fvn`.
 
 ### The rank-priced streaming protocol
 

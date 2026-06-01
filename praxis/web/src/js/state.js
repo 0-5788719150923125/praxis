@@ -199,6 +199,27 @@ export const state = {
         error: null
     },
 
+    // Swarm contracts: the Stage tab shows a slide-out CONTRACTS panel (offering
+    // compute to the swarm) above the always-present fleet list. Agreeing to a
+    // contract spawns an in-page SwarmAgent (see swarm.js). The list is static
+    // for now - eventually contracts arrive from the mesh.
+    contracts: {
+        open: false,      // is the slide-out contracts panel open?
+        available: [
+            {
+                id: 'donate-browser-agent',
+                title: 'Donate a browser agent',
+                guarantee: 'max security',
+                description:
+                    'Run a tiny transformer agent in this browser tab, sandboxed and ' +
+                    'gated behind this app. It performs online updates as one expert in ' +
+                    'a distributed swarm. No native code, no central server - peers sync ' +
+                    'directly. Opt-in, idle until work arrives, and revocable at any time.',
+            },
+        ],
+        agents: [],       // live SwarmAgent instances (not view objects)
+    },
+
     // Research/metrics data (loaded async)
     research: {
         loaded: false,

@@ -62,9 +62,10 @@ def test_forward_shape_preserved():
 
 
 def test_head_type_keys_compose_sequential_heads():
-    # The harmonic+crystal keys are functools.partial over SequentialHead,
-    # composing [HarmonicHead(mode, transform-only), CrystalHead] dynamically -
-    # no bespoke subclass. The mode lives in the harmonic builder's keywords.
+    # The single-field harmonic+crystal keys are functools.partial over
+    # SequentialHead, composing [HarmonicHead(mode, transform-only), CrystalHead]
+    # dynamically - no bespoke subclass. The mode lives in the harmonic builder's
+    # keywords.
     import functools
 
     from praxis.heads import HEAD_REGISTRY
@@ -72,8 +73,7 @@ def test_head_type_keys_compose_sequential_heads():
     from praxis.heads.stacked import SequentialHead
 
     for key, mode in [("crystal_harmonic", "off"),
-                      ("crystal_harmonic_static", "static"),
-                      ("prismatic", "learned")]:
+                      ("crystal_harmonic_static", "static")]:
         entry = HEAD_REGISTRY[key]
         assert isinstance(entry, functools.partial)
         assert entry.func is SequentialHead
@@ -82,3 +82,29 @@ def test_head_type_keys_compose_sequential_heads():
         assert harmonic_spec.func is HarmonicHead
         assert harmonic_spec.keywords["amp_modulation"] == mode
         assert harmonic_spec.keywords["build_classifier"] is False
+
+
+def test_prismatic_is_top_level_parallel_split():
+    # prismatic is a top-level Parallel of two arms balancing bias vs variance:
+    #   Parallel(Sequential(HarmonicField), Sequential(HarmonicField, CrystalClassifier))
+    import functools
+
+    from praxis.heads import HEAD_REGISTRY, CrystalHead, HarmonicHead, ParallelHead
+    from praxis.heads.stacked import SequentialHead
+
+    entry = HEAD_REGISTRY["prismatic"]
+    assert isinstance(entry, functools.partial) and entry.func is ParallelHead
+    arm0, arm1 = entry.keywords["branches"]
+    assert arm0.func is SequentialHead and arm1.func is SequentialHead
+
+    # arm 0 (bias): a single harmonic field with its own linear readout.
+    (field0,) = arm0.keywords["heads"]
+    assert field0.func is HarmonicHead
+    assert field0.keywords["amp_modulation"] == "learned"
+    assert field0.keywords["build_classifier"] is True
+
+    # arm 1 (variance): a transform-only field feeding the crystal classifier.
+    field1, crystal = arm1.keywords["heads"]
+    assert field1.func is HarmonicHead
+    assert field1.keywords["build_classifier"] is False
+    assert crystal is CrystalHead

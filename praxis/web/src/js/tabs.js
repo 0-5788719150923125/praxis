@@ -24,6 +24,7 @@ import {
     escapeHtml
 } from './components.js';
 import { SPEC_CONFIG, extractCommandInfo, AGENT_DISPLAY_FIELDS } from './config.js';
+import { spawnAgent, agentViews, severAgent } from './swarm.js';
 
 /**
  * Generic tab data loader - DRY pattern for all tab loading
@@ -345,6 +346,37 @@ export async function loadAgents() {
 }
 
 /**
+ * Toggle the slide-out CONTRACTS panel open/closed. Animates via a class on the
+ * panel + button instead of re-rendering, so the fleet list below stays put.
+ */
+export function toggleContractsView() {
+    state.contracts.open = !state.contracts.open;
+    const panel = document.getElementById('contracts-panel');
+    const btn = document.getElementById('contracts-toggle');
+    if (panel) panel.classList.toggle('open', state.contracts.open);
+    if (btn) btn.classList.toggle('active', state.contracts.open);
+}
+
+/**
+ * Agree to a contract: spawn a browser ship and re-render the Stage so it
+ * appears among the fleet. Leaves the contracts panel open.
+ */
+export function agreeContract(contractId) {
+    const contract = state.contracts.available.find(c => c.id === contractId);
+    if (!contract) return;
+    spawnAgent(contract);
+    renderAgents(state.agents.availableAgents, document.getElementById('agents-container'));
+}
+
+/**
+ * Sever a spawned agent's connection and re-render the Stage fleet.
+ */
+export function severSwarmAgent(agentId) {
+    if (!severAgent(agentId)) return;
+    renderAgents(state.agents.availableAgents, document.getElementById('agents-container'));
+}
+
+/**
  * Render agents tab content
  */
 /**
@@ -354,6 +386,10 @@ export async function loadAgents() {
  * @returns {string} HTML string
  */
 const renderAgentCard = (agent, allAgents) => {
+    // Browser-spawned ships render with their own info line (dim/layers/passes)
+    // and a SEVER button instead of the freshness-colored remote-actor badge.
+    if (agent.kind === 'browser') return renderBrowserShipCard(agent);
+
     const statusClass = agent.status || 'offline';
     const statusText = statusClass.charAt(0).toUpperCase() + statusClass.slice(1);
 
@@ -388,29 +424,121 @@ const renderAgentCard = (agent, allAgents) => {
     `;
 };
 
-/**
- * Render agents tab content using generic components
- */
-function renderAgents(agents, container) {
-    if (!agents || agents.length === 0) {
-        container.innerHTML = '<div class="loading-placeholder">No agents available.</div>';
-        return;
-    }
+/** The live info line for a ship (dim / layers / passes). */
+const shipInfoLine = (agent) =>
+    `dim: ${agent.hidden}x${agent.hidden} | layers: ${agent.layers} | passes: ${agent.passes}`;
 
-    // Create header with theme-aware title
+/**
+ * Render a browser-spawned ship: a first-class actor reporting its dims, layer
+ * count, and live forward-pass count. The status badge is a button that flips to
+ * a red SEVER on hover/focus (clicking tears down the agent). The info line has
+ * a stable id so the heartbeat refresh updates its text in place (no rebuild).
+ */
+const renderBrowserShipCard = (agent) => {
+    const statusText = agent.status.toUpperCase();
+    return `
+        <div class="agent-row">
+            <div class="agent-info">
+                <div class="agent-name">${escapeHtml(agent.name)} <span class="agent-kind-tag">browser</span></div>
+                <div class="agent-url" id="ship-info-${escapeHtml(agent.id)}">${shipInfoLine(agent)}</div>
+            </div>
+            <button class="agent-status agent-sever ${agent.status}" data-agent-id="${escapeHtml(agent.id)}"
+                    title="Sever this agent's connection" aria-label="Sever agent ${escapeHtml(agent.name)}">
+                <span class="status-dot ${agent.status}"></span>
+                <span class="agent-status-label">${statusText}</span>
+                <span class="agent-sever-label">SEVER</span>
+            </button>
+        </div>
+    `;
+};
+
+/**
+ * Render a single contract row: description + a single AGREE button.
+ */
+const renderContractCard = (contract) => `
+    <div class="contract-row">
+        <div class="contract-info">
+            <div class="contract-name">${escapeHtml(contract.title)}${
+                contract.guarantee ? ` <span class="contract-guarantee">(${escapeHtml(contract.guarantee)} guarantee)</span>` : ''
+            }</div>
+            <div class="contract-desc">${escapeHtml(contract.description)}</div>
+        </div>
+        <button class="contract-agree-btn" data-contract-id="${escapeHtml(contract.id)}">AGREE</button>
+    </div>
+`;
+
+/**
+ * The CONTRACTS toggle button for the Stage header, with a (count) badge. It
+ * opens/closes the slide-out contracts panel (it doesn't swap the view).
+ */
+function contractsToggleButton() {
+    const count = state.contracts.available.length;
+    const open = state.contracts.open;
+    return {
+        id: 'contracts-toggle',
+        label: `CONTRACTS (${count})`,
+        action: 'TOGGLE_CONTRACTS_VIEW',
+        className: `tab-header-button contracts-toggle${open ? ' active' : ''}`,
+    };
+}
+
+/**
+ * Render the Stage tab: header + a slide-out contracts panel + the fleet list.
+ * Browser-spawned ships are first-class actors and sit in the same list as the
+ * discovered remote agents; the contracts panel slides out above them.
+ */
+export function renderAgents(agents, container) {
+    container = container || document.getElementById('agents-container');
+    if (!container) return;
+    state.agents.availableAgents = agents || state.agents.availableAgents || [];
+
     const title = state.theme === 'dark' ? 'Hangar' : 'Wire';
+    const ships = agentViews();
+    const fleet = [...ships, ...state.agents.availableAgents]; // own ships first
     const headerHTML = createTabHeader({
         title: title,
-        metadata: `<span><strong>Discovered:</strong> ${agents.length} actor${agents.length !== 1 ? 's' : ''}</span>`
+        buttons: [contractsToggleButton()],
+        metadata: `<span><strong>Fleet:</strong> ${fleet.length} actor${fleet.length !== 1 ? 's' : ''}${
+            ships.length ? ` (${ships.length} local)` : ''
+        }</span>`
     });
 
-    // Pass all agents to each card for color calculation
-    const agentsHtml = agents.map(agent => renderAgentCard(agent, agents)).join('');
+    const contractsHtml = state.contracts.available.map(renderContractCard).join('');
+    const agentsHtml = fleet.length
+        ? fleet.map(agent => renderAgentCard(agent, fleet)).join('')
+        : '<div class="loading-placeholder">No actors discovered.</div>';
 
     container.innerHTML = `
         ${headerHTML}
+        <div class="contracts-panel${state.contracts.open ? ' open' : ''}" id="contracts-panel">
+            <div class="contracts-panel-inner">
+                <div class="contracts-panel-label">Offer your compute to the swarm.</div>
+                <div class="contracts-list">${contractsHtml}</div>
+            </div>
+        </div>
         <div class="agents-list">${agentsHtml}</div>
     `;
+
+    if (ships.length > 0) ensureFleetRefresh();
+}
+
+// Surgically refresh the live counters on browser ships (pass/step count) WITHOUT
+// rebuilding the list - rebuilding mid-hover made the hover highlight flicker to
+// the heartbeat. Started lazily; stops itself when the tab/ships are gone.
+let _fleetRefreshTimer = null;
+function ensureFleetRefresh() {
+    if (_fleetRefreshTimer) return;
+    _fleetRefreshTimer = setInterval(() => {
+        if (state.currentTab !== 'agents' || state.contracts.agents.length === 0) {
+            clearInterval(_fleetRefreshTimer);
+            _fleetRefreshTimer = null;
+            return;
+        }
+        for (const agent of agentViews()) {
+            const el = document.getElementById(`ship-info-${agent.id}`);
+            if (el) el.textContent = shipInfoLine(agent);
+        }
+    }, 2000);
 }
 
 /**

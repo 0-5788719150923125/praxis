@@ -38,7 +38,7 @@ Source: [praxis/heads/stacked.py:34](../praxis/heads/stacked.py#L34)
 Presets:
 - `crystal_harmonic` - `heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='off', build_classifier=False), <class 'praxis.heads.crystal.CrystalHead'>]`
 - `crystal_harmonic_static` - `heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='static', build_classifier=False), <class 'praxis.heads.crystal.CrystalHead'>]`
-- `prismatic` - `heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='learned', build_classifier=False), <class 'praxis.heads.crystal.CrystalHead'>]`
+- `prismatic` - `heads=[functools.partial(<class 'praxis.heads.parallel.ParallelHead'>, branches=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='learned', build_classifier=False), functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='learned', build_classifier=False)]), <class 'praxis.heads.crystal.CrystalHead'>]`
 
 ## `forward` - ForwardHead
 
