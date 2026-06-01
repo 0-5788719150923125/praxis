@@ -43,7 +43,8 @@ const HIDDEN_FFN = 28;
 const LAYERS = 1;
 const VOCAB = 16;
 const HEARTBEAT_MS = 2000; // how often an idle agent runs a heartbeat pass
-const SEQ = 8;             // sequence length for the heartbeat pass
+const TRAIN_MS = 1500;     // how often a joined agent runs an observer update
+const SEQ = 8;             // sequence length for the heartbeat / train pass
 const TRAIN_DECAY_MS = 4000; // no training within this window -> decay to IDLE
 
 let _seq = 0;
@@ -84,12 +85,23 @@ export class SwarmAgent {
         this._timer = null;
     }
 
-    /** Begin heartbeating. The agent stays IDLE but counts live forward passes. */
+    /**
+     * Begin participating. The agent runs observer-mode training on locally
+     * generated batches - real Mono-Forward updates, detached, not contributing
+     * back to any model - so it reports OBSERVE (blue) like its backend siblings.
+     * (The seam to feed it the backend's actual batches over the wire is the same
+     * stub noted on tick(); locally generated data keeps it genuinely learning
+     * and live until then.)
+     */
     start() {
         if (this._timer) return;
-        const beat = () => this.heartbeat();
-        beat(); // one immediately so the list shows a pass right away
-        this._timer = setInterval(beat, HEARTBEAT_MS);
+        const step = () => {
+            // A locally generated id-batch: input ids and next-token targets.
+            const ids = Array.from({ length: SEQ }, () => Math.floor(Math.random() * VOCAB));
+            this.tick(ids.slice(0, -1), ids.slice(1));
+        };
+        step(); // one immediately so the row shows OBSERVE right away
+        this._timer = setInterval(step, TRAIN_MS);
     }
 
     /**

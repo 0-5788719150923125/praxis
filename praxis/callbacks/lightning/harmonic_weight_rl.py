@@ -22,6 +22,10 @@ from lightning.pytorch.callbacks import Callback
 
 from praxis.policies.harmonic_weight_rl import build_gate_mask
 
+# Per-episode EMA for the kept-fraction chart (~10-episode memory). Fixed, not
+# tuned: the raw keep decision is binary, the chart wants the rolling rate.
+KEEP_RATE_DECAY = 0.9
+
 
 class HarmonicWeightRLCallback(Callback):
     def __init__(
@@ -58,6 +62,7 @@ class HarmonicWeightRLCallback(Callback):
         self.selector = str(selector)
 
         self._loss_ema: Optional[float] = None
+        self._keep_rate: Optional[float] = None  # EMA of the kept decision
         self._step = 0
         self._episode: Optional[dict] = None  # set while an edit is live
         self._metrics: dict = {}
@@ -346,8 +351,16 @@ class HarmonicWeightRLCallback(Callback):
         else:
             kept = 1.0
 
+        # Chart the rolling keep RATE, not the binary decision: a raw 0/1 series
+        # only ever renders at 0 or 100%. Seed from the first episode so it
+        # starts at the actual decision, then smooths into (0, 1).
+        d = KEEP_RATE_DECAY
+        self._keep_rate = (
+            kept if self._keep_rate is None else d * self._keep_rate + (1.0 - d) * kept
+        )
+
         metrics = self.policy.update(ep["state"], ep["raw"], reward)
         metrics.update(ep["meta"])
-        metrics["rl_edit_kept"] = kept
+        metrics["rl_edit_kept"] = self._keep_rate
         metrics["rl_reward_instant"] = instant
         self._metrics = metrics

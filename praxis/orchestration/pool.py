@@ -147,12 +147,19 @@ class ExpertPool:
             self._pool.submit(e.train_step, activations, labels): e for e in alive
         }
         losses: Dict[str, float] = {}
-        for fut in cf.as_completed(futs, timeout=timeout):
-            e = futs[fut]
-            try:
-                losses[e.uid] = fut.result()
-            except Exception:
-                e._alive = False  # a dead peer drops out of the pool
+        try:
+            for fut in cf.as_completed(futs, timeout=timeout):
+                e = futs[fut]
+                try:
+                    losses[e.uid] = fut.result()
+                except Exception:
+                    e._alive = False  # a real error drops a peer from the pool
+        except cf.TimeoutError:
+            # Stragglers: take whatever finished in time. They keep running in the
+            # background and land on a later step - NOT marked dead, so a large
+            # pool doesn't silently stop training its tail. (This is the whole
+            # point of non-blocking dispatch.)
+            pass
         done = list(losses.values())
         self.capacity()  # refresh the published pool status after the step
         return {

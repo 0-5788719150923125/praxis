@@ -131,11 +131,24 @@ class ExpertPoolCallback(Callback):
                 except Exception:
                     pass
         # Sample the pool cheaply at logging intervals (read each expert's
-        # already-computed EMAs - no recompute) and publish the aggregate.
+        # already-computed EMAs - no recompute), publish for the live dashboards,
+        # and log scalars so they flow to the metrics DB -> /api/metrics -> the
+        # Research-tab cards (swarm_loss / _std / _acc / _experts).
         if batch_idx % self.metrics_every == 0:
             m = self.pool.sample_metrics(k=16)
             if m:
                 pool_status.publish_metrics(m)
+                scalars = {"swarm_experts": float(len(self.pool.alive()))}
+                if m.get("loss_mean") is not None:
+                    scalars["swarm_loss"] = float(m["loss_mean"])
+                if m.get("loss_std") is not None:
+                    scalars["swarm_loss_std"] = float(m["loss_std"])
+                if m.get("acc_mean") is not None:
+                    scalars["swarm_acc"] = float(m["acc_mean"])
+                try:
+                    pl_module.log_dict(scalars, on_step=True, on_epoch=False, logger=True)
+                except Exception:
+                    pass
         self.pool.capacity()
 
     def on_fit_end(self, trainer, pl_module) -> None:

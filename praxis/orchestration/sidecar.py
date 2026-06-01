@@ -21,9 +21,12 @@ experts (the pool just runs whatever local/browser experts it has).
 
 from __future__ import annotations
 
+import atexit
 import json
 import shutil
+import signal
 import subprocess
+import sys
 import time
 import urllib.request
 from pathlib import Path
@@ -37,6 +40,29 @@ from praxis.orchestration.base import RemoteExpert
 _SIDECAR_JS = (
     Path(__file__).resolve().parents[1] / "web" / "src" / "js" / "sidecar.js"
 )
+
+
+def _pdeathsig_preexec():
+    """Return a ``preexec_fn`` that asks the kernel to SIGKILL the child when the
+    parent dies (Linux PR_SET_PDEATHSIG) - the only orphan-proofing that survives
+    a hard crash / SIGKILL of the parent. None on non-Linux (no equivalent; those
+    platforms rely on the atexit hook + explicit stop()).
+    """
+    if not sys.platform.startswith("linux"):
+        return None
+    try:
+        import ctypes
+
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+    except Exception:
+        return None
+
+    PR_SET_PDEATHSIG = 1
+
+    def _set_pdeathsig():  # runs in the child after fork, before exec
+        libc.prctl(PR_SET_PDEATHSIG, signal.SIGKILL)
+
+    return _set_pdeathsig
 
 
 def _http(url: str, payload: Optional[dict] = None, method: str = "GET", timeout: float = 10.0):
@@ -120,7 +146,16 @@ class SidecarManager:
         return shutil.which("node") is not None and _SIDECAR_JS.exists()
 
     def start(self, wait: float = 8.0) -> bool:
-        """Launch the sidecar and wait until it answers. Returns success."""
+        """Launch the sidecar and wait until it answers. Returns success.
+
+        Orphan-proofing, defense in depth:
+          1. ``preexec_fn`` sets PR_SET_PDEATHSIG=SIGKILL on Linux, so the kernel
+             kills the Node child the instant *this* process dies - even on a
+             hard crash or SIGKILL of the parent, which no Python hook can catch.
+          2. The child runs in its own session/process group, so ``stop()`` can
+             kill the whole group (catching any Node grandchildren).
+          3. An ``atexit`` hook calls ``stop()`` on normal interpreter exit.
+        """
         if not self.available():
             print("[orchestration] node sidecar unavailable; pool runs without backend experts")
             return False
@@ -129,7 +164,11 @@ class SidecarManager:
              "--port", str(self.port), "--experts", str(self.init_experts),
              "--dim", str(self.dim), "--vocab", str(self.vocab)],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,           # own process group for group-kill
+            preexec_fn=_pdeathsig_preexec(),  # kernel kills child if parent dies
         )
+        # Belt-and-suspenders: also clean up on normal interpreter exit.
+        atexit.register(self.stop)
         deadline = time.monotonic() + wait
         while time.monotonic() < deadline:
             try:
@@ -160,10 +199,26 @@ class SidecarManager:
                 self.pool.remove(e.uid)
 
     def stop(self) -> None:
-        if self.proc is not None:
-            self.proc.terminate()
+        proc = self.proc
+        if proc is None:
+            return
+        self.proc = None
+        if proc.poll() is not None:
+            return  # already dead
+        # Kill the whole process group (catches any Node grandchildren), falling
+        # back to the single process if group signalling isn't available.
+        try:
+            import os
+
+            pgid = os.getpgid(proc.pid)
+            os.killpg(pgid, signal.SIGTERM)
             try:
-                self.proc.wait(timeout=3)
+                proc.wait(timeout=3)
             except Exception:
-                self.proc.kill()
-            self.proc = None
+                os.killpg(pgid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError, AttributeError):
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except Exception:
+                proc.kill()

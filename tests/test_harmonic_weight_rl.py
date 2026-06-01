@@ -135,6 +135,28 @@ def test_callback_rolls_back_unhelpful_edit():
     assert all(torch.equal(b, a) for b, a in zip(before, after))
 
 
+def test_edit_kept_reports_rolling_rate_not_binary():
+    # rl_edit_kept is an EMA of the per-episode keep decision, so over multiple
+    # mixed episodes it lands strictly between 0 and 1 (the chart is a rate, not
+    # a 0/1 line). loss_ema_decay=0 makes L_before exactly the start-step loss.
+    torch.manual_seed(0)
+    policy = HarmonicWeightPolicy(_cfg(rl_alpha_scale=0.3))
+    cb = HarmonicWeightRLCallback(
+        policy, period=3, horizon=2, warmup_steps=3,
+        keep_threshold=0.0, loss_ema_decay=0.0,
+    )
+    pl, tr = _PL(nn.Sequential(nn.Linear(8, 8), nn.Linear(8, 4))), _Trainer()
+
+    # Episode 1 (steps 3-5): loss falls -> kept -> rate seeds to 1.0.
+    # Episode 2 (steps 6-8): loss rises -> rolled back -> rate = 0.9*1 + 0.1*0.
+    for ls in [5.0, 5.0, 5.0, 4.0, 3.0, 3.0, 4.0, 5.0]:
+        cb.on_train_batch_end(tr, pl, torch.tensor(ls), None, 0)
+
+    kept = cb._metrics["rl_edit_kept"]
+    assert 0.0 < kept < 1.0, kept  # the whole point: an in-between value
+    assert kept == pytest.approx(0.9)
+
+
 def _schedulefree(model):
     # Outermost wrapper, as praxis builds it; one step to create the z iterate.
     from pytorch_optimizer.optimizer import ScheduleFreeWrapper

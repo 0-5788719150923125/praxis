@@ -143,6 +143,57 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
             "is_validation": False,
         },
     },
+    # Remote-expert pool (orchestration). Sampled cheaply at logging intervals
+    # from a subset of the swarm's per-expert EMAs - not the main model's loss.
+    # Only emitted when an expert pool is active (--orchestration-type).
+    "swarm_loss": {
+        "description": (
+            "Mean training loss across a sampled subset of swarm experts "
+            "(each tiny expert's own EMA on real batches). The swarm's "
+            "population-level learning curve, distinct from the main model's."
+        ),
+        "chart": {
+            "title": "Swarm Loss (sampled)",
+            "y_label": "Swarm Loss",
+            "y_scale": "linear",
+            "order": 92,
+            "is_validation": False,
+        },
+    },
+    "swarm_loss_std": {
+        "description": (
+            "Std of expert EMA loss across the sample - how much the swarm "
+            "disagrees. High = a diverse population; collapsing = consensus."
+        ),
+        "chart": {
+            "title": "Swarm Loss Spread",
+            "y_label": "Loss Std",
+            "y_scale": "linear",
+            "order": 93,
+            "is_validation": False,
+        },
+    },
+    "swarm_acc": {
+        "description": "Mean next-token accuracy across the sampled swarm experts.",
+        "chart": {
+            "title": "Swarm Accuracy (sampled)",
+            "y_label": "Accuracy",
+            "y_scale": "linear",
+            "order": 94,
+            "is_validation": False,
+        },
+    },
+    "swarm_experts": {
+        "description": "Live expert count in the pool (grows as peers join).",
+        "chart": {
+            "title": "Swarm Experts",
+            "y_label": "Experts",
+            "y_scale": "linear",
+            "order": 95,
+            "is_validation": False,
+            "type": "bar",
+        },
+    },
     # The following are persisted for record-keeping but don't currently
     # get their own Research-tab chart (no chart hint). They still flow
     # through the logger and API as named columns.
@@ -272,12 +323,13 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "rl_edit_kept": {
         "description": (
-            "1 if the last edit was kept (it improved loss), 0 if rolled back. "
-            "The rolling fraction is how often the controller finds a useful edit."
+            "Rolling fraction of edits kept (an EMA of the per-episode keep/roll-back "
+            "decision) - how often the controller finds an edit that improves loss. "
+            "Near 1: most proposals help; near 0: most are rolled back."
         ),
         "chart": {
             "title": "RL Edit Kept",
-            "y_label": "kept (0/1)",
+            "y_label": "keep rate",
             "y_scale": "linear",
             "order": 290,
             "is_validation": False,
