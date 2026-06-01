@@ -948,6 +948,12 @@
     flex-shrink: 0;   /* pinned */
 }
 
+/* Logs view tints the card black (the terminal log surface), keeping the card's
+   border, padding, and tab header so the switcher stays in place. */
+.ld-info-panel--logs {
+    background: var(--term-panel-alt);
+}
+
 /* System panel title carries the LOGS toggle, floated to its right. */
 .ld-info-panel .ld-panel-title {
     display: flex;
@@ -986,7 +992,7 @@
 .ld-card-tabs {
     display: flex;
     gap: 0.375rem;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.375rem;
 }
 
 .ld-card-tab {
@@ -1020,12 +1026,9 @@
     color: var(--term-faint);
 }
 
-.ld-log-view {
-    border: 1px solid var(--term-border-soft);
-    border-radius: 4px;
-    background: var(--term-panel-alt);
-}
-
+/* Plain content inside the grey panel - no nested box. Mirrors how the SYSTEM
+   grid sits directly in the card, so the tabs stay in the card header in both
+   views and the log view is just the card's body. */
 .ld-log-view[hidden] {
     display: none;
 }
@@ -1038,14 +1041,14 @@
     color: var(--term-dim3);
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    padding: 0.375rem 0.5rem;
+    padding: 0 0 0.1875rem 0;
     border-bottom: 1px solid var(--term-border-faint);
 }
 
 .ld-log-content {
     max-height: 200px;
     overflow-y: auto;
-    padding: 0.375rem 0.5rem;
+    padding: 0.1875rem 0 0 0;
 }
 
 .ld-log-line {

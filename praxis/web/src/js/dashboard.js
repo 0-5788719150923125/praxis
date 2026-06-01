@@ -31,6 +31,8 @@ export function switchDashCard(view) {
     const logs = panel.querySelector('.ld-log-view');
     if (grid) grid.hidden = logPanelOpen;
     if (logs) logs.hidden = !logPanelOpen;
+    // Logs view tints the card black (keeps its chrome + tab header).
+    panel.classList.toggle('ld-info-panel--logs', logPanelOpen);
     panel.querySelectorAll('.ld-card-tab').forEach(t =>
         t.classList.toggle('active', t.dataset.view === view));
     if (logPanelOpen && logs) {
@@ -308,7 +310,7 @@ export function renderLiveDashboard(m) {
                     ${m.accuracy ? `<span class="ld-metric">ACCURACY <span class="ld-val">${fmt(m.accuracy[0], 3)}</span></span>` : ''}
                 </span>
             </div>
-            <div class="ld-info-panel">
+            <div class="ld-info-panel ${logPanelOpen ? 'ld-info-panel--logs' : ''}">
                 <div class="ld-card-tabs">
                     <button class="ld-card-tab ${logPanelOpen ? '' : 'active'}" data-view="system" onclick="switchDashCard('system')">SYSTEM</button>
                     <button class="ld-card-tab ${logPanelOpen ? 'active' : ''}" data-view="logs" onclick="switchDashCard('logs')">LOGS</button>
