@@ -66,6 +66,10 @@ class SequentialHead(BaseHead):
             if hasattr(head, "set_downstream"):
                 head.set_downstream(terminal)
 
+    def __repr__(self) -> str:
+        inner = ", ".join(h.__class__.__name__ for h in self.heads)
+        return f"{self.__class__.__name__}([{inner}])"
+
     def forward(self, hidden_states: Tensor, **kwargs: Any) -> Tensor:
         h = hidden_states
         for head in self.heads[:-1]:
