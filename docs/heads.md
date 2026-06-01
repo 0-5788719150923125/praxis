@@ -25,7 +25,7 @@ encoder's dot-product projection at the loss boundary.
 
 Source: [praxis/heads/crystal.py:262](../praxis/heads/crystal.py#L262)
 
-## `crystal_harmonic`, `crystal_harmonic_static`, `prismatic` - SequentialHead
+## `crystal_harmonic`, `crystal_harmonic_static` - SequentialHead
 
 Chain of heads: transforms compose, the last one classifies.
 
@@ -38,7 +38,6 @@ Source: [praxis/heads/stacked.py:34](../praxis/heads/stacked.py#L34)
 Presets:
 - `crystal_harmonic` - `heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='off', build_classifier=False), <class 'praxis.heads.crystal.CrystalHead'>]`
 - `crystal_harmonic_static` - `heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='static', build_classifier=False), <class 'praxis.heads.crystal.CrystalHead'>]`
-- `prismatic` - `heads=[functools.partial(<class 'praxis.heads.parallel.ParallelHead'>, branches=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='learned', build_classifier=False), functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='learned', build_classifier=False)]), <class 'praxis.heads.crystal.CrystalHead'>]`
 
 ## `forward` - ForwardHead
 
@@ -61,6 +60,15 @@ declared byte-output layout in encoder mode, else ``(hidden_size, vocab_size)``)
 identical in standalone and encoder modes.
 
 Source: [praxis/heads/harmonic.py:614](../praxis/heads/harmonic.py#L614)
+
+## `prismatic` - ParallelHead
+
+Gate-combined parallel branches; a SequentialHead stage or top head.
+
+Source: [praxis/heads/parallel.py:51](../praxis/heads/parallel.py#L51)
+
+Presets:
+- `prismatic` - `branches=[functools.partial(<class 'praxis.heads.stacked.SequentialHead'>, heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='learned', build_classifier=True)]), functools.partial(<class 'praxis.heads.stacked.SequentialHead'>, heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='learned', build_classifier=False), <class 'praxis.heads.crystal.CrystalHead'>])]`
 
 ## `tied` - TiedWeights
 
