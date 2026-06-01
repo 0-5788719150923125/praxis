@@ -143,7 +143,19 @@ function renderTabs() {
     const container = document.querySelector('.tab-buttons');
     if (!container) return;
 
-    container.innerHTML = state.tabs
+    // On mobile the strip is a continuous loop: rotate the list so the active
+    // tab leads and the rest trail in wrap order (the tab after the last is the
+    // first). Paired with the wrap-swipe, the ribbon circles endlessly and the
+    // active tab is always anchored at the left edge - no deep overflow dead-end.
+    // Desktop keeps the natural fixed order. (Content visibility is keyed by
+    // tab id, not DOM order, so reordering the buttons is safe.)
+    let tabs = state.tabs;
+    if (window.innerWidth <= 768 && tabs.length > 1) {
+        const a = tabs.findIndex(t => t.active);
+        if (a > 0) tabs = [...tabs.slice(a), ...tabs.slice(0, a)];
+    }
+
+    container.innerHTML = tabs
         .map(tab => createTab(tab))
         .join('');
 
