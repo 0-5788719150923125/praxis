@@ -43,6 +43,13 @@ overloads `config.vocab_size` as its hash-embedding bucket count, so it
 is not a reliable token count; CALM, owning its own `tok_emb`, needs the
 real one.
 
+Because CALM owns its embeddings (`owns_embeddings = True`), config
+processing unifies `config.vocab_size` itself onto this byte width, so
+`vocab_size` reads as the encoder's representational space (264) rather
+than the hash bucket count. External-hash encoders keep `vocab_size` as
+their bucket width. See `_encoder_owns_embeddings` in
+`praxis/cli/processors/config.py`.
+
 ## Profiles
 
 CALM ships as a set of registry profiles rather than per-hyperparam CLI

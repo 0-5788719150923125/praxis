@@ -59,6 +59,11 @@ class SequentialHead(BaseHead):
             for h in heads
         ]
         self.heads = nn.ModuleList(built)
+        # Mirror the terminal head's resolved layout (it sized itself to the
+        # encoder, e.g. CALM's 264 byte vocab) so the wrapper reports the same.
+        terminal_head = self.heads[-1]
+        self.hidden_size = terminal_head.hidden_size
+        self.vocab_size = terminal_head.vocab_size
         # Point each transform stage's grad-ratio at the terminal classifier it
         # actually feeds (heads that don't track it just ignore the call).
         terminal = self.heads[-1].classifier

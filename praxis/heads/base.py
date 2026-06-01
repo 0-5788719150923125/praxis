@@ -56,7 +56,10 @@ class BaseHead(nn.Module, ABC):
         out_dim = getattr(enc, "output_dim", None)
         out_vocab = getattr(enc, "output_vocab_size", None)
         if out_dim is not None and out_vocab is not None:
-            return (int(out_dim), int(out_vocab))
+            # Report what the classifier is actually sized to (e.g. CALM's 264
+            # byte vocab), not the config's overloaded vocab_size.
+            self.hidden_size, self.vocab_size = int(out_dim), int(out_vocab)
+            return (self.hidden_size, self.vocab_size)
         return None
 
     def __repr__(self) -> str:

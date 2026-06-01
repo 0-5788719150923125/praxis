@@ -3,6 +3,19 @@
 import inspect
 
 
+def _encoder_owns_embeddings(encoder_type) -> bool:
+    """Whether the named encoder builds its own (tokenizer-vocab-sized) input
+    embeddings. Registry entries are functools.partial, so read the flag off the
+    underlying class via ``.func``."""
+    if not encoder_type:
+        return False
+    from praxis import ENCODER_REGISTRY
+
+    builder = ENCODER_REGISTRY.get(encoder_type)
+    cls = getattr(builder, "func", builder)
+    return bool(getattr(cls, "owns_embeddings", False))
+
+
 class ConfigBuilder:
     """Builds PraxisConfig from parsed arguments."""
 
@@ -133,6 +146,16 @@ class ConfigBuilder:
                 and "byte_vocab_size" in valid_config_params
             ):
                 config_kwargs["byte_vocab_size"] = byte_vocab
+
+                # vocab_size means "representational width." An encoder that owns
+                # its embeddings (CALM) represents the byte vocab directly, so
+                # report that; external-hash encoders (byte-latent) keep the
+                # bucket count. Keyed on the encoder, since byte_vocab exists for
+                # any byte tokenizer.
+                if _encoder_owns_embeddings(getattr(args, "encoder_type", None)):
+                    config_kwargs["vocab_size"] = byte_vocab
+                    if args is not None:
+                        setattr(args, "vocab_size", byte_vocab)
 
         # Warmup horizon + accumulation factor, derived once here so the LR
         # schedule (main.py) and the encoder share one definition. Mirrors the

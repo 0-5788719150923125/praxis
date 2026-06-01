@@ -9,7 +9,7 @@ import { render, renderAppStructure, updateInputContainerStyling } from './rende
 import { sendMessage, testApiConnection } from './api.js';
 import { connectMetricsLive, setupLiveReload, renderCurrentMetrics } from './websocket.js';
 import { loadSpec, loadAgents, loadResearchMetrics } from './tabs.js';
-import { setupTabCarousel } from './mobile.js';
+import { setupTabCarousel, setupTabSwipe } from './mobile.js';
 import { storage, FORM_FIELDS, readFormValues, updateRangeDisplay } from './config.js';
 import { CLICK_HANDLERS, delegateClick } from './events.js';
 import { executeAction } from './actions.js';
@@ -77,6 +77,9 @@ function init() {
 
     // Setup mobile tab carousel
     setupTabCarousel();
+
+    // Setup mobile swipe-to-switch-tabs
+    setupTabSwipe();
 
     // Setup window resize handler for dashboard scaling
     setupWindowResizeHandler();

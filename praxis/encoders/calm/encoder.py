@@ -67,6 +67,10 @@ def _resolve_dim(spec: Union[int, float], base: int) -> int:
 
 
 class CALMEncoder(BaseEncoder):
+    # Builds its own lm_tok_emb sized to the tokenizer's true (byte) vocab, so
+    # vocab_size should report that width, not the hash-bucket count.
+    owns_embeddings = True
+
     """CALM autoencoder + energy head, plugged into the encoder slot.
 
     The encoder owns its loss bookkeeping; see ``handles_loss``.

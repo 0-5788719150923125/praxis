@@ -315,19 +315,20 @@
        Clip the deck content at the deck's OWN top edge: the cards carry
        will-change:transform, so they live on their own compositor layers and a
        distant ancestor's overflow:hidden does NOT clip them on mobile - the clip
-       must be on their direct parent. In wallet 'A' the deck top sits at the tab
-       row, so exiting/transiting cards vanish there instead of sliding under the
-       chrome. contain:paint forces the compositor clip to follow suit. */
+       must be on their direct parent. The deck top sits just below the title
+       strip (slot A anchors there), so exiting/transiting cards vanish under the
+       title instead of covering it. contain:paint forces the compositor clip to
+       follow suit. */
     .chart-deck {
         z-index: 20;
         overflow: hidden;
         contain: paint;
-        /* The deck box overlaps the title strip (lifted to the tab row) so cards can
-           ride OVER it at A. But at B the cards sit low and the strip shows through -
-           and its toggles must stay tappable. pointer-events:none lets touches in the
-           transparent regions fall through to the header beneath; the head card
-           re-enables them (JS sets pointer-events:auto on the head only), so you grab
-           the card to swipe/lift and tap the header to use its controls. */
+        /* The deck anchors just below the title strip; its transparent regions
+           still overlap the run selector / metadata row, whose toggles must stay
+           tappable. pointer-events:none lets touches in those regions fall through
+           to the header beneath; the head card re-enables them (JS sets
+           pointer-events:auto on the head only), so you grab the card to
+           swipe/lift and tap the header controls. */
         pointer-events: none;
     }
     /* Cards drive the deck (JS narrows pointer-events to the head card); they must

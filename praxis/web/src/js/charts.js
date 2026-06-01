@@ -801,13 +801,19 @@ function measureDeck(deck) {
     const floorY = Math.min(window.innerHeight, regionBottom, visH) - DECK_FLOOR_MARGIN;
     let lift = 0;
     if (mobile) {
-        // Ceiling = bottom edge of the tab row. Lift the deck's own top to the
-        // ceiling so a card pinned at slot A (headTop=0) rides OVER the per-tab
-        // title strip (cards z20 > sticky tab-header z10; contain:paint moves the
-        // clip box up with the margin). The deck is transparent, so at rest (B) -
-        // where the head sits BELOW the strip (headTop=lift) - the strip shows through.
-        const nav = (deck.closest('.app-container') || document).querySelector('.tab-nav');
-        const ceilY = nav ? nav.getBoundingClientRect().bottom : top;
+        // Ceiling = bottom edge of the per-tab title TEXT itself (the .tab-header
+        // <h2>: "Metrics" / "Learning Dynamics"). Lift the deck's top right up to
+        // just under the title so a card pinned at slot A (headTop=0) sits a hair
+        // below the title, shadowing everything else in the header - the
+        // run-selector button and the metadata rows. Pulling back to B drops the
+        // head down to reveal those again. Falls back to the whole header, then
+        // the tab row, if no title text is present.
+        const scope = deck.closest('.app-container') || document;
+        const region = deck.closest('.tab-content') || scope;
+        const ceil = region.querySelector('.tab-header h2')
+            || region.querySelector('.tab-header')
+            || scope.querySelector('.tab-nav');
+        const ceilY = ceil ? ceil.getBoundingClientRect().bottom : top;
         lift = Math.max(0, Math.round(top - ceilY));
         if (lift > 0) deck.style.marginTop = `${-lift}px`;
     }

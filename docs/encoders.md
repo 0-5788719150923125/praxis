@@ -37,9 +37,7 @@ Presets:
 
 ## `calm`, `calm_bpe`, `calm_byte`, `calm_byte_small`, `calm_small` - CALMEncoder
 
-CALM autoencoder + energy head, plugged into the encoder slot.
-
-The encoder owns its loss bookkeeping; see ``handles_loss``.
+Shared contract for encoders plugged into the model's input slot.
 
 Source: [praxis/encoders/calm/encoder.py:69](../praxis/encoders/calm/encoder.py#L69)
 

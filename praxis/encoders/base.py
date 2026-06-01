@@ -23,6 +23,13 @@ class BaseEncoder(nn.Module, ABC):
     # model). None means the encoder owns its embeddings (e.g. CALM).
     embedding_profile: Optional[str] = None
 
+    # True if the encoder builds its own input embeddings sized to the
+    # tokenizer's true vocab (e.g. CALM's 264-wide lm_tok_emb), rather than an
+    # external hash embedding whose width is the overloaded config.vocab_size.
+    # Declarative (class-level) so config processing can read it without an
+    # instance, to unify vocab_size onto the real representational width.
+    owns_embeddings: bool = False
+
     @abstractmethod
     def encode(
         self, input_ids: torch.Tensor, block_ids: Optional[torch.LongTensor] = None
