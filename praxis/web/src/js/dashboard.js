@@ -24,7 +24,8 @@ function applyLogAccent() {
 export function switchDashCard(view) {
     logPanelOpen = view === 'logs';
     applyLogAccent();
-    const panel = document.querySelector('.ld-info-panel');
+    const root = document.querySelector('.live-dashboard');
+    const panel = root && root.querySelector('.ld-info-panel');
     if (!panel) return;
     const grid = panel.querySelector('.ld-info-grid');
     const logs = panel.querySelector('.ld-log-view');
