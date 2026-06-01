@@ -82,6 +82,19 @@ class PraxisModel(PreTrainedModel):
             inputs = self.embeds(input_ids)
             local_decoder_tokens = None
 
+        # Suppress halting metric recording while the encoder is in its codec
+        # "preflight" stage: the decoder runs, but its loop count isn't yet a
+        # meaningful early-exit signal, so it shouldn't populate the Halting
+        # Distribution. Restored to True once the encoder reaches pretrain.
+        halting = getattr(self.decoder, "halting", None)
+        if halting is not None:
+            stage = (
+                self.encoder.training_stage()
+                if self.encoder and hasattr(self.encoder, "training_stage")
+                else "pretrain"
+            )
+            halting.record_metrics = stage != "preflight"
+
         last_hidden_state, new_key_values, new_state, losses = self.decoder(
             inputs,
             attention_mask,
@@ -177,11 +190,17 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
             self.mtp = MultiTokenPrediction(config)
 
-        # Initialize RL policy if requested
+        # Initialize RL policy if requested. rl_type may be a forward-path policy
+        # key (reinforce/grpo/cot) or a weight-editing controller *profile* key
+        # (which resolves to its underlying policy + bundled edit_mode/selector).
         self.policy = None
         rl_type = getattr(config, "rl_type", None)
-        if rl_type and rl_type in RL_POLICIES_REGISTRY:
-            policy_cls = RL_POLICIES_REGISTRY[rl_type]
+        from praxis.policies import get_rl_profile
+
+        _profile = get_rl_profile(rl_type)
+        policy_key = _profile["policy"] if _profile else rl_type
+        if policy_key and policy_key in RL_POLICIES_REGISTRY:
+            policy_cls = RL_POLICIES_REGISTRY[policy_key]
             # Weight-editing controllers act on parameters from a training
             # callback, not on hidden states in the forward pass - so they are
             # not built as self.policy (the callback owns them).

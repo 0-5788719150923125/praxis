@@ -833,7 +833,7 @@ function measureDeck(deck) {
         // Reset any prior cap/flex so we read the card's natural height. We just
         // cleared max-height, so drop renderDeck's _mh cache too (else it'd skip the
         // re-write thinking the cap is still applied).
-        c.style.maxHeight = ''; c.style.display = ''; c.style.flexDirection = ''; c._mh = undefined;
+        c.style.height = ''; c.style.maxHeight = ''; c.style.display = ''; c.style.flexDirection = ''; c._mh = undefined;
         body.style.maxHeight = ''; body.style.flex = ''; body.style.minHeight = '';
         body.style.overflowY = 'auto';
         // Charts shrink under pressure: when the card would overflow, compact the
@@ -847,10 +847,18 @@ function measureDeck(deck) {
             wrapper.style.height = `${Math.max(DECK_MIN_CHART_H, usableH - chrome)}px`;
             h = c.offsetHeight || 0;                   // re-measure after compacting
         }
-        if (h > usableH) {
-            // Still too tall (text sheet, or the chart hit its min) -> pin the card to
-            // the usable height; the scroll body flexes to fill and overflows -> scrolls.
-            c.style.maxHeight = `${usableH}px`;
+        // On mobile, pin EVERY card to the same uniform slot height (not just the
+        // tall ones). A short card then ends its box at the same height as a tall
+        // one, so the fanned cards behind the head share one even bottom edge -
+        // a constant-spacing staircase down the floor, instead of ragged edges
+        // set by each card's content. (Desktop keeps natural height: it grows the
+        // deck and peeks upward, so even bottoms don't apply there.)
+        const pin = mobile ? usableH : (h > usableH ? usableH : 0);
+        if (pin) {
+            // Mobile forces an exact uniform height (even fan bottoms); desktop
+            // only caps an overflowing card (max-height), leaving natural height.
+            if (mobile) c.style.height = `${pin}px`;
+            c.style.maxHeight = `${pin}px`;
             if (body !== c) {
                 c.style.display = 'flex';
                 c.style.flexDirection = 'column';
@@ -859,10 +867,10 @@ function measureDeck(deck) {
                 body.style.maxHeight = 'none';   // flex governs height; override any CSS cap
             }
         }
-        // _capped cards are re-sized per-frame by renderDeck: they grow from this rest
-        // (B) height to the full band as the card slots up to A (mobile only).
-        c._capped = h > usableH;
-        return Math.min(h, usableH);
+        // _capped cards are re-sized per-frame by renderDeck. On mobile all cards
+        // are pinned to the uniform slot so the fan edges line up.
+        c._capped = mobile || h > usableH;
+        return mobile ? usableH : Math.min(h, usableH);
     });
     deck._usableH = usableH;
     if (mobile) {
@@ -936,7 +944,14 @@ function renderDeck(deck) {
         card.style.opacity = opacity >= 1 ? '1' : opacity.toFixed(3);
         if (card._vis !== 'v') { card.style.visibility = 'visible'; card._vis = 'v'; }
         if (card._capped) {
-            if (card._mh !== cardMH) { card.style.maxHeight = cardMH; card._mh = cardMH; }
+            // Set both height and max-height to the uniform slot so a short card's
+            // box ends at the same edge as a tall one - even fan bottoms. (height
+            // forces it; max-height alone would let short content stay short.)
+            if (card._mh !== cardMH) {
+                card.style.height = cardMH;
+                card.style.maxHeight = cardMH;
+                card._mh = cardMH;
+            }
         }
         const zi = 100 - Math.round(rank);
         if (card._zi !== zi) { card.style.zIndex = String(zi); card._zi = zi; }

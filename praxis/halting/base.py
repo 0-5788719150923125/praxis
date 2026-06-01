@@ -13,6 +13,11 @@ class BaseHalting(nn.Module):
         super().__init__()
         self.num_layers = getattr(config, "num_layers", config.depth)
         self.depth = config.depth
+        # When False, subclasses must not fold this forward into their reported
+        # distributions. The model clears it while an encoder is in its codec
+        # pretraining ("preflight") stage, where the decoder runs but its loop
+        # count is not yet a meaningful early-exit signal.
+        self.record_metrics = True
 
     def get_depth(self) -> int:
         """Return the effective depth for this forward pass."""

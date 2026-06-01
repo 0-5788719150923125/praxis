@@ -22,7 +22,7 @@ from praxis.orchestration import (
     MIXING_REGISTRY,
     ORCHESTRATION_REGISTRY,
 )
-from praxis.policies import RL_POLICIES_REGISTRY
+from praxis.policies import RL_POLICIES_REGISTRY, RL_PROFILES
 from praxis.recurrent import RECURRENT_REGISTRY
 from praxis.residuals import RESIDUAL_REGISTRY
 from praxis.routers import ROUTER_REGISTRY

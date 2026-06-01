@@ -142,13 +142,14 @@ export function setupTabSwipe() {
         if (Math.abs(dy) > Math.abs(dx) * MAX_OFF_AXIS) return;
 
         const tabs = state.tabs;
+        const n = tabs.length;
         const idx = tabs.findIndex(tab => tab.active);
-        if (idx === -1) return;
+        if (idx === -1 || n < 2) return;
 
-        // Swipe left (dx<0) advances; swipe right goes back. Clamp at the ends
-        // (no wrap - the edges should feel like a wall, not a loop).
-        const next = dx < 0 ? idx + 1 : idx - 1;
-        if (next < 0 || next >= tabs.length) return;
+        // Swipe left (dx<0) advances; swipe right goes back. The ribbon loops:
+        // past the last tab wraps to the first and vice versa, so you can circle
+        // round from either end.
+        const next = ((dx < 0 ? idx + 1 : idx - 1) % n + n) % n;
 
         // Await the switch (render rebuilds the strip), then scroll the new
         // active tab into view so swiping toward the end keeps it visible.

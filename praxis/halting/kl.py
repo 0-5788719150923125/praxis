@@ -76,10 +76,15 @@ class KLDivergenceHalting(BaseHalting):
         self._inflight_halt_r = None
         if self.training:
             loops = self._sample_loop_count()
-            self._train_calls += 1
-            self._train_loops_sum += loops
-            self._last_train_loops = loops
-            self._train_hist[loops] = self._train_hist.get(loops, 0) + 1
+            # Skip recording while an encoder is in codec preflight: the decoder
+            # still loops (so the model trains end to end), but its loop count is
+            # not a meaningful early-exit signal yet, and folding it in pollutes
+            # the Halting Distribution with pre-decoder-training noise.
+            if self.record_metrics:
+                self._train_calls += 1
+                self._train_loops_sum += loops
+                self._last_train_loops = loops
+                self._train_hist[loops] = self._train_hist.get(loops, 0) + 1
             return loops * self.num_layers
         return self.depth
 

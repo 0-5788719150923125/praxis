@@ -1,6 +1,6 @@
 """Data-related CLI arguments."""
 
-from praxis import RL_POLICIES_REGISTRY, SAMPLER_REGISTRY
+from praxis import RL_POLICIES_REGISTRY, RL_PROFILES, SAMPLER_REGISTRY
 from praxis.data.config import DATASET_COLLECTIONS
 
 
@@ -50,7 +50,9 @@ class DataGroup:
             "--rl-type",
             type=str,
             default=None,
-            choices=RL_POLICIES_REGISTRY.keys(),
+            # Forward-path policies plus the weight-editing controller profiles
+            # (which bundle edit_mode/selector, so no separate rl_* flags).
+            choices=sorted({*RL_POLICIES_REGISTRY.keys(), *RL_PROFILES.keys()}),
             help="Enable reinforcement learning with specified algorithm. "
             "Note: Current GRPO implementation uses static dataset rewards (not true RL). "
             "True RL with generation will be added in a future update.",

@@ -77,22 +77,30 @@ def build_training_callbacks(
     # Sample-based proper scoring rule at validation; cheap on small batches.
     callbacks.append(BrierLMCallback(tokenizer=tokenizer))
 
-    # Weight-editing RL controller (rl_type=harmonic_weight). Driven here from
-    # the training loop, not the forward pass. Ordered before MetricsLogger so
-    # its rl_* scalars are in callback_metrics when MetricsLogger drains them.
-    if getattr(config, "rl_type", None) == "harmonic_weight":
-        from praxis.policies import RL_POLICIES_REGISTRY
+    # Weight-editing RL controller. A single rl_type selects a profile that
+    # bundles the controller's behavior (edit_mode, selector); the experiment
+    # sets only rl_type, not a soup of rl_* flags. Driven here from the training
+    # loop, not the forward pass. Ordered before MetricsLogger so its rl_*
+    # scalars are in callback_metrics when MetricsLogger drains them.
+    from praxis.policies import RL_POLICIES_REGISTRY, get_rl_profile
 
-        rl_policy = RL_POLICIES_REGISTRY["harmonic_weight"](config)
+    _rl_profile = get_rl_profile(getattr(config, "rl_type", None))
+    if _rl_profile is not None:
+        rl_policy = RL_POLICIES_REGISTRY[_rl_profile["policy"]](config)
+        # Profile supplies the defaults; an explicit rl_* config key still wins.
+        def _rl(key, cast):
+            v = getattr(config, f"rl_{key}", None)
+            return cast(v) if v is not None else cast(_rl_profile[key])
+
         callbacks.append(
             HarmonicWeightRLCallback(
                 policy=rl_policy,
-                period=int(getattr(config, "rl_period", 50)),
-                horizon=int(getattr(config, "rl_horizon", 20)),
-                warmup_steps=int(getattr(config, "rl_warmup_steps", 200)),
-                reward_decay=float(getattr(config, "rl_reward_decay", 0.9)),
-                edit_mode=str(getattr(config, "rl_edit_mode", "harmonic")),
-                selector=str(getattr(config, "rl_selector", "sinusoidal")),
+                period=_rl("period", int),
+                horizon=_rl("horizon", int),
+                warmup_steps=_rl("warmup_steps", int),
+                reward_decay=_rl("reward_decay", float),
+                edit_mode=_rl_profile["edit_mode"],
+                selector=_rl_profile["selector"],
             )
         )
 
