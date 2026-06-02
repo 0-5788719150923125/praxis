@@ -87,6 +87,16 @@ export function renderNotifications() {
     // Touch devices toggle the pop-out open with .open; hover-capable devices ignore it.
     panel.classList.toggle('open', state.notifications.panelOpen);
 
+    // Mobile: the panel is viewport-fixed (see responsive.css). Anchor its top to
+    // the bell's live position, since the header height varies (the system prompt
+    // can wrap). Clear it otherwise so the CSS rule owns positioning.
+    if (state.notifications.panelOpen && window.innerWidth <= 768) {
+        const btn = document.getElementById('notifications-btn');
+        if (btn) panel.style.top = `${Math.round(btn.getBoundingClientRect().bottom + 6)}px`;
+    } else {
+        panel.style.top = '';
+    }
+
     // Desktop: hovering the bell counts as reading - clear the unread badge. Bind once
     // per (re)rendered wrapper.
     const wrapper = panel.closest('.notification-wrapper');

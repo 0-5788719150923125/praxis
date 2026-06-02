@@ -122,23 +122,24 @@ CALMBpe = partial(
 # until its reconstruction plateaus (the window's linear trend drops below its
 # own noise), then freezes - capped by ae_max_pretrain_steps as a backstop. Watch
 # calm_recon_ce / calm_pretrain_flatness descend and calm_ae_frozen flip at
-# the boundary. kl_beta is 10x the old joint value - a near-zero KL leaves a
-# recon-perfect but unmodelable latent. Watch calm_kl_active_frac /
-# calm_recon_kl_ratio.
+# the boundary. kl_beta/kl_clip/N/M/vote pool match the paper (arXiv 2510.27688):
+# β=1e-3 with free-bits clip 0.5 keeps the latent modelable without
+# over-regularizing; the ~500-sample vote pool is the paper's accuracy-diversity
+# frontier (50 was far too noisy for patch-vote decoding).
 CALMByteSmall = partial(
     CALMEncoder,
     chunk_size=4,
     latent_dim=0.25,
     ae_hidden=1.0,
-    kl_beta=1e-2,
+    kl_beta=1e-3,
     kl_clip=0.5,
     ae_dropout=0.1,
     noise_dim=0.25,
     energy_blocks=3,
     energy_samples_n=8,
-    energy_samples_m=64,
+    energy_samples_m=100,
     energy_alpha=1.0,
-    vote_num_samples=50,
+    vote_num_samples=500,
 )
 
 

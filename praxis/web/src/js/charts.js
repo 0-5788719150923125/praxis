@@ -1345,6 +1345,14 @@ function bindDeckEvents(deck) {
             // Body wouldn't move despite reported room (stuck card) -> fall through to seam.
         }
 
+        // Anchor flips are exclusive with cycling: a pull whose intent is to move
+        // the A<->B anchor must NEVER scroll through cards. At A a sustained
+        // downward pull (past the content edge) drops to B; at B an upward pull
+        // lifts to A. Either way drive the anchor alone - no seam - so you can
+        // reposition the anchor without the deck cycling underneath you.
+        if (deck._anchorTarget === 1 && dy < 0) { seamAnchor(deck, dy); return; }
+        if (deck._anchorTarget === 0 && dy > 0) { seamAnchor(deck, dy); return; }
+
         // Flick, content edge, or a stuck card: begin the seam to the next/previous card.
         deck._seamBase = ((Math.round(deck._pos) % st.count) + st.count) % st.count;
         deck._seamDir = dy > 0 ? 1 : -1;

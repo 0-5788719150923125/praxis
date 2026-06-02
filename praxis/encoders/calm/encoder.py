@@ -53,6 +53,19 @@ from .vae import CALMVAE
 # self-normalizes against outliers (a spike inflates the denominator too).
 PRETRAIN_WINDOW = 256
 PRETRAIN_FLAT_EPS = 1.0  # converged when the window's drift < one noise std
+
+# Conditioning-anchor weight for the energy head. The energy score alone is a
+# weak, high-variance signal: at small scale the head learns the right marginal
+# latent scale but a condition-weak, high-variance conditional (verified: given
+# real context, cross-sample patch agreement ~0, correct-next-patch rate ~0), so
+# generation samples the marginal (low T repeats the mode, high T is gibberish).
+# A direct MSE from the conditioning onto the next posterior mean gives the
+# strong gradient the score lacks. Weighted comparable-to / above the energy
+# term (~O(5)) so it dominates the early steering - the score alone never
+# concentrated the head over thousands of steps - then fades as the MSE -> 0.
+# Deviates from the paper (justified by the scale gap the paper never faces);
+# set 0.0 for paper-pure behavior. Watch calm_energy_anchor descend.
+ENERGY_ANCHOR_WEIGHT = 5.0
 # Start emitting / computing the convergence Δ once this many recon samples
 # exist, so the chart tracks the descent from early on instead of staying blank
 # (then flat) until the full window fills. The freeze decision still waits for
@@ -169,6 +182,36 @@ class CALMEncoder(BaseEncoder):
                 "y_scale": "linear",
                 "group": "calm",
                 "order": 60,
+            },
+        },
+        "calm_energy_anchor": {
+            "description": (
+                "MSE of the head's zero-noise prediction vs the next posterior "
+                "mean - the conditioning anchor that forces the conditional to "
+                "concentrate on the correct next latent. Should descend; if it "
+                "stays high the head isn't learning next-patch direction."
+            ),
+            "chart": {
+                "title": "Energy Conditioning Anchor (MSE)",
+                "y_label": "mse",
+                "y_scale": "logarithmic",
+                "group": "calm",
+                "order": 64,
+            },
+        },
+        "calm_energy_cond_gap": {
+            "description": (
+                "Energy of context-mismatched targets minus matched targets. "
+                ">0 means the head USES the conditioning (next-patch prediction "
+                "beats marginal); ~0 means it's ignoring context and not learning "
+                "sequences. The decisive signal for whether CALM is modeling order."
+            ),
+            "chart": {
+                "title": "Energy Conditioning Gap",
+                "y_label": "mismatch - matched",
+                "y_scale": "linear",
+                "group": "calm",
+                "order": 65,
             },
         },
         "calm_ae_frozen": {
@@ -714,8 +757,10 @@ class CALMEncoder(BaseEncoder):
         isn't under a Python branch in the compiled caller, which
         produces SpeculationLogDivergence on dynamo retries.
         """
-        if not self.training:
-            return
+        # Runs in eval too: CALM has no CE val loss, so the validation energy
+        # score is the only learning signal to surface as val_loss (modeling.py
+        # combines registered losses for handles_loss encoders during eval). The
+        # eval value is detached below so it never builds a graph.
         B, N = h.shape[0], h.shape[1]
         if N < 2:
             return
@@ -757,9 +802,35 @@ class CALMEncoder(BaseEncoder):
         )
 
         loss = energy_score_loss(model_raw, target_samples)
-        scaled = self.energy_alpha * loss
-        self._pending_losses["energy"] = scaled
-        self._diag["calm_energy_loss"] = float(scaled.detach())
+
+        # Diagnostic: does the head actually USE the conditioning? Re-score the
+        # same model samples against targets rolled one position out of
+        # alignment. If this mismatched energy is no higher than the matched
+        # one, the head is ignoring context - modeling the marginal, not the
+        # sequence (i.e. "not learning sequences"). Detached; no grad effect.
+        if N > 2:
+            mismatched = energy_score_loss(
+                model_raw.detach(), target_samples.detach().roll(1, dims=1)
+            )
+            self._diag["calm_energy_cond_gap"] = float((mismatched - loss).detach())
+
+        # Conditioning anchor: regress the head's zero-noise (mean) prediction
+        # onto the next posterior mean. A strong, low-variance gradient that
+        # forces the conditional to concentrate on the correct next latent -
+        # the energy score alone leaves it at the (marginal) scale only.
+        total = self.energy_alpha * loss
+        if ENERGY_ANCHOR_WEIGHT > 0.0:
+            mean_next = self._last_mean[:, 1:, :].detach()
+            zero_noise = h_cond.new_zeros(*h_cond.shape[:-1], self.energy_head.noise_dim)
+            anchor = torch.nn.functional.mse_loss(
+                self.energy_head(h_cond, zero_noise), mean_next
+            )
+            total = total + ENERGY_ANCHOR_WEIGHT * anchor
+            self._diag["calm_energy_anchor"] = float(anchor.detach())
+
+        # Detach in eval: val_loss only needs the scalar, never a backward graph.
+        self._pending_losses["energy"] = total if self.training else total.detach()
+        self._diag["calm_energy_loss"] = float((self.energy_alpha * loss).detach())
 
     # ------------------------------------------------------------------
     # Loss side-channel
@@ -896,6 +967,7 @@ class CALMEncoder(BaseEncoder):
         h_last: torch.Tensor,
         temperature: float,
         num_samples: int = 200,
+        noise_scale: float = 1.0,
     ) -> torch.Tensor:
         """Paper Algorithm 1 (temperature sampling for CALM).
 
@@ -903,19 +975,25 @@ class CALMEncoder(BaseEncoder):
         candidate latents, decode each to an argmax K-token patch, count
         exact patch matches, and pick the most-supported patch via
         combinatorial weighting (cascade from n_initial = round(1/T) down).
-        For T=1 a single latent is sampled - matching the reference.
+        For T=1 a single latent is sampled - matching the reference. This is
+        the paper's count-based temperature; the energy head's noise is full
+        (``noise_scale=1.0``) as in the reference.
 
         Args:
             h_last: ``[hidden_size]`` conditioning (single stream).
             temperature: T in (0, 1]. Strict T = 1/integer in the paper;
                 we round 1/T to the nearest integer so any T in range works.
             num_samples: pool size for voting.
+            noise_scale: NON-paper diagnostic knob. <1 shrinks the head's
+                noise toward its conditional-mean (best-guess) prediction;
+                useful to peek at a weakly-trained head, but it bypasses the
+                rigorous count-based temperature. Default 1.0 = paper-faithful.
 
         Returns:
             ``[K]`` selected token ids.
         """
         if temperature >= 1.0:
-            z = self.energy_head.sample(h_last, num_samples=1)  # [1, latent_dim]
+            z = self.energy_head.sample(h_last, num_samples=1, noise_scale=noise_scale)
             z = z.view(1, 1, -1)
             recon_hidden = self.vae.decode(z)
             recon_logits = self._classify(recon_hidden)
@@ -924,9 +1002,12 @@ class CALMEncoder(BaseEncoder):
         n_initial = max(1, int(round(1.0 / max(temperature, 1e-6))))
 
         # Pool of candidate patches: decode each candidate latent and take
-        # argmax tokens. Stochasticity lives in the latent draws; voting
-        # then concentrates on the patches the head agrees on most often.
-        z_pool = self.energy_head.sample(h_last, num_samples=num_samples)
+        # argmax tokens. Stochasticity lives in the latent draws; voting then
+        # concentrates on the patches the head agrees on most often (paper
+        # Algorithm 2). noise_scale stays 1.0 for paper-faithful sampling.
+        z_pool = self.energy_head.sample(
+            h_last, num_samples=num_samples, noise_scale=noise_scale
+        )
         z_pool = z_pool.view(num_samples, 1, -1)
         recon_hidden = self.vae.decode(z_pool)  # [N, K, ae_hidden]
         recon_logits = self._classify(recon_hidden)  # [N, K, V]
@@ -981,6 +1062,9 @@ class CALMEncoder(BaseEncoder):
             getattr(generation_config, "calm_num_samples", None)
             or self.vote_num_samples
         )
+        # Non-paper diagnostic: <1 shrinks the head's noise toward its mean
+        # prediction (peek at a weakly-trained head). Default 1.0 = paper-faithful.
+        noise_scale = float(getattr(generation_config, "calm_noise_scale", None) or 1.0)
         return_dict = kwargs.get("return_dict_in_generate", False)
 
         eos_set = set()
@@ -998,7 +1082,8 @@ class CALMEncoder(BaseEncoder):
             h_last = base_out.last_hidden_state[:, -1, :]  # [B, hidden]
 
             new_tokens = self._patch_vote_sample(
-                h_last[0], temperature=float(temperature), num_samples=num_samples
+                h_last[0], temperature=float(temperature),
+                num_samples=num_samples, noise_scale=noise_scale,
             )  # [K]
             new_tokens = new_tokens.view(1, self.K)
 

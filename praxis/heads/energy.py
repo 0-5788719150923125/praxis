@@ -113,12 +113,15 @@ class EnergyHead(nn.Module):
         h: torch.Tensor,
         num_samples: int,
         noise_dtype: torch.dtype = torch.float32,
+        noise_scale: float = 1.0,
     ) -> torch.Tensor:
         """Draw ``num_samples`` latents per conditioning row.
 
         Noise is uniform on [-0.5, 0.5]; the energy score is a proper
         scoring rule, so the head learns to map this noise to whatever
-        target distribution the loss is fed.
+        target distribution the loss is fed. ``noise_scale`` shrinks the
+        noise toward 0 (the conditional-mean prediction) - generation uses
+        it as a temperature, so low T concentrates on the head's best guess.
 
         Returns ``[num_samples, ..., latent_dim]``.
         """
@@ -126,5 +129,5 @@ class EnergyHead(nn.Module):
         expanded = h.unsqueeze(0).expand(num_samples, *h.shape)
         noise = (
             torch.rand(num_samples, *shape, device=h.device, dtype=noise_dtype) - 0.5
-        )
+        ) * noise_scale
         return self(expanded, noise)

@@ -36,7 +36,7 @@ class BrierLMCallback(Callback):
         self,
         tokenizer,
         eval_every: int = 1,
-        num_prompts: int = 8,
+        num_prompts: int = 32,
         prompt_len: int = 32,
         continuation_len: int = 32,
         temperature: float = 1.0,

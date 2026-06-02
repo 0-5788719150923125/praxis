@@ -477,6 +477,11 @@ const renderAgentCard = (agent, allAgents) => {
     `;
 };
 
+/** Proper-case a status word ("observe" -> "Observe") so ship/backend badges
+ * match the remote-actor cards instead of shouting in all-caps. */
+const titleCaseStatus = (s) =>
+    (s || '').charAt(0).toUpperCase() + (s || '').slice(1);
+
 /** Atomic metric chips for an expert's info line - each is one unbreakable unit
  * so a narrow screen wraps whole metrics to the next line instead of chopping
  * one mid-word. Returns inner HTML for the .agent-metrics container. */
@@ -498,7 +503,7 @@ const shipMetrics = (agent) =>
  * a stable id so the heartbeat refresh updates its text in place (no rebuild).
  */
 const renderBrowserShipCard = (agent) => {
-    const statusText = agent.status.toUpperCase();
+    const statusText = titleCaseStatus(agent.status);
     return `
         <div class="agent-row">
             <div class="agent-info">
@@ -521,7 +526,7 @@ const renderBrowserShipCard = (agent) => {
  * OBSERVE (blue) / IDLE status badge.
  */
 const renderBackendExpertCard = (agent) => {
-    const statusText = (agent.status || 'idle').toUpperCase();
+    const statusText = titleCaseStatus(agent.status || 'idle');
     const rank = agent.rank != null ? `${agent.rank}x${agent.rank}` : '?';
     const metrics = expertMetricsHtml([
         `dim ${rank}`, 'layers 1', `passes ${agent.passes ?? 0}`,

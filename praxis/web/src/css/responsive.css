@@ -376,4 +376,22 @@
         font-size: 0;
         gap: 0;
     }
+
+    /* The fly-out lives inside .header, which is a z-index:30 stacking context
+       (the opaque chrome band above). A fixed child can't escape that context, so
+       it tied with .tab-nav (also 30) and lost on DOM order - painting under it.
+       Lift .header above the tab row so its panel always wins; both still outrank
+       the deck (20), and they don't otherwise overlap. */
+    .header { z-index: 40; }
+
+    /* Pin the fly-out to the viewport's right edge with a capped width: enough to
+       clear the left edge on any phone without going full-width. JS sets `top`
+       from the bell's live rect (the header height varies - the prompt can wrap). */
+    .notification-panel {
+        position: fixed;
+        top: 4rem;
+        right: 0.5rem;
+        left: auto;
+        width: min(20rem, calc(100vw - 1rem));
+    }
 }

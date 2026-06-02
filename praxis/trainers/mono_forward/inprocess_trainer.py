@@ -1025,6 +1025,47 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
             encoder.eval()
 
         try:
+            # Encoders that own their decoding loop (CALM) must NOT be sampled
+            # token-by-token from a logits projection: CALM predicts the next
+            # latent via the energy head and decodes K tokens through the frozen
+            # VAE (patch-vote). Delegate to custom_generate, feeding it a
+            # base_forward that runs the MF worker route and returns the
+            # per-patch hidden state - the same signal modeling.generate() hands
+            # the standard path. custom_generate returns None for byte-latent
+            # (BaseEncoder default), so that path falls through to the token loop.
+            if encoder is not None and hasattr(encoder, "custom_generate"):
+                from types import SimpleNamespace
+
+                def _mf_base_forward(ids):
+                    ids = ids.detach().long().to(target_device)
+                    bids = create_block_ids(ids, config.eos_token_id)
+                    with torch.no_grad():
+                        acts, _, _, enc_bids, _, _ = encoder.encode(
+                            ids, block_ids=bids
+                        )
+                        h = acts
+                        bids_use = enc_bids if enc_bids is not None else bids
+                        for step_idx in range(len(self._route_table)):
+                            w = workers[self._route_table[step_idx]]
+                            h, _ = w.infer_batch(h, step_idx, bids_use, None)
+                    return SimpleNamespace(last_hidden_state=h)
+
+                calm_out = encoder.custom_generate(
+                    prefix,
+                    base_forward=_mf_base_forward,
+                    generation_config=SimpleNamespace(
+                        max_new_tokens=max_new_tokens,
+                        temperature=temperature,
+                        eos_token_id=eos_ids,
+                    ),
+                )
+                if calm_out is not None:
+                    seq = getattr(calm_out, "sequences", calm_out)
+                    new = seq[:, prefix.shape[1] :]
+                    for j in range(new.shape[1]):
+                        yield new[:, j].detach().cpu().clone()
+                    return
+
             for _ in range(max_new_tokens):
                 # Re-prepare inputs every step. For the embeds path that's
                 # cheap; for the encoder path that's a fresh patching pass

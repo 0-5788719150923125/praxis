@@ -1506,22 +1506,22 @@
 /* OBSERVE status badge (blue): passively training on real backend batches but
    not contributing back to the model's activations. Pulses to read as "live". */
 .agent-status.observe {
-    background-color: rgba(47, 111, 208, 0.12);
-    color: #2f6fd0;
+    background-color: rgba(0, 39, 76, 0.1);
+    color: #00274c;
 }
 
 [data-theme="dark"] .agent-status.observe {
-    background-color: rgba(106, 169, 238, 0.18);
-    color: #6aa9ee;
+    background-color: rgba(0, 39, 76, 0.3);
+    color: #5b8fc9;
 }
 
 .status-dot.observe {
-    background-color: #2f6fd0;
+    background-color: #00274c;
     animation: pulse 2s infinite;
 }
 
 [data-theme="dark"] .status-dot.observe {
-    background-color: #6aa9ee;
+    background-color: #5b8fc9;
 }
 
 /* Spawned-agent status doubles as a SEVER button: shows the status at rest,

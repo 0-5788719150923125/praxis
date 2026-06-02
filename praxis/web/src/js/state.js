@@ -457,7 +457,7 @@ export function getStatusBaseColor(status, theme) {
         case 'archived':
             return isDark ? hexToRgb('#5b8fc9') : hexToRgb('#00274c'); // blue
         case 'observe':
-            return isDark ? hexToRgb('#6aa9ee') : hexToRgb('#2f6fd0'); // blue (passive observer)
+            return isDark ? hexToRgb('#5b8fc9') : hexToRgb('#00274c'); // blue (matches archived)
         case 'offline':
             return isDark ? hexToRgb('#b0b0b0') : hexToRgb('#666666'); // grey
         case 'ambiguous':
