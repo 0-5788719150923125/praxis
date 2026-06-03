@@ -3,7 +3,7 @@
 
 Pointwise nonlinearities used inside blocks and heads.
 
-Registry: ``praxis.ACTIVATION_REGISTRY`` (31 entries)
+Registry: ``praxis.ACTIVATION_REGISTRY`` (33 entries)
 
 ## `gelu` - GELUActivation
 
@@ -60,6 +60,21 @@ This implementation is equivalent to NewGELU and FastGELU but much faster. Howev
 is not an exact numerical match due to rounding errors.
 
 Source: `transformers.activations` (external dependency)
+
+## `hardswish` - Hardswish
+
+Applies the Hardswish function, element-wise.
+
+Method described in the paper: `Searching for MobileNetV3
+<https://arxiv.org/abs/1905.02244>`_.
+
+Hardswish is defined as:
+
+.. math::     \text{Hardswish}(x) = \begin{cases}         0 & \text{if~} x \le -3, \\
+x & \text{if~} x \ge +3, \\         x \cdot (x + 3) /6 & \text{otherwise}
+\end{cases}
+
+Source: `torch.nn.modules.activation` (external dependency)
 
 ## `jagged_sin` - JaggedSine
 
@@ -249,6 +264,12 @@ Snake activation ``x + sin^2(a*x) / a`` with a learnable per-feature frequency `
 match the input's feature dimension.
 
 Source: [praxis/activations/snake.py:41](../praxis/activations/snake.py#L41)
+
+## `sqrtsoftplus` - SqrtSoftplusActivation
+
+sqrt(softplus(x)) — the router scoring function used by DeepSeek V4.
+
+Source: `transformers.activations` (external dependency)
 
 ## `swish` - SiLU
 

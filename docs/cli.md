@@ -42,13 +42,13 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
-| `--activation` | str | `mish` | The primary activation function to use (choices: gelu, gelu_10, gelu_accurate, gelu_fast, gelu_new, gelu_python, gelu_python_tanh, gelu_pytorch_tanh, jagged_sin, laplace, leaky_relu, linear, mish, nmda, periodic_relu, prelu, quick_gelu, relu, relu2, relu6, serf, serpent, sigmoid, silu, sin, sin_cos, sinlu, snake, swish, tanh, xielu) |
+| `--activation` | str | `mish` | The primary activation function to use (choices: gelu, gelu_10, gelu_accurate, gelu_fast, gelu_new, gelu_python, gelu_python_tanh, gelu_pytorch_tanh, hardswish, jagged_sin, laplace, leaky_relu, linear, mish, nmda, periodic_relu, prelu, quick_gelu, relu, relu2, relu6, serf, serpent, sigmoid, silu, sin, sin_cos, sinlu, snake, sqrtsoftplus, swish, tanh, xielu) |
 | `--attention-type` | str | `modular` | The base attention implementation to use (choices: modular, vanilla, pk, syntaxes, causal, infini, arc) |
 | `--bidirectional` | bool | `False` | Enable bidirectional language modeling (forward and backward prediction) |
 | `--block-size` | int | `512` | The base sequence length to train with |
 | `--block-type` | str | `transformer` | The type of block to use for every intermediate decoder layer (choices: conv, gru, mru, min, nano, recurrent, ssm, transformer, wavelet) |
 | `--compression-type` | str | `none` | The type of sequence compression to use (choices: none, linear, nearest) |
-| `--controller-type` | str | `base` | Various methods used to route inputs through experts in the decoder (choices: base, layer_shuffle, graph, pathfinder, shortcutter, attention, counter_attention) |
+| `--controller-type` | str | `base` | Various methods used to route inputs through experts in the decoder (choices: base, layer_shuffle, graph, pathfinder, shortcutter, attention, counter_attention, neural) |
 | `--decoder-type` | str | `sequential` | How to process layers in the decoder (choices: sequential, parallel_mean, parallel_variance, parallel_weighted) |
 | `--depth` | int | `None` | The max number of experts to route through (defaults to num_layers) |
 | `--differential` | bool | `False` | Use a Differential Attention mechanism |
@@ -109,7 +109,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | `--fixed-schedule` | bool | `False` | Use a fixed (constant) learning rate schedule |
-| `--loss-func` | str | `cross_entropy` | The loss function to use (choices: cross_entropy, dedup, focal, focal_alpha, mile, stablemax, contrastive_token, halo) |
+| `--loss-func` | str | `cross_entropy` | The loss function to use (choices: cross_entropy, dedup, focal, focal_alpha, mile, stablemax, contrastive_token, halo, cut_cross_entropy) |
 | `--no-mask-prompts` | bool | `False` | Drop the assistant_mask before composing loss weights so every token contributes (the pre-2bc2cd4 language-modeling objective). Default off, meaning prompts are masked. Useful for small models that lack the capacity for the SFT-style prompt-conditional split. |
 | `--optimizer` | str | `Lion` | The optimizer profile to use (choices: AdamW, Lion, MARS, Muon, Prodigy) |
 | `--optimizer-wrappers` |  | `[]` | Optimizer wrappers to stack, in order. Choices: gated_schedule_free, half_lion, lookahead, low_rank_moment, ortho, schedule_free, trac, wave_schedule_free. E.g. --optimizer-wrappers ortho gated_schedule_free (choices: gated_schedule_free, half_lion, lookahead, low_rank_moment, ortho, schedule_free, trac, wave_schedule_free) |
