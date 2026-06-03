@@ -4,6 +4,7 @@ section: harmonic
 order: 20
 requires:
   head_type: [crystal, crystal_harmonic, prismatic]
+proofs: [proof-harmonic-expressiveness]
 body: >
   \subsection{Geometry that looks like nature is convergence, not hallucination}
 

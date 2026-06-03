@@ -1,0 +1,29 @@
+# Enables when the run uses a ghostmax-bearing attention (the CausalAttention
+# family: causal/infini/arc all prepend the zero ghost token). The off-by-one
+# softmax gives a head an escape valve, which dampens harmonic noise.
+section: harmonic
+order: 25
+requires:
+  attention_type: [causal, infini, arc]
+proofs: [proof-ghostmax]
+body: >
+  \subsection{A head that can attend to nothing}
+
+  Standard attention is forced to spend all of itself: softmax sums to one, so a
+  head must emit a full-magnitude average of its value vectors even when no key is
+  worth attending to. Praxis instead runs \emph{ghostmax} - the off-by-one softmax
+  of Miller~\cite{miller2023}, realized as a zero-valued ghost token prepended to
+  every key/value sequence. The ghost contributes nothing to the output but adds an
+  implicit $e^0 = 1$ to the denominator, so the weight on real tokens is strictly
+  less than one and falls toward zero when nothing matches. The head acquires an
+  escape valve: it may attend to nothing.
+
+  This matters for a harmonic model specifically. A standing wave is built from
+  superposed components, and a head with no off switch injects a forced average
+  into the residual stream at every position - broadband energy the field must
+  then cancel. The sink lets attention go quiet where there is no signal, so the
+  harmonic field is shaped against silence rather than against noise the head was
+  obligated to emit. Dampening is not a side effect here; it is the mechanism by
+  which the geometry is allowed to stay clean.
+
+  \paperGhostmaxFigure

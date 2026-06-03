@@ -1,0 +1,25 @@
+# Backs geometry-looks-like-nature. Ported from the old proofs/harmonic_pi.md
+# note: why the harmonic head's coupling is multiplicative, and why that forces
+# the field into the gradient path (it is explicitly a sketch, framed as such).
+kind: proposition
+supports: [geometry-looks-like-nature]
+statement: >
+  The harmonic head emits $\mathrm{out}[t,d] = h(x)[t,d]\,(1 + b[t,d])$, where
+  $b$ is a 2D real field built from a sparse spectrum with frozen Weyl phases
+  $\exp(i\,2\pi\,\mathrm{frac}(f_t\pi + f_d e))$ and a learnable amplitude grid.
+  Multiplicative coupling forces the field into the gradient path of every
+  output, and a band-limited target $h_{\text{target}}(x)\,(1+g(t,d))$ with
+  $g$ resolved at $(B_t \le F_t, B_d \le F_d)$ is realizable to
+  $O(1/\sqrt{F_t F_d})$ error.
+proof: >
+  Under additive coupling $\mathrm{out} = h + b$, the upstream can emit
+  $h'(x) = h_{\text{target}}(x) - b(t)$ and route around the field entirely - the
+  head is a no-op gate. Under multiplicative coupling, recovering
+  $\mathrm{out} = h_{\text{target}}$ needs $h = h_{\text{target}}/(1+b)$, which is
+  content-dependent ($b$ varies with $t$) and cannot be precomputed upstream, so
+  the field participates in every gradient. Expressiveness follows from 2D Weyl
+  equidistribution: $\{1,\pi,e\}$ are linearly independent over $\mathbb{Q}$, so
+  the phase grid is a deterministic, well-spread basis, and the field spans an
+  $F_t\times F_d$ subspace of the length-$T\times D$ signal - approximating any
+  such band-limited $g$ to $O(1/\sqrt{F_t F_d})$. This is a sketch, not a closed
+  proof: it asserts realizability, not an optimization guarantee.

@@ -1,0 +1,17 @@
+# Backs the halting-trinary framing: three points are the minimal data that fix
+# a plane, and a plane is the least space a phase can turn in - so three is the
+# minimal resolution for harmonic (oriented) structure.
+kind: lemma
+supports: [halting-trinary]
+statement: >
+  Two distinct points determine a line; three non-collinear points determine a
+  unique plane. A phase - a point on the circle $S^1$ - is realizable only in
+  dimension at least two, so three points are the minimal affine data that orient
+  the plane a harmonic component turns in.
+proof: >
+  Through $p_0, p_1, p_2$ the affine span
+  $\{\,p_0 + s(p_1 - p_0) + t(p_2 - p_0)\,\}$ is a plane exactly when $p_1 - p_0$
+  and $p_2 - p_0$ are linearly independent - that is, when the three points are
+  non-collinear; two points give a single direction and hence only a line. Since
+  $S^1$ embeds in $\mathbb{R}^2$ but in no line, a continuous phase requires that
+  plane, and three points are the fewest that fix it.

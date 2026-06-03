@@ -243,6 +243,13 @@ NON_REGISTRY_PACKAGES: List[Tuple[str, str]] = [
         "modeling",
         "``PraxisModel`` / ``PraxisForCausalLM`` - the top-level transformers-compatible wrappers.",
     ),
+    (
+        "pillars",
+        "Living research paper: builds ``research/`` from the current run via "
+        "``python -m praxis.pillars.build``. Subpackages: ``framing`` (config-gated "
+        "prose), ``proofs`` (consistency-checked lemmas, some verifiable computations), "
+        "``inlines`` (single-value edits); plus runs/geometries/halting/ghostmax figures.",
+    ),
     ("schedulers", "Learning-rate schedulers."),
     ("tasks", "Training task abstractions used by ``strategies``."),
     ("tokenizers", "Tokenizer creation and registry."),
@@ -297,10 +304,6 @@ TOP_LEVEL_DIRS: List[Tuple[str, str]] = [
     (
         "tools",
         "Small CLI utilities, callable by both human and assistant. See [tools/README.md](tools/README.md).",
-    ),
-    (
-        "proofs",
-        "Math / derivation notes backing the more unusual designs (harmonic head, ghostmax).",
     ),
     ("research", "The research paper, in LaTeX."),
     ("axis", "Mobile companion app, built with Godot."),

@@ -1,0 +1,22 @@
+# Backs the attention-sink framing. The off-by-one softmax (softmax1) is due to
+# Evan Miller, "Attention Is Off By One" (2023); Praxis implements it as a zero
+# key/value ghost token (praxis/functional/ghostmax.py, praxis/attention/causal.py).
+# Verified numerically by praxis/pillars/ghostmax.py (Figure~\ref{fig:ghostmax}).
+kind: lemma
+supports: [attention-sink]
+statement: >
+  Let a head attend over logits $z_1,\dots,z_n$. Standard softmax assigns total
+  weight $1$ regardless of $z$, so the output is always a convex combination of
+  the value vectors. Ghostmax (softmax1, Miller 2023) divides by
+  $1 + \sum_i e^{z_i}$, leaving an implicit $e^0 = 1$ in the denominator: the
+  weight on real tokens is $\sum_i e^{z_i} / (1 + \sum_i e^{z_i}) < 1$, and tends
+  to $0$ as $\max_i z_i \to -\infty$. The head may therefore attend to nothing,
+  and the norm of what it writes into the residual stream is bounded by that
+  fraction - a dampening valve standard softmax does not have.
+proof: >
+  The real-token mass is $m(z) = S/(1+S)$ with $S = \sum_i e^{z_i} > 0$, so
+  $0 < m < 1$ and $m \to 0$ as $S \to 0$ (all $z_i \to -\infty$), $m \to 1$ as
+  $S \to \infty$. The output is $o = \sum_i w_i v_i$ with $\sum_i w_i = m$, hence
+  $\lVert o \rVert \le m \max_i \lVert v_i \rVert$: when no key matches, $m \to 0$
+  and the head contributes nothing rather than a forced average. Standard softmax
+  fixes $m = 1$, so it must emit a full-magnitude average even from noise.

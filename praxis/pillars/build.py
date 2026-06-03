@@ -22,7 +22,7 @@ than failing the build.
 import argparse
 import sys
 
-from praxis.pillars import framing, geometries, halting, inlines, proofs, runs
+from praxis.pillars import framing, geometries, ghostmax, halting, inlines, proofs, runs
 
 
 def build_all(n=4, metric="auto", experiment=None, limit=4, scan=40, as_json=False):
@@ -50,6 +50,10 @@ def build_all(n=4, metric="auto", experiment=None, limit=4, scan=40, as_json=Fal
     summary["halting"] = halting.export_halting()
     h = summary["halting"]
     print(f"halting: {h['run'] or '(no halting data)'}")
+
+    summary["ghostmax"] = ghostmax.export_ghostmax()
+    print(f"ghostmax: dampening verified (real mass {summary['ghostmax']['min_mass']:.3g}"
+          f" -> {summary['ghostmax']['max_mass']:.3g})")
 
     summary["inlines"] = inlines.export_inlines()
     res = summary["inlines"]["resolved"]

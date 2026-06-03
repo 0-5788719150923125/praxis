@@ -32,7 +32,8 @@ from typing import Dict, List
 
 import yaml
 
-PROOFS_DIR = Path(__file__).parent / "proofs"
+# Proof definitions live in this package's own directory, beside this file.
+PROOFS_DIR = Path(__file__).parent
 KINDS = ("lemma", "proposition", "theorem")
 
 

@@ -206,12 +206,13 @@ export const ACTION_HANDLERS = {
             await callLifecycleHook(newTab.onActivate, newTab);
         }
 
-        // Re-measure any deck built while its tab was hidden (prefetch), then let
-        // the now-visible deck consume any pending deep-link focus. Cheap: both
-        // only touch decks that are visible and initialized.
-        const { relayoutVisibleDecks } = await import('./charts.js');
+        // Lay out the deck only if it never got a visible measure (prefetch retry
+        // lapsed); an already-laid-out deck is left untouched so switching tabs
+        // doesn't re-render it (which flashed the cards). Then consume any pending
+        // deep-link focus.
+        const { relayoutDeckOnActivate } = await import('./charts.js');
         requestAnimationFrame(() => {
-            relayoutVisibleDecks();
+            relayoutDeckOnActivate(DECK_BY_TAB[tabId]);
             applyDeckFocus(DECK_BY_TAB[tabId]);
         });
 

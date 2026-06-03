@@ -6,7 +6,7 @@ order: 40
 requires:
   halting_type: [kl]
   recurrent_steps: [">1"]
-proofs: [lemma-ternary-gate]
+proofs: [lemma-ternary-gate, lemma-three-plane]
 body: >
   The gear does not have to finish its turn. Praxis can halt the recurrent loop
   early, and the way it decides is the part most readers miss. After each turn the
@@ -28,6 +28,18 @@ body: >
   another turn would change nothing, validating by establishing that further
   computation would be wrong in exactly the expected way. Convergence is proven by
   non-change.
+
+  Why three, and not two? The reason is geometric. Two points fix only a line;
+  three non-collinear points fix a plane (Lemma~\ref{prf:lemma-three-plane}), and
+  a plane is the least structure on which a phase can turn - a circle, a rotation,
+  the standing wave the harmonic field is built from all live in two dimensions or
+  not at all. A binary distinction names one of two points on a line: it can carry
+  sign but never orientation. The third state lifts the representation off the line
+  into the plane, where phase, and therefore harmony, first become possible. So the
+  ternary gate is not a coarser version of a binary one; it is the minimal
+  resolution at which the geometry can hold an oriented shape and let it harmonize -
+  and here that resolution is read not off a hard bit but out of the continuous,
+  lagged latent space the experts vote over.
 
   \paperHaltingFigure
 

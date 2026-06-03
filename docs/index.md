@@ -6,7 +6,7 @@ links to a page listing the registered implementations and their source.
 
 ## Feature registries
 
-- [Activation functions](activations.md) (33) - Pointwise nonlinearities used inside blocks and heads.
+- [Activation functions](activations.md) (31) - Pointwise nonlinearities used inside blocks and heads.
 - [Attention mechanisms](attention.md) (7) - Self-attention variants, from vanilla causal MHA to compressive-memory and per-depth-biased variants.
 - [Block-stacking decoders](decoders.md) (4) - How the stack of blocks is composed (sequential, parallel, weighted, ...).
 - [Data sampler strategies](data.md) (5) - How datasets are interleaved during training. Praxis trains on multiple datasets at once: at every step the trainer picks a dataset, draws a document, and tokenizes it (see ``InterleaveDataManager`` in ``praxis/data/datasets/manager.py``). The sampler chosen here decides *how* that pick is biased - either statically from configured weights, or adaptively based on document length, novelty, or per-dataset loss. Set with ``--sampler``; default is ``novelty``.
@@ -14,9 +14,9 @@ links to a page listing the registered implementations and their source.
 - [Feedforward experts](dense.md) (7) - How a block's feedforward path is realized: MLP, GLU, KAN, polynomial, scatter, PEER, ... Selected with ``--ffn-type``; default is ``glu``.
 - [Halting / early exit](halting.md) (2) - Per-token mechanisms for early exit from recurrent depth loops.
 - [Input encoders](encoders.md) (10) - Front-end encoders, including the byte-latent and abstractinator variants.
-- [Layer-routing controllers](controllers.md) (8) - Decide which expert / block a token visits at each depth. Enables out-of-order layers and graph-style routing.
+- [Layer-routing controllers](controllers.md) (7) - Decide which expert / block a token visits at each depth. Enables out-of-order layers and graph-style routing.
 - [Long-term memory](memory.md) (4) - Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced as a layer (MAL) or a gate (MAG). Selected with ``--memory-type``; default is ``none``.
-- [Loss functions](losses.md) (9) - Per-token criteria. Most accept optional ``loss_weights`` for task-weighted training.
+- [Loss functions](losses.md) (8) - Per-token criteria. Most accept optional ``loss_weights`` for task-weighted training.
 - [Normalization layers](normalization.md) (5) - LayerNorm/RMSNorm variants, including SandwichNorm (required for stable recurrent-depth bias).
 - [Optimizer profiles](optimizers.md) (5) - Named optimizer presets (built on pytorch-optimizer). Selected with ``--optimizer``; default is ``Lion``. Each entry shows its concrete settings (lr, betas, weight decay, ...).
 - [Optimizer wrappers](wrappers.md) (8) - Composable wrappers layered onto the base optimizer with ``--optimizer-wrappers`` (a list, applied innermost-first). The schedule-free family runs without an LR schedule; the others keep it.
@@ -50,7 +50,6 @@ where present.
 - **[`integrations/`](../integrations/README.md)** - This directory contains optional integrations that extend Praxis with additional functionality. Each integration is self-contained and can be automatically loaded based on CLI flags or conditions.
 - **[`next/`](../next/)** - Long-form research notes, exploratory writing, and the project [roadmap](../next/roadmap.md).
 - **[`praxis/`](../praxis/)** - The model framework itself. See [docs/index.md](../docs/index.md) for the per-registry feature map.
-- **[`proofs/`](../proofs/)** - Math / derivation notes backing the more unusual designs (harmonic head, ghostmax).
 - **[`research/`](../research/)** - The research paper, in LaTeX.
 - **[`staging/`](../staging/README.md)** - Welcome to the junkyard! This is where we dump experimental code that doesn't belong in core Praxis.
 - **[`static/`](../static/)** - Images used in the README and the web dashboard.
@@ -77,6 +76,7 @@ the package directory for details.
 - `praxis/logging/` - Logging utilities and formatters.
 - `praxis/metrics/` - Metrics descriptions and bookkeeping for the dashboards.
 - `praxis/modeling/` - ``PraxisModel`` / ``PraxisForCausalLM`` - the top-level transformers-compatible wrappers.
+- `praxis/pillars/` - Living research paper: builds ``research/`` from the current run via ``python -m praxis.pillars.build``. Subpackages: ``framing`` (config-gated prose), ``proofs`` (consistency-checked lemmas, some verifiable computations), ``inlines`` (single-value edits); plus runs/geometries/halting/ghostmax figures.
 - `praxis/schedulers/` - Learning-rate schedulers.
 - `praxis/tasks/` - Training task abstractions used by ``strategies``.
 - `praxis/tokenizers/` - Tokenizer creation and registry.

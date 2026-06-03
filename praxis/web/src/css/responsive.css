@@ -170,18 +170,23 @@
         max-width: 85%;
     }
     
+    /* Mobile scroll model: the inner-body flex-scroll (desktop) does not reliably
+       accept touch on phones. So the terminal-container is the single NATIVE
+       scroll surface (touch scrolling that just works), the dashboard grows to
+       its content, and the header/footer stay pinned via position:sticky. */
     .terminal-container {
         font-size: 0.5rem;
-        padding: 0.3125rem;
-        /* Don't scroll the container itself - let the dashboard fill it and its
-           body scroll internally, so the footer stays pinned at the bottom. */
-        overflow-y: hidden;
+        /* No vertical padding: the sticky header/footer sit flush with the scroll
+           edges, so content can't peek above the header or below the footer and
+           the header doesn't jump when it sticks. */
+        padding: 0;
         display: flex;
         flex-direction: column;
-        /* flex-basis 0 so it's bounded by the tab area (not its content), letting
-           the inner body be the single scroll surface. */
+        /* Bounded to the tab area so it scrolls its overflowing content. */
         flex: 1 1 0%;
         min-height: 0;
+        overflow-y: auto;
+        overscroll-behavior: contain;  /* no rubber-band reveal past the pins */
         -webkit-overflow-scrolling: touch;
     }
 
@@ -200,35 +205,51 @@
 
     .live-dashboard {
         font-size: 0.6875rem;
-        padding: 0.5rem;
-        /* Bound via flex (basis 0), NOT percentage heights: height/max-height:100%
-           fail to resolve through the nested flex chain on some mobile browsers,
-           leaving the dashboard sized to its content and then clipped by the
-           container's overflow:hidden - so nothing scrolls. flex-basis:0 + grow
-           reliably fills the bounded terminal-container instead. */
-        flex: 1 1 0%;
+        /* Horizontal inset only - no top/bottom padding, so the header/footer are
+           flush with the scroll edges (solid boundaries, no header shift). */
+        padding: 0 0.5rem;
+        /* Grow to content; the terminal-container scrolls it. No inner flex
+           bounding (that's what blocked touch scrolling on mobile). */
+        flex: 0 0 auto;
         min-height: 0;
+        max-height: none;
     }
 
-    /* Single column on mobile; the body scrolls internally between the pinned
-       header and footer rather than the whole page scrolling as one surface.
-       Fixed-height rows keep each card bounded so the body (not the page) scrolls. */
+    /* Header and footer stay pinned while the dashboard scrolls beneath them -
+       position:sticky against the native scroller (terminal-container). Opaque
+       backgrounds and their own vertical padding form solid boundaries the
+       scrolling cards can't trail past. */
+    .ld-header {
+        position: sticky;
+        top: 0;
+        z-index: 3;
+        background: var(--term-bg);
+        padding-top: 0.5rem;   /* breathing room (covered by the opaque bg) */
+    }
+
+    .ld-footer {
+        position: sticky;
+        bottom: 0;
+        z-index: 3;
+        background: var(--term-bg);
+        padding-top: 0.4rem;
+        padding-bottom: 0.5rem;
+    }
+
+    /* Single column; cards render at full height and the whole list scrolls with
+       the dashboard (not an internal scroller, which mobile touch wouldn't chain). */
     .ld-body {
         grid-template-columns: 1fr;
         grid-auto-rows: 12rem;
-        overflow-y: auto;
-        flex: 1 1 0%;
+        overflow: visible;
+        flex: 0 0 auto;
         min-height: 0;
-        -webkit-overflow-scrolling: touch;  /* momentum scroll on older iOS */
-        overscroll-behavior: contain;        /* don't chain to the page */
-        touch-action: pan-y;                 /* this is the vertical scroller */
     }
 
-    /* Each card's rolling text is its own overflow scroller. On desktop a wheel
-       chains to the list at the boundary, but a mobile touch does NOT chain - the
-       finger lands on the card text and the list never scrolls ("nothing
-       happens"). Make the inner scrollers transparent to touch so the gesture
-       falls through to .ld-body; JS still auto-scrolls them to their latest line. */
+    /* Each card's rolling text is its own overflow scroller. On mobile a touch
+       lands on it and would be captured instead of scrolling the dashboard, so
+       make the inner scrollers transparent to touch - the gesture falls through
+       to the terminal-container. JS still auto-scrolls them to their latest line. */
     .ld-status-text,
     .ld-log-content {
         pointer-events: none;

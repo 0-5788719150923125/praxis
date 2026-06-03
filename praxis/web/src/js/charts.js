@@ -778,6 +778,21 @@ function ensureVisibleLayout(deck, tries = 0) {
     measureDeck(deck);
     renderDeck(deck);
     applyDeckFocus(deck);  // a freshly visible/rebuilt deck consumes any pending focus
+    deck._laidOut = true;             // measured while visible
+    deck._laidW = window.innerWidth;  // remember the width it was laid out at
+}
+
+// On tab activation, lay out the deck ONLY if it needs it: never measured while
+// visible (prefetch retry lapsed), or the viewport WIDTH changed since (e.g.
+// rotation while this tab was hidden). An unchanged deck is left alone - re-
+// measuring + re-rendering it on every switch flashed the cards (briefly
+// vanishing) each time the tab opened. (Width, not height, so the mobile URL-bar
+// height jitter never re-triggers it.)
+export function relayoutDeckOnActivate(deckId) {
+    const deck = document.getElementById(deckId);
+    if (!deck || !deck._deck) return;
+    if (deck._laidOut && deck._laidW === window.innerWidth) return;
+    ensureVisibleLayout(deck);
 }
 
 // Cache card heights and (mobile) the band between the deck top and the floor.
@@ -1358,6 +1373,7 @@ function bindDeckEvents(deck) {
         deck._backAccum = 0;       // sustained downward travel, gating the drop to B
         deck._scrollVel = 0;       // reset inner-scroll velocity for this gesture
         deck._scrollBody = null;
+        deck._anchorLocked = false; // set once this gesture flips A<->B, then no cycling
     }, { passive: true });
 
     deck.addEventListener('touchmove', (e) => {
@@ -1406,8 +1422,19 @@ function bindDeckEvents(deck) {
         // downward pull (past the content edge) drops to B; at B an upward pull
         // lifts to A. Either way drive the anchor alone - no seam - so you can
         // reposition the anchor without the deck cycling underneath you.
-        if (deck._anchorTarget === 1 && dy < 0) { seamAnchor(deck, dy); return; }
-        if (deck._anchorTarget === 0 && dy > 0) { seamAnchor(deck, dy); return; }
+        if ((deck._anchorTarget === 1 && dy < 0) || (deck._anchorTarget === 0 && dy > 0)) {
+            const before = deck._anchorTarget;
+            seamAnchor(deck, dy);
+            // A completed A<->B flip HARD-GATES card cycling for the rest of this
+            // gesture, so the same drag can't overshoot past the new slot into the
+            // next card. Lift the finger and drag again to cycle.
+            if (deck._anchorTarget !== before) deck._anchorLocked = true;
+            return;
+        }
+
+        // Gate: this gesture already flipped the anchor (A<->B) - don't let the
+        // same continued drag also cycle cards.
+        if (deck._anchorLocked) return;
 
         // Flick, content edge, or a stuck card: begin the seam to the next/previous card.
         deck._seamBase = ((Math.round(deck._pos) % st.count) + st.count) % st.count;
