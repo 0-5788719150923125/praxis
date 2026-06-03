@@ -65,7 +65,7 @@ Source: [praxis/heads/harmonic.py:732](../praxis/heads/harmonic.py#L732)
 
 Gate-combined parallel branches; a SequentialHead stage or top head.
 
-Source: [praxis/heads/parallel.py:51](../praxis/heads/parallel.py#L51)
+Source: [praxis/heads/parallel.py:52](../praxis/heads/parallel.py#L52)
 
 Presets:
 - `prismatic` - `branches=[functools.partial(<class 'praxis.heads.stacked.SequentialHead'>, heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='learned', build_classifier=True)]), functools.partial(<class 'praxis.heads.stacked.SequentialHead'>, heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='input', build_classifier=False), <class 'praxis.heads.crystal.CrystalHead'>])]`

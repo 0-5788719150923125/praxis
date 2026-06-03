@@ -1717,8 +1717,79 @@ function renderHarmonicStrands(canvas, data) {
     canvas._strandsRAF = requestAnimationFrame(draw);
 }
 
+/**
+ * HALO energy ring: a polar map of the batch's radial energy. Each token's
+ * embedding has a mean-square radius; HALO drives them onto a shell of radius
+ * sqrt(1 - 2/D). We paint the radii histogram as concentric rings - bright
+ * where consensus embeddings pile onto the shell (the ring of bias), dark
+ * toward the origin (the abstain sink) and beyond (variance, no structure).
+ */
+function renderHaloRing(canvas, data) {
+    if (canvas._haloRAF) cancelAnimationFrame(canvas._haloRAF);
+    const radii = data.radii || [];
+    const BINS = radii.length;
+    if (BINS < 2) return;
+
+    const ctx = canvas.getContext('2d');
+    const rMax = data.r_max || 1, shell = data.shell_r || 0;
+    let frame = 0;
+
+    const draw = () => {
+        if (!canvas.isConnected) { canvas._haloRAF = null; return; }
+        if (deckCardParked(canvas)) { canvas._haloRAF = requestAnimationFrame(draw); return; }
+        const wrapper = canvas.parentElement;
+        const w = wrapper.clientWidth || 800, h = wrapper.clientHeight || 400;
+        if (w < 2 || h < 2) { canvas._haloRAF = requestAnimationFrame(draw); return; }
+        if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+
+        const { textColor } = getThemeColors();
+        ctx.clearRect(0, 0, w, h);
+        ctx.fillStyle = '#000';            // the void: pure variance has no structure
+        ctx.fillRect(0, 0, w, h);
+
+        const cx = w / 2, cy = h / 2, maxR = Math.min(w, h) * 0.42;
+        const pulse = 1 + 0.07 * Math.sin(frame * 0.03);
+        const thick = (maxR / BINS) + 1.2;
+
+        // Outer -> inner so the bright shell sits cleanly over the dark interior.
+        for (let b = BINS - 1; b >= 0; b--) {
+            const rData = ((b + 0.5) / BINS) * rMax;
+            const cr = (rData / rMax) * maxR;
+            const dens = Math.min(1, Math.max(0, radii[b] * pulse));
+            if (dens <= 0.002) continue;
+            const c = sampleColormap('praxis_heat', dens);
+            ctx.strokeStyle = `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+            ctx.lineWidth = thick;
+            ctx.beginPath();
+            ctx.arc(cx, cy, cr, 0, 2 * Math.PI);
+            ctx.stroke();
+        }
+
+        // Faint marker for the theoretical shell radius sqrt(1 - 2/D).
+        if (shell > 0) {
+            ctx.strokeStyle = 'rgba(120, 200, 255, 0.35)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath();
+            ctx.arc(cx, cy, (shell / rMax) * maxR, 0, 2 * Math.PI);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        ctx.fillStyle = textColor;
+        ctx.font = '11px monospace';
+        ctx.fillText(`ring of bias @ r=${shell.toFixed(3)} - inner/outer void = variance`, 10, 16);
+        ctx.fillText(`${data.n || 0} tokens`, 10, h - 10);
+
+        frame++;
+        canvas._haloRAF = requestAnimationFrame(draw);
+    };
+    canvas._haloRAF = requestAnimationFrame(draw);
+}
+
 const SNAPSHOT_RENDERERS = {
     heatmap_2d: renderHeatmap2D,
+    halo_ring: renderHaloRing,
     harmonic_spiral: renderHarmonicSpiral,
     harmonic_curve: renderHarmonicCurve,
     field_traces: renderFieldTraces,

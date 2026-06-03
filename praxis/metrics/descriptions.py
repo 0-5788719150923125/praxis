@@ -107,6 +107,13 @@ def _candidates(model: Any) -> Iterable[Dict[str, Any]]:
         if isinstance(descs, dict):
             yield descs
 
+    # Loss functions (e.g. HALO) declare chart/snapshot hints as a class attr.
+    criterion = getattr(model, "criterion", None)
+    if criterion is not None:
+        descs = getattr(type(criterion), "metric_descriptions", None)
+        if isinstance(descs, dict):
+            yield descs
+
 
 def resolve_callers(root: Any) -> Dict[str, str]:
     """Map each metric key to the class name of the module that declares it.

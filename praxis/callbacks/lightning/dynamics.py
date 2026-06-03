@@ -79,6 +79,10 @@ class DynamicsLoggerCallback(Callback):
             # energy loss). Encoders opt in via training_metrics().
             dynamics.update(self._extract_encoder_dynamics(model))
 
+            # Loss-function diagnostics (e.g. HALO: gamma, shell radius,
+            # abstain rate). The criterion opts in via training_metrics().
+            dynamics.update(self._extract_loss_dynamics(model))
+
             if dynamics:
                 self._success_count += 1
                 if self._success_count <= 3:
@@ -218,6 +222,22 @@ class DynamicsLoggerCallback(Callback):
             return encoder.training_metrics()
         except Exception as e:
             print(f"[DynamicsLogger] encoder.training_metrics() failed: {e}")
+            return {}
+
+    def _extract_loss_dynamics(self, model) -> dict:
+        """Delegate to the loss function's own diagnostics (e.g. HALO).
+
+        The criterion opts in via ``training_metrics()`` (chart hints declared
+        as a ``metric_descriptions`` class attr); wrapped so a buggy metric
+        doesn't kill the dynamics log.
+        """
+        criterion = getattr(model, "criterion", None)
+        if criterion is None or not hasattr(criterion, "training_metrics"):
+            return {}
+        try:
+            return criterion.training_metrics()
+        except Exception as e:
+            print(f"[DynamicsLogger] criterion.training_metrics() failed: {e}")
             return {}
 
     def _extract_arc_dynamics(self, model) -> dict:

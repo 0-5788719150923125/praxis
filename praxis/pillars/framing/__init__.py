@@ -214,6 +214,10 @@ def _augment(config: Dict) -> Dict:
     else:
         derived["codec_mode"] = "standard"
 
+    # HALO objective: a distance-to-centroid loss in embedding space (a shell
+    # of consensus + an origin abstain sink) rather than cross-entropy.
+    derived["uses_halo"] = str(config.get("loss_func", "")) == "halo"
+
     return {**config, **derived}
 
 

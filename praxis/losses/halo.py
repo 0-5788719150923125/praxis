@@ -49,6 +49,7 @@ class HALOLoss(nn.Module):
             requires_grad=learn_gamma,
         )
         self.abstain_bias = 0.0
+        self._last_stats = None
 
     def _lazy_init(self, emb_dims: int) -> None:
         """Initialize gamma and abstain bias once we know the embedding dimension."""
@@ -108,7 +109,16 @@ class HALOLoss(nn.Module):
 
         flat_emb = embeddings.contiguous().view(-1, emb_dims)
         flat_weights = loss_weights.reshape(-1) if loss_weights is not None else None
-        centroids = classifier.weight
+        # HALO is a distance-to-centroid objective: a Linear head exposes its
+        # centroids as ``weight``, the crystal head as ``centers``.
+        centroids = getattr(classifier, "weight", None)
+        if centroids is None:
+            centroids = getattr(classifier, "centers", None)
+        if centroids is None:
+            raise RuntimeError(
+                "HALOLoss needs a centroid matrix on the classifier "
+                "(`weight` or `centers`)."
+            )
         return self._halo_forward(flat_emb, flat_labels, centroids, flat_weights)
 
     def _halo_forward(
@@ -204,8 +214,96 @@ class HALOLoss(nn.Module):
         radial_nll = -(volume_term + gaussian_term)
 
         per_token = loss_ce_per_token + radial_nll
+
+        self._stash_geometry(x_sq, logits_k_plus_1, gamma)
+
         # target was already filtered by valid_mask; pass labels=None so
         # weighted_reduce doesn't try to filter again.
         return weighted_reduce(
             per_token, labels=None, loss_weights=loss_weights, reduction=self.reduction
         )
+
+    # ── Dashboard geometry ────────────────────────────────────────────────
+    RING_BINS = 96
+
+    @torch.no_grad()
+    def _stash_geometry(self, x_sq: Tensor, logits_kp1: Tensor, gamma: Tensor) -> None:
+        """Snapshot the radial energy of the batch for the HALO ring viz.
+
+        Embeddings ideally settle on a shell of mean-square radius
+        ``r_sq_target = 1 - 2/D``; the abstain class sinks the rest to the
+        origin. We histogram per-token radii so the renderer can paint the
+        bright ring of consensus and the dark interior/exterior of variance.
+        """
+        if torch.compiler.is_compiling():
+            return
+        radius = x_sq.detach().clamp_min(0).sqrt().view(-1).float()
+        if radius.numel() == 0:
+            return
+        shell_r = math.sqrt(max(1.0 - 2.0 / self._D, 1e-6))
+        r_max = max(float(radius.max().item()), shell_r * 1.6)
+        hist = torch.histc(radius, bins=self.RING_BINS, min=0.0, max=r_max)
+        peak = hist.max().clamp_min(1.0)
+        abstain = F.softmax(logits_kp1.detach().float(), dim=-1)[:, -1].mean()
+        self._last_stats = {
+            "radii": (hist / peak).cpu().tolist(),
+            "r_max": r_max,
+            "shell_r": shell_r,
+            "mean_radius": float(radius.mean().item()),
+            "radius_spread": float(radius.std().item()) if radius.numel() > 1 else 0.0,
+            "abstain_rate": float(abstain.item()),
+            "gamma": float(gamma.detach().item()),
+            "n": int(radius.numel()),
+        }
+
+    def training_metrics(self) -> dict:
+        s = self._last_stats
+        if not s:
+            return {}
+        return {
+            "halo_gamma": s["gamma"],
+            "halo_shell_radius": s["shell_r"],
+            "halo_mean_radius": s["mean_radius"],
+            "halo_radius_spread": s["radius_spread"],
+            "halo_abstain_rate": s["abstain_rate"],
+        }
+
+    def dashboard_snapshots(self) -> dict:
+        s = self._last_stats
+        if not s:
+            return {}
+        return {
+            "halo_ring": {
+                "radii": s["radii"],
+                "r_max": s["r_max"],
+                "shell_r": s["shell_r"],
+                "n": s["n"],
+            }
+        }
+
+    metric_descriptions = {
+        "halo_gamma": {
+            "description": "Learnable inverse-temperature scaling the distance metric. Higher gamma = sharper centroid assignment.",
+            "chart": {"title": "HALO Gamma", "group": "halo", "order": 0},
+        },
+        "halo_mean_radius": {
+            "description": "Mean embedding radius (mean-square scale). HALO pulls this toward the shell radius sqrt(1 - 2/D).",
+            "chart": {"title": "HALO Radius", "group": "halo", "order": 1, "series_group": "halo_radius", "series_label": "mean"},
+        },
+        "halo_shell_radius": {
+            "description": "Target shell radius sqrt(1 - 2/D): the ring of consensus the objective drives embeddings onto.",
+            "chart": {"title": "HALO Radius", "group": "halo", "order": 2, "series_group": "halo_radius", "series_label": "shell"},
+        },
+        "halo_radius_spread": {
+            "description": "Std of embedding radii. Collapsing toward the shell tightens this; high spread is residual variance.",
+            "chart": {"title": "HALO Radius Spread", "group": "halo", "order": 3},
+        },
+        "halo_abstain_rate": {
+            "description": "Mean probability mass on the abstain class (the origin sink). High abstain = low-confidence tokens parked at the center.",
+            "chart": {"title": "HALO Abstain Rate", "group": "halo", "order": 4},
+        },
+        "halo_ring": {
+            "description": "Radial energy map: the bright ring marks consensus embeddings settled on the hyperspherical shell, with the dark interior (abstain sink) and exterior carrying no structure - a geometry of bias and variance.",
+            "snapshot": {"title": "HALO Energy Ring", "renderer": "halo_ring", "order": 60},
+        },
+    }

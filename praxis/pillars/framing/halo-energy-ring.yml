@@ -1,0 +1,28 @@
+# Gated on the HALO objective (loss_func: halo). Lives in the harmonic section
+# beside the crystal-geometry discussion: HALO is the loss-side companion to the
+# crystal head, scoring by distance to centroids rather than dot-product logits.
+section: harmonic
+order: 25
+requires:
+  uses_halo: true
+body: >
+  \subsection{A geometry of energy: the consensus shell and the abstain sink}
+
+  When the objective is HALO~\cite{halo,pisoni-halo} rather than cross-entropy, the loss stops
+  reading logits and starts reading geometry directly. Each token embedding is
+  scored by its distance to a set of centroids - here the crystal centers, so the
+  loss and the head share one geometry - and the objective drives every embedding
+  toward a hyperspherical shell of mean-square radius $r^2 = 1 - 2/D$. An extra
+  abstain class sits at the origin as a sink: tokens the model cannot place
+  confidently fall inward toward the center rather than being forced onto the
+  shell.
+
+  This makes the bias-variance picture literal. Plotting the radial energy of a
+  batch produces a single bright ring at the consensus radius - the embeddings
+  that have settled into agreement - with darkness inside (the abstain sink) and
+  darkness outside (overconfident or scattered mass). The ring is bias: shared,
+  converged structure. The dark interior and exterior are variance with no
+  structure to show. The same separation we draw from the harmonic field as
+  fanned strands appears here as a one-dimensional radial law.
+
+  \begin{center}\begin{tikzpicture}[scale=1.0]\fill[black] (0,0) circle (2.0); \draw[orange!90!red,line width=2pt,opacity=0.25] (0,0) circle (1.18); \draw[orange!90!red,line width=2pt,opacity=0.55] (0,0) circle (1.28); \draw[orange!90!red,line width=2pt,opacity=0.9] (0,0) circle (1.38); \draw[orange!90!red,line width=2pt,opacity=0.55] (0,0) circle (1.48); \draw[orange!90!red,line width=2pt,opacity=0.25] (0,0) circle (1.58); \draw[cyan!60!white,dashed,line width=0.5pt] (0,0) circle (1.38); \node[white,font=\scriptsize] at (0,0) {abstain sink}; \node[white,font=\scriptsize] at (0,-1.78) {variance}; \node[orange!80!white,font=\scriptsize] at (1.38,0.32) {$r=\sqrt{1-2/D}$};\end{tikzpicture}\end{center}

@@ -24,9 +24,10 @@ bias against variance per token::
 - branch 1 = a harmonic field refracted through the crystal distance
   classifier (the more expressive variance arm).
 
-The gate exposes no single classifier (the two arms read out differently), so
-``classifier`` is None - fine because crystal forbids cut-CE, so prismatic
-trains on full logits.
+The gate exposes no single linear projection (the two arms read out
+differently), so there is no classifier for cut-CE - fine because crystal
+forbids it, so prismatic trains on full logits. A centroid loss (HALO) instead
+borrows the crystal arm's centers via ``classifier`` (see that property).
 
 Branches are passed as *builders* (a head class or ``functools.partial`` over
 one), exactly like SequentialHead. Because two branches can share a class (two
@@ -123,9 +124,23 @@ class ParallelHead(BaseHead):
 
     @property
     def classifier(self) -> Optional[nn.Module]:
-        # Transform-only wrapper: the enclosing SequentialHead's terminal head
-        # owns classification.
-        return None
+        # The gated arms read out differently, so there is no shared linear
+        # projection for cut-CE (which is why crystal forbids it). But a
+        # centroid loss (HALO) only needs *a* centroid matrix: lend it the
+        # crystal arm's centers, preferring a branch that exposes ``centers``,
+        # then any weight-bearing branch. NB: HALO scores the pre-head
+        # embeddings against these centroids and ignores the gated logits, so
+        # the harmonic/gate machinery sees little gradient under it.
+        fallback = None
+        for b in self.branches:
+            c = getattr(b, "classifier", None)
+            if c is None:
+                continue
+            if hasattr(c, "centers"):
+                return c
+            if fallback is None and hasattr(c, "weight"):
+                fallback = c
+        return fallback
 
     def set_downstream(self, classifier: Optional[nn.Module]) -> None:
         """Point every branch's grad-ratio at the real downstream classifier."""

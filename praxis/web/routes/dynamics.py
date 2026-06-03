@@ -738,10 +738,17 @@ def get_head_snapshots():
         generator = current_app.config.get("generator")
         model = getattr(generator, "model", None) if generator else None
         head = getattr(model, "head", None) if model is not None else None
-        if head is None:
+        criterion = getattr(model, "criterion", None) if model is not None else None
+
+        snapshots = {}
+        if head is not None:
+            snapshots.update(head.dashboard_snapshots() or {})
+        # Loss functions (e.g. HALO) contribute their own geometry snapshots.
+        if criterion is not None and hasattr(criterion, "dashboard_snapshots"):
+            snapshots.update(criterion.dashboard_snapshots() or {})
+        if not snapshots:
             return jsonify({"status": "no_data", "snapshots": {}})
 
-        snapshots = head.dashboard_snapshots() or {}
         response = jsonify({"status": "ok", "snapshots": snapshots})
         response.headers.add("Cache-Control", "max-age=5")
         return response
