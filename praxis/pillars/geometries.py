@@ -29,9 +29,7 @@ import os
 
 from praxis.pillars.runs import experiment_name, experiment_stems
 
-REPO_ROOT = os.path.dirname(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-)
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 RUNS_DIR = os.path.join(REPO_ROOT, "build", "runs")
 RESEARCH_DIR = os.path.join(REPO_ROOT, "research")
 FIG_DIR = os.path.join(RESEARCH_DIR, "figures")
@@ -56,15 +54,18 @@ def runs_newest_first():
             continue
         key = cfg.get("created") or str(os.path.getmtime(cfg_path))
         name = experiment_name(cfg.get("command", ""), stems)
-        out.append((key, cfg.get("truncated_hash", os.path.basename(run_dir)), name, run_dir))
+        out.append(
+            (key, cfg.get("truncated_hash", os.path.basename(run_dir)), name, run_dir)
+        )
     return sorted(out, key=lambda r: r[0], reverse=True)
 
 
 def latest_checkpoint(run_dir):
     """Newest .ckpt in a run's model/ dir (resolving last.ckpt), or None."""
     model_dir = os.path.join(run_dir, "model")
-    cks = [c for c in glob.glob(os.path.join(model_dir, "*.ckpt"))
-           if not os.path.islink(c)]
+    cks = [
+        c for c in glob.glob(os.path.join(model_dir, "*.ckpt")) if not os.path.islink(c)
+    ]
     if not cks:
         return None
     return max(cks, key=os.path.getmtime)
@@ -87,13 +88,21 @@ def pca_density_grid(W, grid_size=GRID_SIZE):
     for i in range(2):
         lo, hi = float(proj[:, i].min()), float(proj[:, i].max())
         span = max(hi - lo, 1e-12)
-        bins.append(((proj[:, i] - lo) / span * (grid_size - 1)).long().clamp_(0, grid_size - 1))
+        bins.append(
+            ((proj[:, i] - lo) / span * (grid_size - 1)).long().clamp_(0, grid_size - 1)
+        )
         spans.append(span)
     flat = bins[1] * grid_size + bins[0]
-    grid = torch.bincount(flat, minlength=grid_size * grid_size).view(grid_size, grid_size)
+    grid = torch.bincount(flat, minlength=grid_size * grid_size).view(
+        grid_size, grid_size
+    )
     n = max(centered.shape[0] - 1, 1)
     total_var = float(centered.pow(2).sum() / n)
-    ve = [float(v) / total_var for v in (S[:2].pow(2) / n).tolist()] if total_var > 0 else [0.0, 0.0]
+    ve = (
+        [float(v) / total_var for v in (S[:2].pow(2) / n).tolist()]
+        if total_var > 0
+        else [0.0, 0.0]
+    )
     return grid.cpu().numpy(), ve
 
 
@@ -135,14 +144,16 @@ def collect_geometries(limit, scan):
             if not hasattr(W, "dim") or W.dim() != 2 or W.shape[0] < 3:
                 continue
             grid, ve = pca_density_grid(W)
-            geometries.append({
-                "name": name,
-                "hash": run_hash,
-                "label": branch_label(key) if multi else "",
-                "grid": grid,
-                "var_explained": ve,
-                "n_points": int(W.shape[0]),
-            })
+            geometries.append(
+                {
+                    "name": name,
+                    "hash": run_hash,
+                    "label": branch_label(key) if multi else "",
+                    "grid": grid,
+                    "var_explained": ve,
+                    "n_points": int(W.shape[0]),
+                }
+            )
     return geometries
 
 
@@ -162,6 +173,7 @@ def _shared_cmap():
 def render_png(geo, index):
     """Write one density heatmap; return its repo-relative figure path."""
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import numpy as np
@@ -171,11 +183,16 @@ def render_png(geo, index):
     os.makedirs(FIG_DIR, exist_ok=True)
     fig, ax = plt.subplots(figsize=(3, 3))
     masked = np.where(grid > 0, grid, np.nan)
-    ax.imshow(masked, origin="lower", cmap=_shared_cmap(),
-              norm=LogNorm(vmin=1, vmax=max(int(grid.max()), 2)))
+    ax.imshow(
+        masked,
+        origin="lower",
+        cmap=_shared_cmap(),
+        norm=LogNorm(vmin=1, vmax=max(int(grid.max()), 2)),
+    )
     title = geo["name"] + (f" {geo['label']}" if geo["label"] else "")
     ax.set_title(title, fontsize=9)
-    ax.set_xticks([]); ax.set_yticks([])
+    ax.set_xticks([])
+    ax.set_yticks([])
     out = os.path.join(FIG_DIR, f"geometry_{index}.png")
     fig.savefig(out, dpi=110, bbox_inches="tight")
     plt.close(fig)
@@ -191,7 +208,7 @@ def figure_tex(paths, geometries):
     rows = []
     for i in range(0, len(paths), 2):
         cells = " \\hfill\n  ".join(
-            f"\\includegraphics[width=0.46\\linewidth]{{{p}}}" for p in paths[i:i + 2]
+            f"\\includegraphics[width=0.46\\linewidth]{{{p}}}" for p in paths[i : i + 2]
         )
         rows.append(cells)
     body = " \\\\[6pt]\n  ".join(rows)
@@ -224,8 +241,10 @@ def export_geometries(limit: int = 4, scan: int = 40) -> dict:
         # No crystal geometry anywhere in scan: emit an empty macro so the
         # paper still builds (fragment renders prose without a figure).
         with open(OUT_TEX, "w") as fh:
-            fh.write("% Generated by praxis/pillars/geometries.py - no crystal geometries found.\n"
-                     "\\newcommand{\\paperGeometryFigure}{}\n")
+            fh.write(
+                "% Generated by praxis/pillars/geometries.py - no crystal geometries found.\n"
+                "\\newcommand{\\paperGeometryFigure}{}\n"
+            )
         return {"count": 0, "panels": []}
 
     paths = [render_png(g, i + 1) for i, g in enumerate(geometries)]
@@ -236,9 +255,13 @@ def export_geometries(limit: int = 4, scan: int = 40) -> dict:
     return {
         "count": len(geometries),
         "panels": [
-            {"name": g["name"], "hash": g["hash"], "label": g["label"],
-             "var_explained": [round(v, 4) for v in g["var_explained"]],
-             "n_points": g["n_points"]}
+            {
+                "name": g["name"],
+                "hash": g["hash"],
+                "label": g["label"],
+                "var_explained": [round(v, 4) for v in g["var_explained"]],
+                "n_points": g["n_points"],
+            }
             for g in geometries
         ],
     }

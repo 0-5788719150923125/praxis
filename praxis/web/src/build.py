@@ -74,8 +74,11 @@ def build_colormaps():
     import json
 
     spec_path = SRC_DIR / "colormaps.json"
-    spec = {k: v for k, v in json.loads(spec_path.read_text()).items()
-            if not k.startswith("_")}
+    spec = {
+        k: v
+        for k, v in json.loads(spec_path.read_text()).items()
+        if not k.startswith("_")
+    }
     stops = {name: cm["stops"] for name, cm in spec.items()}
 
     out = STATIC_DIR / "js" / "colormaps.js"

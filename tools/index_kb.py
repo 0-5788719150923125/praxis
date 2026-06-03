@@ -31,7 +31,9 @@ def main() -> int:
     )
     parser.add_argument("--db", default=str(DEFAULT_DB_PATH), help="Index DB path.")
     parser.add_argument("--query", help="Run a test search after rebuilding.")
-    parser.add_argument("--limit", type=int, default=10, help="Test-query result count.")
+    parser.add_argument(
+        "--limit", type=int, default=10, help="Test-query result count."
+    )
     args = parser.parse_args()
 
     index = KBIndex(db_path=Path(args.db))

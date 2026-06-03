@@ -1040,9 +1040,7 @@ class InProcessMonoForwardTrainer(MonoForwardTrainer):
                     ids = ids.detach().long().to(target_device)
                     bids = create_block_ids(ids, config.eos_token_id)
                     with torch.no_grad():
-                        acts, _, _, enc_bids, _, _ = encoder.encode(
-                            ids, block_ids=bids
-                        )
+                        acts, _, _, enc_bids, _, _ = encoder.encode(ids, block_ids=bids)
                         h = acts
                         bids_use = enc_bids if enc_bids is not None else bids
                         for step_idx in range(len(self._route_table)):

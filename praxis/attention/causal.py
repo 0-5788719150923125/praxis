@@ -44,6 +44,10 @@ class CausalAttention(nn.Module):
         self.dropout_p = config.dropout
         self.causal = config.causal
         self.window_size = getattr(config, "window_size", None)
+        # Ghostmin ablation (next/ghostmin.md): at this recurrent depth step,
+        # withhold the causal tip so the model must lean on delayed context.
+        # None = off. Set per experiment (e.g. calm-c), not a global default.
+        self.ghostmin_step = getattr(config, "ghostmin_step", None)
 
         # Positional encoding lives entirely in the registry-built module:
         # before_scores mutates Q/K (RoPE/HoPE), build_score_mod returns the
@@ -179,6 +183,22 @@ class CausalAttention(nn.Module):
 
         return False
 
+    def _maybe_ghostmin(self, k: Tensor, v: Tensor, current_depth: int):
+        """Ghostmin ablation: at ``ghostmin_step``, shift K/V one position toward
+        the future so every query's newest reachable key is its predecessor.
+
+        The causal tip is withheld for that one recurrent beat, forcing reliance
+        on delayed context (a "lingering"); the remaining steps recorrect. No-op
+        unless ``ghostmin_step`` is set and matches the current depth. Applied to
+        real K/V before the zero ghost is prepended, so softmax1 is unaffected.
+        """
+        if self.ghostmin_step is None or current_depth != self.ghostmin_step:
+            return k, v
+        # cat a zero at the front, drop the last - a causal (pad, not wrap) shift.
+        k = torch.cat([torch.zeros_like(k[:, :, :1]), k[:, :, :-1]], dim=2)
+        v = torch.cat([torch.zeros_like(v[:, :, :1]), v[:, :, :-1]], dim=2)
+        return k, v
+
     def _ghost_aware_attention(
         self,
         q: Tensor,
@@ -301,6 +321,9 @@ class CausalAttention(nn.Module):
         # for RoPE/HoPE). Must happen before ghostmax so the ghost token
         # remains a pristine zero.
         q, k, v = self.encoding.before_scores(q, k, v, current_depth=current_depth)
+
+        # Ghostmin ablation: optionally withhold the causal tip at one depth step.
+        k, v = self._maybe_ghostmin(k, v, current_depth)
 
         # Ghostmax: Prepend zero token to K and V (after positional encoding)
         # This implements softmax1 by adding an implicit exp(0)=1 to the denominator

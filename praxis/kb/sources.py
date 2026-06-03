@@ -225,16 +225,30 @@ class CardsSource(KBSource):
             chart = spec.get("chart") or {}
             title = chart.get("title")
             if title and has_data(key):
-                yield self._card("research", "Research", key, title,
-                                 spec.get("description") or chart.get("y_label", ""))
+                yield self._card(
+                    "research",
+                    "Research",
+                    key,
+                    title,
+                    spec.get("description") or chart.get("y_label", ""),
+                )
 
         for entry in COMPOSITE_METRIC_REGISTRY:
             pattern = entry.get("key_pattern")
             compiled = re.compile(pattern) if pattern else None
-            present = has_data(entry.get("key", ""), compiled) if compiled else has_data(entry.get("key", ""))
+            present = (
+                has_data(entry.get("key", ""), compiled)
+                if compiled
+                else has_data(entry.get("key", ""))
+            )
             if entry.get("title") and present:
-                yield self._card("research", "Research", entry.get("key", ""),
-                                 entry["title"], entry.get("y_label", ""))
+                yield self._card(
+                    "research",
+                    "Research",
+                    entry.get("key", ""),
+                    entry["title"],
+                    entry.get("y_label", ""),
+                )
 
         # Dynamics + Identity are structural (gradient families / fixed sheets /
         # module-emitted scalars); surfaced unconditionally - the deck self-skips
@@ -244,8 +258,13 @@ class CardsSource(KBSource):
             key = entry.get("key", "")
             if entry.get("title") and key not in seen_dynamics:
                 seen_dynamics.add(key)
-                yield self._card("dynamics", "Dynamics", key,
-                                 entry["title"], entry.get("subtitle", ""))
+                yield self._card(
+                    "dynamics",
+                    "Dynamics",
+                    key,
+                    entry["title"],
+                    entry.get("subtitle", ""),
+                )
 
         for key, title, desc in _module_chart_metrics():
             if key not in seen_dynamics:
@@ -369,7 +388,9 @@ def _metric_columns_with_data() -> Optional[set]:
     if not runs_dir.is_dir():
         return None
     dbs = [
-        run / "metrics.db" for run in runs_dir.iterdir() if (run / "metrics.db").exists()
+        run / "metrics.db"
+        for run in runs_dir.iterdir()
+        if (run / "metrics.db").exists()
     ]
     if not dbs:
         return None

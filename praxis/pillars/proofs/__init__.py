@@ -88,7 +88,9 @@ def render_proof(proof: Proof) -> str:
     )
 
 
-def check_consistency(framings: Dict, proofs: Dict[str, Proof] = PROOFS) -> Dict[str, List[str]]:
+def check_consistency(
+    framings: Dict, proofs: Dict[str, Proof] = PROOFS
+) -> Dict[str, List[str]]:
     """Verify the framing<->proof wiring. Static over all framings/proofs (not
     config-gated). Returns {"errors": [...], "warnings": [...]}.
 
@@ -142,7 +144,7 @@ def _cycles(proofs: Dict[str, Proof]) -> List[str]:
             if dep not in proofs:
                 continue
             if color[dep] == GREY:
-                cyc = " -> ".join(stack[stack.index(dep):] + [dep])
+                cyc = " -> ".join(stack[stack.index(dep) :] + [dep])
                 out.append(f"cyclic proof dependency: {cyc}")
             elif color[dep] == WHITE:
                 visit(dep, stack + [dep])

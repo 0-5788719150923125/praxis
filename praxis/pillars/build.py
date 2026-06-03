@@ -52,8 +52,10 @@ def build_all(n=4, metric="auto", experiment=None, limit=4, scan=40, as_json=Fal
     print(f"halting: {h['run'] or '(no halting data)'}")
 
     summary["ghostmax"] = ghostmax.export_ghostmax()
-    print(f"ghostmax: dampening verified (real mass {summary['ghostmax']['min_mass']:.3g}"
-          f" -> {summary['ghostmax']['max_mass']:.3g})")
+    print(
+        f"ghostmax: dampening verified (real mass {summary['ghostmax']['min_mass']:.3g}"
+        f" -> {summary['ghostmax']['max_mass']:.3g})"
+    )
 
     summary["inlines"] = inlines.export_inlines()
     res = summary["inlines"]["resolved"]
@@ -66,8 +68,10 @@ def build_all(n=4, metric="auto", experiment=None, limit=4, scan=40, as_json=Fal
         print(f"proofs ERROR: {err}")
     for warn in report["warnings"]:
         print(f"proofs WARN: {warn}")
-    print(f"proofs: {len(framing.FRAMING)} framings, {len(proofs.PROOFS)} proofs, "
-          f"{len(report['errors'])} error(s), {len(report['warnings'])} unbacked")
+    print(
+        f"proofs: {len(framing.FRAMING)} framings, {len(proofs.PROOFS)} proofs, "
+        f"{len(report['errors'])} error(s), {len(report['warnings'])} unbacked"
+    )
 
     return summary
 
@@ -76,10 +80,14 @@ def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--n", type=int, default=4, help="run curves to include (default 4)")
+    ap.add_argument(
+        "--n", type=int, default=4, help="run curves to include (default 4)"
+    )
     ap.add_argument("--metric", default="auto", help="metric column, or 'auto'")
     ap.add_argument("--experiment", help="experiment to frame (default: newest run)")
-    ap.add_argument("--limit", type=int, default=4, help="max geometry panels (default 4)")
+    ap.add_argument(
+        "--limit", type=int, default=4, help="max geometry panels (default 4)"
+    )
     ap.add_argument("--scan", type=int, default=40, help="runs to scan for geometries")
     ap.add_argument("--json", action="store_true", help="machine-readable run summary")
     args = ap.parse_args()

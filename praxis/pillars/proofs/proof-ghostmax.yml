@@ -19,4 +19,6 @@ proof: >
   $S \to \infty$. The output is $o = \sum_i w_i v_i$ with $\sum_i w_i = m$, hence
   $\lVert o \rVert \le m \max_i \lVert v_i \rVert$: when no key matches, $m \to 0$
   and the head contributes nothing rather than a forced average. Standard softmax
-  fixes $m = 1$, so it must emit a full-magnitude average even from noise.
+  fixes $m = 1$, so it must emit a full-magnitude average even from noise - the
+  forced output is the activation outlier that breaks low-bit quantization, which
+  is the precision problem the bound removes at its root.

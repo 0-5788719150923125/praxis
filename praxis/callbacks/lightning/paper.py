@@ -56,7 +56,9 @@ class PaperBuildCallback(Callback):
                 with open(self.log_path, "w") as log:
                     log.write(f"# paper rebuild at step {step}\n")
                     log.flush()
-                    with contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
+                    with contextlib.redirect_stdout(log), contextlib.redirect_stderr(
+                        log
+                    ):
                         from praxis.pillars.build import build_all
 
                         build_all()

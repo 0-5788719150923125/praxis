@@ -29,14 +29,12 @@ class KBIndex:
     def _ensure_schema(self) -> None:
         # External-content-less FTS5: id/type/title/uri/meta are searchable
         # columns too, but only body and title carry real ranking weight.
-        self._conn.executescript(
-            """
+        self._conn.executescript("""
             CREATE VIRTUAL TABLE IF NOT EXISTS kb USING fts5(
                 id UNINDEXED, type, label, title, body, uri UNINDEXED,
                 meta UNINDEXED, updated UNINDEXED
             );
-            """
-        )
+            """)
         self._conn.commit()
 
     def rebuild(self, sources: Optional[List[str]] = None) -> int:
@@ -61,8 +59,16 @@ class KBIndex:
 
     def _insert(self, items: Iterable[KBItem]) -> int:
         rows = [
-            (it.id, it.type, it.label, it.title, it.body, it.uri,
-             _encode_meta(it.meta), str(int(it.updated or 0)))
+            (
+                it.id,
+                it.type,
+                it.label,
+                it.title,
+                it.body,
+                it.uri,
+                _encode_meta(it.meta),
+                str(int(it.updated or 0)),
+            )
             for it in items
         ]
         self._conn.executemany(
@@ -112,9 +118,7 @@ class KBIndex:
             )
         return hits
 
-    def recent(
-        self, limit: int = 20, types: Optional[List[str]] = None
-    ) -> List[KBHit]:
+    def recent(self, limit: int = 20, types: Optional[List[str]] = None) -> List[KBHit]:
         """Most-recently-updated items, newest first. Powers the empty-query
         default feed. Items with no timestamp (cards, agents) are excluded."""
         sql = (

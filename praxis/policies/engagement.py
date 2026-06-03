@@ -76,6 +76,18 @@ class EngagementPolicy(nn.Module):
         shift_logits = logits[..., :-1, :]
         shift_labels = labels[..., 1:]
         mask = assistant_mask[..., 1:].to(shift_logits.device).bool()
+
+        # Byte-latent / patching encoders (e.g. CALM) can return logits, labels,
+        # and the mask at slightly different sequence lengths (off-by-one from
+        # repadding). Align all three to their common length before combining
+        # rather than erroring; if there's nothing to score, no-op.
+        seq = min(shift_logits.size(1), shift_labels.size(1), mask.size(1))
+        if seq <= 0:
+            return None, {}
+        shift_logits = shift_logits[:, :seq]
+        shift_labels = shift_labels[:, :seq]
+        mask = mask[:, :seq]
+
         mask = mask & (shift_labels != IGNORE_INDEX)
         if not bool(mask.any()):
             return None, {}

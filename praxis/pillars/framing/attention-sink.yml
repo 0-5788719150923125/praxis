@@ -18,6 +18,12 @@ body: >
   less than one and falls toward zero when nothing matches. The head acquires an
   escape valve: it may attend to nothing.
 
+  The escape valve was first proposed for \emph{precision}, not poetry: a head with
+  no way to say ``no match'' dumps its forced weight somewhere, producing the
+  activation outliers that wreck low-bit quantization. The ghost removes them, and
+  the same mechanism that keeps activations quantizable is the one that lets the
+  field stay clean.
+
   This matters for a harmonic model specifically. A standing wave is built from
   superposed components, and a head with no off switch injects a forced average
   into the residual stream at every position - broadband energy the field must

@@ -92,7 +92,7 @@ def _match_one(value, pat) -> bool:
     for op_str, op in _CMP:
         if pat.startswith(op_str):
             try:
-                return op(float(value), float(pat[len(op_str):]))
+                return op(float(value), float(pat[len(op_str) :]))
             except (TypeError, ValueError):
                 return False
     return fnmatch(str(value), pat)
@@ -125,10 +125,7 @@ def _to_tex_paragraphs(body: str) -> str:
 
 def load_framings() -> Dict[str, Fragment]:
     """All fragments from ``framing/``, keyed by id (filename stem)."""
-    return {
-        p.stem: _load_fragment(p)
-        for p in sorted(FRAMING_DIR.glob("*.yml"))
-    }
+    return {p.stem: _load_fragment(p) for p in sorted(FRAMING_DIR.glob("*.yml"))}
 
 
 FRAMING: Dict[str, Fragment] = load_framings()
@@ -142,6 +139,7 @@ def active_fragments(config: Dict) -> List[Fragment]:
 
 
 # ─── Rendering (which fragments the paper sees, for a given run) ──────────────
+
 
 def newest_experiment() -> Optional[str]:
     """Experiment name of the most recently created run, or ``None``."""
@@ -191,16 +189,19 @@ def _augment(config: Dict) -> Dict:
     # swarm, whose layer-wise updates are Mono-Forward by construction.
     trainer = str(config.get("trainer_type", ""))
     derived["uses_mono_forward"] = (
-        trainer.startswith("mono_forward") or config.get("orchestration_type") == "swarm"
+        trainer.startswith("mono_forward")
+        or config.get("orchestration_type") == "swarm"
     )
 
     # Harmonic latent space = a harmonic/crystal-bearing head OR the CALM codec.
     head = str(config.get("head_type", ""))
     encoder = str(config.get("encoder_type", ""))
-    derived["uses_harmonic_latent"] = (
-        head in ("harmonic", "crystal", "crystal_harmonic", "prismatic")
-        or encoder.startswith("calm")
-    )
+    derived["uses_harmonic_latent"] = head in (
+        "harmonic",
+        "crystal",
+        "crystal_harmonic",
+        "prismatic",
+    ) or encoder.startswith("calm")
 
     return {**config, **derived}
 

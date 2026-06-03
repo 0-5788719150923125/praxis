@@ -61,9 +61,7 @@ DENY_FLAGS = {
     "port",
 }
 
-REPO_ROOT = os.path.dirname(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-)
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 RUNS_DIR = os.path.join(REPO_ROOT, "build", "runs")
 OUT_DIR = os.path.join(REPO_ROOT, "research")
 

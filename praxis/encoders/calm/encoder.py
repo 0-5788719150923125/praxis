@@ -821,7 +821,9 @@ class CALMEncoder(BaseEncoder):
         total = self.energy_alpha * loss
         if ENERGY_ANCHOR_WEIGHT > 0.0:
             mean_next = self._last_mean[:, 1:, :].detach()
-            zero_noise = h_cond.new_zeros(*h_cond.shape[:-1], self.energy_head.noise_dim)
+            zero_noise = h_cond.new_zeros(
+                *h_cond.shape[:-1], self.energy_head.noise_dim
+            )
             anchor = torch.nn.functional.mse_loss(
                 self.energy_head(h_cond, zero_noise), mean_next
             )
@@ -1082,8 +1084,10 @@ class CALMEncoder(BaseEncoder):
             h_last = base_out.last_hidden_state[:, -1, :]  # [B, hidden]
 
             new_tokens = self._patch_vote_sample(
-                h_last[0], temperature=float(temperature),
-                num_samples=num_samples, noise_scale=noise_scale,
+                h_last[0],
+                temperature=float(temperature),
+                num_samples=num_samples,
+                noise_scale=noise_scale,
             )  # [K]
             new_tokens = new_tokens.view(1, self.K)
 

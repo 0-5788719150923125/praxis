@@ -152,6 +152,10 @@ class ArcAttention(InfiniAttention):
 
         q, k, v = self.encoding.before_scores(q, k, v, current_depth=current_depth)
 
+        # Ghostmin ablation: optionally withhold the causal tip at one depth step
+        # (inherited from CausalAttention; no-op unless ghostmin_step is set).
+        k, v = self._maybe_ghostmin(k, v, current_depth)
+
         # Expand K/V for GQA before memory operations
         if self.num_queries > 1:
             mem_k = k.repeat_interleave(self.num_queries, dim=1)
