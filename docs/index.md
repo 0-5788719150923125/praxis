@@ -24,7 +24,7 @@ links to a page listing the registered implementations and their source.
 - [Positional encoding](encoding.md) (5) - RoPE, ALiBi, NoPE and friends - the rotational / additive position priors injected into attention.
 - [Recurrent cells](recurrent.md) (2) - Minimal gated recurrent cells (GRU, MinGRU). Used by the recurrent block types and as a sequence mixer inside the byte-latent encoder.
 - [Residual connections](residuals.md) (2) - Standard residuals vs. hyper-connections.
-- [RL policies](policies.md) (5) - Reinforcement-learning policy losses (REINFORCE, GRPO, ...) for post-training.
+- [RL policies](policies.md) (6) - Reinforcement-learning policy losses (REINFORCE, GRPO, ...) for post-training.
 - [Sequence compression](compression.md) (3) - Strategies for reducing sequence length between layers.
 - [Sequence sorting](sorting.md) (5) - Optional reordering operations applied to the sequence.
 - [Token embeddings](embeddings.md) (13) - Input embedding layers, paired with the corresponding block type.

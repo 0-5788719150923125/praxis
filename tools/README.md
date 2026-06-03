@@ -15,4 +15,4 @@ A shared toolbox of small CLI utilities, callable directly by both the human and
 - `generate_print_samples.py` - materializes the default `print` data (25 formats x N) and traces the engagement reward over it, to eyeball the dynamics before any model exists.
 - `index_kb.py` - builds the knowledge-base FTS5 search index the web app serves at `/api/kb/search`, reading `docs/`, `next/`, and `build/runs/` directly.
 
-> The paper's living-document inputs (`variables.tex`, `framing.tex`, `geometries.tex`, `inlines.tex`) are no longer tools - they are part of the codebase under `praxis/research/`. Regenerate them with `python -m praxis.research.build`, then build the PDF.
+> The paper's living-document inputs (`variables.tex`, `framing.tex`, `geometries.tex`, `inlines.tex`) are no longer tools - they are part of the codebase under `praxis/pillars/`. Regenerate them with `python -m praxis.pillars.build`, then build the PDF.

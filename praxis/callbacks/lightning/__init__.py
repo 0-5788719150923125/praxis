@@ -12,6 +12,7 @@ from praxis.callbacks.lightning.harmonic_weight_rl import HarmonicWeightRLCallba
 from praxis.callbacks.lightning.memory_profiler import MemoryProfilerCallback
 from praxis.callbacks.lightning.metrics import MetricsLoggerCallback
 from praxis.callbacks.lightning.orchestration import ExpertPoolCallback
+from praxis.callbacks.lightning.paper import PaperBuildCallback
 from praxis.callbacks.lightning.terminal import TerminalInterface
 
 # Registry for Lightning callbacks
@@ -26,6 +27,7 @@ LIGHTNING_CALLBACK_REGISTRY = {
     "harmonic_weight_rl": HarmonicWeightRLCallback,
     "engagement_live": EngagementLiveRewardCallback,
     "expert_pool": ExpertPoolCallback,
+    "paper_build": PaperBuildCallback,
 }
 
 __all__ = [
@@ -39,5 +41,6 @@ __all__ = [
     "HarmonicWeightRLCallback",
     "EngagementLiveRewardCallback",
     "ExpertPoolCallback",
+    "PaperBuildCallback",
     "LIGHTNING_CALLBACK_REGISTRY",
 ]

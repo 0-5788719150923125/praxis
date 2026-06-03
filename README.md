@@ -40,7 +40,7 @@ source. See [docs/index.md](docs/index.md) for the full map.
 - [Positional encoding](docs/encoding.md) (5)
 - [Recurrent cells](docs/recurrent.md) (2)
 - [Residual connections](docs/residuals.md) (2)
-- [RL policies](docs/policies.md) (5)
+- [RL policies](docs/policies.md) (6)
 - [Sequence compression](docs/compression.md) (3)
 - [Sequence sorting](docs/sorting.md) (5)
 - [Token embeddings](docs/embeddings.md) (13)

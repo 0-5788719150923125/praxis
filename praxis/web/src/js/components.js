@@ -399,13 +399,13 @@ export function createSettingsModalContainer() {
  * @param {boolean} isLast - Whether this is the last message
  * @returns {string} HTML string
  */
-export function createMessage({ role, content, caption, jokeApproval }, isDarkMode, isLast = false) {
+export function createMessage({ role, content, caption, jokeScore, score = 0 }, isDarkMode, isLast = false) {
     const headerText = isDarkMode
         ? (role === 'user' ? 'Me' : 'You')
         : (role === 'user' ? 'You' : 'Me');
 
-    // Add reroll button for last assistant message (not while a joke awaits a vote)
-    const rerollButton = (role === 'assistant' && isLast && !jokeApproval)
+    // Reroll button on the last assistant turn - re-rolls just this section.
+    const rerollButton = (role === 'assistant' && isLast)
         ? '<button class="reroll-button" id="reroll-button">🔄 Reroll</button>'
         : '';
 
@@ -414,11 +414,15 @@ export function createMessage({ role, content, caption, jokeApproval }, isDarkMo
         ? `<div class="message-caption">${escapeHtml(caption)}</div>`
         : '';
 
-    // Joke approval controls (Loop mode): the human signal - approve or reject.
-    const approvalHtml = jokeApproval
-        ? `<div class="joke-approval">
-               <button class="joke-vote joke-approve" data-score="1" title="Funny - approve">👍 Funny</button>
-               <button class="joke-vote joke-reject" data-score="0" title="Not funny - reject">👎 Meh</button>
+    // Loop mode: a want->need score slider (the human signal). A continuous -1..1
+    // judgement of how much we need what the model produced, not a binary vote.
+    const scoreHtml = jokeScore
+        ? `<div class="joke-score">
+               <span class="joke-score-end">want</span>
+               <input type="range" class="joke-slider" min="-1" max="1" step="0.05" value="${score}"
+                      aria-label="Score from want to need">
+               <span class="joke-score-end">need</span>
+               <span class="joke-score-val">${Number(score).toFixed(2)}</span>
            </div>`
         : '';
 
@@ -428,7 +432,7 @@ export function createMessage({ role, content, caption, jokeApproval }, isDarkMo
             <div class="message-header">${headerText}</div>
             <div class="message-content">${escapeHtml(content)}</div>
             ${captionHtml}
-            ${approvalHtml}
+            ${scoreHtml}
         </div>
     `;
 }

@@ -1,0 +1,39 @@
+# Enables only when the KL halting gate runs over a recurrent loop (the gate is
+# meaningless without turns to skip). Continues the circle metaphor of
+# recurrent-watch: halting is how the model decides where on the circle to stop.
+section: scaling
+order: 40
+requires:
+  halting_type: [kl]
+  recurrent_steps: [">1"]
+proofs: [lemma-ternary-gate]
+body: >
+  The gear does not have to finish its turn. Praxis can halt the recurrent loop
+  early, and the way it decides is the part most readers miss. After each turn the
+  model compares the field to its previous state and asks one non-differentiable
+  question - has the shape stopped changing? - by measuring the KL divergence
+  between successive hidden states and stopping when that divergence collapses
+  below a threshold. It is a hard, gradientless gate, decided under \texttt{no\_grad}
+  and never trained by descent: a discrete decision riding on top of a continuous
+  field.
+
+  Read against the circle, that decision is ternary. One turn is unconditional -
+  the loop always runs at least once, an always-true root that anchors the rest,
+  the way XOR needs an always-on bias unit before two inputs can be separated at
+  all. The remaining turns, all but the last of the \paperRecurrentSteps{} (the
+  final boundary is forced), are the decisions the gate actually makes: two-valued
+  comparisons over the interior of the circle that together approximate a parity -
+  keep turning, or the shape is already held. And the test is inverted from the
+  obvious one. The model does not confirm that an answer is right; it confirms that
+  another turn would change nothing, validating by establishing that further
+  computation would be wrong in exactly the expected way. Convergence is proven by
+  non-change.
+
+  \paperHaltingFigure
+
+  This is why the halting signature is diagnostic rather than cosmetic. A model
+  that has learned the geometry halts early, its mass sliding toward the low turns;
+  one that has not keeps turning to the maximum, the gate firing at every boundary
+  but never tripping. The pause is the model lifting itself out of the computation
+  mid-turn, checking whether the shape it holds is the shape it would hold a turn
+  later, and re-inserting itself only when the answer is no.

@@ -348,27 +348,36 @@
     letter-spacing: 0.02em;
 }
 
-/* Joke approval controls (Loop mode): the human signal under a looped joke. */
-.joke-approval {
+/* Loop mode: the want->need score slider - the human signal under a looped
+   output. Continuous control instead of a binary vote. */
+.joke-score {
     display: flex;
+    align-items: center;
     gap: 0.5rem;
     margin-top: 0.5rem;
 }
 
-.joke-vote {
-    background: none;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-small);
-    color: var(--text);
-    font-family: inherit;
-    font-size: 0.72rem;
-    font-weight: bold;
-    padding: 0.25rem 0.625rem;
+.joke-score-end {
+    font-size: 0.65rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    opacity: 0.7;
+}
+
+.joke-slider {
+    flex: 1 1 auto;
+    min-width: 0;
+    accent-color: var(--accent);
     cursor: pointer;
 }
 
-.joke-vote:hover {
-    border-color: var(--accent);
+.joke-score-val {
+    font-size: 0.7rem;
+    font-weight: bold;
+    color: var(--accent);
+    min-width: 2.4em;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
 }
 
 .error-header {

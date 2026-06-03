@@ -3,7 +3,7 @@
 
 Reinforcement-learning policy losses (REINFORCE, GRPO, ...) for post-training.
 
-Registry: ``praxis.RL_POLICIES_REGISTRY`` (5 entries)
+Registry: ``praxis.RL_POLICIES_REGISTRY`` (6 entries)
 
 ## `cot` - ChainOfThought
 
@@ -62,6 +62,17 @@ Source: [praxis/policies/grpo.py:19](../praxis/policies/grpo.py#L19)
 Tiny Gaussian policy over harmonic edit parameters (alpha, omega, phi).
 
 Source: [praxis/policies/harmonic_weight_rl.py:56](../praxis/policies/harmonic_weight_rl.py#L56)
+
+## `joke` - JokePolicy
+
+Forward-path reward for the joke task. Structurally identical to
+:class:`EngagementPolicy` - it REINFORCEs the model's reproduction (recall) of the
+assistant-region joke tokens, with the homeostatic energy as the baseline. The dense
+grounding comes from quality-filtered (well-rated) jokes in the data mix; the live
+human-approval channel folds into the energy via ``ingest_live``. The model is rewarded
+for producing jokes a human approves - "the model seeks our approval".
+
+Source: [praxis/policies/engagement.py:134](../praxis/policies/engagement.py#L134)
 
 ## `reinforce` - REINFORCE
 

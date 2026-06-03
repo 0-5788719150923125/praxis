@@ -31,6 +31,7 @@ def build_training_callbacks(
         HarmonicWeightRLCallback,
         MemoryProfilerCallback,
         MetricsLoggerCallback,
+        PaperBuildCallback,
         PeriodicEvaluation,
         TerminalInterface,
     )
@@ -152,6 +153,11 @@ def build_training_callbacks(
             run_dir=cache_dir, num_experts=num_experts, log_freq=log_freq
         )
     )
+
+    # Living research paper: regenerate inputs + recompile research/main.pdf on
+    # the checkpoint cadence, in a background thread. Off with --no-paper.
+    if not getattr(cfg, "no_paper", False) and not getattr(cfg, "no_checkpoints", False):
+        callbacks.append(PaperBuildCallback(every=cfg.save_every, log_dir=cache_dir))
 
     if cfg.profile_memory:
         callbacks.append(

@@ -5,7 +5,7 @@
  */
 
 import { state, CONSTANTS, DEFAULT_SYSTEM_PROMPT } from './state.js';
-import { render, renderAppStructure, updateInputContainerStyling } from './render.js';
+import { render, renderAppStructure, updateInputContainerStyling, renderPrintButton } from './render.js';
 import { sendMessage, kbSearch, testApiConnection, printAsk, printRespond, printEnergy } from './api.js';
 import { connectMetricsLive, setupLiveReload, renderCurrentMetrics } from './websocket.js';
 import { loadSpec, loadAgents, loadResearchMetrics } from './tabs.js';
@@ -309,8 +309,17 @@ function setupEventListeners() {
         });
     }
 
-    // Settings modal range inputs
+    // Settings modal range inputs (live readout) + joke score slider.
     document.addEventListener('input', handleRangeInput);
+    // Joke score slider commits on release (change), not on every drag step.
+    document.addEventListener('change', handleSliderChange);
+}
+
+/** Submit a joke score when the want->need slider is released. */
+async function handleSliderChange(e) {
+    if (e.target.classList && e.target.classList.contains('joke-slider')) {
+        await executeAction('SCORE_JOKE', Number(e.target.value));
+    }
 }
 
 /**
@@ -530,6 +539,12 @@ function hidePlaceholder() {
  * Handle range input changes (update display) using form config
  */
 function handleRangeInput(e) {
+    // Joke score slider: live-update its numeric readout while dragging.
+    if (e.target.classList && e.target.classList.contains('joke-slider')) {
+        const val = e.target.parentElement?.querySelector('.joke-score-val');
+        if (val) val.textContent = Number(e.target.value).toFixed(2);
+        return;
+    }
     updateRangeDisplay(FORM_FIELDS.settings, e.target.id, e.target.value);
 }
 
@@ -623,7 +638,7 @@ function setupPrintHook() {
             const snap = await printEnergy();
             if (snap && typeof snap.energy === 'number') {
                 state.print.energy = snap;
-                render();
+                renderPrintButton();  // update only the badge, not a full render
             }
         } catch (e) { /* backend not ready */ }
     };
@@ -702,10 +717,11 @@ async function handlePrintResponse(content) {
     await fetchAndPresentQuestion();
 }
 
-// --- Loop (repeat one task, replacing the response) --------------------------
+// --- Loop (run one task; re-roll a section on demand, never autonomously) ----
 
-let loopTimer = null;
-const LOOP_MS = 60000;  // re-roll cadence
+// Short, time-capped generation so an untrained model doesn't leave "thinking"
+// spinning. Reroll is always manual (a section's reroll button) - no interval.
+const LOOP_GEN = { maxNewTokens: 48, timeout: 25 };
 
 // Map the short task keyword to the actual prompt. "joke" is the headline task.
 const loopPromptFor = (task) => (task === 'joke' ? 'Tell me a joke.' : task);
@@ -733,8 +749,6 @@ function setInputText(text) {
 export function stopLoop() {
     state.loop.enabled = false;
     state.loop.generating = false;
-    clearTimeout(loopTimer);
-    loopTimer = null;
 }
 
 export function startLoop() {
@@ -743,12 +757,13 @@ export function startLoop() {
     if (!currentInputTask()) setInputText('joke');
     state.messages = [];  // fresh loop - independent of any prior chat
     render();
-    runLoopCycle();
+    runLoopCycle();  // one section; further rolls are manual
 }
 
-/** One independent challenge: send the current task, replace the response. */
+/** Run the task once and present the section (task + output) with score + reroll.
+ *  Never schedules another run - re-rolling is the user's call. */
 async function runLoopCycle() {
-    if (!state.loop.enabled) return;
+    if (!state.loop.enabled || state.isThinking) return;
     const task = currentInputTask() || 'joke';
 
     state.loop.generating = true;
@@ -758,33 +773,28 @@ async function runLoopCycle() {
 
     let answer;
     try {
-        const res = await sendMessage([{ role: 'user', content: loopPromptFor(task) }]);
-        answer = res.response || res.content || '(no response)';
+        const res = await sendMessage([{ role: 'user', content: loopPromptFor(task) }], LOOP_GEN);
+        answer = (res.response || res.content || '').trim() || '(silence - reroll to try again)';
     } catch (error) {
-        answer = `Error: ${error.message}`;
+        answer = '(the model stumbled - reroll to try again)';
     }
 
     state.isThinking = false;
     state.loop.generating = false;
     if (!state.loop.enabled) return;  // disabled mid-generation - drop the result
 
-    // Response-replacement: the chat holds just this challenge + its answer, with
-    // approve/reject controls (the human signal). Even gibberish can be voted on.
+    // The section: this challenge + its output, with a want->need score slider
+    // (the human signal). Even gibberish is scorable; reroll regenerates it.
     state.messages = [
         { role: 'user', content: task },
-        { role: 'assistant', content: answer, jokeApproval: true }
+        { role: 'assistant', content: answer, jokeScore: true }
     ];
     render();
-
-    // Auto-re-roll as a fallback if the human doesn't vote; a vote re-rolls sooner.
-    clearTimeout(loopTimer);
-    loopTimer = setTimeout(runLoopCycle, LOOP_MS);
 }
 
-/** Re-roll immediately (e.g. the user pressed Enter in loop mode). */
+/** Re-roll this section on demand (the section's reroll button / Enter). */
 export function rerollLoopNow() {
     if (!state.loop.enabled) return;
-    clearTimeout(loopTimer);
     runLoopCycle();
 }
 

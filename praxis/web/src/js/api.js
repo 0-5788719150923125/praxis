@@ -10,18 +10,20 @@ import { state } from './state.js';
  * @param {Array} messages - Conversation history
  * @returns {Promise<Object>} API response
  */
-export async function sendMessage(messages) {
+export async function sendMessage(messages, opts = {}) {
     const payload = {
         messages: messages.map(m => ({
             role: m.role,
             content: m.content
         })),
-        max_new_tokens: state.settings.maxTokens,
+        max_new_tokens: opts.maxNewTokens ?? state.settings.maxTokens,
         temperature: state.settings.temperature,
         repetition_penalty: state.settings.repetitionPenalty,
         do_sample: state.settings.doSample,
         use_cache: state.settings.useCache
     };
+    // Loop/short turns can cap generation time so "thinking" doesn't drag.
+    if (opts.timeout) payload.timeout = opts.timeout;
 
     if (state.settings.debugLogging) {
         console.log('[API] Sending:', payload);

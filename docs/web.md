@@ -49,7 +49,7 @@ Introspected from the live Flask app at every launch. Each summary is the first 
 
 ### Generation
 
-- **GET, POST** `/input` / `/input/` - Handle string-based prompt generation. ([source](../praxis/web/routes/generation.py#L67))
+- **GET, POST** `/input` / `/input/` - Handle string-based prompt generation. ([source](../praxis/web/routes/generation.py#L68))
 - **POST** `/messages` / `/messages/` - Handle message-based generation. ([source](../praxis/web/routes/generation.py#L14))
 
 ### Git HTTP backend
@@ -68,10 +68,12 @@ Introspected from the live Flask app at every launch. Each summary is the first 
 
 ### Print
 
+- **POST** `/api/loop/approve` - Record a human score for a looped output - the live joke reward. `score` is a signed -1..1 want->need judgement (or `approve` bool shorthand). The model seeks our approval. The score is the learning signal; (score+1)/2 drives the homeostatic energy. ([source](../praxis/web/routes/print.py#L166))
+- **GET** `/api/loop/energy` - Live joke-approval energy snapshot. ([source](../praxis/web/routes/print.py#L184))
 - **POST** `/api/print/ask` - Ask the model to lead with a question; stash its predicted answer and expose the question. Idempotent while one is already pending. ([source](../praxis/web/routes/print.py#L44))
-- **GET** `/api/print/energy` - Live engagement energy snapshot (for a dashboard badge). ([source](../praxis/web/routes/print.py#L154))
-- **GET** `/api/print/pending` - The currently presentable question, if any (no generation). ([source](../praxis/web/routes/print.py#L110))
-- **POST** `/api/print/respond` - Score the user's response against the model's stashed predicted answer, fold it into the live engagement energy, and clear the slot. ([source](../praxis/web/routes/print.py#L125))
+- **GET** `/api/print/energy` - Live engagement energy snapshot (for a dashboard badge). ([source](../praxis/web/routes/print.py#L160))
+- **GET** `/api/print/pending` - The currently presentable question, if any (no generation). ([source](../praxis/web/routes/print.py#L116))
+- **POST** `/api/print/respond` - Score the user's response against the model's stashed predicted answer, fold it into the live engagement energy, and clear the slot. ([source](../praxis/web/routes/print.py#L131))
 
 
 ## Sending prompts

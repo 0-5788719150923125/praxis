@@ -1,0 +1,11 @@
+# Enables when the run uses a ByteLatent (BLT) byte encoder. The CALM byte
+# codecs are a separate bullet (uses_harmonic_latent), so we match byte_latent*
+# specifically rather than every byte-level encoder.
+section: framework
+order: 10
+requires:
+  encoder_type: [byte_latent*]
+body: >
+  \item \textbf{ByteLatent compression}~\cite{pagnoni2024byte} forces re-attention
+  through an entropy-based patching bottleneck, selecting which correlations
+  survive aggressive dimensionality reduction.

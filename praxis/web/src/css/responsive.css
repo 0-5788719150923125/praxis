@@ -4,6 +4,21 @@
         overflow-x: hidden;
     }
 
+    /* The energy badge would push the toolbar past the right edge on narrow
+       screens. Let the toolbar wrap and lift the badge onto its own line ABOVE
+       the REPL buttons (order:-1 + full-width line), where it reads as a small
+       status strip rather than getting wedged in beside them. */
+    .conversation-toolbar {
+        flex-wrap: wrap;
+    }
+
+    .print-energy-badge {
+        order: -1;
+        margin-left: 0;
+        width: 100%;             /* full-width line forces it above the buttons */
+        justify-content: flex-start;  /* but the chip inside stays content-width, left */
+    }
+
     .app-container {
         padding: 0 var(--tab-padding-mobile);
         overflow-x: hidden;
@@ -163,6 +178,9 @@
         overflow-y: hidden;
         display: flex;
         flex-direction: column;
+        /* flex-basis 0 so it's bounded by the tab area (not its content), letting
+           the inner body be the single scroll surface. */
+        flex: 1 1 0%;
         min-height: 0;
         -webkit-overflow-scrolling: touch;
     }
@@ -183,12 +201,13 @@
     .live-dashboard {
         font-size: 0.6875rem;
         padding: 0.5rem;
-        /* Bounded flex column (same model as desktop): fill the terminal-container
-           so the header and footer stay pinned and only the body scrolls. */
-        max-height: 100%;
-        height: 100%;
+        /* Bound via flex (basis 0), NOT percentage heights: height/max-height:100%
+           fail to resolve through the nested flex chain on some mobile browsers,
+           leaving the dashboard sized to its content and then clipped by the
+           container's overflow:hidden - so nothing scrolls. flex-basis:0 + grow
+           reliably fills the bounded terminal-container instead. */
+        flex: 1 1 0%;
         min-height: 0;
-        flex: 1 1 auto;
     }
 
     /* Single column on mobile; the body scrolls internally between the pinned
@@ -198,8 +217,21 @@
         grid-template-columns: 1fr;
         grid-auto-rows: 12rem;
         overflow-y: auto;
-        flex: 1 1 auto;
+        flex: 1 1 0%;
         min-height: 0;
+        -webkit-overflow-scrolling: touch;  /* momentum scroll on older iOS */
+        overscroll-behavior: contain;        /* don't chain to the page */
+        touch-action: pan-y;                 /* this is the vertical scroller */
+    }
+
+    /* Each card's rolling text is its own overflow scroller. On desktop a wheel
+       chains to the list at the boundary, but a mobile touch does NOT chain - the
+       finger lands on the card text and the list never scrolls ("nothing
+       happens"). Make the inner scrollers transparent to touch so the gesture
+       falls through to .ld-body; JS still auto-scrolls them to their latest line. */
+    .ld-status-text,
+    .ld-log-content {
+        pointer-events: none;
     }
 
     /* Context cards and the sparkline keep their own bounded height so text/chart

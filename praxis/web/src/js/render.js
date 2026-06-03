@@ -137,11 +137,11 @@ function renderConversation() {
     ).forEach(btn => btn.classList.toggle('active', btn.dataset.tool === mode));
     document.documentElement.toggleAttribute('data-eval', mode === 'evaluate');
 
-    // Loop is coupled to Print: locked (dimmed, inert) unless Print mode is
-    // active, and lit while a loop is running.
+    // Loop is coupled to Print (inert unless Print mode is active) but is never
+    // greyed - it keeps the same color as every other button, just lighting up
+    // via .active while a loop is running.
     const loopBtn = document.querySelector('.tool-toggle[data-tool="loop"]');
     if (loopBtn) {
-        loopBtn.classList.toggle('locked', mode !== 'print');
         loopBtn.classList.toggle('active', state.loop.enabled);
     }
 
@@ -169,13 +169,58 @@ function renderConversation() {
  * and Evaluate - it lights up only while Print mode is active. This handles just
  * the live-energy badge, which appears once a real-user Print reward exists.
  */
-function renderPrintButton() {
+// Harmonic glyph: two half-moon "planes", each a circular segment anchored to 2
+// of 3 shared points (both share the top point A; one fans to B, one to C). They
+// breathe out of phase and the overlap is punched to the background (evenodd), so
+// it reads as two warping planes in (and out of) harmony. currentColor -> accent.
+function buildHarmonicIcon() {
+    const rnd = (a, b) => a + Math.random() * (b - a);
+    // Three anchors, lightly randomized each load (so no two are identical).
+    const A = { x: 12, y: rnd(4.5, 5.5) };
+    const B = { x: rnd(5.5, 6.5), y: rnd(17.5, 18.5) };
+    const C = { x: rnd(17.5, 18.5), y: rnd(17.5, 18.5) };
+    const n = (v) => v.toFixed(1);
+    // A half-moon (minor circular segment) from p to q: arc out, chord back.
+    const seg = (p, q, r, sweep) =>
+        `M${n(p.x)} ${n(p.y)}A${n(r)} ${n(r)} 0 0 ${sweep} ${n(q.x)} ${n(q.y)}Z`;
+    // One warp state: the two planes' radii swing sinusoidally, phase-shifted, so
+    // they flex in harmony. Same path structure each frame (only radii change).
+    const state = (k) => {
+        const r1 = 13 + 3.5 * Math.sin(k * 2 * Math.PI);
+        const r2 = 13 + 3.5 * Math.sin(k * 2 * Math.PI + Math.PI * 0.66);
+        return seg(A, B, r1, 1) + seg(A, C, r2, 0);
+    };
+    const frames = [0, 0.33, 0.66].map(state);
+    const values = [...frames, frames[0]].join(';');
+    return `
+<svg class="harmonic-icon" viewBox="0 0 24 24" aria-hidden="true">
+  <path fill="currentColor" fill-rule="evenodd" d="${frames[0]}">
+    <animate attributeName="d" dur="7s" repeatCount="indefinite" calcMode="spline"
+      keyTimes="0;0.33;0.66;1"
+      keySplines="0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1" values="${values}"/>
+  </path>
+</svg>`;
+}
+
+const HARMONIC_ICON = buildHarmonicIcon();
+
+export function renderPrintButton() {
     const badge = document.getElementById('print-energy-badge');
     if (!badge) return;
     const snap = state.print.energy;
     const live = snap && snap.count > 0;
     badge.hidden = !live;
-    if (live) badge.textContent = `⚡ ${Number(snap.energy).toFixed(2)}`;
+    if (!live) return;
+    // Set the (animating) icon once, then only update the value text - so re-renders
+    // don't restart the SMIL warp.
+    let value = badge.querySelector('.badge-value');
+    if (!value) {
+        // The chip (icon + value) is the visible, content-width element; the
+        // badge itself is just a positioning wrapper (full-width line on mobile).
+        badge.innerHTML = `<span class="badge-chip">${HARMONIC_ICON}<span class="badge-value"></span></span>`;
+        value = badge.querySelector('.badge-value');
+    }
+    value.textContent = Number(snap.energy).toFixed(2);
 }
 
 /**
@@ -186,17 +231,21 @@ function renderKbResults() {
     const container = document.getElementById('kb-results');
     if (!container) return;
 
+    let html;
     if (state.kbOpenItem) {
-        container.innerHTML = createKbCard(state.kbOpenItem, state.kbOpenItem.html || '');
-        container.scrollTop = 0;
-        return;
+        html = createKbCard(state.kbOpenItem, state.kbOpenItem.html || '');
+    } else if (!state.kbResults.length) {
+        html = state.kbSearching ? '<div class="kb-empty">Searching...</div>' : '';
+    } else {
+        html = state.kbResults.map(createKbResult).join('');
     }
 
-    if (!state.kbResults.length) {
-        container.innerHTML = state.kbSearching ? '<div class="kb-empty">Searching...</div>' : '';
-        return;
-    }
-    container.innerHTML = state.kbResults.map(createKbResult).join('');
+    // Same flicker guard as renderMessages: don't re-write identical results on
+    // every periodic render.
+    if (container._kbSig === html) return;
+    container._kbSig = html;
+    container.innerHTML = html;
+    if (state.kbOpenItem) container.scrollTop = 0;
 }
 
 /**
@@ -218,8 +267,16 @@ function renderMessages() {
 
     // Add thinking indicator if needed
     const thinkingHTML = state.isThinking ? createThinkingIndicator(isDarkMode) : '';
+    const html = messagesHTML + thinkingHTML;
 
-    container.innerHTML = messagesHTML + thinkingHTML;
+    // Skip the rebuild when nothing changed. Periodic renders (the energy poll,
+    // websocket events) would otherwise re-write innerHTML every cycle, which
+    // restarts the thinking-dots animation (flicker) and clobbers a mid-drag
+    // slider. The signature lives on the element, so a fresh container (tab
+    // rebuild) has none and always renders.
+    if (container._msgSig === html) return;
+    container._msgSig = html;
+    container.innerHTML = html;
 
     // Scroll to bottom
     ensureLastMessageVisible();

@@ -70,6 +70,11 @@ export const ACTION_HANDLERS = {
      * Handle reroll button click - resend last user message
      */
     REROLL: async () => {
+        // In Loop mode, reroll regenerates just this section's output.
+        if (state.loop.enabled) {
+            rerollLoopNow();
+            return;
+        }
         // Find last user message
         let lastUserMessage = null;
         for (let i = state.messages.length - 1; i >= 0; i--) {
@@ -397,22 +402,21 @@ export const ACTION_HANDLERS = {
     },
 
     /**
-     * Approve/reject a looped joke (the live human signal). Records the reward,
-     * captions the joke with it, and re-rolls to the next one.
+     * Score the current looped output on the want->need slider (the live human
+     * signal). Records the reward and captions the section with it. Does NOT
+     * reroll - re-rolling is a separate, deliberate action.
      */
-    APPROVE_JOKE: async (score) => {
+    SCORE_JOKE: async (score) => {
         const msg = state.messages[state.messages.length - 1];
-        if (msg && msg.role === 'assistant') {
-            msg.jokeApproval = false;  // consume the controls
-            try {
-                const r = await loopApprove(score);
-                msg.caption = `${score >= 0.5 ? '👍 approved' : '👎 rejected'} · energy ${Number(r.energy).toFixed(3)}`;
-            } catch (e) {
-                msg.caption = score >= 0.5 ? '👍 approved' : '👎 rejected';
-            }
-            render();
+        if (!msg || msg.role !== 'assistant') return;
+        msg.score = score;  // persist so the slider re-renders where it was left
+        try {
+            const r = await loopApprove(score);
+            msg.caption = `scored ${Number(score).toFixed(2)} (want↔need) · energy ${Number(r.energy).toFixed(3)}`;
+        } catch (e) {
+            msg.caption = `scored ${Number(score).toFixed(2)} (want↔need)`;
         }
-        rerollLoopNow();  // straight to the next joke
+        render();
     },
 
     /**

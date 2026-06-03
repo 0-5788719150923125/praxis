@@ -50,18 +50,19 @@ def generate_messages():
             temperature=data.get("temperature", 0.4),
             repetition_penalty=data.get("repetition_penalty", 1.15),
             do_sample=data.get("do_sample", True),
+            timeout=float(data.get("timeout", 60.0)),
         )
 
-        if not assistant_reply:
-            raise Exception("Failed to generate an output from this API.")
-
-        response = jsonify({"response": assistant_reply})
-        return response, 200
+        # A baby/untrained model may produce nothing or gibberish - never 500 over
+        # it. Return whatever we got (possibly empty); the UI handles it. No
+        # sanitization, just whatever the model said.
+        return jsonify({"response": assistant_reply or ""}), 200
 
     except Exception as e:
         api_logger.error(f"Error in /messages endpoint: {e}")
-        error_response = jsonify({"error": str(e)})
-        return error_response, 500
+        # Resilience for baby models: surface a failure as an empty turn rather
+        # than a 500 that breaks the chat/loop UI.
+        return jsonify({"response": "", "error": str(e)}), 200
 
 
 @generation_bp.route("/input/", methods=["GET", "POST"])

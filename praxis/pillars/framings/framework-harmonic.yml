@@ -1,0 +1,12 @@
+# Enables when the run builds the harmonic latent space - a harmonic/crystal
+# head or the CALM codec (uses_harmonic_latent, OR'd in framing.py).
+section: framework
+order: 30
+requires:
+  uses_harmonic_latent: [true]
+body: >
+  \item \textbf{Harmonic and crystal heads}, and the \textbf{CALM codec}, supply
+  the harmonic latent space of Sections~\ref{sec:manifold}-\ref{sec:harmonic}; a
+  test-time neural memory and a contrastive-isotropy objective~\cite{simctg2022}
+  address long-range coherence by shaping the representation rather than by
+  enlarging the model.

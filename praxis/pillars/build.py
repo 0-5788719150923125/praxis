@@ -11,7 +11,7 @@ command that regenerates all of them, the research-side analogue of
 
 Run it, then build the PDF::
 
-    python -m praxis.research.build
+    python -m praxis.pillars.build
     (cd research && latexmk -pdf main.tex)
 
 Each step is independent and best-effort: a step that finds nothing to render
@@ -22,7 +22,7 @@ than failing the build.
 import argparse
 import sys
 
-from praxis.research import framing, geometries, inlines, runs
+from praxis.pillars import framing, geometries, halting, inlines, proofs, runs
 
 
 def build_all(n=4, metric="auto", experiment=None, limit=4, scan=40, as_json=False):
@@ -47,9 +47,23 @@ def build_all(n=4, metric="auto", experiment=None, limit=4, scan=40, as_json=Fal
     summary["geometries"] = geometries.export_geometries(limit, scan)
     print(f"geometries: {summary['geometries']['count']} panel(s)")
 
+    summary["halting"] = halting.export_halting()
+    h = summary["halting"]
+    print(f"halting: {h['run'] or '(no halting data)'}")
+
     summary["inlines"] = inlines.export_inlines()
     res = summary["inlines"]["resolved"]
     print(f"inlines: {', '.join(f'{k}={v}' for k, v in res.items()) or '(none)'}")
+
+    # Theorem-prover (consistency check over the framing<->proof wiring).
+    report = proofs.check_consistency(framing.FRAMING)
+    summary["proofs"] = report
+    for err in report["errors"]:
+        print(f"proofs ERROR: {err}")
+    for warn in report["warnings"]:
+        print(f"proofs WARN: {warn}")
+    print(f"proofs: {len(framing.FRAMING)} framings, {len(proofs.PROOFS)} proofs, "
+          f"{len(report['errors'])} error(s), {len(report['warnings'])} unbacked")
 
     return summary
 

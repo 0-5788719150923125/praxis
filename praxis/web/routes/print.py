@@ -165,18 +165,20 @@ def print_energy():
 
 @print_bp.route("/api/loop/approve", methods=["POST"])
 def loop_approve():
-    """Record a human approval of a looped joke - the live joke reward. Accepts
-    `score` in [0,1], or `approve` (bool) shorthand. The model seeks our approval."""
+    """Record a human score for a looped output - the live joke reward. `score` is
+    a signed -1..1 want->need judgement (or `approve` bool shorthand). The model
+    seeks our approval. The score is the learning signal; (score+1)/2 drives the
+    homeostatic energy."""
     data = request.get_json() or {}
     score = data.get("score")
     if score is None:
-        score = 1.0 if data.get("approve") else 0.0
+        score = 1.0 if data.get("approve") else -1.0
     try:
-        score = max(0.0, min(1.0, float(score)))
+        score = max(-1.0, min(1.0, float(score)))
     except (TypeError, ValueError):
         score = 0.0
-    event = LIVE_JOKES.submit_scalar(score)
-    return jsonify({"status": "ok", **event})
+    event = LIVE_JOKES.submit_scalar((score + 1.0) / 2.0, reward=score)
+    return jsonify({"status": "ok", "score": score, **event})
 
 
 @print_bp.route("/api/loop/energy", methods=["GET"])

@@ -1,0 +1,16 @@
+# Backs the halting-trinary framing: the KL gate makes exactly D/L - 1 interior
+# decisions over a D-deep, L-layer recurrent loop. Provable directly from the
+# loop-boundary logic in praxis/halting/kl.py.
+kind: lemma
+supports: [halting-trinary]
+statement: >
+  Over a recurrent loop of depth $D$ that reuses $L$ physical layers, the KL
+  halting gate evaluates its divergence test at every loop boundary except the
+  last, making exactly $D/L - 1$ binary decisions; the first turn is therefore
+  unconditional.
+proof: >
+  The decoder issues $D$ expert calls and the gate fires only at a boundary,
+  where $(\text{depth}+1) \bmod L = 0$, of which there are $D/L$. At the final
+  boundary the budget is exhausted and the gate returns without testing, leaving
+  $D/L - 1$ divergence tests. The first turn precedes the first boundary, so it
+  always runs. Hence one unconditional turn and $D/L - 1$ gated decisions.

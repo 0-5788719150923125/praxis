@@ -1,0 +1,39 @@
+# Enables when the remote-expert swarm is online (orchestration_type: swarm) -
+# the lagged, voted, non-blocking pool this argument depends on. Reframes the
+# Turing-completeness objection rather than asserting completeness.
+section: discussion
+order: 50
+requires:
+  orchestration_type: [swarm*]
+body: >
+  \subsection{Neither halting nor blocking}
+
+  A recurring objection holds that a neural network cannot be Turing-complete, and
+  the halting problem is offered as the reason. The invocation is a category error.
+  Turing-completeness is the capacity to express any computation, including ones
+  that never halt; deciding in advance whether an arbitrary program halts is a
+  separate question, and an undecidable one for Turing machines themselves. The
+  theory in fact runs the other way - recurrent networks with unbounded precision
+  and unbounded time are already Turing-complete~\cite{siegelmann1995}. What bounds
+  a real model is not undecidability but finite precision and a finite number of
+  steps, exactly the resources a fixed-depth forward pass exhausts and exactly the
+  ones recurrence and delay restore.
+
+  Praxis leans into that. With the swarm online, computation runs in two directions
+  at once. Forward, the recurrent loop propels generation and is never required to
+  emit a stop: the halting gate is a convergence check, not an exit, so generation
+  is a continuous autonomous stream rather than a program that terminates.
+  Sideways, a pool of remote experts votes - stochastically sampled, mixed by a
+  CALM-style expert vote - and trains without blocking, so a slow peer never stalls
+  the others; its update simply lags and lands on a later pass. Computation is
+  lagged as much as propelled, and the model commits to neither a halt nor a
+  barrier. It approximates both by doing neither.
+
+  This relocates the question. It is no longer whether the network halts but what
+  the pool expresses, over how much time, at what precision - the resources, not
+  the stop bit. The butterfly is the right image: one expert, then two, then four,
+  each a wing whose small vote the mixture amplifies or cancels, the whole field
+  sensitive to where the late votes fall. The interior turns of the recurrent loop
+  (Section~\ref{sec:scaling}) already carry the decision; the last is only the
+  budget running out. Power here is bought with peers and patience, not with a
+  proof that the machine knows when to stop.

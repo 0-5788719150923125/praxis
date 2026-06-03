@@ -1,0 +1,16 @@
+# Backs the recurrent-watch framing: XOR is separable by a single periodic
+# feature of the input sum (parity read off the circle), which no linear
+# function of the inputs can do.
+kind: lemma
+supports: [recurrent-watch]
+statement: >
+  For $a,b \in \{0,1\}$ let $s = a + b$. Then
+  $\mathrm{XOR}(a,b) = \tfrac{1}{2}\bigl(1 - \cos \pi s\bigr)$, so a single
+  sinusoidal feature of $s$ separates XOR - whereas no linear function of
+  $(a,b)$ can, XOR being the canonical non-separable case.
+proof: >
+  $s \in \{0,1,2\}$ and $\cos \pi s = 1, -1, 1$ respectively, so
+  $\tfrac{1}{2}(1 - \cos \pi s) = 0, 1, 0$ - exactly $\mathrm{XOR}$ on
+  $(0,0)$, on $(0,1)$ and $(1,0)$, and on $(1,1)$. Placing the four
+  configurations at angles $\pi s$ on a circle thus makes parity a threshold on
+  one phase coordinate. Linear inseparability of XOR in $(a,b)$ is classical.

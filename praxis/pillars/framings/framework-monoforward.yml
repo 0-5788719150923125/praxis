@@ -1,0 +1,14 @@
+# Enables wherever Mono-Forward (detached, layer-wise local objectives) is in
+# play - the mono_forward / mono_forward_ray trainer, or the remote-expert swarm
+# whose layer-wise updates are Mono-Forward by construction. The OR across those
+# signals is computed into `uses_mono_forward` (praxis/pillars/framing.py).
+section: framework
+order: 20
+requires:
+  uses_mono_forward: [true]
+body: >
+  \item \textbf{MonoForward training}~\cite{monoforward2025} detaches gradients
+  between layers and trains each with a local objective, turning one global
+  trajectory into many independent ones - whether run in-process, across a Ray
+  actor per layer, or over the remote-expert pool, where a slow peer never blocks
+  the rest.

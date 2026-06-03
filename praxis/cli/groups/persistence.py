@@ -31,3 +31,11 @@ class PersistenceGroup:
             default=256,
             help="Save a checkpoint every N completed batches (default: 256)",
         )
+
+        group.add_argument(
+            "--no-paper",
+            action="store_true",
+            default=False,
+            help="Disable the periodic research-paper rebuild (research/main.pdf, "
+            "regenerated on the --save-every cadence as a background task)",
+        )
