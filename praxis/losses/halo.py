@@ -304,6 +304,6 @@ class HALOLoss(nn.Module):
         },
         "halo_ring": {
             "description": "Radial energy map: the bright ring marks consensus embeddings settled on the hyperspherical shell, with the dark interior (abstain sink) and exterior carrying no structure - a geometry of bias and variance.",
-            "snapshot": {"title": "HALO Energy Ring", "renderer": "halo_ring", "order": 60},
+            "snapshot": {"title": "HALO Energy Ring", "renderer": "halo_ring", "group": "halo", "order": 60},
         },
     }

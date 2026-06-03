@@ -33,6 +33,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from praxis.heads.energy import EnergyHead
+from praxis.losses import get_loss_function
 from praxis.losses.energy_score import energy_score_loss
 
 from ..base import BaseEncoder
@@ -379,6 +380,14 @@ class CALMEncoder(BaseEncoder):
             getattr(config, "byte_vocab_size", None) or config.vocab_size
         )
 
+        # Codec reconstruction obeys config.loss_func like every other path -
+        # cross_entropy by default, but a distance/centroid loss (HALO) trains
+        # the VAE decoder against the head's centroids instead. Built over the
+        # codec's true output vocab. See _reconstruction_loss.
+        self.recon_loss_fn = get_loss_function(
+            config.loss_func, self._output_vocab_size
+        )
+
         # "harmonic" swaps the codec's scalar dropout for a standing-wave field
         # over (patch position, channel) - see HarmonicDropout. Stage-1 only;
         # the field vanishes once the codec freezes (eval disables it).
@@ -536,6 +545,42 @@ class CALMEncoder(BaseEncoder):
         for p in self._codec_parameters():
             p.requires_grad_(False)
 
+    def _reconstruction_loss(
+        self, recon_logits: torch.Tensor, padded: torch.Tensor, recon_hidden: torch.Tensor
+    ) -> torch.Tensor:
+        """Codec reconstruction loss via the configured loss function.
+
+        Flattens the per-patch outputs and routes through ``recon_loss_fn``.
+        Pad positions map to -100 (the registry losses' ignore index), which
+        reproduces the old ``ignore_index=pad_token_id`` behavior for CE.
+        Centroid losses (HALO) also get the decoder features as ``embeddings``
+        and the head's classifier centroids.
+        """
+        V = self.vae.vocab_size
+        flat_logits = recon_logits.reshape(-1, V)
+        flat_labels = padded.reshape(-1).clone()
+        flat_labels[flat_labels == self.pad_token_id] = -100
+        flat_emb = recon_hidden.reshape(-1, recon_hidden.shape[-1])
+        classifier = self._head[0].classifier if self._head else None
+        return self.recon_loss_fn(
+            logits=flat_logits,
+            labels=flat_labels,
+            embeddings=flat_emb,
+            classifier=classifier,
+            input_ids=flat_labels,
+        )
+
+    @torch.no_grad()
+    def _recon_ce(self, recon_logits: torch.Tensor, padded: torch.Tensor) -> torch.Tensor:
+        """Detached reconstruction CE for the bits-per-byte fidelity metric,
+        kept independent of the training loss so ``val_codec_bpb`` stays in
+        bits even when reconstruction trains under a non-CE objective."""
+        return F.cross_entropy(
+            recon_logits.reshape(-1, self.vae.vocab_size),
+            padded.reshape(-1),
+            ignore_index=self.pad_token_id,
+        )
+
     def pretraining_loss(self, input_ids: torch.Tensor) -> torch.Tensor:
         """Codec-only objective: K-scaled reconstruction CE + annealed
         free-bits KL. The global transformer and energy head are not run."""
@@ -544,17 +589,13 @@ class CALMEncoder(BaseEncoder):
         z = self.vae.reparameterize(mean, logvar)
         recon_hidden = self.vae.decode(z)
         recon_logits = self._classify(recon_hidden)
-        recon_loss = F.cross_entropy(
-            recon_logits.reshape(-1, self.vae.vocab_size),
-            padded.reshape(-1),
-            ignore_index=self.pad_token_id,
-        )
+        recon_loss = self._reconstruction_loss(recon_logits, padded, recon_hidden)
         kl = self.vae.kl_divergence(mean, logvar, per_dim_clip=self.kl_clip).mean()
         beta_t = self._current_kl_beta()
         loss = self.K * recon_loss + beta_t * kl
 
         self._train_step += 1
-        self._last_recon_loss = recon_loss.detach()
+        self._last_recon_loss = self._recon_ce(recon_logits, padded)
         self._stash_diagnostics(mean, logvar, recon_loss, kl, beta_t)
         self._diag["calm_ae_frozen"] = 0.0
         self._update_pretrain_convergence(float(recon_loss.detach()))
@@ -660,11 +701,7 @@ class CALMEncoder(BaseEncoder):
 
         recon_hidden = self.vae.decode(z)  # [B, N*K, ae_hidden]
         recon_logits = self._classify(recon_hidden)  # [B, N*K, V]
-        recon_loss = F.cross_entropy(
-            recon_logits.reshape(-1, self.vae.vocab_size),
-            padded.reshape(-1),
-            ignore_index=self.pad_token_id,
-        )
+        recon_loss = self._reconstruction_loss(recon_logits, padded, recon_hidden)
         kl = self.vae.kl_divergence(mean, logvar, per_dim_clip=self.kl_clip).mean()
         beta_t = self._current_kl_beta()
         # K-scaled recon to match the reference's stage-1 AE training: their
@@ -690,7 +727,7 @@ class CALMEncoder(BaseEncoder):
         self._last_N = N
         # Per-byte codec recon CE for val_codec_bpb (codec fidelity only;
         # see codec_recon_loss). Detached: pure diagnostic.
-        self._last_recon_loss = recon_loss.detach()
+        self._last_recon_loss = self._recon_ce(recon_logits, padded)
 
         self._stash_diagnostics(mean, logvar, recon_loss, kl, beta_t)
         self._diag["calm_ae_frozen"] = 1.0 if frozen else 0.0
@@ -957,7 +994,27 @@ class CALMEncoder(BaseEncoder):
         Co-located with the math that produces them (per the project
         convention); the DynamicsLogger callback picks them up.
         """
-        return dict(self._diag)
+        out = dict(self._diag)
+        # A non-CE reconstruction loss (HALO) carries its own diagnostics;
+        # fold them in so they ride the same encoder walk.
+        fn = getattr(self, "recon_loss_fn", None)
+        if fn is not None and hasattr(fn, "training_metrics"):
+            try:
+                out.update(fn.training_metrics())
+            except Exception:
+                pass
+        return out
+
+    def dashboard_snapshots(self) -> Dict[str, dict]:
+        """Non-scalar snapshots from the reconstruction loss (e.g. HALO's
+        energy ring), surfaced via the encoder."""
+        fn = getattr(self, "recon_loss_fn", None)
+        if fn is not None and hasattr(fn, "dashboard_snapshots"):
+            try:
+                return fn.dashboard_snapshots() or {}
+            except Exception:
+                return {}
+        return {}
 
     # ------------------------------------------------------------------
     # Generation

@@ -739,13 +739,18 @@ def get_head_snapshots():
         model = getattr(generator, "model", None) if generator else None
         head = getattr(model, "head", None) if model is not None else None
         criterion = getattr(model, "criterion", None) if model is not None else None
+        encoder = getattr(model, "encoder", None) if model is not None else None
 
         snapshots = {}
         if head is not None:
             snapshots.update(head.dashboard_snapshots() or {})
-        # Loss functions (e.g. HALO) contribute their own geometry snapshots.
+        # Loss functions (e.g. HALO) contribute their own geometry snapshots,
+        # whether HALO is the main criterion (byte-latent) or the encoder's
+        # reconstruction loss (CALM).
         if criterion is not None and hasattr(criterion, "dashboard_snapshots"):
             snapshots.update(criterion.dashboard_snapshots() or {})
+        if encoder and hasattr(encoder, "dashboard_snapshots"):
+            snapshots.update(encoder.dashboard_snapshots() or {})
         if not snapshots:
             return jsonify({"status": "no_data", "snapshots": {}})
 

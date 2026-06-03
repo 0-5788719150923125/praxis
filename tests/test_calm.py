@@ -398,8 +398,11 @@ def test_calm_with_prismatic_head_learns_envelope():
     parallel = model.head  # ParallelHead is the top head
     fields = [arm.heads[0].field for arm in parallel.branches]
     assert len(fields) == 2
+    # Branch 0 (bias arm) learns a static envelope; branch 1 (variance arm)
+    # conditions its envelope on the input.
+    assert fields[0].amp_modulation == "learned"
+    assert fields[1].amp_modulation == "input"
     for field in fields:
-        assert field.amp_modulation == "learned"
         assert field.envelope_depth() > 0.0
 
     model.train()

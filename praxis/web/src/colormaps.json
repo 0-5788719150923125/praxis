@@ -11,6 +11,16 @@
       [1.0,  [255, 255, 255]]
     ]
   },
+  "halo_energy": {
+    "description": "Black -> indigo -> cyan -> white. A cool 'energy' ramp for the HALO ring: the consensus shell glows cyan-white, the variance void stays black. Deliberately avoids the hot map's yellow band.",
+    "stops": [
+      [0.0,  [0, 0, 0]],
+      [0.45, [30, 40, 120]],
+      [0.72, [40, 150, 210]],
+      [0.9,  [120, 220, 245]],
+      [1.0,  [255, 255, 255]]
+    ]
+  },
   "bias_variance": {
     "description": "Diverging blue -> neutral -> red for the bias/variance balance. 0 = pure bias (cool blue), 0.5 = balanced (light neutral), 1 = pure variance (warm red). Used by the strands card to color each feature-hair by variance/(bias+variance).",
     "stops": [

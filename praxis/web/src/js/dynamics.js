@@ -329,20 +329,45 @@ function detectHaltingBuckets(dynamics) {
 // Bespoke chart types (heatmaps, histograms, stacked-per-task series) stay
 // hardcoded - the manifest only handles scalar time-series.
 
-function buildScalarMetricManifest(descriptions) {
+// Cross-tab group ordering (lower = earlier). Keeps a producer's scalars and
+// its snapshots in one contiguous block: heads, then loss/codec, then aux.
+// Groups not listed sort after these, alphabetically (deterministic); the
+// catch-all buckets trail last.
+const GROUP_ORDER = {
+    optimizer: 10, memory: 20, arc: 30,
+    harmonic_head: 40, crystal_head: 50, parallel_head: 60,
+    halo: 70, calm: 80, contrastive_isotropy: 90,
+    misc: 900, snapshots: 950,
+};
+const groupOrder = (name) => GROUP_ORDER[name] ?? 500;
+
+// One manifest for both scalar charts and non-scalar snapshots, grouped so a
+// group's cards (e.g. all "halo") render together. Each value is
+// ``{scalars, snaps}``; groups are returned in GROUP_ORDER then name order.
+function buildMetricManifest(descriptions) {
     const groups = new Map();
+    const ensure = (g) => {
+        if (!groups.has(g)) groups.set(g, { scalars: [], snaps: [] });
+        return groups.get(g);
+    };
     for (const [key, entry] of Object.entries(descriptions || {})) {
         if (!entry || typeof entry !== 'object') continue;
-        const chart = entry.chart;
-        if (!chart || typeof chart !== 'object') continue;
-        const groupName = chart.group || 'misc';
-        if (!groups.has(groupName)) groups.set(groupName, []);
-        groups.get(groupName).push({ key, chart, description: entry.description, caller: entry.caller });
+        const { chart, snapshot: snap } = entry;
+        if (chart && typeof chart === 'object') {
+            ensure(chart.group || 'misc').scalars.push(
+                { key, chart, description: entry.description, caller: entry.caller });
+        }
+        if (snap && typeof snap === 'object') {
+            ensure(snap.group || 'snapshots').snaps.push(
+                { key, snap, description: entry.description, caller: entry.caller });
+        }
     }
-    for (const entries of groups.values()) {
-        entries.sort((a, b) => (a.chart.order ?? 0) - (b.chart.order ?? 0));
+    for (const g of groups.values()) {
+        g.scalars.sort((a, b) => (a.chart.order ?? 0) - (b.chart.order ?? 0));
+        g.snaps.sort((a, b) => (a.snap.order ?? 0) - (b.snap.order ?? 0));
     }
-    return groups;
+    return new Map([...groups.entries()].sort((a, b) =>
+        groupOrder(a[0]) - groupOrder(b[0]) || a[0].localeCompare(b[0])));
 }
 
 // A scalar metric is "present" only if the run logged a finite value for it.
@@ -357,9 +382,11 @@ function metricHasData(dynamics, key) {
 
 function pruneManifestToData(manifest, dynamics) {
     const pruned = new Map();
-    for (const [group, entries] of manifest) {
-        const kept = entries.filter(e => metricHasData(dynamics, e.key));
-        if (kept.length) pruned.set(group, kept);
+    for (const [group, g] of manifest) {
+        // Scalars need logged data; snapshots are fetched live so they always
+        // pass through. Keep the group if either survives.
+        const scalars = g.scalars.filter(e => metricHasData(dynamics, e.key));
+        if (scalars.length || g.snaps.length) pruned.set(group, { scalars, snaps: g.snaps });
     }
     return pruned;
 }
@@ -416,8 +443,8 @@ function metricCardHTML(canvasId, title, subtitle, key) {
 
 function buildManifestSectionsHTML(manifest, getDesc) {
     let html = '';
-    for (const [, entries] of manifest) {
-        for (const item of seriesItemsFor(entries)) {
+    for (const [, g] of manifest) {
+        for (const item of seriesItemsFor(g.scalars)) {
             if (item.kind === 'multi') {
                 const c = item.lead.chart;
                 html += metricCardHTML(
@@ -435,13 +462,18 @@ function buildManifestSectionsHTML(manifest, getDesc) {
                 );
             }
         }
+        // The group's snapshots render right after its scalars (e.g. the HALO
+        // energy ring sits with the HALO metrics).
+        for (const s of g.snaps) {
+            html += snapshotCardHTML(s.key, s.snap, getDesc(s.key, s.description || ''), s.caller);
+        }
     }
     return html;
 }
 
 function mountManifestCharts(manifest, dynamics) {
-    for (const [, entries] of manifest) {
-        for (const item of seriesItemsFor(entries)) {
+    for (const [, g] of manifest) {
+        for (const item of seriesItemsFor(g.scalars)) {
             if (item.kind === 'multi') {
                 const c = item.lead.chart;
                 if (!document.getElementById(item.canvasId)) continue;
@@ -485,23 +517,18 @@ function snapshotEntries(descriptions) {
     return out;
 }
 
-function buildSnapshotSectionsHTML(descriptions, getDesc) {
-    let html = '';
-    for (const { key, snap, description, caller } of snapshotEntries(descriptions)) {
-        const canvasId = canvasIdForMetric(key);
-        html += `
-            <div style="margin-top: 2rem;">
-                <div class="chart-card" data-card-key="${key}">
-                    <div class="chart-title">${snap.title || key}${callerTag([caller])}</div>
-                    <div class="chart-subtitle">${getDesc(key, description || '')}</div>
-                    <div class="chart-wrapper" style="height: 400px;">
-                        <canvas id="${canvasId}"></canvas>
-                    </div>
+function snapshotCardHTML(key, snap, subtitle, caller) {
+    return `
+        <div style="margin-top: 2rem;">
+            <div class="chart-card" data-card-key="${key}">
+                <div class="chart-title">${snap.title || key}${callerTag([caller])}</div>
+                <div class="chart-subtitle">${subtitle}</div>
+                <div class="chart-wrapper" style="height: 400px;">
+                    <canvas id="${canvasIdForMetric(key)}"></canvas>
                 </div>
             </div>
-        `;
-    }
-    return html;
+        </div>
+    `;
 }
 
 async function mountSnapshotCharts(descriptions) {
@@ -566,7 +593,7 @@ function renderDynamicsCharts(runData, container) {
         return entry?.description || fallback;
     };
     const manifest = pruneManifestToData(
-        buildScalarMetricManifest(descriptions), dynamics);
+        buildMetricManifest(descriptions), dynamics);
 
     // Build the present chart families from the backend registry, and stash
     // them so the layer-toggle handler re-renders exactly this set.
@@ -621,15 +648,10 @@ function renderDynamicsCharts(runData, container) {
         .map(c => buildDynamicsFamilyCard(c, desc, allLayers))
         .join('');
 
-    // Head-driven scalar metrics (harmonic, crystal, future heads). The
-    // manifest is built from descriptions whose values carry a ``chart``
-    // hint - new heads opt in just by tagging their metric_descriptions.
+    // Head-driven metrics (harmonic, crystal, halo, future producers): scalar
+    // charts and their non-scalar snapshots, clustered by group and ordered by
+    // GROUP_ORDER. New producers opt in just by tagging metric_descriptions.
     chartsHTML += buildManifestSectionsHTML(manifest, desc);
-
-    // Non-scalar snapshot charts (heatmaps, PCA density grids, etc.).
-    // Like the scalar manifest, snapshots are discovered via descriptions
-    // whose values carry a ``snapshot`` hint.
-    chartsHTML += buildSnapshotSectionsHTML(descriptions, desc);
 
     // Families ordered after the head sections (e.g. halting distribution).
     chartsHTML += familyConfigs
@@ -781,7 +803,7 @@ function rebuildAllCharts() {
     // Head scalar metrics (independent of layer selection). Source of
     // truth is the descriptions manifest in the run payload.
     const descriptions = state.dynamics.data?.descriptions || {};
-    mountManifestCharts(buildScalarMetricManifest(descriptions), dynamics);
+    mountManifestCharts(buildMetricManifest(descriptions), dynamics);
 }
 
 // ─── Shared chart helpers ───────────────────────────────────────────────────
@@ -1748,16 +1770,15 @@ function renderHaloRing(canvas, data) {
         ctx.fillRect(0, 0, w, h);
 
         const cx = w / 2, cy = h / 2, maxR = Math.min(w, h) * 0.42;
-        const pulse = 1 + 0.07 * Math.sin(frame * 0.03);
         const thick = (maxR / BINS) + 1.2;
 
         // Outer -> inner so the bright shell sits cleanly over the dark interior.
         for (let b = BINS - 1; b >= 0; b--) {
             const rData = ((b + 0.5) / BINS) * rMax;
             const cr = (rData / rMax) * maxR;
-            const dens = Math.min(1, Math.max(0, radii[b] * pulse));
+            const dens = Math.min(1, Math.max(0, radii[b]));
             if (dens <= 0.002) continue;
-            const c = sampleColormap('praxis_heat', dens);
+            const c = sampleColormap('halo_energy', dens);
             ctx.strokeStyle = `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
             ctx.lineWidth = thick;
             ctx.beginPath();
