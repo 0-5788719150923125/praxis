@@ -15,7 +15,7 @@ import uuid
 from flask import Blueprint, current_app, jsonify, request
 
 from praxis.data.config import SYSTEM_PROMPT, sample_developer_prompt
-from praxis.policies.engagement_channel import LIVE_ENGAGEMENT
+from praxis.policies.engagement_channel import LIVE_ENGAGEMENT, LIVE_JOKES
 
 from ..utils import generate_from_messages
 
@@ -95,6 +95,12 @@ def print_ask():
     head, _, tail = reply.partition("\n")
     question = head.strip()
     predicted = tail.strip()
+    # Keep it a short, single question: cut at the first '?' if present, and cap
+    # length so an undertrained model's run-on output stays presentable.
+    qmark = question.find("?")
+    if qmark != -1:
+        question = question[: qmark + 1]
+    question = question[:200].strip()
     if not question:
         return jsonify({"status": "ok", "available": False, "reason": "no question"})
 
@@ -155,3 +161,25 @@ def print_respond():
 def print_energy():
     """Live engagement energy snapshot (for a dashboard badge)."""
     return jsonify(LIVE_ENGAGEMENT.snapshot())
+
+
+@print_bp.route("/api/loop/approve", methods=["POST"])
+def loop_approve():
+    """Record a human approval of a looped joke - the live joke reward. Accepts
+    `score` in [0,1], or `approve` (bool) shorthand. The model seeks our approval."""
+    data = request.get_json() or {}
+    score = data.get("score")
+    if score is None:
+        score = 1.0 if data.get("approve") else 0.0
+    try:
+        score = max(0.0, min(1.0, float(score)))
+    except (TypeError, ValueError):
+        score = 0.0
+    event = LIVE_JOKES.submit_scalar(score)
+    return jsonify({"status": "ok", **event})
+
+
+@print_bp.route("/api/loop/energy", methods=["GET"])
+def loop_energy():
+    """Live joke-approval energy snapshot."""
+    return jsonify(LIVE_JOKES.snapshot())

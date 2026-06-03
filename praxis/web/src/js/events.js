@@ -29,6 +29,19 @@ export const CLICK_HANDLERS = [
         action: () => ({ type: 'PRESENT_PRINT_QUESTION' })
     },
     {
+        selector: '.tool-toggle[data-tool="loop"]',
+        match: 'closest',
+        action: () => ({ type: 'TOGGLE_LOOP' })
+    },
+    {
+        selector: '.joke-vote',
+        match: 'closest',
+        action: (e) => ({
+            type: 'APPROVE_JOKE',
+            payload: Number(e.target.closest('.joke-vote').dataset.score)
+        })
+    },
+    {
         selector: '.tool-toggle[data-toggleable]',
         match: 'closest',
         action: (e) => ({

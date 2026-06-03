@@ -112,10 +112,21 @@ def build_training_callbacks(
             )
         )
 
-    # Online-learning seam: when the forward-path engagement policy is active,
-    # drain live `Print` rewards from the web UI into its energy baseline.
-    if "engagement" in normalize_rl_types(getattr(config, "rl_type", None)):
+    # Online-learning seam: drain live web rewards into the matching forward-path
+    # policy's energy baseline (Print answers -> engagement, joke approvals -> joke).
+    _active_rl = normalize_rl_types(getattr(config, "rl_type", None))
+    if "engagement" in _active_rl:
         callbacks.append(EngagementLiveRewardCallback())
+    if "joke" in _active_rl:
+        from praxis.policies.engagement_channel import LIVE_JOKES
+
+        callbacks.append(
+            EngagementLiveRewardCallback(
+                channel=LIVE_JOKES,
+                policy_class_name="JokePolicy",
+                metric_prefix="joke",
+            )
+        )
 
     # Restrict charted task-loss weights to task types a live dataset
     # produces; a learnable weighter still drifts weights for absent tasks.

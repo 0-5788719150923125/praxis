@@ -1,0 +1,7 @@
+# The recurrent-step count for the current run, used by the gated "watch in the
+# depth dimension" prose. Absent (fallback kept) when the run is not recurrent -
+# in which case that prose is gated off too, so they stay consistent.
+macro: paperRecurrentSteps
+provider: recurrent_steps
+format: "{value}"
+fallback: "several"

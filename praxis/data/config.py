@@ -18,6 +18,7 @@ FORMAT_TO_TASK = {
     DataFormat.TOOL_CALLING: TaskType.TOOL_CALL,
     DataFormat.COT: TaskType.REASONING,
     DataFormat.RL: TaskType.RL,
+    DataFormat.JOKE: TaskType.CONVERSATION,
     DataFormat.CUSTOM: DEFAULT_TASK,
 }
 
@@ -137,6 +138,9 @@ DATASET_COLLECTIONS = dict(
     },
     print={
         "synthetic-print": PRINT_WEIGHT,
+    },
+    joke={
+        "rated-jokes": PRINT_WEIGHT,
     },
     cot={
         "chain-of-thought": DEFAULT_WEIGHT * 0.1,
@@ -303,6 +307,18 @@ DATASETS = {
         split="train",
         keys=["prompt", "response", "category", "topic"],
         format=DataFormat.COT,
+        streaming=True,
+        trust_remote_code=False,
+    ),
+    # Rated jokes for the upcoming "joke" RL task (the Loop UI is its live
+    # human-approval channel). jokeText = the joke, joke_reasoning_steps_llama70b
+    # = thinking steps, rating = the quality score (the dense RL signal). Loaded
+    # as plain joke text for now; the rating-driven RL formatter is still to come.
+    "rated-jokes": dict(
+        path="SeppeV/rated_jokes_dataset_from_jester",
+        split="train",
+        keys=["jokeText", "rating"],
+        format=DataFormat.JOKE,
         streaming=True,
         trust_remote_code=False,
     ),

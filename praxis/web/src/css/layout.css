@@ -81,6 +81,13 @@
    inert (clicking is a no-op) until the model has a question, never greyed or
    auto-highlighted. So no conditional styling here by design. */
 
+/* Loop is coupled to Print: 'locked' dims it (and signals inert) until Print mode
+   is active. It lights up via .active while a loop is running. */
+.tool-toggle.locked {
+    opacity: 0.4;
+    cursor: default;
+}
+
 /* Live engagement-energy badge: pushed to the toolbar's right edge, accent-tinted. */
 .print-energy-badge {
     margin-left: auto;
@@ -139,6 +146,9 @@
 /* KB results/content (Read mode) - fill the column below the input. */
 .kb-results {
     flex: 1 1 auto;
+    /* min-height:0 lets this flex child shrink below its content so overflow-y
+       actually scrolls the list, instead of growing the column to fit it all. */
+    min-height: 0;
     display: flex;
     flex-direction: column;
     gap: var(--spacing-sm);

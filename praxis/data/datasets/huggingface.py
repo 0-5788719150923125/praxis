@@ -13,6 +13,7 @@ from praxis.data.formatters import (
     format_conversation,
     format_cot,
     format_instruction,
+    format_joke,
     format_messages,
     format_personachat,
     format_rl,
@@ -34,6 +35,7 @@ FORMAT_HANDLERS = {
     DataFormat.RL: format_rl,
     DataFormat.COT: format_cot,
     DataFormat.TOOL_CALLING: format_tool_calling,
+    DataFormat.JOKE: format_joke,
 }
 
 

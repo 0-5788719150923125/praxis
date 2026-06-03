@@ -125,6 +125,22 @@ export async function printEnergy() {
 }
 
 /**
+ * Loop: record a human approval (1.0) or rejection (0.0) of a looped joke - the
+ * live joke reward fed to training.
+ * @param {number} score - 0..1
+ * @returns {Promise<Object>} {recall, energy, ...}
+ */
+export async function loopApprove(score) {
+    const response = await fetch(`${state.settings.apiUrl}/api/loop/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ score })
+    });
+    if (!response.ok) throw new Error(`Loop approve error: ${response.status}`);
+    return response.json();
+}
+
+/**
  * API endpoint configuration - pure data
  */
 const ENDPOINTS = {

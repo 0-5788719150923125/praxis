@@ -38,6 +38,14 @@ export const state = {
         energy: null             // live channel snapshot {energy, count} for the badge
     },
 
+    // Loop: coupled to Print (must be in Print mode to enable). Repeats one task
+    // (default "joke") on a timer, replacing the response each cycle - independent
+    // challenges the model re-rolls until the user intervenes.
+    loop: {
+        enabled: false,
+        generating: false
+    },
+
     // Input state
     isShowingPlaceholder: true,
 

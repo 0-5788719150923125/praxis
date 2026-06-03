@@ -1,10 +1,16 @@
-"""Research-paper framing: prose fragments gated by active components.
+"""Living-paper build: the generated inputs for ``research/main.tex``.
 
-The paper in ``research/`` is a living document. Sections that describe a
-specific component (the crystal head, the CALM codec) are only true when that
-component is in the run being written up. This package declares those sections
-as :class:`Fragment` objects gated by config, and ``tools/export_framing.py``
-renders the ones whose components are active into ``research/framing.tex``.
+The paper is a living document whose data is regenerated from repository state.
+Each concern is a module here, and ``python -m praxis.research.build`` runs them
+all (the research-side analogue of ``praxis/web/src/build.py``):
+
+- :mod:`runs` - recent validation curves -> variables.tex + data/run_*.csv
+- :mod:`framing` - component-gated prose for the current run -> framing.tex
+- :mod:`geometries` - Center PCA density figure -> geometries.tex + figures/
+- :mod:`inlines` - single-value substitutions -> inlines.tex
+
+Gated prose lives as :class:`Fragment` objects (config-keyed); inline edits as
+:class:`~praxis.research.inlines.InlineEdit` objects (value providers).
 """
 
 from praxis.research.framing import FRAMING, Fragment, active_fragments

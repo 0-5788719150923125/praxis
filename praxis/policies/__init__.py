@@ -3,7 +3,7 @@ Reinforcement Learning policies for training language models.
 """
 
 from praxis.policies.cot import ChainOfThought
-from praxis.policies.engagement import EngagementPolicy
+from praxis.policies.engagement import EngagementPolicy, JokePolicy
 from praxis.policies.grpo import GRPO
 from praxis.policies.harmonic_weight_rl import HarmonicWeightPolicy
 from praxis.policies.reinforce import REINFORCE
@@ -16,6 +16,9 @@ RL_POLICIES_REGISTRY = {
     # Forward-path engagement-prediction reward (computes its own reward from
     # labels, so it needs no RL dataset). See PLAN.md / next/homeostatic_engagement.md.
     "engagement": EngagementPolicy,
+    # Forward-path joke reward (same machinery; dense grounding from well-rated
+    # jokes, live signal from human approval via the Loop UI). PLAN.md section 7b.
+    "joke": JokePolicy,
     # Weight-editing controller (driven by a callback, not the forward pass).
     "harmonic_weight": HarmonicWeightPolicy,
     # "ppo": PPO,    # TODO: Implement PPO
@@ -124,4 +127,5 @@ __all__ = [
     "resolves_to_weight_controller",
     "needs_rl_datasets",
     "EngagementPolicy",
+    "JokePolicy",
 ]

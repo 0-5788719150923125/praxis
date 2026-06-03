@@ -16,12 +16,17 @@ import { executeAction } from './actions.js';
 import { setupAccentRetint } from './charts.js';
 import './prism.js';
 
-// Mode-aware input cues: Read invites a query ("> Look"), Evaluate invites a
-// chat turn ("< Shoot"). Both prefixes are 2 chars, so cursor/length logic in
+// Mode-aware input cues, all basketball: Read invites a query ("> Look"),
+// Evaluate invites a shot ("< Shoot"), Print invites an answer to the model's
+// question - a "< Pass" back. Prefixes are 2 chars, so cursor/length logic in
 // the input handlers is unaffected.
 const prefixForMode = (mode) => (mode === 'read' ? '> ' : '< ');
 export const inputPrefix = () => prefixForMode(state.conversationMode);
-const inputPlaceholderText = () => (state.conversationMode === 'read' ? 'Look' : 'Shoot');
+const inputPlaceholderText = () => {
+    if (state.conversationMode === 'read') return 'Look';
+    if (state.conversationMode === 'print') return 'Pass';
+    return 'Shoot';
+};
 
 /**
  * Keep the input box consistent when the conversation mode flips. Either rebuild
@@ -327,7 +332,9 @@ async function handleInputKeydown(e) {
 
     if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        if (state.conversationMode === 'read') {
+        if (state.loop.enabled) {
+            rerollLoopNow();  // re-roll the current task now
+        } else if (state.conversationMode === 'read') {
             openTopKbResult();
         } else {
             await sendUserMessage();
@@ -544,9 +551,11 @@ async function sendUserMessage() {
 
     if (!content) return;
 
-    // Print flow: if a model-led question is awaiting an answer, this message IS
-    // the answer - score it as the live engagement reward instead of generating.
-    if (state.print.awaitingResponse) {
+    // Print flow: in Print mode with a model-led question awaiting an answer,
+    // this message IS the answer - score it instead of generating. The pending
+    // question survives Read/Evaluate switches, so we also require Print mode
+    // here (a message typed in Evaluate must still chat normally).
+    if (state.print.awaitingResponse && state.conversationMode === 'print') {
         input.value = inputPrefix();
         input.style.height = 'auto';
         state.isShowingPlaceholder = false;
@@ -603,15 +612,13 @@ async function sendUserMessage() {
 let printHookTimer = null;
 
 /**
- * Periodically ask the model to lead with a question. This is the
- * environment-level hook: the act of querying produces the question that makes
- * the conditional Print button appear. Skips while one is already pending, being
- * answered, or while the model is mid-generation.
+ * Keep the live engagement-energy badge fresh. The model is only queried for a
+ * question when the user clicks Print (see PRESENT_PRINT_QUESTION) - this poll
+ * never asks on its own, it just reads the energy snapshot.
  */
 function setupPrintHook() {
     const POLL_MS = 15000;
     const tick = async () => {
-        // Refresh the live-energy badge regardless of question state.
         try {
             const snap = await printEnergy();
             if (snap && typeof snap.energy === 'number') {
@@ -619,19 +626,6 @@ function setupPrintHook() {
                 render();
             }
         } catch (e) { /* backend not ready */ }
-
-        if (state.print.available || state.print.awaitingResponse || state.isThinking) return;
-        try {
-            const res = await printAsk();
-            if (res && res.available && res.question) {
-                state.print.available = true;
-                state.print.question = res.question;
-                state.print.id = res.id;
-                render();
-            }
-        } catch (e) {
-            // Backend not ready (no generator yet) - stay quiet and retry later.
-        }
     };
     clearInterval(printHookTimer);
     printHookTimer = setInterval(tick, POLL_MS);
@@ -639,13 +633,53 @@ function setupPrintHook() {
 }
 
 /**
- * Submit the user's answer to the model-led question and surface the reward.
+ * Query the model for a self-led question and present it as an assistant turn.
+ * No-op (just refocus) if a question is already awaiting an answer, so the model
+ * is prompted once and only again after the user has responded.
+ */
+export async function fetchAndPresentQuestion() {
+    const input = document.getElementById('message-input');
+    if (state.print.awaitingResponse) {
+        if (input) input.focus();
+        return;
+    }
+
+    state.isThinking = true;
+    render();
+    try {
+        const res = await printAsk();
+        if (res && res.available && res.question) {
+            state.print.available = true;
+            state.print.question = res.question;
+            state.print.id = res.id;
+        }
+    } catch (e) {
+        // Backend / generator not ready - leave the chat quiet.
+    }
+    state.isThinking = false;
+
+    if (!state.print.available || !state.print.question) {
+        render();
+        return;
+    }
+
+    // The model leads with its question; the next user message answers it.
+    state.messages.push({ role: 'assistant', content: state.print.question });
+    state.print.awaitingResponse = true;
+    state.print.available = false;
+    render();
+    if (input) input.focus();
+}
+
+/**
+ * Submit the user's answer, attach the reward as a muted caption on that answer
+ * (not a chat bubble), then auto-ask the next question inline.
  */
 async function handlePrintResponse(content) {
-    state.messages.push({ role: 'user', content });
+    const userMsg = { role: 'user', content };
+    state.messages.push(userMsg);
     const id = state.print.id;
     state.print.awaitingResponse = false;
-    state.print.available = false;
     state.print.question = null;
     state.print.id = null;
     state.isThinking = true;
@@ -656,20 +690,102 @@ async function handlePrintResponse(content) {
         if (r && r.status === 'ok') {
             state.print.lastReward = r;
             const pct = Math.round((r.recall || 0) * 100);
-            state.messages.push({
-                role: 'assistant',
-                content: `(Print reward: recall ${pct}%, energy ${Number(r.energy).toFixed(3)}` +
-                    (r.predicted_answer ? ` - I predicted "${r.predicted_answer}")` : ')')
-            });
-        } else {
-            state.messages.push({ role: 'assistant', content: '(Print: this question expired.)' });
+            userMsg.caption = `recall ${pct}% · energy ${Number(r.energy).toFixed(3)}`;
         }
     } catch (error) {
-        state.messages.push({ role: 'assistant', content: `(Print error: ${error.message})` });
-    } finally {
-        state.isThinking = false;
-        render();
+        // Scoring failed - leave the answer un-captioned rather than noisy.
     }
+    state.isThinking = false;
+    render();
+
+    // Now that the user has responded, prompt the next question.
+    await fetchAndPresentQuestion();
+}
+
+// --- Loop (repeat one task, replacing the response) --------------------------
+
+let loopTimer = null;
+const LOOP_MS = 60000;  // re-roll cadence
+
+// Map the short task keyword to the actual prompt. "joke" is the headline task.
+const loopPromptFor = (task) => (task === 'joke' ? 'Tell me a joke.' : task);
+
+/** The task text in the input (prefix stripped), or '' while the placeholder shows. */
+function currentInputTask() {
+    if (state.isShowingPlaceholder) return '';
+    const input = document.getElementById('message-input');
+    if (!input) return '';
+    const v = input.value;
+    return (v.startsWith(inputPrefix()) ? v.slice(inputPrefix().length) : v).trim();
+}
+
+/** Drop literal text into the input (replacing any placeholder). */
+function setInputText(text) {
+    const input = document.getElementById('message-input');
+    if (!input) return;
+    input.value = inputPrefix() + text;
+    input.style.color = '';
+    input.style.fontStyle = '';
+    input.style.height = 'auto';
+    state.isShowingPlaceholder = false;
+}
+
+export function stopLoop() {
+    state.loop.enabled = false;
+    state.loop.generating = false;
+    clearTimeout(loopTimer);
+    loopTimer = null;
+}
+
+export function startLoop() {
+    state.loop.enabled = true;
+    // Seed the canonical "< joke" task unless the user already typed one.
+    if (!currentInputTask()) setInputText('joke');
+    state.messages = [];  // fresh loop - independent of any prior chat
+    render();
+    runLoopCycle();
+}
+
+/** One independent challenge: send the current task, replace the response. */
+async function runLoopCycle() {
+    if (!state.loop.enabled) return;
+    const task = currentInputTask() || 'joke';
+
+    state.loop.generating = true;
+    state.isThinking = true;
+    state.messages = [{ role: 'user', content: task }];
+    render();
+
+    let answer;
+    try {
+        const res = await sendMessage([{ role: 'user', content: loopPromptFor(task) }]);
+        answer = res.response || res.content || '(no response)';
+    } catch (error) {
+        answer = `Error: ${error.message}`;
+    }
+
+    state.isThinking = false;
+    state.loop.generating = false;
+    if (!state.loop.enabled) return;  // disabled mid-generation - drop the result
+
+    // Response-replacement: the chat holds just this challenge + its answer, with
+    // approve/reject controls (the human signal). Even gibberish can be voted on.
+    state.messages = [
+        { role: 'user', content: task },
+        { role: 'assistant', content: answer, jokeApproval: true }
+    ];
+    render();
+
+    // Auto-re-roll as a fallback if the human doesn't vote; a vote re-rolls sooner.
+    clearTimeout(loopTimer);
+    loopTimer = setTimeout(runLoopCycle, LOOP_MS);
+}
+
+/** Re-roll immediately (e.g. the user pressed Enter in loop mode). */
+export function rerollLoopNow() {
+    if (!state.loop.enabled) return;
+    clearTimeout(loopTimer);
+    runLoopCycle();
 }
 
 /**

@@ -12,9 +12,9 @@ import {
 } from './charts.js';
 import { toggleDynamicsRunSelector, selectDynamicsRun } from './dynamics.js';
 import { loadResearchMetrics, loadDynamics, toggleSpecRunSelector, selectSpecRun, toggleContractsView, agreeContract, severSwarmAgent } from './tabs.js';
-import { sendMessage, kbFetchItem, testApiConnection } from './api.js';
+import { sendMessage, kbFetchItem, testApiConnection, loopApprove } from './api.js';
 import { renderMarkdown, renderJson } from './markdown.js';
-import { syncInputToMode } from './main.js';
+import { syncInputToMode, fetchAndPresentQuestion, startLoop, stopLoop, rerollLoopNow } from './main.js';
 
 /**
  * Get lifecycle function by name
@@ -336,18 +336,17 @@ export const ACTION_HANDLERS = {
         if (!meta || !meta.button) return;
         const tool = meta.button.dataset.tool;
 
-        // Read/Evaluate are mutually exclusive modes (radio-like): one is always
-        // active. The others (print/loop) stay independent on/off toggles.
+        // Read/Evaluate/Print are mutually exclusive modes (radio-like): one is
+        // always active. render() mirrors state.conversationMode onto the toolbar.
         if (tool === 'read' || tool === 'evaluate') {
-            const mode = tool;
             const prevMode = state.conversationMode;
-            if (prevMode === mode) return; // already active, keep it
-            state.conversationMode = mode;
+            if (prevMode === tool) return; // already active, keep it
+            state.conversationMode = tool;
             state.kbOpenItem = null;  // leaving Read closes any open content card
-            document.querySelectorAll('.tool-toggle[data-tool="read"], .tool-toggle[data-tool="evaluate"]')
-                .forEach(btn => btn.classList.toggle('active', btn.dataset.tool === mode));
-            // Mirror the "Evaluate" mode onto <html> for the Prism animation easter egg.
-            document.documentElement.toggleAttribute('data-eval', mode === 'evaluate');
+            stopLoop();  // Loop is coupled to Print; leaving Print ends the loop.
+            // NB: a pending Print question is intentionally preserved across mode
+            // switches - the model is prompted once and not re-asked until the
+            // user answers, so toggling Read<->Print never re-queries the model.
             // Swap the input prefix ("> " <-> "< ") in place so it never doubles up.
             syncInputToMode(prevMode);
             render();
@@ -358,31 +357,62 @@ export const ACTION_HANDLERS = {
     },
 
     /**
-     * Present the model's self-generated question (the conditional Print button).
-     * The model "leads": its question is injected as an assistant turn, and the
-     * user's next message is captured as the answer (PRINT response flow).
+     * Clicking Print enters Print mode (a discrete mode like Read/Evaluate) and
+     * queries the model for a self-led question on demand; the model may take a
+     * moment to respond. The question is presented as an assistant turn the user
+     * answers. A no-op only while a request is in flight or a question is already
+     * awaiting an answer.
      */
-    PRESENT_PRINT_QUESTION: () => {
-        if (!state.print.available || !state.print.question) return;
+    PRESENT_PRINT_QUESTION: async () => {
+        if (state.isThinking) return;  // a request is already in flight
 
-        // Make sure the chat (Evaluate) is visible so the question shows.
-        if (state.conversationMode !== 'evaluate') {
+        // Enter Print mode (discrete): highlights Print, drops Read/Evaluate.
+        if (state.conversationMode !== 'print') {
             const prevMode = state.conversationMode;
-            state.conversationMode = 'evaluate';
+            state.conversationMode = 'print';
             state.kbOpenItem = null;
-            document.querySelectorAll('.tool-toggle[data-tool="read"], .tool-toggle[data-tool="evaluate"]')
-                .forEach(btn => btn.classList.toggle('active', btn.dataset.tool === 'evaluate'));
-            document.documentElement.toggleAttribute('data-eval', true);
             syncInputToMode(prevMode);
+            render();
         }
 
-        state.messages.push({ role: 'assistant', content: state.print.question });
-        state.print.awaitingResponse = true;
-        state.print.available = false;
-        render();
+        // Prompt the model only if no question is already waiting (avoids
+        // re-querying when toggling Read<->Print); otherwise just refocus.
+        await fetchAndPresentQuestion();
+    },
 
-        const input = document.getElementById('message-input');
-        if (input) input.focus();
+    /**
+     * Loop is coupled to Print: only enable-able from Print mode. Toggling it on
+     * repeats one task (default "joke") on a timer, replacing the response each
+     * cycle; toggling off stops the loop.
+     */
+    TOGGLE_LOOP: () => {
+        if (state.conversationMode !== 'print') return;  // press Print first
+        if (state.loop.enabled) {
+            stopLoop();
+            render();
+        } else {
+            state.print.awaitingResponse = false;  // suspend the Q&A flow
+            startLoop();
+        }
+    },
+
+    /**
+     * Approve/reject a looped joke (the live human signal). Records the reward,
+     * captions the joke with it, and re-rolls to the next one.
+     */
+    APPROVE_JOKE: async (score) => {
+        const msg = state.messages[state.messages.length - 1];
+        if (msg && msg.role === 'assistant') {
+            msg.jokeApproval = false;  // consume the controls
+            try {
+                const r = await loopApprove(score);
+                msg.caption = `${score >= 0.5 ? '👍 approved' : '👎 rejected'} · energy ${Number(r.energy).toFixed(3)}`;
+            } catch (e) {
+                msg.caption = score >= 0.5 ? '👍 approved' : '👎 rejected';
+            }
+            render();
+        }
+        rerollLoopNow();  // straight to the next joke
     },
 
     /**

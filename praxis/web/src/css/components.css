@@ -338,6 +338,39 @@
     font-style: italic;
 }
 
+/* Muted footnote under a message (e.g. the Print reward shown alongside the
+   answer rather than as its own bubble). */
+.message-caption {
+    margin-top: 0.25rem;
+    font-size: 0.72rem;
+    color: var(--light-text);
+    opacity: 0.75;
+    letter-spacing: 0.02em;
+}
+
+/* Joke approval controls (Loop mode): the human signal under a looped joke. */
+.joke-approval {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+.joke-vote {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.72rem;
+    font-weight: bold;
+    padding: 0.25rem 0.625rem;
+    cursor: pointer;
+}
+
+.joke-vote:hover {
+    border-color: var(--accent);
+}
+
 .error-header {
     color: #cc0000;
     font-weight: 600;

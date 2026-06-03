@@ -27,6 +27,9 @@ class EngagementPolicy(nn.Module):
     # its own reward from labels, so the data pipeline needs no RL collection.
     is_weight_controller = False
     needs_rl_datasets = False
+    # Metric namespace; subclasses (e.g. JokePolicy) override to reuse the same
+    # recall-over-assistant-region machinery under a different chart family.
+    prefix = "engagement"
 
     def __init__(self, config):
         super().__init__()
@@ -104,11 +107,12 @@ class EngagementPolicy(nn.Module):
         policy_loss = -(weighted.sum() / denom)
         loss = self.rl_weight * policy_loss
 
+        p = self.prefix
         self._metrics = {
-            "engagement_energy": energy,
-            "engagement_activation_rate": activation_rate,
-            "engagement_recall": float(reward.mean()),
-            "engagement_advantage": float(advantage.mean()),
+            f"{p}_energy": energy,
+            f"{p}_activation_rate": activation_rate,
+            f"{p}_recall": float(reward.mean()),
+            f"{p}_advantage": float(advantage.mean()),
         }
         return loss, self._metrics
 
@@ -120,8 +124,20 @@ class EngagementPolicy(nn.Module):
         operating point of subsequent dense updates (a delayed, integrated
         return), rather than injecting a gradient with no forward context."""
         energy = self.energy.update(activation_rate)
-        self._metrics["engagement_energy"] = energy
+        self._metrics[f"{self.prefix}_energy"] = energy
         return energy
 
     def get_metrics(self) -> dict:
         return dict(self._metrics)
+
+
+class JokePolicy(EngagementPolicy):
+    """Forward-path reward for the joke task. Structurally identical to
+    :class:`EngagementPolicy` - it REINFORCEs the model's reproduction (recall)
+    of the assistant-region joke tokens, with the homeostatic energy as the
+    baseline. The dense grounding comes from quality-filtered (well-rated) jokes
+    in the data mix; the live human-approval channel folds into the energy via
+    ``ingest_live``. The model is rewarded for producing jokes a human approves -
+    "the model seeks our approval"."""
+
+    prefix = "joke"

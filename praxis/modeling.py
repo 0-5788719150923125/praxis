@@ -191,31 +191,38 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             self.mtp = MultiTokenPrediction(config)
 
         # Initialize RL policy if requested. rl_type is a list of policy/profile
-        # keys (a bare string is coerced to one), so multiple discrete RL tasks
-        # coexist. Each is either a forward-path policy (reinforce/grpo/cot) or a
-        # weight-editing controller *profile* (resolved to its underlying policy +
-        # bundled edit_mode/selector). Weight controllers act from a training
-        # callback, not the forward pass, so they are not built as self.policy.
-        # At most one forward-path policy is supported.
+        # keys, so multiple discrete RL tasks coexist. Weight controllers act from
+        # a callback (not built here). Forward-path policies split in two:
+        #  - recall-style (engagement, joke): share a (logits, labels, mask)
+        #    signature and compute their own reward; any number may coexist, held
+        #    in self.recall_policies (one per RL interface, distinct metrics).
+        #  - others (reinforce/grpo/cot): the single self.policy, mutually
+        #    exclusive (different signatures, modify hidden states).
         self.policy = None
         self.policy_type = None
-        self._engagement_metrics = {}  # latest engagement-policy scalars
+        self._engagement_metrics = {}  # latest recall-policy scalars
+        _recall = {}
         from praxis.policies import get_rl_profile, normalize_rl_types
 
         for rl_name in normalize_rl_types(getattr(config, "rl_type", None)):
             _profile = get_rl_profile(rl_name)
             policy_key = _profile["policy"] if _profile else rl_name
-            if policy_key and policy_key in RL_POLICIES_REGISTRY:
-                policy_cls = RL_POLICIES_REGISTRY[policy_key]
-                if not getattr(policy_cls, "is_weight_controller", False):
-                    if self.policy is not None:
-                        raise ValueError(
-                            f"Multiple forward-path RL policies requested "
-                            f"({self.policy_type!r}, {rl_name!r}); only one is "
-                            f"supported. The rest must be weight controllers."
-                        )
-                    self.policy = policy_cls(config)
-                    self.policy_type = rl_name
+            if not policy_key or policy_key not in RL_POLICIES_REGISTRY:
+                continue
+            policy_cls = RL_POLICIES_REGISTRY[policy_key]
+            if getattr(policy_cls, "is_weight_controller", False):
+                continue  # built by a training callback, not the forward pass
+            if rl_name in ("engagement", "joke"):
+                _recall[rl_name] = policy_cls(config)
+            else:
+                if self.policy is not None:
+                    raise ValueError(
+                        f"Multiple non-recall forward-path RL policies requested "
+                        f"({self.policy_type!r}, {rl_name!r}); only one is supported."
+                    )
+                self.policy = policy_cls(config)
+                self.policy_type = rl_name
+        self.recall_policies = nn.ModuleDict(_recall)
 
         # Encoders that own their loss (e.g. CALM) bypass the main-CE path
         # entirely, so don't build a criterion we'd never call.
@@ -604,7 +611,23 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             if self.backward_head is not None and not skip_logits_for_training:
                 backward_logits = self.backward_head(hidden_states)
 
-        # Apply RL policy if enabled
+        # Recall-style forward policies (engagement / joke): each computes its own
+        # reward from the answer labels over the assistant region. Any number may
+        # coexist (one per RL interface); each emits its own namespaced metrics.
+        if self.recall_policies and labels is not None:
+            self._engagement_metrics = {}
+            for name, pol in self.recall_policies.items():
+                pol_loss, pol_metrics = pol(
+                    logits=logits if not skip_logits_for_training else None,
+                    labels=labels,
+                    assistant_mask=assistant_mask,
+                )
+                if pol_loss is not None:
+                    outputs.losses.add_loss(f"{name}_policy", pol_loss)
+                if pol_metrics:
+                    self._engagement_metrics.update(pol_metrics)
+
+        # Apply the single (non-recall) RL policy if enabled.
         if self.policy is not None:
             # Different RL algorithms need different inputs. policy_type is the
             # single forward-path rl_type selected at build time.
@@ -637,17 +660,6 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 if cot_losses is not None:
                     # Add CoT losses directly using LossContainer integration
                     outputs.losses.add_loss_container(cot_losses)
-            elif rl_type == "engagement" and labels is not None:
-                # Engagement-prediction reward: computes its own reward from the
-                # answer labels over the assistant region (no dataset rewards).
-                eng_loss, eng_metrics = self.policy(
-                    logits=logits if not skip_logits_for_training else None,
-                    labels=labels,
-                    assistant_mask=assistant_mask,
-                )
-                if eng_loss is not None:
-                    outputs.losses.add_loss("engagement_policy", eng_loss)
-                self._engagement_metrics = eng_metrics or {}
             elif rewards is not None and labels is not None:
                 # REINFORCE and other methods
                 hidden_states, rl_loss = self.policy(

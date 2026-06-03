@@ -108,7 +108,14 @@ class NotesSource(KBSource):
 
 
 class RunsSource(KBSource):
-    """Experiments under ``build/runs/<hash>/`` keyed by run hash."""
+    """Experiments under ``build/runs/<hash>/`` keyed by run hash.
+
+    A bare run config carries only a hash and a command, which says nothing
+    about what the run actually built. We resolve the run's experiment to its
+    flat config and list the modules it instantiated (encoder, attention, head,
+    ...) - the run-history analogue of the Dynamics tab's caller labels, so a
+    run is findable and legible by what it did, not just its hash.
+    """
 
     name = "runs"
 
@@ -121,7 +128,8 @@ class RunsSource(KBSource):
             config = _read(run_dir / "config.json")
             if not config:
                 continue
-            label = _run_label(config) or hash_id
+            experiment = _run_experiment(config)
+            modules = _run_modules(experiment) if experiment else ""
             # Freshest signal of run activity: the metrics DB is rewritten each
             # logging step, so it tracks "last active" better than the config.
             updated = max(
@@ -129,14 +137,18 @@ class RunsSource(KBSource):
                 _mtime(run_dir / "config.json"),
                 _mtime(run_dir),
             )
+            title = f"run {hash_id} ({experiment})" if experiment else f"run {hash_id}"
+            # Module summary leads the body so it both ranks in search and serves
+            # as the recent-feed snippet (see KBIndex.recent / meta["summary"]).
+            body = f"{modules}\n\n{config}" if modules else config
             yield KBItem(
                 id=f"run:{hash_id}",
                 type="run",
                 label="Run",
-                title=f"run {hash_id} ({label})" if label != hash_id else f"run {hash_id}",
-                body=config,
+                title=title,
+                body=body,
                 uri=f"build/runs/{hash_id}/config.json",
-                meta={"hash": hash_id},
+                meta={"hash": hash_id, "experiment": experiment, "summary": modules},
                 updated=updated,
             )
 
@@ -397,17 +409,58 @@ def _split_sections(text: str) -> List[tuple]:
     return sections or [("", text)]
 
 
-def _run_label(config_json: str) -> str:
-    """Pull a human label (model_name / experiment) from a run config blob."""
+# Modules surfaced for a run, in display order. Curated so the summary stays a
+# legible one-liner rather than the full config: the choices that define what
+# the run is, mirroring the components the paper's framing gates on.
+_RUN_MODULE_KEYS = [
+    ("encoder_type", "encoder"),
+    ("decoder_type", "decoder"),
+    ("block_type", "block"),
+    ("attention_type", "attention"),
+    ("encoding", "encoding"),
+    ("ffn_type", "ffn"),
+    ("head_type", "head"),
+    ("memory_type", "memory"),
+    ("norm_type", "norm"),
+    ("optimizer_wrappers", "optimizer"),
+]
+
+
+def _run_experiment(config_json: str) -> str:
+    """The experiment stem named in a run's command (the ``--<stem>`` flag that
+    matches an experiments/*.yml), or "" if none."""
     try:
-        cfg = json.loads(config_json)
+        command = json.loads(config_json).get("command", "")
     except json.JSONDecodeError:
         return ""
-    for key in ("experiment", "model_name", "name"):
-        val = cfg.get(key)
-        if isinstance(val, str) and val:
-            return val
+    for token in command.split():
+        if token.startswith("--"):
+            stem = token[2:]
+            if (REPO_ROOT / "experiments" / f"{stem}.yml").exists():
+                return stem
     return ""
+
+
+def _run_modules(experiment: str) -> str:
+    """A one-line module summary for an experiment, e.g.
+    ``encoder: calm_byte_small · attention: arc · head: prismatic``."""
+    try:
+        from praxis.cli.loaders.experiments import load_rendered_config
+
+        config = load_rendered_config(
+            REPO_ROOT / "experiments" / f"{experiment}.yml",
+            experiments_dir=REPO_ROOT / "experiments",
+        )
+    except Exception:
+        return ""
+    parts = []
+    for key, label in _RUN_MODULE_KEYS:
+        value = config.get(key)
+        if isinstance(value, (list, tuple)):
+            value = "/".join(str(v) for v in value) if value else ""
+        if value:
+            parts.append(f"{label}: {value}")
+    return " · ".join(parts)
 
 
 KB_SOURCE_REGISTRY = {

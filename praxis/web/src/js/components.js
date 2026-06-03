@@ -399,14 +399,27 @@ export function createSettingsModalContainer() {
  * @param {boolean} isLast - Whether this is the last message
  * @returns {string} HTML string
  */
-export function createMessage({ role, content }, isDarkMode, isLast = false) {
+export function createMessage({ role, content, caption, jokeApproval }, isDarkMode, isLast = false) {
     const headerText = isDarkMode
         ? (role === 'user' ? 'Me' : 'You')
         : (role === 'user' ? 'You' : 'Me');
 
-    // Add reroll button for last assistant message
-    const rerollButton = (role === 'assistant' && isLast)
+    // Add reroll button for last assistant message (not while a joke awaits a vote)
+    const rerollButton = (role === 'assistant' && isLast && !jokeApproval)
         ? '<button class="reroll-button" id="reroll-button">🔄 Reroll</button>'
+        : '';
+
+    // Optional muted footnote (e.g. the Print reward shown alongside an answer).
+    const captionHtml = caption
+        ? `<div class="message-caption">${escapeHtml(caption)}</div>`
+        : '';
+
+    // Joke approval controls (Loop mode): the human signal - approve or reject.
+    const approvalHtml = jokeApproval
+        ? `<div class="joke-approval">
+               <button class="joke-vote joke-approve" data-score="1" title="Funny - approve">👍 Funny</button>
+               <button class="joke-vote joke-reject" data-score="0" title="Not funny - reject">👎 Meh</button>
+           </div>`
         : '';
 
     return `
@@ -414,6 +427,8 @@ export function createMessage({ role, content }, isDarkMode, isLast = false) {
             ${rerollButton}
             <div class="message-header">${headerText}</div>
             <div class="message-content">${escapeHtml(content)}</div>
+            ${captionHtml}
+            ${approvalHtml}
         </div>
     `;
 }

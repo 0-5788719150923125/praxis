@@ -1,0 +1,25 @@
+# Enables only in recurrent mode - when the same physical layers are revisited
+# across depth (depth > num_layers), as in calm-d's 2 layers over 4 steps. Arc
+# attention/GLU make the per-step turning explicit via current_depth.
+section: scaling
+order: 30
+requires:
+  recurrent_steps: [">1"]
+body: >
+  The watch has a second axis of motion, and it is the one the architecture
+  actually runs on. In recurrent mode Praxis does not stack a distinct gear per
+  layer; it applies the same small mesh again and again - in calm-d, two physical
+  layers turned over \paperRecurrentSteps{} recurrent steps - so depth is not a
+  taller machine but the same machine revisited. ArcAttention and ArcGLU make the
+  turning explicit: each carries a \texttt{current\_depth} signal and warps its
+  rotary phase and its gate per step, so the same weights present a different face
+  at every revolution while the frozen coupling underneath is never re-cut.
+
+  This is the watch again, rotated into the depth dimension. At each step you turn
+  the gear and force the geometric structure to comply: the field is not advanced
+  but re-formed, re-asserted under a per-depth modulation rather than enumerated
+  position by position. What moves is not the data through a pipeline but the
+  shape itself, conforming at every turn to the focal point of the computation -
+  the attention that constructs it. The recurrent step is the hand sweeping the
+  dial; the mesh stays a mesh because the same teeth, revisited, hold it in
+  unison across all \paperRecurrentSteps{} turns.

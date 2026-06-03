@@ -1,15 +1,15 @@
-"""Drains live engagement rewards from the web `Print` UI into the training loop.
+"""Drains live web rewards (Print answers, joke approvals) into the training loop.
 
-The web thread submits sparse, asynchronous rewards (a real user answering a
-model-led question) to the process-global ``LIVE_ENGAGEMENT`` channel. This
-callback - on the training-loop cadence, not the UI's - drains that buffer and
-folds each interaction's activation into the EngagementPolicy's homeostatic
+The web thread submits sparse, asynchronous rewards to a process-global channel
+(``LIVE_ENGAGEMENT`` for Print, ``LIVE_JOKES`` for jokes). This callback - on the
+training-loop cadence, not the UI's - drains that buffer and folds each
+interaction's activation into the matching forward-path policy's homeostatic
 energy (its REINFORCE baseline). That is the online-learning seam: the live
 signal shifts the operating point of subsequent dense updates as a slow,
 integrated return, the way the harmonic-weight callback integrates a delayed EMA.
 
-Metrics (engagement_live_*) are written to ``trainer.callback_metrics`` so
-MetricsLogger drains them; order this before MetricsLogger.
+One instance per (channel, policy, prefix). Metrics (<prefix>_live_*) are written
+to ``trainer.callback_metrics`` so MetricsLogger drains them; order before it.
 """
 
 import torch
@@ -19,9 +19,18 @@ from praxis.policies.engagement_channel import LIVE_ENGAGEMENT
 
 
 class EngagementLiveRewardCallback(Callback):
-    def __init__(self, period: int = 10):
+    def __init__(
+        self,
+        period: int = 10,
+        channel=LIVE_ENGAGEMENT,
+        policy_class_name: str = "EngagementPolicy",
+        metric_prefix: str = "engagement",
+    ):
         super().__init__()
         self.period = int(period)
+        self.channel = channel
+        self.policy_class_name = policy_class_name
+        self.metric_prefix = metric_prefix
         self._step = 0
         self._count = 0  # cumulative live interactions consumed
         self._metrics: dict = {}
@@ -32,15 +41,22 @@ class EngagementLiveRewardCallback(Callback):
             return self._policy
         model = getattr(pl_module, "model", pl_module)
         model = getattr(model, "_orig_mod", model)  # unwrap torch.compile
-        policy = getattr(model, "policy", None)
-        if policy is not None and policy.__class__.__name__ == "EngagementPolicy":
-            self._policy = policy
+        # Recall-style policies live in a ModuleDict; the legacy single forward
+        # policy is model.policy. Match by class name across both.
+        candidates = list(getattr(model, "recall_policies", {}).values())
+        legacy = getattr(model, "policy", None)
+        if legacy is not None:
+            candidates.append(legacy)
+        for policy in candidates:
+            if policy.__class__.__name__ == self.policy_class_name:
+                self._policy = policy
+                break
         return self._policy
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         self._step += 1
         if self._step % self.period == 0:
-            events = LIVE_ENGAGEMENT.drain()
+            events = self.channel.drain()
             if events:
                 policy = self._find_policy(pl_module)
                 for ev in events:
@@ -48,12 +64,11 @@ class EngagementLiveRewardCallback(Callback):
                         policy.ingest_live(ev["activation"])
                 self._count += len(events)
                 last = events[-1]
+                p = self.metric_prefix
                 self._metrics = {
-                    "engagement_live_reward": float(last["reward"]),
-                    "engagement_live_count": float(self._count),
-                    "engagement_live_energy": float(
-                        LIVE_ENGAGEMENT.snapshot()["energy"]
-                    ),
+                    f"{p}_live_reward": float(last["reward"]),
+                    f"{p}_live_count": float(self._count),
+                    f"{p}_live_energy": float(self.channel.snapshot()["energy"]),
                 }
 
         # Carry the latest live scalars forward each step (interactions are

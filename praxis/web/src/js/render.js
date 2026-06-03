@@ -127,7 +127,24 @@ function escapeNotification(str) {
  * messages in Evaluate mode. Only the active panel is shown.
  */
 function renderConversation() {
-    const readMode = state.conversationMode === 'read';
+    const mode = state.conversationMode;
+    const readMode = mode === 'read';
+
+    // Read / Evaluate / Print are discrete, mutually-exclusive modes: exactly one
+    // is highlighted, mirroring state.conversationMode onto the toolbar.
+    document.querySelectorAll(
+        '.tool-toggle[data-tool="read"], .tool-toggle[data-tool="evaluate"], .tool-toggle[data-tool="print"]'
+    ).forEach(btn => btn.classList.toggle('active', btn.dataset.tool === mode));
+    document.documentElement.toggleAttribute('data-eval', mode === 'evaluate');
+
+    // Loop is coupled to Print: locked (dimmed, inert) unless Print mode is
+    // active, and lit while a loop is running.
+    const loopBtn = document.querySelector('.tool-toggle[data-tool="loop"]');
+    if (loopBtn) {
+        loopBtn.classList.toggle('locked', mode !== 'print');
+        loopBtn.classList.toggle('active', state.loop.enabled);
+    }
+
     const results = document.getElementById('kb-results');
     const chat = document.getElementById('chat-container');
     if (results) results.hidden = !readMode;
@@ -148,26 +165,17 @@ function renderConversation() {
 }
 
 /**
- * The Print button is always present and always looks the same - it never greys
- * out and never auto-highlights when a question arrives. It's simply inert
- * (clicking does nothing) until the model has posed a question to answer; the
- * PRESENT_PRINT_QUESTION action guards on state.print.available.
+ * The Print button's highlight is driven by mode (renderConversation), like Read
+ * and Evaluate - it lights up only while Print mode is active. This handles just
+ * the live-energy badge, which appears once a real-user Print reward exists.
  */
 function renderPrintButton() {
-    const btn = document.querySelector('.tool-toggle[data-tool="print"]');
-    if (btn) {
-        // Defensive: ensure no stale conditional styling lingers across renders.
-        btn.classList.remove('inactive', 'available', 'active');
-    }
-
-    // Live-energy badge: appears once at least one real-user Print reward exists.
     const badge = document.getElementById('print-energy-badge');
-    if (badge) {
-        const snap = state.print.energy;
-        const live = snap && snap.count > 0;
-        badge.hidden = !live;
-        if (live) badge.textContent = `⚡ ${Number(snap.energy).toFixed(2)}`;
-    }
+    if (!badge) return;
+    const snap = state.print.energy;
+    const live = snap && snap.count > 0;
+    badge.hidden = !live;
+    if (live) badge.textContent = `⚡ ${Number(snap.energy).toFixed(2)}`;
 }
 
 /**

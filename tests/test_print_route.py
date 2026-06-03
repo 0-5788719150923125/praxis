@@ -103,3 +103,36 @@ def test_channel_buffers_for_trainer_drain():
     drained = LIVE_ENGAGEMENT.drain()
     assert drained and drained[-1]["recall"] == 1.0
     assert LIVE_ENGAGEMENT.snapshot()["buffered"] == 0
+
+
+def test_loop_approve_records_joke_reward():
+    from praxis.policies.engagement_channel import LIVE_JOKES
+
+    LIVE_JOKES.drain()
+    c = _client()
+    approve = c.post("/api/loop/approve", json={"score": 1.0}).get_json()
+    assert approve["status"] == "ok"
+    assert approve["activation"] == 1.0
+    reject = c.post("/api/loop/approve", json={"approve": False}).get_json()
+    assert reject["activation"] == 0.0
+    assert c.get("/api/loop/energy").get_json()["count"] >= 2
+    # Both events buffered for the joke drain callback.
+    assert len(LIVE_JOKES.drain()) >= 2
+
+
+def test_format_joke_quality_filters():
+    from praxis.data.formatters import format_joke
+
+    keys = ["jokeText", "rating"]
+    good = format_joke({"jokeText": "knock knock", "rating": 5.0}, keys, None)
+    assert [m["role"] for m in good["messages"]] == [
+        "system",
+        "developer",
+        "user",
+        "assistant",
+    ]
+    assert good["messages"][-1]["content"] == "knock knock"
+    # Below-median (disliked) jokes are skipped (empty -> sampler retries).
+    assert (
+        format_joke({"jokeText": "bad", "rating": -2.0}, keys, None)["messages"] == []
+    )

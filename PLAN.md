@@ -220,6 +220,45 @@ Each format: `(id, question_template, expected_answer_tokens, prefix_pool)`.
   anxiety-inducing, or content-free attention-bait questions), stop. The whole
   design exists to avoid that.
 
+## 7b. Loop / jokes: the second RL interface
+
+A sibling to Print. Where Print is "model leads with a question, user answers",
+Loop is "user sets one task, model re-rolls it forever, user approves". Two RL
+interfaces for chatting to baby models; the model seeks our approval.
+
+- **UI (DONE).** The Gymnasium `Loop` button is coupled to Print: enable-able only
+  from Print mode (`locked`/dimmed otherwise). Toggling it on seeds `< joke` in the
+  input and runs a 60s response-replacement loop - each cycle is an independent
+  challenge (`sendMessage([{user: task}])`), the chat holds just that challenge +
+  its latest answer, and the model re-rolls until the user intervenes (edit the
+  task, Enter to re-roll now, or toggle Loop off). Leaving Print stops the loop.
+  See `state.loop`, `TOGGLE_LOOP`, `startLoop/stopLoop/runLoopCycle/rerollLoopNow`
+  in `main.js`.
+- **Data (DONE, inert).** `DATASETS["rated-jokes"]` =
+  `SeppeV/rated_jokes_dataset_from_jester` (1.76M rows). `jokeText` = the joke,
+  `joke_reasoning_steps_llama70b` = thinking steps, `rating` (or `Z_rating`) = the
+  quality score = the **dense RL signal**. Loaded as plain joke text for now.
+- **RL (DONE).** `JokePolicy(EngagementPolicy)` (`prefix="joke"`), registered
+  `RL_POLICIES_REGISTRY["joke"]` - same recall-over-assistant-region machinery,
+  joke-namespaced metrics. Dense grounding = quality-filtered jokes (`format_joke`
+  skips below-median `rating`). Live channel = `LIVE_JOKES` (a second
+  `LiveEngagementChannel`, with `submit_scalar` for thumbs-up=1.0/down=0.0); web
+  `/api/loop/approve` + `/api/loop/energy`; the generalized
+  `EngagementLiveRewardCallback(channel, policy_class_name, metric_prefix)` drains
+  it into `JokePolicy.energy`. UI: 👍/👎 controls on each looped joke
+  (`jokeApproval` on the message, `APPROVE_JOKE` action) - even gibberish is
+  votable - submit then re-roll. Metrics `joke_*` and `joke_live_*` registered.
+- **Two forward policies coexist.** modeling now holds recall-style forward
+  policies (engagement, joke) in `self.recall_policies` (nn.ModuleDict) and runs
+  each per batch; the single `self.policy` is reserved for the non-recall
+  forward policies (reinforce/grpo/cot). calm-c =
+  `rl_type: [engagement, joke, harmonic_weight_wave]`,
+  `train_datasets: [focused, print, joke]`.
+- **Caveat (same as Print P3):** dense reward is teacher-forced recall of the
+  rated joke, not sampled-generation quality; the real quality signal is the live
+  human approval. Reward-hacking watch: recall-REINFORCE can reward verbatim
+  reproduction - the live approval is the corrective.
+
 ## 8. Existing code to reuse (navigation for the fresh session)
 
 - REINFORCE + reward-EMA + horizon credit: `praxis/policies/harmonic_weight_rl.py`,

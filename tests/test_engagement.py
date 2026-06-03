@@ -151,3 +151,48 @@ class TestLiveDrainCallback:
         cb.on_train_batch_end(trainer, pl, None, None, 1)  # step 2: no drain
         cb.on_train_batch_end(trainer, pl, None, None, 2)  # step 3: drains
         assert policy.energy.value > 0.0
+
+
+class TestJokePolicy:
+    """JokePolicy reuses EngagementPolicy's machinery under the joke namespace."""
+
+    def test_emits_joke_namespaced_metrics(self):
+        from praxis.policies import JokePolicy
+
+        policy = JokePolicy(PraxisConfig(hidden_size=32, dropout=0.0))
+        policy.train()
+        b, t, v = 3, 8, 40
+        logits = torch.randn(b, t, v, requires_grad=True)
+        labels = torch.randint(0, v, (b, t))
+        loss, metrics = policy(
+            logits=logits, labels=labels, assistant_mask=torch.ones(b, t)
+        )
+        assert loss is not None and torch.isfinite(loss)
+        assert set(metrics) == {
+            "joke_energy",
+            "joke_activation_rate",
+            "joke_recall",
+            "joke_advantage",
+        }
+
+    def test_live_approval_channel_drains_into_joke_policy(self):
+        import types
+
+        from praxis.callbacks.lightning import EngagementLiveRewardCallback
+        from praxis.policies import JokePolicy
+        from praxis.policies.engagement_channel import LIVE_JOKES
+
+        LIVE_JOKES.drain()
+        policy = JokePolicy(PraxisConfig(hidden_size=32, dropout=0.0))
+        pl = types.SimpleNamespace(model=types.SimpleNamespace(policy=policy))
+        trainer = types.SimpleNamespace(callback_metrics={})
+        cb = EngagementLiveRewardCallback(
+            period=1,
+            channel=LIVE_JOKES,
+            policy_class_name="JokePolicy",
+            metric_prefix="joke",
+        )
+        LIVE_JOKES.submit_scalar(1.0)  # a human approved a joke
+        cb.on_train_batch_end(trainer, pl, None, None, 0)
+        assert policy.energy.value > 0.0
+        assert trainer.callback_metrics["joke_live_count"].item() == 1.0

@@ -132,6 +132,7 @@ class KBIndex:
         hits = []
         for row in self._conn.execute(sql, params):
             id_, type_, label, title, body, uri, meta = row
+            decoded = _decode_meta(meta)
             hits.append(
                 KBHit(
                     item=KBItem(
@@ -141,10 +142,12 @@ class KBIndex:
                         title=title,
                         body=body,
                         uri=uri,
-                        meta=_decode_meta(meta),
+                        meta=decoded,
                     ),
                     score=0.0,
-                    snippet="",
+                    # No FTS match in the recent feed, so use a source-provided
+                    # one-liner (e.g. a run's module summary) as the subtitle.
+                    snippet=decoded.get("summary", ""),
                 )
             )
         return hits

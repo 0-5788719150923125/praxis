@@ -444,6 +444,71 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
             "is_validation": False,
         },
     },
+    # Joke task (rl_type=joke): same recall machinery as engagement, dense
+    # grounding from well-rated jokes, live signal from human approval (Loop UI).
+    "joke_energy": {
+        "description": (
+            "Homeostatic energy of the joke policy - climbs as the model "
+            "reproduces well-rated jokes and earns live human approval."
+        ),
+        "chart": {
+            "title": "Joke Energy",
+            "y_label": "energy",
+            "y_scale": "linear",
+            "order": 400,
+            "is_validation": False,
+        },
+    },
+    "joke_recall": {
+        "description": "Recall over joke tokens - how well the model reproduces the rated joke.",
+        "chart": {
+            "title": "Joke Recall",
+            "y_label": "recall",
+            "y_scale": "linear",
+            "order": 410,
+            "is_validation": False,
+        },
+    },
+    "joke_advantage": {
+        "description": "reward - energy baseline for the joke policy (signed REINFORCE signal).",
+        "chart": {
+            "title": "Joke Advantage",
+            "y_label": "advantage",
+            "y_scale": "linear",
+            "order": 420,
+            "is_validation": False,
+        },
+    },
+    "joke_live_reward": {
+        "description": "Most recent live human approval of a model-generated joke (Loop UI).",
+        "chart": {
+            "title": "Joke Live Approval",
+            "y_label": "approval",
+            "y_scale": "linear",
+            "order": 430,
+            "is_validation": False,
+        },
+    },
+    "joke_live_count": {
+        "description": "Cumulative live joke approvals consumed by training.",
+        "chart": {
+            "title": "Joke Live Interactions",
+            "y_label": "count",
+            "y_scale": "linear",
+            "order": 440,
+            "is_validation": False,
+        },
+    },
+    "joke_live_energy": {
+        "description": "Homeostatic energy of the live joke-approval channel.",
+        "chart": {
+            "title": "Joke Live Energy",
+            "y_label": "energy",
+            "y_scale": "linear",
+            "order": 450,
+            "is_validation": False,
+        },
+    },
 }
 
 

@@ -35,6 +35,20 @@ class LiveEngagementChannel:
             self._last = event
         return event
 
+    def submit_scalar(self, activation, recall=None) -> dict:
+        """Fold a direct approval score in [0,1] (e.g. a joke thumbs-up=1.0 /
+        thumbs-down=0.0) into the energy and buffer it. Like ``submit`` but the
+        score is given outright rather than computed from token overlap."""
+        a = max(0.0, min(1.0, float(activation)))
+        r = a if recall is None else max(0.0, min(1.0, float(recall)))
+        with self._lock:
+            energy = self._energy.update(a)
+            event = {"activation": a, "recall": r, "reward": r, "energy": energy}
+            self._buffer.append(event)
+            self._count += 1
+            self._last = event
+        return event
+
     def snapshot(self) -> dict:
         with self._lock:
             return {
@@ -52,5 +66,7 @@ class LiveEngagementChannel:
             return items
 
 
-# The single shared channel. Import this, don't instantiate your own.
+# Shared process-global channels. Import these, don't instantiate your own.
+# LIVE_ENGAGEMENT: Print question/answer recall. LIVE_JOKES: joke approvals.
 LIVE_ENGAGEMENT = LiveEngagementChannel()
+LIVE_JOKES = LiveEngagementChannel()

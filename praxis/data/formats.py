@@ -17,6 +17,7 @@ class DataFormat(Enum):
     RL = "rl"  # Reinforcement learning format
     COT = "cot"  # Chain-of-thought format
     TOOL_CALLING = "tool_calling"  # Tool calling format
+    JOKE = "joke"  # Quality-filtered joke imitation (rated-jokes dataset)
 
 
 def detect_format(dataset_name: str, dataset_config: dict) -> DataFormat:
