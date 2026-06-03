@@ -325,10 +325,9 @@ function renderSpec(data, container) {
                 ? '<button class="spec-copy-btn" type="button" aria-label="Copy to clipboard">Copy</button>'
                 : '';
             return `<div class="chart-card${sheet.copyable ? ' has-copy' : ''}">
-                ${copyBtn}
                 <div class="chart-title">${sheet.title}</div>
                 <div class="chart-subtitle">${sheet.subtitle}</div>
-                <div class="deck-card-scroll">${inner}</div>
+                <div class="deck-card-scroll">${copyBtn}${inner}</div>
             </div>`;
         })
         .filter(Boolean)

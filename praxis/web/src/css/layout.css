@@ -77,8 +77,24 @@
     color: var(--text);
 }
 
-/* Conditional buttons (e.g. Print) stay fully removed until their state flips. */
-.tool-toggle[hidden] {
+/* The Print button is always present and looks identical to its siblings - it is
+   inert (clicking is a no-op) until the model has a question, never greyed or
+   auto-highlighted. So no conditional styling here by design. */
+
+/* Live engagement-energy badge: pushed to the toolbar's right edge, accent-tinted. */
+.print-energy-badge {
+    margin-left: auto;
+    align-self: center;
+    font-size: 0.72rem;
+    font-weight: bold;
+    letter-spacing: 0.03em;
+    color: var(--accent);
+    padding: 0.25rem 0.5rem;
+    border-radius: var(--radius-small);
+    background: hsl(var(--accent-hue) var(--accent-sat) var(--accent-lum) / 0.12);
+}
+
+.print-energy-badge[hidden] {
     display: none;
 }
 

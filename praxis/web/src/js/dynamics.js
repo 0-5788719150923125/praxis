@@ -7,6 +7,7 @@ import { state, CONSTANTS, chartLineColor } from './state.js';
 import { fetchAPI } from './api.js';
 import { createTabHeader } from './components.js';
 import { formatRelativeTime, initChartDeck, applyChartTheme } from './charts.js';
+import { sampleColormap } from './colormaps.js';
 
 // Chart instances
 export const dynamicsCharts = {};
@@ -947,18 +948,6 @@ function createTaskWeightsChart(canvasId, dynamics, keys) {
 // ─── Harmonic head diagnostics (conditional) ────────────────────────────────
 
 /**
- * Magma-ish gradient: black -> purple -> red -> yellow. Cheap colormap that
- * reads well in both themes without depending on a JS color library.
- */
-function magma(t) {
-    t = Math.max(0, Math.min(1, t));
-    const r = Math.round(255 * Math.pow(t, 0.5));
-    const g = Math.round(255 * Math.pow(Math.max(0, t - 0.3) / 0.7, 1.4));
-    const b = Math.round(255 * (0.4 * (1 - Math.abs(t - 0.5) * 2)));
-    return [r, g, Math.max(0, b)];
-}
-
-/**
  * Generic 2D heatmap renderer for non-scalar snapshots.
  *
  * Payload contract: ``data.grid`` is a 2D array (rows x cols of numbers),
@@ -1000,7 +989,7 @@ function renderHeatmap2D(canvas, data, options = {}) {
         const row = grid[i];
         for (let j = 0; j < cols; j++) {
             const v = scaleFn(row[j]) / peakScaled;
-            const [r, g, b] = magma(v);
+            const [r, g, b] = sampleColormap('praxis_heat', v);
             const idx = (i * cols + j) * 4;
             img.data[idx] = r;
             img.data[idx + 1] = g;

@@ -1,0 +1,21 @@
+# Gated on a CALM (continuous-latent) encoder - the harmonic latent space the
+# "operative seed" argument depends on.
+section: harmonic
+order: 30
+requires:
+  encoder_type: [calm*]
+body: >
+  \subsection{The seed dissolves}
+
+  Reproducibility in this regime is no longer an integer. \texttt{seed=42} fixes
+  the random number stream that initializes weights and orders data; it does not
+  fix what the trained model \textit{is}. In a harmonic latent space the operative
+  ``seed'' is the learned field encoded in the weights after training - the frozen
+  phase relationships and the spectrum the amplitudes settled into. Reproducibility
+  becomes a question of which latent dimensions are deterministic (the harmonic
+  structure, fixed by the frozen Weyl phases and the converged spectrum) versus
+  stochastic (the variance envelope, set by temperature and the input-conditional
+  delta). The seed is a property of the trained model, not an argument you pass in.
+  This is uncomfortable for a culture that audits randomness by pinning an integer,
+  and it is the honest situation once the determinism lives in geometry rather than
+  in a stream.

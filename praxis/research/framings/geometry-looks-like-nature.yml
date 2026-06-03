@@ -1,0 +1,28 @@
+# Gated on a crystal-bearing head. prismatic and crystal_harmonic both compose
+# crystal centers, so they count alongside the plain crystal head.
+section: harmonic
+order: 20
+requires:
+  head_type: [crystal, crystal_harmonic, prismatic]
+body: >
+  \subsection{Geometry that looks like nature is convergence, not hallucination}
+
+  The crystal head~\cite{harmonicloss2025} replaces the usual dot-product logits
+  with distances to a set of learnable class centers, so its decision surface is
+  geometric rather than linear. Two things follow that are relevant here. First,
+  the centers provably converge toward class means, and in practice they spread
+  into a ``sun-like'' arrangement when the exponent is set near $\sqrt{D}$ rather
+  than collapsing to a near-one-hot code. Second, when you project the learned
+  latents or centers with PCA, the result is not noise: runs produce recognizable
+  shapes - spines, lobes, branching forms. It is tempting to call this pareidolia,
+  the mind imposing pattern on randomness. We argue the opposite. Harmonic
+  organization produces the same geometric signatures that natural growth
+  processes produce, because both are governed by superposed periodic structure
+  under smoothness constraints. Different runs land on structurally different
+  geometries because the bias-variance-structure space is rich enough to support
+  many valid solutions, the way the same physics grows many different but
+  recognizable trees. The shapes are convergence, not confabulation, and the same
+  latent space can be coupled directly to a discrete classifier by composing the
+  harmonic field with the crystal centers, so that rhythm feeds geometry.
+
+  \paperGeometryFigure

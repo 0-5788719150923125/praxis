@@ -129,23 +129,28 @@ model's question as an assistant turn - the model leads), and `handlePrintRespon
 (captures the next user message as the answer, shows the reward). Built via
 `praxis/web/src/build.py`. Route + channel tested in `tests/test_print_route.py`.
 
-**P5 - Live online reward channel (the real engineering). [HOOK IN PLACE]**
+**P5 - Live online reward channel (the real engineering). [DONE]**
 `praxis/policies/engagement_channel.py`: `LIVE_ENGAGEMENT`, a thread-safe
 process-global channel. The web `respond` route calls `.submit(predicted, response)`
--> folds into a live `HomeostaticEnergy` and buffers the reward; the training side
-will `.drain()` it into the RL controller. STILL TODO: the trainer-side drain (a
-callback that pulls buffered live rewards on its own cadence and applies them to
-the EngagementPolicy, the way the harmonic-weight callback integrates a delayed EMA
-return) and a dashboard energy badge. The decoupling/buffer exists; the consumer
-loop does not yet.
+-> folds into a live `HomeostaticEnergy` and buffers the reward. The trainer-side
+consumer is `praxis/callbacks/lightning/engagement_live.py`
+(`EngagementLiveRewardCallback`): every `period` train steps it `.drain()`s the
+buffer and folds each live activation into the EngagementPolicy's energy baseline
+(`EngagementPolicy.ingest_live`) - the slow integrated online return. Auto-added in
+`callbacks/builder.py` whenever `engagement` is in `rl_type`, ordered before
+MetricsLogger. Emits `engagement_live_reward/count/energy`. Dashboard energy badge:
+the Gymnasium toolbar shows a live `⚡ <energy>` badge fed by `/api/print/energy`
+(polled in `setupPrintHook`, rendered by `renderPrintButton`), visible once any
+real-user reward exists. Tested in `tests/test_engagement.py::TestLiveDrainCallback`.
 
 **P6 - Metrics + eval. [PARTIAL]** Research-tab charts registered in
-`praxis/metrics/training_metrics.py`: `engagement_energy`,
+`praxis/metrics/training_metrics.py`: dense `engagement_energy`,
 `engagement_activation_rate`, `engagement_recall`, `engagement_advantage` (orders
-300-330). They flow `EngagementPolicy._metrics -> model._engagement_metrics ->
-model.get_metrics() -> MetricsLogger -> /api/metrics -> registry-driven charts`
-(no JS edits). STILL TODO: a `BrierLM`-style offline eval of question-posing, and a
-satiation-level card if wanted.
+300-330) plus live `engagement_live_reward`, `engagement_live_count`,
+`engagement_live_energy` (orders 340-360). Dense flow `EngagementPolicy._metrics ->
+model._engagement_metrics -> model.get_metrics() -> MetricsLogger -> charts`; live
+flow via the drain callback's `trainer.callback_metrics`. No JS edits. STILL TODO:
+a `BrierLM`-style offline eval of question-posing (the only remaining nice-to-have).
 
 ## 4. Reward math
 

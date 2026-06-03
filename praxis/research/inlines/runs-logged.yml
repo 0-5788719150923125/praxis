@@ -1,0 +1,7 @@
+# Replaces the framework section's run-count claim with the actual number of
+# recorded runs. Always present while any run exists; the fallback covers a
+# fresh checkout with an empty build/runs.
+macro: paperRunsLogged
+provider: run_count
+format: "{value}"
+fallback: "Thousands of"

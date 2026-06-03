@@ -51,7 +51,9 @@ class EngagementLiveRewardCallback(Callback):
                 self._metrics = {
                     "engagement_live_reward": float(last["reward"]),
                     "engagement_live_count": float(self._count),
-                    "engagement_live_energy": float(LIVE_ENGAGEMENT.snapshot()["energy"]),
+                    "engagement_live_energy": float(
+                        LIVE_ENGAGEMENT.snapshot()["energy"]
+                    ),
                 }
 
         # Carry the latest live scalars forward each step (interactions are

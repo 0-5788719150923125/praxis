@@ -3,7 +3,7 @@
 
 Reinforcement-learning policy losses (REINFORCE, GRPO, ...) for post-training.
 
-Registry: ``praxis.RL_POLICIES_REGISTRY`` (4 entries)
+Registry: ``praxis.RL_POLICIES_REGISTRY`` (5 entries)
 
 ## `cot` - ChainOfThought
 
@@ -20,6 +20,25 @@ Key features:
 - Can be extended with REINFORCE for more complex scenarios
 
 Source: [praxis/policies/cot.py:26](../praxis/policies/cot.py#L26)
+
+## `engagement` - EngagementPolicy
+
+Base class for all neural network modules.
+
+Your models should also subclass this class.
+
+Modules can also contain other Modules, allowing them to be nested in a tree structure.
+You can assign the submodules as regular attributes::
+
+import torch.nn as nn     import torch.nn.functional as F
+
+class Model(nn.Module):         def __init__(self) -> None:
+super().__init__()             self.conv1 = nn.Conv2d(1, 20, 5)             self.conv2 =
+nn.Conv2d(20, 20, 5)
+
+def ...
+
+Source: [praxis/policies/engagement.py:25](../praxis/policies/engagement.py#L25)
 
 ## `grpo` - GRPO
 

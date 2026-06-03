@@ -116,3 +116,38 @@ def test_engagement_needs_no_rl_datasets():
     assert needs_rl_datasets("engagement") is False
     # Coexists with a weight controller; neither pulls the RL collection.
     assert needs_rl_datasets("harmonic_weight_wave") is False
+
+
+class TestLiveDrainCallback:
+    """The training-loop seam: live web rewards -> policy energy baseline."""
+
+    def _setup(self, period=1):
+        import types
+
+        from praxis.callbacks.lightning import EngagementLiveRewardCallback
+        from praxis.policies.engagement_channel import LIVE_ENGAGEMENT
+
+        LIVE_ENGAGEMENT.drain()  # start clean
+        policy = EngagementPolicy(PraxisConfig(hidden_size=32, dropout=0.0))
+        pl = types.SimpleNamespace(model=types.SimpleNamespace(policy=policy))
+        trainer = types.SimpleNamespace(callback_metrics={})
+        cb = EngagementLiveRewardCallback(period=period)
+        return cb, trainer, pl, policy, LIVE_ENGAGEMENT
+
+    def test_drain_folds_live_reward_into_energy(self):
+        cb, trainer, pl, policy, channel = self._setup(period=1)
+        assert policy.energy.value == 0.0
+        channel.submit(["paris"], ["i", "think", "paris"])  # activation 1.0
+        cb.on_train_batch_end(trainer, pl, None, None, 0)
+        assert policy.energy.value > 0.0
+        assert trainer.callback_metrics["engagement_live_count"].item() == 1.0
+        assert channel.snapshot()["buffered"] == 0  # drained
+
+    def test_respects_period(self):
+        cb, trainer, pl, policy, channel = self._setup(period=3)
+        channel.submit(["paris"], ["paris"])
+        cb.on_train_batch_end(trainer, pl, None, None, 0)  # step 1: no drain
+        assert policy.energy.value == 0.0
+        cb.on_train_batch_end(trainer, pl, None, None, 1)  # step 2: no drain
+        cb.on_train_batch_end(trainer, pl, None, None, 2)  # step 3: drains
+        assert policy.energy.value > 0.0

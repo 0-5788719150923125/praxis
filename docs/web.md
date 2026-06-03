@@ -66,6 +66,13 @@ Introspected from the live Flask app at every launch. Each summary is the first 
 - **GET** `/api/metrics` - Get training metrics with LTTB downsampling and caching. ([source](../praxis/web/routes/metrics.py#L51))
 - **GET** `/api/runs` - Get list of available training runs. ([source](../praxis/web/routes/metrics.py#L441))
 
+### Print
+
+- **POST** `/api/print/ask` - Ask the model to lead with a question; stash its predicted answer and expose the question. Idempotent while one is already pending. ([source](../praxis/web/routes/print.py#L44))
+- **GET** `/api/print/energy` - Live engagement energy snapshot (for a dashboard badge). ([source](../praxis/web/routes/print.py#L154))
+- **GET** `/api/print/pending` - The currently presentable question, if any (no generation). ([source](../praxis/web/routes/print.py#L110))
+- **POST** `/api/print/respond` - Score the user's response against the model's stashed predicted answer, fold it into the live engagement energy, and clear the slot. ([source](../praxis/web/routes/print.py#L125))
+
 
 ## Sending prompts
 

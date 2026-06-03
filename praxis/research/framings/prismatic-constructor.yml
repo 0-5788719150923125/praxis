@@ -1,0 +1,21 @@
+# Gated on the prismatic (dual-field) head - the mechanism that realizes the
+# two-stream "attention as a constructor" argument in this codebase.
+section: constructor
+order: 20
+requires:
+  head_type: [prismatic]
+body: >
+  Praxis implements this literally with prismatic attention: two streams, two
+  embedding modules, processing the same sequence under different positional
+  geometries (for instance ALiBi and RoPE). One stream tends to memorize patterns
+  quickly but without semantic integration - a blind watchmaker, wielding its
+  tools competently while understanding nothing of what it builds~\cite{dawkins1986}
+  - while the other accumulates contextual coherence more slowly. This is the
+  dual-stream asymmetry earlier drafts of this paper tried to illustrate with a
+  hand-measured plot of human pattern recognition. That figure is removed. It
+  dressed home measurements as architectural evidence, and the asymmetry it
+  gestured at is exactly the linear-versus-logarithmic conjecture of
+  Section~\ref{sec:scaling}: one stream acquiring coverage at a sub-linear rate,
+  the other linearly, both converging on the same shared pattern space. Stated
+  that way it is measurable in silico - as the acquisition curves of the two
+  streams over training - which is where the claim belongs.

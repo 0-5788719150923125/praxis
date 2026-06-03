@@ -64,10 +64,47 @@ def build_css():
     print(f"  ✓ Built styles.css ({size_kb:.1f}KB)")
 
 
+def build_colormaps():
+    """Generate static/js/colormaps.js from the shared colormaps.json.
+
+    The JSON is the single source of truth (the research-paper figures read it
+    too), so the dashboard and the printed PDF share one ramp. Emitted as an ES
+    module: the stops plus a linear ``sampleColormap(name, t) -> [r,g,b]``.
+    """
+    import json
+
+    spec_path = SRC_DIR / "colormaps.json"
+    spec = {k: v for k, v in json.loads(spec_path.read_text()).items()
+            if not k.startswith("_")}
+    stops = {name: cm["stops"] for name, cm in spec.items()}
+
+    out = STATIC_DIR / "js" / "colormaps.js"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        "// Auto-generated from praxis/web/src/colormaps.json - do not edit.\n"
+        f"export const COLORMAP_STOPS = {json.dumps(stops)};\n\n"
+        "export function sampleColormap(name, t) {\n"
+        "    const stops = COLORMAP_STOPS[name];\n"
+        "    t = Math.max(0, Math.min(1, t));\n"
+        "    for (let i = 1; i < stops.length; i++) {\n"
+        "        const [p1, c1] = stops[i], [p0, c0] = stops[i - 1];\n"
+        "        if (t <= p1) {\n"
+        "            const f = p1 === p0 ? 0 : (t - p0) / (p1 - p0);\n"
+        "            return c0.map((c, k) => Math.round(c + (c1[k] - c) * f));\n"
+        "        }\n"
+        "    }\n"
+        "    return stops[stops.length - 1][1].slice();\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    print(f"  ✓ Generated colormaps.js ({', '.join(stops)})")
+
+
 def build_dev():
     """Build the frontend: copy JS modules + concatenate CSS."""
     print("🔨 Building frontend (ES6 modules)...")
     build_js()
+    build_colormaps()
     build_css()
     print("✨ Build complete.\n")
 

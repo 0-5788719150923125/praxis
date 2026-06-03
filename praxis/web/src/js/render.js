@@ -148,15 +148,26 @@ function renderConversation() {
 }
 
 /**
- * The Print button is conditional: it only appears once the model has produced a
- * self-led question (available), and stays lit while the user answers it.
+ * The Print button is always present and always looks the same - it never greys
+ * out and never auto-highlights when a question arrives. It's simply inert
+ * (clicking does nothing) until the model has posed a question to answer; the
+ * PRESENT_PRINT_QUESTION action guards on state.print.available.
  */
 function renderPrintButton() {
     const btn = document.querySelector('.tool-toggle[data-tool="print"]');
-    if (!btn) return;
-    const show = state.print.available || state.print.awaitingResponse;
-    btn.hidden = !show;
-    btn.classList.toggle('active', state.print.awaitingResponse);
+    if (btn) {
+        // Defensive: ensure no stale conditional styling lingers across renders.
+        btn.classList.remove('inactive', 'available', 'active');
+    }
+
+    // Live-energy badge: appears once at least one real-user Print reward exists.
+    const badge = document.getElementById('print-energy-badge');
+    if (badge) {
+        const snap = state.print.energy;
+        const live = snap && snap.count > 0;
+        badge.hidden = !live;
+        if (live) badge.textContent = `⚡ ${Number(snap.energy).toFixed(2)}`;
+    }
 }
 
 /**

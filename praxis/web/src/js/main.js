@@ -6,7 +6,7 @@
 
 import { state, CONSTANTS, DEFAULT_SYSTEM_PROMPT } from './state.js';
 import { render, renderAppStructure, updateInputContainerStyling } from './render.js';
-import { sendMessage, kbSearch, testApiConnection, printAsk, printRespond } from './api.js';
+import { sendMessage, kbSearch, testApiConnection, printAsk, printRespond, printEnergy } from './api.js';
 import { connectMetricsLive, setupLiveReload, renderCurrentMetrics } from './websocket.js';
 import { loadSpec, loadAgents, loadResearchMetrics } from './tabs.js';
 import { setupTabCarousel, setupTabSwipe } from './mobile.js';
@@ -611,6 +611,15 @@ let printHookTimer = null;
 function setupPrintHook() {
     const POLL_MS = 15000;
     const tick = async () => {
+        // Refresh the live-energy badge regardless of question state.
+        try {
+            const snap = await printEnergy();
+            if (snap && typeof snap.energy === 'number') {
+                state.print.energy = snap;
+                render();
+            }
+        } catch (e) { /* backend not ready */ }
+
         if (state.print.available || state.print.awaitingResponse || state.isThinking) return;
         try {
             const res = await printAsk();
