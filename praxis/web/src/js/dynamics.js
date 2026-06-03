@@ -1618,23 +1618,19 @@ function renderHarmonicStrands(canvas, data) {
     if (N < 2) return;
 
     const ctx = canvas.getContext('2d');
-    const TILT = 26 * Math.PI / 180, HEIGHT = 2.4, SLICES = 7;
+    const TILT = 26 * Math.PI / 180, HEIGHT = 2.4, STEPS = 36, TWIST = Math.PI * 1.25;
     let frame = 0, cachedTheme = null, accent = 'rgb(216, 84, 30)';
 
-    // Per-particle ring (bias phase) and plane (bias-x, variance-y) layouts.
+    // Per-feature: ring radius (from bias energy) + its point on the (bias,
+    // variance) plane. The strand sweeps continuously between them up the axis.
     let bmax = 1e-6;
     for (let i = 0; i < N; i++) bmax = Math.max(bmax, bias[i]);
-    const ring = [], plane = [], isVar = [];
+    const rad = [], plane = [], isVar = [];
     for (let i = 0; i < N; i++) {
-        const rb = Math.sqrt(Math.max(bias[i], 0) / bmax);
-        const rv = Math.sqrt(Math.max(vr[i], 0) / bmax);
-        ring.push([rb * Math.cos(angle[i]), rb * Math.sin(angle[i])]);
-        plane.push([rb * 2 - 1, rv * 2 - 1]);  // x=bias, y=variance, in [-1,1]
+        rad.push(Math.sqrt(Math.max(bias[i], 0) / bmax));
+        plane.push([rad[i] * 2 - 1, Math.sqrt(Math.max(vr[i], 0) / bmax) * 2 - 1]);
         isVar.push(vr[i] > bias[i]);
     }
-    // Feature order around the ring, so connecting them traces one smooth wave
-    // rather than a scatter of points.
-    const ord = [...Array(N).keys()].sort((a, b) => angle[a] - angle[b]);
 
     const draw = () => {
         if (!canvas.isConnected) { canvas._strandsRAF = null; return; }
@@ -1659,34 +1655,36 @@ function renderHarmonicStrands(canvas, data) {
             return { sx: cx + Xs * scale, sy: cy - (Z * cosE - Ys * sinE) * scale, depth: Ys * cosE + Z * sinE };
         };
 
-        // A stack of smooth closed waves, one per axial slice: each is the field
-        // read around the ring, morphing from the bias circle (z=0) to the
-        // bias/variance plane (z=1). Each segment is colored by which energy wins
-        // at that feature, so the wave splits into bias arcs (cool) and variance
-        // arcs (accent) - the bias/variance boundary runs along the wave itself.
+        // Longitudinal strands: one continuous curve per feature, sweeping up the
+        // cylinder from the bias phase-ring (bottom) to its (bias, variance) point
+        // on the plane (top), with a helical twist - a full continuous warp in X,
+        // Y and Z, not stacked rings. Colored by which energy dominates, so the
+        // bias and variance strands separate to either side as they climb.
         const biasColor = state.theme === 'dark' ? 'rgba(150,180,255,0.95)' : 'rgba(60,90,180,0.9)';
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = 1.3;
         ctx.lineJoin = 'round';
-        for (let s = 0; s < SLICES; s++) {
-            const z = s / (SLICES - 1);
-            const pts = ord.map((i) => {
-                const x = ring[i][0] * (1 - z) + plane[i][0] * z;
-                const y = ring[i][1] * (1 - z) + plane[i][1] * z;
-                const p = project(x, y, z);
-                return { sx: p.sx, sy: p.sy, depth: p.depth, v: isVar[i] };
-            });
-            const n = pts.length;
-            for (let i = 0; i < n; i++) {
-                const a = pts[i], pr = pts[(i - 1 + n) % n], nx = pts[(i + 1) % n];
-                const m0x = (pr.sx + a.sx) / 2, m0y = (pr.sy + a.sy) / 2;
-                const m1x = (a.sx + nx.sx) / 2, m1y = (a.sy + nx.sy) / 2;
-                ctx.globalAlpha = (0.1 + 0.5 * ((a.depth + 1.5) / 3)) * (0.45 + 0.55 * z);
-                ctx.strokeStyle = a.v ? accent : biasColor;
-                ctx.beginPath();
-                ctx.moveTo(m0x, m0y);
-                ctx.quadraticCurveTo(a.sx, a.sy, m1x, m1y);  // smooth wave through the feature
-                ctx.stroke();
+        const strands = [];
+        for (let i = 0; i < N; i++) {
+            const pts = [];
+            let dsum = 0;
+            for (let s = 0; s <= STEPS; s++) {
+                const z = s / STEPS;
+                const th = angle[i] + z * TWIST;  // helical twist up the axis
+                const rx = rad[i] * Math.cos(th), ry = rad[i] * Math.sin(th);
+                const p = project(rx * (1 - z) + plane[i][0] * z, ry * (1 - z) + plane[i][1] * z, z);
+                pts.push(p);
+                dsum += p.depth;
             }
+            strands.push({ pts, depth: dsum / pts.length, v: isVar[i] });
+        }
+        strands.sort((a, b) => a.depth - b.depth);  // back-to-front
+        for (const st of strands) {
+            ctx.globalAlpha = 0.15 + 0.5 * ((st.depth + 1.5) / 3);
+            ctx.strokeStyle = st.v ? accent : biasColor;
+            ctx.beginPath();
+            ctx.moveTo(st.pts[0].sx, st.pts[0].sy);
+            for (let s = 1; s < st.pts.length; s++) ctx.lineTo(st.pts[s].sx, st.pts[s].sy);
+            ctx.stroke();
         }
         ctx.globalAlpha = 1;
 
