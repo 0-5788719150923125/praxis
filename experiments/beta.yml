@@ -34,3 +34,10 @@ loss_func: cross_entropy
 head_type: prismatic
 encoding: arc
 tie_weights: true
+# Bring the remote-expert pool online (praxis.orchestration). The "swarm"
+# profile spawns a Node sidecar of 4 tiny experts at boot, joinable from the web
+# Stage tab, and votes through them (CALM-style expert vote, matching calm's
+# patch-vote decoding) - reporting live capacity + a growing remote_layers count
+# on both dashboards. Detached, layer-wise (Mono-Forward) updates, so a slow peer
+# never blocks training.
+orchestration_type: swarm
