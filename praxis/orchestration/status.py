@@ -11,12 +11,14 @@ omit the capacity line.
 from __future__ import annotations
 
 import threading
-from typing import Any, Dict, Optional
+from collections import deque
+from typing import Any, Dict, List, Optional
 
 _lock = threading.Lock()
 _status: Dict[str, Any] = {}
 _experts: list = []
 _metrics: Dict[str, Any] = {}  # sampled pool-wide training metrics
+_loss_history: deque = deque(maxlen=50)  # sampled mean expert loss over time
 _pool = None  # the live ExpertPool, registered by ExpertPoolCallback
 _batch: Optional[Dict[str, Any]] = None  # latest real batch for browser agents
 _batch_seq = 0  # monotonic id so streamers/clients can skip already-seen batches
@@ -39,15 +41,25 @@ def latest_batch() -> Optional[Dict[str, Any]]:
 
 
 def publish_metrics(metrics: Dict[str, Any]) -> None:
-    """Set the latest sampled pool-wide training metrics (loss/acc mean+spread)."""
+    """Set the latest sampled pool-wide training metrics (loss/acc mean+spread)
+    and append the mean loss to the rolling history (for the dashboard sparkline)."""
     global _metrics
     with _lock:
         _metrics = dict(metrics)
+        loss = metrics.get("loss_mean")
+        if loss is not None:
+            _loss_history.append(float(loss))
 
 
 def metrics() -> Dict[str, Any]:
     with _lock:
         return dict(_metrics)
+
+
+def loss_history() -> List[float]:
+    """Rolling sampled-mean expert loss, for the Swarm Loss sparkline."""
+    with _lock:
+        return list(_loss_history)
 
 
 def register_pool(pool) -> None:
@@ -82,6 +94,7 @@ def clear() -> None:
         _status = {}
         _experts = []
         _metrics = {}
+        _loss_history.clear()
         _pool = None
         _batch = None
 

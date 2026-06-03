@@ -6,12 +6,15 @@
 import { state } from './state.js';
 import { render, renderNotifications } from './render.js';
 import { storage, readFormValues, FORM_FIELDS } from './config.js';
-import { toggleRunSelector, toggleRunSelection, repaintDeckCards, jumpToDeckCard } from './charts.js';
+import {
+    toggleRunSelector, toggleRunSelection, repaintDeckCards,
+    requestDeckFocus, applyDeckFocus, isDeckFocusPending, clearDeckFocus,
+} from './charts.js';
 import { toggleDynamicsRunSelector, selectDynamicsRun } from './dynamics.js';
 import { loadResearchMetrics, loadDynamics, toggleSpecRunSelector, selectSpecRun, toggleContractsView, agreeContract, severSwarmAgent } from './tabs.js';
 import { sendMessage, kbFetchItem, testApiConnection } from './api.js';
 import { renderMarkdown, renderJson } from './markdown.js';
-import { showPlaceholder } from './main.js';
+import { syncInputToMode } from './main.js';
 
 /**
  * Get lifecycle function by name
@@ -198,10 +201,14 @@ export const ACTION_HANDLERS = {
             await callLifecycleHook(newTab.onActivate, newTab);
         }
 
-        // Re-measure any deck built while its tab was hidden (prefetch). Cheap:
-        // it only touches decks that are now visible and initialized.
+        // Re-measure any deck built while its tab was hidden (prefetch), then let
+        // the now-visible deck consume any pending deep-link focus. Cheap: both
+        // only touch decks that are visible and initialized.
         const { relayoutVisibleDecks } = await import('./charts.js');
-        requestAnimationFrame(relayoutVisibleDecks);
+        requestAnimationFrame(() => {
+            relayoutVisibleDecks();
+            applyDeckFocus(DECK_BY_TAB[tabId]);
+        });
 
         // First time on a deck tab, play the staggered "unroll" reveal.
         playDeckReveal(tabId);
@@ -333,15 +340,16 @@ export const ACTION_HANDLERS = {
         // active. The others (print/loop) stay independent on/off toggles.
         if (tool === 'read' || tool === 'evaluate') {
             const mode = tool;
-            if (state.conversationMode === mode) return; // already active, keep it
+            const prevMode = state.conversationMode;
+            if (prevMode === mode) return; // already active, keep it
             state.conversationMode = mode;
             state.kbOpenItem = null;  // leaving Read closes any open content card
             document.querySelectorAll('.tool-toggle[data-tool="read"], .tool-toggle[data-tool="evaluate"]')
                 .forEach(btn => btn.classList.toggle('active', btn.dataset.tool === mode));
             // Mirror the "Evaluate" mode onto <html> for the Prism animation easter egg.
             document.documentElement.toggleAttribute('data-eval', mode === 'evaluate');
-            // Refresh the input cue ("> Look" / "< Shoot") if untouched.
-            if (state.isShowingPlaceholder) showPlaceholder();
+            // Swap the input prefix ("> " <-> "< ") in place so it never doubles up.
+            syncInputToMode(prevMode);
             render();
             return;
         }
@@ -619,28 +627,31 @@ function playDeckReveal(tabId) {
 }
 
 /**
- * Switch to a tab and slide its card deck to the target card (by metric key,
- * with a title fallback). A card only exists once its metric has data, so if the
- * first poll misses (e.g. the deck was prefetched before the metric logged), we
- * force a metrics refresh to rebuild the deck, then retry. Still missing => the
- * metric has no data yet; notify rather than leave the user on the wrong card.
+ * Deep-link to a dashboard card. Registers an event-driven focus request the
+ * deck consumes when it becomes visible or rebuilds (see charts.applyDeckFocus),
+ * unifying this with user swiping - both end in the same slideTo. If the deck
+ * lacks the card (prefetched before the metric logged), a refresh rebuilds it
+ * and the request is reapplied. Still missing => no data yet; notify and clear.
  */
 async function navigateToCard(tab, key, title) {
     const deckId = DECK_BY_TAB[tab];
     if (!deckId) return;
-    await executeAction('SWITCH_TAB', tab);
+    requestDeckFocus(deckId, { key, title });
+    await executeAction('SWITCH_TAB', tab);  // activation applies the focus once visible
 
-    if (await pollJumpToCard(deckId, key, title)) return;
+    if (await waitFocusConsumed(deckId)) return;
 
-    await forceRefreshTab(tab);
-    if (await pollJumpToCard(deckId, key, title)) return;
+    await forceRefreshTab(tab);  // rebuild deck with latest data; init reapplies focus
+    if (await waitFocusConsumed(deckId)) return;
 
+    clearDeckFocus();
     notifyMissingCard(title);
 }
 
-async function pollJumpToCard(deckId, key, title, tries = 25) {
+async function waitFocusConsumed(deckId, tries = 20) {
     for (let i = 0; i < tries; i++) {
-        if (jumpToDeckCard(deckId, { key, title })) return true;
+        applyDeckFocus(deckId);  // idempotent; consumes once the card is present
+        if (!isDeckFocusPending(deckId)) return true;
         await new Promise(r => setTimeout(r, 100));
     }
     return false;

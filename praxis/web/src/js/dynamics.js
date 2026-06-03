@@ -399,10 +399,10 @@ function seriesItemsFor(entries) {
     return items;
 }
 
-function metricCardHTML(canvasId, title, subtitle) {
+function metricCardHTML(canvasId, title, subtitle, key) {
     return `
         <div style="margin-top: 2rem;">
-            <div class="chart-card">
+            <div class="chart-card" data-card-key="${key || ''}">
                 <div class="chart-title">${title}</div>
                 <div class="chart-subtitle">${subtitle}</div>
                 <div class="chart-wrapper" style="height: 400px;">
@@ -422,13 +422,15 @@ function buildManifestSectionsHTML(manifest, getDesc) {
                 html += metricCardHTML(
                     item.canvasId,
                     (c.title || item.lead.key) + callerTag(item.callers),
-                    getDesc(item.lead.key, item.lead.description || '')
+                    getDesc(item.lead.key, item.lead.description || ''),
+                    item.lead.key
                 );
             } else {
                 html += metricCardHTML(
                     canvasIdForMetric(item.key),
                     (item.chart.title || item.key) + callerTag([item.caller]),
-                    getDesc(item.key, item.description || '')
+                    getDesc(item.key, item.description || ''),
+                    item.key
                 );
             }
         }
@@ -488,7 +490,7 @@ function buildSnapshotSectionsHTML(descriptions, getDesc) {
         const canvasId = canvasIdForMetric(key);
         html += `
             <div style="margin-top: 2rem;">
-                <div class="chart-card">
+                <div class="chart-card" data-card-key="${key}">
                     <div class="chart-title">${snap.title || key}${callerTag([caller])}</div>
                     <div class="chart-subtitle">${getDesc(key, description || '')}</div>
                     <div class="chart-wrapper" style="height: 400px;">

@@ -213,6 +213,12 @@ function renderContextBlock(c, i, m) {
         </div>`;
 }
 
+// The swarm-loss sparkline only appears once an expert pool has logged at least
+// two sampled points (drawSparkline needs a segment to draw).
+function hasSwarm(m) {
+    return Array.isArray(m.swarm_loss_history) && m.swarm_loss_history.length > 1;
+}
+
 export function renderLiveDashboard(m) {
     const container = document.getElementById('terminal-display');
     if (!container) return;
@@ -223,7 +229,10 @@ export function renderLiveDashboard(m) {
     // matches; if it changed (e.g. contexts arrived after a status_text-only frame)
     // fall through to a full rebuild.
     const existing = container.querySelector('.live-dashboard');
-    if (existing && existing.querySelectorAll('.ld-context').length === ctxs.length) {
+    const swarmPanelPresent = !!(existing && existing.querySelector('#ld-swarm-sparkline-canvas'));
+    if (existing
+        && existing.querySelectorAll('.ld-context').length === ctxs.length
+        && swarmPanelPresent === hasSwarm(m)) {
 
         // Per-context rolling text - auto-scroll only if already at bottom.
         const blocks = existing.querySelectorAll('.ld-context');
@@ -291,9 +300,10 @@ export function renderLiveDashboard(m) {
             <span class="ld-footer-item ld-url">${escapeHtml(m.url || 'N/A')}</span>
         `;
 
-        // Redraw sparkline
+        // Redraw sparklines
         requestAnimationFrame(() => {
             drawSparkline(m.loss_history, 'ld-sparkline-canvas');
+            if (hasSwarm(m)) drawSparkline(m.swarm_loss_history, 'ld-swarm-sparkline-canvas');
         });
         return;
     }
@@ -329,6 +339,11 @@ export function renderLiveDashboard(m) {
                     <div class="ld-panel-title">Training Loss</div>
                     <canvas id="ld-sparkline-canvas" class="ld-sparkline-canvas"></canvas>
                 </div>
+                ${hasSwarm(m) ? `
+                <div class="ld-panel ld-panel-chart">
+                    <div class="ld-panel-title">Swarm Loss</div>
+                    <canvas id="ld-swarm-sparkline-canvas" class="ld-sparkline-canvas"></canvas>
+                </div>` : ''}
             </div>
             <div class="ld-footer">
                 <span class="ld-footer-item">PRAXIS:${m.seed || '?'}</span>
@@ -355,6 +370,7 @@ export function renderLiveDashboard(m) {
     // Draw sparkline and scroll to bottom on first render
     requestAnimationFrame(() => {
         drawSparkline(m.loss_history, 'ld-sparkline-canvas');
+        if (hasSwarm(m)) drawSparkline(m.swarm_loss_history, 'ld-swarm-sparkline-canvas');
         container.querySelectorAll('.ld-status-text').forEach(st => { st.scrollTop = st.scrollHeight; });
         if (logPanelOpen) {
             const logContent = container.querySelector('.ld-log-content');

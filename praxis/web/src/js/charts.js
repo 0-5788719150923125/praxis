@@ -777,6 +777,7 @@ function ensureVisibleLayout(deck, tries = 0) {
     if (!isMobileDeck()) { deck._anchor = deck._anchorTarget = 1; }  // desktop: top-anchored
     measureDeck(deck);
     renderDeck(deck);
+    applyDeckFocus(deck);  // a freshly visible/rebuilt deck consumes any pending focus
 }
 
 // Cache card heights and (mobile) the band between the deck top and the floor.
@@ -1152,6 +1153,36 @@ export function jumpToDeckCard(deckOrId, { key, title } = {}) {
     return true;
 }
 
+// Event-driven deck focus: a deep-link (e.g. a KB card click) registers a
+// target; the deck consumes it whenever it becomes visible/measured or rebuilds
+// (see ensureVisibleLayout) or on tab activation. This unifies programmatic
+// focus with user swiping - both end in slideTo - and avoids racing a deck that
+// is still being built. A user gesture clears any pending request.
+let _pendingFocus = null;  // { deckId, key, title }
+
+export function requestDeckFocus(deckId, { key, title } = {}) {
+    _pendingFocus = { deckId, key, title };
+}
+
+export function isDeckFocusPending(deckId) {
+    return !!_pendingFocus && (!deckId || _pendingFocus.deckId === deckId);
+}
+
+export function clearDeckFocus() {
+    _pendingFocus = null;
+}
+
+export function applyDeckFocus(deckOrId) {
+    if (!_pendingFocus) return false;
+    const deck = typeof deckOrId === 'string' ? document.getElementById(deckOrId) : deckOrId;
+    if (!deck || deck.id !== _pendingFocus.deckId) return false;
+    if (jumpToDeckCard(deck, { key: _pendingFocus.key, title: _pendingFocus.title })) {
+        _pendingFocus = null;
+        return true;
+    }
+    return false;
+}
+
 function slideTo(deck, target) {
     deck._posFrom = deck._pos;
     deck._posTargetRaw = target;                   // unwrapped; wrap only on read/settle
@@ -1296,6 +1327,7 @@ function bindDeckEvents(deck) {
 
         e.preventDefault();
         cancelMomentum(deck);
+        clearDeckFocus();  // wheel navigation cancels pending deep-link focus
         // Desktop fans UP, so scrolling UP advances toward the cards fanned above (you
         // scroll TOWARD a card, not away from it). Mobile fans down: conventional sign.
         const cycleSign = isMobileDeck() ? 1 : -1;
@@ -1394,6 +1426,7 @@ function bindDeckEvents(deck) {
             const mag = deck._seamAccum * dir;
             const commit = mag > DECK_SEAM * 0.5 || fvel * dir > DECK_SEAM_FLING;
             deck._seamAccum = 0;
+            if (commit) clearDeckFocus();  // a real swipe cancels pending deep-link focus
             slideTo(deck, deck._seamBase + (commit ? dir : 0));
         } else if (travel >= 6 && deck._scrollBody && Math.abs(deck._scrollVel) > DECK_SCROLL_MIN_VEL) {
             startScrollMomentum(deck);   // pure inner scroll -> coast the card body
@@ -1432,6 +1465,7 @@ function onDeckKeydown(e) {
     else if (e.key === backKey) target = cur - 1;
     else return;
     e.preventDefault();
+    clearDeckFocus();  // manual navigation cancels any pending deep-link focus
     deck._cycleDir = (e.key === fwdKey) ? 1 : -1;
     setAnchor(deck, deck._cycleDir > 0 ? 1 : 0);
     slideTo(deck, target);   // wraps at the ends

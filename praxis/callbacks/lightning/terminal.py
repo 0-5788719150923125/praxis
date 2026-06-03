@@ -435,13 +435,6 @@ class TerminalInterface(Callback):
         info_dict["depth"] = self.depth
         info_dict["local_layers"] = local_layers
         info_dict["remote_layers"] = remote_layers
-        # Live expert-pool capacity (orchestration). Omitted when no pool is
-        # active, so non-swarm runs don't show an empty row.
-        from praxis.orchestration import status as _pool_status
-
-        _pool_line = _pool_status.info_line()
-        if _pool_line is not None:
-            info_dict["expert_pool"] = _pool_line
         info_dict["hidden_size"] = self.hidden_size
         info_dict["embed_size"] = self.embed_size
         info_dict["dropout"] = self.dropout
@@ -529,13 +522,6 @@ class TerminalInterface(Callback):
         info_dict["depth"] = self.depth
         info_dict["local_layers"] = local_layers
         info_dict["remote_layers"] = remote_layers
-        # Live expert-pool capacity (orchestration). Omitted when no pool is
-        # active, so non-swarm runs don't show an empty row.
-        from praxis.orchestration import status as _pool_status
-
-        _pool_line = _pool_status.info_line()
-        if _pool_line is not None:
-            info_dict["expert_pool"] = _pool_line
         info_dict["hidden_size"] = self.hidden_size
         info_dict["embed_size"] = self.embed_size
         info_dict["dropout"] = self.dropout

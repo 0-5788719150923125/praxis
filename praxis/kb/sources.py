@@ -7,10 +7,11 @@ in by subclassing ``KBSource`` and adding to ``KB_SOURCE_REGISTRY``.
 
 import json
 import re
+import sqlite3
 import subprocess
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable, List, Optional
 
 from praxis.kb.item import KBItem
 
@@ -176,22 +177,48 @@ class CardsSource(KBSource):
             TRAINING_METRIC_REGISTRY,
         )
 
+        # A Research card only renders once its metric has data; only surface
+        # cards we can actually land on. None = no run found yet, so include all
+        # (discovery on a fresh checkout). Reindex to refresh as a run logs more.
+        data_cols = _metric_columns_with_data()
+
+        def has_data(key, key_pattern=None):
+            if data_cols is None:
+                return True
+            if key_pattern is not None:
+                return any(key_pattern.search(c) for c in data_cols)
+            return key in data_cols
+
         for key, spec in TRAINING_METRIC_REGISTRY.items():
             chart = spec.get("chart") or {}
             title = chart.get("title")
-            if title:
+            if title and has_data(key):
                 yield self._card("research", "Research", key, title,
                                  spec.get("description") or chart.get("y_label", ""))
 
         for entry in COMPOSITE_METRIC_REGISTRY:
-            if entry.get("title"):
+            pattern = entry.get("key_pattern")
+            compiled = re.compile(pattern) if pattern else None
+            present = has_data(entry.get("key", ""), compiled) if compiled else has_data(entry.get("key", ""))
+            if entry.get("title") and present:
                 yield self._card("research", "Research", entry.get("key", ""),
                                  entry["title"], entry.get("y_label", ""))
 
+        # Dynamics + Identity are structural (gradient families / fixed sheets /
+        # module-emitted scalars); surfaced unconditionally - the deck self-skips
+        # any whose metric has no data yet, and navigation degrades gracefully.
+        seen_dynamics = set()
         for entry in DYNAMICS_CHART_REGISTRY:
-            if entry.get("title"):
-                yield self._card("dynamics", "Dynamics", entry.get("key", ""),
+            key = entry.get("key", "")
+            if entry.get("title") and key not in seen_dynamics:
+                seen_dynamics.add(key)
+                yield self._card("dynamics", "Dynamics", key,
                                  entry["title"], entry.get("subtitle", ""))
+
+        for key, title, desc in _module_chart_metrics():
+            if key not in seen_dynamics:
+                seen_dynamics.add(key)
+                yield self._card("dynamics", "Dynamics", key, title, desc)
 
         for title, subtitle in self._IDENTITY_SHEETS:
             yield self._card("spec", "Identity", title, title, subtitle)
@@ -250,6 +277,84 @@ class AgentsSource(KBSource):
                 uri="tab:agents",
                 meta={"name": name, "url": url},
             )
+
+
+def _module_chart_metrics() -> List[tuple]:
+    """(key, title, description) for every module-emitted chart/snapshot metric.
+
+    Modules (encoders, heads, ...) declare a ``metric_descriptions`` class attr
+    that renders on the Dynamics tab via the scalar/snapshot manifest - they're
+    not in the central registries. Discover them statically by walking every
+    ``*_REGISTRY`` praxis exposes and reading each registered class's attribute
+    (no model instantiation). Deduped by metric key.
+    """
+    import functools
+    import inspect
+
+    try:
+        import praxis
+    except Exception:
+        return []
+
+    def resolve(value):
+        if inspect.isclass(value):
+            return value
+        if isinstance(value, functools.partial):
+            return resolve(value.func)
+        return None
+
+    out: dict = {}
+    seen_titles = set()
+    for name in dir(praxis):
+        if not name.endswith("_REGISTRY"):
+            continue
+        registry = getattr(praxis, name, None)
+        if not isinstance(registry, dict):
+            continue
+        for value in registry.values():
+            cls = resolve(value)
+            descriptions = getattr(cls, "metric_descriptions", None) if cls else None
+            if not isinstance(descriptions, dict):
+                continue
+            for key, entry in descriptions.items():
+                if key in out or not isinstance(entry, dict):
+                    continue
+                hint = entry.get("chart") or entry.get("snapshot")
+                title = hint.get("title") if isinstance(hint, dict) else None
+                # Series-group companions share a title and render as one card
+                # under the first (lead) key; dedup so KB shows it once.
+                if not title or title in seen_titles:
+                    continue
+                seen_titles.add(title)
+                out[key] = (title, entry.get("description", ""))
+    return [(k, t, d) for k, (t, d) in out.items()]
+
+
+def _metric_columns_with_data() -> Optional[set]:
+    """Scalar metric columns that hold at least one value in the newest run's
+    metrics.db. Returns None when no run/db exists (caller includes all)."""
+    runs_dir = REPO_ROOT / "build" / "runs"
+    if not runs_dir.is_dir():
+        return None
+    dbs = [
+        run / "metrics.db" for run in runs_dir.iterdir() if (run / "metrics.db").exists()
+    ]
+    if not dbs:
+        return None
+    db_path = max(dbs, key=lambda p: p.stat().st_mtime)
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(metrics)")]
+        candidate = [c for c in cols if c not in ("step", "ts", "id")]
+        with_data = set()
+        if candidate:
+            select = ", ".join(f'COUNT("{c}")' for c in candidate)
+            row = conn.execute(f"SELECT {select} FROM metrics").fetchone()
+            with_data = {c for c, n in zip(candidate, row) if n}
+        conn.close()
+        return with_data
+    except sqlite3.Error:
+        return None
 
 
 def _split_sections(text: str) -> List[tuple]:

@@ -10,6 +10,17 @@ from collections import deque
 from .metrics import MetricsState
 
 
+def _swarm_loss_history():
+    """Sampled mean expert-pool loss history, or [] when no pool is active.
+    Lives behind a lazy import so non-swarm runs never touch orchestration."""
+    try:
+        from praxis.orchestration import status as pool_status
+
+        return pool_status.loss_history()
+    except Exception:
+        return []
+
+
 class LiveMetrics:
     """Singleton that holds real-time metrics independently of any dashboard."""
 
@@ -85,6 +96,7 @@ class LiveMetrics:
                     self.state.train_losses[-1] if self.state.train_losses else None
                 ),
                 "loss_history": list(self.state.train_losses)[-50:],
+                "swarm_loss_history": _swarm_loss_history(),
                 "val_loss": self.state.val_loss,
                 "accuracy": self.state.accuracy,
                 "fitness": self.state.fitness,

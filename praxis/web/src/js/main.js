@@ -19,8 +19,29 @@ import './prism.js';
 // Mode-aware input cues: Read invites a query ("> Look"), Evaluate invites a
 // chat turn ("< Shoot"). Both prefixes are 2 chars, so cursor/length logic in
 // the input handlers is unaffected.
-export const inputPrefix = () => (state.conversationMode === 'read' ? '> ' : '< ');
+const prefixForMode = (mode) => (mode === 'read' ? '> ' : '< ');
+export const inputPrefix = () => prefixForMode(state.conversationMode);
 const inputPlaceholderText = () => (state.conversationMode === 'read' ? 'Look' : 'Shoot');
+
+/**
+ * Keep the input box consistent when the conversation mode flips. Either rebuild
+ * the placeholder for the new mode, or swap just the prefix while preserving any
+ * typed text - so the prefix never doubles up (e.g. "< > Perplexity").
+ */
+export function syncInputToMode(prevMode) {
+    const input = document.getElementById('message-input');
+    if (!input) return;
+    if (state.isShowingPlaceholder) {
+        showPlaceholder();
+        return;
+    }
+    const oldPrefix = prefixForMode(prevMode);
+    const newPrefix = inputPrefix();
+    let body = input.value;
+    if (body.startsWith(oldPrefix)) body = body.slice(oldPrefix.length);
+    else if (body.startsWith(newPrefix)) body = body.slice(newPrefix.length);
+    input.value = newPrefix + body;
+}
 
 /**
  * Lifecycle function registry - maps string names to actual functions
@@ -310,14 +331,17 @@ async function handleInputKeydown(e) {
         return;
     }
 
-    // Prevent deleting prefix
-    if ((e.key === 'Backspace' || e.key === 'Delete') && input.selectionStart <= inputPrefix().length) {
+    // Prevent deleting into the prefix - but only for a bare cursor; a real
+    // selection should still be deletable (maintain-prefix re-adds it after).
+    const collapsed = input.selectionStart === input.selectionEnd;
+    if ((e.key === 'Backspace' || e.key === 'Delete')
+        && collapsed && input.selectionStart <= inputPrefix().length) {
         e.preventDefault();
         return;
     }
 
-    // Prevent cursor from moving before prefix
-    if (e.key === 'ArrowLeft' && input.selectionStart <= inputPrefix().length) {
+    // Prevent a bare cursor from moving before the prefix.
+    if (e.key === 'ArrowLeft' && collapsed && input.selectionStart <= inputPrefix().length) {
         e.preventDefault();
         return;
     }
@@ -438,8 +462,11 @@ function handleInputClick(e) {
         hidePlaceholder();
     }
 
-    // Prevent cursor before prefix
-    if (input.selectionStart < inputPrefix().length) {
+    // Nudge a bare cursor out of the prefix, but never disturb an active
+    // selection - collapsing it here is what made highlighting feel like it was
+    // fighting back.
+    const collapsed = input.selectionStart === input.selectionEnd;
+    if (collapsed && input.selectionStart < inputPrefix().length) {
         setCursorAfterPrefix();
     }
 }
