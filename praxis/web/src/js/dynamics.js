@@ -1363,7 +1363,7 @@ function renderFieldTraces(canvas, data) {
 
     const tick = () => {
         if (!canvas.isConnected) { canvas._harmonicRAF = null; return; }
-        if (deckCardParked(canvas)) { canvas._harmonicRAF = requestAnimationFrame(draw); return; }
+        if (deckCardParked(canvas)) { canvas._harmonicRAF = requestAnimationFrame(tick); return; }
         const wrapper = canvas.parentElement;
         const w = wrapper.clientWidth || 800, h = wrapper.clientHeight || 400;
         if (w >= 2 && h >= 2 && (w !== lastW || h !== lastH || state.theme !== lastTheme)) {
@@ -1434,7 +1434,7 @@ function renderCorrMatrix(canvas, data) {
 
     const tick = () => {
         if (!canvas.isConnected) { canvas._harmonicRAF = null; return; }
-        if (deckCardParked(canvas)) { canvas._harmonicRAF = requestAnimationFrame(draw); return; }
+        if (deckCardParked(canvas)) { canvas._harmonicRAF = requestAnimationFrame(tick); return; }
         const wrapper = canvas.parentElement;
         const w = wrapper.clientWidth || 800, h = wrapper.clientHeight || 400;
         if (w >= 2 && h >= 2 && (w !== lastW || h !== lastH || state.theme !== lastTheme)) {
@@ -1618,24 +1618,40 @@ function renderHarmonicStrands(canvas, data) {
     if (N < 2) return;
 
     const ctx = canvas.getContext('2d');
-    const TILT = 26 * Math.PI / 180, HEIGHT = 2.4, STEPS = 36, TWIST = Math.PI * 1.25;
-    let frame = 0, cachedTheme = null, accent = 'rgb(216, 84, 30)';
+    const TILT = 26 * Math.PI / 180, HEIGHT = 2.4, STEPS = 28, TWIST = Math.PI * 1.25;
+    const SAMP = STEPS + 1, cosE = Math.cos(TILT), sinE = Math.sin(TILT);
+    let frame = 0;
 
-    // Per-feature: ring radius (from bias energy) + its point on the (bias,
-    // variance) plane. The strand sweeps continuously between them up the axis.
+    // Precompute ONCE: per-feature color along the diverging bias/variance
+    // spectrum (t = variance/(bias+variance); blue = pure bias, red = pure
+    // variance), and the frame-independent 3D strand geometry. The hot loop then
+    // only rotates+projects these flat buffers - no trig, no allocation per frame.
     let bmax = 1e-6;
     for (let i = 0; i < N; i++) bmax = Math.max(bmax, bias[i]);
-    const rad = [], plane = [], isVar = [];
+    const col = new Array(N);
+    const gx = new Float32Array(N * SAMP), gy = new Float32Array(N * SAMP), gz = new Float32Array(N * SAMP);
     for (let i = 0; i < N; i++) {
-        rad.push(Math.sqrt(Math.max(bias[i], 0) / bmax));
-        plane.push([rad[i] * 2 - 1, Math.sqrt(Math.max(vr[i], 0) / bmax) * 2 - 1]);
-        isVar.push(vr[i] > bias[i]);
+        const b = Math.max(bias[i], 0), v = Math.max(vr[i], 0);
+        const r = Math.sqrt(b / bmax), px = r * 2 - 1, py = Math.sqrt(v / bmax) * 2 - 1;
+        const t = b + v > 1e-9 ? v / (b + v) : 0;
+        const c = sampleColormap('bias_variance', t);
+        col[i] = `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+        const a = angle[i], o = i * SAMP;
+        for (let s = 0; s < SAMP; s++) {
+            const z = s / STEPS, wgt = 1 - z, th = a + z * TWIST;
+            gx[o + s] = r * Math.cos(th) * wgt + px * z;   // ring -> plane morph
+            gy[o + s] = r * Math.sin(th) * wgt + py * z;
+            gz[o + s] = (z - 0.5) * HEIGHT;                // pre-centered cylinder height
+        }
     }
+    // Reusable per-frame buffers (allocated once -> no GC churn in the hot loop).
+    const psx = new Float32Array(N * SAMP), psy = new Float32Array(N * SAMP);
+    const dmean = new Float32Array(N), order = new Int32Array(N);
+    for (let i = 0; i < N; i++) order[i] = i;
 
     const draw = () => {
         if (!canvas.isConnected) { canvas._strandsRAF = null; return; }
         if (deckCardParked(canvas)) { canvas._strandsRAF = requestAnimationFrame(draw); return; }
-        if (cachedTheme !== state.theme) { cachedTheme = state.theme; accent = readAccentColor(); }
         const wrapper = canvas.parentElement;
         const w = wrapper.clientWidth || 800, h = wrapper.clientHeight || 400;
         if (w < 2 || h < 2) { canvas._strandsRAF = requestAnimationFrame(draw); return; }
@@ -1648,42 +1664,34 @@ function renderHarmonicStrands(canvas, data) {
 
         const cx = w / 2, cy = h / 2, scale = Math.min(w, h) * 0.30;
         const cosA = Math.cos(frame * 0.005), sinA = Math.sin(frame * 0.005);
-        const cosE = Math.cos(TILT), sinE = Math.sin(TILT);
-        const project = (x, y, z01) => {
-            const Z = (z01 - 0.5) * HEIGHT;
-            const Xs = x * cosA - y * sinA, Ys = x * sinA + y * cosA;
-            return { sx: cx + Xs * scale, sy: cy - (Z * cosE - Ys * sinE) * scale, depth: Ys * cosE + Z * sinE };
-        };
 
-        // Longitudinal strands: one continuous curve per feature, sweeping up the
-        // cylinder from the bias phase-ring (bottom) to its (bias, variance) point
-        // on the plane (top), with a helical twist - a full continuous warp in X,
-        // Y and Z, not stacked rings. Colored by which energy dominates, so the
-        // bias and variance strands separate to either side as they climb.
-        const biasColor = state.theme === 'dark' ? 'rgba(150,180,255,0.95)' : 'rgba(60,90,180,0.9)';
+        // Rotate + project every precomputed point (branchless), and accumulate
+        // each strand's mean depth for back-to-front ordering.
+        for (let i = 0; i < N; i++) {
+            const o = i * SAMP;
+            let dsum = 0;
+            for (let s = 0; s < SAMP; s++) {
+                const j = o + s, X = gx[j], Y = gy[j], Z = gz[j];
+                const Xs = X * cosA - Y * sinA, Ys = X * sinA + Y * cosA;
+                psx[j] = cx + Xs * scale;
+                psy[j] = cy - (Z * cosE - Ys * sinE) * scale;
+                dsum += Ys * cosE + Z * sinE;
+            }
+            dmean[i] = dsum / SAMP;
+        }
+        order.sort((a, b) => dmean[a] - dmean[b]);  // back-to-front
+
+        // One continuous hair per feature - a full warp in X, Y, Z, colored by
+        // its bias/variance balance.
         ctx.lineWidth = 1.3;
         ctx.lineJoin = 'round';
-        const strands = [];
-        for (let i = 0; i < N; i++) {
-            const pts = [];
-            let dsum = 0;
-            for (let s = 0; s <= STEPS; s++) {
-                const z = s / STEPS;
-                const th = angle[i] + z * TWIST;  // helical twist up the axis
-                const rx = rad[i] * Math.cos(th), ry = rad[i] * Math.sin(th);
-                const p = project(rx * (1 - z) + plane[i][0] * z, ry * (1 - z) + plane[i][1] * z, z);
-                pts.push(p);
-                dsum += p.depth;
-            }
-            strands.push({ pts, depth: dsum / pts.length, v: isVar[i] });
-        }
-        strands.sort((a, b) => a.depth - b.depth);  // back-to-front
-        for (const st of strands) {
-            ctx.globalAlpha = 0.15 + 0.5 * ((st.depth + 1.5) / 3);
-            ctx.strokeStyle = st.v ? accent : biasColor;
+        for (let k = 0; k < N; k++) {
+            const i = order[k], o = i * SAMP;
+            ctx.globalAlpha = 0.2 + 0.5 * ((dmean[i] + 1.5) / 3);
+            ctx.strokeStyle = col[i];
             ctx.beginPath();
-            ctx.moveTo(st.pts[0].sx, st.pts[0].sy);
-            for (let s = 1; s < st.pts.length; s++) ctx.lineTo(st.pts[s].sx, st.pts[s].sy);
+            ctx.moveTo(psx[o], psy[o]);
+            for (let s = 1; s < SAMP; s++) ctx.lineTo(psx[o + s], psy[o + s]);
             ctx.stroke();
         }
         ctx.globalAlpha = 1;
@@ -1693,6 +1701,15 @@ function renderHarmonicStrands(canvas, data) {
         ctx.font = '11px monospace';
         ctx.fillText(`variance ${(100 * sep).toFixed(0)}% of field energy`, 10, 16);
         if (sep < 0.01) ctx.fillText('pure bias - strands not separated yet', 10, 30);
+
+        // Spectrum key: each hair runs blue (pure bias) -> red (pure variance).
+        const lo = sampleColormap('bias_variance', 0), hi = sampleColormap('bias_variance', 1);
+        ctx.fillStyle = `rgb(${lo[0]}, ${lo[1]}, ${lo[2]})`;
+        ctx.fillText('bias', 10, h - 10);
+        ctx.fillStyle = textColor;
+        ctx.fillText('-', 38, h - 10);
+        ctx.fillStyle = `rgb(${hi[0]}, ${hi[1]}, ${hi[2]})`;
+        ctx.fillText('variance', 48, h - 10);
 
         frame++;
         canvas._strandsRAF = requestAnimationFrame(draw);

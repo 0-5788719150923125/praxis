@@ -676,8 +676,9 @@ const DECK_SCALE_STEP = 0.045;   // scale shrink per rank behind the head
 const DECK_MAX_FAN = 3;          // cards drawn behind the head
 const DECK_MIN_CHART_H = 192;    // px; smallest a chart shrinks to under mobile pressure (keeps it readable)
 const DECK_SWIPE_STEP = 70;      // finger px that advance one card (1:1 during the drag)
-const DECK_DROP_THRESHOLD = 96;  // px of SUSTAINED downward pull before the deck drops to B
-                                 // (reveals the header). Higher = harder to trigger by accident.
+const DECK_DROP_THRESHOLD = 200; // px of SUSTAINED downward pull before the deck drops to B
+                                 // (reveals the header). Deliberately high (~two cards' worth)
+                                 // so casual swipes at A cycle cards instead of dropping to B.
 const DECK_SEAM = 88;            // finger px to flip one card AT the content edge (the "seam").
                                  // Eased slow-fast-slow so it pauses at the content end + anchor.
 const DECK_SEAM_FLING = 0.5;     // px/ms finger speed that commits a partial seam on release
@@ -1429,7 +1430,12 @@ function bindDeckEvents(deck) {
         // downward pull (past the content edge) drops to B; at B an upward pull
         // lifts to A. Either way drive the anchor alone - no seam - so you can
         // reposition the anchor without the deck cycling underneath you.
-        if ((deck._anchorTarget === 1 && dy < 0) || (deck._anchorTarget === 0 && dy > 0)) {
+        // At B, an upward pull lifts straight back to A (no cycling). At A,
+        // downward is NOT captured here - it falls through to cycle cards in both
+        // directions, and only a SUSTAINED downward pull (accumulated in
+        // seamAnchor past DECK_DROP_THRESHOLD) commits the drop to B. So you can
+        // scroll cards from A either way, and reaching B takes a deliberate pull.
+        if (deck._anchorTarget === 0 && dy > 0) {
             const before = deck._anchorTarget;
             seamAnchor(deck, dy);
             // A completed A<->B flip HARD-GATES card cycling for the rest of this

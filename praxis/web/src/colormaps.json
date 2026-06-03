@@ -10,5 +10,13 @@
       [0.88, [250, 220, 50]],
       [1.0,  [255, 255, 255]]
     ]
+  },
+  "bias_variance": {
+    "description": "Diverging blue -> neutral -> red for the bias/variance balance. 0 = pure bias (cool blue), 0.5 = balanced (light neutral), 1 = pure variance (warm red). Used by the strands card to color each feature-hair by variance/(bias+variance).",
+    "stops": [
+      [0.0,  [70, 120, 235]],
+      [0.5,  [205, 205, 215]],
+      [1.0,  [225, 70, 55]]
+    ]
   }
 }
