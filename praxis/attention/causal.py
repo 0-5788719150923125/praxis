@@ -46,8 +46,10 @@ class CausalAttention(nn.Module):
         self.window_size = getattr(config, "window_size", None)
         # Ghostmin ablation (next/ghostmin.md): at this recurrent depth step,
         # withhold the causal tip so the model must lean on delayed context.
-        # None = off. Set per experiment (e.g. calm-c), not a global default.
+        # None = off. ghostmin_mode picks how: "shift" (uniform K/V delay) or
+        # "warp" (feature-dependent value sink at the tip). Set per experiment.
         self.ghostmin_step = getattr(config, "ghostmin_step", None)
+        self.ghostmin_mode = getattr(config, "ghostmin_mode", "shift")
 
         # Positional encoding lives entirely in the registry-built module:
         # before_scores mutates Q/K (RoPE/HoPE), build_score_mod returns the
@@ -184,20 +186,43 @@ class CausalAttention(nn.Module):
         return False
 
     def _maybe_ghostmin(self, k: Tensor, v: Tensor, current_depth: int):
-        """Ghostmin ablation: at ``ghostmin_step``, shift K/V one position toward
-        the future so every query's newest reachable key is its predecessor.
+        """Ghostmin ablation (next/ghostmin.md): at ``ghostmin_step``, withhold the
+        causal tip for one recurrent beat so the model leans on delayed context;
+        the remaining steps recorrect. No-op unless ``ghostmin_step`` matches the
+        current depth. Applied to real K/V before the zero ghost is prepended.
 
-        The causal tip is withheld for that one recurrent beat, forcing reliance
-        on delayed context (a "lingering"); the remaining steps recorrect. No-op
-        unless ``ghostmin_step`` is set and matches the current depth. Applied to
-        real K/V before the zero ghost is prepended, so softmax1 is unaffected.
+        Two modes (``ghostmin_mode``):
+
+        - ``shift``: a causal (pad, not wrap) shift of K/V one position toward the
+          future, so every query's newest reachable key is its predecessor. Crude
+          and uniform.
+        - ``warp``: the dual of ghostmax's positionless start-sink - a
+          feature-dependent envelope on V that sinks the tip (last position -> 0)
+          and recovers backward at a per-feature rate. Attending to the tip then
+          injects ~0 per feature (the sink is at the tip, not the start), and the
+          envelope modulates the value stream backward from it. Feature-dependence
+          rides the value, not the attention weight (weights are per-head, not
+          per-feature).
         """
         if self.ghostmin_step is None or current_depth != self.ghostmin_step:
             return k, v
-        # cat a zero at the front, drop the last - a causal (pad, not wrap) shift.
+        if self.ghostmin_mode == "warp":
+            return k, self._ghostmin_warp_value(v)
+        # default: shift
         k = torch.cat([torch.zeros_like(k[:, :, :1]), k[:, :, :-1]], dim=2)
         v = torch.cat([torch.zeros_like(v[:, :, :1]), v[:, :, :-1]], dim=2)
         return k, v
+
+    @staticmethod
+    def _ghostmin_warp_value(v: Tensor) -> Tensor:
+        """Per-feature envelope, 0 at the tip and recovering backward at a
+        per-feature rate: ``1 - exp(-(T-1-t) * rate_d)``. Sinks the most-recent
+        position's value per feature; the start is left intact."""
+        T, D = v.shape[2], v.shape[3]
+        dist = torch.arange(T - 1, -1, -1, device=v.device, dtype=v.dtype)  # 0 at tip
+        rate = torch.linspace(0.5, 2.0, D, device=v.device, dtype=v.dtype)  # per-feature
+        warp = 1.0 - torch.exp(-dist[:, None] * rate[None, :])  # [T, D], 0 at the tip
+        return v * warp
 
     def _ghost_aware_attention(
         self,

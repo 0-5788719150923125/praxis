@@ -59,7 +59,7 @@ declared byte-output layout in encoder mode, else ``(hidden_size, vocab_size)``)
 ``forward`` modulates the features with the field, then projects through ``lm_head`` -
 identical in standalone and encoder modes.
 
-Source: [praxis/heads/harmonic.py:623](../praxis/heads/harmonic.py#L623)
+Source: [praxis/heads/harmonic.py:732](../praxis/heads/harmonic.py#L732)
 
 ## `prismatic` - ParallelHead
 
@@ -68,7 +68,7 @@ Gate-combined parallel branches; a SequentialHead stage or top head.
 Source: [praxis/heads/parallel.py:51](../praxis/heads/parallel.py#L51)
 
 Presets:
-- `prismatic` - `branches=[functools.partial(<class 'praxis.heads.stacked.SequentialHead'>, heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='learned', build_classifier=True)]), functools.partial(<class 'praxis.heads.stacked.SequentialHead'>, heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='learned', build_classifier=False), <class 'praxis.heads.crystal.CrystalHead'>])]`
+- `prismatic` - `branches=[functools.partial(<class 'praxis.heads.stacked.SequentialHead'>, heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='learned', build_classifier=True)]), functools.partial(<class 'praxis.heads.stacked.SequentialHead'>, heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='input', build_classifier=False), <class 'praxis.heads.crystal.CrystalHead'>])]`
 
 ## `tied` - TiedWeights
 

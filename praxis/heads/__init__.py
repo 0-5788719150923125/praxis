@@ -35,17 +35,21 @@ HEAD_REGISTRY = dict(
     # SequentialHead: bare grid (off) or a fixed single oscillation (static).
     crystal_harmonic=partial(SequentialHead, heads=_harmonic_crystal("off")),
     crystal_harmonic_static=partial(SequentialHead, heads=_harmonic_crystal("static")),
-    # Prismatic: a top-level parallel split balancing bias against variance per
-    # token. Branch 0 is a harmonic field read out by a plain linear head (a
-    # strong structural prior); branch 1 refracts a second field through the
-    # crystal distance classifier (the more expressive arm). A learned per-token
-    # gate weights the two logit streams:
+    # Prismatic: a top-level parallel split that makes the bias/variance axes two
+    # physical branches. Branch 0 is a harmonic field (learned but static
+    # envelope) read out by a plain linear head - the bias arm, a strong
+    # structural prior. Branch 1 refracts an input-conditional field (its
+    # envelope carries a per-sequence delta, identity at init) through the
+    # crystal distance classifier - the variance arm, the expressive one. A
+    # learned per-token gate weights the two logit streams, routing features to
+    # whichever arm explains them. Each arm emits its own Bias/Variance Strands
+    # card (#0 stays collapsed = bias; #1 separates as variance is learned):
     #   Parallel(Sequential(HarmonicField), Sequential(HarmonicField, CrystalClassifier))
     prismatic=partial(
         ParallelHead,
         branches=[
             partial(SequentialHead, heads=[_field("learned", build_classifier=True)]),
-            partial(SequentialHead, heads=[_field("learned"), CrystalHead]),
+            partial(SequentialHead, heads=[_field("input"), CrystalHead]),
         ],
     ),
 )

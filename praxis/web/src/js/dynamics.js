@@ -1587,6 +1587,92 @@ function renderHarmonicStaircase(canvas, data) {
     canvas._harmonicRAF = requestAnimationFrame(draw);
 }
 
+/**
+ * Bias/variance strands: a morphing cylinder of feature-particles. One flat end
+ * (z=0) arranges them by phase on a ring - the static field, pure bias, white.
+ * The other end (z=1) is the (bias energy, variance energy) plane: x = static
+ * energy, y = input-conditional energy. Variance-dominant features lift off the
+ * bias axis and take the accent color. With no input-conditional field the plane
+ * stays collapsed on the bias axis - the split appearing is the trained result.
+ * Endpoints are measured; the cylinder between them is interpolation.
+ */
+function renderHarmonicStrands(canvas, data) {
+    if (canvas._strandsRAF) cancelAnimationFrame(canvas._strandsRAF);
+    const angle = data.angle || [], bias = data.bias_energy || [], vr = data.var_energy || [];
+    const N = Math.min(angle.length, bias.length, vr.length);
+    if (N < 2) return;
+
+    const ctx = canvas.getContext('2d');
+    const TILT = 26 * Math.PI / 180, HEIGHT = 2.4, SLICES = 7;
+    let frame = 0, cachedTheme = null, accent = 'rgb(216, 84, 30)';
+
+    // Per-particle ring (bias phase) and plane (bias-x, variance-y) layouts.
+    let bmax = 1e-6;
+    for (let i = 0; i < N; i++) bmax = Math.max(bmax, bias[i]);
+    const ring = [], plane = [], isVar = [];
+    for (let i = 0; i < N; i++) {
+        const rb = Math.sqrt(Math.max(bias[i], 0) / bmax);
+        const rv = Math.sqrt(Math.max(vr[i], 0) / bmax);
+        ring.push([rb * Math.cos(angle[i]), rb * Math.sin(angle[i])]);
+        plane.push([rb * 2 - 1, rv * 2 - 1]);  // x=bias, y=variance, in [-1,1]
+        isVar.push(vr[i] > bias[i]);
+    }
+
+    const draw = () => {
+        if (!canvas.isConnected) { canvas._strandsRAF = null; return; }
+        if (cachedTheme !== state.theme) { cachedTheme = state.theme; accent = readAccentColor(); }
+        const wrapper = canvas.parentElement;
+        const w = wrapper.clientWidth || 800, h = wrapper.clientHeight || 400;
+        if (w < 2 || h < 2) { canvas._strandsRAF = requestAnimationFrame(draw); return; }
+        if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+
+        const { textColor, gridColor } = getThemeColors();
+        ctx.clearRect(0, 0, w, h);
+        ctx.fillStyle = gridColor;
+        ctx.fillRect(0, 0, w, h);
+
+        const cx = w / 2, cy = h / 2, scale = Math.min(w, h) * 0.30;
+        const cosA = Math.cos(frame * 0.005), sinA = Math.sin(frame * 0.005);
+        const cosE = Math.cos(TILT), sinE = Math.sin(TILT);
+        const project = (x, y, z01) => {
+            const Z = (z01 - 0.5) * HEIGHT;
+            const Xs = x * cosA - y * sinA, Ys = x * sinA + y * cosA;
+            return { sx: cx + Xs * scale, sy: cy - (Z * cosE - Ys * sinE) * scale, depth: Ys * cosE + Z * sinE };
+        };
+
+        const prims = [];
+        for (let s = 0; s < SLICES; s++) {
+            const z = s / (SLICES - 1);  // 0 = bias ring, 1 = bias/variance plane
+            for (let i = 0; i < N; i++) {
+                const x = ring[i][0] * (1 - z) + plane[i][0] * z;
+                const y = ring[i][1] * (1 - z) + plane[i][1] * z;
+                prims.push({ p: project(x, y, z), z, v: isVar[i] });
+            }
+        }
+        prims.sort((a, b) => a.p.depth - b.p.depth);
+        for (const pr of prims) {
+            ctx.globalAlpha = 0.2 + 0.6 * ((pr.p.depth + 1.5) / 3);
+            // White (pure bias) on the ring; variance-dominant features take the
+            // accent as they reach the plane.
+            ctx.fillStyle = pr.v && pr.z > 0.4 ? accent : (pr.z > 0.5 ? 'rgba(150,180,255,0.9)' : '#ffffff');
+            ctx.beginPath();
+            ctx.arc(pr.p.sx, pr.p.sy, 1.6, 0, 2 * Math.PI);
+            ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+
+        const sep = data.separated || 0;
+        ctx.fillStyle = textColor;
+        ctx.font = '11px monospace';
+        ctx.fillText(`variance ${(100 * sep).toFixed(0)}% of field energy`, 10, 16);
+        if (sep < 0.01) ctx.fillText('pure bias - strands not separated yet', 10, 30);
+
+        frame++;
+        canvas._strandsRAF = requestAnimationFrame(draw);
+    };
+    canvas._strandsRAF = requestAnimationFrame(draw);
+}
+
 const SNAPSHOT_RENDERERS = {
     heatmap_2d: renderHeatmap2D,
     harmonic_spiral: renderHarmonicSpiral,
@@ -1594,6 +1680,7 @@ const SNAPSHOT_RENDERERS = {
     field_traces: renderFieldTraces,
     corr_matrix: renderCorrMatrix,
     harmonic_staircase: renderHarmonicStaircase,
+    harmonic_strands: renderHarmonicStrands,
 };
 
 /**

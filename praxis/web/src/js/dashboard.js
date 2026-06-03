@@ -91,10 +91,38 @@ function renderInfoPanel(info) {
         return '<div class="ld-info-row"><span class="ld-info-key">status</span><span class="ld-info-val">waiting for data...</span></div>';
     }
 
-    return entries
+    // A "heavy" row is one whose value would wrap (a long value, e.g. several
+    // comma-joined policies) and inflate the grid row it shares with tidy
+    // single-line metrics. Threshold ~ a cell's worth of characters.
+    const HEAVY_LEN = 22;
+    const isHeavy = ([key, value]) =>
+        (key.length + String(value).length) > HEAVY_LEN || String(value).includes(',');
+
+    const shorts = entries.filter(e => !isHeavy(e));
+    const heavies = entries.filter(isHeavy);
+
+    // Float heavy rows to the bottom, but seat them at the LEFT of the final row
+    // with the leftover single-line metrics filling in to their right - tidier
+    // than a tall wrapping cell stranded on the right. The grid is ~4 columns on
+    // desktop (mobile is one column, so this just stacks them near the end); each
+    // heavy is also forced to grid-column 1 (the --heavy class) so it cleanly
+    // begins a row regardless of the exact column count.
+    const COLS = 4;
+    let ordered = shorts;
+    if (heavies.length) {
+        const rightFill = Math.min(shorts.length, COLS - (heavies.length % COLS || COLS));
+        ordered = [
+            ...shorts.slice(0, shorts.length - rightFill),
+            ...heavies,
+            ...shorts.slice(shorts.length - rightFill),
+        ];
+    }
+
+    return ordered
         .map(([key, value]) => {
             const label = key.replace(/_/g, ' ');
-            return `<div class="ld-info-row"><span class="ld-info-key">${escapeHtml(label)}</span><span class="ld-info-val">${escapeHtml(String(value))}</span></div>`;
+            const cls = isHeavy([key, value]) ? 'ld-info-row ld-info-row--heavy' : 'ld-info-row';
+            return `<div class="${cls}"><span class="ld-info-key">${escapeHtml(label)}</span><span class="ld-info-val">${escapeHtml(String(value))}</span></div>`;
         })
         .join('');
 }

@@ -259,6 +259,27 @@ class HarmonicField(nn.Module):
                 "order": 105,
             },
         },
+        # The bias/variance strands. Each feature is a particle; one cylinder end
+        # arranges them by phase (the static field, pure bias), the other by
+        # (static energy, input-conditional energy) - the orthogonal axes made
+        # literal. With amp_modulation != "input" the variance axis is ~0 and the
+        # plane stays collapsed: the split appearing is the trained result.
+        "harmonic_strands": {
+            "description": (
+                "Bias and variance as a morphing cylinder. Particles are "
+                "features: one end is the static field's phase ring (pure bias, "
+                "all structure), the other is the (bias energy, variance energy) "
+                "plane where the input-conditional envelope pulls features off "
+                "the bias axis. A collapsed plane means the field is still pure "
+                "bias; a split means structured variance has been learned."
+            ),
+            "snapshot": {
+                "title": "Bias/Variance Strands",
+                "renderer": "harmonic_strands",
+                "group": "harmonic_head",
+                "order": 106,
+            },
+        },
     }
 
     def __init__(
@@ -285,9 +306,9 @@ class HarmonicField(nn.Module):
         # Amplitude envelope over f_t. "static" and "learned" share one formula
         # (so they are identical at init); only "learned" lets the coefficients
         # move. Init = a single mid-band oscillation (coeff 0 = 1, rest 0).
-        if amp_modulation not in ("off", "static", "learned"):
+        if amp_modulation not in ("off", "static", "learned", "input"):
             raise ValueError(
-                f"amp_modulation must be off|static|learned, got {amp_modulation!r}"
+                f"amp_modulation must be off|static|learned|input, got {amp_modulation!r}"
             )
         self.amp_modulation = amp_modulation
         if amp_modulation != "off":
@@ -298,10 +319,23 @@ class HarmonicField(nn.Module):
             )
             coeffs = torch.zeros(AMP_MOD_BASIS_K)
             coeffs[0] = 1.0
-            if amp_modulation == "learned":
+            if amp_modulation in ("learned", "input"):
                 self.amp_coeffs = nn.Parameter(coeffs)
             else:
                 self.register_buffer("amp_coeffs", coeffs, persistent=False)
+            if amp_modulation == "input":
+                # Input-conditional envelope - the field's structured-variance
+                # axis. A zero-init projection from pooled hidden states to
+                # envelope coefficients: the field is exactly the static (bias)
+                # field at init and learns its input-dependence, orthogonal to
+                # the static spectrum. ``_last_input_coeffs`` keeps a
+                # representative coeff set (mean over the last batch) so the
+                # strands snapshot can rebuild the conditional field with no batch.
+                self.amp_input = nn.Linear(self.D, AMP_MOD_BASIS_K, bias=False)
+                nn.init.zeros_(self.amp_input.weight)
+                self.register_buffer(
+                    "_last_input_coeffs", coeffs.clone(), persistent=False
+                )
 
     def _field(
         self,
@@ -329,12 +363,43 @@ class HarmonicField(nn.Module):
         return b.to(dtype) if dtype is not None else b
 
     def forward(self, hidden_states: Tensor) -> Tensor:
-        b = self._field(
-            hidden_states.shape[-2],
-            device=hidden_states.device,
-            dtype=hidden_states.dtype,
-        )
+        if self.amp_modulation == "input":
+            b = self._field_conditional(hidden_states)
+        else:
+            b = self._field(
+                hidden_states.shape[-2],
+                device=hidden_states.device,
+                dtype=hidden_states.dtype,
+            )
         return hidden_states * (1.0 + b)
+
+    def _field_conditional(self, hidden_states: Tensor) -> Tensor:
+        """Input-conditional field ``[B, seq_len, D]``: the static spectrum with
+        an envelope whose coefficients carry a per-sequence delta from pooled
+        hidden states. Zero-init projection means it is identical to the static
+        field at init; the learned delta is the structured-variance axis."""
+        b_size, seq_len, _ = hidden_states.shape
+        device = hidden_states.device
+        pooled = hidden_states.mean(dim=-2).to(self.amp_basis.dtype)  # [B, D]
+        coeffs = self.amp_coeffs + self.amp_input(pooled)  # [B, K]
+        self._last_input_coeffs = coeffs.detach().mean(0)
+        env = 1.0 + AMP_MOD_DEPTH * torch.tanh(coeffs @ self.amp_basis.T)  # [B, F_t]
+        amps = self.amplitudes.unsqueeze(0) * env.unsqueeze(-1)  # [B, F_t, F_d]
+        return self._build_field(amps, seq_len, device).to(hidden_states.dtype)
+
+    def _build_field(self, amps: Tensor, seq_len: int, device: torch.device) -> Tensor:
+        """Batched field from per-example amplitudes ``[B, F_t, F_d]`` -> ``[B,
+        seq_len, D]``. The batched twin of :meth:`_field`'s spectrum assembly."""
+        rfft_D = self.D // 2 + 1
+        b_size = amps.shape[0]
+        phase = torch.complex(self.spec_real.to(device), self.spec_imag.to(device))
+        scaled = phase.unsqueeze(0) * amps  # [B, F_t, F_d]
+        spec = torch.zeros(b_size, self.T, rfft_D, dtype=torch.complex64, device=device)
+        spec[:, 1 : self.F_t + 1, 1 : self.F_d + 1] = scaled
+        spec[:, self.T - self.F_t : self.T, 1 : self.F_d + 1] = scaled.flip(1).conj()
+        field = torch.fft.irfft2(spec, s=(self.T, self.D), norm="ortho")  # [B, T, D]
+        idx = (torch.arange(seq_len, device=device) % self.T).long()
+        return field[:, idx]
 
     def _envelope(self) -> Optional[Tensor]:
         """``[F_t]`` amplitude envelope over the temporal-frequency axis, or
@@ -359,24 +424,68 @@ class HarmonicField(nn.Module):
         env = self._envelope()
         return 0.0 if env is None else float((env.max() - env.min()).detach().item())
 
-    def _sample_field(self, Tp: int) -> Tensor:
+    def _sample_field(self, Tp: int, coeffs: Optional[Tensor] = None) -> Tensor:
         """Real field [Tp, D] sampled over one period, mean-centered over time.
 
         Alias-free for Tp >= 2*F_t+1 (the field is band-limited to F_t temporal
         frequencies), and far cheaper than the full-T irfft. Shared by every
-        snapshot view below.
+        snapshot view below. ``coeffs`` overrides the envelope coefficients (the
+        input-conditional set, for the strands snapshot); default = the static
+        base envelope.
         """
         rfft_D = self.D // 2 + 1
         spec = torch.zeros(Tp, rfft_D, dtype=torch.complex64)
         amps = self.amplitudes.detach().cpu()
-        env = self._envelope()
-        if env is not None:
-            amps = amps * env.detach().cpu().unsqueeze(1)
+        if coeffs is not None:
+            env = 1.0 + AMP_MOD_DEPTH * torch.tanh(
+                self.amp_basis.detach().cpu() @ coeffs.detach().cpu()
+            )
+            amps = amps * env.unsqueeze(1)
+        else:
+            env = self._envelope()
+            if env is not None:
+                amps = amps * env.detach().cpu().unsqueeze(1)
         scaled = torch.complex(self.spec_real.cpu(), self.spec_imag.cpu()) * amps
         spec[1 : self.F_t + 1, 1 : self.F_d + 1] = scaled
         spec[Tp - self.F_t : Tp, 1 : self.F_d + 1] = scaled.flip(0).conj()
         field = torch.fft.irfft2(spec, s=(Tp, self.D), norm="ortho")
         return field - field.mean(dim=0, keepdim=True)
+
+    def field_strands(self, n_points: int = 240) -> dict:
+        """Per-feature bias/variance decomposition for the cylinder-morph card.
+
+        Each feature is a particle with two embeddings: a phase angle from the
+        static field (the bias ring) and a pair of energies - ``bias`` (static
+        field) and ``var`` (the input-conditional delta) - the orthogonal axes.
+        ``separated`` is the fraction of total energy that is input-conditional;
+        it is ~0 until an ``amp_modulation="input"`` field has trained, so the
+        plane stays collapsed until the variance axis is actually learned.
+        """
+        with torch.no_grad():
+            Tp = max(int(n_points), 2 * self.F_t + 1)
+            static = self._sample_field(Tp)  # [Tp, D] static (bias)
+            cond_coeffs = getattr(self, "_last_input_coeffs", None)
+            if self.amp_modulation == "input" and cond_coeffs is not None:
+                cond = self._sample_field(Tp, coeffs=cond_coeffs)
+            else:
+                cond = static  # no conditional field -> variance axis is zero
+            delta = cond - static
+
+            bias_e = (static * static).sum(dim=0)  # [D]
+            var_e = (delta * delta).sum(dim=0)  # [D]
+            ref = bias_e.max().clamp_min(1e-12)
+            # Fundamental temporal Fourier component per feature -> phase angle.
+            fund = torch.fft.rfft(static, dim=0)[1]  # [D] complex
+            angle = torch.atan2(fund.imag, fund.real)  # [D]
+
+            total = (bias_e.sum() + var_e.sum()).clamp_min(1e-12)
+            return {
+                "angle": angle.to(torch.float32).tolist(),
+                "bias_energy": (bias_e / ref).to(torch.float32).tolist(),
+                "var_energy": (var_e / ref).to(torch.float32).tolist(),
+                "n": int(self.D),
+                "separated": float((var_e.sum() / total).item()),
+            }
 
     def spiral(self, n_points: int = 720) -> dict:
         """The field's top-2 PCA cross-section unrolled along the position axis.
@@ -730,6 +839,7 @@ class HarmonicHead(BaseHead):
             "harmonic_traces": self.field.traces(),
             "harmonic_correlation": self.field.correlation(),
             "harmonic_staircase": self.field.staircase(),
+            "harmonic_strands": self.field.field_strands(),
         }
 
     def training_metrics(self) -> dict:

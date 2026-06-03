@@ -27,15 +27,33 @@ fall to zero and bounds the output - then its dual is a device that does the
 opposite on purpose: it **injects** error rather than absorbing it, and it weans the
 model off the causal tip.
 
-The shape, kept open: a ghost that **caps** attention on the most-recent token (the
-causal focus) and routes the surplus into a **delayed** pathway, so the model cannot
-lean on the tip and must integrate lagged structure instead. Make the cap **periodic**
-and you get a backwards-flowing, pulsing dampening - the recent token is repeatedly
-denied, and reliance shifts to delayed computation (the same lagged regime as the
-remote-expert swarm; see the "Neither halting nor blocking" section).
+The sharpened shape: **a sink at the tip, not the start.** Ghostmax's ghost is
+positionless (a pristine zero, masked always-accessible at index 0); ghostmin gives
+the sink a position - the most-recent token, the causal focus - so attention there
+can fall into a no-op. Two precisions make this hold water rather than rhyme:
+
+- **The feature-dependence rides the value, not the weight.** Attention weights are
+  per-head scalars; there is no per-feature attention weight. So ghostmin is a
+  feature-dependent **warp on the value** that sinks the tip: an envelope, zero at
+  the last position and recovering backward at a per-feature rate, so attending to
+  the tip injects ~0 per feature. It is the value-side dual of ghostmax's
+  zero-value ghost, moved from the start to the tip.
+- **"Backwards" is the depth/gradient axis, not the forward sequence.** A causal
+  forward pass never flows future to past. What flows backward is the gradient and,
+  in a recurrent loop, the re-derivation across beats: sink the tip on one beat and
+  the surrounding beats learn, backward over the shared-weight interval, to set up
+  for it and recorrect after. The "lingering" is across depth, not across the
+  sequence.
 
 Where ghostmax improves quantizability by removing outliers, ghostmin would **force
 quantization error to manifest** - as a training pressure, not a defect.
+
+Implemented as a two-mode ablation (`praxis/attention/causal.py:_maybe_ghostmin`),
+gated to one recurrent depth step: `shift` (a crude uniform K/V delay) and `warp`
+(the feature-dependent tip-value sink above). calm-c runs `warp` at step 6 of 8
+(`ghostmin_step: 6, ghostmin_mode: warp`). Caveat: a tip-sink only touches the most
+-recent query per forward, so its per-step effect is small - it relies entirely on
+the recurrent loop to amplify it across beats.
 
 ## Why force error: velocity per feature
 
@@ -74,9 +92,10 @@ substrate the structure is trained against.
 - Add per-feature learnable phase-rate (extend the per-depth theta to per-feature).
 - During training, inject quantization noise on the seed and measure post-quant loss
   vs the frozen-velocity control (prediction 1, 3).
-- Separately, an attention ablation: cap the max attention weight (or periodically
-  mask `kv_idx = T`), measure the mass-shift to earlier positions and generation
-  coherence (prediction 2). This needs no new parameters and isolates the tip claim.
+- The attention ablation (prediction 2) is **wired**: the `warp` tip-value sink in
+  `_maybe_ghostmin`, enabled in calm-c at one recurrent step. It needs no new
+  parameters and isolates the tip claim; what remains is to measure whether mass
+  shifts to earlier positions and whether generation coherence holds.
 
 ## What this does _not_ claim
 

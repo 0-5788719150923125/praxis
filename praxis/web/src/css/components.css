@@ -1013,21 +1013,40 @@
     display: none;
 }
 
+/* Heavy (wrapping) rows begin a fresh grid row at the left, so the leftover
+   single-line metrics fill in to their right rather than stranding the tall
+   wrapping cell on the right of the bottom row. */
+.ld-info-row--heavy {
+    grid-column: 1;
+}
+
 .ld-info-row {
     display: flex;
     justify-content: space-between;
+    gap: 0.5rem;
+    align-items: baseline;
     font-size: 0.6875rem;
     padding: 0.125rem 0;
+    /* Override the terminal-container's white-space:pre so long values wrap. */
+    white-space: normal;
 }
 
 .ld-info-key {
     color: var(--term-dim2);
     text-transform: uppercase;
+    flex: 0 0 auto;       /* the key keeps its width, pinned left */
+    white-space: nowrap;
 }
 
 .ld-info-val {
     color: var(--term-fg-strong);
     font-weight: bold;
+    /* Let a long value (e.g. multiple comma-joined policies) shrink and wrap
+       within its column, breaking mid-token if needed, instead of overflowing. */
+    min-width: 0;
+    text-align: right;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 /* SYSTEM / LOGS card switcher - tabs styled like the Gymnasium tool toggles. */
