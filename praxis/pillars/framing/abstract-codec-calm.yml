@@ -1,0 +1,11 @@
+# Abstract's second-component clause, CALM variant. Inline (no subsection) so it
+# continues the abstract sentence; one of three codec_mode variants.
+section: abstract
+order: 10
+requires:
+  codec_mode: [calm]
+body: >
+  the CALM continuous-latent codec~\cite{calm2025}, which phase-locks a compressed
+  patch latent to that rhythm. The same geometry reaches its finest, per-feature
+  form in a plain transformer, so across these approaches it is the granularity
+  that changes, not the geometry.

@@ -2063,6 +2063,15 @@
     overflow: hidden;
 }
 
+/* Canvases are inline by default - that leaves a descender gap under them (the
+   "proportions feel slightly off") and lets a stale/DPR-scaled bitmap spill past
+   the card on the right. Block + max-width pins them to their wrapper. */
+.chart-card canvas,
+.chart-wrapper canvas {
+    display: block;
+    max-width: 100%;
+}
+
 /* Scrollable custom legend used by the activation charts, where the raw
    curve count (one per depth pass, per block) blows past what Chart.js's
    built-in legend can fit without stealing chart height. Controls stay

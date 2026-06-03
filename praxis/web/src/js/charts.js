@@ -941,6 +941,7 @@ function renderDeck(deck) {
         if (a > DECK_MAX_FAN + 1) {
             if (card._vis !== 'h') { card.style.visibility = 'hidden'; card._vis = 'h'; }
             if (card._pe !== 'none') { card.style.pointerEvents = 'none'; card._pe = 'none'; }
+            if (card._act) { card.classList.remove('deck-active'); card._act = false; }
             continue;
         }
         const isHead = a < 0.5;
@@ -973,6 +974,9 @@ function renderDeck(deck) {
         if (card._zi !== zi) { card.style.zIndex = String(zi); card._zi = zi; }
         const pe = isHead ? 'auto' : 'none';
         if (card._pe !== pe) { card.style.pointerEvents = pe; card._pe = pe; }
+        // Only the head card animates its canvases (see deckCardParked); the rest
+        // are occluded, so pausing them is the main mobile-lag win.
+        if (card._act !== isHead) { card.classList.toggle('deck-active', isHead); card._act = isHead; }
     }
     if (deck._h !== bandH) { deck.style.height = `${bandH}px`; deck._h = bandH; }
 
@@ -1015,6 +1019,7 @@ function renderDeckDesktop(deck) {
         if (a > DECK_MAX_FAN + 1) {
             if (card._vis !== 'h') { card.style.visibility = 'hidden'; card._vis = 'h'; }
             if (card._pe !== 'none') { card.style.pointerEvents = 'none'; card._pe = 'none'; }
+            if (card._act) { card.classList.remove('deck-active'); card._act = false; }
             continue;
         }
         const capped = a > DECK_MAX_FAN ? DECK_MAX_FAN : a;
@@ -1034,6 +1039,8 @@ function renderDeckDesktop(deck) {
         if (card._zi !== zi) { card.style.zIndex = String(zi); card._zi = zi; }
         const pe = a < 0.5 ? 'auto' : 'none';
         if (card._pe !== pe) { card.style.pointerEvents = pe; card._pe = pe; }
+        const isHead = a < 0.5;
+        if (card._act !== isHead) { card.classList.toggle('deck-active', isHead); card._act = isHead; }
     }
     if (deck._h !== floor) { deck.style.height = `${floor.toFixed(1)}px`; deck._h = floor; }
 

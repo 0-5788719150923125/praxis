@@ -1,0 +1,10 @@
+# Abstract's second-component clause, byte-latent variant (calm-e is here).
+section: abstract
+order: 10
+requires:
+  codec_mode: [byte_latent]
+body: >
+  a byte-latent encoder~\cite{pagnoni2024byte}, which finds that rhythm in
+  content-adaptive byte patches. The same geometry reaches its finest, per-feature
+  form in a plain transformer, so across these approaches it is the granularity
+  that changes, not the geometry.

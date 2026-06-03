@@ -1,0 +1,20 @@
+# Section 3.1, CALM variant: the run uses a CALM continuous-latent codec.
+# One of three mutually-exclusive codec_mode fragments (calm/byte_latent/standard).
+section: harmonic
+order: 10
+requires:
+  codec_mode: [calm]
+body: >
+  \subsection{Phase-locking and near-perfect reconstruction}
+
+  CALM trains a variational codec to compress $K$ tokens into a single continuous
+  latent, then models those latents autoregressively with an energy head and
+  decodes by sampling~\cite{calm2025}. In Praxis the codec reaches reconstruction
+  in the range of a hundredth of a bit per byte - effectively lossless at the
+  patch level. It does so not by giving each latent feature its own job but by
+  letting the features \textit{phase-lock}: they organize around a dominant rhythm
+  and express the sequence as deviations from it. This is the same phenomenon the
+  harmonic head shows from the bias side. A corpus has a beat; a continuous latent
+  that finds the beat can carry almost all of the signal in a few coherent modes,
+  and spend its remaining capacity on the residual. Reconstruction fidelity is a
+  measure of how completely the latent has phase-locked.

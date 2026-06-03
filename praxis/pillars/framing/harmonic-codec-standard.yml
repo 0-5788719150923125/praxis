@@ -1,0 +1,20 @@
+# Section 3.1, standard-tokenization variant: no byte-latent encoder and no CALM
+# codec (encoder_type is unset) - a plain (sub)word vocabulary with an embedding.
+section: harmonic
+order: 10
+requires:
+  codec_mode: [standard]
+body: >
+  \subsection{The field without a codec}
+
+  This run uses ordinary tokenization: a (sub)word vocabulary mapped through a
+  learned embedding, with no compressing codec and no continuous latent in front
+  of the model. There is nothing here to phase-lock by reconstruction, which makes
+  it the cleanest test of the harmonic claim - the standing wave is the
+  \emph{only} source of imposed rhythm. The harmonic head modulates the token
+  embeddings directly, $h \mapsto h\,(1 + b)$, so any periodic structure the model
+  carries comes from the field rather than from a latent that found the beat for
+  it. The bias/variance reading still holds - a static spectrum is the
+  population-average rhythm over token features, an input-conditional modulation
+  is the structured deviation - but with no codec underneath, whether the geometry
+  earns its keep rests entirely on the field.

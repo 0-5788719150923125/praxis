@@ -1,0 +1,9 @@
+# Abstract's second-component clause, standard-tokenization variant: no codec.
+section: abstract
+order: 10
+requires:
+  codec_mode: [standard]
+body: >
+  ordinary tokenization, where the harmonic head writes that rhythm directly over
+  per-feature embeddings - the finest granularity, and evidence that even a plain
+  transformer can carry the harmony with no codec at all.

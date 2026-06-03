@@ -203,6 +203,17 @@ def _augment(config: Dict) -> Dict:
         "prismatic",
     ) or encoder.startswith("calm")
 
+    # codec_mode: which input representation the harmonic section opens on -
+    # a CALM continuous-latent codec, a byte-latent (BLT) patching bottleneck,
+    # or plain (sub)word tokenization with no codec. Exactly one, so the three
+    # section-3.1 fragments are mutually exclusive.
+    if encoder.startswith("calm"):
+        derived["codec_mode"] = "calm"
+    elif encoder.startswith("byte"):
+        derived["codec_mode"] = "byte_latent"
+    else:
+        derived["codec_mode"] = "standard"
+
     return {**config, **derived}
 
 

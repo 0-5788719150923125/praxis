@@ -1068,6 +1068,16 @@ function readAccentColor() {
  * tracer climbing the sequence plus a slow camera spin for depth. No spinning
  * scaffolding, no per-frame model calls.
  */
+// Pause a card's heavy canvas animation when it is a non-active card in a deck
+// (stacked behind the head, occluded). Standalone cards - not inside a deck -
+// always animate. Cuts the dynamics deck from ~one RAF per card down to one for
+// the head card, which is the main source of mobile lag.
+function deckCardParked(canvas) {
+    const card = canvas.closest('.chart-card');
+    if (!card || !card.closest('.chart-deck')) return false;
+    return !card.classList.contains('deck-active');
+}
+
 function renderHarmonicSpiral(canvas, data) {
     if (canvas._harmonicRAF) cancelAnimationFrame(canvas._harmonicRAF);
     const path = Array.isArray(data.path) ? data.path : [];
@@ -1083,6 +1093,7 @@ function renderHarmonicSpiral(canvas, data) {
 
     const draw = () => {
         if (!canvas.isConnected) { canvas._harmonicRAF = null; return; }
+        if (deckCardParked(canvas)) { canvas._harmonicRAF = requestAnimationFrame(draw); return; }
         if (cachedTheme !== state.theme) { cachedTheme = state.theme; accent = readAccentColor(); }
 
         const wrapper = canvas.parentElement;
@@ -1207,6 +1218,7 @@ function renderHarmonicCurve(canvas, data) {
 
     const draw = () => {
         if (!canvas.isConnected) { canvas._harmonicRAF = null; return; }
+        if (deckCardParked(canvas)) { canvas._harmonicRAF = requestAnimationFrame(draw); return; }
         if (cachedTheme !== state.theme) {
             cachedTheme = state.theme;
             accent = readAccentColor();
@@ -1351,6 +1363,7 @@ function renderFieldTraces(canvas, data) {
 
     const tick = () => {
         if (!canvas.isConnected) { canvas._harmonicRAF = null; return; }
+        if (deckCardParked(canvas)) { canvas._harmonicRAF = requestAnimationFrame(draw); return; }
         const wrapper = canvas.parentElement;
         const w = wrapper.clientWidth || 800, h = wrapper.clientHeight || 400;
         if (w >= 2 && h >= 2 && (w !== lastW || h !== lastH || state.theme !== lastTheme)) {
@@ -1421,6 +1434,7 @@ function renderCorrMatrix(canvas, data) {
 
     const tick = () => {
         if (!canvas.isConnected) { canvas._harmonicRAF = null; return; }
+        if (deckCardParked(canvas)) { canvas._harmonicRAF = requestAnimationFrame(draw); return; }
         const wrapper = canvas.parentElement;
         const w = wrapper.clientWidth || 800, h = wrapper.clientHeight || 400;
         if (w >= 2 && h >= 2 && (w !== lastW || h !== lastH || state.theme !== lastTheme)) {
@@ -1474,6 +1488,7 @@ function renderHarmonicStaircase(canvas, data) {
 
     const draw = () => {
         if (!canvas.isConnected) { canvas._harmonicRAF = null; return; }
+        if (deckCardParked(canvas)) { canvas._harmonicRAF = requestAnimationFrame(draw); return; }
         if (cachedTheme !== state.theme) { cachedTheme = state.theme; accent = parseRGB(readAccentColor()); }
 
         const wrapper = canvas.parentElement;
@@ -1617,9 +1632,13 @@ function renderHarmonicStrands(canvas, data) {
         plane.push([rb * 2 - 1, rv * 2 - 1]);  // x=bias, y=variance, in [-1,1]
         isVar.push(vr[i] > bias[i]);
     }
+    // Feature order around the ring, so connecting them traces one smooth wave
+    // rather than a scatter of points.
+    const ord = [...Array(N).keys()].sort((a, b) => angle[a] - angle[b]);
 
     const draw = () => {
         if (!canvas.isConnected) { canvas._strandsRAF = null; return; }
+        if (deckCardParked(canvas)) { canvas._strandsRAF = requestAnimationFrame(draw); return; }
         if (cachedTheme !== state.theme) { cachedTheme = state.theme; accent = readAccentColor(); }
         const wrapper = canvas.parentElement;
         const w = wrapper.clientWidth || 800, h = wrapper.clientHeight || 400;
@@ -1640,24 +1659,34 @@ function renderHarmonicStrands(canvas, data) {
             return { sx: cx + Xs * scale, sy: cy - (Z * cosE - Ys * sinE) * scale, depth: Ys * cosE + Z * sinE };
         };
 
-        const prims = [];
+        // A stack of smooth closed waves, one per axial slice: each is the field
+        // read around the ring, morphing from the bias circle (z=0) to the
+        // bias/variance plane (z=1). Each segment is colored by which energy wins
+        // at that feature, so the wave splits into bias arcs (cool) and variance
+        // arcs (accent) - the bias/variance boundary runs along the wave itself.
+        const biasColor = state.theme === 'dark' ? 'rgba(150,180,255,0.95)' : 'rgba(60,90,180,0.9)';
+        ctx.lineWidth = 1.5;
+        ctx.lineJoin = 'round';
         for (let s = 0; s < SLICES; s++) {
-            const z = s / (SLICES - 1);  // 0 = bias ring, 1 = bias/variance plane
-            for (let i = 0; i < N; i++) {
+            const z = s / (SLICES - 1);
+            const pts = ord.map((i) => {
                 const x = ring[i][0] * (1 - z) + plane[i][0] * z;
                 const y = ring[i][1] * (1 - z) + plane[i][1] * z;
-                prims.push({ p: project(x, y, z), z, v: isVar[i] });
+                const p = project(x, y, z);
+                return { sx: p.sx, sy: p.sy, depth: p.depth, v: isVar[i] };
+            });
+            const n = pts.length;
+            for (let i = 0; i < n; i++) {
+                const a = pts[i], pr = pts[(i - 1 + n) % n], nx = pts[(i + 1) % n];
+                const m0x = (pr.sx + a.sx) / 2, m0y = (pr.sy + a.sy) / 2;
+                const m1x = (a.sx + nx.sx) / 2, m1y = (a.sy + nx.sy) / 2;
+                ctx.globalAlpha = (0.1 + 0.5 * ((a.depth + 1.5) / 3)) * (0.45 + 0.55 * z);
+                ctx.strokeStyle = a.v ? accent : biasColor;
+                ctx.beginPath();
+                ctx.moveTo(m0x, m0y);
+                ctx.quadraticCurveTo(a.sx, a.sy, m1x, m1y);  // smooth wave through the feature
+                ctx.stroke();
             }
-        }
-        prims.sort((a, b) => a.p.depth - b.p.depth);
-        for (const pr of prims) {
-            ctx.globalAlpha = 0.2 + 0.6 * ((pr.p.depth + 1.5) / 3);
-            // White (pure bias) on the ring; variance-dominant features take the
-            // accent as they reach the plane.
-            ctx.fillStyle = pr.v && pr.z > 0.4 ? accent : (pr.z > 0.5 ? 'rgba(150,180,255,0.9)' : '#ffffff');
-            ctx.beginPath();
-            ctx.arc(pr.p.sx, pr.p.sy, 1.6, 0, 2 * Math.PI);
-            ctx.fill();
         }
         ctx.globalAlpha = 1;
 

@@ -1,0 +1,21 @@
+# Section 3.1, byte-latent variant: the run uses a BLT-style byte encoder
+# (entropy patching), not a reconstructing codec. calm-e is here.
+section: harmonic
+order: 10
+requires:
+  codec_mode: [byte_latent]
+body: >
+  \subsection{Entropy patching and the corpus beat}
+
+  This run reads raw bytes through a byte-latent encoder~\cite{pagnoni2024byte}:
+  the stream is segmented into patches at points of high next-byte entropy and
+  compressed through that bottleneck, so the model spends capacity where the
+  bytes are least predictable and coasts where they are not. There is no
+  reconstructing codec here and no per-patch latent to phase-lock - but the same
+  geometry appears one level up. The patch boundaries are content-adaptive, so the
+  patch stream already carries the corpus's own rhythm: its cadence is the
+  byte-entropy profile of the data. The harmonic head then writes its standing
+  wave over those patch features, and the bias/variance reading is unchanged - a
+  static spectrum is the average patch rhythm, an input-conditional modulation is
+  the structured deviation. Where CALM phase-locks a latent to the beat, the
+  byte-latent encoder lets the beat fall out of where it chose to cut.
