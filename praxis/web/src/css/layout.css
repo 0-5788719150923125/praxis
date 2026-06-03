@@ -77,6 +77,11 @@
     color: var(--text);
 }
 
+/* Conditional buttons (e.g. Print) stay fully removed until their state flips. */
+.tool-toggle[hidden] {
+    display: none;
+}
+
 /* Every active tool follows the brand accent (green; blue while the LOGS easter egg is
    on), so Read and Evaluate are always the same color when selected - one source, no
    second hardcoded blue. */

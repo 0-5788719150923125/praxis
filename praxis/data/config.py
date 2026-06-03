@@ -74,6 +74,9 @@ def sample_developer_prompt(prompt_type: str, fallback: str = "") -> str:
 DEFAULT_WEIGHT = 1.0
 DIR_WEIGHT = 1.0
 TOOLS_WEIGHT = 1.0
+# High early so the ~25 print formats are learned fast (deliberate overfit);
+# blend down later for generalization.
+PRINT_WEIGHT = 5.0
 
 # Dataset collections with weights
 DATASET_COLLECTIONS = dict(
@@ -131,6 +134,9 @@ DATASET_COLLECTIONS = dict(
     },
     rl={
         "intellect-rl": DEFAULT_WEIGHT,
+    },
+    print={
+        "synthetic-print": PRINT_WEIGHT,
     },
     cot={
         "chain-of-thought": DEFAULT_WEIGHT * 0.1,
@@ -290,7 +296,6 @@ DATASETS = {
         keys=["prompt", "verification_info", "solve_rate_qwen_r1_distill_7b"],
         format=DataFormat.RL,
         streaming=True,
-        mix_simple_math=True,  # Mix in simple problems for untrained models
         trust_remote_code=False,
     ),
     "chain-of-thought": dict(
@@ -304,6 +309,10 @@ DATASETS = {
     "synthetic-tool-calling": dict(
         type="synthetic-tool-calling",
         task_type=TaskType.TOOL_CALL,
+    ),
+    "synthetic-print": dict(
+        type="synthetic-print",
+        task_type=TaskType.CONVERSATION,
     ),
     "praxis": dict(
         type="directory",

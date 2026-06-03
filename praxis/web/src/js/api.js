@@ -81,6 +81,50 @@ export async function kbFetchItem(id) {
 }
 
 /**
+ * Print: ask the model to lead with a question (the environment-level hook).
+ * Returns {available, id, question}. available=false until the model produces one.
+ * @returns {Promise<Object>}
+ */
+export async function printAsk() {
+    const response = await fetch(`${state.settings.apiUrl}/api/print/ask`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+    });
+    if (!response.ok) throw new Error(`Print ask error: ${response.status}`);
+    return response.json();
+}
+
+/**
+ * Print: submit the user's response to a model-led question. The backend scores
+ * it against the model's stashed predicted answer and returns the reward.
+ * @param {string} id - pending question id
+ * @param {string} responseText - the user's typed answer
+ * @returns {Promise<Object>} {recall, activation, energy, predicted_answer}
+ */
+export async function printRespond(id, responseText) {
+    const response = await fetch(`${state.settings.apiUrl}/api/print/respond`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, response: responseText })
+    });
+    if (!response.ok && response.status !== 409) {
+        throw new Error(`Print respond error: ${response.status}`);
+    }
+    return response.json();
+}
+
+/**
+ * Print: live engagement-energy snapshot for the badge.
+ * @returns {Promise<Object>} {energy, count, buffered, last}
+ */
+export async function printEnergy() {
+    const response = await fetch(`${state.settings.apiUrl}/api/print/energy`);
+    if (!response.ok) throw new Error(`Print energy error: ${response.status}`);
+    return response.json();
+}
+
+/**
  * API endpoint configuration - pure data
  */
 const ENDPOINTS = {

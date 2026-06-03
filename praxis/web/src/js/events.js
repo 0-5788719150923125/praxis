@@ -24,6 +24,11 @@ export const CLICK_HANDLERS = [
         action: () => ({ type: 'TOGGLE_NOTIFICATIONS' })
     },
     {
+        selector: '.tool-toggle[data-tool="print"]',
+        match: 'closest',
+        action: () => ({ type: 'PRESENT_PRINT_QUESTION' })
+    },
+    {
         selector: '.tool-toggle[data-toggleable]',
         match: 'closest',
         action: (e) => ({
@@ -125,8 +130,20 @@ export const CLICK_HANDLERS = [
         action: (e) => ({
             type: 'COPY_TO_CLIPBOARD',
             payload: e.target.dataset.command,
-            meta: { button: e.target }
+            meta: { button: e.target, label: 'Copied git remote to clipboard.' }
         })
+    },
+    {
+        selector: '.spec-copy-btn',
+        match: 'closest',
+        action: (e) => {
+            const pre = e.target.closest('.chart-card')?.querySelector('pre.spec-code');
+            return {
+                type: 'COPY_TO_CLIPBOARD',
+                payload: pre ? pre.textContent : '',
+                meta: { button: e.target.closest('.spec-copy-btn'), label: 'Copied to clipboard.' }
+            };
+        }
     },
     {
         selector: '#run-selector-btn',

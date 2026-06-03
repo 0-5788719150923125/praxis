@@ -16,6 +16,7 @@ class KBItem:
     body: str  # searchable text
     uri: str  # where Read opens it: tab route, file path, or URL
     meta: dict = field(default_factory=dict)
+    updated: float = 0.0  # unix mtime; 0 = no natural timestamp (cards, agents)
 
 
 @dataclass(frozen=True)

@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 from praxis.data.config import (
     DATASET_COLLECTIONS,
     DATASETS,
+    DEFAULT_WEIGHT,
     DIR_WEIGHT,
     TOOLS_WEIGHT,
     resolve_task_type,
@@ -14,6 +15,7 @@ from praxis.data.datamodule import PraxisDataModule
 from praxis.data.datasets import (
     HuggingfaceDataset,
     MultiDirectoryDataset,
+    SyntheticPrintDataset,
     SyntheticToolCallingDataset,
 )
 
@@ -191,6 +193,12 @@ def get_dataset(format, tokenizer, seed, *args, **kwargs):
         dataset.weight = dataset_config.get("weight", TOOLS_WEIGHT)
         dataset.task_type = resolve_task_type(dataset_config)
         return dataset
+    elif format == "synthetic-print":
+        dataset_config = args[0] if args else {}
+        dataset = SyntheticPrintDataset(tokenizer, seed, dataset_config)
+        dataset.weight = dataset_config.get("weight", DEFAULT_WEIGHT)
+        dataset.task_type = resolve_task_type(dataset_config)
+        return dataset
 
 
 def add_collection(config, collection_name, target_key):
@@ -221,24 +229,23 @@ def add_collection(config, collection_name, target_key):
     return config
 
 
-def _rl_uses_datasets(rl_type: Optional[str]) -> bool:
-    """Whether ``rl_type`` is a dataset-RL method that needs RL data collections.
+def _rl_uses_datasets(rl_type) -> bool:
+    """Whether any ``rl_type`` entry is a dataset-RL method needing RL collections.
 
-    Weight-editing controllers (e.g. ``harmonic_weight``) are marked
-    ``is_weight_controller``; they reward loss-delta from a training callback
-    and use no RL datasets, so the data pipeline must ignore them - otherwise
-    setting their ``rl_type`` silently mixes RL/simple-math data into training.
-    Deferred import keeps data/ independent of policies/ at module load.
+    rl_type may be a single name or a list. Weight-editing controllers (e.g.
+    ``harmonic_weight``) are marked ``is_weight_controller``; they reward
+    loss-delta from a training callback and use no RL datasets, so the data
+    pipeline must ignore them - otherwise setting their ``rl_type`` silently mixes
+    RL data into training. Profile keys (e.g. ``harmonic_weight_wave``) are
+    resolved to their underlying policy first. Deferred import keeps data/
+    independent of policies/ at module load.
     """
-    if not rl_type:
-        return False
     try:
-        from praxis.policies import RL_POLICIES_REGISTRY
+        from praxis.policies import needs_rl_datasets, normalize_rl_types
 
-        cls = RL_POLICIES_REGISTRY.get(rl_type)
-        return not bool(getattr(cls, "is_weight_controller", False))
+        return any(needs_rl_datasets(name) for name in normalize_rl_types(rl_type))
     except Exception:
-        return True  # fail open: behave as before if the registry isn't available
+        return bool(rl_type)  # fail open: behave as before if the registry is absent
 
 
 def get_dataset_configs(
@@ -271,17 +278,22 @@ def get_dataset_configs(
     for name in train_datasets:
         config = add_collection(config, name, "primary")
 
-    if _rl_uses_datasets(rl_type):
-        rl_collection = "cot" if rl_type in ["cot", "cot-reinforce"] else "rl"
-        config = add_collection(config, rl_collection, "primary")
+    from praxis.policies import needs_rl_datasets, normalize_rl_types
+
+    rl_names = [name for name in normalize_rl_types(rl_type) if needs_rl_datasets(name)]
+    # Each dataset-RL entry pulls in its collection: CoT methods need the cot
+    # collection, the rest the rl collection. Union, de-duped by collection name.
+    rl_collections = {
+        "cot" if name in ("cot", "cot-reinforce") else "rl" for name in rl_names
+    }
+    for collection in sorted(rl_collections):
+        config = add_collection(config, collection, "primary")
 
     for name in validation_datasets:
         config = add_collection(config, name, "validation")
 
-    if _rl_uses_datasets(rl_type):
+    if rl_names:
         rl_count = len([e for e in config["primary"] if "RL" in e.get("path", "")])
-        print(
-            f"[RL] RL enabled with algorithm '{rl_type}', {rl_count} RL datasets in config"
-        )
+        print(f"[RL] RL enabled with {rl_names}, {rl_count} RL datasets in config")
 
     return config

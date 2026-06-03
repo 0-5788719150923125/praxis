@@ -27,6 +27,7 @@ def build_training_callbacks(
         AccumulationSchedule,
         BrierLMCallback,
         DynamicsLoggerCallback,
+        EngagementLiveRewardCallback,
         HarmonicWeightRLCallback,
         MemoryProfilerCallback,
         MetricsLoggerCallback,
@@ -77,21 +78,27 @@ def build_training_callbacks(
     # Sample-based proper scoring rule at validation; cheap on small batches.
     callbacks.append(BrierLMCallback(tokenizer=tokenizer))
 
-    # Weight-editing RL controller. A single rl_type selects a profile that
-    # bundles the controller's behavior (edit_mode, selector); the experiment
-    # sets only rl_type, not a soup of rl_* flags. Driven here from the training
-    # loop, not the forward pass. Ordered before MetricsLogger so its rl_*
-    # scalars are in callback_metrics when MetricsLogger drains them.
-    from praxis.policies import RL_POLICIES_REGISTRY, get_rl_profile
+    # Weight-editing RL controllers. rl_type is a list; each profile entry
+    # selects a controller and bundles its behavior (edit_mode, selector), so the
+    # experiment sets only rl_type, not a soup of rl_* flags. Driven here from the
+    # training loop, not the forward pass. Ordered before MetricsLogger so the
+    # rl_* scalars are in callback_metrics when MetricsLogger drains them.
+    from praxis.policies import (
+        RL_POLICIES_REGISTRY,
+        get_rl_profile,
+        normalize_rl_types,
+    )
 
-    _rl_profile = get_rl_profile(getattr(config, "rl_type", None))
-    if _rl_profile is not None:
+    for rl_name in normalize_rl_types(getattr(config, "rl_type", None)):
+        _rl_profile = get_rl_profile(rl_name)
+        if _rl_profile is None:
+            continue  # forward-path policy; built inside the model, not here
         rl_policy = RL_POLICIES_REGISTRY[_rl_profile["policy"]](config)
 
         # Profile supplies the defaults; an explicit rl_* config key still wins.
-        def _rl(key, cast):
+        def _rl(key, cast, _p=_rl_profile):
             v = getattr(config, f"rl_{key}", None)
-            return cast(v) if v is not None else cast(_rl_profile[key])
+            return cast(v) if v is not None else cast(_p[key])
 
         callbacks.append(
             HarmonicWeightRLCallback(
@@ -104,6 +111,11 @@ def build_training_callbacks(
                 selector=_rl_profile["selector"],
             )
         )
+
+    # Online-learning seam: when the forward-path engagement policy is active,
+    # drain live `Print` rewards from the web UI into its energy baseline.
+    if "engagement" in normalize_rl_types(getattr(config, "rl_type", None)):
+        callbacks.append(EngagementLiveRewardCallback())
 
     # Restrict charted task-loss weights to task types a live dataset
     # produces; a learnable weighter still drifts weights for absent tasks.

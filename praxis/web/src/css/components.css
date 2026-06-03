@@ -1136,6 +1136,39 @@
     color: #e0e0e0;
 }
 
+/* One-click copy for long, hard-to-select JSON (Identity tab). Pinned to the
+   card chrome so it stays put while the content scrolls beneath it; fades in on
+   hover (always visible on touch - see responsive.css). */
+.chart-card.has-copy {
+    position: relative;
+}
+
+.spec-copy-btn {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    z-index: 3;
+    padding: 0.25rem 0.6rem;
+    font-family: inherit;
+    font-size: 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    background: var(--background);
+    color: var(--text);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s, border-color 0.15s;
+}
+
+.chart-card.has-copy:hover .spec-copy-btn,
+.spec-copy-btn:focus-visible {
+    opacity: 1;
+}
+
+.spec-copy-btn:hover {
+    border-color: var(--accent);
+}
+
 .spec-code-step {
     margin-bottom: 1rem;
 }

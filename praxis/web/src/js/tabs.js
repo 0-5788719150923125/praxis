@@ -305,11 +305,13 @@ function renderSpec(data, container) {
         {
             title: 'Architecture',
             subtitle: 'Instantiated model module tree',
+            copyable: true,
             build: () => present('architecture') ? createPreBlock(data.model_architecture) : '',
         },
         {
             title: 'Arguments',
             subtitle: 'Resolved run configuration',
+            copyable: true,
             build: () => present('arguments') && data.args ? createPreBlock(formatJSON(data.args)) : '',
         },
     ];
@@ -317,7 +319,13 @@ function renderSpec(data, container) {
         .map(sheet => {
             const inner = sheet.build();
             if (!inner || !inner.trim()) return '';
-            return `<div class="chart-card">
+            // Copyable sheets get a pinned copy button in the card chrome (above
+            // the scroll) so it stays put while the JSON scrolls beneath it.
+            const copyBtn = sheet.copyable
+                ? '<button class="spec-copy-btn" type="button" aria-label="Copy to clipboard">Copy</button>'
+                : '';
+            return `<div class="chart-card${sheet.copyable ? ' has-copy' : ''}">
+                ${copyBtn}
                 <div class="chart-title">${sheet.title}</div>
                 <div class="chart-subtitle">${sheet.subtitle}</div>
                 <div class="deck-card-scroll">${inner}</div>

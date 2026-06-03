@@ -6,7 +6,7 @@
 
 import { state, CONSTANTS, DEFAULT_SYSTEM_PROMPT } from './state.js';
 import { render, renderAppStructure, updateInputContainerStyling } from './render.js';
-import { sendMessage, kbSearch, testApiConnection } from './api.js';
+import { sendMessage, kbSearch, testApiConnection, printAsk, printRespond } from './api.js';
 import { connectMetricsLive, setupLiveReload, renderCurrentMetrics } from './websocket.js';
 import { loadSpec, loadAgents, loadResearchMetrics } from './tabs.js';
 import { setupTabCarousel, setupTabSwipe } from './mobile.js';
@@ -113,6 +113,10 @@ function init() {
 
     // Initialize input placeholder
     showPlaceholder();
+
+    // Poll the Print hook: periodically query the model for a self-led question.
+    // When one arrives the conditional Print button appears (see render).
+    setupPrintHook();
 
     // Warm the other tabs in the background so their charts/spec are ready before
     // the user navigates (and so KB card deep-links land on a built deck). Decks
@@ -398,21 +402,19 @@ function currentQuery(input) {
     return (v.startsWith(inputPrefix()) ? v.slice(inputPrefix().length) : v).trim();
 }
 
-/** Debounced live search; stale responses are dropped via a sequence guard. */
+/**
+ * Debounced live search; stale responses are dropped via a sequence guard. An
+ * empty query fetches the recent feed (the backend returns newest-first), so the
+ * box is never blank - it's the default view when you click in with no text.
+ */
 function scheduleKbSearch(query) {
     clearTimeout(kbSearchTimer);
     state.kbOpenItem = null;  // typing a new query returns to the results list
-    if (!query) {
-        state.kbResults = [];
-        state.kbSearching = false;
-        render();
-        return;
-    }
     state.kbSearching = true;
     const seq = ++kbSearchSeq;
     kbSearchTimer = setTimeout(async () => {
         try {
-            const hits = await kbSearch(query);
+            const hits = await kbSearch(query);  // '' -> recent feed
             if (seq !== kbSearchSeq) return; // a newer keystroke superseded us
             state.kbResults = hits;
         } catch (error) {
@@ -425,20 +427,25 @@ function scheduleKbSearch(query) {
                 render();
             }
         }
-    }, 120);
+    }, query ? 120 : 0);
 }
 
 /** Enter in Read mode opens the top-ranked hit (inline, or external for links). */
 function openTopKbResult() {
     const top = state.kbResults[0];
-    if (top) executeAction('OPEN_KB_ITEM', { id: top.id, type: top.type, uri: top.uri });
+    if (top) executeAction('OPEN_KB_ITEM', { id: top.id, type: top.type, uri: top.uri, title: top.title });
 }
 
 /**
- * Handle input focus
+ * Handle input focus. In Read mode, focusing the box loads results for the
+ * current query - empty included, which yields the recent feed.
  */
 function handleInputFocus() {
     hidePlaceholder();
+    if (state.conversationMode === 'read' && !state.kbOpenItem) {
+        const input = document.getElementById('message-input');
+        if (input) scheduleKbSearch(currentQuery(input));
+    }
 }
 
 /**
@@ -537,6 +544,17 @@ async function sendUserMessage() {
 
     if (!content) return;
 
+    // Print flow: if a model-led question is awaiting an answer, this message IS
+    // the answer - score it as the live engagement reward instead of generating.
+    if (state.print.awaitingResponse) {
+        input.value = inputPrefix();
+        input.style.height = 'auto';
+        state.isShowingPlaceholder = false;
+        setCursorAfterPrefix();
+        await handlePrintResponse(content);
+        return;
+    }
+
     // Add user message to state
     state.messages.push({ role: 'user', content });
 
@@ -574,6 +592,71 @@ async function sendUserMessage() {
             role: 'assistant',
             content: `Error: ${error.message}`
         });
+    } finally {
+        state.isThinking = false;
+        render();
+    }
+}
+
+// --- Print (model-leads question + live reward) ------------------------------
+
+let printHookTimer = null;
+
+/**
+ * Periodically ask the model to lead with a question. This is the
+ * environment-level hook: the act of querying produces the question that makes
+ * the conditional Print button appear. Skips while one is already pending, being
+ * answered, or while the model is mid-generation.
+ */
+function setupPrintHook() {
+    const POLL_MS = 15000;
+    const tick = async () => {
+        if (state.print.available || state.print.awaitingResponse || state.isThinking) return;
+        try {
+            const res = await printAsk();
+            if (res && res.available && res.question) {
+                state.print.available = true;
+                state.print.question = res.question;
+                state.print.id = res.id;
+                render();
+            }
+        } catch (e) {
+            // Backend not ready (no generator yet) - stay quiet and retry later.
+        }
+    };
+    clearInterval(printHookTimer);
+    printHookTimer = setInterval(tick, POLL_MS);
+    tick();  // also try once on load
+}
+
+/**
+ * Submit the user's answer to the model-led question and surface the reward.
+ */
+async function handlePrintResponse(content) {
+    state.messages.push({ role: 'user', content });
+    const id = state.print.id;
+    state.print.awaitingResponse = false;
+    state.print.available = false;
+    state.print.question = null;
+    state.print.id = null;
+    state.isThinking = true;
+    render();
+
+    try {
+        const r = await printRespond(id, content);
+        if (r && r.status === 'ok') {
+            state.print.lastReward = r;
+            const pct = Math.round((r.recall || 0) * 100);
+            state.messages.push({
+                role: 'assistant',
+                content: `(Print reward: recall ${pct}%, energy ${Number(r.energy).toFixed(3)}` +
+                    (r.predicted_answer ? ` - I predicted "${r.predicted_answer}")` : ')')
+            });
+        } else {
+            state.messages.push({ role: 'assistant', content: '(Print: this question expired.)' });
+        }
+    } catch (error) {
+        state.messages.push({ role: 'assistant', content: `(Print error: ${error.message})` });
     } finally {
         state.isThinking = false;
         render();

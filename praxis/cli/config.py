@@ -80,7 +80,7 @@ class RunConfig:
     validation_datasets: List[str] = field(default_factory=lambda: ["validation"])
     sampler_mode: str = "novelty"
     data_path: List[str] = field(default_factory=list)
-    rl_type: Optional[str] = None
+    rl_type: Optional[Any] = None  # name, comma-string, or list of RL tasks
 
     # Evaluation / inference display
     eval_every: Optional[int] = None

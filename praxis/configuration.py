@@ -43,7 +43,7 @@ class PraxisConfig(PretrainedConfig):
         halting_type: Optional[str] = None,
         mtp_type: Optional[str] = None,
         mtp_depth: int = 1,
-        rl_type: Optional[str] = None,  # "reinforce", "grpo", "ppo", or None
+        rl_type=None,  # name, comma-string, or list of RL tasks (None disables)
         rl_weight: float = 0.1,
         grpo_group_size: int = 8,
         forward_weight: float = 0.666666,

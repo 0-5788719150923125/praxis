@@ -348,6 +348,102 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
             "is_validation": False,
         },
     },
+    # Engagement-prediction policy (rl_type=engagement). The headline learning
+    # signals: is the model anticipating its own answers, and is the homeostatic
+    # energy climbing toward its setpoint?
+    "engagement_energy": {
+        "description": (
+            "Homeostatic energy EMA: slow-decay, fast-accumulating, satiating "
+            "reward integral. Climbs toward the setpoint as the policy lands more "
+            "predicted answers; the REINFORCE baseline. Flat near 0 = not learning."
+        ),
+        "chart": {
+            "title": "Engagement Energy",
+            "y_label": "energy",
+            "y_scale": "linear",
+            "order": 300,
+            "is_validation": False,
+        },
+    },
+    "engagement_activation_rate": {
+        "description": (
+            "Fraction of examples where any predicted answer token is mentioned "
+            "in the response ('answered at all') - the headline reward activation."
+        ),
+        "chart": {
+            "title": "Engagement Activation Rate",
+            "y_label": "activation rate",
+            "y_scale": "linear",
+            "order": 310,
+            "is_validation": False,
+        },
+    },
+    "engagement_recall": {
+        "description": (
+            "Graded recall |A_hat & R| / |A_hat| over the answer tokens - the "
+            "smoother reward the policy gradient actually optimizes."
+        ),
+        "chart": {
+            "title": "Engagement Recall",
+            "y_label": "recall",
+            "y_scale": "linear",
+            "order": 320,
+            "is_validation": False,
+        },
+    },
+    "engagement_advantage": {
+        "description": (
+            "reward - energy baseline, the signed REINFORCE signal. Positive when "
+            "the model beats its current energy setpoint; drives the update."
+        ),
+        "chart": {
+            "title": "Engagement Advantage",
+            "y_label": "advantage",
+            "y_scale": "linear",
+            "order": 330,
+            "is_validation": False,
+        },
+    },
+    # Live (real-user) `Print` rewards drained from the web UI into training.
+    "engagement_live_reward": {
+        "description": (
+            "Recall of the most recent live interaction: a real user answered a "
+            "model-led question and this is how well the model predicted it."
+        ),
+        "chart": {
+            "title": "Engagement Live Reward",
+            "y_label": "recall",
+            "y_scale": "linear",
+            "order": 340,
+            "is_validation": False,
+        },
+    },
+    "engagement_live_count": {
+        "description": (
+            "Cumulative count of live `Print` interactions consumed by training - "
+            "how much real-user signal the online channel has delivered."
+        ),
+        "chart": {
+            "title": "Engagement Live Interactions",
+            "y_label": "count",
+            "y_scale": "linear",
+            "order": 350,
+            "is_validation": False,
+        },
+    },
+    "engagement_live_energy": {
+        "description": (
+            "Homeostatic energy of the live channel (real-user activations only) - "
+            "the slow online signal folded into the policy's baseline."
+        ),
+        "chart": {
+            "title": "Engagement Live Energy",
+            "y_label": "energy",
+            "y_scale": "linear",
+            "order": 360,
+            "is_validation": False,
+        },
+    },
 }
 
 

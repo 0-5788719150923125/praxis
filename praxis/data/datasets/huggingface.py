@@ -90,60 +90,27 @@ class HuggingfaceDataset(PraxisSampler):
         # Storage for rewards when using RL format
         self.reward_cache = {}
 
-        # Mix simple math for RL datasets
-        self.mix_simple_math = config.get("mix_simple_math", False)
-        if self.mix_simple_math:
-            from praxis.data.datasets.simple_math import SimpleMathDataset
-
-            self.simple_math = SimpleMathDataset(
-                mix_ratio=0.95
-            )  # 95% simple problems to force generation
-
     def get_document(self) -> Dict:
         """Get a formatted document with messages and metadata."""
         try:
-            # Mix in simple math problems for RL
-            if (
-                self.mix_simple_math
-                and hasattr(self, "simple_math")
-                and self.simple_math.should_use_simple()
-            ):
-                # Generate a simple problem
-                simple_problem = self.simple_math.generate()
-                document = self.simple_math.format_for_rl(simple_problem)
-                # Log when we use simple math
-                if not hasattr(self, "_simple_count"):
-                    self._simple_count = 0
-                self._simple_count += 1
-                if (
-                    self._simple_count % 10 == 1
-                ):  # More frequent logging to see if it's working
-                    print(
-                        f"[RL] Using simple math #{self._simple_count}: {simple_problem['prompt']} = {simple_problem['ground_truth']}"
-                    )
-            else:
-                if self.mix_simple_math:
-                    print(
-                        f"[RL DEBUG] Not using simple math (should_use={getattr(self, 'simple_math', None) and self.simple_math.should_use_simple() if hasattr(self, 'simple_math') else 'no simple_math'})"
-                    )
-                try:
-                    document = retry_on_network_error(
-                        lambda: next(self.dataset_iterator),
-                        label=f"stream next from {self.dataset_path}",
-                    )
-                except StopIteration:
-                    # Restart the dataset
-                    self.restart_count += 1
-                    new_seed = self.base_seed + self.restart_count
-                    shuffle_args = {"seed": new_seed}
-                    if self.is_streaming:
-                        shuffle_args["buffer_size"] = self.buffer_size
-                    self.shuffled_dataset = self.dataset.shuffle(**shuffle_args)
-                    self.dataset_iterator = iter(self.shuffled_dataset)
-                    document = retry_on_network_error(
-                        lambda: next(self.dataset_iterator),
-                        label=f"stream next from {self.dataset_path} (post-reshuffle)",
-                    )
+            try:
+                document = retry_on_network_error(
+                    lambda: next(self.dataset_iterator),
+                    label=f"stream next from {self.dataset_path}",
+                )
+            except StopIteration:
+                # Restart the dataset
+                self.restart_count += 1
+                new_seed = self.base_seed + self.restart_count
+                shuffle_args = {"seed": new_seed}
+                if self.is_streaming:
+                    shuffle_args["buffer_size"] = self.buffer_size
+                self.shuffled_dataset = self.dataset.shuffle(**shuffle_args)
+                self.dataset_iterator = iter(self.shuffled_dataset)
+                document = retry_on_network_error(
+                    lambda: next(self.dataset_iterator),
+                    label=f"stream next from {self.dataset_path} (post-reshuffle)",
+                )
 
             # Debug what keys the document has
             if not hasattr(self, "_debug_printed"):

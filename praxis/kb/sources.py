@@ -37,6 +37,13 @@ def _read(path: Path) -> str:
         return ""
 
 
+def _mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def _first_heading(text: str, fallback: str) -> str:
     for line in text.splitlines():
         if line.startswith("#"):
@@ -63,6 +70,7 @@ class DocsSource(KBSource):
                 title=_first_heading(text, slug),
                 body=text,
                 uri=f"docs/{path.name}",
+                updated=_mtime(path),
             )
 
 
@@ -85,6 +93,7 @@ class NotesSource(KBSource):
             # Label by source document (e.g. "Roadmap", "Oscillatory Axes") so
             # notes don't all collapse to one generic chip.
             label = path.stem.replace("_", " ").title()
+            mtime = _mtime(path)
             for i, (title, body) in enumerate(_split_sections(text)):
                 yield KBItem(
                     id=f"note:{path.stem}#{i}",
@@ -94,6 +103,7 @@ class NotesSource(KBSource):
                     body=body,
                     uri=f"next/{path.name}",
                     meta={"document": doc_title},
+                    updated=mtime,
                 )
 
 
@@ -112,6 +122,13 @@ class RunsSource(KBSource):
             if not config:
                 continue
             label = _run_label(config) or hash_id
+            # Freshest signal of run activity: the metrics DB is rewritten each
+            # logging step, so it tracks "last active" better than the config.
+            updated = max(
+                _mtime(run_dir / "metrics.db"),
+                _mtime(run_dir / "config.json"),
+                _mtime(run_dir),
+            )
             yield KBItem(
                 id=f"run:{hash_id}",
                 type="run",
@@ -120,6 +137,7 @@ class RunsSource(KBSource):
                 body=config,
                 uri=f"build/runs/{hash_id}/config.json",
                 meta={"hash": hash_id},
+                updated=updated,
             )
 
 
@@ -137,6 +155,7 @@ class LinksSource(KBSource):
         for sub in ("docs", "next"):
             for path in sorted((REPO_ROOT / sub).glob("*.md")):
                 text = _read(path)
+                mtime = _mtime(path)
                 for label, url in _MD_LINK.findall(text):
                     if url in seen:
                         continue
@@ -149,6 +168,7 @@ class LinksSource(KBSource):
                         body=f"{label}\n{url}",
                         uri=url,
                         meta={"found_in": f"{sub}/{path.name}"},
+                        updated=mtime,
                     )
 
 

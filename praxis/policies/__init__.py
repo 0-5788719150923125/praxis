@@ -3,6 +3,7 @@ Reinforcement Learning policies for training language models.
 """
 
 from praxis.policies.cot import ChainOfThought
+from praxis.policies.engagement import EngagementPolicy
 from praxis.policies.grpo import GRPO
 from praxis.policies.harmonic_weight_rl import HarmonicWeightPolicy
 from praxis.policies.reinforce import REINFORCE
@@ -12,6 +13,9 @@ RL_POLICIES_REGISTRY = {
     "reinforce": REINFORCE,
     "grpo": GRPO,
     "cot": ChainOfThought,  # Basic supervised CoT
+    # Forward-path engagement-prediction reward (computes its own reward from
+    # labels, so it needs no RL dataset). See PLAN.md / next/homeostatic_engagement.md.
+    "engagement": EngagementPolicy,
     # Weight-editing controller (driven by a callback, not the forward pass).
     "harmonic_weight": HarmonicWeightPolicy,
     # "ppo": PPO,    # TODO: Implement PPO
@@ -68,6 +72,46 @@ def get_rl_profile(name):
     return RL_PROFILES.get(name)
 
 
+def normalize_rl_types(rl_type):
+    """Coerce an ``rl_type`` config value to a list of policy/profile names.
+
+    Accepts None, a single name, a comma-separated string, or a list. Multiple
+    entries declare multiple discrete RL tasks that coexist - e.g. a forward-path
+    reward policy alongside a weight-editing controller.
+    """
+    if rl_type is None:
+        return []
+    if isinstance(rl_type, str):
+        return [s.strip() for s in rl_type.split(",") if s.strip()]
+    return [str(s).strip() for s in rl_type if str(s).strip()]
+
+
+def _policy_for(name):
+    """Resolve an ``rl_type`` name (policy or profile key) to its policy class."""
+    profile = get_rl_profile(name)
+    policy_key = profile["policy"] if profile else name
+    return RL_POLICIES_REGISTRY.get(policy_key)
+
+
+def resolves_to_weight_controller(name):
+    """Whether an ``rl_type`` name maps to a weight-editing controller (driven by
+    a callback, not the forward pass)."""
+    return bool(getattr(_policy_for(name), "is_weight_controller", False))
+
+
+def needs_rl_datasets(name):
+    """Whether an ``rl_type`` name requires the RL/cot data collection. Weight
+    controllers reward from a callback and some forward policies (e.g.
+    engagement) compute their own reward from labels, so neither needs RL data.
+    Unknown names fail open (assume they do)."""
+    cls = _policy_for(name)
+    if cls is None:
+        return True
+    if getattr(cls, "is_weight_controller", False):
+        return False
+    return bool(getattr(cls, "needs_rl_datasets", True))
+
+
 __all__ = [
     "REINFORCE",
     "GRPO",
@@ -76,4 +120,8 @@ __all__ = [
     "RL_POLICIES_REGISTRY",
     "RL_PROFILES",
     "get_rl_profile",
+    "normalize_rl_types",
+    "resolves_to_weight_controller",
+    "needs_rl_datasets",
+    "EngagementPolicy",
 ]

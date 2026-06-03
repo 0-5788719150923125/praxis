@@ -66,7 +66,8 @@ class TerminalInterface(Callback):
         # Extract model info from the required dict
         self.optimizer_config = model_info.get("optimizer_config", {})
         self.strategy = model_info.get("strategy")
-        self.rl_type = model_info.get("rl_type")
+        _rl = model_info.get("rl_type")
+        self.rl_type = ", ".join(_rl) if isinstance(_rl, (list, tuple)) else _rl
         self.vocab_size = model_info.get("vocab_size")
         self.depth = model_info.get("depth")
         self.num_layers = model_info.get(

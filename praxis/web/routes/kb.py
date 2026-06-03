@@ -30,7 +30,10 @@ def kb_search():
 
     try:
         index = _get_index()
-        hits = index.search(query, types=types, limit=limit) if query else []
+        # Empty query -> recent feed (newest first), so clicking into an empty
+        # box surfaces the latest content instead of nothing.
+        hits = index.search(query, types=types, limit=limit) if query \
+            else index.recent(limit=limit, types=types)
         index.close()
     except Exception as exc:  # missing index, locked db, etc.
         api_logger.warning(f"KB search failed: {exc}")

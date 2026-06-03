@@ -26,6 +26,18 @@ export const state = {
     kbSearching: false,
     kbOpenItem: null,  // {type, title, uri, body, meta} when a result is opened
 
+    // Print: the model leads with a question (the environment-level hook for
+    // online learning). The button is conditional - it only appears once the
+    // model has actually been queried for and produced a question.
+    print: {
+        available: false,        // a model-led question is pending -> show button
+        question: null,
+        id: null,
+        awaitingResponse: false, // question presented; next user message answers it
+        lastReward: null,        // {recall, activation, energy, predicted_answer}
+        energy: null             // live channel snapshot {energy, count} for the badge
+    },
+
     // Input state
     isShowingPlaceholder: true,
 

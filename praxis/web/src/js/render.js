@@ -133,6 +133,8 @@ function renderConversation() {
     if (results) results.hidden = !readMode;
     if (chat) chat.hidden = readMode;
 
+    renderPrintButton();
+
     // Read floats the input up with results/content below; Evaluate is texting
     // style (messages above, input pinned at bottom). Driven by a pane class.
     const pane = document.getElementById('chat-content');
@@ -143,6 +145,18 @@ function renderConversation() {
     } else {
         renderMessages();
     }
+}
+
+/**
+ * The Print button is conditional: it only appears once the model has produced a
+ * self-led question (available), and stays lit while the user answers it.
+ */
+function renderPrintButton() {
+    const btn = document.querySelector('.tool-toggle[data-tool="print"]');
+    if (!btn) return;
+    const show = state.print.available || state.print.awaitingResponse;
+    btn.hidden = !show;
+    btn.classList.toggle('active', state.print.awaitingResponse);
 }
 
 /**

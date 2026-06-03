@@ -32,7 +32,8 @@ class KBIndex:
         self._conn.executescript(
             """
             CREATE VIRTUAL TABLE IF NOT EXISTS kb USING fts5(
-                id UNINDEXED, type, label, title, body, uri UNINDEXED, meta UNINDEXED
+                id UNINDEXED, type, label, title, body, uri UNINDEXED,
+                meta UNINDEXED, updated UNINDEXED
             );
             """
         )
@@ -60,12 +61,13 @@ class KBIndex:
 
     def _insert(self, items: Iterable[KBItem]) -> int:
         rows = [
-            (it.id, it.type, it.label, it.title, it.body, it.uri, _encode_meta(it.meta))
+            (it.id, it.type, it.label, it.title, it.body, it.uri,
+             _encode_meta(it.meta), str(int(it.updated or 0)))
             for it in items
         ]
         self._conn.executemany(
-            "INSERT INTO kb (id, type, label, title, body, uri, meta) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO kb (id, type, label, title, body, uri, meta, updated) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
         return len(rows)
@@ -106,6 +108,43 @@ class KBIndex:
                     ),
                     score=score,
                     snippet=snip or "",
+                )
+            )
+        return hits
+
+    def recent(
+        self, limit: int = 20, types: Optional[List[str]] = None
+    ) -> List[KBHit]:
+        """Most-recently-updated items, newest first. Powers the empty-query
+        default feed. Items with no timestamp (cards, agents) are excluded."""
+        sql = (
+            "SELECT id, type, label, title, body, uri, meta "
+            "FROM kb WHERE CAST(updated AS INTEGER) > 0"
+        )
+        params: list = []
+        if types:
+            placeholders = ",".join("?" * len(types))
+            sql += f" AND type IN ({placeholders})"
+            params.extend(types)
+        sql += " ORDER BY CAST(updated AS INTEGER) DESC LIMIT ?"
+        params.append(limit)
+
+        hits = []
+        for row in self._conn.execute(sql, params):
+            id_, type_, label, title, body, uri, meta = row
+            hits.append(
+                KBHit(
+                    item=KBItem(
+                        id=id_,
+                        type=type_,
+                        label=label,
+                        title=title,
+                        body=body,
+                        uri=uri,
+                        meta=_decode_meta(meta),
+                    ),
+                    score=0.0,
+                    snippet="",
                 )
             )
         return hits

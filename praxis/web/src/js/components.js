@@ -238,8 +238,9 @@ export const createChatTabContent = (config) => `
     <div class="conversation-toolbar">
         <button class="tool-toggle active" data-tool="read" data-toggleable>Read</button>
         <button class="tool-toggle" data-tool="evaluate" data-toggleable>Evaluate</button>
-        <button class="tool-toggle" data-tool="print">Print</button>
+        <button class="tool-toggle" data-tool="print" hidden>Print</button>
         <button class="tool-toggle" data-tool="loop">Loop</button>
+        <span class="print-energy-badge" id="print-energy-badge" hidden title="Live engagement energy (real-user Print rewards)"></span>
     </div>
     <div class="kb-results" id="kb-results">
         <!-- KB search hits rendered dynamically in Read mode -->

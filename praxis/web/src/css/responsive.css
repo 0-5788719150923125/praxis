@@ -31,6 +31,11 @@
         -webkit-overflow-scrolling: touch;
     }
 
+    /* No hover on touch, so the copy button is always visible. */
+    .spec-copy-btn {
+        opacity: 1;
+    }
+
     /* Non-code content: wrap normally */
     .agent-url,
     .chart-card,

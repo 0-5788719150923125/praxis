@@ -358,6 +358,34 @@ export const ACTION_HANDLERS = {
     },
 
     /**
+     * Present the model's self-generated question (the conditional Print button).
+     * The model "leads": its question is injected as an assistant turn, and the
+     * user's next message is captured as the answer (PRINT response flow).
+     */
+    PRESENT_PRINT_QUESTION: () => {
+        if (!state.print.available || !state.print.question) return;
+
+        // Make sure the chat (Evaluate) is visible so the question shows.
+        if (state.conversationMode !== 'evaluate') {
+            const prevMode = state.conversationMode;
+            state.conversationMode = 'evaluate';
+            state.kbOpenItem = null;
+            document.querySelectorAll('.tool-toggle[data-tool="read"], .tool-toggle[data-tool="evaluate"]')
+                .forEach(btn => btn.classList.toggle('active', btn.dataset.tool === 'evaluate'));
+            document.documentElement.toggleAttribute('data-eval', true);
+            syncInputToMode(prevMode);
+        }
+
+        state.messages.push({ role: 'assistant', content: state.print.question });
+        state.print.awaitingResponse = true;
+        state.print.available = false;
+        render();
+
+        const input = document.getElementById('message-input');
+        if (input) input.focus();
+    },
+
+    /**
      * Open a KB result inline. Links open externally; doc/note/run content is
      * fetched and rendered as a full-height card from data.
      */
@@ -486,7 +514,7 @@ export const ACTION_HANDLERS = {
         if (copySuccess) {
             // Create notification with viewport-aware positioning
             const notification = document.createElement('div');
-            notification.textContent = 'Copied git remote to clipboard.';
+            notification.textContent = (meta && meta.label) || 'Copied to clipboard.';
             notification.className = 'copy-notification';
 
             // Get button position

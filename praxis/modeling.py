@@ -190,22 +190,32 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
             self.mtp = MultiTokenPrediction(config)
 
-        # Initialize RL policy if requested. rl_type may be a forward-path policy
-        # key (reinforce/grpo/cot) or a weight-editing controller *profile* key
-        # (which resolves to its underlying policy + bundled edit_mode/selector).
+        # Initialize RL policy if requested. rl_type is a list of policy/profile
+        # keys (a bare string is coerced to one), so multiple discrete RL tasks
+        # coexist. Each is either a forward-path policy (reinforce/grpo/cot) or a
+        # weight-editing controller *profile* (resolved to its underlying policy +
+        # bundled edit_mode/selector). Weight controllers act from a training
+        # callback, not the forward pass, so they are not built as self.policy.
+        # At most one forward-path policy is supported.
         self.policy = None
-        rl_type = getattr(config, "rl_type", None)
-        from praxis.policies import get_rl_profile
+        self.policy_type = None
+        self._engagement_metrics = {}  # latest engagement-policy scalars
+        from praxis.policies import get_rl_profile, normalize_rl_types
 
-        _profile = get_rl_profile(rl_type)
-        policy_key = _profile["policy"] if _profile else rl_type
-        if policy_key and policy_key in RL_POLICIES_REGISTRY:
-            policy_cls = RL_POLICIES_REGISTRY[policy_key]
-            # Weight-editing controllers act on parameters from a training
-            # callback, not on hidden states in the forward pass - so they are
-            # not built as self.policy (the callback owns them).
-            if not getattr(policy_cls, "is_weight_controller", False):
-                self.policy = policy_cls(config)
+        for rl_name in normalize_rl_types(getattr(config, "rl_type", None)):
+            _profile = get_rl_profile(rl_name)
+            policy_key = _profile["policy"] if _profile else rl_name
+            if policy_key and policy_key in RL_POLICIES_REGISTRY:
+                policy_cls = RL_POLICIES_REGISTRY[policy_key]
+                if not getattr(policy_cls, "is_weight_controller", False):
+                    if self.policy is not None:
+                        raise ValueError(
+                            f"Multiple forward-path RL policies requested "
+                            f"({self.policy_type!r}, {rl_name!r}); only one is "
+                            f"supported. The rest must be weight controllers."
+                        )
+                    self.policy = policy_cls(config)
+                    self.policy_type = rl_name
 
         # Encoders that own their loss (e.g. CALM) bypass the main-CE path
         # entirely, so don't build a criterion we'd never call.
@@ -247,6 +257,9 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 if self.active_task_ids is not None and idx not in self.active_task_ids:
                     continue
                 metrics[f"task_weight_{name}"] = float(value)
+        # Engagement policy scalars (energy, activation rate, recall, advantage).
+        if self._engagement_metrics:
+            metrics.update(self._engagement_metrics)
         return metrics
 
     def compute_loss(
@@ -593,8 +606,9 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
         # Apply RL policy if enabled
         if self.policy is not None:
-            # Different RL algorithms need different inputs
-            rl_type = getattr(self.config, "rl_type", None)
+            # Different RL algorithms need different inputs. policy_type is the
+            # single forward-path rl_type selected at build time.
+            rl_type = self.policy_type
 
             if rl_type == "grpo" and rewards is not None and labels is not None:
                 # GRPO needs logits and labels for proper loss computation
@@ -623,6 +637,17 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 if cot_losses is not None:
                     # Add CoT losses directly using LossContainer integration
                     outputs.losses.add_loss_container(cot_losses)
+            elif rl_type == "engagement" and labels is not None:
+                # Engagement-prediction reward: computes its own reward from the
+                # answer labels over the assistant region (no dataset rewards).
+                eng_loss, eng_metrics = self.policy(
+                    logits=logits if not skip_logits_for_training else None,
+                    labels=labels,
+                    assistant_mask=assistant_mask,
+                )
+                if eng_loss is not None:
+                    outputs.losses.add_loss("engagement_policy", eng_loss)
+                self._engagement_metrics = eng_metrics or {}
             elif rewards is not None and labels is not None:
                 # REINFORCE and other methods
                 hidden_states, rl_loss = self.policy(

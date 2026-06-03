@@ -19,6 +19,7 @@ from praxis.data.formatters.cot import COT_TAGS, format_cot
 from praxis.data.formatters.files import format_file_as_messages
 from praxis.data.formatters.instruction import format_instruction
 from praxis.data.formatters.persona import format_personachat
+from praxis.data.formatters.print import format_print
 from praxis.data.formatters.rl import RLLogger, _rl_logger, format_rl
 from praxis.data.formatters.simple import format_simple
 from praxis.data.formatters.tools import format_tool_calling
@@ -39,6 +40,7 @@ __all__ = [
     "format_messages",
     "format_soda",
     "format_personachat",
+    "format_print",
     "format_wiki",
     "format_rl",
     "format_cot",
