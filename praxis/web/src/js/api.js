@@ -49,6 +49,38 @@ export async function sendMessage(messages) {
 }
 
 /**
+ * Search the knowledge base (Read mode). Ranked, search-as-you-type.
+ * @param {string} query - Raw query text
+ * @param {string[]} [types] - Optional type filter (doc/run/note/link)
+ * @returns {Promise<Array>} Ranked hits
+ */
+export async function kbSearch(query, types) {
+    const params = new URLSearchParams({ q: query });
+    if (types && types.length) params.set('types', types.join(','));
+
+    const response = await fetch(`${state.settings.apiUrl}/api/kb/search?${params}`);
+    if (!response.ok) {
+        throw new Error(`KB search error: ${response.status} ${response.statusText}`);
+    }
+    const data = await response.json();
+    return data.hits || [];
+}
+
+/**
+ * Fetch one KB item's full body for inline rendering.
+ * @param {string} id - Item id
+ * @returns {Promise<Object|null>} The item, or null if not found
+ */
+export async function kbFetchItem(id) {
+    const response = await fetch(`${state.settings.apiUrl}/api/kb/item?id=${encodeURIComponent(id)}`);
+    if (!response.ok) {
+        throw new Error(`KB item error: ${response.status} ${response.statusText}`);
+    }
+    const data = await response.json();
+    return data.item || null;
+}
+
+/**
  * API endpoint configuration - pure data
  */
 const ENDPOINTS = {

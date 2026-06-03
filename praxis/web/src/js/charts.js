@@ -624,7 +624,7 @@ function renderMetricsCharts(data, container) {
             </div>` : '';
 
         return `
-        <div class="chart-card" data-deck-index="${i}">
+        <div class="chart-card" data-deck-index="${i}" data-card-key="${config.key}">
             <div class="chart-title">${config.title}</div>
             ${config.description ? `<div class="chart-subtitle">${config.description}</div>` : ''}
             ${stepSliderHTML}
@@ -1128,6 +1128,30 @@ function easeOutCubic(t) {
 // Slide pos to a target slot over DECK_CYCLE_DUR via easeOutCubic. The target is kept
 // UNWRAPPED (signed distance from the current pos), so the interpolation is monotonic
 // toward an already-correct slot - it cannot reverse. Settles exactly on the slot.
+/**
+ * Slide a deck to a card identified by metric `key` (preferred, exact) or, as a
+ * fallback, its visible `title`. Returns false if no such card exists in the
+ * deck (e.g. the metric has no data yet, so no card was rendered) - the caller
+ * can then refresh and retry. Used to deep-link from a KB search result.
+ * @param {string|HTMLElement} deckOrId - Deck element or its id
+ * @param {{key?: string, title?: string}} target
+ */
+export function jumpToDeckCard(deckOrId, { key, title } = {}) {
+    const deck = typeof deckOrId === 'string' ? document.getElementById(deckOrId) : deckOrId;
+    if (!deck || !deck._cards || !deck._deck) return false;
+    const wantKey = key != null ? String(key) : null;
+    const wantTitle = (title || '').trim();
+    const cardIdx = deck._cards.findIndex(c =>
+        (wantKey && c.dataset.cardKey === wantKey) ||
+        (wantTitle && c.querySelector('.chart-title')?.textContent.trim() === wantTitle));
+    if (cardIdx < 0) return false;
+    const pos = deck._order.indexOf(cardIdx);
+    if (pos < 0) return false;
+    setAnchor(deck, 1);
+    slideTo(deck, pos);
+    return true;
+}
+
 function slideTo(deck, target) {
     deck._posFrom = deck._pos;
     deck._posTargetRaw = target;                   // unwrapped; wrap only on read/settle
@@ -1389,6 +1413,10 @@ function onDeckResize() {
         renderDeck(d);
     });
 }
+
+// Re-measure now-visible decks. Needed when a deck was built while its tab was
+// hidden (background prefetch) and ensureVisibleLayout's retry budget lapsed.
+export const relayoutVisibleDecks = onDeckResize;
 
 function onDeckKeydown(e) {
     const deck = visibleDeck();

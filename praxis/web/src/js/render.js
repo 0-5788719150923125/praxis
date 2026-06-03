@@ -8,6 +8,8 @@ import { state, CONSTANTS, DEFAULT_SYSTEM_PROMPT } from './state.js';
 import {
     createMessage,
     createThinkingIndicator,
+    createKbResult,
+    createKbCard,
     createTab,
     createSettingsModal,
     createTerminalStatus,
@@ -34,7 +36,7 @@ export function renderAppStructure() {
  * This is the heart of the functional approach
  */
 export function render() {
-    renderMessages();
+    renderConversation();
     renderTabs();
     renderTheme();
     renderTerminalStatus();
@@ -118,6 +120,50 @@ function escapeNotification(str) {
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
+}
+
+/**
+ * Render the Gymnasium conversation area: KB results in Read mode, chat
+ * messages in Evaluate mode. Only the active panel is shown.
+ */
+function renderConversation() {
+    const readMode = state.conversationMode === 'read';
+    const results = document.getElementById('kb-results');
+    const chat = document.getElementById('chat-container');
+    if (results) results.hidden = !readMode;
+    if (chat) chat.hidden = readMode;
+
+    // Read floats the input up with results/content below; Evaluate is texting
+    // style (messages above, input pinned at bottom). Driven by a pane class.
+    const pane = document.getElementById('chat-content');
+    if (pane) pane.classList.toggle('mode-read', readMode);
+
+    if (readMode) {
+        renderKbResults();
+    } else {
+        renderMessages();
+    }
+}
+
+/**
+ * Render the Read panel: a full-height content card if one is open, else the
+ * ranked search hits.
+ */
+function renderKbResults() {
+    const container = document.getElementById('kb-results');
+    if (!container) return;
+
+    if (state.kbOpenItem) {
+        container.innerHTML = createKbCard(state.kbOpenItem, state.kbOpenItem.html || '');
+        container.scrollTop = 0;
+        return;
+    }
+
+    if (!state.kbResults.length) {
+        container.innerHTML = state.kbSearching ? '<div class="kb-empty">Searching...</div>' : '';
+        return;
+    }
+    container.innerHTML = state.kbResults.map(createKbResult).join('');
 }
 
 /**

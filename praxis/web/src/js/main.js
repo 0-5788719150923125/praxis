@@ -6,7 +6,7 @@
 
 import { state, CONSTANTS, DEFAULT_SYSTEM_PROMPT } from './state.js';
 import { render, renderAppStructure, updateInputContainerStyling } from './render.js';
-import { sendMessage, testApiConnection } from './api.js';
+import { sendMessage, kbSearch, testApiConnection } from './api.js';
 import { connectMetricsLive, setupLiveReload, renderCurrentMetrics } from './websocket.js';
 import { loadSpec, loadAgents, loadResearchMetrics } from './tabs.js';
 import { setupTabCarousel, setupTabSwipe } from './mobile.js';
@@ -15,6 +15,12 @@ import { CLICK_HANDLERS, delegateClick } from './events.js';
 import { executeAction } from './actions.js';
 import { setupAccentRetint } from './charts.js';
 import './prism.js';
+
+// Mode-aware input cues: Read invites a query ("> Look"), Evaluate invites a
+// chat turn ("< Shoot"). Both prefixes are 2 chars, so cursor/length logic in
+// the input handlers is unaffected.
+export const inputPrefix = () => (state.conversationMode === 'read' ? '> ' : '< ');
+const inputPlaceholderText = () => (state.conversationMode === 'read' ? 'Look' : 'Shoot');
 
 /**
  * Lifecycle function registry - maps string names to actual functions
@@ -87,7 +93,74 @@ function init() {
     // Initialize input placeholder
     showPlaceholder();
 
+    // Warm the other tabs in the background so their charts/spec are ready before
+    // the user navigates (and so KB card deep-links land on a built deck). Decks
+    // built while hidden are re-measured on tab activation. Refresh still forces.
+    prefetchTabs();
+
     console.log('[Praxis] Initialized');
+}
+
+/**
+ * Background-build the data-heavy tabs after the initial paint, sequentially so
+ * we don't fire a burst of fetches that competes with the live metrics stream.
+ * Each is laid out off-screen at the active region's size so its charts measure
+ * and render fully - making the first navigation instant, like a revisit.
+ */
+async function prefetchTabs() {
+    const { loadResearchMetrics, loadDynamics, loadSpec, loadAgents } = await import('./tabs.js');
+    // [contentId, loader, needsLayout] - deck tabs must be laid out off-screen so
+    // their charts measure; the Stage fleet is a plain list, so a background load
+    // is enough.
+    const jobs = [
+        ['spec-content', loadSpec, true],
+        ['research-content', loadResearchMetrics, true],
+        ['dynamics-content', loadDynamics, true],
+        ['agents-content', loadAgents, false],
+    ];
+    setTimeout(async () => {
+        for (const [contentId, load, needsLayout] of jobs) {
+            try {
+                await (needsLayout ? prewarmTab(contentId, load) : load(false));
+            } catch (error) {
+                console.warn('[Praxis] Tab prewarm failed:', contentId, error);
+            }
+        }
+    }, 600);
+}
+
+/**
+ * Lay out a hidden tab off-screen at the active region's exact size, run its
+ * loader so the deck measures + renders for real, then return it to the hidden
+ * state render() manages. Two frames let the deck settle before we hide it.
+ */
+async function prewarmTab(contentId, load) {
+    const el = document.getElementById(contentId);
+    const active = document.querySelector('.tab-content.active');
+    const rect = active ? active.getBoundingClientRect() : null;
+    if (!el || !rect || rect.height < 50) {
+        await load(false);  // can't size it; fall back to a plain background load
+        return;
+    }
+
+    Object.assign(el.style, {
+        display: 'flex',
+        flexDirection: 'column',
+        position: 'absolute',
+        left: `${rect.left}px`,
+        top: `${rect.top}px`,
+        width: `${rect.width}px`,
+        height: `${rect.height}px`,
+        visibility: 'hidden',
+        pointerEvents: 'none',
+        zIndex: '-1',
+    });
+    try {
+        await load(false);
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    } finally {
+        el.removeAttribute('style');  // back to .tab-content (display:none) until activated
+    }
 }
 
 /**
@@ -229,18 +302,22 @@ async function handleInputKeydown(e) {
 
     if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        await sendUserMessage();
+        if (state.conversationMode === 'read') {
+            openTopKbResult();
+        } else {
+            await sendUserMessage();
+        }
         return;
     }
 
     // Prevent deleting prefix
-    if ((e.key === 'Backspace' || e.key === 'Delete') && input.selectionStart <= CONSTANTS.PREFIX.length) {
+    if ((e.key === 'Backspace' || e.key === 'Delete') && input.selectionStart <= inputPrefix().length) {
         e.preventDefault();
         return;
     }
 
     // Prevent cursor from moving before prefix
-    if (e.key === 'ArrowLeft' && input.selectionStart <= CONSTANTS.PREFIX.length) {
+    if (e.key === 'ArrowLeft' && input.selectionStart <= inputPrefix().length) {
         e.preventDefault();
         return;
     }
@@ -261,24 +338,76 @@ function handleInputChange(e) {
 
     // Handle placeholder state
     if (state.isShowingPlaceholder) {
-        const newChars = currentValue.replace(CONSTANTS.PREFIX + CONSTANTS.PLACEHOLDER_TEXT, '').replace(CONSTANTS.PREFIX, '');
+        const newChars = currentValue.replace(inputPrefix() + inputPlaceholderText(), '').replace(inputPrefix(), '');
         hidePlaceholder();
         if (newChars) {
-            input.value = CONSTANTS.PREFIX + newChars;
+            input.value = inputPrefix() + newChars;
             input.setSelectionRange(input.value.length, input.value.length);
         }
         return;
     }
 
     // Maintain prefix
-    if (!currentValue.startsWith(CONSTANTS.PREFIX)) {
-        input.value = CONSTANTS.PREFIX + currentValue;
+    if (!currentValue.startsWith(inputPrefix())) {
+        input.value = inputPrefix() + currentValue;
         setCursorAfterPrefix();
     }
 
     // Auto-resize
     input.style.height = 'auto';
     input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+
+    // Read mode: live KB search as you type.
+    if (state.conversationMode === 'read') {
+        scheduleKbSearch(currentQuery(input));
+    }
+}
+
+// --- KB search (Read mode) ---------------------------------------------------
+
+let kbSearchTimer = null;
+let kbSearchSeq = 0;
+
+/** Strip the input prefix to get the raw query text. */
+function currentQuery(input) {
+    const v = input.value;
+    return (v.startsWith(inputPrefix()) ? v.slice(inputPrefix().length) : v).trim();
+}
+
+/** Debounced live search; stale responses are dropped via a sequence guard. */
+function scheduleKbSearch(query) {
+    clearTimeout(kbSearchTimer);
+    state.kbOpenItem = null;  // typing a new query returns to the results list
+    if (!query) {
+        state.kbResults = [];
+        state.kbSearching = false;
+        render();
+        return;
+    }
+    state.kbSearching = true;
+    const seq = ++kbSearchSeq;
+    kbSearchTimer = setTimeout(async () => {
+        try {
+            const hits = await kbSearch(query);
+            if (seq !== kbSearchSeq) return; // a newer keystroke superseded us
+            state.kbResults = hits;
+        } catch (error) {
+            if (seq !== kbSearchSeq) return;
+            console.error('[KB] Search error:', error);
+            state.kbResults = [];
+        } finally {
+            if (seq === kbSearchSeq) {
+                state.kbSearching = false;
+                render();
+            }
+        }
+    }, 120);
+}
+
+/** Enter in Read mode opens the top-ranked hit (inline, or external for links). */
+function openTopKbResult() {
+    const top = state.kbResults[0];
+    if (top) executeAction('OPEN_KB_ITEM', { id: top.id, type: top.type, uri: top.uri });
 }
 
 /**
@@ -293,7 +422,7 @@ function handleInputFocus() {
  */
 function handleInputBlur(e) {
     const input = e.target;
-    if (input.value === CONSTANTS.PREFIX || input.value === '') {
+    if (input.value === inputPrefix() || input.value === '') {
         showPlaceholder();
     }
 }
@@ -310,7 +439,7 @@ function handleInputClick(e) {
     }
 
     // Prevent cursor before prefix
-    if (input.selectionStart < CONSTANTS.PREFIX.length) {
+    if (input.selectionStart < inputPrefix().length) {
         setCursorAfterPrefix();
     }
 }
@@ -321,18 +450,18 @@ function handleInputClick(e) {
 function setCursorAfterPrefix() {
     const input = document.getElementById('message-input');
     if (input) {
-        input.setSelectionRange(CONSTANTS.PREFIX.length, CONSTANTS.PREFIX.length);
+        input.setSelectionRange(inputPrefix().length, inputPrefix().length);
     }
 }
 
 /**
  * Show placeholder in input
  */
-function showPlaceholder() {
+export function showPlaceholder() {
     const input = document.getElementById('message-input');
     if (!input) return;
 
-    input.value = CONSTANTS.PREFIX + CONSTANTS.PLACEHOLDER_TEXT;
+    input.value = inputPrefix() + inputPlaceholderText();
     input.style.color = 'var(--light-text)';
     input.style.fontStyle = 'italic';
     input.style.height = 'auto'; // Reset height to default (collapse to single line)
@@ -348,7 +477,7 @@ function hidePlaceholder() {
     if (!input) return;
 
     if (state.isShowingPlaceholder) {
-        input.value = CONSTANTS.PREFIX;
+        input.value = inputPrefix();
         input.style.color = '';
         input.style.fontStyle = '';
         state.isShowingPlaceholder = false;
@@ -375,8 +504,8 @@ async function sendUserMessage() {
 
     // Extract message (remove prefix)
     const fullValue = input.value;
-    const content = fullValue.startsWith(CONSTANTS.PREFIX)
-        ? fullValue.slice(CONSTANTS.PREFIX.length).trim()
+    const content = fullValue.startsWith(inputPrefix())
+        ? fullValue.slice(inputPrefix().length).trim()
         : fullValue.trim();
 
     if (!content) return;
@@ -385,7 +514,7 @@ async function sendUserMessage() {
     state.messages.push({ role: 'user', content });
 
     // Clear input without showing placeholder (let blur handler do that if needed)
-    input.value = CONSTANTS.PREFIX;
+    input.value = inputPrefix();
     input.style.height = 'auto'; // Reset height to single line
     input.style.color = '';
     input.style.fontStyle = '';

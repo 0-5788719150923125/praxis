@@ -267,7 +267,7 @@ function buildDynamicsFamilyCard(config, desc, allLayers) {
     const togglesHTML = config.layerToggles ? layerTogglesHTML(allLayers) : '';
     return `
         <div style="margin-top: 2rem;">
-            <div class="chart-card">
+            <div class="chart-card" data-card-key="${config.key}">
                 <div class="chart-title">${config.title}${callerTag(config.caller ? [config.caller] : [], config.callerEtAl)}</div>
                 <div class="chart-subtitle">${desc(config.key, config.subtitle)}</div>
                 ${togglesHTML}

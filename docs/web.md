@@ -56,6 +56,11 @@ Introspected from the live Flask app at every launch. Each summary is the first 
 
 - **GET, POST** `/git-upload-pack` / `/info/refs` / `/praxis` / `/praxis.git` / `/praxis.git/<path:git_path>` / `/praxis/<path:git_path>` / `/src/<path:git_path>` - Simple Git HTTP backend for read-only access to the repository. Supports git clone and fetch operations. ([source](../praxis/web/routes/git.py#L15))
 
+### Kb
+
+- **GET** `/api/kb/item` - Fetch one KB item's full body for inline rendering. Param: id. ([source](../praxis/web/routes/kb.py#L60))
+- **GET** `/api/kb/search` - Ranked KB search. Params: q, types (comma-separated), limit. ([source](../praxis/web/routes/kb.py#L20))
+
 ### Metrics
 
 - **GET** `/api/metrics` - Get training metrics with LTTB downsampling and caching. ([source](../praxis/web/routes/metrics.py#L51))

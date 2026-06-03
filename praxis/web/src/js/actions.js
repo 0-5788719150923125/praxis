@@ -6,10 +6,12 @@
 import { state } from './state.js';
 import { render, renderNotifications } from './render.js';
 import { storage, readFormValues, FORM_FIELDS } from './config.js';
-import { toggleRunSelector, toggleRunSelection, repaintDeckCards } from './charts.js';
+import { toggleRunSelector, toggleRunSelection, repaintDeckCards, jumpToDeckCard } from './charts.js';
 import { toggleDynamicsRunSelector, selectDynamicsRun } from './dynamics.js';
 import { loadResearchMetrics, loadDynamics, toggleSpecRunSelector, selectSpecRun, toggleContractsView, agreeContract, severSwarmAgent } from './tabs.js';
-import { sendMessage, testApiConnection } from './api.js';
+import { sendMessage, kbFetchItem, testApiConnection } from './api.js';
+import { renderMarkdown, renderJson } from './markdown.js';
+import { showPlaceholder } from './main.js';
 
 /**
  * Get lifecycle function by name
@@ -195,6 +197,14 @@ export const ACTION_HANDLERS = {
         if (newTab.onActivate) {
             await callLifecycleHook(newTab.onActivate, newTab);
         }
+
+        // Re-measure any deck built while its tab was hidden (prefetch). Cheap:
+        // it only touches decks that are now visible and initialized.
+        const { relayoutVisibleDecks } = await import('./charts.js');
+        requestAnimationFrame(relayoutVisibleDecks);
+
+        // First time on a deck tab, play the staggered "unroll" reveal.
+        playDeckReveal(tabId);
     },
 
     /**
@@ -317,12 +327,68 @@ export const ACTION_HANDLERS = {
      */
     TOGGLE_TOOL: (_payload, meta) => {
         if (!meta || !meta.button) return;
-        meta.button.classList.toggle('active');
-        // Mirror the Gymnasium "Evaluate" tool onto <html> so the Prism animation can see
-        // it (easter egg: with the LOGS blue mode also on, the flying logo becomes a cross).
-        if (meta.button.dataset.tool === 'evaluate') {
-            document.documentElement.toggleAttribute('data-eval', meta.button.classList.contains('active'));
+        const tool = meta.button.dataset.tool;
+
+        // Read/Evaluate are mutually exclusive modes (radio-like): one is always
+        // active. The others (print/loop) stay independent on/off toggles.
+        if (tool === 'read' || tool === 'evaluate') {
+            const mode = tool;
+            if (state.conversationMode === mode) return; // already active, keep it
+            state.conversationMode = mode;
+            state.kbOpenItem = null;  // leaving Read closes any open content card
+            document.querySelectorAll('.tool-toggle[data-tool="read"], .tool-toggle[data-tool="evaluate"]')
+                .forEach(btn => btn.classList.toggle('active', btn.dataset.tool === mode));
+            // Mirror the "Evaluate" mode onto <html> for the Prism animation easter egg.
+            document.documentElement.toggleAttribute('data-eval', mode === 'evaluate');
+            // Refresh the input cue ("> Look" / "< Shoot") if untouched.
+            if (state.isShowingPlaceholder) showPlaceholder();
+            render();
+            return;
         }
+
+        meta.button.classList.toggle('active');
+    },
+
+    /**
+     * Open a KB result inline. Links open externally; doc/note/run content is
+     * fetched and rendered as a full-height card from data.
+     */
+    OPEN_KB_ITEM: async ({ id, type, uri, title }) => {
+        if (type === 'link') {
+            if (uri) window.open(uri, '_blank', 'noopener');
+            return;
+        }
+        if (type === 'card') {
+            // id is "card:<tab>:<key>"; deep-link to that tab's deck and card.
+            const tab = (uri || '').split(':')[1];
+            const key = (id || '').split(':').slice(2).join(':');
+            await navigateToCard(tab, key, title);
+            return;
+        }
+        if (type === 'agent') {
+            // Switch to the Stage tab and flag the matching fleet row.
+            await navigateToAgent(title);
+            return;
+        }
+        try {
+            const item = await kbFetchItem(id);
+            if (!item) return;
+            item.html = item.type === 'run'
+                ? renderJson(item.body)
+                : renderMarkdown(item.body);
+            state.kbOpenItem = item;
+            render();
+        } catch (error) {
+            console.error('[KB] Open error:', error);
+        }
+    },
+
+    /**
+     * Close the open KB card and return to the results list.
+     */
+    CLOSE_KB_ITEM: () => {
+        state.kbOpenItem = null;
+        render();
     },
 
     /**
@@ -535,6 +601,83 @@ export const ACTION_HANDLERS = {
         }
     }
 };
+
+// Deck element id per tab, for deep-linking a KB card to its dashboard card.
+const DECK_BY_TAB = { research: 'chart-deck', dynamics: 'dynamics-deck', spec: 'spec-deck' };
+
+// Tabs whose first-activation "unroll" has already played (once per session).
+const revealedDecks = new Set();
+
+/** Play the staggered card reveal the first time a deck tab is opened. */
+function playDeckReveal(tabId) {
+    if (revealedDecks.has(tabId) || !DECK_BY_TAB[tabId]) return;
+    revealedDecks.add(tabId);
+    const content = document.getElementById(`${tabId}-content`);
+    if (!content) return;
+    content.classList.add('deck-reveal');
+    setTimeout(() => content.classList.remove('deck-reveal'), 800);
+}
+
+/**
+ * Switch to a tab and slide its card deck to the target card (by metric key,
+ * with a title fallback). A card only exists once its metric has data, so if the
+ * first poll misses (e.g. the deck was prefetched before the metric logged), we
+ * force a metrics refresh to rebuild the deck, then retry. Still missing => the
+ * metric has no data yet; notify rather than leave the user on the wrong card.
+ */
+async function navigateToCard(tab, key, title) {
+    const deckId = DECK_BY_TAB[tab];
+    if (!deckId) return;
+    await executeAction('SWITCH_TAB', tab);
+
+    if (await pollJumpToCard(deckId, key, title)) return;
+
+    await forceRefreshTab(tab);
+    if (await pollJumpToCard(deckId, key, title)) return;
+
+    notifyMissingCard(title);
+}
+
+async function pollJumpToCard(deckId, key, title, tries = 25) {
+    for (let i = 0; i < tries; i++) {
+        if (jumpToDeckCard(deckId, { key, title })) return true;
+        await new Promise(r => setTimeout(r, 100));
+    }
+    return false;
+}
+
+async function forceRefreshTab(tab) {
+    const t = await import('./tabs.js');
+    if (tab === 'research') await t.loadResearchMetrics(true);
+    else if (tab === 'dynamics') await t.loadDynamics(true);
+    else if (tab === 'spec') await t.loadSpec(true);
+}
+
+function notifyMissingCard(title) {
+    state.notifications.items.push({
+        id: `kb-missing-${Date.now()}`,
+        message: `"${title}" has no data yet - its card appears once the run logs it.`,
+        level: 'info',
+    });
+    state.notifications.items = state.notifications.items.slice(-100);
+    state.notifications.unread += 1;
+    renderNotifications();
+}
+
+/** Switch to the Stage tab and scroll/flash the fleet row for `name`. */
+async function navigateToAgent(name) {
+    await executeAction('SWITCH_TAB', 'agents');
+    for (let i = 0; i < 40; i++) {
+        const row = document.querySelector(`.agent-row[data-agent-name="${CSS.escape(name)}"]`);
+        if (row) {
+            row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            row.classList.add('kb-flash');
+            setTimeout(() => row.classList.remove('kb-flash'), 1200);
+            return;
+        }
+        await new Promise(r => setTimeout(r, 100));
+    }
+}
 
 /**
  * Execute action by type

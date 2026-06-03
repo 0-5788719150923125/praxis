@@ -141,6 +141,14 @@ export function setupTabSwipe() {
         if (Math.abs(dx) < MIN_DISTANCE) return;
         if (Math.abs(dy) > Math.abs(dx) * MAX_OFF_AXIS) return;
 
+        // An open KB content card owns horizontal swipes: right returns to the
+        // results list (mobile "back"). Consume the gesture either way so it
+        // never falls through to a tab switch while reading.
+        if (state.currentTab === 'chat' && state.conversationMode === 'read' && state.kbOpenItem) {
+            if (dx > 0) executeAction('CLOSE_KB_ITEM');
+            return;
+        }
+
         const tabs = state.tabs;
         const n = tabs.length;
         const idx = tabs.findIndex(tab => tab.active);

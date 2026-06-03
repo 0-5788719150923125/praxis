@@ -88,24 +88,216 @@
     color: var(--text);
 }
 
-/* Chat Layout - Special: messages grow naturally, input floats below */
+/* Two distinct conversation layouts (toolbar stays order 0 at top):
+   - Evaluate (default): texting style - messages fill and scroll above, input
+     pinned at the bottom.
+   - Read (.mode-read): search style - input floats up under the toolbar, KB
+     results/content fill below it. */
+
+/* Evaluate: messages hug the top under the toolbar; the input sits right below
+   them (flex 0 = no grow, so it never floats to the viewport bottom). */
 .chat-container {
+    order: 1;
     flex: 0 1 auto;
     display: flex;
     flex-direction: column;
-    overflow-y: visible;
+    overflow-y: auto;
     overflow-x: hidden;
-    padding: var(--spacing-md) 0 0 0;
+    padding: 0;
     width: 100%;
     max-width: 100%;
     box-sizing: border-box;
 }
 
-.input-container {
+/* Only space messages from the toolbar when there are messages; an empty chat
+   contributes zero height so the input aligns identically in both modes. */
+.chat-container:not(:empty) {
+    padding-top: var(--spacing-md);
+}
+
+/* KB results/content (Read mode) - fill the column below the input. */
+.kb-results {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+    overflow-y: auto;
+    padding: var(--spacing-md) 0 0 0;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+/* The inactive panel is hidden per mode. Needs higher specificity than the
+   .chat-container / .kb-results display:flex rules above, or the empty panel
+   stays in flow as a flex:1 box and shoves the input down. */
+.chat-container[hidden],
+.kb-results[hidden] { display: none; }
+
+/* Read mode reorders the input above the results. */
+.mode-read .input-container { order: 1; }
+.mode-read .kb-results { order: 2; }
+
+.kb-empty {
+    color: var(--text-muted, var(--text));
+    opacity: 0.6;
+    padding: var(--spacing-md) 0;
+    font-size: 0.9rem;
+}
+
+.kb-result {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    grid-template-areas: "type title" "type snippet";
+    column-gap: var(--spacing-sm);
+    padding: var(--spacing-sm) var(--spacing-md);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    text-decoration: none;
+    color: var(--text);
+    transition: border-color 0.15s, background-color 0.15s;
+}
+
+.kb-result:hover {
+    border-color: var(--accent);
+    background-color: var(--input-bg, var(--background));
+}
+
+.kb-result-type {
+    grid-area: type;
+    align-self: start;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--accent);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    padding: 0.1rem 0.4rem;
+    white-space: nowrap;
+}
+
+/* Actionable items (navigate away) get a filled chip; content items (open
+   inline) stay outlined - a cue for what a click will do. */
+.kb-result-type[data-kb-type="card"],
+.kb-result-type[data-kb-type="link"],
+.kb-result-type[data-kb-type="agent"] {
+    background: var(--accent);
+    color: var(--background);
+    border-color: var(--accent);
+}
+
+/* Brief highlight when a KB search deep-links to a fleet row on the Stage tab. */
+.agent-row.kb-flash {
+    animation: kbFlash 1.2s ease;
+}
+
+@keyframes kbFlash {
+    0%, 100% { background-color: transparent; }
+    25% { background-color: var(--input-bg, var(--background)); box-shadow: 0 0 0 2px var(--accent); }
+}
+
+.kb-result-title {
+    grid-area: title;
+    font-weight: 600;
+}
+
+.kb-result-snippet {
+    grid-area: snippet;
+    font-size: 0.8rem;
+    opacity: 0.75;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.kb-result-snippet mark {
+    background: var(--accent);
+    color: var(--background);
+    border-radius: 2px;
+    padding: 0 1px;
+}
+
+/* KB content card - a single entry rendered inline from data. */
+.kb-card {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    overflow: hidden;
+}
+
+.kb-card-header {
     flex: 0 0 auto;
     display: flex;
-    padding: 0 0 var(--spacing-xl) 0;
-    padding-bottom: calc(var(--spacing-xl) + env(safe-area-inset-bottom));
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-bottom: 1px solid var(--border);
+    background: var(--input-bg, var(--background));
+}
+
+.kb-card-back {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.75rem;
+    padding: 0.25rem 0.6rem;
+    cursor: pointer;
+}
+
+.kb-card-back:hover {
+    border-color: var(--accent);
+}
+
+.kb-card-title {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.kb-card-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: var(--spacing-md) var(--spacing-lg);
+    line-height: 1.6;
+}
+
+.kb-card-body h1,
+.kb-card-body h2,
+.kb-card-body h3 {
+    margin: var(--spacing-md) 0 var(--spacing-sm);
+}
+
+.kb-card-body pre {
+    background: var(--input-bg, var(--background));
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    padding: var(--spacing-sm) var(--spacing-md);
+    overflow-x: auto;
+}
+
+.kb-card-body code {
+    font-family: monospace;
+    font-size: 0.85em;
+}
+
+.kb-card-body blockquote {
+    margin: var(--spacing-sm) 0;
+    padding-left: var(--spacing-md);
+    border-left: 3px solid var(--border);
+    opacity: 0.85;
+}
+
+.input-container {
+    /* Default order 2 = bottom (Evaluate, texting style); Read mode reorders it
+       to 1 (under the toolbar). Equal spacing-md above and below balances the
+       toolbar's top padding. */
+    order: 2;
+    flex: 0 0 auto;
+    display: flex;
+    padding: var(--spacing-md) 0;
     background-color: var(--background);
     width: 100%;
     max-width: 100%;

@@ -32,6 +32,27 @@ export const CLICK_HANDLERS = [
         })
     },
     {
+        selector: '.kb-card-back',
+        match: 'closest',
+        action: () => ({ type: 'CLOSE_KB_ITEM' })
+    },
+    {
+        selector: '.kb-result',
+        match: 'closest',
+        action: (e) => {
+            const el = e.target.closest('.kb-result');
+            return {
+                type: 'OPEN_KB_ITEM',
+                payload: {
+                    id: el.dataset.kbId,
+                    type: el.dataset.kbType,
+                    uri: el.dataset.kbUri,
+                    title: el.dataset.kbTitle
+                }
+            };
+        }
+    },
+    {
         selector: '#contracts-toggle',
         match: 'closest',
         action: () => ({ type: 'TOGGLE_CONTRACTS_VIEW' })

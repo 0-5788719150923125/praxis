@@ -51,3 +51,25 @@
         transform: rotate(360deg);
     }
 }
+
+/* First-navigation "unroll": a prefetched tab is already built, so stagger its
+   deck card elements into place to restore a sense of life (replaces the
+   incidental async-load reveal we lost by pre-building). One-shot per tab;
+   the .deck-reveal class is added on first activation, then removed. */
+@keyframes deckUnroll {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.tab-content.deck-reveal .chart-card > .chart-title,
+.tab-content.deck-reveal .chart-card > .chart-subtitle,
+.tab-content.deck-reveal .chart-card > .deck-card-scroll {
+    animation: deckUnroll 0.4s ease both;
+}
+.tab-content.deck-reveal .chart-card > .chart-title     { animation-delay: 0.04s; }
+.tab-content.deck-reveal .chart-card > .chart-subtitle  { animation-delay: 0.12s; }
+.tab-content.deck-reveal .chart-card > .deck-card-scroll { animation-delay: 0.22s; }
+
+@media (prefers-reduced-motion: reduce) {
+    .tab-content.deck-reveal .chart-card > * { animation: none; }
+}

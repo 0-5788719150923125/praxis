@@ -241,8 +241,11 @@ export const createChatTabContent = (config) => `
         <button class="tool-toggle" data-tool="print">Print</button>
         <button class="tool-toggle" data-tool="loop">Loop</button>
     </div>
+    <div class="kb-results" id="kb-results">
+        <!-- KB search hits rendered dynamically in Read mode -->
+    </div>
     <div class="chat-container" id="${config.chatContainerId}">
-        <!-- Messages rendered dynamically -->
+        <!-- Messages rendered dynamically in Evaluate mode -->
     </div>
     <div class="input-container">
         <textarea class="message-input" id="${config.inputId}" rows="${config.inputRows}"></textarea>
@@ -410,6 +413,47 @@ export function createMessage({ role, content }, isDarkMode, isLast = false) {
             ${rerollButton}
             <div class="message-header">${headerText}</div>
             <div class="message-content">${escapeHtml(content)}</div>
+        </div>
+    `;
+}
+
+/**
+ * Create a single KB search result. Snippet highlight markers (\x01/\x02,
+ * emitted by FTS5 snippet()) are converted to <mark> after escaping.
+ * @param {Object} hit - {type, title, uri, snippet}
+ * @returns {string} HTML string
+ */
+export function createKbResult({ id, type, label, title, uri, snippet }) {
+    const highlighted = escapeHtml(snippet || '')
+        .replaceAll('\x01', '<mark>')
+        .replaceAll('\x02', '</mark>');
+    return `
+        <div class="kb-result" role="button" tabindex="0"
+             data-kb-id="${escapeHtml(id)}" data-kb-type="${escapeHtml(type)}"
+             data-kb-uri="${escapeHtml(uri)}" data-kb-title="${escapeHtml(title)}">
+            <span class="kb-result-type" data-kb-type="${escapeHtml(type)}">${escapeHtml(label || type)}</span>
+            <span class="kb-result-title">${escapeHtml(title)}</span>
+            <span class="kb-result-snippet">${highlighted}</span>
+        </div>
+    `;
+}
+
+/**
+ * Full-height card showing one KB entry's content, rendered from data.
+ * @param {Object} item - {type, title, uri, body, meta}
+ * @param {string} bodyHtml - Pre-rendered body HTML (markdown/json)
+ * @returns {string} HTML string
+ */
+export function createKbCard(item, bodyHtml) {
+    const source = item.meta && item.meta.document ? ` · ${escapeHtml(item.meta.document)}` : '';
+    return `
+        <div class="kb-card">
+            <div class="kb-card-header">
+                <button class="kb-card-back" aria-label="Back to results">← Back</button>
+                <span class="kb-result-type" data-kb-type="${escapeHtml(item.type)}">${escapeHtml(item.label || item.type)}</span>
+                <span class="kb-card-title">${escapeHtml(item.title)}${source}</span>
+            </div>
+            <div class="kb-card-body">${bodyHtml}</div>
         </div>
     `;
 }

@@ -20,6 +20,12 @@ export const state = {
     messages: [],
     isThinking: false,
 
+    // Gymnasium mode: 'read' = live KB search (default), 'evaluate' = AI chat.
+    conversationMode: 'read',
+    kbResults: [],
+    kbSearching: false,
+    kbOpenItem: null,  // {type, title, uri, body, meta} when a result is opened
+
     // Input state
     isShowingPlaceholder: true,
 

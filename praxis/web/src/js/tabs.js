@@ -464,7 +464,7 @@ const renderAgentCard = (agent, allAgents) => {
     const dotStyle = `background-color: ${colors.dot};`;
 
     return `
-        <div class="agent-row">
+        <div class="agent-row" data-agent-name="${escapeHtml(agent.name || '')}">
             <div class="agent-info">
                 <div class="agent-name">${escapeHtml(agent.name || 'Unknown')}</div>
                 ${infoHtml}
