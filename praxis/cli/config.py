@@ -65,6 +65,7 @@ class RunConfig:
     headless: bool = False
     quiet: bool = False
     reset: bool = False
+    reset_after: int = 0
     preserve: bool = False
     no_checkpoints: bool = False
     save_every: int = 256
@@ -156,6 +157,7 @@ class RunConfig:
             headless=get("headless", False),
             quiet=get("quiet", False),
             reset=get("reset", False),
+            reset_after=int(get("reset_after", 0) or 0),
             preserve=get("preserve", False),
             no_checkpoints=get("no_checkpoints", False),
             save_every=int(get("save_every", 256)),

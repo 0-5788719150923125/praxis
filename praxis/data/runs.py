@@ -53,7 +53,31 @@ def setup_training_run(cfg) -> RunContext:
     full_command, args_hash, truncated_hash = log_command()
 
     run_manager = RunManager(cfg.cache_dir)
-    if cfg.reset:
+
+    # Crash-loop breaker. With --reset-after N (N>0), count consecutive launches
+    # that don't advance the checkpoint; once N is reached, force a reset so a
+    # wedged checkpoint self-heals in a respawning (systemd) environment. A launch
+    # that finds the checkpoint advanced since last time is treated as healthy and
+    # resets the counter, so a stable run is never wiped by routine restarts.
+    do_reset = cfg.reset
+    reset_after = getattr(cfg, "reset_after", 0) or 0
+    if not do_reset and reset_after > 0:
+        signature = _checkpoint_signature(run_manager.get_run_dir(truncated_hash))
+        attempts = run_manager.bump_reset_marker(truncated_hash, signature)
+        if attempts >= reset_after:
+            print(
+                f"[RESET-AFTER] {attempts} consecutive launch(es) with no "
+                f"checkpoint progress >= --reset-after={reset_after}; forcing --reset."
+            )
+            do_reset = True
+            run_manager.clear_reset_marker(truncated_hash)
+        else:
+            print(
+                f"[RESET-AFTER] launch attempt {attempts}/{reset_after} "
+                f"(checkpoint unchanged increments this; reset on reaching the limit)."
+            )
+
+    if do_reset:
         run_manager.reset_run(truncated_hash, force=True)
 
     run_dir, is_existing_run = run_manager.setup_run(
@@ -77,6 +101,24 @@ def setup_training_run(cfg) -> RunContext:
     )
 
 
+def _checkpoint_signature(run_dir: Path) -> str:
+    """Fingerprint the run's current resume checkpoint, so a crash loop (same
+    checkpoint every launch) is distinguishable from healthy progress (it
+    advanced). Returns "none" when there's nothing to resume from."""
+    candidates = [
+        run_dir / "model" / "last.ckpt",  # Lightning resume symlink
+        run_dir / "mono_forward.pt",      # Mono-Forward trainer checkpoint
+    ]
+    for path in candidates:
+        try:
+            if path.exists():
+                real = path.resolve()  # follow last.ckpt -> the real file
+                return f"{real}:{int(real.stat().st_mtime)}"
+        except OSError:
+            continue
+    return "none"
+
+
 class RunManager:
     """Manages experiment runs with automatic namespacing by hash."""
 
@@ -94,6 +136,39 @@ class RunManager:
         # Ensure directories exist
         self.runs_dir.mkdir(parents=True, exist_ok=True)
         self.shared_dir.mkdir(parents=True, exist_ok=True)
+
+    def _reset_marker_path(self, truncated_hash: str) -> Path:
+        """Path to a run's reset marker. Lives under build/shared (NOT the run
+        dir), so reset_run's rmtree can't delete the counter it's tracking."""
+        markers = self.shared_dir / "reset_markers"
+        markers.mkdir(parents=True, exist_ok=True)
+        return markers / f"{truncated_hash}.json"
+
+    def bump_reset_marker(self, truncated_hash: str, signature: str) -> int:
+        """Increment the consecutive-launch counter for a run, returning the new
+        count. The counter resets to 1 whenever the checkpoint signature differs
+        from the last launch (the previous run made progress = not a crash loop).
+        """
+        path = self._reset_marker_path(truncated_hash)
+        data = {}
+        if path.exists():
+            try:
+                data = json.loads(path.read_text())
+            except (OSError, ValueError):
+                data = {}
+        attempts = int(data.get("attempts", 0)) + 1 if data.get("checkpoint") == signature else 1
+        try:
+            path.write_text(json.dumps({"attempts": attempts, "checkpoint": signature}))
+        except OSError:
+            pass
+        return attempts
+
+    def clear_reset_marker(self, truncated_hash: str) -> None:
+        """Drop a run's reset counter (after an auto-reset fires)."""
+        try:
+            self._reset_marker_path(truncated_hash).unlink()
+        except OSError:
+            pass
 
     def get_run_dir(self, truncated_hash: str) -> Path:
         """Get the directory path for a specific run.

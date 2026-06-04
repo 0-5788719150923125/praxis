@@ -7,6 +7,7 @@ import json
 # These are typically runtime/debugging flags that don't affect model architecture
 DEFAULT_EXCLUDE_FROM_HASH = [
     "--reset",
+    "--reset-after",
     "--preserve",
     "--list-runs",
     "--debug",

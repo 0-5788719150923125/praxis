@@ -557,6 +557,21 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
 # * ``order``: ordering within the Research tab, after the scalars above.
 COMPOSITE_METRIC_REGISTRY: list = [
     {
+        # Repo-level, not per-run: the framework's own git-churn evolution.
+        # source "standalone" -> the card fetches its own data (/api/evolution),
+        # the SAME computation the LaTeX figure renders. Always shown.
+        "key": "evolution",
+        "type": "evolution",
+        "title": "Praxis Evolution (self-history)",
+        "description": (
+            "Per-subsystem line churn over Praxis's git history, faded by "
+            "distance from HEAD. The framework's recency kernel turned on its "
+            "own development - the same data the research-paper figure renders."
+        ),
+        "source": "standalone",
+        "order": 90,
+    },
+    {
         "key": "sampling_weights",
         "type": "sampling",
         "title": "Task Sampling Weights",

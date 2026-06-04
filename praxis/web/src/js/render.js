@@ -228,7 +228,7 @@ export function renderPrintButton() {
  * Render the Read panel: a full-height content card if one is open, else the
  * ranked search hits.
  */
-function renderKbResults() {
+export function renderKbResults() {
     const container = document.getElementById('kb-results');
     if (!container) return;
 
@@ -246,7 +246,38 @@ function renderKbResults() {
     if (container._kbSig === html) return;
     container._kbSig = html;
     container.innerHTML = html;
-    if (state.kbOpenItem) container.scrollTop = 0;
+    if (state.kbOpenItem) {
+        // The full document is rendered; land on the section we matched (a note's
+        // inner heading) so you can scroll above/below it. No anchor -> top.
+        const body = container.querySelector('.kb-card-body');
+        if (body) scrollKbBodyToAnchor(body, state.kbOpenItem.anchor);
+    }
+}
+
+/** Normalize heading text for fuzzy matching: drop markdown markers/arrows and
+ *  collapse whitespace, so a section title matches its rendered element. */
+function normalizeAnchor(s) {
+    return (s || '').replace(/[#*_`>\-]+/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+/** Scroll the card body to the heading (or bold list item) matching `anchor`.
+ *  Falls back to the top when there's no anchor or no match. */
+function scrollKbBodyToAnchor(body, anchor) {
+    const want = normalizeAnchor(anchor);
+    if (!want) { body.scrollTop = 0; return; }
+    let target = null;
+    // Headings first (the common case), then list items / paragraphs for the
+    // bold-bullet sections notes also split on.
+    for (const el of body.querySelectorAll('h1,h2,h3,h4,h5,h6,li,p,strong')) {
+        const text = normalizeAnchor(el.textContent);
+        if (text && (text === want || text.startsWith(want) || want.startsWith(text))) {
+            target = el;
+            break;
+        }
+    }
+    if (!target) { body.scrollTop = 0; return; }
+    const top = target.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop;
+    body.scrollTop = Math.max(0, top - 8);   // small breathing gap above the heading
 }
 
 /**

@@ -5,7 +5,7 @@
  */
 
 import { state, CONSTANTS, DEFAULT_SYSTEM_PROMPT } from './state.js';
-import { render, renderAppStructure, updateInputContainerStyling, renderPrintButton } from './render.js';
+import { render, renderAppStructure, updateInputContainerStyling, renderPrintButton, renderKbResults } from './render.js';
 import { sendMessage, kbSearch, testApiConnection, printAsk, printRespond, printEnergy } from './api.js';
 import { connectMetricsLive, setupLiveReload, renderCurrentMetrics } from './websocket.js';
 import { loadSpec, loadAgents, loadResearchMetrics } from './tabs.js';
@@ -440,7 +440,10 @@ function scheduleKbSearch(query) {
         } finally {
             if (seq === kbSearchSeq) {
                 state.kbSearching = false;
-                render();
+                // Re-render only the KB panel - a search changes nothing else, and
+                // a full render() (chat, mobile tab carousel, modal, ...) on every
+                // keystroke-debounced query is what made typing feel blocked.
+                renderKbResults();
             }
         }
     }, query ? 120 : 0);

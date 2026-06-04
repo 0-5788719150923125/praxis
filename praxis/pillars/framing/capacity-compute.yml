@@ -1,0 +1,30 @@
+# Scaling-section fragment: the grounded spine of next/forced_computation.md -
+# capacity paid in computation not parameters, tiny scale as the deliberate test
+# regime, the honest inductive-bias reading. The world-model / domain-guarantee
+# vision stays in the note, not asserted here. No requires: a general thesis.
+section: scaling
+order: 37
+body: >
+  This is also why the bet is made small. Praxis is built and tested on the order
+  of a million parameters - far below the scale where a model can simply store the
+  corpus - because the claim is only meaningful where there are not enough
+  parameters to memorize. At that size capacity cannot come from count, so it has
+  to come from somewhere else, and the architecture's wager is that it comes from
+  computation: the recurrent depth that turns the same small mesh again and again,
+  and the harmonic coupling that moves every feature in one motion. Capacity is
+  paid in the turning of the gears, not in their number.
+
+  The forced structure is the mechanism by which that payment buys anything. A
+  harmonic field, a continuous latent, an autoregressive factorization - each is
+  an inductive bias that makes the model compute the way a particular mathematics
+  computes, importing that domain's structure rather than treating the
+  architecture as neutral ground. Some of what is imported is exact: an
+  autoregressive factorization is a proper normalized likelihood by the chain
+  rule, not an approximation of one. Most of it is structure, not a theorem - a
+  smoothness, a basis, a fixed point to iterate toward - and we keep the
+  distinction honest. The stronger reading, that computing in a domain's
+  mathematics confers that domain's guarantees, is the question the framework
+  exists to test, not a result it assumes; the conjecture above is its
+  measurable edge. If interference scales as $\log N$, a model with few
+  parameters but many coupled turns should reach what a far larger consensus
+  model reaches - which is exactly the experiment a million-parameter run is for.

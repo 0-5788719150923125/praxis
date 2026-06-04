@@ -554,7 +554,97 @@ const METRIC_RENDERERS = {
         createExpertRoutingChart(config.canvasId, runs),
     line: (config, { runs }) =>
         createRunComparisonChart(config.canvasId, config.label, runs, config.key),
+    evolution: (config) => createEvolutionChart(config.canvasId),
 };
+
+// Repo-level git-churn evolution card. Fetches /api/evolution - the SAME
+// computation the LaTeX figure renders (praxis.pillars.evolution.evolution_data)
+// - and draws the stacked subsystem churn with the recency fade on canvas. The
+// data is unified; this is just the web output format.
+async function createEvolutionChart(canvasId) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+
+    const fail = (msg) => {
+        const ctx = canvas.getContext('2d');
+        const w = canvas.parentElement.clientWidth || 600, h = canvas.parentElement.clientHeight || 280;
+        canvas.width = w; canvas.height = h;
+        ctx.fillStyle = '#0f1117'; ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = '#888'; ctx.font = '12px monospace'; ctx.textAlign = 'center';
+        ctx.fillText(msg, w / 2, h / 2);
+    };
+
+    let data;
+    try {
+        const r = await fetch('/api/evolution');
+        const j = await r.json();
+        if (j.status !== 'ok' || !j.data) return fail('No git history');
+        data = j.data;
+    } catch (e) {
+        return fail('Evolution data unavailable');
+    }
+
+    const { subsystems: subs, series, colors, bins: B, x_labels } = data;
+
+    const draw = () => {
+        const wrap = canvas.parentElement;
+        const w = wrap.clientWidth || 600, h = wrap.clientHeight || 280;
+        if (w < 2 || h < 2) return;
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+        canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+        const ctx = canvas.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.fillStyle = '#0f1117'; ctx.fillRect(0, 0, w, h);
+
+        const padL = 8, padR = 8, padT = 26, padB = 22;
+        const plotW = w - padL - padR, plotH = h - padT - padB;
+        const totals = new Array(B).fill(0);
+        for (const s of subs) for (let i = 0; i < B; i++) totals[i] += series[s][i];
+        const ymax = Math.max(...totals, 1e-6);
+        const xAt = (i) => padL + (B <= 1 ? 0 : (i / (B - 1)) * plotW);
+        const yAt = (v) => padT + plotH - (v / ymax) * plotH;
+
+        const cum = new Array(B).fill(0);
+        for (const s of subs) {
+            ctx.beginPath();
+            for (let i = 0; i < B; i++) {
+                const X = xAt(i), Y = yAt(cum[i] + series[s][i]);
+                i === 0 ? ctx.moveTo(X, Y) : ctx.lineTo(X, Y);
+            }
+            for (let i = B - 1; i >= 0; i--) ctx.lineTo(xAt(i), yAt(cum[i]));
+            ctx.closePath();
+            ctx.fillStyle = colors[s] || '#586072';
+            ctx.fill();
+            for (let i = 0; i < B; i++) cum[i] += series[s][i];
+        }
+
+        // Recency fade: dark overlay opaque at the oldest commit, clear at HEAD.
+        const g = ctx.createLinearGradient(padL, 0, padL + plotW, 0);
+        g.addColorStop(0, 'rgba(15,17,23,0.72)');
+        g.addColorStop(1, 'rgba(15,17,23,0)');
+        ctx.fillStyle = g; ctx.fillRect(padL, padT, plotW, plotH);
+
+        ctx.font = '10px monospace'; ctx.fillStyle = '#9aa3b2';
+        ctx.textAlign = 'left'; ctx.fillText((x_labels || [])[0] || 'first commit', padL, h - 6);
+        ctx.textAlign = 'right'; ctx.fillText((x_labels || [])[1] || 'now', w - padR, h - 6);
+
+        // Compact legend across the top.
+        ctx.font = '9px monospace'; ctx.textAlign = 'left';
+        let cx = padL;
+        for (const s of subs) {
+            if (cx > w - 70) break;
+            ctx.fillStyle = colors[s] || '#586072'; ctx.fillRect(cx, 5, 8, 8);
+            ctx.fillStyle = '#cfd3dc'; ctx.fillText(s, cx + 11, 13);
+            cx += 13 + ctx.measureText(s).width + 9;
+        }
+    };
+
+    draw();
+    if (canvas._evoRO) canvas._evoRO.disconnect();
+    canvas._evoRO = new ResizeObserver(() => draw());
+    canvas._evoRO.observe(canvas.parentElement);
+}
 
 function renderMetricsCharts(data, container) {
     const runs = data.runs || [];
@@ -592,6 +682,9 @@ function renderMetricsCharts(data, container) {
 
     // Data-driven metric detection
     const availableMetrics = allConfigs.filter(config => {
+        // Standalone cards (e.g. the repo-level evolution chart) fetch their own
+        // data and are not gated on per-run metrics.
+        if (config.source === 'standalone') return true;
         if (config.source === 'data_metrics') {
             return dataMetrics.some(a =>
                 a.data_metrics?.[config.key] &&

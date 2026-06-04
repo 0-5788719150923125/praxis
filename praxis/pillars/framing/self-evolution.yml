@@ -1,0 +1,19 @@
+# Always-on (no requires): the evolution figure is about the repository, not a
+# particular run. Discussion-section reflexive note. Kept factual - the figure
+# is real git churn; the dial/self-model reading lives in next/the_dial.md, not
+# asserted as a result here.
+section: discussion
+order: 60
+body: >
+  A living document can also look at itself. Praxis is built in the open, commit
+  by commit, and that history is just another sequence - a stream of byte-level
+  diffs over time. Figure~\ref{fig:evolution} turns the framework's own recency
+  kernel on its repository: per-subsystem churn across the project's history,
+  with the distant past faded in proportion to its distance from the present, the
+  way a decay bias weights earlier positions in a sequence. It is not an argument,
+  only a mirror - the same machinery that reads a corpus, reading the record of
+  its own construction. The reading that any finite byte sequence is a position to
+  be classified the same way, the repository included, is left as a conjecture to
+  test rather than a claim to lean on (see the project notes).
+
+  \paperEvolutionFigure

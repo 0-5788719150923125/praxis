@@ -48,6 +48,7 @@ METRIC_LABELS = {
 # Command flags that are not experiment selectors.
 DENY_FLAGS = {
     "reset",
+    "reset-after",
     "dev",
     "no-compile",
     "compile",

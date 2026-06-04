@@ -51,6 +51,18 @@ class OtherGroup:
         )
 
         group.add_argument(
+            "--reset-after",
+            type=int,
+            default=0,
+            help=(
+                "Crash-loop breaker: force '--reset' once this many consecutive "
+                "launches occur without the checkpoint advancing (i.e. the run "
+                "keeps failing to start). Use in respawning remote/systemd setups "
+                "so a wedged checkpoint self-heals. 0 (default) disables it."
+            ),
+        )
+
+        group.add_argument(
             "--preserve",
             action="store_true",
             default=False,

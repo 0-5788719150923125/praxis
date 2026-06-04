@@ -745,6 +745,25 @@ def get_paper_pdf():
     )
 
 
+@dynamics_bp.route("/api/evolution", methods=["GET"])
+def get_evolution():
+    """Per-subsystem git-churn evolution data - the SAME source the LaTeX
+    figure renders from (praxis.pillars.evolution.evolution_data), so the web
+    card and the paper figure are one computation, two output formats."""
+    try:
+        from praxis.pillars.evolution import evolution_data
+
+        data = evolution_data()
+        if not data:
+            return jsonify({"status": "no_data", "data": None})
+        resp = jsonify({"status": "ok", "data": data})
+        resp.headers.add("Cache-Control", "max-age=30")
+        return resp
+    except Exception as e:
+        api_logger.error(f"Error in get_evolution: {e}")
+        return jsonify({"status": "error", "message": str(e), "data": None}), 500
+
+
 @dynamics_bp.route("/api/head_snapshots", methods=["GET"])
 def get_head_snapshots():
     """Live non-scalar snapshots from the active model's LM head.

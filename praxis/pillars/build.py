@@ -23,6 +23,7 @@ import argparse
 import sys
 
 from praxis.pillars import (
+    evolution,
     framing,
     geometries,
     ghostmax,
@@ -71,6 +72,17 @@ def build_all(
     except Exception as e:  # best-effort, never break the paper build
         print(f"strands: skipped ({e})")
         summary["strands"] = None
+
+    try:
+        summary["evolution"] = evolution.export_evolution()
+        ev = summary["evolution"]
+        print(
+            f"evolution: {ev['commits']} commits"
+            + (f", focus {ev['focus']}" if ev.get("rendered") else " (no history)")
+        )
+    except Exception as e:  # best-effort, never break the paper build
+        print(f"evolution: skipped ({e})")
+        summary["evolution"] = None
 
     summary["halting"] = halting.export_halting()
     h = summary["halting"]
