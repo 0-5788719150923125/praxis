@@ -22,11 +22,26 @@ than failing the build.
 import argparse
 import sys
 
-from praxis.pillars import framing, geometries, ghostmax, halting, inlines, proofs, runs
+from praxis.pillars import (
+    framing,
+    geometries,
+    ghostmax,
+    halting,
+    inlines,
+    proofs,
+    runs,
+    strands,
+)
 
 
-def build_all(n=4, metric="auto", experiment=None, limit=4, scan=40, as_json=False):
-    """Regenerate every paper input. Returns a dict of per-step summaries."""
+def build_all(
+    n=4, metric="auto", experiment=None, limit=4, scan=40, as_json=False, model=None
+):
+    """Regenerate every paper input. Returns a dict of per-step summaries.
+
+    ``model`` is the live training model (passed by PaperBuildCallback) used for
+    snapshot figures that need populated forward state, e.g. the prismatic
+    bias/variance strands; omitted on a CLI build (those figures stay empty)."""
     summary = {}
 
     result = runs.export_once(n, metric)
@@ -46,6 +61,16 @@ def build_all(n=4, metric="auto", experiment=None, limit=4, scan=40, as_json=Fal
 
     summary["geometries"] = geometries.export_geometries(limit, scan)
     print(f"geometries: {summary['geometries']['count']} panel(s)")
+
+    try:
+        summary["strands"] = strands.export_strands(model)
+        s = summary["strands"]
+        print(
+            f"strands: {'rendered 2 arms' if s['rendered'] else 'no prismatic field'}"
+        )
+    except Exception as e:  # best-effort, never break the paper build
+        print(f"strands: skipped ({e})")
+        summary["strands"] = None
 
     summary["halting"] = halting.export_halting()
     h = summary["halting"]

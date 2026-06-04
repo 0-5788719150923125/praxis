@@ -45,7 +45,8 @@ Introspected from the live Flask app at every launch. Each summary is the first 
 
 - **GET** `/api/activation_curves` - Sample forward and derivative curves for every activation module in the live model, using their actual (learned) parameters. ([source](../praxis/web/routes/dynamics.py#L546))
 - **GET** `/api/dynamics` - Get learning dynamics data for expert learning visualization. ([source](../praxis/web/routes/dynamics.py#L23))
-- **GET** `/api/head_snapshots` - Live non-scalar snapshots from the active model's LM head. ([source](../praxis/web/routes/dynamics.py#L728))
+- **GET** `/api/head_snapshots` - Live non-scalar snapshots from the active model's LM head. ([source](../praxis/web/routes/dynamics.py#L748))
+- **GET** `/api/paper.pdf` - Serve the living research paper (research/main.pdf) as a download. ([source](../praxis/web/routes/dynamics.py#L728))
 
 ### Generation
 

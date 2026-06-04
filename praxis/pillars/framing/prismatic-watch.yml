@@ -1,0 +1,51 @@
+# Gated on the prismatic head. The spatial/parallel counterpart to
+# recurrent-watch: where recurrence resolves parity by turning one mesh in time,
+# the dual-arm prismatic head holds the same structure in parallel - a constant
+# bias arm plus a data-dependent variance arm, read straight off the
+# bias/variance strand card. Cites the same XOR-circle lemma.
+section: scaling
+order: 35
+requires:
+  head_type: [prismatic]
+proofs: [lemma-xor-circle]
+body: >
+  \subsection{The watch held still: parity in parallel}
+
+  The recurrent watch resolves parity in time, turning one mesh until the answer
+  falls at the right phase. The prismatic head holds the same structure without
+  turning: it splits the readout into two parallel arms over the same harmonic
+  field. One arm is a fixed structural prior - a static field read out linearly,
+  the bias arm. Its contribution does not depend on the input, so in the
+  bias/variance decomposition we render on the dashboard its feature-strands stay
+  pure bias: blue, every one, the same vote cast regardless of what arrives. The
+  second arm reads the same field through the crystal distance classifier under
+  an input-conditional envelope, and its strands run the full blue-to-red
+  spectrum - a vote that swings with the data. A per-token gate mixes the two.
+
+  \paperStrandsFigure
+
+  A constant reference and a single data-dependent swing, combined
+  multiplicatively through the gate, are the smallest arrangement that separates
+  what one linear arm cannot - the same parity the recurrent loop walks around
+  its circle (Lemma~\ref{prf:lemma-xor-circle}), here resolved in space rather
+  than in depth. The gate supplies the phase the rotation would otherwise sweep:
+  where recurrence turns the dial to bring a configuration to the right angle,
+  the dual head selects it directly, the bias arm fixing the origin and the
+  variance arm the deviation. It is the watch turn flattened into a single
+  parallel step of fully continuous, inter-model representation - two blue votes
+  held constant against one that flickers blue or red.
+
+  Read geometrically, the split adds an axis. Each feature no longer carries a
+  single activation but a (bias, variance) pair: an orthogonal decomposition
+  lifted out of the scalar value, the way an extra coordinate lifts a projection
+  into a higher dimension. The crystal centers make that space convex and radial -
+  structure grows outward from a focal point, and the field's smoothness holds
+  the interior coherent. Yet the per-feature arms that route through it are not
+  smooth at all; on the strand card they fan from the center like lightning, each
+  hair taking its own chaotic path to its bias/variance position. Convex from the
+  middle, chaotic in the arms: a representation that is globally organized and
+  locally free. We offer this as the reading the geometry invites, not a measured
+  result - the falsifiable form is whether the two arms' strand spectra actually
+  separate (one staying blue, the other spanning) once a prismatic run trains
+  under a gradient that reaches both, which is the experiment the dashboard card
+  is built to show.

@@ -192,6 +192,11 @@ export const CLICK_HANDLERS = [
         action: () => ({ type: 'REFRESH_TAB_DATA' })
     },
     {
+        selector: '.download-pdf-btn',
+        match: 'closest',
+        action: () => ({ type: 'DOWNLOAD_PAPER_PDF' })
+    },
+    {
         selector: '.refresh-button',
         match: 'exact',
         action: (e) => {

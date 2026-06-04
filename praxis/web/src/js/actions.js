@@ -670,6 +670,30 @@ export const ACTION_HANDLERS = {
                 activateParams: [true]  // Force refresh
             });
         }
+    },
+
+    /**
+     * Download the living research paper PDF. Fetched as a blob so a 404
+     * (not built yet) surfaces as a message instead of downloading an error.
+     */
+    DOWNLOAD_PAPER_PDF: async () => {
+        try {
+            const res = await fetch('/api/paper.pdf');
+            if (!res.ok) throw new Error(`status ${res.status}`);
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'praxis-research.pdf';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            console.warn('[PDF] download failed:', e);
+            alert('The research PDF is not available yet. It is rebuilt during '
+                + 'training once latexmk is present in the environment.');
+        }
     }
 };
 

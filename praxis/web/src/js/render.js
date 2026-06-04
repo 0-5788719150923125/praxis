@@ -15,6 +15,7 @@ import {
     createTerminalStatus,
     createAppStructure
 } from './components.js';
+import { centerLoopedTabs, TAB_LOOP_COPIES } from './mobile.js';
 
 /**
  * Initial render - builds entire app structure from scratch
@@ -289,21 +290,17 @@ function renderTabs() {
     const container = document.querySelector('.tab-buttons');
     if (!container) return;
 
-    // On mobile the strip is a continuous loop: rotate the list so the active
-    // tab leads and the rest trail in wrap order (the tab after the last is the
-    // first). Paired with the wrap-swipe, the ribbon circles endlessly and the
-    // active tab is always anchored at the left edge - no deep overflow dead-end.
-    // Desktop keeps the natural fixed order. (Content visibility is keyed by
-    // tab id, not DOM order, so reordering the buttons is safe.)
-    let tabs = state.tabs;
-    if (window.innerWidth <= 768 && tabs.length > 1) {
-        const a = tabs.findIndex(t => t.active);
-        if (a > 0) tabs = [...tabs.slice(a), ...tabs.slice(0, a)];
-    }
+    // Natural fixed order. On mobile the strip is an infinite carousel: lay the
+    // same set out several times over so native scroll (smooth, no pop-in) always
+    // has buffer copies in both directions, and mobile.js re-centers the scroll
+    // toward the middle copy so it never reaches an end. Content visibility is
+    // keyed by tab id, so the duplicate buttons are inert copies; clicking any of
+    // them switches by data-tab just the same.
+    const tabs = state.tabs;
+    const loop = window.innerWidth <= 768 && tabs.length > 1;
+    const buttons = tabs.map(tab => createTab(tab)).join('');
 
-    container.innerHTML = tabs
-        .map(tab => createTab(tab))
-        .join('');
+    container.innerHTML = loop ? buttons.repeat(TAB_LOOP_COPIES) : buttons;
 
     // Show/hide tab content
     state.tabs.forEach(tab => {
@@ -312,6 +309,10 @@ function renderTabs() {
             content.classList.toggle('active', tab.active);
         }
     });
+
+    // Seat the active tab in the middle copy so a full set of strip sits on
+    // each side, ready to scroll either way (no-op on desktop).
+    if (loop) centerLoopedTabs();
 }
 
 /**

@@ -119,6 +119,9 @@
         display: flex;
         gap: 0.375rem;
         max-width: 100%;
+        min-width: 0;
+        /* Native momentum scroll (smooth, tile-managed - no pop-in). The endless
+           loop is the buffer copies + scroll re-center in mobile.js. */
         overflow-x: auto;
         overflow-y: hidden;
         -webkit-overflow-scrolling: touch;
@@ -131,11 +134,7 @@
         display: none;
     }
 
-    /* Trailing runway so the last tab can scroll clear of the status indicator */
-    .tab-buttons::after {
-        content: '';
-        flex: 0 0 2.5rem;
-    }
+    /* (No trailing runway: the strip is an endless loop with no last tab.) */
 
     .tab-button {
         padding: 0.625rem 0.75rem;

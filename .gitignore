@@ -42,3 +42,5 @@ GEMINI.md
 praxis/web/static
 !praxis/web/static/*.png
 !praxis/web/static/*.webp
+# Docker image build stamp (launch auto-rebuild detector)
+.docker-build.*.stamp

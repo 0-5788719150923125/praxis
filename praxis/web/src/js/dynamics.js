@@ -5,7 +5,7 @@
 
 import { state, CONSTANTS, chartLineColor } from './state.js';
 import { fetchAPI } from './api.js';
-import { createTabHeader } from './components.js';
+import { createTabHeader, pdfButton } from './components.js';
 import { formatRelativeTime, initChartDeck, applyChartTheme } from './charts.js';
 import { sampleColormap } from './colormaps.js';
 
@@ -630,12 +630,15 @@ function renderDynamicsCharts(runData, container) {
     const headerHTML = createTabHeader({
         title: 'Learning Dynamics',
         additionalContent: renderDynamicsRunSelector(),
-        buttons: [{
-            id: 'refresh-dynamics-btn',
-            label: 'Refresh',
-            icon: refreshIcon,
-            className: 'tab-header-button'
-        }],
+        buttons: [
+            {
+                id: 'refresh-dynamics-btn',
+                label: 'Refresh',
+                icon: refreshIcon,
+                className: 'tab-header-button'
+            },
+            pdfButton('download-pdf-dynamics'),
+        ],
         metadata: metaParts.join('\n')
     });
 
@@ -1648,22 +1651,38 @@ function renderHarmonicStrands(canvas, data) {
     // spectrum (t = variance/(bias+variance); blue = pure bias, red = pure
     // variance), and the frame-independent 3D strand geometry. The hot loop then
     // only rotates+projects these flat buffers - no trig, no allocation per frame.
-    let bmax = 1e-6;
-    for (let i = 0; i < N; i++) bmax = Math.max(bmax, bias[i]);
-    const col = new Array(N);
+    // First pass: peak bias (geometry scale) and the heaviest per-feature
+    // variance share (color reference).
+    let bmax = 1e-6, tmax = 0;
+    for (let i = 0; i < N; i++) {
+        bmax = Math.max(bmax, bias[i]);
+        const b = Math.max(bias[i], 0), v = Math.max(vr[i], 0);
+        if (b + v > 1e-9) tmax = Math.max(tmax, v / (b + v));
+    }
+    // Color reference: the field's heaviest per-feature variance, floored so a
+    // near-zero-variance field stays blue (we don't amplify noise to red). When
+    // variance IS present, each strand's tip color is its variance share RELATIVE
+    // to that heaviest feature - so per-feature specialization shows even when the
+    // absolute field fraction is small (the absolute % is the readout up top).
+    const tref = Math.max(tmax, 0.04);
+    // Each hair ramps from the blue bias reference at its base (z=0) to its own
+    // relative balance at the tip: the most variance-heavy feature reddens, a
+    // half-as-heavy one tops out white, a bias-dominant one stays blue.
+    const segCol = new Array(N * SAMP);
     const gx = new Float32Array(N * SAMP), gy = new Float32Array(N * SAMP), gz = new Float32Array(N * SAMP);
     for (let i = 0; i < N; i++) {
         const b = Math.max(bias[i], 0), v = Math.max(vr[i], 0);
         const r = Math.sqrt(b / bmax), px = r * 2 - 1, py = Math.sqrt(v / bmax) * 2 - 1;
         const t = b + v > 1e-9 ? v / (b + v) : 0;
-        const c = sampleColormap('bias_variance', t);
-        col[i] = `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+        const rel = Math.min(1, t / tref);   // variance share vs the heaviest feature
         const a = angle[i], o = i * SAMP;
         for (let s = 0; s < SAMP; s++) {
             const z = s / STEPS, wgt = 1 - z, th = a + z * TWIST;
             gx[o + s] = r * Math.cos(th) * wgt + px * z;   // ring -> plane morph
             gy[o + s] = r * Math.sin(th) * wgt + py * z;
             gz[o + s] = (z - 0.5) * HEIGHT;                // pre-centered cylinder height
+            const c = sampleColormap('bias_variance', rel * z);   // blue base -> colormap(rel) tip
+            segCol[o + s] = `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
         }
     }
     // Reusable per-frame buffers (allocated once -> no GC churn in the hot loop).
@@ -1710,11 +1729,24 @@ function renderHarmonicStrands(canvas, data) {
         for (let k = 0; k < N; k++) {
             const i = order[k], o = i * SAMP;
             ctx.globalAlpha = 0.2 + 0.5 * ((dmean[i] + 1.5) / 3);
-            ctx.strokeStyle = col[i];
-            ctx.beginPath();
-            ctx.moveTo(psx[o], psy[o]);
-            for (let s = 1; s < SAMP; s++) ctx.lineTo(psx[o + s], psy[o + s]);
-            ctx.stroke();
+            // Draw the gradient as runs of constant (colormap-quantised) color so
+            // it stays a smooth blue->red gradient at a few strokes per hair, not
+            // one per segment. Adjacent runs share their junction point.
+            let s = 0;
+            while (s < STEPS) {
+                const c = segCol[o + s + 1];   // color of segment s -> s+1
+                ctx.strokeStyle = c;
+                ctx.beginPath();
+                ctx.moveTo(psx[o + s], psy[o + s]);
+                let e = s + 1;
+                ctx.lineTo(psx[o + e], psy[o + e]);
+                while (e < STEPS && segCol[o + e + 1] === c) {
+                    e++;
+                    ctx.lineTo(psx[o + e], psy[o + e]);
+                }
+                ctx.stroke();
+                s = e;
+            }
         }
         ctx.globalAlpha = 1;
 
@@ -1722,7 +1754,12 @@ function renderHarmonicStrands(canvas, data) {
         ctx.fillStyle = textColor;
         ctx.font = '11px monospace';
         ctx.fillText(`variance ${(100 * sep).toFixed(0)}% of field energy`, 10, 16);
-        if (sep < 0.01) ctx.fillText('pure bias - strands not separated yet', 10, 30);
+        ctx.fillText(
+            sep < 0.01
+                ? 'pure bias - strands not separated yet'
+                : 'hue = per-feature share, relative to the heaviest',
+            10, 30
+        );
 
         // Spectrum key: each hair runs blue (pure bias) -> red (pure variance).
         const lo = sampleColormap('bias_variance', 0), hi = sampleColormap('bias_variance', 1);

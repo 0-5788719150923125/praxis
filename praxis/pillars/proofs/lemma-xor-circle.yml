@@ -2,7 +2,7 @@
 # feature of the input sum (parity read off the circle), which no linear
 # function of the inputs can do.
 kind: lemma
-supports: [recurrent-watch]
+supports: [recurrent-watch, prismatic-watch]
 statement: >
   For $a,b \in \{0,1\}$ let $s = a + b$. Then
   $\mathrm{XOR}(a,b) = \tfrac{1}{2}\bigl(1 - \cos \pi s\bigr)$, so a single

@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 import torch
 import torch.nn as nn
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, current_app, jsonify, request, send_file
 from torch.nn.parameter import UninitializedParameter
 
 from praxis.activations import ACT2CLS
@@ -723,6 +723,26 @@ def _sample_activation(
 
     except Exception:
         return None
+
+
+@dynamics_bp.route("/api/paper.pdf", methods=["GET"])
+def get_paper_pdf():
+    """Serve the living research paper (research/main.pdf) as a download.
+
+    Rebuilt during training by PaperBuildCallback; 404 until it first compiles
+    (needs latexmk in the environment)."""
+    pdf = Path(__file__).resolve().parents[3] / "research" / "main.pdf"
+    if not pdf.is_file():
+        return (
+            jsonify({"status": "no_data", "message": "Paper PDF not built yet."}),
+            404,
+        )
+    return send_file(
+        str(pdf),
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name="praxis-research.pdf",
+    )
 
 
 @dynamics_bp.route("/api/head_snapshots", methods=["GET"])

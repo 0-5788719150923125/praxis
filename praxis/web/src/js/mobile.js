@@ -6,96 +6,94 @@
 import { state } from './state.js';
 import { executeAction } from './actions.js';
 
-/**
- * Scroll the carousel so the active tab sits at the strip's left edge.
- * Queries fresh DOM each call (render() rebuilds the strip on tab switch).
- */
-export function snapActiveTabIntoView() {
-    const tabButtons = document.querySelector('.tab-buttons');
-    if (!tabButtons || window.innerWidth > 768) return;
-    const active = tabButtons.querySelector('.tab-button.active');
-    if (!active) return;
-    const offset = active.getBoundingClientRect().left - tabButtons.getBoundingClientRect().left;
-    tabButtons.scrollBy({ left: offset, behavior: 'smooth' });
+// renderTabs lays the tab set out this many times on mobile. Native momentum
+// scroll is smooth but can't reposition mid-fling on every platform, so we keep
+// generous buffer copies (a fling can't reach an end) and re-center toward the
+// middle copy whenever the scroll settles into an outer copy. Odd so there's a
+// true middle copy with equal slack on each side.
+export const TAB_LOOP_COPIES = 5;
+
+function tabStrip() {
+    const el = document.querySelector('.tab-buttons');
+    return el && window.innerWidth <= 768 ? el : null;
+}
+
+// Width of a single copy of the tab set (period of the loop), measured from the
+// buttons. 0 if the strip isn't laid out as the expected multiple yet.
+function copyWidth(strip) {
+    const btns = strip.querySelectorAll('.tab-button');
+    const n = btns.length / TAB_LOOP_COPIES;
+    if (!Number.isInteger(n) || n < 1) return 0;
+    return btns[n].offsetLeft - btns[0].offsetLeft;
 }
 
 /**
- * Setup mobile tab carousel
+ * Seat the middle copy's active tab at the strip's left edge, so a full copy of
+ * the set sits to either side and the carousel can scroll both ways at once.
+ * Called by renderTabs after every rebuild (the strip is rebuilt on switch).
+ */
+export function centerLoopedTabs() {
+    const strip = tabStrip();
+    if (!strip) return;
+    const btns = strip.querySelectorAll('.tab-button');
+    const n = btns.length / TAB_LOOP_COPIES;
+    if (!Number.isInteger(n) || n < 1) return;
+    const mid = Math.floor(TAB_LOOP_COPIES / 2) * n;   // first button of the middle copy
+    let target = btns[mid];
+    for (let i = mid; i < mid + n; i++) {
+        if (btns[i].classList.contains('active')) { target = btns[i]; break; }
+    }
+    // Relative measure (getBoundingClientRect) so it's correct regardless of the
+    // button's offsetParent; aligns the active tab flush with the strip's left.
+    strip.scrollLeft += target.getBoundingClientRect().left - strip.getBoundingClientRect().left;
+}
+
+// Back-compat alias: the swipe-to-switch handler re-centers after a switch.
+export const snapActiveTabIntoView = centerLoopedTabs;
+
+/**
+ * Setup the mobile tab carousel as an infinite loop on top of native scroll.
+ * renderTabs lays the tab set out TAB_LOOP_COPIES times; the browser handles the
+ * drag and momentum (smooth, no pop-in), and we just nudge the scroll back by one
+ * copy-width whenever it settles into an outer copy. The content is identical a
+ * copy-width over, so the nudge is invisible - the strip loops endlessly. The wide
+ * buffer means a fling can't reach an end before the next scroll tick re-centers.
  */
 export function setupTabCarousel() {
-    const tabButtons = document.querySelector('.tab-buttons');
+    const strip = document.querySelector('.tab-buttons');
+    if (!strip || window.innerWidth > 768) return;
+
+    // Right edge fade only: it hints "more tabs ->" without overlaying the
+    // leading (left-most) active tab, which must always be fully visible.
     const tabNav = document.querySelector('.tab-nav');
-
-    if (!tabButtons || !tabNav) return;
-
-    // Only apply on mobile
-    if (window.innerWidth > 768) return;
-
-    function updateScrollIndicators() {
-        const scrollLeft = tabButtons.scrollLeft;
-        const maxScroll = tabButtons.scrollWidth - tabButtons.clientWidth;
-
-        tabNav.classList.toggle('has-scroll-left', scrollLeft > 5);
-        tabNav.classList.toggle('has-scroll-right', scrollLeft < maxScroll - 5);
+    if (tabNav) {
+        tabNav.classList.add('has-scroll-right');
+        tabNav.classList.remove('has-scroll-left');
     }
 
-    // Scroll a tab so it sits at the container's left edge (fixed anchor)
-    function scrollTabToLeft(button) {
-        if (!button) return;
-        const offset = button.getBoundingClientRect().left - tabButtons.getBoundingClientRect().left;
-        tabButtons.scrollLeft += offset;
-    }
-
-    tabButtons.addEventListener('scroll', updateScrollIndicators);
-
-    // Remember where a touch began so we can tell a tap from a scroll gesture
-    let touchStart = null;
-
-    tabButtons.addEventListener('touchstart', (e) => {
-        const button = e.target.closest('.tab-button');
-        touchStart = button ? { button, x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+    // Bound once: #tab-buttons persists across renderTabs rebuilds (only its
+    // children change). Keep the scroll parked in the central copies - jump by a
+    // whole copy-width (identical pixels) when it drifts into the outer ones.
+    strip.addEventListener('scroll', () => {
+        const w = copyWidth(strip);
+        if (!w) return;
+        const sl = strip.scrollLeft;
+        if (sl < 1.5 * w) strip.scrollLeft = sl + w;
+        else if (sl > 3.5 * w) strip.scrollLeft = sl - w;
     }, { passive: true });
 
-    tabButtons.addEventListener('touchend', (e) => {
-        if (!touchStart) return;
-        const { button, x, y } = touchStart;
-        touchStart = null;
+    centerLoopedTabs();
+    // Re-center once fonts settle: their late metrics widen the buttons, which
+    // would otherwise leave the leading tab measured at a stale offset and clipped.
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(centerLoopedTabs);
 
-        // A finger that moved was scrolling the carousel, not pressing a tab
-        const touch = e.changedTouches[0];
-        if (Math.abs(touch.clientX - x) > 10 || Math.abs(touch.clientY - y) > 10) return;
-
-        // Snap once, after the press has switched the active tab
-        let snapped = false;
-        const snap = () => {
-            if (snapped || !button.classList.contains('active')) return;
-            snapped = true;
-            observer.disconnect();
-            scrollTabToLeft(button);
-        };
-        const observer = new MutationObserver(snap);
-        observer.observe(button, { attributes: true, attributeFilter: ['class'] });
-        setTimeout(() => { observer.disconnect(); snap(); }, 50);
-    }, { passive: true });
-
-    // Fallback for non-touch devices (desktop)
-    tabButtons.addEventListener('click', (e) => {
-        if ('ontouchstart' in window) return;
-        if (!e.target.closest('.tab-button')) return;
-        requestAnimationFrame(() => scrollTabToLeft(tabButtons.querySelector('.tab-button.active')));
-    });
-
-    updateScrollIndicators();
-    scrollTabToLeft(tabButtons.querySelector('.tab-button.active'));
-
-    // Re-snap only on real width changes - the URL bar showing/hiding during a
-    // scroll fires resize and would otherwise jerk the active tab to the left
+    // Re-center only on real width changes - the URL bar showing/hiding during a
+    // scroll fires resize and would otherwise jerk the strip mid-drag.
     let lastWidth = window.innerWidth;
     window.addEventListener('resize', () => {
         if (window.innerWidth > 768 || window.innerWidth === lastWidth) return;
         lastWidth = window.innerWidth;
-        updateScrollIndicators();
-        scrollTabToLeft(tabButtons.querySelector('.tab-button.active'));
+        centerLoopedTabs();
     });
 }
 

@@ -172,6 +172,7 @@ class TestJokePolicy:
             "joke_energy",
             "joke_activation_rate",
             "joke_recall",
+            "joke_reward_baseline",
             "joke_advantage",
         }
 

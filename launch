@@ -39,6 +39,29 @@ if [ "$1" = "compose" ]; then
         COMPOSE_FILE="$SCRIPT_DIR/compose.yml"
     fi
 
+    # Rebuild the image only when the Docker build inputs change (the Dockerfile
+    # or a compose file) - NOT on praxis/ source edits (bind-mounted live) or
+    # pyproject changes (installed into the venv volume at runtime). We stamp a
+    # hash of those inputs, keyed per compose file so an arch switch rebuilds
+    # correctly, and gate an explicit `compose build` on it. Unchanged inputs
+    # skip the build and fall through to the cached image; even a triggered
+    # rebuild is cheap when Docker's layer cache has nothing material to redo.
+    # Set PRAXIS_NO_AUTOBUILD=1 to skip this check entirely.
+    if [ -z "${PRAXIS_NO_AUTOBUILD:-}" ] && command -v docker &>/dev/null; then
+        STAMP_FILE="$SCRIPT_DIR/.docker-build.$(basename "$COMPOSE_FILE").stamp"
+        BUILD_HASH=$(cat "$SCRIPT_DIR/Dockerfile" "$SCRIPT_DIR/compose.yml" "$COMPOSE_FILE" 2>/dev/null | sha256sum | cut -d' ' -f1)
+        if [ "$BUILD_HASH" != "$(cat "$STAMP_FILE" 2>/dev/null)" ]; then
+            echo "[DOCKER] Build inputs changed since last build - rebuilding image..."
+            if docker compose -f "$COMPOSE_FILE" build; then
+                echo "$BUILD_HASH" > "$STAMP_FILE"
+            else
+                echo "[DOCKER] Image build failed; continuing with the existing image." >&2
+            fi
+        else
+            echo "[DOCKER] Image up to date (Docker build inputs unchanged)."
+        fi
+    fi
+
     # Parse args for special handling:
     #  --data-path (nargs="+"): resolve to absolute host paths and bind-mount
     #    them into the container at the same path.

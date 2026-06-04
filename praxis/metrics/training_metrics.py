@@ -391,10 +391,25 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
             "is_validation": False,
         },
     },
+    "engagement_reward_baseline": {
+        "description": (
+            "Slow EMA of the recall reward - the REINFORCE variance-reduction "
+            "baseline. Advantages are reward minus this, so they stay zero-mean "
+            "(unlike the energy setpoint, which biased advantages negative)."
+        ),
+        "chart": {
+            "title": "Engagement Reward Baseline",
+            "y_label": "recall EMA",
+            "y_scale": "linear",
+            "order": 325,
+            "is_validation": False,
+        },
+    },
     "engagement_advantage": {
         "description": (
-            "reward - energy baseline, the signed REINFORCE signal. Positive when "
-            "the model beats its current energy setpoint; drives the update."
+            "reward - reward-EMA baseline, the signed REINFORCE signal. Zero-mean "
+            "by construction: positive on better-than-recent predictions, negative "
+            "on worse, balanced so it never systematically suppresses tokens."
         ),
         "chart": {
             "title": "Engagement Advantage",
@@ -469,8 +484,18 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
             "is_validation": False,
         },
     },
+    "joke_reward_baseline": {
+        "description": "Slow EMA of the joke recall reward - the zero-mean REINFORCE baseline.",
+        "chart": {
+            "title": "Joke Reward Baseline",
+            "y_label": "recall EMA",
+            "y_scale": "linear",
+            "order": 415,
+            "is_validation": False,
+        },
+    },
     "joke_advantage": {
-        "description": "reward - energy baseline for the joke policy (signed REINFORCE signal).",
+        "description": "reward - reward-EMA baseline for the joke policy (zero-mean REINFORCE signal).",
         "chart": {
             "title": "Joke Advantage",
             "y_label": "advantage",

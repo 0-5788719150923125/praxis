@@ -31,11 +31,21 @@ class EngagementPolicy(nn.Module):
     # recall-over-assistant-region machinery under a different chart family.
     prefix = "engagement"
 
+    # REINFORCE baseline EMA horizon (~100 steps). Fixed, model-agnostic.
+    REWARD_BASELINE_DECAY = 0.99
+
     def __init__(self, config):
         super().__init__()
         self.config = config
         self.rl_weight = getattr(config, "rl_weight", 0.1)
         self.energy = HomeostaticEnergy()
+        # Variance-reduction baseline: a slow EMA of the reward itself. The
+        # homeostatic energy is a setpoint (~1.0), not a mean-reward baseline -
+        # using it as the baseline biases every advantage negative once the
+        # model activates, which drives the policy to suppress its own answer
+        # tokens (unbounded-negative loss + inference degeneration). The reward
+        # EMA keeps advantages zero-mean and balanced.
+        self.reward_baseline = 0.0
         self._metrics: dict = {}
 
     @torch.no_grad()
@@ -98,9 +108,18 @@ class EngagementPolicy(nn.Module):
         activation_rate = sum(activations) / len(activations)
         reward = torch.tensor(recalls, dtype=torch.float32, device=device)
 
-        # Baseline = homeostatic energy (updated from this batch's activation).
+        # Homeostatic energy: kept as the live engagement signal + metric (and
+        # the ingest_live online channel), NOT the gradient baseline.
         energy = self.energy.update(activation_rate)
-        advantage = (reward - energy).detach()  # [B]
+
+        # Advantage against the reward-EMA baseline (zero-mean, balanced).
+        # Update the baseline *after* computing the advantage so it doesn't peek
+        # at the current sample.
+        advantage = (reward - self.reward_baseline).detach()  # [B]
+        self.reward_baseline = (
+            self.REWARD_BASELINE_DECAY * self.reward_baseline
+            + (1.0 - self.REWARD_BASELINE_DECAY) * float(reward.mean())
+        )
 
         # REINFORCE on the LM's own log-probs over the answer tokens: maximize
         # log_prob(answer) weighted by advantage. log_prob = -CE per token.
@@ -124,6 +143,7 @@ class EngagementPolicy(nn.Module):
             f"{p}_energy": energy,
             f"{p}_activation_rate": activation_rate,
             f"{p}_recall": float(reward.mean()),
+            f"{p}_reward_baseline": self.reward_baseline,
             f"{p}_advantage": float(advantage.mean()),
         }
         return loss, self._metrics

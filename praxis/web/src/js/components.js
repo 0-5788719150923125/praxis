@@ -648,3 +648,21 @@ export function createTabHeader(config) {
     `;
 }
 
+// Document glyph (folded corner) for the "Download PDF" button. ``currentColor``
+// so it inherits the active theme like every other tab-header button.
+export const PDF_ICON = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+        <path d="M9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V4.5L9.5 0zM9 1.5 12.5 5H9.5a.5.5 0 0 1-.5-.5V1.5z"/>
+    </svg>
+`;
+
+/** Tab-header button config that downloads the living research paper PDF. */
+export function pdfButton(id) {
+    return {
+        id,
+        label: 'PDF',
+        icon: PDF_ICON,
+        className: 'tab-header-button download-pdf-btn',
+    };
+}
+

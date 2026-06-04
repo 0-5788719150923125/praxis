@@ -132,6 +132,15 @@ class HALOLoss(nn.Module):
         pos = pos.to(torch.float32)
         cen = centroids.to(torch.float32)
 
+        # Normalize inputs to unit per-coordinate scale (RMS), matching the
+        # shell target 1 - 2/D. HALO is hyperspherical: without this its r_sq,
+        # dot products and loss scale with the upstream activation norm, so a
+        # layer emitting large or drifting activations makes the loss magnitude
+        # (and its gradient) track that norm - destabilizing training and any
+        # loss-delta RL reward downstream. Normalizing decouples HALO from
+        # upstream scale and is the geometry the objective assumes.
+        pos = pos * torch.rsqrt(pos.pow(2).mean(dim=-1, keepdim=True).clamp_min(1e-6))
+
         # Mask out padding tokens before computing HALO
         valid_mask = target != -100
         if not valid_mask.any():
@@ -209,13 +218,20 @@ class HALOLoss(nn.Module):
         r_sq_true = diff_true.pow(2).mean(dim=-1).to(pos.dtype)
 
         volume_coeff = 0.5 - 1.0 / D
-        volume_term = volume_coeff * torch.log(r_sq_true)
+        # Floor r_sq under the log barrier only. As r_sq -> 0 (an embedding
+        # landing on its centroid, or a near-zero upstream activation) the
+        # volume term's gradient -vc/r_sq diverges and detonates training -
+        # the instability HALO is notorious for. Cap well below the shell
+        # target (1 - 2/D) so the barrier is untouched in the healthy regime;
+        # the gaussian term keeps the true r_sq (it has no singularity).
+        r_sq_floor = 1e-2 * max(1.0 - 2.0 / D, 1e-6)
+        volume_term = volume_coeff * torch.log(r_sq_true.clamp_min(r_sq_floor))
         gaussian_term = -0.5 * r_sq_true
         radial_nll = -(volume_term + gaussian_term)
 
         per_token = loss_ce_per_token + radial_nll
 
-        self._stash_geometry(x_sq, logits_k_plus_1, gamma)
+        self._stash_geometry(r_sq_true, logits_k_plus_1, gamma)
 
         # target was already filtered by valid_mask; pass labels=None so
         # weighted_reduce doesn't try to filter again.
@@ -227,21 +243,23 @@ class HALOLoss(nn.Module):
     RING_BINS = 96
 
     @torch.no_grad()
-    def _stash_geometry(self, x_sq: Tensor, logits_kp1: Tensor, gamma: Tensor) -> None:
-        """Snapshot the radial energy of the batch for the HALO ring viz.
+    def _stash_geometry(self, r_sq_true: Tensor, logits_kp1: Tensor, gamma: Tensor) -> None:
+        """Snapshot the consensus geometry for the HALO ring viz.
 
-        Embeddings ideally settle on a shell of mean-square radius
-        ``r_sq_target = 1 - 2/D``; the abstain class sinks the rest to the
-        origin. We histogram per-token radii so the renderer can paint the
-        bright ring of consensus and the dark interior/exterior of variance.
+        Inputs are RMS-normalized, so radius-from-origin is constant; the
+        meaningful geometry is each token's distance to its centroid. The loss
+        pulls that onto a shell of radius ``sqrt(1 - 2/D)``. We histogram those
+        distances so the renderer paints the bright ring of consensus (tokens
+        settled on the shell) with the dark interior (collapse) and exterior
+        (variance) carrying no structure.
         """
         if torch.compiler.is_compiling():
             return
-        radius = x_sq.detach().clamp_min(0).sqrt().view(-1).float()
+        radius = r_sq_true.detach().clamp_min(0).sqrt().view(-1).float()
         if radius.numel() == 0:
             return
         shell_r = math.sqrt(max(1.0 - 2.0 / self._D, 1e-6))
-        r_max = max(float(radius.max().item()), shell_r * 1.6)
+        r_max = max(float(radius.max().item()), shell_r * 2.0)
         hist = torch.histc(radius, bins=self.RING_BINS, min=0.0, max=r_max)
         peak = hist.max().clamp_min(1.0)
         abstain = F.softmax(logits_kp1.detach().float(), dim=-1)[:, -1].mean()
@@ -287,15 +305,15 @@ class HALOLoss(nn.Module):
             "chart": {"title": "HALO Gamma", "group": "halo", "order": 0},
         },
         "halo_mean_radius": {
-            "description": "Mean embedding radius (mean-square scale). HALO pulls this toward the shell radius sqrt(1 - 2/D).",
+            "description": "Mean distance from each token to its centroid (inputs are RMS-normalized). HALO pulls this onto the shell radius sqrt(1 - 2/D).",
             "chart": {"title": "HALO Radius", "group": "halo", "order": 1, "series_group": "halo_radius", "series_label": "mean"},
         },
         "halo_shell_radius": {
-            "description": "Target shell radius sqrt(1 - 2/D): the ring of consensus the objective drives embeddings onto.",
+            "description": "Target shell radius sqrt(1 - 2/D): the ring of consensus the objective drives token-to-centroid distances onto.",
             "chart": {"title": "HALO Radius", "group": "halo", "order": 2, "series_group": "halo_radius", "series_label": "shell"},
         },
         "halo_radius_spread": {
-            "description": "Std of embedding radii. Collapsing toward the shell tightens this; high spread is residual variance.",
+            "description": "Std of token-to-centroid distances. Settling onto the shell tightens this; high spread is residual variance.",
             "chart": {"title": "HALO Radius Spread", "group": "halo", "order": 3},
         },
         "halo_abstain_rate": {
@@ -303,7 +321,7 @@ class HALOLoss(nn.Module):
             "chart": {"title": "HALO Abstain Rate", "group": "halo", "order": 4},
         },
         "halo_ring": {
-            "description": "Radial energy map: the bright ring marks consensus embeddings settled on the hyperspherical shell, with the dark interior (abstain sink) and exterior carrying no structure - a geometry of bias and variance.",
+            "description": "Radial energy map of token-to-centroid distance: the bright ring marks consensus tokens settled on the hyperspherical shell, with the dark interior (collapse) and exterior (variance) carrying no structure - a geometry of bias and variance.",
             "snapshot": {"title": "HALO Energy Ring", "renderer": "halo_ring", "group": "halo", "order": 60},
         },
     }

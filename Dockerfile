@@ -10,6 +10,22 @@ RUN apt-get update -qq && \
     ln -sf /usr/bin/python3 /usr/bin/python && \
     rm -rf /var/lib/apt/lists/*
 
+# TeX toolchain for the living research paper: the PaperBuildCallback recompiles
+# research/main.pdf on the --save-every cadence via latexmk. Without these the
+# callback finds no latexmk and silently disables the rebuild. Targeted texlive
+# set (not texlive-full, ~5GB) covering main.tex's usage: pdflatex+bibtex
+# (base), amsthm/amsmath (recommended), pgfplots (extra), tikz/pgf (pictures),
+# and recommended fonts.
+RUN apt-get update -qq && \
+    apt-get install -y -qq \
+        latexmk \
+        texlive-latex-base \
+        texlive-latex-recommended \
+        texlive-latex-extra \
+        texlive-pictures \
+        texlive-fonts-recommended && \
+    rm -rf /var/lib/apt/lists/*
+
 # Configure git to trust the workspace directory
 RUN git config --global --add safe.directory /workspace
 

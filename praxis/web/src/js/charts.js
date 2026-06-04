@@ -5,7 +5,7 @@
 
 import { state, CONSTANTS, chartLineColor, currentAccentHue, rotateHexHue } from './state.js';
 import { fetchAPI } from './api.js';
-import { createTabHeader } from './components.js';
+import { createTabHeader, pdfButton } from './components.js';
 
 // Chart instances storage (exported for hybrid mode)
 export const charts = {};
@@ -698,6 +698,7 @@ const DECK_ANCHOR_DUR = 240;     // ms; A<->B lift duration
 // hard at the top/bottom edge (no rubber-band, no bleed into cycling).
 const DECK_SCROLL_TAU = 140;     // ms; inner-scroll coast friction halflife
 const DECK_SCROLL_MIN_VEL = 0.02;// px/ms; below this the inner-scroll coast settles
+const DECK_TITLE_FLIP = 28;      // finger px on a card's title handle to flip A<->B
 
 export function initChartDeck(deck, opts = {}) {
     if (typeof deck === 'string') deck = document.getElementById(deck);
@@ -1382,6 +1383,12 @@ function bindDeckEvents(deck) {
         deck._scrollVel = 0;       // reset inner-scroll velocity for this gesture
         deck._scrollBody = null;
         deck._anchorLocked = false; // set once this gesture flips A<->B, then no cycling
+        // A drag that begins on the card's title/chrome (not its scrolling body) is
+        // a dedicated A<->B handle: it always re-shifts the anchor and never cycles
+        // cards, so grabbing the title reliably drops/lifts without skidding decks.
+        deck._titleDrag = !!e.target.closest('.chart-title, .chart-subtitle, .chart-card-number')
+            && !e.target.closest('.deck-card-scroll');
+        deck._titleAccum = 0;
     }, { passive: true });
 
     deck.addEventListener('touchmove', (e) => {
@@ -1397,6 +1404,15 @@ function bindDeckEvents(deck) {
         lastT = e.timeStamp;
         fvel = dy / dt;               // px/ms finger speed (for the fling-commit on release)
         e.preventDefault();           // the deck owns the gesture (touch-action: none)
+
+        // Title-handle drag: drive the A<->B anchor directly, both ways, and never
+        // cycle cards or inner-scroll. The title is the dedicated re-shift grip.
+        if (deck._titleDrag) {
+            deck._titleAccum += dy;   // +up / -down
+            if (deck._titleAccum > DECK_TITLE_FLIP) setAnchor(deck, 1);
+            else if (deck._titleAccum < -DECK_TITLE_FLIP) setAnchor(deck, 0);
+            return;
+        }
 
         // Mid card-transition: the seam owns this move (no inner scroll until it settles).
         if (deck._seamAccum !== 0) {
@@ -1581,12 +1597,15 @@ function renderMetricsHeader(container, runs) {
     const headerHTML = createTabHeader({
         title: 'Metrics',
         additionalContent: selectorHTML,
-        buttons: [{
-            id: 'refresh-metrics-btn',
-            label: 'Refresh',
-            icon: refreshIcon,
-            className: 'tab-header-button'
-        }],
+        buttons: [
+            {
+                id: 'refresh-metrics-btn',
+                label: 'Refresh',
+                icon: refreshIcon,
+                className: 'tab-header-button'
+            },
+            pdfButton('download-pdf-research'),
+        ],
         metadata: metadataHTML
     });
 
