@@ -1,0 +1,48 @@
+# Discussion-section fragment: the rebuttal to "universal approximation makes
+# architecture neutral, so where is the value in the complexity?". The grounded
+# spine of next/architecture_separation.md. Ungated (no requires): a general
+# foundational argument that applies to the whole framework, not one run. Pulls
+# in proof-architecture-separation for the formal load-bearing piece.
+section: discussion
+order: 25
+proofs: [proof-architecture-separation]
+body: >
+  \subsection{Why architecture is not neutral ground}
+
+  A standing objection deserves a direct answer, because the framework's whole
+  premise stands or falls on it. If universal approximation~\cite{hornik1989multilayer}
+  guarantees that a sufficiently wide network of \textit{any} family can represent
+  any function we care about, then any Praxis experiment - however intricate - is
+  by hypothesis emulable by some other network, and one is entitled to ask where
+  the value of the architectural complexity could possibly live. The answer is
+  that the objection conflates three distinct equivalences, and universal
+  approximation establishes only the first of them.
+
+  Representational equivalence says the function exists in the closure of each
+  family; it is an existence statement at unbounded width. Learnability
+  equivalence would say stochastic gradient descent, from a random
+  initialization, actually \textit{reaches} that function in feasible compute and
+  data. Statistical equivalence would say two families generalize equally at a
+  fixed sample budget. Universal approximation asserts the first and is silent on
+  the other two by construction - it quantifies existentially over parameters,
+  not over what an optimizer finds or what a finite sample supports. The value of
+  an architecture lives entirely in the second and third layers, which is exactly
+  where the existence theorem says nothing.
+
+  The foundational mathematics here cuts \textit{for} the framework, not against
+  it. Depth-separation results
+  (Proposition~\ref{prf:proof-architecture-separation}) exhibit functions whose
+  representation cost differs exponentially between architectures that are equal
+  as sets of representable functions: the family is the same in the limit, the
+  resource at fixed accuracy is separated by $2^{\Omega(k)}$. ``Architecture is
+  just a constant factor'' is therefore not a conservative default but a claim
+  already contradicted by theory; the burden of proof runs the other way. The
+  honest residue is that representation cost is not yet learnability, and proving
+  that a given pair of comparable-capacity architectures have \textit{separated
+  error boundaries under training} - the empirical edge of the conjecture in
+  Figure~\ref{fig:scaling} - requires controlled ablations we have not yet run.
+  We state the hypothesis before we have closed it, and mark the seam plainly:
+  the separation of representable cost is established mathematics; the separation
+  of \textit{learned} error across configurations of equal budget is the
+  measurable prediction the framework exists to test, not a result it already
+  owns.

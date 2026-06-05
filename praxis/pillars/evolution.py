@@ -115,7 +115,9 @@ def _subsystem(path: str) -> str:
 
 
 def _commits():
-    """[(unix_ts, {subsystem: churn})] oldest-first, or [] if git is unusable."""
+    """[(unix_ts, {subsystem: [churn, net]})] oldest-first, or [] if git is
+    unusable. ``churn`` = insertions + deletions (activity); ``net`` =
+    insertions - deletions (accumulates into total lines / codebase size)."""
     try:
         out = subprocess.run(
             [
@@ -135,20 +137,23 @@ def _commits():
         ).stdout
     except Exception:
         return []
-    commits, ts, churn = [], None, defaultdict(float)
+    commits, ts, cell = [], None, defaultdict(lambda: [0.0, 0.0])
     for line in out.splitlines():
         if line.startswith("__C__ "):
             if ts is not None:
-                commits.append((ts, churn))
-            ts, churn = int(line[6:].strip() or 0), defaultdict(float)
+                commits.append((ts, cell))
+            ts, cell = int(line[6:].strip() or 0), defaultdict(lambda: [0.0, 0.0])
         elif "\t" in line:
             ins, dele, path = (line.split("\t", 2) + ["", "", ""])[:3]
             # binary files report "-"; skip them (no line churn).
-            if ins == "-" or not path:
+            if ins == "-" or dele == "-" or not path:
                 continue
-            churn[_subsystem(path)] += float(ins or 0) + float(dele or 0)
+            i, d = float(ins or 0), float(dele or 0)
+            sub = _subsystem(path)
+            cell[sub][0] += i + d  # churn (activity)
+            cell[sub][1] += i - d  # net (-> total lines)
     if ts is not None:
-        commits.append((ts, churn))
+        commits.append((ts, cell))
     commits.reverse()  # oldest-first
     return commits
 
@@ -167,11 +172,27 @@ def evolution_data() -> dict:
     t0, t1 = commits[0][0], commits[-1][0]
     span = max(t1 - t0, 1)
     labels = list(dict.fromkeys(LABEL_ORDER))
-    series = {lbl: [0.0] * N_BINS for lbl in labels}
-    for ts, churn in commits:
-        b = min(int((ts - t0) / span * (N_BINS - 1)), N_BINS - 1)
-        for lbl, v in churn.items():
-            series.setdefault(lbl, [0.0] * N_BINS)[b] += v
+
+    def _bin(ts):
+        return min(int((ts - t0) / span * (N_BINS - 1)), N_BINS - 1)
+
+    series = {lbl: [0.0] * N_BINS for lbl in labels}   # churn per bin (activity)
+    totals = {lbl: [None] * N_BINS for lbl in labels}  # cumulative net (total lines)
+    running = defaultdict(float)
+    for ts, cell in commits:
+        b = _bin(ts)
+        for lbl, (churn, net) in cell.items():
+            series.setdefault(lbl, [0.0] * N_BINS)[b] += churn
+            running[lbl] += net
+        for lbl, r in running.items():  # snapshot codebase size at this bin
+            totals.setdefault(lbl, [None] * N_BINS)[b] = max(0.0, r)
+    for arr in totals.values():  # forward-fill bins with no commit (size persists)
+        last = 0.0
+        for b in range(N_BINS):
+            if arr[b] is None:
+                arr[b] = last
+            else:
+                last = arr[b]
 
     # Drop the OTHER junk-drawer entirely (non-Praxis paths: lockfiles,
     # staging/archive, root scripts). It isn't a subsystem, so rather than render
@@ -189,6 +210,7 @@ def evolution_data() -> dict:
         "bins": N_BINS,
         "subsystems": present,
         "series": {l: series[l] for l in present},
+        "totals": {l: totals[l] for l in present},
         "colors": {l: COLORS.get(l, "#586072") for l in present},
         "n_commits": len(commits),
         "focus": focus[:3],
@@ -231,7 +253,7 @@ def export_evolution() -> dict:
     ax.set_aspect("equal")
     ax.axis("off")
     ax.set_title(
-        "Praxis evolving: recent peaks over the historical prior",
+        "Praxis evolving: towers of accumulated code, capped by recent churn",
         color="#e6e9f0",
         fontsize=10,
         fontweight="bold",
@@ -240,7 +262,7 @@ def export_evolution() -> dict:
     ax.text(
         0.5,
         -0.04,
-        "first commit → now    depth: subsystem    height: recency-weighted churn",
+        "first commit → now    depth: subsystem    stack: total lines    cap: recent churn",
         transform=ax.transAxes,
         ha="center",
         va="top",
@@ -270,12 +292,15 @@ def export_evolution() -> dict:
     focus = data["focus"]
     caption = (
         f"Praxis's git history as an isometric terrain over the last "
-        f"{data['n_commits']} commits. Each peak is one subsystem's line churn in one "
-        "time window, weighted by recency (the kernel the model applies to a "
-        "sequence, turned on the repository): recent windows tower into colored "
-        "peaks while history settles toward the always-present prior - the low "
-        "valley we roll into. Color fades from each subsystem's hue toward a neutral "
-        "prior into the past, banded in phased strata over a non-linear timescale. "
+        f"{data['n_commits']} commits. Each cell is one subsystem in one time "
+        "window: a stack of base blocks for its accumulated size (total lines, "
+        "recency-weighted) topped by a vivid cap for that window's line churn - "
+        "the standing codebase carrying the recent activity. Both are weighted by "
+        "recency (the kernel the model applies to a sequence, turned on the "
+        "repository): recent windows stack tall with bright caps while history "
+        "thins toward the always-present prior - the low valley we roll into. "
+        "Color fades from each subsystem's hue toward a neutral prior into the "
+        "past, banded in phased strata over a non-linear timescale. "
         "It is the bias/variance geometry read along the frequency axis (see the "
         "project notes): loud recent corrections over the quiet, ever-present base. "
         f"By recency-weighted churn the current center of gravity is "
@@ -307,10 +332,18 @@ def export_evolution() -> dict:
 # timescale. Loud recent corrections over the quiet, ever-present base.
 ISO_TX, ISO_TY, ISO_TZ, ISO_HMAX, ISO_GAP = 1.0, 0.5, 1.0, 4.4, 0.14
 RECENCY_DECAY = 2.4  # exp falloff into the past; recent has far more impact
-ISO_FLOOR = 0.05  # the always-present prior valley
-ISO_TAPER = 0.6  # top-footprint shrink -> peaks
+ISO_FLOOR = 0.0  # the base stack is the foundation now
+ISO_TAPER = 0.6  # churn-cap top-footprint shrink -> peaks
 PHASE_AMP, PHASE_CYCLES = 0.24, 3.0  # color strata over (1-u)^1.3
 PRIOR_RGB = (0.34, 0.38, 0.45)  # neutral the past fades into
+# Third dimension: total lines (codebase size) as a stack of base blocks under
+# each churn cap. Recency-weighted, so recent windows stack tall (the big current
+# codebase) and history thins toward the floor - more blocks near us, decaying
+# with that value and recency over time.
+MAX_STACK = 6  # max base blocks in a total-lines tower
+BASE_UNIT = 0.12  # height of one base block
+STACK_GAP = 0.28  # gap fraction between stacked base blocks
+CAP_HMAX = 0.32  # max churn-cap height on top of the stack
 
 
 def _hex_rgb(h: str):
@@ -323,14 +356,15 @@ def _shade(rgb, f: float):
 
 
 def _iso_boxes(data: dict):
-    """Painter-ordered (back -> front) ``(polygon, rgb)`` faces for the iso
-    terrain, in unit iso coordinates. Height is recency-weighted churn over a
-    floor (recent towers, history settles to the prior valley); peaks taper;
-    color fades from the subsystem hue toward a neutral prior into the past,
-    banded in phased strata over a non-linear timescale."""
-    subs, series, colors = data["subsystems"], data["series"], data["colors"]
+    """Painter-ordered (back -> front) ``(polygon, rgb)`` faces. Each cell is a
+    stack of base blocks (total lines / codebase size, recency-weighted) topped by
+    a tapered churn cap (the activity in that window). Recent windows stack tall
+    and cap vivid; history thins toward the floor and fades to the prior."""
+    subs, series, totals, colors = (
+        data["subsystems"], data["series"], data["totals"], data["colors"])
     T = data["bins"]
     cmax = max((max(series[s]) for s in subs if series[s]), default=0.0) or 1.0
+    tmax = max((max(totals[s]) for s in subs if totals[s]), default=0.0) or 1.0
 
     def proj(x, y, z):
         return ((x - y) * ISO_TX, z * ISO_HMAX * ISO_TZ - (x + y) * ISO_TY)
@@ -338,56 +372,45 @@ def _iso_boxes(data: dict):
     def mix(a, b, t):
         return tuple(a[k] + t * (b[k] - a[k]) for k in range(3))
 
+    def box(x0, x1, y0, y1, tx0, tx1, ty0, ty1, z0, z1, col):
+        # Three visible faces; sides slant from the base footprint (z0) to the
+        # (possibly inset) top footprint (z1).
+        top = [proj(tx0, ty0, z1), proj(tx1, ty0, z1), proj(tx1, ty1, z1), proj(tx0, ty1, z1)]
+        east = [proj(x1, y0, z0), proj(x1, y1, z0), proj(tx1, ty1, z1), proj(tx1, ty0, z1)]
+        south = [proj(x0, y1, z0), proj(x1, y1, z0), proj(tx1, ty1, z1), proj(tx0, ty1, z1)]
+        return [(south, _shade(col, 0.6)), (east, _shade(col, 0.8)), (top, _shade(col, 1.0))]
+
     blocks = []  # (depth_key, [(poly, rgb), ...])
     for j, s in enumerate(subs):
-        base = _hex_rgb(colors.get(s, "#586072"))
+        base_rgb = _hex_rgb(colors.get(s, "#586072"))
         for i in range(T):
-            c = series[s][i] / cmax
-            if c <= 0:
-                continue  # subsystem untouched this window
-            u = i / max(T - 1, 1)  # 0 oldest .. 1 now
-            w = math.exp(-RECENCY_DECAY * (1.0 - u))  # recency weight
-            h = ISO_FLOOR + (1.0 - ISO_FLOOR) * c * w  # recency-weighted height
-            # Taper the top footprint as the block rises -> peaks.
-            tp = ISO_TAPER * (h - ISO_FLOOR) / (1.0 - ISO_FLOOR)
+            u = i / max(T - 1, 1)                       # 0 oldest .. 1 now
+            w = math.exp(-RECENCY_DECAY * (1.0 - u))    # recency weight
             g = ISO_GAP / 2.0
             x0, x1, y0, y1 = i + g, i + 1 - g, j + g, j + 1 - g
-            ix, iy = tp * (x1 - x0) / 2.0, tp * (y1 - y0) / 2.0
-            tx0, tx1, ty0, ty1 = x0 + ix, x1 - ix, y0 + iy, y1 - iy
-            # Color: subsystem hue fading to the prior into the past, * phased
-            # strata over a non-linear timescale.
-            col = mix(PRIOR_RGB, base, w)
-            phase = 1.0 + PHASE_AMP * math.cos(
-                2 * math.pi * PHASE_CYCLES * (1.0 - u) ** 1.3
-            )
-            col = tuple(min(1.0, col[k] * phase) for k in range(3))
-            top = [
-                proj(tx0, ty0, h),
-                proj(tx1, ty0, h),
-                proj(tx1, ty1, h),
-                proj(tx0, ty1, h),
-            ]
-            east = [
-                proj(x1, y0, 0),
-                proj(x1, y1, 0),
-                proj(tx1, ty1, h),
-                proj(tx1, ty0, h),
-            ]
-            south = [
-                proj(x0, y1, 0),
-                proj(x1, y1, 0),
-                proj(tx1, ty1, h),
-                proj(tx0, ty1, h),
-            ]
-            blocks.append(
-                (
-                    i + j,
-                    [
-                        (south, _shade(col, 0.6)),
-                        (east, _shade(col, 0.8)),
-                        (top, _shade(col, 1.0)),
-                    ],
-                )
-            )
+            phase = 1.0 + PHASE_AMP * math.cos(2 * math.pi * PHASE_CYCLES * (1.0 - u) ** 1.3)
+            faces = []
+            # Base stack: total lines (codebase size), recency-weighted -> N
+            # rectangular blocks (sqrt so smaller subsystems still show some).
+            tot = totals[s][i] / tmax
+            n_stack = int(round((tot ** 0.5) * w * MAX_STACK))
+            base_col = tuple(min(1.0, c * phase)
+                             for c in mix(PRIOR_RGB, base_rgb, min(1.0, w * 0.7)))
+            for k in range(n_stack):
+                z0 = ISO_FLOOR + k * BASE_UNIT
+                z1 = z0 + BASE_UNIT * (1.0 - STACK_GAP)
+                faces += box(x0, x1, y0, y1, x0, x1, y0, y1, z0, z1, base_col)
+            base_top = ISO_FLOOR + n_stack * BASE_UNIT
+            # Churn cap: the activity peak on top, vivid + tapered.
+            c = series[s][i] / cmax
+            if c > 0:
+                cap_h = c * w * CAP_HMAX
+                tp = ISO_TAPER * (cap_h / CAP_HMAX)
+                ix, iy = tp * (x1 - x0) / 2.0, tp * (y1 - y0) / 2.0
+                cap_col = tuple(min(1.0, c2 * phase) for c2 in mix(PRIOR_RGB, base_rgb, w))
+                faces += box(x0, x1, y0, y1, x0 + ix, x1 - ix, y0 + iy, y1 - iy,
+                             base_top, base_top + cap_h, cap_col)
+            if faces:
+                blocks.append((i + j, faces))
     blocks.sort(key=lambda b: b[0])  # back to front
     return [face for _, faces in blocks for face in faces]

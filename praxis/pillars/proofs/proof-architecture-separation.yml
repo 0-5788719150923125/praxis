@@ -1,0 +1,41 @@
+# Backs architecture-separation. The load-bearing formal point under the UAT
+# rebuttal: universal approximation is an existence statement at the
+# representation layer, and known depth-separation results witness that
+# representational equivalence does not descend to cost, learnability, or
+# generalization. Cited, not re-proved - this states the implication and points
+# at the witnesses (Telgarsky; Eldan-Shamir).
+kind: proposition
+supports: [architecture-separation]
+statement: >
+  Let $\mathcal{F}_A$ denote the set of functions a family of networks with
+  architecture $A$ can approximate to arbitrary accuracy given unbounded width.
+  Universal approximation~\cite{hornik1989multilayer} asserts
+  $\mathcal{F}_A = \mathcal{F}_B$ for any two such families: as \emph{sets of
+  representable functions} they are equal. This equality does not imply
+  equality of \emph{cost} - the width, depth, or sample budget at which a target
+  is reached - and there exist target functions for which the cost gap between
+  two architectures is exponential.
+proof: >
+  The first claim is immediate: universal approximation quantifies existentially
+  over parameters at unbounded width, so it constrains only which functions lie
+  in the closure of each family, not the resources at which they are reached.
+  Equality of sets is compatible with any cost profile whatsoever.
+
+  The separation is witnessed, not asserted. Telgarsky~\cite{telgarsky2016}
+  exhibits functions on $[0,1]$ that a network of depth $\Theta(k^2)$ and
+  constant width represents exactly, but that any network of depth $O(k)$
+  requires $2^{\Omega(k)}$ width to approximate. Eldan and
+  Shamir~\cite{eldan2016} exhibit a function expressible by a depth-three network
+  of polynomial width that any depth-two network must use exponential width to
+  approximate. In both, $\mathcal{F}_A = \mathcal{F}_B$ holds in the unbounded
+  limit while the resource at fixed accuracy is separated exponentially. Hence
+  representational equivalence is the wrong invariant for comparing architectures
+  of bounded size; the relevant quantity is cost, and cost is architecture-
+  dependent by these results. The further descent - from representation cost to
+  what stochastic gradient descent actually \emph{reaches} from random
+  initialization, and to what \emph{generalizes} at a fixed sample budget - is
+  the inductive-bias question, on which approximation theory is silent by
+  construction; the lottery-ticket phenomenon~\cite{frankle2019lottery} is one
+  empirical marker that two equal-capacity families do not induce the same
+  reachable solutions. We import these as the foundation the framework's
+  conjecture stands on, not as results re-derived here.

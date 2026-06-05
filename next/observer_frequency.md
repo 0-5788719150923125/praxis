@@ -6,7 +6,9 @@ experience is voice, flagged as such - the discipline that keeps the paper
 defensible (`research/main.tex` already carries the grounded observer thread; see
 its "Tractability is observer-relative" and "what remains philosophy"). Sibling
 to [the_dial.md](the_dial.md), [observer_effect.md](observer_effect.md),
-[world_models.md](world_models.md), [forced_computation.md](forced_computation.md).
+[world_models.md](world_models.md), [forced_computation.md](forced_computation.md),
+[the_fifth_dimension.md](the_fifth_dimension.md),
+[architecture_separation.md](architecture_separation.md).
 
 ## The grounded kernel (the part that maps to mechanism)
 

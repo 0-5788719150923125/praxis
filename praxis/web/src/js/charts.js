@@ -564,7 +564,8 @@ const METRIC_RENDERERS = {
 // past, banded in phased strata over a non-linear timescale.
 const ISO = {
     TX: 1.0, TY: 0.5, TZ: 1.0, HMAX: 4.4, GAP: 0.14,
-    DECAY: 2.4, FLOOR: 0.05, TAPER: 0.6, PHASE_AMP: 0.24, PHASE_CYCLES: 3.0,
+    DECAY: 2.4, FLOOR: 0.0, TAPER: 0.6, PHASE_AMP: 0.24, PHASE_CYCLES: 3.0,
+    MAX_STACK: 6, BASE_UNIT: 0.12, STACK_GAP: 0.28, CAP_HMAX: 0.32,
 };
 const PRIOR_RGB = [87, 97, 115];  // neutral the past fades into (0.34,0.38,0.45)
 const isoProj = (x, y, z) => [(x - y) * ISO.TX, z * ISO.HMAX * ISO.TZ - (x + y) * ISO.TY];
@@ -602,36 +603,60 @@ async function createEvolutionChart(canvasId) {
         return fail('Evolution data unavailable');
     }
 
-    const { subsystems: subs, series, colors, bins: B } = data;
+    const { subsystems: subs, series, totals, colors, bins: B } = data;
     const S = subs.length;
-    let cmax = 1e-6;
-    for (const s of subs) for (let i = 0; i < B; i++) cmax = Math.max(cmax, series[s][i]);
+    let cmax = 1e-6, tmax = 1e-6;
+    for (const s of subs) for (let i = 0; i < B; i++) {
+        cmax = Math.max(cmax, series[s][i]);
+        tmax = Math.max(tmax, (totals[s] || [])[i] || 0);
+    }
+
+    const mix = (a, b, t) => [0, 1, 2].map(k => a[k] + t * (b[k] - a[k]));
+    // Three visible iso faces of a box from base footprint (z0) to top (z1).
+    const isoBox = (x0, x1, y0, y1, tx0, tx1, ty0, ty1, z0, z1, col, depth) => {
+        const top = [isoProj(tx0, ty0, z1), isoProj(tx1, ty0, z1), isoProj(tx1, ty1, z1), isoProj(tx0, ty1, z1)];
+        const east = [isoProj(x1, y0, z0), isoProj(x1, y1, z0), isoProj(tx1, ty1, z1), isoProj(tx1, ty0, z1)];
+        const south = [isoProj(x0, y1, z0), isoProj(x1, y1, z0), isoProj(tx1, ty1, z1), isoProj(tx0, ty1, z1)];
+        return [
+            { pts: south, color: isoShadeRgb(col, 0.6), depth },
+            { pts: east, color: isoShadeRgb(col, 0.8), depth },
+            { pts: top, color: isoShadeRgb(col, 1.0), depth },
+        ];
+    };
 
     // Build the block faces once (geometry is size-independent in unit coords).
-    // Each face: {pts:[[ux,uy]...], color, depth}. Painter-ordered by i+j.
+    // Each cell: a stack of base blocks (total lines, recency-weighted) topped
+    // by a tapered churn cap. Painter-ordered by i+j.
     const faces = [];
     for (let j = 0; j < S; j++) {
         const base = isoHexRgb(colors[subs[j]]);
         for (let i = 0; i < B; i++) {
-            const c = series[subs[j]][i] / cmax;
-            if (c <= 0) continue;
             const u = i / Math.max(B - 1, 1);              // 0 oldest .. 1 now
             const w = Math.exp(-ISO.DECAY * (1 - u));       // recency weight
-            const h = ISO.FLOOR + (1 - ISO.FLOOR) * c * w;  // recency-weighted height
-            const tp = ISO.TAPER * (h - ISO.FLOOR) / (1 - ISO.FLOOR);  // taper -> peaks
             const g = ISO.GAP / 2;
             const x0 = i + g, x1 = i + 1 - g, y0 = j + g, y1 = j + 1 - g;
-            const ix = tp * (x1 - x0) / 2, iy = tp * (y1 - y0) / 2;
-            const tx0 = x0 + ix, tx1 = x1 - ix, ty0 = y0 + iy, ty1 = y1 - iy;
-            // Color: subsystem hue fading to the prior into the past, * phased strata.
             const phase = 1 + ISO.PHASE_AMP * Math.cos(2 * Math.PI * ISO.PHASE_CYCLES * Math.pow(1 - u, 1.3));
-            const col = [0, 1, 2].map(k => Math.min(255, (PRIOR_RGB[k] + w * (base[k] - PRIOR_RGB[k])) * phase));
-            const top = [isoProj(tx0, ty0, h), isoProj(tx1, ty0, h), isoProj(tx1, ty1, h), isoProj(tx0, ty1, h)];
-            const east = [isoProj(x1, y0, 0), isoProj(x1, y1, 0), isoProj(tx1, ty1, h), isoProj(tx1, ty0, h)];
-            const south = [isoProj(x0, y1, 0), isoProj(x1, y1, 0), isoProj(tx1, ty1, h), isoProj(tx0, ty1, h)];
-            faces.push({ pts: south, color: isoShadeRgb(col, 0.6), depth: i + j });
-            faces.push({ pts: east, color: isoShadeRgb(col, 0.8), depth: i + j });
-            faces.push({ pts: top, color: isoShadeRgb(col, 1.0), depth: i + j });
+            const depth = i + j;
+            // Base stack: total lines, recency-weighted -> N rectangular blocks.
+            const tot = ((totals[subs[j]] || [])[i] || 0) / tmax;
+            const nStack = Math.round(Math.sqrt(tot) * w * ISO.MAX_STACK);
+            const baseCol = mix(PRIOR_RGB, base, Math.min(1, w * 0.7)).map(c => Math.min(255, c * phase));
+            for (let k = 0; k < nStack; k++) {
+                const z0 = ISO.FLOOR + k * ISO.BASE_UNIT;
+                const z1 = z0 + ISO.BASE_UNIT * (1 - ISO.STACK_GAP);
+                faces.push(...isoBox(x0, x1, y0, y1, x0, x1, y0, y1, z0, z1, baseCol, depth));
+            }
+            const baseTop = ISO.FLOOR + nStack * ISO.BASE_UNIT;
+            // Churn cap: vivid + tapered, on top of the stack.
+            const c = series[subs[j]][i] / cmax;
+            if (c > 0) {
+                const capH = c * w * ISO.CAP_HMAX;
+                const tp = ISO.TAPER * (capH / ISO.CAP_HMAX);
+                const ix = tp * (x1 - x0) / 2, iy = tp * (y1 - y0) / 2;
+                const capCol = mix(PRIOR_RGB, base, w).map(c2 => Math.min(255, c2 * phase));
+                faces.push(...isoBox(x0, x1, y0, y1, x0 + ix, x1 - ix, y0 + iy, y1 - iy,
+                                     baseTop, baseTop + capH, capCol, depth));
+            }
         }
     }
     faces.sort((a, b) => a.depth - b.depth);  // back to front
@@ -671,7 +696,7 @@ async function createEvolutionChart(canvasId) {
         }
 
         ctx.font = '9px monospace'; ctx.fillStyle = '#9aa3b2'; ctx.textAlign = 'center';
-        ctx.fillText('first commit → now    depth: subsystem    height: recency-weighted churn', w / 2, h - 5);
+        ctx.fillText('first commit → now    depth: subsystem    stack: total lines    cap: recent churn', w / 2, h - 5);
 
         ctx.textAlign = 'left';
         let cx = padL;
