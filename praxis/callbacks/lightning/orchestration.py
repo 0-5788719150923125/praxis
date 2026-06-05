@@ -120,6 +120,18 @@ class ExpertPoolCallback(Callback):
             acts = self._embed(inp)
         return acts, tgt
 
+    def _id_batch(self, batch):
+        """Capped raw-id payload for id-consuming experts (sidecar), shaped like
+        the browser feed: one row, SEQ ids folded into the tiny vocab. Returns
+        (ids, targets) as [1, SEQ] long tensors, or (None, None)."""
+        ids = batch["input_ids"] if isinstance(batch, dict) else batch
+        if ids is None or getattr(ids, "dim", lambda: 0)() != 2 or ids.shape[1] < 2:
+            return None, None
+        row = ids[0, : SEQ + 1].detach().to("cpu").long() % self.vocab
+        if row.numel() < 2:
+            return None, None
+        return row[:-1].unsqueeze(0), row[1:].unsqueeze(0)
+
     def _publish_browser_batch(self, batch) -> None:
         """Publish one real batch as token-id rows for browser agents to train on.
 
@@ -156,9 +168,12 @@ class ExpertPoolCallback(Callback):
             embedded = self._embed_batch(batch)
             if embedded is not None:
                 acts, tgt = embedded
+                id_inp, id_tgt = self._id_batch(batch)
                 try:
-                    self.pool.train_step(acts, tgt, timeout=2.0)
-                    self.pool.infer(acts)
+                    self.pool.train_step(
+                        acts, tgt, timeout=2.0, ids=id_inp, id_targets=id_tgt
+                    )
+                    self.pool.infer(acts, timeout=2.0, ids=id_inp)
                 except Exception:
                     pass
         # Publish the real batch (as ids) for browser agents - every drive step,

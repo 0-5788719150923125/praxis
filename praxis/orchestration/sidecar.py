@@ -86,6 +86,7 @@ class SidecarExpert(RemoteExpert):
     """
 
     kind = "sidecar"
+    consumes = "ids"  # wants raw token ids, not embedded activations
 
     def __init__(self, uid: str, base_url: str, rank: int) -> None:
         super().__init__(uid)

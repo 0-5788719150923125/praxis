@@ -56,6 +56,10 @@ class ExpertPool:
         self.mixer = build_mixer(mixing)
         self.sample_size = sample_size
         self._pool = cf.ThreadPoolExecutor(max_workers=max_workers)
+        # At most one in-flight task per expert (uid -> Future). A straggler is
+        # skipped on later steps until it lands, so the executor queue - and the
+        # tensors each queued task pins - stay bounded no matter how slow a peer is.
+        self._inflight: Dict[str, cf.Future] = {}
         # Cumulative routing telemetry (inference): how heavily the pool is
         # actually leaning on its experts, and how many forwards land.
         self.infer_rounds = 0  # inference forwards driven through the pool
@@ -72,8 +76,18 @@ class ExpertPool:
         for i, e in enumerate(self.experts):
             if e.uid == uid:
                 del self.experts[i]
+                self._inflight.pop(uid, None)
                 return True
         return False
+
+    def _submit(self, fn, expert, *args) -> Optional[cf.Future]:
+        """Submit work for an expert unless it still has a task in flight."""
+        prev = self._inflight.get(expert.uid)
+        if prev is not None and not prev.done():
+            return None
+        fut = self._pool.submit(fn, *args)
+        self._inflight[expert.uid] = fut
+        return fut
 
     def alive(self) -> List[RemoteExpert]:
         return [e for e in self.experts if e.alive]
@@ -136,14 +150,32 @@ class ExpertPool:
     # -- train: non-blocking detached updates -------------------------------
 
     def train_step(
-        self, activations: Tensor, labels: Tensor, timeout: Optional[float] = None
+        self,
+        activations: Tensor,
+        labels: Tensor,
+        timeout: Optional[float] = None,
+        ids: Optional[Tensor] = None,
+        id_targets: Optional[Tensor] = None,
     ) -> Dict[str, Any]:
         """Dispatch a local update to every live expert without blocking on
         stragglers. Returns the losses that completed within ``timeout`` (None =
         wait for all). Each expert updates only itself - nothing to synchronize.
+
+        Experts declaring ``consumes = "ids"`` (e.g. sidecar transformers) get the
+        raw token-id payload instead of embedded activations. An expert still
+        busy with an earlier dispatch is skipped this round (no backlog).
         """
         alive = self.alive()
-        futs = {self._pool.submit(e.train_step, activations, labels): e for e in alive}
+        futs = {}
+        for e in alive:
+            if getattr(e, "consumes", "activations") == "ids":
+                if ids is None or id_targets is None:
+                    continue
+                fut = self._submit(e.train_step, e, ids, id_targets)
+            else:
+                fut = self._submit(e.train_step, e, activations, labels)
+            if fut is not None:
+                futs[fut] = e
         losses: Dict[str, float] = {}
         try:
             for fut in cf.as_completed(futs, timeout=timeout):
@@ -163,37 +195,62 @@ class ExpertPool:
         return {
             "losses": losses,
             "completed": len(done),
-            "dispatched": len(alive),
+            "dispatched": len(futs),
             "mean_loss": (sum(done) / len(done)) if done else None,
         }
 
     # -- infer: stochastic sample + mix -------------------------------------
 
     def infer(
-        self, activations: Tensor, generator: Optional[torch.Generator] = None
+        self,
+        activations: Tensor,
+        generator: Optional[torch.Generator] = None,
+        timeout: Optional[float] = None,
+        ids: Optional[Tensor] = None,
     ) -> Optional[Tensor]:
         """Sample a subset of experts, run forwards in parallel, and combine via
-        the mixing strategy. Returns None if no expert is alive.
+        the mixing strategy. Returns None if no expert is alive. Mixes whatever
+        lands within ``timeout`` (None = wait for all); busy experts are skipped,
+        so this can never block behind a backlog.
         """
         chosen = self._sample_experts(generator)
         self.infer_rounds += 1
-        self.last_routed = len(chosen)
-        self.routed += len(chosen)
-        if not chosen:
+        futs = {}
+        for e in chosen:
+            if getattr(e, "consumes", "activations") == "ids":
+                if ids is None:
+                    continue
+                fut = self._submit(e.forward, e, ids)
+            else:
+                fut = self._submit(e.forward, e, activations)
+            if fut is not None:
+                futs[fut] = e
+        self.last_routed = len(futs)
+        self.routed += len(futs)
+        if not futs:
             self.capacity()
             return None
-        futs = {self._pool.submit(e.forward, activations): e for e in chosen}
         outputs: List[Tensor] = []
-        for fut in cf.as_completed(futs):
-            e = futs[fut]
-            try:
-                outputs.append(fut.result())
-                self.routed_ok += 1
-            except Exception:
-                e._alive = False
+        try:
+            for fut in cf.as_completed(futs, timeout=timeout):
+                e = futs[fut]
+                try:
+                    outputs.append(fut.result())
+                    self.routed_ok += 1
+                except Exception:
+                    e._alive = False
+        except cf.TimeoutError:
+            pass  # mix what finished; stragglers stay in flight and get skipped
         if not outputs:
             self.capacity()
             return None
+        # Heterogeneous pools (id-voters vs activation experts) return different
+        # shapes; mix only the majority shape rather than crash the stack.
+        shapes: Dict[Any, int] = {}
+        for o in outputs:
+            shapes[o.shape] = shapes.get(o.shape, 0) + 1
+        majority = max(shapes, key=shapes.get)
+        outputs = [o for o in outputs if o.shape == majority]
         mixed = self.mixer(torch.stack(outputs, dim=0))
         self.capacity()  # refresh published status after a routed round
         return mixed
