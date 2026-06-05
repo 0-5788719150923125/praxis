@@ -557,10 +557,23 @@ const METRIC_RENDERERS = {
     evolution: (config) => createEvolutionChart(config.canvasId),
 };
 
+// Isometric projection of the time x subsystem x churn block field. MUST match
+// praxis/pillars/evolution.py (_iso_boxes) so the web card and the LaTeX figure
+// are the same picture in two output formats.
+const ISO = { TX: 1.0, TY: 0.5, TZ: 1.0, HMAX: 3.0, GAP: 0.14 };
+const isoProj = (x, y, z) => [(x - y) * ISO.TX, z * ISO.HMAX * ISO.TZ - (x + y) * ISO.TY];
+function isoShade(hex, f) {
+    const n = parseInt((hex || '#586072').slice(1), 16);
+    const r = Math.min(255, ((n >> 16) & 255) * f) | 0;
+    const g = Math.min(255, ((n >> 8) & 255) * f) | 0;
+    const b = Math.min(255, (n & 255) * f) | 0;
+    return `rgb(${r},${g},${b})`;
+}
+
 // Repo-level git-churn evolution card. Fetches /api/evolution - the SAME
 // computation the LaTeX figure renders (praxis.pillars.evolution.evolution_data)
-// - and draws the stacked subsystem churn with the recency fade on canvas. The
-// data is unified; this is just the web output format.
+// - and draws it as the same isometric block field. The data is unified; this is
+// just the web output format.
 async function createEvolutionChart(canvasId) {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
@@ -584,12 +597,42 @@ async function createEvolutionChart(canvasId) {
         return fail('Evolution data unavailable');
     }
 
-    const { subsystems: subs, series, colors, bins: B, x_labels } = data;
+    const { subsystems: subs, series, colors, bins: B } = data;
+    const S = subs.length;
+    let cmax = 1e-6;
+    for (const s of subs) for (let i = 0; i < B; i++) cmax = Math.max(cmax, series[s][i]);
+
+    // Build the block faces once (geometry is size-independent in unit coords).
+    // Each face: {pts:[[ux,uy]...], color, depth}. Painter-ordered by i+j.
+    const faces = [];
+    for (let j = 0; j < S; j++) {
+        const s = subs[j], col = colors[s] || '#586072';
+        for (let i = 0; i < B; i++) {
+            const c = series[s][i] / cmax;
+            if (c <= 0) continue;
+            const hgt = 0.05 + 0.95 * c;
+            const x0 = i, x1 = i + 1 - ISO.GAP, y0 = j, y1 = j + 1 - ISO.GAP;
+            const rec = 0.45 + 0.55 * (i / Math.max(B - 1, 1));
+            const top = [isoProj(x0, y0, hgt), isoProj(x1, y0, hgt), isoProj(x1, y1, hgt), isoProj(x0, y1, hgt)];
+            const east = [isoProj(x1, y0, 0), isoProj(x1, y1, 0), isoProj(x1, y1, hgt), isoProj(x1, y0, hgt)];
+            const south = [isoProj(x0, y1, 0), isoProj(x1, y1, 0), isoProj(x1, y1, hgt), isoProj(x0, y1, hgt)];
+            faces.push({ pts: south, color: isoShade(col, 0.55 * rec), depth: i + j });
+            faces.push({ pts: east, color: isoShade(col, 0.75 * rec), depth: i + j });
+            faces.push({ pts: top, color: isoShade(col, rec), depth: i + j });
+        }
+    }
+    faces.sort((a, b) => a.depth - b.depth);  // back to front
+    // Unit bounding box for the fit.
+    let uxmin = Infinity, uxmax = -Infinity, uymin = Infinity, uymax = -Infinity;
+    for (const f of faces) for (const [ux, uy] of f.pts) {
+        if (ux < uxmin) uxmin = ux; if (ux > uxmax) uxmax = ux;
+        if (uy < uymin) uymin = uy; if (uy > uymax) uymax = uy;
+    }
 
     const draw = () => {
         const wrap = canvas.parentElement;
         const w = wrap.clientWidth || 600, h = wrap.clientHeight || 280;
-        if (w < 2 || h < 2) return;
+        if (w < 2 || h < 2 || !faces.length) return;
         const dpr = window.devicePixelRatio || 1;
         canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
         canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
@@ -597,40 +640,27 @@ async function createEvolutionChart(canvasId) {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.fillStyle = '#0f1117'; ctx.fillRect(0, 0, w, h);
 
-        const padL = 8, padR = 8, padT = 26, padB = 22;
+        const padL = 8, padR = 8, padT = 26, padB = 20;
         const plotW = w - padL - padR, plotH = h - padT - padB;
-        const totals = new Array(B).fill(0);
-        for (const s of subs) for (let i = 0; i < B; i++) totals[i] += series[s][i];
-        const ymax = Math.max(...totals, 1e-6);
-        const xAt = (i) => padL + (B <= 1 ? 0 : (i / (B - 1)) * plotW);
-        const yAt = (v) => padT + plotH - (v / ymax) * plotH;
+        const scale = Math.min(plotW / Math.max(uxmax - uxmin, 1e-6),
+                               plotH / Math.max(uymax - uymin, 1e-6));
+        const offX = padL + (plotW - (uxmax - uxmin) * scale) / 2;
+        const sx = (ux) => offX + (ux - uxmin) * scale;
+        const sy = (uy) => padT + (uymax - uy) * scale;  // canvas y-down flip
 
-        const cum = new Array(B).fill(0);
-        for (const s of subs) {
+        ctx.lineWidth = 0.5; ctx.strokeStyle = '#0f1117'; ctx.lineJoin = 'round';
+        for (const f of faces) {
             ctx.beginPath();
-            for (let i = 0; i < B; i++) {
-                const X = xAt(i), Y = yAt(cum[i] + series[s][i]);
-                i === 0 ? ctx.moveTo(X, Y) : ctx.lineTo(X, Y);
-            }
-            for (let i = B - 1; i >= 0; i--) ctx.lineTo(xAt(i), yAt(cum[i]));
+            ctx.moveTo(sx(f.pts[0][0]), sy(f.pts[0][1]));
+            for (let k = 1; k < f.pts.length; k++) ctx.lineTo(sx(f.pts[k][0]), sy(f.pts[k][1]));
             ctx.closePath();
-            ctx.fillStyle = colors[s] || '#586072';
-            ctx.fill();
-            for (let i = 0; i < B; i++) cum[i] += series[s][i];
+            ctx.fillStyle = f.color; ctx.fill(); ctx.stroke();
         }
 
-        // Recency fade: dark overlay opaque at the oldest commit, clear at HEAD.
-        const g = ctx.createLinearGradient(padL, 0, padL + plotW, 0);
-        g.addColorStop(0, 'rgba(15,17,23,0.72)');
-        g.addColorStop(1, 'rgba(15,17,23,0)');
-        ctx.fillStyle = g; ctx.fillRect(padL, padT, plotW, plotH);
+        ctx.font = '9px monospace'; ctx.fillStyle = '#9aa3b2'; ctx.textAlign = 'center';
+        ctx.fillText('time: first commit → now    depth: subsystem    height: churn', w / 2, h - 5);
 
-        ctx.font = '10px monospace'; ctx.fillStyle = '#9aa3b2';
-        ctx.textAlign = 'left'; ctx.fillText((x_labels || [])[0] || 'first commit', padL, h - 6);
-        ctx.textAlign = 'right'; ctx.fillText((x_labels || [])[1] || 'now', w - padR, h - 6);
-
-        // Compact legend across the top.
-        ctx.font = '9px monospace'; ctx.textAlign = 'left';
+        ctx.textAlign = 'left';
         let cx = padL;
         for (const s of subs) {
             if (cx > w - 70) break;

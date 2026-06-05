@@ -8,6 +8,7 @@ import { state, CONSTANTS, DEFAULT_SYSTEM_PROMPT } from './state.js';
 import { render, renderAppStructure, updateInputContainerStyling, renderPrintButton, renderKbResults } from './render.js';
 import { sendMessage, kbSearch, testApiConnection, printAsk, printRespond, printEnergy } from './api.js';
 import { connectMetricsLive, setupLiveReload, renderCurrentMetrics } from './websocket.js';
+import { kbSlideWindow, setupKbPrefetch } from './kbcache.js';
 import { loadSpec, loadAgents, loadResearchMetrics } from './tabs.js';
 import { setupTabCarousel, setupTabSwipe } from './mobile.js';
 import { storage, FORM_FIELDS, readFormValues, updateRangeDisplay } from './config.js';
@@ -112,6 +113,9 @@ function init() {
 
     // Setup mobile swipe-to-switch-tabs
     setupTabSwipe();
+
+    // Setup KB sliding-window prefetch (scroll-driven precache/postcache)
+    setupKbPrefetch();
 
     // Setup window resize handler for dashboard scaling
     setupWindowResizeHandler();
@@ -444,6 +448,9 @@ function scheduleKbSearch(query) {
                 // a full render() (chat, mobile tab carousel, modal, ...) on every
                 // keystroke-debounced query is what made typing feel blocked.
                 renderKbResults();
+                // Prime the sliding-window prefetch on the fresh result set so the
+                // first screenful of items opens instantly.
+                kbSlideWindow(0);
             }
         }
     }, query ? 120 : 0);

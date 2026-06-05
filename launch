@@ -128,6 +128,11 @@ if [ "$1" = "compose" ]; then
     [ -n "$PRAXIS_PORT_OVERRIDE" ] && export PRAXIS_PORT="$PRAXIS_PORT_OVERRIDE"
     [ -n "$PRAXIS_MASTER_PORT_OVERRIDE" ] && export PRAXIS_MASTER_PORT="$PRAXIS_MASTER_PORT_OVERRIDE"
 
+    # Pass the host user's ids into the container (compose.yml forwards them as
+    # HOST_UID/HOST_GID). The in-container branch below re-execs as that user so
+    # files written into the bind-mounted repo are host-owned, not root.
+    export HOST_UID="$(id -u)" HOST_GID="$(id -g)"
+
     docker compose -f "$COMPOSE_FILE" run --rm --remove-orphans --service-ports $EXTRA_VOLUMES agent ./launch "${RESOLVED_ARGS[@]}"
     exit $?
 fi
@@ -135,6 +140,38 @@ fi
 # Check if we're running inside a Docker container
 if [ -f /.dockerenv ] || [ -n "${CONTAINER:-}" ]; then
     echo "[DOCKER] Running inside container..."
+
+    # Re-exec as the host user so anything written into the bind-mounted repo is
+    # owned by the host user, not root (the recurring permission headache). The
+    # host launch passed its ids via HOST_UID/HOST_GID; we chown the named
+    # volumes (venv, cache under HOME) to match once, then drop privileges with
+    # setpriv (util-linux, in the base image). The re-exec lands here again as a
+    # non-root uid and falls straight through.
+    if [ "$(id -u)" = "0" ] && [ -n "${HOST_UID:-}" ] && [ "${HOST_UID}" != "0" ]; then
+        host_gid="${HOST_GID:-$HOST_UID}"
+        export HOME=/home/dev
+        mkdir -p "$HOME" "$SCRIPT_DIR/.venv"
+        for d in "$HOME" "$SCRIPT_DIR/.venv"; do
+            if [ "$(stat -c %u "$d" 2>/dev/null || echo 0)" != "${HOST_UID}" ]; then
+                chown -R "${HOST_UID}:${host_gid}" "$d" 2>/dev/null || true
+            fi
+        done
+        # One-time migration: earlier root runs may have left root-owned files in
+        # the bind-mounted repo (build/, research/, *.egg-info, __pycache__) that
+        # the host user now cannot write. Chown just those non-host-owned files;
+        # the sentinel gates the full-tree walk to once per uid (-xdev stays on
+        # the bind mount, so it skips the .venv/.cache volumes handled above).
+        migr="$SCRIPT_DIR/.host-uid-migrated"
+        if [ "$(cat "$migr" 2>/dev/null)" != "${HOST_UID}" ]; then
+            echo "[DOCKER] Migrating root-owned files to host user (one-time)..."
+            find "$SCRIPT_DIR" -xdev -not -user "${HOST_UID}" \
+                -exec chown "${HOST_UID}:${host_gid}" {} + 2>/dev/null || true
+            echo "${HOST_UID}" > "$migr" 2>/dev/null || true
+        fi
+        echo "[DOCKER] Running as host user ${HOST_UID}:${host_gid}"
+        exec setpriv --reuid="${HOST_UID}" --regid="${host_gid}" --clear-groups \
+            "$SCRIPT_DIR/launch" "$@"
+    fi
 
     # Ensure .venv directory exists and is writable
     mkdir -p "$SCRIPT_DIR/.venv"

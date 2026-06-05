@@ -2,7 +2,7 @@
 # a plane, and a plane is the least space a phase can turn in - so three is the
 # minimal resolution for harmonic (oriented) structure.
 kind: lemma
-supports: [halting-trinary]
+supports: [halting-trinary, conclusion-ascent]
 statement: >
   Two distinct points determine a line; three non-collinear points determine a
   unique plane. A phase - a point on the circle $S^1$ - is realizable only in

@@ -13,6 +13,7 @@ import {
 import { toggleDynamicsRunSelector, selectDynamicsRun } from './dynamics.js';
 import { loadResearchMetrics, loadDynamics, toggleSpecRunSelector, selectSpecRun, toggleContractsView, agreeContract, severSwarmAgent } from './tabs.js';
 import { sendMessage, kbFetchItem, testApiConnection, loopApprove } from './api.js';
+import { kbCacheFetch } from './kbcache.js';
 import { renderMarkdown, renderJson } from './markdown.js';
 import { syncInputToMode, fetchAndPresentQuestion, startLoop, stopLoop, rerollLoopNow } from './main.js';
 
@@ -442,11 +443,10 @@ export const ACTION_HANDLERS = {
             return;
         }
         try {
-            const item = await kbFetchItem(id);
+            // Served instantly when the sliding-window prefetch already cached it;
+            // otherwise this fetches + hydrates (and caches) on demand.
+            const item = await kbCacheFetch(id);
             if (!item) return;
-            item.html = item.type === 'run'
-                ? renderJson(item.body)
-                : renderMarkdown(item.body);
             state.kbOpenItem = item;
             render();
         } catch (error) {

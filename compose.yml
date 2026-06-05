@@ -10,7 +10,9 @@ services:
     volumes:
       - .:/workspace:rw
       - venv:/workspace/.venv
-      - cache:/root/.cache
+      # Under the host user's HOME (launch sets HOME=/home/dev when it drops to
+      # that user) so the cache stays writable without root.
+      - cache:/home/dev/.cache
     ports:
       - "${PRAXIS_PORT:-2100}:${PRAXIS_PORT:-2100}"
       - "${PRAXIS_MASTER_PORT:-29500}:${PRAXIS_MASTER_PORT:-29500}"
@@ -22,6 +24,10 @@ services:
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
       PYTHONUNBUFFERED: 1
       DEBIAN_FRONTEND: noninteractive
+      # Forwarded from the host launch so the container can re-exec as the host
+      # user (default 0 = stay root, preserving old behavior).
+      HOST_UID: ${HOST_UID:-0}
+      HOST_GID: ${HOST_GID:-0}
 
 volumes:
   venv:

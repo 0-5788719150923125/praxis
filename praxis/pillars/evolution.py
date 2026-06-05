@@ -19,32 +19,70 @@ from praxis.pillars.geometries import FIG_DIR, REPO_ROOT, RESEARCH_DIR
 
 OUT_TEX = os.path.join(RESEARCH_DIR, "evolution.tex")
 MAX_COMMITS = 4000  # cap for speed on long histories
-N_BINS = 48
+N_BINS = 16  # time columns - chunky enough to read as isometric blocks
 
-# Path prefix -> subsystem label. First match wins; order matters (specific
-# before general). Kept coarse (~8 groups) so the stack stays readable.
-SUBSYSTEMS = [
-    ("praxis/heads", "heads"),
-    ("praxis/attention", "attention"),
-    ("praxis/encoders", "encoders"),
-    ("praxis/losses", "losses"),
-    ("praxis/optimizers", "optimizers"),
-    ("praxis/policies", "policies"),
-    ("praxis/web", "web"),
-    ("praxis/pillars", "paper"),
-    ("research", "paper"),
-    ("praxis", "core"),
-]
 OTHER = "other"
+
+# Subsystem label -> the path prefixes that belong to it. Each architectural
+# feature lists BOTH its current directory and the historical praxis/modules/*.py
+# file it grew out of, so a heavy hitter like 'dense' (which has existed since the
+# flat-module days) is credited to itself instead of vanishing into 'core'. Dict
+# order is the display order (depth + legend); matching is longest-prefix-first
+# (see _subsystem), so a more specific prefix always wins regardless of order.
+SUBSYSTEM_PREFIXES = {
+    "attention": ["praxis/attention", "praxis/modules/attention"],
+    "memory": ["praxis/memory", "praxis/modules/memory",
+               "praxis/modules/attention_memory"],
+    "encoders": ["praxis/encoders", "praxis/modules/encoder"],
+    "decoders": ["praxis/decoders", "praxis/modules/decoder"],
+    "blocks": ["praxis/blocks", "praxis/modules/block"],
+    "dense": ["praxis/dense", "praxis/modules/dense", "praxis/modules/kan"],
+    "heads": ["praxis/heads", "praxis/modules/head"],
+    "routers": ["praxis/routers", "praxis/modules/router", "praxis/modules/moe",
+                "praxis/modules/switch_moe", "praxis/modules/experts",
+                "praxis/modules/peer", "praxis/modules/smear"],
+    "controllers": ["praxis/controllers", "praxis/modules/controller"],
+    "encoding": ["praxis/encoding", "praxis/modules/encoding"],
+    "recurrent": ["praxis/recurrent", "praxis/modules/recurrent"],
+    "embeddings": ["praxis/embeddings", "praxis/modules/embeddings"],
+    "residuals": ["praxis/residuals", "praxis/modules/residual"],
+    "normalization": ["praxis/normalization"],
+    "activations": ["praxis/activations"],
+    "compression": ["praxis/compression", "praxis/modules/compression"],
+    "losses": ["praxis/losses"],
+    "optimizers": ["praxis/optimizers"],
+    "policies": ["praxis/policies"],
+    "web": ["praxis/web"],
+    "paper": ["praxis/pillars", "research"],
+}
+
+# (prefix, label) flattened and sorted longest-prefix-first, plus the catch-alls.
+# Longest-first makes "praxis/modules/attention_memory" -> memory beat
+# "praxis/modules/attention" -> attention, and any "praxis/<dir>" beat
+# "praxis" -> core. Everything non-praxis falls through to OTHER.
+SUBSYSTEMS = [(p, lbl) for lbl, ps in SUBSYSTEM_PREFIXES.items() for p in ps]
+SUBSYSTEMS.append(("praxis", "core"))
+SUBSYSTEMS.sort(key=lambda pl: len(pl[0]), reverse=True)
+
+# Display order for depth/legend: architectural features (as declared above),
+# then the catch-alls last.
+LABEL_ORDER = list(SUBSYSTEM_PREFIXES) + ["core", OTHER]
+
 # Stable color per subsystem (dark-theme palette, distinct hues).
 COLORS = {
-    "heads": "#e0566f", "attention": "#e08a3c", "encoders": "#e8c84a",
-    "losses": "#5fd08a", "optimizers": "#46c2c8", "policies": "#5a8cf0",
-    "web": "#9a6ff0", "paper": "#d06fd0", "core": "#8a93a6", OTHER: "#586072",
+    "attention": "#e08a3c", "memory": "#46c2c8", "encoders": "#e8c84a",
+    "decoders": "#b8922e", "blocks": "#5fd08a", "dense": "#e0566f",
+    "heads": "#d06fd0", "routers": "#5a8cf0", "controllers": "#9a6ff0",
+    "encoding": "#66c2e8", "recurrent": "#8ad06f", "embeddings": "#f0a868",
+    "residuals": "#a99ad8", "normalization": "#5ec9a8", "activations": "#b6e04a",
+    "compression": "#cf8f5a", "losses": "#3fae9e", "optimizers": "#6a78c8",
+    "policies": "#d64f86", "web": "#7d7ae6", "paper": "#c25fb0",
+    "core": "#8a93a6", OTHER: "#586072",
 }
 
 
 def _subsystem(path: str) -> str:
+    """Longest matching prefix wins (SUBSYSTEMS is pre-sorted longest-first)."""
     for prefix, label in SUBSYSTEMS:
         if path.startswith(prefix):
             return label
@@ -92,15 +130,21 @@ def evolution_data() -> dict:
 
     t0, t1 = commits[0][0], commits[-1][0]
     span = max(t1 - t0, 1)
-    labels = list(dict.fromkeys([lbl for _, lbl in SUBSYSTEMS] + [OTHER]))
+    labels = list(dict.fromkeys(LABEL_ORDER))
     series = {lbl: [0.0] * N_BINS for lbl in labels}
     for ts, churn in commits:
         b = min(int((ts - t0) / span * (N_BINS - 1)), N_BINS - 1)
         for lbl, v in churn.items():
             series.setdefault(lbl, [0.0] * N_BINS)[b] += v
 
-    present = [l for l in labels if sum(series[l]) > 0]
-    # Recency-weighted churn (linear decay: newest bin weight 1, oldest ~0).
+    # Drop the OTHER junk-drawer entirely (non-Praxis paths: lockfiles,
+    # staging/archive, root scripts). It isn't a subsystem, so rather than render
+    # it as a block field it becomes the empty background - the black vacuum the
+    # real subsystems sit in. This also frees the height normalization to span the
+    # actual subsystems instead of being crushed by OTHER's large cells.
+    present = [l for l in labels if l != OTHER and sum(series[l]) > 0]
+    # Recency-weighted churn (linear decay: newest bin weight 1, oldest ~0) gives
+    # the development "center of gravity".
     w = [i / (N_BINS - 1) for i in range(N_BINS)]
     focus = sorted(
         present, key=lambda l: sum(c * wi for c, wi in zip(series[l], w)), reverse=True
@@ -130,31 +174,32 @@ def export_evolution() -> dict:
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    import numpy as np
+    from matplotlib.collections import PolyCollection
+    from matplotlib.patches import Patch
 
     present = data["subsystems"]
-    series = {l: np.asarray(v) for l, v in data["series"].items()}
-    x = np.linspace(0, 1, data["bins"])  # 0 = oldest, 1 = HEAD
+    boxes = _iso_boxes(data)  # painter-ordered (back->front) (polygon, rgb) faces
 
-    fig, ax = plt.subplots(figsize=(6.4, 3.0), facecolor="#0f1117")
+    fig, ax = plt.subplots(figsize=(6.4, 3.6), facecolor="#0f1117")
     ax.set_facecolor("#0f1117")
-    ax.stackplot(x, *[series[l] for l in present],
-                 labels=present, colors=[COLORS.get(l, "#586072") for l in present],
-                 linewidth=0)
-    # Recency decay: fade the distant past. A black overlay whose opacity falls
-    # from the oldest bin to HEAD - "strength decayed by distance from current".
-    grad = np.linspace(0.72, 0.0, 256).reshape(1, -1)
-    ax.imshow(grad, extent=[0, 1, 0, ax.get_ylim()[1]], aspect="auto",
-              cmap=_fade_cmap(), zorder=5, alpha=1.0)
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0, ax.get_ylim()[1])
-    ax.set_xticks([0, 1])
-    ax.set_xticklabels(["first commit", "now"], color="#9aa3b2", fontsize=8)
-    ax.set_yticks([])
-    ax.set_title("Praxis evolving: subsystem churn over its own history",
-                 color="#e6e9f0", fontsize=10, fontweight="bold", pad=10)
-    leg = ax.legend(loc="upper left", fontsize=6.5, ncol=2, framealpha=0.0,
-                    labelcolor="#cfd3dc")
+    ax.add_collection(PolyCollection(
+        [p for p, _ in boxes],
+        facecolors=[c for _, c in boxes],
+        edgecolors="#0f1117", linewidths=0.4,
+    ))
+    ax.autoscale()
+    ax.margins(0.03)
+    ax.set_aspect("equal")
+    ax.axis("off")
+    ax.set_title("Praxis evolving: subsystem churn as isometric blocks",
+                 color="#e6e9f0", fontsize=10, fontweight="bold", pad=8)
+    ax.text(0.5, -0.04, "time: first commit → now    depth: subsystem    height: churn",
+            transform=ax.transAxes, ha="center", va="top", color="#9aa3b2", fontsize=7.5)
+    leg = ax.legend(
+        handles=[Patch(facecolor=COLORS.get(s, "#586072"), label=s) for s in present],
+        loc="upper left", fontsize=6.5, ncol=2, framealpha=0.0, labelcolor="#cfd3dc",
+        handlelength=1.0, handleheight=1.0, borderpad=0.2,
+    )
     for txt in leg.get_texts():
         txt.set_color("#cfd3dc")
     fig.tight_layout()
@@ -166,12 +211,13 @@ def export_evolution() -> dict:
 
     focus = data["focus"]
     caption = (
-        f"Per-subsystem line churn across the last {data['n_commits']} commits of "
-        "Praxis's git history, binned over time (left = first commit, right = "
-        "now). The distant past fades: strength is decayed by distance from HEAD "
-        "- the same recency kernel the model applies to a sequence, turned on the "
-        "repository. By recency-weighted churn the current center of gravity is "
-        f"{', '.join(focus[:3])}. The framework charts the hand that builds it."
+        f"Praxis's git history as an isometric block field over the last "
+        f"{data['n_commits']} commits: each block is one subsystem's line churn in "
+        "one time window (time runs front-right toward HEAD, subsystem into depth, "
+        "block height is churn). Blocks dim toward the past - the recency kernel the "
+        "model applies to a sequence, turned on the repository. By recency-weighted "
+        f"churn the current center of gravity is {', '.join(focus[:3])}. The "
+        "framework charts the hand that builds it."
     )
     with open(OUT_TEX, "w") as fh:
         fh.write("% Generated by praxis/pillars/evolution.py - do not edit by hand.\n")
@@ -186,10 +232,54 @@ def export_evolution() -> dict:
     return {"rendered": True, "commits": data["n_commits"], "focus": focus, "path": rel}
 
 
-def _fade_cmap():
-    """Transparent -> dark-bg colormap for the recency fade overlay."""
-    from matplotlib.colors import LinearSegmentedColormap
+# Isometric projection of the time x subsystem x churn block field. Shared
+# formula, mirrored in praxis/web/src/js/charts.js (createEvolutionChart):
+#   sx = (x - y) * ISO_TX
+#   sy = z * ISO_HMAX * ISO_TZ - (x + y) * ISO_TY      (y-up; the canvas flips)
+ISO_TX, ISO_TY, ISO_TZ, ISO_HMAX, ISO_GAP = 1.0, 0.5, 1.0, 3.0, 0.14
 
-    return LinearSegmentedColormap.from_list(
-        "fade", [(0, 0, 0, 0), (0.059, 0.067, 0.090, 1.0)]
-    )
+
+def _hex_rgb(h: str):
+    h = h.lstrip("#")
+    return tuple(int(h[i : i + 2], 16) / 255.0 for i in (0, 2, 4))
+
+
+def _shade(rgb, f: float):
+    return tuple(min(1.0, c * f) for c in rgb)
+
+
+def _iso_boxes(data: dict):
+    """Painter-ordered (back -> front) list of ``(polygon, rgb)`` faces for the
+    isometric block field, in unit iso coordinates. Churn is normalized to the
+    busiest cell; cells under 2% are dropped (sparse, Tetris-like). Each block
+    shows its top and two side faces, shaded for depth and dimmed toward the
+    past (recency)."""
+    subs, series, colors = data["subsystems"], data["series"], data["colors"]
+    T = data["bins"]
+    cmax = max((max(series[s]) for s in subs if series[s]), default=0.0) or 1.0
+
+    def proj(x, y, z):
+        return ((x - y) * ISO_TX, z * ISO_HMAX * ISO_TZ - (x + y) * ISO_TY)
+
+    blocks = []  # (depth_key, [(poly, rgb), ...])
+    for j, s in enumerate(subs):
+        base = _hex_rgb(colors.get(s, "#586072"))
+        for i in range(T):
+            c = series[s][i] / cmax
+            if c <= 0:
+                continue  # subsystem untouched this window
+            # Floor every active cell so persistent subsystems read as continuous
+            # bands and bursts rise as taller pieces (Tetris terrain, not islands).
+            h = 0.05 + 0.95 * c
+            x0, x1, y0, y1 = i, i + 1 - ISO_GAP, j, j + 1 - ISO_GAP
+            rec = 0.45 + 0.55 * (i / max(T - 1, 1))  # older dimmer
+            top = [proj(x0, y0, h), proj(x1, y0, h), proj(x1, y1, h), proj(x0, y1, h)]
+            east = [proj(x1, y0, 0), proj(x1, y1, 0), proj(x1, y1, h), proj(x1, y0, h)]
+            south = [proj(x0, y1, 0), proj(x1, y1, 0), proj(x1, y1, h), proj(x0, y1, h)]
+            blocks.append((i + j, [
+                (south, _shade(base, 0.55 * rec)),
+                (east, _shade(base, 0.75 * rec)),
+                (top, _shade(base, rec)),
+            ]))
+    blocks.sort(key=lambda b: b[0])  # back to front
+    return [face for _, faces in blocks for face in faces]

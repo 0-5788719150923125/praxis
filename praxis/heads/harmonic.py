@@ -280,6 +280,23 @@ class HarmonicField(nn.Module):
                 "order": 106,
             },
         },
+        "harmonic_snake": {
+            "description": (
+                "The field over a single sequence as a radial snake: 12 samples "
+                "along the sequence, angle = the field's PCA phase, radius = time "
+                "sinking toward the origin (newest at center). On a clock-face of "
+                "four quadrants. 'Circles the origin' is the winding number of the "
+                "phase - it reaches a full loop only when the dominant mode "
+                "actually turns once over the sequence, so the badge reports "
+                "whether the data produced the circle, not whether we wanted it."
+            ),
+            "snapshot": {
+                "title": "Sequence Snake (on the dial)",
+                "renderer": "harmonic_snake",
+                "group": "harmonic_head",
+                "order": 107,
+            },
+        },
     }
 
     def __init__(
@@ -617,6 +634,50 @@ class HarmonicField(nn.Module):
             "n_feat": int(n_feat),
         }
 
+    def snake(self, n_points: int = 12) -> dict:
+        """The field over a single sequence as a radial snake of ``n_points``.
+
+        Angle is the field's PCA-2D phase at each sampled position; radius is
+        *time*, collapsing toward the origin (newest sample at the center) so the
+        sequence sinks inward as discrete blocks. "Circles the origin" is made
+        falsifiable: the winding number is the full-resolution phase's signed
+        total turn around the origin divided by 2*pi, and it reaches 1 only when
+        the field's dominant mode completes a real loop over the sequence - so we
+        report the number and only claim the loop when the data produces it.
+        """
+        import math
+
+        with torch.no_grad():
+            Tp = max(2 * self.F_t + 1, 64)
+            field = self._sample_field(Tp)  # [Tp, D]
+            fc = field - field.mean(dim=0, keepdim=True)
+            _, _, Vh = torch.linalg.svd(fc, full_matrices=False)
+            xy = fc @ Vh[:2].T  # [Tp, 2] PCA trajectory over position
+            ang = torch.atan2(xy[:, 1], xy[:, 0])  # [Tp] phase per position
+            # Winding number: sum of wrapped phase steps over the full sequence.
+            step = torch.diff(ang)
+            step = (step + math.pi) % (2 * math.pi) - math.pi
+            winding = float(step.sum().item() / (2 * math.pi))
+            mag = xy.norm(dim=1)
+            mag = mag / mag.max().clamp_min(1e-8)
+
+            n = int(n_points)
+            idx = torch.linspace(0, Tp - 1, n).round().long()
+            points = [
+                {
+                    "angle": float(ang[int(idx[k])].item()),
+                    "radius": (n - 1 - k) / max(n - 1, 1),  # time -> radius, newest centered
+                    "mag": float(mag[int(idx[k])].item()),
+                }
+                for k in range(n)
+            ]
+        return {
+            "points": points,
+            "winding": round(winding, 3),
+            "circles_origin": abs(winding) >= 1.0,
+            "n": n,
+        }
+
     def correlation(self, n_feat: int = 64) -> dict:
         """Cosine similarity between feature trajectories over one period.
 
@@ -840,6 +901,7 @@ class HarmonicHead(BaseHead):
             "harmonic_correlation": self.field.correlation(),
             "harmonic_staircase": self.field.staircase(),
             "harmonic_strands": self.field.field_strands(),
+            "harmonic_snake": self.field.snake(),
         }
 
     def training_metrics(self) -> dict:

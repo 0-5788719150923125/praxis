@@ -517,11 +517,81 @@ function snapshotEntries(descriptions) {
     return out;
 }
 
+// ─── Harmonic sonification (Web Audio) ─────────────────────────────────────
+// "Hear" the harmonic field: additive synthesis of its spectrum. Each temporal
+// frequency f_t of the amp grid (summed over feature frequencies f_d) drives a
+// sine partial of a harmonic series (base * (f_t+1)), amplitude from the
+// spectrum - so the field's rhythm becomes a timbre. All in the browser from
+// the already-fetched snapshot; no backend round-trip.
+let _snapshotCache = {};
+let _audioCtx = null;
+let _audioStop = null;
+
+function stopHarmonicAudio() {
+    if (_audioStop) { _audioStop(); _audioStop = null; }
+}
+
+function playHarmonicAudio(spectrum, btn) {
+    if (_audioStop) { stopHarmonicAudio(); return; }  // toggle off
+    const grid = spectrum && spectrum.grid;
+    if (!Array.isArray(grid) || !grid.length) return;
+    const amps = grid.map(row => row.reduce((a, b) => a + Math.abs(b), 0));
+    const amax = Math.max(...amps, 1e-9);
+    try { _audioCtx = _audioCtx || new (window.AudioContext || window.webkitAudioContext)(); }
+    catch (e) { return; }
+    const ctx = _audioCtx;
+    if (ctx.state === 'suspended') ctx.resume();
+
+    const now = ctx.currentTime, dur = 2.6, base = 110;  // A2 fundamental
+    const master = ctx.createGain();
+    master.gain.value = 0;
+    master.connect(ctx.destination);
+    const oscs = [];
+    for (let f = 1; f < amps.length; f++) {  // skip DC (f=0)
+        const a = amps[f] / amax;
+        if (a < 0.02) continue;
+        const osc = ctx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.value = base * (f + 1);
+        const g = ctx.createGain();
+        g.gain.value = (a * 0.3) / Math.sqrt(f + 1);  // 1/sqrt rolloff so highs don't shriek
+        osc.connect(g); g.connect(master);
+        osc.start(now); osc.stop(now + dur);
+        oscs.push(osc);
+    }
+    master.gain.setValueAtTime(0, now);
+    master.gain.linearRampToValueAtTime(0.8, now + 0.06);
+    master.gain.setValueAtTime(0.8, now + dur - 0.5);
+    master.gain.linearRampToValueAtTime(0.0001, now + dur);
+
+    if (btn) btn.classList.add('playing');
+    _audioStop = () => {
+        oscs.forEach(o => { try { o.stop(); } catch (e) {} });
+        try { master.disconnect(); } catch (e) {}
+        if (btn) btn.classList.remove('playing');
+    };
+    setTimeout(() => { stopHarmonicAudio(); }, dur * 1000 + 120);
+}
+
+function wireHarmonicListenButtons() {
+    document.querySelectorAll('.harmonic-listen-btn').forEach(btn => {
+        if (btn._wired) return;
+        btn._wired = true;
+        btn.addEventListener('click', () => playHarmonicAudio(_snapshotCache[btn.dataset.audioKey], btn));
+    });
+}
+
 function snapshotCardHTML(key, snap, subtitle, caller) {
+    // A listen control on the audible harmonic cards; it always synthesizes from
+    // that branch's spectrum (real amplitudes), even from the traces card.
+    const audible = /harmonic_(spectrum|traces)$/.test(key);
+    const listen = audible
+        ? `<button class="harmonic-listen-btn" data-audio-key="${key.replace(/harmonic_.*/, 'harmonic_spectrum')}" title="Hear the harmonic field (additive synthesis of its spectrum)"><span class="hl-icon">▶</span> listen</button>`
+        : '';
     return `
         <div style="margin-top: 2rem;">
             <div class="chart-card" data-card-key="${key}">
-                <div class="chart-title">${snap.title || key}${callerTag([caller])}</div>
+                <div class="chart-title">${snap.title || key}${callerTag([caller])}${listen}</div>
                 <div class="chart-subtitle">${subtitle}</div>
                 <div class="chart-wrapper" style="height: 400px;">
                     <canvas id="${canvasIdForMetric(key)}"></canvas>
@@ -542,10 +612,13 @@ async function mountSnapshotCharts(descriptions) {
         const data = await response.json();
         if (data.status !== 'ok') return;
         snapshots = data.snapshots || {};
+        _snapshotCache = snapshots;  // for the harmonic listen controls
     } catch (e) {
         console.error('[Dynamics] Snapshots failed to load:', e);
         return;
     }
+
+    wireHarmonicListenButtons();
 
     for (const { key, snap } of entries) {
         const renderer = SNAPSHOT_RENDERERS[snap.renderer];
@@ -1845,6 +1918,103 @@ function renderHaloRing(canvas, data) {
     canvas._haloRAF = requestAnimationFrame(draw);
 }
 
+/**
+ * Sequence snake on the dial: the field over a single sequence as 12 blocks on a
+ * clock-face of four quadrants. Angle = the field's PCA phase per sample, radius
+ * = time sinking toward the origin (newest at center). The badge reports the
+ * winding number - whether the snake actually circles the origin, from the data.
+ */
+function renderHarmonicSnake(canvas, data) {
+    const pts = (data && data.points) || [];
+    if (pts.length < 2) return;
+
+    const draw = () => {
+        if (!canvas.isConnected) return;
+        const wrap = canvas.parentElement;
+        const w = wrap.clientWidth || 600, h = wrap.clientHeight || 400;
+        if (w < 2 || h < 2) return;
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+        canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+        const ctx = canvas.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        const { textColor } = getThemeColors();
+        ctx.fillStyle = '#0f1117'; ctx.fillRect(0, 0, w, h);
+
+        const cx = w / 2, cy = h / 2, R = Math.min(w, h) * 0.40;
+        // Clock-face frame: outer ring, quadrant cross, 12 hour ticks.
+        ctx.strokeStyle = 'rgba(150,160,180,0.22)'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(cx, cy, R, 0, 2 * Math.PI); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(cx - R, cy); ctx.lineTo(cx + R, cy);
+        ctx.moveTo(cx, cy - R); ctx.lineTo(cx, cy + R);
+        ctx.stroke();
+        for (let i = 0; i < 12; i++) {
+            const a = Math.PI / 2 - i * Math.PI / 6;
+            ctx.beginPath();
+            ctx.moveTo(cx + R * 0.93 * Math.cos(a), cy - R * 0.93 * Math.sin(a));
+            ctx.lineTo(cx + R * Math.cos(a), cy - R * Math.sin(a));
+            ctx.stroke();
+        }
+        ctx.fillStyle = 'rgba(150,160,180,0.5)';
+        ctx.beginPath(); ctx.arc(cx, cy, 2.5, 0, 2 * Math.PI); ctx.fill();
+
+        // The snake: 12 blocks at (angle, radius=time), tail(old)->head(now).
+        const P = pts.map(p => [cx + R * p.radius * Math.cos(p.angle),
+                                cy - R * p.radius * Math.sin(p.angle)]);
+        const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+        const col = (t) => `rgba(${90 + 150 * t}, ${150 + 90 * t}, 245, 0.9)`;
+        // Body curves AROUND each point (quadratic anchored to the segment
+        // midpoints, control = the point) rather than straight through, with each
+        // control warped perpendicular by a cosine * magnitude factor so the
+        // snake undulates - the "one additional factor" from the per-point PCA
+        // magnitude. Blocks stay at the true points; the line bends around them.
+        const ctrl = P.map((p, k) => {
+            const a = P[Math.max(0, k - 1)], b = P[Math.min(P.length - 1, k + 1)];
+            const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy) || 1;
+            const warp = R * 0.13 * (pts[k].mag || 0) * Math.cos(k * Math.PI);
+            return [p[0] + (-dy / L) * warp, p[1] + (dx / L) * warp];
+        });
+        ctx.lineWidth = 2.2; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        for (let k = 0; k < P.length - 1; k++) {
+            const start = k === 0 ? P[0] : mid(P[k - 1], P[k]);
+            const end = mid(P[k], P[k + 1]);
+            ctx.strokeStyle = col(k / (P.length - 1));
+            ctx.beginPath();
+            ctx.moveTo(start[0], start[1]);
+            ctx.quadraticCurveTo(ctrl[k][0], ctrl[k][1], end[0], end[1]);
+            ctx.stroke();
+        }
+        {  // final stub: last midpoint -> head, bowing around the last control
+            const k = P.length - 1;
+            ctx.strokeStyle = col(1);
+            ctx.beginPath();
+            const s = mid(P[k - 1], P[k]);
+            ctx.moveTo(s[0], s[1]);
+            ctx.quadraticCurveTo(ctrl[k][0], ctrl[k][1], P[k][0], P[k][1]);
+            ctx.stroke();
+        }
+        for (let k = 0; k < P.length; k++) {
+            const t = k / (P.length - 1);
+            const sz = 5 + 5 * (pts[k].mag || 0);
+            ctx.fillStyle = `rgb(${90 + 150 * t}, ${150 + 90 * t}, 245)`;
+            ctx.fillRect(P[k][0] - sz / 2, P[k][1] - sz / 2, sz, sz);
+        }
+
+        const ok = !!data.circles_origin;
+        ctx.font = '11px monospace'; ctx.textAlign = 'left';
+        ctx.fillStyle = ok ? '#5fd08a' : '#9aa3b2';
+        ctx.fillText(`circles the origin: ${ok ? 'yes' : 'no'}  (winding ${(data.winding ?? 0).toFixed(2)})`, 10, 18);
+        ctx.fillStyle = textColor; ctx.font = '9px monospace';
+        ctx.fillText('12 samples · radius = time → origin · angle = field phase', 10, h - 8);
+    };
+
+    draw();
+    if (canvas._snakeRO) canvas._snakeRO.disconnect();
+    canvas._snakeRO = new ResizeObserver(() => draw());
+    canvas._snakeRO.observe(canvas.parentElement);
+}
+
 const SNAPSHOT_RENDERERS = {
     heatmap_2d: renderHeatmap2D,
     halo_ring: renderHaloRing,
@@ -1854,6 +2024,7 @@ const SNAPSHOT_RENDERERS = {
     corr_matrix: renderCorrMatrix,
     harmonic_staircase: renderHarmonicStaircase,
     harmonic_strands: renderHarmonicStrands,
+    harmonic_snake: renderHarmonicSnake,
 };
 
 /**

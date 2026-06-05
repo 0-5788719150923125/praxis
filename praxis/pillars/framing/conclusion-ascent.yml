@@ -1,0 +1,25 @@
+# Swappable conclusion coda (section: conclusion -> \paperFramingConclusion,
+# appended after the default conclusion prose in main.tex). No requires: a
+# general closing reflection. Other config-gated conclusion fragments can be
+# added later and the backend will swap them in by the same mechanism. Honest:
+# marked as a direction, not a result; reuses lemma-three-plane.
+section: conclusion
+order: 10
+proofs: [lemma-three-plane]
+body: >
+  One reading the geometry keeps inviting is worth stating as we close, marked as
+  a direction rather than a result. The case for the third state was that two
+  points fix only a line and three fix a plane (Lemma~\ref{prf:lemma-three-plane}),
+  and that a phase can turn only in a plane - so the least representation that can
+  hold an oriented shape is two-dimensional, not one. But that plane is only where
+  a phase \textit{sits}. A phase also moves: it carries a velocity and a direction,
+  and a position taken together with its motion is a phase space, twice the
+  dimension of the configuration it lives on. The line becomes a plane, and the
+  plane the harmonic field was built to turn in becomes the four-dimensional space
+  in which that turning is itself a coordinate. The representation we have
+  described is therefore never a point; it is a moving point, and the climb - from
+  a position, to a line, to the plane where phase lives, to the phase space where
+  phase moves - is the same ascent at every scale. We make no claim that the
+  network parameterizes that space explicitly. We note only that the geometry,
+  followed honestly, does not stop at the plane: velocity and direction, not
+  position alone, are what a harmonic representation is finally about.

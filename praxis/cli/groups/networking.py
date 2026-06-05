@@ -31,3 +31,13 @@ class NetworkingGroup:
             default="https://buymeacoffee.com/vectorrent",
             help="URL the web app's donations icon links to (empty string hides it)",
         )
+
+        group.add_argument(
+            "--author",
+            type=str,
+            nargs="*",
+            default=["Ryan J. Brooks"],
+            help=(
+                "Authors written to the living paper's \\author block. The original author is always preserved and listed first. Pass additional names to append them."
+            ),
+        )

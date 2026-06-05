@@ -1735,6 +1735,36 @@
     height: 16px;
 }
 
+/* Harmonic sonification control: a small "listen" pill floated into a snapshot
+   card's title. Additive playback of the harmonic field's spectrum (Web Audio). */
+.harmonic-listen-btn {
+    float: right;
+    margin-left: 0.5rem;
+    padding: 0.1rem 0.55rem;
+    font-family: inherit;
+    font-size: 0.7rem;
+    color: var(--light-text);
+    background: transparent;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-small, 4px);
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.harmonic-listen-btn:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+}
+.harmonic-listen-btn.playing {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    animation: harmonic-listen-pulse 1.1s ease-in-out infinite;
+}
+@keyframes harmonic-listen-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.55; }
+}
+
 .tab-header-metadata {
     display: flex;
     flex-wrap: wrap;
@@ -1905,6 +1935,16 @@
     font-weight: 600;
     margin-bottom: 0.5rem;
     color: var(--text);
+}
+
+/* General guard for the recurring "card-number pill overlaps title content" bug.
+   The number is an absolute pill in the top-right of every deck card; reserve a
+   safe zone on the right of the title so its text wraps early and any floated
+   control (e.g. the harmonic listen button) sits to the LEFT of the counter
+   instead of underflowing it. Fix once here, not per-card. */
+:root { --deck-counter-safe: 3.25rem; }
+.chart-deck .chart-card .chart-title {
+    padding-right: var(--deck-counter-safe);
 }
 
 .chart-subtitle {

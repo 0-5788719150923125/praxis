@@ -171,4 +171,5 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--no-docs` | bool | `False` | Skip auto-regeneration of docs/ from praxis registries at launch |
 | `--preserve` | bool | `False` | Mark this run as preserved (protected from --reset) |
 | `--reset` | bool | `False` | Reset the checkpoint |
+| `--reset-after` | int | `0` | Crash-loop breaker: force '--reset' once this many consecutive launches occur without the checkpoint advancing (i.e. the run keeps failing to start). Use in respawning remote/systemd setups so a wedged checkpoint self-heals. 0 (default) disables it. |
 | `--seed` | int | _varies_ | Global seed used for reproducibility |

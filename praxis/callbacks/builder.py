@@ -1,6 +1,20 @@
 """Assembles the trainer callback list for a run."""
 
 import os
+import random
+
+_FIRST_AUTHOR = "Ryan J. Brooks"
+
+
+def _resolve_authors(authors, seed):
+    """Order the paper's authors: the original first, the rest appended - except
+    a deterministic 10%% of runs (seeded by the run seed, so it is stable for a
+    given run and leaves training RNG untouched) where the original slips to the
+    bottom of the list, a quiet hint of discovery."""
+    out = [_FIRST_AUTHOR] + [x for x in (authors or []) if x and x != _FIRST_AUTHOR]
+    if len(out) > 1 and random.Random(seed).random() < 0.10:
+        out = out[1:] + out[:1]  # first -> last
+    return out
 
 
 def build_training_callbacks(
@@ -159,7 +173,10 @@ def build_training_callbacks(
     if not getattr(cfg, "no_paper", False) and not getattr(
         cfg, "no_checkpoints", False
     ):
-        callbacks.append(PaperBuildCallback(every=cfg.save_every, log_dir=cache_dir))
+        callbacks.append(PaperBuildCallback(
+            every=cfg.save_every, log_dir=cache_dir,
+            authors=_resolve_authors(getattr(cfg, "author", None), getattr(cfg, "seed", 0)),
+        ))
 
     if cfg.profile_memory:
         callbacks.append(

@@ -31,12 +31,12 @@ def kb_search():
 
     try:
         index = _get_index()
-        # Empty query -> recent feed (newest first), so clicking into an empty
-        # box surfaces the latest content instead of nothing.
+        # Empty query -> the full global feed (everything, not just runs), so the
+        # search root is a complete index. A real query is ranked + typo-tolerant.
         hits = (
             index.search(query, types=types, limit=limit)
             if query
-            else index.recent(limit=limit, types=types)
+            else index.list_all(types=types)
         )
         index.close()
     except Exception as exc:  # missing index, locked db, etc.

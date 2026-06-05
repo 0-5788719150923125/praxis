@@ -44,3 +44,9 @@ praxis/web/static
 !praxis/web/static/*.webp
 # Docker image build stamp (launch auto-rebuild detector)
 .docker-build.*.stamp
+
+# Docker host-user migration sentinel (launch)
+.host-uid-migrated
+
+# Generated author block (praxis/pillars/build.py)
+authors.tex
