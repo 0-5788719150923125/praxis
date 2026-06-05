@@ -4,6 +4,7 @@ Based on the efficient attention implementation with block masking support.
 """
 
 import os
+from contextlib import contextmanager
 from typing import Optional, Tuple
 
 import torch
@@ -87,6 +88,64 @@ class CausalAttention(nn.Module):
         # Cache for block masks at different sequence lengths
         # Key is (seq_len, kv_len, device_str) tuple
         self.block_mask_cache = {}
+
+    @contextmanager
+    def head_budget(self, kv_keep: Tensor):
+        """Coherently restrict attention to a subset of KV heads (and their GQA
+        query-head groups) for one forward, then restore - the mixture-of-widths
+        recipe for attention.
+
+        Every per-head tensor is sliced in lockstep so the forward stays well
+        formed: the fused QKV rows, the output columns, and (where present) the
+        gate, the per-depth QKV bias, and the Infini ``betas`` / memory buffers.
+        The head counts the ``.view``s read are dropped to match. Weight slices
+        are differentiable gathers, so only the heads that ran get gradient. The
+        per-depth output bias is per-hidden, not per-head, so it is left whole.
+        """
+        nq, hd = self.num_queries, self.head_dim
+        H, QH = self.num_heads, self.num_query_heads
+        dev = self.qkv.weight.device
+        kv_keep = kv_keep.to(dev).sort().values
+        # GQA: each kept KV head brings its nq query heads.
+        q_keep = (kv_keep.unsqueeze(1) * nq + torch.arange(nq, device=dev)).reshape(-1)
+
+        def chans(heads):  # head indices -> flat per-head-dim channel indices
+            return (heads.unsqueeze(1) * hd + torch.arange(hd, device=dev)).reshape(-1)
+
+        q_ch = chans(q_keep)
+        qkv_rows = torch.cat(
+            [q_ch, QH * hd + chans(kv_keep), QH * hd + H * hd + chans(kv_keep)]
+        )
+
+        swaps = []  # (store_dict, name, original_tensor)
+
+        def swap(module, name, new):
+            store = module._parameters if name in module._parameters else module._buffers
+            swaps.append((store, name, store[name]))
+            store[name] = new
+
+        swap(self.qkv, "weight", self.qkv.weight[qkv_rows])
+        if self.qkv.bias is not None:
+            swap(self.qkv, "bias", self.qkv.bias[qkv_rows])
+        swap(self.output, "weight", self.output.weight[:, q_ch])
+        if getattr(self, "attention_gating", False) and hasattr(self, "gate"):
+            swap(self.gate, "weight", self.gate.weight[q_ch])
+            if self.gate.bias is not None:
+                swap(self.gate, "bias", self.gate.bias[q_ch])
+        if hasattr(self, "depth_qkv_bias"):
+            swap(self.depth_qkv_bias, "weight", self.depth_qkv_bias.weight[:, qkv_rows])
+        for name in ("betas", "init_mem", "init_z"):  # Infini per-head state
+            if hasattr(self, name):
+                swap(self, name, getattr(self, name)[:, q_keep])
+
+        saved = (self.num_query_heads, self.num_heads)
+        self.num_query_heads, self.num_heads = int(q_keep.numel()), int(kv_keep.numel())
+        try:
+            yield
+        finally:
+            for store, name, old in reversed(swaps):
+                store[name] = old
+            self.num_query_heads, self.num_heads = saved
 
     def _import_flex_attention(self) -> None:
         """Import FlexAttention components (GPU only - falls back to SDPA on CPU)."""

@@ -7,6 +7,7 @@ done is the part that makes it pay: real matmul shrinkage and a learned schedule
 Sibling to [forced_computation.md](forced_computation.md),
 [the_fifth_dimension.md](the_fifth_dimension.md),
 [architecture_separation.md](architecture_separation.md),
+[deep_recurrent_cost.md](deep_recurrent_cost.md),
 [oscillatory_axes.md](oscillatory_axes.md), [the_dial.md](the_dial.md).
 
 ## The idea
@@ -55,13 +56,36 @@ gentle constant breathing, `helical_tight` an aggressive floor.
 - **Phase 0 (done):** helical mask + arch, applied as a forward pre-hook that
   zeros inactive inner channels (full matmul, zeroed input). Proves the
   capacity-fluctuation dynamics and the metric. No speedup yet.
-- **Phase 1 (real savings):** swap the mask-multiply for a bucketed slice +
-  scatter, so the matmul actually shrinks. Quantize the rank to a few buckets so
-  only K shapes ever compile and allocate - otherwise variable per-step shapes
-  reintroduce the `torch.compile` recompile churn and the expandable-segments
-  fragmentation that bit the Titans variable-shape runs (see the VRAM-swing
-  finding). This discipline is the whole game; unbucketed continuous width is a
-  non-goal.
+- **Phase 1 (real savings) - done for FFN and attention:** `helical_sparse`
+  (`praxis/width/sparse.py`) runs two recipes per step, both over the precessing
+  helical window, and gradients train only what ran:
+  - **FFN** - a generic resizer keyed by the GLU `up`/`down` name convention
+    slices both weights, so the intermediate matmul shrinks. A per-channel
+    parametric activation (Serpent's a/b/g, Snake, PReLU) is sliced to the same
+    window so it stays aligned - including ArcGLU's per-depth activation list;
+    the slice is deferred only while such a param is still lazy
+    (uninitialized), so it materializes at full width first (the model's
+    lazy-init pass handles that). Retargeting another convention is a one-line
+    `PAIR_NAMES` change.
+  - **Attention** (the dominant compute) - whole KV heads and their GQA query
+    groups are dropped via the attention's own `head_budget` context
+    (`CausalAttention.head_budget`), which slices the fused QKV, output, gate,
+    per-depth QKV bias, and the Infini `betas`/`init_mem`/`init_z` in lockstep
+    and drops the head counts the views read. The dataflow-entangled slicing
+    lives in the module that owns it - a name-keyed external resizer can't do it
+    safely (q/k/v split, RoPE, per-depth and per-head state sit between qkv and
+    output) - so the policy only chooses how many heads survive. The per-depth
+    *output* bias is per-hidden, not per-head, so it stays whole.
+
+  The budget is a function of depth, so only one shape occurs per recurrent step
+  - recompiles are bounded and predictable (a multiplier over the steps), which
+  is the whole discipline; unbounded continuous width stays a non-goal.
+
+  **Eager-only.** The runtime monkeypatching is untraceable by Dynamo, so width
+  no-ops under `torch.compile` (guarded via `is_compiling`); it is an eager-mode
+  optimization. Stacking compile and width would need a native budget *argument*
+  the forward reads (no monkeypatch) + bucketed ranks so Dynamo specializes one
+  graph per bucket. See [deep_recurrent_cost.md](deep_recurrent_cost.md).
 - **Phase 2 (learned schedule):** replace the deterministic arch with a width
   gate - a per-depth base (an `nn.Embedding(depth, 1)` like the learnable RoPE
   theta) plus an input-conditional delta - trained with a budget loss whose

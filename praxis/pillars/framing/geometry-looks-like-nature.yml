@@ -22,7 +22,7 @@ body: >
   under smoothness constraints. Different runs land on structurally different
   geometries because the bias-variance-structure space is rich enough to support
   many valid solutions, the way the same physics grows many different but
-  recognizable trees. The shapes are convergence, not confabulation, and the same
+  recognizable trees. The shapes are convergence, and the same
   latent space can be coupled directly to a discrete classifier by composing the
   harmonic field with the crystal centers, so that rhythm feeds geometry.
 

@@ -22,11 +22,16 @@ from functools import partial
 
 from praxis.width.base import FullWidth
 from praxis.width.helical import HelicalWidth
+from praxis.width.sparse import HelicalSparseWidth
 
 WIDTH_REGISTRY = {
     "none": FullWidth,
+    # Mask variants (full matmul, zeroed channels): prove the dynamics.
     "helical": HelicalWidth,  # inflate early (peak 0.3), floor 0.25
     "helical_late": partial(HelicalWidth, peak=0.6),  # crest mid-stack
     "helical_steady": partial(HelicalWidth, floor=0.5, peak=0.5),  # gentle breathing
     "helical_tight": partial(HelicalWidth, floor=0.1, peak=0.25),  # aggressive deflation
+    # Sparse variants (sliced weights, smaller matmul): real FLOP reduction.
+    "helical_sparse": HelicalSparseWidth,
+    "helical_sparse_tight": partial(HelicalSparseWidth, floor=0.1, peak=0.25),
 }

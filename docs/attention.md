@@ -25,7 +25,7 @@ Causal self-attention using PyTorch's FlexAttention API. Provides efficient atte
 computation with customizable block masking. Supports optional sliding window for
 efficient long-sequence inference.
 
-Source: [praxis/attention/causal.py:20](../praxis/attention/causal.py#L20)
+Source: [praxis/attention/causal.py:21](../praxis/attention/causal.py#L21)
 
 ## `infini` - InfiniAttention
 

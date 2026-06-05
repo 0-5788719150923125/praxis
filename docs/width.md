@@ -3,7 +3,7 @@
 
 Per-depth deflation of each block's inner rank over the recurrent loop (a helically-precessing low-rank slice), turning deep recurrence into a population of narrow voters. Selected with ``--width-type``; default is ``none`` (full width).
 
-Registry: ``praxis.WIDTH_REGISTRY`` (5 entries)
+Registry: ``praxis.WIDTH_REGISTRY`` (7 entries)
 
 ## `helical`, `helical_late`, `helical_steady`, `helical_tight` - HelicalWidth
 
@@ -12,13 +12,25 @@ a raised-sine arch over depth (inflate early, decay the tail). ``floor`` is the 
 width fraction; ``peak`` is the depth fraction where width crests. An ``nn.Module`` (no
 parameters of its own) so it appears on the architecture blueprint.
 
-Source: [praxis/width/helical.py:71](../praxis/width/helical.py#L71)
+Source: [praxis/width/helical.py:80](../praxis/width/helical.py#L80)
 
 Presets:
 - `helical` - class defaults
 - `helical_late` - `peak=0.6`
 - `helical_steady` - `floor=0.5, peak=0.5`
 - `helical_tight` - `floor=0.1, peak=0.25`
+
+## `helical_sparse`, `helical_sparse_tight` - HelicalSparseWidth
+
+Truly-sparse helical deflation: same arch schedule as ``HelicalWidth``, but it slices
+the GLU and attention-head weights so the matmuls actually shrink instead of masking
+them.
+
+Source: [praxis/width/sparse.py:139](../praxis/width/sparse.py#L139)
+
+Presets:
+- `helical_sparse` - class defaults
+- `helical_sparse_tight` - `floor=0.1, peak=0.25`
 
 ## `none` - FullWidth
 

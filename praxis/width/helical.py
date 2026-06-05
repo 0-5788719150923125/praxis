@@ -27,6 +27,15 @@ import torch.nn as nn
 GOLDEN = 0.6180339887498949
 
 
+def is_compiling() -> bool:
+    """True while torch.compile / Dynamo is tracing. Width policies mutate module
+    forwards and weights at runtime, which Dynamo cannot trace, so they no-op
+    under compile (the model runs at full width). Use ``--no-compile`` to keep
+    width active - it is an eager-mode optimization."""
+    check = getattr(torch.compiler, "is_compiling", None)
+    return bool(check()) if check is not None else False
+
+
 def width_fraction(depth: int, max_depth: int, floor: float, peak: float) -> float:
     """Active fraction of inner channels at ``depth``: a raised-sine arch from
     ``floor`` up to 1.0 (peaking at the ``peak`` fraction of the stack) and back
@@ -98,6 +107,9 @@ class HelicalWidth(nn.Module):
     def scope(self, experts, current_depth, max_depth):
         """Patch the experts' inner rank for one step, restoring on exit. Pure
         and scoped - hooks are removed in the finally."""
+        if is_compiling():  # Dynamo can't trace runtime hooks; run full width
+            yield
+            return
         frac = width_fraction(current_depth, max_depth, self.floor, self.peak)
         handles = []
         for down in _dense_down_projections(experts):

@@ -89,7 +89,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--target-batch-size` | int | `256` | The actual batch size to use, including accumulation steps |
 | `--tie-weights` | bool | `False` | Tie embedding and output projection weights to reduce parameters |
 | `--vocab-size` | int | `16384` | The absolute vocab size to use, though some architectures might scale it differently (choices: 1024, 2048, 4096, 8192, 16384, 32768, 65536) |
-| `--width-type` | str | `None` | Mixture-of-widths policy: deflate each recurrent step's inner rank to a helically-precessing slice. Presets tune the floor/peak of the arch (default none = full width) (choices: none, helical, helical_late, helical_steady, helical_tight) |
+| `--width-type` | str | `None` | Mixture-of-widths policy: deflate each recurrent step's inner rank to a helically-precessing slice. Presets tune the floor/peak of the arch (default none = full width) (choices: none, helical, helical_late, helical_steady, helical_tight, helical_sparse, helical_sparse_tight) |
 | `--window-size` | int | `None` | Sliding window size for attention (None = full attention). Only used with hex attention. |
 
 ### training
