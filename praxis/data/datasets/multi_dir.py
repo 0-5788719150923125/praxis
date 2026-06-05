@@ -15,6 +15,11 @@ from praxis.data.formatters.files import format_file_as_messages
 class MultiDirectoryDataset(PraxisSampler):
     """Dataset that reads files from multiple directories."""
 
+    # Hard per-file cap. _read_file slurps whole files (and the latin-1 fallback
+    # decodes ANY bytes), so without this a stray checkpoint or database in the
+    # scanned tree gets read fully into RAM as a "document" and OOMs the host.
+    MAX_FILE_BYTES = 2 * 1024 * 1024
+
     def __init__(
         self,
         tokenizer: PreTrainedTokenizer,
@@ -60,6 +65,10 @@ class MultiDirectoryDataset(PraxisSampler):
             ".gradle",
             "target",
             "vendor",
+            "venv",
+            ".cache",
+            "checkpoints",
+            "wandb",
         }
         user_exclusions = set(excluded_dirs) if excluded_dirs else set()
         self.excluded_dirs = default_exclusions.union(user_exclusions)
@@ -83,6 +92,18 @@ class MultiDirectoryDataset(PraxisSampler):
             ".exe",
             ".so",
             ".wasm",
+            ".ckpt",
+            ".pt",
+            ".pth",
+            ".safetensors",
+            ".db",
+            ".sqlite",
+            ".parquet",
+            ".arrow",
+            ".npy",
+            ".npz",
+            ".onnx",
+            ".pdf",
         }
 
         print(f"[DATA] Working directory: {self.cwd}")
@@ -168,6 +189,13 @@ class MultiDirectoryDataset(PraxisSampler):
                         ):
                             continue
 
+                        # Skip oversized files; nothing this large is source text
+                        try:
+                            if os.path.getsize(full_path) > self.MAX_FILE_BYTES:
+                                continue
+                        except OSError:
+                            continue
+
                         # Check if file extension is allowed
                         file_ext = os.path.splitext(filename)[1].lower()
                         if len(self.allowed_extensions) > 0:
@@ -184,6 +212,9 @@ class MultiDirectoryDataset(PraxisSampler):
     def _read_file(self, file_path: str) -> Optional[str]:
         """Read and return the contents of a file, or None if it fails."""
         try:
+            # Re-check size: the file may have grown since the initial scan.
+            if os.path.getsize(file_path) > self.MAX_FILE_BYTES:
+                return None
             with open(file_path, "r", encoding="utf-8") as f:
                 return f.read()
         except UnicodeDecodeError:
