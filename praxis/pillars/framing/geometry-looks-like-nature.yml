@@ -6,7 +6,7 @@ requires:
   head_type: [crystal, crystal_harmonic, prismatic]
 proofs: [proof-harmonic-expressiveness]
 body: >
-  \subsection{Geometry that looks like nature is convergence, not hallucination}
+  \subsection{Geometry that looks like nature is convergence}
 
   The crystal head~\cite{harmonicloss2025} replaces the usual dot-product logits
   with distances to a set of learnable class centers, so its decision surface is

@@ -18,6 +18,12 @@ ENERGY_DECAY = 0.999
 ENERGY_GAIN = 0.5
 ENERGY_MAX = 1.0
 
+# A real person actually responding is itself a strong signal, not only when the
+# model's prediction happened to be right. Any genuine response floors the energy
+# contribution here so the energy ramps and holds; correctness lifts it the rest
+# of the way to 1.0. Fixed and model-agnostic (no per-experiment tuning).
+ENERGY_FLOOR = 0.8
+
 
 def activation(predicted: Iterable[int], response: Iterable[int]) -> float:
     """1.0 if any predicted answer token is mentioned in the response, else 0.0.
@@ -37,6 +43,19 @@ def recall(predicted: Iterable[int], response: Iterable[int]) -> float:
     if not pred:
         return 0.0
     return len(pred & resp) / len(pred)
+
+
+def response_energy(engaged: bool, quality: float = 0.0) -> float:
+    """Energy contributed by one live human interaction.
+
+    Any genuine response is worth at least ``ENERGY_FLOOR`` so the energy sustains
+    on engagement alone; ``quality`` in [0, 1] (e.g. recall) lifts it toward 1.0.
+    Returns 0.0 only when there was no real interaction.
+    """
+    if not engaged:
+        return 0.0
+    q = max(0.0, min(1.0, float(quality)))
+    return ENERGY_FLOOR + (1.0 - ENERGY_FLOOR) * q
 
 
 class HomeostaticEnergy:

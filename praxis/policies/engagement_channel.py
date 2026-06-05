@@ -11,7 +11,12 @@ can both reach it.
 import threading
 from collections import deque
 
-from praxis.policies.engagement_reward import HomeostaticEnergy, activation, recall
+from praxis.policies.engagement_reward import (
+    HomeostaticEnergy,
+    activation,
+    recall,
+    response_energy,
+)
 
 
 class LiveEngagementChannel:
@@ -25,11 +30,20 @@ class LiveEngagementChannel:
     def submit(self, predicted_tokens, response_tokens) -> dict:
         """Score one real interaction, fold it into the live energy, and buffer
         it for the trainer to drain. Returns the event."""
-        a = activation(predicted_tokens, response_tokens)
         r = recall(predicted_tokens, response_tokens)
+        # Any genuine answer sustains the energy (and shifts the RL baseline via
+        # ingest_live), with recall lifting it toward 1.0. The raw prediction
+        # match is kept only as a quality metric.
+        a = response_energy(bool(response_tokens), r)
         with self._lock:
             energy = self._energy.update(a)
-            event = {"activation": a, "recall": r, "reward": r, "energy": energy}
+            event = {
+                "activation": a,
+                "match": activation(predicted_tokens, response_tokens),
+                "recall": r,
+                "reward": r,
+                "energy": energy,
+            }
             self._buffer.append(event)
             self._count += 1
             self._last = event
@@ -41,8 +55,12 @@ class LiveEngagementChannel:
         alongside. ``activation`` drives the homeostatic energy; ``reward`` is the
         logged learning signal. Like ``submit`` but the score is given outright
         rather than computed from token overlap."""
-        a = max(0.0, min(1.0, float(activation)))
-        rw = a if reward is None else float(reward)
+        q = max(0.0, min(1.0, float(activation)))
+        rw = q if reward is None else float(reward)
+        # A human bothering to score sustains the energy on its own, with the
+        # score lifting it toward 1.0. Valence stays in ``reward`` (the signed
+        # want->need learning signal); energy is sustenance, not sign.
+        a = response_energy(True, q)
         with self._lock:
             energy = self._energy.update(a)
             event = {"activation": a, "recall": rw, "reward": rw, "energy": energy}

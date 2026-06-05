@@ -113,8 +113,11 @@ def test_loop_approve_records_joke_reward():
     approve = c.post("/api/loop/approve", json={"score": 1.0}).get_json()
     assert approve["status"] == "ok"
     assert approve["activation"] == 1.0
+    # A rejection still sustains energy (engagement alone counts), but its
+    # valence lives in the signed reward, not the activation.
     reject = c.post("/api/loop/approve", json={"approve": False}).get_json()
-    assert reject["activation"] == 0.0
+    assert reject["activation"] == pytest.approx(0.8)
+    assert reject["score"] == -1.0 and reject["reward"] == -1.0
     assert c.get("/api/loop/energy").get_json()["count"] >= 2
     # Both events buffered for the joke drain callback.
     assert len(LIVE_JOKES.drain()) >= 2

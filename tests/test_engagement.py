@@ -5,9 +5,11 @@ import torch
 from praxis import PraxisConfig
 from praxis.policies import EngagementPolicy, needs_rl_datasets, normalize_rl_types
 from praxis.policies.engagement_reward import (
+    ENERGY_FLOOR,
     HomeostaticEnergy,
     activation,
     recall,
+    response_energy,
 )
 
 
@@ -21,6 +23,14 @@ class TestReward:
         assert recall([1, 2, 3, 4], [1, 2, 9]) == 0.5  # 2 of 4 predicted mentioned
         assert recall([1, 2], [1, 2]) == 1.0
         assert recall([], [1]) == 0.0
+
+    def test_response_energy_floors_on_engagement(self):
+        # Any genuine response sustains energy regardless of prediction match;
+        # quality lifts it to 1.0. No interaction -> no energy.
+        assert response_energy(False) == 0.0
+        assert response_energy(True, 0.0) == ENERGY_FLOOR
+        assert response_energy(True, 1.0) == 1.0
+        assert ENERGY_FLOOR < response_energy(True, 0.5) < 1.0
 
 
 class TestHomeostaticEnergy:
