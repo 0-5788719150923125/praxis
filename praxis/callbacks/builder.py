@@ -173,10 +173,15 @@ def build_training_callbacks(
     if not getattr(cfg, "no_paper", False) and not getattr(
         cfg, "no_checkpoints", False
     ):
-        callbacks.append(PaperBuildCallback(
-            every=cfg.save_every, log_dir=cache_dir,
-            authors=_resolve_authors(getattr(cfg, "author", None), getattr(cfg, "seed", 0)),
-        ))
+        callbacks.append(
+            PaperBuildCallback(
+                every=cfg.save_every,
+                log_dir=cache_dir,
+                authors=_resolve_authors(
+                    getattr(cfg, "author", None), getattr(cfg, "seed", 0)
+                ),
+            )
+        )
 
     if cfg.profile_memory:
         callbacks.append(

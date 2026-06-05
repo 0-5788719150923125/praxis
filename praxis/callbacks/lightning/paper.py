@@ -42,8 +42,10 @@ class PaperBuildCallback(Callback):
             # regenerate from the live model each cadence; only the final PDF
             # compile is skipped, so the .tex/figures stay fresh for a host-side
             # or later compile.
-            print("[Paper] latexmk not found; regenerating paper inputs only "
-                  "(PDF compile skipped this run).")
+            print(
+                "[Paper] latexmk not found; regenerating paper inputs only "
+                "(PDF compile skipped this run)."
+            )
 
     def _snapshot_model(self, pl_module):
         """The model whose live snapshots the figures should match.
@@ -111,7 +113,12 @@ class PaperBuildCallback(Callback):
                     # above already refreshed from the live model.
                     if self._latexmk:
                         subprocess.run(
-                            [self._latexmk, "-pdf", "-interaction=nonstopmode", "main.tex"],
+                            [
+                                self._latexmk,
+                                "-pdf",
+                                "-interaction=nonstopmode",
+                                "main.tex",
+                            ],
                             cwd=RESEARCH_DIR,
                             stdout=log,
                             stderr=subprocess.STDOUT,

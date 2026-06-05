@@ -107,7 +107,7 @@ def _checkpoint_signature(run_dir: Path) -> str:
     advanced). Returns "none" when there's nothing to resume from."""
     candidates = [
         run_dir / "model" / "last.ckpt",  # Lightning resume symlink
-        run_dir / "mono_forward.pt",      # Mono-Forward trainer checkpoint
+        run_dir / "mono_forward.pt",  # Mono-Forward trainer checkpoint
     ]
     for path in candidates:
         try:
@@ -156,7 +156,11 @@ class RunManager:
                 data = json.loads(path.read_text())
             except (OSError, ValueError):
                 data = {}
-        attempts = int(data.get("attempts", 0)) + 1 if data.get("checkpoint") == signature else 1
+        attempts = (
+            int(data.get("attempts", 0)) + 1
+            if data.get("checkpoint") == signature
+            else 1
+        )
         try:
             path.write_text(json.dumps({"attempts": attempts, "checkpoint": signature}))
         except OSError:

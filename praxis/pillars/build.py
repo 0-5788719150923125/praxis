@@ -57,8 +57,14 @@ def _write_authors(authors) -> None:
 
 
 def build_all(
-    n=4, metric="auto", experiment=None, limit=4, scan=40, as_json=False,
-    model=None, authors=None,
+    n=4,
+    metric="auto",
+    experiment=None,
+    limit=4,
+    scan=40,
+    as_json=False,
+    model=None,
+    authors=None,
 ):
     """Regenerate every paper input. Returns a dict of per-step summaries.
 

@@ -546,7 +546,10 @@ class CALMEncoder(BaseEncoder):
             p.requires_grad_(False)
 
     def _reconstruction_loss(
-        self, recon_logits: torch.Tensor, padded: torch.Tensor, recon_hidden: torch.Tensor
+        self,
+        recon_logits: torch.Tensor,
+        padded: torch.Tensor,
+        recon_hidden: torch.Tensor,
     ) -> torch.Tensor:
         """Codec reconstruction loss via the configured loss function.
 
@@ -571,7 +574,9 @@ class CALMEncoder(BaseEncoder):
         )
 
     @torch.no_grad()
-    def _recon_ce(self, recon_logits: torch.Tensor, padded: torch.Tensor) -> torch.Tensor:
+    def _recon_ce(
+        self, recon_logits: torch.Tensor, padded: torch.Tensor
+    ) -> torch.Tensor:
         """Detached reconstruction CE for the bits-per-byte fidelity metric,
         kept independent of the training loss so ``val_codec_bpb`` stays in
         bits even when reconstruction trains under a non-CE objective."""

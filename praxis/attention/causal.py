@@ -220,7 +220,9 @@ class CausalAttention(nn.Module):
         position's value per feature; the start is left intact."""
         T, D = v.shape[2], v.shape[3]
         dist = torch.arange(T - 1, -1, -1, device=v.device, dtype=v.dtype)  # 0 at tip
-        rate = torch.linspace(0.5, 2.0, D, device=v.device, dtype=v.dtype)  # per-feature
+        rate = torch.linspace(
+            0.5, 2.0, D, device=v.device, dtype=v.dtype
+        )  # per-feature
         warp = 1.0 - torch.exp(-dist[:, None] * rate[None, :])  # [T, D], 0 at the tip
         return v * warp
 

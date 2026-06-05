@@ -557,18 +557,23 @@ const METRIC_RENDERERS = {
     evolution: (config) => createEvolutionChart(config.canvasId),
 };
 
-// Isometric projection of the time x subsystem x churn block field. MUST match
-// praxis/pillars/evolution.py (_iso_boxes) so the web card and the LaTeX figure
-// are the same picture in two output formats.
-const ISO = { TX: 1.0, TY: 0.5, TZ: 1.0, HMAX: 3.0, GAP: 0.14 };
+// Isometric recency-weighted terrain. MUST match praxis/pillars/evolution.py
+// (_iso_boxes) so the web card and the LaTeX figure are the same picture: height
+// is recency-weighted churn (recent towers, history settles to the prior valley),
+// peaks taper, color fades from the subsystem hue toward a neutral prior into the
+// past, banded in phased strata over a non-linear timescale.
+const ISO = {
+    TX: 1.0, TY: 0.5, TZ: 1.0, HMAX: 4.4, GAP: 0.14,
+    DECAY: 2.4, FLOOR: 0.05, TAPER: 0.6, PHASE_AMP: 0.24, PHASE_CYCLES: 3.0,
+};
+const PRIOR_RGB = [87, 97, 115];  // neutral the past fades into (0.34,0.38,0.45)
 const isoProj = (x, y, z) => [(x - y) * ISO.TX, z * ISO.HMAX * ISO.TZ - (x + y) * ISO.TY];
-function isoShade(hex, f) {
+const isoHexRgb = (hex) => {
     const n = parseInt((hex || '#586072').slice(1), 16);
-    const r = Math.min(255, ((n >> 16) & 255) * f) | 0;
-    const g = Math.min(255, ((n >> 8) & 255) * f) | 0;
-    const b = Math.min(255, (n & 255) * f) | 0;
-    return `rgb(${r},${g},${b})`;
-}
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+};
+const isoShadeRgb = (rgb, f) =>
+    `rgb(${Math.min(255, rgb[0] * f) | 0},${Math.min(255, rgb[1] * f) | 0},${Math.min(255, rgb[2] * f) | 0})`;
 
 // Repo-level git-churn evolution card. Fetches /api/evolution - the SAME
 // computation the LaTeX figure renders (praxis.pillars.evolution.evolution_data)
@@ -606,19 +611,27 @@ async function createEvolutionChart(canvasId) {
     // Each face: {pts:[[ux,uy]...], color, depth}. Painter-ordered by i+j.
     const faces = [];
     for (let j = 0; j < S; j++) {
-        const s = subs[j], col = colors[s] || '#586072';
+        const base = isoHexRgb(colors[subs[j]]);
         for (let i = 0; i < B; i++) {
-            const c = series[s][i] / cmax;
+            const c = series[subs[j]][i] / cmax;
             if (c <= 0) continue;
-            const hgt = 0.05 + 0.95 * c;
-            const x0 = i, x1 = i + 1 - ISO.GAP, y0 = j, y1 = j + 1 - ISO.GAP;
-            const rec = 0.45 + 0.55 * (i / Math.max(B - 1, 1));
-            const top = [isoProj(x0, y0, hgt), isoProj(x1, y0, hgt), isoProj(x1, y1, hgt), isoProj(x0, y1, hgt)];
-            const east = [isoProj(x1, y0, 0), isoProj(x1, y1, 0), isoProj(x1, y1, hgt), isoProj(x1, y0, hgt)];
-            const south = [isoProj(x0, y1, 0), isoProj(x1, y1, 0), isoProj(x1, y1, hgt), isoProj(x0, y1, hgt)];
-            faces.push({ pts: south, color: isoShade(col, 0.55 * rec), depth: i + j });
-            faces.push({ pts: east, color: isoShade(col, 0.75 * rec), depth: i + j });
-            faces.push({ pts: top, color: isoShade(col, rec), depth: i + j });
+            const u = i / Math.max(B - 1, 1);              // 0 oldest .. 1 now
+            const w = Math.exp(-ISO.DECAY * (1 - u));       // recency weight
+            const h = ISO.FLOOR + (1 - ISO.FLOOR) * c * w;  // recency-weighted height
+            const tp = ISO.TAPER * (h - ISO.FLOOR) / (1 - ISO.FLOOR);  // taper -> peaks
+            const g = ISO.GAP / 2;
+            const x0 = i + g, x1 = i + 1 - g, y0 = j + g, y1 = j + 1 - g;
+            const ix = tp * (x1 - x0) / 2, iy = tp * (y1 - y0) / 2;
+            const tx0 = x0 + ix, tx1 = x1 - ix, ty0 = y0 + iy, ty1 = y1 - iy;
+            // Color: subsystem hue fading to the prior into the past, * phased strata.
+            const phase = 1 + ISO.PHASE_AMP * Math.cos(2 * Math.PI * ISO.PHASE_CYCLES * Math.pow(1 - u, 1.3));
+            const col = [0, 1, 2].map(k => Math.min(255, (PRIOR_RGB[k] + w * (base[k] - PRIOR_RGB[k])) * phase));
+            const top = [isoProj(tx0, ty0, h), isoProj(tx1, ty0, h), isoProj(tx1, ty1, h), isoProj(tx0, ty1, h)];
+            const east = [isoProj(x1, y0, 0), isoProj(x1, y1, 0), isoProj(tx1, ty1, h), isoProj(tx1, ty0, h)];
+            const south = [isoProj(x0, y1, 0), isoProj(x1, y1, 0), isoProj(tx1, ty1, h), isoProj(tx0, ty1, h)];
+            faces.push({ pts: south, color: isoShadeRgb(col, 0.6), depth: i + j });
+            faces.push({ pts: east, color: isoShadeRgb(col, 0.8), depth: i + j });
+            faces.push({ pts: top, color: isoShadeRgb(col, 1.0), depth: i + j });
         }
     }
     faces.sort((a, b) => a.depth - b.depth);  // back to front
@@ -658,7 +671,7 @@ async function createEvolutionChart(canvasId) {
         }
 
         ctx.font = '9px monospace'; ctx.fillStyle = '#9aa3b2'; ctx.textAlign = 'center';
-        ctx.fillText('time: first commit → now    depth: subsystem    height: churn', w / 2, h - 5);
+        ctx.fillText('first commit → now    depth: subsystem    height: recency-weighted churn', w / 2, h - 5);
 
         ctx.textAlign = 'left';
         let cx = padL;

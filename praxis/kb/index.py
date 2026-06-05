@@ -18,8 +18,8 @@ DEFAULT_DB_PATH = REPO_ROOT / "build" / "kb.db"
 # Fuzzy search: a misspelled token won't prefix-match in FTS5, so we fall back to
 # character-trigram cosine similarity over titles - "transfomer" still scores
 # high against "transformer" because they share almost every trigram.
-_FUZZY_MIN_QUERY = 3      # below this, trigrams are too noisy; FTS prefix suffices
-_FUZZY_MIN_SIM = 0.30     # cosine floor to count as a candidate
+_FUZZY_MIN_QUERY = 3  # below this, trigrams are too noisy; FTS prefix suffices
+_FUZZY_MIN_SIM = 0.30  # cosine floor to count as a candidate
 
 
 def _trigrams(text: str) -> Counter:
@@ -146,7 +146,9 @@ class KBIndex:
         if len(hits) < limit and len(query) >= _FUZZY_MIN_QUERY:
             seen = {h.item.id for h in hits}
             hits.extend(
-                self.fuzzy_search(query, types=types, limit=limit - len(hits), exclude=seen)
+                self.fuzzy_search(
+                    query, types=types, limit=limit - len(hits), exclude=seen
+                )
             )
         return hits
 

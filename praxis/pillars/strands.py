@@ -115,7 +115,12 @@ def _segments_and_colors(data):
     gy = r[:, None] * np.sin(th) * wgt[None, :] + py[:, None] * s[None, :]
     gz = (s - 0.5) * HEIGHT  # [S]
 
-    cosA, sinA, cosE, sinE = math.cos(ROT), math.sin(ROT), math.cos(TILT), math.sin(TILT)
+    cosA, sinA, cosE, sinE = (
+        math.cos(ROT),
+        math.sin(ROT),
+        math.cos(TILT),
+        math.sin(TILT),
+    )
     Xs = gx * cosA - gy * sinA
     Ys = gx * sinA + gy * cosA
     sx = Xs
@@ -147,22 +152,45 @@ def _render_panel(ax, data, title_main, title_sub):
     # invisible here). Head tag on top, the branch's head stack beneath.
     ax.set_title(title_main, color="#e6e9f0", fontsize=10, fontweight="bold", pad=12)
     if title_sub:
-        ax.text(0.5, 1.02, title_sub, transform=ax.transAxes, ha="center", va="bottom",
-                color="#9aa3b2", fontsize=7.5)
+        ax.text(
+            0.5,
+            1.02,
+            title_sub,
+            transform=ax.transAxes,
+            ha="center",
+            va="bottom",
+            color="#9aa3b2",
+            fontsize=7.5,
+        )
     ax.set_xticks([])
     ax.set_yticks([])
     ax.set_facecolor("#0f1117")
     ax.set_aspect("equal")
     if built is None:
-        ax.text(0.5, 0.5, "no field", ha="center", va="center",
-                color="#888", transform=ax.transAxes, fontsize=8)
+        ax.text(
+            0.5,
+            0.5,
+            "no field",
+            ha="center",
+            va="center",
+            color="#888",
+            transform=ax.transAxes,
+            fontsize=8,
+        )
         return
     segs, cols, sep = built
     lc = LineCollection(segs, colors=cols, linewidths=0.9)
     ax.add_collection(lc)
     ax.autoscale()
-    ax.text(0.03, 0.97, f"variance {sep * 100:.0f}% of field energy",
-            transform=ax.transAxes, color="#cfd3dc", fontsize=7, va="top")
+    ax.text(
+        0.03,
+        0.97,
+        f"variance {sep * 100:.0f}% of field energy",
+        transform=ax.transAxes,
+        color="#cfd3dc",
+        fontsize=7,
+        va="top",
+    )
 
 
 def export_strands(model=None) -> dict:

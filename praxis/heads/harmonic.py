@@ -666,7 +666,8 @@ class HarmonicField(nn.Module):
             points = [
                 {
                     "angle": float(ang[int(idx[k])].item()),
-                    "radius": (n - 1 - k) / max(n - 1, 1),  # time -> radius, newest centered
+                    "radius": (n - 1 - k)
+                    / max(n - 1, 1),  # time -> radius, newest centered
                     "mag": float(mag[int(idx[k])].item()),
                 }
                 for k in range(n)

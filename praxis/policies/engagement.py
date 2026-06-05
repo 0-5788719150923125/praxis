@@ -116,10 +116,9 @@ class EngagementPolicy(nn.Module):
         # Update the baseline *after* computing the advantage so it doesn't peek
         # at the current sample.
         advantage = (reward - self.reward_baseline).detach()  # [B]
-        self.reward_baseline = (
-            self.REWARD_BASELINE_DECAY * self.reward_baseline
-            + (1.0 - self.REWARD_BASELINE_DECAY) * float(reward.mean())
-        )
+        self.reward_baseline = self.REWARD_BASELINE_DECAY * self.reward_baseline + (
+            1.0 - self.REWARD_BASELINE_DECAY
+        ) * float(reward.mean())
 
         # REINFORCE on the LM's own log-probs over the answer tokens: maximize
         # log_prob(answer) weighted by advantage. log_prob = -CE per token.

@@ -243,7 +243,9 @@ class HALOLoss(nn.Module):
     RING_BINS = 96
 
     @torch.no_grad()
-    def _stash_geometry(self, r_sq_true: Tensor, logits_kp1: Tensor, gamma: Tensor) -> None:
+    def _stash_geometry(
+        self, r_sq_true: Tensor, logits_kp1: Tensor, gamma: Tensor
+    ) -> None:
         """Snapshot the consensus geometry for the HALO ring viz.
 
         Inputs are RMS-normalized, so radius-from-origin is constant; the
@@ -306,11 +308,23 @@ class HALOLoss(nn.Module):
         },
         "halo_mean_radius": {
             "description": "Mean distance from each token to its centroid (inputs are RMS-normalized). HALO pulls this onto the shell radius sqrt(1 - 2/D).",
-            "chart": {"title": "HALO Radius", "group": "halo", "order": 1, "series_group": "halo_radius", "series_label": "mean"},
+            "chart": {
+                "title": "HALO Radius",
+                "group": "halo",
+                "order": 1,
+                "series_group": "halo_radius",
+                "series_label": "mean",
+            },
         },
         "halo_shell_radius": {
             "description": "Target shell radius sqrt(1 - 2/D): the ring of consensus the objective drives token-to-centroid distances onto.",
-            "chart": {"title": "HALO Radius", "group": "halo", "order": 2, "series_group": "halo_radius", "series_label": "shell"},
+            "chart": {
+                "title": "HALO Radius",
+                "group": "halo",
+                "order": 2,
+                "series_group": "halo_radius",
+                "series_label": "shell",
+            },
         },
         "halo_radius_spread": {
             "description": "Std of token-to-centroid distances. Settling onto the shell tightens this; high spread is residual variance.",
@@ -322,6 +336,11 @@ class HALOLoss(nn.Module):
         },
         "halo_ring": {
             "description": "Radial energy map of token-to-centroid distance: the bright ring marks consensus tokens settled on the hyperspherical shell, with the dark interior (collapse) and exterior (variance) carrying no structure - a geometry of bias and variance.",
-            "snapshot": {"title": "HALO Energy Ring", "renderer": "halo_ring", "group": "halo", "order": 60},
+            "snapshot": {
+                "title": "HALO Energy Ring",
+                "renderer": "halo_ring",
+                "group": "halo",
+                "order": 60,
+            },
         },
     }
