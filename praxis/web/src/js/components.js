@@ -451,7 +451,9 @@ export function createKbResult({ id, type, label, title, uri, snippet }) {
         <div class="kb-result" role="button" tabindex="0"
              data-kb-id="${escapeHtml(id)}" data-kb-type="${escapeHtml(type)}"
              data-kb-uri="${escapeHtml(uri)}" data-kb-title="${escapeHtml(title)}">
-            <span class="kb-result-type" data-kb-type="${escapeHtml(type)}">${escapeHtml(label || type)}</span>
+            <span class="kb-result-type kb-label-filter" data-kb-type="${escapeHtml(type)}"
+                  data-kb-label="${escapeHtml(label || type)}" role="button"
+                  title="Add to search">${escapeHtml(label || type)}</span>
             <span class="kb-result-title">${escapeHtml(title)}</span>
             <span class="kb-result-snippet">${highlighted}</span>
         </div>

@@ -47,6 +47,17 @@ export const CLICK_HANDLERS = [
         action: () => ({ type: 'CLOSE_KB_ITEM' })
     },
     {
+        // Clicking a green KB label appends it to the search query (comma-
+        // delimited). Must precede '.kb-result' so it intercepts the click
+        // instead of opening the item (first match wins in delegateClick).
+        selector: '.kb-label-filter',
+        match: 'closest',
+        action: (e) => {
+            const el = e.target.closest('.kb-label-filter');
+            return { type: 'ADD_KB_LABEL_FILTER', payload: { label: el?.dataset.kbLabel || '' } };
+        }
+    },
+    {
         selector: '.kb-result',
         match: 'closest',
         action: (e) => {

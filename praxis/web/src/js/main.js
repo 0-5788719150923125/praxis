@@ -423,6 +423,27 @@ function currentQuery(input) {
 }
 
 /**
+ * Append a KB label to the search query as a comma-delimited term (skipping
+ * duplicates) and re-run the search. The comma form mirrors prompt syntax -
+ * each click narrows the topic the way you'd stack terms in a prompt. Wired to
+ * the green KB labels (see events.js ADD_KB_LABEL_FILTER).
+ */
+export function addKbSearchTerm(label) {
+    const input = document.getElementById('message-input');
+    const term = (label || '').trim();
+    if (!input || !term) return;
+    let raw = currentQuery(input);
+    if (raw === inputPlaceholderText()) raw = '';  // ignore the ghost placeholder
+    const terms = raw.split(',').map(t => t.trim()).filter(Boolean);
+    if (!terms.includes(term)) terms.push(term);
+    const query = terms.join(', ');
+    input.value = inputPrefix() + query;
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    scheduleKbSearch(query);
+}
+
+/**
  * Debounced live search; stale responses are dropped via a sequence guard. An
  * empty query fetches the recent feed (the backend returns newest-first), so the
  * box is never blank - it's the default view when you click in with no text.

@@ -15,7 +15,7 @@ import { loadResearchMetrics, loadDynamics, toggleSpecRunSelector, selectSpecRun
 import { sendMessage, kbFetchItem, testApiConnection, loopApprove } from './api.js';
 import { kbCacheFetch } from './kbcache.js';
 import { renderMarkdown, renderJson } from './markdown.js';
-import { syncInputToMode, fetchAndPresentQuestion, startLoop, stopLoop, rerollLoopNow } from './main.js';
+import { syncInputToMode, fetchAndPresentQuestion, startLoop, stopLoop, rerollLoopNow, addKbSearchTerm } from './main.js';
 
 /**
  * Get lifecycle function by name
@@ -657,6 +657,13 @@ export const ACTION_HANDLERS = {
                 if (e.target === modal) closeModal();
             });
         }
+    },
+
+    /**
+     * Append a clicked KB label to the search query (comma-delimited) and search.
+     */
+    ADD_KB_LABEL_FILTER: (payload) => {
+        addKbSearchTerm(payload?.label || '');
     },
 
     /**

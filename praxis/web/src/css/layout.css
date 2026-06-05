@@ -228,6 +228,22 @@
     border-color: var(--accent);
 }
 
+/* The label doubles as a filter button: click/tap to append it to the search
+   query (comma-delimited). Fill on hover, dim on tap - works on desktop and
+   mobile. */
+.kb-label-filter {
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s, border-color 0.12s, opacity 0.12s;
+}
+.kb-label-filter:hover {
+    background: var(--accent);
+    color: var(--background);
+    border-color: var(--accent);
+}
+.kb-label-filter:active {
+    opacity: 0.6;
+}
+
 /* Brief highlight when a KB search deep-links to a fleet row on the Stage tab. */
 .agent-row.kb-flash {
     animation: kbFlash 1.2s ease;
