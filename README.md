@@ -33,6 +33,7 @@ source. See [docs/index.md](docs/index.md) for the full map.
 - [Layer-routing controllers](docs/controllers.md) (8)
 - [Long-term memory](docs/memory.md) (4)
 - [Loss functions](docs/losses.md) (9)
+- [Mixture-of-widths](docs/width.md) (5)
 - [Normalization layers](docs/normalization.md) (5)
 - [Optimizer profiles](docs/optimizers.md) (5)
 - [Optimizer wrappers](docs/wrappers.md) (8)

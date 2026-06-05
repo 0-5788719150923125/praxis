@@ -41,6 +41,7 @@ class PraxisConfig(PretrainedConfig):
         norm_type: str = "rms_norm",
         head_type: str = "forward",
         halting_type: Optional[str] = None,
+        width_type: Optional[str] = None,
         mtp_type: Optional[str] = None,
         mtp_depth: int = 1,
         rl_type=None,  # name, comma-string, or list of RL tasks (None disables)

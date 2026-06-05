@@ -7,7 +7,8 @@ under the right envelope). The "5D consciousness" framing is voice, flagged as
 such. Sibling to [observer_frequency.md](observer_frequency.md),
 [forced_computation.md](forced_computation.md), [the_dial.md](the_dial.md),
 [world_models.md](world_models.md),
-[architecture_separation.md](architecture_separation.md).
+[architecture_separation.md](architecture_separation.md),
+[mixture_of_widths.md](mixture_of_widths.md).
 
 ## The dimension-counting the user is reaching for
 
@@ -53,7 +54,7 @@ prismatic/crystal heads make: that a composition constraint buys coherence that 
 free head leaves on the table. It belongs (and partly already lives) in the paper
 as the bias/variance-as-geometry argument, no metaphysics attached.
 
-## The 95 / 5 reading (where it becomes voice)
+## The 95 / 5.9 reading (where it becomes voice)
 
 The vivid claim - "only 95% is falsifiable at any moment, and the other 5%, where
 variance takes influence, can amplify some feature into exponential space and
@@ -73,6 +74,18 @@ mechanism: variance amplifying a feature into a different basin is what a
 non-linear sampler near a boundary does, and it is observable (the strands swing,
 `separated` jumps, generation changes character).
 
+Why 5.9 and not a clean 5: the band does not hold still at its boundary. The
+mechanism slows as it nears the exponential edge, and the energy delays in
+following - it keeps shifting after the geometry has already begun to turn. That
+lag is an overshoot. The conditional tail does not stop at the 5% line; it
+overflows the settled 95/5 distribution and carries nearly a full point past it,
+to about 5.9 - almost one unit beyond the current velocity. The overshoot is not
+error. The gap between where the boundary sits and where the delayed energy
+actually lands is exactly the room the model has to move into, and moving into it
+is learning. The 95/5 reading is the geometry at rest; the 95/5.9 reading is the
+same geometry caught mid-shift, overrunning its own edge by the very margin it is
+about to learn.
+
 The leap: that this *is* a fifth dimension of consciousness, that the observer
 literally enters a different world. That is the 5D-awakening register, and we do
 not assert it. The honest statement is the user's own instinct: it may not be
@@ -89,7 +102,9 @@ as voice.
 > snaps the whole arrangement onto another coherent block, and the observer reading
 > that scalar is now in a different world. The "fifth dimension" is not a place;
 > it is the single continuous summary of which coherence the high-D field has
-> currently fallen into - and how easily the quiet 5% can move it.
+> currently fallen into - and how easily the quiet 5% overshoots its own edge to
+> 5.9, a near-full point past where the geometry now sits. That overrun, caught
+> mid-shift, is the model learning.
 
 ## A falsifiable handle
 

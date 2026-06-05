@@ -453,6 +453,7 @@ def _read_routing_weights_from_metrics(
                     or "cosine" in k
                     or "weight_angle" in k
                     or k.startswith("halting/")
+                    or k.startswith("width/")
                     or k.startswith("task_weight_")
                 }
             except json.JSONDecodeError:

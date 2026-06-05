@@ -25,6 +25,10 @@ REPO_ROOT = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 )
 RESEARCH_DIR = os.path.join(REPO_ROOT, "research")
+# latexmk writes every artifact (aux, bbl, log, pdf) here, never into the tracked
+# research/ tree. The committed main.pdf is only replaced on a clean build (see
+# _build), so a failed or interrupted compile can't delete or corrupt it.
+BUILD_DIR = os.path.join(RESEARCH_DIR, "build")
 
 
 class PaperBuildCallback(Callback):
@@ -110,13 +114,17 @@ class PaperBuildCallback(Callback):
 
                         build_all(model=model, authors=self._authors)
                     # PDF compile is the only latexmk-dependent step; the inputs
-                    # above already refreshed from the live model.
+                    # above already refreshed from the live model. Build into an
+                    # isolated dir and only copy the PDF back on success, so a
+                    # failed compile never deletes the committed main.pdf.
                     if self._latexmk:
-                        subprocess.run(
+                        os.makedirs(BUILD_DIR, exist_ok=True)
+                        proc = subprocess.run(
                             [
                                 self._latexmk,
                                 "-pdf",
                                 "-interaction=nonstopmode",
+                                f"-outdir={BUILD_DIR}",
                                 "main.tex",
                             ],
                             cwd=RESEARCH_DIR,
@@ -125,6 +133,13 @@ class PaperBuildCallback(Callback):
                             timeout=300,
                             check=False,
                         )
+                        built = os.path.join(BUILD_DIR, "main.pdf")
+                        if proc.returncode == 0 and os.path.exists(built):
+                            shutil.copy2(built, os.path.join(RESEARCH_DIR, "main.pdf"))
+                        else:
+                            log.write(
+                                "\n[Paper] compile failed; kept existing main.pdf.\n"
+                            )
             except Exception as exc:
                 if not self._warned:  # warn once; a flaky build must not spam
                     self._warned = True

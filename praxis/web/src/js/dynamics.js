@@ -248,6 +248,8 @@ const DYNAMICS_FAMILY_RENDERERS = {
     expert_grad_vars: (id, dyn) => createExpertGradVarsChart(id, dyn, dynamicsLayerState.layers),
     task_weights: (id, dyn) => createTaskWeightsChart(id, dyn, detectTaskWeightKeys(dyn)),
     halting_hist: (id, dyn) => createHaltingHistogramChart(id, dyn, detectHaltingBuckets(dyn)),
+    width_profile: (id, dyn) => createWidthProfileChart(id, dyn, detectWidthDepths(dyn)),
+    width_evolution: (id, dyn) => createWidthEvolutionChart(id, dyn, detectWidthDepths(dyn)),
 };
 
 /** Layer filter buttons, scoped to a single layer-aware card. */
@@ -308,6 +310,17 @@ function detectHaltingBuckets(dynamics) {
     if (rs.size === 0) return null;
     const sorted = Array.from(rs).sort((a, b) => a - b);
     return { rs: sorted, maxLoops: sorted[sorted.length - 1] };
+}
+
+/** Depth indices present in the mixture-of-widths profile series. */
+function detectWidthDepths(dynamics) {
+    const depths = new Set();
+    Object.keys(dynamics).forEach(k => {
+        const m = k.match(/^width\/active_d(\d+)$/);
+        if (m) depths.add(parseInt(m[1]));
+    });
+    if (depths.size === 0) return null;
+    return Array.from(depths).sort((a, b) => a - b);
 }
 
 /**
@@ -2237,6 +2250,104 @@ function createHaltingHistogramChart(canvasId, dynamics, buckets) {
             }
         }
     });
+}
+
+// Mixture-of-widths profile: active inner-width fraction per recurrent depth.
+// A filled arch over depth - inflating early, decaying through the tail - so you
+// can see at a glance that features grow at the front of the stack and thin out
+// late. (When the schedule is learned, this arch will move over training.)
+function createWidthProfileChart(canvasId, dynamics, depths) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx || !depths) return;
+
+    if (dynamicsCharts[canvasId]) {
+        dynamicsCharts[canvasId].destroy();
+    }
+
+    const { textColor, gridColor, tooltipBg } = getThemeColors();
+
+    const labels = depths.map(d => `d${d}`);
+    const fracs = depths.map(d => latestValue(dynamics[`width/active_d${d}`]) || 0);
+
+    dynamicsCharts[canvasId] = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [{
+                label: 'Active width',
+                data: fracs,
+                borderColor: chartLineColor(0),
+                backgroundColor: chartLineColor(0) + '33',
+                borderWidth: 2,
+                fill: true,
+                tension: 0.35,
+                pointRadius: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: tooltipBg,
+                    titleColor: textColor,
+                    bodyColor: textColor,
+                    borderColor: gridColor,
+                    borderWidth: 1,
+                    padding: 12,
+                    callbacks: {
+                        label: (tctx) => `${(tctx.parsed.y * 100).toFixed(1)}% of inner width`
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    title: { display: true, text: 'Recurrent Depth', color: textColor },
+                    ticks: { color: textColor },
+                    grid: { display: false }
+                },
+                y: {
+                    title: { display: true, text: 'Active Width', color: textColor },
+                    ticks: {
+                        color: textColor,
+                        callback: (v) => `${(v * 100).toFixed(0)}%`
+                    },
+                    grid: { color: gridColor },
+                    beginAtZero: true,
+                    max: 1
+                }
+            }
+        }
+    });
+}
+
+// Mixture-of-widths over training: faint per-depth strata (the arch held over
+// time) plus a bold realized-mean line that wanders as halting changes how deep
+// the loop runs. Together: the distribution shape AND its movement over time.
+function createWidthEvolutionChart(canvasId, dynamics, depths) {
+    if (!depths) return;
+    const steps = dynamics.steps || [];
+    const series = (key) => steps
+        .map((step, idx) => ({ x: step, y: (dynamics[key] || [])[idx] }))
+        .filter(p => p.y !== null && p.y !== undefined);
+
+    const datasets = depths.map(d => {
+        const ds = makeLineDataset(`d${d}`, series(`width/active_d${d}`), chartLineColor(d));
+        ds.borderWidth = 1;
+        ds.borderColor = chartLineColor(d) + '66';  // faint strata
+        return ds;
+    });
+
+    const realized = series('width/realized_mean');
+    if (realized.length) {
+        const { textColor } = getThemeColors();
+        const bold = makeLineDataset('realized mean', realized, textColor);
+        bold.borderWidth = 2.5;
+        datasets.push(bold);
+    }
+
+    renderChart(canvasId, datasets, 'Active Width', 'linear');
 }
 
 // ─── Activation curves ──────────────────────────────────────────────────────

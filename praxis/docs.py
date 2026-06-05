@@ -111,6 +111,15 @@ def _registries() -> List[Tuple]:
             "Per-token mechanisms for early exit from recurrent depth loops.",
         ),
         (
+            "width",
+            "Mixture-of-widths",
+            praxis.WIDTH_REGISTRY,
+            "Per-depth deflation of each block's inner rank over the recurrent "
+            "loop (a helically-precessing low-rank slice), turning deep recurrence "
+            "into a population of narrow voters. Selected with ``--width-type``; "
+            "default is ``none`` (full width).",
+        ),
+        (
             "heads",
             "Output heads",
             {**praxis.HEAD_REGISTRY, **praxis.MTP_REGISTRY},
@@ -1100,6 +1109,7 @@ def _registry_attr(slug: str) -> str:
         "routers": "ROUTER_REGISTRY",
         "sorting": "SORTING_REGISTRY",
         "strategies": "STRATEGIES_REGISTRY",
+        "width": "WIDTH_REGISTRY",
     }[slug]
 
 

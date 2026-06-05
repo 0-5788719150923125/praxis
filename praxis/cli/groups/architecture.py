@@ -21,6 +21,7 @@ from praxis import (
     RESIDUAL_REGISTRY,
     ROUTER_REGISTRY,
     SORTING_REGISTRY,
+    WIDTH_REGISTRY,
 )
 
 
@@ -121,6 +122,16 @@ class ArchitectureGroup:
             choices=HALTING_REGISTRY.keys(),
             default=None,
             help="Halting strategy for recurrent depth loops",
+        )
+
+        group.add_argument(
+            "--width-type",
+            type=str,
+            choices=WIDTH_REGISTRY.keys(),
+            default=None,
+            help="Mixture-of-widths policy: deflate each recurrent step's inner "
+            "rank to a helically-precessing slice. Presets tune the floor/peak "
+            "of the arch (default none = full width)",
         )
 
         group.add_argument(

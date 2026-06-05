@@ -67,6 +67,7 @@ class SequentialDecoder(BaseDecoder):
         self.halting.seed(hidden_states)
 
         current_route: List[int] = []
+        realized_widths: List[float] = []  # active width fraction per executed step
 
         controller_state = None
         sequential_experts: List[nn.Module] = list(self.locals) + list(self.remotes)
@@ -108,24 +109,28 @@ class SequentialDecoder(BaseDecoder):
             layer_state = (
                 current_state[state_idx] if current_state is not None else None
             )
-            (
-                hidden_states,
-                past_key_values,
-                layer_state,
-                decoder_loss,
-                exit_signal,
-            ) = create_forward(
-                expert,
-                self.controller,
-                self.manager,
-                hidden_states,
-                attention_mask,
-                past_key_values,
-                layer_state,
-                current_depth,
-                block_ids,
-                should_checkpoint(self.training, current_depth, self.checkpoint_every),
-            )
+            realized_widths.append(self.width.fraction(current_depth, self.depth))
+            with self.width.scope([expert], current_depth, max_depth=self.depth):
+                (
+                    hidden_states,
+                    past_key_values,
+                    layer_state,
+                    decoder_loss,
+                    exit_signal,
+                ) = create_forward(
+                    expert,
+                    self.controller,
+                    self.manager,
+                    hidden_states,
+                    attention_mask,
+                    past_key_values,
+                    layer_state,
+                    current_depth,
+                    block_ids,
+                    should_checkpoint(
+                        self.training, current_depth, self.checkpoint_every
+                    ),
+                )
 
             # Update route immediately after expert execution
             current_route = self.controller.update_route(
@@ -163,6 +168,11 @@ class SequentialDecoder(BaseDecoder):
             if current_state is not None:
                 # Use the same state index for updating
                 current_state[state_idx] = layer_state
+
+        # Mean active width actually used this forward. Varies over training even
+        # under the fixed schedule, because halting samples how many depths run.
+        if realized_widths:
+            self._width_realized = sum(realized_widths) / len(realized_widths)
 
         hidden_states = self.compressor.expand_sequence(hidden_states, seq_len)
 

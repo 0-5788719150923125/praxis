@@ -725,6 +725,32 @@ DYNAMICS_CHART_REGISTRY: list = [
         "caller": "TaskLossWeighter",
     },
     {
+        "key": "width_profile",
+        "type": "width_profile",
+        "title": "Width Profile",
+        "subtitle": (
+            "Active fraction of each block's inner width per recurrent depth - "
+            "inflating early, decaying through the tail (latest step)."
+        ),
+        "key_pattern": r"^width/active_d\d+$",
+        "order": 105,
+        "caller": "MixtureOfWidths",
+    },
+    {
+        "key": "width_evolution",
+        "type": "width_evolution",
+        "title": "Width Evolution",
+        "subtitle": (
+            "Per-depth active width over training (faint strata = the arch) with "
+            "the realized mean actually used each forward (bold) - it wanders as "
+            "halting samples how deep the loop runs."
+        ),
+        "key_pattern": r"^width/(active_d\d+|realized_mean)$",
+        "legend": True,
+        "order": 106,
+        "caller": "MixtureOfWidths",
+    },
+    {
         "key": "halting_hist",
         "type": "halting_hist",
         "title": "Halting Distribution",

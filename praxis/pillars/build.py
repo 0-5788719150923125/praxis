@@ -12,7 +12,7 @@ command that regenerates all of them, the research-side analogue of
 Run it, then build the PDF::
 
     python -m praxis.pillars.build
-    (cd research && latexmk -pdf main.tex)
+    (cd research && latexmk -pdf -outdir=build main.tex && cp build/main.pdf .)
 
 Each step is independent and best-effort: a step that finds nothing to render
 (no runs yet, no crystal geometry) leaves the paper's fallbacks in place rather

@@ -15,6 +15,7 @@ from praxis.halting import HALTING_REGISTRY
 from praxis.layers import LocalLayer, RemoteLayer
 from praxis.orchestration import EXPERT_REGISTRY
 from praxis.sorting import SORTING_REGISTRY
+from praxis.width import WIDTH_REGISTRY
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
@@ -32,6 +33,11 @@ class BaseDecoder(nn.Module):
         self.num_experts = config.num_experts
         # Use num_layers for the actual number of layer components in the model
         self.num_layers = getattr(config, "num_layers", config.num_experts)
+        # Mixture-of-widths: the policy that deflates each step's inner rank.
+        # Registered first so it sits atop the decoder on the blueprint, where the
+        # loop reaches for it (see SequentialDecoder).
+        self.width = WIDTH_REGISTRY[getattr(config, "width_type", None) or "none"]()
+        self._width_realized = None  # mean active width used in the last forward
         self.controller = CONTROLLER_REGISTRY.get(config.controller_type)(config)
         self.genome = GenomicBottleneck(config) if config.evolve else False
         self.compressor = COMPRESSION_REGISTRY.get(config.compression_type)(config)
@@ -217,6 +223,16 @@ class BaseDecoder(nn.Module):
         halting = getattr(self, "halting", None)
         if halting is not None and hasattr(halting, "get_metrics"):
             extras.update(halting.get_metrics())
+
+        # Mixture-of-widths: the per-depth active-width arch (inflate early,
+        # decay through the tail). One key per depth so the dashboard can plot
+        # the profile and watch it move once the schedule is learned.
+        profile = self.width.profile(self.depth)
+        if profile is not None:
+            for d, frac in enumerate(profile):
+                extras[f"width/active_d{d}"] = frac
+            if self._width_realized is not None:
+                extras["width/realized_mean"] = self._width_realized
 
         # Collect metrics from routers (expert convergence tracking)
         # Routers accumulate per-layer metrics internally using current_depth
