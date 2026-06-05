@@ -7,8 +7,8 @@ batch_size: 1
 target_batch_size: 64
 block_size: 256
 infer_context: 512
-depth: 6
-num_layers: 2
+depth: 3
+num_layers: 1
 vocab_size: 1024
 hidden_size: 96
 embed_size: 64
@@ -40,4 +40,4 @@ tie_weights: true
 # patch-vote decoding) - reporting live capacity + a growing remote_layers count
 # on both dashboards. Detached, layer-wise (Mono-Forward) updates, so a slow peer
 # never blocks training.
-orchestration_type: swarm
+# orchestration_type: swarm
