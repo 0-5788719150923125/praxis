@@ -433,7 +433,10 @@ export function addKbSearchTerm(label) {
     const term = (label || '').trim();
     if (!input || !term) return;
     let raw = currentQuery(input);
-    if (raw === inputPlaceholderText()) raw = '';  // ignore the ghost placeholder
+    if (state.isShowingPlaceholder) raw = '';  // ignore the ghost placeholder
+    // Leave placeholder state cleanly, or the input handler will treat our
+    // appended term as ghost text and mangle the next keystroke.
+    hidePlaceholder();
     const terms = raw.split(',').map(t => t.trim()).filter(Boolean);
     if (!terms.includes(term)) terms.push(term);
     const query = terms.join(', ');

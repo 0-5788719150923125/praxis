@@ -247,16 +247,24 @@ function renderSpec(data, container) {
         return;
     }
 
-    // Peer button only makes sense for the live run (snapshots lack git_url).
+    // Git buttons only make sense for the live run (snapshots lack git_url).
     const buttons = [];
     if (data.git_url) {
         const gitRemoteCmd = `git remote add ${data.truncated_hash} ${data.git_url}`;
+        const gitCloneCmd = `git clone ${data.git_url}`;
         buttons.push({
-            id: 'peer-button',
-            label: 'Peer with agent',
+            id: 'git-remote-button',
+            label: 'git remote',
             icon: '',
             className: 'tab-header-button copy-git-remote-btn',
-            dataAttrs: `data-command="${escapeHtml(gitRemoteCmd)}"`
+            dataAttrs: `data-command="${escapeHtml(gitRemoteCmd)}" data-copy-label="Copied git remote to clipboard."`
+        });
+        buttons.push({
+            id: 'git-clone-button',
+            label: 'git clone',
+            icon: '',
+            className: 'tab-header-button copy-git-remote-btn',
+            dataAttrs: `data-command="${escapeHtml(gitCloneCmd)}" data-copy-label="Copied git clone to clipboard."`
         });
     }
 

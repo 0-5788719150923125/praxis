@@ -59,7 +59,7 @@ declared byte-output layout in encoder mode, else ``(hidden_size, vocab_size)``)
 ``forward`` modulates the features with the field, then projects through ``lm_head`` -
 identical in standalone and encoder modes.
 
-Source: [praxis/heads/harmonic.py:793](../praxis/heads/harmonic.py#L793)
+Source: [praxis/heads/harmonic.py:794](../praxis/heads/harmonic.py#L794)
 
 ## `prismatic` - ParallelHead
 

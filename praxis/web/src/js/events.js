@@ -146,7 +146,7 @@ export const CLICK_HANDLERS = [
         action: (e) => ({
             type: 'COPY_TO_CLIPBOARD',
             payload: e.target.dataset.command,
-            meta: { button: e.target, label: 'Copied git remote to clipboard.' }
+            meta: { button: e.target, label: e.target.dataset.copyLabel || 'Copied to clipboard.' }
         })
     },
     {
