@@ -1,0 +1,9 @@
+# The central conjecture, restated as a one-liner for the collected list.
+tag: Linear consensus, logarithmic interference
+order: 10
+cite: [kaplan2020]
+claim: >
+  Learning a corpus as a consensus mean costs resources linearly in the patterns
+  expressed, while composing it by harmonic interference costs only
+  logarithmically, so the coverage-versus-resources slope a basis buys is
+  measurable and basis-dependent.

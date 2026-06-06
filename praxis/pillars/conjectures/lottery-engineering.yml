@@ -1,0 +1,12 @@
+# next/lottery_engineering.md, distilled to its falsifiable one-liner. Not "we
+# prove the lottery ticket hypothesis" - we engineer the lottery; mixture-of-
+# widths trains a population of tickets. The proof is the reachability/depth-cost
+# experiment, not the project's existence.
+tag: Lottery engineering
+order: 30
+cite: [frankle2019lottery]
+claim: >
+  A geometric prior makes good sparse subnetworks reachable by stochastic
+  gradient descent directly rather than only by train-then-prune, and a rotating
+  population of such subnetworks (mixture-of-widths) approaches full-width
+  performance at lower average active width.

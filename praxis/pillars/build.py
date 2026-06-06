@@ -24,6 +24,7 @@ import os
 import sys
 
 from praxis.pillars import (
+    conjectures,
     evolution,
     framing,
     geometries,
@@ -132,6 +133,9 @@ def build_all(
     summary["inlines"] = inlines.export_inlines()
     res = summary["inlines"]["resolved"]
     print(f"inlines: {', '.join(f'{k}={v}' for k, v in res.items()) or '(none)'}")
+
+    summary["conjectures"] = conjectures.export_conjectures()
+    print(f"conjectures: {summary['conjectures']['count']} collected")
 
     # Theorem-prover (consistency check over the framing<->proof wiring).
     report = proofs.check_consistency(framing.FRAMING)

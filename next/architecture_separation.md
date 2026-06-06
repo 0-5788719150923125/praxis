@@ -8,7 +8,8 @@ being open - is the empirical step: that comparable-capacity architectures show
 *separated error boundaries under training*, which needs ablations we have not
 run. Sibling to [forced_computation.md](forced_computation.md),
 [the_fifth_dimension.md](the_fifth_dimension.md),
-[observer_frequency.md](observer_frequency.md).
+[observer_frequency.md](observer_frequency.md),
+[lottery_engineering.md](lottery_engineering.md).
 
 ## The objection, stated at full strength
 

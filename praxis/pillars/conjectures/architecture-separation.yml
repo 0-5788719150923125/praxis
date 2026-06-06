@@ -1,0 +1,11 @@
+# One-liner summary of the architecture-separation argument (Discussion +
+# Proposition prf:proof-architecture-separation). The reachability-not-existence
+# bet.
+tag: Reachable, not merely representable
+order: 20
+cite: [telgarsky2016, frankle2019lottery]
+claim: >
+  Across architectures of comparable parameter count and compute there exist
+  task and data regimes where generalization error is separated, because the
+  prior sets which solutions stochastic gradient descent can reach, not only
+  which functions exist in the closure.
