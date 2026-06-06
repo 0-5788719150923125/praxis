@@ -338,9 +338,9 @@ class HarmonicField(nn.Module):
         # Amplitude envelope over f_t. "static" and "learned" share one formula
         # (so they are identical at init); only "learned" lets the coefficients
         # move. Init = a single mid-band oscillation (coeff 0 = 1, rest 0).
-        if amp_modulation not in ("off", "static", "learned", "input"):
+        if amp_modulation not in ("off", "static", "learned", "input", "pure"):
             raise ValueError(
-                f"amp_modulation must be off|static|learned|input, got {amp_modulation!r}"
+                f"amp_modulation must be off|static|learned|input|pure, got {amp_modulation!r}"
             )
         self.amp_modulation = amp_modulation
         if amp_modulation != "off":
@@ -350,12 +350,20 @@ class HarmonicField(nn.Module):
                 persistent=False,
             )
             coeffs = torch.zeros(AMP_MOD_BASIS_K)
-            coeffs[0] = 1.0
+            if amp_modulation != "pure":
+                coeffs[0] = 1.0  # "pure" has no static base envelope
             if amp_modulation in ("learned", "input"):
                 self.amp_coeffs = nn.Parameter(coeffs)
             else:
                 self.register_buffer("amp_coeffs", coeffs, persistent=False)
-            if amp_modulation == "input":
+            if amp_modulation == "pure":
+                # Variance-only field: no static spectrum reaches the output.
+                # The field is the conditional delta alone, so it is exactly
+                # zero at init (zero-init projection) and ramps only under
+                # optimizer pressure; the per-band gain lets that ramp be
+                # band-selective.
+                self.amp_gain = nn.Parameter(torch.ones(self.F_t))
+            if amp_modulation in ("input", "pure"):
                 # Input-conditional envelope - the field's structured-variance
                 # axis. A zero-init projection from pooled hidden states to
                 # envelope coefficients: the field is exactly the static (bias)
@@ -405,7 +413,7 @@ class HarmonicField(nn.Module):
         return b.to(dtype) if dtype is not None else b
 
     def forward(self, hidden_states: Tensor) -> Tensor:
-        if self.amp_modulation == "input":
+        if self.amp_modulation in ("input", "pure"):
             b = self._field_conditional(hidden_states)
         else:
             b = self._field(
@@ -423,9 +431,12 @@ class HarmonicField(nn.Module):
         b_size, seq_len, _ = hidden_states.shape
         device = hidden_states.device
         pooled = hidden_states.mean(dim=-2).to(self.amp_basis.dtype)  # [B, D]
-        coeffs = self.amp_coeffs + self.amp_input(pooled)  # [B, K]
+        if self.amp_modulation == "pure":
+            coeffs = self.amp_input(pooled)  # [B, K] - no static base
+        else:
+            coeffs = self.amp_coeffs + self.amp_input(pooled)  # [B, K]
         self._last_input_coeffs = coeffs.detach().mean(0)
-        env = 1.0 + AMP_MOD_DEPTH * torch.tanh(coeffs @ self.amp_basis.T)  # [B, F_t]
+        env = self._env_from_coeffs(coeffs)  # [B, F_t]
         amps = self.amplitudes.unsqueeze(0) * env.unsqueeze(-1)  # [B, F_t, F_d]
         return self._build_field(amps, seq_len, device).to(hidden_states.dtype)
 
@@ -437,13 +448,25 @@ class HarmonicField(nn.Module):
         scaled = phase.unsqueeze(0) * amps  # [B, F_t, F_d]
         return self._eval_field(scaled, seq_len, device)
 
+    def _env_from_coeffs(self, coeffs: Tensor) -> Tensor:
+        """Envelope over f_t from coefficient rows ``[..., K]`` -> ``[..., F_t]``.
+        ``1 + depth*tanh(...)`` stays positive and bounded; "pure" drops the
+        base 1 (the field is the conditional delta alone) and applies the
+        per-band gain."""
+        mod = AMP_MOD_DEPTH * torch.tanh(coeffs @ self.amp_basis.T)
+        if self.amp_modulation == "pure":
+            return mod * self.amp_gain
+        return 1.0 + mod
+
     def _envelope(self) -> Optional[Tensor]:
         """``[F_t]`` amplitude envelope over the temporal-frequency axis, or
-        None when modulation is off. ``1 + depth*tanh(basis @ coeffs)`` stays
-        positive (a true amplitude envelope) and bounded."""
+        None when modulation is off. For "pure" this is the last batch's
+        conditional envelope (zero before any forward)."""
         if self.amp_modulation == "off":
             return None
-        return 1.0 + AMP_MOD_DEPTH * torch.tanh(self.amp_basis @ self.amp_coeffs)
+        if self.amp_modulation == "pure":
+            return self._env_from_coeffs(self._last_input_coeffs)
+        return self._env_from_coeffs(self.amp_coeffs)
 
     def effective_amplitudes(self) -> Tensor:
         """The amplitude grid after the envelope - what the spectrum heatmap
@@ -473,10 +496,8 @@ class HarmonicField(nn.Module):
         spec = torch.zeros(Tp, rfft_D, dtype=torch.complex64)
         amps = self.amplitudes.detach().cpu()
         if coeffs is not None:
-            env = 1.0 + AMP_MOD_DEPTH * torch.tanh(
-                self.amp_basis.detach().cpu() @ coeffs.detach().cpu()
-            )
-            amps = amps * env.unsqueeze(1)
+            env = self._env_from_coeffs(coeffs.to(self.amp_basis.device))
+            amps = amps * env.detach().cpu().unsqueeze(1)
         else:
             env = self._envelope()
             if env is not None:
@@ -501,7 +522,11 @@ class HarmonicField(nn.Module):
             Tp = max(int(n_points), 2 * self.F_t + 1)
             static = self._sample_field(Tp)  # [Tp, D] static (bias)
             cond_coeffs = getattr(self, "_last_input_coeffs", None)
-            if self.amp_modulation == "input" and cond_coeffs is not None:
+            if self.amp_modulation == "pure":
+                # No static spectrum reaches the output: the sampled field IS
+                # the conditional delta, so every hair is pure variance.
+                cond, static = static, torch.zeros_like(static)
+            elif self.amp_modulation == "input" and cond_coeffs is not None:
                 cond = self._sample_field(Tp, coeffs=cond_coeffs)
             else:
                 cond = static  # no conditional field -> variance axis is zero
@@ -509,9 +534,15 @@ class HarmonicField(nn.Module):
 
             bias_e = (static * static).sum(dim=0)  # [D]
             var_e = (delta * delta).sum(dim=0)  # [D]
-            ref = bias_e.max().clamp_min(1e-12)
+            # Energy reference: peak bias, or peak variance for a bias-free
+            # ("pure") field so its hairs still span the unit geometry.
+            ref = bias_e.max()
+            if ref < 1e-12:
+                ref = var_e.max()
+            ref = ref.clamp_min(1e-12)
             # Fundamental temporal Fourier component per feature -> phase angle.
-            fund = torch.fft.rfft(static, dim=0)[1]  # [D] complex
+            ang_src = cond if self.amp_modulation == "pure" else static
+            fund = torch.fft.rfft(ang_src, dim=0)[1]  # [D] complex
             angle = torch.atan2(fund.imag, fund.real)  # [D]
 
             total = (bias_e.sum() + var_e.sum()).clamp_min(1e-12)

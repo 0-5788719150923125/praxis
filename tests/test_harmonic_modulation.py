@@ -153,3 +153,36 @@ def test_separable_field_wraps_past_period():
     scaled = torch.complex(f.spec_real, f.spec_imag) * f.amplitudes
     long = f._eval_field(scaled, 2 * f.T, torch.device("cpu"))
     assert torch.allclose(long[: f.T], long[f.T :], atol=1e-5)
+
+
+def test_pure_is_identity_at_init():
+    """No static spectrum: zero field before the input projection learns."""
+    f = _field("pure")
+    x = torch.randn(2, 8, 16)
+    torch.testing.assert_close(f(x), x)
+    # Strands: bias is identically zero, nothing separated yet.
+    d = f.field_strands()
+    assert max(d["bias_energy"]) == 0.0
+    assert d["separated"] == 0.0
+
+
+def test_pure_field_is_input_conditional_and_trainable():
+    f = _field("pure")
+    param_names = {n for n, _ in f.named_parameters()}
+    assert "amp_gain" in param_names and "amp_input.weight" in param_names
+    assert "amp_coeffs" not in param_names  # no static base envelope
+
+    with torch.no_grad():
+        f.amp_input.weight.add_(0.5)
+    x = torch.randn(2, 8, 16, requires_grad=True)
+    out = f(x)
+    assert not torch.allclose(out, x)  # field is live once the projection is
+    out.sum().backward()
+    assert f.amp_gain.grad is not None
+    assert f.amp_input.weight.grad.abs().sum() > 0
+
+    # Strands now read as pure variance: zero bias, all energy conditional.
+    d = f.field_strands()
+    assert max(d["bias_energy"]) == 0.0
+    assert max(d["var_energy"]) > 0.0
+    assert d["separated"] == 1.0

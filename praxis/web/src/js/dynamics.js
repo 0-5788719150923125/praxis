@@ -1749,12 +1749,13 @@ function renderHarmonicStrands(canvas, data) {
     // spectrum (t = variance/(bias+variance); blue = pure bias, red = pure
     // variance), and the frame-independent 3D strand geometry. The hot loop then
     // only rotates+projects these flat buffers - no trig, no allocation per frame.
-    // First pass: peak bias (geometry scale) and the heaviest per-feature
+    // First pass: peak energy on either axis (geometry scale - so a bias-free
+    // "pure" arm still spans the geometry) and the heaviest per-feature
     // variance share (color reference).
     let bmax = 1e-6, tmax = 0;
     for (let i = 0; i < N; i++) {
-        bmax = Math.max(bmax, bias[i]);
         const b = Math.max(bias[i], 0), v = Math.max(vr[i], 0);
+        bmax = Math.max(bmax, b, v);
         if (b + v > 1e-9) tmax = Math.max(tmax, v / (b + v));
     }
     // Color reference: the field's heaviest per-feature variance, floored so a

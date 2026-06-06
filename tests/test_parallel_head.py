@@ -105,3 +105,17 @@ def test_crystal_harmonic_descriptions_unchanged():
     descs = head.all_metric_descriptions()
     assert "harmonic_amplitudes_norm" in descs
     assert not any(k.startswith("p0_") for k in descs)
+
+
+def test_prismatic3_three_arms_and_identity_third_branch():
+    torch.manual_seed(0)
+    head = HEAD_REGISTRY["prismatic3"](_cfg(), encoder=None)
+    assert len(head.branches) == 3
+    x = torch.randn(2, 6, 16)
+    out = head(x)
+    assert out.shape == (2, 6, 32)
+    # The pure arm's field is identity at init: its transform returns x as-is.
+    torch.testing.assert_close(head.branches[2].transform(x), x)
+    # And it reads as pure variance once its strands carry any energy.
+    fld = head.branches[2].heads[0].field
+    assert fld.amp_modulation == "pure"

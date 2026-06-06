@@ -1,9 +1,10 @@
-"""Render the prismatic head's two bias/variance strand fields into the paper.
+"""Render the prismatic head's bias/variance strand fields into the paper.
 
-A 1-to-1 still of the dashboard's "Bias/Variance Strands" card, for the two arms
+A 1-to-1 still of the dashboard's "Bias/Variance Strands" card, for the arms
 of the prismatic (ParallelHead) head side by side: the bias arm (a static field,
-its feature-hairs pure bias = blue) and the variance arm (an input-conditional
-field, its hairs spanning the blue-to-red bias/variance spectrum).
+its feature-hairs pure bias = blue), the variance arm (an input-conditional
+field, its hairs spanning the blue-to-red bias/variance spectrum), and - with
+prismatic3 - a pure-variance arm (no static spectrum, hairs grow pure red).
 
 The data is exactly what the card uses - each arm's
 ``HarmonicField.field_strands()`` (angle, per-feature bias/variance energy). The
@@ -94,7 +95,9 @@ def _segments_and_colors(data):
         return None
     angle, bias, var = angle[:n], bias[:n], var[:n]
 
-    bmax = max(float(bias.max()), 1e-6)
+    # Scale by peak energy on either axis, so a bias-free ("pure") arm still
+    # spans the unit geometry instead of collapsing to a point.
+    bmax = max(float(bias.max()), float(var.max()), 1e-6)
     r = np.sqrt(bias / bmax)  # [n]
     px = r * 2.0 - 1.0
     py = np.sqrt(var / bmax) * 2.0 - 1.0
@@ -194,7 +197,7 @@ def _render_panel(ax, data, title_main, title_sub):
 
 
 def export_strands(model=None) -> dict:
-    """Render the prismatic head's two strand fields. Needs a live model with a
+    """Render the prismatic head's strand fields. Needs a live model with a
     prismatic (>=2 branch) head; otherwise writes an empty macro."""
     pairs = _branch_fields(model) if model is not None else []
     if len(pairs) < 2:
@@ -205,7 +208,7 @@ def export_strands(model=None) -> dict:
             )
         return {"rendered": False, "branches": len(pairs)}
 
-    datasets = [(b, f.field_strands()) for b, f in pairs[:2]]
+    datasets = [(b, f.field_strands()) for b, f in pairs[:3]]
     # Don't downgrade a good figure to all-blue. The variance arm's spectrum
     # needs populated forward state (_last_input_coeffs); it is non-persistent,
     # so right after a resume - before any forward - every hair reads as pure
@@ -222,9 +225,11 @@ def export_strands(model=None) -> dict:
     import matplotlib.pyplot as plt
 
     os.makedirs(FIG_DIR, exist_ok=True)
-    fig, axes = plt.subplots(1, 2, figsize=(6, 3.3), facecolor="#0f1117")
-    # branch 0 is the bias arm, branch 1 the variance arm (the prismatic profile).
-    roles = ["bias arm", "variance arm"]
+    n_arms = len(datasets)
+    fig, axes = plt.subplots(1, n_arms, figsize=(3 * n_arms, 3.3), facecolor="#0f1117")
+    # branch 0 is the bias arm, branch 1 the variance arm (the prismatic
+    # profile); prismatic3 adds a third, variance-only arm.
+    roles = ["bias arm", "variance arm", "pure-variance arm"]
     for i, (ax, (branch, d)) in enumerate(zip(axes, datasets)):
         tag = chr(ord("A") + i)
         role = roles[i] if i < len(roles) else ""
@@ -236,17 +241,26 @@ def export_strands(model=None) -> dict:
     plt.close(fig)
     rel = os.path.relpath(out, RESEARCH_DIR)
 
+    third = (
+        "Head C (right) is the pure-variance arm: it carries no static "
+        "spectrum at all, so its hairs grow pure red from nothing - variance "
+        "arriving from the opposite end of the decomposition. "
+        if n_arms >= 3
+        else ""
+    )
     caption = (
-        "The prismatic head's two arms, rendered exactly as the dashboard's "
+        f"The prismatic head's {'three' if n_arms >= 3 else 'two'} arms, "
+        "rendered exactly as the dashboard's "
         "bias/variance strand card. Each hair is one feature, morphing from a "
         "ring (its static-field phase) out to its (bias, variance) position with "
         "a helical twist; color runs blue (pure bias) to red (pure variance). "
         "Head A (left) is the bias arm: it reads a static field, so every hair "
-        "stays blue - a constant structural vote. Head B (right) is the variance "
+        f"stays blue - a constant structural vote. Head B {'(center)' if n_arms >= 3 else '(right)'} "
+        "is the variance "
         "arm, whose input-conditional envelope lets hairs swing toward red - the "
-        "data-dependent vote. Each panel's subtitle lists that arm's head stack. "
-        "The two "
-        "together are the orthogonal bias/variance decomposition made "
+        f"data-dependent vote. {third}"
+        "Each panel's subtitle lists that arm's head stack. "
+        "Together they are the orthogonal bias/variance decomposition made "
         "architectural - convex and radial from the center, chaotic in the arms."
     )
     with open(OUT_TEX, "w") as fh:

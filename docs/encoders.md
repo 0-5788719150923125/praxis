@@ -3,7 +3,7 @@
 
 Front-end encoders, including the byte-latent and abstractinator variants.
 
-Registry: ``praxis.ENCODER_REGISTRY`` (10 entries)
+Registry: ``praxis.ENCODER_REGISTRY`` (11 entries)
 
 ## `abstractinator` - AbstractinatorEncoder
 
@@ -35,7 +35,7 @@ Presets:
 - `byte_latent_conv_small` - `embeddings='byte_hash', local_architecture='conv', n_layers_decoder=2, n_layers_encoder=2, patching_mode='space'`
 - `byte_latent_transformer` - `embeddings='byte_hash', local_architecture='transformer', n_layers_decoder=1, n_layers_encoder=1, patching_mode='space'`
 
-## `calm`, `calm_bpe`, `calm_byte`, `calm_byte_small`, `calm_small` - CALMEncoder
+## `calm`, `calm_bpe`, `calm_byte`, `calm_byte_small`, `calm_byte_small_harmonic`, `calm_small` - CALMEncoder
 
 Shared contract for encoders plugged into the model's input slot.
 
@@ -45,5 +45,6 @@ Presets:
 - `calm` - `ae_dropout=0.15, ae_hidden=512, chunk_size=8, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=128, noise_dim=128`
 - `calm_bpe` - `ae_dropout=0.15, ae_hidden=512, chunk_size=4, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=128, noise_dim=128`
 - `calm_byte` - `ae_dropout=0.15, ae_hidden=512, chunk_size=16, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=128, noise_dim=128`
-- `calm_byte_small` - `ae_dropout=0.1, ae_hidden=1.0, chunk_size=4, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=0.25, noise_dim=0.25, vote_num_samples=500`
+- `calm_byte_small` - `ae_dropout=0.1, ae_hidden=1.5, chunk_size=8, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=0.5, noise_dim=0.5, vote_num_samples=500`
+- `calm_byte_small_harmonic` - `ae_dropout=0.1, ae_dropout_cycles=2, ae_dropout_mode='harmonic', ae_hidden=1.5, chunk_size=8, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=0.5, noise_dim=0.5, vote_num_samples=500`
 - `calm_small` - `ae_dropout=0.1, ae_hidden=1.0, chunk_size=8, energy_alpha=1.0, energy_blocks=2, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=0.25, noise_dim=0.25`

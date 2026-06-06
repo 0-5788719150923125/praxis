@@ -347,6 +347,8 @@ class CALMEncoder(BaseEncoder):
         kl_clip: float = 0.5,
         kl_warmup_steps: Optional[int] = None,
         ae_dropout: float = 0.15,
+        ae_dropout_mode: str = "scalar",
+        ae_dropout_cycles: int = 2,
         noise_dim: Union[int, float] = 128,
         energy_blocks: int = 3,
         energy_samples_n: int = 8,
@@ -486,8 +488,8 @@ class CALMEncoder(BaseEncoder):
             latent_dim=self.latent_dim,
             hidden_dim=self.ae_hidden,
             dropout=self.ae_dropout,
-            dropout_mode=getattr(config, "ae_dropout_mode", "scalar"),
-            dropout_cycles=getattr(config, "ae_dropout_cycles", 2),
+            dropout_mode=ae_dropout_mode,
+            dropout_cycles=ae_dropout_cycles,
         )
 
         # The token classifier (forward/crystal/...) is built from

@@ -128,18 +128,26 @@ CALMBpe = partial(
 # frontier (50 was far too noisy for patch-vote decoding).
 CALMByteSmall = partial(
     CALMEncoder,
-    chunk_size=4,
-    latent_dim=0.25,
-    ae_hidden=1.0,
+    chunk_size=8,
+    latent_dim=0.5,
+    ae_hidden=1.5,
     kl_beta=1e-3,
     kl_clip=0.5,
     ae_dropout=0.1,
-    noise_dim=0.25,
+    noise_dim=0.5,
     energy_blocks=3,
     energy_samples_n=8,
     energy_samples_m=100,
     energy_alpha=1.0,
     vote_num_samples=500,
+)
+
+# CALMByteSmall with harmonic codec dropout: the scalar rate becomes a
+# standing-wave field over (patch position, channel), n cycles per axis.
+CALMByteSmallHarmonic = partial(
+    CALMByteSmall,
+    ae_dropout_mode="harmonic",
+    ae_dropout_cycles=2,
 )
 
 
@@ -168,6 +176,7 @@ ENCODER_REGISTRY = dict(
     calm_small=CALMSmall,
     calm_byte=CALMByte,
     calm_byte_small=CALMByteSmall,
+    calm_byte_small_harmonic=CALMByteSmallHarmonic,
     calm_bpe=CALMBpe,
     # # Entropy-based patching
     # byte_latent_transformer_entropy=ByteLatentTransformerEntropy,

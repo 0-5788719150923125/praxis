@@ -52,4 +52,16 @@ HEAD_REGISTRY = dict(
             partial(SequentialHead, heads=[_field("input"), CrystalHead]),
         ],
     ),
+    # Prismatic + a third, variance-only arm: a "pure" field (no static
+    # spectrum; the conditional delta alone, zero at init) with its own linear
+    # readout - the mirror of the bias arm. Variance can arrive in bins the
+    # bias arms never occupy; its strand card starts empty and grows pure red.
+    prismatic3=partial(
+        ParallelHead,
+        branches=[
+            partial(SequentialHead, heads=[_field("learned", build_classifier=True)]),
+            partial(SequentialHead, heads=[_field("input"), CrystalHead]),
+            partial(SequentialHead, heads=[_field("pure", build_classifier=True)]),
+        ],
+    ),
 )
