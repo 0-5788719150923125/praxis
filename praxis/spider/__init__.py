@@ -49,7 +49,9 @@ class SpiderSettings:
     revisit_days: int = 7  # re-fetch the stalest page when the frontier is dry
 
 
-def spider_settings(entries: Optional[Union[List[str], dict]]) -> Optional[SpiderSettings]:
+def spider_settings(
+    entries: Optional[Union[List[str], dict]],
+) -> Optional[SpiderSettings]:
     """Resolve ``--spider`` KEY=VALUE entries to settings; None = disabled.
 
     ``profile`` picks a base from ``SPIDER_REGISTRY`` (default "gentle");

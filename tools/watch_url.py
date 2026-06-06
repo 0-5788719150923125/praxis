@@ -43,7 +43,9 @@ def main() -> int:
         for url, last_fetch, streak, enabled, pages in sites:
             status = "ok" if enabled else f"disabled ({streak} errors)"
             ago = (
-                f"{int((time.time() - last_fetch) / 60)}m ago" if last_fetch else "never"
+                f"{int((time.time() - last_fetch) / 60)}m ago"
+                if last_fetch
+                else "never"
             )
             print(f"{url}  pages={pages}  last_fetch={ago}  {status}")
     store.close()

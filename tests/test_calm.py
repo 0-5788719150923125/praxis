@@ -471,8 +471,12 @@ def test_calm_vae_reference_dropouts():
 
     torch.manual_seed(0)
     vae = CALMVAE(
-        vocab_size=64, embed_dim=8, chunk_size=4,
-        latent_dim=8, hidden_dim=16, dropout=0.5,
+        vocab_size=64,
+        embed_dim=8,
+        chunk_size=4,
+        latent_dim=8,
+        hidden_dim=16,
+        dropout=0.5,
     )
     ids = torch.randint(1, 64, (2, 32))
 

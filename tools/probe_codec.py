@@ -24,10 +24,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 def _split_probe_args(argv):
     probe = argparse.ArgumentParser(add_help=False)
-    probe.add_argument("--probe-text", default=(
-        "The quick brown fox jumps over the lazy dog. "
-        "She sells sea shells by the sea shore."
-    ))
+    probe.add_argument(
+        "--probe-text",
+        default=(
+            "The quick brown fox jumps over the lazy dog. "
+            "She sells sea shells by the sea shore."
+        ),
+    )
     probe.add_argument("--probe-sigmas", default="0,0.5,1,2,4")
     probe.add_argument("--probe-ckpt", default=None)
     known, rest = probe.parse_known_args(argv)
@@ -45,7 +48,7 @@ def _load_checkpoint(model, ckpt_path):
     for k, v in state.items():
         for prefix in ("model._orig_mod.", "model."):
             if k.startswith(prefix):
-                k = k[len(prefix):]
+                k = k[len(prefix) :]
                 break
         cleaned[k] = v
     missing, unexpected = model.load_state_dict(cleaned, strict=False)

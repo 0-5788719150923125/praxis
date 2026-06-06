@@ -120,7 +120,9 @@ class CausalAttention(nn.Module):
         swaps = []  # (store_dict, name, original_tensor)
 
         def swap(module, name, new):
-            store = module._parameters if name in module._parameters else module._buffers
+            store = (
+                module._parameters if name in module._parameters else module._buffers
+            )
             swaps.append((store, name, store[name]))
             store[name] = new
 

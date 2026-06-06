@@ -6,7 +6,6 @@ from praxis.spider import SpiderSettings, spider_settings
 from praxis.spider.fetch import _Extractor, _normalize_link
 from praxis.spider.store import SpiderStore, site_of
 
-
 # --- settings ---
 
 
@@ -87,7 +86,7 @@ def test_error_backoff_disables_after_streak(store):
     store.add_site("https://a.com", max_sites=4)
     for _ in range(8):
         store.record_error("https://a.com/", "https://a.com")
-    (_, _, streak, enabled, _) = store.list_sites()[0]
+    _, _, streak, enabled, _ = store.list_sites()[0]
     assert streak == 8 and enabled == 0
 
 
@@ -102,8 +101,13 @@ def test_revisit_when_frontier_dry(store):
 def test_conditional_headers_roundtrip(store):
     store.add_site("https://a.com", max_sites=4)
     store.record_page(
-        "https://a.com/", "https://a.com", "t", "x", "s",
-        etag='W/"abc"', last_modified="Mon, 01 Jan 2026 00:00:00 GMT",
+        "https://a.com/",
+        "https://a.com",
+        "t",
+        "x",
+        "s",
+        etag='W/"abc"',
+        last_modified="Mon, 01 Jan 2026 00:00:00 GMT",
     )
     headers = store.conditional_headers("https://a.com/")
     assert headers["If-None-Match"] == 'W/"abc"'

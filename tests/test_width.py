@@ -72,7 +72,9 @@ def test_hooks_are_removed_on_exit():
 
 def test_helix_window_precesses_with_depth():
     """The active set at successive depths is rotated, not identical (coverage)."""
-    policy = WIDTH_REGISTRY["helical_steady"]()  # constant width, so only the start moves
+    policy = WIDTH_REGISTRY[
+        "helical_steady"
+    ]()  # constant width, so only the start moves
     block, x = _Block(), torch.randn(2, 3, 8)
 
     def active_set(depth):

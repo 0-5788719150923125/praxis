@@ -104,9 +104,7 @@ class SpiderStore:
             ).fetchone()
             if stale:
                 self.remove_site(stale[0])
-        self._conn.execute(
-            "INSERT INTO sites (url, added) VALUES (?, ?)", (site, now)
-        )
+        self._conn.execute("INSERT INTO sites (url, added) VALUES (?, ?)", (site, now))
         self._conn.execute(
             "INSERT OR IGNORE INTO frontier (url, site, depth, discovered) "
             "VALUES (?, ?, 0, ?)",
@@ -212,9 +210,10 @@ class SpiderStore:
         only; promotion never evicts an existing site."""
         promoted = []
         while True:
-            free = max_sites - self._conn.execute(
-                "SELECT COUNT(*) FROM sites"
-            ).fetchone()[0]
+            free = (
+                max_sites
+                - self._conn.execute("SELECT COUNT(*) FROM sites").fetchone()[0]
+            )
             if free <= 0:
                 return promoted
             row = self._conn.execute(
@@ -260,9 +259,9 @@ class SpiderStore:
         crawl outcomes from the event log."""
         out = {
             "pages": self._conn.execute("SELECT COUNT(*) FROM pages").fetchone()[0],
-            "frontier": self._conn.execute(
-                "SELECT COUNT(*) FROM frontier"
-            ).fetchone()[0],
+            "frontier": self._conn.execute("SELECT COUNT(*) FROM frontier").fetchone()[
+                0
+            ],
             "sites": self._conn.execute(
                 "SELECT COUNT(*) FROM sites WHERE enabled = 1"
             ).fetchone()[0],

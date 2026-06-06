@@ -119,9 +119,7 @@ def _irfft2_reference(field, scaled, seq_len):
     batched = scaled.dim() == 3
     if not batched:
         scaled = scaled.unsqueeze(0)
-    spec = torch.zeros(
-        scaled.shape[0], field.T, rfft_D, dtype=torch.complex64
-    )
+    spec = torch.zeros(scaled.shape[0], field.T, rfft_D, dtype=torch.complex64)
     spec[:, 1 : field.F_t + 1, 1 : field.F_d + 1] = scaled
     spec[:, field.T - field.F_t : field.T, 1 : field.F_d + 1] = scaled.flip(1).conj()
     out = torch.fft.irfft2(spec, s=(field.T, field.D), norm="ortho")[:, :seq_len]

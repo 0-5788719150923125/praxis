@@ -176,7 +176,7 @@ def evolution_data() -> dict:
     def _bin(ts):
         return min(int((ts - t0) / span * (N_BINS - 1)), N_BINS - 1)
 
-    series = {lbl: [0.0] * N_BINS for lbl in labels}   # churn per bin (activity)
+    series = {lbl: [0.0] * N_BINS for lbl in labels}  # churn per bin (activity)
     totals = {lbl: [None] * N_BINS for lbl in labels}  # cumulative net (total lines)
     running = defaultdict(float)
     for ts, cell in commits:
@@ -361,7 +361,11 @@ def _iso_boxes(data: dict):
     a tapered churn cap (the activity in that window). Recent windows stack tall
     and cap vivid; history thins toward the floor and fades to the prior."""
     subs, series, totals, colors = (
-        data["subsystems"], data["series"], data["totals"], data["colors"])
+        data["subsystems"],
+        data["series"],
+        data["totals"],
+        data["colors"],
+    )
     T = data["bins"]
     cmax = max((max(series[s]) for s in subs if series[s]), default=0.0) or 1.0
     tmax = max((max(totals[s]) for s in subs if totals[s]), default=0.0) or 1.0
@@ -375,27 +379,49 @@ def _iso_boxes(data: dict):
     def box(x0, x1, y0, y1, tx0, tx1, ty0, ty1, z0, z1, col):
         # Three visible faces; sides slant from the base footprint (z0) to the
         # (possibly inset) top footprint (z1).
-        top = [proj(tx0, ty0, z1), proj(tx1, ty0, z1), proj(tx1, ty1, z1), proj(tx0, ty1, z1)]
-        east = [proj(x1, y0, z0), proj(x1, y1, z0), proj(tx1, ty1, z1), proj(tx1, ty0, z1)]
-        south = [proj(x0, y1, z0), proj(x1, y1, z0), proj(tx1, ty1, z1), proj(tx0, ty1, z1)]
-        return [(south, _shade(col, 0.6)), (east, _shade(col, 0.8)), (top, _shade(col, 1.0))]
+        top = [
+            proj(tx0, ty0, z1),
+            proj(tx1, ty0, z1),
+            proj(tx1, ty1, z1),
+            proj(tx0, ty1, z1),
+        ]
+        east = [
+            proj(x1, y0, z0),
+            proj(x1, y1, z0),
+            proj(tx1, ty1, z1),
+            proj(tx1, ty0, z1),
+        ]
+        south = [
+            proj(x0, y1, z0),
+            proj(x1, y1, z0),
+            proj(tx1, ty1, z1),
+            proj(tx0, ty1, z1),
+        ]
+        return [
+            (south, _shade(col, 0.6)),
+            (east, _shade(col, 0.8)),
+            (top, _shade(col, 1.0)),
+        ]
 
     blocks = []  # (depth_key, [(poly, rgb), ...])
     for j, s in enumerate(subs):
         base_rgb = _hex_rgb(colors.get(s, "#586072"))
         for i in range(T):
-            u = i / max(T - 1, 1)                       # 0 oldest .. 1 now
-            w = math.exp(-RECENCY_DECAY * (1.0 - u))    # recency weight
+            u = i / max(T - 1, 1)  # 0 oldest .. 1 now
+            w = math.exp(-RECENCY_DECAY * (1.0 - u))  # recency weight
             g = ISO_GAP / 2.0
             x0, x1, y0, y1 = i + g, i + 1 - g, j + g, j + 1 - g
-            phase = 1.0 + PHASE_AMP * math.cos(2 * math.pi * PHASE_CYCLES * (1.0 - u) ** 1.3)
+            phase = 1.0 + PHASE_AMP * math.cos(
+                2 * math.pi * PHASE_CYCLES * (1.0 - u) ** 1.3
+            )
             faces = []
             # Base stack: total lines (codebase size), recency-weighted -> N
             # rectangular blocks (sqrt so smaller subsystems still show some).
             tot = totals[s][i] / tmax
-            n_stack = int(round((tot ** 0.5) * w * MAX_STACK))
-            base_col = tuple(min(1.0, c * phase)
-                             for c in mix(PRIOR_RGB, base_rgb, min(1.0, w * 0.7)))
+            n_stack = int(round((tot**0.5) * w * MAX_STACK))
+            base_col = tuple(
+                min(1.0, c * phase) for c in mix(PRIOR_RGB, base_rgb, min(1.0, w * 0.7))
+            )
             for k in range(n_stack):
                 z0 = ISO_FLOOR + k * BASE_UNIT
                 z1 = z0 + BASE_UNIT * (1.0 - STACK_GAP)
@@ -407,9 +433,22 @@ def _iso_boxes(data: dict):
                 cap_h = c * w * CAP_HMAX
                 tp = ISO_TAPER * (cap_h / CAP_HMAX)
                 ix, iy = tp * (x1 - x0) / 2.0, tp * (y1 - y0) / 2.0
-                cap_col = tuple(min(1.0, c2 * phase) for c2 in mix(PRIOR_RGB, base_rgb, w))
-                faces += box(x0, x1, y0, y1, x0 + ix, x1 - ix, y0 + iy, y1 - iy,
-                             base_top, base_top + cap_h, cap_col)
+                cap_col = tuple(
+                    min(1.0, c2 * phase) for c2 in mix(PRIOR_RGB, base_rgb, w)
+                )
+                faces += box(
+                    x0,
+                    x1,
+                    y0,
+                    y1,
+                    x0 + ix,
+                    x1 - ix,
+                    y0 + iy,
+                    y1 - iy,
+                    base_top,
+                    base_top + cap_h,
+                    cap_col,
+                )
             if faces:
                 blocks.append((i + j, faces))
     blocks.sort(key=lambda b: b[0])  # back to front
