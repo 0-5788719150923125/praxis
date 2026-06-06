@@ -13,12 +13,12 @@ hidden_size: 96
 embed_size: 64
 ffn_type: arc
 attention_type: arc
+window_size: 64
 num_heads: 4
 num_queries: 1
 encoder_type: byte_latent_conv_small
 tokenizer_type: byte_level
 decoder_type: sequential
-window_size: 64
 activation: serpent
 norm_type: sandwich
 halting_type: kl
@@ -29,7 +29,7 @@ data_path: ["/opt/platformer"]
 sampler_mode: uniform
 task_weights: difficulty_bias_pretrain
 loss_func: cross_entropy
-# head_type: prismatic
+head_type: prismatic
 encoding: arc
 tie_weights: true
 # Bring the remote-expert pool online (praxis.orchestration). The "swarm"
@@ -38,4 +38,4 @@ tie_weights: true
 # patch-vote decoding) - reporting live capacity + a growing remote_layers count
 # on both dashboards. Detached, layer-wise (Mono-Forward) updates, so a slow peer
 # never blocks training.
-# orchestration_type: swarm
+orchestration_type: swarm

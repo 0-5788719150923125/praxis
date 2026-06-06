@@ -75,10 +75,10 @@ class HuggingfaceDataset(PraxisSampler):
         # Pin a commit when provided: resolves from cache harder and keeps runs reproducible.
         if "revision" in config:
             dataset_args["revision"] = config["revision"]
-        self.dataset = load_dataset_smart(dataset_args)
+        self.dataset = self._load_frugal(dataset_args)
 
         # Initial shuffle with base seed
-        self.buffer_size = config.get("buffer_size", 100)
+        self.buffer_size = config.get("buffer_size", 32)
         shuffle_args = {"seed": self.base_seed}
         if self.is_streaming:
             shuffle_args["buffer_size"] = self.buffer_size
@@ -91,6 +91,32 @@ class HuggingfaceDataset(PraxisSampler):
 
         # Storage for rewards when using RL format
         self.reward_cache = {}
+
+    def _load_frugal(self, dataset_args: Dict):
+        """Load the stream with small fetches: prune to the columns we actually
+        read, decode small record batches (default is a whole row group), and
+        shrink the per-request network buffer (default 32MiB). These are parquet
+        builder options; datasets that reject them fall back to a plain load.
+        """
+        if not self.is_streaming:
+            return load_dataset_smart(dataset_args)
+        frugal = dict(dataset_args)
+        if self.keys:
+            frugal["columns"] = list(self.keys)
+        frugal["batch_size"] = 64  # rows per decoded RecordBatch
+        try:
+            import pyarrow as pa
+            import pyarrow.dataset as pads
+
+            frugal["fragment_scan_options"] = pads.ParquetFragmentScanOptions(
+                cache_options=pa.CacheOptions(range_size_limit=4 << 20)
+            )
+        except Exception:
+            pass
+        try:
+            return load_dataset_smart(frugal)
+        except Exception:
+            return load_dataset_smart(dataset_args)
 
     def get_document(self) -> Dict:
         """Get a formatted document with messages and metadata."""

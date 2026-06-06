@@ -227,8 +227,13 @@ class InterleaveDataManager:
             else:
                 self.weights = self.dynamic_weights
 
-        # Ensure message queue has enough documents
-        self._refill_message_queue()
+        # Ensure message queue has enough documents. Sized to demand: a batch
+        # consumes at most a few docs per sequence, so a small headroom beats
+        # the old fixed 100-doc fill (each fetch drags whole record batches
+        # off the wire; at tiny scale the queue was almost all dead weight).
+        self._refill_message_queue(
+            min_documents=max(16, current_batch_size * sequence_multiplier * 4)
+        )
 
         # Get batch from message queue with adjusted sequence length
         if self.rl_type:
@@ -246,7 +251,7 @@ class InterleaveDataManager:
 
         return batch
 
-    def _refill_message_queue(self, min_documents: int = 100):
+    def _refill_message_queue(self, min_documents: int = 16):
         """
         Refill the message queue with documents from samplers.
 
