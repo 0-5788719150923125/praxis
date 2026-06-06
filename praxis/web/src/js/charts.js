@@ -6,6 +6,7 @@
 import { state, CONSTANTS, chartLineColor, currentAccentHue, rotateHexHue } from './state.js';
 import { fetchAPI } from './api.js';
 import { createTabHeader, pdfButton } from './components.js';
+import { dedupe, hasRealContent } from './prefetch.js';
 
 // Chart instances storage (exported for hybrid mode)
 export const charts = {};
@@ -424,16 +425,21 @@ export function formatRelativeTime(timestamp) {
  * @param {boolean} force - If true, re-fetch even if already loaded.
  */
 export async function loadResearchMetricsWithCharts(force = false) {
+    await dedupe('tab:research', () => loadResearchInner(force));
+}
+
+async function loadResearchInner(force) {
     if (state.research.loaded && !force) return;
 
     const container = document.getElementById('research-container');
     if (!container) return;
 
+    // Stale-while-revalidate: keep the current charts painted during a
+    // refresh; only first loads show the placeholder.
     const chartsArea = document.getElementById('metrics-charts-area');
-    if (chartsArea) {
-        chartsArea.innerHTML = '<div class="loading-placeholder">Loading metrics...</div>';
-    } else {
-        container.innerHTML = '<div class="loading-placeholder">Loading metrics...</div>';
+    const target = chartsArea || container;
+    if (!hasRealContent(target)) {
+        target.innerHTML = '<div class="loading-placeholder">Loading metrics...</div>';
     }
 
     try {

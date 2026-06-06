@@ -31,6 +31,12 @@ def test_dict_entries_from_yml():
     assert settings.tick_seconds == 600
 
 
+def test_fractional_revisit_days():
+    settings = spider_settings(["tick_seconds=3600", "revisit_days=0.05"])
+    assert settings.revisit_days == 0.05
+    assert settings.tick_seconds == 3600
+
+
 @pytest.mark.parametrize("bad", [["nope"], ["profile=missing"], ["bogus=1"]])
 def test_invalid_entries_raise(bad):
     with pytest.raises(ValueError):

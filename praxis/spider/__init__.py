@@ -23,16 +23,16 @@ SPIDER_REGISTRY: Dict[str, dict] = {
         tick_seconds=300,
         domain_seconds=1800,
         max_page_bytes=2 * 1024 * 1024,
-        revisit_days=7,
+        revisit_days=7.0,
     ),
-    "brisk": dict(
-        max_sites=16,
-        max_pages_per_site=50,
-        max_kb_pages=200,
+    "ghost": dict(
+        max_sites=23,
+        max_pages_per_site=23,
+        max_kb_pages=230,
         tick_seconds=15,
         domain_seconds=60,
         max_page_bytes=2 * 1024 * 1024,
-        revisit_days=1,
+        revisit_days=0.01,  # 14.4 minutes; for testing re-fetching of stale pages
     ),
 }
 
@@ -46,7 +46,8 @@ class SpiderSettings:
     tick_seconds: int = 300  # one HTTP request per tick, globally
     domain_seconds: int = 1800  # minimum spacing between hits to one host
     max_page_bytes: int = 2 * 1024 * 1024  # response size cap, text/html only
-    revisit_days: int = 7  # re-fetch the stalest page when the frontier is dry
+    revisit_days: float = 7.0  # re-fetch the stalest page when the frontier is
+    # dry; fractional = sub-day watching (0.05 ≈ every 72 minutes)
 
 
 def spider_settings(
@@ -77,14 +78,22 @@ def spider_settings(
         )
     spec = dict(SPIDER_REGISTRY[profile], profile=profile)
 
-    valid = {f.name: f.type for f in fields(SpiderSettings)}
+    valid = {f.name for f in fields(SpiderSettings)}
     for key, value in overrides.items():
         if key not in valid:
             raise ValueError(
                 f"Unknown spider setting {key!r}. Available: {sorted(valid)}"
             )
-        spec[key] = int(value) if key != "profile" else str(value)
+        spec[key] = _cast(key, value)
     return SpiderSettings(**spec)
+
+
+def _cast(key: str, value):
+    if key == "profile":
+        return str(value)
+    if key == "revisit_days":
+        return float(value)
+    return int(value)
 
 
 __all__ = ["SPIDER_REGISTRY", "SpiderSettings", "spider_settings"]

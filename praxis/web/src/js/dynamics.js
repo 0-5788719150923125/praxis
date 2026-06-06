@@ -8,6 +8,7 @@ import { fetchAPI } from './api.js';
 import { createTabHeader, pdfButton } from './components.js';
 import { formatRelativeTime, initChartDeck, applyChartTheme } from './charts.js';
 import { sampleColormap } from './colormaps.js';
+import { dedupe, hasRealContent } from './prefetch.js';
 
 // Chart instances
 export const dynamicsCharts = {};
@@ -78,6 +79,10 @@ export function selectDynamicsRun(hash) {
  * Load and render learning dynamics
  */
 export async function loadDynamicsWithCharts(force = false) {
+    await dedupe('tab:dynamics', () => loadDynamicsInner(force));
+}
+
+async function loadDynamicsInner(force) {
     if (state.dynamics.loaded && !force) {
         return;
     }
@@ -85,7 +90,9 @@ export async function loadDynamicsWithCharts(force = false) {
     const container = document.getElementById('dynamics-container');
     if (!container) return;
 
-    container.innerHTML = '<div class="loading-placeholder">Loading learning dynamics...</div>';
+    if (!hasRealContent(container)) {
+        container.innerHTML = '<div class="loading-placeholder">Loading learning dynamics...</div>';
+    }
 
     try {
         await loadAvailableDynamicsRuns();

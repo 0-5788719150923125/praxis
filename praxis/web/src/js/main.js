@@ -141,25 +141,44 @@ function init() {
  * Each is laid out off-screen at the active region's size so its charts measure
  * and render fully - making the first navigation instant, like a revisit.
  */
+// Re-warm hidden tabs this often so their data is fresh BEFORE navigation.
+// Endpoints are cheap (ETag 304s for metrics; small JSON elsewhere) and the
+// refresh only ever touches hidden tabs, so it can never flash the screen.
+const TAB_REFRESH_MS = 60000;
+
 async function prefetchTabs() {
     const { loadResearchMetrics, loadDynamics, loadSpec, loadAgents } = await import('./tabs.js');
-    // [contentId, loader, needsLayout] - deck tabs must be laid out off-screen so
-    // their charts measure; the Stage fleet is a plain list, so a background load
-    // is enough.
+    // [tabId, contentId, loader, needsLayout] - deck tabs must be laid out
+    // off-screen so their charts measure; the Stage fleet is a plain list, so
+    // a background load is enough.
     const jobs = [
-        ['spec-content', loadSpec, true],
-        ['research-content', loadResearchMetrics, true],
-        ['dynamics-content', loadDynamics, true],
-        ['agents-content', loadAgents, false],
+        ['spec', 'spec-content', loadSpec, true],
+        ['research', 'research-content', loadResearchMetrics, true],
+        ['dynamics', 'dynamics-content', loadDynamics, true],
+        ['agents', 'agents-content', loadAgents, false],
     ];
-    setTimeout(async () => {
-        for (const [contentId, load, needsLayout] of jobs) {
+    const warm = async (force) => {
+        for (const [tabId, contentId, load, needsLayout] of jobs) {
+            // Never touch the visible tab from the background path: its loader
+            // rebuilds the DOM, which would flash mid-read. It refreshes via
+            // its own controls; hidden tabs swap invisibly and arrive fresh.
+            if (force && state.currentTab === tabId) continue;
             try {
-                await (needsLayout ? prewarmTab(contentId, load) : load(false));
+                const loader = () => load(force);
+                await (needsLayout ? prewarmTab(contentId, loader) : loader());
             } catch (error) {
                 console.warn('[Praxis] Tab prewarm failed:', contentId, error);
             }
         }
+    };
+    setTimeout(async () => {
+        await warm(false);  // initial fill: first navigation lands warm
+        // Steady-state: keep hidden tabs fresh. Sequential + paused while the
+        // page itself is hidden, so it never competes with the live stream.
+        setInterval(() => {
+            if (document.hidden) return;
+            warm(true);
+        }, TAB_REFRESH_MS);
     }, 600);
 }
 
@@ -173,7 +192,7 @@ async function prewarmTab(contentId, load) {
     const active = document.querySelector('.tab-content.active');
     const rect = active ? active.getBoundingClientRect() : null;
     if (!el || !rect || rect.height < 50) {
-        await load(false);  // can't size it; fall back to a plain background load
+        await load();  // can't size it; fall back to a plain background load
         return;
     }
 
@@ -190,7 +209,7 @@ async function prewarmTab(contentId, load) {
         zIndex: '-1',
     });
     try {
-        await load(false);
+        await load();
         await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
     } finally {
         el.removeAttribute('style');  // back to .tab-content (display:none) until activated

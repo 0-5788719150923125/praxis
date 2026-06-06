@@ -32,7 +32,7 @@ import torch._dynamo as dynamo
 import torch.nn.functional as F
 from torch import nn
 
-from praxis.heads.energy import EnergyHead
+from praxis.heads.energy import ENERGY_PRIOR_REGISTRY, EnergyHead
 from praxis.losses import get_loss_function
 from praxis.losses.energy_score import energy_score_loss
 
@@ -71,7 +71,7 @@ PRETRAIN_FLAT_EPS = 1.0  # converged when the window's drift < one noise std
 # Deviates from the paper (justified by the scale gap the paper never faces);
 # set 0.0 for paper-pure behavior. Watch calm_energy_anchor descend.
 ENERGY_ANCHOR_WEIGHT = 5.0
-# Trinary geometric mode (loss_func: halo_geometric) replaces the monolithic
+# Trinary geometric mode (loss_func: halo) replaces the monolithic
 # MSE anchor with its decomposition: an angular HALO CE through the frozen
 # codec (which centroid cell the next patch lives in - the dense, per-token
 # signal the energy score lacks) and a radial norm match (the part of the
@@ -212,6 +212,37 @@ class CALMEncoder(BaseEncoder):
                 "order": 64,
             },
         },
+        "calm_prior_r2": {
+            "description": (
+                "R² of the energy head's closed-form linear prior: the "
+                "fraction of next-latent variance the ridge solve explains "
+                "from the backbone state. High = the conditional structure "
+                "was mostly the linear map (now solved for free); ~0 = the "
+                "backbone does not linearize the sequence. The decisive "
+                "metric for the linear-solve hypothesis."
+            ),
+            "chart": {
+                "title": "Linear Prior R²",
+                "y_label": "R²",
+                "y_scale": "linear",
+                "group": "calm",
+                "order": 68,
+            },
+        },
+        "calm_prior_norm": {
+            "description": (
+                "Frobenius norm of the prior's solved W. Grows during the "
+                "solve window, then flat once frozen; 0 means the solve has "
+                "not run (or the prior is disabled)."
+            ),
+            "chart": {
+                "title": "Linear Prior ‖W‖",
+                "y_label": "frobenius",
+                "y_scale": "linear",
+                "group": "calm",
+                "order": 69,
+            },
+        },
         "calm_halo_angular": {
             "description": (
                 "Geometric mode: HALO distance-to-centroid CE of the head's "
@@ -326,6 +357,7 @@ class CALMEncoder(BaseEncoder):
         requires_pretraining: bool = True,
         ae_max_pretrain_steps: int = 20000,
         vote_num_samples: int = 200,
+        energy_prior: str = "linear",
     ) -> None:
         super().__init__()
         self.config = config
@@ -483,6 +515,29 @@ class CALMEncoder(BaseEncoder):
             hidden_dim=max(config.hidden_size, self.latent_dim),
             num_blocks=self.energy_blocks,
         )
+        # Closed-form linear prior (reservoir-style readout): solved from EMA
+        # sufficient statistics over a post-freeze window, then frozen; the
+        # MLP learns only the residual. See ENERGY_PRIOR_REGISTRY for options
+        # ("none" = paper-pure ablation).
+        prior_factory = ENERGY_PRIOR_REGISTRY[energy_prior]
+        if prior_factory is not None:
+            period = max(2, int(getattr(config, "block_size", 512)) // self.K)
+            self.energy_head.set_prior(
+                prior_factory(
+                    feature_dim=config.hidden_size,
+                    latent_dim=self.latent_dim,
+                    period=period,
+                )
+            )
+        # Optimizer step at which the codec froze (start of the prior's solve
+        # window); -1 until the freeze happens. Persistent for resume.
+        self.register_buffer(
+            "_freeze_opt_step",
+            torch.full((), -1, dtype=torch.long),
+            persistent=True,
+        )
+        # Solve window = the LR warmup horizon (same clock the codec used).
+        self._prior_window = max(1, warmup)
 
         # Loss side-channel: PraxisModel consumes these after decode().
         self._pending_losses: Dict[str, torch.Tensor] = {}
@@ -883,6 +938,29 @@ class CALMEncoder(BaseEncoder):
 
         # Position p predicts latent at p+1. h_cond: [B, N-1, hidden]
         h_cond = h[:, :-1, :]
+        # Conditioning patch positions (harmonic prior's clock).
+        t_cond = torch.arange(N - 1, device=h.device)
+
+        # Linear-solve prior maintenance: accumulate (h, z_next) statistics
+        # and re-solve W during the post-freeze warmup window, then freeze.
+        # The prior is computed, never trained - see LinearPrior.
+        prior = self.energy_head.prior
+        if prior is not None and self.training:
+            if int(self._freeze_opt_step.item()) < 0:
+                self._freeze_opt_step.fill_(self._opt_step())
+            in_window = (
+                self._opt_step() - int(self._freeze_opt_step.item())
+                < self._prior_window
+            )
+            if in_window:
+                prior.observe(
+                    h_cond, self._last_mean[:, 1:, :].detach(), t_cond
+                )
+                prior.solve()
+            elif not bool(prior.frozen.item()):
+                prior.freeze()
+            self._diag["calm_prior_r2"] = prior.last_r2
+            self._diag["calm_prior_norm"] = float(prior.W.norm())
 
         # Target: posterior samples for patches 1..N-1. M independent
         # draws per position, stop-grad so the VAE does not see the
@@ -900,7 +978,7 @@ class CALMEncoder(BaseEncoder):
         # Model samples: N draws from energy head. Same reshape.
         N_samples = self.energy_samples_n
         # [N, B, N-1, L] -> [B, N-1, N, L]
-        model_raw = self.energy_head.sample(h_cond, num_samples=N_samples).permute(
+        model_raw = self.energy_head.sample(h_cond, num_samples=N_samples, t=t_cond).permute(
             1, 2, 0, 3
         )
 
@@ -931,7 +1009,7 @@ class CALMEncoder(BaseEncoder):
             # Gradient reaches only the energy head (+ HALO's own gamma): the
             # codec and centroids are frozen measuring instruments here, so
             # this cannot collapse the downstream harmonies.
-            z_hat = self.energy_head(h_cond, zero_noise)  # [B, N-1, latent]
+            z_hat = self.energy_head(h_cond, zero_noise, t=t_cond)  # [B, N-1, latent]
             feats = self.vae.decode(z_hat)  # [B, (N-1)*K, H]
             logits = self._classify(feats)
             labels = self._last_padded[:, self.K :].clone()
@@ -962,7 +1040,7 @@ class CALMEncoder(BaseEncoder):
             # concentrate on the correct next latent - the energy score alone
             # leaves it at the (marginal) scale only.
             anchor = torch.nn.functional.mse_loss(
-                self.energy_head(h_cond, zero_noise), mean_next
+                self.energy_head(h_cond, zero_noise, t=t_cond), mean_next
             )
             total = total + ENERGY_ANCHOR_WEIGHT * anchor
             self._diag["calm_energy_anchor"] = float(anchor.detach())
@@ -1130,6 +1208,7 @@ class CALMEncoder(BaseEncoder):
         temperature: float,
         num_samples: int = 200,
         noise_scale: float = 1.0,
+        t: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Paper Algorithm 1 (temperature sampling for CALM).
 
@@ -1155,7 +1234,7 @@ class CALMEncoder(BaseEncoder):
             ``[K]`` selected token ids.
         """
         if temperature >= 1.0:
-            z = self.energy_head.sample(h_last, num_samples=1, noise_scale=noise_scale)
+            z = self.energy_head.sample(h_last, num_samples=1, noise_scale=noise_scale, t=t)
             z = z.view(1, 1, -1)
             recon_hidden = self.vae.decode(z)
             recon_logits = self._classify(recon_hidden)
@@ -1181,7 +1260,7 @@ class CALMEncoder(BaseEncoder):
         # concentrates on the patches the head agrees on most often (paper
         # Algorithm 2). noise_scale stays 1.0 for paper-faithful sampling.
         z_pool = self.energy_head.sample(
-            h_last, num_samples=num_samples, noise_scale=noise_scale
+            h_last, num_samples=num_samples, noise_scale=noise_scale, t=t
         )
         z_pool = z_pool.view(num_samples, 1, -1)
         recon_hidden = self.vae.decode(z_pool)  # [N, K, ae_hidden]
@@ -1255,12 +1334,17 @@ class CALMEncoder(BaseEncoder):
         while num_new < max_new_tokens and not done:
             base_out = base_forward(generated)
             h_last = base_out.last_hidden_state[:, -1, :]  # [B, hidden]
+            # Conditioning patch position (the harmonic prior's clock).
+            t_last = torch.tensor(
+                [base_out.last_hidden_state.shape[1] - 1], device=h_last.device
+            )
 
             new_tokens = self._patch_vote_sample(
                 h_last[0],
                 temperature=float(temperature),
                 num_samples=num_samples,
                 noise_scale=noise_scale,
+                t=t_last,
             )  # [K]
             new_tokens = new_tokens.view(1, self.K)
 

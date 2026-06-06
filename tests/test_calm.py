@@ -625,3 +625,70 @@ def test_calm_geometric_mode_off_by_default():
     enc = PraxisForCausalLM(cfg).encoder
     assert not enc.geometric_mode
     assert not hasattr(enc, "geo_loss_fn")
+
+
+def test_linear_prior_recovers_linear_map():
+    """The streaming ridge solve recovers a known linear map z = h @ M with
+    R² near 1, without any gradient training."""
+    from praxis.heads.energy import LinearPrior
+
+    torch.manual_seed(0)
+    prior = LinearPrior(feature_dim=16, latent_dim=4, mode="linear")
+    M = torch.randn(16, 4)
+    for _ in range(30):
+        h = torch.randn(64, 16)
+        prior.observe(h, h @ M)
+        prior.solve()
+    h = torch.randn(64, 16)
+    prior.observe(h, h @ M)  # refresh last_r2 against the solved W
+    assert prior.last_r2 > 0.99
+    assert torch.allclose(prior(h), h @ M, atol=0.05)
+
+    prior.freeze()
+    w_before = prior.W.clone()
+    prior.observe(torch.randn(8, 16), torch.randn(8, 4))
+    prior.solve()
+    assert torch.equal(prior.W, w_before)  # frozen = fixed prior
+
+
+def test_energy_prior_registry_and_default():
+    """linear is the default wherever the energy head is used; none disables;
+    harmonic augments features with the sin/cos basis."""
+    from praxis.heads.energy import ENERGY_PRIOR_REGISTRY, PRIOR_HARMONIC_FREQS
+
+    assert set(ENERGY_PRIOR_REGISTRY) == {"none", "linear", "harmonic"}
+
+    enc = PraxisForCausalLM(_tiny_config()).encoder
+    assert enc.energy_head.prior is not None  # default = linear
+    assert enc.energy_head.prior.mode == "linear"
+
+    harm = ENERGY_PRIOR_REGISTRY["harmonic"](feature_dim=8, latent_dim=4, period=16)
+    phi = harm.features(torch.randn(2, 5, 8), torch.arange(5))
+    assert phi.shape == (2, 5, 8 + 2 * PRIOR_HARMONIC_FREQS)
+
+
+def test_calm_prior_solves_then_freezes_in_stage2():
+    """Stage 2 accumulates stats and solves W during the window, emits the
+    r2/norm diagnostics, and freezes once the window elapses."""
+    cfg = _tiny_config()
+    model = PraxisForCausalLM(cfg)
+    model.train()
+    enc = model.encoder
+    enc.requires_pretraining = False
+    enc.ae_freeze_steps = 1
+    enc._prior_window = 2
+
+    input_ids = torch.randint(4, 200, (2, 32), dtype=torch.long)
+    labels = input_ids[:, 1:].contiguous()
+    model(input_ids=input_ids, labels=labels)  # step 1: cross the boundary
+
+    model(input_ids=input_ids, labels=labels)  # stage 2: observe + solve
+    prior = enc.energy_head.prior
+    assert "calm_prior_r2" in enc._diag
+    assert "calm_prior_norm" in enc._diag
+    assert prior.W.abs().sum() > 0
+    assert not bool(prior.frozen.item())
+
+    for _ in range(4):  # past the window: freezes
+        model(input_ids=input_ids, labels=labels)
+    assert bool(prior.frozen.item())

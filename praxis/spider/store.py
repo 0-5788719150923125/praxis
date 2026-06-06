@@ -130,7 +130,7 @@ class SpiderStore:
 
     # --- frontier ---
 
-    def next_url(self, domain_seconds: int, revisit_days: int) -> Optional[tuple]:
+    def next_url(self, domain_seconds: int, revisit_days: float) -> Optional[tuple]:
         """The best due (url, site, depth) to fetch, skipping sites hit within
         domain_seconds. Ranked by citation count - well-referenced URLs are
         fetched before one-off links, so bad links sink. Falls back to

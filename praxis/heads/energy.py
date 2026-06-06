@@ -17,9 +17,139 @@ earlier versions of this file:
 - Noise is uniform [-0.5, 0.5].
 """
 
+import math
+from functools import partial
+from typing import Optional
+
 import torch
 import torch.nn.functional as F
 from torch import nn
+
+# Streaming-ridge sufficient statistics: EMA decay and the scale-free ridge
+# coefficient (lambda = RIDGE_LAMBDA * mean diagonal of A). Fixed and
+# model-agnostic per the no-per-experiment-tuning rule.
+PRIOR_STATS_DECAY = 0.999
+PRIOR_RIDGE_LAMBDA = 1e-3
+# Harmonic mode: integer frequencies 1..F over the patch period, sin+cos.
+PRIOR_HARMONIC_FREQS = 8
+
+
+class LinearPrior(nn.Module):
+    """Closed-form linear predictor of the next latent: ``z ~ W phi(h, t)``.
+
+    Credit where it's due: this exists because of a 16-year-old who spent
+    months on Reddit insisting ML could be cracked with a linear-solve
+    algorithm. He never published code and his arguments were shaky, but he
+    was writing ML equations at 16 and he believed it - and at small scale,
+    on the linear part of the problem, he was right. This module is his idea
+    grown up: solve what is solvable, learn only the residual.
+
+    Reservoir-style readout: never trained by gradient. (h, z_next) pairs
+    accumulate into EMA sufficient statistics ``A = E[phi phi^T]``,
+    ``B = E[phi z^T]`` and ``W`` is re-solved by ridge regression - the prior
+    is computed, not learned, and drifts only as the data statistics drift.
+    The energy head adds ``W phi`` to its proposal and spends its gradient
+    budget on the residual the solve can't capture.
+
+    ``mode="harmonic"`` augments features with sin/cos of integer frequencies
+    over the patch period, so quasi-periodic latent structure is absorbed as
+    Fourier coefficients - also a linear solve.
+
+    All state is persistent buffers (survives checkpoint/resume). ``frozen``
+    latches at the end of the solve window; afterwards W is a fixed prior.
+    """
+
+    def __init__(
+        self,
+        feature_dim: int,
+        latent_dim: int,
+        mode: str = "linear",
+        period: int = 256,
+    ) -> None:
+        super().__init__()
+        if mode not in ("linear", "harmonic"):
+            raise ValueError(f"LinearPrior mode must be linear|harmonic, got {mode!r}")
+        self.mode = mode
+        self.period = max(2, int(period))
+        self.in_dim = feature_dim
+        F_h = 2 * PRIOR_HARMONIC_FREQS if mode == "harmonic" else 0
+        D = feature_dim + F_h
+        self.register_buffer("A", torch.zeros(D, D), persistent=True)
+        self.register_buffer("B", torch.zeros(D, latent_dim), persistent=True)
+        self.register_buffer("W", torch.zeros(D, latent_dim), persistent=True)
+        self.register_buffer("frozen", torch.zeros((), dtype=torch.bool), persistent=True)
+        self.register_buffer("seen", torch.zeros(()), persistent=True)
+        # Transient diagnostics (consumed by the encoder's training_metrics).
+        self.last_r2 = float("nan")
+
+    def features(self, h: torch.Tensor, t: Optional[torch.Tensor]) -> torch.Tensor:
+        """``[..., in_dim]`` -> ``[..., D]``; harmonic mode appends the basis."""
+        if self.mode != "harmonic":
+            return h
+        if t is None:
+            # Positions default to the trailing sequence axis indices.
+            t = torch.arange(h.shape[-2], device=h.device)
+        t = t.to(h.dtype).reshape(*t.shape, 1)
+        f = torch.arange(
+            1, PRIOR_HARMONIC_FREQS + 1, device=h.device, dtype=h.dtype
+        )
+        ang = 2 * math.pi * t * f / self.period
+        basis = torch.cat([torch.sin(ang), torch.cos(ang)], dim=-1)
+        return torch.cat([h, basis.expand(*h.shape[:-1], basis.shape[-1])], dim=-1)
+
+    @torch.no_grad()
+    def observe(
+        self, h: torch.Tensor, z: torch.Tensor, t: Optional[torch.Tensor] = None
+    ) -> None:
+        """Fold a batch of (conditioning, next-latent) pairs into the stats."""
+        if bool(self.frozen.item()):
+            return
+        phi = self.features(h.detach(), t).reshape(-1, self.A.shape[0]).float()
+        zt = z.detach().reshape(-1, self.B.shape[1]).float()
+        n = phi.shape[0]
+        if n == 0:
+            return
+        d = PRIOR_STATS_DECAY
+        self.A.mul_(d).add_((phi.T @ phi) / n, alpha=1.0 - d)
+        self.B.mul_(d).add_((phi.T @ zt) / n, alpha=1.0 - d)
+        self.seen.add_(1.0)
+        # R^2 of the CURRENT W on this batch: the fraction of next-latent
+        # variance the linear solve already explains. The decisive metric -
+        # high means CALM's grind was mostly the linear map, ~0 means the
+        # backbone doesn't linearize the sequence at all.
+        pred = phi @ self.W
+        ss_res = (zt - pred).pow(2).sum()
+        ss_tot = (zt - zt.mean(dim=0, keepdim=True)).pow(2).sum().clamp_min(1e-12)
+        self.last_r2 = float(1.0 - ss_res / ss_tot)
+
+    @torch.no_grad()
+    def solve(self) -> None:
+        """Ridge solve ``(A + lambda I) W = B``; scale-free lambda."""
+        if bool(self.frozen.item()) or float(self.seen.item()) <= 0:
+            return
+        D = self.A.shape[0]
+        lam = PRIOR_RIDGE_LAMBDA * (self.A.diagonal().mean().clamp_min(1e-12))
+        eye = torch.eye(D, device=self.A.device, dtype=self.A.dtype)
+        self.W.copy_(torch.linalg.solve(self.A + lam * eye, self.B))
+
+    @torch.no_grad()
+    def freeze(self) -> None:
+        self.frozen.fill_(True)
+
+    def forward(self, h: torch.Tensor, t: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """The prior's contribution: ``W phi(h, t)``. W carries no gradient;
+        gradient flows through h into the backbone, which is desirable."""
+        phi = self.features(h, t)
+        return phi @ self.W.to(phi.dtype)
+
+
+# Options for the energy head's closed-form prior. "linear" is the default
+# wherever the energy head is used; "none" is the paper-pure ablation.
+ENERGY_PRIOR_REGISTRY = {
+    "none": None,
+    "linear": partial(LinearPrior, mode="linear"),
+    "harmonic": partial(LinearPrior, mode="harmonic"),
+}
 
 
 class MLPBlock(nn.Module):
@@ -78,6 +208,10 @@ class EnergyHead(nn.Module):
         self.latent_dim = latent_dim
         self.hidden_dim = hidden_dim
 
+        # Optional closed-form linear prior (see LinearPrior): set by the
+        # owner via set_prior(); its solved W phi(h) adds to every proposal.
+        self.prior: Optional[LinearPrior] = None
+
         self.cond_embd = nn.Linear(cond_dim, hidden_dim, bias=True)
         self.noise_embd = nn.Linear(noise_dim, hidden_dim, bias=True)
         self.norm_cond = nn.LayerNorm(hidden_dim, eps=1e-6)
@@ -92,21 +226,34 @@ class EnergyHead(nn.Module):
         nn.init.zeros_(self.final_layer.linears[-1].weight)
         nn.init.zeros_(self.final_layer.linears[-1].bias)
 
-    def forward(self, h: torch.Tensor, noise: torch.Tensor) -> torch.Tensor:
+    def set_prior(self, prior: Optional[LinearPrior]) -> None:
+        self.prior = prior
+
+    def forward(
+        self,
+        h: torch.Tensor,
+        noise: torch.Tensor,
+        t: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         """Generate a latent proposal.
 
         Args:
             h: ``[..., cond_dim]`` conditioning.
             noise: ``[..., noise_dim]`` noise drawn by the caller.
+            t: optional patch positions (harmonic prior only).
 
         Returns:
-            ``[..., latent_dim]`` latent sample.
+            ``[..., latent_dim]`` latent sample: the linear prior's solved
+            contribution (when set) plus the MLP's learned residual.
         """
         cond = self.norm_cond(self.cond_embd(h))
         x = self.norm_noise(self.noise_embd(noise))
         for block in self.blocks:
             x = block(x, cond)
-        return self.final_layer(x)
+        out = self.final_layer(x)
+        if self.prior is not None:
+            out = out + self.prior(h, t)
+        return out
 
     def sample(
         self,
@@ -114,6 +261,7 @@ class EnergyHead(nn.Module):
         num_samples: int,
         noise_dtype: torch.dtype = torch.float32,
         noise_scale: float = 1.0,
+        t: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Draw ``num_samples`` latents per conditioning row.
 
@@ -130,4 +278,4 @@ class EnergyHead(nn.Module):
         noise = (
             torch.rand(num_samples, *shape, device=h.device, dtype=noise_dtype) - 0.5
         ) * noise_scale
-        return self(expanded, noise)
+        return self(expanded, noise, t=t)

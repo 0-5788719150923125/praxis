@@ -25,6 +25,7 @@ import {
 } from './components.js';
 import { SPEC_CONFIG, extractCommandInfo, AGENT_DISPLAY_FIELDS } from './config.js';
 import { spawnAgent, agentViews, severAgent } from './swarm.js';
+import { dedupe, hasRealContent } from './prefetch.js';
 
 /**
  * Generic tab data loader - DRY pattern for all tab loading
@@ -38,12 +39,17 @@ import { spawnAgent, agentViews, severAgent } from './swarm.js';
  */
 async function loadTabData(config) {
     const stateObj = state[config.stateKey];
-    if (stateObj.loaded) return;
+    if (stateObj.loaded && !config.force) return;
 
     const container = document.getElementById(config.containerId);
     if (!container) return;
 
-    container.innerHTML = `<div class="loading-placeholder">${config.loadingMessage}</div>`;
+    // Stale-while-revalidate: only show the placeholder when there's nothing
+    // to look at yet. A refresh keeps the current content painted and swaps
+    // it in place when fresh data lands - no blank flash.
+    if (!hasRealContent(container)) {
+        container.innerHTML = `<div class="loading-placeholder">${config.loadingMessage}</div>`;
+    }
 
     try {
         const data = await config.fetchFn();
@@ -111,12 +117,18 @@ export function selectSpecRun(hash) {
  * persisted snapshot via /api/spec?runs=<hash>.
  */
 export async function loadSpec(force = false) {
+    await dedupe('tab:spec', () => loadSpecInner(force));
+}
+
+async function loadSpecInner(force) {
     if (state.spec.loaded && !force) return;
 
     const container = document.getElementById('spec-container');
     if (!container) return;
 
-    container.innerHTML = '<div class="loading-placeholder">Loading specification...</div>';
+    if (!hasRealContent(container)) {
+        container.innerHTML = '<div class="loading-placeholder">Loading specification...</div>';
+    }
 
     try {
         await loadAvailableSpecRuns();
@@ -349,15 +361,16 @@ function renderSpec(data, container) {
 /**
  * Load Agents tab content
  */
-export async function loadAgents() {
-    await loadTabData({
+export async function loadAgents(force = false) {
+    await dedupe('tab:agents', () => loadTabData({
         stateKey: 'agents',
         containerId: 'agents-container',
         loadingMessage: 'Loading agents...',
+        force,
         fetchFn: () => fetchAPI('agents'),
         processData: (data) => ({ availableAgents: data.agents || [] }),
         renderFn: (data, container) => renderAgents(data.agents || [], container)
-    });
+    }));
 }
 
 /**
