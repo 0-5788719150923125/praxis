@@ -14,6 +14,7 @@ import { setupTabCarousel, setupTabSwipe } from './mobile.js';
 import { storage, FORM_FIELDS, readFormValues, updateRangeDisplay } from './config.js';
 import { CLICK_HANDLERS, delegateClick } from './events.js';
 import { executeAction } from './actions.js';
+import { beginPrewarm, endPrewarm } from './prefetch.js';
 import { setupAccentRetint } from './charts.js';
 import './prism.js';
 
@@ -165,7 +166,7 @@ async function prefetchTabs() {
             if (force && state.currentTab === tabId) continue;
             try {
                 const loader = () => load(force);
-                await (needsLayout ? prewarmTab(contentId, loader) : loader());
+                await (needsLayout ? prewarmTab(tabId, contentId, loader) : loader());
             } catch (error) {
                 console.warn('[Praxis] Tab prewarm failed:', contentId, error);
             }
@@ -187,12 +188,14 @@ async function prefetchTabs() {
  * loader so the deck measures + renders for real, then return it to the hidden
  * state render() manages. Two frames let the deck settle before we hide it.
  */
-async function prewarmTab(contentId, load) {
+async function prewarmTab(tabId, contentId, load) {
     const el = document.getElementById(contentId);
     const active = document.querySelector('.tab-content.active');
     const rect = active ? active.getBoundingClientRect() : null;
-    if (!el || !rect || rect.height < 50) {
-        await load();  // can't size it; fall back to a plain background load
+    // Already on screen (or unsizeable): plain load, never touch its styles -
+    // off-screen styling of a visible tab is exactly the blank-flash bug.
+    if (!el || state.currentTab === tabId || !rect || rect.height < 50) {
+        await load();
         return;
     }
 
@@ -208,10 +211,15 @@ async function prewarmTab(contentId, load) {
         pointerEvents: 'none',
         zIndex: '-1',
     });
+    // Register so SWITCH_TAB can strip these styles instantly if the user
+    // navigates here mid-warm (revealPrewarmed) instead of staring at a
+    // vanished container until the load settles.
+    beginPrewarm(tabId, el);
     try {
         await load();
         await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
     } finally {
+        endPrewarm(tabId);
         el.removeAttribute('style');  // back to .tab-content (display:none) until activated
     }
 }

@@ -110,7 +110,7 @@ async function loadDynamicsInner(force) {
         if (data.status === 'no_data' || !data.runs || data.runs.length === 0) {
             // No run yet: still render the tab (activation curves load on their own);
             // just show whatever cards have data, never a "no data" banner.
-            renderDynamicsCharts({}, container);
+            await renderDynamicsCharts({}, container);
             return;
         }
 
@@ -120,7 +120,7 @@ async function loadDynamicsInner(force) {
             state.dynamics.lastStep = Math.max(...steps);
         }
 
-        renderDynamicsCharts(data.runs[0], container);
+        await renderDynamicsCharts(data.runs[0], container);
         state.dynamics.loaded = true;
 
         console.log(`[Dynamics] Loaded ${steps.length} data points`);
@@ -806,8 +806,11 @@ function renderDynamicsCharts(runData, container) {
     // Layer toggles
     renderDynamicsLayerToggles();
 
-    // Create charts after DOM is ready
-    setTimeout(() => {
+    // Create charts after DOM is ready. Awaitable (same contract as the
+    // Research render): the loader - and prewarmTab's off-screen layout -
+    // hold until the deck has measured with real chart heights, so a visit
+    // never triggers a visible re-layout.
+    return new Promise(resolve => setTimeout(() => {
         try {
             familyConfigs.forEach(c => mountDynamicsFamily(c, dynamics));
             mountManifestCharts(manifest, dynamics);
@@ -818,8 +821,10 @@ function renderDynamicsCharts(runData, container) {
             initChartDeck('dynamics-deck');
         } catch (error) {
             console.error('[Dynamics] Chart creation failed:', error);
+        } finally {
+            resolve();
         }
-    }, 10);
+    }, 10));
 }
 
 // ─── Layer toggles ──────────────────────────────────────────────────────────

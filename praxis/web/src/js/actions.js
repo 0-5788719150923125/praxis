@@ -15,6 +15,7 @@ import { loadResearchMetrics, loadDynamics, toggleSpecRunSelector, selectSpecRun
 import { sendMessage, kbFetchItem, testApiConnection, loopApprove } from './api.js';
 import { kbCacheFetch } from './kbcache.js';
 import { renderMarkdown, renderJson } from './markdown.js';
+import { revealPrewarmed } from './prefetch.js';
 import { syncInputToMode, fetchAndPresentQuestion, startLoop, stopLoop, rerollLoopNow, addKbSearchTerm } from './main.js';
 
 /**
@@ -201,6 +202,12 @@ export const ACTION_HANDLERS = {
         }));
 
         render();
+
+        // If a background warm has this tab laid out off-screen, strip those
+        // styles NOW: the old content stays visible while the refresh swaps in
+        // underneath. Without this the inline styles override .active and the
+        // whole container vanishes until the warm settles.
+        revealPrewarmed(tabId);
 
         // Call activation hook
         if (newTab.onActivate) {

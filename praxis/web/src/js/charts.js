@@ -469,7 +469,7 @@ async function loadResearchInner(force) {
         state.research.lastRuns = runsToRender;
         state.research.lastDataMetrics = dataToRender;
 
-        renderMetricsCharts({
+        await renderMetricsCharts({
             runs: runsToRender,
             dataMetrics: dataToRender,
             registry: state.research.metricRegistry,
@@ -903,13 +903,21 @@ function renderMetricsCharts(data, container) {
 
     // Render charts after DOM update. Each config's `type` selects a
     // renderer from the registry; unknown types fall back to a line chart.
-    setTimeout(() => {
-        const ctx = { runs, dataMetrics };
-        availableMetrics.forEach(config => {
-            (METRIC_RENDERERS[config.type] || METRIC_RENDERERS.line)(config, ctx);
-        });
-        initChartDeck('chart-deck');
-    }, 10);
+    // Returns a promise that settles AFTER the deferred mount, so callers
+    // (and prewarmTab's off-screen layout) can hold until the deck has
+    // actually measured - otherwise the hidden layout is torn down before
+    // initChartDeck runs and the first visit re-lays the deck out visibly.
+    return new Promise(resolve => setTimeout(() => {
+        try {
+            const ctx = { runs, dataMetrics };
+            availableMetrics.forEach(config => {
+                (METRIC_RENDERERS[config.type] || METRIC_RENDERERS.line)(config, ctx);
+            });
+            initChartDeck('chart-deck');
+        } finally {
+            resolve();
+        }
+    }, 10));
 }
 
 // ============================================================================

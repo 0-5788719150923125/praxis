@@ -21,6 +21,28 @@ export function hasRealContent(container) {
     return !!first && !first.classList.contains('loading-placeholder');
 }
 
+// Tabs currently laid out off-screen by a background warm (tabId -> element).
+// If the user activates one mid-warm, the inline off-screen styles would
+// override .active and blank the tab - revealPrewarmed() strips them so the
+// still-painted old content stays visible while the refresh finishes
+// underneath. This is the single seam tying background reloads to
+// navigation; all element-reloading paths go through it.
+const prewarming = new Map();
+
+export function beginPrewarm(tabId, el) {
+    prewarming.set(tabId, el);
+}
+
+export function endPrewarm(tabId) {
+    prewarming.delete(tabId);
+}
+
+/** Called on tab switch: make a mid-warm tab visible immediately. */
+export function revealPrewarmed(tabId) {
+    const el = prewarming.get(tabId);
+    if (el) el.removeAttribute('style');
+}
+
 /**
  * Run `fn` unless a run under the same key is already in flight, in which
  * case return that run's promise instead of starting another.
