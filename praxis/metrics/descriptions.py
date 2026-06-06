@@ -106,13 +106,15 @@ def _candidates(model: Any) -> Iterable[Dict[str, Any]]:
         descs = getattr(type(encoder), "metric_descriptions", None)
         if isinstance(descs, dict):
             yield descs
-        # A loss-owning encoder may run a non-CE reconstruction loss (HALO)
-        # whose chart/snapshot hints live on the loss class.
-        recon_fn = getattr(encoder, "recon_loss_fn", None)
-        if recon_fn is not None:
-            loss_descs = getattr(type(recon_fn), "metric_descriptions", None)
-            if isinstance(loss_descs, dict):
-                yield loss_descs
+        # A loss-owning encoder may run a non-CE reconstruction loss (HALO),
+        # or carry a geometric aux loss (CALM's halo mode), whose
+        # chart/snapshot hints live on the loss class.
+        for attr in ("recon_loss_fn", "geo_loss_fn"):
+            fn = getattr(encoder, attr, None)
+            if fn is not None:
+                loss_descs = getattr(type(fn), "metric_descriptions", None)
+                if isinstance(loss_descs, dict):
+                    yield loss_descs
 
     # Loss functions (e.g. HALO) declare chart/snapshot hints as a class attr.
     criterion = getattr(model, "criterion", None)

@@ -71,6 +71,14 @@ PRETRAIN_FLAT_EPS = 1.0  # converged when the window's drift < one noise std
 # Deviates from the paper (justified by the scale gap the paper never faces);
 # set 0.0 for paper-pure behavior. Watch calm_energy_anchor descend.
 ENERGY_ANCHOR_WEIGHT = 5.0
+# Trinary geometric mode (loss_func: halo_geometric) replaces the monolithic
+# MSE anchor with its decomposition: an angular HALO CE through the frozen
+# codec (which centroid cell the next patch lives in - the dense, per-token
+# signal the energy score lacks) and a radial norm match (the part of the
+# anchor that worked). The energy score stays on as the distributional term.
+# Same scale as the anchor it replaces; fixed, model-agnostic.
+GEOMETRIC_ANGULAR_WEIGHT = 5.0
+GEOMETRIC_RADIAL_WEIGHT = 1.0
 # Start emitting / computing the convergence Δ once this many recon samples
 # exist, so the chart tracks the descent from early on instead of staying blank
 # (then flat) until the full window fills. The freeze decision still waits for
@@ -202,6 +210,36 @@ class CALMEncoder(BaseEncoder):
                 "y_scale": "logarithmic",
                 "group": "calm",
                 "order": 64,
+            },
+        },
+        "calm_halo_angular": {
+            "description": (
+                "Geometric mode: HALO distance-to-centroid CE of the head's "
+                "zero-noise prediction decoded through the frozen codec, vs "
+                "the true next-patch tokens. The torus-point term: which "
+                "centroid cell the prediction lands in. Should descend; the "
+                "per-token signal the energy score lacks."
+            ),
+            "chart": {
+                "title": "Geometric Angular (HALO CE)",
+                "y_label": "halo ce",
+                "y_scale": "logarithmic",
+                "group": "calm",
+                "order": 66,
+            },
+        },
+        "calm_radial": {
+            "description": (
+                "Geometric mode: MSE between predicted and posterior latent "
+                "norms - the radial term of the trinary decomposition. Scale "
+                "calibration only; direction lives in the angular term."
+            ),
+            "chart": {
+                "title": "Geometric Radial (norm MSE)",
+                "y_label": "mse",
+                "y_scale": "logarithmic",
+                "group": "calm",
+                "order": 67,
             },
         },
         "calm_energy_cond_gap": {
@@ -391,13 +429,20 @@ class CALMEncoder(BaseEncoder):
             getattr(config, "byte_vocab_size", None) or config.vocab_size
         )
 
-        # Codec reconstruction obeys config.loss_func like every other path -
-        # cross_entropy by default, but a distance/centroid loss (HALO) trains
-        # the VAE decoder against the head's centroids instead. Built over the
-        # codec's true output vocab. See _reconstruction_loss.
+        # Codec reconstruction obeys config.loss_func like every other path,
+        # with one reroute: "halo" selects the trinary geometric mode. Recon
+        # stays plain CE (HALO in the recon loss shapes the centroids and
+        # collapses downstream harmonies); HALO instead steers the energy head
+        # through the FROZEN codec, plus a radial norm term - see
+        # _register_energy_loss. Built over the codec's true output vocab.
+        loss_func = str(getattr(config, "loss_func", "cross_entropy"))
+        self.geometric_mode = loss_func == "halo"
         self.recon_loss_fn = get_loss_function(
-            config.loss_func, self._output_vocab_size
+            "cross_entropy" if self.geometric_mode else loss_func,
+            self._output_vocab_size,
         )
+        if self.geometric_mode:
+            self.geo_loss_fn = get_loss_function("halo", self._output_vocab_size)
 
         # "harmonic" swaps the codec's scalar dropout for a standing-wave field
         # over (patch position, channel) - see HarmonicDropout. Stage-1 only;
@@ -872,16 +917,50 @@ class CALMEncoder(BaseEncoder):
             )
             self._diag["calm_energy_cond_gap"] = float((mismatched - loss).detach())
 
-        # Conditioning anchor: regress the head's zero-noise (mean) prediction
-        # onto the next posterior mean. A strong, low-variance gradient that
-        # forces the conditional to concentrate on the correct next latent -
-        # the energy score alone leaves it at the (marginal) scale only.
         total = self.energy_alpha * loss
-        if ENERGY_ANCHOR_WEIGHT > 0.0:
-            mean_next = self._last_mean[:, 1:, :].detach()
-            zero_noise = h_cond.new_zeros(
-                *h_cond.shape[:-1], self.energy_head.noise_dim
+        mean_next = self._last_mean[:, 1:, :].detach()
+        zero_noise = h_cond.new_zeros(*h_cond.shape[:-1], self.energy_head.noise_dim)
+
+        if self.geometric_mode and self._ae_is_frozen():
+            # Trinary decomposition of the anchor (sun / torus point / radial):
+            # the energy score above is the distributional term; the angular
+            # HALO CE - the head's zero-noise prediction decoded through the
+            # FROZEN codec, scored against the true next-patch tokens - names
+            # which centroid cell the prediction must land in (per-token, the
+            # signal the score lacks); the radial term matches latent norms.
+            # Gradient reaches only the energy head (+ HALO's own gamma): the
+            # codec and centroids are frozen measuring instruments here, so
+            # this cannot collapse the downstream harmonies.
+            z_hat = self.energy_head(h_cond, zero_noise)  # [B, N-1, latent]
+            feats = self.vae.decode(z_hat)  # [B, (N-1)*K, H]
+            logits = self._classify(feats)
+            labels = self._last_padded[:, self.K :].clone()
+            labels[labels == self.pad_token_id] = -100
+            V = logits.shape[-1]
+            classifier = self._head[0].classifier if self._head else None
+            angular = self.geo_loss_fn(
+                logits=logits.reshape(-1, V),
+                labels=labels.reshape(-1),
+                embeddings=feats.reshape(-1, feats.shape[-1]),
+                classifier=classifier,
+                input_ids=labels.reshape(-1),
             )
+            radial = torch.nn.functional.mse_loss(
+                z_hat.norm(dim=-1), mean_next.norm(dim=-1)
+            )
+            total = (
+                total
+                + GEOMETRIC_ANGULAR_WEIGHT * angular
+                + GEOMETRIC_RADIAL_WEIGHT * radial
+            )
+            self._diag["calm_halo_angular"] = float(angular.detach())
+            self._diag["calm_radial"] = float(radial.detach())
+        elif ENERGY_ANCHOR_WEIGHT > 0.0:
+            # Conditioning anchor (standard CALM mode): regress the head's
+            # zero-noise (mean) prediction onto the next posterior mean. A
+            # strong, low-variance gradient that forces the conditional to
+            # concentrate on the correct next latent - the energy score alone
+            # leaves it at the (marginal) scale only.
             anchor = torch.nn.functional.mse_loss(
                 self.energy_head(h_cond, zero_noise), mean_next
             )
@@ -1016,26 +1095,29 @@ class CALMEncoder(BaseEncoder):
         convention); the DynamicsLogger callback picks them up.
         """
         out = dict(self._diag)
-        # A non-CE reconstruction loss (HALO) carries its own diagnostics;
-        # fold them in so they ride the same encoder walk.
-        fn = getattr(self, "recon_loss_fn", None)
-        if fn is not None and hasattr(fn, "training_metrics"):
-            try:
-                out.update(fn.training_metrics())
-            except Exception:
-                pass
+        # A non-CE reconstruction loss (HALO) or the geometric aux carries its
+        # own diagnostics; fold them in so they ride the same encoder walk.
+        for attr in ("recon_loss_fn", "geo_loss_fn"):
+            fn = getattr(self, attr, None)
+            if fn is not None and hasattr(fn, "training_metrics"):
+                try:
+                    out.update(fn.training_metrics())
+                except Exception:
+                    pass
         return out
 
     def dashboard_snapshots(self) -> Dict[str, dict]:
-        """Non-scalar snapshots from the reconstruction loss (e.g. HALO's
-        energy ring), surfaced via the encoder."""
-        fn = getattr(self, "recon_loss_fn", None)
-        if fn is not None and hasattr(fn, "dashboard_snapshots"):
-            try:
-                return fn.dashboard_snapshots() or {}
-            except Exception:
-                return {}
-        return {}
+        """Non-scalar snapshots from the reconstruction loss or the geometric
+        aux (e.g. HALO's energy ring), surfaced via the encoder."""
+        out: Dict[str, dict] = {}
+        for attr in ("recon_loss_fn", "geo_loss_fn"):
+            fn = getattr(self, attr, None)
+            if fn is not None and hasattr(fn, "dashboard_snapshots"):
+                try:
+                    out.update(fn.dashboard_snapshots() or {})
+                except Exception:
+                    pass
+        return out
 
     # ------------------------------------------------------------------
     # Generation
@@ -1080,6 +1162,19 @@ class CALMEncoder(BaseEncoder):
             return recon_logits.argmax(dim=-1).view(self.K)
 
         n_initial = max(1, int(round(1.0 / max(temperature, 1e-6))))
+        # Count-based temperature only exists at T = 1/integer (the paper
+        # errors otherwise; we round). Warn once when rounding moves the
+        # effective temperature, so e.g. T=0.7 visibly degenerates to T=1
+        # instead of silently pretending to be a distinct setting.
+        effective = 1.0 / n_initial
+        if abs(effective - temperature) > 1e-3 and not getattr(
+            self, "_vote_temp_warned", False
+        ):
+            print(
+                f"[CALM] patch-vote temperature {temperature} is not 1/integer; "
+                f"rounding to T={effective:.3f} (n={n_initial})."
+            )
+            self._vote_temp_warned = True
 
         # Pool of candidate patches: decode each candidate latent and take
         # argmax tokens. Stochasticity lives in the latent draws; voting then

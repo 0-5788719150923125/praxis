@@ -102,7 +102,7 @@ class NotesSource(KBSource):
                     title=title or doc_title,
                     body=body,
                     uri=f"next/{path.name}",
-                    meta={"document": doc_title},
+                    origin=doc_title,
                     updated=mtime,
                 )
 
@@ -138,8 +138,8 @@ class RunsSource(KBSource):
                 _mtime(run_dir),
             )
             title = f"run {hash_id} ({experiment})" if experiment else f"run {hash_id}"
-            # Module summary leads the body so it both ranks in search and serves
-            # as the recent-feed snippet (see KBIndex.recent / meta["summary"]).
+            # Module summary leads the body so it ranks in search; as the item
+            # summary it also serves as the recent-feed snippet.
             body = f"{modules}\n\n{config}" if modules else config
             yield KBItem(
                 id=f"run:{hash_id}",
@@ -148,7 +148,9 @@ class RunsSource(KBSource):
                 title=title,
                 body=body,
                 uri=f"build/runs/{hash_id}/config.json",
-                meta={"hash": hash_id, "experiment": experiment, "summary": modules},
+                origin=f"experiments/{experiment}.yml" if experiment else "",
+                summary=modules,
+                meta={"hash": hash_id, "experiment": experiment},
                 updated=updated,
             )
 
@@ -179,7 +181,8 @@ class LinksSource(KBSource):
                         title=label.strip(),
                         body=f"{label}\n{url}",
                         uri=url,
-                        meta={"found_in": f"{sub}/{path.name}"},
+                        origin=f"{sub}/{path.name}",
+                        summary=url,
                         updated=mtime,
                     )
 
@@ -283,6 +286,7 @@ class CardsSource(KBSource):
             title=title,
             body=body or title,
             uri=f"card:{tab}",
+            origin=f"{label} tab",
             meta={"tab": tab, "card_title": title},
         )
 
@@ -326,7 +330,50 @@ class AgentsSource(KBSource):
                 title=name,
                 body=f"{name}\n{url}",
                 uri="tab:agents",
+                origin="git remotes",
+                summary=url,
                 meta={"name": name, "url": url},
+            )
+
+
+class PagesSource(KBSource):
+    """Web pages crawled by the spider (``build/spider.db``).
+
+    The spider worker writes pages on its own slow clock; this source surfaces
+    the newest ones into the index on reindex, capped so the feed doesn't
+    drown in crawled content. See ``praxis.spider``.
+    """
+
+    name = "pages"
+
+    def iter_items(self) -> Iterable[KBItem]:
+        from praxis.spider import SpiderSettings
+        from praxis.spider.store import DEFAULT_SPIDER_DB
+
+        if not DEFAULT_SPIDER_DB.exists():
+            return
+        try:
+            conn = sqlite3.connect(f"file:{DEFAULT_SPIDER_DB}?mode=ro", uri=True)
+            rows = conn.execute(
+                "SELECT url, site, title, text, summary, fetched FROM pages "
+                "ORDER BY fetched DESC LIMIT ?",
+                (SpiderSettings().max_kb_pages,),
+            ).fetchall()
+            conn.close()
+        except sqlite3.Error:
+            return
+        for url, site, title, text, summary, fetched in rows:
+            host = site.split("//", 1)[-1]
+            yield KBItem(
+                id=f"page:{url}",
+                type="page",
+                label=host,
+                title=title,
+                body=text,
+                uri=url,
+                origin=site,
+                summary=summary,
+                updated=fetched,
             )
 
 
@@ -489,6 +536,7 @@ KB_SOURCE_REGISTRY = {
     "notes": NotesSource,
     "runs": RunsSource,
     "links": LinksSource,
+    "pages": PagesSource,
     "cards": CardsSource,
     "agents": AgentsSource,
 }

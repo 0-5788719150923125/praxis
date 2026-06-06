@@ -30,6 +30,9 @@ LOSS_REGISTRY = {
     "mile": MiLeLoss,
     "stablemax": StableMaxCrossEntropyLoss,
     "contrastive_token": ContrastiveTokenLoss,
+    # Loss-owning encoders may reroute this: CALM treats "halo" as its
+    # geometric mode (recon stays CE; HALO steers the energy head through the
+    # frozen codec), keeping HALO off the centroid-shaping recon path.
     "halo": HALOLoss,
 }
 

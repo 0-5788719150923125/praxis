@@ -296,6 +296,7 @@ function setupEventListeners() {
         messageInput.addEventListener('focus', handleInputFocus);
         messageInput.addEventListener('blur', handleInputBlur);
         messageInput.addEventListener('click', handleInputClick);
+        messageInput.addEventListener('select', handleInputSelect);
     }
 
     // System prompt editing
@@ -525,6 +526,20 @@ function handleInputClick(e) {
     const collapsed = input.selectionStart === input.selectionEnd;
     if (collapsed && input.selectionStart < inputPrefix().length) {
         setCursorAfterPrefix();
+    }
+}
+
+/**
+ * Keep selections out of the prefix. Fires on any selection change (drag,
+ * Ctrl+A, shift-arrows) and snaps the start past the "< " so the prefix can
+ * never be highlighted or deleted as part of a selection.
+ */
+function handleInputSelect(e) {
+    const input = e.target;
+    if (state.isShowingPlaceholder) return;
+    const p = inputPrefix().length;
+    if (input.selectionStart < p && input.selectionEnd > input.selectionStart) {
+        input.setSelectionRange(p, Math.max(input.selectionEnd, p), input.selectionDirection);
     }
 }
 

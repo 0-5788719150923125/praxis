@@ -10,10 +10,13 @@ from collections import Counter
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-from praxis.kb.item import KBHit, KBItem
+from praxis.kb.item import KBHit, KBItem, with_provenance
 from praxis.kb.sources import KB_SOURCE_REGISTRY, REPO_ROOT
 
 DEFAULT_DB_PATH = REPO_ROOT / "build" / "kb.db"
+
+# Columns shared by every item-shaped SELECT, in KBItem field order.
+_ITEM_COLS = "id, type, label, title, body, uri, source, origin, summary, meta"
 
 # Fuzzy search: a misspelled token won't prefix-match in FTS5, so we fall back to
 # character-trigram cosine similarity over titles - "transfomer" still scores
@@ -53,9 +56,17 @@ class KBIndex:
     def _ensure_schema(self) -> None:
         # External-content-less FTS5: id/type/title/uri/meta are searchable
         # columns too, but only body and title carry real ranking weight.
+        # The db is a rebuildable cache, so a schema change just drops the old
+        # table and triggers a rebuild rather than migrating in place.
+        existing = self._conn.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'kb'"
+        ).fetchone()
+        if existing and "origin" not in (existing[0] or ""):
+            self._conn.execute("DROP TABLE kb")
         self._conn.executescript("""
             CREATE VIRTUAL TABLE IF NOT EXISTS kb USING fts5(
                 id UNINDEXED, type, label, title, body, uri UNINDEXED,
+                source UNINDEXED, origin, summary,
                 meta UNINDEXED, updated UNINDEXED
             );
             """)
@@ -68,7 +79,11 @@ class KBIndex:
         count = 0
         for name in names:
             source = KB_SOURCE_REGISTRY[name]()
-            count += self._insert(source.iter_items())
+            # The bus, not the source, stamps producer identity and a default
+            # summary - so every entry has supporting details.
+            count += self._insert(
+                with_provenance(it, name) for it in source.iter_items()
+            )
         self._conn.commit()
         return count
 
@@ -90,14 +105,17 @@ class KBIndex:
                 it.title,
                 it.body,
                 it.uri,
+                it.source,
+                it.origin,
+                it.summary,
                 _encode_meta(it.meta),
                 str(int(it.updated or 0)),
             )
             for it in items
         ]
         self._conn.executemany(
-            "INSERT INTO kb (id, type, label, title, body, uri, meta, updated) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            f"INSERT INTO kb ({_ITEM_COLS}, updated) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
         return len(rows)
@@ -110,7 +128,7 @@ class KBIndex:
             return []
         match = _to_match(query)
         sql = (
-            "SELECT id, type, label, title, body, uri, meta, "
+            f"SELECT {_ITEM_COLS}, "
             "bm25(kb) AS score, snippet(kb, 4, '\x01', '\x02', '...', 12) AS snip "
             "FROM kb WHERE kb MATCH ?"
         )
@@ -124,22 +142,8 @@ class KBIndex:
 
         hits = []
         for row in self._conn.execute(sql, params):
-            id_, type_, label, title, body, uri, meta, score, snip = row
-            hits.append(
-                KBHit(
-                    item=KBItem(
-                        id=id_,
-                        type=type_,
-                        label=label,
-                        title=title,
-                        body=body,
-                        uri=uri,
-                        meta=_decode_meta(meta),
-                    ),
-                    score=score,
-                    snippet=snip or "",
-                )
-            )
+            score, snip = row[-2], row[-1]
+            hits.append(KBHit(item=_row_item(row), score=score, snippet=snip or ""))
 
         # Typo tolerance: when the exact/prefix match is thin, top up with
         # trigram-similar titles so a misspelling doesn't invalidate the search.
@@ -166,31 +170,22 @@ class KBIndex:
             return []
         exclude = exclude or set()
         scored = []
-        for row in self._conn.execute(
-            "SELECT id, type, label, title, body, uri, meta FROM kb"
-        ):
-            id_, type_, label, title, body, uri, meta = row
+        for row in self._conn.execute(f"SELECT {_ITEM_COLS} FROM kb"):
+            id_, type_, title = row[0], row[1], row[3]
             if id_ in exclude or (types and type_ not in types):
                 continue
             sim = _cosine(q, _trigrams(title))
             if sim >= _FUZZY_MIN_SIM:
-                scored.append((sim, id_, type_, label, title, body, uri, meta))
+                scored.append((sim, row))
         scored.sort(key=lambda r: r[0], reverse=True)
         hits = []
-        for sim, id_, type_, label, title, body, uri, meta in scored[:limit]:
+        for sim, row in scored[:limit]:
+            item = _row_item(row)
             hits.append(
                 KBHit(
-                    item=KBItem(
-                        id=id_,
-                        type=type_,
-                        label=label,
-                        title=title,
-                        body=body,
-                        uri=uri,
-                        meta=_decode_meta(meta),
-                    ),
+                    item=item,
                     score=-sim,  # higher similarity ranks first; FTS hits stay above
-                    snippet=(body or title or "")[:140].strip(),
+                    snippet=item.summary or (item.body or item.title)[:140].strip(),
                 )
             )
         return hits
@@ -199,7 +194,7 @@ class KBIndex:
         """Every indexed item - the global feed shown at the search root. Ordered
         newest-first for timestamped items (docs/notes/runs), then the rest
         (cards/agents) alphabetically, so EVERYTHING is listed, not just runs."""
-        sql = "SELECT id, type, label, title, body, uri, meta FROM kb"
+        sql = f"SELECT {_ITEM_COLS} FROM kb"
         params: list = []
         if types:
             placeholders = ",".join("?" * len(types))
@@ -209,32 +204,14 @@ class KBIndex:
 
         hits = []
         for row in self._conn.execute(sql, params):
-            id_, type_, label, title, body, uri, meta = row
-            decoded = _decode_meta(meta)
-            hits.append(
-                KBHit(
-                    item=KBItem(
-                        id=id_,
-                        type=type_,
-                        label=label,
-                        title=title,
-                        body=body,
-                        uri=uri,
-                        meta=decoded,
-                    ),
-                    score=0.0,
-                    snippet=decoded.get("summary", ""),
-                )
-            )
+            item = _row_item(row)
+            hits.append(KBHit(item=item, score=0.0, snippet=item.summary))
         return hits
 
     def recent(self, limit: int = 20, types: Optional[List[str]] = None) -> List[KBHit]:
         """Most-recently-updated items, newest first. Powers the empty-query
         default feed. Items with no timestamp (cards, agents) are excluded."""
-        sql = (
-            "SELECT id, type, label, title, body, uri, meta "
-            "FROM kb WHERE CAST(updated AS INTEGER) > 0"
-        )
+        sql = f"SELECT {_ITEM_COLS} FROM kb WHERE CAST(updated AS INTEGER) > 0"
         params: list = []
         if types:
             placeholders = ",".join("?" * len(types))
@@ -245,45 +222,19 @@ class KBIndex:
 
         hits = []
         for row in self._conn.execute(sql, params):
-            id_, type_, label, title, body, uri, meta = row
-            decoded = _decode_meta(meta)
-            hits.append(
-                KBHit(
-                    item=KBItem(
-                        id=id_,
-                        type=type_,
-                        label=label,
-                        title=title,
-                        body=body,
-                        uri=uri,
-                        meta=decoded,
-                    ),
-                    score=0.0,
-                    # No FTS match in the recent feed, so use a source-provided
-                    # one-liner (e.g. a run's module summary) as the subtitle.
-                    snippet=decoded.get("summary", ""),
-                )
-            )
+            item = _row_item(row)
+            # No FTS match in the recent feed, so the bus-stamped summary
+            # (e.g. a run's module one-liner) serves as the subtitle.
+            hits.append(KBHit(item=item, score=0.0, snippet=item.summary))
         return hits
 
     def get(self, item_id: str) -> Optional[KBItem]:
         """Fetch one item by id (for inline rendering of its full body)."""
         row = self._conn.execute(
-            "SELECT id, type, label, title, body, uri, meta FROM kb WHERE id = ? LIMIT 1",
+            f"SELECT {_ITEM_COLS} FROM kb WHERE id = ? LIMIT 1",
             (item_id,),
         ).fetchone()
-        if not row:
-            return None
-        id_, type_, label, title, body, uri, meta = row
-        return KBItem(
-            id=id_,
-            type=type_,
-            label=label,
-            title=title,
-            body=body,
-            uri=uri,
-            meta=_decode_meta(meta),
-        )
+        return _row_item(row) if row else None
 
     def close(self) -> None:
         self._conn.close()
@@ -299,6 +250,23 @@ def _to_match(query: str) -> str:
     if not tokens:
         return query
     return " ".join(f'"{t}"*' for t in tokens)
+
+
+def _row_item(row) -> KBItem:
+    """Decode a row whose leading columns are ``_ITEM_COLS``; extras ignored."""
+    id_, type_, label, title, body, uri, source, origin, summary, meta = row[:10]
+    return KBItem(
+        id=id_,
+        type=type_,
+        label=label,
+        title=title,
+        body=body,
+        uri=uri,
+        source=source or "",
+        origin=origin or "",
+        summary=summary or "",
+        meta=_decode_meta(meta),
+    )
 
 
 def _encode_meta(meta: dict) -> str:

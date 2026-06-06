@@ -40,12 +40,18 @@ class ContextBlock:
 # chance falls, so the hotter contexts sample rarely and cost little. The two
 # rarely-fired blocks grow a double-length buffer since their cost is amortized
 # across far fewer inference steps.
+#
+# Temperatures are reciprocals of integers (1/3, 1/2, 1) so the three views
+# stay distinct under CALM's count-based patch-vote sampling, which quantizes
+# T to round(1/T): the old 0.7 collapsed onto T=1 there, making Balanced and
+# Wild the same experiment. For token models these are ordinary softmax temps
+# with the same focused < balanced < wild spread.
 DEFAULT_CONTEXT_BLOCKS: List[ContextBlock] = [
     ContextBlock(
-        "Focused", "Low temperature - the most likely continuation.", 0.5, 1.0
+        "Focused", "Low temperature - the most likely continuation.", 1.0 / 3.0, 1.0
     ),
     ContextBlock(
-        "Balanced", "Mid temperature - samples about 1 step in 10.", 0.7, 0.1, 2.0
+        "Balanced", "Mid temperature - samples about 1 step in 10.", 0.5, 0.1, 2.0
     ),
     ContextBlock(
         "Wild", "High temperature - samples about 1 step in 100.", 1.0, 0.01, 2.0

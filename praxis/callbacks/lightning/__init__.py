@@ -13,6 +13,7 @@ from praxis.callbacks.lightning.memory_profiler import MemoryProfilerCallback
 from praxis.callbacks.lightning.metrics import MetricsLoggerCallback
 from praxis.callbacks.lightning.orchestration import ExpertPoolCallback
 from praxis.callbacks.lightning.paper import PaperBuildCallback
+from praxis.callbacks.lightning.spider import SpiderCallback
 from praxis.callbacks.lightning.terminal import TerminalInterface
 
 # Registry for Lightning callbacks
@@ -28,6 +29,7 @@ LIGHTNING_CALLBACK_REGISTRY = {
     "engagement_live": EngagementLiveRewardCallback,
     "expert_pool": ExpertPoolCallback,
     "paper_build": PaperBuildCallback,
+    "spider": SpiderCallback,
 }
 
 __all__ = [
@@ -42,5 +44,6 @@ __all__ = [
     "EngagementLiveRewardCallback",
     "ExpertPoolCallback",
     "PaperBuildCallback",
+    "SpiderCallback",
     "LIGHTNING_CALLBACK_REGISTRY",
 ]

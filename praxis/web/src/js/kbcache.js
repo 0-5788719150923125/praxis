@@ -20,7 +20,7 @@ const RETAIN = 24;      // LRU cap; > window so a short scroll-back stays warm
 const CONCURRENCY = 4;  // max simultaneous prefetches
 
 // Only these types have a fetchable body (link/card/agent navigate instead).
-const FETCHABLE = new Set(['doc', 'note', 'run']);
+const FETCHABLE = new Set(['doc', 'note', 'run', 'page']);
 
 const cache = new Map();     // id -> hydrated item; Map order = LRU (oldest first)
 const inflight = new Map();  // id -> Promise, dedupes concurrent fetches

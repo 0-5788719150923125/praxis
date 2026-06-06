@@ -259,6 +259,14 @@
     font-weight: 600;
 }
 
+/* Provenance chip: where the entry came from (its document, site, or event). */
+.kb-result-origin {
+    margin-left: var(--spacing-sm);
+    font-size: 0.7rem;
+    font-weight: 400;
+    opacity: 0.55;
+}
+
 .kb-result-snippet {
     grid-area: snippet;
     font-size: 0.8rem;
@@ -314,6 +322,21 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+/* Crawled pages: link back to the live original. */
+.kb-card-external {
+    margin-left: auto;
+    color: var(--accent);
+    text-decoration: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    padding: 0.25rem 0.6rem;
+    font-size: 0.75rem;
+}
+
+.kb-card-external:hover {
+    border-color: var(--accent);
 }
 
 .kb-card-body {

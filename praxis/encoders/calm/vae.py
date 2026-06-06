@@ -60,7 +60,12 @@ class CALMVAE(nn.Module):
         chunk_size: K tokens per latent.
         latent_dim: Continuous latent dim.
         hidden_dim: Width of the encoder / decoder MLPs.
-        dropout: Dropout inside the encoder / decoder MLPs.
+        dropout: Dropout rate, applied at three sites as in the reference:
+            input token ids (zeroed), the sampled latent z, and inside the
+            encoder / decoder MLPs. The first two are load-bearing for
+            generation: they train the decoder to map a NEIGHBORHOOD of z
+            to the right tokens, so the LM head's imperfect latent
+            predictions still decode to text.
     """
 
     def __init__(
@@ -80,6 +85,7 @@ class CALMVAE(nn.Module):
         self.chunk_size = chunk_size
         self.latent_dim = latent_dim
         self.hidden_dim = hidden_dim
+        self.dropout_p = float(dropout)
 
         def _drop():
             if dropout_mode == "harmonic":
@@ -127,6 +133,12 @@ class CALMVAE(nn.Module):
         assert L % K == 0, f"seq len {L} not divisible by chunk size {K}"
         N = L // K
 
+        if self.training and self.dropout_p > 0:
+            # Reference-faithful input corruption: random ids -> 0, forcing
+            # the latent to denoise rather than memorize exact patches.
+            keep = torch.rand_like(input_ids, dtype=torch.float) > self.dropout_p
+            input_ids = input_ids * keep.long()
+
         emb = self.tok_emb(input_ids)  # [B, N*K, E]
         emb = emb.view(B, N, K * self.embed_dim)
         h = self.encoder_mlp(emb)  # [B, N, H]
@@ -157,6 +169,10 @@ class CALMVAE(nn.Module):
         """
         B, N, _ = z.shape
         K = self.chunk_size
+        # Latent dropout (reference-faithful): the decoder learns to decode
+        # perturbed latents, the robustness generation depends on. Inactive
+        # in eval, so the frozen stage-2 codec and generation see clean z.
+        z = F.dropout(z, p=self.dropout_p, training=self.training)
         h = self.decoder_mlp(z)  # [B, N, K*H]
         h = h.view(B, N, K, self.hidden_dim)
         h = h.reshape(B, N * K, self.hidden_dim)

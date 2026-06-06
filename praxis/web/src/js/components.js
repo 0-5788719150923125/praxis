@@ -440,13 +440,14 @@ export function createMessage({ role, content, caption, jokeScore, score = 0 }, 
 /**
  * Create a single KB search result. Snippet highlight markers (\x01/\x02,
  * emitted by FTS5 snippet()) are converted to <mark> after escaping.
- * @param {Object} hit - {type, title, uri, snippet}
+ * @param {Object} hit - {type, title, uri, origin, summary, snippet}
  * @returns {string} HTML string
  */
-export function createKbResult({ id, type, label, title, uri, snippet }) {
-    const highlighted = escapeHtml(snippet || '')
+export function createKbResult({ id, type, label, title, uri, origin, summary, snippet }) {
+    const highlighted = escapeHtml(snippet || summary || '')
         .replaceAll('\x01', '<mark>')
         .replaceAll('\x02', '</mark>');
+    const from = origin ? `<span class="kb-result-origin">${escapeHtml(origin)}</span>` : '';
     return `
         <div class="kb-result" role="button" tabindex="0"
              data-kb-id="${escapeHtml(id)}" data-kb-type="${escapeHtml(type)}"
@@ -454,7 +455,7 @@ export function createKbResult({ id, type, label, title, uri, snippet }) {
             <span class="kb-result-type kb-label-filter" data-kb-type="${escapeHtml(type)}"
                   data-kb-label="${escapeHtml(label || type)}" role="button"
                   title="Add to search">${escapeHtml(label || type)}</span>
-            <span class="kb-result-title">${escapeHtml(title)}</span>
+            <span class="kb-result-title">${escapeHtml(title)}${from}</span>
             <span class="kb-result-snippet">${highlighted}</span>
         </div>
     `;
@@ -467,13 +468,19 @@ export function createKbResult({ id, type, label, title, uri, snippet }) {
  * @returns {string} HTML string
  */
 export function createKbCard(item, bodyHtml) {
-    const source = item.meta && item.meta.document ? ` · ${escapeHtml(item.meta.document)}` : '';
+    const source = item.origin ? ` · ${escapeHtml(item.origin)}` : '';
+    // Crawled pages read inline but keep a path back to the live original.
+    const external = /^https?:\/\//.test(item.uri || '')
+        ? `<a class="kb-card-external" href="${escapeHtml(item.uri)}" target="_blank"
+              rel="noopener" aria-label="Open original">↗</a>`
+        : '';
     return `
         <div class="kb-card">
             <div class="kb-card-header">
                 <button class="kb-card-back" aria-label="Back to results">← Back</button>
                 <span class="kb-result-type" data-kb-type="${escapeHtml(item.type)}">${escapeHtml(item.label || item.type)}</span>
                 <span class="kb-card-title">${escapeHtml(item.title)}${source}</span>
+                ${external}
             </div>
             <div class="kb-card-body">${bodyHtml}</div>
         </div>

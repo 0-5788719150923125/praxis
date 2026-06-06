@@ -555,7 +555,100 @@ const METRIC_RENDERERS = {
     line: (config, { runs }) =>
         createRunComparisonChart(config.canvasId, config.label, runs, config.key),
     evolution: (config) => createEvolutionChart(config.canvasId),
+    spider_citations: (config) => createSpiderCitationsChart(config.canvasId),
 };
+
+// Spider link graph: top cited URLs as horizontal bars, ranked by the same
+// citation counts that order the crawl frontier. Fetches /api/spider; the
+// payload also carries top referrers, surfaced in each bar's tooltip footer.
+async function createSpiderCitationsChart(canvasId) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return;
+
+    const fail = (msg) => {
+        const c = ctx.getContext('2d');
+        const w = ctx.parentElement.clientWidth || 600, h = ctx.parentElement.clientHeight || 280;
+        ctx.width = w; ctx.height = h;
+        c.fillStyle = '#888'; c.font = '12px monospace'; c.textAlign = 'center';
+        c.fillText(msg, w / 2, h / 2);
+    };
+
+    let data;
+    try {
+        const r = await fetch('/api/spider');
+        const j = await r.json();
+        if (j.status !== 'ok' || !j.data) return fail('No crawl data yet (enable with --spider)');
+        data = j.data;
+    } catch (e) {
+        return fail('Spider data unavailable');
+    }
+
+    if (charts[canvasId]) {
+        charts[canvasId].destroy();
+    }
+    const theme = getContextTheme(ctx);
+    const { textColor, gridColor, tooltipBg } = getThemeColors(theme);
+
+    // Label by path (host only when it's a site root) so bars stay legible;
+    // the tooltip shows the full URL.
+    const shortLabel = (url) => {
+        const m = url.match(/^https?:\/\/([^/]+)(\/.*)?$/);
+        if (!m) return url;
+        const path = m[2] && m[2] !== '/' ? m[2] : '';
+        const label = path ? `${m[1]}${path}` : m[1];
+        return label.length > 42 ? `…${label.slice(-41)}` : label;
+    };
+    const referrers = (data.referrers || [])
+        .map(r => `${shortLabel(r.url)} (${r.count})`);
+
+    charts[canvasId] = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: data.cited.map(d => shortLabel(d.url)),
+            datasets: [{
+                label: 'Citations',
+                data: data.cited.map(d => d.count),
+                backgroundColor: data.cited.map((d, i) => chartLineColor(i) + '80'),
+                borderColor: data.cited.map((d, i) => chartLineColor(i)),
+                borderWidth: 2,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            indexAxis: 'y',
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: tooltipBg,
+                    titleColor: textColor,
+                    bodyColor: textColor,
+                    borderColor: gridColor,
+                    borderWidth: 1,
+                    padding: 12,
+                    callbacks: {
+                        title: (items) => data.cited[items[0].dataIndex].url,
+                        label: (item) => `${item.parsed.x} citation(s)`,
+                        footer: () => referrers.length
+                            ? ['', 'Top referrers:', ...referrers.slice(0, 5)]
+                            : [],
+                    },
+                },
+            },
+            scales: {
+                x: {
+                    beginAtZero: true,
+                    ticks: { color: textColor, precision: 0 },
+                    grid: { color: gridColor },
+                },
+                y: {
+                    ticks: { color: textColor, font: { size: 10 } },
+                    grid: { display: false },
+                },
+            },
+        },
+    });
+}
 
 // Isometric recency-weighted terrain. MUST match praxis/pillars/evolution.py
 // (_iso_boxes) so the web card and the LaTeX figure are the same picture: height

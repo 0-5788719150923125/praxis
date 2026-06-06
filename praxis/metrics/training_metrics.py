@@ -194,6 +194,75 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
             "type": "bar",
         },
     },
+    # Background web spider (praxis.spider). Counters mirrored from spider.db
+    # by SpiderCallback at logging intervals. Only emitted when --spider is on.
+    "spider_pages": {
+        "description": (
+            "Pages currently held in spider.db across all watched sites - the "
+            "spider's grounded corpus, capped per site."
+        ),
+        "chart": {
+            "title": "Spider Pages Held",
+            "y_label": "Pages",
+            "y_scale": "linear",
+            "order": 96,
+            "is_validation": False,
+        },
+    },
+    "spider_new_pages": {
+        "description": (
+            "Cumulative never-before-seen pages fetched. The slope is the "
+            "discovery rate; it flattens as watched sites are fully walked."
+        ),
+        "chart": {
+            "title": "Spider Discoveries",
+            "y_label": "New Pages",
+            "y_scale": "linear",
+            "order": 97,
+            "is_validation": False,
+        },
+    },
+    "spider_revisits": {
+        "description": (
+            "Cumulative re-fetches of known pages (content refreshes plus "
+            "cheap 304s). Rises once the frontier dries up - the eventually-"
+            "consistent watch phase."
+        ),
+        "chart": {
+            "title": "Spider Revisits",
+            "y_label": "Revisits",
+            "y_scale": "linear",
+            "order": 98,
+            "is_validation": False,
+        },
+    },
+    "spider_frontier": {
+        "description": (
+            "URLs queued for a first fetch across all sites. Growth means "
+            "discovery is outpacing the one-fetch-per-tick budget."
+        ),
+        "chart": {
+            "title": "Spider Frontier",
+            "y_label": "Queued URLs",
+            "y_scale": "linear",
+            "order": 99,
+            "is_validation": False,
+        },
+    },
+    "spider_sites": {
+        "description": (
+            "Enabled watched sites. Grows when a widely-cited external site "
+            "is promoted into a free watchlist slot."
+        ),
+        "chart": {
+            "title": "Spider Watchlist",
+            "y_label": "Sites",
+            "y_scale": "linear",
+            "order": 100,
+            "is_validation": False,
+            "type": "bar",
+        },
+    },
     # The following are persisted for record-keeping but don't currently
     # get their own Research-tab chart (no chart hint). They still flow
     # through the logger and API as named columns.
@@ -570,6 +639,21 @@ COMPOSITE_METRIC_REGISTRY: list = [
         ),
         "source": "standalone",
         "order": 90,
+    },
+    {
+        # Spider link graph: the most-cited URLs and busiest referrer pages
+        # from spider.db's refs table - the same counts that rank the crawl
+        # frontier. source "standalone" -> the card fetches /api/spider.
+        "key": "spider_citations",
+        "type": "spider_citations",
+        "title": "Spider Citations",
+        "description": (
+            "Top cited URLs (and top referrers) in the spider's link graph. "
+            "Citation count is the frontier's ranking signal: well-referenced "
+            "links are fetched first, one-off links sink."
+        ),
+        "source": "standalone",
+        "order": 95,
     },
     {
         "key": "sampling_weights",

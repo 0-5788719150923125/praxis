@@ -215,6 +215,16 @@ def build_training_callbacks(
             )
         )
 
+    # Spider telemetry: mirrors spider.db counters into the metrics stream so
+    # the crawl charts on the Research tab. Gated on --spider, same flag that
+    # starts the worker (praxis/web/services.py).
+    from praxis.spider import spider_settings
+
+    if spider_settings(getattr(cfg.args, "spider", None)) is not None:
+        from praxis.callbacks.lightning import SpiderCallback
+
+        callbacks.append(SpiderCallback())
+
     # TerminalInterface routes dashboard/console output and manages the
     # dashboard internally when use_dashboard=True.
     callbacks.append(

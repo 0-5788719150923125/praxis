@@ -54,6 +54,8 @@ def kb_search():
                     "label": h.item.label,
                     "title": h.item.title,
                     "uri": h.item.uri,
+                    "origin": h.item.origin,
+                    "summary": h.item.summary,
                     "snippet": h.snippet,
                     "score": h.score,
                     "meta": h.item.meta,
@@ -104,6 +106,8 @@ def kb_item():
                 "label": item.label,
                 "title": item.title,
                 "uri": item.uri,
+                "origin": item.origin,
+                "summary": item.summary,
                 "body": body,
                 "anchor": anchor,
                 "meta": item.meta,
@@ -136,6 +140,12 @@ def _corpus_mtime() -> float:
                 latest = max(latest, path.stat().st_mtime)
             except OSError:
                 pass
+    # Spider pages count too; the spider's slow tick (minutes between writes)
+    # keeps this from churning the index.
+    try:
+        latest = max(latest, (REPO_ROOT / "build" / "spider.db").stat().st_mtime)
+    except OSError:
+        pass
     return latest
 
 
@@ -148,6 +158,20 @@ def _get_index() -> KBIndex:
         stale = not db.exists() or db.stat().st_mtime < _corpus_mtime()
     except OSError:
         stale = True
+    if not stale:
+        # An index built before the provenance columns existed must be rebuilt
+        # too; opening KBIndex in write mode drops the outdated table.
+        import sqlite3
+
+        try:
+            conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+            row = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE name = 'kb'"
+            ).fetchone()
+            conn.close()
+            stale = not row or "origin" not in (row[0] or "")
+        except sqlite3.Error:
+            stale = True
     if stale:
         writer = KBIndex()
         writer.rebuild()

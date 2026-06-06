@@ -462,3 +462,162 @@ def test_stacked_head_logits_match_manual_compose():
         manual = crystal(harmonic.transform(feat))
     assert torch.allclose(composed, manual, atol=1e-5)
     assert composed.shape == (2, 6, model.encoder.output_vocab_size)
+
+
+def test_calm_vae_reference_dropouts():
+    """Training applies input-token corruption + latent dropout (the
+    reference's robustness sites); eval applies neither."""
+    from praxis.encoders.calm.vae import CALMVAE
+
+    torch.manual_seed(0)
+    vae = CALMVAE(
+        vocab_size=64, embed_dim=8, chunk_size=4,
+        latent_dim=8, hidden_dim=16, dropout=0.5,
+    )
+    ids = torch.randint(1, 64, (2, 32))
+
+    # Eval: encode is deterministic, decode passes z through untouched.
+    vae.eval()
+    m1, _ = vae.encode(ids)
+    m2, _ = vae.encode(ids)
+    assert torch.equal(m1, m2)
+
+    # Train: input corruption makes encode stochastic; latent dropout
+    # zeroes z entries (visible through decode's first linear).
+    vae.train()
+    t1, _ = vae.encode(ids)
+    t2, _ = vae.encode(ids)
+    assert not torch.equal(t1, t2)
+
+    z = torch.ones(2, 8, 8)
+    outs = [vae.decode(z) for _ in range(2)]
+    assert not torch.equal(outs[0], outs[1])  # latent dropout active
+
+
+def test_calm_halo_geometric_mode():
+    """loss_func=halo selects the trinary geometric mode: recon stays CE, and
+    once the codec freezes the energy head trains under the angular HALO +
+    radial terms with gradient reaching only the head (codec/centroids are
+    frozen instruments)."""
+    from praxis.losses.cross_entropy import CrossEntropyLoss
+
+    cfg = _tiny_config(loss_func="halo", head_type="crystal")
+    model = PraxisForCausalLM(cfg)
+    model.train()
+    enc = model.encoder
+    assert enc.geometric_mode
+    assert isinstance(enc.recon_loss_fn, CrossEntropyLoss)  # never HALO on recon
+
+    # Legacy two-stage with an immediate boundary: frozen from step 1 on.
+    enc.requires_pretraining = False
+    enc.ae_freeze_steps = 1
+
+    input_ids = torch.randint(4, 200, (2, 32), dtype=torch.long)
+    labels = input_ids[:, 1:].contiguous()
+    model(input_ids=input_ids, labels=labels)  # step past the boundary
+
+    out = model(input_ids=input_ids, labels=labels)
+    out.loss.backward()
+    assert "calm_halo_angular" in enc._diag
+    assert "calm_radial" in enc._diag
+    assert "calm_energy_anchor" not in enc._diag  # anchor replaced
+    # Gradient reaches the energy head...
+    assert any(
+        p.grad is not None and p.grad.abs().sum() > 0
+        for p in enc.energy_head.parameters()
+    )
+    # ...but not the frozen codec.
+    assert all(p.grad is None or p.grad.abs().sum() == 0 for p in enc.vae.parameters())
+
+
+def test_calm_geometric_mode_off_by_default():
+    cfg = _tiny_config(head_type="crystal")
+    enc = PraxisForCausalLM(cfg).encoder
+    assert not enc.geometric_mode
+    assert not hasattr(enc, "geo_loss_fn")
+
+
+def test_calm_halo_geometric_mode():
+    """loss_func=halo selects CALM's trinary geometric mode: recon stays CE,
+    and once the codec freezes the energy head trains under the angular HALO +
+    radial terms with gradient reaching only the head (codec/centroids are
+    frozen instruments)."""
+    from praxis.losses.cross_entropy import CrossEntropyLoss
+
+    cfg = _tiny_config(loss_func="halo", head_type="crystal")
+    model = PraxisForCausalLM(cfg)
+    model.train()
+    enc = model.encoder
+    assert enc.geometric_mode
+    assert isinstance(enc.recon_loss_fn, CrossEntropyLoss)  # never HALO on recon
+
+    # Legacy two-stage with an immediate boundary: frozen from step 1 on.
+    enc.requires_pretraining = False
+    enc.ae_freeze_steps = 1
+
+    input_ids = torch.randint(4, 200, (2, 32), dtype=torch.long)
+    labels = input_ids[:, 1:].contiguous()
+    model(input_ids=input_ids, labels=labels)  # step past the boundary
+
+    out = model(input_ids=input_ids, labels=labels)
+    out.loss.backward()
+    assert "calm_halo_angular" in enc._diag
+    assert "calm_radial" in enc._diag
+    assert "calm_energy_anchor" not in enc._diag  # anchor replaced
+    # Gradient reaches the energy head...
+    assert any(
+        p.grad is not None and p.grad.abs().sum() > 0
+        for p in enc.energy_head.parameters()
+    )
+    # ...but not the frozen codec.
+    assert all(p.grad is None or p.grad.abs().sum() == 0 for p in enc.vae.parameters())
+
+
+def test_calm_geometric_mode_off_by_default():
+    cfg = _tiny_config(head_type="crystal")
+    enc = PraxisForCausalLM(cfg).encoder
+    assert not enc.geometric_mode
+    assert not hasattr(enc, "geo_loss_fn")
+
+
+def test_calm_halo_geometric_mode():
+    """loss_func=halo selects CALM's trinary geometric mode: recon stays CE,
+    and once the codec freezes the energy head trains under the angular HALO +
+    radial terms with gradient reaching only the head (codec/centroids are
+    frozen instruments)."""
+    from praxis.losses.cross_entropy import CrossEntropyLoss
+
+    cfg = _tiny_config(loss_func="halo", head_type="crystal")
+    model = PraxisForCausalLM(cfg)
+    model.train()
+    enc = model.encoder
+    assert enc.geometric_mode
+    assert isinstance(enc.recon_loss_fn, CrossEntropyLoss)  # never HALO on recon
+
+    # Legacy two-stage with an immediate boundary: frozen from step 1 on.
+    enc.requires_pretraining = False
+    enc.ae_freeze_steps = 1
+
+    input_ids = torch.randint(4, 200, (2, 32), dtype=torch.long)
+    labels = input_ids[:, 1:].contiguous()
+    model(input_ids=input_ids, labels=labels)  # step past the boundary
+
+    out = model(input_ids=input_ids, labels=labels)
+    out.loss.backward()
+    assert "calm_halo_angular" in enc._diag
+    assert "calm_radial" in enc._diag
+    assert "calm_energy_anchor" not in enc._diag  # anchor replaced
+    # Gradient reaches the energy head...
+    assert any(
+        p.grad is not None and p.grad.abs().sum() > 0
+        for p in enc.energy_head.parameters()
+    )
+    # ...but not the frozen codec.
+    assert all(p.grad is None or p.grad.abs().sum() == 0 for p in enc.vae.parameters())
+
+
+def test_calm_geometric_mode_off_by_default():
+    cfg = _tiny_config(head_type="crystal")
+    enc = PraxisForCausalLM(cfg).encoder
+    assert not enc.geometric_mode
+    assert not hasattr(enc, "geo_loss_fn")

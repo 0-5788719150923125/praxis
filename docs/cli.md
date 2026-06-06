@@ -125,6 +125,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--donations` | str | `https://buymeacoffee.com/vectorrent` | URL the web app's donations icon links to (empty string hides it) |
 | `--host-name` | str | `localhost` | Serve the local API at this CNAME |
 | `--port` | int | `2100` | Serve the local API at this port |
+| `--spider` | str | `None` | Enable the background web spider. Bare '--spider' uses the gentle profile; KEY=VALUE entries override it, e.g. '--spider profile=gentle tick_seconds=600 max_sites=8'. See SPIDER_REGISTRY for profiles. |
 
 ### data
 

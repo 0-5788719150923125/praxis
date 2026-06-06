@@ -33,6 +33,20 @@ class NetworkingGroup:
         )
 
         group.add_argument(
+            "--spider",
+            type=str,
+            nargs="*",
+            default=None,
+            metavar="KEY=VALUE",
+            help=(
+                "Enable the background web spider. Bare '--spider' uses the "
+                "gentle profile; KEY=VALUE entries override it, e.g. "
+                "'--spider profile=gentle tick_seconds=600 max_sites=8'. "
+                "See SPIDER_REGISTRY for profiles."
+            ),
+        )
+
+        group.add_argument(
             "--author",
             type=str,
             nargs="*",

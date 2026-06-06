@@ -60,7 +60,7 @@ Introspected from the live Flask app at every launch. Each summary is the first 
 
 ### Kb
 
-- **GET** `/api/kb/item` - Fetch one KB item's full body for inline rendering. Param: id. ([source](../praxis/web/routes/kb.py#L67))
+- **GET** `/api/kb/item` - Fetch one KB item's full body for inline rendering. Param: id. ([source](../praxis/web/routes/kb.py#L69))
 - **GET** `/api/kb/search` - Ranked KB search. Params: q, types (comma-separated), limit. ([source](../praxis/web/routes/kb.py#L21))
 
 ### Metrics
@@ -76,6 +76,10 @@ Introspected from the live Flask app at every launch. Each summary is the first 
 - **GET** `/api/print/energy` - Live engagement energy snapshot (for a dashboard badge). ([source](../praxis/web/routes/print.py#L160))
 - **GET** `/api/print/pending` - The currently presentable question, if any (no generation). ([source](../praxis/web/routes/print.py#L116))
 - **POST** `/api/print/respond` - Score the user's response against the model's stashed predicted answer, fold it into the live engagement energy, and clear the slot. ([source](../praxis/web/routes/print.py#L131))
+
+### Spider
+
+- **GET** `/api/spider` - Top cited URLs and top referrer pages from the spider's link graph. ([source](../praxis/web/routes/spider.py#L18))
 
 
 ## Sending prompts

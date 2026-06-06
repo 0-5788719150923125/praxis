@@ -11,6 +11,23 @@ class Services:
 
     api_server: Optional[Any] = None
     dashboard: Optional[Any] = None
+    spider: Optional[Any] = None
+
+
+def _start_spider(cfg):
+    """Start the background spider when --spider was passed (rank 0 only)."""
+    from praxis.spider import spider_settings
+
+    settings = spider_settings(getattr(cfg.args, "spider", None))
+    if settings is None:
+        return None
+    from praxis.spider.worker import SpiderWorker
+    from praxis.web.app import api_logger
+
+    worker = SpiderWorker(settings, logger=api_logger)
+    worker.start()
+    print(f"[SPIDER] Watching the web ({settings.profile} profile)")
+    return worker
 
 
 def _create_dashboard(cfg, run):
@@ -78,11 +95,13 @@ def start_services(
     """
     dashboard = None
     api_server = None
+    spider = None
     if cfg.local_rank == 0:
         dashboard = _create_dashboard(cfg, run)
         api_server = _build_api_server(
             cfg, run, generator, tokenizer, integration_loader, param_stats, dashboard
         )
+        spider = _start_spider(cfg)
 
     integration_loader.run_init_hooks(
         cfg.args,
@@ -91,4 +110,4 @@ def start_services(
         truncated_hash=run.truncated_hash,
     )
 
-    return Services(api_server=api_server, dashboard=dashboard)
+    return Services(api_server=api_server, dashboard=dashboard, spider=spider)

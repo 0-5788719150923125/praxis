@@ -11,6 +11,7 @@ from .git import git_bp
 from .kb import kb_bp
 from .metrics import metrics_bp
 from .print import print_bp
+from .spider import spider_bp
 from .static import static_bp
 
 
@@ -29,4 +30,5 @@ def register_routes(app: Flask) -> None:
     app.register_blueprint(print_bp)
     app.register_blueprint(data_metrics_bp)
     app.register_blueprint(dynamics_bp)
+    app.register_blueprint(spider_bp)
     app.register_blueprint(static_bp)
