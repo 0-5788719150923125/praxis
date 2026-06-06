@@ -7,14 +7,14 @@ batch_size: 1
 target_batch_size: 64
 block_size: 256
 infer_context: 512
-depth: 3
-num_layers: 1
+depth: 6
+num_layers: 2
 hidden_size: 96
 embed_size: 64
 ffn_type: arc
 attention_type: arc
 window_size: 64
-num_heads: 4
+num_heads: 6
 num_queries: 1
 encoder_type: byte_latent_conv_small
 tokenizer_type: byte_level
