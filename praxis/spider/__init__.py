@@ -32,7 +32,7 @@ SPIDER_REGISTRY: Dict[str, dict] = {
         tick_seconds=15,
         domain_seconds=60,
         max_page_bytes=2 * 1024 * 1024,
-        revisit_days=0.25,  # 14.4 minutes; for testing re-fetching of stale pages
+        revisit_days=0.25,  # every 6 hours
     ),
 }
 
