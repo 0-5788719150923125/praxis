@@ -41,7 +41,9 @@ class TransformerBlock(nn.Module):
     def __init__(self, config: ConfigType, *args: Any, **kwargs: Any) -> None:
         super().__init__()
 
-        self.attn_res = RESIDUAL_REGISTRY.get(config.residual_type)(config.hidden_size)
+        self.attn_res = RESIDUAL_REGISTRY.get(config.residual_type)(
+            config.hidden_size, num_depths=config.depth
+        )
         self.attn_norm = NORMALIZATION_REGISTRY[config.norm_type](
             config.hidden_size, eps=config.epsilon
         )
@@ -49,7 +51,9 @@ class TransformerBlock(nn.Module):
         # Titans long-term memory (a no-op when --memory-type none)
         self.memory = build_memory(config)
 
-        self.ffn_res = RESIDUAL_REGISTRY.get(config.residual_type)(config.hidden_size)
+        self.ffn_res = RESIDUAL_REGISTRY.get(config.residual_type)(
+            config.hidden_size, num_depths=config.depth
+        )
         self.ffn_norm = NORMALIZATION_REGISTRY[config.norm_type](
             config.hidden_size, eps=config.epsilon
         )
@@ -105,7 +109,9 @@ class TransformerBlock(nn.Module):
         # Apply post-normalization (if configured)
         attn_output = self.attn_norm(attn_output, mode="post")
 
-        attn_merged = self.attn_res.connect_depth(residual, attn_output, beta)
+        attn_merged = self.attn_res.connect_depth(
+            residual, attn_output, beta, current_depth=current_depth
+        )
 
         # =========== Long-term Memory ============
         # current_state carries the per-sequence NeuralMemState across depth;
@@ -133,7 +139,9 @@ class TransformerBlock(nn.Module):
                 ffn_output = ffn_output * router_weights
 
         # Merge expansions
-        final_output = self.ffn_res.connect_depth(residual, ffn_output, beta_ffn)
+        final_output = self.ffn_res.connect_depth(
+            residual, ffn_output, beta_ffn, current_depth=current_depth
+        )
         return (
             self.ffn_res.format_state(final_output),
             past_key_values,

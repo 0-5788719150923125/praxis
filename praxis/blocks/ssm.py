@@ -32,7 +32,9 @@ class SSMBlock(nn.Module):
         self.use_scaler = config.scaled
 
         # Residual connection
-        self.residual = RESIDUAL_REGISTRY.get(config.residual_type)(self.hidden_size)
+        self.residual = RESIDUAL_REGISTRY.get(config.residual_type)(
+            self.hidden_size, num_depths=config.depth
+        )
 
         # Layer norm
         self.norm = nn.RMSNorm(self.hidden_size, eps=config.epsilon)
@@ -206,7 +208,9 @@ class SSMBlock(nn.Module):
         output = self.out_proj(y)
 
         # Residual connection
-        output = self.residual.connect_depth(residual, output, beta)
+        output = self.residual.connect_depth(
+            residual, output, beta, current_depth=current_depth
+        )
         output = self.residual.format_state(output)
 
         return output, None, current_state, torch.tensor(0.0, device=inputs.device)

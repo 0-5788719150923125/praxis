@@ -14,7 +14,7 @@ from dataclasses import dataclass, fields
 from typing import Dict, List, Optional, Union
 
 # Fixed, model-agnostic pacing constants. "gentle" is the default profile;
-# "brisk" is for development, where waiting 5 minutes per fetch is unusable.
+# "ghost" is for development, where waiting 5 minutes per fetch is unusable.
 SPIDER_REGISTRY: Dict[str, dict] = {
     "gentle": dict(
         max_sites=16,

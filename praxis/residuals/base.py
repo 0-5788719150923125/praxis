@@ -34,7 +34,9 @@ class ResidualConnection(nn.Module):
         """
         return h, None
 
-    def connect_depth(self, mix_h: Tensor, h_o: Tensor, beta: Tensor) -> Tensor:
+    def connect_depth(
+        self, mix_h: Tensor, h_o: Tensor, beta: Tensor, current_depth: int = 0
+    ) -> Tensor:
         """
         Connect depth dimension of hidden states.
 
@@ -42,6 +44,7 @@ class ResidualConnection(nn.Module):
             mix_h: Mixed hidden state tensor
             h_o: Output hidden state tensor
             beta: Beta tensor for scaling
+            current_depth: Depth step (used by depth-aware connections)
 
         Returns:
             Combined tensor after connection

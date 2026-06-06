@@ -107,7 +107,9 @@ class WaveletBlock(nn.Module):
         )
 
         # --- wavelet mixer sublayer ---
-        self.mix_res = RESIDUAL_REGISTRY.get(config.residual_type)(self.hidden_size)
+        self.mix_res = RESIDUAL_REGISTRY.get(config.residual_type)(
+            self.hidden_size, num_depths=config.depth
+        )
         self.mix_norm = NORMALIZATION_REGISTRY[config.norm_type](
             self.hidden_size, eps=config.epsilon
         )
@@ -121,7 +123,9 @@ class WaveletBlock(nn.Module):
         self.dropout = nn.Dropout(config.dropout)
 
         # --- FFN sublayer (mirrors TransformerBlock) ---
-        self.ffn_res = RESIDUAL_REGISTRY.get(config.residual_type)(self.hidden_size)
+        self.ffn_res = RESIDUAL_REGISTRY.get(config.residual_type)(
+            self.hidden_size, num_depths=config.depth
+        )
         self.ffn_norm = NORMALIZATION_REGISTRY[config.norm_type](
             self.hidden_size, eps=config.epsilon
         )
@@ -170,7 +174,7 @@ class WaveletBlock(nn.Module):
             h = norm_scaling(h, current_depth)
         h = self._mix(h)
         h = self.mix_norm(h, mode="post")
-        merged = self.mix_res.connect_depth(residual, h, beta)
+        merged = self.mix_res.connect_depth(residual, h, beta, current_depth=current_depth)
 
         # =========== FeedForward =============
         residual, beta_ffn = self.ffn_res.connect_width(
@@ -181,6 +185,8 @@ class WaveletBlock(nn.Module):
             f = norm_scaling(f, current_depth)
         f = self.ffn(f, current_depth)
         f = self.ffn_norm(f, mode="post")
-        out = self.ffn_res.connect_depth(residual, f, beta_ffn)
+        out = self.ffn_res.connect_depth(
+            residual, f, beta_ffn, current_depth=current_depth
+        )
 
         return self.ffn_res.format_state(out), None, None, 0.0

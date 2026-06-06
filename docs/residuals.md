@@ -3,7 +3,7 @@
 
 Standard residuals vs. hyper-connections.
 
-Registry: ``praxis.RESIDUAL_REGISTRY`` (2 entries)
+Registry: ``praxis.RESIDUAL_REGISTRY`` (3 entries)
 
 ## `hyper` - HyperConnection
 
@@ -11,6 +11,17 @@ This module implements static hyper-connections, which are a replacement to resi
 connections. https://arxiv.org/abs/2409.19606
 
 Source: [praxis/residuals/hyper.py:12](../praxis/residuals/hyper.py#L12)
+
+## `rezero` - ReZeroConnection
+
+ReZero (arXiv 1908.01188) with one gain per depth step.
+
+``out = residual + alpha[depth] * branch``, alpha zero-init: the whole stack is the
+identity at entry and the model learns how much force each step applies - per depth,
+shared across sequence length. In a recurrent stack the same block reads a different
+gain at each loop step, so the loop's amplitude profile over depth is itself learned.
+
+Source: [praxis/residuals/rezero.py:10](../praxis/residuals/rezero.py#L10)
 
 ## `standard` - ResidualConnection
 

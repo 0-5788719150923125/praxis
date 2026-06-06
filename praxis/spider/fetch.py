@@ -14,7 +14,7 @@ from html.parser import HTMLParser
 from typing import Dict, List, Optional
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
-USER_AGENT = "praxis-spider/0.1 (+https://github.com/Vectorrent/praxis)"
+USER_AGENT = "praxis-spider/0.1 (+https://github.com/0-5788719150923125/praxis)"
 TIMEOUT = 30
 
 # Tags whose text content is noise, not prose.

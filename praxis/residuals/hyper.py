@@ -22,6 +22,7 @@ class HyperConnection(ResidualConnection):
         rate: int = 2,
         current_depth: Optional[int] = None,
         dynamic: bool = True,
+        **kwargs: Any,
     ) -> None:
         """
         Initialize the hyper-connection.
@@ -93,7 +94,9 @@ class HyperConnection(ResidualConnection):
         mix_h = mix_h_2d.view(B, L, self.rate + 1, D)
         return mix_h, beta
 
-    def connect_depth(self, mix_h: Tensor, h_o: Tensor, beta: Tensor) -> Tensor:
+    def connect_depth(
+        self, mix_h: Tensor, h_o: Tensor, beta: Tensor, current_depth: int = 0
+    ) -> Tensor:
         """
         Connect depth dimension with hyper-connections.
 
