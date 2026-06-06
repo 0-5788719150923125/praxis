@@ -9,7 +9,6 @@ block_size: 256
 infer_context: 512
 depth: 3
 num_layers: 1
-vocab_size: 1024
 hidden_size: 96
 embed_size: 64
 ffn_type: arc

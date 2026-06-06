@@ -110,3 +110,48 @@ def test_prismatic_is_top_level_parallel_split():
     assert field1.func is HarmonicHead
     assert field1.keywords["build_classifier"] is False
     assert crystal is CrystalHead
+
+
+def _irfft2_reference(field, scaled, seq_len):
+    """The old full-T irfft2 construction, kept as the ground truth the
+    separable evaluation must reproduce."""
+    rfft_D = field.D // 2 + 1
+    batched = scaled.dim() == 3
+    if not batched:
+        scaled = scaled.unsqueeze(0)
+    spec = torch.zeros(
+        scaled.shape[0], field.T, rfft_D, dtype=torch.complex64
+    )
+    spec[:, 1 : field.F_t + 1, 1 : field.F_d + 1] = scaled
+    spec[:, field.T - field.F_t : field.T, 1 : field.F_d + 1] = scaled.flip(1).conj()
+    out = torch.fft.irfft2(spec, s=(field.T, field.D), norm="ortho")[:, :seq_len]
+    return out if batched else out[0]
+
+
+def test_separable_field_matches_irfft2():
+    """_eval_field == the ortho irfft2 of the Hermitian-extended spectrum,
+    unbatched and batched, including the Nyquist column (F_d == D//2)."""
+    torch.manual_seed(0)
+    f = HarmonicField(hidden_dim=16, max_positions=64, amp_modulation="off")
+    assert f.F_d == f.D // 2  # Nyquist weight path is exercised
+    phase = torch.complex(f.spec_real, f.spec_imag)
+
+    scaled = phase * f.amplitudes
+    got = f._eval_field(scaled, 24, torch.device("cpu"))
+    want = _irfft2_reference(f, scaled, 24)
+    assert torch.allclose(got, want, atol=1e-5)
+
+    batched = phase.unsqueeze(0) * torch.randn(3, f.F_t, f.F_d)
+    got_b = f._eval_field(batched, 24, torch.device("cpu"))
+    want_b = _irfft2_reference(f, batched, 24)
+    assert got_b.shape == (3, 24, f.D)
+    assert torch.allclose(got_b, want_b, atol=1e-5)
+
+
+def test_separable_field_wraps_past_period():
+    """Positions past T wrap: the field is T-periodic by construction."""
+    torch.manual_seed(0)
+    f = HarmonicField(hidden_dim=16, max_positions=32, amp_modulation="off")
+    scaled = torch.complex(f.spec_real, f.spec_imag) * f.amplitudes
+    long = f._eval_field(scaled, 2 * f.T, torch.device("cpu"))
+    assert torch.allclose(long[: f.T], long[f.T :], atol=1e-5)

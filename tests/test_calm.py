@@ -360,6 +360,36 @@ def test_calm_convergence_does_not_latch_during_steady_descent():
     assert enc._diag["calm_pretrain_flatness"] > PRETRAIN_FLAT_EPS
 
 
+def test_calm_convergence_samples_once_per_optimizer_step():
+    """With grad accumulation, microbatch recon readings average into one
+    history sample per optimizer step, so the window/patience horizons are in
+    optimizer-step units and microbatch data variance doesn't inflate std."""
+    enc = PraxisForCausalLM(_tiny_config()).encoder
+    enc._grad_accum = 4
+    enc._pretrain_min_steps = 0
+    enc.ae_max_pretrain_steps = 10**9
+
+    # Noisy microbatches whose group means are identical: 3 full groups.
+    for _ in range(3):
+        for v in (1.0, 5.0, 2.0, 4.0):  # mean 3.0
+            enc._update_pretrain_convergence(v)
+    assert enc._recon_hist == [3.0, 3.0, 3.0]
+
+    # A partial group accumulates without entering the history.
+    enc._update_pretrain_convergence(9.0)
+    assert len(enc._recon_hist) == 3
+    assert enc._recon_accum == [9.0]
+
+
+def test_calm_pretrain_floor_covers_kl_anneal_plus_window():
+    """The latch floor must sit a full window past the later of the LR warmup
+    and KL anneal horizons, so the history holds only post-anneal readings."""
+    from praxis.encoders.calm.encoder import PRETRAIN_WINDOW
+
+    enc = PraxisForCausalLM(_tiny_config(warmup_steps=100)).encoder
+    assert enc._pretrain_min_steps == max(100, enc.kl_warmup_steps) + PRETRAIN_WINDOW
+
+
 def test_calm_with_stacked_crystal_harmonic_head():
     # crystal_harmonic stacks the harmonic field in front of the crystal
     # classifier; both mechanisms train through CALM's reconstruction path.

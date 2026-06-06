@@ -1,7 +1,8 @@
 """Harmonic head: 2D irrational-rotation field, multiplicatively coupled.
 
 The bias is a 2D standing wave over (position, feature) built from an
-``F_t * F_d`` complex amplitude grid, IRFFT2'd to a ``[T_max, D]`` real field.
+``F_t * F_d`` complex amplitude grid, evaluated separably at the positions in
+use (equivalent to IRFFT2 over the full ``[T_max, D]`` period, never built).
 Phases are seeded by Weyl's theorem on the 2-torus: the cell ``(f_t, f_d)``
 gets phase ``2*pi * frac(f_t * pi + f_d * e)``, equidistributed because
 ``{1, pi, e}`` are linearly independent over Q. Radial ``1/f^alpha`` decay
@@ -317,6 +318,20 @@ class HarmonicField(nn.Module):
         self.register_buffer("spec_real", spec_real, persistent=False)
         self.register_buffer("spec_imag", spec_imag, persistent=False)
 
+        # Feature-axis cosine basis for the separable field evaluation: bin
+        # f_d contributes w * cos(2*pi*f_d*d/D), w=2 from Hermitian doubling
+        # (w=1 at Nyquist), matching irfft over the D axis exactly.
+        f_d = torch.arange(1, self.F_d + 1, dtype=torch.float32)
+        d = torch.arange(self.D, dtype=torch.float32)
+        w = torch.full((self.F_d, 1), 2.0)
+        if self.D % 2 == 0 and self.F_d == self.D // 2:
+            w[-1] = 1.0
+        self.register_buffer(
+            "basis_d",
+            w * torch.cos(2 * math.pi * f_d.unsqueeze(1) * d / self.D),
+            persistent=False,
+        )
+
         self.amplitudes = nn.Parameter(torch.empty(self.F_t, self.F_d))
         nn.init.normal_(self.amplitudes, mean=0.0, std=AMPLITUDE_INIT_STD)
 
@@ -354,14 +369,31 @@ class HarmonicField(nn.Module):
                     "_last_input_coeffs", coeffs.clone(), persistent=False
                 )
 
+    def _eval_field(self, scaled: Tensor, seq_len: int, device: torch.device) -> Tensor:
+        """Band-limited field at positions ``0..seq_len-1`` via two small
+        matmuls - exactly the ortho-normed irfft2 of the (Hermitian-extended)
+        ``[T, D]`` spectrum, but never materializing it: only F_t * F_d bins
+        are nonzero, so the transform is separable. ``scaled`` is the complex
+        amplitude grid ``[..., F_t, F_d]``; returns ``[..., seq_len, D]``.
+        Memory is O(seq_len * D) instead of O(T * D) - load-bearing when T
+        spans the full context and seq_len is one block.
+
+        The 2/sqrt(T*D) factor folds the Hermitian doubling on the T axis
+        into irfft2's ortho norm, preserving spectral energy: field std stays
+        ~ amp std * sqrt(F_t * F_d / (T * D)), independent of T scale.
+        """
+        t = torch.arange(seq_len, device=device, dtype=torch.float32)
+        f_t = torch.arange(1, self.F_t + 1, device=device, dtype=torch.float32)
+        ang = 2 * math.pi * t.unsqueeze(1) * f_t / self.T  # [L, F_t]
+        a = torch.cos(ang) @ scaled.real - torch.sin(ang) @ scaled.imag
+        return (2.0 / math.sqrt(self.T * self.D)) * (a @ self.basis_d.to(device))
+
     def _field(
         self,
         seq_len: int,
         device: torch.device,
         dtype: Optional[torch.dtype],
     ) -> Tensor:
-        rfft_D = self.D // 2 + 1
-        spec = torch.zeros(self.T, rfft_D, dtype=torch.complex64, device=device)
         amps = self.amplitudes
         env = self._envelope()
         if env is not None:
@@ -369,14 +401,7 @@ class HarmonicField(nn.Module):
         scaled = (
             torch.complex(self.spec_real.to(device), self.spec_imag.to(device)) * amps
         )
-        spec[1 : self.F_t + 1, 1 : self.F_d + 1] = scaled
-        # Hermitian symmetry on the T axis so irfft2 yields a real field.
-        spec[self.T - self.F_t : self.T, 1 : self.F_d + 1] = scaled.flip(0).conj()
-        # ortho norm preserves spectral energy: field std stays ~ amp std
-        # times sqrt(F_t * F_d / (T * D)), independent of T scale.
-        field = torch.fft.irfft2(spec, s=(self.T, self.D), norm="ortho")
-        idx = (torch.arange(seq_len, device=device) % self.T).long()
-        b = field[idx]
+        b = self._eval_field(scaled, seq_len, device)
         return b.to(dtype) if dtype is not None else b
 
     def forward(self, hidden_states: Tensor) -> Tensor:
@@ -406,17 +431,11 @@ class HarmonicField(nn.Module):
 
     def _build_field(self, amps: Tensor, seq_len: int, device: torch.device) -> Tensor:
         """Batched field from per-example amplitudes ``[B, F_t, F_d]`` -> ``[B,
-        seq_len, D]``. The batched twin of :meth:`_field`'s spectrum assembly."""
-        rfft_D = self.D // 2 + 1
-        b_size = amps.shape[0]
+        seq_len, D]``. The batched twin of :meth:`_field`; the separable
+        evaluation broadcasts over the batch dim."""
         phase = torch.complex(self.spec_real.to(device), self.spec_imag.to(device))
         scaled = phase.unsqueeze(0) * amps  # [B, F_t, F_d]
-        spec = torch.zeros(b_size, self.T, rfft_D, dtype=torch.complex64, device=device)
-        spec[:, 1 : self.F_t + 1, 1 : self.F_d + 1] = scaled
-        spec[:, self.T - self.F_t : self.T, 1 : self.F_d + 1] = scaled.flip(1).conj()
-        field = torch.fft.irfft2(spec, s=(self.T, self.D), norm="ortho")  # [B, T, D]
-        idx = (torch.arange(seq_len, device=device) % self.T).long()
-        return field[:, idx]
+        return self._eval_field(scaled, seq_len, device)
 
     def _envelope(self) -> Optional[Tensor]:
         """``[F_t]`` amplitude envelope over the temporal-frequency axis, or
@@ -810,9 +829,17 @@ class HarmonicHead(BaseHead):
     ) -> None:
         super().__init__(config, encoder)
         self._downstream = None  # injectable downstream classifier (grad-ratio)
-        max_positions = int(getattr(config, "max_position_embeddings", 32768) or 32768)
-        if "byte" in str(getattr(config, "encoder_type", "")):
-            max_positions = max(max_positions, max_positions * 8)
+        # Field period = the training window, so the F_t frequencies actually
+        # oscillate within a sequence (the old max_position_embeddings sizing,
+        # x8 for byte encoders, left the fastest component slower than one
+        # block - a near-DC field). Positions past T wrap (the field is
+        # periodic); block_size is in the encoder's own units (bytes for
+        # byte-level tokenizers) since that is what the head sees.
+        max_positions = int(
+            getattr(config, "block_size", 0)
+            or getattr(config, "max_position_embeddings", 32768)
+            or 32768
+        )
 
         dims = self.output_dims()
         if dims is None:

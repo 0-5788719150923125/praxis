@@ -43,8 +43,12 @@ from .vae import CALMVAE
 # no-per-experiment-tuning rule): the phase ends when reconstruction stops
 # improving - the recon curve's linear trend across the window shrinks below the
 # window's own noise, sustained for PRETRAIN_PATIENCE readings and only after the
-# LR warmup horizon - or the max-steps cap is hit as a backstop. The warmup floor
-# matters: during the LR ramp a flat recon curve is just the low LR, not convergence.
+# LR/KL warmup horizon - or the max-steps cap is hit as a backstop. The floor
+# matters twice over: during the LR ramp a flat recon curve is just the low LR,
+# and while beta anneals the objective itself is moving. The window and patience
+# are in OPTIMIZER steps: recon is averaged across each accumulation group
+# before entering the history, so the window spans a real slice of the schedule
+# and the per-sample noise reflects trend jitter, not microbatch data variance.
 #
 # Trend-vs-noise, NOT relative-to-mean. The gate is |slope*n| / std(recon) over
 # the window: the total linear drift in units of the per-sample noise. A
@@ -74,9 +78,9 @@ ENERGY_ANCHOR_WEIGHT = 5.0
 # latch on.
 PRETRAIN_MIN_SAMPLES = 16
 # Consecutive below-threshold readings required before convergence latches. The
-# window slides one sample per microbatch, so this demands the plateau hold for
-# a sustained stretch (a full extra window) rather than ending the phase on a
-# single lucky read at the moment the window first fills.
+# window slides one sample per optimizer step, so this demands the plateau hold
+# for a full extra window of steps rather than ending the phase on a single
+# lucky read at the moment the window first fills.
 PRETRAIN_PATIENCE = PRETRAIN_WINDOW
 
 
@@ -310,11 +314,13 @@ class CALMEncoder(BaseEncoder):
         self.kl_warmup_steps = (
             warmup if kl_warmup_steps is None else int(kl_warmup_steps)
         )
-        # Convergence can't latch until the LR warmup horizon has elapsed: while
-        # the LR is still ramping from ~0, a flat recon curve is just the low LR,
-        # not real convergence. Without this floor the codec "converges" in a few
-        # dozen steps the moment the window first fills. Optimizer-step units.
-        self._pretrain_min_steps = warmup
+        # Convergence can't latch until a full window of post-warmup,
+        # post-anneal readings exists: while the LR ramps a flat recon curve is
+        # just the low LR, and while beta rises the objective is still moving.
+        # Without the extra window the history at the boundary is full of
+        # warmup-era samples and the latch fires the moment the floor lifts.
+        # Optimizer-step units.
+        self._pretrain_min_steps = max(warmup, self.kl_warmup_steps) + PRETRAIN_WINDOW
 
         self.noise_dim = _resolve_dim(noise_dim, base)
         self.energy_blocks = energy_blocks
@@ -343,7 +349,12 @@ class CALMEncoder(BaseEncoder):
         else:
             self.ae_freeze_steps = warmup
         self.ae_max_pretrain_steps = int(ae_max_pretrain_steps)
+        # One sample per OPTIMIZER step: microbatch recon values accumulate in
+        # _recon_accum and their mean enters the history once per accumulation
+        # group, so the window measures trend against trend-noise rather than
+        # microbatch data variance.
         self._recon_hist: list = []
+        self._recon_accum: list = []
         # Consecutive below-threshold readings so far (see PRETRAIN_PATIENCE).
         # Plain attribute, not a buffer: resetting to 0 on resume is safe - it
         # just re-requires the plateau to re-establish, which is conservative.
@@ -612,11 +623,16 @@ class CALMEncoder(BaseEncoder):
         reached. Convergence = relative drop across the window below EPS."""
         if bool(self._pretrain_done.item()):
             return
-        self._recon_hist.append(recon)
-        if len(self._recon_hist) > PRETRAIN_WINDOW:
-            self._recon_hist.pop(0)
         self._diag["calm_recon_ce"] = recon
         step = self._opt_step()
+        # Average the accumulation group into one reading per optimizer step.
+        self._recon_accum.append(recon)
+        if len(self._recon_accum) < self._grad_accum:
+            return
+        self._recon_hist.append(sum(self._recon_accum) / len(self._recon_accum))
+        self._recon_accum.clear()
+        if len(self._recon_hist) > PRETRAIN_WINDOW:
+            self._recon_hist.pop(0)
         if step >= self.ae_max_pretrain_steps:
             self._mark_pretrain_done(step, "max-steps cap")
             return
