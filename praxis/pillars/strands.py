@@ -132,14 +132,18 @@ def _segments_and_colors(data):
 
     # Each hair ramps base(blue)->tip via cmap(rel*z); split into per-segment
     # lines so the gradient renders. Segment s->s+1 takes z=(s+1)/STEPS, like
-    # the card. Per-hair depth alpha (far hairs dimmer).
+    # the card. Per-hair depth alpha (far hairs dimmer). A bias-free ("pure")
+    # arm reverses the ramp - variance pushes back from the other end of the
+    # corkscrew, so red enters at the ring.
+    pure = float(bias.max()) <= 1e-12
     cmap = _cmap("bias_variance")
     zmid = (np.arange(STEPS) + 1) / STEPS  # [STEPS]
+    zcol = (1.0 - zmid) if pure else zmid
     alpha = 0.2 + 0.5 * np.clip((depth + 1.5) / 3.0, 0.0, 1.0)  # [n]
     order = np.argsort(depth)  # back-to-front
     segs, cols = [], []
     for i in order:
-        rgba = cmap(rel[i] * zmid)  # [STEPS, 4]
+        rgba = cmap(rel[i] * zcol)  # [STEPS, 4]
         rgba[:, 3] = alpha[i]
         for k in range(STEPS):
             segs.append([(sx[i, k], sy[i, k]), (sx[i, k + 1], sy[i, k + 1])])

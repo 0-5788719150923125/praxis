@@ -1752,12 +1752,16 @@ function renderHarmonicStrands(canvas, data) {
     // First pass: peak energy on either axis (geometry scale - so a bias-free
     // "pure" arm still spans the geometry) and the heaviest per-feature
     // variance share (color reference).
-    let bmax = 1e-6, tmax = 0;
+    let bmax = 1e-6, tmax = 0, biasMax = 0;
     for (let i = 0; i < N; i++) {
         const b = Math.max(bias[i], 0), v = Math.max(vr[i], 0);
         bmax = Math.max(bmax, b, v);
+        biasMax = Math.max(biasMax, b);
         if (b + v > 1e-9) tmax = Math.max(tmax, v / (b + v));
     }
+    // A bias-free ("pure") arm reverses the color ramp: variance pushes back
+    // from the other end of the corkscrew, so red enters at the ring.
+    const pure = biasMax <= 1e-9;
     // Color reference: the field's heaviest per-feature variance, floored so a
     // near-zero-variance field stays blue (we don't amplify noise to red). When
     // variance IS present, each strand's tip color is its variance share RELATIVE
@@ -1780,7 +1784,7 @@ function renderHarmonicStrands(canvas, data) {
             gx[o + s] = r * Math.cos(th) * wgt + px * z;   // ring -> plane morph
             gy[o + s] = r * Math.sin(th) * wgt + py * z;
             gz[o + s] = (z - 0.5) * HEIGHT;                // pre-centered cylinder height
-            const c = sampleColormap('bias_variance', rel * z);   // blue base -> colormap(rel) tip
+            const c = sampleColormap('bias_variance', rel * (pure ? 1 - z : z));   // blue base -> colormap(rel) tip (reversed for pure)
             segCol[o + s] = `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
         }
     }

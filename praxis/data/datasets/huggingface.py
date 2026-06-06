@@ -6,7 +6,12 @@ from typing import Dict
 from transformers import PreTrainedTokenizer
 
 from praxis.data.datasets.base import PraxisSampler, load_dataset_smart
-from praxis.data.datasets.network_retry import is_network_error, retry_on_network_error
+from praxis.data.datasets.network_retry import (
+    enter_offline_mode,
+    hf_offline,
+    is_network_error,
+    retry_on_network_error,
+)
 from praxis.data.formats import DataFormat
 from praxis.data.formatters import (
     _rl_logger,
@@ -63,6 +68,11 @@ class HuggingfaceDataset(PraxisSampler):
         self.base_seed = seed
         self.restart_count = 0
         self.is_streaming = config.get("streaming", True)
+        if hf_offline() and self.is_streaming:
+            # Streams read over HTTP and cache nothing reusable; a full
+            # (non-streaming) load CAN resolve from the local datasets cache.
+            # Uncached datasets fail fast here and get skipped upstream.
+            self.is_streaming = False
 
         dataset_args = dict(
             path=self.dataset_path,
@@ -75,7 +85,18 @@ class HuggingfaceDataset(PraxisSampler):
         # Pin a commit when provided: resolves from cache harder and keeps runs reproducible.
         if "revision" in config:
             dataset_args["revision"] = config["revision"]
-        self.dataset = self._load_frugal(dataset_args)
+        try:
+            self.dataset = self._load_frugal(dataset_args)
+        except Exception as e:
+            if hf_offline() or not is_network_error(e):
+                raise
+            # First hub failure: latch the process offline and retry this
+            # same dataset from the local cache (non-streaming is the only
+            # mode that can read it). Uncached -> raises -> skipped upstream.
+            enter_offline_mode(f"{type(e).__name__} loading {self.dataset_path}")
+            self.is_streaming = False
+            dataset_args["streaming"] = False
+            self.dataset = self._load_frugal(dataset_args)
 
         # Initial shuffle with base seed
         self.buffer_size = config.get("buffer_size", 32)

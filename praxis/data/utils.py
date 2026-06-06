@@ -18,6 +18,7 @@ from praxis.data.datasets import (
     SyntheticPrintDataset,
     SyntheticToolCallingDataset,
 )
+from praxis.data.datasets.network_retry import hf_offline
 
 
 def get_datamodules(
@@ -58,6 +59,11 @@ def get_datamodules(
     train_data = []
     config = get_dataset_configs(train_datasets, validation_datasets, rl_type)
 
+    if hf_offline():
+        print(
+            "[DATA] OFFLINE mode: hub datasets resolve from the local cache "
+            "(streaming disabled); uncached ones are skipped."
+        )
     for c in config["primary"]:
         dataset_type = c.get("type", "huggingface")
         if dataset_type == "huggingface":
@@ -75,7 +81,21 @@ def get_datamodules(
             print(
                 f"[DATA] {dict(id=c.get('_id'), type=dataset_type, weight=c['weight'])}"
             )
-        train_data.append(get_dataset(dataset_type, tokenizer, seed, c, *args))
+        if dataset_type == "huggingface":
+            # The sampler falls back to the local cache on the first hub
+            # failure (latching offline mode for the rest of boot); a dataset
+            # that isn't cached raises and is skipped rather than fatal.
+            try:
+                train_data.append(get_dataset(dataset_type, tokenizer, seed, c, *args))
+            except Exception as e:
+                if not hf_offline():
+                    raise
+                print(
+                    f"[DATA] OFFLINE: skipping {c.get('path')} (not in local "
+                    f"cache): {type(e).__name__}"
+                )
+        else:
+            train_data.append(get_dataset(dataset_type, tokenizer, seed, c, *args))
 
     if data_path:
         train_data.append(
@@ -103,9 +123,17 @@ def get_datamodules(
     if len(config["validation"]) > 0:
         for c in config["validation"]:
             print("[VALIDATION] " + str(dict(path=c["path"], weight=c["weight"])))
-            validation_data.append(
-                get_dataset("huggingface", tokenizer, seed, c, *args)
-            )
+            try:
+                validation_data.append(
+                    get_dataset("huggingface", tokenizer, seed, c, *args)
+                )
+            except Exception as e:
+                if not hf_offline():
+                    raise
+                print(
+                    f"[VALIDATION] OFFLINE: skipping {c.get('path')} (not in "
+                    f"local cache): {type(e).__name__}"
+                )
 
     train_dataloader = PraxisDataModule(
         train_data,

@@ -7,6 +7,11 @@ from transformers import PreTrainedTokenizer
 from praxis.data.datasets.network_retry import retry_on_network_error
 from praxis.tasks import DEFAULT_TASK
 
+# Load-time hub calls are bounded: after this many network failures the caller
+# falls back to the local cache (see HuggingfaceDataset). Mid-stream fetches
+# stay unbounded to preserve data order.
+_LOAD_ATTEMPTS = 2
+
 
 class PraxisSampler:
     """Base class for all dataset samplers."""
@@ -61,6 +66,7 @@ def load_dataset_smart(dataset_args: Dict) -> Any:
         return retry_on_network_error(
             lambda: load_dataset(**fixed_args),
             label=f"load_dataset {dataset_path}",
+            max_attempts=_LOAD_ATTEMPTS,
         )
 
     # For all other datasets, try normal loading
@@ -68,6 +74,7 @@ def load_dataset_smart(dataset_args: Dict) -> Any:
         return retry_on_network_error(
             lambda: load_dataset(**dataset_args),
             label=f"load_dataset {dataset_path}",
+            max_attempts=_LOAD_ATTEMPTS,
         )
     except Exception as e:
         if ".METADATA" in str(e) or "splits" in str(e):
@@ -79,6 +86,7 @@ def load_dataset_smart(dataset_args: Dict) -> Any:
                 return retry_on_network_error(
                     lambda: load_dataset(**dataset_args),
                     label=f"load_dataset {dataset_path} (split=train)",
+                    max_attempts=_LOAD_ATTEMPTS,
                 )
             else:
                 # If split already specified, re-raise original error
