@@ -21,6 +21,7 @@ strands.tex
 conjectures.tex
 authors.tex
 citations.bib
+evolution.tex
 figures/
 
 # Stray top-level latex aux files (proper builds go to build/).
