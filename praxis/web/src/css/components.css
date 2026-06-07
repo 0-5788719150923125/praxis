@@ -9,7 +9,10 @@
     align-items: center;
     padding: 0.25rem 0 1px 0;
     background-color: var(--background);
-    z-index: 10;
+    /* Positioned so the notification fly-out stacks over tab content
+       (e.g. the Gymnasium input box at z-index 10). */
+    position: relative;
+    z-index: 50;
 }
 
 .logo {

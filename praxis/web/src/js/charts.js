@@ -7,6 +7,7 @@ import { state, CONSTANTS, chartLineColor, currentAccentHue, rotateHexHue } from
 import { fetchAPI } from './api.js';
 import { createTabHeader, pdfButton } from './components.js';
 import { dedupe, hasRealContent } from './prefetch.js';
+import { SCROLL_TAU, SCROLL_MIN_VEL } from './momentum.js';
 
 // Chart instances storage (exported for hybrid mode)
 export const charts = {};
@@ -961,9 +962,9 @@ const DECK_FLOOR_MARGIN = 14;    // px between the floor and the screen bottom
 // DECK_ANCHOR_DUR with the same easeOutCubic (matches the slide's weight).
 const DECK_ANCHOR_DUR = 240;     // ms; A<->B lift duration
 // Inner-scroll momentum: flick a card's body and it coasts under friction, clamped
-// hard at the top/bottom edge (no rubber-band, no bleed into cycling).
-const DECK_SCROLL_TAU = 140;     // ms; inner-scroll coast friction halflife
-const DECK_SCROLL_MIN_VEL = 0.02;// px/ms; below this the inner-scroll coast settles
+// hard at the top/bottom edge (no rubber-band, no bleed into cycling). The feel
+// constants (SCROLL_TAU / SCROLL_MIN_VEL) are shared with the wheel-momentum
+// module so touch and wheel coast identically everywhere.
 const DECK_TITLE_FLIP = 28;      // finger px on a card's title handle to flip A<->B
 
 export function initChartDeck(deck, opts = {}) {
@@ -1600,11 +1601,11 @@ function runDeckRAF(deck) {
             if (!b || !b.isConnected) {
                 deck._scrollMode = null;
             } else {
-                deck._scrollVel *= Math.exp(-dt / DECK_SCROLL_TAU);
+                deck._scrollVel *= Math.exp(-dt / SCROLL_TAU);
                 let sp = deck._scrollPos + deck._scrollVel * dt;
                 if (sp <= 0) { sp = 0; deck._scrollMode = null; }                 // hard clamp at edges
                 else if (sp >= deck._scrollMax) { sp = deck._scrollMax; deck._scrollMode = null; }
-                else if (Math.abs(deck._scrollVel) < DECK_SCROLL_MIN_VEL) { deck._scrollMode = null; }
+                else if (Math.abs(deck._scrollVel) < SCROLL_MIN_VEL) { deck._scrollMode = null; }
                 else moving = true;
                 deck._scrollPos = sp;
                 b.scrollTop = sp;   // write only; bounds were snapshotted
@@ -1801,7 +1802,7 @@ function bindDeckEvents(deck) {
             deck._seamAccum = 0;
             if (commit) clearDeckFocus();  // a real swipe cancels pending deep-link focus
             slideTo(deck, deck._seamBase + (commit ? dir : 0));
-        } else if (travel >= 6 && deck._scrollBody && Math.abs(deck._scrollVel) > DECK_SCROLL_MIN_VEL) {
+        } else if (travel >= 6 && deck._scrollBody && Math.abs(deck._scrollVel) > SCROLL_MIN_VEL) {
             startScrollMomentum(deck);   // pure inner scroll -> coast the card body
         }
     }, { passive: true });

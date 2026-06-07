@@ -14,10 +14,10 @@ import { state } from './state.js';
 import { kbFetchItem } from './api.js';
 import { renderMarkdown, renderJson } from './markdown.js';
 
-const AHEAD = 8;        // precache this many rows past the focus (read direction)
-const BEHIND = 4;       // postcache this many already-passed rows
-const RETAIN = 24;      // LRU cap; > window so a short scroll-back stays warm
-const CONCURRENCY = 4;  // max simultaneous prefetches
+const AHEAD = 30;       // precache this many rows past the focus (read direction)
+const BEHIND = 10;      // postcache this many already-passed rows
+const RETAIN = 96;      // LRU cap; > window so a long scroll-back stays warm
+const CONCURRENCY = 6;  // max simultaneous prefetches (browser caps ~6/host)
 
 // Only these types have a fetchable body (link/card/agent navigate instead).
 const FETCHABLE = new Set(['doc', 'note', 'run', 'page']);

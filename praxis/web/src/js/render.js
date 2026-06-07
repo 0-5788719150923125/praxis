@@ -16,6 +16,7 @@ import {
     createAppStructure
 } from './components.js';
 import { centerLoopedTabs, TAB_LOOP_COPIES } from './mobile.js';
+import { attachWheelMomentum } from './momentum.js';
 
 /**
  * Initial render - builds entire app structure from scratch
@@ -248,11 +249,17 @@ export function renderKbResults() {
     if (container._kbSig === html) return;
     container._kbSig = html;
     container.innerHTML = html;
+    // Wheel input coasts like a touch flick (idempotent; the list container
+    // persists, an opened card's body is recreated each open).
+    attachWheelMomentum(container);
     if (state.kbOpenItem) {
         // The full document is rendered; land on the section we matched (a note's
         // inner heading) so you can scroll above/below it. No anchor -> top.
         const body = container.querySelector('.kb-card-body');
-        if (body) scrollKbBodyToAnchor(body, state.kbOpenItem.anchor);
+        if (body) {
+            attachWheelMomentum(body);
+            scrollKbBodyToAnchor(body, state.kbOpenItem.anchor);
+        }
     }
 }
 

@@ -450,22 +450,38 @@ export function createKbResult({ id, type, label, title, uri, origin, summary, s
         .replaceAll('\x01', '<mark>')
         .replaceAll('\x02', '</mark>');
     const from = origin ? `<span class="kb-result-origin">${escapeHtml(origin)}</span>` : '';
-    // Crawled video pages carry a thumbnail along the row's right edge.
     const video = (uri || '').match(/youtube\.com\/watch\?v=([\w-]{11})/);
-    const thumb = video
-        ? `<img class="kb-result-thumb" loading="lazy" alt=""
-               src="https://i.ytimg.com/vi/${video[1]}/mqdefault.jpg">`
-        : '';
-    return `
-        <div class="kb-result${thumb ? ' has-thumb' : ''}" role="button" tabindex="0"
+    const chip = `<span class="kb-result-type kb-label-filter" data-kb-type="${escapeHtml(type)}"
+              data-kb-label="${escapeHtml(label || type)}" role="button"
+              title="Add to search">${escapeHtml(label || type)}</span>`;
+    const open = `<div class="kb-result${video ? ' has-thumb' : ''}" role="button" tabindex="0"
              data-kb-id="${escapeHtml(id)}" data-kb-type="${escapeHtml(type)}"
-             data-kb-uri="${escapeHtml(uri)}" data-kb-title="${escapeHtml(title)}">
-            <span class="kb-result-type kb-label-filter" data-kb-type="${escapeHtml(type)}"
-                  data-kb-label="${escapeHtml(label || type)}" role="button"
-                  title="Add to search">${escapeHtml(label || type)}</span>
+             data-kb-uri="${escapeHtml(uri)}" data-kb-title="${escapeHtml(title)}">`;
+    if (video) {
+        // Video rows: two panels. Media (chip + thumb) left; text right with a
+        // clean title and a shortened link on its own line.
+        const cleanTitle = title.replace(/\s*-\s*YouTube\s*$/, '');
+        return `
+        ${open}
+            <div class="kb-result-media">
+                ${chip}
+                <img class="kb-result-thumb" loading="lazy" decoding="async" alt=""
+                     src="https://i.ytimg.com/vi/${video[1]}/mqdefault.jpg">
+            </div>
+            <div class="kb-result-text">
+                <span class="kb-result-title">${escapeHtml(cleanTitle)}</span>
+                <a class="kb-result-url" href="${escapeHtml(uri)}" target="_blank"
+                   rel="noopener noreferrer">[youtube.com]</a>
+                <span class="kb-result-snippet">${highlighted}</span>
+            </div>
+        </div>
+        `;
+    }
+    return `
+        ${open}
+            ${chip}
             <span class="kb-result-title">${escapeHtml(title)}${from}</span>
             <span class="kb-result-snippet">${highlighted}</span>
-            ${thumb}
         </div>
     `;
 }

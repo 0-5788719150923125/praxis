@@ -68,6 +68,9 @@ const callLifecycleHook = async (hook, config = {}) => {
  * Maps action types to handler functions
  */
 export const ACTION_HANDLERS = {
+    // Click swallowed on purpose (e.g. native <a> navigation inside a row).
+    NOOP: () => {},
+
     /**
      * Handle reroll button click - resend last user message
      */

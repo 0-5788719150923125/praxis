@@ -60,7 +60,7 @@ Introspected from the live Flask app at every launch. Each summary is the first 
 
 ### Kb
 
-- **GET** `/api/kb/item` - Fetch one KB item's full body for inline rendering. Param: id. ([source](../praxis/web/routes/kb.py#L69))
+- **GET** `/api/kb/item` - Fetch one KB item's full body for inline rendering. Param: id. ([source](../praxis/web/routes/kb.py#L68))
 - **GET** `/api/kb/search` - Ranked KB search. Params: q, types (comma-separated), limit. ([source](../praxis/web/routes/kb.py#L21))
 
 ### Metrics

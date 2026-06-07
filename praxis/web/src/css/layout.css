@@ -206,24 +206,67 @@
     text-decoration: none;
     color: var(--text);
     transition: border-color 0.15s, background-color 0.15s;
+    /* Rows are independent: containing layout/paint keeps long lists (and
+       lazy thumbnails decoding in) from re-laying-out the whole feed. */
+    contain: layout paint;
+    min-width: 0;
 }
 
-/* Rows with a thumbnail gain a media column on the right edge. */
+/* Video rows are two true panels: media (chip + thumb) left, text right.
+   The thumbnail hugs the chip's bottom edge regardless of title height. */
 .kb-result.has-thumb {
-    grid-template-columns: auto 1fr auto;
-    grid-template-areas: "type title thumb" "type snippet thumb";
+    display: flex;
+    align-items: flex-start;
+    gap: var(--spacing-sm);
+}
+
+.kb-result-media {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+}
+
+.kb-result-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
 }
 
 .kb-result-thumb {
-    grid-area: thumb;
-    align-self: center;
     width: 96px;
     aspect-ratio: 16 / 9;
     object-fit: cover;
     border-radius: var(--radius-small);
-    margin-left: var(--spacing-sm);
     opacity: 0.92;
     transition: opacity 0.15s;
+}
+
+/* Video descriptions carry hard line breaks; flow them as prose and clamp
+   so the thumbnail row stays compact on every viewport. */
+.has-thumb .kb-result-snippet {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    overflow: hidden;
+}
+
+/* The video's address: a quiet shortened link under the title. */
+.kb-result-url {
+    align-self: flex-start;
+    font-size: 0.7rem;
+    opacity: 0.55;
+    color: inherit;
+    text-decoration: none;
+}
+
+.kb-result-url:hover {
+    opacity: 0.85;
+    text-decoration: underline;
 }
 
 .kb-result:hover .kb-result-thumb {
@@ -287,6 +330,7 @@
 .kb-result-title {
     grid-area: title;
     font-weight: 600;
+    min-width: 0;
 }
 
 /* Provenance chip: where the entry came from (its document, site, or event). */
@@ -299,6 +343,8 @@
 
 .kb-result-snippet {
     grid-area: snippet;
+    width: 100%;
+    min-width: 0;
     font-size: 0.8rem;
     opacity: 0.75;
     white-space: pre-wrap;

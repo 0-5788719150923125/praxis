@@ -58,6 +58,13 @@ export const CLICK_HANDLERS = [
         }
     },
     {
+        // The shortened video link navigates natively; swallow it here so the
+        // click doesn't also open the row's inline card.
+        selector: '.kb-result-url',
+        match: 'closest',
+        action: () => ({ type: 'NOOP' })
+    },
+    {
         selector: '.kb-result',
         match: 'closest',
         action: (e) => {

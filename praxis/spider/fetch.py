@@ -164,7 +164,9 @@ def fetch_page(
             if extra is not None:
                 hrefs.extend(extra.links)
                 if extra.text:
-                    text = f"{text}\n{extra.text}".strip()
+                    # Mined text IS the content (e.g. a video description);
+                    # the JS shell around it is footer boilerplate.
+                    text = extra.text
                 title = title or extra.title
 
     links, seen = [], set()

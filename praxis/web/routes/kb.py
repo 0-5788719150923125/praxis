@@ -30,7 +30,7 @@ def kb_search():
         limit = 20
 
     try:
-        index = _get_index()
+        index = _get_index_cached()
         # Empty query -> the full global feed (everything, not just runs), so the
         # search root is a complete index. A real query is ranked + typo-tolerant.
         hits = (
@@ -38,7 +38,6 @@ def kb_search():
             if query
             else index.list_all(types=types)
         )
-        index.close()
     except Exception as exc:  # missing index, locked db, etc.
         api_logger.warning(f"KB search failed: {exc}")
         return jsonify({"status": "error", "message": str(exc), "hits": []}), 200
@@ -74,9 +73,8 @@ def kb_item():
         return jsonify({"status": "error", "message": "missing id"}), 400
 
     try:
-        index = _get_index()
+        index = _get_index_cached()
         item = index.get(item_id)
-        index.close()
     except Exception as exc:
         api_logger.warning(f"KB item fetch failed: {exc}")
         return jsonify({"status": "error", "message": str(exc)}), 200
@@ -206,3 +204,27 @@ def _get_index() -> KBIndex:
     else:
         _sync_pages(db)
     return KBIndex(read_only=True)
+
+
+# Hot path: scroll prefetch issues bursts of /api/kb/item calls; reopening the
+# db (and probing spider.db) per request is pure latency. Cache a read-only
+# handle per thread (sqlite connections are thread-bound) and revalidate
+# staleness at most once a second.
+_local = None
+
+
+def _get_index_cached() -> KBIndex:
+    import threading
+    import time
+
+    global _local
+    if _local is None:
+        _local = threading.local()
+    now = time.time()
+    if getattr(_local, "index", None) is not None and now - _local.checked < 1.0:
+        return _local.index
+    if getattr(_local, "index", None) is not None:
+        _local.index.close()  # same thread owns it; safe to recycle
+    _local.index = _get_index()
+    _local.checked = now
+    return _local.index
