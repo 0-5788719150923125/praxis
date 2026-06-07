@@ -26,20 +26,33 @@ by frame across training, and the walk through the lifecycle becomes a walk
 through pictures of the same place changing.
 
 The main thing, though, is not the plotting. It is the learnable function -
-the linear solve, again. The head's 2D projection map is only the input
-side. The output side is a tiny renderer: a low-rank convolution over a
-pixel-rebasing map, solved or trained to produce a small image from the
-projected geometry. Tiny models predicting tiny images, trying to mimic the
-head. The renderer is not decoration; it is a probe with the same logic as
-the energy head's LinearPrior - solve what is solvable, and let the residual
-tell you what the cheap map cannot capture. If a rank-k convolution can
-reproduce the picture of a structure from the head's coordinates, that
-structure lives inside the head's geometry; the image was already implied.
+the linear solve, again - and where it lives. It lives in the comparison
+between a parent map and a child map, and the crucial fact is that the two
+are not the same kind of map. The parent is the head's 2D PCA projection:
+coarse, blocky, a handful of principal directions flattening a
+high-dimensional field. The child is asked for pixel-detail output - a
+small image in a format the parent never speaks. This is the human-level
+move: a person comparing a subway diagram to a street map is not checking
+pixels against pixels; they are holding two representations of one
+territory, in different spectrums, and the understanding is exactly the
+translation between them. The child cannot copy the parent. It has to
+*twist* it - cross resolutions, cross formats, hallucinate detail the
+blocky input only implies - and that twist is the learnable function. What
+gets learned is not fidelity within a format but a correspondence across
+formats: a twist in the internal world model, the same way a mind's map of
+a place is not at the scale of any map it was built from.
+
+The renderer is therefore a probe, not decoration, with the same logic as
+the energy head's LinearPrior - solve what is solvable, and let the
+residual tell you what the cheap map cannot capture. If a low-rank
+convolution over a pixel-rebasing map can paint the fine picture from the
+blocky coordinates, then the detail was already implied by the head's
+geometry; the twist was learnable and the structure lives inside the plane.
 Where the tiny painter fails - the pixels it keeps getting wrong, frame
-after frame - is exactly where the architecture holds structure the head's
-plane does not span. The reconstruction error over time is itself the
-metric: a film of what the model knows about itself, and a residual map of
-what it does not.
+after frame - is exactly where the architecture holds structure the
+parent's spectrum does not span at any resolution. The reconstruction
+error over time is itself the metric: a film of what the model knows about
+itself, and a residual map of what it does not.
 
 There is a pleasing recursion in it. We would be training miniature models
 whose entire world is pictures of a larger model, judged by how faithfully
