@@ -63,9 +63,18 @@ class Generator:
 
     @contextlib.contextmanager
     def _eval_mode(self):
-        # Simple eval mode handling - no Lightning-specific branching needed
+        # Simple eval mode handling - no Lightning-specific branching needed.
+        # force_eager: generation must not run through torch.compile. The
+        # decode loop changes python-level guard inputs every token (cache
+        # pos, live-segment length, current_depth), so compiled frames blow
+        # the dynamo recompile limit; eager decode is cheap with the KV cache.
         training = self.model.training
         self.model.eval()
+        stance = contextlib.ExitStack()
+        try:
+            stance.enter_context(torch.compiler.set_stance("force_eager"))
+        except Exception:
+            pass  # older torch: stance API unavailable, run as-is
         try:
             yield
         except Exception as e:
@@ -75,6 +84,7 @@ class Generator:
             print(traceback.format_exc())
             raise
         finally:
+            stance.close()
             self.model.train(training)
 
     def _eos_token_id_list(self) -> Optional[list]:
@@ -301,6 +311,27 @@ class Generator:
 
                 # EOS / SEP / max-tokens halt: done.
                 break
+
+            # Some vocabs (e.g. tokenmonster) can halt on a partial token -
+            # a split multi-byte glyph or pending capcode modifier - which a
+            # decode-then-reencode round trip (rolling contexts) silently
+            # drops. Ask for a few more tokens until the tail is complete.
+            incomplete_tail = getattr(self.tokenizer, "incomplete_tail", None)
+            if incomplete_tail is not None:
+                for _ in range(4):
+                    if not incomplete_tail(tokens[0].tolist()):
+                        break
+                    step_kwargs = dict(gen_kwargs)
+                    step_kwargs["max_new_tokens"] = 1
+                    outputs = self.model.generate(
+                        tokens,
+                        generation_config=GenerationConfig(**step_kwargs),
+                        tokenizer=self.tokenizer,
+                        return_dict_in_generate=True,
+                    )
+                    if outputs.sequences.shape[1] <= tokens.shape[1]:
+                        break
+                    tokens = outputs.sequences
 
         return self.tokenizer.decode(tokens[0], skip_special_tokens=skip_special_tokens)
 

@@ -114,6 +114,22 @@ def test_assistant_tokens_mask(tokenizer):
     assert tokenizer.decode(ids) == rendered
 
 
+def test_incomplete_tail(tokenizer):
+    """Partial tails (split glyphs, pending capcode) must be detectable."""
+    text = "CAPS and élève café 中文 emoji \U0001f600 end"
+    ids = tokenizer.encode(text, add_special_tokens=False)
+    # Detection must agree exactly with decode->reencode lossiness.
+    for k in range(1, len(ids) + 1):
+        prefix = ids[:k]
+        roundtrip = tokenizer.encode(
+            tokenizer.decode(prefix), add_special_tokens=False
+        )
+        assert tokenizer.incomplete_tail(prefix) == (roundtrip != prefix), k
+    assert not tokenizer.incomplete_tail(ids)  # full text is complete
+    assert not tokenizer.incomplete_tail(ids + [tokenizer.eos_token_id])
+    assert not tokenizer.incomplete_tail([])
+
+
 def test_thread_safety(tokenizer):
     import threading
 

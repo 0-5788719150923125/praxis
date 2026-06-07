@@ -294,3 +294,12 @@ def test_youtube_link_veto():
     assert not e.link_allowed("https://www.youtube.com/about/")
     assert not e.link_allowed("https://www.youtube.com/jobs/")
     assert not e.link_allowed("https://www.youtube.com/premium?x=1")
+
+
+def test_blocked_shell_pages_are_errors():
+    """A YouTube page with no minable JSON is a consent/blocked shell."""
+    from praxis.spider.enrichers import enricher_for
+
+    e = enricher_for("https://youtube.com/watch?v=abcdefghijk")
+    out = e.enrich_html("https://youtube.com/watch?v=abcdefghijk", "<html>About Press Copyright</html>")
+    assert not out.links and not out.text  # fetch_page treats this as an error

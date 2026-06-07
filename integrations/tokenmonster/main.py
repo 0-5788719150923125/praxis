@@ -258,6 +258,30 @@ class TokenMonsterTokenizer(
             )
         return out
 
+    def incomplete_tail(self, token_ids: List[int]) -> bool:
+        """Whether the sequence ends on a partial token.
+
+        TM tokens can end mid-glyph (split UTF-8) or as a pending capcode
+        modifier; both are destroyed by a decode-then-reencode round trip
+        (rolling contexts). Such a tail needs more tokens to complete.
+        Detection is stateless: the streaming DecoderInstance panics the
+        v1.1.12 server when fed token-by-token, so we never use it.
+        """
+        if not token_ids:
+            return False
+        if token_ids[-1] < self._offset:
+            return False  # specials are atomic
+        # Trailing TM run since the last special token.
+        start = len(token_ids)
+        while start > 0 and token_ids[start - 1] >= self._offset:
+            start -= 1
+        run = token_ids[start:]
+        full = self._tm_decode(run) or ""
+        if full.endswith("�"):
+            return True  # split multi-byte glyph
+        prev = self._tm_decode(run[:-1]) or ""
+        return full == prev  # tail contributed nothing: pending modifier
+
     def _tm_decode(self, ids: List[int]) -> str:
         if not ids:
             return ""

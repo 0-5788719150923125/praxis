@@ -375,6 +375,8 @@ class PagesSource(KBSource):
             body = "\n".join(
                 ln for ln in text.splitlines() if ln.strip() and ln not in common
             )
+            if not body and not title.replace("- YouTube", "").strip():
+                continue  # consent/blocked husk: chrome-only body, empty title
             yield KBItem(
                 id=f"page:{url}",
                 type="page",

@@ -162,6 +162,12 @@ def fetch_page(
         if enricher is not None:
             extra = enricher.enrich_html(url, html)
             if extra is not None:
+                if not extra.links and not extra.text:
+                    # An enriched site that yields nothing minable is a
+                    # consent/blocked shell (common on remote IPs), not
+                    # content. Treat as an error so it backs off and retries
+                    # instead of becoming an empty KB husk.
+                    raise ValueError("blocked or empty shell page")
                 hrefs.extend(extra.links)
                 if extra.text:
                     # Mined text IS the content (e.g. a video description);
