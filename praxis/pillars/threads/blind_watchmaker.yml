@@ -33,3 +33,19 @@ abstract: 'Do you exist in other people''s realities the same way you exist in y
   by interference, scales logarithmically, because $K$ frequency components address
   exponentially many configurations. The framework exists so that the reader can
   test it.'
+conclusion: 'We began with scale and ended with geometry. The patterns a model can
+  learn are set by the shape of the space its weights may occupy, and a harmonic
+  latent space reshapes the oldest tradeoff in the field: bias becomes a static,
+  population-average spectrum, variance becomes an input-conditional modulation,
+  and because they live on orthogonal axes they can be lowered together. From that
+  decoupling follows a conjecture stated plainly - that learning the mean costs
+  linearly while composing by interference costs logarithmically - and a framework
+  built to test it rather than to argue it. And from that, in turn, follows the
+  harder claim: that tractability is not a fixed property of a problem but a relation
+  between a problem and the observer solving it. The same instance is exponential
+  to one architecture and nearly free to another, so $P$ and $NP$ are better read
+  as a spectrum that the choice of representation indexes than as a wall every solver
+  meets in the same place. The speculative figure is gone; the conjectures that
+  replace it are falsifiable. What remains is praxis: the answer manifests through
+  direct experimentation, and what you choose to attend to determines what we find
+  next.'

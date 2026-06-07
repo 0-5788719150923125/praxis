@@ -7,9 +7,10 @@ A thread pulls the theory out into data: each yaml document under
 
 - ``title`` / ``subtitle`` - the title block (research/title.tex)
 - ``pillars``              - which content generators (build.py STEPS) run
-- ``abstract`` / ``theory`` - LaTeX components, written as macros into
-  research/thread.tex and plugged into the single unified research/body.tex
-  at its hooks (\\paperThreadAbstract, \\paperThreadTheory)
+- ``abstract`` / ``theory`` / ``conclusion`` - LaTeX components, written
+  as macros into research/thread.tex and plugged into the single unified
+  research/body.tex at its hooks (\\paperThreadAbstract,
+  \\paperThreadTheory, \\paperThreadConclusion)
 
 There is one master (main.tex) and one body (body.tex); threads reconfigure
 them rather than forking them. The long-term direction is to migrate the
@@ -42,6 +43,7 @@ class Thread:
     pillars: Tuple[str, ...]  # step keys from praxis.pillars.build.STEPS
     abstract: str = ""  # LaTeX, rendered inside \begin{abstract}...\end{abstract}
     theory: str = ""  # LaTeX, plugged at body.tex's \paperThreadTheory hook
+    conclusion: str = ""  # LaTeX, the conclusion's opening paragraph(s)
 
 
 def _discover() -> dict:
@@ -57,6 +59,7 @@ def _discover() -> dict:
             pillars=tuple(meta.get("pillars", [])),
             abstract=str(meta.get("abstract", "")).strip(),
             theory=str(meta.get("theory", "")).strip(),
+            conclusion=str(meta.get("conclusion", "")).strip(),
         )
     return registry
 
@@ -99,5 +102,12 @@ def write_thread(thread: Thread) -> dict:
             components.append("theory")
             fh.write(
                 "\\newcommand{\\paperThreadTheory}{%\n" + thread.theory + "\n}\n"
+            )
+        if thread.conclusion:
+            components.append("conclusion")
+            fh.write(
+                "\\newcommand{\\paperThreadConclusion}{%\n"
+                + thread.conclusion
+                + "\n}\n"
             )
     return {"thread": thread.key, "components": components}

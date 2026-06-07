@@ -27,3 +27,11 @@ theory: '\section{The Good Get Gooder Theorem}
   % TODO(spine stub): the theorem statement, the patch-vote instance,
 
   % and what widening the variance quadrant trades against convergence.'
+conclusion: 'We began with a vote and ended with a mean. Sampled wide enough, a
+  large transformer''s stochastic ensemble converges to pretty good - never fantastic,
+  never terrible, and dependably buildable-with in linear time. The 75\% of the
+  clock face that bias owns is not a failure of the system; it is the system, the
+  consensus that makes the vote land anywhere at all. The open question this stub
+  leaves for the full treatment: whether the variance quadrant can be widened -
+  more of the face given to input-conditional swing - without forfeiting the convergence
+  that makes pretty good a guarantee rather than a habit.'
