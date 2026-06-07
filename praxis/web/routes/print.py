@@ -181,7 +181,9 @@ def _resolve_loop_mode():
     if not name:
         model = getattr(_get_generator(), "model", None)
         model = getattr(model, "_orig_mod", model)  # unwrap torch.compile
-        for policy in getattr(model, "recall_policies", {}).values() if model is not None else []:
+        for policy in (
+            getattr(model, "recall_policies", {}).values() if model is not None else []
+        ):
             name = getattr(policy, "loop_mode", None)
             if name:
                 break

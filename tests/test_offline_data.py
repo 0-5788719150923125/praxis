@@ -104,9 +104,7 @@ def test_first_hub_failure_falls_back_to_cache(monkeypatch):
     def fake_load(dataset_args):
         seen.append(dict(dataset_args))
         if dataset_args.get("streaming"):
-            raise RuntimeError(
-                "Cannot send a request, as the client has been closed."
-            )
+            raise RuntimeError("Cannot send a request, as the client has been closed.")
         return FakeDataset()
 
     monkeypatch.setattr(hf, "load_dataset_smart", fake_load)

@@ -56,9 +56,7 @@ def ensure_ray(trainer_type: str) -> None:
 
     print(f"[ENV] Installing optional Ray dependency ({RAY_REQUIREMENT})...")
     try:
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", RAY_REQUIREMENT]
-        )
+        subprocess.check_call([sys.executable, "-m", "pip", "install", RAY_REQUIREMENT])
     except subprocess.CalledProcessError:
         sys.exit(
             "[ERROR] Ray install failed. Install manually with\n"

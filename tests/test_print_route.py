@@ -193,16 +193,12 @@ def test_loop_generate_then_calibrated_approve():
     assert gen["predicted"] == pytest.approx(0.6)
 
     # Confirming the model's guess = zero correction = full activation.
-    ok = c.post(
-        "/api/loop/approve", json={"id": gen["id"], "score": 0.6}
-    ).get_json()
+    ok = c.post("/api/loop/approve", json={"id": gen["id"], "score": 0.6}).get_json()
     assert ok["correction"] == pytest.approx(0.0)
     assert ok["activation"] == 1.0
 
     # A large correction shrinks the activation; valence keeps the user's sign.
-    bad = c.post(
-        "/api/loop/approve", json={"id": gen["id"], "score": -0.4}
-    ).get_json()
+    bad = c.post("/api/loop/approve", json={"id": gen["id"], "score": -0.4}).get_json()
     assert bad["correction"] == pytest.approx(1.0)
     assert bad["reward"] == pytest.approx(-0.4)
     assert bad["activation"] < ok["activation"]

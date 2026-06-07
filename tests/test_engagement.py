@@ -243,8 +243,12 @@ class TestTaskScoping:
         labels[:2, 1:] = logits.argmax(dim=-1)[:2, :-1]  # next-token aligned
         eng, joke = EngagementPolicy(self._config()), JokePolicy(self._config())
         eng.train(), joke.train()
-        _, em = eng(logits=logits, labels=labels, assistant_mask=mask, task_type_ids=task_ids)
-        _, jm = joke(logits=logits, labels=labels, assistant_mask=mask, task_type_ids=task_ids)
+        _, em = eng(
+            logits=logits, labels=labels, assistant_mask=mask, task_type_ids=task_ids
+        )
+        _, jm = joke(
+            logits=logits, labels=labels, assistant_mask=mask, task_type_ids=task_ids
+        )
         assert em and jm
         assert em["engagement_recall"] == 1.0
         assert jm["joke_recall"] < 1.0

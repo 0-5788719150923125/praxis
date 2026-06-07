@@ -72,6 +72,7 @@ def enter_offline_mode(reason: str) -> None:
     except Exception:
         pass
 
+
 T = TypeVar("T")
 
 _INITIAL_BACKOFF_SECONDS = 2.0

@@ -140,9 +140,10 @@ class EngagementPolicy(nn.Module):
         # at the current sample.
         advantage = (reward - self.reward_baseline).detach()  # [B]
         scoped_reward = float(sum(reward[i].item() for i in scoped) / len(scoped))
-        self.reward_baseline = self.REWARD_BASELINE_DECAY * self.reward_baseline + (
-            1.0 - self.REWARD_BASELINE_DECAY
-        ) * scoped_reward
+        self.reward_baseline = (
+            self.REWARD_BASELINE_DECAY * self.reward_baseline
+            + (1.0 - self.REWARD_BASELINE_DECAY) * scoped_reward
+        )
 
         # REINFORCE on the LM's own log-probs over the answer tokens: maximize
         # log_prob(answer) weighted by advantage. log_prob = -CE per token.

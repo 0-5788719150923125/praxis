@@ -174,7 +174,9 @@ class WaveletBlock(nn.Module):
             h = norm_scaling(h, current_depth)
         h = self._mix(h)
         h = self.mix_norm(h, mode="post")
-        merged = self.mix_res.connect_depth(residual, h, beta, current_depth=current_depth)
+        merged = self.mix_res.connect_depth(
+            residual, h, beta, current_depth=current_depth
+        )
 
         # =========== FeedForward =============
         residual, beta_ffn = self.ffn_res.connect_width(

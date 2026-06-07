@@ -88,13 +88,19 @@ class LinearPrior(nn.Module):
         self.register_buffer("A", torch.zeros(D, D), persistent=True)
         self.register_buffer("B", torch.zeros(D, latent_dim), persistent=True)
         self.register_buffer("W", torch.zeros(D, latent_dim), persistent=True)
-        self.register_buffer("frozen", torch.zeros((), dtype=torch.bool), persistent=True)
+        self.register_buffer(
+            "frozen", torch.zeros((), dtype=torch.bool), persistent=True
+        )
         self.register_buffer("seen", torch.zeros(()), persistent=True)
         # Post-freeze re-solve state machine (see update_resolve).
         self.register_buffer("W_prev", torch.zeros(D, latent_dim), persistent=True)
-        self.register_buffer("pending", torch.zeros((), dtype=torch.bool), persistent=True)
+        self.register_buffer(
+            "pending", torch.zeros((), dtype=torch.bool), persistent=True
+        )
         self.register_buffer("pending_step", torch.zeros(()), persistent=True)
-        self.register_buffer("gap_anchor", torch.full((), float("nan")), persistent=True)
+        self.register_buffer(
+            "gap_anchor", torch.full((), float("nan")), persistent=True
+        )
         self.register_buffer("loss_ema", torch.full((), float("nan")), persistent=True)
         self.register_buffer("ema_at_apply", torch.zeros(()), persistent=True)
         self.register_buffer("resolves_kept", torch.zeros(()), persistent=True)
@@ -126,9 +132,7 @@ class LinearPrior(nn.Module):
             # Positions default to the trailing sequence axis indices.
             t = torch.arange(h.shape[-2], device=h.device)
         t = t.to(h.dtype).reshape(*t.shape, 1)
-        f = torch.arange(
-            1, PRIOR_HARMONIC_FREQS + 1, device=h.device, dtype=h.dtype
-        )
+        f = torch.arange(1, PRIOR_HARMONIC_FREQS + 1, device=h.device, dtype=h.dtype)
         ang = 2 * math.pi * t * f / self.period
         basis = torch.cat([torch.sin(ang), torch.cos(ang)], dim=-1)
         return torch.cat([h, basis.expand(*h.shape[:-1], basis.shape[-1])], dim=-1)
@@ -205,9 +209,10 @@ class LinearPrior(nn.Module):
             )
         if bool(self.pending.item()):
             if opt_step - int(self.pending_step.item()) >= PRIOR_RESOLVE_VERIFY_STEPS:
-                worse = float(self.loss_ema.item()) > float(
-                    self.ema_at_apply.item()
-                ) * PRIOR_RESOLVE_TOLERANCE
+                worse = (
+                    float(self.loss_ema.item())
+                    > float(self.ema_at_apply.item()) * PRIOR_RESOLVE_TOLERANCE
+                )
                 if worse:
                     # REPLACE the buffer, never mutate in place: this runs
                     # after the loss is computed, so the current W tensor is
@@ -229,15 +234,16 @@ class LinearPrior(nn.Module):
         # Out-of-place blend + buffer REPLACEMENT (see above): the old W must
         # survive untouched until the in-flight backward has consumed it.
         self.W = (
-            (1.0 - PRIOR_RESOLVE_BLEND) * self.W
-            + PRIOR_RESOLVE_BLEND * self._ridge()
+            (1.0 - PRIOR_RESOLVE_BLEND) * self.W + PRIOR_RESOLVE_BLEND * self._ridge()
         ).detach()
         self.gap_anchor.fill_(cond_gap)
         self.ema_at_apply.copy_(self.loss_ema)
         self.pending.fill_(True)
         self.pending_step.fill_(float(opt_step))
 
-    def forward(self, h: torch.Tensor, t: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(
+        self, h: torch.Tensor, t: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
         """The prior's contribution: ``W phi(h, t)``. W carries no gradient;
         gradient flows through h into the backbone, which is desirable."""
         phi = self.features(h, t)

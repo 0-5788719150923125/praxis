@@ -1010,9 +1010,9 @@ class CALMEncoder(BaseEncoder):
         # Model samples: N draws from energy head. Same reshape.
         N_samples = self.energy_samples_n
         # [N, B, N-1, L] -> [B, N-1, N, L]
-        model_raw = self.energy_head.sample(h_cond, num_samples=N_samples, t=t_cond).permute(
-            1, 2, 0, 3
-        )
+        model_raw = self.energy_head.sample(
+            h_cond, num_samples=N_samples, t=t_cond
+        ).permute(1, 2, 0, 3)
 
         loss = energy_score_loss(model_raw, target_samples)
 
@@ -1277,7 +1277,9 @@ class CALMEncoder(BaseEncoder):
             ``[K]`` selected token ids.
         """
         if temperature >= 1.0:
-            z = self.energy_head.sample(h_last, num_samples=1, noise_scale=noise_scale, t=t)
+            z = self.energy_head.sample(
+                h_last, num_samples=1, noise_scale=noise_scale, t=t
+            )
             z = z.view(1, 1, -1)
             recon_hidden = self.vae.decode(z)
             recon_logits = self._classify(recon_hidden)

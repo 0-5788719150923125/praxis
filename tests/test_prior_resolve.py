@@ -46,7 +46,9 @@ def test_resolve_applies_damped_blend_and_pends():
         h = torch.randn(16, 8)
         p.observe(h, h @ torch.randn(8, 4))
     w0 = p.W.clone()
-    p.update_resolve(cond_gap=PRIOR_RESOLVE_GAP_DELTA + 0.1, energy_loss=1.0, opt_step=10)
+    p.update_resolve(
+        cond_gap=PRIOR_RESOLVE_GAP_DELTA + 0.1, energy_loss=1.0, opt_step=10
+    )
     assert bool(p.pending)
     assert not torch.allclose(p.W, w0)
     torch.testing.assert_close(p.W_prev, w0)  # restore point saved
@@ -86,9 +88,22 @@ def test_not_worse_loss_keeps_new_w():
 
 def test_old_checkpoint_loads_without_resolve_buffers():
     p = _trained_prior()
-    sd = {k: v for k, v in p.state_dict().items() if "resolve" not in k
-          and k not in ("W_prev", "pending", "pending_step", "gap_anchor",
-                        "loss_ema", "ema_at_apply", "resolves_kept", "resolves_rejected")}
+    sd = {
+        k: v
+        for k, v in p.state_dict().items()
+        if "resolve" not in k
+        and k
+        not in (
+            "W_prev",
+            "pending",
+            "pending_step",
+            "gap_anchor",
+            "loss_ema",
+            "ema_at_apply",
+            "resolves_kept",
+            "resolves_rejected",
+        )
+    }
     p2 = LinearPrior(feature_dim=8, latent_dim=4)
     p2.load_state_dict(sd)
     torch.testing.assert_close(p2.W, p.W)
