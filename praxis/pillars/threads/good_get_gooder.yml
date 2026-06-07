@@ -35,3 +35,11 @@ conclusion: 'We began with a vote and ended with a mean. Sampled wide enough, a
   leaves for the full treatment: whether the variance quadrant can be widened -
   more of the face given to input-conditional swing - without forfeiting the convergence
   that makes pretty good a guarantee rather than a habit.'
+introduction: 'The claim is almost embarrassing to state: sample a large enough
+  model through a wide enough vote and you reliably get the mean of what it learned
+  - and the mean is pretty good. What keeps the claim from being empty is its geometry.
+  On the clock face of the latent space the consensus owns three quadrants; input-conditional
+  swing - the part of the vote a particular prompt can actually move - lives in
+  the fourth. That partition is measurable, it is the price of dependability, and
+  this paper is the start of taking it seriously: when is pretty good enough, what
+  does it cost to ask for better, and where does the linear time go.'

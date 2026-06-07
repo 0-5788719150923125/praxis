@@ -5,13 +5,9 @@
 
 \section{Introduction}
 
-The dominant recipe for capability is scale. Fix a transformer~\cite{vaswani2017attention}, then grow it: more parameters, more tokens, more compute, with returns described by smooth scaling laws~\cite{kaplan2020}. The recipe works, but it assumes the architecture itself imposes no ceiling on which patterns gradient descent can find - that everything worth learning is reachable from any sufficiently large model. This paper questions that assumption and offers a concrete alternative: that the \textit{geometry} a model is allowed to represent, not its size, determines the patterns accessible to it during finite training.
-
-To make the claim precise we need a vocabulary for ``geometry,'' and the cleanest one available is the oldest tradeoff in statistics. A model that minimizes error by collapsing toward the average of its training data has high bias and low variance; a model that chases the particulars of each example has low bias and high variance. Classically these trade off along a single line: you choose a point on it. Our first contribution is to show that in a \textit{continuous, harmonic} latent space this is no longer true. Bias and variance become separate coordinates, and a model can move in one without paying in the other.
-
-We ground this in mechanisms that already run in Praxis, not in metaphor. The harmonic head (Section~\ref{sec:manifold}) builds a two-dimensional standing wave over (position, feature) from a learned grid of frequency amplitudes with irrational, frozen phases. A \textit{static} amplitude grid produces the same field for every input: it is the corpus-average rhythm, maximum bias, a flat-by-construction prior. Making those amplitudes depend on the input adds \textit{structured} variance - deviation that still respects the learned harmonic constraints. The CALM codec (Section~\ref{sec:harmonic}) shows the same physics from the other side: a continuous-latent autoregressor that reconstructs sequences near-perfectly by phase-locking its latent features to a dominant rhythm. From these two we draw a scaling conjecture (Section~\ref{sec:scaling}): the mean costs linearly, interference costs logarithmically.
-
-This paper therefore contributes: (1) a reframing of bias and variance as orthogonal axes of a harmonic latent space, grounded in a running implementation and its measured diagnostics; (2) a conjecture that consensus modeling scales linearly while harmonic modeling scales logarithmically, stated honestly as a conjecture; (3) the Praxis framework for testing it; and (4) a candid account of what is measured, what is conjectured, and what remains philosophy.
+% The introduction is thread data (praxis/pillars/threads/<key>.yml); the
+% selected thread's generated thread.tex defines \paperThreadIntroduction.
+\paperThreadIntroduction
 
 \section{The Mean and the Manifold}
 \label{sec:manifold}
