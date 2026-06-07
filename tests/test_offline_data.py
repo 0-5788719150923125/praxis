@@ -389,3 +389,95 @@ def test_boot_dead_client_gets_one_fresh_load(monkeypatch):
     monkeypatch.setattr(hf, "load_dataset_smart", fake_load)
     s = hf.HuggingfaceDataset(tokenizer=None, seed=0, config={"path": "fake/ds"})
     assert len(loads) == 2 and s.get_document()["messages"]
+
+
+def test_exhausted_rebuilds_land_on_cache(monkeypatch):
+    """Flapping DNS: rebuilds keep dying, so the source collapses to looping
+    the local cache instead of retiring."""
+    import praxis.data.datasets.huggingface as hf
+
+    _reset_latch(monkeypatch)
+
+    class Dying:
+        def shuffle(self, **kw):
+            return self
+
+        def __iter__(self):
+            def gen():
+                raise RuntimeError(
+                    "Cannot send a request, as the client has been closed."
+                )
+                yield
+
+            return gen()
+
+    class Cached:
+        def shuffle(self, **kw):
+            return self
+
+        def __iter__(self):
+            return iter([{"text": "cached doc"}] * 10)
+
+    def fake_load(args):
+        return Cached() if args.get("streaming") is False else Dying()
+
+    monkeypatch.setattr(hf, "load_dataset_smart", fake_load)
+    s = hf.HuggingfaceDataset(tokenizer=None, seed=0, config={"path": "fake/ds"})
+    s._stream_rebuilds = 3  # budget exhausted
+    doc = s.get_document()
+    assert doc["messages"] and not s._retired
+    assert s.is_streaming is False
+
+
+def test_broken_transport_is_global(monkeypatch):
+    """One failed rebuild flips the class flag; later samplers go straight
+    to cache without burning their own rebuild budgets."""
+    import praxis.data.datasets.huggingface as hf
+
+    _reset_latch(monkeypatch)
+    monkeypatch.setattr(hf.HuggingfaceDataset, "transport_broken", False)
+    loads = []
+
+    class Dying:
+        def shuffle(self, **kw):
+            return self
+
+        def __iter__(self):
+            def gen():
+                raise RuntimeError(
+                    "Cannot send a request, as the client has been closed."
+                )
+                yield
+
+            return gen()
+
+    class Cached(Dying):
+        def __iter__(self):
+            return iter([{"text": "cached"}] * 10)
+
+    def fake_load(args):
+        loads.append(args.get("streaming"))
+        if args.get("streaming") is False:
+            return Cached()
+        raise RuntimeError("Cannot send a request, as the client has been closed.")
+
+    monkeypatch.setattr(hf, "load_dataset_smart", fake_load)
+    s1 = hf.HuggingfaceDataset.__new__(hf.HuggingfaceDataset)
+    # Simulate an already-loaded sampler whose stream just died.
+    for s in (s1,):
+        s.dataset_path = "fake/one"
+        s._dataset_args = {"path": "fake/one", "streaming": True}
+        s.is_streaming = True
+        s.base_seed, s.restart_count, s.buffer_size = 0, 0, 8
+        s.tokenizer = None
+        s._retired = False
+        s.sequence_cache = []
+        s.format_handler = lambda doc, keys, tok: {"messages": [doc], "metadata": {}}
+        s.keys = ["text"]
+        s.dataset = Dying()
+        s.shuffled_dataset = Dying()
+        s.dataset_iterator = iter(s.shuffled_dataset)
+    doc = s1.get_document()
+    assert doc["messages"] and hf.HuggingfaceDataset.transport_broken
+    streaming_loads = [x for x in loads if x is not False]
+    assert len(streaming_loads) <= 2  # one rebuild attempt (frugal+plain), then condemned

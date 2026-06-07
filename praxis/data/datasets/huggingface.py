@@ -50,6 +50,9 @@ class HuggingfaceDataset(PraxisSampler):
     """Dataset that loads from HuggingFace datasets library."""
 
     counts = {}
+    # The httpx client is shared process-wide; once one sampler proves it
+    # dead and unrebuildable, the rest skip straight to their caches.
+    transport_broken = False
 
     def __init__(self, tokenizer: PreTrainedTokenizer, seed: int, config: Dict):
         super().__init__(tokenizer)
@@ -217,7 +220,7 @@ class HuggingfaceDataset(PraxisSampler):
                 # stream so it gets a fresh client. Bounded so a true poison
                 # state degrades to retirement, not a rebuild loop.
                 self._stream_rebuilds = getattr(self, "_stream_rebuilds", 0) + 1
-                if self._stream_rebuilds <= 3:
+                if not HuggingfaceDataset.transport_broken and self._stream_rebuilds <= 1:
                     try:
                         self.dataset = self._load_frugal(dict(self._dataset_args))
                         shuffle_args = {"seed": self.base_seed + self.restart_count}
@@ -227,54 +230,58 @@ class HuggingfaceDataset(PraxisSampler):
                         self.dataset_iterator = iter(self.shuffled_dataset)
                         print(
                             f"[DATA] rebuilt stream {self.dataset_path} "
-                            f"({self._stream_rebuilds}/3) after a dead transport."
+                            "after a dead transport."
                         )
                         return self.get_document()
                     except Exception:
-                        pass  # fall through to offline check / retirement
-                self._retired = True
-                print(
-                    f"[DATA] retiring {self.dataset_path}: transport will not "
-                    "recover and rebuilds were exhausted."
-                )
-                return {"messages": [], "metadata": {}}
+                        # One failed rebuild condemns the shared client for
+                        # everyone - no per-sampler relearning at boot.
+                        HuggingfaceDataset.transport_broken = True
+                return self._fall_back_to_cache("dead transport")
             if hf_offline() and is_network_error(e):
-                # Offline mode latched while this stream was live. Try to
-                # carry on from the local cache (non-streaming is the only
-                # mode that can read it); loop over stale data rather than
-                # lose the source. No cache -> retire quietly: one line, no
-                # traceback, no per-fetch repetition.
-                if getattr(self, "_cache_fallback_tried", False):
-                    self._retired = True
-                    print(
-                        f"[DATA] OFFLINE: retiring {self.dataset_path} "
-                        "(cache fallback also failed)."
-                    )
-                    return {"messages": [], "metadata": {}}
-                self._cache_fallback_tried = True
-                try:
-                    self.is_streaming = False
-                    cached_args = dict(self._dataset_args, streaming=False)
-                    self.dataset = self._load_frugal(cached_args)
-                    self.shuffled_dataset = self.dataset.shuffle(seed=self.base_seed)
-                    self.dataset_iterator = iter(self.shuffled_dataset)
-                    print(
-                        f"[DATA] OFFLINE: {self.dataset_path} now looping "
-                        "over the local cache."
-                    )
-                    return self.get_document()
-                except Exception:
-                    self._retired = True
-                    print(
-                        f"[DATA] OFFLINE: retiring stream {self.dataset_path} "
-                        "for this session (no local cache)."
-                    )
-                return {"messages": [], "metadata": {}}
+                # Offline mode latched while this stream was live.
+                return self._fall_back_to_cache("offline")
             print(f"[ERROR] HuggingfaceDataset.get_document failed: {e}")
             import traceback
 
             traceback.print_exc()
             return {"messages": [], "metadata": {}}
+
+    def _fall_back_to_cache(self, reason: str) -> Dict:
+        """Last resort for a stream that cannot fetch: loop over the local
+        cache (non-streaming is the only mode that can read it). No cache ->
+        retire quietly: one line, no traceback, no per-fetch repetition."""
+        if getattr(self, "_cache_fallback_tried", False):
+            self._retired = True
+            print(
+                f"[DATA] retiring {self.dataset_path} "
+                f"({reason}; cache fallback also failed)."
+            )
+            return {"messages": [], "metadata": {}}
+        self._cache_fallback_tried = True
+        try:
+            self.is_streaming = False
+            cached_args = dict(self._dataset_args, streaming=False)
+            if not hf_offline():
+                # A flapping network could otherwise download the whole set.
+                from datasets import DownloadConfig
+
+                cached_args["download_config"] = DownloadConfig(local_files_only=True)
+            self.dataset = self._load_frugal(cached_args)
+            self.shuffled_dataset = self.dataset.shuffle(seed=self.base_seed)
+            self.dataset_iterator = iter(self.shuffled_dataset)
+            print(
+                f"[DATA] {self.dataset_path} now looping over the local "
+                f"cache ({reason})."
+            )
+            return self.get_document()
+        except Exception:
+            self._retired = True
+            print(
+                f"[DATA] retiring stream {self.dataset_path} for this "
+                f"session ({reason}; no local cache)."
+            )
+        return {"messages": [], "metadata": {}}
 
     def fill_sequence_cache(self):
         """Legacy method for compatibility - converts to old text format."""
