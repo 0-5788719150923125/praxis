@@ -17,4 +17,16 @@ ghostmax.tex
 title.tex
 thread.tex
 evolution_vars.tex
+strands.tex
+conjectures.tex
+authors.tex
 figures/
+
+# Stray top-level latex aux files (proper builds go to build/).
+*.aux
+*.bbl
+*.blg
+*.fls
+*.log
+*.fdb_latexmk
+*.synctex.gz
