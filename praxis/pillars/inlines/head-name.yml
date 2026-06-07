@@ -1,0 +1,7 @@
+# The current run's head, as a prose noun phrase. Lets the body say "the
+# \paperHeadName" and stay true whichever head the run actually uses,
+# independent of the immediate framing. Fallback = the original prose.
+macro: paperHeadName
+provider: head_name
+format: "{value}"
+fallback: "harmonic head"

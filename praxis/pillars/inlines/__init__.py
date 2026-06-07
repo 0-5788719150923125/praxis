@@ -71,6 +71,30 @@ def _recurrent_steps() -> Optional[int]:
     return resolve_config(experiment).get("recurrent_steps")
 
 
+# Display names for HEAD_REGISTRY keys whose prose noun isn't just the key.
+_HEAD_DISPLAY = {
+    "prismatic3": "three-arm prismatic",
+    "crystal_harmonic": "harmonic-crystal",
+    "crystal_harmonic_static": "harmonic-crystal",
+}
+
+
+@provider("head_name")
+def _head_name() -> Optional[str]:
+    """The current run's head as a prose noun phrase ("harmonic head",
+    "prismatic head", ...), derived from its resolved config rather than
+    hardcoded into the body. ``None`` when no run exists."""
+    from praxis.pillars.framing import newest_experiment, resolve_config
+
+    experiment = newest_experiment()
+    if not experiment:
+        return None
+    head = str(resolve_config(experiment).get("head_type", "")).strip()
+    if not head:
+        return None
+    return _HEAD_DISPLAY.get(head, head.replace("_", " ")) + " head"
+
+
 @dataclass(frozen=True)
 class InlineEdit:
     """One macro substitution, loaded from an inlines/*.yml file."""

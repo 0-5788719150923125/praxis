@@ -20,7 +20,7 @@ That picture is correct when the model has one knob mediating both terms - one s
 
 \subsection{The harmonic field: a measured instance}
 
-The harmonic head (Praxis, \texttt{heads/harmonic.py}) modulates a model's hidden states multiplicatively by a learned field $b$:
+The \paperHeadName{} (Praxis, \texttt{heads/harmonic.py}) modulates a model's hidden states multiplicatively by a learned field $b$:
 \[
     h \;\mapsto\; h \,\bigl(1 + b\bigr), \qquad
     b[t,d] \;=\; \mathrm{IRFFT2}\!\left(a[f_t,f_d]\, e^{\,i\varphi[f_t,f_d]}\, /\, f^{\alpha}\right),
