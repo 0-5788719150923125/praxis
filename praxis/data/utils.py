@@ -14,6 +14,7 @@ from praxis.data.config import (
 from praxis.data.datamodule import PraxisDataModule
 from praxis.data.datasets import (
     HuggingfaceDataset,
+    KBDataset,
     MultiDirectoryDataset,
     SyntheticPrintDataset,
     SyntheticToolCallingDataset,
@@ -221,6 +222,12 @@ def get_dataset(format, tokenizer, seed, *args, **kwargs):
         dataset_config = args[0] if args else {}
         dataset = SyntheticToolCallingDataset(tokenizer, seed, dataset_config)
         dataset.weight = dataset_config.get("weight", TOOLS_WEIGHT)
+        dataset.task_type = resolve_task_type(dataset_config)
+        return dataset
+    elif format == "kb":
+        dataset_config = args[0] if args else {}
+        dataset = KBDataset(tokenizer, seed, dataset_config)
+        dataset.weight = dataset_config.get("weight", DEFAULT_WEIGHT)
         dataset.task_type = resolve_task_type(dataset_config)
         return dataset
     elif format == "synthetic-print":

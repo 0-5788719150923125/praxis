@@ -450,8 +450,14 @@ export function createKbResult({ id, type, label, title, uri, origin, summary, s
         .replaceAll('\x01', '<mark>')
         .replaceAll('\x02', '</mark>');
     const from = origin ? `<span class="kb-result-origin">${escapeHtml(origin)}</span>` : '';
+    // Crawled video pages carry a thumbnail along the row's right edge.
+    const video = (uri || '').match(/youtube\.com\/watch\?v=([\w-]{11})/);
+    const thumb = video
+        ? `<img class="kb-result-thumb" loading="lazy" alt=""
+               src="https://i.ytimg.com/vi/${video[1]}/mqdefault.jpg">`
+        : '';
     return `
-        <div class="kb-result" role="button" tabindex="0"
+        <div class="kb-result${thumb ? ' has-thumb' : ''}" role="button" tabindex="0"
              data-kb-id="${escapeHtml(id)}" data-kb-type="${escapeHtml(type)}"
              data-kb-uri="${escapeHtml(uri)}" data-kb-title="${escapeHtml(title)}">
             <span class="kb-result-type kb-label-filter" data-kb-type="${escapeHtml(type)}"
@@ -459,6 +465,7 @@ export function createKbResult({ id, type, label, title, uri, origin, summary, s
                   title="Add to search">${escapeHtml(label || type)}</span>
             <span class="kb-result-title">${escapeHtml(title)}${from}</span>
             <span class="kb-result-snippet">${highlighted}</span>
+            ${thumb}
         </div>
     `;
 }
@@ -476,6 +483,14 @@ export function createKbCard(item, bodyHtml) {
         ? `<a class="kb-card-external" href="${escapeHtml(item.uri)}" target="_blank"
               rel="noopener" aria-label="Open original">↗</a>`
         : '';
+    // Crawled video pages get an inline player above the extracted text.
+    const video = (item.uri || '').match(/youtube\.com\/watch\?v=([\w-]{11})/);
+    const embed = video
+        ? `<iframe class="kb-card-embed" src="https://www.youtube-nocookie.com/embed/${video[1]}"
+              loading="lazy" allowfullscreen
+              allow="encrypted-media; picture-in-picture"
+              referrerpolicy="strict-origin-when-cross-origin"></iframe>`
+        : '';
     return `
         <div class="kb-card">
             <div class="kb-card-header">
@@ -484,6 +499,7 @@ export function createKbCard(item, bodyHtml) {
                 <span class="kb-card-title">${escapeHtml(item.title)}${source}</span>
                 ${external}
             </div>
+            ${embed}
             <div class="kb-card-body">${bodyHtml}</div>
         </div>
     `;

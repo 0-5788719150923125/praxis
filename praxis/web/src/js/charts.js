@@ -950,8 +950,6 @@ const DECK_DROP_THRESHOLD = 200; // px of SUSTAINED downward pull before the dec
 const DECK_SEAM = 88;            // finger px to flip one card AT the content edge (the "seam").
                                  // Eased slow-fast-slow so it pauses at the content end + anchor.
 const DECK_SEAM_FLING = 0.5;     // px/ms finger speed that commits a partial seam on release
-const DECK_FLICK_VEL = 0.85;     // px/ms; a swipe this fast advances the carousel even if the
-                                 // card still has scroll room (so a long card never blocks nav)
 const DECK_WHEEL_STEP = 120;     // wheel px that advance one card
 // Release motion: NO free coast. The release projects ONE target slot from the fling
 // direction, then a fixed-duration easeOutCubic slide lands on it - monotonic, so it
@@ -1738,15 +1736,17 @@ function bindDeckEvents(deck) {
             return;
         }
 
-        // Seated: a slow drag scrolls the head card's content to its edge; a FLICK skips
-        // straight to advancing the carousel (so a long card can never block navigation).
-        const flick = Math.abs(fvel) > DECK_FLICK_VEL;
+        // Seated: while the head card's content has room in this direction, the
+        // gesture ALWAYS scrolls it - however fast the flick. Cycling begins only
+        // at the content edge, so a long document (e.g. Identity's Arguments)
+        // can't be skipped past accidentally; the momentum coast makes reaching
+        // its bottom cheap.
         const body = deck._cards[st.activeIndex] && deck._cards[st.activeIndex].querySelector('.deck-card-scroll');
         const room = body
             ? (dy > 0 ? Math.max(0, body.scrollHeight - body.clientHeight - body.scrollTop)
                       : Math.max(0, body.scrollTop))
             : 0;
-        if (!flick && room > 0) {
+        if (room > 0) {
             const take = dy > 0 ? Math.min(dy, room) : -Math.min(-dy, room);
             const before = body.scrollTop;
             body.scrollTop += take;
@@ -1782,7 +1782,7 @@ function bindDeckEvents(deck) {
         // same continued drag also cycle cards.
         if (deck._anchorLocked) return;
 
-        // Flick, content edge, or a stuck card: begin the seam to the next/previous card.
+        // Content edge (or a stuck card): begin the seam to the next/previous card.
         deck._seamBase = ((Math.round(deck._pos) % st.count) + st.count) % st.count;
         deck._seamDir = dy > 0 ? 1 : -1;
         seatTarget(deck, deck._seamBase + deck._seamDir, deck._seamDir);   // reset before it slides in

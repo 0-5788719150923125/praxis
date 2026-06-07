@@ -132,7 +132,9 @@ def _full_doc_body(uri: str) -> str:
 def _corpus_mtime() -> float:
     """Newest mtime across the hand-authored markdown corpus (docs/ + next/).
     Runs are excluded: their metrics.db is rewritten every training step and
-    would otherwise trigger a reindex on nearly every keystroke."""
+    would otherwise trigger a reindex on nearly every keystroke. Spider pages
+    are excluded too: the spider touches its db every tick, and a full rebuild
+    per tick is waste - new pages arrive through the upsert path instead."""
     latest = 0.0
     for sub in ("docs", "next"):
         for path in (REPO_ROOT / sub).glob("*.md"):
@@ -140,13 +142,38 @@ def _corpus_mtime() -> float:
                 latest = max(latest, path.stat().st_mtime)
             except OSError:
                 pass
-    # Spider pages count too; the spider's slow tick (minutes between writes)
-    # keeps this from churning the index.
-    try:
-        latest = max(latest, (REPO_ROOT / "build" / "spider.db").stat().st_mtime)
-    except OSError:
-        pass
     return latest
+
+
+def _sync_pages(db: Path) -> None:
+    """Upsert pages crawled since the last index write - incremental, so a
+    spider tick costs one small insert instead of a full rebuild."""
+    import os
+
+    from praxis.kb.item import with_provenance
+    from praxis.kb.sources import PagesSource
+
+    try:
+        spider_mtime = (REPO_ROOT / "build" / "spider.db").stat().st_mtime
+        if spider_mtime <= db.stat().st_mtime:
+            return
+    except OSError:
+        return
+    reader = KBIndex(read_only=True)
+    row = reader._conn.execute(
+        "SELECT MAX(CAST(updated AS INTEGER)) FROM kb WHERE type = 'page'"
+    ).fetchone()
+    reader.close()
+    since = float(row[0] or 0)
+    items = [with_provenance(it, "pages") for it in PagesSource().iter_items(since)]
+    if items:
+        writer = KBIndex()
+        writer.upsert(items)
+        writer.close()
+    else:
+        # Nothing new (spider tick was a revisit/error); stamp the db so the
+        # next request skips the page-count query.
+        os.utime(db)
 
 
 def _get_index() -> KBIndex:
@@ -176,4 +203,6 @@ def _get_index() -> KBIndex:
         writer = KBIndex()
         writer.rebuild()
         writer.close()
+    else:
+        _sync_pages(db)
     return KBIndex(read_only=True)

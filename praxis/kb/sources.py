@@ -156,35 +156,39 @@ class RunsSource(KBSource):
 
 
 class LinksSource(KBSource):
-    """External documents, seeded from links embedded in docs and notes.
-
-    The spider that autonomously ingests these is deferred; this source makes
-    the links searchable now and is the natural home for crawled content later.
+    """External documents, seeded from links embedded in the README, docs,
+    and notes. Searchable directly, and the seed list for the spider.
     """
 
     name = "links"
 
     def iter_items(self) -> Iterable[KBItem]:
         seen = set()
+        paths = [(REPO_ROOT / "README.md", "README.md")]
         for sub in ("docs", "next"):
-            for path in sorted((REPO_ROOT / sub).glob("*.md")):
-                text = _read(path)
-                mtime = _mtime(path)
-                for label, url in _MD_LINK.findall(text):
-                    if url in seen:
-                        continue
-                    seen.add(url)
-                    yield KBItem(
-                        id=f"link:{url}",
-                        type="link",
-                        label="Link",
-                        title=label.strip(),
-                        body=f"{label}\n{url}",
-                        uri=url,
-                        origin=f"{sub}/{path.name}",
-                        summary=url,
-                        updated=mtime,
-                    )
+            paths.extend(
+                (p, f"{sub}/{p.name}") for p in sorted((REPO_ROOT / sub).glob("*.md"))
+            )
+        for path, origin in paths:
+            if not path.exists():
+                continue
+            text = _read(path)
+            mtime = _mtime(path)
+            for label, url in _MD_LINK.findall(text):
+                if url in seen:
+                    continue
+                seen.add(url)
+                yield KBItem(
+                    id=f"link:{url}",
+                    type="link",
+                    label="Link",
+                    title=label.strip(),
+                    body=f"{label}\n{url}",
+                    uri=url,
+                    origin=origin,
+                    summary=url,
+                    updated=mtime,
+                )
 
 
 class CardsSource(KBSource):
@@ -346,7 +350,9 @@ class PagesSource(KBSource):
 
     name = "pages"
 
-    def iter_items(self) -> Iterable[KBItem]:
+    def iter_items(self, since: float = 0.0) -> Iterable[KBItem]:
+        """Newest pages, capped; ``since`` narrows to pages fetched after the
+        given timestamp (the incremental indexing path)."""
         from praxis.spider import SpiderSettings
         from praxis.spider.store import DEFAULT_SPIDER_DB
 
@@ -356,8 +362,8 @@ class PagesSource(KBSource):
             conn = sqlite3.connect(f"file:{DEFAULT_SPIDER_DB}?mode=ro", uri=True)
             rows = conn.execute(
                 "SELECT url, site, title, text, summary, fetched FROM pages "
-                "ORDER BY fetched DESC LIMIT ?",
-                (SpiderSettings().max_kb_pages,),
+                "WHERE fetched > ? ORDER BY fetched DESC LIMIT ?",
+                (since, SpiderSettings().max_kb_pages),
             ).fetchall()
             conn.close()
         except sqlite3.Error:

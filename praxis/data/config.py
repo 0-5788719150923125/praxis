@@ -330,6 +330,9 @@ DATASETS = {
         type="synthetic-print",
         task_type=TaskType.CONVERSATION,
     ),
+    "kb": dict(
+        type="kb",
+    ),
     "praxis": dict(
         type="directory",
         path="./",

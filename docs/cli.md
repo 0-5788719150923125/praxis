@@ -126,6 +126,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--host-name` | str | `localhost` | Serve the local API at this CNAME |
 | `--port` | int | `2100` | Serve the local API at this port |
 | `--spider` | str | `None` | Enable the background web spider. Bare '--spider' uses the gentle profile; KEY=VALUE entries override it, e.g. '--spider profile=gentle tick_seconds=600 max_sites=8'. See SPIDER_REGISTRY for profiles. |
+| `--title` | str | `None` | Paper thread (layout) the living paper builds: the title block, master document, and which content generators run. See THREAD_REGISTRY in praxis/pillars/thread.py. (choices: blind_watchmaker, good_get_gooder) |
 
 ### data
 

@@ -208,6 +208,28 @@
     transition: border-color 0.15s, background-color 0.15s;
 }
 
+/* Rows with a thumbnail gain a media column on the right edge. */
+.kb-result.has-thumb {
+    grid-template-columns: auto 1fr auto;
+    grid-template-areas: "type title thumb" "type snippet thumb";
+}
+
+.kb-result-thumb {
+    grid-area: thumb;
+    align-self: center;
+    width: 96px;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    border-radius: var(--radius-small);
+    margin-left: var(--spacing-sm);
+    opacity: 0.92;
+    transition: opacity 0.15s;
+}
+
+.kb-result:hover .kb-result-thumb {
+    opacity: 1;
+}
+
 .kb-result:hover {
     border-color: var(--accent);
     background-color: var(--input-bg, var(--background));
@@ -345,6 +367,16 @@
 
 .kb-card-external:hover {
     border-color: var(--accent);
+}
+
+/* Inline player for crawled video pages. */
+.kb-card-embed {
+    flex: 0 0 auto;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    max-height: 60%;
+    border: none;
+    background: #000;
 }
 
 .kb-card-body {

@@ -20,10 +20,10 @@ def test_bare_flag_uses_gentle_defaults():
 
 
 def test_key_value_overrides():
-    settings = spider_settings(["profile=brisk", "max_sites=4"])
-    assert settings.profile == "brisk"
+    settings = spider_settings(["profile=ghost", "max_sites=4"])
+    assert settings.profile == "ghost"
     assert settings.max_sites == 4
-    assert settings.tick_seconds == 15  # from brisk
+    assert settings.tick_seconds == 15  # from ghost
 
 
 def test_dict_entries_from_yml():
@@ -205,3 +205,30 @@ def test_top_cited_and_referrers(store):
     store.record_refs("https://a.com/p", ["https://a.com/x"])
     assert store.top_cited(1) == [("https://a.com/x", 2)]
     assert store.top_referrers(1) == [("https://a.com/hub", 2)]
+
+
+# --- enrichers ---
+
+
+def test_youtube_enricher_mines_inline_json():
+    from praxis.spider.enrichers import enricher_for
+
+    html = (
+        '{"videoId":"dQw4w9WgXcQ",'
+        '"canonicalBaseUrl":"/@OtherChannel",'
+        '"shortDescription":"A song.\\nMore: https://example.com"}'
+    )
+    e = enricher_for("https://youtube.com/@The-Arc")
+    assert e is not None
+    out = e.enrich_html("https://youtube.com/@The-Arc", html)
+    assert "https://youtube.com/watch?v=dQw4w9WgXcQ" in out.links
+    assert "https://youtube.com/@OtherChannel" in out.links
+    assert "A song.\nMore: https://example.com" == out.text
+    assert enricher_for("https://example.com/") is None
+
+
+def test_links_source_includes_readme():
+    from praxis.kb.sources import LinksSource
+
+    uris = {item.uri for item in LinksSource().iter_items()}
+    assert any("youtube.com" in u for u in uris)

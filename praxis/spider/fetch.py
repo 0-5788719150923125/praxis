@@ -14,6 +14,8 @@ from html.parser import HTMLParser
 from typing import Dict, List, Optional
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
+from praxis.spider.enrichers import enricher_for
+
 USER_AGENT = "praxis-spider/0.1 (+https://github.com/0-5788719150923125/praxis)"
 TIMEOUT = 30
 
@@ -123,9 +125,10 @@ def fetch_page(
             return FetchResult(status=304)
         raise
 
+    enricher = enricher_for(url)
     with response:
         content_type = response.headers.get("Content-Type", "")
-        if "text/html" not in content_type:
+        if "text/html" not in content_type and enricher is None:
             raise ValueError(f"not html: {content_type}")
         raw = response.read(max_bytes + 1)
         if len(raw) > max_bytes:
@@ -137,25 +140,40 @@ def fetch_page(
         etag = response.headers.get("ETag", "")
         last_modified = response.headers.get("Last-Modified", "")
 
-    extractor = _Extractor()
-    try:
-        extractor.feed(html)
-        extractor.close()
-    except Exception:
-        pass  # keep whatever was extracted before the parse hiccup
+    if enricher is not None and "text/html" not in content_type:
+        feed = enricher.parse_feed(url, content_type, html)
+        if feed is None:
+            raise ValueError(f"not html: {content_type}")
+        title, text, hrefs = feed.title, feed.text, feed.links
+        description = ""
+    else:
+        extractor = _Extractor()
+        try:
+            extractor.feed(html)
+            extractor.close()
+        except Exception:
+            pass  # keep whatever was extracted before the parse hiccup
+        title, text, description = extractor.title, extractor.text, extractor.description
+        hrefs = list(extractor.links)
+        if enricher is not None:
+            extra = enricher.enrich_html(url, html)
+            if extra is not None:
+                hrefs.extend(extra.links)
+                if extra.text:
+                    text = f"{text}\n{extra.text}".strip()
+                title = title or extra.title
 
     links, seen = [], set()
-    for href in extractor.links:
+    for href in hrefs:
         normalized = _normalize_link(href, url)
         if normalized and normalized not in seen:
             seen.add(normalized)
             links.append(normalized)
 
-    text = extractor.text
-    summary = extractor.description or text[:140].replace("\n", " ").strip()
+    summary = description or text[:140].replace("\n", " ").strip()
     return FetchResult(
         status=200,
-        title=extractor.title or url,
+        title=title or url,
         text=text,
         summary=summary,
         links=links,
