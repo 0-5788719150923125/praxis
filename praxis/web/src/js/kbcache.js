@@ -12,7 +12,7 @@
 
 import { state } from './state.js';
 import { kbFetchItem } from './api.js';
-import { renderMarkdown, renderJson } from './markdown.js';
+import { renderMarkdown, renderJson, renderCode } from './markdown.js';
 
 const AHEAD = 30;       // precache this many rows past the focus (read direction)
 const BEHIND = 10;      // postcache this many already-passed rows
@@ -20,7 +20,7 @@ const RETAIN = 96;      // LRU cap; > window so a long scroll-back stays warm
 const CONCURRENCY = 6;  // max simultaneous prefetches (browser caps ~6/host)
 
 // Only these types have a fetchable body (link/card/agent navigate instead).
-const FETCHABLE = new Set(['doc', 'note', 'run', 'page']);
+const FETCHABLE = new Set(['doc', 'note', 'run', 'page', 'code']);
 
 const cache = new Map();     // id -> hydrated item; Map order = LRU (oldest first)
 const inflight = new Map();  // id -> Promise, dedupes concurrent fetches
@@ -29,7 +29,9 @@ let active = 0;              // in-flight prefetch count
 
 /** Attach the rendered body HTML so an opened item paints with no extra work. */
 function hydrate(item) {
-    item.html = item.type === 'run' ? renderJson(item.body) : renderMarkdown(item.body);
+    item.html = item.type === 'run' ? renderJson(item.body)
+        : item.type === 'code' ? renderCode(item.body)
+        : renderMarkdown(item.body);
     return item;
 }
 

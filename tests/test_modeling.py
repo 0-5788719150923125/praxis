@@ -136,26 +136,36 @@ def test_prepare_inputs_for_generation(small_config, input_ids, attention_mask):
     assert "attention_mask" in inputs
     assert "past_key_values" not in inputs
 
-    # Test with use_cache
+    # Test with use_cache: an empty cache means prefill - the full prompt
+    # must pass through (no blind last-token slicing).
     inputs = model.prepare_inputs_for_generation(
         input_ids=input_ids,
         attention_mask=attention_mask,
-        past_key_values="dummy_past",
         current_state="dummy_state",
         use_cache=True,
     )
-    assert "input_ids" in inputs
-    assert inputs["input_ids"].shape == (
-        input_ids.shape[0],
-        1,
-    )  # Should only have the last token
-    assert "attention_mask" in inputs
-    assert inputs["attention_mask"].shape == (
-        attention_mask.shape[0],
-        1,
-    )  # Also just the last position
-    assert inputs["past_key_values"] == "dummy_past"
+    from praxis.attention.cache import PraxisCache
+
+    assert inputs["input_ids"].shape == input_ids.shape
+    assert isinstance(inputs["past_key_values"], PraxisCache)
     assert inputs["current_state"] == "dummy_state"
+
+    # With cached content, only the new suffix is fed.
+    cache = PraxisCache()
+    past_len = input_ids.shape[1] - 1
+    cache.update(
+        torch.zeros(input_ids.shape[0], 1, past_len, 4),
+        torch.zeros(input_ids.shape[0], 1, past_len, 4),
+        0,
+    )
+    inputs = model.prepare_inputs_for_generation(
+        input_ids=input_ids,
+        attention_mask=attention_mask,
+        past_key_values=cache,
+        use_cache=True,
+    )
+    assert inputs["input_ids"].shape == (input_ids.shape[0], 1)
+    assert inputs["past_key_values"] is cache
 
 
 def test_training_vs_inference_mode(small_config, input_ids, attention_mask):

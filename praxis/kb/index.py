@@ -123,10 +123,48 @@ class KBIndex:
     def search(
         self, query: str, types: Optional[List[str]] = None, limit: int = 20
     ) -> List[KBHit]:
+        """Comma-delimited groups are OR'd: each widens the result set on its
+        own. Items matching MORE groups rank first (the AND effect lives in
+        the ordering, not the filter), then by best BM25 within that tier."""
         query = (query or "").strip()
         if not query:
             return []
-        match = _to_match(query)
+        groups = [g.strip() for g in query.split(",") if g.strip()] or [query]
+
+        merged: dict = {}  # id -> [groups matched, best score, row]
+        for group in groups:
+            for row in self._match_rows(_to_match(group), types, limit * 2):
+                score = row[-2]
+                entry = merged.get(row[0])
+                if entry is None:
+                    merged[row[0]] = [1, score, row]
+                else:
+                    entry[0] += 1
+                    if score < entry[1]:  # bm25: lower is better
+                        entry[1], entry[2] = score, row
+        ranked = sorted(merged.values(), key=lambda e: (-e[0], e[1]))[:limit]
+        hits = [
+            KBHit(item=_row_item(row), score=score, snippet=row[-1] or "")
+            for _, score, row in ranked
+        ]
+
+        # Typo tolerance: when the exact/prefix match is thin, top up with
+        # trigram-similar titles so a misspelling doesn't invalidate the search.
+        if len(hits) < limit and len(query) >= _FUZZY_MIN_QUERY:
+            seen = {h.item.id for h in hits}
+            for group in groups:
+                if len(hits) >= limit:
+                    break
+                extra = self.fuzzy_search(
+                    group, types=types, limit=limit - len(hits), exclude=seen
+                )
+                hits.extend(extra)
+                seen.update(h.item.id for h in extra)
+        return hits
+
+    def _match_rows(
+        self, match: str, types: Optional[List[str]], limit: int
+    ) -> List[tuple]:
         sql = (
             f"SELECT {_ITEM_COLS}, "
             "bm25(kb) AS score, snippet(kb, 4, '\x01', '\x02', '...', 12) AS snip "
@@ -139,22 +177,10 @@ class KBIndex:
             params.extend(types)
         sql += " ORDER BY score LIMIT ?"
         params.append(limit)
-
-        hits = []
-        for row in self._conn.execute(sql, params):
-            score, snip = row[-2], row[-1]
-            hits.append(KBHit(item=_row_item(row), score=score, snippet=snip or ""))
-
-        # Typo tolerance: when the exact/prefix match is thin, top up with
-        # trigram-similar titles so a misspelling doesn't invalidate the search.
-        if len(hits) < limit and len(query) >= _FUZZY_MIN_QUERY:
-            seen = {h.item.id for h in hits}
-            hits.extend(
-                self.fuzzy_search(
-                    query, types=types, limit=limit - len(hits), exclude=seen
-                )
-            )
-        return hits
+        try:
+            return self._conn.execute(sql, params).fetchall()
+        except Exception:
+            return []  # malformed FTS group (stray punctuation) widens to nothing
 
     def fuzzy_search(
         self,

@@ -64,6 +64,13 @@ Quantum computing code dataset from qoblib
 - Provides: `cli_args`, `datasets`, `lifecycle`
 - Source: [`integrations/quantum/`](../integrations/quantum/README.md)
 
+## `tokenmonster` (v0.1.0)
+
+TokenMonster pretrained vocabularies as a Praxis tokenizer
+
+- Activation: always on when installed
+- Source: [`integrations/tokenmonster/`](../integrations/tokenmonster)
+
 ## `wandb` (v0.1.0)
 
 Weights & Biases integration for Praxis

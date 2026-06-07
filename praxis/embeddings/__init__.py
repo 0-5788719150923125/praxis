@@ -34,6 +34,7 @@ EMBEDDING_REGISTRY: Dict[str, Callable[..., nn.Module]] = {
     "gru": ProjectedEmbedding,
     "min": ProjectedEmbedding,
     "mru": PositionalEmbedding,
+    "positional": PositionalEmbedding,  # explicit override via config.embeddings
     "nano": ProjectedEmbedding,
     "recurrent": ProjectedEmbedding,
     "ssm": ProjectedEmbedding,

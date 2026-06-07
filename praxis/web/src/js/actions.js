@@ -452,6 +452,32 @@ export const ACTION_HANDLERS = {
      * Open a KB result inline. Links open externally; doc/note/run content is
      * fetched and rendered as a full-height card from data.
      */
+    /**
+     * Follow a wiki edge by stem: a relative .md reference inside a card body
+     * names another KB node. Notes are indexed per-section (#0 = the top),
+     * docs by stem - try both, then fall back to a search on the stem so a
+     * dangling edge still lands somewhere useful.
+     */
+    OPEN_KB_WIKI: async ({ stem }) => {
+        if (!stem) return;
+        const ids = stem.endsWith('.py')
+            ? [`code:${stem}`]
+            : [`note:${stem}#0`, `doc:${stem}`];
+        for (const id of ids) {
+            try {
+                const item = await kbCacheFetch(id);
+                if (item) {
+                    state.kbOpenItem = item;
+                    render();
+                    return;
+                }
+            } catch {
+                // not this id form; try the next
+            }
+        }
+        await executeAction('ADD_KB_LABEL_FILTER', { label: stem.replace(/_/g, ' ') });
+    },
+
     OPEN_KB_ITEM: async ({ id, type, uri, title }) => {
         if (type === 'link') {
             if (uri) window.open(uri, '_blank', 'noopener');

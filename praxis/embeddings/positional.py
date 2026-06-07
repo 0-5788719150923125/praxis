@@ -34,13 +34,20 @@ class PositionalEmbedding(nn.Sequential):
             ]
         )
         super().__init__(layers)
+        # GPT-2 style init; default N(0,1) embeddings explode tied-head logits
+        nn.init.normal_(self.wte.weight, std=0.02)
+        nn.init.normal_(self.wpe.weight, std=0.02)
 
-    def forward(self, x: Tensor) -> Tensor:
+    # Cached decode passes the position offset of the new suffix.
+    accepts_offset = True
+
+    def forward(self, x: Tensor, offset: int = 0) -> Tensor:
         """
         Forward pass through learned embeddings.
 
         Args:
             x: Input tensor of token IDs of shape [batch_size, seq_len]
+            offset: Position of the first token (nonzero during cached decode)
 
         Returns:
             Embeddings tensor of shape [batch_size, seq_len, hidden_size]
@@ -51,7 +58,7 @@ class PositionalEmbedding(nn.Sequential):
         hidden_states = self.wte(x)
 
         # Add positional embeddings
-        position_ids = torch.arange(T, device=x.device)
+        position_ids = torch.arange(T, device=x.device) + offset
         positions = self.wpe(position_ids)
         hidden_states = hidden_states + positions
 
@@ -60,3 +67,7 @@ class PositionalEmbedding(nn.Sequential):
         hidden_states = self.reduction(hidden_states)
 
         return hidden_states
+
+    def tie_source(self) -> nn.Embedding:
+        """Token table used for weight tying."""
+        return self.wte

@@ -212,6 +212,98 @@
     min-width: 0;
 }
 
+/* ── KB Explorer: directory cards fanned downward ──
+   Collapsed cards overlap so only header lips show, like a deck of folders
+   running down the page. The opened card lifts out and exposes its files.
+   Depth nudges children rightward, so nesting reads as a slope into space. */
+.kb-explorer {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: var(--spacing-md);
+}
+
+.kb-file.current {
+    background: var(--accent);
+    color: var(--background);
+}
+
+/* Deck-style stack (same gesture as the chart-deck fan): ancestors sit
+   BEHIND the front card, scaled back toward the vanishing point, each
+   peeking a header lip above the card in front. --dir-rank counts back
+   from the front card (0 = front). */
+.kb-dir-card {
+    position: relative;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    background: var(--background);
+    transform: scale(calc(1 - var(--dir-rank, 0) * 0.045));
+    transform-origin: top center;
+    margin-bottom: -0.5rem; /* the next card forward overlaps all but the lip */
+    z-index: calc(10 - var(--dir-rank, 0));
+    box-shadow: 0 -0.3rem 0.7rem rgba(0, 0, 0, 0.18);
+    transition: transform 0.18s ease, margin 0.18s ease, box-shadow 0.18s ease;
+}
+
+.kb-dir-card:last-child {
+    margin-bottom: 0;
+}
+
+.kb-dir-card:not(.open) .kb-dir-header {
+    opacity: calc(1 - var(--dir-rank, 0) * 0.18); /* recede into the dark */
+}
+
+.kb-dir-card.open {
+    transform: scale(1);
+    margin-top: 0.5rem;
+    margin-bottom: 0.35rem;
+    border-color: var(--accent);
+    box-shadow: 0 0.25rem 1rem rgba(0, 0, 0, 0.25);
+}
+
+.kb-dir-header {
+    display: flex;
+    align-items: baseline;
+    gap: var(--spacing-sm);
+    padding: 0.45rem var(--spacing-md);
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.85rem;
+}
+
+.kb-dir-name {
+    color: var(--accent);
+}
+
+.kb-dir-count {
+    font-size: 0.7rem;
+    opacity: 0.55;
+}
+
+.kb-dir-files {
+    display: none;
+    padding: 0 var(--spacing-md) var(--spacing-sm);
+    columns: 14rem;
+    column-gap: var(--spacing-md);
+}
+
+.kb-dir-card.open .kb-dir-files {
+    display: block;
+}
+
+.kb-file {
+    font-family: monospace;
+    font-size: 0.8rem;
+    padding: 0.15rem 0.35rem;
+    border-radius: var(--radius-small);
+    cursor: pointer;
+    break-inside: avoid;
+}
+
+.kb-file:hover {
+    background: var(--input-bg, var(--background));
+    color: var(--accent);
+}
+
 /* Video rows are two true panels: media (chip + thumb) left, text right.
    The thumbnail hugs the chip's bottom edge regardless of title height. */
 .kb-result.has-thumb {
@@ -485,6 +577,12 @@
     color: var(--accent);
 }
 
+/* Wiki edges read as internal: dotted underline, no external affordance. */
+.kb-card-body .kb-wiki-link {
+    text-decoration: underline dotted;
+    text-underline-offset: 2px;
+}
+
 .kb-card-body pre {
     background: var(--input-bg, var(--background));
     border: 1px solid var(--border);
@@ -514,6 +612,20 @@
     opacity: 0.85;
 }
 
+/* Code blocks wrap by default - horizontal scroll is hostile on mobile - and
+   scale down gently with the viewport for vertical readability. */
+.kb-card-body pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: clamp(0.65rem, 0.55rem + 0.4vw, 0.8rem);
+}
+
+/* Syntax tinting: token spans only, all driven off theme variables. */
+.kb-card-body .tok-kw { color: var(--accent); font-weight: 600; }
+.kb-card-body .tok-str { color: var(--primary-dark, #2d7a4f); }
+.kb-card-body .tok-com { opacity: 0.5; font-style: italic; }
+.kb-card-body .tok-num { color: var(--accent); opacity: 0.8; }
+
 /* Type refinements, driven by the KB type system. */
 .kb-card-body[data-kb-type="run"] pre {
     border: none;
@@ -523,6 +635,17 @@
 
 .kb-card-body[data-kb-type="page"] {
     overflow-wrap: anywhere; /* crawled text carries long raw URLs */
+}
+
+/* Whole-file views: full width, quiet frame, room to read. */
+.kb-card-body[data-kb-type="code"] {
+    max-width: none;
+}
+
+.kb-card-body[data-kb-type="code"] .code-file {
+    border: none;
+    background: none;
+    padding: 0;
 }
 
 .input-container {

@@ -140,6 +140,12 @@ def _corpus_mtime() -> float:
                 latest = max(latest, path.stat().st_mtime)
             except OSError:
                 pass
+    # The source tree is indexed too (CodeSource); cheap stats, cached 1s.
+    for path in (REPO_ROOT / "praxis").rglob("*.py"):
+        try:
+            latest = max(latest, path.stat().st_mtime)
+        except OSError:
+            pass
     return latest
 
 

@@ -44,7 +44,7 @@ source. See [docs/index.md](docs/index.md) for the full map.
 - [RL policies](docs/policies.md) (6)
 - [Sequence compression](docs/compression.md) (3)
 - [Sequence sorting](docs/sorting.md) (5)
-- [Token embeddings](docs/embeddings.md) (13)
+- [Token embeddings](docs/embeddings.md) (14)
 - [Token routers](docs/routers.md) (11)
 - [Training strategies](docs/strategies.md) (4)
 

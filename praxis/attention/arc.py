@@ -122,93 +122,27 @@ class ArcAttention(InfiniAttention):
             gate_dim = self.num_query_heads * self.head_dim
             self.gate = nn.Linear(config.hidden_size, gate_dim, bias=True)
 
-    def forward(
-        self,
-        inputs: Tensor,
-        attention_mask: Optional[Tensor] = None,
-        past_key_values: Optional[Tensor] = None,
-        block_ids: Optional[Tensor] = None,
-        current_depth: int = 0,
-    ) -> Tuple[Tensor, Optional[Tensor], float]:
-        batch_size, seq_len, _ = inputs.shape
+    # The forward pass lives in InfiniAttention (including the cached decode
+    # path); Arc only customizes these hooks.
 
-        # --- Full-sequence QKV projection + per-depth bias ---
-        qkv = self.qkv(inputs)
+    def _project_qkv(self, inputs: Tensor, current_depth: int) -> Tensor:
         depth_idx = torch.tensor(current_depth, device=inputs.device)
-        qkv = qkv + self.depth_qkv_bias(depth_idx)
+        return self.qkv(inputs) + self.depth_qkv_bias(depth_idx)
 
-        q_dim = self.num_query_heads * self.head_dim
-        kv_dim = self.num_heads * self.head_dim
+    def _adjust_kv(
+        self, k: Tensor, v: Tensor, current_depth: int
+    ) -> Tuple[Tensor, Tensor]:
+        # Ghostmin ablation: optionally withhold the causal tip at one depth
+        # step (inherited from CausalAttention; no-op unless ghostmin_step set).
+        return self._maybe_ghostmin(k, v, current_depth)
 
-        q = qkv[..., :q_dim]
-        k = qkv[..., q_dim : q_dim + kv_dim]
-        v = qkv[..., q_dim + kv_dim :]
-
-        q = q.view(batch_size, seq_len, self.num_query_heads, self.head_dim).transpose(
-            1, 2
-        )
-        k = k.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        v = v.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-
-        q, k, v = self.encoding.before_scores(q, k, v, current_depth=current_depth)
-
-        # Ghostmin ablation: optionally withhold the causal tip at one depth step
-        # (inherited from CausalAttention; no-op unless ghostmin_step is set).
-        k, v = self._maybe_ghostmin(k, v, current_depth)
-
-        # Expand K/V for GQA before memory operations
-        if self.num_queries > 1:
-            mem_k = k.repeat_interleave(self.num_queries, dim=1)
-            mem_v = v.repeat_interleave(self.num_queries, dim=1)
-        else:
-            mem_k, mem_v = k, v
-
-        # --- Segment-level processing with memory ---
-        memory_states, memory_z = self._init_memory(batch_size, q.device)
-        gate = torch.sigmoid(self.betas)
-        segment_outputs = []
-
-        for start in range(0, seq_len, self.segment_size):
-            end = min(start + self.segment_size, seq_len)
-
-            seg_q = q[:, :, start:end]
-            seg_k = k[:, :, start:end]
-            seg_v = v[:, :, start:end]
-            seg_mem_k = mem_k[:, :, start:end]
-            seg_mem_v = mem_v[:, :, start:end]
-            seg_len = end - start
-            seg_block_ids = block_ids[:, start:end] if block_ids is not None else None
-
-            memory_output = self._retrieve_memory(seg_q, memory_states, memory_z)
-
-            attn_output = self._local_attention(
-                seg_q,
-                seg_k,
-                seg_v,
-                seg_len,
-                inputs.device,
-                seg_block_ids=seg_block_ids,
-            )
-
-            segment_outputs.append(gate * memory_output + (1 - gate) * attn_output)
-
-            memory_states, memory_z = self._update_memory(
-                seg_mem_k, seg_mem_v, memory_states, memory_z
-            )
-
-        # --- Concatenate segments, project, and apply per-depth output bias ---
-        output = torch.cat(segment_outputs, dim=2)
-        output = output.transpose(1, 2).contiguous()
-        output = output.view(batch_size, seq_len, -1)
-
+    def _finalize_output(
+        self, output: Tensor, inputs: Tensor, current_depth: int
+    ) -> Tensor:
         if self.attention_gating:
             output = output * torch.sigmoid(self.gate(inputs))
-
-        output = self.output(output)
-        output = output + self.depth_output_bias(depth_idx)
-        output = self.dropout(output)
-
-        return output, past_key_values, 0.0
+        depth_idx = torch.tensor(current_depth, device=inputs.device)
+        return self.output(output) + self.depth_output_bias(depth_idx)
 
     def training_metrics(self) -> dict:
         """Whether the per-depth biases are specializing or collapsing."""

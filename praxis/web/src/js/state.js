@@ -196,7 +196,7 @@ export const state = {
         temperature: 0.5,
         repetitionPenalty: 1.2,
         doSample: true,
-        useCache: false,
+        useCache: true,
         debugLogging: false
     },
 

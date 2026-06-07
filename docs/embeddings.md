@@ -3,7 +3,7 @@
 
 Input embedding layers, paired with the corresponding block type.
 
-Registry: ``praxis.EMBEDDING_REGISTRY`` (13 entries)
+Registry: ``praxis.EMBEDDING_REGISTRY`` (14 entries)
 
 ## `byte`
 
@@ -29,7 +29,7 @@ Has no single tie-able table by design.
 
 Source: [praxis/embeddings/hash.py:41](../praxis/embeddings/hash.py#L41)
 
-## `mru` - PositionalEmbedding
+## `mru`, `positional` - PositionalEmbedding
 
 Praxis embeddings with learned positional encodings (GPT2-style). Uses Sequential
 organization of layers.

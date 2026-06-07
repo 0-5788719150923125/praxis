@@ -487,6 +487,59 @@ export function createKbResult({ id, type, label, title, uri, origin, summary, s
 }
 
 /**
+ * File explorer: the source tree as a vertical fan of directory cards.
+ * Directories sort top-to-bottom in path order; collapsed cards overlap so
+ * only their header lips show (a fanned deck of folders). Tapping a header
+ * pulls that card out of the fan and reveals its file list; tapping a file
+ * opens the code card. Toggling is a CSS class flip - no re-render.
+ * Given a focus path, the fan shows only that file's lineage: one card per
+ * ancestor directory, each listing its files, with the open file marked.
+ * @param {Array} results - KB hits, all type "code" (title = repo path)
+ * @param {string} [focusPath] - Open file's repo path; scopes the fan
+ * @returns {string} HTML string
+ */
+export function createKbExplorer(results, focusPath) {
+    const dirs = new Map();
+    for (const r of results) {
+        const path = r.title || '';
+        const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '.';
+        if (!dirs.has(dir)) dirs.set(dir, []);
+        dirs.get(dir).push(r);
+    }
+    let keys = [...dirs.keys()].sort();
+    if (focusPath) {
+        const parts = focusPath.split('/').slice(0, -1);
+        const lineage = parts.map((_, i) => parts.slice(0, i + 1).join('/'));
+        keys = keys.filter(d => lineage.includes(d));
+    }
+    const leaf = focusPath ? focusPath.slice(0, focusPath.lastIndexOf('/')) : null;
+    const cards = keys.map(dir => {
+        const files = dirs.get(dir)
+            .sort((a, b) => a.title.localeCompare(b.title))
+            .map(f => `
+                <div class="kb-file${f.title === focusPath ? ' current' : ''}"
+                     role="button" tabindex="0"
+                     data-kb-id="${escapeHtml(f.id)}" data-kb-type="code"
+                     data-kb-uri="${escapeHtml(f.uri)}" data-kb-title="${escapeHtml(f.title)}">
+                    ${escapeHtml(f.title.split('/').pop())}
+                </div>`).join('');
+        // Rank counts back from the front (deepest) card: 0 = front, parents
+        // recede behind it like the chart-deck fan.
+        const rank = keys.length - 1 - keys.indexOf(dir);
+        const open = dir === leaf ? ' open' : '';
+        return `
+        <div class="kb-dir-card${open}" style="--dir-rank: ${rank}">
+            <div class="kb-dir-header" role="button" tabindex="0">
+                <span class="kb-dir-name">${escapeHtml(dir)}/</span>
+                <span class="kb-dir-count">${dirs.get(dir).length}</span>
+            </div>
+            <div class="kb-dir-files">${files}</div>
+        </div>`;
+    }).join('');
+    return `<div class="kb-explorer">${cards}</div>`;
+}
+
+/**
  * Full-height card showing one KB entry's content, rendered from data.
  * @param {Object} item - {type, title, uri, body, meta}
  * @param {string} bodyHtml - Pre-rendered body HTML (markdown/json)

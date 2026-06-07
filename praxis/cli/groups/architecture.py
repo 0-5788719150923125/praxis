@@ -203,10 +203,12 @@ class ArchitectureGroup:
             help="Maximum positional capacity (defaults to block_size when unset)",
         )
 
+        from praxis.tokenizers import VOCAB_SIZE_CHOICES
+
         group.add_argument(
             "--vocab-size",
             type=int,
-            choices=[1024, 2048, 4096, 8192, 16384, 32768, 65536],
+            choices=VOCAB_SIZE_CHOICES,
             default=16384,
             help="The absolute vocab size to use, though some architectures might scale it differently",
         )

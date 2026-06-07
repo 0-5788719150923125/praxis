@@ -1,0 +1,6 @@
+name: "tokenmonster"
+version: "0.1.0"
+description: "TokenMonster pretrained vocabularies as a Praxis tokenizer"
+
+conditions:
+  - "str(getattr(args, 'tokenizer_type', '')).startswith('tokenmonster') or any('tokenmonster' in a for a in __import__('sys').argv[1:])"

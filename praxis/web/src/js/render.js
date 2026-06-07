@@ -10,6 +10,7 @@ import {
     createThinkingIndicator,
     createKbResult,
     createKbCard,
+    createKbExplorer,
     createTab,
     createSettingsModal,
     createTerminalStatus,
@@ -17,6 +18,7 @@ import {
 } from './components.js';
 import { centerLoopedTabs, TAB_LOOP_COPIES } from './mobile.js';
 import { attachWheelMomentum } from './momentum.js';
+import { kbSearch } from './api.js';
 
 /**
  * Initial render - builds entire app structure from scratch
@@ -236,12 +238,13 @@ export function renderKbResults() {
     if (!container) return;
 
     let html;
+    const results = state.kbResults;
     if (state.kbOpenItem) {
         html = createKbCard(state.kbOpenItem, state.kbOpenItem.html || '');
-    } else if (!state.kbResults.length) {
+    } else if (!results.length) {
         html = state.kbSearching ? '<div class="kb-empty">Searching...</div>' : '';
     } else {
-        html = state.kbResults.map(createKbResult).join('');
+        html = results.map(createKbResult).join('');
     }
 
     // Same flicker guard as renderMessages: don't re-write identical results on
@@ -260,7 +263,23 @@ export function renderKbResults() {
             attachWheelMomentum(body);
             scrollKbBodyToAnchor(body, state.kbOpenItem.anchor);
         }
+        // Code cards carry their directory context: the ancestor fan mounts
+        // above the source so traversal is one tap away.
+        if (state.kbOpenItem.type === 'code' && body) {
+            mountCodeExplorer(body, state.kbOpenItem.title);
+        }
     }
+}
+
+// One fetch of the code listing serves every explorer mount; paths only churn
+// on reindex, and a stale tree merely omits brand-new files until reopen.
+let codeTreePromise = null;
+
+async function mountCodeExplorer(body, path) {
+    codeTreePromise ||= kbSearch('', ['code']).catch(() => (codeTreePromise = null, []));
+    const tree = await codeTreePromise;
+    if (!tree.length || state.kbOpenItem?.title !== path) return;
+    body.insertAdjacentHTML('afterbegin', createKbExplorer(tree, path));
 }
 
 /** Normalize heading text for fuzzy matching: drop markdown markers/arrows and

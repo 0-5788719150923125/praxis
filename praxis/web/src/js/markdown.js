@@ -17,7 +17,22 @@ function renderInline(text) {
         .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
         .replace(/\*([^*]+)\*/g, '<em>$1</em>')
         .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
-            '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+            '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+        // Internal wiki edges: a relative .md target is another KB node; the
+        // click handler resolves the stem to its note/doc id and opens it.
+        .replace(/\[([^\]]+)\]\(([\w./-]+\.md)\)/g, (_, label, path) => {
+            const stem = path.split('/').pop().replace(/\.md$/, '');
+            return `<a href="#" class="kb-wiki-link" data-kb-stem="${stem}">${label}</a>`;
+        })
+        // Source references are wiki edges too: a praxis/ path (bare or in a
+        // code span) opens that file's KB entry.
+        .replace(/(<code>)?(praxis\/[\w/]+\.py)(<\/code>)?/g,
+            (_, o, path, c) => `${o || ''}<a href="#" class="kb-wiki-link" data-kb-stem="${path}">${path}</a>${c || ''}`)
+        // Sibling-repo references (../platformer) have no node of their own;
+        // the wiki resolver falls through to a search on the name, which
+        // gathers everything that cites it.
+        .replace(/(<code>)?\.\.\/([\w-]+)(<\/code>)?/g,
+            (_, o, name, c) => `${o || ''}<a href="#" class="kb-wiki-link" data-kb-stem="${name}">../${name}</a>${c || ''}`);
 }
 
 /**
@@ -80,6 +95,32 @@ export function renderMarkdown(src) {
     closeList();
     if (inCode) out.push('</code></pre>');
     return out.join('\n');
+}
+
+// Python keywords for the lightweight highlighter.
+const PY_KEYWORDS = new Set(('and as assert async await break class continue def del elif else except ' +
+    'finally for from global if import in is lambda nonlocal not or pass raise ' +
+    'return try while with yield None True False self').split(' '));
+
+/**
+ * Render a source file as a single highlighted code block. No grammar - just
+ * token-level regexes over escaped text, enough to give the page shape.
+ * @param {string} src - Raw file text
+ * @returns {string} HTML
+ */
+export function renderCode(src) {
+    const html = escapeHtml(src || '').replace(
+        // one pass: strings | comments | numbers | words
+        /(&quot;{3}[\s\S]*?&quot;{3}|'{3}[\s\S]*?'{3}|&quot;[^&\n]*?&quot;|'[^'\n]*')|(#[^\n]*)|(\b\d[\d_.]*\b)|([A-Za-z_]\w*)/g,
+        (m, str, comment, num, word) => {
+            if (str) return `<span class="tok-str">${str}</span>`;
+            if (comment) return `<span class="tok-com">${comment}</span>`;
+            if (num) return `<span class="tok-num">${num}</span>`;
+            if (word && PY_KEYWORDS.has(word)) return `<span class="tok-kw">${word}</span>`;
+            return m;
+        }
+    );
+    return `<pre class="code-file"><code>${html}</code></pre>`;
 }
 
 /**

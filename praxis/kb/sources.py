@@ -368,14 +368,19 @@ class PagesSource(KBSource):
             conn.close()
         except sqlite3.Error:
             return
+        boilerplate = _site_boilerplate(rows)
         for url, site, title, text, summary, fetched in rows:
             host = site.split("//", 1)[-1]
+            common = boilerplate.get(site, frozenset())
+            body = "\n".join(
+                ln for ln in text.splitlines() if ln.strip() and ln not in common
+            )
             yield KBItem(
                 id=f"page:{url}",
                 type="page",
                 label=host,
                 title=title,
-                body=text,
+                body=body or text,
                 uri=url,
                 origin=site,
                 summary=summary,
@@ -537,6 +542,74 @@ def _run_modules(experiment: str) -> str:
     return " · ".join(parts)
 
 
+def _site_boilerplate(rows) -> dict:
+    """Per-site sets of boilerplate lines: any line that recurs on at least
+    half a site's pages (3 page minimum) is site chrome - headers, footers,
+    nav - not content. Frequency does the curation, so a site with one page
+    is left untouched and there are no per-site rules to maintain."""
+    from collections import Counter, defaultdict
+
+    site_pages = Counter(r[1] for r in rows)
+    line_counts: dict = defaultdict(Counter)
+    for _, site, _, text, _, _ in rows:
+        line_counts[site].update({ln for ln in text.splitlines() if ln.strip()})
+    return {
+        site: frozenset(
+            ln
+            for ln, n in counts.items()
+            if n >= max(3, site_pages[site] * 0.5)
+        )
+        for site, counts in line_counts.items()
+        if site_pages[site] >= 3
+    }
+
+
+class CodeSource(KBSource):
+    """The main source tree (``praxis/``), one item per Python file - so docs
+    and notes can wiki-link straight into the implementation they describe.
+
+    Deliberately narrow: only ``.py`` under praxis/, size-capped, and skipped
+    when a line smells like a credential. Configs, env files, and everything
+    outside the package never enter the index.
+    """
+
+    name = "code"
+
+    _MAX_BYTES = 200_000
+    _SECRET = re.compile(
+        r"(api[_-]?key|secret|token|password)\s*[=:]\s*['\"][^'\"]{8,}", re.I
+    )
+
+    def iter_items(self) -> Iterable[KBItem]:
+        root = REPO_ROOT / "praxis"
+        for path in sorted(root.rglob("*.py")):
+            if "__pycache__" in path.parts:
+                continue
+            try:
+                if path.stat().st_size > self._MAX_BYTES:
+                    continue
+                text = _read(path)
+            except OSError:
+                continue
+            if self._SECRET.search(text):
+                continue
+            rel = path.relative_to(REPO_ROOT).as_posix()
+            doc = ""
+            if text.lstrip().startswith(('"""', "'''")):
+                doc = text.lstrip()[3:].split(text.lstrip()[:3], 1)[0]
+            yield KBItem(
+                id=f"code:{rel}",
+                type="code",
+                label="Code",
+                title=rel,
+                body=text,
+                uri=rel,
+                origin="praxis/",
+                summary=doc.strip().splitlines()[0] if doc.strip() else rel,
+                updated=_mtime(path),
+            )
+
+
 KB_SOURCE_REGISTRY = {
     "docs": DocsSource,
     "notes": NotesSource,
@@ -545,4 +618,5 @@ KB_SOURCE_REGISTRY = {
     "pages": PagesSource,
     "cards": CardsSource,
     "agents": AgentsSource,
+    "code": CodeSource,
 }

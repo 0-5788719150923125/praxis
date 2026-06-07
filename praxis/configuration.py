@@ -26,6 +26,7 @@ class PraxisConfig(PretrainedConfig):
         block_size: int = 512,
         activation: str = "mish",
         block_type: str = "transformer",
+        embeddings: Optional[str] = None,  # override block_type-keyed embedding choice
         expert: str = "glu",
         encoding: str = "rope",
         router_type: Optional[str] = None,

@@ -554,7 +554,14 @@ class TerminalInterface(Callback):
         warmup_steps = 250
         trainer = lm.trainer if hasattr(lm, "trainer") else None
         accum = trainer.accumulate_grad_batches if trainer else 1
-        step = batch_idx // accum
+        # Warmup tracks the run's optimizer step, NOT batch_idx: validation
+        # batches restart at 0 and would re-enter warmup, stalling Terminal
+        # inference (~120s interval) for the whole loop.
+        step = (
+            trainer.global_step
+            if trainer and getattr(trainer, "global_step", 0)
+            else batch_idx // accum
+        )
         if step < warmup_steps:
             progress = step / warmup_steps
             effective_interval = 120 - (120 - self.interval) * progress

@@ -28,7 +28,7 @@ links to a page listing the registered implementations and their source.
 - [RL policies](policies.md) (6) - Reinforcement-learning policy losses (REINFORCE, GRPO, ...) for post-training.
 - [Sequence compression](compression.md) (3) - Strategies for reducing sequence length between layers.
 - [Sequence sorting](sorting.md) (5) - Optional reordering operations applied to the sequence.
-- [Token embeddings](embeddings.md) (13) - Input embedding layers, paired with the corresponding block type.
+- [Token embeddings](embeddings.md) (14) - Input embedding layers, paired with the corresponding block type.
 - [Token routers](routers.md) (11) - Token-routing mechanisms, including the Mixture-of-Depths family that skips a fraction of tokens per layer.
 - [Training strategies](strategies.md) (4) - Multi-task / task-weighting strategies used by the trainer.
 
@@ -98,6 +98,7 @@ of the framework. Optional and off by default - see [integrations](integrations.
 - `neurallambda` - Differentiable stack-based memory and neural reasoning tools for advanced routing
 - `ngrok` - Ngrok tunnel integration for exposing API server
 - `quantum` - Quantum computing code dataset from qoblib
+- `tokenmonster` - TokenMonster pretrained vocabularies as a Praxis tokenizer
 - `wandb` - Weights & Biases integration for Praxis
 
 ---

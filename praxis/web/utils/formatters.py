@@ -73,7 +73,10 @@ def generate_from_messages(
         "temperature": temperature,
         "repetition_penalty": repetition_penalty,
         "do_sample": do_sample,
-        "use_cache": False,
+        # KV caching for incremental decode. The model gates this itself:
+        # encoder stacks (CALM) and cache-less attentions fall back to full
+        # recompute, so this is safe to leave on.
+        "use_cache": True,
         "skip_special_tokens": False,
     }
 

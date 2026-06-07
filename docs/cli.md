@@ -88,7 +88,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--stickbreaking` | bool | `False` | Use a Stickbreaking Attention mechanism |
 | `--target-batch-size` | int | `256` | The actual batch size to use, including accumulation steps |
 | `--tie-weights` | bool | `False` | Tie embedding and output projection weights to reduce parameters |
-| `--vocab-size` | int | `16384` | The absolute vocab size to use, though some architectures might scale it differently (choices: 1024, 2048, 4096, 8192, 16384, 32768, 65536) |
+| `--vocab-size` | int | `16384` | The absolute vocab size to use, though some architectures might scale it differently (choices: 1024, 2048, 4096, 8000, 8192, 16000, 16384, 24000, 32000, 32768, 40000, 50256, 65536, 100256) |
 | `--width-type` | str | `None` | Mixture-of-widths policy: deflate each recurrent step's inner rank to a helically-precessing slice. Presets tune the floor/peak of the arch (default none = full width) (choices: none, helical, helical_late, helical_steady, helical_tight, helical_sparse, helical_sparse_tight) |
 | `--window-size` | int | `None` | Sliding window size for attention (None = full attention). Only used with hex attention. |
 
@@ -160,7 +160,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--tokenizer-num-examples` | int | `5000000` | The number of examples to use for tokenizer training |
 | `--tokenizer-train-type` | str | `unigram` | The type of tokenizer to train (choices: bpe, unigram) |
 | `--tokenizer-train-vocab-size` | int | `16384` | The vocab size for tokenizer training (choices: 1024, 2048, 4096, 8192, 16384, 32768, 65536) |
-| `--tokenizer-type` | str | `None` | Tokenizer implementation from TOKENIZER_REGISTRY. Unset = default ('unigram'). (choices: bpe, byte_level, char_level, unigram) |
+| `--tokenizer-type` | str | `None` | Tokenizer implementation from TOKENIZER_REGISTRY. Unset = default ('unigram'). (choices: bpe, byte_level, char_level, tokenmonster, tokenmonster:code-consistent, tokenmonster:english-clean, tokenmonster:englishcode-consistent, unigram) |
 | `--train-tokenizer` | bool | `False` | Train a new tokenizer and exit (shortcut mode) |
 
 ### other

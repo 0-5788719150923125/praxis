@@ -421,6 +421,8 @@ class VanillaMHA(nn.MultiheadAttention):
         inputs: Tensor,
         attention_mask: Optional[Tensor] = None,
         past_key_values: Optional[Tensor] = None,
+        block_ids: Optional[Tensor] = None,
+        current_depth: int = 0,
         *args: Any,
         **kwargs: Any,
     ) -> Tuple[Tensor, Optional[Tensor], int]:
@@ -430,14 +432,23 @@ class VanillaMHA(nn.MultiheadAttention):
         Args:
             inputs: Input tensor of shape [batch_size, seq_len, hidden_size]
             attention_mask: Optional attention mask tensor
-            past_key_values: Optional key-value cache (unused in this implementation)
+            past_key_values: Optional KV cache; a PraxisCache enables
+                incremental decode, anything else falls through to the
+                stock nn.MultiheadAttention path
+            block_ids: Unused (single-document inference)
+            current_depth: Cache slot for this layer call
 
         Returns:
             Tuple containing:
             - Output tensor after attention
-            - None for the key-value cache (not used)
+            - The key-value cache (None when not caching)
             - 0 for auxiliary loss (not used)
         """
+        from praxis.attention.cache import PraxisCache
+
+        if isinstance(past_key_values, PraxisCache) and not self.training:
+            return self._cached_forward(inputs, past_key_values, current_depth)
+
         # scores shape: [B, S, E]
         seq_len = inputs.size(1)
         # Create causal mask
@@ -455,3 +466,29 @@ class VanillaMHA(nn.MultiheadAttention):
         )
         layer_kv: Optional[Tensor] = None
         return outputs, layer_kv, 0
+
+    def _cached_forward(
+        self, inputs: Tensor, cache: "Tensor", current_depth: int
+    ) -> Tuple[Tensor, Tensor, int]:
+        """Manual SDPA path that appends K/V to the cache.
+
+        Math-identical to nn.MultiheadAttention (same in_proj/out_proj
+        weights); prefill runs causal over the full prompt, decode steps
+        attend one query over all cached keys.
+        """
+        batch_size, seq_len, embed_dim = inputs.shape
+        head_dim = embed_dim // self.num_heads
+
+        qkv = F.linear(inputs, self.in_proj_weight, self.in_proj_bias)
+        q, k, v = qkv.chunk(3, dim=-1)
+        q = q.view(batch_size, seq_len, self.num_heads, head_dim).transpose(1, 2)
+        k = k.view(batch_size, seq_len, self.num_heads, head_dim).transpose(1, 2)
+        v = v.view(batch_size, seq_len, self.num_heads, head_dim).transpose(1, 2)
+
+        k, v = cache.update(k, v, current_depth)
+
+        # Prefill is causal; decode (q_len < kv_len) attends to everything.
+        is_causal = q.size(2) == k.size(2) and q.size(2) > 1
+        outputs = F.scaled_dot_product_attention(q, k, v, is_causal=is_causal)
+        outputs = outputs.transpose(1, 2).reshape(batch_size, seq_len, embed_dim)
+        return self.out_proj(outputs), cache, 0

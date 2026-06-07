@@ -310,6 +310,29 @@ class InfiniAttention(CausalAttention):
             weights = F.dropout(weights, p=self.dropout_p)
         return weights @ v_exp  # [B, Hq, S, head_dim]
 
+    # --- Subclass hooks (Arc adds per-depth biases / gating) ---
+
+    def _project_qkv(self, inputs: Tensor, current_depth: int) -> Tensor:
+        return self.qkv(inputs)
+
+    def _adjust_kv(
+        self, k: Tensor, v: Tensor, current_depth: int
+    ) -> Tuple[Tensor, Tensor]:
+        return k, v
+
+    def _finalize_output(
+        self, output: Tensor, inputs: Tensor, current_depth: int
+    ) -> Tensor:
+        return self.output(output)
+
+    def _expand_gqa(self, k: Tensor, v: Tensor) -> Tuple[Tensor, Tensor]:
+        if self.num_queries > 1:
+            return (
+                k.repeat_interleave(self.num_queries, dim=1),
+                v.repeat_interleave(self.num_queries, dim=1),
+            )
+        return k, v
+
     def forward(
         self,
         inputs: Tensor,
@@ -318,10 +341,16 @@ class InfiniAttention(CausalAttention):
         block_ids: Optional[Tensor] = None,
         current_depth: int = 0,
     ) -> Tuple[Tensor, Optional[Tensor], float]:
+        from praxis.attention.cache import PraxisCache
+
         batch_size, seq_len, _ = inputs.shape
 
-        # --- Full-sequence QKV projection + positional encoding ---
-        qkv = self.qkv(inputs)
+        caching = isinstance(past_key_values, PraxisCache) and not self.training
+        state = past_key_values.get_state(current_depth) if caching else None
+        offset = state["pos"] if state is not None else 0
+
+        # --- QKV projection + positional encoding (offset during decode) ---
+        qkv = self._project_qkv(inputs, current_depth)
         q_dim = self.num_query_heads * self.head_dim
         kv_dim = self.num_heads * self.head_dim
 
@@ -335,16 +364,54 @@ class InfiniAttention(CausalAttention):
         k = k.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         v = v.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
 
-        q, k, v = self.encoding.before_scores(q, k, v, current_depth=current_depth)
+        q, k, v = self.encoding.before_scores(
+            q, k, v, offset=offset, current_depth=current_depth
+        )
+        k, v = self._adjust_kv(k, v, current_depth)
+
+        if state is not None:
+            # Incremental decode: one token against memory + live segment.
+            output = self._decode_step(q, k, v, state)
+            past_key_values.set_state(current_depth, state)
+        else:
+            output = self._forward_segments(
+                q,
+                k,
+                v,
+                block_ids,
+                inputs.device,
+                cache=past_key_values if caching else None,
+                slot=current_depth,
+            )
+
+        output = output.transpose(1, 2).contiguous()
+        output = output.view(batch_size, seq_len, -1)
+
+        output = self._finalize_output(output, inputs, current_depth)
+        output = self.dropout(output)
+
+        return output, past_key_values, 0.0
+
+    def _forward_segments(
+        self,
+        q: Tensor,
+        k: Tensor,
+        v: Tensor,
+        block_ids: Optional[Tensor],
+        device: torch.device,
+        cache=None,
+        slot: int = 0,
+    ) -> Tensor:
+        """Segment loop over a full sequence. With ``cache``, the trailing
+        partial segment stays live (not folded into memory) so decode steps
+        can extend it - outputs are identical either way, since a segment's
+        fold only affects later segments."""
+        batch_size = q.size(0)
+        seq_len = q.size(2)
 
         # Expand K/V for GQA before memory operations
-        if self.num_queries > 1:
-            mem_k = k.repeat_interleave(self.num_queries, dim=1)
-            mem_v = v.repeat_interleave(self.num_queries, dim=1)
-        else:
-            mem_k, mem_v = k, v
+        mem_k, mem_v = self._expand_gqa(k, v)
 
-        # --- Segment-level processing with memory ---
         memory_states, memory_z = self._init_memory(batch_size, q.device)
         gate = torch.sigmoid(self.betas)
         segment_outputs = []
@@ -356,8 +423,6 @@ class InfiniAttention(CausalAttention):
             seg_q = q[:, :, start:end]
             seg_k = k[:, :, start:end]
             seg_v = v[:, :, start:end]
-            seg_mem_k = mem_k[:, :, start:end]
-            seg_mem_v = mem_v[:, :, start:end]
             seg_len = end - start
             seg_block_ids = block_ids[:, start:end] if block_ids is not None else None
 
@@ -370,24 +435,67 @@ class InfiniAttention(CausalAttention):
                 seg_k,
                 seg_v,
                 seg_len,
-                inputs.device,
+                device,
                 seg_block_ids=seg_block_ids,
             )
 
             # Blend memory with local attention
             segment_outputs.append(gate * memory_output + (1 - gate) * attn_output)
 
-            # Update memory with this segment's K/V for subsequent segments
+            # Update memory with this segment's K/V for subsequent segments.
+            # When caching, a trailing partial segment is kept live instead.
+            if cache is not None and end == seq_len and seg_len < self.segment_size:
+                continue
             memory_states, memory_z = self._update_memory(
-                seg_mem_k, seg_mem_v, memory_states, memory_z
+                mem_k[:, :, start:end], mem_v[:, :, start:end], memory_states, memory_z
             )
 
-        # --- Concatenate segments and project ---
-        output = torch.cat(segment_outputs, dim=2)
-        output = output.transpose(1, 2).contiguous()
-        output = output.view(batch_size, seq_len, -1)
+        if cache is not None:
+            tail_start = seq_len - (seq_len % self.segment_size)
+            cache.set_state(
+                slot,
+                {
+                    "mem": memory_states,
+                    "z": memory_z,
+                    "k": k[:, :, tail_start:],
+                    "v": v[:, :, tail_start:],
+                    "pos": seq_len,
+                },
+            )
 
-        output = self.output(output)
-        output = self.dropout(output)
+        return torch.cat(segment_outputs, dim=2)
 
-        return output, past_key_values, 0.0
+    def _decode_step(self, q: Tensor, k: Tensor, v: Tensor, state: dict) -> Tensor:
+        """One cached decode token: retrieve from memory, attend over the
+        live segment (with the ghostmax zero column), blend, then fold the
+        segment into memory once it fills. Block gating is skipped - decode
+        is single-document.
+        """
+        seg_k = torch.cat([state["k"], k], dim=2)
+        seg_v = torch.cat([state["v"], v], dim=2)
+
+        memory_output = self._retrieve_memory(q, state["mem"], state["z"])
+
+        k_exp, v_exp = self._expand_gqa(seg_k, seg_v)
+        scale = 1.0 / (self.head_dim**0.5)
+        scores = (q @ k_exp.transpose(-2, -1)) * scale  # [B, Hq, 1, L]
+        scores = self.encoding.after_scores(scores)
+        # Ghostmax: implicit exp(0)=1 column with a zero value vector.
+        ghost = torch.zeros_like(scores[..., :1])
+        weights = F.softmax(torch.cat([ghost, scores], dim=-1), dim=-1)
+        attn_output = weights[..., 1:] @ v_exp
+
+        gate = torch.sigmoid(self.betas)
+        output = gate * memory_output + (1 - gate) * attn_output
+
+        if seg_k.size(2) >= self.segment_size:
+            mem_k, mem_v = self._expand_gqa(seg_k, seg_v)
+            state["mem"], state["z"] = self._update_memory(
+                mem_k, mem_v, state["mem"], state["z"]
+            )
+            state["k"], state["v"] = seg_k[:, :, :0], seg_v[:, :, :0]
+        else:
+            state["k"], state["v"] = seg_k, seg_v
+        state["pos"] = state["pos"] + 1
+
+        return output

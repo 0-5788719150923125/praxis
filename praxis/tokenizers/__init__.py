@@ -33,6 +33,11 @@ TOKENIZER_REGISTRY: Dict[str, Any] = {
 if HAS_BYTE_LEVEL:
     TOKENIZER_REGISTRY["byte_level"] = ByteLevelTokenizer
 
+# Valid --vocab-size values. Mutable on purpose: integrations that ship
+# pretrained vocabs (e.g. tokenmonster) extend this at import time, before
+# the CLI argument groups are built.
+VOCAB_SIZE_CHOICES: list = [1024, 2048, 4096, 8192, 16384, 32768, 65536]
+
 # Default tokenizer when ``tokenizer_type`` is unset. Stays at unigram
 # because that's the only flavor we actually publish pre-trained
 # checkpoints for; switching the default to "bpe" before the BPE

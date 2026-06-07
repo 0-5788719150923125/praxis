@@ -58,6 +58,43 @@ export const CLICK_HANDLERS = [
         }
     },
     {
+        // Explorer fan: a directory header pulls its card out of the stack
+        // (class flip only - the DOM persists, so no re-render).
+        selector: '.kb-dir-header',
+        match: 'closest',
+        action: (e) => {
+            e.target.closest('.kb-dir-card')?.classList.toggle('open');
+            return { type: 'NOOP' };
+        }
+    },
+    {
+        // Explorer file row: open the code card (same path as a result row).
+        selector: '.kb-file',
+        match: 'closest',
+        action: (e) => {
+            const el = e.target.closest('.kb-file');
+            return {
+                type: 'OPEN_KB_ITEM',
+                payload: {
+                    id: el.dataset.kbId,
+                    type: 'code',
+                    uri: el.dataset.kbUri,
+                    title: el.dataset.kbTitle
+                }
+            };
+        }
+    },
+    {
+        // Wiki edge inside a KB card body: resolve the stem to its KB node.
+        selector: '.kb-wiki-link',
+        match: 'closest',
+        action: (e) => {
+            e.preventDefault();
+            const el = e.target.closest('.kb-wiki-link');
+            return { type: 'OPEN_KB_WIKI', payload: { stem: el?.dataset.kbStem || '' } };
+        }
+    },
+    {
         // The shortened video link navigates natively; swallow it here so the
         // click doesn't also open the row's inline card.
         selector: '.kb-result-url',

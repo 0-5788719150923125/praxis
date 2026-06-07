@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "praxis-integration-tokenmonster"
+version = "0.1.0"
+dependencies = [
+    "tokenmonster",
+    "numpy",
+]
+
+[tool.setuptools.packages.find]
+include = []  # dependency carrier only; module is loaded from file by the integration loader
+exclude = ["*"]

@@ -12,6 +12,7 @@ from transformers.modeling_outputs import (
 )
 
 from praxis import DECODER_REGISTRY, EMBEDDING_REGISTRY, ENCODER_REGISTRY, PraxisConfig
+from praxis.attention.cache import PraxisCache
 from praxis.containers import LossContainer
 from praxis.heads import HEAD_REGISTRY
 from praxis.losses import get_loss_function
@@ -41,7 +42,8 @@ class PraxisModel(PreTrainedModel):
                 self.embeds = EMBEDDING_REGISTRY[profile](config, encoder=self.encoder)
                 self.encoder.set_embeddings(self.embeds)
         else:
-            self.embeds = EMBEDDING_REGISTRY[config.block_type](config)
+            profile = getattr(config, "embeddings", None) or config.block_type
+            self.embeds = EMBEDDING_REGISTRY[profile](config)
         self.decoder = DECODER_REGISTRY.get(config.decoder_type)(config)
 
     def forward(
@@ -79,7 +81,14 @@ class PraxisModel(PreTrainedModel):
             losses.add_loss("encoder", encoder_loss)
         else:
             block_ids = token_block_ids
-            inputs = self.embeds(input_ids)
+            if getattr(self.embeds, "accepts_offset", False) and isinstance(
+                past_key_values, PraxisCache
+            ):
+                # Cached decode: input_ids is just the new suffix, so learned
+                # absolute positions must continue from the cached length.
+                inputs = self.embeds(input_ids, offset=past_key_values.past_length())
+            else:
+                inputs = self.embeds(input_ids)
             local_decoder_tokens = None
 
         # Suppress halting metric recording while the encoder is in its codec
@@ -447,20 +456,31 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         attention_mask: Optional[torch.FloatTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
         current_state: Optional[torch.LongTensor] = None,
-        use_cache: bool = False,
+        use_cache: bool = True,
         **kwargs,
     ) -> dict:
-        if not use_cache:
+        # Encoders (e.g. byte-latent CALM) repatch the whole sequence each
+        # step, so the prefix isn't stable - caching would be incorrect.
+        if not use_cache or self.encoder:
             return {
                 "input_ids": input_ids,
                 "attention_mask": attention_mask,
             }
 
+        # Replace whatever HF pre-created (a bare DynamicCache) with ours.
+        if not isinstance(past_key_values, PraxisCache):
+            past_key_values = PraxisCache()
+
+        # Only feed the new suffix once something is actually cached.
+        # Cache-less attentions never write, so past_length() stays 0 and
+        # they keep recomputing the full sequence - slower but correct.
+        past_len = past_key_values.past_length()
+        if past_len > 0:
+            input_ids = input_ids[:, past_len:]
+
         return {
-            "input_ids": input_ids[:, -1:],
-            "attention_mask": (
-                attention_mask[:, -1:] if attention_mask is not None else None
-            ),
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
             "past_key_values": past_key_values,
             "current_state": current_state,
         }
