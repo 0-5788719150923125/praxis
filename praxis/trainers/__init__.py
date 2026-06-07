@@ -26,6 +26,7 @@ from praxis.trainers.runtime import (
     resolve_training_logger,
     run_training,
 )
+from praxis.trainers.ray_support import ensure_ray
 from praxis.trainers.seed import reset_seed, seed_everything
 from praxis.trainers.setup import (
     ModelBundle,
@@ -136,6 +137,7 @@ __all__ = [
     "reset_seed",
     "try_compile",
     # Run setup / lifecycle
+    "ensure_ray",
     "setup_environment",
     "register_praxis_models",
     "configure_torch_precision",

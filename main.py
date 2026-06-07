@@ -29,6 +29,7 @@ from praxis.trainers import (
     assemble_model,
     assemble_trainer,
     build_model_info,
+    ensure_ray,
     print_training_banner,
     run_training,
     setup_environment,
@@ -51,6 +52,10 @@ def main():
         return print_runs(cfg.cache_dir)
     if cfg.train_tokenizer:
         return run_train_tokenizer_cli(cfg)
+
+    # Ray is an optional runtime install (like integrations): only fetched when
+    # the selected trainer actually needs it, before anything imports `ray`.
+    ensure_ray(cfg.trainer_type)
 
     cfg.apply_distributed_env()
     run = setup_training_run(cfg)

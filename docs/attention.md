@@ -3,9 +3,9 @@
 
 Self-attention variants, from vanilla causal MHA to compressive-memory and per-depth-biased variants.
 
-Registry: ``praxis.ATTENTION_REGISTRY`` (7 entries)
+Registry: ``praxis.ATTENTION_REGISTRY`` (8 entries)
 
-## `arc` - ArcAttention
+## `arc`, `arc_ghostmin` - ArcAttention
 
 InfiniAttention subclass that adds per-depth learned biases.
 
@@ -18,6 +18,10 @@ al. 2025, arXiv:2505.06708), which introduces non-linearity and input-dependent 
 between the attention output and W_o.
 
 Source: [praxis/attention/arc.py:19](../praxis/attention/arc.py#L19)
+
+Presets:
+- `arc` - class defaults
+- `arc_ghostmin` - `ghostmin='warp'`
 
 ## `causal` - CausalAttention
 

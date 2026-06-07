@@ -7,7 +7,7 @@ links to a page listing the registered implementations and their source.
 ## Feature registries
 
 - [Activation functions](activations.md) (33) - Pointwise nonlinearities used inside blocks and heads.
-- [Attention mechanisms](attention.md) (7) - Self-attention variants, from vanilla causal MHA to compressive-memory and per-depth-biased variants.
+- [Attention mechanisms](attention.md) (8) - Self-attention variants, from vanilla causal MHA to compressive-memory and per-depth-biased variants.
 - [Block-stacking decoders](decoders.md) (4) - How the stack of blocks is composed (sequential, parallel, weighted, ...).
 - [Data sampler strategies](data.md) (5) - How datasets are interleaved during training. Praxis trains on multiple datasets at once: at every step the trainer picks a dataset, draws a document, and tokenizes it (see ``InterleaveDataManager`` in ``praxis/data/datasets/manager.py``). The sampler chosen here decides *how* that pick is biased - either statically from configured weights, or adaptively based on document length, novelty, or per-dataset loss. Set with ``--sampler``; default is ``novelty``.
 - [Decoder block layouts](blocks.md) (9) - Top-level layer types the decoder stacks. Mix attention-based and recurrent designs freely.

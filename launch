@@ -1,99 +1,100 @@
 #!/bin/bash
-# Praxis Launch Script - Simple wrapper for virtual environment management
+# Praxis launcher. Declarative tunables up top, general machinery below.
+# Subcommands:
+#   ./launch [args...]          train locally (venv auto-created)
+#   ./launch test [pytest...]   route args to pytest inside the venv
+#   ./launch compose [args...]  re-run this script inside Docker compose
+#   ./launch stop               tear down a running compose instance
+#
 
-# Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Check if first argument is 'stop' to tear down a running instance
-if [ "$1" = "stop" ]; then
-    echo "[STOP] Stopping Praxis..."
+# ── Configuration ────────────────────────────────────────────────────────────
+# Everything tunable or data-like lives here, so adding a mounted flag or
+# changing a compose file never means editing control flow below.
 
-    ARCH=$(uname -m)
-    if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
-        COMPOSE_FILE="$SCRIPT_DIR/compose.ARM.yml"
-    else
-        COMPOSE_FILE="$SCRIPT_DIR/compose.yml"
-    fi
+# Docker compose files by architecture (x86_64 = GPU, ARM = CPU-only).
+COMPOSE_FILE_DEFAULT="compose.yml"
+COMPOSE_FILE_ARM="compose.ARM.yml"
 
-    if command -v docker &>/dev/null && [ -f "$COMPOSE_FILE" ]; then
-        docker compose -f "$COMPOSE_FILE" down --remove-orphans
-    fi
+# Files whose content gates the compose auto-rebuild: changing any of these
+# re-runs `docker compose build` (stamped per compose file, so an arch switch
+# rebuilds correctly). Source edits and pyproject changes deliberately do NOT
+# rebuild - praxis/ is bind-mounted live and the venv installs at runtime.
+BUILD_INPUTS=(Dockerfile compose.yml)
 
-    echo "[STOP] Done."
-    exit 0
-fi
+# CLI flags whose values are host paths: each is resolved to an absolute path
+# and bind-mounted read-only into the container at the same location. Flags
+# here may take multiple values (nargs-style) and comma-separated lists.
+MOUNT_FLAGS=(--data-path)
 
-# Check if first argument is 'compose' for Docker Compose execution
-# We short-circuit, if using Docker, to re-run the script within our container
-if [ "$1" = "compose" ]; then
-    shift  # Remove 'compose' from arguments
+# CLI flags whose values publish container ports, as "<flag>:<env-var>" pairs.
+# The env var is read by the compose file's ${VAR} substitution; unset means
+# compose falls back to its own defaults (2100 / 29500).
+PORT_FLAGS=(--port:PRAXIS_PORT --master-port:PRAXIS_MASTER_PORT)
 
-    echo "[DOCKER] Starting Praxis in Docker Compose environment..."
+# In-container identity: HOME for the re-exec'd host user, and the venv dir
+# (a named volume in Docker, a plain directory on the host).
+CONTAINER_HOME=/home/dev
+VENV_DIR=.venv
 
-    ARCH=$(uname -m)
-    if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
-        echo "[DOCKER] Detected ARM64 architecture - using CPU-only configuration"
-        COMPOSE_FILE="$SCRIPT_DIR/compose.ARM.yml"
-    else
-        echo "[DOCKER] Detected x86_64 architecture - using GPU configuration"
-        COMPOSE_FILE="$SCRIPT_DIR/compose.yml"
-    fi
+# ── Compose helpers ──────────────────────────────────────────────────────────
 
-    # Rebuild the image only when the Docker build inputs change (the Dockerfile
-    # or a compose file) - NOT on praxis/ source edits (bind-mounted live) or
-    # pyproject changes (installed into the venv volume at runtime). We stamp a
-    # hash of those inputs, keyed per compose file so an arch switch rebuilds
-    # correctly, and gate an explicit `compose build` on it. Unchanged inputs
-    # skip the build and fall through to the cached image; even a triggered
-    # rebuild is cheap when Docker's layer cache has nothing material to redo.
-    # Set PRAXIS_NO_AUTOBUILD=1 to skip this check entirely.
-    if [ -z "${PRAXIS_NO_AUTOBUILD:-}" ] && command -v docker &>/dev/null; then
-        STAMP_FILE="$SCRIPT_DIR/.docker-build.$(basename "$COMPOSE_FILE").stamp"
-        BUILD_HASH=$(cat "$SCRIPT_DIR/Dockerfile" "$SCRIPT_DIR/compose.yml" "$COMPOSE_FILE" 2>/dev/null | sha256sum | cut -d' ' -f1)
-        if [ "$BUILD_HASH" != "$(cat "$STAMP_FILE" 2>/dev/null)" ]; then
-            echo "[DOCKER] Build inputs changed since last build - rebuilding image..."
-            if docker compose -f "$COMPOSE_FILE" build; then
-                echo "$BUILD_HASH" > "$STAMP_FILE"
-            else
-                echo "[DOCKER] Image build failed; continuing with the existing image." >&2
-            fi
+compose_file() {
+    case "$(uname -m)" in
+        aarch64|arm64) echo "$SCRIPT_DIR/$COMPOSE_FILE_ARM" ;;
+        *)             echo "$SCRIPT_DIR/$COMPOSE_FILE_DEFAULT" ;;
+    esac
+}
+
+# Rebuild the image only when the Docker build inputs (BUILD_INPUTS + the active
+# compose file) change, stamped per compose file. Unchanged inputs fall through
+# to the cached image. Set PRAXIS_NO_AUTOBUILD=1 to skip entirely.
+autobuild_image() {
+    local cf="$1"
+    [ -n "${PRAXIS_NO_AUTOBUILD:-}" ] && return
+    command -v docker &>/dev/null || return
+    local stamp="$SCRIPT_DIR/.docker-build.$(basename "$cf").stamp"
+    local inputs=("${BUILD_INPUTS[@]/#/$SCRIPT_DIR/}" "$cf")
+    local hash
+    hash=$(cat "${inputs[@]}" 2>/dev/null | sha256sum | cut -d' ' -f1)
+    if [ "$hash" != "$(cat "$stamp" 2>/dev/null)" ]; then
+        echo "[DOCKER] Build inputs changed since last build - rebuilding image..."
+        if docker compose -f "$cf" build; then
+            echo "$hash" > "$stamp"
         else
-            echo "[DOCKER] Image up to date (Docker build inputs unchanged)."
+            echo "[DOCKER] Image build failed; continuing with the existing image." >&2
         fi
+    else
+        echo "[DOCKER] Image up to date (Docker build inputs unchanged)."
     fi
+}
 
-    # Parse args for special handling:
-    #  --data-path (nargs="+"): resolve to absolute host paths and bind-mount
-    #    them into the container at the same path.
-    #  --port / --master-port: capture so we can publish the matching host
-    #    ports (the compose file reads PRAXIS_PORT / PRAXIS_MASTER_PORT).
-    EXTRA_VOLUMES=""
-    PRAXIS_PORT_OVERRIDE=""
-    PRAXIS_MASTER_PORT_OVERRIDE=""
+# Walk the args once, driven by launch.conf:
+#   MOUNT_FLAGS - resolve each value (nargs + comma lists) to an absolute host
+#     path, bind-mount it read-only at the same path, and pass the resolved
+#     path through (mirrors the comma-or-list handling on the Python side).
+#   PORT_FLAGS - export the value under the paired env var so the compose
+#     file's ${VAR} substitution publishes the matching host port.
+# Results land in RESOLVED_ARGS / EXTRA_VOLUMES.
+parse_compose_args() {
     RESOLVED_ARGS=()
-    CONSUMING_DATA_PATHS=false
-    EXPECT_PORT=false
-    EXPECT_MASTER_PORT=false
+    EXTRA_VOLUMES=""
+    local mounting=false expect_env=""
+    local arg flag env_var
     for arg in "$@"; do
-        if $EXPECT_PORT; then
-            PRAXIS_PORT_OVERRIDE="$arg"
-            EXPECT_PORT=false
+        if [ -n "$expect_env" ]; then
+            export "$expect_env"="$arg"
+            expect_env=""
             RESOLVED_ARGS+=("$arg")
             continue
         fi
-        if $EXPECT_MASTER_PORT; then
-            PRAXIS_MASTER_PORT_OVERRIDE="$arg"
-            EXPECT_MASTER_PORT=false
-            RESOLVED_ARGS+=("$arg")
-            continue
+        # A new flag ends any in-progress mount-value capture.
+        if $mounting && [[ "$arg" == -* ]]; then
+            mounting=false
         fi
-        # A new flag ends any in-progress --data-path value capture.
-        if $CONSUMING_DATA_PATHS && [[ "$arg" == -* ]]; then
-            CONSUMING_DATA_PATHS=false
-        fi
-        if $CONSUMING_DATA_PATHS; then
-            # A single value may itself be comma-separated (mirrors the
-            # comma-or-list handling on the Python side); mount each path.
+        if $mounting; then
+            local _p abs_path
             IFS=',' read -ra _paths <<< "$arg"
             for _p in "${_paths[@]}"; do
                 [ -z "$_p" ] && continue
@@ -103,65 +104,75 @@ if [ "$1" = "compose" ]; then
             done
             continue
         fi
-        case "$arg" in
-            --data-path)
-                CONSUMING_DATA_PATHS=true
-                RESOLVED_ARGS+=("$arg")
-                ;;
-            --port)
-                EXPECT_PORT=true
-                RESOLVED_ARGS+=("$arg")
-                ;;
-            --master-port)
-                EXPECT_MASTER_PORT=true
-                RESOLVED_ARGS+=("$arg")
-                ;;
-            *)
-                RESOLVED_ARGS+=("$arg")
-                ;;
-        esac
+        for flag in "${MOUNT_FLAGS[@]}"; do
+            if [ "$arg" = "$flag" ]; then mounting=true; break; fi
+        done
+        for pair in "${PORT_FLAGS[@]}"; do
+            flag="${pair%%:*}"; env_var="${pair#*:}"
+            if [ "$arg" = "$flag" ]; then expect_env="$env_var"; break; fi
+        done
+        RESOLVED_ARGS+=("$arg")
     done
+}
 
-    # Export port overrides so compose.yml's ${PRAXIS_PORT}/${PRAXIS_MASTER_PORT}
-    # substitution publishes the right host ports. Unset means compose falls
-    # back to its own defaults (2100 / 29500).
-    [ -n "$PRAXIS_PORT_OVERRIDE" ] && export PRAXIS_PORT="$PRAXIS_PORT_OVERRIDE"
-    [ -n "$PRAXIS_MASTER_PORT_OVERRIDE" ] && export PRAXIS_MASTER_PORT="$PRAXIS_MASTER_PORT_OVERRIDE"
+cmd_stop() {
+    echo "[STOP] Stopping Praxis..."
+    local cf
+    cf=$(compose_file)
+    if command -v docker &>/dev/null && [ -f "$cf" ]; then
+        docker compose -f "$cf" down --remove-orphans
+    fi
+    echo "[STOP] Done."
+}
+
+cmd_compose() {
+    echo "[DOCKER] Starting Praxis in Docker Compose environment..."
+    local cf
+    cf=$(compose_file)
+    case "$cf" in
+        *"$COMPOSE_FILE_ARM") echo "[DOCKER] Detected ARM64 architecture - using CPU-only configuration" ;;
+        *)                    echo "[DOCKER] Detected x86_64 architecture - using GPU configuration" ;;
+    esac
+
+    autobuild_image "$cf"
+    parse_compose_args "$@"
 
     # Pass the host user's ids into the container (compose.yml forwards them as
-    # HOST_UID/HOST_GID). The in-container branch below re-execs as that user so
-    # files written into the bind-mounted repo are host-owned, not root.
+    # HOST_UID/HOST_GID); the in-container path re-execs as that user so files
+    # written into the bind-mounted repo are host-owned, not root.
     export HOST_UID="$(id -u)" HOST_GID="$(id -g)"
 
-    docker compose -f "$COMPOSE_FILE" run --rm --remove-orphans --service-ports $EXTRA_VOLUMES agent ./launch "${RESOLVED_ARGS[@]}"
-    exit $?
-fi
+    docker compose -f "$cf" run --rm --remove-orphans --service-ports $EXTRA_VOLUMES agent ./launch "${RESOLVED_ARGS[@]}"
+}
 
-# Check if we're running inside a Docker container
-if [ -f /.dockerenv ] || [ -n "${CONTAINER:-}" ]; then
+# ── In-container user setup ──────────────────────────────────────────────────
+
+# Re-exec as the host user so anything written into the bind-mounted repo is
+# owned by the host user, not root (the recurring permission headache). The
+# host launch passed its ids via HOST_UID/HOST_GID; we chown the named volumes
+# (venv, cache under HOME) to match once, then drop privileges with setpriv
+# (util-linux, in the base image). The re-exec lands here again as a non-root
+# uid and falls straight through.
+container_setup() {
+    [ -f /.dockerenv ] || [ -n "${CONTAINER:-}" ] || return
     echo "[DOCKER] Running inside container..."
 
-    # Re-exec as the host user so anything written into the bind-mounted repo is
-    # owned by the host user, not root (the recurring permission headache). The
-    # host launch passed its ids via HOST_UID/HOST_GID; we chown the named
-    # volumes (venv, cache under HOME) to match once, then drop privileges with
-    # setpriv (util-linux, in the base image). The re-exec lands here again as a
-    # non-root uid and falls straight through.
     if [ "$(id -u)" = "0" ] && [ -n "${HOST_UID:-}" ] && [ "${HOST_UID}" != "0" ]; then
-        host_gid="${HOST_GID:-$HOST_UID}"
-        export HOME=/home/dev
-        mkdir -p "$HOME" "$SCRIPT_DIR/.venv"
-        for d in "$HOME" "$SCRIPT_DIR/.venv"; do
+        local host_gid="${HOST_GID:-$HOST_UID}"
+        export HOME="$CONTAINER_HOME"
+        mkdir -p "$HOME" "$SCRIPT_DIR/$VENV_DIR"
+        local d
+        for d in "$HOME" "$SCRIPT_DIR/$VENV_DIR"; do
             if [ "$(stat -c %u "$d" 2>/dev/null || echo 0)" != "${HOST_UID}" ]; then
                 chown -R "${HOST_UID}:${host_gid}" "$d" 2>/dev/null || true
             fi
         done
-        # One-time migration: earlier root runs may have left root-owned files in
-        # the bind-mounted repo (build/, research/, *.egg-info, __pycache__) that
-        # the host user now cannot write. Chown just those non-host-owned files;
-        # the sentinel gates the full-tree walk to once per uid (-xdev stays on
-        # the bind mount, so it skips the .venv/.cache volumes handled above).
-        migr="$SCRIPT_DIR/.host-uid-migrated"
+        # One-time migration: earlier root runs may have left root-owned files
+        # in the bind-mounted repo (build/, research/, *.egg-info, __pycache__)
+        # that the host user now cannot write. Chown just those non-host-owned
+        # files; the sentinel gates the full-tree walk to once per uid (-xdev
+        # stays on the bind mount, skipping the volumes handled above).
+        local migr="$SCRIPT_DIR/.host-uid-migrated"
         if [ "$(cat "$migr" 2>/dev/null)" != "${HOST_UID}" ]; then
             echo "[DOCKER] Migrating root-owned files to host user (one-time)..."
             find "$SCRIPT_DIR" -xdev -not -user "${HOST_UID}" \
@@ -173,119 +184,57 @@ if [ -f /.dockerenv ] || [ -n "${CONTAINER:-}" ]; then
             "$SCRIPT_DIR/launch" "$@"
     fi
 
-    # Ensure .venv directory exists and is writable
-    mkdir -p "$SCRIPT_DIR/.venv"
-fi
+    mkdir -p "$SCRIPT_DIR/$VENV_DIR"
+}
 
-# Ensure we have a functional virtual environment and activate it
-if [ ! -f "$SCRIPT_DIR/.venv/bin/activate" ]; then
-    echo "Creating virtual environment..."
-    python3 -m venv "$SCRIPT_DIR/.venv"
-fi
+# ── Virtual environment ──────────────────────────────────────────────────────
 
-echo "[SYSTEM] Activated virtual environment."
-. "$SCRIPT_DIR/.venv/bin/activate"
+ensure_venv() {
+    if [ ! -f "$SCRIPT_DIR/$VENV_DIR/bin/activate" ]; then
+        echo "Creating virtual environment..."
+        python3 -m venv "$SCRIPT_DIR/$VENV_DIR"
+    fi
+    echo "[SYSTEM] Activated virtual environment."
+    . "$SCRIPT_DIR/$VENV_DIR/bin/activate"
+}
 
-# Ray is an optional Praxis extra (see pyproject.toml). Ray publishes no
-# wheels for Python >= 3.14 upstream, so we only request the '[ray]'
-# extra on interpreters where it can actually install. This single piece
-# of logic runs in both environments we care about:
-#
-#   - the host venv on a bleeding-edge distro (e.g. Arch's python3.14):
-#       RAY_SUPPORTED=false  -> installs praxis without ray, and the
-#       mono_forward guard below will fail loud if selected.
-#   - the Docker compose container (ubuntu:24.04 -> python3.12):
-#       RAY_SUPPORTED=true   -> installs praxis with the [ray] extra,
-#       so the Ray trainer path is ready to run.
-#
-# There is no separate Docker install path; both live here.
-RAY_SUPPORTED=false
-PY_MAJOR_MINOR=$(python -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")' 2>/dev/null || echo "unknown")
-case "$PY_MAJOR_MINOR" in
-    3.10|3.11|3.12|3.13) RAY_SUPPORTED=true ;;
-esac
-
-# Install praxis package if not already installed
-if [ -f "$SCRIPT_DIR/pyproject.toml" ]; then
+ensure_install() {
+    [ -f "$SCRIPT_DIR/pyproject.toml" ] || return
     if ! python -c "import praxis" 2>/dev/null; then
-        if $RAY_SUPPORTED; then
-            echo "[ENV] Installing Praxis with Ray extra (Python ${PY_MAJOR_MINOR})..."
-            # `pip install -e "$DIR[ray]"` is the standard way to install a
-            # local editable project with extras. Quoted to keep `[` and `]`
-            # out of bash's glob expansion.
-            pip install -e "${SCRIPT_DIR}[ray]"
-        else
-            echo "[ENV] Installing Praxis in development mode (Python ${PY_MAJOR_MINOR} has no Ray wheels; skipping '[ray]' extra)..."
-            pip install -e "$SCRIPT_DIR"
-        fi
+        echo "[ENV] Installing Praxis in development mode..."
+        pip install -e "$SCRIPT_DIR"
         echo "[ENV] Praxis installation complete"
-    elif $RAY_SUPPORTED && ! python -c "import ray" 2>/dev/null; then
-        # Existing praxis install on a Ray-capable interpreter, but Ray
-        # itself was never added. This is the first-boot path inside the
-        # Docker container after the Phase 1 pivot: the container's
-        # named `venv` volume pre-dates the [ray] extra, so we catch up
-        # lazily the first time launch runs here.
-        echo "[ENV] Adding Ray extra to existing Praxis install (Python ${PY_MAJOR_MINOR})..."
-        pip install -e "${SCRIPT_DIR}[ray]"
-        echo "[ENV] Ray extra installation complete"
     else
         echo "[ENV] Praxis is installed."
     fi
-fi
+}
 
-# If first argument is 'test', route remaining args to pytest instead of main.py.
-# Works standalone or via `./launch compose test ...` (the compose branch
-# re-invokes this script inside the container with the remaining args).
+# ── Dispatch ─────────────────────────────────────────────────────────────────
+
+case "$1" in
+    stop)
+        cmd_stop
+        exit 0
+        ;;
+    compose)
+        shift
+        cmd_compose "$@"
+        exit $?
+        ;;
+esac
+
+container_setup "$@"
+ensure_venv
+ensure_install
+
 if [ "$1" = "test" ]; then
     shift
     pytest "$@"
     EXIT_CODE=$?
-    deactivate
-    exit $EXIT_CODE
+else
+    python "$SCRIPT_DIR/main.py" "$@"
+    EXIT_CODE=$?
 fi
 
-# Guard: the Mono-Forward trainer's current worker backend is Ray,
-# which is an optional extra ('ray') with no wheels on Python >= 3.14.
-# Rather than forcing every contributor to install an older Python
-# system-wide, Ray-requiring runs live in the Docker compose
-# environment (Ubuntu 24.04 + Python 3.12). Detect the Ray-requiring
-# trainer here and fail loud with an actionable message instead of
-# producing an opaque ImportError mid-training.
-NEEDS_RAY=false
-for arg in "$@"; do
-    if [ "$arg" = "mono_forward_ray" ]; then
-        NEEDS_RAY=true
-        break
-    fi
-done
-if $NEEDS_RAY && ! python -c "import ray" 2>/dev/null; then
-    cat >&2 <<'EOF'
-[ERROR] --trainer-type mono_forward_ray requires the optional 'ray' extra,
-        which is not installed in this virtual environment.
-
-        Ray publishes no wheels for Python >= 3.14, so the typical path
-        is to run inside the Docker compose environment (Ubuntu 24.04 +
-        Python 3.12, where Ray installs cleanly):
-
-            ./launch compose --mike --trainer-type mono_forward_ray ...
-
-        To install Ray in this local venv instead (only works on
-        Python 3.10-3.13):
-
-            source .venv/bin/activate
-            pip install -e '.[ray]'
-            deactivate
-
-        For single-host training, use --trainer-type mono_forward
-        (the in-process profile, no Ray dependency).
-EOF
-    exit 1
-fi
-
-# Pass all arguments directly to main.py
-python "$SCRIPT_DIR/main.py" "$@"
-EXIT_CODE=$?
-
-# Deactivate the virtual environment and exit with the command's exit code
 deactivate
 exit $EXIT_CODE

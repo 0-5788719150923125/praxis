@@ -70,12 +70,13 @@ Introspected from the live Flask app at every launch. Each summary is the first 
 
 ### Print
 
-- **POST** `/api/loop/approve` - Record a human score for a looped output - the live joke reward. `score` is a signed -1..1 want->need judgement (or `approve` bool shorthand). The model seeks our approval. The score is the learning signal; (score+1)/2 drives the homeostatic energy. ([source](../praxis/web/routes/print.py#L166))
-- **GET** `/api/loop/energy` - Live joke-approval energy snapshot. ([source](../praxis/web/routes/print.py#L184))
-- **POST** `/api/print/ask` - Ask the model to lead with a question; stash its predicted answer and expose the question. Idempotent while one is already pending. ([source](../praxis/web/routes/print.py#L44))
-- **GET** `/api/print/energy` - Live engagement energy snapshot (for a dashboard badge). ([source](../praxis/web/routes/print.py#L160))
-- **GET** `/api/print/pending` - The currently presentable question, if any (no generation). ([source](../praxis/web/routes/print.py#L116))
-- **POST** `/api/print/respond` - Score the user's response against the model's stashed predicted answer, fold it into the live engagement energy, and clear the slot. ([source](../praxis/web/routes/print.py#L131))
+- **POST** `/api/loop/approve` - Record a human score for a looped output - the live joke reward. `score` is a signed -1..1 want->need judgement (or `approve` bool shorthand). The active loop mode converts (score, stashed prediction) into the channel's (activation, reward): in calibration mode the correction magnitude is the signal (less correction = more energy); approval mode takes the score at face value. An `id` ties the score to a stashed /api/loop/generate section; without one (or unmatched) there is no prediction and scoring degrades to approval semantics. ([source](../praxis/web/routes/print.py#L250))
+- **GET** `/api/loop/energy` - Live joke-approval energy snapshot. ([source](../praxis/web/routes/print.py#L288))
+- **POST** `/api/loop/generate` - Run one looped task through the active loop mode: build the prompt, generate (short, time-capped), parse off any self-predicted score, and stash the section for scoring. Never 500s - baby models produce gibberish or nothing; an empty generation returns text "" for the UI to caption. ([source](../praxis/web/routes/print.py#L191))
+- **POST** `/api/print/ask` - Ask the model to lead with a question; stash its predicted answer and expose the question. Idempotent while one is already pending, unless the caller sends ``{"reroll": true}`` to discard it and generate a fresh one. ([source](../praxis/web/routes/print.py#L49))
+- **GET** `/api/print/energy` - Live engagement energy snapshot (for a dashboard badge). ([source](../praxis/web/routes/print.py#L169))
+- **GET** `/api/print/pending` - The currently presentable question, if any (no generation). ([source](../praxis/web/routes/print.py#L125))
+- **POST** `/api/print/respond` - Score the user's response against the model's stashed predicted answer, fold it into the live engagement energy, and clear the slot. ([source](../praxis/web/routes/print.py#L140))
 
 ### Spider
 
