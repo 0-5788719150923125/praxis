@@ -41,6 +41,10 @@ from praxis.pillars.geometries import RESEARCH_DIR
 from praxis.pillars.thread import THREAD_REGISTRY, resolve_thread, write_thread
 
 _AUTHORS_TEX = os.path.join(RESEARCH_DIR, "authors.tex")
+# Bibliography data lives with the pillars; the build renders it into
+# research/ (gitignored there - the PDF carries the citations).
+_CITATIONS_SRC = os.path.join(os.path.dirname(__file__), "citations.bib")
+_CITATIONS_BIB = os.path.join(RESEARCH_DIR, "citations.bib")
 
 
 def _tex_escape(s: str) -> str:
@@ -192,6 +196,10 @@ def build_all(
     run); written to the paper's \\author block."""
     layout = resolve_thread(thread)
     summary = {"thread": write_thread(layout)}
+
+    import shutil
+
+    shutil.copyfile(_CITATIONS_SRC, _CITATIONS_BIB)
 
     if authors:
         _write_authors(authors)

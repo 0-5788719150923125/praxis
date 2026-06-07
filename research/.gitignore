@@ -20,6 +20,7 @@ evolution_vars.tex
 strands.tex
 conjectures.tex
 authors.tex
+citations.bib
 figures/
 
 # Stray top-level latex aux files (proper builds go to build/).
