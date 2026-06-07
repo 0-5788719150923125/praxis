@@ -75,7 +75,11 @@ def test_enter_offline_mode_latches(monkeypatch):
 
 
 def test_bounded_load_attempts(monkeypatch):
+    import praxis.data.datasets.network_retry as nr
+
     _reset_latch(monkeypatch)
+    monkeypatch.setattr(nr, "hub_reachable", lambda: True)
+    monkeypatch.setattr(nr.time, "sleep", lambda s: None)
     calls = []
 
     def boom():
@@ -230,3 +234,158 @@ def test_midrun_offline_retires_quietly_when_uncached(monkeypatch, capsys):
     for _ in range(5):
         assert s.get_document() == {"messages": [], "metadata": {}}
     assert capsys.readouterr().out == ""
+
+
+def test_midrun_hub_outage_latches_offline_and_propagates(monkeypatch):
+    """Unbounded retries must not hang training when the hub is down: latch
+    offline and raise so get_document's cache fallback can run."""
+    import praxis.data.datasets.network_retry as nr
+
+    _reset_latch(monkeypatch)
+    monkeypatch.setattr(nr, "hub_reachable", lambda: False)
+    calls = []
+
+    def boom():
+        calls.append(1)
+        raise ConnectionError("hub down mid-stream")
+
+    with pytest.raises(ConnectionError):
+        nr.retry_on_network_error(boom)
+    assert len(calls) == 1  # no indefinite wait
+    assert nr.hf_offline()
+
+
+def test_midrun_blip_keeps_retrying_when_hub_up(monkeypatch):
+    import praxis.data.datasets.network_retry as nr
+
+    _reset_latch(monkeypatch)
+    monkeypatch.setattr(nr, "hub_reachable", lambda: True)
+    monkeypatch.setattr(nr.time, "sleep", lambda s: None)
+    calls = []
+
+    def flaky():
+        calls.append(1)
+        if len(calls) < 3:
+            raise ConnectionError("transient")
+        return "ok"
+
+    assert nr.retry_on_network_error(flaky) == "ok"
+    assert len(calls) == 3
+    assert not nr.hf_offline()
+
+
+def test_closed_client_is_unrecoverable():
+    from praxis.data.datasets.network_retry import is_unrecoverable
+
+    exc = RuntimeError("Cannot send a request, as the client has been closed.")
+    assert is_unrecoverable(exc)
+    assert not is_unrecoverable(ConnectionError("connection reset"))
+
+
+def test_closed_client_raises_immediately(monkeypatch):
+    import praxis.data.datasets.network_retry as nr
+
+    _reset_latch(monkeypatch)
+    monkeypatch.setattr(nr, "hub_reachable", lambda: True)
+    calls = []
+
+    def boom():
+        calls.append(1)
+        raise RuntimeError("Cannot send a request, as the client has been closed.")
+
+    with pytest.raises(RuntimeError):
+        nr.retry_on_network_error(boom)
+    assert len(calls) == 1  # no retry on a dead client
+    assert not nr.hf_offline()
+
+
+def test_dead_transport_rebuilds_stream(monkeypatch):
+    """A closed shared client mid-run: the sampler reloads the dataset (fresh
+    client) and keeps serving documents."""
+    import praxis.data.datasets.huggingface as hf
+
+    _reset_latch(monkeypatch)
+    loads = []
+
+    class DeadStream:
+        def shuffle(self, **kw):
+            return self
+
+        def __iter__(self):
+            def gen():
+                yield {"text": "doc before death"}
+                raise RuntimeError(
+                    "Cannot send a request, as the client has been closed."
+                )
+
+            return gen()
+
+    class FreshStream(DeadStream):
+        def __iter__(self):
+            return iter([{"text": "doc after rebuild"}] * 5)
+
+    def fake_load(args):
+        loads.append(1)
+        return DeadStream() if len(loads) == 1 else FreshStream()
+
+    monkeypatch.setattr(hf, "load_dataset_smart", fake_load)
+    s = hf.HuggingfaceDataset(tokenizer=None, seed=0, config={"path": "fake/ds"})
+    assert s.get_document()["messages"]
+    doc = s.get_document()  # client dies; rebuild kicks in
+    assert doc["messages"] and not s._retired
+    assert len(loads) == 2
+    assert s._stream_rebuilds == 0  # healthy fetch reset the budget
+
+
+def test_empty_post_reshuffle_stream_rebuilds(monkeypatch):
+    """A stream that yields nothing even after reshuffle (dead client) goes
+    through the rebuild path instead of spamming empty documents."""
+    import praxis.data.datasets.huggingface as hf
+
+    _reset_latch(monkeypatch)
+    loads = []
+
+    class Empty:
+        def shuffle(self, **kw):
+            return self
+
+        def __iter__(self):
+            return iter(())
+
+    class Fresh(Empty):
+        def __iter__(self):
+            return iter([{"text": "alive"}] * 5)
+
+    def fake_load(args):
+        loads.append(1)
+        return Empty() if len(loads) == 1 else Fresh()
+
+    monkeypatch.setattr(hf, "load_dataset_smart", fake_load)
+    s = hf.HuggingfaceDataset(tokenizer=None, seed=0, config={"path": "fake/ds"})
+    doc = s.get_document()
+    assert doc["messages"] and not s._retired
+    assert len(loads) == 2
+
+
+def test_boot_dead_client_gets_one_fresh_load(monkeypatch):
+    import praxis.data.datasets.huggingface as hf
+
+    _reset_latch(monkeypatch)
+    loads = []
+
+    class Fine:
+        def shuffle(self, **kw):
+            return self
+
+        def __iter__(self):
+            return iter([{"text": "ok"}])
+
+    def fake_load(args):
+        loads.append(1)
+        if len(loads) == 1:
+            raise RuntimeError("Cannot send a request, as the client has been closed.")
+        return Fine()
+
+    monkeypatch.setattr(hf, "load_dataset_smart", fake_load)
+    s = hf.HuggingfaceDataset(tokenizer=None, seed=0, config={"path": "fake/ds"})
+    assert len(loads) == 2 and s.get_document()["messages"]

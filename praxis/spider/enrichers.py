@@ -35,6 +35,11 @@ class Enricher:
         otherwise reject."""
         return None
 
+    def link_allowed(self, url: str) -> bool:
+        """Veto for discovered links INTO this site - lets a site with mostly
+        boilerplate (terms/about/jobs) keep its frontier on content."""
+        return True
+
 
 class YouTubeEnricher(Enricher):
     """Channel/watch pages are JS-rendered; mine their inline JSON for video
@@ -49,8 +54,17 @@ class YouTubeEnricher(Enricher):
     _MAX_VIDEOS = 30
     _MAX_CHANNELS = 5
 
+    # Content lives at watch/channel/handle paths; everything else on the
+    # domain is product boilerplate (terms, about, jobs, ads...) that would
+    # otherwise dominate the citation-ranked frontier.
+    _CONTENT_PATH = re.compile(r"^/(watch$|@|channel/|shorts/|playlist$)")
+
     def matches(self, url: str) -> bool:
         return urlsplit(url).netloc.lower().endswith("youtube.com")
+
+    def link_allowed(self, url: str) -> bool:
+        parts = urlsplit(url)
+        return parts.path in ("", "/") or bool(self._CONTENT_PATH.match(parts.path))
 
     def enrich_html(self, url: str, html: str) -> Enriched:
         # Stay on the fetched host so links land in this site's frontier.

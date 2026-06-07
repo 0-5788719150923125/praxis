@@ -210,9 +210,9 @@ def test_youtube_enricher_mines_inline_json():
         '"canonicalBaseUrl":"/@OtherChannel",'
         '"shortDescription":"A song.\\nMore: https://example.com"}'
     )
-    e = enricher_for("https://youtube.com/@The-Arc")
+    e = enricher_for("https://youtube.com/@AnyChannel")
     assert e is not None
-    out = e.enrich_html("https://youtube.com/@The-Arc", html)
+    out = e.enrich_html("https://youtube.com/@AnyChannel", html)
     assert "https://youtube.com/watch?v=dQw4w9WgXcQ" in out.links
     assert "https://youtube.com/@OtherChannel" in out.links
     assert "A song.\nMore: https://example.com" == out.text
@@ -262,3 +262,35 @@ def test_promotion_spares_more_interesting_incumbents(store):
         store.record_refs(f"https://x.com/p{i}", ["https://meh.com/a"])
     assert store.promote_sites(max_sites=1) == []
     assert {row[0] for row in store.list_sites()} == {"https://liked.com"}
+
+
+def test_deep_seed_queues_cited_page(store):
+    store.add_site("https://yt.com/@Chan", max_sites=4)
+    urls = {r[0] for r in store._conn.execute("SELECT url FROM frontier")}
+    assert "https://yt.com/" in urls and "https://yt.com/@Chan" in urls
+    store.add_site("https://yt.com/@Other", max_sites=4)  # existing site, new path
+    urls = {r[0] for r in store._conn.execute("SELECT url FROM frontier")}
+    assert "https://yt.com/@Other" in urls
+
+
+def test_youtube_link_veto():
+    from praxis.kb.sources import LinksSource
+    from praxis.spider.enrichers import enricher_for
+
+    e = enricher_for("https://www.youtube.com/")
+    # The point of the pipeline: whatever channel the README cites must pass
+    # the veto - discovered, not hardcoded.
+    readme_channels = [
+        i.uri
+        for i in LinksSource().iter_items()
+        if i.origin == "README.md" and e.matches(i.uri)
+    ]
+    assert readme_channels, "README should cite at least one YouTube channel"
+    assert all(e.link_allowed(u) for u in readme_channels)
+    assert e.link_allowed("https://www.youtube.com/watch?v=abcdefghijk")
+    assert e.link_allowed("https://www.youtube.com/channel/UCx")
+    assert e.link_allowed("https://www.youtube.com/")
+    assert not e.link_allowed("https://www.youtube.com/t/terms")
+    assert not e.link_allowed("https://www.youtube.com/about/")
+    assert not e.link_allowed("https://www.youtube.com/jobs/")
+    assert not e.link_allowed("https://www.youtube.com/premium?x=1")

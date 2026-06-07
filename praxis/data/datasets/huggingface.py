@@ -11,6 +11,7 @@ from praxis.data.datasets.network_retry import (
     hf_offline,
     hub_reachable,
     is_network_error,
+    is_unrecoverable,
     retry_on_network_error,
 )
 from praxis.data.formats import DataFormat
@@ -88,7 +89,13 @@ class HuggingfaceDataset(PraxisSampler):
             dataset_args["revision"] = config["revision"]
         self._dataset_args = dict(dataset_args)  # kept for mid-run cache fallback
         try:
-            self.dataset = self._load_frugal(dataset_args)
+            try:
+                self.dataset = self._load_frugal(dataset_args)
+            except Exception as e:
+                if not is_unrecoverable(e):
+                    raise
+                # Dead shared client at boot: one fresh attempt gets a new one.
+                self.dataset = self._load_frugal(dataset_args)
         except Exception as e:
             if hf_offline() or not is_network_error(e):
                 raise
@@ -177,6 +184,8 @@ class HuggingfaceDataset(PraxisSampler):
                     label=f"stream next from {self.dataset_path} (post-reshuffle)",
                 )
 
+            self._stream_rebuilds = 0  # healthy fetch resets the budget
+
             # Debug what keys the document has
             if not hasattr(self, "_debug_printed"):
                 self._debug_printed = True
@@ -198,6 +207,37 @@ class HuggingfaceDataset(PraxisSampler):
                 return {"messages": [], "metadata": {}}
 
         except Exception as e:
+            # StopIteration after a reshuffle means the stream is broken (a
+            # dead transport yields zero documents), not exhausted.
+            if not hf_offline() and (
+                is_network_error(e) or isinstance(e, StopIteration)
+            ):
+                # A dead transport (e.g. closed shared httpx client after a
+                # checkpoint-resume fork) cannot heal by retrying; rebuild the
+                # stream so it gets a fresh client. Bounded so a true poison
+                # state degrades to retirement, not a rebuild loop.
+                self._stream_rebuilds = getattr(self, "_stream_rebuilds", 0) + 1
+                if self._stream_rebuilds <= 3:
+                    try:
+                        self.dataset = self._load_frugal(dict(self._dataset_args))
+                        shuffle_args = {"seed": self.base_seed + self.restart_count}
+                        if self.is_streaming:
+                            shuffle_args["buffer_size"] = self.buffer_size
+                        self.shuffled_dataset = self.dataset.shuffle(**shuffle_args)
+                        self.dataset_iterator = iter(self.shuffled_dataset)
+                        print(
+                            f"[DATA] rebuilt stream {self.dataset_path} "
+                            f"({self._stream_rebuilds}/3) after a dead transport."
+                        )
+                        return self.get_document()
+                    except Exception:
+                        pass  # fall through to offline check / retirement
+                self._retired = True
+                print(
+                    f"[DATA] retiring {self.dataset_path}: transport will not "
+                    "recover and rebuilds were exhausted."
+                )
+                return {"messages": [], "metadata": {}}
             if hf_offline() and is_network_error(e):
                 # Offline mode latched while this stream was live. Try to
                 # carry on from the local cache (non-streaming is the only

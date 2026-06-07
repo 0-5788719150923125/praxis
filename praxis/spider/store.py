@@ -101,6 +101,7 @@ class SpiderStore:
         if not urlsplit(site).netloc:
             return False
         now = time.time()
+        deep = url.rstrip("/") != site  # seeded with a path, not a bare host
         existing = self._conn.execute(
             "SELECT 1 FROM sites WHERE url = ?", (site,)
         ).fetchone()
@@ -109,7 +110,13 @@ class SpiderStore:
                 self._conn.execute(
                     "UPDATE sites SET pinned = 1 WHERE url = ?", (site,)
                 )
-                self._conn.commit()
+            if deep:  # make sure the cited page itself gets crawled
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO frontier (url, site, depth, discovered) "
+                    "VALUES (?, ?, 0, ?)",
+                    (url, site, now),
+                )
+            self._conn.commit()
             return False
         count = self._conn.execute("SELECT COUNT(*) FROM sites").fetchone()[0]
         if count >= max_sites:
@@ -129,6 +136,12 @@ class SpiderStore:
             "VALUES (?, ?, 0, ?)",
             (site + "/", site, now),
         )
+        if deep:  # crawl the cited page itself, not just the site's root
+            self._conn.execute(
+                "INSERT OR IGNORE INTO frontier (url, site, depth, discovered) "
+                "VALUES (?, ?, 0, ?)",
+                (url, site, now),
+            )
         self._conn.commit()
         return True
 

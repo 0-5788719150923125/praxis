@@ -108,6 +108,20 @@ _NETWORK_ERROR_MESSAGES = (
     "Cannot send a request",
 )
 
+# A closed client never heals by waiting - every retry reuses the same dead
+# object. The caller must rebuild its stream instead.
+_UNRECOVERABLE_MESSAGES = ("client has been closed",)
+
+
+def is_unrecoverable(exc: BaseException) -> bool:
+    """True for transport states that retrying the same callable cannot fix."""
+    if any(msg in str(exc) for msg in _UNRECOVERABLE_MESSAGES):
+        return True
+    cause = exc.__cause__ or exc.__context__
+    if cause is not None and cause is not exc:
+        return is_unrecoverable(cause)
+    return False
+
 
 def is_network_error(exc: BaseException) -> bool:
     """Return True if exc looks like a transient connectivity failure."""
@@ -137,9 +151,11 @@ def retry_on_network_error(
     max_attempts: int = 0,
 ) -> T:
     """Call func(), retrying on network errors with capped backoff -
-    indefinitely by default (mid-stream fetches must wait for connectivity to
+    indefinitely by default (mid-stream fetches wait for connectivity to
     preserve data order), or up to ``max_attempts`` when bounded (load-time
-    calls, where the caller has a cache fallback).
+    calls, where the caller has a cache fallback). If the hub itself stops
+    answering a TCP probe, offline mode latches and the error propagates so
+    callers fall back to local caches instead of hanging training.
 
     Non-network exceptions propagate immediately. Callers must be idempotent,
     since func() may be invoked many times.
@@ -154,7 +170,15 @@ def retry_on_network_error(
         except BaseException as exc:
             if not is_network_error(exc):
                 raise
+            if is_unrecoverable(exc):
+                raise  # dead client object; waiting can't revive it
             if max_attempts and attempt + 1 >= max_attempts:
+                raise
+            if not hub_reachable():
+                # The hub itself is down, not just this fetch: latch offline
+                # and propagate so callers fall back to their local caches
+                # instead of waiting on connectivity that may not return.
+                enter_offline_mode(f"{type(exc).__name__} during {label}")
                 raise
             attempt += 1
             print(

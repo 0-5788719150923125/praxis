@@ -166,9 +166,14 @@ def fetch_page(
     links, seen = [], set()
     for href in hrefs:
         normalized = _normalize_link(href, url)
-        if normalized and normalized not in seen:
-            seen.add(normalized)
-            links.append(normalized)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        # The TARGET's enricher can veto boilerplate paths on its own site.
+        target = enricher_for(normalized)
+        if target is not None and not target.link_allowed(normalized):
+            continue
+        links.append(normalized)
 
     summary = description or text[:140].replace("\n", " ").strip()
     return FetchResult(
