@@ -220,7 +220,10 @@ class HuggingfaceDataset(PraxisSampler):
                 # stream so it gets a fresh client. Bounded so a true poison
                 # state degrades to retirement, not a rebuild loop.
                 self._stream_rebuilds = getattr(self, "_stream_rebuilds", 0) + 1
-                if not HuggingfaceDataset.transport_broken and self._stream_rebuilds <= 1:
+                if (
+                    not HuggingfaceDataset.transport_broken
+                    and self._stream_rebuilds <= 1
+                ):
                     try:
                         self.dataset = self._load_frugal(dict(self._dataset_args))
                         shuffle_args = {"seed": self.base_seed + self.restart_count}

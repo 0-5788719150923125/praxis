@@ -480,4 +480,6 @@ def test_broken_transport_is_global(monkeypatch):
     doc = s1.get_document()
     assert doc["messages"] and hf.HuggingfaceDataset.transport_broken
     streaming_loads = [x for x in loads if x is not False]
-    assert len(streaming_loads) <= 2  # one rebuild attempt (frugal+plain), then condemned
+    assert (
+        len(streaming_loads) <= 2
+    )  # one rebuild attempt (frugal+plain), then condemned
