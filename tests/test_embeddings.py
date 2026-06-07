@@ -131,7 +131,7 @@ class TestPositionalEmbedding:
 
         # This should raise error due to position embeddings limit
         x_too_long = torch.randint(0, config.vocab_size, (1, 11))
-        with pytest.raises(IndexError):
+        with pytest.raises(ValueError, match="positional capacity"):
             embedding(x_too_long)
 
 

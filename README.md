@@ -141,7 +141,7 @@ To run unit testing (accepts pytest arguments):
 
 ## recommendations
 
-We recommend you use a `batch-size` of at least 16, if possible. We have implemented an oversampling mechanism, which periodically multiplies your sequence length, and scales quadratically with batch sizes of 1, 4, 16, 64, etc.
+We recommend you use a `batch-size` of at least 16, if possible. Batches periodically trade size for sequence length: a sequence multiplier of 2x, 4x or 8x divides the batch size by the multiplier squared, keeping token count constant. Each tier unlocks when `batch-size` reaches the multiplier squared (4, 16, 64).
 
 We also recommend using an Nvidia GPU.
 

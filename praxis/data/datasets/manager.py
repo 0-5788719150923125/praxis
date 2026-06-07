@@ -15,6 +15,31 @@ from praxis.logging.data_metrics_logger import DataMetricsLogger
 # Valid weighting modes (kept in sync with SAMPLER_REGISTRY).
 WEIGHTING_MODES = ("static", "dynamic", "novelty", "loss", "uniform")
 
+# Sequence-multiplier tiers: (multiplier, per-batch chance), highest first.
+# A batch trades size for length at constant token count - dividing batch
+# size by multiplier^2 - so a tier is only eligible when batch_size >= m^2.
+SEQUENCE_MULTIPLIER_TIERS = ((8, 0.001), (4, 0.01), (2, 0.1))
+
+
+def max_sequence_multiplier(
+    batch_size: int, tiers=SEQUENCE_MULTIPLIER_TIERS
+) -> int:
+    """Largest multiplier the tiers can produce for this batch size."""
+    return max(
+        (m for m, _ in tiers if batch_size >= m * m),
+        default=1,
+    )
+
+
+def sample_sequence_multiplier(
+    batch_size: int, tiers=SEQUENCE_MULTIPLIER_TIERS, rng=random
+) -> int:
+    """Roll the tiers (highest multiplier first); return the first hit, else 1."""
+    for multiplier, chance in tiers:
+        if batch_size >= multiplier * multiplier and rng.random() < chance:
+            return multiplier
+    return 1
+
 
 class InterleaveDataManager:
     """
@@ -188,35 +213,28 @@ class InterleaveDataManager:
     def get_batch(
         self,
         batch_size: int,
-        oversample: bool = False,
-        supersample: bool = False,
-        hypersample: bool = False,
+        sequence_multiplier: int = 1,
     ) -> Dict[str, Any]:
         """
         Get a batch of sequences using the message queue.
 
         Args:
             batch_size: Number of sequences in the batch
-            oversample: Whether to use 2x sequence length
-            supersample: Whether to use 4x sequence length
-            hypersample: Whether to use 8x sequence length
+            sequence_multiplier: Sequence length factor; batch size divides
+                by its square so token count stays constant. Positional
+                capacity is sized against the same tiers at config time.
 
         Returns:
             Dictionary with batch data and metadata
         """
-        # Adjust batch size and sequence length for oversampling
         current_batch_size = batch_size
-        sequence_multiplier = 1
-
-        if hypersample and batch_size >= 64:
-            current_batch_size = batch_size // 64
-            sequence_multiplier = 8  # 8x sequence length
-        elif supersample and batch_size >= 16:
-            current_batch_size = batch_size // 16
-            sequence_multiplier = 4  # 4x sequence length
-        elif oversample and batch_size >= 4:
-            current_batch_size = batch_size // 4
-            sequence_multiplier = 2  # 2x sequence length
+        if sequence_multiplier > 1:
+            if batch_size < sequence_multiplier**2:
+                raise ValueError(
+                    f"sequence_multiplier={sequence_multiplier} requires "
+                    f"batch_size >= {sequence_multiplier ** 2}, got {batch_size}"
+                )
+            current_batch_size = batch_size // sequence_multiplier**2
 
         # Update weights if using adaptive weighting
         if self._adaptive:

@@ -187,6 +187,28 @@ class TokenMonsterTokenizer(
             return []
         return [int(i) + self._offset for i in ids.tolist()]
 
+    def _tm_encode_batch(self, texts: List[str]) -> List[List[int]]:
+        """Batch encode; segments tokenize in parallel server-side."""
+        nonempty = [t for t in texts if t]
+        if not nonempty:
+            return [[] for _ in texts]
+        vocab = self._vocab()
+        with _TM_LOCK:
+            results = vocab.tokenize(nonempty)
+        if len(nonempty) == 1:
+            results = [results]
+        out: List[List[int]] = []
+        it = iter(results)
+        for t in texts:
+            if not t:
+                out.append([])
+                continue
+            ids = next(it)
+            out.append(
+                [] if ids is None else [int(i) + self._offset for i in ids.tolist()]
+            )
+        return out
+
     def _tm_decode(self, ids: List[int]) -> str:
         if not ids:
             return ""
@@ -194,9 +216,9 @@ class TokenMonsterTokenizer(
         with _TM_LOCK:
             return vocab.decode([i - self._offset for i in ids])
 
-    def _tokenize(self, text: str, **kwargs) -> List[str]:
-        """Split out special-token strings, TM-tokenize the segments."""
-        tokens: List[str] = []
+    def _split_specials(self, text: str) -> List[Tuple[bool, str]]:
+        """Split text into (is_special, piece) runs around special tokens."""
+        pieces: List[Tuple[bool, str]] = []
         specials = list(self._special_id_map.keys())
         segment_start = 0
         i = 0
@@ -207,13 +229,25 @@ class TokenMonsterTokenizer(
                     matched = sp
                     break
             if matched is not None:
-                tokens.extend(map(str, self._tm_encode(text[segment_start:i])))
-                tokens.append(matched)
+                if i > segment_start:
+                    pieces.append((False, text[segment_start:i]))
+                pieces.append((True, matched))
                 i += len(matched)
                 segment_start = i
             else:
                 i += 1
-        tokens.extend(map(str, self._tm_encode(text[segment_start:])))
+        if segment_start < len(text):
+            pieces.append((False, text[segment_start:]))
+        return pieces
+
+    def _tokenize(self, text: str, **kwargs) -> List[str]:
+        """Split out special-token strings, TM-tokenize the segments."""
+        tokens: List[str] = []
+        for is_special, piece in self._split_specials(text):
+            if is_special:
+                tokens.append(piece)
+            else:
+                tokens.extend(map(str, self._tm_encode(piece)))
         return tokens
 
     def _convert_token_to_id(self, token: str) -> int:
@@ -245,6 +279,102 @@ class TokenMonsterTokenizer(
                     continue
         out.append(self._tm_decode(run))
         return "".join(out)
+
+    def apply_chat_template(self, conversation, **kwargs):
+        """Build assistant masks without char_to_token (fast-tokenizer only).
+
+        The template's {% generation %} spans are mapped to tokens by
+        encoding the rendered text segment-wise at span boundaries. Those
+        boundaries match the inference-time prompt/generation split, so
+        the tokenization stays in-distribution.
+        """
+        if not kwargs.get("return_assistant_tokens_mask"):
+            return super().apply_chat_template(conversation, **kwargs)
+        if not (kwargs.get("tokenize") and kwargs.get("return_dict")):
+            raise ValueError(
+                "return_assistant_tokens_mask=True requires tokenize=True "
+                "and return_dict=True"
+            )
+        if conversation and not isinstance(conversation[0], dict):
+            raise NotImplementedError(
+                "TokenMonsterTokenizer assistant masks support a single "
+                "conversation, not a batch"
+            )
+
+        from transformers.tokenization_utils_base import BatchEncoding
+        from transformers.utils.chat_template_utils import render_jinja_template
+
+        template_kwargs = {
+            k: v
+            for k, v in kwargs.items()
+            if k
+            not in (
+                "tokenize",
+                "return_dict",
+                "return_assistant_tokens_mask",
+                "return_tensors",
+                "padding",
+                "truncation",
+                "max_length",
+            )
+        }
+        rendered, generation_indices = render_jinja_template(
+            conversations=[conversation],
+            chat_template=self.chat_template,
+            return_assistant_tokens_mask=True,
+            bos_token=self.bos_token,
+            eos_token=self.eos_token,
+            sep_token=self.sep_token,
+            pad_token=self.pad_token,
+            **template_kwargs,
+        )
+        text, spans = rendered[0], generation_indices[0]
+
+        # Alternating non-generation / generation segments.
+        segments: List[Tuple[str, int]] = []
+        cursor = 0
+        for start, end in spans:
+            segments.append((text[cursor:start], 0))
+            segments.append((text[start:end], 1))
+            cursor = end
+        segments.append((text[cursor:], 0))
+
+        input_ids: List[int] = []
+        assistant_mask: List[int] = []
+        for tokens, (_, flag) in zip(
+            self._encode_segments([s for s, _ in segments]), segments
+        ):
+            input_ids.extend(tokens)
+            assistant_mask.extend([flag] * len(tokens))
+
+        return BatchEncoding(
+            {
+                "input_ids": input_ids,
+                "attention_mask": [1] * len(input_ids),
+                "assistant_masks": assistant_mask,
+            }
+        )
+
+    def _encode_segments(self, texts: List[str]) -> List[List[int]]:
+        """Encode segments with all TM runs batched into one server call."""
+        pieces_per_text = [self._split_specials(t) for t in texts]
+        tm_runs = [
+            piece
+            for pieces in pieces_per_text
+            for is_special, piece in pieces
+            if not is_special
+        ]
+        encoded_runs = iter(self._tm_encode_batch(tm_runs))
+        out: List[List[int]] = []
+        for pieces in pieces_per_text:
+            ids: List[int] = []
+            for is_special, piece in pieces:
+                if is_special:
+                    ids.append(self._special_id_map[piece])
+                else:
+                    ids.extend(next(encoded_runs))
+            out.append(ids)
+        return out
 
     def build_inputs_with_special_tokens(
         self, token_ids_0: List[int], token_ids_1: Optional[List[int]] = None

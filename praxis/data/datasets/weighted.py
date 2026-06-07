@@ -1,6 +1,5 @@
 """Weighted iterable dataset implementation."""
 
-import random
 from typing import List, Optional
 
 import torch
@@ -8,7 +7,10 @@ from torch.utils.data import IterableDataset
 from transformers import PreTrainedTokenizer
 
 from praxis.data.datasets.base import PraxisSampler
-from praxis.data.datasets.manager import InterleaveDataManager
+from praxis.data.datasets.manager import (
+    InterleaveDataManager,
+    sample_sequence_multiplier,
+)
 from praxis.data.formatters import _rl_logger
 
 
@@ -22,9 +24,7 @@ class WeightedIterableDataset(IterableDataset):
         tokenizer: PreTrainedTokenizer,
         block_size: int,
         batch_size: int,
-        oversample_chance: float = 0,
-        supersample_chance: float = 0,
-        hypersample_chance: float = 0,
+        sequence_multiplier_tiers=(),
         rl_type: Optional[str] = None,
         run_dir: Optional[str] = None,
         data_metrics_log_interval: int = 50,
@@ -47,9 +47,7 @@ class WeightedIterableDataset(IterableDataset):
         )
 
         self.batch_size = batch_size
-        self.oversample_chance = oversample_chance
-        self.supersample_chance = supersample_chance
-        self.hypersample_chance = hypersample_chance
+        self.sequence_multiplier_tiers = tuple(sequence_multiplier_tiers)
         self.rl_type = rl_type
         # Weight-edit controllers (e.g. harmonic_weight) reward via callback and
         # use no RL datasets, so skip the dataset-reward path and its logging.
@@ -61,13 +59,10 @@ class WeightedIterableDataset(IterableDataset):
 
     def __iter__(self):
         while True:
-            oversample = random.random() < self.oversample_chance
-            supersample = random.random() < self.supersample_chance
-            hypersample = random.random() < self.hypersample_chance
-
-            result = self.data_manager.get_batch(
-                self.batch_size, oversample, supersample, hypersample
+            multiplier = sample_sequence_multiplier(
+                self.batch_size, self.sequence_multiplier_tiers
             )
+            result = self.data_manager.get_batch(self.batch_size, multiplier)
 
             # Extract batch and rewards
             batch = result["batch"]

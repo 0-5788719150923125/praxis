@@ -90,6 +90,30 @@ def test_chat_template(tokenizer):
     assert tokenizer.bos_token_id in ids
 
 
+def test_assistant_tokens_mask(tokenizer):
+    """Slow-tokenizer mask path must not depend on char_to_token."""
+    msgs = [
+        {"role": "user", "content": "What is 2+2?"},
+        {"role": "assistant", "content": "The answer is 4."},
+    ]
+    out = tokenizer.apply_chat_template(
+        msgs,
+        tokenize=True,
+        add_generation_prompt=False,
+        return_dict=True,
+        return_assistant_tokens_mask=True,
+    )
+    ids, mask = out["input_ids"], out["assistant_masks"]
+    assert len(ids) == len(mask)
+    assert sum(mask) > 0
+    assistant_ids = [i for i, f in zip(ids, mask) if f]
+    decoded = tokenizer.decode(assistant_ids)
+    assert decoded == "The answer is 4.\n[SEP]\n"
+    # Whole-sequence decode matches the rendered template text.
+    rendered = tokenizer.apply_chat_template(msgs, tokenize=False)
+    assert tokenizer.decode(ids) == rendered
+
+
 def test_thread_safety(tokenizer):
     import threading
 

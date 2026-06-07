@@ -96,15 +96,15 @@ def assemble_model(cfg, config) -> ModelBundle:
     config.optimizer_config = optimizer_config
     config.optimizer_wrappers = list(cfg.optimizer_wrappers)
 
+    from praxis.data.datasets.manager import SEQUENCE_MULTIPLIER_TIERS
+
     # Spread config first; explicit params override any duplicates.
     hparams = {
         **config.to_dict(),
         "batch_size": cfg.batch_size,
         "target_batch_size": cfg.target_batch_size,
         "block_size": cfg.block_size,
-        "oversample_chance": 0.1,  # double the block_size
-        "supersample_chance": 0.01,  # quadruple the block_size
-        "hypersample_chance": 0.001,  # octuple the block_size
+        "sequence_multiplier_tiers": SEQUENCE_MULTIPLIER_TIERS,
         "device": cfg.device,
         "trainer_type": cfg.trainer_type,
         "no_compile": cfg.no_compile,

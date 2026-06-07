@@ -416,13 +416,13 @@ def test_interleave_data_manager_determinism():
         torch.testing.assert_close(batch_tensors_1[i], batch_tensors_2[i])
 
     # Test different sampling modes
-    batch_3 = manager_1.get_batch(batch_size=4, oversample=True)
+    batch_3 = manager_1.get_batch(batch_size=4, sequence_multiplier=2)
 
     # Reset all seeds and get new batch
     random.seed(42)
     torch.manual_seed(42)
     np.random.seed(42)
-    batch_4 = manager_2.get_batch(batch_size=4, oversample=True)
+    batch_4 = manager_2.get_batch(batch_size=4, sequence_multiplier=2)
 
     # Check that batches are identical
     batch_tensors_3 = batch_3["batch"]

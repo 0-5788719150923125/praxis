@@ -21,9 +21,7 @@ class PraxisDataModule(LightningDataModule):
         tokenizer: PreTrainedTokenizer,
         batch_size: int = 16,
         block_size: int = 512,
-        oversample_chance: float = 0,
-        supersample_chance: float = 0,
-        hypersample_chance: float = 0,
+        sequence_multiplier_tiers=(),
         rl_type: Optional[str] = None,
         run_dir: Optional[str] = None,
         data_metrics_log_interval: int = 50,
@@ -44,9 +42,7 @@ class PraxisDataModule(LightningDataModule):
             tokenizer,
             block_size,
             batch_size,
-            oversample_chance,
-            supersample_chance,
-            hypersample_chance,
+            sequence_multiplier_tiers,
         )
         self.val_datasets = False
         if len(val_datasets) > 0:
@@ -55,9 +51,7 @@ class PraxisDataModule(LightningDataModule):
                 tokenizer,
                 block_size,
                 batch_size,
-                oversample_chance=0,
-                supersample_chance=0,
-                hypersample_chance=0,
+                sequence_multiplier_tiers=(),  # fixed-length validation
                 enable_data_metrics_logging=False,  # Don't log validation metrics
             )
 
@@ -83,9 +77,7 @@ class PraxisDataModule(LightningDataModule):
         tokenizer,
         block_size,
         batch_size,
-        oversample_chance=0,
-        supersample_chance=0,
-        hypersample_chance=0,
+        sequence_multiplier_tiers=(),
         enable_data_metrics_logging=True,
     ):
         # `uniform` forces every dataset to 1.0 regardless of what
@@ -105,9 +97,7 @@ class PraxisDataModule(LightningDataModule):
             tokenizer,
             block_size,
             batch_size,
-            oversample_chance,
-            supersample_chance,
-            hypersample_chance,
+            sequence_multiplier_tiers,
             rl_type=self.rl_type,
             run_dir=self.run_dir if enable_data_metrics_logging else None,
             data_metrics_log_interval=self.data_metrics_log_interval,

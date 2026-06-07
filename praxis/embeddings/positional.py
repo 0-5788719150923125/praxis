@@ -54,6 +54,15 @@ class PositionalEmbedding(nn.Sequential):
         """
         B, T = x.shape
 
+        # Fail loudly here; out-of-range rows surface as async CUDA asserts.
+        capacity = self.wpe.num_embeddings
+        if offset + T > capacity:
+            raise ValueError(
+                f"Sequence of length {T} at offset {offset} exceeds learned "
+                f"positional capacity {capacity}; raise max_position_embeddings "
+                f"(sequence multipliers stretch batches up to 8x block_size)."
+            )
+
         # Token embeddings
         hidden_states = self.wte(x)
 

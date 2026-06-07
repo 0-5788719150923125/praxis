@@ -102,7 +102,22 @@ class ConfigBuilder:
 
         if "max_position_embeddings" in valid_config_params:
             explicit = getattr(args, "max_position_embeddings", None)
+            # Sequence multipliers trade batch size for sequence length, so
+            # positional capacity must cover the longest batch the tiers emit.
+            from praxis.data.datasets.manager import max_sequence_multiplier
+
+            block_size = getattr(args, "block_size", None)
+            batch_size = getattr(args, "batch_size", None)
+            required = None
+            if block_size and batch_size:
+                required = block_size * max_sequence_multiplier(batch_size)
             if explicit is not None:
+                if required is not None and explicit < required:
+                    print(
+                        f"[CONFIG] max_position_embeddings={explicit} cannot cover "
+                        f"sequence-multiplied batches; raising to {required}."
+                    )
+                    explicit = required
                 config_kwargs["max_position_embeddings"] = explicit
 
         # Handle tokenizer IDs if tokenizer is provided
