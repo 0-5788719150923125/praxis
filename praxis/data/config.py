@@ -18,7 +18,7 @@ FORMAT_TO_TASK = {
     DataFormat.TOOL_CALLING: TaskType.TOOL_CALL,
     DataFormat.COT: TaskType.REASONING,
     DataFormat.RL: TaskType.RL,
-    DataFormat.JOKE: TaskType.CONVERSATION,
+    DataFormat.JOKE: TaskType.JOKE,
     DataFormat.CUSTOM: DEFAULT_TASK,
 }
 

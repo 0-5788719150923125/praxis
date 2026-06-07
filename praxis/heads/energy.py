@@ -30,6 +30,17 @@ from torch import nn
 # model-agnostic per the no-per-experiment-tuning rule.
 PRIOR_STATS_DECAY = 0.999
 PRIOR_RIDGE_LAMBDA = 1e-3
+# Post-freeze re-solve gate (all fixed, model-agnostic): a re-solve is
+# triggered when cond_gap has gained GAP_DELTA since the last one, applied as
+# a damped blend, and kept only if the energy-loss EMA has not worsened by
+# the verify window's end - otherwise W restores. Protects against the copy
+# attractor: a solve that buys R² by dragging proposals toward repetition
+# won't improve the energy loss on true continuations, and gets rejected.
+PRIOR_RESOLVE_GAP_DELTA = 0.5
+PRIOR_RESOLVE_BLEND = 0.25
+PRIOR_RESOLVE_VERIFY_STEPS = 200  # optimizer steps
+PRIOR_LOSS_EMA_DECAY = 0.99  # ~100-step horizon, matches the repo convention
+PRIOR_RESOLVE_TOLERANCE = 1.002  # relative slack so EMA noise can't veto
 # Harmonic mode: integer frequencies 1..F over the patch period, sin+cos.
 PRIOR_HARMONIC_FREQS = 8
 
@@ -79,8 +90,33 @@ class LinearPrior(nn.Module):
         self.register_buffer("W", torch.zeros(D, latent_dim), persistent=True)
         self.register_buffer("frozen", torch.zeros((), dtype=torch.bool), persistent=True)
         self.register_buffer("seen", torch.zeros(()), persistent=True)
+        # Post-freeze re-solve state machine (see update_resolve).
+        self.register_buffer("W_prev", torch.zeros(D, latent_dim), persistent=True)
+        self.register_buffer("pending", torch.zeros((), dtype=torch.bool), persistent=True)
+        self.register_buffer("pending_step", torch.zeros(()), persistent=True)
+        self.register_buffer("gap_anchor", torch.full((), float("nan")), persistent=True)
+        self.register_buffer("loss_ema", torch.full((), float("nan")), persistent=True)
+        self.register_buffer("ema_at_apply", torch.zeros(()), persistent=True)
+        self.register_buffer("resolves_kept", torch.zeros(()), persistent=True)
+        self.register_buffer("resolves_rejected", torch.zeros(()), persistent=True)
         # Transient diagnostics (consumed by the encoder's training_metrics).
         self.last_r2 = float("nan")
+
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        # Checkpoints from before the re-solve machinery lack its buffers;
+        # seed them with their init values so resume keeps working.
+        for name in (
+            "W_prev",
+            "pending",
+            "pending_step",
+            "gap_anchor",
+            "loss_ema",
+            "ema_at_apply",
+            "resolves_kept",
+            "resolves_rejected",
+        ):
+            state_dict.setdefault(prefix + name, getattr(self, name).clone())
+        super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
     def features(self, h: torch.Tensor, t: Optional[torch.Tensor]) -> torch.Tensor:
         """``[..., in_dim]`` -> ``[..., D]``; harmonic mode appends the basis."""
@@ -101,9 +137,12 @@ class LinearPrior(nn.Module):
     def observe(
         self, h: torch.Tensor, z: torch.Tensor, t: Optional[torch.Tensor] = None
     ) -> None:
-        """Fold a batch of (conditioning, next-latent) pairs into the stats."""
-        if bool(self.frozen.item()):
-            return
+        """Fold a batch of (conditioning, next-latent) pairs into the stats.
+
+        Keeps accumulating after the freeze: the EMA decay washes out the
+        immature-trunk statistics, so a later re-solve (update_resolve) reads
+        the current features rather than the freeze-time snapshot.
+        """
         phi = self.features(h.detach(), t).reshape(-1, self.A.shape[0]).float()
         zt = z.detach().reshape(-1, self.B.shape[1]).float()
         n = phi.shape[0]
@@ -123,18 +162,74 @@ class LinearPrior(nn.Module):
         self.last_r2 = float(1.0 - ss_res / ss_tot)
 
     @torch.no_grad()
-    def solve(self) -> None:
+    def _ridge(self) -> torch.Tensor:
         """Ridge solve ``(A + lambda I) W = B``; scale-free lambda."""
-        if bool(self.frozen.item()) or float(self.seen.item()) <= 0:
-            return
         D = self.A.shape[0]
         lam = PRIOR_RIDGE_LAMBDA * (self.A.diagonal().mean().clamp_min(1e-12))
         eye = torch.eye(D, device=self.A.device, dtype=self.A.dtype)
-        self.W.copy_(torch.linalg.solve(self.A + lam * eye, self.B))
+        return torch.linalg.solve(self.A + lam * eye, self.B)
+
+    @torch.no_grad()
+    def solve(self) -> None:
+        """Initial solve window: re-solve W in place each step until frozen."""
+        if bool(self.frozen.item()) or float(self.seen.item()) <= 0:
+            return
+        self.W.copy_(self._ridge())
 
     @torch.no_grad()
     def freeze(self) -> None:
         self.frozen.fill_(True)
+
+    @torch.no_grad()
+    def update_resolve(
+        self, cond_gap: float, energy_loss: float, opt_step: int
+    ) -> None:
+        """Milestone-gated, damped, accept-if-not-worse re-solve.
+
+        Called once per training step after the freeze. A re-solve fires when
+        cond_gap has gained PRIOR_RESOLVE_GAP_DELTA since the last one (the
+        trunk matured enough to be worth re-reading), blends the fresh ridge
+        solution in at PRIOR_RESOLVE_BLEND, then watches the energy-loss EMA
+        for PRIOR_RESOLVE_VERIFY_STEPS: not-worse keeps the new W, worse
+        restores the old one. Endogenous - no per-experiment knobs.
+        """
+        if not bool(self.frozen.item()):
+            return
+        if math.isnan(energy_loss):
+            return
+        if math.isnan(float(self.loss_ema.item())):
+            self.loss_ema.fill_(energy_loss)
+        else:
+            self.loss_ema.mul_(PRIOR_LOSS_EMA_DECAY).add_(
+                (1.0 - PRIOR_LOSS_EMA_DECAY) * energy_loss
+            )
+        if bool(self.pending.item()):
+            if opt_step - int(self.pending_step.item()) >= PRIOR_RESOLVE_VERIFY_STEPS:
+                worse = float(self.loss_ema.item()) > float(
+                    self.ema_at_apply.item()
+                ) * PRIOR_RESOLVE_TOLERANCE
+                if worse:
+                    self.W.copy_(self.W_prev)
+                    self.resolves_rejected.add_(1.0)
+                else:
+                    self.resolves_kept.add_(1.0)
+                self.pending.fill_(False)
+            return
+        if math.isnan(cond_gap):
+            return
+        if math.isnan(float(self.gap_anchor.item())):
+            self.gap_anchor.fill_(cond_gap)  # baseline at freeze
+            return
+        if cond_gap - float(self.gap_anchor.item()) < PRIOR_RESOLVE_GAP_DELTA:
+            return
+        self.W_prev.copy_(self.W)
+        self.W.mul_(1.0 - PRIOR_RESOLVE_BLEND).add_(
+            self._ridge(), alpha=PRIOR_RESOLVE_BLEND
+        )
+        self.gap_anchor.fill_(cond_gap)
+        self.ema_at_apply.copy_(self.loss_ema)
+        self.pending.fill_(True)
+        self.pending_step.fill_(float(opt_step))
 
     def forward(self, h: torch.Tensor, t: Optional[torch.Tensor] = None) -> torch.Tensor:
         """The prior's contribution: ``W phi(h, t)``. W carries no gradient;

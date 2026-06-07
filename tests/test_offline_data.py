@@ -144,3 +144,72 @@ def test_offline_latch_emits_notification_event(monkeypatch):
     assert len(events) == before + 1
     assert "OFFLINE" in events[-1]["message"]
     assert events[-1]["level"] == "warning"
+
+
+class _OfflineErr(Exception):
+    pass
+
+
+_OfflineErr.__module__ = "huggingface_hub.errors"
+
+
+def _live_sampler(monkeypatch, cache_works):
+    """A sampler whose stream dies mid-run; cache fallback works or not."""
+    import praxis.data.datasets.huggingface as hf
+
+    class FakeCached:
+        def __init__(self):
+            self.rows = [{"text": "cached doc"}] * 3
+
+        def shuffle(self, **kw):
+            return self
+
+        def __iter__(self):
+            return iter(self.rows)
+
+    class FakeStream:
+        def shuffle(self, **kw):
+            return self
+
+        def __iter__(self):
+            def gen():
+                yield {"text": "live doc"}
+                raise _OfflineErr("offline mode is enabled")
+
+            return gen()
+
+    def fake_load(args):
+        if args.get("streaming"):
+            return FakeStream()
+        if cache_works:
+            return FakeCached()
+        raise FileNotFoundError("not in cache")
+
+    monkeypatch.setattr(hf, "load_dataset_smart", fake_load)
+    return hf.HuggingfaceDataset(tokenizer=None, seed=0, config={"path": "fake/ds"})
+
+
+def test_midrun_offline_falls_back_to_cached_loop(monkeypatch, capsys):
+    _reset_latch(monkeypatch)
+    s = _live_sampler(monkeypatch, cache_works=True)
+    assert s.get_document()["messages"]  # live doc
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")  # hub dies mid-run
+    doc = s.get_document()  # stream dies -> cache fallback -> cached doc
+    assert doc["messages"], doc
+    assert not s._retired and s.is_streaming is False
+    assert "looping over the local cache" in capsys.readouterr().out
+
+
+def test_midrun_offline_retires_quietly_when_uncached(monkeypatch, capsys):
+    _reset_latch(monkeypatch)
+    s = _live_sampler(monkeypatch, cache_works=False)
+    assert s.get_document()["messages"]
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")  # hub dies mid-run
+    assert s.get_document() == {"messages": [], "metadata": {}}
+    assert s._retired
+    out = capsys.readouterr().out
+    assert "retiring stream" in out and "Traceback" not in out
+    # Subsequent picks are silent empties - no per-fetch spam.
+    for _ in range(5):
+        assert s.get_document() == {"messages": [], "metadata": {}}
+    assert capsys.readouterr().out == ""

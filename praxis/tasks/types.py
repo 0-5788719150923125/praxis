@@ -16,6 +16,7 @@ class TaskType(IntEnum):
     TOOL_CALL = 3
     REASONING = 4
     RL = 5
+    JOKE = 6
 
 
 DEFAULT_TASK = TaskType.PRETRAIN

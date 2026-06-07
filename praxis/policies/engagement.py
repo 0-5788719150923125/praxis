@@ -3,8 +3,9 @@
 Dense (simulated-user) path: over the assistant region of each example, the
 model's predicted answer tokens A_hat are scored against the ground-truth answer
 tokens R (the labels) by recall - "did the model anticipate its own answer". That
-recall is the reward; the homeostatic energy is the REINFORCE baseline; the
-policy gradient reweights the LM's own log-probs over the answer tokens. No extra
+recall plus the homeostatic energy is the reward (against a slow reward-EMA
+baseline); the policy gradient reweights the LM's own log-probs over the answer
+tokens. No extra
 parameters and no RL dataset - the reward is computed from labels, not carried in.
 
 This is the teacher-forced dense proxy used to validate that the signal moves a
@@ -18,6 +19,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from praxis.policies.engagement_reward import HomeostaticEnergy
+from praxis.tasks import TaskType
 
 IGNORE_INDEX = -100
 
@@ -30,6 +32,10 @@ class EngagementPolicy(nn.Module):
     # Metric namespace; subclasses (e.g. JokePolicy) override to reuse the same
     # recall-over-assistant-region machinery under a different chart family.
     prefix = "engagement"
+    # Tasks this policy scores. Coexisting recall policies MUST partition the
+    # task space, or they duplicate each other's reward and gradient. None =
+    # score everything (single-policy runs).
+    task_types: Optional[Tuple[int, ...]] = (TaskType.CONVERSATION,)
 
     # REINFORCE baseline EMA horizon (~100 steps). Fixed, model-agnostic.
     REWARD_BASELINE_DECAY = 0.99
@@ -71,6 +77,7 @@ class EngagementPolicy(nn.Module):
         logits: torch.Tensor,
         labels: torch.Tensor,
         assistant_mask: Optional[torch.Tensor] = None,
+        task_type_ids: Optional[torch.Tensor] = None,
     ) -> Tuple[Optional[torch.Tensor], dict]:
         # Needs full per-token logits and an assistant mask; degrade to a no-op
         # rather than guess if either is missing or misshapen.
@@ -99,26 +106,43 @@ class EngagementPolicy(nn.Module):
         mask = mask[:, :seq]
 
         mask = mask & (shift_labels != IGNORE_INDEX)
+
+        # Scope to this policy's tasks so coexisting recall policies (e.g.
+        # engagement vs joke) train on disjoint examples.
+        if self.task_types is not None and task_type_ids is not None:
+            shift_task = task_type_ids[..., 1:].to(mask.device)
+            if shift_task.size(1) >= seq:
+                allowed = torch.zeros_like(mask)
+                for t in self.task_types:
+                    allowed |= shift_task[:, :seq] == int(t)
+                mask = mask & allowed
+
         if not bool(mask.any()):
             return None, {}
 
         pred_ids = shift_logits.argmax(dim=-1)
         activations, recalls = self._reward(pred_ids, shift_labels, mask)
         device = shift_logits.device
-        activation_rate = sum(activations) / len(activations)
-        reward = torch.tensor(recalls, dtype=torch.float32, device=device)
-
-        # Homeostatic energy: kept as the live engagement signal + metric (and
-        # the ingest_live online channel), NOT the gradient baseline.
+        # Stats over in-scope rows only - rows another policy owns must not
+        # dilute this one's activation/recall averages.
+        rows = mask.any(dim=1).tolist()
+        scoped = [i for i, r in enumerate(rows) if r] or list(range(len(activations)))
+        activation_rate = sum(activations[i] for i in scoped) / len(scoped)
+        # Homeostatic energy enters the reward (not the baseline): a live
+        # interaction spikes it, the baseline EMA catches up, and the wall-clock
+        # decay pulls it back - so engagement yields a transient positive
+        # advantage that fades, like eating.
         energy = self.energy.update(activation_rate)
+        reward = torch.tensor(recalls, dtype=torch.float32, device=device) + energy
 
         # Advantage against the reward-EMA baseline (zero-mean, balanced).
         # Update the baseline *after* computing the advantage so it doesn't peek
         # at the current sample.
         advantage = (reward - self.reward_baseline).detach()  # [B]
+        scoped_reward = float(sum(reward[i].item() for i in scoped) / len(scoped))
         self.reward_baseline = self.REWARD_BASELINE_DECAY * self.reward_baseline + (
             1.0 - self.REWARD_BASELINE_DECAY
-        ) * float(reward.mean())
+        ) * scoped_reward
 
         # REINFORCE on the LM's own log-probs over the answer tokens: maximize
         # log_prob(answer) weighted by advantage. log_prob = -CE per token.
@@ -141,19 +165,22 @@ class EngagementPolicy(nn.Module):
         self._metrics = {
             f"{p}_energy": energy,
             f"{p}_activation_rate": activation_rate,
-            f"{p}_recall": float(reward.mean()),
+            f"{p}_recall": float(sum(recalls[i] for i in scoped) / len(scoped)),
+            f"{p}_reward": scoped_reward,
             f"{p}_reward_baseline": self.reward_baseline,
-            f"{p}_advantage": float(advantage.mean()),
+            f"{p}_advantage": float(
+                sum(advantage[i].item() for i in scoped) / len(scoped)
+            ),
         }
         return loss, self._metrics
 
     @torch.no_grad()
     def ingest_live(self, activation_rate: float) -> float:
-        """Fold a live (real-user) activation into the homeostatic energy - the
-        slow online signal layered on top of the dense training reward. The
-        energy is the REINFORCE baseline, so a live interaction shifts the
-        operating point of subsequent dense updates (a delayed, integrated
-        return), rather than injecting a gradient with no forward context."""
+        """Fold a live (real-user) activation into the homeostatic energy. The
+        energy is a component of the dense reward, so a live interaction raises
+        the reward above its baseline on subsequent updates - a transient
+        positive advantage that fades as the energy decays - rather than
+        injecting a gradient with no forward context."""
         energy = self.energy.update(activation_rate)
         self._metrics[f"{self.prefix}_energy"] = energy
         return energy
@@ -172,3 +199,4 @@ class JokePolicy(EngagementPolicy):
     "the model seeks our approval"."""
 
     prefix = "joke"
+    task_types = (TaskType.JOKE,)

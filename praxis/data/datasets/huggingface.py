@@ -85,6 +85,7 @@ class HuggingfaceDataset(PraxisSampler):
         # Pin a commit when provided: resolves from cache harder and keeps runs reproducible.
         if "revision" in config:
             dataset_args["revision"] = config["revision"]
+        self._dataset_args = dict(dataset_args)  # kept for mid-run cache fallback
         try:
             self.dataset = self._load_frugal(dataset_args)
         except Exception as e:
@@ -112,6 +113,10 @@ class HuggingfaceDataset(PraxisSampler):
 
         # Storage for rewards when using RL format
         self.reward_cache = {}
+
+        # A stream that can no longer fetch (offline mode latched mid-run)
+        # retires: logs once, then yields empty documents quietly.
+        self._retired = False
 
     def _load_frugal(self, dataset_args: Dict):
         """Load the stream with small fetches: prune to the columns we actually
@@ -141,6 +146,8 @@ class HuggingfaceDataset(PraxisSampler):
 
     def get_document(self) -> Dict:
         """Get a formatted document with messages and metadata."""
+        if self._retired:
+            return {"messages": [], "metadata": {}}
         try:
             try:
                 document = retry_on_network_error(
@@ -182,6 +189,38 @@ class HuggingfaceDataset(PraxisSampler):
                 return {"messages": [], "metadata": {}}
 
         except Exception as e:
+            if hf_offline() and is_network_error(e):
+                # Offline mode latched while this stream was live. Try to
+                # carry on from the local cache (non-streaming is the only
+                # mode that can read it); loop over stale data rather than
+                # lose the source. No cache -> retire quietly: one line, no
+                # traceback, no per-fetch repetition.
+                if getattr(self, "_cache_fallback_tried", False):
+                    self._retired = True
+                    print(
+                        f"[DATA] OFFLINE: retiring {self.dataset_path} "
+                        "(cache fallback also failed)."
+                    )
+                    return {"messages": [], "metadata": {}}
+                self._cache_fallback_tried = True
+                try:
+                    self.is_streaming = False
+                    cached_args = dict(self._dataset_args, streaming=False)
+                    self.dataset = self._load_frugal(cached_args)
+                    self.shuffled_dataset = self.dataset.shuffle(seed=self.base_seed)
+                    self.dataset_iterator = iter(self.shuffled_dataset)
+                    print(
+                        f"[DATA] OFFLINE: {self.dataset_path} now looping "
+                        "over the local cache."
+                    )
+                    return self.get_document()
+                except Exception:
+                    self._retired = True
+                    print(
+                        f"[DATA] OFFLINE: retiring stream {self.dataset_path} "
+                        "for this session (no local cache)."
+                    )
+                return {"messages": [], "metadata": {}}
             print(f"[ERROR] HuggingfaceDataset.get_document failed: {e}")
             import traceback
 

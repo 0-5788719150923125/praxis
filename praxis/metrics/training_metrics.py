@@ -422,9 +422,10 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     # energy climbing toward its setpoint?
     "engagement_energy": {
         "description": (
-            "Homeostatic energy EMA: slow-decay, fast-accumulating, satiating "
-            "reward integral. Climbs toward the setpoint as the policy lands more "
-            "predicted answers; the REINFORCE baseline. Flat near 0 = not learning."
+            "Homeostatic energy: fast-accumulating, satiating, wall-clock "
+            "decaying (1h half-life). Climbs as the policy lands predicted "
+            "answers and live interactions arrive; folded into the RL reward. "
+            "Flat near 0 = not learning."
         ),
         "chart": {
             "title": "Engagement Energy",
@@ -460,11 +461,25 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
             "is_validation": False,
         },
     },
+    "engagement_reward": {
+        "description": (
+            "Total REINFORCE reward: recall + homeostatic energy. Live Gymnasium "
+            "interactions spike the energy term, then it decays back - a "
+            "transient reward pulse on top of the dense recall signal."
+        ),
+        "chart": {
+            "title": "Engagement Reward",
+            "y_label": "reward",
+            "y_scale": "linear",
+            "order": 322,
+            "is_validation": False,
+        },
+    },
     "engagement_reward_baseline": {
         "description": (
-            "Slow EMA of the recall reward - the REINFORCE variance-reduction "
-            "baseline. Advantages are reward minus this, so they stay zero-mean "
-            "(unlike the energy setpoint, which biased advantages negative)."
+            "Slow EMA of the total reward (recall + energy) - the REINFORCE "
+            "variance-reduction baseline. Advantages are reward minus this, so "
+            "they stay zero-mean."
         ),
         "chart": {
             "title": "Engagement Reward Baseline",
@@ -553,8 +568,18 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
             "is_validation": False,
         },
     },
+    "joke_reward": {
+        "description": "Total joke REINFORCE reward: recall + homeostatic energy (live approvals spike it).",
+        "chart": {
+            "title": "Joke Reward",
+            "y_label": "reward",
+            "y_scale": "linear",
+            "order": 412,
+            "is_validation": False,
+        },
+    },
     "joke_reward_baseline": {
-        "description": "Slow EMA of the joke recall reward - the zero-mean REINFORCE baseline.",
+        "description": "Slow EMA of the total joke reward (recall + energy) - the zero-mean REINFORCE baseline.",
         "chart": {
             "title": "Joke Reward Baseline",
             "y_label": "recall EMA",

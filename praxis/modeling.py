@@ -621,6 +621,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                     logits=logits if not skip_logits_for_training else None,
                     labels=labels,
                     assistant_mask=assistant_mask,
+                    task_type_ids=task_type_ids,
                 )
                 if pol_loss is not None:
                     outputs.losses.add_loss(f"{name}_policy", pol_loss)

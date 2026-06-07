@@ -232,8 +232,8 @@ class CALMEncoder(BaseEncoder):
         "calm_prior_norm": {
             "description": (
                 "Frobenius norm of the prior's solved W. Grows during the "
-                "solve window, then flat once frozen; 0 means the solve has "
-                "not run (or the prior is disabled)."
+                "solve window, steps at each kept re-solve; 0 means the solve "
+                "has not run (or the prior is disabled)."
             ),
             "chart": {
                 "title": "Linear Prior ‖W‖",
@@ -241,6 +241,35 @@ class CALMEncoder(BaseEncoder):
                 "y_scale": "linear",
                 "group": "calm",
                 "order": 69,
+            },
+        },
+        "calm_prior_resolves": {
+            "description": (
+                "Post-freeze prior re-solves kept: cond_gap milestones where "
+                "the damped ridge re-solve survived its energy-loss "
+                "verification window. The trunk maturing makes more of the "
+                "problem linearly solvable; each keep re-claims it."
+            ),
+            "chart": {
+                "title": "Prior Re-solves (kept)",
+                "y_label": "count",
+                "y_scale": "linear",
+                "group": "calm",
+                "order": 70,
+            },
+        },
+        "calm_prior_rejected": {
+            "description": (
+                "Prior re-solves rolled back because the energy-loss EMA "
+                "worsened during verification - the guard against re-solves "
+                "that buy R² by dragging proposals toward repetition."
+            ),
+            "chart": {
+                "title": "Prior Re-solves (rejected)",
+                "y_label": "count",
+                "y_scale": "linear",
+                "group": "calm",
+                "order": 71,
             },
         },
         "calm_halo_angular": {
@@ -954,10 +983,11 @@ class CALMEncoder(BaseEncoder):
                 self._opt_step() - int(self._freeze_opt_step.item())
                 < self._prior_window
             )
+            # Stats accumulate before AND after the freeze (the EMA washes out
+            # immature-trunk batches); only the in-place solve is window-gated.
+            # Post-freeze, update_resolve() below owns W via the gated blend.
+            prior.observe(h_cond, self._last_mean[:, 1:, :].detach(), t_cond)
             if in_window:
-                prior.observe(
-                    h_cond, self._last_mean[:, 1:, :].detach(), t_cond
-                )
                 prior.solve()
             elif not bool(prior.frozen.item()):
                 prior.freeze()
@@ -1050,6 +1080,17 @@ class CALMEncoder(BaseEncoder):
         # Detach in eval: val_loss only needs the scalar, never a backward graph.
         self._pending_losses["energy"] = total if self.training else total.detach()
         self._diag["calm_energy_loss"] = float((self.energy_alpha * loss).detach())
+
+        # Post-freeze prior re-solve: milestone-gated by cond_gap, kept only if
+        # the energy-loss EMA does not regress (see LinearPrior.update_resolve).
+        if prior is not None and self.training:
+            prior.update_resolve(
+                cond_gap=self._diag.get("calm_energy_cond_gap", float("nan")),
+                energy_loss=self._diag["calm_energy_loss"],
+                opt_step=self._opt_step(),
+            )
+            self._diag["calm_prior_resolves"] = float(prior.resolves_kept.item())
+            self._diag["calm_prior_rejected"] = float(prior.resolves_rejected.item())
 
     # ------------------------------------------------------------------
     # Loss side-channel

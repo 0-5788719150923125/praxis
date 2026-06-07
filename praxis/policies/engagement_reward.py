@@ -9,12 +9,14 @@ engagement. All constants are fixed and model-agnostic (no per-experiment tuning
 Kept dependency-free and side-effect-free so it unit-tests in isolation.
 """
 
+import time
 from typing import Iterable
 
-# Homeostatic energy constants. decay sets a long ~1000-step horizon (the
-# "multi-hour" feel); gain is large so a single activation jumps the energy fast;
-# (1 - E/E_MAX) is the satiating, diminishing-returns term that bounds spam.
-ENERGY_DECAY = 0.999
+# Homeostatic energy constants. Decay is wall-clock (half-life in seconds) so
+# energy depletes whether or not events arrive - like hunger; gain is large so a
+# single activation jumps the energy fast; (1 - E/E_MAX) is the satiating,
+# diminishing-returns term that bounds spam.
+ENERGY_HALF_LIFE_S = 3600.0
 ENERGY_GAIN = 0.5
 ENERGY_MAX = 1.0
 
@@ -59,30 +61,46 @@ def response_energy(engaged: bool, quality: float = 0.0) -> float:
 
 
 class HomeostaticEnergy:
-    """Slow EMA "energy" with fast accumulation and satiation.
+    """Wall-clock-decaying "energy" with fast accumulation and satiation.
 
-    ``E <- decay * E + gain * a * (1 - E/E_max)`` - a single activation jumps E
-    fast, repeated activations saturate toward the setpoint, and E decays over a
-    long horizon so the policy is drawn back to seeking the next genuine
-    prediction. Used as the REINFORCE baseline.
+    A single activation jumps E fast via ``E <- E + gain * a * (1 - E/E_max)``;
+    between events E decays exponentially in real time (half-life
+    ``ENERGY_HALF_LIFE_S``), applied lazily on every read - so it depletes
+    overnight with no interactions, drawing the policy back to seeking the next
+    genuine prediction. Folded into the RL reward.
     """
 
     def __init__(
         self,
-        decay: float = ENERGY_DECAY,
+        half_life_s: float = ENERGY_HALF_LIFE_S,
         gain: float = ENERGY_GAIN,
         e_max: float = ENERGY_MAX,
         init: float = 0.0,
+        clock=time.monotonic,
     ):
-        self.decay = float(decay)
+        self.half_life_s = float(half_life_s)
         self.gain = float(gain)
         self.e_max = float(e_max)
-        self.value = float(init)
+        self._clock = clock
+        self._value = float(init)
+        self._t = clock()
+
+    def _decay_to_now(self) -> float:
+        now = self._clock()
+        dt = now - self._t
+        if dt > 0:
+            self._value *= 0.5 ** (dt / self.half_life_s)
+            self._t = now
+        return self._value
+
+    @property
+    def value(self) -> float:
+        return self._decay_to_now()
 
     def update(self, activation_rate: float) -> float:
         """Fold one activation (or a batch's mean activation in [0, 1]) in;
         returns the new energy."""
         a = max(0.0, min(1.0, float(activation_rate)))
-        satiation = 1.0 - self.value / self.e_max
-        self.value = self.decay * self.value + self.gain * a * satiation
-        return self.value
+        e = self._decay_to_now()
+        self._value = e + self.gain * a * (1.0 - e / self.e_max)
+        return self._value

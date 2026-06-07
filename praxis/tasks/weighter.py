@@ -175,6 +175,17 @@ class DifficultyTaskLossWeighter(TaskLossWeighter):
         self.floor = float(floor)
         self.ceiling = float(ceiling)
 
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        # Tolerate checkpoints from before a TaskType was appended: pad the
+        # saved EMA with NaN (unobserved) for new tasks.
+        key = prefix + "ema_loss"
+        saved = state_dict.get(key)
+        if saved is not None and saved.numel() < self.ema_loss.numel():
+            padded = torch.full_like(self.ema_loss, float("nan"))
+            padded[: saved.numel()] = saved
+            state_dict[key] = padded
+        super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
+
     @torch.no_grad()
     def observe(
         self, task_type_ids: torch.Tensor, per_token_loss: torch.Tensor
