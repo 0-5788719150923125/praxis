@@ -31,7 +31,10 @@ def test_pages_source_since_filter(tmp_path, monkeypatch):
     db = tmp_path / "spider.db"
     conn = sqlite3.connect(db)
     conn.executescript(store_mod._SCHEMA)
-    rows = [(f"https://a.com/{i}", "https://a.com", f"t{i}", "x", "s", float(i)) for i in (1, 2, 3)]
+    rows = [
+        (f"https://a.com/{i}", "https://a.com", f"t{i}", "x", "s", float(i))
+        for i in (1, 2, 3)
+    ]
     conn.executemany("INSERT INTO pages VALUES (?,?,?,?,?,?,'','')", rows)
     conn.commit()
     conn.close()

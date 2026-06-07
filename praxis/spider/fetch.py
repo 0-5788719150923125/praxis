@@ -153,7 +153,11 @@ def fetch_page(
             extractor.close()
         except Exception:
             pass  # keep whatever was extracted before the parse hiccup
-        title, text, description = extractor.title, extractor.text, extractor.description
+        title, text, description = (
+            extractor.title,
+            extractor.text,
+            extractor.description,
+        )
         hrefs = list(extractor.links)
         if enricher is not None:
             extra = enricher.enrich_html(url, html)

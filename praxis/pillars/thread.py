@@ -100,9 +100,7 @@ def write_thread(thread: Thread) -> dict:
             )
         if thread.theory:
             components.append("theory")
-            fh.write(
-                "\\newcommand{\\paperThreadTheory}{%\n" + thread.theory + "\n}\n"
-            )
+            fh.write("\\newcommand{\\paperThreadTheory}{%\n" + thread.theory + "\n}\n")
         if thread.conclusion:
             components.append("conclusion")
             fh.write(

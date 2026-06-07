@@ -107,9 +107,7 @@ class SpiderStore:
         ).fetchone()
         if existing:
             if pinned:  # a seed re-encountered: protect it from churn
-                self._conn.execute(
-                    "UPDATE sites SET pinned = 1 WHERE url = ?", (site,)
-                )
+                self._conn.execute("UPDATE sites SET pinned = 1 WHERE url = ?", (site,))
             if deep:  # make sure the cited page itself gets crawled
                 self._conn.execute(
                     "INSERT OR IGNORE INTO frontier (url, site, depth, discovered) "
