@@ -516,7 +516,7 @@ export function createKbCard(item, bodyHtml) {
                 ${external}
             </div>
             ${embed}
-            <div class="kb-card-body">${bodyHtml}</div>
+            <div class="kb-card-body" data-kb-type="${escapeHtml(item.type)}">${bodyHtml}</div>
         </div>
     `;
 }

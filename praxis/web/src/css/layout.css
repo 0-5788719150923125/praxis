@@ -432,10 +432,57 @@
     line-height: 1.6;
 }
 
+/* Reading typography defaults. Every KB type inherits these; types refine
+   below via [data-kb-type] - autonomous, no per-card overrides. */
+.kb-card-body {
+    font-size: 0.95rem;
+    max-width: 46rem;
+}
+
 .kb-card-body h1,
 .kb-card-body h2,
-.kb-card-body h3 {
-    margin: var(--spacing-md) 0 var(--spacing-sm);
+.kb-card-body h3,
+.kb-card-body h4 {
+    margin: 1.2em 0 0.45em;
+    line-height: 1.3;
+}
+
+.kb-card-body h1:first-child,
+.kb-card-body h2:first-child,
+.kb-card-body h3:first-child {
+    margin-top: 0;
+}
+
+.kb-card-body h1 { font-size: 1.35rem; }
+.kb-card-body h2 {
+    font-size: 1.15rem;
+    padding-bottom: 0.25em;
+    border-bottom: 1px solid var(--border);
+}
+.kb-card-body h3 { font-size: 1rem; }
+.kb-card-body h4 { font-size: 0.9rem; opacity: 0.85; }
+
+.kb-card-body p {
+    margin: 0 0 0.75em;
+}
+
+/* Lists indent INSIDE the text column - markers must never hang past it. */
+.kb-card-body ul,
+.kb-card-body ol {
+    margin: 0 0 0.75em;
+    padding-left: 1.5rem;
+}
+
+.kb-card-body li {
+    margin: 0.2em 0;
+}
+
+.kb-card-body li::marker {
+    color: var(--accent);
+}
+
+.kb-card-body a {
+    color: var(--accent);
 }
 
 .kb-card-body pre {
@@ -443,7 +490,9 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-small);
     padding: var(--spacing-sm) var(--spacing-md);
+    margin: 0 0 0.75em;
     overflow-x: auto;
+    line-height: 1.45;
 }
 
 .kb-card-body code {
@@ -451,11 +500,29 @@
     font-size: 0.85em;
 }
 
+.kb-card-body :not(pre) > code {
+    background: var(--input-bg, var(--background));
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 0 0.25em;
+}
+
 .kb-card-body blockquote {
-    margin: var(--spacing-sm) 0;
-    padding-left: var(--spacing-md);
-    border-left: 3px solid var(--border);
+    margin: 0 0 0.75em;
+    padding: 0.1em var(--spacing-md);
+    border-left: 3px solid var(--accent);
     opacity: 0.85;
+}
+
+/* Type refinements, driven by the KB type system. */
+.kb-card-body[data-kb-type="run"] pre {
+    border: none;
+    background: none;
+    padding: 0;
+}
+
+.kb-card-body[data-kb-type="page"] {
+    overflow-wrap: anywhere; /* crawled text carries long raw URLs */
 }
 
 .input-container {

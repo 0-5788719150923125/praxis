@@ -908,12 +908,15 @@ function renderMetricsCharts(data, container) {
     // (and prewarmTab's off-screen layout) can hold until the deck has
     // actually measured - otherwise the hidden layout is torn down before
     // initChartDeck runs and the first visit re-lays the deck out visibly.
-    return new Promise(resolve => setTimeout(() => {
+    return new Promise(resolve => setTimeout(async () => {
         try {
             const ctx = { runs, dataMetrics };
-            availableMetrics.forEach(config => {
+            // Yield between charts: building the whole deck in one chunk
+            // blocks input for hundreds of ms (page-load prewarm hits this).
+            for (const config of availableMetrics) {
                 (METRIC_RENDERERS[config.type] || METRIC_RENDERERS.line)(config, ctx);
-            });
+                await new Promise(r => setTimeout(r, 0));
+            }
             initChartDeck('chart-deck');
         } finally {
             resolve();

@@ -158,12 +158,20 @@ async function prefetchTabs() {
         ['dynamics', 'dynamics-content', loadDynamics, true],
         ['agents', 'agents-content', loadAgents, false],
     ];
+    // Building a hidden deck is a long synchronous chunk (dozens of charts);
+    // run each only in an idle slice so typing and hover never block.
+    const idle = () => new Promise(resolve =>
+        'requestIdleCallback' in window
+            ? requestIdleCallback(() => resolve(), { timeout: 4000 })
+            : setTimeout(resolve, 200)
+    );
     const warm = async (force) => {
         for (const [tabId, contentId, load, needsLayout] of jobs) {
             // Never touch the visible tab from the background path: its loader
             // rebuilds the DOM, which would flash mid-read. It refreshes via
             // its own controls; hidden tabs swap invisibly and arrive fresh.
             if (force && state.currentTab === tabId) continue;
+            await idle();
             try {
                 const loader = () => load(force);
                 await (needsLayout ? prewarmTab(tabId, contentId, loader) : loader());

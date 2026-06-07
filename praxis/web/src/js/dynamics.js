@@ -810,10 +810,16 @@ function renderDynamicsCharts(runData, container) {
     // Research render): the loader - and prewarmTab's off-screen layout -
     // hold until the deck has measured with real chart heights, so a visit
     // never triggers a visible re-layout.
-    return new Promise(resolve => setTimeout(() => {
+    return new Promise(resolve => setTimeout(async () => {
         try {
-            familyConfigs.forEach(c => mountDynamicsFamily(c, dynamics));
+            // Yield between mounts: a single synchronous pass over the whole
+            // deck blocks input for hundreds of ms during page-load prewarm.
+            for (const c of familyConfigs) {
+                mountDynamicsFamily(c, dynamics);
+                await new Promise(r => setTimeout(r, 0));
+            }
             mountManifestCharts(manifest, dynamics);
+            await new Promise(r => setTimeout(r, 0));
             mountSnapshotCharts(descriptions);
             loadActivationCurves();
             // Re-layout once charts have real heights (deck height tracks the
