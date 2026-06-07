@@ -1,4 +1,19 @@
 
+% The evolution figure (formerly research/evolution.tex): static caption
+% prose over the generated data macros (\evoCommitCount, \evoFocus) in
+% evolution_vars.tex; without it main.tex's empty fallback omits the figure.
+% Invoked by the self-evolution framing fragment.
+\IfFileExists{evolution_vars.tex}{%
+\input{evolution_vars.tex}
+\renewcommand{\paperEvolutionFigure}{%
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=0.9\linewidth]{figures/evolution.png}
+  \caption{Praxis's git history as an isometric terrain over the last \evoCommitCount{} commits. Each cell is one subsystem in one time window: a stack of base blocks for its accumulated size (total lines, recency-weighted) topped by a vivid cap for that window's line churn - the standing codebase carrying the recent activity. Both are weighted by recency (the kernel the model applies to a sequence, turned on the repository): recent windows stack tall with bright caps while history thins toward the always-present prior - the low valley we roll into. Color fades from each subsystem's hue toward a neutral prior into the past, banded in phased strata over a non-linear timescale. It is the bias/variance geometry read along the frequency axis (see the project notes): loud recent corrections over the quiet, ever-present base. By recency-weighted churn the current center of gravity is \evoFocus. The framework charts the hand that builds it.}
+  \label{fig:evolution}
+\end{figure}
+}}{}
+
 % The abstract is thread data (praxis/pillars/threads/<key>.yml); the selected
 % thread's generated thread.tex defines \paperThreadAbstract, fallback empty.
 \paperThreadAbstract
