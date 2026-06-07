@@ -1,0 +1,37 @@
+# Enables when a Titans-style neural memory profile is active (--memory-type
+# != none). Describes the in-house deviation - detached, layer-wise local
+# learning, fully continuous - and places it on the paper's bias/variance
+# axes: by structure, pure bias.
+section: harmonic
+order: 55
+requires:
+  memory_type: ["mal*", "mag*"]
+body: >
+  \subsection{A memory that is pure bias by construction}
+
+  The framework also carries a Titans-style neural
+  memory~\cite{behrouz2024titans} - a small network whose weights are updated
+  online, during the forward pass, by gradient descent on a surprise loss:
+  how badly it reconstructs a value vector from its key. Our variant deviates
+  from the baseline in a way that matters to this paper's axes. The update is
+  fully detached and layer-wise local, in the Mono-Forward
+  sense~\cite{monoforward2025}: no gradient from the task ever reaches the
+  memory's own learning rule, which is a fixed, scale-invariant step on local
+  reconstruction error. The module is also fully continuous, end to end. It
+  never sees a token, a position, or a logit - continuous vectors arrive,
+  shifted continuous targets leave - so it cannot know what its inputs mean
+  or what its outputs will be used for; in that respect it shares a direction
+  with fully-differentiable computation efforts such as
+  neurallambda~\cite{neurallambda2024}, which push symbolic machinery into
+  the continuous regime rather than the reverse.
+
+  On the bias/variance geometry of this paper, that design pins the module to
+  one axis. Its learning rule is the same for every input, every layer, every
+  run - a population-average procedure with no input-conditional pathway into
+  how it learns; what varies with the input is only the content written
+  through that fixed rule. It is, by structure, pure bias: the standing
+  rhythm of the architecture, deviation-free where the prismatic head's
+  variance arm is deviation-only. That a useful long-term memory can sit
+  entirely on the bias axis - blind, local, continuous, and still load-bearing
+  - is itself a small piece of evidence for treating the two axes as
+  separable machinery rather than a single dial.
