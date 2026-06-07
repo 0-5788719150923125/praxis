@@ -1,0 +1,263 @@
+
+% The abstract is thread data (praxis/pillars/threads/<key>.yml); the selected
+% thread's generated thread.tex defines \paperThreadAbstract, fallback empty.
+\paperThreadAbstract
+
+\section{Introduction}
+
+The dominant recipe for capability is scale. Fix a transformer~\cite{vaswani2017attention}, then grow it: more parameters, more tokens, more compute, with returns described by smooth scaling laws~\cite{kaplan2020}. The recipe works, but it assumes the architecture itself imposes no ceiling on which patterns gradient descent can find - that everything worth learning is reachable from any sufficiently large model. This paper questions that assumption and offers a concrete alternative: that the \textit{geometry} a model is allowed to represent, not its size, determines the patterns accessible to it during finite training.
+
+To make the claim precise we need a vocabulary for ``geometry,'' and the cleanest one available is the oldest tradeoff in statistics. A model that minimizes error by collapsing toward the average of its training data has high bias and low variance; a model that chases the particulars of each example has low bias and high variance. Classically these trade off along a single line: you choose a point on it. Our first contribution is to show that in a \textit{continuous, harmonic} latent space this is no longer true. Bias and variance become separate coordinates, and a model can move in one without paying in the other.
+
+We ground this in mechanisms that already run in Praxis, not in metaphor. The harmonic head (Section~\ref{sec:manifold}) builds a two-dimensional standing wave over (position, feature) from a learned grid of frequency amplitudes with irrational, frozen phases. A \textit{static} amplitude grid produces the same field for every input: it is the corpus-average rhythm, maximum bias, a flat-by-construction prior. Making those amplitudes depend on the input adds \textit{structured} variance - deviation that still respects the learned harmonic constraints. The CALM codec (Section~\ref{sec:harmonic}) shows the same physics from the other side: a continuous-latent autoregressor that reconstructs sequences near-perfectly by phase-locking its latent features to a dominant rhythm. From these two we draw a scaling conjecture (Section~\ref{sec:scaling}): the mean costs linearly, interference costs logarithmically.
+
+This paper therefore contributes: (1) a reframing of bias and variance as orthogonal axes of a harmonic latent space, grounded in a running implementation and its measured diagnostics; (2) a conjecture that consensus modeling scales linearly while harmonic modeling scales logarithmically, stated honestly as a conjecture; (3) the Praxis framework for testing it; and (4) a candid account of what is measured, what is conjectured, and what remains philosophy.
+
+\section{The Mean and the Manifold}
+\label{sec:manifold}
+
+\subsection{The tradeoff that was supposed to be a line}
+
+The bias-variance decomposition treats generalization error as the sum of a term that grows when the model is too rigid to fit the signal (bias) and a term that grows when it is too flexible and fits the noise (variance). The received wisdom is that you cannot reduce both at once with a fixed budget: regularize harder and bias rises; add capacity and variance rises. The tradeoff is drawn as a U-shaped curve with a single minimum, and model selection is the act of finding the bottom of that U.
+
+That picture is correct when the model has one knob mediating both terms - one scalar of effective complexity. It stops being correct when bias and variance are produced by \textit{different parts} of the architecture that can be optimized independently. A harmonic latent space is exactly such an architecture.
+
+\subsection{The harmonic field: a measured instance}
+
+The harmonic head (Praxis, \texttt{heads/harmonic.py}) modulates a model's hidden states multiplicatively by a learned field $b$:
+\[
+    h \;\mapsto\; h \,\bigl(1 + b\bigr), \qquad
+    b[t,d] \;=\; \mathrm{IRFFT2}\!\left(a[f_t,f_d]\, e^{\,i\varphi[f_t,f_d]}\, /\, f^{\alpha}\right),
+\]
+where $t$ indexes position, $d$ indexes feature, and $a[f_t,f_d]$ is a learnable grid of amplitudes over a two-dimensional frequency lattice. The phases $\varphi$ are \textit{not} learned. They are seeded by Weyl's equidistribution theorem~\cite{weyl1916}: cell $(f_t,f_d)$ receives phase $2\pi\,\mathrm{frac}(f_t\pi + f_d e)$, which is equidistributed on the torus because $\{1,\pi,e\}$ are linearly independent over $\mathbb{Q}$. A radial $1/f^{\alpha}$ envelope imposes a pink-noise prior. Multiplicative coupling is deliberate: the upstream network cannot cancel the field by emitting $h(x)-b$, because the field scales features rather than adding to them, so learning is forced to flow \textit{through} the field rather than around it.
+
+Now read this through the bias-variance lens.
+
+\textbf{Bias is the static spectrum.} With a fixed amplitude grid, $b[t,d]$ is identical for every input. It is a single rhythm imposed on all of the corpus at once - the population average. In the limit where the grid concentrates onto one cell, every feature oscillates to the same beat and the spectrum heatmap is flat: maximum bias, a model that has collapsed to the mean rhythm of its data. The head exposes this directly. \texttt{concentration()} reports Hoyer sparsity of the grid (1 = a single cell, 0 = uniform), and a live spectrum snapshot shows where the energy sits. Early in training the heatmap is indistinguishable from noise; under a smoothness prior it develops a clean low-frequency band - the corpus rhythm crystallizing as a measurable object, not a metaphor.
+
+\textbf{Variance is the input-conditional deviation.} The decisive architectural step was to stop forcing one static field on a corpus that mixes registers - dialogue, code, prose. A static grid must compromise across all of them, and the compromise degenerates into a content-blind side channel that the rest of the model has to route around. The fix makes the amplitudes a baseline plus an input-conditional delta:
+\[
+    a \;=\; a_{\text{static}} \;+\; \Delta_\phi(\text{context}),
+\]
+where $\Delta_\phi$ is a small network reading multi-scale pooled context, in the spirit of delay embeddings~\cite{takens1981}, with its output zero-initialized so the field begins as the trained static prior and \textit{anneals} into input dependence. The static baseline carries the bias; the delta carries the variance; an $L_2$ penalty on the delta keeps the baseline load-bearing. A diagnostic, $\texttt{harmonic\_delta\_norm} = \mathrm{rms}(\Delta)/\mathrm{rms}(a_{\text{static}})$, reads how much variance the model is choosing to add. Zero means pure bias; a small bounded value means structured variance on top of a stable prior.
+
+The point is that these are \textit{separate parameters with separate gradients}. The smoothness prior controls the bias term; the delta network and its regularizer control the variance term. Lowering one does not mechanically raise the other. The U-shaped curve has become a two-dimensional manifold, and we have coordinates on it.
+
+\subsection{Temperature as a coordinate, not as noise}
+
+Sampling temperature is usually described as noise injection. On the bias-variance manifold it is better described as a position dial. At low temperature the model commits to the learned rhythm - the high-bias corner. As temperature rises it explores within the basin the harmonic constraints define - structured variance. Past a critical point it begins to violate those constraints, which reads as either failure or discovery depending on what you were hoping for. CALM makes this literal: rather than perturbing a latent continuously, it votes over decoded patches~\cite{calm2025}, so temperature selects how many candidate latents must agree before a patch is emitted. Temperature is not adding randomness to a fixed distribution; it is choosing where on the manifold to stand.
+
+\begin{figure}[ht]
+    \centering
+    \begin{tikzpicture}[scale=0.95]
+        % Axes: bias (x) vs variance (y)
+        \draw[->] (0,0) -- (6.4,0) node[right,font=\small] {Bias};
+        \draw[->] (0,0) -- (0,4.6) node[above,font=\small] {Variance};
+
+        % Classical tradeoff: a line you must sit on
+        \draw[thick,gray!70] (0.5,4.0) -- (4.2,0.5);
+        \node[gray!70,font=\scriptsize,rotate=-43] at (3.0,2.0) {classical tradeoff (a line)};
+
+        % Harmonic interior: region reachable when the axes decouple
+        \fill[blue!8] (0.5,0.5) -- (4.2,0.5) -- (0.5,4.0) -- cycle;
+        \node[blue!55,font=\scriptsize,align=center] at (1.55,1.35) {harmonic\\interior};
+
+        % The desirable corner
+        \draw[fill=black] (0.65,0.65) circle (1.6pt);
+        \node[font=\scriptsize,right] at (0.78,0.62) {low bias \emph{and} low variance};
+
+        % Temperature dial arrow sweeping into the interior
+        \draw[->,red,thick] (0.75,3.7) .. controls (1.6,2.4) and (2.6,1.4) .. (3.6,0.85);
+        \node[red,font=\scriptsize] at (2.45,2.55) {temperature};
+        \node[red,font=\scriptsize] at (0.95,3.85) {$T\!\uparrow$};
+        \node[red,font=\scriptsize] at (3.75,1.05) {$T\!\downarrow$};
+    \end{tikzpicture}
+    \caption{Bias and variance as orthogonal coordinates. Classically a model must sit somewhere on the gray line: less of one means more of the other. When a static spectrum supplies bias and an input-conditional modulation supplies variance, the two decouple, and the interior (shaded) becomes reachable - lower bias \emph{and} lower variance than any point on the line. Temperature is a path through this space, not noise added at a fixed point.}
+    \label{fig:manifold}
+\end{figure}
+
+\section{Harmonic Latent Space}
+\label{sec:harmonic}
+
+% Gated subsections injected by praxis/pillars/build.py. The first is section 3.1,
+% chosen by codec_mode (CALM / byte-latent / standard tokenization) for the run;
+% the rest (crystal head, attention sink, the seed) follow by order.
+\paperFramingHarmonic
+
+\section{The Scaling Conjecture}
+\label{sec:scaling}
+
+\subsection{The watch}
+
+Hold the title literally for a moment. A watch is a mechanism of intricate, meshed gears, and what makes it a watch is that the gears turn \textit{in unison}. Drive one and you drive them all, because the teeth couple them into a single body. Now try to run the watch by turning each gear in sequence - one at a time, the rest held still. You cannot. The logic does not merely become inefficient; it stops being a watch. The architecture, the mesh itself, forbids sequential operation. The coupling is the whole point.
+
+Autoregressive consensus modeling is the attempt to turn the gears in sequence. It emits one position, conditions on it to emit the next, and accumulates the answer a tooth at a time. For a coupled system this is the wrong shape of computation, and its cost is the cost of enumeration: linear in the parts.
+
+The harmonic field turns the gears in unison. The frozen Weyl phases are the teeth - the coupling, cut once and never re-cut, that ties every feature to every position in fixed relation. The amplitude grid is the single mainspring. One inverse transform releases it, and the entire field, every $(t,d)$ cell at once, assumes its shape in a single coupled motion rather than a loop over positions. That is the mechanical content of ``logarithmic'': the whole mechanism moves together, so the cost tracks the number of independent rhythms it carries, not the number of positions it must cover.
+
+And the field is \textit{rebuilt}, not advanced. With input-conditional amplitudes it is re-derived from the input rather than carried forward and nudged; in the limit, the entire shape is reconstructed at every decision boundary, all of them, the whole computation re-formed around the present input. What the model learns under the smoothness prior - which asks the field at one position to predict the field at the next - is not a sequence of outputs but \textit{the ability to hold a shape over time}: to keep the gears meshed, to keep the watch a watch, while the hands sweep. The frozen phases protect the coupling; the smoothness prior protects the form.
+
+This is why the geometric framing is not ornament. Nearly anything we can imagine can be written as a shape - a configuration in some space, a standing wave, a mesh of constraints that must move together or not at all. A model that builds shapes and protects them over time models that structure directly, in unison, where a model that enumerates is forever turning one gear and hoping the rest follow. There is something here, and the rest of this section is an attempt to say how much.
+
+% Gated extension (recurrent mode) injected by praxis/pillars/build.py.
+\paperFramingScaling
+
+\subsection{Linear consensus, logarithmic interference}
+
+Here is the claim the rest of the paper has been building toward, stated as a conjecture because that is what it is.
+
+A model that represents its corpus as a \textit{mean} - a consensus, an average of examples - must spend resources roughly in proportion to the number of distinct patterns it needs to express. To hold $N$ patterns it allocates capacity that grows with $N$. This is the linear regime, and it is consistent with why scaling laws ask for ever more parameters and tokens to buy each further increment of capability~\cite{kaplan2020}.
+
+A model that represents its corpus as \textit{interference} - a superposition of $K$ frequency components - addresses a combinatorially larger space. $K$ components with learnable amplitudes and frozen, equidistributed phases produce a field whose distinguishable configurations grow exponentially in $K$, because it is the \textit{pattern of constructive and destructive interference} across components that carries information, not the components individually. To express $N$ configurations you need on the order of $\log N$ components. This is the logarithmic regime. The same asymmetry shows up in time: the transform that builds the field is $O(n \log n)$, and a single transform realizes the whole interference pattern at once rather than enumerating its parts.
+
+\begin{figure}[ht]
+    \centering
+    \begin{tikzpicture}[scale=0.92]
+        % Axes
+        \draw[->] (0,0) -- (10,0) node[right,font=\small] {Patterns to express ($N$)};
+        \draw[->] (0,0) -- (0,5.2) node[above,font=\small] {Resources};
+
+        % Consensus / mean: linear O(N)
+        \draw[thick,blue,domain=0:9.2,smooth,samples=60] plot (\x,{0.52*\x});
+        \node[blue,font=\small] at (5.2,3.45) {consensus $O(N)$};
+
+        % Harmonic / interference: logarithmic O(log N)
+        \draw[thick,red,domain=0.05:9.2,smooth,samples=120] plot (\x,{1.35*ln(\x+1)});
+        \node[red,font=\small] at (6.7,2.05) {harmonic $O(\log N)$};
+
+        % The widening gap at scale
+        \draw[densely dotted,gray] (8.6,{0.52*8.6}) -- (8.6,{1.35*ln(9.6)});
+        \node[gray,font=\scriptsize,align=left,right] at (8.7,3.2) {the gap\\widens};
+
+        % small-N note: harmonic overhead
+        \node[font=\scriptsize,gray,align=left] at (2.55,0.55) {overhead dominates\\at small $N$};
+
+        % Shared pattern space: the convergence motif (isometric plane + sphere)
+        \begin{scope}[xshift=2.0cm,yshift=3.7cm,scale=0.95]
+            \fill[gray!12,opacity=0.6] (0,0) -- (1.2,0) -- (1.8,0.35) -- (0.6,0.35) -- cycle;
+            \draw[gray!40,thin] (0,0) -- (1.2,0) -- (1.8,0.35) -- (0.6,0.35) -- cycle;
+            \draw[gray!30,very thin] (0.3,0.088) -- (1.5,0.088);
+            \draw[gray!30,very thin] (0.6,0.175) -- (1.8,0.175);
+            \shade[ball color=gray!30,opacity=0.85] (0.9,0.5) circle (0.26);
+            \node[gray!70,font=\scriptsize,align=center] at (0.9,1.05) {shared\\pattern space};
+        \end{scope}
+    \end{tikzpicture}
+    \caption{Conjectured scaling regimes. To express $N$ patterns, consensus modeling - learning the mean - spends resources growing linearly in $N$ (blue). Harmonic modeling composes patterns by interference, and $K \sim \log N$ components suffice, so its cost grows logarithmically (red). The harmonic basis carries fixed overhead, so it loses at small $N$ and wins at scale, where the gap widens without bound. Both must ultimately represent the same target (the shared pattern space, top); the claim is about the cost of getting there, not the destination. This figure states a conjecture, and replaces the speculative measured-curve figure of earlier drafts.}
+    \label{fig:scaling}
+\end{figure}
+
+\subsection{The exponential edge}
+
+Why should a learned network be able to live in the interference regime at all? Because the transformer already computes on an exponential substrate. Every attention layer is a softmax, $\exp(\cdot)/\sum\exp(\cdot)$, which amplifies small differences and converts addition into multiplication; the network is kept numerically alive only by normalization holding activations in the narrow band where the exponential is both sensitive and stable. Euler's identity, $e^{i\pi} = -1$, ties that exponential directly to periodic structure, which is why a harmonic field seeded with $\pi$ and $e$ is not an arbitrary choice of decoration but a resonance with the machinery already present. The harmonic head writes interference patterns onto a substrate that was always exponential; it makes explicit a structure the softmax was implicitly using.
+
+\subsection{Tractability is observer-relative}
+
+If interference lets a model represent exponentially many configurations with logarithmically many components, then a search that is combinatorial when enumerated becomes, in this representation, the reading-off of an interference pattern computed in a single transform. The hardness did not vanish. It moved into the choice of basis. And that relocation is the real claim, which we will state without hedging: in a continuous, nested representational space, $P$ and $NP$ are not two discrete bins a problem falls into once and for all. They are the ends of a spectrum, and where a given instance sits on that spectrum is set by the representation doing the solving - by the observer.
+
+This is the same thesis the rest of the paper has been making, carried to its conclusion. If attention constructs which patterns manifest (Section~\ref{sec:constructor}), and if the basis a model occupies decides whether a structure costs linear or logarithmic resources to express (Figure~\ref{fig:scaling}), then ``intractable'' cannot be a property of the problem alone. It is a property of the pairing between a problem and a solver. The instance that is exponential to one architecture - one that can only enumerate, that holds no basis in which the instance is smooth - is approximable in near-constant work by another that happens to carry the right harmonic. Some observers are simply better at collapsing $NP$-shaped problems toward $P$; others are blocked, not by the problem, but by their own architecture, perspective, or alignment. The watchmaker who cannot perceive the gear cannot build the watch, however long he is given. The difficulty was never only in the watch.
+
+We keep exactly one boundary, and we keep it because it sharpens the claim rather than softening it. This is not a statement about the formal worst-case question - whether the classes $P$ and $NP$ coincide over all inputs and all machines~\cite{cook1971}. That question is deliberately indifferent to who is asking; it abstracts the observer away on purpose. The claim here is the complementary one, and abstracting the observer away is precisely what it refuses to do: for the bounded, structured, approximate problems that real minds and real models actually face, tractability is observer-relative, continuous, and movable - and moving it is what changing your representation \textit{is}. The weak, measurable form is already in the framework: for a family of problems one can record the scaling slope each architecture buys, and watch a single instance migrate along the $P$-to-$NP$ spectrum as the basis changes underneath it.
+
+\section{The Praxis Framework}
+\label{sec:framework}
+
+Praxis~\cite{praxis2025} is a registry-based framework in which every component - encoder, decoder, attention, optimizer, loss, router, embedding, head, memory - is swappable, and new implementations become available through registration without touching core infrastructure. Read in light of the preceding sections, its components are not an arbitrary catalogue; each one shapes the representational geometry in a different way, and the framework's purpose is to let those geometries be combined and compared rather than to scale any one of them.
+
+\begin{itemize}[noitemsep]
+    % Component-specific bullets enabled per current run by praxis/pillars/build.py;
+    % the always-applicable bullets below stay static (and keep the list non-empty).
+    \paperFramingFramework
+    \item \textbf{Reversible residuals}~\cite{gomez2017reversible} require invertibility throughout the forward pass, forbidding destructive compression and so forcing reconstruction-preserving representations.
+    \item \textbf{Attention variants} (multi-head, sliding-window, gated, structured $O(n\cdot c)$, and others) each impose a different relational geometry on the sequence.
+    \item \textbf{Mixture-of-experts routing}~\cite{shazeer2017outrageously} and \textbf{tool integration} let several geometries coexist and let external, bias-free computation enter the loop.
+\end{itemize}
+
+The configuration hierarchy (Environments $>$ CLI $>$ Experiments $>$ Defaults) makes arbitrary combinations reproducible: different attention per expert, optimizers per layer, frequency offsets~\cite{time2vec2019,tancik2020} per head. \paperRunsLogged{} training runs are documented in the run history. This paper does not present a benchmark table, by design: the framework is the instrument, and the experiment that matters is the one the reader runs to test the scaling conjecture for themselves.
+
+\section{Attention as a Constructor}
+\label{sec:constructor}
+
+The framing that motivates all of this is older than the harmonic head. Across physics and neuroscience, observation appears to participate in what is observed rather than passively recording it: measurement affects the quantum system~\cite{heisenberg1927uncertainty}, attention modulates cortical responses to identical stimuli~\cite{treue1996attentional,kastner2000mechanisms}, and predictive-processing accounts make perception an attention-weighted construction rather than a bottom-up readout~\cite{friston2010free,clark2013whatever}. If attention constructs which patterns manifest rather than filtering pre-existing ones, then architectural diversity in attention is not a tuning detail; it determines what is learnable at all.
+
+% Gated paragraph (prismatic head) injected by praxis/pillars/build.py.
+\paperFramingConstructor
+
+The measurement analogy invites a sharper question than the one it usually settles for: if observation participates in the observed, does \textit{our} act of observing the model - snapshotting its spectrum, sampling its state - change what it learns? The quantum reading is metaphor, and we keep it as such. But a harmonic field is a standing wave over the full (position, feature) computation, and therefore non-local: a perturbation injected at one cell rides the field to the rest rather than staying put. So a harmonic model should be \textit{more} sensitive to impure observation than one whose features are independent, and the weak, measurable form of the question follows directly. Two of its artifacts are mundane and real. First, a measurement that mutates state rather than reading it purely is a literal observer effect - we have already seen one, where a background thread flipped the model's train/eval flag mid-forward and changed gradients that gate on it; harmonics propagate such a perturbation instead of localizing it. Second, observation forces dtype boundaries a pure forward pass avoids (snapshots cast; the inverse transform is sensitive in its low-order bits), and on the exponential edge of Section~\ref{sec:scaling} rounding can amplify rather than wash out - precisely where the field is most plastic. Both are testable as a diff between a watched run and an unwatched one from the same seed, against a non-harmonic control that isolates the field's non-locality. The strong form is the architecture's own: the remote-expert pool the framework runs is, by construction, a passive observer of the model's batches whose gradients never return, so drawing that single coupling - observer to participant - is a clean two-arm ablation of whether being watched, when watching also feeds back, changes which patterns manifest.
+
+\section{Discussion}
+
+\subsection{Answering the opening question}
+
+Do you exist in other people's realities the same way you exist in your own? If the geometry of an attention architecture determines which patterns it constructs, then observers running different geometries build different representations from the same input. You exist in your reality through your geometry, and in another's through theirs. This is not solipsism: convergence to a shared pattern space (Figure~\ref{fig:scaling}) says everyone is reaching the same place. It is the \textit{path} that differs - which patterns manifest, in what order, at what cost - and the path is set by architecture.
+
+\subsection{A note on reconciliation}
+
+The same convergence principle drives the author's companion infrastructure project, Platformer~\cite{platformer2025}, where the explicit design stance is eventual consistency: rather than seeking perfect synchronization, the system runs repeated reconciliation cycles that drift toward a declared desired state and ``find balance'' through iteration. The shift there from fragmented to unified state is described in the same terms as the shift from sparse to fully-connected networks - more global context yields better optimization. Training is reconciliation of this kind: a model is run against its objective again and again until it settles into an attractor, the way a harmonic field settles onto a corpus rhythm or a codec phase-locks. That the same philosophy organizes both a language model and a fleet of cloud accounts is not a coincidence of the author's taste; it is what convergence under repeated local correction looks like, in whatever substrate.
+
+\subsection{The practitioner as proof}
+
+The blind watchmaker is design without a designer: structure that emerges from a blind, iterative process rather than from foresight. That is what these systems do. No one specifies the spectrum the harmonic field will lock onto, or the geometry the crystal centers will grow into; they emerge from the process, and we read them off afterward. Which raises an honest question about what would even count as proof here. A benchmark number proves that one model beat another on one distribution. It does not establish a claim about regimes of representation. The framework's proof, if it has one, is of a different kind: it is the practice itself. \textit{Praxis} is the Greek word for theory enacted - for doing as a form of knowing. The demonstration on offer is not a leaderboard but a method you can run, whose intuitions arrive only by stepping through it yourself. The name is the argument: the proof is in the doing.
+
+\subsection{Implications for machine learning}
+
+If bias and variance are separable in a harmonic latent space, then they should be learned as input-dependent functions rather than chosen as a global operating point: the field learns which rhythm matters, the delta learns when and how much to deviate, and no per-experiment hyperparameter mediates the two. If the scaling conjecture holds even partially, then on problems with strong periodic or compositional structure, the right move is to change the basis rather than to add parameters, and the linear and logarithmic regimes should be distinguishable by measuring the slope of coverage against resources. Both are testable in the framework, which is the only reason to state them.
+
+% Gated subsection (remote-expert swarm) injected by praxis/pillars/build.py.
+\paperFramingDiscussion
+
+% Collected falsifiable conjectures, generated by praxis/pillars/conjectures.
+\paperConjectures
+
+\subsection{Limitations}
+
+We are deliberate about what is and is not established. The bias-variance decoupling is grounded in a running implementation and its diagnostics (concentration, smoothness, delta norm, the spectrum heatmap), but ``orthogonal axes'' is an interpretation of those diagnostics, not a theorem. The scaling conjecture of Figure~\ref{fig:scaling} is a conjecture: the figure draws an asserted relationship, not measured curves, and the honest next step is to measure the slope on tasks of varying combinatorial structure and report where harmonic representations fail to buy it. The observer-relative view of tractability (Section~\ref{sec:scaling}) is a philosophical position, and only its weak form - the scaling slope a given basis buys on a given problem family - is measurable; we make no claim about the formal worst-case $P$ versus $NP$ question, which abstracts the observer away by design. The connection to biological attention remains speculative, and the prismatic asymmetry needs to be shown in silico now that the hand-measured figure is gone. The observer effect of Section~\ref{sec:constructor} is, in its quantum form, an analogy we do not cash; only its weak form is a claim - that impure measurement (state-mutating reads, measurement-induced rounding on the exponential edge) perturbs a non-local harmonic field measurably more than an independent-feature one, and that coupling the framework's passive observer pool back into the forward is a two-arm ablation of being-watched. Those are diffs between a watched and an unwatched run, not statements about physics. None of these are reasons not to state the ideas; they are the boundary between what we have built and what we are conjecturing, drawn so the reader can attack the right target.
+
+\section{Conclusion}
+
+We began with scale and ended with geometry. The patterns a model can learn are set by the shape of the space its weights may occupy, and a harmonic latent space reshapes the oldest tradeoff in the field: bias becomes a static, population-average spectrum, variance becomes an input-conditional modulation, and because they live on orthogonal axes they can be lowered together. From that decoupling follows a conjecture stated plainly - that learning the mean costs linearly while composing by interference costs logarithmically - and a framework built to test it rather than to argue it. And from that, in turn, follows the harder claim: that tractability is not a fixed property of a problem but a relation between a problem and the observer solving it. The same instance is exponential to one architecture and nearly free to another, so $P$ and $NP$ are better read as a spectrum that the choice of representation indexes than as a wall every solver meets in the same place. The speculative figure is gone; the conjectures that replace it are falsifiable. What remains is praxis: the answer manifests through direct experimentation, and what you choose to attend to determines what we find next.
+
+\paperFramingConclusion
+
+\appendix
+
+\section{Current Experiment}
+\label{sec:current}
+
+\emph{This appendix is generated.} The figure is built from training logs by \texttt{praxis/pillars/build.py}; the paper itself is a template the tool populates. The chart leads with the most recently launched experiment that has logged validation data, and fixes the y-metric to that run's family - here \paperMetricName{} (\texttt{\paperMetricKey}), as of the last export (\paperUpdated). Only experiments that report the \emph{same} metric are drawn alongside it; the rest are listed as omitted below. This is the smallest living slice of the document: one metric, the current experiment against its compatible predecessors.
+
+\ifx\paperCurrentNote\empty\else
+    \par\smallskip\noindent\emph{Note:} \paperCurrentNote
+\fi
+
+\begin{figure}[h]
+    \centering
+    \begin{tikzpicture}
+        \begin{axis}[
+                width=0.86\linewidth, height=6cm,
+                xlabel={Training step}, ylabel={\paperMetricYlabel},
+                legend pos=north east, grid=both, grid style={gray!18},
+                tick label style={font=\footnotesize}, label style={font=\small},
+                legend style={font=\footnotesize, fill opacity=0.85},
+            ]
+            \paperValPlots
+        \end{axis}
+    \end{tikzpicture}
+    \caption{\paperMetricName{} across the \paperRunCount{} most recent experiments with comparable validation curves; the leading run (\runOneName) is drawn in bold. Generated from run logs - metrics that are not comparable across families (token loss vs.\ byte bits-per-byte vs.\ codec/CALM BrierLM) are excluded by construction, so the curves on this axis mean the same thing.}
+    \label{fig:current}
+\end{figure}
+
+The current experiment, \runOneName{} (\texttt{\runOneHash}), reached \paperMetricName{} \runOneFinal{} by step \runOneSteps{}. Recent experiments whose families report a different validation metric are omitted rather than plotted on an incomparable axis: \paperSkipped{}.
+
+% Thread-provided theory components plug in here: the selected thread's
+% thread.tex (generated) defines \paperThreadTheory; the empty fallback in
+% main.tex omits it. The long-term direction is to migrate the prose above
+% into thread components as-data, converging on a thin unified body.
+\paperThreadTheory
+
+% Ensure bibliography data is written even if some tools don't see citations
+\nocite{*}
+{\small
+    \bibliographystyle{plain}
+    \bibliography{citations}
+}
+

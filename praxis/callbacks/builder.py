@@ -180,6 +180,7 @@ def build_training_callbacks(
                 authors=_resolve_authors(
                     getattr(cfg, "author", None), getattr(cfg, "seed", 0)
                 ),
+                thread=getattr(cfg, "title", None),
             )
         )
 

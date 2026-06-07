@@ -14,5 +14,7 @@ inlines.tex
 geometries.tex
 halting.tex
 ghostmax.tex
+title.tex
+thread.tex
 evolution_vars.tex
 figures/

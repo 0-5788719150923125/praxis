@@ -1,0 +1,35 @@
+title: The Blind Watchmaker
+subtitle: Harmonic Latent Space and the Geometry of Bias and Variance
+pillars:
+- runs
+- framing
+- geometries
+- strands
+- evolution
+- halting
+- ghostmax
+- inlines
+- conjectures
+- proofs
+abstract: 'Do you exist in other people''s realities the same way you exist in your
+  own? It is a question the field tends to defer: the reflex is to hand the burden
+  of proof back to whoever raised it, as if demanding evidence were the neutral
+  posture and the asking were the indulgence. That reflex is not neutral. It is
+  a prior, learned so early it passes for common sense, and priors are precisely
+  the subject of this paper. The dominant program in machine learning rests on one
+  of them: that a single architecture, given enough parameters, data, and compute,
+  can reach anything worth learning - that the architecture itself is neutral ground.
+  We argue instead that what a model can learn is set less by how large it is than
+  by the geometry of its representation - the shape of the space its weights are
+  allowed to occupy. We make that concrete with two components of the Praxis framework~\cite{praxis2025}:
+  a harmonic head that writes a learned standing wave over its features, and \paperFramingAbstract
+  In both, the classical bias-variance tradeoff stops being a single dial. A static,
+  population-average rhythm (the spectrum the field phase-locks to) is pure bias;
+  an input-conditional modulation of that rhythm is structured variance; and because
+  the two live on orthogonal axes of a harmonic latent space, they can be lowered
+  together rather than traded against each other. This reframing motivates a central
+  conjecture: consensus modeling - learning the mean of a corpus - scales linearly
+  in the patterns it must express, while harmonic modeling, which composes patterns
+  by interference, scales logarithmically, because $K$ frequency components address
+  exponentially many configurations. The framework exists so that the reader can
+  test it.'

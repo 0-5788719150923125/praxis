@@ -1,0 +1,29 @@
+title: The Good Get Gooder Theorem
+subtitle: Stochastic Voting Converges to Pretty Good
+pillars:
+- runs
+- evolution
+abstract: 'Very large transformers, stochastically sampled through a voting system,
+  converge - not to fantastic, but to pretty good. The vote washes out the tails
+  and lands on the mean of the corpus, and the mean turns out to be good enough
+  to build pretty much anything, in linear time. We name this plainly: the good
+  get gooder, and then they stop. On the clock face of the latent space, variance
+  lives in one quadrant - the 25\% where input-conditional structure can still swing
+  the vote - while bias owns the other 75\%, the standing consensus every sample
+  is pulled toward. This paper asks what that partition costs: what "pretty good"
+  can and cannot build, and whether the 25\% can be widened without breaking the
+  convergence that makes the system dependable.'
+theory: '\section{The Good Get Gooder Theorem}
+
+
+  Informally: a sufficiently large model sampled through a vote converges to the
+  corpus mean at linear cost, and the mean is pretty good. The formal work this
+  stub owes: define the vote (the patch-vote decoder is the house instance), bound
+  its variance contraction, and locate the 75/25 bias/variance partition on the
+  measured clock face of the latent space - the quadrant geometry the harmonic snake
+  card already draws.
+
+
+  % TODO(spine stub): the theorem statement, the patch-vote instance,
+
+  % and what widening the variance quadrant trades against convergence.'

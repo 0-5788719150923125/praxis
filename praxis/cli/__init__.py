@@ -195,7 +195,14 @@ def get_loader_flag_attrs():
 if __name__ != "__main__":
     # Only auto-initialize if imported as a module
     # Skip if --help or -h to avoid hanging (argparse will handle it later)
-    if len(sys.argv) > 1 and "--help" not in sys.argv and "-h" not in sys.argv:
+    # Skip under test runners: their argv is not ours to parse, and importing
+    # any praxis module transitively (e.g. praxis.pillars.*) must not exit.
+    if (
+        len(sys.argv) > 1
+        and "--help" not in sys.argv
+        and "-h" not in sys.argv
+        and "pytest" not in sys.modules
+    ):
         parser, args, integration_loader = initialize_cli()
 
 # Export public API

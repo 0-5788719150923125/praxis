@@ -1,7 +1,9 @@
 """Build the living paper's generated inputs from current repository state.
 
-The paper in ``research/`` ``\\input``s four generated files; this is the one
-command that regenerates all of them, the research-side analogue of
+A thread (praxis/pillars/thread.py, selected by --title) names the master
+document and which of the STEPS below run; each step writes a fragment the
+master ``\\input``s behind a fallback. This is the one command that
+regenerates all of them, the research-side analogue of
 ``praxis/web/src/build.py``:
 
 - ``variables.tex`` + ``data/run_*.csv`` - recent validation curves (:mod:`runs`)
@@ -36,6 +38,7 @@ from praxis.pillars import (
     strands,
 )
 from praxis.pillars.geometries import RESEARCH_DIR
+from praxis.pillars.thread import THREAD_REGISTRY, resolve_thread, write_thread
 
 _AUTHORS_TEX = os.path.join(RESEARCH_DIR, "authors.tex")
 
@@ -57,6 +60,115 @@ def _write_authors(authors) -> None:
         fh.write("\\newcommand{\\paperAuthors}{" + body + "}\n")
 
 
+def _step_runs(ctx):
+    result = runs.export_once(ctx["n"], ctx["metric"])
+    if result:
+        runs.report(result, ctx["as_json"])
+    else:
+        print("runs: no usable validation data yet; kept existing variables.tex")
+    return result
+
+
+def _step_framing(ctx):
+    try:
+        f = framing.export_framing(ctx["experiment"])
+        print(f"framing: {', '.join(f['active']) or '(none)'} for '{f['experiment']}'")
+        return f
+    except (ValueError, FileNotFoundError) as e:
+        print(f"framing: skipped ({e})")
+        return None
+
+
+def _step_geometries(ctx):
+    g = geometries.export_geometries(ctx["limit"], ctx["scan"])
+    print(f"geometries: {g['count']} panel(s)")
+    return g
+
+
+def _step_strands(ctx):
+    try:
+        s = strands.export_strands(ctx["model"])
+        print(
+            f"strands: {'rendered 2 arms' if s['rendered'] else 'no prismatic field'}"
+        )
+        return s
+    except Exception as e:  # best-effort, never break the paper build
+        print(f"strands: skipped ({e})")
+        return None
+
+
+def _step_evolution(ctx):
+    try:
+        ev = evolution.export_evolution()
+        print(
+            f"evolution: {ev['commits']} commits"
+            + (f", focus {ev['focus']}" if ev.get("rendered") else " (no history)")
+        )
+        return ev
+    except Exception as e:  # best-effort, never break the paper build
+        print(f"evolution: skipped ({e})")
+        return None
+
+
+def _step_halting(ctx):
+    h = halting.export_halting()
+    print(f"halting: {h['run'] or '(no halting data)'}")
+    return h
+
+
+def _step_ghostmax(ctx):
+    g = ghostmax.export_ghostmax()
+    print(
+        f"ghostmax: dampening verified (real mass {g['min_mass']:.3g}"
+        f" -> {g['max_mass']:.3g})"
+    )
+    return g
+
+
+def _step_inlines(ctx):
+    i = inlines.export_inlines()
+    res = i["resolved"]
+    print(f"inlines: {', '.join(f'{k}={v}' for k, v in res.items()) or '(none)'}")
+    return i
+
+
+def _step_conjectures(ctx):
+    c = conjectures.export_conjectures()
+    print(f"conjectures: {c['count']} collected")
+    return c
+
+
+def _step_proofs(ctx):
+    # Theorem-prover (consistency check over the framing<->proof wiring).
+    report = proofs.check_consistency(framing.FRAMING)
+    for err in report["errors"]:
+        print(f"proofs ERROR: {err}")
+    for warn in report["warnings"]:
+        print(f"proofs WARN: {warn}")
+    print(
+        f"proofs: {len(framing.FRAMING)} framings, {len(proofs.PROOFS)} proofs, "
+        f"{len(report['errors'])} error(s), {len(report['warnings'])} unbacked"
+    )
+    return report
+
+
+# Content generators a thread can enable, in build order. Each writes a tex
+# fragment (or data files) the thread's master document inputs behind an
+# \IfFileExists + \providecommand fallback.
+STEPS = {
+    "runs": _step_runs,
+    "framing": _step_framing,
+    "geometries": _step_geometries,
+    "strands": _step_strands,
+    "evolution": _step_evolution,
+    "halting": _step_halting,
+    "ghostmax": _step_ghostmax,
+    "inlines": _step_inlines,
+    "conjectures": _step_conjectures,
+    "proofs": _step_proofs,
+}
+
+
 def build_all(
     n=4,
     metric="auto",
@@ -66,88 +178,36 @@ def build_all(
     as_json=False,
     model=None,
     authors=None,
+    thread=None,
 ):
-    """Regenerate every paper input. Returns a dict of per-step summaries.
+    """Regenerate the selected thread's paper inputs. Returns per-step summaries.
 
-    ``model`` is the live training model (passed by PaperBuildCallback) used for
-    snapshot figures that need populated forward state, e.g. the prismatic
-    bias/variance strands; omitted on a CLI build (those figures stay empty).
-    ``authors`` is the already-ordered author list (the PaperBuildCallback
-    resolves first-author + the 10%% shuffle once per run); written to the
-    paper's \\author block."""
-    summary = {}
+    ``thread`` is a THREAD_REGISTRY key (or Thread) naming the layout - the
+    title block, body prose, and which STEPS run; default is the Blind
+    Watchmaker paper. ``model`` is the live training model (passed by
+    PaperBuildCallback) used for snapshot figures that need populated forward
+    state, e.g. the prismatic bias/variance strands; omitted on a CLI build
+    (those figures stay empty). ``authors`` is the already-ordered author list
+    (the PaperBuildCallback resolves first-author + the 10%% shuffle once per
+    run); written to the paper's \\author block."""
+    layout = resolve_thread(thread)
+    summary = {"thread": write_thread(layout)}
 
     if authors:
         _write_authors(authors)
         summary["authors"] = list(authors)
 
-    result = runs.export_once(n, metric)
-    if result:
-        runs.report(result, as_json)
-    else:
-        print("runs: no usable validation data yet; kept existing variables.tex")
-    summary["runs"] = result
-
-    try:
-        summary["framing"] = framing.export_framing(experiment)
-        f = summary["framing"]
-        print(f"framing: {', '.join(f['active']) or '(none)'} for '{f['experiment']}'")
-    except (ValueError, FileNotFoundError) as e:
-        print(f"framing: skipped ({e})")
-        summary["framing"] = None
-
-    summary["geometries"] = geometries.export_geometries(limit, scan)
-    print(f"geometries: {summary['geometries']['count']} panel(s)")
-
-    try:
-        summary["strands"] = strands.export_strands(model)
-        s = summary["strands"]
-        print(
-            f"strands: {'rendered 2 arms' if s['rendered'] else 'no prismatic field'}"
-        )
-    except Exception as e:  # best-effort, never break the paper build
-        print(f"strands: skipped ({e})")
-        summary["strands"] = None
-
-    try:
-        summary["evolution"] = evolution.export_evolution()
-        ev = summary["evolution"]
-        print(
-            f"evolution: {ev['commits']} commits"
-            + (f", focus {ev['focus']}" if ev.get("rendered") else " (no history)")
-        )
-    except Exception as e:  # best-effort, never break the paper build
-        print(f"evolution: skipped ({e})")
-        summary["evolution"] = None
-
-    summary["halting"] = halting.export_halting()
-    h = summary["halting"]
-    print(f"halting: {h['run'] or '(no halting data)'}")
-
-    summary["ghostmax"] = ghostmax.export_ghostmax()
-    print(
-        f"ghostmax: dampening verified (real mass {summary['ghostmax']['min_mass']:.3g}"
-        f" -> {summary['ghostmax']['max_mass']:.3g})"
+    ctx = dict(
+        n=n,
+        metric=metric,
+        experiment=experiment,
+        limit=limit,
+        scan=scan,
+        as_json=as_json,
+        model=model,
     )
-
-    summary["inlines"] = inlines.export_inlines()
-    res = summary["inlines"]["resolved"]
-    print(f"inlines: {', '.join(f'{k}={v}' for k, v in res.items()) or '(none)'}")
-
-    summary["conjectures"] = conjectures.export_conjectures()
-    print(f"conjectures: {summary['conjectures']['count']} collected")
-
-    # Theorem-prover (consistency check over the framing<->proof wiring).
-    report = proofs.check_consistency(framing.FRAMING)
-    summary["proofs"] = report
-    for err in report["errors"]:
-        print(f"proofs ERROR: {err}")
-    for warn in report["warnings"]:
-        print(f"proofs WARN: {warn}")
-    print(
-        f"proofs: {len(framing.FRAMING)} framings, {len(proofs.PROOFS)} proofs, "
-        f"{len(report['errors'])} error(s), {len(report['warnings'])} unbacked"
-    )
+    for name in layout.pillars:
+        summary[name] = STEPS[name](ctx)
 
     return summary
 
@@ -166,9 +226,23 @@ def main():
     )
     ap.add_argument("--scan", type=int, default=40, help="runs to scan for geometries")
     ap.add_argument("--json", action="store_true", help="machine-readable run summary")
+    ap.add_argument(
+        "--title",
+        default=None,
+        choices=sorted(THREAD_REGISTRY),
+        help="paper thread (layout) to build; default blind_watchmaker",
+    )
     args = ap.parse_args()
 
-    build_all(args.n, args.metric, args.experiment, args.limit, args.scan, args.json)
+    build_all(
+        args.n,
+        args.metric,
+        args.experiment,
+        args.limit,
+        args.scan,
+        args.json,
+        thread=args.title,
+    )
     return 0
 
 

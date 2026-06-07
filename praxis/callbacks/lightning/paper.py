@@ -34,10 +34,15 @@ BUILD_DIR = os.path.join(RESEARCH_DIR, "build")
 class PaperBuildCallback(Callback):
     """Rebuild research/main.pdf every ``every`` steps, in the background."""
 
-    def __init__(self, every: int, log_dir: str, authors=None):
+    def __init__(self, every: int, log_dir: str, authors=None, thread=None):
         self.every = max(int(every), 0)
         self.log_path = os.path.join(log_dir, "paper_build.log")
         self._authors = authors  # already-ordered (see builder._resolve_authors)
+        # The paper thread (--title): which layout to regenerate and compile.
+        from praxis.pillars.thread import resolve_thread
+
+        self._thread_key = thread
+        self._thread = resolve_thread(thread)
         self._lock = threading.Lock()
         self._latexmk = shutil.which("latexmk")
         self._warned = False
@@ -112,7 +117,11 @@ class PaperBuildCallback(Callback):
                     ):
                         from praxis.pillars.build import build_all
 
-                        build_all(model=model, authors=self._authors)
+                        build_all(
+                            model=model,
+                            authors=self._authors,
+                            thread=self._thread_key,
+                        )
                     # PDF compile is the only latexmk-dependent step; the inputs
                     # above already refreshed from the live model. Build into an
                     # isolated dir and only copy the PDF back on success, so a
