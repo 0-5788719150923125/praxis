@@ -24,7 +24,9 @@ CREATE TABLE IF NOT EXISTS sites (
     added REAL NOT NULL,
     last_fetch REAL NOT NULL DEFAULT 0,
     error_streak INTEGER NOT NULL DEFAULT 0,
-    enabled INTEGER NOT NULL DEFAULT 1
+    enabled INTEGER NOT NULL DEFAULT 1,
+    -- Seeded from the repo's own documents; never evicted by promotion churn.
+    pinned INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS frontier (
     url TEXT PRIMARY KEY,
@@ -81,12 +83,19 @@ class SpiderStore:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self.db_path)
         self._conn.executescript(_SCHEMA)
+        # Pages must survive, so migrate in place rather than drop-and-rebuild.
+        try:
+            self._conn.execute(
+                "ALTER TABLE sites ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0"
+            )
+        except sqlite3.OperationalError:
+            pass  # column already present
         self._conn.commit()
 
     # --- watchlist ---
 
-    def add_site(self, url: str, max_sites: int) -> bool:
-        """Watch a site, evicting the stalest watched site when over the cap.
+    def add_site(self, url: str, max_sites: int, pinned: bool = False) -> bool:
+        """Watch a site, evicting the stalest unpinned site when over the cap.
         The site root enters the frontier so the walk starts at the top."""
         site = site_of(url)
         if not urlsplit(site).netloc:
@@ -96,15 +105,25 @@ class SpiderStore:
             "SELECT 1 FROM sites WHERE url = ?", (site,)
         ).fetchone()
         if existing:
+            if pinned:  # a seed re-encountered: protect it from churn
+                self._conn.execute(
+                    "UPDATE sites SET pinned = 1 WHERE url = ?", (site,)
+                )
+                self._conn.commit()
             return False
         count = self._conn.execute("SELECT COUNT(*) FROM sites").fetchone()[0]
         if count >= max_sites:
             stale = self._conn.execute(
-                "SELECT url FROM sites ORDER BY last_fetch, added LIMIT 1"
+                "SELECT url FROM sites WHERE pinned = 0 ORDER BY last_fetch, added "
+                "LIMIT 1"
             ).fetchone()
-            if stale:
-                self.remove_site(stale[0])
-        self._conn.execute("INSERT INTO sites (url, added) VALUES (?, ?)", (site, now))
+            if not stale:
+                return False  # everything pinned; nothing to evict
+            self.remove_site(stale[0])
+        self._conn.execute(
+            "INSERT INTO sites (url, added, pinned) VALUES (?, ?, ?)",
+            (site, now, int(pinned)),
+        )
         self._conn.execute(
             "INSERT OR IGNORE INTO frontier (url, site, depth, discovered) "
             "VALUES (?, ?, 0, ?)",
@@ -206,16 +225,11 @@ class SpiderStore:
 
     def promote_sites(self, max_sites: int) -> List[str]:
         """Watch external sites cited by enough distinct pages - 'the spider
-        crawled upon something it wanted to watch'. Fills free watchlist slots
-        only; promotion never evicts an existing site."""
+        crawled upon something it wanted to watch'. Free slots fill first;
+        with a full watchlist a candidate must out-cite the least-interesting
+        unpinned site, which it evicts. Pinned (seeded) sites never churn."""
         promoted = []
         while True:
-            free = (
-                max_sites
-                - self._conn.execute("SELECT COUNT(*) FROM sites").fetchone()[0]
-            )
-            if free <= 0:
-                return promoted
             row = self._conn.execute(
                 "SELECT site, COUNT(*) AS n FROM external_refs GROUP BY site "
                 "HAVING n >= ? ORDER BY n DESC LIMIT 1",
@@ -223,11 +237,31 @@ class SpiderStore:
             ).fetchone()
             if not row:
                 return promoted
-            site = row[0]
+            site, citations = row
+            free = (
+                max_sites
+                - self._conn.execute("SELECT COUNT(*) FROM sites").fetchone()[0]
+            )
+            if free <= 0:
+                weakest = self._weakest_site()
+                if not weakest or weakest[1] >= citations:
+                    return promoted  # incumbents are more interesting
+                self.remove_site(weakest[0])
+                self.log_event("evicted", weakest[0])
             self._conn.execute("DELETE FROM external_refs WHERE site = ?", (site,))
             if self.add_site(site, max_sites):
                 self.log_event("promoted", site)
                 promoted.append(site)
+
+    def _weakest_site(self) -> Optional[tuple]:
+        """(site, score) for the least-interesting evictable site: inbound
+        citations to its pages, zeroed for disabled (dead) sites."""
+        return self._conn.execute(
+            "SELECT s.url, CASE WHEN s.enabled = 0 THEN 0 ELSE "
+            "(SELECT COUNT(*) FROM refs r JOIN pages p ON r.dst = p.url "
+            " WHERE p.site = s.url) END AS score "
+            "FROM sites s WHERE s.pinned = 0 ORDER BY score, s.last_fetch LIMIT 1"
+        ).fetchone()
 
     def top_cited(self, limit: int = 5) -> List[tuple]:
         """(url, citations) of the most-referenced URLs."""

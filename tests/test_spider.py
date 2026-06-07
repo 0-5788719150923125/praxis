@@ -178,14 +178,6 @@ def test_external_refs_promote_into_free_slots(store):
     assert "https://news.example" in [row[0] for row in store.list_sites()]
 
 
-def test_promotion_never_evicts_when_full(store):
-    store.add_site("https://a.com", max_sites=1)
-    for src in ("https://a.com/1", "https://a.com/2", "https://a.com/3"):
-        store.record_refs(src, ["https://news.example/story"])
-    assert store.promote_sites(max_sites=1) == []
-    assert [row[0] for row in store.list_sites()] == ["https://a.com"]
-
-
 def test_events_and_counts(store):
     store.add_site("https://a.com", max_sites=4)
     store.record_page("https://a.com/", "https://a.com", "t", "x", "s")
@@ -232,3 +224,41 @@ def test_links_source_includes_readme():
 
     uris = {item.uri for item in LinksSource().iter_items()}
     assert any("youtube.com" in u for u in uris)
+
+
+# --- pinning / competitive promotion ---
+
+
+def test_pinned_sites_survive_eviction(store):
+    store.add_site("https://pinned.com", max_sites=2, pinned=True)
+    store.add_site("https://stale.com", max_sites=2)
+    store.add_site("https://new.com", max_sites=2)  # cap hit: evicts unpinned
+    sites = {row[0] for row in store.list_sites()}
+    assert "https://pinned.com" in sites and "https://stale.com" not in sites
+
+
+def test_add_site_refuses_when_all_pinned(store):
+    store.add_site("https://a.com", max_sites=1, pinned=True)
+    assert not store.add_site("https://b.com", max_sites=1)
+
+
+def test_promotion_evicts_weakest_when_full(store):
+    store.add_site("https://pinned.com", max_sites=2, pinned=True)
+    store.add_site("https://boring.com", max_sites=2)  # zero inbound citations
+    for i in range(3):
+        store.record_refs(f"https://x.com/p{i}", ["https://hot.com/a"])
+    promoted = store.promote_sites(max_sites=2)
+    sites = {row[0] for row in store.list_sites()}
+    assert promoted == ["https://hot.com"]
+    assert "https://boring.com" not in sites and "https://pinned.com" in sites
+
+
+def test_promotion_spares_more_interesting_incumbents(store):
+    store.add_site("https://liked.com", max_sites=1)
+    store.record_page("https://liked.com/a", "https://liked.com", "t", "x", "s")
+    for i in range(9):
+        store.record_refs(f"https://r.com/{i}", ["https://liked.com/a"])
+    for i in range(3):
+        store.record_refs(f"https://x.com/p{i}", ["https://meh.com/a"])
+    assert store.promote_sites(max_sites=1) == []
+    assert {row[0] for row in store.list_sites()} == {"https://liked.com"}

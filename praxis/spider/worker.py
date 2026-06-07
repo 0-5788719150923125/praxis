@@ -45,12 +45,16 @@ class SpiderWorker:
         store.close()
 
     def _seed(self, store: SpiderStore) -> None:
-        """Ground the watchlist in sites already cited in docs/ and next/."""
+        """Ground the watchlist in sites cited by the README, docs/, and
+        next/. README links are the project's curated identity, so those are
+        pinned - promotion churn can never evict them; doc citations compete
+        like everything else."""
         from praxis.kb.sources import LinksSource
 
         added = 0
         for item in LinksSource().iter_items():
-            if store.add_site(item.uri, self.settings.max_sites):
+            pinned = item.origin == "README.md"
+            if store.add_site(item.uri, self.settings.max_sites, pinned=pinned):
                 added += 1
         if added:
             self._log(f"watching {added} new site(s) seeded from cited links")
