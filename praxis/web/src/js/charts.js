@@ -1106,12 +1106,13 @@ function measureDeck(deck) {
     const bandH = Math.max(140, Math.round(floorY - top + lift));   // ceiling -> floor
     deck._bandH = bandH;
     deck._lift = lift;
-    // Cap every card to a single UNIFORM slot height: the full band (ceiling -> floor)
-    // minus only the fan trail. NOT minus the lift - in slot A the head sits at the
-    // ceiling, so it gets the whole band; sizing to the dropped (B) height would collapse
-    // cards early and force inner scrolling that needn't exist. Tall content still scrolls;
-    // the carousel advances via flick so a long card never blocks navigation. (Desktop
-    // lift is 0, so this is unchanged there.)
+    // The UNIFORM slot height: the full band (ceiling -> floor) minus only the
+    // fan trail. NOT minus the lift - in slot A the head sits at the ceiling, so
+    // it gets the whole band; sizing to the dropped (B) height would collapse
+    // cards early and force inner scrolling that needn't exist. On mobile this
+    // is the SHORT-card slot: a card that needs more expands past it, consuming
+    // the fan reserve up to the full band (see below). (Desktop lift is 0, so
+    // this is unchanged there.)
     const fanReserve = Math.min(DECK_MAX_FAN, Math.max(0, cards.length - 1)) * DECK_PEEK;
     const usableH = Math.max(140, bandH - fanReserve);
     deck._cardH = cards.map(c => {
@@ -1122,26 +1123,33 @@ function measureDeck(deck) {
         c.style.height = ''; c.style.maxHeight = ''; c.style.display = ''; c.style.flexDirection = ''; c._mh = undefined;
         body.style.maxHeight = ''; body.style.flex = ''; body.style.minHeight = '';
         body.style.overflowY = 'auto';
-        // Charts shrink under pressure: when the card would overflow, compact the
-        // chart (down to DECK_MIN_CHART_H) so it stays expressive but avoids an inner
-        // scroll. Chart.js (responsive) re-fits the canvas when the wrapper resizes.
         const wrapper = mobile ? c.querySelector('.chart-wrapper') : null;
         if (wrapper) wrapper.style.height = '';   // reset to CSS default before measuring
         let h = c.offsetHeight || 0;
-        if (wrapper && h > usableH) {
+        // Mobile slot height is per-card: short cards share the uniform slot
+        // (even fan bottoms); a card that overflows it EXPANDS into the fan
+        // reserve, up to the full band, instead of inner-scrolling inside the
+        // smaller slot. The fan previews just hide behind the expanded head -
+        // a full card beats a peek strip. Desktop keeps the uniform cap.
+        const capH = mobile && h > usableH ? bandH : usableH;
+        // Charts shrink under pressure: when the card would overflow even its
+        // expanded cap, compact the chart (down to DECK_MIN_CHART_H) so it stays
+        // expressive but avoids an inner scroll. Chart.js (responsive) re-fits
+        // the canvas when the wrapper resizes.
+        if (wrapper && h > capH) {
             const chrome = h - wrapper.offsetHeight;   // title/subtitle/toggles/padding
-            wrapper.style.height = `${Math.max(DECK_MIN_CHART_H, usableH - chrome)}px`;
+            wrapper.style.height = `${Math.max(DECK_MIN_CHART_H, capH - chrome)}px`;
             h = c.offsetHeight || 0;                   // re-measure after compacting
         }
-        // On mobile, pin EVERY card to the same uniform slot height (not just the
-        // tall ones). A short card then ends its box at the same height as a tall
-        // one, so the fanned cards behind the head share one even bottom edge -
-        // a constant-spacing staircase down the floor, instead of ragged edges
-        // set by each card's content. (Desktop keeps natural height: it grows the
-        // deck and peeks upward, so even bottoms don't apply there.)
-        const pin = mobile ? usableH : (h > usableH ? usableH : 0);
+        // On mobile, pin EVERY card to its slot (not just the tall ones). Short
+        // cards then end their boxes at the same height, so the fanned cards
+        // behind the head share one even bottom edge - a constant-spacing
+        // staircase down the floor, instead of ragged edges set by each card's
+        // content. (Desktop keeps natural height: it grows the deck and peeks
+        // upward, so even bottoms don't apply there.)
+        const pin = mobile ? capH : (h > usableH ? usableH : 0);
         if (pin) {
-            // Mobile forces an exact uniform height (even fan bottoms); desktop
+            // Mobile forces an exact slot height (even fan bottoms); desktop
             // only caps an overflowing card (max-height), leaving natural height.
             if (mobile) c.style.height = `${pin}px`;
             c.style.maxHeight = `${pin}px`;
@@ -1153,13 +1161,17 @@ function measureDeck(deck) {
                 body.style.maxHeight = 'none';   // flex governs height; override any CSS cap
             }
         }
-        // _capped cards are re-sized per-frame by renderDeck. On mobile all cards
-        // are pinned to the uniform slot so the fan edges line up.
+        // _capped cards are re-sized per-frame by renderDeck (per-card slot).
         c._capped = mobile || h > usableH;
-        return mobile ? usableH : Math.min(h, usableH);
+        return mobile ? capH : Math.min(h, usableH);
     });
     deck._usableH = usableH;
     if (mobile) {
+        // Seat every non-head card's inner scroll at its bottom so the fan
+        // strips read as natural card ends from first paint (crossings keep
+        // them seated afterwards). The head keeps its own scroll position.
+        const active = deck._deck ? deck._deck.activeIndex : -1;
+        cards.forEach((c, i) => { if (i !== active) seatFanCard(deck, i); });
         deck.style.height = `${bandH}px`;
         // Clip at the floor (band bottom): the downward fan bottoms out here, so a card
         // taller than the floor is simply cut off at it instead of overshooting past the
@@ -1198,11 +1210,12 @@ function renderDeck(deck) {
     // the floor, so it never rides up over the header; trailing cards fade out.
     const headTop = (deck._lift || 0) * (1 - a01);
     const availH = Math.round((bandH - headTop) / 2) * 2;
-    // UNIFORM slot height: every card renders to the same measured cap (which already
-    // reserves the fan floor). So cards of any content size are the same height, sit on
-    // the same fan spectrum, and none overshoots the floor. The fan offset below steps
-    // each card down by DECK_PEEK as it lifts into slot A.
-    const cardMH = `${Math.max(120, deck._usableH || availH)}px`;
+    // Per-card slot heights from measureDeck: short cards share the uniform slot
+    // (which reserves the fan floor, so the fan staircase stays even); tall cards
+    // expanded into the fan reserve up to the full band. The fan offset below
+    // steps each card down by DECK_PEEK as it lifts into slot A.
+    const H = deck._cardH || [];
+    const fallbackH = Math.max(120, deck._usableH || availH);
 
     for (let k = 0; k < count; k++) {
         const card = cards[order[k]];
@@ -1215,10 +1228,13 @@ function renderDeck(deck) {
             continue;
         }
         const isHead = a < 0.5;
-        const rank = a > DECK_MAX_FAN ? DECK_MAX_FAN : a;
         // The fan is gated by the anchor: fully stacked in B (a01=0, every card's title
         // aligned on the same top-left point), fanning DOWN as it lifts into A (a01=1).
-        const top = headTop + delta * DECK_PEEK * a01;   // fan DOWN into the reserved floor
+        // The offset clamps at the fan reserve (DECK_MAX_FAN steps): a 4th card seats
+        // exactly behind the 3rd instead of stepping past the floor and leaking its
+        // content below the staircase (desktop clamps the same way via peekUnits).
+        const peek = delta > DECK_MAX_FAN ? DECK_MAX_FAN : delta;
+        const top = headTop + peek * DECK_PEEK * a01;   // fan DOWN into the reserved floor
         // No scale shrink on mobile: scaling from the top origin would eat the DOWNWARD
         // peek. The offset alone gives the stacked fan, so each card's edge stays visible.
         const scale = 1;
@@ -1231,16 +1247,26 @@ function renderDeck(deck) {
         card.style.opacity = opacity >= 1 ? '1' : opacity.toFixed(3);
         if (card._vis !== 'v') { card.style.visibility = 'visible'; card._vis = 'v'; }
         if (card._capped) {
-            // Set both height and max-height to the uniform slot so a short card's
-            // box ends at the same edge as a tall one - even fan bottoms. (height
-            // forces it; max-height alone would let short content stay short.)
-            if (card._mh !== cardMH) {
-                card.style.height = cardMH;
-                card.style.maxHeight = cardMH;
-                card._mh = cardMH;
+            // Set both height and max-height to the card's slot (height forces
+            // it; max-height alone would let short content stay short). The
+            // expanded (full-band) height applies only AT THE HEAD: in the fan
+            // every card renders at the uniform slot, so an expanded card never
+            // overflows the staircase and covers its neighbors. The expansion
+            // blends in over the last slot of approach (grow: 0 one slot away,
+            // 1 seated) so the height never pops.
+            const slotH = Math.max(120, H[order[k]] || fallbackH);
+            const grow = a >= 1 ? 0 : 1 - a;
+            const mh = `${Math.round(fallbackH + (Math.max(fallbackH, slotH) - fallbackH) * grow)}px`;
+            if (card._mh !== mh) {
+                card.style.height = mh;
+                card.style.maxHeight = mh;
+                card._mh = mh;
             }
         }
-        const zi = 100 - Math.round(rank);
+        // Z by UNCAPPED depth: a 4th card (seated at the same offset as the 3rd
+        // once the peek clamps) must stack BELOW it - capping at rank tied their
+        // z-indexes and let DOM order paint the deeper card's content on top.
+        const zi = 100 - Math.round(a > DECK_MAX_FAN + 1 ? DECK_MAX_FAN + 1 : a);
         if (card._zi !== zi) { card.style.zIndex = String(zi); card._zi = zi; }
         const pe = isHead ? 'auto' : 'none';
         if (card._pe !== pe) { card.style.pointerEvents = pe; card._pe = pe; }
@@ -1253,9 +1279,11 @@ function renderDeck(deck) {
     const k = ((Math.round(pos) % count) + count) % count;
     const idx = order[k];
     if (idx !== st.activeIndex) {
+        const prev = st.activeIndex;
         st.activeIndex = idx;
         deckActive[deck.id] = k;   // persist the order slot (wrap-safe across rebuilds)
         seatEntering(deck, idx);
+        seatFanCard(deck, prev);   // the outgoing head rests at its bottom in the fan
     }
 }
 
@@ -1338,6 +1366,18 @@ function seatEntering(deck, idx) {
     }
     const body = card.querySelector('.deck-card-scroll') || card;
     body.scrollTop = deck._cycleDir < 0 ? body.scrollHeight : 0;
+}
+
+// A fan card shows only its bottom strip below the head, so rest its inner
+// scroll at the BOTTOM: the visible strip is then the content's natural end,
+// not a mid-scroll crop. (The focused card is the opposite - it enters at the
+// top via seatEntering/seatTarget.) Runs on slot crossings and re-measures,
+// never per frame.
+function seatFanCard(deck, idx) {
+    const card = deck._cards && deck._cards[idx];
+    if (!card) return;
+    const body = card.querySelector('.deck-card-scroll') || card;
+    body.scrollTop = body.scrollHeight;
 }
 
 // Reset the card at an order slot to the edge we're entering it from (TOP when going
