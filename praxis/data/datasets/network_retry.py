@@ -73,6 +73,16 @@ def enter_offline_mode(reason: str) -> None:
         pass
 
 
+def hub_reachable(timeout: float = 5.0) -> bool:
+    """Cheap TCP probe of the hub - distinguishes a dataset-specific failure
+    (hub up: skip that dataset) from real connectivity loss (latch offline)."""
+    try:
+        with socket.create_connection(("huggingface.co", 443), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
 T = TypeVar("T")
 
 _INITIAL_BACKOFF_SECONDS = 2.0

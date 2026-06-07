@@ -9,6 +9,7 @@ from praxis.data.datasets.base import PraxisSampler, load_dataset_smart
 from praxis.data.datasets.network_retry import (
     enter_offline_mode,
     hf_offline,
+    hub_reachable,
     is_network_error,
     retry_on_network_error,
 )
@@ -91,7 +92,15 @@ class HuggingfaceDataset(PraxisSampler):
         except Exception as e:
             if hf_offline() or not is_network_error(e):
                 raise
-            # First hub failure: latch the process offline and retry this
+            if hub_reachable():
+                # Hub is up, so this failure is specific to this dataset.
+                # Raise to skip it upstream; the rest stay online.
+                print(
+                    f"[DATA] hub reachable but {self.dataset_path} failed "
+                    f"({type(e).__name__}); skipping this dataset only."
+                )
+                raise
+            # Hub unreachable: latch the process offline and retry this
             # same dataset from the local cache (non-streaming is the only
             # mode that can read it). Uncached -> raises -> skipped upstream.
             enter_offline_mode(f"{type(e).__name__} loading {self.dataset_path}")

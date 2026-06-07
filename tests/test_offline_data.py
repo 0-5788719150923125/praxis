@@ -108,12 +108,31 @@ def test_first_hub_failure_falls_back_to_cache(monkeypatch):
         return FakeDataset()
 
     monkeypatch.setattr(hf, "load_dataset_smart", fake_load)
+    monkeypatch.setattr(hf, "hub_reachable", lambda: False)
     sampler = hf.HuggingfaceDataset(
         tokenizer=None, seed=0, config={"path": "fake/dataset"}
     )
     assert sampler.is_streaming is False
     assert nr.hf_offline()  # latched for the rest of boot
     assert seen[0]["streaming"] is True and seen[-1]["streaming"] is False
+
+
+def test_dataset_specific_failure_skips_without_latching(monkeypatch):
+    """When the hub is reachable, one bad dataset raises (skipped upstream)
+    without dragging the whole process offline."""
+    import praxis.data.datasets.huggingface as hf
+    import praxis.data.datasets.network_retry as nr
+
+    _reset_latch(monkeypatch)
+
+    def fake_load(dataset_args):
+        raise RuntimeError("Cannot send a request, as the client has been closed.")
+
+    monkeypatch.setattr(hf, "load_dataset_smart", fake_load)
+    monkeypatch.setattr(hf, "hub_reachable", lambda: True)
+    with pytest.raises(RuntimeError):
+        hf.HuggingfaceDataset(tokenizer=None, seed=0, config={"path": "fake/bad"})
+    assert not nr.hf_offline()  # rest of the mixture stays online
 
 
 def test_uncached_dataset_raises_after_latch(monkeypatch):

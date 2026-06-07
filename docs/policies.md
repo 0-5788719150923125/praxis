@@ -72,7 +72,7 @@ grounding comes from quality-filtered (well-rated) jokes in the data mix; the li
 human-approval channel folds into the energy via ``ingest_live``. The model is rewarded
 for producing jokes a human approves - "the model seeks our approval".
 
-Source: [praxis/policies/engagement.py:192](../praxis/policies/engagement.py#L192)
+Source: [praxis/policies/engagement.py:193](../praxis/policies/engagement.py#L193)
 
 ## `reinforce` - REINFORCE
 

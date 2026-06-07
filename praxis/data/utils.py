@@ -18,7 +18,7 @@ from praxis.data.datasets import (
     SyntheticPrintDataset,
     SyntheticToolCallingDataset,
 )
-from praxis.data.datasets.network_retry import hf_offline
+from praxis.data.datasets.network_retry import hf_offline, is_network_error
 
 
 def get_datamodules(
@@ -82,17 +82,18 @@ def get_datamodules(
                 f"[DATA] {dict(id=c.get('_id'), type=dataset_type, weight=c['weight'])}"
             )
         if dataset_type == "huggingface":
-            # The sampler falls back to the local cache on the first hub
-            # failure (latching offline mode for the rest of boot); a dataset
-            # that isn't cached raises and is skipped rather than fatal.
+            # The sampler latches offline mode only when the hub itself is
+            # unreachable; a dataset-specific failure (or an uncached one
+            # while offline) raises and is skipped rather than fatal.
             try:
                 train_data.append(get_dataset(dataset_type, tokenizer, seed, c, *args))
             except Exception as e:
-                if not hf_offline():
+                if not hf_offline() and not is_network_error(e):
                     raise
+                reason = "not in local cache" if hf_offline() else "load failed"
                 print(
-                    f"[DATA] OFFLINE: skipping {c.get('path')} (not in local "
-                    f"cache): {type(e).__name__}"
+                    f"[DATA] skipping {c.get('path')} ({reason}): "
+                    f"{type(e).__name__}"
                 )
         else:
             train_data.append(get_dataset(dataset_type, tokenizer, seed, c, *args))
@@ -128,11 +129,12 @@ def get_datamodules(
                     get_dataset("huggingface", tokenizer, seed, c, *args)
                 )
             except Exception as e:
-                if not hf_offline():
+                if not hf_offline() and not is_network_error(e):
                     raise
+                reason = "not in local cache" if hf_offline() else "load failed"
                 print(
-                    f"[VALIDATION] OFFLINE: skipping {c.get('path')} (not in "
-                    f"local cache): {type(e).__name__}"
+                    f"[VALIDATION] skipping {c.get('path')} ({reason}): "
+                    f"{type(e).__name__}"
                 )
 
     train_dataloader = PraxisDataModule(
