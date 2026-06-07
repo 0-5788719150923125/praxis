@@ -43,6 +43,35 @@ _TM_PID = os.getpid()
 _TM_CONFIGURED = False
 
 
+def _detach_server_from_signals(tokenmonster) -> None:
+    """Run tokenmonsterserver in its own session.
+
+    Ctrl+C delivers SIGINT to the whole foreground process group; without
+    this the server dies mid-run and every later call hits BrokenPipeError.
+    The server still exits with us - it watches the parent pid it was
+    handed at spawn.
+    """
+    import subprocess
+
+    @classmethod
+    def _start_process(cls):
+        exe = os.path.join(cls._dir, cls._bin)
+        cls._pid = os.getpid()
+        try:
+            cls._process = subprocess.Popen(
+                [exe, str(cls._pid)],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                start_new_session=True,
+            )
+        except Exception:
+            cls._process = None
+            return False
+        return cls._process is not None
+
+    tokenmonster.Vocab._start_process = _start_process
+
+
 def _load_tm_vocab(vocab_name: str):
     """Load a TokenMonster vocab (multiprocess-safe; we never modify it)."""
     global _TM_CONFIGURED
@@ -50,6 +79,7 @@ def _load_tm_vocab(vocab_name: str):
 
     if not _TM_CONFIGURED:
         tokenmonster.set_local_directory(LOCAL_DIR)
+        _detach_server_from_signals(tokenmonster)
         _TM_CONFIGURED = True
     return tokenmonster.load_multiprocess_safe(vocab_name)
 
@@ -177,12 +207,33 @@ class TokenMonsterTokenizer(
             self._pid = os.getpid()
         return self._tm
 
+    def _tm_call(self, op):
+        """Run one locked vocab op, reconnecting once if the server died."""
+        try:
+            vocab = self._vocab()
+            with _TM_LOCK:
+                return op(vocab)
+        except BrokenPipeError:
+            import tokenmonster
+
+            dead = tokenmonster.Vocab._process
+            if dead is not None:
+                # Close quietly; the buffered writer spews at GC otherwise.
+                for pipe in (dead.stdin, dead.stdout):
+                    try:
+                        pipe.close()
+                    except Exception:
+                        pass
+            tokenmonster.Vocab._process = None
+            self._pid = -1  # force _vocab() to reload
+            vocab = self._vocab()
+            with _TM_LOCK:
+                return op(vocab)
+
     def _tm_encode(self, text: str) -> List[int]:
         if not text:
             return []
-        vocab = self._vocab()
-        with _TM_LOCK:
-            ids = vocab.tokenize(text)
+        ids = self._tm_call(lambda v: v.tokenize(text))
         if ids is None:
             return []
         return [int(i) + self._offset for i in ids.tolist()]
@@ -192,9 +243,7 @@ class TokenMonsterTokenizer(
         nonempty = [t for t in texts if t]
         if not nonempty:
             return [[] for _ in texts]
-        vocab = self._vocab()
-        with _TM_LOCK:
-            results = vocab.tokenize(nonempty)
+        results = self._tm_call(lambda v: v.tokenize(nonempty))
         if len(nonempty) == 1:
             results = [results]
         out: List[List[int]] = []
@@ -212,9 +261,8 @@ class TokenMonsterTokenizer(
     def _tm_decode(self, ids: List[int]) -> str:
         if not ids:
             return ""
-        vocab = self._vocab()
-        with _TM_LOCK:
-            return vocab.decode([i - self._offset for i in ids])
+        shifted = [i - self._offset for i in ids]
+        return self._tm_call(lambda v: v.decode(shifted))
 
     def _split_specials(self, text: str) -> List[Tuple[bool, str]]:
         """Split text into (is_special, piece) runs around special tokens."""

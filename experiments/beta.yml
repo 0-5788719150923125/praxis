@@ -40,3 +40,4 @@ tie_weights: true
 # on both dashboards. Detached, layer-wise (Mono-Forward) updates, so a slow peer
 # never blocks training.
 orchestration_type: swarm
+spider: { profile: ghost }

@@ -19,6 +19,97 @@ import { revealPrewarmed } from './prefetch.js';
 import { syncInputToMode, fetchAndPresentQuestion, startLoop, stopLoop, rerollLoopNow, addKbSearchTerm } from './main.js';
 
 /**
+ * Floating confirmation popup anchored to a button - the "copied to
+ * clipboard" style used by the git copy buttons. Viewport-aware placement.
+ * @param {Element} button - Anchor element
+ * @param {string} label - Popup text
+ */
+function showActionNotification(button, label) {
+    const notification = document.createElement('div');
+    notification.textContent = label;
+    notification.className = 'copy-notification';
+
+    const buttonRect = button.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+
+    // Notification dimensions (estimate before rendering)
+    const notificationWidth = 240;
+    const notificationHeight = 40;
+
+    // Try to place near the button, flipping/clamping at viewport edges.
+    let top = buttonRect.top + (buttonRect.height / 2) - (notificationHeight / 2);
+    let left = buttonRect.left - notificationWidth - 16; // 16px gap
+
+    if (left < 16) {
+        left = buttonRect.right + 16; // Place on right instead
+    }
+    if (left + notificationWidth > viewportWidth - 16) {
+        left = viewportWidth - notificationWidth - 16;
+    }
+    top = Math.min(Math.max(top, 16), viewportHeight - notificationHeight - 16);
+
+    notification.style.cssText = `
+        position: fixed;
+        top: ${top}px;
+        left: ${left}px;
+        padding: 0.5rem 1rem;
+        background: var(--accent);
+        color: white;
+        border-radius: 4px;
+        font-size: 14px;
+        white-space: nowrap;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        z-index: 1000;
+        animation: fadeIn 0.2s ease-in;
+    `;
+
+    // Append to body (ignores all container boundaries)
+    document.body.appendChild(notification);
+
+    setTimeout(() => {
+        notification.style.animation = 'fadeOut 0.2s ease-out';
+        setTimeout(() => notification.remove(), 200);
+    }, 2000);
+}
+
+/**
+ * Crop a captured tab frame down to the app-container, bottom-clipped to
+ * the last visible card (the app has no footer). The frame spans the
+ * viewport, so CSS px are mapped to frame px by the capture scale.
+ * @param {HTMLCanvasElement} frame - Full captured frame
+ * @returns {HTMLCanvasElement} Cropped canvas (or the frame if cropping fails)
+ */
+function cropToAppContainer(frame) {
+    const app = document.querySelector('.app-container');
+    if (!app) return frame;
+    const rect = app.getBoundingClientRect();
+
+    const scaleX = frame.width / window.innerWidth;
+    const scaleY = frame.height / window.innerHeight;
+
+    let bottom = rect.top;
+    for (const el of app.querySelectorAll('.chart-card, .kb-card, .kb-dir-card')) {
+        if (!el.offsetParent) continue; // hidden tab
+        bottom = Math.max(bottom, el.getBoundingClientRect().bottom);
+    }
+    if (bottom <= rect.top) bottom = rect.bottom; // no cards: full container
+    bottom = Math.min(bottom, rect.bottom, window.innerHeight);
+
+    const x = Math.max(rect.left, 0) * scaleX;
+    const y = Math.max(rect.top, 0) * scaleY;
+    const w = Math.min(rect.right, window.innerWidth) * scaleX - x;
+    const h = bottom * scaleY - y;
+    if (w <= 0 || h <= 0) return frame;
+
+    const out = document.createElement('canvas');
+    out.width = Math.round(w);
+    out.height = Math.round(h);
+    out.getContext('2d').drawImage(frame, x, y, w, h, 0, 0, w, h);
+    return out;
+}
+
+/**
  * Get lifecycle function by name
  * @param {string} name - Function name
  * @returns {Promise<Function|null>}
@@ -600,68 +691,7 @@ export const ACTION_HANDLERS = {
         }
 
         if (copySuccess) {
-            // Create notification with viewport-aware positioning
-            const notification = document.createElement('div');
-            notification.textContent = (meta && meta.label) || 'Copied to clipboard.';
-            notification.className = 'copy-notification';
-
-            // Get button position
-            const buttonRect = meta.button.getBoundingClientRect();
-            const viewportWidth = window.innerWidth;
-            const viewportHeight = window.innerHeight;
-
-            // Notification dimensions (estimate before rendering)
-            const notificationWidth = 240; // approximate width
-            const notificationHeight = 40; // approximate height
-
-            // Calculate position: try to place near button
-            let top = buttonRect.top + (buttonRect.height / 2) - (notificationHeight / 2);
-            let left = buttonRect.left - notificationWidth - 16; // 16px gap
-
-            // Adjust if would overflow left
-            if (left < 16) {
-                left = buttonRect.right + 16; // Place on right instead
-            }
-
-            // Adjust if would overflow right
-            if (left + notificationWidth > viewportWidth - 16) {
-                left = viewportWidth - notificationWidth - 16;
-            }
-
-            // Adjust if would overflow top
-            if (top < 16) {
-                top = 16;
-            }
-
-            // Adjust if would overflow bottom
-            if (top + notificationHeight > viewportHeight - 16) {
-                top = viewportHeight - notificationHeight - 16;
-            }
-
-            // Apply positioning
-            notification.style.cssText = `
-                position: fixed;
-                top: ${top}px;
-                left: ${left}px;
-                padding: 0.5rem 1rem;
-                background: var(--accent);
-                color: white;
-                border-radius: 4px;
-                font-size: 14px;
-                white-space: nowrap;
-                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-                z-index: 1000;
-                animation: fadeIn 0.2s ease-in;
-            `;
-
-            // Append to body (ignores all container boundaries)
-            document.body.appendChild(notification);
-
-            // Remove after 2 seconds
-            setTimeout(() => {
-                notification.style.animation = 'fadeOut 0.2s ease-out';
-                setTimeout(() => notification.remove(), 200);
-            }, 2000);
+            showActionNotification(meta.button, (meta && meta.label) || 'Copied to clipboard.');
         } else {
             // Both methods failed - show modal with selectable text
             const modal = document.createElement('div');
@@ -709,6 +739,69 @@ export const ACTION_HANDLERS = {
             modal.addEventListener('click', (e) => {
                 if (e.target === modal) closeModal();
             });
+        }
+    },
+
+    /**
+     * Screenshot the app via the native screen-capture API (current tab),
+     * cropped to the app-container, and copy the PNG to the clipboard.
+     */
+    TAKE_SCREENSHOT: async (_payload, meta) => {
+        let stream;
+        try {
+            stream = await navigator.mediaDevices.getDisplayMedia({
+                // Tab capture only: window/screen surfaces include browser
+                // chrome (URL bar etc), which we never want in a shot.
+                video: { displaySurface: 'browser' },
+                preferCurrentTab: true,
+                selfBrowserSurface: 'include',
+                monitorTypeSurfaces: 'exclude',
+                audio: false
+            });
+
+            // The picker can't be forced; if the user shared a window or
+            // screen anyway, bail rather than capture the URL bar.
+            const surface = stream.getVideoTracks()[0].getSettings().displaySurface;
+            if (surface && surface !== 'browser') {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+                showActionNotification(meta.button, 'Share this tab (not a window) to screenshot.');
+                return;
+            }
+
+            const video = document.createElement('video');
+            video.srcObject = stream;
+            await video.play();
+            // The first frames can be blank; wait for a decoded one.
+            if (video.requestVideoFrameCallback) {
+                await new Promise(r => video.requestVideoFrameCallback(r));
+            }
+
+            const frame = document.createElement('canvas');
+            frame.width = video.videoWidth;
+            frame.height = video.videoHeight;
+            frame.getContext('2d').drawImage(video, 0, 0);
+
+            // Stop tracks promptly so the recording indicator turns off.
+            stream.getTracks().forEach(track => track.stop());
+            stream = null;
+
+            const crop = cropToAppContainer(frame);
+            const blob = await new Promise(r => crop.toBlob(r, 'image/png'));
+
+            // Clipboard only - never auto-download on top of a copy.
+            try {
+                await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+                showActionNotification(meta.button, 'Copied screenshot to clipboard.');
+            } catch (err) {
+                console.warn('[Screenshot] Clipboard write failed:', err);
+                showActionNotification(meta.button, 'Screenshot copy failed - check clipboard permissions.');
+            }
+        } catch (error) {
+            // User dismissed the share prompt, or capture unsupported.
+            console.error('[Screenshot] Capture failed or denied:', error);
+        } finally {
+            if (stream) stream.getTracks().forEach(track => track.stop());
         }
     },
 
