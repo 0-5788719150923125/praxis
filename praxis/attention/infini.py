@@ -78,8 +78,8 @@ class InfiniAttention(CausalAttention):
     learned gate blends memory retrieval with local attention output.
     """
 
-    def __init__(self, config) -> None:
-        super().__init__(config)
+    def __init__(self, config, **kwargs) -> None:
+        super().__init__(config, **kwargs)
 
         # Segment size for chunked processing — repurpose window_size,
         # then clear it so the parent uses simple causal masking within

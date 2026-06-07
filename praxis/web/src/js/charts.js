@@ -1477,12 +1477,21 @@ export function applyDeckFocus(deckOrId) {
 
 function slideTo(deck, target) {
     deck._posFrom = deck._pos;
-    deck._posTargetRaw = target;                   // unwrapped; wrap only on read/settle
-    deck._posDist = target - deck._pos;
+    const n = deck._deck.count;
+    // Shortest signed path on the loop. _pos is wrapped to [0, n) but targets are
+    // computed in an unwrapped frame (e.g. seamBase - 1 = -1 while _pos wrapped to
+    // n - 0.3), so the raw difference can span nearly the whole stack - the slide
+    // then "flings" a full wraparound to land one slot away. Normalize first.
+    let dist = target - deck._pos;
+    if (n > 1) {
+        dist = ((dist % n) + n) % n;
+        if (dist > n / 2) dist -= n;
+    }
+    deck._posDist = dist;
+    deck._posTargetRaw = deck._pos + dist;         // unwrapped; wrap only on read/settle
     deck._cycleDir = deck._posDist >= 0 ? 1 : -1;  // seat entering cards on the right edge
     // Reset the entering card's scroll up front (only when actually changing cards) so it
     // arrives at the edge we came from, not its stale position - matters for short loops.
-    const n = deck._deck.count;
     const fromSlot = ((Math.round(deck._pos) % n) + n) % n;
     const toSlot = ((Math.round(target) % n) + n) % n;
     if (toSlot !== fromSlot) seatTarget(deck, target, deck._cycleDir);

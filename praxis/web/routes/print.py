@@ -16,6 +16,7 @@ from flask import Blueprint, current_app, jsonify, request
 
 from praxis.data.config import SYSTEM_PROMPT, sample_developer_prompt
 from praxis.policies.engagement_channel import LIVE_ENGAGEMENT, LIVE_JOKES
+from praxis.policies.loop_modes import get_loop_mode
 
 from ..utils import generate_from_messages
 
@@ -26,6 +27,10 @@ api_logger = logging.getLogger("praxis.web")
 # question is presented at a time; answering it (or asking again) replaces it.
 _lock = threading.Lock()
 _pending: dict = {}
+
+# Single-slot pending loop section: {id, text, predicted, mode}. Scoring it (or
+# generating again) replaces it.
+_loop_pending: dict = {}
 
 
 def _tokens(text: str):
@@ -44,8 +49,12 @@ def _get_generator():
 @print_bp.route("/api/print/ask", methods=["POST"])
 def print_ask():
     """Ask the model to lead with a question; stash its predicted answer and
-    expose the question. Idempotent while one is already pending."""
+    expose the question. Idempotent while one is already pending, unless the
+    caller sends ``{"reroll": true}`` to discard it and generate a fresh one."""
+    reroll = bool((request.get_json(silent=True) or {}).get("reroll"))
     with _lock:
+        if reroll:
+            _pending.clear()
         if _pending:
             return jsonify(
                 {
@@ -163,12 +172,91 @@ def print_energy():
     return jsonify(LIVE_ENGAGEMENT.snapshot())
 
 
+def _resolve_loop_mode():
+    """The active loop query mode: explicit app config, else the RL policy's
+    ``loop_mode`` attribute (found on the live model, like the drain callback
+    does), else the registry default."""
+    cfg = current_app.config
+    name = cfg.get("loop_mode")
+    if not name:
+        model = getattr(_get_generator(), "model", None)
+        model = getattr(model, "_orig_mod", model)  # unwrap torch.compile
+        for policy in getattr(model, "recall_policies", {}).values() if model is not None else []:
+            name = getattr(policy, "loop_mode", None)
+            if name:
+                break
+    return get_loop_mode(name)
+
+
+@print_bp.route("/api/loop/generate", methods=["POST"])
+def loop_generate():
+    """Run one looped task through the active loop mode: build the prompt,
+    generate (short, time-capped), parse off any self-predicted score, and stash
+    the section for scoring. Never 500s - baby models produce gibberish or
+    nothing; an empty generation returns text "" for the UI to caption."""
+    data = request.get_json(silent=True) or {}
+    task = (data.get("task") or "joke").strip() or "joke"
+    mode = _resolve_loop_mode()
+
+    generator = _get_generator()
+    tokenizer = current_app.config.get("tokenizer")
+    if generator is None or tokenizer is None:
+        return jsonify(
+            {"status": "ok", "available": False, "reason": "generator not ready"}
+        )
+
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {
+            "role": "developer",
+            "content": sample_developer_prompt("engage_conversation"),
+        },
+        {"role": "user", "content": mode.task_prompt(task)},
+    ]
+    try:
+        reply = generate_from_messages(
+            messages=messages,
+            generator=generator,
+            tokenizer=tokenizer,
+            max_new_tokens=48,
+            temperature=0.7,
+            repetition_penalty=1.15,
+            do_sample=True,
+            timeout=25.0,
+        )
+    except Exception as e:
+        api_logger.error(f"[loop] generation failed: {e}")
+        reply = None
+
+    text, predicted = mode.parse(reply or "")
+    rid = str(uuid.uuid4())
+    with _lock:
+        _loop_pending.clear()
+        _loop_pending.update(
+            {"id": rid, "text": text, "predicted": predicted, "mode": mode.name}
+        )
+    return jsonify(
+        {
+            "status": "ok",
+            "available": True,
+            "id": rid,
+            "text": text,
+            "predicted": predicted,
+            "mode": mode.name,
+        }
+    )
+
+
 @print_bp.route("/api/loop/approve", methods=["POST"])
 def loop_approve():
-    """Record a human score for a looped output - the live joke reward. `score` is
-    a signed -1..1 want->need judgement (or `approve` bool shorthand). The model
-    seeks our approval. The score is the learning signal; (score+1)/2 drives the
-    homeostatic energy."""
+    """Record a human score for a looped output - the live joke reward. `score`
+    is a signed -1..1 want->need judgement (or `approve` bool shorthand). The
+    active loop mode converts (score, stashed prediction) into the channel's
+    (activation, reward): in calibration mode the correction magnitude is the
+    signal (less correction = more energy); approval mode takes the score at
+    face value. An `id` ties the score to a stashed /api/loop/generate section;
+    without one (or unmatched) there is no prediction and scoring degrades to
+    approval semantics."""
     data = request.get_json() or {}
     score = data.get("score")
     if score is None:
@@ -177,8 +265,24 @@ def loop_approve():
         score = max(-1.0, min(1.0, float(score)))
     except (TypeError, ValueError):
         score = 0.0
-    event = LIVE_JOKES.submit_scalar((score + 1.0) / 2.0, reward=score)
-    return jsonify({"status": "ok", "score": score, **event})
+
+    # NOT cleared on scoring: the slider can be re-adjusted (each change is its
+    # own event, as before); the slot is replaced by the next /api/loop/generate.
+    rid = data.get("id")
+    with _lock:
+        pending = (
+            dict(_loop_pending)
+            if rid and _loop_pending and _loop_pending.get("id") == rid
+            else None
+        )
+
+    mode = get_loop_mode(pending["mode"]) if pending else _resolve_loop_mode()
+    predicted = pending.get("predicted") if pending else None
+    result = mode.score(score, predicted)
+    event = LIVE_JOKES.submit_scalar(
+        result["activation"], reward=result["reward"], extra=result["extra"]
+    )
+    return jsonify({"status": "ok", "score": score, "mode": mode.name, **event})
 
 
 @print_bp.route("/api/loop/energy", methods=["GET"])

@@ -70,6 +70,10 @@ class EngagementLiveRewardCallback(Callback):
                     f"{p}_live_count": float(self._count),
                     f"{p}_live_energy": float(self.channel.snapshot()["energy"]),
                 }
+                # Calibration loop mode: how far the human corrected the model's
+                # self-predicted score (0 = perfectly calibrated).
+                if "correction" in last:
+                    self._metrics[f"{p}_live_correction"] = float(last["correction"])
 
         # Carry the latest live scalars forward each step (interactions are
         # sparse) so the series stays continuous for MetricsLogger.

@@ -6,7 +6,7 @@
 
 import { state, CONSTANTS, DEFAULT_SYSTEM_PROMPT } from './state.js';
 import { render, renderAppStructure, updateInputContainerStyling, renderPrintButton, renderKbResults } from './render.js';
-import { sendMessage, kbSearch, testApiConnection, printAsk, printRespond, printEnergy } from './api.js';
+import { sendMessage, kbSearch, testApiConnection, printAsk, printRespond, printEnergy, loopGenerate } from './api.js';
 import { connectMetricsLive, setupLiveReload, renderCurrentMetrics } from './websocket.js';
 import { kbSlideWindow, setupKbPrefetch } from './kbcache.js';
 import { loadSpec, loadAgents, loadResearchMetrics } from './tabs.js';
@@ -728,7 +728,7 @@ function setupPrintHook() {
  * No-op (just refocus) if a question is already awaiting an answer, so the model
  * is prompted once and only again after the user has responded.
  */
-export async function fetchAndPresentQuestion() {
+export async function fetchAndPresentQuestion(reroll = false) {
     const input = document.getElementById('message-input');
     if (state.print.awaitingResponse) {
         if (input) input.focus();
@@ -738,7 +738,7 @@ export async function fetchAndPresentQuestion() {
     state.isThinking = true;
     render();
     try {
-        const res = await printAsk();
+        const res = await printAsk(reroll);
         if (res && res.available && res.question) {
             state.print.available = true;
             state.print.question = res.question;
@@ -795,12 +795,9 @@ async function handlePrintResponse(content) {
 
 // --- Loop (run one task; re-roll a section on demand, never autonomously) ----
 
-// Short, time-capped generation so an untrained model doesn't leave "thinking"
-// spinning. Reroll is always manual (a section's reroll button) - no interval.
-const LOOP_GEN = { maxNewTokens: 48, timeout: 25 };
-
-// Map the short task keyword to the actual prompt. "joke" is the headline task.
-const loopPromptFor = (task) => (task === 'joke' ? 'Tell me a joke.' : task);
+// Generation runs server-side via /api/loop/generate (short, time-capped): the
+// active loop mode owns the prompt and parses off any self-predicted score.
+// Reroll is always manual (a section's reroll button) - no interval.
 
 /** The task text in the input (prefix stripped), or '' while the placeholder shows. */
 function currentInputTask() {
@@ -847,10 +844,11 @@ async function runLoopCycle() {
     state.messages = [{ role: 'user', content: task }];
     render();
 
-    let answer;
+    let answer, loopId = null;
     try {
-        const res = await sendMessage([{ role: 'user', content: loopPromptFor(task) }], LOOP_GEN);
-        answer = (res.response || res.content || '').trim() || '(silence - reroll to try again)';
+        const res = await loopGenerate(task);
+        answer = (res.text || '').trim() || '(silence - reroll to try again)';
+        if (res.available) loopId = res.id;
     } catch (error) {
         answer = '(the model stumbled - reroll to try again)';
     }
@@ -860,10 +858,12 @@ async function runLoopCycle() {
     if (!state.loop.enabled) return;  // disabled mid-generation - drop the result
 
     // The section: this challenge + its output, with a want->need score slider
-    // (the human signal). Even gibberish is scorable; reroll regenerates it.
+    // (the human signal). The slider always starts at 0; any self-predicted
+    // score lives backend-side (loopId ties the score to it on submit). Even
+    // gibberish is scorable; reroll regenerates it.
     state.messages = [
         { role: 'user', content: task },
-        { role: 'assistant', content: answer, jokeScore: true }
+        { role: 'assistant', content: answer, jokeScore: true, loopId }
     ];
     render();
 }

@@ -618,6 +618,21 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
             "is_validation": False,
         },
     },
+    "joke_live_correction": {
+        "description": (
+            "Calibration error of the most recent live loop interaction: |user "
+            "score - model's self-predicted want->need score| (0..2). The "
+            "decisive calibration-mode metric - shrinking = the model is "
+            "learning to predict its own reception."
+        ),
+        "chart": {
+            "title": "Joke Live Correction",
+            "y_label": "correction",
+            "y_scale": "linear",
+            "order": 445,
+            "is_validation": False,
+        },
+    },
     "joke_live_energy": {
         "description": "Homeostatic energy of the live joke-approval channel.",
         "chart": {

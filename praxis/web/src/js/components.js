@@ -416,6 +416,8 @@ export function createMessage({ role, content, caption, jokeScore, score = 0 }, 
 
     // Loop mode: a want->need score slider (the human signal). A continuous -1..1
     // judgement of how much we need what the model produced, not a binary vote.
+    // The want/need framing persists across all loop modes; any self-predicted
+    // score stays backend-side (calibration compares against it on submit).
     const scoreHtml = jokeScore
         ? `<div class="joke-score">
                <span class="joke-score-end">want</span>

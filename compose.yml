@@ -10,8 +10,6 @@ services:
     volumes:
       - .:/workspace:rw
       - venv:/workspace/.venv
-      # Under the host user's HOME (launch sets HOME=/home/dev when it drops to
-      # that user) so the cache stays writable without root.
       - cache:/home/dev/.cache
     ports:
       - "${PRAXIS_PORT:-2100}:${PRAXIS_PORT:-2100}"

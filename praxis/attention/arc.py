@@ -98,8 +98,8 @@ class ArcAttention(InfiniAttention):
         },
     }
 
-    def __init__(self, config, attention_gating: bool = True) -> None:
-        super().__init__(config)
+    def __init__(self, config, attention_gating: bool = True, **kwargs) -> None:
+        super().__init__(config, **kwargs)
 
         self.depth = config.depth
 

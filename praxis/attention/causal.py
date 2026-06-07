@@ -25,7 +25,11 @@ class CausalAttention(nn.Module):
     Supports optional sliding window for efficient long-sequence inference.
     """
 
-    def __init__(self, config) -> None:
+    def __init__(
+        self,
+        config,
+        ghostmin: str = None,
+    ) -> None:
         """
         Initialize CausalAttention module.
 
@@ -45,12 +49,20 @@ class CausalAttention(nn.Module):
         self.dropout_p = config.dropout
         self.causal = config.causal
         self.window_size = getattr(config, "window_size", None)
-        # Ghostmin ablation (next/ghostmin.md): at this recurrent depth step,
-        # withhold the causal tip so the model must lean on delayed context.
-        # None = off. ghostmin_mode picks how: "shift" (uniform K/V delay) or
-        # "warp" (feature-dependent value sink at the tip). Set per experiment.
-        self.ghostmin_step = getattr(config, "ghostmin_step", None)
-        self.ghostmin_mode = getattr(config, "ghostmin_mode", "shift")
+        # Ghostmin ablation (next/ghostmin.md): withhold the causal tip at one
+        # depth step so the model must lean on delayed context. ``ghostmin``
+        # is the mode - None (off), "shift" (uniform K/V delay) or "warp"
+        # (feature-dependent value sink at the tip) - owned by
+        # ATTENTION_REGISTRY profiles (e.g. arc_ghostmin), not config. The
+        # step is a heuristic, not an hparam: the first layer of the last
+        # recurrent pass (depth - num_layers), the latest beat that still
+        # leaves the remaining layers to recorrect.
+        self.ghostmin_mode = ghostmin
+        if ghostmin is None:
+            self.ghostmin_step = None
+        else:
+            layers = getattr(config, "num_layers", None) or config.depth
+            self.ghostmin_step = max(0, config.depth - layers)
 
         # Positional encoding lives entirely in the registry-built module:
         # before_scores mutates Q/K (RoPE/HoPE), build_score_mod returns the

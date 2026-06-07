@@ -49,11 +49,12 @@ class LiveEngagementChannel:
             self._last = event
         return event
 
-    def submit_scalar(self, activation, reward=None) -> dict:
+    def submit_scalar(self, activation, reward=None, extra=None) -> dict:
         """Fold a direct activation in [0,1] into the energy and buffer it, with an
         optional signed ``reward`` (e.g. a -1..1 want->need slider score) recorded
         alongside. ``activation`` drives the homeostatic energy; ``reward`` is the
-        logged learning signal. Like ``submit`` but the score is given outright
+        logged learning signal; ``extra`` (e.g. a calibration correction) is merged
+        into the event for metrics. Like ``submit`` but the score is given outright
         rather than computed from token overlap."""
         q = max(0.0, min(1.0, float(activation)))
         rw = q if reward is None else float(reward)
@@ -64,6 +65,8 @@ class LiveEngagementChannel:
         with self._lock:
             energy = self._energy.update(a)
             event = {"activation": a, "recall": rw, "reward": rw, "energy": energy}
+            if extra:
+                event.update(extra)
             self._buffer.append(event)
             self._count += 1
             self._last = event

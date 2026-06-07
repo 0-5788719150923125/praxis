@@ -16,9 +16,10 @@ from praxis.web.routes import register_routes  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _reset_pending():
-    """The pending slot is process-global; clear it between tests."""
+    """The pending slots are process-global; clear them between tests."""
     with print_route._lock:
         print_route._pending.clear()
+        print_route._loop_pending.clear()
     yield
 
 
@@ -134,8 +135,75 @@ def test_format_joke_quality_filters():
         "user",
         "assistant",
     ]
-    assert good["messages"][-1]["content"] == "knock knock"
+    # The assistant turn ends with the normalized want->need score on its own
+    # line - the dense grounding for the calibration loop mode.
+    assert good["messages"][-1]["content"] == "knock knock\n+0.5"
     # Below-median (disliked) jokes are skipped (empty -> sampler retries).
     assert (
         format_joke({"jokeText": "bad", "rating": -2.0}, keys, None)["messages"] == []
     )
+
+
+class TestLoopModes:
+    """The loop-mode registry: parse + score contracts."""
+
+    def test_registry_and_default(self):
+        from praxis.policies.loop_modes import LOOP_MODE_REGISTRY, get_loop_mode
+
+        assert set(LOOP_MODE_REGISTRY) == {"calibration", "approval"}
+        assert get_loop_mode().name == "calibration"
+        assert get_loop_mode("approval").name == "approval"
+        assert get_loop_mode("nonsense").name == "calibration"  # safe fallback
+
+    def test_calibration_parse(self):
+        from praxis.policies.loop_modes import get_loop_mode
+
+        m = get_loop_mode("calibration")
+        assert m.parse("A pun!\n+0.6") == ("A pun!", 0.6)
+        # No trailing score line -> the whole reply is content.
+        assert m.parse("just a joke") == ("just a joke", None)
+        # A bare number far outside the slider range is content (e.g. a year),
+        # not a wildly-clamped prediction.
+        assert m.parse("In the year\n1942") == ("In the year\n1942", None)
+
+    def test_calibration_score_rewards_small_corrections(self):
+        from praxis.policies.loop_modes import get_loop_mode
+
+        m = get_loop_mode("calibration")
+        perfect = m.score(0.6, 0.6)
+        wrong = m.score(-0.4, 0.6)
+        assert perfect["activation"] == 1.0
+        assert perfect["extra"]["correction"] == 0.0
+        assert wrong["activation"] == 0.5  # 1 - |corr|/2 = 1 - 0.5
+        assert wrong["reward"] == -0.4  # valence stays the user's signed score
+        # No parseable prediction -> degrade to approval semantics.
+        assert m.score(1.0, None)["activation"] == 1.0
+        assert m.score(1.0, None)["extra"] == {}
+
+
+def test_loop_generate_then_calibrated_approve():
+    from praxis.policies.engagement_channel import LIVE_JOKES
+
+    LIVE_JOKES.drain()
+    c = _client(reply="[BOS]assistant\nA pun!\n+0.6[SEP]")
+    gen = c.post("/api/loop/generate", json={"task": "joke"}).get_json()
+    assert gen["available"] is True
+    assert gen["mode"] == "calibration"
+    assert gen["text"] == "A pun!"  # prediction parsed off the display text
+    assert gen["predicted"] == pytest.approx(0.6)
+
+    # Confirming the model's guess = zero correction = full activation.
+    ok = c.post(
+        "/api/loop/approve", json={"id": gen["id"], "score": 0.6}
+    ).get_json()
+    assert ok["correction"] == pytest.approx(0.0)
+    assert ok["activation"] == 1.0
+
+    # A large correction shrinks the activation; valence keeps the user's sign.
+    bad = c.post(
+        "/api/loop/approve", json={"id": gen["id"], "score": -0.4}
+    ).get_json()
+    assert bad["correction"] == pytest.approx(1.0)
+    assert bad["reward"] == pytest.approx(-0.4)
+    assert bad["activation"] < ok["activation"]
+    assert len(LIVE_JOKES.drain()) == 2

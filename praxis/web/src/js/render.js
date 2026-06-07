@@ -193,9 +193,12 @@ function buildHarmonicIcon() {
     };
     const frames = [0, 0.33, 0.66].map(state);
     const values = [...frames, frames[0]].join(';');
+    // The shapes stay white; the icon's BACKGROUND is the gauge - green filling
+    // from the bottom to the energy fraction, gray above (CSS gradient driven by
+    // the --energy custom property, set in renderPrintButton).
     return `
 <svg class="harmonic-icon" viewBox="0 0 24 24" aria-hidden="true">
-  <path fill="currentColor" fill-rule="evenodd" d="${frames[0]}">
+  <path fill="#fff" fill-rule="evenodd" d="${frames[0]}">
     <animate attributeName="d" dur="7s" repeatCount="indefinite" calcMode="spline"
       keyTimes="0;0.33;0.66;1"
       keySplines="0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1" values="${values}"/>
@@ -212,16 +215,15 @@ export function renderPrintButton() {
     const live = snap && snap.count > 0;
     badge.hidden = !live;
     if (!live) return;
-    // Set the (animating) icon once, then only update the value text - so re-renders
-    // don't restart the SMIL warp.
-    let value = badge.querySelector('.badge-value');
-    if (!value) {
-        // The chip (icon + value) is the visible, content-width element; the
-        // badge itself is just a positioning wrapper (full-width line on mobile).
-        badge.innerHTML = `<span class="badge-chip">${HARMONIC_ICON}<span class="badge-value"></span></span>`;
-        value = badge.querySelector('.badge-value');
+    // Set the (animating) icon once, then only move the gauge split - so
+    // re-renders don't restart the SMIL warp. No numeric readout: the icon's
+    // background IS the gauge (green fills from the bottom; gray = depleted).
+    if (!badge.querySelector('.harmonic-icon')) {
+        badge.innerHTML = `<span class="badge-chip">${HARMONIC_ICON}</span>`;
     }
-    value.textContent = Number(snap.energy).toFixed(2);
+    const e = Math.max(0, Math.min(1, Number(snap.energy) || 0));
+    badge.style.setProperty('--energy', e.toFixed(3));
+    badge.title = `Live engagement energy: ${Math.round(e * 100)}%`;
 }
 
 /**

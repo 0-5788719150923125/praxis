@@ -87,11 +87,11 @@ export async function kbFetchItem(id) {
  * Returns {available, id, question}. available=false until the model produces one.
  * @returns {Promise<Object>}
  */
-export async function printAsk() {
+export async function printAsk(reroll = false) {
     const response = await fetch(`${state.settings.apiUrl}/api/print/ask`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
+        body: JSON.stringify(reroll ? { reroll: true } : {})
     });
     if (!response.ok) throw new Error(`Print ask error: ${response.status}`);
     return response.json();
@@ -127,16 +127,35 @@ export async function printEnergy() {
 }
 
 /**
- * Loop: record a human approval (1.0) or rejection (0.0) of a looped joke - the
- * live joke reward fed to training.
- * @param {number} score - 0..1
- * @returns {Promise<Object>} {recall, energy, ...}
+ * Loop: run one looped task through the active loop mode. The backend builds
+ * the prompt, generates, and parses off any self-predicted want->need score.
+ * @param {string} task - task keyword or literal prompt
+ * @returns {Promise<Object>} {available, id, text, predicted, mode}
  */
-export async function loopApprove(score) {
+export async function loopGenerate(task) {
+    const response = await fetch(`${state.settings.apiUrl}/api/loop/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task })
+    });
+    if (!response.ok) throw new Error(`Loop generate error: ${response.status}`);
+    return response.json();
+}
+
+/**
+ * Loop: record the human's signed want->need score (-1..1) for a looped
+ * section - the live joke reward fed to training. `id` ties the score to the
+ * generated section so calibration mode can compare against the model's
+ * self-prediction.
+ * @param {number} score - -1..1
+ * @param {string|null} id - section id from loopGenerate
+ * @returns {Promise<Object>} {activation, reward, energy, correction?, ...}
+ */
+export async function loopApprove(score, id = null) {
     const response = await fetch(`${state.settings.apiUrl}/api/loop/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ score })
+        body: JSON.stringify(id ? { score, id } : { score })
     });
     if (!response.ok) throw new Error(`Loop approve error: ${response.status}`);
     return response.json();

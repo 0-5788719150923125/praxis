@@ -77,6 +77,17 @@ export const ACTION_HANDLERS = {
             rerollLoopNow();
             return;
         }
+        // In Print mode, reroll discards the pending question and asks a fresh
+        // one (there's no user turn to resend - the model leads).
+        if (state.conversationMode === 'print' && state.print.awaitingResponse) {
+            const last = state.messages[state.messages.length - 1];
+            if (last && last.role === 'assistant') state.messages.pop();
+            state.print.awaitingResponse = false;
+            state.print.question = null;
+            state.print.id = null;
+            await fetchAndPresentQuestion(true);   // discard server-side pending too
+            return;
+        }
         // Find last user message
         let lastUserMessage = null;
         for (let i = state.messages.length - 1; i >= 0; i--) {
@@ -419,11 +430,17 @@ export const ACTION_HANDLERS = {
         const msg = state.messages[state.messages.length - 1];
         if (!msg || msg.role !== 'assistant') return;
         msg.score = score;  // persist so the slider re-renders where it was left
+        const s = Number(score).toFixed(2);
         try {
-            const r = await loopApprove(score);
-            msg.caption = `scored ${Number(score).toFixed(2)} (want↔need) · energy ${Number(r.energy).toFixed(3)}`;
+            const r = await loopApprove(score, msg.loopId);
+            // Calibration mode appends the correction magnitude (the learning
+            // signal); the want<->need framing is constant across modes.
+            const corr = (r.correction != null)
+                ? ` · off by ${Number(r.correction).toFixed(2)}`
+                : '';
+            msg.caption = `scored ${s} (want↔need)${corr} · energy ${Number(r.energy).toFixed(3)}`;
         } catch (e) {
-            msg.caption = `scored ${Number(score).toFixed(2)} (want↔need)`;
+            msg.caption = `scored ${s} (want↔need)`;
         }
         render();
     },

@@ -82,9 +82,9 @@
    lights up via .active while a loop is running; otherwise no conditional styling
    here by design. */
 
-/* Live engagement-energy badge. The badge is just a positioning wrapper (pushed
-   to the toolbar's right edge on desktop, a full-width line on mobile); the
-   visible, content-width chip lives in .badge-chip. */
+/* Live engagement-energy badge. The badge is just a positioning wrapper pushed
+   to the toolbar's right edge (all viewports); the visible, content-width chip
+   lives in .badge-chip. */
 .print-energy-badge {
     margin-left: auto;
     align-self: center;
@@ -95,9 +95,9 @@
     display: none;
 }
 
-/* The accent-tinted chip - clamps to its content width. The harmonic glyph
-   inherits this color (currentColor) so it tracks the theme hue (green, or blue
-   in logs mode). */
+/* The chip - clamps to its content width. Icon-only: white shapes on the chip's
+   own gauge background (dark green tint filling from the bottom to the energy
+   fraction, muted gray above). */
 .badge-chip {
     display: inline-flex;
     align-items: center;
@@ -108,11 +108,19 @@
     color: var(--accent);
     padding: 0.25rem 0.5rem;
     border-radius: var(--radius-small);
-    background: hsl(var(--accent-hue) var(--accent-sat) var(--accent-lum) / 0.12);
+    /* The chip background IS the energy gauge: a hard horizontal split, muted
+       gray on top, the usual dark accent tint filling from the bottom up to the
+       energy fraction (--energy in [0,1], set by renderPrintButton). Same
+       subdued alpha family as the old solid tint. */
+    background: linear-gradient(
+        to top,
+        hsl(var(--accent-hue) var(--accent-sat) var(--accent-lum) / 0.35) calc(var(--energy, 0) * 100%),
+        hsl(0 0% 55% / 0.15) calc(var(--energy, 0) * 100%)
+    );
 }
 
 .badge-chip .harmonic-icon {
-    height: 1.7em;        /* square glyph, clearly legible next to the value */
+    height: 1.7em;        /* square glyph, transparent - the chip shows through */
     width: 1.7em;
     flex: 0 0 auto;
 }

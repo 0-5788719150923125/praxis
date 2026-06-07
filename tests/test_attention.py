@@ -105,8 +105,10 @@ def module_setup(request, config):
         tuple: (module instance, config)
     """
     module_class, attention_config = request.param
+    # Registry entries may be partials (profiles); inspect the underlying class.
+    base_class = getattr(module_class, "func", module_class)
 
-    if issubclass(module_class, CausalAttention):
+    if issubclass(base_class, CausalAttention):
         if attention_config.encoding == "nope":
             pytest.skip(
                 "CausalAttention requires a positional encoding (alibi or rope)"

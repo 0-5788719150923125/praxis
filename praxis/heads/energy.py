@@ -209,7 +209,10 @@ class LinearPrior(nn.Module):
                     self.ema_at_apply.item()
                 ) * PRIOR_RESOLVE_TOLERANCE
                 if worse:
-                    self.W.copy_(self.W_prev)
+                    # REPLACE the buffer, never mutate in place: this runs
+                    # after the loss is computed, so the current W tensor is
+                    # saved inside the live autograd graph for backward.
+                    self.W = self.W_prev.clone()
                     self.resolves_rejected.add_(1.0)
                 else:
                     self.resolves_kept.add_(1.0)
@@ -223,9 +226,12 @@ class LinearPrior(nn.Module):
         if cond_gap - float(self.gap_anchor.item()) < PRIOR_RESOLVE_GAP_DELTA:
             return
         self.W_prev.copy_(self.W)
-        self.W.mul_(1.0 - PRIOR_RESOLVE_BLEND).add_(
-            self._ridge(), alpha=PRIOR_RESOLVE_BLEND
-        )
+        # Out-of-place blend + buffer REPLACEMENT (see above): the old W must
+        # survive untouched until the in-flight backward has consumed it.
+        self.W = (
+            (1.0 - PRIOR_RESOLVE_BLEND) * self.W
+            + PRIOR_RESOLVE_BLEND * self._ridge()
+        ).detach()
         self.gap_anchor.fill_(cond_gap)
         self.ema_at_apply.copy_(self.loss_ema)
         self.pending.fill_(True)

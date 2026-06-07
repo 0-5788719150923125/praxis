@@ -199,4 +199,8 @@ class JokePolicy(EngagementPolicy):
     "the model seeks our approval"."""
 
     prefix = "joke"
+    # Loop UI query mode for this policy (see praxis.policies.loop_modes): the
+    # model self-predicts its want->need score and the human's correction is
+    # the live signal.
+    loop_mode = "calibration"
     task_types = (TaskType.JOKE,)

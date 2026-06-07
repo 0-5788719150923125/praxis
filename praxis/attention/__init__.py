@@ -1,4 +1,5 @@
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from functools import partial
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 
 import torch
 from torch import nn
@@ -12,7 +13,7 @@ from praxis.attention.pk_attention import ProductKeyAttention
 from praxis.attention.syntaxes import SyntaxesAttention
 
 # Registry of available attention mechanisms
-ATTENTION_REGISTRY: Dict[str, Type[nn.Module]] = {
+ATTENTION_REGISTRY: Dict[str, Callable[..., nn.Module]] = {
     "modular": ModularAttention,
     "vanilla": VanillaMHA,
     "pk": ProductKeyAttention,
@@ -20,4 +21,10 @@ ATTENTION_REGISTRY: Dict[str, Type[nn.Module]] = {
     "causal": CausalAttention,
     "infini": InfiniAttention,
     "arc": ArcAttention,
+    # Arc + the ghostmin ablation (next/ghostmin.md): withhold the causal tip
+    # via the "warp" value sink at the first layer of the last recurrent pass
+    # (heuristic: depth - num_layers; e.g. 2 layers x 4 loops -> step 6), so
+    # the model leans on delayed context for that beat and the remaining
+    # layers recorrect.
+    "arc_ghostmin": partial(ArcAttention, ghostmin="warp"),
 }

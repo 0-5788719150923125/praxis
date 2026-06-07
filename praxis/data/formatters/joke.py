@@ -39,6 +39,13 @@ def format_joke(
     if not joke or rating <= JOKE_RATING_THRESHOLD:
         return {"messages": []}  # skip - sampler draws another
 
+    # Self-prediction grounding for the calibration loop mode: the assistant
+    # turn ends with the joke's want->need score in [-1, 1] on its own line, so
+    # the model learns to append its predicted reception (parsed off and
+    # corrected by the human at inference - see praxis.policies.loop_modes).
+    # The quality filter biases these dense targets positive; the live human
+    # correction is what grounds the negative end of the spectrum.
+    norm = max(-1.0, min(1.0, rating / 10.0))
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {
@@ -46,7 +53,7 @@ def format_joke(
             "content": sample_developer_prompt("engage_conversation"),
         },
         {"role": "user", "content": random.choice(_ASK_TEMPLATES)},
-        {"role": "assistant", "content": joke},
+        {"role": "assistant", "content": f"{joke}\n{norm:+.1f}"},
     ]
     return {
         "messages": messages,

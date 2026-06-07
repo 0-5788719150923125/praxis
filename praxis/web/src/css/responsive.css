@@ -4,20 +4,8 @@
         overflow-x: hidden;
     }
 
-    /* The energy badge would push the toolbar past the right edge on narrow
-       screens. Let the toolbar wrap and lift the badge onto its own line ABOVE
-       the REPL buttons (order:-1 + full-width line), where it reads as a small
-       status strip rather than getting wedged in beside them. */
-    .conversation-toolbar {
-        flex-wrap: wrap;
-    }
-
-    .print-energy-badge {
-        order: -1;
-        margin-left: 0;
-        width: 100%;             /* full-width line forces it above the buttons */
-        justify-content: flex-start;  /* but the chip inside stays content-width, left */
-    }
+    /* The energy badge is icon-only, so it fits in the toolbar row; the desktop
+       margin-left:auto keeps it pushed to the right edge beside the buttons. */
 
     .app-container {
         padding: 0 var(--tab-padding-mobile);
