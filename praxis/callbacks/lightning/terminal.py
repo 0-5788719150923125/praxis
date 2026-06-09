@@ -369,30 +369,35 @@ class TerminalInterface(Callback):
         data,
     ):
         """Update dashboard with current metrics."""
+        # Snapshot the reference: shutdown (ctrl+c) nulls self.dashboard from
+        # another thread, which can land between the caller's guard and these
+        # calls. Work off the local so the method can't dereference None.
+        dashboard = self.dashboard
+        if dashboard is None:
+            return
+
         batch = trainer.callback_metrics.get("batch", 0)
         step = trainer.callback_metrics.get("step", 0)
         rate = trainer.callback_metrics.get("avg_step_time", 0)
         tokens = trainer.callback_metrics.get("num_tokens", 0)
-        self.dashboard.update_batch(batch.item() if hasattr(batch, "item") else batch)
-        self.dashboard.update_step(step.item() if hasattr(step, "item") else step)
-        self.dashboard.update_rate(rate.item() if hasattr(rate, "item") else rate)
-        self.dashboard.update_tokens(
-            tokens.item() if hasattr(tokens, "item") else tokens
-        )
-        self.dashboard.update_loss(self.ema_loss)
-        self.dashboard.update_layer_count(local_layers, remote_layers)
+        dashboard.update_batch(batch.item() if hasattr(batch, "item") else batch)
+        dashboard.update_step(step.item() if hasattr(step, "item") else step)
+        dashboard.update_rate(rate.item() if hasattr(rate, "item") else rate)
+        dashboard.update_tokens(tokens.item() if hasattr(tokens, "item") else tokens)
+        dashboard.update_loss(self.ema_loss)
+        dashboard.update_layer_count(local_layers, remote_layers)
 
         val_loss = trainer.callback_metrics.get("val_loss", None)
         if val_loss is not None:
-            self.dashboard.update_val(
+            dashboard.update_val(
                 val_loss.item() if hasattr(val_loss, "item") else val_loss
             )
         if "fitness" in data:
-            self.dashboard.update_fitness(data["fitness"])
+            dashboard.update_fitness(data["fitness"])
         if "memory_churn" in data:
-            self.dashboard.update_memory(data["memory_churn"])
+            dashboard.update_memory(data["memory_churn"])
         if "acc0" in data:
-            self.dashboard.update_accuracy(data["acc0"], data["acc1"])
+            dashboard.update_accuracy(data["acc0"], data["acc1"])
 
         # Update the info panel with device and memory information
         if self.get_memory_info:
@@ -444,7 +449,7 @@ class TerminalInterface(Callback):
             item for item, condition in [("dev", self.dev)] if condition
         ]
 
-        self.dashboard.update_info(info_dict)
+        dashboard.update_info(info_dict)
 
     def _update_live_metrics(
         self,
