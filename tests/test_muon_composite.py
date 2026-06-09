@@ -175,3 +175,28 @@ def test_composite_runs_under_wrapper_stack_with_rl_hook():
     for _ in range(5):
         _ce_step(model, opt)
     assert all(torch.isfinite(p).all() for p in model.parameters())
+
+
+def test_state_dict_survives_orphaned_state():
+    """An optimizer state key not in any param_group (a param orphaned after its
+    state was created) must not crash checkpointing - torch's state_dict would
+    raise KeyError. The composite prunes it instead."""
+    profile, _ = get_optimizer_profile("Muon")
+    model = TinyLM()
+    opt = _create_muon(model, **profile)
+    for _ in range(3):
+        _ce_step(model, opt)
+
+    # Inject an orphan: state for a tensor that is in no param_group.
+    orphan = torch.randn(4, 4, requires_grad=True)
+    opt.primary.state[orphan] = {"momentum_buffer": torch.zeros(4, 4)}
+    import pytest
+
+    with pytest.raises(KeyError):
+        opt.primary.state_dict()  # confirm the raw failure mode
+
+    sd = opt.state_dict()  # composite prunes the orphan -> no raise
+    assert set(sd) == {"primary", "secondary", "secondary_lr_ratio"}
+    assert orphan not in opt.primary.state  # pruned in place
+    opt2 = _create_muon(TinyLM(), **profile)
+    opt2.load_state_dict(sd)  # and the result loads cleanly

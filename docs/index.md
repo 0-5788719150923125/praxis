@@ -21,7 +21,7 @@ links to a page listing the registered implementations and their source.
 - [Normalization layers](normalization.md) (5) - LayerNorm/RMSNorm variants, including SandwichNorm (required for stable recurrent-depth bias).
 - [Optimizer profiles](optimizers.md) (5) - Named optimizer presets (built on pytorch-optimizer). Selected with ``--optimizer``; default is ``Lion``. Each entry shows its concrete settings (lr, betas, weight decay, ...).
 - [Optimizer wrappers](wrappers.md) (8) - Composable wrappers layered onto the base optimizer with ``--optimizer-wrappers`` (a list, applied innermost-first). The schedule-free family runs without an LR schedule; the others keep it.
-- [Output heads](heads.md) (10) - LM heads (tied/untied, harmonic, crystal) and multi-token-prediction wrappers.
+- [Output heads](heads.md) (11) - LM heads (tied/untied, harmonic, crystal) and multi-token-prediction wrappers.
 - [Positional encoding](encoding.md) (5) - RoPE, ALiBi, NoPE and friends - the rotational / additive position priors injected into attention.
 - [Recurrent cells](recurrent.md) (2) - Minimal gated recurrent cells (GRU, MinGRU). Used by the recurrent block types and as a sequence mixer inside the byte-latent encoder.
 - [Residual connections](residuals.md) (3) - Standard residuals vs. hyper-connections.

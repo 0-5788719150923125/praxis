@@ -56,12 +56,17 @@ class ParallelHead(BaseHead):
     # keeps it under tie_word_embeddings rather than swapping in TiedWeights.
     self_ties = True
 
+    # Floors the log-gap so an exact tie is a bounded (not infinite) penalty and
+    # the gradient stays finite. Fixed, model-agnostic.
+    _REPULSION_EPS = 1e-2
+
     def __init__(
         self,
         config: Any,
         encoder: Optional[nn.Module] = None,
         *,
         branches: List[HeadSpec],
+        gate_repulsion: float = 0.0,
     ) -> None:
         super().__init__(config, encoder)
         if not branches:
@@ -73,6 +78,15 @@ class ParallelHead(BaseHead):
         self.branches = nn.ModuleList(built)
         self._gate_mean: Optional[Tensor] = None
         self._gate_entropy: Optional[float] = None
+        self._gate_min_gap: Optional[float] = None
+        self._gate_repulsion: Optional[Tensor] = None
+        # Level-repulsion strength on the gate weights (0 = off), bound by the
+        # head-registry profile (e.g. prismatic3_repel), not a config flag.
+        # Drives the mean per-branch weights to DISTINCT tiers (e.g. 70/20/10),
+        # penalizing near-ties (70/15/15) like repelling energy levels. NB: with
+        # 2 branches the only tie is 50/50, so repulsion there reduces to
+        # winner-take-all; it's meant for 3+ branches.
+        self._repulsion_lambda = float(gate_repulsion or 0.0)
 
         # Size the gate to the feature dim the branches transform (encoder
         # layout in encoder mode, else config hidden size). When the encoder
@@ -95,8 +109,23 @@ class ParallelHead(BaseHead):
         """Blend per-branch outputs by the per-token softmax gate."""
         w = torch.softmax(gate_logits, dim=-1)  # [..., n]
         self._update_gate_stats(w)
+        if self.training and self._repulsion_lambda > 0.0 and len(self.branches) > 1:
+            self._gate_repulsion = self._level_repulsion(w)
         stacked = torch.stack(outputs, dim=-1)  # [..., d, n]
         return (stacked * w.unsqueeze(-2)).sum(dim=-1)  # [..., d]
+
+    def _level_repulsion(self, w: Tensor) -> Tensor:
+        """Pairwise log-gap repulsion on the mean branch weights (grad-carrying).
+
+        ``-mean_{i<j} log(|m_i - m_j| + eps)`` over the batch-mean weight vector
+        ``m``. Small as the tiers separate, large (bounded by eps) as any two
+        approach equality - so the optimizer is pushed to keep them distinct.
+        """
+        m = w.reshape(-1, w.shape[-1]).mean(dim=0)  # [n], sums to 1
+        diff = (m.unsqueeze(0) - m.unsqueeze(1)).abs()
+        iu = torch.triu_indices(m.numel(), m.numel(), offset=1, device=m.device)
+        gaps = diff[iu[0], iu[1]]
+        return -(gaps + self._REPULSION_EPS).log().mean()
 
     def _update_gate_stats(self, w: Tensor) -> None:
         """Cache cheap gate diagnostics from the latest forward, for logging."""
@@ -105,6 +134,14 @@ class ParallelHead(BaseHead):
             self._gate_mean = flat.mean(dim=0)
             p = flat.clamp_min(1e-9)
             self._gate_entropy = float((-(p * p.log()).sum(dim=-1)).mean().item())
+            # Smallest gap between mean branch weights: -> 0 when two branches
+            # become equally important (the degeneracy the repulsion fights).
+            if self._gate_mean.numel() > 1:
+                d = (self._gate_mean.unsqueeze(0) - self._gate_mean.unsqueeze(1)).abs()
+                iu = torch.triu_indices(
+                    self._gate_mean.numel(), self._gate_mean.numel(), offset=1
+                )
+                self._gate_min_gap = float(d[iu[0], iu[1]].min().item())
 
     def transform(self, hidden_states: Tensor) -> Tensor:
         """The gated mixture of branch transforms - this head's contribution as
@@ -155,6 +192,9 @@ class ParallelHead(BaseHead):
         for i, b in enumerate(self.branches):
             for k, v in b.aux_losses().items():
                 out[f"p{i}_{k}"] = v
+        # Pre-scaled, mirroring crystal's convention; omitted when off.
+        if self._repulsion_lambda > 0.0 and self._gate_repulsion is not None:
+            out["gate_repulsion"] = self._repulsion_lambda * self._gate_repulsion
         return out
 
     def training_metrics(self) -> dict:
@@ -166,6 +206,8 @@ class ParallelHead(BaseHead):
             for i in range(len(self.branches)):
                 out[f"gate_weight_{i}"] = float(self._gate_mean[i].item())
             out["gate_entropy"] = self._gate_entropy
+            if self._gate_min_gap is not None:
+                out["gate_min_gap"] = self._gate_min_gap
         return out
 
     def dashboard_snapshots(self) -> dict:
@@ -239,6 +281,21 @@ class ParallelHead(BaseHead):
                 "y_label": "Entropy (nats)",
                 "group": "parallel_head",
                 "order": 20,
+            },
+            "caller": "ParallelHead",
+        }
+        out["gate_min_gap"] = {
+            "description": (
+                "Smallest gap between any two mean branch weights. Near 0 means "
+                "two branches have become equally important (degenerate tiers) - "
+                "what the gate repulsion (prismatic3_repel) pushes apart. Larger = "
+                "cleanly ranked tiers (e.g. 70/20/10)."
+            ),
+            "chart": {
+                "title": "Parallel Gate Min Gap",
+                "y_label": "Min Weight Gap",
+                "group": "parallel_head",
+                "order": 30,
             },
             "caller": "ParallelHead",
         }

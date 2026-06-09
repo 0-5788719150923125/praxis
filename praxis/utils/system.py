@@ -24,6 +24,13 @@ def configure_multiprocessing():
     """
     import torch.multiprocessing as mp
 
+    # Silence the resource_tracker's "leaked semaphore" warning at shutdown. It
+    # runs in its own process and reads filters from PYTHONWARNINGS at spawn, so
+    # an in-process filter can't reach it; append (don't clobber) an existing var.
+    _filter = "ignore::UserWarning:multiprocessing.resource_tracker"
+    existing = os.environ.get("PYTHONWARNINGS")
+    os.environ["PYTHONWARNINGS"] = f"{existing},{_filter}" if existing else _filter
+
     try:
         mp.set_start_method("spawn", force=True)
     except RuntimeError:

@@ -20,7 +20,27 @@ from __future__ import annotations
 from collections import ChainMap
 from typing import Any, Dict
 
+import torch
 from torch.optim import Optimizer
+
+
+def _prune_orphan_state(opt: Optimizer) -> int:
+    """Drop optimizer state for params no longer in any of ``opt``'s groups.
+
+    torch's ``state_dict`` maps every state key through ``param_groups`` and
+    raises ``KeyError`` on an orphan; such state is dead weight (the optimizer
+    isn't updating that param) so dropping it is safe - and cleaning it in place
+    stops it from re-crashing the next checkpoint. Returns the count pruned.
+    """
+    live = {id(p) for g in opt.param_groups for p in g["params"]}
+    orphans = [
+        k
+        for k in list(opt.state.keys())
+        if isinstance(k, torch.Tensor) and id(k) not in live
+    ]
+    for k in orphans:
+        del opt.state[k]
+    return len(orphans)
 
 
 class CompositeOptimizer(Optimizer):
@@ -76,6 +96,17 @@ class CompositeOptimizer(Optimizer):
         self.param_groups = self.primary.param_groups + self.secondary.param_groups
 
     def state_dict(self) -> Dict[str, Any]:
+        # Guard checkpointing against orphaned state (a param in a sub-optimizer's
+        # state but no longer in its param_groups), which makes torch's
+        # state_dict raise KeyError. Logged so the underlying cause stays visible.
+        for name, sub in (("primary", self.primary), ("secondary", self.secondary)):
+            n = _prune_orphan_state(sub)
+            if n:
+                print(
+                    f"[Optimizer] CompositeOptimizer: pruned {n} orphaned "
+                    f"state entr{'y' if n == 1 else 'ies'} from {name} "
+                    f"({type(sub).__name__}) before checkpoint."
+                )
         return {
             "primary": self.primary.state_dict(),
             "secondary": self.secondary.state_dict(),

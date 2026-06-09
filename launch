@@ -200,12 +200,16 @@ ensure_venv() {
 
 ensure_install() {
     [ -f "$SCRIPT_DIR/pyproject.toml" ] || return
-    if ! python -c "import praxis" 2>/dev/null; then
+    # Require praxis to resolve to THIS repo's source, not merely be importable:
+    # a stale non-editable copy in site-packages imports fine but shadows source
+    # edits, silently running tests/training against old code. (NB: .venv lives
+    # under SCRIPT_DIR, so match the source package dir exactly, not a prefix.)
+    if python -c "import praxis,os,sys; sys.exit(0 if os.path.realpath(os.path.dirname(praxis.__file__))==os.path.realpath('$SCRIPT_DIR/praxis') else 1)" 2>/dev/null; then
+        echo "[ENV] Praxis is installed (editable)."
+    else
         echo "[ENV] Installing Praxis in development mode..."
         pip install -e "$SCRIPT_DIR"
         echo "[ENV] Praxis installation complete"
-    else
-        echo "[ENV] Praxis is installed."
     fi
 }
 

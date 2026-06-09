@@ -37,7 +37,7 @@ source. See [docs/index.md](docs/index.md) for the full map.
 - [Normalization layers](docs/normalization.md) (5)
 - [Optimizer profiles](docs/optimizers.md) (5)
 - [Optimizer wrappers](docs/wrappers.md) (8)
-- [Output heads](docs/heads.md) (10)
+- [Output heads](docs/heads.md) (11)
 - [Positional encoding](docs/encoding.md) (5)
 - [Recurrent cells](docs/recurrent.md) (2)
 - [Residual connections](docs/residuals.md) (3)

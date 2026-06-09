@@ -26,6 +26,16 @@ def _harmonic_crystal(amp_modulation: str) -> list:
     return [_field(amp_modulation), CrystalHead]
 
 
+def _prismatic3_branches() -> list:
+    """The three prismatic3 arms: bias (learned field), variance (input field ->
+    crystal), and a pure variance-only field. Shared by prismatic3 variants."""
+    return [
+        partial(SequentialHead, heads=[_field("learned", build_classifier=True)]),
+        partial(SequentialHead, heads=[_field("input"), CrystalHead]),
+        partial(SequentialHead, heads=[_field("pure", build_classifier=True)]),
+    ]
+
+
 HEAD_REGISTRY = dict(
     forward=ForwardHead,
     tied=TiedWeights,
@@ -56,12 +66,12 @@ HEAD_REGISTRY = dict(
     # spectrum; the conditional delta alone, zero at init) with its own linear
     # readout - the mirror of the bias arm. Variance can arrive in bins the
     # bias arms never occupy; its strand card starts empty and grows pure red.
-    prismatic3=partial(
-        ParallelHead,
-        branches=[
-            partial(SequentialHead, heads=[_field("learned", build_classifier=True)]),
-            partial(SequentialHead, heads=[_field("input"), CrystalHead]),
-            partial(SequentialHead, heads=[_field("pure", build_classifier=True)]),
-        ],
+    prismatic3=partial(ParallelHead, branches=_prismatic3_branches()),
+    # prismatic3 + level-repulsion on the gate: a pairwise log-gap penalty pushes
+    # the three arms' mean weights to DISTINCT tiers (e.g. 70/20/10) and punishes
+    # near-ties (70/15/15) where two arms become equally important. Watch the
+    # "Parallel Gate Min Gap" card. Strength is baked here, not a config flag.
+    prismatic3_repel=partial(
+        ParallelHead, branches=_prismatic3_branches(), gate_repulsion=0.02
     ),
 )
