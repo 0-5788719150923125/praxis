@@ -1,9 +1,24 @@
+"""Praxis model configuration.
+
+`PraxisConfig` is a HuggingFace `PretrainedConfig`: the single object that holds
+every architecture hyperparameter and is what gets serialized to `config.json`.
+"""
+
 from typing import List, Optional, Union
 
 from transformers import PretrainedConfig
 
 
 class PraxisConfig(PretrainedConfig):
+    """All of Praxis's architecture knobs in one HuggingFace config object.
+
+    The string-valued fields (`block_type`, `attention_type`, `encoder_type`,
+    `head_type`, ...) are registry keys: each names an implementation that
+    `modeling.py` looks up in the matching `*_REGISTRY` to build the model, so
+    swapping an architecture is a config change, not a code change. `model_type
+    = "praxis"` registers it with the HF `Auto*` classes.
+    """
+
     model_type = "praxis"
 
     def __init__(
@@ -102,6 +117,10 @@ class PraxisConfig(PretrainedConfig):
         for name, value in declared.items():
             if name not in skip:
                 setattr(self, name, value)
+
+        assert (
+            seed == self.seed
+        ), "the seed attribute is not set to input seed value, likely a bug in the argument copying code"
 
         # Derived / constant attributes that aren't direct argument copies.
         self.depth = depth if depth is not None else num_layers

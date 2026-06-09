@@ -459,9 +459,12 @@ export function createKbResult({ id, type, label, title, uri, origin, summary, s
         .replaceAll('\x02', '</mark>');
     const from = origin ? `<span class="kb-result-origin">${escapeHtml(origin)}</span>` : '';
     const video = (uri || '').match(/youtube\.com\/watch\?v=([\w-]{11})/);
+    // Pages label themselves with their domain, which already shows by the
+    // title (origin) - so the chip uses the generic type instead of repeating it.
+    const chipLabel = type === 'page' ? type : (label || type);
     const chip = `<span class="kb-result-type kb-label-filter" data-kb-type="${escapeHtml(type)}"
-              data-kb-label="${escapeHtml(label || type)}" role="button"
-              title="Add to search">${escapeHtml(label || type)}</span>`;
+              data-kb-label="${escapeHtml(chipLabel)}" role="button"
+              title="Add to search">${escapeHtml(chipLabel)}</span>`;
     const open = `<div class="kb-result${video ? ' has-thumb' : ''}" role="button" tabindex="0"
              data-kb-id="${escapeHtml(id)}" data-kb-type="${escapeHtml(type)}"
              data-kb-uri="${escapeHtml(uri)}" data-kb-title="${escapeHtml(title)}">`;

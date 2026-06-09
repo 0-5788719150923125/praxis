@@ -1,3 +1,11 @@
+"""Praxis models, exposed through HuggingFace's `PreTrainedModel` interface.
+
+Two classes matter to most readers: `PraxisModel` (the backbone that turns input
+ids into hidden states) and `PraxisForCausalLM` (adds the LM head + `.generate()`,
+and is what `AutoModelForCausalLM.from_pretrained(...)` returns). Both assemble
+themselves from the `PraxisConfig` by looking implementations up in the registries.
+"""
+
 import functools
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
@@ -24,6 +32,14 @@ from praxis.utils import create_block_ids
 
 
 class PraxisModel(PreTrainedModel):
+    """The backbone: input ids (or bytes) -> hidden states, no LM head.
+
+    A standard HF `PreTrainedModel`, so it carries the usual `.from_pretrained` /
+    `.save_pretrained` / device + dtype machinery. `__init__` reads the config and
+    builds the optional encoder, embeddings, and decoder stack from the registries;
+    `forward` returns a `PraxisModelOutput`. Use `PraxisForCausalLM` for generation.
+    """
+
     config_class = PraxisConfig
     _supports_cache_class = True
 
@@ -153,6 +169,13 @@ class PraxisModel(PreTrainedModel):
 
 
 class PraxisForCausalLM(PraxisModel, GenerationMixin):
+    """`PraxisModel` plus an LM head and HF `GenerationMixin` (`.generate()`).
+
+    This is the causal-LM entry point - what `AutoModelForCausalLM` loads. It wraps
+    the backbone with an output head (from `HEAD_REGISTRY`); `forward` returns
+    next-token logits and, when `labels` are given, the training loss.
+    """
+
     model_type = "praxis"
 
     def __init__(self, config: PraxisConfig):
@@ -1015,6 +1038,10 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
 @dataclass
 class PraxisModelOutput(BaseModelOutputWithPast):
+    """`forward`'s return type: HF's `BaseModelOutputWithPast` (hidden states +
+    KV cache) extended with Praxis-specific extras - byte-latent encoder state,
+    patch metadata, and any auxiliary `losses` the modules emit."""
+
     current_state: Optional[torch.LongTensor] = None
     h_encoder: Optional[torch.FloatTensor] = None
     patch_lengths: Optional[torch.LongTensor] = None

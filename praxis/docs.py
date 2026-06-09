@@ -363,10 +363,10 @@ def regenerate_docs(repo_root: Optional[Path] = None) -> None:
 
 
 def _sort_roadmap(repo_root: Path) -> None:
-    """Stable-partition next/roadmap.md so open items sit above closed ones.
-
-    Order within each group is preserved exactly - we only move completed `[x]`
-    items to the bottom, never reorder them. Idempotent."""
+    """Partition next/roadmap.md so open items sit above closed ones, then
+    sort each group by description length: open ascending (shortest first),
+    closed descending (longest first). Stable, so equal-length items keep
+    their original order. Idempotent."""
     path = repo_root / "next" / "roadmap.md"
     if not path.exists():
         return
@@ -380,8 +380,10 @@ def _sort_roadmap(repo_root: Path) -> None:
         body[s : (starts[i + 1] if i + 1 < len(starts) else len(body))].rstrip("\n")
         for i, s in enumerate(starts)
     ]
-    opens = [b for b in blocks if re.match(r"- \[ \] ", b)]
-    closed = [b for b in blocks if re.match(r"- \[[xX]\] ", b)]
+    opens = sorted((b for b in blocks if re.match(r"- \[ \] ", b)), key=len)
+    closed = sorted(
+        (b for b in blocks if re.match(r"- \[[xX]\] ", b)), key=len, reverse=True
+    )
     rebuilt = preamble.rstrip("\n") + "\n\n" + "\n\n".join(opens + closed) + "\n"
     _write_if_changed(path, rebuilt)
 
