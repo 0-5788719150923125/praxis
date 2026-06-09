@@ -4,7 +4,7 @@ from praxis.blocks import BLOCK_REGISTRY
 from praxis.compression import COMPRESSION_REGISTRY
 from praxis.configuration import PraxisConfig
 from praxis.controllers import CONTROLLER_REGISTRY
-from praxis.data import SAMPLER_REGISTRY
+from praxis.data import SAMPLER_REGISTRY, SEQ_CURRICULUM_REGISTRY
 from praxis.decoders import DECODER_REGISTRY
 from praxis.dense import DENSE_REGISTRY
 from praxis.embeddings import EMBEDDING_REGISTRY

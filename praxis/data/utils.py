@@ -39,6 +39,7 @@ def get_datamodules(
     enable_chat_validation: bool = True,
     strict_chat_validation: bool = False,
     weighting_mode: str = "novelty",
+    seq_curriculum: str = "fixed",
     *args,
 ):
     """Create and configure data modules for training and validation.
@@ -61,6 +62,17 @@ def get_datamodules(
     validation_datasets = (
         list(validation_datasets) if validation_datasets else ["validation"]
     )
+
+    # Arm the adaptive sequence-length curriculum (no-op otherwise). Done here,
+    # in the main process before any dataloader fork, so the controller's class
+    # state is in place when the sampler first rolls a multiplier.
+    if seq_curriculum == "adaptive":
+        from praxis.data.seq_curriculum import SequenceCurriculum
+
+        SequenceCurriculum.enable(
+            hparams["block_size"], hparams["sequence_multiplier_tiers"]
+        )
+
     train_data = []
     skipped_datasets = []  # (path, reason) for the web notification bell
     config = get_dataset_configs(train_datasets, validation_datasets, rl_type)

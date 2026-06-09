@@ -80,6 +80,7 @@ class RunConfig:
     train_datasets: List[str] = field(default_factory=lambda: ["base"])
     validation_datasets: List[str] = field(default_factory=lambda: ["validation"])
     sampler_mode: str = "novelty"
+    seq_curriculum: str = "fixed"
     data_path: List[str] = field(default_factory=list)
     rl_type: Optional[Any] = None  # name, comma-string, or list of RL tasks
 
@@ -172,6 +173,7 @@ class RunConfig:
                 get("validation_datasets") or ["validation"]
             ),
             sampler_mode=get("sampler_mode", "novelty"),
+            seq_curriculum=get("seq_curriculum", "fixed"),
             data_path=coerce_to_list(get("data_path")),
             rl_type=get("rl_type"),
             eval_every=get("eval_every"),

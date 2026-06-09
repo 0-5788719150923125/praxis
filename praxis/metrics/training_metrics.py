@@ -849,6 +849,21 @@ DYNAMICS_CHART_REGISTRY: list = [
         "caller": "TaskLossWeighter",
     },
     {
+        "key": "seq_length_mix",
+        "type": "seq_mix",
+        "title": "Sequence Length Mix",
+        "subtitle": (
+            "Learned sampling probability over the sequence-length multipliers "
+            "(constant token count). The adaptive curriculum samples more of the "
+            "length the model is improving fastest on; only present when "
+            "seq_curriculum=adaptive."
+        ),
+        "key_pattern": r"^seq_prob_x\d+$",
+        "legend": True,
+        "order": 55,
+        "caller": "SequenceCurriculum",
+    },
+    {
         "key": "width_profile",
         "type": "width_profile",
         "title": "Width Profile",

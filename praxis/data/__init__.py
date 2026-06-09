@@ -12,6 +12,30 @@ SAMPLER_REGISTRY = {
     "uniform": "uniform",
 }
 
+# Sequence-length curriculum registry. "fixed" rolls the static per-tier
+# chances; "adaptive" lets a learning-progress bandit (seq_curriculum.py)
+# control the distribution over multipliers. Selected via --seq-curriculum.
+SEQ_CURRICULUM_REGISTRY = {
+    "fixed": "fixed",
+    "adaptive": "adaptive",
+}
+
+SEQ_CURRICULUM_DESCRIPTIONS = {
+    "fixed": (
+        "Roll the static per-tier chances in ``SEQUENCE_MULTIPLIER_TIERS`` "
+        "(the default). Each batch independently trades batch size for "
+        "sequence length at constant token count, with fixed probabilities."
+    ),
+    "adaptive": (
+        "Let a learning-progress bandit control the sequence-length mix. The "
+        "trainer feeds each batch's length + loss back; the controller samples "
+        "more of the multiplier the model is currently improving fastest on "
+        "(loss-decrease rate, z-scored so absolute scale doesn't matter), with "
+        "a uniform exploration floor. A self-paced length curriculum, made safe "
+        "by the constant-token-count trade. See ``praxis/data/seq_curriculum.py``."
+    ),
+}
+
 # Surfaced in docs/data.md. Keep these tight - the implementation in
 # manager.py is the source of truth for behavior.
 SAMPLER_DESCRIPTIONS = {
@@ -129,6 +153,8 @@ __all__ = [
     # Registries
     "SAMPLER_REGISTRY",
     "SAMPLER_DESCRIPTIONS",
+    "SEQ_CURRICULUM_REGISTRY",
+    "SEQ_CURRICULUM_DESCRIPTIONS",
     # Configuration
     "DataFormat",
     "DataFormatEnum",

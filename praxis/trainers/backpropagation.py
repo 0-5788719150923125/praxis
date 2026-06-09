@@ -9,6 +9,7 @@ from lightning.pytorch import LightningModule
 from torcheval.metrics.functional import perplexity
 
 from praxis.data.datasets.manager import InterleaveDataManager
+from praxis.data.seq_curriculum import SequenceCurriculum
 from praxis.metrics import compute_softmax_collapse
 from praxis.trainers.compile import try_compile
 
@@ -157,6 +158,12 @@ class BackpropagationTrainer(LightningModule):
         # tasker mode; cheap, so run it every step for any dynamic weighter.
         if weighter is not None and getattr(weighter, "is_dynamic", False):
             InterleaveDataManager.update_task_weights(weighter.effective_weights())
+
+        # Feed this batch's length + loss to the sequence-length curriculum so it
+        # can learn which multiplier yields the fastest loss decrease. No-ops
+        # unless the adaptive curriculum is armed.
+        if SequenceCurriculum.enabled and torch.is_tensor(loss):
+            SequenceCurriculum.observe(input_ids.size(1), float(loss.detach()))
 
         batch_size, num_tokens = input_ids.shape
         self.num_tokens += batch_size * num_tokens

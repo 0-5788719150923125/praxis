@@ -34,7 +34,17 @@ def max_sequence_multiplier(
 def sample_sequence_multiplier(
     batch_size: int, tiers=SEQUENCE_MULTIPLIER_TIERS, rng=random
 ) -> int:
-    """Roll the tiers (highest multiplier first); return the first hit, else 1."""
+    """Pick a sequence-length multiplier for this batch.
+
+    When the adaptive curriculum is armed it samples from the learned
+    distribution; otherwise (and during its cold start) it rolls the fixed
+    per-tier chances, highest multiplier first.
+    """
+    from praxis.data.seq_curriculum import SequenceCurriculum
+
+    learned = SequenceCurriculum.sample(batch_size, tiers, rng)
+    if learned is not None:
+        return learned
     for multiplier, chance in tiers:
         if batch_size >= multiplier * multiplier and rng.random() < chance:
             return multiplier

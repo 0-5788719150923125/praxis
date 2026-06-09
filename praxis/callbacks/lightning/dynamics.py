@@ -83,6 +83,10 @@ class DynamicsLoggerCallback(Callback):
             # abstain rate). The criterion opts in via training_metrics().
             dynamics.update(self._extract_loss_dynamics(model))
 
+            # Sequence-length curriculum: per-multiplier sampling mix +
+            # learning progress. Empty unless the adaptive curriculum is armed.
+            dynamics.update(self._extract_seq_curriculum_dynamics())
+
             if dynamics:
                 self._success_count += 1
                 if self._success_count <= 3:
@@ -222,6 +226,18 @@ class DynamicsLoggerCallback(Callback):
             return encoder.training_metrics()
         except Exception as e:
             print(f"[DynamicsLogger] encoder.training_metrics() failed: {e}")
+            return {}
+
+    def _extract_seq_curriculum_dynamics(self) -> dict:
+        """Adaptive sequence-length curriculum telemetry (class-level state,
+        not a model module): per-multiplier sampling probability + learning
+        progress. Empty when the curriculum is disabled."""
+        try:
+            from praxis.data.seq_curriculum import SequenceCurriculum
+
+            return SequenceCurriculum.metrics()
+        except Exception as e:
+            print(f"[DynamicsLogger] seq curriculum metrics failed: {e}")
             return {}
 
     def _extract_loss_dynamics(self, model) -> dict:

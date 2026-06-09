@@ -1,6 +1,11 @@
 """Data-related CLI arguments."""
 
-from praxis import RL_POLICIES_REGISTRY, RL_PROFILES, SAMPLER_REGISTRY
+from praxis import (
+    RL_POLICIES_REGISTRY,
+    RL_PROFILES,
+    SAMPLER_REGISTRY,
+    SEQ_CURRICULUM_REGISTRY,
+)
 from praxis.data.config import DATASET_COLLECTIONS
 
 
@@ -69,4 +74,15 @@ class DataGroup:
             "'novelty' (bigram novelty via Count-Min Sketch), "
             "'dynamic' (EMA of token counts), 'static' (use weights from DATASET_COLLECTIONS as-is), "
             "or 'uniform' (force every dataset to 1.0, ignoring DATASET_COLLECTIONS).",
+        )
+
+        group.add_argument(
+            "--seq-curriculum",
+            type=str,
+            default="fixed",
+            choices=SEQ_CURRICULUM_REGISTRY.keys(),
+            help="Sequence-length curriculum: 'fixed' (roll the static per-tier "
+            "chances) or 'adaptive' (a learning-progress bandit samples more of "
+            "the multiplier the model is improving fastest on, at constant token "
+            "count). See praxis/data/seq_curriculum.py.",
         )

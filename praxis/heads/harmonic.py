@@ -156,6 +156,56 @@ class HarmonicField(nn.Module):
                 "order": 45,
             },
         },
+        # Capacity allocation: three shares (sum to 1) on one chart, showing
+        # how the field's energy budget is split between static bias, learned
+        # input-conditional variance, and unwritten headroom.
+        "harmonic_capacity_bias": {
+            "description": (
+                "Share of field energy doing bias work - the static, "
+                "population-average spectrum every input sees."
+            ),
+            "chart": {
+                "title": "Capacity Allocation",
+                "y_label": "Share of field energy",
+                "y_scale": "linear",
+                "group": "harmonic_head",
+                "order": 46,
+                "series_group": "harmonic_capacity",
+                "series_label": "bias (static)",
+            },
+        },
+        "harmonic_capacity_variance": {
+            "description": (
+                "Share of field energy doing variance work - the "
+                "input-conditional delta the envelope writes per sequence. "
+                "Zero until an input-modulated field has trained."
+            ),
+            "chart": {
+                "title": "Capacity Allocation",
+                "y_label": "Share of field energy",
+                "y_scale": "linear",
+                "group": "harmonic_head",
+                "order": 47,
+                "series_group": "harmonic_capacity",
+                "series_label": "variance (input-conditional)",
+            },
+        },
+        "harmonic_capacity_dormant": {
+            "description": (
+                "Share of spectral capacity sitting dormant - headroom "
+                "relative to a saturated spectrum. This is the room left: a "
+                "concentrated field leaves most features unwritten."
+            ),
+            "chart": {
+                "title": "Capacity Allocation",
+                "y_label": "Share of field energy",
+                "y_scale": "linear",
+                "group": "harmonic_head",
+                "order": 48,
+                "series_group": "harmonic_capacity",
+                "series_label": "dormant (headroom)",
+            },
+        },
         # Spectrum is a bespoke heatmap snapshot, not a scalar chart -
         # the snapshot hint routes it through the heatmap_2d renderer.
         "harmonic_spectrum": {
@@ -552,6 +602,41 @@ class HarmonicField(nn.Module):
                 "var_energy": (var_e / ref).to(torch.float32).tolist(),
                 "n": int(self.D),
                 "separated": float((var_e.sum() / total).item()),
+            }
+
+    def capacity_split(self) -> dict:
+        """Three-way spectral capacity allocation, summing to 1.
+
+        bias = static-spectrum energy, variance = input-conditional delta
+        energy (the same per-feature decomposition the strands card reads),
+        dormant = headroom. The ceiling is a saturated spectrum: if every
+        feature carried the peak feature's energy the field would be full, so
+        the gap between that ceiling and the energy actually present is
+        capacity still unwritten. A concentrated field (few features doing the
+        work) reads as large dormant - the empirical "we have room left".
+        """
+        with torch.no_grad():
+            Tp = max(240, 2 * self.F_t + 1)
+            static = self._sample_field(Tp)  # [Tp, D]
+            cond_coeffs = getattr(self, "_last_input_coeffs", None)
+            if self.amp_modulation == "pure":
+                cond, static = static, torch.zeros_like(static)
+            elif self.amp_modulation == "input" and cond_coeffs is not None:
+                cond = self._sample_field(Tp, coeffs=cond_coeffs)
+            else:
+                cond = static  # no conditional field -> variance is zero
+            bias_e = (static * static).sum(dim=0)  # [D]
+            var_e = ((cond - static) ** 2).sum(dim=0)  # [D]
+
+            peak = torch.maximum(bias_e.max(), var_e.max()).clamp_min(1e-12)
+            ceiling = peak * self.D  # every feature at peak = saturated
+            bias, var = bias_e.sum(), var_e.sum()
+            dormant = (ceiling - bias - var).clamp_min(0.0)
+            total = (bias + var + dormant).clamp_min(1e-12)
+            return {
+                "harmonic_capacity_bias": float((bias / total).item()),
+                "harmonic_capacity_variance": float((var / total).item()),
+                "harmonic_capacity_dormant": float((dormant / total).item()),
             }
 
     def spiral(self, n_points: int = 720) -> dict:
@@ -972,6 +1057,7 @@ class HarmonicHead(BaseHead):
             "harmonic_concentration": float(self.field.concentration().item()),
             "harmonic_smoothness": float(self.field.smoothness().item()),
             "harmonic_env_depth": self.field.envelope_depth(),
+            **self.field.capacity_split(),
         }
 
         # grad_ratio reads whether learning is flowing into the field or

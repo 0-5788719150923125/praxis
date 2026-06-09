@@ -254,6 +254,7 @@ const DYNAMICS_FAMILY_RENDERERS = {
     expert_grad_norms: (id, dyn) => createExpertGradNormsChart(id, dyn, dynamicsLayerState.layers),
     expert_grad_vars: (id, dyn) => createExpertGradVarsChart(id, dyn, dynamicsLayerState.layers),
     task_weights: (id, dyn) => createTaskWeightsChart(id, dyn, detectTaskWeightKeys(dyn)),
+    seq_mix: (id, dyn) => createSeqMixChart(id, dyn, detectSeqMixKeys(dyn)),
     halting_hist: (id, dyn) => createHaltingHistogramChart(id, dyn, detectHaltingBuckets(dyn)),
     width_profile: (id, dyn) => createWidthProfileChart(id, dyn, detectWidthDepths(dyn)),
     width_evolution: (id, dyn) => createWidthEvolutionChart(id, dyn, detectWidthDepths(dyn)),
@@ -301,6 +302,14 @@ function detectTaskWeightKeys(dynamics) {
     return Object.keys(dynamics)
         .filter(k => k.startsWith('task_weight_'))
         .sort();
+}
+
+/** Per-multiplier sampling-probability keys for the sequence-length mix,
+ * sorted by multiplier (seq_prob_x1, seq_prob_x2, ...). */
+function detectSeqMixKeys(dynamics) {
+    return Object.keys(dynamics)
+        .filter(k => /^seq_prob_x\d+$/.test(k))
+        .sort((a, b) => parseInt(a.match(/\d+/)[0]) - parseInt(b.match(/\d+/)[0]));
 }
 
 /**
@@ -1072,6 +1081,31 @@ function createTaskWeightsChart(canvasId, dynamics, keys) {
     });
 
     renderChart(canvasId, datasets, 'Effective Weight', 'linear');
+}
+
+/**
+ * Sequence-length curriculum mix: one line per multiplier (×1, ×2, ...)
+ * tracing its learned sampling probability over training. Same shape as the
+ * task-weights chart; the lines sum to ~1 (a distribution over lengths).
+ */
+function createSeqMixChart(canvasId, dynamics, keys) {
+    const steps = dynamics.steps || [];
+    const datasets = [];
+
+    keys.forEach((key, idx) => {
+        const values = dynamics[key];
+        if (!values) return;
+
+        const data = steps.map((step, i) => ({
+            x: step, y: values[i]
+        })).filter(p => p.y !== null && p.y !== undefined);
+
+        const label = key.replace(/^seq_prob_x/, '×');  // seq_prob_x4 -> ×4
+        const color = chartLineColor(idx);
+        datasets.push(makeLineDataset(label, data, color));
+    });
+
+    renderChart(canvasId, datasets, 'Sampling Probability', 'linear');
 }
 
 // ─── Harmonic head diagnostics (conditional) ────────────────────────────────

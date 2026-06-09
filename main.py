@@ -98,6 +98,7 @@ def main():
         enable_chat_validation=True,  # Always enabled
         strict_chat_validation=False,  # Warning mode (skip invalid docs)
         weighting_mode=cfg.sampler_mode,
+        seq_curriculum=cfg.seq_curriculum,
     )
 
     warmup_steps = config.warmup_steps or bundle.hparams["target_batch_size"] * 4
