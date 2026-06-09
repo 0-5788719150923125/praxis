@@ -328,7 +328,9 @@ def execute_tool_call(
     """
     if not isinstance(tool_call, dict):
         log(f"Malformed tool call (not a JSON object): {tool_call!r}")
-        return f"Error: tool call must be a JSON object, got {type(tool_call).__name__}."
+        return (
+            f"Error: tool call must be a JSON object, got {type(tool_call).__name__}."
+        )
 
     if tool_call.get("_malformed"):
         err = tool_call.get("_error", "malformed tool call")

@@ -753,6 +753,7 @@ def get_evolution():
     """Per-subsystem git-churn evolution data - the SAME source the LaTeX
     figure renders from (praxis.pillars.evolution.evolution_data), so the web
     card and the paper figure are one computation, two output formats."""
+
     def _live():
         from praxis.pillars.evolution import evolution_data
 
@@ -775,6 +776,7 @@ def get_head_snapshots():
     frontend can dispatch on the key. Each value's inner shape is the
     head's own contract with whatever renderer consumes it.
     """
+
     def _live():
         generator = current_app.config.get("generator")
         model = getattr(generator, "model", None) if generator else None

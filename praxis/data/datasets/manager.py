@@ -21,9 +21,7 @@ WEIGHTING_MODES = ("static", "dynamic", "novelty", "loss", "tasker", "uniform")
 SEQUENCE_MULTIPLIER_TIERS = ((8, 0.001), (4, 0.01), (2, 0.1))
 
 
-def max_sequence_multiplier(
-    batch_size: int, tiers=SEQUENCE_MULTIPLIER_TIERS
-) -> int:
+def max_sequence_multiplier(batch_size: int, tiers=SEQUENCE_MULTIPLIER_TIERS) -> int:
     """Largest multiplier the tiers can produce for this batch size."""
     return max(
         (m for m, _ in tiers if batch_size >= m * m),
@@ -246,7 +244,13 @@ class InterleaveDataManager:
         # `uniform` doesn't adapt weights at runtime, but it still wants
         # the per-sample bookkeeping + DataMetricsLogger so the Research
         # tab's sampling chart has data to render.
-        return self.weighting_mode in ("dynamic", "novelty", "loss", "tasker", "uniform")
+        return self.weighting_mode in (
+            "dynamic",
+            "novelty",
+            "loss",
+            "tasker",
+            "uniform",
+        )
 
     def get_batch(
         self,

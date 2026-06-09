@@ -64,12 +64,12 @@ def origin_of(url):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ports", help="comma-separated debug ports to scan")
-    ap.add_argument("--all", action="store_true", help="print every tab, not just Praxis")
+    ap.add_argument(
+        "--all", action="store_true", help="print every tab, not just Praxis"
+    )
     args = ap.parse_args()
 
-    ports = (
-        [int(p) for p in args.ports.split(",")] if args.ports else DEFAULT_PORTS
-    )
+    ports = [int(p) for p in args.ports.split(",")] if args.ports else DEFAULT_PORTS
 
     found, origins, any_port = [], set(), False
     for port in ports:

@@ -468,9 +468,7 @@ def test_cache_fallback_never_downloads(monkeypatch):
     def fake_load(args):
         # download_and_prepare can ignore local_files_only; the real guard is
         # the offline flag being live during the load.
-        seen.append(
-            {**args, "_offline_live": bool(dc.HF_DATASETS_OFFLINE)}
-        )
+        seen.append({**args, "_offline_live": bool(dc.HF_DATASETS_OFFLINE)})
         return Cached() if args.get("streaming") is False else Dying()
 
     monkeypatch.setattr(hf, "load_dataset_smart", fake_load)

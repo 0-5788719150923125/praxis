@@ -557,9 +557,7 @@ def _site_boilerplate(rows) -> dict:
         line_counts[site].update({ln for ln in text.splitlines() if ln.strip()})
     return {
         site: frozenset(
-            ln
-            for ln, n in counts.items()
-            if n >= max(3, site_pages[site] * 0.5)
+            ln for ln, n in counts.items() if n >= max(3, site_pages[site] * 0.5)
         )
         for site, counts in line_counts.items()
         if site_pages[site] >= 3

@@ -69,9 +69,7 @@ def _discover() -> dict:
             subtitle=str(meta.get("subtitle", "")),
             pillars=tuple(meta.get("pillars", [])),
             components=tuple(
-                (name, str(meta[name]).strip())
-                for name in COMPONENTS
-                if meta.get(name)
+                (name, str(meta[name]).strip()) for name in COMPONENTS if meta.get(name)
             ),
         )
     return registry
@@ -108,7 +106,5 @@ def write_thread(thread: Thread) -> dict:
             written.append(name)
             if name == "abstract":
                 prose = "\\begin{abstract}\n" + prose + "\n\\end{abstract}"
-            fh.write(
-                "\\newcommand{\\" + COMPONENTS[name] + "}{%\n" + prose + "\n}\n"
-            )
+            fh.write("\\newcommand{\\" + COMPONENTS[name] + "}{%\n" + prose + "\n}\n")
     return {"thread": thread.key, "components": written}

@@ -301,5 +301,7 @@ def test_blocked_shell_pages_are_errors():
     from praxis.spider.enrichers import enricher_for
 
     e = enricher_for("https://youtube.com/watch?v=abcdefghijk")
-    out = e.enrich_html("https://youtube.com/watch?v=abcdefghijk", "<html>About Press Copyright</html>")
+    out = e.enrich_html(
+        "https://youtube.com/watch?v=abcdefghijk", "<html>About Press Copyright</html>"
+    )
     assert not out.links and not out.text  # fetch_page treats this as an error

@@ -103,9 +103,7 @@ class StreamingContext:
         """Most recent seed (the value reset() snaps back to)."""
         return self._initial_text
 
-    def set_seed_source(
-        self, factory: Callable[[], str], reseed: bool = True
-    ) -> None:
+    def set_seed_source(self, factory: Callable[[], str], reseed: bool = True) -> None:
         """Point this context at a (possibly shared) seed source.
 
         Lets an owner like :class:`ContextStreams` hand several contexts the

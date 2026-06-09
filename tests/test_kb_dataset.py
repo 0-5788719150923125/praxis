@@ -70,11 +70,24 @@ def test_search_groups_widen_and_overlap_ranks_first(tmp_path):
     from praxis.kb.item import KBItem
 
     idx = KBIndex(db_path=tmp_path / "kb.db")
-    idx.upsert([
-        KBItem(id="a", type="doc", label="W", title="alpha only", body="alpha", uri=""),
-        KBItem(id="b", type="doc", label="W", title="beta only", body="beta", uri=""),
-        KBItem(id="c", type="doc", label="W", title="alpha beta both", body="alpha beta", uri=""),
-    ])
+    idx.upsert(
+        [
+            KBItem(
+                id="a", type="doc", label="W", title="alpha only", body="alpha", uri=""
+            ),
+            KBItem(
+                id="b", type="doc", label="W", title="beta only", body="beta", uri=""
+            ),
+            KBItem(
+                id="c",
+                type="doc",
+                label="W",
+                title="alpha beta both",
+                body="alpha beta",
+                uri="",
+            ),
+        ]
+    )
     hits = idx.search("alpha, beta", limit=10)
     ids = [h.item.id for h in hits]
     assert set(ids) == {"a", "b", "c"}  # OR widens to every group's matches
@@ -93,12 +106,19 @@ def test_pages_boilerplate_dedup(tmp_path, monkeypatch):
     conn.executescript(store_mod._SCHEMA)
     chrome = "Skip to main content\nDonate\nAbout Help Contact"
     rows = [
-        (f"https://a.com/{i}", "https://a.com", f"t{i}",
-         f"{chrome}\nUnique abstract {i}", "s", float(i + 1))
+        (
+            f"https://a.com/{i}",
+            "https://a.com",
+            f"t{i}",
+            f"{chrome}\nUnique abstract {i}",
+            "s",
+            float(i + 1),
+        )
         for i in range(4)
     ]
     conn.executemany("INSERT INTO pages VALUES (?,?,?,?,?,?,'','')", rows)
-    conn.commit(); conn.close()
+    conn.commit()
+    conn.close()
     monkeypatch.setattr("praxis.spider.store.DEFAULT_SPIDER_DB", db)
     items = list(PagesSource().iter_items())
     assert all("Donate" not in i.body for i in items)

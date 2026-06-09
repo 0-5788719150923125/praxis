@@ -20,7 +20,19 @@ from praxis.tokenizers.base import PraxisTokenizerBase, PraxisToolTokensMixin
 from praxis.tokenizers.chat_templates import get_chat_template
 
 # Prebuilt vocab sizes published by TokenMonster.
-PRESET_SIZES = [1024, 2048, 4096, 8000, 16000, 24000, 32000, 40000, 50256, 65536, 100256]
+PRESET_SIZES = [
+    1024,
+    2048,
+    4096,
+    8000,
+    16000,
+    24000,
+    32000,
+    40000,
+    50256,
+    65536,
+    100256,
+]
 
 # The supported base/mode profiles, each a registry key. "tokenmonster"
 # aliases the englishcode profile.
@@ -564,7 +576,9 @@ def _register() -> None:
     for key, (dataset, mode) in VARIANTS.items():
         TOKENIZER_REGISTRY.setdefault(
             key,
-            functools.partial(create_tokenmonster_tokenizer, dataset=dataset, mode=mode),
+            functools.partial(
+                create_tokenmonster_tokenizer, dataset=dataset, mode=mode
+            ),
         )
     for size in PRESET_SIZES:
         if size not in VOCAB_SIZE_CHOICES:

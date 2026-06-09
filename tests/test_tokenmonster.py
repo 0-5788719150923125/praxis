@@ -121,9 +121,7 @@ def test_incomplete_tail(tokenizer):
     # Detection must agree exactly with decode->reencode lossiness.
     for k in range(1, len(ids) + 1):
         prefix = ids[:k]
-        roundtrip = tokenizer.encode(
-            tokenizer.decode(prefix), add_special_tokens=False
-        )
+        roundtrip = tokenizer.encode(tokenizer.decode(prefix), add_special_tokens=False)
         assert tokenizer.incomplete_tail(prefix) == (roundtrip != prefix), k
     assert not tokenizer.incomplete_tail(ids)  # full text is complete
     assert not tokenizer.incomplete_tail(ids + [tokenizer.eos_token_id])
@@ -157,18 +155,33 @@ def test_generator_terminates_on_partial_loop(tokenizer):
     from praxis.modeling import PraxisForCausalLM
 
     partial_id = next(
-        (t for t in range(tokenizer.offset, tokenizer.vocab_size)
-         if tokenizer.incomplete_tail([t])),
+        (
+            t
+            for t in range(tokenizer.offset, tokenizer.vocab_size)
+            if tokenizer.incomplete_tail([t])
+        ),
         None,
     )
     assert partial_id is not None
 
     cfg = PraxisConfig(
-        embed_size=32, hidden_size=32, num_heads=2, num_queries=1, num_layers=1,
-        depth=1, vocab_size=tokenizer.vocab_size, max_position_embeddings=256,
-        block_size=128, block_type="transformer", attention_type="vanilla",
-        encoding="nope", embeddings="positional", norm_type="layer_norm",
-        expert="mlp", activation="gelu", tie_weights=True,
+        embed_size=32,
+        hidden_size=32,
+        num_heads=2,
+        num_queries=1,
+        num_layers=1,
+        depth=1,
+        vocab_size=tokenizer.vocab_size,
+        max_position_embeddings=256,
+        block_size=128,
+        block_type="transformer",
+        attention_type="vanilla",
+        encoding="nope",
+        embeddings="positional",
+        norm_type="layer_norm",
+        expert="mlp",
+        activation="gelu",
+        tie_weights=True,
         contrastive_isotropy=False,
     )
     model = PraxisForCausalLM(cfg)
@@ -201,9 +214,9 @@ def test_thread_safety(tokenizer):
         try:
             for i in range(10):
                 t = f"thread {n} iteration {i} with CAPS and punctuation!"
-                assert tokenizer.decode(
-                    tokenizer.encode(t, add_special_tokens=False)
-                ) == t
+                assert (
+                    tokenizer.decode(tokenizer.encode(t, add_special_tokens=False)) == t
+                )
         except Exception as e:  # pragma: no cover
             errors.append(e)
 

@@ -33,8 +33,7 @@ def force_offline():
     exit so unrelated datasets stay online.
     """
     saved_env = {
-        var: os.environ.get(var)
-        for var in ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE")
+        var: os.environ.get(var) for var in ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE")
     }
     for var in saved_env:
         os.environ[var] = "1"

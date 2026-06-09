@@ -78,10 +78,9 @@ class SequenceCurriculum:
         else:
             progress = prev - float(loss)  # positive = loss dropped on this arm
             cls._loss_ema[m] = cls.ema_alpha * loss + (1 - cls.ema_alpha) * prev
-            cls._progress[m] = (
-                cls.ema_alpha * progress
-                + (1 - cls.ema_alpha) * cls._progress.get(m, 0.0)
-            )
+            cls._progress[m] = cls.ema_alpha * progress + (
+                1 - cls.ema_alpha
+            ) * cls._progress.get(m, 0.0)
             cls._recompute()
 
     @classmethod
