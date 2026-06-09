@@ -9,10 +9,6 @@ import torch
 
 from praxis import PraxisConfig, PraxisForCausalLM
 from praxis.encoders import ENCODER_REGISTRY
-from praxis.generation.lf_temperature import (
-    lf_temperature_sample_batched,
-    lf_temperature_sample_exact,
-)
 from praxis.heads.energy import EnergyHead
 from praxis.losses.energy_score import energy_score_loss
 from praxis.metrics import compute_brier_lm
@@ -137,59 +133,6 @@ def test_energy_score_loss_lower_when_distributions_match():
     mismatched = energy_score_loss(mismatched_m, mismatched_t)
 
     assert matched.item() < mismatched.item()
-
-
-def test_lf_temperature_base_case_T1():
-    torch.manual_seed(0)
-
-    def sampler(n):
-        return torch.randn(n, 4)
-
-    z = lf_temperature_sample_batched(sampler, temperature=1.0, num_candidates=16)
-    assert z.shape == (4,)
-
-
-def test_lf_temperature_low_T_prefers_high_density():
-    """At low T, locally-fair sampling should bias toward cluster centres."""
-    torch.manual_seed(0)
-
-    def clustered_sampler(n):
-        # 80% near origin, 20% far away.
-        base = torch.randn(n, 2) * 0.1
-        mask = torch.rand(n) < 0.2
-        base[mask] += 5.0
-        return base
-
-    dists = []
-    for _ in range(64):
-        z = lf_temperature_sample_batched(
-            clustered_sampler, temperature=0.1, num_candidates=32
-        )
-        dists.append(z.norm().item())
-    mean_dist = sum(dists) / len(dists)
-
-    dists_t1 = []
-    for _ in range(64):
-        z = lf_temperature_sample_batched(
-            clustered_sampler, temperature=1.0, num_candidates=32
-        )
-        dists_t1.append(z.norm().item())
-    mean_dist_t1 = sum(dists_t1) / len(dists_t1)
-
-    # Mode-seeking at T<1 should land closer to the dense cluster.
-    assert mean_dist < mean_dist_t1
-
-
-def test_lf_temperature_exact_falls_back_gracefully():
-    torch.manual_seed(0)
-
-    def sampler(n):
-        return torch.randn(n, 3)
-
-    z = lf_temperature_sample_exact(
-        sampler, temperature=0.5, num_candidates=16, max_tries=8
-    )
-    assert z.shape == (3,)
 
 
 def test_brierlm_scores_range():

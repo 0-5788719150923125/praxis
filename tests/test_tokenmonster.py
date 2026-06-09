@@ -130,6 +130,68 @@ def test_incomplete_tail(tokenizer):
     assert not tokenizer.incomplete_tail([])
 
 
+def test_strip_incomplete_tail(tokenizer):
+    """Stripping yields a clean boundary and is a no-op on complete input."""
+    text = "CAPS and élève café 中文 emoji \U0001f600 end"
+    ids = tokenizer.encode(text, add_special_tokens=False)
+    assert tokenizer.strip_incomplete_tail(ids) == ids  # already complete
+    for k in range(1, len(ids) + 1):
+        stripped = tokenizer.strip_incomplete_tail(ids[:k])
+        assert not tokenizer.incomplete_tail(stripped)
+        # decode->reencode of a stripped sequence is lossless
+        assert (
+            tokenizer.encode(tokenizer.decode(stripped), add_special_tokens=False)
+            == stripped
+        )
+
+
+def test_generator_terminates_on_partial_loop(tokenizer):
+    """A model that only ever emits a partial token must not hang the
+    generator; it returns clean (stripped) text instead."""
+    import types
+
+    import torch
+
+    from praxis import PraxisConfig
+    from praxis.generation.generator import Generator
+    from praxis.modeling import PraxisForCausalLM
+
+    partial_id = next(
+        (t for t in range(tokenizer.offset, tokenizer.vocab_size)
+         if tokenizer.incomplete_tail([t])),
+        None,
+    )
+    assert partial_id is not None
+
+    cfg = PraxisConfig(
+        embed_size=32, hidden_size=32, num_heads=2, num_queries=1, num_layers=1,
+        depth=1, vocab_size=tokenizer.vocab_size, max_position_embeddings=256,
+        block_size=128, block_type="transformer", attention_type="vanilla",
+        encoding="nope", embeddings="positional", norm_type="layer_norm",
+        expert="mlp", activation="gelu", tie_weights=True,
+        contrastive_isotropy=False,
+    )
+    model = PraxisForCausalLM(cfg)
+    model.generate = types.MethodType(
+        lambda self, input_ids, **kw: types.SimpleNamespace(
+            sequences=torch.cat([input_ids, torch.tensor([[partial_id]])], dim=1)
+        ),
+        model,
+    )
+    gen = Generator(model, tokenizer, device="cpu")
+    rid = gen.request_generation(
+        "hello world",
+        dict(max_new_tokens=1, skip_special_tokens=False, truncate_to=128),
+    )
+    gen.fulfill_requests()
+    out = gen.get_result(rid)
+    assert out is not None
+    # Output must end on a clean boundary, not a dangling partial token.
+    assert not tokenizer.incomplete_tail(
+        tokenizer.encode(out, add_special_tokens=False)
+    )
+
+
 def test_thread_safety(tokenizer):
     import threading
 

@@ -380,10 +380,23 @@ export function hslToRgb(h, s, l) {
 
 /**
  * The brand accent as [r, g, b], following the central --accent-hue (green, or blue
- * in logs mode). Falls back to the green default off-DOM.
+ * in logs mode). Reads the same sat/lum the CSS --accent uses, so inline-styled
+ * badges never drift paler than CSS-styled ones. Falls back to the green default off-DOM.
  */
 export function accentRgb() {
-    return hslToRgb(currentAccentHue(), 0.82, 0.40);
+    const [, sat, lum] = accentHsl();
+    return hslToRgb(currentAccentHue(), sat, lum);
+}
+
+/** The central accent as [hue°, sat 0-1, lum 0-1], read off <html> to match CSS --accent. */
+function accentHsl() {
+    const hue = currentAccentHue();
+    const css = (name, fallback) => {
+        if (typeof document === 'undefined') return fallback;
+        const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name));
+        return Number.isNaN(v) ? fallback : v / 100;
+    };
+    return [hue, css('--accent-sat', 0.87), css('--accent-lum', 0.32)];
 }
 
 /** Read the central accent hue (degrees) off <html>; 161 (green) by default. */
@@ -483,8 +496,9 @@ export function getStatusBaseColor(status, theme) {
         case 'archived':
             return isDark ? hexToRgb('#5b8fc9') : hexToRgb('#00274c'); // blue
         case 'observe':
-            return isDark ? hexToRgb('#5b8fc9') : hexToRgb('#00274c'); // blue (matches archived)
+            return accentRgb(); // green (active, matches online)
         case 'offline':
+        case 'idle':
             return isDark ? hexToRgb('#b0b0b0') : hexToRgb('#666666'); // grey
         case 'ambiguous':
             return hexToRgb('#FFCB05'); // yellow
@@ -494,18 +508,15 @@ export function getStatusBaseColor(status, theme) {
 }
 
 /**
- * Get color for agent based on commit step position
- * Pure function: (agent, allAgents, theme) → { bg, text, dot }
- * Modulates the status color towards greyscale based on commit position
- * ALL agents participate - each unique commit gets evenly-spaced color
- * @param {Object} agent - Agent data with commit_timestamp and status
- * @param {Array<Object>} allAgents - All agents for comparison
- * @param {string} theme - Current theme (light/dark)
- * @returns {Object} Color palette { background, text, dot }
+ * The single source of truth for an agent badge's colors. Returns the status
+ * color, shaded toward grey by commit freshness (oldest commit = greyest,
+ * newest = full color). An agent with no commit of its own shows the full status
+ * color - never a greyscale wash - so every same-status badge reads consistently.
+ * Pure function: (agent, allAgents, theme) → { background, text, dot }
  */
-export function getAgentFreshnessColor(agent, allAgents, theme) {
+export function getAgentFreshnessColor(agent, allAgents, theme, status = agent.status) {
     // Get base color for this agent's status type
-    const baseColor = getStatusBaseColor(agent.status, theme);
+    const baseColor = getStatusBaseColor(status, theme);
     const greyColor = rgbToGreyscale(...baseColor);
 
     // Get all unique commit timestamps (regardless of status)
@@ -514,11 +525,12 @@ export function getAgentFreshnessColor(agent, allAgents, theme) {
         .map(a => a.commit_timestamp);
 
     if (allTimestamps.length === 0 || !agent.commit_timestamp) {
-        // No timestamp data - use greyscale version
+        // No commit age to place it on the freshness ramp - show the full status
+        // color (the active, current end of the ramp), not a greyscale wash.
         return {
-            background: rgbToString(greyColor),
-            text: rgbToString(greyColor),
-            dot: rgbToString(greyColor),
+            background: rgbToString(baseColor),
+            text: rgbToString(baseColor),
+            dot: rgbToString(baseColor),
         };
     }
 

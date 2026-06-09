@@ -182,6 +182,7 @@ async function prefetchTabs() {
     };
     setTimeout(async () => {
         await warm(false);  // initial fill: first navigation lands warm
+        warmKbIndex();      // build the KB index now so the first "> Look" is instant
         // Steady-state: keep hidden tabs fresh. Sequential + paused while the
         // page itself is hidden, so it never competes with the live stream.
         setInterval(() => {
@@ -452,6 +453,24 @@ function handleInputChange(e) {
 let kbSearchTimer = null;
 let kbSearchSeq = 0;
 
+// The recent feed cached from a background warm-up. Populated by warmKbIndex()
+// at startup so the first focus paints instantly instead of waiting on the
+// one-time FTS index build; kept fresh by every later empty-query search.
+let kbWarmFeed = null;
+let kbWarmPromise = null;
+
+/**
+ * Build the KB index and cache the recent feed in the background. Does NOT touch
+ * the UI - results only surface when the user focuses the "> Look" box. The
+ * expensive first-build happens here, off the click path.
+ */
+export function warmKbIndex() {
+    kbWarmPromise ||= kbSearch('')
+        .then(hits => (kbWarmFeed = hits))
+        .catch(() => { kbWarmPromise = null; return null; });
+    return kbWarmPromise;
+}
+
 /** Strip the input prefix to get the raw query text. */
 function currentQuery(input) {
     const v = input.value;
@@ -490,13 +509,23 @@ export function addKbSearchTerm(label) {
 function scheduleKbSearch(query) {
     clearTimeout(kbSearchTimer);
     state.kbOpenItem = null;  // typing a new query returns to the results list
-    state.kbSearching = true;
     const seq = ++kbSearchSeq;
+    // Empty query (the recent feed) paints instantly from the warm cache - the
+    // first focus never shows a spinner. A revalidating fetch still runs below.
+    if (!query && kbWarmFeed) {
+        state.kbResults = kbWarmFeed;
+        state.kbSearching = false;
+        renderKbResults();
+        kbSlideWindow(0);
+    } else {
+        state.kbSearching = true;
+    }
     kbSearchTimer = setTimeout(async () => {
         try {
             const hits = await kbSearch(query);  // '' -> recent feed
             if (seq !== kbSearchSeq) return; // a newer keystroke superseded us
             state.kbResults = hits;
+            if (!query) kbWarmFeed = hits;  // keep the warm cache fresh
         } catch (error) {
             if (seq !== kbSearchSeq) return;
             console.error('[KB] Search error:', error);

@@ -1,10 +1,6 @@
 """Text generation modules for Praxis."""
 
 from praxis.generation.generator import Generator
-from praxis.generation.lf_temperature import (
-    lf_temperature_sample_batched,
-    lf_temperature_sample_exact,
-)
 from praxis.generation.context_blocks import (
     DEFAULT_CONTEXT_BLOCKS,
     ContextBlock,
@@ -24,8 +20,6 @@ __all__ = [
     "ContextBlock",
     "ContextStreams",
     "DEFAULT_CONTEXT_BLOCKS",
-    "lf_temperature_sample_batched",
-    "lf_temperature_sample_exact",
     "bos_prompt",
     "swap_inference_generator",
 ]

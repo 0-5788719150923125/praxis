@@ -1389,42 +1389,10 @@
     white-space: nowrap;
 }
 
-.agent-status.online {
-    background-color: rgba(11, 154, 109, 0.1);
-    color: var(--primary-light);
-}
-
-.agent-status.archived {
-    background-color: rgba(0, 39, 76, 0.1);
-    color: #00274c;
-}
-
-.agent-status.offline {
-    background-color: rgba(102, 102, 102, 0.1);
-    color: var(--light-text);
-}
-
-.agent-status.ambiguous {
-    background-color: rgba(255, 203, 5, 0.15);
-    color: #FFCB05;
-}
-
-[data-theme="dark"] .agent-status.online {
-    background-color: rgba(11, 154, 109, 0.2);
-}
-
-[data-theme="dark"] .agent-status.archived {
-    background-color: rgba(0, 39, 76, 0.3);
-    color: #5b8fc9;
-}
-
-[data-theme="dark"] .agent-status.offline {
-    background-color: rgba(176, 176, 176, 0.1);
-}
-
-[data-theme="dark"] .agent-status.ambiguous {
-    background-color: rgba(255, 203, 5, 0.2);
-}
+/* Badge background + text color and the dot color are set inline per-agent by
+   renderStatusBadge (status color shaded by commit freshness) - the single
+   source of truth. The status classes below only carry the dot's pulse motion,
+   which signals "live" and can't be expressed inline. */
 
 .status-dot {
     width: 0.5rem;
@@ -1433,20 +1401,10 @@
 }
 
 .status-dot.online {
-    background-color: var(--primary-light);
     animation: pulse 2s infinite;
 }
 
-.status-dot.archived {
-    background-color: #00274c;
-}
-
-.status-dot.offline {
-    background-color: var(--light-text);
-}
-
 .status-dot.ambiguous {
-    background-color: #FFCB05;
     animation: pulse-harsh 1.5s infinite linear;
 }
 
@@ -1585,39 +1543,11 @@
     vertical-align: middle;
 }
 
-/* IDLE status badge (no live data yet - a calm neutral, not a pulse). */
-.agent-status.idle {
-    background-color: rgba(102, 102, 102, 0.1);
-    color: var(--light-text);
-}
-
-[data-theme="dark"] .agent-status.idle {
-    background-color: rgba(176, 176, 176, 0.1);
-}
-
-.status-dot.idle {
-    background-color: var(--light-text);
-}
-
-/* OBSERVE status badge (blue): passively training on real backend batches but
-   not contributing back to the model's activations. Pulses to read as "live". */
-.agent-status.observe {
-    background-color: rgba(0, 39, 76, 0.1);
-    color: #00274c;
-}
-
-[data-theme="dark"] .agent-status.observe {
-    background-color: rgba(0, 39, 76, 0.3);
-    color: #5b8fc9;
-}
-
+/* OBSERVE is an active status (passively training on real backend batches), so
+   its dot pulses like online to read as "live". IDLE shows no pulse - a calm
+   neutral. Colors for both come from the inline freshness style. */
 .status-dot.observe {
-    background-color: #00274c;
     animation: pulse 2s infinite;
-}
-
-[data-theme="dark"] .status-dot.observe {
-    background-color: #5b8fc9;
 }
 
 /* Spawned-agent status doubles as a SEVER button: shows the status at rest,

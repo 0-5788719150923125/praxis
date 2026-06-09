@@ -463,60 +463,17 @@ export function severSwarmAgent(agentId) {
  * @param {Array<Object>} allAgents - All agents for color calculation
  * @returns {string} HTML string
  */
-const renderAgentCard = (agent, allAgents) => {
-    // Browser-spawned ships render with their own info line (dim/layers/passes)
-    // and a SEVER button instead of the freshness-colored remote-actor badge.
-    if (agent.kind === 'browser') return renderBrowserShipCard(agent);
-    // Backend sidecar experts: same unified tiny transformer, but the app's own
-    // (no SEVER) - a plain OBSERVE/IDLE status badge.
-    if (agent.kind === 'backend') return renderBackendExpertCard(agent);
-
-    const statusClass = agent.status || 'offline';
-    const statusText = statusClass.charAt(0).toUpperCase() + statusClass.slice(1);
-
-    // Build info line using configuration
-    const infoLine = AGENT_DISPLAY_FIELDS
-        .filter(field => field.condition(agent))
-        .map(field => `${field.label}: ${escapeHtml(field.getValue(agent))}`)
-        .join(' | ');
-
-    const infoHtml = infoLine ? `<div class="agent-url">${infoLine}</div>` : '';
-
-    // Calculate freshness-based colors for ALL agents
-    // Each status type gets its own base color modulated by commit age
-    const colors = getAgentFreshnessColor(agent, allAgents, state.theme);
-
-    // Apply dynamic colors via inline styles
-    // background with 0.1 opacity, text color, dot color
-    const statusStyle = `background-color: ${colors.background.replace('rgb', 'rgba').replace(')', ', 0.1)')}; color: ${colors.text};`;
-    const dotStyle = `background-color: ${colors.dot};`;
-
-    return `
-        <div class="agent-row" data-agent-name="${escapeHtml(agent.name || '')}">
-            <div class="agent-info">
-                <div class="agent-name">${escapeHtml(agent.name || 'Unknown')}</div>
-                ${infoHtml}
-            </div>
-            <div class="agent-status ${statusClass}" style="${statusStyle}">
-                <span class="status-dot ${statusClass}" style="${dotStyle}"></span>
-                <span>${statusText}</span>
-            </div>
-        </div>
-    `;
-};
-
-/** Proper-case a status word ("observe" -> "Observe") so ship/backend badges
- * match the remote-actor cards instead of shouting in all-caps. */
+/** Proper-case a status word ("observe" -> "Observe") for the badge label. */
 const titleCaseStatus = (s) =>
     (s || '').charAt(0).toUpperCase() + (s || '').slice(1);
 
-/** Atomic metric chips for an expert's info line - each is one unbreakable unit
- * so a narrow screen wraps whole metrics to the next line instead of chopping
- * one mid-word. Returns inner HTML for the .agent-metrics container. */
+/** Atomic metric chips for an info line - each is one unbreakable unit so a
+ * narrow screen wraps whole metrics to the next line instead of chopping one
+ * mid-word. Returns inner HTML for the .agent-metrics container. */
 const expertMetricsHtml = (metrics) =>
     metrics.map(m => `<span class="agent-metric">${m}</span>`).join('');
 
-/** The live metric chips for a ship (dim / layers / passes). */
+/** The live metric chips for a browser ship (dim / layers / passes). */
 const shipMetrics = (agent) =>
     expertMetricsHtml([
         `dim ${agent.hidden}x${agent.hidden}`,
@@ -524,51 +481,85 @@ const shipMetrics = (agent) =>
         `passes ${agent.passes}`,
     ]);
 
+/** The metric chips for a backend sidecar expert (rank / layers / passes). */
+const backendMetrics = (agent) =>
+    expertMetricsHtml([
+        `dim ${agent.rank != null ? `${agent.rank}x${agent.rank}` : '?'}`,
+        'layers 1',
+        `passes ${agent.passes ?? 0}`,
+    ]);
+
 /**
- * Render a browser-spawned ship: a first-class actor reporting its dims, layer
- * count, and live forward-pass count. The status badge is a button that flips to
- * a red SEVER on hover/focus (clicking tears down the agent). The info line has
- * a stable id so the heartbeat refresh updates its text in place (no rebuild).
+ * The status badge shared by every agent card - one markup, one color source.
+ * Colors always come from getAgentFreshnessColor (status color shaded by commit
+ * freshness); the CSS status class only carries the dot's pulse animation.
+ * Severable agents (browser ships) render as a button that flips to a red SEVER
+ * on hover; the rest render as a plain div.
  */
-const renderBrowserShipCard = (agent) => {
-    const statusText = titleCaseStatus(agent.status);
-    return `
-        <div class="agent-row">
-            <div class="agent-info">
-                <div class="agent-name">${escapeHtml(agent.name)} <span class="agent-kind-tag">browser</span></div>
-                <div class="agent-metrics" id="ship-info-${escapeHtml(agent.id)}">${shipMetrics(agent)}</div>
-            </div>
-            <button class="agent-status agent-sever ${agent.status}" data-agent-id="${escapeHtml(agent.id)}"
+const renderStatusBadge = (agent, status, { sever = false, allAgents = [] } = {}) => {
+    const statusText = titleCaseStatus(status);
+
+    const colors = getAgentFreshnessColor(agent, allAgents, state.theme, status);
+    const badgeStyle = ` style="background-color: ${colors.background.replace('rgb', 'rgba').replace(')', ', 0.1)')}; color: ${colors.text};"`;
+    const dotStyle = ` style="background-color: ${colors.dot};"`;
+    const dot = `<span class="status-dot ${status}"${dotStyle}></span>`;
+
+    if (sever) {
+        return `
+            <button class="agent-status agent-sever ${status}"${badgeStyle} data-agent-id="${escapeHtml(agent.id)}"
                     title="Sever this agent's connection" aria-label="Sever agent ${escapeHtml(agent.name)}">
-                <span class="status-dot ${agent.status}"></span>
+                ${dot}
                 <span class="agent-status-label">${statusText}</span>
                 <span class="agent-sever-label">SEVER</span>
             </button>
+        `;
+    }
+    return `
+        <div class="agent-status ${status}"${badgeStyle}>
+            ${dot}
+            <span>${statusText}</span>
         </div>
     `;
 };
 
 /**
- * Render a backend sidecar expert: the unified tiny transformer hosted by the
- * app itself (not severable). Reports its rank + forward-pass count and an
- * OBSERVE (blue) / IDLE status badge.
+ * Render an agent card - the single component behind every Stage fleet row.
+ * The info column varies by kind (remote actors show a URL/command line; browser
+ * ships and backend experts show metric chips), but the status badge is rendered
+ * one way for all of them via renderStatusBadge.
  */
-const renderBackendExpertCard = (agent) => {
-    const statusText = titleCaseStatus(agent.status || 'idle');
-    const rank = agent.rank != null ? `${agent.rank}x${agent.rank}` : '?';
-    const metrics = expertMetricsHtml([
-        `dim ${rank}`, 'layers 1', `passes ${agent.passes ?? 0}`,
-    ]);
+const renderAgentCard = (agent, allAgents) => {
+    const isExpert = agent.kind === 'browser' || agent.kind === 'backend';
+    const kindTag = isExpert ? ` <span class="agent-kind-tag">${agent.kind}</span>` : '';
+
+    // Info column + per-kind details. Remote actors default to 'offline'; the
+    // app's own experts to 'idle'. Browser ships are the only severable kind.
+    let infoHtml, rowAttrs = '', status;
+    if (agent.kind === 'browser') {
+        infoHtml = `<div class="agent-metrics" id="ship-info-${escapeHtml(agent.id)}">${shipMetrics(agent)}</div>`;
+        status = agent.status || 'idle';
+    } else if (agent.kind === 'backend') {
+        infoHtml = `<div class="agent-metrics">${backendMetrics(agent)}</div>`;
+        status = agent.status || 'idle';
+    } else {
+        const infoLine = AGENT_DISPLAY_FIELDS
+            .filter(field => field.condition(agent))
+            .map(field => `${field.label}: ${escapeHtml(field.getValue(agent))}`)
+            .join(' | ');
+        infoHtml = infoLine ? `<div class="agent-url">${infoLine}</div>` : '';
+        rowAttrs = ` data-agent-name="${escapeHtml(agent.name || '')}"`;
+        status = agent.status || 'offline';
+    }
+
+    const badge = renderStatusBadge(agent, status, { sever: agent.kind === 'browser', allAgents });
+
     return `
-        <div class="agent-row">
+        <div class="agent-row"${rowAttrs}>
             <div class="agent-info">
-                <div class="agent-name">${escapeHtml(agent.name)} <span class="agent-kind-tag">backend</span></div>
-                <div class="agent-metrics">${metrics}</div>
+                <div class="agent-name">${escapeHtml(agent.name || 'Unknown')}${kindTag}</div>
+                ${infoHtml}
             </div>
-            <div class="agent-status ${agent.status || 'idle'}">
-                <span class="status-dot ${agent.status || 'idle'}"></span>
-                <span>${statusText}</span>
-            </div>
+            ${badge}
         </div>
     `;
 };
@@ -620,10 +611,15 @@ export function renderAgents(agents, container) {
     // label the agent *type*, not identity, so they repeat across sources). All
     // unified tiny-transformer experts - browser ships and backend sidecar
     // experts alike - are arc-1, arc-2, ... in list order.
+    // Local experts (browser ships / backend sidecars) have no git commit of
+    // their own; they inherit the freshness clock of the node that spawned them
+    // (the local self-N actor), so the whole fleet shades on one timeline.
+    const selfTs = state.agents.availableAgents.find(a => a.commit_timestamp)?.commit_timestamp ?? null;
     let _arc = 0;
     for (const a of fleet) {
         if (a.kind === 'browser' || a.kind === 'backend') {
             a.name = `arc-${++_arc}`;
+            if (a.commit_timestamp == null) a.commit_timestamp = selfTs;
         }
     }
     const headerHTML = createTabHeader({

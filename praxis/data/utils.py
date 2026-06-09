@@ -19,7 +19,11 @@ from praxis.data.datasets import (
     SyntheticPrintDataset,
     SyntheticToolCallingDataset,
 )
-from praxis.data.datasets.network_retry import hf_offline, is_network_error
+from praxis.data.datasets.network_retry import (
+    hf_offline,
+    is_skippable_load_error,
+    reset_hub_session,
+)
 
 
 def get_datamodules(
@@ -58,7 +62,16 @@ def get_datamodules(
         list(validation_datasets) if validation_datasets else ["validation"]
     )
     train_data = []
+    skipped_datasets = []  # (path, reason) for the web notification bell
     config = get_dataset_configs(train_datasets, validation_datasets, rl_type)
+
+    # Start from a clean HTTP client. A prior fork (DataLoader workers, a
+    # checkpoint-resume fork) can leave huggingface_hub's shared httpx client
+    # closed-but-referenced, which makes every streaming load fail with
+    # "client has been closed" until the process restarts. Resetting once here,
+    # before any dataset loads, guarantees the first attempt gets a live client.
+    if not hf_offline():
+        reset_hub_session()
 
     if hf_offline():
         print(
@@ -89,13 +102,14 @@ def get_datamodules(
             try:
                 train_data.append(get_dataset(dataset_type, tokenizer, seed, c, *args))
             except Exception as e:
-                if not hf_offline() and not is_network_error(e):
+                if not is_skippable_load_error(e):
                     raise
                 reason = "not in local cache" if hf_offline() else "load failed"
                 print(
                     f"[DATA] skipping {c.get('path')} ({reason}): "
                     f"{type(e).__name__}"
                 )
+                skipped_datasets.append((c.get("path"), reason))
         else:
             train_data.append(get_dataset(dataset_type, tokenizer, seed, c, *args))
 
@@ -130,13 +144,31 @@ def get_datamodules(
                     get_dataset("huggingface", tokenizer, seed, c, *args)
                 )
             except Exception as e:
-                if not hf_offline() and not is_network_error(e):
+                if not is_skippable_load_error(e):
                     raise
                 reason = "not in local cache" if hf_offline() else "load failed"
                 print(
                     f"[VALIDATION] skipping {c.get('path')} ({reason}): "
                     f"{type(e).__name__}"
                 )
+                skipped_datasets.append((c.get("path"), reason))
+
+    # Surface skipped datasets on the web app's notification bell. One summary
+    # event (not one per dataset); the automatic offline latch that used to
+    # raise this is gone now that failures are handled per-dataset.
+    if skipped_datasets:
+        names = ", ".join(p for p, _ in skipped_datasets)
+        try:
+            from praxis.interface.state.live_metrics import LiveMetrics
+
+            LiveMetrics().add_event(
+                f"{len(skipped_datasets)} dataset(s) skipped (couldn't load; "
+                f"network down or not cached): {names}. Other datasets are "
+                "training normally; restart when the hub returns for the full mixture.",
+                level="warning",
+            )
+        except Exception:
+            pass
 
     train_dataloader = PraxisDataModule(
         train_data,

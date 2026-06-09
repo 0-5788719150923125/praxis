@@ -747,6 +747,22 @@ export const ACTION_HANDLERS = {
      * cropped to the app-container, and copy the PNG to the clipboard.
      */
     TAKE_SCREENSHOT: async (_payload, meta) => {
+        // Surface unsupported environments instead of failing silently:
+        // insecure contexts (plain HTTP off localhost) have no mediaDevices
+        // or clipboard at all; mobile browsers lack getDisplayMedia entirely.
+        if (!navigator.mediaDevices?.getDisplayMedia) {
+            showActionNotification(meta.button, window.isSecureContext
+                ? 'Screen capture is not supported on this device.'
+                : 'Screenshots need HTTPS (or localhost).');
+            return;
+        }
+        if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
+            showActionNotification(meta.button, window.isSecureContext
+                ? 'Image clipboard is not supported in this browser.'
+                : 'Screenshots need HTTPS (or localhost).');
+            return;
+        }
+
         let stream;
         try {
             stream = await navigator.mediaDevices.getDisplayMedia({
@@ -798,8 +814,13 @@ export const ACTION_HANDLERS = {
                 showActionNotification(meta.button, 'Screenshot copy failed - check clipboard permissions.');
             }
         } catch (error) {
-            // User dismissed the share prompt, or capture unsupported.
-            console.error('[Screenshot] Capture failed or denied:', error);
+            if (error && error.name === 'NotAllowedError') {
+                // User dismissed the share prompt - no popup needed.
+                console.info('[Screenshot] Capture canceled.');
+            } else {
+                console.error('[Screenshot] Capture failed:', error);
+                showActionNotification(meta.button, 'Screenshot failed - see console.');
+            }
         } finally {
             if (stream) stream.getTracks().forEach(track => track.stop());
         }

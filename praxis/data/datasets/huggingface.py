@@ -7,11 +7,12 @@ from transformers import PreTrainedTokenizer
 
 from praxis.data.datasets.base import PraxisSampler, load_dataset_smart
 from praxis.data.datasets.network_retry import (
-    enter_offline_mode,
+    force_offline,
     hf_offline,
-    hub_reachable,
     is_network_error,
+    is_skippable_load_error,
     is_unrecoverable,
+    reset_hub_session,
     retry_on_network_error,
 )
 from praxis.data.formats import DataFormat
@@ -72,12 +73,18 @@ class HuggingfaceDataset(PraxisSampler):
         # Store base seed and restart counter
         self.base_seed = seed
         self.restart_count = 0
+        # True once we've dropped to non-streaming as a *fallback* (offline or
+        # dead transport); gates _load_frugal to cache-only so it never pulls a
+        # full download. Configured streaming=False sets is_streaming without
+        # this, so those deliberate one-time downloads still work.
+        self._cache_only = False
         self.is_streaming = config.get("streaming", True)
         if hf_offline() and self.is_streaming:
             # Streams read over HTTP and cache nothing reusable; a full
             # (non-streaming) load CAN resolve from the local datasets cache.
             # Uncached datasets fail fast here and get skipped upstream.
             self.is_streaming = False
+            self._cache_only = True
 
         dataset_args = dict(
             path=self.dataset_path,
@@ -97,26 +104,42 @@ class HuggingfaceDataset(PraxisSampler):
             except Exception as e:
                 if not is_unrecoverable(e):
                     raise
-                # Dead shared client at boot: one fresh attempt gets a new one.
+                # Dead shared client at boot (e.g. closed by a resume fork):
+                # actually reset the hub client/filesystem so the retry is fresh.
+                # The bare retry used to reuse the same dead client and refail.
+                print(
+                    f"[DATA] {self.dataset_path}: resetting stale HF client "
+                    f"({type(e).__name__}: {str(e)[:120]}) and retrying."
+                )
+                reset_hub_session()
                 self.dataset = self._load_frugal(dataset_args)
         except Exception as e:
-            if hf_offline() or not is_network_error(e):
+            if hf_offline() or not is_skippable_load_error(e):
                 raise
-            if hub_reachable():
-                # Hub is up, so this failure is specific to this dataset.
-                # Raise to skip it upstream; the rest stay online.
+            # A load failure on one dataset must not disable the rest. We do NOT
+            # latch the whole process offline (a startup DNS blip on the first
+            # dataset would otherwise skip every later one): instead try THIS
+            # dataset from the local cache, and if it isn't there (uncached or a
+            # corrupt partial download), skip just it. Every other dataset
+            # retries independently, so a connection that recovers a moment
+            # later still loads them. The cache read is forced offline (see
+            # _load_frugal) so it never downloads. Instance-local, not global.
+            self.is_streaming = False
+            self._cache_only = True
+            dataset_args["streaming"] = False
+            try:
+                self.dataset = self._load_frugal(dataset_args)
                 print(
-                    f"[DATA] hub reachable but {self.dataset_path} failed "
-                    f"({type(e).__name__}); skipping this dataset only."
+                    f"[DATA] {self.dataset_path} streaming failed "
+                    f"({type(e).__name__}: {str(e)[:120]}); using local cache."
+                )
+            except Exception:
+                print(
+                    f"[DATA] skipping {self.dataset_path} (not cached); other "
+                    f"datasets keep streaming. streaming error was "
+                    f"{type(e).__name__}: {str(e)[:160]}"
                 )
                 raise
-            # Hub unreachable: latch the process offline and retry this
-            # same dataset from the local cache (non-streaming is the only
-            # mode that can read it). Uncached -> raises -> skipped upstream.
-            enter_offline_mode(f"{type(e).__name__} loading {self.dataset_path}")
-            self.is_streaming = False
-            dataset_args["streaming"] = False
-            self.dataset = self._load_frugal(dataset_args)
 
         # Initial shuffle with base seed
         self.buffer_size = config.get("buffer_size", 32)
@@ -144,6 +167,24 @@ class HuggingfaceDataset(PraxisSampler):
         builder options; datasets that reject them fall back to a plain load.
         """
         if not self.is_streaming:
+            # Two ways to be non-streaming: the config asked for it (a small
+            # set we deliberately download once) or we fell back here because
+            # streaming died / we're offline. The fallback must never download
+            # the whole set (it wedges on a flaky network) - it exists only to
+            # read the cache. local_files_only is necessary but NOT sufficient
+            # (a builder's download_and_prepare can ignore it), so we also run
+            # the load under force_offline(): the runtime flags it does honor.
+            # Uncached -> raises -> skipped upstream. Configured non-streaming
+            # downloads normally.
+            if self._cache_only or hf_offline():
+                from datasets import DownloadConfig
+
+                dataset_args = dict(dataset_args)
+                dataset_args.setdefault(
+                    "download_config", DownloadConfig(local_files_only=True)
+                )
+                with force_offline():
+                    return load_dataset_smart(dataset_args)
             return load_dataset_smart(dataset_args)
         frugal = dict(dataset_args)
         if self.keys:
@@ -225,6 +266,9 @@ class HuggingfaceDataset(PraxisSampler):
                     and self._stream_rebuilds <= 1
                 ):
                     try:
+                        # Actually get a fresh client (the dead transport is
+                        # usually a closed shared client); reusing it refails.
+                        reset_hub_session()
                         self.dataset = self._load_frugal(dict(self._dataset_args))
                         shuffle_args = {"seed": self.base_seed + self.restart_count}
                         if self.is_streaming:
@@ -263,13 +307,11 @@ class HuggingfaceDataset(PraxisSampler):
             return {"messages": [], "metadata": {}}
         self._cache_fallback_tried = True
         try:
+            # Non-streaming is the only mode that reads the cache; _cache_only
+            # makes _load_frugal forbid downloads, so this never pulls the set.
             self.is_streaming = False
+            self._cache_only = True
             cached_args = dict(self._dataset_args, streaming=False)
-            if not hf_offline():
-                # A flapping network could otherwise download the whole set.
-                from datasets import DownloadConfig
-
-                cached_args["download_config"] = DownloadConfig(local_files_only=True)
             self.dataset = self._load_frugal(cached_args)
             self.shuffled_dataset = self.dataset.shuffle(seed=self.base_seed)
             self.dataset_iterator = iter(self.shuffled_dataset)

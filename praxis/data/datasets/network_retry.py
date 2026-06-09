@@ -12,12 +12,66 @@ skip uncached sources (see get_datamodules). The HF_HUB_OFFLINE /
 HF_DATASETS_OFFLINE / PRAXIS_OFFLINE env vars force it from boot.
 """
 
+import contextlib
 import os
 import socket
 import time
 from typing import Callable, TypeVar
 
 _OFFLINE = False  # latched by enter_offline_mode() on the first hub failure
+
+
+@contextlib.contextmanager
+def force_offline():
+    """Temporarily force hub libraries offline, then restore prior state.
+
+    Unlike enter_offline_mode (a permanent process latch), this is scoped to a
+    single load. It flips the *runtime* config flags datasets/huggingface_hub
+    actually consult in download_and_prepare - DownloadConfig(local_files_only)
+    alone does not reliably stop a builder from downloading - so a cache read
+    can never fall through to a full network download. Restores env + flags on
+    exit so unrelated datasets stay online.
+    """
+    saved_env = {
+        var: os.environ.get(var)
+        for var in ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE")
+    }
+    for var in saved_env:
+        os.environ[var] = "1"
+    hub_constants = datasets_config = None
+    saved_hub = saved_ds = saved_ds_hub = None
+    try:
+        import huggingface_hub.constants as hub_constants
+
+        saved_hub = getattr(hub_constants, "HF_HUB_OFFLINE", None)
+        hub_constants.HF_HUB_OFFLINE = True
+    except Exception:
+        hub_constants = None
+    try:
+        import datasets.config as datasets_config
+
+        saved_ds = getattr(datasets_config, "HF_DATASETS_OFFLINE", None)
+        datasets_config.HF_DATASETS_OFFLINE = True
+        if hasattr(datasets_config, "HF_HUB_OFFLINE"):
+            saved_ds_hub = datasets_config.HF_HUB_OFFLINE
+            datasets_config.HF_HUB_OFFLINE = True
+    except Exception:
+        datasets_config = None
+    try:
+        yield
+    finally:
+        for var, val in saved_env.items():
+            if val is None:
+                os.environ.pop(var, None)
+            else:
+                os.environ[var] = val
+        if hub_constants is not None and saved_hub is not None:
+            hub_constants.HF_HUB_OFFLINE = saved_hub
+        if datasets_config is not None:
+            if saved_ds is not None:
+                datasets_config.HF_DATASETS_OFFLINE = saved_ds
+            if saved_ds_hub is not None and hasattr(datasets_config, "HF_HUB_OFFLINE"):
+                datasets_config.HF_HUB_OFFLINE = saved_ds_hub
 
 
 def hf_offline() -> bool:
@@ -73,14 +127,23 @@ def enter_offline_mode(reason: str) -> None:
         pass
 
 
-def hub_reachable(timeout: float = 5.0) -> bool:
+def hub_reachable(timeout: float = 5.0, attempts: int = 3, delay: float = 1.0) -> bool:
     """Cheap TCP probe of the hub - distinguishes a dataset-specific failure
-    (hub up: skip that dataset) from real connectivity loss (latch offline)."""
-    try:
-        with socket.create_connection(("huggingface.co", 443), timeout=timeout):
-            return True
-    except OSError:
-        return False
+    (hub up: skip that dataset) from real connectivity loss (latch offline).
+
+    Retried: this probe gates a *process-wide* offline latch, so a single
+    transient DNS/connect blip (the same kind that makes one dataset's load
+    fail) must not be enough to declare the hub down and disable every other
+    dataset. Only a sustained outage - all attempts failing - latches offline.
+    """
+    for attempt in range(attempts):
+        try:
+            with socket.create_connection(("huggingface.co", 443), timeout=timeout):
+                return True
+        except OSError:
+            if attempt + 1 < attempts:
+                time.sleep(delay)
+    return False
 
 
 T = TypeVar("T")
@@ -123,6 +186,34 @@ def is_unrecoverable(exc: BaseException) -> bool:
     return False
 
 
+def reset_hub_session() -> None:
+    """Drop huggingface_hub's shared HTTP client (and cached HF filesystems) so
+    the next request builds them fresh.
+
+    The shared httpx client can be left CLOSED but still referenced - a fork's
+    at-fork hook, a checkpoint-resume fork, or an SSL reset can close it - and
+    reusing a closed client raises ``RuntimeError: ... client has been closed``,
+    which then fails every dataset load for the rest of the process. Resetting
+    here is what makes a load *retry* actually fresh (the bare retry reused the
+    dead client). Best-effort: never raise.
+    """
+    try:
+        from huggingface_hub.utils import _http
+
+        _http.close_session()  # sets the global client to None -> recreated lazily
+    except Exception:
+        pass
+    # datasets streaming resolves through a cached fsspec HfFileSystem that holds
+    # its own reference to the (now stale) client; clear the instance cache so it
+    # rebuilds with a live one.
+    try:
+        from huggingface_hub import HfFileSystem
+
+        HfFileSystem.clear_instance_cache()
+    except Exception:
+        pass
+
+
 def is_network_error(exc: BaseException) -> bool:
     """Return True if exc looks like a transient connectivity failure."""
     if isinstance(
@@ -142,6 +233,38 @@ def is_network_error(exc: BaseException) -> bool:
     cause = exc.__cause__ or exc.__context__
     if cause is not None and cause is not exc:
         return is_network_error(cause)
+    return False
+
+
+# Cache-resolution failures: the dataset isn't usable locally (uncached, a
+# partial '.incomplete' download, or a config-hash mismatch in the cache).
+# Like a network error, these mean "skip this dataset", not "crash the run".
+_MISSING_DATA_MESSAGES = (
+    "couldn't find cache",
+    "couldn't find file",
+    "couldn't reach",
+    ".incomplete",
+    "offlinemodeisenabled",
+    "offline mode is enabled",
+)
+
+
+def is_skippable_load_error(exc: BaseException) -> bool:
+    """True when a dataset load failed for a reason that should skip just that
+    dataset rather than abort training: a network error, or the data simply not
+    being available locally (cache miss / corruption). Genuine programming
+    errors (bad config, type errors) still propagate.
+    """
+    if is_network_error(exc):
+        return True
+    if isinstance(exc, FileNotFoundError):
+        return True
+    msg = str(exc).lower()
+    if any(s in msg for s in _MISSING_DATA_MESSAGES):
+        return True
+    cause = exc.__cause__ or exc.__context__
+    if cause is not None and cause is not exc:
+        return is_skippable_load_error(cause)
     return False
 
 
@@ -175,10 +298,11 @@ def retry_on_network_error(
             if max_attempts and attempt + 1 >= max_attempts:
                 raise
             if not hub_reachable():
-                # The hub itself is down, not just this fetch: latch offline
-                # and propagate so callers fall back to their local caches
-                # instead of waiting on connectivity that may not return.
-                enter_offline_mode(f"{type(exc).__name__} during {label}")
+                # The hub itself is down, not just this fetch. Don't wait on
+                # connectivity that may not return - but don't latch the whole
+                # process offline either: a blip while loading one dataset must
+                # not disable the rest. Raise so THIS caller falls back to its
+                # local cache (per-dataset); other datasets retry independently.
                 raise
             attempt += 1
             print(

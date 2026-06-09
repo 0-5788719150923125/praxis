@@ -23,7 +23,7 @@ import { Nanoformer, Adam } from './nanoformer.js';
 //   IDLE    - spawned and heartbeating only (no real work). Grey.
 //   OBSERVE - training on real backend batches, but passively: it does the
 //             computation and learns locally, yet does NOT contribute back to
-//             the main model's activations. The current "observer" mode. Blue.
+//             the main model's activations. The current "observer" mode. Green.
 //   TRAINING- reserved: contributing back into the model forward (the seam is
 //             stubbed; see ExpertPoolCallback / RemoteLayer). Not reachable yet.
 export const AGENT_STATUS = {
@@ -141,7 +141,7 @@ export class SwarmAgent {
      * One observer-mode update: a real Mono-Forward layer-wise step over a batch
      * of (ids, targets) sent by the backend. The agent learns locally but its
      * output does NOT feed back into the main model's activations (passive
-     * observer). Counts as a forward pass; drives the OBSERVE (blue) status.
+     * observer). Counts as a forward pass; drives the OBSERVE (green) status.
      *
      * STUB (next step): a contribute() that folds the agent's vote back into the
      * decoder forward - the RemoteLayer seam in praxis/layers/remote.py - would

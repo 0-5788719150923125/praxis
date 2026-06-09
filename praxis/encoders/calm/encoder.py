@@ -388,6 +388,7 @@ class CALMEncoder(BaseEncoder):
         requires_pretraining: bool = True,
         ae_max_pretrain_steps: int = 20000,
         vote_num_samples: int = 200,
+        vote_temperature: float = 0.5,
         energy_prior: str = "linear",
     ) -> None:
         super().__init__()
@@ -465,6 +466,10 @@ class CALMEncoder(BaseEncoder):
         # resume is what re-applies the freeze, so this flag may reset freely.
         self._ae_frozen_logged = False
         self.vote_num_samples = int(vote_num_samples)
+        # Count-based temperature only resolves at T = 1/integer; the authors
+        # default to 0.5 (n=2). A T=1 default would draw a single full-noise
+        # latent and argmax it - near-random output.
+        self.vote_temperature = float(vote_temperature)
 
         # Persistent step counter. Buffer so it survives checkpoint/resume:
         # restarting the warmup after a resume would re-destabilize the model.
@@ -1253,20 +1258,28 @@ class CALMEncoder(BaseEncoder):
         noise_scale: float = 1.0,
         t: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """Paper Algorithm 1 (temperature sampling for CALM).
+        """Approximate count-based temperature sampling (the authors'
+        ``temperature_sampling``, github.com/shaochenze/calm).
 
         ``temperature`` must be in (0, 1]; for T<1 we draw ``num_samples``
         candidate latents, decode each to an argmax K-token patch, count
         exact patch matches, and pick the most-supported patch via
-        combinatorial weighting (cascade from n_initial = round(1/T) down).
-        For T=1 a single latent is sampled - matching the reference. This is
-        the paper's count-based temperature; the energy head's noise is full
-        (``noise_scale=1.0``) as in the reference.
+        combinatorial weighting (cascade from n_initial = round(1/T) down,
+        weighted by C(count, n)). For T=1 a single latent is sampled. The
+        base sampler draws from the natural distribution (``noise_scale=1.0``);
+        temperature is realized entirely by the vote, as in the reference.
+
+        Count-based temperature only resolves exactly at T = 1/integer. The
+        authors *reject* other T; we instead snap 1/T to the nearest integer
+        so the live web app never crashes a generation, warning once when the
+        snap moves the effective T. The paper's exact Algorithm 1 adds a
+        fractional accept-restart stage for arbitrary T - the released code
+        omits it, and so do we.
 
         Args:
             h_last: ``[hidden_size]`` conditioning (single stream).
-            temperature: T in (0, 1]. Strict T = 1/integer in the paper;
-                we round 1/T to the nearest integer so any T in range works.
+            temperature: T in (0, 1]. Exact only at T = 1/integer; other
+                values snap to the nearest reciprocal.
             num_samples: pool size for voting.
             noise_scale: NON-paper diagnostic knob. <1 shrinks the head's
                 noise toward its conditional-mean (best-guess) prediction;
@@ -1340,11 +1353,14 @@ class CALMEncoder(BaseEncoder):
         """CALM generation: latent LM -> energy head -> VAE decode.
 
         Each step runs the global transformer over the latent prefix
-        (``base_forward``), then uses patch-vote temperature sampling
-        (paper Algorithm 1) to pick the next K-token patch: draw a pool
-        of candidate latents, decode each to an argmax patch, and select
-        by combinatorial voting on exact patch matches. Stops on EOS or
-        ``max_new_tokens``.
+        (``base_forward``), then uses approximate count-based temperature
+        sampling to pick the next K-token patch: draw a pool of candidate
+        latents, decode each to an argmax patch, and select by combinatorial
+        voting on exact patch matches. Stops on EOS or ``max_new_tokens``.
+
+        Temperature defaults to ``self.vote_temperature`` (0.5) when the
+        caller leaves it unset: at T=1 a CALM model draws a single full-noise
+        latent and argmaxes it - effectively random.
         """
         from types import SimpleNamespace
 
@@ -1352,7 +1368,9 @@ class CALMEncoder(BaseEncoder):
             raise ValueError("CALM generate requires an input_ids prompt")
 
         max_new_tokens = getattr(generation_config, "max_new_tokens", 100) or 100
-        temperature = getattr(generation_config, "temperature", 1.0) or 1.0
+        temperature = (
+            getattr(generation_config, "temperature", None) or self.vote_temperature
+        )
         eos_token_id = getattr(generation_config, "eos_token_id", None)
         # Pool size for patch-vote (T<1). Profile default lives in
         # self.vote_num_samples (paper-scale = 200); generation_config can

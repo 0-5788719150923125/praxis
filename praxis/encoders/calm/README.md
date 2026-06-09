@@ -18,10 +18,11 @@ Flow inside a single optimizer step:
    latent candidates; pairwise distances against posterior samples of
    the next latent give an implicit generative loss. Stop-gradient on
    the posterior samples keeps the VAE's objective pure.
-4. **Sampling** (`../../generation/lf_temperature.py` +
-   `CALMEncoder.custom_generate`): locally-fair temperature is applied
-   over candidates from the energy head, and the VAE's decoder
-   materialises K tokens per selected latent.
+4. **Sampling** (`CALMEncoder.custom_generate` +
+   `_patch_vote_sample`): approximate count-based temperature sampling
+   (the authors' `temperature_sampling`) draws a pool of latent
+   candidates from the energy head, decodes each to an argmax K-token
+   patch, and selects by combinatorial voting on exact patch matches.
 
 ## LM head
 

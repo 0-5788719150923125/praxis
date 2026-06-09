@@ -259,6 +259,18 @@ def find_unprocessed_tool_call_ids(
                 },
                 j + 1,
             )
+        # Valid JSON, but a call must be an object - the model can emit a bare
+        # int/string/list (e.g. "5"), which would break dict-based handling.
+        if not isinstance(tool_data, dict):
+            return (
+                {
+                    "_malformed": True,
+                    "_error": "tool call body must be a JSON object, got "
+                    f"{type(tool_data).__name__}",
+                    "_body": body.strip(),
+                },
+                j + 1,
+            )
         return (tool_data, j + 1)
     return None
 

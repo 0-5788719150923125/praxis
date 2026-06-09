@@ -92,8 +92,8 @@ def test_bounded_load_attempts(monkeypatch):
 
 
 def test_first_hub_failure_falls_back_to_cache(monkeypatch):
-    """The automatic retry step: a network failure on the streaming load
-    latches offline mode and reloads the same dataset non-streaming (cache)."""
+    """A streaming load failure reloads THIS dataset from the cache without
+    latching the process offline - other datasets must keep streaming."""
     import praxis.data.datasets.huggingface as hf
     import praxis.data.datasets.network_retry as nr
 
@@ -112,31 +112,72 @@ def test_first_hub_failure_falls_back_to_cache(monkeypatch):
         return FakeDataset()
 
     monkeypatch.setattr(hf, "load_dataset_smart", fake_load)
-    monkeypatch.setattr(hf, "hub_reachable", lambda: False)
     sampler = hf.HuggingfaceDataset(
         tokenizer=None, seed=0, config={"path": "fake/dataset"}
     )
-    assert sampler.is_streaming is False
-    assert nr.hf_offline()  # latched for the rest of boot
+    assert sampler.is_streaming is False  # this sampler dropped to cache
+    assert not nr.hf_offline()  # but the process is NOT latched offline
     assert seen[0]["streaming"] is True and seen[-1]["streaming"] is False
 
 
 def test_dataset_specific_failure_skips_without_latching(monkeypatch):
-    """When the hub is reachable, one bad dataset raises (skipped upstream)
-    without dragging the whole process offline."""
+    """A dataset that fails the network AND isn't cached raises (skipped
+    upstream) without dragging the whole process offline."""
     import praxis.data.datasets.huggingface as hf
     import praxis.data.datasets.network_retry as nr
 
     _reset_latch(monkeypatch)
 
     def fake_load(dataset_args):
+        # Streaming fails; the non-streaming cache read also misses.
         raise RuntimeError("Cannot send a request, as the client has been closed.")
 
     monkeypatch.setattr(hf, "load_dataset_smart", fake_load)
-    monkeypatch.setattr(hf, "hub_reachable", lambda: True)
     with pytest.raises(RuntimeError):
         hf.HuggingfaceDataset(tokenizer=None, seed=0, config={"path": "fake/bad"})
     assert not nr.hf_offline()  # rest of the mixture stays online
+
+
+def test_reset_hub_session_recovers_closed_client():
+    """A closed huggingface_hub client stays REFERENCED (not None), so every
+    later get_session() returns the dead client -> 'client has been closed' for
+    the rest of the process. reset_hub_session must null it so a fresh, open
+    client is created. This is the 2-day streaming-failure root cause."""
+    pytest.importorskip("huggingface_hub")
+    import huggingface_hub.utils._http as h
+
+    from praxis.data.datasets.network_retry import reset_hub_session
+
+    client = h.get_session()
+    client.close()
+    # The bug: the global still points at the closed client.
+    assert h._GLOBAL_CLIENT is not None and client.is_closed
+
+    reset_hub_session()
+    assert h._GLOBAL_CLIENT is None  # nulled -> recreated lazily
+    fresh = h.get_session()
+    assert not fresh.is_closed and fresh is not client
+
+
+def test_corrupt_cache_is_skippable_not_fatal(monkeypatch):
+    """A corrupt/partial cache (the '.incomplete' ValueError/FileNotFoundError
+    chain) must classify as skippable so one bad dataset doesn't abort the run.
+    Without offline latched, these used to re-raise and crash main()."""
+    import praxis.data.datasets.network_retry as nr
+
+    _reset_latch(monkeypatch)
+    val_err = ValueError(
+        "Couldn't find cache for tiiuae/falcon-refinedweb for config "
+        "'default-cba17da4221ad668'"
+    )
+    fnf = FileNotFoundError(
+        2, "No such file", "/cache/falcon/c735.incomplete/dataset_info.json"
+    )
+    assert nr.is_skippable_load_error(val_err)
+    assert nr.is_skippable_load_error(fnf)
+    # Genuine programming errors must still propagate (not silently skipped).
+    assert not nr.is_skippable_load_error(TypeError("bad config field"))
+    assert not nr.is_skippable_load_error(KeyError("messages"))
 
 
 def test_uncached_dataset_raises_after_latch(monkeypatch):
@@ -236,9 +277,10 @@ def test_midrun_offline_retires_quietly_when_uncached(monkeypatch, capsys):
     assert capsys.readouterr().out == ""
 
 
-def test_midrun_hub_outage_latches_offline_and_propagates(monkeypatch):
-    """Unbounded retries must not hang training when the hub is down: latch
-    offline and raise so get_document's cache fallback can run."""
+def test_midrun_hub_outage_raises_without_latching(monkeypatch):
+    """Unbounded retries must not hang training when the hub is down: raise
+    immediately so the caller's per-dataset cache fallback runs - but DON'T
+    latch the whole process offline (other datasets keep working)."""
     import praxis.data.datasets.network_retry as nr
 
     _reset_latch(monkeypatch)
@@ -252,7 +294,7 @@ def test_midrun_hub_outage_latches_offline_and_propagates(monkeypatch):
     with pytest.raises(ConnectionError):
         nr.retry_on_network_error(boom)
     assert len(calls) == 1  # no indefinite wait
-    assert nr.hf_offline()
+    assert not nr.hf_offline()  # not latched - per-dataset fallback only
 
 
 def test_midrun_blip_keeps_retrying_when_hub_up(monkeypatch):
@@ -389,6 +431,89 @@ def test_boot_dead_client_gets_one_fresh_load(monkeypatch):
     monkeypatch.setattr(hf, "load_dataset_smart", fake_load)
     s = hf.HuggingfaceDataset(tokenizer=None, seed=0, config={"path": "fake/ds"})
     assert len(loads) == 2 and s.get_document()["messages"]
+
+
+def test_cache_fallback_never_downloads(monkeypatch):
+    """A streaming source that dies must fall back to the cache WITHOUT ever
+    downloading the full set: the non-streaming fallback load must carry
+    local_files_only=True. (Configured streaming=False is exempt - see below.)"""
+    import praxis.data.datasets.huggingface as hf
+
+    _reset_latch(monkeypatch)
+
+    class Dying:
+        def shuffle(self, **kw):
+            return self
+
+        def __iter__(self):
+            def gen():
+                raise RuntimeError(
+                    "Cannot send a request, as the client has been closed."
+                )
+                yield
+
+            return gen()
+
+    class Cached:
+        def shuffle(self, **kw):
+            return self
+
+        def __iter__(self):
+            return iter([{"text": "cached doc"}] * 10)
+
+    import datasets.config as dc
+
+    seen = []
+
+    def fake_load(args):
+        # download_and_prepare can ignore local_files_only; the real guard is
+        # the offline flag being live during the load.
+        seen.append(
+            {**args, "_offline_live": bool(dc.HF_DATASETS_OFFLINE)}
+        )
+        return Cached() if args.get("streaming") is False else Dying()
+
+    monkeypatch.setattr(hf, "load_dataset_smart", fake_load)
+    offline_before = dc.HF_DATASETS_OFFLINE
+    s = hf.HuggingfaceDataset(tokenizer=None, seed=0, config={"path": "fake/ds"})
+    s._stream_rebuilds = 3  # budget exhausted -> cache fallback
+    s.get_document()
+    nonstreaming = [a for a in seen if not a.get("streaming")]
+    assert nonstreaming, "expected a non-streaming cache load"
+    for args in nonstreaming:
+        dl = args.get("download_config")
+        assert dl is not None and dl.local_files_only is True
+        assert args["_offline_live"] is True, "cache load must run offline-forced"
+    # The transient fallback must restore offline state, not latch it.
+    assert dc.HF_DATASETS_OFFLINE == offline_before
+
+
+def test_configured_nonstreaming_still_downloads(monkeypatch):
+    """A dataset deliberately configured streaming=False is a one-time full
+    download, not a fallback - it must NOT be forced to local_files_only."""
+    import praxis.data.datasets.huggingface as hf
+
+    _reset_latch(monkeypatch)
+
+    class Ready:
+        def shuffle(self, **kw):
+            return self
+
+        def __iter__(self):
+            return iter([{"text": "doc"}] * 3)
+
+    seen = []
+
+    def fake_load(args):
+        seen.append(dict(args))
+        return Ready()
+
+    monkeypatch.setattr(hf, "load_dataset_smart", fake_load)
+    hf.HuggingfaceDataset(
+        tokenizer=None, seed=0, config={"path": "fake/small", "streaming": False}
+    )
+    assert seen and all(not a.get("streaming") for a in seen)
+    assert all("download_config" not in a for a in seen)
 
 
 def test_exhausted_rebuilds_land_on_cache(monkeypatch):

@@ -72,16 +72,52 @@ def _detach_server_from_signals(tokenmonster) -> None:
     tokenmonster.Vocab._start_process = _start_process
 
 
+def _vocab_cached(vocab_name: str) -> bool:
+    """Whether the prebuilt vocab is already downloaded to LOCAL_DIR."""
+    return os.path.exists(os.path.join(LOCAL_DIR, vocab_name + ".vocab"))
+
+
 def _load_tm_vocab(vocab_name: str):
-    """Load a TokenMonster vocab (multiprocess-safe; we never modify it)."""
+    """Load a TokenMonster vocab (multiprocess-safe; we never modify it).
+
+    The vocab is mandatory, so an uncached one must still be fetched - but a
+    raw urllib DNS traceback when the hub is unreachable is useless. Offline
+    mode (or a missing cache with no connectivity) raises a clear, actionable
+    error instead; transient blips retry with backoff.
+    """
     global _TM_CONFIGURED
     import tokenmonster
+
+    from praxis.data.datasets.network_retry import (
+        hf_offline,
+        retry_on_network_error,
+    )
 
     if not _TM_CONFIGURED:
         tokenmonster.set_local_directory(LOCAL_DIR)
         _detach_server_from_signals(tokenmonster)
         _TM_CONFIGURED = True
-    return tokenmonster.load_multiprocess_safe(vocab_name)
+
+    if not _vocab_cached(vocab_name) and hf_offline():
+        raise RuntimeError(
+            f"TokenMonster vocab '{vocab_name}' is not cached in {LOCAL_DIR} "
+            "and OFFLINE mode is active. Run once with network access to "
+            "download it, or pick a cached vocab."
+        )
+    try:
+        return retry_on_network_error(
+            lambda: tokenmonster.load_multiprocess_safe(vocab_name),
+            label=f"tokenmonster vocab '{vocab_name}'",
+            max_attempts=3,
+        )
+    except Exception as e:
+        if _vocab_cached(vocab_name):
+            raise
+        raise RuntimeError(
+            f"TokenMonster vocab '{vocab_name}' is not cached in {LOCAL_DIR} "
+            f"and could not be downloaded (hub unreachable): {type(e).__name__}. "
+            "Run once with network access to download it."
+        ) from e
 
 
 def _ensure_this_process():
@@ -281,6 +317,14 @@ class TokenMonsterTokenizer(
             return True  # split multi-byte glyph
         prev = self._tm_decode(run[:-1]) or ""
         return full == prev  # tail contributed nothing: pending modifier
+
+    def strip_incomplete_tail(self, token_ids: List[int]) -> List[int]:
+        """Drop trailing partial tokens so the sequence ends on a clean
+        boundary. Bounded by the trailing TM run length."""
+        ids = list(token_ids)
+        while ids and self.incomplete_tail(ids):
+            ids.pop()
+        return ids
 
     def _tm_decode(self, ids: List[int]) -> str:
         if not ids:

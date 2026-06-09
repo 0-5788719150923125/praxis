@@ -90,8 +90,13 @@ def build_training_callbacks(
         )
     )
 
-    # Sample-based proper scoring rule at validation; cheap on small batches.
-    callbacks.append(BrierLMCallback(tokenizer=tokenizer))
+    # Sample-based proper scoring rule at validation. Only meaningful for
+    # likelihood-free models (CALM's energy head): a standard-logits model
+    # already has exact likelihood via val_loss, which is cheaper and far
+    # less noisy than a sampled Brier estimate.
+    encoder = getattr(model, "encoder", None)
+    if encoder and hasattr(encoder, "energy_head"):
+        callbacks.append(BrierLMCallback(tokenizer=tokenizer))
 
     # Weight-editing RL controllers. rl_type is a list; each profile entry
     # selects a controller and bundles its behavior (edit_mode, selector), so the

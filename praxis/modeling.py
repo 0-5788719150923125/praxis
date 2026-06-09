@@ -46,6 +46,13 @@ class PraxisModel(PreTrainedModel):
             self.embeds = EMBEDDING_REGISTRY[profile](config)
         self.decoder = DECODER_REGISTRY.get(config.decoder_type)(config)
 
+    @property
+    def default_sampling_temperature(self):
+        """Encoder-preferred sampling temperature when the caller omits one
+        (None = use the generator's default). CALM's count-based sampler is
+        near-random at T=1, so it returns its vote_temperature."""
+        return getattr(self.encoder, "vote_temperature", None) if self.encoder else None
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,

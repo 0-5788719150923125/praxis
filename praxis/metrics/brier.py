@@ -1,28 +1,49 @@
 """BrierLM metric.
 
 Sample-based proper scoring rule from the CALM paper (arXiv 2510.27688,
-section 3.5). BrierLM computes per-order Brier scores on n-grams drawn
-from the model and the reference text, then returns the geometric mean
-over ``n in {1..4}`` scaled by 100.
+section 3.5). For each n-gram order the per-position Brier score is the
+likelihood-free estimator
 
-Typical usage: feed a batch of prefixes to the model, draw two i.i.d.
-continuations per prefix, and call ``compute_brier_lm(samples_a,
-samples_b, references)``.
+    1{x1 = y} + 1{x2 = y} - 1{x1 = x2}
 
-Implementation detail: the per-position Brier score only needs pairwise
-n-gram matches - no probability access - which makes it model-agnostic
-and usable for both CALM and discrete LMs.
+where x1, x2 are two i.i.d. sampled continuations and y is the reference.
+Matches are *position-aligned exact prefix matches*: order n counts a hit
+only when the next n tokens agree on every position, in order (the
+reference's ``cumprod`` over consecutive equality indicators). BrierLM is
+the geometric mean over n in {1..4}.
+
+This mirrors the reference ``eval_brier`` / ``compute_metrics``
+(github.com/shaochenze/calm). Samples and reference must be aligned,
+equal-length token-id sequences (the model's continuation against the true
+continuation of the same prompt).
 """
 
-from typing import List, Sequence
+from typing import List, Optional, Sequence
 
 import torch
 
+# The reference omits this; we scale for chart readability (val_brierlm).
+BRIERLM_SCALE = 100.0
 
-def _ngrams(seq: Sequence[int], n: int) -> List[tuple]:
-    if len(seq) < n:
-        return []
-    return [tuple(seq[i : i + n]) for i in range(len(seq) - n + 1)]
+
+def _aligned_eq(x: Sequence[int], y: Sequence[int]) -> torch.Tensor:
+    """Per-position equality indicators for two aligned id sequences."""
+    L = min(len(x), len(y))
+    return torch.tensor(
+        [1.0 if x[i] == y[i] else 0.0 for i in range(L)], dtype=torch.float32
+    )
+
+
+def _prefix_match_rate(eq: torch.Tensor, n: int) -> Optional[float]:
+    """Fraction of length-n windows that match on every position.
+
+    A window is a hit iff the running product over its n equality indicators
+    is 1 - the reference's ``cumprod`` semantics, slid across all positions.
+    """
+    if eq.numel() < n:
+        return None
+    windows = eq.unfold(0, n, 1)  # [num_windows, n]
+    return float(windows.prod(dim=1).mean())
 
 
 def _brier_order(
@@ -30,31 +51,20 @@ def _brier_order(
     samples_b: Sequence[Sequence[int]],
     references: Sequence[Sequence[int]],
     n: int,
-) -> float:
-    """Brier-n over a batch of paired samples and a reference.
-
-    For each example:
-        B_n = 2 * mean(match(sample_a, reference) at each n-gram position)
-            - mean(match(sample_a, sample_b))
-
-    Returned value is the batch mean of ``B_n``. Matches are indicator
-    functions over n-gram equality with shared support (fixed ``n``).
-    """
+) -> Optional[float]:
+    """Brier-n: batch mean of ``1{a=y} + 1{b=y} - 1{a=b}`` over aligned
+    length-n prefix matches. None if no example is long enough for order n."""
     scores = []
     for a, b, r in zip(samples_a, samples_b, references):
-        a_ng = _ngrams(a, n)
-        b_ng = _ngrams(b, n)
-        r_ng = _ngrams(r, n)
-        if not a_ng or not r_ng:
+        ar = _prefix_match_rate(_aligned_eq(a, r), n)
+        if ar is None:
             continue
-        match_ar = sum(1 for g in a_ng if g in r_ng) / max(len(a_ng), 1)
-        match_br = sum(1 for g in b_ng if g in r_ng) / max(len(b_ng), 1)
-        match_ab = sum(1 for g in a_ng if g in b_ng) / max(len(a_ng), 1)
-        # Symmetrise the positive term so a and b contribute equally.
-        scores.append((match_ar + match_br) - match_ab)
+        br = _prefix_match_rate(_aligned_eq(b, r), n)
+        ab = _prefix_match_rate(_aligned_eq(a, b), n)
+        scores.append(ar + br - ab)
     if not scores:
-        return 0.0
-    return float(sum(scores) / len(scores))
+        return None
+    return sum(scores) / len(scores)
 
 
 def compute_brier_lm(
@@ -66,23 +76,26 @@ def compute_brier_lm(
     """Compute BrierLM over a batch.
 
     Args:
-        samples_a, samples_b: paired sample continuations per prompt
-            (each a list of token-id lists).
-        references: reference continuations per prompt.
+        samples_a, samples_b: paired sampled continuations per prompt, each a
+            list of token-id lists, aligned to ``references``.
+        references: the true continuation per prompt.
         orders: n-gram orders to aggregate (default 1-4, per the paper).
 
     Returns:
-        Geometric mean of per-order Brier scores, scaled by 100. Returns
-        0.0 if any order has a non-positive score (the geometric mean is
-        ill-defined in that case).
+        ``max(prod(brier_n), 0) ** (1/k)`` scaled by ``BRIERLM_SCALE``. Each
+        order is floored at 0 first: a non-positive order is no positive
+        evidence, so it zeroes the geometric mean rather than flipping its
+        sign in the product.
     """
     assert len(samples_a) == len(samples_b) == len(references)
-    per_order = []
+    prod = 1.0
+    count = 0
     for n in orders:
         s = _brier_order(samples_a, samples_b, references, n)
-        if s <= 0.0:
-            return 0.0
-        per_order.append(s)
-    # Geometric mean.
-    log_mean = sum(torch.tensor(p).log() for p in per_order) / len(per_order)
-    return float(log_mean.exp()) * 100.0
+        if s is None:
+            continue
+        prod *= max(s, 0.0)
+        count += 1
+    if count == 0 or prod <= 0.0:
+        return 0.0
+    return (prod ** (1.0 / count)) * BRIERLM_SCALE

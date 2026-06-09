@@ -225,6 +225,31 @@ def test_find_unprocessed_tool_call_ids_returns_none_on_no_tool():
     assert find_unprocessed_tool_call_ids(ids, tok) is None
 
 
+def test_non_object_tool_body_is_malformed_not_fatal():
+    """A bare JSON value (e.g. "5") parses fine but isn't a tool call object;
+    it must be flagged malformed, never returned as a raw int that downstream
+    .get() would crash on."""
+    tok = ByteLevelTokenizer()
+    open_id = tok.tool_call_token_id
+    close_id = tok.tool_call_end_token_id
+    body = list(tok.encode("5", add_special_tokens=False))
+    ids = [open_id] + body + [close_id]
+    found = find_unprocessed_tool_call_ids(ids, tok)
+    assert found is not None
+    call, _ = found
+    assert isinstance(call, dict) and call.get("_malformed")
+
+
+def test_execute_tool_call_guards_non_dict():
+    """execute_tool_call must not crash on a non-dict (defense in depth for the
+    'int object has no attribute get' regression)."""
+    from praxis.tools import execute_tool_call
+
+    for bad in (5, "hi", [1, 2], None):
+        result = execute_tool_call(bad, [])
+        assert isinstance(result, str) and result.startswith("Error:")
+
+
 def test_has_complete_tool_call_and_output_ids():
     tok = ByteLevelTokenizer()
     open_only = list(

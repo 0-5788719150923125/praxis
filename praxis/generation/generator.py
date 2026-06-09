@@ -12,7 +12,6 @@ Tool calls are marked by atomic special tokens ``[TOOL_CALL]`` /
   template), restore the caller's sampling params, and resume.
 """
 
-import contextlib
 import logging
 import time
 import uuid
@@ -20,8 +19,8 @@ from queue import Queue
 from typing import Any, Dict, Optional, Tuple
 
 import torch
-from transformers import GenerationConfig
 
+from praxis.generation.decode_backend import ModelBackend
 from praxis.generation.request import GenerationRequest
 from praxis.tools import (
     STOP_TOOL_LOOP,
@@ -42,10 +41,21 @@ class Generator:
     # Maximum number of results to keep in memory to prevent VRAM leaks
     MAX_RESULTS = 100
 
-    def __init__(self, model, tokenizer, device="cuda"):
-        self.model = model
+    def __init__(
+        self, model=None, tokenizer=None, device="cuda", backend=None, synchronous=False
+    ):
+        # One Generator, two ways to decode (a DecodeBackend) and two ways to
+        # drive the queue. ``synchronous`` runs each request in-place in
+        # request_generation (fulfill_requests is a no-op) for callers with no
+        # training loop to drain the queue - the Mono-Forward web path. The
+        # default queues and does the work in fulfill_requests.
+        if backend is None:
+            backend = ModelBackend(model, tokenizer)
+        self.backend = backend
+        self.model = getattr(backend, "model", None)
         self.tokenizer = tokenizer
         self.device = device
+        self.synchronous = synchronous
         self.request_queue = Queue()
         self.results = {}
         self._result_order = []  # Track insertion order for cleanup
@@ -60,32 +70,6 @@ class Generator:
         self.max_tool_call_time = 10.0  # Maximum time (seconds) for all tool calls
 
         print(f"[TOOLS]: Loaded {len(self.tools)} tools.")
-
-    @contextlib.contextmanager
-    def _eval_mode(self):
-        # Simple eval mode handling - no Lightning-specific branching needed.
-        # force_eager: generation must not run through torch.compile. The
-        # decode loop changes python-level guard inputs every token (cache
-        # pos, live-segment length, current_depth), so compiled frames blow
-        # the dynamo recompile limit; eager decode is cheap with the KV cache.
-        training = self.model.training
-        self.model.eval()
-        stance = contextlib.ExitStack()
-        try:
-            stance.enter_context(torch.compiler.set_stance("force_eager"))
-        except Exception:
-            pass  # older torch: stance API unavailable, run as-is
-        try:
-            yield
-        except Exception as e:
-            import traceback
-
-            print(f"[ERROR] Exception during generation: {e}")
-            print(traceback.format_exc())
-            raise
-        finally:
-            stance.close()
-            self.model.train(training)
 
     def _eos_token_id_list(self) -> Optional[list]:
         """Build the eos_token_id list for a chat-style generation.
@@ -110,6 +94,15 @@ class Generator:
                 ids.append(int(tid))
         return ids or None
 
+    def _max_positions(self) -> Optional[int]:
+        """The model's positional capacity (max_position_embeddings).
+
+        Learned absolute positions only exist up to this many tokens, so the
+        generation context (prompt + generated + any spliced tool results) must
+        never exceed it - otherwise the position lookup overflows and crashes.
+        """
+        return self.backend.max_positions
+
     def request_generation(self, prompt, kwargs={}) -> str:
         """
         Submit a generation request and return a request ID.
@@ -123,7 +116,20 @@ class Generator:
         """
         request_id = str(uuid.uuid4())
         request = GenerationRequest(id=request_id, prompt=prompt, kwargs=kwargs)
-        self.request_queue.put(request)
+        # Synchronous backends (no training loop to drain the queue) run now;
+        # the queued path defers the work to fulfill_requests.
+        if self.synchronous:
+            try:
+                self.results[request_id] = self._process_single_request(request)
+            except Exception as exc:
+                _log.error(f"Generation request {request_id} failed: {exc}")
+                self.results[request_id] = (
+                    prompt if isinstance(prompt, str) else str(prompt)
+                )
+            self._result_order.append(request_id)
+            self._evict_old_results()
+        else:
+            self.request_queue.put(request)
         return request_id
 
     def get_result(self, request_id: str) -> Optional[str]:
@@ -177,7 +183,7 @@ class Generator:
             prompt_text = request.prompt
 
         ids = self.tokenizer.encode(prompt_text)
-        model_device = next(self.model.parameters()).device
+        model_device = self.backend.device
         if isinstance(ids, list):
             input_ids = torch.tensor([ids], dtype=torch.long, device=model_device)
         else:
@@ -194,13 +200,30 @@ class Generator:
         # Caller overrides win, except for our own keys handled below.
         gen_kwargs.update(request.kwargs)
 
+        # When the caller omits temperature, let the model pick its own
+        # default. CALM needs T=0.5 (count-based sampling is near-random at
+        # T=1); token models are happy at the transformers default.
+        if "temperature" not in gen_kwargs:
+            default_temp = self.backend.default_sampling_temperature
+            if default_temp is not None:
+                gen_kwargs["temperature"] = float(default_temp)
+
         gen_kwargs.pop("prompt", None)
         skip_special_tokens = not (gen_kwargs.pop("skip_special_tokens", True) is False)
         truncate_to = gen_kwargs.pop("truncate_to", None)
+        max_new_tokens = int(gen_kwargs.get("max_new_tokens", 100))
+
+        # The prompt plus what we generate must fit the model's positional
+        # capacity (learned absolute positions can't extend past it). Cap the
+        # prompt to leave room for new tokens - tighter than any caller's
+        # truncate_to - so inference can never overflow and crash.
+        mpe = self._max_positions()
+        if mpe is not None:
+            budget = max(1, mpe - max_new_tokens)
+            truncate_to = budget if truncate_to is None else min(truncate_to, budget)
         if truncate_to is not None and input_ids.size(1) > truncate_to:
             input_ids = input_ids[:, -truncate_to:]
 
-        max_new_tokens = int(gen_kwargs.get("max_new_tokens", 100))
         return input_ids, gen_kwargs, max_new_tokens, skip_special_tokens
 
     def _process_single_request(self, request: GenerationRequest) -> str:
@@ -235,7 +258,7 @@ class Generator:
         in_tool_call = False
         tool_call_depth = 0
 
-        with self._eval_mode():
+        with self.backend.eval_mode():
             while True:
                 remaining = max_new_tokens - (tokens.shape[1] - initial_len)
                 if remaining <= 0:
@@ -251,16 +274,11 @@ class Generator:
                     for key in ("temperature", "top_k", "top_p", "renormalize_logits"):
                         step_kwargs.pop(key, None)
 
-                outputs = self.model.generate(
-                    tokens,
-                    generation_config=GenerationConfig(**step_kwargs),
-                    tokenizer=self.tokenizer,
-                    return_dict_in_generate=True,
-                )
-                if outputs.sequences.shape[1] <= tokens.shape[1]:
-                    tokens = outputs.sequences
+                extended = self.backend.generate_until_halt(tokens, step_kwargs)
+                if extended.shape[1] <= tokens.shape[1]:
+                    tokens = extended
                     break
-                tokens = outputs.sequences
+                tokens = extended
                 last_token = int(tokens[0, -1].item())
 
                 if tools_enabled and last_token == call_open_id:
@@ -302,6 +320,12 @@ class Generator:
                         + list(result_ids)
                         + token_list[call_end_index:]
                     )
+                    # Splicing grows the sequence; keep the most recent context
+                    # within the model's positional capacity so the next forward
+                    # can't overflow learned positions.
+                    mpe = self._max_positions()
+                    if mpe is not None and len(spliced) > mpe:
+                        spliced = spliced[-mpe:]
                     tokens = torch.tensor(
                         [spliced], dtype=torch.long, device=tokens.device
                     )
@@ -323,15 +347,13 @@ class Generator:
                         break
                     step_kwargs = dict(gen_kwargs)
                     step_kwargs["max_new_tokens"] = 1
-                    outputs = self.model.generate(
-                        tokens,
-                        generation_config=GenerationConfig(**step_kwargs),
-                        tokenizer=self.tokenizer,
-                        return_dict_in_generate=True,
-                    )
-                    if outputs.sequences.shape[1] <= tokens.shape[1]:
+                    extended = self.backend.generate_until_halt(tokens, step_kwargs)
+                    if extended.shape[1] <= tokens.shape[1]:
                         break
-                    tokens = outputs.sequences
+                    tokens = extended
+                strip = getattr(self.tokenizer, "strip_incomplete_tail", None)
+                if strip is not None and incomplete_tail(tokens[0].tolist()):
+                    tokens = tokens[:, : len(strip(tokens[0].tolist()))]
 
         return self.tokenizer.decode(tokens[0], skip_special_tokens=skip_special_tokens)
 
@@ -340,6 +362,9 @@ class Generator:
         Process pending generation requests. Should be called from inside the training loop.
         Returns the number of requests processed.
         """
+        if self.synchronous:
+            return 0  # synchronous backends already ran the work in request_generation
+
         processed = 0
         while not self.request_queue.empty():
             if max_requests is not None and processed >= max_requests:
@@ -349,13 +374,14 @@ class Generator:
             result = self._process_single_request(request)
             self.results[request.id] = result
             self._result_order.append(request.id)
-
-            # Prevent memory leaks by limiting results dictionary size
-            while len(self.results) > self.MAX_RESULTS:
-                oldest_id = self._result_order.pop(0)
-                if oldest_id in self.results:
-                    del self.results[oldest_id]
+            self._evict_old_results()
 
             processed += 1
 
         return processed
+
+    def _evict_old_results(self) -> None:
+        """Cap the results cache to prevent unbounded memory growth."""
+        while len(self.results) > self.MAX_RESULTS:
+            oldest_id = self._result_order.pop(0)
+            self.results.pop(oldest_id, None)
