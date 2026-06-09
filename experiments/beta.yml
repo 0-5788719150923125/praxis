@@ -30,7 +30,7 @@ data_path: ["/opt/platformer"]
 sampler_mode: uniform
 task_weights: difficulty_bias_pretrain
 loss_func: cross_entropy
-head_type: prismatic
+head_type: prismatic3
 encoding: arc
 tie_weights: true
 # Bring the remote-expert pool online (praxis.orchestration). The "swarm"

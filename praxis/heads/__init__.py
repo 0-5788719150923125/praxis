@@ -1,9 +1,9 @@
+from functools import partial
+
 from praxis.heads.crystal import CrystalClassifier, CrystalHead
 from praxis.heads.forward import ForwardHead
 from praxis.heads.harmonic import HarmonicField, HarmonicHead
 from praxis.heads.mtp import MTP_REGISTRY, MultiTokenPrediction
-from functools import partial
-
 from praxis.heads.parallel import ParallelHead
 from praxis.heads.stacked import SequentialHead
 from praxis.heads.tied import TiedWeights
@@ -24,6 +24,15 @@ def _harmonic_crystal(amp_modulation: str) -> list:
     transform-only so it allocates no dead classifier) feeding the crystal
     distance classifier."""
     return [_field(amp_modulation), CrystalHead]
+
+
+def _prismatic2_branches() -> list:
+    """The two prismatic2 arms: bias (learned field), variance (input field ->
+    crystal). Shared by prismatic2 variants."""
+    return [
+        partial(SequentialHead, heads=[_field("learned", build_classifier=True)]),
+        partial(SequentialHead, heads=[_field("input"), CrystalHead]),
+    ]
 
 
 def _prismatic3_branches() -> list:
@@ -55,13 +64,7 @@ HEAD_REGISTRY = dict(
     # whichever arm explains them. Each arm emits its own Bias/Variance Strands
     # card (#0 stays collapsed = bias; #1 separates as variance is learned):
     #   Parallel(Sequential(HarmonicField), Sequential(HarmonicField, CrystalClassifier))
-    prismatic=partial(
-        ParallelHead,
-        branches=[
-            partial(SequentialHead, heads=[_field("learned", build_classifier=True)]),
-            partial(SequentialHead, heads=[_field("input"), CrystalHead]),
-        ],
-    ),
+    prismatic=partial(ParallelHead, branches=_prismatic2_branches()),
     # Prismatic + a third, variance-only arm: a "pure" field (no static
     # spectrum; the conditional delta alone, zero at init) with its own linear
     # readout - the mirror of the bias arm. Variance can arrive in bins the
