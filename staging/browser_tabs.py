@@ -20,16 +20,9 @@ Usage:
 By default prints only Praxis-looking tabs; --all prints everything found.
 """
 
-import sys
-
-# This script's own dir lands first on sys.path, where staging/compression.py
-# shadows the stdlib 'compression' module that urllib transitively needs. Drop
-# it before importing anything else.
-if sys.path and sys.path[0].endswith("staging"):
-    sys.path.pop(0)
-
 import argparse
 import json
+import sys
 import urllib.error
 import urllib.request
 

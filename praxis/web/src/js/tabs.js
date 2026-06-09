@@ -612,9 +612,14 @@ export function renderAgents(agents, container) {
     // unified tiny-transformer experts - browser ships and backend sidecar
     // experts alike - are arc-1, arc-2, ... in list order.
     // Local experts (browser ships / backend sidecars) have no git commit of
-    // their own; they inherit the freshness clock of the node that spawned them
-    // (the local self-N actor), so the whole fleet shades on one timeline.
-    const selfTs = state.agents.availableAgents.find(a => a.commit_timestamp)?.commit_timestamp ?? null;
+    // their own; they mirror the freshness clock of the node that spawned them -
+    // the local self-N actor specifically. Inheriting its exact timestamp (even
+    // when that's null) lands an expert on the same point of the ramp as self-1,
+    // so their badges are an exact color match, not just a near one. No fallback
+    // to a remote actor: that would put the expert on a different ramp position
+    // than self-1 - invisible in the 0.1-alpha background, visible in the text.
+    const selfNode = state.agents.availableAgents.find(a => /^self-/.test(a.name || ''));
+    const selfTs = selfNode?.commit_timestamp ?? null;
     let _arc = 0;
     for (const a of fleet) {
         if (a.kind === 'browser' || a.kind === 'backend') {
