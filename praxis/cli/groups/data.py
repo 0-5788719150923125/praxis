@@ -64,6 +64,8 @@ class DataGroup:
             default="loss",
             choices=SAMPLER_REGISTRY.keys(),
             help="Dataset sampling weighting mode: 'loss' (upsample high-loss datasets via per-sequence CE), "
+            "'tasker' (sample each dataset by its task's learned loss weight from --task-weights; "
+            "pairs with a 'difficulty' weighter to upsample hard tasks), "
             "'novelty' (bigram novelty via Count-Min Sketch), "
             "'dynamic' (EMA of token counts), 'static' (use weights from DATASET_COLLECTIONS as-is), "
             "or 'uniform' (force every dataset to 1.0, ignoring DATASET_COLLECTIONS).",

@@ -25,7 +25,7 @@ source. See [docs/index.md](docs/index.md) for the full map.
 - [Activation functions](docs/activations.md) (33)
 - [Attention mechanisms](docs/attention.md) (8)
 - [Block-stacking decoders](docs/decoders.md) (4)
-- [Data sampler strategies](docs/data.md) (5)
+- [Data sampler strategies](docs/data.md) (6)
 - [Decoder block layouts](docs/blocks.md) (9)
 - [Feedforward experts](docs/dense.md) (7)
 - [Halting / early exit](docs/halting.md) (2)

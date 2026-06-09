@@ -8,6 +8,7 @@ SAMPLER_REGISTRY = {
     "dynamic": "dynamic",
     "static": "static",
     "loss": "loss",
+    "tasker": "tasker",
     "uniform": "uniform",
 }
 
@@ -40,6 +41,17 @@ SAMPLER_DESCRIPTIONS = {
         "uniform floor (``alpha=0.2``) so no single high-loss source captures "
         "everything, then length-normalized so a dataset that produces N "
         "sequences per document is fetched ~1/N as often."
+    ),
+    "tasker": (
+        "Close the loop between sampling and the model's own per-task loss "
+        "weighter (``--task-weights``). The trainer pushes the tasker's "
+        "``effective_weights`` via ``InterleaveDataManager.update_task_weights``; "
+        "each dataset's sampling weight becomes its configured weight times its "
+        "task's learned weight, mixed with a uniform floor and normalized. With "
+        "``difficulty`` task weights a hard task is both upweighted (loss) and "
+        "upsampled (data) - the model spends more steps where it is worst. Pair "
+        "with a ``difficulty`` weighter; the ``learnable`` variant downweights "
+        "hard tasks and would invert the intent."
     ),
     "uniform": (
         "Ignore the per-dataset weights from ``DATASET_COLLECTIONS`` - every "

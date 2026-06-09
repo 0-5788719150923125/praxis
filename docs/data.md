@@ -3,7 +3,7 @@
 
 How datasets are interleaved during training. Praxis trains on multiple datasets at once: at every step the trainer picks a dataset, draws a document, and tokenizes it (see ``InterleaveDataManager`` in ``praxis/data/datasets/manager.py``). The sampler chosen here decides *how* that pick is biased - either statically from configured weights, or adaptively based on document length, novelty, or per-dataset loss. Set with ``--sampler``; default is ``novelty``.
 
-Registry: ``praxis.SAMPLER_REGISTRY`` (5 entries)
+Registry: ``praxis.SAMPLER_REGISTRY`` (6 entries)
 
 ## `dynamic`
 
@@ -31,6 +31,17 @@ down-weighted. Good for noisy or repetitive corpora. The default.
 Use the per-dataset weights from ``DATASET_COLLECTIONS`` as configured and never adapt
 them. Predictable, no feedback loop. Pick this when you want full control of the data
 mix.
+
+## `tasker`
+
+Close the loop between sampling and the model's own per-task loss weighter (``--task-
+weights``). The trainer pushes the tasker's ``effective_weights`` via
+``InterleaveDataManager.update_task_weights``; each dataset's sampling weight becomes
+its configured weight times its task's learned weight, mixed with a uniform floor and
+normalized. With ``difficulty`` task weights a hard task is both upweighted (loss) and
+upsampled (data) - the model spends more steps where it is worst. Pair with a
+``difficulty`` weighter; the ``learnable`` variant downweights hard tasks and would
+invert the intent.
 
 ## `uniform`
 

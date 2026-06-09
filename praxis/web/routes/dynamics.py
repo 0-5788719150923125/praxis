@@ -16,6 +16,7 @@ from torch.nn.parameter import UninitializedParameter
 from praxis.activations import ACT2CLS
 from praxis.metrics import DYNAMICS_CHART_REGISTRY, get_metric_descriptions
 from praxis.web.app import api_logger
+from praxis.web.snapshots import serve_snapshot
 
 dynamics_bp = Blueprint("dynamics", __name__)
 
@@ -548,20 +549,17 @@ def _compute_expert_metadata(
 def get_activation_curves():
     """Sample forward and derivative curves for every activation module in the
     live model, using their actual (learned) parameters.
+
+    Served from the precomputed snapshot (the producer probes the model on its
+    own thread); the live fallback only fires before the first cycle, or honors a
+    non-default x-range/points request the snapshot can't satisfy.
     """
-    try:
+
+    def _live():
         generator = current_app.config.get("generator")
         model = getattr(generator, "model", None) if generator else None
         if model is None:
-            response = jsonify(
-                {
-                    "status": "no_data",
-                    "message": "Model not available",
-                    "curves": [],
-                }
-            )
-            return response
-
+            return {"status": "no_data", "message": "Model not available", "curves": []}
         try:
             x_min = float(request.args.get("x_min", -6.0))
             x_max = float(request.args.get("x_max", 6.0))
@@ -569,21 +567,25 @@ def get_activation_curves():
         except ValueError:
             x_min, x_max, num_points = -6.0, 6.0, 256
         num_points = max(32, min(num_points, 1024))
-
         curves, activation_type = _compute_activation_curves(
             model, x_min, x_max, num_points
         )
+        return {
+            "status": "ok" if curves else "no_data",
+            "activation_type": activation_type,
+            "x_range": [x_min, x_max],
+            "curves": curves,
+        }
 
-        response = jsonify(
-            {
-                "status": "ok" if curves else "no_data",
-                "activation_type": activation_type,
-                "x_range": [x_min, x_max],
-                "curves": curves,
-            }
-        )
-        response.headers.add("Cache-Control", "max-age=5")
-        return response
+    try:
+        # A custom range/resolution isn't what the producer caches (it samples the
+        # default window), so honor those requests live.
+        custom = any(k in request.args for k in ("x_min", "x_max", "points"))
+        if custom:
+            response = jsonify(_live())
+            response.headers.add("Cache-Control", "max-age=5")
+            return response
+        return serve_snapshot("activation_curves", _live)
 
     except Exception as e:
         api_logger.error(f"Error in get_activation_curves: {e}")
@@ -751,15 +753,14 @@ def get_evolution():
     """Per-subsystem git-churn evolution data - the SAME source the LaTeX
     figure renders from (praxis.pillars.evolution.evolution_data), so the web
     card and the paper figure are one computation, two output formats."""
-    try:
+    def _live():
         from praxis.pillars.evolution import evolution_data
 
         data = evolution_data()
-        if not data:
-            return jsonify({"status": "no_data", "data": None})
-        resp = jsonify({"status": "ok", "data": data})
-        resp.headers.add("Cache-Control", "max-age=30")
-        return resp
+        return {"status": "ok" if data else "no_data", "data": data or None}
+
+    try:
+        return serve_snapshot("evolution", _live, cache_seconds=30)
     except Exception as e:
         api_logger.error(f"Error in get_evolution: {e}")
         return jsonify({"status": "error", "message": str(e), "data": None}), 500
@@ -774,7 +775,7 @@ def get_head_snapshots():
     frontend can dispatch on the key. Each value's inner shape is the
     head's own contract with whatever renderer consumes it.
     """
-    try:
+    def _live():
         generator = current_app.config.get("generator")
         model = getattr(generator, "model", None) if generator else None
         head = getattr(model, "head", None) if model is not None else None
@@ -791,12 +792,10 @@ def get_head_snapshots():
             snapshots.update(criterion.dashboard_snapshots() or {})
         if encoder and hasattr(encoder, "dashboard_snapshots"):
             snapshots.update(encoder.dashboard_snapshots() or {})
-        if not snapshots:
-            return jsonify({"status": "no_data", "snapshots": {}})
+        return {"status": "ok" if snapshots else "no_data", "snapshots": snapshots}
 
-        response = jsonify({"status": "ok", "snapshots": snapshots})
-        response.headers.add("Cache-Control", "max-age=5")
-        return response
+    try:
+        return serve_snapshot("head_snapshots", _live)
 
     except Exception as e:
         api_logger.error(f"Error in get_head_snapshots: {e}")

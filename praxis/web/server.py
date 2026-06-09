@@ -21,6 +21,7 @@ from .middleware import (
     register_response_middleware,
 )
 from .routes import register_routes
+from .snapshots import SnapshotProducer, SnapshotStore
 from .utils import find_available_port
 from .utils.file_watcher import TemplateWatcher
 from .websocket import setup_live_reload, setup_metrics_live_namespace
@@ -203,6 +204,18 @@ class APIServer:
         app.config["config_file"] = self.config_file
         app.config["donations"] = self.donations
         app.config["repo_root"] = os.getcwd()  # Store the repository root at startup
+
+        # Precompute the expensive model-probing endpoints on a background thread
+        # so every read is a cheap cached lookup and the model is only ever
+        # touched from this one producer (never from concurrent request threads).
+        self.snapshot_store = SnapshotStore()
+        app.config["snapshot_store"] = self.snapshot_store
+        self.snapshot_producer = SnapshotProducer(
+            store=self.snapshot_store,
+            model_fn=lambda: getattr(self.generator, "model", None),
+            shutdown_event=self.shutdown_event,
+        )
+        self.snapshot_producer.start()
 
         # Start the server thread
         self.server_thread = Thread(target=self._run_server)

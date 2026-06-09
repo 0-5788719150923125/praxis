@@ -13,7 +13,7 @@ from praxis.data.formatters import _rl_logger
 from praxis.logging.data_metrics_logger import DataMetricsLogger
 
 # Valid weighting modes (kept in sync with SAMPLER_REGISTRY).
-WEIGHTING_MODES = ("static", "dynamic", "novelty", "loss", "uniform")
+WEIGHTING_MODES = ("static", "dynamic", "novelty", "loss", "tasker", "uniform")
 
 # Sequence-multiplier tiers: (multiplier, per-batch chance), highest first.
 # A batch trades size for length at constant token count - dividing batch
@@ -66,6 +66,24 @@ class InterleaveDataManager:
     # Per-dataset EMA losses for loss-based mode (dataset_name -> float)
     # None when not in loss mode; empty dict before first loss report
     shared_losses = None
+
+    # Per-task learned weights for tasker mode (list indexed by TaskType id).
+    # None when not in tasker mode; the model's loss weighter already smooths
+    # these (EMA / sigmoid-gated), so we store the latest snapshot directly.
+    shared_task_weights = None
+
+    @classmethod
+    def update_task_weights(cls, weights) -> None:
+        """Report the model's per-task loss-weighter ``effective_weights`` for
+        tasker-based sampling. No-ops unless a manager is in tasker mode.
+
+        Args:
+            weights: a ``[num_tasks]`` sequence (tensor or list) indexed by
+                TaskType id, e.g. ``model.tasker.effective_weights()``.
+        """
+        if cls.shared_task_weights is None:
+            return
+        cls.shared_task_weights = [float(w) for w in weights]
 
     @classmethod
     def update_losses(cls, losses: dict):
@@ -163,6 +181,16 @@ class InterleaveDataManager:
             if self.weighting_mode == "loss":
                 InterleaveDataManager.shared_losses = {}
 
+            # Tasker mode: cache each sampler's task id and arm the shared
+            # task-weight registry (all-ones until the trainer reports).
+            if self.weighting_mode == "tasker":
+                self.sampler_task_ids = [
+                    int(getattr(s, "task_type", 0)) for s in self.samplers
+                ]
+                num_tasks = max(self.sampler_task_ids, default=0) + 1
+                if InterleaveDataManager.shared_task_weights is None:
+                    InterleaveDataManager.shared_task_weights = [1.0] * num_tasks
+
             # Novelty tracker (only for novelty mode)
             if self.weighting_mode == "novelty":
                 # Build set of token IDs that decode to pure digits so the
@@ -208,7 +236,7 @@ class InterleaveDataManager:
         # `uniform` doesn't adapt weights at runtime, but it still wants
         # the per-sample bookkeeping + DataMetricsLogger so the Research
         # tab's sampling chart has data to render.
-        return self.weighting_mode in ("dynamic", "novelty", "loss", "uniform")
+        return self.weighting_mode in ("dynamic", "novelty", "loss", "tasker", "uniform")
 
     def get_batch(
         self,
@@ -436,6 +464,28 @@ class InterleaveDataManager:
         """Calculate target weights based on current weighting mode."""
         if self.weighting_mode == "novelty":
             return self.novelty_tracker.get_target_weights(self.static_weights)
+
+        if self.weighting_mode == "tasker":
+            task_weights = InterleaveDataManager.shared_task_weights
+            n = len(self.samplers)
+            if not task_weights:
+                return [1.0 / n] * n  # warmup: uniform until the tasker reports
+            # Each dataset's pull = its configured weight x its task's learned
+            # weight. A `difficulty` weighter makes hard tasks heavier, so they
+            # get sampled more; a uniform floor keeps any task from starving.
+            raw = []
+            for i in range(n):
+                tid = self.sampler_task_ids[i]
+                tw = task_weights[tid] if tid < len(task_weights) else 1.0
+                raw.append(self.static_weights[i] * max(tw, 0.0))
+            total = sum(raw)
+            if total <= 0:
+                return [1.0 / n] * n
+            weights = [w / total for w in raw]
+            alpha = self.loss_uniform_mix
+            uniform = 1.0 / n
+            weights = [(1 - alpha) * w + alpha * uniform for w in weights]
+            return weights
 
         if self.weighting_mode == "loss":
             losses = InterleaveDataManager.shared_losses

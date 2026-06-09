@@ -152,6 +152,12 @@ class BackpropagationTrainer(LightningModule):
                 shifted_task = task_type_ids[:, -per_token.size(-1) :].contiguous()
                 weighter.observe(shifted_task, per_token)
 
+        # Close the loop to tasker-based sampling: hand the model's learned
+        # per-task weights to the data manager. No-ops unless a sampler is in
+        # tasker mode; cheap, so run it every step for any dynamic weighter.
+        if weighter is not None and getattr(weighter, "is_dynamic", False):
+            InterleaveDataManager.update_task_weights(weighter.effective_weights())
+
         batch_size, num_tokens = input_ids.shape
         self.num_tokens += batch_size * num_tokens
 

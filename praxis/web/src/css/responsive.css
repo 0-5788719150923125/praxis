@@ -242,6 +242,16 @@
         pointer-events: none;
     }
 
+    /* Exception: the rolling context boxes ARE meant to be read by hand, so they
+       keep their own touch scroller. No overscroll-behavior: contain here - a box
+       with overflow scrolls its own text, but one with little content lets the
+       swipe chain through to the page instead of swallowing it into a dead zone. */
+    .ld-context .ld-status-text {
+        pointer-events: auto;
+        touch-action: pan-y;
+        -webkit-overflow-scrolling: touch;
+    }
+
     /* Context cards and the sparkline keep their own bounded height so text/chart
        scroll within the card and the footer never gets pushed off-screen. */
     .ld-panel-chart {
