@@ -358,7 +358,32 @@ def regenerate_docs(repo_root: Optional[Path] = None) -> None:
     _patch_readme_block(readme_path, "LAYOUT", _render_layout_block(repo_root))
     _patch_readme_block(readme_path, "SUBSYSTEMS", _render_subsystems_block())
 
+    _sort_roadmap(repo_root)
     _regenerate_terminal_webp(repo_root)
+
+
+def _sort_roadmap(repo_root: Path) -> None:
+    """Stable-partition next/roadmap.md so open items sit above closed ones.
+
+    Order within each group is preserved exactly - we only move completed `[x]`
+    items to the bottom, never reorder them. Idempotent."""
+    path = repo_root / "next" / "roadmap.md"
+    if not path.exists():
+        return
+    text = path.read_text()
+    first = re.search(r"^- \[[ xX]\] ", text, re.M)
+    if not first:
+        return
+    preamble, body = text[: first.start()], text[first.start() :]
+    starts = [m.start() for m in re.finditer(r"^- \[[ xX]\] ", body, re.M)]
+    blocks = [
+        body[s : (starts[i + 1] if i + 1 < len(starts) else len(body))].rstrip("\n")
+        for i, s in enumerate(starts)
+    ]
+    opens = [b for b in blocks if re.match(r"- \[ \] ", b)]
+    closed = [b for b in blocks if re.match(r"- \[[xX]\] ", b)]
+    rebuilt = preamble.rstrip("\n") + "\n\n" + "\n\n".join(opens + closed) + "\n"
+    _write_if_changed(path, rebuilt)
 
 
 # Files whose content determines the rendered terminal.webp.
