@@ -16,7 +16,10 @@ from __future__ import annotations
 
 import functools
 import inspect
+import os
 import re
+import subprocess
+import sys
 import textwrap
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -353,6 +356,65 @@ def regenerate_docs(repo_root: Optional[Path] = None) -> None:
     _patch_readme_block(readme_path, "FEATURES", _render_features_block(written))
     _patch_readme_block(readme_path, "LAYOUT", _render_layout_block(repo_root))
     _patch_readme_block(readme_path, "SUBSYSTEMS", _render_subsystems_block())
+
+    _regenerate_terminal_webp(repo_root)
+
+
+# Files whose content determines the rendered terminal.webp.
+def _terminal_render_sources(repo_root: Path) -> List[Path]:
+    paths = [
+        p
+        for p in (repo_root / "praxis" / "interface").rglob("*.py")
+        if "__pycache__" not in p.parts
+    ]
+    paths.append(repo_root / "tools" / "render_dashboard_webp.py")
+    paths.append(repo_root / "tools" / "assets" / "DejaVuSansMono.ttf")
+    return paths
+
+
+def _terminal_webp_stale(repo_root: Path) -> bool:
+    """True if any rendering source is newer than the webp (detected on the fly
+    from mtimes - no stored fingerprint). The renderer bumps the webp's mtime
+    even on a no-op render, so an unchanged result won't re-trigger."""
+    out = repo_root / "static" / "terminal.webp"
+    if not out.exists():
+        return True
+    cutoff = out.stat().st_mtime
+    return any(
+        p.exists() and p.stat().st_mtime > cutoff
+        for p in _terminal_render_sources(repo_root)
+    )
+
+
+def _regenerate_terminal_webp(repo_root: Path) -> None:
+    """Re-render static/terminal.webp when the dashboard rendering changes.
+
+    Detached background process: the render takes ~40s and the renderer also
+    hijacks logging/warnings/atexit, so we neither block the launch nor run it
+    in-process. The webp's own mtime becoming newest is what clears staleness."""
+    if not _terminal_webp_stale(repo_root):
+        return
+
+    out = repo_root / "static" / "terminal.webp"
+    # Claim the artifact now (bump its mtime) so rapid re-launches during the
+    # ~40s render don't each spawn a duplicate.
+    if out.exists():
+        os.utime(out, None)
+
+    script = repo_root / "tools" / "render_dashboard_webp.py"
+    log = repo_root / "static" / ".terminal_render.log"
+    try:
+        logf = open(log, "w")
+        subprocess.Popen(
+            [sys.executable, str(script), "--out", str(out)],
+            cwd=str(repo_root),
+            stdout=logf,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        print("[DOCS] Dashboard changed - rendering static/terminal.webp in background.")
+    except OSError as e:
+        print(f"[DOCS] Skipped terminal.webp: {e}")
 
 
 def _render_registry(

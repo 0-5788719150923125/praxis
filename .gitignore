@@ -50,3 +50,6 @@ praxis/web/static
 
 # Generated author block (praxis/pillars/build.py)
 authors.tex
+
+# dashboard webp render log (generated at launch)
+static/.terminal_render.log
