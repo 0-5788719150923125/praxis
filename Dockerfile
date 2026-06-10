@@ -27,7 +27,7 @@ RUN apt-get update -qq && \
     rm -rf /var/lib/apt/lists/*
 
 # Configure git to trust the workspace directory
-RUN git config --global --add safe.directory /workspace
+RUN git config --global --add safe.directory /workspace/praxis
 
 # Set working directory
-WORKDIR /workspace
+WORKDIR /workspace/praxis

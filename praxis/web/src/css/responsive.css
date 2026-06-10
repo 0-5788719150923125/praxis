@@ -400,6 +400,15 @@
            swipe/lift and tap the header controls. */
         pointer-events: none;
     }
+    /* An OPEN run-selector dropdown must paint over the deck, but its z-index
+       lives inside the tab-header's stacking context (10), so the deck (20)
+       wins no matter how high the dropdown sets it. Lift the whole header
+       above the deck only while a dropdown is open - 25 stays under the
+       chrome ceiling (30). Keyed off the inline display the JS toggles, so
+       every open/close path (all three tabs) is covered by this one rule. */
+    .tab-header:has(.run-selector-dropdown[style*="block"]) {
+        z-index: 25;
+    }
     /* Cards drive the deck (JS narrows pointer-events to the head card); they must
        block native pan so the JS 1:1 drag / inner-scroll owns the gesture. */
     .chart-deck .chart-card,

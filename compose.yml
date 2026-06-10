@@ -5,11 +5,19 @@ services:
     stdin_open: true
     tty: true
     ipc: host
-    working_dir: /workspace
+    working_dir: /workspace/praxis
     command: ["./launch"]
     volumes:
-      - .:/workspace:rw
-      - venv:/workspace/.venv
+      # The repo nests one level deep with its parent mounted read-only above
+      # it, so relative sibling paths in experiment configs (data_path:
+      # "../platformer") resolve in-container to the same host directory they
+      # name outside it. Mounting the repo at /workspace itself made
+      # "../platformer" resolve to an empty /platformer at container root.
+      - ..:/workspace:ro
+      - .:/workspace/praxis:rw
+      # Fresh volume name: the old "venv" volume baked /workspace/.venv into
+      # its shebangs/activate and breaks at the new path.
+      - venv-praxis:/workspace/praxis/.venv
       - cache:/home/dev/.cache
     ports:
       - "${PRAXIS_PORT:-2100}:${PRAXIS_PORT:-2100}"
@@ -28,5 +36,5 @@ services:
       HOST_GID: ${HOST_GID:-0}
 
 volumes:
-  venv:
+  venv-praxis:
   cache:

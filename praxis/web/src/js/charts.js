@@ -1085,7 +1085,13 @@ function measureDeck(deck) {
     // the deck never extends below the screen.
     const region = deck.closest('.tab-content');
     const regionBottom = region ? region.getBoundingClientRect().bottom : window.innerHeight;
-    const visH = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+    // A background warm measures for FUTURE display, but visualViewport reads the
+    // live screen: typing on another tab (e.g. KB queries) shrinks it to the
+    // keyboard's edge, and the warmed deck would keep that stunted band (the
+    // width-only activation check never rechecks it). Hidden warm -> trust the
+    // warm container's geometry, not the transient viewport.
+    const warming = region && region.style.visibility === 'hidden';
+    const visH = (!warming && window.visualViewport && window.visualViewport.height) || window.innerHeight;
     const floorY = Math.min(window.innerHeight, regionBottom, visH) - DECK_FLOOR_MARGIN;
     let lift = 0;
     if (mobile) {
