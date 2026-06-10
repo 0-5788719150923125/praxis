@@ -1453,13 +1453,6 @@ class Creature {
             });
         }
 
-        J.shadow = [];
-        for (let i = 0; i < 10; i++) {
-            const a2 = (i / 10) * Math.PI * 2;
-            const sa3 = this.a + Math.cos(a2) * 0.5 * s * p.elong * 0.8;
-            const sb3 = this.b + Math.sin(a2) * 0.38 * s;
-            J.shadow.push(toWorld(S, sa3, sb3, this.groundAt(sa3, sb3) + 0.01));
-        }
         return J;
     }
 }
@@ -2911,32 +2904,6 @@ class Arena {
             }
         }
         ctx.globalAlpha = 1;
-
-    }
-
-    /* The accent glow under the creature - the only backdrop element that
-       moves every frame, so it lives in the live pass. */
-    drawGlow(ctx, J) {
-        const cl = this.colors;
-        const P = (x, y, z) => this.project({ x, y, z });
-        // A soft pool of accent light under the creature.
-        const sc = J.shadow[0] ? this.project(J.body) : null;
-        if (sc) {
-            const under = J.shadow.reduce((acc, s) => {
-                const p = this.project(s);
-                return { x: acc.x + p.x / J.shadow.length, y: acc.y + p.y / J.shadow.length };
-            }, { x: 0, y: 0 });
-            const r = sc.d * 1.1 * this.creature.p.scale * 2.2;
-            const glow = ctx.createRadialGradient(under.x, under.y, 0, under.x, under.y, r);
-            glow.addColorStop(0, cl.glow);
-            glow.addColorStop(1, 'transparent');
-            ctx.globalAlpha = 0.10;
-            ctx.fillStyle = glow;
-            ctx.beginPath();
-            ctx.ellipse(under.x, under.y, r, r * 0.45, 0, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.globalAlpha = 1;
-        }
     }
 
     quad(ctx, p0, p1, p2, p3) {
@@ -3091,11 +3058,6 @@ class Arena {
             grounded: leg.grounded,
         }));
 
-        ctx.strokeStyle = this.colors.shade;
-        ctx.globalAlpha = 0.15;
-        ctx.lineWidth = 1.1;
-        inker.loop(ctx, J.shadow.map(s => this.project(s)), 'shadow', 1.0);
-        ctx.globalAlpha = 1;
 
         const pBody = this.project(body);
         const lw = (base) => Math.max(1.25, base * pBody.d / 110);
