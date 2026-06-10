@@ -105,6 +105,10 @@ function sampleMorphology(rng) {
         legPairs: pairs,                   // 0 (snake) .. 6 (centipede)
         segs: t() > 0.62 ? 3 : 2,          // elbows per leg
         heads: t() > 0.78 ? 2 : 1,
+        // Machinery limbs: 0 line, 1 triangle, 2 diamond, 3 scissor -
+        // only expressed when the morph leans mechanical.
+        limbStyle: Math.floor(t() * 3.999),
+        bladeW: u(0.5, 1.2),               // blade width of shaped limbs
         legSpan: u(0.95, 1.5),
         legSeg: u(0.6, 0.84),
         arch: u(0.55, 1.5),
@@ -124,8 +128,10 @@ function sampleMorphology(rng) {
         // Locomotion archetype dials - corners of this space read as
         // spider / centipede / frog / lizard / snake.
         waveK: u(0.25, Math.PI),      // gait phase per leg: ripple .. alternate
-        hindBias: t(),                // rear legs longer, jumps harder (frog)
+        hindBias: t(),                // rear legs longer, leaps harder (frog)
         undulate: t(),                // lateral spine wave (snake, swimmer)
+        sprawl: t(),                  // legs out to the side, low slung (lizard)
+        playful: u(0.04, 0.22),       // P(run circles around the pen)
         // Temperament.
         speed: u(1.8, 3.6),
         restlessness: u(0.5, 2.2),
@@ -139,6 +145,8 @@ function sampleMorphology(rng) {
         bumpy: t(),
         floaty: t(),
         speedy: t(),
+        plasticity: t(),              // how far traits FLUCTUATE at runtime
+        alert: t(),                   // posture bias: skulker .. sentinel
         // Ink.
         sketch: u(0.5, 1.3),
         boilHz: u(5, 9),
@@ -147,32 +155,68 @@ function sampleMorphology(rng) {
     };
 }
 
-/* The room's own genome: rooms lean colorful or plain, noisy or calm,
-   cohesive or decayed - coupled the same way the creature is. */
+/* Arena archetypes: discrete prototypes whose FEATURES get blended.
+   Each habitat draws sharpened mixture weights over these through its
+   genome, so an arena can be 60% rock tunnel / 30% thicket - hybrids
+   with furniture no single archetype carries. */
+const ARCHETYPES = {
+    gym: { seams: 3, ring: 1, rail: 1, grid: 0, stalks: 1, arcs: 0, rocks: 1, pebbles: 0, glass: 0, trees: 0.6, tufts: 4, mounds: 1.5, mold: 0.6, beams: 0.4, pylons: 0, faces: 0, treeline: 0.3, shell: 0.5 },
+    tank: { seams: 0, ring: 0, rail: 0, grid: 0, stalks: 2, arcs: 0, rocks: 2, pebbles: 26, glass: 1, trees: 0.3, tufts: 3, mounds: 2.5, mold: 0.8, beams: 0, pylons: 0, faces: 0.3, treeline: 0, shell: 1.2 },
+    tunnel: { seams: 0, ring: 0, rail: 0, grid: 0, stalks: 0, arcs: 5, rocks: 5, pebbles: 9, glass: 0, trees: 0, tufts: 1, mounds: 3.5, mold: 3, beams: 0, pylons: 0, faces: 3, treeline: 0, shell: 0.12 },
+    thicket: { seams: 0, ring: 0, rail: 0, grid: 0, stalks: 14, arcs: 1, rocks: 1, pebbles: 0, glass: 0, trees: 4, tufts: 18, mounds: 3, mold: 1.5, beams: 0, pylons: 0, faces: 0.4, treeline: 1.5, shell: 0 },
+    void: { seams: 0, ring: 0, rail: 0, grid: 7, stalks: 0, arcs: 0, rocks: 0, pebbles: 0, glass: 0, trees: 0, tufts: 0, mounds: 0, mold: 0, beams: 0, pylons: 0, faces: 0, treeline: 0.4, shell: 0 },
+    machine: { seams: 1, ring: 0, rail: 0.5, grid: 1.5, stalks: 0, arcs: 0.5, rocks: 0.5, pebbles: 0, glass: 0.1, trees: 0, tufts: 0.5, mounds: 0.6, mold: 1.2, beams: 5, pylons: 3, faces: 0.5, treeline: 0, shell: 0.35 },
+};
+
+/* The room's own genome: archetype mixture, scale, color lean, noise,
+   cohesion, decay - coupled the same way the creature is. */
 function sampleHabitat(rng) {
     const t = genome(rng, 4, 6);
+    const names = Object.keys(ARCHETYPES);
+    const raw = names.map(() => Math.exp((t() - 0.5) * 5));
+    const wSum = raw.reduce((a, b) => a + b, 0);
+    const weights = {};
+    names.forEach((n, i) => { weights[n] = raw[i] / wSum; });
+    const feat = {};
+    for (const f of Object.keys(ARCHETYPES.gym)) {
+        feat[f] = names.reduce((acc, n) => acc + ARCHETYPES[n][f] * weights[n], 0);
+    }
     return {
-        style: Math.floor(rng() * 4),
-        hueOff: (t() - 0.5) * 90,     // color lean off the accent hue
-        noise: 0.4 + t() * 1.3,       // jitter of the room's ink
-        cohesion: 0.55 + t() * 0.45,  // overall presence of the lines
-        decay: t() * 0.45,            // chance any given line has crumbled
-        density: 0.5 + t() * 1.2,     // how much furniture
+        weights, feat,
+        // Every arena gets its own scale: cathedrals, crawlspaces, long
+        // galleries. A low ceiling makes ceiling-grip jumps routine.
+        roomW: 10 + t() * 10,
+        roomD: 5 + t() * 4,
+        roomH: 2.4 + t() * 3.1,
+        hueOff: (t() - 0.5) * 90,
+        noise: 0.4 + t() * 1.3,
+        cohesion: 0.55 + t() * 0.45,
+        decay: t() * 0.45,
+        density: 0.6 + t(),
     };
 }
 
 // ------------------------------------------------------------ 3D helpers
 
-const ROOM_W = 14, ROOM_D = 7, ROOM_H = 4;
+let ROOM_W = 14, ROOM_D = 7, ROOM_H = 4;
 const EDGE = 0.4;
+const POSTURES = [0.45, 0.65, 0.85, 1.0, 1.2];   // quantized stance levels
 
-const SURFACES = {
-    floor: { o: [0, 0, 0], ea: [1, 0, 0], eb: [0, 0, 1], n: [0, 1, 0], A: ROOM_W, B: ROOM_D },
-    ceiling: { o: [0, ROOM_H, 0], ea: [1, 0, 0], eb: [0, 0, 1], n: [0, -1, 0], A: ROOM_W, B: ROOM_D },
-    wallB: { o: [0, 0, ROOM_D], ea: [1, 0, 0], eb: [0, 1, 0], n: [0, 0, -1], A: ROOM_W, B: ROOM_H },
-    wallL: { o: [0, 0, 0], ea: [0, 0, 1], eb: [0, 1, 0], n: [1, 0, 0], A: ROOM_D, B: ROOM_H },
-    wallR: { o: [ROOM_W, 0, 0], ea: [0, 0, 1], eb: [0, 1, 0], n: [-1, 0, 0], A: ROOM_D, B: ROOM_H },
-};
+const SURFACES = {};
+
+/* One arena lives at a time, so room scale is module state: set the
+   dimensions, rebuild the surface frames. */
+function setRoom(w, d, h) {
+    ROOM_W = w; ROOM_D = d; ROOM_H = h;
+    Object.assign(SURFACES, {
+        floor: { o: [0, 0, 0], ea: [1, 0, 0], eb: [0, 0, 1], n: [0, 1, 0], A: w, B: d },
+        ceiling: { o: [0, h, 0], ea: [1, 0, 0], eb: [0, 0, 1], n: [0, -1, 0], A: w, B: d },
+        wallB: { o: [0, 0, d], ea: [1, 0, 0], eb: [0, 1, 0], n: [0, 0, -1], A: w, B: h },
+        wallL: { o: [0, 0, 0], ea: [0, 0, 1], eb: [0, 1, 0], n: [1, 0, 0], A: d, B: h },
+        wallR: { o: [w, 0, 0], ea: [0, 0, 1], eb: [0, 1, 0], n: [-1, 0, 0], A: d, B: h },
+    });
+}
+setRoom(14, 7, 4);
 
 function toWorld(S, a, b, h) {
     return {
@@ -235,10 +279,34 @@ class Creature {
         }
         this.ch = { energy: 0, buoy: 0, tempo: 0, swayA: 0, swayB: 0, gaze: 0 };
 
+        // Runtime plasticity: sampled traits are not frozen at birth.
+        // Each of these gets its own nonlinear projection of the voter
+        // pool, depth gated by the plasticity gene - so sprawl, arch,
+        // stance, undulation, stride all breathe, and downstream
+        // nonlinearities (IK, gait windows, spring physics) amplify the
+        // fluctuations into behaviors no static genome shows.
+        this.modW = {};
+        for (const m of ['stance', 'arch', 'sprawl', 'undulate', 'stride']) {
+            this.modW[m] = Array.from({ length: N },
+                () => ((this.rng() * 2 - 1) * 2.0) / Math.sqrt(N));
+        }
+        this.mods = { stance: 0, arch: 0, sprawl: 0, undulate: 0, stride: 0 };
+
+        // Posture ladder: stance height moves in DISCRETE levels, one
+        // step per pause - three steps, crouch, hold, rise, rise, full
+        // height. The quantization is the sequential nonlinearity.
+        this.postureLvl = 3;          // index into POSTURES
+        this.postureGoal = 3;
+        this.postureT = 1 + this.rng();
+
+        this.terrainRef = null;       // set by the Arena; floor geometry
+        this.enclosure = 1;           // open worlds have no walls to climb
+
         this.surface = 'floor';
         this.a = ROOM_W * (0.25 + 0.5 * this.rng());
         this.b = ROOM_D * (0.25 + 0.5 * this.rng());
         this.va = 0; this.vb = 0;
+        this.p.stance *= 1 - 0.35 * this.p.sprawl;   // lizards run low
         this.h = this.p.stance * this.p.scale;
         this.vh = 0;
         this.heading = this.rng() * Math.PI * 2;
@@ -296,6 +364,12 @@ class Creature {
 
     expo(mean) { return -Math.log(1 - this.live() + 1e-9) * mean; }
 
+    /* True ground level under a surface point - only the floor rolls. */
+    groundAt(a, b) {
+        if (this.surface !== 'floor' || !this.terrainRef) return 0;
+        return groundHeight(this.terrainRef, a, b);
+    }
+
     pool(t) {
         const vals = this.voters.map(
             v => Math.sin(v.w1 * t + v.p1) * 0.6 + Math.sin(v.w2 * t + v.p2) * 0.4,
@@ -306,6 +380,13 @@ class Creature {
             for (let i = 0; i < w.length; i++) s += w[i] * vals[i];
             this.ch[c] = Math.tanh(s);
         }
+        const depth = 0.35 * this.p.plasticity;
+        for (const m in this.modW) {
+            let s = 0;
+            const w = this.modW[m];
+            for (let i = 0; i < w.length; i++) s += w[i] * vals[i];
+            this.mods[m] = Math.tanh(1.5 * s) * depth;
+        }
         return this.ch;
     }
 
@@ -315,11 +396,26 @@ class Creature {
         if (r < p.sleepiness) {
             this.state = 'sleep';
             this.timer = 3.0 + this.expo(4.0);
-        } else if (r < p.sleepiness + p.jumpiness) {
-            this.state = 'jump';
+        } else if (r < p.sleepiness + p.playful) {
+            // Play: fast circles around a spot in the pen, like a horse.
+            this.state = 'play';
+            this.timer = 4.0 + this.expo(6.0);
+            const S = SURFACES[this.surface];
+            this.playR = 0.8 + this.live() * 1.8;
+            this.playCa = Math.min(S.A - EDGE - this.playR,
+                Math.max(EDGE + this.playR, this.a));
+            this.playCb = Math.min(S.B - EDGE - this.playR,
+                Math.max(EDGE + this.playR, this.b));
+            this.playPhase = Math.atan2(this.b - this.playCb, this.a - this.playCa);
+            this.playDir = this.live() < 0.5 ? 1 : -1;
+        } else if (r < p.sleepiness + p.playful + p.jumpiness) {
+            // A real leap: crouch first, then launch up AND forward.
+            this.state = 'crouch';
+            this.timer = 0.12 + 0.1 * this.live();
             const hard = this.surface === 'floor' && this.live() < 0.35;
-            this.vh += (hard ? 4.6 : 2.2 + this.live() * 1.6)
+            this.jumpVh = (hard ? 4.6 : 2.2 + this.live() * 1.6)
                 * (0.75 + 0.5 * p.floaty) * (1 + 0.5 * p.hindBias);
+            this.jumpFwd = (1.0 + 2.6 * p.hindBias) * (0.6 + 0.6 * this.live());
         } else {
             this.state = 'run';
             const S = SURFACES[this.surface];
@@ -336,6 +432,9 @@ class Creature {
     rest() {
         this.state = 'idle';
         this.timer = this.expo(this.p.restlessness);
+        // Pulling up from a run often ends in a wary crouch, re-risen
+        // step by step on the posture ladder.
+        if (this.live() < 0.45) this.postureGoal = this.live() < 0.5 ? 1 : 0;
     }
 
     unplant() { for (const leg of this.legs) { leg.planted = null; leg.swing = null; } }
@@ -378,7 +477,7 @@ class Creature {
         };
         const route = routes[this.surface]?.[which];
 
-        if (route && fast && this.live() < p.climby) {
+        if (route && fast && this.enclosure > 0.3 && this.live() < p.climby) {
             this.transfer(route[0], ...route[1]());
             return;
         }
@@ -399,6 +498,8 @@ class Creature {
             this.stagger = 0.9;
             this.state = 'bump';
             this.timer = 0.6 + this.expo(0.4);
+            this.postureLvl = 0;       // knocked flat; the ladder rebuilds
+            this.postureGoal = 0;
             return;
         }
         if (which[0] === 'a') this.va = 0; else this.vb = 0;
@@ -436,16 +537,39 @@ class Creature {
                 this.lie -= (0.5 + 0.8 * p.fluid) * dt;
                 if (this.lie <= 0) { this.lie = 0; this.rest(); }
                 break;
+            case 'crouch':
+                // Load the spring: the body sinks before the leap.
+                if (this.timer <= 0) {
+                    this.state = 'jump';
+                    this.vh += this.jumpVh;
+                    this.va += Math.cos(this.heading) * this.jumpFwd;
+                    this.vb += Math.sin(this.heading) * this.jumpFwd;
+                }
+                break;
             case 'jump':
                 if (this.vh <= 0 && this.h <= p.stance * p.scale * 1.15) this.rest();
                 break;
+            case 'play': {
+                // Orbit the pen: chase a point ahead on the circle.
+                const w = (this.effSpeed * 1.15) / this.playR;
+                this.playPhase += w * this.playDir * dt;
+                const aim = this.playPhase + this.playDir * 0.55;
+                const sp2 = this.effSpeed * 1.15;
+                const ga = this.playCa + Math.cos(aim) * this.playR - this.a;
+                const gb = this.playCb + Math.sin(aim) * this.playR - this.b;
+                const gd = Math.hypot(ga, gb) || 1;
+                dva = (ga / gd) * sp2; dvb = (gb / gd) * sp2;
+                if (this.timer <= 0) this.rest();
+                break;
+            }
             case 'bump':
                 if (this.timer <= 0) this.rest();
                 break;
         }
 
         const agility = (2.2 + 7 * p.speedy) * (this.state === 'bump' ? 0.4 : 1);
-        const drag = 1.2 + 3.5 * (1 - p.fluid);
+        const flying = this.state === 'jump' && this.h > p.stance * p.scale * 1.3;
+        const drag = (1.2 + 3.5 * (1 - p.fluid)) * (flying ? 0.15 : 1);
         this.va += ((dva - this.va) * agility + ch.swayA * 2.2 * p.bumpy) * dt;
         this.vb += ((dvb - this.vb) * agility + ch.swayB * 2.2 * p.bumpy) * dt;
         this.va -= this.va * drag * dt * (dva ? 0 : 1);
@@ -461,10 +585,50 @@ class Creature {
             this.b = SURFACES[this.surface].B - EDGE; this.hitEdge('b1');
         }
 
+        // Solid trunks: trees push the body out and around, never through.
+        if (this.surface === 'floor' && this.terrainRef) {
+            for (const tr of this.terrainRef.trees) {
+                const dx2 = this.a - tr.x, dz2 = this.b - tr.z;
+                const d2 = Math.hypot(dx2, dz2);
+                const rT = 0.22 + 0.18 * p.scale;
+                if (d2 < rT && d2 > 1e-4) {
+                    this.a = tr.x + (dx2 / d2) * rT;
+                    this.b = tr.z + (dz2 / d2) * rT;
+                    const vn = (this.va * dx2 + this.vb * dz2) / d2;
+                    if (vn < 0) {            // kill the inward component
+                        this.va -= (dx2 / d2) * vn;
+                        this.vb -= (dz2 / d2) * vn;
+                    }
+                }
+            }
+        }
+        const ground = this.groundAt(this.a, this.b);
+
         const standH = p.stance * p.scale;
         const lieH = 0.08 * p.scale;
-        const targetH = (standH * (1 - this.lie) + lieH * this.lie)
-            * (1 + 0.12 * this.ch.buoy * p.floaty);
+        // The posture ladder ticks on its own clock: one quantized step
+        // toward the goal per pause, new goals chosen at the top.
+        this.postureT -= dt;
+        if (this.postureT <= 0) {
+            this.postureT = 0.25 + this.expo(0.7);
+            if (this.postureLvl !== this.postureGoal) {
+                this.postureLvl += Math.sign(this.postureGoal - this.postureLvl);
+            } else if (this.state === 'idle' && this.live() < 0.5) {
+                // Mostly stand tall (alert biases how tall); sometimes
+                // drop low and ladder back up later.
+                const r2 = this.live();
+                this.postureGoal = r2 < 0.2 ? 0
+                    : r2 < 0.35 ? 1
+                    : 2 + Math.round((1 + p.alert) * this.live());
+                this.postureGoal = Math.min(POSTURES.length - 1, this.postureGoal);
+            }
+        }
+        const posture = POSTURES[this.postureLvl];
+
+        const crouch = this.state === 'crouch' ? 0.55 : 0;
+        const standLive = standH * posture * (1 + this.mods.stance);
+        const targetH = ground + (standLive * (1 - this.lie) + lieH * this.lie)
+            * (1 + 0.12 * this.ch.buoy * p.floaty) * (1 - crouch);
         const airborne = this.h > targetH + 0.12;
         const onWall = this.surface.startsWith('wall');
         if (airborne && !onWall) {
@@ -476,9 +640,11 @@ class Creature {
             this.vh += (k * (targetH - this.h) - damp * this.vh) * dt;
         }
         this.h += this.vh * dt;
-        if (this.h < lieH * 0.6) { this.h = lieH * 0.6; this.vh = Math.abs(this.vh) * 0.3; }
+        const hMin = ground + lieH * 0.6;
+        if (this.h < hMin) { this.h = hMin; this.vh = Math.abs(this.vh) * 0.3; }
 
-        if (this.surface === 'floor' && this.vh > 0 && this.h >= ROOM_H - standH * 1.4) {
+        if (this.surface === 'floor' && this.enclosure > 0.3
+            && this.vh > 0 && this.h >= ROOM_H - standH * 1.4) {
             this.surface = 'ceiling';
             this.h = ROOM_H - this.h;
             this.vh = -this.vh * 0.25;
@@ -523,7 +689,7 @@ class Creature {
             const dl = Math.hypot(da, db) || 1;
             da /= dl; db /= dl;
             const wave = Math.sin(this.phase * 0.8 - i * 1.15)
-                * p.undulate * bodyR * 1.2 * speedF;
+                * p.undulate * (1 + this.mods.undulate) * bodyR * 1.2 * speedF;
             const anchor = toWorld(S,
                 prevL.a - da * spacing + (-db) * wave,
                 prevL.b - db * spacing + da * wave,
@@ -562,13 +728,14 @@ class Creature {
         // independent swing to a predicted landing. No sliding.
         this.stepLegs(dt, sp, S);
 
-        this.phase += (2.0 + 3.0 * sp) * p.stride * (1 + 0.3 * ch.tempo) * dt;
+        this.phase += (2.0 + 3.0 * sp) * p.stride * (1 + 0.3 * ch.tempo + this.mods.stride) * dt;
     }
 
     stepLegs(dt, sp, S) {
         const p = this.p;
         const s = p.scale;
-        const grounded = this.h < p.stance * s * 1.3 && this.lie < 0.7;
+        const g0 = this.groundAt(this.a, this.b);
+        const grounded = this.h - g0 < p.stance * s * 1.3 && this.lie < 0.7;
         const reachBase = 0.95 * p.legSpan * s;
         const swinging = this.legs.filter(l => l.swing).length;
         const maxSwing = Math.max(1, Math.ceil(this.legs.length / 2));
@@ -690,46 +857,54 @@ class Creature {
             J.heads.push({ pos, eyes, stalk, headR });
         }
 
-        const grounded = this.h < p.stance * s * 1.3;
+        const gBody = this.groundAt(this.a, this.b);
+        const grounded = this.h - gBody < p.stance * s * 1.3;
         J.legs = [];
         for (const leg of this.legs) {
             const host = this.hostLocal(leg.host, S);
             const reach = reachBase * (leg.hind ? 1 + 0.6 * p.hindBias : 1);
             const seg = reach * p.legSeg;
             const ang = host.dir + leg.sweep;
+            const hipR = bodyR * (0.85 + 0.55 * Math.max(0, p.sprawl * (1 + this.mods.sprawl)));
             const hip = {
-                a: host.a + Math.cos(ang) * bodyR * 0.85,
-                b: host.b + Math.sin(ang) * bodyR * 0.85,
+                a: host.a + Math.cos(ang) * hipR,
+                b: host.b + Math.sin(ang) * hipR,
                 h: host.h + bob,
             };
             let foot, toeDir;
             if (this.lie >= 0.7) {
-                foot = { a: host.a + Math.cos(ang) * reach * 1.25, b: host.b + Math.sin(ang) * reach * 1.25, h: 0.01 };
+                const fa3 = host.a + Math.cos(ang) * reach * 1.25;
+                const fb3 = host.b + Math.sin(ang) * reach * 1.25;
+                foot = { a: fa3, b: fb3, h: this.groundAt(fa3, fb3) + 0.01 };
                 toeDir = ang;
             } else if (!grounded) {
+                const back = leg.hind ? 0.9 : 0;   // hind legs trail in flight
                 foot = {
-                    a: host.a + Math.cos(ang) * reach * 0.5,
-                    b: host.b + Math.sin(ang) * reach * 0.5,
-                    h: bodyH - seg * 0.7,
+                    a: host.a + Math.cos(ang) * reach * 0.5 - Math.cos(host.dir) * reach * back,
+                    b: host.b + Math.sin(ang) * reach * 0.5 - Math.sin(host.dir) * reach * back,
+                    h: bodyH - seg * (leg.hind ? 0.3 : 0.7),
                 };
                 toeDir = ang;
             } else if (leg.swing) {
                 const sw = leg.swing;
                 const e = sw.t < 0.5 ? 2 * sw.t * sw.t : 1 - Math.pow(-2 * sw.t + 2, 2) / 2;
+                const fa3 = sw.fa + (sw.ta2 - sw.fa) * e;
+                const fb3 = sw.fb + (sw.tb2 - sw.fb) * e;
                 foot = {
-                    a: sw.fa + (sw.ta2 - sw.fa) * e,
-                    b: sw.fb + (sw.tb2 - sw.fb) * e,
-                    h: Math.sin(Math.PI * sw.t) * 0.16 * s,
+                    a: fa3, b: fb3,
+                    h: this.groundAt(fa3, fb3) + Math.sin(Math.PI * sw.t) * 0.16 * s,
                 };
                 toeDir = Math.atan2(sw.tb2 - sw.fb, sw.ta2 - sw.fa);
             } else if (leg.planted) {
-                foot = { a: leg.planted.a, b: leg.planted.b, h: 0 };
+                foot = { a: leg.planted.a, b: leg.planted.b, h: this.groundAt(leg.planted.a, leg.planted.b) };
                 toeDir = host.dir;
             } else {
-                foot = { a: host.a + Math.cos(ang) * reach * 0.7, b: host.b + Math.sin(ang) * reach * 0.7, h: 0 };
+                const fa3 = host.a + Math.cos(ang) * reach * 0.7;
+                const fb3 = host.b + Math.sin(ang) * reach * 0.7;
+                foot = { a: fa3, b: fb3, h: this.groundAt(fa3, fb3) };
                 toeDir = ang;
             }
-            const sol = ik2local(hip, foot, seg, seg, p.arch);
+            const sol = ik2local(hip, foot, seg, seg, p.arch * (1 + this.mods.arch));
             const joints = [hip, sol.knee];
             if (p.segs === 3) {
                 joints.splice(1, 0, {
@@ -741,11 +916,9 @@ class Creature {
             joints.push(sol.foot);
             // The toe: a short flat segment ON the surface, conforming to
             // the terrain and pointing where the foot is headed.
-            const toe = {
-                a: sol.foot.a + Math.cos(toeDir) * 0.1 * s,
-                b: sol.foot.b + Math.sin(toeDir) * 0.1 * s,
-                h: 0,
-            };
+            const ta3 = sol.foot.a + Math.cos(toeDir) * 0.1 * s;
+            const tb3 = sol.foot.b + Math.sin(toeDir) * 0.1 * s;
+            const toe = { a: ta3, b: tb3, h: this.groundAt(ta3, tb3) };
             J.legs.push({
                 joints: joints.map(j => toWorld(S, j.a, j.b, j.h)),
                 toe: toWorld(S, toe.a, toe.b, toe.h),
@@ -756,9 +929,9 @@ class Creature {
         J.shadow = [];
         for (let i = 0; i < 10; i++) {
             const a2 = (i / 10) * Math.PI * 2;
-            J.shadow.push(toWorld(S,
-                this.a + Math.cos(a2) * 0.5 * s * p.elong * 0.8,
-                this.b + Math.sin(a2) * 0.38 * s, 0.01));
+            const sa3 = this.a + Math.cos(a2) * 0.5 * s * p.elong * 0.8;
+            const sb3 = this.b + Math.sin(a2) * 0.38 * s;
+            J.shadow.push(toWorld(S, sa3, sb3, this.groundAt(sa3, sb3) + 0.01));
         }
         return J;
     }
@@ -829,51 +1002,146 @@ class Inker {
 
 // ------------------------------------------------------------ ecosystem
 
-/* Habitat furniture, sampled per seed under the habitat genome (density
-   scales counts). Every element carries a depth z so the painter can
-   interleave it with the creature. */
-function buildFurniture(rng, hab) {
-    const count = (n) => Math.max(1, Math.round(n * hab.density));
-    const style = hab.style;
-    if (style === 0) {
-        return {
-            kind: 'gym',
-            seams: count(3),
-            ringR: 1.0 + rng() * 1.2,
-            railH: 0.35 + rng() * 0.2,
-        };
-    }
-    if (style === 1) {
-        return {
-            kind: 'grove',
-            stalks: Array.from({ length: count(10) }, () => ({
-                x: rng() * ROOM_W,
-                z: ROOM_D * (0.15 + rng() * 0.8),
-                h: 0.8 + rng() * 2.4,
-                lean: (rng() - 0.5) * 0.6,
-            })),
-        };
-    }
-    if (style === 2) {
-        return {
-            kind: 'cavern',
-            arcs: Array.from({ length: count(4) }, () => ({
-                h: ROOM_H - 0.4 - rng() * 0.8,
-                sag: 0.3 + rng() * 0.6,
-                z: ROOM_D * (0.5 + rng() * 0.45),
-            })),
-            rocks: Array.from({ length: count(8) }, () => ({
-                x: rng() * ROOM_W,
-                z: ROOM_D * (0.1 + rng() * 0.85),
-                r: 0.15 + rng() * 0.4,
-            })),
-        };
-    }
+/* A shared terrain layer every habitat gets a hint of: rolling contour
+   lines, boulders solid enough to hide behind, a tree or two, mold
+   creeping on the back wall, motes drifting in the air. Counts ride the
+   habitat genome - a sketch of what full generative terrain could be. */
+function buildTerrain(rng, hab) {
+    const f = hab.feat;
+    const n = (k) => Math.round(k * hab.density);
     return {
-        kind: 'void',
-        gridX: count(7),
-        gridZ: count(4),
+        hills: Array.from({ length: 1 + n(2) }, () => ({
+            z: ROOM_D * (0.2 + rng() * 0.7),
+            amp: 0.1 + rng() * 0.3,
+            waves: 1 + Math.floor(rng() * 3),
+            ph: rng() * Math.PI * 2,
+        })),
+        boulders: Array.from({ length: 1 + n(f.rocks * 0.7) }, () => ({
+            x: ROOM_W * (0.1 + rng() * 0.8),
+            z: ROOM_D * (0.15 + rng() * 0.75),
+            r: 0.45 + rng() * 0.65,
+            squash: 0.55 + rng() * 0.3,
+        })),
+        trees: Array.from({ length: n(f.trees) }, () => ({
+            x: ROOM_W * (0.1 + rng() * 0.8),
+            z: ROOM_D * (0.3 + rng() * 0.65),
+            h: Math.min(ROOM_H * 0.85, 1.6 + rng() * 1.6),
+            r: 0.4 + rng() * 0.5,
+        })),
+        stalks: Array.from({ length: n(f.stalks) }, () => ({
+            x: rng() * ROOM_W,
+            z: ROOM_D * (0.15 + rng() * 0.8),
+            h: Math.min(ROOM_H * 0.7, 0.8 + rng() * 2.4),
+            lean: (rng() - 0.5) * 0.6,
+        })),
+        arcs: Array.from({ length: n(f.arcs) }, () => ({
+            h: ROOM_H - 0.3 - rng() * 0.7,
+            sag: 0.25 + rng() * 0.55,
+            z: ROOM_D * (0.35 + rng() * 0.6),
+        })),
+        pebbles: Array.from({ length: n(f.pebbles) }, () => ({
+            x: rng() * ROOM_W,
+            z: ROOM_D * (0.05 + rng() * 0.9),
+            r: 0.05 + rng() * 0.12,
+        })),
+        glass: f.glass,
+        seams: n(f.seams),
+        ring: f.ring > 0.4 ? { r: 1.0 + rng() * 1.2 } : null,
+        rail: f.rail > 0.4 ? { h: 0.35 + rng() * 0.2 } : null,
+        gridX: n(f.grid), gridZ: Math.round(n(f.grid) * 0.6),
+        mounds: Array.from({ length: 1 + n(f.mounds) }, () => ({
+            x: ROOM_W * (0.05 + rng() * 0.9),
+            z: ROOM_D * (0.1 + rng() * 0.8),
+            r: 0.5 + rng() * 0.9,
+            h: 0.12 + rng() * 0.3,
+        })),
+        tufts: Array.from({ length: 2 + n(f.tufts) }, () => ({
+            x: ROOM_W * rng(), z: ROOM_D * rng(),
+            s: 0.08 + rng() * 0.14, lean: (rng() - 0.5) * 0.6,
+        })),
+        mold: Array.from({ length: n(f.mold) }, () => ({
+            x: ROOM_W * rng(),
+            y: ROOM_H * (0.05 + rng() * 0.6),
+            spots: Array.from({ length: 4 + Math.floor(rng() * 9) }, () => ({
+                dx: (rng() - 0.5) * 1.4, dy: (rng() - 0.5) * 0.9,
+                r: 0.04 + rng() * 0.1,
+            })),
+        })),
+        motes: Array.from({ length: 1 + n(1.5) }, () => ({
+            x: ROOM_W * rng(), y: 0.8 + rng() * Math.max(0.5, ROOM_H - 1.6),
+            z: ROOM_D * (0.2 + rng() * 0.7),
+            r: 0.25 + rng() * 0.5, w: 0.3 + rng() * 0.7, ph: rng() * Math.PI * 2,
+        })),
+        ceilDots: Array.from({ length: n(40) + 20 }, () => ({
+            x: rng() * ROOM_W, z: rng() * ROOM_D,
+            r: 0.5 + rng() * 1.2, al: 0.02 + rng() * 0.05,
+        })),
+        shell: f.shell,
+        // Machinery: angled girders and braced pylons.
+        beams: Array.from({ length: n(f.beams) }, () => ({
+            x0: ROOM_W * rng(), x1: ROOM_W * rng(),
+            z: ROOM_D * (0.45 + rng() * 0.5),
+            h0: 0.0, h1: Math.min(ROOM_H * 0.9, 1.2 + rng() * 2.4),
+        })),
+        pylons: Array.from({ length: n(f.pylons) }, () => ({
+            x: ROOM_W * (0.08 + rng() * 0.84),
+            z: ROOM_D * (0.4 + rng() * 0.55),
+            h: Math.min(ROOM_H * 0.95, 1.4 + rng() * 2.2),
+            brace: rng() < 0.7,
+        })),
+        // Natural backdrop: big angled rock faces instead of a flat wall.
+        faces: Array.from({ length: n(f.faces) }, () => ({
+            cx: ROOM_W * (rng() * 1.3 - 0.15),
+            z: ROOM_D * (0.8 + rng() * 0.5),
+            w: ROOM_W * (0.25 + rng() * 0.6),
+            h: 1.0 + rng() * (ROOM_H * 0.9),
+            tilt: (rng() - 0.5) * 2.2,
+            jag: Array.from({ length: 5 }, () => (rng() - 0.5) * 0.5),
+        })),
+        treeline: f.treeline > 0.3 ? {
+            z: ROOM_D + 1.5 + rng() * 1.5,
+            pts: Array.from({ length: 12 }, () => 0.6 + rng() * 1.4),
+            trunks: Array.from({ length: 3 + Math.floor(rng() * 4) }, () => ({
+                x: rng() * 1.4 - 0.2, h: 0.5 + rng() * 0.9,
+            })),
+        } : null,
+        // The world continues past the bounds: faded scatter off-stage.
+        outTufts: Array.from({ length: n((f.tufts + f.stalks) * 0.6) }, () => ({
+            x: ROOM_W * (rng() * 1.6 - 0.3),
+            z: ROOM_D * (1.0 + rng() * 0.45),
+            s: 0.1 + rng() * 0.18, lean: (rng() - 0.5) * 0.6,
+        })),
+        outRocks: Array.from({ length: n((f.rocks + f.mounds) * 0.5) }, () => ({
+            x: ROOM_W * (rng() * 1.5 - 0.25),
+            z: ROOM_D * (1.05 + rng() * 0.4),
+            r: 0.3 + rng() * 0.7,
+        })),
     };
+}
+
+/* The floor's true geometry: boulders are domes, mounds are gaussian
+   humps, hills are low ridges. The creature's body height and every
+   planted foot sample this, so it steps up onto rocks and self-corrects
+   over dirt - the spring physics and IK do the rest. */
+function groundHeight(terrain, a, b) {
+    let g = 0;
+    for (const bo of terrain.boulders) {
+        const d = Math.hypot(a - bo.x, b - bo.z);
+        const R = bo.r * 1.15;
+        if (d < R) {
+            g = Math.max(g, bo.r * bo.squash * 0.85 * Math.cos((d / R) * Math.PI / 2));
+        }
+    }
+    for (const mo of terrain.mounds) {
+        const d2 = (a - mo.x) ** 2 + (b - mo.z) ** 2;
+        g = Math.max(g, mo.h * Math.exp(-d2 / (2 * mo.r * mo.r * 0.35)));
+    }
+    for (const hl of terrain.hills) {
+        const ridge = Math.max(0, Math.sin((a / ROOM_W) * Math.PI * hl.waves + hl.ph));
+        const band = Math.exp(-((b - hl.z) ** 2) / 0.5);
+        g = Math.max(g, hl.amp * ridge * band);
+    }
+    return g;
 }
 
 /* Stable per-key decay: a decayed room has crumbled away some of its
@@ -885,7 +1153,7 @@ function survives(key, hab, salt) {
 /* Emit the room as depth-sorted items. Long spanning lines split into
    thirds so the creature can pass in front of the near part of an edge
    and behind the far part. */
-function envItems(env, hab, salt, ink, P) {
+function envItems(hab, salt, ink, P, terrain, colors, t) {
     const items = [];
     const seg3 = (x0, y0, z0, x1, y1, z1, key, alpha, amp) => {
         for (let k = 0; k < 3; k++) {
@@ -906,99 +1174,376 @@ function envItems(env, hab, salt, ink, P) {
         }
     };
 
-    // Room shell.
-    seg3(0, 0, 0, ROOM_W, 0, 0, 'fl-near', 0.45, 1.0);
-    seg3(0, 0, ROOM_D, ROOM_W, 0, ROOM_D, 'fl-far', 0.3, 0.8);
-    seg3(0, 0, 0, 0, 0, ROOM_D, 'fl-left', 0.3, 0.8);
-    seg3(ROOM_W, 0, 0, ROOM_W, 0, ROOM_D, 'fl-right', 0.3, 0.8);
-    seg3(0, ROOM_H, ROOM_D, ROOM_W, ROOM_H, ROOM_D, 'ce-far', 0.22, 0.8);
-    seg3(0, ROOM_H, 0, ROOM_W, ROOM_H, 0, 'ce-near', 0.16, 0.7);
-    seg3(0, ROOM_H, 0, 0, ROOM_H, ROOM_D, 'ce-left', 0.16, 0.7);
-    seg3(ROOM_W, ROOM_H, 0, ROOM_W, ROOM_H, ROOM_D, 'ce-right', 0.16, 0.7);
-    seg3(0, 0, ROOM_D, 0, ROOM_H, ROOM_D, 'post-bl', 0.22, 0.8);
-    seg3(ROOM_W, 0, ROOM_D, ROOM_W, ROOM_H, ROOM_D, 'post-br', 0.22, 0.8);
-    seg3(0, 0, 0, 0, ROOM_H, 0, 'post-fl', 0.10, 0.7);
-    seg3(ROOM_W, 0, 0, ROOM_W, ROOM_H, 0, 'post-fr', 0.10, 0.7);
-
-    if (env.kind === 'gym') {
-        for (let i = 1; i <= env.seams; i++) {
-            const z = (ROOM_D * i) / (env.seams + 1);
-            seg3(0, 0, z, ROOM_W, 0, z, 'fl-z' + i, 0.12, 0.7);
-        }
-        if (survives('ring', hab, salt)) {
-            items.push({
-                z: ROOM_D / 2 - env.ringR,
-                draw: (ctx) => {
-                    ctx.globalAlpha = 0.12 * hab.cohesion;
-                    const ring = [];
-                    for (let i = 0; i < 14; i++) {
-                        const a = (i / 14) * Math.PI * 2;
-                        ring.push(P(ROOM_W / 2 + Math.cos(a) * env.ringR, 0,
-                            ROOM_D / 2 + Math.sin(a) * env.ringR));
-                    }
-                    ink.loop(ctx, ring, 'fl-ring', 0.7);
-                },
-            });
-        }
-        seg3(-0.5, ROOM_H * env.railH, ROOM_D, ROOM_W + 0.5, ROOM_H * env.railH, ROOM_D, 'rail', 0.15, 0.7);
-    } else if (env.kind === 'grove') {
-        env.stalks.forEach((st, i) => {
-            if (!survives('stalk' + i, hab, salt)) return;
-            items.push({
-                z: st.z,
-                draw: (ctx) => {
-                    ctx.globalAlpha = 0.28 * hab.cohesion;
-                    const top = P(st.x + st.lean, st.h, st.z);
-                    ink.bone(ctx, P(st.x, 0, st.z), top, 'stalk' + i, 1.1);
-                    ctx.globalAlpha = 0.18 * hab.cohesion;
-                    ink.bone(ctx, top, P(st.x + st.lean + 0.3, st.h - 0.35, st.z), 'frond-a' + i, 0.9);
-                    ink.bone(ctx, top, P(st.x + st.lean - 0.3, st.h - 0.3, st.z), 'frond-b' + i, 0.9);
-                },
-            });
+    // The containment shell is a TANK feature, not a given: its lines
+    // fade in only as the habitat leans glass-tank. Open-world arenas
+    // keep a whisper of the floor edge and nothing else.
+    const sh = Math.min(1, terrain.shell);
+    const floorA = 0.12 + 0.33 * sh;
+    seg3(0, 0, 0, ROOM_W, 0, 0, 'fl-near', floorA, 1.0);
+    seg3(0, 0, ROOM_D, ROOM_W, 0, ROOM_D, 'fl-far', floorA * 0.7, 0.8);
+    seg3(0, 0, 0, 0, 0, ROOM_D, 'fl-left', floorA * 0.7, 0.8);
+    seg3(ROOM_W, 0, 0, ROOM_W, 0, ROOM_D, 'fl-right', floorA * 0.7, 0.8);
+    if (sh > 0.15) {
+        seg3(0, ROOM_H, ROOM_D, ROOM_W, ROOM_H, ROOM_D, 'ce-far', 0.22 * sh, 0.8);
+        seg3(0, ROOM_H, 0, ROOM_W, ROOM_H, 0, 'ce-near', 0.16 * sh, 0.7);
+        seg3(0, ROOM_H, 0, 0, ROOM_H, ROOM_D, 'ce-left', 0.16 * sh, 0.7);
+        seg3(ROOM_W, ROOM_H, 0, ROOM_W, ROOM_H, ROOM_D, 'ce-right', 0.16 * sh, 0.7);
+        seg3(0, 0, ROOM_D, 0, ROOM_H, ROOM_D, 'post-bl', 0.22 * sh, 0.8);
+        seg3(ROOM_W, 0, ROOM_D, ROOM_W, ROOM_H, ROOM_D, 'post-br', 0.22 * sh, 0.8);
+        seg3(0, 0, 0, 0, ROOM_H, 0, 'post-fl', 0.10 * sh, 0.7);
+        seg3(ROOM_W, 0, 0, ROOM_W, ROOM_H, 0, 'post-fr', 0.10 * sh, 0.7);
+    }    // ---- blended archetype furniture ----
+    for (let i = 1; i <= terrain.seams; i++) {
+        const z = (ROOM_D * i) / (terrain.seams + 1);
+        seg3(0, 0, z, ROOM_W, 0, z, 'fl-z' + i, 0.12, 0.7);
+    }
+    if (terrain.ring && survives('ring', hab, salt)) {
+        items.push({
+            z: ROOM_D / 2 - terrain.ring.r,
+            draw: (ctx) => {
+                ctx.globalAlpha = 0.12 * hab.cohesion;
+                const ring = [];
+                for (let i = 0; i < 14; i++) {
+                    const a = (i / 14) * Math.PI * 2;
+                    ring.push(P(ROOM_W / 2 + Math.cos(a) * terrain.ring.r, 0,
+                        ROOM_D / 2 + Math.sin(a) * terrain.ring.r));
+                }
+                ink.loop(ctx, ring, 'fl-ring', 0.7);
+            },
         });
-    } else if (env.kind === 'cavern') {
-        env.arcs.forEach((arc, i) => {
-            if (!survives('arc' + i, hab, salt)) return;
-            items.push({
-                z: arc.z,
-                draw: (ctx) => {
-                    ctx.globalAlpha = 0.20 * hab.cohesion;
+    }
+    if (terrain.rail) {
+        seg3(-0.5, ROOM_H * terrain.rail.h, ROOM_D, ROOM_W + 0.5, ROOM_H * terrain.rail.h, ROOM_D, 'rail', 0.15, 0.7);
+    }
+    for (let i = 1; i < terrain.gridX; i++) {
+        const x = (ROOM_W * i) / terrain.gridX;
+        seg3(x, 0, 0, x, 0, ROOM_D, 'gx' + i, 0.10, 0.6);
+    }
+    for (let i = 1; i < terrain.gridZ; i++) {
+        const z = (ROOM_D * i) / terrain.gridZ;
+        seg3(0, 0, z, ROOM_W, 0, z, 'gz' + i, 0.10, 0.6);
+    }
+    terrain.stalks.forEach((st, i) => {
+        if (!survives('stalk' + i, hab, salt)) return;
+        items.push({
+            z: st.z,
+            draw: (ctx) => {
+                ctx.globalAlpha = 0.28 * hab.cohesion;
+                const top = P(st.x + st.lean, st.h, st.z);
+                ink.bone(ctx, P(st.x, 0, st.z), top, 'stalk' + i, 1.1);
+                ctx.globalAlpha = 0.18 * hab.cohesion;
+                ink.bone(ctx, top, P(st.x + st.lean + 0.3, st.h - 0.35, st.z), 'frond-a' + i, 0.9);
+                ink.bone(ctx, top, P(st.x + st.lean - 0.3, st.h - 0.3, st.z), 'frond-b' + i, 0.9);
+            },
+        });
+    });
+    terrain.arcs.forEach((arc, i) => {
+        if (!survives('arc' + i, hab, salt)) return;
+        items.push({
+            z: arc.z,
+            draw: (ctx) => {
+                ctx.globalAlpha = 0.20 * hab.cohesion;
+                let prev = null;
+                for (let k = 0; k <= 8; k++) {
+                    const x = (k / 8) * ROOM_W;
+                    const dip = -Math.sin((k / 8) * Math.PI) * arc.sag;
+                    const pt = P(x, arc.h + dip, arc.z);
+                    if (prev) ink.bone(ctx, prev, pt, 'arc' + i + '-' + k, 0.8);
+                    prev = pt;
+                }
+            },
+        });
+    });
+    terrain.pebbles.forEach((pb, i) => {
+        if (!survives('pebble' + i, hab, salt)) return;
+        items.push({
+            z: pb.z,
+            draw: (ctx) => {
+                ctx.globalAlpha = 0.25 * hab.cohesion;
+                const pts = [];
+                for (let k = 0; k < 6; k++) {
+                    const a = (k / 6) * Math.PI * 2;
+                    pts.push(P(pb.x + Math.cos(a) * pb.r,
+                        Math.max(0, Math.sin(a) * pb.r * 0.6), pb.z));
+                }
+                ink.loop(ctx, pts, 'pebble' + i, 0.5);
+            },
+        });
+    });
+    if (terrain.glass > 0.25) {
+        // Glass tank: translucent panes and a diagonal glint on the back
+        // wall - drawn deepest, so everything lives in front of it.
+        items.push({
+            z: ROOM_D + 0.02,
+            draw: (ctx) => {
+                ctx.globalAlpha = 0.05 * terrain.glass;
+                ctx.fillStyle = colors.grain;
+                ctx.beginPath();
+                const q = [P(0, ROOM_H, ROOM_D), P(ROOM_W, ROOM_H, ROOM_D),
+                    P(ROOM_W, 0, ROOM_D), P(0, 0, ROOM_D)];
+                q.forEach((p2, k) => ctx[k ? 'lineTo' : 'moveTo'](p2.x, p2.y));
+                ctx.closePath();
+                ctx.fill();
+                ctx.globalAlpha = 0.18 * terrain.glass * hab.cohesion;
+                ink.bone(ctx, P(ROOM_W * 0.18, ROOM_H * 0.9, ROOM_D),
+                    P(ROOM_W * 0.42, ROOM_H * 0.15, ROOM_D), 'glint-a', 0.5);
+                ink.bone(ctx, P(ROOM_W * 0.28, ROOM_H * 0.95, ROOM_D),
+                    P(ROOM_W * 0.46, ROOM_H * 0.35, ROOM_D), 'glint-b', 0.5);
+            },
+        });
+    }
+
+    terrain.hills.forEach((hl, i) => {
+        if (!survives('hill' + i, hab, salt)) return;
+        items.push({
+            z: hl.z,
+            draw: (ctx) => {
+                ctx.globalAlpha = 0.14 * hab.cohesion;
+                let prev = null;
+                for (let k = 0; k <= 10; k++) {
+                    const x = (k / 10) * ROOM_W;
+                    const y = Math.max(0, Math.sin((k / 10) * Math.PI * hl.waves + hl.ph) * hl.amp);
+                    const pt = P(x, y, hl.z);
+                    if (prev) ink.bone(ctx, prev, pt, `hill${i}-${k}`, 0.8);
+                    prev = pt;
+                }
+            },
+        });
+    });
+    terrain.boulders.forEach((bo, i) => {
+        if (!survives('boulder' + i, hab, salt)) return;
+        items.push({
+            z: bo.z,
+            draw: (ctx) => {
+                // Filled with the paper color: the creature can disappear
+                // entirely behind a boulder.
+                const pts = [];
+                for (let k = 0; k < 9; k++) {
+                    const a = (k / 9) * Math.PI * 2;
+                    const rr = bo.r * (1 + 0.18 * Math.sin(a * 3 + i));
+                    pts.push(P(bo.x + Math.cos(a) * rr,
+                        Math.max(0, Math.sin(a) * rr * bo.squash), bo.z));
+                }
+                ctx.globalAlpha = 1;
+                ctx.fillStyle = colors.paper;
+                ctx.beginPath();
+                pts.forEach((p2, k) => ctx[k ? 'lineTo' : 'moveTo'](p2.x, p2.y));
+                ctx.closePath();
+                ctx.fill();
+                ctx.globalAlpha = 0.35 * hab.cohesion;
+                ink.loop(ctx, pts, 'boulder' + i, 1.0);
+            },
+        });
+    });
+    terrain.trees.forEach((tr, i) => {
+        if (!survives('tree' + i, hab, salt)) return;
+        items.push({
+            z: tr.z,
+            draw: (ctx) => {
+                ctx.globalAlpha = 0.30 * hab.cohesion;
+                const top = P(tr.x, tr.h, tr.z);
+                ink.bone(ctx, P(tr.x, 0, tr.z), top, 'trunk' + i, 1.0);
+                // Canopy: paper-filled so it occludes, faint rim.
+                const pts = [];
+                for (let k = 0; k < 9; k++) {
+                    const a = (k / 9) * Math.PI * 2;
+                    const rr = tr.r * (1 + 0.22 * Math.sin(a * 4 + i * 2));
+                    pts.push(P(tr.x + Math.cos(a) * rr, tr.h + Math.sin(a) * rr * 0.75, tr.z));
+                }
+                ctx.globalAlpha = 1;
+                ctx.fillStyle = colors.paper;
+                ctx.beginPath();
+                pts.forEach((p2, k) => ctx[k ? 'lineTo' : 'moveTo'](p2.x, p2.y));
+                ctx.closePath();
+                ctx.fill();
+                ctx.globalAlpha = 0.28 * hab.cohesion;
+                ink.loop(ctx, pts, 'canopy' + i, 1.1);
+            },
+        });
+    });
+    // Mold on the back wall: behind everything in the room.
+    items.push({
+        z: ROOM_D + 0.01,
+        draw: (ctx) => {
+            ctx.fillStyle = colors.grain;
+            for (let i = 0; i < terrain.mold.length; i++) {
+                const m = terrain.mold[i];
+                for (const sp of m.spots) {
+                    const pt = P(m.x + sp.dx, m.y + sp.dy, ROOM_D);
+                    ctx.globalAlpha = 0.10;
+                    ctx.beginPath();
+                    ctx.arc(pt.x, pt.y, sp.r * pt.d, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+            ctx.globalAlpha = 1;
+        },
+    });
+    // Dirt mounds: low stacked arc strokes with a dusting of grain.
+    terrain.mounds.forEach((mo, i) => {
+        if (!survives('mound' + i, hab, salt)) return;
+        items.push({
+            z: mo.z,
+            draw: (ctx) => {
+                ctx.globalAlpha = 0.20 * hab.cohesion;
+                for (let ring = 0; ring < 2; ring++) {
+                    const rr = mo.r * (1 - ring * 0.4);
+                    const hh = mo.h * (1 - ring * 0.35);
                     let prev = null;
-                    for (let k = 0; k <= 8; k++) {
-                        const x = (k / 8) * ROOM_W;
-                        const dip = -Math.sin((k / 8) * Math.PI) * arc.sag;
-                        const pt = P(x, arc.h + dip, arc.z);
-                        if (prev) ink.bone(ctx, prev, pt, 'arc' + i + '-' + k, 0.8);
+                    for (let k = 0; k <= 6; k++) {
+                        const x = mo.x - rr + (k / 6) * rr * 2;
+                        const y = Math.sin((k / 6) * Math.PI) * hh;
+                        const pt = P(x, y, mo.z);
+                        if (prev) ink.bone(ctx, prev, pt, `mound${i}-${ring}-${k}`, 0.7);
                         prev = pt;
                     }
-                },
-            });
+                }
+                ctx.fillStyle = colors.grain;
+                for (let k = 0; k < 5; k++) {
+                    const pt = P(mo.x + Math.sin(k * 2.4 + i) * mo.r * 0.6, 0.03,
+                        mo.z + Math.cos(k * 1.7 + i) * 0.2);
+                    ctx.globalAlpha = 0.10;
+                    ctx.beginPath();
+                    ctx.arc(pt.x, pt.y, Math.max(0.6, pt.d * 0.008), 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            },
         });
-        env.rocks.forEach((r, i) => {
-            if (!survives('rock' + i, hab, salt)) return;
-            items.push({
-                z: r.z,
-                draw: (ctx) => {
-                    ctx.globalAlpha = 0.28 * hab.cohesion;
-                    const pts = [];
-                    for (let k = 0; k < 7; k++) {
-                        const a = (k / 7) * Math.PI * 2;
-                        pts.push(P(r.x + Math.cos(a) * r.r, Math.max(0, Math.sin(a) * r.r * 0.7), r.z));
-                    }
-                    ink.loop(ctx, pts, 'rock' + i, 0.9);
-                },
-            });
+    });
+    // Grass tufts: two or three leaning blades, everywhere.
+    terrain.tufts.forEach((tf, i) => {
+        if (!survives('tuft' + i, hab, salt)) return;
+        items.push({
+            z: tf.z,
+            draw: (ctx) => {
+                ctx.globalAlpha = 0.22 * hab.cohesion;
+                const base = P(tf.x, 0, tf.z);
+                for (let k = -1; k <= 1; k++) {
+                    const tip = P(tf.x + tf.lean * tf.s * 3 + k * tf.s * 0.8,
+                        tf.s * (2.2 - Math.abs(k) * 0.6), tf.z);
+                    ink.bone(ctx, base, tip, `tuft${i}-${k}`, 0.5);
+                }
+            },
         });
-    } else if (env.kind === 'void') {
-        for (let i = 1; i < env.gridX; i++) {
-            const x = (ROOM_W * i) / env.gridX;
-            seg3(x, 0, 0, x, 0, ROOM_D, 'gx' + i, 0.10, 0.6);
-        }
-        for (let i = 1; i < env.gridZ; i++) {
-            const z = (ROOM_D * i) / env.gridZ;
-            seg3(0, 0, z, ROOM_W, 0, z, 'gz' + i, 0.10, 0.6);
-        }
+    });
+    // Machinery: girders rake across the back, pylons stand braced.
+    terrain.beams.forEach((bm, i) => {
+        if (!survives('beam' + i, hab, salt)) return;
+        items.push({
+            z: bm.z,
+            draw: (ctx) => {
+                ctx.globalAlpha = 0.26 * hab.cohesion;
+                ink.bone(ctx, P(bm.x0, bm.h0, bm.z), P(bm.x1, bm.h1, bm.z), 'beam' + i, 0.6);
+            },
+        });
+    });
+    terrain.pylons.forEach((py, i) => {
+        if (!survives('pylon' + i, hab, salt)) return;
+        items.push({
+            z: py.z,
+            draw: (ctx) => {
+                ctx.globalAlpha = 0.30 * hab.cohesion;
+                ink.bone(ctx, P(py.x, 0, py.z), P(py.x, py.h, py.z), 'pylon' + i, 0.6);
+                if (py.brace) {
+                    ctx.globalAlpha = 0.18 * hab.cohesion;
+                    ink.bone(ctx, P(py.x - 0.5, 0, py.z), P(py.x, py.h * 0.55, py.z), 'pybr-a' + i, 0.5);
+                    ink.bone(ctx, P(py.x + 0.5, 0, py.z), P(py.x, py.h * 0.55, py.z), 'pybr-b' + i, 0.5);
+                }
+            },
+        });
+    });
+    // Natural backdrop: angled rock faces where a wall might have been -
+    // jagged, tilted, sometimes spanning the full width.
+    terrain.faces.forEach((fc, i) => {
+        if (!survives('face' + i, hab, salt)) return;
+        items.push({
+            z: fc.z,
+            draw: (ctx) => {
+                const pts = [];
+                pts.push(P(fc.cx - fc.w / 2, 0, fc.z));
+                for (let k = 0; k < fc.jag.length; k++) {
+                    const fr = (k + 0.5) / fc.jag.length;
+                    pts.push(P(fc.cx - fc.w / 2 + fc.w * fr + fc.tilt * (fc.h * fr),
+                        fc.h * Math.sin(fr * Math.PI) * (1 + fc.jag[k]), fc.z));
+                }
+                pts.push(P(fc.cx + fc.w / 2 + fc.tilt * 0.3, 0, fc.z));
+                ctx.globalAlpha = 0.06;
+                ctx.fillStyle = colors.grain;
+                ctx.beginPath();
+                pts.forEach((p2, k) => ctx[k ? 'lineTo' : 'moveTo'](p2.x, p2.y));
+                ctx.closePath();
+                ctx.fill();
+                ctx.globalAlpha = 0.25 * hab.cohesion;
+                ink.loop(ctx, pts, 'face' + i, 1.3);
+            },
+        });
+    });
+    // A treeline past the bounds: the world does not end at the pen.
+    if (terrain.treeline) {
+        const tl = terrain.treeline;
+        items.push({
+            z: tl.z,
+            draw: (ctx) => {
+                ctx.globalAlpha = 0.16 * hab.cohesion;
+                let prev = null;
+                for (let k = 0; k < tl.pts.length; k++) {
+                    const x = ROOM_W * (k / (tl.pts.length - 1)) * 1.4 - ROOM_W * 0.2;
+                    const pt = P(x, tl.pts[k], tl.z);
+                    if (prev) ink.bone(ctx, prev, pt, 'tline' + k, 1.0);
+                    prev = pt;
+                }
+                for (let k = 0; k < tl.trunks.length; k++) {
+                    const tr = tl.trunks[k];
+                    ink.bone(ctx, P(ROOM_W * tr.x, 0, tl.z), P(ROOM_W * tr.x, tr.h, tl.z), 'ttr' + k, 0.7);
+                }
+            },
+        });
     }
+    // Off-stage scatter, faded: tufts and rocks beyond the pen.
+    terrain.outTufts.forEach((tf, i) => {
+        items.push({
+            z: tf.z,
+            draw: (ctx) => {
+                ctx.globalAlpha = 0.11 * hab.cohesion;
+                const base = P(tf.x, 0, tf.z);
+                for (let k = -1; k <= 1; k++) {
+                    ink.bone(ctx, base, P(tf.x + tf.lean * tf.s * 3 + k * tf.s * 0.8,
+                        tf.s * (2.2 - Math.abs(k) * 0.6), tf.z), `otuft${i}-${k}`, 0.5);
+                }
+            },
+        });
+    });
+    terrain.outRocks.forEach((r, i) => {
+        items.push({
+            z: r.z,
+            draw: (ctx) => {
+                ctx.globalAlpha = 0.13 * hab.cohesion;
+                const pts = [];
+                for (let k = 0; k < 7; k++) {
+                    const a = (k / 7) * Math.PI * 2;
+                    pts.push(P(r.x + Math.cos(a) * r.r, Math.max(0, Math.sin(a) * r.r * 0.6), r.z));
+                }
+                ink.loop(ctx, pts, 'orock' + i, 0.8);
+            },
+        });
+    });
+
+    // Motes: tiny fauna drifting slow ellipses in the air.
+    terrain.motes.forEach((mo, i) => {
+        items.push({
+            z: mo.z,
+            draw: (ctx) => {
+                const pt = P(mo.x + Math.cos(t * mo.w + mo.ph) * mo.r,
+                    mo.y + Math.sin(t * mo.w * 1.7 + mo.ph) * mo.r * 0.4, mo.z);
+                ctx.globalAlpha = 0.3;
+                ctx.fillStyle = colors.grain;
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, Math.max(0.8, pt.d * 0.012), 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+            },
+        });
+    });
     return items;
 }
 
@@ -1008,15 +1553,24 @@ class Arena {
     constructor(canvas, seedStr) {
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d');
+        // Habitat first: it sets the room's scale, and the creature is
+        // born into whatever space this seed grows.
+        const envRng = mulberry32(fnv1a(seedStr + ':env'));
+        this.hab = sampleHabitat(envRng);
+        setRoom(this.hab.roomW, this.hab.roomD, this.hab.roomH);
+        this.terrain = buildTerrain(envRng, this.hab);
+        // Enclosure: how much of a box this habitat truly is. Tunnels
+        // count - their rock arcs are a ceiling of sorts.
+        this.enclosure = Math.min(1,
+            this.hab.feat.shell + this.hab.weights.tunnel * 0.8);
         this.creature = new Creature(seedStr);
+        this.creature.terrainRef = this.terrain;
+        this.creature.enclosure = this.enclosure;
         this.inker = new Inker(
             mulberry32(fnv1a(seedStr + ':ink')),
             this.creature.p.boilHz,
             this.creature.p.sketch,
         );
-        const envRng = mulberry32(fnv1a(seedStr + ':env'));
-        this.hab = sampleHabitat(envRng);
-        this.env = buildFurniture(envRng, this.hab);
         this.envSalt = seedStr;
         this.envInker = new Inker(
             mulberry32(fnv1a(seedStr + ':env-ink')), 0.12,
@@ -1076,6 +1630,7 @@ class Arena {
             washBot: `hsl(${envHue} ${sat}% ${dark ? 70 : 35}% / ${dark ? 0.10 : 0.08})`,
             grain: `hsl(${envHue} ${sat}% ${dark ? 75 : 30}%)`,
             glow: `hsl(${hue} 70% ${dark ? 60 : 45}%)`,
+            paper: cs.getPropertyValue('--background').trim() || (dark ? '#101312' : '#f4f6f3'),
         };
     }
 
@@ -1111,14 +1666,29 @@ class Arena {
     drawBackdrop(ctx, P, J) {
         const cl = this.colors;
 
-        // Back wall: a vertical wash, heavier toward the floor line.
-        const wt = P(0, ROOM_H, ROOM_D), wb = P(0, 0, ROOM_D);
-        const wallGrad = ctx.createLinearGradient(0, wt.y, 0, wb.y);
-        wallGrad.addColorStop(0, cl.washTop);
-        wallGrad.addColorStop(1, cl.washBot);
-        ctx.fillStyle = wallGrad;
-        this.quad(ctx, P(0, ROOM_H, ROOM_D), P(ROOM_W, ROOM_H, ROOM_D),
-            P(ROOM_W, 0, ROOM_D), P(0, 0, ROOM_D));
+        // Enclosed habitats get a back-wall wash; open ones get a low
+        // horizon band rising from the far floor edge instead.
+        const enc = this.enclosure;
+        if (enc > 0.15) {
+            const wt = P(0, ROOM_H, ROOM_D), wb = P(0, 0, ROOM_D);
+            const wallGrad = ctx.createLinearGradient(0, wt.y, 0, wb.y);
+            wallGrad.addColorStop(0, cl.washTop);
+            wallGrad.addColorStop(1, cl.washBot);
+            ctx.fillStyle = wallGrad;
+            ctx.globalAlpha = Math.min(1, enc);
+            this.quad(ctx, P(0, ROOM_H, ROOM_D), P(ROOM_W, ROOM_H, ROOM_D),
+                P(ROOM_W, 0, ROOM_D), P(0, 0, ROOM_D));
+            ctx.globalAlpha = 1;
+        } else {
+            const hb2 = P(0, 1.2, ROOM_D * 1.4), fb2 = P(0, 0, ROOM_D);
+            const sky = ctx.createLinearGradient(0, hb2.y, 0, fb2.y);
+            sky.addColorStop(0, cl.washTop);
+            sky.addColorStop(1, cl.washBot);
+            ctx.fillStyle = sky;
+            this.quad(ctx, P(-ROOM_W * 0.3, 1.2, ROOM_D * 1.4),
+                P(ROOM_W * 1.3, 1.2, ROOM_D * 1.4),
+                P(ROOM_W * 1.3, 0, ROOM_D), P(-ROOM_W * 0.3, 0, ROOM_D));
+        }
 
         // Floor: the wash deepens toward the viewer - the tank's shadowed
         // near bed.
@@ -1139,12 +1709,23 @@ class Arena {
             ctx.arc(pt.x, pt.y, d.r * pt.d / 90, 0, Math.PI * 2);
             ctx.fill();
         }
-        for (const d of this.wallDots) {
-            const pt = P(d.x, d.y, ROOM_D);
-            ctx.globalAlpha = d.al;
-            ctx.beginPath();
-            ctx.arc(pt.x, pt.y, d.r * pt.d / 110, 0, Math.PI * 2);
-            ctx.fill();
+        if (enc > 0.15) {
+            for (const d of this.wallDots) {
+                const pt = P(d.x, d.y, ROOM_D);
+                ctx.globalAlpha = d.al * enc;
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, d.r * pt.d / 110, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            // Ceiling grain: sparse stipple so the plane reads when the
+            // creature walks it.
+            for (const d of this.terrain.ceilDots) {
+                const pt = P(d.x, ROOM_H, d.z);
+                ctx.globalAlpha = d.al * enc;
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, d.r * pt.d / 100, 0, Math.PI * 2);
+                ctx.fill();
+            }
         }
         ctx.globalAlpha = 1;
 
@@ -1178,14 +1759,18 @@ class Arena {
         ctx.fill();
     }
 
-    /* Tank camera: standing outside and above, looking down in. */
+    /* Tank camera: standing outside and above, looking down in. The
+       seat scales with the room, so every arena fills the window. */
     project(p) {
-        const camY = 7.5, camD = 7.0;
-        const f = this.w * 0.50;
+        const camY = ROOM_H * 1.875, camD = ROOM_D;
+        const f = (this.w * 0.97 * camD) / ROOM_W;
         const d = f / (camD + p.z);
+        // Pin the near floor edge to the window's bottom: rooms of any
+        // proportion fill the frame.
+        const y0 = this.h * 0.96 - camY * (f / camD);
         return {
             x: this.w / 2 + (p.x - ROOM_W / 2) * d,
-            y: this.h * 0.04 + (camY - p.y) * d,
+            y: y0 + (camY - p.y) * d,
             d, z: p.z,
         };
     }
@@ -1265,8 +1850,45 @@ class Arena {
             ctx.globalAlpha = far ? 0.45 : 0.95;
             ctx.lineWidth = lw(far ? 1.3 : 1.8);
             const pts = leg.joints.map(j => this.project(j));
+            const blades = p.mech > 0.4 && p.limbStyle > 0;
             for (let s2 = 0; s2 < pts.length - 1; s2++) {
-                inker.bone(ctx, pts[s2], pts[s2 + 1], `leg${leg.i}-s${s2}`, 1.2);
+                if (!blades) {
+                    inker.bone(ctx, pts[s2], pts[s2 + 1], `leg${leg.i}-s${s2}`, 1.2);
+                    continue;
+                }
+                // Shaped segments: thin closed polygons along the bone -
+                // triangles, diamonds, or crossed scissor blades.
+                const a3 = pts[s2], b3 = pts[s2 + 1];
+                const dx3 = b3.x - a3.x, dy3 = b3.y - a3.y;
+                const ln = Math.hypot(dx3, dy3) || 1;
+                const nx3 = -dy3 / ln, ny3 = dx3 / ln;
+                const wB = lw(2.6) * p.bladeW;
+                const key = `leg${leg.i}-s${s2}`;
+                if (p.limbStyle === 1) {
+                    inker.loop(ctx, [
+                        { x: a3.x + nx3 * wB, y: a3.y + ny3 * wB },
+                        { x: a3.x - nx3 * wB, y: a3.y - ny3 * wB },
+                        { x: b3.x, y: b3.y },
+                    ], key, 0.8);
+                } else if (p.limbStyle === 2) {
+                    inker.loop(ctx, [
+                        { x: a3.x, y: a3.y },
+                        { x: (a3.x + b3.x) / 2 + nx3 * wB, y: (a3.y + b3.y) / 2 + ny3 * wB },
+                        { x: b3.x, y: b3.y },
+                        { x: (a3.x + b3.x) / 2 - nx3 * wB, y: (a3.y + b3.y) / 2 - ny3 * wB },
+                    ], key, 0.8);
+                } else {
+                    inker.loop(ctx, [
+                        { x: a3.x + nx3 * wB, y: a3.y + ny3 * wB },
+                        { x: b3.x - nx3 * wB * 0.4, y: b3.y - ny3 * wB * 0.4 },
+                        { x: b3.x, y: b3.y },
+                    ], key + 'x', 0.7);
+                    inker.loop(ctx, [
+                        { x: a3.x - nx3 * wB, y: a3.y - ny3 * wB },
+                        { x: b3.x + nx3 * wB * 0.4, y: b3.y + ny3 * wB * 0.4 },
+                        { x: b3.x, y: b3.y },
+                    ], key + 'y', 0.7);
+                }
             }
             // The toe conforms to the terrain.
             if (leg.grounded) {
@@ -1412,7 +2034,7 @@ class Arena {
         // Painter's algorithm: the room's pieces and the creature sort by
         // depth, so stalks and rocks pass in front of or behind the
         // creature - and near wall edges overdraw it when it climbs.
-        const items = envItems(this.env, this.hab, this.envSalt, this.envInker, P);
+        const items = envItems(this.hab, this.envSalt, this.envInker, P, this.terrain, this.colors, this.t);
         items.push({
             z: J.body.z,
             creature: true,

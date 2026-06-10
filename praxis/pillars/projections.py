@@ -729,11 +729,7 @@ def bone_field(ax, rng, pal, mods):
         flare = w * (0.55 + 0.45 * (np.abs(s) / half) ** 2.2)
         jit = chaos * 0.18 * w * _fbm1(rng, n, octaves=2)
         for sign in (-1, 1):
-            p = (
-                center[:, None]
-                + np.outer(axis, s)
-                + np.outer(perp, sign * flare + jit)
-            )
+            p = center[:, None] + np.outer(axis, s) + np.outer(perp, sign * flare + jit)
             stroke(p[0], p[1], pal["stroke"], lw, z)
         # Each end cap is ONE continuous curve: shaft edge -> around the top
         # lobe -> notch at the tip -> around the bottom lobe -> shaft edge.
@@ -857,9 +853,9 @@ def neural_field(ax, rng, pal, mods):
     def dendrite(x0, y0, ang, length, lw, depth):
         n = 40
         t = np.linspace(0, length, n)
-        a = ang + (0.4 + 1.4 * chaos) * np.cumsum(
-            rng.standard_normal(n)
-        ) * length / (n * 14)
+        a = ang + (0.4 + 1.4 * chaos) * np.cumsum(rng.standard_normal(n)) * length / (
+            n * 14
+        )
         x = x0 + np.cumsum(np.cos(a)) * (length / n)
         y = y0 + np.cumsum(np.sin(a)) * (length / n)
         stroke(x, y, pal["stroke"], lw, 3)
@@ -870,7 +866,8 @@ def neural_field(ax, rng, pal, mods):
                     dendrite(
                         x[i],
                         y[i],
-                        float(a[i]) + float(rng.uniform(0.35, 1.0)) * rng.choice([-1, 1]),
+                        float(a[i])
+                        + float(rng.uniform(0.35, 1.0)) * rng.choice([-1, 1]),
                         length * float(rng.uniform(0.45, 0.65)),
                         lw * 0.65,
                         depth - 1,
@@ -878,7 +875,9 @@ def neural_field(ax, rng, pal, mods):
         else:
             # Synaptic bouton at the growth tip.
             r = float(rng.uniform(0.25, 0.55))
-            stroke(x[-1] + r * np.cos(t_c), y[-1] + r * np.sin(t_c), pal["stroke"], lw, 3)
+            stroke(
+                x[-1] + r * np.cos(t_c), y[-1] + r * np.sin(t_c), pal["stroke"], lw, 3
+            )
 
     def soma(cx, cy, r):
         somata.append((cx, cy))
@@ -948,26 +947,49 @@ def matrix_field(ax, rng, pal, mods):
         n = 40
         for i in range(cols + 1):
             pts = np.array([P(i, j) for j in np.linspace(0, rows, n)])
-            stroke(pts[:, 0], pts[:, 1], pal["stroke" if i % 4 == 0 else "faint"],
-                   lw * (1.4 if i % 4 == 0 else 1.0), z)
+            stroke(
+                pts[:, 0],
+                pts[:, 1],
+                pal["stroke" if i % 4 == 0 else "faint"],
+                lw * (1.4 if i % 4 == 0 else 1.0),
+                z,
+            )
         for j in range(rows + 1):
             pts = np.array([P(i, j) for i in np.linspace(0, cols, n)])
-            stroke(pts[:, 0], pts[:, 1], pal["stroke" if j % 4 == 0 else "faint"],
-                   lw * (1.4 if j % 4 == 0 else 1.0), z)
+            stroke(
+                pts[:, 0],
+                pts[:, 1],
+                pal["stroke" if j % 4 == 0 else "faint"],
+                lw * (1.4 if j % 4 == 0 else 1.0),
+                z,
+            )
         # Entries: dots at intersections, occasional solid cells.
         t_dot = np.linspace(0, 2 * np.pi, 12)
         for i in range(cols):
             for j in range(rows):
                 r = rng.random()
                 if r < 0.12:
-                    quad = np.array([P(i, j), P(i + 1, j), P(i + 1, j + 1), P(i, j + 1)])
-                    ax.fill(quad[:, 0], quad[:, 1], facecolor=pal["fill"],
-                            edgecolor=pal["stroke"], lw=0.4, zorder=z)
+                    quad = np.array(
+                        [P(i, j), P(i + 1, j), P(i + 1, j + 1), P(i, j + 1)]
+                    )
+                    ax.fill(
+                        quad[:, 0],
+                        quad[:, 1],
+                        facecolor=pal["fill"],
+                        edgecolor=pal["stroke"],
+                        lw=0.4,
+                        zorder=z,
+                    )
                 elif r < 0.4:
                     c = P(i + 0.5, j + 0.5)
                     rr = cell * 0.07
-                    stroke(c[0] + rr * np.cos(t_dot), c[1] + rr * np.sin(t_dot),
-                           pal["stroke"], lw, z)
+                    stroke(
+                        c[0] + rr * np.cos(t_dot),
+                        c[1] + rr * np.sin(t_dot),
+                        pal["stroke"],
+                        lw,
+                        z,
+                    )
         # Oversized brackets along the left/right columns.
         for side, i in ((-1, 0), (1, cols)):
             lip = 0.35 * cell * side
@@ -978,8 +1000,16 @@ def matrix_field(ax, rng, pal, mods):
                 stroke(tip[:, 0], tip[:, 1], pal["stroke"], lw * 2.2, z)
         if depth > 0:
             sub = P(float(rng.uniform(0, cols)), float(rng.uniform(0, rows)))
-            lattice(sub[0], sub[1], max(2, cols // 2), max(2, rows // 2),
-                    cell / PHI, lw * 0.8, depth - 1, max(z - 1, 2))
+            lattice(
+                sub[0],
+                sub[1],
+                max(2, cols // 2),
+                max(2, rows // 2),
+                cell / PHI,
+                lw * 0.8,
+                depth - 1,
+                max(z - 1, 2),
+            )
 
     lattice(
         float(rng.uniform(0.3, 0.7)) * CARD_W,
@@ -1073,6 +1103,252 @@ def helix_field(ax, rng, pal, mods):
         )
 
 
+# Leaf species as pointed-kernel mixtures: r(theta) = base + sum of
+# L*exp(-(|dth|/w)^p) lobes (p=1 pointed, p=2 rounded), a negative kernel
+# notching the petiole, optional marginal teeth. Tips double as vein targets.
+# Kernel: (angle, length, width, p). Tuned by eye against real silhouettes.
+_LEAF_SPECIES = (
+    dict(  # maple: 5 pointed lobes, deep sinuses, toothed margin
+        lobes=[
+            (0.0, 1.0, 0.42, 1.2),
+            (1.13, 0.88, 0.38, 1.2),
+            (-1.13, 0.88, 0.38, 1.2),
+            (2.27, 0.60, 0.30, 1.2),
+            (-2.27, 0.60, 0.30, 1.2),
+        ],
+        base=0.24,
+        notch=0.16,
+        teeth=40,
+        tooth=0.045,
+        aspect=1.0,
+    ),
+    dict(  # oak: seven rounded finger lobes
+        lobes=[
+            (0.0, 1.0, 0.20, 2.0),
+            (0.70, 0.80, 0.20, 2.0),
+            (-0.70, 0.80, 0.20, 2.0),
+            (1.40, 0.72, 0.20, 2.0),
+            (-1.40, 0.72, 0.20, 2.0),
+            (2.09, 0.60, 0.20, 2.0),
+            (-2.09, 0.60, 0.20, 2.0),
+        ],
+        base=0.30,
+        notch=0.10,
+        teeth=0,
+        tooth=0.0,
+        aspect=0.95,
+    ),
+    dict(  # ovate: smooth teardrop with a drawn-out apex
+        lobes=[(0.0, 0.92, 1.00, 2.0), (0.0, 1.05, 0.25, 1.0)],
+        base=0.30,
+        notch=0.06,
+        teeth=0,
+        tooth=0.0,
+        aspect=0.68,
+    ),
+    dict(  # birch: ovate body, serrated margin
+        lobes=[(0.0, 0.90, 0.90, 2.0), (0.0, 1.02, 0.28, 1.0)],
+        base=0.28,
+        notch=0.08,
+        teeth=26,
+        tooth=0.035,
+        aspect=0.72,
+    ),
+)
+
+
+def leaf_field(ax, rng, pal, mods):
+    """Foliage: leaves grown from one polar function - a base disc plus
+    pointed angular kernels per lobe - with species presets (maple, oak,
+    ovate, birch), veins traced to the lobe tips, and the bones' size
+    spectrum: the occasional giant shows only a cropped fragment."""
+    chaos, rec = mods["chaos"], mods["recurrence"]
+    # Outline and veins must stay mutually aligned.
+    mods = {**mods, "wobble": 0.35 * mods["wobble"]}
+    stroke = _make_stroke(ax, rng, mods)
+
+    def leaf(cx, cy, ang, size, sp, lw, z):
+        n = 360
+        th = np.linspace(-np.pi, np.pi, n)
+        r = np.full(n, sp["base"])
+        for a, L, w, p in sp["lobes"]:
+            d = np.abs(np.angle(np.exp(1j * (th - a))))
+            r = r + (L - sp["base"]) * np.exp(-((d / w) ** p))
+        d = np.abs(np.angle(np.exp(1j * (th - np.pi))))
+        r = r - sp["notch"] * np.exp(-((d / 0.35) ** 2))
+        if sp["teeth"]:
+            saw = 2 * np.abs((sp["teeth"] * th / (2 * np.pi)) % 1 - 0.5)
+            r = r * (1 - sp["tooth"] * saw)
+        r = np.maximum(r + chaos * 0.05 * _fbm1(rng, n, octaves=3), 0.02)
+
+        ca, sa = np.cos(ang), np.sin(ang)
+        asp = sp["aspect"]
+
+        def to_xy(rr, tt):
+            u, v = rr * np.cos(tt), rr * asp * np.sin(tt)
+            return cx + size * (u * ca - v * sa), cy + size * (u * sa + v * ca)
+
+        x, y = to_xy(r, th)
+        if rng.random() < 0.3:
+            ax.fill(x, y, facecolor=pal["fill"], edgecolor="none", zorder=z)
+        stroke(x, y, pal["stroke"], lw, z)
+
+        # Petiole + veins: from the basal junction to each major lobe tip,
+        # gently bowed. The lobe list already knows where the tips are.
+        bx, by = to_xy(np.array([r[0]]), np.array([np.pi]))
+        sx, sy = to_xy(np.array([r[0] + 0.30]), np.array([np.pi]))
+        stroke(
+            np.linspace(bx[0], sx[0], 8),
+            np.linspace(by[0], sy[0], 8),
+            pal["stroke"],
+            lw,
+            z,
+        )
+        if size > 5.5:
+            for a, L, w, p in sp["lobes"]:
+                if L < 0.5 or w > 0.95:
+                    continue  # minor lobe / body kernel, not a vein target
+                i = int((a + np.pi) / (2 * np.pi) * (n - 1))
+                tx, ty = to_xy(np.array([r[i] * 0.92]), np.array([a]))
+                t = np.linspace(0, 1, 24)
+                bow = 0.06 * size * np.sin(np.pi * t) * float(rng.uniform(-1, 1))
+                vx = bx[0] + t * (tx[0] - bx[0]) - bow * sa
+                vy = by[0] + t * (ty[0] - by[0]) + bow * ca
+                stroke(vx, vy, pal["faint" if L < 0.9 else "stroke"], lw * 0.7, z)
+
+    # Faint drift lines behind the foliage.
+    for _ in range(int(rng.integers(2, 4))):
+        x, y = _line_strand(rng, chaos, mods["arc"], mods["overshoot"])
+        stroke(x, y, pal["faint"], 0.5, 1)
+
+    # Size spectrum biased large, pass-through anchored like the bones;
+    # recurrence thickens the scatter of small companions.
+    n_leaves = 2 + int(round(rec * 4)) + int(rng.integers(0, 3))
+    for _ in range(n_leaves):
+        u = float(rng.uniform(0, 1)) ** 0.65
+        size = 4.0 * PHI ** (5.2 * u)
+        sp = _LEAF_SPECIES[int(rng.integers(len(_LEAF_SPECIES)))]
+        ang = float(rng.uniform(0, 2 * np.pi))
+        px = float(rng.uniform(0, CARD_W))
+        py = float(rng.uniform(0, CARD_H))
+        t = float(rng.uniform(0.1, 0.9)) * size
+        leaf(
+            px - t * np.cos(ang),
+            py - t * np.sin(ang),
+            ang,
+            size,
+            sp,
+            0.55 + 0.6 * u,
+            3,
+        )
+
+
+def _noise2(rng, gx=5, gy=4):
+    """Smooth 2D value noise over the card, as a callable (x, y) -> value."""
+    g = rng.standard_normal((gy + 1, gx + 1))
+
+    def f(x, y):
+        u = np.clip(np.asarray(x) / CARD_W, 0, 1) * gx
+        v = np.clip(np.asarray(y) / CARD_H, 0, 1) * gy
+        i0 = np.minimum(np.floor(u).astype(int), gx - 1)
+        j0 = np.minimum(np.floor(v).astype(int), gy - 1)
+        fu, fv = u - i0, v - j0
+        fu = fu * fu * (3 - 2 * fu)
+        fv = fv * fv * (3 - 2 * fv)
+        return (
+            g[j0, i0] * (1 - fu) * (1 - fv)
+            + g[j0, i0 + 1] * fu * (1 - fv)
+            + g[j0 + 1, i0] * (1 - fu) * fv
+            + g[j0 + 1, i0 + 1] * fu * fv
+        )
+
+    return f
+
+
+def chimera_field(ax, rng, pal, mods):
+    """TWO styles sharing one card as discrete territories: pool candidate
+    samples of the other fields, vote (counts become dominance), render
+    both winners, then keep each stroke only where its style's organic
+    noise mask wins. The boundary is a hard fbm contour, so each region
+    reads as a pure, unmixed sample of its style; only high chaos
+    occasionally earns a narrow seam where the two interleave."""
+    names = [n for n in PROJECTION_REGISTRY if n != "chimera"]
+    if not names:  # nothing to blend (e.g. a stripped-down registry)
+        return
+    # Candidate pooling + vote: 5 draws, counts weight the winners.
+    votes = np.bincount(rng.integers(0, len(names), size=5), minlength=len(names))
+    chosen = [int(i) for i in np.argsort(-votes) if votes[i] > 0][:2]
+    if len(chosen) < 2 and len(names) > 1:
+        # Unanimous vote still pairs with one dissenter.
+        extra = int(rng.integers(0, len(names)))
+        while extra in chosen:
+            extra = int(rng.integers(0, len(names)))
+        chosen.append(extra)
+
+    chaos = mods["chaos"]
+    sharp = 8.0  # near-argmax weights: territories, not gradients
+    # Pure discreteness by default; only high chaos sometimes opens a
+    # narrow seam where both styles survive.
+    margin = 0.18 * chaos if rng.random() < 0.1 + 0.3 * chaos else 0.0
+    # Few, large noise cells: coherent territories instead of confetti.
+    masks = [_noise2(rng, gx=3, gy=2) for _ in chosen]
+    bias = 0.5 * np.log1p(votes[chosen])  # pooled votes bias dominance
+
+    def weights(x, y):
+        m = np.stack([bias[k] + masks[k](x, y) for k in range(len(chosen))])
+        e = np.exp(sharp * (m - m.max(axis=0, keepdims=True)))
+        return e / e.sum(axis=0, keepdims=True)
+
+    styled = []  # (style index, artist)
+    for k, ci in enumerate(chosen):
+        n_lines, n_patches = len(ax.lines), len(ax.patches)
+        sub = np.random.default_rng(int(rng.integers(2**62)))
+        PROJECTION_REGISTRY[names[ci]](ax, sub, pal, dict(mods))
+        styled += [(k, a) for a in list(ax.lines)[n_lines:]]
+        styled += [(k, a) for a in list(ax.patches)[n_patches:]]
+
+    from matplotlib.lines import Line2D
+
+    for k, artist in styled:
+        if not isinstance(artist, Line2D):
+            # Filled shapes live or die whole - no fading; a kept shape
+            # looks exactly as its pure style would draw it.
+            verts = artist.get_xy()
+            if float(np.mean(weights(verts[:, 0], verts[:, 1])[k])) < 0.5:
+                artist.remove()
+            continue
+        x, y = np.asarray(artist.get_xdata()), np.asarray(artist.get_ydata())
+        if len(x) < 2:
+            continue
+        w = weights(x, y)
+        keep = w[k] >= w.max(axis=0) - margin
+        if keep.all():
+            continue
+        idx = np.where(keep)[0]
+        runs = [
+            r for r in np.split(idx, np.where(np.diff(idx) > 1)[0] + 1) if len(r) > 1
+        ]
+        color, lw, z, gid = (
+            artist.get_color(),
+            artist.get_linewidth(),
+            artist.get_zorder(),
+            artist.get_gid(),
+        )
+        artist.remove()
+        for r in runs:
+            # Full width to the cut: strokes stop at the territory line
+            # instead of dissolving, keeping each side's look intact.
+            (line,) = ax.plot(
+                x[r[0] : r[-1] + 1],
+                y[r[0] : r[-1] + 1],
+                color=color,
+                lw=lw,
+                zorder=z,
+            )
+            if gid:
+                line.set_gid(gid)
+
+
 PROJECTION_REGISTRY = {
     "strands": strand_field,
     "shatter": shatter_field,
@@ -1088,6 +1364,8 @@ PROJECTION_REGISTRY = {
     "neural": neural_field,
     "matrix": matrix_field,
     "helix": helix_field,
+    "leaves": leaf_field,
+    "chimera": chimera_field,
 }
 
 

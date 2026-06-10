@@ -188,6 +188,26 @@ export const readFormValues = (fieldConfigs) =>
     }, {});
 
 /**
+ * Read form values and deep-merge them into target. readFormValues builds a
+ * fresh nested object holding only the form's keys, so a shallow
+ * Object.assign would replace whole sub-objects (state.settings) and drop
+ * their non-form keys (systemPrompt, useCache).
+ */
+export const applyFormValues = (fieldConfigs, target) => {
+    const updates = readFormValues(fieldConfigs);
+    Object.entries(updates).forEach(([key, value]) => {
+        if (
+            value && typeof value === 'object' && !Array.isArray(value)
+            && target[key] && typeof target[key] === 'object'
+        ) {
+            Object.assign(target[key], value);
+        } else {
+            target[key] = value;
+        }
+    });
+};
+
+/**
  * Pure function to write form values to DOM
  */
 export const writeFormValues = (fieldConfigs, state) => {

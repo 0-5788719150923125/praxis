@@ -11,7 +11,7 @@ import { connectMetricsLive, setupLiveReload, renderCurrentMetrics } from './web
 import { kbSlideWindow, setupKbPrefetch } from './kbcache.js';
 import { loadSpec, loadAgents, loadResearchMetrics } from './tabs.js';
 import { setupTabCarousel, setupTabSwipe } from './mobile.js';
-import { storage, FORM_FIELDS, readFormValues, updateRangeDisplay } from './config.js';
+import { storage, FORM_FIELDS, applyFormValues, updateRangeDisplay } from './config.js';
 import { CLICK_HANDLERS, delegateClick } from './events.js';
 import { executeAction } from './actions.js';
 import { beginPrewarm, endPrewarm } from './prefetch.js';
@@ -1051,8 +1051,7 @@ async function handleReroll() {
  * Read settings from modal inputs using form config
  */
 function readSettingsFromModal() {
-    const updates = readFormValues(FORM_FIELDS.settings);
-    Object.assign(state, updates);
+    applyFormValues(FORM_FIELDS.settings, state);
 }
 
 /**

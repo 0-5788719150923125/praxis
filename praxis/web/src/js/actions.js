@@ -5,7 +5,7 @@
 
 import { state } from './state.js';
 import { render, renderNotifications } from './render.js';
-import { storage, readFormValues, FORM_FIELDS } from './config.js';
+import { storage, applyFormValues, FORM_FIELDS } from './config.js';
 import {
     toggleRunSelector, toggleRunSelection, repaintDeckCards,
     requestDeckFocus, applyDeckFocus, isDeckFocusPending, clearDeckFocus,
@@ -399,9 +399,8 @@ export const ACTION_HANDLERS = {
             }
         }
 
-        // Read form values
-        const updates = readFormValues(FORM_FIELDS.settings);
-        Object.assign(state, updates);
+        // Read form values (deep-merged so non-form settings keys survive)
+        applyFormValues(FORM_FIELDS.settings, state);
 
         // Save to localStorage
         storage.set('theme', state.theme);
