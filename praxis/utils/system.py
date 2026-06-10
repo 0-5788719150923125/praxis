@@ -336,8 +336,9 @@ def resolve_resume_checkpoint(cache_dir, reset=False):
             match = re.search(r"batch=(\d+)\.0\.ckpt", f)
             if match:
                 batches.append((int(match.group(1)), f))
-        candidates += [os.path.join(ckpt_dir, f)
-                       for _, f in sorted(batches, reverse=True)]
+        candidates += [
+            os.path.join(ckpt_dir, f) for _, f in sorted(batches, reverse=True)
+        ]
     candidates.append(os.path.join(cache_dir, "mono_forward.pt"))
 
     seen = set()

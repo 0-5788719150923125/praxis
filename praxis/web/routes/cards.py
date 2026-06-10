@@ -51,28 +51,30 @@ def _zip_both(render, name_fmt, zip_name):
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for side in ("front", "back"):
-            pdf = render(side, seed, theme, hue, authors, donations,
-                         run_hash, mods=mods)
+            pdf = render(
+                side, seed, theme, hue, authors, donations, run_hash, mods=mods
+            )
             zf.writestr(name_fmt.format(side=side), pdf)
     buf.seek(0)
-    return send_file(buf, mimetype="application/zip", as_attachment=True,
-                     download_name=zip_name)
+    return send_file(
+        buf, mimetype="application/zip", as_attachment=True, download_name=zip_name
+    )
 
 
 @cards_bp.route("/api/card/cards.zip", methods=["GET"])
 def cards_zip():
     from praxis.pillars.projections import render_single_pdf
 
-    return _zip_both(render_single_pdf, "praxis-card-{side}.pdf",
-                     "praxis-card.zip")
+    return _zip_both(render_single_pdf, "praxis-card-{side}.pdf", "praxis-card.zip")
 
 
 @cards_bp.route("/api/card/sheets.zip", methods=["GET"])
 def sheets_zip():
     from praxis.pillars.projections import render_sheet_pdf
 
-    return _zip_both(render_sheet_pdf, "praxis-cards-10up-{side}.pdf",
-                     "praxis-cards-10up.zip")
+    return _zip_both(
+        render_sheet_pdf, "praxis-cards-10up-{side}.pdf", "praxis-cards-10up.zip"
+    )
 
 
 @cards_bp.route("/api/card/card.pdf", methods=["GET"])
@@ -81,7 +83,9 @@ def card_pdf():
 
     seed, side, theme, hue, mods = _params()
     authors, donations, run_hash = _identity()
-    pdf = render_single_pdf(side, seed, theme, hue, authors, donations, run_hash, mods=mods)
+    pdf = render_single_pdf(
+        side, seed, theme, hue, authors, donations, run_hash, mods=mods
+    )
     return send_file(
         io.BytesIO(pdf),
         mimetype="application/pdf",
@@ -96,7 +100,9 @@ def sheet_pdf():
 
     seed, side, theme, hue, mods = _params()
     authors, donations, run_hash = _identity()
-    pdf = render_sheet_pdf(side, seed, theme, hue, authors, donations, run_hash, mods=mods)
+    pdf = render_sheet_pdf(
+        side, seed, theme, hue, authors, donations, run_hash, mods=mods
+    )
     return send_file(
         io.BytesIO(pdf),
         mimetype="application/pdf",

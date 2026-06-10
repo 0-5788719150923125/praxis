@@ -624,8 +624,13 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             assistant_mask,
         )
         self._collect_aux_losses(
-            outputs, hidden_states, logits, labels, input_ids,
-            attention_mask, skip_logits,
+            outputs,
+            hidden_states,
+            logits,
+            labels,
+            input_ids,
+            attention_mask,
+            skip_logits,
         )
         loss = self._finalize_loss(loss, outputs.losses, labels)
 

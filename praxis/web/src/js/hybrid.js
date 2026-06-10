@@ -101,6 +101,7 @@ function createHybridLayer() {
         headerClone.replaceWith(spacer);
     }
 
+    relightBizCard(appClone);
     hybridLayer.appendChild(appClone);
 
     // Position overlay - full viewport
@@ -123,6 +124,18 @@ function createHybridLayer() {
 
     // Start content sync to keep dynamic content (charts, agents, etc.) updated
     startContentSync();
+}
+
+/**
+ * The business-card preview is server-rendered per theme, so the cloned img
+ * would show the dark card inside the light overlay. Point the clone at the
+ * light variant; the split then divides two genuinely different renders.
+ */
+function relightBizCard(clone) {
+    clone.querySelectorAll('.biz-card-img').forEach(img => {
+        const src = img.getAttribute('src');
+        if (src) img.setAttribute('src', src.replace('theme=dark', 'theme=light'));
+    });
 }
 
 /**
@@ -173,6 +186,7 @@ function syncHybridContent() {
     }
 
     // Update hybrid layer content
+    relightBizCard(appClone);
     hybridLayer.innerHTML = '';
     hybridLayer.appendChild(appClone);
 

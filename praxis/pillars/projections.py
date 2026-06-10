@@ -50,7 +50,7 @@ def _palette(theme, hue):
     }
 
 
-PHI = (1 + 5 ** 0.5) / 2
+PHI = (1 + 5**0.5) / 2
 GOLDEN = 2 * np.pi * (1 - 1 / PHI)  # golden angle, ~137.5 deg
 
 
@@ -106,10 +106,15 @@ def _spiral_strand(rng, chaos, cx, cy, r0, turns, facets=13, n=900):
     x = (1 - chaos) * xp + chaos * xs
     y = (1 - chaos) * yp + chaos * ys
     scale = 0.04 * r  # displacement grows with the coil
-    return _displace(rng, x, y, chaos,
-                     tooth_h=float(rng.uniform(0.3, 1.0)) * scale,
-                     period=float(rng.uniform(30, 80)),
-                     noise_h=float(rng.uniform(0.6, 1.6)) * scale)
+    return _displace(
+        rng,
+        x,
+        y,
+        chaos,
+        tooth_h=float(rng.uniform(0.3, 1.0)) * scale,
+        period=float(rng.uniform(30, 80)),
+        noise_h=float(rng.uniform(0.6, 1.6)) * scale,
+    )
 
 
 def _line_strand(rng, chaos, arc=0.0, overshoot=0.0, n=700):
@@ -124,17 +129,22 @@ def _line_strand(rng, chaos, arc=0.0, overshoot=0.0, n=700):
     x, y = px + t * np.cos(a), py + t * np.sin(a)
     if arc > 0:
         bow = arc * float(rng.uniform(0.05, 0.6))
-        sag = bow * (t ** 2 - half ** 2) / half
+        sag = bow * (t**2 - half**2) / half
         x, y = x - sag * np.sin(a), y + sag * np.cos(a)
-    return _displace(rng, x, y, chaos,
-                     tooth_h=float(rng.uniform(0.8, 2.2)),
-                     period=float(rng.uniform(25, 70)),
-                     noise_h=float(rng.uniform(2.0, 6.0)))
+    return _displace(
+        rng,
+        x,
+        y,
+        chaos,
+        tooth_h=float(rng.uniform(0.8, 2.2)),
+        period=float(rng.uniform(25, 70)),
+        noise_h=float(rng.uniform(2.0, 6.0)),
+    )
 
 
 # The sampled modulation axes, each in [0, 1]. All endpoints accept them
 # as query-param overrides; unset axes are drawn per seed.
-MOD_AXES = ("chaos", "recurrence", "arc", "wobble", "overshoot")
+MOD_AXES = ("chaos", "recurrence", "arc", "wobble", "overshoot", "symmetry")
 
 
 def _make_stroke(ax, rng, mods):
@@ -146,6 +156,12 @@ def _make_stroke(ax, rng, mods):
     swirl_cy = float(rng.uniform(0, CARD_H))
     swirl_k = float(rng.uniform(0.5, 1.4)) * arc
     falloff = float(rng.uniform(35, 90))
+    # symmetry replicates every stroke k-fold around one center: any field
+    # becomes a mandala / crystal as the dial rises.
+    sym = mods["symmetry"]
+    sym_k = 1 + int(round(sym * float(rng.uniform(2, 6))))
+    sym_cx = float(rng.uniform(0.25, 0.75)) * CARD_W
+    sym_cy = float(rng.uniform(0.25, 0.75)) * CARD_H
 
     def stroke(x, y, color, lw, z):
         if wob > 0:
@@ -158,9 +174,19 @@ def _make_stroke(ax, rng, mods):
             ca, sa = np.cos(ang), np.sin(ang)
             x = swirl_cx + dx * ca - dy * sa
             y = swirl_cy + dx * sa + dy * ca
-        line, = ax.plot(x, y, color=color, lw=lw, zorder=z)
-        if ov > 0 and rng.random() < 0.6 * ov:
-            line.set_gid("overshoot")
+        tag = ov > 0 and rng.random() < 0.6 * ov
+        for i in range(sym_k):
+            if i == 0:
+                xi, yi = x, y
+            else:
+                a = 2 * np.pi * i / sym_k
+                ca, sa = np.cos(a), np.sin(a)
+                dx, dy = x - sym_cx, y - sym_cy
+                xi = sym_cx + dx * ca - dy * sa
+                yi = sym_cy + dx * sa + dy * ca
+            (line,) = ax.plot(xi, yi, color=color, lw=lw, zorder=z)
+            if tag:
+                line.set_gid("overshoot")
 
     return stroke
 
@@ -169,7 +195,9 @@ def strand_field(ax, rng, pal, mods):
     """Vib-Ribbon line art: every mark is one continuous stroke, pushed
     around by the modulation axes. chaos blends discrete golden cuts into
     fractal wander; recurrence spawns child coils."""
-    chaos, rec, arc, wob, ov = (mods[k] for k in MOD_AXES)
+    chaos, rec, arc, wob, ov = (
+        mods[k] for k in ("chaos", "recurrence", "arc", "wobble", "overshoot")
+    )
     stroke = _make_stroke(ax, rng, mods)
 
     def coil(cx, cy, scale, depth, facets, z):
@@ -184,16 +212,28 @@ def strand_field(ax, rng, pal, mods):
             for _ in range(int(round(rec * rng.integers(1, 4)))):
                 a = GOLDEN * int(rng.integers(1, 9))
                 rr = scale * 1.2 * PHI ** (n_coils / 2.2) * float(rng.uniform(0.5, 1.0))
-                coil(cx + rr * np.cos(a), cy + rr * np.sin(a),
-                     scale / PHI, depth - 1, facets, max(z - 1, 2))
+                coil(
+                    cx + rr * np.cos(a),
+                    cy + rr * np.sin(a),
+                    scale / PHI,
+                    depth - 1,
+                    facets,
+                    max(z - 1, 2),
+                )
 
     # Faint background cuts for depth.
     for _ in range(int(rng.integers(5, 9))):
         x, y = _line_strand(rng, chaos, arc, ov)
         stroke(x, y, pal["faint"], 0.5, 1)
 
-    coil(float(rng.uniform(-5, CARD_W + 5)), float(rng.uniform(-5, CARD_H + 5)),
-         1.0, 1 + int(rec > 0.4), int(rng.choice([8, 13, 21])), 3)
+    coil(
+        float(rng.uniform(-5, CARD_W + 5)),
+        float(rng.uniform(-5, CARD_H + 5)),
+        1.0,
+        1 + int(rec > 0.4),
+        int(rng.choice([8, 13, 21])),
+        3,
+    )
 
     # Foreground cuts.
     for _ in range(int(rng.integers(2, 5))):
@@ -228,9 +268,13 @@ def shatter_field(ax, rng, pal, mods):
                     continue
                 j1 = int(ring / r1 * (n - 1))
                 j2 = int(ring / r2 * (n - 1))
-                stroke(np.array([x1[j1], x2[j2]]), np.array([y1[j1], y2[j2]]),
-                       pal["faint"] if rng.random() < 0.4 else pal["stroke"],
-                       0.5, 2)
+                stroke(
+                    np.array([x1[j1], x2[j2]]),
+                    np.array([y1[j1], y2[j2]]),
+                    pal["faint"] if rng.random() < 0.4 else pal["stroke"],
+                    0.5,
+                    2,
+                )
 
 
 def lightning_field(ax, rng, pal, mods):
@@ -257,22 +301,36 @@ def lightning_field(ax, rng, pal, mods):
                 i = int(rng.integers(len(pts) // 4, 3 * len(pts) // 4))
                 d = pts[i] - pts[i - 1]
                 ang = np.arctan2(d[1], d[0]) + float(rng.uniform(-1.2, 1.2))
-                length = float(np.hypot(*(np.array(p1) - p0))) * float(rng.uniform(0.25, 0.5))
+                length = float(np.hypot(*(np.array(p1) - p0))) * float(
+                    rng.uniform(0.25, 0.5)
+                )
                 end = pts[i] + length * np.array([np.cos(ang), np.sin(ang)])
                 bolt(pts[i], end, disp * 4, depth - 1, lw * 0.6, color, z)
 
     rough = 3.0 + 9.0 * chaos
     for _ in range(int(rng.integers(4, 8))):
         edge = rng.uniform(-15, 1.15 * CARD_W, 2), rng.uniform(-15, 1.15 * CARD_H, 2)
-        bolt((float(edge[0][0]), float(edge[1][0])),
-             (float(edge[0][1]), float(edge[1][1])),
-             rough * 0.4, 1, 0.5, pal["faint"], 1)
+        bolt(
+            (float(edge[0][0]), float(edge[1][0])),
+            (float(edge[0][1]), float(edge[1][1])),
+            rough * 0.4,
+            1,
+            0.5,
+            pal["faint"],
+            1,
+        )
     for _ in range(int(rng.integers(2, 4))):
         x0, x1 = rng.uniform(-10, CARD_W + 10, 2)
         y0, y1 = rng.uniform(-10, CARD_H + 10, 2)
-        bolt((float(x0), float(y0)), (float(x1), float(y1)),
-             rough, 1 + int(rec > 0.4), float(rng.uniform(0.9, 1.5)),
-             pal["stroke"], 3)
+        bolt(
+            (float(x0), float(y0)),
+            (float(x1), float(y1)),
+            rough,
+            1 + int(rec > 0.4),
+            float(rng.uniform(0.9, 1.5)),
+            pal["stroke"],
+            3,
+        )
 
 
 def wave_field(ax, rng, pal, mods):
@@ -289,10 +347,11 @@ def wave_field(ax, rng, pal, mods):
     for i in range(rows):
         y0 = -8 + (CARD_H + 16) * i / (rows - 1)
         center = env_c + drift * (y0 - CARD_H / 2) + float(rng.normal(0, 4))
-        env = np.exp(-((x - center) ** 2) / (2 * env_w ** 2))
+        env = np.exp(-((x - center) ** 2) / (2 * env_w**2))
         amp = float(rng.uniform(2, 9))
-        carrier = np.sin(2 * np.pi * x / float(rng.uniform(5, 14))
-                         + float(rng.uniform(0, 6)))
+        carrier = np.sin(
+            2 * np.pi * x / float(rng.uniform(5, 14)) + float(rng.uniform(0, 6))
+        )
         sig = (1 - chaos) * carrier + chaos * 2.2 * _fbm1(rng, n)
         y = y0 + amp * env * sig + 0.4 * _fbm1(rng, n, octaves=3)
         color = pal["faint"] if i % 4 == 3 else pal["stroke"]
@@ -319,13 +378,17 @@ def fibonacci_field(ax, rng, pal, mods):
         color = pal["stroke"] if gen < 2 else pal["faint"]
         lw = max(0.4, 1.1 * PHI ** (-gen))
         for k in range(arms):
-            x, y = _spiral_strand(rng, chaos, cx, cy, scale, turns,
-                                  facets, n=700)
+            x, y = _spiral_strand(rng, chaos, cx, cy, scale, turns, facets, n=700)
             rot = base_rot + GOLDEN * (k + gen)
             dx, dy = x - cx, y - cy
             ca, sa = np.cos(rot), np.sin(rot)
-            stroke(cx + dx * ca - dy * sa, cy + dx * sa + dy * ca,
-                   color, lw, 4 - min(gen, 2))
+            stroke(
+                cx + dx * ca - dy * sa,
+                cy + dx * sa + dy * ca,
+                color,
+                lw,
+                4 - min(gen, 2),
+            )
     # Phyllotaxis nodes: seed points at golden-angle steps, sqrt spacing.
     if rng.random() < 0.7:
         t = np.linspace(0, 2 * np.pi, 24)
@@ -334,9 +397,13 @@ def fibonacci_field(ax, rng, pal, mods):
             r = c * np.sqrt(i)
             a = i * GOLDEN + base_rot
             nr = 0.25 + 0.5 * (i % 3 == 0)
-            stroke(cx + r * np.cos(a) + nr * np.cos(t),
-                   cy + r * np.sin(a) + nr * np.sin(t),
-                   pal["faint"], 0.5, 1)
+            stroke(
+                cx + r * np.cos(a) + nr * np.cos(t),
+                cy + r * np.sin(a) + nr * np.sin(t),
+                pal["faint"],
+                0.5,
+                1,
+            )
 
 
 def glyph_field(ax, rng, pal, mods):
@@ -356,8 +423,11 @@ def glyph_field(ax, rng, pal, mods):
         rot = float(rng.uniform(0, 2 * np.pi))
         if k:
             # Regular k-gon by apothem, then chaos warps the radius.
-            r = rad * np.cos(np.pi / k) / np.cos(
-                ((t + rot) % (2 * np.pi / k)) - np.pi / k)
+            r = (
+                rad
+                * np.cos(np.pi / k)
+                / np.cos(((t + rot) % (2 * np.pi / k)) - np.pi / k)
+            )
         else:
             r = np.full_like(t, rad)
         r = r * (1 + 0.35 * chaos * _fbm1(rng, len(t), octaves=3))
@@ -366,16 +436,272 @@ def glyph_field(ax, rng, pal, mods):
     for rad, x, y in sorted(glyphs, key=lambda g: -g[0]):  # big ones behind
         style = rng.random()
         if style < 0.45:
-            patch, = ax.fill(x, y, facecolor=pal["fill"],
-                             edgecolor=pal["stroke"], lw=0.7, zorder=2)
+            (patch,) = ax.fill(
+                x, y, facecolor=pal["fill"], edgecolor=pal["stroke"], lw=0.7, zorder=2
+            )
         elif style < 0.7:
-            patch, = ax.fill(x, y, facecolor=pal["stroke"],
-                             edgecolor=pal["paper"], lw=0.7, zorder=3)
+            (patch,) = ax.fill(
+                x, y, facecolor=pal["stroke"], edgecolor=pal["paper"], lw=0.7, zorder=3
+            )
         else:
-            patch, = ax.fill(x, y, facecolor="none", hatch="///",
-                             edgecolor=pal["faint"], lw=0.6, zorder=2)
+            (patch,) = ax.fill(
+                x,
+                y,
+                facecolor="none",
+                hatch="///",
+                edgecolor=pal["faint"],
+                lw=0.6,
+                zorder=2,
+            )
         if ov > 0 and rng.random() < 0.6 * ov:
             patch.set_gid("overshoot")
+
+
+def _blob(rng, cx, cy, rad, rough, n=160):
+    """Closed organic outline: a circle with fBm-perturbed radius."""
+    t = np.linspace(0, 2 * np.pi, n)
+    r = rad * (1 + rough * _fbm1(rng, n, octaves=3))
+    return cx + r * np.cos(t), cy + r * np.sin(t)
+
+
+def rubble_field(ax, rng, pal, mods):
+    """Particles: fractured stone. A few large cracked slabs, then pebbles
+    and rubble scattered in a power-law size cascade, settling toward a
+    sampled resting band."""
+    chaos, ov = mods["chaos"], mods["overshoot"]
+    stroke = _make_stroke(ax, rng, mods)
+    band_y = float(rng.uniform(0, CARD_H))
+    spread = float(rng.uniform(8, 40))
+
+    def place():
+        return (
+            float(rng.uniform(-5, CARD_W + 5)),
+            float(np.clip(rng.normal(band_y, spread), -5, CARD_H + 5)),
+        )
+
+    # Slabs: large angular shards, cracked through by a jagged strand.
+    for _ in range(int(rng.integers(1, 4))):
+        cx, cy = place()
+        rad = float(rng.uniform(8, 20))
+        k = int(rng.integers(4, 7))
+        t = np.linspace(0, 2 * np.pi, k, endpoint=False)
+        r = rad * rng.uniform(0.6, 1.0, k)
+        x = np.append(cx + r * np.cos(t), cx + r[0] * np.cos(t[0]))
+        y = np.append(cy + r * np.sin(t), cy + r[0] * np.sin(t[0]))
+        (patch,) = ax.fill(
+            x, y, facecolor=pal["fill"], edgecolor=pal["stroke"], lw=0.9, zorder=2
+        )
+        if ov > 0 and rng.random() < 0.6 * ov:
+            patch.set_gid("overshoot")
+        a = float(rng.uniform(0, np.pi))
+        n = 80
+        tt = np.linspace(-rad, rad, n)
+        crack = (1 + 2 * chaos) * _fbm1(rng, n, octaves=4)
+        stroke(
+            cx + tt * np.cos(a) - crack * np.sin(a),
+            cy + tt * np.sin(a) + crack * np.cos(a),
+            pal["stroke"],
+            0.6,
+            3,
+        )
+
+    # Pebbles: many small irregular convex stones, smaller = more numerous.
+    count = int(rng.integers(25, 70))
+    for _ in range(count):
+        cx, cy = place()
+        rad = 0.8 + 5.0 * float(rng.random()) ** 2.5
+        k = int(rng.integers(5, 9))
+        t = np.sort(rng.uniform(0, 2 * np.pi, k))
+        r = rad * rng.uniform(0.7, 1.0, k)
+        x = np.append(cx + r * np.cos(t), cx + r[0] * np.cos(t[0]))
+        y = np.append(cy + r * np.sin(t), cy + r[0] * np.sin(t[0]))
+        filled = rng.random()
+        if filled < 0.25:
+            ax.fill(x, y, facecolor=pal["stroke"], edgecolor="none", zorder=2)
+        elif filled < 0.5:
+            ax.fill(
+                x, y, facecolor=pal["fill"], edgecolor=pal["stroke"], lw=0.5, zorder=2
+            )
+        else:
+            ax.plot(x, y, color=pal["stroke"], lw=0.5, zorder=2)
+
+
+def splatter_field(ax, rng, pal, mods):
+    """Fluid: thrown liquid. Main blobs with fBm-rough rims, directional
+    droplet spray decaying with distance, and gravity drips trailing off
+    the largest masses. chaos sets the violence of the throw."""
+    chaos, ov = mods["chaos"], mods["overshoot"]
+    rough = 0.15 + 0.5 * chaos
+    for _ in range(int(rng.integers(2, 5))):
+        cx = float(rng.uniform(0, CARD_W))
+        cy = float(rng.uniform(0, CARD_H))
+        rad = float(rng.uniform(3, 13))
+        solid = rng.random() < 0.7
+        x, y = _blob(rng, cx, cy, rad, rough)
+        (patch,) = ax.fill(
+            x,
+            y,
+            facecolor=pal["stroke"] if solid else pal["fill"],
+            edgecolor="none" if solid else pal["stroke"],
+            lw=0.6,
+            zorder=3,
+        )
+        if ov > 0 and rng.random() < 0.6 * ov:
+            patch.set_gid("overshoot")
+
+        # Directional spray: droplets shrink and spread with distance.
+        throw = float(rng.uniform(0, 2 * np.pi))
+        for _ in range(int(10 + 30 * chaos)):
+            dist = rad + float(rng.exponential(12 + 25 * chaos))
+            a = throw + float(rng.normal(0, 0.35 + 0.4 * chaos))
+            dr = max(0.15, rad * 0.25 * float(rng.random()) * rad / (rad + dist))
+            dx, dy = _blob(
+                rng, cx + dist * np.cos(a), cy + dist * np.sin(a), dr, rough * 0.6, n=40
+            )
+            ax.fill(dx, dy, facecolor=pal["stroke"], edgecolor="none", zorder=3)
+
+        # Gravity drips off the big masses.
+        if rad > 7 and rng.random() < 0.8:
+            for _ in range(int(rng.integers(1, 4))):
+                dxp = cx + float(rng.uniform(-0.5, 0.5)) * rad
+                run = float(rng.uniform(4, 16))
+                ax.plot(
+                    [dxp, dxp + float(rng.normal(0, 1.5))],
+                    [cy, cy - run],
+                    color=pal["stroke"],
+                    lw=0.7,
+                    zorder=2,
+                )
+                bx, by = _blob(rng, dxp, cy - run, 0.7, 0.3, n=30)
+                ax.fill(bx, by, facecolor=pal["stroke"], edgecolor="none", zorder=2)
+
+
+def snowflake_field(ax, rng, pal, mods):
+    """Dendritic crystals: 6-fold arms with paired side branchlets that
+    shrink toward the tip. chaos jitters the growth, recurrence adds
+    sub-branching, sizes scatter like falling snow."""
+    chaos, rec = mods["chaos"], mods["recurrence"]
+    stroke = _make_stroke(ax, rng, mods)
+
+    def branchlets(stroke_fn, x0, y0, ang, length, lw, depth):
+        n = 30
+        t = np.linspace(0, length, n)
+        x = x0 + t * np.cos(ang)
+        y = y0 + t * np.sin(ang)
+        jit = chaos * 0.06 * length * _fbm1(rng, n, octaves=2)
+        stroke_fn(x - jit * np.sin(ang), y + jit * np.cos(ang), pal["stroke"], lw, 3)
+        if depth > 0:
+            for frac in np.arange(0.3, 1.0, float(rng.uniform(0.18, 0.3))):
+                bx, by = x0 + frac * length * np.cos(ang), y0 + frac * length * np.sin(
+                    ang
+                )
+                blen = length * (1 - frac) * float(rng.uniform(0.4, 0.7))
+                spread = np.pi / 3 * (1 + 0.4 * chaos * float(rng.standard_normal()))
+                for s in (-1, 1):
+                    branchlets(
+                        stroke_fn, bx, by, ang + s * spread, blen, lw * 0.7, depth - 1
+                    )
+
+    for _ in range(int(rng.integers(2, 5))):
+        cx = float(rng.uniform(0, CARD_W))
+        cy = float(rng.uniform(0, CARD_H))
+        size = float(rng.uniform(5, 24))
+        rot = float(rng.uniform(0, np.pi / 3))
+        depth = 1 + int(rec > 0.45)
+        for k in range(6):
+            branchlets(
+                stroke,
+                cx,
+                cy,
+                rot + k * np.pi / 3,
+                size,
+                max(0.45, 0.09 * size**0.5 * 3),
+                depth,
+            )
+        # Hex core, sometimes.
+        if rng.random() < 0.5:
+            t = np.linspace(0, 2 * np.pi, 7)
+            r = size * 0.18
+            stroke(
+                cx + r * np.cos(t + rot),
+                cy + r * np.sin(t + rot),
+                pal["stroke"],
+                0.5,
+                3,
+            )
+
+
+def flora_field(ax, rng, pal, mods):
+    """Branches with leaves and petals: recursive limbs curving as they
+    grow, ellipse foliage filled along stems and at tips. recurrence sets
+    branching depth, chaos bends the growth."""
+    chaos, rec = mods["chaos"], mods["recurrence"]
+    stroke = _make_stroke(ax, rng, mods)
+    t_leaf = np.linspace(0, 2 * np.pi, 40)
+
+    def leaf(x0, y0, ang, size):
+        lx = size * np.cos(t_leaf) * 0.32
+        ly = size * np.sin(t_leaf)
+        ca, sa = np.cos(ang), np.sin(ang)
+        x = x0 + (ly + size) * ca - lx * sa
+        y = y0 + (ly + size) * sa + lx * ca
+        solid = rng.random() < 0.4
+        ax.fill(
+            x,
+            y,
+            facecolor=pal["stroke"] if solid else pal["fill"],
+            edgecolor="none" if solid else pal["stroke"],
+            lw=0.5,
+            zorder=2,
+        )
+
+    def limb(x0, y0, ang, length, lw, depth):
+        n = 50
+        t = np.linspace(0, length, n)
+        bend = (0.15 + 0.5 * chaos) * float(rng.standard_normal())
+        a = ang + bend * t / length
+        x = x0 + np.cumsum(np.cos(a)) * (length / n)
+        y = y0 + np.cumsum(np.sin(a)) * (length / n)
+        stroke(x, y, pal["stroke"], lw, 3)
+        tip_a = float(a[-1])
+        if depth > 0:
+            for frac in (0.45, 0.7, 0.9):
+                i = int(frac * (n - 1))
+                limb(
+                    x[i],
+                    y[i],
+                    float(a[i])
+                    + float(rng.uniform(0.4, 0.9)) * (1 if rng.random() < 0.5 else -1),
+                    length * float(rng.uniform(0.4, 0.6)),
+                    lw * 0.7,
+                    depth - 1,
+                )
+            if rng.random() < 0.5:
+                leaf(x[-1], y[-1], tip_a, float(rng.uniform(2, 5)))
+        else:
+            # Terminal foliage: a leaf or a petal whorl.
+            if rng.random() < 0.25:
+                petals = int(rng.integers(4, 7))
+                for p in range(petals):
+                    leaf(
+                        x[-1],
+                        y[-1],
+                        tip_a + 2 * np.pi * p / petals,
+                        float(rng.uniform(1.5, 3.5)),
+                    )
+            else:
+                leaf(x[-1], y[-1], tip_a, float(rng.uniform(2, 5)))
+
+    for _ in range(int(rng.integers(2, 4))):
+        edge_x = float(rng.uniform(0, CARD_W))
+        limb(
+            edge_x,
+            -3.0,
+            np.pi / 2 + float(rng.uniform(-0.5, 0.5)),
+            float(rng.uniform(18, 42)),
+            1.3,
+            1 + int(round(2 * rec)),
+        )
 
 
 PROJECTION_REGISTRY = {
@@ -385,6 +711,10 @@ PROJECTION_REGISTRY = {
     "waves": wave_field,
     "fibonacci": fibonacci_field,
     "glyphs": glyph_field,
+    "rubble": rubble_field,
+    "splatter": splatter_field,
+    "snowflake": snowflake_field,
+    "flora": flora_field,
 }
 
 
@@ -402,6 +732,7 @@ def _sample_mods(rng, mods):
         "arc": float(rng.uniform(0, 1)),
         "wobble": float(rng.uniform(0, 1)) * float(rng.random() < 0.6),
         "overshoot": float(rng.uniform(0, 1)) * float(rng.random() < 0.6),
+        "symmetry": float(rng.uniform(0, 1)) * float(rng.random() < 0.35),
     }
     for k, v in (mods or {}).items():
         if v is not None:
@@ -409,8 +740,7 @@ def _sample_mods(rng, mods):
     return sampled
 
 
-def _draw_card(ax, side, seed, theme, hue, authors, donations, run_hash,
-               mods=None):
+def _draw_card(ax, side, seed, theme, hue, authors, donations, run_hash, mods=None):
     from matplotlib import patheffects
     from matplotlib.patches import Rectangle
 
@@ -418,8 +748,14 @@ def _draw_card(ax, side, seed, theme, hue, authors, donations, run_hash,
     if side == "back":
         # Inverted two-tone: paper-colored strokes on an accent ground.
         paper, accent = pal["paper"], pal["stroke"]
-        pal = {**pal, "paper": accent, "stroke": paper, "ink": paper,
-               "faint": paper, "fill": accent}
+        pal = {
+            **pal,
+            "paper": accent,
+            "stroke": paper,
+            "ink": paper,
+            "faint": paper,
+            "fill": accent,
+        }
     rng = np.random.default_rng([seed, 0 if side == "front" else 1])
 
     ax.set_xlim(0, CARD_W)
@@ -427,11 +763,19 @@ def _draw_card(ax, side, seed, theme, hue, authors, donations, run_hash,
     ax.set_aspect("equal")
     ax.axis("off")
 
-    ax.add_patch(Rectangle((0, 0), CARD_W, CARD_H, facecolor=pal["border"],
-                           edgecolor="none", zorder=0))
-    inner = Rectangle((BORDER_MM, BORDER_MM), CARD_W - 2 * BORDER_MM,
-                      CARD_H - 2 * BORDER_MM, facecolor=pal["paper"],
-                      edgecolor="none", zorder=0.5)
+    ax.add_patch(
+        Rectangle(
+            (0, 0), CARD_W, CARD_H, facecolor=pal["border"], edgecolor="none", zorder=0
+        )
+    )
+    inner = Rectangle(
+        (BORDER_MM, BORDER_MM),
+        CARD_W - 2 * BORDER_MM,
+        CARD_H - 2 * BORDER_MM,
+        facecolor=pal["paper"],
+        edgecolor="none",
+        zorder=0.5,
+    )
     ax.add_patch(inner)
 
     names = list(PROJECTION_REGISTRY)
@@ -440,13 +784,11 @@ def _draw_card(ax, side, seed, theme, hue, authors, donations, run_hash,
     field(ax, rng, pal, sampled)
     # Clip geometry to the inner panel so the border stays clean;
     # overshoot-tagged strands get the full card and cross the frame.
-    bleed = Rectangle((0, 0), CARD_W, CARD_H, facecolor="none",
-                      edgecolor="none")
+    bleed = Rectangle((0, 0), CARD_W, CARD_H, facecolor="none", edgecolor="none")
     ax.add_patch(bleed)
     for artist in list(ax.lines) + list(ax.patches) + list(ax.collections):
         if artist is not inner and artist is not bleed:
-            artist.set_clip_path(bleed if artist.get_gid() == "overshoot"
-                                 else inner)
+            artist.set_clip_path(bleed if artist.get_gid() == "overshoot" else inner)
 
     halo = [patheffects.withStroke(linewidth=2.2, foreground=pal["paper"])]
     m = BORDER_MM + 4
@@ -456,32 +798,63 @@ def _draw_card(ax, side, seed, theme, hue, authors, donations, run_hash,
     va = "top" if flip_v else "baseline"
     if side == "front":
         for i, author in enumerate(authors):
-            ax.text(m, vy(m + 6 * (len(authors) - 1 - i)),
-                    _caps(rng, author, [0.5, 0.35, 0.15]),
-                    fontsize=11, color=pal["ink"], family="DejaVu Sans",
-                    weight="bold" if i == 0 else "normal", va=va,
-                    path_effects=halo, zorder=5)
+            ax.text(
+                m,
+                vy(m + 6 * (len(authors) - 1 - i)),
+                _caps(rng, author, [0.5, 0.35, 0.15]),
+                fontsize=11,
+                color=pal["ink"],
+                family="DejaVu Sans",
+                weight="bold" if i == 0 else "normal",
+                va=va,
+                path_effects=halo,
+                zorder=5,
+            )
         if rng.random() < 0.6:  # a signature stroke above the name, sometimes
             chaos = sampled["chaos"]
             n = 140
             xs = np.linspace(m, m + float(rng.uniform(16, 30)), n)
             env = np.sin(np.linspace(0, np.pi, n)) ** 0.6  # pen taper
-            teeth = np.tanh(6 * np.sin(2 * np.pi * np.arange(n)
-                                       / float(rng.uniform(15, 40))))
-            d = ((1 - chaos) * 0.5 * teeth
-                 + chaos * 1.4 * _fbm1(rng, n, octaves=4)) * env
-            ax.plot(xs, vy(m + 6 * len(authors) + 1.0) + d,
-                    color=pal["stroke"], lw=1.2, zorder=5)
+            teeth = np.tanh(
+                6 * np.sin(2 * np.pi * np.arange(n) / float(rng.uniform(15, 40)))
+            )
+            d = (
+                (1 - chaos) * 0.5 * teeth + chaos * 1.4 * _fbm1(rng, n, octaves=4)
+            ) * env
+            ax.plot(
+                xs,
+                vy(m + 6 * len(authors) + 1.0) + d,
+                color=pal["stroke"],
+                lw=1.2,
+                zorder=5,
+            )
     else:
         if donations:
-            ax.text(CARD_W / 2, CARD_H / 2,
-                    _caps(rng, donations, [0.1, 0.1, 0.8]),
-                    fontsize=7.5, color=pal["ink"], family="DejaVu Sans Mono",
-                    ha="center", va="center", path_effects=halo, zorder=5)
+            ax.text(
+                CARD_W / 2,
+                CARD_H / 2,
+                _caps(rng, donations, [0.1, 0.1, 0.8]),
+                fontsize=7.5,
+                color=pal["ink"],
+                family="DejaVu Sans Mono",
+                ha="center",
+                va="center",
+                path_effects=halo,
+                zorder=5,
+            )
         if run_hash:
-            ax.text(CARD_W - m, vy(m), run_hash, fontsize=5.5,
-                    color=pal["stroke"], family="DejaVu Sans Mono", ha="right",
-                    va=va, path_effects=halo, zorder=5)
+            ax.text(
+                CARD_W - m,
+                vy(m),
+                run_hash,
+                fontsize=5.5,
+                color=pal["stroke"],
+                family="DejaVu Sans Mono",
+                ha="right",
+                va=va,
+                path_effects=halo,
+                zorder=5,
+            )
 
 
 def _new_fig(w_mm, h_mm, facecolor):
@@ -502,10 +875,12 @@ def _mm_axes(fig, x, y, w, h, page_w, page_h):
 def _crop_marks(ax, x, y, w, h, color, length=4.0, gap=1.0):
     for px, sx in ((x, -1), (x + w, 1)):
         for py, sy in ((y, -1), (y + h, 1)):
-            ax.plot([px + sx * gap, px + sx * (gap + length)], [py, py],
-                    color=color, lw=0.5)
-            ax.plot([px, px], [py + sy * gap, py + sy * (gap + length)],
-                    color=color, lw=0.5)
+            ax.plot(
+                [px + sx * gap, px + sx * (gap + length)], [py, py], color=color, lw=0.5
+            )
+            ax.plot(
+                [px, px], [py + sy * gap, py + sy * (gap + length)], color=color, lw=0.5
+            )
 
 
 def _save(fig, fmt):
@@ -525,18 +900,36 @@ def _merge_mods(mods, chaos):
     return mods
 
 
-def render_card(side, seed, theme, hue, authors, donations, run_hash,
-                fmt="svg", chaos=None, mods=None):
+def render_card(
+    side,
+    seed,
+    theme,
+    hue,
+    authors,
+    donations,
+    run_hash,
+    fmt="svg",
+    chaos=None,
+    mods=None,
+):
     """One bare card at exact size (preview or print-and-cut)."""
     fig = _new_fig(CARD_W, CARD_H, "none")
     ax = _mm_axes(fig, 0, 0, CARD_W, CARD_H, CARD_W, CARD_H)
-    _draw_card(ax, side, seed, theme, hue, authors, donations, run_hash,
-               _merge_mods(mods, chaos))
+    _draw_card(
+        ax,
+        side,
+        seed,
+        theme,
+        hue,
+        authors,
+        donations,
+        run_hash,
+        _merge_mods(mods, chaos),
+    )
     return _save(fig, fmt)
 
 
-def _page(cells, side, seed_for, theme, hue, authors, donations, run_hash,
-          mods=None):
+def _page(cells, side, seed_for, theme, hue, authors, donations, run_hash, mods=None):
     """A4 page with cards at the given (x, y) mm cells, crop marks, margin note."""
     pal = _palette(theme, hue)
     fig = _new_fig(PAGE_W, PAGE_H, "#ffffff")
@@ -547,39 +940,80 @@ def _page(cells, side, seed_for, theme, hue, authors, donations, run_hash,
     for i, (x, y) in enumerate(cells):
         _crop_marks(page, x, y, CARD_W, CARD_H, "#999999")
         ax = _mm_axes(fig, x, y, CARD_W, CARD_H, PAGE_W, PAGE_H)
-        _draw_card(ax, side, seed_for(i), theme, hue, authors, donations,
-                   run_hash, mods)
-    page.text(PAGE_W / 2, 8, PRINT_NOTE, fontsize=6, color="#666666",
-              ha="center", va="center", wrap=True)
-    page.text(PAGE_W / 2, PAGE_H - 8,
-              f"Praxis business card - {side} - seed {seed_for(0)}",
-              fontsize=6, color="#666666", ha="center", va="center")
+        _draw_card(
+            ax, side, seed_for(i), theme, hue, authors, donations, run_hash, mods
+        )
+    page.text(
+        PAGE_W / 2,
+        8,
+        PRINT_NOTE,
+        fontsize=6,
+        color="#666666",
+        ha="center",
+        va="center",
+        wrap=True,
+    )
+    page.text(
+        PAGE_W / 2,
+        PAGE_H - 8,
+        f"Praxis business card - {side} - seed {seed_for(0)}",
+        fontsize=6,
+        color="#666666",
+        ha="center",
+        va="center",
+    )
     # Paper guidance runs sideways in the left/right margins.
-    page.text(6, PAGE_H / 2, PAPER_NOTE, fontsize=6, color="#666666",
-              ha="center", va="center", rotation=90)
-    page.text(PAGE_W - 6, PAGE_H / 2, PAPER_LINK_NOTE, fontsize=6,
-              color="#666666", ha="center", va="center", rotation=270,
-              url=PAPER_URL)
+    page.text(
+        6,
+        PAGE_H / 2,
+        PAPER_NOTE,
+        fontsize=6,
+        color="#666666",
+        ha="center",
+        va="center",
+        rotation=90,
+    )
+    page.text(
+        PAGE_W - 6,
+        PAGE_H / 2,
+        PAPER_LINK_NOTE,
+        fontsize=6,
+        color="#666666",
+        ha="center",
+        va="center",
+        rotation=270,
+        url=PAPER_URL,
+    )
     return _save(fig, "pdf")
 
 
 def _cell(row, col):
     """Avery 28371 cell origin (mm, bottom-left), row 0 at the page top."""
-    return (SHEET_X0 + col * CARD_W,
-            PAGE_H - SHEET_Y0 - (row + 1) * CARD_H)
+    return (SHEET_X0 + col * CARD_W, PAGE_H - SHEET_Y0 - (row + 1) * CARD_H)
 
 
-def render_single_pdf(side, seed, theme, hue, authors, donations, run_hash,
-                      chaos=None, mods=None):
+def render_single_pdf(
+    side, seed, theme, hue, authors, donations, run_hash, chaos=None, mods=None
+):
     # The top-left Avery cell, so a single card prints onto the same stock;
     # the back mirrors to the other column for long-edge duplex.
     col = 0 if side == "front" else SHEET_COLS - 1
-    return _page([_cell(0, col)], side, lambda i: seed, theme, hue, authors,
-                 donations, run_hash, _merge_mods(mods, chaos))
+    return _page(
+        [_cell(0, col)],
+        side,
+        lambda i: seed,
+        theme,
+        hue,
+        authors,
+        donations,
+        run_hash,
+        _merge_mods(mods, chaos),
+    )
 
 
-def render_sheet_pdf(side, seed, theme, hue, authors, donations, run_hash,
-                     chaos=None, mods=None):
+def render_sheet_pdf(
+    side, seed, theme, hue, authors, donations, run_hash, chaos=None, mods=None
+):
     """Full Avery 28371 imposition (10-up). Back pages mirror columns for
     long-edge duplex."""
     cells, seeds = [], []
@@ -588,5 +1022,14 @@ def render_sheet_pdf(side, seed, theme, hue, authors, donations, run_hash,
             draw_col = (SHEET_COLS - 1 - col) if side == "back" else col
             cells.append(_cell(row, draw_col))
             seeds.append(seed + row * SHEET_COLS + col)
-    return _page(cells, side, lambda i: seeds[i], theme, hue, authors,
-                 donations, run_hash, _merge_mods(mods, chaos))
+    return _page(
+        cells,
+        side,
+        lambda i: seeds[i],
+        theme,
+        hue,
+        authors,
+        donations,
+        run_hash,
+        _merge_mods(mods, chaos),
+    )

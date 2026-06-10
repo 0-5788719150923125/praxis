@@ -388,7 +388,7 @@ function renderBusinessCard() {
     return `<div class="biz-card">
         <div class="biz-card-frame">
             <img class="biz-card-img" src="/api/card/preview.svg?${cardQuery(state.spec.cardSide)}"
-                alt="Business card ${state.spec.cardSide}" title="Click to flip">
+                alt="" role="presentation" title="Click to flip">
             <div class="biz-card-actions">
                 <button class="biz-btn" id="biz-card-flip" type="button">Flip</button>
                 <button class="biz-btn" id="biz-card-reroll" type="button">Reroll</button>
