@@ -1,27 +1,29 @@
 /**
- * The spider, raised - a seeded robot bug living in a large 3D room,
- * watched from the bleachers (the Arena card on the Identity tab). Pure
- * mechanics, no backend: all randomness derives from the model hash, so
- * each model is one creature.
+ * The spider, raised - a seeded creature living in a large 3D room,
+ * watched from above like a fish tank (the Arena card on the Identity
+ * tab). Pure mechanics, no backend: all randomness derives from the
+ * model hash, so each model is one creature in one room.
  *
- * World space is 3D: x along the room, z into depth, y up. The creature
- * lives on SURFACES (floor, walls, ceiling) in surface-local coordinates
- * and is flattened only at draw time through a perspective camera.
+ * Everything is a coupled spectrum, the business-card move in 3D. A
+ * seeded latent genome passes through a random tanh net, so body plan
+ * and temperament co-vary: spine length, leg count, gait wave, hind-leg
+ * bias, undulation - the same parameters that, pushed to corners, read
+ * as spider, centipede, frog, lizard, or snake. Ineffective morphs still
+ * wriggle and try. The room has its own genome: color lean, noise,
+ * cohesion, decay.
  *
- * Morphology is evolutionary, the business-card move in 3D: a seeded
- * latent genome passes through a small random tanh network, so traits
- * (leg count, elbows, heads, body squareness, mech-vs-organic...) couple
- * non-linearly instead of being independent dials.
- *
- * Three layers:
- *   1. Behavior - a probabilistic FSM (idle/run/sleep/jump/bump/climb)
- *      plus a voter pool: seeded slow oscillators pooled into continuous
- *      control channels that inform the rigged parts.
- *   2. Skeleton - the true mechanical rig in surface-local space: body,
- *      abdomen, 1-2 heads, and 4-8 legs of 2-3 segments via analytic IK.
- *   3. Ink - every rendered joint is a spring-damper twin chasing its
- *      true joint, and every bone is a jagged polyline whose jitter
- *      re-rolls a few times a second - the living-newspaper boil.
+ * Layers:
+ *   1. Behavior - probabilistic FSM (idle/run/sleep/jump/bump/climb)
+ *      plus a voter pool of seeded slow oscillators pooled into
+ *      continuous control channels.
+ *   2. Skeleton - a chain of spring-follower spine segments trailing the
+ *      driver; legs are assigned along the spine and PLANT their feet:
+ *      each foot stays put until its rest pose drifts too far, then
+ *      swings independently to a predicted landing. Toes conform to the
+ *      gripped surface.
+ *   3. Ink - jagged double-strokes whose jitter re-rolls a few times a
+ *      second; the world renders painter-sorted so the creature passes
+ *      behind and in front of furniture correctly.
  */
 
 import { state } from './state.js';
@@ -47,56 +49,65 @@ function mulberry32(seed) {
     };
 }
 
-// -------------------------------------------------------------- morphology
-
 /* A latent genome through a random two-layer tanh net: every trait is a
-   non-linear projection of the same hidden state, so proportions and
-   temperament co-vary - lanky things tend whole families of ways. */
-function sampleMorphology(rng) {
-    const z = Array.from({ length: 6 }, () => rng() * 2 - 1);
-    const hidden = Array.from({ length: 10 }, () => {
+   non-linear projection of the same hidden state, so traits co-vary. */
+function genome(rng, latentDim = 6, hiddenDim = 10) {
+    const z = Array.from({ length: latentDim }, () => rng() * 2 - 1);
+    const hidden = Array.from({ length: hiddenDim }, () => {
         let s = (rng() * 2 - 1) * 0.5;
         for (const zi of z) s += (rng() * 2 - 1) * zi;
         return Math.tanh(s * 1.2);
     });
-    const t = () => {
+    return () => {
         let s = (rng() * 2 - 1) * 0.4;
         for (const hi of hidden) s += (rng() * 2 - 1) * hi;
-        return Math.tanh(s) * 0.5 + 0.5;             // [0,1], non-uniform
+        return Math.tanh(s) * 0.5 + 0.5;
     };
+}
+
+// -------------------------------------------------------------- morphology
+
+function sampleMorphology(rng) {
+    const t = genome(rng);
     const u = (lo, hi) => lo + (hi - lo) * t();
 
+    const legT = t();
+    const pairs = legT < 0.1 ? 0 : 1 + Math.floor(((legT - 0.1) / 0.9) * 5.999);
     return {
-        // The master spectrum: organic blob .. tooled machine.
-        mech: t(),
+        mech: t(),                    // master spectrum: organic .. machine
         // Body plan.
-        scale: u(0.36, 0.6),          // small creatures, large room
-        elong: u(1.0, 2.3),           // body length / width
-        square: t(),                  // superellipse: oval .. slab
-        chunk: u(0.7, 1.2),           // body minor radius
-        tail: t(),                    // abdomen: tucked .. trailing
-        legPairs: 2 + Math.floor(t() * 2.999),  // 4 / 6 / 8 legs
-        segs: t() > 0.62 ? 3 : 2,     // elbows per leg
-        heads: t() > 0.72 ? 2 : 1,
+        scale: u(0.36, 0.6),
+        elong: u(1.0, 2.2),
+        square: t(),
+        chunk: u(0.7, 1.2),
+        spine: 1 + Math.floor(t() * 5.0),  // 1..5 trailing segments
+        taper: u(0.1, 0.6),                // how fast the chain shrinks
+        tail: t(),
+        legPairs: pairs,                   // 0 (snake) .. 6 (centipede)
+        segs: t() > 0.62 ? 3 : 2,          // elbows per leg
+        heads: t() > 0.78 ? 2 : 1,
         legSpan: u(0.95, 1.5),
-        legSeg: u(0.6, 0.84),         // segment/reach: stubby .. lanky
-        arch: u(0.55, 1.5),           // knee arch: crouched .. cathedral
+        legSeg: u(0.6, 0.84),
+        arch: u(0.55, 1.5),
         sweepBase: u(0.3, 0.65),
-        sweepRange: u(1.4, 2.3),
+        sweepRange: u(1.0, 2.0),
         neck: u(1.1, 2.0),
         headSize: u(0.4, 0.72),
-        torsoLift: u(0.0, 0.2),
-        stance: u(0.3, 0.5),
+        stance: u(0.28, 0.5),
+        // Locomotion archetype dials - corners of this space read as
+        // spider / centipede / frog / lizard / snake.
+        waveK: u(0.25, Math.PI),      // gait phase per leg: ripple .. alternate
+        hindBias: t(),                // rear legs longer, jumps harder (frog)
+        undulate: t(),                // lateral spine wave (snake, swimmer)
         // Temperament.
-        speed: u(1.8, 3.6),           // units/sec - they RUN
-        restlessness: u(0.5, 2.2),    // mean idle seconds (short: energy)
+        speed: u(1.8, 3.6),
+        restlessness: u(0.5, 2.2),
         jumpiness: u(0.12, 0.42),
         sleepiness: u(0.04, 0.16),
-        clumsiness: u(0.05, 0.3),     // P(run target inside a wall)
-        kick: u(0.25, 0.85),          // P(wall-kick on a fast bump)
-        climby: u(0.25, 0.85),        // P(scaling the wall instead)
+        clumsiness: u(0.05, 0.3),
+        kick: u(0.25, 0.85),
+        climby: u(0.25, 0.85),
         stride: u(0.8, 1.5),
-        // Motion spectrums the voter pool plays.
         fluid: t(),
         bumpy: t(),
         floaty: t(),
@@ -109,13 +120,25 @@ function sampleMorphology(rng) {
     };
 }
 
+/* The room's own genome: rooms lean colorful or plain, noisy or calm,
+   cohesive or decayed - coupled the same way the creature is. */
+function sampleHabitat(rng) {
+    const t = genome(rng, 4, 6);
+    return {
+        style: Math.floor(rng() * 4),
+        hueOff: (t() - 0.5) * 90,     // color lean off the accent hue
+        noise: 0.4 + t() * 1.3,       // jitter of the room's ink
+        cohesion: 0.55 + t() * 0.45,  // overall presence of the lines
+        decay: t() * 0.45,            // chance any given line has crumbled
+        density: 0.5 + t() * 1.2,     // how much furniture
+    };
+}
+
 // ------------------------------------------------------------ 3D helpers
 
-const ROOM_W = 14, ROOM_D = 7, ROOM_H = 4;   // world units; y is up
-const EDGE = 0.4;                            // soft margin at every bound
+const ROOM_W = 14, ROOM_D = 7, ROOM_H = 4;
+const EDGE = 0.4;
 
-/* Surfaces the bug can grip: local axes (ea, eb), outward normal n, and
-   bounds. Local coords: a along ea, b along eb, h along n. */
 const SURFACES = {
     floor: { o: [0, 0, 0], ea: [1, 0, 0], eb: [0, 0, 1], n: [0, 1, 0], A: ROOM_W, B: ROOM_D },
     ceiling: { o: [0, ROOM_H, 0], ea: [1, 0, 0], eb: [0, 0, 1], n: [0, -1, 0], A: ROOM_W, B: ROOM_D },
@@ -132,8 +155,16 @@ function toWorld(S, a, b, h) {
     };
 }
 
-/* 2-bone IK in the surface-local frame: root->knee->foot, knee arched
-   along +h (away from the gripped surface - spider knees point out). */
+function fromWorld(S, w) {
+    const dx = w.x - S.o[0], dy = w.y - S.o[1], dz = w.z - S.o[2];
+    return {
+        a: dx * S.ea[0] + dy * S.ea[1] + dz * S.ea[2],
+        b: dx * S.eb[0] + dy * S.eb[1] + dz * S.eb[2],
+        h: dx * S.n[0] + dy * S.n[1] + dz * S.n[2],
+    };
+}
+
+/* 2-bone IK in surface-local space, knee arched away from the surface. */
 function ik2local(root, foot, l1, l2, arch) {
     let da = foot.a - root.a, db = foot.b - root.b, dh = foot.h - root.h;
     let d = Math.hypot(da, db, dh);
@@ -158,13 +189,12 @@ function ik2local(root, foot, l1, l2, arch) {
 
 class Creature {
     constructor(seedStr) {
-        this.rng = mulberry32(fnv1a(seedStr));            // morphology
-        this.live = mulberry32(fnv1a(seedStr + ':live')); // runtime
+        this.rng = mulberry32(fnv1a(seedStr));
+        this.live = mulberry32(fnv1a(seedStr + ':live'));
         this.p = sampleMorphology(this.rng);
 
-        // Voter pool: seeded slow oscillators pooled through per-channel
-        // weight vectors into continuous control signals - the incremental
-        // sample-voter loop the generative process will one day replace.
+        // Voter pool: seeded slow oscillators pooled per channel - the
+        // sample-voter loop the generative process will one day drive.
         const N = 12;
         this.voters = Array.from({ length: N }, () => ({
             w1: 0.3 + this.rng() * 2.2, p1: this.rng() * Math.PI * 2,
@@ -178,38 +208,58 @@ class Creature {
         }
         this.ch = { energy: 0, buoy: 0, tempo: 0, swayA: 0, swayB: 0 };
 
-        // Surface-local state.
         this.surface = 'floor';
         this.a = ROOM_W * (0.25 + 0.5 * this.rng());
         this.b = ROOM_D * (0.25 + 0.5 * this.rng());
         this.va = 0; this.vb = 0;
-        this.h = this.p.stance * this.p.scale;   // height off the surface
+        this.h = this.p.stance * this.p.scale;
         this.vh = 0;
-        this.heading = this.rng() * Math.PI * 2; // angle in the (ea,eb) plane
+        this.heading = this.rng() * Math.PI * 2;
         this.spin = 0;
         this.phase = this.rng() * Math.PI * 2;
-        this.lie = 0;                            // 0 standing .. 1 asleep flat
+        this.lie = 0;
         this.stagger = 0;
         this.state = 'idle';
         this.timer = this.expo(this.p.restlessness);
         this.ta = this.a; this.tb = this.b;
 
-        // Leg fan around the body rim, mirrored pairs.
-        const pairs = this.p.legPairs;
-        this.legAngles = [];
-        for (let i = 0; i < pairs; i++) {
-            const sweep = this.p.sweepBase
-                + (pairs > 1 ? (i / (pairs - 1)) : 0.5) * this.p.sweepRange;
-            this.legAngles.push(sweep, -sweep);
-        }
-        this.legPhase = this.legAngles.map((a, i) => (i % 2) * Math.PI + i * 0.25);
+        // Locomotor effectiveness derives from the body: legless or
+        // overloaded morphs are slower, but they still try - the wriggle.
+        const P = this.p.legPairs;
+        this.effSpeed = this.p.speed
+            * (P === 0 ? 0.45 : 0.55 + 0.45 * Math.min(1, P / 3))
+            * (0.7 + 0.6 * this.p.legSpan * this.p.legSeg);
 
-        // Head and abdomen are physical followers in WORLD space: they
-        // chase anchors with momentum, so turns and surface transitions
-        // whip and settle elastically instead of pivoting rigidly.
+        // The spine: world-space spring masses trailing the driver.
         const w0 = toWorld(SURFACES.floor, this.a, this.b, this.h);
+        const M = this.p.spine;
+        this.chain = Array.from({ length: M }, (_, i) => ({
+            x: w0.x - (i + 1) * 0.1, y: w0.y, z: w0.z, vx: 0, vy: 0, vz: 0,
+        }));
         this.headM = { ...w0, vx: 0, vy: 0, vz: 0 };
-        this.abdM = { ...w0, vx: 0, vy: 0, vz: 0 };
+
+        // Legs distributed along the spine (driver = segment -1, then the
+        // chain), mirrored pairs, each with its own planted foot.
+        this.legs = [];
+        const hosts = 1 + M;
+        for (let i = 0; i < P; i++) {
+            const host = Math.min(hosts - 1, Math.floor((i / Math.max(1, P)) * hosts)) - 1;
+            const fr = P > 1 ? i / (P - 1) : 0.5;
+            const sweep = this.p.sweepBase + fr * this.p.sweepRange;
+            for (const side of [1, -1]) {
+                this.legs.push({
+                    host,                  // -1 = driver body, 0.. = chain seg
+                    side,
+                    sweep: sweep * side,
+                    hind: i === P - 1 && P > 1,
+                    thresh: 0.6 + this.rng() * 0.5,   // independent tempo
+                    gait: (this.legs.length % 2) * Math.PI
+                        + i * this.p.waveK,           // ripple .. alternate
+                    planted: null,         // surface coords {a,b}
+                    swing: null,           // {fa,fb,ta2,tb2,t}
+                });
+            }
+        }
 
         this.ink = new Map();
     }
@@ -229,8 +279,6 @@ class Creature {
         return this.ch;
     }
 
-    /* ---------------- behavior ---------------- */
-
     act() {
         const r = this.live();
         const p = this.p;
@@ -239,11 +287,9 @@ class Creature {
             this.timer = 3.0 + this.expo(4.0);
         } else if (r < p.sleepiness + p.jumpiness) {
             this.state = 'jump';
-            // On the ceiling a jump is a push-off toward the floor; on the
-            // floor a hard jump can reach the ceiling and grip it.
             const hard = this.surface === 'floor' && this.live() < 0.35;
             this.vh += (hard ? 4.6 : 2.2 + this.live() * 1.6)
-                * (0.75 + 0.5 * p.floaty);
+                * (0.75 + 0.5 * p.floaty) * (1 + 0.5 * p.hindBias);
         } else {
             this.state = 'run';
             const S = SURFACES[this.surface];
@@ -262,7 +308,8 @@ class Creature {
         this.timer = this.expo(this.p.restlessness);
     }
 
-    /* Move to another surface, keeping coordinates and motion continuous. */
+    unplant() { for (const leg of this.legs) { leg.planted = null; leg.swing = null; } }
+
     transfer(name, a, b, va, vb) {
         this.surface = name;
         const S = SURFACES[name];
@@ -272,21 +319,19 @@ class Creature {
         this.h = this.p.stance * this.p.scale;
         this.vh = 0;
         this.heading = Math.atan2(vb, va) || this.heading;
+        this.unplant();                 // landing scramble on the new surface
         if (this.state === 'run') {
-            // Re-aim somewhere on the new surface, biased onward.
             this.ta = S.A * (0.1 + 0.8 * this.live());
             this.tb = S.B * (0.1 + 0.8 * this.live());
         }
     }
 
-    /* The bug hit edge (`which` is 'a0','a1','b0','b1') of its surface. */
     hitEdge(which) {
         const p = this.p;
         const sp = Math.hypot(this.va, this.vb);
         const S = SURFACES[this.surface];
-        const fast = sp > 0.4 * p.speed;
+        const fast = sp > 0.4 * this.effSpeed;
 
-        // Climbing routes between surfaces, where they exist.
         const routes = {
             floor: { a0: ['wallL', () => [this.b, EDGE, this.vb, Math.abs(this.va)]],
                      a1: ['wallR', () => [this.b, EDGE, this.vb, Math.abs(this.va)]],
@@ -308,7 +353,6 @@ class Creature {
             return;
         }
         if (fast && this.live() < p.kick) {
-            // Wall-kick: rebound hard and keep running the other way.
             if (which[0] === 'a') this.va = -this.va * 1.25;
             else this.vb = -this.vb * 1.25;
             this.vh += 0.6;
@@ -319,7 +363,6 @@ class Creature {
             return;
         }
         if (fast) {
-            // A plain crash.
             if (which[0] === 'a') this.va = -this.va * 0.4;
             else this.vb = -this.vb * 0.4;
             this.vh += 0.4 * p.bumpy;
@@ -338,7 +381,6 @@ class Creature {
         this.timer -= dt;
         this.stagger = Math.max(0, this.stagger - dt);
 
-        // Desired surface velocity from the FSM; reality is physics.
         let dva = 0, dvb = 0;
         switch (this.state) {
             case 'idle': {
@@ -352,7 +394,7 @@ class Creature {
                 const da = this.ta - this.a, db = this.tb - this.b;
                 const d = Math.hypot(da, db);
                 if (d < 0.18) { this.rest(); break; }
-                const sp = p.speed * (1 + 0.45 * ch.energy);
+                const sp = this.effSpeed * (1 + 0.45 * ch.energy);
                 dva = (da / d) * sp; dvb = (db / d) * sp;
                 break;
             }
@@ -382,7 +424,6 @@ class Creature {
         this.a += this.va * dt;
         this.b += this.vb * dt;
 
-        // Edges: climbing routes, wall-kicks, or crashes.
         if (this.a < EDGE) { this.a = EDGE; this.hitEdge('a0'); }
         else if (this.a > S.A - EDGE) { this.a = S.A - EDGE; this.hitEdge('a1'); }
         if (this.b < EDGE) { this.b = EDGE; this.hitEdge('b0'); }
@@ -390,8 +431,6 @@ class Creature {
             this.b = SURFACES[this.surface].B - EDGE; this.hitEdge('b1');
         }
 
-        // Height physics along the surface normal. Bugs grip walls (no
-        // gravity there); floor and ceiling have real flight.
         const standH = p.stance * p.scale;
         const lieH = 0.08 * p.scale;
         const targetH = (standH * (1 - this.lie) + lieH * this.lie)
@@ -400,6 +439,7 @@ class Creature {
         const onWall = this.surface.startsWith('wall');
         if (airborne && !onWall) {
             this.vh -= (9.0 - 5.5 * p.floaty) * dt;
+            if (this.legs.some(l => l.planted)) this.unplant();
         } else {
             const k = 60 - 38 * p.floaty;
             const damp = 6 + 6 * p.fluid;
@@ -408,27 +448,26 @@ class Creature {
         this.h += this.vh * dt;
         if (this.h < lieH * 0.6) { this.h = lieH * 0.6; this.vh = Math.abs(this.vh) * 0.3; }
 
-        // Cross-room flight: a hard floor jump grips the ceiling; pushing
-        // off the ceiling falls all the way to the floor.
         if (this.surface === 'floor' && this.vh > 0 && this.h >= ROOM_H - standH * 1.4) {
             this.surface = 'ceiling';
             this.h = ROOM_H - this.h;
             this.vh = -this.vh * 0.25;
+            this.unplant();
             this.rest();
         } else if (this.surface === 'ceiling' && this.h >= ROOM_H - standH * 1.2) {
             this.surface = 'floor';
             this.h = ROOM_H - this.h;
             this.vh = -Math.abs(this.vh) * 0.2;
+            this.unplant();
         }
 
-        // Heading earns its authority from momentum: no twirling in place.
         const sp = Math.hypot(this.va, this.vb);
         if (sp > 0.08) {
             const want = Math.atan2(this.vb, this.va);
             let diff = want - this.heading;
             while (diff > Math.PI) diff -= 2 * Math.PI;
             while (diff < -Math.PI) diff += 2 * Math.PI;
-            const authority = Math.min(1, sp / (p.speed * 0.5));
+            const authority = Math.min(1, sp / (this.effSpeed * 0.5));
             this.spin += (diff * (6 + 16 * p.speedy) * authority
                 - this.spin * (5 + 4 * p.fluid)) * dt;
         } else {
@@ -436,22 +475,110 @@ class Creature {
         }
         this.heading += this.spin * dt;
 
-        // Followers chase their world anchors; the lag is the elasticity.
+        // ---- spine: each segment chases a point behind the previous,
+        // plus a traveling lateral wave - the snake/centipede undulation.
         const s = p.scale;
         const bodyR = 0.32 * s * p.chunk;
-        const ha = Math.cos(this.heading), hb = Math.sin(this.heading);
-        const lift = (1 - this.lie);
+        const spacing = bodyR * 1.3;
+        const speedF = Math.min(1, sp / Math.max(0.5, this.effSpeed) + 0.15);
         const kF = 30 + 60 * p.speedy, dF = 6 + 5 * p.fluid;
+        let prevW = toWorld(S, this.a, this.b, this.h);
+        let prevDirA = Math.cos(this.heading), prevDirB = Math.sin(this.heading);
+        for (let i = 0; i < this.chain.length; i++) {
+            const seg = this.chain[i];
+            // Direction away from the leader, in surface coords.
+            const segL = fromWorld(S, seg);
+            const prevL = fromWorld(S, prevW);
+            let da = prevL.a - segL.a, db = prevL.b - segL.b;
+            const dl = Math.hypot(da, db) || 1;
+            da /= dl; db /= dl;
+            const wave = Math.sin(this.phase * 0.8 - i * 1.15)
+                * p.undulate * bodyR * 1.2 * speedF;
+            const anchor = toWorld(S,
+                prevL.a - da * spacing + (-db) * wave,
+                prevL.b - db * spacing + da * wave,
+                Math.max(0.05, prevL.h * (1 - 0.08 * i)));
+            this.follow(seg, anchor, kF * 0.7, dF, dt);
+            prevW = seg;
+            prevDirA = da; prevDirB = db;
+        }
+
+        // Head follower rides the nose.
+        const ha = Math.cos(this.heading), hb = Math.sin(this.heading);
         const nose = toWorld(S, this.a + ha * bodyR * p.neck * p.elong,
             this.b + hb * bodyR * p.neck * p.elong,
-            this.h + (0.10 + p.torsoLift) * s * lift);
-        const tail = toWorld(S, this.a - ha * bodyR * (1.0 + 0.9 * p.tail) * p.elong,
-            this.b - hb * bodyR * (1.0 + 0.9 * p.tail) * p.elong,
-            this.h + (0.08 + 0.12 * p.tail + p.torsoLift * 0.5) * s * lift);
+            this.h + 0.12 * s * (1 - this.lie));
         this.follow(this.headM, nose, kF, dF, dt);
-        this.follow(this.abdM, tail, kF * 0.6, dF, dt);
+
+        // ---- feet: planted until the rest pose drifts, then an
+        // independent swing to a predicted landing. No sliding.
+        this.stepLegs(dt, sp, S);
 
         this.phase += (2.0 + 3.0 * sp) * p.stride * (1 + 0.3 * ch.tempo) * dt;
+    }
+
+    stepLegs(dt, sp, S) {
+        const p = this.p;
+        const s = p.scale;
+        const grounded = this.h < p.stance * s * 1.3 && this.lie < 0.7;
+        const reachBase = 0.95 * p.legSpan * s;
+        const swinging = this.legs.filter(l => l.swing).length;
+        const maxSwing = Math.max(1, Math.ceil(this.legs.length / 2));
+        const mva = sp > 0.05 ? this.va / sp : Math.cos(this.heading);
+        const mvb = sp > 0.05 ? this.vb / sp : Math.sin(this.heading);
+
+        for (const leg of this.legs) {
+            const host = this.hostLocal(leg.host, S);
+            const reach = reachBase * (leg.hind ? 1 + 0.6 * p.hindBias : 1);
+            const ang = host.dir + leg.sweep;
+            const ra = host.a + Math.cos(ang) * reach * 0.7;
+            const rb = host.b + Math.sin(ang) * reach * 0.7;
+
+            if (!grounded) { leg.planted = null; leg.swing = null; continue; }
+            if (!leg.planted && !leg.swing) {
+                leg.planted = { a: ra, b: rb };
+                continue;
+            }
+            if (leg.swing) {
+                const sw = leg.swing;
+                sw.t += dt / (0.16 + 0.10 * (1 - p.speedy));
+                if (sw.t >= 1) {
+                    leg.planted = { a: sw.ta2, b: sw.tb2 };
+                    leg.swing = null;
+                }
+                continue;
+            }
+            // Planted: trigger a swing when drift exceeds this leg's own
+            // threshold AND its gait window is open AND the body has spare
+            // support - legs move independently, not on a metronome.
+            const drift = Math.hypot(leg.planted.a - ra, leg.planted.b - rb);
+            const window2 = Math.sin(this.phase + leg.gait) > -0.2;
+            if (drift > leg.thresh * reach * 0.45 && window2 && swinging < maxSwing) {
+                const lead = 0.22 * sp;
+                leg.swing = {
+                    fa: leg.planted.a, fb: leg.planted.b,
+                    ta2: ra + mva * lead, tb2: rb + mvb * lead,
+                    t: 0,
+                };
+                leg.planted = null;
+            }
+        }
+    }
+
+    /* Surface-local position and facing of a leg's host segment. */
+    hostLocal(host, S) {
+        if (host < 0) {
+            return { a: this.a, b: this.b, h: this.h, dir: this.heading };
+        }
+        const seg = this.chain[host];
+        const segL = fromWorld(S, seg);
+        const ahead = host === 0
+            ? { a: this.a, b: this.b }
+            : fromWorld(S, this.chain[host - 1]);
+        return {
+            a: segL.a, b: segL.b, h: Math.max(0.05, segL.h),
+            dir: Math.atan2(ahead.b - segL.b, ahead.a - segL.a),
+        };
     }
 
     follow(m, w, k, damp, dt) {
@@ -461,19 +588,16 @@ class Creature {
         m.x += m.vx * dt; m.y += m.vy * dt; m.z += m.vz * dt;
     }
 
-    /* ---------------- skeleton solve ----------------
-       Solves the rig in surface-local space, then transforms every joint
-       to world units. Returns { body, heads[], abdomen, legs[], up }. */
+    /* ---------------- skeleton solve ---------------- */
 
     solve(t) {
         const p = this.p;
         const S = SURFACES[this.surface];
         const s = p.scale;
         const bodyR = 0.32 * s * p.chunk;
-        const reach = 0.95 * p.legSpan * s;
-        const seg = reach * p.legSeg;
+        const reachBase = 0.95 * p.legSpan * s;
         const sp = Math.hypot(this.va, this.vb);
-        const speed = sp / p.speed;
+        const speed = sp / Math.max(0.5, this.effSpeed);
 
         const bob = Math.sin(this.phase * 2) * 0.03 * s * Math.min(1, speed + 0.1);
         const wob = this.stagger > 0 ? Math.sin(t * 22) * 0.10 * this.stagger : 0;
@@ -481,12 +605,10 @@ class Creature {
 
         const ha = Math.cos(this.heading), hb = Math.sin(this.heading);
         const J = {};
-        J.up = { x: S.n[0], y: S.n[1], z: S.n[2] };
         J.body = toWorld(S, this.a, this.b, bodyH);
-        J.abdomen = { x: this.abdM.x, y: this.abdM.y, z: this.abdM.z };
+        J.chain = this.chain.map(seg => ({ x: seg.x, y: seg.y, z: seg.z }));
 
-        // Heads ride the nose follower; two-headed morphs split laterally.
-        const px = -hb, pb2 = ha;     // surface-plane perpendicular
+        const px = -hb, pb2 = ha;
         J.heads = [];
         const off = p.heads === 2 ? bodyR * 0.55 : 0;
         for (let i = 0; i < p.heads; i++) {
@@ -501,55 +623,68 @@ class Creature {
         }
 
         const grounded = this.h < p.stance * s * 1.3;
-        const strideLen = 0.45 * s * Math.min(1, speed + 0.05);
-        const mva = sp > 0.05 ? this.va / sp : ha;
-        const mvb = sp > 0.05 ? this.vb / sp : hb;
-
         J.legs = [];
-        for (let i = 0; i < this.legAngles.length; i++) {
-            const ang = this.heading + this.legAngles[i];
-            const oa = Math.cos(ang), ob = Math.sin(ang);
+        for (const leg of this.legs) {
+            const host = this.hostLocal(leg.host, S);
+            const reach = reachBase * (leg.hind ? 1 + 0.6 * p.hindBias : 1);
+            const seg = reach * p.legSeg;
+            const ang = host.dir + leg.sweep;
             const hip = {
-                a: this.a + oa * bodyR * 0.9 * (1 + (p.elong - 1) * 0.4 * Math.abs(Math.cos(this.legAngles[i]))),
-                b: this.b + ob * bodyR * 0.9,
-                h: bodyH,
+                a: host.a + Math.cos(ang) * bodyR * 0.85,
+                b: host.b + Math.sin(ang) * bodyR * 0.85,
+                h: host.h + bob,
             };
-            const ph = this.phase + this.legPhase[i];
-            let foot;
+            let foot, toeDir;
             if (this.lie >= 0.7) {
-                foot = { a: this.a + oa * reach * 1.25, b: this.b + ob * reach * 1.25, h: 0.01 };
+                foot = { a: host.a + Math.cos(ang) * reach * 1.25, b: host.b + Math.sin(ang) * reach * 1.25, h: 0.01 };
+                toeDir = ang;
             } else if (!grounded) {
                 foot = {
-                    a: this.a + oa * reach * 0.5,
-                    b: this.b + ob * reach * 0.5,
+                    a: host.a + Math.cos(ang) * reach * 0.5,
+                    b: host.b + Math.sin(ang) * reach * 0.5,
                     h: bodyH - seg * 0.7,
                 };
-            } else {
-                const swing = Math.sin(ph) * strideLen;
-                const liftF = Math.max(0, Math.cos(ph)) * 0.22 * s * Math.min(1, speed + 0.03);
+                toeDir = ang;
+            } else if (leg.swing) {
+                const sw = leg.swing;
+                const e = sw.t < 0.5 ? 2 * sw.t * sw.t : 1 - Math.pow(-2 * sw.t + 2, 2) / 2;
                 foot = {
-                    a: this.a + oa * reach * 0.7 + mva * swing,
-                    b: this.b + ob * reach * 0.7 + mvb * swing,
-                    h: liftF,
+                    a: sw.fa + (sw.ta2 - sw.fa) * e,
+                    b: sw.fb + (sw.tb2 - sw.fb) * e,
+                    h: Math.sin(Math.PI * sw.t) * 0.16 * s,
                 };
+                toeDir = Math.atan2(sw.tb2 - sw.fb, sw.ta2 - sw.fa);
+            } else if (leg.planted) {
+                foot = { a: leg.planted.a, b: leg.planted.b, h: 0 };
+                toeDir = host.dir;
+            } else {
+                foot = { a: host.a + Math.cos(ang) * reach * 0.7, b: host.b + Math.sin(ang) * reach * 0.7, h: 0 };
+                toeDir = ang;
             }
             const sol = ik2local(hip, foot, seg, seg, p.arch);
             const joints = [hip, sol.knee];
             if (p.segs === 3) {
-                // Third segment: split the thigh with a second elbow pushed
-                // a little further out - a stylized extra articulation.
-                const mid = {
+                joints.splice(1, 0, {
                     a: (hip.a + sol.knee.a) / 2,
                     b: (hip.b + sol.knee.b) / 2,
                     h: (hip.h + sol.knee.h) / 2 + seg * 0.22 * p.arch,
-                };
-                joints.splice(1, 0, mid);
+                });
             }
             joints.push(sol.foot);
-            J.legs.push(joints.map(j => toWorld(S, j.a, j.b, j.h)));
+            // The toe: a short flat segment ON the surface, conforming to
+            // the terrain and pointing where the foot is headed.
+            const toe = {
+                a: sol.foot.a + Math.cos(toeDir) * 0.1 * s,
+                b: sol.foot.b + Math.sin(toeDir) * 0.1 * s,
+                h: 0,
+            };
+            J.legs.push({
+                joints: joints.map(j => toWorld(S, j.a, j.b, j.h)),
+                toe: toWorld(S, toe.a, toe.b, toe.h),
+                grounded: !!leg.planted,
+            });
         }
 
-        // Shadow ring on the gripped surface, under the body.
         J.shadow = [];
         for (let i = 0; i < 10; i++) {
             const a2 = (i / 10) * Math.PI * 2;
@@ -626,125 +761,177 @@ class Inker {
 
 // ------------------------------------------------------------ ecosystem
 
-/* Environment styles, sampled per seed like the business-card fields.
-   Furniture rolls once at construction; drawing replays through the slow
-   environment inker, so the room itself barely breathes. */
-
-const ENV_STYLES = [
-    (rng) => ({
-        kind: 'gym',
-        seams: 2 + Math.floor(rng() * 4),
-        ringR: 1.0 + rng() * 1.2,
-        railH: 0.35 + rng() * 0.2,
-    }),
-    (rng) => ({
-        kind: 'grove',
-        stalks: Array.from({ length: 8 + Math.floor(rng() * 9) }, () => ({
-            x: rng() * ROOM_W,
-            z: ROOM_D * (0.7 + rng() * 0.3),
-            h: 0.8 + rng() * 2.4,
-            lean: (rng() - 0.5) * 0.6,
-        })),
-    }),
-    (rng) => ({
-        kind: 'cavern',
-        arcs: Array.from({ length: 3 + Math.floor(rng() * 3) }, (_, i) => ({
-            h: ROOM_H - 0.4 - rng() * 0.8,
-            sag: 0.3 + rng() * 0.6,
-        })),
-        rocks: Array.from({ length: 6 + Math.floor(rng() * 7) }, () => ({
-            x: rng() * ROOM_W,
-            z: rng() < 0.5 ? 0.3 + rng() * 0.5 : ROOM_D - 0.3 - rng() * 0.5,
-            r: 0.15 + rng() * 0.4,
-        })),
-    }),
-    (rng) => ({
+/* Habitat furniture, sampled per seed under the habitat genome (density
+   scales counts). Every element carries a depth z so the painter can
+   interleave it with the creature. */
+function buildFurniture(rng, hab) {
+    const count = (n) => Math.max(1, Math.round(n * hab.density));
+    const style = hab.style;
+    if (style === 0) {
+        return {
+            kind: 'gym',
+            seams: count(3),
+            ringR: 1.0 + rng() * 1.2,
+            railH: 0.35 + rng() * 0.2,
+        };
+    }
+    if (style === 1) {
+        return {
+            kind: 'grove',
+            stalks: Array.from({ length: count(10) }, () => ({
+                x: rng() * ROOM_W,
+                z: ROOM_D * (0.15 + rng() * 0.8),
+                h: 0.8 + rng() * 2.4,
+                lean: (rng() - 0.5) * 0.6,
+            })),
+        };
+    }
+    if (style === 2) {
+        return {
+            kind: 'cavern',
+            arcs: Array.from({ length: count(4) }, () => ({
+                h: ROOM_H - 0.4 - rng() * 0.8,
+                sag: 0.3 + rng() * 0.6,
+                z: ROOM_D * (0.5 + rng() * 0.45),
+            })),
+            rocks: Array.from({ length: count(8) }, () => ({
+                x: rng() * ROOM_W,
+                z: ROOM_D * (0.1 + rng() * 0.85),
+                r: 0.15 + rng() * 0.4,
+            })),
+        };
+    }
+    return {
         kind: 'void',
-        gridX: 5 + Math.floor(rng() * 6),
-        gridZ: 3 + Math.floor(rng() * 4),
-    }),
-];
+        gridX: count(7),
+        gridZ: count(4),
+    };
+}
 
-function drawEnvironment(ctx, ink, P, env) {
-    // The room shell: floor and ceiling perimeters, corner posts.
-    const c000 = P(0, 0, 0), c100 = P(ROOM_W, 0, 0);
-    const c001 = P(0, 0, ROOM_D), c101 = P(ROOM_W, 0, ROOM_D);
-    const c010 = P(0, ROOM_H, 0), c110 = P(ROOM_W, ROOM_H, 0);
-    const c011 = P(0, ROOM_H, ROOM_D), c111 = P(ROOM_W, ROOM_H, ROOM_D);
-    ctx.globalAlpha = 0.45;
-    ink.bone(ctx, c000, c100, 'fl-near', 1.0);
-    ctx.globalAlpha = 0.3;
-    ink.bone(ctx, c001, c101, 'fl-far', 0.8);
-    ink.bone(ctx, c000, c001, 'fl-left', 0.8);
-    ink.bone(ctx, c100, c101, 'fl-right', 0.8);
-    ctx.globalAlpha = 0.22;
-    ink.bone(ctx, c011, c111, 'ce-far', 0.8);
-    ink.bone(ctx, c010, c110, 'ce-near', 0.7);
-    ink.bone(ctx, c010, c011, 'ce-left', 0.7);
-    ink.bone(ctx, c110, c111, 'ce-right', 0.7);
-    ink.bone(ctx, c001, c011, 'post-bl', 0.8);
-    ink.bone(ctx, c101, c111, 'post-br', 0.8);
-    ctx.globalAlpha = 0.10;
-    ink.bone(ctx, c000, c010, 'post-fl', 0.7);
-    ink.bone(ctx, c100, c110, 'post-fr', 0.7);
+/* Stable per-key decay: a decayed room has crumbled away some of its
+   lines, and which ones never changes for a given seed. */
+function survives(key, hab, salt) {
+    return ((fnv1a(key + salt) % 1000) / 1000) >= hab.decay;
+}
+
+/* Emit the room as depth-sorted items. Long spanning lines split into
+   thirds so the creature can pass in front of the near part of an edge
+   and behind the far part. */
+function envItems(env, hab, salt, ink, P) {
+    const items = [];
+    const seg3 = (x0, y0, z0, x1, y1, z1, key, alpha, amp) => {
+        for (let k = 0; k < 3; k++) {
+            const t0 = k / 3, t1 = (k + 1) / 3;
+            const subKey = key + ':' + k;
+            if (!survives(subKey, hab, salt)) continue;
+            const za = z0 + (z1 - z0) * t0, zb = z0 + (z1 - z0) * t1;
+            items.push({
+                z: Math.min(za, zb),
+                draw: (ctx) => {
+                    ctx.globalAlpha = alpha * hab.cohesion;
+                    ink.bone(ctx,
+                        P(x0 + (x1 - x0) * t0, y0 + (y1 - y0) * t0, za),
+                        P(x0 + (x1 - x0) * t1, y0 + (y1 - y0) * t1, zb),
+                        subKey, amp);
+                },
+            });
+        }
+    };
+
+    // Room shell.
+    seg3(0, 0, 0, ROOM_W, 0, 0, 'fl-near', 0.45, 1.0);
+    seg3(0, 0, ROOM_D, ROOM_W, 0, ROOM_D, 'fl-far', 0.3, 0.8);
+    seg3(0, 0, 0, 0, 0, ROOM_D, 'fl-left', 0.3, 0.8);
+    seg3(ROOM_W, 0, 0, ROOM_W, 0, ROOM_D, 'fl-right', 0.3, 0.8);
+    seg3(0, ROOM_H, ROOM_D, ROOM_W, ROOM_H, ROOM_D, 'ce-far', 0.22, 0.8);
+    seg3(0, ROOM_H, 0, ROOM_W, ROOM_H, 0, 'ce-near', 0.16, 0.7);
+    seg3(0, ROOM_H, 0, 0, ROOM_H, ROOM_D, 'ce-left', 0.16, 0.7);
+    seg3(ROOM_W, ROOM_H, 0, ROOM_W, ROOM_H, ROOM_D, 'ce-right', 0.16, 0.7);
+    seg3(0, 0, ROOM_D, 0, ROOM_H, ROOM_D, 'post-bl', 0.22, 0.8);
+    seg3(ROOM_W, 0, ROOM_D, ROOM_W, ROOM_H, ROOM_D, 'post-br', 0.22, 0.8);
+    seg3(0, 0, 0, 0, ROOM_H, 0, 'post-fl', 0.10, 0.7);
+    seg3(ROOM_W, 0, 0, ROOM_W, ROOM_H, 0, 'post-fr', 0.10, 0.7);
 
     if (env.kind === 'gym') {
-        ctx.globalAlpha = 0.12;
         for (let i = 1; i <= env.seams; i++) {
             const z = (ROOM_D * i) / (env.seams + 1);
-            ink.bone(ctx, P(0, 0, z), P(ROOM_W, 0, z), 'fl-z' + i, 0.7);
+            seg3(0, 0, z, ROOM_W, 0, z, 'fl-z' + i, 0.12, 0.7);
         }
-        const ring = [];
-        for (let i = 0; i < 14; i++) {
-            const a = (i / 14) * Math.PI * 2;
-            ring.push(P(ROOM_W / 2 + Math.cos(a) * env.ringR, 0, ROOM_D / 2 + Math.sin(a) * env.ringR));
+        if (survives('ring', hab, salt)) {
+            items.push({
+                z: ROOM_D / 2 - env.ringR,
+                draw: (ctx) => {
+                    ctx.globalAlpha = 0.12 * hab.cohesion;
+                    const ring = [];
+                    for (let i = 0; i < 14; i++) {
+                        const a = (i / 14) * Math.PI * 2;
+                        ring.push(P(ROOM_W / 2 + Math.cos(a) * env.ringR, 0,
+                            ROOM_D / 2 + Math.sin(a) * env.ringR));
+                    }
+                    ink.loop(ctx, ring, 'fl-ring', 0.7);
+                },
+            });
         }
-        ink.loop(ctx, ring, 'fl-ring', 0.7);
-        ctx.globalAlpha = 0.15;
-        ink.bone(ctx, P(-0.5, ROOM_H * env.railH, ROOM_D),
-            P(ROOM_W + 0.5, ROOM_H * env.railH, ROOM_D), 'rail', 0.7);
+        seg3(-0.5, ROOM_H * env.railH, ROOM_D, ROOM_W + 0.5, ROOM_H * env.railH, ROOM_D, 'rail', 0.15, 0.7);
     } else if (env.kind === 'grove') {
         env.stalks.forEach((st, i) => {
-            ctx.globalAlpha = 0.28;
-            const top = P(st.x + st.lean, st.h, st.z);
-            ink.bone(ctx, P(st.x, 0, st.z), top, 'stalk' + i, 1.1);
-            ctx.globalAlpha = 0.18;
-            ink.bone(ctx, top, P(st.x + st.lean + 0.3, st.h - 0.35, st.z), 'frond-a' + i, 0.9);
-            ink.bone(ctx, top, P(st.x + st.lean - 0.3, st.h - 0.3, st.z), 'frond-b' + i, 0.9);
+            if (!survives('stalk' + i, hab, salt)) return;
+            items.push({
+                z: st.z,
+                draw: (ctx) => {
+                    ctx.globalAlpha = 0.28 * hab.cohesion;
+                    const top = P(st.x + st.lean, st.h, st.z);
+                    ink.bone(ctx, P(st.x, 0, st.z), top, 'stalk' + i, 1.1);
+                    ctx.globalAlpha = 0.18 * hab.cohesion;
+                    ink.bone(ctx, top, P(st.x + st.lean + 0.3, st.h - 0.35, st.z), 'frond-a' + i, 0.9);
+                    ink.bone(ctx, top, P(st.x + st.lean - 0.3, st.h - 0.3, st.z), 'frond-b' + i, 0.9);
+                },
+            });
         });
     } else if (env.kind === 'cavern') {
         env.arcs.forEach((arc, i) => {
-            ctx.globalAlpha = 0.20;
-            let prev = null;
-            for (let k = 0; k <= 8; k++) {
-                const x = (k / 8) * ROOM_W;
-                const dip = -Math.sin((k / 8) * Math.PI) * arc.sag;
-                const pt = P(x, arc.h + dip, ROOM_D * 0.9);
-                if (prev) ink.bone(ctx, prev, pt, 'arc' + i + '-' + k, 0.8);
-                prev = pt;
-            }
+            if (!survives('arc' + i, hab, salt)) return;
+            items.push({
+                z: arc.z,
+                draw: (ctx) => {
+                    ctx.globalAlpha = 0.20 * hab.cohesion;
+                    let prev = null;
+                    for (let k = 0; k <= 8; k++) {
+                        const x = (k / 8) * ROOM_W;
+                        const dip = -Math.sin((k / 8) * Math.PI) * arc.sag;
+                        const pt = P(x, arc.h + dip, arc.z);
+                        if (prev) ink.bone(ctx, prev, pt, 'arc' + i + '-' + k, 0.8);
+                        prev = pt;
+                    }
+                },
+            });
         });
         env.rocks.forEach((r, i) => {
-            ctx.globalAlpha = 0.28;
-            const pts = [];
-            for (let k = 0; k < 7; k++) {
-                const a = (k / 7) * Math.PI * 2;
-                pts.push(P(r.x + Math.cos(a) * r.r, Math.max(0, Math.sin(a) * r.r * 0.7), r.z));
-            }
-            ink.loop(ctx, pts, 'rock' + i, 0.9);
+            if (!survives('rock' + i, hab, salt)) return;
+            items.push({
+                z: r.z,
+                draw: (ctx) => {
+                    ctx.globalAlpha = 0.28 * hab.cohesion;
+                    const pts = [];
+                    for (let k = 0; k < 7; k++) {
+                        const a = (k / 7) * Math.PI * 2;
+                        pts.push(P(r.x + Math.cos(a) * r.r, Math.max(0, Math.sin(a) * r.r * 0.7), r.z));
+                    }
+                    ink.loop(ctx, pts, 'rock' + i, 0.9);
+                },
+            });
         });
     } else if (env.kind === 'void') {
-        ctx.globalAlpha = 0.10;
         for (let i = 1; i < env.gridX; i++) {
             const x = (ROOM_W * i) / env.gridX;
-            ink.bone(ctx, P(x, 0, 0), P(x, 0, ROOM_D), 'gx' + i, 0.6);
+            seg3(x, 0, 0, x, 0, ROOM_D, 'gx' + i, 0.10, 0.6);
         }
         for (let i = 1; i < env.gridZ; i++) {
             const z = (ROOM_D * i) / env.gridZ;
-            ink.bone(ctx, P(0, 0, z), P(ROOM_W, 0, z), 'gz' + i, 0.6);
+            seg3(0, 0, z, ROOM_W, 0, z, 'gz' + i, 0.10, 0.6);
         }
     }
-    ctx.globalAlpha = 1;
+    return items;
 }
 
 // ------------------------------------------------------------------ arena
@@ -759,13 +946,27 @@ class Arena {
             this.creature.p.boilHz,
             this.creature.p.sketch,
         );
-        this.envInker = new Inker(
-            mulberry32(fnv1a(seedStr + ':env-ink')), 0.12, this.creature.p.sketch * 0.8,
-        );
         const envRng = mulberry32(fnv1a(seedStr + ':env'));
-        this.env = ENV_STYLES[Math.floor(envRng() * ENV_STYLES.length)](envRng);
-        // A static phase offset so two-headed shells etc. differ per seed.
+        this.hab = sampleHabitat(envRng);
+        this.env = buildFurniture(envRng, this.hab);
+        this.envSalt = seedStr;
+        this.envInker = new Inker(
+            mulberry32(fnv1a(seedStr + ':env-ink')), 0.12,
+            this.creature.p.sketch * 0.6 * this.hab.noise,
+        );
         this.flair = envRng() * Math.PI * 2;
+
+        // Sparse seeded grain: stipple on the floor and the back wall -
+        // roughness scales with the habitat's noise gene.
+        const dots = Math.round(70 * this.hab.noise);
+        this.floorDots = Array.from({ length: dots }, () => ({
+            x: envRng() * ROOM_W, z: envRng() * ROOM_D,
+            r: 0.6 + envRng() * 1.4, al: 0.02 + envRng() * 0.06,
+        }));
+        this.wallDots = Array.from({ length: Math.round(dots * 0.6) }, () => ({
+            x: envRng() * ROOM_W, y: envRng() * ROOM_H,
+            r: 0.6 + envRng() * 1.2, al: 0.02 + envRng() * 0.05,
+        }));
 
         this.t = 0;
         this.lastTs = null;
@@ -789,17 +990,24 @@ class Arena {
         this.h = r.height;
     }
 
-    /* Strokes follow the live accent hue AND the theme: ink is the accent
-       hue desaturated toward the theme's text lightness, eyes the full
-       accent. Re-read every ~30 frames so LOGS / dark-toggle re-ink live. */
+    /* Ink follows the live accent hue AND theme. The creature reads at
+       text contrast (dark ink on light, bright on dark); the room leans
+       off the accent by its own seeded hue and stays a register quieter.
+       Washes are the gradient/grain tints for walls and floor. */
     refreshColors() {
         const cs = getComputedStyle(document.documentElement);
         const hue = parseFloat(cs.getPropertyValue('--accent-hue')) || 161;
-        const dark = document.documentElement.getAttribute('data-theme') !== 'light';
+        const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        const envHue = (hue + this.hab.hueOff + 360) % 360;
+        const sat = 20 + Math.abs(this.hab.hueOff) * 0.4;
         this.colors = {
-            line: `hsl(${hue} 38% ${dark ? 80 : 24}%)`,
-            shade: `hsl(${hue} 30% ${dark ? 65 : 40}%)`,
+            line: `hsl(${hue} 30% ${dark ? 88 : 14}%)`,
+            shade: `hsl(${envHue} ${sat}% ${dark ? 62 : 42}%)`,
             accent: cs.getPropertyValue('--accent').trim() || `hsl(${hue} 87% 40%)`,
+            washTop: `hsl(${envHue} ${sat}% ${dark ? 70 : 35}% / 0)`,
+            washBot: `hsl(${envHue} ${sat}% ${dark ? 70 : 35}% / ${dark ? 0.10 : 0.08})`,
+            grain: `hsl(${envHue} ${sat}% ${dark ? 75 : 30}%)`,
+            glow: `hsl(${hue} 70% ${dark ? 60 : 45}%)`,
         };
     }
 
@@ -830,22 +1038,90 @@ class Arena {
         this.ro.disconnect();
     }
 
-    /* Bleachers camera: above the near sideline of a large room, looking
-       across. Perspective divide gives depth. */
+    /* Soft washes, grain, and a glow under the creature: enough surface
+       treatment to give the box weight, sparse enough to stay a sketch. */
+    drawBackdrop(ctx, P, J) {
+        const cl = this.colors;
+
+        // Back wall: a vertical wash, heavier toward the floor line.
+        const wt = P(0, ROOM_H, ROOM_D), wb = P(0, 0, ROOM_D);
+        const wallGrad = ctx.createLinearGradient(0, wt.y, 0, wb.y);
+        wallGrad.addColorStop(0, cl.washTop);
+        wallGrad.addColorStop(1, cl.washBot);
+        ctx.fillStyle = wallGrad;
+        this.quad(ctx, P(0, ROOM_H, ROOM_D), P(ROOM_W, ROOM_H, ROOM_D),
+            P(ROOM_W, 0, ROOM_D), P(0, 0, ROOM_D));
+
+        // Floor: the wash deepens toward the viewer - the tank's shadowed
+        // near bed.
+        const fn = P(0, 0, 0), ff = P(0, 0, ROOM_D);
+        const floorGrad = ctx.createLinearGradient(0, ff.y, 0, fn.y);
+        floorGrad.addColorStop(0, cl.washTop);
+        floorGrad.addColorStop(1, cl.washBot);
+        ctx.fillStyle = floorGrad;
+        this.quad(ctx, P(0, 0, ROOM_D), P(ROOM_W, 0, ROOM_D),
+            P(ROOM_W, 0, 0), P(0, 0, 0));
+
+        // Grain: seeded stipple, the terrain's roughness.
+        ctx.fillStyle = cl.grain;
+        for (const d of this.floorDots) {
+            const pt = P(d.x, 0, d.z);
+            ctx.globalAlpha = d.al;
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, d.r * pt.d / 90, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        for (const d of this.wallDots) {
+            const pt = P(d.x, d.y, ROOM_D);
+            ctx.globalAlpha = d.al;
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, d.r * pt.d / 110, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+
+        // A soft pool of accent light under the creature.
+        const sc = J.shadow[0] ? this.project(J.body) : null;
+        if (sc) {
+            const under = J.shadow.reduce((acc, s) => {
+                const p = this.project(s);
+                return { x: acc.x + p.x / J.shadow.length, y: acc.y + p.y / J.shadow.length };
+            }, { x: 0, y: 0 });
+            const r = sc.d * 1.1 * this.creature.p.scale * 2.2;
+            const glow = ctx.createRadialGradient(under.x, under.y, 0, under.x, under.y, r);
+            glow.addColorStop(0, cl.glow);
+            glow.addColorStop(1, 'transparent');
+            ctx.globalAlpha = 0.10;
+            ctx.fillStyle = glow;
+            ctx.beginPath();
+            ctx.ellipse(under.x, under.y, r, r * 0.45, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 1;
+        }
+    }
+
+    quad(ctx, p0, p1, p2, p3) {
+        ctx.beginPath();
+        ctx.moveTo(p0.x, p0.y);
+        ctx.lineTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.lineTo(p3.x, p3.y);
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    /* Tank camera: standing outside and above, looking down in. */
     project(p) {
-        const camY = 2.2, camD = 8.0;
-        const f = this.w * 0.52;
+        const camY = 7.5, camD = 7.0;
+        const f = this.w * 0.50;
         const d = f / (camD + p.z);
         return {
             x: this.w / 2 + (p.x - ROOM_W / 2) * d,
-            y: this.h * 0.42 + (camY - p.y) * d,
+            y: this.h * 0.04 + (camY - p.y) * d,
             d, z: p.z,
         };
     }
 
-    /* A body shell: superellipse (oval..slab) elongated along the body
-       axis, its rim modulated by mech teeth and organic waver - the
-       business-card discrete..fractal blend, in 3D. */
     shell(ctx, inker, center, axis, major, minor, key, n = 16) {
         const p = this.creature.p;
         const pe = 2 + 6 * p.square;
@@ -854,11 +1130,8 @@ class Arena {
         for (let i = 0; i < n; i++) {
             const th = (i / n) * Math.PI * 2;
             const ct = Math.cos(th), st = Math.sin(th);
-            // Superellipse radius.
             const r = 1 / Math.pow(
                 Math.pow(Math.abs(ct), pe) + Math.pow(Math.abs(st), pe), 1 / pe);
-            // Rim modulation: square teeth when mechanical, slow waver when
-            // organic - coupled, never both at full strength.
             const teeth = Math.tanh(5 * Math.sin(th * 7 + this.flair)) * 0.07 * p.mech;
             const waver = Math.sin(th * 3 + this.flair * 2) * 0.08 * (1 - p.mech);
             const m = 1 + teeth + waver;
@@ -868,8 +1141,6 @@ class Arena {
         inker.loop(ctx, pts, key, 1.1);
     }
 
-    /* A gear ring: the mechanical heart, drawn only on machine-leaning
-       morphs. Teeth emerge from radius modulation, never drawn discretely. */
     gear(ctx, inker, center, radius, key) {
         const pts = [];
         const n = 18;
@@ -881,30 +1152,11 @@ class Arena {
         inker.loop(ctx, pts, key, 0.8);
     }
 
-    draw(dt) {
-        const { ctx, w, h } = this;
-        if (!w) return;
+    drawCreature(ctx, J, dt) {
         const c = this.creature;
         const p = c.p;
         const inker = this.inker;
-        inker.boil(this.t);
-        this.envInker.boil(this.t);
 
-        ctx.clearRect(0, 0, w, h);
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-
-        const P = (x, y, z) => this.project({ x, y, z });
-
-        // ---- the room ----
-        ctx.strokeStyle = this.colors.shade;
-        ctx.lineWidth = 1.2;
-        drawEnvironment(ctx, this.envInker, P, this.env);
-
-        // ---- the creature ----
-        const J = c.solve(this.t);
-
-        // Ink springs chase true joints in 3D, then project.
         const k = p.stiffness, dmp = p.damping;
         const chase = (name, target) => {
             let s = c.ink.get(name);
@@ -917,12 +1169,13 @@ class Arena {
         };
 
         const body = chase('body', J.body);
-        const abdomen = chase('abd', J.abdomen);
         const heads = J.heads.map((hd, i) => chase('head' + i, hd));
-        const legs = J.legs.map((joints, i) =>
-            joints.map((j, k2) => chase(`leg${i}-${k2}`, j)));
+        const legs = J.legs.map((leg, i) => ({
+            joints: leg.joints.map((j, k2) => chase(`leg${i}-${k2}`, j)),
+            toe: leg.toe,
+            grounded: leg.grounded,
+        }));
 
-        // Shadow on the gripped surface.
         ctx.strokeStyle = this.colors.shade;
         ctx.globalAlpha = 0.15;
         ctx.lineWidth = 1.1;
@@ -930,11 +1183,10 @@ class Arena {
         ctx.globalAlpha = 1;
 
         const pBody = this.project(body);
-        const lw = (base) => Math.max(0.8, base * pBody.d / 160);
+        const lw = (base) => Math.max(1.25, base * pBody.d / 110);
 
-        // Far legs first, fainter and thinner: depth in the ink.
         ctx.strokeStyle = this.colors.line;
-        const order = legs.map((joints, i) => ({ joints, i, z: joints[1].z }))
+        const order = legs.map((leg, i) => ({ ...leg, i, z: leg.joints[1].z }))
             .sort((a, b2) => b2.z - a.z);
         for (const leg of order) {
             const far = leg.z > body.z;
@@ -944,7 +1196,11 @@ class Arena {
             for (let s2 = 0; s2 < pts.length - 1; s2++) {
                 inker.bone(ctx, pts[s2], pts[s2 + 1], `leg${leg.i}-s${s2}`, 1.2);
             }
-            // Axle dots at the joints on machine-leaning morphs.
+            // The toe conforms to the terrain.
+            if (leg.grounded) {
+                ctx.lineWidth = lw(1.2);
+                inker.bone(ctx, pts[pts.length - 1], this.project(leg.toe), `toe${leg.i}`, 0.7);
+            }
             if (p.mech > 0.55) {
                 ctx.fillStyle = this.colors.line;
                 for (let s2 = 1; s2 < pts.length - 1; s2++) {
@@ -956,17 +1212,25 @@ class Arena {
         }
         ctx.globalAlpha = 1;
 
-        // Body shells: an elongated superellipse thorax, a trailing
-        // abdomen, and 1-2 heads - all on the mech..organic rim blend.
-        const pAbd = this.project(abdomen);
+        // Spine shells, tail-first so nearer segments overdraw.
         const pHead0 = this.project(heads[0]);
-        const axis = Math.atan2(pHead0.y - pAbd.y, pHead0.x - pAbd.x);
         const u = pBody.d * 0.32 * p.scale * p.chunk;
+        const chainP = J.chain.map(s => this.project(s));
+        const axisOf = (a, b2) => Math.atan2(a.y - b2.y, a.x - b2.x);
+        ctx.lineWidth = lw(1.7);
+        for (let i = chainP.length - 1; i >= 0; i--) {
+            const ahead = i === 0 ? pBody : chainP[i - 1];
+            const axis = axisOf(ahead, chainP[i]);
+            const shrink = 1 - p.taper * ((i + 1) / (chainP.length + 1));
+            const last = i === chainP.length - 1;
+            const size = u * shrink * (last ? 0.9 + 0.7 * p.tail : 1);
+            this.shell(ctx, inker, chainP[i], axis, size * (1 + (p.elong - 1) * 0.3), size * 0.8, 'sh-c' + i, 12);
+            inker.bone(ctx, chainP[i], ahead, 'sp-c' + i, 0.9);
+        }
+
+        const axis = Math.atan2(pHead0.y - pBody.y, pHead0.x - pBody.x);
         ctx.lineWidth = lw(1.8);
-        const tailR = u * (0.9 + 0.8 * p.tail);
-        this.shell(ctx, inker, pAbd, axis, tailR, tailR * 0.78, 'sh-abd', 14);
         this.shell(ctx, inker, pBody, axis, u * p.elong, u * 0.8, 'sh-body', 16);
-        inker.bone(ctx, pAbd, pBody, 'sp-1', 0.9);
 
         if (p.mech > 0.5) {
             ctx.globalAlpha = 0.5;
@@ -982,7 +1246,6 @@ class Arena {
             this.shell(ctx, inker, ph, axis, hr, hr * 0.85, 'sh-head' + i, 10);
             inker.bone(ctx, pBody, ph, 'sp-2-' + i, 0.8);
 
-            // Feelers and accent eyes per head.
             const fwd = { x: ph.x - pBody.x, y: ph.y - pBody.y };
             const fl = Math.hypot(fwd.x, fwd.y) || 1;
             ctx.lineWidth = lw(1.1);
@@ -1006,6 +1269,46 @@ class Arena {
                 ctx.fill();
             }
         }
+    }
+
+    draw(dt) {
+        const { ctx, w, h } = this;
+        if (!w) return;
+        const inker = this.inker;
+        inker.boil(this.t);
+        this.envInker.boil(this.t);
+
+        ctx.clearRect(0, 0, w, h);
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        const P = (x, y, z) => this.project({ x, y, z });
+        const J = this.creature.solve(this.t);
+        this.drawBackdrop(ctx, P, J);
+
+        // Painter's algorithm: the room's pieces and the creature sort by
+        // depth, so stalks and rocks pass in front of or behind the
+        // creature - and near wall edges overdraw it when it climbs.
+        const items = envItems(this.env, this.hab, this.envSalt, this.envInker, P);
+        items.push({
+            z: J.body.z,
+            creature: true,
+            draw: (ctx2) => {
+                ctx2.globalAlpha = 1;
+                this.drawCreature(ctx2, J, dt);
+            },
+        });
+        items.sort((a, b) => b.z - a.z);
+        ctx.strokeStyle = this.colors.shade;
+        ctx.lineWidth = 1.2;
+        for (const item of items) {
+            if (!item.creature) {
+                ctx.strokeStyle = this.colors.shade;
+                ctx.lineWidth = 1.2;
+            }
+            item.draw(ctx);
+        }
+        ctx.globalAlpha = 1;
     }
 }
 

@@ -166,6 +166,10 @@ def _make_stroke(ax, rng, mods):
     def stroke(x, y, color, lw, z):
         if wob > 0:
             amp = wob * float(rng.uniform(2.0, 8.0))
+            # Small marks (bone knobs, boutons, glyph dots) can't survive
+            # multi-mm wander; scale the drift to the stroke's own extent.
+            ext = float(max(np.ptp(x), np.ptp(y)))
+            amp *= min(1.0, max(0.15, ext / 30.0))
             x = x + amp * _fbm1(rng, len(x), octaves=2)
             y = y + amp * _fbm1(rng, len(y), octaves=2)
         if swirl_k > 0:
@@ -704,6 +708,371 @@ def flora_field(ax, rng, pal, mods):
         )
 
 
+def bone_field(ax, rng, pal, mods):
+    """Ossuary: cartoon long bones (flared shafts, paired condyle knobs)
+    strewn at golden angles, with the odd vertebral chain. chaos warps the
+    shafts, recurrence scatters smaller bone litter."""
+    chaos, rec = mods["chaos"], mods["recurrence"]
+    # Rigid geometry: full per-stroke wobble disassembles shapes whose
+    # identity lives in stroke alignment (shafts+knobs, strands+rungs).
+    mods = {**mods, "wobble": 0.35 * mods["wobble"]}
+    stroke = _make_stroke(ax, rng, mods)
+
+    def bone(cx, cy, ang, length, w, lw, z):
+        axis = np.array([np.cos(ang), np.sin(ang)])
+        perp = np.array([-axis[1], axis[0]])
+        center = np.array([cx, cy])
+        half = length / 2
+        n = int(np.clip(length * 0.8, 50, 160))
+        s = np.linspace(-half, half, n)
+        # Shaft edges pinch at the middle and flare toward the ends.
+        flare = w * (0.55 + 0.45 * (np.abs(s) / half) ** 2.2)
+        jit = chaos * 0.18 * w * _fbm1(rng, n, octaves=2)
+        for sign in (-1, 1):
+            p = (
+                center[:, None]
+                + np.outer(axis, s)
+                + np.outer(perp, sign * flare + jit)
+            )
+            stroke(p[0], p[1], pal["stroke"], lw, z)
+        # Each end cap is ONE continuous curve: shaft edge -> around the top
+        # lobe -> notch at the tip -> around the bottom lobe -> shaft edge.
+        kr = w * float(rng.uniform(0.8, 1.1))
+        sep, fwd = 0.62 * kr, 0.45 * kr
+        tip = fwd + np.sqrt(kr * kr - sep * sep)  # where the lobe circles meet
+
+        def lobe_arc(p_from, p_to, knob, end_pt):
+            """Arc of the lobe circle from p_from to p_to, swept the way
+            around that bulges away from the bone center."""
+            a0 = np.arctan2(*(p_from - knob)[::-1])
+            a1 = np.arctan2(*(p_to - knob)[::-1])
+            cw = (a1 - a0) % (2 * np.pi)
+            best = None
+            for sweep in (cw, cw - 2 * np.pi):
+                t = a0 + np.linspace(0, sweep, 40)
+                arc = knob[:, None] + kr * np.vstack([np.cos(t), np.sin(t)])
+                mid = arc[:, len(t) // 2]
+                d = np.hypot(*(mid - center))
+                if best is None or d > best[0]:
+                    best = (d, arc)
+            return best[1]
+
+        for end, j in ((-1, jit[0]), (1, jit[-1])):
+            e = center + end * half * axis
+            notch = e + end * tip * axis
+            a_top = e + (w + j) * perp
+            a_bot = e + (-w + j) * perp
+            k_top = e + end * fwd * axis + sep * perp
+            k_bot = e + end * fwd * axis - sep * perp
+            cap = np.hstack(
+                [
+                    a_top[:, None],
+                    lobe_arc(a_top, notch, k_top, e),
+                    lobe_arc(notch, a_bot, k_bot, e),
+                    a_bot[:, None],
+                ]
+            )
+            stroke(cap[0], cap[1], pal["stroke"], lw, z)
+
+    def spine(cx, cy, ang, n_vert, size, z):
+        # Vertebrae as shrinking diamonds along a bowed line.
+        bend = (0.2 + 0.6 * chaos) * float(rng.standard_normal())
+        a = ang
+        for i in range(n_vert):
+            r = size * (1 - 0.06 * i)
+            t = np.linspace(0, 2 * np.pi, 5)
+            stroke(
+                cx + r * np.cos(t + a + np.pi / 4),
+                cy + r * np.sin(t + a + np.pi / 4),
+                pal["stroke"],
+                0.7,
+                z,
+            )
+            a += bend / n_vert
+            cx += 2.4 * r * np.cos(a)
+            cy += 2.4 * r * np.sin(a)
+
+    # Faint sediment lines behind the litter.
+    for _ in range(int(rng.integers(2, 5))):
+        x, y = _line_strand(rng, chaos, mods["arc"], mods["overshoot"])
+        stroke(x, y, pal["faint"], 0.5, 1)
+
+    # A log size spectrum biased toward the colossal: anchor a point the
+    # bone must pass through, then slide the length under it - the biggest
+    # bones dwarf the card and render only as a cropped fragment.
+    for _ in range(int(rng.integers(1, 5))):
+        u = float(rng.uniform(0, 1)) ** 0.55
+        length = 9.0 * PHI ** (7.2 * u)
+        w = min(length * float(rng.uniform(0.055, 0.10)), 22.0)
+        ang = float(rng.uniform(0, 2 * np.pi))
+        px = float(rng.uniform(0, CARD_W))
+        py = float(rng.uniform(0, CARD_H))
+        # Anchor biased toward an end, so a giant usually shows a cap
+        # fragment rather than an anonymous stretch of mid-shaft.
+        t = (
+            float(rng.choice([-1, 1]))
+            * (0.5 - 0.35 * float(rng.random()) ** 1.5)
+            * length
+        )
+        bone(
+            px - t * np.cos(ang),
+            py - t * np.sin(ang),
+            ang,
+            length,
+            w,
+            0.6 + 0.8 * u,
+            3,
+        )
+    if rng.random() < 0.6:
+        spine(
+            float(rng.uniform(10, CARD_W - 10)),
+            float(rng.uniform(8, CARD_H - 8)),
+            float(rng.uniform(0, 2 * np.pi)),
+            int(rng.integers(5, 9)),
+            float(rng.uniform(1.2, 2.2)),
+            2,
+        )
+    # Recurrence: small bone litter.
+    for _ in range(int(round(rec * rng.integers(2, 6)))):
+        bone(
+            float(rng.uniform(0, CARD_W)),
+            float(rng.uniform(0, CARD_H)),
+            float(rng.uniform(0, 2 * np.pi)),
+            float(rng.uniform(5, 11)),
+            float(rng.uniform(0.7, 1.2)),
+            0.6,
+            2,
+        )
+
+
+def neural_field(ax, rng, pal, mods):
+    """Neural growth: somata sprouting tapering dendrites by recursive
+    wander, one long axon linking cells, boutons dotting the tips.
+    recurrence sets arborization depth, chaos bends the growth cones."""
+    chaos, rec = mods["chaos"], mods["recurrence"]
+    stroke = _make_stroke(ax, rng, mods)
+    t_c = np.linspace(0, 2 * np.pi, 30)
+    somata = []
+
+    def dendrite(x0, y0, ang, length, lw, depth):
+        n = 40
+        t = np.linspace(0, length, n)
+        a = ang + (0.4 + 1.4 * chaos) * np.cumsum(
+            rng.standard_normal(n)
+        ) * length / (n * 14)
+        x = x0 + np.cumsum(np.cos(a)) * (length / n)
+        y = y0 + np.cumsum(np.sin(a)) * (length / n)
+        stroke(x, y, pal["stroke"], lw, 3)
+        if depth > 0 and length > 2.5:
+            for frac in (0.35, 0.65, 0.95):
+                i = int(frac * (n - 1))
+                if rng.random() < 0.8:
+                    dendrite(
+                        x[i],
+                        y[i],
+                        float(a[i]) + float(rng.uniform(0.35, 1.0)) * rng.choice([-1, 1]),
+                        length * float(rng.uniform(0.45, 0.65)),
+                        lw * 0.65,
+                        depth - 1,
+                    )
+        else:
+            # Synaptic bouton at the growth tip.
+            r = float(rng.uniform(0.25, 0.55))
+            stroke(x[-1] + r * np.cos(t_c), y[-1] + r * np.sin(t_c), pal["stroke"], lw, 3)
+
+    def soma(cx, cy, r):
+        somata.append((cx, cy))
+        wob = 1 + 0.18 * _fbm1(rng, len(t_c), octaves=2)
+        ax.fill(
+            cx + r * wob * np.cos(t_c),
+            cy + r * wob * np.sin(t_c),
+            facecolor=pal["fill"],
+            edgecolor=pal["stroke"],
+            lw=0.8,
+            zorder=3,
+        )
+        arms = int(rng.integers(4, 7))
+        a0 = float(rng.uniform(0, 2 * np.pi))
+        for k in range(arms):
+            ang = a0 + 2 * np.pi * k / arms + float(rng.uniform(-0.3, 0.3))
+            dendrite(
+                cx + r * np.cos(ang),
+                cy + r * np.sin(ang),
+                ang,
+                float(rng.uniform(6, 16)),
+                0.8,
+                1 + int(round(2 * rec)),
+            )
+
+    for _ in range(int(rng.integers(2, 4))):
+        soma(
+            float(rng.uniform(8, CARD_W - 8)),
+            float(rng.uniform(6, CARD_H - 6)),
+            float(rng.uniform(1.6, 3.2)),
+        )
+    # Axons: long myelinated runs between somata, faint and beaded.
+    for (x0, y0), (x1, y1) in zip(somata, somata[1:]):
+        n = 120
+        t = np.linspace(0, 1, n)
+        sag = float(rng.uniform(4, 14)) * np.sin(np.pi * t)
+        dx, dy = x1 - x0, y1 - y0
+        norm = max(np.hypot(dx, dy), 1e-6)
+        x = x0 + t * dx - sag * dy / norm + chaos * 2.0 * _fbm1(rng, n)
+        y = y0 + t * dy + sag * dx / norm + chaos * 2.0 * _fbm1(rng, n)
+        stroke(x, y, pal["faint"], 1.1, 2)
+
+
+def matrix_field(ax, rng, pal, mods):
+    """Matrix geometry: a warped lattice under a random linear map, framed
+    by oversized brackets - entries dot the intersections, some cells fill
+    solid. chaos shears the basis, recurrence nests a sub-matrix."""
+    chaos, rec = mods["chaos"], mods["recurrence"]
+    # Rigid geometry: full per-stroke wobble disassembles shapes whose
+    # identity lives in stroke alignment (shafts+knobs, strands+rungs).
+    mods = {**mods, "wobble": 0.35 * mods["wobble"]}
+    stroke = _make_stroke(ax, rng, mods)
+
+    def lattice(cx, cy, cols, rows, cell, lw, depth, z):
+        ang = GOLDEN * int(rng.integers(0, 13))
+        # Random basis: rotation + shear/scale rising with chaos.
+        ca, sa = np.cos(ang), np.sin(ang)
+        sh = chaos * float(rng.uniform(-0.6, 0.6))
+        sc = 1 + chaos * float(rng.uniform(-0.25, 0.25))
+        ex = np.array([ca, sa]) * cell
+        ey = np.array([-sa * sc + ca * sh, ca * sc + sa * sh]) * cell
+        org = np.array([cx, cy]) - (cols / 2) * ex - (rows / 2) * ey
+
+        def P(i, j):
+            return org + i * ex + j * ey
+
+        n = 40
+        for i in range(cols + 1):
+            pts = np.array([P(i, j) for j in np.linspace(0, rows, n)])
+            stroke(pts[:, 0], pts[:, 1], pal["stroke" if i % 4 == 0 else "faint"],
+                   lw * (1.4 if i % 4 == 0 else 1.0), z)
+        for j in range(rows + 1):
+            pts = np.array([P(i, j) for i in np.linspace(0, cols, n)])
+            stroke(pts[:, 0], pts[:, 1], pal["stroke" if j % 4 == 0 else "faint"],
+                   lw * (1.4 if j % 4 == 0 else 1.0), z)
+        # Entries: dots at intersections, occasional solid cells.
+        t_dot = np.linspace(0, 2 * np.pi, 12)
+        for i in range(cols):
+            for j in range(rows):
+                r = rng.random()
+                if r < 0.12:
+                    quad = np.array([P(i, j), P(i + 1, j), P(i + 1, j + 1), P(i, j + 1)])
+                    ax.fill(quad[:, 0], quad[:, 1], facecolor=pal["fill"],
+                            edgecolor=pal["stroke"], lw=0.4, zorder=z)
+                elif r < 0.4:
+                    c = P(i + 0.5, j + 0.5)
+                    rr = cell * 0.07
+                    stroke(c[0] + rr * np.cos(t_dot), c[1] + rr * np.sin(t_dot),
+                           pal["stroke"], lw, z)
+        # Oversized brackets along the left/right columns.
+        for side, i in ((-1, 0), (1, cols)):
+            lip = 0.35 * cell * side
+            col = np.array([P(i, j) for j in np.linspace(0, rows, n)])
+            stroke(col[:, 0], col[:, 1], pal["stroke"], lw * 2.2, z)
+            for j in (0, rows):
+                tip = np.array([P(i, j), P(i, j) - lip * ex / cell])
+                stroke(tip[:, 0], tip[:, 1], pal["stroke"], lw * 2.2, z)
+        if depth > 0:
+            sub = P(float(rng.uniform(0, cols)), float(rng.uniform(0, rows)))
+            lattice(sub[0], sub[1], max(2, cols // 2), max(2, rows // 2),
+                    cell / PHI, lw * 0.8, depth - 1, max(z - 1, 2))
+
+    lattice(
+        float(rng.uniform(0.3, 0.7)) * CARD_W,
+        float(rng.uniform(0.3, 0.7)) * CARD_H,
+        int(rng.integers(4, 8)),
+        int(rng.integers(3, 6)),
+        float(rng.uniform(6, 11)),
+        0.55,
+        int(rec > 0.4),
+        3,
+    )
+
+
+def helix_field(ax, rng, pal, mods):
+    """DNA: double helices crossing the card - two phase-offset strands
+    woven by depth (the back pass thins at each crossing), rungs for base
+    pairs. chaos denatures the geometry, recurrence buds child helices."""
+    chaos, rec = mods["chaos"], mods["recurrence"]
+    # Rigid geometry: full per-stroke wobble disassembles shapes whose
+    # identity lives in stroke alignment (shafts+knobs, strands+rungs).
+    mods = {**mods, "wobble": 0.35 * mods["wobble"]}
+    stroke = _make_stroke(ax, rng, mods)
+
+    def helix(cx, cy, ang, length, amp, pitch, lw, depth, z):
+        n = 500
+        ca, sa = np.cos(ang), np.sin(ang)
+        s = np.linspace(-length / 2, length / 2, n)
+        ph = float(rng.uniform(0, 2 * np.pi))
+        wander = chaos * amp * 0.8 * _fbm1(rng, n)
+        amp_s = amp * (1 + 0.25 * chaos * _fbm1(rng, n, octaves=3))
+        for k, phase in enumerate((0.0, np.pi)):
+            w = np.sin(2 * np.pi * s / pitch + ph + phase)
+            depth_cue = np.cos(2 * np.pi * s / pitch + ph + phase)
+            d = amp_s * w + wander
+            x, y = cx + s * ca - d * sa, cy + s * sa + d * ca
+            # Split the strand into front (thick) and back (thin) arcs so
+            # the pair reads as woven, not just two sine waves.
+            front = depth_cue >= 0
+            for mask, width in ((front, lw * 1.5), (~front, lw * 0.6)):
+                idx = np.where(mask)[0]
+                if len(idx) == 0:
+                    continue
+                for run in np.split(idx, np.where(np.diff(idx) > 1)[0] + 1):
+                    stroke(x[run], y[run], pal["stroke"], width, z)
+        # Base-pair rungs between the strands, skipped near crossings.
+        n_rungs = int(length / pitch * float(rng.uniform(4, 6)))
+        for i in range(n_rungs):
+            si = -length / 2 + (i + 0.5) * length / n_rungs
+            w = np.sin(2 * np.pi * si / pitch + ph)
+            if abs(w) < 0.25:
+                continue
+            di = amp * w
+            base = np.array([cx + si * ca, cy + si * sa])
+            p0 = base + np.array([-di * sa, di * ca])
+            p1 = base - np.array([-di * sa, di * ca])
+            mid = (p0 + p1) / 2
+            for pa, pb in ((p0, mid), (mid, p1)):
+                stroke(
+                    np.linspace(pa[0], pb[0], 8),
+                    np.linspace(pa[1], pb[1], 8),
+                    pal["faint"],
+                    lw * 0.9,
+                    z,
+                )
+        if depth > 0:
+            # A child buds off one end, rotated by the golden angle.
+            end = 1 if rng.random() < 0.5 else -1
+            helix(
+                cx + end * length / 2 * ca,
+                cy + end * length / 2 * sa,
+                ang + GOLDEN,
+                length / PHI,
+                amp / PHI**0.5,
+                pitch / PHI**0.5,
+                lw * 0.8,
+                depth - 1,
+                max(z - 1, 2),
+            )
+
+    for _ in range(int(rng.integers(1, 3))):
+        helix(
+            float(rng.uniform(0.2, 0.8)) * CARD_W,
+            float(rng.uniform(0.2, 0.8)) * CARD_H,
+            GOLDEN * int(rng.integers(0, 13)),
+            float(rng.uniform(60, 130)),
+            float(rng.uniform(3.0, 6.5)),
+            float(rng.uniform(12, 26)),
+            0.8,
+            int(round(rec * 2)),
+            3,
+        )
+
+
 PROJECTION_REGISTRY = {
     "strands": strand_field,
     "shatter": shatter_field,
@@ -715,6 +1084,10 @@ PROJECTION_REGISTRY = {
     "splatter": splatter_field,
     "snowflake": snowflake_field,
     "flora": flora_field,
+    "bones": bone_field,
+    "neural": neural_field,
+    "matrix": matrix_field,
+    "helix": helix_field,
 }
 
 
