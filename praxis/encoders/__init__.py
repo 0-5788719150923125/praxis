@@ -142,6 +142,38 @@ CALMByteSmall = partial(
     vote_num_samples=500,
 )
 
+# Reference-faithful profile for the calm-a-1 ablation: the published repo's
+# absolute dims (latent 128, AE hidden 512, noise 64, 4 head blocks, dropout
+# 0.15) with the non-paper extras off (no MSE anchor, no linear prior). Pair
+# with a vanilla ~512-hidden trunk so the ablated variable vs the working
+# reference reproducer is just "Praxis surroundings vs authors' surroundings".
+CALMByteRef = partial(
+    CALMEncoder,
+    chunk_size=8,
+    latent_dim=128,
+    ae_hidden=512,
+    kl_beta=1e-3,
+    kl_clip=0.5,
+    ae_dropout=0.15,
+    noise_dim=64,
+    energy_blocks=4,
+    energy_samples_n=8,
+    energy_samples_m=100,
+    energy_alpha=1.0,
+    vote_num_samples=500,
+    energy_prior="none",
+    energy_anchor_weight=0.0,
+)
+
+# CALMByteRef at the reference's true patch granularity: K=4 subword tokens
+# (~15-20 bytes of text per latent) for a TokenMonster/BPE tokenizer. The
+# calm-a-1 ablation uses this so byte-level patching - itself unexplored for
+# CALM - stays out of the ablated variable set.
+CALMTmRef = partial(
+    CALMByteRef,
+    chunk_size=4,
+)
+
 # CALMByteSmall with harmonic codec dropout: the scalar rate becomes a
 # standing-wave field over (patch position, channel), n cycles per axis.
 CALMByteSmallHarmonic = partial(
@@ -177,6 +209,8 @@ ENCODER_REGISTRY = dict(
     calm_byte=CALMByte,
     calm_byte_small=CALMByteSmall,
     calm_byte_small_harmonic=CALMByteSmallHarmonic,
+    calm_byte_ref=CALMByteRef,
+    calm_tm_ref=CALMTmRef,
     calm_bpe=CALMBpe,
     # # Entropy-based patching
     # byte_latent_transformer_entropy=ByteLatentTransformerEntropy,

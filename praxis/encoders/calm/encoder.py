@@ -390,6 +390,7 @@ class CALMEncoder(BaseEncoder):
         vote_num_samples: int = 200,
         vote_temperature: float = 0.5,
         energy_prior: str = "linear",
+        energy_anchor_weight: float = ENERGY_ANCHOR_WEIGHT,
     ) -> None:
         super().__init__()
         self.config = config
@@ -429,6 +430,8 @@ class CALMEncoder(BaseEncoder):
         self.energy_samples_n = energy_samples_n
         self.energy_samples_m = energy_samples_m
         self.energy_alpha = energy_alpha
+        # 0.0 = paper-pure (no conditioning anchor); see ENERGY_ANCHOR_WEIGHT.
+        self.energy_anchor_weight = float(energy_anchor_weight)
         self.energy_warmup_steps = int(energy_warmup_steps)
         # Two-stage boundary (optimizer steps): trains the codec alone until
         # this step, then freezes it and trains only the LM/energy head. None
@@ -1070,7 +1073,7 @@ class CALMEncoder(BaseEncoder):
             )
             self._diag["calm_halo_angular"] = float(angular.detach())
             self._diag["calm_radial"] = float(radial.detach())
-        elif ENERGY_ANCHOR_WEIGHT > 0.0:
+        elif self.energy_anchor_weight > 0.0:
             # Conditioning anchor (standard CALM mode): regress the head's
             # zero-noise (mean) prediction onto the next posterior mean. A
             # strong, low-variance gradient that forces the conditional to
@@ -1079,7 +1082,7 @@ class CALMEncoder(BaseEncoder):
             anchor = torch.nn.functional.mse_loss(
                 self.energy_head(h_cond, zero_noise, t=t_cond), mean_next
             )
-            total = total + ENERGY_ANCHOR_WEIGHT * anchor
+            total = total + self.energy_anchor_weight * anchor
             self._diag["calm_energy_anchor"] = float(anchor.detach())
 
         # Detach in eval: val_loss only needs the scalar, never a backward graph.
