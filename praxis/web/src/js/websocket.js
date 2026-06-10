@@ -110,6 +110,14 @@ export function connectMetricsLive() {
         }
     });
 
+    // Server-pushed invalidations ("metrics" on each flushed training step,
+    // "snapshots" when a model-probe snapshot actually changes). Re-broadcast
+    // as a DOM event so the refresh scheduler (main.js) stays decoupled from
+    // the socket lifecycle.
+    metricsSocket.on('invalidate', (data) => {
+        window.dispatchEvent(new CustomEvent('praxis:data-invalidate', { detail: data }));
+    });
+
     metricsSocket.on('connect_error', (error) => {
         console.error('[WS] Metrics-live connection error:', error);
         state.liveMetrics.connected = false;

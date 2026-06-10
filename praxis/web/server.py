@@ -209,6 +209,14 @@ class APIServer:
         # so every read is a cheap cached lookup and the model is only ever
         # touched from this one producer (never from concurrent request threads).
         self.snapshot_store = SnapshotStore()
+        # Broadcast snapshot changes so clients refresh model-probe cards
+        # (activation curves, head snapshots, evolution) on change, not on a
+        # polling timer. Unchanged recomputes are filtered in the store.
+        self.snapshot_store.notify = lambda name, version: socketio.emit(
+            "invalidate",
+            {"topic": "snapshots", "key": name, "version": version},
+            namespace="/metrics-live",
+        )
         app.config["snapshot_store"] = self.snapshot_store
         self.snapshot_producer = SnapshotProducer(
             store=self.snapshot_store,

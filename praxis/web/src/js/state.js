@@ -129,7 +129,7 @@ export const state = {
             ),
             onActivate: 'loadResearchMetrics',
             activateDelay: 0,
-            activateParams: [false],  // Don't force refresh - user clicks reload button
+            activateParams: [false],  // Don't force refresh - invalidation events keep it fresh
             onDeactivate: null
         },
         {

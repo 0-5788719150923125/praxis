@@ -13,6 +13,7 @@ FORMAT_TO_TASK = {
     DataFormat.INSTRUCTION: TaskType.INSTRUCTION,
     DataFormat.CONVERSATION: TaskType.CONVERSATION,
     DataFormat.MESSAGES: TaskType.CONVERSATION,
+    DataFormat.HUMAN_ASSISTANT: TaskType.CONVERSATION,
     DataFormat.PERSONACHAT: TaskType.CONVERSATION,
     DataFormat.SODA: TaskType.CONVERSATION,
     DataFormat.TOOL_CALLING: TaskType.TOOL_CALL,
@@ -100,6 +101,7 @@ DATASET_COLLECTIONS = dict(
         "natural-instructions": DEFAULT_WEIGHT,
         "cosmopedia-v2": DEFAULT_WEIGHT,
         "smoltalk": DEFAULT_WEIGHT,
+        "hh-rlhf": DEFAULT_WEIGHT,
     },
     phi={
         "fineweb": 0.75,
@@ -186,6 +188,14 @@ DATASETS = {
         path="AlekseyKorshuk/persona-chat",
         keys=["personality", "utterances"],
         format=DataFormat.PERSONACHAT,
+    ),
+    # Preference dataset, used SFT-style for now: only the `chosen` dialogues
+    # train (parsed from the raw Human:/Assistant: transcripts). The `rejected`
+    # column waits on a preference-based objective (see next/roadmap.md).
+    "hh-rlhf": dict(
+        path="Anthropic/hh-rlhf",
+        keys=["chosen"],
+        format=DataFormat.HUMAN_ASSISTANT,
     ),
     "smoltalk": dict(
         path="HuggingFaceTB/smoltalk",

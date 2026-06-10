@@ -142,10 +142,18 @@ function init() {
  * Each is laid out off-screen at the active region's size so its charts measure
  * and render fully - making the first navigation instant, like a revisit.
  */
-// Re-warm hidden tabs this often so their data is fresh BEFORE navigation.
-// Endpoints are cheap (ETag 304s for metrics; small JSON elsewhere) and the
-// refresh only ever touches hidden tabs, so it can never flash the screen.
-const TAB_REFRESH_MS = 60000;
+// Refreshes are event-driven: the server pushes "invalidate" over the live
+// socket when data actually changes (training step flushed, model-probe
+// snapshot updated), and we re-warm in response - never on a blind timer.
+// These gaps coalesce the step-rate event stream into a sane refresh rate:
+// hidden decks are expensive synchronous rebuilds, so they go slow; the
+// visible tab refreshes in place (stale-while-revalidate, deck position
+// preserved) so it can go faster.
+const HIDDEN_WARM_GAP_MS = 60000;
+const VISIBLE_REFRESH_GAP_MS = 20000;
+// Don't rebuild the visible tab while the user is mid-interaction (swiping a
+// deck, scrolling a card); wait for this much quiet first.
+const INTERACTION_QUIET_MS = 3000;
 
 async function prefetchTabs() {
     const { loadResearchMetrics, loadDynamics, loadSpec, loadAgents } = await import('./tabs.js');
@@ -167,9 +175,9 @@ async function prefetchTabs() {
     );
     const warm = async (force) => {
         for (const [tabId, contentId, load, needsLayout] of jobs) {
-            // Never touch the visible tab from the background path: its loader
-            // rebuilds the DOM, which would flash mid-read. It refreshes via
-            // its own controls; hidden tabs swap invisibly and arrive fresh.
+            // The visible tab is refreshed by its own in-place path below,
+            // never by the off-screen prewarm (off-screen styling of a visible
+            // tab is exactly the blank-flash bug).
             if (force && state.currentTab === tabId) continue;
             await idle();
             try {
@@ -180,15 +188,83 @@ async function prefetchTabs() {
             }
         }
     };
+
+    // Track the last user gesture so an in-place refresh never lands mid-swipe.
+    let lastInteraction = 0;
+    const touch = () => { lastInteraction = Date.now(); };
+    ['pointerdown', 'wheel', 'keydown', 'touchstart'].forEach((ev) =>
+        document.addEventListener(ev, touch, { passive: true, capture: true }));
+
+    // In-place refresh of the visible tab: same loader, stale-while-revalidate
+    // keeps it painted and the deck restores its card position, so this is the
+    // flash-free replacement for the per-tab Refresh buttons.
+    const refreshVisible = async () => {
+        const job = jobs.find(([tabId]) => tabId === state.currentTab);
+        if (!job) return;
+        if (Date.now() - lastInteraction < INTERACTION_QUIET_MS) return false;
+        await idle();
+        if (Date.now() - lastInteraction < INTERACTION_QUIET_MS) return false;
+        try {
+            await job[2](true);
+        } catch (error) {
+            console.warn('[Praxis] Visible tab refresh failed:', job[1], error);
+        }
+        return true;
+    };
+
+    // Event-gated scheduler: invalidations mark tabs dirty; each plane drains
+    // on its own cadence. When training idles there are no events, so the
+    // page does zero background work - the old 60s loop rebuilt every deck
+    // forever regardless.
+    let hiddenDirty = false;
+    let visibleDirty = false;
+    let lastHiddenWarm = 0;
+    let lastVisibleRefresh = 0;
+    let draining = false;
+    let retryTimer = 0;
+
+    const drain = async () => {
+        if (draining || document.hidden) return;
+        draining = true;
+        clearTimeout(retryTimer);
+        retryTimer = 0;
+        try {
+            const now = Date.now();
+            if (visibleDirty && now - lastVisibleRefresh >= VISIBLE_REFRESH_GAP_MS) {
+                if (await refreshVisible() !== false) {
+                    visibleDirty = false;
+                    lastVisibleRefresh = Date.now();
+                }
+            }
+            if (hiddenDirty && now - lastHiddenWarm >= HIDDEN_WARM_GAP_MS) {
+                hiddenDirty = false;
+                lastHiddenWarm = Date.now();
+                await warm(true);
+            }
+        } finally {
+            draining = false;
+        }
+        // Something still pending (cooldown or interaction guard): retry soon
+        // rather than waiting for the next server event.
+        if ((hiddenDirty || visibleDirty) && !retryTimer) {
+            retryTimer = setTimeout(() => { retryTimer = 0; drain(); }, 5000);
+        }
+    };
+
+    window.addEventListener('praxis:data-invalidate', () => {
+        hiddenDirty = true;
+        visibleDirty = true;
+        drain();
+    });
+    // Catch up when the page becomes visible again (drain skips while hidden).
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) drain();
+    });
+
     setTimeout(async () => {
         await warm(false);  // initial fill: first navigation lands warm
+        lastHiddenWarm = Date.now();
         warmKbIndex();      // build the KB index now so the first "> Look" is instant
-        // Steady-state: keep hidden tabs fresh. Sequential + paused while the
-        // page itself is hidden, so it never competes with the live stream.
-        setInterval(() => {
-            if (document.hidden) return;
-            warm(true);
-        }, TAB_REFRESH_MS);
     }, 600);
 }
 

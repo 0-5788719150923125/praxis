@@ -52,6 +52,13 @@ def _start_emitter(socketio: SocketIO) -> None:
                         snapshot,
                         namespace="/metrics-live",
                     )
+                    # Typed invalidation: tells clients chart/history data may
+                    # have changed, so they refresh on events, not timers.
+                    socketio.emit(
+                        "invalidate",
+                        {"topic": "metrics", "version": snapshot["update_count"]},
+                        namespace="/metrics-live",
+                    )
                     last_update_count = snapshot["update_count"]
                 time.sleep(0.5)
             except Exception:

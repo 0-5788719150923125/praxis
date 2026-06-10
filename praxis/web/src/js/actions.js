@@ -834,19 +834,6 @@ export const ACTION_HANDLERS = {
     },
 
     /**
-     * Refresh current tab data
-     */
-    REFRESH_TAB_DATA: async () => {
-        const currentTab = state.tabs.find(t => t.active);
-        if (currentTab?.onActivate) {
-            await callLifecycleHook(currentTab.onActivate, {
-                ...currentTab,
-                activateParams: [true]  // Force refresh
-            });
-        }
-    },
-
-    /**
      * Download the living research paper PDF. Fetched as a blob so a 404
      * (not built yet) surfaces as a message instead of downloading an error.
      */

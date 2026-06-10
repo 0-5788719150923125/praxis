@@ -2,6 +2,7 @@
 
 import json
 import random
+import re
 from typing import Dict, List
 
 from transformers import PreTrainedTokenizer
@@ -103,6 +104,30 @@ def format_messages(
         "messages": processed_messages,
         "metadata": {"format": "messages", "source_keys": keys},
     }
+
+
+def format_human_assistant(
+    document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
+) -> Dict:
+    """Parse a raw "\\n\\nHuman: ... \\n\\nAssistant: ..." transcript (e.g. the
+    Anthropic/hh-rlhf `chosen` column) into chat messages, then reuse the
+    messages pipeline so it gets the unified system/developer prompts.
+    """
+    transcript = document.get(keys[0], "") or ""
+    # Leading separator guarantees the first marker matches even after strip.
+    turns = re.findall(
+        r"\n\n(Human|Assistant): (.*?)(?=\n\n(?:Human|Assistant): |\Z)",
+        "\n\n" + transcript.strip(),
+        flags=re.S,
+    )
+    messages = [
+        {"role": "user" if speaker == "Human" else "assistant", "content": text}
+        for speaker, text in turns
+        if text.strip()
+    ]
+    if not messages:
+        return {"messages": [], "metadata": {}}
+    return format_messages({"messages": messages}, ["messages"], tokenizer)
 
 
 def format_soda(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer) -> str:

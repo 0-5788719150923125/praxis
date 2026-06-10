@@ -19,6 +19,7 @@ from praxis.data.formats import DataFormat
 from praxis.data.formatters import (
     _rl_logger,
     format_conversation,
+    format_human_assistant,
     format_cot,
     format_instruction,
     format_joke,
@@ -38,6 +39,7 @@ FORMAT_HANDLERS = {
     DataFormat.CONVERSATION: format_conversation,
     DataFormat.PERSONACHAT: format_personachat,
     DataFormat.MESSAGES: format_messages,
+    DataFormat.HUMAN_ASSISTANT: format_human_assistant,
     DataFormat.SODA: format_soda,
     DataFormat.WIKI: format_wiki,
     DataFormat.RL: format_rl,

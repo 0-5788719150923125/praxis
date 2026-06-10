@@ -12,6 +12,7 @@ class DataFormat(Enum):
     PERSONACHAT = "persona_chat"  # Persona-based chat
     CUSTOM = "custom"  # Custom format (user-defined)
     MESSAGES = "messages"  # Chat messages format
+    HUMAN_ASSISTANT = "human_assistant"  # Raw "Human:/Assistant:" transcript (hh-rlhf)
     SODA = "soda"  # SODA dialogue format
     WIKI = "wiki"  # Wikipedia article format
     RL = "rl"  # Reinforcement learning format

@@ -245,28 +245,9 @@ export const CLICK_HANDLERS = [
         action: () => ({ type: 'TOGGLE_SPEC_RUN_SELECTOR' })
     },
     {
-        selector: '#refresh-metrics-btn',
-        match: 'closest',
-        action: () => ({ type: 'REFRESH_TAB_DATA' })
-    },
-    {
-        selector: '#refresh-dynamics-btn',
-        match: 'closest',
-        action: () => ({ type: 'REFRESH_TAB_DATA' })
-    },
-    {
         selector: '.download-pdf-btn',
         match: 'closest',
         action: () => ({ type: 'DOWNLOAD_PAPER_PDF' })
-    },
-    {
-        selector: '.refresh-button',
-        match: 'exact',
-        action: (e) => {
-            // Don't handle if it's a copy button (already handled above)
-            if (e.target.classList.contains('copy-git-remote-btn')) return null;
-            return { type: 'REFRESH_TAB_DATA' };
-        }
     }
 ];
 

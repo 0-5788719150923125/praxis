@@ -419,9 +419,9 @@ export function formatRelativeTime(timestamp) {
 /**
  * Load and render research metrics with full Chart.js integration.
  *
- * Fetches run on tab activation and on explicit user-initiated refreshes
- * (refresh button, run-selector change). There is no background polling;
- * charts only rebuild when the user asks for it.
+ * Fetches run on tab activation, on run-selector changes, and when a
+ * server-pushed invalidation marks the data dirty (see main.js). There is
+ * no blind polling; charts only rebuild when something actually changed.
  *
  * @param {boolean} force - If true, re-fetch even if already loaded.
  */
@@ -1907,13 +1907,6 @@ function renderMetricsHeader(container, runs) {
         `;
     }
 
-    const refreshIcon = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-            <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
-            <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
-        </svg>
-    `;
-
     const totalPoints = runs.reduce((sum, r) => sum + (r.metadata?.num_points || 0), 0);
 
     const metadataHTML = `
@@ -1925,12 +1918,6 @@ function renderMetricsHeader(container, runs) {
         title: 'Metrics',
         additionalContent: selectorHTML,
         buttons: [
-            {
-                id: 'refresh-metrics-btn',
-                label: 'Refresh',
-                icon: refreshIcon,
-                className: 'tab-header-button'
-            },
             pdfButton('download-pdf-research'),
         ],
         metadata: metadataHTML

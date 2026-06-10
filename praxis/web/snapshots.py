@@ -29,15 +29,31 @@ class SnapshotStore:
         self._lock = threading.Lock()
         self._data = {}
         self._version = 0
+        # Optional fn(name, version), called after a slot actually changes.
+        # The server wires this to a websocket "invalidate" broadcast so
+        # clients refresh on change instead of polling on a timer.
+        self.notify = None
 
     def set(self, name, payload):
         with self._lock:
+            prev = self._data.get(name)
+            # Identical recompute: keep the version (and thus the ETag) stable
+            # so clients keep getting 304s and never re-render unchanged data.
+            if prev is not None and prev["payload"] == payload:
+                prev["computed_at"] = time.time()
+                return
             self._version += 1
+            version = self._version
             self._data[name] = {
-                "version": self._version,
+                "version": version,
                 "computed_at": time.time(),
                 "payload": payload,
             }
+        if self.notify is not None:
+            try:
+                self.notify(name, version)
+            except Exception as exc:
+                api_logger.debug(f"[snapshots] notify failed: {exc}")
 
     def get(self, name):
         with self._lock:

@@ -11,6 +11,7 @@ from praxis.data.formatters.base import (
 from praxis.data.formatters.conversation import (
     create_person_mapping,
     format_conversation,
+    format_human_assistant,
     format_messages,
     format_soda,
     replace_person_references,
@@ -38,6 +39,7 @@ __all__ = [
     "format_simple",
     "format_instruction",
     "format_conversation",
+    "format_human_assistant",
     "format_messages",
     "format_soda",
     "format_personachat",
