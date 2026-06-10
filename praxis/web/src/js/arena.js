@@ -160,10 +160,10 @@ function sampleMorphology(rng) {
     // Creature KIND is a discrete archetype roll, like the arena's faces:
     // the genome stays continuous underneath, the kind re-shapes it.
     const kr = rng();
-    if (kr < 0.38) {
+    if (kr < 0.3) {
         m.kind = 'bug';
         m.components = ['legs'];
-    } else if (kr < 0.5) {
+    } else if (kr < 0.42) {
         // The roach: a low scuttler under one dorsal shell.
         m.kind = 'roach';
         m.carapace = true;
@@ -187,7 +187,7 @@ function sampleMorphology(rng) {
         m.feelerLen = u(2.0, 3.0);          // the long antennae
         m.tailStyle = 'none';
         m.components = ['legs', 'carapace'];
-    } else if (kr < 0.62) {
+    } else if (kr < 0.53) {
         m.kind = 'squirrel';
         m.legPairs = 2; m.segs = 2; m.spine = 1; m.heads = 1;
         m.elong = u(1.15, 1.55); m.square = m.square * 0.4;
@@ -205,7 +205,7 @@ function sampleMorphology(rng) {
         m.eyeCount = 2; m.stalky = 0;
         m.climby = Math.max(0.6, m.climby); // squirrels scale anything
         m.components = ['legs', 'paws', 'floofTail'];
-    } else if (kr < 0.74) {
+    } else if (kr < 0.64) {
         m.kind = 'rat';
         m.legPairs = 2; m.segs = 2; m.spine = 2; m.heads = 1;
         m.elong = u(1.5, 2.1); m.scale *= 0.85;
@@ -221,7 +221,7 @@ function sampleMorphology(rng) {
         m.mech = m.mech * 0.5;
         m.eyeCount = 2; m.stalky = 0;
         m.components = ['legs', 'paws', 'whipTail'];
-    } else if (kr < 0.87) {
+    } else if (kr < 0.74) {
         m.kind = 'fish';
         m.swim = true;
         m.legPairs = 0; m.segs = 2; m.heads = 1;
@@ -236,6 +236,46 @@ function sampleMorphology(rng) {
         m.fluid = Math.max(0.6, m.fluid);   // water is smooth
         m.stalky = 0;
         m.components = ['swimmer', 'caudalFin', 'pectorals'];
+    } else if (kr < 0.83) {
+        // The butterfly: slow, erratic, mostly wind; perches often.
+        m.kind = 'butterfly';
+        m.swim = true; m.flyStyle = 'butterfly';
+        m.legPairs = 0; m.spine = 1; m.heads = 1;
+        m.scale *= 0.62; m.elong = u(0.9, 1.3);
+        m.chunk = u(0.5, 0.8);
+        m.undulate *= 0.2; m.tail = 0.3;
+        m.speed = u(1.0, 1.9);
+        m.speedy = Math.min(0.35, m.speedy);  // drifts, never darts
+        m.bumpy = Math.max(0.6, m.bumpy);     // the flutter
+        m.fluid = Math.max(0.5, m.fluid);
+        m.sleepiness = u(0.1, 0.26);          // perches constantly
+        m.playful = u(0.1, 0.3);              // loops and circles
+        m.jumpiness = 0.02; m.fidget = 0;
+        m.restlessness = u(0.5, 1.6);
+        m.swimLo = 0.4; m.swimHi = Math.min(2.8, ROOM_H * 0.8);
+        m.eyeCount = 2; m.stalky = 0;
+        m.feelerLen = u(1.4, 2.2);
+        m.tailStyle = 'none';
+        m.components = ['swimmer', 'wingsButterfly'];
+    } else if (kr < 0.9) {
+        // The wasp: fast hover, hard darts, a mean little pendulum.
+        m.kind = 'wasp';
+        m.swim = true; m.flyStyle = 'wasp';
+        m.legPairs = 0; m.spine = 2; m.heads = 1;
+        m.scale *= 0.68; m.elong = u(1.2, 1.6);
+        m.taper = u(0.1, 0.25); m.tail = u(0.5, 0.9);
+        m.undulate *= 0.15;
+        m.speed = u(2.6, 4.0);
+        m.speedy = Math.max(0.8, m.speedy);
+        m.bumpy = Math.min(0.4, m.bumpy);
+        m.sleepiness = u(0.01, 0.05);
+        m.fidget = u(0.3, 0.5);               // the darting
+        m.restlessness = u(0.3, 1.0);
+        m.swimLo = 0.3; m.swimHi = ROOM_H * 0.7;
+        m.eyeCount = 2; m.stalky = 0;
+        m.feelerLen = u(0.8, 1.2);
+        m.tailStyle = 'none';
+        m.components = ['swimmer', 'wingsWasp'];
     } else {
         // The Spore move: no preset at all - a spine and whatever parts
         // the roll attaches. Chimeras the named kinds never produce.
@@ -560,7 +600,7 @@ class Creature {
             this.timer = 1.2 + this.expo(2.5);
             this.rearHigh = this.live() < 0.4;   // second stage: stretch up
             this.nibbleOn = this.live() < 0.5;
-        } else if (!p.swim && r < p.rear + p.fidget) {
+        } else if (p.fidget > 0 && r < p.rear + p.fidget) {
             this.state = 'fidget';
             this.timer = 0.4 + this.expo(0.6);
         } else if (r < p.rear + p.fidget + p.sleepiness) {
@@ -767,6 +807,19 @@ class Creature {
             this.nibble = Math.max(0, this.nibble - 3 * dt);
         }
 
+        // The environment moves bodies: wind pushes (light things more),
+        // a heavy gust can even wrench the frozen axis around.
+        const wind = this.env ? this.env.wind : 0;
+        if (wind && this.surface === 'floor') {
+            const sail = p.swim
+                ? (p.flyStyle === 'butterfly' ? 1.8 : p.flyStyle === 'wasp' ? 0.5 : 0.3)
+                : 0.35 * (1.3 - p.scale);
+            this.va += wind * sail * dt;
+            if (Math.abs(wind) > 1.0) {
+                this.spin += wind * 0.22 * (1.3 - p.scale) * dt;
+            }
+        }
+
         const agility = (2.2 + 7 * p.speedy) * (this.state === 'bump' ? 0.4 : 1);
         const flying = this.state === 'jump' && this.h > p.stance * p.scale * 1.3;
         const drag = (1.2 + 3.5 * (1 - p.fluid)) * (flying ? 0.15 : 1);
@@ -841,21 +894,31 @@ class Creature {
         const standH = p.stance * p.scale;
         const lieH = 0.08 * p.scale;
         if (p.swim) {
-            // Fish: no gravity, no ground spring - a smooth swim toward a
-            // wandering depth target, breathing with the buoy voter.
+            // Swimmers and flyers: no gravity, no ground spring - a smooth
+            // glide toward a wandering altitude, breathing with the buoy
+            // voter. Perching flyers drop to the ground to rest.
+            const lo = p.swimLo != null ? p.swimLo : 0.5;
+            const hi = p.swimHi != null ? p.swimHi : Math.max(1.1, ROOM_H * 0.75);
             if (this.swimH == null || this.live() < 0.25 * dt) {
-                this.swimH = 0.5 + this.live()
-                    * Math.max(0.6, ROOM_H * 0.75 - 0.5);
+                this.swimH = lo + this.live() * Math.max(0.3, hi - lo);
             }
             const gFloor = this.groundAt(this.a, this.b);
-            const targetH2 = Math.max(gFloor + 0.4,
+            const perched = p.flyStyle
+                && (this.state === 'sleep' || this.state === 'rise');
+            let targetH2 = Math.max(gFloor + 0.4,
                 Math.min(ROOM_H * 0.85, this.swimH))
                 + 0.25 * this.ch.buoy;
+            if (perched) targetH2 = gFloor + 0.1;
+            if (p.flyStyle === 'butterfly' && !perched) {
+                // The flutter: every wingbeat lifts, gravity answers.
+                this.vh += Math.sin(t * 9 + this.phase) * 2.2 * dt;
+            }
             this.vh += ((targetH2 - this.h) * 2.2 - this.vh * 2.5) * dt
                 + (this.state === 'jump' ? 0 : 0);
             if (this.state === 'jump') this.vh += 2.0 * dt; // the breach
             this.h += this.vh * dt;
-            if (this.h < gFloor + 0.25) { this.h = gFloor + 0.25; this.vh = Math.abs(this.vh) * 0.4; }
+            const hMin2 = perched ? gFloor + 0.06 : gFloor + 0.25;
+            if (this.h < hMin2) { this.h = hMin2; this.vh = Math.abs(this.vh) * 0.4; }
             if (this.h > ROOM_H * 0.9) { this.h = ROOM_H * 0.9; this.vh = -Math.abs(this.vh) * 0.4; }
             if (this.state === 'jump' && this.timer <= 0) this.rest();
         } else {
@@ -912,17 +975,22 @@ class Creature {
         }
         }
 
+        // The axis is FROZEN unless the creature's own locomotion turns
+        // it: below a real stride speed there is no torque at all - no
+        // effortless rotating in place. (The environment may still shove
+        // it: see the wind coupling above.)
         const sp = Math.hypot(this.va, this.vb);
-        if (sp > 0.08) {
+        const spThresh = 0.22 * this.effSpeed;
+        if (sp > spThresh) {
             const want = Math.atan2(this.vb, this.va);
             let diff = want - this.heading;
             while (diff > Math.PI) diff -= 2 * Math.PI;
             while (diff < -Math.PI) diff += 2 * Math.PI;
-            const authority = Math.min(1, sp / (this.effSpeed * 0.5));
+            const authority = Math.min(1, (sp - spThresh) / (this.effSpeed * 0.5));
             this.spin += (diff * (6 + 16 * p.speedy) * authority
                 - this.spin * (5 + 4 * p.fluid)) * dt;
         } else {
-            this.spin -= this.spin * 6 * dt;
+            this.spin -= this.spin * 8 * dt;
         }
         this.heading += this.spin * dt;
 
@@ -2280,6 +2348,85 @@ const COMPONENTS = {
         },
     },
 
+    wingsButterfly: {
+        draw(d) {
+            const { arena, ctx, c, p, J, body, pBody, inker, lw } = d;
+            ctx.strokeStyle = arena.colors.line;
+            // Wingbeat: fold foreshortens the span; perching folds them up.
+            const rest = 1 - Math.min(1, c.lie * 1.2);
+            const beat = Math.sin(c.phase * 3.5);
+            const fold = (0.25 + 0.75 * Math.abs(Math.cos(c.phase * 3.5))) * rest + 0.12;
+            const liftY = beat * 0.45 * p.scale * rest;
+            const span = p.scale * 1.5;
+            for (const sgn of [-1, 1]) {
+                for (const [lobe, back, sc] of [['u', 0.12, 1.0], ['l', -0.3, 0.62]]) {
+                    const tip = {
+                        x: body.x + J.perpW.x * sgn * span * fold * sc + J.fwd.x * back * p.scale,
+                        y: body.y + liftY * sc + 0.15 * p.scale,
+                        z: body.z + J.perpW.z * sgn * span * fold * sc + J.fwd.z * back * p.scale,
+                    };
+                    const fore = {
+                        x: body.x + J.fwd.x * (back + 0.25) * p.scale,
+                        y: body.y + 0.1 * p.scale,
+                        z: body.z + J.fwd.z * (back + 0.25) * p.scale,
+                    };
+                    const aft = {
+                        x: body.x + J.fwd.x * (back - 0.2) * p.scale,
+                        y: body.y + 0.05 * p.scale,
+                        z: body.z + J.fwd.z * (back - 0.2) * p.scale,
+                    };
+                    ctx.lineWidth = lw(1.4);
+                    inker.loop(ctx, [arena.project(fore),
+                        arena.project({ x: tip.x + J.fwd.x * 0.12 * p.scale, y: tip.y, z: tip.z + J.fwd.z * 0.12 * p.scale }),
+                        arena.project(tip), arena.project(aft)],
+                        `bw${sgn}${lobe}`, 1.0);
+                }
+            }
+        },
+    },
+
+    wingsWasp: {
+        draw(d) {
+            const { arena, ctx, c, p, J, body, inker, lw } = d;
+            ctx.strokeStyle = arena.colors.line;
+            // A blur of wing: two ghost positions per side, beating fast.
+            const span = p.scale * 0.8;
+            for (const sgn of [-1, 1]) {
+                for (const ghost of [0, 1]) {
+                    const beat = Math.sin(arena.t * 46 + ghost * 1.8 + sgn);
+                    const liftY = 0.25 * p.scale + beat * 0.18 * p.scale;
+                    const tip = {
+                        x: body.x + J.perpW.x * sgn * span - J.fwd.x * 0.2 * p.scale,
+                        y: body.y + liftY,
+                        z: body.z + J.perpW.z * sgn * span - J.fwd.z * 0.2 * p.scale,
+                    };
+                    ctx.globalAlpha = ghost ? 0.22 : 0.45;
+                    ctx.lineWidth = lw(1.1);
+                    inker.loop(ctx, [d.pBody, arena.project(tip),
+                        arena.project({ x: tip.x - J.fwd.x * 0.25 * p.scale, y: tip.y - 0.05 * p.scale, z: tip.z - J.fwd.z * 0.25 * p.scale })],
+                        `ww${sgn}${ghost}`, 0.7);
+                }
+            }
+            ctx.globalAlpha = 1;
+            // Stripes across the abdomen, and the sting.
+            const tailW = J.chain[J.chain.length - 1];
+            const dir = { x: body.x - tailW.x, y: body.y - tailW.y, z: body.z - tailW.z };
+            const dl = Math.hypot(dir.x, dir.y, dir.z) || 1;
+            ctx.lineWidth = lw(1.2);
+            for (const fr of [0.3, 0.6]) {
+                const cx2 = { x: tailW.x + dir.x * fr, y: tailW.y + dir.y * fr, z: tailW.z + dir.z * fr };
+                const r2 = 0.16 * p.scale;
+                inker.bone(ctx,
+                    arena.project({ x: cx2.x + J.perpW.x * r2, y: cx2.y, z: cx2.z + J.perpW.z * r2 }),
+                    arena.project({ x: cx2.x - J.perpW.x * r2, y: cx2.y, z: cx2.z - J.perpW.z * r2 }),
+                    `stripe${fr}`, 0.5);
+            }
+            inker.bone(ctx, arena.project(tailW),
+                arena.project({ x: tailW.x - dir.x / dl * 0.18 * p.scale, y: tailW.y - dir.y / dl * 0.18 * p.scale, z: tailW.z - dir.z / dl * 0.18 * p.scale }),
+                'sting', 0.5);
+        },
+    },
+
     pectorals: {
         draw(d) {
             const { arena, ctx, c, p, J, body, pBody, inker, lw } = d;
@@ -2450,6 +2597,7 @@ class Arena {
                 this.onFrame?.();
                 this.colorTick = 30;
             }
+            this.creature.env = { wind: this.windSignal() };
             this.creature.step(dt, this.t);
             this.updateCamera(dt);
             this.draw(dt);
@@ -3033,13 +3181,23 @@ class Arena {
     /* The particle system: a camera-wrapped volume of simple strokes.
        Wind is one shared signal - base strength, gusts and reductions,
        and the slow swell - so the whole sky moves as a body. */
+    /* One wind for the whole world: weather particles, swaying bodies,
+       gusts that shove a frozen axis. Zero when the sky rolled clear. */
+    windSignal() {
+        const wth = this.weather;
+        if (!wth || wth.clear) return 0;
+        const t = this.t;
+        const sw = Math.sin(t * wth.swell * 6.283);
+        return wth.wind * (1 - wth.gust * 0.45
+            + wth.gust * (0.55 * sw + 0.35 * Math.sin(t * wth.swell * 17 + 1.7)))
+            * (this.terrain.facesMat.ceiling !== 'none' ? 0.25 : 1);
+    }
+
     drawWeather(ctx, dt) {
         const wth = this.weather;
         if (!wth || !this.particles.length) return;
         const t = this.t;
-        const sw = Math.sin(t * wth.swell * 6.283);
-        const windNow = wth.wind * (1 - wth.gust * 0.45
-            + wth.gust * (0.55 * sw + 0.35 * Math.sin(t * wth.swell * 17 + 1.7)));
+        const windNow = this.windSignal();
         const fall = WEATHER_FALL[wth.material] * (0.6 + 0.7 * wth.density);
         const mat = wth.material;
         const bubbles = mat === 'bubbles';
