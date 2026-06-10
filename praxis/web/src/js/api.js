@@ -91,7 +91,10 @@ export async function printAsk(reroll = false) {
     const response = await fetch(`${state.settings.apiUrl}/api/print/ask`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(reroll ? { reroll: true } : {})
+        body: JSON.stringify({
+            ...(reroll ? { reroll: true } : {}),
+            max_new_tokens: state.settings.maxTokens,
+        })
     });
     if (!response.ok) throw new Error(`Print ask error: ${response.status}`);
     return response.json();
@@ -136,7 +139,7 @@ export async function loopGenerate(task) {
     const response = await fetch(`${state.settings.apiUrl}/api/loop/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task })
+        body: JSON.stringify({ task, max_new_tokens: state.settings.maxTokens })
     });
     if (!response.ok) throw new Error(`Loop generate error: ${response.status}`);
     return response.json();

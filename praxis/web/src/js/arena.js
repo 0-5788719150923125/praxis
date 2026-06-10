@@ -300,7 +300,8 @@ class Creature {
         this.postureT = 1 + this.rng();
 
         this.terrainRef = null;       // set by the Arena; floor geometry
-        this.enclosure = 1;           // open worlds have no walls to climb
+        this.enclosure = 1;           // backdrop-scale enclosure
+        this.faces = null;            // per-face materials; null = all solid
 
         this.surface = 'floor';
         this.a = ROOM_W * (0.25 + 0.5 * this.rng());
@@ -364,6 +365,26 @@ class Creature {
 
     expo(mean) { return -Math.log(1 - this.live() + 1e-9) * mean; }
 
+    solidFace(name) {
+        if (name === 'floor') return true;
+        return this.faces ? this.faces[name] !== 'none' : true;
+    }
+
+    /* Where this creature may roam: every open edge runs off-stage. */
+    bounds() {
+        const S = SURFACES[this.surface];
+        if (this.surface === 'floor' && this.terrainRef?.roam) {
+            const rm = this.terrainRef.roam;
+            return {
+                x0: this.solidFace('wallL') ? 0 : rm.x0,
+                x1: this.solidFace('wallR') ? S.A : rm.x1,
+                z0: rm.z0,
+                z1: this.solidFace('wallB') ? S.B : rm.z1,
+            };
+        }
+        return { x0: 0, x1: S.A, z0: 0, z1: S.B };
+    }
+
     /* True ground level under a surface point - only the floor rolls. */
     groundAt(a, b) {
         if (this.surface !== 'floor' || !this.terrainRef) return 0;
@@ -418,14 +439,14 @@ class Creature {
             this.jumpFwd = (1.0 + 2.6 * p.hindBias) * (0.6 + 0.6 * this.live());
         } else {
             this.state = 'run';
-            const S = SURFACES[this.surface];
+            const B = this.bounds();
             const over = this.live() < p.clumsiness;
             this.ta = over && this.live() < 0.5
-                ? (this.live() < 0.5 ? -0.6 : S.A + 0.6)
-                : S.A * (0.06 + 0.88 * this.live());
+                ? (this.live() < 0.5 ? B.x0 - 0.6 : B.x1 + 0.6)
+                : B.x0 + (B.x1 - B.x0) * (0.06 + 0.88 * this.live());
             this.tb = over && this.live() >= 0.5
-                ? S.B + 0.6
-                : S.B * (0.06 + 0.88 * this.live());
+                ? B.z1 + 0.6
+                : B.z0 + (B.z1 - B.z0) * (0.06 + 0.88 * this.live());
         }
     }
 
@@ -477,7 +498,7 @@ class Creature {
         };
         const route = routes[this.surface]?.[which];
 
-        if (route && fast && this.enclosure > 0.3 && this.live() < p.climby) {
+        if (route && fast && this.solidFace(route[0]) && this.live() < p.climby) {
             this.transfer(route[0], ...route[1]());
             return;
         }
@@ -578,7 +599,12 @@ class Creature {
         this.a += this.va * dt;
         this.b += this.vb * dt;
 
-        if (this.enclosure > 0.3 || this.surface !== 'floor') {
+        const edgeFaces = this.surface === 'floor'
+            ? { a0: 'wallL', a1: 'wallR', b0: 'front', b1: 'wallB' }
+            : null;
+        const edgeSolid = (e) => !edgeFaces || this.solidFace(edgeFaces[e]);
+        if (this.surface !== 'floor'
+            || (edgeSolid('a0') && edgeSolid('a1') && edgeSolid('b0') && edgeSolid('b1'))) {
             if (this.a < EDGE) { this.a = EDGE; this.hitEdge('a0'); }
             else if (this.a > S.A - EDGE) { this.a = S.A - EDGE; this.hitEdge('a1'); }
             if (this.b < EDGE) { this.b = EDGE; this.hitEdge('b0'); }
@@ -586,24 +612,31 @@ class Creature {
                 this.b = SURFACES[this.surface].B - EDGE; this.hitEdge('b1');
             }
         } else {
-            // Open world: no walls to hit. The land rises at the rim and
-            // the creature is gently steered home - it wanders back over
-            // the berm instead of bouncing off glass nobody can see.
+            // Mixed faces: solid edges collide, open edges soft-steer.
+            if (edgeSolid('a0') && this.a < EDGE) { this.a = EDGE; this.hitEdge('a0'); }
+            if (edgeSolid('a1') && this.a > S.A - EDGE) { this.a = S.A - EDGE; this.hitEdge('a1'); }
+            if (edgeSolid('b0') && this.b < EDGE) { this.b = EDGE; this.hitEdge('b0'); }
+            if (edgeSolid('b1') && this.b > S.B - EDGE) { this.b = S.B - EDGE; this.hitEdge('b1'); }
+            // Open world: no walls to hit. The land rises at the roam
+            // rim and the creature is gently steered home - it wanders
+            // back over the berm instead of bouncing off unseen glass.
+            const B = this.bounds();
             const M = 1.0;
             const push = 4.5;
-            if (this.a < M) this.va += (M - this.a) * push * dt;
-            if (this.a > S.A - M) this.va -= (this.a - (S.A - M)) * push * dt;
-            if (this.b < M) this.vb += (M - this.b) * push * dt;
-            if (this.b > S.B - M) this.vb -= (this.b - (S.B - M)) * push * dt;
-            // Failsafe rail well off-stage.
-            this.a = Math.min(S.A + 0.6, Math.max(-0.6, this.a));
-            this.b = Math.min(S.B + 0.6, Math.max(-0.6, this.b));
-            // A runner aimed off-stage picks a new target inside.
+            if (this.a < B.x0 + M) this.va += (B.x0 + M - this.a) * push * dt;
+            if (this.a > B.x1 - M) this.va -= (this.a - (B.x1 - M)) * push * dt;
+            if (this.b < B.z0 + M) this.vb += (B.z0 + M - this.b) * push * dt;
+            if (this.b > B.z1 - M) this.vb -= (this.b - (B.z1 - M)) * push * dt;
+            // Failsafe rail just past the rim.
+            this.a = Math.min(B.x1 + 0.6, Math.max(B.x0 - 0.6, this.a));
+            this.b = Math.min(B.z1 + 0.6, Math.max(B.z0 - 0.6, this.b));
+            // A runner aimed past the rim picks a new target inside.
             if (this.state === 'run'
-                && (this.ta < 0 || this.ta > S.A || this.tb < 0 || this.tb > S.B)
-                && (this.a < M || this.a > S.A - M || this.b < M || this.b > S.B - M)) {
-                this.ta = S.A * (0.15 + 0.7 * this.live());
-                this.tb = S.B * (0.15 + 0.7 * this.live());
+                && (this.ta < B.x0 || this.ta > B.x1 || this.tb < B.z0 || this.tb > B.z1)
+                && (this.a < B.x0 + M || this.a > B.x1 - M
+                    || this.b < B.z0 + M || this.b > B.z1 - M)) {
+                this.ta = B.x0 + (B.x1 - B.x0) * (0.15 + 0.7 * this.live());
+                this.tb = B.z0 + (B.z1 - B.z0) * (0.15 + 0.7 * this.live());
             }
         }
 
@@ -665,7 +698,7 @@ class Creature {
         const hMin = ground + lieH * 0.6;
         if (this.h < hMin) { this.h = hMin; this.vh = Math.abs(this.vh) * 0.3; }
 
-        if (this.surface === 'floor' && this.enclosure > 0.3
+        if (this.surface === 'floor' && this.solidFace('ceiling')
             && this.vh > 0 && this.h >= ROOM_H - standH * 1.4) {
             this.surface = 'ceiling';
             this.h = ROOM_H - this.h;
@@ -1099,12 +1132,70 @@ function buildTerrain(rng, hab) {
             r: 0.5 + rng() * 1.2, al: 0.02 + rng() * 0.05,
         })),
         shell: f.shell,
+        _fillRoam: true,
+        // Geometry is built face by face, DISCRETELY: each wall and the
+        // ceiling rolls its own material from the archetype weights. One
+        // scene has a glass right wall and nothing on the left; the cube
+        // only exists when every roll lands solid.
+        facesMat: (() => {
+            const w = hab.weights;
+            const wallTable = [
+                ['none', 0.3 + w.void * 1.6 + w.thicket * 0.7],
+                ['box', w.gym * 1.3 + w.tank * 0.4],
+                ['glass', w.tank * 1.8],
+                ['rock', w.tunnel * 1.8 + 0.12],
+                ['hedge', w.thicket * 1.5],
+                ['machine', w.machine * 1.6],
+            ];
+            const ceilTable = [
+                ['none', 0.5 + w.void * 1.6 + w.thicket * 1.3 + w.tank * 0.5],
+                ['box', w.gym * 0.8 + w.tank * 0.4],
+                ['rock', w.tunnel * 2.2],
+                ['machine', w.machine * 1.6],
+            ];
+            const roll2 = (table) => {
+                const tot = table.reduce((a2, e) => a2 + e[1], 0);
+                let r = rng() * tot;
+                for (const [m2, wt] of table) { r -= wt; if (r <= 0) return m2; }
+                return 'none';
+            };
+            return {
+                wallB: roll2(wallTable),
+                wallL: roll2(wallTable),
+                wallR: roll2(wallTable),
+                ceiling: roll2(ceilTable),
+                front: w.tank > 0.35 ? 'glass' : 'none',
+            };
+        })(),
+        // Asymmetric macro relief: big signed gaussians - a high hill far
+        // right, a sunken valley near left, wherever the rolls land.
+        macro: Array.from({ length: 3 + Math.floor(rng() * 3) }, () => ({
+            x: ROOM_W * (rng() * 1.5 - 0.25),
+            z: ROOM_D * (rng() * 1.2),
+            r: 1.5 + rng() * 3.5,
+            amp: (rng() - 0.35) * 1.3 * (1 - Math.min(1, f.shell) * 0.7),
+        })),
+        tilt: {
+            gx: (rng() - 0.5) * 0.08 * (1 - Math.min(1, f.shell)),
+            gz: (rng() - 0.5) * 0.08 * (1 - Math.min(1, f.shell)),
+        },
+        // The floor is a heightmap, not a plane: a seeded low-frequency
+        // rolling field that physics and rendering both sample. Tanks
+        // stay flat; open country rolls.
+        roll: {
+            amp: (1 - Math.min(1, f.shell)) * (0.12 + rng() * 0.4),
+            k1: 0.25 + rng() * 0.45, k2: 0.25 + rng() * 0.45,
+            k3: 0.15 + rng() * 0.35, k4: 0.15 + rng() * 0.35,
+            p1: rng() * Math.PI * 2, p2: rng() * Math.PI * 2, p3: rng() * Math.PI * 2,
+        },
+        // How far the world extends: each open edge runs off-stage.
+        roam: null, // filled below from facesMat
         // Open worlds: ground swells into a berm at the old boundary and
         // rolls off in ridgelines - no edge, just rising land.
         rim: (1 - Math.min(1, f.shell)) * (0.2 + rng() * 0.45),
         ridges: Math.min(1, f.shell) < 0.3
-            ? Array.from({ length: 1 + n(1.2) }, () => ({
-                z: ROOM_D * (0.95 + rng() * 0.4),
+            ? Array.from({ length: 2 + n(1.6) }, () => ({
+                z: ROOM_D * (0.95 + rng() * 2.6),
                 amp: 0.25 + rng() * 0.55,
                 waves: 1 + Math.floor(rng() * 3),
                 ph: rng() * Math.PI * 2,
@@ -1133,24 +1224,45 @@ function buildTerrain(rng, hab) {
             jag: Array.from({ length: 5 }, () => (rng() - 0.5) * 0.5),
         })),
         treeline: f.treeline > 0.3 ? {
-            z: ROOM_D + 1.5 + rng() * 1.5,
+            z: ROOM_D * (1.6 + rng() * 1.6),
             pts: Array.from({ length: 12 }, () => 0.6 + rng() * 1.4),
             trunks: Array.from({ length: 3 + Math.floor(rng() * 4) }, () => ({
                 x: rng() * 1.4 - 0.2, h: 0.5 + rng() * 0.9,
             })),
         } : null,
         // The world continues past the bounds: faded scatter off-stage.
-        outTufts: Array.from({ length: n((f.tufts + f.stalks) * 0.6) }, () => ({
-            x: ROOM_W * (rng() * 1.6 - 0.3),
-            z: ROOM_D * (1.0 + rng() * 0.45),
+        outTufts: Array.from({ length: n((f.tufts + f.stalks) * 0.9) }, () => ({
+            x: ROOM_W * (rng() * 3.0 - 1.0),
+            z: ROOM_D * (1.0 + rng() * 1.8),
             s: 0.1 + rng() * 0.18, lean: (rng() - 0.5) * 0.6,
         })),
-        outRocks: Array.from({ length: n((f.rocks + f.mounds) * 0.5) }, () => ({
-            x: ROOM_W * (rng() * 1.5 - 0.25),
-            z: ROOM_D * (1.05 + rng() * 0.4),
+        outRocks: Array.from({ length: n((f.rocks + f.mounds) * 0.8) }, () => ({
+            x: ROOM_W * (rng() * 3.0 - 1.0),
+            z: ROOM_D * (1.05 + rng() * 1.9),
             r: 0.3 + rng() * 0.7,
         })),
     };
+}
+
+function finishTerrain(terrain) {
+    const fm = terrain.facesMat;
+    terrain.roam = {
+        x0: fm.wallL === 'none' ? -ROOM_W * 0.25 : 0,
+        x1: fm.wallR === 'none' ? ROOM_W * 1.25 : ROOM_W,
+        z0: 0.15,
+        z1: fm.wallB === 'none' ? ROOM_D * 1.3 : ROOM_D,
+    };
+    // The RENDERED ground: where no face stands, the plane runs far
+    // beyond anything the camera frames. Only the box ends at the box.
+    terrain.vast = {
+        x0: fm.wallL === 'none' ? -ROOM_W * 2.5 : 0,
+        x1: fm.wallR === 'none' ? ROOM_W * 3.5 : ROOM_W,
+        // No front pane: the ground continues toward (and past) the
+        // camera, so its near edge falls outside the viewport entirely.
+        z0: fm.front === 'none' ? -ROOM_D * 0.45 : 0.15,
+        z1: fm.wallB === 'none' ? ROOM_D * 5.5 : ROOM_D,
+    };
+    return terrain;
 }
 
 /* The floor's true geometry: boulders are domes, mounds are gaussian
@@ -1175,14 +1287,32 @@ function groundHeight(terrain, a, b) {
         const band = Math.exp(-((b - hl.z) ** 2) / 0.5);
         g = Math.max(g, hl.amp * ridge * band);
     }
+    if (terrain.macro) {
+        for (const m of terrain.macro) {
+            const d2 = (a - m.x) ** 2 + (b - m.z) ** 2;
+            g += m.amp * Math.exp(-d2 / (2 * m.r * m.r));
+        }
+    }
+    if (terrain.tilt) {
+        g += terrain.tilt.gx * (a - ROOM_W / 2) + terrain.tilt.gz * (b - ROOM_D / 2);
+    }
+    const roll = terrain.roll;
+    if (roll && roll.amp > 0.02) {
+        g += roll.amp * (
+            Math.sin(a * roll.k1 + roll.p1) * Math.sin(b * roll.k2 + roll.p2) * 0.6
+            + Math.sin(a * roll.k3 + b * roll.k4 + roll.p3) * 0.4
+            + 1.0
+        ) * 0.5;
+    }
     if (terrain.rim > 0.05) {
-        const dEdge = Math.min(a, b, ROOM_W - a, ROOM_D - b);
+        const rm = terrain.roam || { x0: 0, x1: ROOM_W, z0: 0, z1: ROOM_D };
+        const dEdge = Math.min(a - rm.x0, b - rm.z0, rm.x1 - a, rm.z1 - b);
         if (dEdge < 1.6) {
             const r2 = Math.min(1.3, 1 - dEdge / 1.6);
             g += terrain.rim * r2 * r2;
         }
     }
-    return g;
+    return Math.max(-0.7, g);
 }
 
 /* Stable per-key decay: a decayed room has crumbled away some of its
@@ -1196,6 +1326,7 @@ function survives(key, hab, salt) {
    and behind the far part. */
 function envItems(hab, salt, ink, P, terrain, colors, t) {
     const items = [];
+    const gy = (x, z) => groundHeight(terrain, x, z);
     const seg3 = (x0, y0, z0, x1, y1, z1, key, alpha, amp) => {
         for (let k = 0; k < 3; k++) {
             const t0 = k / 3, t1 = (k + 1) / 3;
@@ -1218,24 +1349,137 @@ function envItems(hab, salt, ink, P, terrain, colors, t) {
     // The containment shell is a TANK feature, not a given: its lines
     // fade in only as the habitat leans glass-tank. Open-world arenas
     // keep a whisper of the floor edge and nothing else.
-    const sh = Math.min(1, terrain.shell);
-    if (sh > 0.25) {
-        const floorA = 0.12 + 0.33 * sh;
-        seg3(0, 0, 0, ROOM_W, 0, 0, 'fl-near', floorA, 1.0);
-        seg3(0, 0, ROOM_D, ROOM_W, 0, ROOM_D, 'fl-far', floorA * 0.7, 0.8);
-        seg3(0, 0, 0, 0, 0, ROOM_D, 'fl-left', floorA * 0.7, 0.8);
-        seg3(ROOM_W, 0, 0, ROOM_W, 0, ROOM_D, 'fl-right', floorA * 0.7, 0.8);
+    // ---- geometry, face by face ----
+    const fm = terrain.facesMat;
+    const solid = (m) => m && m !== 'none';
+    const rollAmp = (terrain.roll ? terrain.roll.amp : 0)
+        + (terrain.macro ? terrain.macro.reduce((a2, m) => a2 + Math.abs(m.amp), 0) / 4 : 0);
+
+    // The ground: flowing contour lines over the heightmap whenever the
+    // land actually rolls; straight floor edges only along solid faces.
+    if (rollAmp > 0.05) {
+        const vt = terrain.vast;
+        const LINES = 9, PTS = 19;
+        for (let li = 0; li < LINES; li++) {
+            // Quadratic spacing: dense near the viewer, reaching far out.
+            const fr = (li + 0.5) / LINES;
+            const z = vt.z0 + (vt.z1 - vt.z0) * fr * fr;
+            const fade = 1 - 0.75 * fr;
+            items.push({
+                z,
+                draw: (ctx) => {
+                    ctx.globalAlpha = 0.11 * hab.cohesion * fade;
+                    let prev = null;
+                    for (let k = 0; k < PTS; k++) {
+                        const x = vt.x0 + (vt.x1 - vt.x0) * (k / (PTS - 1));
+                        const pt = P(x, gy(x, z) + 0.01, z);
+                        if (prev) ink.bone(ctx, prev, pt, `flow${li}-${k}`, 0.6);
+                        prev = pt;
+                    }
+                },
+            });
+        }
     }
-    if (sh > 0.15) {
-        seg3(0, ROOM_H, ROOM_D, ROOM_W, ROOM_H, ROOM_D, 'ce-far', 0.22 * sh, 0.8);
-        seg3(0, ROOM_H, 0, ROOM_W, ROOM_H, 0, 'ce-near', 0.16 * sh, 0.7);
-        seg3(0, ROOM_H, 0, 0, ROOM_H, ROOM_D, 'ce-left', 0.16 * sh, 0.7);
-        seg3(ROOM_W, ROOM_H, 0, ROOM_W, ROOM_H, ROOM_D, 'ce-right', 0.16 * sh, 0.7);
-        seg3(0, 0, ROOM_D, 0, ROOM_H, ROOM_D, 'post-bl', 0.22 * sh, 0.8);
-        seg3(ROOM_W, 0, ROOM_D, ROOM_W, ROOM_H, ROOM_D, 'post-br', 0.22 * sh, 0.8);
-        seg3(0, 0, 0, 0, ROOM_H, 0, 'post-fl', 0.10 * sh, 0.7);
-        seg3(ROOM_W, 0, 0, ROOM_W, ROOM_H, 0, 'post-fr', 0.10 * sh, 0.7);
-    }    // ---- blended archetype furniture ----
+    if (solid(fm.front)) seg3(0, 0, 0, ROOM_W, 0, 0, 'fl-near', 0.4, 1.0);
+    if (solid(fm.wallB)) seg3(0, 0, ROOM_D, ROOM_W, 0, ROOM_D, 'fl-far', 0.25, 0.8);
+    if (solid(fm.wallL)) seg3(0, 0, 0, 0, 0, ROOM_D, 'fl-left', 0.25, 0.8);
+    if (solid(fm.wallR)) seg3(ROOM_W, 0, 0, ROOM_W, 0, ROOM_D, 'fl-right', 0.25, 0.8);
+
+    // Each wall face is its own construction in its own plane.
+    const facePlanes = {
+        wallB: { pt: (u, v) => P(u * ROOM_W, v, ROOM_D), zOf: ROOM_D, span: ROOM_W },
+        wallL: { pt: (u, v) => P(0, v, u * ROOM_D), zOf: ROOM_D * 0.55, span: ROOM_D },
+        wallR: { pt: (u, v) => P(ROOM_W, v, u * ROOM_D), zOf: ROOM_D * 0.55, span: ROOM_D },
+    };
+    for (const fname of ['wallB', 'wallL', 'wallR']) {
+        const mat = fm[fname];
+        if (!solid(mat)) continue;
+        const FP = facePlanes[fname];
+        items.push({
+            z: FP.zOf,
+            draw: (ctx) => {
+                if (mat === 'box' || mat === 'glass') {
+                    ctx.globalAlpha = 0.2 * hab.cohesion;
+                    ink.bone(ctx, FP.pt(0, 0), FP.pt(0, ROOM_H), fname + '-p0', 0.8);
+                    ink.bone(ctx, FP.pt(1, 0), FP.pt(1, ROOM_H), fname + '-p1', 0.8);
+                    ink.bone(ctx, FP.pt(0, ROOM_H), FP.pt(1, ROOM_H), fname + '-top', 0.8);
+                    if (mat === 'glass') {
+                        ctx.globalAlpha = 0.05;
+                        ctx.fillStyle = colors.grain;
+                        const q = [FP.pt(0, ROOM_H), FP.pt(1, ROOM_H), FP.pt(1, 0), FP.pt(0, 0)];
+                        ctx.beginPath();
+                        q.forEach((p2, k) => ctx[k ? 'lineTo' : 'moveTo'](p2.x, p2.y));
+                        ctx.closePath();
+                        ctx.fill();
+                        ctx.globalAlpha = 0.16 * hab.cohesion;
+                        ink.bone(ctx, FP.pt(0.2, ROOM_H * 0.9), FP.pt(0.45, ROOM_H * 0.15), fname + '-gl', 0.5);
+                    }
+                } else if (mat === 'rock') {
+                    const pts = [FP.pt(-0.04, 0)];
+                    for (let k = 0; k < 6; k++) {
+                        const fr = (k + 0.5) / 6;
+                        pts.push(FP.pt(fr, ROOM_H * (0.35 + 0.55 * Math.abs(Math.sin(fr * 7 + FP.span)))));
+                    }
+                    pts.push(FP.pt(1.04, 0));
+                    ctx.globalAlpha = 0.06;
+                    ctx.fillStyle = colors.grain;
+                    ctx.beginPath();
+                    pts.forEach((p2, k) => ctx[k ? 'lineTo' : 'moveTo'](p2.x, p2.y));
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.globalAlpha = 0.26 * hab.cohesion;
+                    ink.loop(ctx, pts, fname + '-rk', 1.3);
+                } else if (mat === 'hedge') {
+                    ctx.globalAlpha = 0.2 * hab.cohesion;
+                    for (let k = 0; k < 8; k++) {
+                        const u = (k + 0.5) / 8;
+                        const hgt = ROOM_H * (0.3 + 0.35 * Math.abs(Math.sin(u * 9 + FP.span * 2)));
+                        ink.bone(ctx, FP.pt(u, 0), FP.pt(u + 0.02, hgt), fname + '-hg' + k, 1.0);
+                    }
+                } else if (mat === 'machine') {
+                    ctx.globalAlpha = 0.22 * hab.cohesion;
+                    ink.bone(ctx, FP.pt(0, 0), FP.pt(0.6, ROOM_H * 0.85), fname + '-bm0', 0.6);
+                    ink.bone(ctx, FP.pt(1, 0), FP.pt(0.4, ROOM_H * 0.8), fname + '-bm1', 0.6);
+                    ink.bone(ctx, FP.pt(0.1, ROOM_H * 0.55), FP.pt(0.9, ROOM_H * 0.55), fname + '-bm2', 0.6);
+                }
+            },
+        });
+    }
+    // The ceiling face, when it exists at all.
+    if (solid(fm.ceiling)) {
+        items.push({
+            z: ROOM_D * 0.98,
+            draw: (ctx) => {
+                if (fm.ceiling === 'box') {
+                    ctx.globalAlpha = 0.16 * hab.cohesion;
+                    ink.bone(ctx, P(0, ROOM_H, 0), P(ROOM_W, ROOM_H, 0), 'ce-near', 0.7);
+                    ink.bone(ctx, P(0, ROOM_H, ROOM_D), P(ROOM_W, ROOM_H, ROOM_D), 'ce-far', 0.7);
+                    ink.bone(ctx, P(0, ROOM_H, 0), P(0, ROOM_H, ROOM_D), 'ce-l', 0.7);
+                    ink.bone(ctx, P(ROOM_W, ROOM_H, 0), P(ROOM_W, ROOM_H, ROOM_D), 'ce-r', 0.7);
+                } else if (fm.ceiling === 'rock') {
+                    ctx.globalAlpha = 0.2 * hab.cohesion;
+                    for (let i = 0; i < 3; i++) {
+                        let prev = null;
+                        for (let k = 0; k <= 7; k++) {
+                            const x = (k / 7) * ROOM_W;
+                            const dip = -Math.sin((k / 7) * Math.PI) * (0.3 + i * 0.18);
+                            const pt = P(x, ROOM_H - 0.2 - i * 0.22 + dip, ROOM_D * (0.55 + i * 0.15));
+                            if (prev) ink.bone(ctx, prev, pt, `cerk${i}-${k}`, 0.8);
+                            prev = pt;
+                        }
+                    }
+                } else if (fm.ceiling === 'machine') {
+                    ctx.globalAlpha = 0.18 * hab.cohesion;
+                    for (let i = 1; i < 4; i++) {
+                        const x = (ROOM_W * i) / 4;
+                        ink.bone(ctx, P(x, ROOM_H, 0), P(x, ROOM_H, ROOM_D), 'cebm' + i, 0.6);
+                    }
+                    ink.bone(ctx, P(0, ROOM_H, ROOM_D / 2), P(ROOM_W, ROOM_H, ROOM_D / 2), 'cebmx', 0.6);
+                }
+            },
+        });
+    }
+    // ---- blended archetype furniture ----
     for (let i = 1; i <= terrain.seams; i++) {
         const z = (ROOM_D * i) / (terrain.seams + 1);
         seg3(0, 0, z, ROOM_W, 0, z, 'fl-z' + i, 0.12, 0.7);
@@ -1272,11 +1516,12 @@ function envItems(hab, salt, ink, P, terrain, colors, t) {
             z: st.z,
             draw: (ctx) => {
                 ctx.globalAlpha = 0.28 * hab.cohesion;
-                const top = P(st.x + st.lean, st.h, st.z);
-                ink.bone(ctx, P(st.x, 0, st.z), top, 'stalk' + i, 1.1);
+                const g0 = gy(st.x, st.z);
+                const top = P(st.x + st.lean, g0 + st.h, st.z);
+                ink.bone(ctx, P(st.x, g0, st.z), top, 'stalk' + i, 1.1);
                 ctx.globalAlpha = 0.18 * hab.cohesion;
-                ink.bone(ctx, top, P(st.x + st.lean + 0.3, st.h - 0.35, st.z), 'frond-a' + i, 0.9);
-                ink.bone(ctx, top, P(st.x + st.lean - 0.3, st.h - 0.3, st.z), 'frond-b' + i, 0.9);
+                ink.bone(ctx, top, P(st.x + st.lean + 0.3, g0 + st.h - 0.35, st.z), 'frond-a' + i, 0.9);
+                ink.bone(ctx, top, P(st.x + st.lean - 0.3, g0 + st.h - 0.3, st.z), 'frond-b' + i, 0.9);
             },
         });
     });
@@ -1304,168 +1549,13 @@ function envItems(hab, salt, ink, P, terrain, colors, t) {
             draw: (ctx) => {
                 ctx.globalAlpha = 0.25 * hab.cohesion;
                 const pts = [];
+                const g0 = gy(pb.x, pb.z);
                 for (let k = 0; k < 6; k++) {
                     const a = (k / 6) * Math.PI * 2;
                     pts.push(P(pb.x + Math.cos(a) * pb.r,
-                        Math.max(0, Math.sin(a) * pb.r * 0.6), pb.z));
+                        g0 + Math.max(0, Math.sin(a) * pb.r * 0.6), pb.z));
                 }
                 ink.loop(ctx, pts, 'pebble' + i, 0.5);
-            },
-        });
-    });
-    if (terrain.glass > 0.25) {
-        // Glass tank: translucent panes and a diagonal glint on the back
-        // wall - drawn deepest, so everything lives in front of it.
-        items.push({
-            z: ROOM_D + 0.02,
-            draw: (ctx) => {
-                ctx.globalAlpha = 0.05 * terrain.glass;
-                ctx.fillStyle = colors.grain;
-                ctx.beginPath();
-                const q = [P(0, ROOM_H, ROOM_D), P(ROOM_W, ROOM_H, ROOM_D),
-                    P(ROOM_W, 0, ROOM_D), P(0, 0, ROOM_D)];
-                q.forEach((p2, k) => ctx[k ? 'lineTo' : 'moveTo'](p2.x, p2.y));
-                ctx.closePath();
-                ctx.fill();
-                ctx.globalAlpha = 0.18 * terrain.glass * hab.cohesion;
-                ink.bone(ctx, P(ROOM_W * 0.18, ROOM_H * 0.9, ROOM_D),
-                    P(ROOM_W * 0.42, ROOM_H * 0.15, ROOM_D), 'glint-a', 0.5);
-                ink.bone(ctx, P(ROOM_W * 0.28, ROOM_H * 0.95, ROOM_D),
-                    P(ROOM_W * 0.46, ROOM_H * 0.35, ROOM_D), 'glint-b', 0.5);
-            },
-        });
-    }
-
-    terrain.hills.forEach((hl, i) => {
-        if (!survives('hill' + i, hab, salt)) return;
-        items.push({
-            z: hl.z,
-            draw: (ctx) => {
-                ctx.globalAlpha = 0.14 * hab.cohesion;
-                let prev = null;
-                for (let k = 0; k <= 10; k++) {
-                    const x = (k / 10) * ROOM_W;
-                    const y = Math.max(0, Math.sin((k / 10) * Math.PI * hl.waves + hl.ph) * hl.amp);
-                    const pt = P(x, y, hl.z);
-                    if (prev) ink.bone(ctx, prev, pt, `hill${i}-${k}`, 0.8);
-                    prev = pt;
-                }
-            },
-        });
-    });
-    terrain.boulders.forEach((bo, i) => {
-        if (!survives('boulder' + i, hab, salt)) return;
-        items.push({
-            z: bo.z,
-            draw: (ctx) => {
-                // Filled with the paper color: the creature can disappear
-                // entirely behind a boulder.
-                const pts = [];
-                for (let k = 0; k < 9; k++) {
-                    const a = (k / 9) * Math.PI * 2;
-                    const rr = bo.r * (1 + 0.18 * Math.sin(a * 3 + i));
-                    pts.push(P(bo.x + Math.cos(a) * rr,
-                        Math.max(0, Math.sin(a) * rr * bo.squash), bo.z));
-                }
-                ctx.globalAlpha = 1;
-                ctx.fillStyle = colors.paper;
-                ctx.beginPath();
-                pts.forEach((p2, k) => ctx[k ? 'lineTo' : 'moveTo'](p2.x, p2.y));
-                ctx.closePath();
-                ctx.fill();
-                ctx.globalAlpha = 0.35 * hab.cohesion;
-                ink.loop(ctx, pts, 'boulder' + i, 1.0);
-            },
-        });
-    });
-    terrain.trees.forEach((tr, i) => {
-        if (!survives('tree' + i, hab, salt)) return;
-        items.push({
-            z: tr.z,
-            draw: (ctx) => {
-                ctx.globalAlpha = 0.30 * hab.cohesion;
-                const top = P(tr.x, tr.h, tr.z);
-                ink.bone(ctx, P(tr.x, 0, tr.z), top, 'trunk' + i, 1.0);
-                // Canopy: paper-filled so it occludes, faint rim.
-                const pts = [];
-                for (let k = 0; k < 9; k++) {
-                    const a = (k / 9) * Math.PI * 2;
-                    const rr = tr.r * (1 + 0.22 * Math.sin(a * 4 + i * 2));
-                    pts.push(P(tr.x + Math.cos(a) * rr, tr.h + Math.sin(a) * rr * 0.75, tr.z));
-                }
-                ctx.globalAlpha = 1;
-                ctx.fillStyle = colors.paper;
-                ctx.beginPath();
-                pts.forEach((p2, k) => ctx[k ? 'lineTo' : 'moveTo'](p2.x, p2.y));
-                ctx.closePath();
-                ctx.fill();
-                ctx.globalAlpha = 0.28 * hab.cohesion;
-                ink.loop(ctx, pts, 'canopy' + i, 1.1);
-            },
-        });
-    });
-    // Mold on the back wall: behind everything in the room.
-    items.push({
-        z: ROOM_D + 0.01,
-        draw: (ctx) => {
-            ctx.fillStyle = colors.grain;
-            for (let i = 0; i < terrain.mold.length; i++) {
-                const m = terrain.mold[i];
-                for (const sp of m.spots) {
-                    const pt = P(m.x + sp.dx, m.y + sp.dy, ROOM_D);
-                    ctx.globalAlpha = 0.10;
-                    ctx.beginPath();
-                    ctx.arc(pt.x, pt.y, sp.r * pt.d, 0, Math.PI * 2);
-                    ctx.fill();
-                }
-            }
-            ctx.globalAlpha = 1;
-        },
-    });
-    // Dirt mounds: low stacked arc strokes with a dusting of grain.
-    terrain.mounds.forEach((mo, i) => {
-        if (!survives('mound' + i, hab, salt)) return;
-        items.push({
-            z: mo.z,
-            draw: (ctx) => {
-                ctx.globalAlpha = 0.20 * hab.cohesion;
-                for (let ring = 0; ring < 2; ring++) {
-                    const rr = mo.r * (1 - ring * 0.4);
-                    const hh = mo.h * (1 - ring * 0.35);
-                    let prev = null;
-                    for (let k = 0; k <= 6; k++) {
-                        const x = mo.x - rr + (k / 6) * rr * 2;
-                        const y = Math.sin((k / 6) * Math.PI) * hh;
-                        const pt = P(x, y, mo.z);
-                        if (prev) ink.bone(ctx, prev, pt, `mound${i}-${ring}-${k}`, 0.7);
-                        prev = pt;
-                    }
-                }
-                ctx.fillStyle = colors.grain;
-                for (let k = 0; k < 5; k++) {
-                    const pt = P(mo.x + Math.sin(k * 2.4 + i) * mo.r * 0.6, 0.03,
-                        mo.z + Math.cos(k * 1.7 + i) * 0.2);
-                    ctx.globalAlpha = 0.10;
-                    ctx.beginPath();
-                    ctx.arc(pt.x, pt.y, Math.max(0.6, pt.d * 0.008), 0, Math.PI * 2);
-                    ctx.fill();
-                }
-            },
-        });
-    });
-    // Grass tufts: two or three leaning blades, everywhere.
-    terrain.tufts.forEach((tf, i) => {
-        if (!survives('tuft' + i, hab, salt)) return;
-        items.push({
-            z: tf.z,
-            draw: (ctx) => {
-                ctx.globalAlpha = 0.22 * hab.cohesion;
-                const base = P(tf.x, 0, tf.z);
-                for (let k = -1; k <= 1; k++) {
-                    const tip = P(tf.x + tf.lean * tf.s * 3 + k * tf.s * 0.8,
-                        tf.s * (2.2 - Math.abs(k) * 0.6), tf.z);
-                    ink.bone(ctx, base, tip, `tuft${i}-${k}`, 0.5);
-                }
             },
         });
     });
@@ -1476,7 +1566,8 @@ function envItems(hab, salt, ink, P, terrain, colors, t) {
             z: bm.z,
             draw: (ctx) => {
                 ctx.globalAlpha = 0.26 * hab.cohesion;
-                ink.bone(ctx, P(bm.x0, bm.h0, bm.z), P(bm.x1, bm.h1, bm.z), 'beam' + i, 0.6);
+                ink.bone(ctx, P(bm.x0, gy(bm.x0, bm.z) + bm.h0, bm.z),
+                    P(bm.x1, gy(bm.x1, bm.z) + bm.h1, bm.z), 'beam' + i, 0.6);
             },
         });
     });
@@ -1486,11 +1577,12 @@ function envItems(hab, salt, ink, P, terrain, colors, t) {
             z: py.z,
             draw: (ctx) => {
                 ctx.globalAlpha = 0.30 * hab.cohesion;
-                ink.bone(ctx, P(py.x, 0, py.z), P(py.x, py.h, py.z), 'pylon' + i, 0.6);
+                const g0 = gy(py.x, py.z);
+                ink.bone(ctx, P(py.x, g0, py.z), P(py.x, g0 + py.h, py.z), 'pylon' + i, 0.6);
                 if (py.brace) {
                     ctx.globalAlpha = 0.18 * hab.cohesion;
-                    ink.bone(ctx, P(py.x - 0.5, 0, py.z), P(py.x, py.h * 0.55, py.z), 'pybr-a' + i, 0.5);
-                    ink.bone(ctx, P(py.x + 0.5, 0, py.z), P(py.x, py.h * 0.55, py.z), 'pybr-b' + i, 0.5);
+                    ink.bone(ctx, P(py.x - 0.5, g0, py.z), P(py.x, g0 + py.h * 0.55, py.z), 'pybr-a' + i, 0.5);
+                    ink.bone(ctx, P(py.x + 0.5, g0, py.z), P(py.x, g0 + py.h * 0.55, py.z), 'pybr-b' + i, 0.5);
                 }
             },
         });
@@ -1530,7 +1622,7 @@ function envItems(hab, salt, ink, P, terrain, colors, t) {
                 let prev = null;
                 for (let k = 0; k < rd.jag.length; k++) {
                     const fr = k / (rd.jag.length - 1);
-                    const x = ROOM_W * (fr * 1.5 - 0.25);
+                    const x = ROOM_W * (fr * 4.0 - 1.5);
                     const y = Math.max(0.02,
                         rd.amp * (Math.sin(fr * Math.PI * rd.waves + rd.ph) * 0.5 + 0.5)
                         * (1 + rd.jag[k]));
@@ -1551,7 +1643,7 @@ function envItems(hab, salt, ink, P, terrain, colors, t) {
                 ctx.globalAlpha = 0.16 * hab.cohesion;
                 let prev = null;
                 for (let k = 0; k < tl.pts.length; k++) {
-                    const x = ROOM_W * (k / (tl.pts.length - 1)) * 1.4 - ROOM_W * 0.2;
+                    const x = ROOM_W * ((k / (tl.pts.length - 1)) * 4.5 - 1.75);
                     const pt = P(x, tl.pts[k], tl.z);
                     if (prev) ink.bone(ctx, prev, pt, 'tline' + k, 1.0);
                     prev = pt;
@@ -1622,14 +1714,15 @@ class Arena {
         const envRng = mulberry32(fnv1a(seedStr + ':env'));
         this.hab = sampleHabitat(envRng);
         setRoom(this.hab.roomW, this.hab.roomD, this.hab.roomH);
-        this.terrain = buildTerrain(envRng, this.hab);
-        // Enclosure: how much of a box this habitat truly is. Tunnels
-        // count - their rock arcs are a ceiling of sorts.
-        this.enclosure = Math.min(1,
-            this.hab.feat.shell + this.hab.weights.tunnel * 0.8);
+        this.terrain = finishTerrain(buildTerrain(envRng, this.hab));
+        // Enclosure is now literal: the fraction of faces that exist.
+        const fmat = this.terrain.facesMat;
+        this.enclosure = ['wallB', 'wallL', 'wallR', 'ceiling']
+            .filter(f2 => fmat[f2] !== 'none').length / 4;
         this.creature = new Creature(seedStr);
         this.creature.terrainRef = this.terrain;
         this.creature.enclosure = this.enclosure;
+        this.creature.faces = fmat;
         this.inker = new Inker(
             mulberry32(fnv1a(seedStr + ':ink')),
             this.creature.p.boilHz,
@@ -1645,10 +1738,17 @@ class Arena {
         // Sparse seeded grain: stipple on the floor and the back wall -
         // roughness scales with the habitat's noise gene.
         const dots = Math.round(70 * this.hab.noise);
-        this.floorDots = Array.from({ length: dots }, () => ({
-            x: envRng() * ROOM_W, z: envRng() * ROOM_D,
-            r: 0.6 + envRng() * 1.4, al: 0.02 + envRng() * 0.06,
-        }));
+        const rm = this.terrain.roam, vt = this.terrain.vast;
+        // Two-thirds of the grain lands where the creature lives, the
+        // rest scatters across the vast plane.
+        this.floorDots = Array.from({ length: Math.round(dots * 1.4) }, (_, i) => {
+            const R = i % 3 === 2 ? vt : rm;
+            return {
+                x: R.x0 + envRng() * (R.x1 - R.x0),
+                z: R.z0 + envRng() * (R.z1 - R.z0),
+                r: 0.6 + envRng() * 1.4, al: 0.02 + envRng() * 0.06,
+            };
+        });
         this.wallDots = Array.from({ length: Math.round(dots * 0.6) }, () => ({
             x: envRng() * ROOM_W, y: envRng() * ROOM_H,
             r: 0.6 + envRng() * 1.2, al: 0.02 + envRng() * 0.05,
@@ -1730,10 +1830,11 @@ class Arena {
     drawBackdrop(ctx, P, J) {
         const cl = this.colors;
 
-        // Enclosed habitats get a back-wall wash; open ones get a low
-        // horizon band rising from the far floor edge instead.
+        // A back-wall wash only when that face exists; otherwise a low
+        // horizon band rising from the far floor edge.
         const enc = this.enclosure;
-        if (enc > 0.15) {
+        const fmat = this.terrain.facesMat;
+        if (fmat.wallB !== 'none') {
             const wt = P(0, ROOM_H, ROOM_D), wb = P(0, 0, ROOM_D);
             const wallGrad = ctx.createLinearGradient(0, wt.y, 0, wb.y);
             wallGrad.addColorStop(0, cl.washTop);
@@ -1744,48 +1845,52 @@ class Arena {
                 P(ROOM_W, 0, ROOM_D), P(0, 0, ROOM_D));
             ctx.globalAlpha = 1;
         } else {
-            const hb2 = P(0, 1.2, ROOM_D * 1.4), fb2 = P(0, 0, ROOM_D);
-            const sky = ctx.createLinearGradient(0, hb2.y, 0, fb2.y);
+            // A full-width atmospheric band at the horizon - screen
+            // space, so it has no edges of its own.
+            const vt = this.terrain.vast;
+            const yTop = P(0, 1.4, vt.z1).y;
+            const yBot = P(0, 0, vt.z1 * 0.55).y;
+            const sky = ctx.createLinearGradient(0, yTop, 0, yBot);
             sky.addColorStop(0, cl.washTop);
             sky.addColorStop(1, cl.washBot);
             ctx.fillStyle = sky;
-            this.quad(ctx, P(-ROOM_W * 0.3, 1.2, ROOM_D * 1.4),
-                P(ROOM_W * 1.3, 1.2, ROOM_D * 1.4),
-                P(ROOM_W * 1.3, 0, ROOM_D), P(-ROOM_W * 0.3, 0, ROOM_D));
+            ctx.fillRect(0, yTop, this.w, Math.max(1, yBot - yTop));
         }
 
-        // Floor: the wash deepens toward the viewer - the tank's shadowed
-        // near bed.
-        const fn = P(0, 0, 0), ff = P(0, 0, ROOM_D);
+        // Ground wash over the whole rendered plane, deepening toward
+        // the viewer - the near bed.
+        const rm = this.terrain.vast;
+        const fn = P(rm.x0, 0, rm.z0), ff = P(rm.x0, 0, rm.z1);
         const floorGrad = ctx.createLinearGradient(0, ff.y, 0, fn.y);
         floorGrad.addColorStop(0, cl.washTop);
         floorGrad.addColorStop(1, cl.washBot);
         ctx.fillStyle = floorGrad;
-        this.quad(ctx, P(0, 0, ROOM_D), P(ROOM_W, 0, ROOM_D),
-            P(ROOM_W, 0, 0), P(0, 0, 0));
+        this.quad(ctx, P(rm.x0, 0, rm.z1), P(rm.x1, 0, rm.z1),
+            P(rm.x1, 0, rm.z0), P(rm.x0, 0, rm.z0));
 
-        // Grain: seeded stipple, the terrain's roughness.
+        // Grain: seeded stipple riding the actual heightmap.
         ctx.fillStyle = cl.grain;
         for (const d of this.floorDots) {
-            const pt = P(d.x, 0, d.z);
+            const pt = P(d.x, groundHeight(this.terrain, d.x, d.z) + 0.01, d.z);
             ctx.globalAlpha = d.al;
             ctx.beginPath();
             ctx.arc(pt.x, pt.y, d.r * pt.d / 90, 0, Math.PI * 2);
             ctx.fill();
         }
-        if (enc > 0.15) {
+        if (fmat.wallB !== 'none') {
             for (const d of this.wallDots) {
                 const pt = P(d.x, d.y, ROOM_D);
-                ctx.globalAlpha = d.al * enc;
+                ctx.globalAlpha = d.al;
                 ctx.beginPath();
                 ctx.arc(pt.x, pt.y, d.r * pt.d / 110, 0, Math.PI * 2);
                 ctx.fill();
             }
-            // Ceiling grain: sparse stipple so the plane reads when the
-            // creature walks it.
+        }
+        // Ceiling grain only when there IS a ceiling.
+        if (fmat.ceiling !== 'none') {
             for (const d of this.terrain.ceilDots) {
                 const pt = P(d.x, ROOM_H, d.z);
-                ctx.globalAlpha = d.al * enc;
+                ctx.globalAlpha = d.al;
                 ctx.beginPath();
                 ctx.arc(pt.x, pt.y, d.r * pt.d / 100, 0, Math.PI * 2);
                 ctx.fill();

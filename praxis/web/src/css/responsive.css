@@ -415,6 +415,16 @@
     .chart-deck .deck-card-scroll {
         touch-action: none;
     }
+    /* The no-dead-zones surface: the deck container stays pointer-events:none
+       (the header controls under its transparent TOP must remain tappable),
+       but from the head card's top down to the floor the pad accepts the
+       gesture anywhere - beside and below short compact cards too. Sits
+       under the cards (their z runs 95+), so card content still wins. */
+    .chart-deck .deck-gesture-pad {
+        pointer-events: auto;
+        touch-action: none;
+        z-index: 1;
+    }
     /* Cards must FULLY occlude whatever they lift over (the run selector, the
        title strip), so drop the title-row translucency on mobile - the faint
        card-behind bleed is a desktop orientation aid, not wanted over the chrome. */

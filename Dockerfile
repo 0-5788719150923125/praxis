@@ -4,6 +4,9 @@
 ARG BASE_IMAGE=nvidia/cuda:13.2.0-devel-ubuntu24.04
 FROM ${BASE_IMAGE}
 
+# Silence the NVIDIA entrypoint banner (no-op on non-CUDA base images)
+RUN rm -f /opt/nvidia/entrypoint.d/*banner* /opt/nvidia/entrypoint.d/*.txt
+
 # Install Python and dependencies once
 RUN apt-get update -qq && \
     apt-get install -y -qq python3-full python3-pip python3-venv git && \

@@ -1243,10 +1243,165 @@ def leaf_field(ax, rng, pal, mods):
         )
 
 
+def scratch_field(ax, rng, pal, mods):
+    """Score marks: clustered parallel gouges - sharp, slightly bowed
+    slashes that skip where the point lifts (pressure breaks) and taper
+    toward the tail of the cut, crossed by the odd counter-slash. chaos
+    roughens the cut, recurrence adds clusters."""
+    chaos, rec = mods["chaos"], mods["recurrence"]
+    stroke = _make_stroke(ax, rng, mods)
+
+    def gouge(cx, cy, ang, length, lw, color, z):
+        n = max(30, int(length * 3))
+        t = np.linspace(-length / 2, length / 2, n)
+        bow = float(rng.uniform(-0.04, 0.04)) * (t**2 - (length / 2) ** 2) / length
+        jag = (0.10 + 0.45 * chaos) * _fbm1(rng, n, octaves=5)
+        ca, sa = np.cos(ang), np.sin(ang)
+        d = bow + jag
+        x, y = cx + t * ca - d * sa, cy + t * sa + d * ca
+        # Pressure breaks: the point skips, leaving gaps mid-stroke.
+        mask = np.ones(n, bool)
+        for _ in range(int(rng.integers(0, 3))):
+            i = int(rng.integers(n // 5, 4 * n // 5))
+            mask[i : i + int(float(rng.uniform(0.02, 0.08)) * n)] = False
+        idx = np.where(mask)[0]
+        for r in np.split(idx, np.where(np.diff(idx) > 1)[0] + 1):
+            if len(r) > 1:
+                frac = r[len(r) // 2] / n  # taper along the cut
+                stroke(x[r], y[r], color, lw * (1.2 - 0.7 * frac), z)
+
+    def cluster(cx, cy, scale, z):
+        ang = float(rng.uniform(0, np.pi))
+        n_marks = int(rng.integers(2, 5))
+        gap = float(rng.uniform(1.2, 3.0))
+        for i in range(n_marks):
+            off = (i - n_marks / 2) * gap
+            gouge(
+                cx - off * np.sin(ang) + float(rng.uniform(-2, 2)),
+                cy + off * np.cos(ang) + float(rng.uniform(-2, 2)),
+                ang + float(rng.uniform(-0.06, 0.06)),
+                scale * float(rng.uniform(0.6, 1.0)),
+                float(rng.uniform(0.7, 1.4)),
+                pal["stroke"],
+                z,
+            )
+        if rng.random() < 0.4:  # counter-slash across the set
+            gouge(cx, cy, ang + float(rng.uniform(0.9, 1.6)), scale * 0.7, 0.8,
+                  pal["stroke"], z)
+
+    # Faint hairline scuffs behind the cuts.
+    for _ in range(int(rng.integers(3, 7))):
+        gouge(
+            float(rng.uniform(0, CARD_W)),
+            float(rng.uniform(0, CARD_H)),
+            float(rng.uniform(0, np.pi)),
+            float(rng.uniform(15, 70)),
+            0.4,
+            pal["faint"],
+            1,
+        )
+    for _ in range(2 + int(round(rec * 3))):
+        cluster(
+            float(rng.uniform(5, CARD_W - 5)),
+            float(rng.uniform(3, CARD_H - 3)),
+            float(rng.uniform(14, 55)),
+            3,
+        )
+
+
+def sketch_field(ax, rng, pal, mods):
+    """Hand-drawn pencil work: every figure is 2-3 imperfect passes
+    re-tracing each other (with overshoot past the ends), over cross-hatch
+    patches and faint construction lines. chaos is the sloppiness."""
+    chaos, rec = mods["chaos"], mods["recurrence"]
+    stroke = _make_stroke(ax, rng, mods)
+    slop = 0.4 + 1.8 * chaos
+
+    def retrace(x, y, lw, color, z):
+        n = len(x)
+        for _ in range(int(rng.integers(2, 4))):
+            jx = slop * 0.4 * _fbm1(rng, n, octaves=2)
+            jy = slop * 0.4 * _fbm1(rng, n, octaves=2)
+            i0 = int(float(rng.uniform(0, 0.06)) * n)
+            i1 = n - int(float(rng.uniform(0, 0.06)) * n)
+            stroke(x[i0:i1] + jx[i0:i1], y[i0:i1] + jy[i0:i1], color,
+                   lw * float(rng.uniform(0.7, 1.1)), z)
+
+    def line(p0, p1, lw, color, z):
+        t = np.linspace(-0.05, 1.05, 50)  # the hand runs past both ends
+        retrace(p0[0] + t * (p1[0] - p0[0]), p0[1] + t * (p1[1] - p0[1]),
+                lw, color, z)
+
+    def circle(cx, cy, r, lw, z):
+        # Never quite closes: just over a full turn, radius drifting.
+        th = float(rng.uniform(0, 2 * np.pi)) + np.linspace(
+            0, 2 * np.pi * float(rng.uniform(1.02, 1.18)), 110
+        )
+        rr = r * (1 + 0.05 * slop * _fbm1(rng, len(th), octaves=2))
+        retrace(cx + rr * np.cos(th), cy + rr * np.sin(th), lw, pal["stroke"], z)
+
+    def box(cx, cy, w, h, ang, lw, z):
+        ca, sa = np.cos(ang), np.sin(ang)
+        c = [
+            (cx + ux * w / 2 * ca - uy * h / 2 * sa, cy + ux * w / 2 * sa + uy * h / 2 * ca)
+            for ux, uy in ((-1, -1), (1, -1), (1, 1), (-1, 1))
+        ]
+        for i in range(4):  # separate strokes: corners overshoot and cross
+            line(c[i], c[(i + 1) % 4], lw, pal["stroke"], z)
+
+    def hatch(cx, cy, w, h, ang, z):
+        ca, sa = np.cos(ang), np.sin(ang)
+        spacing = float(rng.uniform(1.2, 2.4))
+        passes = [0.0] + ([float(rng.uniform(1.2, 1.8))] if rng.random() < 0.5 else [])
+        for rot in passes:  # second pass = cross-hatch
+            cr, sr = np.cos(ang + rot), np.sin(ang + rot)
+            for off in np.arange(-w / 2, w / 2, spacing):
+                jo = off + float(rng.uniform(-0.3, 0.3))
+                half = h / 2 * float(rng.uniform(0.8, 1.1))
+                p0 = (cx + jo * ca - half * (-sr), cy + jo * sa - half * cr)
+                p1 = (cx + jo * ca + half * (-sr), cy + jo * sa + half * cr)
+                t = np.linspace(0, 1, 16)
+                stroke(
+                    p0[0] + t * (p1[0] - p0[0]) + slop * 0.2 * _fbm1(rng, 16, octaves=2),
+                    p0[1] + t * (p1[1] - p0[1]) + slop * 0.2 * _fbm1(rng, 16, octaves=2),
+                    pal["stroke"],
+                    0.45,
+                    z,
+                )
+
+    # Construction lines first, faint and long.
+    for _ in range(int(rng.integers(2, 5))):
+        a = GOLDEN * int(rng.integers(0, 13))
+        px, py = float(rng.uniform(0, CARD_W)), float(rng.uniform(0, CARD_H))
+        line((px - 80 * np.cos(a), py - 80 * np.sin(a)),
+             (px + 80 * np.cos(a), py + 80 * np.sin(a)), 0.4, pal["faint"], 1)
+    # Figures: roughed-in boxes and circles.
+    for _ in range(2 + int(round(rec * 2))):
+        cx = float(rng.uniform(5, CARD_W - 5))
+        cy = float(rng.uniform(3, CARD_H - 3))
+        if rng.random() < 0.5:
+            box(cx, cy, float(rng.uniform(8, 30)), float(rng.uniform(6, 22)),
+                float(rng.uniform(0, np.pi)), float(rng.uniform(0.7, 1.1)), 3)
+        else:
+            circle(cx, cy, float(rng.uniform(4, 14)), float(rng.uniform(0.7, 1.1)), 3)
+    # Shaded patches.
+    for _ in range(int(rng.integers(1, 4))):
+        hatch(
+            float(rng.uniform(8, CARD_W - 8)),
+            float(rng.uniform(5, CARD_H - 5)),
+            float(rng.uniform(8, 24)),
+            float(rng.uniform(6, 16)),
+            float(rng.uniform(0, np.pi)),
+            2,
+        )
+
+
 PROJECTION_REGISTRY = {
     "strands": strand_field,
     "shatter": shatter_field,
     "lightning": lightning_field,
+    "scratches": scratch_field,
+    "sketch": sketch_field,
     "waves": wave_field,
     "fibonacci": fibonacci_field,
     "glyphs": glyph_field,

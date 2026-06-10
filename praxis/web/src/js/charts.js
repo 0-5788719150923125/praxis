@@ -935,6 +935,15 @@ function renderMetricsCharts(data, container) {
 // step one slot. On mobile the deck lifts (wallet 'A') so the active card title
 // tucks just under the tab row, hiding the per-tab title strip; a downward
 // swipe begun at the deck's top edge drops it back ('B') to reveal that strip.
+//
+// Gesture hierarchy (uniform across every deck and card):
+//   1. GRIP - the top band of the head card (title chrome included). Never
+//      inner-scrolls: drives the seam + A/B anchor. Exists on every card,
+//      titled or not; opt out per card with class "deck-no-grip".
+//   2. BODY - scrolls the card's content while there's room, then behaves
+//      like the grip at the content edge.
+// Anchor flips are exclusive with cycling in both paths: a B->A lift locks
+// the gesture, and dropping to B takes a sustained pull (DECK_DROP_THRESHOLD).
 // ============================================================================
 
 // activeIndex and anchor state persist across the DOM rebuilds that happen on
@@ -954,6 +963,10 @@ const DECK_DROP_THRESHOLD = 200; // px of SUSTAINED downward pull before the dec
 const DECK_SEAM = 88;            // finger px to flip one card AT the content edge (the "seam").
                                  // Eased slow-fast-slow so it pauses at the content end + anchor.
 const DECK_SEAM_FLING = 0.5;     // px/ms finger speed that commits a partial seam on release
+const DECK_GRIP_H = 56;          // px; the standard grip band at every card's top. Title
+                                 // chrome extends it, but the band exists on EVERY card
+                                 // (titled or bare), so the grip gesture is uniform deck-wide.
+                                 // Per-card opt-out: class "deck-no-grip".
 const DECK_WHEEL_STEP = 120;     // wheel px that advance one card
 // Release motion: NO free coast. The release projects ONE target slot from the fling
 // direction, then a fixed-duration easeOutCubic slide lands on it - monotonic, so it
@@ -1012,6 +1025,17 @@ export function initChartDeck(deck, opts = {}) {
     });
 
     deck._cards = cards;
+    // Mobile gesture pad: a transparent surface spanning the band from the
+    // head card's top to the floor, so a swipe ANYWHERE in deck territory
+    // (beside or below a short compact card) drives the deck - no dead
+    // zones. Sits behind the cards; pointer-events only on mobile (CSS).
+    let pad = deck.querySelector(':scope > .deck-gesture-pad');
+    if (!pad) {
+        pad = document.createElement('div');
+        pad.className = 'deck-gesture-pad';
+        deck.prepend(pad);
+    }
+    deck._pad = pad;
     // Visiting order for the loop. Default is a linear loop over card index; a
     // sort can replace this array (the loop runs over order positions, wrapping).
     deck._order = cards.map((_, i) => i);
@@ -1285,6 +1309,17 @@ function renderDeck(deck) {
         if (card._act !== isHead) { card.classList.toggle('deck-active', isHead); card._act = isHead; }
     }
     if (deck._h !== bandH) { deck.style.height = `${bandH}px`; deck._h = bandH; }
+
+    // Keep the gesture pad under the band below the head's top: never over
+    // the header controls the deck's transparent top overlaps at rest (B).
+    if (deck._pad) {
+        const padY = Math.round(headTop);
+        if (deck._padY !== padY) {
+            deck._pad.style.transform = `translateY(${padY}px)`;
+            deck._pad.style.height = `${Math.max(0, bandH - padY)}px`;
+            deck._padY = padY;
+        }
+    }
 
     const k = ((Math.round(pos) % count) + count) % count;
     const idx = order[k];
@@ -1710,11 +1745,22 @@ function bindDeckEvents(deck) {
         deck._scrollVel = 0;       // reset inner-scroll velocity for this gesture
         deck._scrollBody = null;
         deck._anchorLocked = false; // set once this gesture flips A<->B, then no cycling
-        // A drag that begins on a card's title/chrome (not its scrolling body) is
-        // a dedicated stack-navigation handle: it always drives the card seam and
-        // never inner-scrolls, so long content can be swiped past from the title.
-        deck._titleDrag = !!e.target.closest('.chart-title, .chart-subtitle, .chart-card-number')
+        // The GRIP: every card's standard stack-navigation handle. It is the
+        // title chrome where there is one, plus a fixed band at the card's top
+        // (DECK_GRIP_H) so title-less cards (e.g. the Identity tab's bare
+        // sheets) get the exact same handle. A grip drag never inner-scrolls -
+        // it drives the seam and the A/B anchor like a body drag at its content
+        // edge, so long content can be swiped past from the top. Taps are
+        // unaffected (only moves are interpreted). Cards opt out of the band
+        // with the "deck-no-grip" class.
+        const head = deck._deck && deck._cards[deck._deck.activeIndex];
+        let grip = !!e.target.closest('.chart-title, .chart-subtitle, .chart-card-number')
             && !e.target.closest('.deck-card-scroll');
+        if (!grip && head && !head.classList.contains('deck-no-grip')) {
+            const r = head.getBoundingClientRect();   // once per gesture, off the hot path
+            grip = lastY >= r.top && lastY <= r.top + DECK_GRIP_H;
+        }
+        deck._gripDrag = grip;
     }, { passive: true });
 
     deck.addEventListener('touchmove', (e) => {
@@ -1731,15 +1777,25 @@ function bindDeckEvents(deck) {
         fvel = dy / dt;               // px/ms finger speed (for the fling-commit on release)
         e.preventDefault();           // the deck owns the gesture (touch-action: none)
 
-        // Title-handle drag: drive the card seam directly, both ways, skipping
-        // inner scroll - the title is the grip for moving through the stack
-        // without paging through a long card body. A<->B stays on body gestures.
-        if (deck._titleDrag) {
+        // Grip drag: the standard handle. Same anchor mechanics as a body drag
+        // at its content edge - at B an upward pull slots the deck to A (and
+        // locks, no cycling in the same gesture); otherwise it drives the seam
+        // both ways, with a sustained downward pull dropping back to B. The
+        // only difference from a body drag is that the grip never inner-scrolls.
+        if (deck._gripDrag) {
+            if (deck._seamAccum === 0 && deck._anchorTarget === 0 && dy > 0) {
+                const before = deck._anchorTarget;
+                seamAnchor(deck, dy);
+                if (deck._anchorTarget !== before) deck._anchorLocked = true;
+                return;
+            }
+            if (deck._anchorLocked) return;
             if (deck._seamAccum === 0) {
                 deck._seamBase = ((Math.round(deck._pos) % st.count) + st.count) % st.count;
                 deck._seamDir = dy > 0 ? 1 : -1;
                 seatTarget(deck, deck._seamBase + deck._seamDir, deck._seamDir);
             }
+            seamAnchor(deck, dy);
             advanceSeam(deck, dy);
             return;
         }

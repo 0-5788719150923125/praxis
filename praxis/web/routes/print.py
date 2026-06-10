@@ -46,12 +46,22 @@ def _get_generator():
     return cfg.get("generator")
 
 
+def _max_new_tokens(data, default=256):
+    """Per-request generation budget: the UI sends its Max Tokens setting;
+    clamp to a sane band and fall back to a generous default."""
+    try:
+        return max(16, min(1024, int(data.get("max_new_tokens") or default)))
+    except (TypeError, ValueError):
+        return default
+
+
 @print_bp.route("/api/print/ask", methods=["POST"])
 def print_ask():
     """Ask the model to lead with a question; stash its predicted answer and
     expose the question. Idempotent while one is already pending, unless the
     caller sends ``{"reroll": true}`` to discard it and generate a fresh one."""
-    reroll = bool((request.get_json(silent=True) or {}).get("reroll"))
+    data = request.get_json(silent=True) or {}
+    reroll = bool(data.get("reroll"))
     with _lock:
         if reroll:
             _pending.clear()
@@ -87,7 +97,7 @@ def print_ask():
             messages=messages,
             generator=generator,
             tokenizer=tokenizer,
-            max_new_tokens=64,
+            max_new_tokens=_max_new_tokens(data),
             temperature=0.7,
             repetition_penalty=1.15,
             do_sample=True,
@@ -220,11 +230,13 @@ def loop_generate():
             messages=messages,
             generator=generator,
             tokenizer=tokenizer,
-            max_new_tokens=48,
+            max_new_tokens=_max_new_tokens(data),
             temperature=0.7,
             repetition_penalty=1.15,
             do_sample=True,
-            timeout=25.0,
+            # Still time-capped so the UI never hangs, but roomy enough for
+            # the full token budget on a slow box.
+            timeout=60.0,
         )
     except Exception as e:
         api_logger.error(f"[loop] generation failed: {e}")

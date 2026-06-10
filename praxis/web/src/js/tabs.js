@@ -362,7 +362,9 @@ function renderSpec(data, container) {
         .map(sheet => {
             const inner = sheet.build();
             if (!inner || !inner.trim()) return '';
-            // Bare sheets render their own chrome (the content IS the card).
+            // Bare sheets render their own chrome (the content IS the card);
+            // no title strip - the deck's standard grip band (top of every
+            // card) gives them the same swipe/slot behavior as titled cards.
             if (sheet.bare) {
                 return `<div class="chart-card ${sheet.klass} deck-compact">${inner}</div>`;
             }

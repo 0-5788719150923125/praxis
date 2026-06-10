@@ -1785,6 +1785,17 @@
     overflow: hidden;
 }
 
+/* Mobile gesture surface (created by initChartDeck): spans the band from the
+   head card's top to the floor so swipes beside/below short compact cards
+   still drive the deck. Inert on desktop; activated in responsive.css. */
+.deck-gesture-pad {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    pointer-events: none;
+}
+
 /* Card-switcher carousel: chart cards are stacked in place, the active one on
    top at full size with the next few peeking out behind it. Cycling advances
    the deck in place - the page never grows. JS sets per-card transforms and
