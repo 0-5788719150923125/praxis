@@ -148,7 +148,13 @@ async function loadSpecInner(force) {
         // the same payload (and the same run list, which the header renders),
         // skip the innerHTML rebuild entirely - it redraws every card title
         // for nothing.
-        const fingerprint = JSON.stringify([data, state.spec.availableRuns]);
+        // Fingerprint only what the render actually shows. The run list
+        // carries live counters (num_steps, relative times) that change on
+        // every poll - including them forced a full deck rebuild each
+        // refresh (flashing titles, resetting the arena).
+        const runsKey = (state.spec.availableRuns || [])
+            .map(r => `${r.hash}:${r.is_current ? 1 : 0}`).join(',');
+        const fingerprint = JSON.stringify([data, runsKey]);
         if (fingerprint === state.spec.fingerprint && hasRealContent(container)) {
             return;
         }

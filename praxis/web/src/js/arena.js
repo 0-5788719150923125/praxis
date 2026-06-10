@@ -186,6 +186,7 @@ function sampleMorphology(rng) {
         m.eyeCount = 2; m.stalky = 0;
         m.feelerLen = u(2.0, 3.0);          // the long antennae
         m.tailStyle = 'none';
+        m.eyeSize = u(0.09, 0.14);
         m.components = ['legs', 'carapace'];
     } else if (kr < 0.53) {
         m.kind = 'squirrel';
@@ -196,13 +197,16 @@ function sampleMorphology(rng) {
         m.waveK = Math.PI;                  // bounding gait
         m.stance = u(0.4, 0.52);
         m.restlessness = u(0.4, 1.2);       // busy little thing
-        m.rear = u(0.18, 0.32);             // P(stand on hind legs)
+        m.rear = u(0.3, 0.48);              // sits constantly
         m.fidget = u(0.2, 0.35);
+        m.bounder = true;                   // gallop: paired feet
         m.pecky = u(0.08, 0.2);
         m.tailStyle = 'floof';
         m.tailLen = u(0.9, 1.4);
         m.mech = m.mech * 0.5;
         m.eyeCount = 2; m.stalky = 0;
+        m.eyeSize = u(0.07, 0.11);          // small rodent eyes, side-set
+        m.eyeSpread = u(0.55, 0.8);
         m.climby = Math.max(0.6, m.climby); // squirrels scale anything
         m.components = ['legs', 'paws', 'floofTail'];
     } else if (kr < 0.64) {
@@ -213,13 +217,16 @@ function sampleMorphology(rng) {
         m.stance = u(0.26, 0.36);           // low slink
         m.speedy = Math.max(0.6, m.speedy);
         m.restlessness = u(0.4, 1.4);
-        m.rear = u(0.1, 0.2);
+        m.rear = u(0.18, 0.3);
         m.fidget = u(0.25, 0.4);
+        m.bounder = true;
         m.pecky = u(0.1, 0.22);
         m.tailStyle = 'whip';
         m.tailLen = u(1.2, 1.9);
         m.mech = m.mech * 0.5;
         m.eyeCount = 2; m.stalky = 0;
+        m.eyeSize = u(0.07, 0.11);
+        m.eyeSpread = u(0.55, 0.8);
         m.components = ['legs', 'paws', 'whipTail'];
     } else if (kr < 0.74) {
         m.kind = 'fish';
@@ -254,6 +261,7 @@ function sampleMorphology(rng) {
         m.restlessness = u(0.5, 1.6);
         m.swimLo = 0.4; m.swimHi = Math.min(2.8, ROOM_H * 0.8);
         m.eyeCount = 2; m.stalky = 0;
+        m.eyeSize = u(0.18, 0.3);           // big compound insect eyes
         m.feelerLen = u(1.4, 2.2);
         m.tailStyle = 'none';
         // Endurance: how long the wings last. The high tail flies forever
@@ -277,6 +285,7 @@ function sampleMorphology(rng) {
         m.restlessness = u(0.3, 1.0);
         m.swimLo = 0.3; m.swimHi = ROOM_H * 0.7;
         m.eyeCount = 2; m.stalky = 0;
+        m.eyeSize = u(0.18, 0.28);
         m.feelerLen = u(0.8, 1.2);
         m.tailStyle = 'none';
         m.endurance = Math.min(1, u(0.3, 1.1));
@@ -529,8 +538,12 @@ class Creature {
                     sweep: sweep * side,
                     hind: i === P - 1 && P > 1,
                     thresh: 0.6 + this.rng() * 0.5,   // independent tempo
-                    gait: (this.legs.length % 2) * Math.PI
-                        + i * this.p.waveK,           // ripple .. alternate
+                    // Bounders gallop: each pair lands together, pairs
+                    // alternate. Everything else ripples or alternates.
+                    gait: this.p.bounder
+                        ? (i % 2) * Math.PI
+                        : (this.legs.length % 2) * Math.PI
+                            + i * this.p.waveK,
                     planted: null,         // surface coords {a,b}
                     swing: null,           // {fa,fb,ta2,tb2,t}
                 });
@@ -543,6 +556,34 @@ class Creature {
     expo(mean) { return -Math.log(1 - this.live() + 1e-9) * mean; }
 
     has(component) { return this.p.components.includes(component); }
+
+    /* Place every follower exactly where the rig wants it - called once
+       the terrain is attached (constructor defaults know no ground), and
+       the cure for heads that spawn on the floor and reel themselves in. */
+    seat() {
+        const S = SURFACES[this.surface];
+        const p = this.p;
+        const s = p.scale;
+        const g = this.groundAt(this.a, this.b);
+        this.h = g + p.stance * s;
+        this.vh = 0;
+        const bodyR = 0.32 * s * p.chunk;
+        const ha = Math.cos(this.heading), hb = Math.sin(this.heading);
+        const nose = toWorld(S,
+            this.a + ha * bodyR * p.neck * p.elong,
+            this.b + hb * bodyR * p.neck * p.elong,
+            this.h + 0.12 * s);
+        Object.assign(this.headM, { x: nose.x, y: nose.y, z: nose.z, vx: 0, vy: 0, vz: 0 });
+        const spacing = bodyR * 1.3;
+        this.chain.forEach((seg, i) => {
+            const w = toWorld(S,
+                this.a - ha * spacing * (i + 1),
+                this.b - hb * spacing * (i + 1),
+                Math.max(g + 0.05, this.h * (1 - 0.08 * (i + 1))));
+            Object.assign(seg, { x: w.x, y: w.y, z: w.z, vx: 0, vy: 0, vz: 0 });
+        });
+        this.ink.clear();   // drawn twins re-init on the seated pose
+    }
 
     solidFace(name) {
         if (name === 'floor') return true;
@@ -1021,7 +1062,9 @@ class Creature {
         const posture = POSTURES[this.postureLvl];
 
         const crouch = this.state === 'crouch' ? 0.55 : 0;
-        const rearLift = 1 + this.rearAmt * 0.85;
+        // Low rear = SITTING on the haunches (chest up, rear sunk);
+        // rearHigh = the full upright stretch to look around.
+        const rearLift = 1 + this.rearAmt * (this.rearHigh ? 0.85 : 0.22);
         const peckCrouch = 1 - 0.38 * peckDip * (1 - this.lie);
         const standLive = standH * posture * rearLift * peckCrouch * (1 + this.mods.stance);
         const targetH = ground + (standLive * (1 - this.lie) + lieH * this.lie)
@@ -1096,7 +1139,8 @@ class Creature {
             const anchor = toWorld(S,
                 prevL.a - da * spacing + (-db) * wave,
                 prevL.b - db * spacing + da * wave,
-                Math.max(0.05, prevL.h * (1 - 0.08 * i)
+                Math.max(0.04, prevL.h * (1 - 0.08 * i)
+                    * (1 - this.rearAmt * 0.55 * ((i + 1) / this.chain.length))
                     + peckDip * 0.14 * s * ((i + 1) / this.chain.length)));
             this.follow(seg, anchor, kF * 0.7, dF, dt);
             prevW = seg;
@@ -1112,7 +1156,7 @@ class Creature {
         if (this.peck > 0) {
             this.peck = Math.max(0, this.peck - dt / 0.9);
         } else if (this.state === 'idle' && this.peckCool <= 0
-            && this.live() < p.pecky) {
+            && !p.flyStyle && this.live() < p.pecky) {
             this.peck = 1;
             this.peckCool = 1.5 + this.expo(3.0);
         }
@@ -1124,8 +1168,8 @@ class Creature {
         const face = this.heading + this.headYaw;
         const fa2 = Math.cos(face), fb2 = Math.sin(face);
         const nose = toWorld(S,
-            this.a + fa2 * bodyR * p.neck * p.elong * (1 + 0.25 * peckDip),
-            this.b + fb2 * bodyR * p.neck * p.elong * (1 + 0.25 * peckDip),
+            this.a + fa2 * bodyR * p.neck * p.elong * (1 + 0.12 * peckDip),
+            this.b + fb2 * bodyR * p.neck * p.elong * (1 + 0.12 * peckDip),
             Math.max(0.04, this.h + (0.12 + this.rearAmt * 0.45) * s * (1 - this.lie)
                 - peckDip * this.h * 0.45 - nib * this.h * 0.4
                 - (this.has('paws') ? (this.airDip || 0) * this.h * 0.3 : 0)));
@@ -1225,7 +1269,8 @@ class Creature {
         const sp = Math.hypot(this.va, this.vb);
         const speed = sp / Math.max(0.5, this.effSpeed);
 
-        const bob = Math.sin(this.phase * 2) * 0.03 * s * Math.min(1, speed + 0.1);
+        const bob = Math.sin(this.phase * 2) * 0.03 * s
+            * (p.bounder ? 2.4 : 1) * Math.min(1, speed + 0.1);
         const wob = this.stagger > 0 ? Math.sin(t * 22) * 0.10 * this.stagger : 0;
         const bodyH = this.h + bob + wob;
 
@@ -1260,9 +1305,9 @@ class Creature {
             for (let e = 0; e < p.eyeCount; e++) {
                 const lat = p.eyeCount === 1 ? 0
                     : (e / (p.eyeCount - 1) - 0.5) * 2 * p.eyeSpread * headR;
-                let ep = add(pos, J.faceW, headR * 0.55);
-                ep = add(ep, J.browW, lat);
-                ep = add(ep, J.upW, headR * 0.35 + stalk);
+                let ep = add(pos, J.faceW, headR * 0.38);
+                ep = add(ep, J.browW, lat * 1.15);
+                ep = add(ep, J.upW, headR * 0.12 + stalk);
                 eyes.push({ pos: ep, r: headR * p.eyeSize * (1 + 0.4 * (e % 2 === 0 ? 0 : -0.3)) });
             }
             J.heads.push({ pos, eyes, stalk, headR });
@@ -1271,6 +1316,7 @@ class Creature {
         const gBody = this.groundAt(this.a, this.b);
         const grounded = this.h - gBody < p.stance * s * 1.3;
         J.legs = [];
+        const pending = [];
         for (const leg of this.legs) {
             if (leg.front && this.rearAmt > 0.2) {
                 leg.planted = null; leg.swing = null;
@@ -1288,14 +1334,26 @@ class Creature {
             };
             let foot, toeDir;
             if (leg.front && this.rearAmt > 0.2) {
-                // Paws held to the chest, cradling whatever it found.
+                // Paws held to the chest - and busy: they groom and fuss
+                // in quick alternation, more so while nibbling.
                 const ha2 = Math.cos(this.heading), hb2 = Math.sin(this.heading);
                 const lat = Math.sin(leg.sweep) * bodyR * 0.45;
+                const fuss = Math.sin(t * 11 + (leg.side > 0 ? 0 : Math.PI))
+                    * (0.05 + 0.08 * this.nibble);
                 foot = {
-                    a: this.a + ha2 * bodyR * 0.9 - hb2 * lat,
-                    b: this.b + hb2 * bodyR * 0.9 + ha2 * lat,
-                    h: bodyH * (0.62 + 0.12 * Math.sin(this.phase * 2) * this.nibble),
+                    a: this.a + ha2 * bodyR * (0.9 + fuss * 0.5) - hb2 * lat,
+                    b: this.b + hb2 * bodyR * (0.9 + fuss * 0.5) + ha2 * lat,
+                    h: bodyH * (0.62 + fuss
+                        + 0.12 * Math.sin(this.phase * 2) * this.nibble),
                 };
+                toeDir = this.heading;
+            } else if (leg.hind && this.rearAmt > 0.4) {
+                // Sitting: the hind feet fold forward under the haunches.
+                const ha2 = Math.cos(this.heading), hb2 = Math.sin(this.heading);
+                const lat = Math.sin(leg.sweep) * bodyR * 0.8;
+                const fa3 = this.a + ha2 * reach * 0.15 - hb2 * lat;
+                const fb3 = this.b + hb2 * reach * 0.15 + ha2 * lat;
+                foot = { a: fa3, b: fb3, h: this.groundAt(fa3, fb3) };
                 toeDir = this.heading;
             } else if (this.lie >= 0.7) {
                 const fa3 = host.a + Math.cos(ang) * reach * 1.25;
@@ -1336,6 +1394,43 @@ class Creature {
                 foot = { a: fa3, b: fb3, h: this.groundAt(fa3, fb3) };
                 toeDir = ang;
             }
+            pending.push({ leg, hip, foot, toeDir, seg });
+        }
+
+        // Self-collision: the body is its own boundary. Feet never cross
+        // the midline to the other side, and same-side feet keep a gap -
+        // legs stop passing through each other before the IK ever runs.
+        if (this.lie < 0.7) {
+            const ha2 = Math.cos(this.heading), hb2 = Math.sin(this.heading);
+            const minLat = bodyR * 0.35;
+            for (const pd of pending) {
+                const side = Math.sign(pd.leg.sweep) || 1;
+                const ra2 = pd.foot.a - this.a, rb2 = pd.foot.b - this.b;
+                const lat = -hb2 * ra2 + ha2 * rb2;
+                if (side * lat < minLat) {
+                    const fix = (minLat - side * lat) * side;
+                    pd.foot.a += -hb2 * fix;
+                    pd.foot.b += ha2 * fix;
+                }
+            }
+            const sep = 0.22 * s;
+            for (let i = 0; i < pending.length; i++) {
+                for (let k2 = i + 1; k2 < pending.length; k2++) {
+                    const A2 = pending[i], B2 = pending[k2];
+                    if (Math.sign(A2.leg.sweep) !== Math.sign(B2.leg.sweep)) continue;
+                    let dxf = B2.foot.a - A2.foot.a, dbf = B2.foot.b - A2.foot.b;
+                    const df = Math.hypot(dxf, dbf);
+                    if (df < sep && df > 1e-4) {
+                        const push = (sep - df) / 2 / df;
+                        A2.foot.a -= dxf * push; A2.foot.b -= dbf * push;
+                        B2.foot.a += dxf * push; B2.foot.b += dbf * push;
+                    }
+                }
+            }
+        }
+
+        for (const pd of pending) {
+            const { leg, hip, foot, toeDir, seg } = pd;
             const sol = ik2local(hip, foot, seg, seg, p.arch * (1 + this.mods.arch));
             const joints = [hip, sol.knee];
             if (p.segs === 3) {
@@ -2383,16 +2478,19 @@ const COMPONENTS = {
             const { arena, ctx, c, p, inker, lw } = d;
             const { S2, L, da, db, len } = tailFrame(d);
             ctx.strokeStyle = arena.colors.line;
+            // The classic S: back, then HIGH over the body; taller still
+            // when sitting up.
+            const curl = 0.62 * (1 + 0.35 * (c.rearAmt || 0));
             for (const off of [0, 0.16, -0.16]) {
                 let prev = null;
                 for (let k = 0; k <= 7; k++) {
-                    const th = (k / 7) * 2.3;
-                    const r = len * (0.5 + off * Math.sin((k / 7) * Math.PI));
+                    const th = (k / 7) * 2.6;
+                    const r = len * (curl + off * Math.sin((k / 7) * Math.PI));
                     const pt = arena.project(toWorld(S2,
-                        L.a + da * Math.sin(th) * r * 0.9,
-                        L.b + db * Math.sin(th) * r * 0.9
+                        L.a + da * Math.sin(th) * r * 0.75,
+                        L.b + db * Math.sin(th) * r * 0.75
                             + Math.cos(arena.t * 2) * 0.03,
-                        Math.max(0.05, L.h + (1 - Math.cos(th)) * r)));
+                        Math.max(0.05, L.h + (1 - Math.cos(th)) * r * 1.2)));
                     ctx.lineWidth = lw(1.5 - Math.abs(off) * 2);
                     if (prev) inker.bone(ctx, prev, pt, `tail${off}-${k}`, 1.1);
                     prev = pt;
@@ -2411,10 +2509,11 @@ const COMPONENTS = {
             for (let k = 0; k <= 6; k++) {
                 const tt = k / 6;
                 const sway = Math.sin(c.phase * 0.7 + tt * 3) * 0.12 * len;
+                // The rat tail DRAGS: on the ground from halfway out.
                 const pt = arena.project(toWorld(S2,
                     L.a + da * len * tt - db * sway,
                     L.b + db * len * tt + da * sway,
-                    Math.max(0.02, L.h * (1 - tt * 0.85))));
+                    Math.max(0.02, L.h * Math.max(0, 1 - tt * 1.8))));
                 if (prev) inker.bone(ctx, prev, pt, `whip${k}`, 0.7);
                 prev = pt;
             }
@@ -2548,6 +2647,7 @@ const COMPONENTS = {
 class Arena {
     constructor(canvas, seedStr) {
         this.canvas = canvas;
+        this.seedStr = seedStr;
         this.ctx = canvas.getContext('2d');
         // Habitat first: it sets the room's scale, and the creature is
         // born into whatever space this seed grows.
@@ -2563,6 +2663,7 @@ class Arena {
         this.creature.terrainRef = this.terrain;
         this.creature.enclosure = this.enclosure;
         this.creature.faces = fmat;
+        this.creature.seat();
         this.inker = new Inker(
             mulberry32(fnv1a(seedStr + ':ink')),
             this.creature.p.boilHz,
@@ -2624,16 +2725,32 @@ class Arena {
         this.partYMax = yMax;
         // Fog banks: big soft blobs that drift with the wind and billow,
         // masking some of the scene while other patches stay clear.
-        const fogN = wth.fog > 0 ? 4 + Math.round(wth.fog * 9) : 0;
+        const fogN = wth.fog > 0 ? 6 + Math.round(wth.fog * 16) : 0;
+        // Fog lives in WORLD space: banks sit where they sit while the
+        // camera travels; leaving one behind, a new one wraps in ahead.
         this.fogBlobs = Array.from({ length: fogN }, () => ({
-            x: (wRng() - 0.5) * 60,
+            x: ROOM_W / 2 + (wRng() - 0.5) * 64,
             z: 2 + wRng() * 26,
-            y: 0.2 + wRng() * 1.6,
-            rx: 3 + wRng() * 6,
-            ry: 0.8 + wRng() * 1.6,
+            y: 0.2 + wRng() * 1.8,
+            rx: 4 + wRng() * 8,
+            ry: 1.0 + wRng() * 2.0,
             ph: wRng() * Math.PI * 2,
             sp: 0.5 + wRng(),
         }));
+        if (wth.fog > 0.55) {
+            // Heavy cover: wide sheets hugging the ground.
+            for (let i = 0; i < 3; i++) {
+                this.fogBlobs.push({
+                    x: ROOM_W / 2 + (wRng() - 0.5) * 60,
+                    z: 3 + wRng() * 20,
+                    y: 0.15 + wRng() * 0.4,
+                    rx: 12 + wRng() * 10,
+                    ry: 1.2 + wRng() * 1.2,
+                    ph: wRng() * Math.PI * 2,
+                    sp: 0.3 + wRng() * 0.5,
+                });
+            }
+        }
         this.particles = Array.from({ length: count }, () => ({
             x: (wRng() - 0.5) * 48,        // relative to camera in x
             y: wRng() * yMax,
@@ -3149,19 +3266,19 @@ class Arena {
                 if (head.stalk > 0) {
                     inker.bone(ctx, ph, pe2, `stalk${i}-${e}`, 0.6);
                 }
-                const rPx = Math.max(1.1, eye.r * pe2.d);
+                // The common black eye: solid ink, no glow, no accent.
+                const rPx = Math.max(1.0, eye.r * pe2.d);
                 if (p.mech > 0.55) {
-                    ctx.strokeStyle = this.colors.accent;
+                    ctx.strokeStyle = this.colors.line;
                     ctx.beginPath();
                     ctx.arc(pe2.x, pe2.y, rPx, 0, Math.PI * 2);
                     ctx.stroke();
-                    ctx.fillStyle = this.colors.accent;
+                    ctx.fillStyle = this.colors.line;
                     ctx.beginPath();
-                    ctx.arc(pe2.x, pe2.y, Math.max(0.6, rPx * 0.35), 0, Math.PI * 2);
+                    ctx.arc(pe2.x, pe2.y, Math.max(0.5, rPx * 0.4), 0, Math.PI * 2);
                     ctx.fill();
-                    ctx.strokeStyle = this.colors.line;
                 } else {
-                    ctx.fillStyle = this.colors.accent;
+                    ctx.fillStyle = this.colors.line;
                     ctx.beginPath();
                     ctx.arc(pe2.x, pe2.y, rPx, 0, Math.PI * 2);
                     ctx.fill();
@@ -3265,8 +3382,7 @@ class Arena {
         ctx.drawImage(this.scene, dx, 0, this.scene.width / (window.devicePixelRatio || 1),
             this.scene.height / (window.devicePixelRatio || 1));
 
-        // Live pass: glow, near items, the creature, animated ambience.
-        this.drawGlow(ctx, J);
+        // Live pass: near items, the creature, animated ambience.
         const zCull = this.camZ - ROOM_D * 0.7;
         const live = [];
         for (const item of items) {
@@ -3277,16 +3393,20 @@ class Arena {
         live.push(...envDynamicItems(this.terrain, P, this.colors, this.t));
         if (this.fogBlobs && this.fogBlobs.length) {
             const wind = this.windSignal();
-            const fogA = 0.06 + 0.1 * this.weather.fog;
+            const fogA = 0.1 + 0.32 * this.weather.fog;
             for (const fb of this.fogBlobs) {
                 fb.x += (wind * 0.55 + Math.sin(this.t * 0.13 + fb.ph) * 0.12) * dt * fb.sp * 8;
-                if (fb.x > 34) fb.x -= 68;
-                if (fb.x < -34) fb.x += 68;
-                const wz = this.camZ + fb.z;
+                // World-anchored: wrap into the window around the camera,
+                // so departed banks regenerate ahead instead of tagging along.
+                while (fb.x - this.camX > 34) fb.x -= 68;
+                while (fb.x - this.camX < -34) fb.x += 68;
+                while (fb.z - this.camZ > 28) fb.z -= 28;
+                while (fb.z - this.camZ < 0) fb.z += 28;
+                const wz = fb.z;
                 live.push({
                     z: wz,
                     draw: (ctx2) => {
-                        const cx2 = this.camX + fb.x;
+                        const cx2 = fb.x;
                         // Billow: each bank swells and thins on its own slow clock.
                         const billow = 0.65 + 0.35 * Math.sin(this.t * 0.21 * fb.sp + fb.ph);
                         const pc = this.project({ x: cx2, y: fb.y, z: wz });
@@ -3369,10 +3489,10 @@ class Arena {
             if (pt.z < 0) pt.z += 30;
             if (pt.z > 30) pt.z -= 30;
 
-            const wx = bubbles
-                ? ROOM_W / 2 + pt.x * (ROOM_W / 50)   // bubbles stay in-tank
-                : this.camX + pt.x;
-            const wz = bubbles ? pt.z * (ROOM_D / 30) : this.camZ + pt.z;
+            // Weather is regional: the volume rides the camera window, so
+            // it keeps falling wherever the creature leads the view.
+            const wx = this.camX + pt.x;
+            const wz = this.camZ + pt.z;
             const pp = this.project({ x: wx, y: pt.y, z: wz });
             if (pp.x < -10 || pp.x > this.w + 10 || pp.y < -10 || pp.y > this.h + 10) continue;
             const depth = Math.min(1, pp.d / 30);
@@ -3412,6 +3532,8 @@ class Arena {
 // -------------------------------------------------------------- wiring
 
 let arenaInstance = null;
+let arenaSeedBase = null;     // the hash-bound seed the tab handed us
+let arenaSeedActive = null;   // what is actually running (reroll survives)
 
 export function renderArena() {
     return `<div class="arena-card">
@@ -3429,8 +3551,19 @@ export function renderArena() {
 export function wireArena(container, seedStr) {
     const canvas = container.querySelector('.arena-canvas');
     if (!canvas) return;
+    const base = seedStr || 'praxis';
+    // Idempotent against the global tab refresh: if the living arena is
+    // already wired to this very canvas for this model, leave it alone.
+    if (arenaInstance && arenaInstance.canvas === canvas
+        && arenaSeedBase === base) return;
+    // Re-rendered DOM, same model: resume whatever seed was ACTIVE - a
+    // reroll must survive the tab's re-render, not revert to the hash.
+    const seed = arenaSeedBase === base && arenaSeedActive
+        ? arenaSeedActive : base;
+    arenaSeedBase = base;
+    arenaSeedActive = seed;
     if (arenaInstance) arenaInstance.stop();
-    arenaInstance = new Arena(canvas, seedStr || 'praxis');
+    arenaInstance = new Arena(canvas, seed);
     window.__arena = arenaInstance; // dev introspection
     arenaInstance.start();
 
@@ -3445,7 +3578,8 @@ export function wireArena(container, seedStr) {
     let n = 0;
     reroll.addEventListener('click', () => {
         arenaInstance.stop();
-        arenaInstance = new Arena(canvas, `reroll:${Date.now()}:${++n}`);
+        arenaSeedActive = `reroll:${Date.now()}:${++n}`;
+        arenaInstance = new Arena(canvas, arenaSeedActive);
         window.__arena = arenaInstance;
         arenaInstance.onFrame = sync;
         arenaInstance.start();
