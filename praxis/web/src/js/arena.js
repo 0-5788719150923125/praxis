@@ -92,7 +92,7 @@ function sampleMorphology(rng) {
 
     const legT = t();
     const pairs = legT < 0.1 ? 0 : 1 + Math.floor(((legT - 0.1) / 0.9) * 5.999);
-    return {
+    const m = {
         mech: t(),                    // master spectrum: organic .. machine
         // Body plan.
         scale: u(0.36, 0.6),
@@ -152,7 +152,63 @@ function sampleMorphology(rng) {
         boilHz: u(5, 9),
         stiffness: u(45, 110),
         damping: u(7, 13),
+        // Rodent/fish behavior dials (overridden per kind below).
+        rear: 0, fidget: 0, tailStyle: 'none', tailLen: 0, swim: false,
     };
+
+    // Creature KIND is a discrete archetype roll, like the arena's faces:
+    // the genome stays continuous underneath, the kind re-shapes it.
+    const kr = rng();
+    if (kr < 0.55) {
+        m.kind = 'bug';
+    } else if (kr < 0.72) {
+        m.kind = 'squirrel';
+        m.legPairs = 2; m.segs = 2; m.spine = 1; m.heads = 1;
+        m.elong = u(1.15, 1.55); m.square = m.square * 0.4;
+        m.sprawl *= 0.35; m.undulate *= 0.3;
+        m.hindBias = Math.max(0.65, m.hindBias);
+        m.waveK = Math.PI;                  // bounding gait
+        m.stance = u(0.4, 0.52);
+        m.restlessness = u(0.4, 1.2);       // busy little thing
+        m.rear = u(0.18, 0.32);             // P(stand on hind legs)
+        m.fidget = u(0.2, 0.35);
+        m.pecky = u(0.08, 0.2);
+        m.tailStyle = 'floof';
+        m.tailLen = u(0.9, 1.4);
+        m.mech = m.mech * 0.5;
+        m.eyeCount = 2; m.stalky = 0;
+        m.climby = Math.max(0.6, m.climby); // squirrels scale anything
+    } else if (kr < 0.87) {
+        m.kind = 'rat';
+        m.legPairs = 2; m.segs = 2; m.spine = 2; m.heads = 1;
+        m.elong = u(1.5, 2.1); m.scale *= 0.85;
+        m.sprawl *= 0.5; m.undulate *= 0.4;
+        m.stance = u(0.26, 0.36);           // low slink
+        m.speedy = Math.max(0.6, m.speedy);
+        m.restlessness = u(0.4, 1.4);
+        m.rear = u(0.1, 0.2);
+        m.fidget = u(0.25, 0.4);
+        m.pecky = u(0.1, 0.22);
+        m.tailStyle = 'whip';
+        m.tailLen = u(1.2, 1.9);
+        m.mech = m.mech * 0.5;
+        m.eyeCount = 2; m.stalky = 0;
+    } else {
+        m.kind = 'fish';
+        m.swim = true;
+        m.legPairs = 0; m.segs = 2; m.heads = 1;
+        m.spine = 2 + Math.floor(t() * 3.0);
+        m.elong = u(1.4, 2.0);
+        m.undulate = Math.max(0.7, m.undulate);
+        m.tailStyle = 'fin';
+        m.tailLen = u(0.5, 0.9);
+        m.fidget = 0; m.rear = 0;
+        m.jumpiness = u(0.04, 0.12);        // the rare breach
+        m.sleepiness = u(0.03, 0.1);
+        m.fluid = Math.max(0.6, m.fluid);   // water is smooth
+        m.stalky = 0;
+    }
+    return m;
 }
 
 /* Arena archetypes: discrete prototypes whose FEATURES get blended.
@@ -299,6 +355,8 @@ class Creature {
         this.postureGoal = 3;
         this.postureT = 1 + this.rng();
 
+        this.rearAmt = 0;             // 0 standing .. 1 up on hind legs
+        this.nibble = 0;              // paws-to-mouth eating envelope
         this.terrainRef = null;       // set by the Arena; floor geometry
         this.enclosure = 1;           // backdrop-scale enclosure
         this.faces = null;            // per-face materials; null = all solid
@@ -322,9 +380,11 @@ class Creature {
         // Locomotor effectiveness derives from the body: legless or
         // overloaded morphs are slower, but they still try - the wriggle.
         const P = this.p.legPairs;
-        this.effSpeed = this.p.speed
-            * (P === 0 ? 0.45 : 0.55 + 0.45 * Math.min(1, P / 3))
-            * (0.7 + 0.6 * this.p.legSpan * this.p.legSeg);
+        this.effSpeed = this.p.swim
+            ? this.p.speed * 0.9
+            : this.p.speed
+                * (P === 0 ? 0.45 : 0.55 + 0.45 * Math.min(1, P / 3))
+                * (0.7 + 0.6 * this.p.legSpan * this.p.legSeg);
 
         // The spine: world-space spring masses trailing the driver.
         const w0 = toWorld(SURFACES.floor, this.a, this.b, this.h);
@@ -347,6 +407,7 @@ class Creature {
             const sweep = this.p.sweepBase + fr * this.p.sweepRange;
             for (const side of [1, -1]) {
                 this.legs.push({
+                    front: i === 0 && P > 1,   // the front pair: rodent paws
                     host,                  // -1 = driver body, 0.. = chain seg
                     side,
                     sweep: sweep * side,
@@ -414,10 +475,20 @@ class Creature {
     act() {
         const r = this.live();
         const p = this.p;
-        if (r < p.sleepiness) {
+        if (!p.swim && r < p.rear) {
+            // Up on the hind legs - sometimes higher still - looking
+            // around, sometimes nibbling something held in the paws.
+            this.state = 'rear';
+            this.timer = 1.2 + this.expo(2.5);
+            this.rearHigh = this.live() < 0.4;   // second stage: stretch up
+            this.nibbleOn = this.live() < 0.5;
+        } else if (!p.swim && r < p.rear + p.fidget) {
+            this.state = 'fidget';
+            this.timer = 0.4 + this.expo(0.6);
+        } else if (r < p.rear + p.fidget + p.sleepiness) {
             this.state = 'sleep';
             this.timer = 3.0 + this.expo(4.0);
-        } else if (r < p.sleepiness + p.playful) {
+        } else if (r < p.rear + p.fidget + p.sleepiness + p.playful) {
             // Play: fast circles around a spot in the pen, like a horse.
             this.state = 'play';
             this.timer = 4.0 + this.expo(6.0);
@@ -429,7 +500,7 @@ class Creature {
                 Math.max(EDGE + this.playR, this.b));
             this.playPhase = Math.atan2(this.b - this.playCb, this.a - this.playCa);
             this.playDir = this.live() < 0.5 ? 1 : -1;
-        } else if (r < p.sleepiness + p.playful + p.jumpiness) {
+        } else if (r < p.rear + p.fidget + p.sleepiness + p.playful + p.jumpiness) {
             // A real leap: crouch first, then launch up AND forward.
             this.state = 'crouch';
             this.timer = 0.12 + 0.1 * this.live();
@@ -498,7 +569,7 @@ class Creature {
         };
         const route = routes[this.surface]?.[which];
 
-        if (route && fast && this.solidFace(route[0]) && this.live() < p.climby) {
+        if (route && fast && !p.swim && this.solidFace(route[0]) && this.live() < p.climby) {
             this.transfer(route[0], ...route[1]());
             return;
         }
@@ -542,12 +613,29 @@ class Creature {
                 if (this.timer <= 0) this.act();
                 break;
             }
+
             case 'run': {
                 const da = this.ta - this.a, db = this.tb - this.b;
                 const d = Math.hypot(da, db);
                 if (d < 0.18) { this.rest(); break; }
                 const sp = this.effSpeed * (1 + 0.45 * ch.energy);
                 dva = (da / d) * sp; dvb = (db / d) * sp;
+                break;
+            }
+            case 'rear': {
+                this.va *= Math.exp(-10 * dt); this.vb *= Math.exp(-10 * dt);
+                const high = this.rearHigh ? 1.0 : 0.6;
+                this.rearAmt = Math.min(high, this.rearAmt + 2.5 * dt);
+                if (this.nibbleOn) this.nibble = Math.min(1, this.nibble + 3 * dt);
+                if (this.timer <= 0) this.rest();
+                break;
+            }
+            case 'fidget': {
+                // Quick darty jitter: tiny lunges, snapped heading.
+                dva = ch.swayA * 1.6; dvb = ch.swayB * 1.6;
+                this.spin += (this.live() - 0.5) * 30 * dt;
+                this.phase += 6 * dt;
+                if (this.timer <= 0) this.rest();
                 break;
             }
             case 'sleep':
@@ -586,6 +674,11 @@ class Creature {
             case 'bump':
                 if (this.timer <= 0) this.rest();
                 break;
+        }
+
+        if (this.state !== 'rear') {
+            this.rearAmt = Math.max(0, this.rearAmt - 2.2 * dt);
+            this.nibble = Math.max(0, this.nibble - 3 * dt);
         }
 
         const agility = (2.2 + 7 * p.speedy) * (this.state === 'bump' ? 0.4 : 1);
@@ -661,6 +754,25 @@ class Creature {
 
         const standH = p.stance * p.scale;
         const lieH = 0.08 * p.scale;
+        if (p.swim) {
+            // Fish: no gravity, no ground spring - a smooth swim toward a
+            // wandering depth target, breathing with the buoy voter.
+            if (this.swimH == null || this.live() < 0.25 * dt) {
+                this.swimH = 0.5 + this.live()
+                    * Math.max(0.6, ROOM_H * 0.75 - 0.5);
+            }
+            const gFloor = this.groundAt(this.a, this.b);
+            const targetH2 = Math.max(gFloor + 0.4,
+                Math.min(ROOM_H * 0.85, this.swimH))
+                + 0.25 * this.ch.buoy;
+            this.vh += ((targetH2 - this.h) * 2.2 - this.vh * 2.5) * dt
+                + (this.state === 'jump' ? 0 : 0);
+            if (this.state === 'jump') this.vh += 2.0 * dt; // the breach
+            this.h += this.vh * dt;
+            if (this.h < gFloor + 0.25) { this.h = gFloor + 0.25; this.vh = Math.abs(this.vh) * 0.4; }
+            if (this.h > ROOM_H * 0.9) { this.h = ROOM_H * 0.9; this.vh = -Math.abs(this.vh) * 0.4; }
+            if (this.state === 'jump' && this.timer <= 0) this.rest();
+        } else {
         // The posture ladder ticks on its own clock: one quantized step
         // toward the goal per pause, new goals chosen at the top.
         this.postureT -= dt;
@@ -681,7 +793,8 @@ class Creature {
         const posture = POSTURES[this.postureLvl];
 
         const crouch = this.state === 'crouch' ? 0.55 : 0;
-        const standLive = standH * posture * (1 + this.mods.stance);
+        const rearLift = 1 + this.rearAmt * 0.85;
+        const standLive = standH * posture * rearLift * (1 + this.mods.stance);
         const targetH = ground + (standLive * (1 - this.lie) + lieH * this.lie)
             * (1 + 0.12 * this.ch.buoy * p.floaty) * (1 - crouch);
         const airborne = this.h > targetH + 0.12;
@@ -698,7 +811,7 @@ class Creature {
         const hMin = ground + lieH * 0.6;
         if (this.h < hMin) { this.h = hMin; this.vh = Math.abs(this.vh) * 0.3; }
 
-        if (this.surface === 'floor' && this.solidFace('ceiling')
+        if (this.surface === 'floor' && !p.swim && this.solidFace('ceiling')
             && this.vh > 0 && this.h >= ROOM_H - standH * 1.4) {
             this.surface = 'ceiling';
             this.h = ROOM_H - this.h;
@@ -710,6 +823,7 @@ class Creature {
             this.h = ROOM_H - this.h;
             this.vh = -Math.abs(this.vh) * 0.2;
             this.unplant();
+        }
         }
 
         const sp = Math.hypot(this.va, this.vb);
@@ -768,6 +882,8 @@ class Creature {
             this.peckCool = 1.5 + this.expo(3.0);
         }
         const peckDip = this.peck > 0 ? Math.sin(Math.PI * this.peck) : 0;
+        // Nibbling: the head bobs down toward the held paws.
+        const nib = this.nibble * (0.4 + 0.2 * Math.sin(t * 7));
 
         // Head follower rides the nose, swiveled by the yaw, dipped by
         // the peck.
@@ -776,7 +892,8 @@ class Creature {
         const nose = toWorld(S,
             this.a + fa2 * bodyR * p.neck * p.elong * (1 + 0.25 * peckDip),
             this.b + fb2 * bodyR * p.neck * p.elong * (1 + 0.25 * peckDip),
-            Math.max(0.04, this.h + 0.12 * s * (1 - this.lie) - peckDip * this.h * 0.85));
+            Math.max(0.04, this.h + (0.12 + this.rearAmt * 0.45) * s * (1 - this.lie)
+                - peckDip * this.h * 0.85 - nib * this.h * 0.4));
         this.follow(this.headM, nose, kF, dF, dt);
 
         // ---- feet: planted until the rest pose drifts, then an
@@ -798,6 +915,10 @@ class Creature {
         const mvb = sp > 0.05 ? this.vb / sp : Math.sin(this.heading);
 
         for (const leg of this.legs) {
+            if (leg.front && this.rearAmt > 0.2) {
+                leg.planted = null; leg.swing = null;
+                continue;
+            }
             const host = this.hostLocal(leg.host, S);
             const reach = reachBase * (leg.hind ? 1 + 0.6 * p.hindBias : 1);
             const ang = host.dir + leg.sweep;
@@ -916,6 +1037,10 @@ class Creature {
         const grounded = this.h - gBody < p.stance * s * 1.3;
         J.legs = [];
         for (const leg of this.legs) {
+            if (leg.front && this.rearAmt > 0.2) {
+                leg.planted = null; leg.swing = null;
+                continue;
+            }
             const host = this.hostLocal(leg.host, S);
             const reach = reachBase * (leg.hind ? 1 + 0.6 * p.hindBias : 1);
             const seg = reach * p.legSeg;
@@ -927,7 +1052,17 @@ class Creature {
                 h: host.h + bob,
             };
             let foot, toeDir;
-            if (this.lie >= 0.7) {
+            if (leg.front && this.rearAmt > 0.2) {
+                // Paws held to the chest, cradling whatever it found.
+                const ha2 = Math.cos(this.heading), hb2 = Math.sin(this.heading);
+                const lat = Math.sin(leg.sweep) * bodyR * 0.45;
+                foot = {
+                    a: this.a + ha2 * bodyR * 0.9 - hb2 * lat,
+                    b: this.b + hb2 * bodyR * 0.9 + ha2 * lat,
+                    h: bodyH * (0.62 + 0.12 * Math.sin(this.phase * 2) * this.nibble),
+                };
+                toeDir = this.heading;
+            } else if (this.lie >= 0.7) {
                 const fa3 = host.a + Math.cos(ang) * reach * 1.25;
                 const fb3 = host.b + Math.sin(ang) * reach * 1.25;
                 foot = { a: fa3, b: fb3, h: this.groundAt(fa3, fb3) + 0.01 };
@@ -2182,6 +2317,84 @@ class Arena {
                 }
             }
             ctx.lineWidth = lw(1.6);
+        }
+
+        // ---- tails and fins, per kind ----
+        if (p.tailStyle !== 'none' && J.chain.length) {
+            const S2 = SURFACES[c.surface];
+            const last = J.chain[J.chain.length - 1];
+            const ahead = J.chain.length > 1 ? J.chain[J.chain.length - 2] : body;
+            const L = fromWorld(S2, last);
+            const A2 = fromWorld(S2, ahead);
+            let da = L.a - A2.a, db = L.b - A2.b;
+            const dl = Math.hypot(da, db) || 1;
+            da /= dl; db /= dl;
+            const len = p.tailLen * p.scale;
+            ctx.strokeStyle = this.colors.line;
+
+            if (p.tailStyle === 'floof') {
+                // The squirrel plume: back, up, and curling over the body.
+                for (const off of [0, 0.16, -0.16]) {
+                    let prev = null;
+                    for (let k = 0; k <= 7; k++) {
+                        const th = (k / 7) * 2.3;
+                        const r = len * (0.5 + off * Math.sin((k / 7) * Math.PI));
+                        const pt = this.project(toWorld(S2,
+                            L.a + da * Math.sin(th) * r * 0.9,
+                            L.b + db * Math.sin(th) * r * 0.9
+                                + Math.cos(this.t * 2) * 0.03,
+                            Math.max(0.05, L.h + (1 - Math.cos(th)) * r)));
+                        ctx.lineWidth = lw(1.5 - Math.abs(off) * 2);
+                        if (prev) inker.bone(ctx, prev, pt, `tail${off}-${k}`, 1.1);
+                        prev = pt;
+                    }
+                }
+            } else if (p.tailStyle === 'whip') {
+                // The rat whip: thin, dragging, swaying with the gait.
+                let prev = null;
+                ctx.lineWidth = lw(1.1);
+                for (let k = 0; k <= 6; k++) {
+                    const tt = k / 6;
+                    const sway = Math.sin(c.phase * 0.7 + tt * 3) * 0.12 * len;
+                    const pt = this.project(toWorld(S2,
+                        L.a + da * len * tt - db * sway,
+                        L.b + db * len * tt + da * sway,
+                        Math.max(0.02, L.h * (1 - tt * 0.85))));
+                    if (prev) inker.bone(ctx, prev, pt, `whip${k}`, 0.7);
+                    prev = pt;
+                }
+            } else if (p.tailStyle === 'fin') {
+                // Caudal fin: a sweeping vertical triangle off the spine.
+                const sweep = Math.sin(c.phase * 1.4) * 0.25 * len;
+                const tip = toWorld(S2,
+                    L.a + da * len - db * sweep,
+                    L.b + db * len + da * sweep, L.h);
+                const up2 = toWorld(S2, L.a + da * len * 0.8 - db * sweep,
+                    L.b + db * len * 0.8 + da * sweep, L.h + len * 0.5);
+                const dn = toWorld(S2, L.a + da * len * 0.8 - db * sweep,
+                    L.b + db * len * 0.8 + da * sweep, Math.max(0.05, L.h - len * 0.4));
+                ctx.lineWidth = lw(1.4);
+                inker.loop(ctx, [this.project(last), this.project(up2),
+                    this.project(tip), this.project(dn)], 'caudal', 1.0);
+                // Pectoral fins beating at the body's sides.
+                const flap = Math.sin(c.phase * 2.2) * 0.25;
+                for (const sgn of [-1, 1]) {
+                    const baseW = body;
+                    const finTip = {
+                        x: baseW.x + J.perpW.x * sgn * p.scale * (0.5 + flap),
+                        y: baseW.y + J.perpW.y * sgn * p.scale * (0.5 + flap) - p.scale * 0.18,
+                        z: baseW.z + J.perpW.z * sgn * p.scale * (0.5 + flap),
+                    };
+                    const finBk = {
+                        x: baseW.x - J.fwd.x * p.scale * 0.35,
+                        y: baseW.y - J.fwd.y * p.scale * 0.35,
+                        z: baseW.z - J.fwd.z * p.scale * 0.35,
+                    };
+                    ctx.lineWidth = lw(1.1);
+                    inker.loop(ctx, [pBody, this.project(finTip), this.project(finBk)],
+                        'pec' + sgn, 0.8);
+                }
+            }
         }
     }
 
