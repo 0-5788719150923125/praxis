@@ -99,6 +99,12 @@ def _candidates(model: Any) -> Iterable[Dict[str, Any]]:
         if isinstance(descs, dict):
             yield descs
 
+    probe = getattr(model, "solvability", None)
+    if probe is not None:
+        descs = getattr(type(probe), "metric_descriptions", None)
+        if isinstance(descs, dict):
+            yield descs
+
     # Loss-owning encoders (e.g. CALM) declare chart hints as a class attr;
     # guard against ``model.encoder = False`` (the no-encoder sentinel).
     encoder = getattr(model, "encoder", None)
@@ -165,6 +171,13 @@ def _stamp_callers(out: Dict[str, Dict[str, Any]], model: Any) -> None:
         if isinstance(descs, dict):
             for key in descs:
                 claim(key, type(iso).__name__)
+
+    probe = getattr(model, "solvability", None)
+    if probe is not None:
+        descs = getattr(type(probe), "metric_descriptions", None)
+        if isinstance(descs, dict):
+            for key in descs:
+                claim(key, type(probe).__name__)
 
     weighter = getattr(model, "tasker", None)
     if weighter is not None and getattr(weighter, "is_dynamic", False):

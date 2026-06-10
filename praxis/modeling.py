@@ -25,6 +25,7 @@ from praxis.containers import LossContainer
 from praxis.heads import HEAD_REGISTRY
 from praxis.losses import get_loss_function
 from praxis.losses.contrastive_isotropy import ContrastiveIsotropyLoss
+from praxis.losses.solvability import SolvabilityProbe
 from praxis.policies import RL_POLICIES_REGISTRY
 from praxis.strategies import STRATEGIES_REGISTRY
 from praxis.tasks import TASK_NAMES, resolve_task_weighter
@@ -281,9 +282,19 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         self.active_task_ids = None
 
         # SimCTG isotropy regularizer (additive; see forward). On by default.
-        self.aux = None
+        # Named to match the dynamics extractor / descriptions walker, which
+        # look up model.contrastive_isotropy.
+        self.contrastive_isotropy = None
         if getattr(config, "contrastive_isotropy", True):
-            self.aux = ContrastiveIsotropyLoss(pad_id=config.pad_token_id)
+            self.contrastive_isotropy = ContrastiveIsotropyLoss(
+                pad_id=config.pad_token_id
+            )
+
+        # Self-predicted solvability probe (observational: detached input, so
+        # it watches the trunk without steering it). On by default.
+        self.solvability = None
+        if getattr(config, "solvability", True):
+            self.solvability = SolvabilityProbe(config.hidden_size)
 
         # The strategy for combining multiple losses into a single scalar objective.
         self.strategy = STRATEGIES_REGISTRY.get(config.strategy, "naive")()
@@ -792,9 +803,30 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # Contrastive isotropy (SimCTG): additive regularizer on the last-layer
         # representations to keep the space discriminative for contrastive-search
         # decoding. Leaves the main objective untouched.
-        if self.aux is not None and self.training and labels is not None:
-            iso_loss = self.aux(hidden_states, input_ids)
+        if (
+            self.contrastive_isotropy is not None
+            and self.training
+            and labels is not None
+        ):
+            iso_loss = self.contrastive_isotropy(hidden_states, input_ids)
             outputs.losses.add_loss("contrastive", iso_loss)
+
+        # Self-predicted solvability: the probe reads an early prefix of the
+        # TRUNK states (always hidden_size wide, even under encoders) and is
+        # scored against the realized per-sample loss. Skipped under cut-CE
+        # training, where full logits are never materialized.
+        if (
+            self.solvability is not None
+            and self.training
+            and labels is not None
+            and not skip_logits_for_training
+            and logits.size(-1) == self.config.vocab_size
+            and logits.size(1) in (labels.size(1), labels.size(1) + 1)
+        ):
+            solvability_loss = self.solvability(
+                outputs.last_hidden_state, logits, labels
+            )
+            outputs.losses.add_loss("solvability", solvability_loss)
 
         # We omit auxiliary losses during validation and inference - except
         # for handles_loss encoders (CALM), where the encoder owns the main
