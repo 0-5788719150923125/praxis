@@ -71,8 +71,8 @@ def cards_zip():
 def sheets_zip():
     from praxis.pillars.projections import render_sheet_pdf
 
-    return _zip_both(render_sheet_pdf, "praxis-cards-8up-{side}.pdf",
-                     "praxis-cards-8up.zip")
+    return _zip_both(render_sheet_pdf, "praxis-cards-10up-{side}.pdf",
+                     "praxis-cards-10up.zip")
 
 
 @cards_bp.route("/api/card/card.pdf", methods=["GET"])
@@ -101,5 +101,5 @@ def sheet_pdf():
         io.BytesIO(pdf),
         mimetype="application/pdf",
         as_attachment=True,
-        download_name=f"praxis-cards-8up-{side}.pdf",
+        download_name=f"praxis-cards-10up-{side}.pdf",
     )

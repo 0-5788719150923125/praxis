@@ -10,16 +10,26 @@ import io
 
 import numpy as np
 
-# EU standard card: tiles A4 as 2x4 = 8 per sheet.
-CARD_W, CARD_H = 85.0, 55.0
+# US standard card (3.5 x 2 in) on US Letter, matching Avery 28371:
+# 2 cols x 5 rows = 10 per sheet, 0.75 in side and 0.5 in top/bottom
+# margins, no gutters. EU/A4 support deferred.
+CARD_W, CARD_H = 88.9, 50.8
 BORDER_MM = 3.0
-A4_W, A4_H = 210.0, 297.0
+PAGE_W, PAGE_H = 215.9, 279.4
+SHEET_X0, SHEET_Y0 = 19.05, 12.7
+SHEET_COLS, SHEET_ROWS = 2, 5
 
-PRINT_NOTE = (
-    "Print at 100% scale (no fit-to-page) on A4 matte cardstock, 250-300 gsm. "
-    "Pre-perforated 85 x 55 mm business card sheets align with the cut marks - "
-    'search "A4 business card sheets 85x55" on Amazon.'
+PRINT_NOTE = "Print at 100% scale (no fit-to-page) on US Letter."
+PAPER_NOTE = (
+    "Paper: Avery micro-perforated business card sheets, 10-up 2 x 3.5 in on "
+    "US Letter, 80 lb / 216 gsm matte - this layout lands exactly on the "
+    "perforations."
 )
+PAPER_LINK_NOTE = (
+    "Buy: inkjet - Avery 28371, amazon.com/dp/B00004Z5DG. Laser - Avery 5371, "
+    "same 10-up layout."
+)
+PAPER_URL = "https://www.amazon.com/dp/B00004Z5DG"
 
 
 def _hsl(h, s, l):
@@ -289,11 +299,92 @@ def wave_field(ax, rng, pal, mods):
         stroke(x, y, color, 0.6, 2 + (i % 4 != 3))
 
 
+def fibonacci_field(ax, rng, pal, mods):
+    """One golden spiral arm, cloned through golden-angle rotations and
+    phi-shrunk generation by generation - the same curve repeated over
+    time, fading as it recedes. recurrence sets the generation depth,
+    chaos the usual cut-to-fractal blend."""
+    chaos, rec = mods["chaos"], mods["recurrence"]
+    stroke = _make_stroke(ax, rng, mods)
+    cx = float(rng.uniform(10, CARD_W - 10))
+    cy = float(rng.uniform(5, CARD_H - 5))
+    arms = int(rng.integers(3, 8))
+    generations = 2 + int(round(3 * rec))
+    facets = int(rng.choice([8, 13, 21]))
+    base_rot = float(rng.uniform(0, 2 * np.pi))
+    turns = float(rng.uniform(2.4, 3.4))
+    base = float(rng.uniform(5, 12))
+    for gen in range(generations):
+        scale = base * PHI ** (-gen)
+        color = pal["stroke"] if gen < 2 else pal["faint"]
+        lw = max(0.4, 1.1 * PHI ** (-gen))
+        for k in range(arms):
+            x, y = _spiral_strand(rng, chaos, cx, cy, scale, turns,
+                                  facets, n=700)
+            rot = base_rot + GOLDEN * (k + gen)
+            dx, dy = x - cx, y - cy
+            ca, sa = np.cos(rot), np.sin(rot)
+            stroke(cx + dx * ca - dy * sa, cy + dx * sa + dy * ca,
+                   color, lw, 4 - min(gen, 2))
+    # Phyllotaxis nodes: seed points at golden-angle steps, sqrt spacing.
+    if rng.random() < 0.7:
+        t = np.linspace(0, 2 * np.pi, 24)
+        c = float(rng.uniform(1.5, 3.0))
+        for i in range(int(rng.integers(40, 90))):
+            r = c * np.sqrt(i)
+            a = i * GOLDEN + base_rot
+            nr = 0.25 + 0.5 * (i % 3 == 0)
+            stroke(cx + r * np.cos(a) + nr * np.cos(t),
+                   cy + r * np.sin(a) + nr * np.sin(t),
+                   pal["faint"], 0.5, 1)
+
+
+def glyph_field(ax, rng, pal, mods):
+    """Basic closed geometries, drawn and shaded: filled vectors scattered
+    nearly full-bleed in some samples, sparse in others. Outlines deform
+    with chaos; fills cycle solid tint, solid accent, and hatch shading."""
+    chaos, ov = mods["chaos"], mods["overshoot"]
+    density = float(rng.uniform(0.1, 1.0))
+    count = int(round(4 + 26 * density))
+    t = np.linspace(0, 2 * np.pi, 240)
+    glyphs = []
+    for _ in range(count):
+        cx = float(rng.uniform(-5, CARD_W + 5))
+        cy = float(rng.uniform(-5, CARD_H + 5))
+        rad = float(rng.uniform(2.5, 15)) * (1.6 - 0.6 * density)
+        k = int(rng.choice([3, 4, 5, 6, 8, 13, 0]))  # 0 = circle
+        rot = float(rng.uniform(0, 2 * np.pi))
+        if k:
+            # Regular k-gon by apothem, then chaos warps the radius.
+            r = rad * np.cos(np.pi / k) / np.cos(
+                ((t + rot) % (2 * np.pi / k)) - np.pi / k)
+        else:
+            r = np.full_like(t, rad)
+        r = r * (1 + 0.35 * chaos * _fbm1(rng, len(t), octaves=3))
+        glyphs.append((rad, cx + r * np.cos(t), cy + r * np.sin(t)))
+
+    for rad, x, y in sorted(glyphs, key=lambda g: -g[0]):  # big ones behind
+        style = rng.random()
+        if style < 0.45:
+            patch, = ax.fill(x, y, facecolor=pal["fill"],
+                             edgecolor=pal["stroke"], lw=0.7, zorder=2)
+        elif style < 0.7:
+            patch, = ax.fill(x, y, facecolor=pal["stroke"],
+                             edgecolor=pal["paper"], lw=0.7, zorder=3)
+        else:
+            patch, = ax.fill(x, y, facecolor="none", hatch="///",
+                             edgecolor=pal["faint"], lw=0.6, zorder=2)
+        if ov > 0 and rng.random() < 0.6 * ov:
+            patch.set_gid("overshoot")
+
+
 PROJECTION_REGISTRY = {
     "strands": strand_field,
     "shatter": shatter_field,
     "lightning": lightning_field,
     "waves": wave_field,
+    "fibonacci": fibonacci_field,
+    "glyphs": glyph_field,
 }
 
 
@@ -345,7 +436,8 @@ def _draw_card(ax, side, seed, theme, hue, authors, donations, run_hash,
 
     names = list(PROJECTION_REGISTRY)
     field = PROJECTION_REGISTRY[names[int(rng.integers(len(names)))]]
-    field(ax, rng, pal, _sample_mods(rng, mods))
+    sampled = _sample_mods(rng, mods)
+    field(ax, rng, pal, sampled)
     # Clip geometry to the inner panel so the border stays clean;
     # overshoot-tagged strands get the full card and cross the frame.
     bleed = Rectangle((0, 0), CARD_W, CARD_H, facecolor="none",
@@ -358,15 +450,28 @@ def _draw_card(ax, side, seed, theme, hue, authors, donations, run_hash,
 
     halo = [patheffects.withStroke(linewidth=2.2, foreground=pal["paper"])]
     m = BORDER_MM + 4
+    # Sometimes the text block mirrors to the top of the card.
+    flip_v = rng.random() < 0.35
+    vy = (lambda y: CARD_H - y) if flip_v else (lambda y: y)
+    va = "top" if flip_v else "baseline"
     if side == "front":
         for i, author in enumerate(authors):
-            ax.text(m, m + 6 * (len(authors) - 1 - i),
+            ax.text(m, vy(m + 6 * (len(authors) - 1 - i)),
                     _caps(rng, author, [0.5, 0.35, 0.15]),
                     fontsize=11, color=pal["ink"], family="DejaVu Sans",
-                    weight="bold" if i == 0 else "normal",
+                    weight="bold" if i == 0 else "normal", va=va,
                     path_effects=halo, zorder=5)
-        ax.plot([m, m + 22], [m + 6 * len(authors) + 1.0] * 2,
-                color=pal["stroke"], lw=1.2, zorder=5)
+        if rng.random() < 0.6:  # a signature stroke above the name, sometimes
+            chaos = sampled["chaos"]
+            n = 140
+            xs = np.linspace(m, m + float(rng.uniform(16, 30)), n)
+            env = np.sin(np.linspace(0, np.pi, n)) ** 0.6  # pen taper
+            teeth = np.tanh(6 * np.sin(2 * np.pi * np.arange(n)
+                                       / float(rng.uniform(15, 40))))
+            d = ((1 - chaos) * 0.5 * teeth
+                 + chaos * 1.4 * _fbm1(rng, n, octaves=4)) * env
+            ax.plot(xs, vy(m + 6 * len(authors) + 1.0) + d,
+                    color=pal["stroke"], lw=1.2, zorder=5)
     else:
         if donations:
             ax.text(CARD_W / 2, CARD_H / 2,
@@ -374,9 +479,9 @@ def _draw_card(ax, side, seed, theme, hue, authors, donations, run_hash,
                     fontsize=7.5, color=pal["ink"], family="DejaVu Sans Mono",
                     ha="center", va="center", path_effects=halo, zorder=5)
         if run_hash:
-            ax.text(CARD_W - m, m, run_hash, fontsize=5.5, color=pal["stroke"],
-                    family="DejaVu Sans Mono", ha="right",
-                    path_effects=halo, zorder=5)
+            ax.text(CARD_W - m, vy(m), run_hash, fontsize=5.5,
+                    color=pal["stroke"], family="DejaVu Sans Mono", ha="right",
+                    va=va, path_effects=halo, zorder=5)
 
 
 def _new_fig(w_mm, h_mm, facecolor):
@@ -434,48 +539,54 @@ def _page(cells, side, seed_for, theme, hue, authors, donations, run_hash,
           mods=None):
     """A4 page with cards at the given (x, y) mm cells, crop marks, margin note."""
     pal = _palette(theme, hue)
-    fig = _new_fig(A4_W, A4_H, "#ffffff")
-    page = _mm_axes(fig, 0, 0, A4_W, A4_H, A4_W, A4_H)
-    page.set_xlim(0, A4_W)
-    page.set_ylim(0, A4_H)
+    fig = _new_fig(PAGE_W, PAGE_H, "#ffffff")
+    page = _mm_axes(fig, 0, 0, PAGE_W, PAGE_H, PAGE_W, PAGE_H)
+    page.set_xlim(0, PAGE_W)
+    page.set_ylim(0, PAGE_H)
     page.axis("off")
     for i, (x, y) in enumerate(cells):
         _crop_marks(page, x, y, CARD_W, CARD_H, "#999999")
-        ax = _mm_axes(fig, x, y, CARD_W, CARD_H, A4_W, A4_H)
+        ax = _mm_axes(fig, x, y, CARD_W, CARD_H, PAGE_W, PAGE_H)
         _draw_card(ax, side, seed_for(i), theme, hue, authors, donations,
                    run_hash, mods)
-    page.text(A4_W / 2, 8, PRINT_NOTE, fontsize=6, color="#666666",
+    page.text(PAGE_W / 2, 8, PRINT_NOTE, fontsize=6, color="#666666",
               ha="center", va="center", wrap=True)
-    page.text(A4_W / 2, A4_H - 8,
+    page.text(PAGE_W / 2, PAGE_H - 8,
               f"Praxis business card - {side} - seed {seed_for(0)}",
               fontsize=6, color="#666666", ha="center", va="center")
+    # Paper guidance runs sideways in the left/right margins.
+    page.text(6, PAGE_H / 2, PAPER_NOTE, fontsize=6, color="#666666",
+              ha="center", va="center", rotation=90)
+    page.text(PAGE_W - 6, PAGE_H / 2, PAPER_LINK_NOTE, fontsize=6,
+              color="#666666", ha="center", va="center", rotation=270,
+              url=PAPER_URL)
     return _save(fig, "pdf")
+
+
+def _cell(row, col):
+    """Avery 28371 cell origin (mm, bottom-left), row 0 at the page top."""
+    return (SHEET_X0 + col * CARD_W,
+            PAGE_H - SHEET_Y0 - (row + 1) * CARD_H)
 
 
 def render_single_pdf(side, seed, theme, hue, authors, donations, run_hash,
                       chaos=None, mods=None):
-    # Top-left of the printable area; the back mirrors to top-right so the
-    # two sides land on each other under long-edge duplex.
-    margin = 12.0
-    x = margin if side == "front" else A4_W - CARD_W - margin
-    cells = [(x, A4_H - CARD_H - margin)]
-    return _page(cells, side, lambda i: seed, theme, hue, authors, donations,
-                 run_hash, _merge_mods(mods, chaos))
+    # The top-left Avery cell, so a single card prints onto the same stock;
+    # the back mirrors to the other column for long-edge duplex.
+    col = 0 if side == "front" else SHEET_COLS - 1
+    return _page([_cell(0, col)], side, lambda i: seed, theme, hue, authors,
+                 donations, run_hash, _merge_mods(mods, chaos))
 
 
 def render_sheet_pdf(side, seed, theme, hue, authors, donations, run_hash,
                      chaos=None, mods=None):
-    """8-up imposition. Back pages mirror columns for long-edge duplex."""
-    gap = 6.0
-    grid_w = 2 * CARD_W + gap
-    grid_h = 4 * CARD_H + 3 * gap
-    x0, y0 = (A4_W - grid_w) / 2, (A4_H - grid_h) / 2
+    """Full Avery 28371 imposition (10-up). Back pages mirror columns for
+    long-edge duplex."""
     cells, seeds = [], []
-    for row in range(4):
-        for col in range(2):
-            draw_col = (1 - col) if side == "back" else col
-            cells.append((x0 + draw_col * (CARD_W + gap),
-                          y0 + (3 - row) * (CARD_H + gap)))
-            seeds.append(seed + row * 2 + col)
+    for row in range(SHEET_ROWS):
+        for col in range(SHEET_COLS):
+            draw_col = (SHEET_COLS - 1 - col) if side == "back" else col
+            cells.append(_cell(row, draw_col))
+            seeds.append(seed + row * SHEET_COLS + col)
     return _page(cells, side, lambda i: seeds[i], theme, hue, authors,
                  donations, run_hash, _merge_mods(mods, chaos))

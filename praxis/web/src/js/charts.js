@@ -1155,7 +1155,10 @@ function measureDeck(deck) {
         // staircase down the floor, instead of ragged edges set by each card's
         // content. (Desktop keeps natural height: it grows the deck and peeks
         // upward, so even bottoms don't apply there.)
-        const pin = mobile ? capH : (h > usableH ? usableH : 0);
+        // deck-compact cards (the business card) keep their natural height
+        // everywhere: forcing them to the slot stretches them vertically.
+        const compact = c.classList.contains('deck-compact');
+        const pin = compact ? 0 : (mobile ? capH : (h > usableH ? usableH : 0));
         if (pin) {
             // Mobile forces an exact slot height (even fan bottoms); desktop
             // only caps an overflowing card (max-height), leaving natural height.
@@ -1170,7 +1173,8 @@ function measureDeck(deck) {
             }
         }
         // _capped cards are re-sized per-frame by renderDeck (per-card slot).
-        c._capped = mobile || h > usableH;
+        c._capped = !compact && (mobile || h > usableH);
+        if (compact) return Math.min(h, usableH);
         return mobile ? capH : Math.min(h, usableH);
     });
     deck._usableH = usableH;

@@ -110,8 +110,9 @@ cardstock to buy and points at Amazon for pre-perforated 85 x 55 sheets.
 
 ## Open questions
 
-- 85 x 55 vs US 88.9 x 50.8: going EU for the clean 8-up A4 fit; revisit if a
-  US Letter template is requested.
+- ~~85 x 55 vs US 88.9 x 50.8~~: resolved the other way - canonical is now US
+  3.5 x 2 in on Letter, 10-up on the Avery 28371 grid, with the product link
+  in the PDF margin ("buy this one"). EU/A4 deferred until someone asks.
 - Whether per-run data (param counts, loss curves) should eventually modulate
   the geometry, making each card a fingerprint of a training run. Tempting,
   deferred.

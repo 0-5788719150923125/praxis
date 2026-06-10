@@ -346,7 +346,7 @@ function renderSpec(data, container) {
             if (!inner || !inner.trim()) return '';
             // Bare sheets render their own chrome (the business card IS the card).
             if (sheet.bare) {
-                return `<div class="chart-card biz-card-sheet">${inner}</div>`;
+                return `<div class="chart-card biz-card-sheet deck-compact">${inner}</div>`;
             }
             // Copyable sheets get a pinned copy button in the card chrome (above
             // the scroll) so it stays put while the JSON scrolls beneath it.
@@ -387,17 +387,29 @@ function renderBusinessCard() {
     state.spec.cardSide = state.spec.cardSide || 'front';
     return `<div class="biz-card">
         <div class="biz-card-frame">
-            <span class="biz-card-badge">Business Card</span>
             <img class="biz-card-img" src="/api/card/preview.svg?${cardQuery(state.spec.cardSide)}"
-                alt="Business card ${state.spec.cardSide}">
-        </div>
-        <div class="biz-card-actions">
-            <button class="tab-header-button" id="biz-card-flip" type="button">Flip</button>
-            <button class="tab-header-button" id="biz-card-reroll" type="button">Reroll</button>
-            <button class="tab-header-button" id="biz-card-download" type="button">Download</button>
-            <button class="tab-header-button" id="biz-card-download-8" type="button">Download 8</button>
+                alt="Business card ${state.spec.cardSide}" title="Click to flip">
+            <div class="biz-card-actions">
+                <button class="biz-btn" id="biz-card-flip" type="button">Flip</button>
+                <button class="biz-btn" id="biz-card-reroll" type="button">Reroll</button>
+                <button class="biz-btn" id="biz-card-download" type="button">Download</button>
+                <button class="biz-btn" id="biz-card-download-8" type="button">Download 10</button>
+            </div>
         </div>
     </div>`;
+}
+
+// Re-render the preview when the live theme or accent changes (dark toggle,
+// LOGS button): cardQuery reads both at request time, so a refresh is enough.
+let bizCardRefresh = null;
+let bizCardThemeObserver = null;
+
+function watchThemeForBizCard() {
+    if (bizCardThemeObserver) return;
+    bizCardThemeObserver = new MutationObserver(() => bizCardRefresh?.());
+    bizCardThemeObserver.observe(document.documentElement, {
+        attributes: true, attributeFilter: ['data-theme', 'data-accent'],
+    });
 }
 
 function wireBusinessCard(container) {
@@ -410,6 +422,8 @@ function wireBusinessCard(container) {
         img.addEventListener('error', done, { once: true });
         img.src = `/api/card/preview.svg?${cardQuery(state.spec.cardSide)}`;
     };
+    bizCardRefresh = refresh;
+    watchThemeForBizCard();
     const dl = (path) => {
         const a = document.createElement('a');
         a.href = `${path}?${cardQuery(state.spec.cardSide)}`;
@@ -418,10 +432,12 @@ function wireBusinessCard(container) {
         a.click();
         a.remove();
     };
-    container.querySelector('#biz-card-flip')?.addEventListener('click', () => {
+    const flip = () => {
         state.spec.cardSide = state.spec.cardSide === 'front' ? 'back' : 'front';
         refresh();
-    });
+    };
+    container.querySelector('#biz-card-flip')?.addEventListener('click', flip);
+    container.querySelector('.biz-card-img')?.addEventListener('click', flip);
     container.querySelector('#biz-card-reroll')?.addEventListener('click', () => {
         state.spec.cardSeed = Math.floor(Math.random() * 2 ** 31);
         refresh();

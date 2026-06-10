@@ -76,7 +76,7 @@ def test_zip_routes(client):
     for path, names in [
         ("/api/card/cards.zip", {"praxis-card-front.pdf", "praxis-card-back.pdf"}),
         ("/api/card/sheets.zip",
-         {"praxis-cards-8up-front.pdf", "praxis-cards-8up-back.pdf"}),
+         {"praxis-cards-10up-front.pdf", "praxis-cards-10up-back.pdf"}),
     ]:
         resp = client.get(f"{path}?seed=5")
         assert resp.status_code == 200
@@ -89,7 +89,7 @@ def test_zip_routes(client):
 def test_pdf_routes(client):
     for path, name in [
         ("/api/card/card.pdf", "praxis-card-back.pdf"),
-        ("/api/card/sheet.pdf", "praxis-cards-8up-back.pdf"),
+        ("/api/card/sheet.pdf", "praxis-cards-10up-back.pdf"),
     ]:
         resp = client.get(f"{path}?seed=5&side=back")
         assert resp.status_code == 200
