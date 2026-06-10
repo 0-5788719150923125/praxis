@@ -1243,112 +1243,6 @@ def leaf_field(ax, rng, pal, mods):
         )
 
 
-def _noise2(rng, gx=5, gy=4):
-    """Smooth 2D value noise over the card, as a callable (x, y) -> value."""
-    g = rng.standard_normal((gy + 1, gx + 1))
-
-    def f(x, y):
-        u = np.clip(np.asarray(x) / CARD_W, 0, 1) * gx
-        v = np.clip(np.asarray(y) / CARD_H, 0, 1) * gy
-        i0 = np.minimum(np.floor(u).astype(int), gx - 1)
-        j0 = np.minimum(np.floor(v).astype(int), gy - 1)
-        fu, fv = u - i0, v - j0
-        fu = fu * fu * (3 - 2 * fu)
-        fv = fv * fv * (3 - 2 * fv)
-        return (
-            g[j0, i0] * (1 - fu) * (1 - fv)
-            + g[j0, i0 + 1] * fu * (1 - fv)
-            + g[j0 + 1, i0] * (1 - fu) * fv
-            + g[j0 + 1, i0 + 1] * fu * fv
-        )
-
-    return f
-
-
-def chimera_field(ax, rng, pal, mods):
-    """TWO styles sharing one card as discrete territories: pool candidate
-    samples of the other fields, vote (counts become dominance), render
-    both winners, then keep each stroke only where its style's organic
-    noise mask wins. The boundary is a hard fbm contour, so each region
-    reads as a pure, unmixed sample of its style; only high chaos
-    occasionally earns a narrow seam where the two interleave."""
-    names = [n for n in PROJECTION_REGISTRY if n != "chimera"]
-    if not names:  # nothing to blend (e.g. a stripped-down registry)
-        return
-    # Candidate pooling + vote: 5 draws, counts weight the winners.
-    votes = np.bincount(rng.integers(0, len(names), size=5), minlength=len(names))
-    chosen = [int(i) for i in np.argsort(-votes) if votes[i] > 0][:2]
-    if len(chosen) < 2 and len(names) > 1:
-        # Unanimous vote still pairs with one dissenter.
-        extra = int(rng.integers(0, len(names)))
-        while extra in chosen:
-            extra = int(rng.integers(0, len(names)))
-        chosen.append(extra)
-
-    chaos = mods["chaos"]
-    sharp = 8.0  # near-argmax weights: territories, not gradients
-    # Pure discreteness by default; only high chaos sometimes opens a
-    # narrow seam where both styles survive.
-    margin = 0.18 * chaos if rng.random() < 0.1 + 0.3 * chaos else 0.0
-    # Few, large noise cells: coherent territories instead of confetti.
-    masks = [_noise2(rng, gx=3, gy=2) for _ in chosen]
-    bias = 0.5 * np.log1p(votes[chosen])  # pooled votes bias dominance
-
-    def weights(x, y):
-        m = np.stack([bias[k] + masks[k](x, y) for k in range(len(chosen))])
-        e = np.exp(sharp * (m - m.max(axis=0, keepdims=True)))
-        return e / e.sum(axis=0, keepdims=True)
-
-    styled = []  # (style index, artist)
-    for k, ci in enumerate(chosen):
-        n_lines, n_patches = len(ax.lines), len(ax.patches)
-        sub = np.random.default_rng(int(rng.integers(2**62)))
-        PROJECTION_REGISTRY[names[ci]](ax, sub, pal, dict(mods))
-        styled += [(k, a) for a in list(ax.lines)[n_lines:]]
-        styled += [(k, a) for a in list(ax.patches)[n_patches:]]
-
-    from matplotlib.lines import Line2D
-
-    for k, artist in styled:
-        if not isinstance(artist, Line2D):
-            # Filled shapes live or die whole - no fading; a kept shape
-            # looks exactly as its pure style would draw it.
-            verts = artist.get_xy()
-            if float(np.mean(weights(verts[:, 0], verts[:, 1])[k])) < 0.5:
-                artist.remove()
-            continue
-        x, y = np.asarray(artist.get_xdata()), np.asarray(artist.get_ydata())
-        if len(x) < 2:
-            continue
-        w = weights(x, y)
-        keep = w[k] >= w.max(axis=0) - margin
-        if keep.all():
-            continue
-        idx = np.where(keep)[0]
-        runs = [
-            r for r in np.split(idx, np.where(np.diff(idx) > 1)[0] + 1) if len(r) > 1
-        ]
-        color, lw, z, gid = (
-            artist.get_color(),
-            artist.get_linewidth(),
-            artist.get_zorder(),
-            artist.get_gid(),
-        )
-        artist.remove()
-        for r in runs:
-            # Full width to the cut: strokes stop at the territory line
-            # instead of dissolving, keeping each side's look intact.
-            (line,) = ax.plot(
-                x[r[0] : r[-1] + 1],
-                y[r[0] : r[-1] + 1],
-                color=color,
-                lw=lw,
-                zorder=z,
-            )
-            if gid:
-                line.set_gid(gid)
-
-
 PROJECTION_REGISTRY = {
     "strands": strand_field,
     "shatter": shatter_field,
@@ -1365,7 +1259,6 @@ PROJECTION_REGISTRY = {
     "matrix": matrix_field,
     "helix": helix_field,
     "leaves": leaf_field,
-    "chimera": chimera_field,
 }
 
 

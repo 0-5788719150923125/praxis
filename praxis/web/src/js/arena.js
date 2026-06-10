@@ -578,11 +578,33 @@ class Creature {
         this.a += this.va * dt;
         this.b += this.vb * dt;
 
-        if (this.a < EDGE) { this.a = EDGE; this.hitEdge('a0'); }
-        else if (this.a > S.A - EDGE) { this.a = S.A - EDGE; this.hitEdge('a1'); }
-        if (this.b < EDGE) { this.b = EDGE; this.hitEdge('b0'); }
-        else if (this.b > SURFACES[this.surface].B - EDGE) {
-            this.b = SURFACES[this.surface].B - EDGE; this.hitEdge('b1');
+        if (this.enclosure > 0.3 || this.surface !== 'floor') {
+            if (this.a < EDGE) { this.a = EDGE; this.hitEdge('a0'); }
+            else if (this.a > S.A - EDGE) { this.a = S.A - EDGE; this.hitEdge('a1'); }
+            if (this.b < EDGE) { this.b = EDGE; this.hitEdge('b0'); }
+            else if (this.b > SURFACES[this.surface].B - EDGE) {
+                this.b = SURFACES[this.surface].B - EDGE; this.hitEdge('b1');
+            }
+        } else {
+            // Open world: no walls to hit. The land rises at the rim and
+            // the creature is gently steered home - it wanders back over
+            // the berm instead of bouncing off glass nobody can see.
+            const M = 1.0;
+            const push = 4.5;
+            if (this.a < M) this.va += (M - this.a) * push * dt;
+            if (this.a > S.A - M) this.va -= (this.a - (S.A - M)) * push * dt;
+            if (this.b < M) this.vb += (M - this.b) * push * dt;
+            if (this.b > S.B - M) this.vb -= (this.b - (S.B - M)) * push * dt;
+            // Failsafe rail well off-stage.
+            this.a = Math.min(S.A + 0.6, Math.max(-0.6, this.a));
+            this.b = Math.min(S.B + 0.6, Math.max(-0.6, this.b));
+            // A runner aimed off-stage picks a new target inside.
+            if (this.state === 'run'
+                && (this.ta < 0 || this.ta > S.A || this.tb < 0 || this.tb > S.B)
+                && (this.a < M || this.a > S.A - M || this.b < M || this.b > S.B - M)) {
+                this.ta = S.A * (0.15 + 0.7 * this.live());
+                this.tb = S.B * (0.15 + 0.7 * this.live());
+            }
         }
 
         // Solid trunks: trees push the body out and around, never through.
@@ -1077,6 +1099,18 @@ function buildTerrain(rng, hab) {
             r: 0.5 + rng() * 1.2, al: 0.02 + rng() * 0.05,
         })),
         shell: f.shell,
+        // Open worlds: ground swells into a berm at the old boundary and
+        // rolls off in ridgelines - no edge, just rising land.
+        rim: (1 - Math.min(1, f.shell)) * (0.2 + rng() * 0.45),
+        ridges: Math.min(1, f.shell) < 0.3
+            ? Array.from({ length: 1 + n(1.2) }, () => ({
+                z: ROOM_D * (0.95 + rng() * 0.4),
+                amp: 0.25 + rng() * 0.55,
+                waves: 1 + Math.floor(rng() * 3),
+                ph: rng() * Math.PI * 2,
+                jag: Array.from({ length: 11 }, () => (rng() - 0.5) * 0.4),
+            }))
+            : [],
         // Machinery: angled girders and braced pylons.
         beams: Array.from({ length: n(f.beams) }, () => ({
             x0: ROOM_W * rng(), x1: ROOM_W * rng(),
@@ -1141,6 +1175,13 @@ function groundHeight(terrain, a, b) {
         const band = Math.exp(-((b - hl.z) ** 2) / 0.5);
         g = Math.max(g, hl.amp * ridge * band);
     }
+    if (terrain.rim > 0.05) {
+        const dEdge = Math.min(a, b, ROOM_W - a, ROOM_D - b);
+        if (dEdge < 1.6) {
+            const r2 = Math.min(1.3, 1 - dEdge / 1.6);
+            g += terrain.rim * r2 * r2;
+        }
+    }
     return g;
 }
 
@@ -1178,11 +1219,13 @@ function envItems(hab, salt, ink, P, terrain, colors, t) {
     // fade in only as the habitat leans glass-tank. Open-world arenas
     // keep a whisper of the floor edge and nothing else.
     const sh = Math.min(1, terrain.shell);
-    const floorA = 0.12 + 0.33 * sh;
-    seg3(0, 0, 0, ROOM_W, 0, 0, 'fl-near', floorA, 1.0);
-    seg3(0, 0, ROOM_D, ROOM_W, 0, ROOM_D, 'fl-far', floorA * 0.7, 0.8);
-    seg3(0, 0, 0, 0, 0, ROOM_D, 'fl-left', floorA * 0.7, 0.8);
-    seg3(ROOM_W, 0, 0, ROOM_W, 0, ROOM_D, 'fl-right', floorA * 0.7, 0.8);
+    if (sh > 0.25) {
+        const floorA = 0.12 + 0.33 * sh;
+        seg3(0, 0, 0, ROOM_W, 0, 0, 'fl-near', floorA, 1.0);
+        seg3(0, 0, ROOM_D, ROOM_W, 0, ROOM_D, 'fl-far', floorA * 0.7, 0.8);
+        seg3(0, 0, 0, 0, 0, ROOM_D, 'fl-left', floorA * 0.7, 0.8);
+        seg3(ROOM_W, 0, 0, ROOM_W, 0, ROOM_D, 'fl-right', floorA * 0.7, 0.8);
+    }
     if (sh > 0.15) {
         seg3(0, ROOM_H, ROOM_D, ROOM_W, ROOM_H, ROOM_D, 'ce-far', 0.22 * sh, 0.8);
         seg3(0, ROOM_H, 0, ROOM_W, ROOM_H, 0, 'ce-near', 0.16 * sh, 0.7);
@@ -1478,6 +1521,27 @@ function envItems(hab, salt, ink, P, terrain, colors, t) {
             },
         });
     });
+    // Rolling ridgelines where a far edge would have been.
+    terrain.ridges.forEach((rd, i) => {
+        items.push({
+            z: rd.z,
+            draw: (ctx) => {
+                ctx.globalAlpha = 0.18 * hab.cohesion;
+                let prev = null;
+                for (let k = 0; k < rd.jag.length; k++) {
+                    const fr = k / (rd.jag.length - 1);
+                    const x = ROOM_W * (fr * 1.5 - 0.25);
+                    const y = Math.max(0.02,
+                        rd.amp * (Math.sin(fr * Math.PI * rd.waves + rd.ph) * 0.5 + 0.5)
+                        * (1 + rd.jag[k]));
+                    const pt = P(x, y, rd.z);
+                    if (prev) ink.bone(ctx, prev, pt, `ridge${i}-${k}`, 1.0);
+                    prev = pt;
+                }
+            },
+        });
+    });
+
     // A treeline past the bounds: the world does not end at the pen.
     if (terrain.treeline) {
         const tl = terrain.treeline;
