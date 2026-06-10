@@ -49,18 +49,37 @@ function mulberry32(seed) {
     };
 }
 
-/* A latent genome through a random two-layer tanh net: every trait is a
-   non-linear projection of the same hidden state, so traits co-vary. */
-function genome(rng, latentDim = 6, hiddenDim = 10) {
-    const z = Array.from({ length: latentDim }, () => rng() * 2 - 1);
-    const hidden = Array.from({ length: hiddenDim }, () => {
-        let s = (rng() * 2 - 1) * 0.5;
-        for (const zi of z) s += (rng() * 2 - 1) * zi;
-        return Math.tanh(s * 1.2);
+/* Population genetics, not a single genome: seed a pool of latent
+   genomes, draw a handful of parents, and blend PER TRAIT - every trait
+   samples its own mixture of the parents through a shared random tanh
+   encoder. The hybrid inherits coordinates no single parent occupied,
+   and traits still co-vary through the shared hidden space. */
+function genome(rng, latentDim = 6, hiddenDim = 10, poolSize = 100, parents = 10) {
+    const pool = Array.from({ length: poolSize }, () =>
+        Array.from({ length: latentDim }, () => rng() * 2 - 1));
+    // Shared encoder: one set of random weights for the whole population.
+    const W1 = Array.from({ length: hiddenDim }, () =>
+        Array.from({ length: latentDim }, () => rng() * 2 - 1));
+    const b1 = Array.from({ length: hiddenDim }, () => (rng() * 2 - 1) * 0.5);
+    // Candidates: a sampled subset of the pool become this creature's parents.
+    const hs = Array.from({ length: parents }, () => {
+        const z = pool[Math.floor(rng() * poolSize)];
+        return W1.map((row, j) => {
+            let s = b1[j];
+            for (let i = 0; i < latentDim; i++) s += row[i] * z[i];
+            return Math.tanh(s * 1.2);
+        });
     });
     return () => {
+        // Per-trait mixture over the parents: softmax of seeded noise.
+        const wts = hs.map(() => Math.exp((rng() * 2 - 1) * 2));
+        const wSum = wts.reduce((a2, b2) => a2 + b2, 0);
         let s = (rng() * 2 - 1) * 0.4;
-        for (const hi of hidden) s += (rng() * 2 - 1) * hi;
+        for (let j = 0; j < hiddenDim; j++) {
+            let hb = 0;
+            for (let i = 0; i < hs.length; i++) hb += hs[i][j] * wts[i] / wSum;
+            s += (rng() * 2 - 1) * hb;
+        }
         return Math.tanh(s) * 0.5 + 0.5;
     };
 }
@@ -94,6 +113,14 @@ function sampleMorphology(rng) {
         neck: u(1.1, 2.0),
         headSize: u(0.4, 0.72),
         stance: u(0.28, 0.5),
+        // Eyes - level with the gripped plane, several layouts.
+        eyeCount: 1 + Math.floor(t() * 3.999),  // 1..4 across the brow
+        eyeSpread: u(0.35, 0.95),
+        eyeSize: u(0.10, 0.26),
+        stalky: t(),                  // > 0.6: eyes ride short stalks
+        // Head dynamics.
+        gazey: t(),                   // how far the head swivels to look
+        pecky: u(0.02, 0.14),         // rate of head-dips to the ground (eat)
         // Locomotion archetype dials - corners of this space read as
         // spider / centipede / frog / lizard / snake.
         waveK: u(0.25, Math.PI),      // gait phase per leg: ripple .. alternate
@@ -201,12 +228,12 @@ class Creature {
             w2: 0.05 + this.rng() * 0.6, p2: this.rng() * Math.PI * 2,
         }));
         this.weights = {};
-        for (const c of ['energy', 'buoy', 'tempo', 'swayA', 'swayB']) {
+        for (const c of ['energy', 'buoy', 'tempo', 'swayA', 'swayB', 'gaze']) {
             this.weights[c] = Array.from(
                 { length: N }, () => ((this.rng() * 2 - 1) * 2.2) / Math.sqrt(N),
             );
         }
-        this.ch = { energy: 0, buoy: 0, tempo: 0, swayA: 0, swayB: 0 };
+        this.ch = { energy: 0, buoy: 0, tempo: 0, swayA: 0, swayB: 0, gaze: 0 };
 
         this.surface = 'floor';
         this.a = ROOM_W * (0.25 + 0.5 * this.rng());
@@ -237,6 +264,9 @@ class Creature {
             x: w0.x - (i + 1) * 0.1, y: w0.y, z: w0.z, vx: 0, vy: 0, vz: 0,
         }));
         this.headM = { ...w0, vx: 0, vy: 0, vz: 0 };
+        this.headYaw = 0;     // looking around, relative to heading
+        this.peck = 0;        // 0..1 head-dip envelope (eating)
+        this.peckCool = 2;
 
         // Legs distributed along the spine (driver = segment -1, then the
         // chain), mirrored pairs, each with its own planted foot.
@@ -503,11 +533,29 @@ class Creature {
             prevDirA = da; prevDirB = db;
         }
 
-        // Head follower rides the nose.
-        const ha = Math.cos(this.heading), hb = Math.sin(this.heading);
-        const nose = toWorld(S, this.a + ha * bodyR * p.neck * p.elong,
-            this.b + hb * bodyR * p.neck * p.elong,
-            this.h + 0.12 * s * (1 - this.lie));
+        // Head dynamics: the gaze voter swivels the head (wide when idle,
+        // a lead-glance when running), and idle heads sometimes dip to the
+        // ground - pecking at something only they can see.
+        const yawMax = p.gazey * (this.state === 'idle' ? 0.9 : 0.3);
+        this.headYaw += (this.ch.gaze * yawMax - this.headYaw) * Math.min(1, 4 * dt);
+        this.peckCool -= dt;
+        if (this.peck > 0) {
+            this.peck = Math.max(0, this.peck - dt / 0.9);
+        } else if (this.state === 'idle' && this.peckCool <= 0
+            && this.live() < p.pecky) {
+            this.peck = 1;
+            this.peckCool = 1.5 + this.expo(3.0);
+        }
+        const peckDip = this.peck > 0 ? Math.sin(Math.PI * this.peck) : 0;
+
+        // Head follower rides the nose, swiveled by the yaw, dipped by
+        // the peck.
+        const face = this.heading + this.headYaw;
+        const fa2 = Math.cos(face), fb2 = Math.sin(face);
+        const nose = toWorld(S,
+            this.a + fa2 * bodyR * p.neck * p.elong * (1 + 0.25 * peckDip),
+            this.b + fb2 * bodyR * p.neck * p.elong * (1 + 0.25 * peckDip),
+            Math.max(0.04, this.h + 0.12 * s * (1 - this.lie) - peckDip * this.h * 0.85));
         this.follow(this.headM, nose, kF, dF, dt);
 
         // ---- feet: planted until the rest pose drifts, then an
@@ -608,18 +656,38 @@ class Creature {
         J.body = toWorld(S, this.a, this.b, bodyH);
         J.chain = this.chain.map(seg => ({ x: seg.x, y: seg.y, z: seg.z }));
 
-        const px = -hb, pb2 = ha;
+        // Everything about the head is built in the SURFACE plane: facing
+        // and brow vectors live in world space, so shells and eye rows
+        // foreshorten with the floor (or wall) instead of facing the canvas.
+        const face = this.heading + this.headYaw;
+        const o0 = toWorld(S, 0, 0, 0);
+        const sub = (w) => ({ x: w.x - o0.x, y: w.y - o0.y, z: w.z - o0.z });
+        J.fwd = sub(toWorld(S, ha, hb, 0));                 // body facing
+        J.faceW = sub(toWorld(S, Math.cos(face), Math.sin(face), 0));
+        J.browW = sub(toWorld(S, -Math.sin(face), Math.cos(face), 0));
+        J.perpW = sub(toWorld(S, -hb, ha, 0));
+        J.upW = { x: S.n[0], y: S.n[1], z: S.n[2] };
+
+        const add = (w, v, k2) => ({ x: w.x + v.x * k2, y: w.y + v.y * k2, z: w.z + v.z * k2 });
         J.heads = [];
         const off = p.heads === 2 ? bodyR * 0.55 : 0;
+        const headR = bodyR * p.headSize * 2.2;
         for (let i = 0; i < p.heads; i++) {
             const sgn = p.heads === 2 ? (i === 0 ? 1 : -1) : 0;
-            const d = toWorld(S, sgn * px * off, sgn * pb2 * off, 0);
-            const o0 = toWorld(S, 0, 0, 0);
-            J.heads.push({
-                x: this.headM.x + (d.x - o0.x),
-                y: this.headM.y + (d.y - o0.y),
-                z: this.headM.z + (d.z - o0.z),
-            });
+            const pos = add(this.headM, J.perpW, sgn * off);
+            // Eyes: a row across the brow, on the upper-front of the head,
+            // level with the gripped plane. Stalky morphs lift them off.
+            const stalk = p.stalky > 0.6 ? (p.stalky - 0.6) * headR * 2.2 : 0;
+            const eyes = [];
+            for (let e = 0; e < p.eyeCount; e++) {
+                const lat = p.eyeCount === 1 ? 0
+                    : (e / (p.eyeCount - 1) - 0.5) * 2 * p.eyeSpread * headR;
+                let ep = add(pos, J.faceW, headR * 0.55);
+                ep = add(ep, J.browW, lat);
+                ep = add(ep, J.upW, headR * 0.35 + stalk);
+                eyes.push({ pos: ep, r: headR * p.eyeSize * (1 + 0.4 * (e % 2 === 0 ? 0 : -0.3)) });
+            }
+            J.heads.push({ pos, eyes, stalk, headR });
         }
 
         const grounded = this.h < p.stance * s * 1.3;
@@ -1122,10 +1190,12 @@ class Arena {
         };
     }
 
-    shell(ctx, inker, center, axis, major, minor, key, n = 16) {
+    /* A body shell spanned by two screen-space basis vectors (the
+       projections of world-plane axes), so it foreshortens with the
+       surface the creature grips instead of facing the canvas. */
+    shell(ctx, inker, center, vMaj, vMin, key, n = 16) {
         const p = this.creature.p;
         const pe = 2 + 6 * p.square;
-        const ca = Math.cos(axis), sa = Math.sin(axis);
         const pts = [];
         for (let i = 0; i < n; i++) {
             const th = (i / n) * Math.PI * 2;
@@ -1134,9 +1204,11 @@ class Arena {
                 Math.pow(Math.abs(ct), pe) + Math.pow(Math.abs(st), pe), 1 / pe);
             const teeth = Math.tanh(5 * Math.sin(th * 7 + this.flair)) * 0.07 * p.mech;
             const waver = Math.sin(th * 3 + this.flair * 2) * 0.08 * (1 - p.mech);
-            const m = 1 + teeth + waver;
-            const ex = ct * r * major * m, ey = st * r * minor * m;
-            pts.push({ x: center.x + ex * ca - ey * sa, y: center.y + ex * sa + ey * ca });
+            const m = r * (1 + teeth + waver);
+            pts.push({
+                x: center.x + ct * m * vMaj.x + st * m * vMin.x,
+                y: center.y + ct * m * vMaj.y + st * m * vMin.y,
+            });
         }
         inker.loop(ctx, pts, key, 1.1);
     }
@@ -1169,7 +1241,7 @@ class Arena {
         };
 
         const body = chase('body', J.body);
-        const heads = J.heads.map((hd, i) => chase('head' + i, hd));
+        const heads = J.heads.map((hd, i) => chase('head' + i, hd.pos));
         const legs = J.legs.map((leg, i) => ({
             joints: leg.joints.map((j, k2) => chase(`leg${i}-${k2}`, j)),
             toe: leg.toe,
@@ -1212,62 +1284,113 @@ class Arena {
         }
         ctx.globalAlpha = 1;
 
-        // Spine shells, tail-first so nearer segments overdraw.
-        const pHead0 = this.project(heads[0]);
-        const u = pBody.d * 0.32 * p.scale * p.chunk;
+        // Screen-space basis of a world direction at a point: project the
+        // point and a point one unit along the direction, take the delta.
+        const basis = (w, dir, len) => {
+            const a2 = this.project(w);
+            const b2 = this.project({ x: w.x + dir.x * len, y: w.y + dir.y * len, z: w.z + dir.z * len });
+            return { x: b2.x - a2.x, y: b2.y - a2.y };
+        };
+        const cross = (n, d) => ({
+            x: n[1] * d.z - n[2] * d.y,
+            y: n[2] * d.x - n[0] * d.z,
+            z: n[0] * d.y - n[1] * d.x,
+        });
+        const S = SURFACES[c.surface];
+        const rW = 0.32 * p.scale * p.chunk;   // body radius, world units
+
+        // Spine shells, tail-first so nearer segments overdraw - each
+        // spanned by its own in-plane direction so it lies on the surface.
         const chainP = J.chain.map(s => this.project(s));
-        const axisOf = (a, b2) => Math.atan2(a.y - b2.y, a.x - b2.x);
         ctx.lineWidth = lw(1.7);
-        for (let i = chainP.length - 1; i >= 0; i--) {
-            const ahead = i === 0 ? pBody : chainP[i - 1];
-            const axis = axisOf(ahead, chainP[i]);
-            const shrink = 1 - p.taper * ((i + 1) / (chainP.length + 1));
-            const last = i === chainP.length - 1;
-            const size = u * shrink * (last ? 0.9 + 0.7 * p.tail : 1);
-            this.shell(ctx, inker, chainP[i], axis, size * (1 + (p.elong - 1) * 0.3), size * 0.8, 'sh-c' + i, 12);
-            inker.bone(ctx, chainP[i], ahead, 'sp-c' + i, 0.9);
+        for (let i = J.chain.length - 1; i >= 0; i--) {
+            const aheadW = i === 0 ? body : J.chain[i - 1];
+            const seg = J.chain[i];
+            let dir = { x: aheadW.x - seg.x, y: aheadW.y - seg.y, z: aheadW.z - seg.z };
+            const dl = Math.hypot(dir.x, dir.y, dir.z) || 1;
+            dir = { x: dir.x / dl, y: dir.y / dl, z: dir.z / dl };
+            const side = cross(S.n, dir);
+            const shrink = 1 - p.taper * ((i + 1) / (J.chain.length + 1));
+            const last = i === J.chain.length - 1;
+            const size = rW * shrink * (last ? 0.9 + 0.7 * p.tail : 1);
+            this.shell(ctx, inker, chainP[i],
+                basis(seg, dir, size * (1 + (p.elong - 1) * 0.3)),
+                basis(seg, side, size * 0.8), 'sh-c' + i, 12);
+            const aheadP = i === 0 ? pBody : chainP[i - 1];
+            inker.bone(ctx, chainP[i], aheadP, 'sp-c' + i, 0.9);
         }
 
-        const axis = Math.atan2(pHead0.y - pBody.y, pHead0.x - pBody.x);
+        // Thorax, spanned by the body's facing and side vectors in-plane.
         ctx.lineWidth = lw(1.8);
-        this.shell(ctx, inker, pBody, axis, u * p.elong, u * 0.8, 'sh-body', 16);
+        this.shell(ctx, inker, pBody,
+            basis(body, J.fwd, rW * p.elong),
+            basis(body, J.perpW, rW * 0.8), 'sh-body', 16);
 
         if (p.mech > 0.5) {
             ctx.globalAlpha = 0.5;
             ctx.lineWidth = lw(1.2);
-            this.gear(ctx, inker, pBody, u * 0.45, 'gear');
+            this.gear(ctx, inker, pBody, pBody.d * rW * 0.45, 'gear');
             ctx.globalAlpha = 1;
         }
 
+        // Heads: shells, feelers, and eye rows all built on the head's
+        // facing/brow vectors - level with the gripped plane, swiveling
+        // with the gaze and dipping with the peck.
         ctx.lineWidth = lw(1.6);
-        for (let i = 0; i < heads.length; i++) {
-            const ph = this.project(heads[i]);
-            const hr = u * p.headSize;
-            this.shell(ctx, inker, ph, axis, hr, hr * 0.85, 'sh-head' + i, 10);
+        for (let i = 0; i < J.heads.length; i++) {
+            const head = J.heads[i];
+            const hw = heads[i];
+            const ph = this.project(hw);
+            const hr = head.headR;
+            this.shell(ctx, inker, ph,
+                basis(hw, J.faceW, hr),
+                basis(hw, J.browW, hr * 0.85), 'sh-head' + i, 10);
             inker.bone(ctx, pBody, ph, 'sp-2-' + i, 0.8);
 
-            const fwd = { x: ph.x - pBody.x, y: ph.y - pBody.y };
-            const fl = Math.hypot(fwd.x, fwd.y) || 1;
             ctx.lineWidth = lw(1.1);
             for (const sgn of [-1, 1]) {
-                const tip = {
-                    x: ph.x + (fwd.x / fl) * hr * 1.6 - (fwd.y / fl) * sgn * hr * 0.7,
-                    y: ph.y + (fwd.y / fl) * hr * 1.6 + (fwd.x / fl) * sgn * hr * 0.7
+                const tipW = {
+                    x: hw.x + J.faceW.x * hr * 1.6 + J.browW.x * sgn * hr * 0.7,
+                    y: hw.y + J.faceW.y * hr * 1.6 + J.browW.y * sgn * hr * 0.7
                         + Math.sin(this.t * 6 + sgn + i) * hr * 0.15,
+                    z: hw.z + J.faceW.z * hr * 1.6 + J.browW.z * sgn * hr * 0.7,
                 };
-                inker.bone(ctx, ph, tip, `feel${i}${sgn}`, 0.8);
+                inker.bone(ctx, ph, this.project(tipW), `feel${i}${sgn}`, 0.8);
+            }
+
+            // Eyes - stalked morphs get a little stem first; mechanical
+            // morphs get lens rings, organic morphs get filled dots.
+            ctx.lineWidth = lw(1.0);
+            for (let e = 0; e < head.eyes.length; e++) {
+                const eye = head.eyes[e];
+                // Eyes ride the chased head: offset by the ink spring's lag.
+                const pe2 = this.project({
+                    x: eye.pos.x + (hw.x - head.pos.x),
+                    y: eye.pos.y + (hw.y - head.pos.y),
+                    z: eye.pos.z + (hw.z - head.pos.z),
+                });
+                if (head.stalk > 0) {
+                    inker.bone(ctx, ph, pe2, `stalk${i}-${e}`, 0.6);
+                }
+                const rPx = Math.max(1.1, eye.r * pe2.d);
+                if (p.mech > 0.55) {
+                    ctx.strokeStyle = this.colors.accent;
+                    ctx.beginPath();
+                    ctx.arc(pe2.x, pe2.y, rPx, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.fillStyle = this.colors.accent;
+                    ctx.beginPath();
+                    ctx.arc(pe2.x, pe2.y, Math.max(0.6, rPx * 0.35), 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = this.colors.line;
+                } else {
+                    ctx.fillStyle = this.colors.accent;
+                    ctx.beginPath();
+                    ctx.arc(pe2.x, pe2.y, rPx, 0, Math.PI * 2);
+                    ctx.fill();
+                }
             }
             ctx.lineWidth = lw(1.6);
-            ctx.fillStyle = this.colors.accent;
-            for (const sgn of [-1, 1]) {
-                ctx.beginPath();
-                ctx.arc(
-                    ph.x + (fwd.x / fl) * hr * 0.45 - (fwd.y / fl) * sgn * hr * 0.32,
-                    ph.y + (fwd.y / fl) * hr * 0.45 + (fwd.x / fl) * sgn * hr * 0.32,
-                    Math.max(1.1, hr * 0.16), 0, Math.PI * 2,
-                );
-                ctx.fill();
-            }
         }
     }
 
