@@ -131,7 +131,7 @@ function sampleMorphology(rng) {
         hindBias: t(),                // rear legs longer, leaps harder (frog)
         undulate: t(),                // lateral spine wave (snake, swimmer)
         sprawl: t(),                  // legs out to the side, low slung (lizard)
-        playful: u(0.04, 0.22),       // P(run circles around the pen)
+        playful: u(0.01, 0.07),       // P(run circles) - a rare mood
         // Temperament.
         speed: u(1.8, 3.6),
         restlessness: u(0.5, 2.2),
@@ -256,7 +256,7 @@ function sampleMorphology(rng) {
         m.bumpy = Math.max(0.6, m.bumpy);     // the flutter
         m.fluid = Math.max(0.5, m.fluid);
         m.sleepiness = u(0.1, 0.26);          // perches constantly
-        m.playful = u(0.1, 0.3);              // loops and circles
+        m.playful = u(0.03, 0.1);             // occasional lazy loops
         m.jumpiness = 0.02; m.fidget = 0;
         m.restlessness = u(0.5, 1.6);
         m.swimLo = 0.4; m.swimHi = Math.min(2.8, ROOM_H * 0.8);
@@ -501,6 +501,7 @@ class Creature {
         this.state = 'idle';
         this.timer = this.expo(this.p.restlessness);
         this.ta = this.a; this.tb = this.b;
+        this.playCool = 15;           // circles cannot chain back-to-back
 
         // Locomotor effectiveness derives from the body: legless or
         // overloaded morphs are slower, but they still try - the wriggle.
@@ -663,10 +664,12 @@ class Creature {
         } else if (r < p.rear + p.fidget + p.sleepiness) {
             this.state = 'sleep';
             this.timer = 3.0 + this.expo(4.0);
-        } else if (r < p.rear + p.fidget + p.sleepiness + p.playful) {
-            // Play: fast circles around a spot in the pen, like a horse.
+        } else if (r < p.rear + p.fidget + p.sleepiness + p.playful
+            && this.playCool <= 0) {
+            // Play: a rare mood - short laps, abandoned as easily as begun.
             this.state = 'play';
-            this.timer = 4.0 + this.expo(6.0);
+            this.timer = 2.5 + this.expo(2.5);
+            this.playCool = 30 + this.expo(40);
             const S = SURFACES[this.surface];
             this.playR = 0.8 + this.live() * 1.8;
             const B2 = this.bounds();
@@ -799,6 +802,7 @@ class Creature {
         const S = SURFACES[this.surface];
         this.timer -= dt;
         this.stagger = Math.max(0, this.stagger - dt);
+        this.playCool -= dt;
         // The peck is a WHOLE-BODY act: the body crouches over the front
         // legs, the rear teeters up, and the head only closes the last
         // span - no telescoping necks.
@@ -863,6 +867,8 @@ class Creature {
                 if (this.vh <= 0 && this.h <= p.stance * p.scale * 1.15) this.rest();
                 break;
             case 'play': {
+                // The mood passes as suddenly as it arrived.
+                if (this.live() < 0.35 * dt) { this.rest(); break; }
                 // Orbit the pen: chase a point ahead on the circle.
                 const w = (this.effSpeed * 1.15) / this.playR;
                 this.playPhase += w * this.playDir * dt;
