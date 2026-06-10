@@ -256,6 +256,10 @@ function sampleMorphology(rng) {
         m.eyeCount = 2; m.stalky = 0;
         m.feelerLen = u(1.4, 2.2);
         m.tailStyle = 'none';
+        // Endurance: how long the wings last. The high tail flies forever
+        // - a butterfly that is, in truth, a fish of the air.
+        m.endurance = Math.min(1, u(0.15, 1.15));
+        m.perchTime = u(2.0, 6.0);            // long lazy rests
         m.components = ['swimmer', 'wingsButterfly'];
     } else if (kr < 0.9) {
         // The wasp: fast hover, hard darts, a mean little pendulum.
@@ -275,6 +279,8 @@ function sampleMorphology(rng) {
         m.eyeCount = 2; m.stalky = 0;
         m.feelerLen = u(0.8, 1.2);
         m.tailStyle = 'none';
+        m.endurance = Math.min(1, u(0.3, 1.1));
+        m.perchTime = u(0.4, 1.4);            // touch-and-go
         m.components = ['swimmer', 'wingsWasp'];
     } else {
         // The Spore move: no preset at all - a spine and whatever parts
@@ -465,6 +471,8 @@ class Creature {
 
         this.rearAmt = 0;             // 0 standing .. 1 up on hind legs
         this.nibble = 0;              // paws-to-mouth eating envelope
+        this.stamina = 1;             // wing fuel; flyers land to refill
+        this.perchFold = 0;           // 0 flying .. 1 wings folded
         this.terrainRef = null;       // set by the Arena; floor geometry
         this.enclosure = 1;           // backdrop-scale enclosure
         this.faces = null;            // per-face materials; null = all solid
@@ -593,6 +601,14 @@ class Creature {
     act() {
         const r = this.live();
         const p = this.p;
+        // Tired wings land before anything else - except the enduring,
+        // who never need to.
+        if (p.flyStyle && (p.endurance ?? 1) < 1 && this.stamina < 0.25) {
+            this.state = 'land';
+            this.ta = this.a + (this.live() * 2 - 1) * 2;
+            this.tb = this.b + (this.live() * 2 - 1) * 2;
+            return;
+        }
         if (this.has('paws') && r < p.rear) {
             // Up on the hind legs - sometimes higher still - looking
             // around, sometimes nibbling something held in the paws.
@@ -620,13 +636,26 @@ class Creature {
             this.playPhase = Math.atan2(this.b - this.playCb, this.a - this.playCa);
             this.playDir = this.live() < 0.5 ? 1 : -1;
         } else if (r < p.rear + p.fidget + p.sleepiness + p.playful + p.jumpiness) {
-            // A real leap: crouch first, then launch up AND forward.
+            // The leap: a quick dart AHEAD on a low arc - crouch, then
+            // mostly-forward launch. Straight-up ceiling jumps survive
+            // only as a rare move for climbers under a real ceiling.
             this.state = 'crouch';
             this.timer = 0.12 + 0.1 * this.live();
-            const hard = this.surface === 'floor' && this.live() < 0.35;
-            this.jumpVh = (hard ? 4.6 : 2.2 + this.live() * 1.6)
-                * (0.75 + 0.5 * p.floaty) * (1 + 0.5 * p.hindBias);
-            this.jumpFwd = (1.0 + 2.6 * p.hindBias) * (0.6 + 0.6 * this.live());
+            const hard = this.surface === 'floor' && !p.swim
+                && p.climby > 0.5 && this.solidFace('ceiling')
+                && this.live() < 0.15;
+            this.jumpVh = hard
+                ? 4.6 * (0.75 + 0.5 * p.floaty)
+                : (0.9 + this.live() * 0.9)
+                    * (0.8 + 0.5 * p.floaty) * (1 + 0.35 * p.hindBias);
+            this.jumpFwd = hard
+                ? 0.5
+                : (2.3 + 2.4 * p.hindBias) * (0.7 + 0.6 * this.live());
+            // Rodents bound: more arc, and the head-down landing shows.
+            if (!hard && this.has('paws')) {
+                this.jumpVh *= 1.8;
+                this.jumpFwd *= 1.15;
+            }
         } else {
             this.state = 'run';
             const B = this.bounds();
@@ -729,6 +758,14 @@ class Creature {
         const S = SURFACES[this.surface];
         this.timer -= dt;
         this.stagger = Math.max(0, this.stagger - dt);
+        // The peck is a WHOLE-BODY act: the body crouches over the front
+        // legs, the rear teeters up, and the head only closes the last
+        // span - no telescoping necks.
+        const peckDip = this.peck > 0 ? Math.sin(Math.PI * this.peck) : 0;
+        // Coming down from a leap, rodents look to the ground and reach
+        // with the front paws - the landing is led by the head and hands.
+        const wantDip = (this.state === 'jump' && this.vh < -0.2 && !p.swim) ? 1 : 0;
+        this.airDip = (this.airDip || 0) + (wantDip - (this.airDip || 0)) * Math.min(1, 7 * dt);
 
         let dva = 0, dvb = 0;
         switch (this.state) {
@@ -800,6 +837,47 @@ class Creature {
             case 'bump':
                 if (this.timer <= 0) this.rest();
                 break;
+            case 'land': {
+                // Glide down toward the landing spot.
+                const da2 = this.ta - this.a, db2 = this.tb - this.b;
+                const d2 = Math.hypot(da2, db2) || 1;
+                const gl = Math.min(1, d2) * this.effSpeed * 0.4;
+                dva = (da2 / d2) * gl; dvb = (db2 / d2) * gl;
+                if (this.h - this.groundAt(this.a, this.b) < 0.18) {
+                    this.state = 'perch';
+                    this.timer = (this.p.perchTime || 2)
+                        * (0.7 + 0.6 * this.live());
+                }
+                break;
+            }
+            case 'perch':
+                this.va *= Math.exp(-8 * dt); this.vb *= Math.exp(-8 * dt);
+                if (this.timer <= 0 && this.stamina > 0.85) {
+                    this.vh += 1.6 + this.live();        // the takeoff hop
+                    this.swimH = null;
+                    this.rest();
+                }
+                break;
+        }
+
+        // Wing fuel: drains aloft (slower for the enduring), refills on
+        // the ground. Exhaustion is not a choice: tired wings land NOW,
+        // whatever the creature was doing. perchFold eases the wings shut.
+        if (p.flyStyle) {
+            if ((p.endurance ?? 1) < 1 && this.stamina < 0.2
+                && !['land', 'perch', 'sleep', 'rise'].includes(this.state)) {
+                this.state = 'land';
+                this.ta = this.a + (this.live() * 2 - 1) * 2;
+                this.tb = this.b + (this.live() * 2 - 1) * 2;
+            }
+            const gAlt = this.h - this.groundAt(this.a, this.b);
+            const aloft = gAlt > 0.3;
+            const drain = 0.05 * (1 - (p.endurance ?? 1));
+            this.stamina = Math.min(1, Math.max(0,
+                this.stamina + (aloft ? -drain : 0.15) * dt));
+            const wantFold = this.state === 'perch' || this.state === 'sleep'
+                || (this.state === 'rise' && gAlt < 0.3) ? 1 : 0;
+            this.perchFold += (wantFold - this.perchFold) * Math.min(1, 5 * dt);
         }
 
         if (this.state !== 'rear') {
@@ -904,7 +982,8 @@ class Creature {
             }
             const gFloor = this.groundAt(this.a, this.b);
             const perched = p.flyStyle
-                && (this.state === 'sleep' || this.state === 'rise');
+                && (this.state === 'sleep' || this.state === 'rise'
+                    || this.state === 'perch' || this.state === 'land');
             let targetH2 = Math.max(gFloor + 0.4,
                 Math.min(ROOM_H * 0.85, this.swimH))
                 + 0.25 * this.ch.buoy;
@@ -943,7 +1022,8 @@ class Creature {
 
         const crouch = this.state === 'crouch' ? 0.55 : 0;
         const rearLift = 1 + this.rearAmt * 0.85;
-        const standLive = standH * posture * rearLift * (1 + this.mods.stance);
+        const peckCrouch = 1 - 0.38 * peckDip * (1 - this.lie);
+        const standLive = standH * posture * rearLift * peckCrouch * (1 + this.mods.stance);
         const targetH = ground + (standLive * (1 - this.lie) + lieH * this.lie)
             * (1 + 0.12 * this.ch.buoy * p.floaty) * (1 - crouch);
         const airborne = this.h > targetH + 0.12;
@@ -1016,7 +1096,8 @@ class Creature {
             const anchor = toWorld(S,
                 prevL.a - da * spacing + (-db) * wave,
                 prevL.b - db * spacing + da * wave,
-                Math.max(0.05, prevL.h * (1 - 0.08 * i)));
+                Math.max(0.05, prevL.h * (1 - 0.08 * i)
+                    + peckDip * 0.14 * s * ((i + 1) / this.chain.length)));
             this.follow(seg, anchor, kF * 0.7, dF, dt);
             prevW = seg;
             prevDirA = da; prevDirB = db;
@@ -1035,7 +1116,6 @@ class Creature {
             this.peck = 1;
             this.peckCool = 1.5 + this.expo(3.0);
         }
-        const peckDip = this.peck > 0 ? Math.sin(Math.PI * this.peck) : 0;
         // Nibbling: the head bobs down toward the held paws.
         const nib = this.nibble * (0.4 + 0.2 * Math.sin(t * 7));
 
@@ -1047,7 +1127,8 @@ class Creature {
             this.a + fa2 * bodyR * p.neck * p.elong * (1 + 0.25 * peckDip),
             this.b + fb2 * bodyR * p.neck * p.elong * (1 + 0.25 * peckDip),
             Math.max(0.04, this.h + (0.12 + this.rearAmt * 0.45) * s * (1 - this.lie)
-                - peckDip * this.h * 0.85 - nib * this.h * 0.4));
+                - peckDip * this.h * 0.45 - nib * this.h * 0.4
+                - (this.has('paws') ? (this.airDip || 0) * this.h * 0.3 : 0)));
         this.follow(this.headM, nose, kF, dF, dt);
 
         // ---- feet: planted until the rest pose drifts, then an
@@ -1223,10 +1304,17 @@ class Creature {
                 toeDir = ang;
             } else if (!grounded) {
                 const back = leg.hind ? 0.9 : 0;   // hind legs trail in flight
+                // Falling: the front feet stretch down and ahead to take
+                // the landing first.
+                const reachF = leg.front ? (this.airDip || 0) : 0;
                 foot = {
-                    a: host.a + Math.cos(ang) * reach * 0.5 - Math.cos(host.dir) * reach * back,
-                    b: host.b + Math.sin(ang) * reach * 0.5 - Math.sin(host.dir) * reach * back,
-                    h: bodyH - seg * (leg.hind ? 0.3 : 0.7),
+                    a: host.a + Math.cos(ang) * reach * 0.5
+                        - Math.cos(host.dir) * reach * back
+                        + Math.cos(host.dir) * reach * 0.5 * reachF,
+                    b: host.b + Math.sin(ang) * reach * 0.5
+                        - Math.sin(host.dir) * reach * back
+                        + Math.sin(host.dir) * reach * 0.5 * reachF,
+                    h: bodyH - seg * (leg.hind ? 0.3 : 0.7 + 0.5 * reachF),
                 };
                 toeDir = ang;
             } else if (leg.swing) {
@@ -2230,6 +2318,9 @@ function sampleWeather(rng, hab, facesMat) {
         gust: t(),
         swell: 0.04 + t() * 0.25,
         flutter: t(),
+        // Fog rolls independently of precipitation - a still, clear day
+        // can still be socked in. 0 = none, 1 = heavy banks.
+        fog: rng() < 0.35 ? 0.25 + t() * 0.75 : 0,
     };
 }
 
@@ -2353,7 +2444,7 @@ const COMPONENTS = {
             const { arena, ctx, c, p, J, body, pBody, inker, lw } = d;
             ctx.strokeStyle = arena.colors.line;
             // Wingbeat: fold foreshortens the span; perching folds them up.
-            const rest = 1 - Math.min(1, c.lie * 1.2);
+            const rest = 1 - Math.min(1, Math.max(c.lie * 1.2, c.perchFold || 0));
             const beat = Math.sin(c.phase * 3.5);
             const fold = (0.25 + 0.75 * Math.abs(Math.cos(c.phase * 3.5))) * rest + 0.12;
             const liftY = beat * 0.45 * p.scale * rest;
@@ -2392,8 +2483,9 @@ const COMPONENTS = {
             // A blur of wing: two ghost positions per side, beating fast.
             const span = p.scale * 0.8;
             for (const sgn of [-1, 1]) {
+                const restW = 1 - 0.9 * (c.perchFold || 0);
                 for (const ghost of [0, 1]) {
-                    const beat = Math.sin(arena.t * 46 + ghost * 1.8 + sgn);
+                    const beat = Math.sin(arena.t * 46 + ghost * 1.8 + sgn) * restW;
                     const liftY = 0.25 * p.scale + beat * 0.18 * p.scale;
                     const tip = {
                         x: body.x + J.perpW.x * sgn * span - J.fwd.x * 0.2 * p.scale,
@@ -2530,6 +2622,18 @@ class Arena {
         const yMax = wth.material === 'bubbles'
             ? ROOM_H * 0.85 : Math.max(6, ROOM_H * 1.5);
         this.partYMax = yMax;
+        // Fog banks: big soft blobs that drift with the wind and billow,
+        // masking some of the scene while other patches stay clear.
+        const fogN = wth.fog > 0 ? 4 + Math.round(wth.fog * 9) : 0;
+        this.fogBlobs = Array.from({ length: fogN }, () => ({
+            x: (wRng() - 0.5) * 60,
+            z: 2 + wRng() * 26,
+            y: 0.2 + wRng() * 1.6,
+            rx: 3 + wRng() * 6,
+            ry: 0.8 + wRng() * 1.6,
+            ph: wRng() * Math.PI * 2,
+            sp: 0.5 + wRng(),
+        }));
         this.particles = Array.from({ length: count }, () => ({
             x: (wRng() - 0.5) * 48,        // relative to camera in x
             y: wRng() * yMax,
@@ -2581,6 +2685,7 @@ class Arena {
             grain: `hsl(${envHue} ${sat}% ${dark ? 75 : 30}%)`,
             glow: `hsl(${hue} 70% ${dark ? 60 : 45}%)`,
             paper: cs.getPropertyValue('--background').trim() || (dark ? '#101312' : '#f4f6f3'),
+            fog: `hsl(${envHue} ${Math.min(20, sat)}% ${dark ? 34 : 86}%)`,
         });
     }
 
@@ -2754,6 +2859,19 @@ class Arena {
         const c = this.creature;
         const S = SURFACES[c.surface];
         const w0 = toWorld(S, c.a, c.b, c.h);
+        // Velocity EMA: the camera aims a beat AHEAD of a walker, so the
+        // long marchers stay framed instead of forever outrunning the pan.
+        if (this.lastW0) {
+            const ivx = (w0.x - this.lastW0.x) / Math.max(1e-3, dt);
+            const ivz = (w0.z - this.lastW0.z) / Math.max(1e-3, dt);
+            const k2 = Math.min(1, 1.2 * dt);
+            this.vemaX = (this.vemaX || 0) + (ivx - (this.vemaX || 0)) * k2;
+            this.vemaZ = (this.vemaZ || 0) + (ivz - (this.vemaZ || 0)) * k2;
+        }
+        this.lastW0 = { x: w0.x, z: w0.z };
+        const lead = 1.1;
+        const aimX = w0.x + (this.vemaX || 0) * lead;
+        const aimZ = w0.z + (this.vemaZ || 0) * lead;
         const pb = this.project(w0);
         // The camera sleeps until the creature touches the outside of the
         // screen, then drifts after it - slowly, so as not to disturb it -
@@ -2762,10 +2880,10 @@ class Arena {
             this.panX = true;
         }
         if (this.panX) {
-            this.camX += (w0.x - this.camX) * Math.min(1, 0.22 * dt);
-            if (Math.abs(w0.x - this.camX) < 0.5) this.panX = false;
+            this.camX += (aimX - this.camX) * Math.min(1, 0.22 * dt);
+            if (Math.abs(aimX - this.camX) < 0.5) this.panX = false;
         }
-        const zRel = w0.z - this.camZ;
+        const zRel = aimZ - this.camZ;
         const zHome = ROOM_D * 0.55;
         if (!this.panZ && (zRel > ROOM_D * 2.2 || zRel < 0.25)) this.panZ = true;
         if (this.panZ) {
@@ -3157,6 +3275,37 @@ class Arena {
             live.push(item);
         }
         live.push(...envDynamicItems(this.terrain, P, this.colors, this.t));
+        if (this.fogBlobs && this.fogBlobs.length) {
+            const wind = this.windSignal();
+            const fogA = 0.06 + 0.1 * this.weather.fog;
+            for (const fb of this.fogBlobs) {
+                fb.x += (wind * 0.55 + Math.sin(this.t * 0.13 + fb.ph) * 0.12) * dt * fb.sp * 8;
+                if (fb.x > 34) fb.x -= 68;
+                if (fb.x < -34) fb.x += 68;
+                const wz = this.camZ + fb.z;
+                live.push({
+                    z: wz,
+                    draw: (ctx2) => {
+                        const cx2 = this.camX + fb.x;
+                        // Billow: each bank swells and thins on its own slow clock.
+                        const billow = 0.65 + 0.35 * Math.sin(this.t * 0.21 * fb.sp + fb.ph);
+                        const pc = this.project({ x: cx2, y: fb.y, z: wz });
+                        if (pc.x < -300 || pc.x > this.w + 300) return;
+                        const rx = fb.rx * pc.d * billow;
+                        const ry = fb.ry * pc.d * 0.45 * billow;
+                        const g2 = ctx2.createRadialGradient(pc.x, pc.y, 0, pc.x, pc.y, Math.max(1, rx));
+                        g2.addColorStop(0, this.colors.fog);
+                        g2.addColorStop(1, 'transparent');
+                        ctx2.globalAlpha = fogA * billow;
+                        ctx2.fillStyle = g2;
+                        ctx2.beginPath();
+                        ctx2.ellipse(pc.x, pc.y, rx, ry, 0, 0, Math.PI * 2);
+                        ctx2.fill();
+                        ctx2.globalAlpha = 1;
+                    },
+                });
+            }
+        }
         live.push({
             z: J.body.z,
             creature: true,
