@@ -160,9 +160,10 @@ function sampleMorphology(rng) {
     // Creature KIND is a discrete archetype roll, like the arena's faces:
     // the genome stays continuous underneath, the kind re-shapes it.
     const kr = rng();
-    if (kr < 0.42) {
+    if (kr < 0.38) {
         m.kind = 'bug';
-    } else if (kr < 0.56) {
+        m.components = ['legs'];
+    } else if (kr < 0.5) {
         // The roach: a low scuttler under one dorsal shell.
         m.kind = 'roach';
         m.carapace = true;
@@ -185,7 +186,8 @@ function sampleMorphology(rng) {
         m.eyeCount = 2; m.stalky = 0;
         m.feelerLen = u(2.0, 3.0);          // the long antennae
         m.tailStyle = 'none';
-    } else if (kr < 0.7) {
+        m.components = ['legs', 'carapace'];
+    } else if (kr < 0.62) {
         m.kind = 'squirrel';
         m.legPairs = 2; m.segs = 2; m.spine = 1; m.heads = 1;
         m.elong = u(1.15, 1.55); m.square = m.square * 0.4;
@@ -202,7 +204,8 @@ function sampleMorphology(rng) {
         m.mech = m.mech * 0.5;
         m.eyeCount = 2; m.stalky = 0;
         m.climby = Math.max(0.6, m.climby); // squirrels scale anything
-    } else if (kr < 0.85) {
+        m.components = ['legs', 'paws', 'floofTail'];
+    } else if (kr < 0.74) {
         m.kind = 'rat';
         m.legPairs = 2; m.segs = 2; m.spine = 2; m.heads = 1;
         m.elong = u(1.5, 2.1); m.scale *= 0.85;
@@ -217,7 +220,8 @@ function sampleMorphology(rng) {
         m.tailLen = u(1.2, 1.9);
         m.mech = m.mech * 0.5;
         m.eyeCount = 2; m.stalky = 0;
-    } else {
+        m.components = ['legs', 'paws', 'whipTail'];
+    } else if (kr < 0.87) {
         m.kind = 'fish';
         m.swim = true;
         m.legPairs = 0; m.segs = 2; m.heads = 1;
@@ -231,7 +235,47 @@ function sampleMorphology(rng) {
         m.sleepiness = u(0.03, 0.1);
         m.fluid = Math.max(0.6, m.fluid);   // water is smooth
         m.stalky = 0;
+        m.components = ['swimmer', 'caudalFin', 'pectorals'];
+    } else {
+        // The Spore move: no preset at all - a spine and whatever parts
+        // the roll attaches. Chimeras the named kinds never produce.
+        m.kind = 'hybrid';
+        const comps = [];
+        if (rng() < 0.25) {
+            comps.push('swimmer', 'caudalFin');
+            m.swim = true;
+            m.legPairs = rng() < 0.5 ? 0 : 1;
+            m.undulate = Math.max(0.6, m.undulate);
+            m.fluid = Math.max(0.5, m.fluid);
+            if (rng() < 0.6) comps.push('pectorals');
+        } else {
+            comps.push('legs');
+            m.legPairs = 1 + Math.floor(rng() * 3.0);
+        }
+        if (rng() < 0.35) {
+            comps.push('carapace');
+            m.carapace = true;
+            m.stance = Math.min(m.stance, u(0.2, 0.34));
+            m.elong = Math.max(1.5, m.elong);
+        }
+        if (!comps.includes('caudalFin')) {
+            const tr = rng();
+            if (tr < 0.25) { comps.push('floofTail'); m.tailStyle = 'floof'; m.tailLen = u(0.8, 1.4); }
+            else if (tr < 0.5) { comps.push('whipTail'); m.tailStyle = 'whip'; m.tailLen = u(1.0, 1.8); }
+        }
+        if (!m.swim && m.legPairs >= 2 && rng() < 0.4) {
+            comps.push('paws');
+            m.rear = u(0.1, 0.3); m.fidget = u(0.15, 0.35);
+        }
+        m.feelerLen = 0.8 + rng() * 1.8;
+        m.spine = 1 + Math.floor(rng() * 4);
+        m.components = comps;
     }
+    // Derived flags stay consistent with the parts actually attached.
+    m.swim = m.components.includes('swimmer');
+    m.carapace = m.components.includes('carapace');
+    if (!m.components.includes('floofTail') && !m.components.includes('whipTail')
+        && !m.components.includes('caudalFin')) m.tailStyle = 'none';
     return m;
 }
 
@@ -450,6 +494,8 @@ class Creature {
 
     expo(mean) { return -Math.log(1 - this.live() + 1e-9) * mean; }
 
+    has(component) { return this.p.components.includes(component); }
+
     solidFace(name) {
         if (name === 'floor') return true;
         return this.faces ? this.faces[name] !== 'none' : true;
@@ -507,7 +553,7 @@ class Creature {
     act() {
         const r = this.live();
         const p = this.p;
-        if (!p.swim && r < p.rear) {
+        if (this.has('paws') && r < p.rear) {
             // Up on the hind legs - sometimes higher still - looking
             // around, sometimes nibbling something held in the paws.
             this.state = 'rear';
@@ -1781,7 +1827,7 @@ function envItems(hab, salt, ink, P, terrain, colors, t, cam) {
     terrain.stalks.forEach((st, i) => {
         if (!survives('stalk' + i, hab, salt)) return;
         items.push({
-            z: st.z,
+            z: st.z, x: st.x,
             draw: (ctx) => {
                 ctx.globalAlpha = 0.28 * hab.cohesion;
                 const g0 = gy(st.x, st.z);
@@ -1813,7 +1859,7 @@ function envItems(hab, salt, ink, P, terrain, colors, t, cam) {
     terrain.pebbles.forEach((pb, i) => {
         if (!survives('pebble' + i, hab, salt)) return;
         items.push({
-            z: pb.z,
+            z: pb.z, x: pb.x,
             draw: (ctx) => {
                 ctx.globalAlpha = 0.25 * hab.cohesion;
                 const pts = [];
@@ -1831,7 +1877,7 @@ function envItems(hab, salt, ink, P, terrain, colors, t, cam) {
     terrain.beams.forEach((bm, i) => {
         if (!survives('beam' + i, hab, salt)) return;
         items.push({
-            z: bm.z,
+            z: bm.z, x: (bm.x0 + bm.x1) / 2,
             draw: (ctx) => {
                 ctx.globalAlpha = 0.26 * hab.cohesion;
                 ink.bone(ctx, P(bm.x0, gy(bm.x0, bm.z) + bm.h0, bm.z),
@@ -1842,7 +1888,7 @@ function envItems(hab, salt, ink, P, terrain, colors, t, cam) {
     terrain.pylons.forEach((py, i) => {
         if (!survives('pylon' + i, hab, salt)) return;
         items.push({
-            z: py.z,
+            z: py.z, x: py.x,
             draw: (ctx) => {
                 ctx.globalAlpha = 0.30 * hab.cohesion;
                 const g0 = gy(py.x, py.z);
@@ -1926,7 +1972,7 @@ function envItems(hab, salt, ink, P, terrain, colors, t, cam) {
     // Off-stage scatter, faded: tufts and rocks beyond the pen.
     terrain.outTufts.forEach((tf, i) => {
         items.push({
-            z: tf.z,
+            z: tf.z, x: tf.x,
             draw: (ctx) => {
                 ctx.globalAlpha = 0.11 * hab.cohesion;
                 const base = P(tf.x, 0, tf.z);
@@ -1939,7 +1985,7 @@ function envItems(hab, salt, ink, P, terrain, colors, t, cam) {
     });
     terrain.outRocks.forEach((r, i) => {
         items.push({
-            z: r.z,
+            z: r.z, x: r.x,
             draw: (ctx) => {
                 ctx.globalAlpha = 0.13 * hab.cohesion;
                 const pts = [];
@@ -1963,7 +2009,7 @@ function envItems(hab, salt, ink, P, terrain, colors, t, cam) {
                 const ck = ci + ',' + cj;
                 c.tufts.forEach((tf, i) => {
                     items.push({
-                        z: tf.z,
+                        z: tf.z, x: tf.x,
                         draw: (ctx) => {
                             ctx.globalAlpha = 0.2 * hab.cohesion;
                             const g0 = gy(tf.x, tf.z);
@@ -1977,7 +2023,7 @@ function envItems(hab, salt, ink, P, terrain, colors, t, cam) {
                 });
                 c.boulders.forEach((bo, i) => {
                     items.push({
-                        z: bo.z,
+                        z: bo.z, x: bo.x,
                         draw: (ctx) => {
                             const pts = [];
                             for (let k = 0; k < 9; k++) {
@@ -1999,7 +2045,7 @@ function envItems(hab, salt, ink, P, terrain, colors, t, cam) {
                 });
                 c.mounds.forEach((mo, i) => {
                     items.push({
-                        z: mo.z,
+                        z: mo.z, x: mo.x,
                         draw: (ctx) => {
                             ctx.globalAlpha = 0.2 * hab.cohesion;
                             for (let ring = 0; ring < 2; ring++) {
@@ -2018,7 +2064,7 @@ function envItems(hab, salt, ink, P, terrain, colors, t, cam) {
                 });
                 c.trees.forEach((tr, i) => {
                     items.push({
-                        z: tr.z,
+                        z: tr.z, x: tr.x,
                         draw: (ctx) => {
                             ctx.globalAlpha = 0.3 * hab.cohesion;
                             const g0 = gy(tr.x, tr.z);
@@ -2043,7 +2089,7 @@ function envItems(hab, salt, ink, P, terrain, colors, t, cam) {
                 });
                 c.grain.forEach((d, i) => {
                     items.push({
-                        z: d.z,
+                        z: d.z, x: d.x,
                         draw: (ctx) => {
                             const pt = P(d.x, gy(d.x, d.z) + 0.01, d.z);
                             ctx.globalAlpha = d.al;
@@ -2058,10 +2104,16 @@ function envItems(hab, salt, ink, P, terrain, colors, t, cam) {
         }
     }
 
+    return items;
+}
+
+/* Animated ambience rebuilt every frame (cheap, a handful of items). */
+function envDynamicItems(terrain, P, colors, t) {
+    const items = [];
     // Motes: tiny fauna drifting slow ellipses in the air.
     terrain.motes.forEach((mo, i) => {
         items.push({
-            z: mo.z,
+            z: mo.z, x: mo.x,
             draw: (ctx) => {
                 const pt = P(mo.x + Math.cos(t * mo.w + mo.ph) * mo.r,
                     mo.y + Math.sin(t * mo.w * 1.7 + mo.ph) * mo.r * 0.4, mo.z);
@@ -2076,6 +2128,181 @@ function envItems(hab, salt, ink, P, terrain, colors, t, cam) {
     });
     return items;
 }
+
+// -------------------------------------------------------------- weather
+
+/* The sky's genome: one discrete material roll (weighted by the same
+   archetype mixture as the room) and continuous dials - density from
+   drizzle to downpour, signed wind, gust depth, and a slow swell that
+   makes the whole system ebb and flow like a tide. A clear-sky roll
+   yields pure stillness. Tank-leaning scenes weather UNDERWATER: bubbles
+   on a drifting current. */
+function sampleWeather(rng, hab, facesMat) {
+    const t = genome(rng, 4, 6);
+    const w = hab.weights;
+    const indoor = facesMat.ceiling !== 'none';
+    const clear = rng() < 0.22;
+    const table = [
+        ['rain', indoor ? 0 : 0.5 + w.thicket + w.gym * 0.4],
+        ['snow', indoor ? 0 : 0.35 + w.void * 1.2],
+        ['ash', 0.15 + w.tunnel * 1.3 + w.machine * 0.5],
+        ['dust', 0.25 + w.machine * 1.1 + w.tunnel * 0.4],
+        ['leaves', indoor ? 0 : w.thicket * 1.6],
+        ['bubbles', w.tank * 1.9],
+    ];
+    const tot = table.reduce((a, e) => a + e[1], 0);
+    let r = rng() * tot;
+    let material = 'dust';
+    for (const [m, wt] of table) { r -= wt; if (r <= 0) { material = m; break; } }
+    return {
+        material,
+        clear,
+        density: clear ? 0 : 0.15 + t() * 0.85,
+        wind: (t() - 0.5) * 2.4,
+        gust: t(),
+        swell: 0.04 + t() * 0.25,
+        flutter: t(),
+    };
+}
+
+const WEATHER_COUNT = { rain: 300, snow: 220, ash: 150, dust: 200, leaves: 60, bubbles: 90 };
+const WEATHER_FALL = { rain: -7.5, snow: -0.7, ash: -0.3, dust: -0.05, leaves: -0.7, bubbles: 0.7 };
+
+// ----------------------------------------------------------- components
+
+/* Spore-style parts: every creature is a shared spine; kinds are preset
+   bundles of COMPONENTS and hybrids are free assemblies. Each component
+   may shape traits at birth (done in sampleMorphology), grant behaviors
+   (gated via creature.has()), and draw itself here. `drawUnder` runs
+   before the heads (shells that cover the body), `draw` after (tails,
+   fins, anything trailing). All hooks receive the same bag. */
+function tailFrame(d) {
+    const { c, J, body } = d;
+    const S2 = SURFACES[c.surface];
+    const last = J.chain[J.chain.length - 1];
+    const ahead = J.chain.length > 1 ? J.chain[J.chain.length - 2] : body;
+    const L = fromWorld(S2, last);
+    const A2 = fromWorld(S2, ahead);
+    let da = L.a - A2.a, db = L.b - A2.b;
+    const dl = Math.hypot(da, db) || 1;
+    return { S2, last, L, da: da / dl, db: db / dl, len: d.p.tailLen * d.p.scale };
+}
+
+const COMPONENTS = {
+    legs: {},        // the leg machinery lives in the spine solve itself
+    swimmer: {},     // locomotion override lives in step(); marker part
+    paws: {},        // grants rear/nibble/fidget; poses live in the solve
+
+    carapace: {
+        drawUnder(d) {
+            const { arena, ctx, p, J, body, inker, rW, lw, basis } = d;
+            const tailW = J.chain[J.chain.length - 1];
+            const mid = {
+                x: (body.x * 1.1 + tailW.x * 0.9) / 2,
+                y: Math.max(body.y, tailW.y) + 0.06 * p.scale,
+                z: (body.z * 1.1 + tailW.z * 0.9) / 2,
+            };
+            const span = Math.hypot(body.x - tailW.x, body.y - tailW.y, body.z - tailW.z);
+            const major = span * 0.75 + rW * 1.5;
+            const pMid = arena.project(mid);
+            ctx.lineWidth = lw(1.9);
+            arena.shell(ctx, inker, pMid,
+                basis(mid, J.fwd, major),
+                basis(mid, J.perpW, rW * 1.25), 'carapace', 18);
+            ctx.globalAlpha = 0.55;
+            ctx.lineWidth = lw(1.2);
+            inker.bone(ctx,
+                arena.project({ x: mid.x - J.fwd.x * major * 0.85, y: mid.y - J.fwd.y * major * 0.85, z: mid.z - J.fwd.z * major * 0.85 }),
+                arena.project({ x: mid.x + J.fwd.x * major * 0.7, y: mid.y + J.fwd.y * major * 0.7, z: mid.z + J.fwd.z * major * 0.7 }),
+                'seam', 0.7);
+            ctx.globalAlpha = 1;
+        },
+    },
+
+    floofTail: {
+        draw(d) {
+            const { arena, ctx, c, p, inker, lw } = d;
+            const { S2, L, da, db, len } = tailFrame(d);
+            ctx.strokeStyle = arena.colors.line;
+            for (const off of [0, 0.16, -0.16]) {
+                let prev = null;
+                for (let k = 0; k <= 7; k++) {
+                    const th = (k / 7) * 2.3;
+                    const r = len * (0.5 + off * Math.sin((k / 7) * Math.PI));
+                    const pt = arena.project(toWorld(S2,
+                        L.a + da * Math.sin(th) * r * 0.9,
+                        L.b + db * Math.sin(th) * r * 0.9
+                            + Math.cos(arena.t * 2) * 0.03,
+                        Math.max(0.05, L.h + (1 - Math.cos(th)) * r)));
+                    ctx.lineWidth = lw(1.5 - Math.abs(off) * 2);
+                    if (prev) inker.bone(ctx, prev, pt, `tail${off}-${k}`, 1.1);
+                    prev = pt;
+                }
+            }
+        },
+    },
+
+    whipTail: {
+        draw(d) {
+            const { arena, ctx, c, inker, lw } = d;
+            const { S2, L, da, db, len } = tailFrame(d);
+            ctx.strokeStyle = arena.colors.line;
+            let prev = null;
+            ctx.lineWidth = lw(1.1);
+            for (let k = 0; k <= 6; k++) {
+                const tt = k / 6;
+                const sway = Math.sin(c.phase * 0.7 + tt * 3) * 0.12 * len;
+                const pt = arena.project(toWorld(S2,
+                    L.a + da * len * tt - db * sway,
+                    L.b + db * len * tt + da * sway,
+                    Math.max(0.02, L.h * (1 - tt * 0.85))));
+                if (prev) inker.bone(ctx, prev, pt, `whip${k}`, 0.7);
+                prev = pt;
+            }
+        },
+    },
+
+    caudalFin: {
+        draw(d) {
+            const { arena, ctx, c, inker, lw } = d;
+            const { S2, last, L, da, db, len } = tailFrame(d);
+            ctx.strokeStyle = arena.colors.line;
+            const sweep = Math.sin(c.phase * 1.4) * 0.25 * len;
+            const tip = toWorld(S2, L.a + da * len - db * sweep,
+                L.b + db * len + da * sweep, L.h);
+            const up2 = toWorld(S2, L.a + da * len * 0.8 - db * sweep,
+                L.b + db * len * 0.8 + da * sweep, L.h + len * 0.5);
+            const dn = toWorld(S2, L.a + da * len * 0.8 - db * sweep,
+                L.b + db * len * 0.8 + da * sweep, Math.max(0.05, L.h - len * 0.4));
+            ctx.lineWidth = lw(1.4);
+            inker.loop(ctx, [arena.project(last), arena.project(up2),
+                arena.project(tip), arena.project(dn)], 'caudal', 1.0);
+        },
+    },
+
+    pectorals: {
+        draw(d) {
+            const { arena, ctx, c, p, J, body, pBody, inker, lw } = d;
+            ctx.strokeStyle = arena.colors.line;
+            const flap = Math.sin(c.phase * 2.2) * 0.25;
+            for (const sgn of [-1, 1]) {
+                const finTip = {
+                    x: body.x + J.perpW.x * sgn * p.scale * (0.5 + flap),
+                    y: body.y + J.perpW.y * sgn * p.scale * (0.5 + flap) - p.scale * 0.18,
+                    z: body.z + J.perpW.z * sgn * p.scale * (0.5 + flap),
+                };
+                const finBk = {
+                    x: body.x - J.fwd.x * p.scale * 0.35,
+                    y: body.y - J.fwd.y * p.scale * 0.35,
+                    z: body.z - J.fwd.z * p.scale * 0.35,
+                };
+                ctx.lineWidth = lw(1.1);
+                inker.loop(ctx, [pBody, arena.project(finTip), arena.project(finBk)],
+                    'pec' + sgn, 0.8);
+            }
+        },
+    },
+};
 
 // ------------------------------------------------------------------ arena
 
@@ -2137,6 +2364,32 @@ class Arena {
         this.zoom = 1;
         this.panX = false;
         this.panZ = false;
+        this.camYoff = 0;
+        this.lostT = 0;       // seconds the creature has been off-canvas
+        // Distant scenery freezes into an offscreen layer; only the band
+        // around the creature renders live. See draw().
+        this.scene = document.createElement('canvas');
+        this.sceneCtx = this.scene.getContext('2d');
+        this.sceneStamp = { x: NaN, z: NaN, zoom: NaN, boil: NaN, band: NaN, colors: '', frame: -9 };
+        this.itemsCache = null;
+        this.itemsEpoch = '';
+        this.frameNo = 0;
+
+        // Weather: its own seed stream so habitats never reroll.
+        const wRng = mulberry32(fnv1a(seedStr + ':weather'));
+        this.weather = sampleWeather(wRng, this.hab, this.terrain.facesMat);
+        const wth = this.weather;
+        const count = Math.round((WEATHER_COUNT[wth.material] || 0) * wth.density);
+        const yMax = wth.material === 'bubbles'
+            ? ROOM_H * 0.85 : Math.max(6, ROOM_H * 1.5);
+        this.partYMax = yMax;
+        this.particles = Array.from({ length: count }, () => ({
+            x: (wRng() - 0.5) * 48,        // relative to camera in x
+            y: wRng() * yMax,
+            z: wRng() * 30,                // relative to camera in z
+            ph: wRng() * Math.PI * 2,
+            sp: 0.7 + wRng() * 0.6,
+        }));
         this.colors = { line: '#888', accent: '#4a8', shade: '#888' };
         this.colorTick = 0;
         this.raf = null;
@@ -2153,6 +2406,10 @@ class Arena {
         this.canvas.width = Math.round(r.width * dpr);
         this.canvas.height = Math.round(r.height * dpr);
         this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        this.scene.width = this.canvas.width;
+        this.scene.height = this.canvas.height;
+        this.sceneCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        this.sceneStamp.boil = NaN;   // stale after resize
         this.w = r.width;
         this.h = r.height;
     }
@@ -2167,7 +2424,8 @@ class Arena {
         const dark = document.documentElement.getAttribute('data-theme') === 'dark';
         const envHue = (hue + this.hab.hueOff + 360) % 360;
         const sat = 20 + Math.abs(this.hab.hueOff) * 0.4;
-        this.colors = {
+        // Mutate, never replace: cached scenery closures hold this object.
+        Object.assign(this.colors, {
             line: `hsl(${hue} 30% ${dark ? 88 : 14}%)`,
             shade: `hsl(${envHue} ${sat}% ${dark ? 62 : 42}%)`,
             accent: cs.getPropertyValue('--accent').trim() || `hsl(${hue} 87% 40%)`,
@@ -2176,7 +2434,7 @@ class Arena {
             grain: `hsl(${envHue} ${sat}% ${dark ? 75 : 30}%)`,
             glow: `hsl(${hue} 70% ${dark ? 60 : 45}%)`,
             paper: cs.getPropertyValue('--background').trim() || (dark ? '#101312' : '#f4f6f3'),
-        };
+        });
     }
 
     start() {
@@ -2209,7 +2467,7 @@ class Arena {
 
     /* Soft washes, grain, and a glow under the creature: enough surface
        treatment to give the box weight, sparse enough to stay a sketch. */
-    drawBackdrop(ctx, P, J) {
+    drawBackdrop(ctx, P) {
         const cl = this.colors;
 
         // A back-wall wash only when that face exists; otherwise a low
@@ -2284,6 +2542,13 @@ class Arena {
         }
         ctx.globalAlpha = 1;
 
+    }
+
+    /* The accent glow under the creature - the only backdrop element that
+       moves every frame, so it lives in the live pass. */
+    drawGlow(ctx, J) {
+        const cl = this.colors;
+        const P = (x, y, z) => this.project({ x, y, z });
         // A soft pool of accent light under the creature.
         const sc = J.shadow[0] ? this.project(J.body) : null;
         if (sc) {
@@ -2319,10 +2584,14 @@ class Arena {
        infinite world - pan and zoom live in here. */
     project(p) {
         const camY = ROOM_H * 1.875, camD = ROOM_D;
-        const f = ((this.w * 0.97 * camD) / ROOM_W) * this.zoom;
+        const fBase = (this.w * 0.97 * camD) / ROOM_W;
+        const f = fBase * this.zoom;
         const zc = Math.max(-camD + 0.6, p.z - this.camZ);
         const d = f / (camD + zc);
-        const y0 = this.h * 0.96 - camY * (f / camD);
+        // The floor pin must NOT depend on zoom (a zoomed pin slides the
+        // whole scene upward and the camera "looks down" forever); zoomed
+        // framing is handled by camYoff re-centering on the creature.
+        const y0 = this.h * 0.96 - camY * (fBase / camD) + (this.camYoff || 0);
         return {
             x: this.w / 2 + (p.x - this.camX) * d,
             y: y0 + (camY - p.y) * d,
@@ -2359,6 +2628,26 @@ class Arena {
         // in view.
         const tz = Math.min(2.0, Math.max(1, (ROOM_D + zRel) / (ROOM_D + zHome)));
         this.zoom += (tz - this.zoom) * Math.min(1, 0.15 * dt);
+
+        // Zoomed framing re-centers vertically on the creature; at rest
+        // (zoom ~1) the offset eases home so the floor pin rules again.
+        const pb2 = this.project(w0);
+        const zBlend = Math.min(1, Math.max(0, (this.zoom - 1) / 0.6));
+        const wantY = zBlend * Math.max(-this.h * 0.45,
+            Math.min(this.h * 0.45, this.h * 0.52 - (pb2.y - this.camYoff)));
+        this.camYoff += (wantY - this.camYoff) * Math.min(1, 0.3 * dt);
+
+        // Watchdog: if the creature has been fully off-canvas for a couple
+        // of seconds - whatever the cause - recover focus directly.
+        const off = pb2.x < -40 || pb2.x > this.w + 40
+            || pb2.y < -40 || pb2.y > this.h + 40;
+        this.lostT = off ? this.lostT + dt : 0;
+        if (this.lostT > 2) {
+            this.panX = true; this.panZ = true;
+            this.camX += (w0.x - this.camX) * Math.min(1, 0.7 * dt);
+            this.camZ += (zRel - zHome) * Math.min(1, 0.7 * dt);
+            this.camYoff += (0 - this.camYoff) * Math.min(1, 0.7 * dt);
+        }
     }
 
     /* A body shell spanned by two screen-space basis vectors (the
@@ -2511,30 +2800,16 @@ class Arena {
         // spanned by its own in-plane direction so it lies on the surface.
         const chainP = J.chain.map(s => this.project(s));
         ctx.lineWidth = lw(1.7);
+        // The component bag: every part hook gets the same view of the
+        // creature - Spore-style shared spine, parts drawn on top.
+        const bag = {
+            arena: this, ctx, c, p, J, inker,
+            body, pBody, heads, chainP, rW, lw, basis,
+        };
         if (p.carapace) {
-            // One dorsal shell covers everything: body and chain hide
-            // beneath it, legs and head poke out from under the rim.
-            const tailW = J.chain[J.chain.length - 1];
-            const mid = {
-                x: (body.x * 1.1 + tailW.x * 0.9) / 2,
-                y: Math.max(body.y, tailW.y) + 0.06 * p.scale,
-                z: (body.z * 1.1 + tailW.z * 0.9) / 2,
-            };
-            const span = Math.hypot(body.x - tailW.x, body.y - tailW.y, body.z - tailW.z);
-            const major = span * 0.75 + rW * 1.5;
-            const pMid = this.project(mid);
-            ctx.lineWidth = lw(1.9);
-            this.shell(ctx, inker, pMid,
-                basis(mid, J.fwd, major),
-                basis(mid, J.perpW, rW * 1.25), 'carapace', 18);
-            // The wing-case seam down the middle.
-            ctx.globalAlpha = 0.55;
-            ctx.lineWidth = lw(1.2);
-            inker.bone(ctx,
-                this.project({ x: mid.x - J.fwd.x * major * 0.85, y: mid.y - J.fwd.y * major * 0.85, z: mid.z - J.fwd.z * major * 0.85 }),
-                this.project({ x: mid.x + J.fwd.x * major * 0.7, y: mid.y + J.fwd.y * major * 0.7, z: mid.z + J.fwd.z * major * 0.7 }),
-                'seam', 0.7);
-            ctx.globalAlpha = 1;
+            for (const name of p.components) {
+                COMPONENTS[name]?.drawUnder?.(bag);
+            }
         } else {
         for (let i = J.chain.length - 1; i >= 0; i--) {
             const aheadW = i === 0 ? body : J.chain[i - 1];
@@ -2629,88 +2904,44 @@ class Arena {
             ctx.lineWidth = lw(1.6);
         }
 
-        // ---- tails and fins, per kind ----
-        if (p.tailStyle !== 'none' && J.chain.length) {
-            const S2 = SURFACES[c.surface];
-            const last = J.chain[J.chain.length - 1];
-            const ahead = J.chain.length > 1 ? J.chain[J.chain.length - 2] : body;
-            const L = fromWorld(S2, last);
-            const A2 = fromWorld(S2, ahead);
-            let da = L.a - A2.a, db = L.b - A2.b;
-            const dl = Math.hypot(da, db) || 1;
-            da /= dl; db /= dl;
-            const len = p.tailLen * p.scale;
-            ctx.strokeStyle = this.colors.line;
-
-            if (p.tailStyle === 'floof') {
-                // The squirrel plume: back, up, and curling over the body.
-                for (const off of [0, 0.16, -0.16]) {
-                    let prev = null;
-                    for (let k = 0; k <= 7; k++) {
-                        const th = (k / 7) * 2.3;
-                        const r = len * (0.5 + off * Math.sin((k / 7) * Math.PI));
-                        const pt = this.project(toWorld(S2,
-                            L.a + da * Math.sin(th) * r * 0.9,
-                            L.b + db * Math.sin(th) * r * 0.9
-                                + Math.cos(this.t * 2) * 0.03,
-                            Math.max(0.05, L.h + (1 - Math.cos(th)) * r)));
-                        ctx.lineWidth = lw(1.5 - Math.abs(off) * 2);
-                        if (prev) inker.bone(ctx, prev, pt, `tail${off}-${k}`, 1.1);
-                        prev = pt;
-                    }
-                }
-            } else if (p.tailStyle === 'whip') {
-                // The rat whip: thin, dragging, swaying with the gait.
-                let prev = null;
-                ctx.lineWidth = lw(1.1);
-                for (let k = 0; k <= 6; k++) {
-                    const tt = k / 6;
-                    const sway = Math.sin(c.phase * 0.7 + tt * 3) * 0.12 * len;
-                    const pt = this.project(toWorld(S2,
-                        L.a + da * len * tt - db * sway,
-                        L.b + db * len * tt + da * sway,
-                        Math.max(0.02, L.h * (1 - tt * 0.85))));
-                    if (prev) inker.bone(ctx, prev, pt, `whip${k}`, 0.7);
-                    prev = pt;
-                }
-            } else if (p.tailStyle === 'fin') {
-                // Caudal fin: a sweeping vertical triangle off the spine.
-                const sweep = Math.sin(c.phase * 1.4) * 0.25 * len;
-                const tip = toWorld(S2,
-                    L.a + da * len - db * sweep,
-                    L.b + db * len + da * sweep, L.h);
-                const up2 = toWorld(S2, L.a + da * len * 0.8 - db * sweep,
-                    L.b + db * len * 0.8 + da * sweep, L.h + len * 0.5);
-                const dn = toWorld(S2, L.a + da * len * 0.8 - db * sweep,
-                    L.b + db * len * 0.8 + da * sweep, Math.max(0.05, L.h - len * 0.4));
-                ctx.lineWidth = lw(1.4);
-                inker.loop(ctx, [this.project(last), this.project(up2),
-                    this.project(tip), this.project(dn)], 'caudal', 1.0);
-                // Pectoral fins beating at the body's sides.
-                const flap = Math.sin(c.phase * 2.2) * 0.25;
-                for (const sgn of [-1, 1]) {
-                    const baseW = body;
-                    const finTip = {
-                        x: baseW.x + J.perpW.x * sgn * p.scale * (0.5 + flap),
-                        y: baseW.y + J.perpW.y * sgn * p.scale * (0.5 + flap) - p.scale * 0.18,
-                        z: baseW.z + J.perpW.z * sgn * p.scale * (0.5 + flap),
-                    };
-                    const finBk = {
-                        x: baseW.x - J.fwd.x * p.scale * 0.35,
-                        y: baseW.y - J.fwd.y * p.scale * 0.35,
-                        z: baseW.z - J.fwd.z * p.scale * 0.35,
-                    };
-                    ctx.lineWidth = lw(1.1);
-                    inker.loop(ctx, [pBody, this.project(finTip), this.project(finBk)],
-                        'pec' + sgn, 0.8);
-                }
-            }
+        // ---- attached parts: tails, fins, whatever the spine carries ----
+        for (const name of p.components) {
+            COMPONENTS[name]?.draw?.(bag);
         }
+    }
+
+    /* Should this item be skipped as outside the viewport? Cheap world-x
+       test against the projected half-width at the item's depth. */
+    culled(item, fEff) {
+        if (item.x === undefined) return false;
+        const d = fEff / (ROOM_D + Math.max(0.6, item.z - this.camZ));
+        return Math.abs((item.x - this.camX) * d) > this.w * 0.62;
+    }
+
+    /* Render backdrop + everything beyond the near band into the frozen
+       scene layer. Runs only when the camera/boil/theme actually change. */
+    renderScene(items, band, fEff) {
+        const ctx = this.sceneCtx;
+        ctx.clearRect(0, 0, this.w, this.h);
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        const P = (x, y, z) => this.project({ x, y, z });
+        this.drawBackdrop(ctx, P);
+        const zCull = this.camZ - ROOM_D * 0.7;
+        for (const item of items) {
+            if (item.z <= band || item.z < zCull) continue;
+            if (this.culled(item, fEff)) continue;
+            ctx.strokeStyle = this.colors.shade;
+            ctx.lineWidth = 1.2;
+            item.draw(ctx);
+        }
+        ctx.globalAlpha = 1;
     }
 
     draw(dt) {
         const { ctx, w, h } = this;
         if (!w) return;
+        this.frameNo++;
         const inker = this.inker;
         inker.boil(this.t);
         this.envInker.boil(this.t);
@@ -2721,14 +2952,64 @@ class Arena {
 
         const P = (x, y, z) => this.project({ x, y, z });
         const J = this.creature.solve(this.t);
-        this.drawBackdrop(ctx, P, J);
+        const fEff = ((this.w * 0.97 * ROOM_D) / ROOM_W) * this.zoom;
 
-        // Painter's algorithm: the room's pieces and the creature sort by
-        // depth, so stalks and rocks pass in front of or behind the
-        // creature - and near wall edges overdraw it when it climbs.
-        const items = envItems(this.hab, this.envSalt, this.envInker, P,
-            this.terrain, this.colors, this.t, { x: this.camX, z: this.camZ });
-        items.push({
+        // Item epoch: rebuild the (camera-independent) item closures only
+        // when the window slides 4+ units - this also PRE-SPAWNS chunks a
+        // full view ahead of the camera, and unloads distant ones.
+        const epochX = Math.round(this.camX / 4) * 4;
+        const epochZ = Math.round(this.camZ / 4) * 4;
+        const epochKey = epochX + '|' + epochZ;
+        if (!this.itemsCache || this.itemsEpoch !== epochKey) {
+            this.itemsEpoch = epochKey;
+            this.itemsCache = envItems(this.hab, this.envSalt, this.envInker, P,
+                this.terrain, this.colors, this.t, { x: this.camX, z: this.camZ });
+            this.itemsCache.sort((a, b) => b.z - a.z);
+            const m = this.terrain._chunks;
+            if (m && m.size > 280) {
+                for (const k of m.keys()) {
+                    const [ci, cj] = k.split(',');
+                    if (Math.hypot(ci * CH - this.camX, cj * CH - this.camZ) > 90) m.delete(k);
+                }
+            }
+            this.sceneStamp.boil = NaN;   // scene layer must repaint
+        }
+        const items = this.itemsCache;
+
+        // The near band renders live so the creature sorts among it; the
+        // rest is frozen in the scene layer. Quantized so the boundary
+        // only moves when the creature crosses a 2-unit stripe.
+        const band = Math.ceil((J.body.z + 1.5) / 2) * 2;
+        const s = this.sceneStamp;
+        const colKey = this.colors.line + this.colors.shade;
+        const moved = Math.abs(this.camX - s.x) > 0.05
+            || Math.abs(this.camZ - s.z) > 0.05
+            || Math.abs(this.zoom - s.zoom) > 0.004;
+        const hard = s.band !== band || s.boil !== this.envInker.last || s.colors !== colKey;
+        if ((hard || moved) && (hard || this.frameNo - s.frame >= 2)) {
+            this.renderScene(items, band, fEff);
+            s.x = this.camX; s.z = this.camZ; s.zoom = this.zoom;
+            s.boil = this.envInker.last; s.band = band; s.colors = colKey;
+            s.frame = this.frameNo;
+        }
+        // Blit the frozen layer, shift-compensated for the pan since the
+        // last repaint (parallax error is sub-pixel at these speeds).
+        const dMid = fEff / (ROOM_D + 8);
+        const dx = (s.x - this.camX) * dMid;
+        ctx.drawImage(this.scene, dx, 0, this.scene.width / (window.devicePixelRatio || 1),
+            this.scene.height / (window.devicePixelRatio || 1));
+
+        // Live pass: glow, near items, the creature, animated ambience.
+        this.drawGlow(ctx, J);
+        const zCull = this.camZ - ROOM_D * 0.7;
+        const live = [];
+        for (const item of items) {
+            if (item.z > band || item.z < zCull) continue;
+            if (this.culled(item, fEff)) continue;
+            live.push(item);
+        }
+        live.push(...envDynamicItems(this.terrain, P, this.colors, this.t));
+        live.push({
             z: J.body.z,
             creature: true,
             draw: (ctx2) => {
@@ -2736,17 +3017,86 @@ class Arena {
                 this.drawCreature(ctx2, J, dt);
             },
         });
-        items.sort((a, b) => b.z - a.z);
-        ctx.strokeStyle = this.colors.shade;
-        ctx.lineWidth = 1.2;
-        const zCull = this.camZ - ROOM_D * 0.7;
-        for (const item of items) {
-            if (item.z < zCull && !item.creature) continue;
+        live.sort((a, b) => b.z - a.z);
+        for (const item of live) {
             if (!item.creature) {
                 ctx.strokeStyle = this.colors.shade;
                 ctx.lineWidth = 1.2;
             }
             item.draw(ctx);
+        }
+        ctx.globalAlpha = 1;
+
+        this.drawWeather(ctx, dt);
+    }
+
+    /* The particle system: a camera-wrapped volume of simple strokes.
+       Wind is one shared signal - base strength, gusts and reductions,
+       and the slow swell - so the whole sky moves as a body. */
+    drawWeather(ctx, dt) {
+        const wth = this.weather;
+        if (!wth || !this.particles.length) return;
+        const t = this.t;
+        const sw = Math.sin(t * wth.swell * 6.283);
+        const windNow = wth.wind * (1 - wth.gust * 0.45
+            + wth.gust * (0.55 * sw + 0.35 * Math.sin(t * wth.swell * 17 + 1.7)));
+        const fall = WEATHER_FALL[wth.material] * (0.6 + 0.7 * wth.density);
+        const mat = wth.material;
+        const bubbles = mat === 'bubbles';
+        const yMax = this.partYMax;
+        ctx.strokeStyle = mat === 'ash' || mat === 'dust' || mat === 'leaves'
+            ? this.colors.grain : this.colors.line;
+        ctx.fillStyle = ctx.strokeStyle;
+        ctx.lineWidth = 1;
+
+        for (const pt of this.particles) {
+            const flut = wth.flutter * Math.sin(t * (2 + pt.sp) + pt.ph);
+            pt.y += fall * pt.sp * dt;
+            pt.x += (windNow * (mat === 'dust' ? 2.2 : 1) + flut * 0.6) * dt;
+            pt.z += Math.cos(t * 0.7 + pt.ph) * 0.2 * dt;
+            // Wrap the volume around the camera.
+            if (pt.y < 0) pt.y += yMax;
+            if (pt.y > yMax) pt.y -= yMax;
+            if (pt.x < -24) pt.x += 48;
+            if (pt.x > 24) pt.x -= 48;
+            if (pt.z < 0) pt.z += 30;
+            if (pt.z > 30) pt.z -= 30;
+
+            const wx = bubbles
+                ? ROOM_W / 2 + pt.x * (ROOM_W / 50)   // bubbles stay in-tank
+                : this.camX + pt.x;
+            const wz = bubbles ? pt.z * (ROOM_D / 30) : this.camZ + pt.z;
+            const pp = this.project({ x: wx, y: pt.y, z: wz });
+            if (pp.x < -10 || pp.x > this.w + 10 || pp.y < -10 || pp.y > this.h + 10) continue;
+            const depth = Math.min(1, pp.d / 30);
+            ctx.globalAlpha = (mat === 'dust' ? 0.12 : 0.3) * (0.35 + 0.65 * depth) * (0.5 + 0.5 * wth.density);
+
+            if (mat === 'rain') {
+                const p2 = this.project({
+                    x: wx + windNow * 0.05, y: pt.y - fall * pt.sp * 0.045, z: wz,
+                });
+                ctx.beginPath();
+                ctx.moveTo(pp.x, pp.y);
+                ctx.lineTo(p2.x, p2.y);
+                ctx.stroke();
+            } else if (mat === 'leaves') {
+                const a2 = t * 3 * pt.sp + pt.ph;
+                const r2 = Math.max(1.4, pp.d * 0.02);
+                ctx.beginPath();
+                ctx.moveTo(pp.x - Math.cos(a2) * r2, pp.y - Math.sin(a2) * r2 * 0.5);
+                ctx.lineTo(pp.x, pp.y + r2 * 0.4);
+                ctx.lineTo(pp.x + Math.cos(a2) * r2, pp.y - Math.sin(a2) * r2 * 0.5);
+                ctx.stroke();
+            } else if (mat === 'bubbles') {
+                ctx.beginPath();
+                ctx.arc(pp.x, pp.y, Math.max(0.8, pp.d * (0.008 + 0.006 * pt.sp)), 0, Math.PI * 2);
+                ctx.stroke();
+            } else {
+                // snow, ash, dust: dots of falling matter.
+                ctx.beginPath();
+                ctx.arc(pp.x, pp.y, Math.max(0.6, pp.d * (mat === 'snow' ? 0.012 : 0.007)), 0, Math.PI * 2);
+                ctx.fill();
+            }
         }
         ctx.globalAlpha = 1;
     }
