@@ -32,6 +32,21 @@ from praxis.tasks import TASK_NAMES, resolve_task_weighter
 from praxis.utils import create_block_ids
 
 
+@dataclass
+class PraxisModelOutput(BaseModelOutputWithPast):
+    """`forward`'s return type: HF's `BaseModelOutputWithPast` (hidden states +
+    KV cache) extended with Praxis-specific extras - byte-latent encoder state,
+    patch metadata, and any auxiliary `losses` the modules emit."""
+
+    current_state: Optional[torch.LongTensor] = None
+    h_encoder: Optional[torch.FloatTensor] = None
+    patch_lengths: Optional[torch.LongTensor] = None
+    patch_embeds: Optional[torch.FloatTensor] = None
+    local_decoder_tokens: Optional[torch.LongTensor] = None
+    token_block_ids: Optional[torch.LongTensor] = None
+    losses: List[torch.LongTensor] = None
+
+
 class PraxisModel(PreTrainedModel):
     """The backbone: input ids (or bytes) -> hidden states, no LM head.
 
@@ -188,19 +203,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # size their own submodules. Encoder-agnostic heads (forward,
         # tied) ignore the reference and skip allocating an lm_head.
         encoder_ref = self.encoder if self.encoder else None
-        # Standard-mode tying normally routes to the dedicated "tied" head;
-        # heads that tie their own weights (crystal, and compositions ending in
-        # it) keep their type and tie themselves in tie_weights(). Read the flag
-        # off the registered class, unwrapping any functools.partial variant.
-        entry = HEAD_REGISTRY.get(config.head_type)
-        head_cls_decl = entry
-        while isinstance(head_cls_decl, functools.partial):
-            head_cls_decl = head_cls_decl.func
-        self_ties = bool(getattr(head_cls_decl, "self_ties", False))
-        if encoder_ref is None and config.tie_word_embeddings and not self_ties:
-            head_type = "tied"
-        else:
-            head_type = config.head_type
+        head_type = resolve_head_type(config, has_encoder=encoder_ref is not None)
         head_cls = HEAD_REGISTRY.get(head_type, HEAD_REGISTRY["forward"])
         self.head = head_cls(config, encoder=encoder_ref)
 
@@ -230,39 +233,11 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
             self.mtp = MultiTokenPrediction(config)
 
-        # Initialize RL policy if requested. rl_type is a list of policy/profile
-        # keys, so multiple discrete RL tasks coexist. Weight controllers act from
-        # a callback (not built here). Forward-path policies split in two:
-        #  - recall-style (engagement, joke): share a (logits, labels, mask)
-        #    signature and compute their own reward; any number may coexist, held
-        #    in self.recall_policies (one per RL interface, distinct metrics).
-        #  - others (reinforce/grpo/cot): the single self.policy, mutually
-        #    exclusive (different signatures, modify hidden states).
-        self.policy = None
-        self.policy_type = None
-        self._engagement_metrics = {}  # latest recall-policy scalars
-        _recall = {}
-        from praxis.policies import get_rl_profile, normalize_rl_types
-
-        for rl_name in normalize_rl_types(getattr(config, "rl_type", None)):
-            _profile = get_rl_profile(rl_name)
-            policy_key = _profile["policy"] if _profile else rl_name
-            if not policy_key or policy_key not in RL_POLICIES_REGISTRY:
-                continue
-            policy_cls = RL_POLICIES_REGISTRY[policy_key]
-            if getattr(policy_cls, "is_weight_controller", False):
-                continue  # built by a training callback, not the forward pass
-            if rl_name in ("engagement", "joke"):
-                _recall[rl_name] = policy_cls(config)
-            else:
-                if self.policy is not None:
-                    raise ValueError(
-                        f"Multiple non-recall forward-path RL policies requested "
-                        f"({self.policy_type!r}, {rl_name!r}); only one is supported."
-                    )
-                self.policy = policy_cls(config)
-                self.policy_type = rl_name
+        # Forward-path RL policies (see build_rl_policies). Weight controllers
+        # are built by training callbacks, never here.
+        self.policy, self.policy_type, _recall = build_rl_policies(config)
         self.recall_policies = nn.ModuleDict(_recall)
+        self._engagement_metrics = {}  # latest recall-policy scalars
 
         # Encoders that own their loss (e.g. CALM) bypass the main-CE path
         # entirely, so don't build a criterion we'd never call.
@@ -612,24 +587,76 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             labels=labels,
         )
 
-        # Get hidden states before computing logits
-        hidden_states = outputs.last_hidden_state
-
-        classifier = None
-        backward_logits = None
-
-        logits = hidden_states
-
-        # Check if we're using cut_cross_entropy to optimize logits computation
+        # Under cut-CE training, full logits are never materialized; the loss
+        # projects internally from embeddings + classifier.
         is_cut_ce = (
             self.criterion is not None
             and self.criterion.__class__.__name__ == "CutCrossEntropyLoss"
         )
-        skip_logits_for_training = is_cut_ce and self.training and labels is not None
+        skip_logits = is_cut_ce and self.training and labels is not None
+
+        logits, classifier, hidden_states, backward_logits = self._compute_logits(
+            outputs, input_ids, skip_logits
+        )
+
+        self._apply_recall_policies(
+            outputs.losses, logits, labels, assistant_mask, task_type_ids, skip_logits
+        )
+        hidden_states = self._apply_rl_policy(
+            outputs.losses,
+            hidden_states,
+            logits,
+            labels,
+            rewards,
+            attention_mask,
+            token_weights,
+        )
+
+        loss = self._main_loss(
+            outputs.losses,
+            logits,
+            labels,
+            hidden_states,
+            classifier,
+            input_ids,
+            backward_logits,
+            task_type_ids,
+            assistant_mask,
+        )
+        self._collect_aux_losses(
+            outputs, hidden_states, logits, labels, input_ids,
+            attention_mask, skip_logits,
+        )
+        loss = self._finalize_loss(loss, outputs.losses, labels)
+
+        return CausalLMOutputWithPast(
+            loss=loss,
+            logits=logits,
+            past_key_values=outputs.past_key_values,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+        )
+
+    def _compute_logits(
+        self,
+        outputs: "PraxisModelOutput",
+        input_ids: torch.Tensor,
+        skip_logits: bool,
+    ) -> Tuple[torch.Tensor, Optional[nn.Module], torch.Tensor, Optional[torch.Tensor]]:
+        """Turn trunk hidden states into logits.
+
+        Returns ``(logits, classifier, hidden_states, backward_logits)``.
+        Three paths: encoder-owned decode (e.g. CALM), head projection, or
+        passthrough when the trunk already emits vocab-width states. With
+        ``skip_logits`` (cut-CE training) the projection is left to the loss
+        and ``logits`` stays at the embedding width.
+        """
+        hidden_states = outputs.last_hidden_state
+        logits = hidden_states
+        classifier = None
+        backward_logits = None
 
         if self.encoder:
-            """Needs encoding:"""
-
             enc_logits, decoder_embeds = self.encoder.decode(
                 hidden_states,
                 outputs.h_encoder,
@@ -645,9 +672,8 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 classifier = self.encoder.classifier
             else:
                 # Encoder produced features; the head classifies them - the
-                # same path as standalone mode. Skip materializing logits
-                # under cut-CE training (the loss projects internally).
-                if not skip_logits_for_training:
+                # same path as standalone mode.
+                if not skip_logits:
                     logits = self.head(decoder_embeds)
                 classifier = self.head.classifier
             hidden_states = decoder_embeds
@@ -658,137 +684,178 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             for key, value in self.encoder.consume_pending_losses().items():
                 outputs.losses.add_loss(key, value)
         elif hidden_states.size(-1) != self.config.vocab_size:
-            """Needs projection/classification:"""
-
-            # Skip logits computation during training with cut_cross_entropy
-            # The loss function will compute it internally without materializing the full matrix
-            if not skip_logits_for_training:
+            if not skip_logits:
                 logits = self.head(hidden_states)
-            # Always get classifier reference (needed for cut_cross_entropy)
+            # Always keep the classifier reference (needed for cut-CE).
             classifier = self.head.classifier
-
-            # Compute backward logits if we have a separate backward head
-            # (only when we need them - not during cut_ce training)
-            if self.backward_head is not None and not skip_logits_for_training:
+            if self.backward_head is not None and not skip_logits:
                 backward_logits = self.backward_head(hidden_states)
 
-        # Recall-style forward policies (engagement / joke): each computes its own
-        # reward from the answer labels over the assistant region. Any number may
-        # coexist (one per RL interface); each emits its own namespaced metrics.
-        if self.recall_policies and labels is not None:
-            self._engagement_metrics = {}
-            for name, pol in self.recall_policies.items():
-                pol_loss, pol_metrics = pol(
-                    logits=logits if not skip_logits_for_training else None,
-                    labels=labels,
-                    assistant_mask=assistant_mask,
-                    task_type_ids=task_type_ids,
-                )
-                if pol_loss is not None:
-                    outputs.losses.add_loss(f"{name}_policy", pol_loss)
-                if pol_metrics:
-                    self._engagement_metrics.update(pol_metrics)
+        return logits, classifier, hidden_states, backward_logits
 
-        # Apply the single (non-recall) RL policy if enabled.
-        if self.policy is not None:
-            # Different RL algorithms need different inputs. policy_type is the
-            # single forward-path rl_type selected at build time.
-            rl_type = self.policy_type
-
-            if rl_type == "grpo" and rewards is not None and labels is not None:
-                # GRPO needs logits and labels for proper loss computation
-                # For now, we'll need to compute reference logits in the training loop
-                _, rl_losses = self.policy(
-                    hidden_states,
-                    logits=logits,
-                    labels=labels,
-                    rewards=rewards,
-                    ref_logits=None,  # TODO: Add reference model support
-                    mask=attention_mask,
-                )
-                if rl_losses is not None:
-                    for key, value in rl_losses.items():
-                        outputs.losses.add_loss(f"rl_{key}", value)
-            elif rl_type == "cot" and labels is not None:
-                # Basic CoT uses supervised learning with weighted loss
-                # Note: Pass shifted logits to match labels
-                _, cot_losses = self.policy(
-                    hidden_states,
-                    logits=logits[..., :-1, :].contiguous(),
-                    labels=labels,
-                    attention_mask=attention_mask,
-                    token_weights=token_weights,  # Pre-computed token weights from builder
-                )
-                if cot_losses is not None:
-                    # Add CoT losses directly using LossContainer integration
-                    outputs.losses.add_loss_container(cot_losses)
-            elif rewards is not None and labels is not None:
-                # REINFORCE and other methods
-                hidden_states, rl_loss = self.policy(
-                    hidden_states, rewards=rewards, mask=attention_mask
-                )
-                if rl_loss is not None:
-                    outputs.losses.add_loss("rl_policy", rl_loss)
-
-        loss = 0
-        if labels is not None:
-            loss_weights = self._build_loss_weights(
+    def _apply_recall_policies(
+        self,
+        losses: LossContainer,
+        logits: torch.Tensor,
+        labels: Optional[torch.Tensor],
+        assistant_mask: Optional[torch.Tensor],
+        task_type_ids: Optional[torch.Tensor],
+        skip_logits: bool,
+    ) -> None:
+        """Recall-style forward policies (engagement / joke): each computes its
+        own reward from the answer labels over the assistant region. Any number
+        may coexist; each emits its own namespaced loss and metrics."""
+        if not self.recall_policies or labels is None:
+            return
+        self._engagement_metrics = {}
+        for name, pol in self.recall_policies.items():
+            pol_loss, pol_metrics = pol(
+                logits=logits if not skip_logits else None,
                 labels=labels,
-                task_type_ids=task_type_ids,
                 assistant_mask=assistant_mask,
+                task_type_ids=task_type_ids,
             )
-            # Check if trainer already computed layer-wise losses (e.g., MonoForward trainer)
-            if "_layer_wise_complete" in outputs.losses.loss_dict:
-                # Trainer handled its own training, use strategy to combine losses
-                layer_losses = [
-                    v
-                    for k, v in outputs.losses.loss_dict.items()
-                    if k != "_layer_wise_complete" and k != "main"
-                ]
-                if layer_losses:
-                    loss = self.strategy(layer_losses)
-            elif self.encoder and self.encoder.handles_loss:
-                # Encoder owns its loss bookkeeping (see CALMEncoder).
-                # Registered losses will be combined by the strategy below.
-                pass
-            elif self.config.bidirectional:
-                main_loss = self._compute_bidirectional_loss(
-                    logits=logits,
-                    labels=labels,
-                    embeddings=hidden_states,
-                    classifier=classifier,
-                    input_ids=input_ids,
-                    backward_logits=backward_logits,
-                )
-                loss = outputs.losses.add_loss("main", main_loss)
-            else:
-                main_loss = self._compute_loss(
-                    logits=logits,
-                    labels=labels,
-                    embeddings=hidden_states,
-                    classifier=classifier,
-                    input_ids=input_ids,
-                    loss_weights=loss_weights,
-                )
-                loss = outputs.losses.add_loss("main", main_loss)
+            if pol_loss is not None:
+                losses.add_loss(f"{name}_policy", pol_loss)
+            if pol_metrics:
+                self._engagement_metrics.update(pol_metrics)
 
-        # Task-weight anchor loss (learnable weighters only). Folds in
-        # alongside MTP / RL / encoder aux losses so the strategy sees it.
-        if self.training and labels is not None:
-            anchor = self.tasker.anchor_loss()
-            if anchor is not None:
-                outputs.losses.add_loss("task_weight_anchor", anchor)
+    def _apply_rl_policy(
+        self,
+        losses: LossContainer,
+        hidden_states: torch.Tensor,
+        logits: torch.Tensor,
+        labels: Optional[torch.Tensor],
+        rewards: Optional[torch.Tensor],
+        attention_mask: Optional[torch.Tensor],
+        token_weights: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        """Apply the single (non-recall) forward-path RL policy.
 
-        # Heads can emit named aux losses (e.g., HarmonicHead's
-        # forward-shift smoothness loss, CrystalHead's centers-RMS
-        # regularizer).
-        if self.training and labels is not None and self.head is not None:
-            aux = self.head.aux_losses()
-            for name, value in aux.items():
+        Returns ``hidden_states``, which REINFORCE-style policies may modify.
+        """
+        if self.policy is None:
+            return hidden_states
+        rl_type = self.policy_type
+
+        if rl_type == "grpo" and rewards is not None and labels is not None:
+            # GRPO needs logits and labels for proper loss computation.
+            _, rl_losses = self.policy(
+                hidden_states,
+                logits=logits,
+                labels=labels,
+                rewards=rewards,
+                ref_logits=None,  # TODO: Add reference model support
+                mask=attention_mask,
+            )
+            if rl_losses is not None:
+                for key, value in rl_losses.items():
+                    losses.add_loss(f"rl_{key}", value)
+        elif rl_type == "cot" and labels is not None:
+            # Basic CoT uses supervised learning with weighted loss; logits
+            # are shifted to match labels.
+            _, cot_losses = self.policy(
+                hidden_states,
+                logits=logits[..., :-1, :].contiguous(),
+                labels=labels,
+                attention_mask=attention_mask,
+                token_weights=token_weights,
+            )
+            if cot_losses is not None:
+                losses.add_loss_container(cot_losses)
+        elif rewards is not None and labels is not None:
+            # REINFORCE and other methods.
+            hidden_states, rl_loss = self.policy(
+                hidden_states, rewards=rewards, mask=attention_mask
+            )
+            if rl_loss is not None:
+                losses.add_loss("rl_policy", rl_loss)
+
+        return hidden_states
+
+    def _main_loss(
+        self,
+        losses: LossContainer,
+        logits: torch.Tensor,
+        labels: Optional[torch.Tensor],
+        hidden_states: torch.Tensor,
+        classifier: Optional[nn.Module],
+        input_ids: torch.Tensor,
+        backward_logits: Optional[torch.Tensor],
+        task_type_ids: Optional[torch.Tensor],
+        assistant_mask: Optional[torch.Tensor],
+    ):
+        """Register the main objective and return it (0 when none applies:
+        no labels, a layer-wise trainer without layer losses, or an encoder
+        that owns its loss - those are combined later in _finalize_loss)."""
+        if labels is None:
+            return 0
+        loss_weights = self._build_loss_weights(
+            labels=labels,
+            task_type_ids=task_type_ids,
+            assistant_mask=assistant_mask,
+        )
+        # Layer-wise trainers (e.g. MonoForward) already trained each layer;
+        # just combine their recorded losses.
+        if "_layer_wise_complete" in losses.loss_dict:
+            layer_losses = [
+                v
+                for k, v in losses.loss_dict.items()
+                if k != "_layer_wise_complete" and k != "main"
+            ]
+            return self.strategy(layer_losses) if layer_losses else 0
+        if self.encoder and self.encoder.handles_loss:
+            # Encoder owns its loss bookkeeping (see CALMEncoder); its
+            # registered losses are combined in _finalize_loss.
+            return 0
+        if self.config.bidirectional:
+            main_loss = self._compute_bidirectional_loss(
+                logits=logits,
+                labels=labels,
+                embeddings=hidden_states,
+                classifier=classifier,
+                input_ids=input_ids,
+                backward_logits=backward_logits,
+            )
+            return losses.add_loss("main", main_loss)
+        main_loss = self._compute_loss(
+            logits=logits,
+            labels=labels,
+            embeddings=hidden_states,
+            classifier=classifier,
+            input_ids=input_ids,
+            loss_weights=loss_weights,
+        )
+        return losses.add_loss("main", main_loss)
+
+    def _collect_aux_losses(
+        self,
+        outputs: "PraxisModelOutput",
+        hidden_states: torch.Tensor,
+        logits: torch.Tensor,
+        labels: Optional[torch.Tensor],
+        input_ids: torch.Tensor,
+        attention_mask: Optional[torch.Tensor],
+        skip_logits: bool,
+    ) -> None:
+        """Accumulate training-only auxiliary losses into the container:
+        task-weight anchor, head aux losses, MTP, contrastive isotropy, and
+        the solvability probe."""
+        if not self.training or labels is None:
+            return
+
+        # Task-weight anchor loss (learnable weighters only).
+        anchor = self.tasker.anchor_loss()
+        if anchor is not None:
+            outputs.losses.add_loss("task_weight_anchor", anchor)
+
+        # Heads can emit named aux losses (e.g., HarmonicHead's forward-shift
+        # smoothness loss, CrystalHead's centers-RMS regularizer).
+        if self.head is not None:
+            for name, value in self.head.aux_losses().items():
                 outputs.losses.add_loss(name, value)
 
-        # MTP auxiliary loss (training only)
-        if self.mtp is not None and self.training and labels is not None:
+        if self.mtp is not None:
             mtp_inputs = self.mtp.prepare_inputs(
                 hidden_states=hidden_states,
                 input_ids=input_ids,
@@ -797,17 +864,11 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 head=self.head,
                 patch_embeds=outputs.patch_embeds if self.encoder else None,
             )
-            mtp_losses = self.mtp(mtp_inputs)
-            outputs.losses.add_loss_container(mtp_losses)
+            outputs.losses.add_loss_container(self.mtp(mtp_inputs))
 
-        # Contrastive isotropy (SimCTG): additive regularizer on the last-layer
-        # representations to keep the space discriminative for contrastive-search
-        # decoding. Leaves the main objective untouched.
-        if (
-            self.contrastive_isotropy is not None
-            and self.training
-            and labels is not None
-        ):
+        # Contrastive isotropy (SimCTG): additive regularizer keeping the
+        # representation space discriminative for contrastive-search decoding.
+        if self.contrastive_isotropy is not None:
             iso_loss = self.contrastive_isotropy(hidden_states, input_ids)
             outputs.losses.add_loss("contrastive", iso_loss)
 
@@ -817,9 +878,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # training, where full logits are never materialized.
         if (
             self.solvability is not None
-            and self.training
-            and labels is not None
-            and not skip_logits_for_training
+            and not skip_logits
             and logits.size(-1) == self.config.vocab_size
             and logits.size(1) in (labels.size(1), labels.size(1) + 1)
         ):
@@ -828,29 +887,28 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             )
             outputs.losses.add_loss("solvability", solvability_loss)
 
-        # We omit auxiliary losses during validation and inference - except
-        # for handles_loss encoders (CALM), where the encoder owns the main
-        # loss and there's nothing else to fall back to. Without this their
-        # val_loss would stay at 0.
+    def _finalize_loss(
+        self, loss, losses: LossContainer, labels: Optional[torch.Tensor]
+    ):
+        """Combine all tagged losses via the strategy.
+
+        Auxiliary losses are omitted during validation and inference - except
+        for handles_loss encoders (CALM), where the encoder owns the main loss
+        and there is nothing else to fall back to (their val_loss would
+        otherwise stay at 0).
+        """
         handles_loss_encoder = self.encoder is not False and getattr(
             self.encoder, "handles_loss", False
         )
-        if labels is not None and (self.training or handles_loss_encoder):
-            loss_values = outputs.losses.get_loss_values()
-            if len(loss_values) > 1:
-                # Multiple tagged losses — let the strategy combine them
-                loss = self.strategy(loss_values)
-            elif loss == 0 and len(loss_values) > 0:
-                # Only auxiliary losses (no main) — combine via strategy
-                loss = self.strategy(loss_values)
-
-        return CausalLMOutputWithPast(
-            loss=loss,
-            logits=logits,
-            past_key_values=outputs.past_key_values,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
-        )
+        if labels is None or not (self.training or handles_loss_encoder):
+            return loss
+        loss_values = losses.get_loss_values()
+        if len(loss_values) > 1:
+            return self.strategy(loss_values)
+        if loss == 0 and len(loss_values) > 0:
+            # Only auxiliary losses (no main) - combine via strategy.
+            return self.strategy(loss_values)
+        return loss
 
     def generate(self, inputs=None, generation_config=None, **kwargs):
         """Generate tokens, dispatching to specialised paths when applicable."""
@@ -894,11 +952,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         eos_token_id = getattr(generation_config, "eos_token_id", None)
         return_dict = kwargs.get("return_dict_in_generate", False)
 
-        eos_set = set()
-        if isinstance(eos_token_id, int):
-            eos_set = {eos_token_id}
-        elif isinstance(eos_token_id, (list, tuple)):
-            eos_set = set(eos_token_id)
+        eos_set = make_eos_set(eos_token_id)
 
         generated = input_ids
         embed_fn = self.get_input_embeddings()
@@ -912,7 +966,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
             # Sample first token from main model
             last_logits = main_logits[:, -1, :]
-            token_0 = self._sample_token(last_logits, do_sample, temperature)
+            token_0 = sample_token(last_logits, do_sample, temperature)
             token_0_2d = token_0.unsqueeze(1)
 
             if token_0.item() in eos_set:
@@ -940,7 +994,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
             for i in range(n_candidates):
                 v_logits = verify_logits[:, gen_len - 1 + i, :]
-                v_token = self._sample_token(v_logits, do_sample, temperature)
+                v_token = sample_token(v_logits, do_sample, temperature)
 
                 if v_token.item() == candidates[:, i].item():
                     accepted += 1
@@ -968,7 +1022,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
                 if num_new < max_new_tokens:
                     bonus_logits = verify_logits[:, gen_len - 1 + n_candidates, :]
-                    bonus = self._sample_token(bonus_logits, do_sample, temperature)
+                    bonus = sample_token(bonus_logits, do_sample, temperature)
                     generated = torch.cat([generated, bonus.unsqueeze(1)], dim=1)
                     num_new += 1
                     if bonus.item() in eos_set:
@@ -977,13 +1031,6 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         if return_dict:
             return SimpleNamespace(sequences=generated)
         return generated
-
-    def _sample_token(self, logits, do_sample, temperature):
-        """Sample or greedily select a single token from logits."""
-        if do_sample and temperature > 0:
-            probs = F.softmax(logits / temperature, dim=-1)
-            return torch.multinomial(probs, 1).squeeze(-1)
-        return logits.argmax(dim=-1)
 
     def get_input_embeddings(self) -> nn.Module:
         """Get the input embeddings module."""
@@ -1068,16 +1115,83 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         return filtered_state
 
 
-@dataclass
-class PraxisModelOutput(BaseModelOutputWithPast):
-    """`forward`'s return type: HF's `BaseModelOutputWithPast` (hidden states +
-    KV cache) extended with Praxis-specific extras - byte-latent encoder state,
-    patch metadata, and any auxiliary `losses` the modules emit."""
+# ---------------------------------------------------------------------------
+# Standalone helpers (state-light pieces of model assembly and generation)
+# ---------------------------------------------------------------------------
 
-    current_state: Optional[torch.LongTensor] = None
-    h_encoder: Optional[torch.FloatTensor] = None
-    patch_lengths: Optional[torch.LongTensor] = None
-    patch_embeds: Optional[torch.FloatTensor] = None
-    local_decoder_tokens: Optional[torch.LongTensor] = None
-    token_block_ids: Optional[torch.LongTensor] = None
-    losses: List[torch.LongTensor] = None
+
+def resolve_head_type(config, has_encoder: bool) -> str:
+    """Pick the head registry key for a model.
+
+    Standard-mode weight tying routes to the dedicated "tied" head - unless
+    the configured head ties its own weights (crystal, and compositions
+    ending in it), which keeps its type and ties itself in tie_weights().
+    The flag is read off the registered class, unwrapping any
+    functools.partial variant. Encoder mode always keeps the configured type.
+    """
+    head_cls = HEAD_REGISTRY.get(config.head_type)
+    while isinstance(head_cls, functools.partial):
+        head_cls = head_cls.func
+    self_ties = bool(getattr(head_cls, "self_ties", False))
+    if not has_encoder and config.tie_word_embeddings and not self_ties:
+        return "tied"
+    return config.head_type
+
+
+def build_rl_policies(config):
+    """Construct forward-path RL policies from ``config.rl_type``.
+
+    rl_type is a list of policy/profile keys, so multiple discrete RL tasks
+    coexist. Returns ``(policy, policy_type, recall_policies)``:
+
+    - recall-style policies (engagement, joke) share a (logits, labels, mask)
+      signature and compute their own reward; any number may coexist, one per
+      RL interface with distinct metrics.
+    - all others (reinforce/grpo/cot) are mutually exclusive (different
+      signatures, may modify hidden states) - the single ``policy``.
+
+    Weight controllers act from a training callback and are never built here.
+    """
+    from praxis.policies import get_rl_profile, normalize_rl_types
+
+    policy = None
+    policy_type = None
+    recall = {}
+    for rl_name in normalize_rl_types(getattr(config, "rl_type", None)):
+        profile = get_rl_profile(rl_name)
+        policy_key = profile["policy"] if profile else rl_name
+        if not policy_key or policy_key not in RL_POLICIES_REGISTRY:
+            continue
+        policy_cls = RL_POLICIES_REGISTRY[policy_key]
+        if getattr(policy_cls, "is_weight_controller", False):
+            continue
+        if rl_name in ("engagement", "joke"):
+            recall[rl_name] = policy_cls(config)
+        else:
+            if policy is not None:
+                raise ValueError(
+                    f"Multiple non-recall forward-path RL policies requested "
+                    f"({policy_type!r}, {rl_name!r}); only one is supported."
+                )
+            policy = policy_cls(config)
+            policy_type = rl_name
+    return policy, policy_type, recall
+
+
+def make_eos_set(eos_token_id) -> set:
+    """Normalize an eos_token_id (int, list, tuple, or None) to a set."""
+    if isinstance(eos_token_id, int):
+        return {eos_token_id}
+    if isinstance(eos_token_id, (list, tuple)):
+        return set(eos_token_id)
+    return set()
+
+
+def sample_token(
+    logits: torch.Tensor, do_sample: bool, temperature: float
+) -> torch.Tensor:
+    """Sample or greedily select a single token from logits."""
+    if do_sample and temperature > 0:
+        probs = F.softmax(logits / temperature, dim=-1)
+        return torch.multinomial(probs, 1).squeeze(-1)
+    return logits.argmax(dim=-1)
