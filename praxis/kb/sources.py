@@ -345,10 +345,15 @@ class PagesSource(KBSource):
 
     The spider worker writes pages on its own slow clock; this source surfaces
     the newest ones into the index on reindex, capped so the feed doesn't
-    drown in crawled content. See ``praxis.spider``.
+    drown in crawled content. A fixed slice of the cap is reserved for
+    enriched pages (ones carrying a preview image), so text-only boilerplate
+    can never crowd every thumbnail out of the KB. See ``praxis.spider``.
     """
 
     name = "pages"
+
+    # Fraction of max_kb_pages reserved for image-bearing pages.
+    ENRICHED_RESERVE = 0.25
 
     def iter_items(self, since: float = 0.0) -> Iterable[KBItem]:
         """Newest pages, capped; ``since`` narrows to pages fetched after the
@@ -358,18 +363,32 @@ class PagesSource(KBSource):
 
         if not DEFAULT_SPIDER_DB.exists():
             return
+        cap = SpiderSettings().max_kb_pages
+        # Watch URLs count as enriched even when image wasn't stored: the
+        # frontend derives their thumbnail from the video id alone.
+        enriched = "(image != '' OR url LIKE '%youtube.com/watch?v=%')"
         try:
             conn = sqlite3.connect(f"file:{DEFAULT_SPIDER_DB}?mode=ro", uri=True)
+            select = (
+                "SELECT url, site, title, text, summary, fetched, richness, image "
+                "FROM pages WHERE fetched > ?"
+            )
+            order = " ORDER BY richness DESC, fetched DESC LIMIT ?"
             rows = conn.execute(
-                "SELECT url, site, title, text, summary, fetched, richness FROM pages "
-                "WHERE fetched > ? ORDER BY richness DESC, fetched DESC LIMIT ?",
-                (since, SpiderSettings().max_kb_pages),
+                f"{select} AND {enriched}{order}",
+                (since, int(cap * self.ENRICHED_RESERVE)),
             ).fetchall()
+            taken = {row[0] for row in rows}
+            rows += [
+                row
+                for row in conn.execute(f"{select}{order}", (since, cap)).fetchall()
+                if row[0] not in taken
+            ][: cap - len(rows)]
             conn.close()
         except sqlite3.Error:
             return
         boilerplate = _site_boilerplate(rows)
-        for url, site, title, text, summary, fetched, richness in rows:
+        for url, site, title, text, summary, fetched, richness, image in rows:
             host = site.split("//", 1)[-1]
             common = boilerplate.get(site, frozenset())
             body = "\n".join(
@@ -387,7 +406,7 @@ class PagesSource(KBSource):
                 origin=site,
                 summary=summary,
                 updated=fetched,
-                meta={"richness": richness},
+                meta={"richness": richness, "image": image},
             )
 
 
@@ -554,7 +573,7 @@ def _site_boilerplate(rows) -> dict:
 
     site_pages = Counter(r[1] for r in rows)
     line_counts: dict = defaultdict(Counter)
-    for _, site, _, text, _, _, _ in rows:
+    for _, site, _, text, *_rest in rows:
         line_counts[site].update({ln for ln in text.splitlines() if ln.strip()})
     return {
         site: frozenset(

@@ -88,6 +88,7 @@ class SpiderWorker:
             etag=result.etag,
             last_modified=result.last_modified,
             richness=result.richness,
+            image=result.image,
         )
         # Track every citation: same-site edges rank the frontier, edges to
         # unwatched sites accrue toward promotion. Only this site's own links

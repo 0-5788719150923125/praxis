@@ -453,36 +453,44 @@ export function createMessage({ role, content, caption, jokeScore, score = 0 }, 
  * @param {Object} hit - {type, title, uri, origin, summary, snippet}
  * @returns {string} HTML string
  */
-export function createKbResult({ id, type, label, title, uri, origin, summary, snippet }) {
+export function createKbResult({ id, type, label, title, uri, origin, summary, snippet, meta }) {
     const highlighted = escapeHtml(snippet || summary || '')
         .replaceAll('\x01', '<mark>')
         .replaceAll('\x02', '</mark>');
     const from = origin ? `<span class="kb-result-origin">${escapeHtml(origin)}</span>` : '';
     const video = (uri || '').match(/youtube\.com\/watch\?v=([\w-]{11})/);
+    // Thumbnail: a stored preview image (og:image, crawled by the spider), or
+    // one derived from the video id for watch URLs that predate image capture.
+    const image = (meta && meta.image) || (video ? `https://i.ytimg.com/vi/${video[1]}/mqdefault.jpg` : '');
     // Pages label themselves with their domain, which already shows by the
     // title (origin) - so the chip uses the generic type instead of repeating it.
     const chipLabel = type === 'page' ? type : (label || type);
     const chip = `<span class="kb-result-type kb-label-filter" data-kb-type="${escapeHtml(type)}"
               data-kb-label="${escapeHtml(chipLabel)}" role="button"
               title="Add to search">${escapeHtml(chipLabel)}</span>`;
-    const open = `<div class="kb-result${video ? ' has-thumb' : ''}" role="button" tabindex="0"
+    const open = `<div class="kb-result${image ? ' has-thumb' : ''}" role="button" tabindex="0"
              data-kb-id="${escapeHtml(id)}" data-kb-type="${escapeHtml(type)}"
              data-kb-uri="${escapeHtml(uri)}" data-kb-title="${escapeHtml(title)}">`;
-    if (video) {
-        // Video rows: two panels. Media (chip + thumb) left; text right with a
-        // clean title and a shortened link on its own line.
+    if (image) {
+        // Enriched rows: two panels. Media (chip + thumb) left; text right
+        // with a clean title and a shortened link on its own line.
         const cleanTitle = title.replace(/\s*-\s*YouTube\s*$/, '');
+        let host = '';
+        try { host = new URL(uri).hostname.replace(/^www\./, ''); } catch { /* tab routes etc. */ }
+        const link = host
+            ? `<a class="kb-result-url" href="${escapeHtml(uri)}" target="_blank"
+                   rel="noopener noreferrer">[${escapeHtml(host)}]</a>`
+            : '';
         return `
         ${open}
             <div class="kb-result-media">
                 ${chip}
                 <img class="kb-result-thumb" loading="lazy" decoding="async" alt=""
-                     src="https://i.ytimg.com/vi/${video[1]}/mqdefault.jpg">
+                     src="${escapeHtml(image)}">
             </div>
             <div class="kb-result-text">
                 <span class="kb-result-title">${escapeHtml(cleanTitle)}</span>
-                <a class="kb-result-url" href="${escapeHtml(uri)}" target="_blank"
-                   rel="noopener noreferrer">[youtube.com]</a>
+                ${link}
                 <span class="kb-result-snippet">${highlighted}</span>
             </div>
         </div>

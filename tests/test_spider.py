@@ -170,12 +170,33 @@ def test_citations_rank_the_frontier(store):
 
 
 def test_external_refs_promote_into_free_slots(store):
-    store.add_site("https://a.com", max_sites=4)
-    for src in ("https://a.com/1", "https://a.com/2", "https://a.com/3"):
+    store.add_site("https://a.com", max_sites=8)
+    store.add_site("https://b.com", max_sites=8)
+    store.add_site("https://c.com", max_sites=8)
+    for src in ("https://a.com/1", "https://b.com/2", "https://c.com/3"):
         store.record_refs(src, ["https://news.example/story"])
-    promoted = store.promote_sites(max_sites=4)
+    promoted = store.promote_sites(max_sites=8)
     assert promoted == ["https://news.example"]
     assert "https://news.example" in [row[0] for row in store.list_sites()]
+
+
+def test_same_site_referrers_do_not_promote(store):
+    """A single site's footer boilerplate citing the same external site on
+    every page must not promote it - that's the churn-ring failure mode."""
+    store.add_site("https://a.com", max_sites=8)
+    for src in ("https://a.com/1", "https://a.com/2", "https://a.com/3"):
+        store.record_refs(src, ["https://social.example/share"])
+    assert store.promote_sites(max_sites=8) == []
+
+
+def test_evicted_sites_wait_out_a_cooldown(store):
+    store.add_site("https://a.com", max_sites=8)
+    store.add_site("https://b.com", max_sites=8)
+    store.add_site("https://c.com", max_sites=8)
+    store.log_event("evicted", "https://news.example")
+    for src in ("https://a.com/1", "https://b.com/2", "https://c.com/3"):
+        store.record_refs(src, ["https://news.example/story"])
+    assert store.promote_sites(max_sites=8) == []
 
 
 def test_events_and_counts(store):
@@ -246,7 +267,7 @@ def test_promotion_evicts_weakest_when_full(store):
     store.add_site("https://pinned.com", max_sites=2, pinned=True)
     store.add_site("https://boring.com", max_sites=2)  # zero inbound citations
     for i in range(3):
-        store.record_refs(f"https://x.com/p{i}", ["https://hot.com/a"])
+        store.record_refs(f"https://x{i}.com/p", ["https://hot.com/a"])
     promoted = store.promote_sites(max_sites=2)
     sites = {row[0] for row in store.list_sites()}
     assert promoted == ["https://hot.com"]
@@ -259,7 +280,7 @@ def test_promotion_spares_more_interesting_incumbents(store):
     for i in range(9):
         store.record_refs(f"https://r.com/{i}", ["https://liked.com/a"])
     for i in range(3):
-        store.record_refs(f"https://x.com/p{i}", ["https://meh.com/a"])
+        store.record_refs(f"https://x{i}.com/p", ["https://meh.com/a"])
     assert store.promote_sites(max_sites=1) == []
     assert {row[0] for row in store.list_sites()} == {"https://liked.com"}
 

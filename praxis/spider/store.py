@@ -49,7 +49,9 @@ CREATE TABLE IF NOT EXISTS pages (
     last_modified TEXT NOT NULL DEFAULT '',
     -- Host-agnostic content-conformance score in [0, 1]; ranks both the crawl
     -- frontier (via prior) and KB results (via the pages source).
-    richness REAL NOT NULL DEFAULT 0
+    richness REAL NOT NULL DEFAULT 0,
+    -- Preview image (og:image) extracted from the page, if any.
+    image TEXT NOT NULL DEFAULT ''
 );
 -- The link graph: who cites whom. Citation counts rank the frontier, so a
 -- URL many pages point at is fetched before a one-off (likely bad) link.
@@ -58,11 +60,13 @@ CREATE TABLE IF NOT EXISTS refs (
     dst TEXT NOT NULL,
     PRIMARY KEY (src, dst)
 );
--- Citations of sites we don't watch yet. Enough distinct referrers promotes
--- a site into the watchlist when there's free capacity.
+-- Citations of sites we don't watch yet. Enough distinct referring SITES
+-- promotes a site into the watchlist when there's free capacity - per-page
+-- counting let one site's footer boilerplate promote its whole link ring.
 CREATE TABLE IF NOT EXISTS external_refs (
     site TEXT NOT NULL,
     src TEXT NOT NULL,
+    src_site TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (site, src)
 );
 -- One row per crawl outcome, the time series behind the dashboard cards.
@@ -73,8 +77,12 @@ CREATE TABLE IF NOT EXISTS events (
 );
 """
 
-# Distinct referring pages before an unwatched site earns a watchlist slot.
+# Distinct referring SITES before an unwatched site earns a watchlist slot.
 PROMOTE_MIN_REFERRERS = 3
+
+# A recently evicted site can't re-promote until this much time passes -
+# breaks the promote/error/evict/re-promote churn loop on bot-hostile sites.
+EVICT_COOLDOWN_SECONDS = 3 * 86400
 
 
 def site_of(url: str) -> str:
@@ -94,6 +102,8 @@ class SpiderStore:
             "ALTER TABLE sites ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE frontier ADD COLUMN prior REAL NOT NULL DEFAULT 0",
             "ALTER TABLE pages ADD COLUMN richness REAL NOT NULL DEFAULT 0",
+            "ALTER TABLE pages ADD COLUMN image TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE external_refs ADD COLUMN src_site TEXT NOT NULL DEFAULT ''",
         ):
             try:
                 self._conn.execute(ddl)
@@ -241,8 +251,9 @@ class SpiderStore:
                 )
             else:
                 self._conn.execute(
-                    "INSERT OR IGNORE INTO external_refs (site, src) VALUES (?, ?)",
-                    (dst_site, src),
+                    "INSERT OR IGNORE INTO external_refs (site, src, src_site) "
+                    "VALUES (?, ?, ?)",
+                    (dst_site, src, site_of(src)),
                 )
         self._conn.commit()
 
@@ -253,10 +264,15 @@ class SpiderStore:
         unpinned site, which it evicts. Pinned (seeded) sites never churn."""
         promoted = []
         while True:
+            # Count distinct referring sites (legacy rows fall back to the
+            # page URL), and hold recently evicted sites out for a cooldown.
             row = self._conn.execute(
-                "SELECT site, COUNT(*) AS n FROM external_refs GROUP BY site "
-                "HAVING n >= ? ORDER BY n DESC LIMIT 1",
-                (PROMOTE_MIN_REFERRERS,),
+                "SELECT site, COUNT(DISTINCT CASE WHEN src_site = '' THEN src "
+                "ELSE src_site END) AS n FROM external_refs "
+                "WHERE site NOT IN (SELECT site FROM events "
+                "WHERE event = 'evicted' AND ts > ?) "
+                "GROUP BY site HAVING n >= ? ORDER BY n DESC LIMIT 1",
+                (time.time() - EVICT_COOLDOWN_SECONDS, PROMOTE_MIN_REFERRERS),
             ).fetchone()
             if not row:
                 return promoted
@@ -341,6 +357,7 @@ class SpiderStore:
         etag: str = "",
         last_modified: str = "",
         richness: float = 0.0,
+        image: str = "",
     ) -> None:
         now = time.time()
         known = self._conn.execute(
@@ -352,9 +369,20 @@ class SpiderStore:
         )
         self._conn.execute(
             "INSERT OR REPLACE INTO pages "
-            "(url, site, title, text, summary, fetched, etag, last_modified, richness) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (url, site, title, text, summary, now, etag, last_modified, richness),
+            "(url, site, title, text, summary, fetched, etag, last_modified, "
+            "richness, image) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                url,
+                site,
+                title,
+                text,
+                summary,
+                now,
+                etag,
+                last_modified,
+                richness,
+                image,
+            ),
         )
         self._conn.execute("DELETE FROM frontier WHERE url = ?", (url,))
         self._conn.execute(
