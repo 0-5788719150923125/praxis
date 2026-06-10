@@ -87,13 +87,16 @@ class SpiderWorker:
             result.summary,
             etag=result.etag,
             last_modified=result.last_modified,
+            richness=result.richness,
         )
         # Track every citation: same-site edges rank the frontier, edges to
         # unwatched sites accrue toward promotion. Only this site's own links
         # extend its frontier (the top-to-bottom walk stays per-site).
         store.record_refs(url, result.links)
         own = [u for u in result.links if u.startswith(site + "/") or u == site]
-        queued = store.extend_frontier(site, own, depth + 1, s.max_pages_per_site)
+        queued = store.extend_frontier(
+            site, own, depth + 1, s.max_pages_per_site, prior=result.richness
+        )
         for promoted in store.promote_sites(s.max_sites):
             self._log(f"promoted {promoted} to the watchlist (widely cited)")
         self._log(f"fetched {url} (+{queued} queued)")

@@ -33,7 +33,10 @@ CREATE TABLE IF NOT EXISTS frontier (
     site TEXT NOT NULL,
     depth INTEGER NOT NULL DEFAULT 0,
     discovered REAL NOT NULL,
-    next_due REAL NOT NULL DEFAULT 0
+    next_due REAL NOT NULL DEFAULT 0,
+    -- Content richness of the page this link was discovered on: a prior that
+    -- biases the crawl toward neighbours of substantive (e.g. video) pages.
+    prior REAL NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS pages (
     url TEXT PRIMARY KEY,
@@ -43,7 +46,10 @@ CREATE TABLE IF NOT EXISTS pages (
     summary TEXT NOT NULL DEFAULT '',
     fetched REAL NOT NULL,
     etag TEXT NOT NULL DEFAULT '',
-    last_modified TEXT NOT NULL DEFAULT ''
+    last_modified TEXT NOT NULL DEFAULT '',
+    -- Host-agnostic content-conformance score in [0, 1]; ranks both the crawl
+    -- frontier (via prior) and KB results (via the pages source).
+    richness REAL NOT NULL DEFAULT 0
 );
 -- The link graph: who cites whom. Citation counts rank the frontier, so a
 -- URL many pages point at is fetched before a one-off (likely bad) link.
@@ -84,12 +90,15 @@ class SpiderStore:
         self._conn = sqlite3.connect(self.db_path)
         self._conn.executescript(_SCHEMA)
         # Pages must survive, so migrate in place rather than drop-and-rebuild.
-        try:
-            self._conn.execute(
-                "ALTER TABLE sites ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0"
-            )
-        except sqlite3.OperationalError:
-            pass  # column already present
+        for ddl in (
+            "ALTER TABLE sites ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE frontier ADD COLUMN prior REAL NOT NULL DEFAULT 0",
+            "ALTER TABLE pages ADD COLUMN richness REAL NOT NULL DEFAULT 0",
+        ):
+            try:
+                self._conn.execute(ddl)
+            except sqlite3.OperationalError:
+                pass  # column already present
         self._conn.commit()
 
     # --- watchlist ---
@@ -173,7 +182,7 @@ class SpiderStore:
             "FROM frontier f JOIN sites s "
             "ON s.url = f.site WHERE s.enabled = 1 AND f.next_due <= ? "
             "AND s.last_fetch <= ? "
-            "ORDER BY cited DESC, f.next_due, f.discovered LIMIT 1",
+            "ORDER BY (cited + f.prior) DESC, f.next_due, f.discovered LIMIT 1",
             (now, now - domain_seconds),
         ).fetchone()
         if row:
@@ -185,9 +194,12 @@ class SpiderStore:
             (now - revisit_days * 86400, now - domain_seconds),
         ).fetchone()
 
-    def extend_frontier(self, site: str, urls: List[str], depth: int, cap: int) -> int:
+    def extend_frontier(
+        self, site: str, urls: List[str], depth: int, cap: int, prior: float = 0.0
+    ) -> int:
         """Queue same-site links breadth-first, bounded by the per-site cap
-        across frontier + stored pages."""
+        across frontier + stored pages. ``prior`` is the richness of the page
+        these links came from - a crawl bias toward neighbours of rich pages."""
         now = time.time()
         held = self._conn.execute(
             "SELECT (SELECT COUNT(*) FROM frontier WHERE site = ?) + "
@@ -206,9 +218,9 @@ class SpiderStore:
             if known:
                 continue
             self._conn.execute(
-                "INSERT INTO frontier (url, site, depth, discovered) "
-                "VALUES (?, ?, ?, ?)",
-                (url, site, depth, now),
+                "INSERT INTO frontier (url, site, depth, discovered, prior) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (url, site, depth, now, prior),
             )
             added += 1
         self._conn.commit()
@@ -328,6 +340,7 @@ class SpiderStore:
         summary: str,
         etag: str = "",
         last_modified: str = "",
+        richness: float = 0.0,
     ) -> None:
         now = time.time()
         known = self._conn.execute(
@@ -339,9 +352,9 @@ class SpiderStore:
         )
         self._conn.execute(
             "INSERT OR REPLACE INTO pages "
-            "(url, site, title, text, summary, fetched, etag, last_modified) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (url, site, title, text, summary, now, etag, last_modified),
+            "(url, site, title, text, summary, fetched, etag, last_modified, richness) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (url, site, title, text, summary, now, etag, last_modified, richness),
         )
         self._conn.execute("DELETE FROM frontier WHERE url = ?", (url,))
         self._conn.execute(

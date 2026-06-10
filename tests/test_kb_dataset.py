@@ -35,7 +35,11 @@ def test_pages_source_since_filter(tmp_path, monkeypatch):
         (f"https://a.com/{i}", "https://a.com", f"t{i}", "x", "s", float(i))
         for i in (1, 2, 3)
     ]
-    conn.executemany("INSERT INTO pages VALUES (?,?,?,?,?,?,'','')", rows)
+    conn.executemany(
+        "INSERT INTO pages (url, site, title, text, summary, fetched, etag, "
+        "last_modified) VALUES (?,?,?,?,?,?,'','')",
+        rows,
+    )
     conn.commit()
     conn.close()
     monkeypatch.setattr("praxis.spider.store.DEFAULT_SPIDER_DB", db)
@@ -116,7 +120,11 @@ def test_pages_boilerplate_dedup(tmp_path, monkeypatch):
         )
         for i in range(4)
     ]
-    conn.executemany("INSERT INTO pages VALUES (?,?,?,?,?,?,'','')", rows)
+    conn.executemany(
+        "INSERT INTO pages (url, site, title, text, summary, fetched, etag, "
+        "last_modified) VALUES (?,?,?,?,?,?,'','')",
+        rows,
+    )
     conn.commit()
     conn.close()
     monkeypatch.setattr("praxis.spider.store.DEFAULT_SPIDER_DB", db)

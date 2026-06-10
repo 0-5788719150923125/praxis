@@ -24,6 +24,13 @@ _ITEM_COLS = "id, type, label, title, body, uri, source, origin, summary, meta"
 _FUZZY_MIN_QUERY = 3  # below this, trigrams are too noisy; FTS prefix suffices
 _FUZZY_MIN_SIM = 0.30  # cosine floor to count as a candidate
 
+# How content richness (weight in [0, 1]) reweights ranking. Fixed, model-
+# agnostic constants - not per-query knobs. In search, a full-richness item
+# earns this much bm25 credit (lower bm25 = better). In the recency feed it
+# counts as if the item were this many seconds fresher (one week at richness 1).
+_SEARCH_RICHNESS_GAIN = 2.0
+_FEED_RICHNESS_SECONDS = 604800
+
 
 def _trigrams(text: str) -> Counter:
     """Padded character trigrams of a string, as a count vector. Padding makes
@@ -61,13 +68,13 @@ class KBIndex:
         existing = self._conn.execute(
             "SELECT sql FROM sqlite_master WHERE name = 'kb'"
         ).fetchone()
-        if existing and "origin" not in (existing[0] or ""):
+        if existing and "weight" not in (existing[0] or ""):
             self._conn.execute("DROP TABLE kb")
         self._conn.executescript("""
             CREATE VIRTUAL TABLE IF NOT EXISTS kb USING fts5(
                 id UNINDEXED, type, label, title, body, uri UNINDEXED,
                 source UNINDEXED, origin, summary,
-                meta UNINDEXED, updated UNINDEXED
+                meta UNINDEXED, updated UNINDEXED, weight UNINDEXED
             );
             """)
         self._conn.commit()
@@ -110,12 +117,13 @@ class KBIndex:
                 it.summary,
                 _encode_meta(it.meta),
                 str(int(it.updated or 0)),
+                float((it.meta or {}).get("richness", 0.0) or 0.0),
             )
             for it in items
         ]
         self._conn.executemany(
-            f"INSERT INTO kb ({_ITEM_COLS}, updated) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            f"INSERT INTO kb ({_ITEM_COLS}, updated, weight) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
         return len(rows)
@@ -142,7 +150,15 @@ class KBIndex:
                     entry[0] += 1
                     if score < entry[1]:  # bm25: lower is better
                         entry[1], entry[2] = score, row
-        ranked = sorted(merged.values(), key=lambda e: (-e[0], e[1]))[:limit]
+
+        # Richness credit: a richer page earns lower (better) effective bm25,
+        # so videos and other substantive pages rise within each match tier.
+        def _rank_key(entry):
+            groups, score, row = entry
+            weight = float(row[-3] or 0.0)
+            return (-groups, score - _SEARCH_RICHNESS_GAIN * weight)
+
+        ranked = sorted(merged.values(), key=_rank_key)[:limit]
         hits = [
             KBHit(item=_row_item(row), score=score, snippet=row[-1] or "")
             for _, score, row in ranked
@@ -166,7 +182,7 @@ class KBIndex:
         self, match: str, types: Optional[List[str]], limit: int
     ) -> List[tuple]:
         sql = (
-            f"SELECT {_ITEM_COLS}, "
+            f"SELECT {_ITEM_COLS}, CAST(weight AS REAL) AS w, "
             "bm25(kb) AS score, snippet(kb, 4, '\x01', '\x02', '...', 12) AS snip "
             "FROM kb WHERE kb MATCH ?"
         )
@@ -226,7 +242,10 @@ class KBIndex:
             placeholders = ",".join("?" * len(types))
             sql += f" WHERE type IN ({placeholders})"
             params.extend(types)
-        sql += " ORDER BY CAST(updated AS INTEGER) DESC, label, title"
+        sql += (
+            " ORDER BY CAST(updated AS INTEGER) "
+            f"+ CAST(weight AS REAL) * {_FEED_RICHNESS_SECONDS} DESC, label, title"
+        )
 
         hits = []
         for row in self._conn.execute(sql, params):
@@ -243,7 +262,10 @@ class KBIndex:
             placeholders = ",".join("?" * len(types))
             sql += f" AND type IN ({placeholders})"
             params.extend(types)
-        sql += " ORDER BY CAST(updated AS INTEGER) DESC LIMIT ?"
+        sql += (
+            " ORDER BY CAST(updated AS INTEGER) "
+            f"+ CAST(weight AS REAL) * {_FEED_RICHNESS_SECONDS} DESC LIMIT ?"
+        )
         params.append(limit)
 
         hits = []

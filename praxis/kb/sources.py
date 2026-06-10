@@ -361,15 +361,15 @@ class PagesSource(KBSource):
         try:
             conn = sqlite3.connect(f"file:{DEFAULT_SPIDER_DB}?mode=ro", uri=True)
             rows = conn.execute(
-                "SELECT url, site, title, text, summary, fetched FROM pages "
-                "WHERE fetched > ? ORDER BY fetched DESC LIMIT ?",
+                "SELECT url, site, title, text, summary, fetched, richness FROM pages "
+                "WHERE fetched > ? ORDER BY richness DESC, fetched DESC LIMIT ?",
                 (since, SpiderSettings().max_kb_pages),
             ).fetchall()
             conn.close()
         except sqlite3.Error:
             return
         boilerplate = _site_boilerplate(rows)
-        for url, site, title, text, summary, fetched in rows:
+        for url, site, title, text, summary, fetched, richness in rows:
             host = site.split("//", 1)[-1]
             common = boilerplate.get(site, frozenset())
             body = "\n".join(
@@ -387,6 +387,7 @@ class PagesSource(KBSource):
                 origin=site,
                 summary=summary,
                 updated=fetched,
+                meta={"richness": richness},
             )
 
 
@@ -553,7 +554,7 @@ def _site_boilerplate(rows) -> dict:
 
     site_pages = Counter(r[1] for r in rows)
     line_counts: dict = defaultdict(Counter)
-    for _, site, _, text, _, _ in rows:
+    for _, site, _, text, _, _, _ in rows:
         line_counts[site].update({ln for ln in text.splitlines() if ln.strip()})
     return {
         site: frozenset(

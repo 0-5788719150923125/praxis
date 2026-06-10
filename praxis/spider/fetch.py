@@ -32,6 +32,23 @@ class FetchResult:
     links: List[str] = field(default_factory=list)
     etag: str = ""
     last_modified: str = ""
+    image: str = ""  # preview image (og:image), if the page carries one
+    richness: float = 0.0  # content-conformance score in [0, 1]
+
+
+def content_richness(title: str, text: str, summary: str, image: str) -> float:
+    """Host-agnostic conformance score in [0, 1]: how well a fetched page meets
+    the marks of substantive content - a preview image, a body of prose, a real
+    summary, a title. Videos rise because they carry thumbnails and
+    descriptions, not because the score knows what a video is."""
+    body = (text or "").strip()
+    marks = (
+        (0.40, 1.0 if image else 0.0),
+        (0.30, min(len(body) / 1200.0, 1.0)),
+        (0.20, 1.0 if len((summary or "").strip()) >= 40 else 0.0),
+        (0.10, 1.0 if (title or "").strip() else 0.0),
+    )
+    return round(sum(w * m for w, m in marks), 4)
 
 
 class _Extractor(HTMLParser):
@@ -41,6 +58,7 @@ class _Extractor(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.title = ""
         self.description = ""
+        self.image = ""
         self.links: List[str] = []
         self._chunks: List[str] = []
         self._stack: List[str] = []
@@ -56,6 +74,15 @@ class _Extractor(HTMLParser):
             self.links.append(attrs["href"])
         elif tag == "meta" and attrs.get("name") == "description":
             self.description = (attrs.get("content") or "").strip()
+        elif (
+            tag == "meta"
+            and not self.image
+            and (
+                attrs.get("property") == "og:image"
+                or attrs.get("name") == "twitter:image"
+            )
+        ):
+            self.image = (attrs.get("content") or "").strip()
 
     def handle_endtag(self, tag):
         if tag == "title":
@@ -140,6 +167,7 @@ def fetch_page(
         etag = response.headers.get("ETag", "")
         last_modified = response.headers.get("Last-Modified", "")
 
+    image = ""
     if enricher is not None and "text/html" not in content_type:
         feed = enricher.parse_feed(url, content_type, html)
         if feed is None:
@@ -158,6 +186,7 @@ def fetch_page(
             extractor.text,
             extractor.description,
         )
+        image = extractor.image
         hrefs = list(extractor.links)
         if enricher is not None:
             extra = enricher.enrich_html(url, html)
@@ -196,4 +225,6 @@ def fetch_page(
         links=links,
         etag=etag,
         last_modified=last_modified,
+        image=image,
+        richness=content_richness(title, text, summary, image),
     )
