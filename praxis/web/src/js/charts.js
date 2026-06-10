@@ -968,8 +968,6 @@ const DECK_ANCHOR_DUR = 240;     // ms; A<->B lift duration
 // hard at the top/bottom edge (no rubber-band, no bleed into cycling). The feel
 // constants (SCROLL_TAU / SCROLL_MIN_VEL) are shared with the wheel-momentum
 // module so touch and wheel coast identically everywhere.
-const DECK_TITLE_FLIP = 28;      // finger px on a card's title handle to flip A<->B
-
 export function initChartDeck(deck, opts = {}) {
     if (typeof deck === 'string') deck = document.getElementById(deck);
     if (!deck) return;
@@ -1712,12 +1710,11 @@ function bindDeckEvents(deck) {
         deck._scrollVel = 0;       // reset inner-scroll velocity for this gesture
         deck._scrollBody = null;
         deck._anchorLocked = false; // set once this gesture flips A<->B, then no cycling
-        // A drag that begins on the card's title/chrome (not its scrolling body) is
-        // a dedicated A<->B handle: it always re-shifts the anchor and never cycles
-        // cards, so grabbing the title reliably drops/lifts without skidding decks.
+        // A drag that begins on a card's title/chrome (not its scrolling body) is
+        // a dedicated stack-navigation handle: it always drives the card seam and
+        // never inner-scrolls, so long content can be swiped past from the title.
         deck._titleDrag = !!e.target.closest('.chart-title, .chart-subtitle, .chart-card-number')
             && !e.target.closest('.deck-card-scroll');
-        deck._titleAccum = 0;
     }, { passive: true });
 
     deck.addEventListener('touchmove', (e) => {
@@ -1734,12 +1731,16 @@ function bindDeckEvents(deck) {
         fvel = dy / dt;               // px/ms finger speed (for the fling-commit on release)
         e.preventDefault();           // the deck owns the gesture (touch-action: none)
 
-        // Title-handle drag: drive the A<->B anchor directly, both ways, and never
-        // cycle cards or inner-scroll. The title is the dedicated re-shift grip.
+        // Title-handle drag: drive the card seam directly, both ways, skipping
+        // inner scroll - the title is the grip for moving through the stack
+        // without paging through a long card body. A<->B stays on body gestures.
         if (deck._titleDrag) {
-            deck._titleAccum += dy;   // +up / -down
-            if (deck._titleAccum > DECK_TITLE_FLIP) setAnchor(deck, 1);
-            else if (deck._titleAccum < -DECK_TITLE_FLIP) setAnchor(deck, 0);
+            if (deck._seamAccum === 0) {
+                deck._seamBase = ((Math.round(deck._pos) % st.count) + st.count) % st.count;
+                deck._seamDir = dy > 0 ? 1 : -1;
+                seatTarget(deck, deck._seamBase + deck._seamDir, deck._seamDir);
+            }
+            advanceSeam(deck, dy);
             return;
         }
 

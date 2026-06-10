@@ -32,3 +32,4 @@ figures/
 *.log
 *.fdb_latexmk
 *.synctex.gz
+datasets.tex

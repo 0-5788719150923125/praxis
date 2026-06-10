@@ -26,6 +26,7 @@ import {
 import { SPEC_CONFIG, extractCommandInfo, AGENT_DISPLAY_FIELDS } from './config.js';
 import { spawnAgent, agentViews, severAgent } from './swarm.js';
 import { dedupe, hasRealContent } from './prefetch.js';
+import { renderArena, wireArena } from './arena.js';
 
 /**
  * Generic tab data loader - DRY pattern for all tab loading
@@ -142,6 +143,16 @@ async function loadSpecInner(force) {
         state.spec.data = data;
         state.spec.loaded = true;
         state.spec.error = null;
+
+        // Identity data is launch-time static: when a forced refresh returns
+        // the same payload (and the same run list, which the header renders),
+        // skip the innerHTML rebuild entirely - it redraws every card title
+        // for nothing.
+        const fingerprint = JSON.stringify([data, state.spec.availableRuns]);
+        if (fingerprint === state.spec.fingerprint && hasRealContent(container)) {
+            return;
+        }
+        state.spec.fingerprint = fingerprint;
 
         renderSpec(data, container);
     } catch (error) {
@@ -337,16 +348,23 @@ function renderSpec(data, container) {
         {
             title: 'Business Card',
             bare: true,
+            klass: 'biz-card-sheet',
             build: () => renderBusinessCard(),
+        },
+        {
+            title: 'Arena',
+            bare: true,
+            klass: 'arena-sheet',
+            build: () => renderArena(),
         },
     ];
     const cardsHTML = sheets
         .map(sheet => {
             const inner = sheet.build();
             if (!inner || !inner.trim()) return '';
-            // Bare sheets render their own chrome (the business card IS the card).
+            // Bare sheets render their own chrome (the content IS the card).
             if (sheet.bare) {
-                return `<div class="chart-card biz-card-sheet deck-compact">${inner}</div>`;
+                return `<div class="chart-card ${sheet.klass} deck-compact">${inner}</div>`;
             }
             // Copyable sheets get a pinned copy button in the card chrome (above
             // the scroll) so it stays put while the JSON scrolls beneath it.
@@ -366,6 +384,7 @@ function renderSpec(data, container) {
         `<div class="chart-deck" id="spec-deck"><div class="chart-deck-counter"></div>${cardsHTML}</div>`;
     initChartDeck('spec-deck', { fanDown: true });
     wireBusinessCard(container);
+    wireArena(container, data.full_hash || data.truncated_hash || 'praxis');
 }
 
 /**

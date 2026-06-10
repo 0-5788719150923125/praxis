@@ -2,6 +2,7 @@ title: The Good Get Gooder Theorem
 subtitle: Stochastic Voting Converges to Pretty Good
 pillars:
 - runs
+- datasets
 - evolution
 abstract: 'Very large transformers, stochastically sampled through a voting system,
   converge - not to fantastic, but to pretty good. The vote washes out the tails

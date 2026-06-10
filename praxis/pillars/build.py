@@ -27,6 +27,7 @@ import sys
 
 from praxis.pillars import (
     conjectures,
+    datasets,
     evolution,
     framing,
     geometries,
@@ -129,6 +130,16 @@ def _step_ghostmax(ctx):
     return g
 
 
+def _step_datasets(ctx):
+    try:
+        d = datasets.export_datasets(ctx["n"])
+        print(f"datasets: {d['rows']} row(s) across {d['experiments']} experiment(s)")
+        return d
+    except Exception as e:  # best-effort, never break the paper build
+        print(f"datasets: skipped ({e})")
+        return None
+
+
 def _step_inlines(ctx):
     i = inlines.export_inlines()
     res = i["resolved"]
@@ -161,6 +172,7 @@ def _step_proofs(ctx):
 # \IfFileExists + \providecommand fallback.
 STEPS = {
     "runs": _step_runs,
+    "datasets": _step_datasets,
     "framing": _step_framing,
     "geometries": _step_geometries,
     "strands": _step_strands,

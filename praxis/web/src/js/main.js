@@ -251,9 +251,23 @@ async function prefetchTabs() {
         }
     };
 
-    window.addEventListener('praxis:data-invalidate', () => {
+    // Server invalidation topics each tab's data actually depends on. The
+    // spec/Customs tab is launch-time identity: no topic, so the step-rate
+    // "metrics" invalidations never force its in-place rebuild (which redraws
+    // every card title - a visible flicker for zero new data). It still
+    // refreshes off-screen via the hidden prewarm and on run selection.
+    const TAB_TOPICS = {
+        research: ['metrics'],
+        dynamics: ['metrics', 'snapshots'],
+        agents: ['metrics'],
+        spec: [],
+    };
+
+    window.addEventListener('praxis:data-invalidate', (e) => {
         hiddenDirty = true;
-        visibleDirty = true;
+        const topic = e.detail && e.detail.topic;
+        const topics = TAB_TOPICS[state.currentTab];
+        if (!topic || !topics || topics.includes(topic)) visibleDirty = true;
         drain();
     });
     // Catch up when the page becomes visible again (drain skips while hidden).

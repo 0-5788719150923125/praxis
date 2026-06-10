@@ -2,6 +2,7 @@ title: The Blind Watchmaker
 subtitle: Harmonic Latent Space and the Geometry of Bias and Variance
 pillars:
 - runs
+- datasets
 - framing
 - geometries
 - strands
