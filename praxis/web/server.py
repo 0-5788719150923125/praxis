@@ -46,6 +46,7 @@ class APIServer:
         launch_command=None,
         config_file=None,
         donations="",
+        author=None,
     ):
         """Initialize the API server.
 
@@ -78,6 +79,7 @@ class APIServer:
         self.launch_command = launch_command
         self.config_file = config_file
         self.donations = donations
+        self.author = author
         self.dev_mode = dev_mode
         self.launch_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -203,6 +205,7 @@ class APIServer:
         app.config["param_stats"] = self.param_stats
         app.config["config_file"] = self.config_file
         app.config["donations"] = self.donations
+        app.config["author"] = self.author
         app.config["repo_root"] = os.getcwd()  # Store the repository root at startup
 
         # Precompute the expensive model-probing endpoints on a background thread

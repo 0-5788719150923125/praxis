@@ -301,32 +301,56 @@ def find_latest_checkpoint(cache_dir):
     return latest_checkpoint
 
 
+def checkpoint_readable(path):
+    """True if the checkpoint's zip central directory is intact. A save
+    killed mid-write leaves a truncated archive that torch.load only
+    rejects after the trainer is fully constructed."""
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(path):
+            return True
+    except (zipfile.BadZipFile, OSError):
+        return False
+
+
 def resolve_resume_checkpoint(cache_dir, reset=False):
     """Find a checkpoint to resume from, or None to start fresh.
 
-    Prefers Lightning's ``last.ckpt`` symlink, then the latest batch
-    checkpoint, then a Mono-Forward ``mono_forward.pt`` (saved to a
-    different path than Lightning). Honors --reset and the force_reset
-    environment feature.
+    Prefers Lightning's ``last.ckpt`` symlink, then batch checkpoints
+    newest-first, then a Mono-Forward ``mono_forward.pt`` (saved to a
+    different path than Lightning). Corrupt candidates are skipped with
+    a warning instead of crashing the launch. Honors --reset and the
+    force_reset environment feature.
     """
     from praxis.environments import EnvironmentFeatures
 
     if reset or EnvironmentFeatures.is_enabled("force_reset"):
         return None
 
-    symlink = os.path.join(cache_dir, "model", "last.ckpt")
-    true_link = find_latest_checkpoint(cache_dir)
-    if os.path.exists(symlink):
-        print(f"resuming from symbolic path: {symlink}")
-        return symlink
-    if true_link is not None and os.path.exists(true_link):
-        print(f"resuming from true path: {true_link}")
-        return true_link
+    ckpt_dir = os.path.join(cache_dir, "model")
+    candidates = [os.path.join(ckpt_dir, "last.ckpt")]
+    if os.path.isdir(ckpt_dir):
+        batches = []
+        for f in os.listdir(ckpt_dir):
+            match = re.search(r"batch=(\d+)\.0\.ckpt", f)
+            if match:
+                batches.append((int(match.group(1)), f))
+        candidates += [os.path.join(ckpt_dir, f)
+                       for _, f in sorted(batches, reverse=True)]
+    candidates.append(os.path.join(cache_dir, "mono_forward.pt"))
 
-    mf_path = os.path.join(cache_dir, "mono_forward.pt")
-    if os.path.exists(mf_path):
-        print(f"resuming from mono-forward checkpoint: {mf_path}")
-        return mf_path
+    seen = set()
+    for path in candidates:
+        real = os.path.realpath(path)
+        if real in seen or not os.path.exists(path):
+            continue
+        seen.add(real)
+        if not checkpoint_readable(path):
+            print(f"[WARN] skipping corrupt checkpoint: {path}")
+            continue
+        print(f"resuming from checkpoint: {path}")
+        return path
 
     return None
 

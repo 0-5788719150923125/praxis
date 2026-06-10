@@ -334,11 +334,20 @@ function renderSpec(data, container) {
             copyable: true,
             build: () => present('arguments') && data.args ? createPreBlock(formatJSON(data.args)) : '',
         },
+        {
+            title: 'Business Card',
+            bare: true,
+            build: () => renderBusinessCard(),
+        },
     ];
     const cardsHTML = sheets
         .map(sheet => {
             const inner = sheet.build();
             if (!inner || !inner.trim()) return '';
+            // Bare sheets render their own chrome (the business card IS the card).
+            if (sheet.bare) {
+                return `<div class="chart-card biz-card-sheet">${inner}</div>`;
+            }
             // Copyable sheets get a pinned copy button in the card chrome (above
             // the scroll) so it stays put while the JSON scrolls beneath it.
             const copyBtn = sheet.copyable
@@ -356,6 +365,71 @@ function renderSpec(data, container) {
     container.innerHTML = headerHTML +
         `<div class="chart-deck" id="spec-deck"><div class="chart-deck-counter"></div>${cardsHTML}</div>`;
     initChartDeck('spec-deck', { fanDown: true });
+    wireBusinessCard(container);
+}
+
+/**
+ * Business card sheet: live preview of the front/back endpoints plus
+ * download buttons. Seed persists across re-renders so downloads match
+ * the preview; "Reroll" resamples it.
+ */
+function cardQuery(side) {
+    const hue = getComputedStyle(document.documentElement)
+        .getPropertyValue('--accent-hue').trim() || '161';
+    const theme = document.documentElement.getAttribute('data-theme') || 'light';
+    return `seed=${state.spec.cardSeed}&side=${side}&theme=${theme}&hue=${hue}`;
+}
+
+function renderBusinessCard() {
+    if (state.spec.cardSeed == null) {
+        state.spec.cardSeed = Math.floor(Math.random() * 2 ** 31);
+    }
+    state.spec.cardSide = state.spec.cardSide || 'front';
+    return `<div class="biz-card">
+        <div class="biz-card-frame">
+            <span class="biz-card-badge">Business Card</span>
+            <img class="biz-card-img" src="/api/card/preview.svg?${cardQuery(state.spec.cardSide)}"
+                alt="Business card ${state.spec.cardSide}">
+        </div>
+        <div class="biz-card-actions">
+            <button class="tab-header-button" id="biz-card-flip" type="button">Flip</button>
+            <button class="tab-header-button" id="biz-card-reroll" type="button">Reroll</button>
+            <button class="tab-header-button" id="biz-card-download" type="button">Download</button>
+            <button class="tab-header-button" id="biz-card-download-8" type="button">Download 8</button>
+        </div>
+    </div>`;
+}
+
+function wireBusinessCard(container) {
+    const refresh = () => {
+        const img = container.querySelector('.biz-card-img');
+        if (!img) return;
+        img.classList.add('loading');
+        const done = () => img.classList.remove('loading');
+        img.addEventListener('load', done, { once: true });
+        img.addEventListener('error', done, { once: true });
+        img.src = `/api/card/preview.svg?${cardQuery(state.spec.cardSide)}`;
+    };
+    const dl = (path) => {
+        const a = document.createElement('a');
+        a.href = `${path}?${cardQuery(state.spec.cardSide)}`;
+        a.download = '';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+    };
+    container.querySelector('#biz-card-flip')?.addEventListener('click', () => {
+        state.spec.cardSide = state.spec.cardSide === 'front' ? 'back' : 'front';
+        refresh();
+    });
+    container.querySelector('#biz-card-reroll')?.addEventListener('click', () => {
+        state.spec.cardSeed = Math.floor(Math.random() * 2 ** 31);
+        refresh();
+    });
+    container.querySelector('#biz-card-download')
+        ?.addEventListener('click', () => dl('/api/card/cards.zip'));
+    container.querySelector('#biz-card-download-8')
+        ?.addEventListener('click', () => dl('/api/card/sheets.zip'));
 }
 
 /**

@@ -126,9 +126,21 @@ def get_datamodules(
             train_data.append(get_dataset(dataset_type, tokenizer, seed, c, *args))
 
     if data_path:
-        train_data.append(
-            get_dataset("directory", tokenizer, seed, data_path=data_path, *args)
-        )
+        # One sampler per path: each directory is a distinct item in the
+        # sampling weights (its own weight, novelty/loss EMA, and metrics
+        # card) instead of every path pooling into one dataset whose share
+        # was a single slot regardless of how many paths were given.
+        paths = data_path if isinstance(data_path, list) else [data_path]
+        seen_names = set()
+        for p in paths:
+            dataset = get_dataset("directory", tokenizer, seed, data_path=p, *args)
+            # Basename collisions (e.g. two dirs both named "src") would merge
+            # their metrics/EMA entries; qualify with the parent dir.
+            if dataset.dataset_path in seen_names:
+                parent = os.path.basename(os.path.dirname(p.rstrip("/\\")))
+                dataset.dataset_path = f"{parent}/{dataset.dataset_path}"
+            seen_names.add(dataset.dataset_path)
+            train_data.append(dataset)
     # Load any module-provided datasets
     try:
         from praxis.cli import integration_loader

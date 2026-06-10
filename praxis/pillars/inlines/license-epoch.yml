@@ -1,0 +1,8 @@
+# The launch sequence rewrites the LICENSE copyright line with the instant of
+# observation as a fractional year, and that file is committed and trained on.
+# The observer-effect prose cites the live value; the fallback is the stamp
+# that was current when the passage was written.
+macro: paperLicenseEpoch
+provider: license_epoch
+format: "{value}"
+fallback: "2026.43936818164358193"

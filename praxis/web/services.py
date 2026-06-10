@@ -76,6 +76,7 @@ def _build_api_server(
         launch_command=run.full_command,
         config_file=getattr(cfg.args, "config_file", None),
         donations=getattr(cfg.args, "donations", "https://buymeacoffee.com/vectorrent"),
+        author=getattr(cfg.args, "author", None),
     )
     api_server.start()
 

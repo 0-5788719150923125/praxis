@@ -30,6 +30,14 @@ Introspected from the live Flask app at every launch. Each summary is the first 
 - **POST** `/api/swarm/heartbeat` - Keep a browser session's joined experts alive (called periodically by the tab). Also runs the prune sweep so silent sessions are reclaimed. ([source](../praxis/web/routes/agents.py#L420))
 - **POST** `/api/swarm/join` - Add experts to the live pool for a browser session (an AGREE joins here). ([source](../praxis/web/routes/agents.py#L367))
 
+### Cards
+
+- **GET** `/api/card/card.pdf` ([source](../praxis/web/routes/cards.py#L78))
+- **GET** `/api/card/cards.zip` ([source](../praxis/web/routes/cards.py#L62))
+- **GET** `/api/card/preview.svg` ([source](../praxis/web/routes/cards.py#L35))
+- **GET** `/api/card/sheet.pdf` ([source](../praxis/web/routes/cards.py#L93))
+- **GET** `/api/card/sheets.zip` ([source](../praxis/web/routes/cards.py#L70))
+
 ### Core
 
 - **GET** `/` - Serve the main page. ([source](../praxis/web/routes/core.py#L55))

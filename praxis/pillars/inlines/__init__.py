@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import glob
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
@@ -69,6 +70,20 @@ def _recurrent_steps() -> Optional[int]:
     if not experiment:
         return None
     return resolve_config(experiment).get("recurrent_steps")
+
+
+@provider("license_epoch")
+def _license_epoch() -> Optional[str]:
+    """The LICENSE copyright stamp: a fractional year rewritten at every launch
+    (see ``update_license_timestamp``), so the repo - which the model trains
+    on - carries the instant of its own last observation. The paper cites the
+    live value so the prose and the artifact can never drift apart."""
+    try:
+        line = (REPO_ROOT / "LICENSE").read_text().splitlines()[2]
+    except (OSError, IndexError):
+        return None
+    match = re.search(r"Copyright \(c\) ([0-9]{4}\.[0-9]+)", line)
+    return match.group(1) if match else None
 
 
 # Display names for HEAD_REGISTRY keys whose prose noun isn't just the key.

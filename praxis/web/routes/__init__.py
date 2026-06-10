@@ -3,6 +3,7 @@
 from flask import Flask
 
 from .agents import agents_bp
+from .cards import cards_bp
 from .core import core_bp
 from .data_metrics import data_metrics_bp
 from .dynamics import dynamics_bp
@@ -32,3 +33,4 @@ def register_routes(app: Flask) -> None:
     app.register_blueprint(dynamics_bp)
     app.register_blueprint(spider_bp)
     app.register_blueprint(static_bp)
+    app.register_blueprint(cards_bp)
