@@ -1,4 +1,4 @@
-# Ghostmin: forcing error instead of absorbing it
+# Dropoff: forcing error instead of absorbing it
 
 > Status: **vision / unscoped** (2026-06-03). A hypothesis, not a result. The
 > kernel is sound and partly grounded in what already runs; the mechanism is
@@ -20,7 +20,7 @@ quantizes cleanly. The sink is a **precision-preserving, stabilizing** device.
 Our paper's `attention-sink` framing currently tells the harmonics-dampening story.
 That is downstream and true, but the origin is precision, and we should say so.
 
-## Ghostmin: the matched dual
+## Dropoff: the matched dual
 
 If ghostmax is a _sink_ - a zero-logit, zero-value ghost that lets total attention
 fall to zero and bounds the output - then its dual is a device that does the
@@ -28,12 +28,12 @@ opposite on purpose: it **injects** error rather than absorbing it, and it weans
 model off the causal tip.
 
 The sharpened shape: **a sink at the tip, not the start.** Ghostmax's ghost is
-positionless (a pristine zero, masked always-accessible at index 0); ghostmin gives
+positionless (a pristine zero, masked always-accessible at index 0); dropoff gives
 the sink a position - the most-recent token, the causal focus - so attention there
 can fall into a no-op. Two precisions make this hold water rather than rhyme:
 
 - **The feature-dependence rides the value, not the weight.** Attention weights are
-  per-head scalars; there is no per-feature attention weight. So ghostmin is a
+  per-head scalars; there is no per-feature attention weight. So dropoff is a
   feature-dependent **warp on the value** that sinks the tip: an envelope, zero at
   the last position and recovering backward at a per-feature rate, so attending to
   the tip injects ~0 per feature. It is the value-side dual of ghostmax's
@@ -45,13 +45,13 @@ can fall into a no-op. Two precisions make this hold water rather than rhyme:
   for it and recorrect after. The "lingering" is across depth, not across the
   sequence.
 
-Where ghostmax improves quantizability by removing outliers, ghostmin would **force
+Where ghostmax improves quantizability by removing outliers, dropoff would **force
 quantization error to manifest** - as a training pressure, not a defect.
 
-Implemented as a two-mode ablation (`praxis/attention/causal.py:_maybe_ghostmin`),
+Implemented as a two-mode ablation (`praxis/attention/causal.py:_maybe_dropoff`),
 gated to one recurrent depth step: `shift` (a crude uniform K/V delay) and `warp`
 (the feature-dependent tip-value sink above). calm-c runs `warp` at step 6 of 8
-(`ghostmin_step: 6, ghostmin_mode: warp`). Caveat: a tip-sink only touches the most
+(`dropoff_step: 6, dropoff_mode: warp`). Caveat: a tip-sink only touches the most
 -recent query per forward, so its per-step effect is small - it relies entirely on
 the recurrent loop to amplify it across beats.
 
@@ -93,13 +93,13 @@ substrate the structure is trained against.
 - During training, inject quantization noise on the seed and measure post-quant loss
   vs the frozen-velocity control (prediction 1, 3).
 - The attention ablation (prediction 2) is **wired**: the `warp` tip-value sink in
-  `_maybe_ghostmin`, enabled in calm-c at one recurrent step. It needs no new
+  `_maybe_dropoff`, enabled in calm-c at one recurrent step. It needs no new
   parameters and isolates the tip claim; what remains is to measure whether mass
   shifts to earlier positions and whether generation coherence holds.
 
 ## What this does _not_ claim
 
-- That ghostmin, in any specific form, helps. Forcing error could simply degrade; that
+- That dropoff, in any specific form, helps. Forcing error could simply degrade; that
   is what prediction 1 is for.
 - That "velocity" is anything but per-feature phase-rate until measured.
 - That seeds-as-parameters is novel in general (hypernetworks, INRs, Fourier features

@@ -28,7 +28,7 @@ class CausalAttention(nn.Module):
     def __init__(
         self,
         config,
-        ghostmin: str = None,
+        dropoff: str = None,
     ) -> None:
         """
         Initialize CausalAttention module.
@@ -49,20 +49,20 @@ class CausalAttention(nn.Module):
         self.dropout_p = config.dropout
         self.causal = config.causal
         self.window_size = getattr(config, "window_size", None)
-        # Ghostmin ablation (next/ghostmin.md): withhold the causal tip at one
-        # depth step so the model must lean on delayed context. ``ghostmin``
+        # Dropoff ablation (next/dropoff.md): withhold the causal tip at one
+        # depth step so the model must lean on delayed context. ``dropoff``
         # is the mode - None (off), "shift" (uniform K/V delay) or "warp"
         # (feature-dependent value sink at the tip) - owned by
-        # ATTENTION_REGISTRY profiles (e.g. arc_ghostmin), not config. The
+        # ATTENTION_REGISTRY profiles (e.g. arc_dropoff), not config. The
         # step is a heuristic, not an hparam: the first layer of the last
         # recurrent pass (depth - num_layers), the latest beat that still
         # leaves the remaining layers to recorrect.
-        self.ghostmin_mode = ghostmin
-        if ghostmin is None:
-            self.ghostmin_step = None
+        self.dropoff_mode = dropoff
+        if dropoff is None:
+            self.dropoff_step = None
         else:
             layers = getattr(config, "num_layers", None) or config.depth
-            self.ghostmin_step = max(0, config.depth - layers)
+            self.dropoff_step = max(0, config.depth - layers)
 
         # Positional encoding lives entirely in the registry-built module:
         # before_scores mutates Q/K (RoPE/HoPE), build_score_mod returns the
@@ -258,13 +258,13 @@ class CausalAttention(nn.Module):
 
         return False
 
-    def _maybe_ghostmin(self, k: Tensor, v: Tensor, current_depth: int):
-        """Ghostmin ablation (next/ghostmin.md): at ``ghostmin_step``, withhold the
+    def _maybe_dropoff(self, k: Tensor, v: Tensor, current_depth: int):
+        """Dropoff ablation (next/dropoff.md): at ``dropoff_step``, withhold the
         causal tip for one recurrent beat so the model leans on delayed context;
-        the remaining steps recorrect. No-op unless ``ghostmin_step`` matches the
+        the remaining steps recorrect. No-op unless ``dropoff_step`` matches the
         current depth. Applied to real K/V before the zero ghost is prepended.
 
-        Two modes (``ghostmin_mode``):
+        Two modes (``dropoff_mode``):
 
         - ``shift``: a causal (pad, not wrap) shift of K/V one position toward the
           future, so every query's newest reachable key is its predecessor. Crude
@@ -277,17 +277,17 @@ class CausalAttention(nn.Module):
           rides the value, not the attention weight (weights are per-head, not
           per-feature).
         """
-        if self.ghostmin_step is None or current_depth != self.ghostmin_step:
+        if self.dropoff_step is None or current_depth != self.dropoff_step:
             return k, v
-        if self.ghostmin_mode == "warp":
-            return k, self._ghostmin_warp_value(v)
+        if self.dropoff_mode == "warp":
+            return k, self._dropoff_warp_value(v)
         # default: shift
         k = torch.cat([torch.zeros_like(k[:, :, :1]), k[:, :, :-1]], dim=2)
         v = torch.cat([torch.zeros_like(v[:, :, :1]), v[:, :, :-1]], dim=2)
         return k, v
 
     @staticmethod
-    def _ghostmin_warp_value(v: Tensor) -> Tensor:
+    def _dropoff_warp_value(v: Tensor) -> Tensor:
         """Per-feature envelope, 0 at the tip and recovering backward at a
         per-feature rate: ``1 - exp(-(T-1-t) * rate_d)``. Sinks the most-recent
         position's value per feature; the start is left intact."""
@@ -422,8 +422,8 @@ class CausalAttention(nn.Module):
         # remains a pristine zero.
         q, k, v = self.encoding.before_scores(q, k, v, current_depth=current_depth)
 
-        # Ghostmin ablation: optionally withhold the causal tip at one depth step.
-        k, v = self._maybe_ghostmin(k, v, current_depth)
+        # Dropoff ablation: optionally withhold the causal tip at one depth step.
+        k, v = self._maybe_dropoff(k, v, current_depth)
 
         # Ghostmax: Prepend zero token to K and V (after positional encoding)
         # This implements softmax1 by adding an implicit exp(0)=1 to the denominator

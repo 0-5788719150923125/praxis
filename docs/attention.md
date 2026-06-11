@@ -5,7 +5,7 @@ Self-attention variants, from vanilla causal MHA to compressive-memory and per-d
 
 Registry: ``praxis.ATTENTION_REGISTRY`` (8 entries)
 
-## `arc`, `arc_ghostmin` - ArcAttention
+## `arc`, `arc_dropoff` - ArcAttention
 
 InfiniAttention subclass that adds per-depth learned biases.
 
@@ -21,7 +21,7 @@ Source: [praxis/attention/arc.py:19](../praxis/attention/arc.py#L19)
 
 Presets:
 - `arc` - class defaults
-- `arc_ghostmin` - `ghostmin='warp'`
+- `arc_dropoff` - `dropoff='warp'`
 
 ## `causal` - CausalAttention
 

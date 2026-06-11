@@ -132,9 +132,9 @@ class ArcAttention(InfiniAttention):
     def _adjust_kv(
         self, k: Tensor, v: Tensor, current_depth: int
     ) -> Tuple[Tensor, Tensor]:
-        # Ghostmin ablation: optionally withhold the causal tip at one depth
-        # step (inherited from CausalAttention; no-op unless ghostmin_step set).
-        return self._maybe_ghostmin(k, v, current_depth)
+        # Dropoff ablation: optionally withhold the causal tip at one depth
+        # step (inherited from CausalAttention; no-op unless dropoff_step set).
+        return self._maybe_dropoff(k, v, current_depth)
 
     def _finalize_output(
         self, output: Tensor, inputs: Tensor, current_depth: int
