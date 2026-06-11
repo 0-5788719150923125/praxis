@@ -69,7 +69,7 @@ def guard_hover_rules(css: str) -> str:
         if brace == -1 or (close != -1 and close < brace):
             # End of an @media block (or trailing text).
             if close != -1 and close < (brace if brace != -1 else n):
-                out.append(css[i:close + 1])
+                out.append(css[i : close + 1])
                 if media_stack:
                     media_stack.pop()
                 i = close + 1
@@ -78,7 +78,9 @@ def guard_hover_rules(css: str) -> str:
             break
         header = css[i:brace]
         stripped = header.strip()
-        if stripped.startswith("@") and not stripped.startswith(("@media", "@supports")):
+        if stripped.startswith("@") and not stripped.startswith(
+            ("@media", "@supports")
+        ):
             # @keyframes / @font-face etc: copy the whole block verbatim.
             depth, j = 1, brace + 1
             while j < n and depth:
@@ -91,18 +93,18 @@ def guard_hover_rules(css: str) -> str:
             i = j
             continue
         if stripped.startswith(("@media", "@supports")):
-            out.append(css[i:brace + 1])
+            out.append(css[i : brace + 1])
             media_stack.append(stripped)
             i = brace + 1
             continue
         # An ordinary rule: find its closing brace (rule bodies don't nest).
         body_end = css.find("}", brace)
         body_end = n if body_end == -1 else body_end
-        body = css[brace + 1:body_end]
+        body = css[brace + 1 : body_end]
         if ":hover" in header:
             emit_rule(header, body)
         else:
-            out.append(css[i:body_end + 1] + "\n")
+            out.append(css[i : body_end + 1] + "\n")
         i = body_end + 1
     return "".join(out)
 

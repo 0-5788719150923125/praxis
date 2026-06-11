@@ -226,8 +226,10 @@ class TerminalInterface(Callback):
             self.live_metrics.state.set_mode("train")
             self.live_metrics.state.set_stage(stage)
             # Announce stage transitions (e.g. preflight -> pretrain) once.
-            last = getattr(self, "_last_stage", None)
-            if last is not None and stage != last:
+            # Every run starts in "preflight" (the state's initial stage), so
+            # the first batch of a plain LM announces preflight -> pretrain.
+            last = getattr(self, "_last_stage", "preflight")
+            if stage != last:
                 msg = f"Training stage: {last} → {stage}"
                 self.live_metrics.add_event(msg)
                 if self.dashboard:

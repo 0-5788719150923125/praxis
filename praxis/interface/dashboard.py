@@ -266,7 +266,7 @@ class TerminalDashboard:
         self.state.set_mode(mode)
         self.force_redraw()
 
-    def set_stage(self, stage="pretrain"):
+    def set_stage(self, stage="preflight"):
         self.state.set_stage(stage)
         self.force_redraw()
 

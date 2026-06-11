@@ -899,9 +899,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             if torch.is_tensor(main) and torch.isfinite(main):
                 outputs.losses.add_loss(
                     "solvability",
-                    self.solvability.forward_scalar(
-                        outputs.last_hidden_state, main
-                    ),
+                    self.solvability.forward_scalar(outputs.last_hidden_state, main),
                 )
 
     def _finalize_loss(

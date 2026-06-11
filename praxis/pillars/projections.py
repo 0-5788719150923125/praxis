@@ -1286,8 +1286,15 @@ def scratch_field(ax, rng, pal, mods):
                 z,
             )
         if rng.random() < 0.4:  # counter-slash across the set
-            gouge(cx, cy, ang + float(rng.uniform(0.9, 1.6)), scale * 0.7, 0.8,
-                  pal["stroke"], z)
+            gouge(
+                cx,
+                cy,
+                ang + float(rng.uniform(0.9, 1.6)),
+                scale * 0.7,
+                0.8,
+                pal["stroke"],
+                z,
+            )
 
     # Faint hairline scuffs behind the cuts.
     for _ in range(int(rng.integers(3, 7))):
@@ -1324,13 +1331,17 @@ def sketch_field(ax, rng, pal, mods):
             jy = slop * 0.4 * _fbm1(rng, n, octaves=2)
             i0 = int(float(rng.uniform(0, 0.06)) * n)
             i1 = n - int(float(rng.uniform(0, 0.06)) * n)
-            stroke(x[i0:i1] + jx[i0:i1], y[i0:i1] + jy[i0:i1], color,
-                   lw * float(rng.uniform(0.7, 1.1)), z)
+            stroke(
+                x[i0:i1] + jx[i0:i1],
+                y[i0:i1] + jy[i0:i1],
+                color,
+                lw * float(rng.uniform(0.7, 1.1)),
+                z,
+            )
 
     def line(p0, p1, lw, color, z):
         t = np.linspace(-0.05, 1.05, 50)  # the hand runs past both ends
-        retrace(p0[0] + t * (p1[0] - p0[0]), p0[1] + t * (p1[1] - p0[1]),
-                lw, color, z)
+        retrace(p0[0] + t * (p1[0] - p0[0]), p0[1] + t * (p1[1] - p0[1]), lw, color, z)
 
     def circle(cx, cy, r, lw, z):
         # Never quite closes: just over a full turn, radius drifting.
@@ -1343,7 +1354,10 @@ def sketch_field(ax, rng, pal, mods):
     def box(cx, cy, w, h, ang, lw, z):
         ca, sa = np.cos(ang), np.sin(ang)
         c = [
-            (cx + ux * w / 2 * ca - uy * h / 2 * sa, cy + ux * w / 2 * sa + uy * h / 2 * ca)
+            (
+                cx + ux * w / 2 * ca - uy * h / 2 * sa,
+                cy + ux * w / 2 * sa + uy * h / 2 * ca,
+            )
             for ux, uy in ((-1, -1), (1, -1), (1, 1), (-1, 1))
         ]
         for i in range(4):  # separate strokes: corners overshoot and cross
@@ -1362,8 +1376,12 @@ def sketch_field(ax, rng, pal, mods):
                 p1 = (cx + jo * ca + half * (-sr), cy + jo * sa + half * cr)
                 t = np.linspace(0, 1, 16)
                 stroke(
-                    p0[0] + t * (p1[0] - p0[0]) + slop * 0.2 * _fbm1(rng, 16, octaves=2),
-                    p0[1] + t * (p1[1] - p0[1]) + slop * 0.2 * _fbm1(rng, 16, octaves=2),
+                    p0[0]
+                    + t * (p1[0] - p0[0])
+                    + slop * 0.2 * _fbm1(rng, 16, octaves=2),
+                    p0[1]
+                    + t * (p1[1] - p0[1])
+                    + slop * 0.2 * _fbm1(rng, 16, octaves=2),
                     pal["stroke"],
                     0.45,
                     z,
@@ -1373,15 +1391,27 @@ def sketch_field(ax, rng, pal, mods):
     for _ in range(int(rng.integers(2, 5))):
         a = GOLDEN * int(rng.integers(0, 13))
         px, py = float(rng.uniform(0, CARD_W)), float(rng.uniform(0, CARD_H))
-        line((px - 80 * np.cos(a), py - 80 * np.sin(a)),
-             (px + 80 * np.cos(a), py + 80 * np.sin(a)), 0.4, pal["faint"], 1)
+        line(
+            (px - 80 * np.cos(a), py - 80 * np.sin(a)),
+            (px + 80 * np.cos(a), py + 80 * np.sin(a)),
+            0.4,
+            pal["faint"],
+            1,
+        )
     # Figures: roughed-in boxes and circles.
     for _ in range(2 + int(round(rec * 2))):
         cx = float(rng.uniform(5, CARD_W - 5))
         cy = float(rng.uniform(3, CARD_H - 3))
         if rng.random() < 0.5:
-            box(cx, cy, float(rng.uniform(8, 30)), float(rng.uniform(6, 22)),
-                float(rng.uniform(0, np.pi)), float(rng.uniform(0.7, 1.1)), 3)
+            box(
+                cx,
+                cy,
+                float(rng.uniform(8, 30)),
+                float(rng.uniform(6, 22)),
+                float(rng.uniform(0, np.pi)),
+                float(rng.uniform(0.7, 1.1)),
+                3,
+            )
         else:
             circle(cx, cy, float(rng.uniform(4, 14)), float(rng.uniform(0.7, 1.1)), 3)
     # Shaded patches.

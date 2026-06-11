@@ -35,7 +35,9 @@ class MetricsState:
         self.mode = "train"
         # Semantic training stage (preflight/pretrain/validation/...). Distinct
         # from `mode`, which is just the Lightning train|validation phase.
-        self.stage = "pretrain"
+        # Every run starts in "preflight" (compile, dataset download, encoder
+        # codec pretraining); the first real training batch promotes it.
+        self.stage = "preflight"
         self.status_text = "_initializing"
         self.url = "N/A"
         self.seed = None
