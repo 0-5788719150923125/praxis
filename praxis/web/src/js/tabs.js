@@ -418,9 +418,14 @@ function renderBusinessCard() {
                 alt="" role="presentation" title="Click to flip">
             <div class="biz-card-actions">
                 <button class="biz-btn" id="biz-card-flip" type="button">Flip</button>
-                <button class="biz-btn" id="biz-card-reroll" type="button">Reroll</button>
-                <button class="biz-btn" id="biz-card-download" type="button">Download</button>
-                <button class="biz-btn" id="biz-card-download-8" type="button">Download 10</button>
+                <button class="biz-btn" id="biz-card-draw" type="button">Draw</button>
+                <div class="biz-dl-wrap">
+                    <div class="biz-dl-menu" id="biz-card-dl-menu" hidden>
+                        <button class="biz-btn" data-dl="1" type="button" title="One card, front and back">1</button>
+                        <button class="biz-btn" data-dl="10" type="button" title="10-up Avery sheets, front and back">10</button>
+                    </div>
+                    <button class="biz-btn" id="biz-card-download" type="button">Download</button>
+                </div>
             </div>
         </div>
     </div>`;
@@ -465,14 +470,31 @@ function wireBusinessCard(container) {
     };
     container.querySelector('#biz-card-flip')?.addEventListener('click', flip);
     container.querySelector('.biz-card-img')?.addEventListener('click', flip);
-    container.querySelector('#biz-card-reroll')?.addEventListener('click', () => {
+    container.querySelector('#biz-card-draw')?.addEventListener('click', () => {
         state.spec.cardSeed = Math.floor(Math.random() * 2 ** 31);
         refresh();
     });
+    // One Download button; the count picker pops out above it.
+    const dlMenu = container.querySelector('#biz-card-dl-menu');
     container.querySelector('#biz-card-download')
-        ?.addEventListener('click', () => dl('/api/card/cards.zip'));
-    container.querySelector('#biz-card-download-8')
-        ?.addEventListener('click', () => dl('/api/card/sheets.zip'));
+        ?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (dlMenu) dlMenu.hidden = !dlMenu.hidden;
+        });
+    dlMenu?.querySelectorAll('[data-dl]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            dl(btn.dataset.dl === '10' ? '/api/card/sheets.zip' : '/api/card/cards.zip');
+            dlMenu.hidden = true;
+        });
+    });
+    if (!wireBusinessCard._dlCloser) {
+        wireBusinessCard._dlCloser = true;
+        document.addEventListener('click', () => {
+            const m = document.querySelector('#biz-card-dl-menu');
+            if (m) m.hidden = true;
+        });
+    }
 }
 
 /**

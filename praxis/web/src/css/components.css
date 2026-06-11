@@ -2632,3 +2632,21 @@ body.hybrid-active .prism-logo {
 .arena-actions[hidden] {
     display: none;
 }
+
+/* Single Download button with a pop-out count picker (1 / 10). */
+.biz-dl-wrap {
+    position: relative;
+    display: flex;
+}
+
+.biz-dl-menu {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    right: 0;
+    display: flex;
+    gap: 0.35rem;
+}
+
+.biz-dl-menu[hidden] {
+    display: none;
+}

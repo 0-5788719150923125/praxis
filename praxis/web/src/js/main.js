@@ -218,6 +218,7 @@ async function prefetchTabs() {
     // forever regardless.
     let hiddenDirty = false;
     let visibleDirty = false;
+    let visibleDirtyTab = null;  // the tab that was visible when marked dirty
     let lastHiddenWarm = 0;
     let lastVisibleRefresh = 0;
     let draining = false;
@@ -230,6 +231,15 @@ async function prefetchTabs() {
         retryTimer = 0;
         try {
             const now = Date.now();
+            // A dirty flag raised on one tab must never be spent on another:
+            // with the flag pending (cooldown/interaction/retry timer), a tab
+            // switch used to leak a forced refresh into the NEW tab seconds
+            // after it opened - rebuilding e.g. Customs for an invalidation
+            // it is deliberately not subscribed to. The departed tab is the
+            // hidden-warm plane's job now.
+            if (visibleDirty && visibleDirtyTab !== state.currentTab) {
+                visibleDirty = false;
+            }
             if (visibleDirty && now - lastVisibleRefresh >= VISIBLE_REFRESH_GAP_MS) {
                 if (await refreshVisible() !== false) {
                     visibleDirty = false;
@@ -267,7 +277,10 @@ async function prefetchTabs() {
         hiddenDirty = true;
         const topic = e.detail && e.detail.topic;
         const topics = TAB_TOPICS[state.currentTab];
-        if (!topic || !topics || topics.includes(topic)) visibleDirty = true;
+        if (!topic || !topics || topics.includes(topic)) {
+            visibleDirty = true;
+            visibleDirtyTab = state.currentTab;
+        }
         drain();
     });
     // Catch up when the page becomes visible again (drain skips while hidden).

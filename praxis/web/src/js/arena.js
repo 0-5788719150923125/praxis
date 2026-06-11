@@ -438,9 +438,14 @@ function ik2local(root, foot, l1, l2, arch) {
 // --------------------------------------------------------------- creature
 
 class Creature {
-    constructor(seedStr) {
+    constructor(seedStr, epochSalt = '') {
+        // Identity is hash-bound and eternal: the genome, the voter wiring,
+        // the leg temperaments. The RUNTIME is epoch-salted: where it
+        // spawns and what it decides differ each window - but identically
+        // for every viewer on Earth, since the salt is UTC-derived.
         this.rng = mulberry32(fnv1a(seedStr));
-        this.live = mulberry32(fnv1a(seedStr + ':live'));
+        this.live = mulberry32(fnv1a(seedStr + epochSalt + ':live'));
+        const spawn = mulberry32(fnv1a(seedStr + epochSalt + ':spawn'));
         this.p = sampleMorphology(this.rng);
 
         // Voter pool: seeded slow oscillators pooled per channel - the
@@ -487,15 +492,15 @@ class Creature {
         this.faces = null;            // per-face materials; null = all solid
 
         this.surface = 'floor';
-        this.a = ROOM_W * (0.25 + 0.5 * this.rng());
-        this.b = ROOM_D * (0.25 + 0.5 * this.rng());
+        this.a = ROOM_W * (0.25 + 0.5 * spawn());
+        this.b = ROOM_D * (0.25 + 0.5 * spawn());
         this.va = 0; this.vb = 0;
         this.p.stance *= 1 - 0.35 * this.p.sprawl;   // lizards run low
         this.h = this.p.stance * this.p.scale;
         this.vh = 0;
-        this.heading = this.rng() * Math.PI * 2;
+        this.heading = spawn() * Math.PI * 2;
         this.spin = 0;
-        this.phase = this.rng() * Math.PI * 2;
+        this.phase = spawn() * Math.PI * 2;
         this.lie = 0;
         this.stagger = 0;
         this.state = 'idle';
@@ -2648,17 +2653,26 @@ class Arena {
         this.canvas = canvas;
         this.seedStr = seedStr;
         this.ctx = canvas.getContext('2d');
+        // Observation is 1-to-1: every page load is a fresh sighting of
+        // the same animal in the same REGION, but never the same spot or
+        // the same moment. Regional traits stay hash-bound; geometry,
+        // spawn, and the decision stream re-roll per observation. Weather
+        // keeps an hourly regional cadence.
+        const obsSalt = ':o' + Date.now();
+        const weatherEpoch = ':w' + Math.floor(Date.now() / 3600e3);
+
         // Habitat first: it sets the room's scale, and the creature is
         // born into whatever space this seed grows.
         const envRng = mulberry32(fnv1a(seedStr + ':env'));
         this.hab = sampleHabitat(envRng);
         setRoom(this.hab.roomW, this.hab.roomD, this.hab.roomH);
-        this.terrain = finishTerrain(buildTerrain(envRng, this.hab, seedStr));
+        const geoRng = mulberry32(fnv1a(seedStr + ':geo' + obsSalt));
+        this.terrain = finishTerrain(buildTerrain(geoRng, this.hab, seedStr + obsSalt));
         // Enclosure is now literal: the fraction of faces that exist.
         const fmat = this.terrain.facesMat;
         this.enclosure = ['wallB', 'wallL', 'wallR', 'ceiling']
             .filter(f2 => fmat[f2] !== 'none').length / 4;
-        this.creature = new Creature(seedStr);
+        this.creature = new Creature(seedStr, obsSalt);
         this.creature.terrainRef = this.terrain;
         this.creature.enclosure = this.enclosure;
         this.creature.faces = fmat;
@@ -2678,20 +2692,21 @@ class Arena {
         // Sparse seeded grain: stipple on the floor and the back wall -
         // roughness scales with the habitat's noise gene.
         const dots = Math.round(70 * this.hab.noise);
+        const dotRng = mulberry32(fnv1a(seedStr + ':dots' + obsSalt));
         const rm = this.terrain.roam, vt = this.terrain.vast;
         // Two-thirds of the grain lands where the creature lives, the
         // rest scatters across the vast plane.
         this.floorDots = Array.from({ length: Math.round(dots * 1.4) }, (_, i) => {
             const R = i % 3 === 2 ? vt : rm;
             return {
-                x: R.x0 + envRng() * (R.x1 - R.x0),
-                z: R.z0 + envRng() * (R.z1 - R.z0),
-                r: 0.6 + envRng() * 1.4, al: 0.02 + envRng() * 0.06,
+                x: R.x0 + dotRng() * (R.x1 - R.x0),
+                z: R.z0 + dotRng() * (R.z1 - R.z0),
+                r: 0.6 + dotRng() * 1.4, al: 0.02 + dotRng() * 0.06,
             };
         });
         this.wallDots = Array.from({ length: Math.round(dots * 0.6) }, () => ({
-            x: envRng() * ROOM_W, y: envRng() * ROOM_H,
-            r: 0.6 + envRng() * 1.2, al: 0.02 + envRng() * 0.05,
+            x: dotRng() * ROOM_W, y: dotRng() * ROOM_H,
+            r: 0.6 + dotRng() * 1.2, al: 0.02 + dotRng() * 0.05,
         }));
 
         this.t = 0;
@@ -2715,7 +2730,7 @@ class Arena {
         this.frameNo = 0;
 
         // Weather: its own seed stream so habitats never reroll.
-        const wRng = mulberry32(fnv1a(seedStr + ':weather'));
+        const wRng = mulberry32(fnv1a(seedStr + ':weather' + weatherEpoch));
         this.weather = sampleWeather(wRng, this.hab, this.terrain.facesMat);
         const wth = this.weather;
         const count = Math.round((WEATHER_COUNT[wth.material] || 0) * wth.density);
@@ -3512,7 +3527,7 @@ export function renderArena() {
             <div class="portal-window">
                 <canvas class="arena-canvas"></canvas>
                 <div class="biz-card-actions arena-actions" hidden>
-                    <button class="biz-btn" id="arena-reroll" type="button">Reroll</button>
+                    <button class="biz-btn" id="arena-draw" type="button">Draw</button>
                 </div>
             </div>
         </div>
@@ -3538,18 +3553,19 @@ export function wireArena(container, seedStr) {
     window.__arena = arenaInstance; // dev introspection
     arenaInstance.start();
 
-    // Debug-mode developer tool: reroll the creature's seed, overriding
-    // the hash-bound default. Visibility tracks the Settings checkbox.
+    // Debug-mode developer tool: DRAW a fresh sample from the genome
+    // pool, overriding the hash-bound default. Full random - it's a
+    // debugging tool, determinism is not wanted here. Only the first
+    // card (the hash-bound one) is stable across debug on/off.
     const actions = container.querySelector('.arena-actions');
-    const reroll = container.querySelector('#arena-reroll');
-    if (!actions || !reroll) return;
+    const draw = container.querySelector('#arena-draw');
+    if (!actions || !draw) return;
     const sync = () => { actions.hidden = !state.settings.debugLogging; };
     sync();
     arenaInstance.onFrame = sync;
-    let n = 0;
-    reroll.addEventListener('click', () => {
+    draw.addEventListener('click', () => {
         arenaInstance.stop();
-        arenaSeedActive = `reroll:${Date.now()}:${++n}`;
+        arenaSeedActive = `draw:${Math.random().toString(36).slice(2)}`;
         arenaInstance = new Arena(canvas, arenaSeedActive);
         window.__arena = arenaInstance;
         arenaInstance.onFrame = sync;

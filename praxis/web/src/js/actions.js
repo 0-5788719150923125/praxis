@@ -271,6 +271,13 @@ export const ACTION_HANDLERS = {
             active: t.id === tabId
         }));
 
+        // Arm the first-open "unroll" BEFORE the tab paints. Added after
+        // render(), the prewarmed cards painted fully visible for a frame,
+        // then snapped to opacity 0 (animation fill "both") and staggered
+        // back in - reading as a flicker/reload instead of a reveal. Armed
+        // pre-paint, the first frame starts hidden and only fades in.
+        playDeckReveal(tabId);
+
         render();
 
         // If a background warm has this tab laid out off-screen, strip those
@@ -294,8 +301,6 @@ export const ACTION_HANDLERS = {
             applyDeckFocus(DECK_BY_TAB[tabId]);
         });
 
-        // First time on a deck tab, play the staggered "unroll" reveal.
-        playDeckReveal(tabId);
     },
 
     /**

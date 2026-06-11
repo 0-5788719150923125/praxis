@@ -61,14 +61,14 @@
     to   { opacity: 1; transform: translateY(0); }
 }
 
-.tab-content.deck-reveal .chart-card > .chart-title,
-.tab-content.deck-reveal .chart-card > .chart-subtitle,
+/* Titles/subtitles are deliberately NOT animated: the card chrome is
+   precached and already painted, so text that starts hidden and fades in
+   reads as "the title vanished and reloaded", not as a reveal. Only the
+   card body unrolls. */
 .tab-content.deck-reveal .chart-card > .deck-card-scroll {
     animation: deckUnroll 0.4s ease both;
+    animation-delay: 0.12s;
 }
-.tab-content.deck-reveal .chart-card > .chart-title     { animation-delay: 0.04s; }
-.tab-content.deck-reveal .chart-card > .chart-subtitle  { animation-delay: 0.12s; }
-.tab-content.deck-reveal .chart-card > .deck-card-scroll { animation-delay: 0.22s; }
 
 @media (prefers-reduced-motion: reduce) {
     .tab-content.deck-reveal .chart-card > * { animation: none; }

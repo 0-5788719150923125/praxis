@@ -6,7 +6,7 @@
 import { state, CONSTANTS, chartLineColor } from './state.js';
 import { fetchAPI } from './api.js';
 import { createTabHeader, pdfButton } from './components.js';
-import { formatRelativeTime, initChartDeck, applyChartTheme } from './charts.js';
+import { formatRelativeTime, initChartDeck, applyChartTheme, upsertChart } from './charts.js';
 import { sampleColormap } from './colormaps.js';
 import { dedupe, hasRealContent } from './prefetch.js';
 
@@ -719,6 +719,22 @@ function renderDynamicsCharts(runData, container) {
         metadata: metaParts.join('\n')
     });
 
+    // Structural fingerprint: rebuild the tab DOM only when the set of cards
+    // changes. Data-only polls keep the deck (position, scroll, gestures) and
+    // pour new data into the live Chart instances via upsertChart.
+    const manifestFp = [...manifest.entries()]
+        .map(([g, v]) =>
+            `${g}:${v.scalars.map(s => s.key).join(',')};${v.snaps.map(s => s.key).join(',')}`)
+        .join('|');
+    const fingerprint = [
+        familyConfigs.map(c => c.canvasId).join('|'),
+        manifestFp,
+        allLayers.join(','),
+    ].join('§');
+    const structural =
+        !container.querySelector('#dynamics-deck') ||
+        container.dataset.dynamicsFingerprint !== fingerprint;
+
     // ── Chart cards ─────────────────────────────────────────────────────
     // Families ordered before the head-metric sections (gradient flow,
     // expert charts, task weights), rendered straight from the registry.
@@ -764,27 +780,34 @@ function renderDynamicsCharts(runData, container) {
         </div>
     `;
 
-    container.innerHTML = headerHTML + chartsHTML;
+    if (structural) {
+        container.dataset.dynamicsFingerprint = fingerprint;
+        container.innerHTML = headerHTML + chartsHTML;
 
-    // Stack the dynamics charts into the same card deck as the Research tab.
-    // Cards are a flat sequence (each already carries its own title), so we
-    // just move them into one deck; layer-aware cards carry their own filter.
-    const dCards = Array.from(container.querySelectorAll('.chart-card'));
-    if (dCards.length) {
-        const deck = document.createElement('div');
-        deck.className = 'chart-deck';
-        deck.id = 'dynamics-deck';
-        deck.innerHTML = '<div class="chart-deck-counter"></div>';
-        const firstWrapper = dCards[0].parentElement;
-        firstWrapper.parentNode.insertBefore(deck, firstWrapper);
-        dCards.forEach(card => deck.appendChild(card));
-        // Drop the now-empty margin-top wrappers the cards left behind.
-        Array.from(container.children).forEach(ch => {
-            if (ch !== deck && ch.tagName === 'DIV' && ch.children.length === 0) {
-                ch.remove();
-            }
-        });
-        initChartDeck(deck);
+        // Stack the dynamics charts into the same card deck as the Research tab.
+        // Cards are a flat sequence (each already carries its own title), so we
+        // just move them into one deck; layer-aware cards carry their own filter.
+        const dCards = Array.from(container.querySelectorAll('.chart-card'));
+        if (dCards.length) {
+            const deck = document.createElement('div');
+            deck.className = 'chart-deck';
+            deck.id = 'dynamics-deck';
+            deck.innerHTML = '<div class="chart-deck-counter"></div>';
+            const firstWrapper = dCards[0].parentElement;
+            firstWrapper.parentNode.insertBefore(deck, firstWrapper);
+            dCards.forEach(card => deck.appendChild(card));
+            // Drop the now-empty margin-top wrappers the cards left behind.
+            Array.from(container.children).forEach(ch => {
+                if (ch !== deck && ch.tagName === 'DIV' && ch.children.length === 0) {
+                    ch.remove();
+                }
+            });
+            initChartDeck(deck);
+        }
+    } else {
+        // Data-only refresh: just keep the header's point/expert counts live.
+        const meta = container.querySelector('.tab-header-metadata');
+        if (meta) meta.innerHTML = metaParts.join('\n');
     }
 
     // Layer toggles
@@ -807,7 +830,8 @@ function renderDynamicsCharts(runData, container) {
             loadActivationCurves();
             // Re-layout once charts have real heights (deck height tracks the
             // active card); activeIndex is preserved across the re-init.
-            initChartDeck('dynamics-deck');
+            // Data-only refresh: the deck DOM is untouched, heights still valid.
+            if (structural) initChartDeck('dynamics-deck');
         } catch (error) {
             console.error('[Dynamics] Chart creation failed:', error);
         } finally {
@@ -900,17 +924,13 @@ function renderChart(canvasId, datasets, yLabel, yType) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
 
-    if (dynamicsCharts[canvasId]) {
-        dynamicsCharts[canvasId].destroy();
-    }
-
     const { textColor, gridColor, tooltipBg } = getThemeColors();
     const options = baseChartOptions(yLabel, yType, textColor, gridColor, tooltipBg);
     // Defer legend rendering to the scrollable HTML legend so clicks don't
     // block on a Chart.js redraw and Show/Hide-all is available.
     options.plugins.legend.display = false;
 
-    const chart = new Chart(ctx, {
+    const chart = upsertChart(dynamicsCharts[canvasId], ctx, {
         type: 'line',
         data: { datasets },
         options
@@ -2023,15 +2043,11 @@ function createScalarMetricChart(canvasId, dynamics, key, yLabel, yType) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
 
-    if (dynamicsCharts[canvasId]) {
-        dynamicsCharts[canvasId].destroy();
-    }
-
     const { textColor, gridColor, tooltipBg } = getThemeColors();
     const options = baseChartOptions(yLabel, yType, textColor, gridColor, tooltipBg);
     options.plugins.legend.display = false;
 
-    dynamicsCharts[canvasId] = new Chart(ctx, {
+    dynamicsCharts[canvasId] = upsertChart(dynamicsCharts[canvasId], ctx, {
         type: 'line',
         data: { datasets: [makeLineDataset(yLabel, data, chartLineColor(0))] },
         options
@@ -2043,10 +2059,6 @@ function createMultiSeriesMetricChart(canvasId, dynamics, series, yLabel, yType)
     const steps = dynamics.steps || [];
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
-
-    if (dynamicsCharts[canvasId]) {
-        dynamicsCharts[canvasId].destroy();
-    }
 
     const datasets = [];
     series.forEach(({ key, label }, idx) => {
@@ -2061,7 +2073,7 @@ function createMultiSeriesMetricChart(canvasId, dynamics, series, yLabel, yType)
     const { textColor, gridColor, tooltipBg } = getThemeColors();
     const options = baseChartOptions(yLabel, yType, textColor, gridColor, tooltipBg);
 
-    dynamicsCharts[canvasId] = new Chart(ctx, { type: 'line', data: { datasets }, options });
+    dynamicsCharts[canvasId] = upsertChart(dynamicsCharts[canvasId], ctx, { type: 'line', data: { datasets }, options });
 }
 
 // ─── Expert charts (conditional) ────────────────────────────────────────────
@@ -2141,10 +2153,6 @@ function createHaltingHistogramChart(canvasId, dynamics, buckets) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
 
-    if (dynamicsCharts[canvasId]) {
-        dynamicsCharts[canvasId].destroy();
-    }
-
     const { textColor, gridColor, tooltipBg } = getThemeColors();
 
     const labels = buckets.rs.map(r => `r=${r}`);
@@ -2176,7 +2184,7 @@ function createHaltingHistogramChart(canvasId, dynamics, buckets) {
         });
     }
 
-    dynamicsCharts[canvasId] = new Chart(ctx, {
+    dynamicsCharts[canvasId] = upsertChart(dynamicsCharts[canvasId], ctx, {
         type: 'bar',
         data: { labels, datasets },
         options: {
@@ -2228,16 +2236,12 @@ function createWidthProfileChart(canvasId, dynamics, depths) {
     const ctx = document.getElementById(canvasId);
     if (!ctx || !depths) return;
 
-    if (dynamicsCharts[canvasId]) {
-        dynamicsCharts[canvasId].destroy();
-    }
-
     const { textColor, gridColor, tooltipBg } = getThemeColors();
 
     const labels = depths.map(d => `d${d}`);
     const fracs = depths.map(d => latestValue(dynamics[`width/active_d${d}`]) || 0);
 
-    dynamicsCharts[canvasId] = new Chart(ctx, {
+    dynamicsCharts[canvasId] = upsertChart(dynamicsCharts[canvasId], ctx, {
         type: 'line',
         data: {
             labels,
@@ -2376,10 +2380,6 @@ function renderActivationChart(canvasId, curves, field, yLabel) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
 
-    if (dynamicsCharts[canvasId]) {
-        dynamicsCharts[canvasId].destroy();
-    }
-
     const { textColor, gridColor, tooltipBg } = getThemeColors();
 
     const datasets = [];
@@ -2426,7 +2426,7 @@ function renderActivationChart(canvasId, curves, field, yLabel) {
         options.plugins.tooltip.filter = (tctx) => !tctx.dataset.label.startsWith('__band_');
     }
 
-    const chart = new Chart(ctx, {
+    const chart = upsertChart(dynamicsCharts[canvasId], ctx, {
         type: 'line',
         data: { datasets },
         options

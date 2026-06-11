@@ -12,6 +12,36 @@ import { SCROLL_TAU, SCROLL_MIN_VEL } from './momentum.js';
 // Chart instances storage (exported for hybrid mode)
 export const charts = {};
 
+// ── In-place chart upsert ───────────────────────────────────────────────────
+// Pour fresh data (and options - they embed theme colors) into a live Chart
+// instance instead of destroy+recreate. Recreating on every metrics poll is
+// what made tabs visibly "reload": canvases blank for a frame and entrance
+// animations replay. Per-dataset visibility (legend clicks) is carried over
+// by label. Falls back to a fresh Chart when there is no live instance for
+// this canvas or the chart type changed.
+export function upsertChart(existing, canvas, cfg) {
+    if (
+        existing &&
+        existing.canvas === canvas &&
+        existing.config.type === cfg.type &&
+        !existing._destroyed
+    ) {
+        const hiddenByLabel = new Map(
+            existing.data.datasets.map((d, i) => [d.label, !existing.isDatasetVisible(i)])
+        );
+        (cfg.data.datasets || []).forEach(d => {
+            if (hiddenByLabel.get(d.label)) d.hidden = true;
+        });
+        existing.data.labels = cfg.data.labels;
+        existing.data.datasets = cfg.data.datasets;
+        if (cfg.options) existing.options = cfg.options;
+        existing.update('none');
+        return existing;
+    }
+    if (existing) existing.destroy();
+    return new Chart(canvas, cfg);
+}
+
 // ── Accent auto-retint ──────────────────────────────────────────────────────
 // Chart.js caches dataset colors at creation, so flipping the accent (the logs
 // "blue mode") wouldn't recolor live charts. A plugin stamps each chart with the
@@ -590,9 +620,6 @@ async function createSpiderCitationsChart(canvasId) {
         return fail('Spider data unavailable');
     }
 
-    if (charts[canvasId]) {
-        charts[canvasId].destroy();
-    }
     const theme = getContextTheme(ctx);
     const { textColor, gridColor, tooltipBg } = getThemeColors(theme);
 
@@ -608,7 +635,7 @@ async function createSpiderCitationsChart(canvasId) {
     const referrers = (data.referrers || [])
         .map(r => `${shortLabel(r.url)} (${r.count})`);
 
-    charts[canvasId] = new Chart(ctx, {
+    charts[canvasId] = upsertChart(charts[canvasId], ctx, {
         type: 'bar',
         data: {
             labels: data.cited.map(d => shortLabel(d.url)),
@@ -831,6 +858,7 @@ function renderMetricsCharts(data, container) {
     if (!chartsArea) return;
 
     if (runs.length === 0) {
+        delete chartsArea.dataset.deckFingerprint;
         chartsArea.innerHTML = `
             <div class="empty-state" style="margin-top: 2rem;">
                 <h3>No Metrics Available</h3>
@@ -867,40 +895,54 @@ function renderMetricsCharts(data, container) {
         return runs.some(r => r.metrics[config.key]?.some(v => v !== null));
     });
 
-    // Destroy existing chart instances before rebuilding
-    availableMetrics.forEach(config => {
-        if (charts[config.canvasId]) {
-            charts[config.canvasId].destroy();
-            delete charts[config.canvasId];
-        }
-    });
+    // Structural fingerprint: rebuild the deck DOM only when the SET of
+    // cards changes (new metric appeared, run selection changed the mix).
+    // A data-only poll keeps the DOM - and with it the deck position,
+    // scroll state, and live Chart instances (renderers upsert in place).
+    // This is the fix for tabs visibly "reloading" on every metrics poll.
+    const deckFingerprint = availableMetrics.map(c => c.canvasId).join('|');
+    const structural =
+        !document.getElementById('chart-deck') ||
+        chartsArea.dataset.deckFingerprint !== deckFingerprint;
 
-    // Build chart cards as a stacked deck (card-switcher carousel)
-    let chartsHTML = '<div class="chart-deck" id="chart-deck">';
-    chartsHTML += '<div class="chart-deck-counter" id="chart-deck-counter"></div>';
+    if (structural) {
+        chartsArea.dataset.deckFingerprint = deckFingerprint;
 
-    chartsHTML += availableMetrics.map((config, i) => {
-        const stepSliderHTML = (config.type === 'expert_routing_heatmap') ?
-            `<div id="layer-toggles-${config.canvasId}" class="layer-toggles" style="margin-bottom: 1rem; padding: 0.5rem; display: flex; gap: 1rem; flex-wrap: wrap; align-items: center;">
-            </div>` : '';
+        // Destroy existing chart instances before rebuilding the DOM
+        availableMetrics.forEach(config => {
+            if (charts[config.canvasId]) {
+                charts[config.canvasId].destroy();
+                delete charts[config.canvasId];
+            }
+        });
 
-        return `
-        <div class="chart-card" data-deck-index="${i}" data-card-key="${config.key}">
-            <div class="chart-title">${config.title}</div>
-            ${config.description ? `<div class="chart-subtitle">${config.description}</div>` : ''}
-            ${stepSliderHTML}
-            <div class="deck-card-scroll">
-                <div class="chart-wrapper">
-                    <canvas id="${config.canvasId}"></canvas>
+        // Build chart cards as a stacked deck (card-switcher carousel)
+        let chartsHTML = '<div class="chart-deck" id="chart-deck">';
+        chartsHTML += '<div class="chart-deck-counter" id="chart-deck-counter"></div>';
+
+        chartsHTML += availableMetrics.map((config, i) => {
+            const stepSliderHTML = (config.type === 'expert_routing_heatmap') ?
+                `<div id="layer-toggles-${config.canvasId}" class="layer-toggles" style="margin-bottom: 1rem; padding: 0.5rem; display: flex; gap: 1rem; flex-wrap: wrap; align-items: center;">
+                </div>` : '';
+
+            return `
+            <div class="chart-card" data-deck-index="${i}" data-card-key="${config.key}">
+                <div class="chart-title">${config.title}</div>
+                ${config.description ? `<div class="chart-subtitle">${config.description}</div>` : ''}
+                ${stepSliderHTML}
+                <div class="deck-card-scroll">
+                    <div class="chart-wrapper">
+                        <canvas id="${config.canvasId}"></canvas>
+                    </div>
                 </div>
             </div>
-        </div>
-        `;
-    }).join('');
+            `;
+        }).join('');
 
-    chartsHTML += '</div>';
+        chartsHTML += '</div>';
 
-    chartsArea.innerHTML = chartsHTML;
+        chartsArea.innerHTML = chartsHTML;
+    }
 
     // Render charts after DOM update. Each config's `type` selects a
     // renderer from the registry; unknown types fall back to a line chart.
@@ -917,7 +959,9 @@ function renderMetricsCharts(data, container) {
                 (METRIC_RENDERERS[config.type] || METRIC_RENDERERS.line)(config, ctx);
                 await new Promise(r => setTimeout(r, 0));
             }
-            initChartDeck('chart-deck');
+            // Data-only refresh: the deck DOM is untouched, so transforms,
+            // momentum, and measured heights are all still valid.
+            if (structural) initChartDeck('chart-deck');
         } finally {
             resolve();
         }
@@ -2006,10 +2050,6 @@ function createRunComparisonChart(canvasId, label, runs, metricKey) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
 
-    if (charts[canvasId]) {
-        charts[canvasId].destroy();
-    }
-
     const theme = getContextTheme(ctx);
     const { textColor, gridColor, tooltipBg } = getThemeColors(theme);
 
@@ -2060,7 +2100,7 @@ function createRunComparisonChart(canvasId, label, runs, metricKey) {
         };
     }).filter(d => d !== null);
 
-    charts[canvasId] = new Chart(ctx, {
+    charts[canvasId] = upsertChart(charts[canvasId], ctx, {
         type: 'line',
         data: { datasets },
         options: {
@@ -2140,10 +2180,6 @@ function createTokensBarChart(canvasId, label, runs, metricKey) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
 
-    if (charts[canvasId]) {
-        charts[canvasId].destroy();
-    }
-
     const theme = getContextTheme(ctx);
     const { textColor, gridColor, tooltipBg } = getThemeColors(theme);
 
@@ -2172,7 +2208,7 @@ function createTokensBarChart(canvasId, label, runs, metricKey) {
         };
     }).filter(d => d.value !== null);
 
-    charts[canvasId] = new Chart(ctx, {
+    charts[canvasId] = upsertChart(charts[canvasId], ctx, {
         type: 'bar',
         data: {
             labels: data.map(d => d.label),
@@ -2242,10 +2278,6 @@ function createSamplingWeightsChart(canvasId, dataMetrics) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
 
-    // Destroy existing
-    if (charts[canvasId]) {
-        charts[canvasId].destroy();
-    }
 
     // Get colors for the appropriate theme context (hybrid overlay or normal)
     const theme = getContextTheme(ctx);
@@ -2292,7 +2324,7 @@ function createSamplingWeightsChart(canvasId, dataMetrics) {
     const maxWeight = Math.max(...documentData.map(d => d.value));
     const scaledMax = Math.min(maxWeight * 1.1, 1.0);  // Add 10% padding, cap at 1.0
 
-    charts[canvasId] = new Chart(ctx, {
+    charts[canvasId] = upsertChart(charts[canvasId], ctx, {
         type: 'bar',
         data: {
             labels: documentData.map(d => d.label),
@@ -2701,17 +2733,12 @@ async function createExpertRoutingChart(canvasId, agents) {
         }
     });
 
-    // Destroy existing chart
-    if (charts[canvasId]) {
-        charts[canvasId].destroy();
-    }
-
     // Calculate uniform weight reference
     const uniformWeight = maxExperts > 0 ? 1.0 / maxExperts : 0.5;
     const uniformPct = (uniformWeight * 100).toFixed(1);
 
-    // Create heatmap using scatter plot with colored square points
-    charts[canvasId] = new Chart(ctx, {
+    // Heatmap as a scatter plot with colored square points
+    charts[canvasId] = upsertChart(charts[canvasId], ctx, {
         type: 'scatter',
         data: {
             datasets: [{
@@ -2845,10 +2872,6 @@ function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern,
     if (!ctx) return;
 
     // Destroy existing
-    if (charts[canvasId]) {
-        charts[canvasId].destroy();
-    }
-
     const theme = getContextTheme(ctx);
     const { textColor, gridColor, tooltipBg } = getThemeColors(theme);
 
@@ -2917,9 +2940,7 @@ function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern,
         });
     });
 
-    console.log(`[createMultiExpertChart] Creating chart with X bounds: [${minX}, ${maxX}], ${allDatasets.length} datasets`);
-
-    charts[canvasId] = new Chart(ctx, {
+    charts[canvasId] = upsertChart(charts[canvasId], ctx, {
         type: 'line',
         data: { datasets: allDatasets },
         options: {
