@@ -39,6 +39,17 @@ class TrainingGroup:
         )
 
         group.add_argument(
+            "--warmup-steps",
+            type=int,
+            default=None,
+            help=(
+                "LR warmup horizon in optimizer steps. Also gates the CALM "
+                "KL anneal and codec-freeze floor. Default: "
+                "target_batch_size * 4."
+            ),
+        )
+
+        group.add_argument(
             "--no-compile",
             action="store_true",
             default=False,

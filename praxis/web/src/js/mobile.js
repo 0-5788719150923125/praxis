@@ -3,6 +3,19 @@
  * Clean tab carousel - clicked tabs float to left
  */
 
+// Touch devices keep :focus on a tapped button (the other half of the
+// stuck-pressed-state bug; :hover is handled at build time by the
+// hover-media guard). Focus lands on the synthetic click AFTER touchend,
+// so release it on the click that follows a touch.
+let lastTouchTs = 0;
+document.addEventListener('touchend', () => { lastTouchTs = Date.now(); },
+    { passive: true, capture: true });
+document.addEventListener('click', (e) => {
+    if (Date.now() - lastTouchTs > 700) return;   // real mouse click
+    const el = e.target.closest ? e.target.closest('button, a') : null;
+    if (el) setTimeout(() => el.blur(), 0);
+}, { passive: true });
+
 import { state } from './state.js';
 import { executeAction } from './actions.js';
 

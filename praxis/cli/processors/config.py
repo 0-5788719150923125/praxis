@@ -182,7 +182,12 @@ class ConfigBuilder:
             if batch_size >= target_batch_size
             else -(-target_batch_size // batch_size)
         )
-        config_kwargs["warmup_steps"] = target_batch_size * 4
+        # User-provided warmup (CLI flag or experiment yml) wins; the
+        # batch-derived horizon is only the default.
+        user_warmup = getattr(args, "warmup_steps", None)
+        config_kwargs["warmup_steps"] = (
+            int(user_warmup) if user_warmup else target_batch_size * 4
+        )
 
         # Handle optimizer configuration
         if hasattr(args, "optimizer") and args.optimizer:

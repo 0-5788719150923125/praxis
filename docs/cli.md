@@ -104,6 +104,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--ray-pipeline-api` | str | `manual` | Whether to drive the Mono-Forward pipeline with Ray's experimental_compile() DAG API ('compiled') or with a manual ray.wait()-based driver loop ('manual'). Default is 'manual' because it only uses stable Ray APIs. Only applies to --trainer-type mono_forward_ray. (choices: compiled, manual) |
 | `--trainer-type` | str | `backpropagation` | Training strategy to use. 'backpropagation' is standard gradient descent. The Mono-Forward profiles share the same training math (each layer trains locally against a per-layer projection matrix, O(1) activation memory in depth) and differ only in worker backend: 'mono_forward' runs every layer in the driver process under a single CUDA context (single host, low VRAM overhead), while 'mono_forward_ray' spawns one Ray actor per layer (multi-host capable, ~300-500 MB CUDA context per actor). (choices: backpropagation, mono_forward, mono_forward_ray) |
 | `--val-every` | int | `1024` | Run validation every N effective steps (multiplied by target_batch_size / batch_size internally to get the raw-batch cadence). Default 1024 matches the historical Lightning default. Lower values like 64 or 128 give faster feedback at the cost of more validation overhead. Can also be set in experiment YAML as 'val_every'. |
+| `--warmup-steps` | int | `None` | LR warmup horizon in optimizer steps. Also gates the CALM KL anneal and codec-freeze floor. Default: target_batch_size * 4. |
 
 ### optimization
 

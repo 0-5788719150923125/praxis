@@ -1,3 +1,4 @@
+import math
 import torch
 
 from praxis.losses.solvability import SolvabilityProbe
@@ -56,3 +57,25 @@ def test_aligned_logits_accepted():
     labels = torch.randint(0, 11, (2, 8))
     loss = probe(hidden, logits, labels)
     assert torch.isfinite(loss)
+
+
+def test_forward_scalar_fallback():
+    """Encoder/cut-CE runs grade the batch's realized loss instead of
+    per-sample CE; same metric keys, so the dashboard cards light up."""
+    torch.manual_seed(0)
+    probe = SolvabilityProbe(hidden_size=32)
+    hidden = torch.randn(4, 16, 32)
+
+    for step, loss_val in enumerate([2.0, 1.7, 1.4]):
+        out = probe.forward_scalar(hidden, torch.tensor(loss_val))
+        assert torch.isfinite(out)
+
+    metrics = probe.training_metrics()
+    assert set(metrics) == {
+        "solvability_confidence",
+        "solvability_solve_rate",
+        "solvability_brier",
+    }
+    assert all(math.isfinite(v) for v in metrics.values())
+    # A falling loss beats the EMA baseline: the batch reads as solved.
+    assert metrics["solvability_solve_rate"] == 1.0

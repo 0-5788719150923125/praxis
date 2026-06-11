@@ -32,6 +32,81 @@ def build_js():
     print(f"  ✓ Copied {count} JS module(s)")
 
 
+def guard_hover_rules(css: str) -> str:
+    """Wrap every ``:hover`` rule in ``@media (hover: hover)``.
+
+    Touch devices apply :hover on tap and KEEP it applied after the finger
+    lifts - buttons look stuck in their pressed state until the next tap
+    lands elsewhere. Guarding at build time fixes every current and future
+    hover rule at once; rules already inside an @media get a combined
+    query. Mixed selector groups split: non-hover selectors keep their
+    original (unguarded) rule.
+    """
+    out = []
+    i, n = 0, len(css)
+    media_stack = []
+
+    def emit_rule(selector: str, body: str):
+        sel_list = [s.strip() for s in selector.split(",")]
+        hover = [s for s in sel_list if ":hover" in s]
+        plain = [s for s in sel_list if ":hover" not in s]
+        if plain:
+            out.append(f"{', '.join(plain)} {{{body}}}\n")
+        if hover:
+            cond = "(hover: hover)"
+            out.append(f"@media {cond} {{ {', '.join(hover)} {{{body}}} }}\n")
+
+    while i < n:
+        # Pass comments through untouched.
+        if css.startswith("/*", i):
+            j = css.find("*/", i)
+            j = n if j == -1 else j + 2
+            out.append(css[i:j])
+            i = j
+            continue
+        brace = css.find("{", i)
+        close = css.find("}", i)
+        if brace == -1 or (close != -1 and close < brace):
+            # End of an @media block (or trailing text).
+            if close != -1 and close < (brace if brace != -1 else n):
+                out.append(css[i:close + 1])
+                if media_stack:
+                    media_stack.pop()
+                i = close + 1
+                continue
+            out.append(css[i:])
+            break
+        header = css[i:brace]
+        stripped = header.strip()
+        if stripped.startswith("@") and not stripped.startswith(("@media", "@supports")):
+            # @keyframes / @font-face etc: copy the whole block verbatim.
+            depth, j = 1, brace + 1
+            while j < n and depth:
+                if css[j] == "{":
+                    depth += 1
+                elif css[j] == "}":
+                    depth -= 1
+                j += 1
+            out.append(css[i:j])
+            i = j
+            continue
+        if stripped.startswith(("@media", "@supports")):
+            out.append(css[i:brace + 1])
+            media_stack.append(stripped)
+            i = brace + 1
+            continue
+        # An ordinary rule: find its closing brace (rule bodies don't nest).
+        body_end = css.find("}", brace)
+        body_end = n if body_end == -1 else body_end
+        body = css[brace + 1:body_end]
+        if ":hover" in header:
+            emit_rule(header, body)
+        else:
+            out.append(css[i:body_end + 1] + "\n")
+        i = body_end + 1
+    return "".join(out)
+
+
 def build_css():
     """Concatenate the modular CSS into static/styles.css (order matters)."""
     css_dir = SRC_DIR / "css"
@@ -57,7 +132,7 @@ def build_css():
             if not file.exists():
                 continue
             out.write(f"\n/* ========== {file.name} ========== */\n")
-            out.write(file.read_text(encoding="utf-8"))
+            out.write(guard_hover_rules(file.read_text(encoding="utf-8")))
             out.write("\n")
 
     size_kb = output.stat().st_size / 1024

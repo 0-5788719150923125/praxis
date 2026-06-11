@@ -133,6 +133,40 @@ class SolvabilityProbe(nn.Module):
             }
         return loss
 
+    def forward_scalar(self, hidden_states: Tensor, realized_loss: Tensor) -> Tensor:
+        """Batch-level fallback when per-sample CE is unavailable (encoder
+        and cut-CE runs never materialize aligned full-vocab logits, which
+        silently disabled the probe on those runs). The outcome is one
+        Bernoulli per batch - whether the realized training loss beat the
+        running baseline - scored against every sample's credence. Weaker
+        signal, same calibration target, same metric keys.
+        """
+        with torch.no_grad():
+            batch_loss = realized_loss.detach().float()
+            baseline = self.loss_ema if self.ema_steps > 0 else batch_loss
+            solved = (batch_loss < baseline).float()
+            self.loss_ema.copy_(
+                batch_loss
+                if self.ema_steps == 0
+                else EMA_DECAY * self.loss_ema + (1 - EMA_DECAY) * batch_loss
+            )
+            self.ema_steps += 1
+
+        k = max(1, int(hidden_states.size(1) * PREFIX_FRACTION))
+        pooled = hidden_states[:, :k].detach().float().mean(dim=1)
+        credence_logit = self.proj(pooled).squeeze(-1)
+        target = solved.expand_as(credence_logit)
+        loss = F.binary_cross_entropy_with_logits(credence_logit, target)
+
+        with torch.no_grad():
+            credence = torch.sigmoid(credence_logit)
+            self._metrics = {
+                "solvability_confidence": float(credence.mean()),
+                "solvability_solve_rate": float(solved.mean()),
+                "solvability_brier": float(((credence - target) ** 2).mean()),
+            }
+        return loss
+
     def training_metrics(self) -> dict:
         """Scalars from the last forward, surfaced to the metrics logger."""
         return dict(self._metrics)

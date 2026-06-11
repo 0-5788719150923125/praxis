@@ -891,6 +891,18 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 outputs.last_hidden_state, logits, labels
             )
             outputs.losses.add_loss("solvability", solvability_loss)
+        elif self.solvability is not None:
+            # Encoder / cut-CE runs: no aligned full-vocab logits to score
+            # against, so grade the batch's realized main loss instead -
+            # otherwise the probe never runs (and never logs) on these runs.
+            main = outputs.losses.get_loss("main")
+            if torch.is_tensor(main) and torch.isfinite(main):
+                outputs.losses.add_loss(
+                    "solvability",
+                    self.solvability.forward_scalar(
+                        outputs.last_hidden_state, main
+                    ),
+                )
 
     def _finalize_loss(
         self, loss, losses: LossContainer, labels: Optional[torch.Tensor]
