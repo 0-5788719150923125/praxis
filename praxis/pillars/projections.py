@@ -1447,9 +1447,20 @@ PROJECTION_REGISTRY = {
 }
 
 
-def _caps(rng, text, weights):
+def _caps(rng, text, weights, url=False):
+    """Sampled casing. URLs only ever go whole-string upper or lower:
+    .title() capitalizes after every non-letter (Https://Example.Com/...),
+    which mangles them. The rng draw is identical either way, so a seed
+    renders the same regardless of what the text happens to be."""
     style = rng.choice(["title", "upper", "lower"], p=weights)
+    if url and style == "title":
+        style = "lower"
     return {"title": text.title(), "upper": text.upper(), "lower": text.lower()}[style]
+
+
+def _looks_like_url(text):
+    t = text.strip().lower()
+    return "://" in t or t.startswith("www.") or ("/" in t and "." in t)
 
 
 def _sample_mods(rng, mods):
@@ -1562,7 +1573,7 @@ def _draw_card(ax, side, seed, theme, hue, authors, donations, run_hash, mods=No
             ax.text(
                 CARD_W / 2,
                 CARD_H / 2,
-                _caps(rng, donations, [0.1, 0.1, 0.8]),
+                _caps(rng, donations, [0.1, 0.1, 0.8], url=_looks_like_url(donations)),
                 fontsize=7.5,
                 color=pal["ink"],
                 family="DejaVu Sans Mono",
