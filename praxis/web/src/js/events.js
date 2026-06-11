@@ -185,14 +185,6 @@ export const CLICK_HANDLERS = [
         })
     },
     {
-        selector: '#screenshot-btn',
-        match: 'closest',
-        action: (e) => ({
-            type: 'TAKE_SCREENSHOT',
-            meta: { button: e.target.closest('#screenshot-btn') }
-        })
-    },
-    {
         selector: '.copy-git-remote-btn',
         match: 'exact',
         action: (e) => ({

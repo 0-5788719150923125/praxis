@@ -56,7 +56,13 @@ from .vae import CALMVAE
 # floor stays put while the mean vanishes, so it could never read "converged" on
 # a good codec. Trend-vs-noise is bounded (drift and noise shrink together) and
 # self-normalizes against outliers (a spike inflates the denominator too).
-PRETRAIN_WINDOW = 256
+#
+# Window length sets sensitivity: for a fixed true slope, |slope*n|/std grows
+# linearly with n, so a longer window resolves slower descents. At 256 the
+# detector latched while eval recon was still halving every ~1k steps - train
+# recon under ae_dropout noise-floors near 1.0 nat and its slow drift read
+# 0.3-0.5, below EPS. 1024 puts that same descent at ~1.2-2.0, above the latch.
+PRETRAIN_WINDOW = 1024
 PRETRAIN_FLAT_EPS = 1.0  # converged when the window's drift < one noise std
 
 # Conditioning-anchor weight for the energy head. The energy score alone is a

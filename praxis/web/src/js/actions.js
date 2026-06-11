@@ -73,41 +73,6 @@ function showActionNotification(button, label) {
     }, 2000);
 }
 
-/**
- * Crop a captured tab frame down to the app-container, bottom-clipped to
- * the last visible card (the app has no footer). The frame spans the
- * viewport, so CSS px are mapped to frame px by the capture scale.
- * @param {HTMLCanvasElement} frame - Full captured frame
- * @returns {HTMLCanvasElement} Cropped canvas (or the frame if cropping fails)
- */
-function cropToAppContainer(frame) {
-    const app = document.querySelector('.app-container');
-    if (!app) return frame;
-    const rect = app.getBoundingClientRect();
-
-    const scaleX = frame.width / window.innerWidth;
-    const scaleY = frame.height / window.innerHeight;
-
-    let bottom = rect.top;
-    for (const el of app.querySelectorAll('.chart-card, .kb-card, .kb-dir-card')) {
-        if (!el.offsetParent) continue; // hidden tab
-        bottom = Math.max(bottom, el.getBoundingClientRect().bottom);
-    }
-    if (bottom <= rect.top) bottom = rect.bottom; // no cards: full container
-    bottom = Math.min(bottom, rect.bottom, window.innerHeight);
-
-    const x = Math.max(rect.left, 0) * scaleX;
-    const y = Math.max(rect.top, 0) * scaleY;
-    const w = Math.min(rect.right, window.innerWidth) * scaleX - x;
-    const h = bottom * scaleY - y;
-    if (w <= 0 || h <= 0) return frame;
-
-    const out = document.createElement('canvas');
-    out.width = Math.round(w);
-    out.height = Math.round(h);
-    out.getContext('2d').drawImage(frame, x, y, w, h, 0, 0, w, h);
-    return out;
-}
 
 /**
  * Get lifecycle function by name
@@ -741,89 +706,6 @@ export const ACTION_HANDLERS = {
         }
     },
 
-    /**
-     * Screenshot the app via the native screen-capture API (current tab),
-     * cropped to the app-container, and copy the PNG to the clipboard.
-     */
-    TAKE_SCREENSHOT: async (_payload, meta) => {
-        // Surface unsupported environments instead of failing silently:
-        // insecure contexts (plain HTTP off localhost) have no mediaDevices
-        // or clipboard at all; mobile browsers lack getDisplayMedia entirely.
-        if (!navigator.mediaDevices?.getDisplayMedia) {
-            showActionNotification(meta.button, window.isSecureContext
-                ? 'Screen capture is not supported on this device.'
-                : 'Screenshots need HTTPS (or localhost).');
-            return;
-        }
-        if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
-            showActionNotification(meta.button, window.isSecureContext
-                ? 'Image clipboard is not supported in this browser.'
-                : 'Screenshots need HTTPS (or localhost).');
-            return;
-        }
-
-        let stream;
-        try {
-            stream = await navigator.mediaDevices.getDisplayMedia({
-                // Tab capture only: window/screen surfaces include browser
-                // chrome (URL bar etc), which we never want in a shot.
-                video: { displaySurface: 'browser' },
-                preferCurrentTab: true,
-                selfBrowserSurface: 'include',
-                monitorTypeSurfaces: 'exclude',
-                audio: false
-            });
-
-            // The picker can't be forced; if the user shared a window or
-            // screen anyway, bail rather than capture the URL bar.
-            const surface = stream.getVideoTracks()[0].getSettings().displaySurface;
-            if (surface && surface !== 'browser') {
-                stream.getTracks().forEach(track => track.stop());
-                stream = null;
-                showActionNotification(meta.button, 'Share this tab (not a window) to screenshot.');
-                return;
-            }
-
-            const video = document.createElement('video');
-            video.srcObject = stream;
-            await video.play();
-            // The first frames can be blank; wait for a decoded one.
-            if (video.requestVideoFrameCallback) {
-                await new Promise(r => video.requestVideoFrameCallback(r));
-            }
-
-            const frame = document.createElement('canvas');
-            frame.width = video.videoWidth;
-            frame.height = video.videoHeight;
-            frame.getContext('2d').drawImage(video, 0, 0);
-
-            // Stop tracks promptly so the recording indicator turns off.
-            stream.getTracks().forEach(track => track.stop());
-            stream = null;
-
-            const crop = cropToAppContainer(frame);
-            const blob = await new Promise(r => crop.toBlob(r, 'image/png'));
-
-            // Clipboard only - never auto-download on top of a copy.
-            try {
-                await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-                showActionNotification(meta.button, 'Copied screenshot to clipboard.');
-            } catch (err) {
-                console.warn('[Screenshot] Clipboard write failed:', err);
-                showActionNotification(meta.button, 'Screenshot copy failed - check clipboard permissions.');
-            }
-        } catch (error) {
-            if (error && error.name === 'NotAllowedError') {
-                // User dismissed the share prompt - no popup needed.
-                console.info('[Screenshot] Capture canceled.');
-            } else {
-                console.error('[Screenshot] Capture failed:', error);
-                showActionNotification(meta.button, 'Screenshot failed - see console.');
-            }
-        } finally {
-            if (stream) stream.getTracks().forEach(track => track.stop());
-        }
-    },
 
     /**
      * Append a clicked KB label to the search query (comma-delimited) and search.

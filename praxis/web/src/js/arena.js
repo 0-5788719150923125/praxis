@@ -2750,10 +2750,13 @@ class Arena {
                 });
             }
         }
+        // Particles live in WORLD space and wrap around the camera
+        // window: real parallax (near flakes sweep, far ones crawl)
+        // instead of a field glued to the lens.
         this.particles = Array.from({ length: count }, () => ({
-            x: (wRng() - 0.5) * 48,        // relative to camera in x
+            x: ROOM_W / 2 + (wRng() - 0.5) * 48,
             y: wRng() * yMax,
-            z: wRng() * 30,                // relative to camera in z
+            z: wRng() * 30,
             ph: wRng() * Math.PI * 2,
             sp: 0.7 + wRng() * 0.6,
         }));
@@ -3449,18 +3452,18 @@ class Arena {
             pt.y += fall * pt.sp * dt;
             pt.x += (windNow * (mat === 'dust' ? 2.2 : 1) + flut * 0.6) * dt;
             pt.z += Math.cos(t * 0.7 + pt.ph) * 0.2 * dt;
-            // Wrap the volume around the camera.
+            // World-anchored, camera-wrapped: the region of weather is
+            // wherever the view is, but each particle holds its world
+            // position - parallax comes free from the projection.
             if (pt.y < 0) pt.y += yMax;
             if (pt.y > yMax) pt.y -= yMax;
-            if (pt.x < -24) pt.x += 48;
-            if (pt.x > 24) pt.x -= 48;
-            if (pt.z < 0) pt.z += 30;
-            if (pt.z > 30) pt.z -= 30;
+            while (pt.x - this.camX > 24) pt.x -= 48;
+            while (pt.x - this.camX < -24) pt.x += 48;
+            while (pt.z - this.camZ > 30) pt.z -= 30;
+            while (pt.z - this.camZ < 0) pt.z += 30;
 
-            // Weather is regional: the volume rides the camera window, so
-            // it keeps falling wherever the creature leads the view.
-            const wx = this.camX + pt.x;
-            const wz = this.camZ + pt.z;
+            const wx = pt.x;
+            const wz = pt.z;
             const pp = this.project({ x: wx, y: pt.y, z: wz });
             if (pp.x < -10 || pp.x > this.w + 10 || pp.y < -10 || pp.y > this.h + 10) continue;
             const depth = Math.min(1, pp.d / 30);

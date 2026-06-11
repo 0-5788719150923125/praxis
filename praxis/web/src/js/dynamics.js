@@ -249,10 +249,10 @@ function detectLayerIndices(dynamics, configs) {
 // takes (canvasId, dynamics). Layer-dependent ones read the live toggle
 // selection from dynamicsLayerState.
 const DYNAMICS_FAMILY_RENDERERS = {
-    layer_grad_norms: (id, dyn) => createLayerGradNormsChart(id, dyn, dynamicsLayerState.layers),
-    layer_update_ratio: (id, dyn) => createLayerUpdateRatioChart(id, dyn, dynamicsLayerState.layers),
-    expert_grad_norms: (id, dyn) => createExpertGradNormsChart(id, dyn, dynamicsLayerState.layers),
-    expert_grad_vars: (id, dyn) => createExpertGradVarsChart(id, dyn, dynamicsLayerState.layers),
+    layer_grad_norms: (id, dyn) => createLayerGradNormsChart(id, dyn, dynamicsLayerState.allLayers),
+    layer_update_ratio: (id, dyn) => createLayerUpdateRatioChart(id, dyn, dynamicsLayerState.allLayers),
+    expert_grad_norms: (id, dyn) => createExpertGradNormsChart(id, dyn, dynamicsLayerState.allLayers),
+    expert_grad_vars: (id, dyn) => createExpertGradVarsChart(id, dyn, dynamicsLayerState.allLayers),
     task_weights: (id, dyn) => createTaskWeightsChart(id, dyn, detectTaskWeightKeys(dyn)),
     seq_mix: (id, dyn) => createSeqMixChart(id, dyn, detectSeqMixKeys(dyn)),
     halting_hist: (id, dyn) => createHaltingHistogramChart(id, dyn, detectHaltingBuckets(dyn)),
@@ -260,22 +260,13 @@ const DYNAMICS_FAMILY_RENDERERS = {
     width_evolution: (id, dyn) => createWidthEvolutionChart(id, dyn, detectWidthDepths(dyn)),
 };
 
-/** Layer filter buttons, scoped to a single layer-aware card. */
-function layerTogglesHTML(allLayers) {
-    if (!allLayers.length) return '';
-    const buttons = [
-        '<button class="layer-toggle-btn" data-layer="all">All</button>',
-        '<button class="layer-toggle-btn" data-layer="none">None</button>',
-        ...allLayers.map(l => `<button class="layer-toggle-btn" data-layer="${l}">L${l}</button>`)
-    ].join('');
-    return `<div class="dynamics-layer-toggles"><strong>Layers:</strong> ${buttons}</div>`;
-}
-
 function buildDynamicsFamilyCard(config, desc, allLayers) {
     const legendHTML = config.legend
         ? `<div class="chart-legend" id="${config.canvasId}-legend"></div>`
         : '';
-    const togglesHTML = config.layerToggles ? layerTogglesHTML(allLayers) : '';
+    // No per-card "Layers:" toolbar: the chart legend already toggles
+    // series, and the duplicate filter row was pure noise.
+    const togglesHTML = '';
     return `
         <div style="margin-top: 2rem;">
             <div class="chart-card" data-card-key="${config.key}">
@@ -712,9 +703,6 @@ function renderDynamicsCharts(runData, container) {
     ).size;
 
     dynamicsLayerState.allLayers = [...allLayers];
-    if (!dynamicsLayerState.layers) {
-        dynamicsLayerState.layers = [...allLayers];
-    }
 
     // ── Header ──────────────────────────────────────────────────────────
     const metaParts = [`<span><strong>Points:</strong> ${steps.length}</span>`];
@@ -800,7 +788,6 @@ function renderDynamicsCharts(runData, container) {
     }
 
     // Layer toggles
-    renderDynamicsLayerToggles();
 
     // Create charts after DOM is ready. Awaitable (same contract as the
     // Research render): the loader - and prewarmTab's off-screen layout -
@@ -827,69 +814,6 @@ function renderDynamicsCharts(runData, container) {
             resolve();
         }
     }, 10));
-}
-
-// ─── Layer toggles ──────────────────────────────────────────────────────────
-
-/**
- * Wire the per-card layer filters. The buttons are emitted inline by
- * buildDynamicsFamilyCard; here we just bind clicks and sync active states.
- * Selection is shared, so every card's filter stays in step.
- */
-function renderDynamicsLayerToggles() {
-    const container = document.getElementById('dynamics-container');
-    if (!container) return;
-    if ((dynamicsLayerState.allLayers || []).length === 0) return;
-
-    updateDynamicsLayerToggles();
-
-    container.querySelectorAll('.layer-toggle-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            const layer = e.currentTarget.dataset.layer;
-
-            if (layer === 'all') {
-                dynamicsLayerState.layers = [...dynamicsLayerState.allLayers];
-            } else if (layer === 'none') {
-                dynamicsLayerState.layers = [];
-            } else {
-                const layerNum = parseInt(layer);
-                const idx = dynamicsLayerState.layers.indexOf(layerNum);
-                if (idx >= 0) {
-                    dynamicsLayerState.layers.splice(idx, 1);
-                } else {
-                    dynamicsLayerState.layers.push(layerNum);
-                    dynamicsLayerState.layers.sort((a, b) => a - b);
-                }
-            }
-
-            updateDynamicsLayerToggles();
-            rebuildAllCharts();
-        });
-    });
-}
-
-/**
- * Sync active states across every card's layer filter.
- */
-function updateDynamicsLayerToggles() {
-    const container = document.getElementById('dynamics-container');
-    if (!container) return;
-
-    const allLayers = dynamicsLayerState.allLayers || [];
-    const selectedLayers = dynamicsLayerState.layers || [];
-
-    container.querySelectorAll('.layer-toggle-btn').forEach(btn => {
-        const layer = btn.dataset.layer;
-
-        if (layer === 'all') {
-            btn.classList.toggle('active', selectedLayers.length === allLayers.length);
-        } else if (layer === 'none') {
-            btn.classList.toggle('active', selectedLayers.length === 0);
-        } else {
-            const layerNum = parseInt(layer);
-            btn.classList.toggle('active', selectedLayers.includes(layerNum));
-        }
-    });
 }
 
 /**
