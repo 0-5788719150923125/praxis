@@ -23,6 +23,23 @@
 
     const ctx = canvas.getContext('2d');
 
+    // Deterministic mode for scripted captures: ?seed=N swaps in a seeded PRNG,
+    // and &paused trades the free-running loop for a window.prismStep() hook.
+    // Without the params, behavior is unchanged (rand === Math.random).
+    const prismParams = new URLSearchParams(window.location.search);
+    const prismSeed = prismParams.get('seed');
+    const manualClock = prismSeed !== null && prismParams.has('paused');
+    function mulberry32(a) {
+        return function () {
+            a |= 0;
+            a = (a + 0x6d2b79f5) | 0;
+            let t = Math.imul(a ^ (a >>> 15), 1 | a);
+            t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+    }
+    const rand = prismSeed !== null ? mulberry32(Number(prismSeed) >>> 0) : Math.random;
+
     // High-DPI canvas setup for zoom resistance
     // Always render at very high resolution to prevent pixelation
     const baseSize = 140; // Canvas render size (25% larger than container)
@@ -69,9 +86,9 @@
     };
 
     // Rotation velocities for full 3D rotation
-    let rotVelX = 0.003 + Math.random() * 0.002;
-    let rotVelY = 0.005 + Math.random() * 0.002;
-    let rotVelZ = 0.002 + Math.random() * 0.001;
+    let rotVelX = 0.003 + rand() * 0.002;
+    let rotVelY = 0.005 + rand() * 0.002;
+    let rotVelZ = 0.002 + rand() * 0.001;
 
     // Motion behavior system
     const motionBehaviors = {
@@ -86,7 +103,7 @@
 
     let currentBehavior = motionBehaviors.SPINNING;
     let behaviorStartTime = 0;
-    let behaviorDuration = 5 + Math.random() * 5; // 5-10 seconds per behavior
+    let behaviorDuration = 5 + rand() * 5; // 5-10 seconds per behavior
     let nextBehavior = null;
     let transitionProgress = 0;
     let transitionDuration = 1.5; // 1.5 second transitions
@@ -118,7 +135,7 @@
         intensity: 0,
         startTime: 0,
         duration: 0,
-        nextCheck: 20 + Math.random() * 30, // First check at 20-50 seconds (rare!)
+        nextCheck: 20 + rand() * 30, // First check at 20-50 seconds (rare!)
         // Rotational jolts (spinning off axis)
         joltRotX: 0,
         joltRotY: 0,
@@ -294,16 +311,16 @@
         if (time - windState.gustTime > windState.gustDuration) {
             // New gust
             windState.gustTime = time;
-            windState.gustDuration = 2 + Math.random() * 3; // 2-5 seconds
+            windState.gustDuration = 2 + rand() * 3; // 2-5 seconds
 
             // Random direction (favoring horizontal for dandelion effect)
-            const angle = Math.random() * Math.PI * 2;
+            const angle = rand() * Math.PI * 2;
             windState.targetDirection = {
                 x: Math.cos(angle),
-                y: (Math.random() - 0.5) * 0.2, // less vertical movement
+                y: (rand() - 0.5) * 0.2, // less vertical movement
                 z: Math.sin(angle)
             };
-            windState.strength = 0.3 + Math.random() * 0.7;
+            windState.strength = 0.3 + rand() * 0.7;
         }
 
         // Smooth transition between wind directions
@@ -349,17 +366,17 @@
         // Check if it's time to consider turbulence (completely independent of surges/hyperactivity)
         if (!turbulenceState.active && time >= turbulenceState.nextCheck) {
             // Lower chance - turbulence is RARE (20% when checked)
-            if (Math.random() < 0.2) {
+            if (rand() < 0.2) {
                 // TURBULENCE TRIGGERED!
                 turbulenceState.active = true;
                 turbulenceState.startTime = time;
-                turbulenceState.duration = 3 + Math.random() * 5; // 3-8 seconds of sustained jolts
-                turbulenceState.intensity = 0.6 + Math.random() * 0.4; // 0.6-1.0 intensity
+                turbulenceState.duration = 3 + rand() * 5; // 3-8 seconds of sustained jolts
+                turbulenceState.intensity = 0.6 + rand() * 0.4; // 0.6-1.0 intensity
                 turbulenceState.lastJoltTime = time;
             }
 
             // Schedule next check (20-50 seconds from now - INFREQUENT)
-            turbulenceState.nextCheck = time + 20 + Math.random() * 30;
+            turbulenceState.nextCheck = time + 20 + rand() * 30;
         }
 
         // Apply turbulence jolts if active
@@ -376,27 +393,27 @@
                 const timeSinceLastJolt = time - turbulenceState.lastJoltTime;
 
                 // Variable jolt frequency: sometimes rapid fire, sometimes sparse
-                const joltInterval = 0.05 + Math.random() * 0.15; // 50-200ms between jolts
+                const joltInterval = 0.05 + rand() * 0.15; // 50-200ms between jolts
 
                 if (timeSinceLastJolt > joltInterval) {
                     turbulenceState.lastJoltTime = time;
 
                     // Mix of small bumps (70%) and larger jolts (30%)
-                    const isLargeJolt = Math.random() < 0.3;
+                    const isLargeJolt = rand() < 0.3;
                     const magnitude = isLargeJolt ?
-                        turbulenceState.intensity * (1.5 + Math.random()) :  // Large jolt: 1.5-2.5x
-                        turbulenceState.intensity * (0.3 + Math.random() * 0.4); // Small bump: 0.3-0.7x
+                        turbulenceState.intensity * (1.5 + rand()) :  // Large jolt: 1.5-2.5x
+                        turbulenceState.intensity * (0.3 + rand() * 0.4); // Small bump: 0.3-0.7x
 
                     // Rotational jolts (spinning off axis)
-                    const joltRotMagnitude = magnitude * (0.015 + Math.random() * 0.02);
-                    turbulenceState.joltRotX += (Math.random() - 0.5) * joltRotMagnitude;
-                    turbulenceState.joltRotY += (Math.random() - 0.5) * joltRotMagnitude;
-                    turbulenceState.joltRotZ += (Math.random() - 0.5) * joltRotMagnitude;
+                    const joltRotMagnitude = magnitude * (0.015 + rand() * 0.02);
+                    turbulenceState.joltRotX += (rand() - 0.5) * joltRotMagnitude;
+                    turbulenceState.joltRotY += (rand() - 0.5) * joltRotMagnitude;
+                    turbulenceState.joltRotZ += (rand() - 0.5) * joltRotMagnitude;
 
                     // Spatial displacement jolts (fuzzy anchor - actually moves position)
-                    const joltPosMagnitude = magnitude * (10 + Math.random() * 15);
-                    turbulenceState.offsetX += (Math.random() - 0.5) * joltPosMagnitude;
-                    turbulenceState.offsetY += (Math.random() - 0.5) * joltPosMagnitude;
+                    const joltPosMagnitude = magnitude * (10 + rand() * 15);
+                    turbulenceState.offsetX += (rand() - 0.5) * joltPosMagnitude;
+                    turbulenceState.offsetY += (rand() - 0.5) * joltPosMagnitude;
                 }
 
                 // Envelope: fade in/out turbulence intensity over duration
@@ -446,7 +463,7 @@
             const lightMode = isLightMode();
 
             // 25% chance to target edges/vertices for better shape definition
-            if (Math.random() < 0.25) {
+            if (rand() < 0.25) {
                 let targets;
 
                 if (lightMode) {
@@ -488,18 +505,18 @@
                     ];
                 }
 
-                const target = targets[Math.floor(Math.random() * targets.length)];
+                const target = targets[Math.floor(rand() * targets.length)];
 
                 // Add some noise to avoid perfect lines
                 this.baseDirection = {
-                    x: target.x + (Math.random() - 0.5) * 0.3,
-                    y: target.y + (Math.random() - 0.5) * 0.3,
-                    z: target.z + (Math.random() - 0.5) * 0.3
+                    x: target.x + (rand() - 0.5) * 0.3,
+                    y: target.y + (rand() - 0.5) * 0.3,
+                    z: target.z + (rand() - 0.5) * 0.3
                 };
             } else {
                 // Generate random 3D direction for organic look
-                const phi = Math.random() * Math.PI * 2; // Azimuth
-                const theta = (Math.random() - 0.5) * Math.PI; // Full sphere coverage
+                const phi = rand() * Math.PI * 2; // Azimuth
+                const theta = (rand() - 0.5) * Math.PI; // Full sphere coverage
 
                 this.baseDirection = {
                     x: Math.cos(theta) * Math.cos(phi),
@@ -519,18 +536,18 @@
             this.baseDirection.z /= mag;
 
             this.lifetime = 0;
-            this.maxLifetime = 30 + Math.random() * 40;
+            this.maxLifetime = 30 + rand() * 40;
             this.opacity = 0;
             this.growing = true;
-            this.thickness = 0.5 + Math.random() * 1.5;
-            this.waveSpeed = 0.02 + Math.random() * 0.02;
-            this.waveAmount = 0.02 + Math.random() * 0.02;
+            this.thickness = 0.5 + rand() * 1.5;
+            this.waveSpeed = 0.02 + rand() * 0.02;
+            this.waveAmount = 0.02 + rand() * 0.02;
             this.color = this.generateColor();
-            this.phaseOffset = Math.random() * Math.PI * 2;
+            this.phaseOffset = rand() * Math.PI * 2;
             this.lengthProgress = 0;
             this.state = 'growing';
             this.escapeWorldAnchor = null;
-            this.willEscape = Math.random() < 0.3; // 30% chance of escaping
+            this.willEscape = rand() < 0.3; // 30% chance of escaping
         }
 
         generateColor() {
@@ -543,7 +560,7 @@
                 { r: 144, g: 238, b: 144 },  // Light green
                 { r: 152, g: 251, b: 152 },  // Pale green
             ];
-            return tintForAccent(colors[Math.floor(Math.random() * colors.length)]);
+            return tintForAccent(colors[Math.floor(rand() * colors.length)]);
         }
 
         // Detect proximity to 2x4 board edges for enhanced glow (light mode)
@@ -1298,7 +1315,7 @@
         weights[currentBehavior] = 0;
 
         const totalWeight = Object.values(weights).reduce((a, b) => a + b, 0);
-        let random = Math.random() * totalWeight;
+        let random = rand() * totalWeight;
 
         for (const [behavior, weight] of Object.entries(weights)) {
             random -= weight;
@@ -1317,9 +1334,9 @@
             case motionBehaviors.SPINNING:
                 // Original spinning behavior
                 return {
-                    x: 0.003 + Math.random() * 0.002,
-                    y: 0.005 + Math.random() * 0.002,
-                    z: 0.002 + Math.random() * 0.001
+                    x: 0.003 + rand() * 0.002,
+                    y: 0.005 + rand() * 0.002,
+                    z: 0.002 + rand() * 0.001
                 };
 
             case motionBehaviors.FLYING:
@@ -1369,9 +1386,9 @@
             case motionBehaviors.TUMBLING:
                 // Chaotic tumbling
                 return {
-                    x: (Math.random() - 0.5) * 0.02,
-                    y: (Math.random() - 0.5) * 0.02,
-                    z: (Math.random() - 0.5) * 0.015
+                    x: (rand() - 0.5) * 0.02,
+                    y: (rand() - 0.5) * 0.02,
+                    z: (rand() - 0.5) * 0.015
                 };
 
             default:
@@ -1386,7 +1403,7 @@
 
     // Animation loop
     function animate() {
-        requestAnimationFrame(animate);
+        if (!manualClock) requestAnimationFrame(animate);
 
         // Clear canvas
         ctx.clearRect(0, 0, baseSize, baseSize);
@@ -1412,7 +1429,7 @@
                 currentBehavior = nextBehavior;
                 nextBehavior = null;
                 behaviorStartTime = time;
-                behaviorDuration = 4 + Math.random() * 8; // 4-12 seconds
+                behaviorDuration = 4 + rand() * 8; // 4-12 seconds
                 transitionProgress = 0;
             }
         }
@@ -1495,11 +1512,11 @@
 
         if (surgeProbability > 0.95 && time - lastSurgeTime > 5) {
             // MASSIVE surge event!
-            surgeMultiplier = 10 + Math.random() * 15; // Scaled down for logo
+            surgeMultiplier = 10 + rand() * 15; // Scaled down for logo
             lastSurgeTime = time;
         } else if (surgeProbability > 0.7) {
             // Medium surge
-            surgeMultiplier = 3 + Math.random() * 5;
+            surgeMultiplier = 3 + rand() * 5;
         }
 
         const baseIntensity = (baseWave + mediumWave + fastWave) / 3;
@@ -1509,10 +1526,10 @@
         let targetCount;
         if (surgeMultiplier > 10) {
             // Large surge
-            targetCount = Math.floor(40 + Math.random() * 60);
+            targetCount = Math.floor(40 + rand() * 60);
         } else if (surgeMultiplier > 3) {
             // Medium surge
-            targetCount = Math.floor(20 + Math.random() * 20);
+            targetCount = Math.floor(20 + rand() * 20);
         } else {
             // Normal oscillation
             targetCount = Math.floor(minTendrils + (normalTendrils - minTendrils) * baseIntensity);
@@ -1638,5 +1655,9 @@
         }
     }
 
-    animate();
+    if (manualClock) {
+        window.prismStep = animate;
+    } else {
+        animate();
+    }
 })();

@@ -169,7 +169,7 @@ To apply [dev](environments/dev.yml) settings within your [environment](environm
 
 The dashboard and chat interface live at <http://localhost:2100>, backed by a JSON API for inference, metrics, and run management. See [docs/web.md](docs/web.md) for the architecture, the full route table (auto-generated from the live Flask app), and Python examples for the `/input` and `/messages` endpoints.
 
-![Praxis Chat](./static/chat.png)
+![Praxis Chat](./static/chat.webp)
 
 ## mobile app
 

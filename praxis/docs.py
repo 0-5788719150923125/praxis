@@ -360,6 +360,7 @@ def regenerate_docs(repo_root: Optional[Path] = None) -> None:
 
     _sort_roadmap(repo_root)
     _regenerate_terminal_webp(repo_root)
+    _regenerate_chat_webp(repo_root)
 
 
 def _sort_roadmap(repo_root: Path) -> None:
@@ -445,6 +446,60 @@ def _regenerate_terminal_webp(repo_root: Path) -> None:
         )
     except OSError as e:
         print(f"[DOCS] Skipped terminal.webp: {e}")
+
+
+# Files whose content determines the rendered chat.webp.
+def _chat_render_sources(repo_root: Path) -> List[Path]:
+    web = repo_root / "praxis" / "web"
+    paths = [
+        p
+        for p in (web / "src").rglob("*")
+        if p.is_file() and "__pycache__" not in p.parts
+    ]
+    paths.append(web / "templates" / "index.html")
+    paths.append(repo_root / "tools" / "render_chat_webp.py")
+    paths.append(repo_root / "tools" / "assets" / "inter" / "inter-latin.woff2")
+    return paths
+
+
+def _chat_webp_stale(repo_root: Path) -> bool:
+    """Same on-the-fly mtime check as the terminal webp."""
+    out = repo_root / "static" / "chat.webp"
+    if not out.exists():
+        return True
+    cutoff = out.stat().st_mtime
+    return any(
+        p.exists() and p.stat().st_mtime > cutoff
+        for p in _chat_render_sources(repo_root)
+    )
+
+
+def _regenerate_chat_webp(repo_root: Path) -> None:
+    """Re-render static/chat.webp when the web frontend changes.
+
+    Same shape as the terminal webp: detached background process (this one
+    boots the API server and a headless browser), claim via mtime bump."""
+    if not _chat_webp_stale(repo_root):
+        return
+
+    out = repo_root / "static" / "chat.webp"
+    if out.exists():
+        os.utime(out, None)
+
+    script = repo_root / "tools" / "render_chat_webp.py"
+    log = repo_root / "static" / ".chat_render.log"
+    try:
+        logf = open(log, "w")
+        subprocess.Popen(
+            [sys.executable, str(script), "--out", str(out)],
+            cwd=str(repo_root),
+            stdout=logf,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        print("[DOCS] Web app changed - rendering static/chat.webp in background.")
+    except OSError as e:
+        print(f"[DOCS] Skipped chat.webp: {e}")
 
 
 def _render_registry(
