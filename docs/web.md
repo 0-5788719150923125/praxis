@@ -32,11 +32,11 @@ Introspected from the live Flask app at every launch. Each summary is the first 
 
 ### Cards
 
-- **GET** `/api/card/card.pdf` ([source](../praxis/web/routes/cards.py#L80))
-- **GET** `/api/card/cards.zip` ([source](../praxis/web/routes/cards.py#L64))
+- **GET** `/api/card/card.pdf` ([source](../praxis/web/routes/cards.py#L103))
+- **GET** `/api/card/cards.zip` ([source](../praxis/web/routes/cards.py#L87))
 - **GET** `/api/card/preview.svg` ([source](../praxis/web/routes/cards.py#L35))
-- **GET** `/api/card/sheet.pdf` ([source](../praxis/web/routes/cards.py#L97))
-- **GET** `/api/card/sheets.zip` ([source](../praxis/web/routes/cards.py#L71))
+- **GET** `/api/card/sheet.pdf` ([source](../praxis/web/routes/cards.py#L121))
+- **GET** `/api/card/sheets.zip` ([source](../praxis/web/routes/cards.py#L94))
 
 ### Core
 

@@ -18,6 +18,11 @@ BORDER_MM = 3.0
 PAGE_W, PAGE_H = 215.9, 279.4
 SHEET_X0, SHEET_Y0 = 19.05, 12.7
 SHEET_COLS, SHEET_ROWS = 2, 5
+# Printer feed compensation, mm. Prints land a touch high of the
+# perforations (fat bottom margin on every card), so the whole imposition
+# ships nudged down. Fine-tune per printer with ?dx=&dy= on the PDF routes;
+# the margin rulers on each page read the residual correction directly.
+FEED_DX, FEED_DY = 0.0, -1.5
 
 PRINT_NOTE = "Print at 100% scale (no fit-to-page) on US Letter."
 PAPER_NOTE = (
@@ -1503,11 +1508,10 @@ def _draw_card(ax, side, seed, theme, hue, authors, donations, run_hash, mods=No
     ax.set_aspect("equal")
     ax.axis("off")
 
-    ax.add_patch(
-        Rectangle(
-            (0, 0), CARD_W, CARD_H, facecolor=pal["border"], edgecolor="none", zorder=0
-        )
+    frame = Rectangle(
+        (0, 0), CARD_W, CARD_H, facecolor=pal["border"], edgecolor="none", zorder=0
     )
+    ax.add_patch(frame)
     inner = Rectangle(
         (BORDER_MM, BORDER_MM),
         CARD_W - 2 * BORDER_MM,
@@ -1523,8 +1527,17 @@ def _draw_card(ax, side, seed, theme, hue, authors, donations, run_hash, mods=No
     sampled = _sample_mods(rng, mods)
     field(ax, rng, pal, sampled)
     # Clip geometry to the inner panel so the border stays clean;
-    # overshoot-tagged strands get the full card and cross the frame.
-    bleed = Rectangle((0, 0), CARD_W, CARD_H, facecolor="none", edgecolor="none")
+    # overshoot-tagged strands cross the frame into the gutter, but stop
+    # short of the card edge - on perforated stock that edge is the tear
+    # line, and a strand cut mid-stroke by the tear looks like a misprint.
+    safe = 1.2
+    bleed = Rectangle(
+        (safe, safe),
+        CARD_W - 2 * safe,
+        CARD_H - 2 * safe,
+        facecolor="none",
+        edgecolor="none",
+    )
     ax.add_patch(bleed)
     for artist in list(ax.lines) + list(ax.patches) + list(ax.collections):
         if artist is not inner and artist is not bleed:
@@ -1595,6 +1608,46 @@ def _draw_card(ax, side, seed, theme, hue, authors, donations, run_hash, mods=No
                 path_effects=halo,
                 zorder=5,
             )
+    _float_center(ax, (frame, inner, bleed), (pal["paper"], pal["border"]))
+
+
+def _float_center(ax, fixed, bg_colors):
+    """Float the drawn content so its ink sits centered in the card.
+    Anchored elements (the name block) otherwise bias one edge, which reads
+    as a lopsided margin on the cut card. The frame and clips stay put."""
+    from matplotlib import transforms as mtransforms
+    from matplotlib.colors import to_rgb
+
+    fig = ax.figure
+    # Iterate: shifting can expose ink that the frame clip was hiding, which
+    # moves the extremes, so one pass undershoots on dense fields.
+    for _ in range(3):
+        fig.canvas.draw()
+        buf = np.asarray(fig.canvas.buffer_rgba())[..., :3].astype(np.int16)
+        x0, y0, x1, y1 = ax.bbox.extents
+        page_h = buf.shape[0]
+        tile = buf[int(page_h - y1) : int(page_h - y0), int(x0) : int(x1)]
+        ink = np.ones(tile.shape[:2], bool)
+        for c in bg_colors:
+            rgb = np.asarray(to_rgb(c)) * 255
+            ink &= np.abs(tile - rgb).max(axis=2) > 16
+        if not ink.any():
+            return
+        ys, xs = np.where(ink)
+        h, w = ink.shape
+        dx = ((w - 1 - xs.max()) - xs.min()) / 2 * CARD_W / w
+        dy = (ys.min() - (h - 1 - ys.max())) / 2 * CARD_H / h
+        if max(abs(dx), abs(dy)) < 0.3:
+            return
+        shift = mtransforms.Affine2D().translate(
+            float(np.clip(dx, -8, 8)), float(np.clip(dy, -8, 8))
+        )
+        for artist in (
+            list(ax.lines) + list(ax.patches) + list(ax.collections) + list(ax.texts)
+        ):
+            if any(artist is f for f in fixed):
+                continue
+            artist.set_transform(shift + artist.get_transform())
 
 
 def _new_fig(w_mm, h_mm, facecolor):
@@ -1612,15 +1665,53 @@ def _mm_axes(fig, x, y, w, h, page_w, page_h):
     return ax
 
 
-def _crop_marks(ax, x, y, w, h, color, length=4.0, gap=1.0):
-    for px, sx in ((x, -1), (x + w, 1)):
-        for py, sy in ((y, -1), (y + h, 1)):
-            ax.plot(
-                [px + sx * gap, px + sx * (gap + length)], [py, py], color=color, lw=0.5
+def _perf_ticks(page, cells, dx, dy, color="#999999", length=3.0, gap=1.0):
+    """Registration ticks for every cut line, kept to the page margins.
+    Inside the grid bounding box is solid card stock - the old per-cell
+    crop marks landed 1-5mm inside neighboring cards and got printed."""
+    left, right = SHEET_X0 + dx, SHEET_X0 + SHEET_COLS * CARD_W + dx
+    bottom = PAGE_H - SHEET_Y0 - SHEET_ROWS * CARD_H + dy
+    top = PAGE_H - SHEET_Y0 + dy
+    xs = sorted({round(x + k * CARD_W, 3) for x, _ in cells for k in (0, 1)})
+    ys = sorted({round(y + k * CARD_H, 3) for _, y in cells for k in (0, 1)})
+    for x in xs:
+        for edge, s in ((top, 1), (bottom, -1)):
+            seg = [edge + s * gap, edge + s * (gap + length)]
+            page.plot([x, x], seg, color=color, lw=0.5)
+    for y in ys:
+        for edge, s in ((left, -1), (right, 1)):
+            seg = [edge + s * gap, edge + s * (gap + length)]
+            page.plot(seg, [y, y], color=color, lw=0.5)
+
+
+def _offset_rulers(page, dx, dy, color="#999999"):
+    """Print-offset readout: mm ticks around the stock's top-left corner.
+    The tick the physical perforation crosses on a print is the correction
+    to ADD to dx (top ruler) / dy (left ruler)."""
+    top = PAGE_H - SHEET_Y0 + dy
+    left = SHEET_X0 + dx
+    for t in range(-3, 4):
+        ln = 4.2 if t == 0 else 2.6
+        page.plot([left + t] * 2, [top + 2.2, top + 2.2 + ln], color=color, lw=0.5)
+        page.plot([left - 2.2 - ln, left - 2.2], [top + t] * 2, color=color, lw=0.5)
+        if t in (-2, 0, 2):
+            lbl = f"{t:+d}" if t else "0"
+            page.text(
+                left + t, top + 7.2, lbl, fontsize=3.2, color=color,
+                ha="center", va="bottom",
             )
-            ax.plot(
-                [px, px], [py + sy * gap, py + sy * (gap + length)], color=color, lw=0.5
+            page.text(
+                left - 7.6, top + t, lbl, fontsize=3.2, color=color,
+                ha="right", va="center",
             )
+    page.text(
+        left + 4.2, top + 7.2, "+dx", fontsize=3.2, color=color,
+        ha="left", va="bottom",
+    )
+    page.text(
+        left - 7.6, top + 4.2, "+dy", fontsize=3.2, color=color,
+        ha="right", va="center",
+    )
 
 
 def _save(fig, fmt):
@@ -1669,23 +1760,39 @@ def render_card(
     return _save(fig, fmt)
 
 
-def _page(cells, side, seed_for, theme, hue, authors, donations, run_hash, mods=None):
-    """A4 page with cards at the given (x, y) mm cells, crop marks, margin note."""
+def _page(
+    cells,
+    side,
+    seed_for,
+    theme,
+    hue,
+    authors,
+    donations,
+    run_hash,
+    mods=None,
+    offset=(0.0, 0.0),
+):
+    """Letter page with cards at the given (x, y) mm cells, margin ticks
+    and rulers, margin notes."""
     pal = _palette(theme, hue)
+    dx, dy = offset
     fig = _new_fig(PAGE_W, PAGE_H, "#ffffff")
     page = _mm_axes(fig, 0, 0, PAGE_W, PAGE_H, PAGE_W, PAGE_H)
     page.set_xlim(0, PAGE_W)
     page.set_ylim(0, PAGE_H)
     page.axis("off")
+    _perf_ticks(page, cells, dx, dy)
+    _offset_rulers(page, dx, dy)
     for i, (x, y) in enumerate(cells):
-        _crop_marks(page, x, y, CARD_W, CARD_H, "#999999")
         ax = _mm_axes(fig, x, y, CARD_W, CARD_H, PAGE_W, PAGE_H)
         _draw_card(
             ax, side, seed_for(i), theme, hue, authors, donations, run_hash, mods
         )
+    # Footer notes sit at the column centers so they never cross the cut
+    # lines' bottom ticks.
     page.text(
-        PAGE_W / 2,
-        8,
+        SHEET_X0 + CARD_W / 2,
+        6,
         PRINT_NOTE,
         fontsize=6,
         color="#666666",
@@ -1694,8 +1801,19 @@ def _page(cells, side, seed_for, theme, hue, authors, donations, run_hash, mods=
         wrap=True,
     )
     page.text(
+        SHEET_X0 + CARD_W * 1.5,
+        6,
+        f"Offset dx {dx:+.1f} / dy {dy:+.1f} mm; rulers read the mm to add.",
+        fontsize=6,
+        color="#666666",
+        ha="center",
+        va="center",
+    )
+    # Anchored above the (offset-shifted) grid top so it can never drift
+    # onto the top row of cards or under the cut-line ticks.
+    page.text(
         PAGE_W / 2,
-        PAGE_H - 8,
+        PAGE_H - SHEET_Y0 + dy + 6,
         f"Praxis business card - {side} - seed {seed_for(0)}",
         fontsize=6,
         color="#666666",
@@ -1727,19 +1845,33 @@ def _page(cells, side, seed_for, theme, hue, authors, donations, run_hash, mods=
     return _save(fig, "pdf")
 
 
-def _cell(row, col):
+def _cell(row, col, dx=0.0, dy=0.0):
     """Avery 28371 cell origin (mm, bottom-left), row 0 at the page top."""
-    return (SHEET_X0 + col * CARD_W, PAGE_H - SHEET_Y0 - (row + 1) * CARD_H)
+    return (
+        SHEET_X0 + col * CARD_W + dx,
+        PAGE_H - SHEET_Y0 - (row + 1) * CARD_H + dy,
+    )
 
 
 def render_single_pdf(
-    side, seed, theme, hue, authors, donations, run_hash, chaos=None, mods=None
+    side,
+    seed,
+    theme,
+    hue,
+    authors,
+    donations,
+    run_hash,
+    chaos=None,
+    mods=None,
+    offset=None,
 ):
-    # The top-left Avery cell, so a single card prints onto the same stock;
-    # the back mirrors to the other column for long-edge duplex.
+    # The middle-row Avery cell: with 5 rows that lands exactly at the
+    # vertical center of the page, so a lone card floats centered AND still
+    # prints onto the perforations. Back mirrors columns for long-edge duplex.
+    dx, dy = offset if offset is not None else (FEED_DX, FEED_DY)
     col = 0 if side == "front" else SHEET_COLS - 1
     return _page(
-        [_cell(0, col)],
+        [_cell(SHEET_ROWS // 2, col, dx, dy)],
         side,
         lambda i: seed,
         theme,
@@ -1748,19 +1880,30 @@ def render_single_pdf(
         donations,
         run_hash,
         _merge_mods(mods, chaos),
+        offset=(dx, dy),
     )
 
 
 def render_sheet_pdf(
-    side, seed, theme, hue, authors, donations, run_hash, chaos=None, mods=None
+    side,
+    seed,
+    theme,
+    hue,
+    authors,
+    donations,
+    run_hash,
+    chaos=None,
+    mods=None,
+    offset=None,
 ):
     """Full Avery 28371 imposition (10-up). Back pages mirror columns for
     long-edge duplex."""
+    dx, dy = offset if offset is not None else (FEED_DX, FEED_DY)
     cells, seeds = [], []
     for row in range(SHEET_ROWS):
         for col in range(SHEET_COLS):
             draw_col = (SHEET_COLS - 1 - col) if side == "back" else col
-            cells.append(_cell(row, draw_col))
+            cells.append(_cell(row, draw_col, dx, dy))
             seeds.append(seed + row * SHEET_COLS + col)
     return _page(
         cells,
@@ -1772,4 +1915,5 @@ def render_sheet_pdf(
         donations,
         run_hash,
         _merge_mods(mods, chaos),
+        offset=(dx, dy),
     )

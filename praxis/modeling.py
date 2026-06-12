@@ -566,8 +566,15 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # must run the FULL path so the transformer/head materialize. Locking
         # (requires_grad_) an UninitializedParameter raises; deferring also
         # leaves the trunk uninitialized. Once materialized this is a no-op.
+        # torch.is_grad_enabled() guards the no-grad dummy forward in
+        # initialize_lazy_modules: it runs in train() mode BEFORE the optimizer
+        # is built, and on models with no lazy params it used to engage the
+        # lock right there - get_optimizer then filtered out every non-codec
+        # param, so stage 2 could never train (flat energy loss, zero trunk
+        # grads, the energy head's zero-init final layer frozen at 0 forever).
         if (
             self.training
+            and torch.is_grad_enabled()
             and self.encoder
             and self.encoder.in_pretraining()
             and not self._has_uninitialized_params()

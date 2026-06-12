@@ -177,10 +177,16 @@ class BackpropagationTrainer(LightningModule):
             # self._log_training_document(input_ids, batch_idx)
             self.last_logged_step = batch_idx
 
-        # Prepare metrics dict
+        # Prepare metrics dict. ``batch`` is the fit-wide batch counter
+        # (restored from the checkpoint's loop state), NOT the hook's
+        # ``batch_idx``, which is per-epoch and restarts at 0 on resume.
+        try:
+            total_batch_idx = int(self.trainer.fit_loop.epoch_loop.total_batch_idx)
+        except (AttributeError, TypeError):
+            total_batch_idx = int(batch_idx)
         metrics = {
             "loss": loss,
-            "batch": int(batch_idx),
+            "batch": total_batch_idx,
             "learning_rate": self.scheduler.get_last_lr()[0],
             "num_tokens": self.num_tokens / 1_000_000_000,  # convert to billions
             "avg_step_time": self.train_step_ema,

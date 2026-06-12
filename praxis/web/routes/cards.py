@@ -45,6 +45,21 @@ def card_preview():
     return resp
 
 
+def _offset():
+    """Print-calibration nudge in mm, clamped; defaults live in projections."""
+    import math
+
+    from praxis.pillars.projections import FEED_DX, FEED_DY
+
+    def axis(name, default):
+        v = request.args.get(name, default, type=float)
+        if not math.isfinite(v):
+            v = default
+        return max(-4.0, min(4.0, v))
+
+    return (axis("dx", FEED_DX), axis("dy", FEED_DY))
+
+
 def _zip_both(render, name_fmt, zip_name):
     seed, _, theme, hue, mods = _params()
     authors, donations, run_hash = _identity()
@@ -52,7 +67,15 @@ def _zip_both(render, name_fmt, zip_name):
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for side in ("front", "back"):
             pdf = render(
-                side, seed, theme, hue, authors, donations, run_hash, mods=mods
+                side,
+                seed,
+                theme,
+                hue,
+                authors,
+                donations,
+                run_hash,
+                mods=mods,
+                offset=_offset(),
             )
             zf.writestr(name_fmt.format(side=side), pdf)
     buf.seek(0)
@@ -84,7 +107,8 @@ def card_pdf():
     seed, side, theme, hue, mods = _params()
     authors, donations, run_hash = _identity()
     pdf = render_single_pdf(
-        side, seed, theme, hue, authors, donations, run_hash, mods=mods
+        side, seed, theme, hue, authors, donations, run_hash, mods=mods,
+        offset=_offset(),
     )
     return send_file(
         io.BytesIO(pdf),
@@ -101,7 +125,8 @@ def sheet_pdf():
     seed, side, theme, hue, mods = _params()
     authors, donations, run_hash = _identity()
     pdf = render_sheet_pdf(
-        side, seed, theme, hue, authors, donations, run_hash, mods=mods
+        side, seed, theme, hue, authors, donations, run_hash, mods=mods,
+        offset=_offset(),
     )
     return send_file(
         io.BytesIO(pdf),

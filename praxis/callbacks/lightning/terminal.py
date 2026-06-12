@@ -304,7 +304,10 @@ class TerminalInterface(Callback):
             remote_layers = max(remote_layers, _pool.get("experts_alive", 0))
 
         data = {
-            "step": int(batch_idx // trainer.accumulate_grad_batches),
+            # The global optimizer step - Lightning restores it from the
+            # checkpoint, unlike batch_idx // accum, which is per-epoch and
+            # reported 0 after every resume.
+            "step": int(trainer.global_step),
             "local_layers": int(local_layers),
             "remote_layers": int(remote_layers),
         }
