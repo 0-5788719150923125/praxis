@@ -143,14 +143,15 @@ CALMByteSmall = partial(
 )
 
 # Baseline for the calm-a-1 ablation: the published repo's absolute dims
-# (latent 128, AE hidden 512, noise 64, 4 head blocks, dropout 0.15), but with
-# three deliberate departures from the authors to fix the brittle-latent /
-# weak-signal stall at our scale (the reference relies on scale + KL/dropout
-# alone and we can't): a deeper residual codec (vae_depth=4), a fixed latent
-# geometry (latent_norm), and the conditioning anchor on (energy_anchor_weight
-# 5.0). Verified against ../calm: the authors do NONE of these - we trade exact
-# faithfulness for a codec that converges and a conditional that concentrates
-# without 250k steps.
+# (latent 128, AE hidden 512, noise 64, 4 head blocks, dropout 0.15), with two
+# departures from the authors that fix the brittle-latent stall at our scale (a
+# brittle latent, NOT codec capacity, was the actual blocker): a deeper
+# residual codec (vae_depth=4) and a fixed latent geometry (latent_norm). The
+# conditioning anchor is OFF: it diverges from the paper, it fights the energy
+# score (MSE-to-mean vs distribution-matching), and the first cond_gap progress
+# is more plausibly the codec/latent fix than the anchor (three changes were
+# confounded). Disabling it de-confounds the ablation and removes the tension;
+# if cond_gap holds without it, the codec changes carried the run.
 CALMByteRef = partial(
     CALMEncoder,
     chunk_size=8,
@@ -168,7 +169,7 @@ CALMByteRef = partial(
     energy_alpha=1.0,
     vote_num_samples=500,
     energy_prior="none",
-    energy_anchor_weight=5.0,
+    energy_anchor_weight=0.0,
 )
 
 # CALMByteRef at the reference's true patch granularity: K=4 subword tokens

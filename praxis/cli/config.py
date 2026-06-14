@@ -57,6 +57,9 @@ class RunConfig:
     fixed_schedule: bool = False
     optimizer_wrappers: List[str] = field(default_factory=list)
     disable_schedule: bool = False
+    # Global gradient-norm clip threshold (norm mode). Applied by trainers that
+    # support clipping; ignored by the ones that don't (mono_forward/pipeline).
+    gradient_clip_val: float = 10.0
 
     # Training loop
     max_steps: Optional[int] = None
@@ -152,6 +155,7 @@ class RunConfig:
             fixed_schedule=get("fixed_schedule", False),
             optimizer_wrappers=_resolve_optimizer_wrappers(get),
             disable_schedule=get("disable_schedule", False),
+            gradient_clip_val=float(get("gradient_clip_val", 10.0)),
             max_steps=get("max_steps"),
             val_every=get("val_every", 1024),
             use_dashboard=get("use_dashboard", False),

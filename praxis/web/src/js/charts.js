@@ -1317,8 +1317,10 @@ function renderDeck(deck) {
         // peek. The offset alone gives the stacked fan, so each card's edge stays visible.
         const scale = 1;
         // Downward fan: upcoming cards (delta >= 0) stay opaque and peek below the
-        // head as a preview; the passed card (delta < 0) fades out as it leaves.
-        const opacity = delta >= 0 ? 1 : Math.max(0, 1 + delta);
+        // head as a preview. The passed card stays OPAQUE while it's still on top
+        // (delta > -0.5, before the z-swap) so you can't see the stack through it,
+        // then fades out only once it has dropped behind the new head.
+        const opacity = delta >= -0.5 ? 1 : Math.max(0, 2 * (delta + 1));
         // transform + opacity change every frame; the rest flip only on boundary
         // crossings, so write them on-change only (cuts ~70% of the per-frame writes).
         card.style.transform = `translateY(${top.toFixed(2)}px) scale(${scale.toFixed(4)})`;
@@ -1410,15 +1412,17 @@ function renderDeckDesktop(deck) {
             continue;
         }
         const capped = a > DECK_MAX_FAN ? DECK_MAX_FAN : a;
-        // Upcoming cards (delta > 0) lift UP off the floor to peek above the head;
-        // passed cards (delta < 0) drop below and fade out (the leaving ghost).
+        // Upcoming cards (delta > 0) lift UP off the floor to peek above the head.
         // Clamp the upward peek to the reserved band so the deepest card's title
         // sits at the deck's top edge and never pops out above it - keeping the
         // title track smooth and every title aligned (the bottom may run longer).
         const peekUnits = delta < below ? delta : below;
         const y = headTop - peekUnits * DECK_PEEK;
         const scale = 1 - capped * DECK_SCALE_STEP;
-        const opacity = delta >= 0 ? 1 : Math.max(0, 1 + delta);
+        // The passed card stays OPAQUE while it's still on top (delta > -0.5, before
+        // the z-swap) so the stack never shows through it, then fades out once it has
+        // dropped behind the new head.
+        const opacity = delta >= -0.5 ? 1 : Math.max(0, 2 * (delta + 1));
         card.style.transform = `translateY(${y.toFixed(2)}px) scale(${scale.toFixed(4)})`;
         card.style.opacity = opacity >= 1 ? '1' : opacity.toFixed(3);
         if (card._vis !== 'v') { card.style.visibility = 'visible'; card._vis = 'v'; }

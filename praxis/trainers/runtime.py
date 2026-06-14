@@ -54,7 +54,9 @@ def _build_trainer_params(cfg, bundle, callbacks, logger):
         max_epochs=-1,
         reload_dataloaders_every_n_epochs=0,
         precision="32-true",
-        gradient_clip_val=(1.0 if caps.supports_gradient_clipping else None),
+        gradient_clip_val=(
+            cfg.gradient_clip_val if caps.supports_gradient_clipping else None
+        ),
         gradient_clip_algorithm=("norm" if caps.supports_gradient_clipping else None),
         benchmark=True,
         deterministic=False,

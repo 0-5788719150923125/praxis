@@ -35,7 +35,7 @@ Introspected from the live Flask app at every launch. Each summary is the first 
 - **GET** `/api/card/card.pdf` ([source](../praxis/web/routes/cards.py#L103))
 - **GET** `/api/card/cards.zip` ([source](../praxis/web/routes/cards.py#L87))
 - **GET** `/api/card/preview.svg` ([source](../praxis/web/routes/cards.py#L35))
-- **GET** `/api/card/sheet.pdf` ([source](../praxis/web/routes/cards.py#L121))
+- **GET** `/api/card/sheet.pdf` ([source](../praxis/web/routes/cards.py#L128))
 - **GET** `/api/card/sheets.zip` ([source](../praxis/web/routes/cards.py#L94))
 
 ### Core

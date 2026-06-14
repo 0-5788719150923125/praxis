@@ -88,3 +88,14 @@ class OptimizationGroup:
             default=False,
             help="Use a fixed (constant) learning rate schedule",
         )
+
+        group.add_argument(
+            "--gradient-clip-val",
+            type=float,
+            default=10.0,
+            help=(
+                "Global gradient-norm clip threshold. Watch the optimizer "
+                "card's Clip Rate to tell whether it's binding. Ignored by "
+                "trainers that don't support clipping (mono_forward/pipeline)."
+            ),
+        )
