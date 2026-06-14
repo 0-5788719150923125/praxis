@@ -86,10 +86,26 @@ class DiscordBot:
         @self.client.event
         async def on_ready():
             bot_self.ready = True
-            # Use bot's display name if not provided via CLI
             if not bot_self.nickname:
-                # display_name returns global_name if set, otherwise username
+                # No nickname configured: adopt whatever Discord already shows.
+                # display_name returns global_name if set, otherwise username.
                 bot_self.nickname = bot_self.client.user.display_name
+            else:
+                # Push the configured nickname to every guild so the bot is
+                # actually renamed. Per-guild and needs the "Change Nickname"
+                # permission; a failure in one guild must not down the bot.
+                for guild in bot_self.client.guilds:
+                    try:
+                        await guild.me.edit(nick=bot_self.nickname)
+                    except discord.Forbidden:
+                        print(
+                            f"Discord: missing 'Change Nickname' permission in "
+                            f"'{guild.name}'; nickname not applied there"
+                        )
+                    except Exception as e:
+                        print(
+                            f"Discord: failed to set nickname in '{guild.name}': {e}"
+                        )
             print(
                 f"Discord bot '{bot_self.nickname}' connected as {bot_self.client.user}"
             )

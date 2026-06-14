@@ -32,6 +32,12 @@ class DynamicsLoggerCallback(Callback):
         self.log_freq = log_freq
         self._success_count = 0
         self._failure_logged = False
+        # Per-step gradient-clip accumulators (drained every log_freq). Tracked
+        # every step so a spike that clips between logged steps still counts -
+        # the whole reason a sampled norm is a poor clip diagnostic.
+        self._clip_norm_max = 0.0
+        self._clip_hits = 0
+        self._clip_enabled_steps = 0
         print(
             f"[DynamicsLogger] Initialized: logging every {log_freq} steps to {self.dynamics_logger.filepath}"
         )
@@ -43,6 +49,12 @@ class DynamicsLoggerCallback(Callback):
         applied or zeroed. Works correctly with gradient accumulation.
         """
         try:
+            # Every step, before the log-frequency gate: the gradients here are
+            # pre-clip (Lightning clips after this hook), so this is where clip
+            # behavior is observable. Accumulating every step is what lets the
+            # interval-max norm and clip rate catch spikes between logged steps.
+            self._accumulate_clip_stats(optimizer, trainer)
+
             if trainer.global_step % self.log_freq != 0:
                 return
 
@@ -58,6 +70,10 @@ class DynamicsLoggerCallback(Callback):
             # Optimizer-state telemetry (lr, update size, momentum/grad cosine,
             # Adam SNR + second moment, schedule-free spread + gate).
             dynamics.update(self._extract_optimizer_dynamics(optimizer))
+
+            # Gradient-clip behavior accumulated since the last log: interval-max
+            # pre-clip norm + the fraction of steps that actually clipped.
+            dynamics.update(self._drain_clip_stats())
 
             # Expert dynamics: per-expert gradients (only when routers exist)
             dynamics.update(self._extract_expert_dynamics(model))
@@ -116,6 +132,54 @@ class DynamicsLoggerCallback(Callback):
     def _unwrap_model(self, pl_module):
         """Return the inner model that holds the actual decoder/locals."""
         return getattr(pl_module, "model", pl_module)
+
+    @staticmethod
+    def _grad_global_norm(optimizer):
+        """Pre-clip global gradient L2 norm over all optimized params - the
+        exact quantity ``gradient_clip_val`` (norm mode) is compared against.
+        Returns ``None`` if no gradients are present."""
+        actual = optimizer
+        while hasattr(actual, "optimizer") and actual.optimizer is not actual:
+            actual = actual.optimizer
+        pgs = getattr(actual, "param_groups", None)
+        if not pgs:
+            return None
+        s = 0.0
+        seen = False
+        for group in pgs:
+            for p in group["params"]:
+                if p.grad is not None:
+                    s += float((p.grad * p.grad).sum())
+                    seen = True
+        return s**0.5 if seen else None
+
+    def _accumulate_clip_stats(self, optimizer, trainer):
+        """Every-step tally feeding the interval-max norm and clip rate. Counts
+        a step as 'clipped' when the pre-clip norm exceeds the trainer's active
+        threshold; clip-rate steps are only tallied when clipping is enabled, so
+        a trainer with clipping off (threshold None) emits no misleading rate."""
+        norm = self._grad_global_norm(optimizer)
+        if norm is None:
+            return
+        if norm > self._clip_norm_max:
+            self._clip_norm_max = norm
+        threshold = getattr(trainer, "gradient_clip_val", None)
+        if threshold:  # not None and > 0
+            self._clip_enabled_steps += 1
+            if norm > threshold:
+                self._clip_hits += 1
+
+    def _drain_clip_stats(self) -> dict:
+        """Emit the accumulated clip stats and reset for the next interval."""
+        out = {}
+        if self._clip_norm_max > 0.0:
+            out["opt_grad_norm"] = self._clip_norm_max
+        if self._clip_enabled_steps > 0:
+            out["opt_clip_rate"] = self._clip_hits / self._clip_enabled_steps
+        self._clip_norm_max = 0.0
+        self._clip_hits = 0
+        self._clip_enabled_steps = 0
+        return out
 
     def _extract_layer_dynamics(self, model, optimizer) -> dict:
         """Extract universal per-layer gradient dynamics from decoder layers.

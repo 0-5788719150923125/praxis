@@ -52,6 +52,40 @@ OPTIMIZER_METRIC_DESCRIPTIONS = {
             "order": 20,
         },
     },
+    "opt_grad_norm": {
+        "description": (
+            "MAX pre-clip global gradient L2 norm over the logging interval - "
+            "the worst-case the clip saw, measured every step so a spike "
+            "between logged steps still surfaces (a sampled snapshot would "
+            "miss it). This is the quantity gradient_clip_val compares "
+            "against; pair it with Clip Rate to read both the spike size and "
+            "how often it bites."
+        ),
+        "chart": {
+            "title": "Gradient Norm (pre-clip, interval max)",
+            "y_label": "||grad|| max",
+            "y_scale": "logarithmic",
+            "group": "optimizer",
+            "order": 21,
+        },
+    },
+    "opt_clip_rate": {
+        "description": (
+            "Fraction of optimizer steps in the interval whose pre-clip "
+            "gradient norm exceeded gradient_clip_val - how often clipping "
+            "actually fires. ~0 means the threshold is slack and its value is "
+            "irrelevant; persistently high means clipping is throttling many "
+            "steps and the threshold may be too low. The honest answer to 'is "
+            "the clip value right', counted every step (not sampled)."
+        ),
+        "chart": {
+            "title": "Clip Rate",
+            "y_label": "fraction clipped",
+            "y_scale": "linear",
+            "group": "optimizer",
+            "order": 22,
+        },
+    },
     "opt_momentum_rms": {
         "description": (
             "RMS of the optimizer's momentum buffer (exp_avg / momentum_buffer)."

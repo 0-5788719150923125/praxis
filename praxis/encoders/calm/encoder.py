@@ -384,6 +384,8 @@ class CALMEncoder(BaseEncoder):
         ae_dropout: float = 0.15,
         ae_dropout_mode: str = "scalar",
         ae_dropout_cycles: int = 2,
+        vae_depth: int = 2,
+        latent_norm: bool = False,
         noise_dim: Union[int, float] = 128,
         energy_blocks: int = 3,
         energy_samples_n: int = 8,
@@ -530,6 +532,8 @@ class CALMEncoder(BaseEncoder):
             chunk_size=self.K,
             latent_dim=self.latent_dim,
             hidden_dim=self.ae_hidden,
+            depth=vae_depth,
+            latent_norm=latent_norm,
             dropout=self.ae_dropout,
             dropout_mode=ae_dropout_mode,
             dropout_cycles=ae_dropout_cycles,
@@ -1016,10 +1020,14 @@ class CALMEncoder(BaseEncoder):
         M = self.energy_samples_m
         std_t = (0.5 * logvar_t).exp()
         eps_t = torch.randn(M, *mean_t.shape, device=mean_t.device, dtype=mean_t.dtype)
-        # [M, B, N-1, L] -> [B, N-1, M, L]
-        target_samples = (mean_t.unsqueeze(0) + std_t.unsqueeze(0) * eps_t).permute(
-            1, 2, 0, 3
+        # Normalize each posterior draw to the same fixed latent geometry the
+        # decoder consumes, so the energy head learns to predict in that space
+        # (no-op unless latent_norm is on).
+        target_samples = self.vae.normalize_latent(
+            mean_t.unsqueeze(0) + std_t.unsqueeze(0) * eps_t
         )
+        # [M, B, N-1, L] -> [B, N-1, M, L]
+        target_samples = target_samples.permute(1, 2, 0, 3)
 
         # Model samples: N draws from energy head. Same reshape.
         N_samples = self.energy_samples_n
@@ -1042,7 +1050,8 @@ class CALMEncoder(BaseEncoder):
             self._diag["calm_energy_cond_gap"] = float((mismatched - loss).detach())
 
         total = self.energy_alpha * loss
-        mean_next = self._last_mean[:, 1:, :].detach()
+        # Anchor / radial targets live in the decoder's latent geometry too.
+        mean_next = self.vae.normalize_latent(self._last_mean[:, 1:, :].detach())
         zero_noise = h_cond.new_zeros(*h_cond.shape[:-1], self.energy_head.noise_dim)
 
         if self.geometric_mode and self._ae_is_frozen():

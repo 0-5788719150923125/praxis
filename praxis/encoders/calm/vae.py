@@ -51,6 +51,26 @@ class HarmonicDropout(nn.Module):
         return x * mask / keep
 
 
+class ResidualMLPBlock(nn.Module):
+    """Pre-norm residual MLP block (the reference's AELayer shape).
+
+    ``x + drop(W2(SiLU(W1(RMSNorm(x)))))``. Residual + pre-norm is what lets
+    the codec stack deepen without the vanishing-gradient stall a plain
+    Linear/SiLU stack hits, so capacity scales with ``depth``.
+    """
+
+    def __init__(self, dim: int, drop: nn.Module) -> None:
+        super().__init__()
+        self.norm = nn.RMSNorm(dim)
+        self.fc1 = nn.Linear(dim, dim)
+        self.act = nn.SiLU()
+        self.drop = drop
+        self.fc2 = nn.Linear(dim, dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x + self.drop(self.fc2(self.act(self.fc1(self.norm(x)))))
+
+
 class CALMVAE(nn.Module):
     """Chunked token VAE.
 
@@ -60,9 +80,17 @@ class CALMVAE(nn.Module):
         chunk_size: K tokens per latent.
         latent_dim: Continuous latent dim.
         hidden_dim: Width of the encoder / decoder MLPs.
+        depth: Number of residual blocks per side. Higher = more codec
+            capacity (the reference reaches recon CE ~0.04 with a residual
+            stack; a flat 2-layer MLP stalls ~0.3).
+        latent_norm: Fix the latent to unit per-dim RMS (norm = sqrt(D))
+            before it is decoded. Pins the latent geometry so it can't drift
+            into the large-norm / tiny-variance brittleness that makes the
+            energy head's target unreachably precise. Parameter-free, so the
+            geometry is stationary across the stage-1 -> stage-2 freeze.
         dropout: Dropout rate, applied at three sites as in the reference:
             input token ids (zeroed), the sampled latent z, and inside the
-            encoder / decoder MLPs. The first two are load-bearing for
+            encoder / decoder blocks. The first two are load-bearing for
             generation: they train the decoder to map a NEIGHBORHOOD of z
             to the right tokens, so the LM head's imperfect latent
             predictions still decode to text.
@@ -75,6 +103,8 @@ class CALMVAE(nn.Module):
         chunk_size: int,
         latent_dim: int,
         hidden_dim: int,
+        depth: int = 2,
+        latent_norm: bool = False,
         dropout: float = 0.15,
         dropout_mode: str = "scalar",
         dropout_cycles: int = 2,
@@ -85,6 +115,7 @@ class CALMVAE(nn.Module):
         self.chunk_size = chunk_size
         self.latent_dim = latent_dim
         self.hidden_dim = hidden_dim
+        self.latent_norm = bool(latent_norm)
         self.dropout_p = float(dropout)
 
         def _drop():
@@ -94,27 +125,24 @@ class CALMVAE(nn.Module):
 
         self.tok_emb = nn.Embedding(vocab_size, embed_dim)
 
-        self.encoder_mlp = nn.Sequential(
-            nn.Linear(chunk_size * embed_dim, hidden_dim),
-            nn.SiLU(),
-            _drop(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.SiLU(),
-            _drop(),
+        # Encoder: project K token embeddings to hidden, refine through a
+        # residual block stack, then project to posterior params.
+        self.enc_in = nn.Linear(chunk_size * embed_dim, hidden_dim)
+        self.enc_blocks = nn.ModuleList(
+            [ResidualMLPBlock(hidden_dim, _drop()) for _ in range(depth)]
         )
         # Norm before posterior projection: keeps μ/logvar in a well-scaled
         # range and matches the reference's LlamaRMSNorm in the AE encoder.
         self.params_norm = nn.RMSNorm(hidden_dim)
         self.to_params = nn.Linear(hidden_dim, 2 * latent_dim)
 
-        self.decoder_mlp = nn.Sequential(
-            nn.Linear(latent_dim, hidden_dim),
-            nn.SiLU(),
-            _drop(),
-            nn.Linear(hidden_dim, chunk_size * hidden_dim),
-            nn.SiLU(),
-            _drop(),
+        # Decoder: latent to hidden, residual block stack, expand to K
+        # per-token feature vectors.
+        self.dec_in = nn.Linear(latent_dim, hidden_dim)
+        self.dec_blocks = nn.ModuleList(
+            [ResidualMLPBlock(hidden_dim, _drop()) for _ in range(depth)]
         )
+        self.dec_expand = nn.Linear(hidden_dim, chunk_size * hidden_dim)
         # Norm before the classifier consumes decoder features.
         self.out_norm = nn.RMSNorm(hidden_dim)
 
@@ -141,7 +169,9 @@ class CALMVAE(nn.Module):
 
         emb = self.tok_emb(input_ids)  # [B, N*K, E]
         emb = emb.view(B, N, K * self.embed_dim)
-        h = self.encoder_mlp(emb)  # [B, N, H]
+        h = self.enc_in(emb)  # [B, N, H]
+        for blk in self.enc_blocks:
+            h = blk(h)
         h = self.params_norm(h)
         params = self.to_params(h)  # [B, N, 2L]
         mean, logvar = params.chunk(2, dim=-1)
@@ -150,10 +180,19 @@ class CALMVAE(nn.Module):
         logvar = logvar.clamp(min=-10.0, max=10.0)
         return mean, logvar
 
-    @staticmethod
-    def reparameterize(mean: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
+    def reparameterize(
+        self, mean: torch.Tensor, logvar: torch.Tensor
+    ) -> torch.Tensor:
         std = (0.5 * logvar).exp()
         return mean + std * torch.randn_like(std)
+
+    def normalize_latent(self, x: torch.Tensor) -> torch.Tensor:
+        """Fix the latent to unit per-dim RMS (norm = sqrt(D)). Parameter-free
+        so the geometry stays stationary once the codec freezes. No-op unless
+        ``latent_norm`` is set."""
+        if not self.latent_norm:
+            return x
+        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + 1e-5)
 
     def decode(self, z: torch.Tensor) -> torch.Tensor:
         """Decode latent to per-token decoder features.
@@ -169,11 +208,18 @@ class CALMVAE(nn.Module):
         """
         B, N, _ = z.shape
         K = self.chunk_size
+        # Single source of truth for "the decoder consumes a normalized
+        # latent": covers teacher-forced recon, the energy head's zero-noise
+        # decode, and generation, all of which route through here.
+        z = self.normalize_latent(z)
         # Latent dropout (reference-faithful): the decoder learns to decode
         # perturbed latents, the robustness generation depends on. Inactive
         # in eval, so the frozen stage-2 codec and generation see clean z.
         z = F.dropout(z, p=self.dropout_p, training=self.training)
-        h = self.decoder_mlp(z)  # [B, N, K*H]
+        h = self.dec_in(z)  # [B, N, H]
+        for blk in self.dec_blocks:
+            h = blk(h)
+        h = self.dec_expand(h)  # [B, N, K*H]
         h = h.view(B, N, K, self.hidden_dim)
         h = h.reshape(B, N * K, self.hidden_dim)
         return self.out_norm(h)
