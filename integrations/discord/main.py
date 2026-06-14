@@ -103,9 +103,7 @@ class DiscordBot:
                             f"'{guild.name}'; nickname not applied there"
                         )
                     except Exception as e:
-                        print(
-                            f"Discord: failed to set nickname in '{guild.name}': {e}"
-                        )
+                        print(f"Discord: failed to set nickname in '{guild.name}': {e}")
             print(
                 f"Discord bot '{bot_self.nickname}' connected as {bot_self.client.user}"
             )

@@ -1697,20 +1697,40 @@ def _offset_rulers(page, dx, dy, color="#999999"):
         if t in (-2, 0, 2):
             lbl = f"{t:+d}" if t else "0"
             page.text(
-                left + t, top + 7.2, lbl, fontsize=3.2, color=color,
-                ha="center", va="bottom",
+                left + t,
+                top + 7.2,
+                lbl,
+                fontsize=3.2,
+                color=color,
+                ha="center",
+                va="bottom",
             )
             page.text(
-                left - 7.6, top + t, lbl, fontsize=3.2, color=color,
-                ha="right", va="center",
+                left - 7.6,
+                top + t,
+                lbl,
+                fontsize=3.2,
+                color=color,
+                ha="right",
+                va="center",
             )
     page.text(
-        left + 4.2, top + 7.2, "+dx", fontsize=3.2, color=color,
-        ha="left", va="bottom",
+        left + 4.2,
+        top + 7.2,
+        "+dx",
+        fontsize=3.2,
+        color=color,
+        ha="left",
+        va="bottom",
     )
     page.text(
-        left - 7.6, top + 4.2, "+dy", fontsize=3.2, color=color,
-        ha="right", va="center",
+        left - 7.6,
+        top + 4.2,
+        "+dy",
+        fontsize=3.2,
+        color=color,
+        ha="right",
+        va="center",
     )
 
 

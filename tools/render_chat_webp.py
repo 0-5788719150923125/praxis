@@ -248,8 +248,7 @@ def capture_frames(url, n_frames):
 
         # Crop to content: the app column, ending just below the input box
         # (the chat tab otherwise stretches to the full viewport height).
-        clip = page.evaluate(
-            """() => {
+        clip = page.evaluate("""() => {
                 const app = document.querySelector('.app-container')
                     .getBoundingClientRect();
                 const input = document.querySelector('.input-container')
@@ -260,8 +259,7 @@ def capture_frames(url, n_frames):
                     width: Math.round(app.width),
                     height: Math.ceil(input.bottom - app.y) + 18,
                 };
-            }"""
-        )
+            }""")
 
         frames = [page.screenshot(clip=clip)]
         for f in range(1, n_frames):

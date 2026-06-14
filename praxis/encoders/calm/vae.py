@@ -180,9 +180,7 @@ class CALMVAE(nn.Module):
         logvar = logvar.clamp(min=-10.0, max=10.0)
         return mean, logvar
 
-    def reparameterize(
-        self, mean: torch.Tensor, logvar: torch.Tensor
-    ) -> torch.Tensor:
+    def reparameterize(self, mean: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         std = (0.5 * logvar).exp()
         return mean + std * torch.randn_like(std)
 

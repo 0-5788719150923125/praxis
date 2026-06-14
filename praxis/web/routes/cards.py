@@ -107,7 +107,14 @@ def card_pdf():
     seed, side, theme, hue, mods = _params()
     authors, donations, run_hash = _identity()
     pdf = render_single_pdf(
-        side, seed, theme, hue, authors, donations, run_hash, mods=mods,
+        side,
+        seed,
+        theme,
+        hue,
+        authors,
+        donations,
+        run_hash,
+        mods=mods,
         offset=_offset(),
     )
     return send_file(
@@ -125,7 +132,14 @@ def sheet_pdf():
     seed, side, theme, hue, mods = _params()
     authors, donations, run_hash = _identity()
     pdf = render_sheet_pdf(
-        side, seed, theme, hue, authors, donations, run_hash, mods=mods,
+        side,
+        seed,
+        theme,
+        hue,
+        authors,
+        donations,
+        run_hash,
+        mods=mods,
         offset=_offset(),
     )
     return send_file(
