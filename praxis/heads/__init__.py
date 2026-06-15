@@ -9,13 +9,17 @@ from praxis.heads.stacked import SequentialHead
 from praxis.heads.tied import TiedWeights
 
 
-def _field(amp_modulation: str, build_classifier: bool = False):
+def _field(
+    amp_modulation: str, build_classifier: bool = False, fast_weights: bool = False
+):
     """A harmonic field builder; transform-only by default (no dead classifier),
-    or terminal (its own linear readout) when ``build_classifier`` is set."""
+    or terminal (its own linear readout) when ``build_classifier`` is set.
+    ``fast_weights`` adds the bounded context-written overlay on the spectrum."""
     return partial(
         HarmonicHead,
         amp_modulation=amp_modulation,
         build_classifier=build_classifier,
+        fast_weights=fast_weights,
     )
 
 
@@ -37,11 +41,21 @@ def _prismatic2_branches() -> list:
 
 def _prismatic3_branches() -> list:
     """The three prismatic3 arms: bias (learned field), variance (input field ->
-    crystal), and a pure variance-only field. Shared by prismatic3 variants."""
+    crystal), and a pure variance-only field. Each arm carries fast weights - a
+    bounded test-time overlay on its spectrum foundation. Shared by all
+    prismatic3 variants."""
     return [
-        partial(SequentialHead, heads=[_field("learned", build_classifier=True)]),
-        partial(SequentialHead, heads=[_field("input"), CrystalHead]),
-        partial(SequentialHead, heads=[_field("pure", build_classifier=True)]),
+        partial(
+            SequentialHead,
+            heads=[_field("learned", build_classifier=True, fast_weights=True)],
+        ),
+        partial(
+            SequentialHead, heads=[_field("input", fast_weights=True), CrystalHead]
+        ),
+        partial(
+            SequentialHead,
+            heads=[_field("pure", build_classifier=True, fast_weights=True)],
+        ),
     ]
 
 

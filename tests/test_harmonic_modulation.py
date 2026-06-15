@@ -1,8 +1,9 @@
 """Amplitude modulation envelope on the harmonic field (off|static|learned)."""
 
 import torch
+import torch.nn.functional as F
 
-from praxis.heads.harmonic import AMP_MOD_BASIS_K, HarmonicField
+from praxis.heads.harmonic import AMP_MOD_BASIS_K, FAST_EPS, FAST_SEGMENT, HarmonicField
 
 
 def _field(mode):
@@ -186,3 +187,96 @@ def test_pure_field_is_input_conditional_and_trainable():
     assert max(d["bias_energy"]) == 0.0
     assert max(d["var_energy"]) > 0.0
     assert d["separated"] == 1.0
+
+
+def _fast_field(mode, max_positions=256):
+    torch.manual_seed(0)
+    return HarmonicField(
+        hidden_dim=16,
+        max_positions=max_positions,
+        amp_modulation=mode,
+        fast_weights=True,
+    )
+
+
+def test_fast_weights_are_identity_at_init():
+    # fast_u is zero-init, so the per-token overlay is exactly zero and the field
+    # matches the no-fast field, for every modulation mode.
+    for mode in ["learned", "input", "pure"]:
+        x = torch.randn(2, 80, 16)
+        torch.manual_seed(0)  # same seed as _fast_field -> identical amplitude grid
+        base = HarmonicField(hidden_dim=16, max_positions=256, amp_modulation=mode)
+        f = _fast_field(mode)
+        torch.testing.assert_close(base(x), f(x))
+        assert f(x).shape == x.shape
+
+
+def test_fast_weights_gradient_reaches_overlay():
+    f = _fast_field("learned")
+    names = {n for n, _ in f.named_parameters()}
+    assert {"fast_qkv.weight", "fast_u.weight", "fast_v.weight"} <= names
+    x = torch.randn(2, 80, 16, requires_grad=True)
+    f(x).sum().backward()
+    assert f.fast_u.weight.grad.abs().sum() > 0
+    assert float(f._fast_repr.norm()) == 0.0  # overlay zero at init -> zero repr
+
+
+def test_fast_weights_overlay_is_causal():
+    # The delta-rule bank is built from PRIOR segments only, so perturbing a token
+    # in a later segment must not change an earlier segment's output. The base
+    # "learned" field is position-only, so any change would be a future leak.
+    f = _fast_field("learned")
+    with torch.no_grad():
+        f.fast_u.weight.normal_(std=0.5)  # make the overlay live
+    L = 200  # 3 segments at FAST_SEGMENT=64
+    x = torch.randn(1, L, 16)
+    x2 = x.clone()
+    x2[:, 190] += 5.0  # perturb a token in the last segment
+    with torch.no_grad():
+        o1, o2 = f(x), f(x2)
+    earlier = slice(FAST_SEGMENT, 2 * FAST_SEGMENT)  # an earlier segment
+    torch.testing.assert_close(o1[:, earlier], o2[:, earlier])
+    assert not torch.allclose(o1[:, 190], o2[:, 190])  # its own token did change
+
+
+def test_fast_weights_overlay_reads_as_variance():
+    f = _fast_field("learned")
+    with torch.no_grad():
+        f.fast_u.weight.normal_(std=0.5)
+    f(torch.randn(2, 80, 16))  # populate the live representative
+    d = f.field_strands()
+    assert max(d["var_energy"]) > 0.0 and d["separated"] > 0.0
+    assert float(f._fast_repr.norm()) > 0.0
+
+
+def _reference_delta_loop(field, hs):
+    """The plain sequential delta-rule loop the vectorized _fast_retrieve must
+    reproduce. Kept here as the ground truth for the closed-form rewrite."""
+    q, k, v = field.fast_qkv(hs.float()).split(field.fast_mem, dim=-1)
+    sig_q, sig_k = F.elu(q) + 1.0, F.elu(k) + 1.0
+    b, L, _ = q.shape
+    mem = q.new_zeros(b, field.fast_mem, field.fast_mem)
+    z = q.new_zeros(b, field.fast_mem, 1)
+    reads = []
+    for s in range(0, L, FAST_SEGMENT):
+        e = min(s + FAST_SEGMENT, L)
+        sq, sk, sv = sig_q[:, s:e], sig_k[:, s:e], v[:, s:e]
+        reads.append((sq @ mem) / (sq @ z + FAST_EPS))
+        retrieved = (sk @ mem) / (sk @ z + FAST_EPS)
+        mem = mem + sk.transpose(-2, -1) @ (sv - retrieved)
+        z = z + sk.sum(dim=1, keepdim=True).transpose(-2, -1)
+    return torch.cat(reads, dim=1)
+
+
+def test_fast_retrieve_matches_sequential_loop():
+    # The vectorized affine-recurrence form must equal the naive per-segment loop
+    # to float precision, across exact-multiple, ragged-tail, and sub-segment L.
+    for L in [50, 64, 200, 256, 513]:
+        torch.manual_seed(L)
+        f = _fast_field("learned", max_positions=1024)
+        with torch.no_grad():
+            f.fast_qkv.weight.normal_(std=0.7)  # non-trivial memory
+        x = torch.randn(3, L, 16)
+        got, want = f._fast_retrieve(x), _reference_delta_loop(f, x)
+        assert got.shape == (3, L, f.fast_mem)
+        torch.testing.assert_close(got, want, atol=1e-5, rtol=0.0)

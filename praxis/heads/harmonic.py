@@ -23,6 +23,7 @@ from typing import Any, Optional
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch import Tensor
 
 from praxis.heads.base import BaseHead
@@ -46,6 +47,28 @@ SMOOTHNESS_LAMBDA: float = 0.01
 # grid settles into. See ``HarmonicField`` and ``next/harmony.md``.
 AMP_MOD_DEPTH: float = 0.5  # peak envelope modulation, tanh-bounded
 AMP_MOD_BASIS_K: int = 6  # learned envelope = K low-frequency f_t modes
+
+# Fast weights: a per-token, delta-rule recurrent overlay on the spectrum. A small
+# linear-attention memory (ELU+1 kernel, delta write, z-normalized - the
+# Infini-Attention rule) reads a per-token vector from the causal context; that
+# read drives a bounded rank-r factoring ``u_t (x) v_t`` added to the amplitude
+# grid. The slow grid is the foundation; this is the secondary, test-time,
+# surprise-stabilized modulation. The field is linear in the grid, so the overlay
+# is just the field of the per-token delta, added to the base field.
+FAST_WEIGHT_RANK: int = 2  # rank of the per-token grid delta
+FAST_MEM_DIM: int = 32  # key/value width of the delta-rule memory
+FAST_SEGMENT: int = 64  # memory bank refreshes per segment; queries stay per-token
+FAST_WEIGHT_SCALE: float = 0.25  # per-cell cap; keeps the slow grid foundational
+FAST_EPS: float = 1e-6
+# Smoothing for the reported input-conditional envelope (the "input" arm's separate
+# pooled-envelope pathway). The raw per-batch coeffs swing hard step to step; the
+# snapshots want a representative, not one draw. The fast-weight overlay no longer
+# needs this - its delta-rule state is already a stable, surprise-filtered read.
+COEFF_EMA: float = 0.9
+# Step 3 (deferred): a per-depth learned spectral temperature - |a_k|^(1/T(depth))
+# via an nn.Embedding(depth, 1) delta - would let each decoder pass sharpen or
+# release the harmonics. Per-depth Serpent activations likely already cover much
+# of this conditional shaping; revisit if they do not.
 
 
 def _envelope_basis(F_t: int, K: int) -> torch.Tensor:
@@ -154,6 +177,21 @@ class HarmonicField(nn.Module):
                 "y_scale": "linear",
                 "group": "harmonic_head",
                 "order": 45,
+            },
+        },
+        "harmonic_fast_norm": {
+            "description": (
+                "L2 norm of the fast-weight overlay (EMA representative). The "
+                "secondary, context-written delta on the spectrum - should stay "
+                "small relative to the grid; growth means the model leans on "
+                "test-time modulation, a spike means it is swamping the foundation."
+            ),
+            "chart": {
+                "title": "Fast-Weight Magnitude",
+                "y_label": "||fast overlay||",
+                "y_scale": "linear",
+                "group": "harmonic_head",
+                "order": 49,
             },
         },
         # Capacity allocation: three shares (sum to 1) on one chart, showing
@@ -340,6 +378,7 @@ class HarmonicField(nn.Module):
         F_t: Optional[int] = None,
         F_d: Optional[int] = None,
         amp_modulation: str = "off",
+        fast_weights: bool = False,
     ) -> None:
         super().__init__()
         self.T = max_positions
@@ -410,6 +449,115 @@ class HarmonicField(nn.Module):
                     "_last_input_coeffs", coeffs.clone(), persistent=False
                 )
 
+        # Fast weights: slow ``amplitudes`` is the foundation, this is the
+        # secondary, per-token overlay. ``fast_qkv`` feeds a delta-rule memory;
+        # its per-token read drives rank-r grid factors. ``fast_u`` zero-init (so
+        # the overlay is exactly zero at init, identity start) while ``fast_v``
+        # seeds the other factor so gradients still flow.
+        self.fast_weights = bool(fast_weights)
+        if self.fast_weights:
+            self.fast_rank = FAST_WEIGHT_RANK
+            self.fast_mem = FAST_MEM_DIM
+            self.fast_qkv = nn.Linear(self.D, 3 * self.fast_mem, bias=False)
+            self.fast_u = nn.Linear(
+                self.fast_mem, self.fast_rank * self.F_t, bias=False
+            )
+            self.fast_v = nn.Linear(
+                self.fast_mem, self.fast_rank * self.F_d, bias=False
+            )
+            nn.init.zeros_(self.fast_u.weight)
+            nn.init.normal_(self.fast_v.weight, std=0.02)
+            self.register_buffer(
+                "_fast_repr", torch.zeros(self.F_t, self.F_d), persistent=False
+            )
+
+    def _fast_retrieve(self, hidden_states: Tensor) -> Tensor:
+        """Per-token read ``[B, L, d]`` from a delta-rule linear-attention memory
+        over the causal context. ELU+1 kernel, delta write (value minus what the
+        memory already predicts), z-normalized retrieval - the Infini-Attention
+        rule. The bank refreshes once per segment; queries are per token, so the
+        read varies token to token. Strictly causal: a segment reads the bank
+        built from prior segments, then writes itself.
+
+        The delta correction is against the prior bank, so the write is closed
+        form: ``phi_k^T (phi_k mem / z) = (phi_k^T (phi_k / z)) mem = A_n mem``.
+        The per-segment ``A_n``, write matrix ``B_n = phi_k^T v`` and the ``z``
+        normalizer are all computed batched; only the affine matrix recurrence
+        ``mem_{n+1} = (I - A_n) mem_n + B_n`` stays sequential, over the handful
+        of segments (no per-token loop, no ``S`` dim in the loop body)."""
+        d, seg = self.fast_mem, FAST_SEGMENT
+        q, k, v = self.fast_qkv(hidden_states.float()).split(d, dim=-1)
+        sig_q, sig_k = F.elu(q) + 1.0, F.elu(k) + 1.0
+        b_size, seq_len, _ = q.shape
+
+        n_seg = (seq_len + seg - 1) // seg
+        pad = n_seg * seg - seq_len
+        if pad:  # zero-pad post-kernel so the tail contributes nothing to any bank
+            zr = sig_k.new_zeros(b_size, pad, d)
+            sig_q, sig_k, v = (
+                torch.cat([sig_q, zr], 1),
+                torch.cat([sig_k, zr], 1),
+                torch.cat([v, zr], 1),
+            )
+        qk = sig_q.view(b_size, n_seg, seg, d)
+        kk = sig_k.view(b_size, n_seg, seg, d)
+        vv = v.view(b_size, n_seg, seg, d)
+
+        dz = kk.sum(dim=2)  # [B, N, d] per-segment z increment
+        z_prior = dz.cumsum(dim=1) - dz  # exclusive cumsum = bank from prior segments
+        dk = torch.einsum("bnsd,bnd->bns", kk, z_prior) + FAST_EPS  # [B, N, S]
+        a_mat = torch.einsum("bnsd,bnse->bnde", kk, kk / dk.unsqueeze(-1))  # A_n
+        b_mat = torch.einsum("bnsd,bnse->bnde", kk, vv)  # B_n = phi_k^T v
+
+        mem = q.new_zeros(b_size, d, d)
+        mems = []
+        for n in range(n_seg):
+            mems.append(mem)  # bank from prior segments (mem_0 = 0 -> read 0)
+            mem = mem + b_mat[:, n] - a_mat[:, n] @ mem
+        mem_stack = torch.stack(mems, dim=1)  # [B, N, d, d]
+
+        dq = torch.einsum("bnsd,bnd->bns", qk, z_prior) + FAST_EPS
+        reads = torch.einsum("bnsd,bnde->bnse", qk, mem_stack) / dq.unsqueeze(-1)
+        return reads.reshape(b_size, n_seg * seg, d)[:, :seq_len]
+
+    def _field_fast(self, hidden_states: Tensor) -> Tensor:
+        """Per-token bounded rank-r overlay field ``[B, L, D]``. The retrieved
+        context vector drives factors ``u_t (x) v_t``; since the field is linear
+        in the grid this is the field of the per-token delta alone, summed into
+        the base field upstream. ``f_t`` is contracted against the frozen phase
+        inside the matmul, so the ``[B, L, F_t, F_d]`` grid is never built."""
+        r = self._fast_retrieve(hidden_states)
+        b_size, seq_len, _ = r.shape
+        u = torch.tanh(self.fast_u(r)).view(b_size, seq_len, self.fast_rank, self.F_t)
+        v = torch.tanh(self.fast_v(r)).view(b_size, seq_len, self.fast_rank, self.F_d)
+        self._update_fast_repr(u, v)
+
+        device = hidden_states.device
+        t = torch.arange(seq_len, device=device, dtype=torch.float32)
+        f_t = torch.arange(1, self.F_t + 1, device=device, dtype=torch.float32)
+        ang = 2 * math.pi * t.unsqueeze(1) * f_t / self.T  # [L, F_t]
+        cos_a = torch.cos(ang).view(1, seq_len, 1, self.F_t)
+        sin_a = torch.sin(ang).view(1, seq_len, 1, self.F_t)
+        p_re, p_im = self.spec_real.to(device), self.spec_imag.to(device)
+        c = torch.einsum("blrf,fd->blrd", u * cos_a, p_re) - torch.einsum(
+            "blrf,fd->blrd", u * sin_a, p_im
+        )
+        w = (v * c).sum(dim=2)  # [B, L, F_d]
+        scale = FAST_WEIGHT_SCALE / self.fast_rank
+        b = scale * (2.0 / math.sqrt(self.T * self.D)) * (w @ self.basis_d.to(device))
+        return b.to(hidden_states.dtype)
+
+    def _update_fast_repr(self, u: Tensor, v: Tensor) -> None:
+        """[F_t, F_d] representative of the overlay for the snapshots: the
+        rank-factored outer product of the batch-time-mean factors. No EMA - the
+        mean over B*L tokens is already a stable readout of a stable state."""
+        with torch.no_grad():
+            scale = FAST_WEIGHT_SCALE / self.fast_rank
+            u_m, v_m = u.mean(dim=(0, 1)), v.mean(dim=(0, 1))  # [r, F_t], [r, F_d]
+            self._fast_repr = scale * torch.einsum("rf,rd->fd", u_m, v_m).to(
+                self._fast_repr.dtype
+            )
+
     def _eval_field(self, scaled: Tensor, seq_len: int, device: torch.device) -> Tensor:
         """Band-limited field at positions ``0..seq_len-1`` via two small
         matmuls - exactly the ortho-normed irfft2 of the (Hermitian-extended)
@@ -446,14 +594,15 @@ class HarmonicField(nn.Module):
         return b.to(dtype) if dtype is not None else b
 
     def forward(self, hidden_states: Tensor) -> Tensor:
+        seq_len = hidden_states.shape[-2]
+        device = hidden_states.device
+        dtype = hidden_states.dtype
         if self.amp_modulation in ("input", "pure"):
             b = self._field_conditional(hidden_states)
         else:
-            b = self._field(
-                hidden_states.shape[-2],
-                device=hidden_states.device,
-                dtype=hidden_states.dtype,
-            )
+            b = self._field(seq_len, device=device, dtype=dtype)
+        if self.fast_weights:
+            b = b + self._field_fast(hidden_states)  # per-token overlay [B, L, D]
         return hidden_states * (1.0 + b)
 
     def _field_conditional(self, hidden_states: Tensor) -> Tensor:
@@ -461,14 +610,17 @@ class HarmonicField(nn.Module):
         an envelope whose coefficients carry a per-sequence delta from pooled
         hidden states. Zero-init projection means it is identical to the static
         field at init; the learned delta is the structured-variance axis."""
-        b_size, seq_len, _ = hidden_states.shape
+        _, seq_len, _ = hidden_states.shape
         device = hidden_states.device
-        pooled = hidden_states.mean(dim=-2).to(self.amp_basis.dtype)  # [B, D]
+        p = hidden_states.mean(dim=-2).to(self.amp_basis.dtype)  # [B, D]
         if self.amp_modulation == "pure":
-            coeffs = self.amp_input(pooled)  # [B, K] - no static base
+            coeffs = self.amp_input(p)  # [B, K] - no static base
         else:
-            coeffs = self.amp_coeffs + self.amp_input(pooled)  # [B, K]
-        self._last_input_coeffs = coeffs.detach().mean(0)
+            coeffs = self.amp_coeffs + self.amp_input(p)  # [B, K]
+        rep = coeffs.detach().mean(0)
+        self._last_input_coeffs = (
+            COEFF_EMA * self._last_input_coeffs + (1.0 - COEFF_EMA) * rep
+        )
         env = self._env_from_coeffs(coeffs)  # [B, F_t]
         amps = self.amplitudes.unsqueeze(0) * env.unsqueeze(-1)  # [B, F_t, F_d]
         return self._build_field(amps, seq_len, device).to(hidden_states.dtype)
@@ -509,6 +661,8 @@ class HarmonicField(nn.Module):
         env = self._envelope()
         if env is not None:
             amps = amps * env.detach().unsqueeze(1)
+        if self.fast_weights:
+            amps = amps + self._fast_repr.detach()
         return amps
 
     def envelope_depth(self) -> float:
@@ -516,14 +670,19 @@ class HarmonicField(nn.Module):
         env = self._envelope()
         return 0.0 if env is None else float((env.max() - env.min()).detach().item())
 
-    def _sample_field(self, Tp: int, coeffs: Optional[Tensor] = None) -> Tensor:
+    def _sample_field(
+        self,
+        Tp: int,
+        coeffs: Optional[Tensor] = None,
+        grid_delta: Optional[Tensor] = None,
+    ) -> Tensor:
         """Real field [Tp, D] sampled over one period, mean-centered over time.
 
         Alias-free for Tp >= 2*F_t+1 (the field is band-limited to F_t temporal
         frequencies), and far cheaper than the full-T irfft. Shared by every
         snapshot view below. ``coeffs`` overrides the envelope coefficients (the
         input-conditional set, for the strands snapshot); default = the static
-        base envelope.
+        base envelope. ``grid_delta`` adds the fast-weight overlay on the grid.
         """
         rfft_D = self.D // 2 + 1
         spec = torch.zeros(Tp, rfft_D, dtype=torch.complex64)
@@ -535,6 +694,8 @@ class HarmonicField(nn.Module):
             env = self._envelope()
             if env is not None:
                 amps = amps * env.detach().cpu().unsqueeze(1)
+        if grid_delta is not None:
+            amps = amps + grid_delta.detach().cpu()
         scaled = torch.complex(self.spec_real.cpu(), self.spec_imag.cpu()) * amps
         spec[1 : self.F_t + 1, 1 : self.F_d + 1] = scaled
         spec[Tp - self.F_t : Tp, 1 : self.F_d + 1] = scaled.flip(0).conj()
@@ -553,14 +714,18 @@ class HarmonicField(nn.Module):
         """
         with torch.no_grad():
             Tp = max(int(n_points), 2 * self.F_t + 1)
+            grid_delta = self._fast_repr if self.fast_weights else None
             static = self._sample_field(Tp)  # [Tp, D] static (bias)
             cond_coeffs = getattr(self, "_last_input_coeffs", None)
             if self.amp_modulation == "pure":
-                # No static spectrum reaches the output: the sampled field IS
-                # the conditional delta, so every hair is pure variance.
-                cond, static = static, torch.zeros_like(static)
+                # No static spectrum reaches the output: the sampled field (plus
+                # the fast overlay) IS the conditional delta, so all variance.
+                cond = self._sample_field(Tp, grid_delta=grid_delta)
+                static = torch.zeros_like(static)
             elif self.amp_modulation == "input" and cond_coeffs is not None:
-                cond = self._sample_field(Tp, coeffs=cond_coeffs)
+                cond = self._sample_field(Tp, coeffs=cond_coeffs, grid_delta=grid_delta)
+            elif grid_delta is not None:
+                cond = self._sample_field(Tp, grid_delta=grid_delta)  # fast = variance
             else:
                 cond = static  # no conditional field -> variance axis is zero
             delta = cond - static
@@ -600,12 +765,16 @@ class HarmonicField(nn.Module):
         """
         with torch.no_grad():
             Tp = max(240, 2 * self.F_t + 1)
+            grid_delta = self._fast_repr if self.fast_weights else None
             static = self._sample_field(Tp)  # [Tp, D]
             cond_coeffs = getattr(self, "_last_input_coeffs", None)
             if self.amp_modulation == "pure":
-                cond, static = static, torch.zeros_like(static)
+                cond = self._sample_field(Tp, grid_delta=grid_delta)
+                static = torch.zeros_like(static)
             elif self.amp_modulation == "input" and cond_coeffs is not None:
-                cond = self._sample_field(Tp, coeffs=cond_coeffs)
+                cond = self._sample_field(Tp, coeffs=cond_coeffs, grid_delta=grid_delta)
+            elif grid_delta is not None:
+                cond = self._sample_field(Tp, grid_delta=grid_delta)  # fast = variance
             else:
                 cond = static  # no conditional field -> variance is zero
             bias_e = (static * static).sum(dim=0)  # [D]
@@ -880,6 +1049,7 @@ class HarmonicHead(BaseHead):
         encoder: Optional[nn.Module] = None,
         amp_modulation: str = "off",
         build_classifier: bool = True,
+        fast_weights: bool = False,
     ) -> None:
         super().__init__(config, encoder)
         self._downstream = None  # injectable downstream classifier (grad-ratio)
@@ -908,6 +1078,7 @@ class HarmonicHead(BaseHead):
             hidden_dim=feature_dim,
             max_positions=max_positions,
             amp_modulation=amp_modulation,
+            fast_weights=fast_weights,
         )
         # Transform-only stages (in a SequentialHead) skip the classifier - the
         # terminal head classifies, so the vocab projection would be dead.
@@ -996,6 +1167,8 @@ class HarmonicHead(BaseHead):
             "harmonic_env_depth": self.field.envelope_depth(),
             **self.field.capacity_split(),
         }
+        if self.field.fast_weights:
+            out["harmonic_fast_norm"] = float(self.field._fast_repr.norm().item())
 
         # grad_ratio reads whether learning is flowing into the field or
         # past it through the downstream classifier. Skip silently if
