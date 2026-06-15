@@ -142,27 +142,19 @@ CALMByteSmall = partial(
     vote_num_samples=500,
 )
 
-# Baseline for the calm-a-1 ablation: the published repo's absolute dims
-# (latent 128, AE hidden 512, noise 64, 4 head blocks, dropout 0.15), with two
-# departures from the authors that fix the brittle-latent stall at our scale (a
-# brittle latent, NOT codec capacity, was the actual blocker): a deeper
-# residual codec (vae_depth=4) and a fixed latent geometry (latent_norm). The
-# conditioning anchor is OFF: it diverges from the paper, it fights the energy
-# score (MSE-to-mean vs distribution-matching), and the first cond_gap progress
-# is more plausibly the codec/latent fix than the anchor (three changes were
-# confounded). Disabling it de-confounds the ablation and removes the tension;
-# if cond_gap holds without it, the codec changes carried the run.
+# Baseline for the calm-a-1 ablation: the published repo's dims (latent 128, AE
+# hidden 512, noise 64, 4 head blocks, dropout 0.15) with ONE departure from the
+# authors - a deeper residual codec (vae_depth=4).
 CALMByteRef = partial(
     CALMEncoder,
     chunk_size=8,
-    latent_dim=128,
-    ae_hidden=512,
+    latent_dim=0.5,
+    ae_hidden=2.0,
     vae_depth=4,
-    latent_norm=True,
     kl_beta=1e-3,
     kl_clip=0.5,
     ae_dropout=0.15,
-    noise_dim=64,
+    noise_dim=0.25,
     energy_blocks=4,
     energy_samples_n=8,
     energy_samples_m=100,

@@ -64,6 +64,16 @@ from .vae import CALMVAE
 # 0.3-0.5, below EPS. 1024 puts that same descent at ~1.2-2.0, above the latch.
 PRETRAIN_WINDOW = 1024
 PRETRAIN_FLAT_EPS = 1.0  # converged when the window's drift < one noise std
+# EMA smoothing for the convergence signal. The raw recon jitters hard under
+# ae_dropout, which both inflates the window noise and lets a slow true descent
+# read as a premature plateau. We smooth first, then measure flatness on the
+# smoothed series so the trend (and new lows) are legible. Fixed, model-agnostic.
+PRETRAIN_EMA_ALPHA = 0.1
+# Relative improvement of the SMOOTHED recon that counts as a new best (scale-
+# free, so model-agnostic). While the smoothed recon keeps beating its best by
+# this much, the codec is still finding lower ground and the freeze is vetoed -
+# this is what carries stage 1 through the low points a raw plateau hides.
+PRETRAIN_BEST_REL_TOL = 0.01
 
 # Conditioning-anchor weight for the energy head. The energy score alone is a
 # weak, high-variance signal: at small scale the head learns the right marginal
@@ -340,8 +350,8 @@ class CALMEncoder(BaseEncoder):
         "calm_recon_ce": {
             "description": (
                 "Raw per-step codec reconstruction CE during AE pretraining. "
-                "Its plateau is what the convergence detector watches; once the "
-                "codec freezes this stops updating."
+                "Jittery under ae_dropout; the convergence detector watches the "
+                "smoothed (EMA) version, not this. Stops updating once frozen."
             ),
             "chart": {
                 "title": "Codec Recon CE (pretrain)",
@@ -349,6 +359,35 @@ class CALMEncoder(BaseEncoder):
                 "y_scale": "logarithmic",
                 "group": "calm",
                 "order": 80,
+            },
+        },
+        "calm_recon_ema": {
+            "description": (
+                "EMA-smoothed codec recon CE - the signal the convergence "
+                "detector actually measures flatness on, so the ae_dropout "
+                "jitter in the raw curve can't fake a premature plateau."
+            ),
+            "chart": {
+                "title": "Codec Recon CE (smoothed)",
+                "y_label": "recon CE (EMA)",
+                "y_scale": "logarithmic",
+                "group": "calm",
+                "order": 81,
+            },
+        },
+        "calm_recon_best": {
+            "description": (
+                "Running best of the smoothed recon. While this keeps dropping "
+                "the codec is still finding lower ground and the freeze is "
+                "vetoed; the codec only freezes once the smoothed curve is flat "
+                "AND this has stopped improving."
+            ),
+            "chart": {
+                "title": "Codec Recon CE (best)",
+                "y_label": "best recon CE",
+                "y_scale": "logarithmic",
+                "group": "calm",
+                "order": 82,
             },
         },
         "calm_pretrain_flatness": {
@@ -468,6 +507,11 @@ class CALMEncoder(BaseEncoder):
         # microbatch data variance.
         self._recon_hist: list = []
         self._recon_accum: list = []
+        # EMA of the per-opt-step recon, and the running best of that EMA. Plain
+        # attributes (reset on resume, conservatively re-establishing the
+        # smoothing/best, same rationale as _pretrain_patience below).
+        self._recon_ema: Optional[float] = None
+        self._recon_best: float = float("inf")
         # Consecutive below-threshold readings so far (see PRETRAIN_PATIENCE).
         # Plain attribute, not a buffer: resetting to 0 on resume is safe - it
         # just re-requires the plateau to re-establish, which is conservative.
@@ -778,8 +822,31 @@ class CALMEncoder(BaseEncoder):
         self._recon_accum.append(recon)
         if len(self._recon_accum) < self._grad_accum:
             return
-        self._recon_hist.append(sum(self._recon_accum) / len(self._recon_accum))
+        group_mean = sum(self._recon_accum) / len(self._recon_accum)
         self._recon_accum.clear()
+
+        # EMA-smooth across optimizer steps before measuring convergence, so the
+        # ae_dropout jitter doesn't drown a slow true descent (or fake a plateau).
+        if self._recon_ema is None:
+            self._recon_ema = group_mean
+        else:
+            self._recon_ema = (
+                PRETRAIN_EMA_ALPHA * group_mean
+                + (1.0 - PRETRAIN_EMA_ALPHA) * self._recon_ema
+            )
+        smoothed = self._recon_ema
+        self._diag["calm_recon_ema"] = smoothed
+
+        # Running best of the smoothed recon. A new best (beating the prior by
+        # >REL_TOL) means the codec is still finding lower ground, so veto the
+        # freeze - the every-step read catches lows a sparse eval would miss.
+        # Tracked on the EMA, not raw, so dropout noise can't mint fake lows.
+        improved = smoothed < self._recon_best * (1.0 - PRETRAIN_BEST_REL_TOL)
+        if improved:
+            self._recon_best = smoothed
+        self._diag["calm_recon_best"] = self._recon_best
+
+        self._recon_hist.append(smoothed)
         if len(self._recon_hist) > PRETRAIN_WINDOW:
             self._recon_hist.pop(0)
         if step >= self.ae_max_pretrain_steps:
@@ -803,12 +870,15 @@ class CALMEncoder(BaseEncoder):
             std_y = (sum((v - mean_y) ** 2 for v in self._recon_hist) / n) ** 0.5
             flat = abs(slope * n) / (std_y + 1e-9)
             self._diag["calm_pretrain_flatness"] = flat
-            # Latch only after the LR warmup floor, with a full window, once the
-            # plateau has held for PRETRAIN_PATIENCE consecutive readings.
+            # Latch after the LR warmup floor, with a full window, once the
+            # smoothed series is flat AND has stopped setting new bests, held for
+            # PRETRAIN_PATIENCE readings. The new-best veto keeps a momentary
+            # flat reading mid-descent from latching prematurely.
             converging = (
                 len(self._recon_hist) >= PRETRAIN_WINDOW
                 and step >= self._pretrain_min_steps
                 and flat < PRETRAIN_FLAT_EPS
+                and not improved
             )
             if converging:
                 self._pretrain_patience += 1
