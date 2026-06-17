@@ -7,6 +7,21 @@ from typing import Any, Dict, Optional
 
 from praxis.integrations.base import BaseIntegration, IntegrationSpec
 
+# Host suffixes that identify a request arriving through the ngrok tunnel.
+NGROK_HOST_SUFFIXES = (".ngrok-free.app", ".ngrok.io")
+
+
+def _static_domain_suffix():
+    """Suffix for a configured static ngrok domain (NGROK_DOMAIN), if any.
+
+    Returned bare so ``host.endswith(...)`` matches both the exact domain and
+    any subdomain of it.
+    """
+    domain = os.getenv("NGROK_DOMAIN")
+    if not domain:
+        return None
+    return domain.lstrip(".")
+
 
 class NgrokTunnel:
     """Manages ngrok tunnel for the API server using the Python SDK."""
@@ -405,20 +420,18 @@ class Integration(BaseIntegration):
             print(f"🔐 Protected URL: {protected_url}")
             print(f"📡 Local server: http://{host}:{port}")
 
-            # Store ngrok info in Flask app config for middleware to access
+            # Wire the tunnel into the running Flask app.
             try:
-                from praxis import api
+                from praxis import web
 
-                # Store the ngrok information in app config
-                api.app.config["ngrok_url"] = base_url
-                api.app.config["ngrok_secret"] = _tunnel.webhook_secret
-                api.app.config["ngrok_protected_url"] = protected_url
+                # The before_request auth check reads the secret from app config.
+                web.app.config["ngrok_secret"] = _tunnel.webhook_secret
 
                 # Register the ngrok header using the generic hook
-                api.register_response_header("ngrok-skip-browser-warning", "true")
+                web.register_response_header("ngrok-skip-browser-warning", "true")
 
                 # Set up Flask routes with the secret
-                setup_ngrok_routes(api.app, _tunnel.webhook_secret)
+                setup_ngrok_routes(web.app, _tunnel.webhook_secret)
 
             except Exception as e:
                 print(f"Could not set up routes: {e}")
@@ -427,6 +440,29 @@ class Integration(BaseIntegration):
             import sys
 
             sys.exit(1)
+
+    def public_host_suffixes(self):
+        """Host suffixes that mark a request as arriving through the tunnel."""
+        suffixes = list(NGROK_HOST_SUFFIXES)
+        static = _static_domain_suffix()
+        if static:
+            suffixes.append(static)
+        return suffixes
+
+    def public_base_url(self):
+        """The protected tunnel URL (public URL + secret prefix), if active."""
+        if _tunnel is not None and _tunnel.public_url and _tunnel.webhook_secret:
+            return f"{_tunnel.public_url}/{_tunnel.webhook_secret}"
+        return None
+
+    def csp_sources(self):
+        """Allow the tunnel's domains to serve scripts under the CSP."""
+        sources = ["https://*.ngrok-free.app", "https://*.ngrok.io"]
+        static = _static_domain_suffix()
+        if static:
+            sources.append(f"https://*.{static}")
+            sources.append(f"https://{static}")
+        return {"script-src": sources}
 
     def request_middleware(self, request: Any, response: Any = None) -> Any:
         """Middleware for modifying requests/responses."""
@@ -439,9 +475,7 @@ class Integration(BaseIntegration):
         is_ngrok_request = (
             "ngrok-skip-browser-warning" in request.headers
             or "X-Forwarded-Host" in request.headers
-            or request.host.endswith(".ngrok-free.app")
-            or request.host.endswith(".ngrok.io")
-            or request.host.endswith(".src.eco")
+            or any(request.host.endswith(s) for s in self.public_host_suffixes())
         )
 
         if not is_ngrok_request:

@@ -358,7 +358,11 @@ class PagesSource(KBSource):
     def iter_items(self, since: float = 0.0) -> Iterable[KBItem]:
         """Newest pages, capped; ``since`` narrows to pages fetched after the
         given timestamp (the incremental indexing path)."""
+        from collections import Counter
+        from urllib.parse import urljoin
+
         from praxis.spider import SpiderSettings
+        from praxis.spider.fetch import canonical_url
         from praxis.spider.store import DEFAULT_SPIDER_DB
 
         if not DEFAULT_SPIDER_DB.exists():
@@ -387,7 +391,24 @@ class PagesSource(KBSource):
             conn.close()
         except sqlite3.Error:
             return
+        # Collapse URL variants of the same page (trailing slash, tracking
+        # params) so a page is indexed once. Rows arrive richness-first, so the
+        # first occurrence of each canonical key is the best one to keep.
+        seen, deduped = set(), []
+        for row in rows:
+            key = canonical_url(row[0])
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(row)
+        rows = deduped
         boilerplate = _site_boilerplate(rows)
+        # An og:image reused across several pages is the site's default share
+        # card, not a per-page preview - the visual analogue of boilerplate
+        # text. Drop it so the same thumbnail doesn't repeat down the feed.
+        shared_images = {
+            img for img, n in Counter(r[7] for r in rows if r[7]).items() if n >= 3
+        }
         for url, site, title, text, summary, fetched, richness, image in rows:
             host = site.split("//", 1)[-1]
             common = boilerplate.get(site, frozenset())
@@ -396,6 +417,10 @@ class PagesSource(KBSource):
             )
             if not body and not title.replace("- YouTube", "").strip():
                 continue  # consent/blocked husk: chrome-only body, empty title
+            # Resolve images stored before absolute-URL normalization landed, so
+            # old relative og:image rows render instead of breaking; drop the
+            # site-default share cards that repeat across pages.
+            image = urljoin(url, image) if image and image not in shared_images else ""
             yield KBItem(
                 id=f"page:{url}",
                 type="page",

@@ -475,7 +475,8 @@ export function createKbResult({ id, type, label, title, uri, origin, summary, s
             <div class="kb-result-media">
                 ${chip}
                 <img class="kb-result-thumb" loading="lazy" decoding="async" alt=""
-                     src="${escapeHtml(image)}">
+                     src="${escapeHtml(image)}"
+                     onerror="this.remove()">
             </div>
             <div class="kb-result-text">
                 <span class="kb-result-title">${escapeHtml(cleanTitle)}</span>

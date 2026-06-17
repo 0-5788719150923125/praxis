@@ -390,6 +390,43 @@ class IntegrationLoader:
         """Get all request middleware functions."""
         return self.integration_registry["request_middleware"]
 
+    def get_public_host_suffixes(self) -> List[str]:
+        """Collect public host suffixes declared by all loaded integrations."""
+        suffixes: List[str] = []
+        for integration in self.loaded_integrations.values():
+            try:
+                for suffix in integration.public_host_suffixes() or []:
+                    if suffix and suffix not in suffixes:
+                        suffixes.append(suffix)
+            except Exception as e:
+                print(f"public_host_suffixes failed for {integration.name}: {e}")
+        return suffixes
+
+    def get_public_base_url(self) -> Optional[str]:
+        """First externally-reachable base URL provided by a loaded integration."""
+        for integration in self.loaded_integrations.values():
+            try:
+                url = integration.public_base_url()
+                if url:
+                    return url
+            except Exception as e:
+                print(f"public_base_url failed for {integration.name}: {e}")
+        return None
+
+    def get_csp_sources(self) -> Dict[str, List[str]]:
+        """Merge CSP sources declared by all loaded integrations, by directive."""
+        merged: Dict[str, List[str]] = {}
+        for integration in self.loaded_integrations.values():
+            try:
+                for directive, sources in (integration.csp_sources() or {}).items():
+                    bucket = merged.setdefault(directive, [])
+                    for src in sources:
+                        if src and src not in bucket:
+                            bucket.append(src)
+            except Exception as e:
+                print(f"csp_sources failed for {integration.name}: {e}")
+        return merged
+
     def get_loss_functions(self) -> Dict:
         """Get all loss functions provided by integrations."""
         return self.integration_registry["loss_functions"]

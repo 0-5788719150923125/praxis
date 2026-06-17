@@ -263,6 +263,20 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
             "type": "bar",
         },
     },
+    "kb_size_mb": {
+        "description": (
+            "On-disk size of the knowledge base (FTS index + spider store, with "
+            "write-ahead logs) in MB. Rises as the spider grounds more pages; "
+            "a monitor for crawl storage growth."
+        ),
+        "chart": {
+            "title": "Knowledge Base Size",
+            "y_label": "MB",
+            "y_scale": "linear",
+            "order": 101,
+            "is_validation": False,
+        },
+    },
     # The following are persisted for record-keeping but don't currently
     # get their own Research-tab chart (no chart hint). They still flow
     # through the logger and API as named columns.

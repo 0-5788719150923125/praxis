@@ -29,15 +29,43 @@ CORS_ORIGINS = "*"
 CORS_METHODS = ["GET", "POST", "OPTIONS", "HEAD"]
 CORS_HEADERS = ["Content-Type"]
 
-# Content Security Policy
-CSP_POLICY = (
-    "default-src 'self' https:; "
-    # TODO: implement an interface for users to add their own trusted domains, so that integrations can be added without modifying this config file.
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://*.ngrok-free.app https://*.ngrok.io; "
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-    "font-src 'self' https://fonts.gstatic.com; "
-    "connect-src 'self' wss: ws: https: http:;"
-)
+# Content Security Policy. Base directives only; integrations contribute their
+# own trusted domains via the csp_sources() hook (see build_csp_policy).
+CSP_DIRECTIVES = {
+    "default-src": ["'self'", "https:"],
+    "script-src": [
+        "'self'",
+        "'unsafe-inline'",
+        "'unsafe-eval'",
+        "https://cdnjs.cloudflare.com",
+        "https://cdn.jsdelivr.net",
+    ],
+    "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+    "font-src": ["'self'", "https://fonts.gstatic.com"],
+    "connect-src": ["'self'", "wss:", "ws:", "https:", "http:"],
+}
+
+
+def build_csp_policy(extra_sources=None):
+    """Build the CSP header, merging integration-contributed sources by directive.
+
+    Args:
+        extra_sources: Optional mapping of directive -> list of extra sources.
+    """
+    directives = {name: list(vals) for name, vals in CSP_DIRECTIVES.items()}
+    for directive, sources in (extra_sources or {}).items():
+        bucket = directives.setdefault(directive, [])
+        for src in sources:
+            if src not in bucket:
+                bucket.append(src)
+    return (
+        "; ".join(f"{name} {' '.join(vals)}" for name, vals in directives.items())
+        + ";"
+    )
+
+
+# Base policy with no integrations loaded (kept for callers that need a constant).
+CSP_POLICY = build_csp_policy()
 
 # Git HTTP backend configuration
 GIT_ALLOWED_SERVICES = ["git-upload-pack", "git-receive-pack"]

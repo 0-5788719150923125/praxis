@@ -21,32 +21,54 @@ from praxis.cli.loaders.experiments import load_rendered_config
 from praxis.optimizers import get_parameter_stats
 from praxis.utils import mask_git_url
 
-from ..config import CSP_POLICY
+from ..config import build_csp_policy
 from ..spec_data import build_spec_payload, load_run_spec
 
 core_bp = Blueprint("core", __name__)
 
 
+def _public_host_suffixes(app_config) -> list[str]:
+    """Public host suffixes declared by active integrations (e.g. tunnels)."""
+    loader = app_config.get("integration_loader")
+    if loader is None:
+        return []
+    try:
+        return loader.get_public_host_suffixes()
+    except Exception:
+        return []
+
+
+def _is_public_host(host: str, app_config) -> bool:
+    """Whether the request host is served via an integration's public endpoint."""
+    return any(host.endswith(s) for s in _public_host_suffixes(app_config))
+
+
+def _public_base_url(app_config) -> str | None:
+    """Externally-reachable base URL exposed by an active integration (e.g. a tunnel)."""
+    loader = app_config.get("integration_loader")
+    if loader is None:
+        return None
+    try:
+        return loader.get_public_base_url()
+    except Exception:
+        return None
+
+
 def _compute_git_url(app_config) -> str | None:
     """Build the git URL for the *current* run based on the request host."""
-    ngrok_url = app_config.get("ngrok_url")
-    ngrok_secret = app_config.get("ngrok_secret")
     configured_host = app_config.get("configured_host")
     configured_port = app_config.get("configured_port")
 
-    if ngrok_url and ngrok_secret:
-        return f"{ngrok_url}/{ngrok_secret}/praxis"
+    public_base = _public_base_url(app_config)
+    if public_base:
+        return f"{public_base}/praxis"
     if configured_host and configured_host != "localhost":
         if configured_host.startswith(("https://", "http://")):
             return f"{configured_host}/praxis"
         return f"http://{configured_host}:{configured_port}/praxis"
 
     host = request.host.split(":")[0] if ":" in request.host else request.host
-    if (
-        host.endswith(".ngrok-free.app")
-        or host.endswith(".ngrok.io")
-        or host.endswith(".src.eco")
-    ):
+    if _is_public_host(host, app_config):
         return f"https://{host}/praxis"
     port = request.host.split(":")[1] if ":" in request.host else "80"
     return f"http://{host}:{port}/praxis"
@@ -56,9 +78,16 @@ def _compute_git_url(app_config) -> str | None:
 def home():
     """Serve the main page."""
     donations = current_app.config.get("donations", "")
-    response = make_response(render_template("index.html", donations=donations))
-    response.headers["Content-Security-Policy"] = CSP_POLICY
-    response.headers["ngrok-skip-browser-warning"] = "true"
+    loader = current_app.config.get("integration_loader")
+    csp_sources = loader.get_csp_sources() if loader else {}
+
+    host = request.host.split(":")[0] if ":" in request.host else request.host
+    proxied = _is_public_host(host, current_app.config)
+
+    response = make_response(
+        render_template("index.html", donations=donations, proxied=proxied)
+    )
+    response.headers["Content-Security-Policy"] = build_csp_policy(csp_sources)
     return response
 
 

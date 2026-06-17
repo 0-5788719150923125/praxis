@@ -64,8 +64,11 @@ class RoPE(NoPE):
         """Bounded, learned theta for a given recurrent depth."""
         idx = torch.tensor(current_depth, device=self.log_theta_base.device)
         z = self.log_theta_base + self.depth_log_theta(idx).squeeze(-1)
-        span = THETA_MAX / THETA_MIN
-        return THETA_MIN * span ** torch.sigmoid(z)
+        # span**sigmoid(z) written as exp(sigmoid(z)*log(span)): a scalar-base
+        # power's backward needs log(base), which inductor can't lower when
+        # dynamic=True makes the scalar a symbolic float (NYI log symbolic float).
+        log_span = math.log(THETA_MAX / THETA_MIN)
+        return THETA_MIN * torch.exp(log_span * torch.sigmoid(z))
 
     def _compute_inv_freq(
         self, head_dim: int, device: torch.device, current_depth: int

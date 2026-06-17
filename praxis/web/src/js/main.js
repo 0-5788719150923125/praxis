@@ -384,8 +384,9 @@ function loadSettings() {
     // Load API URL
     const savedApiUrl = storage.get('apiUrl');
     if (savedApiUrl) {
-        // Skip if we're on ngrok (use dynamic URL)
-        if (!window.location.hostname.includes('ngrok')) {
+        // Skip when served through a public tunnel/proxy (use the dynamic origin).
+        const proxied = (document.querySelector('meta[name="praxis-proxied"]')?.content || '') === 'true';
+        if (!proxied) {
             state.settings.apiUrl = savedApiUrl;
         }
     }

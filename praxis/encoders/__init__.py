@@ -142,12 +142,13 @@ CALMByteSmall = partial(
     vote_num_samples=500,
 )
 
-# Baseline for the calm-a-1 ablation: the published repo's dims (latent 128, AE
+# Baseline for the calm-a ablations: the published repo's dims (latent 128, AE
 # hidden 512, noise 64, 4 head blocks, dropout 0.15) with ONE departure from the
-# authors - a deeper residual codec (vae_depth=4).
+# authors - a deeper residual codec (vae_depth=4). chunk_size=16 is the byte-level
+# K (~16 bytes per latent); CALMTmRef overrides it to K=4 for subword tokenizers.
 CALMByteRef = partial(
     CALMEncoder,
-    chunk_size=8,
+    chunk_size=16,
     latent_dim=0.5,
     ae_hidden=2.0,
     vae_depth=4,
@@ -166,8 +167,8 @@ CALMByteRef = partial(
 
 # CALMByteRef at the reference's true patch granularity: K=4 subword tokens
 # (~15-20 bytes of text per latent) for a TokenMonster/BPE tokenizer. The
-# calm-a-1 ablation uses this so byte-level patching - itself unexplored for
-# CALM - stays out of the ablated variable set.
+# calm-a-1 ablation uses this; calm-a-2 uses CALMByteRef (K=16) directly so the
+# only moved variable is byte vs subword tokenization.
 CALMTmRef = partial(
     CALMByteRef,
     chunk_size=4,

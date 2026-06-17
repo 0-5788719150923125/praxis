@@ -31,11 +31,27 @@ class SpiderCallback(Callback):
             ),
             "spider_frontier": float(counts.get("frontier", 0)),
             "spider_sites": float(counts.get("sites", 0)),
+            "kb_size_mb": self._kb_size_mb(),
         }
         try:
             pl_module.log_dict(scalars, on_step=True, on_epoch=False, logger=True)
         except Exception:
             pass
+
+    @staticmethod
+    def _kb_size_mb() -> float:
+        """On-disk footprint of the knowledge base in MB: the FTS index plus the
+        spider's store of record, including their write-ahead logs."""
+        from praxis.kb.index import DEFAULT_DB_PATH
+
+        total = 0
+        for db in (DEFAULT_DB_PATH, DEFAULT_SPIDER_DB):
+            for path in (db, db.with_suffix(db.suffix + "-wal")):
+                try:
+                    total += path.stat().st_size
+                except OSError:
+                    pass
+        return total / (1024 * 1024)
 
     @staticmethod
     def _counts():

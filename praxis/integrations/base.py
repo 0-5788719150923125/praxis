@@ -229,6 +229,38 @@ class BaseIntegration(ABC):
         """
         pass
 
+    def public_host_suffixes(self) -> List[str]:
+        """Host suffixes that mark a request as arriving via this integration's
+        public endpoint (e.g. a tunnel domain like ``.example.com``).
+
+        The web layer uses these to detect proxied/public requests without
+        hardcoding integration-specific domains.
+
+        Note: Override this method if your integration exposes the server on
+        external hostnames.
+        """
+        return []
+
+    def public_base_url(self) -> Optional[str]:
+        """The externally-reachable base URL this integration currently exposes
+        the server at, including any secret path prefix (or None if inactive).
+
+        The web layer prefixes route paths onto this to advertise reachable URLs
+        (e.g. the git clone URL) without knowing integration-specific config.
+
+        Note: Override this method if your integration provides a public URL.
+        """
+        return None
+
+    def csp_sources(self) -> Dict[str, List[str]]:
+        """Content-Security-Policy sources this integration needs allowed,
+        keyed by directive (e.g. ``{"script-src": ["https://*.example.com"]}``).
+
+        Note: Override this method if your integration is served from or loads
+        resources from external origins.
+        """
+        return {}
+
     def on_decoder_init(self, decoder: Any, config: Any) -> None:
         """Hook called when a decoder is initialized.
 

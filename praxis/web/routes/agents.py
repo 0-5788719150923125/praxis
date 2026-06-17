@@ -35,16 +35,16 @@ def get_agents():
 
         # Get current instance details
         try:
-            # Get our git URL - prioritize ngrok if active
-            ngrok_url = current_app.config.get("ngrok_url")
-            ngrok_secret = current_app.config.get("ngrok_secret")
+            # Get our git URL - prioritize a public integration endpoint if active
+            loader = current_app.config.get("integration_loader")
+            public_base = loader.get_public_base_url() if loader else None
 
             configured_host = current_app.config.get("configured_host")
             configured_port = current_app.config.get("configured_port")
 
-            if ngrok_url and ngrok_secret:
-                # Ngrok is active - use the protected URL
-                git_url = f"{ngrok_url}/{ngrok_secret}/praxis"
+            if public_base:
+                # A public endpoint (e.g. tunnel) is active - use its protected URL
+                git_url = f"{public_base}/praxis"
             elif configured_host and configured_host != "localhost":
                 # If host includes a scheme (e.g., https://host.example.com), use it directly
                 if configured_host.startswith(("https://", "http://")):
@@ -52,7 +52,7 @@ def get_agents():
                 else:
                     git_url = f"http://{configured_host}:{configured_port}/praxis"
             else:
-                # No ngrok or explicit host - use local URL
+                # No public endpoint or explicit host - use local URL
                 git_url = f"http://localhost:{current_port}/praxis"
 
             # Get git hash and timestamp

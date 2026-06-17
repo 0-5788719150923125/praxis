@@ -12,7 +12,7 @@ import urllib.robotparser
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from typing import Dict, List, Optional
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urljoin, urlsplit, urlunsplit
 
 from praxis.spider.enrichers import enricher_for
 
@@ -120,15 +120,66 @@ def _robots_allowed(url: str, cache: Dict[str, object]) -> bool:
     return parser.can_fetch(USER_AGENT, url)
 
 
+# Query keys that only track a click; they never change which page is served,
+# so dropping them collapses URL variants that would otherwise be stored and
+# indexed as separate (duplicate) pages.
+_TRACKING_PARAMS = frozenset(
+    {
+        "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+        "utm_id", "utm_name", "utm_reader", "utm_social", "utm_brand",
+        "fbclid", "gclid", "dclid", "msclkid", "yclid", "mc_eid", "mc_cid",
+        "igshid", "igsh", "ref", "ref_src", "ref_url", "spm",
+        "_hsenc", "_hsmi", "oly_enc_id", "oly_anon_id",
+    }
+)  # fmt: skip
+
+
+def canonical_url(url: str) -> str:
+    """A stable identity for a page: lowercased scheme/host, no default port, no
+    trailing slash, no fragment, and tracking-only query params dropped. This is
+    the dedup key - it collapses the trailing-slash / utm variants that would
+    otherwise store and index the same page several times. Meaningful params
+    (e.g. ``?v=`` on a watch URL) and ``www`` are preserved (``www`` is part of
+    the site key the crawler matches on)."""
+    parts = urlsplit(url)
+    netloc = parts.netloc.lower()
+    # Drop the port when it's the scheme's default.
+    if (parts.scheme, parts.port) in (("http", 80), ("https", 443)):
+        netloc = (parts.hostname or "").lower()
+    query = "&".join(
+        f"{k}={v}" if v else k
+        for k, v in parse_qsl(parts.query, keep_blank_values=True)
+        if k.lower() not in _TRACKING_PARAMS
+    )
+    # Drop trailing slashes, including a bare "/" root, so the slash variants
+    # of a page collapse to one key.
+    path = parts.path.rstrip("/")
+    return urlunsplit((parts.scheme.lower(), netloc, path, query, ""))
+
+
 def _normalize_link(href: str, base_url: str) -> Optional[str]:
-    """Resolve an href to a fragment-free absolute http(s) URL, or None.
+    """Resolve an href to a canonical absolute http(s) URL, or None.
     Cross-site links are kept: the worker splits them into frontier edges
     (same site) vs citation counts toward watching a new site."""
     url = urljoin(base_url, href)
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https"):
         return None
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, ""))
+    return canonical_url(url)
+
+
+def _absolute_image(image: str, base_url: str) -> str:
+    """Resolve an og:image reference to an absolute http(s) URL the dashboard
+    can actually load. Relative (``/img/x.jpg``) and protocol-relative
+    (``//cdn/x.jpg``) references are the common cause of broken thumbnails -
+    the browser would otherwise resolve them against the dashboard's own
+    origin. Anything that isn't http(s) is dropped."""
+    if not image:
+        return ""
+    url = urljoin(base_url, image.strip())
+    if urlsplit(url).scheme not in ("http", "https"):
+        return ""
+    return url
 
 
 def fetch_page(
@@ -186,7 +237,7 @@ def fetch_page(
             extractor.text,
             extractor.description,
         )
-        image = extractor.image
+        image = _absolute_image(extractor.image, url)
         hrefs = list(extractor.links)
         if enricher is not None:
             extra = enricher.enrich_html(url, html)
