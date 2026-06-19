@@ -33,6 +33,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from praxis.heads.energy import ENERGY_PRIOR_REGISTRY, EnergyHead
+from praxis.heads.flow import LATENT_HEAD_REGISTRY
 from praxis.losses import get_loss_function
 from praxis.losses.energy_score import energy_score_loss
 
@@ -333,6 +334,23 @@ class CALMEncoder(BaseEncoder):
                 "order": 65,
             },
         },
+        "calm_head_token_acc": {
+            "description": (
+                "Teacher-forced next-patch token accuracy of the head's "
+                "best-guess (zero-noise) prediction decoded through the frozen "
+                "codec. The live, head-agnostic, absolute version of the probe's "
+                "make-or-break signal: energy sat at ~0; watch flow climb off it. "
+                "Unlike the loss/cond_gap (head-specific units), this is "
+                "comparable across head kinds."
+            ),
+            "chart": {
+                "title": "Head Next-Patch Token Acc",
+                "y_label": "accuracy",
+                "y_scale": "linear",
+                "group": "calm",
+                "order": 64,
+            },
+        },
         "calm_ae_frozen": {
             "description": (
                 "1 once the codec is frozen and stage 2 (energy head only) "
@@ -438,6 +456,7 @@ class CALMEncoder(BaseEncoder):
         vote_temperature: float = 0.5,
         energy_prior: str = "linear",
         energy_anchor_weight: float = ENERGY_ANCHOR_WEIGHT,
+        head_kind: str = "energy",
     ) -> None:
         super().__init__()
         self.config = config
@@ -601,7 +620,13 @@ class CALMEncoder(BaseEncoder):
             nn.LayerNorm(config.hidden_size, eps=1e-6),
         )
 
-        self.energy_head = EnergyHead(
+        # energy = implicit generator + energy score; flow = flow-matching
+        # velocity field. Same slot, same sample/forward surface - the loss
+        # branches in _register_head_loss. Attribute stays `energy_head` so
+        # generation/diagnostic call sites are head-agnostic.
+        self.head_kind = head_kind
+        head_cls = LATENT_HEAD_REGISTRY[head_kind]
+        self.energy_head = head_cls(
             cond_dim=config.hidden_size,
             noise_dim=self.noise_dim,
             latent_dim=self.latent_dim,
@@ -611,9 +636,9 @@ class CALMEncoder(BaseEncoder):
         # Closed-form linear prior (reservoir-style readout): solved from EMA
         # sufficient statistics over a post-freeze window, then frozen; the
         # MLP learns only the residual. See ENERGY_PRIOR_REGISTRY for options
-        # ("none" = paper-pure ablation).
+        # ("none" = paper-pure ablation). Energy head only; flow has none.
         prior_factory = ENERGY_PRIOR_REGISTRY[energy_prior]
-        if prior_factory is not None:
+        if prior_factory is not None and head_kind != "flow":
             period = max(2, int(getattr(config, "block_size", 512)) // self.K)
             self.energy_head.set_prior(
                 prior_factory(
@@ -639,6 +664,7 @@ class CALMEncoder(BaseEncoder):
         return (
             f"{self.__class__.__name__}("
             f"K={self.K}, "
+            f"head={self.head_kind}, "
             f"latent={self.latent_dim}, "
             f"ae_hidden={self.ae_hidden}, "
             f"energy_blocks={self.energy_blocks}, "
@@ -1014,12 +1040,20 @@ class CALMEncoder(BaseEncoder):
         recon_hidden = self.vae.decode(z)
         recon_logits = self._classify(recon_hidden)
 
-        # Unconditional call: gating happens inside the dynamo-disabled body.
-        # Gating *here* puts the graph-break under a Python branch and
-        # produces SpeculationLogDivergence on dynamo retries.
-        self._register_energy_loss(h)
+        # Unconditional call: gating (and the energy/flow head branch) happens
+        # inside the dynamo-disabled body. Gating *here* puts the graph-break
+        # under a Python branch and produces SpeculationLogDivergence on retries.
+        self._register_head_loss(h)
 
         return recon_logits, recon_hidden
+
+    @dynamo.disable()
+    def _register_head_loss(self, h: torch.Tensor) -> None:
+        """Dispatch the stage-2 latent objective by head kind."""
+        if self.head_kind == "flow":
+            self._register_flow_loss(h)
+        else:
+            self._register_energy_loss(h)
 
     @dynamo.disable()
     def _register_energy_loss(self, h: torch.Tensor) -> None:
@@ -1173,6 +1207,7 @@ class CALMEncoder(BaseEncoder):
         # Detach in eval: val_loss only needs the scalar, never a backward graph.
         self._pending_losses["energy"] = total if self.training else total.detach()
         self._diag["calm_energy_loss"] = float((self.energy_alpha * loss).detach())
+        self._stash_head_token_acc(h_cond)
 
         # Post-freeze prior re-solve: milestone-gated by cond_gap, kept only if
         # the energy-loss EMA does not regress (see LinearPrior.update_resolve).
@@ -1184,6 +1219,74 @@ class CALMEncoder(BaseEncoder):
             )
             self._diag["calm_prior_resolves"] = float(prior.resolves_kept.item())
             self._diag["calm_prior_rejected"] = float(prior.resolves_rejected.item())
+
+    @dynamo.disable()
+    def _register_flow_loss(self, h: torch.Tensor) -> None:
+        """Flow-matching loss between the head's velocity field and the
+        posterior targets. Same stage-2 gate and target construction as the
+        energy path, but a dense regression objective (lower variance than the
+        sample-based score). Reuses calm_energy_loss / calm_energy_cond_gap so
+        the dashboard and probe stay head-agnostic.
+        """
+        B, N = h.shape[0], h.shape[1]
+        if N < 2:
+            return
+        if self.requires_pretraining or self.ae_freeze_steps > 0:
+            active = self._ae_is_frozen()
+        else:
+            active = self._opt_step() >= self.energy_warmup_steps
+        if not active:
+            return
+
+        h_cond = h[:, :-1, :]  # position p predicts latent p+1
+        mean_t = self._last_mean[:, 1:, :].detach()
+        logvar_t = self._last_logvar[:, 1:, :].detach()
+        # S posterior draws per position (reference flow num_samples == 8);
+        # the dense FM target makes the energy head's M=100 pool unnecessary.
+        S = self.energy_samples_n
+        std_t = (0.5 * logvar_t).exp()
+        eps_t = torch.randn(S, *mean_t.shape, device=mean_t.device, dtype=mean_t.dtype)
+        target = self.vae.normalize_latent(
+            mean_t.unsqueeze(0) + std_t.unsqueeze(0) * eps_t
+        )  # [S, B, N-1, L]
+        cond = h_cond.unsqueeze(0).expand(S, *h_cond.shape)  # [S, B, N-1, hidden]
+
+        # Shared flow noise/time so matched vs mismatched is apples-to-apples.
+        x0 = torch.randn_like(target)
+        tau = torch.rand(target.shape[:-1], device=target.device, dtype=target.dtype)
+        loss = self.energy_head.flow_loss(target, cond, x0=x0, t=tau).mean()
+
+        # cond_gap: re-score against targets rolled one patch out of alignment.
+        # No drop = the field ignores context (marginal, not sequence).
+        if N > 2:
+            mismatched = self.energy_head.flow_loss(
+                target.roll(1, dims=2), cond, x0=x0, t=tau
+            ).mean()
+            self._diag["calm_energy_cond_gap"] = float((mismatched - loss).detach())
+
+        total = self.energy_alpha * loss
+        self._pending_losses["energy"] = total if self.training else total.detach()
+        self._diag["calm_energy_loss"] = float(total.detach())
+        self._stash_head_token_acc(h_cond)
+
+    @torch.no_grad()
+    def _stash_head_token_acc(self, h_cond: torch.Tensor) -> None:
+        """Teacher-forced next-patch token accuracy of the head's best-guess.
+
+        Decode the head's zero-noise prediction through the frozen codec and
+        match argmax tokens against the true next patches - the live,
+        head-agnostic, absolute view of the probe's make-or-break signal.
+        """
+        t_cond = torch.arange(h_cond.shape[1], device=h_cond.device)
+        zero_noise = h_cond.new_zeros(*h_cond.shape[:-1], self.energy_head.noise_dim)
+        z_hat = self.energy_head(h_cond, zero_noise, t=t_cond)
+        pred = self._classify(self.vae.decode(z_hat)).argmax(dim=-1)
+        labels = self._last_padded[:, self.K :]
+        mask = labels != self.pad_token_id
+        if mask.any():
+            self._diag["calm_head_token_acc"] = float(
+                (pred[mask] == labels[mask]).float().mean()
+            )
 
     # ------------------------------------------------------------------
     # Loss side-channel

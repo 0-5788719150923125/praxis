@@ -18,7 +18,7 @@ The Praxis platform is an ever-evolving, local-first, peer-to-peer, burstable, f
 
 <!-- AUTODOC:FEATURES:BEGIN -->
 
-Praxis is organized as 44 pluggable registries. The feature categories below link to a docs page listing the concrete implementations and their source. See [docs/index.md](docs/index.md) for the full map.
+Praxis is organized as 45 pluggable registries. The feature categories below link to a docs page listing the concrete implementations and their source. See [docs/index.md](docs/index.md) for the full map.
 
 - [Activation functions](docs/activations.md) (33)
 - [Attention mechanisms](docs/attention.md) (8)
@@ -27,7 +27,7 @@ Praxis is organized as 44 pluggable registries. The feature categories below lin
 - [Decoder block layouts](docs/blocks.md) (9)
 - [Feedforward experts](docs/dense.md) (7)
 - [Halting / early exit](docs/halting.md) (2)
-- [Input encoders](docs/encoders.md) (13)
+- [Input encoders](docs/encoders.md) (14)
 - [Layer-routing controllers](docs/controllers.md) (8)
 - [Long-term memory](docs/memory.md) (4)
 - [Loss functions](docs/losses.md) (9)

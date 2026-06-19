@@ -165,6 +165,15 @@ CALMByteRef = partial(
     energy_anchor_weight=0.0,
 )
 
+# CALMByteRef with the energy head swapped for a flow-matching head: the
+# probe showed the codec round-trips losslessly but the energy head never
+# learns the conditional (acc 0 even teacher-forced), so the flow head's
+# dense low-variance objective is the calm-a-2 intervention.
+CALMByteFlow = partial(
+    CALMByteRef,
+    head_kind="flow",
+)
+
 # CALMByteRef at the reference's true patch granularity: K=4 subword tokens
 # (~15-20 bytes of text per latent) for a TokenMonster/BPE tokenizer. The
 # calm-a-1 ablation uses this; calm-a-2 uses CALMByteRef (K=16) directly so the
@@ -210,6 +219,7 @@ ENCODER_REGISTRY = dict(
     calm_byte_small=CALMByteSmall,
     calm_byte_small_harmonic=CALMByteSmallHarmonic,
     calm_byte_ref=CALMByteRef,
+    calm_byte_flow=CALMByteFlow,
     calm_tm_ref=CALMTmRef,
     calm_bpe=CALMBpe,
     # # Entropy-based patching
