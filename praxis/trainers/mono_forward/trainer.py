@@ -1928,11 +1928,15 @@ class MonoForwardTrainer:
         if self.tokenizer is None:
             return None
 
-        from praxis.generation import (
-            ContextStreams,
-            StreamingContext,
-            random_char_seed,
-        )
+        from praxis.generation import ContextStreams, StreamingContext
+        from praxis.generation.streaming import random_char_seed, random_text_seed
+        from praxis.trainers.setup import _encoder_patch_size
+
+        # Patch-compressing encoders (CALM) need a full patch of K real chars as
+        # the seed; a sub-K seed leaves the conditioning patch mostly pad, which
+        # the model can only answer with a degenerate run (see random_text_seed).
+        K = _encoder_patch_size(getattr(self._config, "encoder_type", None))
+        seed_factory = (lambda: random_text_seed(K)) if K > 1 else random_char_seed
 
         # Build the list of ignored n-grams the same way the backprop
         # TerminalInterface does - special tokens shouldn't count
@@ -1949,7 +1953,7 @@ class MonoForwardTrainer:
         # each degeneracy reset, matching the backprop TerminalInterface.
         def _make_streaming(block):
             return StreamingContext(
-                initial_text=random_char_seed,
+                initial_text=seed_factory,
                 max_length=int(self.inference_max_context_chars * block.context_scale),
                 ignored_n_grams=ignored_n_grams,
             )
@@ -1959,7 +1963,7 @@ class MonoForwardTrainer:
             return int(ids.shape[1]) if ids is not None else 0
 
         self._context_streams = ContextStreams(
-            _make_streaming, token_counter=_count_tokens
+            _make_streaming, token_counter=_count_tokens, seed_factory=seed_factory
         )
         return self._context_streams
 

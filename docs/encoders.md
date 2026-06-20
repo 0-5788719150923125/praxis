@@ -39,13 +39,13 @@ Presets:
 
 Shared contract for encoders plugged into the model's input slot.
 
-Source: [praxis/encoders/calm/encoder.py:119](../praxis/encoders/calm/encoder.py#L119)
+Source: [praxis/encoders/calm/encoder.py:120](../praxis/encoders/calm/encoder.py#L120)
 
 Presets:
 - `calm` - `ae_dropout=0.15, ae_hidden=512, chunk_size=8, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=128, noise_dim=128`
 - `calm_bpe` - `ae_dropout=0.15, ae_hidden=512, chunk_size=4, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=128, noise_dim=128`
 - `calm_byte` - `ae_dropout=0.15, ae_hidden=512, chunk_size=16, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=128, noise_dim=128`
-- `calm_byte_flow` - `ae_dropout=0.15, ae_hidden=2.0, chunk_size=16, energy_alpha=1.0, energy_anchor_weight=0.0, energy_blocks=4, energy_prior='none', energy_samples_m=100, energy_samples_n=8, head_kind='flow', kl_beta=0.001, kl_clip=0.5, latent_dim=0.5, noise_dim=0.25, vae_depth=4, vote_num_samples=500`
+- `calm_byte_flow` - `ae_dropout=0.15, ae_hidden=2.0, ae_max_pretrain_steps=3000, chunk_size=16, energy_alpha=1.0, energy_anchor_weight=0.0, energy_blocks=4, energy_prior='none', energy_samples_m=100, energy_samples_n=8, head_kind='flow', kl_beta=0.001, kl_clip=0.5, latent_dim=0.5, noise_dim=0.25, vae_depth=4, vote_num_samples=500`
 - `calm_byte_ref` - `ae_dropout=0.15, ae_hidden=2.0, chunk_size=16, energy_alpha=1.0, energy_anchor_weight=0.0, energy_blocks=4, energy_prior='none', energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=0.5, noise_dim=0.25, vae_depth=4, vote_num_samples=500`
 - `calm_byte_small` - `ae_dropout=0.1, ae_hidden=1.5, chunk_size=8, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=0.5, noise_dim=0.5, vote_num_samples=500`
 - `calm_byte_small_harmonic` - `ae_dropout=0.1, ae_dropout_cycles=2, ae_dropout_mode='harmonic', ae_hidden=1.5, chunk_size=8, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=0.5, noise_dim=0.5, vote_num_samples=500`

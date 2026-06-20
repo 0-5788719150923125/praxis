@@ -165,13 +165,22 @@ CALMByteRef = partial(
     energy_anchor_weight=0.0,
 )
 
-# CALMByteRef with the energy head swapped for a flow-matching head: the
-# probe showed the codec round-trips losslessly but the energy head never
-# learns the conditional (acc 0 even teacher-forced), so the flow head's
-# dense low-variance objective is the calm-a-2 intervention.
+# CALMByteRef with the energy head swapped for a flow-matching head: the probe
+# showed the codec round-trips losslessly but the energy head never learns the
+# conditional (acc 0 even teacher-forced), so the flow head's dense low-variance
+# objective is the calm-a-2 intervention.
+# K=4 (4:1 codec compression) not the reference's K=16: at 16:1 the codec
+# manifold was a thin high-norm shell that the flow head couldn't hit at small
+# scale (off-manifold -> gibberish). 4:1 is near-lossless with a forgiving
+# manifold - testing whether the failure is over-aggressive patching (encoder
+# variance), not model scale.
+# Cap stage 1 well under the 20k backstop so it can't pretrain for days; K=4
+# recon converges fast, so the detector likely freezes before this anyway.
 CALMByteFlow = partial(
     CALMByteRef,
     head_kind="flow",
+    chunk_size=4,
+    ae_max_pretrain_steps=3000,
 )
 
 # CALMByteRef at the reference's true patch granularity: K=4 subword tokens

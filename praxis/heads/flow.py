@@ -207,7 +207,9 @@ class FlowHead(nn.Module):
         flat = math.prod(lead) if lead else 1
         c = cond.reshape(flat, -1)
         x = x.reshape(flat, -1)
-        steps = FLOW_SAMPLE_STEPS // 2 if FLOW_SOLVER == "midpoint" else FLOW_SAMPLE_STEPS
+        steps = (
+            FLOW_SAMPLE_STEPS // 2 if FLOW_SOLVER == "midpoint" else FLOW_SAMPLE_STEPS
+        )
         dt = 1.0 / steps
         for step in range(steps):
             t = torch.full((flat,), step / steps, device=x.device, dtype=x.dtype)
@@ -242,8 +244,11 @@ class FlowHead(nn.Module):
         cond = h.unsqueeze(0).expand(num_samples, *h.shape)
         x0 = (
             torch.randn(
-                num_samples, *h.shape[:-1], self.latent_dim,
-                device=h.device, dtype=noise_dtype,
+                num_samples,
+                *h.shape[:-1],
+                self.latent_dim,
+                device=h.device,
+                dtype=noise_dtype,
             )
             * noise_scale
         )

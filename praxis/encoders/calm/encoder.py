@@ -102,11 +102,12 @@ GEOMETRIC_RADIAL_WEIGHT = 1.0
 # the full window - an early, small-sample Δ is informative but too noisy to
 # latch on.
 PRETRAIN_MIN_SAMPLES = 16
-# Consecutive below-threshold readings required before convergence latches. The
-# window slides one sample per optimizer step, so this demands the plateau hold
-# for a full extra window of steps rather than ending the phase on a single
-# lucky read at the moment the window first fills.
-PRETRAIN_PATIENCE = PRETRAIN_WINDOW
+# Consecutive below-threshold readings required before convergence latches.
+# Just a guard against latching on a single lucky read the moment the window
+# fills - the full-window flatness check already encodes 1024 steps of evidence,
+# so a second full window (the old PRETRAIN_WINDOW value) was redundant and cost
+# ~1000 extra opt steps. A short hold is enough to confirm the plateau is real.
+PRETRAIN_PATIENCE = 128
 
 
 def _resolve_dim(spec: Union[int, float], base: int) -> int:
@@ -525,6 +526,11 @@ class CALMEncoder(BaseEncoder):
         # group, so the window measures trend against trend-noise rather than
         # microbatch data variance.
         self._recon_hist: list = []
+        # Raw (un-smoothed) per-opt-step recon, windowed in lockstep with
+        # _recon_hist. Its std is the noise floor the flatness ratio divides by:
+        # the smoothed series' std collapses on a plateau and makes flatness
+        # diverge upward, so the denominator must come from the raw signal.
+        self._recon_raw_hist: list = []
         self._recon_accum: list = []
         # EMA of the per-opt-step recon, and the running best of that EMA. Plain
         # attributes (reset on resume, conservatively re-establishing the
@@ -873,8 +879,10 @@ class CALMEncoder(BaseEncoder):
         self._diag["calm_recon_best"] = self._recon_best
 
         self._recon_hist.append(smoothed)
+        self._recon_raw_hist.append(group_mean)
         if len(self._recon_hist) > PRETRAIN_WINDOW:
             self._recon_hist.pop(0)
+            self._recon_raw_hist.pop(0)
         if step >= self.ae_max_pretrain_steps:
             self._mark_pretrain_done(step, "max-steps cap")
             return
@@ -887,13 +895,16 @@ class CALMEncoder(BaseEncoder):
             )
             var = sum((i - mean_x) ** 2 for i in range(n))
             slope = cov / var if var > 0 else 0.0
-            # The window's linear drift measured in units of its own noise:
-            # |slope*n| / std(recon). Scale-free and, unlike a relative-to-mean
-            # delta, bounded as recon CE -> 0 (drift and noise shrink together),
-            # so a true plateau reads "trend lost in the noise". Computed from
-            # PRETRAIN_MIN_SAMPLES onward so the chart tracks the descent early;
-            # the latch waits for the full window so it can't fire on noise.
-            std_y = (sum((v - mean_y) ** 2 for v in self._recon_hist) / n) ** 0.5
+            # The window's linear drift measured in units of its noise floor:
+            # |slope*n| / std(raw recon). The slope rides the SMOOTHED series so
+            # ae_dropout jitter can't fake a trend; the std is of the RAW series
+            # so the denominator is the (roughly constant) dropout-noise floor.
+            # Taking std from the smoothed series instead lets it collapse on a
+            # plateau, which makes flatness diverge upward and never latch.
+            # Scale-free and bounded as recon CE -> 0 (drift and noise shrink
+            # together), so a true plateau reads "trend lost in the noise".
+            raw_mean = sum(self._recon_raw_hist) / n
+            std_y = (sum((v - raw_mean) ** 2 for v in self._recon_raw_hist) / n) ** 0.5
             flat = abs(slope * n) / (std_y + 1e-9)
             self._diag["calm_pretrain_flatness"] = flat
             # Latch after the LR warmup floor, with a full window, once the
@@ -1581,6 +1592,19 @@ class CALMEncoder(BaseEncoder):
         elif isinstance(eos_token_id, (list, tuple)):
             eos_set = set(eos_token_id)
 
+        # Left-pad the prompt to a multiple of K. The codec compresses K tokens
+        # into one latent, so a non-aligned prompt would make _pad_to_chunk
+        # right-pad the TAIL - i.e. the conditioning patch the head predicts from
+        # - leaving it mostly pad on every step. Left-padding keeps the trailing
+        # patch full of real tokens; only the leading patch carries pads, and we
+        # strip them from the returned sequence. (The reference pads here too,
+        # modeling_calm.py; it right-pads, but that injects pads between prompt
+        # and continuation, which corrupts the Terminal's self-fed buffer.)
+        pad_n = (-inputs.shape[1]) % self.K
+        if pad_n:
+            pad = inputs.new_full((inputs.shape[0], pad_n), self.pad_token_id)
+            inputs = torch.cat([pad, inputs], dim=1)
+
         generated = inputs
         num_new = 0
         done = False
@@ -1614,6 +1638,9 @@ class CALMEncoder(BaseEncoder):
                     if t in eos_set:
                         done = True
                         break
+
+        # Drop the alignment pads so callers see a clean [prompt, continuation].
+        generated = generated[:, pad_n:]
 
         if return_dict:
             return SimpleNamespace(sequences=generated)

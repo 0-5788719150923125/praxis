@@ -59,8 +59,7 @@ def build_csp_policy(extra_sources=None):
             if src not in bucket:
                 bucket.append(src)
     return (
-        "; ".join(f"{name} {' '.join(vals)}" for name, vals in directives.items())
-        + ";"
+        "; ".join(f"{name} {' '.join(vals)}" for name, vals in directives.items()) + ";"
     )
 
 

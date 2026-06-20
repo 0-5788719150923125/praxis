@@ -88,6 +88,27 @@ def test_calm_generate_advances_in_K_steps():
     assert new >= 12
 
 
+def test_calm_generate_aligns_unaligned_prompt():
+    # A prompt whose length is not a multiple of K must still generate cleanly:
+    # custom_generate left-pads for alignment (so the conditioning patch stays
+    # full of real tokens) then strips the pads, so the returned sequence begins
+    # with the verbatim prompt - no pad tokens injected into the output.
+    cfg = _tiny_config()
+    model = PraxisForCausalLM(cfg)
+    model.eval()
+    from transformers import GenerationConfig
+
+    K = model.encoder.K
+    prompt_len = K + 1  # deliberately off-boundary
+    gc = GenerationConfig(max_new_tokens=2 * K, temperature=1.0, do_sample=True)
+    input_ids = torch.randint(4, 200, (1, prompt_len), dtype=torch.long)
+    out = model.generate(input_ids, generation_config=gc)
+
+    assert torch.equal(out[:, :prompt_len], input_ids)  # prompt preserved, no pads
+    new = out.size(1) - prompt_len
+    assert new % K == 0 and new >= 2 * K
+
+
 def test_calm_with_crystal_head():
     # CALM borrows a HEAD_REGISTRY head as its token classifier. Crystal
     # (which previously refused loss-owning encoders) now sizes to the VAE

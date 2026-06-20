@@ -36,17 +36,24 @@ from typing import Callable, List, Optional, Sequence, Union
 SEED_CHARS = string.ascii_letters + string.digits + string.punctuation
 
 
-def random_char_seed() -> str:
-    """Return a single random printable character to seed a buffer.
+def random_text_seed(n: int = 1) -> str:
+    """Return ``n`` random printable characters to seed a buffer.
 
     The model must attend to *something* at position 0; a fixed seed
-    imprints that choice on every sample. Re-rolling a real character
+    imprints that choice on every sample. Re-rolling real characters
     spreads the starting condition without ever producing an invalid
-    (un-decodable) seed. Usable directly as ``initial_text`` so each
-    ``reset()`` draws a fresh character. Shared by every streaming path
-    (Lightning backprop callback and Ray mono-forward hook).
+    (un-decodable) seed. ``n`` matters for patch-compressing encoders
+    (CALM): a seed shorter than one patch (K tokens) leaves the
+    conditioning patch mostly pad, which the model can only answer with
+    a degenerate run - so callers seed a full patch. Usable directly as
+    ``initial_text`` so each ``reset()`` draws a fresh seed.
     """
-    return random.choice(SEED_CHARS)
+    return "".join(random.choice(SEED_CHARS) for _ in range(max(1, n)))
+
+
+def random_char_seed() -> str:
+    """Single-character :func:`random_text_seed`; the default for K=1 models."""
+    return random_text_seed(1)
 
 
 class StreamingContext:

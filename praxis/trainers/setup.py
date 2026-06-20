@@ -127,11 +127,28 @@ def assemble_model(cfg, config) -> ModelBundle:
     )
 
 
+def _encoder_patch_size(encoder_type) -> int:
+    """Tokens-per-latent (K) for patch-compressing encoders (CALM); 1 otherwise.
+    The Terminal seeds a full patch so the first conditioning patch is real, not
+    mostly pad (see praxis.generation.streaming.random_text_seed)."""
+    import functools
+
+    from praxis.encoders import ENCODER_REGISTRY
+
+    f = ENCODER_REGISTRY.get(encoder_type)
+    while isinstance(f, functools.partial):
+        if "chunk_size" in f.keywords:
+            return int(f.keywords["chunk_size"])
+        f = f.func
+    return 1
+
+
 def build_model_info(cfg, config, bundle, run) -> Dict[str, Any]:
     """Build the model_info dict shown by TerminalInterface and the trainer."""
     from praxis.environments import EnvironmentFeatures
 
     return {
+        "patch_size": _encoder_patch_size(getattr(config, "encoder_type", None)),
         "optimizer_config": bundle.optimizer_config,
         "strategy": cfg.strategy,
         "rl_type": cfg.rl_type,

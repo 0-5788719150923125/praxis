@@ -9,7 +9,11 @@ from praxis.generation.context_blocks import (
 from praxis.generation.mono_forward_generator import MonoForwardGenerator
 from praxis.generation.request import GenerationRequest
 from praxis.generation.runtime import bos_prompt, swap_inference_generator
-from praxis.generation.streaming import StreamingContext, random_char_seed
+from praxis.generation.streaming import (
+    StreamingContext,
+    random_char_seed,
+    random_text_seed,
+)
 
 __all__ = [
     "Generator",
@@ -17,6 +21,7 @@ __all__ = [
     "MonoForwardGenerator",
     "StreamingContext",
     "random_char_seed",
+    "random_text_seed",
     "ContextBlock",
     "ContextStreams",
     "DEFAULT_CONTEXT_BLOCKS",

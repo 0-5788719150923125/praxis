@@ -7,7 +7,11 @@ from datetime import datetime, timedelta
 from lightning.pytorch.callbacks import Callback
 
 from praxis.generation.context_blocks import ContextStreams
-from praxis.generation.streaming import StreamingContext, random_char_seed
+from praxis.generation.streaming import (
+    StreamingContext,
+    random_char_seed,
+    random_text_seed,
+)
 from praxis.metrics.ema import LOSS_EMA_ALPHA, compute_ema
 
 
@@ -43,10 +47,17 @@ class TerminalInterface(Callback):
         self.last_logged_weights = None  # Track weights for change detection
         self.tokenizer = tokenizer
         self.generator = generator
-        # Seed factory for the streaming context below: each reset
-        # re-rolls a fresh random printable character, so the dashboard
-        # never forces a specific priming character across a run.
-        self._seed_factory = random_char_seed
+        # Seed factory for the streaming context below: each reset re-rolls a
+        # fresh random seed, so the dashboard never forces a specific priming
+        # character across a run. Patch-compressing encoders (CALM) need a full
+        # patch of K real chars - a sub-K seed leaves the conditioning patch
+        # mostly pad, which the model can only answer with a degenerate null run.
+        self.patch_size = int(model_info.get("patch_size", 1) or 1)
+        self._seed_factory = (
+            (lambda: random_text_seed(self.patch_size))
+            if self.patch_size > 1
+            else random_char_seed
+        )
         self.text = self._seed_factory()
         self.initial_text = self.text
         self.interval = infer_every
@@ -126,7 +137,9 @@ class TerminalInterface(Callback):
             return len(self.tokenizer.encode(text)) if self.tokenizer and text else 0
 
         self._context_streams = ContextStreams(
-            _make_streaming, token_counter=_count_tokens
+            _make_streaming,
+            token_counter=_count_tokens,
+            seed_factory=self._seed_factory,
         )
         # Largest per-block scale; the shared generate path truncates prompts to
         # this so a double-length block isn't clipped back to the base length.
