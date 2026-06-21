@@ -171,15 +171,21 @@ CALMByteRef = partial(
 # objective is the calm-a-2 intervention.
 # K=4 (4:1 codec compression) not the reference's K=16: at 16:1 the codec
 # manifold was a thin high-norm shell that the flow head couldn't hit at small
-# scale (off-manifold -> gibberish). 4:1 is near-lossless with a forgiving
-# manifold - testing whether the failure is over-aggressive patching (encoder
-# variance), not model scale.
+# scale (off-manifold -> gibberish). 4:1 doubled head token-acc (0.15 -> ~0.35),
+# confirming aggressive patching was a real constraint - but not enough alone.
+# kl_beta 1e-2 (10x the reference 1e-3): a stronger pull to the prior makes the
+# latent more isotropic/lower-norm = a more forgiving manifold, so the head's
+# target is easier to hit and sampled draws fall off it less (shrinking the
+# teacher-forced-vs-sampled gap that shows up as byte-chaos). Trades codec
+# fidelity (recon CE will rise) for head learnability + faster convergence;
+# watch recon_ce in stage 1 - if it blows past ~0.7 the codec is too lossy.
 # Cap stage 1 well under the 20k backstop so it can't pretrain for days; K=4
 # recon converges fast, so the detector likely freezes before this anyway.
 CALMByteFlow = partial(
     CALMByteRef,
     head_kind="flow",
     chunk_size=4,
+    kl_beta=1e-2,
     ae_max_pretrain_steps=3000,
 )
 
