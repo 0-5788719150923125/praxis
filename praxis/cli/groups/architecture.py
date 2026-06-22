@@ -18,6 +18,7 @@ from praxis import (
     MTP_REGISTRY,
     NORMALIZATION_REGISTRY,
     ORCHESTRATION_REGISTRY,
+    REGULARIZER_REGISTRY,
     RESIDUAL_REGISTRY,
     ROUTER_REGISTRY,
     SORTING_REGISTRY,
@@ -383,11 +384,15 @@ class ArchitectureGroup:
         )
 
         group.add_argument(
-            "--no-contrastive-isotropy",
-            action="store_false",
-            dest="contrastive_isotropy",
-            default=True,
-            help="Disable the SimCTG contrastive isotropy loss (on by default)",
+            "--regularizers",
+            type=str,
+            nargs="*",
+            choices=list(REGULARIZER_REGISTRY.keys()),
+            default=["contrastive_isotropy"],
+            help=(
+                "Additive representation-shaping losses to apply (space-separated; "
+                "pass with no values to disable all). Default: contrastive_isotropy"
+            ),
         )
 
         group.add_argument(

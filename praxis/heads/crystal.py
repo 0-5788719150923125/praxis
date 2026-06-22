@@ -110,6 +110,7 @@ class CrystalClassifier(nn.Module):
                 "y_label": "Mean ||c_v||",
                 "y_scale": "linear",
                 "group": "crystal_head",
+                "group_order": 50,
                 "order": 10,
             },
         },

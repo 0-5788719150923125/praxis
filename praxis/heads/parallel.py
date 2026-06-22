@@ -264,6 +264,7 @@ class ParallelHead(BaseHead):
                     "title": "Parallel Gate Weights",
                     "y_label": "Mean Gate Weight",
                     "group": "parallel_head",
+                    "group_order": 60,
                     "order": 10,
                     "series_group": "parallel_gate",
                     "series_label": f"branch {i}",

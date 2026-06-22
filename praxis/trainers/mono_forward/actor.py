@@ -29,13 +29,13 @@ ever try to import this module.
 from __future__ import annotations
 
 import copy
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import ray
 import torch
 import torch.nn as nn
 
-from praxis.losses.contrastive_isotropy import ContrastiveIsotropyLoss
+from praxis.losses.regularizers import build_regularizers
 from praxis.losses.layer_wise import compute_layer_wise_loss
 from praxis.metrics import compute_softmax_collapse, extract_layer_dynamics
 from praxis.trainers.mono_forward._worker_common import (
@@ -96,7 +96,7 @@ class LayerActor:
         lr: float = 1e-3,
         num_layers: int = 1,
         accumulate_grad_batches: int = 1,
-        contrastive_isotropy: bool = False,
+        regularizers: Optional[List[str]] = None,
         pad_id: int = 0,
     ) -> None:
         self.layer_idx = layer_idx
@@ -122,13 +122,11 @@ class LayerActor:
         else:
             self.strategy = None
 
-        # Per-layer SimCTG isotropy regularizer. Mono-Forward trains each
-        # layer locally, so (unlike the backprop path's single final-layer
-        # term) this regularizes every layer's own output - the natural,
-        # if imperfect, analog. Folded as an aux loss below.
-        self.aux = None
-        if contrastive_isotropy:
-            self.aux = _deep_to(ContrastiveIsotropyLoss(pad_id=pad_id), self.device)
+        # Per-layer regularizers. Mono-Forward trains each layer locally, so
+        # (unlike the backprop path's single final-layer term) these regularize
+        # every layer's own output - the natural, if imperfect, analog. Folded
+        # as aux losses below. None resolves to the default set.
+        self.reg = _deep_to(build_regularizers(regularizers, pad_id), self.device)
 
         # Per-layer projection matrix M_i (paper Section 3.1). Each
         # layer gets its own independent projection - there is no
@@ -245,11 +243,11 @@ class LayerActor:
 
         # (3) Compute the local loss via the framework-agnostic helper.
         # This routes through self.criterion (so cut-CE fires correctly)
-        # and folds aux losses via self.strategy (D5). The contrastive
-        # isotropy term, when enabled, joins the fold as another aux loss.
+        # and folds aux losses via self.strategy (D5). Each regularizer joins
+        # the fold as another aux loss.
         aux = [aux_loss] if aux_loss is not None else []
-        if self.aux is not None:
-            aux.append(self.aux(h_out, input_ids_dev))
+        for reg in self.reg:
+            aux.append(reg(h_out, input_ids_dev))
         loss = compute_layer_wise_loss(
             hidden_states=h_out,
             labels=labels_dev,
@@ -385,8 +383,8 @@ class LayerActor:
         """
         try:
             dyn = extract_layer_dynamics(self.layer, self._current_lr()) or {}
-            if self.aux is not None:
-                dyn.update(self.aux.training_metrics())
+            for reg in self.reg:
+                dyn.update(reg.training_metrics())
             return dyn or None
         except Exception:
             return None

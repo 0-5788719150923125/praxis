@@ -182,7 +182,7 @@ def test_generator_terminates_on_partial_loop(tokenizer):
         expert="mlp",
         activation="gelu",
         tie_weights=True,
-        contrastive_isotropy=False,
+        regularizers=[],
     )
     model = PraxisForCausalLM(cfg)
     model.generate = types.MethodType(

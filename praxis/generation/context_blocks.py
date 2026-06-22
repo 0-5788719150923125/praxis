@@ -37,9 +37,9 @@ class ContextBlock:
 
 
 # Default Terminal contexts. Temperature rises (more exploratory) as the call
-# chance falls, so the hotter contexts sample rarely and cost little. The two
-# rarely-fired blocks grow a double-length buffer since their cost is amortized
-# across far fewer inference steps.
+# chance falls, so the hotter contexts sample rarely and cost little. All three
+# share one context window (context_scale 1.0) so the only thing that differs
+# between them is temperature.
 #
 # Temperatures are reciprocals of integers (1/3, 1/2, 1) so the three views
 # stay distinct under CALM's count-based patch-vote sampling, which quantizes
@@ -51,10 +51,10 @@ DEFAULT_CONTEXT_BLOCKS: List[ContextBlock] = [
         "Focused", "Low temperature - the most likely continuation.", 1.0 / 3.0, 1.0
     ),
     ContextBlock(
-        "Balanced", "Mid temperature - samples about 1 step in 10.", 0.5, 0.1, 2.0
+        "Balanced", "Mid temperature - samples about 1 step in 10.", 0.5, 0.1
     ),
     ContextBlock(
-        "Wild", "High temperature - samples about 1 step in 100.", 1.0, 0.01, 2.0
+        "Wild", "High temperature - samples about 1 step in 100.", 1.0, 0.01
     ),
 ]
 

@@ -115,6 +115,7 @@ class HarmonicField(nn.Module):
                 "y_label": "Amplitudes ||L2||",
                 "y_scale": "logarithmic",
                 "group": "harmonic_head",
+                "group_order": 40,
                 "order": 10,
             },
         },

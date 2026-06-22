@@ -93,15 +93,8 @@ def _candidates(model: Any) -> Iterable[Dict[str, Any]]:
         if arc_descs:
             yield arc_descs
 
-    iso = getattr(model, "contrastive_isotropy", None)
-    if iso is not None:
-        descs = getattr(type(iso), "metric_descriptions", None)
-        if isinstance(descs, dict):
-            yield descs
-
-    probe = getattr(model, "solvability", None)
-    if probe is not None:
-        descs = getattr(type(probe), "metric_descriptions", None)
+    for reg in getattr(model, "reg", []) or []:
+        descs = getattr(type(reg), "metric_descriptions", None)
         if isinstance(descs, dict):
             yield descs
 
@@ -165,19 +158,11 @@ def _stamp_callers(out: Dict[str, Dict[str, Any]], model: Any) -> None:
     for key, caller in resolve_callers(model).items():
         claim(key, caller)
 
-    iso = getattr(model, "contrastive_isotropy", None)
-    if iso is not None:
-        descs = getattr(type(iso), "metric_descriptions", None)
+    for reg in getattr(model, "reg", []) or []:
+        descs = getattr(type(reg), "metric_descriptions", None)
         if isinstance(descs, dict):
             for key in descs:
-                claim(key, type(iso).__name__)
-
-    probe = getattr(model, "solvability", None)
-    if probe is not None:
-        descs = getattr(type(probe), "metric_descriptions", None)
-        if isinstance(descs, dict):
-            for key in descs:
-                claim(key, type(probe).__name__)
+                claim(key, type(reg).__name__)
 
     weighter = getattr(model, "tasker", None)
     if weighter is not None and getattr(weighter, "is_dynamic", False):

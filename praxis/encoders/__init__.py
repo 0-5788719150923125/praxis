@@ -189,6 +189,18 @@ CALMByteFlow = partial(
     ae_max_pretrain_steps=3000,
 )
 
+# CALMByteFlow with the flow head's generic velocity net swapped for the harmonic
+# latent head (head_kind="harmonic"): same flow-matching objective, but the flow
+# runs in a compact harmonic coefficient space so each next-latent is a smooth
+# low-frequency superposition. The bet (research/main.tex log-scaling) is that
+# fewer effective output dims = lower head variance = faster convergence at small
+# scale - the scale-wall lever the flow head can't pull. Not yet run; the fast
+# proxy (calm-a-3) is the bench to A/B it against flow once that loop is trusted.
+CALMByteHarmonic = partial(
+    CALMByteFlow,
+    head_kind="harmonic",
+)
+
 # CALMByteRef at the reference's true patch granularity: K=4 subword tokens
 # (~15-20 bytes of text per latent) for a TokenMonster/BPE tokenizer. The
 # calm-a-1 ablation uses this; calm-a-2 uses CALMByteRef (K=16) directly so the
@@ -235,6 +247,7 @@ ENCODER_REGISTRY = dict(
     calm_byte_small_harmonic=CALMByteSmallHarmonic,
     calm_byte_ref=CALMByteRef,
     calm_byte_flow=CALMByteFlow,
+    calm_byte_harmonic=CALMByteHarmonic,
     calm_tm_ref=CALMTmRef,
     calm_bpe=CALMBpe,
     # # Entropy-based patching

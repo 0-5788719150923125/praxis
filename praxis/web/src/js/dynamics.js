@@ -341,6 +341,8 @@ function detectWidthDepths(dynamics) {
 //   y_label:  y-axis label
 //   y_scale:  'linear' (default) or 'logarithmic'
 //   group:    section key used to cluster related metrics together
+//   group_order: where this section sorts cross-tab (lower = earlier); set on
+//                one of a group's charts. Default middle, then alphabetical.
 //   order:    integer ordering within the group (default 0)
 //   series_group: metrics sharing this key render as lines on ONE chart
 //                 (lowest-order member supplies title/axis/subtitle)
@@ -349,21 +351,27 @@ function detectWidthDepths(dynamics) {
 // Bespoke chart types (heatmaps, histograms, stacked-per-task series) stay
 // hardcoded - the manifest only handles scalar time-series.
 
-// Cross-tab group ordering (lower = earlier). Keeps a producer's scalars and
-// its snapshots in one contiguous block: heads, then loss/codec, then aux.
-// Groups not listed sort after these, alphabetically (deterministic); the
-// catch-all buckets trail last.
-const GROUP_ORDER = {
-    optimizer: 10, memory: 20, arc: 30,
-    harmonic_head: 40, crystal_head: 50, parallel_head: 60,
-    halo: 70, calm: 80, contrastive_isotropy: 90,
-    misc: 900, snapshots: 950,
+// Cross-tab group ordering (lower = earlier). A group's position is whatever
+// `group_order` its producer declares in metric_descriptions - co-located with
+// the metrics, so no producer names live here. The two generic catch-all
+// buckets (un-grouped charts / snapshots) trail last; everything else without a
+// declared order sits in the middle and falls back to alphabetical.
+const TRAILING_GROUPS = { misc: 900, snapshots: 950 };
+const DEFAULT_GROUP_ORDER = 500;
+
+// Smallest group_order any member declares wins (producers conventionally tag
+// their lowest-order chart); absent that, the trailing default, else the middle.
+const groupOrder = (name, members) => {
+    const declared = members
+        .map((m) => (m.chart || m.snap || {}).group_order)
+        .filter((n) => Number.isFinite(n));
+    if (declared.length) return Math.min(...declared);
+    return TRAILING_GROUPS[name] ?? DEFAULT_GROUP_ORDER;
 };
-const groupOrder = (name) => GROUP_ORDER[name] ?? 500;
 
 // One manifest for both scalar charts and non-scalar snapshots, grouped so a
 // group's cards (e.g. all "halo") render together. Each value is
-// ``{scalars, snaps}``; groups are returned in GROUP_ORDER then name order.
+// ``{scalars, snaps}``; groups are returned by declared group_order, then name.
 function buildMetricManifest(descriptions) {
     const groups = new Map();
     const ensure = (g) => {
@@ -386,8 +394,10 @@ function buildMetricManifest(descriptions) {
         g.scalars.sort((a, b) => (a.chart.order ?? 0) - (b.chart.order ?? 0));
         g.snaps.sort((a, b) => (a.snap.order ?? 0) - (b.snap.order ?? 0));
     }
+    const members = (g) => [...g.scalars, ...g.snaps];
     return new Map([...groups.entries()].sort((a, b) =>
-        groupOrder(a[0]) - groupOrder(b[0]) || a[0].localeCompare(b[0])));
+        groupOrder(a[0], members(a[1])) - groupOrder(b[0], members(b[1]))
+        || a[0].localeCompare(b[0])));
 }
 
 // A scalar metric is "present" only if the run logged a finite value for it.
@@ -746,7 +756,8 @@ function renderDynamicsCharts(runData, container) {
 
     // Head-driven metrics (harmonic, crystal, halo, future producers): scalar
     // charts and their non-scalar snapshots, clustered by group and ordered by
-    // GROUP_ORDER. New producers opt in just by tagging metric_descriptions.
+    // each group's declared group_order. New producers opt in just by tagging
+    // metric_descriptions (set group_order on one chart to place the section).
     chartsHTML += buildManifestSectionsHTML(manifest, desc);
 
     // Families ordered after the head sections (e.g. halting distribution).

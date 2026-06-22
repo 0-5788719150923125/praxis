@@ -1,7 +1,8 @@
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+
+from praxis.losses.regularizer_base import BaseRegularizer
 
 # SimCTG margin: penalize cosine similarity above (1 - RHO) between distinct
 # tokens. Fixed, model-agnostic constant from arxiv 2202.06417 - not a knob to
@@ -9,7 +10,7 @@ from torch import Tensor
 RHO = 0.5
 
 
-class ContrastiveIsotropyLoss(nn.Module):
+class ContrastiveIsotropyLoss(BaseRegularizer):
     """SimCTG isotropy regularizer. Pushes apart the representations of distinct
     tokens within a sequence so the space stays discriminative - the geometry
     contrastive-search decoding relies on. Additive to the main objective; it
@@ -17,6 +18,8 @@ class ContrastiveIsotropyLoss(nn.Module):
 
     From "A Contrastive Framework for Neural Text Generation" (arxiv 2202.06417).
     """
+
+    name = "contrastive"
 
     # Chart hints for the values training_metrics() produces, kept beside
     # them so both edit in one place. Surfaced to the Dynamics tab manifest.
@@ -31,6 +34,7 @@ class ContrastiveIsotropyLoss(nn.Module):
                 "y_label": "Loss",
                 "y_scale": "linear",
                 "group": "contrastive_isotropy",
+                "group_order": 90,
                 "order": 10,
             },
         },

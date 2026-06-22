@@ -24,8 +24,7 @@ from praxis.attention.cache import PraxisCache
 from praxis.containers import LossContainer
 from praxis.heads import HEAD_REGISTRY
 from praxis.losses import get_loss_function
-from praxis.losses.contrastive_isotropy import ContrastiveIsotropyLoss
-from praxis.losses.solvability import SolvabilityProbe
+from praxis.losses.regularizers import build_regularizers
 from praxis.policies import RL_POLICIES_REGISTRY
 from praxis.strategies import STRATEGIES_REGISTRY
 from praxis.tasks import TASK_NAMES, resolve_task_weighter
@@ -84,6 +83,19 @@ class PraxisModel(PreTrainedModel):
         (None = use the generator's default). CALM's count-based sampler is
         near-random at T=1, so it returns its vote_temperature."""
         return getattr(self.encoder, "vote_temperature", None) if self.encoder else None
+
+    def stage_warmup_anchor(self) -> int:
+        """Optimizer step at which a new LR warmup should begin, or -1 if none.
+
+        The scheduler/stage contract: a multi-stage model (e.g. CALM, whose
+        trunk and head sit idle until the codec freezes) reports the boundary
+        step here so the scheduler can re-warm the newly-activated params
+        instead of slamming them with the full post-warmup LR cold. Default
+        -1 = single-stage; nothing to re-warm."""
+        enc = self.encoder
+        if enc and hasattr(enc, "stage_warmup_anchor"):
+            return int(enc.stage_warmup_anchor())
+        return -1
 
     def forward(
         self,
@@ -256,20 +268,13 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # get_metrics() uses it to skip charting weights for absent tasks.
         self.active_task_ids = None
 
-        # SimCTG isotropy regularizer (additive; see forward). On by default.
-        # Named to match the dynamics extractor / descriptions walker, which
-        # look up model.contrastive_isotropy.
-        self.contrastive_isotropy = None
-        if getattr(config, "contrastive_isotropy", True):
-            self.contrastive_isotropy = ContrastiveIsotropyLoss(
-                pad_id=config.pad_token_id
-            )
-
-        # Self-predicted solvability probe (observational: detached input, so
-        # it watches the trunk without steering it). On by default.
-        self.solvability = None
-        if getattr(config, "solvability", True):
-            self.solvability = SolvabilityProbe(config.hidden_size)
+        # Additive representation-shaping regularizers (see forward): a list of
+        # swappable losses from REGULARIZER_REGISTRY, chosen by name in
+        # config.regularizers (default: contrastive isotropy). The dynamics
+        # extractor / descriptions walker iterate model.reg.
+        self.reg = build_regularizers(
+            getattr(config, "regularizers", None), pad_id=config.pad_token_id
+        )
 
         # The strategy for combining multiple losses into a single scalar objective.
         self.strategy = STRATEGIES_REGISTRY.get(config.strategy, "naive")()
@@ -851,8 +856,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         skip_logits: bool,
     ) -> None:
         """Accumulate training-only auxiliary losses into the container:
-        task-weight anchor, head aux losses, MTP, contrastive isotropy, and
-        the solvability probe."""
+        task-weight anchor, head aux losses, MTP, and the regularizers."""
         if not self.training or labels is None:
             return
 
@@ -878,36 +882,9 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             )
             outputs.losses.add_loss_container(self.mtp(mtp_inputs))
 
-        # Contrastive isotropy (SimCTG): additive regularizer keeping the
-        # representation space discriminative for contrastive-search decoding.
-        if self.contrastive_isotropy is not None:
-            iso_loss = self.contrastive_isotropy(hidden_states, input_ids)
-            outputs.losses.add_loss("contrastive", iso_loss)
-
-        # Self-predicted solvability: the probe reads an early prefix of the
-        # TRUNK states (always hidden_size wide, even under encoders) and is
-        # scored against the realized per-sample loss. Skipped under cut-CE
-        # training, where full logits are never materialized.
-        if (
-            self.solvability is not None
-            and not skip_logits
-            and logits.size(-1) == self.config.vocab_size
-            and logits.size(1) in (labels.size(1), labels.size(1) + 1)
-        ):
-            solvability_loss = self.solvability(
-                outputs.last_hidden_state, logits, labels
-            )
-            outputs.losses.add_loss("solvability", solvability_loss)
-        elif self.solvability is not None:
-            # Encoder / cut-CE runs: no aligned full-vocab logits to score
-            # against, so grade the batch's realized main loss instead -
-            # otherwise the probe never runs (and never logs) on these runs.
-            main = outputs.losses.get_loss("main")
-            if torch.is_tensor(main) and torch.isfinite(main):
-                outputs.losses.add_loss(
-                    "solvability",
-                    self.solvability.forward_scalar(outputs.last_hidden_state, main),
-                )
+        # Additive representation-shaping regularizers (REGULARIZER_REGISTRY).
+        for reg in self.reg:
+            outputs.losses.add_loss(reg.name, reg(hidden_states, input_ids))
 
     def _finalize_loss(
         self, loss, losses: LossContainer, labels: Optional[torch.Tensor]

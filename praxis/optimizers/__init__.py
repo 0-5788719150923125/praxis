@@ -225,10 +225,15 @@ def build_optimizer_and_scheduler(
     """
     from praxis.schedulers import get_scheduler_func
 
+    # Let a multi-stage model re-warm the LR when a later stage activates cold
+    # params (e.g. CALM's trunk/head at the codec freeze). Reads the boundary
+    # live each step; -1 until/unless one is reported.
+    stage_anchor = getattr(model, "stage_warmup_anchor", None)
     scheduler_func = get_scheduler_func(
         optimizer_config=optimizer_config,
         disable_schedule=disable_schedule,
         warmup_steps=warmup_steps,
+        stage_anchor=stage_anchor,
     )
 
     optimizer = get_optimizer(

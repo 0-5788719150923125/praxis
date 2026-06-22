@@ -634,9 +634,7 @@ class MonoForwardTrainer:
                     disable_schedule=self.disable_schedule,
                     num_layers=num_layers,
                     accumulate_grad_batches=self.accumulate_grad_batches,
-                    contrastive_isotropy=getattr(
-                        model_host.config, "contrastive_isotropy", True
-                    ),
+                    regularizers=getattr(model_host.config, "regularizers", None),
                     pad_id=model_host.config.pad_token_id,
                 )
                 for i in range(num_layers)

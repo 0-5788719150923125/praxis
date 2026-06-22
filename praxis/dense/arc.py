@@ -40,6 +40,7 @@ class ArcGLU(BaseDense):
                 "y_label": "Specialized fraction",
                 "y_scale": "linear",
                 "group": "arc",
+                "group_order": 30,
                 "order": 12,
                 "series_group": "arc_specialization",
                 "series_label": "activation",

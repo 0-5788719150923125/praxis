@@ -32,9 +32,7 @@ def _parallel(cfg, n=2):
 
 
 def _stub(head):
-    return SimpleNamespace(
-        head=head, contrastive_isotropy=None, tasker=None, encoder=False
-    )
+    return SimpleNamespace(head=head, reg=[], tasker=None, encoder=False)
 
 
 def test_transform_preserves_shape_and_gate_normalizes():

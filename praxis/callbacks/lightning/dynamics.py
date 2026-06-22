@@ -85,11 +85,8 @@ class DynamicsLoggerCallback(Callback):
             # Titans memory diagnostics (surprise), averaged across layers.
             dynamics.update(self._extract_memory_dynamics(model))
 
-            # Contrastive isotropy diagnostics (loss + repr anisotropy).
-            dynamics.update(self._extract_contrastive_dynamics(model))
-
-            # Self-predicted solvability (credence, solve rate, Brier).
-            dynamics.update(self._extract_solvability_dynamics(model))
+            # Regularizer diagnostics (each regularizer's own training_metrics).
+            dynamics.update(self._extract_regularizer_dynamics(model))
 
             # Arc per-depth bias specialization, averaged across Arc modules.
             dynamics.update(self._extract_arc_dynamics(model))
@@ -264,35 +261,19 @@ class DynamicsLoggerCallback(Callback):
             print(f"[DynamicsLogger] head.training_metrics() failed: {e}")
             return {}
 
-    def _extract_contrastive_dynamics(self, model) -> dict:
-        """Delegate to the contrastive isotropy loss's own diagnostics.
+    def _extract_regularizer_dynamics(self, model) -> dict:
+        """Collect each regularizer's own diagnostics from model.reg.
 
-        The module opts in via ``training_metrics()``; wrapped in try/except
+        Each module opts in via ``training_metrics()``; wrapped in try/except
         so a buggy metric doesn't kill the whole dynamics log.
         """
-        iso = getattr(model, "contrastive_isotropy", None)
-        if iso is None:
-            return {}
-        try:
-            return iso.training_metrics()
-        except Exception as e:
-            print(f"[DynamicsLogger] contrastive training_metrics() failed: {e}")
-            return {}
-
-    def _extract_solvability_dynamics(self, model) -> dict:
-        """Delegate to the solvability probe's own diagnostics.
-
-        The probe opts in via ``training_metrics()``; wrapped in try/except
-        so a buggy metric doesn't kill the whole dynamics log.
-        """
-        probe = getattr(model, "solvability", None)
-        if probe is None:
-            return {}
-        try:
-            return probe.training_metrics()
-        except Exception as e:
-            print(f"[DynamicsLogger] solvability training_metrics() failed: {e}")
-            return {}
+        out: dict = {}
+        for reg in getattr(model, "reg", []) or []:
+            try:
+                out.update(reg.training_metrics())
+            except Exception as e:
+                print(f"[DynamicsLogger] {reg.name} training_metrics() failed: {e}")
+        return out
 
     def _extract_encoder_dynamics(self, model) -> dict:
         """Delegate to a loss-owning encoder's own diagnostics (e.g. CALM).

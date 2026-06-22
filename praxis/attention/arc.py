@@ -44,6 +44,7 @@ class ArcAttention(InfiniAttention):
                 "y_label": "Specialized fraction",
                 "y_scale": "linear",
                 "group": "arc",
+                "group_order": 30,
                 "order": 10,
                 "series_group": "arc_specialization",
                 "series_label": "qkv bias",

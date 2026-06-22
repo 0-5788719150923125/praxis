@@ -133,6 +133,61 @@ def test_energy_head_shapes():
     assert samples.shape == (4, 3, 5, 8)
 
 
+def test_harmonic_latent_head():
+    # Drop-in sibling of FlowHead: same flow_loss/forward/sample surface, but the
+    # flow lives in a compact harmonic coefficient space and synthesized latents
+    # lie exactly in the harmonic subspace.
+    from praxis.heads.flow import LATENT_HEAD_REGISTRY
+
+    assert "harmonic" in LATENT_HEAD_REGISTRY
+    head = LATENT_HEAD_REGISTRY["harmonic"](
+        cond_dim=32, noise_dim=0, latent_dim=16, hidden_dim=32, num_blocks=2
+    )
+    assert head.noise_dim == 16  # caller builds a latent-width start state
+    assert head.coeff_dim <= 16  # compressed (DC + low freqs)
+
+    cond = torch.randn(2, 4, 32)
+    target = torch.randn(2, 4, 16)
+    loss = head.flow_loss(target, cond).mean()
+    loss.backward()
+    assert any(
+        p.grad is not None and p.grad.abs().sum() > 0 for p in head.net.parameters()
+    )
+    with torch.no_grad():
+        best = head.forward(cond, torch.zeros(2, 4, 16))
+        samples = head.sample(cond[:, :1], num_samples=3)
+    assert best.shape == (2, 4, 16)
+    assert samples.shape == (3, 2, 1, 16)
+    # synthesized latents are pure harmonic superpositions (idempotent project)
+    assert torch.allclose(best, head.synthesize(head.project(best)), atol=1e-5)
+
+
+def test_calm_harmonic_head_trains():
+    # Full CALM model with head_kind="harmonic" (overriding the profile's flow);
+    # the harmonic head trains through the shared flow loss path.
+    import functools
+
+    from praxis.encoders import ENCODER_REGISTRY
+
+    cfg = _tiny_config(encoder_type="calm_byte_flow", tokenizer_type="byte_level")
+    orig = ENCODER_REGISTRY["calm_byte_flow"]
+    ENCODER_REGISTRY["calm_byte_flow"] = functools.partial(orig, head_kind="harmonic")
+    try:
+        model = PraxisForCausalLM(cfg)
+        model.train()
+        model.encoder.requires_pretraining = False  # joint mode: head trains now
+        assert type(model.encoder.energy_head).__name__ == "HarmonicLatentHead"
+        ids = torch.randint(4, 200, (2, 32), dtype=torch.long)
+        out = model(input_ids=ids, labels=ids[:, 1:].contiguous())
+        out.loss.backward()
+        assert any(
+            p.grad is not None and p.grad.abs().sum() > 0
+            for p in model.encoder.energy_head.net.parameters()
+        )
+    finally:
+        ENCODER_REGISTRY["calm_byte_flow"] = orig
+
+
 def test_energy_score_loss_nonnegative_on_random():
     torch.manual_seed(0)
     model = torch.randn(2, 3, 4, 8)

@@ -304,7 +304,12 @@ class HALOLoss(nn.Module):
     metric_descriptions = {
         "halo_gamma": {
             "description": "Learnable inverse-temperature scaling the distance metric. Higher gamma = sharper centroid assignment.",
-            "chart": {"title": "HALO Gamma", "group": "halo", "order": 0},
+            "chart": {
+                "title": "HALO Gamma",
+                "group": "halo",
+                "group_order": 70,
+                "order": 0,
+            },
         },
         "halo_mean_radius": {
             "description": "Mean distance from each token to its centroid (inputs are RMS-normalized). HALO pulls this onto the shell radius sqrt(1 - 2/D).",

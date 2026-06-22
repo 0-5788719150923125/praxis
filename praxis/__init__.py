@@ -12,7 +12,7 @@ from praxis.encoders import ENCODER_REGISTRY
 from praxis.encoding import ENCODING_REGISTRY
 from praxis.halting import HALTING_REGISTRY
 from praxis.heads import HEAD_REGISTRY, MTP_REGISTRY
-from praxis.losses import LOSS_REGISTRY
+from praxis.losses import LOSS_REGISTRY, REGULARIZER_REGISTRY
 from praxis.memory import MEMORY_PROFILE_DESCRIPTIONS, MEMORY_REGISTRY
 from praxis.modeling import PraxisForCausalLM, PraxisModel
 from praxis.normalization import NORMALIZATION_REGISTRY

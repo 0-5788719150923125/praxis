@@ -143,6 +143,7 @@ class CALMEncoder(BaseEncoder):
                 "y_label": "mean ‖μ‖",
                 "y_scale": "linear",
                 "group": "calm",
+                "group_order": 80,
                 "order": 10,
             },
         },
@@ -644,7 +645,7 @@ class CALMEncoder(BaseEncoder):
         # MLP learns only the residual. See ENERGY_PRIOR_REGISTRY for options
         # ("none" = paper-pure ablation). Energy head only; flow has none.
         prior_factory = ENERGY_PRIOR_REGISTRY[energy_prior]
-        if prior_factory is not None and head_kind != "flow":
+        if prior_factory is not None and head_kind not in ("flow", "harmonic"):
             period = max(2, int(getattr(config, "block_size", 512)) // self.K)
             self.energy_head.set_prior(
                 prior_factory(
@@ -766,6 +767,15 @@ class CALMEncoder(BaseEncoder):
         """ "preflight" while the codec pretrains in isolation, then "pretrain"
         once the codec is frozen and the energy LM trains."""
         return "preflight" if self.in_pretraining() else "pretrain"
+
+    def stage_warmup_anchor(self) -> int:
+        """The codec-freeze step (stage 1 -> 2 boundary) in optimizer steps, or
+        -1 until it happens. The trunk and head are gated off during stage 1, so
+        they enter stage 2 cold; reporting this lets the scheduler re-warm them
+        from the freeze rather than at the full LR. ``_freeze_opt_step`` is a
+        persistent buffer, so the anchor survives checkpoint resume."""
+        fs = int(self._freeze_opt_step.item())
+        return fs if fs >= 0 else -1
 
     def pretraining_parameters(self):
         """Codec params (VAE + head recon path) train during the AE warmup."""
@@ -1061,7 +1071,9 @@ class CALMEncoder(BaseEncoder):
     @dynamo.disable()
     def _register_head_loss(self, h: torch.Tensor) -> None:
         """Dispatch the stage-2 latent objective by head kind."""
-        if self.head_kind == "flow":
+        # Harmonic is a flow head over a coefficient space - same flow_loss
+        # surface, so it shares the flow path (it projects internally).
+        if self.head_kind in ("flow", "harmonic"):
             self._register_flow_loss(h)
         else:
             self._register_energy_loss(h)
@@ -1369,6 +1381,13 @@ class CALMEncoder(BaseEncoder):
         self.vae.eval()
         for p in self.vae.parameters():
             p.requires_grad_(False)
+        # Record the stage-1 -> 2 boundary the first time we freeze, for ALL
+        # head kinds (the prior-window set below only runs for the energy head).
+        # This is the convergence/cap moment the codec actually froze, which
+        # stage_warmup_anchor() reports to re-warm the LR. The <0 guard keeps it
+        # at the true freeze step across checkpoint resume.
+        if int(self._freeze_opt_step.item()) < 0:
+            self._freeze_opt_step.fill_(self._opt_step())
         if not self._ae_frozen_logged:
             print(
                 f"[CALM] codec frozen at optimizer step {self._opt_step()}; "

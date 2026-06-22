@@ -255,11 +255,14 @@ class FlowHead(nn.Module):
         return self._integrate(x0, cond)
 
 
-# Energy and flow share the encoder's head slot; the encoder picks via the
-# head_kind kwarg baked into its profile partial.
+# Energy, flow, and harmonic share the encoder's head slot; the encoder picks
+# via the head_kind kwarg baked into its profile partial. Imported at the bottom
+# (after FlowMLP is defined) since harmonic_latent reuses it.
 from praxis.heads.energy import EnergyHead  # noqa: E402
+from praxis.heads.harmonic_latent import HarmonicLatentHead  # noqa: E402
 
 LATENT_HEAD_REGISTRY = {
     "energy": EnergyHead,
     "flow": FlowHead,
+    "harmonic": HarmonicLatentHead,
 }

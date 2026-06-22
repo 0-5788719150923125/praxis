@@ -36,6 +36,7 @@ OPTIMIZER_METRIC_DESCRIPTIONS = {
             "y_label": "lr",
             "y_scale": "logarithmic",
             "group": "optimizer",
+            "group_order": 10,
             "order": 10,
         },
     },

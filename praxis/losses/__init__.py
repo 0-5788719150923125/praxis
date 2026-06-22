@@ -9,6 +9,7 @@ from praxis.losses.focal import FocalLoss
 from praxis.losses.halo import HALOLoss
 from praxis.losses.layer_wise import compute_layer_wise_loss
 from praxis.losses.mile import MiLeLoss
+from praxis.losses.regularizers import REGULARIZER_REGISTRY, build_regularizers
 from praxis.losses.stablemax import StableMaxCrossEntropyLoss
 
 

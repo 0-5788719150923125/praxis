@@ -14,8 +14,8 @@ normal Poisson distribution. This forces the model to front-load useful computat
 since it never knows how many loops it will receive.
 
 Inference: runs up to full depth but monitors KL-divergence between hidden states at
-successive loop boundaries. When the divergence drops below a threshold, the latent
-representation has converged ...
+successive loop boundaries. Rather than gate on an absolute KL floor (which depends on
+hidden_size, sequence length, ...
 
 Source: [praxis/halting/kl.py:13](../praxis/halting/kl.py#L13)
 

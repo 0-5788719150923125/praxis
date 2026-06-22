@@ -85,6 +85,7 @@ class MemorySurfacing(MemoryBase):
                 "y_label": "Surprise",
                 "y_scale": "logarithmic",
                 "group": "memory",
+                "group_order": 20,
                 "order": 10,
             },
         },

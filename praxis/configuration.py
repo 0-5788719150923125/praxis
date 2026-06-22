@@ -78,7 +78,7 @@ class PraxisConfig(PretrainedConfig):
         mla: bool = False,
         hivemind: bool = False,
         tie_weights: bool = False,
-        contrastive_isotropy: bool = True,
+        regularizers: Optional[List[str]] = None,  # None -> default; [] -> none
         window_size: Optional[int] = None,
         bidirectional: bool = False,
         initial_peers: List[str] = [],

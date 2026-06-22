@@ -54,7 +54,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--differential` | bool | `False` | Use a Differential Attention mechanism |
 | `--dropout` | float | `0.0` | The percentage of neurons to drop-out during training |
 | `--embed-size` | int | `192` | The size of the model's embedding dimension (if applicable) |
-| `--encoder-type` | str | `None` | Encoder integration to use (choices: byte_latent, byte_latent_conv, byte_latent_conv_small, byte_latent_transformer, abstractinator, calm, calm_small, calm_byte, calm_byte_small, calm_byte_small_harmonic, calm_byte_ref, calm_byte_flow, calm_tm_ref, calm_bpe) |
+| `--encoder-type` | str | `None` | Encoder integration to use (choices: byte_latent, byte_latent_conv, byte_latent_conv_small, byte_latent_transformer, abstractinator, calm, calm_small, calm_byte, calm_byte_small, calm_byte_small_harmonic, calm_byte_ref, calm_byte_flow, calm_byte_harmonic, calm_tm_ref, calm_bpe) |
 | `--encoding-type` | str | `rope` | The positional encoding to use for sequence length extrapolation (choices: nope, alibi, rope, hope, arc) |
 | `--evolve` | bool | `False` | Use a genomic bottleneck |
 | `--ffn-type` | str | `glu` | The feedforward-network implementation to use within each block (choices: mlp, glu, arc, poly, scatter, kan, peer) |
@@ -74,13 +74,13 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--mta` | bool | `False` | Use Multi-Token Attention (MTA) |
 | `--mtp-depth` | int | `1` | Number of Multi-Token Prediction depths |
 | `--mtp-type` | str | `None` | MTP module type (omit to disable MTP) (choices: transformer, conv) |
-| `--no-contrastive-isotropy` | bool | `True` | Disable the SimCTG contrastive isotropy loss (on by default) |
 | `--norm-type` | str | `rms_norm` | The type of normalization to use (choices: none, layer_norm, rms_norm, post_rms_norm, sandwich) |
 | `--num-experts` | int | `1` | Number of experts per layer (1 = no MoE) |
 | `--num-heads` | int | `4` | Number of attention heads |
 | `--num-layers` | int | `2` | Number of layer components for controllers |
 | `--num-queries` | int | `2` | Number of queries per attention head (for GQA/MQA) |
 | `--orchestration-type` | str | `none` | Remote-expert pool profile: backend sidecar of tiny experts (joinable from the web Stage tab) + a mixing strategy. Default none. (choices: none, swarm, swarm_mean, swarm_wave, swarm_sidecar, frontend_only) |
+| `--regularizers` | str | `['contrastive_isotropy']` | Additive representation-shaping losses to apply (space-separated; pass with no values to disable all). Default: contrastive_isotropy (choices: contrastive_isotropy, activation) |
 | `--residual-type` | str | `standard` | The style of residual connection to use (choices: standard, hyper, rezero) |
 | `--router-type` | str | `None` | How to route tokens at every layer (choices: mixture_of_depths, mixture_of_depths_u, mixture_of_depths_decayed, mixture_of_depths_ramped, mixture_of_depths_skip_2, smear, distance, prismatic, taxus, taxus_aggressive, taxus_balanced) |
 | `--scaled` | bool | `False` | Scale the output of each layer by the inverse square root of its depth |
