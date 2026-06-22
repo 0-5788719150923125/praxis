@@ -6,7 +6,7 @@
 import { state, CONSTANTS, chartLineColor, currentAccentHue, rotateHexHue } from './state.js';
 import { fetchAPI } from './api.js';
 import { createTabHeader, pdfButton } from './components.js';
-import { dedupe, hasRealContent } from './prefetch.js';
+import { hasRealContent } from './prefetch.js';
 import { SCROLL_TAU, SCROLL_MIN_VEL } from './momentum.js';
 
 // Chart instances storage (exported for hybrid mode)
@@ -427,8 +427,21 @@ export function toggleRunSelection(hash) {
         state.research.selectedHistoricalRuns.push(hash);
     }
 
+    // Counter reflects pure state, so update it now instead of waiting on the
+    // async chart reload (which may coalesce several rapid toggles).
+    updateRunSelectorCount();
+
     // Reload charts only (header stays intact)
     loadResearchMetricsWithCharts(true);
+}
+
+/** Sync the "Runs (X/Y)" button count from current selection state. */
+function updateRunSelectorCount() {
+    const countEl = document.getElementById('run-selector-count');
+    if (countEl) {
+        countEl.textContent =
+            `${state.research.selectedHistoricalRuns.length}/${state.research.historicalRuns.length}`;
+    }
 }
 
 /**
@@ -455,8 +468,32 @@ export function formatRelativeTime(timestamp) {
  *
  * @param {boolean} force - If true, re-fetch even if already loaded.
  */
+let researchInflight = null;
+let researchReloadQueued = false;
+let researchQueuedForce = false;
+
 export async function loadResearchMetricsWithCharts(force = false) {
-    await dedupe('tab:research', () => loadResearchInner(force));
+    // A reload requested mid-flight (e.g. toggling another run while the last
+    // fetch is still running) must not be dropped, or the newest selection is
+    // lost until the next refresh. Queue a trailing reload so the final
+    // selection always re-fetches; rapid toggles coalesce into one.
+    if (researchInflight) {
+        researchReloadQueued = true;
+        researchQueuedForce = researchQueuedForce || force;
+        return researchInflight;
+    }
+
+    researchInflight = Promise.resolve()
+        .then(() => loadResearchInner(force))
+        .finally(() => { researchInflight = null; });
+    await researchInflight;
+
+    if (researchReloadQueued) {
+        researchReloadQueued = false;
+        const queuedForce = researchQueuedForce;
+        researchQueuedForce = false;
+        await loadResearchMetricsWithCharts(queuedForce);
+    }
 }
 
 async function loadResearchInner(force) {
@@ -1012,6 +1049,10 @@ const DECK_GRIP_H = 56;          // px; the standard grip band at every card's t
                                  // (titled or bare), so the grip gesture is uniform deck-wide.
                                  // Per-card opt-out: class "deck-no-grip".
 const DECK_WHEEL_STEP = 120;     // wheel px that advance one card
+const DECK_AXIS_LOCK = 10;       // px of travel before a drag commits to an axis. A
+                                 // horizontal-dominant drag is a tab swipe (tabslide.js),
+                                 // not a deck gesture - the deck bails so it never reads
+                                 // the swipe's vertical drift as a B->A lift.
 // Release motion: NO free coast. The release projects ONE target slot from the fling
 // direction, then a fixed-duration easeOutCubic slide lands on it - monotonic, so it
 // can never reverse (no bounce) and has no asymptotic tail (decisive, weighty).
@@ -1788,6 +1829,10 @@ function bindDeckEvents(deck) {
         lastT = e.timeStamp;
         fvel = 0;
         travel = 0;
+        deck._startX = e.touches[0].clientX;   // axis-lock origin (vs. horizontal tab swipe)
+        deck._startY = e.touches[0].clientY;
+        deck._axis = 0;                         // 0 undecided, 1 vertical (deck), -1 horizontal (tab swipe)
+        deck._anchorStart = deck._anchorTarget; // baseline to restore if we lock horizontal
         deck._seamAccum = 0;       // 0 = seated on a card; non-zero = mid card-transition
         deck._backAccum = 0;       // sustained downward travel, gating the drop to B
         deck._scrollVel = 0;       // reset inner-scroll velocity for this gesture
@@ -1815,6 +1860,28 @@ function bindDeckEvents(deck) {
         if (!dragging) return;
         const st = deck._deck;
         if (!st) return;
+
+        // Axis lock: a horizontal-dominant drag is a tab transition, not a deck
+        // gesture. Once the finger has moved enough, commit to an axis and keep
+        // it. On a horizontal lock the deck bails for the rest of the gesture and
+        // undoes any anchor nudge from the ambiguous first pixels - so swiping
+        // between tabs never slots a card from B up into A.
+        if (deck._axis === -1) return;
+        if (deck._axis === 0) {
+            const tx = Math.abs(e.touches[0].clientX - deck._startX);
+            const ty = Math.abs(e.touches[0].clientY - deck._startY);
+            if (Math.max(tx, ty) >= DECK_AXIS_LOCK) {
+                deck._axis = tx > ty ? -1 : 1;
+                if (deck._axis === -1) {
+                    if (deck._anchorTarget !== deck._anchorStart) {
+                        deck._anchorLocked = false;
+                        setAnchor(deck, deck._anchorStart);
+                    }
+                    return;
+                }
+            }
+        }
+
         const y = e.touches[0].clientY;
         let dy = lastY - y;            // finger up -> dy > 0 -> advance / scroll content down
         lastY = y;
@@ -1982,7 +2049,7 @@ function renderMetricsHeader(container, runs) {
                         <path d="M8 1a7 7 0 1 0 4.95 11.95l.707.707A8.001 8.001 0 1 1 8 0v1z"/>
                         <path d="M7.5 3a.5.5 0 0 1 .5.5v5.21l3.248 1.856a.5.5 0 0 1-.496.868l-3.5-2A.5.5 0 0 1 7 9V3.5a.5.5 0 0 1 .5-.5z"/>
                     </svg>
-                    Runs (${selectedCount}/${totalCount})
+                    Runs (<span id="run-selector-count">${selectedCount}/${totalCount}</span>)
                 </button>
                 <div class="run-selector-dropdown" id="run-selector-dropdown" style="display: none;">
                     <div class="run-selector-header">Compare Runs</div>
@@ -2045,6 +2112,8 @@ function updateMetricsMetadata(runs) {
     const pointsEl = document.getElementById('metrics-metadata-points');
     if (comparingEl) comparingEl.innerHTML = `<strong>Comparing:</strong> ${runs.length} run${runs.length !== 1 ? 's' : ''}`;
     if (pointsEl) pointsEl.innerHTML = `<strong>Total Points:</strong> ${totalPoints}`;
+
+    updateRunSelectorCount();
 }
 
 /**

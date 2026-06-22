@@ -345,6 +345,12 @@ function renderMessages() {
 /**
  * Render tabs
  */
+// Signature of the rendered strip (copies + tab ids/labels). render() runs on
+// every metrics tick / notification, so we rebuild the strip's innerHTML only
+// when the set actually changes - a blind rebuild every render thrashes the DOM
+// and resets the carousel scroll mid-swipe.
+let lastTabSig = null;
+
 function renderTabs() {
     const container = document.querySelector('.tab-buttons');
     if (!container) return;
@@ -357,21 +363,43 @@ function renderTabs() {
     // them switches by data-tab just the same.
     const tabs = state.tabs;
     const loop = window.innerWidth <= 768 && tabs.length > 1;
-    const buttons = tabs.map(tab => createTab(tab)).join('');
+    const copies = loop ? TAB_LOOP_COPIES : 1;
 
-    container.innerHTML = loop ? buttons.repeat(TAB_LOOP_COPIES) : buttons;
+    const sig = copies + '|' + tabs.map(t => {
+        const label = typeof t.label === 'function' ? t.label(state.theme) : t.label;
+        return `${t.id}:${label}`;
+    }).join(',');
+
+    const existing = container.querySelectorAll('.tab-button');
+    const intact = existing.length === tabs.length * copies;
+    let rebuilt = false;
+    if (sig !== lastTabSig || !intact) {
+        const buttons = tabs.map(tab => createTab(tab)).join('');
+        container.innerHTML = loop ? buttons.repeat(TAB_LOOP_COPIES) : buttons;
+        lastTabSig = sig;
+        rebuilt = true;
+    } else {
+        // Same set: just move the .active class on the existing buttons.
+        existing.forEach(btn =>
+            btn.classList.toggle('active', btn.dataset.tab === state.currentTab));
+    }
 
     // Show/hide tab content
+    let activeChanged = false;
     state.tabs.forEach(tab => {
         const content = document.getElementById(`${tab.id}-content`);
-        if (content) {
+        if (content && content.classList.contains('active') !== tab.active) {
             content.classList.toggle('active', tab.active);
+            if (tab.active) activeChanged = true;
         }
     });
 
-    // Seat the active tab in the middle copy so a full set of strip sits on
-    // each side, ready to scroll either way (no-op on desktop).
-    if (loop) centerLoopedTabs();
+    // Seat the active tab in the middle copy so a full set of strip sits on each
+    // side, ready to scroll either way. Only on rebuild or an actual tab change -
+    // re-seating on every incidental render would jerk the strip mid-scroll. A
+    // pure active change (a switch) animates; a rebuild seats instantly (the
+    // fresh buttons have no prior scroll position to glide from).
+    if (loop && (rebuilt || activeChanged)) centerLoopedTabs(activeChanged && !rebuilt);
 }
 
 /**

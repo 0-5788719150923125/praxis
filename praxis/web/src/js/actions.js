@@ -16,6 +16,7 @@ import { sendMessage, kbFetchItem, testApiConnection, loopApprove } from './api.
 import { kbCacheFetch } from './kbcache.js';
 import { renderMarkdown, renderJson } from './markdown.js';
 import { revealPrewarmed } from './prefetch.js';
+import { slideTabs, canSlideTabs, finishActiveSlide } from './tabslide.js';
 import { syncInputToMode, fetchAndPresentQuestion, startLoop, stopLoop, rerollLoopNow, addKbSearchTerm } from './main.js';
 
 /**
@@ -253,11 +254,23 @@ export const ACTION_HANDLERS = {
      * Switch active tab
      * @param {string} tabId - ID of tab to switch to
      */
-    SWITCH_TAB: async (tabId) => {
+    SWITCH_TAB: async (tabId, meta) => {
         const oldTab = state.tabs.find(t => t.active);
         const newTab = state.tabs.find(t => t.id === tabId);
 
         if (!newTab || newTab.id === oldTab?.id) return;
+
+        // Finish any slide still settling before we measure, so the outgoing box
+        // is read at rest, not parked off-screen from the previous swipe.
+        finishActiveSlide();
+
+        // Capture the outgoing panel + its box BEFORE render hides it, so a
+        // swipe can slide it off. dir comes from the swipe handler (>0 forward,
+        // <0 back); clicks/programmatic nav pass none and stay instant.
+        const dir = meta && meta.dir;
+        const animate = dir && canSlideTabs();
+        const outgoing = animate ? document.getElementById(`${oldTab.id}-content`) : null;
+        const outRect = outgoing ? outgoing.getBoundingClientRect() : null;
 
         // Call deactivation hook
         if (oldTab?.onDeactivate) {
@@ -280,26 +293,38 @@ export const ACTION_HANDLERS = {
 
         render();
 
-        // If a background warm has this tab laid out off-screen, strip those
-        // styles NOW: the old content stays visible while the refresh swaps in
-        // underneath. Without this the inline styles override .active and the
-        // whole container vanishes until the warm settles.
+        // Refresh data + lay out the deck. This is the expensive part (chart
+        // re-fit, deck measure). When sliding it runs UNDER the cover (see
+        // slideTabs) so the heavy work finishes before the panel moves - doing
+        // it mid-slide stalled the transition halfway. Deep-link callers poll
+        // applyDeckFocus, so they don't need it inline.
+        const postSwitch = async () => {
+            if (state.currentTab !== tabId) return;  // a newer switch superseded us
+            try {
+                if (newTab.onActivate) await callLifecycleHook(newTab.onActivate, newTab);
+                const { relayoutDeckOnActivate } = await import('./charts.js');
+                relayoutDeckOnActivate(DECK_BY_TAB[tabId]);
+                applyDeckFocus(DECK_BY_TAB[tabId]);
+            } catch (err) {
+                console.error('[Actions] SWITCH_TAB post-activate failed:', err);
+            }
+        };
+
+        // Already-rendered tabs slide on their cached content with no forced
+        // wait (refresh runs after); only a cold tab is built under the cover
+        // first. A tab with a loaded-flag that's false is the cold case.
+        const slice = state[tabId];
+        const ready = !slice || typeof slice.loaded !== 'boolean' || slice.loaded;
+
+        // Reveal a mid-warm tab (strip its off-screen styles so .active wins),
+        // then start the slide. Both run before the browser paints, so the
+        // incoming never flashes at rest.
         revealPrewarmed(tabId);
-
-        // Call activation hook
-        if (newTab.onActivate) {
-            await callLifecycleHook(newTab.onActivate, newTab);
+        if (animate) {
+            slideTabs(outgoing, outRect, document.getElementById(`${tabId}-content`), dir, postSwitch, ready);
+        } else {
+            requestAnimationFrame(postSwitch);
         }
-
-        // Lay out the deck only if it never got a visible measure (prefetch retry
-        // lapsed); an already-laid-out deck is left untouched so switching tabs
-        // doesn't re-render it (which flashed the cards). Then consume any pending
-        // deep-link focus.
-        const { relayoutDeckOnActivate } = await import('./charts.js');
-        requestAnimationFrame(() => {
-            relayoutDeckOnActivate(DECK_BY_TAB[tabId]);
-            applyDeckFocus(DECK_BY_TAB[tabId]);
-        });
 
     },
 

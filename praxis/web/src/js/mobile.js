@@ -44,25 +44,68 @@ function copyWidth(strip) {
  * Seat the middle copy's active tab at the strip's left edge, so a full copy of
  * the set sits to either side and the carousel can scroll both ways at once.
  * Called by renderTabs after every rebuild (the strip is rebuilt on switch).
+ * `smooth` animates the reseat on a tab switch; layout-time reseats stay instant.
  */
-export function centerLoopedTabs() {
+export function centerLoopedTabs(smooth = false) {
     const strip = tabStrip();
     if (!strip) return;
     const btns = strip.querySelectorAll('.tab-button');
     const n = btns.length / TAB_LOOP_COPIES;
     if (!Number.isInteger(n) || n < 1) return;
+
     const mid = Math.floor(TAB_LOOP_COPIES / 2) * n;   // first button of the middle copy
-    let target = btns[mid];
-    for (let i = mid; i < mid + n; i++) {
-        if (btns[i].classList.contains('active')) { target = btns[i]; break; }
+    let local = -1;                                    // active tab's index within one copy
+    for (let i = 0; i < n; i++) {
+        if (btns[mid + i].classList.contains('active')) { local = i; break; }
     }
+    if (local < 0) return;
+
+    const motionOK = window.matchMedia('(prefers-reduced-motion: no-preference)').matches;
+    const stripLeft = strip.getBoundingClientRect().left;
+
+    // Which copy of the active tab to seat at the left edge. A smooth switch
+    // seats the NEAREST instance, so wrapping (last <-> first) glides one tab
+    // over instead of scrolling a whole copy back across the strip. Instant
+    // (layout) reseats use the middle copy for an even buffer on both sides.
+    let target = btns[mid + local];
+    if (smooth && motionOK) {
+        let best = Infinity;
+        for (let c = 0; c < TAB_LOOP_COPIES; c++) {
+            const b = btns[c * n + local];
+            const d = Math.abs(b.getBoundingClientRect().left - stripLeft);
+            if (d < best) { best = d; target = b; }
+        }
+    }
+
     // Relative measure (getBoundingClientRect) so it's correct regardless of the
     // button's offsetParent; aligns the active tab flush with the strip's left.
-    strip.scrollLeft += target.getBoundingClientRect().left - strip.getBoundingClientRect().left;
+    const delta = target.getBoundingClientRect().left - stripLeft;
+    if (!delta) return;
+    const left = strip.scrollLeft + delta;
+    if (smooth && motionOK) {
+        // Suppress the loop-nudge while the smooth seat runs - nudging mid-scroll
+        // (an instant copy-width jump) would fight the animation.
+        strip._seeking = true;
+        clearTimeout(strip._seekT);
+        strip._seekT = setTimeout(() => {
+            strip._seeking = false;
+            // Re-home into the central copies by whole copy-widths (identical
+            // pixels, so invisible), restoring buffer after a nearest-instance seat.
+            const w = copyWidth(strip);
+            if (!w) return;
+            let sl = strip.scrollLeft;
+            while (sl < 1.5 * w) sl += w;
+            while (sl > 2.5 * w) sl -= w;
+            if (sl !== strip.scrollLeft) strip.scrollLeft = sl;
+        }, 600);
+        strip.scrollTo({ left, behavior: 'smooth' });
+    } else {
+        strip.scrollLeft = left;
+    }
 }
 
-// Back-compat alias: the swipe-to-switch handler re-centers after a switch.
-export const snapActiveTabIntoView = centerLoopedTabs;
+// The swipe-to-switch handler re-centers after a switch; animate that reseat.
+export const snapActiveTabIntoView = () => centerLoopedTabs(true);
 
 /**
  * Setup the mobile tab carousel as an infinite loop on top of native scroll.
@@ -88,6 +131,7 @@ export function setupTabCarousel() {
     // children change). Keep the scroll parked in the central copies - jump by a
     // whole copy-width (identical pixels) when it drifts into the outer ones.
     strip.addEventListener('scroll', () => {
+        if (strip._seeking) return;   // a smooth reseat is running; don't jump mid-scroll
         const w = copyWidth(strip);
         if (!w) return;
         const sl = strip.scrollLeft;
@@ -98,7 +142,7 @@ export function setupTabCarousel() {
     centerLoopedTabs();
     // Re-center once fonts settle: their late metrics widen the buttons, which
     // would otherwise leave the leading tab measured at a stale offset and clipped.
-    if (document.fonts && document.fonts.ready) document.fonts.ready.then(centerLoopedTabs);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => centerLoopedTabs());
 
     // Re-center only on real width changes - the URL bar showing/hiding during a
     // scroll fires resize and would otherwise jerk the strip mid-drag.
@@ -170,8 +214,10 @@ export function setupTabSwipe() {
         // round from either end.
         const next = ((dx < 0 ? idx + 1 : idx - 1) % n + n) % n;
 
-        // Await the switch (render rebuilds the strip), then scroll the new
-        // active tab into view so swiping toward the end keeps it visible.
-        executeAction('SWITCH_TAB', tabs[next].id).then(snapActiveTabIntoView);
+        // Switch (render re-seats the strip), then scroll the new active tab
+        // into view so swiping toward the end keeps it visible. dir drives the
+        // slide direction: swipe left enters from the right, right from the left.
+        const dir = dx < 0 ? 1 : -1;
+        executeAction('SWITCH_TAB', tabs[next].id, { dir }).then(snapActiveTabIntoView);
     }, { passive: true, capture: true });
 }

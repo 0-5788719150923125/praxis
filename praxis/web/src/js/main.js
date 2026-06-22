@@ -159,12 +159,14 @@ async function prefetchTabs() {
     const { loadResearchMetrics, loadDynamics, loadSpec, loadAgents } = await import('./tabs.js');
     // [tabId, contentId, loader, needsLayout] - deck tabs must be laid out
     // off-screen so their charts measure; the Stage fleet is a plain list, so
-    // a background load is enough.
+    // a background load is enough. Stage goes first and skips the idle gate
+    // (see below) so its first navigation lands instantly instead of hitting a
+    // blocking "Loading agents" fetch.
     const jobs = [
+        ['agents', 'agents-content', loadAgents, false],
         ['spec', 'spec-content', loadSpec, true],
         ['research', 'research-content', loadResearchMetrics, true],
         ['dynamics', 'dynamics-content', loadDynamics, true],
-        ['agents', 'agents-content', loadAgents, false],
     ];
     // Building a hidden deck is a long synchronous chunk (dozens of charts);
     // run each only in an idle slice so typing and hover never block.
@@ -179,7 +181,9 @@ async function prefetchTabs() {
             // never by the off-screen prewarm (off-screen styling of a visible
             // tab is exactly the blank-flash bug).
             if (force && state.currentTab === tabId) continue;
-            await idle();
+            // Only the heavy off-screen deck builds need an idle slice; the
+            // plain Stage list can warm right away.
+            if (needsLayout) await idle();
             try {
                 const loader = () => load(force);
                 await (needsLayout ? prewarmTab(tabId, contentId, loader) : loader());
@@ -472,9 +476,31 @@ async function handleSliderChange(e) {
  * Pure delegation pattern - configuration in event-handlers.js, logic in actions.js
  */
 async function handleClick(e) {
+    closeRunSelectorsOnOutsideClick(e);
+
     const action = delegateClick(e, CLICK_HANDLERS);
     if (action) {
         await executeAction(action.type, action.payload, action.meta);
+    }
+}
+
+// Run-selector dropdowns (Research/Dynamics/Identity) close when clicking
+// anywhere outside their wrapper. Clicks on the button or inside the dropdown
+// (e.g. ticking a checkbox) stay open and are handled by delegation.
+const RUN_SELECTOR_DROPDOWNS = [
+    { state: () => state.research, id: 'run-selector-dropdown' },
+    { state: () => state.dynamics, id: 'dynamics-run-selector-dropdown' },
+    { state: () => state.spec, id: 'spec-run-selector-dropdown' },
+];
+
+function closeRunSelectorsOnOutsideClick(e) {
+    if (e.target.closest('.run-selector-wrapper')) return;
+    for (const { state: getState, id } of RUN_SELECTOR_DROPDOWNS) {
+        const s = getState();
+        if (!s || !s.runSelectorOpen) continue;
+        s.runSelectorOpen = false;
+        const dropdown = document.getElementById(id);
+        if (dropdown) dropdown.style.display = 'none';
     }
 }
 

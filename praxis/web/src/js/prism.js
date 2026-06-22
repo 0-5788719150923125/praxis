@@ -1405,6 +1405,10 @@
     function animate() {
         if (!manualClock) requestAnimationFrame(animate);
 
+        // Yield the main thread + compositor during a tab slide: redrawing this
+        // canvas every frame competes with the transition and makes it stutter.
+        if (window.__prismPaused) return;
+
         // Clear canvas
         ctx.clearRect(0, 0, baseSize, baseSize);
 
