@@ -50,12 +50,8 @@ DEFAULT_CONTEXT_BLOCKS: List[ContextBlock] = [
     ContextBlock(
         "Focused", "Low temperature - the most likely continuation.", 1.0 / 3.0, 1.0
     ),
-    ContextBlock(
-        "Balanced", "Mid temperature - samples about 1 step in 10.", 0.5, 0.1
-    ),
-    ContextBlock(
-        "Wild", "High temperature - samples about 1 step in 100.", 1.0, 0.01
-    ),
+    ContextBlock("Balanced", "Mid temperature - samples about 1 step in 10.", 0.5, 0.1),
+    ContextBlock("Wild", "High temperature - samples about 1 step in 100.", 1.0, 0.01),
 ]
 
 

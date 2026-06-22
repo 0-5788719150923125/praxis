@@ -36,7 +36,10 @@ def test_stage2_rewarmup_fires_at_anchor():
     p = torch.nn.Parameter(torch.zeros(1))
     opt = torch.optim.SGD([p], lr=1.0)
     sched = get_scheduler_func(
-        {"lr": 1.0}, disable_schedule=True, warmup_steps=10, stage_anchor=lambda: anchor["v"]
+        {"lr": 1.0},
+        disable_schedule=True,
+        warmup_steps=10,
+        stage_anchor=lambda: anchor["v"],
     )(opt)
     lrs = []
     for step in range(40):

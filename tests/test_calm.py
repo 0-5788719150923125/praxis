@@ -194,7 +194,12 @@ def test_fixed_codec_deterministic_drop_in():
 
     assert CODEC_REGISTRY["fixed"] is FixedCodec
     c = FixedCodec(
-        vocab_size=264, embed_dim=32, chunk_size=4, latent_dim=16, hidden_dim=64, depth=2
+        vocab_size=264,
+        embed_dim=32,
+        chunk_size=4,
+        latent_dim=16,
+        hidden_dim=64,
+        depth=2,
     )
     ids = torch.randint(0, 264, (2, 12))
     m1, lv1 = c.encode(ids)
@@ -203,7 +208,9 @@ def test_fixed_codec_deterministic_drop_in():
     assert m1.shape == (2, 3, 16)
     assert float(c.kl_divergence(m1, lv1).abs().sum()) == 0.0
     # the encode transform is non-learnable (only the decoder has parameters)
-    enc_params = [n for n, _ in c.named_parameters() if not n.startswith(("dec", "out"))]
+    enc_params = [
+        n for n, _ in c.named_parameters() if not n.startswith(("dec", "out"))
+    ]
     assert enc_params == []
     out = c.decode(c.reparameterize(m1, lv1))
     assert out.shape == (2, 12, 64)
