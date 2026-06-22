@@ -12,6 +12,7 @@
 
 import { state } from './state.js';
 import { kbFetchItem } from './api.js';
+import { kbThumbUrl } from './components.js';
 import { renderMarkdown, renderJson, renderCode } from './markdown.js';
 
 const AHEAD = 30;       // precache this many rows past the focus (read direction)
@@ -26,6 +27,18 @@ const cache = new Map();     // id -> hydrated item; Map order = LRU (oldest fir
 const inflight = new Map();  // id -> Promise, dedupes concurrent fetches
 let queue = [];              // ordered ids awaiting prefetch
 let active = 0;              // in-flight prefetch count
+const warmedThumbs = new Set();  // thumbnail URLs already pulled into the browser cache
+
+// Pull a thumbnail into the browser's HTTP cache ahead of scroll, so the row's
+// lazy <img> paints from cache instead of popping in. Browser connection limits
+// bound the concurrency; dedupe keeps a sliding window from re-requesting.
+function warmThumb(url) {
+    if (!url || warmedThumbs.has(url)) return;
+    warmedThumbs.add(url);
+    const img = new Image();
+    img.decoding = 'async';
+    img.src = url;
+}
 
 /** Attach the rendered body HTML so an opened item paints with no extra work. */
 function hydrate(item) {
@@ -89,6 +102,10 @@ export function kbSlideWindow(focusIndex) {
     const want = [];
     for (let k = i; k < end; k++) want.push(results[k]);        // precache ahead
     for (let k = i - 1; k >= start; k--) want.push(results[k]); // postcache behind
+
+    // Warm thumbnails for every windowed row (any type can carry an image),
+    // separate from the body queue below (bodies are FETCHABLE types only).
+    for (const r of want) if (r) warmThumb(kbThumbUrl(r));
 
     queue = want
         .filter(r => r && FETCHABLE.has(r.type) && !cache.has(r.id) && !inflight.has(r.id))

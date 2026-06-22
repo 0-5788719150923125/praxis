@@ -449,13 +449,13 @@ def test_calm_convergence_samples_once_per_optimizer_step():
     assert enc._recon_accum == [9.0]
 
 
-def test_calm_pretrain_floor_covers_kl_anneal_plus_window():
-    """The latch floor must sit a full window past the later of the LR warmup
-    and KL anneal horizons, so the history holds only post-anneal readings."""
+def test_calm_pretrain_floor_covers_warmup_plus_window():
+    """The latch floor must sit a full window past the LR warmup horizon, so the
+    history holds only post-warmup readings (β is constant - no anneal term)."""
     from praxis.encoders.calm.encoder import PRETRAIN_WINDOW
 
     enc = PraxisForCausalLM(_tiny_config(warmup_steps=100)).encoder
-    assert enc._pretrain_min_steps == max(100, enc.kl_warmup_steps) + PRETRAIN_WINDOW
+    assert enc._pretrain_min_steps == 100 + PRETRAIN_WINDOW
 
 
 def test_calm_with_stacked_crystal_harmonic_head():

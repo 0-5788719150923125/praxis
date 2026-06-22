@@ -189,19 +189,6 @@ class CALMEncoder(BaseEncoder):
                 "order": 40,
             },
         },
-        "calm_kl_beta": {
-            "description": (
-                "Effective KL coefficient β at this step. Linearly anneals from "
-                "0 to the configured kl_beta over kl_warmup_steps, then holds."
-            ),
-            "chart": {
-                "title": "KL β (annealed)",
-                "y_label": "β",
-                "y_scale": "linear",
-                "group": "calm",
-                "order": 50,
-            },
-        },
         "calm_energy_loss": {
             "description": (
                 "Energy-score loss between proposed next latents and posterior "
@@ -439,7 +426,6 @@ class CALMEncoder(BaseEncoder):
         ae_hidden: Union[int, float] = 512,
         kl_beta: float = 1e-3,
         kl_clip: float = 0.5,
-        kl_warmup_steps: Optional[int] = None,
         ae_dropout: float = 0.15,
         ae_dropout_mode: str = "scalar",
         ae_dropout_cycles: int = 2,
@@ -477,22 +463,19 @@ class CALMEncoder(BaseEncoder):
 
         # All schedules below are in optimizer-step units. _train_step counts
         # encode() calls (microbatches), so the gates divide by grad_accumulation
-        # to convert - see _opt_step(). When kl_warmup/ae_freeze are left None,
-        # they lock to the LR warmup horizon: the codec trains entirely under the
-        # rising-LR phase and freezes at the LR peak, then the rest of the model
-        # adapts to a fixed codec during decay.
+        # to convert - see _opt_step(). When ae_freeze is left None it locks to
+        # the LR warmup horizon: the codec trains entirely under the rising-LR
+        # phase and freezes at the LR peak, then the rest of the model adapts to
+        # a fixed codec during decay. β is constant (the reference uses no KL
+        # anneal; free-bits already prevents collapse).
         self._grad_accum = max(1, int(getattr(config, "grad_accumulation", 1) or 1))
         warmup = int(getattr(config, "warmup_steps", 0) or 0)
-        self.kl_warmup_steps = (
-            warmup if kl_warmup_steps is None else int(kl_warmup_steps)
-        )
-        # Convergence can't latch until a full window of post-warmup,
-        # post-anneal readings exists: while the LR ramps a flat recon curve is
-        # just the low LR, and while beta rises the objective is still moving.
+        # Convergence can't latch until a full window of post-warmup readings
+        # exists: while the LR ramps a flat recon curve is just the low LR.
         # Without the extra window the history at the boundary is full of
         # warmup-era samples and the latch fires the moment the floor lifts.
         # Optimizer-step units.
-        self._pretrain_min_steps = max(warmup, self.kl_warmup_steps) + PRETRAIN_WINDOW
+        self._pretrain_min_steps = warmup + PRETRAIN_WINDOW
 
         self.noise_dim = _resolve_dim(noise_dim, base)
         self.energy_blocks = energy_blocks
@@ -847,7 +830,7 @@ class CALMEncoder(BaseEncoder):
         recon_logits = self._classify(recon_hidden)
         recon_loss = self._reconstruction_loss(recon_logits, padded, recon_hidden)
         kl = self.vae.kl_divergence(mean, logvar, per_dim_clip=self.kl_clip).mean()
-        beta_t = self._current_kl_beta()
+        beta_t = float(self.kl_beta)
         loss = self.K * recon_loss + beta_t * kl
 
         self._train_step += 1
@@ -995,7 +978,7 @@ class CALMEncoder(BaseEncoder):
         recon_logits = self._classify(recon_hidden)  # [B, N*K, V]
         recon_loss = self._reconstruction_loss(recon_logits, padded, recon_hidden)
         kl = self.vae.kl_divergence(mean, logvar, per_dim_clip=self.kl_clip).mean()
-        beta_t = self._current_kl_beta()
+        beta_t = float(self.kl_beta)
         # K-scaled recon to match the reference's stage-1 AE training: their
         # objective is `loss * patch_size + kl_loss * kl_weight`, so β is K
         # times softer relative to recon than a plain mean. Without this our
@@ -1401,13 +1384,6 @@ class CALMEncoder(BaseEncoder):
             self._ae_frozen_logged = True
         return True
 
-    def _current_kl_beta(self) -> float:
-        """Linearly annealed β: 0 → kl_beta over kl_warmup_steps, then held."""
-        if self.kl_warmup_steps <= 0:
-            return float(self.kl_beta)
-        progress = float(self._opt_step()) / float(self.kl_warmup_steps)
-        return float(self.kl_beta) * min(1.0, max(0.0, progress))
-
     @torch.no_grad()
     def _stash_diagnostics(
         self,
@@ -1435,7 +1411,6 @@ class CALMEncoder(BaseEncoder):
         self._diag["calm_latent_std_mean"] = float(std.mean())
         self._diag["calm_kl_active_frac"] = float(active_frac)
         self._diag["calm_recon_kl_ratio"] = ratio
-        self._diag["calm_kl_beta"] = float(beta_t)
         # Energy loss is updated in _register_energy_loss; default 0.0 during
         # warmup or eval (when it's not registered).
         self._diag.setdefault("calm_energy_loss", 0.0)

@@ -442,15 +442,21 @@ export function createMessage({ role, content, caption, jokeScore, score = 0 }, 
  * @param {Object} hit - {type, title, uri, origin, summary, snippet}
  * @returns {string} HTML string
  */
+// Thumbnail URL for a KB result: a stored preview image (og:image, crawled by
+// the spider), or one derived from the video id for watch URLs that predate
+// image capture. Shared with the prefetcher so warmed URLs match rendered ones.
+export function kbThumbUrl({ uri, meta } = {}) {
+    if (meta && meta.image) return meta.image;
+    const video = (uri || '').match(/youtube\.com\/watch\?v=([\w-]{11})/);
+    return video ? `https://i.ytimg.com/vi/${video[1]}/mqdefault.jpg` : '';
+}
+
 export function createKbResult({ id, type, label, title, uri, origin, summary, snippet, meta }) {
     const highlighted = escapeHtml(snippet || summary || '')
         .replaceAll('\x01', '<mark>')
         .replaceAll('\x02', '</mark>');
     const from = origin ? `<span class="kb-result-origin">${escapeHtml(origin)}</span>` : '';
-    const video = (uri || '').match(/youtube\.com\/watch\?v=([\w-]{11})/);
-    // Thumbnail: a stored preview image (og:image, crawled by the spider), or
-    // one derived from the video id for watch URLs that predate image capture.
-    const image = (meta && meta.image) || (video ? `https://i.ytimg.com/vi/${video[1]}/mqdefault.jpg` : '');
+    const image = kbThumbUrl({ uri, meta });
     // Pages label themselves with their domain, which already shows by the
     // title (origin) - so the chip uses the generic type instead of repeating it.
     const chipLabel = type === 'page' ? type : (label || type);
