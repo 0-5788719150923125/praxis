@@ -188,6 +188,55 @@ def test_calm_harmonic_head_trains():
         ENCODER_REGISTRY["calm_byte_flow"] = orig
 
 
+def test_fixed_codec_deterministic_drop_in():
+    # Fixed codec: deterministic encode (pure buffers), learned decode, zero KL.
+    from praxis.encoders.calm.fixed_codec import CODEC_REGISTRY, FixedCodec
+
+    assert CODEC_REGISTRY["fixed"] is FixedCodec
+    c = FixedCodec(
+        vocab_size=264, embed_dim=32, chunk_size=4, latent_dim=16, hidden_dim=64, depth=2
+    )
+    ids = torch.randint(0, 264, (2, 12))
+    m1, lv1 = c.encode(ids)
+    m2, _ = c.encode(ids)
+    assert torch.equal(m1, m2)  # deterministic
+    assert m1.shape == (2, 3, 16)
+    assert float(c.kl_divergence(m1, lv1).abs().sum()) == 0.0
+    # the encode transform is non-learnable (only the decoder has parameters)
+    enc_params = [n for n, _ in c.named_parameters() if not n.startswith(("dec", "out"))]
+    assert enc_params == []
+    out = c.decode(c.reparameterize(m1, lv1))
+    assert out.shape == (2, 12, 64)
+
+
+def test_calm_fixed_codec_trains_single_stage():
+    # Full CALM model with codec_kind="fixed", single-stage (ae_freeze_steps=0):
+    # the learned decoder trains against the stationary fixed latent.
+    import functools
+
+    from praxis.encoders import ENCODER_REGISTRY
+
+    cfg = _tiny_config(encoder_type="calm_byte_flow", tokenizer_type="byte_level")
+    orig = ENCODER_REGISTRY["calm_byte_flow"]
+    ENCODER_REGISTRY["calm_byte_flow"] = functools.partial(
+        orig, codec_kind="fixed", ae_freeze_steps=0
+    )
+    try:
+        model = PraxisForCausalLM(cfg)
+        model.train()
+        assert type(model.encoder.vae).__name__ == "FixedCodec"
+        ids = torch.randint(4, 200, (2, 32), dtype=torch.long)
+        out = model(input_ids=ids, labels=ids[:, 1:].contiguous())
+        out.loss.backward()
+        # decoder learns; the fixed encode path carries no gradients
+        assert any(
+            p.grad is not None and p.grad.abs().sum() > 0
+            for p in model.encoder.vae.dec_in.parameters()
+        )
+    finally:
+        ENCODER_REGISTRY["calm_byte_flow"] = orig
+
+
 def test_energy_score_loss_nonnegative_on_random():
     torch.manual_seed(0)
     model = torch.randn(2, 3, 4, 8)

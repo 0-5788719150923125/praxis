@@ -30,12 +30,19 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         num_heads: int = 4,
         k: int = 8,
         offset_heads: bool = False,
+        sparse: bool = False,
     ):
         """
         Initialize the PEER module.
 
         Args:
             config: Configuration object containing PEER parameters
+            sparse: if True, the expert banks emit sparse gradients (only the
+                selected rows get a grad/optimizer update), which is what lets
+                `num_experts` scale without paying dense grad + optimizer state
+                on every untouched expert. Requires a sparse-aware optimizer
+                (e.g. torch.optim.SparseAdam); Lion/Muon and the schedule-free
+                optimizers here reject sparse grads, so it is off by default.
         """
         super().__init__()
 
@@ -105,13 +112,20 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         self.keys = nn.Parameter(
             torch.randn(self.num_heads, self.num_keys, 2, key_dims)
         )
-        nn.init.normal_(self.keys, std=0.02)
-
-        self.down = nn.Embedding(self.num_experts * self.num_sets, hidden_size)
-        nn.init.xavier_uniform_(self.down.weight)
+        self.down = nn.Embedding(
+            self.num_experts * self.num_sets, hidden_size, sparse=sparse
+        )
         self.act = ACT2FN[config.activation]
         self.dropout = nn.Dropout(config.dropout)
-        self.up = nn.Embedding(self.num_experts * self.num_sets, hidden_size)
+        self.up = nn.EmbeddingBag(
+            self.num_experts * self.num_sets, hidden_size, mode="sum", sparse=sparse
+        )
+        self.init_weights()
+
+    def init_weights(self, keys_std: float = 0.02) -> None:
+        """Init the product keys (normal) and both expert banks (Xavier)."""
+        nn.init.normal_(self.keys, std=keys_std)
+        nn.init.xavier_uniform_(self.down.weight)
         nn.init.xavier_uniform_(self.up.weight)
 
     def forward(self, inputs: Tensor) -> Tensor:
@@ -163,17 +177,18 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         weights_down = self.down(indices)
         outputs = torch.einsum("b n d, b n h k d -> b n h k", inputs, weights_down)
 
-        # Apply sigmoid scores to activated outputs
+        # Apply sigmoid scores to activated outputs, then drop whole experts
         outputs = F.sigmoid(scores) * self.act(outputs)
-
-        # Force sparse ensembling of intermediate states
         outputs = self.dropout(outputs)
-        weights_up = self.dropout(self.up(indices))
 
-        # Aggregate expert outputs
-        outputs = torch.einsum("b n h k, b n h k d -> b n d", outputs, weights_up)
+        # Aggregate via EmbeddingBag: the score-weighted sum over (heads, k) is
+        # fused in the kernel, so the [b, n, h, k, d] up tensor is never built.
+        b, n = indices.shape[:2]
+        flat_indices = indices.reshape(b * n, -1)
+        flat_weights = outputs.reshape(b * n, -1).to(self.up.weight.dtype)
+        outputs = self.up(flat_indices, per_sample_weights=flat_weights)
 
-        return outputs
+        return outputs.view(b, n, -1)
 
 
 if __name__ == "__main__":

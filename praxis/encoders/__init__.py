@@ -201,6 +201,19 @@ CALMByteHarmonic = partial(
     head_kind="harmonic",
 )
 
+# CALMByteFlow with the learned VAE swapped for a FIXED deterministic codec
+# (codec_kind="fixed"): the encoder is a frozen orthonormal byte transform, only
+# the decoder learns. The latent target is stationary from step 0, so no codec
+# freeze is needed - ae_freeze_steps=0 runs it single-stage (decoder + flow head
+# train jointly, head active immediately against the fixed target). Tests the
+# bet that a static codec is "good enough" at our tiny scale + 264-byte vocab,
+# eliminating two-stage training entirely. Not yet run; inert option.
+CALMByteFixed = partial(
+    CALMByteFlow,
+    codec_kind="fixed",
+    ae_freeze_steps=0,
+)
+
 # CALMByteRef at the reference's true patch granularity: K=4 subword tokens
 # (~15-20 bytes of text per latent) for a TokenMonster/BPE tokenizer. The
 # calm-a-1 ablation uses this; calm-a-2 uses CALMByteRef (K=16) directly so the
@@ -248,6 +261,7 @@ ENCODER_REGISTRY = dict(
     calm_byte_ref=CALMByteRef,
     calm_byte_flow=CALMByteFlow,
     calm_byte_harmonic=CALMByteHarmonic,
+    calm_byte_fixed=CALMByteFixed,
     calm_tm_ref=CALMTmRef,
     calm_bpe=CALMBpe,
     # # Entropy-based patching
