@@ -210,6 +210,36 @@ CALMByteFixed = partial(
     ae_freeze_steps=0,
 )
 
+# CALMByteFixed's static scaffold + a small never-frozen learned residual
+# (codec_kind="hybrid"): the bias-variance midpoint between the fixed codec
+# (pure stationary) and the VAE (two-stage learned). Starts identical to fixed
+# (residual zero-init), then the latent slowly drifts toward better organization
+# without ever freezing - "stable, yet always slightly improving". Single-stage.
+# Tests whether a slow-moving target reclaims any VAE benefit at scale/large K
+# where a learned latent might earn its keep. Not yet run; inert option.
+CALMByteHybrid = partial(
+    CALMByteFlow,
+    codec_kind="hybrid",
+    ae_freeze_steps=0,
+)
+
+# FixedCodec with harmonic (standing-wave) bases instead of random orthonormal
+# ones (codec_kind="harmonic"): structured rather than arbitrary latent geometry,
+# every feature coupled through a shared spectrum, per-vocab + per-K modulation.
+# Still deterministic/stationary, single-stage. The _serpent variant adds a
+# learned periodic Serpent nonlinearity after the transform (encode becomes
+# learnable, never frozen). Not yet run; inert options.
+CALMByteHarmonicCodec = partial(
+    CALMByteFlow,
+    codec_kind="harmonic",
+    ae_freeze_steps=0,
+)
+CALMByteHarmonicSerpent = partial(
+    CALMByteFlow,
+    codec_kind="harmonic_serpent",
+    ae_freeze_steps=0,
+)
+
 # CALMByteRef at the reference's true patch granularity: K=4 subword tokens
 # (~15-20 bytes of text per latent) for a TokenMonster/BPE tokenizer. The
 # calm-a-1 ablation uses this; calm-a-2 uses CALMByteRef (K=16) directly so the
@@ -258,6 +288,9 @@ ENCODER_REGISTRY = dict(
     calm_byte_flow=CALMByteFlow,
     calm_byte_harmonic=CALMByteHarmonic,
     calm_byte_fixed=CALMByteFixed,
+    calm_byte_hybrid=CALMByteHybrid,
+    calm_byte_harmonic_codec=CALMByteHarmonicCodec,
+    calm_byte_harmonic_serpent=CALMByteHarmonicSerpent,
     calm_tm_ref=CALMTmRef,
     calm_bpe=CALMBpe,
     # # Entropy-based patching

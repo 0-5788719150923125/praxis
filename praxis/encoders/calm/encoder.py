@@ -38,7 +38,7 @@ from praxis.losses import get_loss_function
 from praxis.losses.energy_score import energy_score_loss
 
 from ..base import BaseEncoder
-from .fixed_codec import CODEC_REGISTRY
+from .codecs import CODEC_REGISTRY
 
 # AE pretraining-phase convergence detector. Fixed and model-agnostic (per the
 # no-per-experiment-tuning rule): the phase ends when reconstruction stops

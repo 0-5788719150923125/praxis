@@ -190,7 +190,7 @@ def test_calm_harmonic_head_trains():
 
 def test_fixed_codec_deterministic_drop_in():
     # Fixed codec: deterministic encode (pure buffers), learned decode, zero KL.
-    from praxis.encoders.calm.fixed_codec import CODEC_REGISTRY, FixedCodec
+    from praxis.encoders.calm.codecs import CODEC_REGISTRY, FixedCodec
 
     assert CODEC_REGISTRY["fixed"] is FixedCodec
     c = FixedCodec(
@@ -242,6 +242,71 @@ def test_calm_fixed_codec_trains_single_stage():
         )
     finally:
         ENCODER_REGISTRY["calm_byte_flow"] = orig
+
+
+def test_harmonic_codec_variants():
+    # Harmonic codec: standing-wave bases instead of random orthonormal. Linear
+    # variant is deterministic with no learnable encode params; serpent variant
+    # adds a learned periodic nonlinearity (encode becomes learnable).
+    from praxis.encoders.calm.codecs import (
+        CODEC_REGISTRY,
+        HarmonicCodec,
+        _harmonic_matrix,
+        _separable_harmonic_matrix,
+    )
+
+    assert CODEC_REGISTRY["harmonic"] is HarmonicCodec
+    # harmonic basis is orthonormal and deterministic
+    h = _harmonic_matrix(20, 8)
+    assert torch.allclose(h.T @ h, torch.eye(8), atol=1e-5)
+    assert torch.equal(h, _harmonic_matrix(20, 8))
+    # separable 2D basis: right shape, orthonormal columns, deterministic
+    sep = _separable_harmonic_matrix(4, 12, 16)  # K=4, embed=12 -> latent 16
+    assert sep.shape == (48, 16)
+    assert torch.allclose(sep.T @ sep, torch.eye(16), atol=1e-5)
+    assert torch.equal(sep, _separable_harmonic_matrix(4, 12, 16))
+
+    ids = torch.randint(0, 264, (2, 12))
+    lin = HarmonicCodec(264, 32, 4, 16, 64, depth=2)
+    m1, _ = lin.encode(ids)
+    m2, _ = lin.encode(ids)
+    assert torch.equal(m1, m2)  # deterministic
+    assert lin.act is None
+    enc = [n for n, _ in lin.named_parameters() if not n.startswith(("dec", "out"))]
+    assert enc == []  # pure fixed encode
+
+    serp = HarmonicCodec(264, 32, 4, 16, 64, depth=2, nonlinear=True)
+    out = serp.decode(serp.reparameterize(*serp.encode(ids)))
+    out.pow(2).mean().backward()
+    assert any(
+        p.grad is not None and p.grad.abs().sum() > 0 for p in serp.act.parameters()
+    )
+
+
+def test_hybrid_codec_residual_learns():
+    # Hybrid codec: fixed scaffold + a never-frozen learned residual. Starts at
+    # the fixed scaffold (zero-init), and the residual gets reconstruction grad.
+    from praxis.encoders.calm.codecs import CODEC_REGISTRY, HybridCodec
+
+    assert CODEC_REGISTRY["hybrid"] is HybridCodec
+    c = HybridCodec(
+        vocab_size=264, embed_dim=32, chunk_size=4, latent_dim=16, hidden_dim=64, depth=2
+    )
+    ids = torch.randint(0, 264, (2, 12))
+    out = c.decode(c.reparameterize(*c.encode(ids)))
+    out.pow(2).mean().backward()
+    assert any(
+        p.grad is not None and p.grad.abs().sum() > 0
+        for p in c.residual_net.parameters()
+    )
+    # latent stays unit-RMS even if the residual is forced large
+    with torch.no_grad():
+        for p in c.residual_net.parameters():
+            p.add_(torch.randn_like(p) * 5)
+    z, _ = c.encode(ids)
+    assert torch.allclose(
+        z.pow(2).mean(-1).sqrt(), torch.ones(2, 3), atol=1e-2
+    )
 
 
 def test_energy_score_loss_nonnegative_on_random():
