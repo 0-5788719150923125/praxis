@@ -34,9 +34,8 @@ let liveReloadSocket = null;
 
 // Metrics live socket
 let metricsSocket = null;
-let metricsReconnectTimeout = null;
-let metricsReconnectAttempts = 0;
-const MAX_RECONNECT_ATTEMPTS = 5;
+// Guards the one-time foreground/online revival listeners (see below).
+let revivalWired = false;
 
 /**
  * Get the socket.io path based on current URL
@@ -56,29 +55,28 @@ function getSocketPath() {
  * Connect to metrics-live WebSocket for real-time dashboard data
  */
 export function connectMetricsLive() {
-    if (metricsSocket && metricsSocket.connected) {
+    // Reuse the existing socket: if it's mid-reconnect just nudge it awake,
+    // never build a second one (orphaned sockets keep firing on shared state).
+    if (metricsSocket) {
+        if (!metricsSocket.connected) metricsSocket.connect();
         return;
     }
 
-    if (metricsReconnectTimeout) {
-        clearTimeout(metricsReconnectTimeout);
-        metricsReconnectTimeout = null;
-    }
+    console.log('[WS] Connecting to metrics-live');
 
-    console.log('[WS] Connecting to metrics-live (attempt', metricsReconnectAttempts + 1, ')');
-
+    // Let socket.io own reconnection entirely - no hand-rolled retry loop, and
+    // crucially no attempt cap (default ['polling','websocket'] handshake is the
+    // robust path through mobile carriers/proxies that block a bare WS upgrade).
     metricsSocket = io.connect('/metrics-live', {
         path: getSocketPath(),
         reconnection: true,
         reconnectionDelay: 1000,
-        reconnectionDelayMax: 5000,
-        reconnectionAttempts: MAX_RECONNECT_ATTEMPTS,
-        transports: ['websocket', 'polling']
+        reconnectionDelayMax: 10000,
+        reconnectionAttempts: Infinity
     });
 
     metricsSocket.on('connect', () => {
         console.log('[WS] Metrics-live connected');
-        metricsReconnectAttempts = 0;
         state.liveMetrics.connected = true;
         state.terminal.connected = true;
         render();
@@ -89,14 +87,13 @@ export function connectMetricsLive() {
         state.liveMetrics.connected = false;
         state.terminal.connected = false;
         render();
-
-        if (metricsReconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-            metricsReconnectTimeout = setTimeout(() => {
-                metricsReconnectAttempts++;
-                connectMetricsLive();
-            }, 2000);
-        }
+        // No manual reconnect here: socket.io's built-in reconnection handles it.
     });
+
+    // Mobile browsers suspend backgrounded tabs, killing the socket and (while
+    // throttled) stalling socket.io's own backoff. Force a reconnect the moment
+    // the page returns to the foreground or the network comes back.
+    wireConnectionRevival();
 
     metricsSocket.on('metrics_snapshot', (data) => {
         state.liveMetrics.data = data;
@@ -134,10 +131,30 @@ export function disconnectMetricsLive() {
         metricsSocket.disconnect();
         metricsSocket = null;
     }
-    if (metricsReconnectTimeout) {
-        clearTimeout(metricsReconnectTimeout);
-        metricsReconnectTimeout = null;
-    }
+}
+
+/**
+ * Revive the metrics socket whenever the page returns to the foreground or the
+ * network is restored. Wired once. socket.io reconnects on its own, but mobile
+ * timer throttling can leave that backoff stalled while the tab is hidden - this
+ * gives it an immediate kick on resume so the dot/terminal recover without a
+ * full page reload.
+ */
+function wireConnectionRevival() {
+    if (revivalWired) return;
+    revivalWired = true;
+
+    const revive = () => {
+        if (metricsSocket && !metricsSocket.connected) {
+            metricsSocket.connect();
+        }
+    };
+
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) revive();
+    });
+    window.addEventListener('online', revive);
+    window.addEventListener('focus', revive);
 }
 
 /**
