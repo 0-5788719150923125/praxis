@@ -147,6 +147,10 @@ DATASET_COLLECTIONS = dict(
     cot={
         "chain-of-thought": DEFAULT_WEIGHT * 0.1,
     },
+    # The repo's own git history as a self-lineage signal (next/self_lineage.md).
+    git_history={
+        "git-history": DEFAULT_WEIGHT,
+    },
 )
 
 # Dataset configurations. Each entry has a `type` (default "huggingface");
@@ -342,6 +346,12 @@ DATASETS = {
     ),
     "kb": dict(
         type="kb",
+    ),
+    # Recency-weighted before/after code transitions from the current repo's git
+    # history. type-only; the dataset reads ``.`` by default (override with
+    # ``repo``). See praxis/data/datasets/git_history.py.
+    "git-history": dict(
+        type="git_history",
     ),
     "praxis": dict(
         type="directory",

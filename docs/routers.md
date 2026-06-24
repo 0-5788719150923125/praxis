@@ -3,7 +3,21 @@
 
 Token-routing mechanisms, including the Mixture-of-Depths family that skips a fraction of tokens per layer.
 
-Registry: ``praxis.ROUTER_REGISTRY`` (11 entries)
+Registry: ``praxis.ROUTER_REGISTRY`` (12 entries)
+
+## `arc_mixture` - ArcMixture
+
+MixtureOfDepths that conditions the router on recurrent depth.
+
+Each recurrent depth pass gets its own additive scalar bias on the router logits via an
+nn.Embedding lookup. Zero-initialized so the model starts identical to MixtureOfDepths
+and gradually specializes its routing per depth - the same "adjust the bias at the
+recurrent step" mechanism used by ArcAttention and ArcGLU.
+
+Defaults to the ``arc`` layout: full capacity on even layers and 75% sparsity (capacity
+0.25) on odd layers.
+
+Source: [praxis/routers/arc.py:26](../praxis/routers/arc.py#L26)
 
 ## `distance` - Distance
 
@@ -29,7 +43,7 @@ tokens by score) rather than token-choice, per the original paper's recommendati
 The ``layout`` controls how per-layer capacity varies with depth - flat, decayed,
 U-shaped, ramped, or skip-every-N. See https://arxiv.org/abs/2404.02258.
 
-Source: [praxis/routers/mixture_of_depths.py:40](../praxis/routers/mixture_of_depths.py#L40)
+Source: [praxis/routers/mixture_of_depths.py:43](../praxis/routers/mixture_of_depths.py#L43)
 
 Presets:
 - `mixture_of_depths` - class defaults

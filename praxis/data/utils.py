@@ -13,6 +13,7 @@ from praxis.data.config import (
 )
 from praxis.data.datamodule import PraxisDataModule
 from praxis.data.datasets import (
+    GitHistoryDataset,
     HuggingfaceDataset,
     KBDataset,
     MultiDirectoryDataset,
@@ -281,6 +282,12 @@ def get_dataset(format, tokenizer, seed, *args, **kwargs):
     elif format == "kb":
         dataset_config = args[0] if args else {}
         dataset = KBDataset(tokenizer, seed, dataset_config)
+        dataset.weight = dataset_config.get("weight", DEFAULT_WEIGHT)
+        dataset.task_type = resolve_task_type(dataset_config)
+        return dataset
+    elif format == "git_history":
+        dataset_config = args[0] if args else {}
+        dataset = GitHistoryDataset(tokenizer, seed, dataset_config)
         dataset.weight = dataset_config.get("weight", DEFAULT_WEIGHT)
         dataset.task_type = resolve_task_type(dataset_config)
         return dataset

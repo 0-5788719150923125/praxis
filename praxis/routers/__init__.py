@@ -1,6 +1,7 @@
 from functools import partial
 from typing import Optional, TypeVar
 
+from praxis.routers.arc import ArcMixture
 from praxis.routers.distance import Distance
 from praxis.routers.mixture_of_depths import MixtureOfDepths
 from praxis.routers.prismatic import Prismatic
@@ -100,6 +101,7 @@ ROUTER_REGISTRY = dict(
     mixture_of_depths_decayed=partial(MixtureOfDepths, layout="decayed"),
     mixture_of_depths_ramped=partial(MixtureOfDepths, layout="ramped"),
     mixture_of_depths_skip_2=partial(MixtureOfDepths, layout="skip_2"),
+    arc_mixture=ArcMixture,
     smear=SMEAR,
     distance=Distance,
     prismatic=Prismatic,

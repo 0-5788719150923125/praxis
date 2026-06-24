@@ -143,3 +143,87 @@ rollback (`platformer2025`); commit-diff modeling (real but niche - e.g. learned
 edit/commit models; verify before citing); reverse-time / bidirectional sequence
 augmentation. Koopman/DMD ([harmonic_koopman.md](harmonic_koopman.md)) - bordering
 case, flagged above.
+
+## Implementation plan (registry-driven dataset)
+
+Grounded in the actual seams (2026-06-23). Portable by design: any Praxis checkout
+gets it in the registry and trains on *its own* repo (the dataset reads `.`).
+
+**Status: BUILT (v1), 2026-06-24 - registry dataset, no CLI flag.** First built as
+an `integrations/git_history/` integration, then moved into the core dataset
+registry to honor registry-over-CLI-flags / tuning-free design (the integration
+gated on a `--git-history` flag - the wrong shape; see
+[[feedback_registry_over_cli_args]]). Files:
+- `praxis/data/datasets/git_history.py` - `GitHistoryDataset(PraxisSampler)`.
+- `DATASETS["git-history"] = {type: git_history}` + a `git_history` collection in
+  `DATASET_COLLECTIONS`; dispatch branch in `praxis/data/utils.py` (mirrors `kb`);
+  exported from `datasets/__init__.py`.
+- **calm-d** enables it: `train_datasets: [focused, print, joke, git_history]`.
+
+Select it anywhere by adding the `git_history` collection to `train_datasets` - no
+flag. Smoke-test: `python -m praxis.data.datasets.git_history [repo]`. Verified
+end-to-end (2337 commits, ~663-day lifespan): collection -> registry -> dispatch ->
+`GitHistoryDataset` with weight + task_type, real samples emitted. Known v1
+behavior: one commit's changed files are emitted consecutively (batched per cache
+fill) - the global interleave still mixes datasets; binaries skipped; new/deleted
+files render as `(new file)` / `(deleted file)`.
+
+**Crash fix, 2026-06-24.** First run died: the message-queue manager calls
+`sampler.get_document()`, not `fill_sequence_cache()` (KBDataset has the same
+latent gap - a misleading template). Added `get_document()` returning
+`{messages, metadata}` - the transition wrapped system/developer/assistant like
+`format_simple`, but **verbatim** (no `text_formatter`, which reflows prose and
+would mangle code indentation). Validated end-to-end through `apply_chat_template`
+(912 chars -> 888 byte tokens). See [[reference_dataset_get_document_contract]].
+
+**Home & contract.** Core dataset, mirroring `KBDataset`:
+- `praxis/data/datasets/git_history.py` - `GitHistoryDataset(PraxisSampler)` with
+  `__init__(self, tokenizer, seed, config)` (reads `config["repo"]`, default `.`).
+- registered in `DATASETS` (`type: git_history`) + a `git_history` collection;
+  `get_dataset` dispatches `type == "git_history"` (mirrors the `kb` branch).
+  Selected via `train_datasets`, like every other source.
+
+**The sampler.** `GitHistoryDataset(PraxisSampler)` overrides
+`fill_sequence_cache()` to append recency-weighted diff text to
+`self.sequence_cache`. Reuse `praxis/pillars/evolution.py`'s `git log` subprocess
+pattern, but `git log -p` (patches, not `--numstat`); parse per-commit ->
+per-file hunks.
+
+**Sample unit (decided).** Per-file **(before -> after) pairs** - the explicit
+transition, richest context. The header carries an **in-band timestamp**:
+normalized lifespan position `t in [0,1]` (0 = first commit, 1 = HEAD) + ISO date,
+giving the model temporal ordering between otherwise-shuffled samples (the phase
+along the project lifespan, consonant with the harmonic time axis). Whole-file
+pairs can be large, so cap per sample (the 2MB `beta` lesson) and fall back to a
+hunk-windowed before/after for big files.
+
+**Recency, two layers (v1 decided).**
+- *Sampling weight (v1, free):* draw commits with `P ~ exp(-age / half-life)`
+  (mirrors evolution.py's `RECENCY_DECAY`) - recent code is seen more often, so it
+  gets more gradient influence. The `1/f` envelope on the time axis, the same prior
+  the harmonic head imposes on frequency.
+- *Value signal (v1):* pure **recency = HEAD-as-truth**. Honest caveat on record:
+  this inherits survivorship bias on the time axis (recent-but-reverted bugs score
+  high); survival-weighting (persistence toward HEAD via blame age) is the robust
+  v2 alternative. See `../platformer/next/survivorship-bias.md`.
+- *Per-sample loss weight (v2, deferred):* a true fixed-continuum loss multiplier
+  needs a new weight channel dataset -> collator -> loss (the data path passes only
+  strings; weighting is per-dataset today, `weighting_mode` in
+  `praxis/data/datasets/manager.py`). Contained and reusable beyond git-history;
+  scoped as v2.
+
+**Guards (reuse hard-won lessons).** Skip binaries + large files (2MB cap,
+artifact/lockfile excludes - the `project_beta_oom_multi_dir` lesson); best-effort
+on no-git / shallow clone (empty, exactly like evolution.py); per-sample byte cap.
+
+**Wiring.** Small, idiomatic core edits (not an integration): one `DATASETS`
+entry, one `DATASET_COLLECTIONS` entry, one `get_dataset` dispatch branch, one
+export. Selected purely through `train_datasets` - the tuning-free, registry
+path.
+
+**Effort:** one ~150-200 line module + a short `spec.yaml`. Not difficult; no new
+architecture, no core surgery.
+
+**Why it's the right substrate:** this feeds the self_lineage experiments above
+(does self-history training shift identity; is the variance K-modal). The
+ouroboros caveat (training on source that describes the model) stands - watch it.

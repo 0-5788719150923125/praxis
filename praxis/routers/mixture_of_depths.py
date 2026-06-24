@@ -34,6 +34,9 @@ MOD_LAYOUT: Dict[str, Callable[[ConfigType], List[float]]] = {
     "skip_2": lambda config: generate_alternating_values(
         size=depth, interval=2, capacity=0.125
     ),
+    "arc": lambda depth: generate_alternating_values(
+        size=depth, interval=1, capacity=0.25
+    ),
 }
 
 
@@ -108,7 +111,9 @@ class MixtureOfDepths(nn.Linear):
             return inputs, past_key_values, current_state, router_loss
 
         # emit scalar weights for each token
-        router_logits = F.linear(inputs, self.weight, self.bias)  # -> batch, seq_len, 1
+        router_logits = self._compute_router_logits(
+            inputs, current_depth
+        )  # -> batch, seq_len, 1
 
         #  𝑟𝑙> 𝑃𝛽 (R) - equation 1
         token_weights, token_indices = torch.topk(
@@ -173,6 +178,14 @@ class MixtureOfDepths(nn.Linear):
         )
 
         return outputs, layer_kv, state_update, aux_loss + router_loss
+
+    def _compute_router_logits(self, inputs: Tensor, current_depth: int) -> Tensor:
+        """Per-token routing logits, shape [batch, seq_len, 1].
+
+        Subclasses (e.g. ``ArcMixture``) override this to inject
+        depth-conditioned terms before the top-k selection.
+        """
+        return F.linear(inputs, self.weight, self.bias)
 
     def aux_loss(self, router_logits: Tensor, selected_indices: Tensor) -> Tensor:
         """

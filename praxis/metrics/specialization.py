@@ -57,8 +57,9 @@ def _arc_modules(root) -> Iterator:
     """
     from praxis.attention.arc import ArcAttention
     from praxis.dense.arc import ArcGLU
+    from praxis.routers.arc import ArcMixture
 
-    arc_types = (ArcAttention, ArcGLU)
+    arc_types = (ArcAttention, ArcGLU, ArcMixture)
     for module in root.modules():
         if isinstance(module, arc_types):
             yield module

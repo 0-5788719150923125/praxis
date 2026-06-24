@@ -82,7 +82,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--orchestration-type` | str | `none` | Remote-expert pool profile: backend sidecar of tiny experts (joinable from the web Stage tab) + a mixing strategy. Default none. (choices: none, swarm, swarm_mean, swarm_wave, swarm_sidecar, frontend_only) |
 | `--regularizers` | str | `['contrastive_isotropy']` | Additive representation-shaping losses to apply (space-separated; pass with no values to disable all). Default: contrastive_isotropy (choices: contrastive_isotropy, activation) |
 | `--residual-type` | str | `standard` | The style of residual connection to use (choices: standard, hyper, rezero) |
-| `--router-type` | str | `None` | How to route tokens at every layer (choices: mixture_of_depths, mixture_of_depths_u, mixture_of_depths_decayed, mixture_of_depths_ramped, mixture_of_depths_skip_2, smear, distance, prismatic, taxus, taxus_aggressive, taxus_balanced) |
+| `--router-type` | str | `None` | How to route tokens at every layer (choices: mixture_of_depths, mixture_of_depths_u, mixture_of_depths_decayed, mixture_of_depths_ramped, mixture_of_depths_skip_2, arc_mixture, smear, distance, prismatic, taxus, taxus_aggressive, taxus_balanced) |
 | `--scaled` | bool | `False` | Scale the output of each layer by the inverse square root of its depth |
 | `--sorting-type` | str | `none` | The type of feature sorting to use (choices: none, amplitude_field, decay_bias, native, sinkhorn) |
 | `--stickbreaking` | bool | `False` | Use a Stickbreaking Attention mechanism |
@@ -138,7 +138,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--rl-type` | str | `None` | Enable reinforcement learning with specified algorithm. Note: Current GRPO implementation uses static dataset rewards (not true RL). True RL with generation will be added in a future update. (choices: cot, engagement, grpo, harmonic_weight, harmonic_weight_anchor, harmonic_weight_wave, joke, reinforce) |
 | `--sampler-mode` | str | `loss` | Dataset sampling weighting mode: 'loss' (upsample high-loss datasets via per-sequence CE), 'tasker' (sample each dataset by its task's learned loss weight from --task-weights; pairs with a 'difficulty' weighter to upsample hard tasks), 'novelty' (bigram novelty via Count-Min Sketch), 'dynamic' (EMA of token counts), 'static' (use weights from DATASET_COLLECTIONS as-is), or 'uniform' (force every dataset to 1.0, ignoring DATASET_COLLECTIONS). (choices: novelty, dynamic, static, loss, tasker, uniform) |
 | `--seq-curriculum` | str | `fixed` | Sequence-length curriculum: 'fixed' (roll the static per-tier chances) or 'adaptive' (a learning-progress bandit samples more of the multiplier the model is improving fastest on, at constant token count). See praxis/data/seq_curriculum.py. (choices: fixed, adaptive) |
-| `--train-datasets` | str | `['base']` | Named dataset collections to train on. Space- or comma-separated (e.g. '--train-datasets base phi' or '--train-datasets base,phi'). Available: base, chat, cot, dev, focused, joke, phi, pile, print, rl, slimpajama, tools, validation. |
+| `--train-datasets` | str | `['base']` | Named dataset collections to train on. Space- or comma-separated (e.g. '--train-datasets base phi' or '--train-datasets base,phi'). Available: base, chat, cot, dev, focused, git_history, joke, phi, pile, print, rl, slimpajama, tools, validation. |
 | `--validation-datasets` | str | `['validation']` | Named dataset collections to use for validation. Same format as --train-datasets. |
 
 ### logging
