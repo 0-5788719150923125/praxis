@@ -104,6 +104,12 @@ export class SwarmAgent {
         this._lastSeq = -1;
         const step = async () => {
             if (this._busy) return; // drop: previous step still in flight
+            // trainLayerWise runs synchronous matrix math on the main thread.
+            // Skip it while the page is backgrounded - the user can't see the
+            // agent's status and a blocked main thread there just wastes battery
+            // and can stall the gesture queue on return. (Browsers also throttle
+            // this interval when hidden; this makes the skip explicit.)
+            if (document.hidden) return;
             this._busy = true;
             try {
                 const res = await fetch(`/api/swarm/batch?since=${this._lastSeq}`);

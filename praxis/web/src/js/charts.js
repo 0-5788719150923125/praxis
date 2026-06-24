@@ -1138,7 +1138,7 @@ export function initChartDeck(deck, opts = {}) {
     ensureVisibleLayout(deck);
 
     if (!window._deckGlobalBound) {
-        window.addEventListener('resize', onDeckResize);
+        window.addEventListener('resize', onWindowResizeDeck);
         window.addEventListener('keydown', onDeckKeydown);
         window._deckGlobalBound = true;
     }
@@ -2006,6 +2006,22 @@ function onDeckResize() {
     });
 }
 
+// Window-resize entry point. measureDeck is a layout-thrashing remeasure of
+// every visible deck, so two guards keep it off the scroll hot path on mobile:
+//   - WIDTH-only: the URL bar showing/hiding during a scroll fires a stream of
+//     height-only `resize` events; measureDeck re-derives its band from
+//     visualViewport whenever it does run, so a width-unchanged event needs no
+//     remeasure (same rationale as relayoutDeckOnActivate's width check).
+//   - DEBOUNCE: coalesce a burst (e.g. an orientation change settling) into one.
+let _deckResizeW = typeof window !== 'undefined' ? window.innerWidth : 0;
+let _deckResizeT = 0;
+function onWindowResizeDeck() {
+    if (window.innerWidth === _deckResizeW) return;
+    _deckResizeW = window.innerWidth;
+    clearTimeout(_deckResizeT);
+    _deckResizeT = setTimeout(onDeckResize, 150);
+}
+
 // Re-measure now-visible decks. Needed when a deck was built while its tab was
 // hidden (background prefetch) and ensureVisibleLayout's retry budget lapsed.
 export const relayoutVisibleDecks = onDeckResize;
@@ -2511,16 +2527,22 @@ function renderStepSlider(canvasId, sortedSteps, currentStepIndex, agents, chart
     const valueDisplay = document.getElementById(`step-value-${canvasId}`);
 
     if (slider && valueDisplay) {
+        // The slider fires `input` per pixel of drag; each heavy rebuild
+        // (nested layer x expert loops + double color remap + chart.update)
+        // would run dozens of times per drag and stutter on mobile. Coalesce
+        // to one rebuild per animation frame - the label still tracks every
+        // event, but the grid recompute lands at most once per paint.
+        let pendingRaf = 0;
         slider.addEventListener('input', (e) => {
             const newIndex = parseInt(e.target.value);
-            const newStep = sortedSteps[newIndex];
-            valueDisplay.textContent = `${newStep} / ${maxStep}`;
-
-            // Update state
+            valueDisplay.textContent = `${sortedSteps[newIndex]} / ${maxStep}`;
             layerSelectionState[canvasId].stepIndex = newIndex;
-
-            // Update chart data without recreating the entire chart
-            updateHeatmapData(canvasId, sortedSteps, newIndex, chartData);
+            if (pendingRaf) return;
+            pendingRaf = requestAnimationFrame(() => {
+                pendingRaf = 0;
+                updateHeatmapData(canvasId, sortedSteps,
+                    layerSelectionState[canvasId].stepIndex, chartData);
+            });
         });
     }
 }

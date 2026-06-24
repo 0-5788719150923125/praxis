@@ -23,6 +23,18 @@
 
     const ctx = canvas.getContext('2d');
 
+    // Pause the loop when the logo scrolls out of view (the header leaves the
+    // viewport on mobile). The animate() loop polls `prismOffscreen` and idles
+    // while it's true, so the heavy tendril draw never runs off-screen.
+    let prismOffscreen = false;
+    if ('IntersectionObserver' in window) {
+        const io = new IntersectionObserver(
+            (entries) => { prismOffscreen = !entries[entries.length - 1].isIntersecting; },
+            { threshold: 0 }
+        );
+        io.observe(canvas);
+    }
+
     // Deterministic mode for scripted captures: ?seed=N swaps in a seeded PRNG,
     // and &paused trades the free-running loop for a window.prismStep() hook.
     // Without the params, behavior is unchanged (rand === Math.random).
@@ -43,7 +55,10 @@
     // High-DPI canvas setup for zoom resistance
     // Always render at very high resolution to prevent pixelation
     const baseSize = 140; // Canvas render size (25% larger than container)
-    const renderScale = 4; // Render at 4x resolution for crisp zooming
+    // Render at high resolution for crisp zooming. Mobile GPUs choke on the
+    // 4x (16x area) supersample, so cap it lower there - a phone's own DPR
+    // already keeps a 140px logo sharp at this scale.
+    const renderScale = window.innerWidth <= 768 ? 2.5 : 4;
     const renderSize = baseSize * renderScale;
 
     // Set actual canvas size to high resolution
@@ -937,7 +952,10 @@
     const minTendrils = 3;
     const normalTendrils = 12;
     const surgeTendrils = 50;
-    const maxTendrils = 200; // Reduced for logo size
+    // Cap the tendril count - each is a gradient-stroked, shadow-blurred path
+    // (drawn twice in light mode), so the ceiling bounds the per-frame cost.
+    // Lower on mobile where that fill rate is the bottleneck.
+    const maxTendrils = window.innerWidth <= 768 ? 120 : 200;
     const tendrils = [];
 
     // Initialize with a few tendrils
@@ -1405,9 +1423,11 @@
     function animate() {
         if (!manualClock) requestAnimationFrame(animate);
 
-        // Yield the main thread + compositor during a tab slide: redrawing this
-        // canvas every frame competes with the transition and makes it stutter.
-        if (window.__prismPaused) return;
+        // Yield the main thread + compositor when there's nothing to gain by
+        // drawing: during a tab slide (competes with the transition), when the
+        // page is backgrounded, or when the logo has scrolled out of view. The
+        // rAF is already re-queued above, so these are cheap idle frames.
+        if (window.__animPaused || document.hidden || prismOffscreen) return;
 
         // Clear canvas
         ctx.clearRect(0, 0, baseSize, baseSize);

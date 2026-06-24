@@ -68,26 +68,15 @@ export function renderNotifications() {
     // The pop-out shows on hover (desktop) or tap (touch, via .open) - so the content is
     // ALWAYS rendered and ready; visibility is owned by CSS, not the `hidden` attribute.
     const items = state.notifications.items;
-    if (!items.length) {
-        panel.innerHTML = '<div class="notification-empty">No events yet.</div>';
-    } else {
-        // Newest first.
-        panel.innerHTML = items
-            .slice()
-            .reverse()
-            .map((ev) => {
-                const age = typeof ev.hours_elapsed === 'number'
-                    ? `${ev.hours_elapsed.toFixed(2)}h`
-                    : '';
-                const level = ev.level || 'info';
-                return `
-                    <div class="notification-item notification-${level}">
-                        <span class="notification-message">${escapeNotification(ev.message)}</span>
-                        <span class="notification-age">${age}</span>
-                    </div>
-                `;
-            })
-            .join('');
+    // Re-serialize the panel body only when the event set actually changes -
+    // render() runs on nearly every action, and rebuilding this innerHTML each
+    // time is pure waste when the list is identical. Keyed by event ids. The
+    // open/position/hover tail below still runs every call (panelOpen can change
+    // without the items changing).
+    const sig = items.map((e) => e.id).join(',');
+    if (panel._notifSig !== sig) {
+        panel._notifSig = sig;
+        renderNotificationItems(panel, items);
     }
 
     // Touch devices toggle the pop-out open with .open; hover-capable devices ignore it.
@@ -116,6 +105,30 @@ export function renderNotifications() {
             }
         });
     }
+}
+
+/** Serialize the notification event list into the panel body (newest first). */
+function renderNotificationItems(panel, items) {
+    if (!items.length) {
+        panel.innerHTML = '<div class="notification-empty">No events yet.</div>';
+        return;
+    }
+    panel.innerHTML = items
+        .slice()
+        .reverse()
+        .map((ev) => {
+            const age = typeof ev.hours_elapsed === 'number'
+                ? `${ev.hours_elapsed.toFixed(2)}h`
+                : '';
+            const level = ev.level || 'info';
+            return `
+                    <div class="notification-item notification-${level}">
+                        <span class="notification-message">${escapeNotification(ev.message)}</span>
+                        <span class="notification-age">${age}</span>
+                    </div>
+                `;
+        })
+        .join('');
 }
 
 /** Minimal HTML escaping for event text. */
@@ -424,7 +437,7 @@ function renderTheme() {
 /**
  * Render terminal connection status
  */
-function renderTerminalStatus() {
+export function renderTerminalStatus() {
     const indicator = document.getElementById('status-indicator');
     if (!indicator) return;
 

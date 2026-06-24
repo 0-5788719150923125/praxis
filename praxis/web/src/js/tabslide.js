@@ -27,9 +27,12 @@ export function canSlideTabs() {
         && window.matchMedia('(prefers-reduced-motion: no-preference)').matches;
 }
 
-// Freeze the prism logo's render loop for the duration of a slide - one less
-// thing repainting while the transition composites.
-function pausePrism(on) { window.__prismPaused = on; }
+// Freeze every background canvas loop (prism logo, arena sim, dynamics
+// snapshots) for the duration of a slide - one less thing repainting while the
+// transition composites. The loops poll this global and idle while it's set.
+// __prismPaused stays an alias so the prism keeps yielding even if an older
+// build is cached.
+function pausePrism(on) { window.__animPaused = on; window.__prismPaused = on; }
 
 function finalize(slide) {
     if (!slide || slide.done) return;

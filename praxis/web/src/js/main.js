@@ -80,6 +80,12 @@ function init() {
     if (window.Chart) {
         const isTouch = window.matchMedia('(hover: none)').matches;
         Chart.defaults.events = isTouch ? [] : ['mousemove', 'mouseout', 'click'];
+        // Kill entrance/update tweening. On a deck rebuild, 8-15 charts each
+        // kicked off a ~1s Chart.js rAF animation loop - including parked cards
+        // behind the head - which is what stuttered swipes on the Research tab.
+        // The upsert path already updates with 'none'; this covers creation too.
+        Chart.defaults.animation = false;
+        Chart.defaults.animations = { colors: false, x: false, y: false };
     }
 
     // Charts auto-recolor when the accent (logs blue mode) flips - no Refresh needed.

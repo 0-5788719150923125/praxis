@@ -1154,14 +1154,21 @@ function withAlpha(color, a) {
     return color;
 }
 
-/** Resolve the brand accent to a concrete rgb() via a throwaway probe. */
+// Resolve the brand accent to a concrete rgb() via a throwaway probe. The probe
+// append + getComputedStyle + remove forces a synchronous style/layout flush, so
+// cache the result module-wide keyed by theme: the 5+ snapshot canvases each
+// re-resolve on a theme flip, but now share one probe instead of mutating
+// document.body once per canvas. Callers already only ask on a theme change.
+let _accentCache = { theme: null, color: 'rgb(26, 161, 121)' };
 function readAccentColor() {
+    if (_accentCache.theme === state.theme) return _accentCache.color;
     const probe = document.createElement('span');
     probe.style.cssText = 'color: var(--accent); display: none;';
     document.body.appendChild(probe);
     const c = getComputedStyle(probe).color;
     probe.remove();
-    return c || 'rgb(26, 161, 121)';
+    _accentCache = { theme: state.theme, color: c || 'rgb(26, 161, 121)' };
+    return _accentCache.color;
 }
 
 /**
@@ -1173,11 +1180,16 @@ function readAccentColor() {
  * tracer climbing the sequence plus a slow camera spin for depth. No spinning
  * scaffolding, no per-frame model calls.
  */
-// Pause a card's heavy canvas animation when it is a non-active card in a deck
-// (stacked behind the head, occluded). Standalone cards - not inside a deck -
-// always animate. Cuts the dynamics deck from ~one RAF per card down to one for
-// the head card, which is the main source of mobile lag.
+// Whether a snapshot canvas should skip its draw this frame and just idle-poll.
+// True when:
+//   - the Dynamics tab isn't the visible one (its canvases stay in the DOM as
+//     display:none, so isConnected alone never stopped them - this was the main
+//     source of heavy 3D loops burning the main thread behind OTHER tabs),
+//   - the page is backgrounded, or a tab slide is compositing (yield to it),
+//   - the card is a non-active card stacked behind the head in a deck (occluded).
+// Standalone cards - not inside a deck - animate whenever Dynamics is on screen.
 function deckCardParked(canvas) {
+    if (state.currentTab !== 'dynamics' || document.hidden || window.__animPaused) return true;
     const card = canvas.closest('.chart-card');
     if (!card || !card.closest('.chart-deck')) return false;
     return !card.classList.contains('deck-active');

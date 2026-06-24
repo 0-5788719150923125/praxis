@@ -4,7 +4,7 @@
  */
 
 import { state } from './state.js';
-import { render, renderNotifications } from './render.js';
+import { renderTerminalStatus, renderNotifications } from './render.js';
 import { renderLiveDashboard } from './dashboard.js';
 
 /**
@@ -79,14 +79,16 @@ export function connectMetricsLive() {
         console.log('[WS] Metrics-live connected');
         state.liveMetrics.connected = true;
         state.terminal.connected = true;
-        render();
+        // Only the connection dot reflects this; a full render() here re-touched
+        // the tab carousel mid-swipe on every connect/disconnect flap.
+        renderTerminalStatus();
     });
 
     metricsSocket.on('disconnect', () => {
         console.log('[WS] Metrics-live disconnected');
         state.liveMetrics.connected = false;
         state.terminal.connected = false;
-        render();
+        renderTerminalStatus();
         // No manual reconnect here: socket.io's built-in reconnection handles it.
     });
 
@@ -119,7 +121,7 @@ export function connectMetricsLive() {
         console.error('[WS] Metrics-live connection error:', error);
         state.liveMetrics.connected = false;
         state.terminal.connected = false;
-        render();
+        renderTerminalStatus();
     });
 }
 

@@ -2779,13 +2779,31 @@ class Arena {
         this.colorTick = 0;
         this.raf = null;
         this.onFrame = null;
+        this.dpr = 1;   // real value set in resize(); guards the blit if it early-outs
         this.ro = new ResizeObserver(() => this.resize());
         this.ro.observe(canvas);
+        // Pause the sim when its card scrolls off-screen or its tab is hidden.
+        // The canvas stays connected (display:none) when you switch tabs, so
+        // isConnected alone never stopped the loop - it kept running a full
+        // physics+draw frame behind every other tab. IntersectionObserver
+        // reports display:none as not-intersecting, so this covers both cases.
+        this.onscreen = true;
+        if ('IntersectionObserver' in window) {
+            this.io = new IntersectionObserver((entries) => {
+                this.onscreen = entries[entries.length - 1].isIntersecting;
+            }, { threshold: 0 });
+            this.io.observe(canvas);
+        }
         this.resize();
     }
 
     resize() {
-        const dpr = window.devicePixelRatio || 1;
+        // Cap DPR: retina phones report 2.5-4, which makes the backing store
+        // (and every gradient fill + the full-frame scene blit) 6-16x the
+        // pixels of a 1x render. 2 is plenty sharp; 1.5 on phones keeps the
+        // uncapped, every-frame draw affordable.
+        const cap = window.innerWidth <= 768 ? 1.5 : 2;
+        const dpr = this.dpr = Math.min(window.devicePixelRatio || 1, cap);
         const r = this.canvas.getBoundingClientRect();
         if (!r.width) return;
         this.canvas.width = Math.round(r.width * dpr);
@@ -2827,6 +2845,14 @@ class Arena {
         if (this.raf) return;
         const tick = (ts) => {
             if (!this.canvas.isConnected) { this.stop(); return; }
+            // Idle (no physics, no draw) while off-screen, backgrounded, or a tab
+            // slide is compositing. The rAF is re-queued so it resumes instantly
+            // when conditions clear; lastTs is reset so dt doesn't jump on resume.
+            if (!this.onscreen || document.hidden || window.__animPaused) {
+                this.lastTs = null;
+                this.raf = requestAnimationFrame(tick);
+                return;
+            }
             if (this.lastTs == null) this.lastTs = ts;
             const dt = Math.min(0.05, (ts - this.lastTs) / 1000);
             this.lastTs = ts;
@@ -2850,6 +2876,7 @@ class Arena {
         this.raf = null;
         this.lastTs = null;
         this.ro.disconnect();
+        if (this.io) this.io.disconnect();
     }
 
     /* Soft washes, grain, and a glow under the creature: enough surface
@@ -3365,8 +3392,8 @@ class Arena {
         // last repaint (parallax error is sub-pixel at these speeds).
         const dMid = fEff / (ROOM_D + 8);
         const dx = (s.x - this.camX) * dMid;
-        ctx.drawImage(this.scene, dx, 0, this.scene.width / (window.devicePixelRatio || 1),
-            this.scene.height / (window.devicePixelRatio || 1));
+        ctx.drawImage(this.scene, dx, 0, this.scene.width / this.dpr,
+            this.scene.height / this.dpr);
 
         // Live pass: near items, the creature, animated ambience.
         const zCull = this.camZ - ROOM_D * 0.7;
