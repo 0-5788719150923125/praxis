@@ -32,6 +32,7 @@ import torch._dynamo as dynamo
 import torch.nn.functional as F
 from torch import nn
 
+from praxis.activations import ACT2CLS
 from praxis.heads.energy import ENERGY_PRIOR_REGISTRY, EnergyHead
 from praxis.heads.flow import LATENT_HEAD_REGISTRY
 from praxis.losses import get_loss_function
@@ -595,6 +596,7 @@ class CALMEncoder(BaseEncoder):
             dropout=self.ae_dropout,
             dropout_mode=ae_dropout_mode,
             dropout_cycles=ae_dropout_cycles,
+            activation=config.activation,
         )
 
         # The token classifier (forward/crystal/...) is built from
@@ -610,7 +612,7 @@ class CALMEncoder(BaseEncoder):
         self.lm_tok_emb = nn.Embedding(self._output_vocab_size, config.embed_size)
         self.embed_proj = nn.Sequential(
             nn.Linear(self.K * config.embed_size, 2 * config.hidden_size),
-            nn.SiLU(),
+            ACT2CLS[config.activation](),
             nn.Linear(2 * config.hidden_size, config.hidden_size),
             nn.LayerNorm(config.hidden_size, eps=1e-6),
         )

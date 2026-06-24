@@ -3,7 +3,7 @@
 
 Front-end encoders, including the byte-latent and abstractinator variants.
 
-Registry: ``praxis.ENCODER_REGISTRY`` (16 entries)
+Registry: ``praxis.ENCODER_REGISTRY`` (19 entries)
 
 ## `abstractinator` - AbstractinatorEncoder
 
@@ -35,11 +35,11 @@ Presets:
 - `byte_latent_conv_small` - `embeddings='byte_hash', local_architecture='conv', n_layers_decoder=2, n_layers_encoder=2, patching_mode='space'`
 - `byte_latent_transformer` - `embeddings='byte_hash', local_architecture='transformer', n_layers_decoder=1, n_layers_encoder=1, patching_mode='space'`
 
-## `calm`, `calm_bpe`, `calm_byte`, `calm_byte_fixed`, `calm_byte_flow`, `calm_byte_harmonic`, `calm_byte_ref`, `calm_byte_small`, `calm_byte_small_harmonic`, `calm_small`, `calm_tm_ref` - CALMEncoder
+## `calm`, `calm_bpe`, `calm_byte`, `calm_byte_fixed`, `calm_byte_flow`, `calm_byte_harmonic`, `calm_byte_harmonic_codec`, `calm_byte_harmonic_serpent`, `calm_byte_hybrid`, `calm_byte_ref`, `calm_byte_small`, `calm_byte_small_harmonic`, `calm_small`, `calm_tm_ref` - CALMEncoder
 
 Shared contract for encoders plugged into the model's input slot.
 
-Source: [praxis/encoders/calm/encoder.py:120](../praxis/encoders/calm/encoder.py#L120)
+Source: [praxis/encoders/calm/encoder.py:121](../praxis/encoders/calm/encoder.py#L121)
 
 Presets:
 - `calm` - `ae_dropout=0.15, ae_hidden=512, chunk_size=8, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=128, noise_dim=128`
@@ -48,6 +48,9 @@ Presets:
 - `calm_byte_fixed` - `ae_dropout=0.15, ae_freeze_steps=0, ae_hidden=2.0, ae_max_pretrain_steps=3000, chunk_size=4, codec_kind='fixed', energy_alpha=1.0, energy_anchor_weight=0.0, energy_blocks=4, energy_prior='none', energy_samples_m=100, energy_samples_n=8, head_kind='flow', kl_beta=0.001, kl_clip=0.5, latent_dim=0.5, noise_dim=0.25, vae_depth=4, vote_num_samples=500`
 - `calm_byte_flow` - `ae_dropout=0.15, ae_hidden=2.0, ae_max_pretrain_steps=3000, chunk_size=4, energy_alpha=1.0, energy_anchor_weight=0.0, energy_blocks=4, energy_prior='none', energy_samples_m=100, energy_samples_n=8, head_kind='flow', kl_beta=0.001, kl_clip=0.5, latent_dim=0.5, noise_dim=0.25, vae_depth=4, vote_num_samples=500`
 - `calm_byte_harmonic` - `ae_dropout=0.15, ae_hidden=2.0, ae_max_pretrain_steps=3000, chunk_size=4, energy_alpha=1.0, energy_anchor_weight=0.0, energy_blocks=4, energy_prior='none', energy_samples_m=100, energy_samples_n=8, head_kind='harmonic', kl_beta=0.001, kl_clip=0.5, latent_dim=0.5, noise_dim=0.25, vae_depth=4, vote_num_samples=500`
+- `calm_byte_harmonic_codec` - `ae_dropout=0.15, ae_freeze_steps=0, ae_hidden=2.0, ae_max_pretrain_steps=3000, chunk_size=8, codec_kind='harmonic', energy_alpha=1.0, energy_anchor_weight=0.0, energy_blocks=4, energy_prior='none', energy_samples_m=100, energy_samples_n=8, head_kind='flow', kl_beta=0.001, kl_clip=0.5, latent_dim=0.5, noise_dim=0.25, vae_depth=4, vote_num_samples=500`
+- `calm_byte_harmonic_serpent` - `ae_dropout=0.15, ae_freeze_steps=0, ae_hidden=2.0, ae_max_pretrain_steps=3000, chunk_size=8, codec_kind='harmonic_serpent', energy_alpha=1.0, energy_anchor_weight=0.0, energy_blocks=4, energy_prior='none', energy_samples_m=100, energy_samples_n=8, head_kind='flow', kl_beta=0.001, kl_clip=0.5, latent_dim=0.5, noise_dim=0.25, vae_depth=4, vote_num_samples=500`
+- `calm_byte_hybrid` - `ae_dropout=0.15, ae_freeze_steps=0, ae_hidden=2.0, ae_max_pretrain_steps=3000, chunk_size=4, codec_kind='hybrid', energy_alpha=1.0, energy_anchor_weight=0.0, energy_blocks=4, energy_prior='none', energy_samples_m=100, energy_samples_n=8, head_kind='flow', kl_beta=0.001, kl_clip=0.5, latent_dim=0.5, noise_dim=0.25, vae_depth=4, vote_num_samples=500`
 - `calm_byte_ref` - `ae_dropout=0.15, ae_hidden=2.0, chunk_size=16, energy_alpha=1.0, energy_anchor_weight=0.0, energy_blocks=4, energy_prior='none', energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=0.5, noise_dim=0.25, vae_depth=4, vote_num_samples=500`
 - `calm_byte_small` - `ae_dropout=0.1, ae_hidden=1.5, chunk_size=8, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=0.5, noise_dim=0.5, vote_num_samples=500`
 - `calm_byte_small_harmonic` - `ae_dropout=0.1, ae_dropout_cycles=2, ae_dropout_mode='harmonic', ae_hidden=1.5, chunk_size=8, energy_alpha=1.0, energy_blocks=3, energy_samples_m=100, energy_samples_n=8, kl_beta=0.001, kl_clip=0.5, latent_dim=0.5, noise_dim=0.5, vote_num_samples=500`

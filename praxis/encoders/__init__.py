@@ -226,18 +226,25 @@ CALMByteHybrid = partial(
 # FixedCodec with harmonic (standing-wave) bases instead of random orthonormal
 # ones (codec_kind="harmonic"): structured rather than arbitrary latent geometry,
 # every feature coupled through a shared spectrum, per-vocab + per-K modulation.
-# Still deterministic/stationary, single-stage. The _serpent variant adds a
-# learned periodic Serpent nonlinearity after the transform (encode becomes
-# learnable, never frozen). Not yet run; inert options.
+# Deterministic/stationary encode, single-stage. K=8 (longer patches than
+# CALMByteFlow's K=4): the separable 2D harmonic basis gives the patch-position
+# axis its own frequency budget, so smooth-across-patch structure compresses
+# gracefully as K grows - this codec is the one built to absorb larger K, so it
+# carries the longer patch.
 CALMByteHarmonicCodec = partial(
     CALMByteFlow,
     codec_kind="harmonic",
     ae_freeze_steps=0,
+    chunk_size=8,
 )
+# Serpent variant: same harmonic codec + K=8, but the encode gains a learned
+# periodic Serpent nonlinearity after the transform (codec_kind="harmonic_serpent").
+# This makes encode learnable and NON-stationary - trading the deterministic
+# fixed-latent property for expressiveness (still single-stage, never frozen).
+# Derived from the codec profile so K stays in sync.
 CALMByteHarmonicSerpent = partial(
-    CALMByteFlow,
+    CALMByteHarmonicCodec,
     codec_kind="harmonic_serpent",
-    ae_freeze_steps=0,
 )
 
 # CALMByteRef at the reference's true patch granularity: K=4 subword tokens

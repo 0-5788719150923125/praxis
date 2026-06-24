@@ -31,6 +31,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from praxis.activations import ACT2CLS
 from praxis.activations.serpent import Serpent
 from praxis.encoders.calm.vae import HarmonicDropout, ResidualMLPBlock
 
@@ -105,6 +106,7 @@ class FixedCodec(nn.Module):
         dropout: float = 0.15,
         dropout_mode: str = "scalar",
         dropout_cycles: int = 2,
+        activation: str = "silu",
     ) -> None:
         super().__init__()
         self.vocab_size = vocab_size
@@ -114,6 +116,7 @@ class FixedCodec(nn.Module):
         self.hidden_dim = hidden_dim
         self.latent_norm = bool(latent_norm)
         self.dropout_p = float(dropout)
+        self.activation = activation
 
         # Frozen encode path (buffers, never learned). Unit-norm byte embeddings
         # and an orthonormal K*embed -> latent mix; z is a pure function of ids.
@@ -134,7 +137,7 @@ class FixedCodec(nn.Module):
         # Learned decoder (the only trainable part): latent -> K per-token feats.
         self.dec_in = nn.Linear(latent_dim, hidden_dim)
         self.dec_blocks = nn.ModuleList(
-            [ResidualMLPBlock(hidden_dim, _drop()) for _ in range(depth)]
+            [ResidualMLPBlock(hidden_dim, _drop(), activation) for _ in range(depth)]
         )
         self.dec_expand = nn.Linear(hidden_dim, chunk_size * hidden_dim)
         self.out_norm = nn.RMSNorm(hidden_dim)
@@ -209,7 +212,7 @@ class HybridCodec(FixedCodec):
         super().__init__(*args, **kwargs)
         self.residual_net = nn.Sequential(
             nn.Linear(self.chunk_size * self.embed_dim, self.hidden_dim),
-            nn.SiLU(),
+            ACT2CLS[self.activation](),
             nn.Linear(self.hidden_dim, self.latent_dim),
         )
         # Zero the output so z starts exactly at the fixed scaffold; the residual

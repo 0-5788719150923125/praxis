@@ -16,6 +16,8 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from praxis.activations import ACT2CLS
+
 
 class HarmonicDropout(nn.Module):
     """Dropout whose keep-rate is a standing-wave field, not a scalar.
@@ -54,16 +56,18 @@ class HarmonicDropout(nn.Module):
 class ResidualMLPBlock(nn.Module):
     """Pre-norm residual MLP block (the reference's AELayer shape).
 
-    ``x + drop(W2(SiLU(W1(RMSNorm(x)))))``. Residual + pre-norm is what lets
+    ``x + drop(W2(act(W1(RMSNorm(x)))))``. Residual + pre-norm is what lets
     the codec stack deepen without the vanishing-gradient stall a plain
-    Linear/SiLU stack hits, so capacity scales with ``depth``.
+    Linear/act stack hits, so capacity scales with ``depth``. ``activation``
+    names the inner nonlinearity (``config.activation``, defaulting to SiLU
+    for reference parity).
     """
 
-    def __init__(self, dim: int, drop: nn.Module) -> None:
+    def __init__(self, dim: int, drop: nn.Module, activation: str = "silu") -> None:
         super().__init__()
         self.norm = nn.RMSNorm(dim)
         self.fc1 = nn.Linear(dim, dim)
-        self.act = nn.SiLU()
+        self.act = ACT2CLS[activation]()
         self.drop = drop
         self.fc2 = nn.Linear(dim, dim)
 
@@ -108,6 +112,7 @@ class CALMVAE(nn.Module):
         dropout: float = 0.15,
         dropout_mode: str = "scalar",
         dropout_cycles: int = 2,
+        activation: str = "silu",
     ) -> None:
         super().__init__()
         self.vocab_size = vocab_size
@@ -129,7 +134,7 @@ class CALMVAE(nn.Module):
         # residual block stack, then project to posterior params.
         self.enc_in = nn.Linear(chunk_size * embed_dim, hidden_dim)
         self.enc_blocks = nn.ModuleList(
-            [ResidualMLPBlock(hidden_dim, _drop()) for _ in range(depth)]
+            [ResidualMLPBlock(hidden_dim, _drop(), activation) for _ in range(depth)]
         )
         # Norm before posterior projection: keeps μ/logvar in a well-scaled
         # range and matches the reference's LlamaRMSNorm in the AE encoder.
@@ -140,7 +145,7 @@ class CALMVAE(nn.Module):
         # per-token feature vectors.
         self.dec_in = nn.Linear(latent_dim, hidden_dim)
         self.dec_blocks = nn.ModuleList(
-            [ResidualMLPBlock(hidden_dim, _drop()) for _ in range(depth)]
+            [ResidualMLPBlock(hidden_dim, _drop(), activation) for _ in range(depth)]
         )
         self.dec_expand = nn.Linear(hidden_dim, chunk_size * hidden_dim)
         # Norm before the classifier consumes decoder features.
