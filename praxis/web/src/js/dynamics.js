@@ -2170,12 +2170,16 @@ function terrainMesh(canvas, spec) {
 
     const ctx = canvas.getContext('2d');
     const cosE = Math.cos(tilt), sinE = Math.sin(tilt);
-    let frame = 0;
+    let frame = 0, lastT = 0;
     const sx = new Float32Array(n), sy = new Float32Array(n), sd = new Float32Array(n);
 
-    const draw = () => {
+    const draw = (t) => {
         if (!canvas.isConnected) { canvas[rafKey] = null; return; }
         if (deckCardParked(canvas)) { canvas[rafKey] = requestAnimationFrame(draw); return; }
+        // Throttle to ~30fps: these are ambient spinning terrains, and several
+        // animate at once on the Dynamics tab - 60fps each is what lagged.
+        if (t && lastT && t - lastT < 32) { canvas[rafKey] = requestAnimationFrame(draw); return; }
+        lastT = t || 0;
 
         const wrapper = canvas.parentElement;
         const w = wrapper.clientWidth || 800, h = wrapper.clientHeight || 400;
@@ -2248,28 +2252,29 @@ function renderParamManifold(canvas, data) {
 }
 
 /**
- * Parameter field renderer: the LITERAL weight terrain. Each cell is a real
- * parameter at its native index; height and color are its absolute value. No
- * projection - this is the raw geometry of the weights (a harmonic spectrum as
- * mountains, a crystal grid as a lattice), at full resolution unless the tensor
- * was max-pooled down to the render cap.
+ * Weight-geometry renderer: the WHOLE model as one smooth terrain. The backend
+ * flattens every parameter, chunks + PCA-projects them, and bins into a blurred
+ * density grid - so height is where weight-chunks cluster in PCA space (the
+ * model's central mass + structured satellites), color is mean chunk amplitude.
+ * No single layer, no hairy per-element noise.
  */
 function renderParamField(canvas, data) {
-    const amp = data && data.amp;
-    if (!Array.isArray(amp) || amp.length < 2 || !Array.isArray(amp[0])) return;
-    const R = amp.length, C = amp[0].length;
+    const height = data && data.height, tint = data && data.tint;
+    if (!Array.isArray(height) || height.length < 2 || !Array.isArray(height[0])) return;
+    const R = height.length, C = height[0].length;
     terrainMesh(canvas, {
-        R, C, rafKey: '_fieldRAF', tilt: 40, zoom: 0.56, heightScale: 1.05,
-        heightAt: (i, j) => amp[i][j],
-        colorAt: (i, j) => sampleColormap('praxis_heat', amp[i][j]),
+        R, C, rafKey: '_fieldRAF', tilt: 40, zoom: 0.56, heightScale: 1.1,
+        heightAt: (i, j) => height[i][j],
+        colorAt: (i, j) => sampleColormap('praxis_heat', tint ? tint[i][j] : height[i][j]),
         overlay: (ctx, w, h, tc) => {
             ctx.fillStyle = tc; ctx.font = '12px sans-serif'; ctx.textAlign = 'left';
-            if (data.weight_name) ctx.fillText(data.weight_name, 10, 18);
-            const shp = data.native_shape;
-            if (Array.isArray(shp))
-                ctx.fillText(`${shp[0]}x${shp[1]}${data.pooled ? ' (pooled)' : ' (native)'}`, 10, 34);
+            ctx.fillText('whole model', 10, 18);
+            if (typeof data.var_explained === 'number')
+                ctx.fillText(`top-2 PCA var ${(data.var_explained * 100).toFixed(0)}%`, 10, 34);
             if (typeof data.n_params === 'number') {
-                ctx.textAlign = 'right'; ctx.fillText(`${data.n_params} params`, w - 10, 18);
+                ctx.textAlign = 'right';
+                const m = data.n_params >= 1e6 ? `${(data.n_params / 1e6).toFixed(1)}M` : `${data.n_params}`;
+                ctx.fillText(`${m} params`, w - 10, 18);
             }
         },
     });

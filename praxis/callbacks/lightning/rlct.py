@@ -161,14 +161,18 @@ class RLCTLandscapeCallback(Callback):
             snapshots["param_manifold"] = manifold
             metrics["rlct_manifold_var"] = manifold["var_explained"]
 
-        # Literal weight terrain (actual values by index) - also weight-only.
+        # Whole-model weight geometry (all params chunked + PCA + smoothed) -
+        # also weight-only, cheap, runs even when the landscape is skipped.
         try:
             field = compute_param_field(
-                core, max_cells=int(self.cfg["field_max_cells"])
+                core,
+                grid=int(self.cfg["field_grid"]),
+                chunk=int(self.cfg["field_chunk"]),
+                max_points=int(self.cfg["field_max_points"]),
             )
         except Exception as e:
             field = None
-            print(f"[RLCT] param field failed at step {step}: {e}")
+            print(f"[RLCT] weight geometry failed at step {step}: {e}")
         if field is not None:
             field["status"] = "ok"
             field["step"] = step

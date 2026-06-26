@@ -163,32 +163,41 @@ def test_param_manifold_prefers_structured_weight():
     assert "harmonic_amplitudes" in out["weight_name"]  # 4x boost beats more rows
 
 
-def test_param_field_native_and_pooled():
+def test_param_field_whole_model_smooth_terrain():
     torch.manual_seed(5)
 
-    class _Struct(nn.Module):
+    class _Net(nn.Module):
         def __init__(self):
             super().__init__()
-            self.harmonic_field = nn.Parameter(torch.randn(40, 24))  # fits native
-            self.ffn = nn.Linear(300, 300)                            # would pool
+            self.a = nn.Linear(128, 128)
+            self.b = nn.Linear(128, 64)
+            self.harmonic_field = nn.Parameter(torch.randn(48, 16))
 
-    # Native: small structured weight rendered as-is.
-    out = compute_param_field(_Struct(), max_cells=128)
+    net = _Net()
+    n_params = sum(p.numel() for p in net.parameters())
+    out = compute_param_field(net, grid=24, chunk=32, max_points=8000)
     assert out is not None
-    assert "harmonic_field" in out["weight_name"]
-    assert out["rows"] == 40 and out["cols"] == 24
-    assert out["native_shape"] == [40, 24] and out["pooled"] is False
-    flat = [v for r in out["amp"] for v in r]
-    assert all(0.0 <= v <= 1.0 for v in flat) and max(flat) == 1.0  # normalized
+    # Square smoothed terrain, fixed low-vertex grid regardless of model size.
+    assert out["rows"] == 24 and out["cols"] == 24
+    assert len(out["height"]) == 24 and len(out["tint"]) == 24
+    # Whole model: every parameter participates, reported.
+    assert out["n_params"] == n_params
+    assert out["chunk_len"] == 32 and out["n_chunks"] > 0
+    assert 0.0 <= out["var_explained"] <= 1.0 + 1e-6
+    hflat = [v for r in out["height"] for v in r]
+    assert all(0.0 <= v <= 1.0 + 1e-6 for v in hflat) and max(hflat) > 0
+    # Smoothness: blurred density has no isolated single-cell spikes far above
+    # their neighbourhood (a hairy raw grid would).
+    H = out["height"]
+    for i in range(1, 23):
+        for j in range(1, 23):
+            neigh = (H[i-1][j] + H[i+1][j] + H[i][j-1] + H[i][j+1]) / 4
+            assert H[i][j] <= neigh + 0.6  # no needle spikes after blur
 
-    # Pooled: a big weight is capped to max_cells per axis, peaks preserved.
-    big = nn.Linear(300, 300)  # 300x300 weight, no structured name
-    out2 = compute_param_field(big, max_cells=64)
-    assert out2 is not None
-    assert out2["pooled"] is True
-    assert out2["rows"] == 64 and out2["cols"] == 64
-    assert out2["native_shape"] == [300, 300]
-    assert out2["n_params"] == 300 * 300
+
+def test_param_field_returns_none_for_tiny_model():
+    out = compute_param_field(nn.Linear(2, 2), grid=16, chunk=64)
+    assert out is None  # 6 params < chunkable minimum
 
 
 def test_field_descriptions_exposed():

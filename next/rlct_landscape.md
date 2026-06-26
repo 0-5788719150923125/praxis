@@ -24,10 +24,14 @@ uncompiled model (`_orig_mod`), and is drained by `DynamicsLoggerCallback` (scal
 2. **Parameter Manifold** (`compute_param_manifold` → `param_manifold`). PCA of a
    structured weight's ROWS → 2D; height = density (the cloud SHAPE = geometry:
    blob vs ring/arms), color = amplitude. Tracks `rlct_manifold_var` (planarity).
-3. **Parameter Field** (`compute_param_field` → `param_field`). The LITERAL weight
-   terrain: each cell a real parameter at its native index, height/color =
-   `|value|`. Native res unless > `field_max_cells` (128/axis), then max-pooled.
-   For a harmonic head this is the actual spectrum as mountains.
+3. **Weight Geometry (whole model)** (`compute_param_field` → `param_field`).
+   The ENTIRE model as one smooth terrain: flatten every param, cut into
+   `field_chunk` (64) windows, PCA the chunks → 2D, bin into a `field_grid` (40)
+   density grid, Gaussian-blur it. Height = chunk density (bulk Gaussian mass +
+   structured satellites), color = mean chunk amplitude. Fixed ~1600 verts
+   regardless of model size. **Replaced the earlier literal single-tensor field**
+   - raw per-param values are noise ("hairy") and one tensor was unclear + laggy
+   (up to 16k verts). Ryan wanted whole-model, smooth, no layer choice.
 
 `_pick_manifold_weight` (shared by 2+3) is **structured-first**: largest among
 harmonic/crystal/field-named weights if any, else largest overall.
@@ -37,7 +41,8 @@ harmonic/crystal/field-named weights if any, else largest overall.
 Manifold + field share `terrainMesh(canvas, spec)` in `dynamics.js` (one place for
 the camera): close + oblique (zoom ~0.55, tilt ~40°) so the plane overflows the
 card, gentle spin, cell-aspect preserved for non-square weights, grid lines
-dropped on dense (>4000-quad) fields. `rlct_mesh` left standalone (bespoke
+dropped on dense (>4000-quad) fields, **throttled to ~30fps** (several terrains
+spin at once on the tab - 60fps each was the lag). `rlct_mesh` left standalone (bespoke
 water/curvature color). Edit `web/src/`, rebuild `build.py`.
 
 ## Key decisions / gotchas

@@ -291,8 +291,13 @@ SUBSYSTEMS: List[Tuple[str, str, str]] = [
     ),
     (
         "Axis mobile app",
-        "axis/README.md",
+        "axis/axis/README.md",
         "archived Godot companion app for controlling Praxis.",
+    ),
+    (
+        "nuTube",
+        "axis/nutube/README.md",
+        "local-first YouTube explorer with an on-device recommender (Godot, in development).",
     ),
 ]
 
@@ -319,7 +324,7 @@ TOP_LEVEL_DIRS: List[Tuple[str, str]] = [
         "Small CLI utilities, callable by both human and assistant. See [tools/README.md](tools/README.md).",
     ),
     ("research", "The research paper, in LaTeX."),
-    ("axis", "Mobile companion app, built with Godot."),
+    ("axis", "Standalone side projects with little or no Praxis integration."),
     ("docs", "Auto-generated per-registry docs. Regenerated at every launch."),
     ("static", "Images used in the README and the web dashboard."),
 ]

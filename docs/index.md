@@ -35,14 +35,15 @@ Praxis is built around 47 pluggable registries. The feature categories below lin
 
 - [CLI arguments](cli.md) - every `./launch` flag, grouped as in `--help`.
 - [Web stack](web.md) - dashboard, JSON API routes, and inference endpoints.
-- [Axis mobile app](../axis/README.md) - archived Godot companion app for controlling Praxis.
+- [Axis mobile app](../axis/axis/README.md) - archived Godot companion app for controlling Praxis.
+- [nuTube](../axis/nutube/README.md) - local-first YouTube explorer with an on-device recommender (Godot, in development).
 
 ## Project layout
 
 Top-level directories, with detail sourced from each one's README
 where present.
 
-- **[`axis/`](../axis/README.md)** - Axis is a mobile companion app for controlling Praxis, built with [Godot](https://godotengine.org/) 4.3. It is an older, archived experiment: the app still runs, but the model-prompting flow almost certainly no longer talks to the current Praxis API.
+- **[`axis/`](../axis/README.md)** - A home for random side projects that live in the Praxis repo but have little or no integration with it. Each subdirectory is a self-contained app with its own toolchain (Godot, Kotlin, ...); Praxis neither imports them nor depends on them. They live here because this is where the work happens, not ...
 - **[`docs/`](../docs/)** - Auto-generated per-registry docs. Regenerated at every launch.
 - **[`environments/`](../environments/README.md)** - Environment configurations override all other settings (defaults, experiments, and CLI args) to provide controlled presets for different use cases.
 - **[`evaluation/`](../evaluation/)** - Evaluation harnesses and helpers.

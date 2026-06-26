@@ -1,0 +1,82 @@
+[gd_scene load_steps=3 format=3 uid="uid://cnutube0main00"]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Texture2D" path="res://icon.svg" id="2_icon"]
+
+[node name="Main" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_main")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.07, 0.08, 0.1, 1)
+
+[node name="Margin" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 24
+theme_override_constants/margin_top = 48
+theme_override_constants/margin_right = 24
+theme_override_constants/margin_bottom = 24
+
+[node name="VBox" type="VBoxContainer" parent="Margin"]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="HeaderRow" type="HBoxContainer" parent="Margin/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="Logo" type="TextureRect" parent="Margin/VBox/HeaderRow"]
+custom_minimum_size = Vector2(56, 56)
+layout_mode = 2
+texture = ExtResource("2_icon")
+expand_mode = 1
+stretch_mode = 5
+
+[node name="Header" type="Label" parent="Margin/VBox/HeaderRow"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 48
+text = "nuTube"
+vertical_alignment = 1
+
+[node name="Subtitle" type="Label" parent="Margin/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.6, 0.65, 0.72, 1)
+text = "A local-first way to explore video. No remote algorithm."
+
+[node name="SearchRow" type="HBoxContainer" parent="Margin/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="SearchBar" type="LineEdit" parent="Margin/VBox/SearchRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "Search the local index..."
+
+[node name="SearchButton" type="Button" parent="Margin/VBox/SearchRow"]
+layout_mode = 2
+text = "Explore"
+
+[node name="Feed" type="ScrollContainer" parent="Margin/VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="FeedList" type="VBoxContainer" parent="Margin/VBox/Feed"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 12

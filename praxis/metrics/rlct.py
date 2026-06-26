@@ -61,7 +61,9 @@ RLCT_DEFAULTS: Dict[str, float] = {
     "max_params": 150_000_000,  # skip the probe above this (the 3x param clone)
     "manifold_grid": 28,  # G x G bins for the parameter-manifold terrain
     "manifold_max_rows": 20000,  # subsample rows above this before PCA
-    "field_max_cells": 128,  # max grid dim for the literal parameter-field terrain
+    "field_grid": 40,  # G x G bins for the whole-model weight-geometry terrain
+    "field_chunk": 64,  # flatten the model, cut into chunks of this many params
+    "field_max_points": 16000,  # subsample chunks above this before PCA
 }
 
 # Substrings that flag a structured-head weight worth projecting (harmonic
@@ -403,40 +405,114 @@ def compute_param_manifold(
     }
 
 
+def _gaussian_blur2d(g: torch.Tensor, sigma: float = 1.0) -> torch.Tensor:
+    """Separable Gaussian blur on a 2D grid (reflect padding) - turns a spiky
+    density histogram into smooth rolling terrain."""
+    import torch.nn.functional as F
+
+    r = max(1, int(round(3 * sigma)))
+    x = torch.arange(-r, r + 1, dtype=torch.float32, device=g.device)
+    k = torch.exp(-(x * x) / (2 * sigma * sigma))
+    k = k / k.sum()
+    t = g.view(1, 1, *g.shape)
+    t = F.conv2d(F.pad(t, (r, r, 0, 0), mode="reflect"), k.view(1, 1, 1, -1))
+    t = F.conv2d(F.pad(t, (0, 0, r, r), mode="reflect"), k.view(1, 1, -1, 1))
+    return t.view(*g.shape)
+
+
 @torch.no_grad()
-def compute_param_field(core, *, max_cells: int = 128) -> Optional[dict]:
-    """Literal weight terrain: actual parameter values by index, height = |value|.
+def compute_param_field(
+    core,
+    *,
+    grid: int = 40,
+    chunk: int = 64,
+    max_points: int = 16000,
+    blur: float = 1.1,
+) -> Optional[dict]:
+    """Whole-model weight geometry as a smooth terrain.
 
-    Unlike the manifold (which PCA-projects rows into a density cloud), this
-    renders the chosen weight tensor *as it is* - each cell is a real parameter,
-    laid out at its native index, with amplitude as height. For a structured
-    head this is the actual harmonic/crystal amplitude grid as terrain. Full
-    fidelity when the tensor fits under ``max_cells`` per axis; above that it is
-    max-pooled (peak-preserving) down to a renderable grid.
+    Per-parameter values are essentially noise (a 'hairy' surface), and no single
+    tensor is the model. Instead this represents the ENTIRE model: flatten every
+    trainable parameter, cut the vector into fixed-length ``chunk`` windows (each
+    a point), PCA the chunks to 2D, bin into a density grid, and Gaussian-blur it.
+    The bulk of the (near-Gaussian) weights forms a central mass; structured
+    regions (harmonic/crystal heads) pull out as distinct features. Low vertex
+    count (grid^2) and smooth, independent of model size.
+
+    Height = chunk density (where weight-chunks cluster in PCA space); color tint
+    = mean chunk amplitude. Returns ``None`` for a model too small to chunk.
     """
-    picked = _pick_manifold_weight(core)
-    if picked is None:
+    vecs = [
+        p.detach().reshape(-1)
+        for p in core.parameters()
+        if p.requires_grad and p.is_floating_point()
+    ]
+    if not vecs:
         return None
-    name, W = picked
-    A = W.detach().abs().float()
-    R, C = A.shape
-    pooled = False
-    if R > max_cells or C > max_cells:
-        import torch.nn.functional as F
+    flat = torch.cat(vecs).float()
+    n_params = int(flat.numel())
 
-        out_r, out_c = min(R, max_cells), min(C, max_cells)
-        A = F.adaptive_max_pool2d(A.view(1, 1, R, C), (out_r, out_c)).view(out_r, out_c)
-        pooled = True
-    amax = float(A.max().clamp(min=1e-9))
-    amp = (A / amax).cpu().tolist()
+    L = int(chunk)
+    M = n_params // L
+    if M < 16:  # tiny model: shrink the chunk so we still get enough points
+        L = max(1, n_params // 64)
+        M = n_params // L
+        if M < 8:
+            return None
+    X = flat[: M * L].view(M, L)
+
+    if M > max_points:  # subsample chunks deterministically
+        idx = torch.linspace(0, M - 1, max_points, device=X.device).long()
+        X = X.index_select(0, idx)
+        M = int(X.shape[0])
+
+    mean = X.mean(dim=0, keepdim=True)
+    Xc = X - mean
+    q = min(3, L, M)
+    try:
+        _, S, V = torch.pca_lowrank(Xc, q=q, center=False)
+    except Exception:
+        return None
+    if V.shape[1] < 2:
+        return None
+
+    coords = Xc @ V[:, :2]
+    amp = X.norm(dim=1)
+    var = S * S
+    var_explained = float((var[:2].sum() / (var.sum() + 1e-9)).item())
+
+    def _robust(x):
+        lo = torch.quantile(x, 0.01)
+        hi = torch.quantile(x, 0.99)
+        rng = (hi - lo).clamp(min=1e-9)
+        return ((x - lo) / rng * 2 - 1).clamp(-1, 1)
+
+    G = int(grid)
+    ix = ((_robust(coords[:, 0]) + 1) * 0.5 * (G - 1)).round().long().clamp_(0, G - 1)
+    iy = ((_robust(coords[:, 1]) + 1) * 0.5 * (G - 1)).round().long().clamp_(0, G - 1)
+    fidx = (ix * G + iy).cpu()
+    amp_c = amp.cpu().float()
+
+    count = torch.bincount(fidx, minlength=G * G).float().view(G, G)
+    ampsum = torch.zeros(G * G, dtype=torch.float32).scatter_add_(0, fidx, amp_c).view(G, G)
+    mean_amp = torch.where(count > 0, ampsum / count.clamp(min=1), torch.zeros_like(ampsum))
+
+    # Smooth both channels; height from log-density so the bulk doesn't flatten
+    # the structured satellites.
+    height = _gaussian_blur2d(torch.log1p(count), sigma=blur)
+    height = height / height.max().clamp(min=1e-9)
+    tint = _gaussian_blur2d(mean_amp, sigma=blur)
+    tint = tint / tint.max().clamp(min=1e-9)
+
     return {
-        "amp": amp,
-        "rows": A.shape[0],
-        "cols": A.shape[1],
-        "weight_name": name,
-        "pooled": pooled,
-        "native_shape": [int(R), int(C)],
-        "n_params": int(W.numel()),
+        "height": height.tolist(),
+        "tint": tint.tolist(),
+        "rows": G,
+        "cols": G,
+        "n_chunks": M,
+        "chunk_len": L,
+        "var_explained": var_explained,
+        "n_params": n_params,
     }
 
 
@@ -572,20 +648,20 @@ RLCT_METRIC_DESCRIPTIONS: Dict[str, dict] = {
             "order": 110,
         },
     },
-    # Literal weight terrain: actual parameter values by index, height = |value|.
-    # Where the manifold abstracts via PCA, this is the raw structure of the
-    # weights - the harmonic/crystal amplitude grid rendered as it is.
+    # Whole-model weight geometry: every parameter chunked, PCA'd, smoothed into
+    # one terrain. No layer choice, no hairy per-element noise.
     "param_field": {
         "description": (
-            "The chosen weight tensor rendered literally: each cell is a real "
-            "parameter at its native index, height = its absolute value. No "
-            "projection - this is the actual geometry of the weights (a "
-            "harmonic spectrum as mountains, a crystal grid as a lattice). Full "
-            "resolution when it fits; max-pooled above the render cap. The card "
-            "names the weight and its native shape."
+            "The ENTIRE model as one smooth terrain. Every parameter is "
+            "flattened, cut into fixed-length chunks, and PCA-projected to 2D; "
+            "height is the (blurred) density of chunks, color their mean "
+            "amplitude. The bulk of the near-Gaussian weights forms a central "
+            "mass; structured regions (harmonic/crystal heads) pull out as "
+            "distinct features as they train. A whole-model fingerprint, not a "
+            "single layer."
         ),
         "snapshot": {
-            "title": "Parameter Field",
+            "title": "Weight Geometry (whole model)",
             "renderer": "param_field",
             "group": _RLCT_GROUP,
             "order": 120,

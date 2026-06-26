@@ -1,0 +1,7 @@
+# Godot 4+ specific ignores
+.godot/
+/android/
+
+# Auto-generated import metadata - Godot regenerates these on editor open.
+*.uid
+*.import
