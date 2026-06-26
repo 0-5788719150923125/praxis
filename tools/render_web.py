@@ -84,14 +84,11 @@ MODEL_ARCHITECTURE = """PraxisForCausalLM(
           (attn_res): ResidualConnection()
           (attn_norm): SandwichNorm((96,), eps=1e-05, elementwise_affine=True)
           (attn): ArcAttention(
-            (encoding): ArcHoPE(
-              (depth_log_theta): Embedding(3, 1)
-            )
+            (encoding): ArcHoPE()
             (qkv): Linear(in_features=96, out_features=288, bias=True)
             (output): Linear(in_features=96, out_features=96, bias=True)
             (dropout): Dropout(p=0.0, inplace=False)
-            (depth_qkv_bias): Embedding(3, 288)
-            (depth_output_bias): Embedding(3, 96)
+            (depth_bias): Embedding(3, 384)
             (gate): Linear(in_features=96, out_features=96, bias=True)
           )
           (memory): MemoryBase()

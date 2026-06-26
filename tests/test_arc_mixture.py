@@ -110,8 +110,8 @@ class TestArcMixturePassBias:
         router = ArcMixture(config)
         # ceil(9 / 3) = 3 recurrent passes.
         assert router.num_passes == 3
-        assert router.depth_router_bias.weight.shape == (3, 1)
-        assert torch.allclose(router.depth_router_bias.weight, torch.zeros(3, 1))
+        assert router.depth_bias.weight.shape == (3, 1)
+        assert torch.allclose(router.depth_bias.weight, torch.zeros(3, 1))
 
     def test_logits_match_base_at_zero_init(self):
         config = make_config()
@@ -126,8 +126,8 @@ class TestArcMixturePassBias:
         config = make_config(depth=9, num_layers=3)
         router = ArcMixture(config)
         with torch.no_grad():
-            router.depth_router_bias.weight[0].fill_(5.0)  # pass 0
-            router.depth_router_bias.weight[1].fill_(-2.0)  # pass 1
+            router.depth_bias.weight[0].fill_(5.0)  # pass 0
+            router.depth_bias.weight[1].fill_(-2.0)  # pass 1
 
         inputs = torch.randn(2, 16, config.hidden_size)
         base = nn.functional.linear(inputs, router.weight, router.bias)
@@ -154,7 +154,7 @@ class TestArcMixturePassBias:
         )
         aux_loss.backward()
 
-        grad = router.depth_router_bias.weight.grad
+        grad = router.depth_bias.weight.grad
         assert grad is not None
         # Only the active pass row should receive gradient.
         assert not torch.allclose(grad[1], torch.zeros(1))
@@ -176,7 +176,7 @@ class TestArcMixtureMetrics:
         config = make_config(depth=9, num_layers=3)
         router = ArcMixture(config)
         with torch.no_grad():
-            router.depth_router_bias.weight.copy_(
+            router.depth_bias.weight.copy_(
                 torch.tensor([[-3.0], [0.0], [3.0]])
             )
         metrics = router.training_metrics()
@@ -196,7 +196,7 @@ class TestArcMixtureMetrics:
         parent = nn.Module()
         parent.router = ArcMixture(config)
         with torch.no_grad():
-            parent.router.depth_router_bias.weight.copy_(
+            parent.router.depth_bias.weight.copy_(
                 torch.tensor([[-3.0], [0.0], [3.0]])
             )
         metrics = collect_arc_metrics(parent)

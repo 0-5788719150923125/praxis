@@ -104,17 +104,16 @@ class ArcAttention(InfiniAttention):
 
         self.depth = config.depth
 
-        # Per-depth biases for QKV projection (applied after the linear)
-        qkv_dim = (
+        # Single per-depth bias table covering both projections: the first
+        # qkv_dim columns are added after the QKV linear, the trailing
+        # hidden_size columns after the output linear. Stored together so Arc
+        # carries one depth-conditioned bias parameter.
+        self.qkv_dim = (
             self.num_query_heads * self.head_dim + 2 * self.num_heads * self.head_dim
         )
-        self.depth_qkv_bias = nn.Embedding(self.depth, qkv_dim)
-        nn.init.zeros_(self.depth_qkv_bias.weight)
-
-        # Per-depth bias for output projection
         out_dim = config.hidden_size
-        self.depth_output_bias = nn.Embedding(self.depth, out_dim)
-        nn.init.zeros_(self.depth_output_bias.weight)
+        self.depth_bias = nn.Embedding(self.depth, self.qkv_dim + out_dim)
+        nn.init.zeros_(self.depth_bias.weight)
 
         # Head-specific elementwise sigmoid gate on SDPA output.
         # Score shape: (n, num_query_heads * head_dim), computed from input X.
@@ -128,7 +127,7 @@ class ArcAttention(InfiniAttention):
 
     def _project_qkv(self, inputs: Tensor, current_depth: int) -> Tensor:
         depth_idx = torch.tensor(current_depth, device=inputs.device)
-        return self.qkv(inputs) + self.depth_qkv_bias(depth_idx)
+        return self.qkv(inputs) + self.depth_bias(depth_idx)[..., : self.qkv_dim]
 
     def _adjust_kv(
         self, k: Tensor, v: Tensor, current_depth: int
@@ -143,18 +142,19 @@ class ArcAttention(InfiniAttention):
         if self.attention_gating:
             output = output * torch.sigmoid(self.gate(inputs))
         depth_idx = torch.tensor(current_depth, device=inputs.device)
-        return self.output(output) + self.depth_output_bias(depth_idx)
+        return self.output(output) + self.depth_bias(depth_idx)[..., self.qkv_dim :]
 
     def training_metrics(self) -> dict:
         """Whether the per-depth biases are specializing or collapsing."""
         from praxis.metrics.specialization import depth_dispersion
 
         out = {}
-        qkv = depth_dispersion(self.depth_qkv_bias.weight)
+        weight = self.depth_bias.weight
+        qkv = depth_dispersion(weight[:, : self.qkv_dim])
         if qkv is not None:
             out["arc_qkv_specialization"] = qkv["specialization"]
             out["arc_qkv_similarity"] = qkv["similarity"]
-        outp = depth_dispersion(self.depth_output_bias.weight)
+        outp = depth_dispersion(weight[:, self.qkv_dim :])
         if outp is not None:
             out["arc_output_specialization"] = outp["specialization"]
             out["arc_output_similarity"] = outp["similarity"]

@@ -25,6 +25,12 @@ class NoPE(nn.Module):
         self.num_query_heads = config.num_heads * config.num_queries
         self.head_scales = nn.Parameter(torch.linspace(-1.2, 1.2, self.num_query_heads))
 
+    def __repr__(self) -> str:
+        # Collapse every positional encoding to a single line in the
+        # blueprint; child params (e.g. depth_log_theta) would otherwise
+        # expand subclasses like RoPE/HoPE/ArcHoPE multi-line.
+        return f"{self.__class__.__name__}()"
+
     def before_scores(
         self,
         q: torch.Tensor,

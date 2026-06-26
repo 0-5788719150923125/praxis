@@ -91,11 +91,12 @@ class MemorySurfacing(MemoryBase):
         },
         "memory_surprise_norm": {
             "description": (
-                "Reconstruction loss in RMS-normalized (directional) space, "
-                "which is what the readout's out_norm consumes - the scale-free "
-                "quantity the energy update actually optimizes. Unlike the raw "
-                "surprise it isn't dominated by output-scale drift; falling = "
-                "the memory is learning directional associations."
+                "Surprise in RMS-normalized (directional) space, which is what "
+                "the readout's out_norm consumes - the scale-free quantity the "
+                "energy update actually optimizes. In the predictive arm this is "
+                "the next-latent (Huber) prediction error; falling = the memory "
+                "is learning to forecast the stream, i.e. storing belief-state "
+                "structure rather than echoing the current token."
             ),
             "chart": {
                 "title": "Memory Surprise (norm)",
@@ -190,6 +191,7 @@ class MemorySurfacing(MemoryBase):
             segment=spec.get("segment", False),
             segment_block=spec.get("segment_block", 16),
             parallel_scan=spec.get("parallel_scan", True),
+            write_objective=spec.get("write_objective", "recon"),
         )
 
     def forward(self, stream, attn_output, state=None):

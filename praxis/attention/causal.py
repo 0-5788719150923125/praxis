@@ -146,8 +146,14 @@ class CausalAttention(nn.Module):
             swap(self.gate, "weight", self.gate.weight[q_ch])
             if self.gate.bias is not None:
                 swap(self.gate, "bias", self.gate.bias[q_ch])
-        if hasattr(self, "depth_qkv_bias"):
-            swap(self.depth_qkv_bias, "weight", self.depth_qkv_bias.weight[:, qkv_rows])
+        if hasattr(self, "depth_bias") and hasattr(self, "qkv_dim"):
+            # depth_bias packs [qkv_dim qkv cols | hidden_size output cols];
+            # prune only the qkv columns, keep the output tail intact.
+            out_cols = torch.arange(
+                self.qkv_dim, self.depth_bias.weight.shape[1], device=dev
+            )
+            keep_cols = torch.cat([qkv_rows, out_cols])
+            swap(self.depth_bias, "weight", self.depth_bias.weight[:, keep_cols])
         for name in ("betas", "init_mem", "init_z"):  # Infini per-head state
             if hasattr(self, name):
                 swap(self, name, getattr(self, name)[:, q_keep])

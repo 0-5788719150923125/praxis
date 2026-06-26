@@ -118,6 +118,7 @@ class NeuralMemory(nn.Module):
         eps: float = 1e-8,
         weight_decay: float = 0.0,
         parallel_scan: bool = True,
+        write_objective: str = "recon",
     ) -> None:
         super().__init__()
         self.dim = dim
@@ -125,6 +126,21 @@ class NeuralMemory(nn.Module):
         self.max_lr = max_lr
         self.use_momentum = momentum
         self.use_energy = use_energy
+        # Write target for the test-time update. "recon": auto-associative, the
+        # value is the (normalized) input itself - the memory reconstructs the
+        # stream, which is redundant with the residual it's added to, so the
+        # model learns to route around it (gain -> 0 at every scale). "predictive"
+        # (NextLat, Liu et al. 2025): the value is the *next* latent stream_{t+1},
+        # so retrieval carries belief-state info the residual doesn't already
+        # hold. The target is stop-gradded (the detached update ctx) and the loss
+        # is Huber, both per NextLat. Only meaningful in energy mode (recon mode
+        # there fixes the value side to identity).
+        assert write_objective in ("recon", "predictive"), write_objective
+        assert (
+            write_objective == "recon" or use_energy
+        ), "predictive write_objective requires use_energy"
+        self.write_objective = write_objective
+        self.predictive = write_objective == "predictive"
         # True: differentiate every chunk in one batched pass and collapse the
         # per-chunk recurrence to a parallel scan (fast, materializes the full
         # (b, nc, *p) trajectory). False: a sequential loop carrying running
@@ -209,6 +225,7 @@ class NeuralMemory(nn.Module):
             f"model={type(self.memory_model).__name__}, "
             f"activation={self._activation_name()}, momentum={self.use_momentum}, "
             f"energy={self.use_energy}, segment={self.segment}, "
+            f"write_objective={self.write_objective}, "
             f"parallel_scan={self.parallel_scan})"
         )
 
@@ -318,13 +335,18 @@ class NeuralMemory(nn.Module):
     # --- functional grad of the surprise loss --------------------------------
 
     def _recon_per_token(self, pred: Tensor, v: Tensor, normalize: bool) -> Tensor:
-        """Per-token reconstruction loss. Energy mode compares RMS-normalized
-        (directional) vectors - matching the out_norm'd readout - so the memory
-        net's free output-scale mode can't dominate; standard mode uses raw MSE.
+        """Per-token surprise loss against the write target. Energy mode compares
+        RMS-normalized (directional) vectors - matching the out_norm'd readout -
+        so the memory net's free output-scale mode can't dominate; standard mode
+        uses raw MSE. The predictive arm (next-latent target) uses Smooth L1
+        (Huber, NextLat), which bounds the surprise on outlier latents so the
+        write rule stays stable without a tuned clip.
         """
         if normalize:
             pred = pred * torch.rsqrt(pred.pow(2).mean(-1, keepdim=True) + self.eps)
             v = v * torch.rsqrt(v.pow(2).mean(-1, keepdim=True) + self.eps)
+        if self.predictive:
+            return F.smooth_l1_loss(pred, v, reduction="none", beta=1.0).mean(dim=-1)
         return ((pred - v) ** 2).mean(dim=-1)
 
     def _surprise_grads(
@@ -391,7 +413,18 @@ class NeuralMemory(nn.Module):
         with self._update_ctx():
             stored = self.store_norm(seq)
             keys = self.to_keys(stored).unflatten(1, (num_chunks, c))  # (b, nc, c, d)
-            values = self.to_values(stored).unflatten(1, (num_chunks, c))
+            # Predictive: store key_t -> stream_{t+1} (next latent), so retrieval
+            # is a forecast rather than an echo of the residual. Reading pre-write
+            # weights (each chunk sees only earlier chunks' writes) keeps this
+            # causal: an interior token's own target is written by its own chunk,
+            # invisible at retrieval. The global last token has no successor, so it
+            # falls back to itself (a single self-recon token, harmless).
+            tgt = (
+                torch.cat([stored[:, 1:], stored[:, -1:]], dim=1)
+                if self.predictive
+                else self.to_values(stored)
+            )
+            values = tgt.unflatten(1, (num_chunks, c))
             # Energy mode takes the raw surprise (lr=1) and applies a fixed lr in
             # the Adam step; standard mode weights it by a learned per-token lr.
             if self.use_energy:
@@ -525,6 +558,15 @@ class NeuralMemory(nn.Module):
             valid.view(-1)[-pad:] = 0.0
         queries = self.to_queries(self.retrieve_norm(seq)).unflatten(1, (num_chunks, c))
 
+        # Predictive write target: the next-latent stream, stop-gradded, sliced
+        # per chunk in the loop. Materializing the (b, N, d) stream is cheap (it
+        # is the size of seq, not the (b, nc, *p) weight trajectory the sequential
+        # path exists to avoid), so the low-VRAM property is preserved.
+        if self.predictive:
+            with torch.no_grad():
+                sn = self.store_norm(seq)
+                pred_target = torch.cat([sn[:, 1:], sn[:, -1:]], dim=1)
+
         retrieved_chunks, reset_list = [], []
         raw_sum = drv_sum = seq.new_zeros(())
         raw_cnt = drv_cnt = 0
@@ -543,7 +585,12 @@ class NeuralMemory(nn.Module):
 
             with self._update_ctx():
                 stored = self.store_norm(seq[:, i * c : (i + 1) * c])
-                k_i, val_i = self.to_keys(stored), self.to_values(stored)
+                k_i = self.to_keys(stored)
+                val_i = (
+                    pred_target[:, i * c : (i + 1) * c]
+                    if self.predictive
+                    else self.to_values(stored)
+                )
                 lr_i = (
                     stored.new_ones(b, c)
                     if self.use_energy

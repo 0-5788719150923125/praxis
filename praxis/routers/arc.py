@@ -78,8 +78,8 @@ class ArcMixture(MixtureOfDepths):
 
         # Per-pass additive bias on the (scalar) router logit, applied after
         # the linear scorer. Zero-init -> starts identical to MixtureOfDepths.
-        self.depth_router_bias = nn.Embedding(self.num_passes, 1)
-        nn.init.zeros_(self.depth_router_bias.weight)
+        self.depth_bias = nn.Embedding(self.num_passes, 1)
+        nn.init.zeros_(self.depth_bias.weight)
 
     def _build_capacities(self, config: ConfigType, layout: str) -> List[float]:
         # Key capacity to the physical layer index (length num_layers), not the
@@ -96,16 +96,14 @@ class ArcMixture(MixtureOfDepths):
     def _compute_router_logits(self, inputs: Tensor, current_depth: int) -> Tensor:
         pass_idx = (current_depth // self.num_layers) % self.num_passes
         depth_idx = torch.tensor(pass_idx, device=inputs.device)
-        return F.linear(inputs, self.weight, self.bias) + self.depth_router_bias(
-            depth_idx
-        )
+        return F.linear(inputs, self.weight, self.bias) + self.depth_bias(depth_idx)
 
     def training_metrics(self) -> dict:
         """Whether the per-pass router biases are specializing or collapsing."""
         from praxis.metrics.specialization import depth_dispersion
 
         out = {}
-        disp = depth_dispersion(self.depth_router_bias.weight)
+        disp = depth_dispersion(self.depth_bias.weight)
         if disp is not None:
             out["arc_router_specialization"] = disp["specialization"]
         return out

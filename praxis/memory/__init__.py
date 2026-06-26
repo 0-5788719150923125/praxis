@@ -44,6 +44,7 @@ MEMORY_REGISTRY: Dict[str, Optional[dict]] = {
         segment=True,
         segment_block=16,
         parallel_scan=True,
+        write_objective="predictive",
     ),
     "mag": dict(
         surfacing="mag",
@@ -71,9 +72,13 @@ MEMORY_PROFILE_DESCRIPTIONS: Dict[str, str] = {
         "much lower VRAM. The update uses a fixed Adam-style adaptive rule (EMA "
         "1st/2nd moment, constant lr) in place of learned gates; the key "
         "projection is tied to the query projection (so addressing trains on the "
-        "task) and the value side is fixed to identity. The update grid is "
-        "segmented at surprise spikes (EM-LLM-style events, capped at "
-        "chunk_size) so a context shift starts a fresh memory write."
+        "task). The write target is predictive (NextLat): each key stores the "
+        "*next* latent stream_{t+1} (stop-gradded, Huber surprise) rather than "
+        "reconstructing the current token - so retrieval carries belief-state "
+        "information the residual stream doesn't already hold, instead of an echo "
+        "the model just routes around. The update grid is segmented at surprise "
+        "spikes (EM-LLM-style events, capped at chunk_size) so a context shift "
+        "starts a fresh memory write."
     ),
     "mag": (
         "Memory-as-Gate (Titans): a memory branch run parallel to attention "
