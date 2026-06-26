@@ -172,6 +172,14 @@ The dashboard and chat interface live at <http://localhost:2100>, backed by a JS
 
 ![Praxis Chat](./static/chat.webp)
 
+The Terminal tab streams the live training dashboard - error and validation, the rolling sampled-context blocks, the system panel, and the loss curve:
+
+![Terminal tab](./static/dashboard.webp)
+
+The Customs tab inspects the instantiated model. Its Architecture card renders the full module tree, so the registry choices for a run are legible at a glance (shown here for a `--beta` model: byte-latent encoder, Arc attention, KL-divergence halting):
+
+![Architecture card](./static/architecture.webp)
+
 ## side projects
 
 The [`axis/`](./axis/README.md) directory holds standalone side projects that live in this repo but have little or no integration with Praxis. It currently contains [Axis](./axis/axis/README.md), an older Godot app for controlling Praxis, and [nuTube](./axis/nutube/README.md), an experiment in a local-first YouTube recommender that runs entirely on the device.

@@ -365,7 +365,7 @@ def regenerate_docs(repo_root: Optional[Path] = None) -> None:
 
     _sort_roadmap(repo_root)
     _regenerate_terminal_webp(repo_root)
-    _regenerate_chat_webp(repo_root)
+    _regenerate_web_webps(repo_root)
 
 
 def _sort_roadmap(repo_root: Path) -> None:
@@ -453,8 +453,12 @@ def _regenerate_terminal_webp(repo_root: Path) -> None:
         print(f"[DOCS] Skipped terminal.webp: {e}")
 
 
-# Files whose content determines the rendered chat.webp.
-def _chat_render_sources(repo_root: Path) -> List[Path]:
+# The web-app stills (chat, dashboard, architecture) all come from one tool.
+_WEB_WEBPS = ("chat.webp", "dashboard.webp", "architecture.webp")
+
+
+# Files whose content determines the rendered web-app webps.
+def _web_render_sources(repo_root: Path) -> List[Path]:
     web = repo_root / "praxis" / "web"
     paths = [
         p
@@ -462,49 +466,57 @@ def _chat_render_sources(repo_root: Path) -> List[Path]:
         if p.is_file() and "__pycache__" not in p.parts
     ]
     paths.append(web / "templates" / "index.html")
-    paths.append(repo_root / "tools" / "render_chat_webp.py")
+    paths.append(repo_root / "tools" / "render_web.py")
     paths.append(repo_root / "tools" / "assets" / "inter" / "inter-latin.woff2")
     return paths
 
 
-def _chat_webp_stale(repo_root: Path) -> bool:
-    """Same on-the-fly mtime check as the terminal webp."""
-    out = repo_root / "static" / "chat.webp"
-    if not out.exists():
+def _web_webps_stale(repo_root: Path) -> bool:
+    """Stale if any still is missing, or any rendering source is newer than the
+    oldest still (the tool re-renders all three in one boot, so any drift
+    re-fires the lot). Same on-the-fly mtime check as the terminal webp."""
+    outs = [repo_root / "static" / name for name in _WEB_WEBPS]
+    if any(not out.exists() for out in outs):
         return True
-    cutoff = out.stat().st_mtime
+    cutoff = min(out.stat().st_mtime for out in outs)
     return any(
         p.exists() and p.stat().st_mtime > cutoff
-        for p in _chat_render_sources(repo_root)
+        for p in _web_render_sources(repo_root)
     )
 
 
-def _regenerate_chat_webp(repo_root: Path) -> None:
-    """Re-render static/chat.webp when the web frontend changes.
+def _regenerate_web_webps(repo_root: Path) -> None:
+    """Re-render the web-app stills when the web frontend changes.
 
     Same shape as the terminal webp: detached background process (this one
     boots the API server and a headless browser), claim via mtime bump."""
-    if not _chat_webp_stale(repo_root):
+    if not _web_webps_stale(repo_root):
         return
 
-    out = repo_root / "static" / "chat.webp"
-    if out.exists():
-        os.utime(out, None)
+    # Claim every output now so rapid re-launches during the render don't each
+    # spawn a duplicate.
+    for name in _WEB_WEBPS:
+        out = repo_root / "static" / name
+        if out.exists():
+            os.utime(out, None)
 
-    script = repo_root / "tools" / "render_chat_webp.py"
-    log = repo_root / "static" / ".chat_render.log"
+    script = repo_root / "tools" / "render_web.py"
+    log = repo_root / "static" / ".web_render.log"
     try:
         logf = open(log, "w")
         subprocess.Popen(
-            [sys.executable, str(script), "--out", str(out)],
+            [sys.executable, str(script)],
             cwd=str(repo_root),
             stdout=logf,
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
-        print("[DOCS] Web app changed - rendering static/chat.webp in background.")
+        print(
+            "[DOCS] Web app changed - rendering chat/dashboard/architecture "
+            "webps in background."
+        )
     except OSError as e:
-        print(f"[DOCS] Skipped chat.webp: {e}")
+        print(f"[DOCS] Skipped web webps: {e}")
 
 
 def _render_registry(
