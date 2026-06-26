@@ -19,20 +19,31 @@ class KLDivergenceHalting(BaseHalting):
     it will receive.
 
     Inference: runs up to full depth but monitors KL-divergence between
-    hidden states at successive loop boundaries. Rather than gate on an
-    absolute KL floor (which depends on hidden_size, sequence length, and
-    drifts with the residual norm as the model trains), we halt when the
-    latent has stopped moving *relative to its own peak movement* this
-    pass: once per-position KL decays below ``convergence_ratio`` of the
-    largest KL seen so far, remaining loops are skipped. The ratio is
-    dimensionless, so the same value holds across architectures with no
-    per-experiment tuning.
+    hidden states at successive loop boundaries, halting once the latent
+    has stopped moving. The floor it must drop below is ``convergence_ratio``
+    times a *global* scale - a slow EMA of the per-pass peak KL across passes
+    - not this pass's own peak.
+
+    That distinction is the whole design. A trained recurrent block acts like
+    a contraction toward a fixed point, so within one pass the per-position KL
+    decays geometrically at a rate that is a property of the learned operator,
+    roughly *independent of the input* (kl_r ~= kl_1 * lambda^(r-1)).
+    Normalizing by this pass's own peak cancels kl_1 - the only input-dependent
+    term - so ``kl_r < ratio * peak`` reduces to ``lambda^(r-1) < ratio``, a
+    constant: every input exits at the same depth and the halting distribution
+    collapses to a single route. Anchoring instead to a fixed global scale
+    keeps the absolute magnitude of the early movement, so harder inputs (which
+    move more) cross the floor later and the exit depth spreads into a curve.
+    The scale is learned endogenously (the EMA), so there is still no
+    per-experiment threshold to tune.
 
     Two details keep the signal honest across models and training: the
     hidden state is standardized (shift/scale invariant) before the
-    softmax, so the measure does not drift as residual norms grow; and KL
-    is averaged per position, so it does not scale with sequence length.
-    No LM head required - works uniformly for head- and encoder-based models.
+    softmax, so the measure does not drift as residual norms grow (this is
+    what made an absolute floor flaky before, and the EMA tracks any slow
+    residual drift on top of it); and KL is averaged per position, so it does
+    not scale with sequence length. No LM head required - works uniformly for
+    head- and encoder-based models.
 
     Reference: Geiping et al., "Scaling up Test-Time Compute with Latent
     Reasoning: A Recurrent Depth Approach" (arXiv 2502.05171)
@@ -44,16 +55,24 @@ class KLDivergenceHalting(BaseHalting):
         convergence_ratio: float = 0.1,
         sigma: float = 0.5,
         r_bar: Optional[float] = None,
+        peak_ema_decay: float = 0.95,
     ) -> None:
         super().__init__(config)
         self.convergence_ratio = convergence_ratio
         self.sigma = sigma
+        self.peak_ema_decay = peak_ema_decay
         self.max_loops = self.depth // self.num_layers
         self.r_bar = (
             float(r_bar) if r_bar is not None else max(1.0, (self.max_loops - 1) / 2)
         )
         self._prev_log_probs: Optional[Tensor] = None
-        self._peak_kl: Optional[float] = None  # largest KL this pass (relative anchor)
+        # Global scale the inference floor is measured against: a slow EMA of
+        # each pass's peak KL. Persists across passes (unlike the per-pass
+        # state below) so the floor is a fixed absolute level within any one
+        # pass, which is what lets the exit depth vary with input difficulty.
+        self._peak_ema: Optional[float] = None
+        self._pass_peak: float = 0.0  # largest KL this pass; folded into the EMA next pass
+        self._pass_anchor: Optional[float] = None  # EMA snapshot frozen for this pass
 
         self._train_calls = 0
         self._train_loops_sum = 0
@@ -82,8 +101,21 @@ class KLDivergenceHalting(BaseHalting):
         return self.max_loops
 
     def get_depth(self) -> int:
+        # Fold the just-finished eval pass's peak KL into the slow global EMA,
+        # then freeze that EMA as this pass's floor anchor. There is no
+        # pass-end callback, so we settle the previous pass here at the start of
+        # the next. _pass_peak is only ever > 0 after an eval pass (training
+        # never computes KL), so training passes leave the EMA untouched.
+        if self._pass_peak > 0:
+            if self._peak_ema is None:
+                self._peak_ema = self._pass_peak
+            else:
+                d = self.peak_ema_decay
+                self._peak_ema = d * self._peak_ema + (1.0 - d) * self._pass_peak
+        self._pass_peak = 0.0
+        self._pass_anchor = self._peak_ema
+
         self._prev_log_probs = None
-        self._peak_kl = None
         self._inflight_halt_r = None
         if self.training:
             loops = self._sample_loop_count()
@@ -164,13 +196,21 @@ class KLDivergenceHalting(BaseHalting):
 
         self._eval_checks += 1
         self._eval_kl_sum += kl
+        self._pass_peak = max(self._pass_peak, kl)
 
-        # Relative convergence: halt once movement has decayed to a small
-        # fraction of its peak this pass. The first measured KL can never
-        # halt (it sets the peak), so we always loop at least twice.
-        if self._peak_kl is None or kl > self._peak_kl:
-            self._peak_kl = kl
-        halted = self._peak_kl > 0 and kl < self.convergence_ratio * self._peak_kl
+        # Absolute convergence on a self-calibrating scale: halt once the
+        # per-position movement drops below ``convergence_ratio`` of the model's
+        # typical peak movement (the global EMA), frozen for this pass. Unlike a
+        # this-pass-peak anchor, the global scale keeps the input-dependent
+        # magnitude, so harder inputs cross the floor later (see class docstring
+        # for the contraction-mapping argument).
+        anchor = self._pass_anchor
+        if anchor is None:
+            # First eval pass, EMA not warmed yet: fall back to this pass's
+            # running peak so the very first pass still behaves sanely while the
+            # global scale calibrates. From the next pass on, the EMA takes over.
+            anchor = self._pass_peak
+        halted = anchor > 0 and kl < self.convergence_ratio * anchor
         if halted:
             self._eval_halts += 1
             self._record_eval_r(loop_r)
@@ -181,6 +221,8 @@ class KLDivergenceHalting(BaseHalting):
             "halting/max_loops": self.max_loops,
             "halting/r_bar": self.r_bar,
         }
+        if self._peak_ema is not None:
+            metrics["halting/peak_ema"] = self._peak_ema
         if self._train_calls > 0:
             metrics["halting/train_calls"] = self._train_calls
             metrics["halting/mean_loops"] = self._train_loops_sum / self._train_calls

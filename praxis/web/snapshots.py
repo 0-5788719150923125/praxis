@@ -119,6 +119,10 @@ def _recipe_head_snapshots(model):
         snapshots.update(criterion.dashboard_snapshots() or {})
     if encoder and hasattr(encoder, "dashboard_snapshots"):
         snapshots.update(encoder.dashboard_snapshots() or {})
+    # RLCT loss-landscape grid, stashed on the model by RLCTLandscapeCallback.
+    rlct = getattr(model, "_rlct_landscape", None)
+    if isinstance(rlct, dict):
+        snapshots.update(rlct)
     return {
         "status": "ok" if snapshots else "no_data",
         "snapshots": snapshots,

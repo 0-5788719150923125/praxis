@@ -43,7 +43,7 @@ class EngagementLiveRewardCallback(Callback):
         model = getattr(model, "_orig_mod", model)  # unwrap torch.compile
         # Recall-style policies live in a ModuleDict; the legacy single forward
         # policy is model.policy. Match by class name across both.
-        candidates = list(getattr(model, "recall_policies", {}).values())
+        candidates = list(getattr(model, "policies", {}).values())
         legacy = getattr(model, "policy", None)
         if legacy is not None:
             candidates.append(legacy)

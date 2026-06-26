@@ -1943,6 +1943,338 @@ function renderHaloRing(canvas, data) {
 }
 
 
+/**
+ * RLCT landscape renderer: the loss-geometry terrain.
+ *
+ * Payload contract (from praxis.metrics.rlct.probe_landscape): ``grid`` is a
+ * rows x cols array of loss values, ``z_min``/``z_max`` bound it, ``lambda_hat``
+ * is the scalar coefficient (may be null), ``step`` stamps the probe.
+ *
+ * Heightfield = loss, so low-loss basins sink into valleys and high-loss walls
+ * rise into ridges. Color reads the Singular-Learning-Theory geometry directly:
+ *   - cyan pools fill the flat low-loss basins (low LLC, high bias),
+ *   - magenta/red climbs the steep high-curvature slopes (high LLC, high variance),
+ *   - grey hillshade is the corpus-average relief between.
+ * A fixed world-space light keeps the relief stable while a slow camera spin
+ * gives depth; the per-quad colors are computed once and only the projection
+ * updates each frame.
+ */
+function renderRLCTMesh(canvas, data) {
+    if (canvas._rlctRAF) cancelAnimationFrame(canvas._rlctRAF);
+    const grid = data && data.grid;
+    if (!Array.isArray(grid) || grid.length < 2 || !Array.isArray(grid[0])) return;
+    const R = grid.length, C = grid[0].length;
+    if (C < 2) return;
+
+    const zMin = (typeof data.z_min === 'number') ? data.z_min : Math.min(...grid.flat());
+    const zMax = (typeof data.z_max === 'number') ? data.z_max : Math.max(...grid.flat());
+    const denom = Math.max(zMax - zMin, 1e-9);
+
+    const HEIGHT = 0.85;          // vertical relief in world units
+    const TILT = 56 * Math.PI / 180;
+    const WATER = 0.17;           // height fraction below which basins flood
+    const LIGHT = (() => { const l = [-0.42, -0.5, 0.76]; const n = Math.hypot(...l); return l.map(v => v / n); })();
+
+    // World vertices (camera-independent) + normalized heights.
+    const VX = [], VY = [], VH = [], H01 = [];
+    for (let i = 0; i < R; i++) {
+        H01.push([]);
+        for (let j = 0; j < C; j++) {
+            const h = (grid[i][j] - zMin) / denom;     // 0 = basin floor, 1 = peak
+            H01[i].push(h);
+            VX.push((j / (C - 1)) * 2 - 1);
+            VY.push((i / (R - 1)) * 2 - 1);
+            VH.push(h * HEIGHT);
+        }
+    }
+    const vidx = (i, j) => i * C + j;
+
+    // Per-vertex local curvature = |discrete Laplacian of loss| (edge-clamped).
+    // This is the SLT signal the color reads: near-zero curvature is a flat,
+    // degenerate direction (low LLC / bias); high curvature is a sharp wall
+    // (high LLC / variance). It is distinct from the mesh's visual slope.
+    const curv = [];
+    let curvMax = 1e-9;
+    for (let i = 0; i < R; i++) {
+        curv.push([]);
+        for (let j = 0; j < C; j++) {
+            const c = H01[i][j];
+            const up = H01[Math.max(0, i - 1)][j], dn = H01[Math.min(R - 1, i + 1)][j];
+            const lf = H01[i][Math.max(0, j - 1)], rt = H01[i][Math.min(C - 1, j + 1)];
+            const k = Math.abs(4 * c - up - dn - lf - rt);
+            curv[i].push(k);
+            if (k > curvMax) curvMax = k;
+        }
+    }
+
+    const smoothstep = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+
+    // Per-quad base color, computed once from the fixed-light hillshade.
+    const quads = [];
+    for (let i = 0; i < R - 1; i++) {
+        for (let j = 0; j < C - 1; j++) {
+            const a = vidx(i, j), b = vidx(i, j + 1), c = vidx(i + 1, j);
+            // Surface normal from two edges of the cell (world space) -> hillshade.
+            const e1 = [VX[b] - VX[a], VY[b] - VY[a], VH[b] - VH[a]];
+            const e2 = [VX[c] - VX[a], VY[c] - VY[a], VH[c] - VH[a]];
+            let nx = e1[1] * e2[2] - e1[2] * e2[1];
+            let ny = e1[2] * e2[0] - e1[0] * e2[2];
+            let nz = e1[0] * e2[1] - e1[1] * e2[0];
+            const nl = Math.hypot(nx, ny, nz) || 1;
+            nx /= nl; ny /= nl; nz /= nl;
+            if (nz < 0) { nx = -nx; ny = -ny; nz = -nz; }
+            const shade = Math.max(0.2, Math.min(1, nx * LIGHT[0] + ny * LIGHT[1] + nz * LIGHT[2]));
+            const cellH = (H01[i][j] + H01[i][j + 1] + H01[i + 1][j] + H01[i + 1][j + 1]) / 4;
+            const cellK = (curv[i][j] + curv[i][j + 1] + curv[i + 1][j] + curv[i + 1][j + 1]) / 4 / curvMax;
+
+            let r, g, bl;
+            if (cellH < WATER) {                       // flooded basin -> cyan pool
+                r = 14 + 26 * shade;
+                g = 120 + 110 * shade;
+                bl = 150 + 95 * shade;
+            } else {
+                const grey = 52 + 168 * shade;          // corpus-average relief
+                const t = smoothstep(0.18, 0.7, cellK);  // red where curvature is high
+                r = grey * (1 - t) + 216 * t;
+                g = grey * (1 - t) + 46 * t;
+                bl = grey * (1 - t) + 128 * t;
+            }
+            quads.push({ a, b, c, d: vidx(i + 1, j + 1), color: `rgb(${r | 0},${g | 0},${bl | 0})` });
+        }
+    }
+
+    const ctx = canvas.getContext('2d');
+    const cosE = Math.cos(TILT), sinE = Math.sin(TILT);
+    let frame = 0;
+    const sx = new Float32Array(R * C), sy = new Float32Array(R * C), sd = new Float32Array(R * C);
+
+    const lam = (typeof data.lambda_hat === 'number') ? data.lambda_hat : null;
+
+    const draw = () => {
+        if (!canvas.isConnected) { canvas._rlctRAF = null; return; }
+        if (deckCardParked(canvas)) { canvas._rlctRAF = requestAnimationFrame(draw); return; }
+
+        const wrapper = canvas.parentElement;
+        const w = wrapper.clientWidth || 800, h = wrapper.clientHeight || 400;
+        if (w < 2 || h < 2) { canvas._rlctRAF = requestAnimationFrame(draw); return; }
+        if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+
+        const { textColor, gridColor } = getThemeColors();
+        ctx.clearRect(0, 0, w, h);
+        ctx.fillStyle = gridColor;
+        ctx.fillRect(0, 0, w, h);
+
+        const cx = w / 2, cy = h / 2 + h * 0.06;
+        const scale = Math.min(w, h) * 0.34;
+        const cosA = Math.cos(frame * 0.004), sinA = Math.sin(frame * 0.004);
+
+        for (let k = 0; k < R * C; k++) {
+            const Xs = VX[k] * cosA - VY[k] * sinA;
+            const Ys = VX[k] * sinA + VY[k] * cosA;
+            sx[k] = cx + Xs * scale;
+            sy[k] = cy - (VH[k] * cosE - Ys * sinE) * scale;
+            sd[k] = Ys * cosE + VH[k] * sinE;          // depth: larger = nearer
+        }
+
+        // Painter's algorithm: far quads first.
+        quads.sort((p, q) =>
+            (sd[p.a] + sd[p.b] + sd[p.c] + sd[p.d]) - (sd[q.a] + sd[q.b] + sd[q.c] + sd[q.d]));
+
+        ctx.lineJoin = 'round';
+        for (const qd of quads) {
+            ctx.beginPath();
+            ctx.moveTo(sx[qd.a], sy[qd.a]);
+            ctx.lineTo(sx[qd.b], sy[qd.b]);
+            ctx.lineTo(sx[qd.d], sy[qd.d]);
+            ctx.lineTo(sx[qd.c], sy[qd.c]);
+            ctx.closePath();
+            ctx.fillStyle = qd.color;
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(0,0,0,0.12)';   // faint sampling grid
+            ctx.lineWidth = 0.5;
+            ctx.stroke();
+        }
+
+        ctx.fillStyle = textColor;
+        ctx.font = '12px sans-serif';
+        ctx.textAlign = 'left';
+        const lamStr = lam === null ? 'λ̂ n/a' : `λ̂ = ${lam.toFixed(3)}`;
+        ctx.fillText(lamStr, 10, 18);
+        ctx.fillText(`loss ${zMin.toFixed(3)} .. ${zMax.toFixed(3)}`, 10, 34);
+        if (typeof data.step === 'number') {
+            ctx.textAlign = 'right';
+            ctx.fillText(`step ${data.step}`, w - 10, 18);
+        }
+
+        frame++;
+        canvas._rlctRAF = requestAnimationFrame(draw);
+    };
+    draw();
+}
+
+/**
+ * Shared 3D terrain renderer for the weight-geometry cards. Builds a height
+ * field from a normalized grid, shades it with a fixed world-space light, and
+ * spins it under a close, oblique camera so the plane overflows the card edges
+ * for a more sculptural, less map-like read. Non-square grids keep cell aspect
+ * (the longer axis spans the viewport, the shorter is scaled in).
+ *
+ * spec: { R, C, heightAt(i,j)->[0,1], colorAt(i,j)->[r,g,b 0..255],
+ *         rafKey, tilt(deg), zoom, heightScale, overlay(ctx,w,h,textColor) }
+ */
+function terrainMesh(canvas, spec) {
+    const rafKey = spec.rafKey || '_terrainRAF';
+    if (canvas[rafKey]) cancelAnimationFrame(canvas[rafKey]);
+    const R = spec.R, C = spec.C;
+    if (R < 2 || C < 2) return;
+
+    const HS = spec.heightScale ?? 0.95;
+    const tilt = (spec.tilt ?? 42) * Math.PI / 180;
+    const zoom = spec.zoom ?? 0.52;
+    const spin = spec.spin ?? 0.004;
+    const LIGHT = (() => { const l = [-0.42, -0.5, 0.76]; const n = Math.hypot(...l); return l.map(v => v / n); })();
+
+    // Keep cells roughly square: the longer axis fills [-1, 1], the shorter is
+    // scaled proportionally so a tall/wide weight matrix isn't distorted.
+    const ax = (C - 1) >= (R - 1) ? 1 : (C - 1) / Math.max(1, R - 1);
+    const ay = (R - 1) >= (C - 1) ? 1 : (R - 1) / Math.max(1, C - 1);
+
+    const n = R * C;
+    const VX = new Float32Array(n), VY = new Float32Array(n), VH = new Float32Array(n);
+    for (let i = 0; i < R; i++) {
+        for (let j = 0; j < C; j++) {
+            const k = i * C + j;
+            VX[k] = ((j / (C - 1)) * 2 - 1) * ax;
+            VY[k] = ((i / (R - 1)) * 2 - 1) * ay;
+            VH[k] = spec.heightAt(i, j) * HS;
+        }
+    }
+    const vidx = (i, j) => i * C + j;
+
+    const quads = [];
+    for (let i = 0; i < R - 1; i++) {
+        for (let j = 0; j < C - 1; j++) {
+            const a = vidx(i, j), b = vidx(i, j + 1), c = vidx(i + 1, j), d = vidx(i + 1, j + 1);
+            const e1x = VX[b] - VX[a], e1y = VY[b] - VY[a], e1z = VH[b] - VH[a];
+            const e2x = VX[c] - VX[a], e2y = VY[c] - VY[a], e2z = VH[c] - VH[a];
+            let nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
+            const nl = Math.hypot(nx, ny, nz) || 1;
+            nx /= nl; ny /= nl; nz /= nl;
+            if (nz < 0) { nx = -nx; ny = -ny; nz = -nz; }
+            const shade = 0.35 + 0.65 * Math.max(0, Math.min(1, nx * LIGHT[0] + ny * LIGHT[1] + nz * LIGHT[2]));
+            const col = spec.colorAt(i, j);
+            quads.push({ a, b, c, d, color: `rgb(${(col[0] * shade) | 0},${(col[1] * shade) | 0},${(col[2] * shade) | 0})` });
+        }
+    }
+    const drawEdges = quads.length < 4000;  // dense weight fields skip grid lines
+
+    const ctx = canvas.getContext('2d');
+    const cosE = Math.cos(tilt), sinE = Math.sin(tilt);
+    let frame = 0;
+    const sx = new Float32Array(n), sy = new Float32Array(n), sd = new Float32Array(n);
+
+    const draw = () => {
+        if (!canvas.isConnected) { canvas[rafKey] = null; return; }
+        if (deckCardParked(canvas)) { canvas[rafKey] = requestAnimationFrame(draw); return; }
+
+        const wrapper = canvas.parentElement;
+        const w = wrapper.clientWidth || 800, h = wrapper.clientHeight || 400;
+        if (w < 2 || h < 2) { canvas[rafKey] = requestAnimationFrame(draw); return; }
+        if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+
+        const { textColor, gridColor } = getThemeColors();
+        ctx.clearRect(0, 0, w, h);
+        ctx.fillStyle = gridColor;
+        ctx.fillRect(0, 0, w, h);
+
+        const cx = w / 2, cy = h / 2 + h * 0.10;
+        const scale = Math.min(w, h) * zoom;
+        const cosA = Math.cos(frame * spin), sinA = Math.sin(frame * spin);
+
+        for (let k = 0; k < n; k++) {
+            const Xs = VX[k] * cosA - VY[k] * sinA;
+            const Ys = VX[k] * sinA + VY[k] * cosA;
+            sx[k] = cx + Xs * scale;
+            sy[k] = cy - (VH[k] * cosE - Ys * sinE) * scale;
+            sd[k] = Ys * cosE + VH[k] * sinE;
+        }
+        quads.sort((p, q) =>
+            (sd[p.a] + sd[p.b] + sd[p.c] + sd[p.d]) - (sd[q.a] + sd[q.b] + sd[q.c] + sd[q.d]));
+
+        ctx.lineJoin = 'round';
+        for (const qd of quads) {
+            ctx.beginPath();
+            ctx.moveTo(sx[qd.a], sy[qd.a]);
+            ctx.lineTo(sx[qd.b], sy[qd.b]);
+            ctx.lineTo(sx[qd.d], sy[qd.d]);
+            ctx.lineTo(sx[qd.c], sy[qd.c]);
+            ctx.closePath();
+            ctx.fillStyle = qd.color;
+            ctx.fill();
+            if (drawEdges) { ctx.strokeStyle = 'rgba(0,0,0,0.10)'; ctx.lineWidth = 0.5; ctx.stroke(); }
+        }
+
+        if (spec.overlay) spec.overlay(ctx, w, h, textColor);
+        frame++;
+        canvas[rafKey] = requestAnimationFrame(draw);
+    };
+    draw();
+}
+
+/**
+ * Parameter manifold renderer: the PCA terrain of a structured weight's rows.
+ * Height = row density (the cloud's shape: a Gaussian hill for an unstructured
+ * layer, rings/arms for a harmonic or crystal head), color = mean row amplitude.
+ */
+function renderParamManifold(canvas, data) {
+    const density = data && data.density, tint = data && data.tint;
+    if (!Array.isArray(density) || density.length < 2 || !Array.isArray(density[0])) return;
+    const R = density.length, C = density[0].length;
+    const lmax = Math.log1p(Math.max(data.max_count || 1, 1));
+    terrainMesh(canvas, {
+        R, C, rafKey: '_manifoldRAF', tilt: 42, zoom: 0.54, heightScale: 0.95,
+        heightAt: (i, j) => lmax > 0 ? Math.log1p(density[i][j]) / lmax : 0,
+        colorAt: (i, j) => sampleColormap('praxis_heat', tint ? tint[i][j] : 0),
+        overlay: (ctx, w, h, tc) => {
+            ctx.fillStyle = tc; ctx.font = '12px sans-serif'; ctx.textAlign = 'left';
+            if (data.weight_name) ctx.fillText(data.weight_name, 10, 18);
+            if (typeof data.var_explained === 'number')
+                ctx.fillText(`top-2 PCA var ${(data.var_explained * 100).toFixed(0)}%`, 10, 34);
+            if (typeof data.n_points === 'number') {
+                ctx.textAlign = 'right'; ctx.fillText(`${data.n_points} rows`, w - 10, 18);
+            }
+        },
+    });
+}
+
+/**
+ * Parameter field renderer: the LITERAL weight terrain. Each cell is a real
+ * parameter at its native index; height and color are its absolute value. No
+ * projection - this is the raw geometry of the weights (a harmonic spectrum as
+ * mountains, a crystal grid as a lattice), at full resolution unless the tensor
+ * was max-pooled down to the render cap.
+ */
+function renderParamField(canvas, data) {
+    const amp = data && data.amp;
+    if (!Array.isArray(amp) || amp.length < 2 || !Array.isArray(amp[0])) return;
+    const R = amp.length, C = amp[0].length;
+    terrainMesh(canvas, {
+        R, C, rafKey: '_fieldRAF', tilt: 40, zoom: 0.56, heightScale: 1.05,
+        heightAt: (i, j) => amp[i][j],
+        colorAt: (i, j) => sampleColormap('praxis_heat', amp[i][j]),
+        overlay: (ctx, w, h, tc) => {
+            ctx.fillStyle = tc; ctx.font = '12px sans-serif'; ctx.textAlign = 'left';
+            if (data.weight_name) ctx.fillText(data.weight_name, 10, 18);
+            const shp = data.native_shape;
+            if (Array.isArray(shp))
+                ctx.fillText(`${shp[0]}x${shp[1]}${data.pooled ? ' (pooled)' : ' (native)'}`, 10, 34);
+            if (typeof data.n_params === 'number') {
+                ctx.textAlign = 'right'; ctx.fillText(`${data.n_params} params`, w - 10, 18);
+            }
+        },
+    });
+}
+
 const SNAPSHOT_RENDERERS = {
     heatmap_2d: renderHeatmap2D,
     halo_ring: renderHaloRing,
@@ -1952,6 +2284,9 @@ const SNAPSHOT_RENDERERS = {
     corr_matrix: renderCorrMatrix,
     harmonic_staircase: renderHarmonicStaircase,
     harmonic_strands: renderHarmonicStrands,
+    rlct_mesh: renderRLCTMesh,
+    param_manifold: renderParamManifold,
+    param_field: renderParamField,
 };
 
 /**

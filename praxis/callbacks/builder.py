@@ -173,6 +173,18 @@ def build_training_callbacks(
         )
     )
 
+    # RLCT loss-landscape probe: periodically perturbs the live weights through a
+    # fixed 2D slice (the terrain) + a best-effort SGLD lambda-hat. Stashes onto
+    # the model; DynamicsLoggerCallback drains the scalars and the snapshot
+    # route serves the grid. Constants are model-agnostic (no per-run tuning).
+    # Needs Lightning's training-step hooks + pl_module._handle_batch_format, so
+    # it only applies to the standard backprop trainer (not Mono-Forward, which
+    # runs its own per-worker loop and isn't a LightningModule).
+    if get_trainer_capabilities(cfg.trainer_type).is_lightning_module:
+        from praxis.callbacks.lightning import RLCTLandscapeCallback
+
+        callbacks.append(RLCTLandscapeCallback())
+
     # Living research paper: regenerate inputs + recompile research/main.pdf on
     # the checkpoint cadence, in a background thread. Off with --no-paper.
     if not getattr(cfg, "no_paper", False) and not getattr(

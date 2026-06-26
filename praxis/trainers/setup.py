@@ -147,7 +147,7 @@ def build_model_info(cfg, config, bundle, run) -> Dict[str, Any]:
     """Build the model_info dict shown by TerminalInterface and the trainer."""
     from praxis.environments import EnvironmentFeatures
 
-    return {
+    info = {
         "patch_size": _encoder_patch_size(getattr(config, "encoder_type", None)),
         "optimizer_config": bundle.optimizer_config,
         "strategy": cfg.strategy,
@@ -165,3 +165,18 @@ def build_model_info(cfg, config, bundle, run) -> Dict[str, Any]:
         "batch_size": cfg.batch_size,
         "target_batch_size": cfg.target_batch_size,
     }
+
+    # Let the encoder amend its own stats: an encoder knows which of these
+    # fields actually describe it and can correct a value or drop one that
+    # doesn't (e.g. CALM hides embed_size). Doing this once here - the single
+    # payload both the CLI dashboard and the web stream consume - keeps the two
+    # surfaces from drifting.
+    encoder = getattr(bundle.model, "encoder", None)
+    if encoder:
+        for key, value in encoder.info_overrides().items():
+            if value is None:
+                info.pop(key, None)
+            else:
+                info[key] = value
+
+    return info

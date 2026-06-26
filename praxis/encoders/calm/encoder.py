@@ -25,7 +25,7 @@ Architecture (matches the reference at github.com/shaochenze/calm):
 import math
 import random
 from collections import Counter
-from typing import Dict, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple, Union
 
 import torch
 import torch._dynamo as dynamo
@@ -711,6 +711,14 @@ class CALMEncoder(BaseEncoder):
     def handles_loss(self) -> bool:
         """Skip the default CE path; we register losses internally."""
         return True
+
+    def info_overrides(self) -> Dict[str, Any]:
+        """Hide ``embed_size`` from the dashboards. CALM doesn't expose a single
+        token-embedding width to the model: it packs K token embeddings per
+        patch and projects to ``hidden_size``, so the bare ``config.embed_size``
+        describes nothing the model actually consumes downstream. Reporting it
+        is misleading, so drop the field rather than show a stale number."""
+        return {"embed_size": None}
 
     # sequence_length_multiplier defaults to 1 (BaseEncoder): the global
     # transformer sees patches, not tokens.

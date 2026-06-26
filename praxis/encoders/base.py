@@ -10,7 +10,7 @@ without the model needing to know the concrete type.
 """
 
 from abc import ABC, abstractmethod
-from typing import Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import torch
 from torch import nn
@@ -75,6 +75,18 @@ class BaseEncoder(nn.Module, ABC):
 
     def consume_pending_losses(self) -> Dict[str, torch.Tensor]:
         """Pop side-channel losses registered during the last decode()."""
+        return {}
+
+    def info_overrides(self) -> Dict[str, Any]:
+        """Amend the model-info panel that both dashboards (CLI + web) render.
+
+        Returns a mapping from a ``model_info`` key to a replacement value, or
+        to ``None`` to drop that field entirely. This lets an encoder correct
+        or hide a stat that doesn't describe it - e.g. CALM packs K token
+        embeddings into one ``hidden_size`` patch vector, so a lone
+        ``embed_size`` is misleading and CALM removes it. Applied once at the
+        shared source (``build_model_info``), so both surfaces stay in sync.
+        Default: no changes."""
         return {}
 
     # ------------------------------------------------------------------

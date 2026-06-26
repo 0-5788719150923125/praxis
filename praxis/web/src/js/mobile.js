@@ -165,6 +165,26 @@ export function setupTabSwipe() {
     const MIN_DISTANCE = 60;   // px of horizontal travel
     const MAX_OFF_AXIS = 0.6;  // |dy| must stay under 60% of |dx|
 
+    // Walk up from the touch target to the closest element that can scroll
+    // horizontally right now, and snapshot whether it has room to scroll toward
+    // its start/end. Capturing this at gesture START is deliberate: an inner
+    // swipe owns the gesture for its whole duration, and only unlocks the tab
+    // swipe when the content was ALREADY maxed out when the finger went down -
+    // scrolling mid-swipe never retroactively hands the gesture to the tabs.
+    const innerScrollState = (el) => {
+        for (let node = el; node && node !== document.body; node = node.parentElement) {
+            if (!(node instanceof Element)) continue;
+            const max = node.scrollWidth - node.clientWidth;
+            if (max <= 1) continue;
+            if (!/(auto|scroll)/.test(getComputedStyle(node).overflowX)) continue;
+            return {
+                canStart: node.scrollLeft > 1,        // room to scroll toward the left edge
+                canEnd: node.scrollLeft < max - 1,    // room to scroll toward the right edge
+            };
+        }
+        return null;
+    };
+
     let start = null;
 
     // Capture-phase on the document: this runs BEFORE any inner card/deck
@@ -183,7 +203,7 @@ export function setupTabSwipe() {
         if (e.target.closest('.tab-nav')) { start = null; return; }
         if (!e.target.closest('.app-container') || e.target.closest('.settings-modal')) { start = null; return; }
         const t = e.touches[0];
-        start = { x: t.clientX, y: t.clientY };
+        start = { x: t.clientX, y: t.clientY, inner: innerScrollState(e.target) };
     }, { passive: true, capture: true });
 
     document.addEventListener('touchend', (e) => {
@@ -191,10 +211,21 @@ export function setupTabSwipe() {
         const t = e.changedTouches[0];
         const dx = t.clientX - start.x;
         const dy = t.clientY - start.y;
+        const inner = start.inner;
         start = null;
 
         if (Math.abs(dx) < MIN_DISTANCE) return;
         if (Math.abs(dy) > Math.abs(dx) * MAX_OFF_AXIS) return;
+
+        // The swipe began inside a horizontally-scrollable element that still
+        // had room to move in this direction, so the inner content owns the
+        // gesture - keep it pure and don't switch tabs. Swiping the finger left
+        // (dx<0) scrolls content toward its end; right (dx>0) toward its start.
+        // The tab only moves once that content was already maxed out at touch.
+        if (inner) {
+            if (dx < 0 && inner.canEnd) return;
+            if (dx > 0 && inner.canStart) return;
+        }
 
         // An open KB content card owns horizontal swipes: right returns to the
         // results list (mobile "back"). Consume the gesture either way so it

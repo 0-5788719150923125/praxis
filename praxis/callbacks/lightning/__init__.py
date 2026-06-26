@@ -13,6 +13,7 @@ from praxis.callbacks.lightning.memory_profiler import MemoryProfilerCallback
 from praxis.callbacks.lightning.metrics import MetricsLoggerCallback
 from praxis.callbacks.lightning.orchestration import ExpertPoolCallback
 from praxis.callbacks.lightning.paper import PaperBuildCallback
+from praxis.callbacks.lightning.rlct import RLCTLandscapeCallback
 from praxis.callbacks.lightning.spider import SpiderCallback
 from praxis.callbacks.lightning.terminal import TerminalInterface
 
@@ -23,6 +24,7 @@ LIGHTNING_CALLBACK_REGISTRY = {
     "accumulation_schedule": AccumulationSchedule,
     "metrics_logger": MetricsLoggerCallback,
     "dynamics_logger": DynamicsLoggerCallback,
+    "rlct_landscape": RLCTLandscapeCallback,
     "brier_lm": BrierLMCallback,
     "memory_profiler": MemoryProfilerCallback,
     "harmonic_weight_rl": HarmonicWeightRLCallback,
@@ -38,6 +40,7 @@ __all__ = [
     "AccumulationSchedule",
     "MetricsLoggerCallback",
     "DynamicsLoggerCallback",
+    "RLCTLandscapeCallback",
     "BrierLMCallback",
     "MemoryProfilerCallback",
     "HarmonicWeightRLCallback",

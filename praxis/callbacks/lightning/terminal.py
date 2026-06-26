@@ -375,6 +375,64 @@ class TerminalInterface(Callback):
                 data,
             )
 
+    def _build_info_dict(self, lm, seq_length, batch_size, local_layers, remote_layers):
+        """Build the model-info panel shared by the CLI dashboard and the web
+        stream. One builder keeps the two surfaces from drifting; each caller
+        only appends its surface-specific extras (CLI: debug/meta; web:
+        rank/node). Fields the encoder chose to hide (see
+        ``build_model_info`` / ``BaseEncoder.info_overrides``) arrive already
+        absent from the cached scalars, so they're simply omitted here too."""
+        if self.get_memory_info:
+            memory_info = self.get_memory_info(self.device)
+        else:
+            memory_info = {}
+
+        info_dict = {
+            "device": self.device,
+            "ram": f"{memory_info.get('ram_used', 'N/A')}/{memory_info.get('ram_total', 'N/A')}",
+        }
+
+        # Add GPU memory info if available
+        if self.device and self.device.startswith("cuda:"):
+            gpu_idx = int(self.device.split(":")[1])
+            # Driver-level GPU usage (mem_get_info) matches what
+            # nvidia-smi shows: the full per-device VRAM consumption,
+            # CUDA context overhead included. The PyTorch
+            # caching-allocator's ``reserved`` counter only sees its
+            # own pool and undercounts everything else.
+            gpu_actual_key = f"gpu{gpu_idx}_actual_used"
+            gpu_total_key = f"gpu{gpu_idx}_total"
+            if gpu_actual_key in memory_info and gpu_total_key in memory_info:
+                info_dict["vram"] = (
+                    f"{memory_info[gpu_actual_key]}/{memory_info[gpu_total_key]}"
+                )
+            elif "gpu_status" in memory_info:
+                info_dict["vram"] = memory_info["gpu_status"]
+            else:
+                info_dict["vram"] = "N/A"
+
+        info_dict["optimizer"] = self.optimizer_config.get("optimizer_name", "Unknown")
+        info_dict["strategy"] = self.strategy
+        info_dict["policy"] = self.rl_type
+        info_dict["vocab_size"] = self.vocab_size
+        info_dict["block_size"] = seq_length
+        info_dict["batch_size"] = batch_size
+        info_dict["target_batch"] = self.target_batch_size or getattr(
+            lm.hparams, "target_batch_size", batch_size
+        )
+        info_dict["depth"] = self.depth
+        info_dict["local_layers"] = local_layers
+        info_dict["remote_layers"] = remote_layers
+        info_dict["hidden_size"] = self.hidden_size
+        # embed_size is None when the encoder hid it (CALM packs K token
+        # embeddings into one hidden_size patch vector, so a lone embed_size
+        # describes nothing the model uses). Omit the key entirely - the CLI
+        # panel renders raw values and would otherwise print "embed_size: None".
+        if self.embed_size is not None:
+            info_dict["embed_size"] = self.embed_size
+        info_dict["dropout"] = self.dropout
+        return info_dict
+
     def _update_dashboard(
         self,
         trainer,
@@ -418,50 +476,9 @@ class TerminalInterface(Callback):
             dashboard.update_accuracy(data["acc0"], data["acc1"])
 
         # Update the info panel with device and memory information
-        if self.get_memory_info:
-            memory_info = self.get_memory_info(self.device)
-        else:
-            memory_info = {}
-
-        info_dict = {
-            "device": self.device,
-            "ram": f"{memory_info.get('ram_used', 'N/A')}/{memory_info.get('ram_total', 'N/A')}",
-        }
-
-        # Add GPU memory info if available
-        if self.device and self.device.startswith("cuda:"):
-            gpu_idx = int(self.device.split(":")[1])
-            # Driver-level GPU usage (mem_get_info) matches what
-            # nvidia-smi shows: the full per-device VRAM consumption,
-            # CUDA context overhead included. The PyTorch
-            # caching-allocator's ``reserved`` counter only sees its
-            # own pool and undercounts everything else.
-            gpu_actual_key = f"gpu{gpu_idx}_actual_used"
-            gpu_total_key = f"gpu{gpu_idx}_total"
-            if gpu_actual_key in memory_info and gpu_total_key in memory_info:
-                info_dict["vram"] = (
-                    f"{memory_info[gpu_actual_key]}/{memory_info[gpu_total_key]}"
-                )
-            elif "gpu_status" in memory_info:
-                info_dict["vram"] = memory_info["gpu_status"]
-            else:
-                info_dict["vram"] = "N/A"
-
-        info_dict["optimizer"] = self.optimizer_config.get("optimizer_name", "Unknown")
-        info_dict["strategy"] = self.strategy
-        info_dict["policy"] = self.rl_type
-        info_dict["vocab_size"] = self.vocab_size
-        info_dict["block_size"] = seq_length
-        info_dict["batch_size"] = batch_size
-        info_dict["target_batch"] = self.target_batch_size or getattr(
-            lm.hparams, "target_batch_size", batch_size
+        info_dict = self._build_info_dict(
+            lm, seq_length, batch_size, local_layers, remote_layers
         )
-        info_dict["depth"] = self.depth
-        info_dict["local_layers"] = local_layers
-        info_dict["remote_layers"] = remote_layers
-        info_dict["hidden_size"] = self.hidden_size
-        info_dict["embed_size"] = self.embed_size
-        info_dict["dropout"] = self.dropout
         info_dict["debug"] = self.debug
         info_dict["meta"] = [
             item for item, condition in [("dev", self.dev)] if condition
@@ -505,50 +522,10 @@ class TerminalInterface(Callback):
         if "acc0" in data:
             lm_state.update_accuracy(data["acc0"], data["acc1"])
 
-        # Build info dict
-        if self.get_memory_info:
-            memory_info = self.get_memory_info(self.device)
-        else:
-            memory_info = {}
-
-        info_dict = {
-            "device": self.device,
-            "ram": f"{memory_info.get('ram_used', 'N/A')}/{memory_info.get('ram_total', 'N/A')}",
-        }
-
-        if self.device and self.device.startswith("cuda:"):
-            gpu_idx = int(self.device.split(":")[1])
-            # Driver-level GPU usage (mem_get_info) matches what
-            # nvidia-smi shows: the full per-device VRAM consumption,
-            # CUDA context overhead included. The PyTorch
-            # caching-allocator's ``reserved`` counter only sees its
-            # own pool and undercounts everything else.
-            gpu_actual_key = f"gpu{gpu_idx}_actual_used"
-            gpu_total_key = f"gpu{gpu_idx}_total"
-            if gpu_actual_key in memory_info and gpu_total_key in memory_info:
-                info_dict["vram"] = (
-                    f"{memory_info[gpu_actual_key]}/{memory_info[gpu_total_key]}"
-                )
-            elif "gpu_status" in memory_info:
-                info_dict["vram"] = memory_info["gpu_status"]
-            else:
-                info_dict["vram"] = "N/A"
-
-        info_dict["optimizer"] = self.optimizer_config.get("optimizer_name", "Unknown")
-        info_dict["strategy"] = self.strategy
-        info_dict["policy"] = self.rl_type
-        info_dict["vocab_size"] = self.vocab_size
-        info_dict["block_size"] = seq_length
-        info_dict["batch_size"] = batch_size
-        info_dict["target_batch"] = self.target_batch_size or getattr(
-            lm.hparams, "target_batch_size", batch_size
+        # Build info dict (shared with the CLI dashboard)
+        info_dict = self._build_info_dict(
+            lm, seq_length, batch_size, local_layers, remote_layers
         )
-        info_dict["depth"] = self.depth
-        info_dict["local_layers"] = local_layers
-        info_dict["remote_layers"] = remote_layers
-        info_dict["hidden_size"] = self.hidden_size
-        info_dict["embed_size"] = self.embed_size
-        info_dict["dropout"] = self.dropout
 
         if trainer.world_size > 1:
             info_dict["rank"] = trainer.local_rank

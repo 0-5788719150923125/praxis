@@ -103,6 +103,10 @@ class DynamicsLoggerCallback(Callback):
             # learning progress. Empty unless the adaptive curriculum is armed.
             dynamics.update(self._extract_seq_curriculum_dynamics())
 
+            # RLCT landscape scalars (lambda-hat + LLC mean/max/min/std),
+            # stashed on the model by RLCTLandscapeCallback on its own cadence.
+            dynamics.update(self._extract_rlct_dynamics(model))
+
             if dynamics:
                 self._success_count += 1
                 if self._success_count <= 3:
@@ -302,6 +306,20 @@ class DynamicsLoggerCallback(Callback):
         except Exception as e:
             print(f"[DynamicsLogger] seq curriculum metrics failed: {e}")
             return {}
+
+    def _extract_rlct_dynamics(self, model) -> dict:
+        """Drain the RLCT landscape scalars stashed by RLCTLandscapeCallback.
+
+        The probe runs on its own (slow) cadence and stashes the latest scalars
+        on the uncompiled model; we re-log the standing value each dynamics tick
+        so the chart is a continuous step function between probes (honest: the
+        metric only refreshes every ``period`` steps).
+        """
+        core = getattr(model, "_orig_mod", model)
+        metrics = getattr(core, "_rlct_metrics", None)
+        if not isinstance(metrics, dict):
+            return {}
+        return {k: v for k, v in metrics.items() if isinstance(v, (int, float))}
 
     def _extract_loss_dynamics(self, model) -> dict:
         """Delegate to the loss function's own diagnostics (e.g. HALO).

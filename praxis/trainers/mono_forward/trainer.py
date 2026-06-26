@@ -1543,10 +1543,13 @@ class MonoForwardTrainer:
                 "local_layers": num_layers,
                 "remote_layers": 0,
                 "hidden_size": info.get("hidden_size"),
-                "embed_size": info.get("embed_size"),
                 "dropout": info.get("dropout"),
                 "trainer": "mono_forward",
             }
+            # embed_size is absent when the encoder hid it (e.g. CALM). Only
+            # surface it when present, so the panel never shows a stale value.
+            if info.get("embed_size") is not None:
+                info_dict["embed_size"] = info["embed_size"]
             lm.state.update_info(info_dict)
             lm.info_dict = info_dict
             lm._update_count += 1

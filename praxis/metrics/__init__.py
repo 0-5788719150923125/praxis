@@ -5,6 +5,13 @@ from praxis.metrics.collapse import compute_softmax_collapse
 from praxis.metrics.descriptions import get_metric_descriptions
 from praxis.metrics.dynamics import extract_layer_dynamics
 from praxis.metrics.ema import LOSS_EMA_ALPHA, STEP_TIME_EMA_ALPHA, compute_ema
+from praxis.metrics.rlct import (
+    RLCT_DEFAULTS,
+    RLCT_METRIC_DESCRIPTIONS,
+    compute_param_field,
+    compute_param_manifold,
+    probe_landscape,
+)
 from praxis.metrics.training_metrics import (
     COMPOSITE_METRIC_REGISTRY,
     DYNAMICS_CHART_REGISTRY,
@@ -17,6 +24,11 @@ __all__ = [
     "compute_brier_lm",
     "compute_softmax_collapse",
     "extract_layer_dynamics",
+    "RLCT_DEFAULTS",
+    "RLCT_METRIC_DESCRIPTIONS",
+    "probe_landscape",
+    "compute_param_manifold",
+    "compute_param_field",
     "compute_ema",
     "get_metric_descriptions",
     "LOSS_EMA_ALPHA",

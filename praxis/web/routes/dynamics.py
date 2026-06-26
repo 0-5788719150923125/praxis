@@ -794,6 +794,10 @@ def get_head_snapshots():
             snapshots.update(criterion.dashboard_snapshots() or {})
         if encoder and hasattr(encoder, "dashboard_snapshots"):
             snapshots.update(encoder.dashboard_snapshots() or {})
+        # RLCT loss-landscape grid, stashed on the model by the landscape probe.
+        rlct = getattr(model, "_rlct_landscape", None)
+        if isinstance(rlct, dict):
+            snapshots.update(rlct)
         return {"status": "ok" if snapshots else "no_data", "snapshots": snapshots}
 
     try:

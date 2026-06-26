@@ -34,9 +34,6 @@ MOD_LAYOUT: Dict[str, Callable[[ConfigType], List[float]]] = {
     "skip_2": lambda config: generate_alternating_values(
         size=depth, interval=2, capacity=0.125
     ),
-    "arc": lambda depth: generate_alternating_values(
-        size=depth, interval=1, capacity=0.25
-    ),
 }
 
 
@@ -55,9 +52,17 @@ class MixtureOfDepths(nn.Linear):
         self, config: ConfigType, layout: str = "standard", *args: Any, **kwargs: Any
     ) -> None:
         super().__init__(in_features=config.hidden_size, out_features=1)
-        self.capacities: List[float] = MOD_LAYOUT.get(layout)(config.depth)
+        self.capacities: List[float] = self._build_capacities(config, layout)
         if config.debug:
             print(self.capacities)
+
+    def _build_capacities(self, config: ConfigType, layout: str) -> List[float]:
+        """Per-step capacity schedule, indexed by the global flattened depth.
+
+        Subclasses (e.g. ``ArcMixture``) override to key the schedule to a
+        different axis, such as the physical layer index.
+        """
+        return MOD_LAYOUT.get(layout)(config.depth)
 
     def forward(
         self,
@@ -89,7 +94,7 @@ class MixtureOfDepths(nn.Linear):
                 - Combined loss value
         """
         router_loss = 0.0
-        capacity = self.capacities[current_depth]
+        capacity = self._capacity_for(current_depth)
 
         b, s, d = inputs.shape
         k = int(s * capacity)
@@ -178,6 +183,15 @@ class MixtureOfDepths(nn.Linear):
         )
 
         return outputs, layer_kv, state_update, aux_loss + router_loss
+
+    def _capacity_for(self, current_depth: int) -> float:
+        """Token capacity for this step.
+
+        Base MoD keys capacity to the global flattened depth index. Subclasses
+        (e.g. ``ArcMixture``) may instead key it to the physical layer index so
+        a layer's sparsity is fixed across every recurrent pass.
+        """
+        return self.capacities[current_depth]
 
     def _compute_router_logits(self, inputs: Tensor, current_depth: int) -> Tensor:
         """Per-token routing logits, shape [batch, seq_len, 1].

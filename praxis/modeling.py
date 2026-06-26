@@ -248,7 +248,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # Forward-path RL policies (see build_rl_policies). Weight controllers
         # are built by training callbacks, never here.
         self.policy, self.policy_type, _recall = build_rl_policies(config)
-        self.recall_policies = nn.ModuleDict(_recall)
+        self.policies = nn.ModuleDict(_recall)
         self._engagement_metrics = {}  # latest recall-policy scalars
 
         # Encoders that own their loss (e.g. CALM) bypass the main-CE path
@@ -722,10 +722,10 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         """Recall-style forward policies (engagement / joke): each computes its
         own reward from the answer labels over the assistant region. Any number
         may coexist; each emits its own namespaced loss and metrics."""
-        if not self.recall_policies or labels is None:
+        if not self.policies or labels is None:
             return
         self._engagement_metrics = {}
-        for name, pol in self.recall_policies.items():
+        for name, pol in self.policies.items():
             pol_loss, pol_metrics = pol(
                 logits=logits if not skip_logits else None,
                 labels=labels,
