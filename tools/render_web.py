@@ -259,6 +259,88 @@ SNAPSHOT = {
     "log_lines": LOG_LINES,
 }
 
+# The always-on AMBIENT context is a large standing paragraph; the model only
+# appends a few tokens to its tail every 3s (30 frames), so the box sits mostly
+# still with a slow trickle at the end (scrolled to the bottom). The other two
+# boxes (Probe, Dream) are chance-gated and never move here - sampled rarely.
+AMBIENT_BASE = (
+    "the model reads the corpus the way water finds a level, settling slowly "
+    "into the shape of the text. each byte is a small vote, and the patches "
+    "that agree are kept while the noise is damped away, so what survives the "
+    "tally is a quiet consensus - a sentence assembled from the residue of a "
+    "thousand interfering waves, none of them loud on its own. the schedule "
+    "cools as the basin deepens, and the loss descends in uneven steps, pausing "
+    "on the plateaus where the gradient goes quiet before it finds the next "
+    "slope down. token by token the standing pattern resolves, and the halting "
+    "head stops only when the divergence falls below its floor"
+)
+# Appended a few words at a time, in a brief burst at the start of each cycle.
+AMBIENT_TAIL = (
+    "and the next continuation has nowhere left to wander, so it waits, "
+    "listening, for the following byte to arrive."
+).split()
+AMBIENT_BASE_TOKENS = 487  # the standing paragraph's (approx) token count
+CYCLE_FRAMES = 30  # 3s at 10fps: one small append per cycle
+APPEND_PER_CYCLE = 3  # words trickled in each cycle
+
+
+def _ambient_shown_tail(f):
+    """Tail words revealed at frame f: bursts of APPEND_PER_CYCLE, each streamed
+    over the first few frames of its 3s cycle, then still until the next one."""
+    completed = (f // CYCLE_FRAMES) * APPEND_PER_CYCLE
+    within = min((f % CYCLE_FRAMES) + 1, APPEND_PER_CYCLE)
+    return min(len(AMBIENT_TAIL), completed + within)
+
+
+# Jagged, periodic per-step loss. Periodic over 120 so the scrolling sparkline
+# loops seamlessly; the cubed pseudo-noise makes it spiky (mostly small jitter,
+# the occasional larger step) instead of a smooth wave.
+def _noise_seq(n):
+    seq, h = [], 0x9E3779B9
+    for _ in range(n):
+        h = (h * 1664525 + 1013904223) & 0xFFFFFFFF
+        seq.append((h / 0xFFFFFFFF) * 2 - 1)  # [-1, 1]
+    return seq
+
+
+_NOISE = _noise_seq(120)
+
+
+def _loss_at(i):
+    jag = 0.075 * (_NOISE[i % 120] ** 3)  # spiky high-frequency jitter
+    drift = 0.045 * math.sin(2 * math.pi * i / 120)  # gentle seamless drift
+    return round(1.93 + drift + jag, 4)
+
+
+def _dashboard_snapshot(f):
+    """The live metrics for frame f: a jagged scrolling loss window, advancing
+    counters (BATCH, the optimizer step, slower than STEP), and the AMBIENT
+    paragraph with a few tail tokens trickling in every 3s."""
+    shown = _ambient_shown_tail(f)
+    ambient_text = AMBIENT_BASE
+    if shown:
+        ambient_text += " " + " ".join(AMBIENT_TAIL[:shown])
+
+    history = [_loss_at(f - 49 + k) for k in range(50)]
+    contexts = [
+        {**CONTEXTS[0], "text": ambient_text, "tokens": AMBIENT_BASE_TOKENS + shown},
+        CONTEXTS[1],
+        CONTEXTS[2],
+    ]
+    return {
+        **SNAPSHOT,
+        "loss": history[-1],
+        "loss_history": history,
+        "step": 14820 + 3 * f,  # STEP: the faster counter
+        "batch": 3705 + f,  # BATCH: the optimizer step - slower, never static
+        "num_tokens": round(0.834 + f * 0.0007, 3),
+        "rate": round(0.41 + 0.05 * math.sin(f / 6.0), 2),
+        "hours_elapsed": round(6.27 + f * 0.0015, 2),
+        "status_text": ambient_text,
+        "contexts": contexts,
+        "update_count": f + 1,
+    }
+
 
 # ---------------------------------------------------------------------------
 # Server + request stubbing
@@ -397,6 +479,7 @@ def _route_external(context, origin):
 
 # Installs window.__tick(f): advance the prism a fixed number of steps and
 # seek every infinite CSS animation to the frame's timestamp, then sit still.
+# Called once per frame (including frame 0) by the capture loop.
 INSTALL_TICK_JS = """
 ([frameMs, steps]) => {
     window.__tick = (f) => {
@@ -409,7 +492,6 @@ INSTALL_TICK_JS = """
             }
         }
     };
-    window.__tick(0);
 }
 """
 
@@ -460,11 +542,31 @@ def _setup_dashboard(page):
             state.liveMetrics.data = snap;
             state.terminal.connected = true;
         }""",
-        SNAPSHOT,
+        _dashboard_snapshot(0),
     )
     page.click('.tab-button[data-tab="terminal"]')
     page.wait_for_selector(".live-dashboard", state="visible")
     page.wait_for_timeout(400)
+
+
+# Push frame f's metrics through the real renderer (in-place update), then wait
+# out the rAF that redraws the loss sparkline so it lands in the screenshot.
+_DASHBOARD_FRAME_JS = """
+async (snap) => {
+    const { state } = await import('/static/js/state.js');
+    const { renderLiveDashboard } = await import('/static/js/dashboard.js');
+    state.liveMetrics.data = snap;
+    renderLiveDashboard(snap);
+    // Keep the AMBIENT box pinned to the bottom so the trickling tail shows.
+    const amb = document.querySelector('.ld-context .ld-status-text');
+    if (amb) amb.scrollTop = amb.scrollHeight;
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+}
+"""
+
+
+def _frame_dashboard(page, f):
+    page.evaluate(_DASHBOARD_FRAME_JS, _dashboard_snapshot(f))
 
 
 def _clip_dashboard(page):
@@ -519,6 +621,7 @@ SCENES = {
         "viewport": {"width": 944, "height": 1180},
         "setup": _setup_dashboard,
         "clip": _clip_dashboard,
+        "frame": _frame_dashboard,
     },
     "architecture": {
         "out": "static/architecture.webp",
@@ -552,9 +655,12 @@ def _capture_scene(browser, url, scene, n_frames):
         clip = scene["clip"](page)
         if not clip:
             raise RuntimeError(f"scene '{scene['name']}' produced no clip")
-        frames = [page.screenshot(clip=clip)]
-        for f in range(1, n_frames):
-            page.evaluate("f => window.__tick(f)", f)
+        frame_fn = scene.get("frame")
+        frames = []
+        for f in range(n_frames):
+            if frame_fn:
+                frame_fn(page, f)  # scene-specific per-frame state update
+            page.evaluate("f => window.__tick(f)", f)  # prism + CSS animations
             frames.append(page.screenshot(clip=clip))
         return frames
     finally:
