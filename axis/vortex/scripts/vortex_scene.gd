@@ -3,41 +3,97 @@ class_name VortexScene
 
 ## VortexScene - one visualizer.
 ##
-## The base of every scene. Mirrors the Arena / business-card generators: a
-## seeded [RandomNumberGenerator] rolls a typed *definition* ([member params]),
-## and that definition is then pushed through transforms that are modulated by
-## the audio. Subclasses override exactly two things:
+## The base of every scene, and the heart of the pipeline. A scene is a seeded
+## *definition* plus *transforms modulated by audio* - exactly the Arena /
+## business-card move, pushed at sound. Two things come for free here:
 ##
-##   build_params(rng) -> Dictionary   # the seeded definition (geometry, colors)
-##   update(features, delta)           # modulate by audio, then queue_redraw()
+##   mod  : a [ModBank] of organic oscillator channels (mod.value("sway")...)
+##   view : a [SceneView] - zoom / tilt / rotate / off-center, drawn through
 ##
-## ...and draw in [method _draw] using [member params] plus whatever state
-## [method update] stashed. [Director] handles seeding, sizing, and lifetime, so
-## a scene file is just "definition + how it reacts."
+## Subclasses override:
+##   build_params(rng) -> Dictionary   # the seeded definition
+##   update(features, delta)           # set state + view, then queue_redraw()
+##   _draw()                           # begin_draw(); draw shapes around (0,0)
+##
+## Coordinates in _draw are centered: (0,0) is the screen middle. Call
+## [method begin_draw] first and the view's zoom/tilt/pan/roll apply to
+## everything you draw.
 
-## The typed definition for this instance, produced by [method build_params].
+## Motion behaviors - the typed "how does this scene move" axis, separate from
+## *what* it draws. The same geometry can be shown frozen (pure audio reaction,
+## the original look), gently drifting as a whole, or with each element moving on
+## its own. The Director pairs a scene with one of these.
+##   view    - how much whole-scene camera drift to apply (0 = frozen camera)
+##   element - how much independent per-element motion (0 = rigid)
+##   speed   - time scale for all organic motion (0 = modulators frozen)
+const BEHAVIORS := {
+	"static": {"view": 0.0, "element": 0.0, "speed": 0.0},
+	"drift": {"view": 1.0, "element": 0.0, "speed": 1.0},
+	"fluid": {"view": 0.3, "element": 1.0, "speed": 1.0},
+}
+
+## The typed definition for this instance.
 var params: Dictionary = {}
-
-## Viewport size, kept current so scenes can lay out in pixels.
+## Viewport size in pixels, kept current across resizes.
 var size: Vector2 = Vector2.ZERO
+## Organic modulation channels (seeded). See [ModBank].
+var mod: ModBank
+## The camera this scene draws through. See [SceneView].
+var view: SceneView
+## This instance's motion behavior (one of [constant BEHAVIORS]).
+var behavior: Dictionary = BEHAVIORS["drift"]
+
+## Lifecycle - does this scene loop until the Director cuts it (`"loop"`), or play
+## one self-contained sequence and end (`"oneshot"`)? A oneshot reports when its
+## sequence is done via [method finished]; the Director then exits it on the next
+## musical cue. A scene sets this in [method build_params] if it wants to be a
+## oneshot (or to choose between the two on its seed).
+var lifecycle := "loop"
+
+## Framing class for shot selection: `"subject"` (a discrete object - gets the
+## expressive cinematic shots) or `"field"` (fills the frame - gets gentle shots
+## only, so panning never exposes its edges). Field scenes set this in build_params.
+var framing := "subject"
+
+## The camera framing assigned by the [Director] (see [Shots]); applied in tick().
+var shot = null
+
+## Seconds this scene has been alive - drives slow shot moves (push-in, pan).
+var _life := 0.0
 
 
-## Called once by [Director] before the scene enters the tree. Seeds the
-## definition deterministically. Do not override - override [method build_params].
-func init_with_seed(seed_value: int) -> void:
+## Called once by [Director] before the scene enters the tree. Seeds everything
+## deterministically and fixes the motion behavior. Do not override - override
+## [method build_params] / [method seed_view].
+func init_with_seed(seed_value: int, behavior_name := "drift") -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_value
+	behavior = BEHAVIORS.get(behavior_name, BEHAVIORS["drift"])
+	mod = ModBank.new(seed_value ^ 0x5bd1e995)
+	view = SceneView.new()
 	params = build_params(rng)
+	seed_view(rng)
 
 
-## Override: roll the typed definition from a seeded RNG. Same seed -> same scene.
+## Override: roll the typed definition. Same seed -> same scene.
 func build_params(_rng: RandomNumberGenerator) -> Dictionary:
 	return {}
 
 
-## Override: read [param f], update internal state, then call queue_redraw().
+## Override (optional): seed per-scene view ranges or initial state.
+func seed_view(_rng: RandomNumberGenerator) -> void:
+	pass
+
+
+## Override: read [param f], update state and [member view], then queue_redraw().
 func update(_f: AudioFeatures, _delta: float) -> void:
 	pass
+
+
+## Override (oneshot scenes only): true once the scene's sequence has finished
+## and it is ready to be exited. Loop scenes leave this false forever.
+func finished() -> bool:
+	return false
 
 
 func _ready() -> void:
@@ -50,6 +106,53 @@ func _on_resize() -> void:
 	queue_redraw()
 
 
-## Center of the screen - the usual anchor for radial scenes.
-func center() -> Vector2:
-	return size * 0.5
+## Push the view transform. Call at the top of _draw; then draw around (0,0).
+func begin_draw() -> void:
+	draw_set_transform_matrix(view.matrix(size))
+
+
+## The shorter screen axis - use it to size geometry independent of aspect.
+func unit() -> float:
+	return minf(size.x, size.y)
+
+
+## Set the camera framing for this scene (called once by the Director).
+func set_shot(s) -> void:
+	shot = s
+
+
+## Advance the organic clock once per frame, scaled by the behavior's speed
+## (so a "static" scene's modulators stay frozen and it reacts to audio alone),
+## and apply the assigned shot's base framing. Call this at the top of update().
+func tick(f: AudioFeatures, delta: float) -> void:
+	_life += delta
+	mod.advance(delta * float(behavior.speed), f.energy)
+	if shot != null:
+		shot.apply(view, f, _life)
+
+
+## Organic camera drift, added *on top* of the shot's base framing (set in tick),
+## scaled by the behavior's view gain. A "static" scene (view = 0) adds nothing
+## and rides the shot alone. Deliberately only zoom + pan: rolling or shearing flat
+## 2D content reads as fake 3D / spinning, so the camera never does it here -
+## rotation comes only from shots, and real depth only from Mesh3D. (The `roll` and
+## `tilt` parameters are kept for call-site compatibility but intentionally unused;
+## a scene that genuinely wants skew sets view.skew itself, e.g. strata.)
+func drift_view(f: AudioFeatures, move := 0.05, zoom := 0.08, _roll := 0.0, _tilt := 0.0) -> void:
+	var g: float = behavior.view
+	if g <= 0.0:
+		return
+	view.zoom += g * zoom * mod.value("zoom") + 0.04 * f.energy
+	view.offset += Vector2(g * move * mod.value("panx"), g * move * mod.value("pany"))
+
+
+## Per-element motion primitive: an independent organic offset in -1..1 for
+## element [param i], decorrelated per index and scaled by the behavior's element
+## gain (0 for rigid scenes). This is how lines/shapes move on their own instead
+## of the whole scene shifting as a block - the seed of the motion-primitive
+## library the visualizer will grow.
+func wobble(key: String, i: int) -> float:
+	var g: float = behavior.element
+	if g <= 0.0:
+		return 0.0
+	return mod.value("%s_%d" % [key, i]) * g

@@ -2,69 +2,86 @@ extends VortexScene
 
 ## Harmonic lattice - a grid of cells that breathe with the spectrum.
 ##
-## A rows x cols lattice. Each cell samples the spectrum by its position (low
-## bands left, high bands right) and a traveling wave whose phase is pushed by
-## the named bands, so energy visibly sweeps across the grid. Cells scale, spin,
-## and shift hue with the sound. A different shape of motion from the ring -
-## same AudioFeatures, same contract.
+## A rows x cols lattice. Each cell samples the spectrum by its column (low bands
+## left, high right) and a traveling wave whose phase is pushed by the bass, so
+## energy visibly sweeps across the grid. Cells scale, spin, and shift hue. The
+## field is overscanned so the view's tilt and drift never expose the edges.
+
+const OVER := 1.35   # draw this much beyond the screen, for view motion headroom
 
 var _phase := 0.0
 var _f: AudioFeatures = AudioFeatures.new()
+var _act: Activation
 
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
+	framing = "field"
+	var cols := rng.randi_range(8, 18)
+	var rows := rng.randi_range(5, 12)
+	var sparsity := 0.0 if rng.randf() < 0.4 else rng.randf_range(0.35, 0.7)
+	_act = Activation.new(cols * rows, rng, sparsity)
 	return {
-		"cols": rng.randi_range(8, 18),
-		"rows": rng.randi_range(5, 12),
+		"cols": cols,
+		"rows": rows,
 		"hue": rng.randf(),
-		"hue_flow": rng.randf_range(0.2, 0.8),     # hue shift across the grid
-		"wave_freq": rng.randf_range(1.5, 4.0),    # spatial frequency of the wave
+		"hue_flow": rng.randf_range(0.2, 0.8),
+		"wave_freq": rng.randf_range(1.5, 4.0),
 		"wave_speed": rng.randf_range(0.5, 2.0),
-		"cell_fill": rng.randf_range(0.55, 0.85),  # max cell size vs. spacing
-		"spin": rng.randf_range(0.0, 1.0),         # how much cells rotate
-		"diamond": rng.randf() < 0.5,              # square vs. diamond cells
+		"cell_fill": rng.randf_range(0.55, 0.85),
+		"spin": rng.randf_range(0.0, 1.0),
+		"diamond": rng.randf() < 0.5,
 	}
 
 
 func update(f: AudioFeatures, delta: float) -> void:
 	_f = f
-	# Bass drives the wave forward; treble adds shimmer to its speed.
-	_phase += (params.wave_speed * (0.5 + f.bass) + f.treble * 2.0) * delta
+	tick(f, delta)
+	drift_view(f, 0.03, 0.05, 0.04, 0.10)
+	_act.update(f.energy + 0.4 * f.beat, delta)
+	_phase += (float(params.wave_speed) * (0.4 + 0.6 * f.bass) + f.treble) * 0.5 * delta
 	queue_redraw()
 
 
 func _draw() -> void:
-	var cols: int = params.cols
-	var rows: int = params.rows
-	var cell_w := size.x / float(cols)
-	var cell_h := size.y / float(rows)
+	begin_draw()
+	var cols := int(params.cols)
+	var rows := int(params.rows)
+	var field := size * OVER
+	var cell_w := field.x / float(cols)
+	var cell_h := field.y / float(rows)
 	var spacing := minf(cell_w, cell_h)
-	var max_size: float = spacing * params.cell_fill
+	var max_size: float = spacing * float(params.cell_fill)
+	var hue: float = params.hue
+	var hue_flow: float = params.hue_flow
+	var wave_freq: float = params.wave_freq
+	var spin: float = params.spin
+	var diamond: bool = params.diamond
+	var origin := -field * 0.5
 
 	for r in rows:
 		for col in cols:
-			var pos := Vector2((col + 0.5) * cell_w, (r + 0.5) * cell_h)
-			# Spectrum by column (low -> high), modulated by a traveling wave.
+			var idx := r * cols + col
+			var pos := origin + Vector2((col + 0.5) * cell_w, (r + 0.5) * cell_h)
+			# Per-cell independent drift (fluid behavior only; 0 otherwise).
+			pos += Vector2(wobble("cx", idx), wobble("cy", idx)) * spacing * 0.3
 			var t := float(col) / float(maxi(1, cols - 1))
-			var wave := 0.5 + 0.5 * sin(
-				params.wave_freq * (t + float(r) / float(rows)) * TAU - _phase)
+			var wave := 0.5 + 0.5 * sin(wave_freq * (t + float(r) / float(rows)) * TAU - _phase)
 			var e: float = _f.sample(t) * 0.7 + wave * 0.3 * _f.energy
 			e = clampf(e + _f.beat * 0.2, 0.0, 1.0)
-
+			# Rooted cells hold a small base size; activated cells swell and decay.
+			e *= 0.2 + 0.8 * _act.level(idx)
 			var s := max_size * (0.15 + 0.85 * e)
-			var h := fposmod(params.hue + params.hue_flow * t, 1.0)
-			var col_color := Color.from_hsv(h, 0.65, 0.4 + 0.6 * e)
-			_draw_cell(pos, s, e * params.spin, col_color)
+			var h := fposmod(hue + hue_flow * t, 1.0)
+			_draw_cell(pos, s, e * spin, Color.from_hsv(h, 0.65, 0.4 + 0.6 * e), diamond)
 
 
-# A square or diamond centered at `pos`, rotated by `rot`.
-func _draw_cell(pos: Vector2, s: float, rot: float, col: Color) -> void:
+func _draw_cell(pos: Vector2, s: float, rot: float, col: Color, diamond: bool) -> void:
 	var half := s * 0.5
+	var base_rot := rot * PI + (PI * 0.25 if diamond else 0.0)
 	var pts := PackedVector2Array([
 		Vector2(-half, -half), Vector2(half, -half),
 		Vector2(half, half), Vector2(-half, half),
 	])
-	var base_rot := rot * PI + (PI * 0.25 if params.diamond else 0.0)
 	var out := PackedVector2Array()
 	for p in pts:
 		out.append(pos + p.rotated(base_rot))

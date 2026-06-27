@@ -44,6 +44,16 @@ var _idle_time := 0.0
 # Smoothing / beat state.
 var _energy_avg := 0.0          # slow moving average, for onset comparison
 var _beat := 0.0
+
+# Spectral-flux / movement state (drives audio-triggered scene changes).
+var _prev_bands := PackedFloat32Array()
+var _flux_fast := 0.0           # short EMA of flux - the current "agitation"
+var _flux_slow := 0.0           # long EMA - the passage's baseline
+
+# Per-band smoothing (anti-jitter). Lerp factor toward the new value each frame.
+const SMOOTH := 0.4
+var _sm_bands := PackedFloat32Array()
+var _sm_named := {}
 var _band_lo := PackedFloat32Array()   # precomputed per-band edges
 var _band_hi := PackedFloat32Array()
 
@@ -105,19 +115,55 @@ func _process(delta: float) -> void:
 		_beat = maxf(0.0, _beat - delta * 4.0)
 	f.beat = _beat
 
+	_compute_movement(f)
 	current = f
 
 
-# Sample the analyzer into f.bands and the named convenience fields.
+# Spectral flux + a sliding-window "movement" score. Flux is how much new
+# frequency content arrived this frame; movement is the short-term flux measured
+# against the passage's own baseline, so it spikes at section changes (a drop, a
+# build, a new instrument) and stays low through a steady groove.
+func _compute_movement(f: AudioFeatures) -> void:
+	var flux := 0.0
+	if _prev_bands.size() == f.bands.size() and f.bands.size() > 0:
+		for i in f.bands.size():
+			flux += maxf(0.0, f.bands[i] - _prev_bands[i])
+		flux /= float(f.bands.size())
+	_prev_bands = f.bands.duplicate()
+	f.flux = flux
+
+	_flux_fast = lerpf(_flux_fast, flux, 0.18)
+	_flux_slow = lerpf(_flux_slow, flux, 0.012)
+	# How far the recent agitation sits above the running baseline.
+	var ratio := _flux_fast / (_flux_slow + 0.0008)
+	f.movement = clampf((ratio - 1.3) * 0.7, 0.0, 1.0)
+
+
+# Sample the analyzer into f.bands and the named convenience fields. The raw
+# analyzer magnitudes jitter frame to frame, so each value is EMA-smoothed
+# against the previous frame - this calms every scene at the source.
 func _fill_bands(f: AudioFeatures) -> void:
+	if _sm_bands.size() != BAND_COUNT:
+		_sm_bands.resize(BAND_COUNT)
 	f.bands.resize(BAND_COUNT)
 	for i in BAND_COUNT:
-		f.bands[i] = _band_energy(_band_lo[i], _band_hi[i])
-	f.bass = _band_energy(NAMED.bass[0], NAMED.bass[1])
-	f.low_mid = _band_energy(NAMED.low_mid[0], NAMED.low_mid[1])
-	f.mid = _band_energy(NAMED.mid[0], NAMED.mid[1])
-	f.high = _band_energy(NAMED.high[0], NAMED.high[1])
-	f.treble = _band_energy(NAMED.treble[0], NAMED.treble[1])
+		var raw := _band_energy(_band_lo[i], _band_hi[i])
+		_sm_bands[i] = lerpf(_sm_bands[i], raw, SMOOTH)
+		f.bands[i] = _sm_bands[i]
+	f.bass = _smooth_named("bass", NAMED.bass)
+	f.low_mid = _smooth_named("low_mid", NAMED.low_mid)
+	f.mid = _smooth_named("mid", NAMED.mid)
+	f.high = _smooth_named("high", NAMED.high)
+	f.treble = _smooth_named("treble", NAMED.treble)
+
+
+# A named band, EMA-smoothed like the spectrum.
+func _smooth_named(key: String, pair: Array) -> float:
+	var raw := _band_energy(pair[0], pair[1])
+	var prev: float = _sm_named.get(key, 0.0)
+	var v := lerpf(prev, raw, SMOOTH)
+	_sm_named[key] = v
+	return v
 
 
 # One band: magnitude over a frequency range, mapped from dB to 0..1.

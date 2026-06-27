@@ -22,6 +22,16 @@ var treble: float = 0.0
 ## Cheap stand-in for real beat detection (see README roadmap).
 var beat: float = 0.0
 
+## Spectral flux this frame: how much the spectrum *changed* (sum of positive
+## per-band deltas). High when new frequency content arrives - the raw material
+## for detecting a change of section.
+var flux: float = 0.0
+
+## 0..1 "we just moved into a new part of the song" score, from a sliding window
+## over [member flux]. The [Director] cuts scenes on this rather than a timer, so
+## changes land with the music. Stays low through a steady passage.
+var movement: float = 0.0
+
 ## The full spectrum this frame: N band magnitudes, low to high, each ~0..1.
 var bands: PackedFloat32Array = PackedFloat32Array()
 

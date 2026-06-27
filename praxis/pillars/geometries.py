@@ -35,7 +35,12 @@ RESEARCH_DIR = os.path.join(REPO_ROOT, "research")
 FIG_DIR = os.path.join(RESEARCH_DIR, "figures")
 OUT_TEX = os.path.join(RESEARCH_DIR, "geometries.tex")
 GRID_SIZE = 64
-CENTERS_SUFFIX = "lm_head.centers"
+# Match any CrystalClassifier centers tensor (its param is always `.centers`):
+# CrystalHead exposes it as `...lm_head.centers`, while the prismatic4 VEAR bank
+# (CrystalVearHead) exposes N of them as `...bank.experts.<i>.centers`. Matching
+# the bare suffix catches both; the [V, D] shape guard in collect_geometries
+# rejects anything else that happens to end in `.centers`.
+CENTERS_SUFFIX = ".centers"
 # Shared with the web dashboard (praxis/web/src/js/colormaps.js is generated from
 # the same file), so the printed figure matches the live Center PCA Density card.
 COLORMAPS_JSON = os.path.join(REPO_ROOT, "praxis", "web", "src", "colormaps.json")
@@ -108,14 +113,23 @@ def pca_density_grid(W, grid_size=GRID_SIZE):
 
 def branch_label(key):
     """Short human tag for which head produced a centers tensor, e.g.
-    ``model.head.branches.1.heads.1.lm_head.centers`` -> ``branch 1``."""
+    ``...branches.1.heads.1.lm_head.centers`` -> ``branch 1``, and a prismatic4
+    VEAR crystal bank ``...branches.1...bank.experts.2.centers`` ->
+    ``branch 1 · expert 2`` (so the bank's N crystals get distinct panels)."""
     parts = key.split(".")
+    branch = ""
     for marker in ("branches", "branch", "heads"):
         if marker in parts:
             i = parts.index(marker)
             if i + 1 < len(parts) and parts[i + 1].isdigit():
-                return f"branch {parts[i + 1]}"
-    return ""
+                branch = f"branch {parts[i + 1]}"
+                break
+    if "experts" in parts:
+        i = parts.index("experts")
+        if i + 1 < len(parts) and parts[i + 1].isdigit():
+            expert = f"expert {parts[i + 1]}"
+            return f"{branch} · {expert}" if branch else expert
+    return branch
 
 
 def collect_geometries(limit, scan):
