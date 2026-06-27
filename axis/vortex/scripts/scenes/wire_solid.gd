@@ -12,7 +12,7 @@ var _f: AudioFeatures = AudioFeatures.new()
 var _mesh: Mesh3D
 var _rot := Vector3.ZERO
 var _hue := 0.0
-var _scale := 1.0
+var _glow := 0.0
 
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
@@ -41,12 +41,13 @@ func update(f: AudioFeatures, delta: float) -> void:
 	var spin: Vector3 = params.spin
 	# Slow continuous 3D rotation reveals the solid; energy only nudges the pace.
 	_rot += spin * delta * (0.7 + 0.5 * f.energy)
-	_scale = 1.0 + 0.08 * f.beat + 0.06 * f.bass
+	# Audio drives the *glow*, not the size - the solid holds its shape.
+	_glow = 0.35 * f.beat + 0.18 * f.energy
 	queue_redraw()
 
 
 func _draw() -> void:
 	begin_draw()
-	var sz := float(params.radius) * unit() * _scale
+	var sz := float(params.radius) * unit()
 	_mesh.draw_shaded(self, Basis.from_euler(_rot), Vector2.ZERO, sz,
-		fposmod(_hue + 0.04 * _f.energy, 1.0), 0.5, 0.0, 2, float(params.face_alpha))
+		fposmod(_hue + 0.04 * _f.energy, 1.0), 0.5, 0.0, 2, float(params.face_alpha), _glow)

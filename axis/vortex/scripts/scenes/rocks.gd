@@ -51,7 +51,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 			"basis": Basis.from_euler(Vector3(rng.randf() * TAU, rng.randf() * TAU, 0.0)),
 			"spin": spin.normalized() * rng.randf_range(0.07, 0.16),   # gentle
 			"e": 0.0,
-			"scale": 1.0,
+			"glow": 0.0,
 		})
 	# Some instances have everyone stir; others keep most rocks rooted.
 	var sparsity := 0.0 if rng.randf() < 0.4 else rng.randf_range(0.3, 0.7)
@@ -77,7 +77,8 @@ func update(f: AudioFeatures, delta: float) -> void:
 		rock.basis = rock.basis * Basis.from_euler(rock.spin * delta * (0.1 + 0.9 * a))
 		match _mode:
 			Mode.PULSE:
-				rock.scale = 1.0 + (0.14 * f.energy + 0.20 * f.beat) * a
+				# Pulse the light, not the size - the rock holds its form.
+				rock.glow = (0.25 * f.energy + 0.40 * f.beat) * a
 			Mode.EXPLODE:
 				rock.e = maxf(rock.e, f.beat * a * 0.5)
 				rock.e = maxf(0.0, rock.e - delta * 0.5)
@@ -97,5 +98,5 @@ func _draw() -> void:
 	for rock: Dictionary in _rocks:
 		var mesh: Mesh3D = rock.mesh
 		mesh.draw_shaded(self, rock.basis, Vector2(rock.center) * u,
-			float(rock.radius) * u * float(rock.scale), float(rock.hue), _sat,
-			float(rock.e), _edge)
+			float(rock.radius) * u, float(rock.hue), _sat,
+			float(rock.e), _edge, 1.0, float(rock.glow))

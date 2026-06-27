@@ -11,11 +11,13 @@ var _drift := 0.0
 var _free := 0.0
 var _f: AudioFeatures = AudioFeatures.new()
 var _act: Activation
+var _light: Lighting
 
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	var sparsity := 0.0 if rng.randf() < 0.4 else rng.randf_range(0.3, 0.7)
 	_act = Activation.new(Spectrum.BAND_COUNT, rng, sparsity)
+	_light = Lighting.new(rng)
 	_free = 0.0 if rng.randf() < 0.65 else rng.randf_range(0.3, 1.0)
 	return {
 		"hue": rng.randf(),
@@ -33,6 +35,7 @@ func update(f: AudioFeatures, delta: float) -> void:
 	tick(f, delta)
 	drift_view(f, 0.05, 0.07, 0.06, 0.12)
 	_act.update(f.energy + 0.5 * f.beat, delta)
+	_light.update(f, delta)
 	# Bounded sway about rest; continuous slow drift only when free.
 	_drift += float(params.spin_rate) * delta * _free
 	_spin = _drift + 0.22 * mod.value("turn")
@@ -42,8 +45,10 @@ func update(f: AudioFeatures, delta: float) -> void:
 func _draw() -> void:
 	begin_draw()
 	var u := unit()
-	var base_r: float = u * params.radius * (1.0 + 0.15 * _f.energy + 0.1 * _f.beat)
+	var base_r: float = u * params.radius          # fixed - the ring doesn't breathe
+	var radius_frac: float = params.radius
 	var max_len: float = u * params.bar_len
+	var glow := _light.glow()
 	var n := _f.bands.size()
 	if n == 0:
 		n = Spectrum.BAND_COUNT
@@ -66,8 +71,13 @@ func _draw() -> void:
 		var dir := Vector2(cos(ang), sin(ang))
 		var inner := dir * r_i
 		var outer := dir * (r_i + max_len * e)
-		var h := fposmod(hue + hue_spread * float(band_i) / float(n), 1.0)
-		draw_line(inner, outer, Color.from_hsv(h, 0.7, 0.5 + 0.5 * e), thickness, true)
+		# Colour, not size, carries the audio: a moving hotspot lights the bars it
+		# sweeps over, and the global glow lifts everything on a beat.
+		var lit := _light.at(dir * radius_frac)
+		var h := fposmod(hue + hue_spread * float(band_i) / float(n) + 0.10 * lit + _light.hue_shift(), 1.0)
+		var val := clampf(0.35 + 0.4 * e + 0.5 * lit + 0.4 * glow, 0.0, 1.0)
+		draw_line(inner, outer, Color.from_hsv(h, 0.7, val), thickness, true)
 
-	var core := Color.from_hsv(hue, 0.4, 1.0, 0.25 + 0.5 * _f.bass)
-	draw_circle(Vector2.ZERO, base_r * 0.5 * (0.8 + 0.6 * _f.bass), core)
+	# Core glows on the beat (fixed size).
+	var core := Color.from_hsv(hue, 0.4, 1.0, 0.2 + 0.6 * glow)
+	draw_circle(Vector2.ZERO, base_r * 0.5, core)

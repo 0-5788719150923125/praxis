@@ -119,7 +119,8 @@ func displace(amp: float, rng: RandomNumberGenerator) -> void:
 ## along its normal; `edge` 0 none / 1 dark / 2 bright outlines; `face_alpha` < 1
 ## makes the faces translucent (a see-through solid - real 3D, not a wireframe).
 func draw_shaded(ci: CanvasItem, basis: Basis, center: Vector2, scale: float,
-		hue: float, sat: float, explode: float, edge: int, face_alpha := 1.0) -> void:
+		hue: float, sat: float, explode: float, edge: int, face_alpha := 1.0,
+		glow := 0.0) -> void:
 	var light := LIGHT.normalized()
 	var focal := 3.2
 	var rv := []                      # rotated vertices
@@ -147,7 +148,7 @@ func draw_shaded(ci: CanvasItem, basis: Basis, center: Vector2, scale: float,
 		var cz := (v0 + v1 + v2) / 3.0
 		if n.dot(cz) < 0.0:
 			n = -n
-		var bright := 0.22 + 0.78 * maxf(0.0, n.dot(light))
+		var bright := clampf(0.22 + 0.78 * maxf(0.0, n.dot(light)) + glow, 0.0, 1.0)
 		var push := n * explode
 		var poly := PackedVector2Array()
 		for idx in f:

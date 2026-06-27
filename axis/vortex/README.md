@@ -26,6 +26,7 @@ Generating visuals for a song with an image/video model is slow and expensive. A
 - **Structure is the bias; motion is bounded variance** - for *flat* things. A flat subject (snowflake, glass pane) sways about a seeded rest pose rather than spinning, and the camera never rolls or shears flat 2D content (rolling/shearing a plane is fake 3D - `drift_view` does only zoom + pan). Genuinely 3D bodies (`Mesh3D`) are the exception: they rotate slowly and continuously, because that is how a real solid reveals its volume. **`Activation`** carries the same idea to elements: each gets a seeded threshold + gain through a soft nonlinearity and a fast-attack/slow-decay EMA, so with `sparsity > 0` some elements stay rooted (the static floor) while others bloom; `sparsity = 0` means everything moves. And the **camera eases** (the `SceneView` EMA-smooths toward its target), so every move is gentle.
 - **Real 3D where it matters.** `Mesh3D` is a software 3D primitive (icosphere / cube / octahedron / tetrahedron → depth-sorted flat-shaded faces, perspective). Rocks and `wire_solid` are genuine 3D bodies, not sheared flat polygons. `Geo` holds the shared polygon helpers (convex split, fracture) that shatter the glass.
 - **Many items, local rules.** `Swarm` is a scalar field over a grid that evolves by *local* interaction - development creeping out from seeds (`GROW`), or injected pulses diffusing across the lattice (`WAVE`). It drives thousands of items without scripting each one (the `metropolis` city grows and pulses from one), and the same mechanism transfers to any abstract many-item grid - the cellular / ant-colony idea.
+- **Sound drives colour, not scale.** Pulsing geometry *size* with amplitude reads as cheap throbbing - shapes hold their form. Instead, audio drives **colour, brightness, and glow** through `Lighting`: moving bright **hotspots** that sweep the frame (region-aware lighting / gradient swipes), a global **glow** that flares on beats and decays slowly, and a slow hue drift. A scene asks `light.at(pos)` for a local brightness boost and `light.glow()` for the global flare. This is the shared modulation surface a future unified renderer (2D or 3D under one control) will route everything through; for now scenes opt in.
 - **Framing is a typed axis.** A scene declares a `framing` class and the **`Shots`** registry assigns a camera move from the matching pool: expressive for `subject` (offset / push / pan / canted), gentle for `field` fillers, square-on for a single `plane` (so a flat snowflake or pane never reads as a tumbling card). And planes can spawn in multiples - a few small ones don't look stranded the way one lone spinning plane does.
 - **Lifecycle and exit cues are typed too.** A scene either **loops** until cut, or is a **oneshot** that plays one sequence and reports `finished()` (shatter glass settling, then ending). Once a scene is *eligible* to exit - a loop past its minimum hold, or a oneshot that finished - the **`Director`** waits for a chosen spectral **trigger** before actually cutting, so exits land on the music: usually a **beat** (rising edge), sometimes a **movement** (section change) or a **lull** (drop into quiet), with a maximum-hold backstop. Triggers are picked weighted per scene.
 - **`Director`** (autoload) holds the registry of `{scene, behavior}` pairs, runs the lifecycle/trigger logic above, and performs the change - mostly clean **jump cuts**, occasionally a **blend** (fade / zoom-through / additive bleed). `--scene <name|N>` pins one scene for authoring.
@@ -50,6 +51,7 @@ Generating visuals for a song with an image/video model is slow and expensive. A
 - `scripts/particle.gd` / `scripts/primitives.gd` / `scripts/particle_system.gd` - the physics substrate: a `Particle`, the `Primitives` force **registry**, and the `ParticleSystem` that composes and steps them.
 - `scripts/mesh3d.gd` / `scripts/geometry.gd` - the `Mesh3D` software-3D primitive and `Geo` polygon helpers (split, fracture).
 - `scripts/swarm.gd` - `Swarm`, the grid field that spreads by local rules (growth fronts, pulse waves) for many-item scenes.
+- `scripts/lighting.gd` - `Lighting`, audio-reactive colour: moving hotspots, beat glow, hue drift (the preferred channel over scale).
 - `scripts/director.gd` - `Director` autoload: `{scene, behavior}` registry, lifecycle + spectral-trigger timing, cut/blend transitions, `--scene` pin.
 - `scripts/scenes/` - the visualizers (see below). Drop new ones here and register them in `Director.SCENES`.
 - `audio/` - put `song.wav` here (git-ignored). Or pass `--audio /path/to/song.wav` on launch.
@@ -81,6 +83,8 @@ Open `project.godot` in Godot 4.6 and press play, or from the command line:
 godot --path axis/vortex                       # default: audio/song.wav if present
 godot --path axis/vortex -- --audio ~/track.wav
 ```
+
+`--audio` accepts `.wav`, `.mp3`, `.ogg`, and `.flac`. FLAC has no runtime loader in Godot, so it is transcoded to a temp WAV via `ffmpeg` (must be on `PATH`); the others load natively.
 
 Controls: `Space` next scene · `F11` full-screen · `Esc` quit.
 
@@ -119,7 +123,9 @@ Then add `{"script": preload("res://scripts/scenes/my_scene.gd"), "behavior": "f
 - [x] **Real 3D**: `Mesh3D` software primitive; rocks and `wire_solid` are genuine 3D bodies. `Geo` fracture replaced the pizza-sliced glass.
 - [x] **Swarm fields**: many-item scenes driven by local rules (`metropolis` city growth + colour pulses); transferable to any grid.
 - [ ] **Filaments** scene: a procedural growth primitive feeding lightning / tesla / snake / neural / roots / branches variants (replaces the removed `orbits`).
+- [x] **Colour over scale**: `Lighting` (moving hotspots, beat glow, hue drift) drives reactivity; shapes hold their form. Wired into ring / lattice / rocks / wire_solid so far.
 - [ ] More `Swarm` rules: pheromone / ant-colony trails, reaction-diffusion, predator-prey - and abstract (non-city) many-item scenes that reuse the field.
+- [ ] **Unified renderer**: one modulation surface (`Lighting` + materials) feeding either the 2D canvas or `Mesh3D`/3D, so any scene can render in 2D or 3D under one set of controls. Migrate the remaining scenes onto `Lighting`.
 - [ ] Grow the kit (flow fields, collisions, soft-body links, emitters) and migrate more bespoke scenes onto particles / `Mesh3D`.
 - [ ] **Bake mode**: offline FFT → spectrum-timeline resource + Movie Maker export, so recorded output is deterministic and frame-perfect.
 - [ ] Stronger beat/onset and tempo tracking; exits that snap to bars, not just beats.

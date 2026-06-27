@@ -203,12 +203,28 @@ func _audio_path_from_args() -> String:
 	return ""
 
 
-# External (non-res://) files: WAV via the runtime loader, others via load().
+# External (non-res://) files via the runtime loaders, by extension.
 func _load_external(path: String) -> AudioStream:
-	if path.to_lower().ends_with(".wav"):
+	var lower := path.to_lower()
+	if lower.ends_with(".wav"):
 		return AudioStreamWAV.load_from_file(path)
-	# .ogg / .mp3 imported into the project can still be load()-ed by res path;
-	# arbitrary external ogg/mp3 loading is left for the bake backend.
+	if lower.ends_with(".mp3"):
+		return AudioStreamMP3.load_from_file(path)
+	if lower.ends_with(".ogg") or lower.ends_with(".oga"):
+		return AudioStreamOggVorbis.load_from_file(path)
+	if lower.ends_with(".flac"):
+		return _load_flac(path)
 	if ResourceLoader.exists(path):
 		return load(path)
+	return null
+
+
+# Godot 4.6 has no runtime FLAC loader (FLAC is editor-import only), so transcode
+# to a temp WAV with ffmpeg. Degrades gracefully if ffmpeg isn't on PATH.
+func _load_flac(path: String) -> AudioStream:
+	var tmp := ProjectSettings.globalize_path("user://vortex_flac.wav")
+	var code := OS.execute("ffmpeg", ["-y", "-loglevel", "error", "-i", path, tmp])
+	if code == 0 and FileAccess.file_exists(tmp):
+		return AudioStreamWAV.load_from_file(tmp)
+	push_warning("vortex: FLAC playback needs ffmpeg on PATH to decode (%s)" % path)
 	return null

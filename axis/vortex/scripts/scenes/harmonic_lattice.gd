@@ -12,6 +12,7 @@ const OVER := 1.35   # draw this much beyond the screen, for view motion headroo
 var _phase := 0.0
 var _f: AudioFeatures = AudioFeatures.new()
 var _act: Activation
+var _light: Lighting
 
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
@@ -20,6 +21,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	var rows := rng.randi_range(5, 12)
 	var sparsity := 0.0 if rng.randf() < 0.4 else rng.randf_range(0.35, 0.7)
 	_act = Activation.new(cols * rows, rng, sparsity)
+	_light = Lighting.new(rng)
 	return {
 		"cols": cols,
 		"rows": rows,
@@ -38,12 +40,14 @@ func update(f: AudioFeatures, delta: float) -> void:
 	tick(f, delta)
 	drift_view(f, 0.03, 0.05, 0.04, 0.10)
 	_act.update(f.energy + 0.4 * f.beat, delta)
+	_light.update(f, delta)
 	_phase += (float(params.wave_speed) * (0.4 + 0.6 * f.bass) + f.treble) * 0.5 * delta
 	queue_redraw()
 
 
 func _draw() -> void:
 	begin_draw()
+	var u := unit()
 	var cols := int(params.cols)
 	var rows := int(params.rows)
 	var field := size * OVER
@@ -70,9 +74,13 @@ func _draw() -> void:
 			e = clampf(e + _f.beat * 0.2, 0.0, 1.0)
 			# Rooted cells hold a small base size; activated cells swell and decay.
 			e *= 0.2 + 0.8 * _act.level(idx)
-			var s := max_size * (0.15 + 0.85 * e)
-			var h := fposmod(hue + hue_flow * t, 1.0)
-			_draw_cell(pos, s, e * spin, Color.from_hsv(h, 0.65, 0.4 + 0.6 * e), diamond)
+			# Size stays mostly stable; colour and brightness carry the audio - a
+			# moving hotspot lights the cells it sweeps, and the beat glow lifts all.
+			var s := max_size * (0.55 + 0.30 * e)
+			var lit := _light.at(pos / u)
+			var h := fposmod(hue + hue_flow * t + 0.12 * lit + _light.hue_shift(), 1.0)
+			var val := clampf(0.28 + 0.3 * e + 0.55 * lit + 0.4 * _light.glow(), 0.05, 1.0)
+			_draw_cell(pos, s, e * spin, Color.from_hsv(h, 0.65, val), diamond)
 
 
 func _draw_cell(pos: Vector2, s: float, rot: float, col: Color, diamond: bool) -> void:

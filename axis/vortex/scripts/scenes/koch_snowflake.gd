@@ -66,7 +66,7 @@ func _draw() -> void:
 		var iscale: float = float(inst.scale)
 		var iphase: float = float(inst.phase)
 		for rdx in rings:
-			var scale: float = float(params.radius) * u * iscale * (1.0 - 0.22 * rdx) * (1.0 + 0.10 * _f.bass)
+			var scale: float = float(params.radius) * u * iscale * (1.0 - 0.22 * rdx)
 			var pts := _snowflake(scale, depth)
 			var rot := _spin + iphase + rdx * 0.3
 			var out := PackedVector2Array()

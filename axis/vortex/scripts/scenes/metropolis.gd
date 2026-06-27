@@ -83,7 +83,7 @@ func _draw() -> void:
 	var th := tw * 0.5                        # 2:1 iso
 	var z_ter := u * 0.16                     # hill height scale
 	var z_build := u * 0.12                   # building height scale
-	var build_gain := 0.3 + 0.7 * _f.energy
+	var build_gain := 0.65 + 0.25 * _f.energy   # height is mostly structural, not throb
 
 	# Back-to-front so nearer blocks overlap farther ones correctly.
 	for gy in G:
