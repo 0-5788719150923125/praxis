@@ -820,15 +820,46 @@ COMPOSITE_METRIC_REGISTRY: list = [
     {
         "key": "smear_routing_variance",
         "type": "multi_expert_line",
-        "title": "SMEAR Routing Variance (Specialization)",
-        "y_label": "Variance",
+        "title": "SMEAR Load-Balance Variance (normalized)",
+        "y_label": "Variance [0,1]",
         "description": (
-            "Per-depth variance of routing weights across experts for SMEAR "
-            "routers (one line per layer). Higher = experts specializing; near "
-            "zero = uniform, interchangeable experts."
+            "Per-depth variance of the BATCH-MEAN routing weights, normalized to "
+            "[0,1] (0 = balanced load across experts, 1 = collapsed onto one "
+            "expert). This is LOAD BALANCE, not per-sequence specialization - it "
+            "stays near 0 even when VEAR is sharply committing each sequence "
+            "(different sequences pick different experts, averaging back to "
+            "uniform). Watch Routing Specialization for that."
         ),
         "key_pattern": r"^layer_\d+_routing_variance$",
         "order": 220,
+    },
+    {
+        "key": "smear_routing_specialization",
+        "type": "multi_expert_line",
+        "title": "SMEAR/VEAR Routing Specialization (per-sequence)",
+        "y_label": "Specialization [0,1]",
+        "description": (
+            "Per-sequence routing commitment, computed BEFORE the batch-mean and "
+            "rescaled to [0,1]: 0 = uniform routing, 1 = every sequence commits to "
+            "a single expert. This is the gauge VEAR's sharpening + repulsion "
+            "actually move; it rises as experts specialize even when load stays "
+            "balanced (which the load-balance cards cannot show)."
+        ),
+        "key_pattern": r"^layer_\d+_routing_specialization$",
+        "order": 230,
+    },
+    {
+        "key": "smear_routing_peak",
+        "type": "multi_expert_line",
+        "title": "SMEAR/VEAR Routing Peak (mean per-sequence top weight)",
+        "y_label": "Mean peak weight",
+        "description": (
+            "Mean per-sequence maximum routing weight (1/num_experts = uniform .. "
+            "1.0 = each sequence fully committed). The raw per-sequence "
+            "concentration behind Routing Specialization."
+        ),
+        "key_pattern": r"^layer_\d+_routing_peak$",
+        "order": 240,
     },
 ]
 

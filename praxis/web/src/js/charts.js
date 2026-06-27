@@ -2514,7 +2514,7 @@ function renderStepSlider(canvasId, sortedSteps, currentStepIndex, agents, chart
                 min="0"
                 max="${sortedSteps.length - 1}"
                 value="${currentStepIndex}"
-                style="flex: 1; min-width: 200px;"
+                style="flex: 1; min-width: 0;"
             />
             <span id="step-value-${canvasId}" style="font-weight: 600; min-width: 80px; text-align: right;">
                 ${currentStep} / ${maxStep}

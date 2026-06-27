@@ -321,15 +321,35 @@ class SMEAR(nn.Module):
             entropy = -(probs * probs.log()).sum()
             self._metrics[f"{layer_prefix}routing_entropy"] = entropy.item()
 
-            # Concentration: max routing weight
-            # Measures expert collapse: 1.0 = fully collapsed, 1/N = uniform
-            concentration = expert_weights.max()
-            self._metrics[f"{layer_prefix}routing_concentration"] = concentration.item()
+            # Concentration: max batch-mean weight (1/N balanced .. 1.0 hogging).
+            self._metrics[f"{layer_prefix}routing_concentration"] = (
+                expert_weights.max().item()
+            )
 
-            # Variance: measures routing stability across experts
-            # High variance = specialized experts, low variance = uniform
-            variance = expert_weights.var()
-            self._metrics[f"{layer_prefix}routing_variance"] = variance.item()
+            # Variance of the batch-mean, NORMALIZED to [0, 1]. Raw variance maxes
+            # at (N-1)/N^2 (~0.19 for N=4), so the raw number reads misleadingly
+            # small; here 0 = perfectly balanced load, 1 = collapsed onto one expert.
+            n = expert_weights.numel()
+            max_var = (n - 1) / (n * n) if n > 1 else 1.0
+            self._metrics[f"{layer_prefix}routing_variance"] = (
+                expert_weights.var(unbiased=False) / max_var
+            ).item()
+
+            # --- Specialization, computed PER SEQUENCE (before the batch-mean) ---
+            # This is what VEAR's sharpening/repulsion actually move: how committed
+            # each sequence's routing is. The batch-mean metrics above CANNOT show
+            # it - different sequences picking different experts average back to
+            # uniform, so routing_variance/entropy plateau low even at perfect
+            # per-sequence specialization.
+            # routing_peak: mean per-sequence top weight (1/N uniform .. 1.0 committed).
+            peak = routing_probs.max(dim=-1).values.mean()
+            self._metrics[f"{layer_prefix}routing_peak"] = peak.item()
+            # routing_specialization: peak rescaled to [0, 1] - 0 = uniform routing,
+            # 1 = every sequence commits to a single expert. The VEAR gauge to watch.
+            if n > 1:
+                self._metrics[f"{layer_prefix}routing_specialization"] = (
+                    (n * peak - 1.0) / (n - 1)
+                ).item()
         except Exception:
             # Silently fail if metric computation fails - don't break training
             pass
