@@ -871,6 +871,14 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             for name, value in self.head.aux_losses().items():
                 outputs.losses.add_loss(name, value)
 
+        # Router aux losses (e.g. VEAR's parameter-only repulsion), collected once
+        # per step here rather than through the per-forward aux return: a
+        # parameter-only loss escaping the gradient-checkpointed recurrent forward
+        # causes a double-backward.
+        if self.decoder is not None and hasattr(self.decoder, "router_aux_losses"):
+            for name, value in self.decoder.router_aux_losses().items():
+                outputs.losses.add_loss(name, value)
+
         if self.mtp is not None:
             mtp_inputs = self.mtp.prepare_inputs(
                 hidden_states=hidden_states,

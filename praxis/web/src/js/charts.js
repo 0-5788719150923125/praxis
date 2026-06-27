@@ -2985,9 +2985,15 @@ function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern,
         maxExperts = Math.max(maxExperts, expertKeys.length);
 
         expertKeys.forEach((expertKey) => {
-            // Extract expert number
-            const match = expertKey.match(/expert[_/](\d+)/);
-            const expertNum = match ? match[1] : '0';
+            // Series index + noun: expert-indexed (MoE routers) or layer-indexed
+            // (per-depth router scalars, e.g. SMEAR entropy). The key_pattern in
+            // the registry decides which keys land here; this just labels and
+            // colors each line sensibly for whichever axis it carries.
+            const expertMatch = expertKey.match(/expert[_/](\d+)/);
+            const layerMatch = expertKey.match(/layer[_/](\d+)/);
+            const seriesNum = expertMatch ? expertMatch[1]
+                : layerMatch ? layerMatch[1] : '0';
+            const seriesNoun = expertMatch ? 'Expert' : layerMatch ? 'Layer' : 'Series';
             const values = metrics[expertKey] || [];
 
             console.log(`[createMultiExpertChart] Key: ${expertKey}, Values length: ${values.length}, First: ${values[0]}, Last: ${values[values.length-1]}`);
@@ -3000,8 +3006,8 @@ function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern,
 
             console.log(`[createMultiExpertChart] Data points after filtering: ${data.length}, First x: ${data[0]?.x}, Last x: ${data[data.length-1]?.x}`);
 
-            const color = chartLineColor(parseInt(expertNum));
-            const label = agents.length > 1 ? `${agent.name} - Expert ${expertNum}` : `Expert ${expertNum}`;
+            const color = chartLineColor(parseInt(seriesNum));
+            const label = agents.length > 1 ? `${agent.name} - ${seriesNoun} ${seriesNum}` : `${seriesNoun} ${seriesNum}`;
 
             allDatasets.push({
                 label: label,

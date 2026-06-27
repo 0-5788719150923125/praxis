@@ -61,7 +61,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--gated` | bool | `False` | Add a gating network to attention outputs |
 | `--halting-type` | str | `None` | Halting strategy for recurrent depth loops (choices: none, kl) |
 | `--head-size` | int | `None` | Specify the inner head dimension |
-| `--head-type` | str | `forward` | The type of language modeling head to use (choices: forward, tied, harmonic, crystal, crystal_harmonic, crystal_harmonic_static, prismatic, prismatic3, prismatic3_repel) |
+| `--head-type` | str | `forward` | The type of language modeling head to use (choices: forward, tied, harmonic, crystal, crystal_harmonic, crystal_harmonic_static, prismatic, prismatic3, prismatic3_repel, prismatic4) |
 | `--hidden-size` | int | `256` | The size of the model's hidden dimensions |
 | `--k-heads` | int | `None` | A sparse MoE, controlling the number of heads to sample. Should be smaller than num_heads to enable. |
 | `--kv-rank` | int | `None` | Set this value to factorize key/value projections, making them low-rank. A value of 1 is lowest. |
@@ -82,7 +82,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--orchestration-type` | str | `none` | Remote-expert pool profile: backend sidecar of tiny experts (joinable from the web Stage tab) + a mixing strategy. Default none. (choices: none, swarm, swarm_mean, swarm_wave, swarm_sidecar, frontend_only) |
 | `--regularizers` | str | `['contrastive_isotropy']` | Additive representation-shaping losses to apply (space-separated; pass with no values to disable all). Default: contrastive_isotropy (choices: contrastive_isotropy, activation) |
 | `--residual-type` | str | `standard` | The style of residual connection to use (choices: standard, hyper, rezero) |
-| `--router-type` | str | `None` | How to route tokens at every layer (choices: mixture_of_depths, mixture_of_depths_u, mixture_of_depths_decayed, mixture_of_depths_ramped, mixture_of_depths_skip_2, arc_mixture, smear, distance, prismatic, taxus, taxus_aggressive, taxus_balanced) |
+| `--router-type` | str | `None` | How to route tokens at every layer (choices: mixture_of_depths, mixture_of_depths_u, mixture_of_depths_decayed, mixture_of_depths_ramped, mixture_of_depths_skip_2, arc_mixture, smear, vear, distance, prismatic, taxus, taxus_aggressive, taxus_balanced) |
 | `--scaled` | bool | `False` | Scale the output of each layer by the inverse square root of its depth |
 | `--sorting-type` | str | `none` | The type of feature sorting to use (choices: none, amplitude_field, decay_bias, native, sinkhorn) |
 | `--stickbreaking` | bool | `False` | Use a Stickbreaking Attention mechanism |

@@ -158,9 +158,16 @@ class SMEAR(nn.Module):
             block_ids,
         )
 
-        # Apply the merged parameters using functional_call
+        # Apply the merged parameters using functional_call. tie_weights=False is
+        # REQUIRED. This is functional_call's OWN arg (not model weight-tying - the
+        # model need not tie anything): with the default (True), its param-aliasing
+        # machinery corrupts the merged-param graph when the SAME expert module is
+        # reparametrized repeatedly across recurrent depths, so the next step's
+        # backward re-enters a freed graph ("backward through the graph a second
+        # time"). Verified on a model with zero tied weights. Only bites under the
+        # smear/vear shared-expert recurrent reuse.
         result = torch.func.functional_call(
-            base_module, merged_state_dict, forward_args, {}
+            base_module, merged_state_dict, forward_args, {}, tie_weights=False
         )
 
         # Handle different return formats
@@ -450,9 +457,10 @@ class SMEAR(nn.Module):
         # Use the first expert as the base module structure
         base_module = self.experts[0]
 
-        # Apply the merged parameters using functional_call
+        # Apply the merged parameters using functional_call (tie_weights=False:
+        # see _router_forward - avoids the shared-expert recurrent double-backward).
         result = torch.func.functional_call(
-            base_module, merged_state_dict, (inputs, current_state), {}
+            base_module, merged_state_dict, (inputs, current_state), {}, tie_weights=False
         )
 
         # Handle different return formats

@@ -1,6 +1,6 @@
 from functools import partial
 
-from praxis.heads.crystal import CrystalClassifier, CrystalHead
+from praxis.heads.crystal import CrystalClassifier, CrystalHead, CrystalVearHead
 from praxis.heads.forward import ForwardHead
 from praxis.heads.harmonic import HarmonicField, HarmonicHead
 from praxis.heads.mtp import MTP_REGISTRY, MultiTokenPrediction
@@ -59,6 +59,27 @@ def _prismatic3_branches() -> list:
     ]
 
 
+def _prismatic4_branches() -> list:
+    """prismatic3's arms, but the variance arm's single crystal becomes a
+    VEAR-merged BANK of CrystalClassifiers: sharpened routing selects a discrete
+    crystal per batch and inter-expert repulsion keeps the geometries unique (a
+    population of output geometries instead of one). See CrystalVearHead."""
+    return [
+        partial(
+            SequentialHead,
+            heads=[_field("learned", build_classifier=True, fast_weights=True)],
+        ),
+        partial(
+            SequentialHead,
+            heads=[_field("input", fast_weights=True), CrystalVearHead],
+        ),
+        partial(
+            SequentialHead,
+            heads=[_field("pure", build_classifier=True, fast_weights=True)],
+        ),
+    ]
+
+
 HEAD_REGISTRY = dict(
     forward=ForwardHead,
     tied=TiedWeights,
@@ -91,4 +112,8 @@ HEAD_REGISTRY = dict(
     prismatic3_repel=partial(
         ParallelHead, branches=_prismatic3_branches(), gate_repulsion=0.02
     ),
+    # prismatic3 with the variance arm's crystal replaced by a VEAR-merged bank
+    # of CrystalClassifiers (CRYSTAL_BANK_SIZE geometries): discrete, unique
+    # output geometries voted per context. See CrystalVearHead, praxis/routers/vear.py.
+    prismatic4=partial(ParallelHead, branches=_prismatic4_branches()),
 )

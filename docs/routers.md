@@ -3,19 +3,19 @@
 
 Token-routing mechanisms, including the Mixture-of-Depths family that skips a fraction of tokens per layer.
 
-Registry: ``praxis.ROUTER_REGISTRY`` (12 entries)
+Registry: ``praxis.ROUTER_REGISTRY`` (13 entries)
 
 ## `arc_mixture` - ArcMixture
 
-MixtureOfDepths keyed to physical layer, with a per-pass router bias.
+MixtureOfDepths keyed to physical layer, with a per-pass weight delta.
 
 Capacity follows the ``arc`` schedule over ``num_layers`` (odd layers 75% sparse, even
 layers full) rather than over the flattened depth, so the same layer is the routed one
-on every recurrent pass. Each pass additionally gets its own zero-init additive bias on
-the router logits, so the model starts identical to MixtureOfDepths and specializes its
-routing threshold per pass over training.
+on every recurrent pass. Each pass additionally gets its own low-rank additive delta on
+the router weight vector, so the routing *direction* (not just a uniform threshold)
+specializes per pass. Zero-init coefficients mean the model starts identical to ...
 
-Source: [praxis/routers/arc.py:38](../praxis/routers/arc.py#L38)
+Source: [praxis/routers/arc.py:48](../praxis/routers/arc.py#L48)
 
 ## `distance` - Distance
 
@@ -92,3 +92,9 @@ Value: `functools.partial(<function praxis.routers.create_taxus_with_dynamic_bud
 ## `taxus_balanced`
 
 Value: `functools.partial(<function praxis.routers.create_taxus_with_dynamic_budget>, budget_ratio=0.6, target_depth_ratio=0.5, temperature=0.5)`
+
+## `vear` - VEAR
+
+Variance-driven Experts with Adaptive Routing (sharpened, repelled SMEAR).
+
+Source: [praxis/routers/vear.py:45](../praxis/routers/vear.py#L45)

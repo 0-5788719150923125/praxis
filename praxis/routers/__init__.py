@@ -7,6 +7,7 @@ from praxis.routers.mixture_of_depths import MixtureOfDepths
 from praxis.routers.prismatic import Prismatic
 from praxis.routers.smear import SMEAR
 from praxis.routers.taxus import Taxus
+from praxis.routers.vear import VEAR
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
@@ -103,6 +104,9 @@ ROUTER_REGISTRY = dict(
     mixture_of_depths_skip_2=partial(MixtureOfDepths, layout="skip_2"),
     arc_mixture=ArcMixture,
     smear=SMEAR,
+    # VEAR: variance-driven SMEAR - sharpened routing + inter-expert repulsion for
+    # discrete, unique geometries (praxis/routers/vear.py).
+    vear=VEAR,
     distance=Distance,
     prismatic=Prismatic,
     taxus=create_taxus_with_dynamic_budget,

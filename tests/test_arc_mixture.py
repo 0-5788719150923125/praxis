@@ -2,7 +2,7 @@
 
 ArcMixture keys capacity to the *physical layer* index (current_depth %
 num_layers), so a given layer is the routed one on every recurrent pass, and
-keys an additive router bias to the *recurrent pass* (current_depth //
+keys a low-rank router weight delta to the *recurrent pass* (current_depth //
 num_layers). This mirrors the ArcGLU idiom; see praxis/routers/arc.py.
 """
 
@@ -103,45 +103,59 @@ class TestArcMixtureLayout:
 
 
 class TestArcMixturePassBias:
-    """The per-recurrent-pass router bias - the Arc mechanism."""
+    """The per-recurrent-pass router weight delta - the Arc mechanism."""
 
-    def test_bias_table_sized_to_num_passes_and_zero_init(self):
+    def test_no_shared_bias(self):
+        # The base nn.Linear scalar bias is dropped; only the per-pass delta
+        # calibrates routing.
+        config = make_config()
+        router = ArcMixture(config)
+        assert router.bias is None
+
+    def test_delta_tables_sized_and_zero_init(self):
         config = make_config(depth=9, num_layers=3)
         router = ArcMixture(config)
-        # ceil(9 / 3) = 3 recurrent passes.
+        # ceil(9 / 3) = 3 recurrent passes; rank <= hidden_size.
         assert router.num_passes == 3
-        assert router.depth_bias.weight.shape == (3, 1)
-        assert torch.allclose(router.depth_bias.weight, torch.zeros(3, 1))
+        assert router.delta_coef.weight.shape == (3, router.delta_rank)
+        assert router.delta_basis.shape == (router.delta_rank, config.hidden_size)
+        # Coefficients zero-init -> the delta is exactly 0 at init.
+        assert torch.allclose(router.delta_coef.weight, torch.zeros_like(router.delta_coef.weight))
+        assert torch.allclose(router._pass_deltas(), torch.zeros(3, config.hidden_size))
 
     def test_logits_match_base_at_zero_init(self):
         config = make_config()
         router = ArcMixture(config)
         inputs = torch.randn(2, 16, config.hidden_size)
 
-        base_logits = nn.functional.linear(inputs, router.weight, router.bias)
+        base_logits = nn.functional.linear(inputs, router.weight, None)
         arc_logits = router._compute_router_logits(inputs, current_depth=4)
         assert torch.allclose(arc_logits, base_logits)
 
-    def test_bias_is_pass_specific_and_added(self):
+    def test_delta_is_pass_specific_and_reranks(self):
         config = make_config(depth=9, num_layers=3)
         router = ArcMixture(config)
         with torch.no_grad():
-            router.depth_bias.weight[0].fill_(5.0)  # pass 0
-            router.depth_bias.weight[1].fill_(-2.0)  # pass 1
+            # Give pass 0 and pass 1 distinct nonzero coefficients; pass 2 stays
+            # zero. basis is random at init, so distinct coefs -> distinct deltas.
+            router.delta_coef.weight[0].fill_(0.5)  # pass 0
+            router.delta_coef.weight[1].fill_(-0.5)  # pass 1
 
         inputs = torch.randn(2, 16, config.hidden_size)
-        base = nn.functional.linear(inputs, router.weight, router.bias)
+        base = nn.functional.linear(inputs, router.weight, None)
 
         # Layer 1 is revisited at depth 1 (pass 0), 4 (pass 1), 7 (pass 2).
         logits_pass0 = router._compute_router_logits(inputs, current_depth=1)
         logits_pass1 = router._compute_router_logits(inputs, current_depth=4)
         logits_pass2 = router._compute_router_logits(inputs, current_depth=7)
 
-        assert torch.allclose(logits_pass0, base + 5.0)
-        assert torch.allclose(logits_pass1, base - 2.0)
+        # A nonzero delta shifts logits per token (re-ranks), not a uniform offset.
+        assert not torch.allclose(logits_pass0, base)
+        assert not torch.allclose(logits_pass1, base)
+        assert not torch.allclose(logits_pass0, logits_pass1)
         assert torch.allclose(logits_pass2, base)  # untouched pass stays at base
 
-    def test_bias_receives_gradient_through_routing(self):
+    def test_delta_receives_gradient_through_routing(self):
         config = make_config(depth=9, num_layers=3)
         router = ArcMixture(config)
         router.train()
@@ -154,12 +168,12 @@ class TestArcMixturePassBias:
         )
         aux_loss.backward()
 
-        grad = router.depth_bias.weight.grad
+        grad = router.delta_coef.weight.grad
         assert grad is not None
         # Only the active pass row should receive gradient.
-        assert not torch.allclose(grad[1], torch.zeros(1))
-        assert torch.allclose(grad[0], torch.zeros(1))
-        assert torch.allclose(grad[2], torch.zeros(1))
+        assert not torch.allclose(grad[1], torch.zeros(router.delta_rank))
+        assert torch.allclose(grad[0], torch.zeros(router.delta_rank))
+        assert torch.allclose(grad[2], torch.zeros(router.delta_rank))
 
 
 class TestArcMixtureMetrics:
@@ -176,9 +190,11 @@ class TestArcMixtureMetrics:
         config = make_config(depth=9, num_layers=3)
         router = ArcMixture(config)
         with torch.no_grad():
-            router.depth_bias.weight.copy_(
-                torch.tensor([[-3.0], [0.0], [3.0]])
-            )
+            # Drive the per-pass coefficients apart so the effective deltas
+            # diverge (basis is fixed, nonzero at init).
+            router.delta_coef.weight.zero_()
+            router.delta_coef.weight[0, 0] = -3.0
+            router.delta_coef.weight[2, 0] = 3.0
         metrics = router.training_metrics()
         assert metrics["arc_router_specialization"] > 0.5
 
@@ -196,9 +212,9 @@ class TestArcMixtureMetrics:
         parent = nn.Module()
         parent.router = ArcMixture(config)
         with torch.no_grad():
-            parent.router.depth_bias.weight.copy_(
-                torch.tensor([[-3.0], [0.0], [3.0]])
-            )
+            parent.router.delta_coef.weight.zero_()
+            parent.router.delta_coef.weight[0, 0] = -3.0
+            parent.router.delta_coef.weight[2, 0] = 3.0
         metrics = collect_arc_metrics(parent)
         assert "arc_router_specialization" in metrics
 

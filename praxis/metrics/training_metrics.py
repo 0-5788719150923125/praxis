@@ -786,6 +786,50 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "y_label": "Diversity Loss",
         "order": 190,
     },
+    # SMEAR routers log entropy/concentration/variance per *depth* (one key
+    # per layer the shared router runs at, hence the layer_N_ prefix), unlike
+    # Prismatic's single global routing/* scalars above. multi_expert_line
+    # draws one line per matched key; these cards auto-hide until a SMEAR
+    # router is active and emitting (availableMetrics gates on key presence).
+    {
+        "key": "smear_routing_entropy",
+        "type": "multi_expert_line",
+        "title": "SMEAR Routing Entropy (Balance)",
+        "y_label": "Entropy",
+        "description": (
+            "Per-depth routing entropy for SMEAR routers (one line per layer). "
+            "High = balanced soft-merge across experts; low = the router is "
+            "collapsing onto a single expert."
+        ),
+        "key_pattern": r"^layer_\d+_routing_entropy$",
+        "order": 200,
+    },
+    {
+        "key": "smear_routing_concentration",
+        "type": "multi_expert_line",
+        "title": "SMEAR Routing Concentration (Collapse)",
+        "y_label": "Max weight",
+        "description": (
+            "Per-depth maximum routing weight for SMEAR routers (one line per "
+            "layer). 1.0 = collapsed onto one expert; 1/num_experts = uniform "
+            "merge."
+        ),
+        "key_pattern": r"^layer_\d+_routing_concentration$",
+        "order": 210,
+    },
+    {
+        "key": "smear_routing_variance",
+        "type": "multi_expert_line",
+        "title": "SMEAR Routing Variance (Specialization)",
+        "y_label": "Variance",
+        "description": (
+            "Per-depth variance of routing weights across experts for SMEAR "
+            "routers (one line per layer). Higher = experts specializing; near "
+            "zero = uniform, interchangeable experts."
+        ),
+        "key_pattern": r"^layer_\d+_routing_variance$",
+        "order": 220,
+    },
 ]
 
 

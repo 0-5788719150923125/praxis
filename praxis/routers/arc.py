@@ -1,5 +1,5 @@
 """
-ArcMixture: MixtureOfDepths with a per-recurrent-pass router bias.
+ArcMixture: MixtureOfDepths with a per-recurrent-pass router weight delta.
 
 Cyclic mixture-of-depths. Two axes, mirroring the ArcGLU idiom:
 
@@ -9,11 +9,16 @@ Cyclic mixture-of-depths. Two axes, mirroring the ArcGLU idiom:
   (capacity 0.25) and even layers run full - e.g. for num_layers=3 the 2nd
   layer (index 1) is the routed one on every pass.
 
-- A zero-init ``nn.Embedding(num_passes, 1)`` adds a per-recurrent-pass scalar
-  bias to the router logits (keyed to ``current_depth // num_layers``), so each
-  time the layer is revisited it can shift its own routing threshold. This is
-  the "adjust the bias at the recurrent step" mechanism shared with
-  ArcAttention and ArcGLU, applied here to which tokens get routed.
+- Each recurrent pass gets its own low-rank additive delta on the router's
+  weight *vector* (keyed to ``current_depth // num_layers``), so the routing
+  direction itself - not just a uniform threshold - can specialize per pass.
+  A uniform scalar bias is rank-invariant to the top-k and so can never change
+  *which* tokens route; only a delta on the weight can re-rank them. The delta
+  is a shared ``[rank, hidden]`` basis (LoRA "A") with per-pass coefficients
+  ``nn.Embedding(num_passes, rank)`` (LoRA "B", zero-init), so the model starts
+  identical to MixtureOfDepths and the passes diverge over training. The base
+  ``nn.Linear`` bias is dropped: a per-token-uniform scalar adds nothing the
+  delta cannot, and it competed with the per-pass term for the same calibration.
 
 The decoder routes physical block ``i`` whenever ``current_depth % num_layers
 == i`` (base controller, round-robin), so block ``i`` sees ``current_depth``
@@ -34,16 +39,21 @@ from praxis.utils import generate_alternating_values
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
+# Rank of the per-pass weight delta. Small relative to hidden_size: the deltas
+# only need to nudge the routing direction, and a low rank keeps the per-pass
+# coefficient count tiny while sharing a common basis across passes.
+_DELTA_RANK = 8
+
 
 class ArcMixture(MixtureOfDepths):
-    """MixtureOfDepths keyed to physical layer, with a per-pass router bias.
+    """MixtureOfDepths keyed to physical layer, with a per-pass weight delta.
 
     Capacity follows the ``arc`` schedule over ``num_layers`` (odd layers 75%
     sparse, even layers full) rather than over the flattened depth, so the same
     layer is the routed one on every recurrent pass. Each pass additionally
-    gets its own zero-init additive bias on the router logits, so the model
-    starts identical to MixtureOfDepths and specializes its routing threshold
-    per pass over training.
+    gets its own low-rank additive delta on the router weight vector, so the
+    routing *direction* (not just a uniform threshold) specializes per pass.
+    Zero-init coefficients mean the model starts identical to MixtureOfDepths.
     """
 
     # Depth-specialization diagnostics (see praxis.metrics.specialization),
@@ -51,11 +61,11 @@ class ArcMixture(MixtureOfDepths):
     metric_descriptions = {
         "arc_router_specialization": {
             "description": (
-                "Depth-specific fraction of the per-pass router bias "
+                "Depth-specific fraction of the per-pass router weight delta "
                 "(between-pass variance / total energy). 0 = every recurrent "
-                "pass learned the same routing bias (collapsed, no benefit "
-                "over a shared bias, and the zero-init case); rising = each "
-                "pass is specializing its routing threshold."
+                "pass learned the same routing direction (collapsed, no benefit "
+                "over a shared router, and the zero-init case); rising = each "
+                "pass is specializing which tokens it routes."
             ),
             "chart": {
                 "title": "Arc Depth Specialization",
@@ -65,7 +75,7 @@ class ArcMixture(MixtureOfDepths):
                 "group_order": 30,
                 "order": 13,
                 "series_group": "arc_specialization",
-                "series_label": "router bias",
+                "series_label": "router delta",
             },
         },
     }
@@ -73,13 +83,26 @@ class ArcMixture(MixtureOfDepths):
     def __init__(self, config: ConfigType, *args: Any, **kwargs: Any) -> None:
         super().__init__(config, *args, **kwargs)
 
+        # Drop the shared per-token-uniform scalar bias: it adds nothing the
+        # per-pass delta cannot, and it competed for the same calibration.
+        self.bias = None
+
         # Recurrent passes this layer will receive: ceil(depth / num_layers).
         self.num_passes = max(1, math.ceil(config.depth / self.num_layers))
 
-        # Per-pass additive bias on the (scalar) router logit, applied after
-        # the linear scorer. Zero-init -> starts identical to MixtureOfDepths.
-        self.depth_bias = nn.Embedding(self.num_passes, 1)
-        nn.init.zeros_(self.depth_bias.weight)
+        # Low-rank per-pass delta on the router weight vector [1, hidden]:
+        #   delta_w[pass] = coef[pass] @ basis            ([rank]@[rank,hidden])
+        # Shared ``basis`` (LoRA "A", random), per-pass ``coef`` (LoRA "B",
+        # zero-init) -> delta is exactly 0 at init, so logits match base MoD.
+        rank = min(_DELTA_RANK, config.hidden_size)
+        self.delta_rank = rank
+        self.delta_basis = nn.Parameter(
+            torch.empty(rank, config.hidden_size).normal_(
+                std=config.hidden_size**-0.5
+            )
+        )
+        self.delta_coef = nn.Embedding(self.num_passes, rank)
+        nn.init.zeros_(self.delta_coef.weight)
 
     def _build_capacities(self, config: ConfigType, layout: str) -> List[float]:
         # Key capacity to the physical layer index (length num_layers), not the
@@ -93,17 +116,26 @@ class ArcMixture(MixtureOfDepths):
         # Physical block i is visited whenever current_depth % num_layers == i.
         return self.capacities[current_depth % self.num_layers]
 
+    def _pass_delta(self, pass_idx: int, device) -> Tensor:
+        """Per-pass additive delta on the router weight vector, shape [1, hidden]."""
+        coef = self.delta_coef(torch.tensor(pass_idx, device=device))  # [rank]
+        return (coef @ self.delta_basis).unsqueeze(0)  # [1, hidden]
+
     def _compute_router_logits(self, inputs: Tensor, current_depth: int) -> Tensor:
         pass_idx = (current_depth // self.num_layers) % self.num_passes
-        depth_idx = torch.tensor(pass_idx, device=inputs.device)
-        return F.linear(inputs, self.weight, self.bias) + self.depth_bias(depth_idx)
+        weight = self.weight + self._pass_delta(pass_idx, inputs.device)
+        return F.linear(inputs, weight, self.bias)
+
+    def _pass_deltas(self) -> Tensor:
+        """All per-pass weight deltas stacked, shape [num_passes, hidden]."""
+        return self.delta_coef.weight @ self.delta_basis
 
     def training_metrics(self) -> dict:
-        """Whether the per-pass router biases are specializing or collapsing."""
+        """Whether the per-pass router deltas are specializing or collapsing."""
         from praxis.metrics.specialization import depth_dispersion
 
         out = {}
-        disp = depth_dispersion(self.depth_bias.weight)
+        disp = depth_dispersion(self._pass_deltas())
         if disp is not None:
             out["arc_router_specialization"] = disp["specialization"]
         return out

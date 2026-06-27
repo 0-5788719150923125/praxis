@@ -19,13 +19,20 @@ Reference: Baek et al., "Harmonic Loss Trains Interpretable AI Models"
 """
 
 import math
+from types import SimpleNamespace
 from typing import Any, Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch import Tensor
 
 from praxis.heads.base import BaseHead
+
+# Number of CrystalClassifiers in the VEAR-merged bank for the prismatic4 head.
+# Baked (fixed, model-agnostic) per the tuning-free stance; override with a
+# partial(CrystalVearHead, n_experts=...) in a head profile.
+CRYSTAL_BANK_SIZE: int = 4
 
 EPS: float = 1e-4
 
@@ -379,3 +386,230 @@ class CrystalHead(BaseHead):
         c = self.lm_head.centers
         rms = c.pow(2).mean(dim=0).clamp_min(1e-12).sqrt().mean()
         return {"centers_rms": lam * rms}
+
+
+class CrystalVearHead(BaseHead):
+    """A bank of ``CrystalClassifier``s merged by a VEAR router.
+
+    Where ``CrystalHead`` learns one center geometry, this learns ``n_experts``
+    and lets VEAR pick a discrete, per-context blend: sharpened routing selects a
+    near-single crystal per batch (not the smeared convex-hull average SMEAR would
+    give), and VEAR's inter-expert repulsion keeps the geometries distinct - a
+    "population" of output geometries. Drop-in for ``CrystalHead`` inside a
+    prismatic arm (``prismatic4``). Reuses VEAR's merge machinery
+    (``praxis/routers/vear.py``); see ``next/roadmap.md`` (geometry banks + voting).
+
+    Honest limit inherited from SMEAR/VEAR: the merge reduces to ONE crystal per
+    batch (``routing_probs.mean(dim=0)``), so every token in the batch shares the
+    selected geometry. Per-token crystal selection is a future refinement.
+    """
+
+    self_ties = False  # a bank has no single tie target; keep it untied
+
+    def __init__(self, config: Any, encoder: Optional[nn.Module] = None,
+                 n_experts: int = CRYSTAL_BANK_SIZE) -> None:
+        super().__init__(config, encoder)
+        if config.loss_func == "cut_cross_entropy":
+            raise ValueError(
+                "CrystalVearHead (prismatic4) is incompatible with "
+                "loss_func='cut_cross_entropy' (cut-CE assumes a dot-product head)"
+            )
+        # Deferred import: routers/ -> heads/ would otherwise risk an import cycle.
+        from praxis.routers.vear import VEAR, VEAR_REPULSION, VEAR_SHARPEN
+
+        self._rep_scale = float(VEAR_REPULSION)
+        self._sharpen = float(VEAR_SHARPEN)
+        n_cfg = getattr(config, "crystal_n", None)
+        smoothing = float(
+            getattr(config, "crystal_label_smoothing", DEFAULT_LABEL_SMOOTHING) or 0.0
+        )
+        self.pre_projection: Optional[nn.Module] = None
+        dims = self.output_dims()
+        if dims is None:
+            raise ValueError(
+                "head_type='prismatic4' needs an encoder that declares an output "
+                "layout; it can't pair with a loss-owning encoder (handles_loss)."
+            )
+        feature_dim, vocab_size = dims
+        if self.has_encoder:
+            center_dim = feature_dim
+        else:
+            tie = bool(getattr(config, "tie_word_embeddings", False))
+            embed_size = getattr(config, "embed_size", self.hidden_size)
+            center_dim = embed_size if tie else feature_dim
+            if tie and embed_size != self.hidden_size:
+                self.pre_projection = nn.Linear(self.hidden_size, embed_size, bias=False)
+        n = float(n_cfg) if n_cfg is not None else math.sqrt(center_dim)
+        self.n_experts = int(n_experts)
+        experts = [
+            CrystalClassifier(
+                hidden_size=center_dim, vocab_size=vocab_size, n=n,
+                label_smoothing=smoothing,
+            )
+            for _ in range(self.n_experts)
+        ]
+        # VEAR owns the router (Linear(center_dim, N) + norm) and the N experts.
+        vcfg = SimpleNamespace(
+            num_experts=self.n_experts, hidden_size=center_dim, expert_dropout=0.1
+        )
+        self.bank = VEAR(vcfg, experts=experts)
+
+    def _route(self, hidden_states: Tensor) -> Tensor:
+        """Per-sequence routing probs ``[B, N]`` (mirrors SMEAR's routing)."""
+        v = self.bank
+        if hidden_states.dim() >= 3:
+            router_input = hidden_states.mean(dim=1)
+        else:
+            router_input = hidden_states.reshape(
+                -1, hidden_states.shape[-1]
+            ).mean(dim=0, keepdim=True)
+        router_input = v.router_norm(router_input)
+        weight = F.normalize(v.router.weight, dim=1)
+        logits = F.linear(router_input, weight, v.router.bias)
+        probs = torch.softmax(logits, dim=-1)
+        if v.training and v.dropout_rate > 0:
+            mask = torch.bernoulli(torch.ones_like(probs) * (1 - v.dropout_rate))
+            probs = probs * mask
+            probs = probs / (probs.sum(dim=-1, keepdim=True) + 1e-8)
+        return probs
+
+    def forward(self, hidden_states: Tensor, **kwargs: Any) -> Tensor:
+        if self.pre_projection is not None:
+            hidden_states = self.pre_projection(hidden_states)
+        probs = self._route(hidden_states)  # [B, N] (post-dropout)
+        # VEAR discrete: sharpen, then batch-mean -> one merged center-set. Done
+        # with plain tensor ops (no functional_call), which is faster and keeps
+        # the head out of any functional_call/autograd edge cases.
+        sharp = probs.pow(self._sharpen)
+        sharp = sharp / sharp.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+        ew = sharp.mean(dim=0)  # [N]
+        experts = self.bank.experts
+        merged_centers = sum(ew[i] * experts[i].centers for i in range(len(experts)))
+        # One merged crystal applied to every token (CrystalClassifier distance
+        # math inlined; identical to functional_call'ing experts[0] with merged).
+        return self._crystal_logits(hidden_states, merged_centers, experts[0])
+
+    def _crystal_logits(self, x: Tensor, centers: Tensor, ref: nn.Module) -> Tensor:
+        """CrystalClassifier.forward, but with externally-merged ``centers`` (the
+        only param) instead of ``ref.centers`` - avoids functional_call."""
+        orig_shape = x.shape
+        out_dtype = x.dtype
+        x_flat = x.reshape(-1, orig_shape[-1]).float()
+        c = centers.float()
+        cc = (c * c).sum(-1)
+        xx = (x_flat * x_flat).sum(-1, keepdim=True)
+        cx = x_flat @ c.T
+        dist_sq = (cc.unsqueeze(0) + xx - 2.0 * cx).clamp_min(ref.eps)
+        dist_sq = torch.nan_to_num(dist_sq, nan=1e9, posinf=1e9)
+        dist_sq = dist_sq / dist_sq.amin(dim=-1, keepdim=True)
+        pseudo_logits = -ref.n * torch.log(dist_sq)
+        if ref.label_smoothing > 0.0:
+            prob = torch.softmax(pseudo_logits, dim=-1) + ref.label_smoothing / ref.vocab_size
+            pseudo_logits = torch.log(prob)
+        return pseudo_logits.view(*orig_shape[:-1], ref.vocab_size).to(out_dtype)
+
+    @property
+    def classifier(self) -> nn.Module:
+        return self.bank.experts[0]
+
+    def compose_repr(self) -> str:
+        return f"CrystalVearBank({self.n_experts})"
+
+    def aux_losses(self) -> dict:
+        out: dict = {}
+        # Repulsion computed fresh here (parameter-only, collected post-forward
+        # like centers_rms) - no stash, so nothing escapes the forward graph.
+        if self.training and self.n_experts >= 2:
+            out["crystal_bank_repulsion"] = (
+                self._rep_scale * self.bank._inter_expert_repulsion()
+            )
+        lam = float(
+            getattr(self.config, "embedding_rms_lambda", DEFAULT_EMBEDDING_RMS_LAMBDA)
+            or 0.0
+        )
+        if lam > 0.0:
+            rms = torch.stack(
+                [
+                    e.centers.pow(2).mean(dim=0).clamp_min(1e-12).sqrt().mean()
+                    for e in self.bank.experts
+                ]
+            ).mean()
+            out["centers_rms"] = lam * rms
+        return out
+
+    @torch.no_grad()
+    def _bank_distinctness(self) -> float:
+        """Mean pairwise L2 distance between the experts' center-sets - rises as
+        VEAR's repulsion drives the geometries apart; ~0 = collapsed/redundant."""
+        flat = torch.stack([e.centers.reshape(-1) for e in self.bank.experts], dim=0)
+        n = flat.shape[0]
+        if n < 2:
+            return 0.0
+        d = torch.cdist(flat, flat)  # [N, N], diagonal 0
+        return float(d.sum().item() / (n * (n - 1)))
+
+    def training_metrics(self) -> dict:
+        experts = self.bank.experts
+        return {
+            "crystal_centers_norm_mean": float(
+                torch.stack([e.centers_norm_mean() for e in experts]).mean().item()
+            ),
+            "crystal_centers_norm_std": float(
+                torch.stack([e.centers_norm_std() for e in experts]).mean().item()
+            ),
+            "crystal_effective_dim": int(
+                round(sum(e.effective_dim() for e in experts) / len(experts))
+            ),
+            # The direct readout of VEAR's goal: are the geometries actually unique?
+            "crystal_bank_distinctness": self._bank_distinctness(),
+        }
+
+    def dashboard_snapshots(self) -> dict:
+        # One PCA density per expert: distinct structure across experts = VEAR
+        # producing unique geometries; identical clouds = the bank collapsed.
+        out: dict = {}
+        for k, e in enumerate(self.bank.experts):
+            grid = _pca_density_grid([e.centers])
+            if grid:
+                out[f"crystal_centers_pca_{k}"] = grid
+        return out
+
+    def all_metric_descriptions(self) -> dict:
+        # Start from the module-walk (the per-expert CrystalClassifiers contribute
+        # the scalar descriptions), then swap the single-centers PCA for one card
+        # per expert and drop the grad-norm (not tracked for the merged bank).
+        out = dict(super().all_metric_descriptions())
+        out.pop("crystal_centers_pca", None)
+        out.pop("crystal_centers_grad_norm", None)
+        for k in range(self.n_experts):
+            out[f"crystal_centers_pca_{k}"] = {
+                "description": (
+                    f"Top-2 PCA density of crystal expert {k}'s vocabulary centers. "
+                    "Distinct structure across experts means VEAR is producing unique "
+                    "geometries; identical clouds mean the bank collapsed."
+                ),
+                "snapshot": {
+                    "title": f"Center PCA Density (expert {k})",
+                    "renderer": "heatmap_2d",
+                    "color_scale": "log",
+                    "group": "crystal_head",
+                    "order": 100 + k,
+                },
+                "caller": "CrystalClassifier",
+            }
+        out["crystal_bank_distinctness"] = {
+            "description": (
+                "Mean pairwise L2 distance between the bank's expert center-sets. "
+                "Rises as VEAR's repulsion drives the geometries apart; near 0 means "
+                "collapsed / redundant experts."
+            ),
+            "chart": {
+                "title": "Crystal Bank Distinctness",
+                "y_label": "mean pairwise center dist",
+                "y_scale": "linear",
+                "group": "crystal_head",
+                "order": 45,
+            },
+            "caller": "CrystalVearHead",
+        }
+        return out

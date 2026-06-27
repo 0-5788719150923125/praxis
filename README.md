@@ -35,7 +35,7 @@ Praxis is organized as 47 pluggable registries. The feature categories below lin
 - [Normalization layers](docs/normalization.md) (5)
 - [Optimizer profiles](docs/optimizers.md) (5)
 - [Optimizer wrappers](docs/wrappers.md) (8)
-- [Output heads](docs/heads.md) (11)
+- [Output heads](docs/heads.md) (12)
 - [Positional encoding](docs/encoding.md) (5)
 - [Recurrent cells](docs/recurrent.md) (2)
 - [Residual connections](docs/residuals.md) (3)
@@ -43,7 +43,7 @@ Praxis is organized as 47 pluggable registries. The feature categories below lin
 - [Sequence compression](docs/compression.md) (3)
 - [Sequence sorting](docs/sorting.md) (5)
 - [Token embeddings](docs/embeddings.md) (14)
-- [Token routers](docs/routers.md) (12)
+- [Token routers](docs/routers.md) (13)
 - [Training strategies](docs/strategies.md) (4)
 
 <!-- AUTODOC:FEATURES:END -->

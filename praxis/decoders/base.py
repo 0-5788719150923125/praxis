@@ -73,8 +73,8 @@ class BaseDecoder(nn.Module):
             expert = LocalLayer(config, block=block)
             for i in range(self.num_layers):
                 self.locals.append(expert)
-        elif config.router_type == "smear" or config.router_type == "distance":
-            # For SMEAR and Distance routers with multiple experts, create a single LocalLayer
+        elif config.router_type in ("smear", "vear", "distance"):
+            # For SMEAR/VEAR and Distance routers with multiple experts, create a single LocalLayer
             # that manages all experts and reuse it across all positions
             expert_blocks = []
             for expert_idx in range(self.num_experts):
@@ -206,6 +206,27 @@ class BaseDecoder(nn.Module):
             return self.norm(states)
         else:
             return states
+
+    def router_aux_losses(self) -> Dict[str, Any]:
+        """Named auxiliary losses from unique routers, collected once per step
+        OUTSIDE the (gradient-checkpointed, recurrent) forward - so a router's
+        parameter-only loss (e.g. VEAR's repulsion) is added exactly once and
+        doesn't escape a checkpointed region. Dedups by router id like
+        ``get_metrics`` (the smear/vear branch shares one router across all
+        positions)."""
+        out: Dict[str, Any] = {}
+        seen: set = set()
+        for local_layer in self.locals:
+            router = getattr(local_layer, "router", None)
+            # router_aux_loss (not aux_loss) is VEAR-specific; using a unique name
+            # avoids colliding with MixtureOfDepths.aux_loss(x, y) on arc routers.
+            fn = getattr(router, "router_aux_loss", None)
+            if router is None or not callable(fn) or id(router) in seen:
+                continue
+            seen.add(id(router))
+            for name, value in fn().items():
+                out[name] = out[name] + value if name in out else value
+        return out
 
     def get_metrics(self) -> Dict[str, Any]:
         """
