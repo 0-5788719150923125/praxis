@@ -6,6 +6,7 @@ A home for random side projects that live in the Praxis repo but have little or 
 
 - **[`axis/`](axis/README.md)** - the original Axis mobile app: an archived Godot companion for controlling Praxis. Largely unmaintained; kept as a record of the idea.
 - **[`nutube/`](nutube/README.md)** - a local-first YouTube explorer (Godot, mobile). An experiment in replacing the algorithm with a simple recommender that runs entirely on the device. In early development.
+- **[`vortex/`](vortex/README.md)** - a spectral music visualizer (Godot, desktop). Reads a `.wav` and draws seeded scene definitions modulated by audio features, looping like a recordable video. Procedural, deterministic, no generative AI in the render path. Early scaffold.
 
 ## Adding one
 

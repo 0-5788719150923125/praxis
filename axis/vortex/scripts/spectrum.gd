@@ -1,0 +1,168 @@
+extends Node
+
+## Spectrum - the audio front end (autoload).
+##
+## Owns the [AudioStreamPlayer] and the [AudioEffectSpectrumAnalyzer] sitting on
+## the Master bus. Every frame it samples the analyzer across a log-spaced set
+## of frequency bands, packs the result into a typed [AudioFeatures], and stores
+## it on [member current]. Scenes read [member current]; they never see the
+## analyzer. This is the one place that knows audio exists.
+##
+## Today this is a live backend (reacts to playback). A baked backend - read
+## from a pre-computed spectrum timeline for deterministic Movie Maker exports -
+## is the planned sibling (see README).
+
+## Number of log-spaced bands in [member AudioFeatures.bands].
+const BAND_COUNT := 64
+const FREQ_MIN := 30.0
+const FREQ_MAX := 16000.0
+
+## dB window mapped onto 0..1. Magnitudes quieter than -DB_FLOOR read as 0.
+const DB_FLOOR := 60.0
+
+## Named-band frequency splits (Hz), low edge inclusive.
+const NAMED := {
+	"bass": [30.0, 150.0],
+	"low_mid": [150.0, 500.0],
+	"mid": [500.0, 2000.0],
+	"high": [2000.0, 6000.0],
+	"treble": [6000.0, 16000.0],
+}
+
+## The latest frame. Read this from anywhere; it is replaced every frame.
+var current: AudioFeatures = AudioFeatures.new()
+
+## A stable hash of the loaded audio's path - scenes seed from this so the same
+## song always renders the same video. 0 when nothing is loaded.
+var song_hash: int = 0
+
+var _player: AudioStreamPlayer
+var _analyzer: AudioEffectSpectrumAnalyzerInstance
+var _has_audio := false
+var _idle_time := 0.0
+
+# Smoothing / beat state.
+var _energy_avg := 0.0          # slow moving average, for onset comparison
+var _beat := 0.0
+var _band_lo := PackedFloat32Array()   # precomputed per-band edges
+var _band_hi := PackedFloat32Array()
+
+
+func _ready() -> void:
+	_setup_analyzer()
+	_precompute_bands()
+	_player = AudioStreamPlayer.new()
+	_player.bus = "Master"
+	add_child(_player)
+	_load_audio()
+	if _has_audio:
+		_player.play()
+
+
+# Install the analyzer on the Master bus and grab its instance.
+func _setup_analyzer() -> void:
+	var bus := AudioServer.get_bus_index("Master")
+	var fx := AudioEffectSpectrumAnalyzer.new()
+	fx.buffer_length = 0.1   # short window - tighter reaction to transients
+	AudioServer.add_bus_effect(bus, fx)
+	var idx := AudioServer.get_bus_effect_count(bus) - 1
+	_analyzer = AudioServer.get_bus_effect_instance(bus, idx)
+
+
+# Log-spaced band edges, computed once.
+func _precompute_bands() -> void:
+	_band_lo.resize(BAND_COUNT)
+	_band_hi.resize(BAND_COUNT)
+	var ratio := FREQ_MAX / FREQ_MIN
+	for i in BAND_COUNT:
+		_band_lo[i] = FREQ_MIN * pow(ratio, float(i) / float(BAND_COUNT))
+		_band_hi[i] = FREQ_MIN * pow(ratio, float(i + 1) / float(BAND_COUNT))
+
+
+func _process(delta: float) -> void:
+	var f := AudioFeatures.new()
+
+	if _has_audio and _player.playing:
+		f.time = _player.get_playback_position()
+		_fill_bands(f)
+	else:
+		_idle_time += delta
+		f.time = _idle_time
+		# bands stay zero; scenes idle-animate on f.time
+
+	# Overall energy: mean of the spectrum, lightly smoothed.
+	var sum := 0.0
+	for v in f.bands:
+		sum += v
+	var raw_energy := sum / float(max(1, f.bands.size()))
+	f.energy = raw_energy
+
+	# Beat: pulse when energy jumps above its slow average.
+	_energy_avg = lerpf(_energy_avg, raw_energy, 0.08)
+	if raw_energy > _energy_avg * 1.4 + 0.02:
+		_beat = 1.0
+	else:
+		_beat = maxf(0.0, _beat - delta * 4.0)
+	f.beat = _beat
+
+	current = f
+
+
+# Sample the analyzer into f.bands and the named convenience fields.
+func _fill_bands(f: AudioFeatures) -> void:
+	f.bands.resize(BAND_COUNT)
+	for i in BAND_COUNT:
+		f.bands[i] = _band_energy(_band_lo[i], _band_hi[i])
+	f.bass = _band_energy(NAMED.bass[0], NAMED.bass[1])
+	f.low_mid = _band_energy(NAMED.low_mid[0], NAMED.low_mid[1])
+	f.mid = _band_energy(NAMED.mid[0], NAMED.mid[1])
+	f.high = _band_energy(NAMED.high[0], NAMED.high[1])
+	f.treble = _band_energy(NAMED.treble[0], NAMED.treble[1])
+
+
+# One band: magnitude over a frequency range, mapped from dB to 0..1.
+func _band_energy(lo: float, hi: float) -> float:
+	var mag := _analyzer.get_magnitude_for_frequency_range(
+		lo, hi, AudioEffectSpectrumAnalyzerInstance.MAGNITUDE_MAX)
+	var db := linear_to_db(mag.length())
+	return clampf((db + DB_FLOOR) / DB_FLOOR, 0.0, 1.0)
+
+
+# Resolve a stream from `--audio <path>` or res://audio/song.wav and load it.
+func _load_audio() -> void:
+	var path := _audio_path_from_args()
+	var stream: AudioStream = null
+
+	if not path.is_empty():
+		stream = _load_external(path)
+		if stream == null:
+			push_warning("vortex: could not load audio at %s" % path)
+	if stream == null and ResourceLoader.exists("res://audio/song.wav"):
+		path = "res://audio/song.wav"
+		stream = load(path)
+
+	if stream != null:
+		_player.stream = stream
+		_has_audio = true
+		song_hash = hash(path)
+	else:
+		print("vortex: no audio loaded - scenes will idle-animate.")
+
+
+func _audio_path_from_args() -> String:
+	var args := OS.get_cmdline_user_args()
+	for i in args.size():
+		if args[i] == "--audio" and i + 1 < args.size():
+			return args[i + 1]
+	return ""
+
+
+# External (non-res://) files: WAV via the runtime loader, others via load().
+func _load_external(path: String) -> AudioStream:
+	if path.to_lower().ends_with(".wav"):
+		return AudioStreamWAV.load_from_file(path)
+	# .ogg / .mp3 imported into the project can still be load()-ed by res path;
+	# arbitrary external ogg/mp3 loading is left for the bake backend.
+	if ResourceLoader.exists(path):
+		return load(path)
+	return null
