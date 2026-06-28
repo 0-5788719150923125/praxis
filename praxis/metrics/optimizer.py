@@ -87,6 +87,26 @@ OPTIMIZER_METRIC_DESCRIPTIONS = {
             "order": 22,
         },
     },
+    "opt_clip_intensity": {
+        "description": (
+            "Mean clip severity over the interval: how much of the gradient "
+            "magnitude clipping shaved off each step (1 - gradient_clip_val / "
+            "norm, 0 on steps that did not clip), averaged across all enabled "
+            "steps. Norm-mode clipping rescales every parameter by the same "
+            "factor, so there is no 'fraction of parameters' to report - this "
+            "is the real-valued 'how hard is the clip biting' signal. Unlike "
+            "Clip Rate (a binary count, quantized by the small window), this is "
+            "continuous: 0 means clipping never bites, 0.4 means on average 40% "
+            "of the gradient magnitude is being removed when it does."
+        ),
+        "chart": {
+            "title": "Clip Intensity",
+            "y_label": "mean fraction removed",
+            "y_scale": "linear",
+            "group": "optimizer",
+            "order": 23,
+        },
+    },
     "opt_momentum_rms": {
         "description": (
             "RMS of the optimizer's momentum buffer (exp_avg / momentum_buffer)."

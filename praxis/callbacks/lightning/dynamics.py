@@ -37,6 +37,7 @@ class DynamicsLoggerCallback(Callback):
         # the whole reason a sampled norm is a poor clip diagnostic.
         self._clip_norm_max = 0.0
         self._clip_hits = 0
+        self._clip_severity_sum = 0.0
         self._clip_enabled_steps = 0
         print(
             f"[DynamicsLogger] Initialized: logging every {log_freq} steps to {self.dynamics_logger.filepath}"
@@ -169,6 +170,13 @@ class DynamicsLoggerCallback(Callback):
             self._clip_enabled_steps += 1
             if norm > threshold:
                 self._clip_hits += 1
+                # Severity = the fraction of the gradient magnitude this step's
+                # clip shaved off (1 - threshold/norm). Norm-mode clipping
+                # rescales every param by the same factor, so there is no
+                # per-parameter fraction to measure - this is the meaningful
+                # 'how hard did it bite' signal, real-valued instead of the
+                # binary hit the rate counts.
+                self._clip_severity_sum += 1.0 - threshold / norm
 
     def _drain_clip_stats(self) -> dict:
         """Emit the accumulated clip stats and reset for the next interval."""
@@ -177,8 +185,15 @@ class DynamicsLoggerCallback(Callback):
             out["opt_grad_norm"] = self._clip_norm_max
         if self._clip_enabled_steps > 0:
             out["opt_clip_rate"] = self._clip_hits / self._clip_enabled_steps
+            # Averaged over every enabled step (non-clipping steps contribute 0),
+            # so this is continuous - no quantization from the small window the
+            # binary rate suffers - and weights by how much each step overshot.
+            out["opt_clip_intensity"] = (
+                self._clip_severity_sum / self._clip_enabled_steps
+            )
         self._clip_norm_max = 0.0
         self._clip_hits = 0
+        self._clip_severity_sum = 0.0
         self._clip_enabled_steps = 0
         return out
 

@@ -2,6 +2,10 @@
 .godot/
 /android/
 
+# Transient: the exporter writes override.cfg to set the render's output resolution,
+# then removes it when the render finishes (see scripts/exporter.gd).
+override.cfg
+
 # Imported translations (automatically generated from CSV files)
 *.translation
 

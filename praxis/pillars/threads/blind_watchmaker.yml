@@ -1,18 +1,19 @@
 title: The Blind Watchmaker
 subtitle: Harmonic Latent Space and the Geometry of Bias and Variance
 pillars:
-- runs
-- datasets
-- framing
-- geometries
-- strands
-- evolution
-- halting
-- ghostmax
-- inlines
-- conjectures
-- proofs
-abstract: 'Do you exist in other people''s realities the same way you exist in your
+  - runs
+  - datasets
+  - framing
+  - geometries
+  - strands
+  - evolution
+  - halting
+  - ghostmax
+  - inlines
+  - conjectures
+  - proofs
+abstract:
+  'Do you exist in other people''s realities the same way you exist in your
   own? It is a question the field tends to defer: the reflex is to hand the burden
   of proof back to whoever raised it, as if demanding evidence were the neutral
   posture and the asking were the indulgence. That reflex is not neutral. It is
@@ -35,7 +36,8 @@ abstract: 'Do you exist in other people''s realities the same way you exist in y
   by interference, scales logarithmically, because $K$ frequency components address
   exponentially many configurations. The framework exists so that the reader can
   test it.'
-conclusion: 'We began with scale and ended with geometry. The patterns a model can
+conclusion:
+  "We began with scale and ended with geometry. The patterns a model can
   learn are set by the shape of the space its weights may occupy, and a harmonic
   latent space reshapes the oldest tradeoff in the field: bias becomes a static,
   population-average spectrum, variance becomes an input-conditional modulation,
@@ -50,8 +52,9 @@ conclusion: 'We began with scale and ended with geometry. The patterns a model c
   meets in the same place. The speculative figure is gone; the conjectures that
   replace it are falsifiable. What remains is praxis: the answer manifests through
   direct experimentation, and what you choose to attend to determines what we find
-  next.'
-introduction: 'The dominant recipe for capability is scale. Fix a transformer~\cite{vaswani2017attention},
+  next."
+introduction:
+  'The dominant recipe for capability is scale. Fix a transformer~\cite{vaswani2017attention},
   then grow it: more parameters, more tokens, more compute, with returns described
   by smooth scaling laws~\cite{kaplan2020}. The recipe works, but it assumes the
   architecture itself imposes no ceiling on which patterns gradient descent can
@@ -61,8 +64,10 @@ introduction: 'The dominant recipe for capability is scale. Fix a transformer~\c
   the patterns accessible to it during finite training.
 
 
-  To make the claim precise we need a vocabulary for ``geometry,'''' and the cleanest
-  one available is the oldest tradeoff in statistics. A model that minimizes error
+  With geometry as defined (Section~\ref{sec:definitions}), the objects in play are
+  \textit{symbols} - discrete geometries the model reuses - and what it learns is a
+  change in symbolism over time. The oldest tradeoff in statistics gives the first
+  coordinate on that change. A model that minimizes error
   by collapsing toward the average of its training data has high bias and low variance;
   a model that chases the particulars of each example has low bias and high variance.
   Classically these trade off along a single line: you choose a point on it. Our

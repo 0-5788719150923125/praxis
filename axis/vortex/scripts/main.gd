@@ -25,10 +25,17 @@ func _ready() -> void:
 	_export_mode = OS.get_cmdline_user_args().has("--export")
 	if _export_mode:
 		# Background render: Boot (first autoload) already hid the window as early as
-		# possible. Run clean and quit when the song ends, finalizing the movie.
+		# possible, and the exporter's override.cfg has set the output resolution + stretch
+		# mode at engine startup (Movie Maker locks resolution before any script runs, so
+		# it cannot be set from here). Run clean and quit when the song ends.
 		Spectrum.song_finished.connect(func(): get_tree().quit())
 		_begin_session()
 		return
+	# The live window stretches in "canvas_items" mode (set in project.godot): 2D is
+	# rasterized at the window's native pixel resolution - so fullscreen is crisp, not an
+	# upscale of the 1080p base - while the coordinate system scales *proportionally*, so
+	# UI and scene content keep their relative size and snap back exactly when the window
+	# returns to its original size. (Export overrides this; see _apply_export_resolution.)
 	# The exporter is persistent (created once, never torn down): an in-flight render
 	# and its status must survive the song ending and the return to the home screen.
 	_exporter = preload("res://scripts/exporter.gd").new()
