@@ -24,6 +24,23 @@
 % selected thread's generated thread.tex defines \paperThreadIntroduction.
 \paperThreadIntroduction
 
+\section{Definitions}
+\label{sec:definitions}
+
+The paper leans on a small vocabulary, used precisely. It is ordinary signal processing; the only commitment is to read the model's representations through it.
+
+\textbf{Harmonic.} A representation is \textit{harmonic} when it is carried by a superposition of oscillatory modes over a fixed frequency basis - amplitudes and phases on a frequency lattice, inverse-transformed into the signal - rather than by values in the raw signal space. The field $b = \mathrm{IRFFT}(a\,e^{i\varphi}/f^{\alpha})$ of Section~\ref{sec:manifold} is the concrete instance: $a$ is a spectrum of amplitudes, $\varphi$ a set of phases, $f$ the frequency lattice. The word is not shorthand for ``oscillating'' or ``smooth''; it is the literal claim that the representation is a sum of fixed modes and that only their amplitudes vary.
+
+\textbf{Amplitude, frequency, phase, velocity.} A mode at frequency $f$ contributes $a_f\cos(2\pi f x + \varphi_f)$: \textit{amplitude} $a_f$ is how much of the mode is present, \textit{phase} $\varphi_f$ is where in its cycle it sits, \textit{frequency} $f$ is which mode it is. A mode's frequency is also its angular \textit{velocity} - the rate its phase advances - so for a single mode ``frequency'' and ``velocity'' name the same quantity, and a velocity that varies across the signal is simply a frequency that changes (a chirp). In Praxis the amplitudes are learned, the frequencies are a fixed lattice, and the phases are \textit{frozen}.
+
+\textbf{Frozen phases.} The phases are seeded once - by Weyl equidistribution (Section~\ref{sec:manifold}) - and never trained. This is what fixes the basis: the same modes describe every input, and learning moves only the amplitudes. A representation whose phases are learned per input has no fixed basis and is not harmonic in our sense.
+
+\textbf{Geometry.} The superposition of modes at one moment is a point - a \textit{geometry} - in the latent space; inputs that share an amplitude configuration form a cluster of such points (the crystal-head centers, Figure~\ref{fig:geometry}). ``Overlaid geometries'' are several modes present at once. Distinct modes are orthogonal (the spectral theorem), so independent quantities can occupy separate modes without interacting - the property Section~\ref{sec:manifold} uses to pull bias and variance apart.
+
+\textbf{Bias and variance, in these terms.} \textit{Bias} is the time-invariant part of the spectrum, the amplitudes shared across all inputs (the corpus rhythm); \textit{variance} is the input-conditional deviation on top. They are orthogonal axes because they are different spectral components carried by different parameters, not two ends of one knob.
+
+\textbf{Harmonics over time (Koopman).} When the representation \textit{evolves} - across sequence position, or across recurrent-depth steps - the harmonic claim is that it evolves approximately \textit{linearly in the mode basis}: each mode carries its own frequency forward and the nonlinear dynamics become a linear operator on the spectrum. This is the Koopman view~\cite{koopman1931} of a dynamical system, and the sense in which we say the model works ``in harmonic space.'' The claim has a boundary, and is therefore falsifiable: a representation whose basis depends on the input, that is not a superposition of a fixed set of modes, or whose dynamics are not approximately linear in any fixed basis, is \textit{not} harmonic here. The universality - that \textit{any} dynamics admits such a description - holds only in an infinite-dimensional limit; the working claim is that a \textit{finite} harmonic basis approximates this model's behavior well enough to measure, and how well is an empirical question, not a definition.
+
 \section{The Mean and the Manifold}
 \label{sec:manifold}
 
