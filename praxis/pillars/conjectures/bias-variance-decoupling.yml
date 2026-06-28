@@ -1,0 +1,15 @@
+# Upgrades the paper's "orthogonal axes is an interpretation, not a theorem"
+# sentence into a falsifiable conjecture. The orthogonality of the two subspaces
+# is free (spectral theorem); the content is the *vanishing cross-curvature* -
+# that the two can be reduced at once, with no Pareto tradeoff. Paired roadmap
+# item: build the (bias, variance) trajectory metric + the frozen-basis proof.
+tag: Bias and variance as orthogonal axes
+order: 15
+claim: >
+  Bias and variance - the projections of the harmonic latent onto its frozen,
+  time-invariant modes and its time-varying modes - occupy orthogonal subspaces
+  whose loss cross-curvature vanishes, so under training both fall together
+  toward the origin rather than trading off along a frontier; the claim is
+  falsified the moment the measured (bias, variance) trajectory bends into a
+  Pareto frontier, or the cross-curvature between the two mode bands stays
+  bounded away from zero.

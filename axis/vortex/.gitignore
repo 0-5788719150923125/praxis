@@ -16,6 +16,10 @@ mono_crash.*.json
 *.pck
 *.zip
 
+# Authoring feedback channel (scene records + screenshots written by the feedback
+# console - a working comms channel between author and tooling, not an artifact).
+/feedback/
+
 # Recorded output and source audio (drop your own song.wav in audio/)
 /audio/
 *.avi

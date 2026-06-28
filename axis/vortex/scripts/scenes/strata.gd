@@ -31,9 +31,11 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 func update(f: AudioFeatures, delta: float) -> void:
 	_f = f
 	tick(f, delta)
-	# Tilt-forward bias so the stack always reads as receding planes.
+	# Tilt-forward bias so the stack always reads as receding planes. This is an
+	# absolute skew *target* (the view eases toward it) - it must be set, not
+	# accumulated: `+=` ran the skew away every frame and sheared the whole stack.
 	drift_view(f, 0.03, 0.04, 0.04, 0.08)
-	view.skew += 0.18 + 0.05 * mod.value("tilt2")
+	view.skew = 0.18 + 0.05 * mod.value("tilt2")
 	_t += delta * float(params.scroll)
 	queue_redraw()
 

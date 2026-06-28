@@ -8,9 +8,9 @@ extends Node
 ## it on [member current]. Scenes read [member current]; they never see the
 ## analyzer. This is the one place that knows audio exists.
 ##
-## Today this is a live backend (reacts to playback). A baked backend - read
-## from a pre-computed spectrum timeline for deterministic Movie Maker exports -
-## is the planned sibling (see README).
+## Two backends: the live analyzer (default, real-time, what you author in) and a
+## baked timeline ([SpectrumBake], enabled with --use-bake) read from pre-computed
+## frames for deterministic, analyzer-independent Movie Maker exports.
 
 ## Number of log-spaced bands in [member AudioFeatures.bands].
 const BAND_COUNT := 64
@@ -19,6 +19,10 @@ const FREQ_MAX := 16000.0
 
 ## dB window mapped onto 0..1. Magnitudes quieter than -DB_FLOOR read as 0.
 const DB_FLOOR := 60.0
+
+## Frames per second the offline bake is sampled at (must match bake_runner.gd).
+const BAKE_FPS := 30
+const Bake := preload("res://scripts/bake.gd")
 
 ## Named-band frequency splits (Hz), low edge inclusive.
 const NAMED := {
@@ -36,10 +40,22 @@ var current: AudioFeatures = AudioFeatures.new()
 ## song always renders the same video. 0 when nothing is loaded.
 var song_hash: int = 0
 
+## Emitted when a loaded song reaches its end (not in idle mode). main listens to
+## return to the splash. Looping streams never end, so this never fires for them.
+signal song_finished
+
 var _player: AudioStreamPlayer
 var _analyzer: AudioEffectSpectrumAnalyzerInstance
 var _has_audio := false
 var _idle_time := 0.0
+var _override_path := ""        # song chosen on the splash; wins over CLI/default
+var _loaded_path := ""          # the resolved path actually loaded (for re-launch/export)
+
+# Baked backend: a pre-computed per-frame spectrum timeline (one PackedFloat32Array
+# of BAND_COUNT per frame). Used by the export render (--use-bake) so a recorded
+# video's reactivity is correct and analyzer-independent. Live sessions leave it off.
+var _baked := false
+var _baked_frames: Array = []
 
 # Smoothing / beat state.
 var _energy_avg := 0.0          # slow moving average, for onset comparison
@@ -63,10 +79,96 @@ func _ready() -> void:
 	_precompute_bands()
 	_player = AudioStreamPlayer.new()
 	_player.bus = "Master"
+	_player.finished.connect(_on_player_finished)
 	add_child(_player)
+	# Audio is no longer loaded here - main decides when (immediately on a direct
+	# boot, or after the user picks a song on the splash). See begin().
+
+
+## Load the chosen audio and start playback. Called once the session begins: with
+## the splash's picked path, or with "" on a direct boot (which falls back to the
+## --audio flag, then res://audio/song.wav). Idempotent enough to re-point the song.
+func begin(path := "") -> void:
+	if not path.is_empty():
+		_override_path = path
 	_load_audio()
 	if _has_audio:
+		var bake_file := _arg_value("--bake-file")
+		if not bake_file.is_empty():
+			# Pre-built cache (the export render's normal path): load it and start -
+			# NO in-process baking, so the render never blocks on a grey frame.
+			_baked_frames = Bake.load_cache(bake_file, BAND_COUNT)
+			_baked = not _baked_frames.is_empty()
+			if _baked:
+				print("vortex: loaded bake file - %d frames" % _baked_frames.size())
+			else:
+				push_warning("vortex: bake file missing/empty: %s" % bake_file)
+		elif OS.get_cmdline_user_args().has("--use-bake"):
+			_bake()                              # direct-CLI fallback (bakes in-process)
 		_player.play()
+
+
+# Pre-analyze the loaded song into a spectrum timeline (export render only). Blocks
+# until done - fine for a non-interactive render, and Movie Maker only starts
+# recording once it is ready. Cached per song, so a re-export skips the analysis.
+func _bake() -> void:
+	var cache := _bake_cache_path()
+	_baked_frames = Bake.load_cache(cache, BAND_COUNT)
+	if not _baked_frames.is_empty():
+		print("vortex: loaded cached bake - %d frames" % _baked_frames.size())
+	else:
+		_baked_frames = Bake.bake(_loaded_path, BAKE_FPS, BAND_COUNT, FREQ_MIN, FREQ_MAX, DB_FLOOR)
+		if not _baked_frames.is_empty():
+			Bake.save_cache(cache, _baked_frames, BAND_COUNT)
+			print("vortex: baked spectrum - %d frames (cached)" % _baked_frames.size())
+	_baked = not _baked_frames.is_empty()
+	if not _baked:
+		push_warning("vortex: bake failed; the render will fall back to the live analyzer")
+
+
+# Cache key: the song's path + byte size (so replacing the file invalidates it).
+func _bake_cache_path() -> String:
+	var p := _loaded_path
+	if p.begins_with("res://") or p.begins_with("user://"):
+		p = ProjectSettings.globalize_path(p)
+	var sz := 0
+	if FileAccess.file_exists(p):
+		var fa := FileAccess.open(p, FileAccess.READ)
+		if fa != null:
+			sz = fa.get_length()
+			fa.close()
+	return "user://bake_%d.spec" % hash(p + "_" + str(sz))
+
+
+## Stop playback and reset to a clean, songless state, so the next begin() starts
+## fresh. Called when a session ends (the song finished, or we returned home).
+func stop() -> void:
+	if _player != null:
+		_player.stop()
+	_has_audio = false
+	_idle_time = 0.0
+	_override_path = ""
+	song_hash = 0
+	current = AudioFeatures.new()
+
+
+func _on_player_finished() -> void:
+	if _has_audio:
+		song_finished.emit()
+
+
+## The filesystem path of the song actually loaded (or "" if idle). The exporter
+## re-passes it to the Movie Maker render so it renders the same track.
+func audio_path() -> String:
+	return _loaded_path
+
+
+## Length of the loaded song in seconds (0 when idle / unknown). The exporter uses
+## it with the playback position ([member current].time) to know it is near the end.
+func song_length() -> float:
+	if _has_audio and _player != null and _player.stream != null:
+		return _player.stream.get_length()
+	return 0.0
 
 
 # Install the analyzer on the Master bus and grab its instance.
@@ -94,7 +196,10 @@ func _process(delta: float) -> void:
 
 	if _has_audio and _player.playing:
 		f.time = _player.get_playback_position()
-		_fill_bands(f)
+		if _baked:
+			_fill_bands_baked(f)
+		else:
+			_fill_bands(f)
 	else:
 		_idle_time += delta
 		f.time = _idle_time
@@ -157,6 +262,40 @@ func _fill_bands(f: AudioFeatures) -> void:
 	f.treble = _smooth_named("treble", NAMED.treble)
 
 
+# Baked counterpart of _fill_bands: read the band frame at the current playback
+# time from the timeline and apply the same EMA smoothing, so the baked replay
+# tracks the live look. Named bands are aggregated from the 64 baked bands.
+func _fill_bands_baked(f: AudioFeatures) -> void:
+	if _sm_bands.size() != BAND_COUNT:
+		_sm_bands.resize(BAND_COUNT)
+	f.bands.resize(BAND_COUNT)
+	var idx := clampi(int(f.time * BAKE_FPS), 0, _baked_frames.size() - 1)
+	var raw: PackedFloat32Array = _baked_frames[idx]
+	for i in BAND_COUNT:
+		_sm_bands[i] = lerpf(_sm_bands[i], raw[i], SMOOTH)
+		f.bands[i] = _sm_bands[i]
+	f.bass = _named_baked("bass", raw, NAMED.bass)
+	f.low_mid = _named_baked("low_mid", raw, NAMED.low_mid)
+	f.mid = _named_baked("mid", raw, NAMED.mid)
+	f.high = _named_baked("high", raw, NAMED.high)
+	f.treble = _named_baked("treble", raw, NAMED.treble)
+
+
+# A named band averaged from the baked log bands over its frequency range, smoothed.
+func _named_baked(key: String, raw: PackedFloat32Array, pair: Array) -> float:
+	var ratio := FREQ_MAX / FREQ_MIN
+	var b0 := clampi(int(BAND_COUNT * log(float(pair[0]) / FREQ_MIN) / log(ratio)), 0, BAND_COUNT - 1)
+	var b1 := clampi(int(BAND_COUNT * log(float(pair[1]) / FREQ_MIN) / log(ratio)), 0, BAND_COUNT - 1)
+	var s := 0.0
+	for b in range(b0, b1 + 1):
+		s += raw[b]
+	var rawv := s / float(maxi(1, b1 - b0 + 1))
+	var prev: float = _sm_named.get(key, 0.0)
+	var v := lerpf(prev, rawv, SMOOTH)
+	_sm_named[key] = v
+	return v
+
+
 # A named band, EMA-smoothed like the spectrum.
 func _smooth_named(key: String, pair: Array) -> float:
 	var raw := _band_energy(pair[0], pair[1])
@@ -191,11 +330,23 @@ func _load_audio() -> void:
 		_player.stream = stream
 		_has_audio = true
 		song_hash = hash(path)
+		_loaded_path = path
 	else:
 		print("vortex: no audio loaded - scenes will idle-animate.")
 
 
+# Value following a `--flag` in the user args, or "".
+func _arg_value(flag: String) -> String:
+	var args := OS.get_cmdline_user_args()
+	for i in args.size():
+		if args[i] == flag and i + 1 < args.size():
+			return args[i + 1]
+	return ""
+
+
 func _audio_path_from_args() -> String:
+	if not _override_path.is_empty():
+		return _override_path
 	var args := OS.get_cmdline_user_args()
 	for i in args.size():
 		if args[i] == "--audio" and i + 1 < args.size():

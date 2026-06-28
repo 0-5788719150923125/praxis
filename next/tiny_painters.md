@@ -16,7 +16,7 @@ that scrubbing is natural is vision - which, on this dashboard, is every
 domain. Everything we chart is already a picture.
 
 The harmonic head hands us the canvas for free. Its field has a continuous
-2D PCA plane - the cross-section the spiral and snake cards already project
+2D PCA plane - the cross-section the spiral card already projects
 onto - and that plane is the one surface in the framework where the model's
 own sense of position and feature is laid flat. So let it be the ground:
 a flat plane onto which the geometric structures of the architecture are

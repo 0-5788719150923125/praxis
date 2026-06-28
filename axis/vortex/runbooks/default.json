@@ -1,0 +1,13 @@
+{
+	"name": "default",
+	"loop": true,
+	"sequence": [
+		{ "scene": "spectrum_ring", "behavior": "static", "shot": "push_in", "hold": 10 },
+		{ "scene": "harmonic_lattice", "behavior": "drift", "exit": "movement", "min_hold": 8, "max_hold": 26 },
+		{ "scene": "planes", "behavior": "drift", "exit": "beat", "min_hold": 9 },
+		{ "scene": "rocks", "behavior": "drift" },
+		{ "scene": "shatter_glass", "behavior": "drift" },
+		{ "scene": "metropolis", "behavior": "drift", "exit": "lull", "max_hold": 30 },
+		{ "scene": "wire_solid", "behavior": "drift", "hold": 12 }
+	]
+}

@@ -32,10 +32,10 @@ func _init(rng: RandomNumberGenerator, count := 3) -> void:
 
 func update(f: AudioFeatures, dt: float) -> void:
 	_mod.advance(dt, f.energy)
-	# Glow flares fast on energy/beat, fades slowly (asymmetric EMA).
+	# Glow flares fast on energy/beat, fades slowly - the shared asymmetric envelope
+	# (the same flare() every alive thing uses now, instead of a private EMA here).
 	var target := clampf(f.energy * 0.8 + f.beat * 0.7, 0.0, 1.0)
-	var rate := 8.0 if target > _glow else 1.5
-	_glow = lerpf(_glow, target, 1.0 - exp(-rate * dt))
+	_glow = Nonlinear.flare(_glow, target, dt, 8.0, 1.5)
 	_hue += dt * 0.01   # slow palette drift
 
 

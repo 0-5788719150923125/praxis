@@ -11,6 +11,9 @@ extends VortexScene
 var _f: AudioFeatures = AudioFeatures.new()
 var _lights: Array = []
 var _fog: Array = []
+var _swirl := 0.0        # field rotation angle
+var _swirl_vel := 0.0    # angular velocity - kicked on beats, decays between them
+var _beat_prev := 0.0
 
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
@@ -42,6 +45,15 @@ func update(f: AudioFeatures, delta: float) -> void:
 	_f = f
 	tick(f, delta)
 	drift_view(f, 0.03, 0.04, 0.03, 0.08)
+	# Tempo-driven swirl: each beat kicks the angular velocity, which then decays back
+	# toward a slow baseline - so the field lurches with the music and coasts down,
+	# instead of rotating at one uniform rate.
+	var beat_edge: bool = f.beat > 0.55 and _beat_prev <= 0.55
+	_beat_prev = f.beat
+	if beat_edge:
+		_swirl_vel += 0.8 * (0.5 + f.energy)
+	_swirl_vel = 0.06 + (_swirl_vel - 0.06) * exp(-1.3 * delta)   # decay toward baseline
+	_swirl += _swirl_vel * delta
 	queue_redraw()
 
 
@@ -54,7 +66,7 @@ func _draw() -> void:
 		var L: Dictionary = _lights[i]
 		var base: Vector2 = L.pos
 		var drift := Vector2(mod.value("lx%d" % i), mod.value("ly%d" % i)) * 0.04
-		var pos := (base + drift) * u
+		var pos := (base + drift).rotated(_swirl) * u
 		var bright: float = _f.sample(float(L.band)) * 0.8 + _f.energy * 0.3 + _f.beat * 0.25
 		bright = clampf(0.15 + bright, 0.0, 1.3)
 		var radius: float = u * float(L.size) * (0.6 + 0.6 * bright)
@@ -67,7 +79,7 @@ func _draw() -> void:
 		var Fb: Dictionary = _fog[i]
 		var base: Vector2 = Fb.pos
 		var drift := Vector2(mod.value("fx%d" % i), mod.value("fy%d" % i)) * 0.10
-		var pos := (base + drift) * u
+		var pos := (base + drift).rotated(_swirl * 0.6) * u
 		var radius: float = u * float(Fb.size) * (0.9 + 0.2 * _f.low_mid)
 		_soft_blob(pos, radius, tint)
 

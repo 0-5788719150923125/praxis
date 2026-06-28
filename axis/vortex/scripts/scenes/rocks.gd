@@ -27,20 +27,18 @@ var _done := false
 
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
+	render_kind = "mesh3d"
 	_mode = rng.randi_range(0, 2)
 	_style = STYLES[rng.randi_range(0, STYLES.size() - 1)]
 	lifecycle = "oneshot" if _mode == Mode.CRUMBLE else "loop"
 
-	var subdiv := 2 if _style == "plain" else 1
-	var amp := 0.05 if _style == "plain" else (0.30 if _style == "rough" else 0.14)
 	_edge = 0 if _style == "plain" else (1 if _style == "rough" else 2)
 	_sat = 0.30 if _style == "plain" else (0.42 if _style == "rough" else 0.5)
 
 	var base_hue := rng.randf()
 	var count := rng.randi_range(2, 4)
 	for i in count:
-		var mesh := Mesh3D.icosphere(subdiv)
-		mesh.displace(amp, rng)
+		var mesh := Mesh3D.rock(_style, rng)   # coherent fractal mass + fracture facets
 		var spin := Vector3(
 			rng.randf_range(-1, 1), rng.randf_range(-1, 1), rng.randf_range(-0.4, 0.4))
 		_rocks.append({

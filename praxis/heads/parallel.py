@@ -105,14 +105,45 @@ class ParallelHead(BaseHead):
     def __repr__(self) -> str:
         return self.compose_repr()
 
-    def _gate_combine(self, outputs: List[Tensor], gate_logits: Tensor) -> Tensor:
-        """Blend per-branch outputs by the per-token softmax gate."""
+    def _gate_weights(self, gate_logits: Tensor) -> Tensor:
+        """Per-token softmax gate weights, plus the cached diagnostics and the
+        training-only level-repulsion shared by both combine paths."""
         w = torch.softmax(gate_logits, dim=-1)  # [..., n]
         self._update_gate_stats(w)
         if self.training and self._repulsion_lambda > 0.0 and len(self.branches) > 1:
             self._gate_repulsion = self._level_repulsion(w)
+        return w
+
+    def _gate_combine(self, outputs: List[Tensor], gate_logits: Tensor) -> Tensor:
+        """FEATURE blend (non-terminal ``transform``): weighted sum of the
+        branches' feature outputs. There is no distribution to mix here, so the
+        raw-output blend is correct; only the terminal classify path swaps to a
+        softmax mixture (see ``_gate_combine_logits``)."""
+        w = self._gate_weights(gate_logits)
         stacked = torch.stack(outputs, dim=-1)  # [..., d, n]
         return (stacked * w.unsqueeze(-2)).sum(dim=-1)  # [..., d]
+
+    def _gate_combine_logits(
+        self, outputs: List[Tensor], gate_logits: Tensor
+    ) -> Tensor:
+        """DISTRIBUTION blend (terminal classify): a mixture of softmaxes rather
+        than a weighted sum of raw logits::
+
+            log p = logsumexp_i( log w_i + log_softmax(logits_i) )
+
+        This is scale-invariant - the gate gradient couples to bounded log-probs
+        instead of the branches' raw logit magnitudes, which span |64| on the
+        linear arms vs ~8 on the crystal arm and were hammering the tiny gate
+        weight (~17x grad/weight, the persistent clip source). The result is a
+        normalized log-prob (``sum_v exp = 1``, ``max <= 0``), so cross-entropy
+        and argmax are unchanged and crystal's ``max~0`` logit contract holds for
+        free."""
+        w = self._gate_weights(gate_logits)
+        logw = w.clamp_min(1e-9).log().unsqueeze(-2)  # [..., 1, n]
+        logp = torch.stack(
+            [torch.log_softmax(o, dim=-1) for o in outputs], dim=-1
+        )  # [..., V, n]
+        return torch.logsumexp(logp + logw, dim=-1)  # [..., V]
 
     def _level_repulsion(self, w: Tensor) -> Tensor:
         """Pairwise log-gap repulsion on the mean branch weights (grad-carrying).
@@ -152,12 +183,15 @@ class ParallelHead(BaseHead):
         return self._gate_combine(outs, self.gate(hidden_states))
 
     def forward(self, hidden_states: Tensor, **kwargs: Any) -> Tensor:
-        """Standalone: gate-combine the branches' own outputs (logits when the
-        branches classify, features otherwise)."""
+        """Standalone (terminal): gate-combine the branches' classifier outputs
+        as a mixture of softmaxes, so the gate gradient stays scale-invariant
+        across heterogeneous branch logit magnitudes (see _gate_combine_logits).
+        Terminal ParallelHeads classify; a non-terminal one blends features via
+        ``transform``/``_gate_combine`` instead."""
         if self.gate is None:
             return hidden_states
         outs = [b(hidden_states, **kwargs) for b in self.branches]
-        return self._gate_combine(outs, self.gate(hidden_states))
+        return self._gate_combine_logits(outs, self.gate(hidden_states))
 
     @property
     def classifier(self) -> Optional[nn.Module]:

@@ -34,7 +34,7 @@ ordered, and that ordering carries the whole intuition without any metaphysics:
   Temperature is a position dial over how far off the mean you draw.
 - **The clock computing non-linear transformations** is recurrence - the watch
   turned in depth, re-forming the field each turn (see the paper's recurrent
-  section and [the_snake.md](the_snake.md)'s winding).
+  section).
 
 So the structure the intuition is reaching for is the **frequency-amplitude
 ordering the envelope imposes**: a loud shared mean, a spectrum of progressively

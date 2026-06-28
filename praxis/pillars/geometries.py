@@ -133,13 +133,40 @@ def branch_label(key):
 
 
 def collect_geometries(limit, scan):
-    """Newest-first list of geometry dicts (up to ``limit``), scanning at most
-    ``scan`` runs. Each: {name, hash, label, grid, var_explained, n_points}."""
+    """Geometry dicts for the figure. Two modes, decided by the newest
+    crystal-bearing run:
+
+    * INTRA-RUN - if that run is MULTI-HEAD (e.g. prismatic4's VEAR crystal
+      bank), render *its own* heads and stop. The bank's experts are the natural
+      comparison set; other runs carry a single, differently-shaped head, so a
+      cross-run mix would be apples-to-oranges (and the bank is THIS model's
+      story anyway).
+    * CROSS-RUN - otherwise, one-or-few panels per run, newest-first up to
+      ``limit`` (the original behaviour, for single-head runs).
+
+    Each dict: {name, hash, label, grid, var_explained, n_points, intra_run}."""
     import torch
 
-    geometries = []
+    def _panels(sd, name, run_hash, keys, multi):
+        out = []
+        for key in keys:
+            grid, ve = pca_density_grid(sd[key])
+            out.append(
+                {
+                    "name": name,
+                    "hash": run_hash,
+                    "label": branch_label(key) if multi else "",
+                    "grid": grid,
+                    "var_explained": ve,
+                    "n_points": int(sd[key].shape[0]),
+                    "intra_run": multi,
+                }
+            )
+        return out
+
+    cross_run = []
     for _, run_hash, name, run_dir in runs_newest_first()[:scan]:
-        if len(geometries) >= limit:
+        if len(cross_run) >= limit:
             break
         ckpt = latest_checkpoint(run_dir)
         if not ckpt:
@@ -149,26 +176,26 @@ def collect_geometries(limit, scan):
         except Exception:
             continue
         sd = sd.get("state_dict", sd) if isinstance(sd, dict) else sd
-        keys = sorted(k for k in sd if k.endswith(CENTERS_SUFFIX))
+        keys = [
+            k
+            for k in sorted(sd)
+            if k.endswith(CENTERS_SUFFIX)
+            and hasattr(sd[k], "dim")
+            and sd[k].dim() == 2
+            and sd[k].shape[0] >= 3
+        ]
+        if not keys:
+            continue
         multi = len(keys) > 1
-        for key in keys:
-            if len(geometries) >= limit:
+        run_geos = _panels(sd, name, run_hash, keys, multi)
+        # Newest crystal run is a multi-head bank: render its own heads, done.
+        if multi and not cross_run:
+            return run_geos
+        for g in run_geos:
+            if len(cross_run) >= limit:
                 break
-            W = sd[key]
-            if not hasattr(W, "dim") or W.dim() != 2 or W.shape[0] < 3:
-                continue
-            grid, ve = pca_density_grid(W)
-            geometries.append(
-                {
-                    "name": name,
-                    "hash": run_hash,
-                    "label": branch_label(key) if multi else "",
-                    "grid": grid,
-                    "var_explained": ve,
-                    "n_points": int(W.shape[0]),
-                }
-            )
-    return geometries
+            cross_run.append(g)
+    return cross_run
 
 
 def _shared_cmap():
@@ -191,17 +218,25 @@ def render_png(geo, index):
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import numpy as np
-    from matplotlib.colors import LogNorm
 
-    grid = geo["grid"]
+    grid = np.asarray(geo["grid"], dtype=float)
     os.makedirs(FIG_DIR, exist_ok=True)
     fig, ax = plt.subplots(figsize=(3, 3))
-    masked = np.where(grid > 0, grid, np.nan)
+    # Mirror the dashboard's renderHeatmap2D exactly: normalize by
+    # log1p(count) / log1p(peak) and map straight through the shared ramp with
+    # nearest-neighbour upscaling. The old LogNorm(vmin=1) floored every
+    # single-point cell to black - and in a sparse PCA grid most occupied cells
+    # hold exactly one center, so the panel read as near-empty. log1p lifts those
+    # to visible color, matching the live card's density.
+    peak = max(float(grid.max()), 1.0)
+    v = np.log1p(grid) / np.log1p(peak)
     ax.imshow(
-        masked,
+        v,
         origin="lower",
         cmap=_shared_cmap(),
-        norm=LogNorm(vmin=1, vmax=max(int(grid.max()), 2)),
+        vmin=0.0,
+        vmax=1.0,
+        interpolation="nearest",
     )
     title = geo["name"] + (f" {geo['label']}" if geo["label"] else "")
     ax.set_title(title, fontsize=9)
@@ -226,17 +261,32 @@ def figure_tex(paths, geometries):
         )
         rows.append(cells)
     body = " \\\\[6pt]\n  ".join(rows)
-    names = ", ".join(
-        g["name"] + (f" ({g['label']})" if g["label"] else "") for g in geometries
-    )
-    caption = (
-        "Center PCA density for the "
-        f"{len(geometries)} most recent crystal-head runs ({names}). Each panel "
-        "is the top-2 PCA projection of a head's vocabulary centers, binned to a "
+    grid_desc = (
+        f"the top-2 PCA projection of a head's vocabulary centers, binned to a "
         f"{GRID_SIZE}$\\times${GRID_SIZE} density grid (log color) - the same "
-        "snapshot the dashboard renders live. Different runs settle into "
-        "structurally different geometries, not noise."
+        "snapshot the dashboard renders live."
     )
+    if geometries and all(g.get("intra_run") for g in geometries):
+        # Single multi-head model (a crystal bank): the panels are its OWN heads.
+        run = geometries[0]["name"]
+        labels = ", ".join(g["label"] for g in geometries if g["label"])
+        caption = (
+            f"Center PCA density for the {len(geometries)} crystal heads of "
+            f"{run} - a single multi-head model (prismatic4's VEAR crystal bank), "
+            f"so these are that run's own heads ({labels}), not a cross-run mix. "
+            f"Each panel is {grid_desc} The bank's experts settle into structurally "
+            "distinct geometries - the between-expert variance the router selects over."
+        )
+    else:
+        names = ", ".join(
+            g["name"] + (f" ({g['label']})" if g["label"] else "") for g in geometries
+        )
+        caption = (
+            "Center PCA density for the "
+            f"{len(geometries)} most recent crystal-head runs ({names}). Each panel "
+            f"is {grid_desc} Different runs settle into structurally different "
+            "geometries, not noise."
+        )
     return (
         "\\newcommand{\\paperGeometryFigure}{%\n"
         "\\begin{figure}[tbp]\n  \\centering\n  "

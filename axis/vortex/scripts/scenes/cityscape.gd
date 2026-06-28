@@ -40,11 +40,15 @@ func update(f: AudioFeatures, delta: float) -> void:
 	queue_redraw()
 
 
+const OVER := 1.3        # draw wider than the frame so view motion never bares an edge
+
 func _draw() -> void:
 	begin_draw()
-	var halfw := size.x * 0.5
+	var halfw := size.x * 0.5 * OVER
 	var halfh := size.y * 0.5
-	var ground := halfh * 0.92
+	# The baseline sits BELOW the visible bottom, so the buildings run off the bottom
+	# edge - no black bar under the skyline (the old 0.92 left a strip).
+	var ground := halfh * 1.18
 	var hue: float = params.hue
 	var max_h: float = params.max_h
 	var win_hue: float = params.win_hue
@@ -54,7 +58,7 @@ func _draw() -> void:
 		var depth: float = layer.depth         # 0 back .. 1 front
 		var buildings: Array = layer.buildings
 		var bn := buildings.size()
-		var bw := size.x * 1.05 / float(bn)
+		var bw := (halfw * 2.0) / float(bn)
 		for bi in bn:
 			var bd: Dictionary = buildings[bi]
 			var loud: float = _f.sample(float(bd.band))

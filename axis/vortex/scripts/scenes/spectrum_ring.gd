@@ -78,6 +78,24 @@ func _draw() -> void:
 		var val := clampf(0.35 + 0.4 * e + 0.5 * lit + 0.4 * glow, 0.0, 1.0)
 		draw_line(inner, outer, Color.from_hsv(h, 0.7, val), thickness, true)
 
-	# Core glows on the beat (fixed size).
-	var core := Color.from_hsv(hue, 0.4, 1.0, 0.2 + 0.6 * glow)
-	draw_circle(Vector2.ZERO, base_r * 0.5, core)
+	# A shaded sphere at the core: real curvature (dark rim -> bright, light-offset
+	# highlight) and a soft halo, brightening on the beat. Not a flat disc.
+	_draw_sphere(Vector2.ZERO, base_r * 0.62, hue, glow)
+
+
+# A pseudo-3D sphere: opaque circles stacked large-dark to small-bright, each nudged
+# toward the light, so a highlight sits up-left and the lower-right falls into shadow.
+func _draw_sphere(c: Vector2, radius: float, hue: float, glow: float) -> void:
+	# Soft outer halo (a couple of faint wide discs).
+	for h in 3:
+		var hr := radius * (1.4 + 0.5 * h)
+		draw_circle(c, hr, Color.from_hsv(hue, 0.4, 1.0, (0.05 + 0.10 * glow) * (1.0 - h / 3.0)))
+	var light := Vector2(-0.36, -0.42)
+	var layers := 16
+	for i in layers:
+		var t := float(i) / float(layers - 1)          # 0 rim .. 1 highlight
+		var r := radius * (1.0 - 0.9 * t)
+		var off := light * radius * 0.5 * t
+		var val := clampf(0.12 + 0.95 * t * (0.55 + 0.55 * glow), 0.0, 1.0)
+		var sat := 0.55 * (1.0 - 0.85 * t)             # desaturate toward the highlight
+		draw_circle(c + off, r, Color.from_hsv(hue, sat, val))

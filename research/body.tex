@@ -214,6 +214,12 @@ The same convergence principle drives the author's companion infrastructure proj
 
 The blind watchmaker is design without a designer: structure that emerges from a blind, iterative process rather than from foresight. That is what these systems do. No one specifies the spectrum the harmonic field will lock onto, or the geometry the crystal centers will grow into; they emerge from the process, and we read them off afterward. Which raises an honest question about what would even count as proof here. A benchmark number proves that one model beat another on one distribution. It does not establish a claim about regimes of representation. The framework's proof, if it has one, is of a different kind: it is the practice itself. \textit{Praxis} is the Greek word for theory enacted - for doing as a form of knowing. The demonstration on offer is not a leaderboard but a method you can run, whose intuitions arrive only by stepping through it yourself. The name is the argument: the proof is in the doing.
 
+% Real Center-PCA densities read off the live checkpoint - the "read them off
+% afterward" above, in silico. For a multi-head model (prismatic4's VEAR crystal
+% bank) this renders that run's own heads rather than a cross-run mix; generated
+% by praxis/pillars/geometries.py (empty macro on a clean checkout).
+\paperGeometryFigure
+
 \subsection{Implications for machine learning}
 
 If bias and variance are separable in a harmonic latent space, then they should be learned as input-dependent functions rather than chosen as a global operating point: the field learns which rhythm matters, the delta learns when and how much to deviate, and no per-experiment hyperparameter mediates the two. If the scaling conjecture holds even partially, then on problems with strong periodic or compositional structure, the right move is to change the basis rather than to add parameters, and the linear and logarithmic regimes should be distinguishable by measuring the slope of coverage against resources. Both are testable in the framework, which is the only reason to state them.

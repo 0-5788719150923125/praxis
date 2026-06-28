@@ -7,7 +7,6 @@ done is the part that makes it pay: real matmul shrinkage and a learned schedule
 Sibling to [forced_computation.md](forced_computation.md),
 [the_fifth_dimension.md](the_fifth_dimension.md),
 [architecture_separation.md](architecture_separation.md),
-[deep_recurrent_cost.md](deep_recurrent_cost.md),
 [oscillatory_axes.md](oscillatory_axes.md), [the_dial.md](the_dial.md).
 
 ## The idea
@@ -85,7 +84,7 @@ gentle constant breathing, `helical_tight` an aggressive floor.
   no-ops under `torch.compile` (guarded via `is_compiling`); it is an eager-mode
   optimization. Stacking compile and width would need a native budget *argument*
   the forward reads (no monkeypatch) + bucketed ranks so Dynamo specializes one
-  graph per bucket. See [deep_recurrent_cost.md](deep_recurrent_cost.md).
+  graph per bucket. See the cost question below.
 - **Phase 2 (learned schedule):** replace the deterministic arch with a width
   gate - a per-depth base (an `nn.Embedding(depth, 1)` like the learnable RoPE
   theta) plus an input-conditional delta - trained with a budget loss whose
@@ -96,6 +95,46 @@ gentle constant breathing, `helical_tight` an aggressive floor.
   training), each prefix becomes individually valid and the voters genuinely
   span the space. Once it learns, the Width Profile card stops being a static
   arch and starts moving over training - the cosine the dynamics want to become.
+
+## Does trimming embedding width help speed? (the cost question)
+
+Status: analysis, parked until profiled. Mixture-of-widths (`helical_sparse`) cut
+the per-step FLOPs and it feels faster, but a deep recurrent model is still slower
+than a shallow one. This records *why*, and why reducing the embedding/output
+width is a small, orthogonal win - not the lever.
+
+Trimming embedding/head width shrinks the gradient **tensors** (fewer elements),
+not the per-element **magnitude**, so it is a parameter-count win - a cheaper Lion
+step (O(num_params)) and less optimizer-state memory, plus the fixed per-forward
+cost of the byte-latent encoder/embeddings/head - not a gradient-conditioning win.
+No optimizer hooks are needed: `embed_size` is already decoupled from
+`hidden_size` (96 vs 128 in the calm-c blueprint, projected up), so trimming it is
+a static config change. Hooks would only be needed to vary width *dynamically* per
+step, which hits the same residual-stream invariant this note respects - you
+cannot shrink the stream the layers add into, so a dynamic embedding width does
+not compose. (Width gets around it by deflating each block's *inner* rank and
+scattering a low-rank update back into the full stream.)
+
+It will not fix the slowness, because the embedding and head run **once per
+forward**, amortized over every depth step. A deep recurrent model is slower than
+a shallow one because of **depth-sequential latency**: N steps that must run in
+sequence, each paying kernel-launch + Python overhead. Width cut per-step FLOPs
+(the felt speedup) but left the step *count* and per-step *overhead* untouched,
+and trimming the embedding touches neither. The real levers, in order:
+`torch.compile` (the slow runs are `--no-compile`, so every step is eager - but it
+does not compose with width, see the eager-only note above; pick the regime per
+run), per-step fixed overhead (Infini's segment loop and the memory
+retrieve/update are Python-looped and paid `depth` times, plausibly bigger than
+the embedding at small hidden sizes), and fewer steps (halting already trims
+depth; the arch's bias-to-exit compounds it).
+
+Honest recommendation: profile before trimming. For this model the head is small
+(byte vocab 264; crystal/HALO, not a large softmax), so the embedding/head is
+probably not hot - the depth loop and eager mode are. Test `helical_sparse` as is,
+turn compile back on and re-measure to separate eager overhead from real compute,
+profile a step to see whether the encoder/head or the per-step attention loop
+dominates, and only then consider a smaller `embed_size` - as an
+optimizer-step/memory win, not a latency fix.
 
 ## Why this is a note, not paper content yet
 

@@ -6,7 +6,7 @@
 > training it on the record of its own construction. Sibling to
 > [harmonic_koopman.md](harmonic_koopman.md), [the_dial.md](the_dial.md),
 > [observer_frequency.md](observer_frequency.md),
-> [observer_effect.md](observer_effect.md), [kb_spider.md](kb_spider.md).
+> [observer_effect.md](observer_effect.md).
 > Discipline as always: kernel maps to mechanism; the cyclic-time / rollback
 > imagery is voice, marked.
 
@@ -37,7 +37,7 @@ That is precisely "sample commits over time, penalized over age." What is missin
 is the other half: emit the **actual diffs** (file + line level, `git log -p`
 patch hunks, not just numstat counts) as a **training source**, recency-weighted
 in the *sampling*, registered like any other dataset (the KB dataset / spider
-pattern, [kb_spider.md](kb_spider.md)). The figure proves the signal is real and
+pattern, `praxis/spider/`). The figure proves the signal is real and
 cheap to extract; the feature is "same signal, into tokens instead of canvas."
 
 ## The grounded kernel (buildable)
@@ -137,7 +137,7 @@ allowing 144,000 to move on." Held honestly:
 
 `praxis/pillars/evolution.py` (the half that exists); the self-evolution figure
 (`research/.../self-evolution.yml`, paper); KB dataset / spider
-([kb_spider.md](kb_spider.md)); recency kernel ([the_dial.md](the_dial.md),
+(`praxis/spider/`); recency kernel ([the_dial.md](the_dial.md),
 [observer_frequency.md](observer_frequency.md)); Platformer reconciliation /
 rollback (`platformer2025`); commit-diff modeling (real but niche - e.g. learned
 edit/commit models; verify before citing); reverse-time / bidirectional sequence

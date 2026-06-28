@@ -27,6 +27,7 @@ var _opick := 0
 
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
+	render_kind = "swarm"
 	framing = "field"
 	_theme = "growth" if rng.randf() < 0.5 else "pulse"
 	_hue = rng.randf()                                   # terrain hue
@@ -62,7 +63,7 @@ func update(f: AudioFeatures, delta: float) -> void:
 	_f = f
 	tick(f, delta)
 	drift_view(f, 0.02, 0.03)
-	var drive := f.energy * 0.7 + f.beat * 0.5
+	var drive := f.energy * 0.8 + f.beat * 0.6
 	if _theme == "growth":
 		_dev.step(drive, delta, 0.02)    # grows, slight decay so it breathes
 	# Inject a colour pulse at one origin on each beat, then let it ripple outward.
@@ -83,7 +84,7 @@ func _draw() -> void:
 	var th := tw * 0.5                        # 2:1 iso
 	var z_ter := u * 0.16                     # hill height scale
 	var z_build := u * 0.12                   # building height scale
-	var build_gain := 0.65 + 0.25 * _f.energy   # height is mostly structural, not throb
+	var build_gain := 0.55 + 0.3 * _f.energy
 
 	# Back-to-front so nearer blocks overlap farther ones correctly.
 	for gy in G:
@@ -91,14 +92,20 @@ func _draw() -> void:
 			var i := gy * G + gx
 			var dev := _dev.f[i]
 			var pulse := _pulse.f[i]
-			var building := dev * build_gain
+			# Each block bounces with its own spectral band - responsiveness, so the
+			# city moves with the music instead of standing as one static slab.
+			var react := _f.sample(clampf(_terrain[i] * 0.85, 0.0, 1.0))
+			var building := dev * (build_gain + 0.7 * react)
 			var top_z := _terrain[i] * z_ter + building * z_build
 			var cx := float(gx - gy) * tw
 			var cy := (float(gx + gy) - float(G - 1)) * th - top_z
 			var side := building * z_build + 2.0
-			var hue := fposmod(lerpf(_hue, _city_hue, dev) + 0.12 * pulse, 1.0)
-			var lit := 0.14 + 0.45 * _terrain[i] + 0.35 * dev + 0.6 * pulse
-			_block(Vector2(cx, cy), tw, th, side, hue, clampf(lit, 0.05, 1.1))
+			# Gradients: hue drifts with terrain height, position, development, and the
+			# colour pulse - a varied field, not the uniform pink the flat city read as.
+			var posg := float(gx + gy) / float(2 * G)
+			var hue := fposmod(_hue + 0.16 * _terrain[i] + 0.13 * posg + 0.30 * dev + 0.20 * pulse, 1.0)
+			var lit := 0.08 + 0.52 * _terrain[i] + 0.28 * dev + 0.5 * react + 0.7 * pulse
+			_block(Vector2(cx, cy), tw, th, side, hue, clampf(lit, 0.05, 1.15))
 
 	_draw_fog(-span * 0.5, span, size.y * 0.5, u)
 

@@ -117,8 +117,11 @@ class Wind extends Force:
 		var freq := num("freq", 0.4)
 		var lift := num("lift", 0.0)
 		for p: Particle in ps:
-			p.acc.x += amp * sin((p.home.y * 3.0 + _t) * freq * TAU) + 0.4 * amp * f.treble * p.noise.x
-			p.acc.y += lift
+			# Per-particle phase (p.noise.x * TAU) decorrelates the sway, so the cloud
+			# drifts as individuals instead of swaying back and forth as one block.
+			p.acc.x += amp * sin((p.home.y * 3.0 + p.noise.x * TAU + _t) * freq * TAU) \
+				+ 0.4 * amp * f.treble * p.noise.x
+			p.acc.y += lift + 0.3 * amp * sin((p.noise.y * TAU + _t) * freq * TAU)
 	func resolve(_ps, _f, dt) -> void:
 		_t += dt
 

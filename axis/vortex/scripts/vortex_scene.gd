@@ -32,8 +32,34 @@ const BEHAVIORS := {
 	"fluid": {"view": 0.3, "element": 1.0, "speed": 1.0},
 }
 
+## Render kind - the typed "how is this scene drawn" axis, separate from *what* it
+## draws and *how it moves*. The project carries several rendering mechanisms
+## forward (the "split"); naming each one makes the divergence explicit so we can
+## converge on the unified 3D path. A scene declares this in build_params. One of:
+##   "canvas"    - flat 2D canvas drawing (draw_* in centered screen space). Legacy.
+##   "mesh3d"    - software 3D bodies ([Mesh3D]) projected onto the 2D canvas.
+##   "particles" - a [ParticleSystem] substrate, drawn on the canvas.
+##   "swarm"     - a [Swarm] field of many items, drawn on the canvas.
+##   "scene3d"   - the unified path: a [Camera3D] + depth-sorted 3D drawables
+##                 (meshes and [Plane3D] quads) under forced perspective. The target
+##                 everything else migrates toward.
+var render_kind := "canvas"
+
 ## The typed definition for this instance.
 var params: Dictionary = {}
+
+## Identity stamped by the [Director] at creation, for telemetry / feedback capture
+## (the feedback console writes these so a critique can be tied back to its scene).
+var scene_name := ""
+var behavior_name := "drift"
+var shot_name := ""
+var seed_value := 0
+
+## Optional per-scene exit override set by the [Director] in manual (runbook) mode:
+## `{"hold": seconds}` for fixed timing, or `{"trigger": Trigger, "min":, "max":}`
+## to land the cut on a chosen musical cue. Empty = the Director's default
+## lifecycle + randomly-armed trigger (auto mode).
+var exit_spec: Dictionary = {}
 ## Viewport size in pixels, kept current across resizes.
 var size: Vector2 = Vector2.ZERO
 ## Organic modulation channels (seeded). See [ModBank].
@@ -68,6 +94,8 @@ var _life := 0.0
 func init_with_seed(seed_value: int, behavior_name := "drift") -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_value
+	self.seed_value = seed_value
+	self.behavior_name = behavior_name
 	behavior = BEHAVIORS.get(behavior_name, BEHAVIORS["drift"])
 	mod = ModBank.new(seed_value ^ 0x5bd1e995)
 	view = SceneView.new()
