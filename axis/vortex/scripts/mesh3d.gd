@@ -29,6 +29,10 @@ var faces: Array = []   # each face is a PackedInt32Array of 3 vertex indices
 ## Optional per-face surface variation in roughly -amp..amp (see [method texturize]),
 ## applied as a brightness/saturation mottle when drawn - the "texture" layer.
 var face_tint := PackedFloat32Array()
+## Optional per-vertex normals (see [method compute_normals]) for smooth (Gouraud)
+## shading - the colour is interpolated across each triangle instead of flat, so a
+## subdivided sphere reads as a smooth ball, not faceted.
+var vertex_normals := PackedVector3Array()
 
 
 ## A subdivided icosphere (subdiv 0 = 20-face icosahedron, 1 = 80, 2 = 320).
@@ -128,6 +132,31 @@ static func tetrahedron() -> Mesh3D:
 	return m
 
 
+## A circular cap of `rings` concentric rings and `segments` around, radius 1 at the
+## rim (z=0), with a spherical-cap profile to `height` at the centre: height > 0 is a
+## dome bulging toward +z (a cornea/lens), height < 0 a funnel/recess (an iris bowl),
+## 0 a flat disc. Built facing +z; orient it with the draw basis.
+static func dome(rings: int, segments: int, height: float) -> Mesh3D:
+	var m := Mesh3D.new()
+	m.verts.append(Vector3(0, 0, height))                       # centre
+	for ri in range(1, rings + 1):
+		var rr := float(ri) / float(rings)
+		var z := height * sqrt(maxf(0.0, 1.0 - rr * rr))       # spherical-cap profile
+		for si in segments:
+			var a := TAU * float(si) / float(segments)
+			m.verts.append(Vector3(cos(a) * rr, sin(a) * rr, z))
+	for si in segments:                                         # centre fan (first ring)
+		m.faces.append(PackedInt32Array([0, 1 + si, 1 + (si + 1) % segments]))
+	for ri in range(1, rings):                                  # strips between rings
+		var b0 := 1 + (ri - 1) * segments
+		var b1 := 1 + ri * segments
+		for si in segments:
+			var sn := (si + 1) % segments
+			m.faces.append(PackedInt32Array([b0 + si, b1 + si, b1 + sn]))
+			m.faces.append(PackedInt32Array([b0 + si, b1 + sn, b0 + sn]))
+	return m
+
+
 ## Push each vertex out/in along its direction by seeded *uncorrelated* noise - a
 ## quick fuzzy lump. Neighbours are independent, so the surface reads as a noisy
 ## ball; for a believable solid prefer [method warp] (coherent), which is what the
@@ -178,6 +207,22 @@ func facet(count: int, depth: float, rng: RandomNumberGenerator) -> void:
 func stretch(s: Vector3) -> void:
 	for i in verts.size():
 		verts[i] = Vector3(verts[i].x * s.x, verts[i].y * s.y, verts[i].z * s.z)
+
+
+## Compute per-vertex normals (area-weighted average of adjacent face normals) for
+## smooth shading. Call once after the geometry is final; pass smooth = true to
+## [method draw_through] to use them.
+func compute_normals() -> void:
+	vertex_normals.resize(verts.size())
+	for i in verts.size():
+		vertex_normals[i] = Vector3.ZERO
+	for f: PackedInt32Array in faces:
+		var fn := (verts[f[1]] - verts[f[0]]).cross(verts[f[2]] - verts[f[0]])
+		for idx in f:
+			vertex_normals[idx] = vertex_normals[idx] + fn
+	for i in verts.size():
+		var n: Vector3 = vertex_normals[i]
+		vertex_normals[i] = n.normalized() if n.length() > 1e-6 else Vector3.UP
 
 
 ## Bake a coherent surface texture: a value-noise mottle sampled at each face
@@ -343,8 +388,11 @@ func draw_shaded(ci: CanvasItem, basis: Basis, center: Vector2, scale: float,
 ## look. A face is skipped if any of its vertices fall behind the camera.
 func draw_through(ci: CanvasItem, lens: Lens3D, u_px: float, basis: Basis, pos: Vector3,
 		scale: float, hue: float, sat: float, edge: int, face_alpha := 1.0,
-		glow := 0.0, explode := 0.0) -> void:
+		glow := 0.0, explode := 0.0, gloss := 0.0, rough := 0.6,
+		unlit := Color(0, 0, 0, 0), smooth := false) -> void:
 	var light := LIGHT.normalized()
+	var shininess := lerpf(48.0, 4.0, clampf(rough, 0.0, 1.0))
+	var textured := face_tint.size() == faces.size()
 	var wv := []                      # world-space vertices
 	wv.resize(verts.size())
 	for i in verts.size():
@@ -361,6 +409,36 @@ func draw_through(ci: CanvasItem, lens: Lens3D, u_px: float, basis: Basis, pos: 
 	var order := range(faces.size())
 	order.sort_custom(func(a, b): return depth[a] > depth[b])   # far first
 
+	# Smooth (Gouraud) path: per-vertex normals -> per-vertex colour interpolated
+	# across each triangle, so a sphere reads smooth, not faceted. Back-face culled.
+	if smooth and vertex_normals.size() == verts.size():
+		for fi in order:
+			var f: PackedInt32Array = faces[fi]
+			var a0: Vector3 = wv[f[0]]
+			var a1: Vector3 = wv[f[1]]
+			var a2: Vector3 = wv[f[2]]
+			var cen := (a0 + a1 + a2) / 3.0
+			if (a1 - a0).cross(a2 - a0).dot(cen - lens.eye) > 0.0:
+				continue                       # back-facing
+			var poly := PackedVector2Array()
+			var cols := PackedColorArray()
+			var ok := true
+			for idx in f:
+				var wp: Vector3 = wv[idx]
+				var pr := lens.project(wp)
+				if pr.z <= lens.near:
+					ok = false
+					break
+				poly.append(Vector2(pr.x, pr.y) * u_px)
+				var nw: Vector3 = (basis * vertex_normals[idx]).normalized()
+				var view: Vector3 = (lens.eye - wp).normalized()
+				var sp := gloss * pow(maxf(0.0, nw.dot((light + view).normalized())), shininess) if gloss > 0.0 else 0.0
+				var b := clampf(0.22 + 0.78 * maxf(0.0, nw.dot(light)) + glow + sp, 0.0, 1.0)
+				cols.append(Color.from_hsv(hue, clampf(sat * (1.0 - 0.6 * sp), 0.0, 1.0), b, face_alpha))
+			if ok and not _degenerate(poly):
+				ci.draw_polygon(poly, cols)
+		return
+
 	for fi in order:
 		var f: PackedInt32Array = faces[fi]
 		var v0: Vector3 = wv[f[0]]
@@ -370,7 +448,16 @@ func draw_through(ci: CanvasItem, lens: Lens3D, u_px: float, basis: Basis, pos: 
 		var cen := (v0 + v1 + v2) / 3.0
 		if n.dot(cen - lens.eye) > 0.0:        # facing away from the camera -> flip
 			n = -n
-		var bright := clampf(0.22 + 0.78 * maxf(0.0, n.dot(light)) + glow, 0.0, 1.0)
+		var col: Color
+		if unlit.a > 0.0:                       # flat, unlit (e.g. a black pupil)
+			col = Color(unlit.r, unlit.g, unlit.b, unlit.a * face_alpha)
+		else:
+			var view := (lens.eye - cen).normalized()
+			var spec := gloss * pow(maxf(0.0, n.dot((light + view).normalized())), shininess) if gloss > 0.0 else 0.0
+			var tint := face_tint[fi] if textured else 0.0
+			var bright := clampf((0.22 + 0.78 * maxf(0.0, n.dot(light)) + glow + spec) * (1.0 + tint), 0.0, 1.0)
+			var fsat := clampf(sat * (1.0 - 0.6 * spec) * (1.0 - 0.25 * absf(tint)), 0.0, 1.0)
+			col = Color.from_hsv(hue, fsat, bright, face_alpha)
 		var push := n * explode
 		var poly := PackedVector2Array()
 		var ok := true
@@ -382,7 +469,7 @@ func draw_through(ci: CanvasItem, lens: Lens3D, u_px: float, basis: Basis, pos: 
 			poly.append(Vector2(pr.x, pr.y) * u_px)
 		if not ok or _degenerate(poly):
 			continue
-		ci.draw_colored_polygon(poly, Color.from_hsv(hue, sat, bright, face_alpha))
+		ci.draw_colored_polygon(poly, col)
 		if edge == 1:
 			var e := poly.duplicate(); e.append(poly[0])
 			ci.draw_polyline(e, Color(0, 0, 0, 0.5), 1.0, true)

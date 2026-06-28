@@ -104,7 +104,9 @@ func update(f: AudioFeatures, delta: float) -> void:
 
 	for s in _shards:
 		s.pos += s.vel * delta
-		s.basis = s.basis * Basis.from_euler(s.spin * delta)
+		# Re-orthonormalize: repeated incremental rotation accumulates float drift,
+		# which would otherwise make slerp/quaternion conversion below fail.
+		s.basis = (s.basis * Basis.from_euler(s.spin * delta)).orthonormalized()
 		s.vel *= maxf(0.0, 1.0 - 1.1 * delta)        # drag
 		s.spin *= maxf(0.0, 1.0 - 0.4 * delta)
 		if not _oneshot:                              # pull back home and re-knit
