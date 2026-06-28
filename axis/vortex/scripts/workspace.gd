@@ -4,26 +4,26 @@ class_name Workspace
 ## Workspace - the manual-mode authoring surface (scaffolding).
 ##
 ## Opened by the splash's Manual button, over a session already running the default
-## runbook. A left-side panel lists the runbooks in runbooks/; clicking one switches
+## storyboard. A left-side panel lists the storyboards in storyboards/; clicking one switches
 ## the Director to it (manual mode) and jumps to its first scene. The visualizer
 ## keeps playing behind the panel - this is the canvas the future manual editor will
 ## live in (per-entry params, reordering, timeline, save). For now it is just the
-## runbook list + the scene behind it; everything else is intentionally stubbed.
+## storyboard list + the scene behind it; everything else is intentionally stubbed.
 
 const PANEL_W := 300
 
 var _panel: PanelContainer
 var _reopen: Button
 var _list: VBoxContainer
-var _buttons := {}            # runbook name -> Button
+var _buttons := {}            # storyboard name -> Button
 var _active := ""
 
 
 func _ready() -> void:
 	layer = 100               # above the scene, below the feedback console (128)
 	_build_ui()
-	# Reflect the runbook the session started on (default), if any.
-	_active = Director.runbook_name()
+	# Reflect the storyboard the session started on (default), if any.
+	_active = Director.storyboard_name()
 	_restyle()
 
 
@@ -55,7 +55,7 @@ func _build_ui() -> void:
 	header.add_child(hide_btn)
 
 	var sub := Label.new()
-	sub.text = "Runbooks"
+	sub.text = "Storyboards"
 	sub.add_theme_color_override("font_color", Color(0.6, 0.68, 0.8))
 	col.add_child(sub)
 
@@ -68,7 +68,7 @@ func _build_ui() -> void:
 	_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_list.add_theme_constant_override("separation", 4)
 	scroll.add_child(_list)
-	_populate_runbooks()
+	_populate_storyboards()
 
 	var note := Label.new()
 	note.text = "scaffolding — editing tools coming"
@@ -77,7 +77,7 @@ func _build_ui() -> void:
 	col.add_child(note)
 
 	# Collapsed-state reopen tab.
-	_reopen = _flat_button("Runbooks ›")
+	_reopen = _flat_button("Storyboards ›")
 	_reopen.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	_reopen.position = Vector2(10, 10)
 	_reopen.visible = false
@@ -85,8 +85,8 @@ func _build_ui() -> void:
 	_reopen.pressed.connect(_expand)
 
 
-func _populate_runbooks() -> void:
-	var dir := DirAccess.open("res://runbooks")
+func _populate_storyboards() -> void:
+	var dir := DirAccess.open("res://storyboards")
 	if dir == null:
 		return
 	var names := []
@@ -103,15 +103,15 @@ func _populate_runbooks() -> void:
 		_buttons[n] = b
 
 
-# Switch the live session to a runbook and jump to its first scene.
+# Switch the live session to a storyboard and jump to its first scene.
 func _select(name: String) -> void:
-	if Director.load_runbook(name):
+	if Director.load_storyboard(name):
 		_active = name
 		Director.next()
 		_restyle()
 
 
-# Mark the active runbook in the list.
+# Mark the active storyboard in the list.
 func _restyle() -> void:
 	for n in _buttons:
 		var b: Button = _buttons[n]

@@ -26,34 +26,58 @@ and the compute budget to resolve them - "no length, only a budget of steps."
 
 ## Provenance (and an honest caution)
 
-This started as length extrapolation through harmonic memory of past amplitudes,
-with a damping "entry velocity" reading of the Serpent modulation. That damping
-reading came back null (below). The reframe to spectral-attractor convergence is
-better aligned with the Koopman thesis - but it was made *after* a null, which is
-exactly when a falsifiable claim can quietly become an unfalsifiable one.
-"Timelessness" and "phantoms" predict nothing as words. The reframe earns its keep
-only because it predicts *more* measurements than the length version did (the
-battery below); held to those, it is a sharpening, not a retreat. If it ever
-floats free of the battery, it has become the sealed box and should be cut.
+This started as length extrapolation with a damping "entry velocity" reading. The
+*linear* form of that reading came back null - but the null was scoped too
+narrowly (a straight-line fit cannot see clustered/sparse/periodic structure), and
+re-measuring the right shape found the **sparse, clustered, low-dim geometry is
+actually there** (below). So the reframe to spectral-attractor convergence is
+partly *earned by data* (the structural half), not a pure post-null retreat. The
+discipline still holds on what remains unmeasured: the periodic-jump half is
+untested, and "timelessness/phantoms" predict nothing as words - the reframe keeps
+its place only by predicting the battery below. The one part that is *not*
+recoverable as a measurement is the cosmic scale ("an Euler-derived timescale ≈
+the length of the full universe"): the period is real and measurable (the β's, the
+recurrent depth), but "the length of the universe" is not a quantity in the
+network. Keep the measurable core; let the cosmic scale be the muse, not the claim.
 
-## What is measured (null, batch 7165)
+## What is measured (batch 7165) - one null, one positive
 
-The damping-line sub-reading is falsified on the obvious cut:
+The first pass tested for a *linear* shape and was scoped too narrowly (a low R²
+on a line says "not a line," not "no structure"):
 
-- Encoder Serpent params, γ/β/α vs feature index (linear fit): **R² 0.00-0.08.**
-  No line in the bias.
-- Activation amplitude vs patch position: thirds 0.291 / 0.304 / 0.299, trend
-  **R² 0.015.** No envelope.
+- **Null (linear ramp):** Serpent params γ/β/α vs feature index, R² 0.00-0.08;
+  activation amplitude vs patch position, trend R² 0.015. Kills the smooth
+  "amplitude rises right-to-left / dampening" reading - but *only* that shape.
 
-This kills "amplitude rises right-to-left / clear dampening" in those views. It
-says nothing yet about spectral-attractor convergence, which predicts other things.
+Re-measured on the shapes the theory actually predicts (sparse, clustered,
+periodic), the picture flips on the structural half:
+
+- **Positive (sparse + clustered):** crystal bank centers are low-dimensional and
+  tightly clustered - effective dim (participation ratio) **1.0, 1.3, 7.5, 7.4**
+  out of 128 across the four experts; nearest-neighbor / mean distance **0.05-0.62**.
+  Experts 0-1 are essentially a *line* (eff. dim ≈ 1) - the "line in the bias"
+  Servant intuition, unbidden. This is a sparse, clustered geometric index, the
+  structural half of the conjecture. Caveat: eff. dim 1.0 is genuine structure OR
+  partial center-collapse; the non-harmonic control (test 4) distinguishes them.
+- **Untested (periodic jumps):** β frequencies span scales (range/std 7.6, up to
+  ~6), but a static FFT of one activation across patches is near-flat (top freq
+  1.28x mean - no dominant period). "Jumps between clusters" is a property of the
+  *dynamics across compute steps*, not a static activation, so this is untested,
+  not disproven (see test 1).
+
+Named prior art the conjecture maps onto: Kanerva **Sparse Distributed Memory**
+(vast address space, sparse population, proximity retrieval), the **Platonic
+Representation Hypothesis** (approximately-universal shared space), and the
+**grokking "clock" circuits** (periodic activations folding inputs modularly).
 
 ## Falsification battery (the cash value of "timelessness")
 
-1. **Convergence within budget.** Hold the input fixed, run the iteration, track
-   the spectral state across compute steps; it should reach a fixed point within
-   the budget. Falsified if it never settles. This is the literal "computes to a
-   cluster," and is the gate to any *paper* claim.
+1. **Convergence + discrete jumps within budget.** Hold the input fixed, run the
+   iteration, and track *which cluster is active* across recurrent-depth steps. Two
+   predictions in one: it should reach a fixed point within the budget (the literal
+   "computes to a cluster"), and the path there should be *discrete hops* between
+   populated clusters, not a smooth drift - the right-shaped test for the
+   periodic-jump mechanism the static FFT could not see. Gate to any *paper* claim.
 2. **Compute scales with spectral complexity, not length.** Steps-to-converge
    (halting depth) should track the input's spectral entropy and be *flat* in
    sequence length - regress steps against complexity vs against length.
@@ -61,7 +85,9 @@ says nothing yet about spectral-attractor convergence, which predicts other thin
    of few modes: low effective rank in the eigenbasis, approximately linear under
    mode superposition.
 4. **Non-harmonic control.** A non-harmonic baseline that does none of (1)-(3) is
-   what turns description into evidence.
+   what turns description into evidence - and specifically tells the measured
+   low-dim centers (eff. dim ≈ 1) apart as *organized geometry* vs *degenerate
+   collapse*: structure should survive the control, collapse should appear in it too.
 
 ## Open questions (unresolved - stated, not papered over)
 

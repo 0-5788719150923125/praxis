@@ -861,6 +861,48 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "key_pattern": r"^layer_\d+_routing_peak$",
         "order": 240,
     },
+    {
+        "key": "depth_step",
+        "type": "multi_expert_line",
+        "title": "Depth Trajectory: Step Size (spectral-attractor probe)",
+        "y_label": "Relative step",
+        "description": (
+            "Per recurrent-depth transition, the relative move of the hidden "
+            "state's fingerprint (mean over batch+seq). The conjecture's signature "
+            "(next/harmonic_memory_velocity.md): a fixed-point iteration should "
+            "show steps shrinking toward zero (settling to a spectral attractor), "
+            "ideally as a few discrete hops rather than a smooth drift. One line "
+            "per depth transition."
+        ),
+        "key_pattern": r"^depth/step_d\d+$",
+        "order": 250,
+    },
+    {
+        "key": "depth/convergence_ratio",
+        "type": "line",
+        "title": "Depth Convergence Ratio (settling)",
+        "y_label": "last step / first step",
+        "description": (
+            "Ratio of the last to the first depth-transition step. < 1 = the "
+            "iteration settles toward a fixed point across depth (spectral "
+            "attractor); ~ 1 = no convergence; > 1 = diverging. Should fall over "
+            "training if the model learns to compute to a cluster within budget."
+        ),
+        "order": 251,
+    },
+    {
+        "key": "depth/jump_concentration",
+        "type": "line",
+        "title": "Depth Jump Concentration (discrete vs smooth)",
+        "y_label": "max step / mean step",
+        "description": (
+            "How concentrated the depth movement is: high = one large hop then "
+            "settle (discrete jump between clusters, the conjectured mechanism); "
+            "~ 1 = uniform movement (smooth drift). The static-FFT periodicity "
+            "test was the wrong shape; this is the dynamics-over-depth version."
+        ),
+        "order": 252,
+    },
 ]
 
 

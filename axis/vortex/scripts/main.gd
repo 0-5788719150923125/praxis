@@ -42,12 +42,12 @@ func _ready() -> void:
 
 
 # A CLI flag means "I know what I want" (authoring, automation, headless): boot
-# straight in, past the splash, so the existing --audio/--scene/--runbook flows and
+# straight in, past the splash, so the existing --audio/--scene/--storyboard flows and
 # the headless tests are unchanged.
 func _wants_direct_boot() -> bool:
 	var args := OS.get_cmdline_user_args()
 	return args.has("--audio") or args.has("--scene") \
-		or args.has("--runbook") or args.has("--no-splash")
+		or args.has("--storyboard") or args.has("--no-splash")
 
 
 func _show_splash() -> void:
@@ -58,10 +58,10 @@ func _show_splash() -> void:
 
 
 # The splash hands back the chosen song and whether Manual was clicked. Manual opens
-# the workspace over a session running the default runbook; Auto just runs.
+# the workspace over a session running the default storyboard; Auto just runs.
 func _on_splash_start(audio_path: String, manual: bool) -> void:
 	if manual:
-		Director.load_runbook("default")
+		Director.load_storyboard("default")
 		_begin_session(audio_path)
 		_workspace = preload("res://scripts/workspace.gd").new()
 		add_child(_workspace)

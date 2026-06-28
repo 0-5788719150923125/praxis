@@ -68,6 +68,11 @@ class SequentialDecoder(BaseDecoder):
 
         current_route: List[int] = []
         realized_widths: List[float] = []  # active width fraction per executed step
+        depth_prints: List[Tensor] = []  # per-depth hidden-state fingerprint
+        # Entry fingerprint: the trajectory starts at the decoder input, so even a
+        # single executed depth yields one transition (entry -> first cluster).
+        if hidden_states.dim() == 3:
+            depth_prints.append(hidden_states.detach().float().mean(dim=(0, 1)))
 
         controller_state = None
         sequential_experts: List[nn.Module] = list(self.locals) + list(self.remotes)
@@ -137,6 +142,14 @@ class SequentialDecoder(BaseDecoder):
                 hidden_states, current_route, current_depth, next_expert_idx
             )
 
+            # Per-depth representation fingerprint: mean over batch+seq -> [D],
+            # shape-robust across compression. The trajectory of these over depth
+            # is the spectral-attractor probe (next/harmonic_memory_velocity.md):
+            # does the iteration settle to a fixed point, and in discrete hops or
+            # a smooth drift? Detached - diagnostic only.
+            if hidden_states.dim() == 3:
+                depth_prints.append(hidden_states.detach().float().mean(dim=(0, 1)))
+
             # Handle expert decoder loss (can be scalar/tensor or LossContainer)
             if isinstance(decoder_loss, LossContainer):
                 losses.add_loss_container(decoder_loss)
@@ -173,6 +186,25 @@ class SequentialDecoder(BaseDecoder):
         # under the fixed schedule, because halting samples how many depths run.
         if realized_widths:
             self._width_realized = sum(realized_widths) / len(realized_widths)
+
+        # Depth-trajectory (spectral-attractor) metrics from the fingerprints:
+        # relative step size per depth transition, plus a convergence ratio
+        # (<1 = settling toward a fixed point, ~1 = no convergence) and a jump
+        # concentration (high = one big hop then settle = discrete; ~1 = smooth).
+        self._depth_metrics = {}
+        if len(depth_prints) >= 2:
+            prints = torch.stack(depth_prints)  # [n, D]
+            steps = (prints[1:] - prints[:-1]).norm(dim=-1) / (
+                prints[:-1].norm(dim=-1) + 1e-8
+            )
+            s = steps.tolist()
+            for i, v in enumerate(s):
+                self._depth_metrics[f"depth/step_d{i}"] = v
+            if len(s) >= 2:  # a ratio / concentration needs 2+ transitions
+                self._depth_metrics["depth/convergence_ratio"] = s[-1] / (s[0] + 1e-8)
+                self._depth_metrics["depth/jump_concentration"] = max(s) / (
+                    sum(s) / len(s) + 1e-8
+                )
 
         hidden_states = self.compressor.expand_sequence(hidden_states, seq_len)
 

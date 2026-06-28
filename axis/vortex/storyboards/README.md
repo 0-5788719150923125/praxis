@@ -1,27 +1,27 @@
-# Runbooks
+# Storyboards
 
-A **runbook** is a user-authored score for a song: an ordered list of scenes the
+A **storyboard** is a user-authored score for a song: an ordered list of scenes the
 visualizer plays in sequence, instead of the automatic novelty scheduler choosing
 for you. This is **manual mode** - the first step toward orchestrating an entire
 visualization by hand.
 
-- **Auto mode** (no runbook): the `Director` picks scenes by novelty weighting and
+- **Auto mode** (no storyboard): the `Director` picks scenes by novelty weighting and
   cuts on the music. This is the default.
-- **Manual mode** (a runbook): the `Director` walks your `sequence` in order, and
+- **Manual mode** (a storyboard): the `Director` walks your `sequence` in order, and
   each entry decides how long it stays and what cue it exits on.
 
 Run one:
 
 ```
-godot --path axis/vortex -- --runbook default         # loads runbooks/default.json
-godot --path axis/vortex -- --audio ~/track.wav --runbook default
+godot --path axis/vortex -- --storyboard default         # loads storyboards/default.json
+godot --path axis/vortex -- --audio ~/track.wav --storyboard default
 ```
 
 (or pick it from the splash screen, in manual mode).
 
 ## Format
 
-A runbook is a JSON object:
+A storyboard is a JSON object:
 
 ```json
 {
@@ -59,12 +59,12 @@ Scene names come from `scripts/scenes/*.gd`: `spectrum_ring`, `harmonic_lattice`
 `voxel_blocks`, `cityscape`, `shatter_glass`, `gaussian_landscape`, `rocks`,
 `embers`, `metropolis`.
 
-See `default.json` (the runbook Manual mode opens with) for a worked score mixing fixed holds, musical exits, and a
+See `default.json` (the storyboard Manual mode opens with) for a worked score mixing fixed holds, musical exits, and a
 self-ending oneshot.
 
 ## Roadmap
 
-Today a runbook is a linear sequence. The intended direction (see the project
+Today a storyboard is a linear sequence. The intended direction (see the project
 README) is richer: per-entry parameter overrides, time-coded cues tied to the
 song, blends chosen per transition, and eventually a full manual editor that
 writes these files. The data spec is meant to grow toward that without breaking

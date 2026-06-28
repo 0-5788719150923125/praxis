@@ -172,8 +172,8 @@ func _start_render() -> void:
 		"--", "--export", "--bake-file", _cache, "--seed", str(Director.session_seed()),
 		"--audio", _song])
 	if Director.is_manual():
-		args.append("--runbook")
-		args.append(Director.runbook_name())
+		args.append("--storyboard")
+		args.append(Director.storyboard_name())
 	_render_pid = OS.create_process(exe, args)
 	if _render_pid > 0:
 		_state = "rendering"

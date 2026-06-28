@@ -42,6 +42,11 @@ const SCENES := [
 	{"script": preload("res://scripts/scenes/rocks.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/embers.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/metropolis.gd"), "behavior": "drift"},
+	# "the-point" scenes (camera holds, per the brief).
+	{"script": preload("res://scripts/scenes/eye.gd"), "behavior": "static"},
+	{"script": preload("res://scripts/scenes/two_eyes.gd"), "behavior": "static"},
+	{"script": preload("res://scripts/scenes/prism.gd"), "behavior": "static"},
+	{"script": preload("res://scripts/scenes/prism_split.gd"), "behavior": "static"},
 ]
 
 enum Style { CUT, DIP, FADE }
@@ -86,12 +91,13 @@ var _held := false           # the feedback console freezes cuts while open
 var _kind_last := {}         # scene script path -> _swaps value when last shown
 var _session_seed := 0       # base seed for this session (random per play; --seed pins)
 
-# Manual mode: a runbook is an ordered, user-authored sequence of scenes (see
-# runbooks/README.md). When _runbook_seq is non-empty the Director walks it in
+# Manual mode: a storyboard is an ordered, user-authored sequence of scenes (see
+# storyboards/README.md). When _storyboard_seq is non-empty the Director walks it in
 # order instead of the novelty scheduler, and each entry can dictate its own exit.
-var _runbook_seq: Array = []
-var _runbook_name := ""
-var _runbook_loop := true
+var _storyboard_seq: Array = []
+var _storyboard_name := ""
+var _storyboard_loop := true
+var _storyboard_transition := ""    # default transition style for a storyboard ("" = cut in manual mode)
 var _step := 0
 
 
@@ -100,7 +106,7 @@ func attach(host: Node) -> void:
 	_session_seed = _resolve_seed()
 	_rng.seed = _session_seed ^ 0x1234567
 	_locked = _locked_scene_arg()
-	_load_runbook_arg()
+	_load_storyboard_arg()
 	_current = _make_scene()
 	_host.add_child(_current)
 	_arm()
@@ -125,7 +131,7 @@ func _resolve_seed() -> int:
 
 ## Tear down the current session: free the live scene(s) and reset all state, so a
 ## later attach() starts cleanly. Called when a song ends and we return to the
-## splash. Does not clear a runbook loaded for the *next* session (load it after).
+## splash. Does not clear a storyboard loaded for the *next* session (load it after).
 func detach() -> void:
 	if _transitioning and is_instance_valid(_next):
 		_next.queue_free()
@@ -142,54 +148,55 @@ func detach() -> void:
 	_elapsed = 0.0
 	_held = false
 	_kind_last = {}
-	_runbook_seq = []
-	_runbook_name = ""
+	_storyboard_seq = []
+	_storyboard_name = ""
 
 
-## True when the Director is walking a user-authored runbook (manual mode).
+## True when the Director is walking a user-authored storyboard (manual mode).
 func is_manual() -> bool:
-	return not _runbook_seq.is_empty()
+	return not _storyboard_seq.is_empty()
 
 
-## Name of the active runbook, or "" in auto mode.
-func runbook_name() -> String:
-	return _runbook_name
+## Name of the active storyboard, or "" in auto mode.
+func storyboard_name() -> String:
+	return _storyboard_name
 
 
-## Load a runbook by name (res://runbooks/<name>.json) or by a full/absolute path,
+## Load a storyboard by name (res://storyboards/<name>.json) or by a full/absolute path,
 ## switching the Director into manual mode. Returns true on success. Safe to call
 ## before attach(); the splash uses this to start a manually-orchestrated session.
-func load_runbook(name_or_path: String) -> bool:
+func load_storyboard(name_or_path: String) -> bool:
 	var path := name_or_path
 	if not path.ends_with(".json"):
-		path = "res://runbooks/%s.json" % name_or_path
+		path = "res://storyboards/%s.json" % name_or_path
 	if not FileAccess.file_exists(path):
-		push_warning("vortex: runbook not found: %s" % path)
+		push_warning("vortex: storyboard not found: %s" % path)
 		return false
 	var text := FileAccess.get_file_as_string(path)
 	var data: Variant = JSON.parse_string(text)
 	if typeof(data) != TYPE_DICTIONARY or not data.has("sequence"):
-		push_warning("vortex: runbook %s has no 'sequence' array" % path)
+		push_warning("vortex: storyboard %s has no 'sequence' array" % path)
 		return false
 	var seq: Variant = data["sequence"]
 	if typeof(seq) != TYPE_ARRAY or (seq as Array).is_empty():
-		push_warning("vortex: runbook %s sequence is empty" % path)
+		push_warning("vortex: storyboard %s sequence is empty" % path)
 		return false
-	_runbook_seq = seq
-	_runbook_loop = bool(data.get("loop", true))
-	_runbook_name = String(data.get("name", name_or_path))
+	_storyboard_seq = seq
+	_storyboard_loop = bool(data.get("loop", true))
+	_storyboard_name = String(data.get("name", name_or_path))
+	_storyboard_transition = String(data.get("transition", ""))   # e.g. "cut" forces jump cuts
 	_step = 0
-	print("vortex: runbook '%s' loaded (%d scenes, loop=%s)" % [
-		_runbook_name, _runbook_seq.size(), _runbook_loop])
+	print("vortex: storyboard '%s' loaded (%d scenes, loop=%s)" % [
+		_storyboard_name, _storyboard_seq.size(), _storyboard_loop])
 	return true
 
 
-# `--runbook <name|path>` selects manual mode at launch.
-func _load_runbook_arg() -> void:
+# `--storyboard <name|path>` selects manual mode at launch.
+func _load_storyboard_arg() -> void:
 	var args := OS.get_cmdline_user_args()
 	for i in args.size():
-		if args[i] == "--runbook" and i + 1 < args.size():
-			load_runbook(args[i + 1])
+		if args[i] == "--storyboard" and i + 1 < args.size():
+			load_storyboard(args[i + 1])
 			return
 
 
@@ -247,11 +254,11 @@ func _process(delta: float) -> void:
 func _should_change() -> bool:
 	if _locked >= 0 or _held:
 		return false
-	# In manual mode, a non-looping runbook holds its final scene forever.
-	if not _runbook_seq.is_empty() and not _runbook_loop and _step >= _runbook_seq.size():
+	# In manual mode, a non-looping storyboard holds its final scene forever.
+	if not _storyboard_seq.is_empty() and not _storyboard_loop and _step >= _storyboard_seq.size():
 		return false
 	var ex: Dictionary = _current.exit_spec
-	# A fixed hold (deterministic runbook timing) ignores cues entirely.
+	# A fixed hold (deterministic storyboard timing) ignores cues entirely.
 	if ex.has("hold"):
 		return _elapsed >= float(ex["hold"])
 	if _elapsed >= float(ex.get("max", max_hold)):   # backstop: the cue never came
@@ -268,7 +275,7 @@ func _ready_to_exit(ex: Dictionary) -> bool:
 	return _elapsed >= float(ex.get("min", min_hold))
 
 
-# Has the exit cue arrived this frame? Uses the runbook-specified trigger if the
+# Has the exit cue arrived this frame? Uses the storyboard-specified trigger if the
 # scene carries one, otherwise the randomly-armed trigger (auto mode).
 func _trigger_fires(ex: Dictionary) -> bool:
 	var trig: int = int(ex.get("trigger", _trigger))
@@ -373,9 +380,23 @@ func _begin_transition() -> void:
 	if SCENES.size() < 2:
 		_elapsed = 0.0
 		return
-	_style = STYLE_BAG[_rng.randi() % STYLE_BAG.size()]
 	var nxt := _make_scene()
 
+	# Content-aware morph: if the incoming can grow out of the outgoing's geometry,
+	# swap instantly and let it animate the morph (e.g. one eye splitting into two).
+	# Only ever between compatible, non-empty types - so we never morph a mismatch.
+	if _current != null and not nxt.morph_in.is_empty() and nxt.morph_in == _current.morph_out:
+		print("vortex: morph %s -> %s (%s)" % [_current.scene_name, nxt.scene_name, nxt.morph_in])
+		var from := _current
+		_host.add_child(nxt)
+		_current = nxt
+		_swaps += 1
+		nxt.begin_morph(from)         # hand over state BEFORE the source is freed
+		from.queue_free()
+		_arm()
+		return
+
+	_style = _choose_style()
 	if _style == Style.CUT:
 		_host.add_child(nxt)          # instant swap, no blend
 		_current.queue_free()
@@ -393,6 +414,16 @@ func _begin_transition() -> void:
 	_host.add_child(_next)            # added last -> drawn over _current
 	_transitioning = true
 	_trans_t = 0.0
+
+
+# The transition style for leaving the current scene: its storyboard-set style
+# (cut/dip/fade), or the auto-mode weighted bag (mostly dip) when unspecified.
+func _choose_style() -> int:
+	match (_current.transition_style if _current != null else ""):
+		"cut": return Style.CUT
+		"dip": return Style.DIP
+		"fade": return Style.FADE
+	return STYLE_BAG[_rng.randi() % STYLE_BAG.size()]
 
 
 func _finish_transition() -> void:
@@ -449,32 +480,33 @@ func _novelty_weight(i: int) -> float:
 
 
 # Resolve the next scene to build: from the novelty scheduler (auto mode) or the
-# next runbook entry (manual mode). Returns {script, behavior, seed, shot, exit_spec}.
+# next storyboard entry (manual mode). Returns {script, behavior, seed, shot, exit_spec}.
 func _next_entry() -> Dictionary:
-	if _runbook_seq.is_empty():
+	if _storyboard_seq.is_empty():
 		_index = _pick_index()
 		_kind_last[String(SCENES[_index].script.resource_path)] = _swaps
 		var e: Dictionary = SCENES[_index]
 		var seed := _session_seed ^ (_index * 0x9E3779B1) ^ (_swaps * 0x85EBCA77)
 		return {"script": e.script, "behavior": e.behavior, "seed": seed,
-			"shot": "", "exit_spec": {}}
+			"shot": "", "exit_spec": {}, "transition": ""}   # "" -> auto STYLE_BAG
 	# Manual: walk the sequence (wrap when looping, else hold on the last entry).
-	var n := _runbook_seq.size()
-	var i: int = _step % n if _runbook_loop else mini(_step, n - 1)
+	var n := _storyboard_seq.size()
+	var i: int = _step % n if _storyboard_loop else mini(_step, n - 1)
 	_step += 1
-	var item: Dictionary = _runbook_seq[i]
+	var item: Dictionary = _storyboard_seq[i]
 	var nm := String(item.get("scene", ""))
 	var path := "res://scripts/scenes/%s.gd" % nm
 	var script: Resource = load(path) if ResourceLoader.exists(path) else SCENES[0].script
 	if not ResourceLoader.exists(path):
-		push_warning("vortex: runbook scene '%s' not found, substituting" % nm)
+		push_warning("vortex: storyboard scene '%s' not found, substituting" % nm)
 	var seed2: int = int(item.get("seed",
 		_session_seed ^ (i * 0x9E3779B1) ^ (_step * 0x85EBCA77)))
 	return {"script": script, "behavior": String(item.get("behavior", "drift")),
-		"seed": seed2, "shot": String(item.get("shot", "")), "exit_spec": _parse_exit(item)}
+		"seed": seed2, "shot": String(item.get("shot", "")), "exit_spec": _parse_exit(item),
+		"transition": String(item.get("transition", ""))}   # entry-level only; resolved in _make_scene
 
 
-# Translate a runbook entry's timing into an exit_spec the scene carries (see
+# Translate a storyboard entry's timing into an exit_spec the scene carries (see
 # _should_change): a fixed `hold`, a musical `exit` trigger, or just min/max bounds.
 func _parse_exit(item: Dictionary) -> Dictionary:
 	if item.has("hold"):
@@ -511,7 +543,20 @@ func _make_scene() -> VortexScene:
 	scene.init_with_seed(seed, String(entry["behavior"]))
 	scene.scene_name = String(script.resource_path).get_file().get_basename()
 	scene.exit_spec = entry["exit_spec"]
-	# Camera framing: an explicit runbook shot if given and valid, else assigned by
+	# Transition style, by override hierarchy (highest first): storyboard entry, then
+	# the scene's own choice (set in build_params), then the storyboard's default,
+	# then the mode default (manual = cut, auto = "" -> the weighted STYLE_BAG). A
+	# compatible morph still wins over all of these at change time.
+	var entry_tr := String(entry.get("transition", ""))
+	if not entry_tr.is_empty():
+		scene.transition_style = entry_tr
+	elif not scene.transition_style.is_empty():
+		pass                                       # keep the scene's own override
+	elif not _storyboard_transition.is_empty():
+		scene.transition_style = _storyboard_transition
+	elif not _storyboard_seq.is_empty():
+		scene.transition_style = "cut"             # manual default: jump cuts
+	# Camera framing: an explicit storyboard shot if given and valid, else assigned by
 	# the scene's framing class (expressive for subjects, gentle for fields, square
 	# for lone planes).
 	var shot_name := String(entry.get("shot", ""))

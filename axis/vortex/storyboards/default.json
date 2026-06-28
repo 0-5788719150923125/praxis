@@ -1,13 +1,11 @@
 {
-	"name": "default",
+	"name": "the-point",
 	"loop": true,
+	"transition": "cut",
 	"sequence": [
-		{ "scene": "spectrum_ring", "behavior": "static", "shot": "push_in", "hold": 10 },
-		{ "scene": "harmonic_lattice", "behavior": "drift", "exit": "movement", "min_hold": 8, "max_hold": 26 },
-		{ "scene": "planes", "behavior": "drift", "exit": "beat", "min_hold": 9 },
-		{ "scene": "rocks", "behavior": "drift" },
-		{ "scene": "shatter_glass", "behavior": "drift" },
-		{ "scene": "metropolis", "behavior": "drift", "exit": "lull", "max_hold": 30 },
-		{ "scene": "wire_solid", "behavior": "drift", "hold": 12 }
+		{ "scene": "eye", "behavior": "static", "exit": "movement", "min_hold": 3, "max_hold": 8 },
+		{ "scene": "two_eyes", "behavior": "static", "exit": "beat", "min_hold": 3, "max_hold": 8 },
+		{ "scene": "prism", "behavior": "static", "exit": "beat", "min_hold": 4, "max_hold": 10 },
+		{ "scene": "prism_split", "behavior": "static", "exit": "lull", "min_hold": 4, "max_hold": 12 }
 	]
 }

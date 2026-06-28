@@ -8,7 +8,7 @@ class_name Splash
 ## button *is* start):
 ##   Auto    - the Director picks scenes by novelty and cuts on the music (today's
 ##             visualizer, unchanged).
-##   Manual  - open the workspace (a left-side runbook panel over a running scene)
+##   Manual  - open the workspace (a left-side storyboard panel over a running scene)
 ##             to orchestrate the show by hand. Scaffolding for now; see workspace.gd.
 ##
 ## The last imported song is remembered (user://vortex.cfg) and pre-selected on the

@@ -274,6 +274,10 @@ class BaseDecoder(nn.Module):
                         # Metrics already have layer prefixes from router
                         extras.update(router_metrics)
 
+        # Depth-trajectory (spectral-attractor) metrics, computed in the
+        # SequentialDecoder forward; merged here so they flow with the rest.
+        extras.update(getattr(self, "_depth_metrics", {}))
+
         # The remote count includes the live expert pool (orchestration), so the
         # dashboards' remote_layers reflects the swarm growing as peers join.
         remote_count = len(self.remotes)

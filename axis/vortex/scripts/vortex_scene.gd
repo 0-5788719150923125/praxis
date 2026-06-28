@@ -55,11 +55,26 @@ var behavior_name := "drift"
 var shot_name := ""
 var seed_value := 0
 
-## Optional per-scene exit override set by the [Director] in manual (runbook) mode:
+## Optional per-scene exit override set by the [Director] in manual (storyboard) mode:
 ## `{"hold": seconds}` for fixed timing, or `{"trigger": Trigger, "min":, "max":}`
 ## to land the cut on a chosen musical cue. Empty = the Director's default
 ## lifecycle + randomly-armed trigger (auto mode).
 var exit_spec: Dictionary = {}
+
+## Content-aware transition typing. A scene declares the geometry it LEAVES on screen
+## (`morph_out`) and the geometry it can grow IN from (`morph_in`). When the Director
+## changes from A to B and `B.morph_in == A.morph_out` (and both non-empty), it plays
+## a *morph* - an instant swap where B animates itself out of A's shape (e.g. one eye
+## splitting into two) - instead of a cut or dip. Mismatched or empty = a normal cut.
+## This is how fancy transitions are added safely: only between compatible geometries,
+## so we never try to morph two things that don't line up.
+var morph_out := ""
+var morph_in := ""
+
+## Transition style the [Director] uses when leaving this scene, set from the
+## storyboard ("cut" / "dip" / "fade"; "" = the Director chooses). A morph, when
+## compatible, always wins over this.
+var transition_style := ""
 ## Viewport size in pixels, kept current across resizes.
 var size: Vector2 = Vector2.ZERO
 ## Organic modulation channels (seeded). See [ModBank].
@@ -122,6 +137,22 @@ func update(_f: AudioFeatures, _delta: float) -> void:
 ## and it is ready to be exited. Loop scenes leave this false forever.
 func finished() -> bool:
 	return false
+
+
+## Override (morph sources): a small typed bag of state the outgoing scene hands to
+## the incoming one during a morph, so the transition is *continuous* - e.g. the eye
+## passes its colour / gaze / size so the two it splits into are the SAME eye, not
+## new ones. Keys are by convention; the receiver reads what it understands.
+func morph_payload() -> Dictionary:
+	return {}
+
+
+## Override (morph targets): called by the [Director] when this scene is morphing in
+## from a compatible scene (see [member morph_in]). [param from] is the outgoing
+## scene - read its [method morph_payload] to continue from its state, then play the
+## morph-in animation (e.g. two_eyes starts as one eye and splits apart).
+func begin_morph(_from: VortexScene) -> void:
+	pass
 
 
 func _ready() -> void:
