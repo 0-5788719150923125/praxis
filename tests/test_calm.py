@@ -290,7 +290,12 @@ def test_hybrid_codec_residual_learns():
 
     assert CODEC_REGISTRY["hybrid"] is HybridCodec
     c = HybridCodec(
-        vocab_size=264, embed_dim=32, chunk_size=4, latent_dim=16, hidden_dim=64, depth=2
+        vocab_size=264,
+        embed_dim=32,
+        chunk_size=4,
+        latent_dim=16,
+        hidden_dim=64,
+        depth=2,
     )
     ids = torch.randint(0, 264, (2, 12))
     out = c.decode(c.reparameterize(*c.encode(ids)))
@@ -304,9 +309,7 @@ def test_hybrid_codec_residual_learns():
         for p in c.residual_net.parameters():
             p.add_(torch.randn_like(p) * 5)
     z, _ = c.encode(ids)
-    assert torch.allclose(
-        z.pow(2).mean(-1).sqrt(), torch.ones(2, 3), atol=1e-2
-    )
+    assert torch.allclose(z.pow(2).mean(-1).sqrt(), torch.ones(2, 3), atol=1e-2)
 
 
 def test_energy_score_loss_nonnegative_on_random():

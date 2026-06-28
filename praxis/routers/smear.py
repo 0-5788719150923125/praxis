@@ -480,7 +480,11 @@ class SMEAR(nn.Module):
         # Apply the merged parameters using functional_call (tie_weights=False:
         # see _router_forward - avoids the shared-expert recurrent double-backward).
         result = torch.func.functional_call(
-            base_module, merged_state_dict, (inputs, current_state), {}, tie_weights=False
+            base_module,
+            merged_state_dict,
+            (inputs, current_state),
+            {},
+            tie_weights=False,
         )
 
         # Handle different return formats

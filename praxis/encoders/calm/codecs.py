@@ -259,9 +259,7 @@ class HarmonicCodec(FixedCodec):
             F.normalize(_harmonic_matrix(self.vocab_size, self.embed_dim), dim=-1)
         )
         self.mix.copy_(
-            _separable_harmonic_matrix(
-                self.chunk_size, self.embed_dim, self.latent_dim
-            )
+            _separable_harmonic_matrix(self.chunk_size, self.embed_dim, self.latent_dim)
         )
         self.act = Serpent() if nonlinear else None
 

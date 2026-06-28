@@ -120,7 +120,9 @@ class TestArcMixturePassBias:
         assert router.delta_coef.weight.shape == (3, router.delta_rank)
         assert router.delta_basis.shape == (router.delta_rank, config.hidden_size)
         # Coefficients zero-init -> the delta is exactly 0 at init.
-        assert torch.allclose(router.delta_coef.weight, torch.zeros_like(router.delta_coef.weight))
+        assert torch.allclose(
+            router.delta_coef.weight, torch.zeros_like(router.delta_coef.weight)
+        )
         assert torch.allclose(router._pass_deltas(), torch.zeros(3, config.hidden_size))
 
     def test_logits_match_base_at_zero_init(self):

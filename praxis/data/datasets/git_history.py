@@ -140,7 +140,13 @@ def _parse_patch(text: str) -> List[Tuple[str, str, str, bool, bool]]:
         pre, post = _clean_path(f["pre"]), _clean_path(f["post"])
         path = post or pre or "unknown"
         out.append(
-            (path, "\n".join(f["before"]), "\n".join(f["after"]), pre is None, post is None)
+            (
+                path,
+                "\n".join(f["before"]),
+                "\n".join(f["after"]),
+                pre is None,
+                post is None,
+            )
         )
     return out
 
@@ -161,7 +167,14 @@ def _cap(s: str) -> str:
 
 
 def _format_sample(
-    path: str, before: str, after: str, is_new: bool, is_deleted: bool, iso: str, t: float, short: str
+    path: str,
+    before: str,
+    after: str,
+    is_new: bool,
+    is_deleted: bool,
+    iso: str,
+    t: float,
+    short: str,
 ) -> str:
     before_block = "(new file)" if is_new else _cap(before)
     after_block = "(deleted file)" if is_deleted else _cap(after)
@@ -207,7 +220,9 @@ class GitHistoryDataset(PraxisSampler):
     def _refill_pending(self) -> None:
         """Pick a recency-weighted commit and queue its files' before/after pairs."""
         for _ in range(MAX_PICK_ATTEMPTS):
-            idx = self.rng.choices(range(len(self.commits)), weights=self._weights, k=1)[0]
+            idx = self.rng.choices(
+                range(len(self.commits)), weights=self._weights, k=1
+            )[0]
             sha, ts = self.commits[idx]
             pairs = _changed_pairs(self.repo, sha)
             if not pairs:
@@ -218,7 +233,9 @@ class GitHistoryDataset(PraxisSampler):
             iso = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
             short = sha[:9]
             for path, before, after, is_new, is_deleted in pairs:
-                sample = _format_sample(path, before, after, is_new, is_deleted, iso, t, short)
+                sample = _format_sample(
+                    path, before, after, is_new, is_deleted, iso, t, short
+                )
                 if sample:
                     self._pending.append(sample)
             if self._pending:
@@ -263,7 +280,9 @@ if __name__ == "__main__":
     ds = GitHistoryDataset(tokenizer=None, seed=42, config={"repo": repo})
     print(f"commits found: {len(ds.commits)}")
     if ds.commits:
-        print(f"lifespan: {ds._span / 86400.0:.1f} days across {len(ds.commits)} commits\n")
+        print(
+            f"lifespan: {ds._span / 86400.0:.1f} days across {len(ds.commits)} commits\n"
+        )
         for s in ds.get_sequences(3):
             clip = s[:1400] + ("\n... [clipped]" if len(s) > 1400 else "")
             print("=" * 72)

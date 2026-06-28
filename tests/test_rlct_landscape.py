@@ -141,8 +141,8 @@ def test_param_manifold_shape_and_metadata():
     assert out["rows"] == 12 and out["cols"] == 12
     assert len(out["density"]) == 12 and len(out["tint"]) == 12
     assert 0.0 <= out["var_explained"] <= 1.0 + 1e-6
-    assert out["n_points"] == 64           # 64 embedding rows
-    assert "emb" in out["weight_name"]      # picked the richest 2D weight
+    assert out["n_points"] == 64  # 64 embedding rows
+    assert "emb" in out["weight_name"]  # picked the richest 2D weight
     # tint normalized to [0,1]; density non-negative ints summing to n_points
     flat_t = [v for r in out["tint"] for v in r]
     assert all(0.0 <= v <= 1.0 for v in flat_t)
@@ -155,7 +155,7 @@ def test_param_manifold_prefers_structured_weight():
     class _Struct(nn.Module):
         def __init__(self):
             super().__init__()
-            self.ffn = nn.Linear(128, 64)              # 64 rows, unstructured
+            self.ffn = nn.Linear(128, 64)  # 64 rows, unstructured
             self.harmonic_amplitudes = nn.Parameter(torch.randn(48, 8))  # structured
 
     out = compute_param_manifold(_Struct(), grid=10)
@@ -191,7 +191,7 @@ def test_param_field_whole_model_smooth_terrain():
     H = out["height"]
     for i in range(1, 23):
         for j in range(1, 23):
-            neigh = (H[i-1][j] + H[i+1][j] + H[i][j-1] + H[i][j+1]) / 4
+            neigh = (H[i - 1][j] + H[i + 1][j] + H[i][j - 1] + H[i][j + 1]) / 4
             assert H[i][j] <= neigh + 0.6  # no needle spikes after blur
 
 

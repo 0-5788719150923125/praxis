@@ -74,11 +74,7 @@ _STRUCTURED_HINTS = ("amplitud", "harmonic", "crystal", "center", "field", "spec
 
 def _probe_params(core) -> List[torch.nn.Parameter]:
     """Trainable floating-point parameters of the model, in a stable order."""
-    return [
-        p
-        for p in core.parameters()
-        if p.requires_grad and p.is_floating_point()
-    ]
+    return [p for p in core.parameters() if p.requires_grad and p.is_floating_point()]
 
 
 def _filter_normalized_directions(
@@ -179,9 +175,9 @@ def _sgld_lambda(
                     drift = -gamma * (p.data - w0)
                     if g is not None:
                         drift = drift - beta * n * g
-                    noise = torch.randn(
-                        p.shape, generator=gen, dtype=torch.float32
-                    ).to(device=p.device, dtype=p.dtype)
+                    noise = torch.randn(p.shape, generator=gen, dtype=torch.float32).to(
+                        device=p.device, dtype=p.dtype
+                    )
                     p.data.add_(drift, alpha=eps * 0.5).add_(
                         noise, alpha=math.sqrt(eps)
                     )
@@ -241,8 +237,9 @@ def probe_landscape(
         # Clean loss at the center (w*).
         l0 = float(loss_only())
 
-        coords = [(-extent + 2.0 * extent * k / (G - 1)) if G > 1 else 0.0
-                  for k in range(G)]
+        coords = [
+            (-extent + 2.0 * extent * k / (G - 1)) if G > 1 else 0.0 for k in range(G)
+        ]
         grid: List[List[float]] = []
         for a in coords:
             row: List[float] = []
@@ -255,9 +252,7 @@ def probe_landscape(
         lam = None
         if loss_with_grad is not None:
             try:
-                lam = _sgld_lambda(
-                    params, base, loss_with_grad, l0, n_tokens, cfg
-                )
+                lam = _sgld_lambda(params, base, loss_with_grad, l0, n_tokens, cfg)
             except Exception:
                 lam = None
             _restore(params, base)
@@ -387,7 +382,9 @@ def compute_param_manifold(
 
     count = torch.bincount(flat, minlength=G * G).float()
     ampsum = torch.zeros(G * G, dtype=torch.float32).scatter_add_(0, flat, amp_c)
-    mean_amp = torch.where(count > 0, ampsum / count.clamp(min=1), torch.zeros_like(ampsum))
+    mean_amp = torch.where(
+        count > 0, ampsum / count.clamp(min=1), torch.zeros_like(ampsum)
+    )
     amax = float(mean_amp.max().clamp(min=1e-9))
 
     density = count.view(G, G).tolist()
@@ -494,8 +491,12 @@ def compute_param_field(
     amp_c = amp.cpu().float()
 
     count = torch.bincount(fidx, minlength=G * G).float().view(G, G)
-    ampsum = torch.zeros(G * G, dtype=torch.float32).scatter_add_(0, fidx, amp_c).view(G, G)
-    mean_amp = torch.where(count > 0, ampsum / count.clamp(min=1), torch.zeros_like(ampsum))
+    ampsum = (
+        torch.zeros(G * G, dtype=torch.float32).scatter_add_(0, fidx, amp_c).view(G, G)
+    )
+    mean_amp = torch.where(
+        count > 0, ampsum / count.clamp(min=1), torch.zeros_like(ampsum)
+    )
 
     # Smooth both channels; height from log-density so the bulk doesn't flatten
     # the structured satellites.

@@ -406,8 +406,12 @@ class CrystalVearHead(BaseHead):
 
     self_ties = False  # a bank has no single tie target; keep it untied
 
-    def __init__(self, config: Any, encoder: Optional[nn.Module] = None,
-                 n_experts: int = CRYSTAL_BANK_SIZE) -> None:
+    def __init__(
+        self,
+        config: Any,
+        encoder: Optional[nn.Module] = None,
+        n_experts: int = CRYSTAL_BANK_SIZE,
+    ) -> None:
         super().__init__(config, encoder)
         if config.loss_func == "cut_cross_entropy":
             raise ValueError(
@@ -438,12 +442,16 @@ class CrystalVearHead(BaseHead):
             embed_size = getattr(config, "embed_size", self.hidden_size)
             center_dim = embed_size if tie else feature_dim
             if tie and embed_size != self.hidden_size:
-                self.pre_projection = nn.Linear(self.hidden_size, embed_size, bias=False)
+                self.pre_projection = nn.Linear(
+                    self.hidden_size, embed_size, bias=False
+                )
         n = float(n_cfg) if n_cfg is not None else math.sqrt(center_dim)
         self.n_experts = int(n_experts)
         experts = [
             CrystalClassifier(
-                hidden_size=center_dim, vocab_size=vocab_size, n=n,
+                hidden_size=center_dim,
+                vocab_size=vocab_size,
+                n=n,
                 label_smoothing=smoothing,
             )
             for _ in range(self.n_experts)
@@ -460,9 +468,9 @@ class CrystalVearHead(BaseHead):
         if hidden_states.dim() >= 3:
             router_input = hidden_states.mean(dim=1)
         else:
-            router_input = hidden_states.reshape(
-                -1, hidden_states.shape[-1]
-            ).mean(dim=0, keepdim=True)
+            router_input = hidden_states.reshape(-1, hidden_states.shape[-1]).mean(
+                dim=0, keepdim=True
+            )
         router_input = v.router_norm(router_input)
         weight = F.normalize(v.router.weight, dim=1)
         logits = F.linear(router_input, weight, v.router.bias)
@@ -504,7 +512,10 @@ class CrystalVearHead(BaseHead):
         dist_sq = dist_sq / dist_sq.amin(dim=-1, keepdim=True)
         pseudo_logits = -ref.n * torch.log(dist_sq)
         if ref.label_smoothing > 0.0:
-            prob = torch.softmax(pseudo_logits, dim=-1) + ref.label_smoothing / ref.vocab_size
+            prob = (
+                torch.softmax(pseudo_logits, dim=-1)
+                + ref.label_smoothing / ref.vocab_size
+            )
             pseudo_logits = torch.log(prob)
         return pseudo_logits.view(*orig_shape[:-1], ref.vocab_size).to(out_dtype)
 

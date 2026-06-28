@@ -71,7 +71,9 @@ class KLDivergenceHalting(BaseHalting):
         # state below) so the floor is a fixed absolute level within any one
         # pass, which is what lets the exit depth vary with input difficulty.
         self._peak_ema: Optional[float] = None
-        self._pass_peak: float = 0.0  # largest KL this pass; folded into the EMA next pass
+        self._pass_peak: float = (
+            0.0  # largest KL this pass; folded into the EMA next pass
+        )
         self._pass_anchor: Optional[float] = None  # EMA snapshot frozen for this pass
 
         self._train_calls = 0

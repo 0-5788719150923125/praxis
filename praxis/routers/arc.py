@@ -97,9 +97,7 @@ class ArcMixture(MixtureOfDepths):
         rank = min(_DELTA_RANK, config.hidden_size)
         self.delta_rank = rank
         self.delta_basis = nn.Parameter(
-            torch.empty(rank, config.hidden_size).normal_(
-                std=config.hidden_size**-0.5
-            )
+            torch.empty(rank, config.hidden_size).normal_(std=config.hidden_size**-0.5)
         )
         self.delta_coef = nn.Embedding(self.num_passes, rank)
         nn.init.zeros_(self.delta_coef.weight)
