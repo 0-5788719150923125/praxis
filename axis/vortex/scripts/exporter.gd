@@ -18,12 +18,11 @@ class_name Exporter
 ## Both steps are separate processes, polled by PID; status ("Baking… / Rendering… /
 ## Exported ✓") shows here in the main window. Nothing to watch, nothing to force-quit.
 
-const MAX_WINDOW := 15.0
-const WINDOW_FRACTION := 0.25
-# TEMP: show the Export button throughout a session (not just the final window), so
-# exports are quick to trigger while testing. Flip to false to restore the final-
-# window-only behavior (the _in_final_window() logic is kept).
-const ALWAYS_SHOW := true
+# Show the Export button after this many seconds of playback - no need to watch the
+# whole thing. For songs too short to reach that, show it partway through instead
+# (SHORT_FRACTION), so short clips still get a button.
+const EXPORT_DELAY := 30.0
+const SHORT_FRACTION := 0.5
 const Bake := preload("res://scripts/bake.gd")
 
 var _btn: Button
@@ -54,6 +53,7 @@ func _build_ui() -> void:
 	_btn.offset_right = -28
 	_btn.offset_bottom = -28
 	_btn.visible = false
+	_btn.modulate.a = 0.0       # fade in elegantly when it becomes eligible
 	_btn.pressed.connect(_on_export)
 	add_child(_btn)
 
@@ -105,24 +105,20 @@ func _process(dt: float) -> void:
 			if _done_t <= 0.0:
 				_status.visible = false
 				_state = "idle"
-	# Button shows only when idle (not mid-export) and a song is loaded.
-	_btn.visible = _state == "idle" and _can_export()
+	# The button fades in once eligible (idle, not mid-export, past the delay) and
+	# fades out otherwise - never a hard pop.
+	var want := _state == "idle" and _can_export()
+	_btn.modulate.a = lerpf(_btn.modulate.a, 1.0 if want else 0.0, 1.0 - exp(-6.0 * dt))
+	_btn.visible = _btn.modulate.a > 0.02
 
 
-# Whether to show the Export button now: any time a song is loaded (ALWAYS_SHOW, for
-# testing), otherwise only in the song's final window.
+# Eligible once playback passes the delay (30s), or partway through a song too short
+# to reach it.
 func _can_export() -> bool:
-	if Spectrum.song_length() <= 0.0:
-		return false
-	if ALWAYS_SHOW:
-		return true
-	return _in_final_window()
-
-
-func _in_final_window() -> bool:
 	var length := Spectrum.song_length()
-	var window := minf(MAX_WINDOW, length * WINDOW_FRACTION)
-	return Spectrum.current.time >= length - window
+	if length <= 0.0:
+		return false
+	return Spectrum.current.time >= minf(EXPORT_DELAY, length * SHORT_FRACTION)
 
 
 # Refresh the cached percentage from the worker process (ignore mid-write misreads).

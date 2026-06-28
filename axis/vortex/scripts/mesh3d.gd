@@ -10,6 +10,7 @@ class_name Mesh3D
 ## Reusable - any scene that wants a solid spinning body uses this, not its own.
 
 const LIGHT := Vector3(0.35, -0.55, 0.75)   # upper-front key light (normalized below)
+const VIEW := Vector3(0.0, 0.0, 1.0)        # viewer direction, for specular highlights
 
 
 # A projected triangle whose 2D area is sub-pixel (an edge-on or collapsed face)
@@ -25,6 +26,9 @@ static func _degenerate(poly: PackedVector2Array) -> bool:
 
 var verts := PackedVector3Array()
 var faces: Array = []   # each face is a PackedInt32Array of 3 vertex indices
+## Optional per-face surface variation in roughly -amp..amp (see [method texturize]),
+## applied as a brightness/saturation mottle when drawn - the "texture" layer.
+var face_tint := PackedFloat32Array()
 
 
 ## A subdivided icosphere (subdiv 0 = 20-face icosahedron, 1 = 80, 2 = 320).
@@ -50,17 +54,19 @@ static func icosphere(subdiv := 1) -> Mesh3D:
 	return m
 
 
-# Split every triangle into four, projecting new midpoints back onto the sphere.
-func _subdivide() -> void:
+# Split every triangle into four. With `project` (the icosphere case) new midpoints
+# are pushed back onto the sphere; without it (flat bases like a cube) they stay put,
+# so subdivision just adds vertices to deform while keeping the geometric form.
+func _subdivide(project := true) -> void:
 	var cache := {}
 	var new_faces: Array = []
 	for f: PackedInt32Array in faces:
 		var a := f[0]
 		var b := f[1]
 		var c := f[2]
-		var ab := _midpoint(a, b, cache)
-		var bc := _midpoint(b, c, cache)
-		var ca := _midpoint(c, a, cache)
+		var ab := _midpoint(a, b, cache, project)
+		var bc := _midpoint(b, c, cache, project)
+		var ca := _midpoint(c, a, cache, project)
 		new_faces.append(PackedInt32Array([a, ab, ca]))
 		new_faces.append(PackedInt32Array([b, bc, ab]))
 		new_faces.append(PackedInt32Array([c, ca, bc]))
@@ -68,11 +74,13 @@ func _subdivide() -> void:
 	faces = new_faces
 
 
-func _midpoint(i: int, j: int, cache: Dictionary) -> int:
+func _midpoint(i: int, j: int, cache: Dictionary, project := true) -> int:
 	var key := "%d_%d" % [mini(i, j), maxi(i, j)]
 	if cache.has(key):
 		return cache[key]
-	var mid := ((verts[i] + verts[j]) * 0.5).normalized()
+	var mid := (verts[i] + verts[j]) * 0.5
+	if project:
+		mid = mid.normalized()
 	var idx := verts.size()
 	verts.append(mid)
 	cache[key] = idx
@@ -172,6 +180,69 @@ func stretch(s: Vector3) -> void:
 		verts[i] = Vector3(verts[i].x * s.x, verts[i].y * s.y, verts[i].z * s.z)
 
 
+## Bake a coherent surface texture: a value-noise mottle sampled at each face
+## centroid, stored in [member face_tint] and applied as a per-face brightness /
+## saturation variation when drawn - patches of light and dark across the surface,
+## the way real stone is never one flat colour. `amount` is the depth of the mottle.
+func texturize(amount: float, freq: float, rng: RandomNumberGenerator) -> void:
+	var noise := FastNoiseLite.new()
+	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
+	noise.seed = rng.randi()
+	noise.frequency = freq
+	noise.fractal_type = FastNoiseLite.FRACTAL_FBM
+	noise.fractal_octaves = 3
+	face_tint.resize(faces.size())
+	for fi in faces.size():
+		var f: PackedInt32Array = faces[fi]
+		var c := (verts[f[0]] + verts[f[1]] + verts[f[2]]) / 3.0
+		face_tint[fi] = noise.get_noise_3dv(c) * amount
+
+
+## Coherent fractal displacement *masked by a second noise field*, so the growth is
+## patchy: where the mask is high the surface erupts into rock, where it is low it
+## stays the underlying (geometric) form. The basis for "rock growing on a structure"
+## - run it on a subdivided cube/octahedron and only parts crust over.
+func warp_masked(amp: float, detail: int, gain: float, freq: float, mask_freq: float,
+		rng: RandomNumberGenerator) -> void:
+	var noise := FastNoiseLite.new()
+	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
+	noise.seed = rng.randi()
+	noise.frequency = freq
+	noise.fractal_type = FastNoiseLite.FRACTAL_FBM
+	noise.fractal_octaves = detail
+	noise.fractal_gain = gain
+	var mask := FastNoiseLite.new()
+	mask.noise_type = FastNoiseLite.TYPE_SIMPLEX
+	mask.seed = rng.randi()
+	mask.frequency = mask_freq
+	for i in verts.size():
+		var v := verts[i]
+		var dir: Vector3 = v.normalized() if v.length() > 1e-6 else Vector3.UP
+		var m := smoothstep(-0.1, 0.5, mask.get_noise_3dv(v))   # 0 = bare geometry, 1 = full rock
+		var n := noise.get_noise_3dv(dir)
+		verts[i] = v + dir * (v.length() * amp * n * m)
+
+
+## A hybrid body: a crisp geometric base (cube / octahedron / tetrahedron) with rock
+## crusting over part of it, where a noise mask says so ([method warp_masked]). Part
+## machined, part grown - "rock growing upon the geometric structure."
+static func hybrid(rng: RandomNumberGenerator) -> Mesh3D:
+	var m: Mesh3D
+	match rng.randi_range(0, 2):
+		0: m = cube()
+		1: m = octahedron()
+		_: m = tetrahedron()
+	for s in 3:
+		m._subdivide(false)        # add vertices to grow on, keep the flat geometric form
+	m.warp_masked(rng.randf_range(0.35, 0.55), 4, 0.55,
+		rng.randf_range(1.6, 2.6), rng.randf_range(0.9, 1.7), rng)
+	m.facet(rng.randi_range(2, 5), 0.6, rng)
+	m.stretch(Vector3(
+		rng.randf_range(0.85, 1.15), rng.randf_range(0.8, 1.1), rng.randf_range(0.85, 1.15)))
+	m.texturize(rng.randf_range(0.15, 0.30), rng.randf_range(2.0, 4.0), rng)
+	return m
+
+
 ## A believable stone, built from data rather than displayed as a sphere: a
 ## subdivided icosphere given coherent fractal mass ([method warp]), shaved into
 ## angular fracture faces ([method facet]), then stretched into a natural, non-round
@@ -194,16 +265,23 @@ static func rock(style: String, rng: RandomNumberGenerator) -> Mesh3D:
 			m.facet(rng.randi_range(2, 4), 0.7, rng)
 	m.stretch(Vector3(
 		rng.randf_range(0.82, 1.18), rng.randf_range(0.70, 1.05), rng.randf_range(0.82, 1.18)))
+	var tex := 0.20 if style == "rough" else (0.10 if style == "crystal" else 0.15)
+	m.texturize(tex, rng.randf_range(2.0, 4.0), rng)
 	return m
 
 
 ## Draw the mesh, flat-shaded and depth sorted. `explode` pushes each face out
 ## along its normal; `edge` 0 none / 1 dark / 2 bright outlines; `face_alpha` < 1
-## makes the faces translucent (a see-through solid - real 3D, not a wireframe).
+## makes the faces translucent. `gloss` adds a specular highlight (a wet/polished
+## look) whose tightness is set by `rough` (low rough = a sharp glossy glint, high
+## rough = matte); per-face [member face_tint] mottles the surface like real texture.
 func draw_shaded(ci: CanvasItem, basis: Basis, center: Vector2, scale: float,
 		hue: float, sat: float, explode: float, edge: int, face_alpha := 1.0,
-		glow := 0.0) -> void:
+		glow := 0.0, gloss := 0.0, rough := 0.6) -> void:
 	var light := LIGHT.normalized()
+	var half := (light + VIEW).normalized()       # for the specular highlight
+	var shininess := lerpf(48.0, 4.0, clampf(rough, 0.0, 1.0))
+	var textured := face_tint.size() == faces.size()
 	var focal := 3.2
 	var rv := []                      # rotated vertices
 	rv.resize(verts.size())
@@ -230,7 +308,11 @@ func draw_shaded(ci: CanvasItem, basis: Basis, center: Vector2, scale: float,
 		var cz := (v0 + v1 + v2) / 3.0
 		if n.dot(cz) < 0.0:
 			n = -n
-		var bright := clampf(0.22 + 0.78 * maxf(0.0, n.dot(light)) + glow, 0.0, 1.0)
+		var spec := gloss * pow(maxf(0.0, n.dot(half)), shininess) if gloss > 0.0 else 0.0
+		var tint := face_tint[fi] if textured else 0.0
+		var bright := clampf((0.22 + 0.78 * maxf(0.0, n.dot(light)) + glow + spec) * (1.0 + tint), 0.0, 1.0)
+		# Specular washes the colour toward white; texture pulls saturation around.
+		var fsat := clampf(sat * (1.0 - 0.6 * spec) * (1.0 - 0.25 * absf(tint)), 0.0, 1.0)
 		var push := n * explode
 		var poly := PackedVector2Array()
 		var ok := true
@@ -243,7 +325,7 @@ func draw_shaded(ci: CanvasItem, basis: Basis, center: Vector2, scale: float,
 			poly.append(center + Vector2(p.x, p.y) * scale * (focal / denom))
 		if not ok or _degenerate(poly):      # edge-on faces project to a line - skip
 			continue
-		ci.draw_colored_polygon(poly, Color.from_hsv(hue, sat, bright, face_alpha))
+		ci.draw_colored_polygon(poly, Color.from_hsv(hue, fsat, bright, face_alpha))
 		if edge == 1:
 			var e := poly.duplicate(); e.append(poly[0])
 			ci.draw_polyline(e, Color(0, 0, 0, 0.5), 1.0, true)

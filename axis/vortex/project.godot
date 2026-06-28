@@ -19,6 +19,7 @@ config/icon="res://icon.svg"
 
 [autoload]
 
+Boot="*res://scripts/boot.gd"
 Spectrum="*res://scripts/spectrum.gd"
 Director="*res://scripts/director.gd"
 

@@ -15,13 +15,13 @@ extends VortexScene
 const MODES := {
 	"lightning": {"variant": "lightning", "count_lo": 3, "count_hi": 6, "grow": 1.6,
 		"fade": 1.1, "strike": true, "hue": 0.60, "sat": 0.35, "w_lo": 3.0, "w_hi": 5.0,
-		"len_lo": 0.55, "len_hi": 0.85, "evolve": 0.10},
+		"len_lo": 0.55, "len_hi": 0.85, "evolve": 0.10, "jitter": 0.0},
 	"neural": {"variant": "tendril", "count_lo": 5, "count_hi": 9, "grow": 0.5,
 		"fade": 0.0, "strike": false, "hue": 0.75, "sat": 0.7, "w_lo": 3.0, "w_hi": 6.0,
-		"len_lo": 0.35, "len_hi": 0.55, "evolve": 0.05},
+		"len_lo": 0.35, "len_hi": 0.55, "evolve": 0.05, "jitter": 0.012},
 	"thread": {"variant": "thread", "count_lo": 4, "count_hi": 7, "grow": 0.42,
 		"fade": 0.0, "strike": false, "hue": 0.50, "sat": 0.6, "w_lo": 2.0, "w_hi": 4.0,
-		"len_lo": 0.6, "len_hi": 0.95, "evolve": 0.08},
+		"len_lo": 0.6, "len_hi": 0.95, "evolve": 0.08, "jitter": 0.006},
 }
 
 var _f: AudioFeatures = AudioFeatures.new()
@@ -137,7 +137,8 @@ func _draw() -> void:
 			continue
 		_life_alpha = fil.life
 		var tip := Color.from_hsv(fposmod(_hue + 0.5, 1.0), 0.2, 1.0, 0.9 * fil.life)
-		fil.fil.draw_growing(self, u, fil.grown, _color_for, tip)
+		var jitter := float(_cfg.jitter) * (0.6 + 0.6 * _f.energy)
+		fil.fil.draw_growing(self, u, fil.grown, _color_for, tip, jitter, _life)
 
 
 func _color_for(depth: int) -> Color:

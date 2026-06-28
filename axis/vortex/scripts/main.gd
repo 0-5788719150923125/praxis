@@ -24,14 +24,8 @@ var _export_mode := false
 func _ready() -> void:
 	_export_mode = OS.get_cmdline_user_args().has("--export")
 	if _export_mode:
-		# This instance is the background render. Minimize its window so it doesn't sit
-		# on screen - Movie Maker keeps rendering while minimized (it drives its own
-		# loop; the earlier "freeze" was the in-process bake, now a separate headless
-		# step, not minimizing). Off-screen positioning is ignored by Wayland, so we
-		# minimize instead. NO_FOCUS keeps it from stealing focus during the brief
-		# moment before it iconifies.
-		DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_NO_FOCUS, true)
-		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_MINIMIZED)
+		# Background render: Boot (first autoload) already hid the window as early as
+		# possible. Run clean and quit when the song ends, finalizing the movie.
 		Spectrum.song_finished.connect(func(): get_tree().quit())
 		_begin_session()
 		return

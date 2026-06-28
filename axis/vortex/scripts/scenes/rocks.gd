@@ -1,19 +1,29 @@
 extends VortexScene
 
-## Rocks - faceted stones in real 3D.
+## Rocks - faceted stones in real 3D, sampled from a small material/geometry spec.
 ##
-## Each rock is a [Mesh3D] (a displaced icosphere) rotated by a genuine 3D basis
-## and drawn depth-sorted and shaded - so tumbling reads as dimensional, not a
-## sheared flat polygon. An [Activation] decides which rocks stir and which stay
-## rooted. Style (seeded) sets the surface:
-##   plain   - smooth, many faces, no edges.
-##   rough   - heavily displaced lumps, dark facet relief.
-##   crystal - low-poly gem, bright edges, high contrast.
+## Each rock is a [Mesh3D] rotated by a genuine 3D basis and drawn depth-sorted and
+## shaded. The look is a *sampled configuration* of composable layers rather than a
+## fixed scene: a geometry family, a surface texture, and a material (gloss /
+## roughness). An [Activation] decides which rocks stir and which stay rooted. Style
+## (seeded) sets the character:
+##   plain   - smooth rounded mass, satin sheen.
+##   rough   - craggy boulder, matte, dark facet relief.
+##   crystal - faceted gem, bright edges, glossy.
+##   hybrid  - a geometric base (cube / octa / tetra) with rock crusting over part of
+##             it (gaussian-masked growth) - part machined, part grown.
 ## Mode (seeded) sets the motion: `pulse` (breathe), `explode` (faces burst out on
 ## the beat), `crumble` (faces push apart once, then the scene ends).
 
 enum Mode { PULSE, EXPLODE, CRUMBLE }
-const STYLES := ["plain", "rough", "crystal"]
+const STYLES := ["plain", "rough", "crystal", "hybrid"]
+# Per-style material: [edge, sat, gloss, roughness].
+const MATERIAL := {
+	"plain":   {"edge": 0, "sat": 0.30, "gloss": 0.18, "rough": 0.6},
+	"rough":   {"edge": 1, "sat": 0.42, "gloss": 0.05, "rough": 0.95},
+	"crystal": {"edge": 2, "sat": 0.50, "gloss": 0.55, "rough": 0.18},
+	"hybrid":  {"edge": 1, "sat": 0.38, "gloss": 0.30, "rough": 0.45},
+}
 
 var _f: AudioFeatures = AudioFeatures.new()
 var _mode := Mode.PULSE
@@ -22,6 +32,8 @@ var _rocks: Array = []
 var _act: Activation
 var _edge := 0
 var _sat := 0.35
+var _gloss := 0.0
+var _rough := 0.6
 var _crumble_t := 0.0
 var _done := false
 
@@ -32,13 +44,17 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_style = STYLES[rng.randi_range(0, STYLES.size() - 1)]
 	lifecycle = "oneshot" if _mode == Mode.CRUMBLE else "loop"
 
-	_edge = 0 if _style == "plain" else (1 if _style == "rough" else 2)
-	_sat = 0.30 if _style == "plain" else (0.42 if _style == "rough" else 0.5)
+	var mat: Dictionary = MATERIAL[_style]
+	_edge = int(mat.edge)
+	_sat = float(mat.sat)
+	_gloss = float(mat.gloss)
+	_rough = float(mat.rough)
 
 	var base_hue := rng.randf()
 	var count := rng.randi_range(2, 4)
 	for i in count:
-		var mesh := Mesh3D.rock(_style, rng)   # coherent fractal mass + fracture facets
+		# Sample the geometry family for this rock (the start of the spec pattern).
+		var mesh := Mesh3D.hybrid(rng) if _style == "hybrid" else Mesh3D.rock(_style, rng)
 		var spin := Vector3(
 			rng.randf_range(-1, 1), rng.randf_range(-1, 1), rng.randf_range(-0.4, 0.4))
 		_rocks.append({
@@ -97,4 +113,4 @@ func _draw() -> void:
 		var mesh: Mesh3D = rock.mesh
 		mesh.draw_shaded(self, rock.basis, Vector2(rock.center) * u,
 			float(rock.radius) * u, float(rock.hue), _sat,
-			float(rock.e), _edge, 1.0, float(rock.glow))
+			float(rock.e), _edge, 1.0, float(rock.glow), _gloss, _rough)

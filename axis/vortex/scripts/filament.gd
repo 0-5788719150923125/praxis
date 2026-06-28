@@ -37,6 +37,7 @@ const MAX_SEGS := 3000        # safety cap against a pathological branch explosi
 ## (0..1 birth times along the longest root-to-tip path), depth.
 var segs: Array = []
 var _total := 0.0             # max arclength to any tip (normaliser for born times)
+var _max_depth := 0           # deepest branch level (so trunk vs tip can be told apart)
 
 
 ## Grow a filament from [param origin] heading [param heading] (radians), of about
@@ -76,6 +77,7 @@ func _build(p: Vector2, ang: float, seg_len: float, width: float, depth: int,
 		segs.append({"a": p, "b": np, "w0": w, "w1": w1,
 			"born0": born, "born1": born1, "depth": depth})
 		_total = maxf(_total, born1)
+		_max_depth = maxi(_max_depth, depth)
 		p = np
 		w = w1
 		born = born1
@@ -90,18 +92,34 @@ func _build(p: Vector2, ang: float, seg_len: float, width: float, depth: int,
 
 
 ## Draw the filament revealed up to growth front [param grown] (0..1). `u` is the
-## pixel unit (unit-fraction -> pixels). `color_for` is a Callable(depth:int) ->
-## Color so the scene owns the palette. A bud glows at the live tip while it grows.
+## pixel unit. `color_for` is a Callable(depth:int) -> Color so the scene owns the
+## palette. A bud glows at the live tip while it grows.
+##
+## `jitter` (unit-fraction) + `t` (time) give the timelapse twitch the growth wants:
+## the trunk (low depth) is rock-steady while the young tips (high depth) tremble,
+## and segments right at the advancing front shake hardest - so it reads as living
+## growth, not a static drawing, with stable trunks and unstable new shoots.
 func draw_growing(ci: CanvasItem, u: float, grown: float, color_for: Callable,
-		tip: Color = Color(1, 1, 1, 0.9)) -> void:
+		tip: Color = Color(1, 1, 1, 0.9), jitter := 0.0, t := 0.0) -> void:
+	var maxd := float(maxi(1, _max_depth))
+	var i := 0
 	for s in segs:
+		i += 1
 		if s.born0 > grown:
 			continue                                  # not yet reached by the front
 		var frac := 1.0
 		if s.born1 > grown:
 			frac = clampf((grown - s.born0) / maxf(1e-6, s.born1 - s.born0), 0.0, 1.0)
-		var a: Vector2 = s.a * u
-		var b: Vector2 = (s.a as Vector2).lerp(s.b, frac) * u
+		var jo := Vector2.ZERO
+		if jitter > 0.0:
+			# Stable trunk -> twitchy tip (depth), strongest near the live front.
+			var depth_f := float(s.depth) / maxd
+			var front_f := clampf(1.0 - (grown - s.born1) / 0.18, 0.0, 1.0)
+			var amt := jitter * depth_f * (0.25 + 0.75 * front_f)
+			var ph := float(i) * 1.7
+			jo = Vector2(sin(t * 5.0 + ph), cos(t * 4.3 + ph * 1.3)) * amt
+		var a: Vector2 = (s.a + jo) * u
+		var b: Vector2 = ((s.a as Vector2).lerp(s.b, frac) + jo) * u
 		var w: float = maxf(0.6, lerpf(s.w0, s.w1, frac))
 		ci.draw_line(a, b, color_for.call(int(s.depth)), w, true)
 		if frac > 0.0 and frac < 1.0:                 # the live, advancing tip

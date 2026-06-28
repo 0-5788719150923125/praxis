@@ -74,9 +74,11 @@ func _draw() -> void:
 	begin_draw()
 	var u := unit()
 	var tip := Color.from_hsv(fposmod(_hue + 0.5, 1.0), 0.25, 1.0, 0.85)
+	# Timelapse twitch: trunks hold, young tips tremble (more with energy).
+	var jitter := 0.008 + 0.018 * _f.energy
 	for r in _roots:
 		if r.fil != null:
-			r.fil.draw_growing(self, u, r.grown, _color_for, tip)
+			r.fil.draw_growing(self, u, r.grown, _color_for, tip, jitter, _life)
 
 
 # Palette per branch depth, brightness carried by bass + beat glow (colour over

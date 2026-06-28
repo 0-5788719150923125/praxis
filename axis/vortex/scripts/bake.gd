@@ -23,20 +23,27 @@ const STATUS_PATH := "user://export_status.txt"
 
 
 static func write_progress(frac: float) -> void:
-	var f := FileAccess.open(STATUS_PATH, FileAccess.WRITE)
-	if f != null:
-		f.store_string("%f" % clampf(frac, 0.0, 1.0))
-		f.close()
+	# Write to a temp file then rename: rename is atomic, so a reader in another
+	# process never catches a half-written file (which errored get_as_text).
+	var tmp := STATUS_PATH + ".tmp"
+	var f := FileAccess.open(tmp, FileAccess.WRITE)
+	if f == null:
+		return
+	f.store_string("%f" % clampf(frac, 0.0, 1.0))
+	f.close()
+	DirAccess.rename_absolute(
+		ProjectSettings.globalize_path(tmp), ProjectSettings.globalize_path(STATUS_PATH))
 
 
-# 0..1 progress, or -1 if absent/unreadable (e.g. a read landing mid-write).
+# 0..1 progress, or -1 if absent/unreadable. Reads raw bytes (not get_as_text, which
+# asserts on a length mismatch) so a read landing mid-write degrades to -1, not an error.
 static func read_progress() -> float:
 	if not FileAccess.file_exists(STATUS_PATH):
 		return -1.0
 	var f := FileAccess.open(STATUS_PATH, FileAccess.READ)
 	if f == null:
 		return -1.0
-	var s := f.get_as_text().strip_edges()
+	var s := f.get_buffer(f.get_length()).get_string_from_utf8().strip_edges()
 	f.close()
 	return float(s) if s.is_valid_float() else -1.0
 
