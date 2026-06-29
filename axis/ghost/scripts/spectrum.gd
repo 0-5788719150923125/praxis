@@ -329,10 +329,35 @@ func _load_audio() -> void:
 	if stream != null:
 		_player.stream = stream
 		_has_audio = true
-		song_hash = hash(path)
+		song_hash = _fingerprint(path)
 		_loaded_path = path
 	else:
 		print("ghost: no audio loaded - scenes will idle-animate.")
+
+
+# A content fingerprint of the audio file, so the seed is a true *file* match - the same
+# sound yields the same show regardless of the file's name or location (rename-proof),
+# which a path hash is not. Samples up to ~768 KB from the start / middle / end plus the
+# byte length, rather than hashing a whole multi-MB file, which is plenty to distinguish
+# tracks. Falls back to the path hash if the bytes can't be read. (Phase 1 of spectral
+# determinism - exact file. A perceptual signature that also matches re-encodes / lossy
+# copies is the planned phase 2; see the README roadmap.)
+func _fingerprint(path: String) -> int:
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return hash(path)
+	var size := f.get_length()
+	var chunk := 262144
+	var acc := PackedByteArray()
+	acc.append_array(f.get_buffer(chunk))                 # start
+	if size > chunk * 2:
+		f.seek(size / 2)
+		acc.append_array(f.get_buffer(chunk))             # middle
+	if size > chunk:
+		f.seek(maxi(0, size - chunk))
+		acc.append_array(f.get_buffer(chunk))             # end
+	f.close()
+	return hash(acc) ^ int(size * 0x9E3779B1)
 
 
 # Value following a `--flag` in the user args, or "".

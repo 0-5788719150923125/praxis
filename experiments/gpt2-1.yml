@@ -1,0 +1,47 @@
+# GPT-2 replication baseline (POC-size, for ablations).
+# Faithful to the original architecture; data and training method may differ.
+# Tokenizer is TokenMonster (pretrained, external) rather than GPT-2's BPE,
+# keeping the baseline independent of our in-house tokenizer suite.
+seed: 42
+device: cuda:0
+
+# Dimensions - GPT-2 small scaled down to 1/4 size (for faster iteration in ablations).
+block_size: 512
+# Auto-raised to cover sequence-multiplied (2x/4x/8x) batches when too small.
+max_position_embeddings: 4096
+batch_size: 16
+target_batch_size: 128
+num_layers: 4
+depth: 4
+vocab_size: 4096
+embed_size: 256
+hidden_size: 256
+num_heads: 16
+num_queries: 1
+dropout: 0.1
+
+# Architecture - vanilla causal MHA, learned absolute positions (wte + wpe),
+# pre-LN LayerNorm, 4x GELU MLP, tied LM head
+block_type: transformer
+decoder_type: sequential
+attention_type: vanilla
+encoding_type: nope
+embeddings: positional
+norm_type: layer_norm
+ffn_type: mlp
+activation: gelu
+residual_type: standard
+tie_weights: true
+contrastive_isotropy: false
+
+tokenizer_type: tokenmonster
+loss_func: cross_entropy
+optimizer: AdamW
+
+train_datasets: [focused, print, joke]
+optimizer_wrappers: [schedule_free]
+orchestration_type: swarm
+spider: { profile: ghost }
+
+discord: true
+discord_nickname: Q

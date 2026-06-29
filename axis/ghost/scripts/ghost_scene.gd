@@ -167,6 +167,13 @@ func begin_morph(_from: GhostScene) -> void:
 func _ready() -> void:
 	size = get_viewport_rect().size
 	get_viewport().size_changed.connect(_on_resize)
+	# Disable premature canvas-item culling. Scenes draw through a view transform (pan /
+	# zoom), so content near the frame edge - especially big soft glows / lighting whose
+	# centre drifts off-screen while their halo still bleeds in - would pop out abruptly
+	# when the item's auto-computed bounds crossed the viewport. A large custom rect keeps
+	# the item always considered visible, so things ease off the edge instead of clipping.
+	RenderingServer.canvas_item_set_custom_rect(
+		get_canvas_item(), true, Rect2(-100000, -100000, 200000, 200000))
 
 
 func _on_resize() -> void:

@@ -117,6 +117,7 @@ var _step := 0
 func attach(host: Node) -> void:
 	_host = host
 	_session_seed = _resolve_seed()
+	print("ghost: session seed %d (%s)" % [_session_seed, _seed_source()])
 	_rng.seed = _session_seed ^ 0x1234567
 	_locked = _locked_scene_arg()
 	_load_storyboard_arg()
@@ -132,14 +133,31 @@ func session_seed() -> int:
 	return _session_seed
 
 
+# The session seed, by priority:
+#   1. an explicit --seed N (the exporter passes it so a render reproduces a session, and
+#      it is the way to roll a *different* show for the same song on purpose);
+#   2. otherwise the audio's own fingerprint (Spectrum.song_hash) - SPECTRAL DETERMINISM:
+#      the same song always yields the same show, because the imagery is a deterministic
+#      function of the sound rather than a fresh random roll each play;
+#   3. random, only when no audio is loaded (idle preview).
 func _resolve_seed() -> int:
 	var args := OS.get_cmdline_user_args()
 	for i in args.size():
 		if args[i] == "--seed" and i + 1 < args.size() and args[i + 1].is_valid_int():
 			return int(args[i + 1])
+	if Spectrum.song_hash != 0:
+		return Spectrum.song_hash
 	var r := RandomNumberGenerator.new()
 	r.randomize()
 	return r.randi()
+
+
+# Where the session seed came from, for the log line (so determinism is observable).
+func _seed_source() -> String:
+	for a in OS.get_cmdline_user_args():
+		if a == "--seed":
+			return "--seed override"
+	return "audio fingerprint" if Spectrum.song_hash != 0 else "random (no audio)"
 
 
 ## Tear down the current session: free the live scene(s) and reset all state, so a

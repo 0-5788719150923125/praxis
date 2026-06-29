@@ -1,0 +1,5 @@
+# Experiments - commit canonical reference experiments, ignore user custom experiments
+*.yml
+!alpha.yml
+!beta.yml
+!gpt2-1.yml
