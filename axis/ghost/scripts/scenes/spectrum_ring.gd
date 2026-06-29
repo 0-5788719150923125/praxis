@@ -12,6 +12,10 @@ var _free := 0.0
 var _f: AudioFeatures = AudioFeatures.new()
 var _act: Activation
 var _light: Lighting
+# Optionally a real 3D human eye at the core instead of the pseudo-sphere (by seed).
+var _use_eye := false
+var _eye: EyeBody
+var _lens: Lens3D
 
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
@@ -19,6 +23,13 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_act = Activation.new(Spectrum.BAND_COUNT, rng, sparsity)
 	_light = Lighting.new(rng)
 	_free = 0.0 if rng.randf() < 0.65 else rng.randf_range(0.3, 1.0)
+	_use_eye = rng.randf() < 0.4
+	if _use_eye:
+		_eye = EyeBody.new(rng.randi())          # looks around in centre-biased saccades
+		_lens = Lens3D.new()
+		_lens.eye = Vector3(0.0, 0.0, 4.0)
+		_lens.look = Vector3.ZERO
+		_lens.fov = 48.0
 	return {
 		"hue": rng.randf(),
 		"hue_spread": rng.randf_range(0.1, 0.6),
@@ -36,6 +47,8 @@ func update(f: AudioFeatures, delta: float) -> void:
 	drift_view(f, 0.05, 0.07, 0.06, 0.12)
 	_act.update(f.energy + 0.5 * f.beat, delta)
 	_light.update(f, delta)
+	if _use_eye:
+		_eye.update(delta, clampf(f.energy * 0.7 + f.beat * 0.4, 0.0, 1.0))
 	# Bounded sway about rest; continuous slow drift only when free.
 	_drift += float(params.spin_rate) * delta * _free
 	_spin = _drift + 0.22 * mod.value("turn")
@@ -78,9 +91,14 @@ func _draw() -> void:
 		var val := clampf(0.35 + 0.4 * e + 0.5 * lit + 0.4 * glow, 0.0, 1.0)
 		draw_line(inner, outer, Color.from_hsv(h, 0.7, val), thickness, true)
 
-	# A shaded sphere at the core: real curvature (dark rim -> bright, light-offset
-	# highlight) and a soft halo, brightening on the beat. Not a flat disc.
-	_draw_sphere(Vector2.ZERO, base_r * 0.62, hue, glow)
+	# The core: either a real 3D human eye (looking around) or the pseudo-3D sphere.
+	if _use_eye:
+		_lens.prepare()
+		_eye.draw(self, _lens, u, Vector3.ZERO, float(params.radius) * 1.15)
+	else:
+		# A shaded sphere at the core: real curvature (dark rim -> bright, light-offset
+		# highlight) and a soft halo, brightening on the beat. Not a flat disc.
+		_draw_sphere(Vector2.ZERO, base_r * 0.62, hue, glow)
 
 
 # A pseudo-3D sphere: opaque circles stacked large-dark to small-bright, each nudged

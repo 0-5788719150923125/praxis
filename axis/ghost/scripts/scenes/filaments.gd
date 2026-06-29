@@ -13,13 +13,13 @@ extends GhostScene
 ## flow's meander, the spike-shaped drive, the asymmetric flare) is what animates it.
 
 const MODES := {
-	"lightning": {"variant": "lightning", "count_lo": 3, "count_hi": 6, "grow": 1.6,
+	"lightning": {"variant": "lightning", "count_lo": 4, "count_hi": 7, "grow": 1.6,
 		"fade": 1.1, "strike": true, "hue": 0.60, "sat": 0.35, "w_lo": 3.0, "w_hi": 5.0,
 		"len_lo": 0.55, "len_hi": 0.85, "evolve": 0.10, "jitter": 0.0},
-	"neural": {"variant": "tendril", "count_lo": 5, "count_hi": 9, "grow": 0.5,
+	"neural": {"variant": "tendril", "count_lo": 7, "count_hi": 12, "grow": 0.5,
 		"fade": 0.0, "strike": false, "hue": 0.75, "sat": 0.7, "w_lo": 3.0, "w_hi": 6.0,
 		"len_lo": 0.35, "len_hi": 0.55, "evolve": 0.05, "jitter": 0.012},
-	"thread": {"variant": "thread", "count_lo": 4, "count_hi": 7, "grow": 0.42,
+	"thread": {"variant": "thread", "count_lo": 5, "count_hi": 9, "grow": 0.42,
 		"fade": 0.0, "strike": false, "hue": 0.50, "sat": 0.6, "w_lo": 2.0, "w_hi": 4.0,
 		"len_lo": 0.6, "len_hi": 0.95, "evolve": 0.08, "jitter": 0.006},
 }
@@ -51,14 +51,14 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	for i in count:
 		var fil := {"fil": null, "grown": 0.0, "life": 0.0, "mature": 0.0,
 			"origin": Vector2.ZERO, "heading": 0.0, "active": false,
-			"state": "grow", "timer": 0.0, "rate": 1.0, "hold": 2.0, "mode": "fade"}
+			"state": "grow", "timer": 0.0, "rate": 1.0, "hold": 2.0, "mode": "fade", "retract_to": 0.0}
 		_seed_path(fil, i, count)
 		_regrow(fil)
 		if not bool(_cfg.strike):
 			# Continuous modes run a staggered, rate-varied lifecycle (see _update_continuous).
 			fil.life = 1.0
 			fil.grown = rng.randf_range(0.0, 1.0)   # start anywhere in the lifecycle (async)
-			fil.rate = rng.randf_range(0.6, 1.5)
+			fil.rate = _gauss_rate()
 			fil.hold = rng.randf_range(1.6, 4.5)
 			fil.mode = "rewind" if rng.randf() < 0.30 else "fade"
 		_fils.append(fil)
@@ -77,13 +77,15 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 func _seed_path(fil: Dictionary, i: int, count: int) -> void:
 	match _mode:
 		"lightning":
-			fil.origin = Vector2(_rng.randf_range(-0.4, 0.4), -0.5)
+			# Strike across the whole width / top, not one patch.
+			fil.origin = Vector2(_rng.randf_range(-0.78, 0.78), _rng.randf_range(-0.62, -0.42))
 			fil.heading = PI * 0.5 + _rng.randf_range(-0.4, 0.4)   # downward strike
 		"thread":
-			fil.origin = Vector2(-0.55, _rng.randf_range(-0.4, 0.4))
+			# Lanes spread across the full height so the threads fill the frame.
+			fil.origin = Vector2(_rng.randf_range(-0.7, -0.45), _rng.randf_range(-0.62, 0.62))
 			fil.heading = _rng.randf_range(-0.3, 0.3)              # rightward flow
-		_:  # neural - scattered seeds, any heading
-			fil.origin = Vector2(_rng.randf_range(-0.35, 0.35), _rng.randf_range(-0.35, 0.35))
+		_:  # neural - scattered seeds spread across the frame, any heading
+			fil.origin = Vector2(_rng.randf_range(-0.62, 0.62), _rng.randf_range(-0.6, 0.6))
 			fil.heading = TAU * float(i) / float(count) + _rng.randf_range(-0.5, 0.5)
 
 
@@ -173,14 +175,27 @@ func _update_continuous(f: AudioFeatures, delta: float, grow: float) -> void:
 				fil.timer -= delta
 				if fil.timer <= 0.0:
 					fil.state = fil.mode
+					if fil.state == "rewind":
+						# How far it pulls back varies: usually a PARTIAL retract (the front
+						# recedes part way, then grows out again on the same tendril); only a
+						# near-zero target fully deletes and starts a fresh path.
+						fil.retract_to = _rng.randf_range(0.0, 0.65)
 			"fade":
 				fil.life = maxf(0.0, fil.life - delta * 0.55)
 				if fil.life <= 0.0:
 					_recycle(fil)
 			"rewind":
-				fil.grown = maxf(0.0, fil.grown - delta * 0.4 * (0.6 + 0.5 * drive))
-				if fil.grown <= 0.0:
-					_recycle(fil)
+				var floor_v: float = fil.retract_to
+				fil.grown = maxf(floor_v, fil.grown - delta * 0.4 * (0.6 + 0.5 * drive))
+				if fil.grown <= floor_v + 0.005:
+					if floor_v < 0.08:
+						_recycle(fil)               # fully retracted -> new path
+					else:
+						# Partial retract: regrow the SAME tendril back up, re-rolling only
+						# the next hold/retire so it keeps varying.
+						fil.state = "grow"
+						fil.hold = _rng.randf_range(1.6, 4.5)
+						fil.mode = "rewind" if _rng.randf() < 0.30 else "fade"
 
 
 # Regrow a continuous tendril on a fresh path and re-roll its lifecycle constants, so
@@ -189,9 +204,17 @@ func _recycle(fil: Dictionary) -> void:
 	_regrow(fil)
 	fil.life = 1.0
 	fil.state = "grow"
-	fil.rate = _rng.randf_range(0.6, 1.5)
+	fil.rate = _gauss_rate()
 	fil.hold = _rng.randf_range(1.6, 4.5)
 	fil.mode = "rewind" if _rng.randf() < 0.30 else "fade"
+
+
+# A per-filament growth-speed multiplier drawn from a ~normal distribution (sum of three
+# uniforms), with a wide spread - so the strands grow at a real variety of speeds (some
+# slow crawlers, some fast shoots, most middling) rather than all at roughly one rate.
+func _gauss_rate() -> float:
+	var g := (_rng.randf() + _rng.randf() + _rng.randf()) / 3.0
+	return 0.3 + 1.7 * g
 
 
 func _draw() -> void:
@@ -200,10 +223,19 @@ func _draw() -> void:
 	for fil in _fils:
 		if fil.fil == null or fil.life <= 0.0:
 			continue
-		_life_alpha = fil.life
-		var tip := Color.from_hsv(fposmod(_hue + 0.5, 1.0), 0.2, 1.0, 0.9 * fil.life)
+		# Nonlinear lifecycle: the fade eases (smoothstep) rather than ramping linearly,
+		# and the growth front advances on an eased curve - slow-fast-slow - so sprouting
+		# and dying read as living motion, not a uniform slider.
+		_life_alpha = smoothstep(0.0, 1.0, float(fil.life))
+		var eased_grown: float = Nonlinear.apply("smoothstep", clampf(float(fil.grown), 0.0, 1.0))
+		# A glowing bud where the strand sprouts - a complementary node, alive with energy.
+		var bud_v: float = clampf(0.25 + 0.7 * _f.energy + 0.5 * _glow, 0.0, 1.0) * _life_alpha
+		var bud := Color.from_hsv(fposmod(_hue + 0.5, 1.0), 0.3, 1.0, 0.5 * bud_v)
+		var bsz: float = u * (0.006 + 0.010 * bud_v)
+		Layer.glow(self, Vector2(fil.origin) * u, bsz * 3.0, bud, 4)
+		var tip := Color.from_hsv(fposmod(_hue + 0.5, 1.0), 0.2, 1.0, 0.9 * _life_alpha)
 		var jitter := float(_cfg.jitter) * (0.6 + 0.6 * _f.energy)
-		fil.fil.draw_growing(self, u, fil.grown, _color_for, tip, jitter, _life)
+		fil.fil.draw_growing(self, u, eased_grown, _color_for, tip, jitter, _life)
 
 
 func _color_for(depth: int) -> Color:

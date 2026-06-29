@@ -21,6 +21,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		"hue": bug_hue,
 		"count": rng.randi_range(30, 55),
 		"speed": rng.randf_range(0.05, 0.09),
+		"real_light": rng.randf() < 0.5,   # half the time, render as actual light sources
 	})
 	return {"hue": bug_hue}
 

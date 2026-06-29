@@ -36,6 +36,7 @@ from praxis.pillars import (
     inlines,
     proofs,
     runs,
+    spectrum,
     strands,
 )
 from praxis.pillars.geometries import RESEARCH_DIR
@@ -88,6 +89,12 @@ def _step_geometries(ctx):
     g = geometries.export_geometries(ctx["limit"], ctx["scan"])
     print(f"geometries: {g['count']} panel(s)")
     return g
+
+
+def _step_spectrum(ctx):
+    s = spectrum.export_spectrum(ctx["limit"], ctx["scan"])
+    print(f"spectrum: {s['count']} field(s)")
+    return s
 
 
 def _step_strands(ctx):
@@ -175,6 +182,7 @@ STEPS = {
     "datasets": _step_datasets,
     "framing": _step_framing,
     "geometries": _step_geometries,
+    "spectrum": _step_spectrum,
     "strands": _step_strands,
     "evolution": _step_evolution,
     "halting": _step_halting,

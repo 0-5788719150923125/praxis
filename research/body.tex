@@ -43,6 +43,10 @@ The paper leans on a small vocabulary, used precisely. It is ordinary signal pro
 
 \textbf{Harmonics over time (Koopman).} When the representation \textit{evolves} - across sequence position, or across recurrent-depth steps - the harmonic claim is that it evolves approximately \textit{linearly in the mode basis}: each mode carries its own frequency forward and the nonlinear dynamics become a linear operator on the spectrum. This is the Koopman view~\cite{koopman1931} of a dynamical system, and the sense in which we say the model works ``in harmonic space.'' The claim has a boundary, and is therefore falsifiable: a representation whose basis depends on the input, that is not a superposition of a fixed set of modes, or whose dynamics are not approximately linear in any fixed basis, is \textit{not} harmonic here. The universality - that \textit{any} dynamics admits such a description - holds only in an infinite-dimensional limit; the working claim is that a \textit{finite} harmonic basis approximates this model's behavior well enough to measure, and how well is an empirical question, not a definition.
 
+\textbf{Ghostmax.} Attention normalizes scores with \textit{ghostmax} (softmax1,~\cite{miller2023}): the denominator is $1 + \sum_j e^{z_j}$ rather than $\sum_j e^{z_j}$, equivalently a single positionless key prepended to every row whose value vector is zero. The extra $e^{0}=1$ is an escape valve - when nothing in the context matches, the head spends its probability mass on the ghost and contributes nothing downstream, instead of being forced to average over irrelevant tokens. It is the dampening valve that lets a head go quiet rather than inject noise the harmonic field would then have to cancel. The boundary: a normalization that must sum to one over the real tokens has no quiet state, and is not ghostmax here.
+
+\textbf{Dropoff.} \textit{Dropoff} is the matched dual of ghostmax. Where the ghost is a zero sink at the \textit{start} of a row that \textit{absorbs} error, dropoff is a zero sink at the \textit{tip} - the most recent position - that \textit{injects} it. In its feature-wise form the value at the causal tip is scaled by an envelope $1 - e^{-(T-1-t)\,r_d}$ that is zero at the last position and recovers backward at a per-feature rate $r_d$, so the model cannot lean on the newest token and is pressed to carry its prediction in earlier structure. ``Backward'' here is the recurrent-depth axis, not sequence time: a causal pass never flows future to past. The boundary, and the present status: ghostmax is in production, but dropoff is a standing hypothesis - wired and runnable, not yet a measured result - and is dropoff only if mass demonstrably migrates off the tip.
+
 \section{The Mean and the Manifold}
 \label{sec:manifold}
 
@@ -63,7 +67,9 @@ where $t$ indexes position, $d$ indexes feature, and $a[f_t,f_d]$ is a learnable
 
 Now read this through the bias-variance lens.
 
-\textbf{Bias is the static spectrum.} With a fixed amplitude grid, $b[t,d]$ is identical for every input. It is a single rhythm imposed on all of the corpus at once - the population average. In the limit where the grid concentrates onto one cell, every feature oscillates to the same beat and the spectrum heatmap is flat: maximum bias, a model that has collapsed to the mean rhythm of its data. The head exposes this directly. \texttt{concentration()} reports Hoyer sparsity of the grid (1 = a single cell, 0 = uniform), and a live spectrum snapshot shows where the energy sits.\paperHoyerConcentration{} Early in training the heatmap is indistinguishable from noise; under a smoothness prior it develops a clean low-frequency band - the corpus rhythm crystallizing as a measurable object, not a metaphor.
+\textbf{Bias is the static spectrum.} With a fixed amplitude grid, $b[t,d]$ is identical for every input. It is a single rhythm imposed on all of the corpus at once - the population average. In the limit where the grid concentrates onto one cell, every feature oscillates to the same beat and the spectrum heatmap is flat: maximum bias, a model that has collapsed to the mean rhythm of its data. The head exposes this directly. \texttt{concentration()} reports Hoyer sparsity of the grid (1 = a single cell, 0 = uniform), and a live spectrum snapshot shows where the energy sits.\paperHoyerConcentration{} Early in training the heatmap is indistinguishable from noise; under a smoothness prior it develops a clean low-frequency band - the corpus rhythm crystallizing as a measurable object, not a metaphor (Figure~\ref{fig:spectrum}).
+
+\paperSpectrumFigure{}
 
 \textbf{Variance is the input-conditional deviation.} The decisive architectural step was to stop forcing one static field on a corpus that mixes registers - dialogue, code, prose. A static grid must compromise across all of them, and the compromise degenerates into a content-blind side channel that the rest of the model has to route around. The fix makes the amplitudes a baseline plus an input-conditional delta:
 \[
@@ -113,6 +119,78 @@ Sampling temperature is usually described as noise injection. On the bias-varian
 % chosen by codec_mode (CALM / byte-latent / standard tokenization) for the run;
 % the rest (crystal head, attention sink, the seed) follow by order.
 \paperFramingHarmonic
+
+\subsection{The outer representation}
+
+There is a third way to read what this architecture trains for, orthogonal to the bias-variance manifold and to the Koopman dynamics: not \textit{how} it represents, but \textit{where in the sequence the learning pressure falls}. A standard causal model carries a next-token objective at every position; it learns the running interior, the representation as it unfolds one step at a time. A masked model hides interior positions and learns to fill them in; it learns the inner representation by infilling. Both place their pressure inside the window. The harmonic codec places it at the \textit{ends}.
+
+Two objectives sit at the two temporal extremes of a patch. The codec is an autoencoder over $K$ contiguous tokens (\texttt{calm-d}: $K=8$; the plain byte profile, $K=16$): it \textit{reconstructs} the patch it has already consumed, a $K$-scaled cross-entropy that anchors the already-observed - the past, relative to the decision boundary. It does so over a separable harmonic basis that keeps only the lowest total-frequency modes, so smooth-across-patch structure compresses into few coefficients and the cost of holding a patch falls as $K$ grows rather than rising. The outer decoder then \textit{predicts} the next latent, $z_p \mapsto z_{p+1}$, which decodes to the unobserved next patch - the future, $T{+}1$ tokens ahead. One loss reconstructs what is behind the boundary; the other predicts what is in front of it. The interior of the patch is never a target in itself - it is reconstructed only as a by-product of pinning both ends.
+
+The two attention sinks of Section~\ref{sec:definitions} mirror the two objectives in the same geometry. Ghostmax is a zero sink at the head of every attention row - positionless, always reachable, the place a query falls back to when the past holds nothing it needs. Dropoff, when enabled, is a zero sink at the tip - positioned, on the most recent token, the place that forces a query off the easiest signal so it cannot simply copy the present. A sink that absorbs at the start and a sink that injects at the end: together they pull the model toward the boundaries of what it can see and away from the comfortable middle. We call the result the \textit{outer representation} - the model is incentivized at the head and the tail, the edges of the window, rather than along its interior. It is the complement of both standard regimes (Figure~\ref{fig:masks}): causal learning is interior-running, masked learning is interior-filling, and this learns the rim.
+
+\begin{figure}[t]
+  \centering
+  \begin{tikzpicture}[x=0.34cm, y=0.34cm]
+    \tikzset{
+      attend/.style={fill=blue!70},
+      masked/.style={fill=white},
+      cb/.style={draw=black!30, line width=0.2pt},
+    }
+    % ===== Panel 1: causal =====
+    \begin{scope}
+      \foreach \r in {0,...,7}{
+        \foreach \c in {0,...,7}{
+          \ifnum\c>\r \fill[masked] (\c,-\r) rectangle (\c+1,-\r-1);
+          \else \fill[attend] (\c,-\r) rectangle (\c+1,-\r-1);\fi
+          \draw[cb] (\c,-\r) rectangle (\c+1,-\r-1);
+        }
+      }
+      \node[font=\scriptsize,rotate=90] at (-1.0,-4.0) {query $i$};
+      \node[font=\scriptsize] at (4.0,0.8) {key $j$};
+      \node[font=\footnotesize] at (4.0,-9.4) {causal (GPT)};
+      \node[font=\scriptsize,text=black!55] at (4.0,-10.4) {interior-running};
+    \end{scope}
+    % ===== Panel 2: outer (ours) =====
+    \begin{scope}[shift={(11,0)}]
+      \foreach \r in {0,...,7}{
+        \foreach \c in {0,...,7}{
+          \ifnum\r=0 \fill[masked] (\c,-\r) rectangle (\c+1,-\r-1);
+          \else
+            \ifnum\r=7 \fill[masked] (\c,-\r) rectangle (\c+1,-\r-1);
+            \else
+              \ifnum\c>\r \fill[masked] (\c,-\r) rectangle (\c+1,-\r-1);
+              \else \fill[attend] (\c,-\r) rectangle (\c+1,-\r-1);\fi
+            \fi
+          \fi
+          \draw[cb] (\c,-\r) rectangle (\c+1,-\r-1);
+        }
+      }
+      \node[font=\footnotesize] at (4.0,-9.4) {outer (ours)};
+      \node[font=\scriptsize,text=black!55] at (4.0,-10.4) {learns the rim};
+    \end{scope}
+    % ===== Panel 3: bidirectional (BERT) =====
+    \begin{scope}[shift={(23,0)}]
+      \foreach \r in {0,...,7}{
+        \foreach \c in {0,...,7}{
+          \fill[attend] (\c,-\r) rectangle (\c+1,-\r-1);
+          \draw[cb] (\c,-\r) rectangle (\c+1,-\r-1);
+        }
+      }
+      \foreach \r in {2,5}{
+        \foreach \c in {0,...,7}{
+          \fill[masked] (\c,-\r) rectangle (\c+1,-\r-1);
+          \draw[cb] (\c,-\r) rectangle (\c+1,-\r-1);
+        }
+      }
+      \node[font=\footnotesize] at (4.0,-9.4) {bidirectional (BERT)};
+      \node[font=\scriptsize,text=black!55] at (4.0,-10.4) {interior-filling};
+    \end{scope}
+  \end{tikzpicture}
+  \caption{Where the learning pressure falls, read as an attention mask (rows = query position $i$, columns = key position $j$; a blue cell means $i$ attends to $j$). \textbf{Causal (GPT)} is lower-triangular: every position predicts the next from its past, so pressure runs along the interior. \textbf{Bidirectional (BERT)} is the full square with a few interior query rows held out as masked targets (the white bands): pressure fills the interior. \textbf{Outer (ours)} keeps the causal triangle but drops the first and last query rows to sinks - ghostmax at the head, dropoff at the tail - so the objective is anchored at the edges of the window rather than its middle: it learns the rim.}
+  \label{fig:masks}
+\end{figure}
+
+This is the least settled part of the picture, and we mark the seam honestly. The reconstruction-and-prediction duality is in production and measurable - reconstruction fidelity and the conditional gap between marginal and conditional next-latent prediction are both reported. The outer-representation reading, and the dropoff sink that would complete its symmetry, are a conjecture: the claim that learning pressure migrates to earlier positions is exactly what a measurement of attention mass would confirm or refute. We offer the axis as a third coordinate to look along, not yet as one we have surveyed.
 
 \section{The Scaling Conjecture}
 \label{sec:scaling}

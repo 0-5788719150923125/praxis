@@ -5,6 +5,7 @@ pillars:
   - datasets
   - framing
   - geometries
+  - spectrum
   - strands
   - evolution
   - halting

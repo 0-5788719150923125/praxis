@@ -15,6 +15,12 @@ var _mesh: Mesh3D
 var _rot := Vector3.ZERO
 var _hue := 0.0
 var _glow := 0.0
+# Async per-face flicker (a random roll): each face lights on its own phase/rate, so the
+# solid shimmers face-by-face instead of pulsing all at once.
+var _async := false
+var _fphase := PackedFloat32Array()
+var _frate := PackedFloat32Array()
+var _fglow := PackedFloat32Array()
 
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
@@ -26,6 +32,13 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		_: _mesh = Mesh3D.icosphere(0)
 	_rot = Vector3(rng.randf() * TAU, rng.randf() * TAU, rng.randf() * TAU)
 	_hue = rng.randf()
+	# Roll for the async per-face flicker; if on, seed each face its own phase + rate.
+	_async = rng.randf() < 0.6
+	var nf := _mesh.faces.size()
+	_fglow.resize(nf)
+	for i in nf:
+		_fphase.append(rng.randf() * TAU)
+		_frate.append(rng.randf_range(0.5, 2.6))
 	lens.fov = rng.randf_range(42.0, 56.0)
 	lens.eye = Vector3(0.0, 0.0, rng.randf_range(3.4, 4.4))   # a touch of perspective
 	return {
@@ -46,7 +59,17 @@ func update(f: AudioFeatures, delta: float) -> void:
 	# Slow continuous 3D rotation reveals the solid; energy only nudges the pace.
 	_rot += spin * delta * (0.7 + 0.5 * f.energy)
 	# Audio drives the *glow*, not the size - the solid holds its shape.
-	_glow = 0.35 * f.beat + 0.18 * f.energy
+	if _async:
+		# Each face flickers on its own phase/rate, driven (not synced) by the audio, so
+		# they light asynchronously rather than all at once.
+		var drive := 0.25 + 0.55 * f.beat + 0.3 * f.energy
+		for i in _mesh.faces.size():
+			_fglow[i] = clampf((0.5 + 0.5 * sin(_life * float(_frate[i]) + float(_fphase[i]))) * drive, 0.0, 0.85)
+		_mesh.face_glow = _fglow
+		_glow = 0.04
+	else:
+		_mesh.face_glow = PackedFloat32Array()
+		_glow = 0.35 * f.beat + 0.18 * f.energy
 	bodies.clear()
 	add_body(_mesh, Basis.from_euler(_rot), Vector3.ZERO, 0.7,
 		fposmod(_hue + 0.04 * f.energy, 1.0), 0.5, 2, float(params.face_alpha), _glow)

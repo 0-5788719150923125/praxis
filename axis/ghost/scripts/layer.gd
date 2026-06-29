@@ -85,6 +85,15 @@ static func soft_blob(ci: CanvasItem, c: Vector2, radius: float, color: Color, l
 		ci.draw_circle(c, r, Color(color.r, color.g, color.b, al))
 
 
+## An ellipse outline as a point ring (for a wobbling bubble rim, etc.).
+static func ellipse(c: Vector2, rx: float, ry: float, segs := 22) -> PackedVector2Array:
+	var pts := PackedVector2Array()
+	for i in segs:
+		var th := TAU * float(i) / float(segs)
+		pts.append(c + Vector2(cos(th) * rx, sin(th) * ry))
+	return pts
+
+
 ## Draw a procedural six-fold snow-crystal dendrite, centred at `c`, of `radius` pixels,
 ## rotated by `ang`. Generated, not hard-coded: a main arm per fold with a few side
 ## branches at the natural 60° dendrite angle, their length and placement varied by
@@ -130,8 +139,10 @@ class Bed:
 		var n := int(num("pools", 3))
 		for i in n:
 			_pools.append({
-				"home": Vector2(seed_rng.randf_range(-0.6, 0.6), seed_rng.randf_range(-0.4, 0.4)),
-				"size": seed_rng.randf_range(0.5, 0.95),
+				# Spread wider (partly off-frame) and larger, so the pools read as a soft
+				# wash rather than discrete giant lights sitting at the edges.
+				"home": Vector2(seed_rng.randf_range(-0.95, 0.95), seed_rng.randf_range(-0.6, 0.6)),
+				"size": seed_rng.randf_range(0.7, 1.25),
 				"hue_off": seed_rng.randf_range(-0.12, 0.16),
 				"band": seed_rng.randf(),
 				"px": seed_rng.randf() * TAU, "py": seed_rng.randf() * TAU,
@@ -210,7 +221,10 @@ class Fog:
 		var tint := Color.from_hsv(tint_h, sat, 0.92, alpha)
 		for b in _blobs:
 			var p: Vector2 = b.home
-			p.x = wrapf(p.x + _drift * float(b.speed), -1.0, 1.0)
+			# Wrap far off-screen (±2.4, well past the frame + the blob's own radius) so a
+			# big blob drifts fully out of view before reappearing on the other side - no
+			# pop-in of giant lights at the edges.
+			p.x = wrapf(p.x + _drift * float(b.speed), -2.4, 2.4)
 			var sway := Vector2(0.06 * sin(t * 0.2 + b.px), 0.05 * cos(t * 0.17 + b.py))
 			var pos := Vector2((p.x + sway.x) * half.x, (b.home.y + sway.y) * half.y) \
 				.rotated(_swirl * 0.4) * u
@@ -367,12 +381,26 @@ class Fireflies:
 
 	func draw(ci: CanvasItem, u: float) -> void:
 		var base_h: float = num("hue", 0.16)
+		var real: bool = flag("real_light", false)
 		for b in _bugs:
 			var c: Vector2 = b.pos * u
 			var v: float = b.glow
-			var col := Color.from_hsv(fposmod(base_h + b.hue_off, 1.0), 0.55, clampf(0.3 + v, 0.0, 1.0))
+			var col := Color.from_hsv(fposmod(base_h + b.hue_off, 1.0), 0.55, clampf(0.35 + 0.65 * v, 0.0, 1.0))
 			var r: float = float(b.size) * u
-			Layer.glow(ci, c, r * (3.0 + 5.0 * v), Color(col.r, col.g, col.b, 0.12 + 0.3 * v), 5)
+			if real:
+				# A real point light, not a pasted halo: a faint wide wash (light reaching
+				# into the dark) + a steep additive falloff + a white-hot core. Reads as a
+				# source that actually illuminates.
+				ci.draw_circle(c, r * (7.0 + 9.0 * v), Color(col.r, col.g, col.b, 0.02 + 0.04 * v))
+				for k in 4:
+					var fk := float(k) / 3.0
+					ci.draw_circle(c, r * (0.8 + (1.0 - fk) * 3.0 * (0.6 + 0.7 * v)),
+						Color(col.r, col.g, col.b, (0.05 + 0.20 * fk) * (0.4 + 0.6 * v)))
+				ci.draw_circle(c, r * (0.6 + 0.4 * v), Color(1, 1, 1, 0.55 * v))   # hot core
+			else:
+				# A tighter, less fake glow than before, with a hot core on the flare.
+				Layer.glow(ci, c, r * (2.2 + 3.2 * v), Color(col.r, col.g, col.b, 0.10 + 0.26 * v), 5)
+				ci.draw_circle(c, r * 0.7, Color(1, 1, 1, 0.4 * v))
 			ci.draw_circle(c, r, col)
 
 
@@ -597,44 +625,116 @@ class Dust:
 
 
 # ---------------------------------------------------------------------------------
-# Bubbles - rising bubbles with a rim highlight, wobbling as they ascend. For an
-# underwater feel; pairs with a cool bed.
+# Bubbles - underwater bubbles released in BURSTS (gurgles) from bed emitters, rising,
+# meandering, and POPPING near the surface. Not a tidy field of identical discs: a few
+# vents trickle bubbles and periodically (and on beats - a burp) belch a cluster of
+# mostly-tiny ones, which ascend at size-dependent speeds and burst into a quick ring.
 # ---------------------------------------------------------------------------------
 class Bubbles:
 	extends Base
 	var _bubbles: Array = []
+	var _pops: Array = []
+	var _emitters: Array = []        # vent x positions, normalized -1..1
+	var _flow: FlowField
+	var _trickle := 0.0
+	var _gurgle := 0.0
+	var _beat_prev := 0.0
+	const CAP := 240
 
 	func _init(seed_rng: RandomNumberGenerator, c: Dictionary = {}) -> void:
 		super(seed_rng, c)
-		var n := int(num("count", 44))
-		for i in n:
-			var depth := seed_rng.randf_range(0.3, 1.0)
-			_bubbles.append({
-				"x": seed_rng.randf(), "y": seed_rng.randf(), "depth": depth,
-				"size": seed_rng.randf_range(0.006, 0.03) * depth,
-				"wob_amp": seed_rng.randf_range(0.01, 0.04),
-				"wob_rate": seed_rng.randf_range(0.6, 1.6),
-				"phase": seed_rng.randf() * TAU,
-			})
+		_flow = FlowField.new(seed_rng.randi(), 1.4, 0.05)
+		for i in seed_rng.randi_range(2, 4):
+			_emitters.append(seed_rng.randf_range(-0.8, 0.8))
+		_gurgle = seed_rng.randf_range(0.4, 1.8)
+
+	# Release one bubble from vent `ex` (normalized x). `scale` shrinks a burst's bubbles.
+	func _spawn(ex: float, scale: float) -> void:
+		if _bubbles.size() >= CAP:
+			return
+		var size: float = pow(rng.randf(), 2.4) * 0.024 * scale + 0.0018   # skew strongly small
+		_bubbles.append({
+			"x": ex * half.x + rng.randf_range(-0.025, 0.025),
+			"y": half.y * rng.randf_range(0.9, 1.02),          # near the bed
+			"size": size,
+			"vy": num("rise", 0.09) * (0.5 + 16.0 * size) * rng.randf_range(0.8, 1.3),
+			"wob_amp": rng.randf_range(0.008, 0.035),
+			"wob_rate": rng.randf_range(0.8, 2.2),
+			"squash_rate": rng.randf_range(1.2, 2.8),
+			"phase": rng.randf() * TAU,
+			"age": 0.0,
+			# Variable-length lifetimes, skewed so most are short and a few linger.
+			"life": 1.4 + pow(rng.randf(), 0.7) * 7.0,
+		})
 
 	func update(f: AudioFeatures, dt: float, h: Vector2) -> void:
 		super(f, dt, h)
-		var spd: float = num("rise", 0.09) * (1.0 + 0.4 * f.energy)
+		_flow.advance(dt)
+		# A steady trickle from the vents.
+		_trickle -= dt
+		if _trickle <= 0.0:
+			_trickle = rng.randf_range(0.12, 0.45)
+			_spawn(_emitters[rng.randi() % _emitters.size()], 1.0)
+		# Gurgles: a modest timed burst, and a slightly bigger burp on a STRONG beat -
+		# gated through a spike curve so it only belches on real hits, not every tick.
+		var beat_edge: bool = f.beat > 0.6 and _beat_prev <= 0.6
+		_beat_prev = f.beat
+		var burp: float = Nonlinear.apply("spike", clampf(f.beat - 0.5, 0.0, 1.0), 3.0)
+		_gurgle -= dt
+		if _gurgle <= 0.0 or beat_edge:
+			_gurgle = rng.randf_range(2.2, 4.8)
+			var ex: float = _emitters[rng.randi() % _emitters.size()]
+			var k := rng.randi_range(3, 6) + int(round(3.0 * burp))
+			for j in k:
+				_spawn(ex, rng.randf_range(0.35, 1.0))
+		# Advance: rise (size-dependent), meander, age; pop near the surface / at end of life.
+		var boost: float = 1.0 + 0.4 * f.energy
+		var live: Array = []
 		for b in _bubbles:
-			b.y = fposmod(b.y - spd * float(b.depth) * dt, 1.0)   # rise = decreasing y
+			b.age += dt
+			b.y -= float(b.vy) * boost * dt
+			b.x += _flow.at(Vector2(b.x / maxf(0.01, half.x), b.y / maxf(0.01, half.y))).x * 0.04 * dt
+			var pop: bool = b.age > float(b.life) or b.y < -half.y * 0.85 \
+				or (b.age > 0.7 and rng.randf() < 1.2 * dt)
+			if pop:
+				_pops.append({"x": b.x, "y": b.y, "size": float(b.size), "age": 0.0})
+			else:
+				live.append(b)
+		_bubbles = live
+		var lp: Array = []
+		for p in _pops:
+			p.age += dt
+			if p.age < 0.22:
+				lp.append(p)
+		_pops = lp
 
 	func draw(ci: CanvasItem, u: float) -> void:
 		var base_h: float = num("hue", 0.55)
 		for b in _bubbles:
-			var wob: float = b.wob_amp * sin(t * b.wob_rate + b.phase)
-			var px: float = (b.x * 2.0 - 1.0) * half.x + wob
-			var py: float = (b.y * 2.0 - 1.0) * half.y
-			var c: Vector2 = Vector2(px, py) * u
+			# Ease in at birth AND ease out in the last moments, so a bubble doesn't blink
+			# out abruptly - it thins away just before it pops.
+			var fin: float = clampf(b.age * 3.0, 0.0, 1.0) * clampf((float(b.life) - b.age) * 4.0, 0.0, 1.0)
+			var wob: float = b.wob_amp * sin(t * float(b.wob_rate) + b.phase)
+			var c: Vector2 = Vector2(b.x + wob, b.y) * u
 			var r: float = float(b.size) * u
-			var col := Color.from_hsv(base_h, 0.25, 0.95, 0.10 + 0.10 * float(b.depth))
-			ci.draw_circle(c, r, col)                                  # body
-			ci.draw_arc(c, r, -PI * 0.9, -PI * 0.4, 10, Color(1, 1, 1, 0.4), maxf(1.0, r * 0.12), true)
-			ci.draw_circle(c - Vector2(r * 0.3, r * 0.3), r * 0.16, Color(1, 1, 1, 0.5))  # highlight
+			var sq: float = 1.0 + 0.12 * sin(t * float(b.squash_rate) + b.phase)
+			var rx := r
+			var ry := r / sq
+			ci.draw_colored_polygon(Layer.ellipse(c, rx * 0.95, ry * 0.95, 14),
+				Color.from_hsv(base_h, 0.28, 0.9, 0.04 * fin))
+			var rim := Layer.ellipse(c, rx, ry, 16)
+			rim.append(rim[0])
+			ci.draw_polyline(rim, Color(0.85, 0.93, 1.0, 0.22 * fin), maxf(1.0, r * 0.06), true)
+			if r > 3.0:
+				ci.draw_circle(c + Vector2(-r * 0.32, -r * 0.34), r * 0.09, Color(1, 1, 1, 0.5 * fin))
+		# Pops: a small, brief ring - just a wisp, not a wild explosion.
+		for p in _pops:
+			var k: float = float(p.age) / 0.22
+			var pr: float = float(p.size) * u * (1.0 + 1.4 * k)
+			var a: float = (1.0 - k) * 0.25
+			var ring := Layer.ellipse(Vector2(p.x, p.y) * u, pr, pr, 12)
+			ring.append(ring[0])
+			ci.draw_polyline(ring, Color(0.9, 0.95, 1.0, a), maxf(1.0, float(p.size) * u * 0.2), true)
 
 
 # ---------------------------------------------------------------------------------

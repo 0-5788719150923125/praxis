@@ -55,6 +55,8 @@ const SCENES := [
 	{"script": preload("res://scripts/scenes/petals.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/bubbles.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/motes.gd"), "behavior": "drift"},
+	{"script": preload("res://scripts/scenes/projection.gd"), "behavior": "drift"},
+	{"script": preload("res://scripts/scenes/projection.gd"), "behavior": "static"},
 	# "the-point" scenes (camera holds, per the brief).
 	{"script": preload("res://scripts/scenes/eye.gd"), "behavior": "static"},
 	{"script": preload("res://scripts/scenes/two_eyes.gd"), "behavior": "static"},

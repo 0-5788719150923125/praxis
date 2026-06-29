@@ -10,6 +10,7 @@ extends GhostScene
 const OVER := 1.35   # draw this much beyond the screen, for view motion headroom
 
 var _phase := 0.0
+var _hue_t := 0.0     # flowing-hue clock: advances with the audio so the palette drifts
 var _f: AudioFeatures = AudioFeatures.new()
 var _act: Activation
 var _light: Lighting
@@ -26,7 +27,12 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		"cols": cols,
 		"rows": rows,
 		"hue": rng.randf(),
-		"hue_flow": rng.randf_range(0.2, 0.8),
+		"hue_flow": rng.randf_range(0.2, 0.8),       # horizontal hue gradient (existing)
+		"hue_flow_y": rng.randf_range(0.05, 0.45),   # vertical hue gradient
+		"hue_wave": rng.randf_range(0.05, 0.16),     # amplitude of the travelling hue wave
+		"hue_drift": rng.randf_range(0.10, 0.40),    # how fast the whole palette flows
+		"sat": rng.randf_range(0.55, 0.75),
+		"sat_var": rng.randf_range(0.05, 0.20),      # saturation variance across the field
 		"wave_freq": rng.randf_range(1.5, 4.0),
 		"wave_speed": rng.randf_range(0.5, 2.0),
 		"cell_fill": rng.randf_range(0.55, 0.85),
@@ -42,6 +48,7 @@ func update(f: AudioFeatures, delta: float) -> void:
 	_act.update(f.energy + 0.4 * f.beat, delta)
 	_light.update(f, delta)
 	_phase += (float(params.wave_speed) * (0.4 + 0.6 * f.bass) + f.treble) * 0.5 * delta
+	_hue_t += float(params.hue_drift) * (0.5 + 0.8 * f.energy + 0.6 * f.beat) * delta
 	queue_redraw()
 
 
@@ -57,12 +64,17 @@ func _draw() -> void:
 	var max_size: float = spacing * float(params.cell_fill)
 	var hue: float = params.hue
 	var hue_flow: float = params.hue_flow
+	var hue_flow_y: float = params.hue_flow_y
+	var hue_wave: float = params.hue_wave
+	var sat0: float = params.sat
+	var sat_var: float = params.sat_var
 	var wave_freq: float = params.wave_freq
 	var spin: float = params.spin
 	var diamond: bool = params.diamond
 	var origin := -field * 0.5
 
 	for r in rows:
+		var rt := float(r) / float(maxi(1, rows - 1))
 		for col in cols:
 			var idx := r * cols + col
 			var pos := origin + Vector2((col + 0.5) * cell_w, (r + 0.5) * cell_h)
@@ -78,9 +90,15 @@ func _draw() -> void:
 			# moving hotspot lights the cells it sweeps, and the beat glow lifts all.
 			var s := max_size * (0.55 + 0.30 * e)
 			var lit := _light.at(pos / u)
-			var h := fposmod(hue + hue_flow * t + 0.12 * lit + _light.hue_shift(), 1.0)
+			# A flowing hue *map*: a diagonal gradient across the field (hue_flow x +
+			# hue_flow_y y) plus a travelling wave that the audio drives forward (_hue_t),
+			# so colour is never static - it gradients across the grid and drifts over time.
+			var h := fposmod(hue + hue_flow * t + hue_flow_y * rt
+				+ hue_wave * sin((t + rt) * TAU - _hue_t * TAU) + 0.06 * _hue_t
+				+ 0.12 * lit + _light.hue_shift(), 1.0)
+			var sat := clampf(sat0 + sat_var * sin((t - rt) * PI + _hue_t * 1.3) - 0.25 * lit, 0.0, 1.0)
 			var val := clampf(0.28 + 0.3 * e + 0.55 * lit + 0.4 * _light.glow(), 0.05, 1.0)
-			_draw_cell(pos, s, e * spin, Color.from_hsv(h, 0.65, val), diamond)
+			_draw_cell(pos, s, e * spin, Color.from_hsv(h, sat, val), diamond)
 
 
 func _draw_cell(pos: Vector2, s: float, rot: float, col: Color, diamond: bool) -> void:

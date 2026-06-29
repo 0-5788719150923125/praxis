@@ -29,6 +29,9 @@ var faces: Array = []   # each face is a PackedInt32Array of 3 vertex indices
 ## Optional per-face surface variation in roughly -amp..amp (see [method texturize]),
 ## applied as a brightness/saturation mottle when drawn - the "texture" layer.
 var face_tint := PackedFloat32Array()
+## Optional per-face additive glow (0..1), added to each face's brightness when drawn -
+## so faces can light up independently (e.g. an async per-face flicker). Empty = off.
+var face_glow := PackedFloat32Array()
 ## Optional per-vertex normals (see [method compute_normals]) for smooth (Gouraud)
 ## shading - the colour is interpolated across each triangle instead of flat, so a
 ## subdivided sphere reads as a smooth ball, not faceted.
@@ -543,7 +546,8 @@ func draw_through(ci: CanvasItem, lens: Lens3D, u_px: float, basis: Basis, pos: 
 				var nw: Vector3 = (basis * vertex_normals[idx]).normalized()
 				var view: Vector3 = (lens.eye - wp).normalized()
 				var sp := gloss * pow(maxf(0.0, nw.dot((light + view).normalized())), shininess) if gloss > 0.0 else 0.0
-				var b := clampf(0.22 + 0.78 * maxf(0.0, nw.dot(light)) + glow + sp, 0.0, 1.0)
+				var fgv := face_glow[fi] if face_glow.size() == faces.size() else 0.0
+				var b := clampf(0.22 + 0.78 * maxf(0.0, nw.dot(light)) + glow + fgv + sp, 0.0, 1.0)
 				cols.append(Color.from_hsv(hue, clampf(sat * (1.0 - 0.6 * sp), 0.0, 1.0), b, face_alpha))
 			if ok and not _degenerate(poly):
 				ci.draw_polygon(poly, cols)
@@ -565,7 +569,8 @@ func draw_through(ci: CanvasItem, lens: Lens3D, u_px: float, basis: Basis, pos: 
 			var view := (lens.eye - cen).normalized()
 			var spec := gloss * pow(maxf(0.0, n.dot((light + view).normalized())), shininess) if gloss > 0.0 else 0.0
 			var tint := face_tint[fi] if textured else 0.0
-			var bright := clampf((0.22 + 0.78 * maxf(0.0, n.dot(light)) + glow + spec) * (1.0 + tint), 0.0, 1.0)
+			var fg := face_glow[fi] if face_glow.size() == faces.size() else 0.0
+			var bright := clampf((0.22 + 0.78 * maxf(0.0, n.dot(light)) + glow + fg + spec) * (1.0 + tint), 0.0, 1.0)
 			var fsat := clampf(sat * (1.0 - 0.6 * spec) * (1.0 - 0.25 * absf(tint)), 0.0, 1.0)
 			col = Color.from_hsv(hue, fsat, bright, face_alpha)
 		var push := n * explode

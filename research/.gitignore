@@ -12,6 +12,7 @@ data/
 framing.tex
 inlines.tex
 geometries.tex
+spectrum.tex
 halting.tex
 ghostmax.tex
 title.tex

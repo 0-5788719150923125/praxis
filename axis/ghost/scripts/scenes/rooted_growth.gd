@@ -37,7 +37,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	var count := rng.randi_range(4, 7)
 	for i in count:
 		var r := {"fil": null, "grown": 0.0, "life": 1.0, "state": "grow",
-			"timer": 0.0, "rate": 1.0, "hold": 2.0, "mode": "fade",
+			"timer": 0.0, "rate": 1.0, "hold": 2.0, "mode": "fade", "retract_to": 0.0,
 			"heading": -PI * 0.5 + TAU * float(i) / float(count) + rng.randf_range(-0.3, 0.3)}
 		_regrow(r)
 		# Stagger: start each root at a random point in its own lifecycle, so they are
@@ -60,9 +60,16 @@ func _regrow(r: Dictionary) -> void:
 	r.grown = 0.0
 	r.life = 1.0
 	r.state = "grow"
-	r.rate = _rng.randf_range(0.6, 1.5)
+	r.rate = _gauss_rate()
 	r.hold = _rng.randf_range(1.6, 4.5)
 	r.mode = "rewind" if _rng.randf() < 0.30 else "fade"   # mostly fade, sometimes collapse inward
+
+
+# Per-root growth-speed multiplier from a ~normal distribution (sum of three uniforms),
+# wide spread - so roots grow at a real variety of speeds, not all at roughly one rate.
+func _gauss_rate() -> float:
+	var g := (_rng.randf() + _rng.randf() + _rng.randf()) / 3.0
+	return 0.3 + 1.7 * g
 
 
 func update(f: AudioFeatures, delta: float) -> void:
@@ -91,15 +98,25 @@ func _advance(r: Dictionary, delta: float, drive: float) -> void:
 			r.timer -= delta
 			if r.timer <= 0.0:
 				r.state = r.mode
+				if r.state == "rewind":
+					# Varied retraction depth: usually a partial pull-back (then it grows
+					# out again on the same root), occasionally a full collapse + new path.
+					r.retract_to = _rng.randf_range(0.0, 0.65)
 		"fade":
 			r.life = maxf(0.0, r.life - delta * 0.55)
 			if r.life <= 0.0:
 				_regrow(r)
 		"rewind":
-			# Retract the front back toward the seed - the filament collapses inward.
-			r.grown = maxf(0.0, r.grown - delta * 0.4 * (0.6 + 0.5 * drive))
-			if r.grown <= 0.0:
-				_regrow(r)
+			# Retract the front back toward the seed - the root collapses partly inward.
+			var floor_v: float = r.retract_to
+			r.grown = maxf(floor_v, r.grown - delta * 0.4 * (0.6 + 0.5 * drive))
+			if r.grown <= floor_v + 0.005:
+				if floor_v < 0.08:
+					_regrow(r)                  # fully retracted -> fresh path
+				else:
+					r.state = "grow"            # partial -> regrow the same root back up
+					r.hold = _rng.randf_range(1.6, 4.5)
+					r.mode = "rewind" if _rng.randf() < 0.30 else "fade"
 
 
 func _draw() -> void:

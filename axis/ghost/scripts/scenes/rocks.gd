@@ -54,16 +54,25 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	var reveal_chance := 0.0 if rng.randf() < 0.3 else rng.randf_range(0.3, 0.9)
 
 	var base_hue := rng.randf()
+	# Fewer, bigger, more spread-out rocks: a zoomed-in cluster where the largest run off
+	# the edges rather than sitting tidily centred. The overall scale is sampled per scene
+	# so some shows are a few colossal boulders, others a looser scatter of mid stones.
 	var count := rng.randi_range(2, 4)
+	var zoom := rng.randf_range(1.5, 2.6)            # > 1 pushes rocks bigger / off-frame
 	for i in count:
 		# Sample the geometry family for this rock (the start of the spec pattern).
 		var mesh := Mesh3D.hybrid(rng) if _style == "hybrid" else Mesh3D.rock(_style, rng)
 		var spin := Vector3(
 			rng.randf_range(-1, 1), rng.randf_range(-1, 1), rng.randf_range(-0.4, 0.4))
+		# Spread wide - well past the frame edges, so big rocks are only partly on screen.
+		var spread := rng.randf_range(0.0, 0.65)
+		var ang := rng.randf() * TAU
 		var rock := {
 			"mesh": mesh,
-			"center": Vector2(rng.randf_range(-0.30, 0.30), rng.randf_range(-0.24, 0.24)),
-			"radius": rng.randf_range(0.10, 0.17),
+			"verts0": mesh.verts.duplicate(),   # pristine geometry, for the collision dent
+			"center": Vector2(cos(ang), sin(ang)) * spread + Vector2(
+				rng.randf_range(-0.12, 0.12), rng.randf_range(-0.10, 0.10)),
+			"radius": rng.randf_range(0.10, 0.20) * zoom,   # zoomed in; the biggest overflow the frame
 			"hue": fposmod(base_hue + 0.08 * rng.randf(), 1.0),
 			"basis": Basis.from_euler(Vector3(rng.randf() * TAU, rng.randf() * TAU, 0.0)),
 			"spin": spin.normalized() * rng.randf_range(0.07, 0.16),   # gentle
@@ -127,7 +136,46 @@ func update(f: AudioFeatures, delta: float) -> void:
 		_crumble_t += delta
 		if _crumble_t > 4.5:
 			_done = true
+	_deform_collisions()
 	queue_redraw()
+
+
+# Where two rocks overlap (their screen circles intersect), dent the contact-facing
+# faces inward so the panels bend, as if pressed together. The dent is in WORLD space
+# at the contact: each frame we restore the pristine geometry and push the vertices that
+# currently rotate into the contact direction back along it - so as a rock spins, its
+# surface flows through a dent that stays put at the contact, rather than the whole rock
+# carrying a fixed flat spot. Bounded and only while overlapping.
+func _deform_collisions() -> void:
+	var n := _rocks.size()
+	for i in n:
+		var rock: Dictionary = _rocks[i]
+		var verts: PackedVector3Array = (rock.verts0 as PackedVector3Array).duplicate()
+		var ci: Vector2 = rock.center
+		var ri: float = rock.radius
+		var basinv := (rock.basis as Basis).inverse()
+		for j in n:
+			if j == i:
+				continue
+			var other: Dictionary = _rocks[j]
+			var d: Vector2 = Vector2(other.center) - ci
+			var dist := d.length()
+			var overlap: float = (ri + float(other.radius)) - dist
+			if overlap <= 0.0 or dist < 1e-4:
+				continue
+			# Contact direction (toward the neighbour), mapped from world/screen into this
+			# rock's object space; dent depth grows with the overlap.
+			var ldir := (basinv * Vector3(d.x / dist, d.y / dist, 0.0)).normalized()
+			var dent := clampf(overlap / ri, 0.0, 0.7) * 0.45
+			for k in verts.size():
+				var v := verts[k]
+				var vl := v.length()
+				if vl < 1e-5:
+					continue
+				var facing := (v / vl).dot(ldir)
+				if facing > 0.15:
+					verts[k] = v - ldir * ((facing - 0.15) * dent * vl)
+		rock.mesh.verts = verts
 
 
 func _draw() -> void:
