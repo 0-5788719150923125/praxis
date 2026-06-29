@@ -23,22 +23,26 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	var n := rng.randi_range(80, 160)
 	for i in n:
 		var a := rng.randf() * TAU
-		var r := sqrt(rng.randf()) * 0.14
+		# A wider, looser cloud (not a tight central clump) so the sparks no longer feel
+		# bunched; the spawn radius itself varies per spark.
+		var r := sqrt(rng.randf()) * rng.randf_range(0.22, 0.40)
 		var p := Particle.new()
 		p.home = Vector2(cos(a), sin(a)) * r
 		p.radius = rng.randf_range(0.004, 0.012)
 		p.hue = fposmod(base_hue + rng.randf_range(-0.04, 0.07), 1.0)
 		p.noise = Vector2(rng.randf_range(-1, 1), rng.randf_range(-1, 1))
-		# Per-particle flare threshold (some embers catch on a faint beat, some need
-		# a hard one) and a twinkle phase/rate - this is what makes it async.
+		# Per-particle flare threshold (some embers catch on a faint beat, some need a
+		# hard one), a twinkle phase/rate, and a mobility multiplier so each rides the
+		# wind at its own speed (the Wind force reads "mobility") - varied, not uniform.
 		p.data = {"thresh": 0.18 + 0.5 * absf(p.noise.y), "phase": rng.randf() * TAU,
-			"rate": rng.randf_range(0.8, 2.4)}
+			"rate": rng.randf_range(0.8, 2.4), "mobility": rng.randf_range(0.45, 1.7)}
 		_sys.add(p)
 
-	# Per-particle wind drift + a gentle pull home. No synchronized burst.
-	_sys.add_force("wind", {"amp": 0.20, "freq": 0.3, "lift": -0.14})   # negative y = rise
-	_sys.add_force("spring", {"k": 1.1})
-	_sys.add_force("drag", {"k": 1.2})
+	# Per-particle wind drift + a *gentle* pull home (weak spring, so they wander wide
+	# instead of clumping back to centre) + drag for decay. No synchronized burst.
+	_sys.add_force("wind", {"amp": 0.24, "freq": 0.3, "lift": -0.14})   # negative y = rise
+	_sys.add_force("spring", {"k": 0.5})
+	_sys.add_force("drag", {"k": 1.1})
 	return {"hue": base_hue}
 
 

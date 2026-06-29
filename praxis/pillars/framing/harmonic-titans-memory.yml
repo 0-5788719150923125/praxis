@@ -17,13 +17,30 @@ body: >
   fully detached and layer-wise local, in the Mono-Forward
   sense~\cite{monoforward2025}: no gradient from the task ever reaches the
   memory's own learning rule, which is a fixed, scale-invariant step on local
-  reconstruction error. The module is also fully continuous, end to end. It
+  surprise. The module is also fully continuous, end to end. It
   never sees a token, a position, or a logit - continuous vectors arrive,
   shifted continuous targets leave - so it cannot know what its inputs mean
   or what its outputs will be used for; in that respect it shares a direction
   with fully-differentiable computation efforts such as
   neurallambda~\cite{neurallambda2024}, which push symbolic machinery into
-  the continuous regime rather than the reverse.
+  the continuous regime rather than the reverse. This is a zero-knowledge
+  discipline~\cite{gmr1989} turned inward: the module does verifiable local
+  work - it provably reduces its own surprise - on a witness whose semantics
+  are structurally withheld from it, the same expose-the-output,
+  hide-the-perturbable-witness principle that makes the rest of the system
+  robust to its own observers.
+
+  What that surprise targets is itself a coordinate. In the predictive
+  variant the memory is trained to forecast the \emph{next} latent rather
+  than reconstruct the current value, which - following Next-Latent
+  Prediction~\cite{nextlat2025} - shapes the stored state into a
+  \emph{belief state}: a sufficient statistic for the future rather than a
+  lagged echo of the residual it is added to. The distinction is load-bearing
+  here, because an echo of the present is redundant and the model learns to
+  route around it, while a forecast of the next state is the input-conditional
+  correction the residual does not already carry - which is why a predictive
+  target keeps the memory contributing real signal where an auto-associative
+  one decays toward none.
 
   On the bias/variance geometry of this paper, that design pins the module to
   one axis. Its learning rule is the same for every input, every layer, every

@@ -34,6 +34,9 @@ var _hue := 0.0
 var _glow := 0.0
 var _beat_prev := 0.0
 var _life_alpha := 1.0       # set per-filament before its draw, read by _color_for
+var _strike_acc := 0.0       # lightning: time since the last strike
+var _strike_period := 1.6    # lightning: fallback re-strike cadence (sampled), so it
+                             # strikes even with no detectable beats - never pure black
 
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
@@ -43,16 +46,30 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_cfg = MODES[_mode]
 	_hue = fposmod(float(_cfg.hue) + rng.randf_range(-0.08, 0.08), 1.0)
 	_flow = Flow2D.new(rng.randi(), rng.randf_range(2.0, 3.5), float(_cfg.evolve))
+	_strike_period = rng.randf_range(1.1, 2.0)
 	var count := rng.randi_range(int(_cfg.count_lo), int(_cfg.count_hi))
 	for i in count:
 		var fil := {"fil": null, "grown": 0.0, "life": 0.0, "mature": 0.0,
-			"origin": Vector2.ZERO, "heading": 0.0, "active": false}
+			"origin": Vector2.ZERO, "heading": 0.0, "active": false,
+			"state": "grow", "timer": 0.0, "rate": 1.0, "hold": 2.0, "mode": "fade"}
 		_seed_path(fil, i, count)
 		_regrow(fil)
 		if not bool(_cfg.strike):
+			# Continuous modes run a staggered, rate-varied lifecycle (see _update_continuous).
 			fil.life = 1.0
-			fil.grown = rng.randf_range(0.4, 1.0)   # continuous modes enter mid-growth
+			fil.grown = rng.randf_range(0.0, 1.0)   # start anywhere in the lifecycle (async)
+			fil.rate = rng.randf_range(0.6, 1.5)
+			fil.hold = rng.randf_range(1.6, 4.5)
+			fil.mode = "rewind" if rng.randf() < 0.30 else "fade"
 		_fils.append(fil)
+	# Lightning: seed an opening strike (mid-flash) so the very first frame already has
+	# bolts on screen, rather than waiting in the dark for the first beat.
+	if bool(_cfg.strike):
+		for j in mini(2, _fils.size()):
+			var fil: Dictionary = _fils[j]
+			fil.active = true
+			fil.life = 1.0
+			fil.grown = rng.randf_range(0.5, 1.0)
 	return {}
 
 
@@ -98,16 +115,21 @@ func update(f: AudioFeatures, delta: float) -> void:
 	queue_redraw()
 
 
-# Lightning: idle bolts re-strike on beats, flood in, blaze, then fade out.
+# Lightning: bolts strike on beats, flood in, blaze, then fade out. They also strike on
+# a fallback cadence (so quiet/no-audio stretches still flicker), and a strike is forced
+# whenever none are alive - so the scene is never pure black.
 func _update_strikes(f: AudioFeatures, delta: float, grow: float, beat_edge: bool) -> void:
 	var drive := 0.5 + 1.5 * Nonlinear.apply("spike", clampf(0.6 * f.energy + f.beat, 0.0, 1.0), 2.0)
+	_strike_acc += delta
+	var any_active := false
 	for fil in _fils:
-		if not fil.active:
-			if beat_edge and _rng.randf() < 0.6:
-				_regrow(fil)
-				fil.active = true
-				fil.life = 1.0
-		else:
+		if fil.active:
+			any_active = true
+	if beat_edge or _strike_acc >= _strike_period or not any_active:
+		_strike_acc = 0.0
+		_strike_some(not any_active)
+	for fil in _fils:
+		if fil.active:
 			fil.grown = minf(1.0, fil.grown + delta * grow * drive)
 			if fil.grown >= 1.0:
 				fil.life = maxf(0.0, fil.life - delta * float(_cfg.fade))
@@ -115,18 +137,61 @@ func _update_strikes(f: AudioFeatures, delta: float, grow: float, beat_edge: boo
 					fil.active = false
 
 
-# Neural / thread: a steady creep surged by energy, regrowing on a fresh path once
-# matured, so the network keeps moving.
-func _update_continuous(f: AudioFeatures, delta: float, grow: float) -> void:
-	var drive := 0.4 + 1.2 * Nonlinear.apply("spike", clampf(0.7 * f.energy + f.beat, 0.0, 1.0), 2.0)
+# Strike a random subset of idle bolts. If `force`, guarantee at least one strikes even
+# when the random draw lights none (the never-pure-black backstop).
+func _strike_some(force: bool) -> void:
+	var struck := false
 	for fil in _fils:
-		fil.life = 1.0
-		if fil.grown < 1.0:
-			fil.grown = minf(1.0, fil.grown + delta * grow * drive)
-		else:
-			fil.mature += delta
-			if fil.mature > 4.0 and (f.beat > 0.6 or fil.mature > 11.0):
+		if not fil.active and _rng.randf() < 0.6:
+			_regrow(fil)
+			fil.active = true
+			fil.life = 1.0
+			struck = true
+	if force and not struck:
+		for fil in _fils:
+			if not fil.active:
 				_regrow(fil)
+				fil.active = true
+				fil.life = 1.0
+				break
+
+
+# Neural / thread: each tendril runs an independent, staggered lifecycle - grow slowly
+# to full, hold, then retire gracefully (FADE out, or REWIND its front back inward) and
+# regrow on a fresh path. Never a clear-and-pop; always something growing. A steady
+# creep surged by energy through a spike curve.
+func _update_continuous(f: AudioFeatures, delta: float, grow: float) -> void:
+	var drive := 0.5 + 1.1 * Nonlinear.apply("spike", clampf(0.7 * f.energy + f.beat, 0.0, 1.0), 2.0)
+	for fil in _fils:
+		match fil.state:
+			"grow":
+				fil.grown = minf(1.0, fil.grown + delta * grow * 0.5 * float(fil.rate) * drive)
+				if fil.grown >= 1.0:
+					fil.state = "hold"
+					fil.timer = fil.hold
+			"hold":
+				fil.timer -= delta
+				if fil.timer <= 0.0:
+					fil.state = fil.mode
+			"fade":
+				fil.life = maxf(0.0, fil.life - delta * 0.55)
+				if fil.life <= 0.0:
+					_recycle(fil)
+			"rewind":
+				fil.grown = maxf(0.0, fil.grown - delta * 0.4 * (0.6 + 0.5 * drive))
+				if fil.grown <= 0.0:
+					_recycle(fil)
+
+
+# Regrow a continuous tendril on a fresh path and re-roll its lifecycle constants, so
+# each life differs (path, rate, hold, retire mode).
+func _recycle(fil: Dictionary) -> void:
+	_regrow(fil)
+	fil.life = 1.0
+	fil.state = "grow"
+	fil.rate = _rng.randf_range(0.6, 1.5)
+	fil.hold = _rng.randf_range(1.6, 4.5)
+	fil.mode = "rewind" if _rng.randf() < 0.30 else "fade"
 
 
 func _draw() -> void:

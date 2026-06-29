@@ -3,31 +3,37 @@ class_name EyeBody
 
 ## EyeBody - a real-3D human eyeball, drawn through a [Lens3D] with a real light.
 ##
-## Discrete geometries, each lit differently (not faked in 2D):
-##   sclera  - a matte white SPHERE ([Mesh3D] icosphere), diffuse.
-##   iris    - a recessed CAP ([Mesh3D] dome, concave) on the front, with colour +
-##             a little surface texture; it foreshortens as the eye turns.
-##   pupil   - a small flat-black cap at the iris centre, dilating with the audio.
-##   cornea  - a clear convex DOME over the iris, translucent and glossy, so it
-##             catches a wet specular highlight from the light source.
-## It looks around by ROTATING the whole eyeball in 3D (centre-biased saccades), so
-## the iris/cornea genuinely swing across the front and shrink toward the limb. The
-## wet catchlight is a real reflection point on the cornea, projected - it tracks the
-## eye, the camera, and the light, because it is 3D, not a pasted-on dot.
+## A genuine 3D sclera sphere carries a high-detail iris that is placed *by* the eye's
+## 3D orientation (so it foreshortens correctly as the eye turns) but drawn in 2D for
+## fidelity the flat-shaded mesh can't reach:
+##   sclera  - a glossy near-white SPHERE ([Mesh3D] icosphere, smooth-shaded), with a
+##             wet specular sheen and a soft limbal shadow where the iris is set in.
+##   iris    - a projected disc with procedural radial fibres (the vein-like detail), a
+##             dark limbal ring, a ciliary->collarette colour gradient, and crypts.
+##   pupil   - a black disc with a soft inner shadow, dilating with the audio AND
+##             *accommodating* to focus depth (a near focus constricts it).
+##   cornea  - a wet catchlight (a real reflection point toward the light) plus a faint
+##             rim glaze on the light side.
+##
+## Gaze: the eye looks at a 3D point. [method look_at_point] aims it from its own world
+## position, so two eyes sharing a focus *verge* - they toe in on a near point and run
+## parallel on a far one - rather than just rotating to the same direction. When no
+## owner drives it, it self-saccades (centre-biased).
 
 var gaze := Vector2.ZERO       # yaw (x), pitch (y), radians - the eyeball's rotation
 var target := Vector2.ZERO     # where the gaze is heading (set externally if not autonomous)
-var autonomous := true         # true = self-saccades; false = the owner drives `target`
+var autonomous := true         # true = self-saccades; false = the owner drives the gaze/focus
 var hue := 0.55                # iris hue (public: a morph handoff can copy it)
+var focus_dist := 6.0          # world distance to the thing being looked at (accommodation)
 var _sat := 0.65
 var _dwell := 0.0
-var _dilate := 0.3
+var _dilate := 0.35            # 0..1 pupil openness (fraction of the iris radius)
 var _rng := RandomNumberGenerator.new()
 
 var _sclera: Mesh3D
-var _iris: Mesh3D
-var _pupil: Mesh3D
-var _cornea: Mesh3D
+var _fibres: Array = []        # seeded iris vein fibres (stable per eye)
+var _crypts: Array = []        # seeded iris crypts (small dark lacunae)
+var _flecks: Array = []        # seeded faint sclera veins near the periphery
 
 
 func _init(seed_value := 0, hue_override := -1.0) -> void:
@@ -37,21 +43,50 @@ func _init(seed_value := 0, hue_override := -1.0) -> void:
 	_dwell = _rng.randf_range(0.6, 1.5)
 	_sclera = Mesh3D.icosphere(3)            # finer -> rounder silhouette; smooth-shaded
 	_sclera.compute_normals()
-	_iris = Mesh3D.dome(3, 28, -0.10)        # shallow concave bowl
-	_iris.texturize(0.18, 6.0, _rng)         # faint fibre-ish surface variation
-	_iris.compute_normals()
-	_pupil = Mesh3D.dome(2, 20, -0.05)
-	_cornea = Mesh3D.dome(4, 30, 0.34)       # clear bulging lens
-	_cornea.compute_normals()
+	# Radial vein fibres: many thin strands from the collarette out to the limbus, each
+	# at its own angle, length, curve, and shade (bright striae and dark furrows).
+	var nf := _rng.randi_range(70, 110)
+	for i in nf:
+		_fibres.append({
+			"a": TAU * float(i) / float(nf) + _rng.randf_range(-0.03, 0.03),
+			"ri": _rng.randf_range(0.30, 0.40),
+			"ro": _rng.randf_range(0.84, 0.99),
+			"shade": _rng.randf_range(-0.34, 0.46),
+			"wob": _rng.randf_range(-0.07, 0.07),
+			"w": _rng.randf_range(0.6, 1.7),
+		})
+	for i in _rng.randi_range(4, 8):
+		_crypts.append({"a": _rng.randf() * TAU, "r": _rng.randf_range(0.42, 0.72),
+			"size": _rng.randf_range(0.05, 0.12), "dark": _rng.randf_range(0.3, 0.6)})
+	for i in _rng.randi_range(3, 6):          # a few faint red sclera veins
+		_flecks.append({"a": _rng.randf() * TAU, "len": _rng.randf_range(0.25, 0.5),
+			"wob": _rng.randf_range(-0.3, 0.3)})
+
+
+## Aim the eye from its own world position at a world focus point. Two eyes sharing one
+## focus will verge (converge on near points, run parallel on far ones); also records
+## the focus distance for pupil accommodation.
+func look_at_point(eye_pos: Vector3, focus: Vector3) -> void:
+	var d := focus - eye_pos
+	var dist := d.length()
+	if dist < 1e-4:
+		return
+	focus_dist = dist
+	d /= dist
+	target = Vector2(atan2(d.x, d.z), -asin(clampf(d.y, -1.0, 1.0)))
 
 
 func update(dt: float, energy: float) -> void:
-	_dilate = lerpf(_dilate, clampf(0.25 + 0.6 * energy, 0.0, 1.0), 1.0 - exp(-4.0 * dt))
+	# Pupil accommodates to focus depth (near = constricted, far = wide) and opens a
+	# little more with the audio - the two combine.
+	var accom := clampf((focus_dist - 1.2) / 18.0, 0.0, 1.0)        # 0 near .. 1 far
+	var pupil_t := clampf(lerpf(0.17, 0.52, accom) + 0.30 * energy, 0.12, 0.74)
+	_dilate = lerpf(_dilate, pupil_t, 1.0 - exp(-4.0 * dt))
 	if autonomous:
 		_dwell -= dt
 		if _dwell <= 0.0:
 			_saccade()
-	gaze = gaze.lerp(target, 1.0 - exp(-30.0 * dt))   # fast snap = a jerky saccade
+	gaze = gaze.lerp(target, 1.0 - exp(-26.0 * dt))   # fast snap = a jerky saccade
 
 
 # A centre-biased saccade target (radians). Static helper so a multi-eye owner can
@@ -76,47 +111,148 @@ func draw(ci: CanvasItem, lens: Lens3D, u: float, pos: Vector3, radius: float, f
 	var eyeb := Basis.from_euler(Vector3(gaze.y, gaze.x, 0.0))
 	var front: Vector3 = eyeb * Vector3(0, 0, 1)
 
-	# Sclera: matte near-white sphere, SMOOTH-shaded (no facets).
-	_sclera.draw_through(ci, lens, u, Basis.IDENTITY, pos, radius, 0.09, 0.05, 0, fade,
-		0.0, 0.0, 0.04, 0.95, Color(0, 0, 0, 0), true)
-	# Iris: recessed cap, gaze-rotated (foreshortens in 3D), smooth.
-	_iris.draw_through(ci, lens, u, eyeb, pos + front * radius * 0.80, radius * 0.5,
-		hue, _sat, 0, fade, 0.0, 0.0, 0.2, 0.5, Color(0, 0, 0, 0), true)
-	# Pupil: flat black, dilating (unlit, no smoothing needed).
-	var prad := radius * 0.5 * (0.30 + 0.5 * _dilate)
-	_pupil.draw_through(ci, lens, u, eyeb, pos + front * radius * 0.84, prad,
-		0.0, 0.0, 0, fade, 0.0, 0.0, 0.0, 1.0, Color(0.02, 0.02, 0.03, 1.0))
-	# Cornea: clear glossy dome over the iris (translucent + tight specular), smooth.
-	var cornea_pos := pos + front * radius * 0.66
-	_cornea.draw_through(ci, lens, u, eyeb, cornea_pos, radius * 0.62,
-		hue, 0.12, 0, fade * 0.16, 0.0, 0.0, 0.95, 0.1, Color(0, 0, 0, 0), true)
-	# Wet catchlight: a real 3D reflection point on the cornea toward the light.
-	_draw_catchlight(ci, lens, u, cornea_pos, radius, front, fade)
+	# Sclera: glossy near-white sphere, SMOOTH-shaded, with a wet specular sheen.
+	_sclera.draw_through(ci, lens, u, Basis.IDENTITY, pos, radius, 0.07, 0.05, 0, fade,
+		0.0, 0.0, 0.5, 0.14, Color(0, 0, 0, 0), true)
 
-
-func _draw_catchlight(ci: CanvasItem, lens: Lens3D, u: float, cornea_pos: Vector3,
-		radius: float, front: Vector3, fade: float) -> void:
-	var view := (lens.eye - cornea_pos).normalized()
+	# The iris sits on the front of the eye; project it and build its on-screen ellipse
+	# basis, so all the 2D detail foreshortens exactly as the eyeball turns.
+	var iris_c3 := pos + front * radius * 0.80
+	var view := (lens.eye - iris_c3).normalized()
 	var facing := front.dot(view)
-	if facing < 0.15:
-		return                                          # cornea turned away - no glint
+	var pc := lens.project(iris_c3)
+	if facing < 0.04 or pc.z <= lens.near:
+		return                                          # iris turned away - sclera only
+	var e1 := front.cross(Vector3.UP)
+	if e1.length() < 1e-4:
+		e1 = front.cross(Vector3.RIGHT)
+	e1 = e1.normalized()
+	var e2 := front.cross(e1).normalized()
+	var iris_world := radius * 0.52
+	var center := Vector2(pc.x, pc.y) * u
+	var ua := _axis(lens, u, iris_c3, e1, iris_world, center)   # screen image of local x
+	var va := _axis(lens, u, iris_c3, e2, iris_world, center)   # screen image of local y
+	var iris_px: float = maxf(ua.length(), va.length())          # for sizing line widths
+	var a := fade
+
+	_draw_sclera_veins(ci, center, ua, va, a * 0.5)
+	# Soft limbal shadow: the sclera dips in around the iris - a dark ring just outside it.
+	_ring(ci, center, ua, va, 1.06, Color(0.04, 0.03, 0.04, 0.5 * a), 44)
+	_ring(ci, center, ua, va, 1.0, Color(0.05, 0.04, 0.05, 0.35 * a), 44)
+	_draw_iris(ci, center, ua, va, iris_px, a)
+	# Pupil: black disc with a soft inner shadow, sized by dilation/accommodation.
+	var prad: float = clampf(_dilate, 0.14, 0.74) * 0.92
+	_ring(ci, center, ua, va, prad + 0.06, Color(0, 0, 0, 0.5 * a), 36)
+	ci.draw_colored_polygon(_disc(center, ua, va, prad, 36), Color(0.02, 0.02, 0.03, a))
+	# Cornea: the wet catchlight + a faint rim glaze on the light side.
+	_draw_cornea(ci, lens, u, pos, radius, front, view, center, ua, va, iris_px, fade)
+
+
+# The screen vector that the iris-plane unit axis `e` maps to (foreshortened by the
+# projection), measured from the iris centre.
+func _axis(lens: Lens3D, u: float, c3: Vector3, e: Vector3, world_r: float, center: Vector2) -> Vector2:
+	var p := lens.project(c3 + e * world_r)
+	return Vector2(p.x, p.y) * u - center
+
+
+# A filled disc / ring in the iris's projected frame, at local radius `r` (1 = limbus).
+func _disc(center: Vector2, ua: Vector2, va: Vector2, r: float, segs: int) -> PackedVector2Array:
+	var pts := PackedVector2Array()
+	for i in segs:
+		var th := TAU * float(i) / float(segs)
+		pts.append(center + ua * (cos(th) * r) + va * (sin(th) * r))
+	return pts
+
+
+func _ring(ci: CanvasItem, center: Vector2, ua: Vector2, va: Vector2, r: float, col: Color, segs: int) -> void:
+	var pts := _disc(center, ua, va, r, segs)
+	pts.append(pts[0])
+	ci.draw_polyline(pts, col, maxf(1.0, (ua.length() + va.length()) * 0.5 * 0.04), true)
+
+
+# The iris body: a limbus->collarette colour gradient (concentric discs), then the
+# radial vein fibres, crypts, and the collarette ridge.
+func _draw_iris(ci: CanvasItem, center: Vector2, ua: Vector2, va: Vector2, iris_px: float, a: float) -> void:
+	var layers := 8
+	for i in layers:
+		var t := float(i) / float(layers - 1)        # 0 outer (limbus) .. 1 inner
+		var r := lerpf(1.0, 0.34, t)
+		# Dark limbal ring outside, brighter ciliary body, lifting toward the collarette.
+		var val := lerpf(0.16, 0.60, smoothstep(0.0, 1.0, t))
+		var sat := clampf(_sat * lerpf(1.05, 0.82, t), 0.0, 1.0)
+		var hh := fposmod(hue + 0.03 * t, 1.0)
+		ci.draw_colored_polygon(_disc(center, ua, va, r, 44), Color.from_hsv(hh, sat, val, a))
+	# Radial fibres - the vein-like detail. A gently curved 3-point strand each.
+	var lw: float = maxf(0.8, iris_px * 0.014)
+	for f in _fibres:
+		var ca: float = cos(f.a)
+		var sa: float = sin(f.a)
+		var perp_a: float = f.a + PI * 0.5
+		var midr: float = (float(f.ri) + float(f.ro)) * 0.5
+		var wob: float = f.wob
+		var p_in := center + ua * (ca * float(f.ri)) + va * (sa * float(f.ri))
+		var p_mid := center + ua * (cos(f.a) * midr + cos(perp_a) * wob) \
+			+ va * (sin(f.a) * midr + sin(perp_a) * wob)
+		var p_out := center + ua * (ca * float(f.ro)) + va * (sa * float(f.ro))
+		var v := clampf(0.42 + float(f.shade), 0.08, 0.96)
+		var col := Color.from_hsv(fposmod(hue + 0.02, 1.0), clampf(_sat * 0.85, 0.0, 1.0), v,
+			(0.30 + 0.4 * absf(float(f.shade))) * a)
+		ci.draw_polyline(PackedVector2Array([p_in, p_mid, p_out]), col, lw * float(f.w), true)
+	# Crypts: small dark notches around the collarette.
+	for c in _crypts:
+		var cc := center + ua * (cos(c.a) * float(c.r)) + va * (sin(c.a) * float(c.r))
+		ci.draw_colored_polygon(_disc(cc, ua * float(c.size), va * float(c.size), 1.0, 12),
+			Color(0.04, 0.03, 0.03, float(c.dark) * a))
+	# Collarette ridge - the boundary of the pupillary zone.
+	_ring(ci, center, ua, va, 0.36, Color.from_hsv(hue, clampf(_sat * 0.7, 0, 1), 0.72, 0.55 * a), 40)
+
+
+func _draw_sclera_veins(ci: CanvasItem, center: Vector2, ua: Vector2, va: Vector2, a: float) -> void:
+	for fl in _flecks:
+		var r0: float = 1.25
+		var r1: float = 1.25 + float(fl.len)
+		var p0 := center + ua * (cos(fl.a) * r0) + va * (sin(fl.a) * r0)
+		var pm := center + ua * (cos(fl.a + 0.1) * (r0 + r1) * 0.5 + float(fl.wob)) \
+			+ va * (sin(fl.a + 0.1) * (r0 + r1) * 0.5)
+		var p1 := center + ua * (cos(fl.a) * r1) + va * (sin(fl.a) * r1)
+		ci.draw_polyline(PackedVector2Array([p0, pm, p1]),
+			Color(0.7, 0.2, 0.2, 0.12 * a), maxf(1.0, (ua.length() + va.length()) * 0.012), true)
+
+
+func _draw_cornea(ci: CanvasItem, lens: Lens3D, u: float, pos: Vector3, radius: float,
+		front: Vector3, view: Vector3, center: Vector2, ua: Vector2, va: Vector2,
+		iris_px: float, fade: float) -> void:
+	var cornea_pos := pos + front * radius * 0.66
+	var facing := front.dot(view)
+	# A faint wet glaze across the cornea on the light side (a soft bright crescent).
 	var light := Mesh3D.LIGHT.normalized()
+	var lit := light - light.project(front)             # light direction in the iris plane
+	if lit.length() > 1e-3:
+		var lx := lit.dot(e_basis(front, true))
+		var ly := lit.dot(e_basis(front, false))
+		var gc := center + (ua * lx + va * ly) * 0.5
+		ci.draw_colored_polygon(_disc(gc, ua * 0.5, va * 0.5, 1.0, 20),
+			Color(1, 1, 1, 0.05 * fade * clampf(facing, 0, 1)))
+	# The hot catchlight: a real reflection point toward the light, projected.
+	if facing < 0.12:
+		return
 	var catch3 := cornea_pos + (light + view).normalized() * radius * 0.42
 	var pr := lens.project(catch3)
 	if pr.z <= lens.near:
 		return
 	var sp := Vector2(pr.x, pr.y) * u
-	var er := _screen_radius(lens, cornea_pos, radius, u)
-	var cs := er * 0.12
+	var cs: float = maxf(1.5, iris_px * 0.1)
 	var a := fade * clampf(facing, 0.0, 1.0)
 	ci.draw_circle(sp, cs * 2.4, Color(1, 1, 1, 0.10 * a))     # soft bloom
 	ci.draw_circle(sp, cs * 1.2, Color(1, 1, 1, 0.45 * a))
 	ci.draw_circle(sp, cs * 0.55, Color(1, 1, 1, 0.95 * a))    # hot core
-	ci.draw_circle(sp + Vector2(cs * 1.4, cs * 1.1), cs * 0.42, Color(1, 1, 1, 0.4 * a))  # 2nd reflection
+	ci.draw_circle(sp + Vector2(cs * 1.5, cs * 1.1), cs * 0.4, Color(1, 1, 1, 0.4 * a))  # 2nd glint
 
 
-# Projected on-screen radius of the eyeball (px), for sizing the catchlight.
-func _screen_radius(lens: Lens3D, pos: Vector3, radius: float, u: float) -> float:
-	var c := lens.project(pos)
-	var e := lens.project(pos + Vector3(radius, 0.0, 0.0))
-	return (Vector2(e.x, e.y) - Vector2(c.x, c.y)).length() * u
+# One of the two in-plane unit axes used for the iris frame (kept consistent with draw).
+func e_basis(front: Vector3, first: bool) -> Vector3:
+	var e1 := front.cross(Vector3.UP)
+	if e1.length() < 1e-4:
+		e1 = front.cross(Vector3.RIGHT)
+	e1 = e1.normalized()
+	return e1 if first else front.cross(e1).normalized()

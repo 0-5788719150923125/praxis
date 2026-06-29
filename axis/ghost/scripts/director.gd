@@ -62,6 +62,15 @@ const SCENES := [
 	{"script": preload("res://scripts/scenes/prism_split.gd"), "behavior": "static"},
 ]
 
+# ----------------------------------------------------------------------------------
+# The launch-lottery constant. The auto show is spectrally deterministic - a given song
+# always plays the same sequence (see _resolve_seed). This salt is mixed into that seed,
+# so changing it RE-ROLLS the entire show for a fixed song without touching the audio.
+# Tune it: edit the value, relaunch on the launch track, watch the auto show; repeat
+# until it looks best, then ship that value. Starts at the digits of Pi.
+const SEED_SALT := 3141592653589793
+# ----------------------------------------------------------------------------------
+
 enum Style { CUT, DIP, FADE }
 enum Trigger { BEAT, MOVEMENT, LULL }
 
@@ -135,10 +144,11 @@ func session_seed() -> int:
 
 # The session seed, by priority:
 #   1. an explicit --seed N (the exporter passes it so a render reproduces a session, and
-#      it is the way to roll a *different* show for the same song on purpose);
-#   2. otherwise the audio's own fingerprint (Spectrum.song_hash) - SPECTRAL DETERMINISM:
-#      the same song always yields the same show, because the imagery is a deterministic
-#      function of the sound rather than a fresh random roll each play;
+#      it is the way to roll a *different* show for the same song on purpose) - taken
+#      verbatim, so the export reproduces session_seed() exactly (the salt is already in it);
+#   2. otherwise the audio's own fingerprint (Spectrum.song_hash) mixed with the tunable
+#      SEED_SALT - SPECTRAL DETERMINISM: the same song + same salt always yields the same
+#      show; changing the salt re-rolls it (the launch-lottery knob);
 #   3. random, only when no audio is loaded (idle preview).
 func _resolve_seed() -> int:
 	var args := OS.get_cmdline_user_args()
@@ -146,18 +156,28 @@ func _resolve_seed() -> int:
 		if args[i] == "--seed" and i + 1 < args.size() and args[i + 1].is_valid_int():
 			return int(args[i + 1])
 	if Spectrum.song_hash != 0:
-		return Spectrum.song_hash
+		return _salt_seed(Spectrum.song_hash)
 	var r := RandomNumberGenerator.new()
 	r.randomize()
 	return r.randi()
 
 
-# Where the session seed came from, for the log line (so determinism is observable).
+# Mix the audio fingerprint with the launch-lottery SEED_SALT into the session seed. A
+# string hash so any change in either input disperses across the whole seed (a different
+# salt is a different show, not a one-bit nudge).
+func _salt_seed(fingerprint: int) -> int:
+	return hash("%d:%d" % [fingerprint, SEED_SALT])
+
+
+# Where the session seed came from, for the log line (so determinism is observable and
+# the active lottery salt is visible while tuning).
 func _seed_source() -> String:
 	for a in OS.get_cmdline_user_args():
 		if a == "--seed":
 			return "--seed override"
-	return "audio fingerprint" if Spectrum.song_hash != 0 else "random (no audio)"
+	if Spectrum.song_hash != 0:
+		return "audio fingerprint + salt %d" % SEED_SALT
+	return "random (no audio)"
 
 
 ## Tear down the current session: free the live scene(s) and reset all state, so a

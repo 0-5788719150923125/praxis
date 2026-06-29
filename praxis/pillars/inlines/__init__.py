@@ -110,6 +110,30 @@ def _head_name() -> Optional[str]:
     return _HEAD_DISPLAY.get(head, head.replace("_", " ")) + " head"
 
 
+@provider("harmonic_concentration")
+def _harmonic_concentration() -> Optional[float]:
+    """Latest Hoyer sparsity of the harmonic amplitude grid for the current
+    run, read from its logged ``harmonic_concentration`` series. ``None`` when
+    no run exists, or when the run's head emits no such metric (a non-harmonic
+    head) - so the paper only reports a measured value when one was produced."""
+    from praxis.pillars.framing import newest_experiment
+    from praxis.pillars.runs import discover_runs, experiment_stems, metric_series
+
+    experiment = newest_experiment()
+    if not experiment:
+        return None
+    run = next(
+        (r for r in discover_runs(experiment_stems()) if r["name"] == experiment),
+        None,
+    )
+    if not run:
+        return None
+    series = metric_series(run, "harmonic_concentration", min_points=1)
+    if not series:
+        return None
+    return series[-1][1]
+
+
 @dataclass(frozen=True)
 class InlineEdit:
     """One macro substitution, loaded from an inlines/*.yml file."""

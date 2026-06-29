@@ -63,7 +63,7 @@ where $t$ indexes position, $d$ indexes feature, and $a[f_t,f_d]$ is a learnable
 
 Now read this through the bias-variance lens.
 
-\textbf{Bias is the static spectrum.} With a fixed amplitude grid, $b[t,d]$ is identical for every input. It is a single rhythm imposed on all of the corpus at once - the population average. In the limit where the grid concentrates onto one cell, every feature oscillates to the same beat and the spectrum heatmap is flat: maximum bias, a model that has collapsed to the mean rhythm of its data. The head exposes this directly. \texttt{concentration()} reports Hoyer sparsity of the grid (1 = a single cell, 0 = uniform), and a live spectrum snapshot shows where the energy sits. Early in training the heatmap is indistinguishable from noise; under a smoothness prior it develops a clean low-frequency band - the corpus rhythm crystallizing as a measurable object, not a metaphor.
+\textbf{Bias is the static spectrum.} With a fixed amplitude grid, $b[t,d]$ is identical for every input. It is a single rhythm imposed on all of the corpus at once - the population average. In the limit where the grid concentrates onto one cell, every feature oscillates to the same beat and the spectrum heatmap is flat: maximum bias, a model that has collapsed to the mean rhythm of its data. The head exposes this directly. \texttt{concentration()} reports Hoyer sparsity of the grid (1 = a single cell, 0 = uniform), and a live spectrum snapshot shows where the energy sits.\paperHoyerConcentration{} Early in training the heatmap is indistinguishable from noise; under a smoothness prior it develops a clean low-frequency band - the corpus rhythm crystallizing as a measurable object, not a metaphor.
 
 \textbf{Variance is the input-conditional deviation.} The decisive architectural step was to stop forcing one static field on a corpus that mixes registers - dialogue, code, prose. A static grid must compromise across all of them, and the compromise degenerates into a content-blind side channel that the rest of the model has to route around. The fix makes the amplitudes a baseline plus an input-conditional delta:
 \[
@@ -253,13 +253,24 @@ If bias and variance are separable in a harmonic latent space, then they should 
 
 We are deliberate about what is and is not established. The bias-variance decoupling is grounded in a running implementation and its diagnostics (concentration, smoothness, delta norm, the spectrum heatmap), but ``orthogonal axes'' is an interpretation of those diagnostics, not a theorem. The scaling conjecture of Figure~\ref{fig:scaling} is a conjecture: the figure draws an asserted relationship, not measured curves, and the honest next step is to measure the slope on tasks of varying combinatorial structure and report where harmonic representations fail to buy it. The observer-relative view of tractability (Section~\ref{sec:scaling}) is a philosophical position, and only its weak form - the scaling slope a given basis buys on a given problem family - is measurable; we make no claim about the formal worst-case $P$ versus $NP$ question, which abstracts the observer away by design. The connection to biological attention remains speculative, and the prismatic asymmetry needs to be shown in silico now that the hand-measured figure is gone. The observer effect of Section~\ref{sec:constructor} is, in its quantum form, an analogy we do not cash; only its weak form is a claim - that impure measurement (state-mutating reads, measurement-induced rounding on the exponential edge, self-ingested execution timestamps) perturbs a non-local harmonic field measurably more than an independent-feature one, and that coupling the framework's passive observer pool back into the forward is a two-arm ablation of being-watched. The temporal artifact in particular is a claim about data provenance, not physics: launch rates and license stamps enter the model as tokens, so ``modeling its own time'' means modeling those tokens, and we make no claim that the field encodes execution timing beyond what is literally written into its corpus. Those are diffs between a watched and an unwatched run, not statements about physics. The coupled-observer extension (Section~\ref{sec:coupling}) - that two phase-locked observers amplify perturbations of the frame they share, of which \textit{feeling watched} is the folk instance - is conjecture in the same spirit: its only measurable form is the synchrony-stratified design that separates a resonance gain on ordinary sensory cues from a non-sensory channel, and we side explicitly with the former, against the latter, pending that experiment. None of these are reasons not to state the ideas; they are the boundary between what we have built and what we are conjecturing, drawn so the reader can attack the right target.
 
+\subsection{A direction: the moving point}
+
+% A forward-looking reflection (praxis/pillars/framing/conclusion-ascent.yml),
+% deliberately placed BEFORE the conclusion so the closing argument lands last and
+% uninterrupted - this coda is a direction, not part of the sign-off.
+% The macro emits a lemma + proof; in this reflective passage the proof's QED
+% tombstone reads as out of place, so blank \qedsymbol within this group only
+% (the formal sections keep their end-of-proof marks).
+\begingroup
+\renewcommand{\qedsymbol}{}
+\paperFramingConclusion
+\endgroup
+
 \section{Conclusion}
 
 % The conclusion's opening is thread data (praxis/pillars/threads/<key>.yml);
 % the selected thread's generated thread.tex defines \paperThreadConclusion.
 \paperThreadConclusion
-
-\paperFramingConclusion
 
 \appendix
 

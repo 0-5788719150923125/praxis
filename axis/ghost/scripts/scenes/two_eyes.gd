@@ -2,11 +2,12 @@ extends Scene3D
 
 ## Two eyes - the single eye split into two (the-point, scene 2).
 ##
-## Two real-3D eyeballs ([EyeBody]) side by side, each looking around independently,
-## drawn through the [Scene3D] camera. Declares `morph_in = "eye"`: arriving from the
-## single `eye` scene it plays the *split* - starting as that exact eye at centre (its
-## colour, gaze, and size) and easing apart into two identical copies as it shrinks
-## to pair size. Entered by a plain cut it simply opens already split.
+## Two real-3D eyeballs ([EyeBody]) that *verge*: both aim at one shared 3D focus point,
+## so they toe in on a near point and run parallel on a far one - real binocular gaze,
+## not two eyes locked to the same direction. The focus drifts in depth (near -> far ->
+## extreme distance) and lingers at the extremes, with the pupils accommodating. Declares
+## `morph_in = "eye"`: arriving from the single eye it plays the split (the same eye
+## dividing). Occasionally one eye diverges - the nonlinear deviation, not the default.
 
 var _f: AudioFeatures = AudioFeatures.new()
 var _rng := RandomNumberGenerator.new()
@@ -14,12 +15,13 @@ var _left: EyeBody
 var _right: EyeBody
 var _split := 1.0       # 0 = one centred eye, 1 = two apart (1 unless morphed in)
 var _start_radius := 0.34  # world radius the split begins at (the source eye's)
-# Conjugate gaze: both eyes lock to one shared target (as real eyes do); occasionally
-# one diverges - the async wander is the nonlinear deviation, not the default.
-var _gaze_target := Vector2.ZERO
-var _gaze_dwell := 0.0
-var _ldiv := Vector2.ZERO
+var _focus := Vector3(0, 0, 6.0)        # the shared point both eyes look at
+var _focus_target := Vector3(0, 0, 6.0)
+var _focus_dwell := 0.0
+var _ldiv := Vector2.ZERO   # rare per-eye gaze divergence
 var _rdiv := Vector2.ZERO
+var _eye_off := 0.0         # current world x separation (kept in sync with _draw)
+var _eye_rad := 0.27
 
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
@@ -30,12 +32,13 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	var h := rng.randf_range(0.05, 0.6)        # two IDENTICAL eyes: same colour
 	_left = EyeBody.new(rng.randi(), h)
 	_right = EyeBody.new(rng.randi(), h)
-	_left.autonomous = false                   # driven by the shared gaze below
+	_left.autonomous = false                   # driven by the shared focus below
 	_right.autonomous = false
 	lens.eye = Vector3(0, 0, 4.0)
 	lens.look = Vector3.ZERO
 	lens.fov = 48.0
-	return {"radius": rng.randf_range(0.24, 0.30), "offset": rng.randf_range(0.55, 0.72)}
+	_eye_rad = rng.randf_range(0.24, 0.30)
+	return {"radius": _eye_rad, "offset": rng.randf_range(0.55, 0.72)}
 
 
 # Arrived from the single eye: become that exact eye (colour, gaze, size) at centre,
@@ -52,7 +55,10 @@ func begin_morph(from: GhostScene) -> void:
 	var g: Vector2 = p.get("gaze", Vector2.ZERO)
 	_left.gaze = g
 	_right.gaze = g
-	_gaze_target = g            # continue the shared gaze from where the single eye was
+	# Continue from where the single eye was looking: a forward focus along that gaze.
+	var front: Vector3 = Basis.from_euler(Vector3(g.y, g.x, 0.0)) * Vector3(0, 0, 1)
+	_focus = front * 6.0
+	_focus_target = _focus
 
 
 func update(f: AudioFeatures, delta: float) -> void:
@@ -60,33 +66,62 @@ func update(f: AudioFeatures, delta: float) -> void:
 	tick(f, delta)
 	drift_view(f, 0.006, 0.012)
 	var drive := clampf(f.energy * 0.7 + f.beat * 0.4, 0.0, 1.0)
-	# Shared (locked) gaze, with a rare divergence on one eye.
-	_gaze_dwell -= delta
-	if _gaze_dwell <= 0.0:
-		_gaze_target = EyeBody.saccade_target(_rng)
-		_ldiv = Vector2.ZERO
-		_rdiv = Vector2.ZERO
-		if _rng.randf() < 0.16:                # the nonlinear deviation: one eye wanders
-			var d := Vector2(_rng.randf_range(-1, 1), _rng.randf_range(-1, 1)).normalized() * _rng.randf_range(0.15, 0.4)
-			if _rng.randf() < 0.5:
-				_ldiv = d
-			else:
-				_rdiv = d
-		_gaze_dwell = _rng.randf_range(0.4, 1.6)
-	_left.target = _gaze_target + _ldiv
-	_right.target = _gaze_target + _rdiv
+
+	# Drift the shared focus in depth and across the frame, lingering at the extremes.
+	_focus_dwell -= delta
+	if _focus_dwell <= 0.0:
+		_new_focus()
+	_focus = _focus.lerp(_focus_target, 1.0 - exp(-3.0 * delta))   # smooth pursuit + vergence
+
+	_split = minf(1.0, _split + delta * 1.1)    # the split eases open over ~1s
+	var s01 := smoothstep(0.0, 1.0, _split)
+	_eye_off = float(params.offset) * s01
+	_eye_rad = lerpf(_start_radius, float(params.radius), s01)
+
+	# Both eyes aim at the shared focus from their own positions - this is the vergence.
+	_left.look_at_point(Vector3(-_eye_off, 0, 0), _focus)
+	_right.look_at_point(Vector3(_eye_off, 0, 0), _focus)
+	_left.target += _ldiv                        # rare one-eye wander on top
+	_right.target += _rdiv
 	_left.update(delta, drive)
 	_right.update(delta, drive)
-	_split = minf(1.0, _split + delta * 1.1)   # the split eases open over ~1s
 	queue_redraw()
+
+
+# Choose a new focus: a depth tier (near / mid / far-extreme, the extremes held longer)
+# plus a lateral offset. A near point is eccentric (the eyes converge hard); a far point
+# is nearly straight ahead - the geometry does the vergence for free.
+func _new_focus() -> void:
+	var tier := _rng.randf()
+	var d: float
+	var dwell: float
+	if tier < 0.32:
+		d = _rng.randf_range(2.2, 4.0)
+		dwell = _rng.randf_range(1.6, 3.0)       # near - linger
+	elif tier < 0.68:
+		d = _rng.randf_range(5.0, 11.0)
+		dwell = _rng.randf_range(0.5, 1.4)       # mid
+	else:
+		d = _rng.randf_range(22.0, 80.0)
+		dwell = _rng.randf_range(2.0, 4.2)       # far / extreme distance - linger
+	var sacc := EyeBody.saccade_target(_rng)
+	var lat := _rng.randf_range(0.25, 0.85)
+	_focus_target = Vector3(sacc.x * lat, sacc.y * lat * 0.7, d)
+	_focus_dwell = dwell
+	_ldiv = Vector2.ZERO
+	_rdiv = Vector2.ZERO
+	if _rng.randf() < 0.14:                       # the nonlinear deviation: one eye wanders
+		var dv := Vector2(_rng.randf_range(-1, 1), _rng.randf_range(-1, 1)).normalized() \
+			* _rng.randf_range(0.10, 0.30)
+		if _rng.randf() < 0.5:
+			_ldiv = dv
+		else:
+			_rdiv = dv
 
 
 func _draw() -> void:
 	begin_draw()
 	lens.prepare()
 	var u := unit()
-	var s01 := smoothstep(0.0, 1.0, _split)
-	var off := float(params.offset) * s01                       # world x separation
-	var rad := lerpf(_start_radius, float(params.radius), s01)  # start at source size, shrink
-	_left.draw(self, lens, u, Vector3(-off, 0, 0), rad)
-	_right.draw(self, lens, u, Vector3(off, 0, 0), rad)
+	_left.draw(self, lens, u, Vector3(-_eye_off, 0, 0), _eye_rad)
+	_right.draw(self, lens, u, Vector3(_eye_off, 0, 0), _eye_rad)

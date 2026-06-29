@@ -1,0 +1,8 @@
+# The current run's measured Hoyer sparsity of the harmonic amplitude grid -
+# the live value behind \texttt{concentration()} in the "Bias is the static
+# spectrum" prose. Gated: a non-harmonic head logs no such metric, so the
+# provider returns None and the empty fallback leaves the paragraph unchanged.
+macro: paperHoyerConcentration
+provider: harmonic_concentration
+format: " For the current run, that Hoyer concentration measures \\(\\approx {value:.2f}\\)."
+fallback: ""
