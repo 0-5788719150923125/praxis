@@ -17,9 +17,9 @@ abstract:
   own? It is a question the field tends to defer: the reflex is to hand the burden
   of proof back to whoever raised it, as if demanding evidence were the neutral
   posture and the asking were the indulgence. That reflex is not neutral. It is
-  a prior, learned so early it passes for common sense, and priors are precisely
-  the subject of this paper. The dominant program in machine learning rests on one
-  of them: that a single architecture, given enough parameters, data, and compute,
+  a prior, learned so early in life it passes for common sense.
+  The dominant program in machine learning rests on one such prior:
+  that a single architecture, given enough parameters, data, and compute,
   can reach anything worth learning - that the architecture itself is neutral ground.
   This is the Universal Approximation Theorem. We argue instead that what a model
   can learn is set less by how large it is than

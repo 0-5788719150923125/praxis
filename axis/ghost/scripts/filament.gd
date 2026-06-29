@@ -1,0 +1,126 @@
+extends RefCounted
+class_name Filament
+
+## Filament - an organic growing path: root, tendril, lightning, or thread.
+##
+## The procedural-growth primitive the visualizer was missing. One mechanism, many
+## lives: a path is grown segment by segment by *following a [Flow2D] field* (so it
+## meanders and curls), turning toward that flow through a nonlinearity (so the turn
+## is smooth but decisive, not a uniform arc), branching stochastically, tapering as
+## it goes, and carrying a per-segment *birth time* so it can be revealed along a
+## growth front - it crawls into being rather than popping in. The `variant` sets
+## the character: roots that spread and droop, tendrils that coil, lightning that
+## kinks and forks, threads that flow. Built once from a seed; drawn growing.
+##
+## All coordinates are ghost's centred unit-fraction space; widths are pixels.
+## Compose it: a scene grows a handful of filaments and draws them, colour and
+## growth driven by audio. See `rooted_growth` and `filaments`.
+
+## variant -> shaping config. flow_follow: how hard it turns toward the flow.
+## branch: per-step fork chance. spread: fork half-angle. jitter: per-step wobble.
+## kink: occasional sharp deflection (lightning). taper: width kept per segment.
+## bias_ang/bias_amt: a pull toward a fixed heading (gravity / upward reach).
+const VARIANTS := {
+	"root":      {"flow_follow": 0.45, "branch": 0.30, "max_depth": 4, "ratio": 0.74,
+		"spread": 0.62, "jitter": 0.05, "kink": 0.0, "taper": 0.90, "bias_ang": 1.5708, "bias_amt": 0.14},
+	"tendril":   {"flow_follow": 0.80, "branch": 0.16, "max_depth": 3, "ratio": 0.80,
+		"spread": 0.70, "jitter": 0.03, "kink": 0.0, "taper": 0.93, "bias_ang": -1.5708, "bias_amt": 0.05},
+	"lightning": {"flow_follow": 0.22, "branch": 0.24, "max_depth": 3, "ratio": 0.70,
+		"spread": 0.55, "jitter": 0.30, "kink": 0.55, "taper": 0.82, "bias_ang": 1.5708, "bias_amt": 0.10},
+	"thread":    {"flow_follow": 0.92, "branch": 0.05, "max_depth": 2, "ratio": 0.85,
+		"spread": 0.50, "jitter": 0.01, "kink": 0.0, "taper": 0.96, "bias_ang": 0.0, "bias_amt": 0.0},
+}
+
+const MAX_SEGS := 3000        # safety cap against a pathological branch explosion
+
+## Each segment: a, b (unit-fraction endpoints), w0, w1 (px widths), born0, born1
+## (0..1 birth times along the longest root-to-tip path), depth.
+var segs: Array = []
+var _total := 0.0             # max arclength to any tip (normaliser for born times)
+var _max_depth := 0           # deepest branch level (so trunk vs tip can be told apart)
+
+
+## Grow a filament from [param origin] heading [param heading] (radians), of about
+## [param length] over [param steps] segments, starting [param width] px wide,
+## following [param flow]. Seeded by [param rng].
+static func grow(variant: String, origin: Vector2, heading: float, length: float,
+		width: float, steps: int, flow: Flow2D, rng: RandomNumberGenerator) -> Filament:
+	var f := Filament.new()
+	var cfg: Dictionary = VARIANTS.get(variant, VARIANTS["root"])
+	f._build(origin, heading, length / float(maxi(1, steps)), width, 0, steps, cfg, flow, rng, 0.0)
+	if f._total > 0.0:
+		for s in f.segs:
+			s.born0 /= f._total
+			s.born1 /= f._total
+	return f
+
+
+func _build(p: Vector2, ang: float, seg_len: float, width: float, depth: int,
+		steps: int, cfg: Dictionary, flow: Flow2D, rng: RandomNumberGenerator, born: float) -> void:
+	var w := width
+	for s in steps:
+		if segs.size() >= MAX_SEGS:
+			return
+		# Turn toward the flow (nonlinear follow), then a gentle pull toward the
+		# variant's bias heading, then per-step wobble and the occasional sharp kink.
+		var fdir := flow.angle_at(p, ang)
+		ang = lerp_angle(ang, fdir, float(cfg.flow_follow))
+		if float(cfg.bias_amt) > 0.0:
+			ang = lerp_angle(ang, float(cfg.bias_ang), float(cfg.bias_amt))
+		ang += rng.randf_range(-1.0, 1.0) * float(cfg.jitter)
+		if float(cfg.kink) > 0.0 and rng.randf() < 0.5:
+			ang += rng.randf_range(-1.0, 1.0) * float(cfg.kink)
+
+		var np := p + Vector2(cos(ang), sin(ang)) * seg_len
+		var w1 := w * float(cfg.taper)
+		var born1 := born + seg_len
+		segs.append({"a": p, "b": np, "w0": w, "w1": w1,
+			"born0": born, "born1": born1, "depth": depth})
+		_total = maxf(_total, born1)
+		_max_depth = maxi(_max_depth, depth)
+		p = np
+		w = w1
+		born = born1
+
+		# Fork: a child continues from here, shorter, thinner, one depth deeper.
+		if depth < int(cfg.max_depth) and rng.randf() < float(cfg.branch):
+			var side := 1.0 if rng.randf() < 0.5 else -1.0
+			var child_len := seg_len * float(cfg.ratio)
+			var child_steps := maxi(2, int(float(steps) * float(cfg.ratio)))
+			_build(p, ang + side * float(cfg.spread), child_len, w * 0.7,
+				depth + 1, child_steps, cfg, flow, rng, born)
+
+
+## Draw the filament revealed up to growth front [param grown] (0..1). `u` is the
+## pixel unit. `color_for` is a Callable(depth:int) -> Color so the scene owns the
+## palette. A bud glows at the live tip while it grows.
+##
+## `jitter` (unit-fraction) + `t` (time) give the timelapse twitch the growth wants:
+## the trunk (low depth) is rock-steady while the young tips (high depth) tremble,
+## and segments right at the advancing front shake hardest - so it reads as living
+## growth, not a static drawing, with stable trunks and unstable new shoots.
+func draw_growing(ci: CanvasItem, u: float, grown: float, color_for: Callable,
+		tip: Color = Color(1, 1, 1, 0.9), jitter := 0.0, t := 0.0) -> void:
+	var maxd := float(maxi(1, _max_depth))
+	var i := 0
+	for s in segs:
+		i += 1
+		if s.born0 > grown:
+			continue                                  # not yet reached by the front
+		var frac := 1.0
+		if s.born1 > grown:
+			frac = clampf((grown - s.born0) / maxf(1e-6, s.born1 - s.born0), 0.0, 1.0)
+		var jo := Vector2.ZERO
+		if jitter > 0.0:
+			# Stable trunk -> twitchy tip (depth), strongest near the live front.
+			var depth_f := float(s.depth) / maxd
+			var front_f := clampf(1.0 - (grown - s.born1) / 0.18, 0.0, 1.0)
+			var amt := jitter * depth_f * (0.25 + 0.75 * front_f)
+			var ph := float(i) * 1.7
+			jo = Vector2(sin(t * 5.0 + ph), cos(t * 4.3 + ph * 1.3)) * amt
+		var a: Vector2 = (s.a + jo) * u
+		var b: Vector2 = ((s.a as Vector2).lerp(s.b, frac) + jo) * u
+		var w: float = maxf(0.6, lerpf(s.w0, s.w1, frac))
+		ci.draw_line(a, b, color_for.call(int(s.depth)), w, true)
+		if frac > 0.0 and frac < 1.0:                 # the live, advancing tip
+			ci.draw_circle(b, w * 1.3, tip)
