@@ -154,8 +154,7 @@ def figure_tex(paths, spectra):
     rows = []
     for i in range(0, len(paths), 2):
         cells = " \\hfill\n  ".join(
-            f"\\includegraphics[width=0.46\\linewidth]{{{p}}}"
-            for p in paths[i : i + 2]
+            f"\\includegraphics[width=0.46\\linewidth]{{{p}}}" for p in paths[i : i + 2]
         )
         rows.append(cells)
     body = " \\\\[6pt]\n  ".join(rows)
