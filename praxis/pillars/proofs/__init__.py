@@ -1,6 +1,6 @@
 """Proofs: small formal claims attached to framings, checked for consistency.
 
-Where a framing makes an argument in prose, a proof states the load-bearing
+Where a framing makes an argument in prose, a proof states the essential
 piece formally - a lemma or proposition with a short body - and renders inline
 beside the framing that invokes it. Each proof is one YAML file in ``proofs/``
 (keyed by stem); a framing cites its support via ``proofs: [keys]`` and each

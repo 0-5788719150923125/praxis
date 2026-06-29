@@ -25,8 +25,9 @@ const VARIANTS := {
 		"spread": 0.62, "jitter": 0.05, "kink": 0.0, "taper": 0.90, "bias_ang": 1.5708, "bias_amt": 0.14},
 	"tendril":   {"flow_follow": 0.80, "branch": 0.16, "max_depth": 3, "ratio": 0.80,
 		"spread": 0.70, "jitter": 0.03, "kink": 0.0, "taper": 0.93, "bias_ang": -1.5708, "bias_amt": 0.05},
-	"lightning": {"flow_follow": 0.22, "branch": 0.24, "max_depth": 3, "ratio": 0.70,
-		"spread": 0.55, "jitter": 0.30, "kink": 0.55, "taper": 0.82, "bias_ang": 1.5708, "bias_amt": 0.10},
+	"lightning": {"flow_follow": 0.22, "branch": 0.34, "max_depth": 4, "ratio": 0.70,
+		"spread": 0.60, "jitter": 0.30, "kink": 0.55, "taper": 0.82, "bias_ang": 1.5708,
+		"bias_amt": 0.10, "tendril": 0.26},
 	"thread":    {"flow_follow": 0.92, "branch": 0.05, "max_depth": 2, "ratio": 0.85,
 		"spread": 0.50, "jitter": 0.01, "kink": 0.0, "taper": 0.96, "bias_ang": 0.0, "bias_amt": 0.0},
 }
@@ -89,6 +90,33 @@ func _build(p: Vector2, ang: float, seg_len: float, width: float, depth: int,
 			var child_steps := maxi(2, int(float(steps) * float(cfg.ratio)))
 			_build(p, ang + side * float(cfg.spread), child_len, w * 0.7,
 				depth + 1, child_steps, cfg, flow, rng, born)
+
+			# Tiny tendril: a brief hair-thin offshoot at a sharp angle that does NOT keep
+			# growing - the fine fuzz that real lightning frays into along its length.
+			if float(cfg.get("tendril", 0.0)) > 0.0 and rng.randf() < float(cfg.tendril):
+				var tside := 1.0 if rng.randf() < 0.5 else -1.0
+				_stub(p, ang + tside * float(cfg.spread) * 1.7, seg_len * 0.5, w * 0.5,
+					born, int(cfg.max_depth), rng)
+
+
+# A short dead-end offshoot (1-3 kinky segments, no recursion) - a "tendril".
+func _stub(p: Vector2, ang: float, seg_len: float, width: float, born: float,
+		depth: int, rng: RandomNumberGenerator) -> void:
+	var w := width
+	for s in rng.randi_range(1, 3):
+		if segs.size() >= MAX_SEGS:
+			return
+		ang += rng.randf_range(-1.0, 1.0) * 0.5
+		var np := p + Vector2(cos(ang), sin(ang)) * seg_len
+		var w1 := w * 0.7
+		var born1 := born + seg_len
+		segs.append({"a": p, "b": np, "w0": w, "w1": w1,
+			"born0": born, "born1": born1, "depth": depth})
+		_total = maxf(_total, born1)
+		_max_depth = maxi(_max_depth, depth)
+		p = np
+		w = w1
+		born = born1
 
 
 ## Draw the filament revealed up to growth front [param grown] (0..1). `u` is the

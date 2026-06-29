@@ -37,6 +37,7 @@ var _life_alpha := 1.0       # set per-filament before its draw, read by _color_
 var _strike_acc := 0.0       # lightning: time since the last strike
 var _strike_period := 1.6    # lightning: fallback re-strike cadence (sampled), so it
                              # strikes even with no detectable beats - never pure black
+var _converge := Vector2(0.0, 0.2)   # lightning: the point the spread bolts strike toward
 
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
@@ -44,6 +45,8 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	var keys := MODES.keys()
 	_mode = keys[rng.randi() % keys.size()]
 	_cfg = MODES[_mode]
+	# Lightning converges on a point: the spread bolts all strike toward it.
+	_converge = Vector2(rng.randf_range(-0.35, 0.35), rng.randf_range(0.0, 0.45))
 	_hue = fposmod(float(_cfg.hue) + rng.randf_range(-0.08, 0.08), 1.0)
 	_flow = Flow2D.new(rng.randi(), rng.randf_range(2.0, 3.5), float(_cfg.evolve))
 	_strike_period = rng.randf_range(1.1, 2.0)
@@ -77,9 +80,10 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 func _seed_path(fil: Dictionary, i: int, count: int) -> void:
 	match _mode:
 		"lightning":
-			# Strike across the whole width / top, not one patch.
-			fil.origin = Vector2(_rng.randf_range(-0.78, 0.78), _rng.randf_range(-0.62, -0.42))
-			fil.heading = PI * 0.5 + _rng.randf_range(-0.4, 0.4)   # downward strike
+			# Spawn in several places around the upper arc, then CONVERGE: each bolt heads
+			# toward a shared strike point, so they fan in instead of falling in parallel.
+			fil.origin = Vector2(_rng.randf_range(-0.92, 0.92), _rng.randf_range(-0.72, -0.30))
+			fil.heading = (_converge - fil.origin).angle() + _rng.randf_range(-0.22, 0.22)
 		"thread":
 			# Lanes spread across the full height so the threads fill the frame.
 			fil.origin = Vector2(_rng.randf_range(-0.7, -0.45), _rng.randf_range(-0.62, 0.62))

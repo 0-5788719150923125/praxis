@@ -2,7 +2,7 @@
 # architecture neutral, so where is the value in the complexity?". The grounded
 # spine of next/architecture_separation.md. Ungated (no requires): a general
 # foundational argument that applies to the whole framework, not one run. Pulls
-# in proof-architecture-separation for the formal load-bearing piece.
+# in proof-architecture-separation for the formal essential piece.
 section: discussion
 order: 25
 proofs: [proof-architecture-separation]

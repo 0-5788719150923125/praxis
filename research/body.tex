@@ -75,7 +75,7 @@ Now read this through the bias-variance lens.
 \[
     a \;=\; a_{\text{static}} \;+\; \Delta_\phi(\text{context}),
 \]
-where $\Delta_\phi$ is a small network reading multi-scale pooled context, in the spirit of delay embeddings~\cite{takens1981}, with its output zero-initialized so the field begins as the trained static prior and \textit{anneals} into input dependence. The static baseline carries the bias; the delta carries the variance; an $L_2$ penalty on the delta keeps the baseline load-bearing. A diagnostic, $\texttt{harmonic\_delta\_norm} = \mathrm{rms}(\Delta)/\mathrm{rms}(a_{\text{static}})$, reads how much variance the model is choosing to add. Zero means pure bias; a small bounded value means structured variance on top of a stable prior.
+where $\Delta_\phi$ is a small network reading multi-scale pooled context, in the spirit of delay embeddings~\cite{takens1981}, with its output zero-initialized so the field begins as the trained static prior and \textit{anneals} into input dependence. The static baseline carries the bias; the delta carries the variance; an $L_2$ penalty on the delta keeps the baseline dominant. A diagnostic, $\texttt{harmonic\_delta\_norm} = \mathrm{rms}(\Delta)/\mathrm{rms}(a_{\text{static}})$, reads how much variance the model is choosing to add. Zero means pure bias; a small bounded value means structured variance on top of a stable prior.
 
 The point is that these are \textit{separate parameters with separate gradients}. The smoothness prior controls the bias term; the delta network and its regularizer control the variance term. Lowering one does not mechanically raise the other. The U-shaped curve has become a two-dimensional manifold, and we have coordinates on it.
 
@@ -159,7 +159,12 @@ The two attention sinks of Section~\ref{sec:definitions} mirror the two objectiv
             \ifnum\r=7 \fill[masked] (\c,-\r) rectangle (\c+1,-\r-1);
             \else
               \ifnum\c>\r \fill[masked] (\c,-\r) rectangle (\c+1,-\r-1);
-              \else \fill[attend] (\c,-\r) rectangle (\c+1,-\r-1);\fi
+              \else
+                \ifnum\c=0
+                  \pgfmathtruncatemacro{\shade}{round((6-\r)/5*60+10)}
+                  \fill[blue!\shade] (\c,-\r) rectangle (\c+1,-\r-1);
+                \else \fill[attend] (\c,-\r) rectangle (\c+1,-\r-1);\fi
+              \fi
             \fi
           \fi
           \draw[cb] (\c,-\r) rectangle (\c+1,-\r-1);
@@ -189,6 +194,8 @@ The two attention sinks of Section~\ref{sec:definitions} mirror the two objectiv
   \caption{Where the learning pressure falls, read as an attention mask (rows = query position $i$, columns = key position $j$; a blue cell means $i$ attends to $j$). \textbf{Causal (GPT)} is lower-triangular: every position predicts the next from its past, so pressure runs along the interior. \textbf{Bidirectional (BERT)} is the full square with a few interior query rows held out as masked targets (the white bands): pressure fills the interior. \textbf{Outer (ours)} keeps the causal triangle but drops the first and last query rows to sinks - ghostmax at the head, dropoff at the tail - so the objective is anchored at the edges of the window rather than its middle: it learns the rim.}
   \label{fig:masks}
 \end{figure}
+
+Pushed one step further - and now firmly into conjecture - the same machinery suggests a regime in which the model \textit{mostly does not transform at all}. A head that falls silent through its ghost is an identity on the residual stream, contributing nothing; and with the input-conditional delta held small against the standing static baseline (Section~\ref{sec:manifold}), the field a sequence sees is dominated by the input-\textit{independent} corpus rhythm. The transform is then nearly the same for every input, and what separates one sequence from another is a sparse scatter of large deviations on a shared standing shape - the smoothness prior carrying that shape forward, each feature entering with a velocity and only now and then kicked off it. Read this way the computation is \textit{event-driven} rather than a fresh dense map at every step, closer in spirit to the sparse activity of spiking systems - a point of contact with biological plausibility we flag as motivation, not as a claim that the architecture is neural. It is checkable in diagnostics already reported: \texttt{harmonic\_delta\_norm} measures how much deviation is added, and how \textit{concentrated} that deviation is across positions and features is the sparsity this reading predicts - a diffuse delta would refute it. It leaves open the further question, which we do not attempt here, of whether a downstream consensus (the CALM vote) could itself raise such events and fold them back into the field.
 
 This is the least settled part of the picture, and we mark the seam honestly. The reconstruction-and-prediction duality is in production and measurable - reconstruction fidelity and the conditional gap between marginal and conditional next-latent prediction are both reported. The outer-representation reading, and the dropoff sink that would complete its symmetry, are a conjecture: the claim that learning pressure migrates to earlier positions is exactly what a measurement of attention mass would confirm or refute. We offer the axis as a third coordinate to look along, not yet as one we have surveyed.
 

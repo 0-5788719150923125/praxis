@@ -35,7 +35,7 @@ body: >
   than reconstruct the current value, which - following Next-Latent
   Prediction~\cite{nextlat2025} - shapes the stored state into a
   \emph{belief state}: a sufficient statistic for the future rather than a
-  lagged echo of the residual it is added to. The distinction is load-bearing
+  lagged echo of the residual it is added to. The distinction matters
   here, because an echo of the present is redundant and the model learns to
   route around it, while a forecast of the next state is the input-conditional
   correction the residual does not already carry - which is why a predictive
@@ -49,6 +49,6 @@ body: >
   through that fixed rule. It is, by structure, pure bias: the standing
   rhythm of the architecture, deviation-free where the prismatic head's
   variance arm is deviation-only. That a useful long-term memory can sit
-  entirely on the bias axis - blind, local, continuous, and still load-bearing
+  entirely on the bias axis - blind, local, continuous, and still doing real work
   - is itself a small piece of evidence for treating the two axes as
   separable machinery rather than a single dial.

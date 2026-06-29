@@ -19,12 +19,12 @@ unison" scaling argument in `research/body.tex`.
   identity, values rebuilt rather than mutated. No shared standing structure;
   each result is re-derived from its inputs. That *is* variance: input-conditional
   by construction. Taken to the limit it is also the *exponential* failure mode -
-  recomputation without memo, no load-bearing shared rhythm to lean on.
+  recomputation without memo, no shared standing rhythm to lean on.
 - **The strong design refuses the binary.** Praxis presents a functional
   surface (registries of partials, composition, `decode()` returning values,
   config-driven assembly) over a spine of classes implementing abstract
   primitives (`BaseEncoder` ABC, `nn.Module`, the registries themselves). Neither
-  pole. A *sampled* point in the interior - structure where it is load-bearing,
+  pole. A *sampled* point in the interior - structure where it is needed,
   composition where expression is. The same interior-point the paper says the
   model should occupy, the codebase occupies too.
 

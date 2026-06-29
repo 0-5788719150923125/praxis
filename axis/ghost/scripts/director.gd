@@ -57,6 +57,9 @@ const SCENES := [
 	{"script": preload("res://scripts/scenes/motes.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/projection.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/projection.gd"), "behavior": "static"},
+	{"script": preload("res://scripts/scenes/terrain.gd"), "behavior": "drift"},
+	{"script": preload("res://scripts/scenes/terrain.gd"), "behavior": "static"},
+	{"script": preload("res://scripts/scenes/terrain_city.gd"), "behavior": "drift"},
 	# "the-point" scenes (camera holds, per the brief).
 	{"script": preload("res://scripts/scenes/eye.gd"), "behavior": "static"},
 	{"script": preload("res://scripts/scenes/two_eyes.gd"), "behavior": "static"},
