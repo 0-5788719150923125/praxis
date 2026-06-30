@@ -14,6 +14,7 @@ const SPAN := 22.0      # parametric length of the trace
 var _f: AudioFeatures = AudioFeatures.new()
 var _gphase := 0.0
 var _curves: Array = []
+var _ch := Vector2.ZERO       # live tonal colour (hue, strength) from the harmonic signature
 
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
@@ -41,6 +42,7 @@ func update(f: AudioFeatures, delta: float) -> void:
 	tick(f, delta)
 	drift_view(f, 0.04, 0.06, 0.06, 0.12)
 	_gphase += delta * (0.07 + 0.35 * f.treble + 0.1 * mod.unit("rate"))
+	_ch = chroma_hue()        # the music's tonality, as a hue + strength (continuous modulation)
 	queue_redraw()
 
 
@@ -55,7 +57,8 @@ func _draw() -> void:
 func _draw_curve(cv: Dictionary, u: float) -> void:
 	var f: PackedFloat32Array = cv.f
 	var ph: PackedFloat32Array = cv.ph
-	var scale: float = u * float(cv.amp)
+	# Tonal swell: the curve reaches wider when the moment is strongly tonal.
+	var scale: float = u * float(cv.amp) * (1.0 + 0.3 * _ch.y)
 	# Amplitudes leaning on different bands so the curve pulses asymmetrically.
 	var ax := scale * (0.6 + 0.7 * _f.bass)
 	var ay := scale * (0.6 + 0.7 * _f.mid)
@@ -67,5 +70,10 @@ func _draw_curve(cv: Dictionary, u: float) -> void:
 		var x := (sin(f[0] * s + ph[0] + _gphase) + sin(f[1] * s + ph[1])) * d
 		var y := (sin(f[2] * s + ph[2] + _gphase) + sin(f[3] * s + ph[3])) * d
 		pts[k] = Vector2(x * ax, y * ay)
-	var col := Color.from_hsv(float(cv.hue), 0.7, 0.6 + 0.4 * _f.energy, 0.85)
+	# Pull the curve's hue toward the live tonal hue (circular nudge, scaled by how tonal it is),
+	# so the palette tracks the music's key - the continuous half of harmonic seeding.
+	var dh: float = _ch.x - float(cv.hue)
+	dh = dh - round(dh)                              # shortest way around the wheel
+	var hue := fposmod(float(cv.hue) + dh * 0.5 * _ch.y, 1.0)
+	var col := Color.from_hsv(hue, 0.7, 0.6 + 0.4 * _f.energy, 0.85)
 	draw_polyline(pts, col, float(cv.width), true)

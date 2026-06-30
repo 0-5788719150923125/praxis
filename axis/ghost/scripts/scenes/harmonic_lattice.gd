@@ -14,6 +14,8 @@ var _hue_t := 0.0     # flowing-hue clock: advances with the audio so the palett
 var _f: AudioFeatures = AudioFeatures.new()
 var _act: Activation
 var _light: Lighting
+var _ch := Vector2.ZERO            # live tonal colour (hue, strength) from the harmonic signature
+var _sig := PackedFloat32Array()   # the 12 chroma channels + coarse shape (continuous)
 
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
@@ -49,6 +51,9 @@ func update(f: AudioFeatures, delta: float) -> void:
 	_light.update(f, delta)
 	_phase += (float(params.wave_speed) * (0.4 + 0.6 * f.bass) + f.treble) * 0.5 * delta
 	_hue_t += float(params.hue_drift) * (0.5 + 0.8 * f.energy + 0.6 * f.beat) * delta
+	# Continuous harmonic seeding: the chroma channels and the tonality, read live each frame.
+	_sig = Spectrum.harmonic_signature()
+	_ch = chroma_hue()
 	queue_redraw()
 
 
@@ -84,6 +89,11 @@ func _draw() -> void:
 			var wave := 0.5 + 0.5 * sin(wave_freq * (t + float(r) / float(rows)) * TAU - _phase)
 			var e: float = _f.sample(t) * 0.7 + wave * 0.3 * _f.energy
 			e = clampf(e + _f.beat * 0.2, 0.0, 1.0)
+			# Each COLUMN maps to a pitch class: that chroma channel lights the column, so the
+			# grid reads the music's harmonics tonally (not just raw band energy left-to-right).
+			var pc := int(t * 12.0) % 12
+			if _sig.size() > pc:
+				e = clampf(e + 0.85 * _sig[pc], 0.0, 1.0)
 			# Rooted cells hold a small base size; activated cells swell and decay.
 			e *= 0.2 + 0.8 * _act.level(idx)
 			# Size stays mostly stable; colour and brightness carry the audio - a
@@ -96,6 +106,9 @@ func _draw() -> void:
 			var h := fposmod(hue + hue_flow * t + hue_flow_y * rt
 				+ hue_wave * sin((t + rt) * TAU - _hue_t * TAU) + 0.06 * _hue_t
 				+ 0.12 * lit + _light.hue_shift(), 1.0)
+			# Pull the palette toward the live tonal hue, scaled by how tonal the moment is.
+			var dh: float = _ch.x - h
+			h = fposmod(h + (dh - round(dh)) * 0.4 * _ch.y, 1.0)
 			var sat := clampf(sat0 + sat_var * sin((t - rt) * PI + _hue_t * 1.3) - 0.25 * lit, 0.0, 1.0)
 			var val := clampf(0.28 + 0.3 * e + 0.55 * lit + 0.4 * _light.glow(), 0.05, 1.0)
 			_draw_cell(pos, s, e * spin, Color.from_hsv(h, sat, val), diamond)

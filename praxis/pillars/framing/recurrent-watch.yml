@@ -27,8 +27,8 @@ body: >
 
   Read continuously, the dial is time itself: not a line of ticks but a full turn
   projected outward from the focal point over an interval, with the
-  \paperRecurrentSteps{} recurrent steps as stages sampled around it. This is where
-  XOR enters. XOR is the smallest function no linear model can separate, and its
+  \paperRecurrentSteps{} recurrent steps as stages sampled around it. Enter
+  XOR: the smallest function no linear model can separate, and its
   four configurations sit at the corners of a square - but lay those corners on a
   circle and parity becomes separable by a single phase, read off as position
   around the turn. The recurrent loop is an approximation of exactly that circle:

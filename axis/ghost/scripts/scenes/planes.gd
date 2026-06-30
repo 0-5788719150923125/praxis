@@ -34,6 +34,21 @@ var _pitch_base := 0.30
 var _pitch_amp := 0.08
 var _yaw_dir := 1.0
 var _yaw_base := 0.16
+# The whole ring tumbles on a sampled axis (not just the camera's yaw) with a wind-up /
+# wind-down angular speed, so the circle tilts and spins on other axes over time.
+var _ring_basis := Basis.IDENTITY
+var _ring_angle := 0.0
+var _tumble_axis := Vector3.UP
+var _tumble_base := 0.05
+var _tumble_amp := 0.25
+var _tumble_rate := 0.3
+# A travelling TWIST in the band: around one point on the ring the panels rotate their slide axis
+# from UP toward OUTWARD (and a little past it - an inversion), so the band's animation is
+# redirected radially over a phase of the circle. The twist point drifts slowly around the ring.
+var _twist_a := 0.0
+var _twist_max := PI * 0.6
+var _twist_w := PI * 0.45
+var _twist_speed := 0.2
 
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
@@ -47,7 +62,21 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_pitch_base = rng.randf_range(0.10, 0.55)
 	_pitch_amp = rng.randf_range(0.03, 0.12)
 	_yaw_dir = 1.0 if rng.randf() < 0.5 else -1.0
-	_yaw_base = rng.randf_range(0.10, 0.24)
+	_yaw_base = rng.randf_range(0.06, 0.16)             # gentler camera spin; the ring tumbles too
+	# Ring tumble: an axis biased strongly HORIZONTAL (so the circle visibly TILTS / rolls, not
+	# just spins like the camera). The orientation is a slow net spin (_tumble_base) plus a big
+	# wind-up / wind-down TILT that swings the ring back and forth (_tumble_amp radians).
+	_tumble_axis = Vector3(rng.randf_range(-1, 1), rng.randf_range(-0.15, 0.15),
+		rng.randf_range(-1, 1)).normalized()
+	_tumble_base = rng.randf_range(-0.08, 0.08)        # net spin rate (rad/s)
+	_tumble_amp = rng.randf_range(0.45, 1.15)          # tilt amplitude (rad) of the wind-up/down
+	_tumble_rate = rng.randf_range(0.15, 0.4)          # how fast it winds up and back
+	# The band twist: how far the panels rotate at the point (a bit past 90 deg = a flip), the
+	# phase-width it eases over, and how fast the twist point travels round the ring.
+	_twist_max = rng.randf_range(PI * 0.5, PI * 0.78)
+	_twist_w = rng.randf_range(PI * 0.28, PI * 0.55)
+	_twist_speed = rng.randf_range(0.08, 0.28) * (1.0 if rng.randf() < 0.5 else -1.0)
+	_twist_a = rng.randf() * TAU
 
 	var count := rng.randi_range(28, 50)
 	for i in count:
@@ -64,7 +93,9 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		var pl := Plane3D.new(c, uax, vax, Color.from_hsv(_hue, 0.7, 0.8, 0.9))
 		pl.edge = Color(1, 1, 1, 0.22)
 		add_plane(pl)
-		_bars.append({"t": t})
+		# Store each panel's LOCAL ring position + tangent so the whole ring can be re-oriented
+		# by _ring_basis each frame (the panel slides along the ring's local up).
+		_bars.append({"t": t, "a": a, "bx": cos(a) * _R, "bz": sin(a) * _R, "ul": uax})
 
 	_make_core(rng)
 	# Cross-scene bleed: a faint sky behind the ring, sometimes.
@@ -111,17 +142,36 @@ func update(f: AudioFeatures, delta: float) -> void:
 	var pitch := _pitch_base + _pitch_amp * sin(_life * 0.2)
 	lens.orbit(Vector3(0.0, BASE_H * 1.5, 0.0), _orbit_dist, _yaw, pitch)
 
+	# Tumble the whole ring: a slow net spin that accumulates (energy nudges it faster) plus a
+	# big wind-up / wind-down TILT swinging it back and forth, so the circle visibly tilts and
+	# rolls on axes the camera alone can't.
+	_ring_angle += delta * (_tumble_base + 0.12 * f.energy)
+	var angle := _ring_angle + _tumble_amp * sin(_life * _tumble_rate)
+	_ring_basis = Basis(_tumble_axis, angle)
+	_twist_a = wrapf(_twist_a + delta * _twist_speed, -PI, PI)     # the twist point travels round the ring
+
 	for i in _bars.size():
-		var t: float = _bars[i].t
-		var band := f.sample(t)
+		var bar: Dictionary = _bars[i]
+		var band := f.sample(float(bar.t))
 		var amp: float = band * 1.5 + f.beat * 0.12
 		var pl: Plane3D = planes[i]
-		# One continuous circle of equal panels: each SLIDES vertically (its single axis) by its
-		# band - quiet panels sink below the resting line, loud panels rise above it - so the
-		# ring reads as one undulating wave with no anchored floor and no loop seam.
-		pl.center.y = SLIDE_AMP * (amp - SLIDE_MID)
+		# Twist: how much THIS panel is rotated, peaking at the travelling twist point and easing to
+		# nothing a phase-window away. Its slide axis rotates from UP toward the OUTWARD radial (a
+		# bit past, an inversion), so near the twist the panel stands out radially and its animation
+		# is redirected outward instead of up.
+		var d := absf(wrapf(float(bar.a) - _twist_a, -PI, PI))
+		var w := 1.0 - smoothstep(0.0, _twist_w, d)
+		var ang := w * _twist_max
+		var radial := Vector3(float(bar.bx), 0.0, float(bar.bz)) / _R       # unit outward
+		var axis := Vector3.UP * cos(ang) + radial * sin(ang)              # up -> outward (-> inverted)
+		# Each panel SLIDES along its (possibly twisted) axis by its band, then the whole ring is
+		# re-oriented by the tumble basis - so the undulating circle also rolls and tilts as a body.
+		var local := Vector3(float(bar.bx), 0.0, float(bar.bz)) + axis * (SLIDE_AMP * (amp - SLIDE_MID))
+		pl.center = _ring_basis * local
+		pl.u_axis = _ring_basis * (bar.ul as Vector3)
+		pl.v_axis = _ring_basis * (axis * PANEL_H)
 		var lit := clampf(0.30 + 0.70 * band + 0.45 * _glow, 0.0, 1.0)
-		pl.color = Color.from_hsv(fposmod(_hue + 0.25 * t + 0.05 * _glow, 1.0), 0.7, lit, 0.9)
+		pl.color = Color.from_hsv(fposmod(_hue + 0.25 * float(bar.t) + 0.05 * _glow, 1.0), 0.7, lit, 0.9)
 
 	bodies.clear()
 	if _has_core and _core != null:

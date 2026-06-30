@@ -15,7 +15,9 @@ body: >
   how badly it reconstructs a value vector from its key. Our variant deviates
   from the baseline in a way that matters to this paper's axes. The update is
   fully detached and layer-wise local, in the Mono-Forward
-  sense~\cite{monoforward2025}: no gradient from the task ever reaches the
+  sense~\cite{monoforward2025}, itself a descendant of Forward-Forward
+  layer-local learning~\cite{hinton2022forwardforward}: no gradient from the
+  task ever reaches the
   memory's own learning rule, which is a fixed, scale-invariant step on local
   surprise. The module is also fully continuous, end to end. It
   never sees a token, a position, or a logit - continuous vectors arrive,

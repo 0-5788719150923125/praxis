@@ -80,7 +80,7 @@ func _begin_session(audio_path := "") -> void:
 	Spectrum.begin(audio_path)
 	Director.attach(self)
 	if _export_mode:
-		return                         # render clean: no overlays in the recorded movie
+		return                         # render clean: no overlays (the Director fades the video ends)
 	_feedback = preload("res://scripts/feedback.gd").new()
 	add_child(_feedback)               # press ` to critique a scene
 

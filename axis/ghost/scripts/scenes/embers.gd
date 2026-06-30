@@ -14,6 +14,8 @@ extends GhostScene
 var _f: AudioFeatures = AudioFeatures.new()
 var _sys: ParticleSystem
 var _t := 0.0
+var _beat_prev := 0.0
+var _ch := Vector2.ZERO       # live tonal colour (hue, strength) from the harmonic signature
 
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
@@ -35,7 +37,11 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		# hard one), a twinkle phase/rate, and a mobility multiplier so each rides the
 		# wind at its own speed (the Wind force reads "mobility") - varied, not uniform.
 		p.data = {"thresh": 0.18 + 0.5 * absf(p.noise.y), "phase": rng.randf() * TAU,
-			"rate": rng.randf_range(0.8, 2.4), "mobility": rng.randf_range(0.45, 1.7)}
+			"rate": rng.randf_range(0.8, 2.4), "mobility": rng.randf_range(0.45, 1.7),
+			# Each ember listens to its own spectral BAND (drives its transparency), and has a
+			# high LAUNCH threshold: a strong harmonic moment flings it far outward (a mega
+			# activation), still tethered by the weak spring. `h` is its smoothed band level.
+			"band": rng.randf(), "launch": rng.randf_range(0.7, 1.5), "h": 0.0}
 		_sys.add(p)
 
 	# Per-particle wind drift + a *gentle* pull home (weak spring, so they wander wide
@@ -51,6 +57,28 @@ func update(f: AudioFeatures, delta: float) -> void:
 	tick(f, delta)
 	drift_view(f, 0.03, 0.05, 0.04, 0.08)
 	_t += delta
+	var beat_edge: bool = f.beat > 0.55 and _beat_prev <= 0.55
+	_beat_prev = f.beat
+	_ch = chroma_hue()          # tonal hue + strength, to tint the cloud toward the music's key
+	for p: Particle in _sys.particles:
+		var d: Dictionary = p.data
+		# Each ember tracks its own band - its harmonic strength right now (drives transparency).
+		d.h = lerpf(float(d.h), f.sample(float(d.band)), 1.0 - exp(-6.0 * delta))
+		# MEGA ACTIVATION: on a beat, an ember whose harmonic-weighted drive clears its high
+		# launch threshold is flung far OUTWARD from the attractor (with a swirl), the further
+		# the harder the hit - then the weak spring reels it slowly back, so it fills the screen
+		# yet stays loosely coupled. Only a subset fires per beat - never the whole cloud.
+		if beat_edge:
+			var drive: float = (f.beat + 0.6 * f.energy) * (0.35 + float(d.h))
+			var excess: float = drive - float(d.launch)
+			if excess > 0.0:
+				var mag: float = (1.2 + 6.0 * Nonlinear.apply("spike", clampf(excess, 0.0, 1.0), 2.0)) * float(d.mobility)
+				var dir: Vector2 = p.pos()
+				if dir.length() < 0.05:
+					dir = p.noise
+				dir = dir.normalized()
+				var tang := Vector2(-dir.y, dir.x) * (1.0 if p.nspin >= 0.0 else -1.0)   # swirl out
+				p.vel += (dir + tang * 0.45) * mag
 	_sys.step(f, delta)
 	queue_redraw()
 
@@ -65,9 +93,17 @@ func _draw() -> void:
 		# crossed, shaped by a spike so the onset is emphatic.
 		var twinkle := 0.5 + 0.5 * sin(_t * float(d.rate) + float(d.phase))
 		var flare := Nonlinear.apply("spike", clampf(beat_drive - float(d.thresh), 0.0, 1.0), 3.0)
+		var harm := float(d.h)                                # this ember's own harmonic strength
 		var v := clampf(0.28 + 0.34 * twinkle + 0.75 * flare, 0.05, 1.0)
+		# Transparency is INDEPENDENT per ember, tied to its band: embers on a live harmonic
+		# stay present, those on a quiet one fade toward glass - so the cloud reads the spectrum.
+		var alpha := clampf(0.10 + 0.85 * harm + 0.45 * flare, 0.04, 1.0)
 		var c := p.pos() * u
 		var r := p.radius * u * (0.85 + 0.3 * twinkle)        # gentle, async - not beat-synced
-		var col := Color.from_hsv(p.hue, 0.6, v)
-		draw_circle(c, r * (2.0 + 2.0 * flare), Color(col.r, col.g, col.b, 0.10 + 0.18 * flare))
-		draw_circle(c, r, col)
+		# Tint each ember toward the live tonal hue (circular nudge, scaled by tonal strength), so
+		# the warm cloud drifts in colour with the music's key.
+		var dh: float = _ch.x - p.hue
+		dh = dh - round(dh)
+		var col := Color.from_hsv(fposmod(p.hue + dh * 0.4 * _ch.y, 1.0), 0.6, v)
+		draw_circle(c, r * (2.0 + 2.0 * flare), Color(col.r, col.g, col.b, (0.08 + 0.18 * flare) * (0.4 + 0.6 * harm)))
+		draw_circle(c, r, Color(col.r, col.g, col.b, alpha))

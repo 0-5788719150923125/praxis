@@ -209,10 +209,16 @@ def _augment(config: Dict) -> Dict:
     # section-3.1 fragments are mutually exclusive.
     if encoder.startswith("calm"):
         derived["codec_mode"] = "calm"
-    elif encoder.startswith("byte"):
+    elif encoder.startswith("byte") or encoder.startswith("abstractinator"):
+        # Abstractinator subclasses ByteLatentEncoder (BLT + residual VQ), so it
+        # opens the same section-3.1 fragment as the plain byte-latent encoders.
         derived["codec_mode"] = "byte_latent"
     else:
         derived["codec_mode"] = "standard"
+
+    # Abstractinator (byte-latent + residual-VQ bottleneck) gates an addendum to
+    # the byte-latent codec section: residual codes written into the encoder.
+    derived["uses_abstractinator"] = encoder.startswith("abstractinator")
 
     # HALO objective: a distance-to-centroid loss in embedding space (a shell
     # of consensus + an origin abstain sink) rather than cross-entropy.

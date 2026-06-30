@@ -62,7 +62,8 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 func _new_root() -> Dictionary:
 	return {"fil": null, "grown": 0.0, "life": 1.0, "state": "grow",
 		"timer": 0.0, "rate": 1.0, "hold": 2.0, "mode": "fade", "retract_to": 0.0,
-		"origin": Vector2.ZERO, "heading": 0.0}
+		"origin": Vector2.ZERO, "heading": 0.0,
+		"trate": _rng.randf_range(4.0, 9.0), "tphase": _rng.randf_range(0.0, TAU)}
 
 
 # The seed keeps sprouting: a new shoot emerges from the centre heading outward in any
@@ -131,6 +132,13 @@ func _spawn_site(force_centre := false) -> Dictionary:
 	return centre
 
 
+# A stuttery, timelapse advance multiplier: cubed sine spends most of its time low (the front
+# creeps or pauses) with brief peaks (a lunge), per root, so growth twitches forward.
+func _twitch(r: Dictionary) -> float:
+	var s := 0.5 + 0.5 * sin(_life * float(r.trate) + float(r.tphase))
+	return 0.25 + 1.6 * pow(s, 3.0)
+
+
 # Per-root growth-speed multiplier from a ~normal distribution (sum of three uniforms),
 # wide spread - so roots grow at a real variety of speeds, not all at roughly one rate.
 func _gauss_rate() -> float:
@@ -164,7 +172,9 @@ func update(f: AudioFeatures, delta: float) -> void:
 func _advance(r: Dictionary, delta: float, drive: float) -> void:
 	match r.state:
 		"grow":
-			r.grown = minf(1.0, r.grown + delta * 0.26 * float(r.rate) * drive)
+			# Slow and deliberate, and TWITCHY: the front mostly creeps, with brief lunges and
+			# near-pauses, the way a plant-growth timelapse stutters forward rather than gliding.
+			r.grown = minf(1.0, r.grown + delta * 0.12 * float(r.rate) * drive * _twitch(r))
 			if r.grown >= 1.0:
 				r.state = "hold"
 				r.timer = r.hold

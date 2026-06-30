@@ -1,0 +1,34 @@
+# Addendum to the byte-latent section-3.1 fragment, firing only when the encoder
+# is the Abstractinator variant (BLT + residual VQ). encoder_type "abstractinator"
+# also sets codec_mode=byte_latent, so harmonic-codec-bytelatent (order 10) renders
+# first and this (order 12) follows as the residual-VQ addendum. The CALM bridge is
+# marked as conjecture, not result, with its falsifier named - the paper's standard.
+section: harmonic
+order: 12
+requires:
+  uses_abstractinator: [true]
+body: >
+  \subsubsection*{A residual code in place of a continuous codec}
+
+  This run's byte-latent encoder carries a residual vector-quantization
+  bottleneck~\cite{abstractinator} - the Abstractinator variant of a BLT
+  encoder~\cite{pagnoni2024byte}, which quantizes each patch latent through a
+  stack of residual codebooks and folds the quantization error back into the
+  encoder's own loss. The codes are written \emph{into} the encoder rather than
+  read off it: each codebook stage corrects what the stage before it left over,
+  a coarse-to-fine address rather than a single lookup, and meaningful structure
+  is added at the representation itself.
+
+  This suggests a bridge we state as conjecture, not result. CALM phase-locks a
+  \emph{continuous} latent~\cite{calm2025} and pays for it in training time - the
+  convergence is slow enough that a CPU-scale demonstration is out of reach. A
+  residual code is a discrete sum of basis vectors, a quantized point in the same
+  continuous space; were those codes read as amplitudes in the harmonic basis -
+  ordered by amplitude, or shaped toward belief-state sufficiency rather than
+  reconstruction - a residual-coded encoder might approximate the continuous-latent
+  target CALM learns at a fraction of its cost, putting that regime within reach
+  where CALM's convergence forbids it. We do not claim the approximation holds; we
+  mark it as the direction, and the falsifier is the obvious one: whether a
+  residual-coded encoder reaches a CALM-comparable signature - the codec
+  round-trip and the conditional gap of the energy head - at a scale where CALM
+  does not converge at all.

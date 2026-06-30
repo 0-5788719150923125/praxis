@@ -4,8 +4,8 @@ extends Scene3D
 ##
 ## The metropolis idea on the [Terrain] foundation: a [Swarm] development field creeps
 ## across a landscape (rolling hills / mesa), and where it has grown, blocks stand on the
-## surface - **oriented to the terrain normal**, so they lean with the gentle curvature of
-## the land like real buildings on a hillside rather than a flat grid. Heights are driven
+## surface - **upright** (real buildings are vertical whatever the ground does), with only a
+## faint lean toward the terrain normal so the field is not a perfectly rigid grid. Heights are driven
 ## by development x a per-block spectral band (nonlinear), so the skyline rises with the
 ## music. Some plots **detach**, their blocks floating a little off the ground. Camera
 ## orbits under a wide lens; the city grows over time from a few seeds.
@@ -80,9 +80,9 @@ func _draw() -> void:
 			# Each block bounces with its own spectral band - a responsive skyline.
 			var react := _f.sample(clampf(_terrain.height_at(wx, wz) + 0.5, 0.0, 1.0))
 			var h := dev * (bgain + 0.7 * react) * _terrain.relief * 0.9
-			# Orient to the terrain, but only halfway to the normal - a gentle lean, not a
-			# wild tilt - so blocks follow the land's curvature like buildings on a hillside.
-			var up := _terrain.normal_world(wx, wz).lerp(Vector3.UP, 0.5).normalized()
+			# Buildings stand UPRIGHT - real ones are vertical whatever the ground does. Keep
+			# only a faint lean toward the terrain normal so the field isn't perfectly rigid.
+			var up := _terrain.normal_world(wx, wz).lerp(Vector3.UP, 0.92).normalized()
 			var base := Vector3(wx, ground + float_off, wz)
 			var hue := fposmod(_hue + 0.12 * _terrain.height_at(wx, wz) + 0.25 * dev, 1.0)
 			var blit := clampf(0.18 + 0.5 * dev + 0.5 * react + 0.6 * _glow, 0.05, 1.2) * lit

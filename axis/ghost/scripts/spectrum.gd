@@ -39,6 +39,7 @@ var current: AudioFeatures = AudioFeatures.new()
 ## A stable hash of the loaded audio's path - scenes seed from this so the same
 ## song always renders the same video. 0 when nothing is loaded.
 var song_hash: int = 0
+var _sig: HarmonicSignature = null   # rolling perceptual harmonic descriptor + content seed
 
 ## Emitted when a loaded song reaches its end (not in idle mode). main listens to
 ## return to the splash. Looping streams never end, so this never fires for them.
@@ -171,6 +172,34 @@ func song_length() -> float:
 	return 0.0
 
 
+## The current perceptual harmonic descriptor (12 chroma + coarse shape, normalised). For
+## SMOOTH content-driven modulation of a scene's dynamics. Empty until the analyzer is up.
+func harmonic_signature() -> PackedFloat32Array:
+	return _sig.vector() if _sig != null else PackedFloat32Array()
+
+## A coarse content seed (SimHash bucket) from the harmonics RIGHT NOW - the same for the same
+## music even re-encoded / cut up, drifting only as the content does. `bits` sets bucket width
+## (fewer = wider/more robust). For DISCRETE choices (which scene / behavior).
+func harmonic_bucket(bits := 10) -> int:
+	return _sig.bucket(bits) if _sig != null else 0
+
+## The full content seed from the live harmonics.
+func harmonic_seed() -> int:
+	return _sig.seed() if _sig != null else 0
+
+
+## A live, harmonic-derived SEED BIAS, meant to be XOR-mixed into any seed expression - it does
+## not REPLACE the existing seed (session identity, scene index, history all stay); it BIASES it,
+## so the harmonic channels themselves continuously steer the sampled randomness everywhere this
+## is threaded. Read it AT THE MOMENT a thing is instanced (it samples the current spectrum).
+## Same music -> same bias trajectory -> same show; the bias is coarse + smoothed, so it survives
+## re-encoding and a cut-out segment carries its own.
+func seed_bias() -> int:
+	if _sig == null:
+		return 0
+	return _sig.bucket(12) * 0x2545F4914F6CDD1D   # spread the coarse harmonic bucket across the bits
+
+
 # Install the analyzer on the Master bus and grab its instance.
 func _setup_analyzer() -> void:
 	var bus := AudioServer.get_bus_index("Master")
@@ -186,9 +215,13 @@ func _precompute_bands() -> void:
 	_band_lo.resize(BAND_COUNT)
 	_band_hi.resize(BAND_COUNT)
 	var ratio := FREQ_MAX / FREQ_MIN
+	var centres := PackedFloat32Array()
+	centres.resize(BAND_COUNT)
 	for i in BAND_COUNT:
 		_band_lo[i] = FREQ_MIN * pow(ratio, float(i) / float(BAND_COUNT))
 		_band_hi[i] = FREQ_MIN * pow(ratio, float(i + 1) / float(BAND_COUNT))
+		centres[i] = sqrt(_band_lo[i] * _band_hi[i])     # geometric centre (log-spaced)
+	_sig = HarmonicSignature.new(centres)
 
 
 func _process(delta: float) -> void:
@@ -222,6 +255,12 @@ func _process(delta: float) -> void:
 
 	_compute_movement(f)
 	current = f
+
+	# Roll the perceptual harmonic descriptor (chroma + coarse shape) and its content seed. This
+	# tracks WHAT the music is, robustly, so scenes can be seeded from the harmonics themselves
+	# rather than the file - see HarmonicSignature / next/harmonic_seeding.md.
+	if _sig != null:
+		_sig.update(f.bands, f.bass + f.low_mid, f.mid, f.high + f.treble, f.flux, delta)
 
 
 # Spectral flux + a sliding-window "movement" score. Flux is how much new

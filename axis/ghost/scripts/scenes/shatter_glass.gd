@@ -97,7 +97,9 @@ func _burst(strength: float) -> void:
 	for s in _shards:
 		var radial: Vector3 = s.home
 		var dir: Vector3 = radial.normalized() if radial.length() > 0.01 else Vector3(0, 0, 1)
-		s.vel += (dir + s.noise * 0.7 + Vector3(0, 0, _rng.randf_range(0.4, 1.1))) * strength
+		# Outward in-plane + a SMALL push toward the viewer (a big z-kick used to fling shards past
+		# the camera, off-screen) + a little noise, scaled by strength.
+		s.vel += (dir + s.noise * 0.6 + Vector3(0, 0, _rng.randf_range(0.1, 0.45))) * strength
 		s.spin += s.noise * _rng.randf_range(2.5, 6.0)
 
 
@@ -223,7 +225,7 @@ func update(f: AudioFeatures, delta: float) -> void:
 	_beat_prev = f.beat
 	if _oneshot:
 		if not _fired and (beat_edge or _life > 1.2):
-			_burst(1.0)
+			_burst(0.5)            # gentler: the shards scatter but stay in view, then settle
 			_fired = true
 	elif beat_edge:
 		_burst(0.5)
@@ -256,10 +258,12 @@ func update(f: AudioFeatures, delta: float) -> void:
 		s.basis = (s.basis * Basis.from_euler(s.spin * delta)).orthonormalized()
 		s.vel *= maxf(0.0, 1.0 - 1.1 * delta)        # drag
 		s.spin *= maxf(0.0, 1.0 - 0.4 * delta)
-		if not _oneshot:                              # pull back home and re-knit
+		if not _oneshot:                              # loop: pull back home and re-knit
 			s.vel += (s.home - s.pos) * 2.6 * delta
 			if (s.pos - s.home).length() < 0.02:
 				s.basis = s.basis.slerp(Basis.IDENTITY, 1.0 - exp(-3.0 * delta))
+		else:                                         # oneshot: a gentle gather so the shattered
+			s.vel += (s.home - s.pos) * 0.8 * delta   # pieces drift back and settle IN frame, not off it
 	if not _settled():
 		_moved = true
 	queue_redraw()

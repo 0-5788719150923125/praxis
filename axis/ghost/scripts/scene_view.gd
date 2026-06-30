@@ -18,6 +18,19 @@ var offset: Vector2 = Vector2.ZERO
 ## 0..1 transition presence (1 = fully on screen).
 var presence: float = 1.0
 
+## Composition bias, applied ON TOP of the scene's own framing (the Director sets it during a
+## LAYER transition to push two overlapping scenes to opposite regions so they don't collide at
+## the focal point). The scene never touches these, so its own drift rides on top.
+var bias_offset: Vector2 = Vector2.ZERO
+var bias_zoom: float = 1.0
+
+## Punch channel: a momentary zoom / roll / skew applied INSTANTLY (not eased - the Director
+## drives the envelope) on top of everything else. This is how a rapid-fire modulation "stinger"
+## contorts and zooms the current scene on the beat without easing-lag. Neutral = identity.
+var pulse_zoom: float = 1.0
+var pulse_rot: float = 0.0
+var pulse_skew: float = 0.0
+
 ## How fast the actual transform chases the target (per second). Lower = gentler.
 var smoothing: float = 5.0
 
@@ -26,6 +39,8 @@ var _zoom := 1.0
 var _rot := 0.0
 var _skew := 0.0
 var _off := Vector2.ZERO
+var _bias_off := Vector2.ZERO
+var _bias_zoom := 1.0
 
 
 ## Ease the actual transform toward the target. Called once per frame (and during
@@ -36,9 +51,12 @@ func commit(dt: float) -> void:
 	_rot = lerpf(_rot, rotation, a)
 	_skew = lerpf(_skew, skew, a)
 	_off = _off.lerp(offset, a)
+	_bias_off = _bias_off.lerp(bias_offset, a)
+	_bias_zoom = lerpf(_bias_zoom, bias_zoom, a)
 
 
 ## The transform a scene pushes at the top of _draw, for the given viewport size.
 func matrix(size: Vector2) -> Transform2D:
-	var origin := size * 0.5 + _off * size
-	return Transform2D(_rot, Vector2(_zoom, _zoom), _skew, origin)
+	var origin := size * 0.5 + (_off + _bias_off) * size
+	var z := _zoom * _bias_zoom * pulse_zoom
+	return Transform2D(_rot + pulse_rot, Vector2(z, z), _skew + pulse_skew, origin)

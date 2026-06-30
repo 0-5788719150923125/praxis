@@ -14,8 +14,10 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	# Cool winter palettes: dusk blue, slate, or a faint aurora green.
 	var hue: float = [0.58, 0.62, 0.55, 0.45][rng.randi() % 4]
 	add_layer("bed", rng, {"hue": hue, "sat": 0.45, "val": 0.26, "pools": 3})
-	if rng.randf() < 0.5:
-		add_layer("fog", rng, {"hue": hue, "alpha": 0.04, "count": 6})
+	# Real volumetric fog rolling low under the snow - a lit, drifting bank with harmonic motion,
+	# behind the falling flakes (added before the snow layer).
+	if rng.randf() < 0.6:
+		add_layer("volumetric", rng, {"mode": "fog", "hue": hue})
 	add_layer("snow", rng, {
 		"hue": fposmod(hue + 0.02, 1.0),
 		"count": rng.randi_range(160, 260),       # many fine flecks

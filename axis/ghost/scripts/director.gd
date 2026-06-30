@@ -46,9 +46,13 @@ const SCENES := [
 	{"script": preload("res://scripts/scenes/clockwork.gd"), "behavior": "drift"},
 	# Weather & atmosphere - composed from the shared Layer registry (see scripts/layer.gd).
 	{"script": preload("res://scripts/scenes/snowfall.gd"), "behavior": "drift"},
-	{"script": preload("res://scripts/scenes/snowfall.gd"), "behavior": "static"},
 	{"script": preload("res://scripts/scenes/snowflakes.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/rainfall.gd"), "behavior": "drift"},
+	{"script": preload("res://scripts/scenes/clouds.gd"), "behavior": "drift"},
+	{"script": preload("res://scripts/scenes/clouds.gd"), "behavior": "static"},
+	{"script": preload("res://scripts/scenes/fog_volume.gd"), "behavior": "drift"},
+	{"script": preload("res://scripts/scenes/fire.gd"), "behavior": "drift"},
+	{"script": preload("res://scripts/scenes/underwater.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/fireflies.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/starfield.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/starfield.gd"), "behavior": "static"},
@@ -78,14 +82,31 @@ const SCENES := [
 const SEED_SALT := 3141592653589793
 # ----------------------------------------------------------------------------------
 
-enum Style { CUT, DIP, FADE }
+# The LAYER transition phases two scenes ASYNCHRONOUSLY: the incoming fades IN over the
+# outgoing (both visible, layered), then the outgoing fades OUT, leaving the incoming behind -
+# a slow dissolve-through-an-overlap rather than a dip to black. To keep the overlap tasteful it
+# is only used when the INCOMING scene is one of these ATMOSPHERIC field scenes (they read well
+# washed over another look). During the overlap the two are pushed to opposite regions (one left
+# /smaller, one right/larger) so they compose instead of colliding at the focal point.
+const ATMOSPHERIC := [
+	"res://scripts/scenes/starfield.gd", "res://scripts/scenes/aurora.gd",
+	"res://scripts/scenes/fog_bank.gd", "res://scripts/scenes/fog_lights.gd",
+	"res://scripts/scenes/fireflies.gd", "res://scripts/scenes/snowfall.gd",
+	"res://scripts/scenes/rainfall.gd", "res://scripts/scenes/motes.gd",
+	"res://scripts/scenes/bubbles.gd", "res://scripts/scenes/petals.gd",
+	"res://scripts/scenes/embers.gd", "res://scripts/scenes/clouds.gd",
+	"res://scripts/scenes/underwater.gd", "res://scripts/scenes/fire.gd",
+	"res://scripts/scenes/clouds.gd", "res://scripts/scenes/fog_volume.gd",
+]
+
+enum Style { CUT, DIP, FADE, LAYER }
 enum Trigger { BEAT, MOVEMENT, LULL }
 
 # How a change is performed, weighted. Mostly a DIP to black - the old scene fades
 # out, a beat of true darkness, then the new one fades up - so the eye gets a clean
 # gap between scenes and two scenes never overlap (the old crossfades read as
 # clipping). The occasional hard CUT keeps things punchy; a plain crossfade is rare.
-const STYLE_BAG := [Style.DIP, Style.DIP, Style.DIP, Style.DIP, Style.DIP, Style.CUT, Style.FADE]
+const STYLE_BAG := [Style.DIP, Style.DIP, Style.DIP, Style.DIP, Style.CUT, Style.FADE, Style.LAYER]
 # Exit cues, weighted: usually land the cut on a beat; sometimes on a section
 # change (movement) or a drop into quiet (lull).
 const TRIGGER_BAG := [Trigger.BEAT, Trigger.BEAT, Trigger.BEAT, Trigger.MOVEMENT, Trigger.MOVEMENT, Trigger.LULL]
@@ -109,6 +130,9 @@ const TRIGGER_BAG := [Trigger.BEAT, Trigger.BEAT, Trigger.BEAT, Trigger.MOVEMENT
 ## Seconds a dip/blend takes end to end (cuts are instant). A DIP spends the middle
 ## of this in darkness, so a little long reads as a deliberate breath between scenes.
 @export var transition_time: float = 2.0
+## A LAYER transition is slower than a dip - the two scenes overlap and shift for a while before
+## the first leaves - so it gets its own, longer duration.
+@export var layer_time: float = 6.0
 
 var _host: Node = null
 var _current: GhostScene = null
@@ -122,6 +146,23 @@ var _style: Style = Style.CUT
 var _trigger: Trigger = Trigger.BEAT
 var _beat_prev := 0.0
 var _audio_ema := 0.0        # smoothed audio level (fast attack, slow release) for the silence guard
+var _bookends := false       # export only: fade the picture up from black at the start, down at the end
+# Rapid-fire BURST: a sparse, harmonic-gated flurry of quick jump cuts (a cinematic "3 quick
+# scenes" effect) breaking up the slow holds. While a burst is live the holds shrink to a few
+# seconds and every exit is a hard CUT landing on the beat.
+var _burst_left := 0         # quick scenes remaining in the burst (0 = normal pacing)
+var _burst_min := 1.5        # this burst's minimum hold (s)
+var _burst_max := 4.0        # this burst's maximum hold (s)
+var _flurry_cd := 0          # scenes until another flurry (burst or stinger) may start - keeps them rare
+# Rapid-fire STINGER: instead of cutting through different scenes (jarring at speed), a run of
+# beat-synced PUNCHES that contort / recolour / zoom the CURRENT scene - BANG, BANG, BANG - then
+# settle. A universal modulation: it rides the SceneView pulse + node tint, so it works on any scene.
+var _sting_left := 0         # beat-synced punches remaining in the run
+var _sting := 0.0            # current punch envelope (1 on the beat -> 0 between)
+var _sting_zoom := 0.0       # this punch's sampled kicks
+var _sting_rot := 0.0
+var _sting_skew := 0.0
+var _sting_flash := 0.0
 var _swaps := 0
 var _rng := RandomNumberGenerator.new()
 var _locked := -1            # >=0 pins one scene (authoring), set via --scene N
@@ -141,6 +182,7 @@ var _step := 0
 
 func attach(host: Node) -> void:
 	_host = host
+	_bookends = OS.get_cmdline_user_args().has("--export")   # fade the video in/out at its ends
 	_session_seed = _resolve_seed()
 	print("ghost: session seed %d (%s)" % [_session_seed, _seed_source()])
 	_rng.seed = _session_seed ^ 0x1234567
@@ -268,10 +310,37 @@ func _load_storyboard_arg() -> void:
 
 
 # Reset the hold clock and choose the exit cue for the scene now on screen.
+# A harmonic-biased index in [0, n): the deterministic _rng draw XOR'd with the live seed_bias,
+# so the spectrum steers this discrete choice on TOP of the base sequence (not replacing it).
+func _biased(n: int) -> int:
+	return absi(_rng.randi() ^ Spectrum.seed_bias()) % maxi(1, n)
+
+
 func _arm() -> void:
 	_elapsed = 0.0
 	_beat_prev = Spectrum.current.beat
-	_trigger = TRIGGER_BAG[_rng.randi() % TRIGGER_BAG.size()]
+	if _flurry_cd > 0:
+		_flurry_cd -= 1            # count down the spacing between flurries
+	if _burst_left == 0:
+		_maybe_start_burst()       # rarely, kick off a rapid-fire CUT burst on this scene
+	# In a burst, exits land on the beat (quick + musical); otherwise the weighted cue bag.
+	_trigger = Trigger.BEAT if _burst_left > 0 else TRIGGER_BAG[_biased(TRIGGER_BAG.size())]
+
+
+# A sparse, NON-LINEAR chance to start a rapid-fire CUT burst: only in the auto show, only with
+# real audio, weighted up by how much the music is moving right now (a spike curve on movement +
+# energy). Rare on purpose, with a long cooldown after, so it does not chain into a dozen cuts.
+func _maybe_start_burst() -> void:
+	if not _storyboard_seq.is_empty() or _locked >= 0 or _audio_ema < 0.15 or _flurry_cd > 0:
+		return
+	var f := Spectrum.current
+	var drive: float = Nonlinear.apply("spike", clampf(f.movement + 0.5 * f.energy, 0.0, 1.0), 2.5)
+	if _rng.randf() < 0.012 + 0.05 * drive:        # ~1.2% baseline, up to ~6% on a strong moment
+		_burst_left = _rng.randi_range(2, 3)       # short - normalizes after a couple of cuts
+		_burst_min = _rng.randf_range(1.0, 2.0)
+		_burst_max = _rng.randf_range(3.0, 5.0)
+		_flurry_cd = _rng.randi_range(14, 26)      # then a long stretch of normal pacing
+		print("ghost: BURST x%d  (%.1f-%.1fs cuts)" % [_burst_left, _burst_min, _burst_max])
 
 
 # `--scene N` (or `--scene name`) pins a single scene for authoring - no changes.
@@ -288,6 +357,24 @@ func _locked_scene_arg() -> int:
 	return -1
 
 
+# The video bookend fade: in export, the picture eases UP from black over the first
+# `transition_time` (a dip's incoming half) and back DOWN to black over the final
+# `transition_time` before the song ends - reusing the very same modulate.a-to-black that the
+# scene transitions use, so the first and last scenes fade like any other cut. 1.0 (no fade) in
+# the live app. Audio is owned by Spectrum and never touched.
+func _bookend_fade() -> float:
+	if not _bookends:
+		return 1.0
+	var fade := maxf(0.5, transition_time)
+	var t := Spectrum.current.time
+	var a_in := clampf(t / fade, 0.0, 1.0)            # 0 at the very start -> 1 after `fade`
+	var a_out := 1.0
+	var slen := Spectrum.song_length()
+	if slen > 0.0:
+		a_out = clampf((slen - t) / fade, 0.0, 1.0)   # 1 -> 0 over the final `fade` seconds
+	return minf(a_in, a_out)
+
+
 func _process(delta: float) -> void:
 	if _current == null:
 		return
@@ -298,17 +385,19 @@ func _process(delta: float) -> void:
 	if _held:
 		return
 
+	var bf := _bookend_fade()                       # 1, except fading from/to black at the video's ends
 	if _transitioning:
-		_trans_t += delta / maxf(0.01, transition_time)
+		var dur: float = layer_time if _style == Style.LAYER else transition_time
+		_trans_t += delta / maxf(0.01, dur)
 		var k := clampf(_trans_t, 0.0, 1.0)
 		_current.update(Spectrum.current, delta)
 		_next.update(Spectrum.current, delta)
 		# Both scenes keep animating; their alphas are sequenced so the picture is
 		# clean (a DIP never shows both at once).
 		var a := _transition_alphas(k)
-		_current.modulate.a = a.x
+		_current.modulate.a = a.x * bf
 		_current.view.presence = a.x
-		_next.modulate.a = a.y
+		_next.modulate.a = a.y * bf
 		_next.view.presence = a.y
 		_current.view.commit(delta)
 		_next.view.commit(delta)
@@ -323,9 +412,40 @@ func _process(delta: float) -> void:
 	# read as silence but a genuinely dead track (or its silent tail) does.
 	var e: float = Spectrum.current.energy
 	_audio_ema = lerpf(_audio_ema, e, 1.0 - exp(-(8.0 if e > _audio_ema else 0.6) * delta))
+	_drive_stinger(delta, bf)                       # rapid-fire beat-synced modulation of THIS scene
 	if _should_change():
 		_begin_transition()
 	_beat_prev = Spectrum.current.beat
+
+
+# The rapid-fire stinger: on a strong beat, sparsely start a short run of beat-synced punches;
+# each punch zooms / rolls / skews and brightens the CURRENT scene, decaying before the next - a
+# BANG-BANG-BANG without a jarring cut. Universal (rides the view pulse + node tint).
+func _drive_stinger(delta: float, bf: float) -> void:
+	var f := Spectrum.current
+	var beat_edge: bool = f.beat > 0.55 and _beat_prev <= 0.55
+	if beat_edge:
+		if _sting_left > 0:                          # land the next punch on this beat
+			_sting_left -= 1
+			_sting = 1.0
+			_sting_zoom = _rng.randf_range(0.07, 0.20) * (1.0 if _rng.randf() < 0.5 else -1.0)
+			_sting_rot = _rng.randf_range(-0.09, 0.09)
+			_sting_skew = _rng.randf_range(-0.06, 0.06)
+			_sting_flash = _rng.randf_range(0.20, 0.5)
+		elif _flurry_cd == 0 and _audio_ema >= 0.2:  # else maybe begin a run (rare, harmonic-gated)
+			var drive: float = Nonlinear.apply("spike", clampf(f.movement + 0.5 * f.energy, 0.0, 1.0), 2.5)
+			if _rng.randf() < 0.02 + 0.07 * drive:
+				_sting_left = _rng.randi_range(2, 4)  # BANG, BANG (, BANG)
+				_flurry_cd = _rng.randi_range(14, 26)
+				print("ghost: STINGER x%d" % _sting_left)
+	_sting = maxf(0.0, _sting - delta * 6.0)         # quick decay between beats
+	var p := _sting * _sting                         # eased punch (snappy attack, soft tail)
+	_current.view.pulse_zoom = 1.0 + _sting_zoom * p
+	_current.view.pulse_rot = _sting_rot * p
+	_current.view.pulse_skew = _sting_skew * p
+	# Brightness/tint flash via the node modulate, preserving the fade alpha.
+	var fl := 1.0 + _sting_flash * p
+	_current.modulate = Color(fl * (1.0 + 0.06 * _sting_rot), fl, fl * (1.0 - 0.06 * _sting_rot), bf)
 
 
 func _should_change() -> bool:
@@ -349,18 +469,22 @@ func _should_change() -> bool:
 	# A fixed hold (deterministic storyboard timing) ignores cues entirely.
 	if ex.has("hold"):
 		return _elapsed >= float(ex["hold"])
-	if _elapsed >= float(ex.get("max", max_hold)):   # backstop: the cue never came
+	# During a burst the backstop shrinks to a few seconds so quick scenes never linger.
+	var hi: float = _burst_max if _burst_left > 0 else float(ex.get("max", max_hold))
+	if _elapsed >= hi:                               # backstop: the cue never came
 		return true
 	if not _ready_to_exit(ex):
 		return false
 	return _trigger_fires(ex)
 
 
-# Eligibility: a oneshot when its sequence ends, a loop after the minimum hold.
+# Eligibility: a oneshot when its sequence ends, a loop after the minimum hold (a short one in a
+# burst, so a quick scene becomes eligible to cut almost immediately - on the next beat).
 func _ready_to_exit(ex: Dictionary) -> bool:
 	if _current.lifecycle == "oneshot":
 		return _current.finished()
-	return _elapsed >= float(ex.get("min", min_hold))
+	var lo: float = _burst_min if _burst_left > 0 else float(ex.get("min", min_hold))
+	return _elapsed >= lo
 
 
 # Has the exit cue arrived this frame? Uses the storyboard-specified trigger if the
@@ -445,6 +569,7 @@ func _style_name(s: int) -> String:
 		Style.CUT: return "cut"
 		Style.DIP: return "dip"
 		Style.FADE: return "fade"
+		Style.LAYER: return "layer"
 	return "?"
 
 
@@ -460,6 +585,15 @@ func _transition_alphas(k: float) -> Vector2:
 			return Vector2(out_a, in_a)
 		Style.FADE:
 			return Vector2(smoothstep(0.0, 1.0, 1.0 - k), smoothstep(0.0, 1.0, k))
+		Style.LAYER:
+			# Async overlap. First the incoming fades IN to a TRANSLUCENT level over the still-full
+			# outgoing (so the outgoing shows through it - they layer); then the outgoing fades OUT
+			# while the incoming solidifies to full, surviving. The two are offset apart (bias) so
+			# they compose rather than collide.
+			if k < 0.45:
+				return Vector2(1.0, smoothstep(0.0, 1.0, k / 0.45) * 0.65)
+			var kk := (k - 0.45) / 0.55
+			return Vector2(1.0 - smoothstep(0.0, 1.0, kk), lerpf(0.65, 1.0, smoothstep(0.0, 1.0, kk)))
 		_:
 			return Vector2(1.0 - k, k)
 
@@ -468,12 +602,24 @@ func _begin_transition() -> void:
 	if SCENES.size() < 2:
 		_elapsed = 0.0
 		return
+	var burst_cut := _burst_left > 0      # leaving a burst scene -> a hard jump cut, no morph/blend
+	if _burst_left > 0:
+		_burst_left -= 1                  # consume this quick scene
+	# Clear any rapid-fire modulation so the leaving scene doesn't freeze mid-contortion or tint.
+	_sting_left = 0
+	_sting = 0.0
+	if _current != null:
+		_current.view.pulse_zoom = 1.0
+		_current.view.pulse_rot = 0.0
+		_current.view.pulse_skew = 0.0
+		_current.modulate = Color(1.0, 1.0, 1.0, _current.modulate.a)
 	var nxt := _make_scene()
 
 	# Content-aware morph: if the incoming can grow out of the outgoing's geometry,
 	# swap instantly and let it animate the morph (e.g. one eye splitting into two).
-	# Only ever between compatible, non-empty types - so we never morph a mismatch.
-	if _current != null and not nxt.morph_in.is_empty() and nxt.morph_in == _current.morph_out:
+	# Only ever between compatible, non-empty types - so we never morph a mismatch. (Not during a
+	# burst - a flurry wants clean jump cuts, not a slow morph.)
+	if not burst_cut and _current != null and not nxt.morph_in.is_empty() and nxt.morph_in == _current.morph_out:
 		print("ghost: morph %s -> %s (%s)" % [_current.scene_name, nxt.scene_name, nxt.morph_in])
 		var from := _current
 		_host.add_child(nxt)
@@ -485,6 +631,12 @@ func _begin_transition() -> void:
 		return
 
 	_style = _choose_style()
+	if burst_cut:
+		_style = Style.CUT            # a burst is a run of hard jump cuts
+	# A LAYER overlap only reads well when the incoming is an atmospheric wash; otherwise two
+	# busy looks fight, so fall back to a clean dip.
+	if _style == Style.LAYER and not ATMOSPHERIC.has(nxt.get_script().resource_path):
+		_style = Style.DIP
 	if _style == Style.CUT:
 		_host.add_child(nxt)          # instant swap, no blend
 		_current.queue_free()
@@ -492,6 +644,17 @@ func _begin_transition() -> void:
 		_swaps += 1
 		_arm()
 		return
+
+	# Layer overlap: push the two scenes to opposite regions (one side + smaller, the other side
+	# + larger, on a sampled axis) so they compose instead of sitting on the same focal point.
+	if _style == Style.LAYER:
+		var ang := _rng.randf_range(0.0, TAU)
+		var dir := Vector2(cos(ang), sin(ang)) * _rng.randf_range(0.14, 0.26)
+		_current.view.bias_offset = -dir
+		_current.view.bias_zoom = _rng.randf_range(0.55, 0.72)        # the leaving scene shrinks aside
+		nxt.view.bias_offset = dir
+		nxt.view.bias_zoom = _rng.randf_range(0.82, 1.02)
+		print("ghost: layer %s under %s" % [nxt.scene_name, _current.scene_name])
 
 	# Start the incoming scene fully transparent BEFORE it is ever drawn - otherwise
 	# it flashes at full alpha for the one frame between being added and the first
@@ -511,7 +674,7 @@ func _choose_style() -> int:
 		"cut": return Style.CUT
 		"dip": return Style.DIP
 		"fade": return Style.FADE
-	return STYLE_BAG[_rng.randi() % STYLE_BAG.size()]
+	return STYLE_BAG[_biased(STYLE_BAG.size())]
 
 
 func _finish_transition() -> void:
@@ -522,6 +685,8 @@ func _finish_transition() -> void:
 	_swaps += 1
 	_current.modulate.a = 1.0
 	_current.view.presence = 1.0
+	# The survivor of a LAYER HOLDS the position it took during the overlap - it does not shift
+	# back to the centred focal point (that snap-back read as wrong). Its bias stays as set.
 	_arm()
 
 
@@ -536,21 +701,35 @@ func _pick_index() -> int:
 		return _locked
 	if SCENES.size() <= 1:
 		return 0
-	var weights := []
-	var total := 0.0
+	# Identity-keyed weighted selection (Efraimidis-Spirakis): each candidate gets a STABLE
+	# per-cut uniform from a hash of (session, cut#, this scene's identity, live harmonic bias),
+	# and we keep the one with the largest key = u^(1/weight). Because each scene's key depends
+	# only on ITS OWN identity - never on the catalogue's size or order - adding a new animation
+	# can only change the cuts it actually wins; it does not reshuffle the rest of the show. The
+	# harmonic bias still steers the choice (it re-rolls the uniforms when the spectrum shifts),
+	# and everything stays deterministic per song.
+	var bias := Spectrum.seed_bias()
+	var best := -1
+	var best_key := -1.0
 	for i in SCENES.size():
 		var w := _novelty_weight(i)
-		weights.append(w)
-		total += w
-	if total <= 0.0:                      # degenerate (everything suppressed): uniform
-		return _rng.randi() % SCENES.size()
-	var r := _rng.randf() * total
-	var acc := 0.0
-	for i in SCENES.size():
-		acc += weights[i]
-		if r <= acc:
-			return i
-	return SCENES.size() - 1
+		if w <= 0.0:
+			continue
+		var h := hash([_session_seed, _swaps, _scene_key(i), bias])
+		var u := clampf(float(h & 0xFFFFFFFF) / 4294967296.0, 1e-9, 1.0)
+		var key := pow(u, 1.0 / w)
+		if key > best_key:
+			best_key = key
+			best = i
+	return best if best >= 0 else _rng.randi() % SCENES.size()   # all suppressed: fall back
+
+
+# A STABLE identity for a catalogue entry: a hash of (scene name, behavior), independent of its
+# position in SCENES. Keying seeds and selection off this - not the array index - is what lets us
+# add or reorder scenes without changing how the existing ones are chosen or how they look.
+func _scene_key(i: int) -> int:
+	var e: Dictionary = SCENES[i]
+	return hash(String(e.script.resource_path).get_file().get_basename() + "|" + String(e.behavior))
 
 
 # Selection weight for one catalogue entry: 0 for the entry on screen (never an
@@ -574,7 +753,10 @@ func _next_entry() -> Dictionary:
 		_index = _pick_index()
 		_kind_last[String(SCENES[_index].script.resource_path)] = _swaps
 		var e: Dictionary = SCENES[_index]
-		var seed := _session_seed ^ (_index * 0x9E3779B1) ^ (_swaps * 0x85EBCA77)
+		# session identity ^ scene IDENTITY (not its array slot) ^ history (swaps) ^ a LIVE harmonic
+		# seed_bias sampled at this cut - so content, history, and the spectrum itself all steer the
+		# seed, while a scene's look stays the same no matter where it sits in the catalogue.
+		var seed := _session_seed ^ _scene_key(_index) ^ (_swaps * 0x85EBCA77) ^ Spectrum.seed_bias()
 		return {"script": e.script, "behavior": e.behavior, "seed": seed,
 			"shot": "", "exit_spec": {}, "transition": ""}   # "" -> auto STYLE_BAG
 	# Manual: walk the sequence (wrap when looping, else hold on the last entry).
@@ -630,6 +812,10 @@ func _make_scene() -> GhostScene:
 	var seed: int = int(entry["seed"])
 	scene.init_with_seed(seed, String(entry["behavior"]))
 	scene.scene_name = String(script.resource_path).get_file().get_basename()
+	# Telemetry: the live harmonic bucket whose seed_bias was folded into this scene's seed at
+	# the cut. Same music (even re-encoded / cut up) should print the same bucket here. (See
+	# next/harmonic_seeding.md.)
+	print("ghost: cut -> %s  harmonic bucket %d" % [scene.scene_name, Spectrum.harmonic_bucket(12)])
 	scene.exit_spec = entry["exit_spec"]
 	# Transition style, by override hierarchy (highest first): storyboard entry, then
 	# the scene's own choice (set in build_params), then the storyboard's default,

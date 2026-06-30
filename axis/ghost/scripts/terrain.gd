@@ -95,13 +95,15 @@ func build(rng: RandomNumberGenerator, type_: String, world_half := 3.0,
 			if _biome_on:
 				_vcol[i] = _biome(hgrid[i], slope, moist.at(p), tex)
 				continue
-			# Palette path (surreal climates): the detail field shifts the band AND mottles
-			# brightness/saturation, so the surface has visible grain and striation.
-			var c := palette.at(clampf(hgrid[i] + 0.22 * (tex - 0.5), 0.0, 1.0))
-			var contour := 0.82 + 0.18 * sin(hgrid[i] * PI * 22.0)
-			var shade := clampf((0.40 + 0.5 * slope + 0.6 * (tex - 0.5)) * contour, 0.1, 1.3)
-			var sat := clampf(c.s * (0.78 + 0.6 * tex), 0.0, 1.0)
-			_vcol[i] = Color.from_hsv(c.h, sat, clampf(c.v * shade, 0.0, 1.0))
+			# Palette path (surreal climates): take the palette's ACTUAL interpolated colour
+			# (smooth in RGB) and just shade it by slope and surface detail. Rebuilding it via
+			# from_hsv(c.h, ...) flipped the hue wildly wherever the RGB lerp crossed grey - that
+			# was the wrong colours and the hard edges. The detail field still shifts the band a
+			# little and grains the brightness, so the surface keeps its striation.
+			var c := palette.at(clampf(hgrid[i] + 0.18 * (tex - 0.5), 0.0, 1.0))
+			var contour := 0.88 + 0.12 * sin(hgrid[i] * PI * 16.0)
+			var shade := clampf((0.50 + 0.42 * slope + 0.40 * (tex - 0.5)) * contour, 0.14, 1.25)
+			_vcol[i] = Color(c.r * shade, c.g * shade, c.b * shade, 1.0)
 
 
 # Resolve a climate's material colours (jittered per seed so no two are identical).
