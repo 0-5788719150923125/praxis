@@ -645,15 +645,14 @@ func _begin_transition() -> void:
 		_arm()
 		return
 
-	# Layer overlap: push the two scenes to opposite regions (one side + smaller, the other side
-	# + larger, on a sampled axis) so they compose instead of sitting on the same focal point.
+	# Layer overlap: pan / zoom only the INCOMING scene into an off-centre region so it composes
+	# beside the outgoing one without sitting on the same focal point. The OUTGOING scene is left
+	# exactly where it is (it just fades) - it must never re-shift to "make room", which read as a
+	# jarring lurch. The incoming eases from neutral into this bias (a pan-in) and then holds it.
 	if _style == Style.LAYER:
 		var ang := _rng.randf_range(0.0, TAU)
-		var dir := Vector2(cos(ang), sin(ang)) * _rng.randf_range(0.14, 0.26)
-		_current.view.bias_offset = -dir
-		_current.view.bias_zoom = _rng.randf_range(0.55, 0.72)        # the leaving scene shrinks aside
-		nxt.view.bias_offset = dir
-		nxt.view.bias_zoom = _rng.randf_range(0.82, 1.02)
+		nxt.view.bias_offset = Vector2(cos(ang), sin(ang)) * _rng.randf_range(0.16, 0.30)
+		nxt.view.bias_zoom = _rng.randf_range(0.80, 1.05)
 		print("ghost: layer %s under %s" % [nxt.scene_name, _current.scene_name])
 
 	# Start the incoming scene fully transparent BEFORE it is ever drawn - otherwise

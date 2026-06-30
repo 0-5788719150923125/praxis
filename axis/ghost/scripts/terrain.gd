@@ -243,10 +243,20 @@ func draw_surface(ci: CanvasItem, lens: Lens3D, u: float, lit: float, shimmer: f
 	sv.resize(n)
 	var dep := PackedFloat32Array()
 	dep.resize(n)
+	# Drifting CLOUD SHADOWS: soft bands moving across the land over time (per-vertex, so they
+	# follow the real 3D surface), darkening the ground where a cloud passes and brightening the
+	# sunlit gaps - dynamic shading without a real shadow pass.
+	var shadow := PackedFloat32Array()
+	shadow.resize(n)
+	var sxd := shimmer * 0.06
+	var szd := shimmer * 0.045
 	for i in n:
 		var pr := lens.project(_world[i])
 		sv[i] = Vector2(pr.x, pr.y) * u
 		dep[i] = pr.z
+		var p: Vector3 = _world[i]
+		var cv := sin(p.x * 0.7 + sxd) + sin(p.z * 0.55 - szd) + 0.6 * sin((p.x + p.z) * 1.1 + sxd * 1.5)
+		shadow[i] = clampf(0.55 + 0.5 * smoothstep(-0.7, 0.9, cv * 0.5), 0.5, 1.0)
 	var quads: Array = []
 	for gy in res - 1:
 		for gx in res - 1:
@@ -260,8 +270,8 @@ func draw_surface(ci: CanvasItem, lens: Lens3D, u: float, lit: float, shimmer: f
 			if _quad_area(poly) < 2.0:        # edge-on / collapsed quad - skip (else triangulation fails)
 				continue
 			quads.append({"d": (dep[i0] + dep[i1] + dep[i2] + dep[i3]) * 0.25, "poly": poly,
-				"cols": PackedColorArray([_lit(_vcol[i0], lit), _lit(_vcol[i1], lit),
-					_lit(_vcol[i3], lit), _lit(_vcol[i2], lit)])})
+				"cols": PackedColorArray([_lit(_vcol[i0], lit * shadow[i0]), _lit(_vcol[i1], lit * shadow[i1]),
+					_lit(_vcol[i3], lit * shadow[i3]), _lit(_vcol[i2], lit * shadow[i2])])})
 	# Water plane (a coarse translucent grid at y=0), shimmering, depth-sorted with the land.
 	if water > 0.0:
 		var wc := _water_col

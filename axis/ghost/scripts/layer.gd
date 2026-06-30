@@ -720,14 +720,19 @@ class Dust:
 	func draw(ci: CanvasItem, u: float) -> void:
 		# An optional soft shaft of light behind the motes.
 		if flag("shaft", true):
+			# A soft shaft of light from above, built from a column of overlapping soft gaussian
+			# puffs that widen and fade as they descend. Its bright end sits well ABOVE the frame
+			# (only the soft falloff reaches in), so there is NO hard flat top to reveal even when
+			# the scene is panned or zoomed during a transition.
 			var sh := num("shaft_x", -0.2)
-			var col := Color.from_hsv(num("hue", 0.12), 0.2, 1.0, 0.04)
+			var hue := num("hue", 0.12)
 			var x := sh * half.x * u
-			var w := 0.5 * half.x * u
-			ci.draw_polygon(PackedVector2Array([
-				Vector2(x - w * 0.3, -half.y * u), Vector2(x + w * 0.3, -half.y * u),
-				Vector2(x + w, half.y * u), Vector2(x - w, half.y * u)]),
-				PackedColorArray([col, col, Color(col.r, col.g, col.b, 0.0), Color(col.r, col.g, col.b, 0.0)]))
+			for i in 7:
+				var fy := float(i) / 6.0                        # 0 high (off-screen) .. 1 mid-low
+				var py := lerpf(-half.y * 1.4, half.y * 0.55, fy) * u
+				var pw := lerpf(0.22, 0.7, fy) * half.x * u     # the beam spreads downward
+				Layer.puff(ci, Vector2(x + sh * 0.08 * fy * half.x * u, py), pw,
+					Color.from_hsv(hue, 0.2, 1.0, 0.055 * (1.0 - 0.85 * fy)))
 		var mc := Color.from_hsv(num("hue", 0.12), 0.15, 1.0)
 		for m in _motes:
 			var c: Vector2 = m.pos * u
@@ -1105,11 +1110,19 @@ class Fire:
 
 	func draw(ci: CanvasItem, u: float) -> void:
 		var base_h := num("hue", 0.04)
+		# A warm ember BED glowing along the base, brighter where the hot spot sits, so the rising
+		# licks read as one anchored fire and not a field of loose sparks.
+		var by := half.y * u * 0.96
+		for i in 7:
+			var gx := lerpf(-0.92, 0.92, float(i) / 6.0)
+			var glow := 0.06 + 0.06 * exp(-pow((gx - _hot_x) / 0.5, 2.0))
+			Layer.puff(ci, Vector2(gx * half.x * u, by), half.x * u * 0.42,
+				Color.from_hsv(0.06, 0.7, 0.7, glow))
 		for s in _sparks:
 			var heat := clampf(float(s.life), 0.0, 1.0)
 			var flick := 0.7 + 0.3 * sin(t * float(s.flicker) + float(s.phase) * 2.0)   # shimmer
 			var c: Vector2 = Vector2(float(s.x) * half.x, float(s.y) * half.y) * u
-			var w: float = float(s.size) * u * (1.1 + 0.7 * heat)
+			var w: float = float(s.size) * u * (1.5 + 0.9 * heat)
 			# Height: a base tongue, taller near the wandering hot spot, and massively taller for
 			# the sparse licks - more so on a burst - so tall flames leap up one side and dissipate.
 			var hot := exp(-pow((float(s.x) - _hot_x) / 0.45, 2.0))   # 0..1 proximity to the hot side
@@ -1120,24 +1133,23 @@ class Fire:
 			var weave := (sin(t * 2.0 + float(s.phase) + float(s.y) * 4.0)
 				+ 0.5 * sin(t * 3.3 + float(s.phase) * 1.7)) \
 				* float(s.amp) * u * (1.0 + 2.0 * float(s.lick))
-			# Draw the flame as a COLUMN of soft gaussian puffs flowing UP from the base: hot, bright
-			# and wide at the bottom, cooling/narrowing/dimming toward the tip, the column curling
-			# smoothly with height (quadratic sway) rather than spiking. Reads as a tongue of light.
-			# A column of overlapping soft GAUSSIAN puffs (smooth sprites, no ring banding) flowing
-			# up from the base - heavily overlapping so they merge into one continuous tongue.
+			# Draw the flame as a COLUMN of soft gaussian puffs: a bright, wide white-hot HEAD that
+			# leads at the top (where the flame is climbing to) tapering down to a thin, dim, red
+			# TAIL that trails DOWNWARD behind it - so the wisp flows down, not up. fk=0 is the tail
+			# (bottom), fk=1 the head (top); the head curls with the coherent sway.
 			var steps: int = clampi(int(hgt / maxf(w * 0.7, 1.0)) + 3, 4, 16)
 			for k in steps:
-				var fk := float(k) / float(steps - 1)            # 0 base .. 1 tip
-				var pp := c + Vector2(weave * fk * fk, -hgt * fk)  # up + a coherent curl
-				var pr := w * (1.5 - 0.85 * fk)                  # wide hot base, tapering to the tip
-				var hue := fposmod(0.02 + 0.10 * (1.0 - fk), 1.0)           # red tip -> orange-yellow base
-				var sat := clampf(lerpf(0.45, 1.0, fk), 0.0, 1.0)           # white-hot base -> saturated red tip
-				var val := clampf(lerpf(1.0, 0.30, fk) * (0.55 + 0.5 * heat) * flick, 0.0, 1.0)
-				var a := clampf(lerpf(0.5, 0.12, fk) * (0.6 + 0.4 * heat), 0.0, 1.0)
+				var fk := float(k) / float(steps - 1)            # 0 tail (bottom) .. 1 head (top)
+				var pp := c + Vector2(weave * fk * fk, -hgt * fk)  # up toward the head + a coherent curl
+				var pr := w * (0.45 + 1.05 * fk)                 # thin tail -> wide rounded head
+				var hue := fposmod(0.02 + 0.09 * fk, 1.0)        # red tail -> orange-yellow head
+				var sat := clampf(lerpf(1.0, 0.45, fk), 0.0, 1.0)           # red tail -> white-hot head
+				var val := clampf(lerpf(0.40, 1.0, fk) * (0.55 + 0.5 * heat) * flick, 0.0, 1.0)
+				var a := clampf(lerpf(0.12, 0.55, fk) * (0.6 + 0.4 * heat), 0.0, 1.0)
 				Layer.puff(ci, pp, pr, Color.from_hsv(hue, sat, val, a))
-			# A soft warm glow spilling off the base - the flame's light (a halo, not a dot).
-			Layer.puff(ci, c + Vector2(weave * 0.08, -w * 0.3), w * 2.8,
-				Color.from_hsv(0.09, 0.55, clampf((0.6 + 0.5 * heat) * flick, 0.0, 1.0), 0.14 * (0.6 + 0.4 * heat)))
+			# A soft warm glow around the HEAD - the flame's brightest light (a halo, not a dot).
+			Layer.puff(ci, c + Vector2(weave * 0.9, -hgt * 0.85), w * 3.0,
+				Color.from_hsv(0.10, 0.5, clampf((0.6 + 0.5 * heat) * flick, 0.0, 1.0), 0.13 * (0.6 + 0.4 * heat)))
 
 
 # ---------------------------------------------------------------------------------
