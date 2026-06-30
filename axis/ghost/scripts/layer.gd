@@ -426,20 +426,31 @@ class Stars:
 				"hue": fposmod(num("hue", 0.6) + seed_rng.randf_range(-0.12, 0.12), 1.0),
 				"depth": seed_rng.randf_range(0.2, 1.0),
 			})
-		_next_shoot = seed_rng.randf_range(2.0, 6.0)
+		_next_shoot = seed_rng.randf_range(4.0, 10.0)
 
 	func update(f: AudioFeatures, dt: float, h: Vector2) -> void:
 		super(f, dt, h)
 		if _shoot.is_empty():
-			_next_shoot -= dt * (1.0 + 2.0 * f.beat)
+			_next_shoot -= dt * (1.0 + 0.8 * f.beat)
 			if _next_shoot <= 0.0:
-				var from := Vector2(rng.randf_range(-1.0, 0.2), rng.randf_range(-0.6, -0.1))
-				_shoot = {"p": from, "v": Vector2(rng.randf_range(0.5, 1.0),
-					rng.randf_range(0.25, 0.5)).normalized() * rng.randf_range(1.2, 2.0), "life": 1.0}
-				_next_shoot = rng.randf_range(3.0, 8.0)
+				# Enter from a RANDOM edge and cross in a varied direction (not always the same
+				# diagonal), at a sampled DEPTH so near ones streak big/fast/bright and far ones
+				# drift small/slow/faint - the sky has depth, and they are rarer now.
+				var from: Vector2
+				match rng.randi() % 4:
+					0: from = Vector2(rng.randf_range(-1.1, 1.1), -0.8)   # top
+					1: from = Vector2(rng.randf_range(-1.1, 1.1), 0.8)    # bottom
+					2: from = Vector2(-1.2, rng.randf_range(-0.7, 0.7))   # left
+					_: from = Vector2(1.2, rng.randf_range(-0.7, 0.7))    # right
+				var aim := Vector2(rng.randf_range(-0.5, 0.5), rng.randf_range(-0.5, 0.5))
+				var ang := (aim - from).angle() + rng.randf_range(-0.45, 0.45)
+				var depth := rng.randf()                              # 0 far .. 1 near
+				_shoot = {"p": from, "v": Vector2.from_angle(ang) * lerpf(0.8, 2.6, depth),
+					"life": 1.0, "depth": depth}
+				_next_shoot = rng.randf_range(5.0, 13.0)
 		else:
 			_shoot.p += _shoot.v * dt
-			_shoot.life -= dt * 1.1
+			_shoot.life -= dt * lerpf(0.55, 1.0, float(_shoot.depth))   # far ones linger to cross
 			if _shoot.life <= 0.0:
 				_shoot = {}
 
@@ -454,11 +465,13 @@ class Stars:
 				Layer.glow(ci, c, r * 3.0, Color(col.r, col.g, col.b, 0.25 * v), 4)
 			ci.draw_circle(c, maxf(0.8, r), col)
 		if not _shoot.is_empty():
+			var dep: float = _shoot.depth
 			var p: Vector2 = _shoot.p * Vector2(half.x / 0.9, half.y / 0.55) * u
-			var tail: Vector2 = p - _shoot.v.normalized() * 0.12 * u * clampf(_shoot.life, 0.0, 1.0)
-			var a: float = clampf(_shoot.life, 0.0, 1.0)
-			ci.draw_line(tail, p, Color(1, 1, 1, a), 2.0, true)
-			ci.draw_circle(p, 2.5, Color(1, 1, 1, a))
+			var taillen: float = lerpf(0.06, 0.17, dep)        # near streaks are longer
+			var tail: Vector2 = p - _shoot.v.normalized() * taillen * u * clampf(_shoot.life, 0.0, 1.0)
+			var a: float = clampf(_shoot.life, 0.0, 1.0) * lerpf(0.4, 1.0, dep)   # far ones fainter
+			ci.draw_line(tail, p, Color(1, 1, 1, a), lerpf(1.0, 2.6, dep), true)
+			ci.draw_circle(p, lerpf(1.4, 3.6, dep), Color(1, 1, 1, a))
 
 
 # ---------------------------------------------------------------------------------
@@ -819,6 +832,94 @@ class Embers:
 			ci.draw_circle(c, r, col)
 
 
+# ---------------------------------------------------------------------------------
+# Cosmos - large, distant background bodies that give a star field DEPTH instead of just
+# dots: a shaded PLANET (a lit crescent over a dark globe, sometimes ringed), a soft
+# coloured NEBULA cloud, or a slowly turning spiral GALAXY. Few, dim, drawn behind the
+# stars (z = back). Seeded; a scene adds it sometimes so the void isn't barren.
+# ---------------------------------------------------------------------------------
+class Cosmos:
+	extends Base
+	var _bodies: Array = []
+
+	func _init(seed_rng: RandomNumberGenerator, c: Dictionary = {}) -> void:
+		super(seed_rng, c)
+		var n := int(num("count", 1))
+		for i in n:
+			var kind: String = ["planet", "nebula", "galaxy"][seed_rng.randi() % 3]
+			var blobs := []
+			for k in 6:
+				blobs.append(Vector2(seed_rng.randf_range(-1.0, 1.0), seed_rng.randf_range(-1.0, 1.0))
+					* seed_rng.randf_range(0.2, 0.7))
+			_bodies.append({
+				"kind": kind,
+				"pos": Vector2(seed_rng.randf_range(-0.85, 0.85), seed_rng.randf_range(-0.6, 0.6)),
+				"size": seed_rng.randf_range(0.10, 0.24) * (1.0 if kind == "planet" else 1.4),
+				"depth": seed_rng.randf_range(0.18, 0.7),      # far/dim .. nearer/brighter
+				"hue": fposmod(num("hue", 0.6) + seed_rng.randf_range(-0.25, 0.25), 1.0),
+				"light": seed_rng.randf() * TAU,               # planet sun direction
+				"spin": seed_rng.randf_range(-0.04, 0.04),     # galaxy turn
+				"arms": seed_rng.randi_range(2, 4),
+				"wind": seed_rng.randf_range(3.5, 6.5),        # galaxy arm winding
+				"phase": seed_rng.randf() * TAU,
+				"ring": seed_rng.randf() < 0.4,
+				"blobs": blobs,
+			})
+
+	func draw(ci: CanvasItem, u: float) -> void:
+		for b in _bodies:
+			var c: Vector2 = (b.pos as Vector2) * half * u
+			match String(b.kind):
+				"planet": _planet(ci, u, c, b)
+				"nebula": _nebula(ci, u, c, b)
+				_: _galaxy(ci, u, c, b)
+
+	# A dark globe with a soft lit crescent toward the sun direction, sometimes ringed.
+	func _planet(ci: CanvasItem, u: float, c: Vector2, b: Dictionary) -> void:
+		var r: float = float(b.size) * u
+		var dep: float = float(b.depth)
+		var hue: float = float(b.hue)
+		var ld := Vector2(cos(float(b.light)), sin(float(b.light)))
+		ci.draw_circle(c, r, Color.from_hsv(hue, 0.5, 0.10 * dep))           # the shadowed globe
+		for k in 6:                                                          # lit side: a soft terminator
+			var f := float(k) / 5.0
+			ci.draw_circle(c + ld * r * 0.55 * f, r * (1.0 - 0.55 * f),
+				Color.from_hsv(hue, lerpf(0.5, 0.25, f), lerpf(0.12, 0.7, f) * dep))
+		if bool(b.ring):
+			var pts := Layer.ellipse(c, r * 1.7, r * 0.5, 30)
+			pts.append(pts[0])
+			ci.draw_polyline(pts, Color.from_hsv(hue, 0.3, 0.55 * dep, 0.5), maxf(1.0, r * 0.03), true)
+
+	# A soft coloured cloud from a few overlapping faint blobs, drifting slowly.
+	func _nebula(ci: CanvasItem, u: float, c: Vector2, b: Dictionary) -> void:
+		var r: float = float(b.size) * u
+		var hue: float = float(b.hue)
+		var dep: float = float(b.depth)
+		var drift := Vector2(sin(t * 0.05 + float(b.phase)), cos(t * 0.04)) * r * 0.1
+		for off: Vector2 in b.blobs:
+			var col := Color.from_hsv(fposmod(hue + off.x * 0.05, 1.0), 0.55, 0.6 * dep, 0.06 * dep)
+			Layer.soft_blob(ci, c + off * r + drift, r * (0.9 + 0.5 * off.length()), col, 8)
+
+	# A glowing core with a few logarithmic arms of fading dots, turning slowly.
+	func _galaxy(ci: CanvasItem, u: float, c: Vector2, b: Dictionary) -> void:
+		var r: float = float(b.size) * u
+		var hue: float = float(b.hue)
+		var dep: float = float(b.depth)
+		var rot := t * float(b.spin) + float(b.phase)
+		Layer.glow(ci, c, r * 0.5, Color.from_hsv(hue, 0.35, 0.9 * dep, 0.4), 6)
+		var arms := int(b.arms)
+		var wind: float = float(b.wind)
+		for arm in arms:
+			var a0 := TAU * float(arm) / float(arms) + rot
+			for k in 36:
+				var f := float(k) / 35.0
+				var ang := a0 + f * wind
+				var p := c + Vector2(cos(ang), sin(ang)) * (r * f)
+				var v := (1.0 - f) * 0.75 * dep
+				ci.draw_circle(p, maxf(0.8, r * 0.03 * (1.0 - f)),
+					Color.from_hsv(fposmod(hue + 0.05 * f, 1.0), 0.3, v, 0.5 * (1.0 - f)))
+
+
 const REGISTRY := {
 	"bed": Bed,
 	"fog": Fog,
@@ -831,6 +932,7 @@ const REGISTRY := {
 	"dust": Dust,
 	"bubbles": Bubbles,
 	"embers": Embers,
+	"cosmos": Cosmos,
 }
 
 

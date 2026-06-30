@@ -102,6 +102,10 @@ const TRIGGER_BAG := [Trigger.BEAT, Trigger.BEAT, Trigger.BEAT, Trigger.MOVEMENT
 @export var movement_threshold: float = 0.6
 ## Energy (0..1) at or below which a LULL trigger fires.
 @export var lull_threshold: float = 0.12
+## Below this smoothed audio level the track is treated as SILENT and scenes never change -
+## forcing a cut with nothing playing (e.g. a song's silent tail) reads as broken. Kept well
+## under lull_threshold so a musical lull still cuts but true silence holds the scene.
+@export var silence_floor: float = 0.03
 ## Seconds a dip/blend takes end to end (cuts are instant). A DIP spends the middle
 ## of this in darkness, so a little long reads as a deliberate breath between scenes.
 @export var transition_time: float = 2.0
@@ -117,6 +121,7 @@ var _trans_t := 0.0
 var _style: Style = Style.CUT
 var _trigger: Trigger = Trigger.BEAT
 var _beat_prev := 0.0
+var _audio_ema := 0.0        # smoothed audio level (fast attack, slow release) for the silence guard
 var _swaps := 0
 var _rng := RandomNumberGenerator.new()
 var _locked := -1            # >=0 pins one scene (authoring), set via --scene N
@@ -314,6 +319,10 @@ func _process(delta: float) -> void:
 	_current.update(Spectrum.current, delta)
 	_current.view.commit(delta)
 	_elapsed += delta
+	# Smoothed audio level: rises fast, falls slowly, so a momentary gap between beats doesn't
+	# read as silence but a genuinely dead track (or its silent tail) does.
+	var e: float = Spectrum.current.energy
+	_audio_ema = lerpf(_audio_ema, e, 1.0 - exp(-(8.0 if e > _audio_ema else 0.6) * delta))
 	if _should_change():
 		_begin_transition()
 	_beat_prev = Spectrum.current.beat
@@ -321,6 +330,11 @@ func _process(delta: float) -> void:
 
 func _should_change() -> bool:
 	if _locked >= 0 or _held:
+		return false
+	# Never change scenes during silence: with no perceptible audio there is nothing to cut
+	# on, and forcing a transition (a max-hold backstop, or a LULL trigger that silence
+	# trivially satisfies) drops a fresh scene into dead air. Hold until the audio returns.
+	if _audio_ema < silence_floor:
 		return false
 	# Hold the final scene to the end. Once the song is into its closing stretch (audio and
 	# harmonics fading), a cut to a fresh scene with almost nothing left to play reads as a

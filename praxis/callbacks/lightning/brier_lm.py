@@ -17,7 +17,7 @@ import torch
 from lightning.pytorch.callbacks import Callback
 from transformers import GenerationConfig
 
-from praxis.metrics.brier import compute_brier_lm
+from praxis.metrics.brier import BRIERLM_SCALE, compute_brier_lm_with_orders
 
 
 class BrierLMCallback(Callback):
@@ -36,7 +36,7 @@ class BrierLMCallback(Callback):
         self,
         tokenizer,
         eval_every: int = 1,
-        num_prompts: int = 32,
+        num_prompts: int = 128,
         prompt_len: int = 32,
         continuation_len: int = 32,
         temperature: float = 1.0,
@@ -68,8 +68,16 @@ class BrierLMCallback(Callback):
         if not samples_a:
             return
 
-        score = compute_brier_lm(samples_a, samples_b, refs)
+        score, per_order = compute_brier_lm_with_orders(samples_a, samples_b, refs)
         trainer.callback_metrics["val_brierlm"] = torch.tensor(float(score))
+        # Per-order Brier-n curves (raw, scaled to the aggregate's units) so the
+        # dashboard can show which order zeroes the AND-shaped geometric mean.
+        for n, s in per_order.items():
+            if s is None:
+                continue
+            trainer.callback_metrics[f"val_brier_{n}"] = torch.tensor(
+                float(s) * BRIERLM_SCALE
+            )
 
     # ------------------------------------------------------------------
     # Helpers

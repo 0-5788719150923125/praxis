@@ -67,35 +67,52 @@ def _brier_order(
     return sum(scores) / len(scores)
 
 
+def compute_brier_lm_with_orders(
+    samples_a: Sequence[Sequence[int]],
+    samples_b: Sequence[Sequence[int]],
+    references: Sequence[Sequence[int]],
+    orders: Sequence[int] = (1, 2, 3, 4),
+) -> "tuple[float, dict]":
+    """BrierLM aggregate *and* the per-order scores it is built from.
+
+    Computing the orders once and deriving the aggregate avoids re-walking the
+    prefix matches; the callback charts the per-order curves alongside the
+    aggregate to diagnose its spikiness (the geometric mean is floored and
+    AND-shaped, so a single non-positive order zeroes it - the per-order curves
+    show *which* order, and are themselves smooth and rarely zero at low n).
+
+    Returns:
+        ``(aggregate, per_order)`` where ``aggregate`` is
+        ``max(prod(brier_n), 0) ** (1/k)`` scaled by ``BRIERLM_SCALE`` (each
+        order floored at 0 first: a non-positive order is no positive evidence,
+        so it zeroes the geometric mean rather than flipping its sign), and
+        ``per_order`` maps ``n -> raw (unfloored) brier_n`` (or ``None`` when no
+        example is long enough for order ``n``).
+    """
+    assert len(samples_a) == len(samples_b) == len(references)
+    per_order = {
+        n: _brier_order(samples_a, samples_b, references, n) for n in orders
+    }
+    prod = 1.0
+    count = 0
+    for n in orders:
+        s = per_order[n]
+        if s is None:
+            continue
+        prod *= max(s, 0.0)
+        count += 1
+    aggregate = 0.0
+    if count > 0 and prod > 0.0:
+        aggregate = (prod ** (1.0 / count)) * BRIERLM_SCALE
+    return aggregate, per_order
+
+
 def compute_brier_lm(
     samples_a: Sequence[Sequence[int]],
     samples_b: Sequence[Sequence[int]],
     references: Sequence[Sequence[int]],
     orders: Sequence[int] = (1, 2, 3, 4),
 ) -> float:
-    """Compute BrierLM over a batch.
-
-    Args:
-        samples_a, samples_b: paired sampled continuations per prompt, each a
-            list of token-id lists, aligned to ``references``.
-        references: the true continuation per prompt.
-        orders: n-gram orders to aggregate (default 1-4, per the paper).
-
-    Returns:
-        ``max(prod(brier_n), 0) ** (1/k)`` scaled by ``BRIERLM_SCALE``. Each
-        order is floored at 0 first: a non-positive order is no positive
-        evidence, so it zeroes the geometric mean rather than flipping its
-        sign in the product.
-    """
-    assert len(samples_a) == len(samples_b) == len(references)
-    prod = 1.0
-    count = 0
-    for n in orders:
-        s = _brier_order(samples_a, samples_b, references, n)
-        if s is None:
-            continue
-        prod *= max(s, 0.0)
-        count += 1
-    if count == 0 or prod <= 0.0:
-        return 0.0
-    return (prod ** (1.0 / count)) * BRIERLM_SCALE
+    """Compute the BrierLM aggregate over a batch (see
+    :func:`compute_brier_lm_with_orders` for the per-order breakdown)."""
+    return compute_brier_lm_with_orders(samples_a, samples_b, references, orders)[0]

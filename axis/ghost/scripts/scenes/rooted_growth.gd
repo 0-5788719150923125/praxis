@@ -29,6 +29,9 @@ var _glow := 0.0
 var _base_len := 0.5
 var _width := 7.0
 var _draw_life := 1.0        # current root's alpha, set before its draw, read by _color_for
+var _max_roots := 20         # the bloom grows the pool up to this, then sustains
+var _emit_t := 0.0           # countdown to the next sprout from the seed
+var _emit_interval := 0.6    # sampled seconds between new sprouts
 
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
@@ -39,30 +42,46 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_flow = Flow2D.new(rng.randi(), rng.randf_range(2.0, 3.4), 0.06)
 	_width = rng.randf_range(5.0, 9.0)
 	_base_len = rng.randf_range(0.42, 0.60)
-	var count := rng.randi_range(4, 7)
-	for i in count:
-		var r := {"fil": null, "grown": 0.0, "life": 1.0, "state": "grow",
-			"timer": 0.0, "rate": 1.0, "hold": 2.0, "mode": "fade", "retract_to": 0.0,
-			"origin": Vector2.ZERO,
-			"heading": -PI * 0.5 + TAU * float(i) / float(count) + rng.randf_range(-0.3, 0.3)}
-		_regrow(r)
-		# Stagger: start each root at a random point in its own lifecycle, so they are
-		# desynchronised from frame zero (and the varied rates keep them apart).
-		r.grown = rng.randf_range(0.0, 1.0)
-		if r.grown >= 1.0:
-			r.state = "hold"
-			r.timer = r.hold
+	_max_roots = rng.randi_range(14, 22)
+	_emit_interval = rng.randf_range(0.4, 0.9)
+	_emit_t = _emit_interval
+	# Start SPARSE - a few barely-sprouted shoots from the seed - and bloom outward over time
+	# (new shoots keep emitting from the centre in update), rather than filling the frame at
+	# once and then holding a static shape.
+	var start := rng.randi_range(2, 4)
+	for i in start:
+		var r := _new_root()
+		r.heading = -PI * 0.5 + TAU * float(i) / float(start) + rng.randf_range(-0.4, 0.4)
+		_regrow(r, true)                            # from the central seed
+		r.grown = rng.randf_range(0.0, 0.25)        # barely out of the ground; they grow from here
 		_roots.append(r)
 	return {}
+
+
+# A fresh root record (lifecycle fields); origin/heading/fil are filled in by _regrow.
+func _new_root() -> Dictionary:
+	return {"fil": null, "grown": 0.0, "life": 1.0, "state": "grow",
+		"timer": 0.0, "rate": 1.0, "hold": 2.0, "mode": "fade", "retract_to": 0.0,
+		"origin": Vector2.ZERO, "heading": 0.0}
+
+
+# The seed keeps sprouting: a new shoot emerges from the centre heading outward in any
+# direction, so the root system continuously blooms over time instead of pausing once full.
+func _emit_root() -> void:
+	var r := _new_root()
+	r.heading = _rng.randf_range(-PI, PI)
+	_regrow(r, true)
+	r.grown = 0.0
+	_roots.append(r)
 
 
 # Grow a fresh path for one root from a spawn site (a point along an existing root, or
 # the central seed), on a heading set by that site, and re-roll its lifecycle constants
 # (rate / hold / retire mode) so each life differs from the last. Laterals start shorter
 # and finer than taproots, so the network reads as trunks feeding ever-thinner roots.
-func _regrow(r: Dictionary) -> void:
+func _regrow(r: Dictionary, force_centre := false) -> void:
 	var steps := _rng.randi_range(12, 20)
-	var site := _spawn_site()
+	var site := _spawn_site(force_centre)
 	r.origin = site.pos
 	r.heading = float(site.ang) + _rng.randf_range(-0.3, 0.3)
 	var length := _base_len * _rng.randf_range(0.8, 1.25)
@@ -75,7 +94,7 @@ func _regrow(r: Dictionary) -> void:
 	r.life = 1.0
 	r.state = "grow"
 	r.rate = _gauss_rate()
-	r.hold = _rng.randf_range(1.6, 4.5)
+	r.hold = _rng.randf_range(0.6, 2.2)   # shorter holds: keep crawling, don't freeze full
 	r.mode = _roll_mode()   # mostly partial rewind, rarely a full fade-out
 
 
@@ -83,9 +102,11 @@ func _regrow(r: Dictionary) -> void:
 # (a LATERAL, emerging at an angle to its parent), occasionally the central seed (a fresh
 # TAPROOT). Returns {pos, ang (heading suggestion), lateral}. Falls back to the centre
 # when nothing has grown enough to branch from yet (e.g. the very first roots).
-func _spawn_site() -> Dictionary:
-	var centre := {"pos": Vector2.ZERO, "ang": -PI * 0.5 + _rng.randf_range(-PI, PI), "lateral": false}
-	if _rng.randf() < 0.16:
+func _spawn_site(force_centre := false) -> Dictionary:
+	var centre := {"pos": Vector2.ZERO, "ang": _rng.randf_range(-PI, PI), "lateral": false}
+	# More shoots come straight from the seed now (per the bloom note), and emitted shoots
+	# force it; the rest emerge as laterals off existing roots.
+	if force_centre or _rng.randf() < 0.42:
 		return centre
 	# Roots with something revealed to branch from.
 	var live := []
@@ -124,6 +145,14 @@ func update(f: AudioFeatures, delta: float) -> void:
 	_flow.advance(delta)
 	_glow = Nonlinear.flare(_glow, clampf(0.30 * f.energy + 0.70 * f.beat, 0.0, 1.0), delta, 8.0, 1.5)
 
+	# The seed keeps blooming: emit new shoots from the centre over time until the pool fills,
+	# so the system is always sprouting rather than settling into one finished shape.
+	_emit_t -= delta
+	if _emit_t <= 0.0:
+		_emit_t = _emit_interval * _rng.randf_range(0.7, 1.4)
+		if _roots.size() < _max_roots:
+			_emit_root()
+
 	# A slow base creep, surged by beats/energy through a spike curve.
 	var drive := 0.55 + 1.1 * Nonlinear.apply("spike", clampf(0.7 * f.energy + f.beat, 0.0, 1.0), 2.0)
 	for r in _roots:
@@ -158,7 +187,7 @@ func _advance(r: Dictionary, delta: float, drive: float) -> void:
 					_regrow(r)                  # fully retracted -> fresh path
 				else:
 					r.state = "grow"            # partial -> regrow the same root back up
-					r.hold = _rng.randf_range(1.6, 4.5)
+					r.hold = _rng.randf_range(0.6, 2.2)
 					r.mode = _roll_mode()
 
 
@@ -188,9 +217,14 @@ func _draw() -> void:
 		r.fil.draw_growing(self, u, float(r.grown), _color_for, tip, jitter, _life)
 
 
-# Palette per branch depth, brightness carried by bass + beat glow (colour over scale),
-# alpha by the root's current life (so a fade dissolves gracefully, never pops).
-func _color_for(depth: int) -> Color:
-	var h := fposmod(_hue + _hue_depth * float(depth), 1.0)
-	var v := clampf(0.40 + 0.45 * _f.bass + 0.40 * _glow, 0.10, 1.0)
-	return Color.from_hsv(h, 0.6, v, 0.92 * _draw_life)
+# Colour with TEXTURE along the strand, not one flat tone: the hue drifts and the strand
+# desaturates from base to tip (a woody-to-fresh gradient), brightness ramps toward the tip,
+# and a fine sinusoidal band rides along the length so the line reads as grain / pattern
+# rather than a uniform stroke. `along` is 0 at the base, 1 at the growing tip. Brightness is
+# still carried by bass + beat glow; alpha by the root's current life.
+func _color_for(depth: int, along := 0.0) -> Color:
+	var h := fposmod(_hue + _hue_depth * float(depth) + 0.10 * along, 1.0)
+	var band := 0.11 * sin(along * 38.0 + float(depth) * 1.9)        # fine grain along the length
+	var v := clampf(0.28 + 0.40 * along + 0.42 * _f.bass + 0.38 * _glow + band, 0.10, 1.0)
+	var sat := clampf(0.72 - 0.30 * along, 0.0, 1.0)                 # fresher / paler toward the tip
+	return Color.from_hsv(h, sat, v, 0.92 * _draw_life)

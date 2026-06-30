@@ -611,6 +611,7 @@ function buildCompositeConfigsFromRegistry(registry) {
             source: entry.source || 'metrics',
             stepped: entry.stepped || false,
             keyPattern: entry.key_pattern ? new RegExp(entry.key_pattern) : null,
+            series_noun: entry.series_noun || null,
         }));
 }
 
@@ -3022,9 +3023,16 @@ function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern,
             // colors each line sensibly for whichever axis it carries.
             const expertMatch = expertKey.match(/expert[_/](\d+)/);
             const layerMatch = expertKey.match(/layer[_/](\d+)/);
+            // Fallback for non-expert/non-layer series (e.g. val_brier_1..4):
+            // take the trailing number so each line gets a distinct index and
+            // color, and let the registry name the axis via series_noun.
+            const trailingMatch = expertKey.match(/(\d+)\s*$/);
             const seriesNum = expertMatch ? expertMatch[1]
-                : layerMatch ? layerMatch[1] : '0';
-            const seriesNoun = expertMatch ? 'Expert' : layerMatch ? 'Layer' : 'Series';
+                : layerMatch ? layerMatch[1]
+                : trailingMatch ? trailingMatch[1] : '0';
+            const seriesNoun = expertMatch ? 'Expert'
+                : layerMatch ? 'Layer'
+                : (options.series_noun || 'Series');
             const values = metrics[expertKey] || [];
 
             console.log(`[createMultiExpertChart] Key: ${expertKey}, Values length: ${values.length}, First: ${values[0]}, Last: ${values[values.length-1]}`);

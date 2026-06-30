@@ -366,10 +366,11 @@ func _draw() -> void:
 		fil.fil.draw_growing(self, u, eased_grown, _color_for, tip, jitter, _life)
 
 
-func _color_for(depth: int) -> Color:
+func _color_for(depth: int, along := 0.0) -> Color:
 	var h := fposmod(_hue + 0.04 * float(depth), 1.0)
 	var sat: float = float(_cfg.sat) * (0.6 + 0.4 * float(depth == 0))
-	var v := clampf(0.45 + 0.4 * _f.energy + 0.45 * _glow, 0.1, 1.0)
+	var band := 0.08 * sin(along * 30.0 + float(depth) * 1.5)        # a faint grain along the strand
+	var v := clampf(0.45 + 0.4 * _f.energy + 0.45 * _glow + band, 0.1, 1.0)
 	return Color.from_hsv(h, sat, v, 0.92 * _seg_alpha(depth))
 
 

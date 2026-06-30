@@ -20,8 +20,8 @@ var _fired := false
 var _moved := false
 var _beat_prev := 0.0
 var _angle := 0.5
-var _crack_t := 0.0          # time since the last crack
-var _crack_interval := 2.5   # sampled seconds between cracks (shortened under pressure)
+var _stress := 0.0           # accumulated harmonic stress; releases as a fracture at threshold
+var _stress_thresh := 4.0    # sampled release point (re-rolled per fracture, so cracks are uneven)
 var _max_shards := 60        # stop cracking once the pane is this finely divided
 var _cracks: Array = []      # transient bright fracture flashes ({a, b world endpoints, age})
 
@@ -73,10 +73,10 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 			"resonance": rng.randf_range(0.6, 1.0),   # how strongly this shard answers its band
 			"lev": 0.0,                               # smoothed channel level (its resonance)
 		})
-	# The pane keeps cracking under pressure over its life: a new fracture appears every so
-	# often (sooner when the music drives harder), up to a finely divided ceiling.
-	_crack_interval = rng.randf_range(1.4, 3.2)
-	_max_shards = mini(64, _shards.size() * 3)
+	# Cracks are driven by the music, not a clock: harmonic stress accumulates and releases as
+	# a connected fracture at a sampled threshold (see update / _fracture_run).
+	_stress_thresh = rng.randf_range(2.6, 5.5)
+	_max_shards = mini(72, _shards.size() * 3)
 	return {}
 
 
@@ -101,49 +101,93 @@ func _burst(strength: float) -> void:
 		s.spin += s.noise * _rng.randf_range(2.5, 6.0)
 
 
-# Crack one shard in two. Picks a large shard, weighted toward the ones currently resonating
-# (the most stressed glass), and splits it through its centre at a random angle.
-func _crack_one() -> void:
+# A connected fracture RUN: a crack starts in a stressed shard and propagates from region to
+# region along a continuing, meandering line - splitting each shard it crosses - so a tiny
+# fracture turns a stretch of the pane into shards, the way real glass cracks. The line jags
+# non-linearly (occasional sharp kinks), so the resulting pattern is irregular and alive.
+func _fracture_run() -> void:
+	var start := _pick_stressed()
+	if start < 0:
+		return
+	var s0: Dictionary = _shards[start]
+	var p := Vector2(s0.home.x, s0.home.y)             # pane-space crack head (the seed of the fracture)
+	var dir := Vector2.from_angle(_rng.randf() * TAU)
+	# Usually a short fracture, sometimes a long run that races across the pane (non-linear).
+	var steps := 2 + int(pow(_rng.randf(), 1.4) * 4.0)
+	for _i in steps:
+		if _shards.size() >= _max_shards:
+			break
+		var idx := _shard_at(p)
+		if idx < 0:
+			break                                      # ran off the pane (into a gap / the rim)
+		_split_shard_at(idx, p, dir)
+		p += dir * _rng.randf_range(0.10, 0.26)        # advance into the next region
+		var turn := _rng.randf_range(-0.35, 0.35)
+		if _rng.randf() < 0.30:
+			turn += _rng.randf_range(-1.0, 1.0)        # a kink: the crack jags and the pattern branches
+		dir = dir.rotated(turn)
+
+
+# Pick a shard to start a fracture in: large, and weighted toward the ones currently
+# resonating (the most stressed glass). Returns its index, or -1 if none qualifies.
+func _pick_stressed() -> int:
 	var best := -1
 	var best_score := 0.0
 	for i in _shards.size():
 		var s: Dictionary = _shards[i]
 		var ar: float = Geo.area(s.poly)
-		if ar < 0.03:                                   # don't fracture slivers into degenerate bits
+		if ar < 0.025:                                  # don't seed in a sliver
 			continue
 		var score: float = ar * (0.4 + float(s.lev)) * _rng.randf()
 		if score > best_score:
 			best_score = score
 			best = i
-	if best >= 0:
-		_split_shard(best)
+	return best
 
 
-# Replace shard `idx` with the two halves of a crack through its centre, each inheriting the
-# parent's motion and given a gentle opening kick so the fracture eases apart, not bursts.
-func _split_shard(idx: int) -> void:
+# The shard whose resting (pane-space) outline contains point `p`, or -1. The fracture run
+# walks the pane through these to find the next region to split.
+func _shard_at(p: Vector2) -> int:
+	for i in _shards.size():
+		var s: Dictionary = _shards[i]
+		var poly := PackedVector2Array()
+		var hx: float = s.home.x
+		var hy: float = s.home.y
+		for v: Vector2 in s.poly:
+			poly.append(Vector2(hx + v.x, hy + v.y))
+		if Geometry2D.is_point_in_polygon(p, poly):
+			return i
+	return -1
+
+
+# Split shard `idx` along the line through pane-space point `pane_pt` running in direction
+# `dir`. Children inherit the parent's motion, get a gentle opening kick, and leave a
+# PERMANENT thin gap so the crack never heals; the fresh break also flashes briefly.
+func _split_shard_at(idx: int, pane_pt: Vector2, dir: Vector2) -> bool:
 	var s: Dictionary = _shards[idx]
-	var ang := _rng.randf() * PI
-	var nrm := Vector2(cos(ang), sin(ang))
-	var pieces := Geo.split(s.poly, Vector2.ZERO, nrm)
+	var local_pt: Vector2 = pane_pt - Vector2(s.home.x, s.home.y)   # crack head in the shard's local frame
+	var nrm := Vector2(-dir.y, dir.x)                  # normal to the fracture line
+	if nrm.length() < 0.5:
+		return false
+	nrm = nrm.normalized()
+	var pieces := Geo.split(s.poly, local_pt, nrm)
 	var a: PackedVector2Array = pieces[0]
 	var b: PackedVector2Array = pieces[1]
-	if a.size() < 3 or b.size() < 3 or Geo.area(a) < 0.01 or Geo.area(b) < 0.01:
-		return
+	if a.size() < 3 or b.size() < 3 or Geo.area(a) < 0.008 or Geo.area(b) < 0.008:
+		return false
 	_shards.remove_at(idx)
 	var wnrm: Vector3 = (s.basis as Basis) * Vector3(nrm.x, nrm.y, 0.0)
-	var sep := _rng.randf_range(0.02, 0.06)            # gentle: a crack opening, not a burst
-	# A PERMANENT thin gap at the new fracture (along the pane-space normal): when the shards
-	# re-knit, the crack stays as a visible seam that never heals, so cracks accumulate.
-	var hgap: float = _rng.randf_range(0.010, 0.022)
+	var sep := _rng.randf_range(0.015, 0.05)           # gentle: a crack opening, not a burst
+	var hgap: float = _rng.randf_range(0.008, 0.020)
 	var hsep := Vector3(nrm.x, nrm.y, 0.0) * hgap
 	_shards.append(_child_from(s, a, wnrm * sep, hsep))
 	_shards.append(_child_from(s, b, -wnrm * sep, -hsep))
-	# Flash the new break: a bright line along the crack that fades over a moment, so the eye
-	# catches the fracture forming. Endpoints span the shard along the cut direction.
-	var perp: Vector3 = (s.basis as Basis) * Vector3(-nrm.y, nrm.x, 0.0)
-	var halflen := sqrt(maxf(Geo.area(s.poly), 0.001))
-	_cracks.append({"a": Vector3(s.pos) + perp * halflen, "b": Vector3(s.pos) - perp * halflen, "age": 0.0})
+	# Flash this segment of the running crack, centred at the crack head and along the line.
+	var wpt: Vector3 = (s.basis as Basis) * Vector3(local_pt.x, local_pt.y, 0.0) + Vector3(s.pos)
+	var lined: Vector3 = (s.basis as Basis) * Vector3(dir.x, dir.y, 0.0)
+	var halflen := sqrt(maxf(Geo.area(s.poly), 0.001)) * 0.7
+	_cracks.append({"a": wpt + lined * halflen, "b": wpt - lined * halflen, "age": 0.0})
+	return true
 
 
 # Build a child shard from one piece of a split: re-centre the piece on its own centroid and
@@ -184,23 +228,16 @@ func update(f: AudioFeatures, delta: float) -> void:
 	elif beat_edge:
 		_burst(0.5)
 
-	# Glass cracks under pressure: sparsely and NON-LINEARLY over time, new fractures split
-	# stressed shards and never heal, so cracks accumulate across the pane. Pressure (a power
-	# curve of the music) shortens the wait and, occasionally, cracks several at once - an
-	# uneven, bursty build toward a shatter that (in loop mode) never fully arrives.
-	_crack_t += delta
-	var pressure: float = pow(clampf(0.25 + f.energy + 0.7 * f.beat, 0.0, 1.0), 1.5)
-	if _crack_t >= _crack_interval and _shards.size() < _max_shards:
-		_crack_t = 0.0
-		_crack_interval = _rng.randf_range(1.2, 4.0) * (1.15 - 0.7 * pressure)   # sooner under pressure
-		var burst := 1
-		if _rng.randf() < 0.28 * pressure:
-			burst += 1
-		if _rng.randf() < 0.12 * pressure:
-			burst += 1
-		for _b in burst:
-			if _shards.size() < _max_shards:
-				_crack_one()
+	# Cracks answer the HARMONICS, not a clock. Spectral change (flux), energy, and beats feed
+	# a "stress" that builds through a non-linear curve; when it crosses a sampled threshold it
+	# releases as a connected fracture and re-rolls the threshold. So cracks are sparse, uneven,
+	# and tied to what the music is doing - quiet stretches barely crack, busy ones split more.
+	var harmonic: float = clampf(0.45 * f.energy + 3.0 * f.flux + 0.4 * f.beat, 0.0, 1.4)
+	_stress += delta * (0.05 + pow(harmonic, 1.7))     # 0.05 = a faint baseline so silence still creeps
+	if _stress >= _stress_thresh and _shards.size() < _max_shards:
+		_stress = 0.0
+		_stress_thresh = _rng.randf_range(2.6, 5.5)
+		_fracture_run()
 
 	# Age out the fracture flashes.
 	for cr in _cracks:

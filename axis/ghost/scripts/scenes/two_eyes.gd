@@ -95,24 +95,28 @@ func _new_focus() -> void:
 	var tier := _rng.randf()
 	var d: float
 	var dwell: float
+	# Hold each fixation much longer so the gaze reads as calm and deliberate, not flickering:
+	# real eyes rest on a point for whole seconds between saccades.
 	if tier < 0.32:
 		d = _rng.randf_range(2.2, 4.0)
-		dwell = _rng.randf_range(1.6, 3.0)       # near - linger
+		dwell = _rng.randf_range(3.0, 5.5)       # near - linger
 	elif tier < 0.68:
 		d = _rng.randf_range(5.0, 11.0)
-		dwell = _rng.randf_range(0.5, 1.4)       # mid
+		dwell = _rng.randf_range(2.0, 3.6)       # mid (was a twitchy 0.5-1.4)
 	else:
 		d = _rng.randf_range(22.0, 80.0)
-		dwell = _rng.randf_range(2.0, 4.2)       # far / extreme distance - linger
+		dwell = _rng.randf_range(3.5, 7.0)       # far / extreme distance - linger
 	var sacc := EyeBody.saccade_target(_rng)
-	var lat := _rng.randf_range(0.25, 0.85)
+	# Smaller lateral excursions keep the eyes near forward, so refixations are short hops,
+	# not wild swings across the orbit.
+	var lat := _rng.randf_range(0.12, 0.45)
 	_focus_target = Vector3(sacc.x * lat, sacc.y * lat * 0.7, d)
 	_focus_dwell = dwell
 	_ldiv = Vector2.ZERO
 	_rdiv = Vector2.ZERO
-	if _rng.randf() < 0.14:                       # the nonlinear deviation: one eye wanders
+	if _rng.randf() < 0.07:                       # the nonlinear deviation: one eye wanders (rare)
 		var dv := Vector2(_rng.randf_range(-1, 1), _rng.randf_range(-1, 1)).normalized() \
-			* _rng.randf_range(0.10, 0.30)
+			* _rng.randf_range(0.06, 0.16)
 		if _rng.randf() < 0.5:
 			_ldiv = dv
 		else:

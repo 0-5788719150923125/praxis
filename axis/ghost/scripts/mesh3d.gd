@@ -421,7 +421,7 @@ static func reveal_texture(rng: RandomNumberGenerator, threshold := -0.15, soft 
 ## to the rock as it tumbles instead of swimming in screen space.
 func draw_revealed(ci: CanvasItem, basis: Basis, center: Vector2, scale: float,
 		hue: float, sat: float, glow: float, wire_col: Color, reveal_tex: Texture2D,
-		pan := 0.0) -> void:
+		pan := 0.0, pan_seed := 0.0) -> void:
 	var light := LIGHT.normalized()
 	var focal := 3.2
 	var textured := face_tint.size() == faces.size()
@@ -479,7 +479,15 @@ func draw_revealed(ci: CanvasItem, basis: Basis, center: Vector2, scale: float,
 				uv = Vector2((vo.x - bbmin.x) / ext.x, (vo.z - bbmin.z) / ext.z)
 			else:
 				uv = Vector2((vo.x - bbmin.x) / ext.x, (vo.y - bbmin.y) / ext.y)
-			uv.x += pan          # scroll the mask along its (seamless) X over time
+			# Spatially-varying drift instead of one uniform scroll: a smooth field decides how
+			# much THIS patch moves (0 = a stable, anchored patch; 1 = full drift) and which way,
+			# and a second field gently varies the local scale - so the coat creeps unevenly, some
+			# patches holding still while others crawl, with blended scales across the geometry.
+			var motion := 0.5 + 0.5 * sin(uv.x * 4.7 + uv.y * 6.1 + pan_seed)
+			var ddir := sin(uv.y * 3.3 - uv.x * 2.7 + pan_seed * 1.7)
+			var scl := 1.0 + 0.12 * sin(uv.x * 5.5 - uv.y * 4.3 + pan_seed)
+			uv = Vector2(0.5, 0.5) + (uv - Vector2(0.5, 0.5)) * scl   # blended local scale (centred)
+			uv.x += pan * motion * ddir                              # uneven drift, seamless in X
 			uvs.append(uv)
 		var tint := face_tint[fi] if textured else 0.0
 		var bright := clampf((0.22 + 0.78 * maxf(0.0, n.dot(light)) + glow) * (1.0 + tint), 0.0, 1.0)

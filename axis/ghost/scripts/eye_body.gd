@@ -24,9 +24,9 @@ class_name EyeBody
 # muscles stop it (roughly 35 deg). The gaze and its target are held inside this cone so
 # the eye can never roll its iris to the pole or turn fully away - the "spinning wildly"
 # failure - no matter what the focus geometry or the saccade spring asks for.
-const YAW_LIMIT := 0.62        # ~35 deg, left/right
-const PITCH_LIMIT := 0.50      # ~29 deg, up/down
-const GAZE_VEL_MAX := 18.0     # rad/s ceiling: a frame hitch can't fling the eye
+const YAW_LIMIT := 0.52        # ~30 deg, left/right
+const PITCH_LIMIT := 0.42      # ~24 deg, up/down
+const GAZE_VEL_MAX := 12.0     # rad/s ceiling: a frame hitch can't fling the eye
 
 var gaze := Vector2.ZERO       # yaw (x), pitch (y), radians - the eyeball's rotation
 var gaze_vel := Vector2.ZERO   # angular velocity of the gaze (the saccade's momentum)
@@ -101,7 +101,7 @@ func update(dt: float, energy: float) -> void:
 	# skew (randf^3) keeps MOST landings well-damped - a clean, subtle stop - and lets only
 	# the occasional one come in loose and bouncy. Variance, not a wobble on every move.
 	if target.distance_to(_last_target) > 0.02:
-		_zeta = lerpf(0.95, 0.50, pow(_rng.randf(), 3.0))
+		_zeta = lerpf(0.97, 0.68, pow(_rng.randf(), 3.0))
 	_last_target = target
 	# Hold the aim point inside the motility cone before the spring chases it, so a hard
 	# vergence or a divergence nudge can never command an impossible rotation.
@@ -110,7 +110,7 @@ func update(dt: float, energy: float) -> void:
 	# Move the gaze with the spring: it carries momentum, and when _zeta is low it
 	# overshoots and re-fixates - a real saccade, not a smooth ramp into a hard stop.
 	var sdt := minf(dt, 0.04)                          # clamp so a frame hitch can't blow it up
-	var omega := 32.0                                  # natural frequency (a fast saccade)
+	var omega := 22.0                                  # natural frequency (a calmer saccade)
 	var accel := (target - gaze) * (omega * omega) - gaze_vel * (2.0 * _zeta * omega)
 	gaze_vel += accel * sdt
 	if gaze_vel.length() > GAZE_VEL_MAX:               # finite muscle: cap the angular speed

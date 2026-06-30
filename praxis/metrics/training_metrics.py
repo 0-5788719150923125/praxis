@@ -69,6 +69,15 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
             "is_validation": True,
         },
     },
+    # Per-order Brier-n breakdown behind val_brierlm. Chartless columns (no
+    # individual chart): they render together as the "BrierLM by n-gram Order"
+    # composite below. Raw, scaled x100 to the aggregate's units; written by
+    # BrierLMCallback on the same validation step as val_brierlm, so they ride
+    # its preserved validation rows (no separate is_validation needed).
+    "val_brier_1": {"description": "BrierLM order-1 (unigram) raw score, x100."},
+    "val_brier_2": {"description": "BrierLM order-2 raw score, x100."},
+    "val_brier_3": {"description": "BrierLM order-3 raw score, x100."},
+    "val_brier_4": {"description": "BrierLM order-4 raw score, x100."},
     "val_bits_per_byte": {
         "description": (
             "val_loss / log(2). Byte-latent runs only - the comparable "
@@ -708,6 +717,18 @@ COMPOSITE_METRIC_REGISTRY: list = [
         ),
         "source": "standalone",
         "order": 95,
+    },
+    {
+        # Per-order Brier-n curves behind val_brierlm, on one chart. Each order
+        # is a smooth, rarely-zero diagnostic; the aggregate (val_brierlm) is
+        # their floored geometric mean, so this shows which order collapses it.
+        "key": "val_brier_orders",
+        "type": "multi_expert_line",
+        "title": "BrierLM by n-gram Order",
+        "y_label": "Brier-n (x100)",
+        "key_pattern": r"^val_brier_[1-4]$",
+        "series_noun": "Order",
+        "order": 45,
     },
     {
         "key": "sampling_weights",

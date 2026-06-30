@@ -94,6 +94,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 			"rtex": null,
 			"wire": Color.WHITE,
 			"pan": 0.0, "pan_rate": 0.0,   # reveal rocks: continuous mask drift (set below)
+			"pan_seed": 0.0,               # per-rock phase for the spatially-varying drift field
 		}
 		# Partial wireframe reveal, with a sampled masking threshold across the spectrum:
 		# low threshold = mostly coat with sparse bare patches, near 0 = roughly half-and-half.
@@ -109,6 +110,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 				# Each revealed rock's crust drifts at its own slow rate/direction, so the mask
 				# is always gently panning rather than holding a fixed (looping) pattern.
 			rock.pan_rate = rng.randf_range(0.015, 0.055) * (1.0 if rng.randf() < 0.5 else -1.0)
+			rock.pan_seed = rng.randf_range(0.0, TAU)
 		_rocks.append(rock)
 	# Settle the cluster so the stones rest against each other instead of passing through
 	# one another (which read as broken collision); a light overlap is left so the contact
@@ -233,7 +235,8 @@ func _draw() -> void:
 			# The exploded-faces modes don't apply to a revealed shell (it would tear the
 			# lattice apart); the reveal rocks breathe with light only.
 			mesh.draw_revealed(self, rock.basis, c, rad,
-				float(rock.hue), float(rock.sat), float(rock.glow), rock.wire, rock.rtex, float(rock.pan))
+				float(rock.hue), float(rock.sat), float(rock.glow), rock.wire, rock.rtex,
+				float(rock.pan), float(rock.pan_seed))
 		else:
 			mesh.draw_shaded(self, rock.basis, c, rad, float(rock.hue), float(rock.sat),
 				float(rock.e), _edge, 1.0, float(rock.glow), float(rock.gloss), float(rock.rough))

@@ -162,6 +162,8 @@ func draw_growing(ci: CanvasItem, u: float, grown: float, color_for: Callable,
 		var a: Vector2 = (s.a + jo) * u
 		var b: Vector2 = ((s.a as Vector2).lerp(s.b, frac) + jo) * u
 		var w: float = maxf(0.6, lerpf(s.w0, s.w1, frac))
-		ci.draw_line(a, b, color_for.call(int(s.depth)), w, true)
+		# Pass the segment's position along the path (born0, 0 base .. 1 tip) so the scene can
+		# shade a gradient / texture along the strand, not just a flat colour per depth.
+		ci.draw_line(a, b, color_for.call(int(s.depth), float(s.born0)), w, true)
 		if frac > 0.0 and frac < 1.0:                 # the live, advancing tip
 			ci.draw_circle(b, w * 1.3, tip)
