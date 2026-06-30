@@ -152,6 +152,10 @@ func _on_submit(text: String) -> void:
 	if query.is_empty() or img == null:
 		return
 	_write(query, img, desc)
+	# We have been staring at this exact scene for the minutes it took to write the
+	# critique, so don't wait out the next harmonic cue - cut to the next scene the
+	# moment the feedback lands. (Director.next() no-ops if the session is ending.)
+	Director.next()
 
 
 # Write the snapshot taken at open time (no live capture - that races the Director).

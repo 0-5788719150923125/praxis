@@ -41,13 +41,23 @@ var _total := 0.0             # max arclength to any tip (normaliser for born ti
 var _max_depth := 0           # deepest branch level (so trunk vs tip can be told apart)
 
 
+## The deepest branch level reached (0 = an unbranched trunk). Lets a scene fade or colour
+## a filament by depth - tips (high depth) versus the main channel (depth 0).
+func max_depth() -> int:
+	return _max_depth
+
+
 ## Grow a filament from [param origin] heading [param heading] (radians), of about
 ## [param length] over [param steps] segments, starting [param width] px wide,
-## following [param flow]. Seeded by [param rng].
+## following [param flow]. Seeded by [param rng]. [param cluster] (0..1) makes the growth
+## *chunky*: each forked branch's reveal time is delayed past its parent's, so the shape
+## accumulates region by region in chunks (granular within a branch) instead of fanning out
+## all at once. 0 = the old smooth, uniform growth front.
 static func grow(variant: String, origin: Vector2, heading: float, length: float,
-		width: float, steps: int, flow: Flow2D, rng: RandomNumberGenerator) -> Filament:
+		width: float, steps: int, flow: Flow2D, rng: RandomNumberGenerator, cluster := 0.0) -> Filament:
 	var f := Filament.new()
-	var cfg: Dictionary = VARIANTS.get(variant, VARIANTS["root"])
+	var cfg: Dictionary = (VARIANTS.get(variant, VARIANTS["root"]) as Dictionary).duplicate()
+	cfg["cluster"] = cluster
 	f._build(origin, heading, length / float(maxi(1, steps)), width, 0, steps, cfg, flow, rng, 0.0)
 	if f._total > 0.0:
 		for s in f.segs:
@@ -88,15 +98,18 @@ func _build(p: Vector2, ang: float, seg_len: float, width: float, depth: int,
 			var side := 1.0 if rng.randf() < 0.5 else -1.0
 			var child_len := seg_len * float(cfg.ratio)
 			var child_steps := maxi(2, int(float(steps) * float(cfg.ratio)))
+			# Clustered growth: delay the child branch's birth time so it reveals as a later
+			# CHUNK, after this run, rather than fanning out in lockstep with the trunk.
+			var gap := seg_len * float(cfg.get("cluster", 0.0)) * rng.randf_range(1.5, 4.5)
 			_build(p, ang + side * float(cfg.spread), child_len, w * 0.7,
-				depth + 1, child_steps, cfg, flow, rng, born)
+				depth + 1, child_steps, cfg, flow, rng, born + gap)
 
 			# Tiny tendril: a brief hair-thin offshoot at a sharp angle that does NOT keep
 			# growing - the fine fuzz that real lightning frays into along its length.
 			if float(cfg.get("tendril", 0.0)) > 0.0 and rng.randf() < float(cfg.tendril):
 				var tside := 1.0 if rng.randf() < 0.5 else -1.0
 				_stub(p, ang + tside * float(cfg.spread) * 1.7, seg_len * 0.5, w * 0.5,
-					born, int(cfg.max_depth), rng)
+					born + gap, int(cfg.max_depth), rng)
 
 
 # A short dead-end offshoot (1-3 kinky segments, no recursion) - a "tendril".

@@ -11,8 +11,7 @@ extends Scene3D
 var _f: AudioFeatures = AudioFeatures.new()
 var _eye: EyeBody
 var _rng := RandomNumberGenerator.new()
-var _focus := Vector3(0, 0, 6.0)        # the point the eye is looking at
-var _focus_target := Vector3(0, 0, 6.0)
+var _focus_target := Vector3(0, 0, 6.0) # the point the eye snaps to look at
 var _focus_dwell := 0.0
 
 
@@ -43,8 +42,9 @@ func update(f: AudioFeatures, delta: float) -> void:
 	_focus_dwell -= delta
 	if _focus_dwell <= 0.0:
 		_new_focus()
-	_focus = _focus.lerp(_focus_target, 1.0 - exp(-3.0 * delta))
-	_eye.look_at_point(Vector3.ZERO, _focus)
+	# Aim straight at the (jumped) target - the EyeBody's spring gives the saccade its
+	# momentum and overshoot, instead of a slow pre-smoothed glide that lands flat.
+	_eye.look_at_point(Vector3.ZERO, _focus_target)
 	_eye.update(delta, clampf(f.energy * 0.7 + f.beat * 0.4, 0.0, 1.0))
 	queue_redraw()
 

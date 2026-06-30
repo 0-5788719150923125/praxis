@@ -397,10 +397,16 @@ static func reveal_texture(rng: RandomNumberGenerator, threshold := -0.15, soft 
 	noise.frequency = freq
 	noise.fractal_type = FastNoiseLite.FRACTAL_FBM
 	noise.fractal_octaves = 4
+	# Seamless along X: the x axis is wrapped around a circle (3D noise on a cylinder), so the
+	# left and right edges meet exactly. That lets the mask be PANNED horizontally over time
+	# (see draw_revealed) and wrap with no seam - a continuously drifting crust instead of a
+	# static pattern that appears to reset. The radius keeps the feature scale matching freq.
 	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
+	var radius := float(size) / TAU
 	for y in size:
 		for x in size:
-			var n := noise.get_noise_2d(float(x), float(y))            # -1..1
+			var ang := TAU * float(x) / float(size)
+			var n := noise.get_noise_3d(cos(ang) * radius, sin(ang) * radius, float(y))   # -1..1
 			var a := smoothstep(threshold - soft, threshold + soft, n)  # coat where n > threshold
 			img.set_pixel(x, y, Color(1.0, 1.0, 1.0, a))
 	return ImageTexture.create_from_image(img)
@@ -414,7 +420,8 @@ static func reveal_texture(rng: RandomNumberGenerator, threshold := -0.15, soft 
 ## The mask UVs come from each face's dominant object-space axis, so the pattern sticks
 ## to the rock as it tumbles instead of swimming in screen space.
 func draw_revealed(ci: CanvasItem, basis: Basis, center: Vector2, scale: float,
-		hue: float, sat: float, glow: float, wire_col: Color, reveal_tex: Texture2D) -> void:
+		hue: float, sat: float, glow: float, wire_col: Color, reveal_tex: Texture2D,
+		pan := 0.0) -> void:
 	var light := LIGHT.normalized()
 	var focal := 3.2
 	var textured := face_tint.size() == faces.size()
@@ -472,6 +479,7 @@ func draw_revealed(ci: CanvasItem, basis: Basis, center: Vector2, scale: float,
 				uv = Vector2((vo.x - bbmin.x) / ext.x, (vo.z - bbmin.z) / ext.z)
 			else:
 				uv = Vector2((vo.x - bbmin.x) / ext.x, (vo.y - bbmin.y) / ext.y)
+			uv.x += pan          # scroll the mask along its (seamless) X over time
 			uvs.append(uv)
 		var tint := face_tint[fi] if textured else 0.0
 		var bright := clampf((0.22 + 0.78 * maxf(0.0, n.dot(light)) + glow) * (1.0 + tint), 0.0, 1.0)

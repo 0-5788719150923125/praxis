@@ -43,6 +43,7 @@ var _done := false
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	render_kind = "mesh3d"
+	texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED   # so the panned reveal mask wraps seamlessly
 	_mode = rng.randi_range(0, 2)
 	_style = STYLES[rng.randi_range(0, STYLES.size() - 1)]
 	lifecycle = "oneshot" if _mode == Mode.CRUMBLE else "loop"
@@ -54,12 +55,18 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	var reveal_chance := 0.0 if rng.randf() < 0.3 else rng.randf_range(0.3, 0.9)
 
 	var base_hue := rng.randf()
+	# Each rock gets a DISTINCT colour, spread across a sampled span around the base hue (so
+	# some scenes are a tight family, others a wide spread) and distributed by index so no
+	# two stones read the same - per the note that different shapes want different colours.
+	var hue_span := rng.randf_range(0.22, 0.72)
+	var hue_dir := 1.0 if rng.randf() < 0.5 else -1.0
 	# Fewer, bigger, more spread-out rocks: a zoomed-in cluster where the largest run off
 	# the edges rather than sitting tidily centred. The overall scale is sampled per scene
 	# so some shows are a few colossal boulders, others a looser scatter of mid stones.
 	var count := rng.randi_range(2, 4)
 	var zoom := rng.randf_range(1.5, 2.6)            # > 1 pushes rocks bigger / off-frame
 	for i in count:
+		var hue_t := float(i) / float(maxi(1, count - 1))   # 0..1 across the rocks
 		# Sample the geometry family for this rock (the start of the spec pattern).
 		var mesh := Mesh3D.hybrid(rng) if _style == "hybrid" else Mesh3D.rock(_style, rng)
 		var spin := Vector3(
@@ -73,19 +80,20 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 			"center": Vector2(cos(ang), sin(ang)) * spread + Vector2(
 				rng.randf_range(-0.12, 0.12), rng.randf_range(-0.10, 0.10)),
 			"radius": rng.randf_range(0.10, 0.20) * zoom,   # zoomed in; the biggest overflow the frame
-			"hue": fposmod(base_hue + 0.08 * rng.randf(), 1.0),
+			"hue": fposmod(base_hue + hue_dir * (hue_t - 0.5) * hue_span + rng.randf_range(-0.04, 0.04), 1.0),
 			"basis": Basis.from_euler(Vector3(rng.randf() * TAU, rng.randf() * TAU, 0.0)),
 			"spin": spin.normalized() * rng.randf_range(0.07, 0.16),   # gentle
 			"e": 0.0,
 			"glow": 0.0,
 			# Material sampled around the style centre - perturbed, not a shared constant.
-			"sat": clampf(float(mat.sat) + rng.randf_range(-0.08, 0.08), 0.0, 1.0),
+			"sat": clampf(float(mat.sat) + rng.randf_range(-0.14, 0.14), 0.0, 1.0),
 			"gloss": clampf(float(mat.gloss) * rng.randf_range(0.7, 1.3), 0.0, 1.0),
 			"rough": clampf(float(mat.rough) + rng.randf_range(-0.12, 0.12), 0.05, 1.0),
 			"react": rng.randf_range(0.75, 1.3),   # per-rock responsiveness to the audio
 			"reveal": false,
 			"rtex": null,
 			"wire": Color.WHITE,
+			"pan": 0.0, "pan_rate": 0.0,   # reveal rocks: continuous mask drift (set below)
 		}
 		# Partial wireframe reveal, with a sampled masking threshold across the spectrum:
 		# low threshold = mostly coat with sparse bare patches, near 0 = roughly half-and-half.
@@ -98,11 +106,44 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 				rng.randf_range(0.10, 0.22), rng.randf_range(0.03, 0.07))
 			rock.wire = Color.from_hsv(
 				float(rock.hue), rng.randf_range(0.0, 0.2), 1.0, rng.randf_range(0.6, 0.85))
+				# Each revealed rock's crust drifts at its own slow rate/direction, so the mask
+				# is always gently panning rather than holding a fixed (looping) pattern.
+			rock.pan_rate = rng.randf_range(0.015, 0.055) * (1.0 if rng.randf() < 0.5 else -1.0)
 		_rocks.append(rock)
+	# Settle the cluster so the stones rest against each other instead of passing through
+	# one another (which read as broken collision); a light overlap is left so the contact
+	# dent still shows where they press.
+	_relax_positions(rng)
 	# Some instances have everyone stir; others keep most rocks rooted.
 	var sparsity := 0.0 if rng.randf() < 0.4 else rng.randf_range(0.3, 0.7)
 	_act = Activation.new(count, rng, sparsity)
 	return {}
+
+
+# Push overlapping rock centres apart over a few relaxation passes until they only lightly
+# overlap - a believable touching pile rather than a heap of interpenetrating shapes. The
+# pushes are symmetric so the cluster stays centred (the biggest stones still overflow the
+# frame). Positions are static after this, so one settle at build time is enough.
+func _relax_positions(rng: RandomNumberGenerator) -> void:
+	for _iter in 32:
+		var moved := false
+		for i in _rocks.size():
+			for j in range(i + 1, _rocks.size()):
+				var a: Dictionary = _rocks[i]
+				var b: Dictionary = _rocks[j]
+				var d: Vector2 = Vector2(b.center) - Vector2(a.center)
+				var dist := d.length()
+				var mind: float = (float(a.radius) + float(b.radius)) * 0.86   # ~14% overlap kept
+				if dist < 1e-4:
+					d = Vector2(rng.randf_range(-1, 1), rng.randf_range(-1, 1)).normalized()
+					dist = 0.001
+				if dist < mind:
+					var push: Vector2 = (d / dist) * (mind - dist) * 0.5
+					a.center = Vector2(a.center) - push
+					b.center = Vector2(b.center) + push
+					moved = true
+		if not moved:
+			break
 
 
 func finished() -> bool:
@@ -120,6 +161,9 @@ func update(f: AudioFeatures, delta: float) -> void:
 		var rock: Dictionary = _rocks[ri]
 		var a := _act.level(ri)
 		var react: float = rock.react
+		# Continuously drift the reveal mask (slightly faster with activation) so the crust
+		# keeps panning instead of holding a static pattern.
+		rock.pan += delta * float(rock.pan_rate) * (1.0 + 0.6 * a)
 		# Rooted rocks barely turn; activation earns rotation (structure is the bias).
 		rock.basis = rock.basis * Basis.from_euler(rock.spin * delta * (0.1 + 0.9 * a))
 		match _mode:
@@ -189,7 +233,7 @@ func _draw() -> void:
 			# The exploded-faces modes don't apply to a revealed shell (it would tear the
 			# lattice apart); the reveal rocks breathe with light only.
 			mesh.draw_revealed(self, rock.basis, c, rad,
-				float(rock.hue), float(rock.sat), float(rock.glow), rock.wire, rock.rtex)
+				float(rock.hue), float(rock.sat), float(rock.glow), rock.wire, rock.rtex, float(rock.pan))
 		else:
 			mesh.draw_shaded(self, rock.basis, c, rad, float(rock.hue), float(rock.sat),
 				float(rock.e), _edge, 1.0, float(rock.glow), float(rock.gloss), float(rock.rough))

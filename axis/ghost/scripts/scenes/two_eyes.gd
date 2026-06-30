@@ -71,7 +71,7 @@ func update(f: AudioFeatures, delta: float) -> void:
 	_focus_dwell -= delta
 	if _focus_dwell <= 0.0:
 		_new_focus()
-	_focus = _focus.lerp(_focus_target, 1.0 - exp(-3.0 * delta))   # smooth pursuit + vergence
+	_focus = _focus_target   # snap to the target; each eye's spring gives the saccade momentum + overshoot
 
 	_split = minf(1.0, _split + delta * 1.1)    # the split eases open over ~1s
 	var s01 := smoothstep(0.0, 1.0, _split)

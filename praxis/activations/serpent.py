@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 
 import torch
 from torch import Tensor
@@ -27,6 +27,13 @@ class Serpent(LazyModuleMixin, Module):
     `α / (α^2 + ε^2)`: matches `1/α` for `|α| >> ε`, bounded by `1/ε` for
     `|α| ~ 0`. Prevents the tiny-α feature explosion that produces
     intermittent gradient spikes during training.
+
+    Subclassing hooks (used by Servant, and any future variant we layer on):
+    `_declare_extra_parameters` adds lazily-materialized params/buffers,
+    `_initialize_extra_parameters` materializes them on first forward, and
+    `_effective_frequency` returns the (possibly modulated) primary frequency
+    that drives the sin^2 term. The base implementations leave the activation
+    exactly as written above.
     """
 
     def __init__(
@@ -46,14 +53,44 @@ class Serpent(LazyModuleMixin, Module):
         self.exp_rate = exp_rate
         self.gamma_init = gamma_init
 
-        if trainable:
-            self.a = UninitializedParameter()
-            self.b = UninitializedParameter()
-            self.g = UninitializedParameter()
+        self._declare_parameter("a")
+        self._declare_parameter("b")
+        self._declare_parameter("g")
+        self._declare_extra_parameters()
+
+    # -- subclassing hooks -------------------------------------------------
+
+    def _declare_extra_parameters(self) -> None:
+        """Declare additional lazy params/buffers (base: none). Call
+        ``self._declare_parameter(name)`` for each."""
+
+    def _initialize_extra_parameters(self, x: Tensor) -> None:
+        """Materialize the extra params on first forward (base: none). Build
+        the initial tensors from ``x`` and call ``self._materialize(...)``."""
+
+    def _effective_frequency(self, a: Tensor, x: Tensor) -> Tensor:
+        """The primary frequency driving the sin^2 term. Base: the static,
+        per-feature ``a`` (already broadcast against ``x``)."""
+        return a
+
+    # -- lazy-parameter plumbing (shared by all variants) ------------------
+
+    def _declare_parameter(self, name: str) -> None:
+        if self.trainable:
+            setattr(self, name, UninitializedParameter())
         else:
-            self.register_buffer("a", None)
-            self.register_buffer("b", None)
-            self.register_buffer("g", None)
+            self.register_buffer(name, None)
+
+    def _materialize(self, *named_inits: Tuple[str, Tensor]) -> None:
+        if self.trainable:
+            for name, init in named_inits:
+                param = getattr(self, name)
+                param.materialize(init.shape, device=init.device, dtype=init.dtype)
+                with torch.no_grad():
+                    param.copy_(init)
+        else:
+            for name, init in named_inits:
+                self.register_buffer(name, init)
 
     def initialize_parameters(self, x: Tensor, *args: Any, **kwargs: Any) -> None:
         feature_shape = x.shape[-1:]
@@ -78,28 +115,21 @@ class Serpent(LazyModuleMixin, Module):
             )
         )
 
-        if self.trainable:
-            for name, init in (("a", initial_a), ("b", initial_b), ("g", initial_g)):
-                param = getattr(self, name)
-                param.materialize(init.shape, device=device, dtype=dtype)
-                with torch.no_grad():
-                    param.copy_(init)
-        else:
-            self.register_buffer("a", initial_a)
-            self.register_buffer("b", initial_b)
-            self.register_buffer("g", initial_g)
+        self._materialize(("a", initial_a), ("b", initial_b), ("g", initial_g))
+        self._initialize_extra_parameters(x)
+
+    def _broadcast(self, t: Tensor, x: Tensor) -> Tensor:
+        """View a per-feature tensor so it broadcasts across ``x``'s leading dims."""
+        if t.dim() < x.dim():
+            return t.view([1] * (x.dim() - t.dim()) + list(t.shape))
+        return t
 
     def forward(self, x: Tensor) -> Tensor:
-        a = self.a
-        b = self.b
-        g = self.g
-        # Broadcast params across leading dims of x
-        if a.dim() < x.dim():
-            shape = [1] * (x.dim() - a.dim()) + list(a.shape)
-            a = a.view(shape)
-            b = b.view(shape)
-            g = g.view(shape)
+        a = self._broadcast(self.a, x)
+        b = self._broadcast(self.b, x)
+        g = self._broadcast(self.g, x)
 
-        inv_a = a / (a * a + INV_FLOOR_EPS * INV_FLOOR_EPS)
-        snake = x + torch.sin(a * x).square() * inv_a
+        a_eff = self._effective_frequency(a, x)
+        inv_a = a_eff / (a_eff * a_eff + INV_FLOOR_EPS * INV_FLOOR_EPS)
+        snake = x + torch.sin(a_eff * x).square() * inv_a
         return snake + g * torch.sin(b * x)

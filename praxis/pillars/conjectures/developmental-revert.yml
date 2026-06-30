@@ -1,0 +1,22 @@
+# The evolutionary/developmental reading of the title (Section: the blind
+# watchmaker) made measurable. Sibling to always-grokking (order 17): both
+# predict the same punctuated signature across recurrent-depth steps, but read
+# along different observables - always-grokking on which symbol cluster is
+# active (identity), this one on the magnitude/position of the state relative to
+# the frozen basis (dynamics). The shared prediction is stasis broken by events,
+# not smooth drift; convergent predictions from two readings strengthen rather
+# than duplicate. The named falsifier is a continuously drifting state that never
+# returns to the basis. Companion: next/harmonic_memory_velocity.md battery
+# test 1 (the cluster-hopping plot is the same measurement read as identity).
+tag: Development reverts to the basis
+order: 18
+cite: [dawkins1986, eldredge1972]
+claim: >
+  If the contortion of the hidden state across recurrent-depth steps is a wind-up
+  that releases back to the frozen harmonic basis - development expressed and then
+  reverted, in the manner of cumulative selection - then the per-step state
+  trajectory should be stable, close to the standing harmonic shape, punctuated by
+  sparse discrete jumps in magnitude rather than a continuous drift, and the claim
+  is falsified the moment that trajectory is measured to drift smoothly and
+  monotonically away from the basis without returning, or to change at every step
+  rather than in rare punctuated events.

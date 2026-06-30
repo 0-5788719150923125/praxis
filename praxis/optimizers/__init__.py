@@ -342,4 +342,5 @@ WD_BAN_LIST = [
     "SinLU",
     "NMDA",
     "Serpent",
+    "Servant",
 ]

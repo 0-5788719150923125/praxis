@@ -12,6 +12,9 @@ extends Scene3D
 ## ring, composed from the shared [Layer] registry.
 
 const BASE_H := 0.16          # bar half-height at rest
+const PANEL_H := 0.42         # half-height of each panel (uniform: they SLIDE, they don't grow)
+const SLIDE_AMP := 0.85       # how far a panel travels up/down along its single (vertical) axis
+const SLIDE_MID := 0.5        # band level that sits a panel at the ring's resting height
 
 var _f: AudioFeatures = AudioFeatures.new()
 var _bars: Array = []         # parallel to `planes`: {t} spectrum coordinate
@@ -49,10 +52,15 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	var count := rng.randi_range(28, 50)
 	for i in count:
 		var a := float(i) / float(count) * TAU
-		var t := float(i) / float(maxi(1, count - 1))
+		# Palindrome spectrum mapping: t runs 0 -> 1 -> 0 around the ring, so the value at the
+		# wrap matches itself and the circle closes seamlessly. (It used to run 0 -> 1 once and
+		# jump from treble straight back to bass between the last panel and the first - the hard
+		# loop-edge.) Every panel is one continuous circle; each just slides on its own Y axis.
+		var u := float(i) / float(count)
+		var t := 1.0 - absf(2.0 * u - 1.0)
 		var c := Vector3(cos(a) * _R, BASE_H, sin(a) * _R)
 		var uax := Vector3(-sin(a), 0.0, cos(a)) * _bar_w      # tangential width
-		var vax := Vector3.UP * BASE_H
+		var vax := Vector3.UP * PANEL_H
 		var pl := Plane3D.new(c, uax, vax, Color.from_hsv(_hue, 0.7, 0.8, 0.9))
 		pl.edge = Color(1, 1, 1, 0.22)
 		add_plane(pl)
@@ -106,10 +114,12 @@ func update(f: AudioFeatures, delta: float) -> void:
 	for i in _bars.size():
 		var t: float = _bars[i].t
 		var band := f.sample(t)
-		var h: float = BASE_H + band * 1.5 + f.beat * 0.12
+		var amp: float = band * 1.5 + f.beat * 0.12
 		var pl: Plane3D = planes[i]
-		pl.v_axis = Vector3.UP * h
-		pl.center.y = h                      # stand on the ground (bottom at y = 0)
+		# One continuous circle of equal panels: each SLIDES vertically (its single axis) by its
+		# band - quiet panels sink below the resting line, loud panels rise above it - so the
+		# ring reads as one undulating wave with no anchored floor and no loop seam.
+		pl.center.y = SLIDE_AMP * (amp - SLIDE_MID)
 		var lit := clampf(0.30 + 0.70 * band + 0.45 * _glow, 0.0, 1.0)
 		pl.color = Color.from_hsv(fposmod(_hue + 0.25 * t + 0.05 * _glow, 1.0), 0.7, lit, 0.9)
 

@@ -42,6 +42,8 @@ const SCENES := [
 	{"script": preload("res://scripts/scenes/rocks.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/embers.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/metropolis.gd"), "behavior": "drift"},
+	{"script": preload("res://scripts/scenes/clockwork.gd"), "behavior": "static"},
+	{"script": preload("res://scripts/scenes/clockwork.gd"), "behavior": "drift"},
 	# Weather & atmosphere - composed from the shared Layer registry (see scripts/layer.gd).
 	{"script": preload("res://scripts/scenes/snowfall.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/snowfall.gd"), "behavior": "static"},
@@ -92,6 +94,10 @@ const TRIGGER_BAG := [Trigger.BEAT, Trigger.BEAT, Trigger.BEAT, Trigger.MOVEMENT
 @export var min_hold: float = 7.0
 ## Exit at least this often even if the chosen cue never arrives (seconds).
 @export var max_hold: float = 28.0
+## Hold the final scene through the song's closing stretch: once the playback is within
+## this many seconds of the end (the audio fading out), stop changing scenes and let the
+## current one ride to the finish - a late cut into a near-empty tail reads as a glitch.
+@export var end_hold: float = 10.0
 ## Movement score (0..1) that satisfies a MOVEMENT trigger.
 @export var movement_threshold: float = 0.6
 ## Energy (0..1) at or below which a LULL trigger fires.
@@ -281,6 +287,12 @@ func _process(delta: float) -> void:
 	if _current == null:
 		return
 
+	# While the feedback console is open it holds the scene; freeze it entirely (no
+	# update, no redraw) so a heavy scene's draw can't starve the main loop and make
+	# typing in the console lag. The console dims the frozen frame anyway.
+	if _held:
+		return
+
 	if _transitioning:
 		_trans_t += delta / maxf(0.01, transition_time)
 		var k := clampf(_trans_t, 0.0, 1.0)
@@ -309,6 +321,12 @@ func _process(delta: float) -> void:
 
 func _should_change() -> bool:
 	if _locked >= 0 or _held:
+		return false
+	# Hold the final scene to the end. Once the song is into its closing stretch (audio and
+	# harmonics fading), a cut to a fresh scene with almost nothing left to play reads as a
+	# glitch - so stop changing and let the current scene ride out the fade.
+	var slen := Spectrum.song_length()
+	if slen > 0.0 and Spectrum.current.time >= slen - end_hold:
 		return false
 	# In manual mode, a non-looping storyboard holds its final scene forever.
 	if not _storyboard_seq.is_empty() and not _storyboard_loop and _step >= _storyboard_seq.size():

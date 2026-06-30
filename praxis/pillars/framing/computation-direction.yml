@@ -37,3 +37,21 @@ body: >
   (Section~\ref{sec:scaling}) already carry the decision; the last is only the
   budget running out. Power here is bought with peers and patience, not with a
   proof that the machine knows when to stop.
+
+  The same shape is built into the interface, where it can be used rather than
+  only argued. A network is Turing-complete only with constraints applied -
+  finite precision, a finite step budget, and some structure on what it may do -
+  and Praxis makes one such constraint visible as the Gymnasium, a
+  read-eval-print loop turned from a sequence into a choice. A classical REPL
+  runs its four stages in series - read, then evaluate, then print, then loop -
+  each blocking on the one before. Praxis treats them not as stages but as
+  actions and activates one at a time: \emph{Read} the knowledge base,
+  \emph{Evaluate} a conversation, \emph{Print} a question of its own, with the
+  recurrent loop the implicit fourth that carries the stream onward - an XOR over
+  the handful where the conventional loop is their dense, ordered product. Sparse,
+  mutually exclusive action selection is the halting-and-blocking argument in
+  miniature: a loop that neither marches a fixed sequence to a terminating print
+  nor blocks at each stage, but picks a single move and continues. Read and
+  Evaluate are live; Print is the planned next button on the row, and the
+  constraint is the point - the machine is general because of what it is forbidden
+  to do all at once, not in spite of it.

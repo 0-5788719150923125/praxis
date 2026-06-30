@@ -107,17 +107,42 @@ Representation Hypothesis** (approximately-universal shared space), and the
 4. **"Backward propagation through time"** - BPTT (trivial, every model) or
    anti-causal inference at *inference* time (strong, surprising, testable)?
 
-## Servant - the proposed activation
+## Servant - the activation (BUILT 2026-06-30, repurposed)
 
-Serpent learns K *independent* per-feature `(α, β, γ)`. **Servant** makes those a
-*structured function* of the feature/position index - simplest a line,
-`γ(k) = γ₀ + γ₁·k` ("a line in the bias"). Three consequences: the slope γ₁ is an
-explicit, watchable velocity; it costs 2 params not K; and a parametric envelope
-*extrapolates to unseen lengths where a per-position table cannot* - the length
-corollary above, made mechanical. A line extrapolates linearly; the exponential
-version needs an exp envelope or the scaling conjecture's interference argument.
-Ambiguity to resolve before building: a line *across features* vs a learned line
-*direction in K-space* are different activations.
+The original Servant proposal (a parametric *line* over the feature index,
+`γ(k) = γ₀ + γ₁·k`, to make Serpent's K params extrapolate) was **set aside**. The
+name now carries a different idea we actually built: a **test-time-modulated**
+Serpent. `praxis/activations/servant.py`.
+
+Keeps Serpent's harmonic form but lets the per-feature frequency `a` *breathe at
+inference* with each token's own energy:
+
+    s     = rms(x over features)            # live per-token energy (detached: a measurement)
+    m     = tanh(log s - log_s_ref)         # centered test-time signal in (-1, 1)
+    a_eff = a * (1 + MOD_MAX * tanh(v) * m) # frequency breathes -> a learnable chirp
+    y     = x + sin^2(a_eff x)/a_eff + g sin(b x)
+
+Why this is the same "velocity" idea, kept honest:
+- A frequency that varies across the signal *is* a chirp (paper Definitions:
+  frequency = angular velocity). The watchable velocity is now `v`, the per-feature
+  coupling, not a line slope.
+- By Parseval the per-token RMS is the token's total spectral power, so the
+  modulation is driven by a genuinely *spectral* quantity - coupled to harmonic
+  principles, self-contained (reads only `x`, reduced over features -> causal,
+  instance-local), no plumbing, drops into any activation slot.
+- `v` is **zero-init** => `a_eff == a` => Servant *is* Serpent at init. So it is a
+  strict generalization that anneals into test-time dependence. `tanh(v)` and
+  `MOD_MAX=0.5` bound the swing; the `1/a_eff` floor (Serpent's INV_FLOOR_EPS)
+  stops a near-zero modulated frequency from exploding.
+
+**The null is the point.** If `v` stays at zero, the live energy signal carries no
+usable information - a clean result, not a failure. Watch `v` in the blueprint.
+
+Staged as **`experiments/calm-d-2.yml`** (`extends: calm-d-1`, `activation:
+servant`). calm-d-1 inherits `activation: serpent` from calm-a, so calm-d-2 starts
+bit-identical and isolates exactly the test-time-chirp contribution. Validated:
+registered, == Serpent at init, `v` gets nonzero finite gradient, bf16 stable,
+config resolves. Untested on a real run.
 
 ## Status
 

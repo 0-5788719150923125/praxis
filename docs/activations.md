@@ -3,7 +3,7 @@
 
 Pointwise nonlinearities used inside blocks and heads.
 
-Registry: ``praxis.ACTIVATION_REGISTRY`` (33 entries)
+Registry: ``praxis.ACTIVATION_REGISTRY`` (34 entries)
 
 ## `gelu` - GELUActivation
 
@@ -206,6 +206,20 @@ The `1/α` factor in the original Snake is replaced by the smooth-rectified `α 
 feature explosion ...
 
 Source: [praxis/activations/serpent.py:17](../praxis/activations/serpent.py#L17)
+
+## `servant` - Servant
+
+Serpent with a test-time-modulated frequency: a learnable chirp.
+
+s     = rms(x, over features)               # live per-token energy     m     =
+tanh(log(s) - log_s_ref)            # centered test-time signal in (-1, 1)     a_eff = a
+* (1 + MOD_MAX * tanh(v) * m)     # frequency breathes with energy     y     = x +
+sin^2(a_eff*x) * a_eff/(a_eff^2 + eps^2) + g*sin(b*x)
+
+Serpent learns a *static* per-feature frequency ``a``. Servant lets that frequency move
+at inference with the energy of ...
+
+Source: [praxis/activations/servant.py:16](../praxis/activations/servant.py#L16)
 
 ## `sigmoid` - Sigmoid
 

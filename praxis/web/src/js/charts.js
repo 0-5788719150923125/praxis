@@ -2483,6 +2483,22 @@ function createSamplingWeightsChart(canvasId, dataMetrics) {
  * Render step slider for navigating through training steps in heatmap
  * Only renders once to avoid recursion
  */
+// Nearest existing step value to `step` (by absolute distance). Used when a
+// pinned step is no longer present after a resample, so a paused inspection
+// snaps to the closest surviving sample instead of vanishing.
+function nearestStep(sortedSteps, step) {
+    let best = sortedSteps[0];
+    let bestDist = Math.abs(best - step);
+    for (const s of sortedSteps) {
+        const dist = Math.abs(s - step);
+        if (dist < bestDist) {
+            bestDist = dist;
+            best = s;
+        }
+    }
+    return best;
+}
+
 function renderStepSlider(canvasId, sortedSteps, currentStepIndex, agents, chartData) {
     const container = document.getElementById(`layer-toggles-${canvasId}`);
     if (!container) return;
@@ -2497,6 +2513,8 @@ function renderStepSlider(canvasId, sortedSteps, currentStepIndex, agents, chart
         if (valueDisplay) {
             valueDisplay.textContent = `${currentStep} / ${maxStep}`;
         }
+        // Keep the slider range in sync with live-growing data, then re-seat it.
+        existingSlider.max = sortedSteps.length - 1;
         existingSlider.value = currentStepIndex;
         return;
     }
@@ -2536,12 +2554,15 @@ function renderStepSlider(canvasId, sortedSteps, currentStepIndex, agents, chart
         slider.addEventListener('input', (e) => {
             const newIndex = parseInt(e.target.value);
             valueDisplay.textContent = `${sortedSteps[newIndex]} / ${maxStep}`;
-            layerSelectionState[canvasId].stepIndex = newIndex;
+            // Pin to the chosen step VALUE so it survives a resample (see the
+            // value-tracking note in createExpertRoutingChart).
+            layerSelectionState[canvasId].selectedStep = sortedSteps[newIndex];
+            layerSelectionState[canvasId].pinned = true;
             if (pendingRaf) return;
             pendingRaf = requestAnimationFrame(() => {
                 pendingRaf = 0;
-                updateHeatmapData(canvasId, sortedSteps,
-                    layerSelectionState[canvasId].stepIndex, chartData);
+                const idx = sortedSteps.indexOf(layerSelectionState[canvasId].selectedStep);
+                updateHeatmapData(canvasId, sortedSteps, idx, chartData);
             });
         });
     }
@@ -2773,13 +2794,23 @@ async function createExpertRoutingChart(canvasId, agents) {
     console.log('[Heatmap] Reasoning info:', reasoningInfo);
     console.log('[Heatmap] Model config:', modelConfigCache);
 
-    // Initialize or get current step index
-    if (!layerSelectionState[canvasId]) {
-        layerSelectionState[canvasId] = { stepIndex: sortedSteps.length - 1 };  // Default to latest step
+    // Track the selected STEP VALUE, not an array position. The number of step
+    // samples returned varies between refreshes (downsampling / stale-while-
+    // revalidate), so a saved array index can overrun a now-sparser array and
+    // render "undefined / maxStep". Resolving by value each render is
+    // resample-proof; until the user drags, we follow the live edge (latest).
+    const stepState = layerSelectionState[canvasId] ||
+        (layerSelectionState[canvasId] = { selectedStep: null, pinned: false });
+    let currentStep;
+    if (stepState.pinned && stepState.selectedStep != null) {
+        currentStep = sortedSteps.includes(stepState.selectedStep)
+            ? stepState.selectedStep
+            : nearestStep(sortedSteps, stepState.selectedStep);
+    } else {
+        currentStep = sortedSteps[sortedSteps.length - 1];  // default: latest
     }
-
-    const currentStepIndex = layerSelectionState[canvasId].stepIndex;
-    const currentStep = sortedSteps[currentStepIndex];
+    stepState.selectedStep = currentStep;
+    const currentStepIndex = sortedSteps.indexOf(currentStep);
 
     // Store chart data for slider updates
     const chartData = { layerExpertMetrics, layers, maxExperts, reasoningInfo };

@@ -37,7 +37,7 @@ The paper leans on a small vocabulary, used precisely. It is ordinary signal pro
 
 \textbf{Geometry.} The superposition of modes at one moment is a point - a \textit{geometry} - in the latent space; inputs that share an amplitude configuration form a cluster of such points (the crystal-head centers, Figure~\ref{fig:geometry}). ``Overlaid geometries'' are several modes present at once. Distinct modes are orthogonal (the spectral theorem), so independent quantities can occupy separate modes without interacting - the property Section~\ref{sec:manifold} uses to pull bias and variance apart.
 
-\textbf{Symbol.} A \textit{symbol} is a discrete, reusable geometry - a configuration the model commits to and recombines, not a one-off point. The crystal-head centers (Figure~\ref{fig:geometry}) are symbols in this sense: a finite, sparsely populated set of geometric units that recur across inputs. A symbol can be a geometry, but not every geometry is a symbol - the added content is that it is discrete and reused. We mean this in the literal, measurable sense (a clustered, low-dimensional set of recurring configurations), not the semiotic one. Reading computation as a \textit{change in symbolism over time} - which symbol is active, and how it shifts across position and depth - is the temporal companion to the static picture above.
+\textbf{Symbol.} A \textit{symbol} is a discrete, reusable geometry - a configuration the model commits to and recombines, not a one-off point. The crystal-head centers (Figure~\ref{fig:geometry}) are symbols in this sense: a finite, sparsely populated set of geometric units that recur across inputs. A symbol can be a geometry, but not every geometry is a symbol - the added content is that it is discrete and reused. We mean this in the literal, measurable sense (a clustered, low-dimensional set of recurring configurations), not the semiotic one. Read across training, this set is what grokking discovers - the periodic algorithm a network recovers only after its delayed memorize-then-generalize transition~\cite{nanda2023grokking,power2022grokking}; a model with frozen phases is handed that basis at init, so it begins \textit{post-grok} rather than working toward the transition. Reading computation as a \textit{change in symbolism over time} - which symbol is active, and how it shifts across position and depth - is the temporal companion to the static picture above: the symbol set is fixed, and what moves is which symbol is active, re-fitted per input (the \textit{always grokking} conjecture, collected with the others in the Discussion).
 
 \textbf{Bias and variance, in these terms.} \textit{Bias} is the time-invariant part of the spectrum, the amplitudes shared across all inputs (the corpus rhythm); \textit{variance} is the input-conditional deviation on top, carried by different spectral components and different parameters. The two do not stop being a spectrum: at any single decision boundary, a neuron's value still sets a \textit{ratio} - how much corpus rhythm and how much input-conditional deviation pass downstream - a point between the ends. What the harmonic latent removes is the assumption that \textit{one} such ratio stands for the whole model. There are many - a consensus of independent decision boundaries, each free to sit at its own point - and it is the aggregate of those ratios, not any single one, that lets bias and variance move as orthogonal coordinates rather than the two ends of a single dial.
 
@@ -54,7 +54,58 @@ The paper leans on a small vocabulary, used precisely. It is ordinary signal pro
 
 The bias-variance decomposition treats generalization error as the sum of a term that grows when the model is too rigid to fit the signal (bias) and a term that grows when it is too flexible and fits the noise (variance). The received wisdom is that you cannot reduce both at once with a fixed budget: regularize harder and bias rises; add capacity and variance rises. The tradeoff is drawn as a U-shaped curve with a single minimum, and model selection is the act of finding the bottom of that U.
 
-That picture is correct when the model has one knob mediating both terms - one scalar of effective complexity. It stops being correct when bias and variance are produced by \textit{different parts} of the architecture that can be optimized independently. A harmonic latent space is exactly such an architecture.
+That picture is correct when the model has one knob mediating both terms - one scalar of effective complexity. It stops being correct when bias and variance are produced by \textit{different parts} of the architecture that can be optimized independently. A harmonic latent space is exactly such an architecture (Figure~\ref{fig:landscape}).
+
+\begin{figure}[t]
+  \centering
+  \begin{minipage}[b]{0.44\linewidth}\centering
+  \begin{tikzpicture}
+    \begin{axis}[
+      width=5.6cm, height=5.0cm,
+      xlabel={model complexity}, ylabel={error},
+      xtick=\empty, ytick=\empty,
+      axis lines=left, enlargelimits=true, clip=false,
+      domain=0:4, samples=120,
+      every axis x label/.style={at={(axis description cs:0.5,-0.05)},anchor=north,font=\small},
+      every axis y label/.style={at={(axis description cs:-0.03,0.5)},rotate=90,anchor=south,font=\small},
+    ]
+      \addplot[blue!55, dashed, thick] {1.6*exp(-1.3*x)};
+      \addplot[blue!55, dotted, thick] {0.085*x^2};
+      \addplot[black, very thick] {1.6*exp(-1.3*x) + 0.085*x^2};
+      \node[font=\scriptsize] at (axis cs:0.92,1.66) {total};
+      \node[font=\scriptsize, blue!55] at (axis cs:3.3,0.2) {bias$^2$};
+      \node[font=\scriptsize, blue!55] at (axis cs:2.95,1.32) {variance};
+      \draw[densely dashed, gray] (axis cs:1.72,0) -- (axis cs:1.72,0.62);
+      \node[font=\scriptsize, gray, anchor=north] at (axis cs:1.72,-0.01) {min};
+    \end{axis}
+  \end{tikzpicture}
+  \end{minipage}\hfill
+  \begin{minipage}[b]{0.54\linewidth}\centering
+  \begin{tikzpicture}
+    \begin{axis}[
+      width=6.6cm, height=5.6cm,
+      view={48}{36},
+      colormap/viridis, shader=interp,
+      domain=-2.5:2.5, y domain=-2.5:2.5, samples=36,
+      xlabel={bias}, ylabel={variance}, zlabel={error},
+      xtick=\empty, ytick=\empty, ztick=\empty,
+      enlargelimits=false,
+      every axis x label/.style={at={(axis description cs:0.45,-0.02)},anchor=north,font=\small},
+      every axis y label/.style={at={(axis description cs:0.97,0.13)},anchor=west,font=\small},
+      every axis z label/.style={at={(axis description cs:0.02,0.52)},rotate=90,anchor=south,font=\small},
+    ]
+      \addplot3[surf] {
+        -1.2*exp(-((x+1)^2+(y+1)^2)/1.6)
+        +1.0*exp(-((x-1.2)^2+(y-1.0)^2)/1.4)
+        +0.5*exp(-((x+1.6)^2+(y-1.4)^2)/0.8)
+        -0.45*exp(-((x-1.3)^2+(y+1.3)^2)/0.7)
+      };
+    \end{axis}
+  \end{tikzpicture}
+  \end{minipage}
+  \caption{Schematic, not measured. \textbf{Left:} the received picture - one knob of effective complexity, so bias$^2$ falls while variance rises and total error traces a single U with one minimum; the best you can do is find the bottom of that curve. \textbf{Right:} when bias and variance are separate coordinates, error becomes a surface over a two-dimensional space - a landscape of basins and ridges navigated in two directions at once, not a single curve to slide along. The decoupling is what turns the line into the landscape.}
+  \label{fig:landscape}
+\end{figure}
 
 \subsection{The harmonic field: a measured instance}
 
@@ -67,7 +118,7 @@ where $t$ indexes position, $d$ indexes feature, and $a[f_t,f_d]$ is a learnable
 
 Now read this through the bias-variance lens.
 
-\textbf{Bias is the static spectrum.} With a fixed amplitude grid, $b[t,d]$ is identical for every input. It is a single rhythm imposed on all of the corpus at once - the population average. In the limit where the grid concentrates onto one cell, every feature oscillates to the same beat and the spectrum heatmap is flat: maximum bias, a model that has collapsed to the mean rhythm of its data. The head exposes this directly. \texttt{concentration()} reports Hoyer sparsity of the grid (1 = a single cell, 0 = uniform), and a live spectrum snapshot shows where the energy sits.\paperHoyerConcentration{} Early in training the heatmap is indistinguishable from noise; under a smoothness prior it develops a clean low-frequency band - the corpus rhythm crystallizing as a measurable object, not a metaphor (Figure~\ref{fig:spectrum}).
+\textbf{Bias is the static spectrum.} With a fixed amplitude grid, $b[t,d]$ is identical for every input. It is a single rhythm imposed on all of the corpus at once - the population average. In the limit where the grid concentrates onto one cell, every feature oscillates to the same beat and the spectrum heatmap is flat: maximum bias, a model that has collapsed to the mean rhythm of its data. The head exposes this directly. \texttt{concentration()} reports Hoyer sparsity of the grid (1 = a single cell, 0 = uniform), and a live spectrum snapshot shows where the energy sits.\paperHoyerConcentration{} Early in training the heatmap is indistinguishable from noise; under a smoothness prior it develops a clean low-frequency band - the corpus rhythm crystallizing as a measurable object, not a metaphor.\paperSpectrumRef{}
 
 \paperSpectrumFigure{}
 
@@ -303,7 +354,81 @@ The measurement analogy invites a sharper question than the one it usually settl
 
 \subsection{Answering the opening question}
 
-Do you exist in other people's realities the same way you exist in your own? If the geometry of an attention architecture determines which patterns it constructs, then observers running different geometries build different representations from the same input. You exist in your reality through your geometry, and in another's through theirs. This is not solipsism: convergence to a shared pattern space (Figure~\ref{fig:scaling}) says everyone is reaching the same place. It is the \textit{path} that differs - which patterns manifest, in what order, at what cost - and the path is set by architecture.
+Do you exist in other people's realities the same way you exist in your own? If the geometry of an attention architecture determines which patterns it constructs, then observers running different geometries build different representations from the same input. You exist in your reality through your geometry, and in another's through theirs. This is not solipsism: convergence to a shared pattern space (Figure~\ref{fig:scaling}) says everyone is reaching the same place. It is the \textit{path} that differs - which patterns manifest, in what order, at what cost (Figure~\ref{fig:paths}) - and the path is set by architecture.
+
+\begin{figure}[ht]
+    \centering
+    \begin{tikzpicture}[scale=0.85]
+
+        % Axes
+        \draw[->] (0,0) -- (10,0) node[right,font=\small] {Time (log)};
+        \draw[->] (0,0) -- (0,5) node[above,font=\small] {Patterns};
+
+        % Time markers
+        \node[below,font=\footnotesize] at (1,0) {fast};
+        \node[below,font=\footnotesize] at (9,0) {slow};
+
+        % Immediate reference (theoretical, smooth exponential - the O(1) bound)
+        \draw[thick,red,domain=0:9.5,smooth,samples=80,dashed,opacity=0.5] plot (\x,{4.5*(1-exp(-0.95*\x))});
+
+        % Harmonic / interference observer: near-immediate access (illustrative samples)
+        \draw[red,fill=red] (0.5,2.4) circle (2.5pt);
+        \draw[red,fill=red] (1,3.5) circle (2.5pt);
+        \draw[red,fill=red] (2,3.7) circle (2.5pt);
+        \draw[red,fill=red] (3,4.15) circle (2.5pt);
+        \draw[red,fill=red] (5,4.2) circle (2.5pt);
+        \draw[red,fill=red] (7,4.5) circle (2.5pt);
+        \draw[red,fill=red] (9,4.4) circle (2.5pt);
+        \draw[red,thick] (0.5,2.4) -- (1,3.5) -- (2,3.7) -- (3,4.15) -- (5,4.2) -- (7,4.5) -- (9,4.4);
+
+        % Enumerating / consensus observer: gradual O(n) climb
+        \draw[blue,fill=blue] (0.5,0.5) circle (2.5pt);
+        \draw[blue,fill=blue] (1,0.7) circle (2.5pt);
+        \draw[blue,fill=blue] (2,1.15) circle (2.5pt);
+        \draw[blue,fill=blue] (3,1.3) circle (2.5pt);
+        \draw[blue,fill=blue] (5,2.4) circle (2.5pt);
+        \draw[blue,fill=blue] (7,3.0) circle (2.5pt);
+        \draw[blue,fill=blue] (9,3.7) circle (2.5pt);
+        \draw[blue,thick,opacity=0.7] (0.5,0.5) -- (1,0.7) -- (2,1.15) -- (3,1.3) -- (5,2.4) -- (7,3.0) -- (9,3.7);
+
+        % Other observers - smooth linear curves (theoretical predictions)
+        \draw[thick,blue,domain=0:9.5,smooth,samples=80,opacity=0.35,dashed] plot (\x,{0.40*\x + 0.25});
+        \draw[thick,blue,domain=0:9.5,smooth,samples=80,opacity=0.35,dashed] plot (\x,{0.42*\x + 0.15});
+
+        % Isometric plane + sphere = shared pattern space (the convergence motif of Fig. scaling)
+        \begin{scope}[xshift=7.8cm,yshift=3.8cm,scale=0.9]
+            \fill[gray!15,opacity=0.5] (0,0) -- (1.2,0) -- (1.8,0.35) -- (0.6,0.35) -- cycle;
+            \draw[gray!40,thin] (0,0) -- (1.2,0) -- (1.8,0.35) -- (0.6,0.35) -- cycle;
+            \draw[gray!30,very thin] (0.3,0.088) -- (1.5,0.088);
+            \draw[gray!30,very thin] (0.6,0.175) -- (1.8,0.175);
+            \draw[gray!30,very thin] (0.3,0.263) -- (1.5,0.263);
+            \shade[ball color=gray!30,opacity=0.8] (0.9,0.5) circle (0.28);
+            \node[gray!70,font=\scriptsize,align=center] at (0.9,1.15) {shared\\pattern space};
+        \end{scope}
+
+        % Legend (below chart, boxed, centered, padded)
+        \begin{scope}[xshift=1.4cm,yshift=-2.3cm]
+            \draw[fill=white,draw=black,thin] (-0.2,-0.15) rectangle (7.6,1.55);
+
+            \draw[red,thick,dashed,opacity=0.5] (0.1,1.2) -- (0.7,1.2);
+            \node[right,font=\scriptsize] at (0.75,1.2) {Immediate bound ($O(1)$, theoretical)};
+
+            \draw[red,thick] (0.1,0.8) -- (0.7,0.8);
+            \node[right,font=\scriptsize] at (0.75,0.8) {\textbf{Harmonic observer} (interference)};
+
+            \draw[blue,thick] (0.1,0.4) -- (0.7,0.4);
+            \node[right,font=\scriptsize] at (0.75,0.4) {Enumerating observer ($O(n)$)};
+
+            \draw[blue,thick,opacity=0.4,dashed] (0.1,0) -- (0.7,0);
+            \node[right,font=\scriptsize] at (0.75,0) {Other observers (predicted)};
+        \end{scope}
+
+    \end{tikzpicture}
+    \caption{Schematic, not measured. The same convergence as Figure~\ref{fig:scaling}, read in the time domain rather than the resource domain. Different observers reach the same shared pattern space (the sphere over the plane, top right) along different temporal complexities: a harmonic observer composes by interference and has near-immediate, $O(1)$-like access (red, tracking the theoretical bound); an enumerating observer accumulates the same patterns one at a time, $O(n)$ (blue), and other architectures (dashed) sit between. All converge asymptotically - the destination is shared, and it is the \emph{path} to it, set by architecture, that differs. This is the intuitive companion to the cost figure, restored from an earlier draft and redrawn as the schematic it always was rather than the measurement it was once dressed as.}
+    \label{fig:paths}
+\end{figure}
+
+The same lens has to account for its harder cases - the readings that are not merely different but look incoherent from outside. A shared document can anchor an elaborate, internally consistent interpretation across a large community and read as noise to everyone else; the declassified Gateway Process and psychotronics assessments in the intelligence archives are a standing example~\cite{gateway1983,psychotronicuniverse}, self-evident inside one geometry and opaque from another. The framework neither endorses such a reading nor waves it away - it names it. On the shared field the corpus rhythm is the convergent part, the bias every observer reaches; a construction that does \textit{not} converge to it is \textit{variance} - real, coherent on its own coordinates, and told apart from the signal by its failure to converge rather than by anyone's authority to rule it out. That is the anti-solipsism guardrail above doing its work. We are not forced to accept divergent logics as true; we are forced to accept that they are \textit{constructible} - that a variance-driven geometry can grow arbitrarily elaborate and still be variance. The discipline is to read coherence-to-an-observer as evidence about geometry, never as evidence about the field.
 
 \subsection{When two observers couple}
 \label{sec:coupling}
@@ -312,11 +437,23 @@ If a single observer constructs its reality through its geometry, the next quest
 
 \subsection{A note on reconciliation}
 
-The same convergence principle drives the author's companion infrastructure project, Platformer~\cite{platformer2025}, where the explicit design stance is eventual consistency: rather than seeking perfect synchronization, the system runs repeated reconciliation cycles that drift toward a declared desired state and ``find balance'' through iteration. The shift there from fragmented to unified state is described in the same terms as the shift from sparse to fully-connected networks - more global context yields better optimization. Training is reconciliation of this kind: a model is run against its objective again and again until it settles into an attractor, the way a harmonic field settles onto a corpus rhythm or a codec phase-locks. That the same philosophy organizes both a language model and a fleet of cloud accounts is not a coincidence of the author's taste; it is what convergence under repeated local correction looks like, in whatever substrate.
+The same convergence principle drives the author's companion infrastructure project, Platformer~\cite{platformer2025}, where the explicit design stance is eventual consistency: rather than seeking perfect synchronization, the system runs repeated reconciliation cycles that drift toward a declared desired state and ``find balance'' through iteration. The shift there from fragmented to unified state is described in the same terms as the shift from sparse to fully-connected networks - more global context yields better optimization. Training is reconciliation of this kind: a model is run against its objective again and again until it settles into an attractor, the way a harmonic field settles onto a corpus rhythm or a codec phase-locks. Platformer carries the dual, too: its disaster recovery is \textit{sequence-modeled}, lifecycle events forming a convergence graph walked \textit{forward} to deploy and \textit{backward} to revert - recovery as traversal of a reversible graph rather than restore from a snapshot. That is the harmonic pass's own shape at another scale: the hidden state wound forward into a geometry and released back to the basis (Section~\ref{sec:watchmaker}), development and reversion as two directions on one graph. That the same philosophy organizes both a language model and a fleet of cloud accounts is not a coincidence of the author's taste; it is what convergence under repeated local correction looks like, in whatever substrate.
+
+Carried to its edge, the same thought reaches an intuition we will name but not bank: that a mind may be coupled to the world it runs inside as directly as a model is to its corpus - energetically, not only informationally. The only form of it we defend is the one already staked out under coupling (Section~\ref{sec:coupling}), a measurable resonance gain on ordinary channels near criticality; the stronger, non-local reading is left to the experiment that would earn it, not asserted here. The proof, here as everywhere in this framework, would be in the doing.
+
+\subsection{The blind watchmaker, made literal}
+\label{sec:watchmaker}
+
+The title is Dawkins', and it should earn its place rather than borrow his. His argument is that apparent design needs no designer: \textit{cumulative} selection - small variation retained and built upon, step after step, with no foresight - reaches structure that single-step chance never could~\cite{dawkins1986}. His \textit{biomorphs} make it concrete - a handful of recursive developmental rules, treated as genes, grow into branching tree-like forms that evolve under selection, the genes never coding the form directly but coding the \textit{development} that grows it. Read the harmonic model in those terms and the metaphor stops being decoration. The frozen basis is the genotype: the inherited, stable rule, cut once by the Weyl seeding and never re-cut. The construction of the field and the contortion of the hidden state across recurrent-depth steps are the development - the rule winding up into a phenotype, geometries stretched somewhere else for a moment, branches growing, roots crawling, strands entangling, before the pass resolves. The vote and the halting convergence are selection; the loop and the repeated passes are what make selection cumulative rather than single-step; and that no one specifies the spectrum the field locks onto, that it emerges and we only read it off afterward (Section~\ref{sec:proof}), is what makes the watchmaker blind.
+
+Set both arguments on the stage, because this is a place they can be told apart. Dawkins' gradualism does not demand a constant rate - only that complex structure accrue through small cumulative steps rather than single saltational leaps; fast bursts are allowed, sudden whole-form jumps are not~\cite{dawkins1986}. Eldredge and Gould's \textit{punctuated equilibrium} pressed the opposite emphasis: that the dominant tempo is long \textit{stasis} interrupted by geologically brief change~\cite{eldredge1972}. Much of that dispute turned on the fossil record itself - are the gaps between forms missing intermediates, as gradualism reads them, or real stasis, as punctuationism reads them? - and it could not be closed, because the record is incomplete by construction: most individuals never fossilize. A forward pass has no such gap. Every computational step can be snapshotted, the developmental record made complete, and the question paleontology could only litigate becomes one a measurement settles.
+
+That is what gives the title a measurement and not just a mood. If the contortion is a \textit{wind-up that releases back to the basis} rather than a drift away from it, then across steps the state should be \textit{stable} - close to the standing harmonic shape - punctuated by \textit{sparse, discrete jumps} in magnitude where a geometry is briefly expressed and then reverts: the punctuated tempo, not the smooth one. The conjecture this paper registers takes that side, and it cuts both ways - a state that drifts continuously and never returns to the basis would refute it, and so would one that changes by a little at every step, which is the gradualist reading made visible. It converges with the always-grokking conjecture, which predicts the same punctuation read as which symbol is active rather than as magnitude, and the measurement is laid out in the project notes. And the deepest part of Dawkins' objection stays in reach: whether a given jump is a true saltation or the visible crest of many small accumulated moves is itself in the snapshot, so the model need not simply side with Gould - it can show which of the two each step was. That is the title made literal: development under blind, cumulative selection, snapped step by step, reverting each time to the inherited rhythm it was grown from.
 
 \subsection{The practitioner as proof}
+\label{sec:proof}
 
-The blind watchmaker is design without a designer: structure that emerges from a blind, iterative process rather than from foresight. That is what these systems do. No one specifies the spectrum the harmonic field will lock onto, or the geometry the crystal centers will grow into; they emerge from the process, and we read them off afterward. Which raises an honest question about what would even count as proof here. A benchmark number proves that one model beat another on one distribution. It does not establish a claim about regimes of representation. The framework's proof, if it has one, is of a different kind: it is the practice itself. \textit{Praxis} is the Greek word for theory enacted - for doing as a form of knowing. The demonstration on offer is not a leaderboard but a method you can run, whose intuitions arrive only by stepping through it yourself. The name is the argument: the proof is in the doing.
+That blind, cumulative process is what these systems run. No one specifies the spectrum the harmonic field will lock onto, or the geometry the crystal centers will grow into; they emerge from the process, and we read them off afterward. Which raises an honest question about what would even count as proof here. A benchmark number proves that one model beat another on one distribution. It does not establish a claim about regimes of representation. The framework's proof, if it has one, is of a different kind: it is the practice itself. \textit{Praxis} is the Greek word for theory enacted - for doing as a form of knowing. The demonstration on offer is not a leaderboard but a method you can run, whose intuitions arrive only by stepping through it yourself. The name is the argument: the proof is in the doing.
 
 % Real Center-PCA densities read off the live checkpoint - the "read them off
 % afterward" above, in silico. For a multi-head model (prismatic4's VEAR crystal

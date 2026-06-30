@@ -475,6 +475,15 @@ class Aurora:
 		super(seed_rng, c)
 		var n := int(num("count", 4))
 		for i in n:
+			# A few sparse, slowly drifting nodes along the wavelength where a gentle vibrato
+			# in the wave amplitude is allowed to act (elsewhere the ribbon stays calm).
+			var nodes := []
+			for j in seed_rng.randi_range(2, 4):
+				nodes.append({
+					"pos": seed_rng.randf(),
+					"w": seed_rng.randf_range(0.04, 0.10),
+					"drift": seed_rng.randf_range(-0.03, 0.03),
+				})
 			_ribbons.append({
 				"y": seed_rng.randf_range(-0.35, 0.1),
 				"amp": seed_rng.randf_range(0.06, 0.16),
@@ -484,11 +493,34 @@ class Aurora:
 				"phase": seed_rng.randf() * TAU,
 				"hue_off": seed_rng.randf_range(0.0, 0.18),
 				"band": seed_rng.randf(),
+				# Harmonic vibrato on the amplitude: a gentle quiver (rate in rad/s) that rides
+				# the high band like the shimmer in a held vocal note, only near the nodes above.
+				"vib_rate": seed_rng.randf_range(3.0, 7.0),
+				"vib_depth": seed_rng.randf_range(0.20, 0.45),
+				"vib_phase": seed_rng.randf() * TAU,
+				"vib_sx": seed_rng.randf_range(1.5, 4.0),
+				"nodes": nodes,
 			})
 
 	func update(f: AudioFeatures, dt: float, h: Vector2) -> void:
 		super(f, dt, h)
 		_f_cache = f
+
+	# The wave amplitude at position fx along a ribbon: the base amp, plus a gentle harmonic
+	# VIBRATO that is sparsely active along the wavelength - only near a few slowly drifting
+	# nodes - and rides the high band, like the shimmer in a held vocal note. Away from the
+	# nodes the envelope is ~0 and the ribbon keeps its calm wave.
+	func _amp_at(rb: Dictionary, fx: float) -> float:
+		var env := 0.0
+		for nd in rb.nodes:
+			var pos: float = fposmod(float(nd.pos) + t * float(nd.drift), 1.0)
+			var d: float = fx - pos
+			var w: float = float(nd.w)
+			env = maxf(env, exp(-(d * d) / (2.0 * w * w)))
+		var voice: float = 0.4 + 0.6 * _f_cache.high
+		var vib: float = float(rb.vib_depth) * env * voice \
+			* sin(float(rb.vib_rate) * t + fx * float(rb.vib_sx) * TAU + float(rb.vib_phase))
+		return float(rb.amp) * (1.0 + vib)
 
 	func draw(ci: CanvasItem, u: float) -> void:
 		var base_h: float = num("hue", 0.38)
@@ -504,8 +536,8 @@ class Aurora:
 				var fx1 := float(k + 1) / float(steps)
 				var x0 := (fx0 * 2.0 - 1.0) * half.x
 				var x1 := (fx1 * 2.0 - 1.0) * half.x
-				var y0: float = rb.y + rb.amp * sin(rb.freq * TAU * fx0 + t * rb.speed * TAU + rb.phase)
-				var y1: float = rb.y + rb.amp * sin(rb.freq * TAU * fx1 + t * rb.speed * TAU + rb.phase)
+				var y0: float = rb.y + _amp_at(rb, fx0) * sin(rb.freq * TAU * fx0 + t * rb.speed * TAU + rb.phase)
+				var y1: float = rb.y + _amp_at(rb, fx1) * sin(rb.freq * TAU * fx1 + t * rb.speed * TAU + rb.phase)
 				var th: float = rb.thick * (0.6 + 0.6 * bright)
 				var top := Color.from_hsv(hue, sat, bright, 0.0)
 				var midc := Color.from_hsv(hue, sat, bright, 0.16 + 0.30 * bright)

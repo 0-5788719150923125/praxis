@@ -1,0 +1,25 @@
+# "Always grokking." Grokking's grokked endpoint is, mechanistically, a harmonic
+# representation - the Fourier/trig algorithm Nanda et al. recover after the
+# delayed transition. A frozen-phase model is handed that basis at init, so it
+# does not undergo the memorize->generalize transition over training; it begins
+# post-grok. The transition therefore moves OFF the training axis and ONTO the
+# input axis: the symbols are grokked once, but the belief state is *always*
+# re-grokking - hopping between fixed symbol clusters, per input, across compute
+# steps. The named falsifier is exactly battery test 1 in
+# next/harmonic_memory_velocity.md (the cluster-hopping plot we have specified
+# but not yet drawn): a smooth drift, not discrete hops, refutes it; so does a
+# symbol set that keeps growing rather than being recombined. Companion to the
+# bias-variance conjecture (the static/dynamic mode split is the same geometry
+# read along the training vs. input axis).
+tag: Always grokking
+order: 17
+cite: [nanda2023grokking, power2022grokking]
+claim: >
+  Because the grokked solution is itself a harmonic representation, a model with
+  frozen phases begins post-grok and never undergoes the delayed
+  memorize-then-generalize transition over training; the transition instead
+  recurs on the input axis - the symbol set is fixed, but the belief state is
+  perpetually re-fitting, hopping between those fixed symbol clusters across
+  compute steps - and the claim is falsified the moment that per-input path is
+  measured to be a smooth drift rather than discrete cluster-to-cluster hops, or
+  the symbol set is found to keep growing rather than being recombined.

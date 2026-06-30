@@ -6,6 +6,7 @@ from praxis.activations.nmda import NMDA
 from praxis.activations.periodic_relu import PeriodicReLU
 from praxis.activations.serf import SERF
 from praxis.activations.serpent import Serpent
+from praxis.activations.servant import Servant
 from praxis.activations.sin import Sine
 from praxis.activations.sin_cos import SineCosine
 from praxis.activations.sinlu import SinLU
@@ -18,6 +19,7 @@ ACTIVATION_MAP = dict(
     prelu=PReLU,
     serf=SERF,
     serpent=Serpent,
+    servant=Servant,
     sin=Sine,
     sin_cos=SineCosine,
     sinlu=SinLU,

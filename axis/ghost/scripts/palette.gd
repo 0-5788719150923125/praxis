@@ -23,9 +23,9 @@ static func named(name: String, rng: RandomNumberGenerator) -> Palette:
 		"desert":
 			return _ramp([[0.0, j.call(0.09), 0.5, 0.32], [0.35, j.call(0.10), 0.55, 0.55],
 				[0.7, j.call(0.08), 0.45, 0.78], [1.0, j.call(0.11), 0.20, 0.95]])
-		"alpine":
-			return _ramp([[0.0, j.call(0.58), 0.55, 0.30], [0.28, j.call(0.30), 0.45, 0.45],
-				[0.55, j.call(0.10), 0.25, 0.55], [0.78, 0.0, 0.05, 0.78], [1.0, 0.0, 0.0, 1.0]])
+		"alpine":  # kept off pure white (snow at v<=0.82) so smooth slopes still show texture
+			return _ramp([[0.0, j.call(0.58), 0.6, 0.28], [0.30, j.call(0.32), 0.5, 0.42],
+				[0.58, j.call(0.12), 0.40, 0.46], [0.80, j.call(0.05), 0.18, 0.62], [1.0, 0.0, 0.06, 0.82]])
 		"volcanic":
 			return _ramp([[0.0, 0.0, 0.0, 0.06], [0.45, j.call(0.02), 0.7, 0.30],
 				[0.7, j.call(0.04), 0.9, 0.65], [0.88, j.call(0.10), 0.95, 0.95], [1.0, 0.15, 0.4, 1.0]])
@@ -35,10 +35,10 @@ static func named(name: String, rng: RandomNumberGenerator) -> Palette:
 		"ocean":
 			return _ramp([[0.0, j.call(0.62), 0.7, 0.18], [0.5, j.call(0.55), 0.6, 0.4],
 				[0.78, j.call(0.12), 0.45, 0.7], [1.0, j.call(0.10), 0.18, 0.95]])
-		_:  # "earth": deep water, shore, grass, rock, snow
+		_:  # "earth": deep water, shore, grass, rock, snow (snow kept off pure white)
 			return _ramp([[0.0, j.call(0.60), 0.65, 0.28], [0.30, j.call(0.12), 0.55, 0.62],
-				[0.45, j.call(0.32), 0.55, 0.50], [0.7, j.call(0.09), 0.40, 0.45],
-				[0.88, j.call(0.07), 0.18, 0.62], [1.0, 0.0, 0.04, 0.98]])
+				[0.45, j.call(0.32), 0.58, 0.50], [0.7, j.call(0.09), 0.42, 0.45],
+				[0.88, j.call(0.07), 0.22, 0.60], [1.0, 0.0, 0.06, 0.84]])
 
 
 static func _ramp(rows: Array) -> Palette:

@@ -28,7 +28,8 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	framing = "field"
 	var ttype := "mesa" if rng.randf() < 0.5 else "hills"
 	_terrain = Terrain.new()
-	_terrain.build(rng, ttype, 3.0, rng.randf_range(0.7, 1.1), Palette.named("earth", rng))
+	_terrain.build(rng, ttype, 3.0, rng.randf_range(0.7, 1.1), null,
+		"verdant" if rng.randf() < 0.5 else "temperate")
 	_hue = fposmod(rng.randf() + 0.5, 1.0)
 	_dev = Swarm.new(C, C, Swarm.GROW, rng, rng.randi_range(2, 4))
 	# Per-plot detach: a few districts float off the ground.
@@ -88,7 +89,8 @@ func _draw() -> void:
 			_block_faces(faces, base, up, bw, h, hue, blit)
 	faces.sort_custom(func(a, b): return a.d > b.d)
 	for fc in faces:
-		Terrain.draw_quad(self, fc.poly, fc.col)
+		var c: Color = fc.col
+		Terrain.draw_quad(self, fc.poly, PackedColorArray([c, c, c, c]))
 
 
 # Append the camera-facing faces of one oriented box to `out` (each {poly, col, d}).

@@ -18,28 +18,36 @@ var _yaw_dir := 1.0
 var _yaw_speed := 0.10
 
 const TYPES := ["hills", "mountains", "valleys", "canyon", "islands", "mesa"]
-const PALS := {"hills": "earth", "mountains": "alpine", "valleys": "earth",
-	"canyon": "desert", "islands": "ocean", "mesa": "desert"}
 
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	framing = "field"
 	var ttype: String = TYPES[rng.randi() % TYPES.size()]
-	# Usually the fitting palette, sometimes a surreal one (volcanic / alien) for variety.
-	var pname: String = PALS[ttype]
-	if rng.randf() < 0.28:
-		pname = ["volcanic", "alien", "ocean", "alpine"][rng.randi() % 4]
 	var relief := rng.randf_range(1.1, 1.9)
+	# Mostly a natural biome (green lowland, brown/grey rock, snow peaks, blue water),
+	# biased by terrain type; sometimes a surreal palette (volcanic / alien) for variety.
+	var climate := ""
+	var pal: Palette = null
+	if rng.randf() < 0.22:
+		pal = Palette.named(["volcanic", "alien", "ocean"][rng.randi() % 3], rng)
+	elif ttype == "canyon" or ttype == "mesa":
+		climate = "arid"
+	elif ttype == "islands":
+		climate = "verdant" if rng.randf() < 0.6 else "temperate"
+	else:
+		climate = ["temperate", "tundra", "verdant"][rng.randi() % 3]
 	_terrain = Terrain.new()
-	_terrain.build(rng, ttype, 3.0, relief, Palette.named(pname, rng))
+	# Bigger extent (4.0) + a closer camera so the land runs off every edge and fills the
+	# frame, rather than floating as a small island of geometry in a black field.
+	_terrain.build(rng, ttype, 4.0, relief, pal, climate)
 	# Sampled camera (never the same flyover twice).
-	lens.fov = rng.randf_range(52.0, 70.0)
-	_dist = rng.randf_range(6.0, 8.5)
-	_pitch = rng.randf_range(0.32, 0.62)
+	lens.fov = rng.randf_range(50.0, 62.0)
+	_dist = rng.randf_range(5.4, 7.2)
+	_pitch = rng.randf_range(0.30, 0.52)
 	_yaw = rng.randf() * TAU
 	_yaw_dir = 1.0 if rng.randf() < 0.5 else -1.0
 	_yaw_speed = rng.randf_range(0.05, 0.14)
-	return {"type": ttype, "palette": pname}
+	return {"type": ttype, "climate": climate, "surreal": pal != null}
 
 
 func update(f: AudioFeatures, delta: float) -> void:

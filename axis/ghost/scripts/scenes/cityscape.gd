@@ -86,6 +86,13 @@ func _draw() -> void:
 	draw_layers("front")         # snow / rain falling over the city
 
 
+# A stable pseudo-random value in 0..1 from two ints and a salt (no per-window storage).
+# Used to assign cluster harmonics and per-window light thresholds deterministically.
+func _whash(a: int, b: int, salt: float) -> float:
+	var v := sin(float(a) * 127.1 + float(b) * 311.7 + salt * 7.13) * 43758.5453
+	return v - floor(v)
+
+
 # A grid of lit windows on one building face; which are lit drifts with time and
 # flares with loudness/beat.
 func _windows(x: float, top: float, w: float, ground: float, bd: Dictionary, loud: float, depth: float, win_hue: float) -> void:
@@ -96,15 +103,32 @@ func _windows(x: float, top: float, w: float, ground: float, bd: Dictionary, lou
 	var cell_h := minf(cell_w, (ground - top) / float(rows + 1))
 	var ww := cell_w * 0.6
 	var wh := cell_h * 0.6
-	var lit_level := 0.35 + 0.5 * loud + 0.3 * _f.beat
-	var col := Color.from_hsv(win_hue, 0.35, 0.7 + 0.3 * depth, 0.85)
+	# Lights cluster and switch on/off SPARSELY, tied to harmonics - not a linear sweep. The
+	# windows are grouped into a few blocks; each block listens to its own spectral band and
+	# breathes on its own slow phase, and within an active block only a sparse subset (those
+	# with a low intrinsic threshold) actually light - so clusters glow together and fade as
+	# their harmonic comes and goes, the way real windows switch room by room.
+	var cw := maxi(1, cols / 2)          # a cluster spans ~half the columns ...
+	var crows := maxi(2, rows / 3)       # ... and ~a third of the rows
+	var phase := float(bd.phase)
 	for wy in rows:
 		var wy_top := top + pad + wy * cell_h
 		if wy_top + wh > ground:
 			break
 		for wx in cols:
-			var k := float(wx * 7 + wy * 13) + float(bd.phase)
-			var on := 0.5 + 0.5 * sin(k + _f.time * 1.5)
-			if on < lit_level:
+			var cx := wx / cw
+			var cy := wy / crows
+			var cband := _whash(cx + 3, cy + 5, phase)     # this cluster's harmonic
+			var cloud := _f.sample(cband)                  # how active that harmonic is now
+			var breathe := 0.5 + 0.5 * sin(_f.time * (0.20 + 0.5 * cband) + _whash(cx, cy, phase) * TAU)
+			# A baseline presence (so a city is never fully dark) that the harmonic boosts; the
+			# slow breathing makes clusters switch on and off over time, beats add a flare.
+			var base := 0.30 + 0.70 * cloud
+			var activation := base * (0.35 + 0.65 * breathe) + 0.30 * _f.beat * cloud + 0.12 * loud
+			var thr := _whash(wx * 2 + 1, wy * 2 + 7, phase)   # per-window sparsity
+			if activation > 0.12 + 0.7 * thr:
+				var bv := clampf(0.55 + 0.5 * activation, 0.0, 1.0)
+				var col := Color.from_hsv(fposmod(win_hue + 0.05 * cband, 1.0), 0.35,
+					bv * (0.7 + 0.3 * depth), 0.9)
 				var wx_left := x + pad + wx * cell_w
 				draw_rect(Rect2(wx_left, wy_top, ww, wh), col)
