@@ -22,6 +22,11 @@ var treble: float = 0.0
 ## Cheap stand-in for real beat detection (see README roadmap).
 var beat: float = 0.0
 
+## Smoothed seconds between beat onsets - the track's PULSE PERIOD (small = fast music, large =
+## slow). ~0.5 (120 BPM) until enough onsets are seen. The Director paces scene changes off this,
+## so faster music transitions scenes more often.
+var beat_period: float = 0.5
+
 ## Spectral flux this frame: how much the spectrum *changed* (sum of positive
 ## per-band deltas). High when new frequency content arrives - the raw material
 ## for detecting a change of section.

@@ -10,7 +10,7 @@ class_name Terrain
 ## just projected and depth-sorted each frame - cheap. It exposes height(wx, wz) and a
 ## surface normal so other scenes can stand things on it (blocks, water, growth).
 
-const RES := 64                  # grid resolution (RES x RES vertices)
+const RES := 112                 # grid resolution (RES x RES vertices)
 
 var res := RES
 var half := 3.0                  # world half-extent in x and z
@@ -21,6 +21,18 @@ var palette: Palette
 var hgrid := PackedFloat32Array()   # heights 0..1
 var _world := PackedVector3Array()  # world-space vertices
 var _vcol: PackedColorArray         # base per-vertex colour (palette + texture + slope)
+var _vnorm := PackedVector3Array()  # per-vertex surface normal (for the moving directional light)
+
+# Cinematic area light + cast shadows: a low directional key light whose azimuth drifts, so the
+# mountains cast long shadows that gently sweep as it moves. The shadow map is per-vertex and
+# refreshed a few rows per frame (never a full-grid recompute), so it stays hitch-free.
+var _light_dir := Vector3(0.55, 0.5, 0.35).normalized()   # world direction TOWARD the key light
+var _cast := PackedFloat32Array()   # per-vertex cast-shadow factor SHOWN (eased toward _cast_target)
+var _cast_target := PackedFloat32Array()   # the raw ray-march result, refreshed a few rows per frame
+var _shadow_row := 0                 # incremental shadow-refresh cursor (row being recomputed)
+const SHADOW_MIN := 0.42            # ground brightness where fully in a mountain's cast shadow
+var _fog_level := -1.0               # world height below which valley fog pools (< min = no fog)
+var _fog_col := Color(0.62, 0.66, 0.72)
 
 # Biome colour sets [h, s, v] for grass / dirt / low rock / high rock / snow / sand /
 # water. A climate gives the natural look (green lowland, brown+grey rock, snow peaks,
@@ -71,6 +83,9 @@ func build(rng: RandomNumberGenerator, type_: String, world_half := 3.0,
 	var moist := Field.make("fbm", rng.randi(), 3.2, 4)        # wet (grass) vs dry (rock) regions
 	hgrid.resize(res * res)
 	_world.resize(res * res)
+	_vnorm.resize(res * res)
+	_cast.resize(res * res)
+	_cast.fill(1.0)
 	_vcol = PackedColorArray()
 	_vcol.resize(res * res)
 	# Sample the field into the grid (the only expensive pass; done once).
@@ -78,7 +93,23 @@ func build(rng: RandomNumberGenerator, type_: String, world_half := 3.0,
 		for gx in res:
 			var p := Vector2(float(gx) / float(res - 1) - 0.5, float(gy) / float(res - 1) - 0.5) * 2.0
 			hgrid[gy * res + gx] = height.at(p)
-	_smooth(2)        # kill grid-scale aliasing so the land rolls instead of spiking
+	_smooth(1)        # a single pass: knock down grid-scale aliasing but KEEP the recipe's detail
+	# Micro-relief: overlay fine GEOMETRIC detail over the whole surface so the land reads as
+	# textured ground, not low-res smooth blobs. Three octaves - a coarse roll, a ridged grain,
+	# and a fine crinkle - tiled across the terrain and added AFTER the smoothing pass (so it
+	# survives), turned into real height (not just colour). This catches the slope shading and the
+	# per-vertex normals, so the surface keeps crisp bumps and creases even under a close camera,
+	# instead of the over-smoothed sheen that read as blur when the push-in magnified it.
+	var micro := Field.combine(
+		Field.combine(Field.make("fbm", rng.randi(), 9.0, 5), "add",
+			Field.make("ridged", rng.randi(), 19.0, 4), 0.7),
+		"add", Field.make("fbm", rng.randi(), 42.0, 3), 0.4)
+	var micro_amp := 0.09
+	for gy in res:
+		for gx in res:
+			var i := gy * res + gx
+			var p := Vector2(float(gx) / float(res - 1) - 0.5, float(gy) / float(res - 1) - 0.5) * 2.0
+			hgrid[i] = clampf(hgrid[i] + (micro.at(p) - 0.5) * micro_amp, 0.0, 1.0)
 	for gy in res:
 		for gx in res:
 			var i := gy * res + gx
@@ -90,6 +121,7 @@ func build(rng: RandomNumberGenerator, type_: String, world_half := 3.0,
 			var i := gy * res + gx
 			var p := Vector2(float(gx) / float(res - 1) - 0.5, float(gy) / float(res - 1) - 0.5) * 2.0
 			var n := _normal(gx, gy)
+			_vnorm[i] = n
 			var slope := clampf(n.dot(Vector3(0, 1, 0)), 0.0, 1.0)     # 1 flat .. 0 cliff
 			var tex := detail.at(p)
 			if _biome_on:
@@ -104,6 +136,15 @@ func build(rng: RandomNumberGenerator, type_: String, world_half := 3.0,
 			var contour := 0.88 + 0.12 * sin(hgrid[i] * PI * 16.0)
 			var shade := clampf((0.50 + 0.42 * slope + 0.40 * (tex - 0.5)) * contour, 0.14, 1.25)
 			_vcol[i] = Color(c.r * shade, c.g * shade, c.b * shade, 1.0)
+	# Valley fog pools a little above the lowest ground (or the water line), so mist gathers in
+	# the low valleys and clears off the ridges. A tundra/arid palette gets a cooler, thinner fog.
+	var lo := 1.0
+	var hi := 0.0
+	for hv in hgrid:
+		lo = minf(lo, hv)
+		hi = maxf(hi, hv)
+	_fog_level = maxf(water, lo) + 0.11 * (hi - lo)
+	_fog_col = Color(0.66, 0.70, 0.76) if _biome_on else Color(0.60, 0.62, 0.70)
 
 
 # Resolve a climate's material colours (jittered per seed so no two are identical).
@@ -235,6 +276,64 @@ func normal_world(wx: float, wz: float) -> Vector3:
 	return _normal(gx, gy)
 
 
+## Aim the key light. `az` is the azimuth (radians, drifts over time); `el` the elevation
+## (kept low for long dramatic shadows). Call each frame from the scene with a slowly moving az.
+func set_light(az: float, el := 0.5) -> void:
+	_light_dir = Vector3(cos(el) * cos(az), sin(el), cos(el) * sin(az)).normalized()
+
+
+## The world direction toward the key light (so a scene can shade its own props - city blocks -
+## with the SAME light as the terrain).
+func light_dir() -> Vector3:
+	return _light_dir
+
+
+## Refresh a few rows of the cast-shadow TARGET each frame, then ease the SHOWN shadow toward it.
+## The easing is the anti-flicker: a cell never hard-flips lit<->shadowed as the light drifts (which
+## popped and shimmered), it glides; and the incremental refresh no longer shows a moving seam.
+func step_light(delta: float) -> void:
+	var n := res * res
+	if _cast.size() != n:
+		_cast.resize(n)
+		_cast.fill(1.0)
+	if _cast_target.size() != n:
+		_cast_target.resize(n)
+		_cast_target.fill(1.0)
+	var rows := maxi(1, int(res / 16))            # a few rows per frame; whole target refreshed ~every 16
+	for _r in rows:
+		var gy := _shadow_row
+		for gx in res:
+			_cast_target[gy * res + gx] = _cast_at(gx, gy)
+		_shadow_row = (_shadow_row + 1) % res
+	var ease := 1.0 - exp(-3.0 * delta)           # smooth glide toward the target - no pop, no seam
+	for i in n:
+		_cast[i] = lerpf(_cast[i], _cast_target[i], ease)
+
+
+# March from a vertex toward the light through the heightfield and return a SOFT shadow factor
+# (SHADOW_MIN fully shadowed .. 1 lit). Instead of a hard hit/miss, it tracks how far the terrain
+# rises ABOVE the light ray along the way and maps that penetration through a smoothstep, so shadow
+# edges get a penumbra and don't harshly flip on/off as the light sweeps - killing the flicker.
+func _cast_at(gx: int, gy: int) -> float:
+	if _light_dir.y <= 0.02:
+		return 1.0
+	var p: Vector3 = _world[gy * res + gx]
+	var ds := (2.0 * half / float(res)) * 2.1
+	var bias := 0.03 * relief
+	var occ := 0.0
+	for s in range(1, 18):
+		var d := ds * float(s)
+		var wx := p.x + _light_dir.x * d
+		var wz := p.z + _light_dir.z * d
+		if absf(wx) > half or absf(wz) > half:
+			break                                 # ray left the terrain - nothing more can occlude
+		var margin := height_at(wx, wz) * relief - (p.y + _light_dir.y * d + bias)
+		if margin > occ:
+			occ = margin
+	var shade := smoothstep(0.0, 0.14 * relief, occ)   # 0 lit .. 1 fully shadowed, with a penumbra
+	return lerpf(1.0, SHADOW_MIN, shade)
+
+
 ## Project + depth-sort + draw the terrain surface (and water) through the lens. `lit`
 ## scales brightness (audio); `shimmer` (time) animates the water.
 func draw_surface(ci: CanvasItem, lens: Lens3D, u: float, lit: float, shimmer: float) -> void:
@@ -245,18 +344,40 @@ func draw_surface(ci: CanvasItem, lens: Lens3D, u: float, lit: float, shimmer: f
 	dep.resize(n)
 	# Drifting CLOUD SHADOWS: soft bands moving across the land over time (per-vertex, so they
 	# follow the real 3D surface), darkening the ground where a cloud passes and brightening the
-	# sunlit gaps - dynamic shading without a real shadow pass.
-	var shadow := PackedFloat32Array()
-	shadow.resize(n)
+	# sunlit gaps - layered under the directional key light and the mountains' cast shadows.
 	var sxd := shimmer * 0.06
 	var szd := shimmer * 0.045
+	# The final lit colour per vertex: base colour x audio brightness x cloud shadow x directional
+	# key light (n.l) x mountain cast shadow, then valley fog blended over the low ground. Computed
+	# once here so both triangles of every quad reuse it.
+	var vc := PackedColorArray()
+	vc.resize(n)
+	# World-space UVs for the tiling detail texture (grain follows the real surface, not the screen).
+	var uvg := PackedVector2Array()
+	uvg.resize(n)
+	var tex := detail_texture()
+	ci.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED   # so the UVs > 1 tile
+	var tile := 1.7 / maxf(0.5, half)                        # ~a dozen repeats across the land
 	for i in n:
 		var pr := lens.project(_world[i])
 		sv[i] = Vector2(pr.x, pr.y) * u
 		dep[i] = pr.z
 		var p: Vector3 = _world[i]
+		uvg[i] = Vector2(p.x, p.z) * tile
 		var cv := sin(p.x * 0.7 + sxd) + sin(p.z * 0.55 - szd) + 0.6 * sin((p.x + p.z) * 1.1 + sxd * 1.5)
-		shadow[i] = clampf(0.55 + 0.5 * smoothstep(-0.7, 0.9, cv * 0.5), 0.5, 1.0)
+		var cloud := clampf(0.55 + 0.5 * smoothstep(-0.7, 0.9, cv * 0.5), 0.5, 1.0)
+		# Directional key light: sunny slopes brighten, slopes facing away fall into shade.
+		var ndotl := clampf(_vnorm[i].dot(_light_dir), 0.0, 1.0)
+		var key := 0.55 + 0.6 * ndotl                 # ambient floor + directional term
+		var col := _lit(_vcol[i], lit * cloud * key * _cast[i])
+		# Valley fog: a thin drifting haze pooling in the deepest LAND hollows (never over water,
+		# never on the ridges), thickest at the very bottom and feathering out quickly upward.
+		if hgrid[i] > water and hgrid[i] < _fog_level:
+			var hw := (hgrid[i] - water) / maxf(0.02, _fog_level - water)   # 0 valley floor .. 1 fog line
+			var drift := 0.7 + 0.3 * sin(shimmer * 0.15 + p.x * 0.5 + p.z * 0.4)
+			var fog := clampf((1.0 - hw) * (1.0 - hw), 0.0, 1.0) * 0.42 * drift
+			col = col.lerp(Color(_fog_col.r * lit, _fog_col.g * lit, _fog_col.b * lit), fog)
+		vc[i] = col
 	var quads: Array = []
 	for gy in res - 1:
 		for gx in res - 1:
@@ -267,15 +388,15 @@ func draw_surface(ci: CanvasItem, lens: Lens3D, u: float, lit: float, shimmer: f
 			if dep[i0] <= lens.near or dep[i1] <= lens.near or dep[i2] <= lens.near or dep[i3] <= lens.near:
 				continue
 			var poly := PackedVector2Array([sv[i0], sv[i1], sv[i3], sv[i2]])
-			if _quad_area(poly) < 2.0:        # edge-on / collapsed quad - skip (else triangulation fails)
+			if _quad_area(poly) < 0.25:       # only truly collapsed quads (lowered: the old 2.0 left black holes)
 				continue
 			quads.append({"d": (dep[i0] + dep[i1] + dep[i2] + dep[i3]) * 0.25, "poly": poly,
-				"cols": PackedColorArray([_lit(_vcol[i0], lit * shadow[i0]), _lit(_vcol[i1], lit * shadow[i1]),
-					_lit(_vcol[i3], lit * shadow[i3]), _lit(_vcol[i2], lit * shadow[i2])])})
+				"cols": PackedColorArray([vc[i0], vc[i1], vc[i3], vc[i2]]),
+				"uvs": PackedVector2Array([uvg[i0], uvg[i1], uvg[i3], uvg[i2]])})
 	# Water plane (a coarse translucent grid at y=0), shimmering, depth-sorted with the land.
 	if water > 0.0:
 		var wc := _water_col
-		var wr := 12
+		var wr := 22
 		for gy in wr:
 			for gx in wr:
 				var c0 := _wpt(gx, gy, wr, lens, u)
@@ -286,7 +407,7 @@ func draw_surface(ci: CanvasItem, lens: Lens3D, u: float, lit: float, shimmer: f
 					continue
 				var wpoly := PackedVector2Array([Vector2(c0.x, c0.y), Vector2(c1.x, c1.y),
 					Vector2(c3.x, c3.y), Vector2(c2.x, c2.y)])
-				if _quad_area(wpoly) < 2.0:
+				if _quad_area(wpoly) < 0.25:
 					continue
 				var sh := 0.85 + 0.15 * sin(shimmer * 1.3 + float(gx) * 0.7 + float(gy) * 0.5)
 				var wcol := Color(wc.r * sh * lit, wc.g * sh * lit, wc.b * sh * lit, 0.62)
@@ -294,7 +415,10 @@ func draw_surface(ci: CanvasItem, lens: Lens3D, u: float, lit: float, shimmer: f
 					"cols": PackedColorArray([wcol, wcol, wcol, wcol])})
 	quads.sort_custom(func(a, b): return a.d > b.d)        # far first
 	for q in quads:
-		draw_quad(ci, q.poly, q.cols)
+		if q.has("uvs"):
+			draw_quad(ci, q.poly, q.cols, q.uvs, tex)      # land: modulated by the detail texture
+		else:
+			draw_quad(ci, q.poly, q.cols)                  # water: flat translucent
 
 
 # Screen-space area of a quad (shoelace). Near-zero => the quad is edge-on / collapsed /
@@ -314,16 +438,56 @@ static func _lit(c: Color, k: float) -> Color:
 ## Draw a 4-point quad as its two Gouraud (per-vertex-coloured) triangles, split on the
 ## 0-2 diagonal. A projected heightfield quad can fold into a bowtie that a single
 ## polygon can't triangulate; two triangles never can, and degenerate ones are skipped.
-## Per-vertex colour is what makes the surface texture read instead of flat facets.
-static func draw_quad(ci: CanvasItem, poly: PackedVector2Array, cols: PackedColorArray) -> void:
+## Per-vertex colour is what makes the surface texture read instead of flat facets. If `uvs`
+## + `tex` are given, the vertex colours are MODULATED by a tiling detail texture (world-space
+## UVs) - genuine sub-vertex surface grain (a value/bump texture), not just interpolated colour.
+static func draw_quad(ci: CanvasItem, poly: PackedVector2Array, cols: PackedColorArray,
+		uvs := PackedVector2Array(), tex: Texture2D = null) -> void:
 	if poly.size() < 4:
 		return
+	var textured := tex != null and uvs.size() >= 4
 	var t1 := PackedVector2Array([poly[0], poly[1], poly[2]])
-	if _quad_area(t1) > 0.3:
-		ci.draw_polygon(t1, PackedColorArray([cols[0], cols[1], cols[2]]))
+	if _quad_area(t1) > 0.04:
+		if textured:
+			ci.draw_polygon(t1, PackedColorArray([cols[0], cols[1], cols[2]]),
+				PackedVector2Array([uvs[0], uvs[1], uvs[2]]), tex)
+		else:
+			ci.draw_polygon(t1, PackedColorArray([cols[0], cols[1], cols[2]]))
 	var t2 := PackedVector2Array([poly[0], poly[2], poly[3]])
-	if _quad_area(t2) > 0.3:
-		ci.draw_polygon(t2, PackedColorArray([cols[0], cols[2], cols[3]]))
+	if _quad_area(t2) > 0.04:
+		if textured:
+			ci.draw_polygon(t2, PackedColorArray([cols[0], cols[2], cols[3]]),
+				PackedVector2Array([uvs[0], uvs[2], uvs[3]]), tex)
+		else:
+			ci.draw_polygon(t2, PackedColorArray([cols[0], cols[2], cols[3]]))
+
+
+# A tiling grayscale DETAIL texture (built once): fbm value-noise crossed with a ridged streak, so
+# terrain quads carry fine sub-vertex grain when this modulates their colour. Tiled finely across
+# the land via world-space UVs, so the seams (it is not perfectly seamless) fall well below a pixel.
+static var _dtex: Texture2D = null
+static func detail_texture() -> Texture2D:
+	if _dtex == null:
+		var s := 128
+		var img := Image.create(s, s, false, Image.FORMAT_RGBA8)
+		var nf := FastNoiseLite.new()
+		nf.seed = 1337
+		nf.frequency = 0.045
+		nf.fractal_octaves = 4
+		var nr := FastNoiseLite.new()
+		nr.seed = 4242
+		nr.noise_type = FastNoiseLite.TYPE_SIMPLEX
+		nr.fractal_type = FastNoiseLite.FRACTAL_RIDGED
+		nr.frequency = 0.09
+		nr.fractal_octaves = 3
+		for y in s:
+			for x in s:
+				var a := nf.get_noise_2d(float(x), float(y)) * 0.5 + 0.5
+				var b := nr.get_noise_2d(float(x) + 33.0, float(y) - 12.0) * 0.5 + 0.5
+				var v := clampf(0.72 + 0.5 * (a - 0.5) + 0.34 * (b - 0.5), 0.4, 1.18)
+				img.set_pixel(x, y, Color(v, v, v, 1.0))
+		_dtex = ImageTexture.create_from_image(img)
+	return _dtex
 
 
 # A water-plane grid point (y = 0), projected to screen-pixels + depth.

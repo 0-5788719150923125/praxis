@@ -66,6 +66,7 @@ const SCENES := [
 	{"script": preload("res://scripts/scenes/terrain.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/terrain.gd"), "behavior": "static"},
 	{"script": preload("res://scripts/scenes/terrain_city.gd"), "behavior": "drift"},
+	{"script": preload("res://scripts/scenes/spires.gd"), "behavior": "drift"},
 	# "the-point" scenes (camera holds, per the brief).
 	{"script": preload("res://scripts/scenes/eye.gd"), "behavior": "static"},
 	{"script": preload("res://scripts/scenes/two_eyes.gd"), "behavior": "static"},
@@ -111,10 +112,20 @@ const STYLE_BAG := [Style.DIP, Style.DIP, Style.DIP, Style.DIP, Style.CUT, Style
 # change (movement) or a drop into quiet (lull).
 const TRIGGER_BAG := [Trigger.BEAT, Trigger.BEAT, Trigger.BEAT, Trigger.MOVEMENT, Trigger.MOVEMENT, Trigger.LULL]
 
-## Don't exit a looping scene before this (seconds) - keeps cuts from thrashing.
+## Don't exit a looping scene before this (seconds) - keeps cuts from thrashing. Both this and
+## max_hold are DRIVE-SCALED at use (see _pacing_scale): a loud/fast/energetic passage shortens the
+## holds so scenes cut faster, a calm one lengthens them. These are the calm-reference values.
 @export var min_hold: float = 7.0
-## Exit at least this often even if the chosen cue never arrives (seconds).
+## Exit at least this often even if the chosen cue never arrives (seconds). Drive-scaled (see min_hold).
 @export var max_hold: float = 28.0
+
+## Scene-pacing knobs (see _pacing_scale). The hold multiplier runs from pace_drive_scale (music at
+## full drive - loud/fast - so scenes cut fast) up to pace_calm_scale (quiet - scenes linger).
+## pace_energy_gain sets how strongly loudness alone shortens holds. Turn pace_drive_scale DOWN (or
+## pace_energy_gain UP) for punchier, faster-cutting shows.
+@export var pace_drive_scale: float = 0.35
+@export var pace_calm_scale: float = 1.2
+@export var pace_energy_gain: float = 3.4
 ## Hold the final scene through the song's closing stretch: once the playback is within
 ## this many seconds of the end (the audio fading out), stop changing scenes and let the
 ## current one ride to the finish - a late cut into a near-empty tail reads as a glitch.
@@ -135,6 +146,9 @@ const TRIGGER_BAG := [Trigger.BEAT, Trigger.BEAT, Trigger.BEAT, Trigger.MOVEMENT
 @export var layer_time: float = 6.0
 
 var _host: Node = null
+var _prev_time := -1.0       # last frame's MUSIC-CLOCK position (Spectrum.current.time); the per-frame
+                             # time step is derived from this, NOT the drawn-frame delta, so scenes and
+                             # the cut schedule stay locked to the song even when a heavy scene drops FPS
 var _current: GhostScene = null
 var _next: GhostScene = null
 var _index := -1
@@ -146,7 +160,7 @@ var _style: Style = Style.CUT
 var _trigger: Trigger = Trigger.BEAT
 var _beat_prev := 0.0
 var _audio_ema := 0.0        # smoothed audio level (fast attack, slow release) for the silence guard
-var _bookends := false       # export only: fade the picture up from black at the start, down at the end
+var _bookend_time := 6.0     # seconds of the start fade-up-from-black and end fade-down-to-black
 # Rapid-fire BURST: a sparse, harmonic-gated flurry of quick jump cuts (a cinematic "3 quick
 # scenes" effect) breaking up the slow holds. While a burst is live the holds shrink to a few
 # seconds and every exit is a hard CUT landing on the beat.
@@ -182,10 +196,12 @@ var _step := 0
 
 func attach(host: Node) -> void:
 	_host = host
-	_bookends = OS.get_cmdline_user_args().has("--export")   # fade the video in/out at its ends
 	_session_seed = _resolve_seed()
 	print("ghost: session seed %d (%s)" % [_session_seed, _seed_source()])
 	_rng.seed = _session_seed ^ 0x1234567
+	# A long-ish start/end fade, sampled per song into [3, 10] s. Derived from a HASH of the seed
+	# (not a draw off _rng) so it doesn't perturb the deterministic scene sequence.
+	_bookend_time = 3.0 + 7.0 * (float(hash([_session_seed, "bookend"]) & 0xFFFF) / 65535.0)
 	_locked = _locked_scene_arg()
 	_load_storyboard_arg()
 	_current = _make_scene()
@@ -310,10 +326,13 @@ func _load_storyboard_arg() -> void:
 
 
 # Reset the hold clock and choose the exit cue for the scene now on screen.
-# A harmonic-biased index in [0, n): the deterministic _rng draw XOR'd with the live seed_bias,
-# so the spectrum steers this discrete choice on TOP of the base sequence (not replacing it).
+# A deterministic index in [0, n) from the session _rng (itself seeded from the song fingerprint).
+# This USED to XOR the live Spectrum.seed_bias() so the spectrum steered the choice, but that value
+# samples the spectrum at the instant of the call and is not frame-reproducible in live playback, so
+# the same song rolled a different show every run. Harmonic content already enters deterministically
+# through the fingerprint-derived session seed; the pick stays song-driven AND reproducible.
 func _biased(n: int) -> int:
-	return absi(_rng.randi() ^ Spectrum.seed_bias()) % maxi(1, n)
+	return absi(_rng.randi()) % maxi(1, n)
 
 
 func _arm() -> void:
@@ -357,21 +376,20 @@ func _locked_scene_arg() -> int:
 	return -1
 
 
-# The video bookend fade: in export, the picture eases UP from black over the first
-# `transition_time` (a dip's incoming half) and back DOWN to black over the final
-# `transition_time` before the song ends - reusing the very same modulate.a-to-black that the
-# scene transitions use, so the first and last scenes fade like any other cut. 1.0 (no fade) in
-# the live app. Audio is owned by Spectrum and never touched.
+# The whole-show bookend fade: the picture eases UP from black over the first `_bookend_time`
+# seconds of the song and back DOWN to black over the final `_bookend_time` seconds before it
+# ends - reusing the very same modulate.a-to-black that the scene transitions use, so the first
+# and last scenes fade like any other cut. This runs whenever a song is loaded (LIVE and export
+# alike - not export-only any more), so the live animation gets the start/end fades too. Returns
+# 1.0 (no fade) only when idle, where there is no defined start or end. Audio is never touched.
 func _bookend_fade() -> float:
-	if not _bookends:
-		return 1.0
-	var fade := maxf(0.5, transition_time)
+	var slen := Spectrum.song_length()
+	if slen <= 0.0:
+		return 1.0                                    # idle / no song: no bookend
+	var fade := maxf(0.5, _bookend_time)
 	var t := Spectrum.current.time
 	var a_in := clampf(t / fade, 0.0, 1.0)            # 0 at the very start -> 1 after `fade`
-	var a_out := 1.0
-	var slen := Spectrum.song_length()
-	if slen > 0.0:
-		a_out = clampf((slen - t) / fade, 0.0, 1.0)   # 1 -> 0 over the final `fade` seconds
+	var a_out := clampf((slen - t) / fade, 0.0, 1.0)  # 1 -> 0 over the final `fade` seconds
 	return minf(a_in, a_out)
 
 
@@ -385,13 +403,24 @@ func _process(delta: float) -> void:
 	if _held:
 		return
 
+	# The per-frame time step is the advance of the MUSIC CLOCK, not the drawn-frame delta. When a
+	# heavy scene lags the renderer, the song keeps playing, so this step grows and animations advance
+	# MORE per frame - they stay pinned to where the music is instead of stretching the sequence out.
+	# (Matches the deterministic fixed-fps export exactly.) Fall back to the real delta on the first
+	# frame, a song loop/seek (time jumps), or a pause; clamp so a jump can't lurch the whole show.
+	var md := delta
+	if _prev_time >= 0.0:
+		var d := Spectrum.current.time - _prev_time
+		md = d if (d >= 0.0 and d <= 0.5) else clampf(delta, 0.0, 0.1)  # d==0: audio stalled this frame -> hold (no over-count)
+	_prev_time = Spectrum.current.time
+
 	var bf := _bookend_fade()                       # 1, except fading from/to black at the video's ends
 	if _transitioning:
 		var dur: float = layer_time if _style == Style.LAYER else transition_time
-		_trans_t += delta / maxf(0.01, dur)
+		_trans_t += md / maxf(0.01, dur)
 		var k := clampf(_trans_t, 0.0, 1.0)
-		_current.update(Spectrum.current, delta)
-		_next.update(Spectrum.current, delta)
+		_current.update(Spectrum.current, md)
+		_next.update(Spectrum.current, md)
 		# Both scenes keep animating; their alphas are sequenced so the picture is
 		# clean (a DIP never shows both at once).
 		var a := _transition_alphas(k)
@@ -399,20 +428,20 @@ func _process(delta: float) -> void:
 		_current.view.presence = a.x
 		_next.modulate.a = a.y * bf
 		_next.view.presence = a.y
-		_current.view.commit(delta)
-		_next.view.commit(delta)
+		_current.view.commit(md)
+		_next.view.commit(md)
 		if k >= 1.0:
 			_finish_transition()
 		return
 
-	_current.update(Spectrum.current, delta)
-	_current.view.commit(delta)
-	_elapsed += delta
+	_current.update(Spectrum.current, md)
+	_current.view.commit(md)
+	_elapsed += md
 	# Smoothed audio level: rises fast, falls slowly, so a momentary gap between beats doesn't
 	# read as silence but a genuinely dead track (or its silent tail) does.
 	var e: float = Spectrum.current.energy
-	_audio_ema = lerpf(_audio_ema, e, 1.0 - exp(-(8.0 if e > _audio_ema else 0.6) * delta))
-	_drive_stinger(delta, bf)                       # rapid-fire beat-synced modulation of THIS scene
+	_audio_ema = lerpf(_audio_ema, e, 1.0 - exp(-(8.0 if e > _audio_ema else 0.6) * md))
+	_drive_stinger(md, bf)                          # rapid-fire beat-synced modulation of THIS scene
 	if _should_change():
 		_begin_transition()
 	_beat_prev = Spectrum.current.beat
@@ -456,11 +485,14 @@ func _should_change() -> bool:
 	# trivially satisfies) drops a fresh scene into dead air. Hold until the audio returns.
 	if _audio_ema < silence_floor:
 		return false
-	# Hold the final scene to the end. Once the song is into its closing stretch (audio and
-	# harmonics fading), a cut to a fresh scene with almost nothing left to play reads as a
-	# glitch - so stop changing and let the current scene ride out the fade.
+	# Tail gate: normally hold the final scene through the song's closing stretch, so a cut into a
+	# near-empty FADING tail doesn't read as a glitch. But scale the gate by the current drive - if
+	# the track is still DRIVING hard right up to the end (a punchy sting, not a fade-out), the gate
+	# shrinks so transitions keep coming at that energy; only a genuine floor keeps us from cutting
+	# in the last couple of seconds. A quiet/fading ending keeps the full hold.
 	var slen := Spectrum.song_length()
-	if slen > 0.0 and Spectrum.current.time >= slen - end_hold:
+	var eff_end: float = clampf(end_hold * _pacing_scale(), 2.0, end_hold)
+	if slen > 0.0 and Spectrum.current.time >= slen - eff_end:
 		return false
 	# In manual mode, a non-looping storyboard holds its final scene forever.
 	if not _storyboard_seq.is_empty() and not _storyboard_loop and _step >= _storyboard_seq.size():
@@ -470,7 +502,7 @@ func _should_change() -> bool:
 	if ex.has("hold"):
 		return _elapsed >= float(ex["hold"])
 	# During a burst the backstop shrinks to a few seconds so quick scenes never linger.
-	var hi: float = _burst_max if _burst_left > 0 else float(ex.get("max", max_hold))
+	var hi: float = _burst_max if _burst_left > 0 else _scaled_bound(ex, "max", max_hold)
 	if _elapsed >= hi:                               # backstop: the cue never came
 		return true
 	if not _ready_to_exit(ex):
@@ -478,12 +510,29 @@ func _should_change() -> bool:
 	return _trigger_fires(ex)
 
 
+# Scene holds scale with the music's DRIVE: how hard it is pushing RIGHT NOW. A loud, fast, active
+# passage shrinks both the minimum and maximum hold so scenes cut faster; a calm one lets them
+# linger. Energy is the reliable backbone (a beat-period estimate alone barely moves for fast music
+# and stalls when onsets are missed); a quick pulse and busy spectral flux push it further. Returns
+# a hold multiplier from `pace_drive_scale` (full drive -> fast cuts) up to `pace_calm_scale`.
+func _pacing_scale() -> float:
+	var f := Spectrum.current
+	var fast := clampf((0.58 - f.beat_period) / 0.24, 0.0, 1.0)      # 1 when the pulse is quick
+	var drive := clampf(pace_energy_gain * _audio_ema + 0.45 * fast + 3.0 * f.flux, 0.0, 1.0)
+	return lerpf(pace_calm_scale, pace_drive_scale, drive)
+
+
+# A hold bound: a storyboard-explicit value is taken literally; the auto-mode default is pace-scaled.
+func _scaled_bound(ex: Dictionary, key: String, base: float) -> float:
+	return float(ex[key]) if ex.has(key) else base * _pacing_scale()
+
+
 # Eligibility: a oneshot when its sequence ends, a loop after the minimum hold (a short one in a
 # burst, so a quick scene becomes eligible to cut almost immediately - on the next beat).
 func _ready_to_exit(ex: Dictionary) -> bool:
 	if _current.lifecycle == "oneshot":
 		return _current.finished()
-	var lo: float = _burst_min if _burst_left > 0 else float(ex.get("min", min_hold))
+	var lo: float = _burst_min if _burst_left > 0 else _scaled_bound(ex, "min", min_hold)
 	return _elapsed >= lo
 
 
@@ -701,20 +750,21 @@ func _pick_index() -> int:
 	if SCENES.size() <= 1:
 		return 0
 	# Identity-keyed weighted selection (Efraimidis-Spirakis): each candidate gets a STABLE
-	# per-cut uniform from a hash of (session, cut#, this scene's identity, live harmonic bias),
-	# and we keep the one with the largest key = u^(1/weight). Because each scene's key depends
-	# only on ITS OWN identity - never on the catalogue's size or order - adding a new animation
-	# can only change the cuts it actually wins; it does not reshuffle the rest of the show. The
-	# harmonic bias still steers the choice (it re-rolls the uniforms when the spectrum shifts),
-	# and everything stays deterministic per song.
-	var bias := Spectrum.seed_bias()
+	# per-cut uniform from a hash of (session, cut#, this scene's identity), and we keep the one
+	# with the largest key = u^(1/weight). Because each scene's key depends only on ITS OWN
+	# identity - never on the catalogue's size or order - adding a new animation can only change
+	# the cuts it actually wins; it does not reshuffle the rest of the show. The hash is fully
+	# DETERMINISTIC per song (the session seed is the song fingerprint): the same audio picks the
+	# same scenes in the same order. It used to also fold in the live Spectrum.seed_bias(), but
+	# that samples the spectrum at the cut instant and is not frame-reproducible, so it re-rolled
+	# the running order every playback.
 	var best := -1
 	var best_key := -1.0
 	for i in SCENES.size():
 		var w := _novelty_weight(i)
 		if w <= 0.0:
 			continue
-		var h := hash([_session_seed, _swaps, _scene_key(i), bias])
+		var h := hash([_session_seed, _swaps, _scene_key(i)])
 		var u := clampf(float(h & 0xFFFFFFFF) / 4294967296.0, 1e-9, 1.0)
 		var key := pow(u, 1.0 / w)
 		if key > best_key:
@@ -752,10 +802,12 @@ func _next_entry() -> Dictionary:
 		_index = _pick_index()
 		_kind_last[String(SCENES[_index].script.resource_path)] = _swaps
 		var e: Dictionary = SCENES[_index]
-		# session identity ^ scene IDENTITY (not its array slot) ^ history (swaps) ^ a LIVE harmonic
-		# seed_bias sampled at this cut - so content, history, and the spectrum itself all steer the
-		# seed, while a scene's look stays the same no matter where it sits in the catalogue.
-		var seed := _session_seed ^ _scene_key(_index) ^ (_swaps * 0x85EBCA77) ^ Spectrum.seed_bias()
+		# session identity (from the song fingerprint) ^ scene IDENTITY (not its array slot) ^ history
+		# (swaps). Fully DETERMINISTIC: the same song yields the same seed here every run, so a scene's
+		# structure - clockwork's gears, a terrain's shape - reproduces exactly. The live
+		# Spectrum.seed_bias() used to be XOR'd in for extra harmonic steering, but it samples the
+		# spectrum at the cut instant and is not frame-reproducible, which re-rolled the look each play.
+		var seed := _session_seed ^ _scene_key(_index) ^ (_swaps * 0x85EBCA77)
 		return {"script": e.script, "behavior": e.behavior, "seed": seed,
 			"shot": "", "exit_spec": {}, "transition": ""}   # "" -> auto STYLE_BAG
 	# Manual: walk the sequence (wrap when looping, else hold on the last entry).
@@ -811,8 +863,9 @@ func _make_scene() -> GhostScene:
 	var seed: int = int(entry["seed"])
 	scene.init_with_seed(seed, String(entry["behavior"]))
 	scene.scene_name = String(script.resource_path).get_file().get_basename()
-	# Telemetry: the live harmonic bucket whose seed_bias was folded into this scene's seed at
-	# the cut. Same music (even re-encoded / cut up) should print the same bucket here. (See
+	# Telemetry only: the live harmonic bucket at the cut. It is NO LONGER folded into the scene
+	# seed (that broke run-to-run reproducibility); the seed is deterministic per song. Same music
+	# should still print the same bucket here, a useful observability signal. (See
 	# next/harmonic_seeding.md.)
 	print("ghost: cut -> %s  harmonic bucket %d" % [scene.scene_name, Spectrum.harmonic_bucket(12)])
 	scene.exit_spec = entry["exit_spec"]

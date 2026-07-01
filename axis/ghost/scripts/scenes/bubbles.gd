@@ -11,6 +11,12 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	framing = "field"
 	var hue: float = [0.5, 0.55, 0.45][rng.randi() % 3]    # teal / blue / green water
 	add_layer("bed", rng, {"hue": hue, "sat": 0.6, "val": 0.24, "pools": 3})
+	# Light pouring down from the surface (with caustics) and a blurry kelp floor, so the depths read
+	# as a lit underwater space rather than flat blue.
+	add_layer("surface", rng, {"hue": fposmod(hue + 0.03, 1.0), "caustics": rng.randi_range(6, 10),
+		"sun_x": rng.randf_range(-0.4, 0.4)})
+	add_layer("kelp", rng, {"hue": fposmod(hue - 0.04, 1.0), "fronds": rng.randi_range(10, 16),
+		"glows": rng.randi_range(2, 4)})
 	add_layer("dust", rng, {"hue": hue, "count": 90, "shaft": true, "shaft_x": rng.randf_range(-0.3, 0.3),
 		"drift": 0.004})
 	add_layer("bubbles", rng, {

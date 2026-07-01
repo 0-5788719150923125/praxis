@@ -16,6 +16,9 @@ var _dist := 7.0
 var _pitch := 0.45
 var _yaw_dir := 1.0
 var _yaw_speed := 0.10
+var _light_az := 0.0
+var _light_dir := 1.0
+var _light_el := 0.5
 
 const TYPES := ["hills", "mountains", "valleys", "canyon", "islands", "mesa"]
 
@@ -47,6 +50,12 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_yaw = rng.randf() * TAU
 	_yaw_dir = 1.0 if rng.randf() < 0.5 else -1.0
 	_yaw_speed = rng.randf_range(0.05, 0.14)
+	# A low key light (long shadows) whose azimuth drifts slowly, so the mountains' cast shadows
+	# gently sweep across the land as it moves.
+	_light_az = rng.randf() * TAU
+	_light_dir = 1.0 if rng.randf() < 0.5 else -1.0
+	_light_el = rng.randf_range(0.32, 0.52)
+	_terrain.set_light(_light_az, _light_el)
 	return {"type": ttype, "climate": climate, "surreal": pal != null}
 
 
@@ -58,6 +67,10 @@ func update(f: AudioFeatures, delta: float) -> void:
 	_yaw += delta * (_yaw_speed + 0.18 * f.energy) * _yaw_dir
 	var pitch := _pitch + 0.05 * sin(_life * 0.15)
 	lens.orbit(Vector3(0.0, _terrain.relief * 0.15, 0.0), _dist, _yaw, pitch)
+	# Drift the key light slowly and refresh the sweeping cast shadows.
+	_light_az += delta * 0.035 * _light_dir
+	_terrain.set_light(_light_az, _light_el)
+	_terrain.step_light(delta)
 	queue_redraw()
 
 

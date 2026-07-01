@@ -33,6 +33,8 @@ var _fils: Array = []
 var _hue := 0.0
 var _glow := 0.0
 var _beat_prev := 0.0
+var _loud := 0.0             # lightning: smoothed loudness (energy) - the audio-liveness gate
+var _flux_prev := 0.0        # lightning: smoothed spectral flux, for onset (transient) detection
 var _life_alpha := 1.0       # set per-filament before its draw, read by _color_for
 var _strike_acc := 0.0       # lightning: time since the last strike
 var _strike_period := 1.6    # lightning: fallback re-strike cadence (sampled), so it
@@ -73,18 +75,13 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 			fil.hold = rng.randf_range(1.6, 4.5)
 			fil.mode = _roll_mode()
 		_fils.append(fil)
-	# Lightning: seed an opening strike (mid-flash) so the very first frame already has
-	# bolts on screen, rather than waiting in the dark for the first beat.
+	# Mark some bolts as persistent CHANNELS: their base never fully fades and the next
+	# strike re-ionises the SAME path (real lightning re-uses its route). The rest are
+	# transient forks that come and go. Guarantee at least one channel. NO opening strike is
+	# seeded any more: lightning scatters from real audio energy (see the loudness gate in
+	# _update_strikes), so a silent intro / long fade-in stays dark instead of flashing out
+	# of dead air.
 	if bool(_cfg.strike):
-		for j in mini(2, _fils.size()):
-			var fil: Dictionary = _fils[j]
-			fil.active = true
-			fil.life = 1.0
-			fil.grown = rng.randf_range(0.5, 1.0)
-			fil.rate = _gauss_rate()        # even the opener's two bolts grow at their own pace
-		# Mark some bolts as persistent CHANNELS: their base never fully fades and the next
-		# strike re-ionises the SAME path (real lightning re-uses its route). The rest are
-		# transient forks that come and go. Guarantee at least one channel.
 		var any_persist := false
 		for fil in _fils:
 			if _rng.randf() < 0.45:
@@ -165,19 +162,32 @@ func update(f: AudioFeatures, delta: float) -> void:
 	queue_redraw()
 
 
-# Lightning: bolts strike on beats, flood in, blaze, then fade out. They also strike on
-# a fallback cadence (so quiet/no-audio stretches still flicker), and a strike is forced
-# whenever none are alive - so the scene is never pure black.
+# Lightning: bolts strike on beats and on harmonic transients, flood in, blaze, then fade
+# out. They strike ONLY when the audio is actually sounding - a smoothed-loudness gate keeps
+# the scene dark through a silent intro / fade-in, so bolts scatter from real spectral energy
+# rather than out of dead air. While the audio is alive, a fallback cadence still flickers
+# the bolts and a strike is forced if none are lit, so loud passages are never black.
 func _update_strikes(f: AudioFeatures, delta: float, grow: float, beat_edge: bool) -> void:
 	var drive := 0.5 + 1.5 * Nonlinear.apply("spike", clampf(0.6 * f.energy + f.beat, 0.0, 1.0), 2.0)
+	# Audio-liveness gate. `energy` is the overall loudness proxy (the per-band levels are a
+	# normalised spectral shape, so they read high even in near-silence and can't gate). Smooth
+	# it so a fade-in ramps in gradually, and treat sub-threshold loudness as dead air.
+	_loud = lerpf(_loud, f.energy, 1.0 - exp(-5.0 * delta))
+	var alive := _loud > 0.13
+	# A spectral-flux onset (a harmonic transient) scatters a fresh strike while alive.
+	var onset := alive and f.flux > 0.02 and f.flux > _flux_prev * 1.5
+	_flux_prev = lerpf(_flux_prev, f.flux, 0.35)
 	_strike_acc += delta
 	var any_active := false
 	for fil in _fils:
 		if fil.active:
 			any_active = true
-	if beat_edge or _strike_acc >= _strike_period or not any_active:
+	# Beats fire whenever the beat detector triggers (it only fires on real audio anyway). The
+	# fallback cadence and the never-black backstop are gated on `alive`, so silence stays dark.
+	var trigger := beat_edge or onset or (alive and (_strike_acc >= _strike_period or not any_active))
+	if trigger:
 		_strike_acc = 0.0
-		_strike_some(not any_active)
+		_strike_some(alive and not any_active)
 	for fil in _fils:
 		if not fil.active:
 			continue

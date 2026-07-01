@@ -61,6 +61,9 @@ var _baked_frames: Array = []
 # Smoothing / beat state.
 var _energy_avg := 0.0          # slow moving average, for onset comparison
 var _beat := 0.0
+var _onset_high := false        # tempo: were we above the onset threshold last frame (edge detect)
+var _last_beat_t := -1.0        # tempo: playback time of the previous beat onset
+var _beat_period := 0.5         # tempo: smoothed seconds between onsets (~120 BPM default)
 
 # Spectral-flux / movement state (drives audio-triggered scene changes).
 var _prev_bands := PackedFloat32Array()
@@ -247,11 +250,23 @@ func _process(delta: float) -> void:
 
 	# Beat: pulse when energy jumps above its slow average.
 	_energy_avg = lerpf(_energy_avg, raw_energy, 0.08)
-	if raw_energy > _energy_avg * 1.4 + 0.02:
+	var onset := raw_energy > _energy_avg * 1.4 + 0.02
+	# Tempo: on the RISING edge of an onset, measure the interval since the last one and fold it
+	# into a smoothed beat period. Reject implausible gaps (~30..270 BPM) so double-triggers and
+	# missed beats don't corrupt the estimate. This is the "how fast is the music" signal.
+	if onset and not _onset_high:
+		if _last_beat_t >= 0.0:
+			var ibi := f.time - _last_beat_t
+			if ibi > 0.22 and ibi < 2.0:
+				_beat_period = lerpf(_beat_period, ibi, 0.2)
+		_last_beat_t = f.time
+	_onset_high = onset
+	if onset:
 		_beat = 1.0
 	else:
 		_beat = maxf(0.0, _beat - delta * 4.0)
 	f.beat = _beat
+	f.beat_period = _beat_period
 
 	_compute_movement(f)
 	current = f

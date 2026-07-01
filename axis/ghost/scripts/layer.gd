@@ -166,6 +166,30 @@ static func draw_flake(ci: CanvasItem, c: Vector2, radius: float, ang: float,
 				color, width * 0.7, true)
 
 
+## The same six-fold dendrite, but drawn on an arbitrary 2D BASIS (ex, ey) instead of a flat
+## radius+angle. ex / ey are the screen-space images of the flake's local x / y axes (already
+## scaled to the flake radius). Feed them the orthographic projection of a tumbling 3D plane
+## and the flake foreshortens as it turns - real 3D tumbling (edge-on it thins to a line),
+## which reads as motion where a flat in-plane spin of a symmetric flake does not.
+static func draw_flake_basis(ci: CanvasItem, c: Vector2, ex: Vector2, ey: Vector2,
+		color: Color, width := 1.5, folds := 6, shape := 0.5) -> void:
+	var branch_at := 0.42 + 0.30 * shape
+	var branch_len := 0.26 + 0.34 * shape
+	var tip := 0.30 + 0.30 * (1.0 - shape)
+	for s in folds:
+		var a := TAU * float(s) / float(folds)
+		var arm := ex * cos(a) + ey * sin(a)          # local unit arm, projected (foreshortens)
+		var tipv := c + arm
+		ci.draw_line(c, tipv, color, width, true)
+		var bp := c + arm * branch_at
+		for sgn in [-1.0, 1.0]:
+			var ba: float = a + sgn * deg_to_rad(60.0)
+			ci.draw_line(bp, bp + (ex * cos(ba) + ey * sin(ba)) * branch_len, color, width * 0.8, true)
+		for sgn2 in [-1.0, 1.0]:
+			var ta: float = a + sgn2 * deg_to_rad(45.0)
+			ci.draw_line(tipv, tipv + (ex * cos(ta) + ey * sin(ta)) * (0.16 * tip), color, width * 0.7, true)
+
+
 # ---------------------------------------------------------------------------------
 # Bed - a full-frame colour wash: a soft vertical gradient plus a few slow colour
 # pools that breathe with the spectrum. The "colours underneath / inside" that fog,
@@ -650,40 +674,74 @@ class Petals:
 			var depth := seed_rng.randf_range(0.4, 1.0)
 			_petals.append({
 				"x": seed_rng.randf(), "y": seed_rng.randf(), "depth": depth,
-				"size": seed_rng.randf_range(0.012, 0.026) * depth,
+				"size": seed_rng.randf_range(0.016, 0.032) * depth,
+				"width": seed_rng.randf_range(0.52, 0.74),          # petal fullness (half-width fraction)
+				"curl": seed_rng.randf_range(-0.32, 0.32),          # sideways bend of the blade
 				"ang": seed_rng.randf() * TAU,
-				"spin": seed_rng.randf_range(-1.2, 1.2),
+				"spin": seed_rng.randf_range(-0.6, 0.6),
 				"hue_off": seed_rng.randf_range(-0.05, 0.05),
 				"flutter": seed_rng.randf() * TAU,
+				# A steady, gentle descent and a slow REGULAR side-to-side sway (a leaf gliding down),
+				# each petal a little different - never lurching, never speeding up and slowing down.
+				"fall_rate": seed_rng.randf_range(0.7, 1.2),
+				"sway_amp": seed_rng.randf_range(0.05, 0.11),
+				"sway_rate": seed_rng.randf_range(0.30, 0.6),
 			})
 
 	func update(f: AudioFeatures, dt: float, h: Vector2) -> void:
 		super(f, dt, h)
-		_flow.advance(dt)
-		var spd: float = num("fall", 0.08) * (1.0 + 0.3 * f.energy)
+		var spd: float = num("fall", 0.08)
 		for p in _petals:
-			p.y = fposmod(p.y + spd * float(p.depth) * dt, 1.0)
-			p.ang += p.spin * dt * (0.6 + 0.4 * f.energy)
+			# Gentle, steady descent (each petal its own calm rate). No flutter-driven surging.
+			var vy: float = spd * float(p.fall_rate) * float(p.depth) * (1.0 + 0.2 * f.energy)
+			p.y = fposmod(p.y + vy * dt, 1.0)
+			# A calm, CONSTANT-rate tumble - it turns the same gentle speed the whole way down, so
+			# the sway never reads as "fast, then slow, then fast".
+			p.ang += float(p.spin) * dt * (0.6 + 0.25 * f.energy)
 
 	func draw(ci: CanvasItem, u: float) -> void:
 		var base_h: float = num("hue", 0.95)
 		var sat: float = num("sat", 0.5)
 		for p in _petals:
-			var breeze := _flow.at(Vector2(p.x * 2.0 - 1.0, p.y * 2.0 - 1.0)) * 0.06
-			var px: float = (p.x * 2.0 - 1.0) * half.x + breeze.x + 0.05 * sin(t * 0.7 + p.flutter)
+			# A smooth, slow, REGULAR pendulum sway - the petal glides side to side at one steady
+			# rhythm (no noisy curl-flow wander, which read as an erratic waggle).
+			var rock: float = float(p.sway_amp) * sin(t * float(p.sway_rate) + float(p.flutter))
+			var px: float = (p.x * 2.0 - 1.0) * half.x + rock
 			var py: float = (p.y * 2.0 - 1.0) * half.y
 			var c: Vector2 = Vector2(px, py) * u
 			var s: float = float(p.size) * u
-			# A petal = a thin diamond, foreshortened by its flutter so it tumbles.
-			var fold := 0.35 + 0.65 * absf(sin(t * 1.1 + p.flutter))
+			# Foreshorten in step with the same slow sway, so the blade turns as it glides - one
+			# coherent, unhurried motion rather than an independent fast flicker.
+			var fold := 0.35 + 0.65 * absf(sin(t * float(p.sway_rate) + float(p.flutter)))
 			var col := Color.from_hsv(fposmod(base_h + p.hue_off, 1.0), sat,
 				0.85, 0.5 + 0.4 * float(p.depth))
-			var pts := PackedVector2Array([
-				Vector2(0, -s), Vector2(s * 0.6 * fold, 0), Vector2(0, s), Vector2(-s * 0.6 * fold, 0)])
-			var tp := PackedVector2Array()
-			for v in pts:
-				tp.append(c + v.rotated(p.ang))
-			ci.draw_colored_polygon(tp, col)
+			ci.draw_colored_polygon(_petal_poly(c, s, float(p.width) * fold, float(p.curl), float(p.ang)), col)
+
+	# A real PETAL outline (not a diamond): convex curved sides tapering to a pointed base, a
+	# broad rounded outer end with a soft central NOTCH (the cherry-blossom silhouette), gently
+	# curled. Built parametrically in local space, then curled, rotated and translated to `c`.
+	func _petal_poly(c: Vector2, s: float, width: float, curl: float, ang: float) -> PackedVector2Array:
+		var right := PackedVector2Array()
+		var left := PackedVector2Array()
+		var N := 8
+		for i in N + 1:
+			var lz := float(i) / float(N)                     # 0 base (point) .. 1 outer edge
+			var yy := s - 1.9 * s * lz                        # +s (base) .. ~-0.9s (near outer)
+			var w := s * width * pow(sin(PI * 0.5 * lz), 0.8) # 0 at base, widest at the outer end
+			var cx := curl * s * sin(PI * lz)                 # gentle sideways curl
+			right.append(Vector2(cx + w, yy))
+			left.append(Vector2(cx - w, yy))
+		var topw := s * width                                 # full half-width at the outer edge
+		var pts := PackedVector2Array(right)                  # base -> up the right side
+		pts.append(Vector2(topw * 0.55, -s))                  # right lobe of the outer edge
+		pts.append(Vector2(0.0, -s + 0.34 * s))               # central notch (dips back toward base)
+		pts.append(Vector2(-topw * 0.55, -s))                 # left lobe
+		for j in left.size():
+			pts.append(left[left.size() - 1 - j])             # down the left side -> base
+		var out := PackedVector2Array()
+		for pt in pts:
+			out.append(c + pt.rotated(ang))
+		return out
 
 
 # ---------------------------------------------------------------------------------
@@ -755,38 +813,66 @@ class Bubbles:
 	var _trickle := 0.0
 	var _gurgle := 0.0
 	var _beat_prev := 0.0
-	const CAP := 240
+	var _seeded := false              # prefill the whole frame on the first update (see update)
+	const CAP := 260
 
 	func _init(seed_rng: RandomNumberGenerator, c: Dictionary = {}) -> void:
 		super(seed_rng, c)
 		_flow = FlowField.new(seed_rng.randi(), 1.4, 0.05)
-		for i in seed_rng.randi_range(2, 4):
-			_emitters.append(seed_rng.randf_range(-0.8, 0.8))
+		# Vents spread across nearly the full width so bubbles rise from everywhere, not two
+		# columns - the field should occupy the frame, not one corner.
+		for i in seed_rng.randi_range(4, 7):
+			_emitters.append(seed_rng.randf_range(-0.92, 0.92))
 		_gurgle = seed_rng.randf_range(0.4, 1.8)
 
 	# Release one bubble from vent `ex` (normalized x). `scale` shrinks a burst's bubbles.
 	func _spawn(ex: float, scale: float) -> void:
 		if _bubbles.size() >= CAP:
 			return
-		var size: float = pow(rng.randf(), 1.8) * 0.026 * scale + 0.0022   # skew small, but enough mid bubbles to read
+		# DEPTH sets how near/far this bubble is: near ones are bigger and crisp, far ones tiny and
+		# blurred (see draw). Skewed so most bubbles sit back in the soft depths.
+		var depth := pow(rng.randf(), 1.5)
+		var size: float = (0.004 + 0.024 * depth) * scale * rng.randf_range(0.7, 1.15) + 0.0018
 		_bubbles.append({
-			"x": ex * half.x + rng.randf_range(-0.025, 0.025),
+			"x": ex * half.x + rng.randf_range(-0.03, 0.03),
 			"y": half.y * rng.randf_range(0.82, 0.98),         # near the bed, clearly inside the frame
-			"size": size,
+			"size": size, "depth": depth,
 			# Terminal-velocity rise: buoyancy balances drag, so bubbles climb at a calm, bounded
-			# speed (bigger ones a little faster) - not an accelerating cartoon shot upward.
-			"vy": num("rise", 0.075) * (0.45 + 9.0 * size) * rng.randf_range(0.85, 1.15),
-			"wob_amp": rng.randf_range(0.012, 0.045),          # they spiral as they rise
-			"wob_rate": rng.randf_range(0.6, 1.6),
+			# speed (bigger ones a little faster) - not an accelerating cartoon shot upward, but
+			# clearly UPWARD: rise dominates, so they head for the surface rather than milling about.
+			"vy": num("rise", 0.17) * (0.7 + 10.0 * size) * rng.randf_range(0.9, 1.15),
+			# A slight, slow lateral sway on the way up - just enough to look alive, not a fast
+			# left-right shimmy. Once at terminal velocity a bubble barely wanders sideways.
+			"wob_amp": rng.randf_range(0.005, 0.018),
+			"wob_rate": rng.randf_range(0.25, 0.7),
 			"squash_rate": rng.randf_range(1.2, 2.8),
+			"squash_amp": rng.randf_range(0.07, 0.17),         # how hard the skin jiggles (oblate<->prolate)
 			"phase": rng.randf() * TAU,
+			"hl_phase": rng.randf() * TAU,                     # the catch-light's own drift phase
 			"age": 0.0,
-			# Variable-length lifetimes, skewed so most are short and a few linger.
-			"life": 1.4 + pow(rng.randf(), 0.7) * 7.0,
+			# Long enough to travel the frame; most pop at the surface, not mid-water.
+			"life": 4.0 + pow(rng.randf(), 0.7) * 9.0,
 		})
+
+	# Scatter a full frame of bubbles at varied heights and lifecycle points, so the scene
+	# opens already populated top-to-bottom instead of waiting for a column to rise from the
+	# bed. Done once, on the first update, when `half` (the real visible extent) is known.
+	func _prefill() -> void:
+		var target := int(num("count", 60))
+		for i in target:
+			_spawn(0.0, rng.randf_range(0.4, 1.0))
+			if _bubbles.is_empty():
+				break
+			var b: Dictionary = _bubbles[-1]
+			b.x = rng.randf_range(-1.0, 1.0) * half.x
+			b.y = rng.randf_range(-half.y * 0.85, half.y * 0.98)
+			b.age = rng.randf_range(0.0, float(b.life) * 0.6)
 
 	func update(f: AudioFeatures, dt: float, h: Vector2) -> void:
 		super(f, dt, h)
+		if not _seeded:
+			_seeded = true
+			_prefill()
 		_flow.advance(dt)
 		# A steady trickle from the vents.
 		_trickle -= dt
@@ -812,9 +898,11 @@ class Bubbles:
 		for b in _bubbles:
 			b.age += dt
 			b.y -= float(b.vy) * boost * dt
-			b.x += _flow.at(Vector2(b.x / maxf(0.01, half.x), b.y / maxf(0.01, half.y))).x * 0.04 * dt
+			b.x += _flow.at(Vector2(b.x / maxf(0.01, half.x), b.y / maxf(0.01, half.y))).x * 0.025 * dt
+			# Pop at the end of life, at the surface, or - rarely - mid-water. The random hazard is
+			# low so bubbles mostly survive the climb and populate the full height of the frame.
 			var pop: bool = b.age > float(b.life) or b.y < -half.y * 0.85 \
-				or (b.age > 0.7 and rng.randf() < 1.2 * dt)
+				or (b.age > 1.0 and rng.randf() < 0.22 * dt)
 			if pop:
 				_pops.append({"x": b.x, "y": b.y, "size": float(b.size), "age": 0.0})
 			else:
@@ -833,31 +921,51 @@ class Bubbles:
 			# Ease in at birth AND ease out in the last moments, so a bubble doesn't blink
 			# out abruptly - it thins away just before it pops.
 			var fin: float = clampf(b.age * 3.0, 0.0, 1.0) * clampf((float(b.life) - b.age) * 4.0, 0.0, 1.0)
+			# Bubbles are only SLIGHTLY opaque, and each one's transparency breathes GENTLY over time
+			# as it flows up - so the glass shimmers softly rather than reading as a solid disc.
+			var a: float = fin * (0.62 + 0.26 * sin(t * 0.5 + float(b.phase)))
 			# Spiral path: a smooth two-frequency lateral sway, so the bubble corkscrews up.
 			var wob: float = float(b.wob_amp) * (sin(t * float(b.wob_rate) + b.phase)
 				+ 0.4 * sin(t * float(b.wob_rate) * 1.7 + float(b.phase) * 2.0))
 			var c: Vector2 = Vector2(b.x + wob, b.y) * u
 			var r: float = float(b.size) * u
+			# Depth-of-field: NEAR bubbles (sharp~1) are crisp glassy spheres; FAR ones (sharp~0) are
+			# small, soft, low-contrast blooms - so the field reads as bubbles scattered through DEPTH.
+			var sharp: float = float(b.depth)
+			var soft := 1.0 - sharp
 			if r < 1.6:
-				ci.draw_circle(c, maxf(0.8, r), Color(0.85, 0.93, 1.0, 0.28 * fin))   # distant fleck
+				Layer.puff(ci, c, maxf(2.0, r * (2.2 + 2.0 * soft)), Color(0.85, 0.93, 1.0, 0.14 * a))   # distant blurred fleck
 				continue
-			# A glassy, transparent sphere: a soft refraction halo, a barely-there fill you see
-			# through, a dim full rim brightening to a lit crescent on the upper-left, a sharp
-			# specular highlight, and a faint spot of light TRANSMITTED through to the lower-right.
-			Layer.puff(ci, c, r * 1.7, Color(tint.r, tint.g, tint.b, 0.09 * fin))
-			ci.draw_colored_polygon(Layer.ellipse(c, r * 0.92, r * 0.92, 18),
-				Color(tint.r * 0.7, tint.g * 0.85, 1.0, 0.07 * fin))
-			var rim := Layer.ellipse(c, r, r, 22)
-			rim.append(rim[0])
-			ci.draw_polyline(rim, Color(0.80, 0.90, 1.0, 0.34 * fin), maxf(1.0, r * 0.06), true)
-			ci.draw_arc(c, r, PI * 0.9, PI * 1.55, 12, Color(0.97, 0.99, 1.0, 0.7 * fin), maxf(1.3, r * 0.12), true)
-			ci.draw_circle(c + Vector2(-r * 0.34, -r * 0.34), maxf(1.0, r * 0.18), Color(1, 1, 1, 0.85 * fin))
-			ci.draw_circle(c + Vector2(r * 0.30, r * 0.32), maxf(0.8, r * 0.11), Color(0.9, 0.96, 1.0, 0.38 * fin))
-		# Pops: a soft, quick wisp fading out - a bubble's skin breaking, not an explosion.
+			# A glassy, transparent sphere. Its rest shape is a pure CIRCLE (the baseline); the only
+			# deformation is a gentle VERTICAL stretch that pulses up from the circle and relaxes back.
+			var wf: float = t * float(b.squash_rate) + float(b.phase)
+			var st: float = float(b.squash_amp) * 0.5 * (1.0 - cos(wf))   # 0 = circle .. squash_amp = tallest
+			var rx: float = r * (1.0 - 0.5 * st)                          # narrows a touch as it heightens (area ~kept)
+			var ry: float = r * (1.0 + st)
+			var ring := Layer.ellipse(c, rx, ry, 26)
+			# Refraction halo - blooms WIDER and fills in for far bubbles (out of focus).
+			Layer.puff(ci, c, r * (1.6 + 1.9 * soft), Color(tint.r, tint.g, tint.b, 0.07 * a * (0.5 + 0.7 * sharp)))
+			ci.draw_colored_polygon(ring, Color(tint.r * 0.7, tint.g * 0.85, 1.0, 0.045 * a * (0.6 + 0.5 * sharp)))
+			# Rim: crisp thin+bright when near, soft thick+faint when far.
+			var rim := PackedVector2Array(ring)
+			rim.append(ring[0])
+			ci.draw_polyline(rim, Color(0.80, 0.90, 1.0, 0.30 * a * (0.3 + 0.7 * sharp)), maxf(1.0, r * (0.05 + 0.18 * soft)), true)
+			# Lit crescent + sharp specular only really register on the nearer, crisper bubbles.
+			if sharp > 0.28:
+				var cr0: float = PI * 1.12 + 0.08 * sin(wf * 0.7)
+				ci.draw_arc(c, maxf(rx, ry) * 0.94, cr0, cr0 + 0.5, 12, Color(0.97, 0.99, 1.0, 0.48 * a * sharp), maxf(1.1, r * 0.09), true)
+			# Specular catch-light: a tight bright dot up near, a wide soft glow when far.
+			var hp: Vector2 = c + Vector2(-0.34 + 0.09 * sin(wf * 0.9 + float(b.hl_phase)),
+				-0.34 + 0.07 * cos(wf * 1.1 + float(b.hl_phase))) * r
+			Layer.puff(ci, hp, r * (0.45 + 0.7 * soft), Color(1, 1, 1, 0.5 * a * (0.4 + 0.6 * sharp)))
+			var gp: Vector2 = c + Vector2(0.30 + 0.05 * sin(wf * 1.2), 0.32 + 0.05 * cos(wf)) * r
+			Layer.puff(ci, gp, r * (0.32 + 0.3 * soft), Color(0.9, 0.96, 1.0, 0.26 * a * (0.4 + 0.6 * sharp)))
+		# Pops: a faint, quick wisp fading out - a bubble's skin breaking, not an explosion. Stays
+		# close to the bubble's own size and only barely expands, so it never flashes or balloons.
 		for p in _pops:
 			var k: float = float(p.age) / 0.22
-			Layer.puff(ci, Vector2(p.x, p.y) * u, float(p.size) * u * (1.4 + 1.0 * k),
-				Color(0.85, 0.93, 1.0, (1.0 - k) * 0.18))
+			Layer.puff(ci, Vector2(p.x, p.y) * u, float(p.size) * u * (0.9 + 0.4 * k),
+				Color(0.85, 0.93, 1.0, (1.0 - k) * 0.09))
 
 
 # ---------------------------------------------------------------------------------
@@ -1081,7 +1189,7 @@ class Fire:
 		s["vy"] = r.randf_range(1.2, 2.4) if lick else r.randf_range(0.35, 1.05)
 		s["size"] = r.randf_range(0.010, 0.024) if lick else r.randf_range(0.006, 0.018)
 		s["flen"] = r.randf_range(0.05, 0.13)      # flame-tongue length (fraction of unit)
-		s["amp"] = r.randf_range(0.03, 0.10)       # how much this tongue weaves
+		s["amp"] = r.randf_range(0.015, 0.05)      # how much this tongue weaves (kept small: a gentle lean, not a big curl)
 		s["flicker"] = r.randf_range(6.0, 16.0)    # per-spark flicker rate
 		s["phase"] = r.randf() * TAU
 		s["decay"] = (0.40 + 0.45 * float(s["vy"])) * (0.42 if lick else 1.0)   # licks last longer
@@ -1128,19 +1236,28 @@ class Fire:
 			var hot := exp(-pow((float(s.x) - _hot_x) / 0.45, 2.0))   # 0..1 proximity to the hot side
 			var tall := (1.6 + 4.5 * _burst) * (0.55 + hot) if bool(s.lick) else 1.0
 			var hgt: float = float(s.flen) * u * (0.5 + 0.7 * heat) * flick * (1.0 + 0.7 * hot) * tall
-			# Weave is a COHERENT sideways sway, the same for the whole tongue, so the flame leans/
-			# curls as one - it does not point in a random direction.
-			var weave := (sin(t * 2.0 + float(s.phase) + float(s.y) * 4.0)
-				+ 0.5 * sin(t * 3.3 + float(s.phase) * 1.7)) \
-				* float(s.amp) * u * (1.0 + 2.0 * float(s.lick))
+			# Sway is a COHERENT, SLOW sideways lean - the same for the whole tongue, so the flame
+			# leans as one. Deliberately low-frequency and small, not a fast left-right flail (that
+			# read as unnatural wagging), and the tall licks weave only a little more, not 3x.
+			# A gentle, slow, coherent sideways swing turned into a bend that is a small FRACTION of
+			# the flame's OWN height. Scaling by height (not a fixed pixel offset) means short and tall
+			# tongues curve by the SAME modest amount - the old fixed offset whipped the short flames
+			# into hooks. A mild inward bias leans outer flames toward the centre. Clamped so the curl
+			# always stays subtle - the flame reads as upright with a lick, never a big C.
+			var swing := sin(t * 0.9 + float(s.phase) + float(s.y) * 2.0) \
+				+ 0.4 * sin(t * 1.4 + float(s.phase) * 1.7)
+			var lean := clampf((swing * float(s.amp) * 2.0 - float(s.x) * 0.06) * (1.0 + 0.3 * float(s.lick)), -0.16, 0.16)
 			# Draw the flame as a COLUMN of soft gaussian puffs: a bright, wide white-hot HEAD that
 			# leads at the top (where the flame is climbing to) tapering down to a thin, dim, red
 			# TAIL that trails DOWNWARD behind it - so the wisp flows down, not up. fk=0 is the tail
-			# (bottom), fk=1 the head (top); the head curls with the coherent sway.
+			# (bottom), fk=1 the head (top).
 			var steps: int = clampi(int(hgt / maxf(w * 0.7, 1.0)) + 3, 4, 16)
 			for k in steps:
 				var fk := float(k) / float(steps - 1)            # 0 tail (bottom) .. 1 head (top)
-				var pp := c + Vector2(weave * fk * fk, -hgt * fk)  # up toward the head + a coherent curl
+				# sin(pi*fk): ZERO at the tail and ZERO at the tip, peaking mid-tongue. So the body
+				# leans but the tip always tapers straight UP - never a sideways or downward hook.
+				var bend := lean * hgt * sin(PI * fk)
+				var pp := c + Vector2(bend, -hgt * fk)
 				var pr := w * (0.45 + 1.05 * fk)                 # thin tail -> wide rounded head
 				var hue := fposmod(0.02 + 0.09 * fk, 1.0)        # red tail -> orange-yellow head
 				var sat := clampf(lerpf(1.0, 0.45, fk), 0.0, 1.0)           # red tail -> white-hot head
@@ -1148,7 +1265,7 @@ class Fire:
 				var a := clampf(lerpf(0.12, 0.55, fk) * (0.6 + 0.4 * heat), 0.0, 1.0)
 				Layer.puff(ci, pp, pr, Color.from_hsv(hue, sat, val, a))
 			# A soft warm glow around the HEAD - the flame's brightest light (a halo, not a dot).
-			Layer.puff(ci, c + Vector2(weave * 0.9, -hgt * 0.85), w * 3.0,
+			Layer.puff(ci, c + Vector2(lean * hgt * sin(PI * 0.85), -hgt * 0.85), w * 3.0,
 				Color.from_hsv(0.10, 0.5, clampf((0.6 + 0.5 * heat) * flick, 0.0, 1.0), 0.13 * (0.6 + 0.4 * heat)))
 
 
@@ -1448,8 +1565,150 @@ class Veil:
 				Color.from_hsv(hue, sat, val, va))
 
 
+# ---------------------------------------------------------------------------------
+# Surface - the lit water SURFACE far above: a bright wash of light pouring down from a distant
+# sun in the sky, and drifting CAUSTIC ripples (the refracted light-net). Fills the "dead space"
+# at the top of the underwater scenes with a real light source and topological refraction. Soft,
+# additive, brightest at the top and fading into the depths; brightens and shimmers with the music.
+# ---------------------------------------------------------------------------------
+class Surface:
+	extends Base
+	var _hue := 0.54
+	var _sun := 0.0
+	var _e := 0.0
+	var _caustics: Array = []
+
+	func _init(seed_rng: RandomNumberGenerator, c: Dictionary = {}) -> void:
+		super(seed_rng, c)
+		_hue = num("hue", 0.54)
+		_sun = num("sun_x", seed_rng.randf_range(-0.45, 0.45))
+		for i in int(num("caustics", 8)):
+			# Each caustic is a wavy bright band shimmering across the frame, packed toward the top
+			# (the light-net is strongest near the surface and dissolves with depth).
+			var d := pow(seed_rng.randf(), 1.6)                      # 0 top .. 1 deeper (skewed shallow)
+			_caustics.append({
+				"y": lerpf(-1.02, 0.35, d), "depth": d,
+				"amp": seed_rng.randf_range(0.02, 0.07), "freq": seed_rng.randf_range(1.6, 4.5),
+				"speed": seed_rng.randf_range(0.12, 0.4) * (1.0 if seed_rng.randf() < 0.5 else -1.0),
+				"phase": seed_rng.randf() * TAU, "w": seed_rng.randf_range(0.015, 0.05),
+				"bright": seed_rng.randf_range(0.35, 0.9)})
+
+	func update(f: AudioFeatures, dt: float, h: Vector2) -> void:
+		super(f, dt, h)
+		_e = lerpf(_e, f.energy, 1.0 - exp(-3.0 * dt))
+
+	func draw(ci: CanvasItem, u: float) -> void:
+		var lit := 0.55 + 0.55 * _e
+		# The surface glow: a bright gradient band pouring down from the top edge, fading into depth.
+		var top := Color.from_hsv(_hue, 0.16, 1.0, 0.30 * lit)
+		var midf := Color.from_hsv(_hue, 0.34, 1.0, 0.10 * lit)
+		var zero := Color.from_hsv(_hue, 0.4, 1.0, 0.0)
+		var x := half.x * u * 1.5
+		var y0 := -half.y * u * 1.5
+		var y1 := -half.y * u * 0.15
+		var y2 := half.y * u * 0.6
+		ci.draw_polygon(PackedVector2Array([Vector2(-x, y0), Vector2(x, y0), Vector2(x, y1), Vector2(-x, y1)]),
+			PackedColorArray([top, top, midf, midf]))
+		ci.draw_polygon(PackedVector2Array([Vector2(-x, y1), Vector2(x, y1), Vector2(x, y2), Vector2(-x, y2)]),
+			PackedColorArray([midf, midf, zero, zero]))
+		# The distant SUN through the surface: a soft bright bloom at the top, swaying gently.
+		var sunp := Vector2((_sun + 0.06 * sin(t * 0.2)) * half.x, -half.y * 0.98) * u
+		Layer.puff(ci, sunp, maxf(half.x, half.y) * u * (0.6 + 0.2 * _e), Color.from_hsv(_hue, 0.10, 1.0, 0.22 * lit))
+		Layer.puff(ci, sunp, maxf(half.x, half.y) * u * 0.28, Color(1.0, 1.0, 1.0, 0.16 * lit))
+		# Caustics: drifting wavy bright bands - the refracted light-net - fading with depth.
+		var segs := 22
+		for ca in _caustics:
+			var yb: float = float(ca.y)
+			var fade := clampf(1.0 - float(ca.depth) * 0.85, 0.08, 1.0)
+			var a: float = float(ca.bright) * fade * lit * 0.5
+			if a < 0.01:
+				continue
+			var pts := PackedVector2Array()
+			for i in segs + 1:
+				var fx := float(i) / float(segs)
+				var wx := (fx * 2.0 - 1.0) * half.x
+				var wy := yb + float(ca.amp) * sin(wx * float(ca.freq) + t * float(ca.speed) + float(ca.phase)) \
+					+ 0.02 * sin(wx * float(ca.freq) * 2.3 - t * float(ca.speed) * 0.7)
+				pts.append(Vector2(wx, wy * half.y) * u)
+			var col := Color.from_hsv(_hue, 0.2, 1.0, a)
+			ci.draw_polyline(pts, Color(col.r, col.g, col.b, a * 0.4), float(ca.w) * half.y * u * 2.2, true)
+			ci.draw_polyline(pts, col, maxf(1.0, float(ca.w) * half.y * u * 0.7), true)
+
+
+# ---------------------------------------------------------------------------------
+# Kelp - the sea FLOOR: tall soft kelp fronds swaying up from the bottom, and a few blurry
+# bioluminescent glows pooled among them - abstract, transparent, all out of focus in the deep
+# water. Anchors the underwater scenes with a floor and life instead of empty blue below.
+# ---------------------------------------------------------------------------------
+class Kelp:
+	extends Base
+	var _fronds: Array = []
+	var _glows: Array = []
+	var _hue := 0.5
+	var _e := 0.0
+
+	func _init(seed_rng: RandomNumberGenerator, c: Dictionary = {}) -> void:
+		super(seed_rng, c)
+		_hue = num("hue", 0.48)
+		for i in int(num("fronds", 14)):
+			_fronds.append({
+				"x": seed_rng.randf_range(-1.05, 1.05),
+				"h": seed_rng.randf_range(0.55, 1.25),                 # height (unit fractions)
+				"w": seed_rng.randf_range(0.02, 0.055),
+				"sway": seed_rng.randf_range(0.05, 0.16), "rate": seed_rng.randf_range(0.3, 0.8),
+				"phase": seed_rng.randf() * TAU, "lean": seed_rng.randf_range(-0.12, 0.12),
+				"hue_off": seed_rng.randf_range(-0.06, 0.10), "bright": seed_rng.randf_range(0.5, 1.0)})
+		for i in int(num("glows", 4)):
+			_glows.append({
+				"x": seed_rng.randf_range(-0.9, 0.9), "y": seed_rng.randf_range(0.55, 0.95),
+				"size": seed_rng.randf_range(0.12, 0.32), "hue_off": seed_rng.randf_range(-0.05, 0.2),
+				"phase": seed_rng.randf() * TAU, "bright": seed_rng.randf_range(0.4, 0.9),
+				"near": seed_rng.randf()})     # 0 far/big/soft .. 1 near/tighter/brighter (uneven diffusion)
+
+	func update(f: AudioFeatures, dt: float, h: Vector2) -> void:
+		super(f, dt, h)
+		_e = lerpf(_e, f.energy, 1.0 - exp(-3.0 * dt))
+
+	func draw(ci: CanvasItem, u: float) -> void:
+		var lit := 0.6 + 0.5 * _e
+		# Blurry bioluminescent light-source glows pooled on the floor (drawn first, behind the fronds).
+		# Each sits at its own DEPTH: far ones bloom big and soft, near ones are tighter and brighter -
+		# so they diffuse unevenly, reading as lights at different distances. Smooth gaussian puffs
+		# (not stacked discs), so no concentric-ring banding.
+		for g in _glows:
+			var pulse := 0.6 + 0.4 * sin(t * 0.6 + float(g.phase))
+			var gc := Vector2(float(g.x) * half.x, float(g.y) * half.y) * u
+			var near: float = float(g.near)
+			var base := float(g.size) * maxf(half.x, half.y) * u
+			var hue := fposmod(_hue + float(g.hue_off), 1.0)
+			var br: float = float(g.bright) * pulse * lit
+			# A wide soft halo (bigger/fainter for far lights) plus a tighter, brighter core (near).
+			Layer.puff(ci, gc, base * (2.0 - 1.1 * near), Color.from_hsv(hue, 0.5, 1.0, (0.04 + 0.05 * (1.0 - near)) * br))
+			Layer.puff(ci, gc, base * (0.9 - 0.4 * near), Color.from_hsv(hue, 0.4, 1.0, (0.06 + 0.12 * near) * br))
+		# Kelp fronds: a wavy strand rooted at the floor, swaying more toward its tip, soft and
+		# translucent (blurry silhouettes fading out into the water above).
+		var base_y := half.y * u
+		var segs := 12
+		for fr in _fronds:
+			var pts := PackedVector2Array()
+			var cols := PackedColorArray()
+			var col := Color.from_hsv(fposmod(_hue + float(fr.hue_off), 1.0), 0.55, 0.5 + 0.4 * lit)
+			for i in segs + 1:
+				var fy := float(i) / float(segs)                      # 0 root .. 1 tip
+				var sway := (float(fr.lean) + float(fr.sway) * sin(t * float(fr.rate) + float(fr.phase) + fy * 2.5)) * fy * fy
+				var px := (float(fr.x) + sway) * half.x
+				var py := (1.0 - fy * float(fr.h)) * half.y
+				pts.append(Vector2(px, py) * u)
+				cols.append(Color(col.r, col.g, col.b, (0.5 * float(fr.bright)) * (1.0 - fy) * lit))   # fade to the tip
+			var wpx := float(fr.w) * half.x * u
+			ci.draw_polyline_colors(pts, cols, wpx * 2.4, true)       # soft wide pass (blur)
+			ci.draw_polyline_colors(pts, cols, maxf(1.0, wpx), true)
+
+
 const REGISTRY := {
 	"bed": Bed,
+	"surface": Surface,
+	"kelp": Kelp,
 	"fog": Fog,
 	"snow": Snow,
 	"rain": Rain,

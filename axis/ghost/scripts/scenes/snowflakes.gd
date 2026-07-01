@@ -33,16 +33,23 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	var n := rng.randi_range(26, 50)
 	for i in n:
 		var depth := rng.randf_range(0.35, 1.0)
-		# Each flake spins on its own: a signed angular velocity (either direction) with a
-		# varied magnitude, so the field turns organically instead of in lockstep.
-		var avel := rng.randf_range(0.18, 0.85) * (1.0 if rng.randf() < 0.5 else -1.0)
+		# Each flake is a thin plate TUMBLING in 3D: a full starting orientation and a signed
+		# angular velocity on all THREE axes, so it turns in space and foreshortens as it goes
+		# (edge-on it thins to a line). A flat in-plane spin of a six-fold-symmetric flake barely
+		# reads; a 3D tumble unmistakably does.
 		_flakes.append({
 			"pos": Vector2(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0)),
 			"size": rng.randf_range(0.02, 0.07) * depth,
 			"depth": depth,
 			"shape": rng.randf(),
-			"avel": avel,
-			"ang": rng.randf() * TAU,        # starting orientation, also varied
+			"ax": rng.randf() * TAU, "ay": rng.randf() * TAU, "az": rng.randf() * TAU,
+			"wx": rng.randf_range(0.35, 1.1) * (1.0 if rng.randf() < 0.5 else -1.0),
+			"wy": rng.randf_range(0.35, 1.1) * (1.0 if rng.randf() < 0.5 else -1.0),
+			"wz": rng.randf_range(0.35, 1.1) * (1.0 if rng.randf() < 0.5 else -1.0),
+			# Each flake tumbles faster to its OWN harmonic band (high / treble / mid / energy)
+			# with its own sensitivity, so the surges are independent, not one global wobble.
+			"band": rng.randi() % 4,
+			"spin": rng.randf_range(0.9, 2.6),
 			"phase": rng.randf() * TAU,
 			"hue": fposmod(hue + rng.randf_range(-0.04, 0.05), 1.0),
 			"sway": rng.randf() * TAU,
@@ -56,10 +63,15 @@ func update(f: AudioFeatures, delta: float) -> void:
 	drift_view(f, 0.02, 0.03)
 	update_layers(f, delta)
 	_spin += delta * (0.15 + 0.3 * f.energy)
-	# Advance each flake's own rotation (any direction, varied speed), faster with energy.
-	var rot := delta * (0.4 + 0.6 * f.energy)
+	# Advance each flake's 3D tumble on all three axes: a steady signed base rate plus an
+	# independent surge keyed to that flake's own harmonic band, so they tumble independently
+	# rather than turning in one locked direction.
+	var bands := [f.high, f.treble, f.mid, f.energy]
 	for fl in _flakes:
-		fl.ang += fl.avel * rot
+		var rate: float = 0.5 + float(bands[int(fl.band)]) * float(fl.spin)
+		fl.ax += float(fl.wx) * delta * rate
+		fl.ay += float(fl.wy) * delta * rate
+		fl.az += float(fl.wz) * delta * rate
 	if _mode == "wind":
 		_flow.advance(delta)
 		for fl in _flakes:
@@ -81,10 +93,14 @@ func _draw() -> void:
 		var px: float = fl.pos.x * hx + swayx
 		var py: float = fl.pos.y * hy
 		var c := Vector2(px, py) * u
-		var ang: float = fl.ang
 		var r: float = fl.size * u
+		# The flake's local plane, tumbled in 3D and projected orthographically (drop z): the
+		# screen images of its local x / y axes foreshorten as it turns, so it reads as tumbling.
+		var b := Basis.from_euler(Vector3(float(fl.ax), float(fl.ay), float(fl.az)))
+		var ex := Vector2(b.x.x, b.x.y) * r
+		var ey := Vector2(b.y.x, b.y.y) * r
 		var bright: float = clampf(0.55 + 0.45 * glow_b, 0.0, 1.0)
 		var col := Color.from_hsv(float(fl.hue), 0.12, 1.0, clampf(0.5 + 0.4 * float(fl.depth), 0.4, 0.95))
 		Layer.glow(self, c, r * 1.5, Color(col.r, col.g, col.b, 0.10 * bright), 4)
-		Layer.draw_flake(self, c, r, ang,
+		Layer.draw_flake_basis(self, c, ex, ey,
 			Color(col.r, col.g, col.b, col.a * bright), maxf(1.0, r * 0.06), 6, float(fl.shape))
