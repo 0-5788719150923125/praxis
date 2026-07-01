@@ -21,6 +21,8 @@ var _city_hue := 0.0
 var _dev: Swarm         # development / building height
 var _pulse: Swarm       # colour wave
 var _terrain := PackedFloat32Array()
+var _detail := PackedFloat32Array()    # per-tile ground/wall grain (texture)
+var _district := PackedFloat32Array()  # per-tile low-freq hue zone (city QUADRANTS - siblings share a hue)
 var _origins: Array = []
 var _beat_prev := 0.0
 var _opick := 0
@@ -40,6 +42,12 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		bumps.append({
 			"x": rng.randf(), "y": rng.randf(),
 			"s": rng.randf_range(0.10, 0.28), "a": rng.randf_range(0.4, 1.0)})
+	# A fine detail field (ground/wall grain) and a low-frequency DISTRICT field (broad hue zones, so
+	# neighbouring buildings share a colour and the city reads as quadrants rather than noise).
+	var detf := Field.make("fbm", rng.randi(), 9.0, 4)
+	var distf := Field.make("fbm", rng.randi(), 2.0, 3)
+	_detail.resize(G * G)
+	_district.resize(G * G)
 	for y in G:
 		for x in G:
 			var height := 0.0
@@ -48,6 +56,9 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 				var dy := float(y) / G - float(b.y)
 				height += float(b.a) * exp(-(dx * dx + dy * dy) / (2.0 * float(b.s) * float(b.s)))
 			_terrain[y * G + x] = height
+			var p := Vector2(float(x) / float(G), float(y) / float(G)) * 2.0 - Vector2.ONE
+			_detail[y * G + x] = detf.at(p)
+			_district[y * G + x] = distf.at(p)
 
 	_dev = Swarm.new(G, G, Swarm.GROW, rng, rng.randi_range(2, 4))
 	if _theme == "pulse":
@@ -100,18 +111,32 @@ func _draw() -> void:
 			var cx := float(gx - gy) * tw
 			var cy := (float(gx + gy) - float(G - 1)) * th - top_z
 			var side := building * z_build + 2.0
-			# Gradients: hue drifts with terrain height, position, development, and the
-			# colour pulse - a varied field, not the uniform pink the flat city read as.
-			var posg := float(gx + gy) / float(2 * G)
-			var hue := fposmod(_hue + 0.16 * _terrain[i] + 0.13 * posg + 0.30 * dev + 0.20 * pulse, 1.0)
-			var lit := 0.08 + 0.52 * _terrain[i] + 0.28 * dev + 0.5 * react + 0.7 * pulse
-			_block(Vector2(cx, cy), tw, th, side, hue, clampf(lit, 0.05, 1.15))
+			var det: float = _detail[i]
+			# Hue: a DISTRICT base (broad zones so neighbours match) drifting with height, development
+			# and the colour pulse - a real varied field, and buildings vs ground read differently.
+			var district: float = _district[i] - 0.5
+			var is_bldg := building > 0.12
+			var base_h: float = _city_hue if is_bldg else _hue
+			var hue := fposmod(base_h + 0.34 * district + 0.12 * _terrain[i] + 0.22 * dev + 0.20 * pulse, 1.0)
+			# Value: terrain + development + audio + pulse, grained by the detail texture.
+			var lit := 0.08 + 0.52 * _terrain[i] + 0.28 * dev + 0.5 * react + 0.7 * pulse + 0.28 * (det - 0.5)
+			# Cast shadow: taller buildings drop a soft dark diamond onto the ground toward the back-left
+			# (light reads from the front-right), grounding them instead of floating on flat colour.
+			if building > 0.25:
+				var so := building * z_build
+				var shp := Vector2(cx - tw * 0.5 - so * 0.35, cy + top_z - th * 0.4 - so * 0.15)
+				draw_colored_polygon(PackedVector2Array([
+					shp + Vector2(0, -th), shp + Vector2(tw, 0), shp + Vector2(0, th), shp + Vector2(-tw, 0)]),
+					Color(0, 0, 0, clampf(0.10 + 0.22 * clampf(building, 0.0, 1.5), 0.0, 0.4)))
+			_block(Vector2(cx, cy), tw, th, side, hue, clampf(lit, 0.05, 1.15), building, det)
 
 	_draw_fog(-span * 0.5, span, size.y * 0.5, u)
 
 
-# One iso block: front-left and front-right side quads, then the top diamond.
-func _block(base: Vector2, tw: float, th: float, side: float, hue: float, lit: float) -> void:
+# One iso block: front-left and front-right side quads (with floor/window detail on tall ones),
+# then the top diamond.
+func _block(base: Vector2, tw: float, th: float, side: float, hue: float, lit: float,
+		building := 0.0, det := 0.5) -> void:
 	var down := Vector2(0, side)
 	var n_t := base + Vector2(0, -th)
 	var e_t := base + Vector2(tw, 0)
@@ -121,8 +146,39 @@ func _block(base: Vector2, tw: float, th: float, side: float, hue: float, lit: f
 		Color.from_hsv(hue, 0.5, lit * 0.55))
 	draw_colored_polygon(PackedVector2Array([s_t, e_t, e_t + down, s_t + down]),
 		Color.from_hsv(hue, 0.5, lit * 0.75))
+	# Building features: FLOOR bands + a few LIT WINDOWS on the two visible walls, so a tall block
+	# reads as a building with structure instead of a flat coloured slab. Only tall blocks, capped.
+	if building > 0.3 and side > 14.0:
+		var floors := clampi(int(side / 8.0), 2, 7)
+		_wall(w_t, s_t, down, floors, hue, lit * 0.55, det)          # left wall
+		_wall(s_t, e_t, down, floors, hue, lit * 0.75, det + 0.37)   # right wall
 	draw_colored_polygon(PackedVector2Array([n_t, e_t, s_t, w_t]),
 		Color.from_hsv(hue, 0.4, clampf(lit + 0.12, 0.0, 1.0)))
+
+
+# Draw floor bands + scattered lit windows on one skewed wall face (top edge a->b, height `down`).
+func _wall(a: Vector2, b: Vector2, down: Vector2, floors: int, hue: float, wlit: float, seed: float) -> void:
+	var fade := Color(0, 0, 0, 0.18)
+	for f in range(1, floors):
+		var v := float(f) / float(floors)
+		draw_line(a + down * v, b + down * v, fade, 1.0, true)        # floor band (a thin dark line)
+	# A few windows, lit or dark by a stable per-cell hash (no flicker), on the mid floors.
+	var cols := 2
+	for f in floors:
+		for c in cols:
+			var h := fposmod(sin((seed + float(f) * 3.3 + float(c) * 1.7) * 12.9898) * 43758.5, 1.0)
+			if h < 0.45:
+				continue                                             # a dark (unlit) window - skip
+			var uc := (float(c) + 0.5) / float(cols)
+			var vf := (float(f) + 0.5) / float(floors)
+			var hw := 0.5 / float(cols) * 0.5
+			var hh := 0.5 / float(floors) * 0.5
+			var p0 := a.lerp(b, uc - hw) + down * (vf - hh)
+			var p1 := a.lerp(b, uc + hw) + down * (vf - hh)
+			var p2 := a.lerp(b, uc + hw) + down * (vf + hh)
+			var p3 := a.lerp(b, uc - hw) + down * (vf + hh)
+			draw_colored_polygon(PackedVector2Array([p0, p1, p2, p3]),
+				Color.from_hsv(fposmod(hue + 0.04, 1.0), 0.3, clampf(wlit * (1.4 + 0.8 * h), 0.0, 1.0)))
 
 
 # Translucent fog flowing across the low ground.

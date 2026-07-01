@@ -393,6 +393,15 @@ func _bookend_fade() -> float:
 	return minf(a_in, a_out)
 
 
+# Fixed simulation timestep. The SIM is advanced in chunks of this size (decoupled from the drawn
+# frame), so animations integrate stably and the cut schedule is exact regardless of render FPS.
+const SIM_STEP := 1.0 / 30.0
+# Cap on how many sim steps one render frame may run - a death-spiral guard. At ~0.5s of catch-up
+# per frame (a renderer crawling below ~2 fps) we stop advancing and accept a small drift, rather
+# than letting a heavy frame trigger an ever-growing pile of sim work.
+const MAX_SIM_STEPS := 15
+
+
 func _process(delta: float) -> void:
 	if _current == null:
 		return
@@ -403,24 +412,39 @@ func _process(delta: float) -> void:
 	if _held:
 		return
 
-	# The per-frame time step is the advance of the MUSIC CLOCK, not the drawn-frame delta. When a
-	# heavy scene lags the renderer, the song keeps playing, so this step grows and animations advance
-	# MORE per frame - they stay pinned to where the music is instead of stretching the sequence out.
-	# (Matches the deterministic fixed-fps export exactly.) Fall back to the real delta on the first
-	# frame, a song loop/seek (time jumps), or a pause; clamp so a jump can't lurch the whole show.
+	# The time to advance is the advance of the MUSIC CLOCK, not the drawn-frame delta. When a heavy
+	# scene lags the renderer the song keeps playing, so this grows - and we consume ALL of it below,
+	# so the show stays pinned to where the music is instead of stretching out. (Matches the fixed-fps
+	# export.) Fall back to the real delta on the first frame, a song loop/seek, or a pause.
 	var md := delta
 	if _prev_time >= 0.0:
 		var d := Spectrum.current.time - _prev_time
-		md = d if (d >= 0.0 and d <= 0.5) else clampf(delta, 0.0, 0.1)  # d==0: audio stalled this frame -> hold (no over-count)
+		md = d if (d >= 0.0 and d <= 2.0) else clampf(delta, 0.0, 0.1)  # d<0 loop / d>2 seek -> fallback
 	_prev_time = Spectrum.current.time
 
+	# Advance the simulation in fixed sub-steps to cover `md`, but only DRAW once (queue_redraw is
+	# idempotent per frame). So under lag we SKIP the intermediate frames' renders while still ticking
+	# the sim - animations stay stable and cuts land on time; the picture just refreshes less often.
+	var remaining := md
+	var steps := 0
+	while remaining > 1e-5 and steps < MAX_SIM_STEPS:
+		var dt := minf(remaining, SIM_STEP)
+		_sim_step(dt)
+		remaining -= dt
+		steps += 1
+
+
+# One fixed-timestep tick of the whole show: advance the current scene (or the crossfade), the hold
+# clock, the smoothed audio level and the stinger, and arm the next cut. `dt` is a slice of the
+# music-clock advance (see _process); this runs one or more times per drawn frame.
+func _sim_step(dt: float) -> void:
 	var bf := _bookend_fade()                       # 1, except fading from/to black at the video's ends
 	if _transitioning:
 		var dur: float = layer_time if _style == Style.LAYER else transition_time
-		_trans_t += md / maxf(0.01, dur)
+		_trans_t += dt / maxf(0.01, dur)
 		var k := clampf(_trans_t, 0.0, 1.0)
-		_current.update(Spectrum.current, md)
-		_next.update(Spectrum.current, md)
+		_current.update(Spectrum.current, dt)
+		_next.update(Spectrum.current, dt)
 		# Both scenes keep animating; their alphas are sequenced so the picture is
 		# clean (a DIP never shows both at once).
 		var a := _transition_alphas(k)
@@ -428,20 +452,20 @@ func _process(delta: float) -> void:
 		_current.view.presence = a.x
 		_next.modulate.a = a.y * bf
 		_next.view.presence = a.y
-		_current.view.commit(md)
-		_next.view.commit(md)
+		_current.view.commit(dt)
+		_next.view.commit(dt)
 		if k >= 1.0:
 			_finish_transition()
 		return
 
-	_current.update(Spectrum.current, md)
-	_current.view.commit(md)
-	_elapsed += md
+	_current.update(Spectrum.current, dt)
+	_current.view.commit(dt)
+	_elapsed += dt
 	# Smoothed audio level: rises fast, falls slowly, so a momentary gap between beats doesn't
 	# read as silence but a genuinely dead track (or its silent tail) does.
 	var e: float = Spectrum.current.energy
-	_audio_ema = lerpf(_audio_ema, e, 1.0 - exp(-(8.0 if e > _audio_ema else 0.6) * md))
-	_drive_stinger(md, bf)                          # rapid-fire beat-synced modulation of THIS scene
+	_audio_ema = lerpf(_audio_ema, e, 1.0 - exp(-(8.0 if e > _audio_ema else 0.6) * dt))
+	_drive_stinger(dt, bf)                          # rapid-fire beat-synced modulation of THIS scene
 	if _should_change():
 		_begin_transition()
 	_beat_prev = Spectrum.current.beat

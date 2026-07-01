@@ -32,6 +32,7 @@ var _mode := "lightning"
 var _fils: Array = []
 var _hue := 0.0
 var _glow := 0.0
+var _spark := 0.0            # a rare SPONTANEOUS activation pulse - keeps the scene alive in dead air
 var _beat_prev := 0.0
 var _loud := 0.0             # lightning: smoothed loudness (energy) - the audio-liveness gate
 var _flux_prev := 0.0        # lightning: smoothed spectral flux, for onset (transient) detection
@@ -150,15 +151,23 @@ func update(f: AudioFeatures, delta: float) -> void:
 	tick(f, delta)
 	drift_view(f, 0.03, 0.05)
 	_flow.advance(delta)
-	_glow = Nonlinear.flare(_glow, clampf(0.3 * f.energy + 0.7 * f.beat, 0.0, 1.0), delta, 9.0, 1.6)
+	# Spontaneous activation: a RARE nonlinear self-ignition (independent of the audio), so the scene
+	# never freezes into dead space when the song fades out - there is always the odd flicker of life.
+	# Deliberately low-chance and impulsive (not the constant fallback that used to strobe the intro).
+	_spark = maxf(0.0, _spark - delta * 1.3)
+	var spont := false
+	if _rng.randf() < 0.22 * delta:
+		_spark = _rng.randf_range(0.55, 1.0)
+		spont = true
+	_glow = Nonlinear.flare(_glow, clampf(0.3 * f.energy + 0.7 * f.beat + 0.6 * _spark, 0.0, 1.0), delta, 9.0, 1.6)
 	var beat_edge: bool = f.beat > 0.55 and _beat_prev <= 0.55
 	_beat_prev = f.beat
 
 	var grow := float(_cfg.grow)
 	if bool(_cfg.strike):
-		_update_strikes(f, delta, grow, beat_edge)
+		_update_strikes(f, delta, grow, beat_edge, spont)
 	else:
-		_update_continuous(f, delta, grow)
+		_update_continuous(f, delta, grow, spont)
 	queue_redraw()
 
 
@@ -167,8 +176,8 @@ func update(f: AudioFeatures, delta: float) -> void:
 # the scene dark through a silent intro / fade-in, so bolts scatter from real spectral energy
 # rather than out of dead air. While the audio is alive, a fallback cadence still flickers
 # the bolts and a strike is forced if none are lit, so loud passages are never black.
-func _update_strikes(f: AudioFeatures, delta: float, grow: float, beat_edge: bool) -> void:
-	var drive := 0.5 + 1.5 * Nonlinear.apply("spike", clampf(0.6 * f.energy + f.beat, 0.0, 1.0), 2.0)
+func _update_strikes(f: AudioFeatures, delta: float, grow: float, beat_edge: bool, spont: bool) -> void:
+	var drive := 0.5 + 1.5 * Nonlinear.apply("spike", clampf(0.6 * f.energy + f.beat + _spark, 0.0, 1.0), 2.0)
 	# Audio-liveness gate. `energy` is the overall loudness proxy (the per-band levels are a
 	# normalised spectral shape, so they read high even in near-silence and can't gate). Smooth
 	# it so a fade-in ramps in gradually, and treat sub-threshold loudness as dead air.
@@ -184,10 +193,11 @@ func _update_strikes(f: AudioFeatures, delta: float, grow: float, beat_edge: boo
 			any_active = true
 	# Beats fire whenever the beat detector triggers (it only fires on real audio anyway). The
 	# fallback cadence and the never-black backstop are gated on `alive`, so silence stays dark.
-	var trigger := beat_edge or onset or (alive and (_strike_acc >= _strike_period or not any_active))
+	# `spont` = the rare spontaneous activation: strike even in dead air, so a silent outro still flickers.
+	var trigger := beat_edge or onset or spont or (alive and (_strike_acc >= _strike_period or not any_active))
 	if trigger:
 		_strike_acc = 0.0
-		_strike_some(alive and not any_active)
+		_strike_some((alive or spont) and not any_active)
 	for fil in _fils:
 		if not fil.active:
 			continue
@@ -281,8 +291,14 @@ func _stagger_ignition(struck: Array) -> void:
 # to full, hold, then retire gracefully (FADE out, or REWIND its front back inward) and
 # regrow on a fresh path. Never a clear-and-pop; always something growing. A steady
 # creep surged by energy through a spike curve.
-func _update_continuous(f: AudioFeatures, delta: float, grow: float) -> void:
-	var drive := 0.5 + 1.1 * Nonlinear.apply("spike", clampf(0.7 * f.energy + f.beat, 0.0, 1.0), 2.0)
+func _update_continuous(f: AudioFeatures, delta: float, grow: float, spont: bool) -> void:
+	# The spark feeds the drive, so a spontaneous activation visibly surges the growth in dead air.
+	var drive := 0.5 + 1.1 * Nonlinear.apply("spike", clampf(0.7 * f.energy + f.beat + _spark, 0.0, 1.0), 2.0)
+	# On a fresh spark, kick a random RESTING tendril back into growth so something new sprouts.
+	if spont and not _fils.is_empty():
+		var fil: Dictionary = _fils[_rng.randi() % _fils.size()]
+		if String(fil.state) == "hold" or String(fil.state) == "fade":
+			fil.state = "grow"
 	for fil in _fils:
 		match fil.state:
 			"grow":
