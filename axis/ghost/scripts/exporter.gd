@@ -14,10 +14,14 @@ class_name Exporter
 ##      Cached per song, so only the first export of a song pays for it.
 ##   2. RENDER (Movie Maker): a second process loads that cache (`--bake-file`, no
 ##      in-process baking) and draws immediately, recording the visualization + audio
-##      to the file. Its window is moved off-screen by main.
+##      to a scratch AVI. Its window is moved off-screen by main.
+##   3. TRANSCODE (ffmpeg): the scratch AVI is re-encoded to the chosen MP4 (H.264 + AAC),
+##      then deleted. Godot only writes AVI, and AVI is a 32-bit/RIFF container that
+##      corrupts past ~4 GB (the 4K exports had a broken index + glitchy audio); the MP4
+##      we ship uses 64-bit offsets, is ~10-20x smaller, and plays everywhere.
 ##
-## Both steps are separate processes, polled by PID; status ("Baking… / Rendering… /
-## Exported ✓") shows here in the main window. Nothing to watch, nothing to force-quit.
+## All three steps are separate processes, polled by PID; status ("Analyzing… / Rendering… /
+## Finalizing… / Saved ✓") shows here in the main window. Nothing to watch, nothing to force-quit.
 
 # Show the Export button after this many seconds of playback - no need to watch the
 # whole thing. For songs too short to reach that, show it partway through instead
@@ -41,10 +45,12 @@ var _btn: Button
 var _status: Label
 var _dialog: FileDialog
 var _quality_menu: PopupMenu
-var _state := "idle"     # idle | baking | rendering | done
+var _state := "idle"     # idle | baking | rendering | transcoding | done
 var _bake_pid := -1
 var _render_pid := -1
-var _out := ""
+var _transcode_pid := -1
+var _out := ""           # the final file the user chose (.mp4)
+var _avi := ""           # the intermediate Movie Maker AVI (transcoded away, then deleted)
 var _song := ""
 var _cache := ""
 var _done_t := 0.0
@@ -97,8 +103,13 @@ func _build_ui() -> void:
 	_dialog.access = FileDialog.ACCESS_FILESYSTEM
 	_dialog.use_native_dialog = true
 	_dialog.title = "Export video"
-	_dialog.filters = PackedStringArray(["*.avi ; Video (AVI, MJPEG + audio)"])
-	_dialog.current_file = "ghost.avi"
+	_dialog.filters = PackedStringArray(["*.mp4 ; Video (MP4, H.264 + AAC)"])
+	_dialog.current_file = "ghost.mp4"
+	# Default to the Downloads folder so an export lands somewhere predictable (the native dialog
+	# otherwise opens in its last-used directory, which is easy to lose track of).
+	var downloads := OS.get_system_dir(OS.SYSTEM_DIR_DOWNLOADS)
+	if not downloads.is_empty():
+		_dialog.current_dir = downloads
 	_dialog.size = Vector2i(800, 560)
 	_dialog.file_selected.connect(_on_path)
 	add_child(_dialog)
@@ -120,9 +131,27 @@ func _process(dt: float) -> void:
 				_set_status("⏺  Rendering %s …  %d%%" % [_out.get_file(), _pct], Color(0.95, 0.92, 0.7))
 			else:
 				_clear_override()                # render finished -> restore live resolution
+				# The render only reports success by PID exit; make sure it actually produced the AVI
+				# (a crashed Movie Maker exits too) before spending minutes transcoding nothing.
+				if FileAccess.file_exists(_avi) and _file_size(_avi) > 65536:
+					_start_transcode()
+				else:
+					_fail("⚠  Render produced no file (see console)")
+		"transcoding":
+			if OS.is_process_running(_transcode_pid):
+				_set_status("⏳  Finalizing %s …  %d%%" % [_out.get_file(), _read_transcode_pct()], Color(0.95, 0.92, 0.7))
+			elif FileAccess.file_exists(_out) and _file_size(_out) > 4096:
+				DirAccess.remove_absolute(_avi)   # transcode ok -> drop the scratch AVI
 				_state = "done"
-				_done_t = 24.0
-				_set_status("✓  Exported  %s" % _out.get_file(), Color(0.82, 0.95, 0.86))
+				_done_t = 30.0
+				_set_status("✓  Saved  %s" % _out, Color(0.82, 0.95, 0.86))
+				print("ghost: exported -> ", _out)
+			else:
+				# Transcode failed (ffmpeg missing/errored). Keep the raw AVI so the work isn't lost.
+				_state = "done"
+				_done_t = 30.0
+				_set_status("⚠  Transcode failed; raw file kept: %s" % _avi, Color(1.0, 0.7, 0.6))
+				push_warning("ghost export: transcode failed; kept AVI at " + _avi)
 		"done":
 			_done_t -= dt
 			if _done_t <= 0.0:
@@ -162,7 +191,7 @@ func _on_export() -> void:
 
 func _on_quality(id: int) -> void:
 	_quality = QUALITIES[id]
-	_dialog.current_file = "ghost_%s.avi" % _quality.tag
+	_dialog.current_file = "ghost_%s.mp4" % _quality.tag
 	_dialog.popup_centered()
 
 
@@ -172,6 +201,12 @@ func _on_path(out_path: String) -> void:
 		_fail("⚠  No song to export")
 		return
 	_out = out_path
+	if _out.get_extension().to_lower() != "mp4":
+		_out += ".mp4"
+	# Movie Maker records to this intermediate AVI (beside the final file, on the same disk); we then
+	# transcode it to the chosen .mp4 and delete it. The AVI is only ever scratch - it never ships,
+	# so its 4 GB/RIFF index limit (which corrupts 4K exports) can't reach the user.
+	_avi = _out.get_basename() + ".render.avi"
 	_cache = Bake.cache_path(_song)
 	if FileAccess.file_exists(_cache):
 		_start_render()                          # already analyzed -> straight to render
@@ -209,7 +244,7 @@ func _start_render() -> void:
 	var exe := OS.get_executable_path()
 	var project := ProjectSettings.globalize_path("res://")
 	var args := PackedStringArray([
-		"--path", project, "--write-movie", _out, "--fixed-fps", str(_quality.fps),
+		"--path", project, "--write-movie", _avi, "--fixed-fps", str(_quality.fps),
 		"--", "--export", "--bake-file", _cache, "--seed", str(Director.session_seed()),
 		"--audio", _song])
 	if Director.is_manual():
@@ -219,10 +254,72 @@ func _start_render() -> void:
 	if _render_pid > 0:
 		_state = "rendering"
 		print("ghost: rendering %dx%d @ %d fps (pid %d) -> %s" % [
-			_quality.w, _quality.h, _quality.fps, _render_pid, _out])
+			_quality.w, _quality.h, _quality.fps, _render_pid, _avi])
 	else:
 		_clear_override()
 		_fail("⚠  Could not start the render process")
+
+
+# Step 3: transcode the scratch AVI into the chosen MP4 (H.264 + AAC) via ffmpeg. This is what the
+# user actually keeps: MP4 uses 64-bit offsets so its index is valid at any size (Godot's AVI is
+# 32-bit and corrupts past 4 GB, which is why 4K exports had a broken index and glitchy audio), and
+# H.264 is ~10-20x smaller than the MJPEG intermediate. `-fflags +genpts` re-derives timestamps so a
+# damaged AVI index is bypassed; audio is re-encoded from decoded PCM, so it comes out clean.
+func _start_transcode() -> void:
+	var dur := Spectrum.song_length()
+	_progress_reset()
+	var args := PackedStringArray([
+		"-y", "-fflags", "+genpts", "-i", _avi,
+		"-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p",
+		"-c:a", "aac", "-b:a", "192k",
+		"-progress", ProjectSettings.globalize_path(_PROGRESS_FILE), "-nostats", "-loglevel", "error",
+		_out])
+	_transcode_pid = OS.create_process("ffmpeg", args)
+	if _transcode_pid > 0:
+		_state = "transcoding"
+		print("ghost: transcoding (pid %d, %.0fs) %s -> %s" % [_transcode_pid, dur, _avi, _out])
+	else:
+		# No ffmpeg: we can't produce the MP4. Leave the raw AVI so the render isn't wasted.
+		_state = "done"
+		_done_t = 30.0
+		_set_status("⚠  ffmpeg not found; raw file kept: %s" % _avi, Color(1.0, 0.7, 0.6))
+
+
+const _PROGRESS_FILE := "user://transcode_progress.txt"
+
+
+func _progress_reset() -> void:
+	var f := FileAccess.open(_PROGRESS_FILE, FileAccess.WRITE)
+	if f != null:
+		f.store_string("")
+		f.close()
+
+
+# ffmpeg writes `out_time_us=<microseconds>` lines to the progress file; the fraction of the song's
+# duration it has reached is the transcode percent. Robust to partial/mid-write reads.
+func _read_transcode_pct() -> int:
+	var dur := Spectrum.song_length()
+	if dur <= 0.0 or not FileAccess.file_exists(_PROGRESS_FILE):
+		return _pct
+	var text := FileAccess.get_file_as_string(_PROGRESS_FILE)
+	var best := -1.0
+	for line in text.split("\n"):
+		if line.begins_with("out_time_us="):
+			best = maxf(best, line.substr(12).to_float() / 1_000_000.0)
+		elif line.begins_with("out_time_ms="):     # older ffmpeg (value is microseconds despite the name)
+			best = maxf(best, line.substr(12).to_float() / 1_000_000.0)
+	if best >= 0.0:
+		_pct = clampi(int(round(best / dur * 100.0)), 0, 99)
+	return _pct
+
+
+func _file_size(path: String) -> int:
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return 0
+	var s := f.get_length()
+	f.close()
+	return s
 
 
 # override.cfg lives in the project root only for the duration of a render; Godot reads
