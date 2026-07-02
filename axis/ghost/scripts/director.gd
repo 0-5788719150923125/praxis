@@ -400,6 +400,14 @@ const SIM_STEP := 1.0 / 30.0
 # per frame (a renderer crawling below ~2 fps) we stop advancing and accept a small drift, rather
 # than letting a heavy frame trigger an ever-growing pile of sim work.
 const MAX_SIM_STEPS := 15
+# Per-drawn-frame cap on how much MUSIC time the sim advances, so a single slow frame (a scene build,
+# an FPS hitch) can't lurch the camera forward in one visible step. Any excess is BANKED as debt and
+# paid down over the following (faster) frames, so the show still tracks the music on average - it just
+# eases into place instead of snapping. STEP_CAP must exceed a normal frame's music step or a steadily
+# heavy scene would stretch; DEBT bounds how far behind a sustained-slow patch may fall.
+const STEP_CAP := 0.11
+const DEBT_CAP := 0.4
+var _time_debt := 0.0
 
 
 func _process(delta: float) -> void:
@@ -412,54 +420,47 @@ func _process(delta: float) -> void:
 	if _held:
 		return
 
-	# The time to advance is the advance of the MUSIC CLOCK, not the drawn-frame delta. When a heavy
-	# scene lags the renderer the song keeps playing, so this grows - and we consume ALL of it below,
-	# so the show stays pinned to where the music is instead of stretching out. (Matches the fixed-fps
-	# export.) Fall back to the real delta on the first frame, a song loop/seek, or a pause.
-	var md := delta
+	# The raw advance is the advance of the MUSIC CLOCK, not the drawn-frame delta. When a heavy scene
+	# lags the renderer the song keeps playing, so this grows. `_prev_time < 0` marks a fresh reference
+	# (very first frame, or a loop/seek).
+	var raw := clampf(delta, 0.0, 0.12)
 	if _prev_time >= 0.0:
 		var d := Spectrum.current.time - _prev_time
-		md = d if (d >= 0.0 and d <= 2.0) else clampf(delta, 0.0, 0.1)  # d<0 loop / d>2 seek -> fallback
+		raw = d if (d >= 0.0 and d <= 2.0) else clampf(delta, 0.0, 0.1)  # d<0 loop / d>2 seek -> fallback
 	_prev_time = Spectrum.current.time
+	# SMOOTH the ANIMATION step: bank the raw advance as debt, spend at most STEP_CAP per drawn frame, so
+	# a scene BUILD (12-step pre-warm + the first heavy draw) or an FPS hitch can't jerk the fresh camera
+	# into place in one visible frame - the excess eases in over the next faster frames.
+	_time_debt = minf(_time_debt + raw, DEBT_CAP)
+	var anim := minf(_time_debt, STEP_CAP)
+	_time_debt -= anim
 
-	# Advance the simulation in fixed sub-steps to cover `md`, but only DRAW once (queue_redraw is
-	# idempotent per frame). So under lag we SKIP the intermediate frames' renders while still ticking
-	# the sim - animations stay stable and cuts land on time; the picture just refreshes less often.
-	var remaining := md
-	var steps := 0
-	while remaining > 1e-5 and steps < MAX_SIM_STEPS:
-		var dt := minf(remaining, SIM_STEP)
-		_sim_step(dt)
-		remaining -= dt
-		steps += 1
+	# CRITICAL split: the SCHEDULE (how long a scene holds, transition progress) runs on the RAW music
+	# advance, so a scene always cuts at the right MUSIC time - a heavy scene rendering below the cap
+	# does NOT overrun its hold (that made a scene last 30s+). Only the ANIMATION (camera / growth) is
+	# smoothed. So duration tracks the song; the picture just eases rather than lurches under lag.
+	_tick_schedule(raw)
+	_tick_animation(anim)
 
 
-# One fixed-timestep tick of the whole show: advance the current scene (or the crossfade), the hold
-# clock, the smoothed audio level and the stinger, and arm the next cut. `dt` is a slice of the
-# music-clock advance (see _process); this runs one or more times per drawn frame.
-func _sim_step(dt: float) -> void:
+# The SCHEDULE, advanced by the REAL music-clock step: the hold clock, transition progress + alphas,
+# the smoothed audio level, the stinger, and arming the next cut. This decides WHEN things happen, so
+# it must track the music exactly (never the capped animation step) or scene durations drift long.
+func _tick_schedule(dt: float) -> void:
 	var bf := _bookend_fade()                       # 1, except fading from/to black at the video's ends
 	if _transitioning:
 		var dur: float = layer_time if _style == Style.LAYER else transition_time
 		_trans_t += dt / maxf(0.01, dur)
 		var k := clampf(_trans_t, 0.0, 1.0)
-		_current.update(Spectrum.current, dt)
-		_next.update(Spectrum.current, dt)
-		# Both scenes keep animating; their alphas are sequenced so the picture is
-		# clean (a DIP never shows both at once).
+		# Alphas are sequenced so the picture is clean (a DIP never shows both scenes at once).
 		var a := _transition_alphas(k)
 		_current.modulate.a = a.x * bf
 		_current.view.presence = a.x
 		_next.modulate.a = a.y * bf
 		_next.view.presence = a.y
-		_current.view.commit(dt)
-		_next.view.commit(dt)
 		if k >= 1.0:
 			_finish_transition()
 		return
-
-	_current.update(Spectrum.current, dt)
-	_current.view.commit(dt)
 	_elapsed += dt
 	# Smoothed audio level: rises fast, falls slowly, so a momentary gap between beats doesn't
 	# read as silence but a genuinely dead track (or its silent tail) does.
@@ -469,6 +470,23 @@ func _sim_step(dt: float) -> void:
 	if _should_change():
 		_begin_transition()
 	_beat_prev = Spectrum.current.beat
+
+
+# The ANIMATION, advanced by the SMOOTHED step in fixed sub-steps (stable integration, no lurch), and
+# DRAWN once (queue_redraw is idempotent per frame) - so under lag we skip intermediate renders while
+# the scene(s) still tick forward.
+func _tick_animation(anim: float) -> void:
+	var remaining := anim
+	var steps := 0
+	while remaining > 1e-5 and steps < MAX_SIM_STEPS:
+		var dt := minf(remaining, SIM_STEP)
+		_current.update(Spectrum.current, dt)
+		_current.view.commit(dt)
+		if _transitioning and _next != null:
+			_next.update(Spectrum.current, dt)
+			_next.view.commit(dt)
+		remaining -= dt
+		steps += 1
 
 
 # The rapid-fire stinger: on a strong beat, sparsely start a short run of beat-synced punches;
@@ -509,14 +527,14 @@ func _should_change() -> bool:
 	# trivially satisfies) drops a fresh scene into dead air. Hold until the audio returns.
 	if _audio_ema < silence_floor:
 		return false
-	# Tail gate: normally hold the final scene through the song's closing stretch, so a cut into a
-	# near-empty FADING tail doesn't read as a glitch. But scale the gate by the current drive - if
-	# the track is still DRIVING hard right up to the end (a punchy sting, not a fade-out), the gate
-	# shrinks so transitions keep coming at that energy; only a genuine floor keeps us from cutting
-	# in the last couple of seconds. A quiet/fading ending keeps the full hold.
+	# Tail gate: hold the final scene through the song's closing stretch, so a cut into a near-empty
+	# FADING tail doesn't read as a glitch. This gate is DETERMINISTIC - a fixed `end_hold` window off
+	# the (known) song length, NOT drive-scaled - because it decides the FINAL scene, and the live
+	# real-time analyzer and the export's baked FFT read the audio slightly differently: a drive-scaled
+	# gate would cross its threshold at different moments in each, so live and export could hold/land on
+	# DIFFERENT last scenes. A fixed window crosses at the same song-time in both, so they always match.
 	var slen := Spectrum.song_length()
-	var eff_end: float = clampf(end_hold * _pacing_scale(), 2.0, end_hold)
-	if slen > 0.0 and Spectrum.current.time >= slen - eff_end:
+	if slen > 0.0 and Spectrum.current.time >= slen - end_hold:
 		return false
 	# In manual mode, a non-looping storyboard holds its final scene forever.
 	if not _storyboard_seq.is_empty() and not _storyboard_loop and _step >= _storyboard_seq.size():
@@ -924,6 +942,10 @@ func _make_scene() -> GhostScene:
 	for w in 12:
 		scene.update(Spectrum.current, 0.05)
 		scene.view.commit(0.05)
+	scene.view.snap()        # finish the ease EXACTLY, so the first shown frame doesn't slide into place
+	# NB: this build burns real wall-time (pre-warm + the first heavy draw), which the music clock keeps
+	# advancing through. That big step is now absorbed by the STEP_CAP / debt smoothing in _process (it
+	# eases in over the next frames), so no clock reset is needed here.
 	return scene
 
 

@@ -237,7 +237,10 @@ func update_layers(f: AudioFeatures, delta: float) -> void:
 	if layers.is_empty():
 		return
 	var u := maxf(1.0, unit())
-	var h := Vector2(size.x, size.y) / (2.0 * u)
+	# Overdraw margin: hand layers a half-extent a bit LARGER than the frame, so they paint past every
+	# edge. The camera drift (drift_view) slides/zooms the whole canvas, and without this the drawn
+	# region's edge slides into view as a hard seam (a plane's border). 1.15x covers the drift range.
+	var h := Vector2(size.x, size.y) / (2.0 * u) * 1.15
 	for l in layers:
 		l.update(f, delta, h)
 

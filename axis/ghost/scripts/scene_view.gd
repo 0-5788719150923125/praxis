@@ -55,6 +55,19 @@ func commit(dt: float) -> void:
 	_bias_zoom = lerpf(_bias_zoom, bias_zoom, a)
 
 
+## Snap the actual transform straight onto the target - no easing. Called at the END of a scene's
+## pre-warm so the FIRST shown frame is already settled: otherwise the ease only reaches ~95% in the
+## pre-warm's frames and the remaining slide plays out live, reading as the whole scene "shifting" into
+## place during the fade-in.
+func snap() -> void:
+	_zoom = zoom
+	_rot = rotation
+	_skew = skew
+	_off = offset
+	_bias_off = bias_offset
+	_bias_zoom = bias_zoom
+
+
 ## The transform a scene pushes at the top of _draw, for the given viewport size.
 func matrix(size: Vector2) -> Transform2D:
 	var origin := size * 0.5 + (_off + _bias_off) * size

@@ -1206,12 +1206,15 @@ class Fire:
 
 	func update(f: AudioFeatures, dt: float, h: Vector2) -> void:
 		super(f, dt, h)
-		var drive := 0.7 + 0.9 * f.energy + 0.5 * f.beat
+		# The RISE speed is STEADY (energy sets a sustained pace; no per-beat jolt), so a spark climbs
+		# LINEARLY instead of lurching up and down with every beat. Beats still drive the burst/licks
+		# and the brightness, just not the climb rate.
+		var rise := 0.85 + 0.5 * f.energy
 		_hot_x = sin(t * 0.13) * 0.6 + sin(t * 0.31 + 1.7) * 0.3      # the hot side wanders
 		# Beats kick the burst envelope up; it falls away between them, so tall flames surge and die.
 		_burst = maxf(_burst * exp(-2.2 * dt), clampf(1.2 * f.beat + 0.5 * f.energy, 0.0, 1.0))
 		for s in _sparks:
-			s.y -= float(s.vy) * dt * drive
+			s.y -= float(s.vy) * dt * rise
 			s.life -= dt * float(s.decay)
 			if float(s.life) <= 0.0 or float(s.y) < -1.1:
 				_reseed(s, rng, false)
@@ -1235,7 +1238,9 @@ class Fire:
 			# the sparse licks - more so on a burst - so tall flames leap up one side and dissipate.
 			var hot := exp(-pow((float(s.x) - _hot_x) / 0.45, 2.0))   # 0..1 proximity to the hot side
 			var tall := (1.6 + 4.5 * _burst) * (0.55 + hot) if bool(s.lick) else 1.0
-			var hgt: float = float(s.flen) * u * (0.5 + 0.7 * heat) * flick * (1.0 + 0.7 * hot) * tall
+			# Height grows smoothly with heat and shrinks as the flame ages - NO fast `flick` term here
+			# (that made the tongue jitter up and down as it rose). Flicker stays in the brightness only.
+			var hgt: float = float(s.flen) * u * (0.5 + 0.7 * heat) * (1.0 + 0.7 * hot) * tall
 			# Sway is a COHERENT, SLOW sideways lean - the same for the whole tongue, so the flame
 			# leans as one. Deliberately low-frequency and small, not a fast left-right flail (that
 			# read as unnatural wagging), and the tall licks weave only a little more, not 3x.
@@ -1244,19 +1249,26 @@ class Fire:
 			# tongues curve by the SAME modest amount - the old fixed offset whipped the short flames
 			# into hooks. A mild inward bias leans outer flames toward the centre. Clamped so the curl
 			# always stays subtle - the flame reads as upright with a lick, never a big C.
-			var swing := sin(t * 0.9 + float(s.phase) + float(s.y) * 2.0) \
-				+ 0.4 * sin(t * 1.4 + float(s.phase) * 1.7)
-			var lean := clampf((swing * float(s.amp) * 2.0 - float(s.x) * 0.06) * (1.0 + 0.3 * float(s.lick)), -0.16, 0.16)
+			var amp2: float = float(s.amp) * 2.0 * (1.0 + 0.3 * float(s.lick))
 			# Draw the flame as a COLUMN of soft gaussian puffs: a bright, wide white-hot HEAD that
 			# leads at the top (where the flame is climbing to) tapering down to a thin, dim, red
 			# TAIL that trails DOWNWARD behind it - so the wisp flows down, not up. fk=0 is the tail
 			# (bottom), fk=1 the head (top).
 			var steps: int = clampi(int(hgt / maxf(w * 0.7, 1.0)) + 3, 4, 16)
+			var head_bend := 0.0
 			for k in steps:
 				var fk := float(k) / float(steps - 1)            # 0 tail (bottom) .. 1 head (top)
-				# sin(pi*fk): ZERO at the tail and ZERO at the tip, peaking mid-tongue. So the body
-				# leans but the tip always tapers straight UP - never a sideways or downward hook.
-				var bend := lean * hgt * sin(PI * fk)
+				# The head LEADS and the body TRAILS along the path it took: material lower down (small
+				# fk) shows the head's sideways sway from EARLIER in time - a phase LAG up the tongue -
+				# so the tail flows along the head's actual trajectory instead of holding one frozen
+				# curve for its whole life. Rooted at the base, free to follow at the head.
+				var lag := (1.0 - fk) * 3.0
+				var swing := sin(t * 1.1 - lag + float(s.phase) + float(s.y) * 1.5) \
+					+ 0.4 * sin(t * 1.7 - lag * 1.2 + float(s.phase) * 1.7)
+				var root := smoothstep(0.0, 0.30, fk)            # anchored at the base, trailing at the head
+				var bend: float = clampf(swing * amp2 * root - float(s.x) * 0.05 * fk, -0.22, 0.22) * hgt
+				if fk >= 0.82 and head_bend == 0.0:
+					head_bend = bend
 				var pp := c + Vector2(bend, -hgt * fk)
 				var pr := w * (0.45 + 1.05 * fk)                 # thin tail -> wide rounded head
 				var hue := fposmod(0.02 + 0.09 * fk, 1.0)        # red tail -> orange-yellow head
@@ -1265,7 +1277,7 @@ class Fire:
 				var a := clampf(lerpf(0.12, 0.55, fk) * (0.6 + 0.4 * heat), 0.0, 1.0)
 				Layer.puff(ci, pp, pr, Color.from_hsv(hue, sat, val, a))
 			# A soft warm glow around the HEAD - the flame's brightest light (a halo, not a dot).
-			Layer.puff(ci, c + Vector2(lean * hgt * sin(PI * 0.85), -hgt * 0.85), w * 3.0,
+			Layer.puff(ci, c + Vector2(head_bend * 0.9, -hgt * 0.85), w * 3.0,
 				Color.from_hsv(0.10, 0.5, clampf((0.6 + 0.5 * heat) * flick, 0.0, 1.0), 0.13 * (0.6 + 0.4 * heat)))
 
 
@@ -1400,9 +1412,11 @@ class Volumetric:
 					"dens": rng.randf_range(0.6, 1.0), "ph": rng.randf() * TAU, "lit": 1.0})
 
 	func _build_fog() -> void:
-		for pi in rng.randi_range(70, 110):        # a wide bank of haze receding into depth
-			var pos := Vector3(rng.randf_range(-3.5, 3.5), rng.randf_range(-0.6, 0.2), rng.randf_range(-1.0, -5.0))
-			_puffs.append({"home": pos, "pos": pos, "r": rng.randf_range(0.6, 1.3),
+		# A wide bank of haze receding into depth. The horizontal spread runs WELL past the frame at
+		# every depth (and the drift shifts it), so its edge never slides into view as a hard seam.
+		for pi in rng.randi_range(130, 180):
+			var pos := Vector3(rng.randf_range(-7.5, 7.5), rng.randf_range(-0.7, 0.25), rng.randf_range(-0.5, -6.5))
+			_puffs.append({"home": pos, "pos": pos, "r": rng.randf_range(0.7, 1.5),
 				"dens": rng.randf_range(0.3, 0.6), "ph": rng.randf() * TAU, "lit": 1.0})
 
 	# Self-shadowing: sort puffs from the sun inward and accumulate optical depth, so the sunlit

@@ -19,9 +19,11 @@ var _detach := PackedFloat32Array()   # per-plot float-off height (0 = grounded)
 var _thresh := PackedFloat32Array()   # per-plot development level needed before a building rises
 var _grown := PackedFloat32Array()    # per-plot BUILT height 0..1, eased up over time (starts small)
 var _foot := PackedFloat32Array()     # per-plot footprint scale (skewed: many small, a few big anchors)
-var _hclass := PackedFloat32Array()   # per-plot height multiplier (big footprints tend taller)
+var _hclass := PackedFloat32Array()   # per-plot MAX height potential (reached only at critical mass)
+var _sky := PackedFloat32Array()      # per-plot "tower from the start" propensity (rare, for variety)
 var _phase := PackedFloat32Array()    # per-plot phase for the slow rearrange wobble
 var _maturity := 0.0                  # 0..1, rises over the scene: thresholds drop -> arms thicken, gaps fill
+var _shadow := ShadowField.new()      # light-space cast-shadow map (buildings shadow ground + each other)
 var _cores: Array = []                # the 1-2 valley cells the city grows out from (re-pinned each frame)
 var _light_az := 0.0
 var _light_el := 0.5
@@ -66,10 +68,11 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_grown.resize(C * C)
 	_foot.resize(C * C)
 	_hclass.resize(C * C)
+	_sky.resize(C * C)
 	_phase.resize(C * C)
 	# A ridged "arm" field: its branching high ridges become the channels the city builds ALONG, so
 	# development reads as dendritic ARMS reaching out from the core rather than a filled blob.
-	var armf := Field.make("ridged", rng.randi(), rng.randf_range(2.0, 3.4), 3)
+	var armf := Field.make("ridged", rng.randi(), rng.randf_range(1.5, 2.4), 3)
 	for cy in C:
 		for cx in C:
 			var i := cy * C + cx
@@ -81,13 +84,20 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 			# Valley bias + a GENTLE off-arm bias: the arm ridges build a bit sooner so the frontier
 			# reaches out in dendritic arms, but off-arm plots still fill in as the base matures (this
 			# is a preference, not a hard gate - a hard gate starved a rugged map of any city at all).
-			_thresh[i] = 0.05 + 0.18 * elev + (1.0 - smoothstep(0.4, 0.7, arm)) * 0.2 + rng.randf_range(-0.03, 0.06)
+			# Threshold is dominated by the ridged ARM field: only cells ON a branching ridge of that
+			# field can build (a strong OFF-ridge penalty keeps the rest bare whatever the development),
+			# so the city is a sparse DENDRITIC network of arms rather than a solid blob. Elevation adds
+			# a gentle bias (lower ground a touch likelier); noise ragged-ifies the frontier.
+			_thresh[i] = 0.05 + 0.2 * elev + (1.0 - smoothstep(0.46, 0.64, arm)) * 0.9 + rng.randf_range(-0.03, 0.05)
 			_grown[i] = 0.0
-			# Footprint + height class: a skewed distribution - most plots small, a rare few large
-			# (the anchors that become the towers of a cluster). Big footprints trend taller.
-			var big := pow(rng.randf(), 2.3)
+			# Footprint + MAX-height potential: a skewed distribution - most plots modest, a rare few are
+			# big anchors. But this height is only ever REALISED once the district hits critical mass (see
+			# the draw): blocks start SMALL and grow taller as their surroundings develop.
+			var big := pow(rng.randf(), 3.2)                             # strongly skewed: MOST plots small
 			_foot[i] = 0.5 + 1.0 * big
-			_hclass[i] = 0.6 + 1.7 * big + rng.randf_range(-0.15, 0.35)
+			_hclass[i] = 0.9 + 2.5 * big + rng.randf_range(-0.1, 0.3)     # tall POTENTIAL (a rare few big)
+			# A rare few plots are skyscrapers FROM THE START (variety) - most are 0 (grow up naturally).
+			_sky[i] = rng.randf_range(0.55, 1.0) if rng.randf() < 0.06 else 0.0
 			_phase[i] = rng.randf() * TAU
 	# Per-plot detach: a few districts float off the ground.
 	_detach.resize(C * C)
@@ -117,23 +127,30 @@ func update(f: AudioFeatures, delta: float) -> void:
 	_f = f
 	tick(f, delta)
 	drift_view(f, 0.012, 0.018)
-	# Nonlinear growth drive: beats lunge development outward through a spike curve. Kept slow, so
-	# the city fills in gradually (districts spread and the gaps close over time), not all at once.
-	var drive := 0.9 + 1.2 * Nonlinear.apply("spike", clampf(0.7 * f.energy + f.beat, 0.0, 1.0), 2.0)
+	# BURST then decay: growth is FAST in the opening seconds and eases to a slow crawl after. A scene's
+	# hold is drive-scaled and can be short (a few seconds on an energetic passage), so front-loading the
+	# growth means even a brief scene BURSTS into a small city up front; a long one keeps creeping after.
+	# `_life` is the scene's age (starts ~0.6 after the pre-warm, which already banks some burst growth).
+	# A quick initial POP (a handful of blocks fast, so even a short scene isn't empty), decaying sharply
+	# to a SLOW crawl - the city keeps developing gently for the rest of the scene, never filling all at
+	# once. Fast decay (~1s) so the burst is a brief opener, not a fill.
+	var burst: float = 1.0 + 3.5 * exp(-_life * 0.7)
+	# Nonlinear growth drive: beats lunge development outward through a spike curve, bursting at the start.
+	var drive := (1.0 + 1.1 * Nonlinear.apply("spike", clampf(0.7 * f.energy + f.beat, 0.0, 1.0), 2.0)) * (0.7 + 0.3 * burst)
 	for core in _cores:
 		_dev.inject(core.x, core.y, 1.0)          # keep the origin cores alive
 	_dev.step(drive, delta, 0.015)
-	# The city keeps maturing: over the scene the effective thresholds drop, so the arms THICKEN and
-	# the gaps between them fill in - the base keeps growing and getting denser, not a fixed footprint.
-	_maturity = minf(1.0, _maturity + delta * 0.045)
+	# The city matures over the scene: the effective thresholds drop, so the arms THICKEN a little - but
+	# kept modest so it stays SPARSE and dendritic (bands/arms reaching along the terrain), never a solid
+	# filled blob. Slow BASE rate (the burst supplies the opening pop; the rest is a gentle creep).
+	_maturity = minf(1.0, _maturity + delta * 0.05 * burst)
 	# Ease each plot's BUILT height up toward its current maturity, so buildings START SMALL and grow
-	# taller as their district matures - and the densest (most-developed) plots grow tallest, so height
-	# reads as a property of the cluster, not of a single plot popping up full-formed.
-	var rise := delta * 0.28
+	# taller as their district matures - and the densest (most-developed) plots grow tallest.
+	var rise := delta * 0.35 * burst
 	for cy in C:
 		for cx in C:
 			var i := cy * C + cx
-			var thr: float = maxf(0.04, float(_thresh[i]) - _maturity * 0.4)
+			var thr: float = maxf(0.04, float(_thresh[i]) - _maturity * 0.1)
 			var target: float = clampf((_dev.at(cx, cy) - thr) / maxf(0.05, 1.0 - thr), 0.0, 1.0)
 			_grown[i] = move_toward(float(_grown[i]), target, rise)
 	_glow = lerpf(_glow, clampf(0.3 * f.energy + 0.5 * f.beat, 0.0, 1.0), 1.0 - exp(-5.0 * delta))
@@ -151,18 +168,27 @@ func _draw() -> void:
 	lens.prepare()
 	var u := unit()
 	var lit := clampf(0.7 + 0.4 * _glow + 0.3 * _f.energy, 0.4, 1.4)
-	_terrain.draw_surface(self, lens, u, lit, _life)
-	texture_repeat = CanvasItem.TEXTURE_REPEAT_DISABLED   # terrain left it enabled; blocks are untextured
-
-	# Collect every visible block face, depth-sort the lot, then draw - so blocks occlude
-	# one another correctly over the terrain.
-	var faces: Array = []
+	texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
 	var bw := _terrain.half / float(C) * 0.62          # block half-footprint (world)
 	var bgain := 0.5 + 0.3 * _f.energy
+	# How deep each building is sunk INTO the terrain: its box starts below the surface and the merged
+	# land hides that buried part, so the visible base is ragged (cut by the ground), never a clean line.
+	var embed: float = 0.35 * _terrain.relief + 0.14
+	# The buildings are EMBEDDED below the surface, so while the scene fades IN (partial alpha) the
+	# semi-transparent terrain would let the buried geometry show through - reading as blocks under the
+	# ground. So the buildings only appear once the terrain is nearly opaque: hidden through the fade,
+	# then eased in over its last stretch (`presence` is the scene's transition opacity, 1 when settled).
+	var reveal: float = smoothstep(0.8, 1.0, view.presence)
+	# Pass A: compute every building and RASTERIZE it into the light-space shadow map. This must finish
+	# before anything is shaded, since a building can cast a shadow on the ground and on other buildings.
+	_shadow.build(_terrain.light_dir(), Vector3(-_terrain.half, -_terrain.relief, -_terrain.half),
+		Vector3(_terrain.half, _terrain.relief + 3.0, _terrain.half))
+	var blds: Array = []
 	for cy in C:
 		for cx in C:
+			if reveal < 0.02:                               # still fading the terrain in - no buildings yet
+				break
 			var i := cy * C + cx
-			var dev := _dev.at(cx, cy)
 			var grown: float = _grown[i]
 			if grown < 0.02:                                # nothing built here yet (a gap / bare peak)
 				continue
@@ -170,37 +196,57 @@ func _draw() -> void:
 			var wz := (float(cy) / float(C - 1) - 0.5) * 2.0 * _terrain.half
 			var ground := _terrain.height_at(wx, wz) * _terrain.relief
 			var float_off: float = _detach[i]
-			# Each block bounces with its own spectral band - a responsive skyline.
+			var dev := _dev.at(cx, cy)
 			var react := _f.sample(clampf(_terrain.height_at(wx, wz) + 0.5, 0.0, 1.0))
-			# A slow per-plot wobble keeps the built skyline REARRANGING over time (buildings edge up
-			# and down at their own pace) rather than freezing once grown.
+			# A slow per-plot wobble keeps the built skyline REARRANGING over time.
 			var wob := 0.85 + 0.28 * sin(_life * 0.12 + float(_phase[i]))
-			# Height = built level x this plot's height CLASS (big-footprint anchors tower) x a base
-			# height (so buildings read even in quiet passages) plus spectral reaction, x the slow
-			# rearrange - a real mix of tall and small, not uniform, and tall enough to see.
-			var h := grown * float(_hclass[i]) * (0.42 + 0.45 * bgain + 0.6 * react) * wob
-			var bw_i := bw * float(_foot[i])                # varied footprint (few big, many small)
-			# Buildings stand UPRIGHT - real ones are vertical whatever the ground does. Keep
-			# only a faint lean toward the terrain normal so the field isn't perfectly rigid.
+			# CRITICAL MASS: how developed (local density `dev`) AND mature the district here is. A block
+			# is BUILT small, then only grows toward its tall potential as its surroundings fill in and
+			# the city matures - so most stay low (many small blocks) and TOWERS emerge later, in the
+			# dense core. Nonlinear (holds low, then surges past the threshold) so the transformation
+			# reads as natural, not linear. A rare few (`_sky`) tower from the start for variety.
+			var crit := clampf(dev * lerpf(0.28, 1.0, _maturity), 0.0, 1.0)
+			var realize := clampf(maxf(Nonlinear.apply("spike", crit, 2.4), float(_sky[i])), 0.0, 1.0)
+			var tall := lerpf(0.5, float(_hclass[i]), realize)   # small base .. this plot's full potential
+			var h := grown * tall * (0.42 + 0.4 * bgain + 0.5 * react) * wob
+			var bw_i := bw * float(_foot[i])
 			var up := _terrain.normal_world(wx, wz).lerp(Vector3.UP, 0.92).normalized()
-			var base := Vector3(wx, ground + float_off, wz)
+			var bx := up.cross(Vector3(1, 0, 0))
+			if bx.length() < 1e-3:
+				bx = up.cross(Vector3(0, 0, 1))
+			bx = bx.normalized()
+			var bz := bx.cross(up).normalized()
+			# Sink the base BELOW the surface so its bottom is buried; the top stays where it was.
+			var base := Vector3(wx, ground + float_off - embed, wz)
+			var htot := h + embed
 			var hue := fposmod(_hue + 0.12 * _terrain.height_at(wx, wz) + 0.25 * dev, 1.0)
-			var blit := clampf(0.18 + 0.5 * dev + 0.5 * react + 0.6 * _glow, 0.05, 1.2) * lit
-			_block_faces(faces, base, up, bw_i, h, hue, blit)
+			# The TERRAIN also shadows the building (a block in a hill's cast shadow darkens).
+			var tsh: float = _terrain.shadow_at(wx, wz)
+			var blit := clampf(0.18 + 0.5 * dev + 0.5 * react + 0.6 * _glow, 0.05, 1.2) * lit * (0.35 + 0.65 * tsh)
+			var ext := _shadow.add_box(base, up, bx, bz, bw_i, htot)   # rasterize + get self-shadow bias
+			blds.append({"base": base, "up": up, "bx": bx, "bz": bz, "w": bw_i, "h": htot,
+				"hue": hue, "lit": blit, "ext": ext})
+
+	# ONE merged list: terrain quads (shadowed by the buildings) + every building face (per-vertex
+	# shadowed, so a neighbour's shadow LAYERS onto the block), depth-sorted together so the land also
+	# occludes the buried building bases. Then draw per entry type.
+	var faces: Array = _terrain.collect_surface(lens, u, lit, _life, _shadow)
+	for b in blds:
+		_block_faces(faces, b.base, b.up, b.bx, b.bz, b.w, b.h, b.hue, b.lit, float(b.ext), reveal)
 	faces.sort_custom(func(a, b): return a.d > b.d)
+	var tex := Terrain.detail_texture()
 	for fc in faces:
-		var c: Color = fc.col
-		Terrain.draw_quad(self, fc.poly, PackedColorArray([c, c, c, c]))
+		if fc.has("uvs"):
+			Terrain.draw_quad(self, fc.poly, fc.cols, fc.uvs, tex)   # terrain land
+		else:
+			Terrain.draw_quad(self, fc.poly, fc.cols)                # building face / water
 
 
-# Append the camera-facing faces of one oriented box to `out` (each {poly, col, d}).
-func _block_faces(out: Array, base: Vector3, up: Vector3, w: float, h: float,
-		hue: float, lit: float) -> void:
-	var bx := up.cross(Vector3(1, 0, 0))
-	if bx.length() < 1e-3:
-		bx = up.cross(Vector3(0, 0, 1))
-	bx = bx.normalized()
-	var bz := bx.cross(up).normalized()                 # the two tangent axes; `up` is height
+# Append the camera-facing faces of one oriented box to `out` (each {poly, cols, d}), per-VERTEX
+# shaded by the key light AND the cast-shadow map - so a neighbour's shadow lands as a real band on
+# the wall. `ext` is this box's own light-depth extent (its self-shadow bias).
+func _block_faces(out: Array, base: Vector3, up: Vector3, bx: Vector3, bz: Vector3, w: float, h: float,
+		hue: float, lit: float, ext: float, alpha := 1.0) -> void:
 	var top := base + up * h
 	# 4 base + 4 top corners.
 	var corners := [
@@ -231,9 +277,18 @@ func _block_faces(out: Array, base: Vector3, up: Vector3, w: float, h: float,
 			Vector2(p2.x, p2.y), Vector2(p3.x, p3.y)])
 		if Terrain._quad_area(fpoly) < 1.0:        # edge-on face - skip (else triangulation fails)
 			continue
-		var shade := 0.55 + 0.45 * clampf(fn.dot(_terrain.light_dir()), 0.0, 1.0)
-		out.append({"d": (p0.z + p1.z + p2.z + p3.z) * 0.25, "poly": fpoly,
-			"col": Color.from_hsv(hue, 0.45, clampf(lit * shade, 0.0, 1.0))})
+		# Strong directional key light: the sunward faces are bright, the faces turned away fall into
+		# real shade - the contrast is what makes a block read as a lit SOLID instead of a flat card.
+		var shade := 0.34 + 0.72 * clampf(fn.dot(_terrain.light_dir()), 0.0, 1.0)
+		# Per-corner CAST shadow from the field (bias by this box's own depth extent so it doesn't
+		# shadow itself, but a taller neighbour's shadow still bands across it).
+		var cols := PackedColorArray()
+		for idx in [i0, i1, i2, i3]:
+			var sf: float = _shadow.factor(corners[idx], ext + 0.06)
+			var c := Color.from_hsv(hue, 0.45, clampf(lit * shade * sf, 0.0, 1.0))
+			c.a = alpha                                  # fade the buildings in AFTER the terrain (embed reveal)
+			cols.append(c)
+		out.append({"d": (p0.z + p1.z + p2.z + p3.z) * 0.25, "poly": fpoly, "cols": cols})
 
 
 # Project a world point to (screen x, screen y, camera depth).

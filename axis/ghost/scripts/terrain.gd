@@ -133,7 +133,7 @@ func build(rng: RandomNumberGenerator, type_: String, world_half := 3.0,
 			# was the wrong colours and the hard edges. The detail field still shifts the band a
 			# little and grains the brightness, so the surface keeps its striation.
 			var c := palette.at(clampf(hgrid[i] + 0.18 * (tex - 0.5), 0.0, 1.0))
-			var contour := 0.88 + 0.12 * sin(hgrid[i] * PI * 16.0)
+			var contour := 0.94 + 0.06 * sin(hgrid[i] * PI * 9.0)
 			var shade := clampf((0.50 + 0.42 * slope + 0.40 * (tex - 0.5)) * contour, 0.14, 1.25)
 			_vcol[i] = Color(c.r * shade, c.g * shade, c.b * shade, 1.0)
 	# Valley fog pools a little above the lowest ground (or the water line), so mist gathers in
@@ -177,7 +177,9 @@ func _biome(h: float, slope: float, moist: float, det: float) -> Color:
 	var c := ground.lerp(rock, rocky)
 	c = c.lerp(_c_snow, smoothstep(0.80, 0.97, t) * clampf(slope * 1.3, 0.0, 1.0))
 	c = c.lerp(_c_sand, (1.0 - smoothstep(0.0, 0.07, t)) * 0.7)
-	var contour := 0.84 + 0.16 * sin(h * PI * 22.0)
+	# A whisper of height striation (kept subtle - a strong contour band read as artificial topographic
+	# lines that didn't match the geometry).
+	var contour := 0.95 + 0.05 * sin(h * PI * 9.0)
 	var sh := clampf((0.55 + 0.42 * slope + 0.32 * (det - 0.5)) * contour, 0.15, 1.25)
 	return Color(c.r * sh, c.g * sh, c.b * sh, 1.0)
 
@@ -276,6 +278,24 @@ func normal_world(wx: float, wz: float) -> Vector3:
 	return _normal(gx, gy)
 
 
+## The cast-shadow factor at a world XZ (1 = full sun, down to SHADOW_MIN inside a mountain's shadow),
+## bilinearly sampled from the terrain's own shadow map - so a scene can darken props (buildings,
+## spires) that stand where the TERRAIN is already in shadow, with the same moving shadows the ground has.
+func shadow_at(wx: float, wz: float) -> float:
+	if _cast.size() != res * res:
+		return 1.0
+	var gx := (wx / half * 0.5 + 0.5) * float(res - 1)
+	var gy := (wz / half * 0.5 + 0.5) * float(res - 1)
+	var x0 := clampi(int(floor(gx)), 0, res - 1)
+	var y0 := clampi(int(floor(gy)), 0, res - 1)
+	var x1 := mini(x0 + 1, res - 1)
+	var y1 := mini(y0 + 1, res - 1)
+	var fx := clampf(gx - float(x0), 0.0, 1.0)
+	var fy := clampf(gy - float(y0), 0.0, 1.0)
+	return lerpf(lerpf(_cast[y0 * res + x0], _cast[y0 * res + x1], fx),
+		lerpf(_cast[y1 * res + x0], _cast[y1 * res + x1], fx), fy)
+
+
 ## Aim the key light. `az` is the azimuth (radians, drifts over time); `el` the elevation
 ## (kept low for long dramatic shadows). Call each frame from the scene with a slowly moving az.
 func set_light(az: float, el := 0.5) -> void:
@@ -334,9 +354,11 @@ func _cast_at(gx: int, gy: int) -> float:
 	return lerpf(1.0, SHADOW_MIN, shade)
 
 
-## Project + depth-sort + draw the terrain surface (and water) through the lens. `lit`
-## scales brightness (audio); `shimmer` (time) animates the water.
-func draw_surface(ci: CanvasItem, lens: Lens3D, u: float, lit: float, shimmer: float) -> void:
+## Build the terrain's projected quads (land + water) for this frame, UNSORTED, so a caller can MERGE
+## them with its own geometry (buildings, spires) and depth-sort everything together - which is what
+## lets the terrain OCCLUDE props embedded in it (a hill in front hides a buried building base). Each
+## quad is {d, poly, cols, [uvs]}; land quads carry uvs (detail texture), water quads don't.
+func collect_surface(lens: Lens3D, u: float, lit: float, shimmer: float, shadow: ShadowField = null) -> Array:
 	var n := res * res
 	var sv := PackedVector2Array()
 	sv.resize(n)
@@ -345,8 +367,8 @@ func draw_surface(ci: CanvasItem, lens: Lens3D, u: float, lit: float, shimmer: f
 	# Drifting CLOUD SHADOWS: soft bands moving across the land over time (per-vertex, so they
 	# follow the real 3D surface), darkening the ground where a cloud passes and brightening the
 	# sunlit gaps - layered under the directional key light and the mountains' cast shadows.
-	var sxd := shimmer * 0.06
-	var szd := shimmer * 0.045
+	var sxd := shimmer * 0.035
+	var szd := shimmer * 0.028
 	# The final lit colour per vertex: base colour x audio brightness x cloud shadow x directional
 	# key light (n.l) x mountain cast shadow, then valley fog blended over the low ground. Computed
 	# once here so both triangles of every quad reuse it.
@@ -355,21 +377,23 @@ func draw_surface(ci: CanvasItem, lens: Lens3D, u: float, lit: float, shimmer: f
 	# World-space UVs for the tiling detail texture (grain follows the real surface, not the screen).
 	var uvg := PackedVector2Array()
 	uvg.resize(n)
-	var tex := detail_texture()
-	ci.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED   # so the UVs > 1 tile
-	var tile := 1.7 / maxf(0.5, half)                        # ~a dozen repeats across the land
+	var tile := 5.0 / maxf(0.5, half)                        # fine grain (many small repeats, not a few stretched)
 	for i in n:
 		var pr := lens.project(_world[i])
 		sv[i] = Vector2(pr.x, pr.y) * u
 		dep[i] = pr.z
 		var p: Vector3 = _world[i]
 		uvg[i] = Vector2(p.x, p.z) * tile
-		var cv := sin(p.x * 0.7 + sxd) + sin(p.z * 0.55 - szd) + 0.6 * sin((p.x + p.z) * 1.1 + sxd * 1.5)
-		var cloud := clampf(0.55 + 0.5 * smoothstep(-0.7, 0.9, cv * 0.5), 0.5, 1.0)
+		# Soft drifting cloud shadow. Two GENTLE orthogonal bands only - the old diagonal (p.x+p.z)
+		# term drew a directional grain that, drifting, read as a diagonal shimmer over the surface.
+		var cv := sin(p.x * 0.5 + sxd) + sin(p.z * 0.42 - szd)
+		var cloud := clampf(0.74 + 0.26 * smoothstep(-0.8, 0.9, cv * 0.5), 0.68, 1.0)
 		# Directional key light: sunny slopes brighten, slopes facing away fall into shade.
 		var ndotl := clampf(_vnorm[i].dot(_light_dir), 0.0, 1.0)
 		var key := 0.55 + 0.6 * ndotl                 # ambient floor + directional term
-		var col := _lit(_vcol[i], lit * cloud * key * _cast[i])
+		# Cast shadows from the scene's occluders (buildings/spires) land on the ground here too.
+		var occ := shadow.factor(_world[i]) if shadow != null else 1.0
+		var col := _lit(_vcol[i], lit * cloud * key * _cast[i] * occ)
 		# Valley fog: a thin drifting haze pooling in the deepest LAND hollows (never over water,
 		# never on the ridges), thickest at the very bottom and feathering out quickly upward.
 		if hgrid[i] > water and hgrid[i] < _fog_level:
@@ -413,7 +437,16 @@ func draw_surface(ci: CanvasItem, lens: Lens3D, u: float, lit: float, shimmer: f
 				var wcol := Color(wc.r * sh * lit, wc.g * sh * lit, wc.b * sh * lit, 0.62)
 				quads.append({"d": (c0.z + c1.z + c2.z + c3.z) * 0.25, "poly": wpoly,
 					"cols": PackedColorArray([wcol, wcol, wcol, wcol])})
+	return quads
+
+
+## Project + depth-sort + draw the terrain surface (and water) - the standalone path for scenes that
+## draw ONLY terrain. Scenes with props embedded in the land use collect_surface() and merge instead.
+func draw_surface(ci: CanvasItem, lens: Lens3D, u: float, lit: float, shimmer: float) -> void:
+	ci.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED   # so the UVs > 1 tile
+	var quads := collect_surface(lens, u, lit, shimmer)
 	quads.sort_custom(func(a, b): return a.d > b.d)        # far first
+	var tex := detail_texture()
 	for q in quads:
 		if q.has("uvs"):
 			draw_quad(ci, q.poly, q.cols, q.uvs, tex)      # land: modulated by the detail texture
@@ -468,24 +501,28 @@ static func draw_quad(ci: CanvasItem, poly: PackedVector2Array, cols: PackedColo
 static var _dtex: Texture2D = null
 static func detail_texture() -> Texture2D:
 	if _dtex == null:
-		var s := 128
+		# A fine, ISOTROPIC grey grain (two plain fbm octaves, no ridged noise - the ridged fractal
+		# baked in directional streaks that tiled into visible diagonal lines). Higher-res and gentler
+		# contrast so it reads as a subtle ground grain modulating the vertex colour, not a stretched,
+		# blotchy, low-res overlay. FastNoiseLite is seamless enough at these frequencies to tile.
+		var s := 256
 		var img := Image.create(s, s, false, Image.FORMAT_RGBA8)
 		var nf := FastNoiseLite.new()
 		nf.seed = 1337
-		nf.frequency = 0.045
-		nf.fractal_octaves = 4
+		nf.frequency = 0.10
+		nf.fractal_octaves = 5
 		var nr := FastNoiseLite.new()
 		nr.seed = 4242
 		nr.noise_type = FastNoiseLite.TYPE_SIMPLEX
-		nr.fractal_type = FastNoiseLite.FRACTAL_RIDGED
-		nr.frequency = 0.09
+		nr.frequency = 0.26
 		nr.fractal_octaves = 3
 		for y in s:
 			for x in s:
 				var a := nf.get_noise_2d(float(x), float(y)) * 0.5 + 0.5
 				var b := nr.get_noise_2d(float(x) + 33.0, float(y) - 12.0) * 0.5 + 0.5
-				var v := clampf(0.72 + 0.5 * (a - 0.5) + 0.34 * (b - 0.5), 0.4, 1.18)
+				var v := clampf(0.80 + 0.30 * (a - 0.5) + 0.18 * (b - 0.5), 0.6, 1.12)
 				img.set_pixel(x, y, Color(v, v, v, 1.0))
+		img.generate_mipmaps()
 		_dtex = ImageTexture.create_from_image(img)
 	return _dtex
 

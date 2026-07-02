@@ -39,6 +39,8 @@ var focus_dist := 6.0          # world distance to the thing being looked at (ac
 var _sat := 0.65
 var _dwell := 0.0
 var _dilate := 0.35            # 0..1 pupil openness (fraction of the iris radius)
+var _t := 0.0                  # local clock for the gentle ambient-light drift
+var _light := 0.6              # 0..1 ambient light ON the eye: drives BOTH the catchlight AND the pupil
 var _rng := RandomNumberGenerator.new()
 
 var _sclera: Mesh3D
@@ -88,10 +90,18 @@ func look_at_point(eye_pos: Vector3, focus: Vector3) -> void:
 
 
 func update(dt: float, energy: float) -> void:
-	# Pupil accommodates to focus depth (near = constricted, far = wide) and opens a
-	# little more with the audio - the two combine.
+	# A gentle, slow drift of the ambient LIGHT falling on the eye, nudged a little by the music. This
+	# is the VISIBLE cause of the pupil's size: the catchlight (the reflected highlight) brightens and
+	# swells with it, and the pupil follows it INVERSELY - dim light OPENS the pupil, bright light CLOSES
+	# it (the pupillary light reflex). So a dilation always coincides with the light visibly dimming,
+	# instead of the pupil ballooning for no reason.
+	_t += dt
+	var light_t := clampf(0.58 + 0.30 * sin(_t * 0.33) + 0.16 * (energy - 0.35), 0.12, 1.0)
+	_light = lerpf(_light, light_t, 1.0 - exp(-2.2 * dt))
+	# Pupil = accommodation (near focus constricts) + the light reflex (dim -> dilate). The pupil eases
+	# faster than the light drifts, so it visibly tracks the light rather than leading it.
 	var accom := clampf((focus_dist - 1.2) / 18.0, 0.0, 1.0)        # 0 near .. 1 far
-	var pupil_t := clampf(lerpf(0.17, 0.52, accom) + 0.30 * energy, 0.12, 0.74)
+	var pupil_t := clampf(lerpf(0.17, 0.52, accom) + 0.42 * (1.0 - _light), 0.12, 0.80)
 	_dilate = lerpf(_dilate, pupil_t, 1.0 - exp(-4.0 * dt))
 	if autonomous:
 		_dwell -= dt
@@ -264,12 +274,16 @@ func _draw_cornea(ci: CanvasItem, lens: Lens3D, u: float, pos: Vector3, radius: 
 	# A faint wet glaze across the cornea on the light side (a soft bright crescent).
 	var light := Mesh3D.LIGHT.normalized()
 	var lit := light - light.project(front)             # light direction in the iris plane
+	# The catchlight/glaze track the ambient light `_light` - they brighten and swell as it rises, dim
+	# and shrink as it falls - so the pupil's light reflex has a plainly visible source on the cornea.
+	var glow := 0.45 + 0.75 * _light         # highlight brightness follows the light
+	var swell := 0.68 + 0.5 * _light         # highlight size follows the light
 	if lit.length() > 1e-3:
 		var lx := lit.dot(e_basis(front, true))
 		var ly := lit.dot(e_basis(front, false))
 		var gc := center + (ua * lx + va * ly) * 0.5
 		ci.draw_colored_polygon(_disc(gc, ua * 0.5, va * 0.5, 1.0, 20),
-			Color(1, 1, 1, 0.05 * fade * clampf(facing, 0, 1)))
+			Color(1, 1, 1, 0.06 * glow * fade * clampf(facing, 0, 1)))
 	# The hot catchlight: a real reflection point toward the light, projected.
 	if facing < 0.12:
 		return
@@ -278,12 +292,12 @@ func _draw_cornea(ci: CanvasItem, lens: Lens3D, u: float, pos: Vector3, radius: 
 	if pr.z <= lens.near:
 		return
 	var sp := Vector2(pr.x, pr.y) * u
-	var cs: float = maxf(1.5, iris_px * 0.1)
+	var cs: float = maxf(1.5, iris_px * 0.1) * swell
 	var a := fade * clampf(facing, 0.0, 1.0)
-	ci.draw_circle(sp, cs * 2.4, Color(1, 1, 1, 0.10 * a))     # soft bloom
-	ci.draw_circle(sp, cs * 1.2, Color(1, 1, 1, 0.45 * a))
-	ci.draw_circle(sp, cs * 0.55, Color(1, 1, 1, 0.95 * a))    # hot core
-	ci.draw_circle(sp + Vector2(cs * 1.5, cs * 1.1), cs * 0.4, Color(1, 1, 1, 0.4 * a))  # 2nd glint
+	ci.draw_circle(sp, cs * 2.4, Color(1, 1, 1, clampf(0.10 * glow, 0.0, 0.3) * a))     # soft bloom
+	ci.draw_circle(sp, cs * 1.2, Color(1, 1, 1, clampf(0.45 * glow, 0.0, 0.8) * a))
+	ci.draw_circle(sp, cs * 0.55, Color(1, 1, 1, clampf(0.95 * glow, 0.0, 1.0) * a))    # hot core
+	ci.draw_circle(sp + Vector2(cs * 1.5, cs * 1.1), cs * 0.4, Color(1, 1, 1, 0.4 * glow * a))  # 2nd glint
 
 
 # One of the two in-plane unit axes used for the iris frame (kept consistent with draw).
