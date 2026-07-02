@@ -188,7 +188,8 @@ var _session_seed := 0       # base seed for this session (random per play; --se
 # storyboards/README.md). When _storyboard_seq is non-empty the Director walks it in
 # order instead of the novelty scheduler, and each entry can dictate its own exit.
 var _storyboard_seq: Array = []
-var _storyboard_name := ""
+var _storyboard_name := ""           # DISPLAY name (the JSON "name" field) - for UI only
+var _storyboard_source := ""         # the loadable name/path passed to load_storyboard - for re-loading (export)
 var _storyboard_loop := true
 var _storyboard_transition := ""    # default transition style for a storyboard ("" = cut in manual mode)
 var _step := 0
@@ -275,6 +276,7 @@ func detach() -> void:
 	_kind_last = {}
 	_storyboard_seq = []
 	_storyboard_name = ""
+	_storyboard_source = ""
 
 
 ## True when the Director is walking a user-authored storyboard (manual mode).
@@ -285,6 +287,12 @@ func is_manual() -> bool:
 ## Name of the active storyboard, or "" in auto mode.
 func storyboard_name() -> String:
 	return _storyboard_name
+
+
+## The loadable name/path the active storyboard was loaded FROM (may differ from its display name).
+## The exporter passes THIS to the render process so it re-loads the same storyboard, not the display name.
+func storyboard_source() -> String:
+	return _storyboard_source
 
 
 ## Load a storyboard by name (res://storyboards/<name>.json) or by a full/absolute path,
@@ -309,6 +317,7 @@ func load_storyboard(name_or_path: String) -> bool:
 	_storyboard_seq = seq
 	_storyboard_loop = bool(data.get("loop", true))
 	_storyboard_name = String(data.get("name", name_or_path))
+	_storyboard_source = name_or_path           # remember HOW it was loaded, so the export can re-load it
 	_storyboard_transition = String(data.get("transition", ""))   # e.g. "cut" forces jump cuts
 	_step = 0
 	print("ghost: storyboard '%s' loaded (%d scenes, loop=%s)" % [

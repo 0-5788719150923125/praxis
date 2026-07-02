@@ -253,7 +253,7 @@ func _start_render() -> void:
 		"--audio", _song])
 	if Director.is_manual():
 		args.append("--storyboard")
-		args.append(Director.storyboard_name())
+		args.append(Director.storyboard_source())   # the loadable name/path, NOT the display name
 	_render_pid = OS.create_process(exe, args)
 	if _render_pid > 0:
 		_state = "rendering"
