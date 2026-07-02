@@ -1622,19 +1622,12 @@
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
-.tab-header h2 {
-    font-size: 1.8rem;
-    font-weight: 600;
-    margin: 0;
-    color: var(--text);
-    word-wrap: break-word;
-}
-
 .tab-header-title-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 0.5rem;
+    flex-wrap: wrap;
+    gap: 0.75rem;
 }
 
 .tab-header-controls {
@@ -1704,7 +1697,6 @@
     gap: 1.5rem;
     font-size: 0.9rem;
     color: var(--light-text);
-    margin-top: 0.5rem;
 }
 
 /* ==================== Research Tab ==================== */

@@ -306,7 +306,6 @@ function renderSpec(data, container) {
     }
 
     const headerHTML = createTabHeader({
-        title: 'Configuration',
         additionalContent: renderSpecRunSelector(),
         buttons,
         metadata: metaParts.join('\n')
@@ -743,7 +742,6 @@ export function renderAgents(agents, container) {
     if (!container) return;
     state.agents.availableAgents = agents || state.agents.availableAgents || [];
 
-    const title = state.theme === 'dark' ? 'Hangar' : 'Wire';
     const ships = agentViews();
     const fleet = [...ships, ...state.agents.availableAgents]; // own ships first
     // Apply the per-type naming convention here (the frontend owns names; they
@@ -767,7 +765,6 @@ export function renderAgents(agents, container) {
         }
     }
     const headerHTML = createTabHeader({
-        title: title,
         buttons: [contractsToggleButton()],
         metadata: `<span><strong>Fleet:</strong> ${fleet.length} actor${fleet.length !== 1 ? 's' : ''}${
             ships.length ? ` (${ships.length} local)` : ''

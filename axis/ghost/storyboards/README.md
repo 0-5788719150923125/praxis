@@ -31,20 +31,23 @@ A storyboard is a JSON object:
 }
 ```
 
-| field      | type    | default | meaning                                                        |
-|------------|---------|---------|----------------------------------------------------------------|
-| `name`     | string  | file    | label shown in logs / the splash.                              |
-| `loop`     | bool    | `true`  | restart the sequence from the top when it ends. `false` holds the final scene. |
-| `sequence` | array   | -       | the ordered scenes (required, non-empty).                      |
+| field         | type    | default | meaning                                                        |
+|---------------|---------|---------|----------------------------------------------------------------|
+| `name`        | string  | file    | label shown in logs / the splash.                              |
+| `loop`        | bool    | `true`  | restart the sequence from the top when it ends. `false` holds the final scene. |
+| `transition`  | string  | `cut`   | default transition style for the whole storyboard (`cut` / `dip` / `fade`); a compatible morph always wins. |
+| `sensitivity` | number  | `1.0`   | narrative **tempo**. Higher = **faster**: every scene's hold shrinks by this and each scene marches through its keyframe phases sooner (they are paced as fractions of the hold, so they always still land). It compresses ONLY the keyframe/cut clock - the **ambient animation** of the bodies (a prism's spin, an eye's saccades) is never sped up. Lower = slower, more deliberate. A per-entry `sensitivity` overrides it for one scene. |
+| `sequence`    | array   | -       | the ordered scenes (required, non-empty).                      |
 
 ### A `sequence` entry
 
 | field      | type    | default        | meaning                                                                 |
 |------------|---------|----------------|-------------------------------------------------------------------------|
-| `scene`    | string  | -              | scene file in `scripts/scenes/` **without** `.gd` (e.g. `"planes"`). Required. |
-| `behavior` | string  | `"drift"`      | motion behavior: `static` / `drift` / `fluid` (see `GhostScene`).      |
-| `shot`     | string  | by framing     | camera framing: `centered` / `offset` / `push_in` / `pull_back` / `pan` / `canted`. Omit to let the scene's framing class choose. |
-| `seed`     | int     | derived        | pin the scene's seed for an exact look. Omit for a song-derived seed.   |
+| `scene`       | string  | -              | scene file in `scripts/scenes/` **without** `.gd` (e.g. `"planes"`). Required. |
+| `behavior`    | string  | `"drift"`      | motion behavior: `static` / `drift` / `fluid` (see `GhostScene`).      |
+| `shot`        | string  | by framing     | camera framing: `centered` / `offset` / `push_in` / `pull_back` / `pan` / `canted`. Omit to let the scene's framing class choose. |
+| `seed`        | int     | derived        | pin the scene's seed for an exact look. Omit for a song-derived seed.   |
+| `sensitivity` | number  | storyboard's   | override the tempo for this one entry (see the top-level `sensitivity`). |
 
 **Exit rule** - how long the entry stays and what ends it. Pick one:
 
@@ -59,8 +62,12 @@ Scene names come from `scripts/scenes/*.gd`: `spectrum_ring`, `harmonic_lattice`
 `voxel_blocks`, `cityscape`, `shatter_glass`, `gaussian_landscape`, `rocks`,
 `embers`, `metropolis`.
 
-See `default.json` (the storyboard Manual mode opens with) for a worked score mixing fixed holds, musical exits, and a
-self-ending oneshot.
+See `default.json` (the storyboard Manual mode opens with): the full "the-point" arc
+(`eye → two_eyes → eye_prism → two_prisms → prism_swarm`) on timecoded fixed `hold`s, `loop:false`
+so the final swarm holds for the end card. Consecutive entries **morph** into one another (each
+scene's `morph_in` matches the previous scene's `morph_out`), so the eye and the prisms continue
+across the cuts rather than being re-created. A fixed `hold` is honored exactly, above the auto-mode
+silence/tail pacing gates - so a tightly-timed piece reaches its finale.
 
 ## Roadmap
 

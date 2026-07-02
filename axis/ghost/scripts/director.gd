@@ -72,6 +72,9 @@ const SCENES := [
 	{"script": preload("res://scripts/scenes/two_eyes.gd"), "behavior": "static"},
 	{"script": preload("res://scripts/scenes/prism.gd"), "behavior": "static"},
 	{"script": preload("res://scripts/scenes/prism_split.gd"), "behavior": "static"},
+	{"script": preload("res://scripts/scenes/eye_prism.gd"), "behavior": "static"},
+	{"script": preload("res://scripts/scenes/two_prisms.gd"), "behavior": "static"},
+	{"script": preload("res://scripts/scenes/prism_swarm.gd"), "behavior": "drift"},
 ]
 
 # ----------------------------------------------------------------------------------
@@ -138,6 +141,12 @@ const TRIGGER_BAG := [Trigger.BEAT, Trigger.BEAT, Trigger.BEAT, Trigger.MOVEMENT
 ## forcing a cut with nothing playing (e.g. a song's silent tail) reads as broken. Kept well
 ## under lull_threshold so a musical lull still cuts but true silence holds the scene.
 @export var silence_floor: float = 0.03
+## Narrative TEMPO. Higher = faster: scene holds (and the auto-mode pacing bounds) shrink by this,
+## so more scenes play in the same time and each scene marches through its keyframe phases sooner.
+## It compresses ONLY the narrative/keyframe clock - the ambient animation of the bodies is untouched
+## (see GhostScene.event_scale), so a busy session never makes the individual motions look sped-up.
+## A storyboard overrides this with a top-level `sensitivity` (and per-entry `sensitivity`).
+@export var sensitivity: float = 1.0
 ## Seconds a dip/blend takes end to end (cuts are instant). A DIP spends the middle
 ## of this in darkness, so a little long reads as a deliberate breath between scenes.
 @export var transition_time: float = 2.0
@@ -192,6 +201,8 @@ var _storyboard_name := ""           # DISPLAY name (the JSON "name" field) - fo
 var _storyboard_source := ""         # the loadable name/path passed to load_storyboard - for re-loading (export)
 var _storyboard_loop := true
 var _storyboard_transition := ""    # default transition style for a storyboard ("" = cut in manual mode)
+var _storyboard_sensitivity := -1.0 # storyboard-wide tempo override (<0 = fall back to the export)
+var _cur_sens := 1.0                 # the ACTIVE scene's resolved sensitivity (used by the pacing bounds)
 var _step := 0
 
 
@@ -319,6 +330,7 @@ func load_storyboard(name_or_path: String) -> bool:
 	_storyboard_name = String(data.get("name", name_or_path))
 	_storyboard_source = name_or_path           # remember HOW it was loaded, so the export can re-load it
 	_storyboard_transition = String(data.get("transition", ""))   # e.g. "cut" forces jump cuts
+	_storyboard_sensitivity = float(data.get("sensitivity", -1.0))   # narrative tempo (<0 = use the export)
 	_step = 0
 	print("ghost: storyboard '%s' loaded (%d scenes, loop=%s)" % [
 		_storyboard_name, _storyboard_seq.size(), _storyboard_loop])
@@ -531,6 +543,19 @@ func _drive_stinger(delta: float, bf: float) -> void:
 func _should_change() -> bool:
 	if _locked >= 0 or _held:
 		return false
+	# In manual mode, a non-looping storyboard holds its final scene forever (checked FIRST, before
+	# the fixed-hold check below, so the last entry's `hold` can't try to re-cut into nothing).
+	if not _storyboard_seq.is_empty() and not _storyboard_loop and _step >= _storyboard_seq.size():
+		return false
+	var ex: Dictionary = _current.exit_spec
+	# A fixed hold is DETERMINISTIC authored timing: honor it exactly, ABOVE the auto-mode silence
+	# and tail pacing gates. Those gates are heuristics for *cue-based* exits (don't cut into dead air
+	# or a fading tail when we're waiting on a beat/lull); an author who wrote `hold: 16` means 16, and
+	# because the value is fixed it is already identical between the live analyzer and the export bake,
+	# so honoring it early keeps live/export parity while letting a tightly-timed piece (e.g. the-point,
+	# whose 33s runs shorter than the 10s tail window) actually reach its finale.
+	if ex.has("hold"):
+		return _elapsed >= float(ex["hold"])
 	# Never change scenes during silence: with no perceptible audio there is nothing to cut
 	# on, and forcing a transition (a max-hold backstop, or a LULL trigger that silence
 	# trivially satisfies) drops a fresh scene into dead air. Hold until the audio returns.
@@ -545,13 +570,6 @@ func _should_change() -> bool:
 	var slen := Spectrum.song_length()
 	if slen > 0.0 and Spectrum.current.time >= slen - end_hold:
 		return false
-	# In manual mode, a non-looping storyboard holds its final scene forever.
-	if not _storyboard_seq.is_empty() and not _storyboard_loop and _step >= _storyboard_seq.size():
-		return false
-	var ex: Dictionary = _current.exit_spec
-	# A fixed hold (deterministic storyboard timing) ignores cues entirely.
-	if ex.has("hold"):
-		return _elapsed >= float(ex["hold"])
 	# During a burst the backstop shrinks to a few seconds so quick scenes never linger.
 	var hi: float = _burst_max if _burst_left > 0 else _scaled_bound(ex, "max", max_hold)
 	if _elapsed >= hi:                               # backstop: the cue never came
@@ -573,9 +591,11 @@ func _pacing_scale() -> float:
 	return lerpf(pace_calm_scale, pace_drive_scale, drive)
 
 
-# A hold bound: a storyboard-explicit value is taken literally; the auto-mode default is pace-scaled.
+# A hold bound: a storyboard-explicit value is taken literally (already sensitivity-scaled in
+# _make_scene); the auto-mode default is pace-scaled AND divided by the active sensitivity, so a
+# higher tempo also makes auto cuts come faster (more of the catalogue in the same time).
 func _scaled_bound(ex: Dictionary, key: String, base: float) -> float:
-	return float(ex[key]) if ex.has(key) else base * _pacing_scale()
+	return float(ex[key]) if ex.has(key) else base * _pacing_scale() / maxf(0.05, _cur_sens)
 
 
 # Eligibility: a oneshot when its sequence ends, a loop after the minimum hold (a short one in a
@@ -860,7 +880,7 @@ func _next_entry() -> Dictionary:
 		# spectrum at the cut instant and is not frame-reproducible, which re-rolled the look each play.
 		var seed := _session_seed ^ _scene_key(_index) ^ (_swaps * 0x85EBCA77)
 		return {"script": e.script, "behavior": e.behavior, "seed": seed,
-			"shot": "", "exit_spec": {}, "transition": ""}   # "" -> auto STYLE_BAG
+			"shot": "", "exit_spec": {}, "transition": "", "sensitivity": sensitivity}   # "" -> auto STYLE_BAG
 	# Manual: walk the sequence (wrap when looping, else hold on the last entry).
 	var n := _storyboard_seq.size()
 	var i: int = _step % n if _storyboard_loop else mini(_step, n - 1)
@@ -873,9 +893,12 @@ func _next_entry() -> Dictionary:
 		push_warning("ghost: storyboard scene '%s' not found, substituting" % nm)
 	var seed2: int = int(item.get("seed",
 		_session_seed ^ (i * 0x9E3779B1) ^ (_step * 0x85EBCA77)))
+	# Sensitivity resolves per entry: the entry's own value, else the storyboard's, else the export.
+	var sb_sens: float = _storyboard_sensitivity if _storyboard_sensitivity > 0.0 else sensitivity
+	var sens: float = float(item.get("sensitivity", sb_sens))
 	return {"script": script, "behavior": String(item.get("behavior", "drift")),
 		"seed": seed2, "shot": String(item.get("shot", "")), "exit_spec": _parse_exit(item),
-		"transition": String(item.get("transition", ""))}   # entry-level only; resolved in _make_scene
+		"transition": String(item.get("transition", "")), "sensitivity": sens}   # entry-level; resolved in _make_scene
 
 
 # Translate a storyboard entry's timing into an exit_spec the scene carries (see
@@ -919,7 +942,16 @@ func _make_scene() -> GhostScene:
 	# should still print the same bucket here, a useful observability signal. (See
 	# next/harmonic_seeding.md.)
 	print("ghost: cut -> %s  harmonic bucket %d" % [scene.scene_name, Spectrum.harmonic_bucket(12)])
-	scene.exit_spec = entry["exit_spec"]
+	# Narrative tempo: higher sensitivity shrinks the hold (and any explicit min/max bounds), so the
+	# scene is shorter; the scene paces its keyframes as fractions of that shrunken hold, so events
+	# still all land. _cur_sens also feeds the auto-mode pacing bounds (see _scaled_bound).
+	_cur_sens = clampf(float(entry.get("sensitivity", 1.0)), 0.05, 20.0)
+	var ex: Dictionary = entry["exit_spec"]
+	for k in ["hold", "min", "max"]:
+		if ex.has(k):
+			ex[k] = float(ex[k]) / _cur_sens
+	scene.exit_spec = ex
+	scene.event_scale = _cur_sens
 	# Transition style, by override hierarchy (highest first): storyboard entry, then
 	# the scene's own choice (set in build_params), then the storyboard's default,
 	# then the mode default (manual = cut, auto = "" -> the weighted STYLE_BAG). A

@@ -61,6 +61,15 @@ func begin_morph(from: GhostScene) -> void:
 	_focus_target = _focus
 
 
+# Hand the two eyes' identity to a morph target (eye_prism): the LIVE EyeBody instances
+# (so the surviving eye literally continues, no re-seeding), their world separation, radius,
+# hue, and the shared focus. eye_prism keeps the LEFT eye and crystallizes the RIGHT into a
+# blue prism at the same slot - so nothing jumps at the swap.
+func morph_payload() -> Dictionary:
+	return {"left": _left, "right": _right, "offset": _eye_off, "radius": _eye_rad,
+		"hue": _left.hue, "focus": _focus}
+
+
 func update(f: AudioFeatures, delta: float) -> void:
 	_f = f
 	tick(f, delta)
@@ -73,7 +82,9 @@ func update(f: AudioFeatures, delta: float) -> void:
 		_new_focus()
 	_focus = _focus_target   # snap to the target; each eye's spring gives the saccade momentum + overshoot
 
-	_split = minf(1.0, _split + delta * 1.1)    # the split eases open over ~1s
+	# The split eases open over ~45% of the scene's hold, so it always finishes on screen no matter how
+	# short the scene is (a plain cut opens already-split: _split starts at 1.0, so this is a no-op then).
+	_split = minf(1.0, _split + delta / maxf(0.3, phase_span(2.0) * 0.45))
 	var s01 := smoothstep(0.0, 1.0, _split)
 	_eye_off = float(params.offset) * s01
 	_eye_rad = lerpf(_start_radius, float(params.radius), s01)

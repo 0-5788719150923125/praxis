@@ -61,6 +61,22 @@ var seed_value := 0
 ## lifecycle + randomly-armed trigger (auto mode).
 var exit_spec: Dictionary = {}
 
+## Narrative-tempo scalar from the storyboard's `sensitivity` (see the Director), 1.0 = nominal.
+## Higher = faster: the Director shrinks this scene's hold by it, and a scene that has no fixed hold
+## (auto mode) divides its nominal keyframe span by it. It ONLY compresses the keyframe/phase clock -
+## the ambient life of the bodies (a prism's spin, an eye's saccades) always runs on the raw delta,
+## so turning sensitivity up makes events arrive sooner WITHOUT making the animation itself look fast.
+var event_scale: float = 1.0
+
+## The window (seconds) a keyframe-driven scene should pace its phases over: its fixed hold if it has
+## one (already sensitivity-scaled by the Director), else its own [param nominal] design length divided
+## by [member event_scale]. Scenes express keyframes as FRACTIONS of this (e.g. `_t / phase_span(8.0)`),
+## so every event still lands whatever the hold - shorter holds just compress them.
+func phase_span(nominal: float) -> float:
+	if exit_spec.has("hold"):
+		return maxf(0.05, float(exit_spec["hold"]))
+	return maxf(0.05, nominal / maxf(0.05, event_scale))
+
 ## Content-aware transition typing. A scene declares the geometry it LEAVES on screen
 ## (`morph_out`) and the geometry it can grow IN from (`morph_in`). When the Director
 ## changes from A to B and `B.morph_in == A.morph_out` (and both non-empty), it plays

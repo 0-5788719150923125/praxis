@@ -721,7 +721,6 @@ function renderDynamicsCharts(runData, container) {
     }
 
     const headerHTML = createTabHeader({
-        title: 'Learning Dynamics',
         additionalContent: renderDynamicsRunSelector(),
         buttons: [
             pdfButton('download-pdf-dynamics'),

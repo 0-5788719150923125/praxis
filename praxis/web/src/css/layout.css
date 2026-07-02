@@ -53,8 +53,10 @@
     gap: var(--spacing-sm);
     /* Top padding matches the chat-container's top padding below it, so the
        toolbar sits with equal breathing room above and below. Horizontal
-       padding insets the buttons away from the window margin. */
-    padding: var(--spacing-md) var(--spacing-lg) 0;
+       padding insets the buttons away from the window margin. Bottom border
+       mirrors the divider every other tab's second row (.tab-header) has. */
+    padding: var(--spacing-md) var(--spacing-lg) var(--spacing-md);
+    border-bottom: 1px solid var(--border);
     width: 100%;
     box-sizing: border-box;
 }

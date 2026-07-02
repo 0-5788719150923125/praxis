@@ -1,11 +1,13 @@
 {
 	"name": "the-point",
-	"loop": true,
+	"loop": false,
 	"transition": "cut",
+	"sensitivity": 1.0,
 	"sequence": [
-		{ "scene": "eye", "behavior": "static", "exit": "movement", "min_hold": 3, "max_hold": 8 },
-		{ "scene": "two_eyes", "behavior": "static", "exit": "beat", "min_hold": 3, "max_hold": 8 },
-		{ "scene": "prism", "behavior": "static", "exit": "beat", "min_hold": 4, "max_hold": 10 },
-		{ "scene": "prism_split", "behavior": "static", "exit": "lull", "min_hold": 4, "max_hold": 12 }
+		{ "scene": "eye",         "behavior": "static", "hold": 2 },
+		{ "scene": "two_eyes",    "behavior": "static", "hold": 2 },
+		{ "scene": "eye_prism",   "behavior": "static", "hold": 7 },
+		{ "scene": "two_prisms",  "behavior": "static", "hold": 8 },
+		{ "scene": "prism_swarm", "behavior": "static", "hold": 4 }
 	]
 }

@@ -1203,17 +1203,15 @@ function measureDeck(deck) {
     const floorY = Math.min(window.innerHeight, regionBottom, visH) - DECK_FLOOR_MARGIN;
     let lift = 0;
     if (mobile) {
-        // Ceiling = bottom edge of the per-tab title TEXT itself (the .tab-header
-        // <h2>: "Metrics" / "Learning Dynamics"). Lift the deck's top right up to
-        // just under the title so a card pinned at slot A (headTop=0) sits a hair
-        // below the title, shadowing everything else in the header - the
-        // run-selector button and the metadata rows. Pulling back to B drops the
-        // head down to reveal those again. Falls back to the whole header, then
-        // the tab row, if no title text is present.
+        // Ceiling = bottom edge of the per-tab header row (run-selector button +
+        // metadata; there's no title text anymore, the tab nav names the
+        // section). Lift the deck's top right up to just under it so a card
+        // pinned at slot A (headTop=0) sits a hair below it, shadowing
+        // everything else in the header. Pulling back to B drops the head down
+        // to reveal those again. Falls back to the tab row if no header is present.
         const scope = deck.closest('.app-container') || document;
         const region = deck.closest('.tab-content') || scope;
-        const ceil = region.querySelector('.tab-header h2')
-            || region.querySelector('.tab-header')
+        const ceil = region.querySelector('.tab-header')
             || scope.querySelector('.tab-nav');
         const ceilY = ceil ? ceil.getBoundingClientRect().bottom : top;
         lift = Math.max(0, Math.round(top - ceilY));
@@ -2108,7 +2106,6 @@ function renderMetricsHeader(container, runs) {
     `;
 
     const headerHTML = createTabHeader({
-        title: 'Metrics',
         additionalContent: selectorHTML,
         buttons: [
             pdfButton('download-pdf-research'),

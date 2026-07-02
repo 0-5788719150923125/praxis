@@ -715,16 +715,17 @@ export function createTerminalLine(text) {
 
 /**
  * Create tab header - pure functional component
- * Reusable header with title, optional buttons, and optional metadata
+ * Reusable header with optional metadata and optional buttons, sharing a
+ * single row. No title text - the tab nav's own tab name already names the
+ * section, so repeating it here would be redundant.
  * @param {Object} config - Header configuration
- * @param {string} config.title - Main title text
  * @param {Array} config.buttons - Array of button configs [{id, label, icon, action, dataAttrs, className}]
- * @param {string} config.metadata - Optional metadata/subtitle below title
+ * @param {string} config.metadata - Optional metadata, shown opposite the controls
  * @param {Object} config.additionalContent - Optional HTML content to inject into controls
  * @returns {string} HTML string
  */
 export function createTabHeader(config) {
-    if (!config || !config.title) return '';
+    if (!config) return '';
 
     // Build buttons HTML
     const buttonsHTML = (config.buttons || []).map(btn => {
@@ -745,16 +746,16 @@ export function createTabHeader(config) {
     const controlsContent = (config.additionalContent || '') + buttonsHTML;
     const controlsHTML = controlsContent ? `<div class="tab-header-controls">${controlsContent}</div>` : '';
 
-    // Build metadata HTML (subtitle below title)
     const metadataHTML = config.metadata ? `<div class="tab-header-metadata">${config.metadata}</div>` : '';
+
+    if (!controlsHTML && !metadataHTML) return '';
 
     return `
         <div class="tab-header">
             <div class="tab-header-title-row">
-                <h2>${escapeHtml(config.title)}</h2>
+                ${metadataHTML}
                 ${controlsHTML}
             </div>
-            ${metadataHTML}
         </div>
     `;
 }
