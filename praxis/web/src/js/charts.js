@@ -1014,9 +1014,10 @@ function renderMetricsCharts(data, container) {
 // (no getBoundingClientRect / offsetHeight) and forces no reflow. Touch drags
 // pos 1:1; release coasts pos under exponential friction and eases into the
 // nearest integer slot. Wheel accumulates pos and snaps when it stops; arrows
-// step one slot. On mobile the deck lifts (wallet 'A') so the active card title
-// tucks just under the tab row, hiding the per-tab title strip; a downward
-// swipe begun at the deck's top edge drops it back ('B') to reveal that strip.
+// step one slot. On mobile the deck lifts (wallet 'A') so the active card
+// tucks just under the tab row, covering the per-tab header row (buttons/
+// metadata); a downward swipe begun at the deck's top edge drops it back
+// ('B') to reveal that row again.
 //
 // Gesture hierarchy (uniform across every deck and card):
 //   1. GRIP - the top band of the head card (title chrome included). Never
@@ -1203,17 +1204,21 @@ function measureDeck(deck) {
     const floorY = Math.min(window.innerHeight, regionBottom, visH) - DECK_FLOOR_MARGIN;
     let lift = 0;
     if (mobile) {
-        // Ceiling = bottom edge of the per-tab header row (run-selector button +
-        // metadata; there's no title text anymore, the tab nav names the
-        // section). Lift the deck's top right up to just under it so a card
-        // pinned at slot A (headTop=0) sits a hair below it, shadowing
-        // everything else in the header. Pulling back to B drops the head down
-        // to reveal those again. Falls back to the tab row if no header is present.
+        // Ceiling = TOP edge of the per-tab header row (run-selector button +
+        // metadata/buttons; there's no title text anymore, the tab nav names
+        // the section). Lift the deck's top all the way up to the header's own
+        // top so a card pinned at slot A (headTop=0) rises to cover the whole
+        // header - shadowing the buttons/metadata row entirely, the way the
+        // title text used to get shadowed. Pulling back to B drops the head
+        // down below the header to reveal it again. Falls back to the tab
+        // row's bottom if no header is present (nothing to slot over).
         const scope = deck.closest('.app-container') || document;
         const region = deck.closest('.tab-content') || scope;
-        const ceil = region.querySelector('.tab-header')
-            || scope.querySelector('.tab-nav');
-        const ceilY = ceil ? ceil.getBoundingClientRect().bottom : top;
+        const header = region.querySelector('.tab-header');
+        const ceil = header || scope.querySelector('.tab-nav');
+        const ceilY = ceil
+            ? (header ? ceil.getBoundingClientRect().top : ceil.getBoundingClientRect().bottom)
+            : top;
         lift = Math.max(0, Math.round(top - ceilY));
         if (lift > 0) deck.style.marginTop = `${-lift}px`;
     }
@@ -1321,7 +1326,7 @@ function renderDeck(deck) {
     const bandH = deck._bandH || deck.clientHeight || 0;
     // Lift is the A/B anchor only (eased), NOT a per-card bob: the head holds a stable
     // vertical position while cycling so cards don't bounce. At rest (B) it sits below
-    // the title strip (headTop = lift); engaging lifts it to the tab row (A, headTop=0).
+    // the header row (headTop = lift); engaging lifts it to cover the header (A, headTop=0).
     const a01 = deck._anchor < 0 ? 0 : deck._anchor > 1 ? 1 : deck._anchor;
 
     // Head is TOP-anchored, like desktop. The fan always peeks DOWN off the head toward

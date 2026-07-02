@@ -2,7 +2,7 @@
 	"name": "the-point",
 	"loop": false,
 	"transition": "cut",
-	"sensitivity": 1.0,
+	"sensitivity": 1.4,
 	"sequence": [
 		{ "scene": "eye",         "behavior": "static", "hold": 2 },
 		{ "scene": "two_eyes",    "behavior": "static", "hold": 2 },
