@@ -103,7 +103,7 @@ func _build_ui() -> void:
 	btn_row.add_child(manual_btn)
 
 	var hint := Label.new()
-	hint.text = "Space next · F11 fullscreen · ` feedback · Esc quit"
+	hint.text = "F11 fullscreen · ` feedback · Esc quit"
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint.add_theme_color_override("font_color", Color(0.4, 0.46, 0.56))
 	col.add_child(hint)

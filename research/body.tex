@@ -250,6 +250,74 @@ The two attention sinks of Section~\ref{sec:definitions} mirror the two objectiv
   \label{fig:masks}
 \end{figure}
 
+The rim reading earns a term of its own. The received picture of causal language modeling - the figure this field has redrawn a hundred times, tokens in boxes, ``The quick brown fox jumps'' rendered left to right, a little arrow hopping from each box to the next - encodes an assumption that is rarely stated: uniform \textit{information density}. Every token is a self-contained semantic unit, equally represented, to the best of the mean's ability, and the objective enforces the assumption by landing the same loss at every position. Call information density the share of the representation's distinguishing content carried at each position - and, once a depth loop exists, at each step of that loop. In the boxes-and-arrows regime it is a per-token constant by assumption. The harmonic model breaks it by construction (Figure~\ref{fig:density}): the lowest total-frequency modes span the whole window and move slowest, so the head of the sequence carries a slow, echoing hum - the corpus rhythm, the bias axis, the sink that absorbs - while the input-conditional deviation rides the leading edge as a chirp in otherwise settled bias - the variance axis, the sink that injects. Hidden states are extremely stable at the head and unstable at the tip, and the linear token-to-token relationship of the received picture is gone: density stops being a constant and becomes a shape.
+
+\begin{figure}[t]
+  \centering
+  \begin{tikzpicture}[x=0.44cm, y=0.44cm]
+    \tikzset{
+      cb/.style={draw=black!30, line width=0.2pt},
+      tok/.style={font=\bfseries\scriptsize, text=white, inner sep=0pt},
+    }
+    % ===== Panel 1: the received picture - uniform density, token to token =====
+    \begin{scope}
+      \foreach \c in {0,...,18}{
+        \fill[blue!70] (\c,0) rectangle (\c+1,-1);
+        \draw[cb] (\c,0) rectangle (\c+1,-1);
+      }
+      \foreach \ch/\c in {T/0,h/1,e/2,q/4,u/5,i/6,c/7,k/8,b/10,r/11,o/12,w/13,n/14,f/16,o/17,x/18}{
+        \node[tok] at (\c+0.5,-0.5) {\contour{black}{\ch}};
+      }
+      \foreach \c in {0,...,17}{
+        \draw[->, black!45, line width=0.5pt] (\c+0.5,0.18) to[bend left=55] (\c+1.5,0.18);
+      }
+      \node[font=\footnotesize] at (9.5,-1.9) {causal (GPT)};
+      \node[font=\scriptsize,text=black!55] at (9.5,-2.9) {uniform density, token to token};
+    \end{scope}
+    % ===== Panel 2: harmonic - density pushed to the rim =====
+    % Cell shades sample a hum + chirp profile at the cell edges, so the
+    % per-cell gradients chain into one smooth gaussian white/blue blur.
+    \begin{scope}[shift={(0,-6.1)}]
+      \foreach \c in {0,...,18}{
+        \pgfmathtruncatemacro{\lshade}{round(70*exp(-(\c/3.4)^2) + 70*exp(-((19-\c)/1.2)^2) + 6)}
+        \pgfmathtruncatemacro{\rshade}{round(70*exp(-((\c+1)/3.4)^2) + 70*exp(-((18-\c)/1.2)^2) + 6)}
+        \shade[left color=blue!\lshade, right color=blue!\rshade] (\c,0) rectangle (\c+1,-1);
+        \draw[cb] (\c,0) rectangle (\c+1,-1);
+      }
+      % The walls collapse: the same text floats left along x = 0.3 + 18.4*(i/18)^1.8,
+      % piling over the cell boundaries at the head and going sparse toward the tip,
+      % its baseline riding a gentle two-cycle wave (720/19 deg per cell) within the box.
+      \foreach \ch/\px in {T/0.30,h/0.40,e/0.65,q/1.53,u/2.13,i/2.85,c/3.66,k/4.57,b/6.69,r/7.88,o/9.17,w/10.54,n/12.01,f/15.19,o/16.90,x/18.70}{
+        \node[tok] at (\px, {-0.5 + 0.16*sin(37.9*\px)}) {\contour{black}{\ch}};
+      }
+      % The field itself: one continuous wave over the whole strip. Amplitude is the
+      % density envelope (hum + chirp gaussians over a quiet interior floor); phase
+      % sweeps quadratically from hum to chirp. mod() keeps the degree argument small
+      % - pgfmath trig overflows on large angles.
+      \draw[black!45, line width=0.5pt, domain=0:19, samples=420, smooth]
+        plot (\x, {0.55 + (0.10 + 0.24*exp(-(\x/3.4)^2) + 0.24*exp(-((19-\x)/1.2)^2))
+                        * sin(mod(60*\x + 22*\x*\x, 360))});
+      \node[font=\scriptsize,text=black!55, anchor=west] at (0.1,1.25) {humming};
+      \node[font=\scriptsize,text=black!55] at (9.5,1.25) {$e^{i\pi} + 1 = 0$};
+      \node[font=\scriptsize,text=black!55, anchor=east] at (18.9,1.25) {chirping};
+      \node[font=\footnotesize] at (9.5,-1.9) {harmonic (ours)};
+      \node[font=\scriptsize,text=black!55] at (9.5,-2.9) {density at the rim};
+    \end{scope}
+  \end{tikzpicture}
+  \caption{The received picture and the harmonic one, over the same sequence (position runs left to right; shade is \textit{information density}, the share of the representation's distinguishing content carried at each position). \textbf{Top:} the figure every paper redraws - tokens in boxes, an arrow from each to the next. Its unstated assumption is uniform density: every token a self-contained semantic unit, equally represented, to the best of the mean's ability. \textbf{Bottom:} the harmonic model pushes density to the extremes of the window - a slow, echoing hum at the head, where the low-frequency modes that span the whole context anchor the corpus rhythm (the sink that absorbs), and a chirp at the tip, where the input-conditional deviation rides the leading edge (the sink that injects). The same characters, freed of their boxes, pool toward the head, cross the cell walls, and ride the field's slow undulation - the interior goes quiet, and the linear token-to-token relationship is broken by construction. Where the top panel hops token to token, the bottom draws the field itself: one continuous wave, humming at the head, chirping at the tip, its amplitude the density envelope - and Euler's identity between the two gerunds for what the wave never stops doing: looping. Schematic, not measured - the conjectured profile this section names, ahead of the metric that will read it.}
+  \label{fig:density}
+\end{figure}
+
+The strong claim - that a consensus model \textit{cannot} do this - would be false, and the way it is false is the best evidence for the weak one. Vanilla transformers break the uniform picture on their own: attention mass collapses onto the first token, and a handful of massive activations anchor it there, in essentially every large causal model measured~\cite{xiao2024streamingllm,sun2024massive}. Gradient descent visibly strains to build a hum at the head of an architecture that gives it no coordinates for one, and the sink it improvises is a bug the architecture tolerates rather than a feature it provides - the gradient cannot tell bias from variance inside a single scalar loss (Section~\ref{sec:manifold}), so it detects the significance of the split and overshoots it. The harmonic model makes the same structure constitutive. Ghostmax is the head sink by construction, dropoff is the tip sink by construction, and the frozen phases fix which modes are slow and which are fast, so hum-at-the-head, chirp-at-the-tip has an address before training begins. Encode the algorithm into the architecture and the model reaches solutions the gradient would otherwise miss - or find only as this unstable, undirected approximation.
+
+For now, information density is a term and a conjecture, not a metric; the quantitative profile - deviation read per position, per depth step - is deferred until it can be reported rather than promised. But the reading already names its refutation, and it is the sharpest one this section offers. If density is pushed to the extremes, hidden-state deviation must grow with recurrent depth under a monotone positional gradient: early positions settle toward a fixed point while the tip stays live, and the profile should steepen as the loop deepens - and the same shape should reappear wherever a recurrence is harmonized, not only in the depth loop here. A per-position deviation profile measured flat, or one that fails to steepen across depth, kills the reading outright. The per-position halting distribution, where the adaptive-depth loop runs, already reads this profile through compute - pressure that halts early positions early and holds the tip open - so the conjecture arrives with its instrument already logged, waiting to be read.
+
+That falsifier, as first stated, has a blind spot, and closing it sharpens the term. A deviation profile reads magnitude, and magnitude can miss the event: at a decision boundary a single bit's worth of change - one neuron, one activation value - can move the hidden state from one basin of the latent geometry to another while remaining silent in norm. Density asks how much is carried at a position; \textit{geometry} asks which shape is expressed there, and the second is the coordinate system the architecture actually computes in. So the profile must be read twice: in norm, and in \textit{symbol occupancy} - which cluster of the learned codebook the state expresses (the centers of Figure~\ref{fig:geometry}), per position, per depth step. In those coordinates the prediction reads: the hop rate between symbols rises from head to tip and steepens as the loop deepens. A silent flip that changes membership registers at full weight regardless of magnitude, and the conjecture is now falsifiable in both coordinate systems rather than escapable through either - flat in norm \textit{and} flat in occupancy leaves it nothing to hide behind.
+
+Where would such a flip come from? The error source deserves its own dial, and the dial its own name. Training this architecture leans on heavy gradient clipping - constantly, in the CALM regime - and clipping is an operation the gradient cannot see: it lives in the update rule, not the loss, so gradient descent never learns to compensate for an error it is structurally blind to. In a model whose parameters are amplitudes of periodic functions, though, the cap has a precise meaning. A bounded parameter step is a bounded motion of the spectrum, and when the cap binds at nearly every step - the regime we actually run - descent becomes direction-only, its magnitude pinned to the threshold: the loudness of every event is erased and only its direction kept. The threshold is then literally the learning speed, and we call it the \textit{attack} - the envelope on how fast an amplitude is allowed to rise, the term borrowed from the synthesizer because it names the same quantity there. (\textit{Velocity} is already spoken for: it is the per-step motion of the state itself, the quantity the smoothness prior regulates.) Turn the attack down and the model learns slower; turn it up, faster. And because the amplitudes it governs live on the exponential edge (Section~\ref{sec:scaling}), what the cap discards is not noise but a systematic truncation of exactly the largest events - a \textit{bias}, in the statistician's sense, injected inside the variance of the sampled updates. Bias manifesting within the variance of sampling: a verifiable property, not a metaphor - the clipped-update distribution carries its truncation boundary on its face.
+
+What survives the truncation is the architecture's business, and this is where the watchmaker earns its title early. The frozen basis retains the consequences of a clipped step - a perturbed state relaxes back toward the standing shape rather than diverging - and subsequent evaluations of the loss select among those consequences. Variation the gradient cannot see, retention the basis provides, selection the loss performs: cumulative selection (Section~\ref{sec:watchmaker}), with gradient descent as the blind part. Stated so it can die: the coherence this architecture reaches should depend on the forced error being \textit{present}, not merely on the update magnitudes it enforces - train with the attack matched by an unclipped schedule of the same step size, and if expressiveness survives the removal unchanged, the errors were passengers and this paragraph is wrong. One refinement this reading forces on Section~\ref{sec:manifold}: the orthogonality of bias and variance is an instantaneous claim about the loss surface, and it can hold pointwise while the axes still feed each other across training - the variance mapping each flip's consequences, the bias consolidating the map, the consolidated spectrum moving where the next flip lands. The axes are orthogonal in space and coupled in time, and nothing in the decoupling argument requires otherwise.
+
 Pushed one step further - and now firmly into conjecture - the same machinery suggests a regime in which the model \textit{mostly does not transform at all}. A head that falls silent through its ghost is an identity on the residual stream, contributing nothing; and with the input-conditional delta held small against the standing static baseline (Section~\ref{sec:manifold}), the field a sequence sees is dominated by the input-\textit{independent} corpus rhythm. The transform is then nearly the same for every input, and what separates one sequence from another is a sparse scatter of large deviations on a shared standing shape - the smoothness prior carrying that shape forward, each feature entering with a velocity and only now and then kicked off it. Read this way the computation is \textit{event-driven} rather than a fresh dense map at every step, closer in spirit to the sparse activity of spiking systems - a point of contact with biological plausibility we flag as motivation, not as a claim that the architecture is neural. It is checkable in diagnostics already reported: \texttt{harmonic\_delta\_norm} measures how much deviation is added, and how \textit{concentrated} that deviation is across positions and features is the sparsity this reading predicts - a diffuse delta would refute it. It leaves open the further question, which we do not attempt here, of whether a downstream consensus (the CALM vote) could itself raise such events and fold them back into the field.
 
 This is the least settled part of the picture, and we mark the seam honestly. The reconstruction-and-prediction duality is in production and measurable - reconstruction fidelity and the conditional gap between marginal and conditional next-latent prediction are both reported. The outer-representation reading, and the dropoff sink that would complete its symmetry, are a conjecture: the claim that learning pressure migrates to earlier positions is exactly what a measurement of attention mass would confirm or refute. We offer the axis as a third coordinate to look along, not yet as one we have surveyed.

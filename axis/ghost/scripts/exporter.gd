@@ -55,6 +55,7 @@ var _song := ""
 var _cache := ""
 var _done_t := 0.0
 var _pct := 0            # last progress read from the render/bake process
+var _song_dur := 0.0     # song length captured at export START (the live song may end mid-transcode)
 var _quality: Dictionary = QUALITIES[DEFAULT_QUALITY]
 
 
@@ -203,6 +204,9 @@ func _on_path(out_path: String) -> void:
 	_out = out_path
 	if _out.get_extension().to_lower() != "mp4":
 		_out += ".mp4"
+	# Capture the duration NOW, while the song is loaded: the transcode (esp. 4K) runs for minutes, by
+	# which point the live song may have ended/unloaded and Spectrum.song_length() would read 0.
+	_song_dur = Spectrum.song_length()
 	# Movie Maker records to this intermediate AVI (beside the final file, on the same disk); we then
 	# transcode it to the chosen .mp4 and delete it. The AVI is only ever scratch - it never ships,
 	# so its 4 GB/RIFF index limit (which corrupts 4K exports) can't reach the user.
@@ -266,11 +270,14 @@ func _start_render() -> void:
 # H.264 is ~10-20x smaller than the MJPEG intermediate. `-fflags +genpts` re-derives timestamps so a
 # damaged AVI index is bypassed; audio is re-encoded from decoded PCM, so it comes out clean.
 func _start_transcode() -> void:
-	var dur := Spectrum.song_length()
+	var dur := _song_dur
+	_pct = 0                  # reset from the render's 100% so "Finalizing" starts fresh, not stuck full
 	_progress_reset()
 	var args := PackedStringArray([
 		"-y", "-fflags", "+genpts", "-i", _avi,
-		"-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p",
+		# `fast` preset: 4K@60 with `medium` was punishingly slow; `fast` roughly halves encode time for a
+		# few % larger file - a good trade for a visualizer. crf 20 keeps it visually clean.
+		"-c:v", "libx264", "-crf", "20", "-preset", "fast", "-pix_fmt", "yuv420p",
 		"-c:a", "aac", "-b:a", "192k",
 		"-progress", ProjectSettings.globalize_path(_PROGRESS_FILE), "-nostats", "-loglevel", "error",
 		_out])
@@ -296,10 +303,10 @@ func _progress_reset() -> void:
 
 
 # ffmpeg writes `out_time_us=<microseconds>` lines to the progress file; the fraction of the song's
-# duration it has reached is the transcode percent. Robust to partial/mid-write reads.
+# duration (captured at export start) it has reached is the transcode percent. Robust to partial/mid-
+# write reads, and to the live song having ended (we use the captured `_song_dur`, not a live read).
 func _read_transcode_pct() -> int:
-	var dur := Spectrum.song_length()
-	if dur <= 0.0 or not FileAccess.file_exists(_PROGRESS_FILE):
+	if _song_dur <= 0.0 or not FileAccess.file_exists(_PROGRESS_FILE):
 		return _pct
 	var text := FileAccess.get_file_as_string(_PROGRESS_FILE)
 	var best := -1.0
@@ -309,7 +316,7 @@ func _read_transcode_pct() -> int:
 		elif line.begins_with("out_time_ms="):     # older ffmpeg (value is microseconds despite the name)
 			best = maxf(best, line.substr(12).to_float() / 1_000_000.0)
 	if best >= 0.0:
-		_pct = clampi(int(round(best / dur * 100.0)), 0, 99)
+		_pct = clampi(int(round(best / _song_dur * 100.0)), 0, 99)
 	return _pct
 
 

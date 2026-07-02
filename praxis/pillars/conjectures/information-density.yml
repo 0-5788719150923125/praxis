@@ -1,0 +1,27 @@
+# "Information density." Extracted from next/information_density.md
+# (2026-07-01): the boxes-and-arrows picture of causal LM assumes uniform
+# per-token information density; the harmonic latent pushes density to the
+# window's extremes (hum at the head = low-frequency corpus rhythm / bias,
+# chirp at the tip = input-conditional deviation / variance) - constitutively,
+# where vanilla transformers only improvise the same structure (attention
+# sinks, massive activations). Discussed in sec:harmonic, "The outer
+# representation"; drawn in fig:density. The metric (a per-position,
+# per-depth-step deviation profile) is deliberately deferred; the falsifier
+# is stated now. Companion to developmental-revert (order 18), which reads
+# the same depth loop for punctuated returns to the basis - this one reads
+# it for where the deviation sits.
+tag: Information density at the rim
+order: 19
+cite: [xiao2024streamingllm, sun2024massive]
+claim: >
+  Information density - the share of the representation's distinguishing
+  content carried at each position - is uniform by assumption in the consensus
+  regime but pushed to the window's extremes by a harmonic latent, a slow hum
+  anchored at the head and an input-conditional chirp at the tip, so
+  hidden-state deviation must grow with recurrent depth under a monotone
+  positional gradient - early positions settling toward a fixed point while
+  the tip stays live - wherever a recurrence is harmonized; the claim is
+  falsified the moment the per-position, per-step deviation profile - read in
+  norm and in symbol occupancy alike, since a silent bit flip can change the
+  geometry without moving the norm - is measured flat in position, or fails
+  to steepen across depth.
