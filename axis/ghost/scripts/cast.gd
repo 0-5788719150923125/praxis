@@ -74,6 +74,14 @@ class Actor extends RefCounted:
 	var drive_gain := 1.0             # how hard the audio drives the body
 	var state := {}                   # verb scratch - see the class doc
 	var _t := 0.0                     # local clock (jitter phases, pulse breathing)
+	# Live-dial modulation overlay (see [Dial]): set fresh by the stage every frame,
+	# NEVER accumulated into the actor's own state - neutral values mean the dial is
+	# quiet and everything below costs nothing.
+	var mod_scale := 1.0              # multiplies the drawn size
+	var mod_hue := 0.0                # added to the drawn hue (prisms/swarm; eyes hold their iris)
+	var mod_time := 1.0               # multiplies the body's tempo
+	var mod_drive := 1.0              # multiplies the audio drive
+	var mod_off := Vector2.ZERO       # world-space x/y slot displacement
 
 	func setup(_seed: int, _cfg: Dictionary, _rng: RandomNumberGenerator) -> void:
 		pass
@@ -86,12 +94,18 @@ class Actor extends RefCounted:
 	func draw_items(_stage, _lens: Lens3D, _u: float) -> Array:
 		return []
 
-	## The drawn size: `scale` breathing with a latched pulse ({amp, rate}), if any.
+	## The drawn size: `scale` breathing with a latched pulse ({amp, rate}), if any,
+	## times the live-dial overlay.
 	func draw_scale() -> float:
+		var s := scale * mod_scale
 		var p: Variant = state.get("pulse")
 		if typeof(p) == TYPE_DICTIONARY:
-			return scale * (1.0 + float(p.get("amp", 0.0)) * sin(_t * float(p.get("rate", 1.0))))
-		return scale
+			return s * (1.0 + float(p.get("amp", 0.0)) * sin(_t * float(p.get("rate", 1.0))))
+		return s
+
+	## The drawn slot: the choreographed position plus the live-dial displacement.
+	func draw_pos() -> Vector3:
+		return pos + Vector3(mod_off.x, mod_off.y, 0.0)
 
 	## Generic parameter access for the set/ramp verbs. Unknown names land in
 	## `state` so kind classes can expose their own levers.
@@ -138,7 +152,7 @@ class EyeActor extends Actor:
 	func update(f: AudioFeatures, dt: float, _stage) -> void:
 		_t += dt
 		var eye := body as EyeBody
-		var drive := clampf((f.energy * 0.7 + f.beat * 0.4) * drive_gain, 0.0, 1.0)
+		var drive := clampf((f.energy * 0.7 + f.beat * 0.4) * drive_gain * mod_drive, 0.0, 1.0)
 		var tr := float(state.get("tremble", 0.0))
 		if tr > 0.0:
 			drive = clampf(drive + tr * 0.5, 0.0, 1.0)   # it widens as it strains
@@ -152,12 +166,12 @@ class EyeActor extends Actor:
 				state.erase("focus")
 		else:
 			eye.autonomous = true
-		eye.update(dt * time_scale, drive)
+		eye.update(dt * time_scale * mod_time, drive)
 
 	func draw_items(stage, lens: Lens3D, u: float) -> Array:
 		if fade <= 0.003:
 			return []
-		var p := pos
+		var p := draw_pos()
 		var tr := float(state.get("tremble", 0.0))
 		var items := []
 		if tr > 0.001:
@@ -207,8 +221,8 @@ class PrismActor extends Actor:
 	func update(f: AudioFeatures, dt: float, _stage) -> void:
 		_t += dt
 		var prism := body as PrismBody
-		var drive := clampf((f.energy * 0.85 + f.beat * 0.6) * drive_gain, 0.0, 1.0)
-		prism.update(dt * time_scale, drive)
+		var drive := clampf((f.energy * 0.85 + f.beat * 0.6) * drive_gain * mod_drive, 0.0, 1.0)
+		prism.update(dt * time_scale * mod_time, drive)
 		# hold_still: damp the body's own spin toward rest (it keeps breathing).
 		var still := float(state.get("still", 0.0))
 		var want := 1.0 - clampf(still, 0.0, 1.0)
@@ -219,13 +233,13 @@ class PrismActor extends Actor:
 	func draw_items(stage, lens: Lens3D, u: float) -> Array:
 		if fade <= 0.003:
 			return []
-		var pj := lens.project(pos)
+		var pj := lens.project(draw_pos())
 		if pj.z <= lens.near:
 			return []
 		var prism := body as PrismBody
 		var center := Vector2(pj.x, pj.y) * u
 		var px := draw_scale() * lens._focal / maxf(0.1, pj.z) * u * 1.15
-		var h := hue
+		var h := fposmod(hue + mod_hue, 1.0)
 		var a := fade
 		return [{"d": pj.z, "call": func() -> void:
 			prism.draw(stage, center, px, h, a)}]
@@ -296,12 +310,12 @@ class SwarmActor extends Actor:
 
 	func update(f: AudioFeatures, dt: float, _stage) -> void:
 		_t += dt
-		var drive := clampf((f.energy * 0.8 + f.beat * 0.6) * drive_gain, 0.0, 1.0)
+		var drive := clampf((f.energy * 0.8 + f.beat * 0.6) * drive_gain * mod_drive, 0.0, 1.0)
 		for b in _blue:
-			(b as PrismBody).update(dt * time_scale, drive)
+			(b as PrismBody).update(dt * time_scale * mod_time, drive)
 		if float(state.get("split_k", 0.0)) > 0.01:       # reds live once the helix opens
 			for r in _red:
-				(r as PrismBody).update(dt * time_scale, drive)
+				(r as PrismBody).update(dt * time_scale * mod_time, drive)
 
 	# A point on one strand of the double helix at track distance d. strand_dir sets
 	# the angular offset AND the twist direction, so the strands counter-wind and weave.
@@ -337,10 +351,11 @@ class SwarmActor extends Actor:
 				alpha *= on
 			var b: PrismBody = _blue[i]
 			var c := center
-			var px := _size * lens._focal / pj.z * u
+			var px := _size * lens._focal / pj.z * u * mod_scale
+			var h := fposmod(hue + mod_hue, 1.0)
 			var a := alpha
 			items.append({"d": pj.z, "call": func() -> void:
-				b.draw(stage, c, px, hue, a)})
+				b.draw(stage, c, px, h, a)})
 		if split_k > 0.01:
 			for i in _red.size():
 				var d := _head - i * _spacing + travel
@@ -352,10 +367,11 @@ class SwarmActor extends Actor:
 					continue
 				var b: PrismBody = _red[i]
 				var c := Vector2(pj.x, pj.y) * u
-				var px := _size * lens._focal / pj.z * u
+				var px := _size * lens._focal / pj.z * u * mod_scale
+				var h := fposmod(_hue_red + mod_hue, 1.0)
 				var a := clampf(1.0 - (pj.z - 1.0) / 12.0, 0.12, 1.0) * fade * split_k
 				items.append({"d": pj.z, "call": func() -> void:
-					b.draw(stage, c, px, _hue_red, a)})
+					b.draw(stage, c, px, h, a)})
 		return items
 
 

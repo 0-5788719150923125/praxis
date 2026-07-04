@@ -116,7 +116,18 @@ func update(f: AudioFeatures, delta: float) -> void:
 		_t += delta * _clock_rate(f, delta)
 		if _track != null:
 			_track.advance(_t, phase_span(_nominal), self, f, delta)
+	# Live-dial overlay: sample the performance bus per actor (index-diverse, so the
+	# cast modulates as a group without lockstep) and stamp fresh neutral-off values
+	# every frame - the dial perturbs the reading of the choreography, never the
+	# choreography itself.
+	var ai := 0
 	for a in _actors.values():
+		a.mod_scale = 1.0 + 0.22 * Director.dial_value("scale", ai)
+		a.mod_hue = 0.10 * Director.dial_value("hue", ai)
+		a.mod_time = clampf(1.0 + 0.5 * Director.dial_value("tempo", ai), 0.35, 2.0)
+		a.mod_drive = clampf(1.0 + 0.65 * Director.dial_value("drive", ai), 0.0, 2.0)
+		a.mod_off = Vector2(Director.dial_value("off_x", ai), Director.dial_value("off_y", ai)) * 0.05
+		ai += 1
 		a.update(f, delta, self)
 	# Pose locks resolve after every body has advanced, so a locked pair is exact.
 	for a in _actors.values():

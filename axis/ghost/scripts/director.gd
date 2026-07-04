@@ -206,6 +206,12 @@ var _storyboard_sensitivity := -1.0 # storyboard-wide tempo override (<0 = fall 
 var _cur_sens := 1.0                 # the ACTIVE scene's resolved sensitivity (used by the pacing bounds)
 var _step := 0
 
+# Live performance controls (see [Dial]): created per session, seeded from the session
+# seed so a dial's transformation vocabulary belongs to the song. Scenes read them
+# through dial_value(); deposits persist for the whole session (across song loops).
+var dials: Array = []
+var _dial_demo := false              # --dial-demo: scripted turning, for headless renders/demos
+
 
 func attach(host: Node) -> void:
 	_host = host
@@ -217,6 +223,8 @@ func attach(host: Node) -> void:
 	_bookend_time = 3.0 + 7.0 * (float(hash([_session_seed, "bookend"]) & 0xFFFF) / 65535.0)
 	_locked = _locked_scene_arg()
 	_load_storyboard_arg()
+	dials = [Dial.new(_session_seed ^ 0x0D1A15EE)]
+	_dial_demo = OS.get_cmdline_user_args().has("--dial-demo")
 	_current = _make_scene()
 	_host.add_child(_current)
 	_arm()
@@ -290,6 +298,24 @@ func detach() -> void:
 	_storyboard_tail = []
 	_storyboard_name = ""
 	_storyboard_source = ""
+	dials = []
+
+
+## The live performance dials' summed modulation on [param slot], in [-1, 1].
+## [param i] gives element-level phase diversity (a cast modulates as a group, not in
+## lockstep). Zero whenever no dial has been touched - scenes can sample it blindly.
+func dial_value(slot: String, i := 0) -> float:
+	if dials.is_empty():
+		return 0.0
+	var v := 0.0
+	for d in dials:
+		v += (d as Dial).value(slot, i)
+	return clampf(v, -1.0, 1.0)
+
+
+## The primary dial (the workspace widget drives it), or null outside a session.
+func dial(index := 0) -> Dial:
+	return dials[index] if index < dials.size() else null
 
 
 ## True when the Director is walking a user-authored storyboard (manual mode).
@@ -434,6 +460,15 @@ func _process(delta: float) -> void:
 	# typing in the console lag. The console dims the frozen frame anyway.
 	if _held:
 		return
+
+	# Advance the performance dials (waveforms + transient decay). --dial-demo turns
+	# the primary dial at a scripted, slowly-breathing rate - a hands-free tour of the
+	# wedges for headless renders and demos.
+	if not dials.is_empty():
+		if _dial_demo:
+			(dials[0] as Dial).turn(delta * (0.9 + 0.7 * sin((dials[0] as Dial).angle * 0.37)))
+		for d in dials:
+			(d as Dial).advance(delta)
 
 	# The raw advance is the advance of the MUSIC CLOCK, not the drawn-frame delta. When a heavy scene
 	# lags the renderer the song keeps playing, so this grows. `_prev_time < 0` marks a fresh reference

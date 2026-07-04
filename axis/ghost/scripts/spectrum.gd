@@ -144,6 +144,15 @@ func _bake_cache_path() -> String:
 	return "user://bake_%d.spec" % hash(p + "_" + str(sz))
 
 
+## Restart the loaded song from the top WITHOUT touching any session state - no
+## reseed, no reload, the fingerprint and analyzers carry straight on. Manual mode
+## loops the audio endlessly with this; whether the VISUALS restart is the
+## storyboard's own business (its `loop` / `tail` fields), not the session's.
+func replay() -> void:
+	if _has_audio and _player != null and _player.stream != null:
+		_player.play()
+
+
 ## Stop playback and reset to a clean, songless state, so the next begin() starts
 ## fresh. Called when a session ends (the song finished, or we returned home).
 func stop() -> void:

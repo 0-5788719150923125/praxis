@@ -22,6 +22,15 @@ var _active := ""
 func _ready() -> void:
 	layer = 100               # above the scene, below the feedback console (128)
 	_build_ui()
+	# The performance dial (see [Dial]): bottom-right, outside the panel, so it stays
+	# in reach with the storyboard list collapsed. Drag to turn; wheel for fine steps.
+	var dial := DialWidget.new()
+	dial.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	dial.offset_left = -152
+	dial.offset_top = -152
+	dial.offset_right = -20
+	dial.offset_bottom = -20
+	add_child(dial)
 	# Reflect the storyboard the session started on (default), if any.
 	_active = Director.storyboard_name()
 	_restyle()

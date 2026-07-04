@@ -40,8 +40,9 @@ func _ready() -> void:
 	# and its status must survive the song ending and the return to the home screen.
 	_exporter = preload("res://scripts/exporter.gd").new()
 	add_child(_exporter)
-	# Return to the home screen whenever the current song finishes.
-	Spectrum.song_finished.connect(_end_session)
+	# When the current song finishes: an AUTO session returns to the home screen; a
+	# MANUAL session is endless - loop the audio and leave the visualization alone.
+	Spectrum.song_finished.connect(_on_song_finished)
 	if _wants_direct_boot():
 		_begin_session()                 # CLI flags / --no-splash: skip the splash
 	else:
@@ -83,6 +84,19 @@ func _begin_session(audio_path := "") -> void:
 		return                         # render clean: no overlays (the Director fades the video ends)
 	_feedback = preload("res://scripts/feedback.gd").new()
 	add_child(_feedback)               # press ` to critique a scene
+
+
+# The song ended. Manual mode never exits to the home screen: restart the audio in
+# place and keep the show running - the Director's walk, the storyboard's tail, and
+# the dial's deposited modulations all carry across the loop untouched. (Whether the
+# SEQUENCE replays is the board's own `loop` field; the-point's `loop: false` keeps
+# streaming its tail.) Auto mode returns home as before.
+func _on_song_finished() -> void:
+	if Director.is_manual():
+		Spectrum.replay()
+		print("ghost: song looped (manual session continues)")
+		return
+	_end_session()
 
 
 # Tear the session down and return to the splash (the song ended, or a future
