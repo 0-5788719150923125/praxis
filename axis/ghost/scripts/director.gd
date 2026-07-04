@@ -197,6 +197,7 @@ var _session_seed := 0       # base seed for this session (random per play; --se
 # storyboards/README.md). When _storyboard_seq is non-empty the Director walks it in
 # order instead of the novelty scheduler, and each entry can dictate its own exit.
 var _storyboard_seq: Array = []
+var _storyboard_tail: Array = []     # entries cycled after a non-looping sequence ends (never freeze)
 var _storyboard_name := ""           # DISPLAY name (the JSON "name" field) - for UI only
 var _storyboard_source := ""         # the loadable name/path passed to load_storyboard - for re-loading (export)
 var _storyboard_loop := true
@@ -286,6 +287,7 @@ func detach() -> void:
 	_held = false
 	_kind_last = {}
 	_storyboard_seq = []
+	_storyboard_tail = []
 	_storyboard_name = ""
 	_storyboard_source = ""
 
@@ -306,31 +308,23 @@ func storyboard_source() -> String:
 	return _storyboard_source
 
 
-## Load a storyboard by name (res://storyboards/<name>.json) or by a full/absolute path,
-## switching the Director into manual mode. Returns true on success. Safe to call
+## Load a storyboard by name (res://storyboards/<name>.yaml or .json) or by a full/absolute
+## path, switching the Director into manual mode. Returns true on success. Safe to call
 ## before attach(); the splash uses this to start a manually-orchestrated session.
+## Parsing / defs expansion / validation live in [Storyboard] - the Director only keeps
+## the walk state.
 func load_storyboard(name_or_path: String) -> bool:
-	var path := name_or_path
-	if not path.ends_with(".json"):
-		path = "res://storyboards/%s.json" % name_or_path
-	if not FileAccess.file_exists(path):
-		push_warning("ghost: storyboard not found: %s" % path)
+	var sb := Storyboard.load_file(name_or_path)
+	if not sb.ok:
+		push_warning("ghost: %s" % sb.error)
 		return false
-	var text := FileAccess.get_file_as_string(path)
-	var data: Variant = JSON.parse_string(text)
-	if typeof(data) != TYPE_DICTIONARY or not data.has("sequence"):
-		push_warning("ghost: storyboard %s has no 'sequence' array" % path)
-		return false
-	var seq: Variant = data["sequence"]
-	if typeof(seq) != TYPE_ARRAY or (seq as Array).is_empty():
-		push_warning("ghost: storyboard %s sequence is empty" % path)
-		return false
-	_storyboard_seq = seq
-	_storyboard_loop = bool(data.get("loop", true))
-	_storyboard_name = String(data.get("name", name_or_path))
+	_storyboard_seq = sb.sequence
+	_storyboard_tail = sb.tail
+	_storyboard_loop = sb.loop
+	_storyboard_name = sb.name
 	_storyboard_source = name_or_path           # remember HOW it was loaded, so the export can re-load it
-	_storyboard_transition = String(data.get("transition", ""))   # e.g. "cut" forces jump cuts
-	_storyboard_sensitivity = float(data.get("sensitivity", -1.0))   # narrative tempo (<0 = use the export)
+	_storyboard_transition = sb.transition      # e.g. "cut" forces jump cuts
+	_storyboard_sensitivity = sb.sensitivity    # narrative tempo (<0 = use the export)
 	_step = 0
 	print("ghost: storyboard '%s' loaded (%d scenes, loop=%s)" % [
 		_storyboard_name, _storyboard_seq.size(), _storyboard_loop])
@@ -543,9 +537,12 @@ func _drive_stinger(delta: float, bf: float) -> void:
 func _should_change() -> bool:
 	if _locked >= 0 or _held:
 		return false
-	# In manual mode, a non-looping storyboard holds its final scene forever (checked FIRST, before
-	# the fixed-hold check below, so the last entry's `hold` can't try to re-cut into nothing).
-	if not _storyboard_seq.is_empty() and not _storyboard_loop and _step >= _storyboard_seq.size():
+	# In manual mode, a non-looping storyboard with NO tail holds its final scene forever (checked
+	# FIRST, before the fixed-hold check below, so the last entry's `hold` can't try to re-cut into
+	# nothing). With a `tail:`, the sequence instead rolls into the tail entries, cycling on their
+	# own exit rules until the song ends - so a finished arc keeps living rather than freezing.
+	if not _storyboard_seq.is_empty() and not _storyboard_loop and _storyboard_tail.is_empty() \
+			and _step >= _storyboard_seq.size():
 		return false
 	var ex: Dictionary = _current.exit_spec
 	# A fixed hold is DETERMINISTIC authored timing: honor it exactly, ABOVE the auto-mode silence
@@ -881,11 +878,22 @@ func _next_entry() -> Dictionary:
 		var seed := _session_seed ^ _scene_key(_index) ^ (_swaps * 0x85EBCA77)
 		return {"script": e.script, "behavior": e.behavior, "seed": seed,
 			"shot": "", "exit_spec": {}, "transition": "", "sensitivity": sensitivity}   # "" -> auto STYLE_BAG
-	# Manual: walk the sequence (wrap when looping, else hold on the last entry).
+	# Manual: walk the sequence (wrap when looping; past the end of a non-looping board,
+	# cycle the tail entries if there are any, else hold on the last entry).
 	var n := _storyboard_seq.size()
-	var i: int = _step % n if _storyboard_loop else mini(_step, n - 1)
+	var i: int
+	var item: Dictionary
+	if _storyboard_loop:
+		i = _step % n
+		item = _storyboard_seq[i]
+	elif _step < n or _storyboard_tail.is_empty():
+		i = mini(_step, n - 1)
+		item = _storyboard_seq[i]
+	else:
+		var t := (_step - n) % _storyboard_tail.size()
+		i = n + t                                    # distinct index -> distinct derived seed
+		item = _storyboard_tail[t]
 	_step += 1
-	var item: Dictionary = _storyboard_seq[i]
 	var nm := String(item.get("scene", ""))
 	var path := "res://scripts/scenes/%s.gd" % nm
 	var script: Resource = load(path) if ResourceLoader.exists(path) else SCENES[0].script
@@ -898,7 +906,8 @@ func _next_entry() -> Dictionary:
 	var sens: float = float(item.get("sensitivity", sb_sens))
 	return {"script": script, "behavior": String(item.get("behavior", "drift")),
 		"seed": seed2, "shot": String(item.get("shot", "")), "exit_spec": _parse_exit(item),
-		"transition": String(item.get("transition", "")), "sensitivity": sens}   # entry-level; resolved in _make_scene
+		"transition": String(item.get("transition", "")), "sensitivity": sens,
+		"spec": item}   # the raw entry rides along: a data-driven scene (stage) reads it in build_params
 
 
 # Translate a storyboard entry's timing into an exit_spec the scene carries (see
@@ -935,6 +944,7 @@ func _make_scene() -> GhostScene:
 	var script: Resource = entry["script"]
 	var scene: GhostScene = script.new()
 	var seed: int = int(entry["seed"])
+	scene.spec = entry.get("spec", {})           # BEFORE init_with_seed: build_params reads it
 	scene.init_with_seed(seed, String(entry["behavior"]))
 	scene.scene_name = String(script.resource_path).get_file().get_basename()
 	# Telemetry only: the live harmonic bucket at the cut. It is NO LONGER folded into the scene

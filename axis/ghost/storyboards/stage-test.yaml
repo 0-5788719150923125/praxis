@@ -1,0 +1,113 @@
+# stage-test - dev fixture: one entry per verb family (not a show).
+# Render with: python build/scratchpad.py board stage-test <secs> <t1,t2,..>
+name: stage-test
+loop: false
+transition: cut
+
+defs:
+  gaze-calm:
+    tiers:
+      - {p: 0.32, dist: [2.2, 4.0], dwell: [3.0, 5.5]}
+      - {p: 0.36, dist: [5.0, 11.0], dwell: [2.0, 3.6]}
+      - {p: 0.32, dist: [22, 80], dwell: [3.5, 7.0]}
+    lateral: [0.12, 0.45]
+    stray: 0.07
+
+sequence:
+  # [0-4] blink + dilate + look ------------------------------------------------
+  - scene: stage
+    behavior: static
+    hold: 4
+    cast:
+      - {id: left, kind: eye, at: [0, 0, 0], radius: [0.30, 0.40]}
+    track:
+      nominal: 4
+      spans:
+        - {from: 0.0, to: 4.0, action: look, target: left, args: {use: gaze-calm}}
+        - {at: 0.5, action: blink, target: left, args: {duration: [0.28, 0.40]}}
+        - {from: 0.9, to: 1.8, action: ramp, target: left, args: {param: dilate, to: [0.20, 0.30]}}
+
+  # [4-8] split into two ------------------------------------------------------
+  - scene: stage
+    behavior: static
+    hold: 4
+    cast:
+      - {id: left, kind: eye, at: [0, 0, 0], radius: [0.30, 0.40]}
+      - {id: right, kind: eye, at: [0.62, 0, 0], radius: [0.24, 0.30], hidden: true}
+    track:
+      nominal: 4
+      spans:
+        - {from: 0.0, to: 4.0, action: look, target: [left, right], args: {use: gaze-calm}}
+        - from: 0.4
+          to: 1.8
+          action: split
+          target: left
+          args: {into: right, slots: [[-0.62, 0, 0], [0.62, 0, 0]], radius: [0.24, 0.30]}
+
+  # [8-13] crystallize right -> blue prism, then the left eye's riser ----------
+  - scene: stage
+    behavior: static
+    hold: 5
+    cast:
+      - {id: left, kind: eye, at: [-0.62, 0, 0], radius: [0.24, 0.30]}
+      - {id: right, kind: eye, at: [0.62, 0, 0], radius: [0.24, 0.30]}
+      - {id: blue, kind: prism, at: [0.62, 0, 0], hue: 0.6, hidden: true}
+    track:
+      nominal: 5
+      spans:
+        - {from: 0.0, to: 5.0, action: look, target: [left, right], args: {use: gaze-calm}}
+        - {from: 0.2, to: 1.8, action: crystallize, target: right, args: {into: blue}}
+        - {from: 2.2, to: 5.0, action: tremble, target: left, ease: in}
+
+  # [13-19] burst red on the beat; lock to blue; desync; red holds still -------
+  - scene: stage
+    behavior: static
+    hold: 6
+    cast:
+      - {id: left, kind: eye, at: [-0.62, 0, 0], radius: [0.24, 0.30]}
+      - {id: blue, kind: prism, at: [0.62, 0, 0], hue: 0.6}
+      - {id: red, kind: prism, at: [-0.62, 0, 0], hue: 0.0, hidden: true}
+    track:
+      nominal: 6
+      spans:
+        - {at: 0.0, on: beat, by: 0.5, action: burst, target: red, args: {replaces: left}}
+        - {from: 1.5, to: 4.0, action: lock, target: red, args: {to: blue}}
+        - {at: 4.0, action: desync, target: red}
+        - {from: 4.0, to: 6.0, action: hold_still, target: red}
+
+  # [19-25] sway + specialize ---------------------------------------------------
+  - scene: stage
+    behavior: static
+    hold: 6
+    cast:
+      - {id: blue, kind: prism, at: [0.55, 0, 0], hue: 0.6}
+      - {id: red, kind: prism, at: [-0.55, 0, 0], hue: 0.0}
+    track:
+      nominal: 6
+      spans:
+        - {from: 0.0, to: 6.0, action: sway, target: [blue, red], args: {amp: [0.07, 0.10]}}
+        - from: 1.0
+          to: 3.0
+          action: specialize
+          target: blue
+          args: {size: 1.55, tempo: 0.55, pulse: {amp: 0.12, rate: 1.2}}
+        - from: 1.0
+          to: 3.0
+          action: specialize
+          target: red
+          args: {size: 0.6, tempo: 1.8, pulse: {amp: 0.06, rate: 6.5}}
+
+  # [25-32] the swell: gather / fly / helix split / lane jump ------------------
+  - scene: stage
+    behavior: static
+    hold: 7
+    camera: {eye: [0, 0, -2.6], look: [0, 0, 5], fov: 56}
+    cast:
+      - {id: swarm, kind: swarm, at: [0, 0, 0], count: 7, hue: 0.6, lead: blue}
+    track:
+      nominal: 7
+      spans:
+        - {from: 0.0, to: 1.6, action: gather, target: swarm, ease: linear}
+        - {from: 1.6, to: 7.0, action: fly, target: swarm}
+        - {from: 2.8, to: 4.0, action: helix_split, target: swarm}
+        - {from: 4.8, to: 5.6, action: lane_jump, target: swarm}

@@ -36,6 +36,10 @@ var _last_target := Vector2.ZERO
 var autonomous := true         # true = self-saccades; false = the owner drives the gaze/focus
 var hue := 0.55                # iris hue (public: a morph handoff can copy it)
 var focus_dist := 6.0          # world distance to the thing being looked at (accommodation)
+var lid := 0.0                 # eyelid closure: 0 fully open .. 1 fully closed
+var dilate_bias := 0.0         # additive pupil openness on top of the light reflex (a verb's lever)
+var _blink_t := -1.0           # progress clock of the current blink (<0 = none)
+var _blink_dur := 0.32
 var _sat := 0.65
 var _dwell := 0.0
 var _dilate := 0.35            # 0..1 pupil openness (fraction of the iris radius)
@@ -101,8 +105,22 @@ func update(dt: float, energy: float) -> void:
 	# Pupil = accommodation (near focus constricts) + the light reflex (dim -> dilate). The pupil eases
 	# faster than the light drifts, so it visibly tracks the light rather than leading it.
 	var accom := clampf((focus_dist - 1.2) / 18.0, 0.0, 1.0)        # 0 near .. 1 far
-	var pupil_t := clampf(lerpf(0.17, 0.52, accom) + 0.42 * (1.0 - _light), 0.12, 0.80)
+	var pupil_t := clampf(lerpf(0.17, 0.52, accom) + 0.42 * (1.0 - _light) + dilate_bias, 0.12, 0.80)
 	_dilate = lerpf(_dilate, pupil_t, 1.0 - exp(-4.0 * dt))
+	# Blink: a close -> hold -> open envelope on the lids (the close is quicker than the
+	# open, like a real blink). `lid` can also be set directly for a sustained squint.
+	if _blink_t >= 0.0:
+		_blink_t += dt
+		var ph := _blink_t / _blink_dur
+		if ph >= 1.0:
+			lid = 0.0
+			_blink_t = -1.0
+		elif ph < 0.38:
+			lid = smoothstep(0.0, 1.0, ph / 0.38)
+		elif ph < 0.52:
+			lid = 1.0
+		else:
+			lid = 1.0 - smoothstep(0.0, 1.0, (ph - 0.52) / 0.48)
 	if autonomous:
 		_dwell -= dt
 		if _dwell <= 0.0:
@@ -134,6 +152,13 @@ func update(dt: float, energy: float) -> void:
 		gaze_vel.y = 0.0
 	gaze.x = clampf(gaze.x, -YAW_LIMIT, YAW_LIMIT)
 	gaze.y = clampf(gaze.y, -PITCH_LIMIT, PITCH_LIMIT)
+
+
+## Blink once: the lids close quickly, hold a beat, and open again over [param dur]
+## seconds. Safe to call mid-blink (it restarts the envelope).
+func blink(dur := 0.32) -> void:
+	_blink_dur = maxf(0.08, dur)
+	_blink_t = 0.0
 
 
 # A centre-biased saccade target (radians). Static helper so a multi-eye owner can
@@ -169,6 +194,7 @@ func draw(ci: CanvasItem, lens: Lens3D, u: float, pos: Vector3, radius: float, f
 	var facing := front.dot(view)
 	var pc := lens.project(iris_c3)
 	if facing < 0.04 or pc.z <= lens.near:
+		_draw_lids(ci, lens, u, pos, radius, fade)      # lids still cover a turned-away eye
 		return                                          # iris turned away - sclera only
 	var e1 := front.cross(Vector3.UP)
 	if e1.length() < 1e-4:
@@ -193,6 +219,65 @@ func draw(ci: CanvasItem, lens: Lens3D, u: float, pos: Vector3, radius: float, f
 	ci.draw_colored_polygon(_disc(center, ua, va, prad, 36), Color(0.02, 0.02, 0.03, a))
 	# Cornea: the wet catchlight + a faint rim glaze on the light side.
 	_draw_cornea(ci, lens, u, pos, radius, front, view, center, ua, va, iris_px, fade)
+	# Eyelids last, so a blink occludes sclera, iris and catchlight together.
+	_draw_lids(ci, lens, u, pos, radius, fade)
+
+
+# Two curved lid shutters over the projected eyeball: the upper takes ~65% of the
+# travel and the lower ~35% (they meet a little below centre, like real lids), each a
+# spherical-cap polygon whose edge bows toward the pupil, with a soft lash line.
+func _draw_lids(ci: CanvasItem, lens: Lens3D, u: float, pos: Vector3, radius: float, fade: float) -> void:
+	if lid <= 0.005:
+		return
+	var pc := lens.project(pos)
+	if pc.z <= lens.near:
+		return
+	var c := Vector2(pc.x, pc.y) * u
+	var r := radius * lens._focal / maxf(0.1, pc.z) * u * 1.03
+	var skin := Color(0.085, 0.055, 0.055, fade)
+	_lid_shutter(ci, c, r, clampf(lid, 0.0, 1.0) * 0.65, true, skin, fade)
+	_lid_shutter(ci, c, r, clampf(lid, 0.0, 1.0) * 0.35, false, skin, fade)
+
+
+# One lid: the cap of the eye disc covered from the top (upper) or bottom (lower) by
+# `cover` (0..1 of the diameter), the closing edge bowed toward the pupil.
+func _lid_shutter(ci: CanvasItem, c: Vector2, r: float, cover: float, upper: bool,
+		col: Color, fade: float) -> void:
+	if cover <= 0.004:
+		return
+	cover = minf(cover, 1.0)
+	var sgn := -1.0 if upper else 1.0                 # screen y grows downward
+	var y_edge := sgn * r * (1.0 - 2.0 * cover)       # the chord the lid has closed to
+	var s := clampf(y_edge / r, -1.0, 1.0)
+	var x_w := r * sqrt(maxf(0.0, 1.0 - s * s))       # half-width of the chord
+	var bow := -sgn * r * 0.10 * minf(cover * 2.0, 1.0)   # edge bows toward the pupil
+	var segs := 26
+	# Outer rim: the true circle arc from one chord crossing, around the lid's pole, to
+	# the other crossing - so past half-closure the side crescents are covered too.
+	var t1 := asin(s)
+	var ta := PI - t1 if upper else t1                # start angle (at a chord crossing)
+	var tb := TAU + t1 if upper else PI - t1          # end angle (the other crossing)
+	var pts := PackedVector2Array()
+	for i in segs + 1:
+		var th := lerpf(ta, tb, float(i) / float(segs))
+		pts.append(c + Vector2(cos(th), sin(th)) * r)
+	# Closing edge: back across the chord from the rim's end to its start, bowed.
+	# (Endpoints coincide with the rim's - skip them, or the duplicated points break
+	# the polygon triangulation.)
+	var x_end := cos(tb) * r
+	var x_start := cos(ta) * r
+	var edge := PackedVector2Array()
+	for i in segs + 1:
+		var t := float(i) / float(segs)
+		var x := lerpf(x_end, x_start, t)
+		var k := 1.0 - pow(absf(x) / maxf(1e-3, x_w), 2.0)
+		edge.append(c + Vector2(x, y_edge - bow * maxf(0.0, k)))
+	pts.append_array(edge.slice(1, segs))
+	if pts.size() >= 3:
+		ci.draw_colored_polygon(pts, col)
+	# A soft lash line along the closing edge (darker on the upper lid).
+	var lash := Color(0.03, 0.02, 0.02, (0.85 if upper else 0.5) * fade)
+	ci.draw_polyline(edge, lash, maxf(1.0, r * 0.035), true)
 
 
 # The screen vector that the iris-plane unit axis `e` maps to (foreshortened by the

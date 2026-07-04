@@ -48,6 +48,12 @@ var render_kind := "canvas"
 ## The typed definition for this instance.
 var params: Dictionary = {}
 
+## The raw storyboard entry that created this scene (empty in auto mode), set by the
+## [Director] before [method init_with_seed]. A data-driven scene (see scenes/stage.gd)
+## builds its entire content - cast, track, camera - from this in build_params; ordinary
+## scenes ignore it.
+var spec: Dictionary = {}
+
 ## Identity stamped by the [Director] at creation, for telemetry / feedback capture
 ## (the feedback console writes these so a critique can be tied back to its scene).
 var scene_name := ""

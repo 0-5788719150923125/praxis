@@ -91,8 +91,9 @@ func _populate_storyboards() -> void:
 		return
 	var names := []
 	for fn in dir.get_files():
-		if fn.ends_with(".json"):
-			names.append(fn.get_basename())
+		if fn.ends_with(".yaml") or fn.ends_with(".yml") or fn.ends_with(".json"):
+			if not names.has(fn.get_basename()):     # one row per board, whatever the format
+				names.append(fn.get_basename())
 	names.sort()
 	for n in names:
 		var b := _flat_button(n)

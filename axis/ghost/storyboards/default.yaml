@@ -1,0 +1,193 @@
+# the-point - the default storyboard (Manual mode opens with this).
+#
+# The full 33-second brief from ../../tunes/compositions/the-point/video.txt, as DATA:
+# a human eye becoming its digital self, coming to life, then a swarm. All fifteen
+# timecoded beats are spans below (their [Ns] tags are the brief's timecodes); the
+# five entries group them by what is on screen, cut on the musical sections. Every
+# entry is the data-driven `stage` scene - actors from the Cast registry, verbs from
+# the Actions registry - and consecutive entries CARRY their live actors across the
+# cut (same id = same body), so the eye and the prisms continue, never re-created.
+#
+# Numbers in [lo, hi] pairs are sampled ranges - every instance of this show draws
+# its own values from the session seed (cattle, not pets). Times inside a track are
+# seconds of its `nominal`; they scale with the entry's hold and the storyboard's
+# sensitivity, so compressing the piece is one number, not fifteen edits.
+name: the-point
+loop: false                 # hold the final swarm frame for the end card
+transition: cut
+# Holds and span times below are the brief's TRUE 33s timecodes. The actual song
+# (Beats Able) runs 22.88s, so sensitivity 2.0 compresses the arc to ~16.5s - the
+# same pacing the old hand-tuned board had - and the rest of the song rolls through
+# the `tail:` entries below (the swarm streaming on) under the date/logo card.
+# Set 1.0 for a full-length 33s cut.
+sensitivity: 2.0
+# The timeline clock BREATHES with the song: energetic passages run each scene's
+# keyframes up to 25% faster, quiet ones up to 25% slower (zero-mean, endogenous -
+# the total length stays anchored). Ambient body motion never speeds up.
+elastic: 0.25
+
+defs:
+  # The locked, static, forward-facing shot (the brief's guardrail: the camera never
+  # moves until the swarm).
+  front-camera: {eye: [0, 0, 4.0], look: [0, 0, 0], fov: 48}
+
+  # The calm human gaze: depth tiers with the extremes held longer, small lateral
+  # hops, a rare one-eye stray. (This table was baked, differently tuned, into three
+  # scene files; now it is one def.)
+  gaze-calm:
+    tiers:
+      - {p: 0.32, dist: [2.2, 4.0], dwell: [3.0, 5.5]}     # near - linger, eyes verge
+      - {p: 0.36, dist: [5.0, 11.0], dwell: [2.0, 3.6]}    # mid
+      - {p: 0.32, dist: [22, 80], dwell: [3.5, 7.0]}       # far - linger, near-parallel
+    lateral: [0.12, 0.45]
+    stray: 0.07                                            # the nonlinear deviation
+
+  # The watchful gaze beside the prism: nearer, steadier (from eye_prism).
+  gaze-watchful:
+    tiers:
+      - {p: 0.4, dist: [2.2, 4.0], dwell: [2.2, 4.0]}
+      - {p: 0.6, dist: [8.0, 40.0], dwell: [2.0, 3.6]}
+    lateral: [0.12, 0.4]
+
+sequence:
+  # ---- intro [0-4s] ----------------------------------------------------------
+  # beat 1 [0-2s]: a single eye floating in the void, blinking once, pupil dilating.
+  # beat 2 [2-4s]: the eye smoothly splits into TWO identical eyes, side by side.
+  - scene: stage
+    behavior: static
+    hold: 4
+    camera: {use: front-camera}
+    cast:
+      - {id: left, kind: eye, at: [0, 0, 0], radius: [0.30, 0.40]}
+      - {id: right, kind: eye, at: [0.62, 0, 0], hidden: true}
+    track:
+      nominal: 4
+      spans:
+        - {from: 0.0, to: 4.0, action: look, target: [left, right], args: {use: gaze-calm}}
+        - {at: 0.5, action: blink, target: left, args: {duration: [0.28, 0.40]}}       # [0.5s]
+        - {from: 0.9, to: 1.9, action: ramp, target: left, args: {param: dilate, to: [0.18, 0.28]}}
+        - from: 2.0                                                                    # [2-3.4s]
+          to: 3.4
+          action: split
+          target: left
+          args: {into: right, slots: [[-0.62, 0, 0], [0.62, 0, 0]], radius: [0.24, 0.30]}
+
+  # ---- build [4-12s] ---------------------------------------------------------
+  # beat 3 [4-7s]: the RIGHT eye dissolves and crystallizes into the blue Prism.
+  # beat 4 [7-9s]: the Prism rotates and looks around on its own; the eye watches.
+  # beat 5 [9-12s]: the remaining eye trembles faster and faster, light building.
+  - scene: stage
+    behavior: static
+    hold: 8
+    camera: {use: front-camera}
+    cast:
+      - {id: left, kind: eye, at: [-0.62, 0, 0], radius: [0.24, 0.30]}   # carried in live
+      - {id: right, kind: eye, at: [0.62, 0, 0], radius: [0.24, 0.30]}   # carried in live
+      - {id: blue, kind: prism, at: [0.62, 0, 0], scale: [0.26, 0.32], hue: 0.6, hidden: true}
+    track:
+      nominal: 8
+      spans:
+        - {from: 0.0, to: 8.0, action: look, target: [left, right], args: {use: gaze-watchful}}
+        - {from: 0.0, to: 3.0, action: crystallize, target: right, args: {into: blue}} # [4-7s]
+        - {from: 5.0, to: 8.0, action: tremble, target: left, ease: in}                # [9-12s]
+
+  # ---- DROP + groove [12-22s] ------------------------------------------------
+  # beat 6 [12-15s]: the trembling eye BURSTS into the red Prism ON the drop beat.
+  # beat 7 [15-17s]: the two Prisms snap into phase-lock, rotating as one.
+  # beat 8 [17-20s]: the locked pair scans the void in unison.
+  # beat 9 [20-22s]: the blue breaks sync and wanders; the red holds dead still.
+  - scene: stage
+    behavior: static
+    hold: 10
+    camera: {use: front-camera}
+    cast:
+      - {id: left, kind: eye, at: [-0.62, 0, 0], radius: [0.24, 0.30]}   # still trembling
+      - {id: blue, kind: prism, at: [0.62, 0, 0], hue: 0.6}              # carried in live
+      - {id: red, kind: prism, at: [-0.62, 0, 0], scale: [0.26, 0.32], hue: 0.0, hidden: true}
+    track:
+      nominal: 10
+      spans:
+        - {from: 0.0, to: 1.0, action: look, target: left, args: {use: gaze-watchful}}
+        - {at: 0.0, on: beat, by: 0.8, action: burst, target: red, args: {replaces: left}}  # the DROP
+        - {from: 3.0, to: 8.0, action: lock, target: red, args: {to: blue, snap: 0.07}}     # [15-20s]
+        - {at: 8.0, action: desync, target: red}                                            # [20s]
+        - {from: 8.0, to: 10.0, action: hold_still, target: red}                            # [20-22s]
+
+  # ---- float [22-28s] ----------------------------------------------------------
+  # beat 10 [22-25s]: both Prisms slip their anchors and sway, weightless.
+  # beat 11 [25-28s]: they SPECIALIZE - blue swells and pulses slowly; red shrinks
+  # and quickens (bias and variance made physical).
+  - scene: stage
+    behavior: static
+    hold: 6
+    camera: {use: front-camera}
+    cast:
+      - {id: blue, kind: prism, at: [0.55, 0, 0], hue: 0.6}              # carried in live
+      - {id: red, kind: prism, at: [-0.55, 0, 0], hue: 0.0}              # carried in live
+    track:
+      nominal: 6
+      spans:
+        - {from: 0.0, to: 6.0, action: sway, target: [blue, red], args: {amp: [0.07, 0.10]}}
+        - from: 3.0                                                                    # [25-28s]
+          to: 6.0
+          action: specialize
+          target: blue
+          args: {size: [1.45, 1.65], tempo: [0.5, 0.6], pulse: {amp: 0.12, rate: 1.2}}
+        - from: 3.0
+          to: 6.0
+          action: specialize
+          target: red
+          args: {size: [0.55, 0.65], tempo: [1.6, 2.0], pulse: {amp: 0.06, rate: 6.5}}
+
+  # ---- swell [28-33s] ----------------------------------------------------------
+  # beat 12 [28-30s]: 6-7 blue Prisms fly in one at a time and form up (the carried
+  # blue leads the swarm). The camera may move only from here on.
+  # beat 13 [30-31s]: the formation flies forward along an invisible track.
+  # beat 14 [31-32s]: the track splits into a double helix - blue and red strands
+  # counter-winding, weaving past each other.
+  # beat 15 [32-33s]: the swarm banks to ONE side and leaps to the other strand,
+  # then holds - room for the date/logo card (loop: false keeps this frame).
+  - scene: stage
+    behavior: static
+    hold: 5
+    camera: {eye: [0, 0, -2.6], look: [0, 0, 5], fov: 56}
+    cast:
+      - {id: swarm, kind: swarm, at: [0, 0, 0], count: 7, hue: 0.6, hue_red: 0.0, lead: blue}
+    track:
+      nominal: 5
+      spans:
+        - {from: 0.0, to: 2.0, action: gather, target: swarm, ease: linear}            # [28-30s]
+        - {from: 1.4, to: 3.0, action: fly, target: swarm, sustain: true}              # [30s-] never parks
+        - {from: 3.0, to: 4.0, action: helix_split, target: swarm}                     # [31-32s]
+        - {from: 4.0, to: 4.7, action: lane_jump, target: swarm}                       # [32-33s]
+
+# After the sequence ends (loop: false), the Director cycles these instead of
+# freezing the last frame: the swarm KEEPS streaming along its chosen track under
+# the end card, weaving between the strands and breathing the helix open and shut,
+# until the song runs out. The carried `swarm` id continues wholesale - formation,
+# travel, lane - so the cycle boundaries are invisible.
+tail:
+  - scene: stage
+    behavior: static
+    hold: 6
+    camera: {eye: [0, 0, -2.6], look: [0, 0, 5], fov: 56}
+    cast:
+      - {id: swarm, kind: swarm}
+    track:
+      nominal: 6
+      spans:
+        - {from: 0.0, to: 0.4, action: fly, target: swarm, ease: out, sustain: true}
+        - {from: 0.5, to: 3.0, action: ramp, target: swarm, args: {param: lane, to: 0.0}}   # weave back
+        - {from: 2.5, to: 5.5, action: ramp, target: swarm, args: {param: split_k, to: [0.45, 0.6]}}
+  - scene: stage
+    behavior: static
+    hold: 6
+    camera: {eye: [0, 0, -2.6], look: [0, 0, 5], fov: 56}
+    cast:
+      - {id: swarm, kind: swarm}
+    track:
+      nominal: 6
+      spans:
+        - {from: 0.0, to: 0.4, action: fly, target: swarm, ease: out, sustain: true}
+        - {from: 0.5, to: 3.0, action: ramp, target: swarm, args: {param: lane, to: 1.0}}   # weave across
+        - {from: 2.5, to: 5.5, action: ramp, target: swarm, args: {param: split_k, to: 1.0}}  # helix reopens
