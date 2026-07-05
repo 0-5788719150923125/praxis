@@ -47,6 +47,17 @@ outside it is **rejected with a line number**, never silently misparsed:
 | `sequence`    | array   | -       | the ordered scenes (required, non-empty).                      |
 | `tail`        | array   | `[]`    | entries the Director **cycles after a non-looping sequence ends**, instead of freezing the last frame - there is always something to roll into. Each cycles on its own exit rule until the song runs out (fixed `hold`s keep cycling even through quiet outros; cue exits pause in silence and near the song's end). Stage tails carry live actors like any other entry, so the cycle boundaries are invisible. |
 
+A non-looping board is anchored to the **music, not the playhead**: the Director maps
+what the song sounds like at each schedule position (`Echo`). The map spans exactly
+one hearing, so when the finished arc walks past its end the sequence **rolls back to
+entry 1, aligned with the restarting song** (out of the `tail`, back to the top, same
+seeds -> same scenes). For audio the roll can't anticipate - doubled, trimmed, cut-up,
+re-encoded copies - the live signature's accumulated match against the map re-seats
+the cursor wherever the audio says the show is (a match into the opening restarts the
+arc from the top). Entry seeds are keyed to schedule position, so a revisited entry
+rebuilds identically; carried actors morph across where their ids match. `loop: true`
+boards keep their own author-driven cycling and are left alone.
+
 ### Sampled ranges ("cattle, not pets")
 
 Anywhere a number is expected, `[lo, hi]` is accepted as a **range**, sampled once
@@ -149,7 +160,7 @@ Each span:
 |------|------|----------|
 | `look` | eyes track a wandering 3D focus (shared = vergence); depth-tier table with per-fixation ranges | `tiers`, `lateral`, `stray` |
 | `blink` | close and reopen the eyelids once | `duration` |
-| `split` | one eye divides into two identical ones easing to their slots | `into`, `slots`, `radius` |
+| `split` | MITOSIS: a bud swells off the eye (volume conserved - the parent deflates), a tissue membrane stretches, thins to strands, and snaps; damped recoil to the slots, droplet spatter, and the blank newborn rolls its iris in and blinks. Phases are shaped by the verb - give the span `ease: linear` | `into`, `slots` |
 | `crystallize` | an eye dissolves while a prism forms on its slot (form-flash at the crossover) | `into` |
 | `tremble` | the riser: vibration + light building (latches) | - |
 | `burst` | a prism bursts into being in a flash, optionally replacing an actor | `replaces` |
@@ -162,15 +173,16 @@ Each span:
 | `fly` | the swarm flies its track; the stage camera follows a touch slower | `speed`, `follow` |
 | `helix_split` | the track opens into a double helix; the red strand fades in | - |
 | `lane_jump` | bank and leap to the other strand | - |
-| `set` / `ramp` / `pulse` / `flash` | generic: set/ease any actor param (`scale`, `fade`, `hue`, `time_scale`, `drive`, `dilate`, `lid`), a scale pulse, a flash overlay | `param`, `value` / `from`, `to` |
+| `set` / `ramp` / `pulse` / `flash` | generic: set/ease any actor param (`scale`, `fade`, `hue`, `time_scale`, `drive`, `dilate`, `lid`, `iris`), a scale pulse, a flash overlay | `param`, `value` / `from`, `to` |
 
 ## The boards here
 
-- **`default.yaml`** - "the-point": the full 33s brief, five stage entries covering
-  all fifteen timecoded beats, chained by carries, plus a two-entry `tail` that keeps
-  the swarm streaming and weaving under the end card until the song runs out.
-- **`stage-test.yaml`** - dev fixture: one entry per verb family, for render checks
-  (`python build/scratchpad.py board stage-test ...`).
+- **`default.yaml`** - "the-point": the full brief, seven stage entries covering all
+  fifteen timecoded beats, chained by carries, plus a two-entry `tail` that keeps the
+  swarm streaming and weaving under the end card until the song runs out. The opening
+  act grew past the brief: awaken (blink, a dilation surge that decays, searching
+  focus pulls), mitosis (the division), and regard (the pair, verging and blinking)
+  before the crystallization begins.
 
 The five bespoke the-point scene files (`eye`, `two_eyes`, `eye_prism`,
 `two_prisms`, `prism_swarm`) remain in the AUTO catalogue, but the storyboard path

@@ -206,6 +206,20 @@ var _storyboard_sensitivity := -1.0 # storyboard-wide tempo override (<0 = fall 
 var _cur_sens := 1.0                 # the ACTIVE scene's resolved sensitivity (used by the pacing bounds)
 var _step := 0
 
+# Content re-localization (manual mode). [Echo] maps what the song SOUNDS like at each
+# schedule position and matches the live harmonics against that map, so the cursor
+# answers to the music itself, never the playhead: when the audio sustains a match
+# somewhere the cursor is not (the song looped, a doubled track re-entered its opening,
+# a finished board sat frozen), the cursor corrects there and the show re-converges.
+var _echo: Echo = null
+var _sched_starts: Array = []        # schedule start time (s) of each sequence entry
+var _sched_end := 0.0                # schedule time where the sequence ends and the tail begins
+var _manual_i := -1                  # index of the on-screen SEQUENCE entry (-1 = tail / auto)
+var _heard_t := 0.0                  # monotonic listening clock (never rewinds; lags vote against it)
+var _cursor_t := 0.0                 # the cursor's continuous schedule-time claim - snapped to an
+                                     # entry's start when one begins, free-running through the tail,
+                                     # so the echo map covers the WHOLE first hearing (outro included)
+
 # Live performance controls (see [Dial]): created per session, seeded from the session
 # seed so a dial's transformation vocabulary belongs to the song. Scenes read them
 # through dial_value(); deposits persist for the whole session (across song loops).
@@ -225,6 +239,8 @@ func attach(host: Node) -> void:
 	_load_storyboard_arg()
 	dials = [Dial.new(_session_seed ^ 0x0D1A15EE)]
 	_dial_demo = OS.get_cmdline_user_args().has("--dial-demo")
+	_echo = Echo.new()
+	_heard_t = 0.0
 	_current = _make_scene()
 	_host.add_child(_current)
 	_arm()
@@ -299,6 +315,12 @@ func detach() -> void:
 	_storyboard_name = ""
 	_storyboard_source = ""
 	dials = []
+	_echo = null
+	_sched_starts = []
+	_sched_end = 0.0
+	_manual_i = -1
+	_heard_t = 0.0
+	_cursor_t = 0.0
 
 
 ## The live performance dials' summed modulation on [param slot], in [-1, 1].
@@ -352,9 +374,28 @@ func load_storyboard(name_or_path: String) -> bool:
 	_storyboard_transition = sb.transition      # e.g. "cut" forces jump cuts
 	_storyboard_sensitivity = sb.sensitivity    # narrative tempo (<0 = use the export)
 	_step = 0
+	_sched_starts = _schedule_starts()
 	print("ghost: storyboard '%s' loaded (%d scenes, loop=%s)" % [
 		_storyboard_name, _storyboard_seq.size(), _storyboard_loop])
 	return true
+
+
+# Cumulative schedule start time (s) of each sequence entry, mirroring _make_scene's
+# hold scaling (hold / sensitivity) - the coordinate system of the [Echo] map and of a
+# re-localization. Cue-exit entries have no deterministic length, so they contribute a
+# min-hold estimate; the map only needs entry-level granularity there. Also stamps
+# `_sched_end`, where the sequence hands over to the tail.
+func _schedule_starts() -> Array:
+	var out: Array = []
+	var acc := 0.0
+	var sbs: float = _storyboard_sensitivity if _storyboard_sensitivity > 0.0 else sensitivity
+	for item in _storyboard_seq:
+		out.append(acc)
+		var sens := clampf(float(item.get("sensitivity", sbs)), 0.05, 20.0)
+		var dur: float = float(item["hold"]) if item.has("hold") else float(item.get("min_hold", min_hold))
+		acc += maxf(0.5, dur / sens)
+	_sched_end = acc
+	return out
 
 
 # `--storyboard <name|path>` selects manual mode at launch.
@@ -517,6 +558,9 @@ func _tick_schedule(dt: float) -> void:
 	var e: float = Spectrum.current.energy
 	_audio_ema = lerpf(_audio_ema, e, 1.0 - exp(-(8.0 if e > _audio_ema else 0.6) * dt))
 	_drive_stinger(dt, bf)                          # rapid-fire beat-synced modulation of THIS scene
+	if _listen_echo(dt):
+		_beat_prev = Spectrum.current.beat
+		return                                      # re-localized: the cut is already underway
 	if _should_change():
 		_begin_transition()
 	_beat_prev = Spectrum.current.beat
@@ -567,6 +611,103 @@ func _drive_stinger(delta: float, bf: float) -> void:
 	# Brightness/tint flash via the node modulate, preserving the fade alpha.
 	var fl := 1.0 + _sting_flash * p
 	_current.modulate = Color(fl * (1.0 + 0.06 * _sting_rot), fl, fl * (1.0 - 0.06 * _sting_rot), bf)
+
+
+# The content clock (manual mode): feed the [Echo] map at the frontier, listen for a
+# re-localization, and act on one by re-seating the cursor and cutting through the
+# NORMAL transition machinery (a stage->stage morph still carries live actors, so the
+# show converges onto the corrected position rather than teleporting). Returns true
+# when a correction fired this frame. The playhead is never consulted: a looped song,
+# a doubled track, and a trimmed copy all re-converge because the AUDIO matches the
+# map, not because a file position wrapped.
+func _listen_echo(dt: float) -> bool:
+	# Content-anchoring belongs to boards that FOLLOW the song (loop: false). A
+	# `loop: true` board cycles its sequence by its own clock, deliberately unmoored
+	# from audio position - re-localizing it would fight the author every wrap.
+	if _echo == null or _storyboard_seq.is_empty() or _storyboard_loop \
+			or Spectrum.song_length() <= 0.0:
+		return false
+	_heard_t += dt
+	_cursor_t += dt
+	# The ROLL: the map's recording cap is one full song, so a cursor that has walked
+	# past it - with the sequence finished - has heard everything this content holds.
+	# A looping session's next content is necessarily the top, so the arc rolls over
+	# NOW, aligned by construction and with no recognition latency: the eye returns
+	# the moment the song does. Echo's vote matcher below remains the backstop for
+	# everything the roll can't know: trimmed, doubled, or cut-up audio, and drift.
+	if _cursor_t >= Spectrum.song_length() and _step >= _storyboard_seq.size():
+		print("ghost: echo - the song's map is exhausted, rolling the arc to the top")
+		_step = 0
+		_begin_transition()
+		_cursor_t = 0.0
+		return true
+	if _audio_ema < silence_floor:
+		return false                   # true silence: nothing to record, nothing to recognize
+	# The FAST descriptor (~0.7s of context): recognition must notice the content
+	# moving within a couple of seconds - the seeding descriptor's long memory would
+	# spend the whole intro still tasting the outro.
+	var sig := Spectrum.harmonic_signature_fast()
+	# Write-once: only the frontier extends the map. The tail records too - the outro
+	# must own its cells, or its mere RESEMBLANCE to earlier sections yanks the show
+	# backward. The map covers exactly ONE hearing (a static content property): past
+	# one song's worth of schedule the cursor's claim is stale (the audio has wrapped
+	# but recognition hasn't fired yet), and recording there would poison the map.
+	if _cursor_t <= Spectrum.song_length():
+		_echo.record(_cursor_t, sig)
+	var to := _echo.listen(_heard_t, _cursor_t, sig, dt)
+	if to < 0.0:
+		return false
+	# A matched time past the sequence belongs to the TAIL: meaningful only if the
+	# walk isn't already there (then the audio saying "outro" changes nothing).
+	if to >= _sched_end - 0.5:
+		if _manual_i < 0 or _storyboard_tail.is_empty():
+			return false
+		print("ghost: echo - audio matches schedule %.1fs, re-localizing to the tail" % to)
+		_step = _storyboard_seq.size()
+		_begin_transition()
+		_cursor_t = to
+		return true
+	# HEAD rule: a match resolving into the OPENING stretch restarts the arc from the
+	# very top instead of joining mid-entry. Recognition costs a couple of seconds, and
+	# the opening entries are short - joining "where the audio is" would skip them
+	# forever (the eye never returned; the show lived on prisms). Restarting the top a
+	# little late is stable by construction: the lateness is inside Echo's self radius
+	# (NEAR), so the localizer reads the offset show as "here" and leaves it alone; the
+	# tail absorbs the shift before the next loop.
+	if to <= Echo.NEAR:
+		if _manual_i == 0:
+			return false
+		print("ghost: echo - audio matches schedule %.1fs, restarting the arc" % to)
+		_step = 0
+		_begin_transition()
+		_cursor_t = 0.0
+		return true
+	var idx := 0
+	for j in _sched_starts.size():
+		if float(_sched_starts[j]) <= to + 0.01:
+			idx = j
+	if idx == _manual_i:
+		return false                   # the match resolves to the entry already on screen
+	print("ghost: echo - audio matches schedule %.1fs, re-localizing to entry %d" % [to, idx + 1])
+	_step = idx
+	_begin_transition()
+	# Join the entry MID-FLIGHT: recognition costs a few seconds (the signature EMA
+	# must shed the old content, then accumulate its votes), so by now the audio sits
+	# some way INTO the entry. Enter at that offset - fast-forward the hold clock and
+	# the scene's keyframe clock - so the rejoined schedule is aligned with the song
+	# and STAYS aligned, instead of lagging by the recognition latency forever.
+	var into := clampf(to - float(_sched_starts[idx]), 0.0, 8.0)
+	var incoming: GhostScene = _next if _transitioning else _current
+	if into > 0.25 and incoming != null:
+		_elapsed = into
+		var remaining := into
+		while remaining > 1e-4:
+			var dt2 := minf(remaining, SIM_STEP)
+			incoming.update(Spectrum.current, dt2)
+			incoming.view.commit(dt2)
+			remaining -= dt2
+	_cursor_t = to
+	return true
 
 
 func _should_change() -> bool:
@@ -928,14 +1069,22 @@ func _next_entry() -> Dictionary:
 		var t := (_step - n) % _storyboard_tail.size()
 		i = n + t                                    # distinct index -> distinct derived seed
 		item = _storyboard_tail[t]
-	_step += 1
+	_manual_i = i if i < n else -1                   # -1 = a tail entry
+	if i < n and i < _sched_starts.size():
+		_cursor_t = float(_sched_starts[i])          # a sequence entry claims its scheduled start;
+	_step += 1                                       # the tail free-runs from wherever it began
 	var nm := String(item.get("scene", ""))
 	var path := "res://scripts/scenes/%s.gd" % nm
 	var script: Resource = load(path) if ResourceLoader.exists(path) else SCENES[0].script
 	if not ResourceLoader.exists(path):
 		push_warning("ghost: storyboard scene '%s' not found, substituting" % nm)
+	# The seed is keyed to the entry's POSITION, never to how many times it has been
+	# visited: the same section of the schedule must rebuild the SAME scene when the
+	# audio brings the show back to it (an echo re-localization, a `loop: true` wrap).
+	# (i + 1) reproduces the value the old visit-counter formula gave on a first pass,
+	# so existing shows re-render unchanged.
 	var seed2: int = int(item.get("seed",
-		_session_seed ^ (i * 0x9E3779B1) ^ (_step * 0x85EBCA77)))
+		_session_seed ^ (i * 0x9E3779B1) ^ ((i + 1) * 0x85EBCA77)))
 	# Sensitivity resolves per entry: the entry's own value, else the storyboard's, else the export.
 	var sb_sens: float = _storyboard_sensitivity if _storyboard_sensitivity > 0.0 else sensitivity
 	var sens: float = float(item.get("sensitivity", sb_sens))
@@ -1020,7 +1169,13 @@ func _make_scene() -> GhostScene:
 			bag = Shots.FIELD_BAG
 		elif scene.framing == "plane":
 			bag = Shots.PLANE_BAG
-		shot_name = bag[_rng.randi() % bag.size()]
+		if _storyboard_seq.is_empty():
+			shot_name = bag[_rng.randi() % bag.size()]
+		else:
+			# Manual mode: the pick derives from the entry's own seed, not the session
+			# rng stream - a revisit (echo re-localization, loop wrap) must rebuild the
+			# same framing it had the first time, whatever was drawn in between.
+			shot_name = bag[absi(hash([seed, "shot"])) % bag.size()]
 	scene.shot_name = shot_name
 	scene.set_shot(Shots.make(shot_name, seed ^ 0x51ED2701))
 	# Pre-warm stateful motion (growth envelopes, scroll phase, tumbling angles)

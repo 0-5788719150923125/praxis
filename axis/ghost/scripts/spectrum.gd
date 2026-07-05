@@ -39,7 +39,10 @@ var current: AudioFeatures = AudioFeatures.new()
 ## A stable hash of the loaded audio's path - scenes seed from this so the same
 ## song always renders the same video. 0 when nothing is loaded.
 var song_hash: int = 0
-var _sig: HarmonicSignature = null   # rolling perceptual harmonic descriptor + content seed
+var _sig: HarmonicSignature = null       # rolling perceptual harmonic descriptor + content seed
+var _sig_fast: HarmonicSignature = null  # short-memory twin for the Echo re-localizer: recognizing
+                                         # that the audio moved (a loop seam) must not wait out the
+                                         # seconds of context the seeding descriptor integrates
 
 ## Emitted when a loaded song reaches its end (not in idle mode). main listens to
 ## return to the splash. Looping streams never end, so this never fires for them.
@@ -189,6 +192,11 @@ func song_length() -> float:
 func harmonic_signature() -> PackedFloat32Array:
 	return _sig.vector() if _sig != null else PackedFloat32Array()
 
+## The FAST descriptor (same shape, ~0.7s of context instead of 2.5s): for listeners that
+## must notice a content change quickly - the [Echo] re-localizer - at the cost of jitter.
+func harmonic_signature_fast() -> PackedFloat32Array:
+	return _sig_fast.vector() if _sig_fast != null else PackedFloat32Array()
+
 ## A coarse content seed (SimHash bucket) from the harmonics RIGHT NOW - the same for the same
 ## music even re-encoded / cut up, drifting only as the content does. `bits` sets bucket width
 ## (fewer = wider/more robust). For DISCRETE choices (which scene / behavior).
@@ -234,6 +242,7 @@ func _precompute_bands() -> void:
 		_band_hi[i] = FREQ_MIN * pow(ratio, float(i + 1) / float(BAND_COUNT))
 		centres[i] = sqrt(_band_lo[i] * _band_hi[i])     # geometric centre (log-spaced)
 	_sig = HarmonicSignature.new(centres)
+	_sig_fast = HarmonicSignature.new(centres, 0.7)
 
 
 func _process(delta: float) -> void:
@@ -285,6 +294,8 @@ func _process(delta: float) -> void:
 	# rather than the file - see HarmonicSignature / next/harmonic_seeding.md.
 	if _sig != null:
 		_sig.update(f.bands, f.bass + f.low_mid, f.mid, f.high + f.treble, f.flux, delta)
+	if _sig_fast != null:
+		_sig_fast.update(f.bands, f.bass + f.low_mid, f.mid, f.high + f.treble, f.flux, delta)
 
 
 # Spectral flux + a sliding-window "movement" score. Flux is how much new

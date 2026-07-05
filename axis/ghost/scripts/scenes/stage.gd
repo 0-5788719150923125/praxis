@@ -31,6 +31,7 @@ var _nominal := 8.0
 var _t := 0.0
 var _flashes: Array = []           # transient overlays: {actor, k, col}
 var _ties: Array = []              # snap ties: {a, b, k}
+var _drops: Array = []             # spatter droplets: {p, v (Vector3), r, k} - brief ballistic debris
 # The elastic timeline clock (entry `elastic`, 0 = off): the keyframe clock breathes
 # with the music - an energetic passage runs it up to (1 + elastic)x, a quiet one
 # down to (1 - elastic)x. The signal is ENDOGENOUS and zero-mean by construction
@@ -142,6 +143,11 @@ func update(f: AudioFeatures, delta: float) -> void:
 	for tf in _ties:
 		tf.k -= delta * 2.6
 	_ties = _ties.filter(func(x): return x.k > 0.001)
+	for dr in _drops:
+		dr.p += dr.v * delta
+		dr.v.y -= 1.4 * delta              # a little world gravity - the spatter falls
+		dr.k -= delta * 1.5
+	_drops = _drops.filter(func(x): return x.k > 0.001)
 	queue_redraw()
 
 
@@ -170,6 +176,14 @@ func _draw() -> void:
 			continue
 		draw_line(pa.center, pb.center, Color(1, 1, 1, 0.5 * tf.k), 2.0, true)
 		draw_circle((pa.center + pb.center) * 0.5, u * 0.02 * tf.k, Color(1, 1, 1, 0.7 * tf.k))
+	for dr in _drops:
+		var pj := lens.project(dr.p)
+		if pj.z <= lens.near:
+			continue
+		var c := Vector2(pj.x, pj.y) * u
+		var rr: float = dr.r * lens._focal / maxf(0.1, pj.z) * u
+		draw_circle(c, rr, Color(0.80, 0.72, 0.72, 0.7 * dr.k))
+		draw_circle(c - Vector2(rr, rr) * 0.3, rr * 0.4, Color(1, 1, 1, 0.35 * dr.k))
 
 
 # The breathing rate of the keyframe clock (see _elastic above). Ambient body life
@@ -200,6 +214,15 @@ func flash(a: Cast.Actor, col: Color) -> void:
 ## A brief bright tie between two actors (the phase-lock snap).
 func tie(a: Cast.Actor, b: Cast.Actor) -> void:
 	_ties.append({"a": a, "b": b, "k": 1.0})
+
+
+## A burst of small ballistic droplets at a world point (the mitosis snap's spatter).
+func spatter(p: Vector3, count: int, rng: RandomNumberGenerator) -> void:
+	for i in count:
+		var a := rng.randf() * TAU
+		var sp := rng.randf_range(0.25, 0.7)
+		_drops.append({"p": p, "r": rng.randf_range(0.008, 0.02), "k": 1.0,
+			"v": Vector3(cos(a) * sp, sin(a) * sp * 0.7 + 0.22, rng.randf_range(-0.1, 0.1))})
 
 
 ## Project an actor's slot to screen: {center: px Vector2, px: perspective size, z}.

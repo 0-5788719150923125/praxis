@@ -141,12 +141,14 @@ class EyeActor extends Actor:
 		match name:
 			"dilate": (body as EyeBody).dilate_bias = v
 			"lid": (body as EyeBody).lid = v
+			"iris": (body as EyeBody).iris_fade = v
 			_: super.set_param(name, v)
 
 	func get_param(name: String) -> float:
 		match name:
 			"dilate": return (body as EyeBody).dilate_bias
 			"lid": return (body as EyeBody).lid
+			"iris": return (body as EyeBody).iris_fade
 			_: return super.get_param(name)
 
 	func update(f: AudioFeatures, dt: float, _stage) -> void:
@@ -191,7 +193,136 @@ class EyeActor extends Actor:
 		var a := fade
 		items.append({"d": lens.depth(p), "call": func() -> void:
 			eye.draw(stage, lens, u, at, r, a)})
+		# The mitosis MEMBRANE: while the split verb stashes `state.mit`, a stretchy
+		# tissue bridge connects this eye to its budding twin - drawn just behind both
+		# eyeballs so the spheres cap its ends and only the strained middle shows.
+		var mit: Variant = state.get("mit")
+		if typeof(mit) == TYPE_DICTIONARY:
+			var other = stage.actor(String((mit as Dictionary).get("to", "")))
+			if other != null:
+				var m: Dictionary = mit
+				items.append({"d": lens.depth(p) + 0.08, "call": func() -> void:
+					_draw_membrane(stage, lens, u, m, other)})
 		return items
+
+	# The stretchy connective tissue of the split: a metaball-style neck between the
+	# two projected eyeballs, drooping under its own weight, veined and wet-lit, that
+	# thins to slimy strands and - after the snap - leaves retracting nubs and a pair
+	# of dangling remnants. All geometry + layered fills; shapes derive from `m.seed`
+	# so the same show tears the same way.
+	func _draw_membrane(stage, lens: Lens3D, u: float, m: Dictionary, other) -> void:
+		var p1 := lens.project(draw_pos())
+		var p2 := lens.project(other.draw_pos())
+		if p1.z <= lens.near or p2.z <= lens.near:
+			return
+		var c1 := Vector2(p1.x, p1.y) * u
+		var c2 := Vector2(p2.x, p2.y) * u
+		var r1 := draw_scale() * lens._focal / maxf(0.1, p1.z) * u
+		var r2: float = float(other.draw_scale()) * lens._focal / maxf(0.1, p2.z) * u
+		var d := c2 - c1
+		var L := d.length()
+		if L < 1.0 or r2 < 1.0:
+			return
+		var dir := d / L
+		var n := Vector2(-dir.y, dir.x)
+		if n.y > 0.0:
+			n = -n                                     # n points screen-up; droop is -n
+		var waist := clampf(float(m.get("waist", 1.0)), 0.0, 1.0)
+		var snap_t := float(m.get("snap", -1.0))
+		var seed: int = int(m.get("seed", 0))
+		var alpha := clampf(minf(fade, float(other.fade)), 0.0, 1.0)
+		if snap_t >= 0.0:
+			_draw_membrane_torn(stage, c1, c2, dir, n, r1, r2, snap_t, seed, alpha)
+			return
+		# --- the intact bridge ---
+		var w1 := r1 * 0.66
+		var w2 := r2 * 0.74
+		var wm := minf(r1, r2) * 0.78 * pow(waist, 1.35)   # the waist starves as the bud pulls
+		var droop := L * 0.085 * (1.0 - waist) * clampf(L / maxf(r1, 1.0) - 1.2, 0.0, 1.0)
+		var segs := 24
+		var mid := PackedVector2Array()
+		var wid := PackedFloat32Array()
+		for i in segs + 1:
+			var t := float(i) / float(segs)
+			var c := c1.lerp(c2, t)
+			c -= n * (sin(PI * t) * droop)             # the tissue sags under its own weight
+			mid.append(c)
+			wid.append((1.0 - t) * (1.0 - t) * w1 + 2.0 * (1.0 - t) * t * wm + t * t * w2)
+		# Layered flesh: shadowed outer sheet, brighter core, a wet specular streak.
+		stage.draw_colored_polygon(_membrane_poly(mid, wid, n, 1.0), Color(0.50, 0.42, 0.43, 0.92 * alpha))
+		stage.draw_colored_polygon(_membrane_poly(mid, wid, n, 0.58), Color(0.72, 0.64, 0.64, 0.9 * alpha))
+		var streak := PackedVector2Array()
+		for i in segs + 1:
+			streak.append(mid[i] + n * (wid[i] * 0.28))
+		stage.draw_polyline(streak, Color(1.0, 0.98, 0.97, 0.20 * alpha), maxf(1.2, wm * 0.26), true)
+		# Irritated veins, angrier as the waist starves.
+		var vein_a := (0.20 + 0.5 * (1.0 - waist)) * alpha
+		for v in 2:
+			var ph := float(hash([seed, "vein", v]) % 628) * 0.01
+			var off := (0.30 + 0.22 * float(v)) * (1.0 if v == 0 else -1.0)
+			var vp := PackedVector2Array()
+			for i in segs + 1:
+				var t := float(i) / float(segs)
+				var wob := sin(t * 9.0 + ph) * 0.14
+				vp.append(mid[i] + n * (wid[i] * (off + wob)))
+			stage.draw_polyline(vp, Color(0.62, 0.12, 0.12, vein_a), maxf(1.4, minf(r1, r2) * 0.030), true)
+		# Near the tear: the sheet has already given way to a few slimy strands.
+		if waist < 0.42:
+			var sag_amp := L * 0.10
+			for s in 3:
+				var hh := float(hash([seed, "strand", s]) % 1000) / 1000.0
+				var y0 := (hh - 0.5) * 1.2
+				var a0 := c1 + dir * (r1 * 0.85) + n * (w1 * y0 * 0.5)
+				var a1 := c2 - dir * (r2 * 0.85) + n * (w2 * y0 * 0.5)
+				var strand := PackedVector2Array()
+				for i in 13:
+					var t := float(i) / 12.0
+					var c := a0.lerp(a1, t)
+					c -= n * (sin(PI * t) * sag_amp * (0.6 + hh))
+					strand.append(c)
+				var sa := clampf((0.42 - waist) / 0.42, 0.0, 1.0) * 0.8 * alpha
+				stage.draw_polyline(strand, Color(0.80, 0.69, 0.69, sa), maxf(1.4, minf(r1, r2) * 0.045), true)
+
+	# After the snap: the neck is gone - each eye keeps a small retracting NUB where it
+	# tore, and a slack remnant strand swings from each side before wicking away.
+	func _draw_membrane_torn(stage, c1: Vector2, c2: Vector2, dir: Vector2, n: Vector2,
+			r1: float, r2: float, snap_t: float, seed: int, alpha: float) -> void:
+		var g := clampf(1.0 - snap_t / 0.75, 0.0, 1.0)
+		if g <= 0.0:
+			return
+		for side in 2:
+			var c := c1 if side == 0 else c2
+			var r := r1 if side == 0 else r2
+			var toward := dir if side == 0 else -dir
+			# The nub: a teardrop bump easing back into the ball.
+			var base := c + toward * (r * 0.94)
+			var nubs := 4
+			for i in nubs:
+				var t := float(i) / float(nubs - 1)
+				var rr := r * 0.16 * g * (1.0 - t * 0.75)
+				if rr < 0.6:
+					continue
+				var pcen := base + toward * (r * 0.16 * g * t) - n * (rr * 0.35 * t)
+				stage.draw_circle(pcen, rr, Color(0.66, 0.56, 0.57, 0.8 * g * alpha))
+			stage.draw_circle(base + toward * (r * 0.05), r * 0.10 * g, Color(0.95, 0.9, 0.9, 0.25 * g * alpha))
+			# The dangling remnant: a slack filament swinging from the tear point.
+			var hh := float(hash([seed, "rem", side]) % 1000) / 1000.0
+			var sway := sin(snap_t * (7.0 + 4.0 * hh) + hh * 6.0) * 0.35
+			var len := r * (0.55 + 0.3 * hh) * g
+			var rem := PackedVector2Array()
+			for i in 9:
+				var t := float(i) / 8.0
+				rem.append(base + toward * (len * t * (0.4 + sway * t)) - n * (len * t * t * (1.1 - absf(sway))))
+			stage.draw_polyline(rem, Color(0.75, 0.63, 0.63, 0.55 * g * alpha), maxf(1.0, r * 0.045 * g), true)
+
+	# The closed outline of the bridge sheet at a width fraction (top edge out, bottom back).
+	func _membrane_poly(mid: PackedVector2Array, wid: PackedFloat32Array, n: Vector2, frac: float) -> PackedVector2Array:
+		var pts := PackedVector2Array()
+		for i in mid.size():
+			pts.append(mid[i] + n * (wid[i] * frac))
+		for i in range(mid.size() - 1, -1, -1):
+			pts.append(mid[i] - n * (wid[i] * frac))
+		return pts
 
 	# A soft radial glow gathering on the eye as it trembles - "light building around it".
 	func _draw_riser_light(stage, lens: Lens3D, u: float, p: Vector3, k: float) -> void:

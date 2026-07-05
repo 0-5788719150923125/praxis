@@ -38,6 +38,9 @@ var hue := 0.55                # iris hue (public: a morph handoff can copy it)
 var focus_dist := 6.0          # world distance to the thing being looked at (accommodation)
 var lid := 0.0                 # eyelid closure: 0 fully open .. 1 fully closed
 var dilate_bias := 0.0         # additive pupil openness on top of the light reflex (a verb's lever)
+var iris_fade := 1.0           # 0 = a BLANK wet ball (sclera + catchlight only), 1 = full iris.
+                               # The mitosis bud is born featureless and its eye surfaces after
+                               # it tears free - set by the split verb, latched back to 1.
 var _blink_t := -1.0           # progress clock of the current blink (<0 = none)
 var _blink_dur := 0.32
 var _sat := 0.65
@@ -206,17 +209,18 @@ func draw(ci: CanvasItem, lens: Lens3D, u: float, pos: Vector3, radius: float, f
 	var ua := _axis(lens, u, iris_c3, e1, iris_world, center)   # screen image of local x
 	var va := _axis(lens, u, iris_c3, e2, iris_world, center)   # screen image of local y
 	var iris_px: float = maxf(ua.length(), va.length())          # for sizing line widths
-	var a := fade
+	var a := fade * clampf(iris_fade, 0.0, 1.0)                  # the features; the ball itself keeps `fade`
 
-	_draw_sclera_veins(ci, center, ua, va, a * 0.5)
-	# Soft limbal shadow: the sclera dips in around the iris - a dark ring just outside it.
-	_ring(ci, center, ua, va, 1.06, Color(0.04, 0.03, 0.04, 0.5 * a), 44)
-	_ring(ci, center, ua, va, 1.0, Color(0.05, 0.04, 0.05, 0.35 * a), 44)
-	_draw_iris(ci, center, ua, va, iris_px, a)
-	# Pupil: black disc with a soft inner shadow, sized by dilation/accommodation.
-	var prad: float = clampf(_dilate, 0.14, 0.74) * 0.92
-	_ring(ci, center, ua, va, prad + 0.06, Color(0, 0, 0, 0.5 * a), 36)
-	ci.draw_colored_polygon(_disc(center, ua, va, prad, 36), Color(0.02, 0.02, 0.03, a))
+	_draw_sclera_veins(ci, center, ua, va, fade * 0.5)
+	if a > 0.004:
+		# Soft limbal shadow: the sclera dips in around the iris - a dark ring just outside it.
+		_ring(ci, center, ua, va, 1.06, Color(0.04, 0.03, 0.04, 0.5 * a), 44)
+		_ring(ci, center, ua, va, 1.0, Color(0.05, 0.04, 0.05, 0.35 * a), 44)
+		_draw_iris(ci, center, ua, va, iris_px, a)
+		# Pupil: black disc with a soft inner shadow, sized by dilation/accommodation.
+		var prad: float = clampf(_dilate, 0.14, 0.74) * 0.92
+		_ring(ci, center, ua, va, prad + 0.06, Color(0, 0, 0, 0.5 * a), 36)
+		ci.draw_colored_polygon(_disc(center, ua, va, prad, 36), Color(0.02, 0.02, 0.03, a))
 	# Cornea: the wet catchlight + a faint rim glaze on the light side.
 	_draw_cornea(ci, lens, u, pos, radius, front, view, center, ua, va, iris_px, fade)
 	# Eyelids last, so a blink occludes sclera, iris and catchlight together.

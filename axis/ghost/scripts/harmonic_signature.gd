@@ -26,14 +26,19 @@ const DIM := 16
 const BITS := 32
 const PLANE_SEED := 4099   # fixed: the hyperplane bank is GLOBAL / reproducible, not per-session
 const REF_FREQ := 16.35    # C0, for pitch-class folding
-const TAU_SMOOTH := 2.5     # EMA time constant (seconds of context the signature integrates)
+const TAU_SMOOTH := 2.5     # default EMA time constant (seconds of context integrated)
 
+var tau := TAU_SMOOTH                # this instance's EMA time constant (see _init)
 var _vec := PackedFloat32Array()     # current smoothed, normalised descriptor (DIM)
 var _pc := PackedInt32Array()        # band index -> pitch class (0..11), precomputed
 var _planes: Array = []              # BITS hyperplanes of DIM floats (fixed)
 
 
-func _init(band_centres: PackedFloat32Array) -> void:
+## [param smooth_tau] trades stability for reaction time: the default suits seeding
+## and slow modulation; a listener that must NOTICE a change quickly (the [Echo]
+## re-localizer) runs a second, faster instance.
+func _init(band_centres: PackedFloat32Array, smooth_tau := TAU_SMOOTH) -> void:
+	tau = maxf(0.05, smooth_tau)
 	_vec.resize(DIM)
 	_pc.resize(band_centres.size())
 	for i in band_centres.size():
@@ -65,7 +70,7 @@ func update(bands: PackedFloat32Array, low: float, mid: float, high: float, flux
 	for d in DIM:
 		n += raw[d] * raw[d]
 	n = sqrt(maxf(n, 1e-9))
-	var k := 1.0 - exp(-dt / TAU_SMOOTH)
+	var k := 1.0 - exp(-dt / tau)
 	for d in DIM:
 		_vec[d] = lerpf(_vec[d], raw[d] / n, k)
 

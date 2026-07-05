@@ -120,11 +120,11 @@ seq:
 	var sb := Storyboard.load_file("default")
 	check("default resolves to yaml", sb.ok and String(sb.path).ends_with("default.yaml"), sb.error)
 	check("default fields", sb.ok and sb.name == "the-point" and sb.loop == false
-		and sb.sequence.size() == 5)
+		and sb.sequence.size() == 7)
 	if sb.ok:
 		var e0: Dictionary = sb.sequence[0]
 		check("default is stage entries", e0.scene == "stage" and e0.behavior == "static"
-			and float(e0.hold) == 4.0)
+			and float(e0.hold) == 6.0)
 		check("stage cast/track shape", typeof(e0.cast) == TYPE_ARRAY and e0.cast[0].id == "left"
 			and typeof(e0.track) == TYPE_DICTIONARY and (e0.track.spans as Array).size() >= 3)
 		check("defs expanded into entries", typeof(e0.camera) == TYPE_DICTIONARY
