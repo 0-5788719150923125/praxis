@@ -1,16 +1,19 @@
 extends GhostScene
 
-## Fire - a burning flame that rises and flickers, hotter and taller with the music.
+## Fire - a living flame attuned to the harmonics.
 ##
-## A dark, warm bed under a [Fire] of rising sparks (white-yellow hot at the base, cooling
-## through orange to a dim red as they climb and die), with a faint haze of smoke above.
+## One GPU temperature field (see [Layer.Fire] / shaders/flame.gdshader): heat sources
+## along the bed, each listening to its own harmonic band (bass at the centre, treble
+## at the rim), raise columns that rising turbulence carves into licks. CPU sparks
+## crackle out of whichever region is roaring, and smoke sometimes hazes the top.
+## Quiet passages sit as embers; powerful ones send columns up the frame.
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	render_kind = "canvas"
 	framing = "field"
 	add_layer("bed", rng, {"hue": 0.04, "sat": 0.6, "val": 0.06, "pools": 2})
 	add_layer("fire", rng, {
-		"count": rng.randi_range(150, 230),                # soft gaussian tongues - fewer needed
+		"count": rng.randi_range(70, 120),                 # the SPARK pool (born from heat)
 		"spread": rng.randf_range(0.9, 1.1),               # fans across the whole width
 		"hue": rng.randf_range(0.02, 0.06),
 	})

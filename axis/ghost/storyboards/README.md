@@ -135,7 +135,7 @@ side-by-side slots), `hidden`, `seed`.
 |---------|--------|-------|
 | `eye`   | `radius`, `hue` | the photoreal `EyeBody`; gaze via the `look` verb (all targets share one focus = real vergence), eyelids via `blink`. |
 | `prism` | `scale`, `hue`  | the living wireframe `PrismBody` (blue ≈ 0.6, red ≈ 0.0). |
-| `swarm` | `count`, `count_red`, `spacing`, `head`, `size`, `helix`, `r_min`, `r_max`, `hue`, `hue_red`, `bank` (`left`/`right`/by seed), `lead` (actor id whose carried prism becomes member 0) | a GROUP actor: the formation-on-a-track from the finale. |
+| `swarm` | `count`, `count_red`, `spacing`, `head`, `size`, `helix`, `r_min`, `r_max`, `hue`, `hue_red`, `bank` (`left`/`right`/by seed), `lead` (actor id whose carried prism becomes blue member 0), `lead_red` (actor id whose carried prism becomes the RED strand's lead - dormant until the helix opens, the ouroboros closing its loop) | a GROUP actor: the formation-on-a-track from the finale. |
 
 ### `track:` - the timeline
 
@@ -160,14 +160,17 @@ Each span:
 |------|------|----------|
 | `look` | eyes track a wandering 3D focus (shared = vergence); depth-tier table with per-fixation ranges | `tiers`, `lateral`, `stray` |
 | `blink` | close and reopen the eyelids once | `duration` |
-| `split` | MITOSIS: a bud swells off the eye (volume conserved - the parent deflates), a tissue membrane stretches, thins to strands, and snaps; damped recoil to the slots, droplet spatter, and the blank newborn rolls its iris in and blinks. Phases are shaped by the verb - give the span `ease: linear` | `into`, `slots` |
-| `crystallize` | an eye dissolves while a prism forms on its slot (form-flash at the crossover) | `into` |
+| `arrive` | fly IN with velocity from offscreen (or `from`), swoop onto the anchor, land with a small damped wobble. Give the span `ease: linear` | `from`, `wobble` |
+| `sprout` | a STANDING-ROSE entrance: the stem grows up from below the frame beside the anchor, crests, and droops its head over - fruiting the eye at the hanging tip (facing the ground, a wilting bloom); it sheds a petal or two, then the eye DETACHES - the release whips the freed stem back and it retreats down along itself - and the dropped eye settles onto its anchor and rights itself. Give the span `ease: linear` | `side` |
+| `split` | MITOSIS: a bud swells off the eye (volume conserved - the parent deflates), a tissue membrane stretches, thins to strands, and snaps; damped recoil to the slots, droplet spatter, and the blank newborn rolls its iris in. The verb owns the gaze (a dead-ahead stare) while it runs. Give the span `ease: linear` | `into`, `slots` |
+| `crystallize` | the eye FREEZES OVER into the prism: the gaze locks (the verb owns it), crystal edges creep across the ball as the pupil dies to a pinpoint and the iris chills to the crystal's hue, the cage tightens and glints while the prism's wireframe materializes over it, then the ball collapses into the core - cold shards + an icy flash. Give the span `ease: linear` | `into` |
 | `tremble` | the riser: vibration + light building (latches) | - |
 | `burst` | a prism bursts into being in a flash, optionally replacing an actor | `replaces` |
 | `lock` | phase-lock pose to another prism (snap tie; latches) | `to`, `snap` |
 | `desync` | break the phase-lock | - |
 | `hold_still` | damp a prism's own spin to rest (latches) | - |
 | `sway` | slip the anchor and drift weightlessly around it | `amp` |
+| `counterflow` | the pair take OPPOSITE HIGHWAYS: a slow CURRENT catches the drifting pair and eases them onto their lanes and up to cruise (passing mid-scene, rolling about their travel axes); in the final stretch each pulls a loop off its lane that tightens into a spiral sinking toward the centre-depth - both converge on the point the ouroboros blossoms out of, hiding the cut inside the convergence. Speed rides the live `time_scale`, so specialize couples in. Give the span `ease: linear` | `lane`, `speed`, `loop_k` |
 | `specialize` | scale to `size` x, tempo to `tempo` x, latch a pulse | `size`, `tempo`, `pulse {amp, rate}` |
 | `gather` | swarm members ease in one at a time | - |
 | `fly` | the swarm flies its track; the stage camera follows a touch slower | `speed`, `follow` |
@@ -178,11 +181,13 @@ Each span:
 ## The boards here
 
 - **`default.yaml`** - "the-point": the full brief, seven stage entries covering all
-  fifteen timecoded beats, chained by carries, plus a two-entry `tail` that keeps the
-  swarm streaming and weaving under the end card until the song runs out. The opening
-  act grew past the brief: awaken (blink, a dilation surge that decays, searching
-  focus pulls), mitosis (the division), and regard (the pair, verging and blinking)
-  before the crystallization begins.
+  fifteen timecoded beats, chained by carries, plus a one-entry `tail` that keeps the
+  swarm spiraling into the distance under the end card until the song runs out. The
+  opening act grew past the brief, kept deliberately SPARSE (one event at a time):
+  awaken (from nothing, a vine sprouts and fruits the eye at its hanging tip, drops
+  it, and retreats; then a dilation surge that decays), mitosis (the division, sole
+  owner of its scene), and regard (the pair, verging on a shared focus) before the
+  crystallization begins.
 
 The five bespoke the-point scene files (`eye`, `two_eyes`, `eye_prism`,
 `two_prisms`, `prism_swarm`) remain in the AUTO catalogue, but the storyboard path

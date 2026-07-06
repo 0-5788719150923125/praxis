@@ -237,6 +237,11 @@ func attach(host: Node) -> void:
 	_bookend_time = 3.0 + 7.0 * (float(hash([_session_seed, "bookend"]) & 0xFFFF) / 65535.0)
 	_locked = _locked_scene_arg()
 	_load_storyboard_arg()
+	# A storyboard's opening is AUTHORED (the-point's eye flies in over the first
+	# second); the long sampled fade-from-black would swallow it, so manual sessions
+	# get a short fixed bookend and the board owns its own entrance.
+	if is_manual():
+		_bookend_time = minf(_bookend_time, 2.0)
 	dials = [Dial.new(_session_seed ^ 0x0D1A15EE)]
 	_dial_demo = OS.get_cmdline_user_args().has("--dial-demo")
 	_echo = Echo.new()

@@ -105,6 +105,17 @@ static func puff_texture() -> Texture2D:
 	return _puff_tex
 
 
+# A plain white quad texture - a UV carrier for shader-drawn rects (the shader
+# computes everything from UV; the texture just gives the rect its coordinates).
+static var _white_tex: Texture2D = null
+static func white_texture() -> Texture2D:
+	if _white_tex == null:
+		var img := Image.create(2, 2, false, Image.FORMAT_RGBA8)
+		img.fill(Color.WHITE)
+		_white_tex = ImageTexture.create_from_image(img)
+	return _white_tex
+
+
 ## Draw a soft gaussian puff of `radius` at `c`, tinted (and alpha-scaled) by `color`.
 static func puff(ci: CanvasItem, c: Vector2, radius: float, color: Color) -> void:
 	ci.draw_texture_rect(puff_texture(),
@@ -1164,121 +1175,238 @@ class Clouds:
 
 
 # ---------------------------------------------------------------------------------
-# Fire - a burning flame: sparks rise from the base, flicker sideways, and cool from a
-# white-yellow hot core through orange to a dim red as they climb and die, then respawn.
+# Fire - a living flame. The BODY is one shared GPU temperature field (see
+# shaders/flame.gdshader) on a quad child item: heat SOURCES along the bed - each fed
+# by its own harmonic band - raise columns that rising domain-warped noise carves into
+# licks; tongues pinch free, climb and dissolve. On top, CPU SPARKS ride a curl-noise
+# wind out of the hottest regions and crackle up on beats. The dynamic range is the
+# point: a quiet passage sits as a seam of embers, a swell sends columns up the frame -
+# and WHERE it roars is the spectrum (bass at the centre, treble at the rim).
 # ---------------------------------------------------------------------------------
 class Fire:
 	extends Base
+	const SHADER := preload("res://shaders/flame.gdshader")
+	var _quad: FlameQuad = null      # the shader quad (a child canvas item: materials
+	var _mat := ShaderMaterial.new() # apply per-item, so the field needs its own)
+	var _srcs: Array = []            # bed heat sources: {x, w, band, gam, atk, rel, heat}
 	var _sparks: Array = []
-	var _hot_x := 0.0      # a wandering hot spot: flames near it leap taller (uneven across)
-	var _burst := 0.0      # beat-driven surge envelope: kicks the tall licks up, then decays
+	var _flow: Flow2D
+	var _burst := 0.0                # beat/flux surge: taller, wilder, brighter
+	var _wind := 0.0
+	var _gust := 0.0                 # flux-kicked gust envelope (signed)
+	var _gust_dir := 1.0
+	var _energy := 0.0               # fast-attack / slow-release loudness register
+	var _sig := 0.0                  # decaying peak of live energy: gates the idle burn
+	var _last_beat := 0.0            # onset edge detector for the per-source kicks
 
 	func _init(seed_rng: RandomNumberGenerator, c: Dictionary = {}) -> void:
 		super(seed_rng, c)
-		for i in int(num("count", 160)):
-			var s := {}
-			_reseed(s, seed_rng, true)
-			_sparks.append(s)
-
-	func _reseed(s: Dictionary, r: RandomNumberGenerator, anywhere: bool) -> void:
-		s["x"] = r.randf_range(-1.05, 1.05) * num("spread", 1.0)        # spans the FULL width
-		# A sparse minority are tall LICKS: fast, long-lived flames that leap high up the screen
-		# (then dissipate), so the fire is not a flat band in the bottom third.
-		var lick := r.randf() < 0.10
-		s["lick"] = lick
-		s["vy"] = r.randf_range(1.2, 2.4) if lick else r.randf_range(0.35, 1.05)
-		s["size"] = r.randf_range(0.010, 0.024) if lick else r.randf_range(0.006, 0.018)
-		s["flen"] = r.randf_range(0.05, 0.13)      # flame-tongue length (fraction of unit)
-		s["amp"] = r.randf_range(0.015, 0.05)      # how much this tongue weaves (kept small: a gentle lean, not a big curl)
-		s["flicker"] = r.randf_range(6.0, 16.0)    # per-spark flicker rate
-		s["phase"] = r.randf() * TAU
-		s["decay"] = (0.40 + 0.45 * float(s["vy"])) * (0.42 if lick else 1.0)   # licks last longer
-		if anywhere:
-			# Seed each spark partway through its life so the very FIRST frame already looks like
-			# steady-state fire - no flicker as a uniform scatter corrects itself down to the base.
-			var prog := r.randf()
-			s["life"] = 1.0 - prog
-			var rise := float(s["vy"]) * 0.7 / float(s["decay"])      # full-life climb (drive ~0.7)
-			s["y"] = clampf(r.randf_range(0.8, 1.05) - rise * prog, -1.1, 1.05)
-		else:
-			s["life"] = 1.0
-			s["y"] = r.randf_range(0.8, 1.05)
+		_flow = FlowField.new(seed_rng.randi(), 3.2, 0.5)
+		# The bed sources: spread across the width with jitter, each listening to the
+		# band its POSITION maps to - bass at the centre (the heart of the fire), treble
+		# out at the rim - so a bassline roars the middle while hats shiver the edges.
+		var nsrc := seed_rng.randi_range(5, 7)
+		var span := 0.82 * num("spread", 1.0)
+		var band_gamma := seed_rng.randf_range(0.80, 1.30)
+		for i in nsrc:
+			var x0 := lerpf(-span, span, (float(i) + 0.5) / float(nsrc))
+			var x := x0 + seed_rng.randf_range(-0.07, 0.07)
+			# Band cap at 0.8: the outermost sources listen high in the spectrum but not
+			# at its dead top, where most music has nothing - a rim that never lights
+			# isn't localization, it's a hole.
+			_srcs.append({
+				"x": x, "w": seed_rng.randf_range(0.13, 0.24),
+				"band": clampf(pow(absf(x) / maxf(span, 0.01), band_gamma) * 0.8, 0.0, 1.0),
+				"gam": seed_rng.randf_range(1.5, 2.1),    # per-source loudness expander
+				"atk": seed_rng.randf_range(6.0, 11.0),   # heat rises fast...
+				"rel": seed_rng.randf_range(0.9, 1.6),    # ...and cools slow
+				"heat": 0.0, "kick": 0.0,
+			})
+		# The field's character, sampled per instance: how fine the turbulence, how hard
+		# the warp shreds, how tall the columns, how bright the whole.
+		_mat.shader = SHADER
+		_mat.set_shader_parameter("u_scale", seed_rng.randf_range(0.85, 1.35))
+		_mat.set_shader_parameter("u_turb", seed_rng.randf_range(0.60, 1.00))
+		_mat.set_shader_parameter("u_lift", seed_rng.randf_range(0.90, 1.15))
+		_mat.set_shader_parameter("u_gain", seed_rng.randf_range(0.90, 1.15))
+		_mat.set_shader_parameter("u_seed",
+			Vector2(seed_rng.randf_range(0.0, 97.0), seed_rng.randf_range(0.0, 97.0)))
+		# The spark pool starts DEAD: sparks are born from heat, so a quiet opening has
+		# none and a roar crackles with them.
+		for i in int(num("count", 90)):
+			_sparks.append({"life": 0.0})
 
 	func update(f: AudioFeatures, dt: float, h: Vector2) -> void:
 		super(f, dt, h)
-		# The RISE speed is STEADY (energy sets a sustained pace; no per-beat jolt), so a spark climbs
-		# LINEARLY instead of lurching up and down with every beat. Beats still drive the burst/licks
-		# and the brightness, just not the climb rate.
-		var rise := 0.85 + 0.5 * f.energy
-		_hot_x = sin(t * 0.13) * 0.6 + sin(t * 0.31 + 1.7) * 0.3      # the hot side wanders
-		# Beats kick the burst envelope up; it falls away between them, so tall flames surge and die.
-		_burst = maxf(_burst * exp(-2.2 * dt), clampf(1.2 * f.beat + 0.5 * f.energy, 0.0, 1.0))
-		for s in _sparks:
-			s.y -= float(s.vy) * dt * rise
-			s.life -= dt * float(s.decay)
-			if float(s.life) <= 0.0 or float(s.y) < -1.1:
-				_reseed(s, rng, false)
+		# The IDLE burn: with no audio (or long true silence) a gentle synthetic pulse
+		# keeps a modest fire breathing. Gated on a decaying peak of live energy, so any
+		# actual music switches the fire fully onto the harmonics - a quiet passage in a
+		# song still reads as embers, only sustained dead silence re-lights the idle.
+		_sig = maxf(_sig * exp(-0.25 * dt), f.energy)
+		var idle := clampf(1.0 - _sig * 7.0, 0.0, 1.0)
+		# The emotional register: loudness attacks fast and releases slow, so the fire
+		# leaps with a swell and settles down after it rather than tracking every frame.
+		var e_in := maxf(f.energy, idle * (0.34 + 0.16 * sin(t * 0.23)))
+		var ke := 1.0 - exp((-3.0 if e_in > _energy else -0.55) * dt)
+		_energy = lerpf(_energy, e_in, ke)
+		# Per-source heat from that source's OWN band, expanded nonlinearly so quiet
+		# stays embers and power roars; same fast-attack / slow-release shape.
+		for s in _srcs:
+			var raw := clampf(f.sample(float(s.band)) * 1.30, 0.0, 1.0)
+			raw = maxf(raw, idle * (0.40 + 0.30 * sin(t * 0.45 + float(s.band) * 6.0 + float(s.x) * 3.0)))
+			var target := pow(raw, float(s.gam)) * (0.55 + 0.75 * _energy)
+			var k := 1.0 - exp((-float(s.atk) if target > float(s.heat) else -float(s.rel)) * dt)
+			s.heat = maxf(lerpf(float(s.heat), target, k), 0.025)
+		# The burst is the TRANSIENT (beats + arriving spectral content); sustained
+		# loudness already lives in the source heats.
+		_burst = maxf(_burst * exp(-2.4 * dt), clampf(0.8 * f.beat + 1.6 * f.flux, 0.0, 1.0))
+		# A beat onset kicks ONE region: the hottest source flares alone and decays -
+		# the surge belongs to a place in the fire, not to the whole screen.
+		if f.beat > _last_beat + 0.30:
+			var hot: Dictionary = _srcs[0]
+			for s in _srcs:
+				s = s as Dictionary
+				if float(s.heat) > float(hot.heat):
+					hot = s
+			hot.kick = 1.0
+		_last_beat = f.beat
+		for s in _srcs:
+			s.kick = float(s.kick) * exp(-2.8 * dt)
+		# Wind: a slow wander plus flux-kicked gusts in a randomly chosen direction, so
+		# the whole fire leans and recovers like something weather touches.
+		if f.flux * 2.0 > _gust and rng.randf() < 0.5 * dt * 60.0 * f.flux:
+			_gust_dir = -1.0 if rng.randf() < 0.5 else 1.0
+		_gust = maxf(_gust * exp(-1.1 * dt), clampf(f.flux * 2.2, 0.0, 0.8))
+		_wind = clampf(0.22 * (sin(t * 0.16) * 0.6 + sin(t * 0.37 + 2.1) * 0.4)
+			+ _gust * _gust_dir * 0.45, -0.65, 0.65)
+		_flow.advance(dt * (0.6 + 2.4 * f.energy))     # the swirl quickens with the music
+		_push_uniforms()
+		_advance_sparks(f, dt)
+
+	func _push_uniforms() -> void:
+		var xs := PackedFloat32Array()
+		var hs := PackedFloat32Array()
+		var ws := PackedFloat32Array()
+		for s in _srcs:
+			xs.append(float(s.x) * half.x)     # unit fractions, matched to the quad
+			hs.append(_hval(s))
+			ws.append(float(s.w))
+		while xs.size() < 8:                   # a uniform array only takes its FULL
+			xs.append(0.0)                     # declared length - short sets are
+			hs.append(0.0)                     # silently dropped
+			ws.append(1.0)
+		_mat.set_shader_parameter("u_n", _srcs.size())
+		_mat.set_shader_parameter("u_x", xs)
+		_mat.set_shader_parameter("u_heat", hs)
+		_mat.set_shader_parameter("u_w", ws)
+		_mat.set_shader_parameter("u_time", t)
+		# The quad reaches well past the frame top so a roaring column's tip dissolves
+		# in noise instead of clipping flat on the quad edge.
+		_mat.set_shader_parameter("u_half", Vector2(half.x, half.y * 1.8))
+		_mat.set_shader_parameter("u_base", half.y * 0.96)
+		_mat.set_shader_parameter("u_burst", _burst)
+		_mat.set_shader_parameter("u_wind", _wind)
+
+	# A source's EFFECTIVE heat: its band-driven level, flared by its beat kick.
+	func _hval(s: Dictionary) -> float:
+		return float(s.heat) * (1.0 + 0.9 * float(s.kick))
+
+	# A dead spark's chance to be born scales with the TOTAL heat (and leaps on a
+	# burst); its birthplace is a heat-weighted pick of the sources - the sparks
+	# crackle out of whichever region of the fire is roaring right now.
+	func _advance_sparks(f: AudioFeatures, dt: float) -> void:
+		var total := 0.0
+		for s in _srcs:
+			total += _hval(s)
+		var born := clampf((0.35 + 2.6 * _burst) * total * dt, 0.0, 0.9)
+		for sp in _sparks:
+			if float(sp.life) <= 0.0:
+				if rng.randf() < born:
+					_ignite(sp)
+				continue
+			sp.life -= dt
+			var p: Vector2 = sp.pos
+			var v: Vector2 = sp.vel
+			var age := 1.0 - clampf(float(sp.life) / float(sp.span), 0.0, 1.0)
+			var curl := _flow.at(p * 1.6) * (0.10 + 0.22 * _energy)
+			# Buoyancy dies as the spark cools, so embers arc over and begin to sink.
+			var buoy := (0.55 + 0.5 * _energy) * (1.0 - age * 1.25)
+			v.x += (curl.x * 0.8 + _wind * 0.30 - v.x * 1.1) * dt * 3.0
+			v.y += (curl.y * 0.5 - buoy - v.y * 0.5) * dt * 3.0
+			sp.pos = p + v * dt
+			sp.vel = v
+			if float(sp.pos.y) < -half.y * 1.05:
+				sp.life = 0.0
+
+	func _ignite(sp: Dictionary) -> void:
+		var pick := rng.randf() * maxf(0.001, _weight_total())
+		var src: Dictionary = _srcs[0]
+		for s in _srcs:
+			pick -= pow(_hval(s), 1.5)
+			if pick <= 0.0:
+				src = s
+				break
+		var hx := float(src.x) * half.x + rng.randf_range(-0.7, 0.7) * float(src.w)
+		sp.pos = Vector2(hx, half.y * 0.96 - rng.randf_range(0.0, 0.03))
+		sp.vel = Vector2(_wind * 0.2 + rng.randf_range(-0.08, 0.08),
+			-rng.randf_range(0.35, 0.85) * (0.5 + _hval(src)) * (1.0 + 0.8 * _burst))
+		sp.span = rng.randf_range(0.5, 1.4)
+		sp.life = sp.span
+		sp.size = rng.randf_range(0.0018, 0.0042)
+		sp.flicker = rng.randf_range(7.0, 18.0)
+		sp.phase = rng.randf() * TAU
+		sp.hot = rng.randf()
+
+	func _weight_total() -> float:
+		var w := 0.0
+		for s in _srcs:
+			w += pow(_hval(s), 1.5)
+		return w
 
 	func draw(ci: CanvasItem, u: float) -> void:
-		var base_h := num("hue", 0.04)
-		# A warm ember BED glowing along the base, brighter where the hot spot sits, so the rising
-		# licks read as one anchored fire and not a field of loose sparks.
-		var by := half.y * u * 0.96
-		for i in 7:
-			var gx := lerpf(-0.92, 0.92, float(i) / 6.0)
-			var glow := 0.06 + 0.06 * exp(-pow((gx - _hot_x) / 0.5, 2.0))
-			Layer.puff(ci, Vector2(gx * half.x * u, by), half.x * u * 0.42,
-				Color.from_hsv(0.06, 0.7, 0.7, glow))
-		for s in _sparks:
-			var heat := clampf(float(s.life), 0.0, 1.0)
-			var flick := 0.7 + 0.3 * sin(t * float(s.flicker) + float(s.phase) * 2.0)   # shimmer
-			var c: Vector2 = Vector2(float(s.x) * half.x, float(s.y) * half.y) * u
-			var w: float = float(s.size) * u * (1.5 + 0.9 * heat)
-			# Height: a base tongue, taller near the wandering hot spot, and massively taller for
-			# the sparse licks - more so on a burst - so tall flames leap up one side and dissipate.
-			var hot := exp(-pow((float(s.x) - _hot_x) / 0.45, 2.0))   # 0..1 proximity to the hot side
-			var tall := (1.6 + 4.5 * _burst) * (0.55 + hot) if bool(s.lick) else 1.0
-			# Height grows smoothly with heat and shrinks as the flame ages - NO fast `flick` term here
-			# (that made the tongue jitter up and down as it rose). Flicker stays in the brightness only.
-			var hgt: float = float(s.flen) * u * (0.5 + 0.7 * heat) * (1.0 + 0.7 * hot) * tall
-			# Sway is a COHERENT, SLOW sideways lean - the same for the whole tongue, so the flame
-			# leans as one. Deliberately low-frequency and small, not a fast left-right flail (that
-			# read as unnatural wagging), and the tall licks weave only a little more, not 3x.
-			# A gentle, slow, coherent sideways swing turned into a bend that is a small FRACTION of
-			# the flame's OWN height. Scaling by height (not a fixed pixel offset) means short and tall
-			# tongues curve by the SAME modest amount - the old fixed offset whipped the short flames
-			# into hooks. A mild inward bias leans outer flames toward the centre. Clamped so the curl
-			# always stays subtle - the flame reads as upright with a lick, never a big C.
-			var amp2: float = float(s.amp) * 2.0 * (1.0 + 0.3 * float(s.lick))
-			# Draw the flame as a COLUMN of soft gaussian puffs: a bright, wide white-hot HEAD that
-			# leads at the top (where the flame is climbing to) tapering down to a thin, dim, red
-			# TAIL that trails DOWNWARD behind it - so the wisp flows down, not up. fk=0 is the tail
-			# (bottom), fk=1 the head (top).
-			var steps: int = clampi(int(hgt / maxf(w * 0.7, 1.0)) + 3, 4, 16)
-			var head_bend := 0.0
-			for k in steps:
-				var fk := float(k) / float(steps - 1)            # 0 tail (bottom) .. 1 head (top)
-				# The head LEADS and the body TRAILS along the path it took: material lower down (small
-				# fk) shows the head's sideways sway from EARLIER in time - a phase LAG up the tongue -
-				# so the tail flows along the head's actual trajectory instead of holding one frozen
-				# curve for its whole life. Rooted at the base, free to follow at the head.
-				var lag := (1.0 - fk) * 3.0
-				var swing := sin(t * 1.1 - lag + float(s.phase) + float(s.y) * 1.5) \
-					+ 0.4 * sin(t * 1.7 - lag * 1.2 + float(s.phase) * 1.7)
-				var root := smoothstep(0.0, 0.30, fk)            # anchored at the base, trailing at the head
-				var bend: float = clampf(swing * amp2 * root - float(s.x) * 0.05 * fk, -0.22, 0.22) * hgt
-				if fk >= 0.82 and head_bend == 0.0:
-					head_bend = bend
-				var pp := c + Vector2(bend, -hgt * fk)
-				var pr := w * (0.45 + 1.05 * fk)                 # thin tail -> wide rounded head
-				var hue := fposmod(0.02 + 0.09 * fk, 1.0)        # red tail -> orange-yellow head
-				var sat := clampf(lerpf(1.0, 0.45, fk), 0.0, 1.0)           # red tail -> white-hot head
-				var val := clampf(lerpf(0.40, 1.0, fk) * (0.55 + 0.5 * heat) * flick, 0.0, 1.0)
-				var a := clampf(lerpf(0.12, 0.55, fk) * (0.6 + 0.4 * heat), 0.0, 1.0)
-				Layer.puff(ci, pp, pr, Color.from_hsv(hue, sat, val, a))
-			# A soft warm glow around the HEAD - the flame's brightest light (a halo, not a dot).
-			Layer.puff(ci, c + Vector2(head_bend * 0.9, -hgt * 0.85), w * 3.0,
-				Color.from_hsv(0.10, 0.5, clampf((0.6 + 0.5 * heat) * flick, 0.0, 1.0), 0.13 * (0.6 + 0.4 * heat)))
+		if _quad == null:
+			_quad = FlameQuad.new()
+			_quad.material = _mat
+			# Deferred: layers draw inside the scene's _draw, no tree changes mid-pass.
+			ci.call_deferred("add_child", _quad)
+		_quad.px_half = Vector2(half.x, half.y * 1.8) * u   # matches u_half above
+		_quad.queue_redraw()
+		for sp in _sparks:
+			if float(sp.life) <= 0.0:
+				continue
+			var lf := clampf(float(sp.life) / float(sp.span), 0.0, 1.0)
+			var flick := 0.65 + 0.35 * sin(t * float(sp.flicker) + float(sp.phase))
+			var c: Vector2 = sp.pos * u
+			var v: Vector2 = sp.vel
+			# A short streak along the velocity with a hot head: white-yellow young,
+			# cooling through orange to a dying red.
+			var hue := lerpf(0.115, 0.015, pow(1.0 - lf, 1.4))
+			var sat := lerpf(0.55, 1.0, 1.0 - lf)
+			var val := clampf((0.55 + 0.5 * lf) * flick, 0.0, 1.0)
+			var a := clampf(lf * 1.6, 0.0, 1.0) * (0.55 + 0.35 * flick)
+			var col := Color.from_hsv(hue, sat, val, a)
+			var w: float = maxf(float(sp.size) * u * (0.8 + 0.6 * lf), 1.0)
+			ci.draw_line(c - v * u * 0.055, c, col, w)
+			Layer.puff(ci, c, w * 3.0, Color(col.r, col.g, col.b, a * 0.30))
+
+
+# The flame field's canvas item: a canvas material applies to a whole item, so the
+# fire's GPU body lives on this child quad. It re-applies the scene's view matrix in
+# its own draw, so the field and the CPU sparks share one camera. It renders IN FRONT
+# of the parent (behind-parent would bury it under the scene's opaque bed layer), and
+# because the field is additive light it never occludes what the scene drew - sparks
+# and smoke read through it, brightened where the flame burns.
+class FlameQuad:
+	extends Node2D
+	var px_half := Vector2(480.0, 300.0)   # half-extents in PIXELS (set by the layer)
+
+	func _draw() -> void:
+		var sc := get_parent()
+		if sc == null or not ("view" in sc):
+			return
+		draw_set_transform_matrix(sc.view.matrix(sc.size))
+		draw_texture_rect(Layer.white_texture(),
+			Rect2(-px_half, px_half * 2.0), false)
 
 
 # ---------------------------------------------------------------------------------

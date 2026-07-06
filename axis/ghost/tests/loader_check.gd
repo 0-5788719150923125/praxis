@@ -205,7 +205,7 @@ sequence:
 
 	# --- tail + elastic stamping ---------------------------------------------
 	var d0 := Storyboard.load_file("default")
-	check("default has a tail", d0.ok and (d0.tail as Array).size() >= 2, d0.error)
+	check("default has a tail", d0.ok and (d0.tail as Array).size() >= 1, d0.error)
 	if d0.ok and not (d0.tail as Array).is_empty():
 		check("elastic stamped into entries",
 			is_equal_approx(float((d0.sequence[0] as Dictionary).get("elastic", 0.0)), 0.25)

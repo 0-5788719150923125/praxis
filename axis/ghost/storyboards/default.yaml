@@ -52,48 +52,45 @@ defs:
       - {p: 0.6, dist: [8.0, 40.0], dwell: [2.0, 3.6]}
     lateral: [0.12, 0.4]
 
-  # The awakening gaze: restless FOCUS PULLS between very near and very far, short
-  # dwells - the eye visibly hunting for something to fix on, pupil accommodating.
-  gaze-searching:
-    tiers:
-      - {p: 0.45, dist: [1.6, 2.8], dwell: [0.8, 1.6]}     # right up close
-      - {p: 0.55, dist: [28, 90], dwell: [1.0, 2.0]}       # out to infinity
-    lateral: [0.08, 0.22]
-
 sequence:
   # ---- awaken [0-6s] ---------------------------------------------------------
-  # beat 1: a single eye floating in the void. It blinks; the pupil DILATES in a
-  # surge and decays back; the focus hunts near/far (accommodation visibly working).
+  # beat 1: from NOTHING, a STANDING ROSE: the stem grows up from below the frame
+  # beside the anchor, crests above it, and droops its head over - fruiting the eye
+  # at the hanging tip, facing the ground like a wilting bloom. It sheds a petal or
+  # two; the eye DETACHES; the freed stem whips back and retreats down; the dropped
+  # eye settles onto its anchor and rights itself. Then one slow event: the pupil
+  # dilates in a surge and decays away. Nothing else.
   - scene: stage
     behavior: static
     shot: centered
     hold: 6
     camera: {use: front-camera}
     cast:
-      - {id: left, kind: eye, at: [0, 0, 0], radius: [0.30, 0.40]}
+      # Born HIDDEN: the void is empty until the vine fruits the eye into being.
+      - {id: left, kind: eye, at: [0, 0, 0], radius: [0.30, 0.40], hidden: true}
     track:
       nominal: 6
       spans:
-        - {from: 0.0, to: 6.0, action: look, target: left, args: {use: gaze-searching}}
-        - {at: 0.5, action: blink, target: left, args: {duration: [0.28, 0.40]}}       # [0.5s]
-        - from: 1.2                                                                    # the surge...
-          to: 2.0
+        - {from: 0.6, to: 3.4, action: sprout, target: left, ease: linear}
+        - {from: 3.4, to: 6.0, action: look, target: left, args: {use: gaze-calm}}
+        - from: 3.9                                                                    # the surge...
+          to: 4.7
           action: ramp
           target: left
           ease: in
           args: {param: dilate, to: [0.24, 0.34]}
-        - from: 2.0                                                                    # ...decays away
-          to: 5.2
+        - from: 4.7                                                                    # ...decays away
+          to: 6.0
           action: ramp
           target: left
           ease: out
           args: {param: dilate, to: [0.02, 0.06]}
-        - {at: 4.7, action: blink, target: left, args: {duration: [0.30, 0.42]}}
 
   # ---- mitosis [6-12s] -------------------------------------------------------
-  # beat 2: the eye divides. A bud swells off it (volume conserved - the parent
-  # deflates), a tissue membrane stretches between them, thins to strands, and
-  # SNAPS: recoil, spatter, and the blank newborn ball rolls its iris in and blinks.
+  # beat 2: the eye divides - ONE thing happening, watched head-on. A bud swells
+  # off it (volume conserved - the parent deflates), a tissue membrane stretches,
+  # thins to strands, and SNAPS: recoil, spatter, and the blank newborn ball rolls
+  # its iris in. The verb owns the gaze: the parent stares dead ahead as it labors.
   - scene: stage
     behavior: static
     shot: centered
@@ -105,7 +102,6 @@ sequence:
     track:
       nominal: 6
       spans:
-        - {from: 0.0, to: 1.6, action: look, target: left, args: {use: gaze-calm}}
         - from: 0.8                                                                    # the division
           to: 5.3
           ease: linear                       # the verb shapes its own phases
@@ -114,8 +110,8 @@ sequence:
           args: {into: right, slots: [[-0.62, 0, 0], [0.62, 0, 0]]}
 
   # ---- regard [12-17s] -------------------------------------------------------
-  # the two eyes, ALIVE together: verging on a shared wandering focus, blinking out
-  # of step - screen time for the pair before the machines arrive.
+  # the two eyes, ALIVE together: verging on a shared wandering focus - quiet
+  # screen time for the pair before the machines arrive.
   - scene: stage
     behavior: static
     shot: centered
@@ -128,8 +124,6 @@ sequence:
       nominal: 5
       spans:
         - {from: 0.0, to: 5.0, action: look, target: [left, right], args: {use: gaze-calm}}
-        - {at: 1.1, action: blink, target: right, args: {duration: [0.28, 0.40]}}
-        - {at: 3.2, action: blink, target: left, args: {duration: [0.28, 0.40]}}
 
   # ---- build [17-23s] --------------------------------------------------------
   # beat 3: the RIGHT eye dissolves and crystallizes into the blue Prism.
@@ -148,8 +142,13 @@ sequence:
       nominal: 6
       spans:
         - {from: 0.0, to: 6.0, action: look, target: [left, right], args: {use: gaze-watchful}}
-        - {from: 0.5, to: 3.2, action: crystallize, target: right, args: {into: blue}}
-        - {from: 3.6, to: 6.0, action: tremble, target: left, ease: in}
+        - from: 0.4                          # the freezing-over (the verb owns its phases
+          to: 4.6                            # AND the right eye's gaze - it stills first)
+          ease: linear
+          action: crystallize
+          target: right
+          args: {into: blue}
+        - {from: 4.6, to: 6.0, action: tremble, target: left, ease: in}
 
   # ---- DROP + groove [23-32s] --------------------------------------------------
   # beat 6: the trembling eye BURSTS into the red Prism ON the drop beat.
@@ -174,48 +173,61 @@ sequence:
         - {at: 7.2, action: desync, target: red}
         - {from: 7.2, to: 9.0, action: hold_still, target: red}
 
-  # ---- float [32-37s] ----------------------------------------------------------
-  # beat 10: both Prisms slip their anchors and sway, weightless.
-  # beat 11: they SPECIALIZE - blue swells and pulses slowly; red shrinks and
-  # quickens (bias and variance made physical).
+  # ---- counterflow [32-37s] ------------------------------------------------------
+  # beat 10: the Prisms take OPPOSITE HIGHWAYS - each on its own lane, cruising
+  # against the other, rolling like drills down their roads, passing mid-scene.
+  # beat 11: they SPECIALIZE as they drive - blue swells, slows to a glide; red
+  # shrinks and quickens to a zip (bias and variance made physical). In the last
+  # stretch each pulls a LOOP off its lane - the arc that carries them into the
+  # ouroboros, where they become its two counter-winding strands.
   - scene: stage
     behavior: static
     shot: centered
     hold: 5
     camera: {use: front-camera}
     cast:
-      - {id: blue, kind: prism, at: [0.55, 0, 0], hue: 0.6}              # carried in live
-      - {id: red, kind: prism, at: [-0.55, 0, 0], hue: 0.0}              # carried in live
+      # Slots MATCH the drop scene's, so the carried prisms arrive without a jump -
+      # the current catches them exactly where they were drifting.
+      - {id: blue, kind: prism, at: [0.62, 0, 0], hue: 0.6}              # carried in live
+      - {id: red, kind: prism, at: [-0.62, 0, 0], hue: 0.0}              # carried in live
     track:
       nominal: 5
       spans:
-        - {from: 0.0, to: 5.0, action: sway, target: [blue, red], args: {amp: [0.07, 0.10]}}
-        - from: 2.5
-          to: 5.0
+        - {from: 0.0, to: 5.0, action: counterflow, target: [blue, red], ease: linear}
+        - from: 1.2
+          to: 4.0
           action: specialize
           target: blue
           args: {size: [1.45, 1.65], tempo: [0.5, 0.6], pulse: {amp: 0.12, rate: 1.2}}
-        - from: 2.5
-          to: 5.0
+        - from: 1.2
+          to: 4.0
           action: specialize
           target: red
           args: {size: [0.55, 0.65], tempo: [1.6, 2.0], pulse: {amp: 0.06, rate: 6.5}}
 
-  # ---- swell [37-42s] ----------------------------------------------------------
-  # beat 12 [28-30s]: 6-7 blue Prisms fly in one at a time and form up (the carried
-  # blue leads the swarm). The camera may move only from here on.
-  # beat 13 [30-31s]: the formation flies forward along an invisible track.
-  # beat 14 [31-32s]: the track splits into a double helix - blue and red strands
-  # counter-winding, weaving past each other.
-  # beat 15 [32-33s]: the swarm banks to ONE side and leaps to the other strand,
-  # then holds - room for the date/logo card (loop: false keeps this frame).
+  # ---- OUROBOROS [37-42s] --------------------------------------------------------
+  # beat 12: 6-7 blue Prisms fly in one at a time and form up - the carried blue,
+  # arriving mid-loop from its highway, leads them. Camera may move only from here.
+  # beat 13: the formation flies forward along an invisible track.
+  # beat 14: the track splits into a double helix - blue and red strands counter-
+  # winding, weaving past each other. The carried RED, which drove off down the
+  # opposite highway, returns as the red strand's lead: the loop closes on itself.
+  # beat 15: the swarm banks to ONE side and leaps to the other strand, then rides
+  # on - room for the date/logo card.
   - scene: stage
     behavior: static
     shot: centered
     hold: 5
     camera: {eye: [0, 0, -2.6], look: [0, 0, 5], fov: 56}
     cast:
-      - {id: swarm, kind: swarm, at: [0, 0, 0], count: 7, hue: 0.6, hue_red: 0.0, lead: blue}
+      - id: swarm
+        kind: swarm
+        at: [0, 0, 0]
+        count: 7
+        hue: 0.6
+        hue_red: 0.0
+        lead: blue
+        lead_red: red
     track:
       nominal: 5
       spans:
@@ -224,11 +236,11 @@ sequence:
         - {from: 3.0, to: 4.0, action: helix_split, target: swarm}                     # [31-32s]
         - {from: 4.0, to: 4.7, action: lane_jump, target: swarm}                       # [32-33s]
 
-# After the sequence ends (loop: false), the Director cycles these instead of
-# freezing the last frame: the swarm KEEPS streaming along its chosen track under
-# the end card, weaving between the strands and breathing the helix open and shut,
-# until the song runs out. The carried `swarm` id continues wholesale - formation,
-# travel, lane - so the cycle boundaries are invisible.
+# After the sequence ends (loop: false), the Director cycles this instead of
+# freezing the last frame. Deliberately SIMPLE: after the swell's jump the swarm
+# just keeps spiraling along its chosen track into the distance under the end card
+# - no weaving, no new events - until the loop rolls the arc back to the top. The
+# carried `swarm` id continues wholesale, so the cycle boundaries are invisible.
 tail:
   - scene: stage
     behavior: static
@@ -241,18 +253,3 @@ tail:
       nominal: 6
       spans:
         - {from: 0.0, to: 0.4, action: fly, target: swarm, ease: out, sustain: true}
-        - {from: 0.5, to: 3.0, action: ramp, target: swarm, args: {param: lane, to: 0.0}}   # weave back
-        - {from: 2.5, to: 5.5, action: ramp, target: swarm, args: {param: split_k, to: [0.45, 0.6]}}
-  - scene: stage
-    behavior: static
-    shot: centered
-    hold: 6
-    camera: {eye: [0, 0, -2.6], look: [0, 0, 5], fov: 56}
-    cast:
-      - {id: swarm, kind: swarm}
-    track:
-      nominal: 6
-      spans:
-        - {from: 0.0, to: 0.4, action: fly, target: swarm, ease: out, sustain: true}
-        - {from: 0.5, to: 3.0, action: ramp, target: swarm, args: {param: lane, to: 1.0}}   # weave across
-        - {from: 2.5, to: 5.5, action: ramp, target: swarm, args: {param: split_k, to: 1.0}}  # helix reopens

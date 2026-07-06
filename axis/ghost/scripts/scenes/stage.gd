@@ -103,6 +103,8 @@ func begin_morph(from: GhostScene) -> void:
 				if not pr.is_empty():
 					frac = (pr.center as Vector2) / maxf(1.0, from.unit())
 			(a as Cast.SwarmActor).adopt_lead(old, frac)
+		if a is Cast.SwarmActor and carried.has(String(a.spec.get("lead_red", ""))):
+			(a as Cast.SwarmActor).adopt_lead_red(carried[String(a.spec["lead_red"])])
 	_t = 0.0
 
 
@@ -182,7 +184,8 @@ func _draw() -> void:
 			continue
 		var c := Vector2(pj.x, pj.y) * u
 		var rr: float = dr.r * lens._focal / maxf(0.1, pj.z) * u
-		draw_circle(c, rr, Color(0.80, 0.72, 0.72, 0.7 * dr.k))
+		var dc: Color = dr.col
+		draw_circle(c, rr, Color(dc.r, dc.g, dc.b, 0.7 * dr.k))
 		draw_circle(c - Vector2(rr, rr) * 0.3, rr * 0.4, Color(1, 1, 1, 0.35 * dr.k))
 
 
@@ -216,12 +219,14 @@ func tie(a: Cast.Actor, b: Cast.Actor) -> void:
 	_ties.append({"a": a, "b": b, "k": 1.0})
 
 
-## A burst of small ballistic droplets at a world point (the mitosis snap's spatter).
-func spatter(p: Vector3, count: int, rng: RandomNumberGenerator) -> void:
+## A burst of small ballistic droplets at a world point (the mitosis snap's spatter,
+## the crystallization's cold shards). [param col] tints them; default is flesh.
+func spatter(p: Vector3, count: int, rng: RandomNumberGenerator,
+		col := Color(0.80, 0.72, 0.72)) -> void:
 	for i in count:
 		var a := rng.randf() * TAU
 		var sp := rng.randf_range(0.25, 0.7)
-		_drops.append({"p": p, "r": rng.randf_range(0.008, 0.02), "k": 1.0,
+		_drops.append({"p": p, "r": rng.randf_range(0.008, 0.02), "k": 1.0, "col": col,
 			"v": Vector3(cos(a) * sp, sin(a) * sp * 0.7 + 0.22, rng.randf_range(-0.1, 0.1))})
 
 

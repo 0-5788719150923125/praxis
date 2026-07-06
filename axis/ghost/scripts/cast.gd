@@ -171,8 +171,16 @@ class EyeActor extends Actor:
 		eye.update(dt * time_scale * mod_time, drive)
 
 	func draw_items(stage, lens: Lens3D, u: float) -> Array:
+		# The sprout VINE draws even while the eye itself is still unfruited (fade 0):
+		# the plant precedes the fruit.
+		var pre := []
+		var vine: Variant = state.get("vine")
+		if typeof(vine) == TYPE_DICTIONARY:
+			var vd: Dictionary = vine
+			pre.append({"d": lens.depth(pos) + 0.10, "call": func() -> void:
+				_draw_vine(stage, lens, u, vd)})
 		if fade <= 0.003:
-			return []
+			return pre
 		var p := draw_pos()
 		var tr := float(state.get("tremble", 0.0))
 		var items := []
@@ -187,6 +195,7 @@ class EyeActor extends Actor:
 				var light_p := p
 				items.append({"d": lens.depth(p) + 0.01, "call": func() -> void:
 					_draw_riser_light(stage, lens, u, light_p, tr)})
+		items.append_array(pre)
 		var eye := body as EyeBody
 		var at := p
 		var r := draw_scale()
@@ -203,7 +212,66 @@ class EyeActor extends Actor:
 				var m: Dictionary = mit
 				items.append({"d": lens.depth(p) + 0.08, "call": func() -> void:
 					_draw_membrane(stage, lens, u, m, other)})
+		# The crystallization CAGE: while the crystallize verb stashes `state.crys`,
+		# frost-like crystal edges creep across the ball - drawn just in front of it.
+		var crys: Variant = state.get("crys")
+		if typeof(crys) == TYPE_DICTIONARY and fade > 0.003:
+			var cr: Dictionary = crys
+			items.append({"d": lens.depth(p) - 0.05, "call": func() -> void:
+				_draw_crystal_cage(stage, lens, u, cr)})
 		return items
+
+	# Frost taking the eyeball: seeded chord edges that each GROW outward from their
+	# midpoint in a staggered wave (creeping ice), brightening and pulling tight as
+	# the faceting sets in, with vertex glints where edges complete and a cold rim.
+	func _draw_crystal_cage(stage, lens: Lens3D, u: float, cr: Dictionary) -> void:
+		var pj := lens.project(draw_pos())
+		if pj.z <= lens.near:
+			return
+		var c := Vector2(pj.x, pj.y) * u
+		var r := draw_scale() * lens._focal / maxf(0.1, pj.z) * u
+		if r < 2.0:
+			return
+		var k := clampf(float(cr.get("k", 0.0)), 0.0, 1.0)
+		var facet := clampf(float(cr.get("facet", 0.0)), 0.0, 1.0)
+		var seed: int = int(cr.get("seed", 0))
+		var hue := clampf(float(cr.get("hue", 0.6)), 0.0, 1.0)
+		var ice := Color.from_hsv(hue, 0.30, 1.0)
+		var tight := 1.0 - 0.12 * facet                    # the cage pulls in as it sets
+		var lw: float = maxf(1.2, r * 0.022)
+		var edges := 16
+		for j in edges:
+			var h1 := float(hash([seed, j, 1]) % 10000) / 10000.0
+			var h2 := float(hash([seed, j, 2]) % 10000) / 10000.0
+			var h3 := float(hash([seed, j, 3]) % 10000) / 10000.0
+			var h4 := float(hash([seed, j, 4]) % 10000) / 10000.0
+			var a1 := h1 * TAU
+			var a2 := a1 + 0.5 + h2 * 1.1                  # chord span
+			var f1 := (0.55 + 0.45 * h3) * tight
+			var f2 := (0.55 + 0.45 * h4) * tight
+			var pa := c + Vector2(cos(a1), sin(a1)) * (r * f1)
+			var pb := c + Vector2(cos(a2), sin(a2)) * (r * f2)
+			# Staggered growth: each edge extends from its midpoint outward in its window.
+			var start := 0.7 * float(hash([seed, j, 5]) % 1000) / 1000.0
+			var g := clampf((k - start) / 0.25, 0.0, 1.0)
+			if g <= 0.0:
+				continue
+			var qa := pa.lerp(pb, 0.5 - 0.5 * g)
+			var qb := pa.lerp(pb, 0.5 + 0.5 * g)
+			var a := (0.30 + 0.45 * facet) * fade
+			stage.draw_line(qa, qb, Color(ice.r, ice.g, ice.b, a), lw, true)
+			if g >= 1.0 and facet > 0.05:                  # completed edges glint at the joints
+				var ga := (0.35 + 0.4 * facet) * fade
+				stage.draw_circle(pa, lw * 1.1, Color(1, 1, 1, ga))
+				stage.draw_circle(pb, lw * 1.1, Color(1, 1, 1, ga))
+		# A cold rim as the freeze sets in.
+		if facet > 0.02:
+			var rim := 30
+			var pts := PackedVector2Array()
+			for i in rim + 1:
+				var th := TAU * float(i) / float(rim)
+				pts.append(c + Vector2(cos(th), sin(th)) * (r * 1.015))
+			stage.draw_polyline(pts, Color(ice.r, ice.g, ice.b, 0.28 * facet * fade), lw * 0.8, true)
 
 	# The stretchy connective tissue of the split: a metaball-style neck between the
 	# two projected eyeballs, drooping under its own weight, veined and wet-lit, that
@@ -314,6 +382,89 @@ class EyeActor extends Actor:
 				var t := float(i) / 8.0
 				rem.append(base + toward * (len * t * (0.4 + sway * t)) - n * (len * t * t * (1.1 - absf(sway))))
 			stage.draw_polyline(rem, Color(0.75, 0.63, 0.63, 0.55 * g * alpha), maxf(1.0, r * 0.045 * g), true)
+
+	# The sprout's plant-arm: a tapered ribbon along a cubic crook (base -> c1 -> c2 ->
+	# hanging tip), revealed to fraction `g` of its length - growth extends it, the
+	# post-detach retreat slides it back down. A dark fleshy-green stem with a brighter
+	# spine, a wet edge highlight, and a couple of seeded leaf nubs.
+	func _draw_vine(stage, lens: Lens3D, u: float, v: Dictionary) -> void:
+		# Shed petals first - they keep falling even as the stem retreats away.
+		for pt in v.get("petals", []):
+			var pp := lens.project(pt.p as Vector3)
+			if pp.z <= lens.near:
+				continue
+			var pc := Vector2(pp.x, pp.y) * u
+			var ps: float = float(pt.size) * lens._focal / maxf(0.1, pp.z) * u
+			var ca := cos(float(pt.ang))
+			var sa := sin(float(pt.ang))
+			var oval := PackedVector2Array()
+			for i in 10:
+				var th := TAU * float(i) / 10.0
+				var lx := cos(th) * ps
+				var ly := sin(th) * ps * 0.52
+				oval.append(pc + Vector2(lx * ca - ly * sa, lx * sa + ly * ca))
+			stage.draw_colored_polygon(oval, Color.from_hsv(0.965, 0.38, 0.60, float(pt.a)))
+		var g := clampf(float(v.get("g", 0.0)), 0.0, 1.0)
+		if g <= 0.015:
+			return
+		var b: Vector3 = v.base
+		var c1: Vector3 = v.c1
+		var c2: Vector3 = v.c2
+		var tip: Vector3 = v.tip
+		var seed: int = int(v.get("seed", 0))
+		var hue := float(v.get("hue", 0.3))
+		var r := float(v.get("r", 0.3))
+		var segs := 24
+		var mid := PackedVector2Array()
+		var wid := PackedFloat32Array()
+		for i in segs + 1:
+			var tc := g * float(i) / float(segs)           # position along the FULL curve
+			var p3 := _bez(b, c1, c2, tip, tc)
+			var pj := lens.project(p3)
+			if pj.z <= lens.near:
+				return
+			mid.append(Vector2(pj.x, pj.y) * u)
+			wid.append(r * lerpf(0.30, 0.11, tc) * lens._focal / maxf(0.1, pj.z) * u)
+		var nrm := PackedVector2Array()
+		for i in segs + 1:
+			var tan := mid[mini(i + 1, segs)] - mid[maxi(i - 1, 0)]
+			if tan.length() < 0.001:
+				tan = Vector2(0, -1)
+			nrm.append(Vector2(-tan.y, tan.x).normalized())
+		# The stem body: thick line segments with joint-fill discs - NO polygons, so
+		# the tight crook (where ribbon quads twist into bowties) can never fail to
+		# triangulate. The width tapers stepwise along the 24 segments.
+		var flesh := Color.from_hsv(hue, 0.50, 0.27)
+		for i in segs:
+			if mid[i].distance_to(mid[i + 1]) < 0.5:
+				continue                       # a just-sprouted stem is pixels long - skip
+			stage.draw_line(mid[i], mid[i + 1], flesh, wid[i] + wid[i + 1], true)
+			stage.draw_circle(mid[i + 1], (wid[i] + wid[i + 1]) * 0.5, flesh)
+		stage.draw_circle(mid[0], wid[0], flesh)
+		stage.draw_polyline(mid, Color.from_hsv(hue, 0.40, 0.46),
+			maxf(1.2, wid[segs / 2] * 0.85), true)
+		var edge := PackedVector2Array()
+		for i in segs + 1:
+			edge.append(mid[i] + nrm[i] * (wid[i] * 0.55))
+		stage.draw_polyline(edge, Color(0.72, 0.88, 0.70, 0.28), maxf(1.0, wid[0] * 0.22), true)
+		# Leaf nubs at seeded positions along the revealed stem.
+		for lf in 2:
+			var ht := 0.25 + 0.35 * float(hash([seed, "leaf", lf]) % 1000) / 1000.0
+			if g < ht + 0.05:
+				continue
+			var i := clampi(int(ht / g * float(segs)), 1, segs - 1)
+			if wid[i] < 1.2:
+				continue                       # too small to shape - a degenerate triangle
+			var side := 1.0 if lf == 0 else -1.0
+			var along := (mid[i + 1] - mid[i - 1]).normalized()
+			var apex := mid[i] + nrm[i] * (side * wid[i] * 3.2) + along * (wid[i] * 1.4)
+			stage.draw_colored_polygon(PackedVector2Array([
+				mid[i] - along * wid[i], mid[i] + along * wid[i], apex]),
+				Color.from_hsv(hue + 0.02, 0.48, 0.38))
+
+	func _bez(b: Vector3, c1: Vector3, c2: Vector3, tip: Vector3, t: float) -> Vector3:
+		var s := 1.0 - t
+		return b * (s * s * s) + c1 * (3.0 * s * s * t) + c2 * (3.0 * s * t * t) + tip * (t * t * t)
 
 	# The closed outline of the bridge sheet at a width fraction (top edge out, bottom back).
 	func _membrane_poly(mid: PackedVector2Array, wid: PackedFloat32Array, n: Vector2, frac: float) -> PackedVector2Array:
@@ -438,6 +589,13 @@ class SwarmActor extends Actor:
 		if old.body is PrismBody and not _blue.is_empty():
 			_blue[0] = old.body
 			_entry[0] = entry_frac
+
+	## Continue a carried prism as the RED strand's lead: its live body becomes red
+	## member 0, dormant until the helix opens - the ouroboros closing its loop (the
+	## red that drove off down the opposite highway comes back as the counter-strand).
+	func adopt_lead_red(old: Actor) -> void:
+		if old.body is PrismBody and not _red.is_empty():
+			_red[0] = old.body
 
 	func update(f: AudioFeatures, dt: float, _stage) -> void:
 		_t += dt

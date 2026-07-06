@@ -41,6 +41,9 @@ var dilate_bias := 0.0         # additive pupil openness on top of the light ref
 var iris_fade := 1.0           # 0 = a BLANK wet ball (sclera + catchlight only), 1 = full iris.
                                # The mitosis bud is born featureless and its eye surfaces after
                                # it tears free - set by the split verb, latched back to 1.
+var droop := 0.0               # extra BODY pitch (radians, positive = down): the whole orbit tips,
+                               # past what the eye muscles could do - a fruit hanging on its stem
+                               # faces the ground. Separate from gaze; the sprout verb drives it.
 var _blink_t := -1.0           # progress clock of the current blink (<0 = none)
 var _blink_dur := 0.32
 var _sat := 0.65
@@ -183,7 +186,7 @@ func _saccade() -> void:
 ## Draw the eyeball at world [param pos], world radius [param radius], through the
 ## [param lens]. [param fade] scales opacity (for the split morph's emergence).
 func draw(ci: CanvasItem, lens: Lens3D, u: float, pos: Vector3, radius: float, fade := 1.0) -> void:
-	var eyeb := Basis.from_euler(Vector3(gaze.y, gaze.x, 0.0))
+	var eyeb := Basis.from_euler(Vector3(gaze.y + droop, gaze.x, 0.0))
 	var front: Vector3 = eyeb * Vector3(0, 0, 1)
 
 	# Sclera: glossy near-white sphere, SMOOTH-shaded, with a wet specular sheen.

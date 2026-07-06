@@ -19,9 +19,10 @@ class_name Actions
 ## (a gaze fixation's distance) are re-drawn as they happen. Same seed, same show.
 
 const REGISTRY := {
-	"look": Look, "blink": Blink, "split": Split, "crystallize": Crystallize,
-	"tremble": Tremble, "burst": Burst, "lock": Lock, "desync": Desync,
-	"hold_still": HoldStill, "sway": Sway, "specialize": Specialize,
+	"look": Look, "blink": Blink, "arrive": Arrive, "sprout": Sprout, "split": Split,
+	"crystallize": Crystallize, "tremble": Tremble, "burst": Burst, "lock": Lock,
+	"desync": Desync, "hold_still": HoldStill, "sway": Sway, "counterflow": Counterflow,
+	"specialize": Specialize,
 	"gather": Gather, "fly": Fly, "helix_split": HelixSplit, "lane_jump": LaneJump,
 	"set": SetParam, "ramp": Ramp, "pulse": Pulse, "flash": Flash,
 }
@@ -88,6 +89,177 @@ class Blink extends Action:
 				(a.body as EyeBody).blink(dur)
 
 
+## arrive - the actor FLIES IN with velocity from offscreen, finds its anchor, and
+## lands with a small damped wobble. The path curves slightly (a swoop, not a rail)
+## and the approach decelerates hard into the landing. Give the span `ease: linear` -
+## the verb shapes its own motion. args: from ([x,y,z] origin, default a sampled
+## offscreen point), wobble (landing amplitude, world units).
+class Arrive extends Action:
+	var _origin := Vector3.ZERO
+	var _slot := Vector3.ZERO
+	var _flight := Vector3.RIGHT
+	var _side := Vector3.UP
+	var _wob := 0.06
+	var _freq := 13.0
+	var _arc := 0.3
+
+	func begin(_stage, actors: Array) -> void:
+		var a = actors[0]
+		_slot = a.pos
+		if args.has("from"):
+			_origin = Cast._vec3(args["from"], a.home)
+		else:
+			# A sampled offscreen origin: out past the frame edge, biased upward a
+			# little so the entrance reads as a swoop down onto the anchor.
+			var ang := rng.randf_range(0.25, 0.85) * (1.0 if rng.randf() < 0.5 else -1.0)
+			var dir2 := Vector2(sin(ang), absf(cos(ang)) * 0.6 + 0.2).normalized()
+			_origin = _slot + Vector3(dir2.x, dir2.y, 0.0) * rng.randf_range(2.6, 3.4)
+		_wob = num("wobble", rng.randf_range(0.05, 0.09))
+		_freq = rng.randf_range(11.0, 15.0)
+		_arc = rng.randf_range(0.2, 0.42) * (1.0 if rng.randf() < 0.5 else -1.0)
+		_flight = (_slot - _origin).normalized()
+		_side = Vector3(-_flight.y, _flight.x, 0.0)
+		a.fade = 1.0
+
+	func apply(_stage, actors: Array, k: float, _f: AudioFeatures, _dt: float) -> void:
+		var a = actors[0]
+		var approach := 1.0 - pow(1.0 - k, 3.0)             # fast in, decelerating hard
+		var curve: float = _arc * sin(PI * minf(k * 1.15, 1.0)) * (1.0 - k)
+		var land := 0.0
+		if k > 0.55:                                        # the damped landing wobble
+			var kl := (k - 0.55) / 0.45
+			land = _wob * sin(_freq * kl) * exp(-4.5 * kl) * (1.0 - kl * 0.3)
+		a.pos = _origin.lerp(_slot, approach) + _side * curve + _flight * land
+		a.home = _slot
+
+	func finish(_stage, actors: Array) -> void:
+		actors[0].pos = _slot
+		actors[0].home = _slot
+
+
+## sprout - a STANDING ROSE beside the anchor: the stem grows up from below the
+## frame (rooted in the void's floor - never from the camera), rising almost
+## vertical beside the eye's anchor, cresting above it, and drooping its head over
+## so the tip hangs downward; the eye swells at the hanging tip like fruit, facing
+## the ground. As it hangs, the bloom SHEDS a petal or two; then the eye DETACHES -
+## the release is what whips the freed stem back, and it retreats down along itself
+## while the dropped eye settles onto its anchor and slowly rights itself to face
+## forward. The vine and petals are drawn by [Cast.EyeActor] from `state.vine`.
+## Give the span `ease: linear`. args: side (-1/1 stem side, default sampled).
+class Sprout extends Action:
+	var _slot := Vector3.ZERO
+	var _R := 0.34
+	var _base := Vector3.ZERO         # the stem's root, beyond the frame's lower side corner
+	var _grow_k := 0.42               # phase boundaries + character, sampled per instance
+	var _fruit_k := 0.62
+	var _drop_k := 0.74
+	var _hang := Vector3.ZERO         # where the eye's centre hangs (a touch above the slot)
+	var _sag := 0.05                  # how far the fruit's weight bends the tip down
+	var _sway_f := 1.6
+	var _whip_f := 15.0
+	var _whip_a := 0.16
+	var _seed := 0
+	var _hue := 0.3
+	var _petals: Array = []           # {spawn: k, at: Vector3, ph, size} - shed as it wilts
+	var _detached := false
+	var _t := 0.0
+
+	func begin(_stage, actors: Array) -> void:
+		var a = actors[0]
+		_slot = a.pos
+		_R = a.scale
+		var side := signf(num("side", -1.0 if rng.randf() < 0.5 else 1.0))
+		_base = _slot + Vector3(side * rng.randf_range(0.34, 0.52), rng.randf_range(-1.25, -1.05), 0.0)
+		_grow_k = rng.randf_range(0.38, 0.46)
+		_fruit_k = _grow_k + rng.randf_range(0.16, 0.22)
+		_drop_k = _fruit_k + rng.randf_range(0.09, 0.14)
+		_hang = _slot + Vector3(0, rng.randf_range(0.08, 0.14), 0)
+		_sag = rng.randf_range(0.04, 0.07)
+		_sway_f = rng.randf_range(1.2, 2.0)
+		_whip_f = rng.randf_range(12.0, 18.0)
+		_whip_a = rng.randf_range(0.12, 0.20)
+		_seed = rng.randi()
+		_hue = rng.randf_range(0.24, 0.36)          # deep plant green, sampled
+		# The shed petals: one or two, let go while the bloom hangs (before the drop).
+		for i in rng.randi_range(1, 2):
+			_petals.append({"spawn": rng.randf_range(_fruit_k + 0.02, _drop_k + 0.03),
+				"ph": rng.randf() * TAU, "size": rng.randf_range(0.030, 0.045), "at": Vector3.ZERO})
+		a.fade = 0.0
+		if a.body is EyeBody:
+			(a.body as EyeBody).droop = 1.1
+
+	func apply(stage, actors: Array, k: float, _f: AudioFeatures, dt: float) -> void:
+		var a = actors[0]
+		_t += dt
+		var kg := clampf(k / _grow_k, 0.0, 1.0)                                 # growth
+		var kf := clampf((k - _grow_k) / (_fruit_k - _grow_k), 0.0, 1.0)        # fruiting
+		var kd := clampf((k - _drop_k) / maxf(0.05, 1.0 - _drop_k), 0.0, 1.0)   # drop + retreat
+		# The fruit's weight bends the hanging tip lower; a light pendulum sway.
+		var sag := _sag * smoothstep(0.0, 1.0, kf)
+		var sway := 0.022 * sin(_t * TAU * _sway_f) * kf * (1.0 - kd)
+		var tip := _hang + Vector3(sway, _R * 1.02 - sag, 0.0)
+		# The standing rose: a near-vertical rise beside the anchor (a gentle lean),
+		# cresting above it, the head drooping over onto the hanging tip.
+		var c1 := Vector3(_base.x * 1.08, lerpf(_base.y, tip.y, 0.72), 0.0)
+		var c2 := Vector3(tip.x, tip.y + 0.5, 0.0)
+		var grown := 1.0 - pow(1.0 - kg, 2.6)               # quick, decelerating growth
+		if not _detached and k >= _drop_k:
+			_detached = true
+			stage.spatter(tip, 3, rng, Color.from_hsv(_hue, 0.4, 0.55))
+		if _detached:
+			# Freed of the weight, the vine WHIPS back and retreats along itself.
+			var wob := exp(-4.0 * kd * 3.0) * sin(_whip_f * kd * 3.0)
+			c2 += Vector3(-signf(_base.x - _slot.x) * _whip_a * wob, _whip_a * 0.7 * absf(wob), 0.0)
+			c1.x += _whip_a * 0.4 * wob * signf(_base.x - _slot.x)
+			grown = 1.0 - smoothstep(0.0, 1.0, minf(kd * 1.6, 1.0))
+		# The shed petals flutter down from wherever the tip was when they let go.
+		var pets: Array = []
+		for p in _petals:
+			var sp := float(p.spawn)
+			if k < sp:
+				continue
+			if (p.at as Vector3) == Vector3.ZERO:
+				p.at = tip
+			var fall := clampf((k - sp) / 0.34, 0.0, 1.0)
+			if fall >= 1.0:
+				continue
+			var ph := float(p.ph)
+			pets.append({
+				"p": (p.at as Vector3) + Vector3(sin(fall * 7.0 + ph) * 0.07 * (1.0 - 0.4 * fall),
+					-pow(fall, 1.6) * 0.55, 0.0),
+				"ang": ph + fall * 5.0, "size": float(p.size),
+				"a": 1.0 - smoothstep(0.55, 1.0, fall)})
+		a.state["vine"] = {"base": _base, "c1": c1, "c2": c2, "tip": tip,
+			"g": grown, "seed": _seed, "hue": _hue, "r": _R, "petals": pets}
+		# The eye: swells at the hanging tip, drops free, settles, rights itself.
+		if k < _drop_k:
+			a.fade = smoothstep(0.0, 1.0, minf(kf * 1.6, 1.0))
+			a.scale = _R * pow(maxf(kf, 0.0001), 0.45)      # fruit swell
+			a.pos = tip - Vector3(0, a.scale * 1.02, 0.0)   # hanging from the tip
+			if a.body is EyeBody:
+				(a.body as EyeBody).droop = 1.1
+		else:
+			a.scale = _R
+			var fall := 1.0 - exp(-5.0 * kd) * cos(13.0 * kd)   # small drop, damped bounce
+			a.pos = Vector3(_slot.x, lerpf(_hang.y - sag, _slot.y, fall), _slot.z)
+			if a.body is EyeBody:
+				(a.body as EyeBody).droop = 1.1 * (1.0 - smoothstep(0.0, 1.0, kd))
+		a.home = _slot
+		# The verb owns the gaze: neutral under the droop while it hangs and wakes.
+		a.state["focus"] = a.pos + Vector3(0, 0, 9.0)
+		a.state["focus_age"] = 0.0
+
+	func finish(_stage, actors: Array) -> void:
+		var a = actors[0]
+		a.state.erase("vine")
+		a.pos = _slot
+		a.home = _slot
+		a.scale = _R
+		a.fade = 1.0
+		if a.body is EyeBody:
+			(a.body as EyeBody).droop = 0.0
+
+
 ## split - MITOSIS: one eye divides into two. The twin buds off the source as a blank
 ## wet ball (no iris yet), connected by a stretching tissue membrane (drawn by
 ## [Cast.EyeActor] from `state.mit`); volume is conserved, so the parent visibly
@@ -108,8 +280,6 @@ class Split extends Action:
 	var _drops := 4
 	var _seed := 0
 	var _snapped := false
-	var _src_blinked := false
-	var _born_blinked := false
 
 	func begin(stage, actors: Array) -> void:
 		var src = actors[0]
@@ -175,6 +345,15 @@ class Split extends Action:
 			src.state["tremble"] = clampf(0.30 * kt + 0.35 * kp, 0.0, 0.6)
 		else:
 			src.state["tremble"] = maxf(0.0, 0.45 * (1.0 - ks * 3.0))
+		# The division owns the gaze: the parent STARES dead ahead under the strain
+		# (no saccading while it labors - one thing happening, not three), and the
+		# newborn holds the same stare once it tears free. The next entry's look verb
+		# takes over naturally when this stops feeding (focus_age expiry).
+		src.state["focus"] = src.pos + Vector3(0, 0, 9.0)
+		src.state["focus_age"] = 0.0
+		if _snapped:
+			into.state["focus"] = into.pos + Vector3(0, 0, 9.0)
+			into.state["focus_age"] = 0.0
 		# The membrane, for the actor's draw pass. `waist` starves through the pull.
 		src.state["mit"] = {"to": String(args.get("into", "")), "seed": _seed,
 			"waist": 1.0 - kp, "snap": -1.0 if not _snapped else float(src.state["mit"].get("snap", -1.0)) + _dt}
@@ -182,16 +361,9 @@ class Split extends Action:
 			_snapped = true
 			src.state["mit"]["snap"] = 0.0
 			stage.spatter(_from_pos.lerp(s0.lerp(s1, 0.5), sep), _drops, rng)
-		# The aftermath: the parent blinks off the strain; the newborn's iris surfaces,
-		# then it blinks awake.
+		# The aftermath: the newborn's iris surfaces once it has torn free.
 		if _snapped and into.body is EyeBody:
 			(into.body as EyeBody).iris_fade = smoothstep(0.0, 1.0, clampf((ks - 0.25) / 0.6, 0.0, 1.0))
-			if not _src_blinked and ks > 0.15 and src.body is EyeBody:
-				_src_blinked = true
-				(src.body as EyeBody).blink(0.34)
-			if not _born_blinked and ks > 0.85:
-				_born_blinked = true
-				(into.body as EyeBody).blink(0.42)
 
 	func finish(stage, actors: Array) -> void:
 		var src = actors[0]
@@ -213,24 +385,76 @@ class Split extends Action:
 				(into.body as EyeBody).iris_fade = 1.0
 
 
-## crystallize - the target dissolves while `into` (a prism on the same slot) forms
-## in its place, with a form-flash at the crossover. args: into (actor id).
+## crystallize - the eye FREEZES OVER into the prism (a staged physical transition,
+## not a crossfade). Phase 1, stilling: the gaze locks to one point and crystal
+## edges creep across the ball ([Cast.EyeActor] draws the cage from `state.crys`)
+## while the pupil constricts to a pinpoint and the iris hue chills toward the
+## crystal's. Phase 2, faceting: the cage tightens and glints, the iris features
+## die away (a blank frozen ball), and the prism's wireframe materializes aligned
+## over it. Phase 3, collapse: the ball is sucked into the crystal's core - cold
+## shards, an icy flash, and the prism solidifies alive. Give the span `ease:
+## linear` - the verb shapes its own phases. args: into (actor id).
 class Crystallize extends Action:
+	var _facet_k := 0.4               # phase boundaries + character, sampled per instance
+	var _fall_k := 0.8
+	var _seed := 0
+	var _stare := Vector3.ZERO
+	var _base_scale := 0.27
+	var _base_hue := 0.3
 	var _flashed := false
+
+	func begin(stage, actors: Array) -> void:
+		var src = actors[0]
+		_facet_k = rng.randf_range(0.34, 0.44)
+		_fall_k = rng.randf_range(0.76, 0.84)
+		_seed = rng.randi()
+		_base_scale = src.scale
+		# The stare it dies with: one fixed world point, sampled once - the FIRST sign
+		# of the freeze is that the eye stops moving.
+		_stare = src.pos + Vector3(rng.randf_range(-0.4, 0.4), rng.randf_range(-0.25, 0.25), 7.0)
+		if src.body is EyeBody:
+			_base_hue = (src.body as EyeBody).hue
+		var into = stage.actor(String(args.get("into", "")))
+		if into != null:
+			into.fade = 0.0
 
 	func apply(stage, actors: Array, k: float, _f: AudioFeatures, _dt: float) -> void:
 		var src = actors[0]
 		var into = stage.actor(String(args.get("into", "")))
-		src.fade = clampf(1.0 - k, 0.0, 1.0)
-		if into != null:
-			into.fade = smoothstep(0.0, 1.0, k)
-			into.drive_gain = 0.4 + 0.6 * k        # it comes to life as it finishes forming
-			if not _flashed and k >= 0.5:
-				_flashed = true
-				stage.flash(into, Color(0.75, 0.86, 1.0))
+		if into == null:
+			return
+		var kf := clampf((k - _facet_k) / maxf(0.05, _fall_k - _facet_k), 0.0, 1.0)  # faceting
+		var kc := clampf((k - _fall_k) / maxf(0.05, 1.0 - _fall_k), 0.0, 1.0)        # collapse
+		var chill := clampf(into.hue, 0.0, 1.0)
+		# Stilling: the locked stare, the dying pupil, the chilling iris.
+		src.state["focus"] = _stare
+		src.state["focus_age"] = 0.0
+		if src.body is EyeBody:
+			var eye := src.body as EyeBody
+			eye.dilate_bias = -0.30 * smoothstep(0.0, 1.0, minf(k / _facet_k, 1.0))
+			eye.hue = lerpf(_base_hue, chill, smoothstep(0.0, 1.0, k))
+			eye.iris_fade = 1.0 - smoothstep(0.0, 1.0, kf)         # features die in phase 2
+		# The cage, drawn by the actor: growth through phases 1-2, gone with the ball.
+		src.state["crys"] = {"k": k, "facet": kf, "seed": _seed, "hue": chill}
+		# Collapse: the ball is sucked into the crystal's core; the prism solidifies.
+		src.scale = _base_scale * (1.0 - smoothstep(0.0, 1.0, kc))
+		src.fade = 1.0 if kc < 1.0 else 0.0
+		into.fade = smoothstep(0.0, 1.0, kf * 0.55 + kc * 0.45)
+		into.drive_gain = 0.25 + 0.75 * (kf * 0.4 + kc * 0.6)
+		if not _flashed and kc > 0.0:
+			_flashed = true
+			var icy := Color.from_hsv(chill, 0.35, 1.0)
+			stage.flash(into, icy)
+			stage.spatter(src.pos, rng.randi_range(4, 7), rng, icy)
 
 	func finish(stage, actors: Array) -> void:
-		actors[0].fade = 0.0
+		var src = actors[0]
+		src.fade = 0.0
+		src.scale = _base_scale
+		src.state.erase("crys")
+		if src.body is EyeBody:
+			(src.body as EyeBody).iris_fade = 1.0
+			(src.body as EyeBody).dilate_bias = 0.0
 		var into = stage.actor(String(args.get("into", "")))
 		if into != null:
 			into.fade = 1.0
@@ -320,6 +544,76 @@ class Sway extends Action:
 			var w := Vector2(sin(_t * float(p.fx) + float(p.px)), cos(_t * float(p.fy) + float(p.py))) \
 				* (float(p.amp) * k * (0.5 + drive))
 			a.pos = a.pos.lerp(a.home + Vector3(w.x, w.y, 0.0), follow)
+
+
+## counterflow - the pair take OPPOSITE HIGHWAYS: each merges onto its own lane and
+## cruises against the other (they pass mid-scene), rolling about its travel axis
+## like a drill boring down its road; in the final stretch each pulls a LOOP off its
+## lane - the arc that carries them into the ouroboros. Cruise speed rides the
+## actor's live time_scale, so a specialized small/fast prism zips while the large/
+## slow one glides. Give the span `ease: linear`. args: lane (half-gap between the
+## highways), speed (world/s), loop_k (where the exit loop begins, 0..1).
+class Counterflow extends Action:
+	var _lane := 0.18
+	var _speed := 0.35
+	var _loop_k := 0.7
+	var _loop_r := 0.3
+	var _roll := 2.8
+	var _from: Array = []
+	var _dir: Array = []              # +1 / -1 travel direction per target
+	var _trav: Array = []             # accumulated cruise distance per target
+	var _loop_at: Array = []          # position where each target left its lane
+
+	func begin(_stage, actors: Array) -> void:
+		_lane = num("lane", rng.randf_range(0.14, 0.22))
+		_speed = num("speed", rng.randf_range(0.28, 0.40))
+		_loop_k = num("loop_k", rng.randf_range(0.66, 0.74))
+		_loop_r = rng.randf_range(0.19, 0.26)
+		_roll = rng.randf_range(2.2, 3.4)
+		for i in actors.size():
+			var a = actors[i]
+			_from.append(a.pos)
+			_trav.append(0.0)
+			_loop_at.append(Vector3.ZERO)
+			# Travel TOWARD the other side of the frame, so the two pass each other.
+			_dir.append(-signf(a.pos.x) if absf(a.pos.x) > 0.01 else (1.0 if i == 0 else -1.0))
+
+	func apply(_stage, actors: Array, k: float, _f: AudioFeatures, dt: float) -> void:
+		# The CURRENT: the pair start adrift and the flow builds slowly, easing them
+		# onto their lanes and up to cruise - caught, not launched.
+		var current := smoothstep(0.0, 0.38, k)
+		for i in actors.size():
+			var a = actors[i]
+			var d := float(_dir[i])
+			var up := 1.0 if i == 0 else -1.0          # which side its lane and loop live on
+			var lane_y := _lane * up
+			var merge := smoothstep(0.0, 0.42, k)
+			if k < _loop_k:
+				_trav[i] = float(_trav[i]) + dt * _speed * current * (0.4 + 0.6 * a.time_scale)
+				var p := Vector3(float((_from[i] as Vector3).x) + d * float(_trav[i]),
+					lerpf(float((_from[i] as Vector3).y), lane_y, merge), 0.0)
+				a.pos = p
+				_loop_at[i] = p
+			else:
+				# The exit loop: a circular arc off the lane, curling up (blue) or down
+				# (red) - and as it turns, the same current draws it into a SPIRAL that
+				# sinks toward the centre-depth, so the cut into the ouroboros catches
+				# both converging on the point the swarm then blossoms out of.
+				var kl := smoothstep(0.0, 1.0, (k - _loop_k) / maxf(0.05, 1.0 - _loop_k))
+				var c := (_loop_at[i] as Vector3) + Vector3(0, up * _loop_r, 0)
+				var ph := kl * 3.7                     # ~210 degrees of the circle
+				var sink := smoothstep(0.45, 1.0, kl)
+				var on_loop := c + Vector3(sin(ph) * d, -cos(ph) * up, 0.0) * _loop_r
+				a.pos = on_loop.lerp(Vector3(0.0, 0.0, -0.85), sink * 0.8)
+			a.home = a.pos
+			# Roll about the travel axis - a drill boring along its highway; opposite
+			# directions, opposite rolls. Builds with the current, eases off in the loop.
+			if a.body is PrismBody:
+				var want := Vector3(d * _roll * current * (0.4 + 0.6 * a.time_scale), 0.12 * d, 0.0)
+				if k >= _loop_k:
+					want *= 0.4
+				var pb := a.body as PrismBody
+				pb._vel = pb._vel.lerp(want, 1.0 - exp(-3.0 * dt))
 
 
 ## specialize - diverge in character: scale eases to size x, the body's whole tempo
