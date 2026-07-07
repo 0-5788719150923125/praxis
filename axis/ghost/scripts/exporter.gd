@@ -135,6 +135,7 @@ func _process(dt: float) -> void:
 				# The render only reports success by PID exit; make sure it actually produced the AVI
 				# (a crashed Movie Maker exits too) before spending minutes transcoding nothing.
 				if FileAccess.file_exists(_avi) and _file_size(_avi) > 65536:
+					_repair_avi_sizes(_avi)
 					_start_transcode()
 				else:
 					_fail("⚠  Render produced no file (see console)")
@@ -320,6 +321,40 @@ func _read_transcode_pct() -> int:
 	return _pct
 
 
+# Godot's AVI writer keeps 32-bit RIFF/LIST size fields, and a 4K render crosses
+# 4 GiB in a few minutes of video - past that the written sizes WRAP (mod 2^32) and
+# the container lies about where the frame data ends, even though every 00db/01wb
+# chunk after it is written correctly all the way to EOF (verified by walking a 5 GB
+# artifact chunk-by-chunk). Demuxers that trust those fields (players especially -
+# their seeks also hit the equally-wrapped idx1 offsets) stall or repeat frames.
+# The repair is two words: RIFF size and the movi LIST size become 0 - "size
+# unknown, read to end of file" - turning any demux into a clean sequential walk of
+# the intact chunks. No-op for files under 4 GiB (their sizes are correct).
+func _repair_avi_sizes(path: String) -> void:
+	var f := FileAccess.open(path, FileAccess.READ_WRITE)
+	if f == null:
+		return
+	if f.get_length() < 4294967296:
+		f.close()
+		return
+	f.seek(4)
+	f.store_32(0)                       # RIFF size -> unknown
+	var pos := 12
+	for i in 64:                        # walk top-level chunks to the movi LIST
+		f.seek(pos)
+		var tag := f.get_buffer(4).get_string_from_ascii()
+		var csize := f.get_32()
+		if tag == "LIST" and f.get_buffer(4).get_string_from_ascii() == "movi":
+			f.seek(pos + 4)
+			f.store_32(0)               # movi size -> unknown
+			print("ghost export: repaired wrapped >4GiB AVI sizes in ", path.get_file())
+			break
+		if csize <= 0 or tag.is_empty():
+			break
+		pos += 8 + csize + (csize & 1)
+	f.close()
+
+
 func _file_size(path: String) -> int:
 	var f := FileAccess.open(path, FileAccess.READ)
 	if f == null:
@@ -341,7 +376,12 @@ func _write_override(w: int, h: int) -> void:
 	if f == null:
 		push_warning("ghost export: could not write override.cfg (resolution may default)")
 		return
-	f.store_string("[display]\n\nwindow/size/viewport_width=%d\nwindow/size/viewport_height=%d\nwindow/stretch/mode=\"viewport\"\n" % [w, h])
+	# viewport_* set the RENDERED (recorded) resolution; window_*_override shrink the
+	# OS window itself to an unobtrusive floater. In "viewport" stretch mode the two
+	# are independent - true 4K on any monitor, tiny window. The window must stay a
+	# normal, drawable window: minimizing it makes Godot skip rendering and the movie
+	# records frozen frames (see boot.gd).
+	f.store_string("[display]\n\nwindow/size/viewport_width=%d\nwindow/size/viewport_height=%d\nwindow/size/window_width_override=480\nwindow/size/window_height_override=270\nwindow/stretch/mode=\"viewport\"\n" % [w, h])
 	f.close()
 
 
