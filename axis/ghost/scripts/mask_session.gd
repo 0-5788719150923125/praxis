@@ -4,71 +4,121 @@ class_name MaskSession
 ## MaskSession - the data model for one mask-mode editing session.
 ##
 ## A session pairs one imported clip (video + its extracted audio, see masks/README)
-## with a timeline of MARKERS: distinct points where the split/effect changes. A
-## marker is not a free-form dictionary - it is a fixed-schema scalar VECTOR (see
+## with a timeline of MARKERS: distinct points where the mask changes. A marker is
+## not a free-form dictionary - it is a fixed-schema scalar VECTOR (see
 ## VECTOR_FIELDS). That is deliberate: a session's marker list is then literally a
 ## small matrix (one row per marker), the same shape as the harmonic-signature /
 ## seed-bias vectors elsewhere in this project, so it can later be inspected,
 ## compared, or correlated the same way instead of living as opaque nested JSON.
 ##
-## Every marker is one of two KINDS (see MARKER_KINDS) - there is no plain/neutral
-## marker. BOTH kinds are a transition TO the marker's own values; the kind is
-## which side of the anchor the transition occupies:
-##   RAMP  - eases in over the `duration` seconds BEFORE the anchor, arriving
-##           complete exactly at the marker's time (anticipation - the change
-##           builds toward a known landing point).
-##   DECAY - begins AT the anchor and accumulates over the `duration` seconds
-##           AFTER it - the prior state decays INTO this marker's values (the
-##           underlying footage is progressively consumed by the effect, like an
-##           audio decay envelope). Nothing happens before the anchor.
-## Once its transition completes, a marker's values simply hold until the next
-## marker's transition takes over. A zero-length marker of either kind is an
-## instant cut - the natural degenerate case, not a third kind to special-case.
-## (To fade an effect OUT, transition to a marker whose intensity is 0 - fading
-## out is just a transition whose destination happens to be "nothing".)
+## EVERY MARKER IS ONE LAYER. A marker carries a single channel - one target color,
+## one effect, one strength, one pattern placement - plus its own transition
+## envelope. Layers STACK chronologically: place a marker that devours the blues,
+## and a later marker adding fire to the reds layers on top WITHOUT disturbing the
+## blue layer (the old two-channels-per-marker model restated every channel at
+## every marker, so any later change silently rewrote what earlier markers were
+## doing - colors got "restored" that nobody asked to restore).
 ##
-## Discrete fields (effect ids, swap, view_mode) can't have a "half-way" value:
-## for a decay they snap at the anchor (where its transition begins); for a ramp
-## they snap at the START of its window (the arriving marker's stage has to be up
-## while its intensities ease in - see at_time). Continuous fields (hue,
-## threshold, intensity, ...) are what the transition actually shapes.
+## The envelope's KIND (see MARKER_KINDS) is which side of the anchor its
+## transition occupies:
+##   RAMP  - the layer eases in over the `duration` seconds BEFORE the anchor,
+##           arriving complete exactly at the marker's time (anticipation).
+##   DECAY - the layer begins AT the anchor and accumulates over the `duration`
+##           seconds AFTER it - the footage is progressively consumed (an audio
+##           decay envelope). Nothing happens before the anchor.
+## Once in, a layer HOLDS forever. Layering is a continuous, ADDITIVE process:
+## a later marker keying a second color - however near or far from the first in
+## hue - stacks WITH the earlier work, never over it. (An earlier version
+## silently superseded prior layers whose hue was "close enough", which meant
+## keying two nearby tones made the first quietly restore itself - implicit
+## magic, wrong.) The SUBTRACTIVE half is explicit: the "restore" effect (see
+## MASK_EFFECTS). A restore marker draws nothing of its own - it targets a color
+## exactly like a keying marker does (its own picker, its own threshold for how
+## wide around that color it reaches, its own ramp/decay envelope, its intensity
+## = how completely it restores) and fades out every EARLIER layer on that
+## color over its window. Mask a color out at minute one, restore it at minute
+## five, mask it differently at minute six - a chain of explicit operations.
+## A zero-length marker of either kind is an instant cut - the degenerate case,
+## not a third kind.
+##
+## THE TRANSITION CONTRACT. Every visual quantity that leaves at_time() must be
+## transition-safe in exactly one of three standard shapes - any new modulation
+## added later MUST pick one; nothing may drive a visual straight off a discrete
+## snap (every "it pops instead of fading" bug so far has been a violation of
+## this rule, discovered one field at a time):
+##   1. CONTINUOUS  - global keying scalars (threshold, feather, sat_floor):
+##      lerped across transition windows. List: GLOBAL_CONTINUOUS.
+##   2. PRESENCE    - which screen layers are up (view_mode): the discrete value
+##      is kept for storage/labeling, but the visuals consume the derived
+##      AMOUNT_FIELDS, which lerp. A mode change is a presence fade.
+##   3. LAYER       - everything a marker's own channel carries (color, effect,
+##      strength, placement, coverage, contrast, resonance): baked into that
+##      marker's layer, whose ENVELOPE does all the transitioning. An identity
+##      change (new effect, new placement, restored color) is two layers with
+##      complementary envelopes - a dissolve, never a swap, never a glide.
 
 ## The vector schema. Order is the contract - to_vector()/from_vector() and any
 ## future analysis code index into this list, so append, never reorder or remove.
+## (The *_b fields are legacy from the two-channel era: still stored, no longer
+## consumed - a marker's layer reads only the *_a channel.)
 const VECTOR_FIELDS := [
 	"time",             # seconds into the clip
-	"kind",             # 0=ramp (blends up to this marker) / 1=decay (blends away from it) - see MARKER_KINDS
-	"hue_a",            # side A reference hue, 0..1
-	"hue_b",            # side B reference hue, 0..1
-	"threshold",        # key distance threshold, 0..1
-	"feather",          # edge softness, 0..1
-	"sat_floor",        # minimum saturation to key at all, 0..1
-	"swap",             # 0/1 - which physical side wears which key color (discrete)
-	"effect_a",         # side A effect id, see MASK_EFFECTS (discrete)
-	"effect_b",         # side B effect id (discrete)
-	"intensity_a",      # side A effect strength, 0..1 (continuous - this is what a ramp/decay shapes)
-	"intensity_b",      # side B effect strength, 0..1 (continuous)
-	"duration",         # seconds the ramp (before) or decay (after) span takes
-	"view_mode",        # which rendering is shown/exported at this point (discrete) - see VIEW_MODES
+	"kind",             # 0=ramp (eases in before the anchor) / 1=decay (accumulates after)
+	"hue_a",            # THE layer's target hue, 0..1
+	"hue_b",            # legacy, unused
+	"threshold",        # key distance threshold, 0..1 (global)
+	"feather",          # edge softness, 0..1 (global)
+	"sat_floor",        # minimum saturation to key at all, 0..1 (global)
+	"swap",             # legacy, unused
+	"effect_a",         # THE layer's effect id, see MASK_EFFECTS
+	"effect_b",         # legacy, unused
+	"intensity_a",      # THE layer's strength, 0..1
+	"intensity_b",      # legacy, unused
+	"duration",         # seconds the ramp (before) or decay (after) envelope takes
+	"view_mode",        # which rendering is shown/exported at this point - see VIEW_MODES
+	"fx_x",             # THE layer's pattern pan X (unit UV)
+	"fx_y",             # pattern pan Y
+	"fx_scale",         # pattern zoom (1 = nominal)
+	"fx_density",       # pattern coverage 0..1 (how much of the region the wisps consume)
+	"resonance",        # 0..1 - how strongly the pattern breathes with the audio envelope
+	"fx_contrast",      # 0..1 - wisp edge hardness; exponential response, 0.5 = neutral
 ]
 
-## Fields that snap exactly at a marker's own time - no "half-way" value makes sense.
-const DISCRETE_FIELDS := ["swap", "effect_a", "effect_b", "view_mode"]
-## Fields a ramp/decay span actually eases - everything else in VECTOR_FIELDS minus
-## "time", "kind", "duration" (structural, not blendable) and DISCRETE_FIELDS.
-const CONTINUOUS_FIELDS := ["hue_a", "hue_b", "threshold", "feather", "sat_floor", "intensity_a", "intensity_b"]
+## Global keying environment - lerped across transition windows (contract shape 1).
+const GLOBAL_CONTINUOUS := ["threshold", "feather", "sat_floor"]
+## What each marker's LAYER carries (contract shape 3) - baked at the marker's own
+## values; only the layer's envelope varies over time.
+const LAYER_FIELDS := ["hue_a", "effect_a", "intensity_a", "fx_x", "fx_y",
+	"fx_scale", "fx_density", "resonance", "fx_contrast"]
 
 const MARKER_KINDS := ["ramp", "decay"]
 
-## The per-channel effect registry (see next/ for the rest of the spectrum this is
-## designed to grow into - fire and freeze are the first two, not the only two).
-const MASK_EFFECTS := ["erase", "fire", "freeze"]
+## The most simultaneous layers the shader renders (its uniform arrays are sized
+## to this). When more are active, the OLDEST are dropped.
+const MAX_LAYERS := 6
 
-## The view-mode registry (see mask_editor.gd's _apply_view_mode_id). Really a 2-axis
-## matrix flattened to one discrete field - main screen (raw / fx) x inset (hidden /
-## raw / fx) - kept flat because it's a per-marker EXPORTABLE choice, and one scalar
-## in the vector beats two half-meaningful ones. Order is append-only (indices are
-## stored in saved sessions), which is why the "evolution" display order lives in
+## The per-layer effect registry. "erase" hides the keyed region outright; fire /
+## freeze / smoke are volumetric CONSUMING fields (see shaders/mask_split.gdshader):
+## the wisps themselves are the substance - where the drifting noise field forms a
+## lick, the keyed footage is eaten to void, rimmed with a glow in the layer's own
+## hue; where the field is absent, the footage stays intact. fire = rising
+## domain-warped licks, freeze = near-static crystalline veins, smoke = soft
+## billowing gauze. Placement/coverage ride the fx_* fields; coverage 0 =
+## untouched, 1 = fully devoured.
+##
+## "restore" is the SUBTRACTIVE operation (see the class doc): it draws nothing -
+## it fades out every earlier layer whose target hue lies within ITS OWN
+## `threshold` of its picked color, over its own envelope, scaled by its
+## intensity (0.5 = restore halfway). The one effect the shader never sees
+## (layers_at resolves it into the other layers' envelopes).
+const MASK_EFFECTS := ["erase", "fire", "freeze", "smoke", "restore"]
+const EFFECT_RESTORE := 4
+
+## The view-mode registry (see mask_editor.gd). Really a 2-axis matrix flattened to
+## one discrete field - main screen (raw / fx) x inset (hidden / raw / fx) - kept
+## flat because it's a per-marker EXPORTABLE choice, and one scalar in the vector
+## beats two half-meaningful ones. Order is append-only (indices are stored in
+## saved sessions), which is why the "evolution" display order lives in
 ## mask_editor.gd's VIEW_CYCLE, not here:
 ##   pip        - main raw, inset fx (the classic compare view)
 ##   masked     - main fx, no inset
@@ -79,14 +129,13 @@ const VIEW_MODES := ["pip", "masked", "raw", "pip_raw", "masked_pip"]
 
 ## Untouched (no markers yet) preview state. view_mode defaults to "raw" (index 2)
 ## - just the source video, no shader pass at all - so nothing is masked/effected
-## until you explicitly place a marker or toggle the view yourself. Channel 1
-## targets red at full strength (inert until the view actually shows an fx layer);
-## channel 2 is off (intensity 0) - one channel is the default working set, the
-## second is opt-in (see mask_editor.gd's second-channel section).
+## until you explicitly place a marker or toggle the view yourself.
 const DEFAULTS := {
 	"kind": 0.0, "hue_a": 0.02, "hue_b": 0.58, "threshold": 0.24, "feather": 0.12,
 	"sat_floor": 0.18, "swap": 0.0, "effect_a": 0, "effect_b": 0,
 	"intensity_a": 1.0, "intensity_b": 0.0, "duration": 1.0, "view_mode": 2.0,
+	"fx_x": 0.0, "fx_y": 0.0, "fx_scale": 1.0, "fx_density": 0.45, "resonance": 0.0,
+	"fx_contrast": 0.5,
 }
 
 var video_path := ""
@@ -96,11 +145,19 @@ var duration := 0.0
 var markers: Array = []   # Array[Dictionary], sorted by "time"; each has all VECTOR_FIELDS
 
 
-## A new marker at `t`, seeded from the values active at that instant (so inserting
-## one mid-timeline starts as a no-op blend point, not a jump back to defaults).
-## `kind_id` indexes MARKER_KINDS.
+## A new marker at `t`, seeded from the previous marker's stored values (or
+## DEFAULTS before the first) - so a fresh marker CONTINUES the same layer (same
+## color: it supersedes its predecessor with identical params, visually seamless)
+## until you edit it. `kind_id` indexes MARKER_KINDS.
 func add_marker(t: float, kind_id: int = 0) -> Dictionary:
-	var m := at_time(t)
+	var prev = null
+	for mm in markers:
+		if mm.time <= t:
+			prev = mm
+	var src: Dictionary = prev if prev != null else DEFAULTS
+	var m := {}
+	for key in VECTOR_FIELDS:
+		m[key] = src.get(key, DEFAULTS.get(key, 0.0))
 	m.time = t
 	m.kind = float(kind_id)
 	markers.append(m)
@@ -114,13 +171,16 @@ func remove_marker(m: Dictionary) -> void:
 		markers.remove_at(i)
 
 
-## The DERIVED per-layer presence amounts (0..1) a view mode implies. view_mode is
-## stored discrete (a marker names a destination look, whole), but what actually
-## transitions on screen is each LAYER's presence - and those blend continuously
-## through ramp/decay windows like any other continuous quantity, so a move from
-## "fx inset" to "both" fades the main overlay in over the span instead of popping
-## it (the pop was exactly what made mode transitions read as instant regardless
-## of the window). Keys are AMOUNT_FIELDS; at_time() carries them in its result.
+## Shortest distance between two hues on the wrapped 0..1 circle.
+static func hue_dist(a: float, b: float) -> float:
+	var d := absf(a - b)
+	return minf(d, 1.0 - d)
+
+
+## The DERIVED per-screen-layer presence amounts (0..1) a view mode implies.
+## view_mode is stored discrete (a marker names a destination look, whole), but
+## what actually transitions on screen is each surface's presence - and those
+## blend continuously through transition windows (contract shape 2).
 const AMOUNT_FIELDS := ["main_fx", "inset_show", "inset_fx"]
 
 static func mode_amounts(view_mode_val) -> Dictionary:
@@ -140,29 +200,67 @@ static func _amounts_of(state: Dictionary) -> Dictionary:
 	return mode_amounts(state.get("view_mode", 2.0))
 
 
-## The blended parameter dictionary at time `t`. Carries CONTINUOUS_FIELDS,
-## DISCRETE_FIELDS, and the derived AMOUNT_FIELDS (per-layer presences).
+## This marker's own IN-envelope at `t`: 0 before its window, easing to 1 across
+## it, holding 1 forever after. Closed-form - no recursion, no window chaining.
+##   ramp : rises over [time - duration, time]
+##   decay: rises over [time, time + duration]
+static func _envelope(m: Dictionary, t: float) -> float:
+	var d: float = maxf(0.001, float(m.get("duration", 1.0)))
+	var anchor: float = float(m.time)
+	if int(m.get("kind", 0.0)) == 0:
+		return clampf((t - (anchor - d)) / d, 0.0, 1.0)
+	return clampf((t - anchor) / d, 0.0, 1.0)
+
+
+## The layer stack at time `t`, chronological (oldest first - the shader applies
+## them in order, so later layers act on top). Each entry bakes its marker's
+## LAYER_FIELDS plus "env", the layer's current envelope.
 ##
-## Discrete fields snap to whichever marker currently governs (the one at/before
-## `t`) - EXCEPT inside an approaching ramp's window, where the ramp marker's
-## discrete fields take over at the window's START (the arriving marker's stage is
-## up while it eases in). The per-layer AMOUNTS, though, always blend continuously
-## across a window - intensity is "how strong the channel is", amounts are "how
-## present each layer is", and a mode change is an amounts transition.
-##
-## Continuous fields (and amounts) default to holding at the governing state, then:
-##   - the NEXT marker, if it's a ramp, blends UP TO ITSELF over its own `duration`
-##     seconds BEFORE its time, from the state resolved at the window's start.
-##   - the CURRENT marker, if it's a decay, ACCUMULATES from the prior resolved
-##     state TOWARD ITS OWN values over the `duration` seconds AFTER its anchor -
-##     the prior footage/state decays INTO this marker. Once accumulated, it holds
-##     (`f` clamps at 1).
-## (Checked in that order; on the rare pathological overlap - both windows covering
-## the same instant - decay wins, simply because it's evaluated second.)
+## Layering is ADDITIVE: an applying marker never touches earlier layers,
+## whatever its color. Only an explicit RESTORE marker (effect == EFFECT_RESTORE)
+## closes earlier layers - every one whose target hue lies within the restore's
+## own `threshold` of its picked color fades by (1 - restore_env * restore
+## intensity) over the restore's window. Restores compose multiplicatively (two
+## half-restores ≈ three-quarters restored) and never appear as drawn layers
+## themselves. Fully-out layers are dropped; if more than MAX_LAYERS remain, the
+## oldest go (the shader can't carry them, and the newest edits are the ones
+## being worked on).
+func layers_at(t: float) -> Array:
+	var out := []
+	for i in markers.size():
+		var m: Dictionary = markers[i]
+		if int(m.get("effect_a", 0)) == EFFECT_RESTORE:
+			continue   # restores act on other layers; they draw nothing
+		var env := _envelope(m, t)
+		if env <= 0.0005:
+			continue
+		for j in range(i + 1, markers.size()):
+			var mj: Dictionary = markers[j]
+			if int(mj.get("effect_a", 0)) != EFFECT_RESTORE:
+				continue
+			var reach: float = maxf(0.02, float(mj.get("threshold", 0.24)))
+			if hue_dist(float(m.get("hue_a", 0.0)), float(mj.get("hue_a", 0.0))) <= reach:
+				env *= 1.0 - _envelope(mj, t) * clampf(float(mj.get("intensity_a", 1.0)), 0.0, 1.0)
+		if env <= 0.0005:
+			continue
+		var layer := {"env": env}
+		for key in LAYER_FIELDS:
+			layer[key] = m.get(key, DEFAULTS.get(key, 0.0))
+		out.append(layer)
+	while out.size() > MAX_LAYERS:
+		out.pop_front()
+	return out
+
+
+## The resolved state at time `t`: the GLOBAL keying scalars (lerped through
+## transition windows), the discrete view_mode + its derived presence AMOUNTS
+## (lerped), and "layers" - the layer stack from layers_at(). Everything a
+## consumer needs to draw the frame; see the transition contract above.
 func at_time(t: float) -> Dictionary:
 	if markers.is_empty():
 		var d0 := DEFAULTS.duplicate()
 		d0.merge(mode_amounts(d0.get("view_mode", 2.0)))
+		d0["layers"] = []
 		return d0
 	var cur = null
 	var nxt = null
@@ -174,24 +272,18 @@ func at_time(t: float) -> Dictionary:
 
 	# DEFAULTS (not markers[0]) before the first marker: a marker's discrete values
 	# must not leak backward across the timeline prefix before it ever arrives.
-	var discrete_src: Dictionary = cur if cur != null else DEFAULTS
+	var governing: Dictionary = cur if cur != null else DEFAULTS
 	var out := {}
-	for key in DISCRETE_FIELDS:
-		out[key] = discrete_src.get(key, DEFAULTS.get(key, 0.0))
-	out.merge(mode_amounts(out.get("view_mode", 2.0)), true)
+	out["view_mode"] = governing.get("view_mode", DEFAULTS.get("view_mode", 2.0))
+	out.merge(mode_amounts(out["view_mode"]), true)
+	for key in GLOBAL_CONTINUOUS:
+		out[key] = float(governing.get(key, DEFAULTS.get(key, 0.0)))
 
-	var base: Dictionary = cur if cur != null else DEFAULTS
-	for key in CONTINUOUS_FIELDS:
-		out[key] = float(base.get(key, DEFAULTS.get(key, 0.0)))
-
-	# Ramp: is the marker we're approaching (nxt, or the very first marker if we're
-	# before everything) pulling us toward it right now? The source value is
-	# whatever was ACTUALLY active right as this ramp's window opened - recursing
-	# to at_time() just before span_start rather than just reading cur's raw stored
-	# value, because cur might itself be mid-decay at that instant. The query is
-	# nudged strictly BEFORE span_start - querying exactly at the boundary would
-	# resolve the identical window again and recurse forever (hit this the hard
-	# way: real stack overflow, not theoretical).
+	# Ramp window: the approaching marker's stage (view_mode) is up from the
+	# window's start while its presence amounts and the global scalars ease in.
+	# The source is whatever was ACTUALLY active as the window opened - recursed,
+	# nudged strictly earlier (querying the exact boundary would resolve this same
+	# window again, forever - a real stack overflow taught that lesson).
 	var approaching = nxt if nxt != null else (markers[0] if cur == null else null)
 	if approaching != null and int(approaching.get("kind", 0.0)) == 0:
 		var d: float = maxf(0.001, float(approaching.get("duration", 1.0)))
@@ -199,30 +291,22 @@ func at_time(t: float) -> Dictionary:
 		if t >= span_start and t <= float(approaching.time):
 			var src := at_time(span_start - 0.001)
 			var f := (t - span_start) / d
-			for key in CONTINUOUS_FIELDS:
+			for key in GLOBAL_CONTINUOUS:
 				out[key] = lerpf(float(src.get(key, DEFAULTS.get(key, 0.0))),
 					float(approaching.get(key, DEFAULTS.get(key, 0.0))), f)
-			# The arriving marker's stage is already up while it eases in...
-			for key in DISCRETE_FIELDS:
-				out[key] = approaching.get(key, DEFAULTS.get(key, 0.0))
-			# ...but each LAYER's presence fades across the window, so a mode
-			# change is a gradual arrival, not a pop at the window's edge.
+			out["view_mode"] = approaching.get("view_mode", DEFAULTS.get("view_mode", 2.0))
 			var src_amt := _amounts_of(src)
-			var dst_amt := mode_amounts(approaching.get("view_mode", 2.0))
+			var dst_amt := mode_amounts(out["view_mode"])
 			for key in AMOUNT_FIELDS:
 				out[key] = lerpf(float(src_amt.get(key, 0.0)), float(dst_amt.get(key, 0.0)), f)
 
-	# Decay: is the marker we're past (cur) still accumulating? The prior state
-	# (whatever was actually on screen just before the anchor - resolved
-	# recursively, nudged strictly earlier for the same no-infinite-recursion
-	# reason as the ramp above) decays INTO cur's own values over the window.
-	# No upper bound - f clamps at 1, so once fully accumulated it HOLDS cur's
-	# values until the next marker takes over.
+	# Decay window: the just-passed marker's globals/presence accumulate from the
+	# prior state toward its own. f clamps at 1, so it holds once accumulated.
 	if cur != null and int(cur.get("kind", 0.0)) == 1 and t >= float(cur.time):
 		var d: float = maxf(0.001, float(cur.get("duration", 1.0)))
 		var src := at_time(float(cur.time) - 0.001)
 		var f := clampf((t - float(cur.time)) / d, 0.0, 1.0)
-		for key in CONTINUOUS_FIELDS:
+		for key in GLOBAL_CONTINUOUS:
 			out[key] = lerpf(float(src.get(key, DEFAULTS.get(key, 0.0))),
 				float(cur.get(key, DEFAULTS.get(key, 0.0))), f)
 		var src_amt := _amounts_of(src)
@@ -230,6 +314,7 @@ func at_time(t: float) -> Dictionary:
 		for key in AMOUNT_FIELDS:
 			out[key] = lerpf(float(src_amt.get(key, 0.0)), float(dst_amt.get(key, 0.0)), f)
 
+	out["layers"] = layers_at(t)
 	return out
 
 

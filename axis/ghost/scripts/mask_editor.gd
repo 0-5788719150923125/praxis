@@ -67,16 +67,17 @@ var _timeline: MaskTimeline
 var _selected: Variant = null   # the marker Dictionary currently shown in the panel
 
 var _color_a: ColorPickerButton
-var _color_b: ColorPickerButton
 var _threshold: HSlider
 var _feather: HSlider
 var _sat_floor: HSlider
+var _fx_x: HSlider
+var _fx_y: HSlider
+var _fx_scale: HSlider
+var _fx_density: HSlider
+var _fx_contrast: HSlider
+var _resonance: HSlider
 var _effect_a: OptionButton
-var _effect_b: OptionButton
 var _intensity_a: HSlider
-var _intensity_b: HSlider
-var _chan2: VBoxContainer     # second channel's controls - hidden until opted into
-var _chan2_toggle: Button
 var _kind: OptionButton     # ramp / decay - see MaskSession.MARKER_KINDS
 var _marker_duration: HSlider
 var _marker_label: Label
@@ -97,6 +98,7 @@ const _PREP_PROGRESS_FILE := "user://mask_prep_progress.txt"
 
 var _waveform_pid := -1
 var _waveform_path := ""         # set once we know it; polled in _process until it exists
+var _audio_env := PackedFloat32Array()   # per-column amplitude from the waveform image (resonance)
 
 var _render_state := "idle"      # idle / rendering / transcoding / done
 var _render_pid := -1
@@ -362,6 +364,15 @@ func _ready_with_session() -> void:
 
 	if render_mode:
 		_build_render_view()
+		# The resonance envelope must exist BEFORE the first recorded frame, or the
+		# export's early frames disagree with the live preview. Nearly always cached
+		# already (editing generated it); if not, block briefly on ffmpeg - an export
+		# is a batch job, a one-time pause is fine where it wouldn't be live.
+		_waveform_path = session.audio_path.get_base_dir().path_join("waveform_sqrt.png")
+		var abs_wave := ProjectSettings.globalize_path(_waveform_path)
+		if not FileAccess.file_exists(abs_wave):
+			OS.execute("ffmpeg", _waveform_args(abs_wave))
+		_load_waveform(abs_wave)
 	else:
 		_build_editor_ui()
 		_ensure_waveform()
@@ -382,21 +393,51 @@ func _ensure_waveform() -> void:
 	_waveform_path = session.audio_path.get_base_dir().path_join("waveform_sqrt.png")
 	var abs_wave := ProjectSettings.globalize_path(_waveform_path)
 	if FileAccess.file_exists(abs_wave):
-		_timeline.waveform_texture = _load_png(abs_wave)
+		_load_waveform(abs_wave)
 		return
-	var args := PackedStringArray([
+	_waveform_pid = OS.create_process("ffmpeg", _waveform_args(abs_wave))
+
+
+func _waveform_args(abs_out: String) -> PackedStringArray:
+	return PackedStringArray([
 		"-y", "-loglevel", "error", "-i", ProjectSettings.globalize_path(session.audio_path),
 		"-filter_complex", "showwavespic=s=4096x160:colors=white:scale=sqrt",
-		"-frames:v", "1", abs_wave])
-	_waveform_pid = OS.create_process("ffmpeg", args)
+		"-frames:v", "1", abs_out])
 
 
-## Plain load() has no loader for a raw .png outside the import pipeline (the same
-## lesson as AudioStreamWAV.load_from_file elsewhere in this file) - Image's own
-## static loader is the runtime-safe path.
-static func _load_png(path: String) -> Texture2D:
-	var img := Image.load_from_file(path)
-	return ImageTexture.create_from_image(img) if img != null else null
+## Load the waveform image once and derive BOTH consumers from it: the timeline's
+## strip texture, and the resonance envelope (per-column occupancy = amplitude).
+## One file, one recipe - so the wisps breathe with exactly the wave the user sees
+## on the strip, and live/export read identical values (file-deterministic; no
+## real-time analyzer to drift between the two).
+func _load_waveform(abs_path: String) -> void:
+	var img := Image.load_from_file(abs_path)
+	if img == null:
+		return
+	if _timeline != null:
+		_timeline.waveform_texture = ImageTexture.create_from_image(img)
+	var w := img.get_width()
+	var h := img.get_height()
+	_audio_env = PackedFloat32Array()
+	_audio_env.resize(w)
+	for x in w:
+		var count := 0
+		for y in range(0, h, 2):    # every 2nd row - envelope precision, half the cost
+			if img.get_pixel(x, y).a > 0.1:
+				count += 1
+		# showwavespic draws a symmetric column; its filled fraction IS the (sqrt-
+		# scaled) amplitude. 0.9 headroom so full-scale audio still reaches ~1.0.
+		_audio_env[x] = clampf(float(count) / (float(h) * 0.5 * 0.9), 0.0, 1.0)
+
+
+## The audio envelope at clip-time `t` (0 when unavailable), lightly smoothed so
+## the wisps swell rather than flicker frame-to-frame.
+func _env_at(t: float) -> float:
+	if _audio_env.is_empty() or session == null or session.duration <= 0.0:
+		return 0.0
+	var n := _audio_env.size()
+	var i := clampi(int(t / session.duration * float(n)), 1, n - 2)
+	return (_audio_env[i - 1] + _audio_env[i] + _audio_env[i + 1]) / 3.0
 
 
 ## Three stacked layers in `parent`'s full rect, shared by both the live editor and
@@ -554,6 +595,7 @@ func _build_panel() -> void:
 	col.add_child(HSeparator.new())
 	col.add_child(_label("Key color - what this channel targets"))
 	_color_a = ColorPickerButton.new()
+	_color_a.focus_mode = Control.FOCUS_NONE
 	_color_a.custom_minimum_size = Vector2(0, 40)
 	_color_a.edit_alpha = false
 	_color_a.color_changed.connect(func(c): _edit("hue_a", c.h))
@@ -562,30 +604,23 @@ func _build_panel() -> void:
 	_effect_a = _effect_menu(col, func(id): _edit("effect_a", float(id)))
 	_intensity_a = _slider(col, "Intensity", 0.0, 1.0, func(v): _edit("intensity_a", v))
 
-	_chan2_toggle = Button.new()
-	_chan2_toggle.text = "+ second channel"
-	_chan2_toggle.focus_mode = Control.FOCUS_NONE
-	_chan2_toggle.pressed.connect(_toggle_chan2)
-	col.add_child(_chan2_toggle)
-
-	_chan2 = VBoxContainer.new()
-	_chan2.add_theme_constant_override("separation", 8)
-	_chan2.visible = false
-	col.add_child(_chan2)
-	_chan2.add_child(_label("Key color - channel 2"))
-	_color_b = ColorPickerButton.new()
-	_color_b.custom_minimum_size = Vector2(0, 40)
-	_color_b.edit_alpha = false
-	_color_b.color_changed.connect(func(c): _edit("hue_b", c.h))
-	_chan2.add_child(_color_b)
-	_chan2.add_child(_label("Effect"))
-	_effect_b = _effect_menu(_chan2, func(id): _edit("effect_b", float(id)))
-	_intensity_b = _slider(_chan2, "Intensity", 0.0, 1.0, func(v): _edit("intensity_b", v))
-
 	col.add_child(HSeparator.new())
 	_threshold = _slider(col, "Threshold", 0.0, 1.0, func(v): _edit("threshold", v))
 	_feather = _slider(col, "Feather", 0.0, 0.5, func(v): _edit("feather", v))
 	_sat_floor = _slider(col, "Min saturation", 0.0, 1.0, func(v): _edit("sat_floor", v))
+
+	# The wisp field's placement - pan/zoom the pattern over the frame (keyframe a
+	# tendril onto an eye), and dial its coverage from one wisp to an engulfing.
+	# All continuous marker fields, so they blend through ramps/decays.
+	col.add_child(HSeparator.new())
+	col.add_child(_label("Pattern - fire/freeze/smoke field placement"))
+	_fx_x = _slider(col, "Pan X", -2.0, 2.0, func(v): _edit("fx_x", v))
+	_fx_y = _slider(col, "Pan Y", -2.0, 2.0, func(v): _edit("fx_y", v))
+	_fx_scale = _slider(col, "Scale", 0.1, 8.0, func(v): _edit("fx_scale", v))
+	_fx_scale.exp_edit = true
+	_fx_density = _slider(col, "Coverage", 0.0, 1.0, func(v): _edit("fx_density", v))
+	_fx_contrast = _slider(col, "Contrast", 0.0, 1.0, func(v): _edit("fx_contrast", v))
+	_resonance = _slider(col, "Resonance (audio drive)", 0.0, 1.0, func(v): _edit("resonance", v))
 
 	col.add_child(HSeparator.new())
 	# Every marker is a ramp or a decay - there is no plain/neutral marker (see
@@ -594,6 +629,7 @@ func _build_panel() -> void:
 	# complete at the anchor; a decay begins AT the anchor and accumulates after.
 	col.add_child(_label("Kind - which way this marker's change runs"))
 	_kind = OptionButton.new()
+	_kind.focus_mode = Control.FOCUS_NONE
 	for i in MaskSession.MARKER_KINDS.size():
 		_kind.add_item(MaskSession.MARKER_KINDS[i].capitalize(), i)
 	_kind.item_selected.connect(func(id): _edit("kind", float(id)))
@@ -675,6 +711,7 @@ func _label(text: String) -> Label:
 func _slider(col: VBoxContainer, text: String, lo: float, hi: float, cb: Callable) -> HSlider:
 	col.add_child(_label(text))
 	var s := HSlider.new()
+	s.focus_mode = Control.FOCUS_NONE
 	s.min_value = lo
 	s.max_value = hi
 	s.step = (hi - lo) / 200.0
@@ -685,6 +722,7 @@ func _slider(col: VBoxContainer, text: String, lo: float, hi: float, cb: Callabl
 
 func _effect_menu(col: VBoxContainer, cb: Callable) -> OptionButton:
 	var ob := OptionButton.new()
+	ob.focus_mode = Control.FOCUS_NONE
 	for i in MaskSession.MASK_EFFECTS.size():
 		ob.add_item(MaskSession.MASK_EFFECTS[i], i)
 	ob.item_selected.connect(cb)
@@ -757,25 +795,19 @@ func _refresh_panel() -> void:
 	var m: Dictionary = _selected if _selected != null else MaskSession.DEFAULTS
 	_kind.select(int(m.get("kind", 0.0)))
 	_color_a.color = Color.from_hsv(float(m.get("hue_a", 0.02)), 0.85, 0.9)
-	_color_b.color = Color.from_hsv(float(m.get("hue_b", 0.58)), 0.85, 0.9)
 	_threshold.set_value_no_signal(float(m.get("threshold", 0.24)))
 	_feather.set_value_no_signal(float(m.get("feather", 0.12)))
 	_sat_floor.set_value_no_signal(float(m.get("sat_floor", 0.18)))
 	_effect_a.select(int(m.get("effect_a", 0)))
-	_effect_b.select(int(m.get("effect_b", 0)))
 	_intensity_a.set_value_no_signal(float(m.get("intensity_a", 1.0)))
-	_intensity_b.set_value_no_signal(float(m.get("intensity_b", 0.0)))
 	_marker_duration.set_value_no_signal(float(m.get("duration", 1.0)))
-	# A marker actually USING channel 2 reveals its controls - otherwise leave the
-	# user's own show/hide choice alone.
-	if float(m.get("intensity_b", 0.0)) > 0.0 and not _chan2.visible:
-		_toggle_chan2()
+	_fx_x.set_value_no_signal(float(m.get("fx_x", 0.0)))
+	_fx_y.set_value_no_signal(float(m.get("fx_y", 0.0)))
+	_fx_scale.set_value_no_signal(float(m.get("fx_scale", 1.0)))
+	_fx_density.set_value_no_signal(float(m.get("fx_density", 0.45)))
+	_fx_contrast.set_value_no_signal(float(m.get("fx_contrast", 0.5)))
+	_resonance.set_value_no_signal(float(m.get("resonance", 0.0)))
 	_refresh_marker_label()
-
-
-func _toggle_chan2() -> void:
-	_chan2.visible = not _chan2.visible
-	_chan2_toggle.text = "- hide second channel" if _chan2.visible else "+ second channel"
 
 
 func _refresh_marker_label() -> void:
@@ -873,18 +905,69 @@ func _apply_frame_state(p: Dictionary) -> void:
 	var main_amt := clampf(float(p.get("main_fx", 0.0)), 0.0, 1.0)
 	var inset_show := clampf(float(p.get("inset_show", 0.0)), 0.0, 1.0)
 	var inset_fx := clampf(float(p.get("inset_fx", 0.0)), 0.0, 1.0)
-	for mat in [_mat_main, _mat_inset]:
-		mat.set_shader_parameter("u_hue_a", p.hue_a)
-		mat.set_shader_parameter("u_hue_b", p.hue_b)
+	var t: float = _player.stream_position if _player != null else 0.0
+	var env := _env_at(t)
+	var layers: Array = p.get("layers", [])
+	# Build the layer arrays ONCE; only the weights differ per surface (each
+	# material multiplies its own presence in). Arrays are pushed at FULL declared
+	# length - a short uniform array is silently dropped (flame.gdshader lesson).
+	var n: int = mini(layers.size(), MaskSession.MAX_LAYERS)
+	var hues := PackedFloat32Array()
+	var effects := PackedInt32Array()
+	var base_w := PackedFloat32Array()
+	var offs := PackedVector2Array()
+	var scales := PackedFloat32Array()
+	var densities := PackedFloat32Array()
+	var contrasts := PackedFloat32Array()
+	var glows := PackedFloat32Array()
+	for i in MaskSession.MAX_LAYERS:
+		if i < n:
+			var l: Dictionary = layers[i]
+			var res := float(l.get("resonance", 0.0))
+			hues.append(float(l.get("hue_a", 0.0)))
+			effects.append(int(l.get("effect_a", 0)))
+			base_w.append(float(l.get("env", 0.0)) * float(l.get("intensity_a", 0.0)))
+			offs.append(Vector2(float(l.get("fx_x", 0.0)), float(l.get("fx_y", 0.0))))
+			scales.append(float(l.get("fx_scale", 1.0)))
+			# Resonance folds in CPU-side: the audio envelope swings coverage around
+			# its nominal (loud opens the field, quiet closes it) and pulses the rim.
+			densities.append(clampf(float(l.get("fx_density", 0.45)) + 0.5 * res * (env - 0.35), 0.0, 1.0))
+			contrasts.append(float(l.get("fx_contrast", 0.5)))
+			glows.append(1.0 + res * env * 1.3)
+		else:
+			hues.append(0.0)
+			effects.append(0)
+			base_w.append(0.0)
+			offs.append(Vector2.ZERO)
+			scales.append(1.0)
+			densities.append(0.0)
+			contrasts.append(0.5)
+			glows.append(1.0)
+	for pair in [[_mat_main, main_amt], [_mat_inset, inset_fx]]:
+		var mat: ShaderMaterial = pair[0]
+		var amt: float = pair[1]
 		mat.set_shader_parameter("u_threshold", p.threshold)
 		mat.set_shader_parameter("u_feather", p.feather)
 		mat.set_shader_parameter("u_sat_floor", p.sat_floor)
-		mat.set_shader_parameter("u_effect_a", int(p.effect_a))
-		mat.set_shader_parameter("u_effect_b", int(p.effect_b))
-	_mat_main.set_shader_parameter("u_intensity_a", float(p.intensity_a) * main_amt)
-	_mat_main.set_shader_parameter("u_intensity_b", float(p.intensity_b) * main_amt)
-	_mat_inset.set_shader_parameter("u_intensity_a", float(p.intensity_a) * inset_fx)
-	_mat_inset.set_shader_parameter("u_intensity_b", float(p.intensity_b) * inset_fx)
+		# The wisp field's clock is the CLIP's own playback position, never
+		# wall-time - live and export step the same clock, so a session
+		# reproduces its exact wisps frame-for-frame (flame.gdshader discipline).
+		mat.set_shader_parameter("u_time", t)
+		var tex := _player.get_video_texture() if _player != null else null
+		if tex != null and tex.get_height() > 0:
+			mat.set_shader_parameter("u_aspect", float(tex.get_width()) / float(tex.get_height()))
+		var ws := PackedFloat32Array()
+		for i in MaskSession.MAX_LAYERS:
+			ws.append(base_w[i] * amt)
+		mat.set_shader_parameter("u_l_count", n)
+		mat.set_shader_parameter("u_l_hue", hues)
+		mat.set_shader_parameter("u_l_effect", effects)
+		mat.set_shader_parameter("u_l_w", ws)
+		mat.set_shader_parameter("u_l_off", offs)
+		mat.set_shader_parameter("u_l_scale", scales)
+		mat.set_shader_parameter("u_l_dens", densities)
+		mat.set_shader_parameter("u_l_con", contrasts)
+		mat.set_shader_parameter("u_l_glow", glows)
 	_fx_overlay.visible = main_amt > 0.001
 	_mask_wrap.visible = inset_show > 0.001
 	_mask_wrap.modulate.a = inset_show
@@ -933,8 +1016,8 @@ func _process(_dt: float) -> void:
 	if _waveform_pid > 0 and not OS.is_process_running(_waveform_pid):
 		_waveform_pid = -1
 		var abs_wave := ProjectSettings.globalize_path(_waveform_path)
-		if _timeline != null and FileAccess.file_exists(abs_wave):
-			_timeline.waveform_texture = _load_png(abs_wave)
+		if FileAccess.file_exists(abs_wave):
+			_load_waveform(abs_wave)
 	if session == null or _player == null:
 		return
 	# Same call, live or exported: whatever the timeline says at this instant is
@@ -982,6 +1065,7 @@ func _build_status_label() -> void:
 
 func _build_export_ui() -> void:
 	_export_btn = Button.new()
+	_export_btn.focus_mode = Control.FOCUS_NONE
 	_export_btn.text = "⤓  Export video"
 	_export_btn.tooltip_text = "Render this mask session to a video file (in the background)"
 	_export_btn.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
