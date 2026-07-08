@@ -109,21 +109,28 @@ float fbm(vec2 p) {
 	return v;
 }
 
-// This layer's membership, averaged over the prediction taps (see fragment): 1
-// well inside the hue target, feathered to 0 at the threshold edge, 0 regardless
-// for near-neutral pixels. Averaging the MASK across the neighborhood - never the
-// color (averaging RGB across a red/blue seam invents purple) - turns the blocky
-// steps of compressed chroma into coverage gradients, and the mild pow() lift
-// leans uncertain edge zones TOWARD the effect: tough places get covered by the
-// pattern instead of rendering as raw/black blocks.
-float chan_mask(float target_hue, vec3 taps[9]) {
+// One tap's membership: 1 well inside the hue target, feathered to 0 at the
+// threshold edge, 0 regardless for near-neutral pixels.
+float tap_mask(float target_hue, vec3 hsv) {
+	float d = hue_dist(hsv.x, target_hue);
+	float m = 1.0 - smoothstep(u_threshold - u_feather, u_threshold + u_feather, d);
+	return m * smoothstep(u_sat_floor, u_sat_floor + 0.08, hsv.y);
+}
+
+// This layer's membership averaged over a run of the prediction taps (see
+// fragment: [0..8] = center + fine ring, [9..16] = broad ring). Averaging the
+// MASK across the neighborhood - never the color (averaging RGB across a
+// red/blue seam invents purple) - turns the blocky steps of compressed chroma
+// into coverage gradients. The mask is GREY AND CONTINUOUS end to end; nothing
+// downstream may treat it as on/off.
+float mask_over(float target_hue, vec3 taps[17], int start, int count) {
 	float acc = 0.0;
-	for (int k = 0; k < 9; k++) {
-		float d = hue_dist(taps[k].x, target_hue);
-		float m = 1.0 - smoothstep(u_threshold - u_feather, u_threshold + u_feather, d);
-		acc += m * smoothstep(u_sat_floor, u_sat_floor + 0.08, taps[k].y);
+	for (int k = 0; k < 17; k++) {
+		if (k >= start && k < start + count) {
+			acc += tap_mask(target_hue, taps[k]);
+		}
 	}
-	return pow(acc / 9.0, 0.8);
+	return acc / float(count);
 }
 
 // One scalar wisp field, shaped per effect. All three share the fbm basis and
@@ -148,20 +155,52 @@ float wisp_field(vec2 uv, int effect, float t, vec2 off, float scl) {
 	return fbm(p + drift + 0.8 * w);
 }
 
+// SUPPRESSION SHAPING - every darkening in this shader passes through here.
+// Three properties, each aimed at the hard-edged transparency-mask artifact:
+//   CEILING   - suppression never reaches 1.0: even a fully keyed, fully
+//               consumed pixel keeps a faint ghost of the footage bleeding
+//               through. Against pure black, any confidence step reads as a
+//               hard line; against a ghost, the image's own continuity carries
+//               across the edge.
+//   CURVE     - a soft gamma lift: mid-confidence suppresses a little MORE than
+//               linear, so the dark skirt extends further and more gradually
+//               into uncertain zones - continuous, no knees.
+//   GRANULAR  - per-pixel grain modulates the suppression, strongest where
+//               confidence is ambiguous (the artifact zone), a whisper
+//               elsewhere - block boundaries dissolve into grain instead of
+//               lines. Clocked off the clip's own time (quantized ~9Hz), so it
+//               reads as film grain and stays deterministic live vs export.
+float shade_amount(float x, vec2 uv) {
+	x = clamp(x, 0.0, 1.0);
+	float s = pow(x, 0.85);
+	float g = hash21(floor(uv * vec2(1280.0, 720.0)) + floor(u_time * 9.0) * vec2(13.0, 7.0));
+	float amp = 0.06 + 0.22 * (1.0 - abs(2.0 * x - 1.0));
+	s *= 1.0 - amp * g;
+	return s * 0.93;
+}
+
 // Apply layer i to the running color. `w` is the layer's full on-screen weight
 // (envelope x intensity x surface presence), already resolved CPU-side.
-vec4 apply_layer(vec4 col, int i, vec3 taps[9], vec2 uv) {
+vec4 apply_layer(vec4 col, int i, vec3 taps[17], vec2 uv) {
 	float w = u_l_w[i];
-	float mask = chan_mask(u_l_hue[i], taps);
-	if (mask * w <= 0.001) {
+	// Fine confidence: local coverage, mildly lifted so uncertain edges lean
+	// toward the effect. Broad confidence: the wider ring's regional read -
+	// "this AREA is basically keyed, whatever this block says" - the prediction
+	// the volumetrics use to render over artifacting (see below).
+	float fine = pow(mask_over(u_l_hue[i], taps, 0, 9), 0.8);
+	float broad = (fine * 9.0 + mask_over(u_l_hue[i], taps, 9, 8) * 8.0) / 17.0;
+	if (max(fine, broad) * w <= 0.001) {
 		return col;
 	}
 	int effect = u_l_effect[i];
 	if (effect == 0) {
-		// erase: fade this layer's pixels to black by weight. RGB only, alpha
-		// untouched - this surface is drawn OVER the raw video, so a fading alpha
-		// would let the raw color bleed back through the "erased" region.
-		return vec4(col.rgb * (1.0 - w * mask), col.a);
+		// erase: darken this layer's pixels by weight, from the FINE confidence
+		// alone - erase has no field of its own to justify reaching over
+		// uncertainty, so its boundary stays honest. The darkening runs through
+		// shade_amount: granular, continuous, never total. RGB only, alpha
+		// untouched - this surface is drawn OVER the raw video, so a fading
+		// alpha would let the raw color bleed back through the "erased" region.
+		return vec4(col.rgb * (1.0 - shade_amount(w * fine, uv)), col.a);
 	}
 	float field = wisp_field(uv, effect, u_time, u_l_off[i], u_l_scale[i]);
 	// Contrast: exponential response around the neutral midpoint - each half of
@@ -176,10 +215,10 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[9], vec2 uv) {
 	sharp *= mix(1.6, 0.4, con);
 	float glow = (effect == 1 ? 0.95 : (effect == 2 ? 0.75 : 0.5)) * u_l_glow[i];
 	// Tail-weighted coverage response: gentle through the working midrange,
-	// accelerating hard at both ends so the slider genuinely REACHES fully-sparse
-	// and fully-dense (the cubic hits 0 and 1 exactly; the threshold overshoots
-	// the field's own range on both sides so nothing is consumed at 0 and
-	// nothing survives at 1).
+	// accelerating hard at both ends so the slider genuinely reaches fully-sparse
+	// and fully-dense (the cubic hits 0 and 1 exactly). "Fully dense" still
+	// bleeds a granular ghost of the footage through - see shade_amount: total
+	// suppression is where hard chroma edges come from, so it doesn't exist.
 	float dens = clamp(u_l_dens[i], 0.0, 1.0);
 	dens = mix(dens, 4.0 * pow(dens - 0.5, 3.0) + 0.5, 0.6);
 	float thr = 1.05 - dens * 1.15;
@@ -196,8 +235,24 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[9], vec2 uv) {
 	if (effect == 2) {
 		tint = mix(tint, vec3(1.0), 0.45);   // ice glints toward white
 	}
-	vec3 fx = col.rgb * (1.0 - consume) + tint * rim * glow;
-	return vec4(mix(col.rgb, fx, w * mask), col.a);
+	// THE JUDGEMENT CALL. Keying confidence is grey and continuous - but printed
+	// linearly into a wisp, every blocky fluctuation of compressed chroma
+	// renders as stepped darkness, and a tendril crossing an uncertain zone
+	// fragments along block boundaries. So where the FIELD is present, the
+	// layer commits: confidence is allowed to rise to the broad regional read
+	// (the wisp completes itself over local artifacts), and mid-grey confidence
+	// inside a strong wisp is squeezed toward covered (smoothstep) - artifact-
+	// prone places get covered by the volumetric rather than exposed by it.
+	// Where the field is absent, confidence stays untouched - the judgement is
+	// the wisp's to make, never a blanket dilation of the key.
+	float conf = max(fine, broad * consume);
+	conf = mix(conf, smoothstep(0.10, 0.60, conf), 0.85 * consume);
+	// The final darkening is ONE product - field x confidence x weight - shaped
+	// by shade_amount (granular, continuous, never total), so no path through
+	// this branch can manufacture a hard edge or a pure-black pixel.
+	float suppress = shade_amount(consume * conf * w, uv);
+	vec3 outc = col.rgb * (1.0 - suppress) + tint * rim * glow * conf * w;
+	return vec4(outc, col.a);
 }
 
 void fragment() {
@@ -208,12 +263,17 @@ void fragment() {
 	// in/out and the effects render as hard black squares along seams. A small
 	// ring of taps (converted to HSV once, shared by every layer) lets each
 	// layer's mask read as neighborhood COVERAGE instead - see chan_mask.
-	vec3 taps[9];
+	vec3 taps[17];
 	taps[0] = rgb2hsv(src.rgb);
 	vec2 rad = TEXTURE_PIXEL_SIZE * 2.5;
+	vec2 rad_broad = TEXTURE_PIXEL_SIZE * 7.0;
 	for (int k = 0; k < 8; k++) {
 		float a = float(k) * 0.7853981634;   // TAU / 8
-		taps[k + 1] = rgb2hsv(texture(TEXTURE, UV + vec2(cos(a), sin(a)) * rad).rgb);
+		vec2 dirv = vec2(cos(a), sin(a));
+		taps[k + 1] = rgb2hsv(texture(TEXTURE, UV + dirv * rad).rgb);
+		// Broad ring staggered half a step so the two rings don't share spokes.
+		float ab = a + 0.3926990817;         // TAU / 16
+		taps[k + 9] = rgb2hsv(texture(TEXTURE, UV + vec2(cos(ab), sin(ab)) * rad_broad).rgb);
 	}
 	vec4 col = src;
 	for (int i = 0; i < MAXL; i++) {

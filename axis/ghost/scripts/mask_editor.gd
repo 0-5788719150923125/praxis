@@ -62,6 +62,8 @@ var _fx_overlay: TextureRect       # full-frame fx layer - _player's texture, sh
 var _pip_view: TextureRect         # the inset's content - shaded or raw per view mode
 var _mask_wrap: PanelContainer     # the inset's border/placement box (holds _pip_view)
 var _view_btn: Button
+var _peek_btn: Button
+var _peek_raw := false     # DISPLAY-ONLY raw override; never touches session data
 
 var _timeline: MaskTimeline
 var _selected: Variant = null   # the marker Dictionary currently shown in the panel
@@ -582,6 +584,19 @@ func _build_panel() -> void:
 	_view_btn.pressed.connect(_cycle_view_mode)
 	play_row.add_child(_view_btn)
 
+	# Peek: a display-only raw view for inspecting footage / picking colors. The
+	# view button EDITS the marker at the playhead (that's its job - view modes
+	# are sequenced cinematically), which made it a trap for quick checks: "let
+	# me just look at raw for a second" silently rewrote the current marker's
+	# view. Peek renders raw without touching any data.
+	_peek_btn = Button.new()
+	_peek_btn.text = "👁 Peek"
+	_peek_btn.tooltip_text = "Show raw footage while held ON - display only, edits nothing"
+	_peek_btn.toggle_mode = true
+	_peek_btn.focus_mode = Control.FOCUS_NONE
+	_peek_btn.toggled.connect(func(on): _peek_raw = on)
+	play_row.add_child(_peek_btn)
+
 	_time_label = Label.new()
 	_time_label.add_theme_font_size_override("font_size", 15)
 	_time_label.add_theme_color_override("font_color", Color(0.85, 0.9, 1.0))
@@ -742,6 +757,19 @@ func _edit(field: String, value: float) -> void:
 		m = session.add_marker(_player.stream_position if _player != null else 0.0)
 		_selected = m
 	m[field] = value
+	# Assigning a drawing effect to a marker whose OWN view shows no fx surface is
+	# a silent foot-gun: the layer holds forever but this marker's view hides it -
+	# "I configured fire and nothing shows" (a real session lost its fire exactly
+	# this way: the view button had been cycled to Raw on the same marker). Bump
+	# the view to the nearest fx-showing mode, preserving the surface choice:
+	# raw -> masked, pip_raw -> pip. Only on effect/intensity edits - never behind
+	# the user's back on unrelated knobs, and never for restore (draws nothing).
+	if field == "effect_a" or field == "intensity_a":
+		var vm := int(m.get("view_mode", 2.0))
+		var drawing: bool = int(m.get("effect_a", 0)) != MaskSession.EFFECT_RESTORE \
+			and float(m.get("intensity_a", 0.0)) > 0.0
+		if drawing and (vm == 2 or vm == 3):
+			m["view_mode"] = 1.0 if vm == 2 else 0.0
 	_timeline.selected = _selected
 	_refresh_marker_label()
 	_mark_dirty()
@@ -905,6 +933,10 @@ func _apply_frame_state(p: Dictionary) -> void:
 	var main_amt := clampf(float(p.get("main_fx", 0.0)), 0.0, 1.0)
 	var inset_show := clampf(float(p.get("inset_show", 0.0)), 0.0, 1.0)
 	var inset_fx := clampf(float(p.get("inset_fx", 0.0)), 0.0, 1.0)
+	if _peek_raw:
+		main_amt = 0.0
+		inset_show = 0.0
+		inset_fx = 0.0
 	var t: float = _player.stream_position if _player != null else 0.0
 	var env := _env_at(t)
 	var layers: Array = p.get("layers", [])
