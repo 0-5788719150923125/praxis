@@ -109,12 +109,21 @@ float fbm(vec2 p) {
 	return v;
 }
 
-// This layer's membership for the pixel: 1 well inside the hue target, feathered
-// to 0 at the threshold edge, and 0 regardless for near-neutral pixels.
-float chan_mask(float target_hue, vec3 hsv) {
-	float d = hue_dist(hsv.x, target_hue);
-	float m = 1.0 - smoothstep(u_threshold - u_feather, u_threshold + u_feather, d);
-	return m * smoothstep(u_sat_floor, u_sat_floor + 0.08, hsv.y);
+// This layer's membership, averaged over the prediction taps (see fragment): 1
+// well inside the hue target, feathered to 0 at the threshold edge, 0 regardless
+// for near-neutral pixels. Averaging the MASK across the neighborhood - never the
+// color (averaging RGB across a red/blue seam invents purple) - turns the blocky
+// steps of compressed chroma into coverage gradients, and the mild pow() lift
+// leans uncertain edge zones TOWARD the effect: tough places get covered by the
+// pattern instead of rendering as raw/black blocks.
+float chan_mask(float target_hue, vec3 taps[9]) {
+	float acc = 0.0;
+	for (int k = 0; k < 9; k++) {
+		float d = hue_dist(taps[k].x, target_hue);
+		float m = 1.0 - smoothstep(u_threshold - u_feather, u_threshold + u_feather, d);
+		acc += m * smoothstep(u_sat_floor, u_sat_floor + 0.08, taps[k].y);
+	}
+	return pow(acc / 9.0, 0.8);
 }
 
 // One scalar wisp field, shaped per effect. All three share the fbm basis and
@@ -141,9 +150,9 @@ float wisp_field(vec2 uv, int effect, float t, vec2 off, float scl) {
 
 // Apply layer i to the running color. `w` is the layer's full on-screen weight
 // (envelope x intensity x surface presence), already resolved CPU-side.
-vec4 apply_layer(vec4 col, int i, vec3 hsv, vec2 uv) {
+vec4 apply_layer(vec4 col, int i, vec3 taps[9], vec2 uv) {
 	float w = u_l_w[i];
-	float mask = chan_mask(u_l_hue[i], hsv);
+	float mask = chan_mask(u_l_hue[i], taps);
 	if (mask * w <= 0.001) {
 		return col;
 	}
@@ -193,13 +202,25 @@ vec4 apply_layer(vec4 col, int i, vec3 hsv, vec2 uv) {
 
 void fragment() {
 	vec4 src = texture(TEXTURE, UV);
-	vec3 hsv = rgb2hsv(src.rgb);
+	// Prediction taps: compressed video stores chroma at quarter resolution in
+	// quantized blocks, so at hard color edges the hue channel steps in whole
+	// blocks - keyed from the center pixel alone, entire blocks flip fully
+	// in/out and the effects render as hard black squares along seams. A small
+	// ring of taps (converted to HSV once, shared by every layer) lets each
+	// layer's mask read as neighborhood COVERAGE instead - see chan_mask.
+	vec3 taps[9];
+	taps[0] = rgb2hsv(src.rgb);
+	vec2 rad = TEXTURE_PIXEL_SIZE * 2.5;
+	for (int k = 0; k < 8; k++) {
+		float a = float(k) * 0.7853981634;   // TAU / 8
+		taps[k + 1] = rgb2hsv(texture(TEXTURE, UV + vec2(cos(a), sin(a)) * rad).rgb);
+	}
 	vec4 col = src;
 	for (int i = 0; i < MAXL; i++) {
 		if (i >= u_l_count) {
 			break;
 		}
-		col = apply_layer(col, i, hsv, UV);
+		col = apply_layer(col, i, taps, UV);
 	}
 	COLOR = col;
 }
