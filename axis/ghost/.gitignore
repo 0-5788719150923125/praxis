@@ -26,6 +26,11 @@ mono_crash.*.json
 
 # Recorded output and source audio (drop your own song.wav in audio/)
 /audio/
+
+# Mask-mode working data: transcoded video/audio derivatives + session JSON per
+# source clip (see scripts/mask_session.gd). Large, personal, regenerable from the
+# original source file - never ships.
+/masks/
 *.avi
 *.mp4
 *.png.import.bak

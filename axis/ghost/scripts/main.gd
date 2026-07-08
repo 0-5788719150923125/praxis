@@ -13,6 +13,7 @@ var _splash: Node = null
 var _feedback: Node = null
 var _workspace: Node = null
 var _exporter: Node = null
+var _mask_editor: Node = null
 var _status_t := 0.0     # throttle for writing render progress (export mode)
 
 # Export render mode: this instance was relaunched by the exporter in Movie Maker
@@ -22,7 +23,17 @@ var _export_mode := false
 
 
 func _ready() -> void:
-	_export_mode = OS.get_cmdline_user_args().has("--export")
+	var args := OS.get_cmdline_user_args()
+	# Mask mode is a standalone authoring tool (see mask_editor.gd) - tied to one
+	# specific external clip, not the audio-reactive show - so it does not touch
+	# Director/Spectrum at all and is checked before everything else.
+	if args.has("--mask-render"):
+		_begin_mask_render(_arg_value(args, "--mask-render"))
+		return
+	if args.has("--mask-edit"):
+		_open_mask_editor(_arg_value(args, "--mask-edit"))
+		return
+	_export_mode = args.has("--export")
 	if _export_mode:
 		# Background render: Boot (first autoload) already hid the window as early as
 		# possible, and the exporter's override.cfg has set the output resolution + stretch
@@ -61,6 +72,7 @@ func _wants_direct_boot() -> bool:
 func _show_splash() -> void:
 	var splash := preload("res://scripts/splash.gd").new()
 	splash.start_session = _on_splash_start
+	splash.start_mask = _on_splash_mask
 	_splash = splash
 	add_child(splash)
 
@@ -75,6 +87,14 @@ func _on_splash_start(audio_path: String, manual: bool) -> void:
 		add_child(_workspace)
 	else:
 		_begin_session(audio_path)
+
+
+# The splash's Mask button. Mask mode never touches Director/Spectrum (see
+# _open_mask_editor), so this is a straight handoff, not a _begin_session() variant -
+# there is no "session" here in the Auto/Manual sense, just the editor opening on
+# whatever clip (or lack of one) the splash handed over.
+func _on_splash_mask(video_path: String) -> void:
+	_open_mask_editor(video_path)
 
 
 func _begin_session(audio_path := "") -> void:
@@ -138,9 +158,42 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_F11:
 				_toggle_fullscreen()
 			KEY_SPACE:
-				Director.next()
+				# Mask mode owns Space itself (play/pause the clip, see mask_editor.gd) -
+				# it never attaches Director, so Director.next() would be meaningless
+				# there anyway; this just makes the skip explicit rather than relying on
+				# Director to no-op safely while unattached.
+				if _mask_editor == null or not is_instance_valid(_mask_editor):
+					Director.next()
 			KEY_ESCAPE:
 				get_tree().quit()
+
+
+## The value following `flag` in the cmdline args, or "" if the flag is bare/absent
+## (mask mode's two entry points both take an optional path this way).
+func _arg_value(args: PackedStringArray, flag: String) -> String:
+	var i := args.find(flag)
+	if i >= 0 and i + 1 < args.size():
+		return args[i + 1]
+	return ""
+
+
+## --mask-render <session.json>: the export relaunch. No splash, no Director - just
+## the clip + shader + audio, autoplaying, quitting when the audio ends (mirrors
+## _export_mode's Spectrum.song_finished -> quit, one layer down).
+func _begin_mask_render(session_path: String) -> void:
+	var editor := preload("res://scripts/mask_editor.gd").new()
+	editor.render_mode = true
+	add_child(editor)
+	editor.open_source(session_path)
+
+
+## --mask-edit [path]: the interactive editor. `path` is a session .json, a raw
+## source video (transcoded once and cached), or empty (prompts via file dialog).
+func _open_mask_editor(path: String) -> void:
+	var editor := preload("res://scripts/mask_editor.gd").new()
+	_mask_editor = editor
+	add_child(editor)
+	editor.open_source(path)
 
 
 func _toggle_fullscreen() -> void:
