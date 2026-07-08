@@ -209,7 +209,7 @@ const renderSpecSections = {
     },
 
     'architecture': (data) => {
-        return createSection('Architecture', createPreBlock(data.model_architecture));
+        return createSection('Blueprint', createPreBlock(data.model_architecture));
     },
 
     'arguments': (data) => {
@@ -327,7 +327,7 @@ function renderSpec(data, container) {
     const present = id =>
         SPEC_CONFIG.sections.some(s => s.id === id && s.condition(data));
     // Each sheet gets a card title + a brief subtitle. Single-section sheets
-    // (Architecture, Arguments) render their content directly so the card
+    // (Blueprint, Arguments) render their content directly so the card
     // title isn't duplicated by an identical inner section title.
     const sheets = [
         {
@@ -339,7 +339,7 @@ function renderSpec(data, container) {
                 .join(''),
         },
         {
-            title: 'Architecture',
+            title: 'Blueprint',
             subtitle: 'Instantiated model module tree',
             copyable: true,
             build: () => present('architecture') ? createPreBlock(data.model_architecture) : '',

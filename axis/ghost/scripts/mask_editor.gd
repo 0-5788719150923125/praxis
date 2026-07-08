@@ -7,8 +7,8 @@ class_name MaskEditor
 ## shaders/mask_split.gdshader), place MARKERS where the split/effect should
 ## change, scrub the timeline, export. See scripts/mask_session.gd for the data
 ## model - a session's markers are fixed-schema scalar vectors, not free-form
-## params, and every one is either a RAMP (blends up to its own values) or a DECAY
-## (blends away from them) - there's no third, undifferentiated "marker" kind.
+## params, and every one is either a RAMP (eases in before its anchor) or a DECAY
+## (accumulates after it) - there's no third, undifferentiated "marker" kind.
 ##
 ## Standalone by design: a mask session is tied to one specific external clip, not
 ## the audio-reactive show, so this does NOT route through Director/Spectrum. Two
@@ -50,7 +50,12 @@ var _session_path := ""       # res://-relative or absolute; wherever it was loa
 
 var _player: VideoStreamPlayer     # always the RAW decode - never carries the shader
 var _audio: AudioStreamPlayer
-var _mat := ShaderMaterial.new()
+# One material PER LAYER: the main overlay and the inset can be mid-transition at
+# different presences (e.g. fx-inset -> both: the inset holds full while the main
+# overlay fades in), and a layer's presence multiplies into its own intensities -
+# impossible with one shared material.
+var _mat_main := ShaderMaterial.new()
+var _mat_inset := ShaderMaterial.new()
 var _playing := false
 
 var _fx_overlay: TextureRect       # full-frame fx layer - _player's texture, shaded
@@ -99,10 +104,18 @@ var _transcode_pid := -1
 var _out := ""
 var _avi := ""
 
+# Auto-save: every edit marks the session dirty; it saves shortly after the last
+# change in a burst (and unconditionally on close), so work persists across
+# reloads without a save button and without writing once per slider-drag pixel.
+var _dirty := false
+var _autosave_cooldown := 0.0
+const _AUTOSAVE_DELAY := 0.4
+
 
 func _ready() -> void:
 	layer = 100
-	_mat.shader = SHADER
+	_mat_main.shader = SHADER
+	_mat_inset.shader = SHADER
 	if not render_mode:
 		_build_status_label()   # built up front - prep needs it before a session exists
 
@@ -389,19 +402,19 @@ static func _load_png(path: String) -> Texture2D:
 ## Three stacked layers in `parent`'s full rect, shared by both the live editor and
 ## the render_mode export so they composite identically:
 ##   _player      raw video, always visible underneath everything
-##   _fx_overlay  full-frame shaded copy - visible when the MAIN screen is effected
-##   _mask_wrap   the bordered inset (holding _pip_view, whose material toggles
-##                between shaded and raw) - visible when the INSET is shown
-## Which combination is live is the per-marker view_mode (see
-## MaskSession.VIEW_MODES / _apply_view_mode_id) - main and inset are independent
-## axes, so the "evolution" (raw -> inset raw -> inset fx -> both fx) is just four
-## consecutive values of one field.
+##   _fx_overlay  full-frame shaded copy (its own material) - the MAIN fx layer
+##   _mask_wrap   the bordered inset holding _pip_view (its own material)
+## Which layers show, and how strongly, comes from the per-frame AMOUNTS
+## (MaskSession.mode_amounts, blended through ramp/decay windows by at_time) -
+## applied every frame in _apply_frame_state. A layer's presence multiplies into
+## its own material's intensities, which is why each has its own material: the
+## inset can hold full fx while the main overlay is still fading in.
 func _build_video_composition(parent: Control) -> void:
 	parent.add_child(_player)
 	_player.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 	_fx_overlay = TextureRect.new()
-	_fx_overlay.material = _mat
+	_fx_overlay.material = _mat_main
 	_fx_overlay.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_fx_overlay.stretch_mode = TextureRect.STRETCH_SCALE
 	_fx_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -413,10 +426,16 @@ func _build_video_composition(parent: Control) -> void:
 	border.set_border_width_all(2)
 	border.border_color = Color(1.0, 1.0, 1.0, 0.85)
 	_mask_wrap.add_theme_stylebox_override("panel", border)
+	# The inset's placement is fixed (bottom-right corner box); only its
+	# visibility/presence animates.
+	_mask_wrap.anchor_left = 0.66
+	_mask_wrap.anchor_top = 0.64
+	_mask_wrap.anchor_right = 0.98
+	_mask_wrap.anchor_bottom = 0.96
 	parent.add_child(_mask_wrap)
 
 	_pip_view = TextureRect.new()
-	_pip_view.material = _mat
+	_pip_view.material = _mat_inset
 	_pip_view.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_pip_view.stretch_mode = TextureRect.STRETCH_SCALE
 	_mask_wrap.add_child(_pip_view)
@@ -427,9 +446,9 @@ func _build_render_view() -> void:
 	full.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(full)
 	_build_video_composition(full)
-	# Set the correct mode for frame 0 - Movie Maker records every processed frame,
+	# Set the correct state for frame 0 - Movie Maker records every processed frame,
 	# so leaving this to the first _process() tick would bake one wrong frame in.
-	_apply_view_mode_id(int(session.at_time(0.0).get("view_mode", 2.0)))
+	_apply_frame_state(session.at_time(0.0))
 	_audio.finished.connect(func(): get_tree().quit())
 
 
@@ -455,13 +474,15 @@ func _build_editor_ui() -> void:
 	_timeline.offset_top = -90
 	_timeline.scrubbed.connect(_on_scrub)
 	_timeline.marker_picked.connect(_select_marker)
-	_timeline.marker_moved.connect(func(_m): _refresh_marker_label())
+	_timeline.marker_moved.connect(func(_m):
+		_refresh_marker_label()
+		_mark_dirty())
 	add_child(_timeline)
 
 	_build_panel()
 	_build_export_ui()
 	_refresh_panel()
-	_apply_view_mode_id(int(session.at_time(_player.stream_position).get("view_mode", 2.0)))
+	_apply_frame_state(session.at_time(_player.stream_position))
 
 
 func _build_panel() -> void:
@@ -513,7 +534,7 @@ func _build_panel() -> void:
 	# View toggle: cycles pip (raw + a masked inset) -> masked (full look) -> raw
 	# (the default - just the source video, nothing masked/effected until you
 	# explicitly switch or place a marker) -> back to pip. See VIEW_MODES /
-	# _apply_view_mode_id / MaskSession.DEFAULTS.
+	# _apply_frame_state / MaskSession.DEFAULTS.
 	_view_btn = Button.new()
 	_view_btn.focus_mode = Control.FOCUS_NONE
 	_view_btn.custom_minimum_size = Vector2(160, 0)
@@ -568,17 +589,22 @@ func _build_panel() -> void:
 
 	col.add_child(HSeparator.new())
 	# Every marker is a ramp or a decay - there is no plain/neutral marker (see
-	# MaskSession class doc). A ramp blends UP TO its own values, arriving exactly
-	# at its own time; a decay holds full strength AT its time then blends AWAY
-	# afterward. The kind IS the direction - that's the whole reason there's no
-	# separate left/right field the way an earlier version of this had.
+	# MaskSession class doc). Both transition TO this marker's values; the kind is
+	# which side of the anchor the transition occupies: a ramp eases in BEFORE,
+	# complete at the anchor; a decay begins AT the anchor and accumulates after.
 	col.add_child(_label("Kind - which way this marker's change runs"))
 	_kind = OptionButton.new()
 	for i in MaskSession.MARKER_KINDS.size():
 		_kind.add_item(MaskSession.MARKER_KINDS[i].capitalize(), i)
 	_kind.item_selected.connect(func(id): _edit("kind", float(id)))
 	col.add_child(_kind)
-	_marker_duration = _slider(col, "Ramp/decay span (s)", 0.0, 8.0, func(v): _edit("duration", v))
+	# Exponential response: fine-grained fractions of a second on the left, whole
+	# minutes on the right - one slider covers a subtle 0.2s blend and a transition
+	# spanning the entire clip. (exp_edit needs a strictly positive min.)
+	_marker_duration = _slider(col, "Ramp/decay span (s)", 0.05, maxf(8.0, session.duration),
+		func(v): _edit("duration", v))
+	_marker_duration.exp_edit = true
+	_marker_duration.step = 0.01
 
 	# --- create/delete + the sequential list, pinned to the panel's bottom with its
 	# --- own scroll - the whole "manage markers" workflow stays visible together,
@@ -604,13 +630,13 @@ func _build_panel() -> void:
 	list_col.add_child(mrow)
 	var ramp_btn := Button.new()
 	ramp_btn.text = "+ Ramp"
-	ramp_btn.tooltip_text = "Plant a ramp at the playhead - blends UP TO these values"
+	ramp_btn.tooltip_text = "Eases IN before the playhead, arriving here complete"
 	ramp_btn.focus_mode = Control.FOCUS_NONE
 	ramp_btn.pressed.connect(func(): _add_marker_at_playhead(0))
 	mrow.add_child(ramp_btn)
 	var decay_btn := Button.new()
 	decay_btn.text = "+ Decay"
-	decay_btn.tooltip_text = "Plant a decay at the playhead - holds then blends AWAY"
+	decay_btn.tooltip_text = "Begins here and accumulates over the span that follows"
 	decay_btn.focus_mode = Control.FOCUS_NONE
 	decay_btn.pressed.connect(func(): _add_marker_at_playhead(1))
 	mrow.add_child(decay_btn)
@@ -680,12 +706,14 @@ func _edit(field: String, value: float) -> void:
 	m[field] = value
 	_timeline.selected = _selected
 	_refresh_marker_label()
+	_mark_dirty()
 
 
 func _add_marker_at_playhead(kind_id: int) -> void:
 	_selected = session.add_marker(_player.stream_position if _player != null else 0.0, kind_id)
 	_timeline.selected = _selected
 	_refresh_panel()
+	_mark_dirty()
 
 
 func _delete_selected() -> void:
@@ -694,6 +722,29 @@ func _delete_selected() -> void:
 		_selected = null
 		_timeline.selected = null
 		_refresh_panel()
+		_mark_dirty()
+
+
+# --- auto-save --------------------------------------------------------------
+
+func _mark_dirty() -> void:
+	_dirty = true
+	_autosave_cooldown = _AUTOSAVE_DELAY
+
+
+func _save_session() -> void:
+	if session == null or _session_path.is_empty():
+		return
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(_session_path.get_base_dir()))
+	session.save(ProjectSettings.globalize_path(_session_path))
+	_dirty = false
+
+
+## Whatever the debounce hasn't flushed yet lands on disk when the editor goes
+## away - closing the window mid-burst never loses the last edit.
+func _exit_tree() -> void:
+	if _dirty:
+		_save_session()
 
 
 func _select_marker(m: Dictionary) -> void:
@@ -789,8 +840,10 @@ func _unhandled_input(event: InputEvent) -> void:
 # --- view mode: main (raw/fx) x inset (hidden/raw/fx) --------------------------
 # A per-marker field (MaskSession.VIEW_MODES), not just an editing preference - see
 # class doc. There is deliberately no standalone "current mode" variable: the single
-# source of truth is always session.at_time(playhead).view_mode, read fresh every
-# frame in _process (live AND render_mode alike) and applied via _apply_view_mode_id.
+# source of truth is always session.at_time(playhead), read fresh every frame in
+# _process (live AND render_mode alike) and applied via _apply_frame_state - which
+# consumes the CONTINUOUS per-layer amounts, so mode changes fade across their
+# marker's window instead of popping.
 
 ## The DISPLAY/cycle order - the "evolution": raw, then the inset appears (still
 ## raw), then the inset gets the effect, then the main screen joins it, then
@@ -807,32 +860,36 @@ func _cycle_view_mode() -> void:
 		cur = int(session.at_time(_player.stream_position).get("view_mode", 2.0))
 	var i := VIEW_CYCLE.find(cur)
 	var next_id: int = VIEW_CYCLE[(i + 1) % VIEW_CYCLE.size()] if i >= 0 else VIEW_CYCLE[0]
-	_edit("view_mode", float(next_id))
-	_apply_view_mode_id(next_id)   # immediate feedback - don't wait for next _process
+	_edit("view_mode", float(next_id))   # _process applies it next frame
 
 
-## Applies the mode's layer combination. _player (raw) never moves or hides - the
-## fx overlay and the inset toggle over it independently; the inset's material
-## flips between the shader and nothing (a raw duplicate) per mode.
-func _apply_view_mode_id(id: int) -> void:
-	var mode: String = MaskSession.VIEW_MODES[clampi(id, 0, MaskSession.VIEW_MODES.size() - 1)]
-	var main_fx := mode == "masked" or mode == "masked_pip"
-	var inset := mode == "pip" or mode == "pip_raw" or mode == "masked_pip"
-	var inset_fx := mode != "pip_raw"
-	_fx_overlay.visible = main_fx
-	_mask_wrap.visible = inset
-	if inset:
-		_pip_view.material = _mat if inset_fx else null
-		_mask_wrap.anchor_left = 0.66
-		_mask_wrap.anchor_top = 0.64
-		_mask_wrap.anchor_right = 0.98
-		_mask_wrap.anchor_bottom = 0.96
-		_mask_wrap.offset_left = 0
-		_mask_wrap.offset_top = 0
-		_mask_wrap.offset_right = 0
-		_mask_wrap.offset_bottom = 0
+## Pushes one resolved timeline state (see MaskSession.at_time) into the layers:
+## channel params to both materials, each layer's intensities scaled by its own
+## PRESENCE amount - so "how present is this layer" is a continuous, blendable
+## quantity and a mode transition is a fade, not a toggle. The inset's border
+## fades with it (modulate), and fully-absent layers are hidden entirely so they
+## cost nothing.
+func _apply_frame_state(p: Dictionary) -> void:
+	var main_amt := clampf(float(p.get("main_fx", 0.0)), 0.0, 1.0)
+	var inset_show := clampf(float(p.get("inset_show", 0.0)), 0.0, 1.0)
+	var inset_fx := clampf(float(p.get("inset_fx", 0.0)), 0.0, 1.0)
+	for mat in [_mat_main, _mat_inset]:
+		mat.set_shader_parameter("u_hue_a", p.hue_a)
+		mat.set_shader_parameter("u_hue_b", p.hue_b)
+		mat.set_shader_parameter("u_threshold", p.threshold)
+		mat.set_shader_parameter("u_feather", p.feather)
+		mat.set_shader_parameter("u_sat_floor", p.sat_floor)
+		mat.set_shader_parameter("u_effect_a", int(p.effect_a))
+		mat.set_shader_parameter("u_effect_b", int(p.effect_b))
+	_mat_main.set_shader_parameter("u_intensity_a", float(p.intensity_a) * main_amt)
+	_mat_main.set_shader_parameter("u_intensity_b", float(p.intensity_b) * main_amt)
+	_mat_inset.set_shader_parameter("u_intensity_a", float(p.intensity_a) * inset_fx)
+	_mat_inset.set_shader_parameter("u_intensity_b", float(p.intensity_b) * inset_fx)
+	_fx_overlay.visible = main_amt > 0.001
+	_mask_wrap.visible = inset_show > 0.001
+	_mask_wrap.modulate.a = inset_show
 	if _view_btn != null:
-		match mode:
+		match MaskSession.VIEW_MODES[clampi(int(p.get("view_mode", 2.0)), 0, MaskSession.VIEW_MODES.size() - 1)]:
 			"raw":        _view_btn.text = "🎬  Raw"
 			"pip_raw":    _view_btn.text = "🖼  PiP (raw)"
 			"pip":        _view_btn.text = "🖼  PiP (fx)"
@@ -880,19 +937,9 @@ func _process(_dt: float) -> void:
 			_timeline.waveform_texture = _load_png(abs_wave)
 	if session == null or _player == null:
 		return
-	var p := session.at_time(_player.stream_position)
-	_mat.set_shader_parameter("u_hue_a", p.hue_a)
-	_mat.set_shader_parameter("u_hue_b", p.hue_b)
-	_mat.set_shader_parameter("u_threshold", p.threshold)
-	_mat.set_shader_parameter("u_feather", p.feather)
-	_mat.set_shader_parameter("u_sat_floor", p.sat_floor)
-	_mat.set_shader_parameter("u_effect_a", int(p.effect_a))
-	_mat.set_shader_parameter("u_effect_b", int(p.effect_b))
-	_mat.set_shader_parameter("u_intensity_a", p.intensity_a)
-	_mat.set_shader_parameter("u_intensity_b", p.intensity_b)
 	# Same call, live or exported: whatever the timeline says at this instant is
 	# what's shown - render_mode doesn't special-case a fixed "always masked" look.
-	_apply_view_mode_id(int(p.get("view_mode", 2.0)))
+	_apply_frame_state(session.at_time(_player.stream_position))
 	# Only one video ever decodes (_player); the fx overlay and the inset just
 	# re-draw that same frame, each only when actually on screen - "raw" mode skips
 	# both (and the shader passes they'd otherwise cost) entirely.
@@ -905,6 +952,13 @@ func _process(_dt: float) -> void:
 	if _time_label != null:
 		_time_label.text = "%s / %s" % [
 			MaskTimeline.format_time(_player.stream_position), MaskTimeline.format_time(session.duration)]
+	# Auto-save: any edit marks the session dirty (see _mark_dirty); it lands on
+	# disk shortly after the LAST change in a burst - a slider drag saves once,
+	# not once per pixel of mouse travel.
+	if _dirty:
+		_autosave_cooldown -= _dt
+		if _autosave_cooldown <= 0.0:
+			_save_session()
 	_poll_render()
 
 

@@ -244,7 +244,7 @@ async function prefetchTabs() {
             // A dirty flag raised on one tab must never be spent on another:
             // with the flag pending (cooldown/interaction/retry timer), a tab
             // switch used to leak a forced refresh into the NEW tab seconds
-            // after it opened - rebuilding e.g. Customs for an invalidation
+            // after it opened - rebuilding e.g. Architecture for an invalidation
             // it is deliberately not subscribed to. The departed tab is the
             // hidden-warm plane's job now.
             if (visibleDirty && visibleDirtyTab !== state.currentTab) {
@@ -272,7 +272,7 @@ async function prefetchTabs() {
     };
 
     // Server invalidation topics each tab's data actually depends on. The
-    // spec/Customs tab is launch-time identity: no topic, so the step-rate
+    // spec/Architecture tab is launch-time identity: no topic, so the step-rate
     // "metrics" invalidations never force its in-place rebuild (which redraws
     // every card title - a visible flicker for zero new data). It still
     // refreshes off-screen via the hidden prewarm and on run selection.

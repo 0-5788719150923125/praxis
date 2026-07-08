@@ -151,7 +151,7 @@ export const state = {
         },
         {
             id: 'spec',
-            label: 'Customs',
+            label: 'Architecture',
             active: false,
             containerClass: 'spec-container',
             customClasses: [],

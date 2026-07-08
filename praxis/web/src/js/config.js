@@ -306,7 +306,7 @@ export const SPEC_CONFIG = {
         },
         {
             id: 'architecture',
-            title: 'Architecture',
+            title: 'Blueprint',
             condition: (data) => data.model_architecture,
             order: 4
         },

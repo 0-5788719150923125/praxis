@@ -12,22 +12,26 @@ class_name MaskSession
 ## compared, or correlated the same way instead of living as opaque nested JSON.
 ##
 ## Every marker is one of two KINDS (see MARKER_KINDS) - there is no plain/neutral
-## marker. A change from one state to another is always either a RAMP (this
-## marker's own values are blended UP TO, arriving exactly at its own time - the
-## span is the `duration` seconds BEFORE it) or a DECAY (this marker's values hold
-## at full strength exactly at its own time, then blend AWAY toward whatever comes
-## next - the span is the `duration` seconds AFTER it). The kind is the whole
-## direction: no separate left/right field, because which side of the marker the
-## blend occupies IS what "ramp" vs "decay" means. Outside its own span, a marker
-## just holds its value - so a ramp marker with duration 0 is an instant cut
-## approaching from a held predecessor, and a decay with duration 0 is an instant
-## cut into whatever follows; the natural degenerate case of a jump-cut is just a
-## zero-length one of either kind, not a third case to special-case.
+## marker. BOTH kinds are a transition TO the marker's own values; the kind is
+## which side of the anchor the transition occupies:
+##   RAMP  - eases in over the `duration` seconds BEFORE the anchor, arriving
+##           complete exactly at the marker's time (anticipation - the change
+##           builds toward a known landing point).
+##   DECAY - begins AT the anchor and accumulates over the `duration` seconds
+##           AFTER it - the prior state decays INTO this marker's values (the
+##           underlying footage is progressively consumed by the effect, like an
+##           audio decay envelope). Nothing happens before the anchor.
+## Once its transition completes, a marker's values simply hold until the next
+## marker's transition takes over. A zero-length marker of either kind is an
+## instant cut - the natural degenerate case, not a third kind to special-case.
+## (To fade an effect OUT, transition to a marker whose intensity is 0 - fading
+## out is just a transition whose destination happens to be "nothing".)
 ##
-## Discrete fields (effect ids, swap, view_mode) can't have a "half-way" value, so
-## they always snap exactly at a marker's own time regardless of its kind -
-## continuous fields (hue, threshold, intensity, ...) are what ramp/decay actually
-## shapes. See at_time for the full blend.
+## Discrete fields (effect ids, swap, view_mode) can't have a "half-way" value:
+## for a decay they snap at the anchor (where its transition begins); for a ramp
+## they snap at the START of its window (the arriving marker's stage has to be up
+## while its intensities ease in - see at_time). Continuous fields (hue,
+## threshold, intensity, ...) are what the transition actually shapes.
 
 ## The vector schema. Order is the contract - to_vector()/from_vector() and any
 ## future analysis code index into this list, so append, never reorder or remove.
@@ -110,24 +114,56 @@ func remove_marker(m: Dictionary) -> void:
 		markers.remove_at(i)
 
 
-## The blended parameter dictionary at time `t`.
+## The DERIVED per-layer presence amounts (0..1) a view mode implies. view_mode is
+## stored discrete (a marker names a destination look, whole), but what actually
+## transitions on screen is each LAYER's presence - and those blend continuously
+## through ramp/decay windows like any other continuous quantity, so a move from
+## "fx inset" to "both" fades the main overlay in over the span instead of popping
+## it (the pop was exactly what made mode transitions read as instant regardless
+## of the window). Keys are AMOUNT_FIELDS; at_time() carries them in its result.
+const AMOUNT_FIELDS := ["main_fx", "inset_show", "inset_fx"]
+
+static func mode_amounts(view_mode_val) -> Dictionary:
+	var id := int(view_mode_val)
+	return {
+		"main_fx": 1.0 if (id == 1 or id == 4) else 0.0,             # masked, masked_pip
+		"inset_show": 1.0 if (id == 0 or id == 3 or id == 4) else 0.0,  # pip, pip_raw, masked_pip
+		"inset_fx": 1.0 if (id == 0 or id == 4) else 0.0,            # pip, masked_pip
+	}
+
+
+# The amounts of a resolved at_time() state: already carried in the dict if it came
+# through at_time (mid-blend values), else derived fresh from its view_mode.
+static func _amounts_of(state: Dictionary) -> Dictionary:
+	if state.has("main_fx"):
+		return state
+	return mode_amounts(state.get("view_mode", 2.0))
+
+
+## The blended parameter dictionary at time `t`. Carries CONTINUOUS_FIELDS,
+## DISCRETE_FIELDS, and the derived AMOUNT_FIELDS (per-layer presences).
 ##
 ## Discrete fields snap to whichever marker currently governs (the one at/before
-## `t`, or the first marker if `t` precedes everything - same fallback DEFAULTS
-## already uses elsewhere).
+## `t`) - EXCEPT inside an approaching ramp's window, where the ramp marker's
+## discrete fields take over at the window's START (the arriving marker's stage is
+## up while it eases in). The per-layer AMOUNTS, though, always blend continuously
+## across a window - intensity is "how strong the channel is", amounts are "how
+## present each layer is", and a mode change is an amounts transition.
 ##
-## Continuous fields default to holding at that same governing marker's value, then
-## two independent checks can override that hold:
+## Continuous fields (and amounts) default to holding at the governing state, then:
 ##   - the NEXT marker, if it's a ramp, blends UP TO ITSELF over its own `duration`
-##     seconds BEFORE its time - so if `t` falls in that window, we're approaching it.
-##   - the CURRENT marker, if it's a decay, blends AWAY FROM ITSELF over its own
-##     `duration` seconds AFTER its time, toward the next marker (or DEFAULTS, if
-##     it's the last one) - so if `t` falls in that window, we're departing it.
+##     seconds BEFORE its time, from the state resolved at the window's start.
+##   - the CURRENT marker, if it's a decay, ACCUMULATES from the prior resolved
+##     state TOWARD ITS OWN values over the `duration` seconds AFTER its anchor -
+##     the prior footage/state decays INTO this marker. Once accumulated, it holds
+##     (`f` clamps at 1).
 ## (Checked in that order; on the rare pathological overlap - both windows covering
 ## the same instant - decay wins, simply because it's evaluated second.)
 func at_time(t: float) -> Dictionary:
 	if markers.is_empty():
-		return DEFAULTS.duplicate()
+		var d0 := DEFAULTS.duplicate()
+		d0.merge(mode_amounts(d0.get("view_mode", 2.0)))
+		return d0
 	var cur = null
 	var nxt = null
 	for m in markers:
@@ -136,17 +172,13 @@ func at_time(t: float) -> Dictionary:
 		elif nxt == null:
 			nxt = m
 
-	# Bug fixed here: this used to fall back to markers[0] (the first marker's OWN
-	# discrete values) before that marker's time - so view_mode would leak
-	# BACKWARD across the whole prefix of the timeline before the first marker ever
-	# arrived, instead of only taking effect exactly at its boundary. DEFAULTS is
-	# the correct "nothing has happened yet" state, matching what CONTINUOUS_FIELDS
-	# already does below - a discrete change (including which view mode is shown)
-	# resets to default and then snaps at each marker's own time, not before it.
+	# DEFAULTS (not markers[0]) before the first marker: a marker's discrete values
+	# must not leak backward across the timeline prefix before it ever arrives.
 	var discrete_src: Dictionary = cur if cur != null else DEFAULTS
 	var out := {}
 	for key in DISCRETE_FIELDS:
 		out[key] = discrete_src.get(key, DEFAULTS.get(key, 0.0))
+	out.merge(mode_amounts(out.get("view_mode", 2.0)), true)
 
 	var base: Dictionary = cur if cur != null else DEFAULTS
 	for key in CONTINUOUS_FIELDS:
@@ -156,34 +188,47 @@ func at_time(t: float) -> Dictionary:
 	# before everything) pulling us toward it right now? The source value is
 	# whatever was ACTUALLY active right as this ramp's window opened - recursing
 	# to at_time() just before span_start rather than just reading cur's raw stored
-	# value, because cur might itself be mid-decay at that instant (a decay ending
-	# exactly where the next marker's ramp begins is a real case, not just
-	# hypothetical - reading cur's raw value there produced a visible glitch:
-	# smoothly decay to 0, then jump back up before ramping down again). The query
-	# is nudged strictly BEFORE span_start (not queried at span_start itself) -
-	# querying exactly at the boundary would resolve the identical window again and
-	# recurse forever (hit this the hard way: real stack overflow, not theoretical).
+	# value, because cur might itself be mid-decay at that instant. The query is
+	# nudged strictly BEFORE span_start - querying exactly at the boundary would
+	# resolve the identical window again and recurse forever (hit this the hard
+	# way: real stack overflow, not theoretical).
 	var approaching = nxt if nxt != null else (markers[0] if cur == null else null)
 	if approaching != null and int(approaching.get("kind", 0.0)) == 0:
 		var d: float = maxf(0.001, float(approaching.get("duration", 1.0)))
 		var span_start: float = float(approaching.time) - d
 		if t >= span_start and t <= float(approaching.time):
-			var src: Dictionary = at_time(span_start - 0.001)
+			var src := at_time(span_start - 0.001)
 			var f := (t - span_start) / d
 			for key in CONTINUOUS_FIELDS:
 				out[key] = lerpf(float(src.get(key, DEFAULTS.get(key, 0.0))),
 					float(approaching.get(key, DEFAULTS.get(key, 0.0))), f)
+			# The arriving marker's stage is already up while it eases in...
+			for key in DISCRETE_FIELDS:
+				out[key] = approaching.get(key, DEFAULTS.get(key, 0.0))
+			# ...but each LAYER's presence fades across the window, so a mode
+			# change is a gradual arrival, not a pop at the window's edge.
+			var src_amt := _amounts_of(src)
+			var dst_amt := mode_amounts(approaching.get("view_mode", 2.0))
+			for key in AMOUNT_FIELDS:
+				out[key] = lerpf(float(src_amt.get(key, 0.0)), float(dst_amt.get(key, 0.0)), f)
 
-	# Decay: is the marker we just passed (cur) still fading away from us right now?
-	if cur != null and int(cur.get("kind", 0.0)) == 1:
+	# Decay: is the marker we're past (cur) still accumulating? The prior state
+	# (whatever was actually on screen just before the anchor - resolved
+	# recursively, nudged strictly earlier for the same no-infinite-recursion
+	# reason as the ramp above) decays INTO cur's own values over the window.
+	# No upper bound - f clamps at 1, so once fully accumulated it HOLDS cur's
+	# values until the next marker takes over.
+	if cur != null and int(cur.get("kind", 0.0)) == 1 and t >= float(cur.time):
 		var d: float = maxf(0.001, float(cur.get("duration", 1.0)))
-		var span_end: float = float(cur.time) + d
-		if t >= float(cur.time) and t <= span_end:
-			var dst: Dictionary = nxt if nxt != null else DEFAULTS
-			var f := (t - float(cur.time)) / d
-			for key in CONTINUOUS_FIELDS:
-				out[key] = lerpf(float(cur.get(key, DEFAULTS.get(key, 0.0))),
-					float(dst.get(key, DEFAULTS.get(key, 0.0))), f)
+		var src := at_time(float(cur.time) - 0.001)
+		var f := clampf((t - float(cur.time)) / d, 0.0, 1.0)
+		for key in CONTINUOUS_FIELDS:
+			out[key] = lerpf(float(src.get(key, DEFAULTS.get(key, 0.0))),
+				float(cur.get(key, DEFAULTS.get(key, 0.0))), f)
+		var src_amt := _amounts_of(src)
+		var dst_amt := mode_amounts(cur.get("view_mode", 2.0))
+		for key in AMOUNT_FIELDS:
+			out[key] = lerpf(float(src_amt.get(key, 0.0)), float(dst_amt.get(key, 0.0)), f)
 
 	return out
 
