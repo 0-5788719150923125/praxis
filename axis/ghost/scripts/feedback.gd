@@ -23,9 +23,9 @@ class_name FeedbackConsole
 signal closed
 
 ## Emitted right after a submission is written to disk (see _write) - the hook
-## point for --assistant (see assistant.gd): index/query/stem are everything
-## Assistant.enqueue needs to dispatch a fresh claude session at this exact
-## feedback record.
+## point for the splash's Assistant dropdown (see assistant.gd): index/query/
+## stem are everything Assistant.enqueue needs to dispatch a fresh claude
+## session at this exact feedback record.
 signal submitted(index: int, query: String, stem: String)
 
 const DIR := "res://feedback"

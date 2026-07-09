@@ -37,6 +37,7 @@ var _beat_prev := 0.0
 var _loud := 0.0             # lightning: smoothed loudness (energy) - the audio-liveness gate
 var _flux_prev := 0.0        # lightning: smoothed spectral flux, for onset (transient) detection
 var _life_alpha := 1.0       # set per-filament before its draw, read by _color_for
+var _ever_alive := false     # lightning: has the audio-liveness gate ever opened yet
 var _strike_acc := 0.0       # lightning: time since the last strike
 var _strike_period := 1.6    # lightning: fallback re-strike cadence (sampled), so it
                              # strikes even with no detectable beats - never pure black
@@ -183,6 +184,8 @@ func _update_strikes(f: AudioFeatures, delta: float, grow: float, beat_edge: boo
 	# it so a fade-in ramps in gradually, and treat sub-threshold loudness as dead air.
 	_loud = lerpf(_loud, f.energy, 1.0 - exp(-5.0 * delta))
 	var alive := _loud > 0.13
+	if alive:
+		_ever_alive = true
 	# A spectral-flux onset (a harmonic transient) scatters a fresh strike while alive.
 	var onset := alive and f.flux > 0.02 and f.flux > _flux_prev * 1.5
 	_flux_prev = lerpf(_flux_prev, f.flux, 0.35)
@@ -193,8 +196,11 @@ func _update_strikes(f: AudioFeatures, delta: float, grow: float, beat_edge: boo
 			any_active = true
 	# Beats fire whenever the beat detector triggers (it only fires on real audio anyway). The
 	# fallback cadence and the never-black backstop are gated on `alive`, so silence stays dark.
-	# `spont` = the rare spontaneous activation: strike even in dead air, so a silent outro still flickers.
-	var trigger := beat_edge or onset or spont or (alive and (_strike_acc >= _strike_period or not any_active))
+	# `spont` = the rare spontaneous activation: strike even in dead air, so a silent OUTRO still
+	# flickers - but only once the song has actually been alive at least once, so an intro's
+	# fade-in never scatters a bolt out of dead air before there is any real sound to react to.
+	var trigger := beat_edge or onset or (spont and _ever_alive) \
+		or (alive and (_strike_acc >= _strike_period or not any_active))
 	if trigger:
 		_strike_acc = 0.0
 		_strike_some((alive or spont) and not any_active)

@@ -87,6 +87,18 @@ uniform int u_l_elag[6];
 // and follows it smoothly as it moves.
 uniform vec2 u_anchor = vec2(0.5, 0.5);
 
+// Wave impulses (whisp only): a fast head turn, detected CPU-side as an onset
+// in frame-to-frame luminance (see mask_editor.gd's _update_wave_impulses),
+// seeds a drop of whisp's own paint at u_wave_pos[i] starting at playback time
+// u_wave_time[i], carried off by the local current (wave_wash below) instead
+// of expanding as a ring. u_wave_amp is 0 for an unused slot, so idle sessions
+// (or footage with no sudden motion) never pay for or show anything here -
+// the all-zero defaults below are the "inactive" state.
+const int WAVEN = 3;
+uniform vec2 u_wave_pos[3];
+uniform float u_wave_time[3];
+uniform float u_wave_amp[3];
+
 vec3 rgb2hsv(vec3 c) {
 	vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
 	vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
@@ -167,6 +179,34 @@ vec3 voronoi_f1f2(vec2 p) {
 		}
 	}
 	return vec3(f1, f2, id);
+}
+
+// Nearest independent root in a jittered cell grid, returning the point-to-root
+// VECTOR (not just its length, unlike voronoi_f1f2 above) - fur uses this to
+// tell whether it sits upstream or downstream of its own root and how far off
+// its centerline it drifted. Each cell's root is scattered at its own random
+// offset, so neighboring tufts start from genuinely independent places rather
+// than a shared lattice or a single shared point.
+vec3 follicle_delta(vec2 p) {
+	vec2 ip = floor(p);
+	vec2 fp = fract(p);
+	float best_d = 1e9;
+	vec2 best_delta = vec2(0.0);
+	float best_id = 0.0;
+	for (int y = -1; y <= 1; y++) {
+		for (int x = -1; x <= 1; x++) {
+			vec2 g = vec2(float(x), float(y));
+			vec2 root = g + hash22(ip + g);
+			vec2 delta = fp - root;
+			float d = dot(delta, delta);
+			if (d < best_d) {
+				best_d = d;
+				best_delta = delta;
+				best_id = hash21(ip + g + 3.7);
+			}
+		}
+	}
+	return vec3(best_delta, best_id);
 }
 
 // One past frame from the echo ring by age (0 = newest capture .. 7 = oldest).
@@ -261,6 +301,33 @@ float wisp_field(vec2 uv, int effect, float t, vec2 off, float scl) {
 	vec2 drift = vec2(0.10 * t, -0.22 * t);
 	vec2 w = vec2(fbm(p * 1.3 + drift * 0.5), fbm(p * 1.1 - drift * 0.3));
 	return fbm(p + drift + 0.8 * w);
+}
+
+// A single wave impulse's trail: a drop carried along `flow` (the same local
+// current whisp's tendrils follow) rather than a ring radiating outward from
+// `origin` in every direction - the drop's effective position at `age`
+// drifts downstream with the current, and brightness decays with BOTH elapsed
+// time (the drop dilutes as it travels) and distance from that drifting
+// position (a soft blob, not a thin shell).
+float wave_ring(vec2 uv, vec2 origin, float age, float amp, vec2 flow) {
+	if (amp <= 0.001 || age < 0.0 || age > 6.0) {
+		return 0.0;
+	}
+	vec2 carried = origin + flow * age * 0.4;
+	float dist = length((uv - carried) * vec2(u_aspect, 1.0));
+	float spread = 0.1 + age * 0.05;   // the blob widens slowly as it dilutes
+	float band = exp(-pow(dist / spread, 2.0));
+	float decay = exp(-age * 0.6) * amp;
+	return band * decay;
+}
+
+// Sum of every live impulse's trail, sampled at this pixel.
+float wave_wash(vec2 uv, vec2 flow) {
+	float acc = 0.0;
+	for (int i = 0; i < WAVEN; i++) {
+		acc += wave_ring(uv, u_wave_pos[i], u_time - u_wave_time[i], u_wave_amp[i], flow);
+	}
+	return clamp(acc, 0.0, 1.0);
 }
 
 // THE REMNANT RULE. Suppressing a keyed pixel by scaling its RGB keeps its HUE -
@@ -543,6 +610,10 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 	}
 	float field;
 	float t_eff = u_time * u_l_speed[i];
+	// The local current at this pixel (whisp's tangent flow, feature-following) -
+	// wave_wash below rides the same field so an impulse is carried BY it rather
+	// than radiating outward independent of it.
+	vec2 flow = vec2(0.0);
 	if (effect == 5) {
 		// WHISP - the content-aware volumetric. Its field is not independent of
 		// the picture: the fine tap ring doubles as a luminance-gradient probe,
@@ -563,7 +634,7 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 			grad += vec2(cos(am), sin(am)) * taps[k2 + 9].z
 				+ vec2(cos(aw), sin(aw)) * taps[k2 + 17].z;
 		}
-		vec2 flow = vec2(-grad.y, grad.x) * 1.5;
+		flow = vec2(-grad.y, grad.x) * 1.5;
 		// LOCAL anchor pull, not rigid translation: full tracking at the
 		// landmark, exponentially fading with distance from it - the field
 		// near the face rides the lock while the far field stays put. Applied
@@ -595,6 +666,70 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		vec2 drift2 = vec2(0.02 * t_eff, 0.015 * t_eff);
 		float n2 = fbm(p2 * 1.4 + drift2 + conform);
 		field = pow(1.0 - abs(2.0 * n2 - 1.0), 2.2);
+	} else if (effect == 10) {
+		// FUR - many INDEPENDENT tufts, each rooted at its own scattered
+		// point (follicle_delta above) rather than combed from one shared
+		// anchor - nothing radiates in straight lines from a center anymore.
+		// Growth direction is a near-constant WIND vector: a gentle bias to
+		// one side, "as if it were blowing in the wind," rather than
+		// splaying every direction. Local recoil from wherever the KEY
+		// COLOR's complementary hue (ghost's standard fposmod(hue+0.5,1)
+		// idiom) is densest nearby only NUDGES that wind aside - red fur
+		// still recoils from a nearby dense blue - the same gated "feature
+		// conformance" shape freeze/crystal already use, kept small so the
+		// one-sided bias never fragments into per-pixel noise. Each tuft
+		// grows downstream from its own root and fades out after its own
+		// randomized reach, and roots only come alive where the footage
+		// actually carries "feature line" content - dense key-color mass
+		// or a sharp edge in it (hairline, eye, mouth) - rather than
+		// uniformly everywhere. The same double-fbm current warp as before
+		// keeps the strand texture flowing like water, not static rows; a
+		// second, finer octave along the same axis is the individual-hair
+		// texture riding the base tuft.
+		vec2 wind10 = normalize(vec2(0.82, -0.38)
+			+ vec2(sin(t_eff * 0.07), cos(t_eff * 0.05)) * 0.05);
+		float comp_hue10 = mod(u_l_hue[i] + 0.5, 1.0);
+		vec2 comp_grad10 = vec2(0.0);
+		vec2 key_grad10 = vec2(0.0);
+		float key_density10 = 0.0;
+		for (int k10 = 0; k10 < 8; k10++) {
+			float am10 = float(k10) * 0.7853981634 + 0.3926990817;
+			float aw10 = float(k10) * 0.7853981634 + 0.1963495409;
+			float cm_mid = tap_mask(comp_hue10, taps[k10 + 9]);
+			float cm_wide = tap_mask(comp_hue10, taps[k10 + 17]);
+			comp_grad10 += vec2(cos(am10), sin(am10)) * cm_mid + vec2(cos(aw10), sin(aw10)) * cm_wide;
+			float km_mid = tap_mask(u_l_hue[i], taps[k10 + 9]);
+			float km_wide = tap_mask(u_l_hue[i], taps[k10 + 17]);
+			key_grad10 += vec2(cos(am10), sin(am10)) * km_mid + vec2(cos(aw10), sin(aw10)) * km_wide;
+			key_density10 += km_mid + km_wide;
+		}
+		key_density10 /= 16.0;
+		float recoil_feat10 = smoothstep(0.05, 0.35, length(comp_grad10));
+		vec2 recoil10 = length(comp_grad10) > 1e-4 ? -normalize(comp_grad10) : vec2(0.0);
+		vec2 growth10 = normalize(wind10 + recoil10 * 0.45 * recoil_feat10);
+		vec2 cross10 = vec2(-growth10.y, growth10.x);
+		vec2 p10 = (uv * vec2(u_aspect, 1.0) + u_l_off[i]) * (3.0 * u_l_scale[i]);
+		float along10 = dot(p10, growth10);
+		float across10 = dot(p10, cross10);
+		// Follicle cells stretched long downstream, narrow across - each
+		// root jittered inside its own cell, so tufts start independently
+		// instead of tiling a rigid lattice.
+		vec3 foll10 = follicle_delta(vec2(across10 * 3.0, along10 * 0.45));
+		float downstream10 = foll10.y;
+		float root_len10 = 0.85 + 1.7 * hash21(vec2(foll10.z, foll10.z * 5.1));
+		float start_fade10 = smoothstep(-0.04, 0.10, downstream10);
+		float end_fade10 = 1.0 - smoothstep(root_len10 * 0.55, root_len10, downstream10);
+		float across_fade10 = exp(-pow(foll10.x * 2.4, 2.0));
+		float presence10 = start_fade10 * end_fade10 * across_fade10;
+		float feature10 = clamp(key_density10 * 0.8
+			+ smoothstep(0.05, 0.3, length(key_grad10)) * 0.5, 0.0, 1.0);
+		presence10 *= smoothstep(0.08, 0.42, feature10);
+		vec2 wp10 = p10 * 0.4 + vec2(t_eff * 0.05, -t_eff * 0.035);
+		vec2 current10 = vec2(fbm(wp10), fbm(wp10 + 11.3)) - 0.5;
+		vec2 drift10 = vec2(t_eff * 0.06, 0.0) + current10 * 0.8;
+		float base_strand = fbm(vec2(across10 * 9.0, along10 * 1.3) + drift10);
+		float fine_strand = fbm(vec2(across10 * 24.0, along10 * 1.3) + drift10 * 1.4);
+		field = clamp((base_strand * 0.65 + fine_strand * 0.35) * presence10, 0.0, 1.0);
 	} else {
 		field = wisp_field(uv, effect, t_eff, u_l_off[i], u_l_scale[i]);
 	}
@@ -606,9 +741,9 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 	// Edge softness / rim strength per pattern: fire cuts thin bright licks,
 	// ice glints hard along its veins, smoke stays soft and gauzy. The edge band
 	// narrows with contrast, so high contrast cuts crisp, not just dark.
-	float sharp = effect == 1 ? 0.10 : (effect == 2 ? 0.06 : 0.18);
+	float sharp = effect == 1 ? 0.10 : (effect == 2 ? 0.06 : (effect == 10 ? 0.13 : 0.18));
 	sharp *= mix(1.6, 0.4, con);
-	float glow = (effect == 1 ? 0.95 : (effect == 2 ? 0.75 : 0.5)) * u_l_glow[i];
+	float glow = (effect == 1 ? 0.95 : (effect == 2 ? 0.75 : (effect == 10 ? 0.6 : 0.5))) * u_l_glow[i];
 	// Tail-weighted coverage response: gentle through the working midrange,
 	// accelerating hard at both ends so the slider genuinely reaches fully-sparse
 	// and fully-dense (the cubic hits 0 and 1 exactly). "Fully dense" still
@@ -649,7 +784,9 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 	// Freeze's rim IS its emission (below), so only fire/smoke fold the rim
 	// into the dark lip - freeze's edge glows instead of charring.
 	float lip = rim * clamp(0.6 * glow, 0.0, 1.0);
-	float shape = (effect == 2 || effect == 5) ? consume : max(consume, lip);
+	// Fur reads as groomed strands, not something charring at the edge - it
+	// joins freeze/whisp's "the rim glows, it doesn't fold into a dark lip" side.
+	float shape = (effect == 2 || effect == 5 || effect == 10) ? consume : max(consume, lip);
 	float suppress = shade_amount(shape * vol_conf * w, uv);
 	vec3 outc = suppressed_remnant(col.rgb, suppress);
 	// The EMISSIVE BODY - the effect's visible substance, in its own FIXED
@@ -660,7 +797,9 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 	// defining line-work, bright and distinct even at sparse coverage; smoke
 	// stays pure consumption. Resonance pulses this through the glow factor.
 	// An effect that only darkens is invisible on dark footage - fire and ice
-	// must carry their own light.
+	// must carry their own light. Fur is the ONE deliberate exception to
+	// "never the key hue" (see the class doc in mask_session.gd) - it's
+	// supposed to look colored like the thing it grew from, not a fixed tint.
 	float heat = smoothstep(thr, thr + 0.4, field);
 	vec3 emiss = vec3(0.0);
 	if (effect == 1) {
@@ -671,8 +810,18 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		// whisp: soft pearl streamers - a spectral, moon-grey light distinct
 		// from fire's amber and freeze's ice blue.
 		emiss = vec3(0.72, 0.82, 0.92) * (heat * 0.45 + rim * 0.5);
+	} else if (effect == 10) {
+		vec3 fur_col = clamp(vec3(0.5) + u_l_tdir[i] * 0.62, 0.0, 1.0);
+		emiss = fur_col * (heat * 0.55 + rim * 0.6);
 	}
 	outc += emiss * (glow * vol_conf * w);
+	if (effect == 5) {
+		// WAVE WASH - a head-turn impulse reads as a drop of the same paint
+		// whisp is already made of, caught in its current: confined to the
+		// volumetric field (vol_conf) like the rest of this function, riding
+		// `flow` instead of radiating past the keyed region on its own.
+		outc += vec3(0.72, 0.82, 0.92) * wave_wash(uv, flow) * vol_conf * w * 1.6;
+	}
 	return vec4(outc, col.a);
 }
 

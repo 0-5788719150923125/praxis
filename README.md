@@ -160,6 +160,35 @@ To apply [dev](environments/dev.yml) settings within your [environment](environm
 ./launch --alpha --dev --device cuda:8 --quiet
 ```
 
+## use with transformers
+
+`PraxisForCausalLM` is a real `PreTrainedModel` + `GenerationMixin`, so once registered, any Praxis checkpoint works with the `transformers` Auto* classes:
+
+```py
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from praxis import PraxisConfig
+from praxis.trainers import register_praxis_models
+
+register_praxis_models()
+
+config = PraxisConfig(
+    embed_size=512,
+    hidden_size=384,
+    depth=6,
+    num_heads=8,
+    device_map="cuda:0",
+)
+
+tokenizer = AutoTokenizer.from_pretrained("UNSAFE/praxis-4096")
+model = AutoModelForCausalLM.from_config(config)
+
+input_ids = tokenizer.encode("The quick brown fox ")
+outputs = model.generate(input_ids, do_sample=True)
+
+print(tokenizer.decode(outputs[0], skip_special_tokens=True))
+# --> The quick brown fox jumped over a lazy dog.
+```
+
 </details>
 
 <details>
@@ -183,37 +212,6 @@ The Customs tab inspects the instantiated model. Its Architecture card renders t
 ## side projects
 
 The [`axis/`](./axis/README.md) directory holds standalone side projects that live in this repo but have little or no integration with Praxis. It currently contains [Axis](./axis/axis/README.md), an older Godot app for controlling Praxis, and [nuTube](./axis/nutube/README.md), an experiment in a local-first YouTube recommender that runs entirely on the device.
-
-## to register with transformers
-
-```py
-from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
-from praxis import PraxisConfig, PraxisForCausalLM, PraxisModel
-
-AutoConfig.register("praxis", PraxisConfig)
-AutoModel.register(PraxisConfig, PraxisModel)
-AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
-
-config = PraxisConfig(
-    embed_size=512,
-    hidden_size=384,
-    depth=6,
-    num_heads=8,
-    device_map="cuda:0",
-)
-
-tokenizer_model = "UNSAFE/praxis-4096"
-tokenizer = AutoTokenizer.from_pretrained(tokenizer_model)
-
-model = AutoModelForCausalLM.from_config(config)
-
-input_ids = tokenizer.encode("The quick brown fox ")
-
-outputs = model.generate(input_ids, do_sample=True)
-
-print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
-# --> The quick brown fox jumped over a lazy dog.
-```
 
 </details>
 

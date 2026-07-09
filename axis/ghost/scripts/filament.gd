@@ -30,6 +30,13 @@ const VARIANTS := {
 		"bias_amt": 0.10, "tendril": 0.26},
 	"thread":    {"flow_follow": 0.92, "branch": 0.05, "max_depth": 2, "ratio": 0.85,
 		"spread": 0.50, "jitter": 0.01, "kink": 0.0, "taper": 0.96, "bias_ang": 0.0, "bias_amt": 0.0},
+	# fur: long, mostly-unbranched strands that hold a LEAN (bias_amt is meaningfully
+	# strong, reasserted every step) rather than wandering freely - the flow field
+	# adds a gentle organic curl on top, it doesn't dominate the direction the way
+	# root/tendril growth does. bias_ang is a per-call override in practice (see
+	# scenes/furry.gd) - every tuft leans its own way, not one fixed heading.
+	"fur":       {"flow_follow": 0.22, "branch": 0.05, "max_depth": 1, "ratio": 0.85,
+		"spread": 0.55, "jitter": 0.05, "kink": 0.0, "taper": 0.965, "bias_ang": 0.0, "bias_amt": 0.11},
 }
 
 const MAX_SEGS := 3000        # safety cap against a pathological branch explosion
@@ -52,12 +59,18 @@ func max_depth() -> int:
 ## following [param flow]. Seeded by [param rng]. [param cluster] (0..1) makes the growth
 ## *chunky*: each forked branch's reveal time is delayed past its parent's, so the shape
 ## accumulates region by region in chunks (granular within a branch) instead of fanning out
-## all at once. 0 = the old smooth, uniform growth front.
+## all at once. 0 = the old smooth, uniform growth front. [param bias_ang_override], if not
+## NAN, replaces the variant's own fixed bias_ang - a per-CALL pull direction rather than a
+## per-variant constant, for callers whose bias depends on where they're growing FROM (e.g.
+## fur leaning toward a scene's own bright spots - see scenes/furry.gd).
 static func grow(variant: String, origin: Vector2, heading: float, length: float,
-		width: float, steps: int, flow: Flow2D, rng: RandomNumberGenerator, cluster := 0.0) -> Filament:
+		width: float, steps: int, flow: Flow2D, rng: RandomNumberGenerator, cluster := 0.0,
+		bias_ang_override := NAN) -> Filament:
 	var f := Filament.new()
 	var cfg: Dictionary = (VARIANTS.get(variant, VARIANTS["root"]) as Dictionary).duplicate()
 	cfg["cluster"] = cluster
+	if not is_nan(bias_ang_override):
+		cfg["bias_ang"] = bias_ang_override
 	f._build(origin, heading, length / float(maxi(1, steps)), width, 0, steps, cfg, flow, rng, 0.0)
 	if f._total > 0.0:
 		for s in f.segs:

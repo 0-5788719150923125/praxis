@@ -155,11 +155,28 @@ const MAX_LAYERS := 6
 ## irregular swings to that direction and speed together; echo's Smoothing
 ## slider uses the same stored field for a different purpose, but the two
 ## groups never show at once so there's no conflict.
-const MASK_EFFECTS := ["erase", "fire", "freeze", "smoke", "restore", "whisp", "crystal", "echo", "clear", "snow"]
+## "fur" - many INDEPENDENT tufts, each rooted at its own scattered point
+## (a jittered follicle-cell grid, follicle_delta() in mask_split.gdshader)
+## rather than combed outward from one shared anchor - no more single-point
+## radiation. Growth direction is a near-constant WIND vector (a bias to one
+## side, not a splay in every direction), only NUDGED aside by local recoil
+## from wherever the KEY COLOR's complementary hue (fposmod(hue+0.5,1.0),
+## ghost's standard complement idiom) is most dense in the neighborhood - red
+## fur still recoils from a nearby dark blue, exactly as asked for. Each
+## tuft's root only comes alive where the footage carries real "feature
+## line" content nearby - dense key-color mass or a sharp edge in it - so
+## strands start along the face's features rather than uniformly everywhere.
+## Unlike every other volumetric here, its emissive body is tinted BY the key
+## hue itself (fur colored like the thing it's replacing) rather than a fixed
+## palette - the one deliberate exception to the "never the key hue" rule,
+## because fur being roughly the color it's keyed on is the whole point, not
+## a halo.
+const MASK_EFFECTS := ["erase", "fire", "freeze", "smoke", "restore", "whisp", "crystal", "echo", "clear", "snow", "fur"]
 const EFFECT_RESTORE := 4
 const EFFECT_CRYSTAL := 6
 const EFFECT_CLEAR := 8
 const EFFECT_SNOW := 9
+const EFFECT_FUR := 10
 
 ## THE CONTROL HIERARCHY: which panel option groups each effect actually consumes
 ## (the editor shows/hides accordingly - a slider that does nothing for the
@@ -180,6 +197,7 @@ const EFFECT_CONTROLS := {
 	7: ["pattern", "echo"],       # echo (pan=clone step, scale=step size, coverage=clones, contrast=mute)
 	9: ["pattern", "snow"],       # snow (no keying group: it has no key color at all)
 	8: [],                        # clear (intensity = how completely; color is meaningless)
+	10: ["keying", "pattern"],    # fur (same shape as fire/freeze/smoke/whisp - a keyed volumetric)
 }
 
 ## The view-mode registry (see mask_editor.gd). Really a 2-axis matrix flattened to
@@ -211,6 +229,44 @@ var audio_path := ""
 var source_path := ""     # the original file this session was prepared from
 var duration := 0.0
 var markers: Array = []   # Array[Dictionary], sorted by "time"; each has all VECTOR_FIELDS
+
+## Primary-clip trim (in/out points, seconds into video_path/audio_path). clip_out
+## of -1 means "uncut" (full duration) - the common case, so old sessions load with
+## no trim applied. These are DELIBERATELY never read by the timeline's own pixel
+## mapping (see MaskTimeline._visible_span/timeline_extent below) - dragging a trim
+## handle must never rescale the ruler it's being dragged against; that's the
+## "extreme right edge" bug every timeline editor seems to have at some point.
+var clip_in := 0.0
+var clip_out := -1.0
+
+## Secondary tracks (picture-in-picture overlays) - see mask_editor.gd's "Import
+## track" flow. Each: {video_path, duration, clip_in, clip_out, offset (seconds on
+## the MASTER timeline where this track's clip_in lands), x, y, w, h (normalized
+## 0..1 screen position/size), muted}. The primary clip (video_path/audio_path/
+## duration/clip_in/clip_out above) is NOT stored in this array - it is "track 0"
+## implicitly, the one thing every session has always had.
+var tracks: Array = []
+
+
+## The clip end for actual use (playback clamping, export stop condition): clip_out
+## if trimmed, else the full duration. Never negative, never past duration.
+func effective_clip_out() -> float:
+	return clampf(clip_out if clip_out > 0.0 else duration, 0.0, duration)
+
+
+## The ruler's total extent in seconds: always at least `duration` (the primary
+## clip's own full, UNTRIMMED length - trimming never shrinks this), extended to
+## cover any track that runs past it, plus a fixed overflow margin so the visible
+## timeline always shows some empty space past the last real content - "the max
+## timeline overflows" rather than fitting content edge-to-edge, so a trim/shift
+## handle dragged near the current boundary never approaches a hard edge that
+## would force a rescale mid-drag.
+func timeline_extent() -> float:
+	var extent := duration
+	for t in tracks:
+		var span: float = maxf(0.0, float(t.get("clip_out", 0.0)) - float(t.get("clip_in", 0.0)))
+		extent = maxf(extent, float(t.get("offset", 0.0)) + span)
+	return extent + maxf(5.0, extent * 0.12)
 
 
 ## A new marker at `t`, seeded from the previous marker's stored values (or
@@ -537,7 +593,8 @@ func to_matrix() -> Array:
 func to_dict() -> Dictionary:
 	return {
 		"source_path": source_path, "video_path": video_path, "audio_path": audio_path,
-		"duration": duration, "vector_fields": VECTOR_FIELDS, "markers": markers,
+		"duration": duration, "clip_in": clip_in, "clip_out": clip_out, "tracks": tracks,
+		"vector_fields": VECTOR_FIELDS, "markers": markers,
 	}
 
 
@@ -561,6 +618,10 @@ static func load(path: String) -> MaskSession:
 	s.video_path = String(parsed.get("video_path", ""))
 	s.audio_path = String(parsed.get("audio_path", ""))
 	s.duration = float(parsed.get("duration", 0.0))
+	s.clip_in = float(parsed.get("clip_in", 0.0))
+	s.clip_out = float(parsed.get("clip_out", -1.0))
+	for t in parsed.get("tracks", []):
+		s.tracks.append(t)
 	for m in parsed.get("markers", []):
 		s.markers.append(m)
 	s.markers.sort_custom(func(a, b): return a.time < b.time)

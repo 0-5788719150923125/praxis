@@ -23,6 +23,16 @@ class_name Splash
 const CFG_PATH := "user://ghost.cfg"
 const VIDEO_EXTS := ["mp4", "mov", "mkv", "webm", "avi"]
 
+## The assistant dropdown: display name -> the persisted key (see
+## assistant_backend()). "" (Off) means no assistant at all - main.gd and
+## mask_editor.gd both gate creating an Assistant node on this being non-empty.
+## Only one real backend exists yet; the dropdown shape is here so a second one
+## (a different CLI, an API-direct backend, whatever) is a new entry, not a
+## redesign - see assistant.gd, which is NOT backend-pluggable internally yet
+## because there is only one backend to plug.
+const ASSISTANT_BACKENDS := ["Off", "Claude Code CLI"]
+const ASSISTANT_KEYS := ["", "claude_cli"]
+
 ## Set by main before the splash enters the tree.
 var start_session: Callable    # start_session.call(audio_path: String, manual: bool)
 var start_mask: Callable       # start_mask.call(video_path: String)
@@ -30,6 +40,7 @@ var start_mask: Callable       # start_mask.call(video_path: String)
 var _audio_path := ""
 var _video_path := ""
 var _kind := "audio"           # "audio" or "video" - which import is active
+var _assistant_backend := ""
 var _caption: Label
 var _audio_buttons: Control
 var _mask_buttons: Control
@@ -41,6 +52,7 @@ func _ready() -> void:
 	_load_last_song()
 	_load_last_video()
 	_load_last_kind()
+	_assistant_backend = assistant_backend()
 	_build_ui()
 
 
@@ -131,6 +143,26 @@ func _build_ui() -> void:
 	_mask_buttons.add_child(mask_btn)
 
 	_refresh_mode()
+
+	col.add_child(_spacer(4))
+	var asst_row := HBoxContainer.new()
+	asst_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	asst_row.add_theme_constant_override("separation", 10)
+	col.add_child(asst_row)
+
+	var asst_label := Label.new()
+	asst_label.text = "Assistant:"
+	asst_label.add_theme_color_override("font_color", Color(0.55, 0.62, 0.75))
+	asst_row.add_child(asst_label)
+
+	var asst_option := OptionButton.new()
+	asst_option.focus_mode = Control.FOCUS_NONE
+	asst_option.tooltip_text = "Feedback left with ` gets handed to this, one-shot, the moment you submit it"
+	for name in ASSISTANT_BACKENDS:
+		asst_option.add_item(name)
+	asst_option.select(maxi(0, ASSISTANT_KEYS.find(_assistant_backend)))
+	asst_option.item_selected.connect(_on_assistant_selected)
+	asst_row.add_child(asst_option)
 
 	var hint := Label.new()
 	hint.text = "F11 fullscreen · ` feedback · Esc quit"
@@ -274,3 +306,24 @@ func _save_last_kind(kind: String) -> void:
 	cfg.load(CFG_PATH)
 	cfg.set_value("ui", "kind", kind)
 	cfg.save(CFG_PATH)
+
+
+func _on_assistant_selected(idx: int) -> void:
+	_assistant_backend = ASSISTANT_KEYS[idx]
+	var cfg := ConfigFile.new()
+	cfg.load(CFG_PATH)
+	cfg.set_value("assistant", "backend", _assistant_backend)
+	cfg.save(CFG_PATH)
+
+
+## The persisted assistant choice ("" = Off, "claude_cli" = Claude Code CLI) -
+## a STATIC reader over the same user://ghost.cfg this instance writes, so
+## main.gd and mask_editor.gd can both read it directly rather than have it
+## threaded through start_session/start_mask. That matters because splash
+## isn't even in the tree for a direct CLI --mask-edit launch - the setting
+## still has to apply there, from whatever a PREVIOUS run last chose.
+static func assistant_backend() -> String:
+	var cfg := ConfigFile.new()
+	if cfg.load(CFG_PATH) != OK:
+		return ""
+	return String(cfg.get_value("assistant", "backend", ""))

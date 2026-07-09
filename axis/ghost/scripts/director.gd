@@ -28,6 +28,8 @@ const SCENES := [
 	{"script": preload("res://scripts/scenes/rooted_growth.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/filaments.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/filaments.gd"), "behavior": "static"},
+	{"script": preload("res://scripts/scenes/furry.gd"), "behavior": "drift"},
+	{"script": preload("res://scripts/scenes/furry.gd"), "behavior": "fluid"},
 	{"script": preload("res://scripts/scenes/fog_lights.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/strata.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/bloom.gd"), "behavior": "drift"},

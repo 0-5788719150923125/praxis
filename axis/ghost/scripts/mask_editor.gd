@@ -57,6 +57,8 @@ var _audio: AudioStreamPlayer
 var _mat_main := ShaderMaterial.new()
 var _mat_inset := ShaderMaterial.new()
 var _playing := false
+var _cursor_idle_t := 0.0
+const _CURSOR_HIDE_DELAY := 1.5   # seconds of stillness during playback before the mouse cursor hides
 
 var _fx_overlay: TextureRect       # full-frame fx layer - _player's texture, shaded
 var _pip_view: TextureRect         # the inset's content - shaded or raw per view mode
@@ -66,6 +68,19 @@ var _peek_btn: Button
 var _peek_raw := false     # DISPLAY-ONLY raw override; never touches session data
 
 var _timeline: MaskTimeline
+var _tview: TimelineView          # shared pixel<->time mapping - see timeline_view.gd
+var _lanes_col: VBoxContainer     # primary clip's trim lane + one per imported track
+var _composition_parent: Control  # holds _player/_fx_overlay/_mask_wrap - track PiP views land here too
+## Runtime state per session.tracks[i] - NOT persisted (session.tracks holds only
+## the data; players/views are rebuilt from it every _ready_with_session). Each:
+## {player: VideoStreamPlayer, view: TextureRect, active: bool}. `active` tracks
+## whether the track is CURRENTLY the one playing (see _sync_tracks) so entering/
+## leaving its window on the master timeline only seeks+starts/pauses it once,
+## not every frame.
+var _track_runtime: Array = []
+var _import_dialog: FileDialog
+var _import_pid := -1
+var _import_pending := {}   # {source, dir, video} mid-transcode
 var _selected: Variant = null   # the marker Dictionary currently shown in the panel
 
 var _color_a: ColorPickerButton
@@ -132,6 +147,26 @@ var _echo_slot := -1
 var _anchor_prev := Vector2(0.5, 0.5)
 var _anchor_ema := Vector2(0.5, 0.5)
 const _ECHO_INTERVAL := 0.35
+
+# Wave impulses (whisp only): a fast head turn shows up as a big frame-to-frame
+# luminance jolt in the same 48x27 grid _update_whisp_anchor already samples -
+# an ONSET detector (motion vs. an adaptive EMA baseline + deviation, not a
+# fixed magic threshold) fires an impulse at the anchor's current position, and
+# the shader drops a decaying blob of paint there that drifts off along
+# whisp's own local current, confined to the volumetric field like the rest of
+# whisp (see u_wave_* / wave_wash in mask_split.gdshader) - a drop carried by
+# the water, not a ring detached from it. WAVE_SLOTS must match WAVEN in the
+# shader.
+const _WAVE_SLOTS := 3
+const _WAVE_COOLDOWN := 1.1   # seconds; keeps a shaky run from piling up waves
+var _wave_prev_lum := PackedFloat32Array()   # last capture's 48x27 luminance grid
+var _wave_motion_ema := 0.0
+var _wave_dev_ema := 0.02     # seeded so the first few ticks aren't hyper-sensitive
+var _wave_last_time := -100.0
+var _wave_pos := PackedVector2Array()
+var _wave_time := PackedFloat32Array()
+var _wave_amp := PackedFloat32Array()
+var _wave_slot := 0
 
 var _waveform_pid := -1
 var _waveform_path := ""         # set once we know it; polled in _process until it exists
@@ -505,6 +540,7 @@ func _env_at(t: float) -> float:
 ## its own material's intensities, which is why each has its own material: the
 ## inset can hold full fx while the main overlay is still fading in.
 func _build_video_composition(parent: Control) -> void:
+	_composition_parent = parent   # secondary tracks' PiP views land here too - see _build_track_view
 	parent.add_child(_player)
 	_player.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
@@ -536,14 +572,256 @@ func _build_video_composition(parent: Control) -> void:
 	_mask_wrap.add_child(_pip_view)
 
 
+## A secondary track's own composited view: a raw (unshaded - the masking
+## effects system keys off ONE frame's colors via the primary's shader chain,
+## not built for a second independent source yet) picture-in-picture box,
+## positioned/sized from the track's own x/y/w/h (normalized 0..1, top-left +
+## size) - draggable in a later pass; a sensible default corner for now. Drawn
+## on TOP of the primary composition (added after it), below nothing - PiP
+## always rides over the main picture.
+func _build_track_view(i: int) -> void:
+	var track: Dictionary = session.tracks[i]
+	var player := VideoStreamPlayer.new()
+	player.stream = load(ProjectSettings.globalize_path(String(track.video_path)))
+	player.expand = true
+	_composition_parent.add_child(player)
+
+	var wrap := Control.new()
+	wrap.anchor_left = float(track.get("x", 0.68))
+	wrap.anchor_top = float(track.get("y", 0.04))
+	wrap.anchor_right = float(track.get("x", 0.68)) + float(track.get("w", 0.28))
+	wrap.anchor_bottom = float(track.get("y", 0.04)) + float(track.get("h", 0.28))
+	_composition_parent.add_child(wrap)
+
+	var view := TextureRect.new()
+	view.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	view.stretch_mode = TextureRect.STRETCH_SCALE
+	view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	wrap.add_child(view)
+
+	var border := StyleBoxFlat.new()
+	border.bg_color = Color(0, 0, 0, 0)
+	border.set_border_width_all(2)
+	border.border_color = Color(0.6, 0.9, 1.0, 0.85)
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", border)
+	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	wrap.add_child(panel)
+
+	while _track_runtime.size() <= i:
+		_track_runtime.append({})
+	_track_runtime[i] = {"player": player, "view": view, "wrap": wrap, "active": false}
+	player.paused = true
+	player.play()   # must be playing before .stream_position can be set (see _sync_tracks)
+
+
+# --- multi-track: trim lanes, import, playback sync ----------------------------
+
+const _LANE_H := 26.0
+
+func _track_getter(i: int, field: String) -> Callable:
+	return func(): return float(session.tracks[i].get(field, 0.0))
+
+
+func _track_setter(i: int, field: String) -> Callable:
+	return func(v): session.tracks[i][field] = v
+
+
+## Rebuild every trim/track lane from session state (the primary clip's own trim
+## block, plus one per session.tracks entry) and recompute the shared
+## TimelineView's cached extent. Called after any STRUCTURAL change (import,
+## delete, undo/redo) - never mid-drag; see TrackLane.drag_ended and
+## TimelineView.refresh's own doc for why that distinction is load-bearing here.
+func _refresh_lanes() -> void:
+	if _lanes_col == null:
+		return
+	for c in _lanes_col.get_children():
+		c.queue_free()
+
+	var primary := TrackLane.new()
+	primary.tview = _tview
+	primary.label = "Clip"
+	primary.color = Color(0.55, 0.75, 1.0)
+	primary.movable = false
+	primary.full_duration = session.duration
+	primary.get_in = func(): return session.clip_in
+	primary.set_in = func(v): session.clip_in = v
+	primary.get_out = func(): return session.effective_clip_out()
+	primary.set_out = func(v): session.clip_out = v
+	primary.drag_started.connect(func(): _push_undo())
+	primary.drag_ended.connect(func(): _tview.refresh(session))
+	primary.changed.connect(_mark_dirty)
+	_lanes_col.add_child(primary)
+
+	for i in session.tracks.size():
+		var lane := TrackLane.new()
+		lane.tview = _tview
+		lane.label = String(session.tracks[i].get("video_path", "")).get_file()
+		lane.color = Color(0.6, 0.95, 0.7)
+		lane.movable = true
+		lane.full_duration = float(session.tracks[i].get("duration", 0.0))
+		lane.get_in = _track_getter(i, "clip_in")
+		lane.set_in = _track_setter(i, "clip_in")
+		lane.get_out = _track_getter(i, "clip_out")
+		lane.set_out = _track_setter(i, "clip_out")
+		lane.get_offset = _track_getter(i, "offset")
+		lane.set_offset = _track_setter(i, "offset")
+		lane.drag_started.connect(func(): _push_undo())
+		lane.drag_ended.connect(func(): _tview.refresh(session))
+		lane.changed.connect(_mark_dirty)
+		_lanes_col.add_child(lane)
+		# The delete button OVERLAYS the lane's own top-right corner rather than
+		# sitting beside it in an HBoxContainer - an inline sibling would shrink
+		# the lane's own width below the primary lane's/_timeline's, and every
+		# lane's x_of() must span the exact same pixel width or their blocks
+		# stop lining up against a shared second.
+		var del := Button.new()
+		del.text = "✕"
+		del.custom_minimum_size = Vector2(20, 18)
+		del.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+		del.offset_left = -22
+		del.offset_top = 2
+		del.offset_right = -2
+		del.offset_bottom = 20
+		del.focus_mode = Control.FOCUS_NONE
+		del.tooltip_text = "Remove this track"
+		var idx := i
+		del.pressed.connect(func(): _delete_track(idx))
+		lane.add_child(del)
+
+	var count := 1 + session.tracks.size()
+	_lanes_col.offset_top = -90 - count * _LANE_H
+	_lanes_col.offset_bottom = -90
+	_tview.refresh(session)
+
+
+func _delete_track(i: int) -> void:
+	if i < 0 or i >= session.tracks.size():
+		return
+	_push_undo()
+	if i < _track_runtime.size():
+		var rt: Dictionary = _track_runtime[i]
+		if rt.has("player"):
+			(rt.player as Node).queue_free()
+		if rt.has("wrap"):
+			(rt.wrap as Node).queue_free()
+		_track_runtime.remove_at(i)
+	session.tracks.remove_at(i)
+	_refresh_lanes()
+	_mark_dirty()
+
+
+func _prompt_import_track() -> void:
+	_import_dialog = FileDialog.new()
+	_import_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+	_import_dialog.access = FileDialog.ACCESS_FILESYSTEM
+	_import_dialog.use_native_dialog = true
+	_import_dialog.title = "Import a second track (picture-in-picture)"
+	_import_dialog.filters = PackedStringArray(["*.mp4,*.mov,*.mkv,*.webm ; Video"])
+	var downloads := OS.get_system_dir(OS.SYSTEM_DIR_DOWNLOADS)
+	if not downloads.is_empty():
+		_import_dialog.current_dir = downloads
+	_import_dialog.size = Vector2i(800, 560)
+	_import_dialog.file_selected.connect(_start_track_import)
+	add_child(_import_dialog)
+	_import_dialog.popup_centered()
+
+
+## Same one-time ffmpeg->theora transcode _prep() does for the primary clip,
+## minus the audio extraction step (v1 tracks are silent - see the class doc's
+## scope note) - PID-polled in _process(), never blocking, matching the
+## project's one established pattern for external subprocesses.
+func _start_track_import(source: String) -> void:
+	var slug := _slugify(source)
+	var dir := _session_path.get_base_dir()
+	var video := dir + "/track_%s_%d.ogv" % [slug, session.tracks.size()]
+	_import_pending = {"source": source, "video": video}
+	_set_status("⏳  Importing track…")
+	var args := PackedStringArray([
+		"-y", "-loglevel", "error", "-i", source, "-an",
+		"-c:v", "libtheora", "-q:v", "6", "-g", "25",
+		ProjectSettings.globalize_path(video)])
+	_import_pid = OS.create_process("ffmpeg", args)
+	if _import_pid <= 0:
+		_set_status("⚠  Could not start ffmpeg for track import")
+		_import_pending = {}
+
+
+func _finish_track_import() -> void:
+	var abs_video := ProjectSettings.globalize_path(String(_import_pending.video))
+	var dur := _probe_duration(abs_video)
+	if dur <= 0.0:
+		_set_status("⚠  Track import failed (could not read the transcoded video)")
+		_import_pending = {}
+		return
+	_push_undo()
+	session.tracks.append({
+		"video_path": _import_pending.video, "duration": dur,
+		"clip_in": 0.0, "clip_out": dur, "offset": 0.0,
+		"x": 0.68, "y": 0.04, "w": 0.28, "h": 0.28,
+	})
+	_build_track_view(session.tracks.size() - 1)
+	_refresh_lanes()
+	_mark_dirty()
+	_import_pending = {}
+	if _status != null:
+		_status.visible = false
+
+
+## Each imported track is driven off the PRIMARY player's own clock (never its
+## own independent playback state) - the same discipline the audio sync already
+## follows (see _play's class doc), so live preview and an export relaunch trace
+## the identical picture. A track that isn't currently inside its
+## [offset, offset+span) window on the master timeline is paused and hidden;
+## entering it seeks the track's own player to the matching local position and
+## lets it run from there, only re-seeking again if it drifts (video seeks are
+## heavy - constant tiny re-seeks would stutter, same reasoning as the 0.15s
+## audio tolerance, just a bit wider since a video seek is coarser than an
+## audio one).
+func _sync_tracks() -> void:
+	if _player == null:
+		return
+	var master_t := _player.stream_position
+	for i in session.tracks.size():
+		if i >= _track_runtime.size():
+			continue
+		var rt: Dictionary = _track_runtime[i]
+		if not rt.has("player"):
+			continue
+		var track: Dictionary = session.tracks[i]
+		var offset := float(track.get("offset", 0.0))
+		var cin := float(track.get("clip_in", 0.0))
+		var cout := float(track.get("clip_out", 0.0))
+		var local_t := master_t - offset + cin
+		var inside: bool = cout > cin and local_t >= cin and local_t < cout
+		var tplayer: VideoStreamPlayer = rt.player
+		var wrap: Control = rt.wrap
+		if inside:
+			wrap.visible = true
+			if not bool(rt.active) or absf(tplayer.stream_position - local_t) > 0.2:
+				tplayer.stream_position = local_t
+				rt.active = true
+			tplayer.paused = not _playing
+		else:
+			wrap.visible = false
+			tplayer.paused = true
+			rt.active = false
+
+
 func _build_render_view() -> void:
 	var full := Control.new()
 	full.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(full)
 	_build_video_composition(full)
-	# Set the correct state for frame 0 - Movie Maker records every processed frame,
-	# so leaving this to the first _process() tick would bake one wrong frame in.
-	_apply_frame_state(session.at_time(0.0))
+	for i in session.tracks.size():
+		_build_track_view(i)
+	# Trimmed exports start AT clip_in, never at 0 - a cut clip renders only its
+	# kept range. Movie Maker records every processed frame, so the seek has to
+	# land before the very first one, not the first _process() tick.
+	_player.play()
+	_player.stream_position = session.clip_in
+	_apply_frame_state(session.at_time(session.clip_in))
 	_audio.finished.connect(func(): get_tree().quit())
 
 
@@ -559,10 +837,15 @@ func _build_editor_ui() -> void:
 	inner.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	video_area.add_child(inner)
 	_build_video_composition(inner)
+	for i in session.tracks.size():
+		_build_track_view(i)
+
+	_tview = TimelineView.new()
 
 	_timeline = MaskTimeline.new()
 	_timeline.session = session
 	_timeline.player = _player
+	_timeline.tview = _tview
 	_timeline.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	_timeline.offset_left = PANEL_W
 	_timeline.offset_bottom = -90
@@ -574,6 +857,17 @@ func _build_editor_ui() -> void:
 		_refresh_marker_label()
 		_mark_dirty())
 	add_child(_timeline)
+
+	# The trim/track lane stack - the primary clip's own trim block, plus one
+	# lane per imported track - sits directly above the marker strip, sharing
+	# its ruler via the same _tview (see _refresh_lanes for why its height is
+	# computed and set explicitly rather than left to container auto-sizing).
+	_lanes_col = VBoxContainer.new()
+	_lanes_col.add_theme_constant_override("separation", 2)
+	_lanes_col.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	_lanes_col.offset_left = PANEL_W
+	add_child(_lanes_col)
+	_refresh_lanes()
 
 	_build_panel()
 	_build_export_ui()
@@ -599,14 +893,16 @@ func _build_feedback() -> void:
 			_play(true)
 	_feedback.advance = func(): pass
 	add_child(_feedback)
-	# --assistant (see assistant.gd): the same fresh-claude-per-feedback loop
-	# as the main show, wired to Mask Lab's own console instance. One editor
-	# session = one Assistant instance for its whole lifetime, no re-entrancy
-	# to guard against (open_source() runs once per process here).
-	if OS.get_cmdline_user_args().has("--assistant"):
-		var assistant := preload("res://scripts/assistant.gd").new()
-		add_child(assistant)
-		_feedback.submitted.connect(assistant.enqueue)
+	# Always present, same reasoning as main.gd's own _assistant: it's also
+	# the feedback browser (review/delete old submissions), which shouldn't
+	# require an assistant backend selected to use. Assistant itself gates
+	# actually DISPATCHING anything on the splash's persisted backend choice
+	# (see splash.gd) - this just wires the console up. One editor session =
+	# one Assistant instance for its whole lifetime, no re-entrancy to guard
+	# against (open_source() runs once per process here).
+	var assistant := preload("res://scripts/assistant.gd").new()
+	add_child(assistant)
+	_feedback.submitted.connect(assistant.enqueue)
 
 
 ## Everything I'd want to know about "this frame looks wrong": where we are, what
@@ -724,6 +1020,17 @@ func _build_panel() -> void:
 	redo_btn.focus_mode = Control.FOCUS_NONE
 	redo_btn.pressed.connect(_redo)
 	hist_row.add_child(redo_btn)
+
+	# Own row again (see the comment above hist_row - this panel is only
+	# PANEL_W wide, and rows fill up fast).
+	var track_row := HBoxContainer.new()
+	col.add_child(track_row)
+	var import_btn := Button.new()
+	import_btn.text = "⬆ Import track"
+	import_btn.tooltip_text = "Add a second video as a picture-in-picture overlay"
+	import_btn.focus_mode = Control.FOCUS_NONE
+	import_btn.pressed.connect(_prompt_import_track)
+	track_row.add_child(import_btn)
 
 	_time_label = Label.new()
 	_time_label.add_theme_font_size_override("font_size", 15)
@@ -1048,23 +1355,34 @@ func _push_anchor() -> void:
 	var anchor := _anchor_prev.lerp(_anchor_ema, f)
 	for mat in [_mat_main, _mat_inset]:
 		mat.set_shader_parameter("u_anchor", anchor)
+		# Only push once impulses exist - a short array is silently dropped by
+		# Godot (see the u_l_* comment above), so an empty/partial one is worse
+		# than leaving the shader's own all-zero (inactive) uniform defaults.
+		if _wave_amp.size() == _WAVE_SLOTS:
+			mat.set_shader_parameter("u_wave_pos", _wave_pos)
+			mat.set_shader_parameter("u_wave_time", _wave_time)
+			mat.set_shader_parameter("u_wave_amp", _wave_amp)
 
 
 func _session_uses_temporal() -> bool:
 	for m in session.markers:
 		var e := int(m.get("effect_a", 0))
-		if e == 5 or e == 7 or e == MaskSession.EFFECT_SNOW:   # whisp / echo / snow (motion probe)
-			return true
+		if e == 5 or e == 7 or e == MaskSession.EFFECT_SNOW:
+			return true   # whisp (anchor) / echo / snow (motion probe)
 	return false
 
 
-## The whisp anchor: the first whisp marker's target-color mass centroid in the
-## captured frame, EMA-smoothed (alpha 0.3 per capture ≈ a short multi-window
-## average) so the lock glides to landmarks instead of jittering with noise.
+## The whisp anchor: the first whisp marker's target-color mass centroid in
+## the captured frame, EMA-smoothed (alpha 0.3 per capture ≈ a short
+## multi-window average) so the lock glides to landmarks instead of jittering
+## with noise. Fur no longer reads this - its tufts root from their own
+## scattered points instead of one shared anchor (see the fur branch of
+## apply_layer / follicle_delta in mask_split.gdshader).
 func _update_whisp_anchor(img: Image) -> void:
 	var hue := -1.0
 	for m in session.markers:
-		if int(m.get("effect_a", 0)) == 5:
+		var e := int(m.get("effect_a", 0))
+		if e == 5:
 			hue = float(m.get("hue_a", 0.0))
 			break
 	if hue < 0.0:
@@ -1075,6 +1393,10 @@ func _update_whisp_anchor(img: Image) -> void:
 	img.resize(48, 27, Image.INTERPOLATE_BILINEAR)
 	var acc := Vector2.ZERO
 	var wsum := 0.0
+	var have_prev := _wave_prev_lum.size() == 48 * 27
+	if not have_prev:
+		_wave_prev_lum.resize(48 * 27)
+	var motion := 0.0
 	for y in 27:
 		for x in 48:
 			var c := img.get_pixel(x, y)
@@ -1082,28 +1404,76 @@ func _update_whisp_anchor(img: Image) -> void:
 			var pr := maxf(0.0, (c.r - l) * tdir.x + (c.g - l) * tdir.y + (c.b - l) * tdir.z)
 			acc += Vector2((float(x) + 0.5) / 48.0, (float(y) + 0.5) / 27.0) * pr
 			wsum += pr
-	if wsum <= 0.01:
-		return
-	_anchor_prev = _anchor_ema
-	_anchor_ema = _anchor_ema.lerp(acc / wsum, 0.15)
+			var idx := y * 48 + x
+			if have_prev:
+				motion += absf(l - _wave_prev_lum[idx])
+			_wave_prev_lum[idx] = l
+	if wsum > 0.01:
+		_anchor_prev = _anchor_ema
+		_anchor_ema = _anchor_ema.lerp(acc / wsum, 0.15)
+	if have_prev:
+		_update_wave_impulses(motion / (48.0 * 27.0))
+
+
+## Onset detection for the wave impulses: motion is this capture's average
+## per-pixel luminance jolt (see caller). A steady baseline (_wave_motion_ema)
+## and its own deviation (_wave_dev_ema) track each clip's ambient motion level
+## adaptively - talking-head footage idles near-still, a real head turn spikes
+## several deviations above it - so one fixed threshold doesn't have to guess
+## right for every source video. Rate-limited (see _WAVE_COOLDOWN) so a shaky
+## run of frames fires one wave, not a pile of overlapping ones.
+func _update_wave_impulses(motion: float) -> void:
+	var onset := motion - _wave_motion_ema
+	var t: float = _player.stream_position
+	if onset > _wave_dev_ema * 3.5 and t - _wave_last_time >= _WAVE_COOLDOWN:
+		_wave_last_time = t
+		if _wave_amp.size() != _WAVE_SLOTS:
+			_wave_pos.resize(_WAVE_SLOTS)
+			_wave_time.resize(_WAVE_SLOTS)
+			_wave_amp.resize(_WAVE_SLOTS)
+		_wave_pos[_wave_slot] = _anchor_ema
+		_wave_time[_wave_slot] = t
+		_wave_amp[_wave_slot] = clampf(onset / maxf(_wave_dev_ema * 6.0, 0.02), 0.35, 1.0)
+		_wave_slot = (_wave_slot + 1) % _WAVE_SLOTS
+	_wave_motion_ema = lerp(_wave_motion_ema, motion, 0.2)
+	_wave_dev_ema = lerp(_wave_dev_ema, absf(onset), 0.2)
 
 
 # --- undo/redo ---------------------------------------------------------------
 
-## Snapshot session.markers onto the undo stack, called BEFORE a mutation - so
-## the stack always holds "what it looked like before this happened". Pass a
-## `key` for edits that repeat rapidly during one gesture (a slider drag, a
-## marker dragged along the timeline): a call whose key matches the in-flight
-## gesture just extends the coalescing window instead of pushing again, so the
-## whole gesture undoes in one Ctrl+Z. Leave `key` empty for one-shot actions
-## (add/delete a marker) - those always open a fresh boundary.
+## Snapshot markers + the primary clip's trim + every track onto the undo
+## stack, called BEFORE a mutation - so the stack always holds "what it looked
+## like before this happened". Pass a `key` for edits that repeat rapidly
+## during one gesture (a slider drag, a marker or trim/track handle dragged
+## along the timeline): a call whose key matches the in-flight gesture just
+## extends the coalescing window instead of pushing again, so the whole
+## gesture undoes in one Ctrl+Z. Leave `key` empty for one-shot actions
+## (add/delete a marker, import/delete a track) - those always open a fresh
+## boundary. Trim/track edits are exactly as accident-prone as marker edits -
+## see the whole reason this project asked for undo in the first place - so
+## they ride the same stack, not a separate one.
+func _snapshot() -> Dictionary:
+	return {
+		"markers": session.markers.duplicate(true),
+		"clip_in": session.clip_in, "clip_out": session.clip_out,
+		"tracks": session.tracks.duplicate(true),
+	}
+
+
+func _restore_snapshot(snap: Dictionary) -> void:
+	session.markers = snap.markers
+	session.clip_in = snap.clip_in
+	session.clip_out = snap.clip_out
+	session.tracks = snap.tracks
+
+
 func _push_undo(key: String = "") -> void:
 	if key != "" and key == _undo_coalesce_key and _undo_coalesce_cooldown > 0.0:
 		_undo_coalesce_cooldown = _UNDO_COALESCE_WINDOW
 		return
 	_undo_coalesce_key = key
 	_undo_coalesce_cooldown = _UNDO_COALESCE_WINDOW
-	_undo_stack.append(session.markers.duplicate(true))
+	_undo_stack.append(_snapshot())
 	if _undo_stack.size() > _UNDO_LIMIT:
 		_undo_stack.pop_front()
 	_redo_stack.clear()
@@ -1112,8 +1482,8 @@ func _push_undo(key: String = "") -> void:
 func _undo() -> void:
 	if _undo_stack.is_empty():
 		return
-	_redo_stack.append(session.markers.duplicate(true))
-	session.markers = _undo_stack.pop_back()
+	_redo_stack.append(_snapshot())
+	_restore_snapshot(_undo_stack.pop_back())
 	_undo_coalesce_key = ""   # the next edit must open its own fresh boundary
 	_after_history_restore()
 
@@ -1121,8 +1491,8 @@ func _undo() -> void:
 func _redo() -> void:
 	if _redo_stack.is_empty():
 		return
-	_undo_stack.append(session.markers.duplicate(true))
-	session.markers = _redo_stack.pop_back()
+	_undo_stack.append(_snapshot())
+	_restore_snapshot(_redo_stack.pop_back())
 	_undo_coalesce_key = ""
 	_after_history_restore()
 
@@ -1130,7 +1500,9 @@ func _redo() -> void:
 ## _selected points INTO the array a restore just replaced wholesale, so it's
 ## dangling - re-resolve it by time in the restored array (or drop the
 ## selection if that marker no longer exists there) before refreshing anything
-## that reads it.
+## that reads it. Tracks went through the same wholesale replacement - the
+## runtime players (see _track_runtime) need reconciling against whatever
+## session.tracks now holds, same as _delete_track/_finish_track_import do.
 func _after_history_restore() -> void:
 	if _selected != null:
 		var t: float = float(_selected.get("time", -1.0))
@@ -1141,9 +1513,32 @@ func _after_history_restore() -> void:
 				break
 	_select_generation += 1
 	_timeline.selected = _selected
+	_reconcile_track_runtime()
+	_refresh_lanes()
 	_refresh_marker_list()
 	_refresh_panel()
 	_mark_dirty()
+
+
+## After undo/redo swaps session.tracks wholesale, the live VideoStreamPlayers
+## in _track_runtime (built incrementally by _build_track_view) no longer
+## necessarily match it 1:1 - a track undo/redo added or removed can leave too
+## many or too few. Rebuild runtime state to match: free anything past the
+## restored count, (re)build anything missing. Existing entries are trusted
+## as-is even if that track's trim/offset changed - _sync_tracks reseeks on
+## the next frame regardless, same as any ordinary drag.
+func _reconcile_track_runtime() -> void:
+	if _composition_parent == null:
+		return   # render_mode / no editor UI - tracks aren't interactive there anyway
+	while _track_runtime.size() > session.tracks.size():
+		var rt: Dictionary = _track_runtime.pop_back()
+		if rt.has("player"):
+			(rt.player as Node).queue_free()
+		if rt.has("wrap"):
+			(rt.wrap as Node).queue_free()
+	for i in session.tracks.size():
+		if i >= _track_runtime.size():
+			_build_track_view(i)
 
 
 # --- auto-save --------------------------------------------------------------
@@ -1166,6 +1561,7 @@ func _save_session() -> void:
 func _exit_tree() -> void:
 	if _dirty:
 		_save_session()
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
 
 func _select_marker(m: Dictionary) -> void:
@@ -1287,6 +1683,18 @@ func _play(on: bool) -> void:
 ## Ctrl+Z / Ctrl+Shift+Z (and Ctrl+Y, the other common redo binding) drive the
 ## undo/redo stack - see _push_undo. echo excluded so a held key doesn't spam
 ## repeats; a real accident deserves a deliberate press each time it's undone.
+## Plain _input (not _unhandled_input) so cursor motion resets the idle timer
+## even while it's over a panel/button - GUI controls can eat mouse motion
+## before it would ever reach _unhandled_input, and hovering the toolbar
+## while playing should un-hide the cursor same as moving it over the video.
+func _input(event: InputEvent) -> void:
+	if render_mode or not event is InputEventMouseMotion:
+		return
+	_cursor_idle_t = 0.0
+	if Input.mouse_mode == Input.MOUSE_MODE_HIDDEN:
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if render_mode or _player == null:
 		return
@@ -1505,6 +1913,9 @@ func _process(_dt: float) -> void:
 		var abs_wave := ProjectSettings.globalize_path(_waveform_path)
 		if FileAccess.file_exists(abs_wave):
 			_load_waveform(abs_wave)
+	if _import_pid > 0 and not OS.is_process_running(_import_pid):
+		_import_pid = -1
+		_finish_track_import()
 	if session == null or _player == null:
 		return
 	# Same call, live or exported: whatever the timeline says at this instant is
@@ -1525,10 +1936,32 @@ func _process(_dt: float) -> void:
 	if _playing and _audio.playing and not _audio.stream_paused:
 		if absf(_audio.get_playback_position() - _player.stream_position) > 0.15:
 			_audio.seek(_player.stream_position)
+	_sync_tracks()
+	# A trimmed clip's OUT point is a hard wall for playback (both live preview
+	# and the export relaunch - export additionally needs a QUIT, not just a
+	# pause, since Movie Maker keeps recording for as long as the process runs).
+	# clip_in is not enforced here on purpose: scrubbing earlier to look at
+	# trimmed-away footage while editing is fine, only PLAYBACK (and export) are
+	# bounded to the kept range.
+	if session.clip_out > 0.0 and _player.stream_position >= session.clip_out:
+		if render_mode:
+			get_tree().quit()
+		elif _playing:
+			_play(false)
 	if _undo_coalesce_cooldown > 0.0:
 		_undo_coalesce_cooldown -= _dt
 	if render_mode:
 		return
+	# Auto-hide the cursor once it's been still for a beat during playback -
+	# _input() above resets the timer and un-hides on any motion, and pausing
+	# (or a mouse click, which also fires motion-adjacent hover) restores it
+	# immediately rather than leaving an editor with a phantom-hidden pointer.
+	if _playing:
+		_cursor_idle_t += _dt
+		if _cursor_idle_t >= _CURSOR_HIDE_DELAY and Input.mouse_mode == Input.MOUSE_MODE_VISIBLE:
+			Input.mouse_mode = Input.MOUSE_MODE_HIDDEN
+	elif Input.mouse_mode == Input.MOUSE_MODE_HIDDEN:
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	if _time_label != null:
 		_time_label.text = "%s / %s" % [
 			MaskTimeline.format_time(_player.stream_position), MaskTimeline.format_time(session.duration)]
