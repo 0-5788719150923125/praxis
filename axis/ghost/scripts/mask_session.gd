@@ -201,9 +201,24 @@ const MAX_LAYERS := 6
 ## travels backward along the body relative to motion (real snake
 ## locomotion); bodies wrap a torus lap longer than themselves, so each
 ## snake laps around with a gap. A slow fbm cluster field decides WHERE the
-## swarm lives - the sparse, clustered distribution is the point. Emissive
-## is a fixed viridian-to-jade palette (never the key hue).
-const MASK_EFFECTS := ["erase", "fire", "freeze", "smoke", "restore", "whisp", "crystal", "echo", "clear", "snow", "fur", "oracle", "serpent"]
+## swarm lives - the sparse, clustered distribution is the point - and the
+## footage itself stirs it: frame-to-frame motion (the echo ring's captures)
+## is treated as energy in the water, its wide slow crests displacing the
+## snake domain and gathering the swarm along the moving model's wake.
+## Emissive is a fixed viridian-to-jade palette (never the key hue).
+## "chimera" - the imported track's video grafted INTO the main frame: two
+## heads merged, not cut. Purely heuristic: a soft window rides u_anchor
+## (keyed by this marker's color when the footage carries it; when the
+## lighting is flat and nothing keys, the tracker falls back to the MOTION
+## centroid - the moving head anchors itself). Per pixel, whichever side
+## carries more feature energy (edges/eyes/mouth beat flat skin) owns the
+## pixel, so the two heads interleave structurally instead of
+## double-exposing; the graft's exposure is pulled toward the local footage
+## first, and wherever the key color IS present the graft claims it
+## outright. Scale = window/zoom, Pan = graft offset, Coverage = how much of
+## the chimera is the other head, Contrast = interleave sharpness. Needs an
+## imported track (T); draws nothing without one.
+const MASK_EFFECTS := ["erase", "fire", "freeze", "smoke", "restore", "whisp", "crystal", "echo", "clear", "snow", "fur", "oracle", "serpent", "chimera"]
 const EFFECT_RESTORE := 4
 const EFFECT_CRYSTAL := 6
 const EFFECT_CLEAR := 8
@@ -211,6 +226,7 @@ const EFFECT_SNOW := 9
 const EFFECT_FUR := 10
 const EFFECT_ORACLE := 11
 const EFFECT_SERPENT := 12
+const EFFECT_CHIMERA := 13
 
 ## THE CONTROL HIERARCHY: which panel option groups each effect actually consumes
 ## (the editor shows/hides accordingly - a slider that does nothing for the
@@ -234,6 +250,7 @@ const EFFECT_CONTROLS := {
 	10: ["keying", "pattern", "fur"],  # fur (a keyed volumetric + its own tendril-dynamics knobs)
 	11: ["pattern", "echo"],      # oracle (echo inverted: pan=premonition step, coverage=copies, contrast=mute, lag=lead)
 	12: ["pattern"],              # serpent (keyless, like snow: contrast-driven, no color to gate on)
+	13: ["pattern"],              # chimera (color steers the anchor/claim; scale=window, pan=graft offset, coverage=dominance, contrast=interleave sharpness)
 }
 
 ## The view-mode registry (see mask_editor.gd). Really a 2-axis matrix flattened to

@@ -84,6 +84,12 @@ uniform int u_l_elag[6];
 // baked into u_l_ew/u_l_elag above); fur reads it as its Coil knob.
 uniform float u_l_lagf[6];
 
+// The first imported track's live frame, for chimera's graft. u_track_on
+// gates it explicitly - the default-black fallback must never be mistaken
+// for footage (a black graft window is worse than no graft).
+uniform sampler2D u_track : hint_default_black;
+uniform int u_track_on = 0;
+
 // The whisp anchor: the target color's mass centroid in the frame, EMA-tracked
 // CPU-side over short windows (see MaskEditor) - the whisp field's coordinate
 // origin rides it, so the pattern auto-locks to the landmark (a lit face half)
@@ -216,7 +222,7 @@ float fur_root_mass(sampler2D tex, vec2 p_uv, vec3 tdir) {
 // the body (fract of q.x/period), so each snake circles its lane endlessly
 // with a gap between passes, heads and tails tapering to points. Neighbor
 // lanes are checked so a wriggle that crosses a lane border never clips.
-float serpent_layer(vec2 q, float t, float sparse, float girth) {
+float serpent_layer(vec2 q, float t, float sparse, float girth, float lenx) {
 	float best = 0.0;
 	float lane0 = floor(q.y);
 	for (int dy = -1; dy <= 1; dy++) {
@@ -230,7 +236,7 @@ float serpent_layer(vec2 q, float t, float sparse, float girth) {
 		float h4 = hash21(vec2(id, 47.9));
 		float dir = h3 > 0.5 ? 1.0 : -1.0;
 		float spd = (0.3 + h2 * 1.1) * dir;
-		float len = 2.5 + h2 * h2 * 11.0;
+		float len = (2.5 + h2 * h2 * 11.0) * lenx;
 		float period = len * (1.4 + h1 * 1.2);
 		float phx = q.x * (1.1 + h2 * 1.3);
 		float wr = sin(phx - t * (1.6 + h1 * 1.4) * dir
@@ -626,6 +632,75 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		}
 		return vec4(acc11, col.a);
 	}
+	if (effect == 13) {
+		// CHIMERA - the imported track grafted INTO the main frame: two heads
+		// merged, not cut. Purely heuristic, no model anywhere: a soft window
+		// rides u_anchor (EMA-tracked landmark - keyed by this marker's color
+		// when the footage carries it, MOTION centroid when the lighting is
+		// flat and nothing keys; see _update_whisp_anchor). Ownership per
+		// pixel goes to whichever side carries more FEATURE ENERGY - edges,
+		// eyes, mouth beat flat skin - so the heads interleave structurally
+		// instead of double-exposing into mush. The graft's exposure is
+		// pulled toward the local footage first (flat lighting must not show
+		// a pasted rectangle of foreign brightness), and wherever the key
+		// color IS present in the main frame the graft claims it outright
+		// (crystal's aligned fraction - the strongest signal when it exists,
+		// merely absent when it doesn't).
+		if (u_track_on == 0) {
+			return col;
+		}
+		float k13 = shade_amount(w, uv);
+		vec2 rel13 = (uv - u_anchor) * vec2(u_aspect, 1.0);
+		float rad13 = 0.36 * max(u_l_scale[i], 0.15);
+		float win13 = 1.0 - smoothstep(rad13 * 0.4, rad13, length(rel13));
+		if (win13 * k13 <= 0.003) {
+			return col;
+		}
+		vec2 tuv13 = (uv - u_anchor) * (0.9 / max(u_l_scale[i], 0.15))
+			+ vec2(0.5) + u_l_off[i] * 0.4;
+		// A graft sampling off its own frame fades at the border, never cuts
+		// (echo's hard-box lesson).
+		float bf13 = smoothstep(0.0, 0.05, tuv13.x) * smoothstep(0.0, 0.05, 1.0 - tuv13.x)
+			* smoothstep(0.0, 0.05, tuv13.y) * smoothstep(0.0, 0.05, 1.0 - tuv13.y);
+		if (bf13 <= 0.001) {
+			return col;
+		}
+		vec3 g13 = texture(u_track, clamp(tuv13, vec2(0.0), vec2(1.0))).rgb;
+		vec3 gn13 = texture(u_track, clamp(tuv13 + vec2(0.020, 0.013), vec2(0.0), vec2(1.0))).rgb;
+		vec3 gm13 = texture(u_track, clamp(tuv13 - vec2(0.016, 0.020), vec2(0.0), vec2(1.0))).rgb;
+		// Exposure match: the wide tap ring's mean value vs the graft's own
+		// small neighborhood.
+		float lv13 = 0.0;
+		for (int kv = 0; kv < 8; kv++) {
+			lv13 += taps[kv + 17].z;
+		}
+		lv13 /= 8.0;
+		float gl13 = dot(g13 + gn13 + gm13, vec3(0.299, 0.587, 0.114)) / 3.0;
+		g13 *= clamp(mix(1.0, (lv13 + 0.10) / (gl13 + 0.10), 0.75), 0.45, 2.2);
+		// Feature energy, both sides: main from the mid-ring gradient probe
+		// (the same one whisp/freeze/crystal trust), graft from its own
+		// neighborhood contrast.
+		vec2 mg13 = vec2(0.0);
+		for (int kg = 0; kg < 8; kg++) {
+			float ag13 = float(kg) * 0.7853981634 + 0.3926990817;
+			mg13 += vec2(cos(ag13), sin(ag13)) * taps[kg + 9].z;
+		}
+		float fe_main13 = smoothstep(0.02, 0.22, length(mg13));
+		float fe_graft13 = smoothstep(0.02, 0.25,
+			abs(dot(g13 - gn13, vec3(0.299, 0.587, 0.114)))
+			+ abs(dot(g13 - gm13, vec3(0.299, 0.587, 0.114))));
+		// Coverage = the graft's baseline dominance; Contrast = how sharply
+		// the feature comparison flips ownership around that baseline.
+		float base13 = mix(0.25, 0.75, clamp(u_l_dens[i], 0.0, 1.0));
+		float own13 = clamp(base13 + (fe_graft13 - fe_main13) * (0.8 + 1.6 * u_l_con[i]), 0.10, 0.92);
+		float lum13 = dot(col.rgb, vec3(0.299, 0.587, 0.114));
+		vec3 ch13 = col.rgb - vec3(lum13);
+		float p13 = max(0.0, dot(ch13, u_l_tdir[i]));
+		float claim13 = clamp(p13 / max(length(ch13), 1e-4)
+			* smoothstep(0.02, 0.10, length(ch13)) * 1.2, 0.0, 1.0);
+		own13 = max(own13, claim13);
+		return vec4(mix(col.rgb, g13, own13 * win13 * bf13 * k13), col.a);
+	}
 	if (effect == 9) {
 		// SNOW - the one effect with no key color at all: hue_a is unused, so
 		// there's nothing here for tap_mask/mask_over to classify against.
@@ -907,12 +982,43 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		// is the slither tempo, Coverage/Contrast shape the consume downstream
 		// as usual.
 		vec2 p12 = (uv * vec2(u_aspect, 1.0) + u_l_off[i]) * u_l_scale[i];
+		// WORLD ANCHOR: the footage's motion stirs the water the swarm swims
+		// in. The echo ring (quarter-res, two slots ~0.7s apart) gives a
+		// broad, smooth measure of WHERE the model moves; that energy is the
+		// ripple's AMPLITUDE, so still water leaves the swarm exactly as it
+		// was and only the wake swells. The ripple itself is a WIDE, SLOW
+		// displacement - a low-frequency fbm swell drifting in time - NOT the
+		// energy's own finite-difference gradient. That gradient flips
+		// direction pixel to pixel and shimmers frame to frame on compressed
+		// footage, and since this displacement feeds a lane coordinate scaled
+		// up to 22x, an incoherent shift stretched and tore the snakes apart.
+		// A smooth field moves each neighborhood together, so the bodies BEND
+		// and drift as one and hold their snake shape.
+		float energy12 = clamp((
+			abs(dot(echo_frame(0, uv) - echo_frame(2, uv), vec3(0.299, 0.587, 0.114)))
+			+ abs(dot(echo_frame(0, uv + vec2(0.05, 0.0)) - echo_frame(2, uv + vec2(0.05, 0.0)), vec3(0.299, 0.587, 0.114)))
+			+ abs(dot(echo_frame(0, uv - vec2(0.05, 0.0)) - echo_frame(2, uv - vec2(0.05, 0.0)), vec3(0.299, 0.587, 0.114)))
+			+ abs(dot(echo_frame(0, uv + vec2(0.0, 0.05)) - echo_frame(2, uv + vec2(0.0, 0.05)), vec3(0.299, 0.587, 0.114)))
+			+ abs(dot(echo_frame(0, uv - vec2(0.0, 0.05)) - echo_frame(2, uv - vec2(0.0, 0.05)), vec3(0.299, 0.587, 0.114)))
+		) * 1.2, 0.0, 1.0);
+		// Two broad swell octaves, drifting slowly and in opposition, gated by
+		// local stirring energy. Frequency ~0.6 puts under a wave across the
+		// whole frame (wide), the time terms are gentle (slow), and the
+		// amplitude stays well under the swell's own wavelength so the map
+		// never folds (no tearing).
+		vec2 rip12 = vec2(
+			fbm(p12 * 0.6 + vec2(t_eff * 0.05, 1.7)),
+			fbm(p12 * 0.6 + vec2(9.3, -t_eff * 0.04))) - 0.5;
+		p12 += rip12 * smoothstep(0.03, 0.30, energy12) * 0.35;
 		// Cluster frequency matters: at 0.55x the whole visible frame sat
 		// inside ONE noise cell, and whenever that cell ran low the gate
 		// zeroed the entire swarm - not "sparse", just blank. ~2x puts a
 		// handful of colonies and a handful of true gaps on screen at once.
 		float cl12 = fbm(p12 * 1.9 + vec2(t_eff * 0.03, -t_eff * 0.02));
 		float clg12 = smoothstep(0.28, 0.52, cl12);
+		// The wake gathers the swarm: a smooth (non-oscillating) lift in
+		// stirred regions, so more snakes surface where the model moves.
+		clg12 = max(clg12, smoothstep(0.06, 0.32, energy12) * 0.7);
 		field = 0.0;
 		if (clg12 > 0.003) {
 			// Four size octaves, each with its own rotated lane axis, the lanes
@@ -930,10 +1036,12 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 			qm.y += (fbm(qm * 0.11 + 4.7) - 0.5) * 2.4;
 			vec2 ql = vec2(p12.x * 0.99 - p12.y * 0.14, p12.x * 0.14 + p12.y * 0.99) * 1.7;
 			ql.y += (fbm(ql * 0.09 + 11.3) - 0.5) * 1.8;
-			float s_micro = serpent_layer(qu, t_eff * 2.1, 0.7, 0.26);
-			float s_small = serpent_layer(qs, t_eff * 1.5, 0.62, 0.30);
-			float s_mid = serpent_layer(qm, t_eff * 1.05, 0.5, 0.34);
-			float s_big = serpent_layer(ql, t_eff * 0.65, 0.3, 0.42);
+			// lenx stretches per octave: the big bodies run several times the
+			// old cap - long sinuous rivers, not stubby commas.
+			float s_micro = serpent_layer(qu, t_eff * 2.1, 0.7, 0.26, 0.9);
+			float s_small = serpent_layer(qs, t_eff * 1.5, 0.62, 0.30, 1.3);
+			float s_mid = serpent_layer(qm, t_eff * 1.05, 0.5, 0.34, 2.0);
+			float s_big = serpent_layer(ql, t_eff * 0.65, 0.3, 0.42, 3.2);
 			float swarm12 = max(max(s_micro * 0.85, s_small * 0.92), max(s_mid, s_big));
 			field = clamp(swarm12 * 1.25 * clg12, 0.0, 1.0);
 		}

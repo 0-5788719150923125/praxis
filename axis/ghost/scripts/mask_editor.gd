@@ -717,19 +717,47 @@ func _delete_track(i: int) -> void:
 
 
 func _prompt_import_track() -> void:
+	# Already open (double-tap of T) - just bring it forward, don't stack a
+	# second dialog behind the first.
+	if _import_dialog != null and is_instance_valid(_import_dialog):
+		_import_dialog.popup_centered()
+		return
+	# An import is already transcoding - don't let a second one clobber the
+	# first's pending state mid-flight (they share _import_pid/_import_pending).
+	if _import_pid > 0:
+		_set_status("⏳  A track is still importing - one at a time")
+		return
+	# Immediate feedback that T registered, BEFORE the dialog - if the dialog
+	# itself somehow fails to show, at least the keypress isn't silent.
+	_set_status("📁  Choose a video to import as a second track…")
 	_import_dialog = FileDialog.new()
 	_import_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
 	_import_dialog.access = FileDialog.ACCESS_FILESYSTEM
-	_import_dialog.use_native_dialog = true
+	# In-window dialog, NOT native. The native (portal) dialog silently shows
+	# nothing on a Linux box without xdg-desktop-portal - the exact "I press T
+	# and nothing happens" report. Godot's own dialog always renders in-window.
+	_import_dialog.use_native_dialog = false
 	_import_dialog.title = "Import a second track (picture-in-picture)"
-	_import_dialog.filters = PackedStringArray(["*.mp4,*.mov,*.mkv,*.webm ; Video"])
+	_import_dialog.filters = PackedStringArray(["*.mp4, *.mov, *.mkv, *.webm, *.ogv ; Video"])
 	var downloads := OS.get_system_dir(OS.SYSTEM_DIR_DOWNLOADS)
 	if not downloads.is_empty():
 		_import_dialog.current_dir = downloads
-	_import_dialog.size = Vector2i(800, 560)
+	_import_dialog.size = Vector2i(820, 560)
 	_import_dialog.file_selected.connect(_start_track_import)
+	# Free the dialog whichever way it closes (pick or cancel), so the next T
+	# opens a fresh one and the is_instance_valid guard above reads false
+	# again. _start_track_import is connected first, so it runs before the
+	# close on a pick.
+	_import_dialog.file_selected.connect(func(_p): _close_import_dialog())
+	_import_dialog.canceled.connect(_close_import_dialog)
 	add_child(_import_dialog)
 	_import_dialog.popup_centered()
+
+
+func _close_import_dialog() -> void:
+	if _import_dialog != null and is_instance_valid(_import_dialog):
+		_import_dialog.queue_free()
+	_import_dialog = null
 
 
 ## Same one-time ffmpeg->theora transcode _prep() does for the primary clip,
@@ -967,19 +995,28 @@ func _build_panel() -> void:
 	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	margin.add_child(col)
 
-	# ONE button up here: Help. The old row of buttons (play, view cycle, peek,
-	# undo, redo, import track) was pure duplication of the keyboard - all of it
-	# lives on keys now (see _unhandled_input + the help overlay for the map),
-	# and the panel is long enough that every reclaimed row matters. The view
-	# MODE still needs to be visible (it's per-marker state, not a preference),
-	# so it lives on as a passive status label next to the clock below.
+	# Two buttons up here: Help and Import track. Everything ELSE that used to
+	# be a button (play, view cycle, peek, undo, redo) was pure duplication of
+	# a key and moved to the keyboard + the help overlay. Import stayed a
+	# button on purpose: it's the ONE action with no on-screen equivalent and
+	# no way to discover (a hidden T shortcut is exactly the "I don't see a
+	# clear way to do this" complaint - a keyboard-only import that also
+	# depends on nothing having eaten the keystroke is not good enough for the
+	# single essential action). Both a visible button AND the T key now.
 	var title_row := HBoxContainer.new()
+	title_row.add_theme_constant_override("separation", 6)
 	col.add_child(title_row)
 	var title := Label.new()
 	title.text = "Mask Lab"
 	title.add_theme_font_size_override("font_size", 22)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title_row.add_child(title)
+	var import_btn := Button.new()
+	import_btn.text = "⬆ Track"
+	import_btn.tooltip_text = "Import a second video as a picture-in-picture track (T)"
+	import_btn.focus_mode = Control.FOCUS_NONE
+	import_btn.pressed.connect(_prompt_import_track)
+	title_row.add_child(import_btn)
 	var help_btn := Button.new()
 	help_btn.text = "?  Help"
 	help_btn.tooltip_text = "Keyboard map (F1)"
@@ -1352,22 +1389,24 @@ func _push_anchor() -> void:
 func _session_uses_temporal() -> bool:
 	for m in session.markers:
 		var e := int(m.get("effect_a", 0))
-		if e == 5 or e == 7 or e == MaskSession.EFFECT_SNOW or e == MaskSession.EFFECT_ORACLE:
-			return true   # whisp (anchor) / echo / snow (motion probe) / oracle (delayed world)
+		if e == 5 or e == 7 or e == MaskSession.EFFECT_SNOW or e == MaskSession.EFFECT_ORACLE \
+				or e == MaskSession.EFFECT_SERPENT or e == MaskSession.EFFECT_CHIMERA:
+			return true   # whisp+chimera (anchor) / echo+oracle (ring) / snow+serpent (motion probe)
 	return false
 
 
-## The whisp anchor: the first whisp marker's target-color mass centroid in
-## the captured frame, EMA-smoothed (alpha 0.3 per capture ≈ a short
-## multi-window average) so the lock glides to landmarks instead of jittering
-## with noise. Fur no longer reads this - its strands root per-pixel on the
-## keyed surface itself (see fur_root_mass / the fur branch of apply_layer
-## in mask_split.gdshader).
+## The landmark anchor (whisp's field origin, chimera's graft window): the
+## first whisp-or-chimera marker's target-color mass centroid in the captured
+## frame, EMA-smoothed so the lock glides to landmarks instead of jittering
+## with noise. When the key color exists NOWHERE (flat lighting), the motion
+## centroid anchors instead - see the fallback below. Fur no longer reads
+## this - its strands root per-pixel on the keyed surface itself (see
+## fur_root_mass / the fur branch of apply_layer in mask_split.gdshader).
 func _update_whisp_anchor(img: Image) -> void:
 	var hue := -1.0
 	for m in session.markers:
 		var e := int(m.get("effect_a", 0))
-		if e == 5:
+		if e == 5 or e == MaskSession.EFFECT_CHIMERA:
 			hue = float(m.get("hue_a", 0.0))
 			break
 	if hue < 0.0:
@@ -1378,6 +1417,8 @@ func _update_whisp_anchor(img: Image) -> void:
 	img.resize(48, 27, Image.INTERPOLATE_BILINEAR)
 	var acc := Vector2.ZERO
 	var wsum := 0.0
+	var macc := Vector2.ZERO
+	var msum := 0.0
 	var have_prev := _wave_prev_lum.size() == 48 * 27
 	if not have_prev:
 		_wave_prev_lum.resize(48 * 27)
@@ -1386,16 +1427,28 @@ func _update_whisp_anchor(img: Image) -> void:
 		for x in 48:
 			var c := img.get_pixel(x, y)
 			var l := 0.299 * c.r + 0.587 * c.g + 0.114 * c.b
+			var pos := Vector2((float(x) + 0.5) / 48.0, (float(y) + 0.5) / 27.0)
 			var pr := maxf(0.0, (c.r - l) * tdir.x + (c.g - l) * tdir.y + (c.b - l) * tdir.z)
-			acc += Vector2((float(x) + 0.5) / 48.0, (float(y) + 0.5) / 27.0) * pr
+			acc += pos * pr
 			wsum += pr
 			var idx := y * 48 + x
 			if have_prev:
-				motion += absf(l - _wave_prev_lum[idx])
+				var dm := absf(l - _wave_prev_lum[idx])
+				motion += dm
+				macc += pos * dm
+				msum += dm
 			_wave_prev_lum[idx] = l
 	if wsum > 0.01:
 		_anchor_prev = _anchor_ema
 		_anchor_ema = _anchor_ema.lerp(acc / wsum, 0.15)
+	elif msum > 0.3:
+		# FLAT-LIGHTING FALLBACK (chimera's first test case): standard, flat
+		# footage may carry the key color NOWHERE - then the landmark is
+		# wherever the pixels MOVE. The motion centroid of a talking head IS
+		# the head; slower EMA than the color lock because motion is noisier
+		# frame to frame.
+		_anchor_prev = _anchor_ema
+		_anchor_ema = _anchor_ema.lerp(macc / msum, 0.1)
 	if have_prev:
 		_update_wave_impulses(motion / (48.0 * 27.0))
 
@@ -1956,6 +2009,18 @@ func _apply_frame_state(p: Dictionary) -> void:
 		mat.set_shader_parameter("u_l_elag", echo_lag)
 		mat.set_shader_parameter("u_l_lagf", lagf)
 		mat.set_shader_parameter("u_l_tdir", tdirs)
+		# Chimera's graft source: the first track's live frame. The explicit
+		# flag matters - the sampler's default-black fallback must never read
+		# as footage.
+		var track_tex: Texture2D = null
+		if _track_runtime.size() > 0 and _track_runtime[0].has("player"):
+			var tp: VideoStreamPlayer = _track_runtime[0].player
+			if tp != null and tp.get_video_texture() != null \
+					and tp.get_video_texture().get_height() > 0:
+				track_tex = tp.get_video_texture()
+		mat.set_shader_parameter("u_track_on", 1 if track_tex != null else 0)
+		if track_tex != null:
+			mat.set_shader_parameter("u_track", track_tex)
 	_fx_overlay.visible = main_amt > 0.001
 	_mask_wrap.visible = inset_show > 0.001
 	_mask_wrap.modulate.a = inset_show
