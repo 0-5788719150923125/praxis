@@ -25,6 +25,14 @@ signal closed
 const DIR := "res://feedback"
 const TOGGLE_KEY := KEY_QUOTELEFT   # the backtick / tilde key
 
+## Injection points for modes that don't run through the Director (the mask
+## editor): what to snapshot, how to freeze the scene while typing, and what to
+## do after a submission. Invalid (unset) Callables fall back to the Director -
+## the auto/manual show's behavior is unchanged.
+var describe: Callable = Callable()   # -> Dictionary: the state descriptor
+var freeze: Callable = Callable()     # (bool): hold the scene while console is open
+var advance: Callable = Callable()    # (): after submit (Director cuts to next scene)
+
 var _ui: Control
 var _info: Label
 var _edit: LineEdit
@@ -111,13 +119,17 @@ func _open_console() -> void:
 	# (un-holding the Director on close can immediately cut a new scene in, which is
 	# the scene that wrongly ended up in early screenshots).
 	_shot_img = get_viewport().get_texture().get_image()
-	_shot_desc = Director.current_descriptor()
+	_shot_desc = describe.call() if describe.is_valid() else Director.current_descriptor()
 	_open = true
 	_ui.visible = true
 	_edit.text = ""
 	_edit.grab_focus()
 	_info.text = _summary()
-	Director.hold(true)            # also keep the scene from cutting away while typing
+	# Keep the scene from cutting/playing away while typing.
+	if freeze.is_valid():
+		freeze.call(true)
+	else:
+		Director.hold(true)
 
 
 ## True while the console is open and accepting input.
@@ -129,7 +141,10 @@ func _close() -> void:
 	_open = false
 	_ui.visible = false
 	_edit.release_focus()
-	Director.hold(false)
+	if freeze.is_valid():
+		freeze.call(false)
+	else:
+		Director.hold(false)
 	closed.emit()
 
 
@@ -137,6 +152,10 @@ func _summary() -> String:
 	var d := _shot_desc
 	if d.is_empty():
 		return ""
+	if d.get("mode", "") == "mask":
+		return "mask · t=%s · %d markers · %d live layers" % [
+			str(d.get("time_str", "?")), int(d.get("marker_count", 0)),
+			int(d.get("layer_count", 0))]
 	return "%s · %s · %s · seed %d" % [
 		d.get("scene", "?"), d.get("render_kind", "?"),
 		d.get("behavior", "?"), int(d.get("seed", 0))]
@@ -154,8 +173,12 @@ func _on_submit(text: String) -> void:
 	_write(query, img, desc)
 	# We have been staring at this exact scene for the minutes it took to write the
 	# critique, so don't wait out the next harmonic cue - cut to the next scene the
-	# moment the feedback lands. (Director.next() no-ops if the session is ending.)
-	Director.next()
+	# moment the feedback lands. (Director.next() no-ops if the session is ending;
+	# the mask editor injects a no-op - its playhead is the user's business.)
+	if advance.is_valid():
+		advance.call()
+	else:
+		Director.next()
 
 
 # Write the snapshot taken at open time (no live capture - that races the Director).

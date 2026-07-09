@@ -70,6 +70,10 @@ var _selected: Variant = null   # the marker Dictionary currently shown in the p
 
 var _color_a: ColorPickerButton
 var _threshold: HSlider
+var _threshold_label: Label
+var _grp_threshold: VBoxContainer   # the control hierarchy's option groups -
+var _grp_keymisc: VBoxContainer     # shown per selected effect, see
+var _grp_pattern: VBoxContainer     # MaskSession.EFFECT_CONTROLS
 var _feather: HSlider
 var _sat_floor: HSlider
 var _fx_x: HSlider
@@ -85,6 +89,9 @@ var _marker_duration: HSlider
 var _marker_label: Label
 var _time_label: Label
 var _marker_list: VBoxContainer   # sequential ramp/decay list, pinned to the panel's bottom
+
+var _feedback: Node = null    # backtick console (see _build_feedback); editor mode only
+var _was_playing_before_feedback := false
 
 var _status: Label            # shared bottom-right notification - prep AND export
 var _export_btn: Button
@@ -524,8 +531,53 @@ func _build_editor_ui() -> void:
 
 	_build_panel()
 	_build_export_ui()
+	_build_feedback()
 	_refresh_panel()
 	_apply_frame_state(session.at_time(_player.stream_position))
+
+
+## The same backtick feedback console the auto/manual show has (see feedback.gd),
+## with mask-specific plumbing injected: the descriptor snapshots everything needed
+## to debug a masking complaint (playhead, the fully-resolved layer stack at that
+## instant, every marker, keying globals, audio envelope), freeze pauses playback
+## while typing (restoring the prior play state after), and advance is a no-op -
+## the playhead is the user's business, not the console's.
+func _build_feedback() -> void:
+	_feedback = preload("res://scripts/feedback.gd").new()
+	_feedback.describe = _feedback_descriptor
+	_feedback.freeze = func(on: bool):
+		if on:
+			_was_playing_before_feedback = _playing
+			_play(false)
+		elif _was_playing_before_feedback:
+			_play(true)
+	_feedback.advance = func(): pass
+	add_child(_feedback)
+
+
+## Everything I'd want to know about "this frame looks wrong": where we are, what
+## the timeline resolved to (including each live layer's full parameter set and
+## envelope), the raw marker list, and the session's file identity. The screenshot
+## the console pairs with this carries the artifact itself.
+func _feedback_descriptor() -> Dictionary:
+	var t: float = _player.stream_position if _player != null else 0.0
+	var p := session.at_time(t)
+	return {
+		"mode": "mask",
+		"time": t,
+		"time_str": MaskTimeline.format_time(t),
+		"session_path": _session_path,
+		"video_path": session.video_path,
+		"source_path": session.source_path,
+		"duration": session.duration,
+		"resolved_state": p,             # globals + amounts + the live layer stack
+		"layer_count": (p.get("layers", []) as Array).size(),
+		"markers": session.markers,
+		"marker_count": session.markers.size(),
+		"audio_env": _env_at(t),
+		"peek_raw": _peek_raw,
+		"playing": _playing,
+	}
 
 
 func _build_panel() -> void:
@@ -619,23 +671,46 @@ func _build_panel() -> void:
 	_effect_a = _effect_menu(col, func(id): _edit("effect_a", float(id)))
 	_intensity_a = _slider(col, "Intensity", 0.0, 1.0, func(v): _edit("intensity_a", v))
 
-	col.add_child(HSeparator.new())
-	_threshold = _slider(col, "Threshold", 0.0, 1.0, func(v): _edit("threshold", v))
-	_feather = _slider(col, "Feather", 0.0, 0.5, func(v): _edit("feather", v))
-	_sat_floor = _slider(col, "Min saturation", 0.0, 1.0, func(v): _edit("sat_floor", v))
+	# Option GROUPS, shown per the selected effect's needs (the control hierarchy,
+	# MaskSession.EFFECT_CONTROLS): a slider that does nothing for the current
+	# effect is not on screen for it. Erase shows none of these (projection is
+	# gate-free); restore shows only the threshold, relabeled as its reach;
+	# the volumetrics show everything. See _update_effect_controls.
+	_grp_threshold = VBoxContainer.new()
+	_grp_threshold.add_theme_constant_override("separation", 8)
+	col.add_child(_grp_threshold)
+	_grp_threshold.add_child(HSeparator.new())
+	_threshold_label = _label("Threshold")
+	_grp_threshold.add_child(_threshold_label)
+	_threshold = HSlider.new()
+	_threshold.focus_mode = Control.FOCUS_NONE
+	_threshold.min_value = 0.0
+	_threshold.max_value = 1.0
+	_threshold.step = 0.005
+	_threshold.value_changed.connect(func(v): _edit("threshold", v))
+	_grp_threshold.add_child(_threshold)
+
+	_grp_keymisc = VBoxContainer.new()
+	_grp_keymisc.add_theme_constant_override("separation", 8)
+	col.add_child(_grp_keymisc)
+	_feather = _slider(_grp_keymisc, "Feather", 0.0, 0.5, func(v): _edit("feather", v))
+	_sat_floor = _slider(_grp_keymisc, "Min colorfulness", 0.0, 1.0, func(v): _edit("sat_floor", v))
 
 	# The wisp field's placement - pan/zoom the pattern over the frame (keyframe a
 	# tendril onto an eye), and dial its coverage from one wisp to an engulfing.
 	# All continuous marker fields, so they blend through ramps/decays.
-	col.add_child(HSeparator.new())
-	col.add_child(_label("Pattern - fire/freeze/smoke field placement"))
-	_fx_x = _slider(col, "Pan X", -2.0, 2.0, func(v): _edit("fx_x", v))
-	_fx_y = _slider(col, "Pan Y", -2.0, 2.0, func(v): _edit("fx_y", v))
-	_fx_scale = _slider(col, "Scale", 0.1, 8.0, func(v): _edit("fx_scale", v))
+	_grp_pattern = VBoxContainer.new()
+	_grp_pattern.add_theme_constant_override("separation", 8)
+	col.add_child(_grp_pattern)
+	_grp_pattern.add_child(HSeparator.new())
+	_grp_pattern.add_child(_label("Pattern - field placement"))
+	_fx_x = _slider(_grp_pattern, "Pan X", -2.0, 2.0, func(v): _edit("fx_x", v))
+	_fx_y = _slider(_grp_pattern, "Pan Y", -2.0, 2.0, func(v): _edit("fx_y", v))
+	_fx_scale = _slider(_grp_pattern, "Scale", 0.1, 8.0, func(v): _edit("fx_scale", v))
 	_fx_scale.exp_edit = true
-	_fx_density = _slider(col, "Coverage", 0.0, 1.0, func(v): _edit("fx_density", v))
-	_fx_contrast = _slider(col, "Contrast", 0.0, 1.0, func(v): _edit("fx_contrast", v))
-	_resonance = _slider(col, "Resonance (audio drive)", 0.0, 1.0, func(v): _edit("resonance", v))
+	_fx_density = _slider(_grp_pattern, "Coverage", 0.0, 1.0, func(v): _edit("fx_density", v))
+	_fx_contrast = _slider(_grp_pattern, "Contrast", 0.0, 1.0, func(v): _edit("fx_contrast", v))
+	_resonance = _slider(_grp_pattern, "Resonance (audio drive)", 0.0, 1.0, func(v): _edit("resonance", v))
 
 	col.add_child(HSeparator.new())
 	# Every marker is a ramp or a decay - there is no plain/neutral marker (see
@@ -770,6 +845,8 @@ func _edit(field: String, value: float) -> void:
 			and float(m.get("intensity_a", 0.0)) > 0.0
 		if drawing and (vm == 2 or vm == 3):
 			m["view_mode"] = 1.0 if vm == 2 else 0.0
+	if field == "effect_a":
+		_update_effect_controls(int(value))
 	_timeline.selected = _selected
 	_refresh_marker_label()
 	_mark_dirty()
@@ -835,7 +912,19 @@ func _refresh_panel() -> void:
 	_fx_density.set_value_no_signal(float(m.get("fx_density", 0.45)))
 	_fx_contrast.set_value_no_signal(float(m.get("fx_contrast", 0.5)))
 	_resonance.set_value_no_signal(float(m.get("resonance", 0.0)))
+	_update_effect_controls(int(m.get("effect_a", 0)))
 	_refresh_marker_label()
+
+
+## The control hierarchy in action (MaskSession.EFFECT_CONTROLS): show only the
+## option groups the selected effect consumes. Threshold doubles as restore's
+## reach - same stored field, relabeled so it says what it does here.
+func _update_effect_controls(effect_id: int) -> void:
+	var groups: Array = MaskSession.EFFECT_CONTROLS.get(effect_id, [])
+	_grp_threshold.visible = groups.has("keying") or groups.has("reach")
+	_threshold_label.text = "Reach - hue range this restore covers" if groups.has("reach") else "Threshold"
+	_grp_keymisc.visible = groups.has("keying")
+	_grp_pattern.visible = groups.has("pattern")
 
 
 func _refresh_marker_label() -> void:
@@ -952,6 +1041,7 @@ func _apply_frame_state(p: Dictionary) -> void:
 	var densities := PackedFloat32Array()
 	var contrasts := PackedFloat32Array()
 	var glows := PackedFloat32Array()
+	var tdirs := PackedVector3Array()
 	for i in MaskSession.MAX_LAYERS:
 		if i < n:
 			var l: Dictionary = layers[i]
@@ -966,6 +1056,12 @@ func _apply_frame_state(p: Dictionary) -> void:
 			densities.append(clampf(float(l.get("fx_density", 0.45)) + 0.5 * res * (env - 0.35), 0.0, 1.0))
 			contrasts.append(float(l.get("fx_contrast", 0.5)))
 			glows.append(1.0 + res * env * 1.3)
+			# The target hue's normalized chroma direction, for erase's
+			# projection-subtraction (see the shader: erase is subtraction,
+			# not classification - no gates, no boundary rings).
+			var tc := Color.from_hsv(float(l.get("hue_a", 0.0)), 1.0, 1.0)
+			var tl := 0.299 * tc.r + 0.587 * tc.g + 0.114 * tc.b
+			tdirs.append(Vector3(tc.r - tl, tc.g - tl, tc.b - tl).normalized())
 		else:
 			hues.append(0.0)
 			effects.append(0)
@@ -975,6 +1071,7 @@ func _apply_frame_state(p: Dictionary) -> void:
 			densities.append(0.0)
 			contrasts.append(0.5)
 			glows.append(1.0)
+			tdirs.append(Vector3(1, 0, 0))
 	for pair in [[_mat_main, main_amt], [_mat_inset, inset_fx]]:
 		var mat: ShaderMaterial = pair[0]
 		var amt: float = pair[1]
@@ -1000,6 +1097,7 @@ func _apply_frame_state(p: Dictionary) -> void:
 		mat.set_shader_parameter("u_l_dens", densities)
 		mat.set_shader_parameter("u_l_con", contrasts)
 		mat.set_shader_parameter("u_l_glow", glows)
+		mat.set_shader_parameter("u_l_tdir", tdirs)
 	_fx_overlay.visible = main_amt > 0.001
 	_mask_wrap.visible = inset_show > 0.001
 	_mask_wrap.modulate.a = inset_show

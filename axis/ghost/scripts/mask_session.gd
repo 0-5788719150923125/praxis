@@ -114,6 +114,22 @@ const MAX_LAYERS := 6
 const MASK_EFFECTS := ["erase", "fire", "freeze", "smoke", "restore"]
 const EFFECT_RESTORE := 4
 
+## THE CONTROL HIERARCHY: which panel option groups each effect actually consumes
+## (the editor shows/hides accordingly - a slider that does nothing for the
+## selected effect is not shown for it). Color + intensity are universal. Groups:
+##   "keying"  - threshold/feather/colorfulness steer the volumetric mask
+##   "reach"   - threshold reinterpreted: how wide around the color a restore acts
+##   "pattern" - field placement/coverage/contrast/resonance
+## Erase consumes NO groups: it is projection-subtraction, gate-free by design -
+## threshold, feather, colorfulness and the pattern have no effect on it at all.
+const EFFECT_CONTROLS := {
+	0: [],                        # erase
+	1: ["keying", "pattern"],     # fire
+	2: ["keying", "pattern"],     # freeze
+	3: ["keying", "pattern"],     # smoke
+	4: ["reach"],                 # restore
+}
+
 ## The view-mode registry (see mask_editor.gd). Really a 2-axis matrix flattened to
 ## one discrete field - main screen (raw / fx) x inset (hidden / raw / fx) - kept
 ## flat because it's a per-marker EXPORTABLE choice, and one scalar in the vector

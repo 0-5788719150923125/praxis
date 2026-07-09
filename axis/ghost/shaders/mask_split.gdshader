@@ -23,8 +23,10 @@ shader_type canvas_item;
 // Effects: "erase" hides the keyed region outright. The rest are volumetric
 // CONSUMING fields: the wisps themselves are the substance - where a drifting
 // fbm field forms a lick of flame / vein of ice / curl of smoke, the keyed
-// footage is eaten to void, rimmed with a glow in the layer's own target hue;
-// everywhere the field is absent, the footage stays intact. (The sparse regions
+// footage is eaten to void, each wisp edged by a deeper DARK lip (edges are
+// drawn in the masking color, never the target hue - a tinted rim just paints
+// the removed color back); everywhere the field is absent, the footage stays
+// intact. (The sparse regions
 // of the pattern DRAW THE VOID - tendrils devouring the subject - they don't
 // open windows onto it.)
 //
@@ -48,7 +50,8 @@ uniform vec2 u_l_off[6];           // pattern pan (unit UV)
 uniform float u_l_scale[6];        // pattern zoom
 uniform float u_l_dens[6];         // coverage (resonance breathe pre-folded CPU-side)
 uniform float u_l_con[6];          // contrast 0..1, exponential response
-uniform float u_l_glow[6];         // rim glow multiplier (resonance pulse pre-folded)
+uniform float u_l_glow[6];         // dark-lip depth multiplier (resonance pulse pre-folded)
+uniform vec3 u_l_tdir[6];          // target hue's normalized CHROMA direction (for erase)
 
 uniform float u_time = 0.0;        // clip playback seconds (deterministic clock)
 uniform float u_aspect = 1.7778;   // video w/h, so the pattern stays isotropic
@@ -60,12 +63,6 @@ vec3 rgb2hsv(vec3 c) {
 	float d = q.x - min(q.w, q.y);
 	float e = 1.0e-10;
 	return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
-}
-
-vec3 hsv2rgb(vec3 c) {
-	vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
-	vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
-	return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
 }
 
 // Shortest distance between two hues on the wrapped 0..1 circle.
@@ -110,22 +107,43 @@ float fbm(vec2 p) {
 }
 
 // One tap's membership: 1 well inside the hue target, feathered to 0 at the
-// threshold edge, 0 regardless for near-neutral pixels.
+// threshold edge, 0 regardless for pixels with no real color.
+//
+// The gate is COLORFULNESS (saturation x brightness), not HSV saturation alone.
+// HSV saturation is chroma NORMALIZED BY BRIGHTNESS, so a near-black compressed
+// pixel - RGB(10,25,20), say - scores "saturation 0.6" while carrying almost no
+// actual color, and its quantized hue is junk that lands anywhere on the wheel
+// (in red-lit footage, disproportionately on red's complement, teal). Gating on
+// saturation alone let those dark chroma-blocks key at FULL strength onto any
+// wide-threshold layer - the hard black block-cluster artifact, immune to
+// spatial smoothing because the junk arrives in contiguous block groups. A
+// pixel must have light carrying its color before its hue is trusted; dark
+// regions simply cannot key, which is correct - there is no chroma information
+// down there to key on.
 float tap_mask(float target_hue, vec3 hsv) {
 	float d = hue_dist(hsv.x, target_hue);
 	float m = 1.0 - smoothstep(u_threshold - u_feather, u_threshold + u_feather, d);
-	return m * smoothstep(u_sat_floor, u_sat_floor + 0.08, hsv.y);
+	float colorfulness = hsv.y * hsv.z;
+	float conf = smoothstep(u_sat_floor * 0.6, u_sat_floor * 0.6 + 0.10, colorfulness);
+	// Where a pixel carries no real color, its membership is UNKNOWN - and
+	// unknown leans PERMISSIVE (0.6), not zero. These masks only steer the
+	// volumetrics now (erase is projection-based and gate-free), and the whole
+	// philosophy of that path is that the wisp field makes the judgement calls
+	// in uncertain places. Zeroing dark pixels silently confined the patterns
+	// to brightly-keyed regions - on dark footage, fire configured to sweep the
+	// whole scene shrank to a few faint patches.
+	return mix(0.6, m, conf);
 }
 
 // This layer's membership averaged over a run of the prediction taps (see
-// fragment: [0..8] = center + fine ring, [9..16] = broad ring). Averaging the
-// MASK across the neighborhood - never the color (averaging RGB across a
-// red/blue seam invents purple) - turns the blocky steps of compressed chroma
-// into coverage gradients. The mask is GREY AND CONTINUOUS end to end; nothing
-// downstream may treat it as on/off.
-float mask_over(float target_hue, vec3 taps[17], int start, int count) {
+// fragment: [0..8] = center + fine ring, [9..16] = mid ring, [17..24] = wide
+// ring). Averaging the MASK across the neighborhood - never the color (averaging
+// RGB across a red/blue seam invents purple) - turns the blocky steps of
+// compressed chroma into coverage gradients. The mask is GREY AND CONTINUOUS end
+// to end; nothing downstream may treat it as on/off.
+float mask_over(float target_hue, vec3 taps[25], int start, int count) {
 	float acc = 0.0;
-	for (int k = 0; k < 17; k++) {
+	for (int k = 0; k < 25; k++) {
 		if (k >= start && k < start + count) {
 			acc += tap_mask(target_hue, taps[k]);
 		}
@@ -155,6 +173,19 @@ float wisp_field(vec2 uv, int effect, float t, vec2 off, float scl) {
 	return fbm(p + drift + 0.8 * w);
 }
 
+// THE REMNANT RULE. Suppressing a keyed pixel by scaling its RGB keeps its HUE -
+// a half-erased blue pixel is still blue, just dimmer, and against fully-dark
+// neighbors every partial-confidence zone (mask edges, the colorfulness gate's
+// ramp) renders as a halo of the exact color being removed. Removing a color
+// means removing the COLOR first: chroma dies ahead of light, so the partial
+// zone trends monochrome and edges land in the masking color (black), never in
+// the target color.
+vec3 suppressed_remnant(vec3 rgb, float s) {
+	float lum = dot(rgb, vec3(0.299, 0.587, 0.114));
+	vec3 neutral = mix(rgb, vec3(lum), smoothstep(0.0, 0.5, s));
+	return neutral * (1.0 - s);
+}
+
 // SUPPRESSION SHAPING - every darkening in this shader passes through here.
 // Three properties, each aimed at the hard-edged transparency-mask artifact:
 //   CEILING   - suppression never reaches 1.0: even a fully keyed, fully
@@ -181,26 +212,42 @@ float shade_amount(float x, vec2 uv) {
 
 // Apply layer i to the running color. `w` is the layer's full on-screen weight
 // (envelope x intensity x surface presence), already resolved CPU-side.
-vec4 apply_layer(vec4 col, int i, vec3 taps[17], vec2 uv) {
+vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv) {
 	float w = u_l_w[i];
-	// Fine confidence: local coverage, mildly lifted so uncertain edges lean
-	// toward the effect. Broad confidence: the wider ring's regional read -
-	// "this AREA is basically keyed, whatever this block says" - the prediction
-	// the volumetrics use to render over artifacting (see below).
-	float fine = pow(mask_over(u_l_hue[i], taps, 0, 9), 0.8);
-	float broad = (fine * 9.0 + mask_over(u_l_hue[i], taps, 9, 8) * 8.0) / 17.0;
-	if (max(fine, broad) * w <= 0.001) {
+	if (w <= 0.001) {
 		return col;
 	}
 	int effect = u_l_effect[i];
 	if (effect == 0) {
-		// erase: darken this layer's pixels by weight, from the FINE confidence
-		// alone - erase has no field of its own to justify reaching over
-		// uncertainty, so its boundary stays honest. The darkening runs through
-		// shade_amount: granular, continuous, never total. RGB only, alpha
-		// untouched - this surface is drawn OVER the raw video, so a fading
-		// alpha would let the raw color bleed back through the "erased" region.
-		return vec4(col.rgb * (1.0 - shade_amount(w * fine, uv)), col.a);
+		// ERASE IS SUBTRACTION, NOT CLASSIFICATION. Every gate-based key -
+		// hue-distance x colorfulness membership - leaks at its own boundaries:
+		// wherever the gate product dips (shadow edges where red drifts magenta,
+		// dim reds near the colorfulness floor), pixels survive at partial
+		// membership as lines and rings of the very color being erased, and no
+		// amount of stacking closes them (it darkens the middle and sharpens
+		// the ring). So erase doesn't ask "is this pixel red?" at all: it
+		// projects the pixel's chroma onto the target color's direction and
+		// SUBTRACTS that component, plus the light it carried. Linear in the
+		// pixel color - no thresholds anywhere, so no boundary artifacts are
+		// even possible - and pixels with no target-colored component (other
+		// hues, neutrals) are untouched by construction. Chroma dies with its
+		// light together: full reds land near black, faint reds go faintly
+		// gray-darker, everything in between is continuous.
+		float k = shade_amount(w, uv);   // strength: granular, curved, never total
+		float lum = dot(col.rgb, vec3(0.299, 0.587, 0.114));
+		vec3 chroma = col.rgb - vec3(lum);
+		float p = max(0.0, dot(chroma, u_l_tdir[i]));
+		vec3 outc = col.rgb - u_l_tdir[i] * (p * k) - vec3(0.85 * p * k);
+		return vec4(max(outc, vec3(0.0)), col.a);
+	}
+	// Fine/regional confidence for the VOLUMETRIC masks: local coverage and the
+	// whole 25-tap pyramid - a wide, spatially smooth envelope with no
+	// block-scale structure (block noise is high-frequency; a ~44px window
+	// doesn't see it). This is what volumetrics taper by - see below.
+	float fine = pow(mask_over(u_l_hue[i], taps, 0, 9), 0.8);
+	float regional = mask_over(u_l_hue[i], taps, 0, 25);
+	if (max(fine, regional) * w <= 0.001) {
+		return col;
 	}
 	float field = wisp_field(uv, effect, u_time, u_l_off[i], u_l_scale[i]);
 	// Contrast: exponential response around the neutral midpoint - each half of
@@ -225,33 +272,55 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[17], vec2 uv) {
 	// The wisp IS the substance: where the field forms a lick, the footage is
 	// consumed to void; everywhere else it stays intact.
 	float consume = smoothstep(thr - sharp, thr + sharp, field);
-	// A rim band on the intact side of the boundary - the devouring edge's
-	// luminous lip, licking into the footage. It fades out entirely as coverage
-	// approaches fully-sparse: "nothing consumed" must mean untouched footage,
-	// not footage wearing free-floating glow.
+	// A rim band on the intact side of the boundary - the devouring edge's lip.
+	// It DARKENS (see below): edges are drawn in the masking color, never in the
+	// layer's target hue - an earlier version added hue-tinted glow here, which
+	// painted the removed color right back along every wisp boundary (the halo
+	// complaint). It fades out entirely as coverage approaches fully-sparse:
+	// "nothing consumed" must mean untouched footage.
 	float rim = smoothstep(thr - sharp * 3.0, thr, field) * (1.0 - consume);
 	rim *= smoothstep(0.0, 0.08, dens);
-	vec3 tint = hsv2rgb(vec3(u_l_hue[i], 0.75, 1.0));
-	if (effect == 2) {
-		tint = mix(tint, vec3(1.0), 0.45);   // ice glints toward white
+	// THE KEY DOES NOT CLIP THE PATTERN. The old model multiplied the wisp by
+	// local keying confidence, so the pattern's edge WAS the key's edge - and on
+	// compressed footage that edge is ragged, blocky, and temporally unstable:
+	// tendrils were amputated mid-lick along compression noise, constantly.
+	// Instead the volumetric draws ANYWHERE, shaped only by its own field, and
+	// the key modulates its TRANSPARENCY through the wide regional envelope -
+	// spatially smooth (it varies over tens of pixels, not blocks), with a soft
+	// knee so it reaches full strength well inside the keyed region and tapers
+	// gently across the boundary. A tendril near the edge fades on its own
+	// terms; it is never cut. (The few-pixel spill past the seam is deliberate
+	// and tapered - the price of never clipping, and it reads as the pattern
+	// drifting across the boundary rather than an error.)
+	float vol_conf = smoothstep(0.05, 0.55, regional);
+	// The darkening is ONE shaped product - the wisp body and its dark lip
+	// (rim folded in via max) x envelope x weight - through shade_amount
+	// (granular, continuous, never total) and the remnant rule (chroma dies
+	// first), so no path here can manufacture a hard edge, a pure-black pixel,
+	// or a target-colored halo.
+	// Freeze's rim IS its emission (below), so only fire/smoke fold the rim
+	// into the dark lip - freeze's edge glows instead of charring.
+	float lip = rim * clamp(0.6 * glow, 0.0, 1.0);
+	float shape = effect == 2 ? consume : max(consume, lip);
+	float suppress = shade_amount(shape * vol_conf * w, uv);
+	vec3 outc = suppressed_remnant(col.rgb, suppress);
+	// The EMISSIVE BODY - the effect's visible substance, in its own FIXED
+	// palette (never the key hue, never tracing mask edges - both halo lessons
+	// hold): fire glows deep-red to amber from its field's interior heat, a
+	// broad body gradient placed by the field itself; freeze's crystalline
+	// VEINS shine cold blue-white - the rim band is the vein, the effect's
+	// defining line-work, bright and distinct even at sparse coverage; smoke
+	// stays pure consumption. Resonance pulses this through the glow factor.
+	// An effect that only darkens is invisible on dark footage - fire and ice
+	// must carry their own light.
+	float heat = smoothstep(thr, thr + 0.4, field);
+	vec3 emiss = vec3(0.0);
+	if (effect == 1) {
+		emiss = mix(vec3(0.55, 0.08, 0.01), vec3(1.0, 0.55, 0.10), heat) * heat * 0.9;
+	} else if (effect == 2) {
+		emiss = vec3(0.62, 0.82, 1.0) * (rim * 1.1 + pow(heat, 2.0) * 0.3);
 	}
-	// THE JUDGEMENT CALL. Keying confidence is grey and continuous - but printed
-	// linearly into a wisp, every blocky fluctuation of compressed chroma
-	// renders as stepped darkness, and a tendril crossing an uncertain zone
-	// fragments along block boundaries. So where the FIELD is present, the
-	// layer commits: confidence is allowed to rise to the broad regional read
-	// (the wisp completes itself over local artifacts), and mid-grey confidence
-	// inside a strong wisp is squeezed toward covered (smoothstep) - artifact-
-	// prone places get covered by the volumetric rather than exposed by it.
-	// Where the field is absent, confidence stays untouched - the judgement is
-	// the wisp's to make, never a blanket dilation of the key.
-	float conf = max(fine, broad * consume);
-	conf = mix(conf, smoothstep(0.10, 0.60, conf), 0.85 * consume);
-	// The final darkening is ONE product - field x confidence x weight - shaped
-	// by shade_amount (granular, continuous, never total), so no path through
-	// this branch can manufacture a hard edge or a pure-black pixel.
-	float suppress = shade_amount(consume * conf * w, uv);
-	vec3 outc = col.rgb * (1.0 - suppress) + tint * rim * glow * conf * w;
+	outc += emiss * (glow * vol_conf * w);
 	return vec4(outc, col.a);
 }
 
@@ -263,17 +332,20 @@ void fragment() {
 	// in/out and the effects render as hard black squares along seams. A small
 	// ring of taps (converted to HSV once, shared by every layer) lets each
 	// layer's mask read as neighborhood COVERAGE instead - see chan_mask.
-	vec3 taps[17];
+	vec3 taps[25];
 	taps[0] = rgb2hsv(src.rgb);
 	vec2 rad = TEXTURE_PIXEL_SIZE * 2.5;
-	vec2 rad_broad = TEXTURE_PIXEL_SIZE * 7.0;
+	vec2 rad_mid = TEXTURE_PIXEL_SIZE * 7.0;
+	vec2 rad_wide = TEXTURE_PIXEL_SIZE * 22.0;
 	for (int k = 0; k < 8; k++) {
 		float a = float(k) * 0.7853981634;   // TAU / 8
 		vec2 dirv = vec2(cos(a), sin(a));
 		taps[k + 1] = rgb2hsv(texture(TEXTURE, UV + dirv * rad).rgb);
-		// Broad ring staggered half a step so the two rings don't share spokes.
+		// Outer rings staggered so the spokes interleave instead of aligning.
 		float ab = a + 0.3926990817;         // TAU / 16
-		taps[k + 9] = rgb2hsv(texture(TEXTURE, UV + vec2(cos(ab), sin(ab)) * rad_broad).rgb);
+		taps[k + 9] = rgb2hsv(texture(TEXTURE, UV + vec2(cos(ab), sin(ab)) * rad_mid).rgb);
+		float aw = a + 0.1963495409;         // TAU / 32
+		taps[k + 17] = rgb2hsv(texture(TEXTURE, UV + vec2(cos(aw), sin(aw)) * rad_wide).rgb);
 	}
 	vec4 col = src;
 	for (int i = 0; i < MAXL; i++) {
