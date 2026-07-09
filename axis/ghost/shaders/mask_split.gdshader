@@ -205,6 +205,61 @@ float fur_root_mass(sampler2D tex, vec2 p_uv, vec3 tdir) {
 	return (p / max(length(ch), 1e-4)) * smoothstep(0.02, 0.10, length(ch)) * ef;
 }
 
+// One octave of wriggling snakes on a torus of lanes. Each integer lane of q.y
+// hosts at most ONE snake (the sparse gate empties most lanes), and every
+// snake samples its own existence, length (squared - mostly small, a few
+// long), lap speed, heading, girth, wriggle, banding, and glow from per-lane
+// hashes. The centerline is a nested-sine serpentine - a nonlinear activation
+// whose phases live on the torus - and its wave travels BACKWARD along the
+// body relative to the direction of travel, which is what actual snake
+// locomotion looks like. The along-body coordinate wraps a lap LONGER than
+// the body (fract of q.x/period), so each snake circles its lane endlessly
+// with a gap between passes, heads and tails tapering to points. Neighbor
+// lanes are checked so a wriggle that crosses a lane border never clips.
+float serpent_layer(vec2 q, float t, float sparse, float girth) {
+	float best = 0.0;
+	float lane0 = floor(q.y);
+	for (int dy = -1; dy <= 1; dy++) {
+		float id = lane0 + float(dy);
+		float h1 = hash21(vec2(id, 7.1));
+		if (h1 > sparse) {
+			continue;
+		}
+		float h2 = hash21(vec2(id, 13.7));
+		float h3 = hash21(vec2(id, 29.3));
+		float h4 = hash21(vec2(id, 47.9));
+		float dir = h3 > 0.5 ? 1.0 : -1.0;
+		float spd = (0.3 + h2 * 1.1) * dir;
+		float len = 2.5 + h2 * h2 * 11.0;
+		float period = len * (1.4 + h1 * 1.2);
+		float phx = q.x * (1.1 + h2 * 1.3);
+		float wr = sin(phx - t * (1.6 + h1 * 1.4) * dir
+			+ 1.7 * sin(phx * 0.43 + t * 0.5 + id * 3.7)) * (0.24 + h4 * 0.22);
+		float yc = id + 0.5 + wr;
+		float su = fract((q.x * dir - t * spd) / period) * period;
+		float un = clamp(su / len, 0.0, 1.0);
+		// Width profile: zero at both ends (pointed tail, tapered head),
+		// fattest mid-body; un clamps to 1 past the body so the rest of the
+		// lap carries no width at all. The max() is NOT optional: sin(pi)
+		// lands a hair NEGATIVE in float, and pow(negative, fractional) is
+		// NaN - which max()/smoothstep happily propagate, so without it every
+		// pixel OUTSIDE a body (un == 1, most of the frame) went NaN and the
+		// whole layer rendered black.
+		float w = girth * (0.55 + h3 * 0.5) * pow(max(sin(un * 3.14159), 0.0), 0.7);
+		if (w <= 1e-4) {
+			continue;
+		}
+		float body = 1.0 - smoothstep(0.0, w, abs(q.y - yc));
+		// Some snakes banded (intensity ripples along the body), a few glowy
+		// (the whole body runs hotter and reads brighter through the
+		// emissive) - stylistic variety, sampled per snake, never uniform.
+		float bands = h4 > 0.55 ? 0.72 + 0.38 * sin(su * (6.0 + h1 * 22.0)) : 1.0;
+		float glow_s = h1 < 0.18 ? 1.35 : 1.0;
+		best = max(best, body * bands * glow_s);
+	}
+	return best;
+}
+
 // One past frame from the echo ring by age (0 = newest capture .. 7 = oldest).
 vec3 echo_frame(int age, vec2 uv) {
 	if (age <= 0) { return texture(u_echo0, uv).rgb; }
@@ -668,7 +723,10 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 	// surface but flow well past it - a pixel half a strand-length away from
 	// the face reads zero on every local tap yet still carries hair. Its own
 	// march (below) is the equivalent test: no root mass upstream, no strand.
-	if (effect != 10 && max(fine, regional) * w <= 0.001) {
+	// Serpent is exempt too, but for snow's reason: it has NO key color -
+	// its canvas is a mostly-flat plane, where key membership reads zero
+	// everywhere and gating on it drew nothing at all.
+	if (effect != 10 && effect != 12 && max(fine, regional) * w <= 0.001) {
 		return col;
 	}
 	float field;
@@ -837,6 +895,48 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 			s10 += step10;
 		}
 		field = clamp(fur_rooted * hair10 * 1.8, 0.0, 1.0);
+	} else if (effect == 12) {
+		// SERPENT - thousands of wriggling snakes as a sparse mask. Three
+		// rotated, domain-warped octaves of torus lanes (serpent_layer above):
+		// many small fast snakes, some medium, a few large slow ones - crossing
+		// each other at their octaves' angles, entwined where they overlap
+		// (max blend reads as over/under). A slow-drifting fbm CLUSTER field
+		// decides where the swarm lives at all, so the mask lands as organic
+		// colonies with real empty space between them rather than an even
+		// crawl. Pan slides the world, Scale sizes the whole swarm, Velocity
+		// is the slither tempo, Coverage/Contrast shape the consume downstream
+		// as usual.
+		vec2 p12 = (uv * vec2(u_aspect, 1.0) + u_l_off[i]) * u_l_scale[i];
+		// Cluster frequency matters: at 0.55x the whole visible frame sat
+		// inside ONE noise cell, and whenever that cell ran low the gate
+		// zeroed the entire swarm - not "sparse", just blank. ~2x puts a
+		// handful of colonies and a handful of true gaps on screen at once.
+		float cl12 = fbm(p12 * 1.9 + vec2(t_eff * 0.03, -t_eff * 0.02));
+		float clg12 = smoothstep(0.28, 0.52, cl12);
+		field = 0.0;
+		if (clg12 > 0.003) {
+			// Four size octaves, each with its own rotated lane axis, the lanes
+			// themselves bent by a low-frequency warp so no octave reads as
+			// straight rows. Weighted so the swarm is mostly small wrigglers
+			// (the micro octave is the "thousands") with a few big bodies
+			// plowing through. Note each lane shows its snake once per torus
+			// lap, so a long visible run of lane carries several passes of the
+			// same creature, each wriggling differently at its own position.
+			vec2 qu = vec2(p12.x * 0.87 + p12.y * 0.50, -p12.x * 0.50 + p12.y * 0.87) * 22.0;
+			qu.y += (fbm(qu * 0.15 + 8.9) - 0.5) * 3.6;
+			vec2 qs = vec2(p12.x * 0.94 - p12.y * 0.34, p12.x * 0.34 + p12.y * 0.94) * 13.0;
+			qs.y += (fbm(qs * 0.13) - 0.5) * 3.0;
+			vec2 qm = vec2(p12.x * 0.79 + p12.y * 0.61, -p12.x * 0.61 + p12.y * 0.79) * 5.0;
+			qm.y += (fbm(qm * 0.11 + 4.7) - 0.5) * 2.4;
+			vec2 ql = vec2(p12.x * 0.99 - p12.y * 0.14, p12.x * 0.14 + p12.y * 0.99) * 1.7;
+			ql.y += (fbm(ql * 0.09 + 11.3) - 0.5) * 1.8;
+			float s_micro = serpent_layer(qu, t_eff * 2.1, 0.7, 0.26);
+			float s_small = serpent_layer(qs, t_eff * 1.5, 0.62, 0.30);
+			float s_mid = serpent_layer(qm, t_eff * 1.05, 0.5, 0.34);
+			float s_big = serpent_layer(ql, t_eff * 0.65, 0.3, 0.42);
+			float swarm12 = max(max(s_micro * 0.85, s_small * 0.92), max(s_mid, s_big));
+			field = clamp(swarm12 * 1.25 * clg12, 0.0, 1.0);
+		}
 	} else {
 		field = wisp_field(uv, effect, t_eff, u_l_off[i], u_l_scale[i]);
 	}
@@ -848,9 +948,9 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 	// Edge softness / rim strength per pattern: fire cuts thin bright licks,
 	// ice glints hard along its veins, smoke stays soft and gauzy. The edge band
 	// narrows with contrast, so high contrast cuts crisp, not just dark.
-	float sharp = effect == 1 ? 0.10 : (effect == 2 ? 0.06 : (effect == 10 ? 0.13 : 0.18));
+	float sharp = effect == 1 ? 0.10 : (effect == 2 ? 0.06 : (effect == 10 ? 0.13 : (effect == 12 ? 0.10 : 0.18)));
 	sharp *= mix(1.6, 0.4, con);
-	float glow = (effect == 1 ? 0.95 : (effect == 2 ? 0.75 : (effect == 10 ? 0.6 : 0.5))) * u_l_glow[i];
+	float glow = (effect == 1 ? 0.95 : (effect == 2 ? 0.75 : (effect == 10 ? 0.6 : (effect == 12 ? 0.7 : 0.5)))) * u_l_glow[i];
 	// Tail-weighted coverage response: gentle through the working midrange,
 	// accelerating hard at both ends so the slider genuinely reaches fully-sparse
 	// and fully-dense (the cubic hits 0 and 1 exactly). "Fully dense" still
@@ -886,10 +986,20 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 	// sample anchored to), not the local tap envelope - a strand's tip sits
 	// where `regional` reads zero, and gating by it would amputate every
 	// strand at the keyed edge, which is exactly the old clipping this
-	// architecture exists to avoid.
-	float vol_conf = effect == 10
-		? smoothstep(0.03, 0.35, fur_rooted)
-		: smoothstep(0.05, 0.55, regional);
+	// architecture exists to avoid. Serpent is keyless and judges by
+	// LUMINANCE, inverted: full bite on bright ground (dark snakes carved
+	// out of a white plane - darkening a pixel that's already dark shows
+	// nothing), easing toward dark ground where the emissive body carries
+	// the snake instead; the floor keeps that emission alive there.
+	float vol_conf;
+	if (effect == 10) {
+		vol_conf = smoothstep(0.03, 0.35, fur_rooted);
+	} else if (effect == 12) {
+		float lum12 = dot(col.rgb, vec3(0.299, 0.587, 0.114));
+		vol_conf = 0.35 + 0.65 * smoothstep(0.12, 0.72, lum12);
+	} else {
+		vol_conf = smoothstep(0.05, 0.55, regional);
+	}
 	// The darkening is ONE shaped product - the wisp body and its dark lip
 	// (rim folded in via max) x envelope x weight - through shade_amount
 	// (granular, continuous, never total) and the remnant rule (chroma dies
@@ -899,8 +1009,10 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 	// into the dark lip - freeze's edge glows instead of charring.
 	float lip = rim * clamp(0.6 * glow, 0.0, 1.0);
 	// Fur reads as groomed strands, not something charring at the edge - it
-	// joins freeze/whisp's "the rim glows, it doesn't fold into a dark lip" side.
-	float shape = (effect == 2 || effect == 5 || effect == 10) ? consume : max(consume, lip);
+	// joins freeze/whisp's "the rim glows, it doesn't fold into a dark lip"
+	// side. Serpent joins them too: a snake's silhouette IS the drawing, and
+	// a charred lip around every body would read as an outline error.
+	float shape = (effect == 2 || effect == 5 || effect == 10 || effect == 12) ? consume : max(consume, lip);
 	float suppress = shade_amount(shape * vol_conf * w, uv);
 	vec3 outc = suppressed_remnant(col.rgb, suppress);
 	// The EMISSIVE BODY - the effect's visible substance, in its own FIXED
@@ -927,6 +1039,11 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 	} else if (effect == 10) {
 		vec3 fur_col = clamp(vec3(0.5) + u_l_tdir[i] * 0.62, 0.0, 1.0);
 		emiss = fur_col * (heat * 0.55 + rim * 0.6);
+	} else if (effect == 12) {
+		// serpent: deep viridian to pale jade by body heat - the glowy snakes
+		// (field boosted per snake) climb this ramp furthest. Fixed palette,
+		// never the key hue (the halo lessons hold).
+		emiss = mix(vec3(0.10, 0.42, 0.24), vec3(0.55, 0.95, 0.62), heat) * heat * 0.8;
 	}
 	outc += emiss * (glow * vol_conf * w);
 	if (effect == 5) {

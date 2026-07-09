@@ -63,9 +63,9 @@ const _CURSOR_HIDE_DELAY := 1.5   # seconds of stillness during playback before 
 var _fx_overlay: TextureRect       # full-frame fx layer - _player's texture, shaded
 var _pip_view: TextureRect         # the inset's content - shaded or raw per view mode
 var _mask_wrap: PanelContainer     # the inset's border/placement box (holds _pip_view)
-var _view_btn: Button
-var _peek_btn: Button
-var _peek_raw := false     # DISPLAY-ONLY raw override; never touches session data
+var _view_label: Label     # passive view-mode readout (the old cycle button; V cycles now)
+var _help_panel: PanelContainer
+var _peek_raw := false     # DISPLAY-ONLY raw override; never touches session data (hold P)
 
 var _timeline: MaskTimeline
 var _tview: TimelineView          # shared pixel<->time mapping - see timeline_view.gd
@@ -967,79 +967,38 @@ func _build_panel() -> void:
 	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	margin.add_child(col)
 
+	# ONE button up here: Help. The old row of buttons (play, view cycle, peek,
+	# undo, redo, import track) was pure duplication of the keyboard - all of it
+	# lives on keys now (see _unhandled_input + the help overlay for the map),
+	# and the panel is long enough that every reclaimed row matters. The view
+	# MODE still needs to be visible (it's per-marker state, not a preference),
+	# so it lives on as a passive status label next to the clock below.
+	var title_row := HBoxContainer.new()
+	col.add_child(title_row)
 	var title := Label.new()
 	title.text = "Mask Lab"
 	title.add_theme_font_size_override("font_size", 22)
-	col.add_child(title)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_row.add_child(title)
+	var help_btn := Button.new()
+	help_btn.text = "?  Help"
+	help_btn.tooltip_text = "Keyboard map (F1)"
+	help_btn.focus_mode = Control.FOCUS_NONE
+	help_btn.pressed.connect(_toggle_help)
+	title_row.add_child(help_btn)
 
-	var play_row := HBoxContainer.new()
-	col.add_child(play_row)
-	var play_btn := Button.new()
-	play_btn.text = "▶ / ⏸"
-	play_btn.focus_mode = Control.FOCUS_NONE
-	play_btn.pressed.connect(func(): _play(not _playing))
-	play_row.add_child(play_btn)
-
-	# View toggle: cycles pip (raw + a masked inset) -> masked (full look) -> raw
-	# (the default - just the source video, nothing masked/effected until you
-	# explicitly switch or place a marker) -> back to pip. See VIEW_MODES /
-	# _apply_frame_state / MaskSession.DEFAULTS.
-	_view_btn = Button.new()
-	_view_btn.focus_mode = Control.FOCUS_NONE
-	_view_btn.custom_minimum_size = Vector2(160, 0)
-	_view_btn.pressed.connect(_cycle_view_mode)
-	play_row.add_child(_view_btn)
-
-	# Peek: a display-only raw view for inspecting footage / picking colors. The
-	# view button EDITS the marker at the playhead (that's its job - view modes
-	# are sequenced cinematically), which made it a trap for quick checks: "let
-	# me just look at raw for a second" silently rewrote the current marker's
-	# view. Peek renders raw without touching any data.
-	_peek_btn = Button.new()
-	_peek_btn.text = "👁 Peek"
-	_peek_btn.tooltip_text = "Show raw footage while held ON - display only, edits nothing"
-	_peek_btn.toggle_mode = true
-	_peek_btn.focus_mode = Control.FOCUS_NONE
-	_peek_btn.toggled.connect(func(on): _peek_raw = on)
-	play_row.add_child(_peek_btn)
-
-	# Undo/redo: buttons mirror Ctrl+Z / Ctrl+Shift+Z (see _unhandled_input) for
-	# anyone who doesn't reach for the shortcut - pressing on an empty stack is
-	# just a harmless no-op, not worth wiring up disabled-state tracking for.
-	# OWN row, not crammed into play_row - that row's three buttons (one of them
-	# a forced 160px-wide _view_btn) already claim nearly the full panel width;
-	# two more pushed the row's natural size well past PANEL_W and right over
-	# the timeline, wide enough that its markers stopped being clickable.
-	var hist_row := HBoxContainer.new()
-	col.add_child(hist_row)
-	var undo_btn := Button.new()
-	undo_btn.text = "↶ Undo"
-	undo_btn.tooltip_text = "Ctrl+Z"
-	undo_btn.focus_mode = Control.FOCUS_NONE
-	undo_btn.pressed.connect(_undo)
-	hist_row.add_child(undo_btn)
-	var redo_btn := Button.new()
-	redo_btn.text = "↷ Redo"
-	redo_btn.tooltip_text = "Ctrl+Shift+Z"
-	redo_btn.focus_mode = Control.FOCUS_NONE
-	redo_btn.pressed.connect(_redo)
-	hist_row.add_child(redo_btn)
-
-	# Own row again (see the comment above hist_row - this panel is only
-	# PANEL_W wide, and rows fill up fast).
-	var track_row := HBoxContainer.new()
-	col.add_child(track_row)
-	var import_btn := Button.new()
-	import_btn.text = "⬆ Import track"
-	import_btn.tooltip_text = "Add a second video as a picture-in-picture overlay"
-	import_btn.focus_mode = Control.FOCUS_NONE
-	import_btn.pressed.connect(_prompt_import_track)
-	track_row.add_child(import_btn)
-
+	var time_row := HBoxContainer.new()
+	time_row.add_theme_constant_override("separation", 10)
+	col.add_child(time_row)
 	_time_label = Label.new()
 	_time_label.add_theme_font_size_override("font_size", 15)
 	_time_label.add_theme_color_override("font_color", Color(0.85, 0.9, 1.0))
-	col.add_child(_time_label)
+	time_row.add_child(_time_label)
+	_view_label = Label.new()
+	_view_label.add_theme_font_size_override("font_size", 13)
+	_view_label.add_theme_color_override("font_color", Color(0.6, 0.68, 0.8))
+	time_row.add_child(_view_label)
+	_build_help_overlay()
 
 	# One channel by default (a channel = one target color + one effect + one
 	# strength); the second is opt-in behind a toggle. Channels are independent
@@ -1631,7 +1590,8 @@ func _update_effect_controls(effect_id: int) -> void:
 	# clear fades out EVERYTHING earlier - it has no target color at all. snow
 	# picks its foreground/background split automatically - it has no target
 	# color either.
-	_grp_color.visible = effect_id != MaskSession.EFFECT_CLEAR and effect_id != MaskSession.EFFECT_SNOW
+	_grp_color.visible = effect_id != MaskSession.EFFECT_CLEAR and effect_id != MaskSession.EFFECT_SNOW \
+		and effect_id != MaskSession.EFFECT_SERPENT
 	_grp_threshold.visible = groups.has("keying") or groups.has("reach")
 	_threshold_label.text = "Reach - hue range this restore covers" if groups.has("reach") else "Threshold"
 	_grp_keymisc.visible = groups.has("keying")
@@ -1707,13 +1667,16 @@ func _play(on: bool) -> void:
 		_audio.seek(_player.stream_position)
 
 
-## Space toggles play/pause - the same action the panel's ▶/⏸ button does. Only
-## live once a clip is actually loaded (_player exists); main.gd defers to this
-## instance for Space entirely while it's open (see main.gd's KEY_SPACE handling),
-## so this doesn't need to fight Director.next() for the key.
-## Ctrl+Z / Ctrl+Shift+Z (and Ctrl+Y, the other common redo binding) drive the
-## undo/redo stack - see _push_undo. echo excluded so a held key doesn't spam
-## repeats; a real accident deserves a deliberate press each time it's undone.
+## THE keyboard map (mirrored by the help overlay - keep the two in sync):
+## Space play/pause · V cycle view · P hold-to-peek · T import track ·
+## Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y undo/redo · F1 help · Esc close help.
+## These aren't shortcuts FOR buttons any more - they're the only way; the
+## toolbar collapsed to the single Help button. Only live once a clip is
+## actually loaded (_player exists); main.gd defers Space entirely while this
+## editor is open (see main.gd's KEY_SPACE handling), so this doesn't fight
+## Director.next() for the key. echo excluded on undo/redo so a held key
+## doesn't spam repeats; a real accident deserves a deliberate press each
+## time it's undone.
 ## Plain _input (not _unhandled_input) so cursor motion resets the idle timer
 ## even while it's over a panel/button - GUI controls can eat mouse motion
 ## before it would ever reach _unhandled_input, and hovering the toolbar
@@ -1729,19 +1692,114 @@ func _input(event: InputEvent) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if render_mode or _player == null:
 		return
-	if event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode == KEY_SPACE:
-			_play(not _playing)
-			get_viewport().set_input_as_handled()
-		elif event.ctrl_pressed and event.keycode == KEY_Z:
-			if event.shift_pressed:
-				_redo()
-			else:
-				_undo()
-			get_viewport().set_input_as_handled()
-		elif event.ctrl_pressed and event.keycode == KEY_Y:
+	if not event is InputEventKey or event.echo:
+		return
+	# Hold-to-peek wants the RELEASE too - everything below this wants presses
+	# only. Hold beats the old toggle button for its actual job ("let me just
+	# look at raw for a second"): letting go always puts the effects back.
+	if event.keycode == KEY_P:
+		_peek_raw = event.pressed
+		get_viewport().set_input_as_handled()
+		return
+	if not event.pressed:
+		return
+	if event.keycode == KEY_SPACE:
+		_play(not _playing)
+		get_viewport().set_input_as_handled()
+	elif event.keycode == KEY_V:
+		_cycle_view_mode()
+		get_viewport().set_input_as_handled()
+	elif event.keycode == KEY_T:
+		_prompt_import_track()
+		get_viewport().set_input_as_handled()
+	elif event.keycode == KEY_F1:
+		_toggle_help()
+		get_viewport().set_input_as_handled()
+	elif event.keycode == KEY_ESCAPE and _help_panel != null and _help_panel.visible:
+		# Only claim Escape while help is open - otherwise it stays main.gd's
+		# quit key. Consuming it here is what keeps closing the overlay from
+		# ALSO quitting ghost.
+		_help_panel.visible = false
+		get_viewport().set_input_as_handled()
+	elif event.ctrl_pressed and event.keycode == KEY_Z:
+		if event.shift_pressed:
 			_redo()
-			get_viewport().set_input_as_handled()
+		else:
+			_undo()
+		get_viewport().set_input_as_handled()
+	elif event.ctrl_pressed and event.keycode == KEY_Y:
+		_redo()
+		get_viewport().set_input_as_handled()
+
+
+func _toggle_help() -> void:
+	if _help_panel != null:
+		_help_panel.visible = not _help_panel.visible
+
+
+## The keyboard map, centered over the video (F1 / the panel's one Help
+## button). This is where the buttons went: everything the old toolbar did is
+## a key now, and this overlay is how anyone who never learned the shortcuts
+## finds them. Keep in sync with _unhandled_input.
+func _build_help_overlay() -> void:
+	_help_panel = PanelContainer.new()
+	_help_panel.visible = false
+	_help_panel.z_index = 40
+	var hm := MarginContainer.new()
+	for side in ["left", "right", "top", "bottom"]:
+		hm.add_theme_constant_override("margin_" + side, 20)
+	_help_panel.add_child(hm)
+	var hv := VBoxContainer.new()
+	hv.add_theme_constant_override("separation", 7)
+	hm.add_child(hv)
+	var ht := Label.new()
+	ht.text = "Keyboard"
+	ht.add_theme_font_size_override("font_size", 18)
+	hv.add_child(ht)
+	for pair in [
+		["Space", "play / pause"],
+		["V", "cycle view - raw → PiP (raw) → PiP (fx) → both → full fx"],
+		["P (hold)", "peek raw footage - display only, edits nothing"],
+		["T", "import a second video track (picture-in-picture)"],
+		["Ctrl+Z", "undo"],
+		["Ctrl+Shift+Z", "redo (also Ctrl+Y)"],
+		["`", "feedback console"],
+		["F11", "fullscreen"],
+		["F1", "this help (Esc closes it)"],
+	]:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 14)
+		var kl := Label.new()
+		kl.text = pair[0]
+		kl.custom_minimum_size = Vector2(130, 0)
+		kl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.5))
+		row.add_child(kl)
+		var dl := Label.new()
+		dl.text = pair[1]
+		dl.add_theme_color_override("font_color", Color(0.78, 0.84, 0.94))
+		row.add_child(dl)
+		hv.add_child(row)
+	hv.add_child(HSeparator.new())
+	for note in [
+		"Timeline - click/drag scrubs · drag markers to move them · Ctrl+scroll zooms at the cursor, plain scroll pans when zoomed · drag clip/track edges to trim",
+		"Editing - touching any knob plants a ramp at the playhead if nothing is selected · sliders are drag-only, the wheel always scrolls the panel",
+	]:
+		var nl := Label.new()
+		nl.text = note
+		nl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		nl.custom_minimum_size = Vector2(560, 0)
+		nl.add_theme_font_size_override("font_size", 12)
+		nl.add_theme_color_override("font_color", Color(0.6, 0.68, 0.8))
+		hv.add_child(nl)
+	# Centered over the VIDEO side, not the whole window (the wrapper starts
+	# at PANEL_W so the box doesn't sit half-under the left panel). The
+	# wrapper ignores the mouse; the box itself still catches its own clicks.
+	var wrap := CenterContainer.new()
+	wrap.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	wrap.offset_left = PANEL_W
+	wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(wrap)
+	wrap.add_child(_help_panel)
 
 
 # --- view mode: main (raw/fx) x inset (hidden/raw/fx) --------------------------
@@ -1901,13 +1959,13 @@ func _apply_frame_state(p: Dictionary) -> void:
 	_fx_overlay.visible = main_amt > 0.001
 	_mask_wrap.visible = inset_show > 0.001
 	_mask_wrap.modulate.a = inset_show
-	if _view_btn != null:
+	if _view_label != null:
 		match MaskSession.VIEW_MODES[clampi(int(p.get("view_mode", 2.0)), 0, MaskSession.VIEW_MODES.size() - 1)]:
-			"raw":        _view_btn.text = "🎬  Raw"
-			"pip_raw":    _view_btn.text = "🖼  PiP (raw)"
-			"pip":        _view_btn.text = "🖼  PiP (fx)"
-			"masked_pip": _view_btn.text = "🎭  Both (fx)"
-			"masked":     _view_btn.text = "🎭  Full (fx)"
+			"raw":        _view_label.text = "🎬  Raw"
+			"pip_raw":    _view_label.text = "🖼  PiP (raw)"
+			"pip":        _view_label.text = "🖼  PiP (fx)"
+			"masked_pip": _view_label.text = "🎭  Both (fx)"
+			"masked":     _view_label.text = "🎭  Full (fx)"
 
 
 # --- per-frame: push the timeline's blended params into the shader ---------------

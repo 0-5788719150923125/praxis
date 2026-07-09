@@ -186,13 +186,31 @@ const MAX_LAYERS := 6
 ## adds PREMONITIONS - muted copies of the live region stamped ahead along
 ## the pan direction; Contrast mutes the delayed world; Lag is how far
 ## ahead the region leads.
-const MASK_EFFECTS := ["erase", "fire", "freeze", "smoke", "restore", "whisp", "crystal", "echo", "clear", "snow", "fur", "oracle"]
+## "serpent" - thousands of wriggling snakes as a sparse volumetric mask
+## (a scalar field through the shared consume/rim path, meant to eat organic
+## clusters out of mostly-flat footage). KEYLESS, like snow: it has no key
+## color at all - a mostly-white plane has nothing to key on (the first cut
+## gated on key membership and drew nothing there). Its contrast is
+## LUMINANCE-INVERSE instead: the consume bites hardest where the footage is
+## bright (dark snakes carved out of white), fading toward dark ground where
+## the viridian emissive carries the bodies instead. Three rotated,
+## domain-warped octaves of torus lanes; each lane hosts at most one snake
+## (most lanes empty), every snake sampling its own length (squared - mostly
+## small, a few long), speed, heading, girth, wriggle, banding, and glow
+## from per-lane hashes. Centerlines are nested-sine serpentines whose wave
+## travels backward along the body relative to motion (real snake
+## locomotion); bodies wrap a torus lap longer than themselves, so each
+## snake laps around with a gap. A slow fbm cluster field decides WHERE the
+## swarm lives - the sparse, clustered distribution is the point. Emissive
+## is a fixed viridian-to-jade palette (never the key hue).
+const MASK_EFFECTS := ["erase", "fire", "freeze", "smoke", "restore", "whisp", "crystal", "echo", "clear", "snow", "fur", "oracle", "serpent"]
 const EFFECT_RESTORE := 4
 const EFFECT_CRYSTAL := 6
 const EFFECT_CLEAR := 8
 const EFFECT_SNOW := 9
 const EFFECT_FUR := 10
 const EFFECT_ORACLE := 11
+const EFFECT_SERPENT := 12
 
 ## THE CONTROL HIERARCHY: which panel option groups each effect actually consumes
 ## (the editor shows/hides accordingly - a slider that does nothing for the
@@ -215,6 +233,7 @@ const EFFECT_CONTROLS := {
 	8: [],                        # clear (intensity = how completely; color is meaningless)
 	10: ["keying", "pattern", "fur"],  # fur (a keyed volumetric + its own tendril-dynamics knobs)
 	11: ["pattern", "echo"],      # oracle (echo inverted: pan=premonition step, coverage=copies, contrast=mute, lag=lead)
+	12: ["pattern"],              # serpent (keyless, like snow: contrast-driven, no color to gate on)
 }
 
 ## The view-mode registry (see mask_editor.gd). Really a 2-axis matrix flattened to
