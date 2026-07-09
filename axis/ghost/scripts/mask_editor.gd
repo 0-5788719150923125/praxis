@@ -105,8 +105,12 @@ var _fx_speed: HSlider
 var _fx_lag: HSlider
 var _fx_smooth: HSlider
 var _grp_echo: VBoxContainer
+var _echo_header: Label             # swaps text when oracle borrows the group
 var _grp_snow: VBoxContainer
 var _gust: HSlider   # snow's own Gust slider - a second, independent view onto fx_smooth (see _grp_echo)
+var _grp_fur: VBoxContainer
+var _undul: HSlider  # fur's Undulation - fur's view onto fx_smooth (same stored-field reuse as _gust)
+var _coil: HSlider   # fur's Coil - fur's view onto fx_lag (pushed raw as u_l_lagf; echo bakes its lag into u_l_ew)
 var _resonance: HSlider
 var _effect_a: OptionButton
 var _intensity_a: HSlider
@@ -1070,6 +1074,7 @@ func _build_panel() -> void:
 	_grp_threshold.add_child(_threshold_label)
 	_threshold = HSlider.new()
 	_threshold.focus_mode = Control.FOCUS_NONE
+	_threshold.scrollable = false   # wheel scrolls the panel, never edits (see _slider)
 	_threshold.min_value = 0.0
 	_threshold.max_value = 1.0
 	_threshold.step = 0.005
@@ -1094,6 +1099,7 @@ func _build_panel() -> void:
 	_grp_pattern.add_child(_fx_x_label)
 	_fx_x = HSlider.new()
 	_fx_x.focus_mode = Control.FOCUS_NONE
+	_fx_x.scrollable = false
 	_fx_x.min_value = -2.0
 	_fx_x.max_value = 2.0
 	_fx_x.step = 0.01
@@ -1103,6 +1109,7 @@ func _build_panel() -> void:
 	_grp_pattern.add_child(_fx_y_label)
 	_fx_y = HSlider.new()
 	_fx_y.focus_mode = Control.FOCUS_NONE
+	_fx_y.scrollable = false
 	_fx_y.min_value = -2.0
 	_fx_y.max_value = 2.0
 	_fx_y.step = 0.01
@@ -1114,6 +1121,7 @@ func _build_panel() -> void:
 	_grp_pattern.add_child(_fx_density_label)
 	_fx_density = HSlider.new()
 	_fx_density.focus_mode = Control.FOCUS_NONE
+	_fx_density.scrollable = false
 	_fx_density.min_value = 0.0
 	_fx_density.max_value = 1.0
 	_fx_density.step = 0.005
@@ -1123,6 +1131,7 @@ func _build_panel() -> void:
 	_grp_pattern.add_child(_fx_contrast_label)
 	_fx_contrast = HSlider.new()
 	_fx_contrast.focus_mode = Control.FOCUS_NONE
+	_fx_contrast.scrollable = false
 	_fx_contrast.min_value = 0.0
 	_fx_contrast.max_value = 1.0
 	_fx_contrast.step = 0.005
@@ -1135,7 +1144,8 @@ func _build_panel() -> void:
 	_grp_echo.add_theme_constant_override("separation", 8)
 	col.add_child(_grp_echo)
 	_grp_echo.add_child(HSeparator.new())
-	_grp_echo.add_child(_label("Echo - how the past is worn"))
+	_echo_header = _label("Echo - how the past is worn")
+	_grp_echo.add_child(_echo_header)
 	_fx_lag = _slider(_grp_echo, "Lag (s)", 0.05, 2.4, func(v): _edit("fx_lag", v))
 	_fx_lag.exp_edit = true
 	_fx_smooth = _slider(_grp_echo, "Smoothing - stutter → smear", 0.0, 1.0, func(v): _edit("fx_smooth", v))
@@ -1150,6 +1160,17 @@ func _build_panel() -> void:
 	_grp_snow.add_child(HSeparator.new())
 	_grp_snow.add_child(_label("Weather - how the fall drifts"))
 	_gust = _slider(_grp_snow, "Gust - 0 = steady drift, 1 = chaotic gusts", 0.0, 1.0, func(v): _edit("fx_smooth", v))
+
+	# Fur's tendril dynamics - fur-only views onto fx_smooth/fx_lag, the same
+	# stored-field reuse as snow's Gust above (the groups never show together,
+	# see _update_effect_controls).
+	_grp_fur = VBoxContainer.new()
+	_grp_fur.add_theme_constant_override("separation", 8)
+	col.add_child(_grp_fur)
+	_grp_fur.add_child(HSeparator.new())
+	_grp_fur.add_child(_label("Tendrils - how the strands move"))
+	_undul = _slider(_grp_fur, "Undulation - traveling waves along each strand", 0.0, 1.0, func(v): _edit("fx_smooth", v))
+	_coil = _slider(_grp_fur, "Coil - eddies and spiral curl", 0.0, 1.0, func(v): _edit("fx_lag", v))
 
 	_resonance = _slider(_grp_pattern, "Resonance (audio drive)", 0.0, 1.0, func(v): _edit("resonance", v))
 
@@ -1243,6 +1264,11 @@ func _slider(col: VBoxContainer, text: String, lo: float, hi: float, cb: Callabl
 	col.add_child(_label(text))
 	var s := HSlider.new()
 	s.focus_mode = Control.FOCUS_NONE
+	# The wheel belongs to the panel's ScrollContainer, never to a slider you
+	# happen to pass over on the way down - the panel is long enough now that
+	# scrolling it drags random knobs (and silently edits the marker under
+	# them). Drag-only.
+	s.scrollable = false
 	s.min_value = lo
 	s.max_value = hi
 	s.step = (hi - lo) / 200.0
@@ -1367,17 +1393,17 @@ func _push_anchor() -> void:
 func _session_uses_temporal() -> bool:
 	for m in session.markers:
 		var e := int(m.get("effect_a", 0))
-		if e == 5 or e == 7 or e == MaskSession.EFFECT_SNOW:
-			return true   # whisp (anchor) / echo / snow (motion probe)
+		if e == 5 or e == 7 or e == MaskSession.EFFECT_SNOW or e == MaskSession.EFFECT_ORACLE:
+			return true   # whisp (anchor) / echo / snow (motion probe) / oracle (delayed world)
 	return false
 
 
 ## The whisp anchor: the first whisp marker's target-color mass centroid in
 ## the captured frame, EMA-smoothed (alpha 0.3 per capture ≈ a short
 ## multi-window average) so the lock glides to landmarks instead of jittering
-## with noise. Fur no longer reads this - its tufts root from their own
-## scattered points instead of one shared anchor (see the fur branch of
-## apply_layer / follicle_delta in mask_split.gdshader).
+## with noise. Fur no longer reads this - its strands root per-pixel on the
+## keyed surface itself (see fur_root_mass / the fur branch of apply_layer
+## in mask_split.gdshader).
 func _update_whisp_anchor(img: Image) -> void:
 	var hue := -1.0
 	for m in session.markers:
@@ -1590,6 +1616,8 @@ func _refresh_panel() -> void:
 	_fx_lag.set_value_no_signal(float(m.get("fx_lag", 0.35)))
 	_fx_smooth.set_value_no_signal(float(m.get("fx_smooth", 0.0)))
 	_gust.set_value_no_signal(float(m.get("fx_smooth", 0.0)))
+	_undul.set_value_no_signal(float(m.get("fx_smooth", 0.0)))
+	_coil.set_value_no_signal(float(m.get("fx_lag", 0.35)))
 	_resonance.set_value_no_signal(float(m.get("resonance", 0.0)))
 	_update_effect_controls(int(m.get("effect_a", 0)))
 	_refresh_marker_label()
@@ -1610,6 +1638,9 @@ func _update_effect_controls(effect_id: int) -> void:
 	_grp_pattern.visible = groups.has("pattern")
 	_grp_echo.visible = groups.has("echo")
 	_grp_snow.visible = groups.has("snow")
+	_grp_fur.visible = groups.has("fur")
+	_echo_header.text = "Oracle - how far ahead it leads" \
+		if effect_id == MaskSession.EFFECT_ORACLE else "Echo - how the past is worn"
 	_fx_contrast_label.text = "Sensitivity - snow's reach toward the subject" \
 		if effect_id == MaskSession.EFFECT_SNOW else "Contrast"
 	var is_snow := effect_id == MaskSession.EFFECT_SNOW
@@ -1773,6 +1804,7 @@ func _apply_frame_state(p: Dictionary) -> void:
 	var tdirs := PackedVector3Array()
 	var echo_w := PackedFloat32Array()
 	var echo_lag := PackedInt32Array()
+	var lagf := PackedFloat32Array()   # raw fx_lag - fur's Coil knob (echo's use is baked into echo_w/echo_lag)
 	var slot_frac := fposmod((_player.stream_position if _player != null else 0.0) / _ECHO_INTERVAL, 1.0)
 	for i in MaskSession.MAX_LAYERS:
 		if i < n:
@@ -1800,6 +1832,7 @@ func _apply_frame_state(p: Dictionary) -> void:
 			var lag_slots := clampf(float(l.get("fx_lag", 0.35)) / _ECHO_INTERVAL, 0.0, 7.0)
 			var smooth_amt := clampf(float(l.get("fx_smooth", 0.0)), 0.0, 1.0)
 			echo_lag.append(clampi(int(round(lag_slots)), 0, 7))
+			lagf.append(float(l.get("fx_lag", 0.35)))
 			var w := PackedFloat32Array()
 			var wsum := 0.0
 			for k in 8:
@@ -1829,6 +1862,7 @@ func _apply_frame_state(p: Dictionary) -> void:
 			speeds.append(1.0)
 			smooths.append(0.0)
 			echo_lag.append(0)
+			lagf.append(0.0)
 			for k in 8:
 				echo_w.append(1.0 if k == 0 else 0.0)
 			glows.append(1.0)
@@ -1862,6 +1896,7 @@ func _apply_frame_state(p: Dictionary) -> void:
 		mat.set_shader_parameter("u_l_smooth", smooths)
 		mat.set_shader_parameter("u_l_ew", echo_w)
 		mat.set_shader_parameter("u_l_elag", echo_lag)
+		mat.set_shader_parameter("u_l_lagf", lagf)
 		mat.set_shader_parameter("u_l_tdir", tdirs)
 	_fx_overlay.visible = main_amt > 0.001
 	_mask_wrap.visible = inset_show > 0.001

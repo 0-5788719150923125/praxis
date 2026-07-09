@@ -155,28 +155,44 @@ const MAX_LAYERS := 6
 ## irregular swings to that direction and speed together; echo's Smoothing
 ## slider uses the same stored field for a different purpose, but the two
 ## groups never show at once so there's no conflict.
-## "fur" - many INDEPENDENT tufts, each rooted at its own scattered point
-## (a jittered follicle-cell grid, follicle_delta() in mask_split.gdshader)
-## rather than combed outward from one shared anchor - no more single-point
-## radiation. Growth direction is a near-constant WIND vector (a bias to one
-## side, not a splay in every direction), only NUDGED aside by local recoil
-## from wherever the KEY COLOR's complementary hue (fposmod(hue+0.5,1.0),
-## ghost's standard complement idiom) is most dense in the neighborhood - red
-## fur still recoils from a nearby dark blue, exactly as asked for. Each
-## tuft's root only comes alive where the footage carries real "feature
-## line" content nearby - dense key-color mass or a sharp edge in it - so
-## strands start along the face's features rather than uniformly everywhere.
-## Unlike every other volumetric here, its emissive body is tinted BY the key
-## hue itself (fur colored like the thing it's replacing) rather than a fixed
+## "fur" - hair ANCHORED on the keyed surface itself, crystal-style. Strand
+## roots are the key color's own pixels, read live from the frame by the
+## same aligned-fraction projection crystal replaces with (fur_root_mass()
+## in mask_split.gdshader) - so the coat tracks the moving face with
+## crystal's per-pixel accuracy, no tap-ring estimate, no CPU centroid. A
+## pixel carries hair only if marching upstream against the local current
+## lands on real root mass within a strand's reach: structurally nothing
+## can draw where no march reaches the face (the old screen-space stripe
+## field read as straight streaks across the whole frame). The current is
+## one shared, slowly-breathing vector field (wind bias + smooth swirl)
+## every strand rides together - the swarm dynamic: curved strands that
+## sway coherently, mermaid hair underwater in slow motion. Pan steers the
+## wind, Scale sets strand length + fineness, Velocity the tempo. Unlike
+## every other volumetric here, its emissive body is tinted BY the key hue
+## itself (fur colored like the thing it grew from) rather than a fixed
 ## palette - the one deliberate exception to the "never the key hue" rule,
-## because fur being roughly the color it's keyed on is the whole point, not
-## a halo.
-const MASK_EFFECTS := ["erase", "fire", "freeze", "smoke", "restore", "whisp", "crystal", "echo", "clear", "snow", "fur"]
+## because fur being roughly the color it's keyed on is the whole point,
+## not a halo. Its "fur" control group adds two tendril-dynamics knobs,
+## fur-only views onto stored fields other effects repurpose the same way
+## (the groups never show together): Undulation (fx_smooth) sends traveling
+## waves down each strand, and Coil (fx_lag, pushed raw as u_l_lagf) spins
+## the local flow frame into eddies and spirals.
+## "oracle" - echo INVERTED: predictive, dominant. Echo lags the keyed
+## region behind a live world; oracle keeps the keyed region LIVE and lags
+## the WORLD around it through the same temporal kernel - relative to
+## everything on screen the region runs ahead by the lag, leading the
+## motion instead of trailing it (delaying everything else is the only
+## causal way to put one region "in the future" in real time). Coverage
+## adds PREMONITIONS - muted copies of the live region stamped ahead along
+## the pan direction; Contrast mutes the delayed world; Lag is how far
+## ahead the region leads.
+const MASK_EFFECTS := ["erase", "fire", "freeze", "smoke", "restore", "whisp", "crystal", "echo", "clear", "snow", "fur", "oracle"]
 const EFFECT_RESTORE := 4
 const EFFECT_CRYSTAL := 6
 const EFFECT_CLEAR := 8
 const EFFECT_SNOW := 9
 const EFFECT_FUR := 10
+const EFFECT_ORACLE := 11
 
 ## THE CONTROL HIERARCHY: which panel option groups each effect actually consumes
 ## (the editor shows/hides accordingly - a slider that does nothing for the
@@ -197,7 +213,8 @@ const EFFECT_CONTROLS := {
 	7: ["pattern", "echo"],       # echo (pan=clone step, scale=step size, coverage=clones, contrast=mute)
 	9: ["pattern", "snow"],       # snow (no keying group: it has no key color at all)
 	8: [],                        # clear (intensity = how completely; color is meaningless)
-	10: ["keying", "pattern"],    # fur (same shape as fire/freeze/smoke/whisp - a keyed volumetric)
+	10: ["keying", "pattern", "fur"],  # fur (a keyed volumetric + its own tendril-dynamics knobs)
+	11: ["pattern", "echo"],      # oracle (echo inverted: pan=premonition step, coverage=copies, contrast=mute, lag=lead)
 }
 
 ## The view-mode registry (see mask_editor.gd). Really a 2-axis matrix flattened to

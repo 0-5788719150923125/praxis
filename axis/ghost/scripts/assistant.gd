@@ -187,9 +187,21 @@ func _dispatch(entry: Dictionary, prompt: String) -> void:
 ## rather than trying to pre-digest the state into the prompt (the record
 ## already carries the full resolved layer stack, markers, and playhead - it
 ## IS the context).
+##
+## axis/ghost/CLAUDE.md is named explicitly (not left to auto-discovery)
+## because a real dispatched run (feedback 0055) burned a huge chunk of a
+## 10-minute session re-deriving ghost's file layout, the effect-registry
+## pattern, and the "shader edits need a real GPU compile, not just
+## --editor --quit" rule from scratch via grep, all of which that file now
+## states up front - forcing an explicit read is one line and removes any
+## doubt about whether a -p session picks up a subdirectory CLAUDE.md on
+## its own before it starts reading files.
 func _build_prompt(entry: Dictionary) -> String:
 	var rel: String = String(entry.stem).trim_prefix("res://")   # "feedback/0051"
-	return ("New feedback was left in ghost's feedback console: axis/ghost/%s.json " +
+	return ("Read axis/ghost/CLAUDE.md first - it's the map of where things live in " +
+		"this project plus hard-won gotchas (shader validation, etc.) that'll save you " +
+		"from re-deriving them via grep.\n\n" +
+		"New feedback was left in ghost's feedback console: axis/ghost/%s.json " +
 		"(screenshot at axis/ghost/%s.png). Read both to understand the exact scene/state " +
 		"being reacted to, then fix the issue. Their note: \"%s\"\n\n" +
 		"This runs unattended - scope the fix to what's actually reported rather than " +

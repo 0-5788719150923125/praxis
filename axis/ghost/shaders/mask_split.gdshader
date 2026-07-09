@@ -80,6 +80,9 @@ uniform sampler2D u_echo7 : hint_default_black;
 // nothing steps. u_l_elag is each layer's integer lag, the clones' start age.
 uniform float u_l_ew[48];
 uniform int u_l_elag[6];
+// Raw fx_lag per layer. Echo/oracle never read this (their temporal use is
+// baked into u_l_ew/u_l_elag above); fur reads it as its Coil knob.
+uniform float u_l_lagf[6];
 
 // The whisp anchor: the target color's mass centroid in the frame, EMA-tracked
 // CPU-side over short windows (see MaskEditor) - the whisp field's coordinate
@@ -181,32 +184,25 @@ vec3 voronoi_f1f2(vec2 p) {
 	return vec3(f1, f2, id);
 }
 
-// Nearest independent root in a jittered cell grid, returning the point-to-root
-// VECTOR (not just its length, unlike voronoi_f1f2 above) - fur uses this to
-// tell whether it sits upstream or downstream of its own root and how far off
-// its centerline it drifted. Each cell's root is scattered at its own random
-// offset, so neighboring tufts start from genuinely independent places rather
-// than a shared lattice or a single shared point.
-vec3 follicle_delta(vec2 p) {
-	vec2 ip = floor(p);
-	vec2 fp = fract(p);
-	float best_d = 1e9;
-	vec2 best_delta = vec2(0.0);
-	float best_id = 0.0;
-	for (int y = -1; y <= 1; y++) {
-		for (int x = -1; x <= 1; x++) {
-			vec2 g = vec2(float(x), float(y));
-			vec2 root = g + hash22(ip + g);
-			vec2 delta = fp - root;
-			float d = dot(delta, delta);
-			if (d < best_d) {
-				best_d = d;
-				best_delta = delta;
-				best_id = hash21(ip + g + 3.7);
-			}
-		}
+// How much of the footage at `p_uv` IS the key color - crystal's aligned-fraction
+// projection (linear, gate-free), read straight from the frame. This is what
+// gives crystal its "extremely accurate tracking": the effect exists exactly
+// where the key color is, per pixel, so it rides the moving face for free -
+// no tap-ring estimate, no CPU centroid, no lag. Fur roots on this. Samples
+// fade out approaching the frame border so a key-colored edge pixel can't
+// stream phantom strands in from off-screen (clamp-repeat would extend it
+// forever).
+float fur_root_mass(sampler2D tex, vec2 p_uv, vec3 tdir) {
+	float ef = smoothstep(0.0, 0.02, p_uv.x) * smoothstep(0.0, 0.02, 1.0 - p_uv.x)
+		* smoothstep(0.0, 0.02, p_uv.y) * smoothstep(0.0, 0.02, 1.0 - p_uv.y);
+	if (ef <= 0.001) {
+		return 0.0;
 	}
-	return vec3(best_delta, best_id);
+	vec3 c = texture(tex, clamp(p_uv, vec2(0.0), vec2(1.0))).rgb;
+	float lum = dot(c, vec3(0.299, 0.587, 0.114));
+	vec3 ch = c - vec3(lum);
+	float p = max(0.0, dot(ch, tdir));
+	return (p / max(length(ch), 1e-4)) * smoothstep(0.02, 0.10, length(ch)) * ef;
 }
 
 // One past frame from the echo ring by age (0 = newest capture .. 7 = oldest).
@@ -512,6 +508,69 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		}
 		return vec4(acc, col.a);
 	}
+	if (effect == 11) {
+		// ORACLE - echo INVERTED: predictive, dominant. Echo lags the keyed
+		// region behind a live world; oracle keeps the keyed region LIVE and
+		// lags the WORLD around it through the same temporal kernel (u_l_ew,
+		// so Lag/Smoothing mean what they mean for echo, applied to everything
+		// else). Relative to everything on screen the region runs AHEAD by the
+		// lag - it leads the motion instead of trailing it. Delaying the world
+		// is the only causal way to put one region "in the future" live; on
+		// export and in the recording the result is indistinguishable from
+		// true read-ahead. Coverage adds PREMONITIONS: copies of the live
+		// region cast forward along the pan direction - the region projecting
+		// where it is about to be - brighter than echo's trailing ghosts
+		// because they lead. Contrast mutes the delayed world (the more muted
+		// the world, the more the live region dominates). Same projection
+		// foundation as erase/crystal/echo: no gates, no rings.
+		float k11 = shade_amount(w, uv);
+		if (k11 <= 0.003) {
+			return col;
+		}
+		float lum11 = dot(col.rgb, vec3(0.299, 0.587, 0.114));
+		vec3 ch11 = col.rgb - vec3(lum11);
+		float p11 = max(0.0, dot(ch11, u_l_tdir[i]));
+		float frac11 = p11 / max(length(ch11), 1e-4);
+		float amt11 = clamp(frac11 * smoothstep(0.02, 0.10, length(ch11)) * 1.2, 0.0, 1.0);
+		// The delayed world: the ring blended through the layer's temporal
+		// kernel, slightly muted so the live region reads as the one true
+		// signal and everything else as its stale surroundings.
+		vec3 past11 = vec3(0.0);
+		for (int k = 0; k < 8; k++) {
+			past11 += echo_frame(k, uv) * u_l_ew[i * 8 + k];
+		}
+		float ml11 = dot(past11, vec3(0.299, 0.587, 0.114));
+		float mute11 = 0.35 + 0.5 * u_l_con[i];
+		past11 = mix(past11, vec3(ml11), mute11 * 0.6) * 0.92;
+		// World delayed by the envelope; the keyed region pinned to LIVE.
+		vec3 acc11 = mix(mix(col.rgb, past11, k11), col.rgb, amt11);
+		// Premonitions: at this pixel, ask whether the LIVE region sits one
+		// step back along the pan direction - if so, its color lands here as
+		// a forward-cast copy. Faded at the frame border like echo's clones
+		// (the hard-skip box lesson).
+		int pre11 = int(round(clamp(u_l_dens[i], 0.0, 1.0) * 3.0));
+		vec2 step11 = u_l_off[i] * 0.12 * u_l_scale[i];
+		for (int c = 1; c <= 3; c++) {
+			if (c > pre11) {
+				break;
+			}
+			vec2 euv = uv - step11 * float(c);
+			float ef = smoothstep(0.0, 0.06, euv.x) * smoothstep(0.0, 0.06, 1.0 - euv.x)
+				* smoothstep(0.0, 0.06, euv.y) * smoothstep(0.0, 0.06, 1.0 - euv.y);
+			if (ef <= 0.001) {
+				continue;
+			}
+			vec3 e11 = texture(tex, clamp(euv, vec2(0.0), vec2(1.0))).rgb;
+			float el11 = dot(e11, vec3(0.299, 0.587, 0.114));
+			vec3 ech11 = e11 - vec3(el11);
+			float ep11 = max(0.0, dot(ech11, u_l_tdir[i]));
+			float efrac11 = ep11 / max(length(ech11), 1e-4);
+			float eamt11 = clamp(efrac11 * smoothstep(0.02, 0.10, length(ech11)) * 1.2, 0.0, 1.0);
+			acc11 = mix(acc11, e11 * (1.02 - 0.08 * float(c)),
+				eamt11 * k11 * (0.5 - 0.09 * float(c)) * ef);
+		}
+		return vec4(acc11, col.a);
+	}
 	if (effect == 9) {
 		// SNOW - the one effect with no key color at all: hue_a is unused, so
 		// there's nothing here for tap_mask/mask_over to classify against.
@@ -605,7 +664,11 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 	// doesn't see it). This is what volumetrics taper by - see below.
 	float fine = pow(mask_over(u_l_hue[i], taps, 0, 9), 0.8);
 	float regional = mask_over(u_l_hue[i], taps, 0, 25);
-	if (max(fine, regional) * w <= 0.001) {
+	// Fur is exempt from this bail-out: its strands are ANCHORED on the keyed
+	// surface but flow well past it - a pixel half a strand-length away from
+	// the face reads zero on every local tap yet still carries hair. Its own
+	// march (below) is the equivalent test: no root mass upstream, no strand.
+	if (effect != 10 && max(fine, regional) * w <= 0.001) {
 		return col;
 	}
 	float field;
@@ -614,6 +677,10 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 	// wave_wash below rides the same field so an impulse is carried BY it rather
 	// than radiating outward independent of it.
 	vec2 flow = vec2(0.0);
+	// Fur's own confidence, filled by its march: the strongest root mass any
+	// upstream sample landed on. Replaces `regional` in vol_conf for fur -
+	// the local tap envelope would amputate every strand at the keyed edge.
+	float fur_rooted = 0.0;
 	if (effect == 5) {
 		// WHISP - the content-aware volumetric. Its field is not independent of
 		// the picture: the fine tap ring doubles as a luminance-gradient probe,
@@ -667,69 +734,109 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		float n2 = fbm(p2 * 1.4 + drift2 + conform);
 		field = pow(1.0 - abs(2.0 * n2 - 1.0), 2.2);
 	} else if (effect == 10) {
-		// FUR - many INDEPENDENT tufts, each rooted at its own scattered
-		// point (follicle_delta above) rather than combed from one shared
-		// anchor - nothing radiates in straight lines from a center anymore.
-		// Growth direction is a near-constant WIND vector: a gentle bias to
-		// one side, "as if it were blowing in the wind," rather than
-		// splaying every direction. Local recoil from wherever the KEY
-		// COLOR's complementary hue (ghost's standard fposmod(hue+0.5,1)
-		// idiom) is densest nearby only NUDGES that wind aside - red fur
-		// still recoils from a nearby dense blue - the same gated "feature
-		// conformance" shape freeze/crystal already use, kept small so the
-		// one-sided bias never fragments into per-pixel noise. Each tuft
-		// grows downstream from its own root and fades out after its own
-		// randomized reach, and roots only come alive where the footage
-		// actually carries "feature line" content - dense key-color mass
-		// or a sharp edge in it (hairline, eye, mouth) - rather than
-		// uniformly everywhere. The same double-fbm current warp as before
-		// keeps the strand texture flowing like water, not static rows; a
-		// second, finer octave along the same axis is the individual-hair
-		// texture riding the base tuft.
-		vec2 wind10 = normalize(vec2(0.82, -0.38)
-			+ vec2(sin(t_eff * 0.07), cos(t_eff * 0.05)) * 0.05);
-		float comp_hue10 = mod(u_l_hue[i] + 0.5, 1.0);
-		vec2 comp_grad10 = vec2(0.0);
-		vec2 key_grad10 = vec2(0.0);
-		float key_density10 = 0.0;
-		for (int k10 = 0; k10 < 8; k10++) {
-			float am10 = float(k10) * 0.7853981634 + 0.3926990817;
-			float aw10 = float(k10) * 0.7853981634 + 0.1963495409;
-			float cm_mid = tap_mask(comp_hue10, taps[k10 + 9]);
-			float cm_wide = tap_mask(comp_hue10, taps[k10 + 17]);
-			comp_grad10 += vec2(cos(am10), sin(am10)) * cm_mid + vec2(cos(aw10), sin(aw10)) * cm_wide;
-			float km_mid = tap_mask(u_l_hue[i], taps[k10 + 9]);
-			float km_wide = tap_mask(u_l_hue[i], taps[k10 + 17]);
-			key_grad10 += vec2(cos(am10), sin(am10)) * km_mid + vec2(cos(aw10), sin(aw10)) * km_wide;
-			key_density10 += km_mid + km_wide;
+		// FUR - anchored on the keyed surface itself, crystal-style. The old
+		// version drew a screen-space stripe field gated by a coarse tap-ring
+		// "feature" estimate; on key-heavy footage that gate passed nearly
+		// everywhere and it read as straight streaks across the whole frame.
+		// Now a pixel carries hair ONLY if marching upstream against the local
+		// current lands on real key-color mass (fur_root_mass - crystal's
+		// per-pixel projection, read live from the frame) within a strand's
+		// reach. Structurally nothing can draw where no march reaches the
+		// face, and the roots move with the face at crystal's accuracy
+		// because they ARE the face's pixels.
+		//
+		// The current is the swarm: one shared, slowly-evolving vector field
+		// (wind bias + a large smooth vnoise swirl) that every strand rides
+		// together, so the whole coat sways coherently - mermaid hair
+		// underwater, in slow motion - instead of each line minding its own
+		// straight path. Because the march integrates a spatially-varying
+		// field, the strands are CURVED, and because that field breathes in
+		// time, they undulate. Pan (u_l_off) steers the wind; Scale sets
+		// strand length + fineness together; Velocity is the tempo; the
+		// Tendrils knobs (Undulation/Coil below) shape the motion itself.
+		vec2 wind_raw10 = vec2(0.55, -0.80) + u_l_off[i] * 2.0
+			+ vec2(sin(t_eff * 0.06), cos(t_eff * 0.045)) * 0.18;
+		vec2 wind10 = length(wind_raw10) > 0.02 ? normalize(wind_raw10) : vec2(0.0, -1.0);
+		float scl10 = max(u_l_scale[i], 0.25);
+		float reach10 = clamp(0.34 / scl10, 0.10, 0.55);
+		float step10 = reach10 / 28.0;
+		// Hair fineness only LOOSELY follows Scale (mix, not multiply): Scale's
+		// main job here is strand LENGTH, and fully coupling the band frequency
+		// to it made long hair coarse hair - zoomed-out fur rendered as thick
+		// smeared ribbons instead of fine strands.
+		float hf10 = 42.0 * mix(1.0, scl10, 0.4);
+		vec2 asp10 = vec2(u_aspect, 1.0);
+		vec2 q10 = uv * asp10;
+		// STRAND TEXTURE at this pixel, in the flow frame HERE - one smooth,
+		// flow-aligned ridged band field. (An earlier cut sampled the bands
+		// per march step, each in that step's own bent frame; the direction
+		// jitter kinked every line into angular scratches.) A strand is where
+		// the band noise CRESTS - thin, separated from its neighbors - because
+		// raw vnoise never leaves its midrange and rendered as one smeared
+		// ribbon. The lines curve because d10 varies smoothly across the
+		// screen, and sway because the current breathes in time.
+		vec2 cw10 = q10 * 2.1 + vec2(t_eff * 0.05, -t_eff * 0.035);
+		vec2 cur10 = vec2(vnoise(cw10), vnoise(cw10 + 31.7)) - 0.5;
+		vec2 d10 = normalize(wind10 + cur10 * 1.6);
+		// COIL (fur's view onto fx_lag, pushed raw as u_l_lagf): a rotation
+		// FIELD over the flow frame. Where its noise peaks the local frame
+		// spins up to a full turn, so streamlines curl into eddies and
+		// spirals instead of combing one way. 0 = straight comb, untouched.
+		float coil10 = clamp(u_l_lagf[i], 0.0, 1.0);
+		if (coil10 > 0.001) {
+			float ca10 = (vnoise(q10 * 3.1 + vec2(-t_eff * 0.04, t_eff * 0.055)) - 0.5)
+				* 6.2832 * coil10;
+			d10 = vec2(cos(ca10) * d10.x - sin(ca10) * d10.y,
+				sin(ca10) * d10.x + cos(ca10) * d10.y);
 		}
-		key_density10 /= 16.0;
-		float recoil_feat10 = smoothstep(0.05, 0.35, length(comp_grad10));
-		vec2 recoil10 = length(comp_grad10) > 1e-4 ? -normalize(comp_grad10) : vec2(0.0);
-		vec2 growth10 = normalize(wind10 + recoil10 * 0.45 * recoil_feat10);
-		vec2 cross10 = vec2(-growth10.y, growth10.x);
-		vec2 p10 = (uv * vec2(u_aspect, 1.0) + u_l_off[i]) * (3.0 * u_l_scale[i]);
-		float along10 = dot(p10, growth10);
-		float across10 = dot(p10, cross10);
-		// Follicle cells stretched long downstream, narrow across - each
-		// root jittered inside its own cell, so tufts start independently
-		// instead of tiling a rigid lattice.
-		vec3 foll10 = follicle_delta(vec2(across10 * 3.0, along10 * 0.45));
-		float downstream10 = foll10.y;
-		float root_len10 = 0.85 + 1.7 * hash21(vec2(foll10.z, foll10.z * 5.1));
-		float start_fade10 = smoothstep(-0.04, 0.10, downstream10);
-		float end_fade10 = 1.0 - smoothstep(root_len10 * 0.55, root_len10, downstream10);
-		float across_fade10 = exp(-pow(foll10.x * 2.4, 2.0));
-		float presence10 = start_fade10 * end_fade10 * across_fade10;
-		float feature10 = clamp(key_density10 * 0.8
-			+ smoothstep(0.05, 0.3, length(key_grad10)) * 0.5, 0.0, 1.0);
-		presence10 *= smoothstep(0.08, 0.42, feature10);
-		vec2 wp10 = p10 * 0.4 + vec2(t_eff * 0.05, -t_eff * 0.035);
-		vec2 current10 = vec2(fbm(wp10), fbm(wp10 + 11.3)) - 0.5;
-		vec2 drift10 = vec2(t_eff * 0.06, 0.0) + current10 * 0.8;
-		float base_strand = fbm(vec2(across10 * 9.0, along10 * 1.3) + drift10);
-		float fine_strand = fbm(vec2(across10 * 24.0, along10 * 1.3) + drift10 * 1.4);
-		field = clamp((base_strand * 0.65 + fine_strand * 0.35) * presence10, 0.0, 1.0);
+		float across10 = dot(q10, vec2(-d10.y, d10.x));
+		float along10 = dot(q10, d10);
+		// Per-strand length jitter: keyed almost entirely by the across
+		// coordinate (near-constant along one strand), so neighboring hairs
+		// end at their own depths instead of a shared hard hem.
+		float lenj10 = vnoise(vec2(across10 * hf10 * 0.5, along10 * 0.4));
+		// UNDULATION (fur's view onto fx_smooth): traveling waves down each
+		// strand - the band domain sways across the flow with phase advancing
+		// along it and in time, kelp in a swell. Two incommensurate harmonics
+		// plus a per-strand phase (lenj10) keep neighbors desynced and the
+		// motion organic rather than metronomic. 0 = today's smooth glide.
+		float und10 = clamp(u_l_smooth[i], 0.0, 1.0);
+		float sway10 = (sin(along10 * 16.0 - t_eff * 0.9 + lenj10 * 6.2832)
+			+ 0.55 * sin(along10 * 37.0 + t_eff * 0.6 + lenj10 * 10.7)) * und10 * 0.034;
+		vec2 hc10 = vec2((across10 + sway10) * hf10, along10 * 1.5 * scl10 - t_eff * 0.22);
+		float r1_10 = 1.0 - abs(2.0 * vnoise(hc10) - 1.0);
+		float r2_10 = 1.0 - abs(2.0 * vnoise(hc10 * vec2(2.07, 1.61) + 5.7) - 1.0);
+		float hair10 = pow(r1_10 * 0.68 + r2_10 * 0.32, 2.2);
+		// ENVELOPE march: where hair volume exists at all. A pixel is inside
+		// the coat only if swimming upstream against the current reaches real
+		// root mass within this strand's reach - the strand texture above is
+		// confined to that, so nothing draws where no march finds the face.
+		float s10 = 0.0;
+		for (int m10 = 0; m10 < 28; m10++) {
+			vec2 cwm10 = q10 * 2.1 + vec2(t_eff * 0.05, -t_eff * 0.035);
+			vec2 curm10 = vec2(vnoise(cwm10), vnoise(cwm10 + 31.7)) - 0.5;
+			vec2 dm10 = normalize(wind10 + curm10 * 1.6);
+			// The march rides the same Coil rotation field and Undulation wave
+			// as the texture above, so the envelope's shape follows the same
+			// curls and swells the bands draw.
+			if (coil10 > 0.001) {
+				float cam10 = (vnoise(q10 * 3.1 + vec2(-t_eff * 0.04, t_eff * 0.055)) - 0.5)
+					* 6.2832 * coil10;
+				dm10 = vec2(cos(cam10) * dm10.x - sin(cam10) * dm10.y,
+					sin(cam10) * dm10.x + cos(cam10) * dm10.y);
+			}
+			if (und10 > 0.001) {
+				float mw10 = sin(s10 * 16.0 - t_eff * 0.9 + lenj10 * 6.2832) * und10 * 0.5;
+				dm10 = normalize(dm10 + vec2(-dm10.y, dm10.x) * mw10);
+			}
+			float mass10 = fur_root_mass(tex, q10 / asp10, u_l_tdir[i]);
+			float fall10 = 1.0 - smoothstep(reach10 * (0.25 + 0.4 * lenj10),
+				reach10 * (0.55 + 0.45 * lenj10), s10);
+			fur_rooted = max(fur_rooted, mass10 * fall10);
+			q10 -= dm10 * step10;
+			s10 += step10;
+		}
+		field = clamp(fur_rooted * hair10 * 1.8, 0.0, 1.0);
 	} else {
 		field = wisp_field(uv, effect, t_eff, u_l_off[i], u_l_scale[i]);
 	}
@@ -775,7 +882,14 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 	// terms; it is never cut. (The few-pixel spill past the seam is deliberate
 	// and tapered - the price of never clipping, and it reads as the pattern
 	// drifting across the boundary rather than an error.)
-	float vol_conf = smoothstep(0.05, 0.55, regional);
+	// Fur judges confidence by its own march (the strongest root any upstream
+	// sample anchored to), not the local tap envelope - a strand's tip sits
+	// where `regional` reads zero, and gating by it would amputate every
+	// strand at the keyed edge, which is exactly the old clipping this
+	// architecture exists to avoid.
+	float vol_conf = effect == 10
+		? smoothstep(0.03, 0.35, fur_rooted)
+		: smoothstep(0.05, 0.55, regional);
 	// The darkening is ONE shaped product - the wisp body and its dark lip
 	// (rim folded in via max) x envelope x weight - through shade_amount
 	// (granular, continuous, never total) and the remnant rule (chroma dies
