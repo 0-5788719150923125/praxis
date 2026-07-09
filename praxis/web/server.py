@@ -21,7 +21,13 @@ from .middleware import (
     register_response_middleware,
 )
 from .routes import register_routes
-from .snapshots import SnapshotProducer, SnapshotStore
+from .snapshots import (
+    DEFAULT_RECIPES,
+    SnapshotProducer,
+    SnapshotStore,
+    _recipe_data_metrics,
+    _recipe_dynamics,
+)
 from .utils import find_available_port
 from .utils.file_watcher import TemplateWatcher
 from .websocket import setup_live_reload, setup_metrics_live_namespace
@@ -221,10 +227,26 @@ class APIServer:
             namespace="/metrics-live",
         )
         app.config["snapshot_store"] = self.snapshot_store
+        # Dynamics/data-metrics scan their whole SQLite table (uniform
+        # sampling can't use an index), so they get slower as those files
+        # grow with training length. Precomputing them here too - same as
+        # the model-probe recipes above - keeps every dashboard read a cheap
+        # cached lookup regardless of how long the run has been going.
         self.snapshot_producer = SnapshotProducer(
             store=self.snapshot_store,
             model_fn=lambda: getattr(self.generator, "model", None),
             shutdown_event=self.shutdown_event,
+            recipes={
+                **DEFAULT_RECIPES,
+                "dynamics": (
+                    lambda model: _recipe_dynamics(model, self.truncated_hash),
+                    5.0,
+                ),
+                "data_metrics": (
+                    lambda model: _recipe_data_metrics(model, self.truncated_hash),
+                    5.0,
+                ),
+            },
         )
         self.snapshot_producer.start()
 

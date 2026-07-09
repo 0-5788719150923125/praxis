@@ -145,6 +145,30 @@ DEFAULT_RECIPES = {
 }
 
 
+# --- Recipes needing the run hash, not the model. Not part of DEFAULT_RECIPES
+# (the hash is per-APIServer-instance); server.py wraps these in closures over
+# self.truncated_hash when it builds the producer's recipes dict. ---
+
+
+def _recipe_dynamics(model, run_hash):
+    from pathlib import Path
+
+    from .routes.dynamics import _fetch_dynamics_payload
+
+    if not run_hash:
+        return {"status": "no_data", "runs": []}
+    dynamics_file = Path("build/runs") / run_hash / "dynamics.db"
+    return _fetch_dynamics_payload(dynamics_file, run_hash, model)
+
+
+def _recipe_data_metrics(model, run_hash):
+    from .routes.data_metrics import _current_run_data_metrics
+
+    if not run_hash:
+        return {"status": "no_data", "message": "No current run"}
+    return _current_run_data_metrics(run_hash)
+
+
 class SnapshotProducer:
     """Daemon thread that keeps each recipe's snapshot fresh on its own cadence.
 

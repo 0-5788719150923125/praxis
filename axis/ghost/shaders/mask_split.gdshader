@@ -357,7 +357,25 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		if (amt6 <= 0.003) {
 			return col;
 		}
-		vec2 cp = (uv * vec2(u_aspect, 1.0) + u_l_off[i]) * (7.0 * u_l_scale[i]);
+		// Feature conformance: the same mid/wide-ring gradient probe freeze and
+		// whisp already use - where the picture concentrates structure (the
+		// face), the lattice bends along the features instead of floating over
+		// them, like the facets grew along the bone structure. Stickiness (the
+		// Coverage slider, relabeled - crystal doesn't otherwise use density)
+		// scales how hard it pulls; 0 keeps today's free-floating lattice. Local
+		// and earned by the pixels, never global: flat regions read ~0 gradient
+		// and the lattice sits exactly where it always did.
+		vec2 grad6 = vec2(0.0);
+		for (int k6i = 0; k6i < 8; k6i++) {
+			float am6 = float(k6i) * 0.7853981634 + 0.3926990817;
+			float aw6 = float(k6i) * 0.7853981634 + 0.1963495409;
+			grad6 += vec2(cos(am6), sin(am6)) * taps[k6i + 9].z
+				+ vec2(cos(aw6), sin(aw6)) * taps[k6i + 17].z;
+		}
+		float feat6 = smoothstep(0.06, 0.30, length(grad6));
+		float stick6 = clamp(u_l_dens[i], 0.0, 1.0);
+		vec2 conform6 = vec2(-grad6.y, grad6.x) * 1.6 * feat6 * stick6;
+		vec2 cp = (uv * vec2(u_aspect, 1.0) + u_l_off[i]) * (7.0 * u_l_scale[i]) + conform6;
 		vec3 v1 = voronoi_f1f2(cp);
 		vec3 v2 = voronoi_f1f2(cp * 2.7 + 13.7);
 		float con6 = u_l_con[i];

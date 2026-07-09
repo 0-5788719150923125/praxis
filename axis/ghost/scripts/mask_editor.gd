@@ -83,6 +83,7 @@ var _fx_x_label: Label   # "Pan X/Y" relabeled "Wind X/Y" for snow - direction, 
 var _fx_y_label: Label
 var _fx_scale: HSlider
 var _fx_density: HSlider
+var _fx_density_label: Label   # "Coverage" relabeled "Stickiness" for crystal (feature conformance)
 var _fx_contrast: HSlider
 var _fx_contrast_label: Label   # "Contrast" relabeled "Sensitivity" for snow (no keying group of its own)
 var _fx_speed: HSlider
@@ -598,6 +599,14 @@ func _build_feedback() -> void:
 			_play(true)
 	_feedback.advance = func(): pass
 	add_child(_feedback)
+	# --assistant (see assistant.gd): the same fresh-claude-per-feedback loop
+	# as the main show, wired to Mask Lab's own console instance. One editor
+	# session = one Assistant instance for its whole lifetime, no re-entrancy
+	# to guard against (open_source() runs once per process here).
+	if OS.get_cmdline_user_args().has("--assistant"):
+		var assistant := preload("res://scripts/assistant.gd").new()
+		add_child(assistant)
+		_feedback.submitted.connect(assistant.enqueue)
 
 
 ## Everything I'd want to know about "this frame looks wrong": where we are, what
@@ -794,7 +803,15 @@ func _build_panel() -> void:
 	_grp_pattern.add_child(_fx_y)
 	_fx_scale = _slider(_grp_pattern, "Scale", 0.1, 8.0, func(v): _edit("fx_scale", v))
 	_fx_scale.exp_edit = true
-	_fx_density = _slider(_grp_pattern, "Coverage", 0.0, 1.0, func(v): _edit("fx_density", v))
+	_fx_density_label = _label("Coverage")
+	_grp_pattern.add_child(_fx_density_label)
+	_fx_density = HSlider.new()
+	_fx_density.focus_mode = Control.FOCUS_NONE
+	_fx_density.min_value = 0.0
+	_fx_density.max_value = 1.0
+	_fx_density.step = 0.005
+	_fx_density.value_changed.connect(func(v): _edit("fx_density", v))
+	_grp_pattern.add_child(_fx_density)
 	_fx_contrast_label = _label("Contrast")
 	_grp_pattern.add_child(_fx_contrast_label)
 	_fx_contrast = HSlider.new()
@@ -1202,6 +1219,8 @@ func _update_effect_controls(effect_id: int) -> void:
 	var is_snow := effect_id == MaskSession.EFFECT_SNOW
 	_fx_x_label.text = "Wind X" if is_snow else "Pan X"
 	_fx_y_label.text = "Wind Y" if is_snow else "Pan Y"
+	_fx_density_label.text = "Stickiness - pull toward the face's edges" \
+		if effect_id == MaskSession.EFFECT_CRYSTAL else "Coverage"
 
 
 func _refresh_marker_label() -> void:

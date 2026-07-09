@@ -79,99 +79,29 @@ def get_dynamics():
         run_dir = Path("build/runs") / target_hash
         dynamics_file = run_dir / "dynamics.db"
 
-        # Check if dynamics data exists
-        if not dynamics_file.exists():
-            # Return empty state with helpful message
-            api_logger.warning(f"Dynamics file not found: {dynamics_file}")
-            response = jsonify(
-                {
-                    "status": "no_data",
-                    "message": "Learning dynamics not logged. Enable by calling router.log_gradient_dynamics() during training.",
-                    "runs": [],
-                }
+        def _live():
+            generator = current_app.config.get("generator")
+            model = getattr(generator, "model", None) if generator else None
+            return _fetch_dynamics_payload(
+                dynamics_file, target_hash, model, since_step, limit
             )
-            return response
 
-        api_logger.info(
-            f"Found dynamics file: {dynamics_file}, size: {dynamics_file.stat().st_size} bytes"
-        )
+        # since=0/limit=1000 on the current run is what every tab-load
+        # actually sends. The full-range sampling query in
+        # _read_dynamics_from_db scans the whole table (it has to: uniform
+        # sampling can't use an index), so it gets slower as dynamics.db
+        # grows with training length. Serving this common case from the
+        # background snapshot producer's cache (see snapshots.py) turns it
+        # into a cheap dict lookup instead of a per-request scan. A custom
+        # since/limit, or an explicitly picked historical run, stay live.
+        if since_step == 0 and limit == 1000 and target_hash == current_hash:
+            return serve_snapshot("dynamics", _live, cache_seconds=5)
 
-        # Read dynamics from SQLite database
-        # Pass limit * 3 to give LTTB algorithm enough data points to work with
-        try:
-            dynamics_data = _read_dynamics_from_db(dynamics_file, since_step, limit * 3)
-        except Exception as read_error:
-            api_logger.error(f"Error reading dynamics database: {read_error}")
-            traceback.print_exc()
-            response = jsonify(
-                {
-                    "status": "error",
-                    "message": f"Error reading database: {str(read_error)}",
-                    "runs": [],
-                }
-            )
+        payload = _live()
+        response = jsonify(payload)
+        if payload.get("status") == "error":
             response.status_code = 500
-            return response
-
-        if not dynamics_data or dynamics_data.get("num_points", 0) == 0:
-            api_logger.warning(f"No data points found in dynamics database")
-            response = jsonify(
-                {
-                    "status": "no_data",
-                    "message": "No dynamics data points found",
-                    "runs": [],
-                }
-            )
-            return response
-
-        # Apply LTTB downsampling if we have more points than requested
-        original_count = dynamics_data["num_points"]
-        if original_count > limit:
-            dynamics_data["metrics"] = _downsample_dynamics_lttb(
-                dynamics_data["metrics"], limit
-            )
-            dynamics_data["num_points"] = len(dynamics_data["metrics"]["steps"])
-            api_logger.debug(
-                f"Downsampled dynamics from {original_count} to {dynamics_data['num_points']} points"
-            )
-
-        # Detect number of experts and compute metadata for charts
-        # First check if num_experts is stored in the database
-        stored_num_experts = dynamics_data.get("num_experts")
-        expert_metadata = _compute_expert_metadata(
-            dynamics_data["metrics"], dynamics_data.get("metadata"), stored_num_experts
-        )
-
-        # Pull live metric descriptions from whichever components the active
-        # model exposes them on. Frontend uses these as chart subtitles, so
-        # the description never drifts from the implementation.
-        # Descriptions come from the live model; for historical runs we still
-        # serve them (chart subtitles fall back to inline text per-key).
-        generator = current_app.config.get("generator")
-        live_model = getattr(generator, "model", None) if generator else None
-        descriptions = get_metric_descriptions(live_model)
-
-        # Format response
-        response_data = {
-            "status": "ok",
-            "runs": [
-                {
-                    "hash": target_hash,
-                    "metadata": {
-                        "num_points": dynamics_data["num_points"],
-                        "last_step": dynamics_data.get("last_step", 0),
-                        **expert_metadata,  # Add expert count, pi_phases, pi_seeds
-                    },
-                    "dynamics": dynamics_data["metrics"],
-                    "descriptions": descriptions,
-                    "chart_registry": DYNAMICS_CHART_REGISTRY,
-                }
-            ],
-        }
-
-        response = jsonify(response_data)
         response.headers.add("Cache-Control", "max-age=5")
-
         return response
 
     except Exception as e:
@@ -180,6 +110,90 @@ def get_dynamics():
         response = jsonify({"status": "error", "message": str(e), "runs": []})
         response.status_code = 500
         return response
+
+
+def _fetch_dynamics_payload(
+    dynamics_file: Path,
+    target_hash: str,
+    model,
+    since_step: int = 0,
+    limit: int = 1000,
+) -> Dict[str, Any]:
+    """Build one run's /api/dynamics payload.
+
+    Pure w.r.t. Flask - no ``current_app``/``request`` access - so it runs
+    both inline in a request (live path) and from the background snapshot
+    producer thread (the cached default-query path; see snapshots.py).
+    """
+    if not dynamics_file.exists():
+        api_logger.warning(f"Dynamics file not found: {dynamics_file}")
+        return {
+            "status": "no_data",
+            "message": "Learning dynamics not logged. Enable by calling router.log_gradient_dynamics() during training.",
+            "runs": [],
+        }
+
+    # Pass limit * 3 to give LTTB algorithm enough data points to work with
+    try:
+        dynamics_data = _read_dynamics_from_db(dynamics_file, since_step, limit * 3)
+    except Exception as read_error:
+        api_logger.error(f"Error reading dynamics database: {read_error}")
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "message": f"Error reading database: {str(read_error)}",
+            "runs": [],
+        }
+
+    if not dynamics_data or dynamics_data.get("num_points", 0) == 0:
+        api_logger.warning(f"No data points found in dynamics database")
+        return {
+            "status": "no_data",
+            "message": "No dynamics data points found",
+            "runs": [],
+        }
+
+    # Apply LTTB downsampling if we have more points than requested
+    original_count = dynamics_data["num_points"]
+    if original_count > limit:
+        dynamics_data["metrics"] = _downsample_dynamics_lttb(
+            dynamics_data["metrics"], limit
+        )
+        dynamics_data["num_points"] = len(dynamics_data["metrics"]["steps"])
+        api_logger.debug(
+            f"Downsampled dynamics from {original_count} to {dynamics_data['num_points']} points"
+        )
+
+    # Detect number of experts and compute metadata for charts
+    # First check if num_experts is stored in the database
+    stored_num_experts = dynamics_data.get("num_experts")
+    expert_metadata = _compute_expert_metadata(
+        dynamics_data["metrics"], dynamics_data.get("metadata"), stored_num_experts
+    )
+
+    # Pull live metric descriptions from whichever components the active
+    # model exposes them on. Frontend uses these as chart subtitles, so
+    # the description never drifts from the implementation.
+    # Descriptions come from the live model; for historical runs we still
+    # serve them (chart subtitles fall back to inline text per-key).
+    descriptions = get_metric_descriptions(model)
+
+    return {
+        "status": "ok",
+        "runs": [
+            {
+                "hash": target_hash,
+                "metadata": {
+                    "num_points": dynamics_data["num_points"],
+                    "last_step": dynamics_data.get("last_step", 0),
+                    **expert_metadata,  # Add expert count, pi_phases, pi_seeds
+                },
+                "dynamics": dynamics_data["metrics"],
+                "descriptions": descriptions,
+                "chart_registry": DYNAMICS_CHART_REGISTRY,
+            }
+        ],
+    }
 
 
 def _downsample_dynamics_lttb(
@@ -439,18 +453,39 @@ def _read_routing_weights_from_metrics(
         conn = sqlite3.connect(f"file:{metrics_db_path}?mode=ro", uri=True)
         cursor = conn.cursor()
 
-        # Query ALL routing metrics in the step range (not just exact matches)
         min_step = min(steps)
         max_step = max(steps)
 
-        query = f"""
-            SELECT step, extra_metrics
-            FROM metrics
-            WHERE step >= ? AND step <= ? AND extra_metrics IS NOT NULL
-            ORDER BY step ASC
-        """
+        # Sample at roughly the density of `steps` (already downsampled from
+        # dynamics.db) rather than fetching + JSON-decoding every metrics.db
+        # row in range: forward-filling onto `steps` doesn't benefit from
+        # full density, and the unsampled version is what made this scale
+        # with total training length instead of with len(steps).
+        target_rows = max(len(steps) * 3, 100)
+        cursor.execute(
+            """SELECT COUNT(*) FROM metrics
+               WHERE step >= ? AND step <= ? AND extra_metrics IS NOT NULL""",
+            (min_step, max_step),
+        )
+        total_count = cursor.fetchone()[0]
 
-        cursor.execute(query, (min_step, max_step))
+        if total_count > target_rows * 2:
+            sample_interval = max(1, total_count // target_rows)
+            query = """
+                SELECT step, extra_metrics FROM metrics
+                WHERE step >= ? AND step <= ? AND extra_metrics IS NOT NULL
+                  AND (rowid % ?) = 0
+                ORDER BY step ASC
+            """
+            cursor.execute(query, (min_step, max_step, sample_interval))
+        else:
+            query = """
+                SELECT step, extra_metrics FROM metrics
+                WHERE step >= ? AND step <= ? AND extra_metrics IS NOT NULL
+                ORDER BY step ASC
+            """
+            cursor.execute(query, (min_step, max_step))
+
         rows = cursor.fetchall()
         conn.close()
 

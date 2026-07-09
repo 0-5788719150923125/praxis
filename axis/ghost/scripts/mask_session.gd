@@ -157,6 +157,7 @@ const MAX_LAYERS := 6
 ## groups never show at once so there's no conflict.
 const MASK_EFFECTS := ["erase", "fire", "freeze", "smoke", "restore", "whisp", "crystal", "echo", "clear", "snow"]
 const EFFECT_RESTORE := 4
+const EFFECT_CRYSTAL := 6
 const EFFECT_CLEAR := 8
 const EFFECT_SNOW := 9
 

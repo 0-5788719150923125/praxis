@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 from flask import Blueprint, current_app, jsonify, request
 
 from praxis.web.app import api_logger
+from praxis.web.snapshots import serve_snapshot
 
 data_metrics_bp = Blueprint("data_metrics", __name__)
 
@@ -62,6 +63,27 @@ def get_data_metrics():
 
         # Get current run directory
         current_hash = current_app.config.get("truncated_hash", "unknown")
+
+        # since=0/limit=1000/lttb on just the current run is what every
+        # tab-load actually sends. The SQL-level modulo sampling in
+        # _read_data_metrics_file scans the whole table (uniform sampling
+        # can't use an index), so it gets slower as data_metrics.db grows
+        # with training length. Serving this common case from the
+        # background snapshot producer's cache (see snapshots.py) turns it
+        # into a cheap dict lookup instead of a per-request scan. Custom
+        # since/limit/downsample, or an explicit multi-run comparison, stay
+        # on the live path below.
+        if (
+            since_step == 0
+            and limit == 1000
+            and downsample_method == "lttb"
+            and not runs_param
+        ):
+            return serve_snapshot(
+                "data_metrics",
+                lambda: _current_run_data_metrics(current_hash),
+                cache_seconds=5,
+            )
 
         # Parse runs to fetch
         if runs_param:
@@ -173,6 +195,57 @@ def get_data_metrics():
             {"error": str(e), "status": "error", "error_type": type(e).__name__}
         )
         return error_response, 500
+
+
+def _current_run_data_metrics(run_hash: str) -> Dict[str, Any]:
+    """Build the default (since=0, limit=1000, lttb) single-run payload.
+
+    Pure w.r.t. Flask - no ``current_app``/``request`` access - so it runs
+    both from the fast path above and from the background snapshot
+    producer thread (see snapshots.py).
+    """
+    data_metrics_file = Path("build/runs") / run_hash / "data_metrics.db"
+
+    if not data_metrics_file.exists():
+        return {
+            "status": "no_data",
+            "message": "No data metrics found for the requested runs",
+        }
+
+    raw_metrics = _read_data_metrics_file(data_metrics_file, 0, max_rows=1000 * 2)
+    if not raw_metrics:
+        return {
+            "status": "no_data",
+            "message": "No data metrics found for the requested runs",
+        }
+
+    if len(raw_metrics) > 1000:
+        raw_metrics = _downsample_data_metrics(raw_metrics, 1000)
+
+    metrics_data = _transform_data_metrics(raw_metrics)
+    stat = data_metrics_file.stat()
+
+    response_data = {
+        "status": "ok",
+        "source": "data_metrics_logger",
+        "runs": [
+            {
+                "hash": run_hash,
+                "is_current": True,
+                "data_metrics": metrics_data,
+                "metadata": {
+                    "model_hash": run_hash,
+                    "last_updated": stat.st_mtime,
+                    "num_points": len(raw_metrics),
+                    "downsampled": len(raw_metrics) > 1000,
+                    "first_step": raw_metrics[0]["step"] if raw_metrics else 0,
+                    "last_step": raw_metrics[-1]["step"] if raw_metrics else 0,
+                },
+            }
+        ],
+        "metadata": {"current_hash": run_hash, "num_runs": 1},
+    }
+    return _sanitize_for_json(response_data)
 
 
 def _read_data_metrics_file(

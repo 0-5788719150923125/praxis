@@ -11,6 +11,7 @@ const Bake := preload("res://scripts/bake.gd")
 
 var _splash: Node = null
 var _feedback: Node = null
+var _assistant: Node = null
 var _workspace: Node = null
 var _exporter: Node = null
 var _mask_editor: Node = null
@@ -21,9 +22,14 @@ var _status_t := 0.0     # throttle for writing render progress (export mode)
 # ends, so the recorded movie starts and stops with the music.
 var _export_mode := false
 
+# --assistant: every feedback submission is immediately handed to a fresh
+# `claude -p --dangerously-skip-permissions` subprocess (see assistant.gd).
+var _assistant_mode := false
+
 
 func _ready() -> void:
 	var args := OS.get_cmdline_user_args()
+	_assistant_mode = args.has("--assistant")
 	# Mask mode is a standalone authoring tool (see mask_editor.gd) - tied to one
 	# specific external clip, not the audio-reactive show - so it does not touch
 	# Director/Spectrum at all and is checked before everything else.
@@ -51,6 +57,13 @@ func _ready() -> void:
 	# and its status must survive the song ending and the return to the home screen.
 	_exporter = preload("res://scripts/exporter.gd").new()
 	add_child(_exporter)
+	# Same persistence reasoning as the exporter: a queued/running claude
+	# subprocess (and its conversation history) must survive a song ending and
+	# a new session beginning, not get torn down and duplicated by the next
+	# _begin_session() call - see the signal (re)connect there.
+	if _assistant_mode:
+		_assistant = preload("res://scripts/assistant.gd").new()
+		add_child(_assistant)
 	# When the current song finishes: an AUTO session returns to the home screen; a
 	# MANUAL session is endless - loop the audio and leave the visualization alone.
 	Spectrum.song_finished.connect(_on_song_finished)
@@ -104,6 +117,12 @@ func _begin_session(audio_path := "") -> void:
 		return                         # render clean: no overlays (the Director fades the video ends)
 	_feedback = preload("res://scripts/feedback.gd").new()
 	add_child(_feedback)               # press ` to critique a scene
+	# _assistant itself is created once in _ready() (see the exporter's own
+	# persistence comment) - a fresh _feedback node needs a fresh connection
+	# to it every _begin_session() call, but the assistant instance and its
+	# in-flight/queued work must not be recreated.
+	if _assistant_mode and _assistant != null and is_instance_valid(_assistant):
+		_feedback.submitted.connect(_assistant.enqueue)
 
 
 # The song ended. Manual mode never exits to the home screen: restart the audio in
