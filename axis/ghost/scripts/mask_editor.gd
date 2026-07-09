@@ -71,16 +71,26 @@ var _selected: Variant = null   # the marker Dictionary currently shown in the p
 var _color_a: ColorPickerButton
 var _threshold: HSlider
 var _threshold_label: Label
-var _grp_threshold: VBoxContainer   # the control hierarchy's option groups -
-var _grp_keymisc: VBoxContainer     # shown per selected effect, see
-var _grp_pattern: VBoxContainer     # MaskSession.EFFECT_CONTROLS
+var _grp_color: VBoxContainer       # the control hierarchy's option groups -
+var _grp_threshold: VBoxContainer   # shown per selected effect, see
+var _grp_keymisc: VBoxContainer     # MaskSession.EFFECT_CONTROLS
+var _grp_pattern: VBoxContainer
 var _feather: HSlider
 var _sat_floor: HSlider
 var _fx_x: HSlider
 var _fx_y: HSlider
+var _fx_x_label: Label   # "Pan X/Y" relabeled "Wind X/Y" for snow - direction, not placement
+var _fx_y_label: Label
 var _fx_scale: HSlider
 var _fx_density: HSlider
 var _fx_contrast: HSlider
+var _fx_contrast_label: Label   # "Contrast" relabeled "Sensitivity" for snow (no keying group of its own)
+var _fx_speed: HSlider
+var _fx_lag: HSlider
+var _fx_smooth: HSlider
+var _grp_echo: VBoxContainer
+var _grp_snow: VBoxContainer
+var _gust: HSlider   # snow's own Gust slider - a second, independent view onto fx_smooth (see _grp_echo)
 var _resonance: HSlider
 var _effect_a: OptionButton
 var _intensity_a: HSlider
@@ -105,6 +115,23 @@ var _prep_state := "idle"        # idle / prepping_video / prepping_audio
 var _pending := {}               # source/dir/video/audio paths mid-prep
 const _PREP_PROGRESS_FILE := "user://mask_prep_progress.txt"
 
+# Temporal capture (echo ring + whisp anchor): quarter-res snapshots of past
+# frames, taken every _ECHO_INTERVAL seconds of PLAYBACK time (slot = position /
+# interval, so live preview and the export relaunch capture at the same clip
+# positions - the deterministic-clock discipline, one level up from u_time).
+# Only runs at all while the session actually contains a whisp/echo marker.
+var _echo_ring: Array = [null, null, null, null, null, null, null, null]   # ImageTexture, slot-indexed
+var _echo_slot := -1
+# The whisp anchor is double-buffered: _anchor_ema is the EMA at the LATEST
+# capture, _anchor_prev the one before. The uniform pushed per frame lerps
+# between them by position-within-slot (see _push_anchor) - pushing the EMA
+# directly stepped the whole pattern once per capture, a visible jump amplified
+# by pattern zoom ("jittery, it resets, it jumps"). Position-keyed, so live and
+# export trace the identical glide.
+var _anchor_prev := Vector2(0.5, 0.5)
+var _anchor_ema := Vector2(0.5, 0.5)
+const _ECHO_INTERVAL := 0.35
+
 var _waveform_pid := -1
 var _waveform_path := ""         # set once we know it; polled in _process until it exists
 var _audio_env := PackedFloat32Array()   # per-column amplitude from the waveform image (resonance)
@@ -121,6 +148,23 @@ var _avi := ""
 var _dirty := false
 var _autosave_cooldown := 0.0
 const _AUTOSAVE_DELAY := 0.4
+
+# Undo/redo: whole-array snapshots of session.markers (small, plain data - cheap
+# enough to duplicate wholesale, no need for a diff/command log). A slider drag
+# or a marker being dragged along the timeline fires the same mutation dozens of
+# times a second; without coalescing, one drag would fragment into dozens of undo
+# steps and a single Ctrl+Z would barely nudge the value back. `_undo_coalesce_key`
+# identifies the CURRENT gesture (which marker, which field) - a repeat push with
+# the same key inside the cooldown window just refreshes the window instead of
+# snapshotting again, so an entire drag - however long - is one undo step, and
+# the boundary lands cleanly the moment you touch something else.
+var _undo_stack: Array = []
+var _redo_stack: Array = []
+const _UNDO_LIMIT := 200
+var _undo_coalesce_key := ""
+var _undo_coalesce_cooldown := 0.0
+const _UNDO_COALESCE_WINDOW := 0.9
+var _select_generation := 0   # bumped on every selection change; folded into the coalesce key
 
 
 func _ready() -> void:
@@ -524,6 +568,7 @@ func _build_editor_ui() -> void:
 	_timeline.offset_top = -90
 	_timeline.scrubbed.connect(_on_scrub)
 	_timeline.marker_picked.connect(_select_marker)
+	_timeline.marker_drag_started.connect(func(_m): _push_undo())
 	_timeline.marker_moved.connect(func(_m):
 		_refresh_marker_label()
 		_mark_dirty())
@@ -649,6 +694,28 @@ func _build_panel() -> void:
 	_peek_btn.toggled.connect(func(on): _peek_raw = on)
 	play_row.add_child(_peek_btn)
 
+	# Undo/redo: buttons mirror Ctrl+Z / Ctrl+Shift+Z (see _unhandled_input) for
+	# anyone who doesn't reach for the shortcut - pressing on an empty stack is
+	# just a harmless no-op, not worth wiring up disabled-state tracking for.
+	# OWN row, not crammed into play_row - that row's three buttons (one of them
+	# a forced 160px-wide _view_btn) already claim nearly the full panel width;
+	# two more pushed the row's natural size well past PANEL_W and right over
+	# the timeline, wide enough that its markers stopped being clickable.
+	var hist_row := HBoxContainer.new()
+	col.add_child(hist_row)
+	var undo_btn := Button.new()
+	undo_btn.text = "↶ Undo"
+	undo_btn.tooltip_text = "Ctrl+Z"
+	undo_btn.focus_mode = Control.FOCUS_NONE
+	undo_btn.pressed.connect(_undo)
+	hist_row.add_child(undo_btn)
+	var redo_btn := Button.new()
+	redo_btn.text = "↷ Redo"
+	redo_btn.tooltip_text = "Ctrl+Shift+Z"
+	redo_btn.focus_mode = Control.FOCUS_NONE
+	redo_btn.pressed.connect(_redo)
+	hist_row.add_child(redo_btn)
+
 	_time_label = Label.new()
 	_time_label.add_theme_font_size_override("font_size", 15)
 	_time_label.add_theme_color_override("font_color", Color(0.85, 0.9, 1.0))
@@ -659,14 +726,17 @@ func _build_panel() -> void:
 	# layers in the shader, not competing "sides" - so there's no swap control any
 	# more either (swapping meant something when every pixel was forced to one side
 	# or the other; independent channels just re-pick their own colors).
-	col.add_child(HSeparator.new())
-	col.add_child(_label("Key color - what this channel targets"))
+	_grp_color = VBoxContainer.new()
+	_grp_color.add_theme_constant_override("separation", 8)
+	col.add_child(_grp_color)
+	_grp_color.add_child(HSeparator.new())
+	_grp_color.add_child(_label("Key color - what this channel targets"))
 	_color_a = ColorPickerButton.new()
 	_color_a.focus_mode = Control.FOCUS_NONE
 	_color_a.custom_minimum_size = Vector2(0, 40)
 	_color_a.edit_alpha = false
 	_color_a.color_changed.connect(func(c): _edit("hue_a", c.h))
-	col.add_child(_color_a)
+	_grp_color.add_child(_color_a)
 	col.add_child(_label("Effect"))
 	_effect_a = _effect_menu(col, func(id): _edit("effect_a", float(id)))
 	_intensity_a = _slider(col, "Intensity", 0.0, 1.0, func(v): _edit("intensity_a", v))
@@ -704,12 +774,59 @@ func _build_panel() -> void:
 	col.add_child(_grp_pattern)
 	_grp_pattern.add_child(HSeparator.new())
 	_grp_pattern.add_child(_label("Pattern - field placement"))
-	_fx_x = _slider(_grp_pattern, "Pan X", -2.0, 2.0, func(v): _edit("fx_x", v))
-	_fx_y = _slider(_grp_pattern, "Pan Y", -2.0, 2.0, func(v): _edit("fx_y", v))
+	_fx_x_label = _label("Pan X")
+	_grp_pattern.add_child(_fx_x_label)
+	_fx_x = HSlider.new()
+	_fx_x.focus_mode = Control.FOCUS_NONE
+	_fx_x.min_value = -2.0
+	_fx_x.max_value = 2.0
+	_fx_x.step = 0.01
+	_fx_x.value_changed.connect(func(v): _edit("fx_x", v))
+	_grp_pattern.add_child(_fx_x)
+	_fx_y_label = _label("Pan Y")
+	_grp_pattern.add_child(_fx_y_label)
+	_fx_y = HSlider.new()
+	_fx_y.focus_mode = Control.FOCUS_NONE
+	_fx_y.min_value = -2.0
+	_fx_y.max_value = 2.0
+	_fx_y.step = 0.01
+	_fx_y.value_changed.connect(func(v): _edit("fx_y", v))
+	_grp_pattern.add_child(_fx_y)
 	_fx_scale = _slider(_grp_pattern, "Scale", 0.1, 8.0, func(v): _edit("fx_scale", v))
 	_fx_scale.exp_edit = true
 	_fx_density = _slider(_grp_pattern, "Coverage", 0.0, 1.0, func(v): _edit("fx_density", v))
-	_fx_contrast = _slider(_grp_pattern, "Contrast", 0.0, 1.0, func(v): _edit("fx_contrast", v))
+	_fx_contrast_label = _label("Contrast")
+	_grp_pattern.add_child(_fx_contrast_label)
+	_fx_contrast = HSlider.new()
+	_fx_contrast.focus_mode = Control.FOCUS_NONE
+	_fx_contrast.min_value = 0.0
+	_fx_contrast.max_value = 1.0
+	_fx_contrast.step = 0.005
+	_fx_contrast.value_changed.connect(func(v): _edit("fx_contrast", v))
+	_grp_pattern.add_child(_fx_contrast)
+	_fx_speed = _slider(_grp_pattern, "Velocity", 0.1, 4.0, func(v): _edit("fx_speed", v))
+	_fx_speed.exp_edit = true
+
+	_grp_echo = VBoxContainer.new()
+	_grp_echo.add_theme_constant_override("separation", 8)
+	col.add_child(_grp_echo)
+	_grp_echo.add_child(HSeparator.new())
+	_grp_echo.add_child(_label("Echo - how the past is worn"))
+	_fx_lag = _slider(_grp_echo, "Lag (s)", 0.05, 2.4, func(v): _edit("fx_lag", v))
+	_fx_lag.exp_edit = true
+	_fx_smooth = _slider(_grp_echo, "Smoothing - stutter → smear", 0.0, 1.0, func(v): _edit("fx_smooth", v))
+
+	# Snow's own view onto fx_smooth - a separate widget from echo's Smoothing
+	# above (same stored field, different meaning; the two groups never show
+	# together, see _update_effect_controls, so there's no risk of them
+	# fighting over what the slider looks like).
+	_grp_snow = VBoxContainer.new()
+	_grp_snow.add_theme_constant_override("separation", 8)
+	col.add_child(_grp_snow)
+	_grp_snow.add_child(HSeparator.new())
+	_grp_snow.add_child(_label("Weather - how the fall drifts"))
+	_gust = _slider(_grp_snow, "Gust - 0 = steady drift, 1 = chaotic gusts", 0.0, 1.0, func(v): _edit("fx_smooth", v))
+
 	_resonance = _slider(_grp_pattern, "Resonance (audio drive)", 0.0, 1.0, func(v): _edit("resonance", v))
 
 	col.add_child(HSeparator.new())
@@ -829,8 +946,12 @@ func _effect_menu(col: VBoxContainer, cb: Callable) -> OptionButton:
 func _edit(field: String, value: float) -> void:
 	var m: Variant = _selected
 	if m == null:
+		_push_undo()   # about to create a marker - always its own boundary
 		m = session.add_marker(_player.stream_position if _player != null else 0.0)
 		_selected = m
+		_select_generation += 1
+	else:
+		_push_undo("marker:%d:%s" % [_select_generation, field])
 	m[field] = value
 	# Assigning a drawing effect to a marker whose OWN view shows no fx surface is
 	# a silent foot-gun: the layer holds forever but this marker's view hides it -
@@ -841,7 +962,9 @@ func _edit(field: String, value: float) -> void:
 	# the user's back on unrelated knobs, and never for restore (draws nothing).
 	if field == "effect_a" or field == "intensity_a":
 		var vm := int(m.get("view_mode", 2.0))
-		var drawing: bool = int(m.get("effect_a", 0)) != MaskSession.EFFECT_RESTORE \
+		var eid := int(m.get("effect_a", 0))
+		var drawing: bool = eid != MaskSession.EFFECT_RESTORE \
+			and eid != MaskSession.EFFECT_CLEAR \
 			and float(m.get("intensity_a", 0.0)) > 0.0
 		if drawing and (vm == 2 or vm == 3):
 			m["view_mode"] = 1.0 if vm == 2 else 0.0
@@ -853,7 +976,9 @@ func _edit(field: String, value: float) -> void:
 
 
 func _add_marker_at_playhead(kind_id: int) -> void:
+	_push_undo()
 	_selected = session.add_marker(_player.stream_position if _player != null else 0.0, kind_id)
+	_select_generation += 1
 	_timeline.selected = _selected
 	_refresh_panel()
 	_mark_dirty()
@@ -861,11 +986,147 @@ func _add_marker_at_playhead(kind_id: int) -> void:
 
 func _delete_selected() -> void:
 	if _selected != null:
+		_push_undo()
 		session.remove_marker(_selected)
 		_selected = null
 		_timeline.selected = null
 		_refresh_panel()
 		_mark_dirty()
+
+
+## Temporal capture: when the playhead crosses into a new _ECHO_INTERVAL slot,
+## snapshot the current frame (quarter-res) into the ring and push the ring to
+## both materials in AGE ORDER (u_echo0 = newest). GPU readback at ~3Hz is cheap
+## enough for a demo; sessions without whisp/echo markers skip all of it.
+func _maybe_capture_echo() -> void:
+	if _player == null or session == null or not _session_uses_temporal():
+		return
+	var slot := int(_player.stream_position / _ECHO_INTERVAL)
+	if slot == _echo_slot:
+		return
+	var tex := _player.get_video_texture()
+	if tex == null:
+		return
+	var img := tex.get_image()
+	if img == null or img.is_empty():
+		return
+	_echo_slot = slot
+	img.resize(480, 270, Image.INTERPOLATE_BILINEAR)
+	_echo_ring[slot % 8] = ImageTexture.create_from_image(img)
+	for age in 8:
+		var t: Variant = _echo_ring[((slot - age) % 8 + 8) % 8]
+		if t == null:
+			t = _echo_ring[slot % 8]
+		for mat in [_mat_main, _mat_inset]:
+			mat.set_shader_parameter("u_echo%d" % age, t)
+	_update_whisp_anchor(img)
+
+
+## The anchor uniform, glided per frame: lerp(prev EMA, latest EMA) by the
+## playhead's fraction through the current capture slot. Deterministic (pure
+## function of playback position + capture history) and continuous - the
+## pattern drifts to each new lock instead of jumping there.
+func _push_anchor() -> void:
+	var f := clampf(fposmod(_player.stream_position, _ECHO_INTERVAL) / _ECHO_INTERVAL, 0.0, 1.0)
+	var anchor := _anchor_prev.lerp(_anchor_ema, f)
+	for mat in [_mat_main, _mat_inset]:
+		mat.set_shader_parameter("u_anchor", anchor)
+
+
+func _session_uses_temporal() -> bool:
+	for m in session.markers:
+		var e := int(m.get("effect_a", 0))
+		if e == 5 or e == 7 or e == MaskSession.EFFECT_SNOW:   # whisp / echo / snow (motion probe)
+			return true
+	return false
+
+
+## The whisp anchor: the first whisp marker's target-color mass centroid in the
+## captured frame, EMA-smoothed (alpha 0.3 per capture ≈ a short multi-window
+## average) so the lock glides to landmarks instead of jittering with noise.
+func _update_whisp_anchor(img: Image) -> void:
+	var hue := -1.0
+	for m in session.markers:
+		if int(m.get("effect_a", 0)) == 5:
+			hue = float(m.get("hue_a", 0.0))
+			break
+	if hue < 0.0:
+		return
+	var tc := Color.from_hsv(hue, 1.0, 1.0)
+	var tl := 0.299 * tc.r + 0.587 * tc.g + 0.114 * tc.b
+	var tdir := Vector3(tc.r - tl, tc.g - tl, tc.b - tl).normalized()
+	img.resize(48, 27, Image.INTERPOLATE_BILINEAR)
+	var acc := Vector2.ZERO
+	var wsum := 0.0
+	for y in 27:
+		for x in 48:
+			var c := img.get_pixel(x, y)
+			var l := 0.299 * c.r + 0.587 * c.g + 0.114 * c.b
+			var pr := maxf(0.0, (c.r - l) * tdir.x + (c.g - l) * tdir.y + (c.b - l) * tdir.z)
+			acc += Vector2((float(x) + 0.5) / 48.0, (float(y) + 0.5) / 27.0) * pr
+			wsum += pr
+	if wsum <= 0.01:
+		return
+	_anchor_prev = _anchor_ema
+	_anchor_ema = _anchor_ema.lerp(acc / wsum, 0.15)
+
+
+# --- undo/redo ---------------------------------------------------------------
+
+## Snapshot session.markers onto the undo stack, called BEFORE a mutation - so
+## the stack always holds "what it looked like before this happened". Pass a
+## `key` for edits that repeat rapidly during one gesture (a slider drag, a
+## marker dragged along the timeline): a call whose key matches the in-flight
+## gesture just extends the coalescing window instead of pushing again, so the
+## whole gesture undoes in one Ctrl+Z. Leave `key` empty for one-shot actions
+## (add/delete a marker) - those always open a fresh boundary.
+func _push_undo(key: String = "") -> void:
+	if key != "" and key == _undo_coalesce_key and _undo_coalesce_cooldown > 0.0:
+		_undo_coalesce_cooldown = _UNDO_COALESCE_WINDOW
+		return
+	_undo_coalesce_key = key
+	_undo_coalesce_cooldown = _UNDO_COALESCE_WINDOW
+	_undo_stack.append(session.markers.duplicate(true))
+	if _undo_stack.size() > _UNDO_LIMIT:
+		_undo_stack.pop_front()
+	_redo_stack.clear()
+
+
+func _undo() -> void:
+	if _undo_stack.is_empty():
+		return
+	_redo_stack.append(session.markers.duplicate(true))
+	session.markers = _undo_stack.pop_back()
+	_undo_coalesce_key = ""   # the next edit must open its own fresh boundary
+	_after_history_restore()
+
+
+func _redo() -> void:
+	if _redo_stack.is_empty():
+		return
+	_undo_stack.append(session.markers.duplicate(true))
+	session.markers = _redo_stack.pop_back()
+	_undo_coalesce_key = ""
+	_after_history_restore()
+
+
+## _selected points INTO the array a restore just replaced wholesale, so it's
+## dangling - re-resolve it by time in the restored array (or drop the
+## selection if that marker no longer exists there) before refreshing anything
+## that reads it.
+func _after_history_restore() -> void:
+	if _selected != null:
+		var t: float = float(_selected.get("time", -1.0))
+		_selected = null
+		for m in session.markers:
+			if absf(float(m.time) - t) < 0.0005:
+				_selected = m
+				break
+	_select_generation += 1
+	_timeline.selected = _selected
+	_refresh_marker_list()
+	_refresh_panel()
+	_mark_dirty()
 
 
 # --- auto-save --------------------------------------------------------------
@@ -892,6 +1153,7 @@ func _exit_tree() -> void:
 
 func _select_marker(m: Dictionary) -> void:
 	_selected = m
+	_select_generation += 1   # a new marker's edits must never coalesce with the last one's
 	_timeline.selected = m
 	_refresh_panel()
 
@@ -911,6 +1173,10 @@ func _refresh_panel() -> void:
 	_fx_scale.set_value_no_signal(float(m.get("fx_scale", 1.0)))
 	_fx_density.set_value_no_signal(float(m.get("fx_density", 0.45)))
 	_fx_contrast.set_value_no_signal(float(m.get("fx_contrast", 0.5)))
+	_fx_speed.set_value_no_signal(float(m.get("fx_speed", 1.0)))
+	_fx_lag.set_value_no_signal(float(m.get("fx_lag", 0.35)))
+	_fx_smooth.set_value_no_signal(float(m.get("fx_smooth", 0.0)))
+	_gust.set_value_no_signal(float(m.get("fx_smooth", 0.0)))
 	_resonance.set_value_no_signal(float(m.get("resonance", 0.0)))
 	_update_effect_controls(int(m.get("effect_a", 0)))
 	_refresh_marker_label()
@@ -921,10 +1187,21 @@ func _refresh_panel() -> void:
 ## reach - same stored field, relabeled so it says what it does here.
 func _update_effect_controls(effect_id: int) -> void:
 	var groups: Array = MaskSession.EFFECT_CONTROLS.get(effect_id, [])
+	# clear fades out EVERYTHING earlier - it has no target color at all. snow
+	# picks its foreground/background split automatically - it has no target
+	# color either.
+	_grp_color.visible = effect_id != MaskSession.EFFECT_CLEAR and effect_id != MaskSession.EFFECT_SNOW
 	_grp_threshold.visible = groups.has("keying") or groups.has("reach")
 	_threshold_label.text = "Reach - hue range this restore covers" if groups.has("reach") else "Threshold"
 	_grp_keymisc.visible = groups.has("keying")
 	_grp_pattern.visible = groups.has("pattern")
+	_grp_echo.visible = groups.has("echo")
+	_grp_snow.visible = groups.has("snow")
+	_fx_contrast_label.text = "Sensitivity - snow's reach toward the subject" \
+		if effect_id == MaskSession.EFFECT_SNOW else "Contrast"
+	var is_snow := effect_id == MaskSession.EFFECT_SNOW
+	_fx_x_label.text = "Wind X" if is_snow else "Pan X"
+	_fx_y_label.text = "Wind Y" if is_snow else "Pan Y"
 
 
 func _refresh_marker_label() -> void:
@@ -952,7 +1229,10 @@ func _refresh_marker_list() -> void:
 		var b := Button.new()
 		b.focus_mode = Control.FOCUS_NONE
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		b.text = "%s   %s" % [MaskTimeline.format_time(float(m.time)), kind_name.capitalize()]
+		var eff_name: String = MaskSession.MASK_EFFECTS[int(m.get("effect_a", 0))]
+		var view_tag := "  · raw ⟲" if int(m.get("view_mode", 2.0)) == 2 else ""
+		b.text = "%s   %s · %s%s" % [MaskTimeline.format_time(float(m.time)),
+			kind_name.capitalize(), eff_name, view_tag]
 		if _selected != null and _selected == m:
 			b.add_theme_color_override("font_color", Color(1.0, 0.85, 0.5))
 		b.pressed.connect(func(): _select_marker(m))
@@ -972,18 +1252,38 @@ func _play(on: bool) -> void:
 		_audio.play(_player.stream_position)
 	_player.paused = not on
 	_audio.stream_paused = not on
+	# THE VIDEO IS THE MASTER CLOCK. The two players don't pause at the same
+	# instant (video stops on a decoded-frame boundary, audio on a mix chunk),
+	# so every pause/resume cycle - spacebar, the feedback console's freeze -
+	# banked a little offset, and nothing ever corrected it. Snap audio to the
+	# video on every resume; _process keeps them corrected from there.
+	if on:
+		_audio.seek(_player.stream_position)
 
 
 ## Space toggles play/pause - the same action the panel's ▶/⏸ button does. Only
 ## live once a clip is actually loaded (_player exists); main.gd defers to this
 ## instance for Space entirely while it's open (see main.gd's KEY_SPACE handling),
 ## so this doesn't need to fight Director.next() for the key.
+## Ctrl+Z / Ctrl+Shift+Z (and Ctrl+Y, the other common redo binding) drive the
+## undo/redo stack - see _push_undo. echo excluded so a held key doesn't spam
+## repeats; a real accident deserves a deliberate press each time it's undone.
 func _unhandled_input(event: InputEvent) -> void:
 	if render_mode or _player == null:
 		return
-	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_SPACE:
-		_play(not _playing)
-		get_viewport().set_input_as_handled()
+	if event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_SPACE:
+			_play(not _playing)
+			get_viewport().set_input_as_handled()
+		elif event.ctrl_pressed and event.keycode == KEY_Z:
+			if event.shift_pressed:
+				_redo()
+			else:
+				_undo()
+			get_viewport().set_input_as_handled()
+		elif event.ctrl_pressed and event.keycode == KEY_Y:
+			_redo()
+			get_viewport().set_input_as_handled()
 
 
 # --- view mode: main (raw/fx) x inset (hidden/raw/fx) --------------------------
@@ -1041,7 +1341,12 @@ func _apply_frame_state(p: Dictionary) -> void:
 	var densities := PackedFloat32Array()
 	var contrasts := PackedFloat32Array()
 	var glows := PackedFloat32Array()
+	var speeds := PackedFloat32Array()
+	var smooths := PackedFloat32Array()   # raw fx_smooth - snow's Gust; echo bakes its own use into echo_w below
 	var tdirs := PackedVector3Array()
+	var echo_w := PackedFloat32Array()
+	var echo_lag := PackedInt32Array()
+	var slot_frac := fposmod((_player.stream_position if _player != null else 0.0) / _ECHO_INTERVAL, 1.0)
 	for i in MaskSession.MAX_LAYERS:
 		if i < n:
 			var l: Dictionary = layers[i]
@@ -1056,6 +1361,30 @@ func _apply_frame_state(p: Dictionary) -> void:
 			densities.append(clampf(float(l.get("fx_density", 0.45)) + 0.5 * res * (env - 0.35), 0.0, 1.0))
 			contrasts.append(float(l.get("fx_contrast", 0.5)))
 			glows.append(1.0 + res * env * 1.3)
+			speeds.append(maxf(0.05, float(l.get("fx_speed", 1.0))))
+			smooths.append(clampf(float(l.get("fx_smooth", 0.0)), 0.0, 1.0))
+			# The echo's temporal kernel: weights over the 8 ring ages, centered
+			# on the layer's lag. Age of ring index k is (k + slot_frac) slots -
+			# continuous in playback time, so a spread kernel (Smoothing > 0)
+			# glides through the ring with no steps; Smoothing ~ 0 collapses to
+			# the nearest single frame - the held-frame stutter, now at an
+			# adjustable distance. Pure function of position + fields: live and
+			# export blend identically.
+			var lag_slots := clampf(float(l.get("fx_lag", 0.35)) / _ECHO_INTERVAL, 0.0, 7.0)
+			var smooth_amt := clampf(float(l.get("fx_smooth", 0.0)), 0.0, 1.0)
+			echo_lag.append(clampi(int(round(lag_slots)), 0, 7))
+			var w := PackedFloat32Array()
+			var wsum := 0.0
+			for k in 8:
+				var wv: float
+				if smooth_amt < 0.02:
+					wv = 1.0 if k == clampi(int(round(lag_slots - slot_frac)), 0, 7) else 0.0
+				else:
+					wv = exp(-absf(float(k) + slot_frac - lag_slots) / (smooth_amt * 2.5))
+				w.append(wv)
+				wsum += wv
+			for k in 8:
+				echo_w.append(w[k] / maxf(wsum, 0.0001))
 			# The target hue's normalized chroma direction, for erase's
 			# projection-subtraction (see the shader: erase is subtraction,
 			# not classification - no gates, no boundary rings).
@@ -1070,6 +1399,11 @@ func _apply_frame_state(p: Dictionary) -> void:
 			scales.append(1.0)
 			densities.append(0.0)
 			contrasts.append(0.5)
+			speeds.append(1.0)
+			smooths.append(0.0)
+			echo_lag.append(0)
+			for k in 8:
+				echo_w.append(1.0 if k == 0 else 0.0)
 			glows.append(1.0)
 			tdirs.append(Vector3(1, 0, 0))
 	for pair in [[_mat_main, main_amt], [_mat_inset, inset_fx]]:
@@ -1097,6 +1431,10 @@ func _apply_frame_state(p: Dictionary) -> void:
 		mat.set_shader_parameter("u_l_dens", densities)
 		mat.set_shader_parameter("u_l_con", contrasts)
 		mat.set_shader_parameter("u_l_glow", glows)
+		mat.set_shader_parameter("u_l_speed", speeds)
+		mat.set_shader_parameter("u_l_smooth", smooths)
+		mat.set_shader_parameter("u_l_ew", echo_w)
+		mat.set_shader_parameter("u_l_elag", echo_lag)
 		mat.set_shader_parameter("u_l_tdir", tdirs)
 	_fx_overlay.visible = main_amt > 0.001
 	_mask_wrap.visible = inset_show > 0.001
@@ -1160,6 +1498,16 @@ func _process(_dt: float) -> void:
 		_fx_overlay.texture = _player.get_video_texture()
 	if _pip_view != null and _mask_wrap.visible:
 		_pip_view.texture = _player.get_video_texture()
+	_maybe_capture_echo()
+	_push_anchor()
+	# Standing A/V drift correction (see _play: video is the master clock).
+	# 0.15s tolerance sits above audio mix-chunk granularity so this never
+	# chatters; beyond it, snap audio back to the video.
+	if _playing and _audio.playing and not _audio.stream_paused:
+		if absf(_audio.get_playback_position() - _player.stream_position) > 0.15:
+			_audio.seek(_player.stream_position)
+	if _undo_coalesce_cooldown > 0.0:
+		_undo_coalesce_cooldown -= _dt
 	if render_mode:
 		return
 	if _time_label != null:

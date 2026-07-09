@@ -26,7 +26,20 @@ class_name MaskSession
 ##   DECAY - the layer begins AT the anchor and accumulates over the `duration`
 ##           seconds AFTER it - the footage is progressively consumed (an audio
 ##           decay envelope). Nothing happens before the anchor.
-## Once in, a layer HOLDS forever. Layering is a continuous, ADDITIVE process:
+## Once in, a layer HOLDS - until one of exactly three things ends it:
+##   1. THE RAW CHECKPOINT (the rebase). A full-raw marker (view_mode 2) is a
+##      canvas reset: once its transition to raw has COMPLETED (at its anchor for
+##      a ramp; anchor+duration for a decay - never mid-fade, or the cut would
+##      pop), no earlier marker's layer exists beyond it. Raw is the one place a
+##      reset is pop-free BY CONSTRUCTION - nothing is on screen while it
+##      happens - so composition history never crosses a raw boundary: a
+##      sliding-window model whose window edges are explicit, user-authored
+##      timeline events instead of a silent time constant (which would kill
+##      layers the author expects to hold - the fire-vanished bug class).
+##   2. "restore" - fades out earlier layers matching ITS color (see below).
+##   3. "clear" - restore for ALL colors at once: fades out every earlier layer
+##      over its envelope, scaled by its intensity.
+## Layering is otherwise a continuous, ADDITIVE process:
 ## a later marker keying a second color - however near or far from the first in
 ## hue - stacks WITH the earlier work, never over it. (An earlier version
 ## silently superseded prior layers whose hue was "close enough", which meant
@@ -82,6 +95,9 @@ const VECTOR_FIELDS := [
 	"fx_density",       # pattern coverage 0..1 (how much of the region the wisps consume)
 	"resonance",        # 0..1 - how strongly the pattern breathes with the audio envelope
 	"fx_contrast",      # 0..1 - wisp edge hardness; exponential response, 0.5 = neutral
+	"fx_speed",         # drift velocity multiplier for the volumetric fields (1 = nominal)
+	"fx_lag",           # echo: how far back the lagged frame reaches, seconds
+	"fx_smooth",        # echo: 0 = discrete stutter, 1 = wide temporal blend (EMA-like)
 ]
 
 ## Global keying environment - lerped across transition windows (contract shape 1).
@@ -89,7 +105,8 @@ const GLOBAL_CONTINUOUS := ["threshold", "feather", "sat_floor"]
 ## What each marker's LAYER carries (contract shape 3) - baked at the marker's own
 ## values; only the layer's envelope varies over time.
 const LAYER_FIELDS := ["hue_a", "effect_a", "intensity_a", "fx_x", "fx_y",
-	"fx_scale", "fx_density", "resonance", "fx_contrast"]
+	"fx_scale", "fx_density", "resonance", "fx_contrast", "fx_speed", "fx_lag",
+	"fx_smooth"]
 
 const MARKER_KINDS := ["ramp", "decay"]
 
@@ -111,8 +128,37 @@ const MAX_LAYERS := 6
 ## `threshold` of its picked color, over its own envelope, scaled by its
 ## intensity (0.5 = restore halfway). The one effect the shader never sees
 ## (layers_at resolves it into the other layers' envelopes).
-const MASK_EFFECTS := ["erase", "fire", "freeze", "smoke", "restore"]
+## whisp / crystal / echo (appended - ids are the contract, EFFECT_RESTORE stays 4):
+##   whisp   - content-aware volumetric: its field is advected along the underlying
+##             picture's luminance edges (tendrils curl around features) and its
+##             placement auto-locks to the target color's mass centroid, EMA-tracked
+##             over short windows by the editor (see MaskEditor echo/anchor capture).
+##   crystal - fractal faceted glass rendered IN PLACE of the target color: voronoi
+##             facets refracting the footage, cold edge light. Projection-based like
+##             erase (no gates - no rings possible).
+##   echo    - temporal lag: the target color's region shows a muted, delayed echo
+##             of the footage (a ring of past frames), optionally cloned with
+##             accumulating X/Y offsets into staircase "time-shapes".
+## "clear" is restore generalized to EVERY color: it draws nothing and fades out
+## ALL earlier layers over its own envelope, scaled by its intensity - the
+## explicit "delete the old effects" primitive (restoring region-by-region was
+## the only way to unwind a stack, and it was clunky). Like restore, the shader
+## never sees it.
+## "snow" has NO key color - hue_a is unused. Foreground vs. background is
+## decided per pixel, automatically, from motion (the echo ring's two newest
+## captures) and color intensity: a lit, moving subject scores high on both, a
+## static, desaturated background scores low - so the flakes fall over the
+## background and thin out over the subject with no color pick required. The
+## Contrast slider is relabeled "Sensitivity" for it, and Pan X/Y become Wind
+## X/Y - a fall DIRECTION (default straight down), decoupled from Velocity's
+## speed. Gust (fx_smooth, its own slider - see MaskEditor's "snow" group) adds
+## irregular swings to that direction and speed together; echo's Smoothing
+## slider uses the same stored field for a different purpose, but the two
+## groups never show at once so there's no conflict.
+const MASK_EFFECTS := ["erase", "fire", "freeze", "smoke", "restore", "whisp", "crystal", "echo", "clear", "snow"]
 const EFFECT_RESTORE := 4
+const EFFECT_CLEAR := 8
+const EFFECT_SNOW := 9
 
 ## THE CONTROL HIERARCHY: which panel option groups each effect actually consumes
 ## (the editor shows/hides accordingly - a slider that does nothing for the
@@ -128,6 +174,11 @@ const EFFECT_CONTROLS := {
 	2: ["keying", "pattern"],     # freeze
 	3: ["keying", "pattern"],     # smoke
 	4: ["reach"],                 # restore
+	5: ["keying", "pattern"],     # whisp
+	6: ["pattern"],               # crystal (projection-based: no keying gates)
+	7: ["pattern", "echo"],       # echo (pan=clone step, scale=step size, coverage=clones, contrast=mute)
+	9: ["pattern", "snow"],       # snow (no keying group: it has no key color at all)
+	8: [],                        # clear (intensity = how completely; color is meaningless)
 }
 
 ## The view-mode registry (see mask_editor.gd). Really a 2-axis matrix flattened to
@@ -151,7 +202,7 @@ const DEFAULTS := {
 	"sat_floor": 0.18, "swap": 0.0, "effect_a": 0, "effect_b": 0,
 	"intensity_a": 1.0, "intensity_b": 0.0, "duration": 1.0, "view_mode": 2.0,
 	"fx_x": 0.0, "fx_y": 0.0, "fx_scale": 1.0, "fx_density": 0.45, "resonance": 0.0,
-	"fx_contrast": 0.5,
+	"fx_contrast": 0.5, "fx_speed": 1.0, "fx_lag": 0.35, "fx_smooth": 0.0,
 }
 
 var video_path := ""
@@ -162,9 +213,10 @@ var markers: Array = []   # Array[Dictionary], sorted by "time"; each has all VE
 
 
 ## A new marker at `t`, seeded from the previous marker's stored values (or
-## DEFAULTS before the first) - so a fresh marker CONTINUES the same layer (same
-## color: it supersedes its predecessor with identical params, visually seamless)
-## until you edit it. `kind_id` indexes MARKER_KINDS.
+## DEFAULTS before the first) - so a fresh marker CONTINUES the same layer: the
+## continuation rule in layers_at dissolves the predecessor through this
+## marker's envelope (identical params = visually seamless; edited params = the
+## transition animation). `kind_id` indexes MARKER_KINDS.
 func add_marker(t: float, kind_id: int = 0) -> Dictionary:
 	var prev = null
 	for mm in markers:
@@ -220,12 +272,64 @@ static func _amounts_of(state: Dictionary) -> Dictionary:
 ## it, holding 1 forever after. Closed-form - no recursion, no window chaining.
 ##   ramp : rises over [time - duration, time]
 ##   decay: rises over [time, time + duration]
+## Index of the latest full-raw marker whose transition to raw has COMPLETED by
+## `t` (-1 if none): at its anchor for a ramp (the ramp eases in BEFORE, arriving
+## complete exactly there), anchor+duration for a decay (still fading until
+## then). Cutting only after completion keeps the reset pop-free: presence is
+## already zero when the history disappears.
+##
+## But that guarantee only holds if the screen actually GOT to raw - and a
+## later marker becomes at_time()'s governing `cur` from its own arrival
+## onward, regardless of whether an earlier raw marker's decay window has
+## finished counting down. If something later takes the screen back to
+## masked/pip before the raw decay completes, main_fx never reaches 0 (it just
+## holds wherever the later marker left it - never faded at all, in the
+## fast-forward-to-the-next-marker case), so a rebase firing purely off the
+## raw marker's own arithmetic would erase a stack that's still fully visible:
+## a hard, lead-in-free pop (the "abrupt deletion" complaint). A raw marker is
+## only ever superseded - never doubled back to - so checking for one later
+## marker starting before `done` is sufficient.
+func _barrier_index(t: float) -> int:
+	var idx := -1
+	for i in markers.size():
+		var m: Dictionary = markers[i]
+		if int(m.get("view_mode", 2.0)) != 2:
+			continue
+		var done: float = float(m.time)
+		if int(m.get("kind", 0.0)) == 1:
+			done += maxf(0.001, float(m.get("duration", 1.0)))
+		if t < done:
+			continue
+		var superseded := false
+		for j in range(i + 1, markers.size()):
+			if float(markers[j].time) < done:
+				superseded = true
+				break
+		if not superseded:
+			idx = i
+	return idx
+
+
 static func _envelope(m: Dictionary, t: float) -> float:
 	var d: float = maxf(0.001, float(m.get("duration", 1.0)))
 	var anchor: float = float(m.time)
 	if int(m.get("kind", 0.0)) == 0:
 		return clampf((t - (anchor - d)) / d, 0.0, 1.0)
 	return clampf((t - anchor) / d, 0.0, 1.0)
+
+
+## Whether `b` is close enough to `a` in SCALE and PLACEMENT to plausibly be
+## the same physical instance keyframed again, rather than an unrelated new
+## burst that happens to share an effect and hue. Deliberately loose (50%
+## scale tolerance, a real pan radius) - it only needs to reject WHOLESALE
+## reconfigurations, not fine-tune what counts as "a tweak".
+static func _same_instance(a: Dictionary, b: Dictionary) -> bool:
+	var scale_a := maxf(0.05, float(a.get("fx_scale", 1.0)))
+	var scale_b := maxf(0.05, float(b.get("fx_scale", 1.0)))
+	var scale_ratio: float = maxf(scale_a, scale_b) / minf(scale_a, scale_b)
+	var pos_a := Vector2(float(a.get("fx_x", 0.0)), float(a.get("fx_y", 0.0)))
+	var pos_b := Vector2(float(b.get("fx_x", 0.0)), float(b.get("fx_y", 0.0)))
+	return scale_ratio <= 1.5 and pos_a.distance_to(pos_b) <= 0.15
 
 
 ## The layer stack at time `t`, chronological (oldest first - the shader applies
@@ -243,25 +347,84 @@ static func _envelope(m: Dictionary, t: float) -> float:
 ## being worked on).
 func layers_at(t: float) -> Array:
 	var out := []
-	for i in markers.size():
+	# The raw checkpoint: layers only exist back to the most recent COMPLETED
+	# transition into full raw (see the class doc - the rebase).
+	var start := _barrier_index(t) + 1
+	# Continuation partners are MERGED into whichever chain already claimed them,
+	# so a later pass of the outer loop must not also emit them as a fresh,
+	# independent layer (see the continuation branch below).
+	var consumed := {}
+	for i in range(start, markers.size()):
+		if consumed.has(i):
+			continue
 		var m: Dictionary = markers[i]
-		if int(m.get("effect_a", 0)) == EFFECT_RESTORE:
-			continue   # restores act on other layers; they draw nothing
+		var e := int(m.get("effect_a", 0))
+		if e == EFFECT_RESTORE or e == EFFECT_CLEAR:
+			continue   # they act on other layers; they draw nothing
 		var env := _envelope(m, t)
 		if env <= 0.0005:
 			continue
+		# `cur` is the field values actually drawn - m's own, until a
+		# continuation partner takes over (see below).
+		var cur: Dictionary = m
 		for j in range(i + 1, markers.size()):
 			var mj: Dictionary = markers[j]
-			if int(mj.get("effect_a", 0)) != EFFECT_RESTORE:
+			var ej := int(mj.get("effect_a", 0))
+			if ej == EFFECT_CLEAR:
+				env *= 1.0 - _envelope(mj, t) * clampf(float(mj.get("intensity_a", 1.0)), 0.0, 1.0)
+				continue
+			# CONTINUATION: a later marker with the SAME effect on the SAME
+			# color is the same channel keyframed again - it takes over its
+			# predecessor through its own envelope. This used to run as TWO
+			# separate layers with complementary envelopes (A fades out, B
+			# fades in, weights summing to one) - correct for the simple
+			# replacement effects (crystal/echo/erase mix toward a target
+			# once), but fire/freeze/smoke/whisp add their emissive body on
+			# top of an ALREADY-suppressed color, and running that pass twice
+			# at partial weight doesn't equal running it once at full weight:
+			# suppression compounds sub-additively (two 44%/56% consumes eat
+			# LESS than one 100% consume) while the emissive term still sums
+			# to the full 100% - the footage under the glow stays too bright,
+			# reading as the transition flaring UP mid-crossfade instead of
+			# holding steady (the "much brighter" complaint). So this is one
+			# LAYER with interpolated field values, drawn once at its natural
+			# env, never two partial draws of the same field.
+			# Hue alone is a weak signal: fire's natural color IS ~0.02, so any
+			# two independently-authored fire bursts left at the default hue
+			# match this test trivially, whether or not they're remotely the
+			# same instance - and unlike the whisp case, nothing else about
+			# them needs to agree (a scale of 0.34 and one of 2.1 are two
+			# different-sized bursts, not one burst keyframed to a new size).
+			# So also require the pattern's PLACEMENT to agree closely - scale
+			# within 50% and pan within a small radius - genuine continuations
+			# (seeded by add_marker's copy-the-predecessor convention, then
+			# tweaked a LITTLE) satisfy this easily; two coincidentally
+			# same-hue bursts placed and sized independently almost never do.
+			if ej == e and hue_dist(float(cur.get("hue_a", 0.0)), float(mj.get("hue_a", 0.0))) <= 0.02 \
+					and _same_instance(cur, mj):
+				var f := _envelope(mj, t)
+				if f <= 0.0005:
+					continue   # mj hasn't started rising yet - cur stands as-is
+				consumed[j] = true
+				if f >= 0.9995:
+					cur = mj   # fully handed off - mj IS the layer now
+				else:
+					var blended := {}
+					for key in LAYER_FIELDS:
+						blended[key] = lerpf(float(cur.get(key, DEFAULTS.get(key, 0.0))),
+							float(mj.get(key, DEFAULTS.get(key, 0.0))), f)
+					cur = blended
+				continue
+			if ej != EFFECT_RESTORE:
 				continue
 			var reach: float = maxf(0.02, float(mj.get("threshold", 0.24)))
-			if hue_dist(float(m.get("hue_a", 0.0)), float(mj.get("hue_a", 0.0))) <= reach:
+			if hue_dist(float(cur.get("hue_a", 0.0)), float(mj.get("hue_a", 0.0))) <= reach:
 				env *= 1.0 - _envelope(mj, t) * clampf(float(mj.get("intensity_a", 1.0)), 0.0, 1.0)
 		if env <= 0.0005:
 			continue
 		var layer := {"env": env}
 		for key in LAYER_FIELDS:
-			layer[key] = m.get(key, DEFAULTS.get(key, 0.0))
+			layer[key] = cur.get(key, DEFAULTS.get(key, 0.0))
 		out.append(layer)
 	while out.size() > MAX_LAYERS:
 		out.pop_front()

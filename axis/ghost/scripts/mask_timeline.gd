@@ -21,6 +21,10 @@ class_name MaskTimeline
 
 signal scrubbed(t: float)
 signal marker_picked(m: Dictionary)
+## Fired once per drag gesture, BEFORE the first time-mutation - the hook point
+## for undo (see MaskEditor._push_undo). A plain click-to-select never fires
+## this at all (no motion, no mutation, nothing to undo).
+signal marker_drag_started(m: Dictionary)
 signal marker_moved(m: Dictionary)
 
 var session: MaskSession = null
@@ -30,6 +34,7 @@ var waveform_texture: Texture2D = null   # set by MaskEditor once generated; nul
 
 var _dragging := false                 # scrubbing the playhead (grabbed empty space)
 var _dragging_marker: Variant = null   # the marker Dictionary being dragged, or null
+var _drag_started_emitted := false     # per-gesture latch for marker_drag_started
 
 # The visible window: zoom 1 = whole clip; view_start = left edge in seconds.
 var _zoom := 1.0
@@ -90,6 +95,7 @@ func _gui_input(event: InputEvent) -> void:
 				if m != null:
 					marker_picked.emit(m)
 					_dragging_marker = m
+					_drag_started_emitted = false
 				else:
 					_dragging = true
 					scrubbed.emit(_t_of(mb.position.x))
@@ -125,6 +131,9 @@ func _pan(frac: float) -> void:
 ## interpolation in MaskSession.at_time assumes sorted order) - re-sorting every
 ## motion event is trivial at marker-list sizes, no need to defer it to release.
 func _drag_marker_to_x(x: float) -> void:
+	if not _drag_started_emitted:
+		_drag_started_emitted = true
+		marker_drag_started.emit(_dragging_marker)
 	_dragging_marker.time = clampf(_t_of(x), 0.0, session.duration)
 	session.markers.sort_custom(func(a, b): return a.time < b.time)
 	marker_moved.emit(_dragging_marker)

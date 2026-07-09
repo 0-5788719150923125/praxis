@@ -349,15 +349,32 @@ def _read_dynamics_from_db(
             conn.close()
             return None
 
-        # Query dynamics data
-        query = f"""
-            SELECT * FROM dynamics
-            WHERE step >= ?
-            ORDER BY step ASC
-            LIMIT ?
-        """
+        # Uniform modulo sampling spans the full step range. No LIMIT:
+        # LIMIT + ORDER BY step truncates newer rows, which is what froze
+        # dynamics charts (e.g. Schedule-Free Spread) at their earliest
+        # ~N steps while metrics.py/data_metrics.py, which already sample
+        # this way, kept updating. See _read_metrics_file for the same fix.
+        cursor.execute("SELECT COUNT(*) FROM dynamics WHERE step >= ?", (since_step,))
+        total_count = cursor.fetchone()[0]
 
-        cursor.execute(query, (since_step, limit))
+        if total_count > limit * 2:
+            sample_interval = max(1, total_count // limit)
+            query = """
+                SELECT * FROM dynamics
+                WHERE step >= ?
+                  AND ((rowid % ?) = 0
+                       OR step = (SELECT MAX(step) FROM dynamics WHERE step >= ?))
+                ORDER BY step ASC
+            """
+            cursor.execute(query, (since_step, sample_interval, since_step))
+        else:
+            query = """
+                SELECT * FROM dynamics
+                WHERE step >= ?
+                ORDER BY step ASC
+            """
+            cursor.execute(query, (since_step,))
+
         rows = cursor.fetchall()
         conn.close()
 
