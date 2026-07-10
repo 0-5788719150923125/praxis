@@ -50,6 +50,8 @@ var _session_path := ""       # res://-relative or absolute; wherever it was loa
 
 var _player: VideoStreamPlayer     # always the RAW decode - never carries the shader
 var _audio: AudioStreamPlayer
+var _audio_thread: Thread = null   # loads the (large, uncompressed) main WAV off the main thread
+var _track_audio_jobs: Array = []  # background sidecar-.ogg extractions, {pid, index, ogg}
 # One material PER LAYER: the main overlay and the inset can be mid-transition at
 # different presences (e.g. fx-inset -> both: the inset holds full while the main
 # overlay fades in), and a layer's presence multiplies into its own intensities -
@@ -66,6 +68,9 @@ var _mask_wrap: PanelContainer     # the inset's border/placement box (holds _pi
 var _view_label: Label     # passive view-mode readout (the old cycle button; V cycles now)
 var _help_panel: PanelContainer
 var _peek_raw := false     # DISPLAY-ONLY raw override; never touches session data (hold P)
+var _last_inset_show := 0.0   # this frame's resolved inset_show - _sync_tracks reads it too,
+                               # so a track's own PiP box respects the same view-mode gate as _mask_wrap
+var _pip_track := 0           # this frame's resolved pip_track: 0 = main clip in the PiP, k = track (k-1)
 
 var _timeline: MaskTimeline
 var _tview: TimelineView          # shared pixel<->time mapping - see timeline_view.gd
@@ -81,10 +86,11 @@ var _composition_parent: Control  # holds _player/_fx_overlay/_mask_wrap - track
 var _track_runtime: Array = []
 var _import_dialog: FileDialog
 var _import_pid := -1
-var _import_pending := {}   # {source, dir, video} mid-transcode
+var _import_pending := {}   # {source, video, index} - the lane is added up front, this tracks its transcode
 var _selected: Variant = null   # the marker Dictionary currently shown in the panel
 
 var _color_a: ColorPickerButton
+var _hue_a: HSlider   # numeric grading twin of _color_a - same hue_a field, precise dragging
 var _threshold: HSlider
 var _threshold_label: Label
 var _grp_color: VBoxContainer       # the control hierarchy's option groups -
@@ -112,9 +118,11 @@ var _gust: HSlider   # snow's own Gust slider - a second, independent view onto 
 var _grp_fur: VBoxContainer
 var _undul: HSlider  # fur's Undulation - fur's view onto fx_smooth (same stored-field reuse as _gust)
 var _coil: HSlider   # fur's Coil - fur's view onto fx_lag (pushed raw as u_l_lagf; echo bakes its lag into u_l_ew)
+var _stick: HSlider  # fur's Stickiness - its OWN field (fx_stick, u_l_stick); 0 = today's free coat
 var _resonance: HSlider
 var _effect_a: OptionButton
 var _intensity_a: HSlider
+var _intensity_label: Label   # tooltip swaps meaning for restore/clear, see _update_effect_controls
 var _kind: OptionButton     # ramp / decay - see MaskSession.MARKER_KINDS
 var _marker_duration: HSlider
 var _marker_label: Label
@@ -143,6 +151,10 @@ const _PREP_PROGRESS_FILE := "user://mask_prep_progress.txt"
 # Only runs at all while the session actually contains a whisp/echo marker.
 var _echo_ring: Array = [null, null, null, null, null, null, null, null]   # ImageTexture, slot-indexed
 var _echo_slot := -1
+var _prev_pos := -1.0         # last frame's playhead position - lets capture skip an ACTIVE
+                              #   scrub drag (position moving) and fire once it settles
+var _chimera_active := false  # is a chimera layer on screen THIS frame - gates the track readback
+                              #   so it never runs while the (distant) chimera marker isn't rendering
 # The whisp anchor is double-buffered: _anchor_ema is the EMA at the LATEST
 # capture, _anchor_prev the one before. The uniform pushed per frame lerps
 # between them by position-within-slot (see _push_anchor) - pushing the EMA
@@ -151,6 +163,20 @@ var _echo_slot := -1
 # export trace the identical glide.
 var _anchor_prev := Vector2(0.5, 0.5)
 var _anchor_ema := Vector2(0.5, 0.5)
+# Chimera's landmark FRAME (position + size), double-buffered and glided exactly
+# like the centroid above. The MAIN face's modeled size (RMS radius of its
+# key/motion mass) and the imported TRACK face's own centroid + size, each an
+# EMA over the same thresholds. The shader maps every main pixel through the two
+# frames so the graft phase-locks to the main head instead of drifting (see the
+# chimera branch in mask_split.gdshader). Defaults degrade to ~the old centered
+# clone when a face can't be modeled.
+var _anchor_scale_prev := 0.28
+var _anchor_scale_ema := 0.28
+var _track_anchor_prev := Vector2(0.5, 0.5)
+var _track_anchor_ema := Vector2(0.5, 0.5)
+var _track_scale_prev := 0.28
+var _track_scale_ema := 0.28
+var _track_prev_lum := PackedFloat32Array()   # track frame's previous-luminance grid (motion fallback)
 const _ECHO_INTERVAL := 0.35
 
 # Wave impulses (whisp only): a fast head turn shows up as a big frame-to-frame
@@ -414,14 +440,57 @@ func _finish_session(source: String, video: String, audio: String) -> void:
 	_ready_with_session()
 
 
+## Robust video-duration probe. The fast path is the container's own duration,
+## but our own libtheora transcode (see _start_track_import) routinely produces an
+## .ogv whose header carries NO duration - ffprobe returns "N/A" for both
+## format=duration AND stream=duration. That returned 0 here, and _finish_track_import
+## reads 0 as "transcode failed" and silently adds no lane (the "Track import does
+## nothing" bug). So when both are absent, fall back to counting video packets (fast,
+## no decode) and dividing by the frame rate - every playable file has a definite
+## packet count even when it lacks a duration field.
 func _probe_duration(path: String) -> float:
+	var d := _ffprobe_float(["-show_entries", "format=duration"], path)
+	if d > 0.0:
+		return d
+	d = _ffprobe_float(["-select_streams", "v:0", "-show_entries", "stream=duration"], path)
+	if d > 0.0:
+		return d
 	var out := []
-	OS.execute("ffprobe", ["-v", "error", "-show_entries", "format=duration",
-		"-of", "csv=p=0", path], out)
+	OS.execute("ffprobe", ["-v", "error", "-select_streams", "v:0", "-count_packets",
+		"-show_entries", "stream=nb_read_packets,r_frame_rate", "-of", "default=nw=1", path], out)
+	if out.size() > 0:
+		var packets := 0.0
+		var fps := 0.0
+		for line in String(out[0]).split("\n"):
+			var s := line.strip_edges()
+			if s.begins_with("nb_read_packets="):
+				packets = s.substr(16).to_float()
+			elif s.begins_with("r_frame_rate="):
+				var fr := s.substr(13).split("/")
+				if fr.size() == 2 and fr[1].to_float() > 0.0:
+					fps = fr[0].to_float() / fr[1].to_float()
+				else:
+					fps = s.substr(13).to_float()
+		if packets > 0.0 and fps > 0.0:
+			return packets / fps
+	return 0.0
+
+
+## One ffprobe query for a single float value (csv, no keys), 0.0 if it comes back
+## empty or "N/A". See _probe_duration for why the caller layers several of these.
+func _ffprobe_float(entries: Array, path: String) -> float:
+	var args := PackedStringArray(["-v", "error"])
+	for e in entries:
+		args.append(String(e))
+	args.append("-of")
+	args.append("csv=p=0")
+	args.append(path)
+	var out := []
+	OS.execute("ffprobe", args, out)
 	if out.size() > 0:
 		var s := String(out[0]).strip_edges()
 		if s.is_valid_float():
-			return float(s)
+			return s.to_float()
 	return 0.0
 
 
@@ -450,11 +519,21 @@ func _ready_with_session() -> void:
 	# timeline says, not a hardcoded "always full masked" look.
 
 	_audio = AudioStreamPlayer.new()
-	# Plain load() has no loader for a raw .wav outside the import pipeline (unlike
-	# VideoStreamTheora, which does resolve on an absolute path); AudioStreamWAV's
-	# static loader is the runtime-safe path for both cases.
-	_audio.stream = AudioStreamWAV.load_from_file(ProjectSettings.globalize_path(session.audio_path))
 	add_child(_audio)
+	# The main audio is a big uncompressed WAV (~170MB / ~3s to read). Loading it on
+	# the main thread froze startup for that whole time. Live: load it on a worker and
+	# attach it the moment it's ready (_process polls the thread), so the video + UI
+	# come up instantly and audio joins a beat later, synced to the current position.
+	# Export (render_mode) still loads synchronously - it must have audio from frame 0,
+	# deterministically. AudioStreamWAV's static loader is the runtime-safe path (plain
+	# load() has no loader for a raw .wav outside the import pipeline).
+	var abs_audio := ProjectSettings.globalize_path(session.audio_path)
+	if render_mode:
+		_audio.stream = AudioStreamWAV.load_from_file(abs_audio)
+		_apply_main_volume()
+	else:
+		_audio_thread = Thread.new()
+		_audio_thread.start(_load_wav_threaded.bind(abs_audio))
 
 	if render_mode:
 		_build_render_view()
@@ -615,11 +694,85 @@ func _build_track_view(i: int) -> void:
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	wrap.add_child(panel)
 
+	# The track's audio plays through a real AudioStreamPlayer (the SAME proven path as
+	# the main clip) - VideoStreamPlayer's own embedded audio does NOT play when the
+	# video is driven by manual seeking, which is why the track was silent. We demux the
+	# track .ogv's Vorbis into a sidecar .ogg once (fast stream-copy, cached), and mute
+	# the video player's audio so nothing double-plays.
+	player.volume = 0.0
+
 	while _track_runtime.size() <= i:
 		_track_runtime.append({})
-	_track_runtime[i] = {"player": player, "view": view, "wrap": wrap, "active": false}
+	_track_runtime[i] = {"player": player, "view": view, "wrap": wrap, "audio": null, "active": false}
 	player.paused = true
 	player.play()   # must be playing before .stream_position can be set (see _sync_tracks)
+	_ensure_track_audio(i)   # attaches .audio now (cached sidecar) or when ffmpeg finishes
+
+
+## Give track `i` its AudioStreamPlayer, from a sidecar .ogg demuxed from the track's
+## .ogv. If the sidecar already exists we attach immediately; otherwise ffmpeg runs in
+## the BACKGROUND (was OS.execute - a synchronous main-thread stall that could hang the
+## whole editor while audio kept playing) and _poll_track_audio attaches it on finish.
+## The sidecar lives beside the .ogv (same basename, .ogg). If it exists, attach it.
+## Otherwise extract it - preferring the ORIGINAL SOURCE, which always has the audio:
+## the old -an transcode stripped it from the .ogv, so demuxing the .ogv gave nothing.
+## Re-encode to Vorbis (the source is usually aac/mp3, not copyable to ogg). Background
+## + quiet; if even the source has no audio, _poll_track_audio records no_audio so we
+## don't retry forever. Once a sidecar exists it's cached and this is a no-op.
+func _ensure_track_audio(i: int) -> void:
+	if i < 0 or i >= session.tracks.size():
+		return
+	var track: Dictionary = session.tracks[i]
+	var video_path := String(track.get("video_path", ""))
+	if video_path.is_empty():
+		return
+	var abs_ogg := ProjectSettings.globalize_path(video_path.get_basename() + ".ogg")
+	if FileAccess.file_exists(abs_ogg):
+		_attach_track_audio(i, abs_ogg)
+		return
+	if bool(track.get("no_audio", false)):
+		return   # already learned there's no audio anywhere for this track
+	# Prefer the original import (has audio); fall back to the .ogv (only new imports
+	# embed audio) when the source is gone or was never recorded.
+	var src := String(track.get("source_path", ""))
+	var abs_src := ProjectSettings.globalize_path(src) if src.begins_with("res://") else src
+	if src.is_empty() or not FileAccess.file_exists(abs_src):
+		abs_src = ProjectSettings.globalize_path(video_path)
+	if not FileAccess.file_exists(abs_src):
+		return
+	var pid := OS.create_process("ffmpeg", ["-y", "-loglevel", "quiet", "-i", abs_src,
+		"-vn", "-c:a", "libvorbis", "-q:a", "4", abs_ogg])
+	if pid > 0:
+		_track_audio_jobs.append({"pid": pid, "index": i, "ogg": abs_ogg})
+
+
+## Load a track's sidecar .ogg into an AudioStreamPlayer and hang it on the runtime.
+func _attach_track_audio(i: int, abs_ogg: String) -> void:
+	if i < 0 or i >= _track_runtime.size() or not (_track_runtime[i] is Dictionary):
+		return
+	var stream := AudioStreamOggVorbis.load_from_file(abs_ogg)
+	if stream == null:
+		return
+	var ap := AudioStreamPlayer.new()
+	ap.stream = stream
+	add_child(ap)
+	_track_runtime[i]["audio"] = ap
+
+
+## Poll the background sidecar extractions; attach each track's audio as ffmpeg finishes.
+func _poll_track_audio() -> void:
+	for j in range(_track_audio_jobs.size() - 1, -1, -1):
+		var job: Dictionary = _track_audio_jobs[j]
+		if not OS.is_process_running(int(job.pid)):
+			var idx := int(job.index)
+			if FileAccess.file_exists(String(job.ogg)):
+				_attach_track_audio(idx, String(job.ogg))
+			elif idx >= 0 and idx < session.tracks.size():
+				# ffmpeg produced nothing - this track has no audio stream. Record it so
+				# we don't re-run (and re-fail) the extraction on every future load.
+				session.tracks[idx]["no_audio"] = true
+				_mark_dirty()
+			_track_audio_jobs.remove_at(j)
 
 
 # --- multi-track: trim lanes, import, playback sync ----------------------------
@@ -664,6 +817,12 @@ func _refresh_lanes() -> void:
 	primary.drag_ended.connect(func(): _tview.refresh(session))
 	primary.changed.connect(_mark_dirty)
 	_lanes_col.add_child(primary)
+	# The main clip's own 0/100 audio toggle (mirrors each track's), so its sound can
+	# be dropped out of the mix independently.
+	primary.add_child(_volume_toggle(
+		func(): return float(session.main_volume) > 0.5,
+		func(on: bool): session.main_volume = 1.0 if on else 0.0,
+		"Main clip audio: full or off"))
 
 	for i in session.tracks.size():
 		var lane := TrackLane.new()
@@ -700,6 +859,14 @@ func _refresh_lanes() -> void:
 		var idx := i
 		del.pressed.connect(func(): _delete_track(idx))
 		lane.add_child(del)
+		# Audio 0/100 toggle, on the LEFT of the lane so it never sits under the floating
+		# assistant chat button (bottom-right, where the old right-side controls landed).
+		# The track's own AudioStreamPlayer mixes with the main clip; _sync_tracks reads
+		# `volume` every frame, so a toggle takes effect live.
+		lane.add_child(_volume_toggle(
+			func(): return float(session.tracks[idx].get("volume", 1.0)) > 0.5,
+			func(on: bool): session.tracks[idx]["volume"] = 1.0 if on else 0.0,
+			"This track's audio: full or off (mixes with the main clip)"))
 
 	# The lane stack sits directly above the marker strip, and the video's own
 	# letterboxed slot (see _build_editor_ui) has to shrink to match - otherwise
@@ -725,6 +892,8 @@ func _delete_track(i: int) -> void:
 			(rt.player as Node).queue_free()
 		if rt.has("wrap"):
 			(rt.wrap as Node).queue_free()
+		if rt.has("audio") and rt.audio != null:
+			(rt.audio as Node).queue_free()
 		_track_runtime.remove_at(i)
 	session.tracks.remove_at(i)
 	_refresh_lanes()
@@ -779,36 +948,87 @@ func _close_import_dialog() -> void:
 ## minus the audio extraction step (v1 tracks are silent - see the class doc's
 ## scope note) - PID-polled in _process(), never blocking, matching the
 ## project's one established pattern for external subprocesses.
+## Add the track's LANE first, transcode second. The lane is pure metadata
+## (duration/offset/trim) - it doesn't need the transcoded video at all - so it
+## appears the instant you pick a file, independent of the background ffmpeg run.
+## The old order (transcode -> probe -> only THEN add the lane) meant any hiccup in
+## that async tail left the timeline looking like nothing happened. The PiP VIDEO
+## still needs the .ogv, so _build_track_view is deferred to _finish_track_import;
+## until then _sync_tracks just skips this index (no "player" in its runtime slot).
 func _start_track_import(source: String) -> void:
 	var slug := _slugify(source)
 	var dir := _session_path.get_base_dir()
-	var video := dir + "/track_%s_%d.ogv" % [slug, session.tracks.size()]
-	_import_pending = {"source": source, "video": video}
-	_set_status("⏳  Importing track…")
+	var idx := session.tracks.size()
+	var video := dir + "/track_%s_%d.ogv" % [slug, idx]
+	# The SOURCE file has reliable duration metadata (unlike our libtheora output),
+	# so the lane gets its real length up front; the transcoded .ogv re-confirms it
+	# in _finish_track_import. Floor keeps the lane a visible width if a probe fails.
+	var dur := _probe_duration(source)
+	if dur <= 0.0:
+		dur = maxf(session.duration, 1.0)
+	_push_undo()
+	session.tracks.append({
+		"video_path": video, "source_path": source, "duration": dur,
+		"clip_in": 0.0, "clip_out": dur, "offset": 0.0,
+		"x": 0.68, "y": 0.04, "w": 0.28, "h": 0.28,
+		"volume": 1.0,
+	})
+	while _track_runtime.size() <= idx:
+		_track_runtime.append({})   # empty slot: _sync_tracks skips it until the video loads
+	_refresh_lanes()                # the new timeline lane is on screen NOW
+	_mark_dirty()
+	_import_pending = {"source": source, "video": video, "index": idx}
+	_set_status("⏳  Track added - transcoding its video in the background…")
+	# Keep the audio this time (was -an): the track's own VideoStreamPlayer plays the
+	# embedded Vorbis, mixed alongside the main clip, with per-track mute/volume (see
+	# _sync_tracks). A source with no audio just yields a silent stream - no failure.
 	var args := PackedStringArray([
-		"-y", "-loglevel", "error", "-i", source, "-an",
+		"-y", "-loglevel", "error", "-i", source,
 		"-c:v", "libtheora", "-q:v", "6", "-g", "25",
+		"-c:a", "libvorbis", "-q:a", "4",
 		ProjectSettings.globalize_path(video)])
 	_import_pid = OS.create_process("ffmpeg", args)
 	if _import_pid <= 0:
+		_cancel_pending_track()     # couldn't even start ffmpeg - roll the lane back out
 		_set_status("⚠  Could not start ffmpeg for track import")
-		_import_pending = {}
+
+
+## Roll back the placeholder lane _start_track_import added (ffmpeg failed to start,
+## or the transcode produced nothing usable). The pending track is always the last
+## one (imports are serialized - see _prompt_import_track's guard).
+func _cancel_pending_track() -> void:
+	if _import_pending.has("index"):
+		var idx := int(_import_pending.index)
+		if idx >= 0 and idx < session.tracks.size():
+			session.tracks.remove_at(idx)
+			if idx < _track_runtime.size():
+				_track_runtime.remove_at(idx)
+			_refresh_lanes()
+			_mark_dirty()
+	_import_pending = {}
+	_import_pid = -1
 
 
 func _finish_track_import() -> void:
-	var abs_video := ProjectSettings.globalize_path(String(_import_pending.video))
-	var dur := _probe_duration(abs_video)
-	if dur <= 0.0:
-		_set_status("⚠  Track import failed (could not read the transcoded video)")
+	if not _import_pending.has("index"):
 		_import_pending = {}
 		return
-	_push_undo()
-	session.tracks.append({
-		"video_path": _import_pending.video, "duration": dur,
-		"clip_in": 0.0, "clip_out": dur, "offset": 0.0,
-		"x": 0.68, "y": 0.04, "w": 0.28, "h": 0.28,
-	})
-	_build_track_view(session.tracks.size() - 1)
+	var idx := int(_import_pending.index)
+	var abs_video := ProjectSettings.globalize_path(String(_import_pending.video))
+	var dur := _probe_duration(abs_video)
+	if dur <= 0.0 or idx < 0 or idx >= session.tracks.size():
+		# The lane is already on screen; the transcode still failed, so take it back
+		# out rather than leave a lane whose PiP video would never load.
+		_cancel_pending_track()
+		_set_status("⚠  Track import failed (transcode produced no usable video)")
+		return
+	# Correct the lane to the actual transcoded length, keeping it full if untrimmed.
+	var t: Dictionary = session.tracks[idx]
+	var was_full: bool = float(t.get("clip_out", 0.0)) >= float(t.get("duration", 0.0)) - 0.05
+	t["duration"] = dur
+	if was_full:
+		t["clip_out"] = dur
+	_build_track_view(idx)          # now the .ogv exists: load its PiP player
 	_refresh_lanes()
 	_mark_dirty()
 	_import_pending = {}
@@ -830,7 +1050,6 @@ func _sync_tracks() -> void:
 	if _player == null:
 		return
 	var master_t := _player.stream_position
-	var any_track_visible := false
 	for i in session.tracks.size():
 		if i >= _track_runtime.size():
 			continue
@@ -845,9 +1064,17 @@ func _sync_tracks() -> void:
 		var inside: bool = cout > cin and local_t >= cin and local_t < cout
 		var tplayer: VideoStreamPlayer = rt.player
 		var wrap: Control = rt.wrap
+		var taudio: AudioStreamPlayer = rt.get("audio")   # may be null (silent track)
+		# This track owns the PiP only when V has selected it (pip_track == i+1). The
+		# box is still gated by inset_show so track modes fade like the main PiP does.
+		var selected := _pip_track == i + 1
+		# Audio is independent of the PiP: a track that's temporally present plays its
+		# sound whether or not its picture is the one on screen (a real multitrack),
+		# mixed with the main clip. 0/1 volume from the lane toggle.
+		if taudio != null:
+			taudio.volume_db = 0.0 if float(track.get("volume", 1.0)) > 0.5 else -80.0
 		if inside:
-			wrap.visible = true
-			any_track_visible = true
+			wrap.visible = _last_inset_show > 0.001 and selected
 			if not bool(rt.active) or absf(tplayer.stream_position - local_t) > 0.2:
 				tplayer.stream_position = local_t
 				rt.active = true
@@ -855,14 +1082,25 @@ func _sync_tracks() -> void:
 			var view: TextureRect = rt.view
 			if view != null:
 				view.texture = tplayer.get_video_texture()
+			if taudio != null:
+				if _playing:
+					if not taudio.playing:
+						taudio.play(local_t)
+					taudio.stream_paused = false
+					if absf(taudio.get_playback_position() - local_t) > 0.2:
+						taudio.seek(local_t)
+				else:
+					taudio.stream_paused = true   # paused / scrubbing: freeze its sound
 		else:
 			wrap.visible = false
-			tplayer.paused = true
+			tplayer.paused = true   # outside its window: no picture...
 			rt.active = false
-	# Only one PiP box at a time (see _build_track_view's class doc) - a track's
-	# own box, when showing, replaces the primary inset rather than stacking
-	# alongside it.
-	if any_track_visible:
+			if taudio != null and taudio.playing:
+				taudio.stop()        # ...and no sound; re-entry restarts it clean
+	# The main clip's PiP shows only when it is the selected source (pip_track == 0);
+	# a selected track replaces it. _apply_frame_state set _mask_wrap by inset_show
+	# alone, so correct it here now that we know which source V picked.
+	if _pip_track != 0:
 		_mask_wrap.visible = false
 
 
@@ -1032,7 +1270,7 @@ func _build_panel() -> void:
 	title_row.add_theme_constant_override("separation", 6)
 	col.add_child(title_row)
 	var title := Label.new()
-	title.text = "Mask Lab"
+	title.text = "ghost-mask"
 	title.add_theme_font_size_override("font_size", 22)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title_row.add_child(title)
@@ -1071,16 +1309,28 @@ func _build_panel() -> void:
 	_grp_color.add_theme_constant_override("separation", 8)
 	col.add_child(_grp_color)
 	_grp_color.add_child(HSeparator.new())
-	_grp_color.add_child(_label("Key color - what this channel targets"))
+	_grp_color.add_child(_label("Key color", "The color this channel targets - what it keys or paints"))
 	_color_a = ColorPickerButton.new()
 	_color_a.focus_mode = Control.FOCUS_NONE
 	_color_a.custom_minimum_size = Vector2(0, 40)
 	_color_a.edit_alpha = false
-	_color_a.color_changed.connect(func(c): _edit("hue_a", c.h))
+	_color_a.tooltip_text = "The color this channel targets - what it keys or paints"
+	_color_a.color_changed.connect(func(c):
+		_hue_a.set_value_no_signal(c.h)
+		_edit("hue_a", c.h))
 	_grp_color.add_child(_color_a)
-	col.add_child(_label("Effect"))
+	# A dedicated grading slider on the same hue_a field the swatch above sets -
+	# color grading (the feedback that drove this) wants fine numeric dragging,
+	# not just a color-wheel pick. Kept in sync both ways: see _refresh_panel and
+	# _color_a's color_changed above.
+	_hue_a = _slider(_grp_color, "Hue", 0.0, 1.0, func(v):
+		_color_a.color = Color.from_hsv(v, 0.85, 0.9)
+		_edit("hue_a", v), "Shifts this layer's color - drag for fine color grading")
+	col.add_child(_label("Effect", "Which visual treatment this layer applies"))
 	_effect_a = _effect_menu(col, func(id): _edit("effect_a", float(id)))
-	_intensity_a = _slider(col, "Intensity", 0.0, 1.0, func(v): _edit("intensity_a", v))
+	_intensity_a = _slider(col, "Strength", 0.0, 1.0, func(v): _edit("intensity_a", v),
+		"How strongly this layer's effect applies")
+	_intensity_label = _intensity_a.get_meta("field_label")
 
 	# Option GROUPS, shown per the selected effect's needs (the control hierarchy,
 	# MaskSession.EFFECT_CONTROLS): a slider that does nothing for the current
@@ -1091,7 +1341,8 @@ func _build_panel() -> void:
 	_grp_threshold.add_theme_constant_override("separation", 8)
 	col.add_child(_grp_threshold)
 	_grp_threshold.add_child(HSeparator.new())
-	_threshold_label = _label("Threshold")
+	_threshold_label = _label("Threshold",
+		"How far a pixel's hue may drift from the key color and still be masked")
 	_grp_threshold.add_child(_threshold_label)
 	_threshold = HSlider.new()
 	_threshold.focus_mode = Control.FOCUS_NONE
@@ -1099,14 +1350,17 @@ func _build_panel() -> void:
 	_threshold.min_value = 0.0
 	_threshold.max_value = 1.0
 	_threshold.step = 0.005
+	_threshold.tooltip_text = _threshold_label.tooltip_text
 	_threshold.value_changed.connect(func(v): _edit("threshold", v))
 	_grp_threshold.add_child(_threshold)
 
 	_grp_keymisc = VBoxContainer.new()
 	_grp_keymisc.add_theme_constant_override("separation", 8)
 	col.add_child(_grp_keymisc)
-	_feather = _slider(_grp_keymisc, "Feather", 0.0, 0.5, func(v): _edit("feather", v))
-	_sat_floor = _slider(_grp_keymisc, "Min colorfulness", 0.0, 1.0, func(v): _edit("sat_floor", v))
+	_feather = _slider(_grp_keymisc, "Feather", 0.0, 0.5, func(v): _edit("feather", v),
+		"Softness of the mask's edge - 0 is a hard cutoff")
+	_sat_floor = _slider(_grp_keymisc, "Min colorfulness", 0.0, 1.0, func(v): _edit("sat_floor", v),
+		"Minimum saturation a pixel needs before it can be keyed at all")
 
 	# The wisp field's placement - pan/zoom the pattern over the frame (keyframe a
 	# tendril onto an eye), and dial its coverage from one wisp to an engulfing.
@@ -1115,8 +1369,8 @@ func _build_panel() -> void:
 	_grp_pattern.add_theme_constant_override("separation", 8)
 	col.add_child(_grp_pattern)
 	_grp_pattern.add_child(HSeparator.new())
-	_grp_pattern.add_child(_label("Pattern - field placement"))
-	_fx_x_label = _label("Pan X")
+	_grp_pattern.add_child(_label("Pattern", "This effect's field placement, coverage, and motion"))
+	_fx_x_label = _label("Pan X", "Shifts the pattern horizontally over the frame")
 	_grp_pattern.add_child(_fx_x_label)
 	_fx_x = HSlider.new()
 	_fx_x.focus_mode = Control.FOCUS_NONE
@@ -1124,9 +1378,10 @@ func _build_panel() -> void:
 	_fx_x.min_value = -2.0
 	_fx_x.max_value = 2.0
 	_fx_x.step = 0.01
+	_fx_x.tooltip_text = _fx_x_label.tooltip_text
 	_fx_x.value_changed.connect(func(v): _edit("fx_x", v))
 	_grp_pattern.add_child(_fx_x)
-	_fx_y_label = _label("Pan Y")
+	_fx_y_label = _label("Pan Y", "Shifts the pattern vertically over the frame")
 	_grp_pattern.add_child(_fx_y_label)
 	_fx_y = HSlider.new()
 	_fx_y.focus_mode = Control.FOCUS_NONE
@@ -1134,11 +1389,14 @@ func _build_panel() -> void:
 	_fx_y.min_value = -2.0
 	_fx_y.max_value = 2.0
 	_fx_y.step = 0.01
+	_fx_y.tooltip_text = _fx_y_label.tooltip_text
 	_fx_y.value_changed.connect(func(v): _edit("fx_y", v))
 	_grp_pattern.add_child(_fx_y)
-	_fx_scale = _slider(_grp_pattern, "Scale", 0.1, 8.0, func(v): _edit("fx_scale", v))
+	_fx_scale = _slider(_grp_pattern, "Scale", 0.1, 8.0, func(v): _edit("fx_scale", v),
+		"Zoom of the effect's pattern - 1 is nominal size")
 	_fx_scale.exp_edit = true
-	_fx_density_label = _label("Coverage")
+	_fx_density_label = _label("Coverage",
+		"How much of the keyed region the pattern consumes - 0 untouched, 1 fully devoured")
 	_grp_pattern.add_child(_fx_density_label)
 	_fx_density = HSlider.new()
 	_fx_density.focus_mode = Control.FOCUS_NONE
@@ -1146,9 +1404,10 @@ func _build_panel() -> void:
 	_fx_density.min_value = 0.0
 	_fx_density.max_value = 1.0
 	_fx_density.step = 0.005
+	_fx_density.tooltip_text = _fx_density_label.tooltip_text
 	_fx_density.value_changed.connect(func(v): _edit("fx_density", v))
 	_grp_pattern.add_child(_fx_density)
-	_fx_contrast_label = _label("Contrast")
+	_fx_contrast_label = _label("Contrast", "Edge hardness of the pattern - 0.5 is neutral")
 	_grp_pattern.add_child(_fx_contrast_label)
 	_fx_contrast = HSlider.new()
 	_fx_contrast.focus_mode = Control.FOCUS_NONE
@@ -1156,20 +1415,24 @@ func _build_panel() -> void:
 	_fx_contrast.min_value = 0.0
 	_fx_contrast.max_value = 1.0
 	_fx_contrast.step = 0.005
+	_fx_contrast.tooltip_text = _fx_contrast_label.tooltip_text
 	_fx_contrast.value_changed.connect(func(v): _edit("fx_contrast", v))
 	_grp_pattern.add_child(_fx_contrast)
-	_fx_speed = _slider(_grp_pattern, "Velocity", 0.1, 4.0, func(v): _edit("fx_speed", v))
+	_fx_speed = _slider(_grp_pattern, "Velocity", 0.1, 4.0, func(v): _edit("fx_speed", v),
+		"Speed multiplier for the pattern's motion")
 	_fx_speed.exp_edit = true
 
 	_grp_echo = VBoxContainer.new()
 	_grp_echo.add_theme_constant_override("separation", 8)
 	col.add_child(_grp_echo)
 	_grp_echo.add_child(HSeparator.new())
-	_echo_header = _label("Echo - how the past is worn")
+	_echo_header = _label("Echo", "How the past is worn")
 	_grp_echo.add_child(_echo_header)
-	_fx_lag = _slider(_grp_echo, "Lag (s)", 0.05, 2.4, func(v): _edit("fx_lag", v))
+	_fx_lag = _slider(_grp_echo, "Lag (s)", 0.05, 2.4, func(v): _edit("fx_lag", v),
+		"Echo: how far back the lagged frame reaches. Oracle: how far ahead the region leads.")
 	_fx_lag.exp_edit = true
-	_fx_smooth = _slider(_grp_echo, "Smoothing - stutter → smear", 0.0, 1.0, func(v): _edit("fx_smooth", v))
+	_fx_smooth = _slider(_grp_echo, "Smoothing", 0.0, 1.0, func(v): _edit("fx_smooth", v),
+		"Stutter → smear: 0 is a discrete stutter, 1 is a wide temporal blend")
 
 	# Snow's own view onto fx_smooth - a separate widget from echo's Smoothing
 	# above (same stored field, different meaning; the two groups never show
@@ -1179,8 +1442,9 @@ func _build_panel() -> void:
 	_grp_snow.add_theme_constant_override("separation", 8)
 	col.add_child(_grp_snow)
 	_grp_snow.add_child(HSeparator.new())
-	_grp_snow.add_child(_label("Weather - how the fall drifts"))
-	_gust = _slider(_grp_snow, "Gust - 0 = steady drift, 1 = chaotic gusts", 0.0, 1.0, func(v): _edit("fx_smooth", v))
+	_grp_snow.add_child(_label("Weather", "How the fall drifts"))
+	_gust = _slider(_grp_snow, "Gust", 0.0, 1.0, func(v): _edit("fx_smooth", v),
+		"0 is a steady drift, 1 is chaotic gusts")
 
 	# Fur's tendril dynamics - fur-only views onto fx_smooth/fx_lag, the same
 	# stored-field reuse as snow's Gust above (the groups never show together,
@@ -1189,20 +1453,30 @@ func _build_panel() -> void:
 	_grp_fur.add_theme_constant_override("separation", 8)
 	col.add_child(_grp_fur)
 	_grp_fur.add_child(HSeparator.new())
-	_grp_fur.add_child(_label("Tendrils - how the strands move"))
-	_undul = _slider(_grp_fur, "Undulation - traveling waves along each strand", 0.0, 1.0, func(v): _edit("fx_smooth", v))
-	_coil = _slider(_grp_fur, "Coil - eddies and spiral curl", 0.0, 1.0, func(v): _edit("fx_lag", v))
+	_grp_fur.add_child(_label("Tendrils", "How the strands move"))
+	_undul = _slider(_grp_fur, "Undulation", 0.0, 1.0, func(v): _edit("fx_smooth", v),
+		"Traveling waves along each strand")
+	_coil = _slider(_grp_fur, "Coil", 0.0, 1.0, func(v): _edit("fx_lag", v),
+		"Eddies and spiral curl")
+	# Stickiness - 0 keeps today's free coat exactly; higher values thin the strands
+	# away from natural anchors so the hair clings to the keyed surface, the tracked
+	# landmark/motion centroid, and brighter regions (see the shader's fur branch).
+	_stick = _slider(_grp_fur, "Stickiness", 0.0, 1.0, func(v): _edit("fx_stick", v),
+		"0 is a free coat, 1 clings to the face/motion")
 
-	_resonance = _slider(_grp_pattern, "Resonance (audio drive)", 0.0, 1.0, func(v): _edit("resonance", v))
+	_resonance = _slider(_grp_pattern, "Resonance", 0.0, 1.0, func(v): _edit("resonance", v),
+		"Audio drive - how strongly this layer reacts to the track's live energy")
 
 	col.add_child(HSeparator.new())
 	# Every marker is a ramp or a decay - there is no plain/neutral marker (see
 	# MaskSession class doc). Both transition TO this marker's values; the kind is
 	# which side of the anchor the transition occupies: a ramp eases in BEFORE,
 	# complete at the anchor; a decay begins AT the anchor and accumulates after.
-	col.add_child(_label("Kind - which way this marker's change runs"))
+	col.add_child(_label("Kind",
+		"Which way this marker's change runs - ramp eases in before it, decay accumulates after"))
 	_kind = OptionButton.new()
 	_kind.focus_mode = Control.FOCUS_NONE
+	_kind.tooltip_text = "Ramp eases in before this marker; decay accumulates after it"
 	for i in MaskSession.MARKER_KINDS.size():
 		_kind.add_item(MaskSession.MARKER_KINDS[i].capitalize(), i)
 	_kind.item_selected.connect(func(id): _edit("kind", float(id)))
@@ -1211,7 +1485,8 @@ func _build_panel() -> void:
 	# minutes on the right - one slider covers a subtle 0.2s blend and a transition
 	# spanning the entire clip. (exp_edit needs a strictly positive min.)
 	_marker_duration = _slider(col, "Ramp/decay span (s)", 0.05, maxf(8.0, session.duration),
-		func(v): _edit("duration", v))
+		func(v): _edit("duration", v),
+		"How long the ramp (before) or decay (after) transition takes, in seconds")
 	_marker_duration.exp_edit = true
 	_marker_duration.step = 0.01
 
@@ -1267,7 +1542,11 @@ func _build_panel() -> void:
 	list_scroll.add_child(_marker_list)
 
 
-func _label(text: String) -> Label:
+## `tip` is the full explanation shown on mouse-over (Godot's native tooltip) -
+## labels themselves stay short so the panel reads clean; see the feedback that
+## drove this (0005): inline "Label - long explanation" text was the ambiguity
+## complaint, not just missing descriptions.
+func _label(text: String, tip: String = "") -> Label:
 	var l := Label.new()
 	l.text = text
 	l.add_theme_font_size_override("font_size", 12)
@@ -1278,12 +1557,18 @@ func _label(text: String) -> Label:
 	# text, so it only showed up after deleting one). Word-wrap caps the minimum to
 	# the longest WORD instead of the longest sentence.
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.mouse_filter = Control.MOUSE_FILTER_PASS   # let the tooltip trigger over the label itself
+	l.tooltip_text = tip
 	return l
 
 
-func _slider(col: VBoxContainer, text: String, lo: float, hi: float, cb: Callable) -> HSlider:
-	col.add_child(_label(text))
+func _slider(col: VBoxContainer, text: String, lo: float, hi: float, cb: Callable, tip: String = "") -> HSlider:
+	var lbl := _label(text, tip)
+	col.add_child(lbl)
 	var s := HSlider.new()
+	# Remember the label so a single knob (label + slider) can be hidden together
+	# when the effect doesn't consume it - see _show_field / _update_effect_controls.
+	s.set_meta("field_label", lbl)
 	s.focus_mode = Control.FOCUS_NONE
 	# The wheel belongs to the panel's ScrollContainer, never to a slider you
 	# happen to pass over on the way down - the panel is long enough now that
@@ -1293,14 +1578,53 @@ func _slider(col: VBoxContainer, text: String, lo: float, hi: float, cb: Callabl
 	s.min_value = lo
 	s.max_value = hi
 	s.step = (hi - lo) / 200.0
+	s.tooltip_text = tip   # hovering the slider itself explains it too, not just the label above
 	s.value_changed.connect(cb)
 	col.add_child(s)
 	return s
 
 
+## A left-anchored 0/100 audio toggle for a lane (🔊 = full, 🔈 = off). `is_on`
+## reads the current state, `set_on` writes the new one - so the same widget drives
+## a track's `volume` and the main clip's `main_volume`. Left side deliberately: the
+## right corner sits under the floating assistant chat button.
+func _volume_toggle(is_on: Callable, set_on: Callable, tip: String) -> Button:
+	var b := Button.new()
+	b.text = "🔊" if bool(is_on.call()) else "🔈"
+	b.custom_minimum_size = Vector2(22, 18)
+	b.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	b.offset_left = 2
+	b.offset_top = 2
+	b.offset_right = 24
+	b.offset_bottom = 20
+	b.focus_mode = Control.FOCUS_NONE
+	b.tooltip_text = tip
+	b.pressed.connect(func():
+		var on := not bool(is_on.call())
+		set_on.call(on)
+		b.text = "🔊" if on else "🔈"
+		_apply_main_volume()   # tracks re-apply per frame in _sync_tracks; this covers the main clip
+		_mark_dirty())
+	return b
+
+
+## Show/hide one knob - the slider AND the label above it (stored on the slider
+## by _slider, or passed for the hand-built pattern rows). Used to prune pattern
+## knobs an effect doesn't read (MaskSession.PATTERN_KNOBS).
+func _show_field(slider: Control, vis: bool, label: Control = null) -> void:
+	if slider != null:
+		slider.visible = vis
+	var lbl: Variant = label
+	if lbl == null and slider != null and slider.has_meta("field_label"):
+		lbl = slider.get_meta("field_label")
+	if lbl != null:
+		(lbl as Control).visible = vis
+
+
 func _effect_menu(col: VBoxContainer, cb: Callable) -> OptionButton:
 	var ob := OptionButton.new()
 	ob.focus_mode = Control.FOCUS_NONE
+	ob.tooltip_text = "Which visual treatment this layer applies"
 	for i in MaskSession.MASK_EFFECTS.size():
 		ob.add_item(MaskSession.MASK_EFFECTS[i], i)
 	ob.item_selected.connect(cb)
@@ -1370,9 +1694,27 @@ func _delete_selected() -> void:
 ## both materials in AGE ORDER (u_echo0 = newest). GPU readback at ~3Hz is cheap
 ## enough for a demo; sessions without whisp/echo markers skip all of it.
 func _maybe_capture_echo() -> void:
-	if _player == null or session == null or not _session_uses_temporal():
+	if _player == null or session == null:
 		return
-	var slot := int(_player.stream_position / _ECHO_INTERVAL)
+	var pos := _player.stream_position
+	# The readback below (tex.get_image()) is a synchronous GPU->CPU stall. We only
+	# ever want to pay it when it MATTERS and when it WON'T fight the user:
+	#   - during playback (the effects need to advance), OR
+	#   - once, when a scrub has SETTLED (playhead stationary since last frame) - so
+	#     dragging the playhead stays responsive and the preview refreshes on release.
+	# Never per-scrub-position mid-drag, which is what made clicking the timeline lag
+	# and starved the audio. render_mode auto-plays, so export still captures every
+	# slot deterministically.
+	if not _playing:
+		var settled := absf(pos - _prev_pos) < 0.0005
+		_prev_pos = pos
+		if not settled:
+			return
+	else:
+		_prev_pos = pos
+	if not _session_uses_temporal():
+		return
+	var slot := int(pos / _ECHO_INTERVAL)
 	if slot == _echo_slot:
 		return
 	var tex := _player.get_video_texture()
@@ -1391,6 +1733,11 @@ func _maybe_capture_echo() -> void:
 		for mat in [_mat_main, _mat_inset]:
 			mat.set_shader_parameter("u_echo%d" % age, t)
 	_update_whisp_anchor(img)
+	# The track readback is chimera's alone - skip it entirely unless a chimera layer
+	# is actually rendering this frame (it usually isn't: the marker sits at one point
+	# in the timeline). This is what my earlier change was paying for everywhere.
+	if _chimera_active:
+		_update_track_frame()
 
 
 ## The anchor uniform, glided per frame: lerp(prev EMA, latest EMA) by the
@@ -1400,8 +1747,17 @@ func _maybe_capture_echo() -> void:
 func _push_anchor() -> void:
 	var f := clampf(fposmod(_player.stream_position, _ECHO_INTERVAL) / _ECHO_INTERVAL, 0.0, 1.0)
 	var anchor := _anchor_prev.lerp(_anchor_ema, f)
+	# Chimera's landmark frames, glided on the same fraction (position + size, both
+	# faces). Pure function of playback position + capture history, so live and
+	# export trace the identical lock.
+	var anchor_scale := lerpf(_anchor_scale_prev, _anchor_scale_ema, f)
+	var track_anchor := _track_anchor_prev.lerp(_track_anchor_ema, f)
+	var track_scale := lerpf(_track_scale_prev, _track_scale_ema, f)
 	for mat in [_mat_main, _mat_inset]:
 		mat.set_shader_parameter("u_anchor", anchor)
+		mat.set_shader_parameter("u_anchor_scale", anchor_scale)
+		mat.set_shader_parameter("u_track_anchor", track_anchor)
+		mat.set_shader_parameter("u_track_scale", track_scale)
 		# Only push once impulses exist - a short array is silently dropped by
 		# Godot (see the u_l_* comment above), so an empty/partial one is worse
 		# than leaving the shader's own all-zero (inactive) uniform defaults.
@@ -1431,7 +1787,11 @@ func _update_whisp_anchor(img: Image) -> void:
 	var hue := -1.0
 	for m in session.markers:
 		var e := int(m.get("effect_a", 0))
-		if e == 5 or e == MaskSession.EFFECT_CHIMERA:
+		# Fur joins whisp/chimera in driving the anchor: its Stickiness cue wants the
+		# key colour's centroid (with the motion-centroid fallback for flat footage) to
+		# track the surface the strands root on. Fur ignores u_anchor at Stickiness 0,
+		# so this has no effect on the existing look.
+		if e == 5 or e == MaskSession.EFFECT_CHIMERA or e == MaskSession.EFFECT_FUR:
 			hue = float(m.get("hue_a", 0.0))
 			break
 	if hue < 0.0:
@@ -1441,8 +1801,10 @@ func _update_whisp_anchor(img: Image) -> void:
 	var tdir := Vector3(tc.r - tl, tc.g - tl, tc.b - tl).normalized()
 	img.resize(48, 27, Image.INTERPOLATE_BILINEAR)
 	var acc := Vector2.ZERO
+	var acc2 := 0.0          # weighted sum of |pos|^2 - second moment, for the RMS radius (size)
 	var wsum := 0.0
 	var macc := Vector2.ZERO
+	var macc2 := 0.0
 	var msum := 0.0
 	var have_prev := _wave_prev_lum.size() == 48 * 27
 	if not have_prev:
@@ -1455,17 +1817,24 @@ func _update_whisp_anchor(img: Image) -> void:
 			var pos := Vector2((float(x) + 0.5) / 48.0, (float(y) + 0.5) / 27.0)
 			var pr := maxf(0.0, (c.r - l) * tdir.x + (c.g - l) * tdir.y + (c.b - l) * tdir.z)
 			acc += pos * pr
+			acc2 += pos.length_squared() * pr
 			wsum += pr
 			var idx := y * 48 + x
 			if have_prev:
 				var dm := absf(l - _wave_prev_lum[idx])
 				motion += dm
 				macc += pos * dm
+				macc2 += pos.length_squared() * dm
 				msum += dm
 			_wave_prev_lum[idx] = l
 	if wsum > 0.01:
 		_anchor_prev = _anchor_ema
 		_anchor_ema = _anchor_ema.lerp(acc / wsum, 0.15)
+		# Size = RMS radius of the mass about its own centroid (Var = E[|p|^2] -
+		# |E[p]|^2), the second half of the main face's landmark frame.
+		_anchor_scale_prev = _anchor_scale_ema
+		_anchor_scale_ema = lerpf(_anchor_scale_ema,
+			clampf(sqrt(maxf(1e-4, acc2 / wsum - (acc / wsum).length_squared())), 0.05, 0.9), 0.15)
 	elif msum > 0.3:
 		# FLAT-LIGHTING FALLBACK (chimera's first test case): standard, flat
 		# footage may carry the key color NOWHERE - then the landmark is
@@ -1474,8 +1843,93 @@ func _update_whisp_anchor(img: Image) -> void:
 		# frame to frame.
 		_anchor_prev = _anchor_ema
 		_anchor_ema = _anchor_ema.lerp(macc / msum, 0.1)
+		_anchor_scale_prev = _anchor_scale_ema
+		_anchor_scale_ema = lerpf(_anchor_scale_ema,
+			clampf(sqrt(maxf(1e-4, macc2 / msum - (macc / msum).length_squared())), 0.05, 0.9), 0.1)
 	if have_prev:
 		_update_wave_impulses(motion / (48.0 * 27.0))
+
+
+## Model a face as a landmark FRAME - centroid + isotropic size (RMS radius) - from
+## the key-colour mass in an already-48x27 frame, with the motion centroid+spread
+## as the flat-lighting fallback (the same thresholds _update_whisp_anchor uses).
+## This is the "simple EMA over key thresholds" model chimera phase-locks to; it
+## runs on the imported TRACK frame so the graft is normalised by the OTHER head's
+## own frame before being re-fitted onto the main head. Returns
+## {c, s, cur_lum, ok}; cur_lum is the caller's next previous-luminance grid.
+func _face_frame(img: Image, tdir: Vector3, prev_lum: PackedFloat32Array) -> Dictionary:
+	var acc := Vector2.ZERO
+	var acc2 := 0.0
+	var wsum := 0.0
+	var macc := Vector2.ZERO
+	var macc2 := 0.0
+	var msum := 0.0
+	var cur := PackedFloat32Array()
+	cur.resize(48 * 27)
+	var have_prev := prev_lum.size() == 48 * 27
+	for y in 27:
+		for x in 48:
+			var c := img.get_pixel(x, y)
+			var l := 0.299 * c.r + 0.587 * c.g + 0.114 * c.b
+			var pos := Vector2((float(x) + 0.5) / 48.0, (float(y) + 0.5) / 27.0)
+			var pr := maxf(0.0, (c.r - l) * tdir.x + (c.g - l) * tdir.y + (c.b - l) * tdir.z)
+			acc += pos * pr
+			acc2 += pos.length_squared() * pr
+			wsum += pr
+			var idx := y * 48 + x
+			if have_prev:
+				var dm := absf(l - prev_lum[idx])
+				macc += pos * dm
+				macc2 += pos.length_squared() * dm
+				msum += dm
+			cur[idx] = l
+	if wsum > 0.01:
+		var c0 := acc / wsum
+		return {"c": c0, "s": clampf(sqrt(maxf(1e-4, acc2 / wsum - c0.length_squared())), 0.05, 0.9),
+			"cur_lum": cur, "ok": true}
+	elif msum > 0.3:
+		var c1 := macc / msum
+		return {"c": c1, "s": clampf(sqrt(maxf(1e-4, macc2 / msum - c1.length_squared())), 0.05, 0.9),
+			"cur_lum": cur, "ok": true}
+	return {"c": Vector2(0.5, 0.5), "s": 0.28, "cur_lum": cur, "ok": false}
+
+
+## Model the imported track face (chimera's graft source) each capture tick, so its
+## frame - centroid + size - can normalise the graft before it's re-fitted onto the
+## main head. Keyed by the chimera marker's own colour; nothing to do without one.
+func _update_track_frame() -> void:
+	if _track_runtime.is_empty():
+		return
+	var rt: Dictionary = _track_runtime[0]
+	if not rt.has("player"):
+		return
+	var tp: VideoStreamPlayer = rt.player
+	if tp == null:
+		return
+	var ttex := tp.get_video_texture()
+	if ttex == null:
+		return
+	var timg := ttex.get_image()
+	if timg == null or timg.is_empty():
+		return
+	var hue := -1.0
+	for m in session.markers:
+		if int(m.get("effect_a", 0)) == MaskSession.EFFECT_CHIMERA:
+			hue = float(m.get("hue_a", 0.0))
+			break
+	if hue < 0.0:
+		return
+	var tc := Color.from_hsv(hue, 1.0, 1.0)
+	var tl := 0.299 * tc.r + 0.587 * tc.g + 0.114 * tc.b
+	var tdir := Vector3(tc.r - tl, tc.g - tl, tc.b - tl).normalized()
+	timg.resize(48, 27, Image.INTERPOLATE_BILINEAR)
+	var fr := _face_frame(timg, tdir, _track_prev_lum)
+	_track_prev_lum = fr.cur_lum
+	if fr.ok:
+		_track_anchor_prev = _track_anchor_ema
+		_track_anchor_ema = _track_anchor_ema.lerp(fr.c, 0.15)
+		_track_scale_prev = _track_scale_ema
+		_track_scale_ema = lerpf(_track_scale_ema, float(fr.s), 0.15)
 
 
 ## Onset detection for the wave impulses: motion is this capture's average
@@ -1599,6 +2053,8 @@ func _reconcile_track_runtime() -> void:
 			(rt.player as Node).queue_free()
 		if rt.has("wrap"):
 			(rt.wrap as Node).queue_free()
+		if rt.has("audio") and rt.audio != null:
+			(rt.audio as Node).queue_free()
 	for i in session.tracks.size():
 		if i >= _track_runtime.size():
 			_build_track_view(i)
@@ -1624,6 +2080,11 @@ func _save_session() -> void:
 func _exit_tree() -> void:
 	if _dirty:
 		_save_session()
+	# Join the audio loader if it's still running, or Godot warns about an orphaned
+	# thread on close.
+	if _audio_thread != null and _audio_thread.is_started():
+		_audio_thread.wait_to_finish()
+		_audio_thread = null
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
 
@@ -1638,6 +2099,7 @@ func _refresh_panel() -> void:
 	var m: Dictionary = _selected if _selected != null else MaskSession.DEFAULTS
 	_kind.select(int(m.get("kind", 0.0)))
 	_color_a.color = Color.from_hsv(float(m.get("hue_a", 0.02)), 0.85, 0.9)
+	_hue_a.set_value_no_signal(float(m.get("hue_a", 0.02)))
 	_threshold.set_value_no_signal(float(m.get("threshold", 0.24)))
 	_feather.set_value_no_signal(float(m.get("feather", 0.12)))
 	_sat_floor.set_value_no_signal(float(m.get("sat_floor", 0.18)))
@@ -1655,6 +2117,7 @@ func _refresh_panel() -> void:
 	_gust.set_value_no_signal(float(m.get("fx_smooth", 0.0)))
 	_undul.set_value_no_signal(float(m.get("fx_smooth", 0.0)))
 	_coil.set_value_no_signal(float(m.get("fx_lag", 0.35)))
+	_stick.set_value_no_signal(float(m.get("fx_stick", 0.0)))
 	_resonance.set_value_no_signal(float(m.get("resonance", 0.0)))
 	_update_effect_controls(int(m.get("effect_a", 0)))
 	_refresh_marker_label()
@@ -1671,21 +2134,60 @@ func _update_effect_controls(effect_id: int) -> void:
 	_grp_color.visible = effect_id != MaskSession.EFFECT_CLEAR and effect_id != MaskSession.EFFECT_SNOW \
 		and effect_id != MaskSession.EFFECT_SERPENT
 	_grp_threshold.visible = groups.has("keying") or groups.has("reach")
-	_threshold_label.text = "Reach - hue range this restore covers" if groups.has("reach") else "Threshold"
+	if groups.has("reach"):
+		_threshold_label.text = "Reach"
+		_threshold_label.tooltip_text = "How wide around the picked color this restore reaches"
+	else:
+		_threshold_label.text = "Threshold"
+		_threshold_label.tooltip_text = "How far a pixel's hue may drift from the key color and still be masked"
+	_threshold.tooltip_text = _threshold_label.tooltip_text
 	_grp_keymisc.visible = groups.has("keying")
 	_grp_pattern.visible = groups.has("pattern")
+	# Within the pattern group, prune the individual knobs this effect never reads
+	# ("only show properties that can be used"). Effects absent from PATTERN_KNOBS
+	# show them all (the default); listed ones show only their subset.
+	if _grp_pattern.visible:
+		var knobs: Array = MaskSession.PATTERN_KNOBS.get(effect_id, MaskSession.PATTERN_KNOBS_ALL)
+		_show_field(_fx_scale, knobs.has("scale"))
+		_show_field(_fx_x, knobs.has("pan"), _fx_x_label)
+		_show_field(_fx_y, knobs.has("pan"), _fx_y_label)
+		_show_field(_fx_density, knobs.has("coverage"), _fx_density_label)
+		_show_field(_fx_contrast, knobs.has("contrast"), _fx_contrast_label)
+		_show_field(_fx_speed, knobs.has("velocity"))
+		_show_field(_resonance, knobs.has("resonance"))
 	_grp_echo.visible = groups.has("echo")
 	_grp_snow.visible = groups.has("snow")
 	_grp_fur.visible = groups.has("fur")
-	_echo_header.text = "Oracle - how far ahead it leads" \
-		if effect_id == MaskSession.EFFECT_ORACLE else "Echo - how the past is worn"
-	_fx_contrast_label.text = "Sensitivity - snow's reach toward the subject" \
-		if effect_id == MaskSession.EFFECT_SNOW else "Contrast"
+	var is_oracle := effect_id == MaskSession.EFFECT_ORACLE
+	_echo_header.text = "Oracle" if is_oracle else "Echo"
+	_echo_header.tooltip_text = "How far ahead it leads" if is_oracle else "How the past is worn"
 	var is_snow := effect_id == MaskSession.EFFECT_SNOW
+	_fx_contrast_label.text = "Sensitivity" if is_snow else "Contrast"
+	_fx_contrast_label.tooltip_text = "How far snow's fall reaches toward the subject" \
+		if is_snow else "Edge hardness of the pattern - 0.5 is neutral"
+	_fx_contrast.tooltip_text = _fx_contrast_label.tooltip_text
 	_fx_x_label.text = "Wind X" if is_snow else "Pan X"
+	_fx_x_label.tooltip_text = "Fall direction - horizontal component" \
+		if is_snow else "Shifts the pattern horizontally over the frame"
+	_fx_x.tooltip_text = _fx_x_label.tooltip_text
 	_fx_y_label.text = "Wind Y" if is_snow else "Pan Y"
-	_fx_density_label.text = "Stickiness - pull toward the face's edges" \
-		if effect_id == MaskSession.EFFECT_CRYSTAL else "Coverage"
+	_fx_y_label.tooltip_text = "Fall direction - vertical component" \
+		if is_snow else "Shifts the pattern vertically over the frame"
+	_fx_y.tooltip_text = _fx_y_label.tooltip_text
+	var is_crystal := effect_id == MaskSession.EFFECT_CRYSTAL
+	_fx_density_label.text = "Stickiness" if is_crystal else "Coverage"
+	_fx_density_label.tooltip_text = "Pull toward the tracked face's edges" \
+		if is_crystal else "How much of the keyed region the pattern consumes - 0 untouched, 1 fully devoured"
+	_fx_density.tooltip_text = _fx_density_label.tooltip_text
+	# "Strength" means something different for the two subtractive effects - the
+	# ambiguity the feedback flagged (an unlabeled, unexplained "Intensity").
+	if effect_id == MaskSession.EFFECT_RESTORE:
+		_intensity_label.tooltip_text = "How completely this restore fades out earlier layers on this color"
+	elif effect_id == MaskSession.EFFECT_CLEAR:
+		_intensity_label.tooltip_text = "How completely this clears every earlier layer"
+	else:
+		_intensity_label.tooltip_text = "How strongly this layer's effect applies"
+	_intensity_a.tooltip_text = _intensity_label.tooltip_text
 
 
 func _refresh_marker_label() -> void:
@@ -1743,6 +2245,36 @@ func _play(on: bool) -> void:
 	# video on every resume; _process keeps them corrected from there.
 	if on:
 		_audio.seek(_player.stream_position)
+	# Track audios are driven entirely by _sync_tracks (windowed play/seek/pause), so
+	# nothing to do for them here.
+
+
+## Worker-thread body: the blocking WAV read (see _ready_with_session). Returns the
+## stream; the main thread attaches it in _process the frame the thread finishes.
+func _load_wav_threaded(path: String) -> AudioStreamWAV:
+	return AudioStreamWAV.load_from_file(path)
+
+
+## Attach the threaded main-audio load the frame it's ready, started at the live
+## position so it's in sync from its first sample. No-op until the thread finishes.
+func _poll_audio_thread() -> void:
+	if _audio_thread == null or _audio_thread.is_alive():
+		return
+	var stream = _audio_thread.wait_to_finish()
+	_audio_thread = null
+	if stream != null and _audio != null:
+		_audio.stream = stream
+		_apply_main_volume()
+		if _playing:
+			_audio.play(_player.stream_position if _player != null else 0.0)
+			_audio.stream_paused = false
+
+
+## The main clip's 0/1 audio toggle -> the AudioStreamPlayer's level. -80 dB reads as
+## silence; 0 dB is unity.
+func _apply_main_volume() -> void:
+	if _audio != null:
+		_audio.volume_db = -80.0 if float(session.main_volume) <= 0.5 else 0.0
 
 
 ## THE keyboard map (mirrored by the help overlay - keep the two in sync):
@@ -1892,18 +2424,60 @@ func _build_help_overlay() -> void:
 ## raw), then the inset gets the effect, then the main screen joins it, then
 ## full-frame fx alone. VIEW_MODES' own order is append-only storage layout (see
 ## MaskSession), so the narrative order lives here.
-const VIEW_CYCLE := [2, 3, 0, 4, 1]   # raw -> pip_raw -> pip -> masked_pip -> masked
+const VIEW_CYCLE := [2, 3, 0, 5, 4, 1]   # raw -> pip_raw -> pip -> fx+raw-pip -> masked_pip -> masked
+
+## The marker GOVERNING time `t` - the same last-wins search at_time() uses
+## internally to resolve its `cur`, exposed here so callers that need the
+## actual marker OBJECT (not at_time()'s resolved copy) can find it without
+## re-deriving the search. Null before the first marker.
+func _governing_marker(t: float) -> Variant:
+	if session == null:
+		return null
+	var cur = null
+	for m in session.markers:
+		if m.time <= t:
+			cur = m
+	return cur
+
 
 ## The toggle button edits the marker at the playhead exactly like every other panel
 ## control (see _edit) - cycling is relative to whatever's ACTIVE right now, not to
 ## some separately-tracked button state, so it can never drift from the timeline.
+## That means retargeting _selected to the playhead's own governing marker FIRST:
+## _selected may still be pointing at whatever the marker list was last clicked on,
+## which never moves the playhead - editing through the stale selection silently
+## changes an unrelated marker elsewhere on the timeline and nothing visibly happens.
 func _cycle_view_mode() -> void:
-	var cur := 2
+	# The cycle is the base looks, then per imported track a pair of stops showing
+	# THAT track raw in the PiP: once with a RAW main (pip_raw, 3), once with an FX
+	# main (masked_pip_raw, 5) - so you can see the fx composite beside the raw source.
+	# Each stop is [view_mode, pip_track]; the list grows/shrinks with the track count.
+	var stops := []
+	for vm in VIEW_CYCLE:
+		stops.append([vm, 0])
+	for k in range(1, session.tracks.size() + 1):
+		stops.append([3, k])
+		stops.append([5, k])
+	var cur_vm := 2
+	var cur_pt := 0
 	if session != null and _player != null:
-		cur = int(session.at_time(_player.stream_position).get("view_mode", 2.0))
-	var i := VIEW_CYCLE.find(cur)
-	var next_id: int = VIEW_CYCLE[(i + 1) % VIEW_CYCLE.size()] if i >= 0 else VIEW_CYCLE[0]
-	_edit("view_mode", float(next_id))   # _process applies it next frame
+		var resolved: Dictionary = session.at_time(_player.stream_position)
+		cur_vm = int(resolved.get("view_mode", 2.0))
+		cur_pt = int(resolved.get("pip_track", 0.0))
+	var idx := -1
+	for j in stops.size():
+		if int(stops[j][0]) == cur_vm and int(stops[j][1]) == cur_pt:
+			idx = j
+			break
+	var nxt: Array = stops[(idx + 1) % stops.size()] if idx >= 0 else stops[0]
+	if session != null and _player != null:
+		var t: float = _player.stream_position
+		var governing: Variant = _governing_marker(t)
+		_selected = governing if governing != null and t - float(governing.time) <= 0.01 else null
+	_edit("view_mode", float(int(nxt[0])))   # plants/selects a marker if needed; applied next frame
+	if _selected != null:
+		_selected["pip_track"] = float(int(nxt[1]))
+		_mark_dirty()
 
 
 ## Pushes one resolved timeline state (see MaskSession.at_time) into the layers:
@@ -1920,9 +2494,21 @@ func _apply_frame_state(p: Dictionary) -> void:
 		main_amt = 0.0
 		inset_show = 0.0
 		inset_fx = 0.0
+	_last_inset_show = inset_show
+	# Which source fills the PiP this frame. Fall back to the main clip if the stored
+	# index points past the current track count (e.g. a track was deleted).
+	var pt := int(p.get("pip_track", 0.0))
+	_pip_track = 0 if (_peek_raw or pt < 0 or pt > session.tracks.size()) else pt
 	var t: float = _player.stream_position if _player != null else 0.0
 	var env := _env_at(t)
 	var layers: Array = p.get("layers", [])
+	# Does a chimera layer actually render this frame? _maybe_capture_echo reads this
+	# to decide whether the (expensive) track readback is worth doing right now.
+	_chimera_active = false
+	for l in layers:
+		if int(l.get("effect_a", 0)) == MaskSession.EFFECT_CHIMERA:
+			_chimera_active = true
+			break
 	# Build the layer arrays ONCE; only the weights differ per surface (each
 	# material multiplies its own presence in). Arrays are pushed at FULL declared
 	# length - a short uniform array is silently dropped (flame.gdshader lesson).
@@ -1941,6 +2527,7 @@ func _apply_frame_state(p: Dictionary) -> void:
 	var echo_w := PackedFloat32Array()
 	var echo_lag := PackedInt32Array()
 	var lagf := PackedFloat32Array()   # raw fx_lag - fur's Coil knob (echo's use is baked into echo_w/echo_lag)
+	var sticks := PackedFloat32Array()   # raw fx_stick - fur's Stickiness (0 = today's free coat)
 	var slot_frac := fposmod((_player.stream_position if _player != null else 0.0) / _ECHO_INTERVAL, 1.0)
 	for i in MaskSession.MAX_LAYERS:
 		if i < n:
@@ -1969,6 +2556,7 @@ func _apply_frame_state(p: Dictionary) -> void:
 			var smooth_amt := clampf(float(l.get("fx_smooth", 0.0)), 0.0, 1.0)
 			echo_lag.append(clampi(int(round(lag_slots)), 0, 7))
 			lagf.append(float(l.get("fx_lag", 0.35)))
+			sticks.append(clampf(float(l.get("fx_stick", 0.0)), 0.0, 1.0))
 			var w := PackedFloat32Array()
 			var wsum := 0.0
 			for k in 8:
@@ -1999,6 +2587,7 @@ func _apply_frame_state(p: Dictionary) -> void:
 			smooths.append(0.0)
 			echo_lag.append(0)
 			lagf.append(0.0)
+			sticks.append(0.0)
 			for k in 8:
 				echo_w.append(1.0 if k == 0 else 0.0)
 			glows.append(1.0)
@@ -2033,6 +2622,7 @@ func _apply_frame_state(p: Dictionary) -> void:
 		mat.set_shader_parameter("u_l_ew", echo_w)
 		mat.set_shader_parameter("u_l_elag", echo_lag)
 		mat.set_shader_parameter("u_l_lagf", lagf)
+		mat.set_shader_parameter("u_l_stick", sticks)
 		mat.set_shader_parameter("u_l_tdir", tdirs)
 		# Chimera's graft source: the first track's live frame. The explicit
 		# flag matters - the sampler's default-black fallback must never read
@@ -2047,15 +2637,21 @@ func _apply_frame_state(p: Dictionary) -> void:
 		if track_tex != null:
 			mat.set_shader_parameter("u_track", track_tex)
 	_fx_overlay.visible = main_amt > 0.001
-	_mask_wrap.visible = inset_show > 0.001
+	# Main clip's PiP only when it's the selected source; _sync_tracks re-confirms.
+	_mask_wrap.visible = inset_show > 0.001 and _pip_track == 0
 	_mask_wrap.modulate.a = inset_show
 	if _view_label != null:
-		match MaskSession.VIEW_MODES[clampi(int(p.get("view_mode", 2.0)), 0, MaskSession.VIEW_MODES.size() - 1)]:
-			"raw":        _view_label.text = "🎬  Raw"
-			"pip_raw":    _view_label.text = "🖼  PiP (raw)"
-			"pip":        _view_label.text = "🖼  PiP (fx)"
-			"masked_pip": _view_label.text = "🎭  Both (fx)"
-			"masked":     _view_label.text = "🎭  Full (fx)"
+		if _pip_track > 0:
+			var main_lbl := "fx" if main_amt > 0.5 else "raw"
+			_view_label.text = "🎞  main %s · Track %d (raw)" % [main_lbl, _pip_track]
+		else:
+			match MaskSession.VIEW_MODES[clampi(int(p.get("view_mode", 2.0)), 0, MaskSession.VIEW_MODES.size() - 1)]:
+				"raw":            _view_label.text = "🎬  Raw"
+				"pip_raw":        _view_label.text = "🖼  PiP (raw)"
+				"pip":            _view_label.text = "🖼  PiP (fx)"
+				"masked_pip_raw": _view_label.text = "🎭  Full (fx) · PiP (raw)"
+				"masked_pip":     _view_label.text = "🎭  Both (fx)"
+				"masked":         _view_label.text = "🎭  Full (fx)"
 
 
 # --- per-frame: push the timeline's blended params into the shader ---------------
@@ -2099,6 +2695,9 @@ func _process(_dt: float) -> void:
 	if _import_pid > 0 and not OS.is_process_running(_import_pid):
 		_import_pid = -1
 		_finish_track_import()
+	_poll_audio_thread()   # cheap bool check; attaches the main audio once its load finishes
+	if not _track_audio_jobs.is_empty():
+		_poll_track_audio()
 	if session == null or _player == null:
 		return
 	# Same call, live or exported: whatever the timeline says at this instant is
@@ -2151,6 +2750,14 @@ func _process(_dt: float) -> void:
 		_undo_coalesce_cooldown -= _dt
 	if render_mode:
 		return
+	# Cross a marker during playback and it selects itself - the panel and timeline
+	# follow the playhead, so scrubbing through a whole session no longer means
+	# clicking every tiny flag by hand. Only while actually playing; a paused scrub
+	# or a deliberate click in the marker list is left alone.
+	if _playing:
+		var governing: Variant = _governing_marker(_player.stream_position)
+		if governing != null and governing != _selected:
+			_select_marker(governing)
 	# Auto-hide the cursor once it's been still for a beat during playback -
 	# _input() above resets the timer and un-hides on any motion, and pausing
 	# (or a mouse click, which also fires motion-adjacent hover) restores it

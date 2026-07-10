@@ -89,6 +89,8 @@ const VECTOR_FIELDS := [
 	"intensity_b",      # legacy, unused
 	"duration",         # seconds the ramp (before) or decay (after) envelope takes
 	"view_mode",        # which rendering is shown/exported at this point - see VIEW_MODES
+	"pip_track",        # which video fills the PiP inset: 0 = the main clip (default),
+	                    #   k = imported track (k-1). The V button cycles through these.
 	"fx_x",             # THE layer's pattern pan X (unit UV)
 	"fx_y",             # pattern pan Y
 	"fx_scale",         # pattern zoom (1 = nominal)
@@ -98,6 +100,9 @@ const VECTOR_FIELDS := [
 	"fx_speed",         # drift velocity multiplier for the volumetric fields (1 = nominal)
 	"fx_lag",           # echo: how far back the lagged frame reaches, seconds
 	"fx_smooth",        # echo: 0 = discrete stutter, 1 = wide temporal blend (EMA-like)
+	"fx_stick",         # fur: 0 = free coat everywhere (default look), 1 = strands cling
+	                    #   to natural anchors (key-colour concentration, the tracked
+	                    #   landmark/motion centroid, luminance) - see the shader's fur branch
 ]
 
 ## Global keying environment - lerped across transition windows (contract shape 1).
@@ -106,7 +111,7 @@ const GLOBAL_CONTINUOUS := ["threshold", "feather", "sat_floor"]
 ## values; only the layer's envelope varies over time.
 const LAYER_FIELDS := ["hue_a", "effect_a", "intensity_a", "fx_x", "fx_y",
 	"fx_scale", "fx_density", "resonance", "fx_contrast", "fx_speed", "fx_lag",
-	"fx_smooth"]
+	"fx_smooth", "fx_stick"]
 
 const MARKER_KINDS := ["ramp", "decay"]
 
@@ -253,6 +258,21 @@ const EFFECT_CONTROLS := {
 	13: ["pattern"],              # chimera (color steers the anchor/claim; scale=window, pan=graft offset, coverage=dominance, contrast=interleave sharpness)
 }
 
+## Second level of the same rule, INSIDE the "pattern" group: which individual
+## knobs an effect actually reads. "Only show properties that can be used" -
+## a knob the shader never touches for this effect is hidden, not just disabled.
+## Keys: "scale", "pan", "coverage", "contrast", "velocity", "resonance". An
+## effect NOT listed here shows every pattern knob (the historical default);
+## list an effect only to PRUNE. Audit against shaders/mask_split.gdshader when
+## an effect changes what it consumes.
+const PATTERN_KNOBS_ALL := ["scale", "pan", "coverage", "contrast", "velocity", "resonance"]
+const PATTERN_KNOBS := {
+	# chimera reads scale (graft zoom), pan (graft nudge), coverage (dominance)
+	# and contrast (interleave sharpness). It never reads speed, and its only
+	# tie to resonance is a marginal audio-breathe on dominance - both hidden.
+	13: ["scale", "pan", "coverage", "contrast"],
+}
+
 ## The view-mode registry (see mask_editor.gd). Really a 2-axis matrix flattened to
 ## one discrete field - main screen (raw / fx) x inset (hidden / raw / fx) - kept
 ## flat because it's a per-marker EXPORTABLE choice, and one scalar in the vector
@@ -264,7 +284,7 @@ const EFFECT_CONTROLS := {
 ##   raw        - main raw, no inset (the default; no shader pass at all)
 ##   pip_raw    - main raw, inset raw (the frame appears, nothing effected yet)
 ##   masked_pip - main fx AND inset fx (the full-evolution end state)
-const VIEW_MODES := ["pip", "masked", "raw", "pip_raw", "masked_pip"]
+const VIEW_MODES := ["pip", "masked", "raw", "pip_raw", "masked_pip", "masked_pip_raw"]
 
 ## Untouched (no markers yet) preview state. view_mode defaults to "raw" (index 2)
 ## - just the source video, no shader pass at all - so nothing is masked/effected
@@ -273,8 +293,10 @@ const DEFAULTS := {
 	"kind": 0.0, "hue_a": 0.02, "hue_b": 0.58, "threshold": 0.24, "feather": 0.12,
 	"sat_floor": 0.18, "swap": 0.0, "effect_a": 0, "effect_b": 0,
 	"intensity_a": 1.0, "intensity_b": 0.0, "duration": 1.0, "view_mode": 2.0,
+	"pip_track": 0.0,
 	"fx_x": 0.0, "fx_y": 0.0, "fx_scale": 1.0, "fx_density": 0.45, "resonance": 0.0,
 	"fx_contrast": 0.5, "fx_speed": 1.0, "fx_lag": 0.35, "fx_smooth": 0.0,
+	"fx_stick": 0.0,
 }
 
 var video_path := ""
@@ -291,6 +313,11 @@ var markers: Array = []   # Array[Dictionary], sorted by "time"; each has all VE
 ## "extreme right edge" bug every timeline editor seems to have at some point.
 var clip_in := 0.0
 var clip_out := -1.0
+
+## The MAIN clip's audio level, 0 or 1 (the audio-mix toggle on its lane). Imported
+## tracks carry their own per-track "volume" in the tracks array. All audio plays
+## together, each gated by its own 0/1 - see mask_editor.gd's _sync_tracks / _play.
+var main_volume := 1.0
 
 ## Secondary tracks (picture-in-picture overlays) - see mask_editor.gd's "Import
 ## track" flow. Each: {video_path, duration, clip_in, clip_out, offset (seconds on
@@ -364,9 +391,9 @@ const AMOUNT_FIELDS := ["main_fx", "inset_show", "inset_fx"]
 static func mode_amounts(view_mode_val) -> Dictionary:
 	var id := int(view_mode_val)
 	return {
-		"main_fx": 1.0 if (id == 1 or id == 4) else 0.0,             # masked, masked_pip
-		"inset_show": 1.0 if (id == 0 or id == 3 or id == 4) else 0.0,  # pip, pip_raw, masked_pip
-		"inset_fx": 1.0 if (id == 0 or id == 4) else 0.0,            # pip, masked_pip
+		"main_fx": 1.0 if (id == 1 or id == 4 or id == 5) else 0.0,          # masked, masked_pip, masked_pip_raw
+		"inset_show": 1.0 if (id == 0 or id == 3 or id == 4 or id == 5) else 0.0,  # pip, pip_raw, masked_pip, masked_pip_raw
+		"inset_fx": 1.0 if (id == 0 or id == 4) else 0.0,                   # pip, masked_pip (5 = fx main + RAW pip)
 	}
 
 
@@ -564,6 +591,9 @@ func at_time(t: float) -> Dictionary:
 	var governing: Dictionary = cur if cur != null else DEFAULTS
 	var out := {}
 	out["view_mode"] = governing.get("view_mode", DEFAULTS.get("view_mode", 2.0))
+	# pip_track is a discrete SOURCE selector - it doesn't blend (the inset's
+	# visibility does, via the amounts below). It switches with view_mode.
+	out["pip_track"] = float(governing.get("pip_track", 0.0))
 	out.merge(mode_amounts(out["view_mode"]), true)
 	for key in GLOBAL_CONTINUOUS:
 		out[key] = float(governing.get(key, DEFAULTS.get(key, 0.0)))
@@ -586,6 +616,16 @@ func at_time(t: float) -> Dictionary:
 			out["view_mode"] = approaching.get("view_mode", DEFAULTS.get("view_mode", 2.0))
 			var src_amt := _amounts_of(src)
 			var dst_amt := mode_amounts(out["view_mode"])
+			# pip_track picks WHICH video fills the inset - a hard content swap, not a
+			# blend. Popping it to the approaching marker's value the instant the window
+			# opens shows the wrong source at whatever opacity the OLD side still holds
+			# (fading OUT of an inset: the new, usually-irrelevant source flashes in at
+			# near-full presence, then fades to nothing - the "wrong girl" bug). Whichever
+			# side currently has the greater inset presence owns the content; the swap
+			# only lands once the other side has faded past it, so it's pop-free.
+			out["pip_track"] = float(approaching.get("pip_track", 0.0)) \
+				if float(dst_amt.get("inset_show", 0.0)) >= float(src_amt.get("inset_show", 0.0)) \
+				else float(src.get("pip_track", 0.0))
 			for key in AMOUNT_FIELDS:
 				out[key] = lerpf(float(src_amt.get(key, 0.0)), float(dst_amt.get(key, 0.0)), f)
 
@@ -600,6 +640,13 @@ func at_time(t: float) -> Dictionary:
 				float(cur.get(key, DEFAULTS.get(key, 0.0))), f)
 		var src_amt := _amounts_of(src)
 		var dst_amt := mode_amounts(cur.get("view_mode", 2.0))
+		# Same pip_track pop-guard as the ramp window above: the initial pass at the
+		# top of this function already set out["pip_track"] to cur's (the just-arrived
+		# decay marker's) own value, which is wrong while its inset presence hasn't
+		# accumulated past whatever was showing before it.
+		out["pip_track"] = float(cur.get("pip_track", 0.0)) \
+			if float(dst_amt.get("inset_show", 0.0)) >= float(src_amt.get("inset_show", 0.0)) \
+			else float(src.get("pip_track", 0.0))
 		for key in AMOUNT_FIELDS:
 			out[key] = lerpf(float(src_amt.get(key, 0.0)), float(dst_amt.get(key, 0.0)), f)
 
@@ -647,6 +694,7 @@ func to_dict() -> Dictionary:
 	return {
 		"source_path": source_path, "video_path": video_path, "audio_path": audio_path,
 		"duration": duration, "clip_in": clip_in, "clip_out": clip_out, "tracks": tracks,
+		"main_volume": main_volume,
 		"vector_fields": VECTOR_FIELDS, "markers": markers,
 	}
 
@@ -673,6 +721,7 @@ static func load(path: String) -> MaskSession:
 	s.duration = float(parsed.get("duration", 0.0))
 	s.clip_in = float(parsed.get("clip_in", 0.0))
 	s.clip_out = float(parsed.get("clip_out", -1.0))
+	s.main_volume = float(parsed.get("main_volume", 1.0))
 	for t in parsed.get("tracks", []):
 		s.tracks.append(t)
 	for m in parsed.get("markers", []):

@@ -256,9 +256,29 @@ func _poll_progress(entry: Dictionary) -> void:
 			continue
 		var evt = JSON.parse_string(line)
 		if evt is Dictionary:
+			# Persist the session id the INSTANT it first appears (the "system"/init
+			# event carries it), not only at _finish - so a run interrupted by a crash
+			# still has a saved id and can be resumed later (see _load_existing).
+			if String(entry.session_id) == "" and evt.has("session_id"):
+				entry.session_id = str(evt.get("session_id", ""))
+				if String(entry.session_id) != "":
+					_save_entry(entry)
 			var desc := _describe_event(evt)
 			if desc != "":
 				entry.progress = desc
+
+
+## Dig a session id out of a captured output/error blob when the field itself was
+## never saved (an interrupted run): every stream-json event carries
+## "session_id":"<uuid>", so the first one in the text is the run's id.
+func _recover_session_id(text: String) -> String:
+	var key := "\"session_id\":\""
+	var i := text.find(key)
+	if i < 0:
+		return ""
+	i += key.length()
+	var j := text.find("\"", i)
+	return text.substr(i, j - i) if j > i else ""
 
 
 ## One stream-json event -> a short human-readable "what's happening now"
@@ -310,10 +330,18 @@ func _finish(entry: Dictionary) -> void:
 		entry.cost_usd = float(parsed.get("total_cost_usd", entry.cost_usd))
 		entry.error_text = ""
 	else:
-		entry.status = "error"
 		var err_text := _read_file(entry.err_path)
-		entry.error_text = err_text if err_text != "" else \
-			(out_text if out_text != "" else "(no output - the process may have failed to start)")
+		# The run produced no clean result, but it may still have a session id (it got
+		# far enough to emit the init event). If so it's RESUMABLE, not a dead end.
+		if String(entry.session_id) == "":
+			entry.session_id = _recover_session_id(out_text + "\n" + err_text)
+		if String(entry.session_id) != "":
+			entry.status = "interrupted"
+			entry.error_text = "did not finish - Resume to continue this session"
+		else:
+			entry.status = "error"
+			entry.error_text = err_text if err_text != "" else \
+				(out_text if out_text != "" else "(no output - the process may have failed to start)")
 	_delete_file(entry.out_path)
 	_delete_file(entry.err_path)
 	entry.pid = -1
@@ -379,12 +407,22 @@ func _load_existing() -> void:
 		var idx := int(data.get("index", 0))
 		var status := str(data.get("status", "error"))
 		var error_text := str(data.get("error_text", ""))
-		if status == "running" or status == "queued":
-			status = "error"
-			error_text = "interrupted - the editor closed before this run finished"
+		var sid := str(data.get("session_id", ""))
+		if sid == "":
+			sid = _recover_session_id(error_text)   # older logs stashed the init event in error_text
+		# A run that was mid-flight when the editor closed (or errored without a clean
+		# result) is resumable IF we know its session id - continue it via --resume
+		# rather than starting over. Only a run we can't identify is a dead "error".
+		if status == "running" or status == "queued" or (status == "error" and sid != ""):
+			if sid != "":
+				status = "interrupted"
+				error_text = "did not finish before the editor closed - Resume to continue this session"
+			else:
+				status = "error"
+				error_text = "interrupted - the editor closed before this run could be identified"
 		loaded.append({
 			"index": idx, "query": str(data.get("query", "")), "stem": "%s/%04d" % [DIR, idx],
-			"status": status, "session_id": str(data.get("session_id", "")),
+			"status": status, "session_id": sid,
 			"response": str(data.get("response", "")), "cost_usd": float(data.get("cost_usd", 0.0)),
 			"pid": -1, "out_path": "", "err_path": "", "error_text": error_text, "expanded": false,
 			"pending_prompt": "",
@@ -532,6 +570,7 @@ func _status_glyph(status: String) -> String:
 		"queued": return "⏳"
 		"running": return "⚙"
 		"done": return "✓"
+		"interrupted": return "↻"
 		_: return "✕"
 
 
@@ -600,6 +639,9 @@ func _build_body(entry: Dictionary) -> Control:
 				body.add_child(_dim_label("no assistant selected - pick one on the home screen to send this"))
 		"queued":
 			body.add_child(_dim_label("queued - waiting for the current run to finish"))
+		"interrupted":
+			body.add_child(_dim_label(String(entry.error_text)))
+			body.add_child(_build_resume_row(entry))
 		"running":
 			var elapsed_s: int = (Time.get_ticks_msec() - int(entry.get("started_at", Time.get_ticks_msec()))) / 1000
 			var time_str := "%ds" % elapsed_s if elapsed_s < 60 else "%d:%02d" % [elapsed_s / 60, elapsed_s % 60]
@@ -692,4 +734,27 @@ func _build_followup_row(entry: Dictionary) -> Control:
 		_pump_queue())
 	edit.text_submitted.connect(func(_t): send.pressed.emit())
 	row.add_child(send)
+	return row
+
+
+## Resume an interrupted run: re-queue it against its saved session_id so --resume
+## picks up the SAME claude session where it left off (see _dispatch), with a prompt
+## telling it to finish the work. Same serial queue as any other dispatch.
+func _build_resume_row(entry: Dictionary) -> Control:
+	var row := HBoxContainer.new()
+	var resume := Button.new()
+	resume.text = "↻  Resume this session"
+	resume.focus_mode = Control.FOCUS_NONE
+	resume.tooltip_text = "Continue the same Claude session (--resume %s) where it left off" % String(entry.session_id)
+	resume.pressed.connect(func():
+		entry.status = "queued"
+		entry.response = ""
+		entry.error_text = ""
+		entry.pending_prompt = "The previous run was interrupted before finishing. Please pick up exactly where you left off and complete the work."
+		_entries.erase(entry)
+		_entries.push_front(entry)
+		_save_entry(entry)
+		_refresh_list()
+		_pump_queue())
+	row.add_child(resume)
 	return row

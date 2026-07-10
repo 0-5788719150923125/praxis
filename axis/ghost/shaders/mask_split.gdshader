@@ -84,6 +84,10 @@ uniform int u_l_elag[6];
 // baked into u_l_ew/u_l_elag above); fur reads it as its Coil knob.
 uniform float u_l_lagf[6];
 
+// Raw fx_stick per layer - fur's Stickiness. 0 (default) leaves the free coat
+// untouched; >0 pulls the strands toward natural anchors (see the fur branch).
+uniform float u_l_stick[6];
+
 // The first imported track's live frame, for chimera's graft. u_track_on
 // gates it explicitly - the default-black fallback must never be mistaken
 // for footage (a black graft window is worse than no graft).
@@ -95,6 +99,13 @@ uniform int u_track_on = 0;
 // origin rides it, so the pattern auto-locks to the landmark (a lit face half)
 // and follows it smoothly as it moves.
 uniform vec2 u_anchor = vec2(0.5, 0.5);
+// Chimera's landmark frames: the MAIN face's modeled size (RMS radius, UV units)
+// and the imported TRACK face's own centroid + size, all EMA-tracked CPU-side
+// (see _update_track_frame / _face_frame). The graft is mapped through both so it
+// phase-locks to the main head. Defaults fall back to ~a centered clone.
+uniform float u_anchor_scale = 0.28;
+uniform vec2 u_track_anchor = vec2(0.5, 0.5);
+uniform float u_track_scale = 0.28;
 
 // Wave impulses (whisp only): a fast head turn, detected CPU-side as an onset
 // in frame-to-frame luminance (see mask_editor.gd's _update_wave_impulses),
@@ -650,14 +661,25 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 			return col;
 		}
 		float k13 = shade_amount(w, uv);
+		// The graft window rides the MAIN face's modeled frame - centered on its
+		// centroid, sized to its RMS radius - so it auto-fits the head instead of
+		// being a fixed circle. Scale just multiplies that size now.
+		float mscale13 = max(u_anchor_scale, 0.05);
 		vec2 rel13 = (uv - u_anchor) * vec2(u_aspect, 1.0);
-		float rad13 = 0.36 * max(u_l_scale[i], 0.15);
-		float win13 = 1.0 - smoothstep(rad13 * 0.4, rad13, length(rel13));
+		float rad13 = clamp(mscale13 * 2.4 * max(u_l_scale[i], 0.3), 0.10, 0.95);
+		float win13 = 1.0 - smoothstep(rad13 * 0.55, rad13, length(rel13));
 		if (win13 * k13 <= 0.003) {
 			return col;
 		}
-		vec2 tuv13 = (uv - u_anchor) * (0.9 / max(u_l_scale[i], 0.15))
-			+ vec2(0.5) + u_l_off[i] * 0.4;
+		// PHASE-LOCK the graft. Put this main pixel into the MAIN face's frame
+		// (centroid + size -> canonical), then read the SAME landmark out of the
+		// TRACK face's own frame. The graft is the other head normalized by its
+		// own centroid/size and re-fitted onto this head, so it tracks the main
+		// scene instead of drifting on its own. Scale zooms, Pan nudges, on top.
+		vec2 canon13 = (uv - u_anchor) / mscale13;
+		vec2 tuv13 = u_track_anchor
+			+ canon13 * (u_track_scale / max(u_l_scale[i], 0.15))
+			+ u_l_off[i] * 0.25;
 		// A graft sampling off its own frame fades at the border, never cuts
 		// (echo's hard-box lesson).
 		float bf13 = smoothstep(0.0, 0.05, tuv13.x) * smoothstep(0.0, 0.05, 1.0 - tuv13.x)
@@ -970,6 +992,29 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 			s10 += step10;
 		}
 		field = clamp(fur_rooted * hair10 * 1.8, 0.0, 1.0);
+		// STICKINESS (fx_stick): thin the coat away from the places hair would
+		// naturally root, so higher values make the strands CLING to anchors
+		// instead of flowing free. At 0 this whole block is a no-op (mix picks
+		// 1.0), so the existing look is preserved bit-for-bit.
+		float stick10 = clamp(u_l_stick[i], 0.0, 1.0);
+		if (stick10 > 0.001) {
+			// Colour concentration: how strongly the footage here IS the key
+			// colour - the wide, smooth key envelope, i.e. the surface the
+			// strands grow from.
+			float a_conc = clamp(regional, 0.0, 1.0);
+			// Landmark + movement: proximity to u_anchor, the EMA-tracked key /
+			// motion centroid (now following fur markers too). Aspect-corrected
+			// so the falloff is round rather than stretched.
+			float a_land = exp(-2.2 * length((uv - u_anchor) * vec2(u_aspect, 1.0)));
+			// Intensity / perceived height: brighter footage reads as raised.
+			vec3 cc10 = texture(tex, clamp(uv, vec2(0.0), vec2(1.0))).rgb;
+			float a_lum = smoothstep(0.12, 0.72, dot(cc10, vec3(0.299, 0.587, 0.114)));
+			// Union of the cues (max): a strand survives near ANY natural anchor,
+			// not only where every cue agrees (an intersection would strip the
+			// coat almost bare). Luminance is a secondary lift, weighted down.
+			float anchor = clamp(max(a_conc, max(a_land, a_lum * 0.55)), 0.0, 1.0);
+			field *= mix(1.0, anchor, stick10);
+		}
 	} else if (effect == 12) {
 		// SERPENT - thousands of wriggling snakes as a sparse mask. Three
 		// rotated, domain-warped octaves of torus lanes (serpent_layer above):
