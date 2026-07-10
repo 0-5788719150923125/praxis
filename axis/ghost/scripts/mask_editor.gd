@@ -69,6 +69,7 @@ var _peek_raw := false     # DISPLAY-ONLY raw override; never touches session da
 
 var _timeline: MaskTimeline
 var _tview: TimelineView          # shared pixel<->time mapping - see timeline_view.gd
+var _video_area: AspectRatioContainer  # letterboxed video slot - see _refresh_lanes
 var _lanes_col: VBoxContainer     # primary clip's trim lane + one per imported track
 var _composition_parent: Control  # holds _player/_fx_overlay/_mask_wrap - track PiP views land here too
 ## Runtime state per session.tracks[i] - NOT persisted (session.tracks holds only
@@ -578,11 +579,12 @@ func _build_video_composition(parent: Control) -> void:
 
 ## A secondary track's own composited view: a raw (unshaded - the masking
 ## effects system keys off ONE frame's colors via the primary's shader chain,
-## not built for a second independent source yet) picture-in-picture box,
-## positioned/sized from the track's own x/y/w/h (normalized 0..1, top-left +
-## size) - draggable in a later pass; a sensible default corner for now. Drawn
-## on TOP of the primary composition (added after it), below nothing - PiP
-## always rides over the main picture.
+## not built for a second independent source yet) picture-in-picture box. It
+## takes over the SAME inset slot _mask_wrap occupies (bottom-right) rather
+## than getting its own corner - there is only ever one PiP box on screen at
+## a time; see _sync_tracks, which hides _mask_wrap for as long as a track's
+## own box is showing (feedback/0056: a stray, always-empty second box used
+## to sit at a separate default corner on top of the real one).
 func _build_track_view(i: int) -> void:
 	var track: Dictionary = session.tracks[i]
 	var player := VideoStreamPlayer.new()
@@ -591,10 +593,10 @@ func _build_track_view(i: int) -> void:
 	_composition_parent.add_child(player)
 
 	var wrap := Control.new()
-	wrap.anchor_left = float(track.get("x", 0.68))
-	wrap.anchor_top = float(track.get("y", 0.04))
-	wrap.anchor_right = float(track.get("x", 0.68)) + float(track.get("w", 0.28))
-	wrap.anchor_bottom = float(track.get("y", 0.04)) + float(track.get("h", 0.28))
+	wrap.anchor_left = _mask_wrap.anchor_left
+	wrap.anchor_top = _mask_wrap.anchor_top
+	wrap.anchor_right = _mask_wrap.anchor_right
+	wrap.anchor_bottom = _mask_wrap.anchor_bottom
 	_composition_parent.add_child(wrap)
 
 	var view := TextureRect.new()
@@ -622,7 +624,12 @@ func _build_track_view(i: int) -> void:
 
 # --- multi-track: trim lanes, import, playback sync ----------------------------
 
-const _LANE_H := 26.0
+# Per-lane reserved height. MUST cover a TrackLane's own minimum (26px, see
+# track_lane.gd) PLUS the _lanes_col VBox's inter-lane separation (2px), or the
+# lane stack overflows its allocated rect and - drawing above the marker strip it
+# abuts - spills over the timeline's top edge, clipping the marker flags and the
+# playhead timestamp tag (worsening with each imported track). 26 + 2 = 28.
+const _LANE_H := 28.0
 
 func _track_getter(i: int, field: String) -> Callable:
 	return func(): return float(session.tracks[i].get(field, 0.0))
@@ -694,9 +701,17 @@ func _refresh_lanes() -> void:
 		del.pressed.connect(func(): _delete_track(idx))
 		lane.add_child(del)
 
+	# The lane stack sits directly above the marker strip, and the video's own
+	# letterboxed slot (see _build_editor_ui) has to shrink to match - otherwise
+	# an imported track (or several) grows this stack tall enough to push its
+	# lanes/delete-buttons over the bottom of the video instead of the reserved
+	# strip below it.
 	var count := 1 + session.tracks.size()
-	_lanes_col.offset_top = -90 - count * _LANE_H
+	var reserved := 90.0 + count * _LANE_H
+	_lanes_col.offset_top = -reserved
 	_lanes_col.offset_bottom = -90
+	if _video_area != null:
+		_video_area.offset_bottom = -reserved
 	_tview.refresh(session)
 
 
@@ -815,6 +830,7 @@ func _sync_tracks() -> void:
 	if _player == null:
 		return
 	var master_t := _player.stream_position
+	var any_track_visible := false
 	for i in session.tracks.size():
 		if i >= _track_runtime.size():
 			continue
@@ -831,14 +847,23 @@ func _sync_tracks() -> void:
 		var wrap: Control = rt.wrap
 		if inside:
 			wrap.visible = true
+			any_track_visible = true
 			if not bool(rt.active) or absf(tplayer.stream_position - local_t) > 0.2:
 				tplayer.stream_position = local_t
 				rt.active = true
 			tplayer.paused = not _playing
+			var view: TextureRect = rt.view
+			if view != null:
+				view.texture = tplayer.get_video_texture()
 		else:
 			wrap.visible = false
 			tplayer.paused = true
 			rt.active = false
+	# Only one PiP box at a time (see _build_track_view's class doc) - a track's
+	# own box, when showing, replaces the primary inset rather than stacking
+	# alongside it.
+	if any_track_visible:
+		_mask_wrap.visible = false
 
 
 func _build_render_view() -> void:
@@ -858,16 +883,16 @@ func _build_render_view() -> void:
 
 
 func _build_editor_ui() -> void:
-	var video_area := AspectRatioContainer.new()
-	video_area.set_anchors_preset(Control.PRESET_FULL_RECT)
-	video_area.offset_left = PANEL_W
-	video_area.ratio = 16.0 / 9.0
-	add_child(video_area)
+	_video_area = AspectRatioContainer.new()
+	_video_area.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_video_area.offset_left = PANEL_W
+	_video_area.ratio = 16.0 / 9.0
+	add_child(_video_area)
 
 	# A plain Control fills the AspectRatioContainer's one centered/letterboxed slot.
 	var inner := Control.new()
 	inner.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	video_area.add_child(inner)
+	_video_area.add_child(inner)
 	_build_video_composition(inner)
 	for i in session.tracks.size():
 		_build_track_view(i)
@@ -2106,6 +2131,22 @@ func _process(_dt: float) -> void:
 			get_tree().quit()
 		elif _playing:
 			_play(false)
+	elif render_mode and _playing:
+		# No trim OUT is set, so the render must still terminate at the end of the SOURCE
+		# on its own - and it CANNOT lean on _audio.finished (the sole quit path wired at
+		# _build_render_view). The video is the master clock and, under Movie Maker, decodes
+		# on wall-clock time while the audio advances in the movie's virtual time; the A/V
+		# drift-seek just above then yanks the audio back to the (slower) video position
+		# every frame, so the audio never reaches its end and `finished` never fires. That
+		# left Movie Maker recording frozen frames forever - multi-GiB AVIs with a wrapped
+		# index. Quit off the video clock instead: at end-of-content, or once the master
+		# player has stopped (finished decoding) after actually getting underway.
+		var content_end := session.duration
+		var reached := content_end > 0.0 and _player.stream_position >= content_end - 0.05
+		var stopped := _player.stream_position > 1.0 and not _player.is_playing()
+		if reached or stopped:
+			get_tree().quit()
+			return
 	if _undo_coalesce_cooldown > 0.0:
 		_undo_coalesce_cooldown -= _dt
 	if render_mode:
@@ -2207,6 +2248,7 @@ func _poll_render() -> void:
 			if OS.is_process_running(_render_pid):
 				return
 			if _file_size(_avi) > 65536:
+				_repair_avi_sizes(_avi)   # Godot's 32-bit AVI sizes wrap past 4 GiB; fix before transcode
 				_start_transcode()
 			else:
 				_set_status("⚠  Render produced no file (see console)")
@@ -2224,11 +2266,49 @@ func _poll_render() -> void:
 
 func _start_transcode() -> void:
 	_set_status("⏳  Finalizing…")
+	# `-fflags +genpts` re-derives timestamps so a damaged/wrapped AVI index (see
+	# _repair_avi_sizes) is bypassed instead of trusted - without it a >4 GiB render
+	# transcodes to a broken file or fails outright, leaving the raw .render.avi behind.
+	# `-pix_fmt yuv420p` keeps the MP4 playable everywhere (VLC/QuickTime/browsers).
 	_transcode_pid = OS.create_process("ffmpeg", PackedStringArray([
-		"-y", "-loglevel", "error", "-i", _avi,
-		"-c:v", "libx264", "-preset", "medium", "-crf", "18",
+		"-y", "-loglevel", "error", "-fflags", "+genpts", "-i", _avi,
+		"-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
 		"-c:a", "aac", "-b:a", "192k", _out]))
 	_render_state = "transcoding"
+
+
+# Godot's AVI writer keeps 32-bit RIFF/LIST size fields, and a full-resolution mask
+# render crosses 4 GiB in a few minutes - past that the written sizes WRAP (mod 2^32)
+# and the container lies about where the frame data ends, even though every 00db/01wb
+# chunk after it is written correctly to EOF. Demuxers that trust those fields (and
+# players, whose seeks hit the equally-wrapped idx1 offsets) stall, repeat frames, or
+# break time indexing (this is why VLC's scrub bar goes wrong on the raw AVI). The
+# repair is two words: RIFF size and the movi LIST size become 0 - "size unknown, read
+# to end of file" - turning any demux into a clean sequential walk of the intact chunks.
+# No-op for files under 4 GiB (their sizes are already correct). Mirrors exporter.gd.
+func _repair_avi_sizes(path: String) -> void:
+	var f := FileAccess.open(path, FileAccess.READ_WRITE)
+	if f == null:
+		return
+	if f.get_length() < 4294967296:
+		f.close()
+		return
+	f.seek(4)
+	f.store_32(0)                       # RIFF size -> unknown
+	var pos := 12
+	for i in 64:                        # walk top-level chunks to the movi LIST
+		f.seek(pos)
+		var tag := f.get_buffer(4).get_string_from_ascii()
+		var csize := f.get_32()
+		if tag == "LIST" and f.get_buffer(4).get_string_from_ascii() == "movi":
+			f.seek(pos + 4)
+			f.store_32(0)               # movi size -> unknown
+			print("ghost mask export: repaired wrapped >4GiB AVI sizes in ", path.get_file())
+			break
+		if csize <= 0 or tag.is_empty():
+			break
+		pos += 8 + csize + (csize & 1)
+	f.close()
 
 
 func _file_size(path: String) -> int:

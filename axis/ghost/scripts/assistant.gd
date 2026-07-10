@@ -484,6 +484,10 @@ func _build_ui() -> void:
 
 	_header = Label.new()
 	_header.text = "Assistant"
+	# Wrap, or a long header ("Feedback (assistant off - browse/delete only)")
+	# reports its full text width as a minimum and drags the right-anchored panel
+	# off-screen to the right (the panel grows to its content's minimum size).
+	_header.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_header.add_theme_color_override("font_color", Color(0.7, 0.85, 1.0, 0.9))
 	outer.add_child(_header)
 
@@ -627,6 +631,12 @@ func _build_body(entry: Dictionary) -> Control:
 func _dim_label(text: String) -> Label:
 	var l := Label.new()
 	l.text = text
+	# These carry the long status strings ("running (12s) - output is captured
+	# here, never printed to a terminal", "no assistant selected - pick one on the
+	# home screen to send this"). Without wrapping, each reports its full one-line
+	# width as a minimum and pushes the right-anchored panel off the screen edge -
+	# WORD_SMART also breaks over-long tokens (paths) so nothing overflows.
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	l.add_theme_color_override("font_color", Color(0.6, 0.68, 0.8, 0.8))
 	return l
 

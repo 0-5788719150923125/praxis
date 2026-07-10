@@ -211,8 +211,8 @@ func _draw() -> void:
 		var tag := format_time(t)
 		var tag_w := ThemeDB.fallback_font.get_string_size(tag, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x + 8.0
 		var tag_x := clampf(px - tag_w * 0.5, 0.0, size.x - tag_w)
-		draw_rect(Rect2(tag_x, 2, tag_w, 16), Color(1, 1, 1, 0.92))
-		draw_string(ThemeDB.fallback_font, Vector2(tag_x + 4, 14), tag,
+		draw_rect(Rect2(tag_x, 2, tag_w, 18), Color(1, 1, 1, 0.92))
+		draw_string(ThemeDB.fallback_font, Vector2(tag_x + 4, 15), tag,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.05, 0.06, 0.08))
 	# Zoom badge, so a zoomed view never masquerades as the whole clip.
 	if tview.zoom > 1.01:
