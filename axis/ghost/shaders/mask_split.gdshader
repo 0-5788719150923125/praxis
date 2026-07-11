@@ -100,6 +100,15 @@ uniform float u_l_stick[6];
 uniform sampler2D u_track : hint_default_black;
 uniform int u_track_on = 0;
 
+// META's mirror source: the editor's OWN rendered frame from one frame ago,
+// captured CPU-side by the editor (see mask_editor.gd _capture_workspace) only
+// while a meta layer is live. Because that captured frame already contains this
+// same video surface, sampling it back in is a feedback loop - each frame nests
+// one level deeper (the OBS "screen inside a screen" infinite mirror), bounded
+// to one capture per frame. hint_default_black so an inactive meta layer (no
+// capture pushed) mixes toward black harmlessly rather than reading as garbage.
+uniform sampler2D u_workspace : hint_default_black;
+
 // The whisp anchor: the target color's mass centroid in the frame, EMA-tracked
 // CPU-side over short windows (see MaskEditor) - the whisp field's coordinate
 // origin rides it, so the pattern auto-locks to the landmark (a lit face half)
@@ -924,6 +933,17 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 			}
 		}
 		return vec4(result14, col.a);
+	}
+	if (effect == 15) {
+		// META - the workspace mirror. Sample the editor's own captured frame and
+		// mix it over the footage by the layer's weight `w` (envelope x intensity x
+		// surface presence). uv is the plain screen UV, so the WHOLE captured
+		// workspace scales into this surface - the video preview becomes a shrunk
+		// live copy of the entire editor, and because the capture already contains
+		// that copy, it nests one level deeper each frame (the infinite mirror).
+		// KEYLESS and directly compositing, like erase: no mask taps, no pattern.
+		vec3 mirror15 = texture(u_workspace, uv).rgb;
+		return vec4(mix(col.rgb, mirror15, clamp(w, 0.0, 1.0)), col.a);
 	}
 	// Fine/regional confidence for the VOLUMETRIC masks: local coverage and the
 	// whole 25-tap pyramid - a wide, spatially smooth envelope with no

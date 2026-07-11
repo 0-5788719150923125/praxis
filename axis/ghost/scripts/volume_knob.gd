@@ -42,7 +42,9 @@ var accent := Color(0.6, 0.95, 0.7)
 ## user learns what the control is - see feedback/0008).
 var show_icon := false
 
-const _D0 := 90.0    # pixels of pull for ~63% - the "feel" scale of the rope
+const _D0 := 45.0    # pixels of pull for ~63% - the "feel" scale of the rope; halved from
+                      # 90 per feedback/0025 ("shouldn't have to pull so far: this is a
+                      # stitch, not a full thread")
 const _AMBIENT_TAU := 18.0   # seconds - how slowly the resting horizon eases toward the cursor
 const _RELEASE_SNAP_EPS := 0.03   # release-time pull below this snaps to exact 0 - keeps 0 reachable
 var _pulling := false

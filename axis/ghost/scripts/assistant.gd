@@ -61,6 +61,14 @@ var _repo_root := ""
 var _entries: Array = [] # Array[Dictionary], newest first - see enqueue()
 var _running_count := 0 # how many entries are actively running right now
 var _timer_tick := 0.0 # throttles the running-entry elapsed-timer repaint to ~1/sec
+## Set the instant the app starts closing (see _notification). Once true, _process
+## stops polling dispatched child PIDs: on shutdown Godot reaps/kills the children it
+## created, and a same-frame OS.is_process_running() call then races that reap on the
+## SAME pid - both waitpid(), the loser gets ECHILD (errno 10), which faults during
+## teardown ("crash on normal close"). Dispatched claude runs are meant to outlive the
+## editor anyway (they write straight to the working tree), so simply not observing
+## them past close is correct, not a leak.
+var _closing := false
 
 var _panel: Control
 var _list_col: VBoxContainer
@@ -281,7 +289,18 @@ func _build_prompt(entry: Dictionary) -> String:
 		"opportunistically refactoring nearby code.") % [rel, rel, String(entry.query)]
 
 
+## WM_CLOSE_REQUEST propagates to every node when the main window is asked to close;
+## EXIT_TREE/PREDELETE cover the programmatic-quit paths. Latching here (before the
+## same frame's _process runs) is what stops the shutdown ECHILD race - see _closing.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_EXIT_TREE \
+			or what == NOTIFICATION_PREDELETE:
+		_closing = true
+
+
 func _process(_dt: float) -> void:
+	if _closing:
+		return
 	var any_running := false
 	for e in _entries:
 		if e.status == "running" and int(e.pid) >= 0:

@@ -176,6 +176,13 @@ var _chimera_active := false  # is a chimera layer on screen THIS frame - gates 
                               #   so it never runs while the (distant) chimera marker isn't rendering
 var _temporal_active := false # is a whisp/echo/snow/oracle/serpent/chimera layer on screen THIS
                               #   frame - gates _maybe_capture_echo's readback entirely
+var _meta_amount := 0.0       # strongest meta-layer weight on screen THIS frame (0 = none);
+                              #   drives the workspace capture and the render-mode chrome reveal
+var _workspace_tex: ImageTexture = null  # the editor's own previous frame, captured for the META
+                              #   mirror (see _capture_workspace) - null until the first capture
+var _meta_chrome: Control = null  # render-mode only: the editor-chrome overlay a META section
+                              #   fades in over the clean video (the recorded product demo)
+var _chrome_parent: Node = null   # where _build_chrome() parents (self, or _meta_chrome in export)
 # The whisp anchor is double-buffered: _anchor_ema is the EMA at the LATEST
 # capture, _anchor_prev the one before. The uniform pushed per frame lerps
 # between them by position-within-slot (see _push_anchor) - pushing the EMA
@@ -1301,6 +1308,22 @@ func _build_render_view() -> void:
 	_build_video_composition(full)
 	for i in session.tracks.size():
 		_build_track_view(i)
+	# Product-demo chrome: if this session uses META anywhere, build the REAL editor
+	# chrome (timeline, lanes, control panel) on top of the clean composition, fully
+	# transparent. _apply_meta_chrome fades it in per frame with the meta envelope, so
+	# the export shows clean video normally and the working editor during a meta
+	# section (the recorded demo). Purely additive - no meta markers, nothing built,
+	# the clean-video export path is untouched. mouse_filter IGNORE: never interactive.
+	if _session_uses_meta():
+		_meta_chrome = Control.new()
+		_meta_chrome.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_meta_chrome.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_meta_chrome.modulate.a = 0.0
+		add_child(_meta_chrome)
+		_chrome_parent = _meta_chrome
+		_build_chrome()
+		_chrome_parent = null
+		_refresh_panel()
 	# Trimmed exports start AT clip_in, never at 0 - a cut clip renders only its
 	# kept range. Movie Maker records every processed frame, so the seek has to
 	# land before the very first one, not the first _process() tick.
@@ -1325,6 +1348,26 @@ func _build_editor_ui() -> void:
 	for i in session.tracks.size():
 		_build_track_view(i)
 
+	_build_chrome()
+	_build_export_ui()
+	_build_feedback()
+	_refresh_panel()
+	_apply_frame_state(session.at_time(_player.stream_position))
+
+
+## Where the interactive chrome (timeline, lanes, control panel) parents. Normally
+## `self` (the live editor); during a render-mode export that uses META, it's the
+## fading _meta_chrome overlay so a meta section can reveal the real working editor
+## over the clean video (the recorded product demo).
+func _chrome_host() -> Node:
+	return _chrome_parent if _chrome_parent != null else self
+
+
+## The editor chrome - the marker timeline, the trim/track lane stack, and the
+## control panel - built into _chrome_host(). Split out of _build_editor_ui so the
+## export path can build the SAME real widgets into an overlay (see _build_render_view
+## / _apply_meta_chrome). Prereqs: session and _player already exist.
+func _build_chrome() -> void:
 	_tview = TimelineView.new()
 	_tview.zoom = session.timeline_zoom          # restore the last zoom/pan (see _save_session)
 	_tview.view_start = session.timeline_view_start
@@ -1343,7 +1386,7 @@ func _build_editor_ui() -> void:
 	_timeline.marker_moved.connect(func(_m):
 		_refresh_marker_label()
 		_mark_dirty())
-	add_child(_timeline)
+	_chrome_host().add_child(_timeline)
 
 	# The trim/track lane stack - the primary clip's own trim block, plus one
 	# lane per imported track - sits directly above the marker strip, sharing
@@ -1353,14 +1396,58 @@ func _build_editor_ui() -> void:
 	_lanes_col.add_theme_constant_override("separation", 2)
 	_lanes_col.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	_lanes_col.offset_left = PANEL_W
-	add_child(_lanes_col)
+	_chrome_host().add_child(_lanes_col)
 	_refresh_lanes()
 
 	_build_panel()
-	_build_export_ui()
-	_build_feedback()
-	_refresh_panel()
-	_apply_frame_state(session.at_time(_player.stream_position))
+
+
+## The META mirror source: the editor's OWN previous frame, read back from the main
+## viewport into u_workspace. A full-window GPU->CPU readback (expensive), so the
+## caller (_process) only runs it while a meta layer is actually on screen. Feeding
+## this window back into the video surface - which lives IN this window - is the
+## infinite mirror; the one-frame delay is inherent and wanted (each frame nests one
+## level deeper). Downscaled before upload since the mirror draws small anyway.
+func _capture_workspace() -> void:
+	# Headless has no real framebuffer to read back (the dummy renderer's viewport
+	# texture is null - get_image would error every frame). It also never records a
+	# movie, so there is nothing to mirror; the windowed Movie Maker export IS a real
+	# GPU context, so this only ever skips genuine no-op cases.
+	if DisplayServer.get_name() == "headless":
+		return
+	var vtex := get_viewport().get_texture()
+	if vtex == null:
+		return
+	var img := vtex.get_image()
+	if img == null or img.is_empty():
+		return
+	if img.get_width() > 960:
+		var h := int(round(960.0 * float(img.get_height()) / float(maxi(1, img.get_width()))))
+		img.resize(960, maxi(1, h), Image.INTERPOLATE_BILINEAR)
+	if img.get_format() != Image.FORMAT_RGBA8:
+		img.convert(Image.FORMAT_RGBA8)
+	var sz := Vector2i(img.get_width(), img.get_height())
+	if _workspace_tex == null or _workspace_tex.get_size() != Vector2(sz):
+		_workspace_tex = ImageTexture.create_from_image(img)
+	else:
+		_workspace_tex.update(img)
+	_mat_main.set_shader_parameter("u_workspace", _workspace_tex)
+	_mat_inset.set_shader_parameter("u_workspace", _workspace_tex)
+
+
+## Render-mode only: fade the editor-chrome overlay in with the meta envelope, so the
+## export shows clean video normally and the real working editor during a meta section.
+func _apply_meta_chrome(amount: float) -> void:
+	if _meta_chrome == null:
+		return
+	_meta_chrome.modulate.a = smoothstep(0.0, 1.0, clampf(amount, 0.0, 1.0))
+
+
+func _session_uses_meta() -> bool:
+	for m in session.markers:
+		if int(m.get("effect_a", 0)) == MaskSession.EFFECT_META:
+			return true
+	return false
 
 
 ## The same backtick feedback console the auto/manual show has (see feedback.gd),
@@ -1425,7 +1512,7 @@ func _build_panel() -> void:
 	# never visually push the panel past PANEL_W and over the timeline, whatever
 	# happens inside (see the autowrap fix below for the actual root cause this
 	# guards - a long unwrapped Label's natural width was doing exactly that).
-	add_child(panel)
+	_chrome_host().add_child(panel)
 
 	# Two independently-scrolling regions, stacked: the controls above (which can
 	# get tall - color pickers, a dozen sliders) scroll in whatever space is left,
@@ -2514,8 +2601,10 @@ func _update_effect_controls(effect_id: int) -> void:
 	# clear fades out EVERYTHING earlier - it has no target color at all. snow
 	# picks its foreground/background split automatically - it has no target
 	# color either. arealight lights the whole frame, not a keyed color.
+	# meta mirrors the whole workspace - it keys on nothing, so no colour picker.
 	var has_color := effect_id != MaskSession.EFFECT_CLEAR and effect_id != MaskSession.EFFECT_SNOW \
-		and effect_id != MaskSession.EFFECT_SERPENT and effect_id != MaskSession.EFFECT_AREALIGHT
+		and effect_id != MaskSession.EFFECT_SERPENT and effect_id != MaskSession.EFFECT_AREALIGHT \
+		and effect_id != MaskSession.EFFECT_META
 	_grp_color.visible = has_color
 	_show_field(_hue_a, has_color)   # the Hue row lives in _grp_options now, not under _grp_color
 	_show_field(_threshold, groups.has("keying") or groups.has("reach"), _threshold_label)
@@ -2689,14 +2778,32 @@ func _clip_fade_gain(local: float, span: float, fi: float, fo: float) -> float:
 	return clampf(g, 0.0, 1.0)
 
 
-## Audio gain in dB for a clip: the pull-rope volume `v` (0..1) times the fade envelope
-## `g` (0..1) gives the perceptual level, mapped through a LINEAR dB ramp - which is a
-## logarithmic amplitude curve, what sounds like an even fade/level to the ear. Silence
-## at a fully-faded edge or v = 0. The knob's asymptotic v means unity is approached but
-## never quite hit.
+## Exponential audio taper for the pull-rope knob's raw 0..1 reading: pushes the quiet
+## end down hard (a real dead zone near the anchor, not just a shallower version of
+## "audible") while leaving the top of the pull comparatively spacious, so fine-tuning
+## a loud level doesn't blow past it - feedback/0025: "1% volume should be nearly
+## inaudible, but isn't"; "the middle volume growth seems very fast". _TAPER_K controls
+## how hard the low end is suppressed; the curve is 0 at v=0 and 1 at v=1 regardless.
+const _TAPER_K := 5.0
+func _volume_taper(v: float) -> float:
+	return (exp(_TAPER_K * v) - 1.0) / (exp(_TAPER_K) - 1.0)
+
+
+## Audio gain in dB for a clip: the pull-rope volume `v` (0..1), exponentially tapered
+## (see _volume_taper), times the fade envelope `g` (0..1) gives the linear gain
+## fraction. This used to run through lerpf(-40, 0, l) - a shallow floor that left a
+## fade idling around a still-audible -40dB for nearly the whole marker-to-marker span,
+## then jumped a discontinuous 40dB to silence in the last fraction of a percent
+## (feedback/0024: "barely reduces until the very tail end"). An equal-power curve (the
+## standard cinematic/DAW fade shape) into a real dB conversion spreads the perceived
+## loudness change smoothly across the whole span instead, with no cliff at the end -
+## and its own natural flattening near l=1 gives the fine control near the top of the
+## pull that feedback/0025 asked for, on top of the taper above.
 func _track_level_db(v: float, g: float) -> float:
-	var l := clampf(v, 0.0, 1.0) * clampf(g, 0.0, 1.0)
-	return -80.0 if l < 0.004 else lerpf(-40.0, 0.0, l)
+	var l := _volume_taper(clampf(v, 0.0, 1.0)) * clampf(g, 0.0, 1.0)
+	if l < 0.0005:
+		return -80.0
+	return clampf(linear_to_db(sin(l * PI * 0.5)), -80.0, 0.0)
 
 
 ## The main clip's own fade, applied every frame: the whole composite (video) dims via
@@ -3000,6 +3107,7 @@ func _apply_frame_state(p: Dictionary) -> void:
 	# itself on whatever's actually on screen, not on the session's marker list.
 	_chimera_active = false
 	_temporal_active = false
+	_meta_amount = 0.0
 	for l in layers:
 		var le := int(l.get("effect_a", 0))
 		if le == MaskSession.EFFECT_CHIMERA:
@@ -3007,6 +3115,12 @@ func _apply_frame_state(p: Dictionary) -> void:
 		if le == 5 or le == 7 or le == MaskSession.EFFECT_SNOW or le == MaskSession.EFFECT_ORACLE \
 				or le == MaskSession.EFFECT_SERPENT or le == MaskSession.EFFECT_CHIMERA:
 			_temporal_active = true
+		# The META mirror's strength - the same env x intensity the shader gets as
+		# this layer's weight. Drives whether the (expensive) workspace readback runs
+		# at all this frame, and how far the render-mode editor chrome has revealed.
+		if le == MaskSession.EFFECT_META:
+			_meta_amount = maxf(_meta_amount,
+				clampf(float(l.get("env", 0.0)) * float(l.get("intensity_a", 0.0)), 0.0, 1.0))
 	# Build the layer arrays ONCE; only the weights differ per surface (each
 	# material multiplies its own presence in). Arrays are pushed at FULL declared
 	# length - a short uniform array is silently dropped (flame.gdshader lesson).
@@ -3251,6 +3365,13 @@ func _process(_dt: float) -> void:
 	if _pip_view != null and _mask_wrap.visible:
 		_pip_view.texture = _player.get_video_texture()
 	_maybe_capture_echo()
+	# META: while a meta layer is live, capture the editor's own frame for the mirror
+	# and (in export) lerp the editor chrome into view. Both are gated on _meta_amount
+	# so the expensive readback only ever runs during an actual meta section.
+	if _meta_amount > 0.001:
+		_capture_workspace()
+	if render_mode:
+		_apply_meta_chrome(_meta_amount)
 	_push_anchor()
 	# Standing A/V drift correction (see _play: video is the master clock).
 	# 0.15s tolerance sits above audio mix-chunk granularity so this never

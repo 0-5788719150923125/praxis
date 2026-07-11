@@ -246,7 +246,7 @@ const MAX_LAYERS := 6
 ## none at 0, a scattered handful by 1. The angles and the waxing/waning are
 ## automatic; the dial changes what the light IS, how MANY sources are live,
 ## and whether standalone flares exist at all.
-const MASK_EFFECTS := ["erase", "fire", "freeze", "smoke", "restore", "whisp", "crystal", "echo", "clear", "snow", "fur", "oracle", "serpent", "chimera", "arealight"]
+const MASK_EFFECTS := ["erase", "fire", "freeze", "smoke", "restore", "whisp", "crystal", "echo", "clear", "snow", "fur", "oracle", "serpent", "chimera", "arealight", "meta"]
 const EFFECT_RESTORE := 4
 const EFFECT_CRYSTAL := 6
 const EFFECT_CLEAR := 8
@@ -256,6 +256,12 @@ const EFFECT_ORACLE := 11
 const EFFECT_SERPENT := 12
 const EFFECT_CHIMERA := 13
 const EFFECT_AREALIGHT := 14
+## META: mirrors the whole editor workspace into the frame (the recorded product
+## demo + OBS-style infinite mirror). KEYLESS, no pattern - the editor captures its
+## own previous frame into u_workspace only while a meta layer is live (expensive:
+## a per-frame viewport readback), and this layer mixes it in by its envelope. See
+## mask_editor.gd _capture_workspace / _meta_amount_of.
+const EFFECT_META := 15
 
 ## THE CONTROL HIERARCHY: which panel option groups each effect actually consumes
 ## (the editor shows/hides accordingly - a slider that does nothing for the
@@ -281,6 +287,7 @@ const EFFECT_CONTROLS := {
 	12: ["pattern"],              # serpent (keyless, like snow: contrast-driven, no color to gate on)
 	13: ["pattern"],              # chimera (color steers the anchor/claim; scale=window, pan=graft offset, coverage=dominance, contrast=interleave sharpness)
 	14: ["pattern"],              # arealight (keyless; pattern group exists only to expose the single Envelope/contrast dial)
+	15: [],                       # meta (mirrors the workspace; keyless, no pattern - only intensity/duration/kind matter)
 }
 
 ## Second level of the same rule, INSIDE the "pattern" group: which individual
