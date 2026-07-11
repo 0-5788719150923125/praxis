@@ -53,6 +53,9 @@ var _session_path := ""       # res://-relative or absolute; wherever it was loa
 var _player: VideoStreamPlayer     # always the RAW decode - never carries the shader
 var _audio: AudioStreamPlayer
 var _audio_thread: Thread = null   # loads the (large, uncompressed) main WAV off the main thread
+var _autostart_pending := false    # live autostart is HELD (video paused on frame 1) until the
+                                   #   threaded audio attaches, so the intro never plays audio-less
+                                   #   and skips - _poll_audio_thread begins playback, synced (below)
 var _pending_restore := -1.0       # playhead seconds to seek to once the player is ready (see _process)
 var _pending_restore_tries := 0
 var _reload_check_pid := -1        # headless compile check gating a reload (see _do_restart)
@@ -583,7 +586,17 @@ func _ready_with_session() -> void:
 	else:
 		_build_editor_ui()
 		_ensure_waveform()
-	_play(true)
+	# Export loaded its audio synchronously (it must have sound from frame 0), so it
+	# can start immediately. Live loads the WAV on a worker thread: starting now would
+	# advance the video (the master clock) while the audio is still unattached, and the
+	# audio would then join wherever the video already got to - the intro skip on every
+	# first run. Hold the autostart instead - show frame 1 paused - and let
+	# _poll_audio_thread begin playback the moment the audio is ready, synced from 0.
+	if render_mode or _audio_thread == null or not _audio_thread.is_started():
+		_play(true)
+	else:
+		_autostart_pending = true
+		_play(false)   # decode + show the first frame, but hold the clock at the start
 	# Land back where the playhead was last time (persisted per session) - only live;
 	# an export always starts at clip_in. Deferred to the first _process tick: a
 	# VideoStreamPlayer won't accept a seek the same frame it starts playing.
@@ -2754,9 +2767,18 @@ func _poll_audio_thread() -> void:
 	if stream != null and _audio != null:
 		_audio.stream = stream
 		_apply_main_volume()
-		if _playing:
-			_audio.play(_player.stream_position if _player != null else 0.0)
-			_audio.stream_paused = false
+	# The autostart was waiting for exactly this: begin playback now, synced at the
+	# current (start) position, so the intro plays with its audio from the first
+	# sample instead of skipping. _play(true) seeks the audio to the video's position,
+	# so it stays in sync. If the load FAILED (stream null) start anyway - a silent
+	# editor beats one frozen forever waiting on audio that will never arrive.
+	if _autostart_pending:
+		_autostart_pending = false
+		_play(true)
+		return
+	if stream != null and _audio != null and _playing:
+		_audio.play(_player.stream_position if _player != null else 0.0)
+		_audio.stream_paused = false
 
 
 ## The main clip's 0/1 audio toggle -> the AudioStreamPlayer's level. -80 dB reads as
