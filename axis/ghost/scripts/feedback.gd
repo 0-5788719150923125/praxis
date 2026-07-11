@@ -49,6 +49,7 @@ var _shot_desc: Dictionary = {}  # the scene descriptor at that same instant
 
 func _ready() -> void:
 	layer = 128                      # draw above every scene
+	add_to_group("feedback_console") # so the Assistant can hold a pending reload while this is open
 	_ensure_dir()
 	_build_ui()
 

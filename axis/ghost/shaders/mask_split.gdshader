@@ -40,6 +40,12 @@ const int MAXL = 6;   // must match MaskSession.MAX_LAYERS
 uniform float u_threshold = 0.24;  // hue-distance inside which a pixel fully belongs
 uniform float u_feather = 0.12;    // softness of the membership edge
 uniform float u_sat_floor = 0.18;  // below this saturation, a pixel keys to NO layer
+uniform float u_fade = 1.0;        // clip fade-in/out envelope (0 = fully faded) - fragment()
+                                    // samples TEXTURE directly rather than starting from the
+                                    // built-in COLOR, so the CanvasItem's own modulate.a never
+                                    // reaches the output pixel; this uniform is how a caller
+                                    // fading the composite (see mask_editor.gd's
+                                    // _apply_main_fade) actually dims it
 
 // The layer stack (chronological; only the first u_l_count entries are live).
 uniform int u_l_count = 0;
@@ -275,6 +281,20 @@ float serpent_layer(vec2 q, float t, float sparse, float girth, float lenx) {
 		best = max(best, body * bands * glow_s);
 	}
 	return best;
+}
+
+// A small fixed cinematic gel palette for arealight's rig - a curated
+// key/backlight/kicker/edge spread rather than a literal rainbow, since real
+// film lighting gels come in a handful of characteristic colors, not a smooth
+// hue wheel. Index 4 (warm practical) is what every source collapses toward
+// at Envelope 0.
+vec3 cine_gel(int idx) {
+	if (idx == 0) { return vec3(1.00, 0.62, 0.32); }  // amber key
+	if (idx == 1) { return vec3(0.35, 0.55, 1.00); }  // cool blue backlight
+	if (idx == 2) { return vec3(1.00, 0.30, 0.55); }  // magenta kicker
+	if (idx == 3) { return vec3(0.30, 0.85, 0.80); }  // teal edge
+	if (idx == 4) { return vec3(0.95, 0.90, 0.55); }  // warm practical
+	return vec3(0.55, 0.35, 1.00);                    // violet rim
 }
 
 // One past frame from the echo ring by age (0 = newest capture .. 7 = oldest).
@@ -810,6 +830,101 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		float amt9 = clamp(flake * w, 0.0, 1.0);
 		return vec4(mix(col.rgb, snowc, amt9), col.a);
 	}
+	if (effect == 14) {
+		// AREALIGHT - cinematic area lighting: a rig of light sources spread
+		// across the full span of azimuth angles behind the camera, each
+		// waxing and waning on its own slow clock so the rig reads as alive
+		// rather than a static three-point setup. KEYLESS and ADDITIVE-ONLY:
+		// it lights the whole frame, nothing is consumed. The single exposed
+		// dial (Contrast, relabeled Envelope) doesn't just recolor a fixed
+		// rig - it GROWS it: at 0 only the first source (a wide, soft, warm
+		// practical) is lit and the rest stay dark; as it rises the other
+		// five switch on in turn, each at its own azimuth/color, the falloff
+		// sharpens from a wide wash toward a tight hard rim, and discrete
+		// point flares - actual sparse gaussian geometries, not just a smooth
+		// wash - start punching through, scattered by the same per-cell
+		// hash+threshold masking snow/serpent already use to scatter their
+		// own elements.
+		float env14 = clamp(u_l_con[i], 0.0, 1.0);
+		// The same mid/wide gradient probe whisp/freeze/crystal already trust
+		// as a feature-conformance cue, repurposed as a 2D lighting normal -
+		// the only depth proxy available without real 3D geometry: edges
+		// catch the rim, flat regions don't.
+		vec2 grad14 = vec2(0.0);
+		for (int k14 = 0; k14 < 8; k14++) {
+			float am14 = float(k14) * 0.7853981634 + 0.3926990817;
+			float aw14 = float(k14) * 0.7853981634 + 0.1963495409;
+			grad14 += vec2(cos(am14), sin(am14)) * taps[k14 + 9].z
+				+ vec2(cos(aw14), sin(aw14)) * taps[k14 + 17].z;
+		}
+		float feat14 = smoothstep(0.02, 0.22, length(grad14));
+		vec2 n14 = feat14 > 0.001 ? normalize(grad14) : vec2(0.0);
+		float hardness14 = mix(0.4, 3.2, env14);
+		float t14 = u_time * 0.12;
+		float total14 = 0.0;
+		vec3 light14 = vec3(0.0);
+		for (int L14 = 0; L14 < 6; L14++) {
+			float ph14 = hash21(vec2(float(L14), 7.31));
+			// Six sources spread evenly across the full circle, each drifting
+			// at its own slightly different rate - the spread stays even but
+			// never looks like a rigid, synchronized rig.
+			float ang14 = (float(L14) / 6.0) * 6.2832 + t14 * (0.25 + ph14 * 0.3);
+			vec2 ldir14 = vec2(cos(ang14), sin(ang14));
+			// Async wax/wane per light - some hold longer, some flare faster -
+			// so the rig never reads as one uniform pulse.
+			float wgt14 = 0.5 + 0.5 * sin(t14 * (0.7 + ph14 * 1.3) + ph14 * 6.2832);
+			wgt14 = pow(wgt14, mix(0.7, 2.4, env14));
+			// The rig GROWS with Envelope instead of staying six always-on
+			// sources that only recolor: the practical (light 0) is always
+			// live, the rest switch on staggered across the dial so the
+			// light's actual spatial distribution spreads as Envelope rises.
+			float on14 = L14 == 0 ? 1.0
+				: smoothstep(float(L14) / 6.0 - 0.16, float(L14) / 6.0 + 0.16, env14);
+			float facing14 = max(0.0, dot(n14, ldir14));
+			float rim14 = pow(facing14, hardness14) * wgt14 * on14;
+			// At env 0 every source collapses toward the same warm practical
+			// gel (palette index 4); at env 1 each keeps its own place in the
+			// spread - the dial sweeping from "one soft key" to "the full rig".
+			vec3 gel14 = mix(cine_gel(4), cine_gel(L14), env14);
+			light14 += gel14 * rim14;
+			total14 += rim14;
+		}
+		vec3 avg_gel14 = light14 / max(total14, 0.001);
+		float amt14 = feat14 * clamp(total14 * mix(0.5, 1.05, env14), 0.0, 1.6) * u_l_w[i];
+		vec3 result14 = col.rgb + avg_gel14 * amt14 * 0.6;
+		// Sparse flare geometries: discrete gaussian point-lights scattered by
+		// cell in aspect-corrected space (so they read as round, not
+		// stretched). These are light SOURCES, not a rim a surface catches,
+		// so they ignore feat14 entirely and can appear over flat background
+		// same as over a feature edge. Each pixel checks its own cell plus
+		// its 3x3 neighborhood so a flare's gaussian tail can bleed across
+		// its cell's border instead of clipping at it. The per-cell gate is
+		// zero at Envelope 0 (none spawn - the single wide practical only)
+		// and opens as Envelope rises, so the flare COUNT grows with the
+		// dial, not just its color.
+		vec2 p14 = uv * vec2(u_aspect, 1.0) * 5.0;
+		vec2 fcell14 = floor(p14);
+		for (int fx14 = -1; fx14 <= 1; fx14++) {
+			for (int fy14 = -1; fy14 <= 1; fy14++) {
+				vec2 fcoord14 = fcell14 + vec2(float(fx14), float(fy14));
+				vec2 fh14 = hash22(fcoord14 + 4.13);
+				if (fh14.x > env14 * 0.35) {
+					continue;
+				}
+				vec2 fcenter14 = fcoord14 + vec2(0.5) + (hash22(fcoord14 + 17.9) - 0.5) * 0.7;
+				int fidx14 = int(floor(fh14.y * 6.0));
+				float fph14 = hash21(fcoord14 + 51.0);
+				float fwgt14 = 0.5 + 0.5 * sin(t14 * (0.6 + fph14 * 1.4) + fph14 * 6.2832);
+				float fr14 = mix(0.32, 0.14, fh14.y) * mix(1.0, 0.7, env14);
+				float fd14 = length(p14 - fcenter14);
+				float fgauss14 = exp(-(fd14 * fd14) / (2.0 * fr14 * fr14));
+				vec3 fgel14 = cine_gel(fidx14);
+				float famt14 = fgauss14 * fwgt14 * env14 * u_l_w[i];
+				result14 += fgel14 * famt14 * 0.9;
+			}
+		}
+		return vec4(result14, col.a);
+	}
 	// Fine/regional confidence for the VOLUMETRIC masks: local coverage and the
 	// whole 25-tap pyramid - a wide, spatially smooth envelope with no
 	// block-scale structure (block noise is high-frequency; a ~44px window
@@ -1239,5 +1354,6 @@ void fragment() {
 		}
 		col = apply_layer(col, i, taps, UV, TEXTURE);
 	}
+	col.a *= u_fade;
 	COLOR = col;
 }

@@ -23,13 +23,13 @@ class_name MaskSession
 ## transition occupies:
 ##   RAMP  - the layer eases in over the `duration` seconds BEFORE the anchor,
 ##           arriving complete exactly at the marker's time (anticipation).
-##   DECAY - the layer begins AT the anchor and accumulates over the `duration`
+##   DAMP  - the layer begins AT the anchor and accumulates over the `duration`
 ##           seconds AFTER it - the footage is progressively consumed (an audio
-##           decay envelope). Nothing happens before the anchor.
+##           damping envelope). Nothing happens before the anchor.
 ## Once in, a layer HOLDS - until one of exactly three things ends it:
 ##   1. THE RAW CHECKPOINT (the rebase). A full-raw marker (view_mode 2) is a
 ##      canvas reset: once its transition to raw has COMPLETED (at its anchor for
-##      a ramp; anchor+duration for a decay - never mid-fade, or the cut would
+##      a ramp; anchor+duration for a damp - never mid-fade, or the cut would
 ##      pop), no earlier marker's layer exists beyond it. Raw is the one place a
 ##      reset is pop-free BY CONSTRUCTION - nothing is on screen while it
 ##      happens - so composition history never crosses a raw boundary: a
@@ -47,7 +47,7 @@ class_name MaskSession
 ## magic, wrong.) The SUBTRACTIVE half is explicit: the "restore" effect (see
 ## MASK_EFFECTS). A restore marker draws nothing of its own - it targets a color
 ## exactly like a keying marker does (its own picker, its own threshold for how
-## wide around that color it reaches, its own ramp/decay envelope, its intensity
+## wide around that color it reaches, its own ramp/damp envelope, its intensity
 ## = how completely it restores) and fades out every EARLIER layer on that
 ## color over its window. Mask a color out at minute one, restore it at minute
 ## five, mask it differently at minute six - a chain of explicit operations.
@@ -76,7 +76,7 @@ class_name MaskSession
 ## consumed - a marker's layer reads only the *_a channel.)
 const VECTOR_FIELDS := [
 	"time",             # seconds into the clip
-	"kind",             # 0=ramp (eases in before the anchor) / 1=decay (accumulates after)
+	"kind",             # 0=ramp (eases in before the anchor) / 1=damp (accumulates after)
 	"hue_a",            # THE layer's target hue, 0..1
 	"hue_b",            # legacy, unused
 	"threshold",        # key distance threshold, 0..1 (global)
@@ -87,7 +87,7 @@ const VECTOR_FIELDS := [
 	"effect_b",         # legacy, unused
 	"intensity_a",      # THE layer's strength, 0..1
 	"intensity_b",      # legacy, unused
-	"duration",         # seconds the ramp (before) or decay (after) envelope takes
+	"duration",         # seconds the ramp (before) or damp (after) envelope takes
 	"view_mode",        # which rendering is shown/exported at this point - see VIEW_MODES
 	"pip_track",        # which video fills the PiP inset: 0 = the main clip (default),
 	                    #   k = imported track (k-1). The V button cycles through these.
@@ -113,7 +113,7 @@ const LAYER_FIELDS := ["hue_a", "effect_a", "intensity_a", "fx_x", "fx_y",
 	"fx_scale", "fx_density", "resonance", "fx_contrast", "fx_speed", "fx_lag",
 	"fx_smooth", "fx_stick"]
 
-const MARKER_KINDS := ["ramp", "decay"]
+const MARKER_KINDS := ["ramp", "damp"]
 
 ## The most simultaneous layers the shader renders (its uniform arrays are sized
 ## to this). When more are active, the OLDEST are dropped.
@@ -223,7 +223,30 @@ const MAX_LAYERS := 6
 ## outright. Scale = window/zoom, Pan = graft offset, Coverage = how much of
 ## the chimera is the other head, Contrast = interleave sharpness. Needs an
 ## imported track (T); draws nothing without one.
-const MASK_EFFECTS := ["erase", "fire", "freeze", "smoke", "restore", "whisp", "crystal", "echo", "clear", "snow", "fur", "oracle", "serpent", "chimera"]
+## "arealight" - cinematic area lighting: a small rig of light sources spread
+## across the FULL SPAN of azimuth angles behind the camera (not one direction
+## - a spread, so the subject catches something from wherever it turns), each
+## waxing and waning on its own slow clock so the rig reads as alive rather
+## than a static three-point setup. KEYLESS, like snow/serpent (there is no
+## subject color to gate on - it lights the whole frame) and ADDITIVE-ONLY:
+## nothing is consumed, only lit, unlike every volumetric effect above. Its
+## local "lighting normal" is the same mid/wide gradient probe whisp/freeze/
+## crystal already read as a feature-conformance cue, repurposed here as the
+## only depth proxy available without real 3D geometry - edges catch the rim,
+## flat regions don't. Deliberately ONE exposed dial (Contrast, relabeled
+## Envelope in the editor) rather than a knob per light: it doesn't aim
+## anything, it moves WHERE ALONG A LIGHTING MOOD the whole rig sits - and it
+## GROWS the rig, not just recolors it. At 0 only the first source (a wide,
+## soft, warm practical) is lit; the rest switch on staggered as the dial
+## rises, each in its own place in a curated cinematic gel palette, the
+## falloff sharpening from a wide wash to a tight hard rim as it goes. Past
+## that, the same dial also unlocks discrete point flares - sparse
+## gaussian-falloff light-source geometries scattered by the same per-cell
+## hash+threshold masking snow/serpent use to scatter their own elements -
+## none at 0, a scattered handful by 1. The angles and the waxing/waning are
+## automatic; the dial changes what the light IS, how MANY sources are live,
+## and whether standalone flares exist at all.
+const MASK_EFFECTS := ["erase", "fire", "freeze", "smoke", "restore", "whisp", "crystal", "echo", "clear", "snow", "fur", "oracle", "serpent", "chimera", "arealight"]
 const EFFECT_RESTORE := 4
 const EFFECT_CRYSTAL := 6
 const EFFECT_CLEAR := 8
@@ -232,6 +255,7 @@ const EFFECT_FUR := 10
 const EFFECT_ORACLE := 11
 const EFFECT_SERPENT := 12
 const EFFECT_CHIMERA := 13
+const EFFECT_AREALIGHT := 14
 
 ## THE CONTROL HIERARCHY: which panel option groups each effect actually consumes
 ## (the editor shows/hides accordingly - a slider that does nothing for the
@@ -256,6 +280,7 @@ const EFFECT_CONTROLS := {
 	11: ["pattern", "echo"],      # oracle (echo inverted: pan=premonition step, coverage=copies, contrast=mute, lag=lead)
 	12: ["pattern"],              # serpent (keyless, like snow: contrast-driven, no color to gate on)
 	13: ["pattern"],              # chimera (color steers the anchor/claim; scale=window, pan=graft offset, coverage=dominance, contrast=interleave sharpness)
+	14: ["pattern"],              # arealight (keyless; pattern group exists only to expose the single Envelope/contrast dial)
 }
 
 ## Second level of the same rule, INSIDE the "pattern" group: which individual
@@ -271,6 +296,9 @@ const PATTERN_KNOBS := {
 	# and contrast (interleave sharpness). It never reads speed, and its only
 	# tie to resonance is a marginal audio-breathe on dominance - both hidden.
 	13: ["scale", "pan", "coverage", "contrast"],
+	# arealight reads ONLY contrast (relabeled Envelope in the editor) - the
+	# whole point is one dial, not a knob per light.
+	14: ["contrast"],
 }
 
 ## The view-mode registry (see mask_editor.gd). Really a 2-axis matrix flattened to
@@ -319,6 +347,23 @@ var clip_out := -1.0
 ## together, each gated by its own 0/1 - see mask_editor.gd's _sync_tracks / _play.
 var main_volume := 1.0
 
+## The MAIN clip's fade envelope (seconds): audio AND video ramp in over the first
+## `main_fade_in` seconds and out over the last `main_fade_out`. Tracks carry their
+## own "fade_in"/"fade_out" per entry. Both edges of a lane are two handles - the
+## trim point and the fade boundary - see TrackLane / _apply_clip_fade.
+var main_fade_in := 0.0
+var main_fade_out := 0.0
+
+## Where the playhead was, in seconds - persisted so reopening a session (or an
+## auto-restart after the assistant edits code) lands you back exactly where you were.
+var playhead := 0.0
+
+## Timeline zoom/pan (see TimelineView), persisted alongside playhead so a reopen
+## or auto-restart also lands back on the same zoomed-in window, not just the
+## same playhead.
+var timeline_zoom := 1.0
+var timeline_view_start := 0.0
+
 ## Secondary tracks (picture-in-picture overlays) - see mask_editor.gd's "Import
 ## track" flow. Each: {video_path, duration, clip_in, clip_out, offset (seconds on
 ## the MASTER timeline where this track's clip_in lands), x, y, w, h (normalized
@@ -332,6 +377,87 @@ var tracks: Array = []
 ## if trimmed, else the full duration. Never negative, never past duration.
 func effective_clip_out() -> float:
 	return clampf(clip_out if clip_out > 0.0 else duration, 0.0, duration)
+
+
+## Where playback (live preview and export) actually stops: effective_clip_out(),
+## extended to cover any track scheduled to run past it - e.g. _split_main's tail,
+## which trims clip_out and appends the remainder as a track at that same offset so
+## it keeps playing there instead of cutting the show short. Clamped to `duration`:
+## the master clock is the main clip's OWN decode position (see mask_editor.gd's
+## _sync_tracks), so it can never advance past the main clip's full length no
+## matter how far out a track's offset reaches.
+func content_end() -> float:
+	var extent := effective_clip_out()
+	for t in tracks:
+		var span: float = maxf(0.0, float(t.get("clip_out", 0.0)) - float(t.get("clip_in", 0.0)))
+		extent = maxf(extent, float(t.get("offset", 0.0)) + span)
+	return minf(extent, duration)
+
+
+## Index of the track that is a continuation of the main clip (same source
+## video_path - produced by splitting the main clip, see mask_editor.gd's
+## _split_main/_split_track) whose own [offset, offset+span) window covers
+## master time `t`, or -1 if none. A track pointing at a DIFFERENT file is
+## always just a PiP inset (see _sync_tracks) and is never a continuation.
+##
+## Each continuation track has its OWN independent player (mask_editor.gd's
+## _track_runtime) that mask_editor.gd seeks/renders full-screen while it
+## owns time `t` - unlike an earlier version of this check, there is no
+## `offset == clip_in` invariant to protect here, because nothing is being
+## borrowed from the main clip's own decode anymore. That invariant used to
+## gate main_visible_at() so the main clip's raw decode (which never re-seeks
+## for a continuation track, it just keeps decoding forward) wouldn't be
+## mistaken for a track's actual content once an ordinary edit - retrimming
+## the track's own in-point, or just shifting its body on the timeline (which
+## only moves `offset`, see track_lane.gd's body-drag) - pulled offset and
+## clip_in apart. That made picture visibility depend on a floating-point
+## equality an ordinary drag could silently break, with audio (which never
+## had that restriction) still playing right through the resulting black frame
+## (feedback/0009, /0012, /0013, /0014 all trace back to this one invariant).
+## The picture now always comes from this track's own player, seeked to its
+## own `t - offset + clip_in` like every other track, so there's nothing left
+## to protect - the invariant is simply gone.
+func continuation_track_at(t: float) -> int:
+	for i in tracks.size():
+		var tr: Dictionary = tracks[i]
+		if tr.get("video_path", "") != video_path:
+			continue
+		var offset := float(tr.get("offset", 0.0))
+		var span: float = maxf(0.0, float(tr.get("clip_out", 0.0)) - float(tr.get("clip_in", 0.0)))
+		if span > 0.0 and t >= offset and t < offset + span:
+			return i
+	return -1
+
+
+## Whether SOME source (the main clip's own kept range, or a continuation
+## track picking up right after it) has valid picture at time `t` at all.
+func main_visible_at(t: float) -> bool:
+	return t < effective_clip_out() or continuation_track_at(t) != -1
+
+
+## Whether a continuation track (same video_path as the main clip) already
+## claims audio ownership at time `t`, so mask_editor.gd's _apply_main_fade
+## knows to mute the main clip's own audio in favor of that track's own
+## independent AudioStreamPlayer instead of doubling it (feedback/0013).
+##
+## Only true when that track is still a GENUINE continuation - `offset` equal
+## to its own `clip_in`, meaning its source position at every `t` (t - offset
+## + clip_in) works out to `t` itself, exactly what the main clip's own decode
+## would be showing/playing there too, hence actually a duplicate. Once a
+## track's body has been dragged independently of its trim (offset and
+## clip_in pulled apart - same drift continuation_track_at's doc describes for
+## picture), it's playing a genuinely different moment of the source, not a
+## copy of main's audio - main should keep playing so the two mix, same as
+## any other pair of overlapping tracks (feedback/0021: a dragged-apart
+## continuation track overlapping the still-active main clip went completely
+## silent because this used to mute main for ANY covering continuation track,
+## in-sync or not).
+func track_owns_audio_at(t: float) -> bool:
+	var i := continuation_track_at(t)
+	if i == -1:
+		return false
+	var tr: Dictionary = tracks[i]
+	return absf(float(tr.get("offset", 0.0)) - float(tr.get("clip_in", 0.0))) < 0.05
 
 
 ## The ruler's total extent in seconds: always at least `duration` (the primary
@@ -408,18 +534,18 @@ static func _amounts_of(state: Dictionary) -> Dictionary:
 ## This marker's own IN-envelope at `t`: 0 before its window, easing to 1 across
 ## it, holding 1 forever after. Closed-form - no recursion, no window chaining.
 ##   ramp : rises over [time - duration, time]
-##   decay: rises over [time, time + duration]
+##   damp: rises over [time, time + duration]
 ## Index of the latest full-raw marker whose transition to raw has COMPLETED by
 ## `t` (-1 if none): at its anchor for a ramp (the ramp eases in BEFORE, arriving
-## complete exactly there), anchor+duration for a decay (still fading until
+## complete exactly there), anchor+duration for a damp (still fading until
 ## then). Cutting only after completion keeps the reset pop-free: presence is
 ## already zero when the history disappears.
 ##
 ## But that guarantee only holds if the screen actually GOT to raw - and a
 ## later marker becomes at_time()'s governing `cur` from its own arrival
-## onward, regardless of whether an earlier raw marker's decay window has
+## onward, regardless of whether an earlier raw marker's damp window has
 ## finished counting down. If something later takes the screen back to
-## masked/pip before the raw decay completes, main_fx never reaches 0 (it just
+## masked/pip before the raw damp completes, main_fx never reaches 0 (it just
 ## holds wherever the later marker left it - never faded at all, in the
 ## fast-forward-to-the-next-marker case), so a rebase firing purely off the
 ## raw marker's own arithmetic would erase a stack that's still fully visible:
@@ -572,17 +698,26 @@ func layers_at(t: float) -> Array:
 ## transition windows), the discrete view_mode + its derived presence AMOUNTS
 ## (lerped), and "layers" - the layer stack from layers_at(). Everything a
 ## consumer needs to draw the frame; see the transition contract above.
-func at_time(t: float) -> Dictionary:
+## want_layers=false skips the O(markers^2) layers_at() at the end - the recursive
+## calls below (resolving the source state a transition window blends FROM) read
+## only the global scalars, amounts, and pip_track off the result, never "layers",
+## so computing and discarding the layer stack at every recursion level was pure
+## waste that grew with both marker count and window overlap depth. External
+## callers keep the default and always get layers.
+func at_time(t: float, want_layers := true) -> Dictionary:
 	if markers.is_empty():
 		var d0 := DEFAULTS.duplicate()
 		d0.merge(mode_amounts(d0.get("view_mode", 2.0)))
 		d0["layers"] = []
 		return d0
 	var cur = null
+	var cur_i := -1
 	var nxt = null
-	for m in markers:
+	for i in markers.size():
+		var m: Dictionary = markers[i]
 		if m.time <= t:
 			cur = m
+			cur_i = i
 		elif nxt == null:
 			nxt = m
 
@@ -608,7 +743,7 @@ func at_time(t: float) -> Dictionary:
 		var d: float = maxf(0.001, float(approaching.get("duration", 1.0)))
 		var span_start: float = float(approaching.time) - d
 		if t >= span_start and t <= float(approaching.time):
-			var src := at_time(span_start - 0.001)
+			var src := at_time(span_start - 0.001, false)
 			var f := (t - span_start) / d
 			for key in GLOBAL_CONTINUOUS:
 				out[key] = lerpf(float(src.get(key, DEFAULTS.get(key, 0.0))),
@@ -629,12 +764,65 @@ func at_time(t: float) -> Dictionary:
 			for key in AMOUNT_FIELDS:
 				out[key] = lerpf(float(src_amt.get(key, 0.0)), float(dst_amt.get(key, 0.0)), f)
 
-	# Decay window: the just-passed marker's globals/presence accumulate from the
+	# Damp window: the just-passed marker's globals/presence accumulate from the
 	# prior state toward its own. f clamps at 1, so it holds once accumulated.
 	if cur != null and int(cur.get("kind", 0.0)) == 1 and t >= float(cur.time):
 		var d: float = maxf(0.001, float(cur.get("duration", 1.0)))
-		var src := at_time(float(cur.time) - 0.001)
-		var f := clampf((t - float(cur.time)) / d, 0.0, 1.0)
+		# If cur interrupted an EARLIER damp-to-raw marker's own trail (its window
+		# still open when cur arrived), that suppression keeps counting down on its
+		# own clock - cur doesn't start accumulating back up until it's actually
+		# done. Without this, a marker placed to fade to raw over a long trail reads
+		# as fully faded right up until the next marker's anchor, then instantly
+		# reverses and rebuilds - the "surging back" bug (feedback/0010): the
+		# overlapping trail should let the fade finish on its own promise before
+		# anything new is allowed to amplify on top of it.
+		var start_t := float(cur.time)
+		var prev_raw_done = null   # prev's own resolved state at start_t, if gated - see below
+		if cur_i > 0:
+			var prev: Dictionary = markers[cur_i - 1]
+			if int(prev.get("kind", 0.0)) == 1 and int(prev.get("view_mode", 2.0)) == 2:
+				var prev_done: float = float(prev.time) + maxf(0.001, float(prev.get("duration", 1.0)))
+				if prev_done > start_t:
+					start_t = prev_done
+					prev_raw_done = prev
+		# While gated (t hasn't reached start_t yet), prev's OWN damp-to-raw is still
+		# mid-flight - ride that curve rather than snapping straight to its endpoint.
+		# cur is by construction prev's immediate successor arriving before prev's own
+		# trail finishes, so prev never becomes the real barrier (see _barrier_index's
+		# supersession check) - treating it as "already reached raw" the instant cur
+		# arrives popped presence straight to zero (a hard cut to raw) instead of
+		# continuing prev's fade to its natural endpoint, THEN handing off to cur - the
+		# "particular effect reverts the whole scene to raw" bug (feedback/0029).
+		if prev_raw_done != null and t < start_t:
+			var pd: float = maxf(0.001, float(prev_raw_done.get("duration", 1.0)))
+			var pf := clampf((t - float(prev_raw_done.time)) / pd, 0.0, 1.0)
+			var psrc := at_time(float(prev_raw_done.time) - 0.001, false)
+			for key in GLOBAL_CONTINUOUS:
+				out[key] = lerpf(float(psrc.get(key, DEFAULTS.get(key, 0.0))),
+					float(prev_raw_done.get(key, DEFAULTS.get(key, 0.0))), pf)
+			var psrc_amt := _amounts_of(psrc)
+			var pdst_amt := mode_amounts(prev_raw_done.get("view_mode", 2.0))
+			out["pip_track"] = float(prev_raw_done.get("pip_track", 0.0)) \
+				if float(pdst_amt.get("inset_show", 0.0)) >= float(psrc_amt.get("inset_show", 0.0)) \
+				else float(psrc.get("pip_track", 0.0))
+			for key in AMOUNT_FIELDS:
+				out[key] = lerpf(float(psrc_amt.get(key, 0.0)), float(pdst_amt.get(key, 0.0)), pf)
+			if want_layers:
+				out["layers"] = layers_at(t)
+			return out
+		# `src` is the state the moment cur is actually allowed to start accumulating.
+		# When gated, that's exactly prev's own fully-arrived values (querying via
+		# at_time(start_t - 0.001) would re-enter THIS SAME window, since start_t is
+		# still >= cur.time - infinite recursion) - prev has already reached them by
+		# construction (the branch above handles every t before that), so no further
+		# transitioning is needed here.
+		var src: Dictionary
+		if prev_raw_done != null:
+			src = prev_raw_done.duplicate()
+			src.merge(mode_amounts(prev_raw_done.get("view_mode", 2.0)), true)
+		else:
+			src = at_time(start_t - 0.001, false)
+		var f := clampf((t - start_t) / d, 0.0, 1.0)
 		for key in GLOBAL_CONTINUOUS:
 			out[key] = lerpf(float(src.get(key, DEFAULTS.get(key, 0.0))),
 				float(cur.get(key, DEFAULTS.get(key, 0.0))), f)
@@ -642,7 +830,7 @@ func at_time(t: float) -> Dictionary:
 		var dst_amt := mode_amounts(cur.get("view_mode", 2.0))
 		# Same pip_track pop-guard as the ramp window above: the initial pass at the
 		# top of this function already set out["pip_track"] to cur's (the just-arrived
-		# decay marker's) own value, which is wrong while its inset presence hasn't
+		# damp marker's) own value, which is wrong while its inset presence hasn't
 		# accumulated past whatever was showing before it.
 		out["pip_track"] = float(cur.get("pip_track", 0.0)) \
 			if float(dst_amt.get("inset_show", 0.0)) >= float(src_amt.get("inset_show", 0.0)) \
@@ -650,19 +838,20 @@ func at_time(t: float) -> Dictionary:
 		for key in AMOUNT_FIELDS:
 			out[key] = lerpf(float(src_amt.get(key, 0.0)), float(dst_amt.get(key, 0.0)), f)
 
-	out["layers"] = layers_at(t)
+	if want_layers:
+		out["layers"] = layers_at(t)
 	return out
 
 
 ## This marker's own active span - [time-duration, time] for a ramp (it's pulling
-## the timeline toward itself from the past), [time, time+duration] for a decay
+## the timeline toward itself from the past), [time, time+duration] for a damp
 ## (it's pushing away from itself into the future). Exposed so the timeline can draw
-## the span it's shading without re-deriving the ramp/decay math itself.
+## the span it's shading without re-deriving the ramp/damp math itself.
 func marker_span(m: Dictionary) -> Vector2:
 	var d: float = maxf(0.001, float(m.get("duration", 1.0)))
 	var anchor: float = float(m.time)
-	var is_decay: bool = int(m.get("kind", 0.0)) == 1
-	return Vector2(anchor, anchor + d) if is_decay else Vector2(anchor - d, anchor)
+	var is_damp: bool = int(m.get("kind", 0.0)) == 1
+	return Vector2(anchor, anchor + d) if is_damp else Vector2(anchor - d, anchor)
 
 
 ## Flatten a marker to its scalar vector, in VECTOR_FIELDS order.
@@ -694,7 +883,8 @@ func to_dict() -> Dictionary:
 	return {
 		"source_path": source_path, "video_path": video_path, "audio_path": audio_path,
 		"duration": duration, "clip_in": clip_in, "clip_out": clip_out, "tracks": tracks,
-		"main_volume": main_volume,
+		"main_volume": main_volume, "main_fade_in": main_fade_in, "main_fade_out": main_fade_out,
+		"playhead": playhead, "timeline_zoom": timeline_zoom, "timeline_view_start": timeline_view_start,
 		"vector_fields": VECTOR_FIELDS, "markers": markers,
 	}
 
@@ -722,6 +912,11 @@ static func load(path: String) -> MaskSession:
 	s.clip_in = float(parsed.get("clip_in", 0.0))
 	s.clip_out = float(parsed.get("clip_out", -1.0))
 	s.main_volume = float(parsed.get("main_volume", 1.0))
+	s.main_fade_in = float(parsed.get("main_fade_in", 0.0))
+	s.main_fade_out = float(parsed.get("main_fade_out", 0.0))
+	s.playhead = float(parsed.get("playhead", 0.0))
+	s.timeline_zoom = float(parsed.get("timeline_zoom", 1.0))
+	s.timeline_view_start = float(parsed.get("timeline_view_start", 0.0))
 	for t in parsed.get("tracks", []):
 		s.tracks.append(t)
 	for m in parsed.get("markers", []):

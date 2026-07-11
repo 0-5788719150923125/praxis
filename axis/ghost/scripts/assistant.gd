@@ -21,11 +21,12 @@ class_name Assistant
 ## show up (status "orphaned") so they stay reviewable/deletable - they just
 ## never get sent anywhere on their own.
 ##
-## Runs are SERIAL: only one subprocess is ever live at a time, queued entries
-## wait. Several fresh, permission-bypassed agents editing the same working
-## tree concurrently is exactly the kind of conflict this whole session has
-## spent its time finding and fixing IN THIS EDITOR - two independent fixes to
-## the same shader at once is a guaranteed mess, not a speedup.
+## Up to MAX_CONCURRENT subprocesses run at once; anything past that queues.
+## Each is a fresh, permission-bypassed agent editing the SAME working tree,
+## so two runs CAN still land conflicting edits on the same file - kept
+## deliberately small, and each dispatch prompt tells the agent to scope its
+## edit narrowly rather than roam, precisely so concurrent runs mostly land on
+## different files.
 ##
 ## Conversations persist to feedback/NNNN.assistant.json (paired with the
 ## feedback console's own NNNN.json/.png) so they survive an app restart, and
@@ -33,16 +34,22 @@ class_name Assistant
 ## SAME claude session via --resume, not a fresh one - a real back-and-forth,
 ## not a one-shot fire-and-forget log.
 ##
-## UI lives bottom-right, above the export status row (see mask_editor.gd /
-## exporter.gd's shared notification corner) - CLOSED by default: a chat-
-## bubble toggle button is the only thing on screen until clicked, carrying an
-## activity badge ("💬 2") when something's running/queued so there's a hint
-## without opening it. Expanded, it's a scrollable list of entries, each
-## expandable to show the full exchange, with a delete button per entry.
+## UI lives bottom-right, in the SAME row as the export button (see
+## mask_editor.gd / exporter.gd's shared "Export video" button), right of it,
+## right in the corner - CLOSED by default: a chat-bubble toggle button is the
+## only thing on screen until clicked, carrying an activity badge ("💬 2")
+## when something's running/queued so there's a hint without opening it.
+## Expanded, it's a scrollable list of entries, each expandable to show the
+## full exchange, with a delete button per entry. Both export buttons leave
+## room for it (see their own offset_right) - the two live side by side by
+## construction, not by coincidence, so don't move one without the other.
 
 const DIR := "res://feedback"
 const PANEL_W := 380
-const LIST_H := 280
+## How many dispatched subprocesses may be live at once - past this, entries
+## queue same as before. Kept small: these are permission-bypassed agents
+## editing the same live working tree, not isolated sandboxes.
+const MAX_CONCURRENT := 3
 
 ## Only ever call `claude` with a controlled argument list via bash's safe
 ## positional-parameter trick ("$1", passed as a real argv element, never
@@ -51,19 +58,26 @@ const LIST_H := 280
 var _claude_bin := "claude"
 var _repo_root := ""
 
-var _entries: Array = []   # Array[Dictionary], newest first - see enqueue()
-var _dispatching := false  # true while one entry is actively running
-var _timer_tick := 0.0     # throttles the running-entry elapsed-timer repaint to ~1/sec
+var _entries: Array = [] # Array[Dictionary], newest first - see enqueue()
+var _running_count := 0 # how many entries are actively running right now
+var _timer_tick := 0.0 # throttles the running-entry elapsed-timer repaint to ~1/sec
 
 var _panel: Control
 var _list_col: VBoxContainer
 var _header: Label
 var _toggle_btn: Button
-var _expanded := false   # closed by default - see _build_ui
+var _expanded := false # closed by default - see _build_ui
+
+
+## A restart requested (by the editor's F5, or auto after a run edits code) but held
+## until every agent has returned - restarting mid-run would corrupt another agent's
+## in-progress edits. Fired by _maybe_reload the moment we go idle.
+var _pending_reload: Callable = Callable()
 
 
 func _ready() -> void:
-	layer = 126   # below the feedback console itself (128), above ordinary scene UI
+	add_to_group("assistant") # the mask editor asks us to defer its reload until idle
+	layer = 126 # below the feedback console itself (128), above ordinary scene UI
 	_resolve_claude_bin()
 	_resolve_repo_root()
 	_ensure_dir()
@@ -109,7 +123,7 @@ func enqueue(index: int, query: String, stem: String) -> void:
 	var entry := {
 		"index": index, "query": query, "stem": stem,
 		"status": "queued", "session_id": "", "response": "", "cost_usd": 0.0,
-		"pid": -1, "out_path": "", "err_path": "", "error_text": "", "expanded": true,
+		"pid": - 1, "out_path": "", "err_path": "", "error_text": "", "expanded": true,
 		"pending_prompt": "",
 	}
 	_entries.push_front(entry)
@@ -124,14 +138,72 @@ func enqueue(index: int, query: String, stem: String) -> void:
 
 # --- dispatch --------------------------------------------------------------------
 
-func _pump_queue() -> void:
-	if _dispatching:
-		return
+## Anything still running OR waiting to run - the window during which a restart would
+## clobber an agent's edits.
+func is_busy() -> bool:
+	if _running_count > 0:
+		return true
 	for e in _entries:
 		if e.status == "queued":
-			var pending: String = e.get("pending_prompt", "")
-			e.pending_prompt = ""
-			_dispatch(e, pending if pending != "" else _build_prompt(e))
+			return true
+	return false
+
+
+## Defer a restart until every agent has returned. Fires immediately if already idle,
+## otherwise held and fired by _maybe_reload once the last run finishes.
+func reload_when_idle(cb: Callable) -> void:
+	_pending_reload = cb
+	if is_busy():
+		var me := get_tree().get_first_node_in_group("mask_editor")
+		if me != null and me.has_method("_set_status"):
+			me.call("_set_status", "⟳  Reload pending - restarting once assistant runs finish (%d active)" % _running_count)
+	_maybe_reload()
+
+
+func _maybe_reload() -> void:
+	if not _pending_reload.is_valid() or is_busy():
+		return
+	# Don't yank the reload out from under someone mid-critique - hold it until the
+	# feedback console closes (submit or cancel), same deference main.gd's
+	# _end_session gives it for session teardown.
+	var fc := get_tree().get_first_node_in_group("feedback_console")
+	if fc != null and is_instance_valid(fc) and fc.is_open():
+		if not fc.closed.is_connected(_maybe_reload):
+			fc.closed.connect(_maybe_reload, CONNECT_ONE_SHOT)
+		return
+	var cb := _pending_reload
+	_pending_reload = Callable()
+	cb.call()
+
+
+## Newest modification time across ghost's own source (scripts + shaders). A dispatch
+## records this at start (see _dispatch); if it's higher at _finish, that run edited
+## code and the app should reload to pick it up.
+func _max_ghost_source_mtime() -> float:
+	var best := 0.0
+	for d in ["res://scripts", "res://shaders"]:
+		var da := DirAccess.open(d)
+		if da == null:
+			continue
+		for fn in da.get_files():
+			if fn.ends_with(".gd") or fn.ends_with(".gdshader"):
+				var m := float(FileAccess.get_modified_time(ProjectSettings.globalize_path("%s/%s" % [d, fn])))
+				if m > best:
+					best = m
+	return best
+
+
+func _pump_queue() -> void:
+	while _running_count < MAX_CONCURRENT:
+		var started := false
+		for e in _entries:
+			if e.status == "queued":
+				var pending: String = e.get("pending_prompt", "")
+				e.pending_prompt = ""
+				_dispatch(e, pending if pending != "" else _build_prompt(e))
+				started = true
+				break
+		if not started:
 			return
 
 
@@ -139,7 +211,8 @@ func _pump_queue() -> void:
 ## record) or a typed follow-up - either way it lands on the SAME claude
 ## session once `entry.session_id` is set, via --resume.
 func _dispatch(entry: Dictionary, prompt: String) -> void:
-	_dispatching = true
+	entry.code_mtime = _max_ghost_source_mtime() # baseline: detect if THIS run edits code
+	_running_count += 1
 	entry.status = "running"
 	entry.started_at = Time.get_ticks_msec()
 	entry.read_offset = 0
@@ -173,7 +246,7 @@ func _dispatch(entry: Dictionary, prompt: String) -> void:
 		# notice or unblock the queue.
 		entry.status = "error"
 		entry.error_text = "failed to start the claude subprocess (OS.create_process returned %d)" % int(entry.pid)
-		_dispatching = false
+		_running_count -= 1
 		_save_entry(entry)
 		_refresh_list()
 		_pump_queue()
@@ -197,7 +270,7 @@ func _dispatch(entry: Dictionary, prompt: String) -> void:
 ## doubt about whether a -p session picks up a subdirectory CLAUDE.md on
 ## its own before it starts reading files.
 func _build_prompt(entry: Dictionary) -> String:
-	var rel: String = String(entry.stem).trim_prefix("res://")   # "feedback/0051"
+	var rel: String = String(entry.stem).trim_prefix("res://") # "feedback/0051"
 	return ("Read axis/ghost/CLAUDE.md first - it's the map of where things live in " +
 		"this project plus hard-won gotchas (shader validation, etc.) that'll save you " +
 		"from re-deriving them via grep.\n\n" +
@@ -248,13 +321,13 @@ func _poll_progress(entry: Dictionary) -> void:
 	fa.close()
 	var last_nl := chunk.rfind("\n")
 	if last_nl < 0:
-		return   # nothing complete yet - the line currently being written doesn't count
+		return # nothing complete yet - the line currently being written doesn't count
 	entry.read_offset = offset + last_nl + 1
 	for line in chunk.substr(0, last_nl).split("\n"):
 		line = line.strip_edges()
 		if line == "":
 			continue
-		var evt = JSON.parse_string(line)
+		var evt = _json_object(line)
 		if evt is Dictionary:
 			# Persist the session id the INSTANT it first appears (the "system"/init
 			# event carries it), not only at _finish - so a run interrupted by a crash
@@ -264,6 +337,11 @@ func _poll_progress(entry: Dictionary) -> void:
 				if String(entry.session_id) != "":
 					_save_entry(entry)
 			var desc := _describe_event(evt)
+			if desc != "" and desc != String(entry.get("progress", "")):
+				# Marks the moment the underlying agent actually did something new -
+				# _build_row uses this to flicker the collapsed title briefly, a
+				# small "sign of life" visible even in a long collapsed list.
+				entry._flicker_pulse_at = Time.get_ticks_msec()
 			if desc != "":
 				entry.progress = desc
 
@@ -309,6 +387,20 @@ func _describe_event(evt: Dictionary) -> String:
 	return "thinking…"
 
 
+## Parse one stream-json line into its object, or null - QUIETLY. claude's stdout is
+## NDJSON (one JSON object per line), but a stray non-JSON line (a subprocess's own
+## stdout that slipped through, a partial write) must be skipped, not logged. JSON.parse_string
+## prints a console ERROR on every failure; a JSON instance's parse() just returns a code, so
+## no spam. Anything not starting with '{' is skipped without even trying.
+func _json_object(line: String) -> Variant:
+	if not line.begins_with("{"):
+		return null
+	var json := JSON.new()
+	if json.parse(line) != OK:
+		return null
+	return json.data
+
+
 func _finish(entry: Dictionary) -> void:
 	var out_text := _read_file(entry.out_path)
 	var parsed = null
@@ -320,7 +412,7 @@ func _finish(entry: Dictionary) -> void:
 			line = line.strip_edges()
 			if line == "":
 				continue
-			var evt = JSON.parse_string(line)
+			var evt = _json_object(line)
 			if evt is Dictionary and String(evt.get("type", "")) == "result":
 				parsed = evt
 	if parsed is Dictionary and parsed.get("is_error", true) == false and parsed.has("result"):
@@ -348,8 +440,16 @@ func _finish(entry: Dictionary) -> void:
 	entry.progress = ""
 	_save_entry(entry)
 	_refresh_list()
-	_dispatching = false
+	_running_count -= 1
 	_pump_queue()
+	# If this run actually edited ghost's own code, arrange a restart to pick it up -
+	# held by reload_when_idle until any OTHER still-running agents also return, so no
+	# restart ever lands mid-edit.
+	if entry.status == "done" and _max_ghost_source_mtime() > float(entry.get("code_mtime", 0.0)):
+		var me := get_tree().get_first_node_in_group("mask_editor")
+		if me != null and me.has_method("_do_restart"):
+			reload_when_idle(Callable(me, "_do_restart"))
+	_maybe_reload()
 
 
 func _read_file(path: String) -> String:
@@ -393,7 +493,7 @@ func _load_existing() -> void:
 	if dir == null:
 		return
 	var loaded := []
-	var has_record := {}   # feedback index -> true, for every entry ALREADY reconciled below
+	var has_record := {} # feedback index -> true, for every entry ALREADY reconciled below
 	for fn in dir.get_files():
 		if not fn.ends_with(".assistant.json"):
 			continue
@@ -409,7 +509,7 @@ func _load_existing() -> void:
 		var error_text := str(data.get("error_text", ""))
 		var sid := str(data.get("session_id", ""))
 		if sid == "":
-			sid = _recover_session_id(error_text)   # older logs stashed the init event in error_text
+			sid = _recover_session_id(error_text) # older logs stashed the init event in error_text
 		# A run that was mid-flight when the editor closed (or errored without a clean
 		# result) is resumable IF we know its session id - continue it via --resume
 		# rather than starting over. Only a run we can't identify is a dead "error".
@@ -424,7 +524,7 @@ func _load_existing() -> void:
 			"index": idx, "query": str(data.get("query", "")), "stem": "%s/%04d" % [DIR, idx],
 			"status": status, "session_id": sid,
 			"response": str(data.get("response", "")), "cost_usd": float(data.get("cost_usd", 0.0)),
-			"pid": -1, "out_path": "", "err_path": "", "error_text": error_text, "expanded": false,
+			"pid": - 1, "out_path": "", "err_path": "", "error_text": error_text, "expanded": false,
 			"pending_prompt": "",
 		})
 		has_record[idx] = true
@@ -458,7 +558,7 @@ func _load_existing() -> void:
 		loaded.append({
 			"index": idx, "query": query, "stem": "%s/%04d" % [DIR, idx],
 			"status": "orphaned", "session_id": "", "response": "", "cost_usd": 0.0,
-			"pid": -1, "out_path": "", "err_path": "", "error_text": "", "expanded": false,
+			"pid": - 1, "out_path": "", "err_path": "", "error_text": "", "expanded": false,
 			"pending_prompt": "",
 		})
 	loaded.sort_custom(func(a, b): return int(a.index) > int(b.index))
@@ -477,7 +577,7 @@ func _delete_entry(entry: Dictionary) -> void:
 	_delete_file(g + ".png")
 	_entries.erase(entry)
 	if entry.status == "running":
-		_dispatching = false
+		_running_count -= 1
 		_pump_queue()
 	_refresh_list()
 
@@ -485,13 +585,19 @@ func _delete_entry(entry: Dictionary) -> void:
 # --- UI ------------------------------------------------------------------------
 
 const _TOGGLE_SIZE := 40.0
-const _TOGGLE_GAP := 4.0    # between the toggle button and the panel above it
+const _TOGGLE_GAP := 4.0 # between the toggle button and the panel above it
+const _PANEL_TOP_MARGIN := 28.0 # never crowd closer to the viewport top than this, even when full of entries
+## The toggle's own bottom edge - the same -28 margin mask_editor.gd's/exporter.gd's
+## "Export video" button sits on, so the two align into one visual row. The export
+## buttons' own offset_right is pulled in by _TOGGLE_SIZE + _TOGGLE_GAP to leave the
+## toggle room at the true corner, right of them - see this file's class doc.
+const _TOGGLE_ROW_BOTTOM := -28.0
 
 func _build_ui() -> void:
-	# Closed by default - a chat-bubble toggle sitting above the export status
-	# row (see mask_editor.gd / exporter.gd's shared notification corner) is
-	# the whole UI until clicked; the panel itself only exists on screen while
-	# expanded.
+	# Closed by default - a chat-bubble toggle sitting in the viewport's very
+	# bottom-right corner, right of the export button in the same row (see
+	# _TOGGLE_ROW_BOTTOM's doc), is the whole UI until clicked; the panel
+	# itself only exists on screen while expanded.
 	_toggle_btn = Button.new()
 	_toggle_btn.text = "💬"
 	_toggle_btn.tooltip_text = "Assistant"
@@ -500,19 +606,25 @@ func _build_ui() -> void:
 	_toggle_btn.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
 	_toggle_btn.offset_right = -28
 	_toggle_btn.offset_left = -28 - _TOGGLE_SIZE
-	_toggle_btn.offset_bottom = -84   # sits just above the export status row
-	_toggle_btn.offset_top = -84 - _TOGGLE_SIZE
+	_toggle_btn.offset_bottom = _TOGGLE_ROW_BOTTOM
+	_toggle_btn.offset_top = _TOGGLE_ROW_BOTTOM - _TOGGLE_SIZE
 	_toggle_btn.pressed.connect(func():
 		_expanded = not _expanded
 		_refresh_list())
 	add_child(_toggle_btn)
 
 	_panel = PanelContainer.new()
+	# BOTTOM_RIGHT (not RIGHT_WIDE) so the panel sits as a small window above
+	# the toggle by default and only grows upward as its content needs more
+	# room - see _resize_panel(), called after every _refresh_list(). Both
+	# offset_top and offset_bottom end up measured from the viewport's
+	# bottom edge this way, which is what lets offset_top move up (more
+	# negative) as content grows instead of being pinned near the top.
 	_panel.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
 	_panel.offset_right = -28
 	_panel.offset_left = -28 - PANEL_W
-	_panel.offset_bottom = -84 - _TOGGLE_SIZE - _TOGGLE_GAP   # above the toggle, not overlapping it
-	_panel.offset_top = _panel.offset_bottom - LIST_H - 28
+	_panel.offset_bottom = _TOGGLE_ROW_BOTTOM - _TOGGLE_SIZE - _TOGGLE_GAP # above the toggle, not overlapping it
+	_panel.offset_top = _panel.offset_bottom # sized properly on the first _resize_panel() call
 	_panel.visible = false
 	add_child(_panel)
 
@@ -528,16 +640,26 @@ func _build_ui() -> void:
 	_header.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_header.add_theme_color_override("font_color", Color(0.7, 0.85, 1.0, 0.9))
 	outer.add_child(_header)
+	# The panel starts (and often sits) invisible/collapsed, and Godot doesn't run
+	# layout on invisible controls - so the deferred _resize_panel() call below can
+	# land while an autowrapped Label is still mid-reflow (a transient near-zero
+	# wrap width briefly reports a wildly inflated minimum height), pinning the
+	# panel's height to that bogus value with nothing left to ever correct it.
+	# Recomputing whenever the real minimum size actually changes (e.g. once the
+	# panel becomes visible and reflows for real) keeps it converging on the true
+	# content height instead of getting stuck on a stale bad reading.
+	_header.minimum_size_changed.connect(_resize_panel)
 
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	scroll.custom_minimum_size = Vector2(0, LIST_H)
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	outer.add_child(scroll)
 
 	_list_col = VBoxContainer.new()
 	_list_col.add_theme_constant_override("separation", 4)
 	_list_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(_list_col)
+	_list_col.minimum_size_changed.connect(_resize_panel)
 
 
 func _refresh_list() -> void:
@@ -562,6 +684,30 @@ func _refresh_list() -> void:
 		c.queue_free()
 	for e in _entries:
 		_list_col.add_child(_build_row(e))
+	# Deferred: freshly added rows haven't had a layout pass yet, so their
+	# autowrapped labels don't report an accurate minimum height until next
+	# idle frame.
+	call_deferred("_resize_panel")
+
+
+## Keeps the panel sized to its actual content (small by default, above the
+## toggle) instead of permanently stretched to the viewport height - it only
+## grows upward, capped so it never crowds past _PANEL_TOP_MARGIN from the
+## top of the screen, beyond which the panel's own ScrollContainer takes
+## over instead of the panel itself continuing to grow.
+func _resize_panel() -> void:
+	if not is_instance_valid(_panel):
+		return
+	var offset_bottom := _TOGGLE_ROW_BOTTOM - _TOGGLE_SIZE - _TOGGLE_GAP
+	_panel.offset_bottom = offset_bottom
+	var viewport_h := get_viewport().get_visible_rect().size.y
+	var max_h: float = max(viewport_h + offset_bottom - _PANEL_TOP_MARGIN, 0.0)
+	var chrome_h := 0.0
+	var style := _panel.get_theme_stylebox("panel")
+	if style:
+		chrome_h = style.get_minimum_size().y
+	var content_h: float = _header.get_combined_minimum_size().y + 6.0 + _list_col.get_combined_minimum_size().y + chrome_h
+	_panel.offset_top = offset_bottom - clamp(content_h, 0.0, max_h)
 
 
 func _status_glyph(status: String) -> String:
@@ -572,6 +718,43 @@ func _status_glyph(status: String) -> String:
 		"done": return "✓"
 		"interrupted": return "↻"
 		_: return "✕"
+
+
+## Neon accent per status - distinct from both the desaturated near-white body
+## text (see _build_body/_dim_label) and each other, so a title reads at a
+## glance even collapsed. Saturated on purpose ("neon sign"), not just tinted.
+func _title_color(status: String) -> Color:
+	match status:
+		"running": return Color(0.3, 1.0, 0.85, 0.95) # cyan - alive right now
+		"done": return Color(0.55, 1.0, 0.45, 0.95) # green - finished clean
+		"interrupted": return Color(1.0, 0.75, 0.25, 0.95) # amber - paused, resumable
+		"queued": return Color(0.7, 0.55, 1.0, 0.9) # violet - waiting
+		"orphaned": return Color(0.55, 0.6, 0.7, 0.85) # dim - nothing happening yet
+		_: return Color(1.0, 0.35, 0.55, 0.95) # pink - error
+
+
+## How long after a genuine progress change (see _poll_progress's
+## _flicker_pulse_at) a title still shows the flicker - long enough to land on
+## the very next ~1/sec repaint (_process), short enough to read as a flicker,
+## not a steady state.
+const _FLICKER_WINDOW_MS := 1800.0
+const _FLICKER_GLYPHS := ["▚", "▞", "░", "▓", "◇", "∴", "≈"]
+
+## Glitches ONE character of a title - half the time it just goes dark (a
+## neon sign losing a letter), half the time it flickers to a brighter glyph.
+## Never touches the status glyph/index prefix (see _build_row) or whitespace/
+## ellipsis, so the title stays legible, just alive.
+func _flicker_text(text: String) -> String:
+	var candidates: Array = []
+	for i in range(text.length()):
+		var ch := text[i]
+		if ch != " " and ch != "…":
+			candidates.append(i)
+	if candidates.is_empty():
+		return text
+	var idx: int = candidates[randi() % candidates.size()]
+	var replacement: String = " " if randi() % 2 == 0 else _FLICKER_GLYPHS[randi() % _FLICKER_GLYPHS.size()]
+	return text.substr(0, idx) + replacement + text.substr(idx + 1)
 
 
 func _build_row(entry: Dictionary) -> Control:
@@ -589,7 +772,15 @@ func _build_row(entry: Dictionary) -> Control:
 	var preview: String = String(entry.query)
 	if preview.length() > 40:
 		preview = preview.substr(0, 40) + "…"
+	# Only flicker while something is actually happening (a real, new progress
+	# event landed recently) - see _poll_progress's _flicker_pulse_at. This is
+	# what makes it read as "life", not a distracting constant twitch.
+	var pulsing: bool = String(entry.status) == "running" and \
+		(Time.get_ticks_msec() - float(entry.get("_flicker_pulse_at", -_FLICKER_WINDOW_MS * 10.0))) < _FLICKER_WINDOW_MS
+	if pulsing:
+		preview = _flicker_text(preview)
 	toggle.text = "%s #%04d  %s" % [_status_glyph(entry.status), int(entry.index), preview]
+	toggle.add_theme_color_override("font_color", _title_color(entry.status))
 	toggle.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	toggle.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	# Without this, a Button's minimum width is sized to fit its FULL text -
@@ -610,7 +801,7 @@ func _build_row(entry: Dictionary) -> Control:
 	var del := Button.new()
 	del.text = "✕"
 	del.focus_mode = Control.FOCUS_NONE
-	del.custom_minimum_size = Vector2(28, 0)   # guaranteed footprint regardless of the toggle's width
+	del.custom_minimum_size = Vector2(28, 0) # guaranteed footprint regardless of the toggle's width
 	del.tooltip_text = "Delete this feedback + conversation"
 	del.pressed.connect(func(): _delete_entry(entry))
 	head.add_child(del)
@@ -645,7 +836,7 @@ func _build_body(entry: Dictionary) -> Control:
 		"running":
 			var elapsed_s: int = (Time.get_ticks_msec() - int(entry.get("started_at", Time.get_ticks_msec()))) / 1000
 			var time_str := "%ds" % elapsed_s if elapsed_s < 60 else "%d:%02d" % [elapsed_s / 60, elapsed_s % 60]
-			body.add_child(_dim_label("running (%s) - output is captured here, never printed to a terminal" % time_str))
+			body.add_child(_dim_label("running (%s)" % time_str))
 			var prog := String(entry.get("progress", ""))
 			if prog != "":
 				var prog_lbl := Label.new()
@@ -653,6 +844,7 @@ func _build_body(entry: Dictionary) -> Control:
 				prog_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 				prog_lbl.add_theme_color_override("font_color", Color(0.6, 0.85, 0.7, 0.9))
 				body.add_child(prog_lbl)
+			body.add_child(_build_interrupt_row(entry))
 		"done":
 			var resp := Label.new()
 			resp.text = String(entry.response)
@@ -715,10 +907,9 @@ func _build_followup_row(entry: Dictionary) -> Control:
 	var send := Button.new()
 	send.text = "Send"
 	send.focus_mode = Control.FOCUS_NONE
-	# Goes through the SAME serial queue as a fresh submission (see
-	# enqueue/_pump_queue) - a follow-up on an idle, already-done entry must
-	# still wait if some OTHER entry is currently running, never fire
-	# concurrently against the working tree.
+	# Goes through the SAME queue as a fresh submission (see
+	# enqueue/_pump_queue) - a follow-up on an idle, already-done entry only
+	# waits if MAX_CONCURRENT other entries are already running.
 	send.pressed.connect(func():
 		var text := edit.text.strip_edges()
 		if text.is_empty():
@@ -737,24 +928,74 @@ func _build_followup_row(entry: Dictionary) -> Control:
 	return row
 
 
-## Resume an interrupted run: re-queue it against its saved session_id so --resume
-## picks up the SAME claude session where it left off (see _dispatch), with a prompt
-## telling it to finish the work. Same serial queue as any other dispatch.
-func _build_resume_row(entry: Dictionary) -> Control:
+## Halts a live run without discarding it (unlike _delete_entry, which also wipes
+## the feedback record). Kills the subprocess and lets the normal _process()/
+## _finish() polling notice it exited next frame - _finish already turns a run
+## with a known session_id into "interrupted" (the same state a crash or app-close
+## leaves behind), which is exactly the state _build_resume_row below knows how to
+## continue via --resume. session_id is usually already captured by then (
+## _poll_progress persists it the instant the run's first stream-json event
+## arrives), so an interrupt reliably lands on "interrupted", not a dead "error".
+func _interrupt_entry(entry: Dictionary) -> void:
+	if entry.status != "running" or int(entry.pid) < 0:
+		return
+	OS.kill(int(entry.pid))
+
+
+func _build_interrupt_row(entry: Dictionary) -> Control:
 	var row := HBoxContainer.new()
+	var stop := Button.new()
+	stop.text = "⏸  Interrupt"
+	stop.focus_mode = Control.FOCUS_NONE
+	stop.tooltip_text = "Halt this run now so you can add context and resume it"
+	stop.pressed.connect(func(): _interrupt_entry(entry))
+	row.add_child(stop)
+	return row
+
+
+## Resume an interrupted run: re-queue it against its saved session_id so --resume
+## picks up the SAME claude session where it left off (see _dispatch). An optional
+## typed note - e.g. context that changed while the run was halted - is folded into
+## the resume prompt; left blank, it falls back to the plain "pick up where you left
+## off" prompt. Same queue as any other dispatch.
+func _build_resume_row(entry: Dictionary) -> Control:
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 4)
+
+	var row := HBoxContainer.new()
+	var edit := LineEdit.new()
+	edit.placeholder_text = "extra context for the resume (optional)..."
+	edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# Same reasoning as _build_followup_row's draft stash - _refresh_list() rebuilds
+	# every row whenever any entry's status changes, so an in-progress note here
+	# would otherwise vanish the moment an unrelated entry finishes.
+	edit.text = String(entry.get("draft_resume", ""))
+	edit.text_changed.connect(func(t): entry.draft_resume = t)
+	row.add_child(edit)
+
 	var resume := Button.new()
-	resume.text = "↻  Resume this session"
+	resume.text = "↻  Resume"
 	resume.focus_mode = Control.FOCUS_NONE
 	resume.tooltip_text = "Continue the same Claude session (--resume %s) where it left off" % String(entry.session_id)
-	resume.pressed.connect(func():
+	var do_resume := func():
+		var extra := edit.text.strip_edges()
+		var prompt := "The previous run was interrupted before finishing."
+		if extra != "":
+			prompt += " The user has additional context: \"%s\"" % extra
+		prompt += " Please pick up exactly where you left off and complete the work."
 		entry.status = "queued"
 		entry.response = ""
 		entry.error_text = ""
-		entry.pending_prompt = "The previous run was interrupted before finishing. Please pick up exactly where you left off and complete the work."
+		entry.pending_prompt = prompt
+		entry.draft_resume = ""
 		_entries.erase(entry)
 		_entries.push_front(entry)
 		_save_entry(entry)
 		_refresh_list()
-		_pump_queue())
+		_pump_queue()
+	resume.pressed.connect(do_resume)
+	edit.text_submitted.connect(func(_t): do_resume.call())
 	row.add_child(resume)
-	return row
+
+	col.add_child(row)
+	return col

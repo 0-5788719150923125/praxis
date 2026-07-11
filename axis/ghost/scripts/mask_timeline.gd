@@ -4,20 +4,24 @@ class_name MaskTimeline
 ## MaskTimeline - the mask editor's scrub strip.
 ##
 ## A bespoke-drawn instrument, same idiom as [DialWidget]: click-drag on the body
-## to scrub (emits `scrubbed`), press-drag a marker's triangle HANDLE (the top band
-## only - grabbing anywhere on the full tick made it far too easy to snag a marker
-## while aiming for the playhead) to pick it up and move it (emits `marker_picked`
-## on grab, `marker_moved` while held). Session markers are mutated directly (time,
-## plus a re-sort); MaskEditor stays the source of truth for everything else.
+## to scrub (emits `scrubbed`). Marker moves are TWO-STEP, to stop the misclick
+## where aiming to select a marker dragged it off its time in the same gesture: a
+## marker's triangle HANDLE (the top band only - grabbing anywhere on the full tick
+## made it far too easy to snag a marker while aiming for the playhead) is grabbable
+## ONLY once it is the selected marker. The first press on a handle just SELECTS it
+## (emits `marker_picked`); a second press-drag on the now-selected marker is what
+## picks it up and moves it (emits `marker_moved` while held). Session markers are
+## mutated directly (time, plus a re-sort); MaskEditor stays the source of truth for
+## everything else.
 ##
 ## Ctrl+scroll ZOOMS around the cursor (plain scroll pans when zoomed), for
 ## granular work across short sequences - all drawing and hit-testing goes through
 ## the shared TimelineView (see timeline_view.gd), so this strip and any track
 ## lane above it always agree on where a second sits on screen.
 ##
-## Every marker is a ramp or a decay (see MaskSession.MARKER_KINDS) and draws as
+## Every marker is a ramp or a damp (see MaskSession.MARKER_KINDS) and draws as
 ## three things together: the anchor line, the triangle handle pointing the
-## direction its span runs (back into the past for a ramp, forward for a decay),
+## direction its span runs (back into the past for a ramp, forward for a damp),
 ## and a translucent tint across exactly the span itself (MaskSession.marker_span).
 
 signal scrubbed(t: float)
@@ -80,9 +84,17 @@ func _gui_input(event: InputEvent) -> void:
 			if mb.pressed:
 				var m: Variant = _marker_near(mb.position)
 				if m != null:
-					marker_picked.emit(m)
-					_dragging_marker = m
-					_drag_started_emitted = false
+					# Two-step (see the class doc): the FIRST press on a marker only
+					# SELECTS it - it is not grabbable until it is the selected one.
+					# Press it again (now selected) to pick it up and drag. selected is
+					# kept in sync by MaskEditor via marker_picked -> _select_marker
+					# synchronously, so the next press already sees this marker selected.
+					# Matches _draw's own `selected == m` identity test.
+					if selected != null and selected == m:
+						_dragging_marker = m
+						_drag_started_emitted = false
+					else:
+						marker_picked.emit(m)
 				else:
 					_dragging = true
 					scrubbed.emit(tview.t_of(mb.position.x))
@@ -157,8 +169,8 @@ func _draw() -> void:
 			draw_texture_rect_region(waveform_texture, Rect2(wx0, 4, wx1 - wx0, size.y - 20),
 				Rect2(0, 0, tw, th), Color(0.55, 0.68, 0.85, 0.85))
 	# Marker spans - a translucent tint across exactly the time range each marker's
-	# own ramp/decay occupies (see MaskSession.marker_span). Ramp = cool/green,
-	# decay = warm/orange; overlapping spans layer visibly.
+	# own ramp/damp occupies (see MaskSession.marker_span). Ramp = cool/green,
+	# damp = warm/orange; overlapping spans layer visibly.
 	for m in session.markers:
 		var mspan: Vector2 = session.marker_span(m)
 		var x0 := tview.x_of(clampf(mspan.x, 0.0, session.duration))
@@ -185,7 +197,7 @@ func _draw() -> void:
 		tt += step
 	# Markers: an anchor line (taller/brighter when selected) plus a triangle handle
 	# pointing back (ramp - it's pulling the timeline in from the past) or forward
-	# (decay - pushing away into the future), colored to match its span tint. The
+	# (damp - pushing away into the future), colored to match its span tint. The
 	# handle is also the ONLY grab region (see _marker_near).
 	for m in session.markers:
 		var x := tview.x_of(float(m.time))

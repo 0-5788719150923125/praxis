@@ -70,9 +70,11 @@ func _build_ui() -> void:
 	_btn.text = "⤓  Export video"
 	_btn.tooltip_text = "Render this visualization + audio to a video file (in the background)"
 	_btn.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	_btn.offset_left = -210
+	# Right edge pulled in 44px (assistant.gd's toggle width + gap) so the chat-bubble
+	# toggle has room to sit right of this button, in the same row, at the true corner.
+	_btn.offset_left = -254
 	_btn.offset_top = -72
-	_btn.offset_right = -28
+	_btn.offset_right = -72
 	_btn.offset_bottom = -28
 	_btn.visible = false
 	_btn.modulate.a = 0.0       # fade in elegantly when it becomes eligible
@@ -81,9 +83,11 @@ func _build_ui() -> void:
 
 	_status = Label.new()
 	_status.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	_status.offset_left = -560
+	# Shifted left in step with _btn above, so right-aligned text never runs under
+	# the assistant toggle sitting in the corner right of this row.
+	_status.offset_left = -604
 	_status.offset_top = -64
-	_status.offset_right = -28
+	_status.offset_right = -72
 	_status.offset_bottom = -28
 	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_status.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.7))

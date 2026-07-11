@@ -7,7 +7,7 @@ class_name MaskEditor
 ## shaders/mask_split.gdshader), place MARKERS where the split/effect should
 ## change, scrub the timeline, export. See scripts/mask_session.gd for the data
 ## model - a session's markers are fixed-schema scalar vectors, not free-form
-## params, and every one is either a RAMP (eases in before its anchor) or a DECAY
+## params, and every one is either a RAMP (eases in before its anchor) or a DAMP
 ## (accumulates after it) - there's no third, undifferentiated "marker" kind.
 ##
 ## Standalone by design: a mask session is tied to one specific external clip, not
@@ -40,6 +40,8 @@ class_name MaskEditor
 const SHADER := preload("res://shaders/mask_split.gdshader")
 const MASKS_DIR := "res://masks"
 const PANEL_W := 320
+# Picked via _sort_dropdown - see _apply_sort for what each one does.
+const _SORT_MODES := ["A → Z", "Z → A", "Energy"]
 
 ## Set by main.gd before open_source() for the --mask-render relaunch: skip the
 ## editing panel, autoplay from t=0, quit when the audio finishes.
@@ -51,6 +53,13 @@ var _session_path := ""       # res://-relative or absolute; wherever it was loa
 var _player: VideoStreamPlayer     # always the RAW decode - never carries the shader
 var _audio: AudioStreamPlayer
 var _audio_thread: Thread = null   # loads the (large, uncompressed) main WAV off the main thread
+var _pending_restore := -1.0       # playhead seconds to seek to once the player is ready (see _process)
+var _pending_restore_tries := 0
+var _reload_check_pid := -1        # headless compile check gating a reload (see _do_restart)
+var _reload_check_log := ""
+## Set the instant _restart_now actually commits to quitting (after its own final
+## _save_session capture) - see _save_session and _exit_tree for why this exists.
+var _restarting := false
 var _track_audio_jobs: Array = []  # background sidecar-.ogg extractions, {pid, index, ogg}
 # One material PER LAYER: the main overlay and the inset can be mid-transition at
 # different presences (e.g. fx-inset -> both: the inset holds full while the main
@@ -59,10 +68,16 @@ var _track_audio_jobs: Array = []  # background sidecar-.ogg extractions, {pid, 
 var _mat_main := ShaderMaterial.new()
 var _mat_inset := ShaderMaterial.new()
 var _playing := false
+var _audio_holding := false   # main audio paused-in-place, waiting for video to catch up (see _process)
 var _cursor_idle_t := 0.0
 const _CURSOR_HIDE_DELAY := 1.5   # seconds of stillness during playback before the mouse cursor hides
 
-var _fx_overlay: TextureRect       # full-frame fx layer - _player's texture, shaded
+var _fx_overlay: TextureRect       # full-frame fx layer - shaded copy of whichever source is active
+var _cont_view: TextureRect        # full-frame RAW layer for an active continuation track (see _sync_tracks) -
+                                   # _player's own raw picture is only valid while session.main_visible_at's
+                                   # own-clip half holds; once a continuation track owns time t, this shows
+                                   # THAT track's own independently-decoded frame instead (never _player's -
+                                   # see continuation_track_at's doc for why the two used to be conflated)
 var _pip_view: TextureRect         # the inset's content - shaded or raw per view mode
 var _mask_wrap: PanelContainer     # the inset's border/placement box (holds _pip_view)
 var _view_label: Label     # passive view-mode readout (the old cycle button; V cycles now)
@@ -93,10 +108,11 @@ var _color_a: ColorPickerButton
 var _hue_a: HSlider   # numeric grading twin of _color_a - same hue_a field, precise dragging
 var _threshold: HSlider
 var _threshold_label: Label
-var _grp_color: VBoxContainer       # the control hierarchy's option groups -
-var _grp_threshold: VBoxContainer   # shown per selected effect, see
-var _grp_keymisc: VBoxContainer     # MaskSession.EFFECT_CONTROLS
-var _grp_pattern: VBoxContainer
+var _grp_color: VBoxContainer   # "Key color" swatch, pinned above the sortable options below
+var _grp_options: VBoxContainer   # every effect option (label+slider pairs), reordered by _apply_sort
+var _options: Array = []          # [{label: Label, control: Control}], creation order - see _register_option
+var _sort_mode := 2                # index into _SORT_MODES - defaults to Energy, see _apply_sort
+var _sort_dropdown: OptionButton
 var _feather: HSlider
 var _sat_floor: HSlider
 var _fx_x: HSlider
@@ -110,12 +126,9 @@ var _fx_contrast: HSlider
 var _fx_contrast_label: Label   # "Contrast" relabeled "Sensitivity" for snow (no keying group of its own)
 var _fx_speed: HSlider
 var _fx_lag: HSlider
+var _fx_lag_label: Label            # "Lag (s)" relabeled "Lead (s)" for oracle - same field, opposite sense
 var _fx_smooth: HSlider
-var _grp_echo: VBoxContainer
-var _echo_header: Label             # swaps text when oracle borrows the group
-var _grp_snow: VBoxContainer
-var _gust: HSlider   # snow's own Gust slider - a second, independent view onto fx_smooth (see _grp_echo)
-var _grp_fur: VBoxContainer
+var _gust: HSlider   # snow's own Gust slider - a second, independent view onto fx_smooth (see _fx_smooth)
 var _undul: HSlider  # fur's Undulation - fur's view onto fx_smooth (same stored-field reuse as _gust)
 var _coil: HSlider   # fur's Coil - fur's view onto fx_lag (pushed raw as u_l_lagf; echo bakes its lag into u_l_ew)
 var _stick: HSlider  # fur's Stickiness - its OWN field (fx_stick, u_l_stick); 0 = today's free coat
@@ -123,11 +136,12 @@ var _resonance: HSlider
 var _effect_a: OptionButton
 var _intensity_a: HSlider
 var _intensity_label: Label   # tooltip swaps meaning for restore/clear, see _update_effect_controls
-var _kind: OptionButton     # ramp / decay - see MaskSession.MARKER_KINDS
+var _kind: OptionButton     # ramp / damp - see MaskSession.MARKER_KINDS
 var _marker_duration: HSlider
 var _marker_label: Label
 var _time_label: Label
-var _marker_list: VBoxContainer   # sequential ramp/decay list, pinned to the panel's bottom
+var _marker_list: VBoxContainer   # sequential ramp/damp list, pinned to the panel's bottom
+var _history_label: Label   # "Undo: <last action>" preview above the +Ramp/+Damp row, see _refresh_history_label
 
 var _feedback: Node = null    # backtick console (see _build_feedback); editor mode only
 var _was_playing_before_feedback := false
@@ -148,13 +162,20 @@ const _PREP_PROGRESS_FILE := "user://mask_prep_progress.txt"
 # frames, taken every _ECHO_INTERVAL seconds of PLAYBACK time (slot = position /
 # interval, so live preview and the export relaunch capture at the same clip
 # positions - the deterministic-clock discipline, one level up from u_time).
-# Only runs at all while the session actually contains a whisp/echo marker.
+# Only runs while a whisp/echo/snow/oracle/serpent/chimera layer is actually on
+# screen THIS frame (_temporal_active, set alongside _chimera_active in
+# _apply_frame_state) - a session-wide "does this ever use one" check made the
+# synchronous GPU readback below run for the ENTIRE session once any one of
+# those markers appeared anywhere in it, stuttering unrelated stretches of a
+# long timeline (feedback/0016).
 var _echo_ring: Array = [null, null, null, null, null, null, null, null]   # ImageTexture, slot-indexed
 var _echo_slot := -1
 var _prev_pos := -1.0         # last frame's playhead position - lets capture skip an ACTIVE
                               #   scrub drag (position moving) and fire once it settles
 var _chimera_active := false  # is a chimera layer on screen THIS frame - gates the track readback
                               #   so it never runs while the (distant) chimera marker isn't rendering
+var _temporal_active := false # is a whisp/echo/snow/oracle/serpent/chimera layer on screen THIS
+                              #   frame - gates _maybe_capture_echo's readback entirely
 # The whisp anchor is double-buffered: _anchor_ema is the EMA at the LATEST
 # capture, _anchor_prev the one before. The uniform pushed per frame lerps
 # between them by position-within-slot (see _push_anchor) - pushing the EMA
@@ -227,6 +248,11 @@ const _AUTOSAVE_DELAY := 0.4
 # the boundary lands cleanly the moment you touch something else.
 var _undo_stack: Array = []
 var _redo_stack: Array = []
+# Parallel to _undo_stack/_redo_stack - a human-readable description of the
+# action each entry captured, so the panel can preview what Ctrl+Z would
+# revert (see _push_undo/_refresh_history_label).
+var _undo_descs: Array = []
+var _redo_descs: Array = []
 const _UNDO_LIMIT := 200
 var _undo_coalesce_key := ""
 var _undo_coalesce_cooldown := 0.0
@@ -239,6 +265,7 @@ func _ready() -> void:
 	_mat_main.shader = SHADER
 	_mat_inset.shader = SHADER
 	if not render_mode:
+		add_to_group("mask_editor")   # so the Assistant can trigger a reload here (see _do_restart)
 		_build_status_label()   # built up front - prep needs it before a session exists
 
 
@@ -550,6 +577,11 @@ func _ready_with_session() -> void:
 		_build_editor_ui()
 		_ensure_waveform()
 	_play(true)
+	# Land back where the playhead was last time (persisted per session) - only live;
+	# an export always starts at clip_in. Deferred to the first _process tick: a
+	# VideoStreamPlayer won't accept a seek the same frame it starts playing.
+	if not render_mode and session.playhead > 0.05:
+		_pending_restore = session.playhead
 
 
 ## Kick off (or discover already-cached) the timeline's waveform image - fully
@@ -613,13 +645,18 @@ func _env_at(t: float) -> float:
 	return (_audio_env[i - 1] + _audio_env[i] + _audio_env[i + 1]) / 3.0
 
 
-## Three stacked layers in `parent`'s full rect, shared by both the live editor and
+## Stacked layers in `parent`'s full rect, shared by both the live editor and
 ## the render_mode export so they composite identically:
-##   _player      raw video, always visible underneath everything
-##   _fx_overlay  full-frame shaded copy (its own material) - the MAIN fx layer
+##   _player      raw video, visible underneath everything while the main clip's
+##                own kept range covers the current time
+##   _cont_view   raw video, same full-rect slot as _player - visible instead of it
+##                while a continuation track (see MaskSession.continuation_track_at)
+##                owns the current time; never both at once
+##   _fx_overlay  full-frame shaded copy of whichever of the above is active (its
+##                own material) - the MAIN fx layer
 ##   _mask_wrap   the bordered inset holding _pip_view (its own material)
 ## Which layers show, and how strongly, comes from the per-frame AMOUNTS
-## (MaskSession.mode_amounts, blended through ramp/decay windows by at_time) -
+## (MaskSession.mode_amounts, blended through ramp/damp windows by at_time) -
 ## applied every frame in _apply_frame_state. A layer's presence multiplies into
 ## its own material's intensities, which is why each has its own material: the
 ## inset can hold full fx while the main overlay is still fading in.
@@ -627,6 +664,16 @@ func _build_video_composition(parent: Control) -> void:
 	_composition_parent = parent   # secondary tracks' PiP views land here too - see _build_track_view
 	parent.add_child(_player)
 	_player.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	# Sits at the same full-rect slot as _player, right underneath it in the same
+	# z-position - only one of the two is ever visible at once (see _process), so
+	# _fx_overlay's shaded copy always has exactly one raw picture beneath it to draw.
+	_cont_view = TextureRect.new()
+	_cont_view.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_cont_view.stretch_mode = TextureRect.STRETCH_SCALE
+	_cont_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_cont_view.visible = false
+	parent.add_child(_cont_view)
 
 	_fx_overlay = TextureRect.new()
 	_fx_overlay.material = _mat_main
@@ -783,6 +830,11 @@ func _poll_track_audio() -> void:
 # abuts - spills over the timeline's top edge, clipping the marker flags and the
 # playhead timestamp tag (worsening with each imported track). 26 + 2 = 28.
 const _LANE_H := 28.0
+# The volume knob every lane gets (see _volume_knob) is anchored top-left, offset_right
+# 34 - a lane's own label must start past that plus a small gap, or the two draw on top
+# of each other whenever the lane's own left edge sits near local x0 (the primary lane's
+# offset is always 0, so this bites it every time - see feedback/0009).
+const _LANE_LABEL_LEFT := 38.0
 
 func _track_getter(i: int, field: String) -> Callable:
 	return func(): return float(session.tracks[i].get(field, 0.0))
@@ -805,7 +857,8 @@ func _refresh_lanes() -> void:
 
 	var primary := TrackLane.new()
 	primary.tview = _tview
-	primary.label = "Clip"
+	primary.label = String(session.video_path).get_file()
+	primary.reserved_left = _LANE_LABEL_LEFT
 	primary.color = Color(0.55, 0.75, 1.0)
 	primary.movable = false
 	primary.full_duration = session.duration
@@ -813,21 +866,43 @@ func _refresh_lanes() -> void:
 	primary.set_in = func(v): session.clip_in = v
 	primary.get_out = func(): return session.effective_clip_out()
 	primary.set_out = func(v): session.clip_out = v
-	primary.drag_started.connect(func(): _push_undo())
+	primary.get_fade_in = func(): return session.main_fade_in
+	primary.set_fade_in = func(v): session.main_fade_in = v
+	primary.get_fade_out = func(): return session.main_fade_out
+	primary.set_fade_out = func(v): session.main_fade_out = v
+	primary.get_snap_targets = _snap_targets_for.bind(-1)
+	primary.drag_started.connect(func(): _push_undo("", "trimmed the main clip"))
 	primary.drag_ended.connect(func(): _tview.refresh(session))
 	primary.changed.connect(_mark_dirty)
 	_lanes_col.add_child(primary)
-	# The main clip's own 0/100 audio toggle (mirrors each track's), so its sound can
-	# be dropped out of the mix independently.
-	primary.add_child(_volume_toggle(
-		func(): return float(session.main_volume) > 0.5,
-		func(on: bool): session.main_volume = 1.0 if on else 0.0,
-		"Main clip audio: full or off"))
+	# The main clip's own pull-rope volume (mirrors each track's), so its level in the
+	# mix is set independently.
+	primary.add_child(_volume_knob(
+		func(): return float(session.main_volume),
+		func(v): session.main_volume = v,
+		Color(0.55, 0.75, 1.0), true))
+	# Split, same corner/behavior as a secondary track's - the main clip is otherwise
+	# just track -1 (see _snap_targets_for), so it gets the same cut at the playhead
+	# (see _split_main). No delete button here: unlike an imported track, the primary
+	# clip is never optional - there's always exactly one.
+	var main_split := Button.new()
+	main_split.text = "✂"
+	main_split.custom_minimum_size = Vector2(20, 18)
+	main_split.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	main_split.offset_left = -22
+	main_split.offset_top = 2
+	main_split.offset_right = -2
+	main_split.offset_bottom = 20
+	main_split.focus_mode = Control.FOCUS_NONE
+	main_split.tooltip_text = "Split the main track at the playhead"
+	main_split.pressed.connect(_split_main)
+	primary.add_child(main_split)
 
 	for i in session.tracks.size():
 		var lane := TrackLane.new()
 		lane.tview = _tview
 		lane.label = String(session.tracks[i].get("video_path", "")).get_file()
+		lane.reserved_left = _LANE_LABEL_LEFT
 		lane.color = Color(0.6, 0.95, 0.7)
 		lane.movable = true
 		lane.full_duration = float(session.tracks[i].get("duration", 0.0))
@@ -837,7 +912,13 @@ func _refresh_lanes() -> void:
 		lane.set_out = _track_setter(i, "clip_out")
 		lane.get_offset = _track_getter(i, "offset")
 		lane.set_offset = _track_setter(i, "offset")
-		lane.drag_started.connect(func(): _push_undo())
+		lane.get_fade_in = _track_getter(i, "fade_in")
+		lane.set_fade_in = _track_setter(i, "fade_in")
+		lane.get_fade_out = _track_getter(i, "fade_out")
+		lane.set_fade_out = _track_setter(i, "fade_out")
+		lane.get_snap_targets = _snap_targets_for.bind(i)
+		lane.get_playhead = func(): return _player.stream_position if _player != null else 0.0
+		lane.drag_started.connect(func(): _push_undo("", "trimmed a track"))
 		lane.drag_ended.connect(func(): _tview.refresh(session))
 		lane.changed.connect(_mark_dirty)
 		_lanes_col.add_child(lane)
@@ -859,33 +940,59 @@ func _refresh_lanes() -> void:
 		var idx := i
 		del.pressed.connect(func(): _delete_track(idx))
 		lane.add_child(del)
-		# Audio 0/100 toggle, on the LEFT of the lane so it never sits under the floating
+		# Split, just left of delete - cuts this track in two at the playhead (see
+		# _split_track). Same overlay approach as delete, for the same reason: an
+		# inline sibling would shrink the lane's own width out from under the
+		# shared timeline's pixel mapping.
+		var split := Button.new()
+		split.text = "✂"
+		split.custom_minimum_size = Vector2(20, 18)
+		split.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+		split.offset_left = -46
+		split.offset_top = 2
+		split.offset_right = -26
+		split.offset_bottom = 20
+		split.focus_mode = Control.FOCUS_NONE
+		split.tooltip_text = "Split this track at the playhead"
+		split.pressed.connect(func(): _split_track(idx))
+		lane.add_child(split)
+		# Pull-rope volume knob, on the LEFT of the lane so it never sits under the floating
 		# assistant chat button (bottom-right, where the old right-side controls landed).
 		# The track's own AudioStreamPlayer mixes with the main clip; _sync_tracks reads
-		# `volume` every frame, so a toggle takes effect live.
-		lane.add_child(_volume_toggle(
-			func(): return float(session.tracks[idx].get("volume", 1.0)) > 0.5,
-			func(on: bool): session.tracks[idx]["volume"] = 1.0 if on else 0.0,
-			"This track's audio: full or off (mixes with the main clip)"))
+		# `volume` every frame, so pulling it changes the level live.
+		lane.add_child(_volume_knob(
+			func(): return float(session.tracks[idx].get("volume", 1.0)),
+			func(v): session.tracks[idx]["volume"] = v,
+			Color(0.6, 0.95, 0.7)))
 
 	# The lane stack sits directly above the marker strip, and the video's own
 	# letterboxed slot (see _build_editor_ui) has to shrink to match - otherwise
 	# an imported track (or several) grows this stack tall enough to push its
 	# lanes/delete-buttons over the bottom of the video instead of the reserved
 	# strip below it.
-	var count := 1 + session.tracks.size()
-	var reserved := 90.0 + count * _LANE_H
+	_apply_lane_reserved(1 + session.tracks.size())
+	_tview.refresh(session)
+
+
+## Collapse the lane stack (and expand the video letterbox into the space that
+## frees up) to fit exactly `count` rows. Called with the full track count
+## right after any structural change (above), and every frame with however
+## many lanes are actually on screen right now - once TrackLane starts hiding
+## itself for clips scrolled entirely out of the current zoom/pan window, the
+## fixed-for-the-whole-track-count reservation left a dead black band where
+## those rows used to be instead of actually collapsing - see feedback/0023.
+func _apply_lane_reserved(count: int) -> void:
+	var reserved := 90.0 + float(count) * _LANE_H
 	_lanes_col.offset_top = -reserved
 	_lanes_col.offset_bottom = -90
 	if _video_area != null:
 		_video_area.offset_bottom = -reserved
-	_tview.refresh(session)
 
 
 func _delete_track(i: int) -> void:
 	if i < 0 or i >= session.tracks.size():
 		return
-	_push_undo()
+	_push_undo("", "deleted a track")
 	if i < _track_runtime.size():
 		var rt: Dictionary = _track_runtime[i]
 		if rt.has("player"):
@@ -896,6 +1003,86 @@ func _delete_track(i: int) -> void:
 			(rt.audio as Node).queue_free()
 		_track_runtime.remove_at(i)
 	session.tracks.remove_at(i)
+	_refresh_lanes()
+	_mark_dirty()
+
+
+## Cut track `i` into two independent lanes at the playhead, both still pointing
+## at the SAME source video/audio (video_path is shared - _ensure_track_audio's
+## sidecar .ogg is keyed off that path, so the new half finds the existing
+## extraction and attaches instantly, no re-demux). The left half keeps this
+## track's own identity and index (just trims its clip_out); the right half is
+## a full duplicate of the fields - same clip_in..clip_out span, same volume -
+## then re-pointed to start exactly at the split: its clip_in advances to the
+## split's LOCAL position in the source, and its offset (where that lands on
+## the MASTER timeline) is set to the playhead itself, so the two blocks sit
+## edge-to-edge with no gap or overlap. From there each is an ordinary lane -
+## TrackLane's own drag handles already shift/resize them independently.
+## Appended at the END of session.tracks (never inserted at i+1): background
+## sidecar-audio jobs (_track_audio_jobs) and _track_runtime are index-keyed,
+## and an insert would silently misalign any in-flight job for a LATER track.
+func _split_track(i: int) -> void:
+	if i < 0 or i >= session.tracks.size():
+		return
+	var track: Dictionary = session.tracks[i]
+	var offset := float(track.get("offset", 0.0))
+	var cin := float(track.get("clip_in", 0.0))
+	var cout := float(track.get("clip_out", 0.0))
+	var master_t: float = _player.stream_position if _player != null else 0.0
+	var split_local := master_t - offset + cin
+	if split_local <= cin + 0.05 or split_local >= cout - 0.05:
+		_set_status("✂  Move the playhead inside this track's span to split it there")
+		return
+	_push_undo("", "split a track")
+	var right: Dictionary = track.duplicate()
+	right["clip_in"] = split_local
+	right["offset"] = master_t
+	right["fade_in"] = 0.0
+	track["clip_out"] = split_local
+	track["fade_out"] = 0.0
+	session.tracks.append(right)
+	_reconcile_track_runtime()
+	_refresh_lanes()
+	_mark_dirty()
+
+
+## Cut the MAIN clip in two at the playhead, same as _split_track but for the
+## primary lane: the main clip has no `offset` of its own (master time and its
+## source time are the same clock - see TrackLane._bounds), so the playhead
+## position IS the split point directly, no offset arithmetic needed. The left
+## half stays the main clip (just trims clip_out, same as dragging its own out
+## handle inward). The right half can't stay "main" - there's only ever one -
+## so it's appended to session.tracks as an ordinary track pointing at the same
+## video_path/source_path, picking up at the split with its own offset. From
+## there it's indistinguishable from any imported track: draggable, deletable,
+## splittable again - the main clip is really just track -1 (see
+## _snap_targets_for), and after a split its tail end is a track in fact, not
+## just in spirit.
+func _split_main() -> void:
+	if _player == null:
+		return
+	var cin := session.clip_in
+	var cout := session.effective_clip_out()
+	var split_t: float = _player.stream_position
+	if split_t <= cin + 0.05 or split_t >= cout - 0.05:
+		_set_status("✂  Move the playhead inside the main clip's span to split it there")
+		return
+	_push_undo("", "split the main clip")
+	var right := {
+		"video_path": session.video_path,
+		"source_path": session.source_path,
+		"duration": session.duration,
+		"clip_in": split_t,
+		"clip_out": cout,
+		"offset": split_t,
+		"fade_in": 0.0,
+		"fade_out": session.main_fade_out,
+		"volume": session.main_volume,
+	}
+	session.clip_out = split_t
+	session.main_fade_out = 0.0
+	session.tracks.append(right)
+	_reconcile_track_runtime()
 	_refresh_lanes()
 	_mark_dirty()
 
@@ -966,7 +1153,7 @@ func _start_track_import(source: String) -> void:
 	var dur := _probe_duration(source)
 	if dur <= 0.0:
 		dur = maxf(session.duration, 1.0)
-	_push_undo()
+	_push_undo("", "imported a track")
 	session.tracks.append({
 		"video_path": video, "source_path": source, "duration": dur,
 		"clip_in": 0.0, "clip_out": dur, "offset": 0.0,
@@ -1068,13 +1255,14 @@ func _sync_tracks() -> void:
 		# This track owns the PiP only when V has selected it (pip_track == i+1). The
 		# box is still gated by inset_show so track modes fade like the main PiP does.
 		var selected := _pip_track == i + 1
-		# Audio is independent of the PiP: a track that's temporally present plays its
-		# sound whether or not its picture is the one on screen (a real multitrack),
-		# mixed with the main clip. 0/1 volume from the lane toggle.
-		if taudio != null:
-			taudio.volume_db = 0.0 if float(track.get("volume", 1.0)) > 0.5 else -80.0
+		# The clip's fade envelope: audio AND video ramp together (coupled) over the
+		# fade_in seconds after the clip's start and the fade_out seconds before its end.
+		# g is 0 at a faded edge, 1 across the middle; see _clip_fade_gain / _track_level_db.
+		var g := _clip_fade_gain(master_t - offset, cout - cin,
+			float(track.get("fade_in", 0.0)), float(track.get("fade_out", 0.0)))
 		if inside:
 			wrap.visible = _last_inset_show > 0.001 and selected
+			wrap.modulate.a = g   # VIDEO fade, coupled to the audio one below
 			if not bool(rt.active) or absf(tplayer.stream_position - local_t) > 0.2:
 				tplayer.stream_position = local_t
 				rt.active = true
@@ -1083,6 +1271,8 @@ func _sync_tracks() -> void:
 			if view != null:
 				view.texture = tplayer.get_video_texture()
 			if taudio != null:
+				# pull-rope volume × the fade envelope, as a log/dB level
+				taudio.volume_db = _track_level_db(float(track.get("volume", 1.0)), g)
 				if _playing:
 					if not taudio.playing:
 						taudio.play(local_t)
@@ -1136,6 +1326,8 @@ func _build_editor_ui() -> void:
 		_build_track_view(i)
 
 	_tview = TimelineView.new()
+	_tview.zoom = session.timeline_zoom          # restore the last zoom/pan (see _save_session)
+	_tview.view_start = session.timeline_view_start
 
 	_timeline = MaskTimeline.new()
 	_timeline.session = session
@@ -1147,7 +1339,7 @@ func _build_editor_ui() -> void:
 	_timeline.offset_top = -90
 	_timeline.scrubbed.connect(_on_scrub)
 	_timeline.marker_picked.connect(_select_marker)
-	_timeline.marker_drag_started.connect(func(_m): _push_undo())
+	_timeline.marker_drag_started.connect(func(_m): _push_undo("", "moved a marker"))
 	_timeline.marker_moved.connect(func(_m):
 		_refresh_marker_label()
 		_mark_dirty())
@@ -1237,7 +1429,7 @@ func _build_panel() -> void:
 
 	# Two independently-scrolling regions, stacked: the controls above (which can
 	# get tall - color pickers, a dozen sliders) scroll in whatever space is left,
-	# and the sequential ramp/decay list is pinned to the bottom with its own fixed-
+	# and the sequential ramp/damp list is pinned to the bottom with its own fixed-
 	# height scroll, so it's always reachable without paging through everything above.
 	var outer := VBoxContainer.new()
 	outer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -1308,7 +1500,6 @@ func _build_panel() -> void:
 	_grp_color = VBoxContainer.new()
 	_grp_color.add_theme_constant_override("separation", 8)
 	col.add_child(_grp_color)
-	_grp_color.add_child(HSeparator.new())
 	_grp_color.add_child(_label("Key color", "The color this channel targets - what it keys or paints"))
 	_color_a = ColorPickerButton.new()
 	_color_a.focus_mode = Control.FOCUS_NONE
@@ -1319,182 +1510,165 @@ func _build_panel() -> void:
 		_hue_a.set_value_no_signal(c.h)
 		_edit("hue_a", c.h))
 	_grp_color.add_child(_color_a)
+	col.add_child(_label("Effect", "Which visual treatment this layer applies"))
+	_effect_a = _effect_menu(col, func(id): _edit("effect_a", float(id)))
+
+	# Every option below - this channel's grading through this effect's own
+	# pattern/echo/weather/tendril knobs - lives in one flat, sortable list instead
+	# of fixed titled groups (see feedback/0011: the group boundaries were drawn as
+	# separator lines that "made no sense" and just ate space). Which rows are
+	# actually visible still follows the selected effect exactly as before
+	# (MaskSession.EFFECT_CONTROLS / PATTERN_KNOBS, see _update_effect_controls) -
+	# only their ON-SCREEN ORDER is now driven by _sort_mode. _sort_dropdown picks
+	# it directly - same shape as the Effect dropdown just above; see _apply_sort.
+	var sort_tip := "How the options below are ordered - alphabetical (either " + \
+		"direction), or energy: the fullest slider floats to the top, pick-type " + \
+		"options with no slider sink to the bottom (A → Z among themselves)"
+	col.add_child(_label("Sort", sort_tip))
+	_sort_dropdown = OptionButton.new()
+	_sort_dropdown.focus_mode = Control.FOCUS_NONE
+	_sort_dropdown.tooltip_text = sort_tip
+	for i in _SORT_MODES.size():
+		_sort_dropdown.add_item(_SORT_MODES[i], i)
+	_sort_dropdown.select(_sort_mode)
+	_sort_dropdown.item_selected.connect(func(id):
+		_sort_mode = id
+		_apply_sort())
+	col.add_child(_sort_dropdown)
+
+	_grp_options = VBoxContainer.new()
+	_grp_options.add_theme_constant_override("separation", 8)
+	col.add_child(_grp_options)
+
+	_intensity_a = _slider(_grp_options, "Strength", 0.0, 1.0, func(v): _edit("intensity_a", v),
+		"How strongly this layer's effect applies")
+	_intensity_label = _intensity_a.get_meta("field_label")
+	_register_option(_intensity_a)
 	# A dedicated grading slider on the same hue_a field the swatch above sets -
 	# color grading (the feedback that drove this) wants fine numeric dragging,
 	# not just a color-wheel pick. Kept in sync both ways: see _refresh_panel and
 	# _color_a's color_changed above.
-	_hue_a = _slider(_grp_color, "Hue", 0.0, 1.0, func(v):
+	_hue_a = _slider(_grp_options, "Hue", 0.0, 1.0, func(v):
 		_color_a.color = Color.from_hsv(v, 0.85, 0.9)
 		_edit("hue_a", v), "Shifts this layer's color - drag for fine color grading")
-	col.add_child(_label("Effect", "Which visual treatment this layer applies"))
-	_effect_a = _effect_menu(col, func(id): _edit("effect_a", float(id)))
-	_intensity_a = _slider(col, "Strength", 0.0, 1.0, func(v): _edit("intensity_a", v),
-		"How strongly this layer's effect applies")
-	_intensity_label = _intensity_a.get_meta("field_label")
+	_register_option(_hue_a)
 
-	# Option GROUPS, shown per the selected effect's needs (the control hierarchy,
+	# Option rows, shown per the selected effect's needs (the control hierarchy,
 	# MaskSession.EFFECT_CONTROLS): a slider that does nothing for the current
 	# effect is not on screen for it. Erase shows none of these (projection is
 	# gate-free); restore shows only the threshold, relabeled as its reach;
 	# the volumetrics show everything. See _update_effect_controls.
-	_grp_threshold = VBoxContainer.new()
-	_grp_threshold.add_theme_constant_override("separation", 8)
-	col.add_child(_grp_threshold)
-	_grp_threshold.add_child(HSeparator.new())
-	_threshold_label = _label("Threshold",
+	_threshold = _slider(_grp_options, "Threshold", 0.0, 1.0, func(v): _edit("threshold", v),
 		"How far a pixel's hue may drift from the key color and still be masked")
-	_grp_threshold.add_child(_threshold_label)
-	_threshold = HSlider.new()
-	_threshold.focus_mode = Control.FOCUS_NONE
-	_threshold.scrollable = false   # wheel scrolls the panel, never edits (see _slider)
-	_threshold.min_value = 0.0
-	_threshold.max_value = 1.0
-	_threshold.step = 0.005
-	_threshold.tooltip_text = _threshold_label.tooltip_text
-	_threshold.value_changed.connect(func(v): _edit("threshold", v))
-	_grp_threshold.add_child(_threshold)
+	_threshold_label = _threshold.get_meta("field_label")
+	_register_option(_threshold)
 
-	_grp_keymisc = VBoxContainer.new()
-	_grp_keymisc.add_theme_constant_override("separation", 8)
-	col.add_child(_grp_keymisc)
-	_feather = _slider(_grp_keymisc, "Feather", 0.0, 0.5, func(v): _edit("feather", v),
+	_feather = _slider(_grp_options, "Feather", 0.0, 0.5, func(v): _edit("feather", v),
 		"Softness of the mask's edge - 0 is a hard cutoff")
-	_sat_floor = _slider(_grp_keymisc, "Min colorfulness", 0.0, 1.0, func(v): _edit("sat_floor", v),
+	_register_option(_feather)
+	_sat_floor = _slider(_grp_options, "Min colorfulness", 0.0, 1.0, func(v): _edit("sat_floor", v),
 		"Minimum saturation a pixel needs before it can be keyed at all")
+	_register_option(_sat_floor)
 
 	# The wisp field's placement - pan/zoom the pattern over the frame (keyframe a
 	# tendril onto an eye), and dial its coverage from one wisp to an engulfing.
-	# All continuous marker fields, so they blend through ramps/decays.
-	_grp_pattern = VBoxContainer.new()
-	_grp_pattern.add_theme_constant_override("separation", 8)
-	col.add_child(_grp_pattern)
-	_grp_pattern.add_child(HSeparator.new())
-	_grp_pattern.add_child(_label("Pattern", "This effect's field placement, coverage, and motion"))
-	_fx_x_label = _label("Pan X", "Shifts the pattern horizontally over the frame")
-	_grp_pattern.add_child(_fx_x_label)
-	_fx_x = HSlider.new()
-	_fx_x.focus_mode = Control.FOCUS_NONE
-	_fx_x.scrollable = false
-	_fx_x.min_value = -2.0
-	_fx_x.max_value = 2.0
+	# All continuous marker fields, so they blend through ramps/damps.
+	_fx_x = _slider(_grp_options, "Pan X", -2.0, 2.0, func(v): _edit("fx_x", v),
+		"Shifts the pattern horizontally over the frame")
 	_fx_x.step = 0.01
-	_fx_x.tooltip_text = _fx_x_label.tooltip_text
-	_fx_x.value_changed.connect(func(v): _edit("fx_x", v))
-	_grp_pattern.add_child(_fx_x)
-	_fx_y_label = _label("Pan Y", "Shifts the pattern vertically over the frame")
-	_grp_pattern.add_child(_fx_y_label)
-	_fx_y = HSlider.new()
-	_fx_y.focus_mode = Control.FOCUS_NONE
-	_fx_y.scrollable = false
-	_fx_y.min_value = -2.0
-	_fx_y.max_value = 2.0
+	_fx_x_label = _fx_x.get_meta("field_label")
+	_register_option(_fx_x)
+	_fx_y = _slider(_grp_options, "Pan Y", -2.0, 2.0, func(v): _edit("fx_y", v),
+		"Shifts the pattern vertically over the frame")
 	_fx_y.step = 0.01
-	_fx_y.tooltip_text = _fx_y_label.tooltip_text
-	_fx_y.value_changed.connect(func(v): _edit("fx_y", v))
-	_grp_pattern.add_child(_fx_y)
-	_fx_scale = _slider(_grp_pattern, "Scale", 0.1, 8.0, func(v): _edit("fx_scale", v),
+	_fx_y_label = _fx_y.get_meta("field_label")
+	_register_option(_fx_y)
+	_fx_scale = _slider(_grp_options, "Scale", 0.1, 8.0, func(v): _edit("fx_scale", v),
 		"Zoom of the effect's pattern - 1 is nominal size")
 	_fx_scale.exp_edit = true
-	_fx_density_label = _label("Coverage",
+	_register_option(_fx_scale)
+	_fx_density = _slider(_grp_options, "Coverage", 0.0, 1.0, func(v): _edit("fx_density", v),
 		"How much of the keyed region the pattern consumes - 0 untouched, 1 fully devoured")
-	_grp_pattern.add_child(_fx_density_label)
-	_fx_density = HSlider.new()
-	_fx_density.focus_mode = Control.FOCUS_NONE
-	_fx_density.scrollable = false
-	_fx_density.min_value = 0.0
-	_fx_density.max_value = 1.0
-	_fx_density.step = 0.005
-	_fx_density.tooltip_text = _fx_density_label.tooltip_text
-	_fx_density.value_changed.connect(func(v): _edit("fx_density", v))
-	_grp_pattern.add_child(_fx_density)
-	_fx_contrast_label = _label("Contrast", "Edge hardness of the pattern - 0.5 is neutral")
-	_grp_pattern.add_child(_fx_contrast_label)
-	_fx_contrast = HSlider.new()
-	_fx_contrast.focus_mode = Control.FOCUS_NONE
-	_fx_contrast.scrollable = false
-	_fx_contrast.min_value = 0.0
-	_fx_contrast.max_value = 1.0
-	_fx_contrast.step = 0.005
-	_fx_contrast.tooltip_text = _fx_contrast_label.tooltip_text
-	_fx_contrast.value_changed.connect(func(v): _edit("fx_contrast", v))
-	_grp_pattern.add_child(_fx_contrast)
-	_fx_speed = _slider(_grp_pattern, "Velocity", 0.1, 4.0, func(v): _edit("fx_speed", v),
+	_fx_density_label = _fx_density.get_meta("field_label")
+	_register_option(_fx_density)
+	_fx_contrast = _slider(_grp_options, "Contrast", 0.0, 1.0, func(v): _edit("fx_contrast", v),
+		"Edge hardness of the pattern - 0.5 is neutral")
+	_fx_contrast_label = _fx_contrast.get_meta("field_label")
+	_register_option(_fx_contrast)
+	_fx_speed = _slider(_grp_options, "Velocity", 0.1, 4.0, func(v): _edit("fx_speed", v),
 		"Speed multiplier for the pattern's motion")
 	_fx_speed.exp_edit = true
+	_register_option(_fx_speed)
+	_resonance = _slider(_grp_options, "Resonance", 0.0, 1.0, func(v): _edit("resonance", v),
+		"Audio drive - how strongly this layer reacts to the track's live energy")
+	_register_option(_resonance)
 
-	_grp_echo = VBoxContainer.new()
-	_grp_echo.add_theme_constant_override("separation", 8)
-	col.add_child(_grp_echo)
-	_grp_echo.add_child(HSeparator.new())
-	_echo_header = _label("Echo", "How the past is worn")
-	_grp_echo.add_child(_echo_header)
-	_fx_lag = _slider(_grp_echo, "Lag (s)", 0.05, 2.4, func(v): _edit("fx_lag", v),
-		"Echo: how far back the lagged frame reaches. Oracle: how far ahead the region leads.")
+	_fx_lag = _slider(_grp_options, "Lag (s)", 0.05, 2.4, func(v): _edit("fx_lag", v),
+		"How far back the lagged frame reaches")
 	_fx_lag.exp_edit = true
-	_fx_smooth = _slider(_grp_echo, "Smoothing", 0.0, 1.0, func(v): _edit("fx_smooth", v),
+	_fx_lag_label = _fx_lag.get_meta("field_label")
+	_register_option(_fx_lag)
+	_fx_smooth = _slider(_grp_options, "Smoothing", 0.0, 1.0, func(v): _edit("fx_smooth", v),
 		"Stutter → smear: 0 is a discrete stutter, 1 is a wide temporal blend")
+	_register_option(_fx_smooth)
 
-	# Snow's own view onto fx_smooth - a separate widget from echo's Smoothing
-	# above (same stored field, different meaning; the two groups never show
-	# together, see _update_effect_controls, so there's no risk of them
-	# fighting over what the slider looks like).
-	_grp_snow = VBoxContainer.new()
-	_grp_snow.add_theme_constant_override("separation", 8)
-	col.add_child(_grp_snow)
-	_grp_snow.add_child(HSeparator.new())
-	_grp_snow.add_child(_label("Weather", "How the fall drifts"))
-	_gust = _slider(_grp_snow, "Gust", 0.0, 1.0, func(v): _edit("fx_smooth", v),
+	# Snow's own view onto fx_smooth - a separate widget from Smoothing above (same
+	# stored field, different meaning; the two rows never show together, see
+	# _update_effect_controls, so there's no risk of them fighting over what the
+	# slider looks like).
+	_gust = _slider(_grp_options, "Gust", 0.0, 1.0, func(v): _edit("fx_smooth", v),
 		"0 is a steady drift, 1 is chaotic gusts")
+	_register_option(_gust)
 
 	# Fur's tendril dynamics - fur-only views onto fx_smooth/fx_lag, the same
-	# stored-field reuse as snow's Gust above (the groups never show together,
-	# see _update_effect_controls).
-	_grp_fur = VBoxContainer.new()
-	_grp_fur.add_theme_constant_override("separation", 8)
-	col.add_child(_grp_fur)
-	_grp_fur.add_child(HSeparator.new())
-	_grp_fur.add_child(_label("Tendrils", "How the strands move"))
-	_undul = _slider(_grp_fur, "Undulation", 0.0, 1.0, func(v): _edit("fx_smooth", v),
+	# stored-field reuse as Gust above (the rows never show together, see
+	# _update_effect_controls).
+	_undul = _slider(_grp_options, "Undulation", 0.0, 1.0, func(v): _edit("fx_smooth", v),
 		"Traveling waves along each strand")
-	_coil = _slider(_grp_fur, "Coil", 0.0, 1.0, func(v): _edit("fx_lag", v),
+	_register_option(_undul)
+	_coil = _slider(_grp_options, "Coil", 0.0, 1.0, func(v): _edit("fx_lag", v),
 		"Eddies and spiral curl")
+	_register_option(_coil)
 	# Stickiness - 0 keeps today's free coat exactly; higher values thin the strands
 	# away from natural anchors so the hair clings to the keyed surface, the tracked
 	# landmark/motion centroid, and brighter regions (see the shader's fur branch).
-	_stick = _slider(_grp_fur, "Stickiness", 0.0, 1.0, func(v): _edit("fx_stick", v),
+	_stick = _slider(_grp_options, "Stickiness", 0.0, 1.0, func(v): _edit("fx_stick", v),
 		"0 is a free coat, 1 clings to the face/motion")
+	_register_option(_stick)
 
-	_resonance = _slider(_grp_pattern, "Resonance", 0.0, 1.0, func(v): _edit("resonance", v),
-		"Audio drive - how strongly this layer reacts to the track's live energy")
-
-	col.add_child(HSeparator.new())
-	# Every marker is a ramp or a decay - there is no plain/neutral marker (see
+	# Every marker is a ramp or a damp - there is no plain/neutral marker (see
 	# MaskSession class doc). Both transition TO this marker's values; the kind is
 	# which side of the anchor the transition occupies: a ramp eases in BEFORE,
-	# complete at the anchor; a decay begins AT the anchor and accumulates after.
-	col.add_child(_label("Kind",
-		"Which way this marker's change runs - ramp eases in before it, decay accumulates after"))
+	# complete at the anchor; a damp begins AT the anchor and accumulates after.
+	# Lives in _grp_options (not a fixed spot below it) so it's part of the same
+	# sortable list as the effect knobs - see _apply_sort/_register_option; a
+	# pick-type control with no slider, it sorts to the bottom under Energy mode.
+	var _kind_label := _label("Kind",
+		"Which way this marker's change runs - ramp eases in before it, damp accumulates after")
+	_grp_options.add_child(_kind_label)
 	_kind = OptionButton.new()
 	_kind.focus_mode = Control.FOCUS_NONE
-	_kind.tooltip_text = "Ramp eases in before this marker; decay accumulates after it"
+	_kind.tooltip_text = "Ramp eases in before this marker; damp accumulates after it"
+	_kind.set_meta("field_label", _kind_label)
 	for i in MaskSession.MARKER_KINDS.size():
 		_kind.add_item(MaskSession.MARKER_KINDS[i].capitalize(), i)
 	_kind.item_selected.connect(func(id): _edit("kind", float(id)))
-	col.add_child(_kind)
+	_grp_options.add_child(_kind)
+	_register_option(_kind)
 	# Exponential response: fine-grained fractions of a second on the left, whole
 	# minutes on the right - one slider covers a subtle 0.2s blend and a transition
 	# spanning the entire clip. (exp_edit needs a strictly positive min.)
-	_marker_duration = _slider(col, "Ramp/decay span (s)", 0.05, maxf(8.0, session.duration),
+	_marker_duration = _slider(_grp_options, "Ramp/damp span (s)", 0.05, maxf(8.0, session.duration),
 		func(v): _edit("duration", v),
-		"How long the ramp (before) or decay (after) transition takes, in seconds")
+		"How long the ramp (before) or damp (after) transition takes, in seconds")
 	_marker_duration.exp_edit = true
 	_marker_duration.step = 0.01
+	_register_option(_marker_duration)
 
 	# --- create/delete + the sequential list, pinned to the panel's bottom with its
 	# --- own scroll - the whole "manage markers" workflow stays visible together,
 	# --- rather than the create buttons living up in the scrolling edit area where
 	# --- reaching them means scrolling past everything else first.
-	outer.add_child(HSeparator.new())
 	var list_margin := MarginContainer.new()
 	for side in ["left", "right", "top", "bottom"]:
 		list_margin.add_theme_constant_override("margin_" + side, 10)
@@ -1510,6 +1684,17 @@ func _build_panel() -> void:
 	_marker_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	list_col.add_child(_marker_label)
 
+	# See feedback/0019: a preview of what Ctrl+Z would revert, so undo isn't a
+	# blind guess - kept right above the buttons that create the history it
+	# describes. Populated by _refresh_history_label, driven off _undo_descs.
+	_history_label = Label.new()
+	_history_label.add_theme_font_size_override("font_size", 12)
+	_history_label.add_theme_color_override("font_color", Color(0.55, 0.6, 0.7))
+	_history_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_history_label.tooltip_text = "What Ctrl+Z would revert right now"
+	list_col.add_child(_history_label)
+	_refresh_history_label()
+
 	var mrow := HBoxContainer.new()
 	list_col.add_child(mrow)
 	var ramp_btn := Button.new()
@@ -1518,12 +1703,12 @@ func _build_panel() -> void:
 	ramp_btn.focus_mode = Control.FOCUS_NONE
 	ramp_btn.pressed.connect(func(): _add_marker_at_playhead(0))
 	mrow.add_child(ramp_btn)
-	var decay_btn := Button.new()
-	decay_btn.text = "+ Decay"
-	decay_btn.tooltip_text = "Begins here and accumulates over the span that follows"
-	decay_btn.focus_mode = Control.FOCUS_NONE
-	decay_btn.pressed.connect(func(): _add_marker_at_playhead(1))
-	mrow.add_child(decay_btn)
+	var damp_btn := Button.new()
+	damp_btn.text = "+ Damp"
+	damp_btn.tooltip_text = "Begins here and accumulates over the span that follows"
+	damp_btn.focus_mode = Control.FOCUS_NONE
+	damp_btn.pressed.connect(func(): _add_marker_at_playhead(1))
+	mrow.add_child(damp_btn)
 	var del_btn := Button.new()
 	del_btn.text = "Delete"
 	del_btn.focus_mode = Control.FOCUS_NONE
@@ -1584,28 +1769,31 @@ func _slider(col: VBoxContainer, text: String, lo: float, hi: float, cb: Callabl
 	return s
 
 
-## A left-anchored 0/100 audio toggle for a lane (🔊 = full, 🔈 = off). `is_on`
-## reads the current state, `set_on` writes the new one - so the same widget drives
-## a track's `volume` and the main clip's `main_volume`. Left side deliberately: the
-## right corner sits under the floating assistant chat button.
-func _volume_toggle(is_on: Callable, set_on: Callable, tip: String) -> Button:
-	var b := Button.new()
-	b.text = "🔊" if bool(is_on.call()) else "🔈"
-	b.custom_minimum_size = Vector2(22, 18)
-	b.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	b.offset_left = 2
-	b.offset_top = 2
-	b.offset_right = 24
-	b.offset_bottom = 20
-	b.focus_mode = Control.FOCUS_NONE
-	b.tooltip_text = tip
-	b.pressed.connect(func():
-		var on := not bool(is_on.call())
-		set_on.call(on)
-		b.text = "🔊" if on else "🔈"
-		_apply_main_volume()   # tracks re-apply per frame in _sync_tracks; this covers the main clip
-		_mark_dirty())
-	return b
+## A left-anchored pull-rope volume knob for a lane (see VolumeKnob): hold and drag
+## away to set a continuous 0..1 level with an asymptotic ceiling. `getter` reads the
+## stored volume, `setter` writes it - the same widget drives a track's `volume` and
+## the main clip's `main_volume`. Left side deliberately: the right corner sits under
+## the floating assistant chat button. `icon` shows the one-time speaker-glyph hint -
+## reserved for the main clip's own knob only (see VolumeKnob.show_icon).
+func _volume_knob(getter: Callable, setter: Callable, accent: Color, icon: bool = false) -> VolumeKnob:
+	var k := VolumeKnob.new()
+	k.accent = accent
+	k.show_icon = icon
+	k.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	# offset_left starts past TrackLane._EDGE_W (8px): the primary lane's own trim/fade
+	# "in" handles sit at local x0 = 0 (its offset is always 0, and the default view
+	# starts at t=0 too), so a knob planted right at the corner silently ate every click
+	# meant for that edge - "drag the left edge" looked broken specifically on the main
+	# track, since only ITS x0 is pinned to 0 - see feedback/0017.
+	k.offset_left = 12
+	k.offset_top = 2
+	k.offset_right = 34
+	k.offset_bottom = 20
+	k.get_v = getter
+	k.set_v = func(v):
+		setter.call(v)
+		_mark_dirty()   # cheap + debounced (autosave cooldown), fine to fire while pulling
+	return k
 
 
 ## Show/hide one knob - the slider AND the label above it (stored on the slider
@@ -1619,6 +1807,66 @@ func _show_field(slider: Control, vis: bool, label: Control = null) -> void:
 		lbl = slider.get_meta("field_label")
 	if lbl != null:
 		(lbl as Control).visible = vis
+
+
+## Registers a slider or pick-type control (label stashed via set_meta, either by
+## _slider or by hand for non-Range controls like an OptionButton) into the flat
+## sortable list - see _apply_sort.
+func _register_option(ctrl: Control) -> void:
+	_options.append({"label": ctrl.get_meta("field_label"), "control": ctrl})
+
+
+## Re-orders _options within _grp_options per the active sort mode: alphabetical by
+## each row's CURRENT label text (which itself changes per effect - e.g. Contrast ->
+## Sensitivity for snow), or "energy" - how wide each slider's fill currently reads,
+## fullest first (see _option_energy). Pick-type controls with no slider (e.g. Kind)
+## have no fill to compare, so they sink below every slider and break ties alphabetically
+## among themselves. Hidden rows (this effect doesn't use them) are left trailing after
+## the visible ones - their order doesn't matter, they're off screen. Re-run whenever
+## the effect/visibility changes (_update_effect_controls) or a mode is picked in
+## _sort_dropdown - never on a live drag, so a slider never jumps out from under the
+## mouse mid-edit.
+func _apply_sort() -> void:
+	if _grp_options == null:
+		return
+	var shown: Array = _options.filter(func(o): return o.control.visible)
+	var hidden: Array = _options.filter(func(o): return not o.control.visible)
+	match _sort_mode:
+		1:
+			shown.sort_custom(func(a, b): return a.label.text.nocasecmp_to(b.label.text) > 0)
+		2:
+			shown.sort_custom(func(a, b):
+				var ea: float = _option_energy(a.control)
+				var eb: float = _option_energy(b.control)
+				if ea == eb:
+					return a.label.text.nocasecmp_to(b.label.text) < 0
+				return ea > eb)
+		_:
+			shown.sort_custom(func(a, b): return a.label.text.nocasecmp_to(b.label.text) < 0)
+	var idx := 0
+	for o in shown + hidden:
+		_grp_options.move_child(o.label, idx)
+		idx += 1
+		_grp_options.move_child(o.control, idx)
+		idx += 1
+
+
+## How "present" a control's current value is, for the "Energy" sort mode. For a
+## slider this is its actual fill fraction - the handle's position between the
+## track's left and right ends, min at 0 and max at 1 - matching the bar you
+## actually see, so a slider barely nudged off its floor reads as low energy even
+## if that floor sits far from the range's midpoint. Range.get_as_ratio() (rather
+## than a hand-rolled linear (value-min)/span) is what makes this match what's on
+## screen for the exp_edit sliders (Scale/Velocity/Lag/Ramp-damp span): those are
+## drawn on a logarithmic track, so a linear fraction would read a handle sitting
+## visibly right-of-center as barely-there. Pick-type controls with no slider (not
+## a Range, e.g. Kind's OptionButton) have nothing to compare, so they return a
+## sentinel below any real slider value - see _apply_sort, where that sinks them to
+## the bottom and falls back to alphabetical among themselves.
+func _option_energy(ctrl: Control) -> float:
+	if not (ctrl is Range):
+		return -1.0
+	return (ctrl as Range).get_as_ratio()
 
 
 func _effect_menu(col: VBoxContainer, cb: Callable) -> OptionButton:
@@ -1637,16 +1885,16 @@ func _effect_menu(col: VBoxContainer, cb: Callable) -> OptionButton:
 ## Every panel edit targets the selected marker; if none is selected yet, planting
 ## one at the current playhead is the edit's first move (a knob you touch becomes a
 ## marker - no separate "create" step needed for the common case). Defaults to a
-## ramp when auto-created this way; press +Decay explicitly for the other kind.
+## ramp when auto-created this way; press +Damp explicitly for the other kind.
 func _edit(field: String, value: float) -> void:
 	var m: Variant = _selected
 	if m == null:
-		_push_undo()   # about to create a marker - always its own boundary
+		_push_undo("", "created a marker")   # about to create one - always its own boundary
 		m = session.add_marker(_player.stream_position if _player != null else 0.0)
 		_selected = m
 		_select_generation += 1
 	else:
-		_push_undo("marker:%d:%s" % [_select_generation, field])
+		_push_undo("marker:%d:%s" % [_select_generation, field], "adjusted %s" % field.capitalize())
 	m[field] = value
 	# Assigning a drawing effect to a marker whose OWN view shows no fx surface is
 	# a silent foot-gun: the layer holds forever but this marker's view hides it -
@@ -1671,7 +1919,7 @@ func _edit(field: String, value: float) -> void:
 
 
 func _add_marker_at_playhead(kind_id: int) -> void:
-	_push_undo()
+	_push_undo("", "added a %s marker" % MaskSession.MARKER_KINDS[kind_id].capitalize())
 	_selected = session.add_marker(_player.stream_position if _player != null else 0.0, kind_id)
 	_select_generation += 1
 	_timeline.selected = _selected
@@ -1681,7 +1929,7 @@ func _add_marker_at_playhead(kind_id: int) -> void:
 
 func _delete_selected() -> void:
 	if _selected != null:
-		_push_undo()
+		_push_undo("", "deleted a marker")
 		session.remove_marker(_selected)
 		_selected = null
 		_timeline.selected = null
@@ -1692,7 +1940,8 @@ func _delete_selected() -> void:
 ## Temporal capture: when the playhead crosses into a new _ECHO_INTERVAL slot,
 ## snapshot the current frame (quarter-res) into the ring and push the ring to
 ## both materials in AGE ORDER (u_echo0 = newest). GPU readback at ~3Hz is cheap
-## enough for a demo; sessions without whisp/echo markers skip all of it.
+## enough for a demo; frames where no whisp/echo/snow/oracle/serpent/chimera
+## layer is actually on screen (_temporal_active) skip all of it.
 func _maybe_capture_echo() -> void:
 	if _player == null or session == null:
 		return
@@ -1712,7 +1961,7 @@ func _maybe_capture_echo() -> void:
 			return
 	else:
 		_prev_pos = pos
-	if not _session_uses_temporal():
+	if not _temporal_active:
 		return
 	var slot := int(pos / _ECHO_INTERVAL)
 	if slot == _echo_slot:
@@ -1767,15 +2016,6 @@ func _push_anchor() -> void:
 			mat.set_shader_parameter("u_wave_amp", _wave_amp)
 
 
-func _session_uses_temporal() -> bool:
-	for m in session.markers:
-		var e := int(m.get("effect_a", 0))
-		if e == 5 or e == 7 or e == MaskSession.EFFECT_SNOW or e == MaskSession.EFFECT_ORACLE \
-				or e == MaskSession.EFFECT_SERPENT or e == MaskSession.EFFECT_CHIMERA:
-			return true   # whisp+chimera (anchor) / echo+oracle (ring) / snow+serpent (motion probe)
-	return false
-
-
 ## The landmark anchor (whisp's field origin, chimera's graft window): the
 ## first whisp-or-chimera marker's target-color mass centroid in the captured
 ## frame, EMA-smoothed so the lock glides to landmarks instead of jittering
@@ -1800,6 +2040,14 @@ func _update_whisp_anchor(img: Image) -> void:
 	var tl := 0.299 * tc.r + 0.587 * tc.g + 0.114 * tc.b
 	var tdir := Vector3(tc.r - tl, tc.g - tl, tc.b - tl).normalized()
 	img.resize(48, 27, Image.INTERPOLATE_BILINEAR)
+	# Read the frame as one flat RGBA8 buffer instead of 1296 Image.get_pixel()
+	# calls. This runs every _ECHO_INTERVAL during playback (once a temporal effect
+	# is live), right after the synchronous GPU readback - the per-pixel Color
+	# construction get_pixel does was a measurable slice of that periodic hitch. The
+	# math is unchanged; only the pixel access is. (_face_frame does the same.)
+	if img.get_format() != Image.FORMAT_RGBA8:
+		img.convert(Image.FORMAT_RGBA8)
+	var data := img.get_data()
 	var acc := Vector2.ZERO
 	var acc2 := 0.0          # weighted sum of |pos|^2 - second moment, for the RMS radius (size)
 	var wsum := 0.0
@@ -1812,14 +2060,17 @@ func _update_whisp_anchor(img: Image) -> void:
 	var motion := 0.0
 	for y in 27:
 		for x in 48:
-			var c := img.get_pixel(x, y)
-			var l := 0.299 * c.r + 0.587 * c.g + 0.114 * c.b
+			var idx := y * 48 + x
+			var base := idx * 4
+			var r := float(data[base]) / 255.0
+			var g := float(data[base + 1]) / 255.0
+			var b := float(data[base + 2]) / 255.0
+			var l := 0.299 * r + 0.587 * g + 0.114 * b
 			var pos := Vector2((float(x) + 0.5) / 48.0, (float(y) + 0.5) / 27.0)
-			var pr := maxf(0.0, (c.r - l) * tdir.x + (c.g - l) * tdir.y + (c.b - l) * tdir.z)
+			var pr := maxf(0.0, (r - l) * tdir.x + (g - l) * tdir.y + (b - l) * tdir.z)
 			acc += pos * pr
 			acc2 += pos.length_squared() * pr
 			wsum += pr
-			var idx := y * 48 + x
 			if have_prev:
 				var dm := absf(l - _wave_prev_lum[idx])
 				motion += dm
@@ -1867,16 +2118,23 @@ func _face_frame(img: Image, tdir: Vector3, prev_lum: PackedFloat32Array) -> Dic
 	var cur := PackedFloat32Array()
 	cur.resize(48 * 27)
 	var have_prev := prev_lum.size() == 48 * 27
+	# Flat RGBA8 buffer read - see _update_whisp_anchor for why (same per-tick path).
+	if img.get_format() != Image.FORMAT_RGBA8:
+		img.convert(Image.FORMAT_RGBA8)
+	var data := img.get_data()
 	for y in 27:
 		for x in 48:
-			var c := img.get_pixel(x, y)
-			var l := 0.299 * c.r + 0.587 * c.g + 0.114 * c.b
+			var idx := y * 48 + x
+			var base := idx * 4
+			var r := float(data[base]) / 255.0
+			var g := float(data[base + 1]) / 255.0
+			var b := float(data[base + 2]) / 255.0
+			var l := 0.299 * r + 0.587 * g + 0.114 * b
 			var pos := Vector2((float(x) + 0.5) / 48.0, (float(y) + 0.5) / 27.0)
-			var pr := maxf(0.0, (c.r - l) * tdir.x + (c.g - l) * tdir.y + (c.b - l) * tdir.z)
+			var pr := maxf(0.0, (r - l) * tdir.x + (g - l) * tdir.y + (b - l) * tdir.z)
 			acc += pos * pr
 			acc2 += pos.length_squared() * pr
 			wsum += pr
-			var idx := y * 48 + x
 			if have_prev:
 				var dm := absf(l - prev_lum[idx])
 				macc += pos * dm
@@ -1984,16 +2242,25 @@ func _restore_snapshot(snap: Dictionary) -> void:
 	session.tracks = snap.tracks
 
 
-func _push_undo(key: String = "") -> void:
+## `desc` is what a Ctrl+Z right after this action would revert - shown live
+## above the Ramp/Damp buttons (see _refresh_history_label) so undo is never a
+## blind guess. Coalesced calls (matching `key`) keep the first desc: the whole
+## gesture is one undo step, so it should read as the one action it is (e.g.
+## "adjusted Contrast", not the field's very last no-op tick).
+func _push_undo(key: String = "", desc: String = "") -> void:
 	if key != "" and key == _undo_coalesce_key and _undo_coalesce_cooldown > 0.0:
 		_undo_coalesce_cooldown = _UNDO_COALESCE_WINDOW
 		return
 	_undo_coalesce_key = key
 	_undo_coalesce_cooldown = _UNDO_COALESCE_WINDOW
 	_undo_stack.append(_snapshot())
+	_undo_descs.append(desc)
 	if _undo_stack.size() > _UNDO_LIMIT:
 		_undo_stack.pop_front()
+		_undo_descs.pop_front()
 	_redo_stack.clear()
+	_redo_descs.clear()
+	_refresh_history_label()
 
 
 func _undo() -> void:
@@ -2001,6 +2268,7 @@ func _undo() -> void:
 		return
 	_redo_stack.append(_snapshot())
 	_restore_snapshot(_undo_stack.pop_back())
+	_redo_descs.append(_undo_descs.pop_back())
 	_undo_coalesce_key = ""   # the next edit must open its own fresh boundary
 	_after_history_restore()
 
@@ -2010,8 +2278,25 @@ func _redo() -> void:
 		return
 	_undo_stack.append(_snapshot())
 	_restore_snapshot(_redo_stack.pop_back())
+	_undo_descs.append(_redo_descs.pop_back())
 	_undo_coalesce_key = ""
 	_after_history_restore()
+
+
+## The live preview above the Ramp/Damp buttons - see feedback/0019: "if a user
+## uses undo, they have a little preview of what they would be reverting."
+## _undo_descs.back() is the description passed to the _push_undo() call that
+## opened the CURRENT undo step, i.e. exactly the action Ctrl+Z would revert.
+func _refresh_history_label() -> void:
+	if _history_label == null:
+		return
+	if _undo_descs.is_empty():
+		_history_label.text = "Undo: nothing yet"
+		_history_label.tooltip_text = ""
+	else:
+		var desc: String = _undo_descs.back()
+		_history_label.text = "Undo: " + desc
+		_history_label.tooltip_text = "Ctrl+Z would revert: " + desc
 
 
 ## _selected points INTO the array a restore just replaced wholesale, so it's
@@ -2034,6 +2319,7 @@ func _after_history_restore() -> void:
 	_refresh_lanes()
 	_refresh_marker_list()
 	_refresh_panel()
+	_refresh_history_label()
 	_mark_dirty()
 
 
@@ -2070,16 +2356,113 @@ func _mark_dirty() -> void:
 func _save_session() -> void:
 	if session == null or _session_path.is_empty():
 		return
+	# Once a restart has committed to quitting, _player's playback is no longer a
+	# trustworthy live read - the engine's own shutdown sequence stops it before
+	# _exit_tree runs, which reports stream_position back as 0. _restart_now already
+	# took the definitive capture right before quitting; exit's own catch-all save
+	# (below) must not re-derive playhead from a player that may already be torn
+	# down, or it silently overwrites the correct saved value with 0 (this was why
+	# a restart always landed back at the start of the timeline).
+	if _player != null and not _restarting:
+		session.playhead = _player.stream_position   # persist where the playhead is
+	if _tview != null:
+		session.timeline_zoom = _tview.zoom
+		session.timeline_view_start = _tview.view_start
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(_session_path.get_base_dir()))
 	session.save(ProjectSettings.globalize_path(_session_path))
 	_dirty = false
 
 
-## Whatever the debounce hasn't flushed yet lands on disk when the editor goes
-## away - closing the window mid-burst never loses the last edit.
+## Reload the app to pick up code the assistant just edited, landing back on THIS
+## session at the current playhead (both persisted, see _save_session). Standalone
+## Godot can't hot-reload GDScript, so this is a clean restart-and-restore.
+##
+## But a restart mid-flight would corrupt any OTHER assistant run still writing files,
+## so it never fires while runs are in progress: it hands the restart to the Assistant,
+## which holds it until every agent has returned, THEN restarts (see Assistant.reload_when_idle).
+func _reload_requested() -> void:
+	var a := get_tree().get_first_node_in_group("assistant")
+	if a != null and a.has_method("reload_when_idle") and bool(a.call("is_busy")):
+		a.call("reload_when_idle", Callable(self, "_do_restart"))
+		_set_status("⟳  Reload queued - restarting once assistant runs finish")
+	else:
+		_do_restart()
+
+
+## The actual restart: relaunch this same executable straight back into --mask-edit on
+## the current session (so it reopens here, at the saved playhead), preserving whatever
+## engine args (--path etc.) it was launched with.
+func _do_restart() -> void:
+	_save_session()   # captures the playhead
+	if _reload_check_pid > 0:
+		return   # a check is already running - don't stack another
+	# NEVER restart into code that doesn't compile: the assistant's edit might have a
+	# syntax error, and relaunching into it would leave the app unable to open. Validate
+	# headless first (same check as scripts/scratchpad.py compile); _process reads the
+	# result and only then restarts, or reports the errors and stays put.
+	var exe := OS.get_executable_path()
+	var proj := ProjectSettings.globalize_path("res://")
+	_reload_check_log = ProjectSettings.globalize_path("user://reload_compile_check.log")
+	var script := "\"%s\" --headless --path \"%s\" --editor --quit > \"%s\" 2>&1" % [exe, proj, _reload_check_log]
+	_reload_check_pid = OS.create_process("/bin/bash", ["-c", script])
+	if _reload_check_pid <= 0:
+		_set_status("⚠  Couldn't run the pre-reload compile check - NOT reloading (edits left as-is)")
+		_reload_check_pid = -1
+		return
+	_set_status("⟳  Checking the edits compile before reloading…")
+
+
+## The actual restart, run only once _do_restart's compile check comes back clean:
+## relaunch this same executable straight back into --mask-edit on the current session
+## (so it reopens here, at the saved playhead), preserving the engine args it had.
+func _restart_now() -> void:
+	# One last accurate capture right before quitting - the compile check the app just
+	# ran can take a while, and the app stays fully interactive while it does, so the
+	# playhead _do_restart captured when the check STARTED may already be stale. This
+	# is also the last point _player is guaranteed to still report a live position -
+	# see _save_session/_exit_tree for why nothing may re-derive it after this.
+	_save_session()
+	_restarting = true
+	var engine_args := PackedStringArray()
+	for a in OS.get_cmdline_args():
+		if a == "--":
+			break                     # everything before the user-args separator
+		engine_args.append(a)
+	engine_args.append("--")
+	engine_args.append("--mask-edit")
+	engine_args.append(_session_path)
+	OS.set_restart_on_exit(true, engine_args)
+	get_tree().quit()
+
+
+## Poll the pre-reload compile check (see _do_restart). Clean -> restart; errors ->
+## block the reload and surface them, so a broken assistant edit never bricks the app.
+func _poll_reload_check() -> void:
+	if _reload_check_pid <= 0 or OS.is_process_running(_reload_check_pid):
+		return
+	_reload_check_pid = -1
+	var log := FileAccess.get_file_as_string(_reload_check_log) if FileAccess.file_exists(_reload_check_log) else ""
+	if not _reload_check_log.is_empty():
+		DirAccess.remove_absolute(_reload_check_log)
+	var errs := []
+	for line in log.split("\n"):
+		for marker in ["SCRIPT ERROR", "Parse Error", "Compile Error", "Identifier not found", "Failed to load"]:
+			if line.contains(marker):
+				errs.append(line.strip_edges())
+				break
+	if errs.is_empty():
+		_restart_now()
+	else:
+		_set_status("⚠  Reload blocked - the edits don't compile (%d error%s); app left running" % [
+			errs.size(), "" if errs.size() == 1 else "s"])
+		push_warning("ghost: reload blocked, compile errors:\n" + "\n".join(errs))
+
+
+## Whatever the debounce hasn't flushed yet lands on disk when the editor goes away -
+## closing the window mid-burst never loses the last edit. Always save (not only when
+## dirty) so the current playhead is captured even after a pure play/scrub with no edit.
 func _exit_tree() -> void:
-	if _dirty:
-		_save_session()
+	_save_session()
 	# Join the audio loader if it's still running, or Godot warns about an orphaned
 	# thread on close.
 	if _audio_thread != null and _audio_thread.is_started():
@@ -2130,10 +2513,12 @@ func _update_effect_controls(effect_id: int) -> void:
 	var groups: Array = MaskSession.EFFECT_CONTROLS.get(effect_id, [])
 	# clear fades out EVERYTHING earlier - it has no target color at all. snow
 	# picks its foreground/background split automatically - it has no target
-	# color either.
-	_grp_color.visible = effect_id != MaskSession.EFFECT_CLEAR and effect_id != MaskSession.EFFECT_SNOW \
-		and effect_id != MaskSession.EFFECT_SERPENT
-	_grp_threshold.visible = groups.has("keying") or groups.has("reach")
+	# color either. arealight lights the whole frame, not a keyed color.
+	var has_color := effect_id != MaskSession.EFFECT_CLEAR and effect_id != MaskSession.EFFECT_SNOW \
+		and effect_id != MaskSession.EFFECT_SERPENT and effect_id != MaskSession.EFFECT_AREALIGHT
+	_grp_color.visible = has_color
+	_show_field(_hue_a, has_color)   # the Hue row lives in _grp_options now, not under _grp_color
+	_show_field(_threshold, groups.has("keying") or groups.has("reach"), _threshold_label)
 	if groups.has("reach"):
 		_threshold_label.text = "Reach"
 		_threshold_label.tooltip_text = "How wide around the picked color this restore reaches"
@@ -2141,30 +2526,43 @@ func _update_effect_controls(effect_id: int) -> void:
 		_threshold_label.text = "Threshold"
 		_threshold_label.tooltip_text = "How far a pixel's hue may drift from the key color and still be masked"
 	_threshold.tooltip_text = _threshold_label.tooltip_text
-	_grp_keymisc.visible = groups.has("keying")
-	_grp_pattern.visible = groups.has("pattern")
-	# Within the pattern group, prune the individual knobs this effect never reads
-	# ("only show properties that can be used"). Effects absent from PATTERN_KNOBS
-	# show them all (the default); listed ones show only their subset.
-	if _grp_pattern.visible:
-		var knobs: Array = MaskSession.PATTERN_KNOBS.get(effect_id, MaskSession.PATTERN_KNOBS_ALL)
-		_show_field(_fx_scale, knobs.has("scale"))
-		_show_field(_fx_x, knobs.has("pan"), _fx_x_label)
-		_show_field(_fx_y, knobs.has("pan"), _fx_y_label)
-		_show_field(_fx_density, knobs.has("coverage"), _fx_density_label)
-		_show_field(_fx_contrast, knobs.has("contrast"), _fx_contrast_label)
-		_show_field(_fx_speed, knobs.has("velocity"))
-		_show_field(_resonance, knobs.has("resonance"))
-	_grp_echo.visible = groups.has("echo")
-	_grp_snow.visible = groups.has("snow")
-	_grp_fur.visible = groups.has("fur")
+	_show_field(_feather, groups.has("keying"))
+	_show_field(_sat_floor, groups.has("keying"))
+	# Prune the individual pattern knobs this effect never reads ("only show
+	# properties that can be used"). Effects absent from PATTERN_KNOBS show them
+	# all (the default); listed ones show only their subset.
+	var has_pattern := groups.has("pattern")
+	var knobs: Array = MaskSession.PATTERN_KNOBS.get(effect_id, MaskSession.PATTERN_KNOBS_ALL) \
+		if has_pattern else []
+	_show_field(_fx_scale, has_pattern and knobs.has("scale"))
+	_show_field(_fx_x, has_pattern and knobs.has("pan"), _fx_x_label)
+	_show_field(_fx_y, has_pattern and knobs.has("pan"), _fx_y_label)
+	_show_field(_fx_density, has_pattern and knobs.has("coverage"), _fx_density_label)
+	_show_field(_fx_contrast, has_pattern and knobs.has("contrast"), _fx_contrast_label)
+	_show_field(_fx_speed, has_pattern and knobs.has("velocity"))
+	_show_field(_resonance, has_pattern and knobs.has("resonance"))
+	_show_field(_fx_lag, groups.has("echo"), _fx_lag_label)
+	_show_field(_fx_smooth, groups.has("echo"))
+	_show_field(_gust, groups.has("snow"))
+	_show_field(_undul, groups.has("fur"))
+	_show_field(_coil, groups.has("fur"))
+	_show_field(_stick, groups.has("fur"))
 	var is_oracle := effect_id == MaskSession.EFFECT_ORACLE
-	_echo_header.text = "Oracle" if is_oracle else "Echo"
-	_echo_header.tooltip_text = "How far ahead it leads" if is_oracle else "How the past is worn"
+	_fx_lag_label.text = "Lead (s)" if is_oracle else "Lag (s)"
+	_fx_lag_label.tooltip_text = "How far ahead it leads" if is_oracle else "How the past is worn"
+	_fx_lag.tooltip_text = _fx_lag_label.tooltip_text
 	var is_snow := effect_id == MaskSession.EFFECT_SNOW
-	_fx_contrast_label.text = "Sensitivity" if is_snow else "Contrast"
-	_fx_contrast_label.tooltip_text = "How far snow's fall reaches toward the subject" \
-		if is_snow else "Edge hardness of the pattern - 0.5 is neutral"
+	var is_arealight := effect_id == MaskSession.EFFECT_AREALIGHT
+	if is_snow:
+		_fx_contrast_label.text = "Sensitivity"
+		_fx_contrast_label.tooltip_text = "How far snow's fall reaches toward the subject"
+	elif is_arealight:
+		_fx_contrast_label.text = "Envelope"
+		_fx_contrast_label.tooltip_text = "Where along the rig's mood this sits - warm, soft, " + \
+			"single-source practical at 0, toward cold, hard, full-spectrum multi-source at 1"
+	else:
+		_fx_contrast_label.text = "Contrast"
+		_fx_contrast_label.tooltip_text = "Edge hardness of the pattern - 0.5 is neutral"
 	_fx_contrast.tooltip_text = _fx_contrast_label.tooltip_text
 	_fx_x_label.text = "Wind X" if is_snow else "Pan X"
 	_fx_x_label.tooltip_text = "Fall direction - horizontal component" \
@@ -2188,6 +2586,7 @@ func _update_effect_controls(effect_id: int) -> void:
 	else:
 		_intensity_label.tooltip_text = "How strongly this layer's effect applies"
 	_intensity_a.tooltip_text = _intensity_label.tooltip_text
+	_apply_sort()   # visibility/labels just changed - re-rank the now-current set (see _apply_sort)
 
 
 func _refresh_marker_label() -> void:
@@ -2201,7 +2600,7 @@ func _refresh_marker_label() -> void:
 	_refresh_marker_list()
 
 
-## The sequential ramp/decay list, pinned to the panel's bottom. Rebuilt wholesale -
+## The sequential ramp/damp list, pinned to the panel's bottom. Rebuilt wholesale -
 ## cheap at the marker counts a session actually has, and simpler than diffing.
 ## Piggybacks on _refresh_marker_label's call sites (add/delete/select/drag all
 ## already call it) rather than needing its own scattered call sites.
@@ -2238,6 +2637,7 @@ func _play(on: bool) -> void:
 		_audio.play(_player.stream_position)
 	_player.paused = not on
 	_audio.stream_paused = not on
+	_audio_holding = false   # any pending catch-up hold is moot once playback state changes
 	# THE VIDEO IS THE MASTER CLOCK. The two players don't pause at the same
 	# instant (video stops on a decoded-frame boundary, audio on a mix chunk),
 	# so every pause/resume cycle - spacebar, the feedback console's freeze -
@@ -2271,10 +2671,100 @@ func _poll_audio_thread() -> void:
 
 
 ## The main clip's 0/1 audio toggle -> the AudioStreamPlayer's level. -80 dB reads as
-## silence; 0 dB is unity.
+## silence; 0 dB is unity. Per-frame the fade overrides this (see _apply_main_fade);
+## this covers the moment the toggle is flipped and the initial attach.
 func _apply_main_volume() -> void:
 	if _audio != null:
-		_audio.volume_db = -80.0 if float(session.main_volume) <= 0.5 else 0.0
+		_audio.volume_db = _track_level_db(session.main_volume, 1.0)
+
+
+## The clip-fade fraction (0 at a faded edge, 1 across the flat middle) for a position
+## `local` seconds into a clip of length `span`, given fade_in / fade_out durations.
+func _clip_fade_gain(local: float, span: float, fi: float, fo: float) -> float:
+	var g := 1.0
+	if fi > 0.001 and local < fi:
+		g = clampf(local / fi, 0.0, 1.0)
+	if fo > 0.001 and local > span - fo:
+		g = minf(g, clampf((span - local) / fo, 0.0, 1.0))
+	return clampf(g, 0.0, 1.0)
+
+
+## Audio gain in dB for a clip: the pull-rope volume `v` (0..1) times the fade envelope
+## `g` (0..1) gives the perceptual level, mapped through a LINEAR dB ramp - which is a
+## logarithmic amplitude curve, what sounds like an even fade/level to the ear. Silence
+## at a fully-faded edge or v = 0. The knob's asymptotic v means unity is approached but
+## never quite hit.
+func _track_level_db(v: float, g: float) -> float:
+	var l := clampf(v, 0.0, 1.0) * clampf(g, 0.0, 1.0)
+	return -80.0 if l < 0.004 else lerpf(-40.0, 0.0, l)
+
+
+## The main clip's own fade, applied every frame: the whole composite (video) dims via
+## _composition_parent.modulate and the main audio ramps in dB - the same envelope,
+## coupled. _composition_parent.modulate alone only reaches the RAW (unshaded) view
+## though - mask_split.gdshader's fragment() samples TEXTURE directly rather than
+## starting from the built-in COLOR, so the CanvasItem's modulate never reached the
+## shaded fx overlay, and with any fx layer active the picture stayed full-opacity no
+## matter what the envelope said (feedback/0022). u_fade is the shader's own copy of
+## the same `g`, so the fade holds whether or not fx is on screen. Deterministic off
+## the playhead, so live and export match.
+func _apply_main_fade() -> void:
+	if _player == null:
+		return
+	var cin := session.clip_in
+	var cout := session.effective_clip_out()
+	var t := _player.stream_position
+	# Past the main clip's own kept range, the composite's alpha follows whichever
+	# continuation track (see MaskSession.continuation_track_at) actually owns `t` now -
+	# its OWN fade_in/fade_out, not main's - since the picture showing there is that
+	# track's own independent frame (see _apply_frame_state/_cont_view). No owning
+	# track (a gap, or past all content) holds at full opacity, same as before
+	# continuation tracks respected their own fade at all.
+	var g := 1.0
+	if t < cout:
+		g = _clip_fade_gain(t - cin, cout - cin, session.main_fade_in, session.main_fade_out)
+	else:
+		var cont_idx := session.continuation_track_at(t)
+		if cont_idx != -1:
+			var tr: Dictionary = session.tracks[cont_idx]
+			var offset := float(tr.get("offset", 0.0))
+			var span := float(tr.get("clip_out", 0.0)) - float(tr.get("clip_in", 0.0))
+			g = _clip_fade_gain(t - offset, span, float(tr.get("fade_in", 0.0)), float(tr.get("fade_out", 0.0)))
+	if _composition_parent != null:
+		_composition_parent.modulate.a = g
+	_mat_main.set_shader_parameter("u_fade", g)
+	if _audio != null:
+		# Audio cuts off exactly at cout, full stop - unlike the picture (see
+		# _apply_frame_state), this is NOT extended by a continuation track's window.
+		# A continuation track (_split_main's tail, same video_path) already plays its
+		# OWN independent audio via _sync_tracks' taudio the moment it's active - gating
+		# this on main_visible_at too meant the main clip's audio kept playing right
+		# alongside it, doubled with the track's own copy of the same source audio
+		# (feedback/0013). Audio ownership passes to the track the moment one exists
+		# there - which, after the track's own in-point is re-trimmed independently of
+		# cout, can be BEFORE cout (session.track_owns_audio_at) rather than exactly at
+		# it. Without this check that brief overlap played main's audio and the track's
+		# own copy of the same source at once, right at the handoff (feedback/0014).
+		var audible := 0.0 if (t >= cout or session.track_owns_audio_at(t)) else g
+		_audio.volume_db = _track_level_db(session.main_volume, audible)
+
+
+## Master-timeline seconds a dragged clip should snap its start/end to: 0, the playhead,
+## the primary clip's end, and every OTHER clip's start and end. exclude_i is the lane
+## doing the dragging (-1 = the primary), so a clip never snaps to itself.
+func _snap_targets_for(exclude_i: int) -> Array:
+	var targets := [0.0, session.effective_clip_out()]
+	if _player != null:
+		targets.append(_player.stream_position)
+	for j in session.tracks.size():
+		if j == exclude_i:
+			continue
+		var t: Dictionary = session.tracks[j]
+		var o := float(t.get("offset", 0.0))
+		var span := float(t.get("clip_out", 0.0)) - float(t.get("clip_in", 0.0))
+		targets.append(o)
+		targets.append(o + span)
+	return targets
 
 
 ## THE keyboard map (mirrored by the help overlay - keep the two in sync):
@@ -2324,6 +2814,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 	elif event.keycode == KEY_F1:
 		_toggle_help()
+		get_viewport().set_input_as_handled()
+	elif event.keycode == KEY_F5:
+		_reload_requested()   # restart-and-restore, deferred until assistant runs finish
 		get_viewport().set_input_as_handled()
 	elif event.keycode == KEY_ESCAPE and _help_panel != null and _help_panel.visible:
 		# Only claim Escape while help is open - otherwise it stays main.gd's
@@ -2472,8 +2965,7 @@ func _cycle_view_mode() -> void:
 	var nxt: Array = stops[(idx + 1) % stops.size()] if idx >= 0 else stops[0]
 	if session != null and _player != null:
 		var t: float = _player.stream_position
-		var governing: Variant = _governing_marker(t)
-		_selected = governing if governing != null and t - float(governing.time) <= 0.01 else null
+		_selected = _governing_marker(t)
 	_edit("view_mode", float(int(nxt[0])))   # plants/selects a marker if needed; applied next frame
 	if _selected != null:
 		_selected["pip_track"] = float(int(nxt[1]))
@@ -2504,11 +2996,17 @@ func _apply_frame_state(p: Dictionary) -> void:
 	var layers: Array = p.get("layers", [])
 	# Does a chimera layer actually render this frame? _maybe_capture_echo reads this
 	# to decide whether the (expensive) track readback is worth doing right now.
+	# _temporal_active is the same idea one level up: gates the echo/whisp capture
+	# itself on whatever's actually on screen, not on the session's marker list.
 	_chimera_active = false
+	_temporal_active = false
 	for l in layers:
-		if int(l.get("effect_a", 0)) == MaskSession.EFFECT_CHIMERA:
+		var le := int(l.get("effect_a", 0))
+		if le == MaskSession.EFFECT_CHIMERA:
 			_chimera_active = true
-			break
+		if le == 5 or le == 7 or le == MaskSession.EFFECT_SNOW or le == MaskSession.EFFECT_ORACLE \
+				or le == MaskSession.EFFECT_SERPENT or le == MaskSession.EFFECT_CHIMERA:
+			_temporal_active = true
 	# Build the layer arrays ONCE; only the weights differ per surface (each
 	# material multiplies its own presence in). Arrays are pushed at FULL declared
 	# length - a short uniform array is silently dropped (flame.gdshader lesson).
@@ -2592,6 +3090,21 @@ func _apply_frame_state(p: Dictionary) -> void:
 				echo_w.append(1.0 if k == 0 else 0.0)
 			glows.append(1.0)
 			tdirs.append(Vector3(1, 0, 0))
+	# Which source actually has valid picture at `t`: the main clip's own kept range,
+	# or - once that's ended - whichever continuation track (see
+	# MaskSession.continuation_track_at) has picked it up. Each continuation track
+	# renders through its OWN player (see _sync_tracks), never by borrowing _player's -
+	# see continuation_track_at's doc for why that used to be a fragile invariant.
+	var main_active := t < session.effective_clip_out()
+	var cont_idx := -1 if main_active else session.continuation_track_at(t)
+	var cont_tex: Texture2D = null
+	if cont_idx != -1 and cont_idx < _track_runtime.size() and _track_runtime[cont_idx].has("player"):
+		var cp: VideoStreamPlayer = _track_runtime[cont_idx].player
+		if cp != null and cp.get_video_texture() != null and cp.get_video_texture().get_height() > 0:
+			cont_tex = cp.get_video_texture()
+	_cont_view.visible = cont_tex != null
+	if cont_tex != null:
+		_cont_view.texture = cont_tex
 	for pair in [[_mat_main, main_amt], [_mat_inset, inset_fx]]:
 		var mat: ShaderMaterial = pair[0]
 		var amt: float = pair[1]
@@ -2602,7 +3115,7 @@ func _apply_frame_state(p: Dictionary) -> void:
 		# wall-time - live and export step the same clock, so a session
 		# reproduces its exact wisps frame-for-frame (flame.gdshader discipline).
 		mat.set_shader_parameter("u_time", t)
-		var tex := _player.get_video_texture() if _player != null else null
+		var tex := (_player.get_video_texture() if _player != null else null) if main_active else cont_tex
 		if tex != null and tex.get_height() > 0:
 			mat.set_shader_parameter("u_aspect", float(tex.get_width()) / float(tex.get_height()))
 		var ws := PackedFloat32Array()
@@ -2636,9 +3149,14 @@ func _apply_frame_state(p: Dictionary) -> void:
 		mat.set_shader_parameter("u_track_on", 1 if track_tex != null else 0)
 		if track_tex != null:
 			mat.set_shader_parameter("u_track", track_tex)
-	_fx_overlay.visible = main_amt > 0.001
+	# The active source's own raw frame - and everything sourced from it (the fx
+	# overlay, its own PiP inset) - only while the timeline actually claims this
+	# instant (feedback/0009: past the main track's own trim, with no track
+	# continuing it here, video.ogv kept rendering anyway).
+	_player.visible = main_active
+	_fx_overlay.visible = main_amt > 0.001 and (main_active or cont_tex != null)
 	# Main clip's PiP only when it's the selected source; _sync_tracks re-confirms.
-	_mask_wrap.visible = inset_show > 0.001 and _pip_track == 0
+	_mask_wrap.visible = inset_show > 0.001 and _pip_track == 0 and main_active
 	_mask_wrap.modulate.a = inset_show
 	if _view_label != null:
 		if _pip_track > 0:
@@ -2698,34 +3216,87 @@ func _process(_dt: float) -> void:
 	_poll_audio_thread()   # cheap bool check; attaches the main audio once its load finishes
 	if not _track_audio_jobs.is_empty():
 		_poll_track_audio()
+	if _lanes_col != null:
+		var visible_lanes := 0
+		for c in _lanes_col.get_children():
+			if c is Control and (c as Control).visible:
+				visible_lanes += 1
+		_apply_lane_reserved(visible_lanes)
+	if _reload_check_pid > 0:
+		_poll_reload_check()   # gates the reload on a clean headless compile
 	if session == null or _player == null:
 		return
+	# Restore the persisted playhead once, now that the player has had a frame to start
+	# (a same-frame seek in _ready_with_session is ignored). Retried until it takes or a
+	# short budget lapses, then the seek + audio sync catch up from there.
+	if _pending_restore >= 0.0:
+		var target := clampf(_pending_restore, session.clip_in, session.effective_clip_out())
+		_player.stream_position = target
+		if _audio != null:
+			_audio.seek(target)
+		if absf(_player.stream_position - target) < 1.0 or _pending_restore_tries > 20:
+			_pending_restore = -1.0
+		_pending_restore_tries += 1
 	# Same call, live or exported: whatever the timeline says at this instant is
 	# what's shown - render_mode doesn't special-case a fixed "always masked" look.
 	_apply_frame_state(session.at_time(_player.stream_position))
-	# Only one video ever decodes (_player); the fx overlay and the inset just
-	# re-draw that same frame, each only when actually on screen - "raw" mode skips
-	# both (and the shader passes they'd otherwise cost) entirely.
+	_apply_main_fade()   # dim the whole composite + main audio at the clip's fade edges
+	# The fx overlay re-draws whichever raw source is actually active this frame -
+	# _player while the main clip's own kept range covers it, else _cont_view's
+	# texture (a continuation track's own independent decode, see _apply_frame_state) -
+	# each only while actually on screen; "raw" mode skips both (and the shader
+	# passes they'd otherwise cost) entirely.
 	if _fx_overlay != null and _fx_overlay.visible:
-		_fx_overlay.texture = _player.get_video_texture()
+		_fx_overlay.texture = _player.get_video_texture() if _player.visible else _cont_view.texture
 	if _pip_view != null and _mask_wrap.visible:
 		_pip_view.texture = _player.get_video_texture()
 	_maybe_capture_echo()
 	_push_anchor()
 	# Standing A/V drift correction (see _play: video is the master clock).
 	# 0.15s tolerance sits above audio mix-chunk granularity so this never
-	# chatters; beyond it, snap audio back to the video.
-	if _playing and _audio.playing and not _audio.stream_paused:
-		if absf(_audio.get_playback_position() - _player.stream_position) > 0.15:
+	# chatters. Video ahead of audio: seek audio forward (a silent skip -
+	# no artifact). Audio ahead of video: HOLD audio in place (pause, no
+	# seek) until video's decode catches back up, instead of seeking it
+	# backward - a backward seek replays audio just heard, audible as an
+	# echo/glitch (feedback/0012, which is why the backward correction was
+	# dropped entirely). But dropping it left the OTHER direction fully
+	# uncorrected: _maybe_capture_echo's synchronous GPU readback (whisp/
+	# echo/chimera/snow/oracle/serpent) stalls this thread every
+	# _ECHO_INTERVAL and freezes _player.stream_position for the stall's
+	# duration while _audio keeps flowing on its own thread, so audio comes
+	# out ahead after every single capture - uncorrected, that drift only
+	# ever grows over a session (feedback/0025). Holding (not seeking) closes
+	# that gap without ever replaying already-heard audio.
+	# The hold's own exit check has to run OUTSIDE the "_audio.playing" gate:
+	# setting stream_paused = true immediately flips .playing to false (that's
+	# just what a paused AudioStreamPlayer reports), so gating the exit check
+	# on .playing meant a hold could engage but never release - audio stayed
+	# silent, permanently, until a manual pause/play cycle called _play()'s own
+	# "if not _audio.playing: _audio.play(...)" restart (feedback/0027).
+	if _playing and _audio_holding:
+		var hold_drift := _player.stream_position - _audio.get_playback_position()
+		if hold_drift >= -0.02:
+			_audio.stream_paused = false
+			_audio_holding = false
+	elif _playing and _audio.playing and not _audio.stream_paused:
+		var av_drift := _player.stream_position - _audio.get_playback_position()
+		if av_drift > 0.15:
 			_audio.seek(_player.stream_position)
+		elif av_drift < -0.15:
+			_audio.stream_paused = true
+			_audio_holding = true
 	_sync_tracks()
 	# A trimmed clip's OUT point is a hard wall for playback (both live preview
 	# and the export relaunch - export additionally needs a QUIT, not just a
 	# pause, since Movie Maker keeps recording for as long as the process runs).
 	# clip_in is not enforced here on purpose: scrubbing earlier to look at
 	# trimmed-away footage while editing is fine, only PLAYBACK (and export) are
-	# bounded to the kept range.
-	if session.clip_out > 0.0 and _player.stream_position >= session.clip_out:
+	# bounded to the kept range. Bounded by content_end(), not clip_out directly -
+	# _split_main trims clip_out but appends the trimmed tail as a track at that
+	# same offset, so the show must keep running (the master clock IS the main
+	# clip's own decode position) until that track's own span is done too.
+	var content_stop := session.content_end()
+	if content_stop < session.duration and _player.stream_position >= content_stop:
 		if render_mode:
 			get_tree().quit()
 		elif _playing:
@@ -2805,9 +3376,11 @@ func _build_export_ui() -> void:
 	_export_btn.text = "⤓  Export video"
 	_export_btn.tooltip_text = "Render this mask session to a video file (in the background)"
 	_export_btn.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	_export_btn.offset_left = -210
+	# Right edge pulled in 44px (assistant.gd's toggle width + gap) so the chat-bubble
+	# toggle has room to sit right of this button, in the same row, at the true corner.
+	_export_btn.offset_left = -254
 	_export_btn.offset_top = -72
-	_export_btn.offset_right = -28
+	_export_btn.offset_right = -72
 	_export_btn.offset_bottom = -28
 	_export_btn.pressed.connect(_on_export_pressed)
 	add_child(_export_btn)
