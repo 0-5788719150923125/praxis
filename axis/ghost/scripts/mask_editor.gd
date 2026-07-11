@@ -53,6 +53,9 @@ var _session_path := ""       # res://-relative or absolute; wherever it was loa
 var _player: VideoStreamPlayer     # always the RAW decode - never carries the shader
 var _audio: AudioStreamPlayer
 var _audio_thread: Thread = null   # loads the (large, uncompressed) main WAV off the main thread
+var _render_t := 0.0               # accumulated MOVIE time in render mode - the deterministic
+                                   #   export clock (sum of the fixed-fps _dt), authoritative over
+                                   #   the video/audio stream clocks, which can drift or end early
 var _autostart_pending := false    # live autostart is HELD (video paused on frame 1) until the
                                    #   threaded audio attaches, so the intro never plays audio-less
                                    #   and skips - _poll_audio_thread begins playback, synced (below)
@@ -60,6 +63,12 @@ var _pending_restore := -1.0       # playhead seconds to seek to once the player
 var _pending_restore_tries := 0
 var _reload_check_pid := -1        # headless compile check gating a reload (see _do_restart)
 var _reload_check_log := ""
+## Set when a reload was requested while an export was mid-flight (_render_state !=
+## "idle") - see _reload_requested. _poll_render re-fires the request once the export
+## finishes, same deference the assistant already gets in reload_when_idle: a restart
+## quits this process, and Godot kills the child processes it created (see assistant.gd's
+## _closing doc) - including the render/transcode subprocess an export is waiting on.
+var _reload_after_export := false
 ## Set the instant _restart_now actually commits to quitting (after its own final
 ## _save_session capture) - see _save_session and _exit_tree for why this exists.
 var _restarting := false
@@ -1337,13 +1346,19 @@ func _build_render_view() -> void:
 		_build_chrome()
 		_chrome_parent = null
 		_refresh_panel()
-	# Trimmed exports start AT clip_in, never at 0 - a cut clip renders only its
-	# kept range. Movie Maker records every processed frame, so the seek has to
-	# land before the very first one, not the first _process() tick.
+	# The export starts at the TIMELINE start (0), exactly like the live editor: live
+	# playback begins at 0 and main_visible_at() never gates on clip_in, so the main
+	# clip is shown from source 0 and markers/scenes can (and here do) sit before
+	# clip_in. Seeking the export to clip_in instead silently dropped everything before
+	# it - the "main video starts ~30s too late, early scenes truncated" report, on a
+	# session whose clip_in was 37s. clip_in still bounds the restore clamp and the
+	# kept-range END via content_end(); it is simply not the export's start.
 	_player.play()
-	_player.stream_position = session.clip_in
-	_apply_frame_state(session.at_time(session.clip_in))
-	_audio.finished.connect(func(): get_tree().quit())
+	_player.stream_position = 0.0
+	_apply_frame_state(session.at_time(0.0))
+	# The export quits on the deterministic movie clock reaching content_end() (see
+	# _process), NOT on the audio finishing - an audio track shorter than the session
+	# would otherwise cut the movie (and its trailing raw video) short.
 
 
 func _build_editor_ui() -> void:
@@ -2480,7 +2495,16 @@ func _save_session() -> void:
 ## But a restart mid-flight would corrupt any OTHER assistant run still writing files,
 ## so it never fires while runs are in progress: it hands the restart to the Assistant,
 ## which holds it until every agent has returned, THEN restarts (see Assistant.reload_when_idle).
+##
+## Same deference applies to an export in progress (_render_state != "idle", see
+## _poll_render): quitting to restart kills the render/transcode subprocess it's waiting
+## on, losing the render (feedback/0027). Checked first, and re-checked by _poll_render
+## once the export finishes, since one can start after this was first requested.
 func _reload_requested() -> void:
+	if _render_state != "idle":
+		_reload_after_export = true
+		_set_status("⟳  Reload queued - restarting once the export in progress finishes")
+		return
 	var a := get_tree().get_first_node_in_group("assistant")
 	if a != null and a.has_method("reload_when_idle") and bool(a.call("is_busy")):
 		a.call("reload_when_idle", Callable(self, "_do_restart"))
@@ -3362,6 +3386,19 @@ func _process(_dt: float) -> void:
 		_poll_reload_check()   # gates the reload on a clean headless compile
 	if session == null or _player == null:
 		return
+	# THE EXPORT CLOCK. In render mode the movie is driven by accumulated fixed-fps time
+	# (_render_t), NOT the video/audio stream positions - those can drift a little, stall,
+	# or (when a source is shorter than the session) end early, and binding the export to
+	# them truncated the movie to the shorter stream and let effects/video slide out of
+	# alignment. render_pos is where the timeline is at this recorded frame; the decoded
+	# video normally free-runs within ~2 frames of it (measured), so it's only re-synced
+	# on real divergence, never seeked every frame (which would thrash the OGV decoder).
+	var render_pos := _player.stream_position
+	if render_mode:
+		_render_t += _dt
+		render_pos = _render_t   # export runs the whole timeline from 0 (see _build_render_view)
+		if _player.is_playing() and absf(_player.stream_position - render_pos) > 0.2:
+			_player.stream_position = render_pos
 	# Restore the persisted playhead once, now that the player has had a frame to start
 	# (a same-frame seek in _ready_with_session is ignored). Retried until it takes or a
 	# short budget lapses, then the seek + audio sync catch up from there.
@@ -3373,9 +3410,10 @@ func _process(_dt: float) -> void:
 		if absf(_player.stream_position - target) < 1.0 or _pending_restore_tries > 20:
 			_pending_restore = -1.0
 		_pending_restore_tries += 1
-	# Same call, live or exported: whatever the timeline says at this instant is
-	# what's shown - render_mode doesn't special-case a fixed "always masked" look.
-	_apply_frame_state(session.at_time(_player.stream_position))
+	# Same resolve, live or exported: whatever the timeline says at this instant is
+	# what's shown - render_mode doesn't special-case a fixed "always masked" look. Live
+	# reads the (just-restored) video position; export reads the deterministic movie clock.
+	_apply_frame_state(session.at_time(render_pos if render_mode else _player.stream_position))
 	_apply_main_fade()   # dim the whole composite + main audio at the clip's fade edges
 	# The fx overlay re-draws whichever raw source is actually active this frame -
 	# _player while the main clip's own kept range covers it, else _cont_view's
@@ -3439,27 +3477,20 @@ func _process(_dt: float) -> void:
 	# same offset, so the show must keep running (the master clock IS the main
 	# clip's own decode position) until that track's own span is done too.
 	var content_stop := session.content_end()
-	if content_stop < session.duration and _player.stream_position >= content_stop:
-		if render_mode:
-			get_tree().quit()
-		elif _playing:
-			_play(false)
-	elif render_mode and _playing:
-		# No trim OUT is set, so the render must still terminate at the end of the SOURCE
-		# on its own - and it CANNOT lean on _audio.finished (the sole quit path wired at
-		# _build_render_view). The video is the master clock and, under Movie Maker, decodes
-		# on wall-clock time while the audio advances in the movie's virtual time; the A/V
-		# drift-seek just above then yanks the audio back to the (slower) video position
-		# every frame, so the audio never reaches its end and `finished` never fires. That
-		# left Movie Maker recording frozen frames forever - multi-GiB AVIs with a wrapped
-		# index. Quit off the video clock instead: at end-of-content, or once the master
-		# player has stopped (finished decoding) after actually getting underway.
-		var content_end := session.duration
-		var reached := content_end > 0.0 and _player.stream_position >= content_end - 0.05
-		var stopped := _player.stream_position > 1.0 and not _player.is_playing()
-		if reached or stopped:
+	if render_mode:
+		# The export ends on the MOVIE clock reaching the session's own content length -
+		# never on a source stream ending. Binding it to the streams truncated the movie
+		# to whichever of the audio/video was shorter than the session (the 13:37 -> 13:00
+		# report) and, since a stalled/ended source froze the position the effects keyed
+		# off, slid the whole show out of alignment. Past a source's own end the timeline
+		# simply shows raw for that region, but the movie still runs its full length with
+		# the full audio. content_end() already folds in clip_out + any continuation track;
+		# the export runs [0, content_end()] - the whole timeline, matching the editor.
+		if _render_t >= content_stop - 0.001:
 			get_tree().quit()
 			return
+	elif content_stop < session.duration and _player.stream_position >= content_stop and _playing:
+		_play(false)
 	if _undo_coalesce_cooldown > 0.0:
 		_undo_coalesce_cooldown -= _dt
 	if render_mode:
@@ -3502,12 +3533,19 @@ func _build_status_label() -> void:
 	_status = Label.new()
 	_status.name = "MaskStatus"
 	_status.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	_status.offset_left = -560
+	_status.offset_left = -548
 	_status.offset_top = -64
-	_status.offset_right = -238
+	_status.offset_right = -116
 	_status.offset_bottom = -28
 	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_status.visible = false
+	# Built before the chrome/timeline exist (see the doc comment on the _status
+	# var) so prep messages show pre-session; once the chrome IS built, MaskTimeline's
+	# near-opaque background (mask_timeline.gd's _draw) is added afterward and, being
+	# a later sibling, painted over this label - silently swallowing every status this
+	# label ever shows for the rest of the session (export progress included; feedback
+	# 0026). z_index keeps it on top regardless of what gets added later.
+	_status.z_index = 5
 	add_child(_status)
 
 
@@ -3516,13 +3554,14 @@ func _build_status_label() -> void:
 func _build_export_ui() -> void:
 	_export_btn = Button.new()
 	_export_btn.focus_mode = Control.FOCUS_NONE
-	_export_btn.text = "⤓  Export video"
+	_export_btn.text = "⤓"                    # icon-only - matches assistant.gd's chat-bubble toggle
 	_export_btn.tooltip_text = "Render this mask session to a video file (in the background)"
+	_export_btn.custom_minimum_size = Vector2(40, 40)
 	_export_btn.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	# Right edge pulled in 44px (assistant.gd's toggle width + gap) so the chat-bubble
-	# toggle has room to sit right of this button, in the same row, at the true corner.
-	_export_btn.offset_left = -254
-	_export_btn.offset_top = -72
+	# Same 40x40 box, same row (-28/-68), as assistant.gd's toggle, right of this one -
+	# see that file's _TOGGLE_SIZE/_TOGGLE_ROW_BOTTOM doc for why the numbers match.
+	_export_btn.offset_left = -112
+	_export_btn.offset_top = -68
 	_export_btn.offset_right = -72
 	_export_btn.offset_bottom = -28
 	_export_btn.pressed.connect(_on_export_pressed)
@@ -3550,6 +3589,8 @@ func _on_export_pressed() -> void:
 func _on_export_path(out_path: String) -> void:
 	_out = out_path if out_path.get_extension().to_lower() == "mp4" else out_path + ".mp4"
 	_avi = _out.get_basename() + ".render.avi"
+	if FileAccess.file_exists(_avi):
+		DirAccess.remove_absolute(_avi)   # a stale scratch AVI from an interrupted prior export
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(_session_path.get_base_dir()))
 	session.save(ProjectSettings.globalize_path(_session_path))   # the relaunch reads THIS file
 	var exe := OS.get_executable_path()
@@ -3579,12 +3620,22 @@ func _poll_render() -> void:
 		"transcoding":
 			if OS.is_process_running(_transcode_pid):
 				return
+			# Always clear the scratch AVI (the transcode's own `&& rm` usually already
+			# did, but not if it failed or was interrupted) - never leave an intermediate
+			# behind. remove_absolute is a harmless no-op when it's already gone.
 			if _file_size(_out) > 4096:
 				DirAccess.remove_absolute(_avi)
 				_set_status("✓  Saved  " + _out)
 			else:
-				_set_status("⚠  Transcode failed; raw file kept: " + _avi)
+				DirAccess.remove_absolute(_avi)
+				_set_status("⚠  Transcode failed (see console)")
 			_render_state = "idle"
+	# A reload asked for while this export was in flight (see _reload_requested) is
+	# held here until the export just went idle, then re-asked - re-checking the
+	# assistant's own busy state fresh rather than assuming it's still the same.
+	if _render_state == "idle" and _reload_after_export:
+		_reload_after_export = false
+		_reload_requested()
 
 
 func _start_transcode() -> void:
@@ -3593,10 +3644,15 @@ func _start_transcode() -> void:
 	# _repair_avi_sizes) is bypassed instead of trusted - without it a >4 GiB render
 	# transcodes to a broken file or fails outright, leaving the raw .render.avi behind.
 	# `-pix_fmt yuv420p` keeps the MP4 playable everywhere (VLC/QuickTime/browsers).
-	_transcode_pid = OS.create_process("ffmpeg", PackedStringArray([
-		"-y", "-loglevel", "error", "-fflags", "+genpts", "-i", _avi,
-		"-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
-		"-c:a", "aac", "-b:a", "192k", _out]))
+	# Run through bash so the scratch AVI is deleted BY THE TRANSCODE ITSELF the moment
+	# it succeeds (`&& rm`), not by a _poll_render tick that never comes if the editor is
+	# closed while ffmpeg (a child that outlives it) is still finalizing - which is how
+	# the orphaned .render.avi got left "alongside the final version". Paths are passed as
+	# $1/$2, never interpolated, so spaces/quotes in the export path are safe.
+	var script := "ffmpeg -y -loglevel error -fflags +genpts -i \"$1\" " \
+		+ "-c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p -c:a aac -b:a 192k \"$2\" " \
+		+ "&& rm -f \"$1\""
+	_transcode_pid = OS.create_process("/bin/bash", PackedStringArray(["-c", script, "bash", _avi, _out]))
 	_render_state = "transcoding"
 
 

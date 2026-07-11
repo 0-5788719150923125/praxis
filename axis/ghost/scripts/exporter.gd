@@ -67,13 +67,15 @@ func _ready() -> void:
 
 func _build_ui() -> void:
 	_btn = Button.new()
-	_btn.text = "⤓  Export video"
+	_btn.text = "⤓"                    # icon-only - matches assistant.gd's chat-bubble toggle
 	_btn.tooltip_text = "Render this visualization + audio to a video file (in the background)"
+	_btn.focus_mode = Control.FOCUS_NONE
+	_btn.custom_minimum_size = Vector2(40, 40)
 	_btn.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	# Right edge pulled in 44px (assistant.gd's toggle width + gap) so the chat-bubble
-	# toggle has room to sit right of this button, in the same row, at the true corner.
-	_btn.offset_left = -254
-	_btn.offset_top = -72
+	# Same 40x40 box, same row (-28/-68), as assistant.gd's toggle, right of this one -
+	# see that file's _TOGGLE_SIZE/_TOGGLE_ROW_BOTTOM doc for why the numbers match.
+	_btn.offset_left = -112
+	_btn.offset_top = -68
 	_btn.offset_right = -72
 	_btn.offset_bottom = -28
 	_btn.visible = false
@@ -83,11 +85,11 @@ func _build_ui() -> void:
 
 	_status = Label.new()
 	_status.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	# Shifted left in step with _btn above, so right-aligned text never runs under
-	# the assistant toggle sitting in the corner right of this row.
-	_status.offset_left = -604
+	# Shifted left in step with _btn above, so right-aligned text ends just clear of
+	# the (now icon-sized) button instead of the old wide button's edge.
+	_status.offset_left = -572
 	_status.offset_top = -64
-	_status.offset_right = -72
+	_status.offset_right = -116
 	_status.offset_bottom = -28
 	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_status.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.7))

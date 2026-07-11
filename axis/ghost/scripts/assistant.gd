@@ -463,11 +463,13 @@ func _finish(entry: Dictionary) -> void:
 	_pump_queue()
 	# If this run actually edited ghost's own code, arrange a restart to pick it up -
 	# held by reload_when_idle until any OTHER still-running agents also return, so no
-	# restart ever lands mid-edit.
+	# restart ever lands mid-edit. Routed through _reload_requested (not _do_restart
+	# directly) so it also defers to an in-flight export (see that method's doc,
+	# feedback/0027) - reload_when_idle only knows about other assistant runs.
 	if entry.status == "done" and _max_ghost_source_mtime() > float(entry.get("code_mtime", 0.0)):
 		var me := get_tree().get_first_node_in_group("mask_editor")
-		if me != null and me.has_method("_do_restart"):
-			reload_when_idle(Callable(me, "_do_restart"))
+		if me != null and me.has_method("_reload_requested"):
+			reload_when_idle(Callable(me, "_reload_requested"))
 	_maybe_reload()
 
 
