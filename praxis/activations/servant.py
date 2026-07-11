@@ -59,13 +59,7 @@ class Servant(Serpent):
         v = self._broadcast(self.v, x)
         # Live, per-token energy reduced over the feature axis (causal,
         # instance-local). Detached: a measurement, not a trained path.
-        s = (
-            x.detach()
-            .square()
-            .mean(dim=-1, keepdim=True)
-            .clamp_min(ENERGY_EPS)
-            .sqrt()
-        )
+        s = x.detach().square().mean(dim=-1, keepdim=True).clamp_min(ENERGY_EPS).sqrt()
         m = torch.tanh(s.log() - self.log_s_ref)
         # Frequency breathes with the signal: a learnable chirp. v=0 -> a_eff == a.
         return a * (1.0 + MOD_MAX * torch.tanh(v) * m)

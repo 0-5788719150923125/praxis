@@ -90,9 +90,7 @@ def compute_brier_lm_with_orders(
         example is long enough for order ``n``).
     """
     assert len(samples_a) == len(samples_b) == len(references)
-    per_order = {
-        n: _brier_order(samples_a, samples_b, references, n) for n in orders
-    }
+    per_order = {n: _brier_order(samples_a, samples_b, references, n) for n in orders}
     prod = 1.0
     count = 0
     for n in orders:
