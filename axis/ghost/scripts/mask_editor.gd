@@ -1454,6 +1454,8 @@ func _capture_workspace() -> void:
 		img.resize(960, maxi(1, h), Image.INTERPOLATE_BILINEAR)
 	if img.get_format() != Image.FORMAT_RGBA8:
 		img.convert(Image.FORMAT_RGBA8)
+	if render_mode:
+		img = _shrink_into_video_pane(img)
 	var sz := Vector2i(img.get_width(), img.get_height())
 	if _workspace_tex == null or _workspace_tex.get_size() != Vector2(sz):
 		_workspace_tex = ImageTexture.create_from_image(img)
@@ -1461,6 +1463,38 @@ func _capture_workspace() -> void:
 		_workspace_tex.update(img)
 	_mat_main.set_shader_parameter("u_workspace", _workspace_tex)
 	_mat_inset.set_shader_parameter("u_workspace", _workspace_tex)
+
+
+## In the live editor, the mirror's nesting comes for free: the video pane the shader
+## draws onto is genuinely SMALLER than the captured window (see _video_area's
+## PANEL_W inset + 16:9 letterbox in _build_editor_ui), so sampling the whole capture
+## back onto that smaller surface shrinks it - and since the capture already contained
+## the previous shrink, each frame nests one level deeper. _build_render_view's own
+## surface is edge-to-edge (the export must stay a clean, full-bleed video outside a
+## meta section - see its comment), so that free shrink doesn't exist there: verified
+## by a standalone Movie-Maker readback test (feedback/0001) that a same-size feedback
+## quad only ghosts/blurs, never nests. This reproduces the live editor's inset by hand
+## - blit a downscaled copy of the capture into the same PANEL_W/letterbox sub-rect the
+## live video pane occupies, over an unshrunk copy of the capture (so the chrome
+## painted at its real position, e.g. by _apply_meta_chrome, still reads at full size
+## around it) - so feeding this back through the SAME edge-to-edge quad reproduces the
+## same receding "hall of mirrors" the live editor gets from its smaller surface.
+func _shrink_into_video_pane(img: Image) -> Image:
+	var w := img.get_width()
+	var h := img.get_height()
+	var px0 := int(round(w * float(PANEL_W) / 1920.0))
+	var avail_w := maxi(1, w - px0)
+	var pw := avail_w
+	var ph := int(round(avail_w * 9.0 / 16.0))
+	if ph > h:
+		ph = h
+		pw = int(round(h * 16.0 / 9.0))
+	var py0 := int(round((h - ph) / 2.0))
+	var shrunk := img.duplicate()
+	shrunk.resize(maxi(1, pw), maxi(1, ph), Image.INTERPOLATE_BILINEAR)
+	var canvas: Image = img.duplicate()
+	canvas.blit_rect(shrunk, Rect2i(Vector2i.ZERO, Vector2i(pw, ph)), Vector2i(px0, py0))
+	return canvas
 
 
 ## Render-mode only: fade the editor-chrome overlay in with the meta envelope, so the
