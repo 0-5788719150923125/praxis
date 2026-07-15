@@ -43,6 +43,7 @@ def build_training_callbacks(
         DynamicsLoggerCallback,
         EngagementLiveRewardCallback,
         HarmonicWeightRLCallback,
+        HostMemoryCallback,
         MemoryProfilerCallback,
         MetricsLoggerCallback,
         PaperBuildCallback,
@@ -200,6 +201,11 @@ def build_training_callbacks(
                 thread=getattr(cfg, "title", None),
             )
         )
+
+    # Host-RAM leak forensics: cheap always-on RSS/swap/rate samples appended to
+    # {run_dir}/host_memory.log (flushed per write, so the tail survives an OOM
+    # SIGKILL).
+    callbacks.append(HostMemoryCallback(run_dir=cache_dir))
 
     if cfg.profile_memory:
         callbacks.append(

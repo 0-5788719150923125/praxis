@@ -22,6 +22,10 @@ DEFAULT_EXCLUDE_FROM_HASH = [
     "--master-addr",
     "--master-port",
     "--infer-every",
+    "--profile-memory",
+    "--profile-memory-start",
+    "--profile-memory-steps",
+    "--profile-memory-max-entries",
 ]
 
 

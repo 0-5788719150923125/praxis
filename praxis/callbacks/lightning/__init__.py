@@ -9,6 +9,7 @@ from praxis.callbacks.lightning.dynamics import DynamicsLoggerCallback
 from praxis.callbacks.lightning.engagement_live import EngagementLiveRewardCallback
 from praxis.callbacks.lightning.evaluation import PeriodicEvaluation
 from praxis.callbacks.lightning.harmonic_weight_rl import HarmonicWeightRLCallback
+from praxis.callbacks.lightning.host_memory import HostMemoryCallback
 from praxis.callbacks.lightning.memory_profiler import MemoryProfilerCallback
 from praxis.callbacks.lightning.metrics import MetricsLoggerCallback
 from praxis.callbacks.lightning.orchestration import ExpertPoolCallback
@@ -27,6 +28,7 @@ LIGHTNING_CALLBACK_REGISTRY = {
     "rlct_landscape": RLCTLandscapeCallback,
     "brier_lm": BrierLMCallback,
     "memory_profiler": MemoryProfilerCallback,
+    "host_memory": HostMemoryCallback,
     "harmonic_weight_rl": HarmonicWeightRLCallback,
     "engagement_live": EngagementLiveRewardCallback,
     "expert_pool": ExpertPoolCallback,
@@ -43,6 +45,7 @@ __all__ = [
     "RLCTLandscapeCallback",
     "BrierLMCallback",
     "MemoryProfilerCallback",
+    "HostMemoryCallback",
     "HarmonicWeightRLCallback",
     "EngagementLiveRewardCallback",
     "ExpertPoolCallback",

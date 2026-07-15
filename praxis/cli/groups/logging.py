@@ -64,7 +64,9 @@ class LoggingGroup:
             "--profile-memory-start",
             type=int,
             default=0,
-            help="Step to begin memory recording, to skip warmup (default: 0)",
+            help="Global step to begin memory recording, to skip warmup "
+            "(default: 0). The first batch of the process is always skipped "
+            "so torch.compile is never recorded",
         )
 
         group.add_argument(

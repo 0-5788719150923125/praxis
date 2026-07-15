@@ -152,7 +152,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--no-dashboard` | bool | `False` | Disable the terminal dashboard |
 | `--profile-memory` | bool | `False` | Record a CUDA memory snapshot over a step window (load at https://pytorch.org/memory_viz) |
 | `--profile-memory-max-entries` | int | `5000000` | Max allocation events retained in the trace ring buffer. Larger spans more steps but grows the pickle |
-| `--profile-memory-start` | int | `0` | Step to begin memory recording, to skip warmup |
+| `--profile-memory-start` | int | `0` | Global step to begin memory recording, to skip warmup (default: 0). The first batch of the process is always skipped so torch.compile is never recorded |
 | `--profile-memory-steps` | int | `50` | Number of steps to record before dumping the snapshot |
 | `--quiet` | bool | `False` | Suppress text generation in the terminal |
 

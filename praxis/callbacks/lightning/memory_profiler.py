@@ -40,12 +40,19 @@ class MemoryProfilerCallback(Callback):
         self._recording = False
         self._done = False
         self._count = 0
+        self._session_batches = 0
 
     def _active(self, trainer) -> bool:
         return torch.cuda.is_available() and trainer.is_global_zero
 
     def on_train_batch_start(self, trainer, pl_module, batch, batch_idx):
         if self._done or self._recording or not self._active(trainer):
+            return
+        # Never record the first batch of THIS process: its forward triggers
+        # torch.compile, and recording python stacks through inductor's
+        # autotuning is a many-fold compile slowdown. global_step can't gate
+        # this - on a resumed run it is already large at batch one.
+        if self._session_batches < 1:
             return
         if trainer.global_step < self.start_step:
             return
@@ -61,6 +68,7 @@ class MemoryProfilerCallback(Callback):
         )
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        self._session_batches += 1
         if not self._recording or self._done:
             return
         self._count += 1

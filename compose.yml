@@ -34,6 +34,14 @@ services:
       # user (default 0 = stay root, preserving old behavior).
       HOST_UID: ${HOST_UID:-0}
       HOST_GID: ${HOST_GID:-0}
+      # Host-RAM containment for the HF-streaming decode path. pyarrow 24's
+      # default pool is a bundled mimalloc that reserves 1GiB arena chunks and
+      # never returns them (observed: 8x 1GiB anon maps, written once, fully
+      # swapped out). Route arrow through the system allocator, and cap glibc
+      # arenas - this process runs ~160 threads, and per-thread arenas were
+      # holding another ~6GB of fragmented heap.
+      ARROW_DEFAULT_MEMORY_POOL: system
+      MALLOC_ARENA_MAX: "2"
 
 volumes:
   venv-praxis:
