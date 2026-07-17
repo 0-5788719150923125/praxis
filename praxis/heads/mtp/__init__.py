@@ -76,7 +76,6 @@ class MultiTokenPrediction(nn.Module):
         # depths run in embed_size space, not the trunk's hidden_size.
         self.byte_level = self.encoder_path and _is_byte_latent(config.encoder_type)
 
-        module_cls = MTP_REGISTRY[config.mtp_type]
         depth_config = config
         if self.byte_level:
             # Depths operate on the byte head's input width. Build them from a
@@ -84,9 +83,23 @@ class MultiTokenPrediction(nn.Module):
             # norms, and projection all size to the byte space.
             depth_config = copy.copy(config)
             depth_config.hidden_size = config.embed_size
-        self.depths = nn.ModuleList(
-            [module_cls(depth_config) for _ in range(self.num_depths)]
-        )
+
+        # vear: one shared pool of light harmonic experts, sliding-window merged
+        # per depth (praxis/heads/mtp/vear.py). Other types: K independent
+        # per-depth modules from the registry.
+        self.is_vear = config.mtp_type == "vear"
+        if self.is_vear:
+            from praxis.heads.mtp.vear import VearHarmonicMTPBank
+
+            self.bank = VearHarmonicMTPBank(depth_config, self.num_depths)
+            self.depths = None
+        else:
+            module_cls = MTP_REGISTRY[config.mtp_type]
+            self.depths = nn.ModuleList(
+                [module_cls(depth_config) for _ in range(self.num_depths)]
+            )
+
+        self._draft_accs: list = []
 
         # Non-byte encoder path (e.g. CALM) owns a projection + head for
         # patch-level MTP; byte-level and token paths reuse the model's head.
@@ -161,12 +174,99 @@ class MultiTokenPrediction(nn.Module):
                 attention_mask=attention_mask,
             )
 
+    def _run_depth(self, k: int, h, e, mask):
+        """Execute depth ``k``: a shared sliding-window merge (vear) or the k-th
+        independent per-depth module (transformer/conv)."""
+        if self.is_vear:
+            return self.bank(h, e, mask, depth=k)
+        return self.depths[k](h, e, mask)
+
+    def training_metrics(self) -> dict:
+        """Multi-token eligibility (per-depth draft accuracy) + vear harmonic
+        field diagnostics."""
+        out: dict = {}
+        accs = getattr(self, "_draft_accs", []) or []
+        for k, a in enumerate(accs):
+            out[f"mtp_draft_acc_d{k}"] = a
+        if accs:
+            out["mtp_draft_acc"] = sum(accs) / len(accs)
+        if self.is_vear:
+            out.update(self.bank.training_metrics())
+        return out
+
+    def dashboard_snapshots(self) -> dict:
+        return self.bank.dashboard_snapshots() if self.is_vear else {}
+
+    def _draft_acc_descriptions(self) -> dict:
+        """Per-depth draft-accuracy chart hints (one shared chart via
+        series_group), plus the mean. Byte-latent MTP only."""
+        if not self.byte_level:
+            return {}
+        out: dict = {
+            f"mtp_draft_acc_d{k}": {
+                "description": (
+                    f"Fraction of positions where MTP depth {k} (drafting the "
+                    f"byte at offset {k + 2}) predicts correctly. This depth's "
+                    "speculative accept-rate ceiling; the profile across depths "
+                    "is the expected accepted-run length, i.e. the achievable "
+                    "multi-token speedup. NOTE: actual accept-rate <= this, since "
+                    "byte-latent's non-causal patching can still reject a good "
+                    "draft at verify time."
+                ),
+                "chart": {
+                    "title": "MTP Draft Accuracy (per depth)",
+                    "y_label": "draft accuracy",
+                    "y_scale": "linear",
+                    "group": "mtp_field",
+                    "group_order": 45,
+                    "order": 50,
+                    "series_group": "mtp_draft_acc",
+                    "series_label": f"depth {k} (+{k + 2})",
+                },
+            }
+            for k in range(self.num_depths)
+        }
+        out["mtp_draft_acc"] = {
+            "description": (
+                "Mean per-depth draft accuracy - the headline multi-token "
+                "inference eligibility number. Rising = the K drafts are getting "
+                "predictable, so more bytes land per speculative step."
+            ),
+            "chart": {
+                "title": "MTP Draft Accuracy (mean)",
+                "y_label": "mean draft accuracy",
+                "y_scale": "linear",
+                "group": "mtp_field",
+                "group_order": 45,
+                "order": 45,
+            },
+        }
+        return out
+
+    def field_metric_descriptions(self) -> dict:
+        """Chart hints for the MTP diagnostics (draft accuracy always for
+        byte-latent; harmonic-field metrics for vear), for the descriptions
+        walker."""
+        out = dict(self._draft_acc_descriptions())
+        if self.is_vear:
+            from praxis.heads.mtp.vear import VearHarmonicMTPBank
+
+            out.update(VearHarmonicMTPBank.metric_descriptions)
+        return out
+
     def forward(self, inputs: MTPInputs):
         total_loss = 0.0
         h_prev = inputs.hidden_states
         depths_computed = 0
+        # Per-depth draft accuracy: how often the depth-k head predicts the true
+        # byte at offset k+2. The multi-token-inference eligibility signal - each
+        # depth's accuracy is (an upper bound on) its speculative accept rate, so
+        # the profile across depths is the expected accepted-run length -> the
+        # achievable speedup. Discrete (CE) paths only; MSE has no argmax.
+        discrete = not self.encoder_path or self.byte_level
+        draft_accs: list = []
 
-        for k, module in enumerate(self.depths):
+        for k in range(self.num_depths):
             offset = k + 1
 
             # Guard: need enough positions for this depth
@@ -191,8 +291,8 @@ class MultiTokenPrediction(nn.Module):
                 else None
             )
 
-            # Run through MTP module
-            h_k = module(h_trimmed, position_embeds, mask)
+            # Run through the depth transform
+            h_k = self._run_depth(k, h_trimmed, position_embeds, mask)
 
             # Predictions via head, trimmed for alignment
             preds = inputs.head(h_k)[:, :-1]
@@ -206,14 +306,23 @@ class MultiTokenPrediction(nn.Module):
             targets = targets[:, :min_out].contiguous()
 
             total_loss = total_loss + inputs.loss_fn(preds, targets)
+            if discrete:
+                with torch.no_grad():
+                    draft_accs.append(
+                        float((preds.argmax(-1) == targets).float().mean().item())
+                    )
 
             # Chain: this depth's output becomes input for next depth
             h_prev = h_k
             depths_computed += 1
 
+        self._draft_accs = draft_accs
         losses = LossContainer()
         if depths_computed > 0:
             losses.add_loss("mtp", total_loss / depths_computed)
+            # Keep the vear pool's harmonic geometries distinct (training-only).
+            if self.is_vear and self.training:
+                losses.add_loss("mtp_vear_repulsion", self.bank.repulsion_loss())
         return losses
 
     @torch.no_grad()
@@ -238,9 +347,9 @@ class MultiTokenPrediction(nn.Module):
         h_prev = hidden_state
         prev_token = first_token_id
 
-        for module in self.depths:
+        for k in range(self.num_depths):
             token_embeds = embed_fn(prev_token)
-            h_k = module(h_prev, token_embeds, attention_mask=None)
+            h_k = self._run_depth(k, h_prev, token_embeds, None)
             logits = head_fn(h_k)
             next_token = logits[:, -1:, :].argmax(dim=-1)
             drafted.append(next_token)

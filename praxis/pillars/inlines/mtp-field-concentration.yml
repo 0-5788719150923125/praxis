@@ -1,0 +1,10 @@
+# The current run's measured Hoyer concentration of the MTP depth transforms'
+# Serpent frequency spectrum - the light-expert (vear) analogue of the harmonic
+# field's concentration, so the harmonic-field reading survives the swap from a
+# HarmonicField grid to Serpent-based depth experts. Gated: only a run with
+# mtp_type: vear logs this metric, so the provider returns None and the empty
+# fallback leaves the paragraph unchanged for any other run.
+macro: paperMtpFieldConcentration
+provider: mtp_field_concentration
+format: " The current run's MTP depth transforms carry a harmonic spectrum whose Hoyer concentration measures \\(\\approx {value:.2f}\\)."
+fallback: ""

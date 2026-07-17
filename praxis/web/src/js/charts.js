@@ -3,7 +3,7 @@
  * Full Chart.js implementation for Research tab
  */
 
-import { state, CONSTANTS, chartLineColor, currentAccentHue, rotateHexHue } from './state.js';
+import { state, CONSTANTS, chartLineColor, currentAccentHue, rotateHexHue, accentRgb } from './state.js';
 import { fetchAPI } from './api.js';
 import { createTabHeader, pdfButton } from './components.js';
 import { hasRealContent } from './prefetch.js';
@@ -81,6 +81,21 @@ export function setupAccentRetint() {
     new MutationObserver(retintAccentCharts).observe(document.documentElement, {
         attributes: true, attributeFilter: ['data-accent'],
     });
+}
+
+// Palette index for a run's chart line. The current/live run is the primary
+// series, so it takes the accent (palette index 0) and its lines match the
+// theme - the whole point of the accent hue. Other runs fill the remaining
+// palette slots in historical order (offset past the accent so they stay
+// distinct and stable across selections). Previously every run took its raw
+// historical index, so once other runs existed the active run drifted off the
+// accent (e.g. to index 1 = blue), which read as an off-by-one against the theme.
+function runColorIndex(run) {
+    const runs = state.research.historicalRuns || [];
+    const entry = runs.find(r => r.hash === run.hash);
+    if (entry && entry.is_current) return 0;
+    const i = runs.filter(r => !r.is_current).findIndex(r => r.hash === run.hash);
+    return i >= 0 ? i + 1 : 0;
 }
 
 // Layer selection state for per-layer metrics
@@ -2170,11 +2185,7 @@ function createRunComparisonChart(canvasId, label, runs, metricKey) {
             });
         }
 
-        // Color by the run's position in the full historical list, so it
-        // stays consistent with the Runs selector regardless of which subset
-        // is currently selected.
-        const colorIdx = state.research.historicalRuns.findIndex(r => r.hash === run.hash);
-        const color = chartLineColor(colorIdx >= 0 ? colorIdx : 0);
+        const color = chartLineColor(runColorIndex(run));
 
         return {
             label: run.hash,
@@ -2287,11 +2298,7 @@ function createTokensBarChart(canvasId, label, runs, metricKey) {
             }
         }
 
-        // Color by the run's position in the full historical list, so it
-        // stays consistent with the Runs selector regardless of which subset
-        // is currently selected.
-        const colorIdx = state.research.historicalRuns.findIndex(r => r.hash === run.hash);
-        const color = chartLineColor(colorIdx >= 0 ? colorIdx : 0);
+        const color = chartLineColor(runColorIndex(run));
 
         return {
             label: run.hash,
@@ -2633,17 +2640,17 @@ function getHeatmapColor(value) {
         return 'rgba(180, 180, 180, 0.3)';  // Light grey for missing data
     }
 
-    // Color scale: grey (0) → green (1)
-    // Grey: rgb(220, 220, 220) - very low usage
-    // Green: rgb(11, 154, 109) - high usage (matches CONSTANTS.RUN_COLORS green)
-
+    // Color scale: grey (low usage, 0) -> the brand ACCENT (high usage, 1).
+    // The high end follows --accent-hue via accentRgb() rather than a baked-in
+    // green, so this heatmap (Expert Routing Weights, etc.) tracks the theme
+    // like the line charts instead of staying green in blue mode. Recomputed per
+    // render, and the heatmap re-renders each metrics poll, so it stays in sync.
     const greyR = 220, greyG = 220, greyB = 220;
-    const greenR = 11, greenG = 154, greenB = 109;
+    const [accR, accG, accB] = accentRgb();
 
-    // Linear interpolation from grey to green
-    const r = Math.round(greyR + (greenR - greyR) * value);
-    const g = Math.round(greyG + (greenG - greyG) * value);
-    const b = Math.round(greyB + (greenB - greyB) * value);
+    const r = Math.round(greyR + (accR - greyR) * value);
+    const g = Math.round(greyG + (accG - greyG) * value);
+    const b = Math.round(greyB + (accB - greyB) * value);
 
     return `rgb(${r}, ${g}, ${b})`;
 }

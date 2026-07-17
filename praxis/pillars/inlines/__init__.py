@@ -110,12 +110,10 @@ def _head_name() -> Optional[str]:
     return _HEAD_DISPLAY.get(head, head.replace("_", " ")) + " head"
 
 
-@provider("harmonic_concentration")
-def _harmonic_concentration() -> Optional[float]:
-    """Latest Hoyer sparsity of the harmonic amplitude grid for the current
-    run, read from its logged ``harmonic_concentration`` series. ``None`` when
-    no run exists, or when the run's head emits no such metric (a non-harmonic
-    head) - so the paper only reports a measured value when one was produced."""
+def _latest_metric(metric_name: str) -> Optional[float]:
+    """Latest value of ``metric_name`` for the current run, or ``None`` when no
+    run exists or the run never logged it (so the paper only reports a measured
+    value when one was produced)."""
     from praxis.pillars.framing import newest_experiment
     from praxis.pillars.runs import discover_runs, experiment_stems, metric_series
 
@@ -128,10 +126,23 @@ def _harmonic_concentration() -> Optional[float]:
     )
     if not run:
         return None
-    series = metric_series(run, "harmonic_concentration", min_points=1)
-    if not series:
-        return None
-    return series[-1][1]
+    series = metric_series(run, metric_name, min_points=1)
+    return series[-1][1] if series else None
+
+
+@provider("harmonic_concentration")
+def _harmonic_concentration() -> Optional[float]:
+    """Latest Hoyer sparsity of the harmonic amplitude grid for the current run
+    (a harmonic head only)."""
+    return _latest_metric("harmonic_concentration")
+
+
+@provider("mtp_field_concentration")
+def _mtp_field_concentration() -> Optional[float]:
+    """Latest Hoyer sparsity of the vear MTP bank's Serpent frequency spectrum -
+    the light-expert analogue of the harmonic field's concentration, for a run
+    with ``mtp_type: vear``. ``None`` (paragraph unchanged) otherwise."""
+    return _latest_metric("mtp_field_concentration")
 
 
 @dataclass(frozen=True)

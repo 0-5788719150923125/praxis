@@ -398,7 +398,10 @@ class ArchitectureGroup:
         group.add_argument(
             "--mtp-type",
             type=str,
-            choices=list(MTP_REGISTRY.keys()),
+            # "vear" is a byte-latent-only bank (shared harmonic-expert pool,
+            # sliding-window merged), special-cased in MultiTokenPrediction
+            # rather than a per-depth registry module.
+            choices=list(MTP_REGISTRY.keys()) + ["vear"],
             default=None,
             help="MTP module type (omit to disable MTP)",
         )

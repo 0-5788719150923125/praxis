@@ -93,6 +93,13 @@ def _candidates(model: Any) -> Iterable[Dict[str, Any]]:
         if arc_descs:
             yield arc_descs
 
+    # MTP harmonic-field diagnostics (vear bank's Serpent spectrum).
+    mtp = getattr(model, "mtp", None)
+    if mtp is not None and hasattr(mtp, "field_metric_descriptions"):
+        field_descs = mtp.field_metric_descriptions()
+        if field_descs:
+            yield field_descs
+
     for reg in getattr(model, "reg", []) or []:
         descs = getattr(type(reg), "metric_descriptions", None)
         if isinstance(descs, dict):

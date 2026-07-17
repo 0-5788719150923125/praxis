@@ -86,6 +86,9 @@ class DynamicsLoggerCallback(Callback):
             # Titans memory diagnostics (surprise), averaged across layers.
             dynamics.update(self._extract_memory_dynamics(model))
 
+            # MTP harmonic-field diagnostics (vear bank's Serpent spectrum).
+            dynamics.update(self._extract_mtp_dynamics(model))
+
             # Regularizer diagnostics (each regularizer's own training_metrics).
             dynamics.update(self._extract_regularizer_dynamics(model))
 
@@ -278,6 +281,18 @@ class DynamicsLoggerCallback(Callback):
             return head.training_metrics()
         except Exception as e:
             print(f"[DynamicsLogger] head.training_metrics() failed: {e}")
+            return {}
+
+    def _extract_mtp_dynamics(self, model) -> dict:
+        """Harmonic-field diagnostics from a vear MTP bank (Serpent spectrum).
+        Empty for other/no MTP; wrapped so a bad metric can't kill the log."""
+        mtp = getattr(model, "mtp", None)
+        if mtp is None or not hasattr(mtp, "training_metrics"):
+            return {}
+        try:
+            return mtp.training_metrics()
+        except Exception as e:
+            print(f"[DynamicsLogger] mtp.training_metrics() failed: {e}")
             return {}
 
     def _extract_regularizer_dynamics(self, model) -> dict:

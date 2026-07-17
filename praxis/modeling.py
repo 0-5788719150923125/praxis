@@ -980,10 +980,18 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         3. Verify all N+1 candidates in a single main model forward pass
         4. Accept the longest prefix where main model agrees with draft
 
-        Byte-latent encoders take this path via byte-level MTP: each accepted
-        draft is a byte the main model would have printed anyway, so up to N+1
-        bytes land per two full forwards instead of one byte per forward -
-        greedy-lossless, only the forward count drops.
+        Byte-latent encoders take this path via byte-level MTP: up to N+1 bytes
+        land per two full forwards instead of one byte per forward, dropping the
+        forward count.
+
+        IMPORTANT - byte-latent is NOT greedy-lossless (unlike a plain token
+        model on this path). Byte-latent patching is non-causal within a partial
+        patch: appending the draft bytes changes the last patch's representation
+        and shifts the verify forward's prediction at earlier positions, so an
+        accepted byte is not guaranteed to equal what byte-by-byte greedy would
+        print. The output stays the model's own argmax over real contexts (a
+        coherent decoding) but is APPROXIMATE, not identical to greedy. Verified:
+        appending bytes changes an earlier position's argmax.
         """
         from types import SimpleNamespace
 

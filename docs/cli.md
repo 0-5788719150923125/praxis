@@ -73,7 +73,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--mla` | bool | `False` | Use Multi-Head Latent Attention (MLA) |
 | `--mta` | bool | `False` | Use Multi-Token Attention (MTA) |
 | `--mtp-depth` | int | `1` | Number of Multi-Token Prediction depths |
-| `--mtp-type` | str | `None` | MTP module type (omit to disable MTP) (choices: transformer, conv) |
+| `--mtp-type` | str | `None` | MTP module type (omit to disable MTP) (choices: transformer, conv, vear) |
 | `--norm-type` | str | `rms_norm` | The type of normalization to use (choices: none, layer_norm, rms_norm, post_rms_norm, sandwich) |
 | `--num-experts` | int | `1` | Number of experts per layer (1 = no MoE) |
 | `--num-heads` | int | `4` | Number of attention heads |
