@@ -7,6 +7,7 @@ section: harmonic
 order: 12
 requires:
   uses_abstractinator: [true]
+  uses_harmonic_bottleneck: [false]
 body: >
   \subsubsection*{A residual code in place of a continuous codec}
 

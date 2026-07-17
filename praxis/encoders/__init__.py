@@ -43,6 +43,30 @@ Abstractinator = partial(
     vq_codebook_size=16384,
 )
 
+# Abstractinator with the residual VQ moved into the CALM harmonic coordinate
+# frame: patch latents rotate into the standing-wave basis (the same
+# harmonic_matrix the HarmonicCodec builds its mix from), are energy-normalized
+# there, and the residual codes quantize harmonic AMPLITUDES - the paper
+# addendum's conjecture (residual codes read as amplitudes in the harmonic
+# basis) made concrete. The objective stays byte CE end-to-end: single-stage,
+# never frozen, no KL - byte-latent convergence with a CALM-shaped latent
+# geometry. bottleneck_ratio=0.5 keeps the frame lossy (a low-frequency
+# spectral budget, the codec's latent_dim < K*E mechanism).
+AbstractinatorHarmonic = partial(
+    Abstractinator,
+    bottleneck="harmonic",
+    bottleneck_ratio=0.5,
+)
+
+# Serpent variant: a learned periodic nonlinearity after the analysis
+# transform, mirroring codec_kind="harmonic_serpent" (the calm-d lineage
+# codec) - the encode into the spectral frame is learnable rather than a
+# fixed rotation. Still single-stage and never frozen.
+AbstractinatorHarmonicSerpent = partial(
+    AbstractinatorHarmonic,
+    bottleneck="harmonic_serpent",
+)
+
 # CALM profiles. Defaults track the paper (arXiv 2510.27688). Tokenizer-
 # specific variants exist because K ("one word of meaning per latent")
 # scales with tokenizer granularity: BPE=4, char=8, byte=16.
@@ -283,6 +307,9 @@ ENCODER_REGISTRY = dict(
     byte_latent_transformer=ByteLatentTransformer,
     # BLT + residual VQ bottleneck
     abstractinator=Abstractinator,
+    # Residual codes as harmonic amplitudes (the CALM-bridge conjecture, run)
+    abstractinator_harmonic=AbstractinatorHarmonic,
+    abstractinator_harmonic_serpent=AbstractinatorHarmonicSerpent,
     # CALM: token-chunk VAE + energy head (arXiv 2510.27688).
     # Tokenizer-specific variants adjust K: BPE=4, char=8, byte=16.
     # calm_small is the smoke-test profile.

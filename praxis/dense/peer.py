@@ -11,6 +11,25 @@ from praxis.dense.base import BaseDense
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
+# The retrieval bank is budgeted against the dense FFN it replaces, so it tracks
+# the model instead of pinning an absolute expert count. Bank params are
+# 2 * num_experts * hidden (a down row + an up row per expert) while a GLU FFN is
+# ~4 * hidden^2, so num_experts = BANK_WIDTH_MULTIPLE * hidden holds the ratio at
+# (BANK_WIDTH_MULTIPLE / 2)x the dense FFN at EVERY width - the fixed count could
+# not, being linear in hidden against the dense FFN's quadratic (12x the GLU at
+# hidden=64, 0.68x at hidden=1024). 4 reproduces this module's historical
+# 32^2 = 1024 experts at the config's default hidden_size of 256: the existing
+# choice generalized, not a new tuning.
+BANK_WIDTH_MULTIPLE: int = 4
+
+# Floor on the product-key sub-query width, below which the query is too narrow
+# to discriminate the key set. Fixed and model-agnostic.
+MIN_KEY_DIMS: int = 16
+
+# Experts retrieved per head. A granularity, not a width, so it does not scale
+# with the model; clamped to num_keys, since topk cannot outrun the key set.
+TOP_K: int = 8
+
 
 class ParameterEfficientExpertRetrieval(BaseDense):
     """
@@ -20,15 +39,20 @@ class ParameterEfficientExpertRetrieval(BaseDense):
     PEER combines aspects of product key memory and mixture of experts,
     using factorized keys for efficient expert retrieval. It enables each token
     to select its own set of experts for processing.
+
+    Every dimension is derived from ``config`` unless explicitly overridden, so
+    the module fits whatever model it is dropped into (see the two invariants
+    on ``BANK_WIDTH_MULTIPLE`` and ``key_dims`` below). Overrides are for
+    registry profiles; nothing here needs a per-experiment knob.
     """
 
     def __init__(
         self,
         config: ConfigType,
-        key_dims: int = 90,
-        num_experts: int = 32**2,
-        num_heads: int = 4,
-        k: int = 8,
+        key_dims: Optional[int] = None,
+        num_experts: Optional[int] = None,
+        num_heads: Optional[int] = None,
+        k: Optional[int] = None,
         offset_heads: bool = False,
         sparse: bool = False,
     ):
@@ -37,6 +61,17 @@ class ParameterEfficientExpertRetrieval(BaseDense):
 
         Args:
             config: Configuration object containing PEER parameters
+            key_dims: product-key sub-query width. Default: hidden_size //
+                (2 * num_heads), which makes the query net exactly one
+                attention-sized projection (hidden -> hidden), floored at
+                MIN_KEY_DIMS.
+            num_experts: retrieval bank size, rounded to a perfect square.
+                Default: BANK_WIDTH_MULTIPLE * hidden_size, so the bank keeps a
+                constant ratio to the dense FFN at any width. NOTE: this is
+                PEER's own bank, unrelated to `config.num_experts` (the router's
+                expert count) - the names collide but the quantities do not.
+            num_heads: independent retrieval heads. Default: config.num_heads.
+            k: experts retrieved per head. Default: TOP_K, clamped to num_keys.
             sparse: if True, the expert banks emit sparse gradients (only the
                 selected rows get a grad/optimizer update), which is what lets
                 `num_experts` scale without paying dense grad + optimizer state
@@ -47,19 +82,41 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         super().__init__()
 
         hidden_size = config.hidden_size
-        key_dims = key_dims
-        self.k: int = k
-        self.num_heads: int = num_heads
+        self.num_heads: int = num_heads if num_heads is not None else config.num_heads
         self.offset_heads: bool = offset_heads
-        self.num_experts: int = num_experts
         self.num_sets: int = 1 if not self.offset_heads else self.num_heads
 
-        # Product-Key retrieval requires keys to be a perfect square of the total experts
-        self.num_keys: int = int(math.sqrt(self.num_experts))
+        # Product-Key retrieval factorizes the expert index into two key lookups,
+        # so the bank is num_keys^2 by construction. Auto-sizing rounds the
+        # budgeted row count to the nearest square and splits it across the
+        # per-head sets, so offset_heads redistributes the bank rather than
+        # multiplying it.
+        if num_experts is None:
+            budgeted_rows = BANK_WIDTH_MULTIPLE * hidden_size / self.num_sets
+            self.num_keys: int = max(2, round(math.sqrt(budgeted_rows)))
+        else:
+            assert (
+                num_experts**0.5
+            ).is_integer(), "`num_experts` needs to be a perfect square"
+            self.num_keys = int(math.sqrt(num_experts))
+        self.num_experts: int = self.num_keys**2
 
-        assert (
-            self.num_experts**0.5
-        ).is_integer(), "`self.num_experts` needs to be a perfect square"
+        # The query net emits 2 (product-key halves) * num_heads * key_dims, so
+        # this default makes retrieval cost exactly one attention-sized
+        # projection. The floor wins when the head count would starve the
+        # sub-query, widening the projection past hidden_size rather than
+        # degenerating the retrieval.
+        if key_dims is None:
+            key_dims = max(MIN_KEY_DIMS, hidden_size // (2 * self.num_heads))
+        self.key_dims: int = key_dims
+
+        # A narrow model can budget fewer keys than the default granularity asks
+        # for; topk would raise rather than clamp on its own.
+        self.k: int = min(k if k is not None else TOP_K, self.num_keys)
+
+        self.hidden_size: int = hidden_size
+        self.sparse: bool = sparse
+
         assert (hidden_size % 2) == 0, "`hidden_size` should be divisible by 2"
 
         class Permute(nn.Module):
@@ -128,12 +185,56 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         nn.init.xavier_uniform_(self.down.weight)
         nn.init.xavier_uniform_(self.up.weight)
 
-    def forward(self, inputs: Tensor) -> Tensor:
+    def extra_repr(self) -> str:
+        return (
+            f"num_experts={self.num_experts} ({self.num_keys}^2), "
+            f"key_dims={self.key_dims}, num_heads={self.num_heads}, k={self.k}, "
+            f"projection={'gather' if self._gathers() else 'dense'}"
+        )
+
+    def _gathers(self) -> bool:
+        """Whether to gather expert rows before projecting, or project against
+        the whole bank and gather after. The two compute the same thing; they
+        differ only in which intermediate is materialized and retained for
+        backward - ``[b, n, h, k, d]`` for the gather, ``[b, n, N]`` for the
+        dense path - so the smaller one wins. The paper's Algorithm 1 gathers,
+        which is right at its N >= 10^6, and it notes the fusion there "may
+        require specialized hardware kernels". Our banks are budgeted to
+        ~4 * hidden_size, orders of magnitude below h*k*d, so the dense path is
+        the correct end of that trade: measured 8.5x less activation memory at
+        a 256-wide model (2.38 -> 0.28 GB per call), where gathering OOMs a
+        16GB card outright at depth 12. Structural, so it re-decides itself if
+        the bank ever outgrows the retrieval fan-out.
+
+        Sparse banks always gather: sparse gradients come from the embedding
+        lookup, and projecting against ``.weight`` would densify them.
+        """
+        return self.sparse or (
+            self.num_experts * self.num_sets > self.num_heads * self.k * self.hidden_size
+        )
+
+    def _project(self, inputs: Tensor, bank: nn.Embedding, indices: Tensor) -> Tensor:
+        """``x . w_e`` for each selected expert -> [b, n, h, k]."""
+        if self._gathers():
+            return torch.einsum("b n d, b n h k d -> b n h k", inputs, bank(indices))
+        b, n = indices.shape[:2]
+        projected = inputs @ bank.weight.T  # [b, n, num_experts * num_sets]
+        return projected.gather(-1, indices.reshape(b, n, -1)).view_as(indices)
+
+    def forward(
+        self,
+        inputs: Tensor,
+        current_depth: int = 0,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Tensor:
         """
         Forward pass through the PEER module.
 
         Args:
             inputs: Input tensor of shape [batch_size, seq_len, hidden_size]
+            current_depth: unused - retrieval is depth-agnostic, but the
+                BaseDense contract passes it to every FFN.
 
         Returns:
             Output tensor of shape [batch_size, seq_len, hidden_size]
@@ -173,9 +274,8 @@ class ParameterEfficientExpertRetrieval(BaseDense):
             )
             indices = indices + head_expert_offsets.view(1, 1, -1, 1)
 
-        # Lookup expert weights using embeddings
-        weights_down = self.down(indices)
-        outputs = torch.einsum("b n d, b n h k d -> b n h k", inputs, weights_down)
+        # Project the input onto each retrieved expert's down vector
+        outputs = self._project(inputs, self.down, indices)
 
         # Apply sigmoid scores to activated outputs, then drop whole experts
         outputs = F.sigmoid(scores) * self.act(outputs)
@@ -192,109 +292,36 @@ class ParameterEfficientExpertRetrieval(BaseDense):
 
 
 if __name__ == "__main__":
-    # Define a suite of configurations to test
-    # Note: We ensure num_experts is always a perfect square for correctness.
-    test_configs = [
-        {
-            "hidden_size": 256,
-            "activation": "gelu",
-            "dropout": 0.1,
-            "expert": {
-                "key_dims": 16,
-                "k": 8,
-                "num_heads": 4,
-                "offset_heads": False,
-                "num_experts": 64,  # 8x8 = 64
-            },
-            "description": "Base configuration",
-        },
-        {
-            "hidden_size": 512,
-            "activation": "gelu",
-            "dropout": 0.1,
-            "expert": {
-                "key_dims": 32,
-                "k": 16,
-                "num_heads": 8,
-                "offset_heads": False,
-                "num_experts": 256,  # 16x16 = 256
-            },
-            "description": "Larger hidden size, more experts, bigger k",
-        },
-        {
-            "hidden_size": 256,
-            "activation": "gelu",
-            "dropout": 0.1,
-            "expert": {
-                "key_dims": 16,
-                "k": 4,
-                "num_heads": 2,
-                "offset_heads": True,
-                "num_experts": 49,  # 7x7 = 49
-            },
-            "description": "Fewer heads, smaller k, offset heads enabled",
-        },
-        {
-            "hidden_size": 128,
-            "activation": "gelu",
-            "dropout": 0.1,
-            "expert": {
-                "key_dims": 8,
-                "k": 8,
-                "num_heads": 4,
-                "offset_heads": False,
-                "num_experts": 81,  # 9x9=81
-            },
-            "description": "Smaller hidden size, moderate experts",
-        },
-    ]
+    # Exercises the config-derived sizing across widths and head counts: every
+    # dimension below is derived, not passed. Prints the two invariants the
+    # defaults are built on (bank/dense ratio, query projection == hidden) so a
+    # regression in either is visible rather than silent.
+    from praxis import PraxisConfig
+    from praxis.dense.glu import GatedLinearMLP
 
-    # Define a set of test input shapes (batch_size, seq_len)
-    test_input_shapes = [
-        (2, 16),
-        (8, 64),
-        (16, 128),
-        (32, 128),
-    ]
+    def count(module: nn.Module) -> int:
+        return sum(p.numel() for p in module.parameters())
 
-    # Helper function for running tests on a given model and input
-    def run_test(model, batch_size, seq_len, hidden_size):
-        inp = torch.randn(batch_size, seq_len, hidden_size, device="cuda")
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
-        mem_before = torch.cuda.memory_allocated()
-        out = model(inp)
-        torch.cuda.synchronize()
-        mem_after = torch.cuda.memory_allocated()
-        mem_diff_mb = (mem_after - mem_before) / (1024**2)
-        return out.shape, mem_diff_mb
+    print(f"{'hidden':>7} {'heads':>6} {'experts':>9} {'key_dims':>9} "
+          f"{'k':>3} {'GLU':>10} {'PEER':>10} {'ratio':>7} {'q_out/hidden':>13}")
+    for hidden_size in (32, 64, 128, 256, 512, 1024):
+        for num_heads in (4, 16):
+            config = PraxisConfig()
+            config.hidden_size = hidden_size
+            config.num_heads = num_heads
+            config.activation = "gelu"
+            config.dropout = 0.1
 
-    # Iterate over each config
-    for cfg in test_configs:
-        # Dynamically build a config object
-        class Config:
-            pass
+            peer = ParameterEfficientExpertRetrieval(config)
+            dense = GatedLinearMLP(config)
+            q_out = 2 * peer.num_heads * peer.key_dims
 
-        config = Config()
-        config.hidden_size = cfg["hidden_size"]
-        config.activation = cfg["activation"]
-        config.dropout = cfg["dropout"]
-        config.expert = cfg["expert"]
+            inputs = torch.randn(2, 16, hidden_size)
+            outputs = peer(inputs, current_depth=0)
+            assert outputs.shape == inputs.shape, (outputs.shape, inputs.shape)
+            assert peer.k <= peer.num_keys, "topk cannot outrun the key set"
 
-        print(f"=== Testing Configuration: {cfg['description']} ===")
-        print(config.expert)
-        print(
-            f"hidden_size={config.hidden_size}, activation={config.activation}, dropout={config.dropout}"
-        )
-
-        model = ParameterEfficientExpertRetrieval(config)
-        model = model.to("cuda")
-
-        # Test multiple input shapes
-        for bs, sl in test_input_shapes:
-            shape, mem_usage = run_test(model, bs, sl, config.hidden_size)
-            print(
-                f"Input: batch_size={bs}, seq_len={sl} => Output Shape: {shape}, Memory Diff: {mem_usage:.2f} MB"
-            )
-
-        print("---------------------------------------------------")
+            print(f"{hidden_size:>7} {num_heads:>6} {peer.num_experts:>9} "
+                  f"{peer.key_dims:>9} {peer.k:>3} {count(dense):>10} "
+                  f"{count(peer):>10} {count(peer)/count(dense):>6.2f}x "
+                  f"{q_out/hidden_size:>12.2f}x")

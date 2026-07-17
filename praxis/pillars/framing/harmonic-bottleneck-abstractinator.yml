@@ -1,0 +1,30 @@
+# Replaces the residual-VQ addendum (order 12, uses_harmonic_bottleneck: false)
+# when the Abstractinator's bottleneck operates in the harmonic frame: the
+# CALM-bridge conjecture is no longer stated, it is the run. Claims stay inside
+# what the run can show, with the falsifier named - the paper's standard.
+section: harmonic
+order: 12
+requires:
+  uses_harmonic_bottleneck: [true]
+body: >
+  \subsubsection*{Residual codes as harmonic amplitudes}
+
+  This run's byte-latent encoder carries the Abstractinator's residual
+  vector-quantization bottleneck~\cite{abstractinator} with one change that
+  turns a previously stated conjecture into the experiment itself: the
+  quantizer operates in the harmonic coordinate frame rather than in raw
+  feature space. Each patch latent is rotated into the standing-wave basis
+  the CALM codec builds its mix from~\cite{calm2025}, energy-normalized
+  there, and only then residual-quantized, so every code is a coarse-to-fine
+  address over harmonic amplitudes - a quantized point on the sphere the
+  continuous codec's normalized latent lives on. The training objective is
+  unchanged byte-level cross-entropy: single-stage, no freeze, no KL term,
+  so the encoder converges on the byte-latent schedule while carrying a
+  CALM-shaped spectral geometry.
+
+  The conjecture - that a residual-coded encoder might approximate the
+  continuous-latent target CALM learns, at a fraction of its training
+  cost - is here run against its own falsifier: whether this encoder reaches
+  a CALM-comparable latent signature, the codec round-trip and a conditional
+  gap over the marginal, at a scale where CALM's convergence forbids the
+  comparison. We report what the run shows and claim nothing past it.

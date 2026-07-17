@@ -3,9 +3,9 @@
 
 Front-end encoders, including the byte-latent and abstractinator variants.
 
-Registry: ``praxis.ENCODER_REGISTRY`` (19 entries)
+Registry: ``praxis.ENCODER_REGISTRY`` (21 entries)
 
-## `abstractinator` - AbstractinatorEncoder
+## `abstractinator`, `abstractinator_harmonic`, `abstractinator_harmonic_serpent` - AbstractinatorEncoder
 
 BLT encoder with a multi-stage residual VQ bottleneck between the local encoder and the
 global transformer.
@@ -14,10 +14,12 @@ After downsampling byte-level representations to patch-level and projecting to
 hidden_size, vectors are quantized through a residual VQ. The VQ loss is added to the
 existing encoder aux_loss, requiring no changes to the training loop.
 
-Source: [praxis/encoders/abstractinator/encoder.py:22](../praxis/encoders/abstractinator/encoder.py#L22)
+Source: [praxis/encoders/abstractinator/encoder.py:30](../praxis/encoders/abstractinator/encoder.py#L30)
 
 Presets:
 - `abstractinator` - `embeddings='byte_hash', local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', vq_codebook_size=16384`
+- `abstractinator_harmonic` - `bottleneck='harmonic', bottleneck_ratio=0.5, embeddings='byte_hash', local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', vq_codebook_size=16384`
+- `abstractinator_harmonic_serpent` - `bottleneck='harmonic_serpent', bottleneck_ratio=0.5, embeddings='byte_hash', local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', vq_codebook_size=16384`
 
 ## `byte_latent`, `byte_latent_conv`, `byte_latent_conv_small`, `byte_latent_transformer` - ByteLatentEncoder
 

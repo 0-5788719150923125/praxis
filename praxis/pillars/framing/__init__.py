@@ -196,12 +196,15 @@ def _augment(config: Dict) -> Dict:
     # Harmonic latent space = a harmonic/crystal-bearing head OR the CALM codec.
     head = str(config.get("head_type", ""))
     encoder = str(config.get("encoder_type", ""))
-    derived["uses_harmonic_latent"] = head in (
-        "harmonic",
-        "crystal",
-        "crystal_harmonic",
-        "prismatic",
-    ) or encoder.startswith("calm")
+    # prismatic is prefix-matched: prismatic3/prismatic4 carry the same
+    # harmonic fields as the base head. The harmonic-bottleneck Abstractinator
+    # counts too - its latent is quantized harmonic amplitudes.
+    derived["uses_harmonic_latent"] = (
+        head in ("harmonic", "crystal", "crystal_harmonic")
+        or head.startswith("prismatic")
+        or encoder.startswith("calm")
+        or encoder.startswith("abstractinator_harmonic")
+    )
 
     # codec_mode: which input representation the harmonic section opens on -
     # a CALM continuous-latent codec, a byte-latent (BLT) patching bottleneck,
@@ -219,6 +222,11 @@ def _augment(config: Dict) -> Dict:
     # Abstractinator (byte-latent + residual-VQ bottleneck) gates an addendum to
     # the byte-latent codec section: residual codes written into the encoder.
     derived["uses_abstractinator"] = encoder.startswith("abstractinator")
+
+    # The harmonic-bottleneck Abstractinator: residual codes read as amplitudes
+    # in the CALM standing-wave basis. Swaps the addendum's conjecture fragment
+    # for the one that states the conjecture is being run.
+    derived["uses_harmonic_bottleneck"] = encoder.startswith("abstractinator_harmonic")
 
     # HALO objective: a distance-to-centroid loss in embedding space (a shell
     # of consensus + an origin abstain sink) rather than cross-entropy.

@@ -50,7 +50,11 @@ PEER combines aspects of product key memory and mixture of experts, using factor
 keys for efficient expert retrieval. It enables each token to select its own set of
 experts for processing.
 
-Source: [praxis/dense/peer.py:15](../praxis/dense/peer.py#L15)
+Every dimension is derived from ``config`` unless explicitly overridden, so the module
+fits whatever model it is dropped into (see the two invariants on
+``BANK_WIDTH_MULTIPLE`` and ...
+
+Source: [praxis/dense/peer.py:34](../praxis/dense/peer.py#L34)
 
 ## `poly` - PolynomialExpansionMLP
 

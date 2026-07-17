@@ -548,7 +548,13 @@ RLCT_METRIC_DESCRIPTIONS: Dict[str, dict] = {
         "chart": {
             "title": "Landscape LLC Distribution",
             "y_label": "loss increase",
-            "y_scale": "linear",
+            # Log scale: the first probe (near-init weights, extent-scale
+            # perturbation) spikes the loss increase into the millions before it
+            # settles to single digits. On a linear axis that lone transient
+            # pins the ceiling and flattens the whole steady-state range to the
+            # floor; log keeps both the spike and the settled band legible, and
+            # preserves later phase-transition spikes (the point of the metric).
+            "y_scale": "logarithmic",
             "group": _RLCT_GROUP,
             "order": 20,
             "series_group": "rlct_llc",
@@ -563,7 +569,7 @@ RLCT_METRIC_DESCRIPTIONS: Dict[str, dict] = {
         "chart": {
             "title": "Landscape LLC Distribution",
             "y_label": "loss increase",
-            "y_scale": "linear",
+            "y_scale": "logarithmic",
             "group": _RLCT_GROUP,
             "order": 21,
             "series_group": "rlct_llc",
@@ -573,12 +579,13 @@ RLCT_METRIC_DESCRIPTIONS: Dict[str, dict] = {
     "rlct_llc_min": {
         "description": (
             "Min LLC over the slice - the tightest minimum (the basin floor, "
-            "where the water pools)."
+            "where the water pools). Identically 0 by construction (the floor is "
+            "its own reference), so it is absent from the log-scaled chart."
         ),
         "chart": {
             "title": "Landscape LLC Distribution",
             "y_label": "loss increase",
-            "y_scale": "linear",
+            "y_scale": "logarithmic",
             "group": _RLCT_GROUP,
             "order": 22,
             "series_group": "rlct_llc",
@@ -593,7 +600,9 @@ RLCT_METRIC_DESCRIPTIONS: Dict[str, dict] = {
         "chart": {
             "title": "Landscape Roughness",
             "y_label": "LLC std",
-            "y_scale": "linear",
+            # Log scale for the same reason as the LLC distribution: the near-init
+            # first probe dwarfs the steady state by orders of magnitude.
+            "y_scale": "logarithmic",
             "group": _RLCT_GROUP,
             "order": 30,
         },
