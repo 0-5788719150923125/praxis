@@ -9,9 +9,30 @@ dropout is forced off so the surprise gradient stays deterministic.
 import copy
 import inspect
 
+import torch
 import torch.nn as nn
+from torch.nn.parameter import UninitializedParameter
 
 from praxis.dense import DENSE_REGISTRY
+
+
+def _materialize_lazy(model: nn.Module, dim: int) -> None:
+    """Force any lazy parameters (e.g. Serpent's per-feature frequencies) to
+    materialize, so the memory harness can enumerate ``named_parameters()`` and
+    drive the net through ``functional_call`` - both need concrete tensors.
+
+    A single dim->dim dummy forward triggers ``LazyModuleMixin`` initialization;
+    dropout is already off, and plain MLP memory nets carry no forward-updated
+    buffers, so this leaves no state behind. On CPU/fp32 at construction; the
+    materialized params move with the later ``.to(device)``.
+    """
+    if not any(isinstance(p, UninitializedParameter) for p in model.parameters()):
+        return
+    was_training = model.training
+    model.eval()
+    with torch.no_grad():
+        model(torch.zeros(1, dim))
+    model.train(was_training)
 
 
 def build_memory_model(config, spec: dict) -> nn.Module:
@@ -19,9 +40,13 @@ def build_memory_model(config, spec: dict) -> nn.Module:
     profile spec. Reuses ``praxis.dense`` so memory and the FFN share variants.
     """
     cfg = copy.copy(config)
-    # A parameter-free activation by default: the memory net's whole parameter
-    # set is then just the fast-weight matrices we update at test time, and we
-    # avoid pulling lazy/learnable activation params (e.g. serpent) into it.
+    # Default to a parameter-free activation (gelu): the memory net's parameter
+    # set is then just the fast-weight matrices updated at test time. A profile
+    # may name a *learnable* activation instead (e.g. serpent) - its per-feature
+    # params then join the fast weights, so the test-time surprise update tunes
+    # the activation's own frequencies online, not only the linear maps. Lazy
+    # params from such activations are materialized below before the memory
+    # harness reads them.
     cfg.activation = spec.get("activation", "gelu")
     cfg.dropout = 0.0  # surprise gradient must be deterministic
 
@@ -37,4 +62,6 @@ def build_memory_model(config, spec: dict) -> nn.Module:
         kwargs["num_layers"] = spec.get("layers", 2)
     if "hidden_dim" in params:
         kwargs["hidden_dim"] = int(config.hidden_size * spec.get("expansion", 1.0))
-    return dense_cls(cfg, **kwargs)
+    model = dense_cls(cfg, **kwargs)
+    _materialize_lazy(model, config.hidden_size)
+    return model

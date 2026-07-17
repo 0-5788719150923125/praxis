@@ -880,11 +880,19 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 outputs.losses.add_loss(name, value)
 
         if self.mtp is not None:
+            # Byte-level MTP embeds byte IDs through the encoder's byte table
+            # (get_input_embeddings() is None in encoder mode); the patch path
+            # never touches embed_fn.
+            mtp_embed_fn = (
+                self.embeds
+                if getattr(self.mtp, "byte_level", False)
+                else self.get_input_embeddings()
+            )
             mtp_inputs = self.mtp.prepare_inputs(
                 hidden_states=hidden_states,
                 input_ids=input_ids,
                 attention_mask=attention_mask,
-                embed_fn=self.get_input_embeddings(),
+                embed_fn=mtp_embed_fn,
                 head=self.head,
                 patch_embeds=outputs.patch_embeds if self.encoder else None,
             )
@@ -931,15 +939,36 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             )
             if result is not None:
                 return result
-        if (
+        # Speculative decode: token models directly; byte-latent encoders via
+        # byte-level MTP (the encoder's custom_generate above returned None, so
+        # we own the loop here). Both are greedy-lossless.
+        spec_ok = (
             self.mtp is not None
-            and not self.encoder
             and not self.training
             and generation_config is not None
             and getattr(generation_config, "num_beams", 1) == 1
-        ):
+            and (not self.encoder or getattr(self.mtp, "byte_level", False))
+        )
+        if spec_ok:
             return self._speculative_generate(inputs, generation_config, **kwargs)
         return super().generate(inputs, generation_config=generation_config, **kwargs)
+
+    @torch.no_grad()
+    def _spec_logits_and_hidden(self, generated):
+        """Vocab logits + the hidden the MTP drafts from, for one prefix.
+
+        Byte-latent: the shared head classifies the byte-level decoder hidden
+        (``_compute_logits`` returns it as ``hidden_states``), so drafting rides
+        that same byte space. Token models: head over the trunk's last hidden.
+        """
+        base_out = PraxisModel.forward(self, input_ids=generated)
+        if self.encoder:
+            logits, _, hidden, _ = self._compute_logits(
+                base_out, generated, skip_logits=False
+            )
+            return logits, hidden
+        hidden = base_out.last_hidden_state
+        return self.head(hidden), hidden
 
     @torch.no_grad()
     def _speculative_generate(self, input_ids, generation_config, **kwargs):
@@ -950,6 +979,11 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         2. Draft N additional tokens greedily via MTP modules
         3. Verify all N+1 candidates in a single main model forward pass
         4. Accept the longest prefix where main model agrees with draft
+
+        Byte-latent encoders take this path via byte-level MTP: each accepted
+        draft is a byte the main model would have printed anyway, so up to N+1
+        bytes land per two full forwards instead of one byte per forward -
+        greedy-lossless, only the forward count drops.
         """
         from types import SimpleNamespace
 
@@ -962,14 +996,14 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         eos_set = make_eos_set(eos_token_id)
 
         generated = input_ids
-        embed_fn = self.get_input_embeddings()
+        # Byte-latent keeps its byte table on the encoder side, so
+        # get_input_embeddings() is None there; use the model's byte embeds.
+        embed_fn = self.embeds if self.encoder else self.get_input_embeddings()
         num_new = 0
 
         while num_new < max_new_tokens:
             # Main model forward pass to get hidden states
-            base_out = PraxisModel.forward(self, input_ids=generated)
-            hidden_states = base_out.last_hidden_state
-            main_logits = self.head(hidden_states)
+            main_logits, hidden_states = self._spec_logits_and_hidden(generated)
 
             # Sample first token from main model
             last_logits = main_logits[:, -1, :]
@@ -992,8 +1026,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
             # Verify all candidates in one forward pass
             verify_input = torch.cat([generated, candidates], dim=1)
-            verify_out = PraxisModel.forward(self, input_ids=verify_input)
-            verify_logits = self.head(verify_out.last_hidden_state)
+            verify_logits, _ = self._spec_logits_and_hidden(verify_input)
 
             # Check agreement at each position
             gen_len = generated.size(1)

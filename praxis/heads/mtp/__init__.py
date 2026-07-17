@@ -12,6 +12,7 @@ Two execution paths are handled internally:
     vs target patch representations — owns the projection and head.
 """
 
+import copy
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -27,6 +28,17 @@ MTP_REGISTRY = {
     "transformer": TransformerMTPModule,
     "conv": ConvMTPModule,
 }
+
+
+def _is_byte_latent(encoder_type) -> bool:
+    """True for a byte-latent (BLT/Abstractinator) encoder. Lazy import: the
+    encoders package pulls in blocks/heads, so a module-level import would
+    cycle."""
+    if not encoder_type:
+        return False
+    from praxis.encoders import is_byte_latent_encoder
+
+    return is_byte_latent_encoder(encoder_type)
 
 
 @dataclass
@@ -54,13 +66,31 @@ class MultiTokenPrediction(nn.Module):
         self.num_depths = config.mtp_depth
         self.mtp_type = config.mtp_type
         self.encoder_path = config.encoder_type is not None
+
+        # Byte-level MTP for byte-latent encoders: predict future BYTES (CE)
+        # rather than future patch representations (MSE). This is the objective
+        # that lets the depth modules DRAFT bytes for speculative decoding, the
+        # inference speedup that makes byte-latent generation not print one byte
+        # per full forward. A byte-latent model's shared head classifies the
+        # byte-level decoder hidden (dim = embed_size = dim_token_emb), so the
+        # depths run in embed_size space, not the trunk's hidden_size.
+        self.byte_level = self.encoder_path and _is_byte_latent(config.encoder_type)
+
         module_cls = MTP_REGISTRY[config.mtp_type]
+        depth_config = config
+        if self.byte_level:
+            # Depths operate on the byte head's input width. Build them from a
+            # config view whose hidden_size == embed_size so the module's block,
+            # norms, and projection all size to the byte space.
+            depth_config = copy.copy(config)
+            depth_config.hidden_size = config.embed_size
         self.depths = nn.ModuleList(
-            [module_cls(config) for _ in range(self.num_depths)]
+            [module_cls(depth_config) for _ in range(self.num_depths)]
         )
 
-        # Encoder path owns its own projection and head for patch-level MTP
-        if self.encoder_path:
+        # Non-byte encoder path (e.g. CALM) owns a projection + head for
+        # patch-level MTP; byte-level and token paths reuse the model's head.
+        if self.encoder_path and not self.byte_level:
             self.embed_proj = nn.Linear(
                 config.hidden_size, config.embed_size, bias=False
             )
@@ -95,7 +125,22 @@ class MultiTokenPrediction(nn.Module):
             head: LM head module (token path) — ignored on encoder path
             patch_embeds: Patch embeddings from encoder (encoder path only)
         """
-        if self.encoder_path:
+        if self.byte_level:
+            # Byte-latent: h_0 is the byte-level decoder hidden (embed_size),
+            # position embeds are byte embeddings, targets are the byte IDs, and
+            # the shared byte head classifies each drafted hidden. Same shape
+            # contract as the token path, so the forward loop is unchanged.
+            return MTPInputs(
+                hidden_states=hidden_states,
+                embeds=embed_fn(input_ids),
+                targets=input_ids,
+                head=head,
+                loss_fn=lambda p, t: F.cross_entropy(
+                    p.reshape(-1, p.size(-1)), t.reshape(-1)
+                ),
+                attention_mask=attention_mask,
+            )
+        elif self.encoder_path:
             return MTPInputs(
                 hidden_states=hidden_states,
                 embeds=self.embed_proj(patch_embeds),

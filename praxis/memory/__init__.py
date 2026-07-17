@@ -46,6 +46,26 @@ MEMORY_REGISTRY: Dict[str, Optional[dict]] = {
         parallel_scan=True,
         write_objective="predictive",
     ),
+    # mal_energy with a harmonic (Serpent) memory activation instead of mish.
+    # Serpent's per-feature frequencies are learnable, so they join the memory's
+    # fast weights: the test-time surprise update tunes the memory's harmonic
+    # geometry online, not just its linear maps. Matches the spectral latents the
+    # abstractinator harmonic codec produces (mish gave the memory a non-periodic
+    # basis mismatched with what it stores). Everything else tracks mal_energy.
+    "mal_energy_serpent": dict(
+        surfacing="mal",
+        dense="mlp",
+        layers=2,
+        expansion=0.5,
+        chunk_size=64,
+        momentum=True,
+        activation="serpent",
+        use_energy=True,
+        segment=True,
+        segment_block=16,
+        parallel_scan=True,
+        write_objective="predictive",
+    ),
     "mag": dict(
         surfacing="mag",
         dense="mlp",
@@ -79,6 +99,14 @@ MEMORY_PROFILE_DESCRIPTIONS: Dict[str, str] = {
         "the model just routes around. The update grid is segmented at surprise "
         "spikes (EM-LLM-style events, capped at chunk_size) so a context shift "
         "starts a fresh memory write."
+    ),
+    "mal_energy_serpent": (
+        "mal_energy with a harmonic Serpent activation in the memory net. Its "
+        "learnable per-feature frequencies join the test-time fast weights, so "
+        "the surprise update re-tunes the memory's harmonic geometry online - a "
+        "second test-time adaptation axis on top of the weight update - and the "
+        "memory represents content in the same oscillatory basis as the "
+        "abstractinator harmonic codec it stores."
     ),
     "mag": (
         "Memory-as-Gate (Titans): a memory branch run parallel to attention "

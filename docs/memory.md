@@ -3,7 +3,7 @@
 
 Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced as a layer (MAL) or a gate (MAG). Selected with ``--memory-type``; default is ``none``.
 
-Registry: ``praxis.MEMORY_REGISTRY`` (4 entries)
+Registry: ``praxis.MEMORY_REGISTRY`` (5 entries)
 
 ## `mag`
 
@@ -27,6 +27,14 @@ stream_{t+1} (stop-gradded, Huber surprise) rather than reconstructing the curre
 hold, instead of an echo the model just routes around. The update grid is segmented at
 surprise spikes (EM-LLM-style events, capped at chunk_size) so a context shift starts a
 fresh memory write.
+
+## `mal_energy_serpent`
+
+mal_energy with a harmonic Serpent activation in the memory net. Its learnable per-
+feature frequencies join the test-time fast weights, so the surprise update re-tunes the
+memory's harmonic geometry online - a second test-time adaptation axis on top of the
+weight update - and the memory represents content in the same oscillatory basis as the
+abstractinator harmonic codec it stores.
 
 ## `none`
 
