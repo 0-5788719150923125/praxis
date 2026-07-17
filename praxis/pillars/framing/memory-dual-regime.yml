@@ -1,0 +1,34 @@
+# Enables when the dual-regime memory is active (memory_type carries "dual").
+# Extends the Titans-memory fragment (order 55) with the two-regime, reward-
+# protected competition and its EML function class - a concrete instance of the
+# paper's cumulative-selection reading. Only rendered when the model actually
+# runs it, so the EML/NEAT citations enter the paper only when used.
+section: harmonic
+order: 56
+requires:
+  memory_type: ["*dual*"]
+body: >
+  \subsection*{Two memory regimes, held by selection}
+
+  That memory need not run one function class. The framework can carry two at
+  once, of deliberately opposed curve shape - an exponential energy score, and
+  the log-minus-exponent regime of an EML tree~\cite{abdo2026eml}, a compact
+  universal approximator - and hold them in competition. Left to the loss the
+  competition collapses: the granular regime predicts worse early, a greedy
+  router downweights it, and it is starved before it can mature, the single-step
+  failure the next section names with rich-get-richer standing in for chance.
+  The repair is the one evolution already found - protect innovation in its own
+  niche until it can compete, which is what speciation does for
+  NEAT~\cite{stanley2002neat}, and what a floor on the weaker regime's share
+  does here. The balance is then set not by the loss but by a slow reward, each
+  regime's own forecast quality over a running-average horizon, so a variation
+  is retained and given time to be built upon rather than discarded for not yet
+  winning.
+
+  Because every step is snapshotted (Section~\ref{sec:watchmaker}), the
+  competition is watched rather than inferred: the two regimes' shares over that
+  horizon draw the same species-over-time picture NEAT plots (its Figure 7),
+  except that the floor appears as a width no band falls below - protection made
+  visible, extinction ruled out by construction. The falsifier is the plain one:
+  if the protected regime never earns a share above its floor, the diversity was
+  noise and not selection.

@@ -3,7 +3,7 @@
 
 How a block's feedforward path is realized: MLP, GLU, KAN, polynomial, scatter, PEER, ... Selected with ``--ffn-type``; default is ``glu``.
 
-Registry: ``praxis.DENSE_REGISTRY`` (7 entries)
+Registry: ``praxis.DENSE_REGISTRY`` (8 entries)
 
 ## `arc` - ArcGLU
 
@@ -16,6 +16,12 @@ sees current_depth values {i, i + num_layers, i + 2*num_layers, ...}; we index t
 activation list by current_depth // num_layers so each pass gets its own instance.
 
 Source: [praxis/dense/arc.py:15](../praxis/dense/arc.py#L15)
+
+## `eml_tree` - EMLTree
+
+``dim -> dim`` stack of EML layers, each ``e^{Ax} - log(softplus(Bx))``.
+
+Source: [praxis/dense/eml.py:39](../praxis/dense/eml.py#L39)
 
 ## `glu` - GatedLinearMLP
 

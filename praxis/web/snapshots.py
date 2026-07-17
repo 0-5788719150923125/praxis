@@ -119,6 +119,17 @@ def _recipe_head_snapshots(model):
         snapshots.update(criterion.dashboard_snapshots() or {})
     if encoder and hasattr(encoder, "dashboard_snapshots"):
         snapshots.update(encoder.dashboard_snapshots() or {})
+    # Memory surfacings live inside the decoder blocks; collect the first one
+    # that offers a snapshot (e.g. the dual-regime river). One card, not one per
+    # block - they share the same competition dynamics.
+    if hasattr(model, "modules"):
+        for mod in model.modules():
+            fn = getattr(mod, "dashboard_snapshots", None)
+            if callable(fn) and type(mod).__name__.startswith("Memory"):
+                snaps = fn() or {}
+                if snaps:
+                    snapshots.update(snaps)
+                    break
     # RLCT loss-landscape grid, stashed on the model by RLCTLandscapeCallback.
     rlct = getattr(model, "_rlct_landscape", None)
     if isinstance(rlct, dict):

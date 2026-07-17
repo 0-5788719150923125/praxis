@@ -3,7 +3,7 @@
 
 Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced as a layer (MAL) or a gate (MAG). Selected with ``--memory-type``; default is ``none``.
 
-Registry: ``praxis.MEMORY_REGISTRY`` (5 entries)
+Registry: ``praxis.MEMORY_REGISTRY`` (6 entries)
 
 ## `mag`
 
@@ -27,6 +27,10 @@ stream_{t+1} (stop-gradded, Huber surprise) rather than reconstructing the curre
 hold, instead of an echo the model just routes around. The update grid is segmented at
 surprise spikes (EM-LLM-style events, capped at chunk_size) so a context shift starts a
 fresh memory write.
+
+## `mal_energy_dual`
+
+Value: `{'surfacing': 'dual_smear', 'dense': 'mlp', 'dense_b': 'eml_tree', 'layers': 2, 'expansion': 0.5, 'chunk_size': 64, 'momentum': True, 'activation': 'serpent', 'use_energy': True, 'segment': True, 'segment_block': 16, 'parallel_scan': True, 'write_objective': 'predictive'}`
 
 ## `mal_energy_serpent`
 

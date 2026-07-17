@@ -57,7 +57,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--encoder-type` | str | `None` | Encoder integration to use (choices: byte_latent, byte_latent_conv, byte_latent_conv_small, byte_latent_transformer, abstractinator, abstractinator_harmonic, abstractinator_harmonic_serpent, calm, calm_small, calm_byte, calm_byte_small, calm_byte_small_harmonic, calm_byte_ref, calm_byte_flow, calm_byte_harmonic, calm_byte_fixed, calm_byte_hybrid, calm_byte_harmonic_codec, calm_byte_harmonic_serpent, calm_tm_ref, calm_bpe) |
 | `--encoding-type` | str | `rope` | The positional encoding to use for sequence length extrapolation (choices: nope, alibi, rope, hope, arc) |
 | `--evolve` | bool | `False` | Use a genomic bottleneck |
-| `--ffn-type` | str | `glu` | The feedforward-network implementation to use within each block (choices: mlp, glu, arc, poly, scatter, kan, peer) |
+| `--ffn-type` | str | `glu` | The feedforward-network implementation to use within each block (choices: mlp, glu, arc, poly, scatter, kan, peer, eml_tree) |
 | `--gated` | bool | `False` | Add a gating network to attention outputs |
 | `--halting-type` | str | `None` | Halting strategy for recurrent depth loops (choices: none, kl) |
 | `--head-size` | int | `None` | Specify the inner head dimension |
@@ -69,7 +69,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--max-position-embeddings` | int | `None` | Maximum positional capacity (defaults to block_size when unset) |
 | `--mega` | bool | `False` | Equip the attention mechanism with exponentially-moving average-based gating |
 | `--memory` | bool | `False` | Use a long-term episodic memory module |
-| `--memory-type` | str | `none` | Titans-style long-term memory profile (choices: none, mal, mal_energy, mal_energy_serpent, mag) |
+| `--memory-type` | str | `none` | Titans-style long-term memory profile (choices: none, mal, mal_energy, mal_energy_serpent, mal_energy_dual, mag) |
 | `--mla` | bool | `False` | Use Multi-Head Latent Attention (MLA) |
 | `--mta` | bool | `False` | Use Multi-Token Attention (MTA) |
 | `--mtp-depth` | int | `1` | Number of Multi-Token Prediction depths |

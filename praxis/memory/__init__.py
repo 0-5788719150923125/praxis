@@ -16,7 +16,12 @@ from praxis.memory.neural_memory import (
     NeuralMemState,
     mem_state_detach,
 )
-from praxis.memory.surfacings import MemoryAsGate, MemoryAsLayer, MemoryBase
+from praxis.memory.surfacings import (
+    MemoryAsGate,
+    MemoryAsLayer,
+    MemoryBase,
+    MemoryDualSmear,
+)
 
 # Named profiles. Each value is a spec dict (or None to disable); the
 # ``surfacing`` key picks the implementing module from ``_SURFACINGS``.
@@ -55,6 +60,31 @@ MEMORY_REGISTRY: Dict[str, Optional[dict]] = {
     "mal_energy_serpent": dict(
         surfacing="mal",
         dense="mlp",
+        layers=2,
+        expansion=0.5,
+        chunk_size=64,
+        momentum=True,
+        activation="serpent",
+        use_energy=True,
+        segment=True,
+        segment_block=16,
+        parallel_scan=True,
+        write_objective="predictive",
+    ),
+    # Two energy-memory cores of OPPOSED function-class regimes, combined by a
+    # REWARD-protected blend (not a loss-trained router, which would starve the
+    # granular EML core before it matured). Core A is the serpent memory
+    # (exponential energy regime); core B swaps the memory net to the EML tree
+    # (dense_b=eml_tree, the log-minus-exponent e^x-Log(y) regime). The blend
+    # weight is a self-contained bandit over each core's forecast quality
+    # (surprise), detached from the LM gradient and floored so neither regime can
+    # collapse - the two are held on a stable axis. Watch memory_blend_b: a slow
+    # rise above 0.5 = EML earning its granular keep; a fall to the floor = it is
+    # not. Everything else tracks mal_energy_serpent.
+    "mal_energy_dual": dict(
+        surfacing="dual_smear",
+        dense="mlp",
+        dense_b="eml_tree",
         layers=2,
         expansion=0.5,
         chunk_size=64,
@@ -119,6 +149,7 @@ MEMORY_PROFILE_DESCRIPTIONS: Dict[str, str] = {
 _SURFACINGS: Dict[str, Type[nn.Module]] = {
     "mal": MemoryAsLayer,
     "mag": MemoryAsGate,
+    "dual_smear": MemoryDualSmear,
 }
 
 

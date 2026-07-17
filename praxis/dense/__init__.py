@@ -1,5 +1,6 @@
 from praxis.dense.arc import ArcGLU
 from praxis.dense.base import BaseDense
+from praxis.dense.eml import EMLTree
 from praxis.dense.glu import GatedLinearMLP
 from praxis.dense.kan import KolmogorovArnoldNetwork
 from praxis.dense.mlp import MultiLayerPerceptron
@@ -15,4 +16,5 @@ DENSE_REGISTRY = dict(
     scatter=ScatterMLP,
     kan=KolmogorovArnoldNetwork,
     peer=ParameterEfficientExpertRetrieval,
+    eml_tree=EMLTree,
 )

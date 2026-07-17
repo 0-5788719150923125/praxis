@@ -2279,8 +2279,44 @@ function renderParamField(canvas, data) {
     });
 }
 
+/**
+ * Regime river: the two memory cores as species-over-time bands (after NEAT
+ * Fig. 7). Time runs DOWN the EMA horizon (newest at the bottom); each row is
+ * split by the blend weight (band width = share), and brightness = each core's
+ * forecast fitness. Colors are theme-aware (accent = energy core A, next palette
+ * hue = EML core B). The floor shows as a width neither band drops below.
+ */
+function renderRegimeRiver(canvas, data, options) {
+    const river = (data && data.river) || [];
+    if (!river.length) return;
+    const wrap = canvas.parentElement;
+    const w = wrap.clientWidth || 800, h = wrap.clientHeight || 400;
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    const { gridColor } = getThemeColors();
+    ctx.fillStyle = gridColor; ctx.fillRect(0, 0, w, h);
+    const colA = chartLineColor(0), colB = chartLineColor(1);  // energy, EML
+    const n = river.length, rh = h / n;
+    const clamp01 = (v) => Math.max(0, Math.min(1, v));
+    for (let i = 0; i < n; i++) {
+        const [wa, wb, fa, fb] = river[i];
+        const y = i * rh, xa = wa * w, hh = Math.ceil(rh);
+        ctx.globalAlpha = 0.2 + 0.8 * clamp01(fa);
+        ctx.fillStyle = colA; ctx.fillRect(0, y, xa, hh);
+        ctx.globalAlpha = 0.2 + 0.8 * clamp01(fb);
+        ctx.fillStyle = colB; ctx.fillRect(xa, y, w - xa, hh);
+    }
+    ctx.globalAlpha = 1;
+    // Labels so the two bands read without a legend.
+    const { textColor } = getThemeColors();
+    ctx.fillStyle = textColor; ctx.font = '11px sans-serif';
+    ctx.textAlign = 'left'; ctx.fillText('energy', 6, 14);
+    ctx.textAlign = 'right'; ctx.fillText('EML', w - 6, 14);
+}
+
 const SNAPSHOT_RENDERERS = {
     heatmap_2d: renderHeatmap2D,
+    regime_river: renderRegimeRiver,
     halo_ring: renderHaloRing,
     harmonic_spiral: renderHarmonicSpiral,
     harmonic_curve: renderHarmonicCurve,
