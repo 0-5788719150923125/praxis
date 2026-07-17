@@ -132,6 +132,10 @@ def _create_muon(model, **profile):
     from pytorch_optimizer import Muon
 
     secondary_name = profile.pop("secondary_optimizer", None)
+    # Optional override for the secondary's weight decay, so a Muon profile can
+    # set the decay on the vocab-facing group (embeddings/head/crystal centers)
+    # independently of the borrowed secondary profile's default.
+    secondary_wd = profile.pop("secondary_weight_decay", None)
     profile = {
         k: v for k, v in profile.items() if k not in ("optimizer_name", "wd_ban_list")
     }
@@ -149,7 +153,9 @@ def _create_muon(model, **profile):
     # Composite: Muon orthogonalizes the body; a separate optimizer drives the
     # vocab-facing params (so Muon gets only the interior group).
     primary = _build_muon(muon_params, None, profile)
-    secondary, sec_lr = _build_secondary(secondary_name, adamw_params)
+    secondary, sec_lr = _build_secondary(
+        secondary_name, adamw_params, wd_override=secondary_wd
+    )
     ratio = sec_lr / float(profile["lr"])
     print(
         f"[Optimizer] Muon+{secondary_name}: {len(muon_params)} matrices "
@@ -159,9 +165,10 @@ def _create_muon(model, **profile):
     return CompositeOptimizer(primary, secondary, secondary_lr_ratio=ratio)
 
 
-def _build_secondary(name, params):
+def _build_secondary(name, params, wd_override=None):
     """Build the composite's secondary optimizer over ``params``, with weight
     decay only on its >=2D members (embeddings/head), not norms/biases.
+    ``wd_override`` (when not None) replaces the borrowed profile's weight decay.
     Returns ``(optimizer, base_lr)``."""
     from pytorch_optimizer import load_optimizer
 
@@ -170,6 +177,8 @@ def _build_secondary(name, params):
         k: v for k, v in profile.items() if k not in ("optimizer_name", "wd_ban_list")
     }
     wd = profile.pop("weight_decay", 0.0)
+    if wd_override is not None:
+        wd = wd_override
     base_lr = float(profile.get("lr", 1e-3))
     decay = [p for p in params if p.ndim >= 2]
     nodecay = [p for p in params if p.ndim < 2]
@@ -304,6 +313,34 @@ OPTIMIZER_PROFILES = {
         # spectrum signal in the interior. Set to None to use Muon's internal
         # AdamW instead (the adamw_* keys below apply only in that case).
         secondary_optimizer="Lion",
+        adamw_lr=0.0003,
+        adamw_betas=(0.9, 0.95),
+        adamw_wd=0.0,
+    ),
+    "MuonGeo": dict(
+        # Muon, but with weight decay ELIMINATED on the geometry - the small-model
+        # counterpart to the default's wd=0.1. Rationale (and a stated hot take,
+        # see research/body.tex): weight decay is the single global complexity
+        # dial, and this architecture already decouples bias/variance into
+        # separate, targeted controls (smoothness prior, delta regularizer), so a
+        # uniform shrink is redundant; in the underparameterized regime it just
+        # erodes the persistent geometry (corpus rhythm, crystal centers) that is
+        # the signal. Norm control is structural here - Muon orthogonalizes the
+        # update (bounded step), the harmonic latents are RMS-normalized, and the
+        # harmonic bases are fixed buffers - which is why decay can go to zero
+        # rather than a tuned whisper. FALSIFIER: watch the weight-norm cards; if
+        # the geometry-bearing matrices grow unbounded, restore a light decay.
+        # The Serpent frequencies are already wd-exempt (WD_BAN_LIST), so this
+        # only changes the matrices (codec/attention/FFN projections + the Lion
+        # secondary's vocab head/embeddings/crystal centers).
+        optimizer_name="Muon",
+        lr=0.01,
+        momentum=0.95,
+        nesterov=True,
+        weight_decay=0.0,
+        use_adjusted_lr=True,
+        secondary_optimizer="Lion",
+        secondary_weight_decay=0.0,
         adamw_lr=0.0003,
         adamw_betas=(0.9, 0.95),
         adamw_wd=0.0,
