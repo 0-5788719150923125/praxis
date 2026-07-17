@@ -3,7 +3,7 @@
 
 Named optimizer presets (built on pytorch-optimizer). Selected with ``--optimizer``; default is ``Lion``. Each entry shows its concrete settings (lr, betas, weight decay, ...).
 
-Registry: ``praxis.OPTIMIZER_PROFILES`` (5 entries)
+Registry: ``praxis.OPTIMIZER_PROFILES`` (6 entries)
 
 ## `AdamW`
 
@@ -20,6 +20,10 @@ Value: `{'optimizer_name': 'MARS', 'mars_type': 'shampoo', 'lr': 0.0003, 'gamma'
 ## `Muon`
 
 Value: `{'optimizer_name': 'Muon', 'lr': 0.01, 'momentum': 0.95, 'nesterov': True, 'weight_decay': 0.1, 'use_adjusted_lr': True, 'secondary_optimizer': 'Lion', 'adamw_lr': 0.0003, 'adamw_betas': (0.9, 0.95), 'adamw_wd': 0.0}`
+
+## `MuonGeo`
+
+Value: `{'optimizer_name': 'Muon', 'lr': 0.01, 'momentum': 0.95, 'nesterov': True, 'weight_decay': 0.0, 'use_adjusted_lr': True, 'secondary_optimizer': 'Lion', 'secondary_weight_decay': 0.0, 'adamw_lr': 0.0003, 'adamw_betas': (0.9, 0.95), 'adamw_wd': 0.0}`
 
 ## `Prodigy`
 

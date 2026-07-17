@@ -210,7 +210,8 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         lookup, and projecting against ``.weight`` would densify them.
         """
         return self.sparse or (
-            self.num_experts * self.num_sets > self.num_heads * self.k * self.hidden_size
+            self.num_experts * self.num_sets
+            > self.num_heads * self.k * self.hidden_size
         )
 
     def _project(self, inputs: Tensor, bank: nn.Embedding, indices: Tensor) -> Tensor:
@@ -302,8 +303,10 @@ if __name__ == "__main__":
     def count(module: nn.Module) -> int:
         return sum(p.numel() for p in module.parameters())
 
-    print(f"{'hidden':>7} {'heads':>6} {'experts':>9} {'key_dims':>9} "
-          f"{'k':>3} {'GLU':>10} {'PEER':>10} {'ratio':>7} {'q_out/hidden':>13}")
+    print(
+        f"{'hidden':>7} {'heads':>6} {'experts':>9} {'key_dims':>9} "
+        f"{'k':>3} {'GLU':>10} {'PEER':>10} {'ratio':>7} {'q_out/hidden':>13}"
+    )
     for hidden_size in (32, 64, 128, 256, 512, 1024):
         for num_heads in (4, 16):
             config = PraxisConfig()
@@ -321,7 +324,9 @@ if __name__ == "__main__":
             assert outputs.shape == inputs.shape, (outputs.shape, inputs.shape)
             assert peer.k <= peer.num_keys, "topk cannot outrun the key set"
 
-            print(f"{hidden_size:>7} {num_heads:>6} {peer.num_experts:>9} "
-                  f"{peer.key_dims:>9} {peer.k:>3} {count(dense):>10} "
-                  f"{count(peer):>10} {count(peer)/count(dense):>6.2f}x "
-                  f"{q_out/hidden_size:>12.2f}x")
+            print(
+                f"{hidden_size:>7} {num_heads:>6} {peer.num_experts:>9} "
+                f"{peer.key_dims:>9} {peer.k:>3} {count(dense):>10} "
+                f"{count(peer):>10} {count(peer)/count(dense):>6.2f}x "
+                f"{q_out/hidden_size:>12.2f}x"
+            )

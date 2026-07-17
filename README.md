@@ -33,7 +33,7 @@ Praxis is organized as 47 pluggable registries. The feature categories below lin
 - [Loss functions](docs/losses.md) (9)
 - [Mixture-of-widths](docs/width.md) (7)
 - [Normalization layers](docs/normalization.md) (5)
-- [Optimizer profiles](docs/optimizers.md) (5)
+- [Optimizer profiles](docs/optimizers.md) (6)
 - [Optimizer wrappers](docs/wrappers.md) (8)
 - [Output heads](docs/heads.md) (12)
 - [Positional encoding](docs/encoding.md) (5)

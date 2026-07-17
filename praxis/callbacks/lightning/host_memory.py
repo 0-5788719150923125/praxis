@@ -112,7 +112,9 @@ class HostMemoryCallback(Callback):
         self._t0 = time.monotonic()
         rss, swap = self._footprint_mb()
         self._base_mb = rss + swap
-        self._log(f"=== run start pid={os.getpid()} rss={rss:.0f}MB swap={swap:.0f}MB ===")
+        self._log(
+            f"=== run start pid={os.getpid()} rss={rss:.0f}MB swap={swap:.0f}MB ==="
+        )
         print(f"[HostMemory] Logging host-RAM samples to {self.path}")
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
