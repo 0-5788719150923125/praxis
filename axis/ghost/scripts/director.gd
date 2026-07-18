@@ -63,6 +63,7 @@ const SCENES := [
 	{"script": preload("res://scripts/scenes/petals.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/bubbles.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/motes.gd"), "behavior": "drift"},
+	# Worlds & projections - real 3D terrain, cities on it, latent geometry.
 	{"script": preload("res://scripts/scenes/projection.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/projection.gd"), "behavior": "static"},
 	{"script": preload("res://scripts/scenes/terrain.gd"), "behavior": "drift"},

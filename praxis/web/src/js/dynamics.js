@@ -2293,7 +2293,7 @@ function renderRegimeRiver(canvas, data, options) {
     const w = wrap.clientWidth || 800, h = wrap.clientHeight || 400;
     canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext('2d');
-    const { gridColor } = getThemeColors();
+    const { gridColor, textColor } = getThemeColors();
     ctx.fillStyle = gridColor; ctx.fillRect(0, 0, w, h);
     const colA = chartLineColor(0), colB = chartLineColor(1);  // energy, EML
     const n = river.length, rh = h / n;
@@ -2307,11 +2307,39 @@ function renderRegimeRiver(canvas, data, options) {
         ctx.fillStyle = colB; ctx.fillRect(xa, y, w - xa, hh);
     }
     ctx.globalAlpha = 1;
-    // Labels so the two bands read without a legend.
-    const { textColor } = getThemeColors();
+
+    // Trace the boundary down the whole horizon so its migration is legible even
+    // when it barely moves: a near-vertical line means a stable split.
+    ctx.strokeStyle = textColor; ctx.lineWidth = 2; ctx.globalAlpha = 0.9;
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+        const x = river[i][0] * w, y = i * rh + rh / 2;
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // Band headers.
     ctx.fillStyle = textColor; ctx.font = '11px sans-serif';
-    ctx.textAlign = 'left'; ctx.fillText('energy', 6, 14);
-    ctx.textAlign = 'right'; ctx.fillText('EML', w - 6, 14);
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    ctx.fillText('energy (A)', 6, 14);
+    ctx.textAlign = 'right'; ctx.fillText('EML (B)', w - 6, 14);
+
+    // The boundary split as percentages at the oldest (top) and newest (bottom)
+    // ends - so you can read what the colors are worth and whether it moved.
+    const pct = (v) => (v * 100).toFixed(1) + '%';
+    const labelSplit = (row, y, baseline) => {
+        const xa = row[0] * w;
+        ctx.textBaseline = baseline;
+        ctx.fillStyle = colA;
+        ctx.textAlign = 'right'; ctx.fillText(pct(row[0]), Math.max(38, xa - 5), y);
+        ctx.fillStyle = colB;
+        ctx.textAlign = 'left'; ctx.fillText(pct(row[1]), Math.min(w - 38, xa + 5), y);
+    };
+    ctx.font = 'bold 12px sans-serif';
+    labelSplit(river[0], 30, 'top');            // oldest
+    labelSplit(river[n - 1], h - 8, 'bottom');  // newest
+    ctx.textBaseline = 'alphabetic';
 }
 
 const SNAPSHOT_RENDERERS = {
