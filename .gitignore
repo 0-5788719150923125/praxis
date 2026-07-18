@@ -49,3 +49,6 @@ authors.tex
 # dashboard webp render log (generated at launch)
 static/.terminal_render.log
 static/.chat_render.log
+
+# CloudFlare Pages deployment artifacts (generated at launch)
+.wrangler

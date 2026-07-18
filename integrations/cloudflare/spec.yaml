@@ -1,0 +1,10 @@
+name: "cloudflare"
+version: "0.1.0"
+description: "Publish a static snapshot of the dashboard to Cloudflare Pages"
+conditions:
+  - "args.publish_snapshot"
+integrations:
+  cli:
+    function: "add_cli_args"
+  api_server_hooks:
+    function: "api_server_hook"

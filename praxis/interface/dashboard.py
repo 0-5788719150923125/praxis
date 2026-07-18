@@ -91,6 +91,8 @@ class TerminalDashboard:
         # Store original logging class to restore later if needed
         self._original_logger_class = logging.getLoggerClass()
 
+        from praxis.log_noise import is_noisy
+
         # Create a custom logger class that automatically uses our handler
         class DashboardLogger(logging.Logger):
             def __init__(self, name, level=logging.NOTSET):
@@ -100,6 +102,10 @@ class TerminalDashboard:
                     self.handlers = []
                     self.addHandler(handler)
                     self.propagate = False
+                    # Keep known-noisy loggers (HTTP downloads, torch.compile)
+                    # quiet even when created after this point.
+                    if is_noisy(name):
+                        self.setLevel(logging.WARNING)
 
         # Set our custom logger class as the default
         logging.setLoggerClass(DashboardLogger)
@@ -111,8 +117,9 @@ class TerminalDashboard:
                 logger.handlers = []
                 logger.addHandler(handler)
                 logger.propagate = False
-                # Use INFO as the default level for all loggers
-                logger.setLevel(logging.INFO)
+                # INFO for our own output; WARNING for the noisy third parties
+                # so their download/compile chatter doesn't bury the CLI.
+                logger.setLevel(logging.WARNING if is_noisy(name) else logging.INFO)
 
         # Capture warnings
         warnings.showwarning = self.show_warning

@@ -427,6 +427,19 @@ class IntegrationLoader:
                 print(f"csp_sources failed for {integration.name}: {e}")
         return merged
 
+    def get_hash_exclusions(self) -> List[str]:
+        """CLI flags loaded integrations want kept out of the run hash (runtime/
+        infra switches that don't change the model)."""
+        flags: List[str] = []
+        for integration in self.loaded_integrations.values():
+            try:
+                for flag in integration.hash_exclusions() or []:
+                    if flag and flag not in flags:
+                        flags.append(flag)
+            except Exception as e:
+                print(f"hash_exclusions failed for {integration.name}: {e}")
+        return flags
+
     def get_loss_functions(self) -> Dict:
         """Get all loss functions provided by integrations."""
         return self.integration_registry["loss_functions"]

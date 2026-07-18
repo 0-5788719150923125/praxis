@@ -57,6 +57,11 @@ def setup_environment(no_docs: bool = False):
     disable_warnings()
     logging.getLogger("pytorch").setLevel(logging.ERROR)
 
+    # Silence HTTP-download / compile chatter that otherwise buries the CLI.
+    from praxis.log_noise import quiet_noisy_loggers
+
+    quiet_noisy_loggers()
+
     ignored_warnings = [
         ".*Checkpoint directory.*exists and is not empty*",
         ".*JAX is multithreaded, so this will likely lead to a deadlock*",

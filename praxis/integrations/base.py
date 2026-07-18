@@ -261,6 +261,20 @@ class BaseIntegration(ABC):
         """
         return {}
 
+    def hash_exclusions(self) -> List[str]:
+        """CLI argument flags this integration adds that must NOT contribute to
+        the run hash - runtime/infra switches (where to publish, tunnel tokens,
+        cadence) that don't change the model, so toggling them must not spawn a
+        new run identity.
+
+        Return the flag strings exactly as registered, e.g.
+        ``["--publish-snapshot", "--publish-project"]``. The CLI merges these
+        into the hash exclusion list whenever this integration is loaded.
+
+        Note: Override this method if your integration adds such CLI args.
+        """
+        return []
+
     def on_decoder_init(self, decoder: Any, config: Any) -> None:
         """Hook called when a decoder is initialized.
 
@@ -383,6 +397,7 @@ class IntegrationFactory:
             "on_api_server_start",
             "request_middleware",
             "on_decoder_init",
+            "hash_exclusions",
         }
 
         # Get all callable attributes from the module

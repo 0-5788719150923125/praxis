@@ -91,6 +91,7 @@ the package directory for details.
 Third-party, non-core add-ons that live in the repo but are not part
 of the framework. Optional and off by default - see [integrations](integrations.md).
 
+- `cloudflare` - Publish a static snapshot of the dashboard to Cloudflare Pages
 - `cut_cross_entropy` - Apple's memory-efficient cut cross-entropy loss integration for Praxis
 - `discord` - Discord bot integration for chat
 - `gun` - Gun.js decentralized data adapter for live chat integration

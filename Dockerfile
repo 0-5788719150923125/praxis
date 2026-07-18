@@ -29,6 +29,17 @@ RUN apt-get update -qq && \
         texlive-fonts-recommended && \
     rm -rf /var/lib/apt/lists/*
 
+# Node.js + wrangler CLI for the Cloudflare Pages integration (--publish-snapshot).
+# The container runs as a non-root user, so wrangler cannot be installed at
+# runtime (apt / npm -g need root) - bake it into the image here, as root, at
+# build time. Ubuntu 24.04's apt Node.js (v18) satisfies wrangler's engine
+# requirement. Skipped work for anyone not publishing, but small next to CUDA.
+RUN apt-get update -qq && \
+    apt-get install -y -qq nodejs npm && \
+    npm install -g wrangler && \
+    npm cache clean --force && \
+    rm -rf /var/lib/apt/lists/*
+
 # Configure git to trust the workspace directory
 RUN git config --global --add safe.directory /workspace/praxis
 

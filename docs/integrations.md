@@ -8,6 +8,14 @@ dependencies on demand. Praxis runs fine with none of them enabled.
 
 See [`integrations/README.md`](../integrations/README.md) for the directory layout and how to add one.
 
+## `cloudflare` (v0.1.0)
+
+Publish a static snapshot of the dashboard to Cloudflare Pages
+
+- Activation: `--publish-snapshot`
+- Provides: `api_server_hooks`, `cli`
+- Source: [`integrations/cloudflare/`](../integrations/cloudflare/README.md)
+
 ## `cut_cross_entropy` (v0.1.0)
 
 Apple's memory-efficient cut cross-entropy loss integration for Praxis
