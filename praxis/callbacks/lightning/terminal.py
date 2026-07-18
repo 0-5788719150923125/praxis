@@ -652,6 +652,10 @@ class TerminalInterface(Callback):
         if hasattr(self, "live_metrics"):
             self.live_metrics.status_text = self.text
             self.live_metrics.contexts = contexts
+            # Bump the counter so the web emitter pushes this even when no
+            # training step is running - otherwise inference updates stall on
+            # the web Terminal all through validation (the CLI is unaffected).
+            self.live_metrics.mark_updated()
 
         self.last_time = datetime.now()
 

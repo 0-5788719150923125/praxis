@@ -32,11 +32,13 @@ RUN apt-get update -qq && \
 # Node.js + wrangler CLI for the Cloudflare Pages integration (--publish-snapshot).
 # The container runs as a non-root user, so wrangler cannot be installed at
 # runtime (apt / npm -g need root) - bake it into the image here, as root, at
-# build time. Ubuntu 24.04's apt Node.js (v18) satisfies wrangler's engine
-# requirement. Skipped work for anyone not publishing, but small next to CUDA.
+# build time. Pinned to wrangler@3: Ubuntu 24.04's apt Node.js is v18, and
+# wrangler v4+ requires Node >=22, so latest wrangler fails at runtime with a
+# Node-version error. v3 needs only Node >=16.17 and its `pages deploy` is all
+# we use. (Bump to a newer Node via NodeSource if you ever need wrangler v4.)
 RUN apt-get update -qq && \
     apt-get install -y -qq nodejs npm && \
-    npm install -g wrangler && \
+    npm install -g wrangler@3 && \
     npm cache clean --force && \
     rm -rf /var/lib/apt/lists/*
 

@@ -88,6 +88,19 @@ class LiveMetrics:
             )
             self._update_count += 1
 
+    def mark_updated(self):
+        """Bump the update counter so the web metrics emitter pushes the next
+        snapshot.
+
+        Call after mutating display-only state (contexts, status_text, info)
+        that no metric update already covers. Otherwise those changes reach the
+        web Terminal only when a training step happens to bump the counter - so
+        they stall during validation (no steps) until it ends, even though the
+        CLI dashboard, which renders state directly, keeps showing them.
+        """
+        with self._event_lock:
+            self._update_count += 1
+
     def snapshot(self):
         """Return a JSON-serializable snapshot of current metrics."""
         with self.state.lock:
