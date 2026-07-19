@@ -2298,65 +2298,89 @@ function renderRegimeRiver(canvas, data, options) {
     const ctx = canvas.getContext('2d');
     const { gridColor, textColor } = getThemeColors();
     ctx.fillStyle = gridColor; ctx.fillRect(0, 0, w, h);
-    const n = river.length, rh = h / n;
     const N = Math.max(1, Math.floor(river[0].length / 2));  // regimes per row
     const labels = (data && data.labels) || [];
+    const names = Array.from({ length: N }, (_, k) => labels[k] || `core ${String.fromCharCode(65 + k)}`);
     const cols = Array.from({ length: N }, (_, k) => chartLineColor(k));
     const clamp01 = (v) => Math.max(0, Math.min(1, v));
     const clampX = (x) => Math.max(24, Math.min(w - 24, x));
 
-    // Each row: N stacked horizontal segments, left-to-right by cumulative
-    // weight (width = share, brightness = fitness).
+    // Legend strip (top): a swatch + name per regime, ALL N shown regardless of
+    // band widths - so a sparse core (the KAN is 0-width on most rows) is always
+    // named, the way every other card's legend works. Drawn on the plain
+    // background strip, so the name uses the theme text colour.
+    const legendH = 24, sw = 11, gap = 5, pad = 16;
+    ctx.font = 'bold 12px sans-serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+    const entryW = names.map((nm) => sw + gap + ctx.measureText(nm).width);
+    const totalW = entryW.reduce((a, b) => a + b, 0) + pad * (N - 1);
+    let lx = Math.max(6, (w - totalW) / 2);
+    names.forEach((nm, k) => {
+        ctx.fillStyle = cols[k];
+        ctx.fillRect(lx, legendH / 2 - sw / 2, sw, sw);
+        ctx.fillStyle = textColor;
+        ctx.fillText(nm, lx + sw + gap, legendH / 2 + 0.5);
+        lx += entryW[k] + pad;
+    });
+
+    // The river fills the area below the legend strip.
+    const top = legendH, n = river.length, rh = (h - top) / n;
+
+    // Each row: N stacked horizontal segments, left-to-right by cumulative weight
+    // (width = share). Fitness modulates brightness but never washes the hue out.
+    // The LAST band is drawn to the right edge so a row always fills the full
+    // width exactly (no rounding gap on the right).
     for (let i = 0; i < n; i++) {
-        const row = river[i], y = i * rh, hh = Math.ceil(rh);
+        const row = river[i], y = top + i * rh, hh = Math.ceil(rh);
         let x = 0;
         for (let k = 0; k < N; k++) {
-            const seg = row[k] * w;
-            ctx.globalAlpha = 0.2 + 0.8 * clamp01(row[N + k]);
+            const seg = (k === N - 1) ? (w - x) : row[k] * w;
+            ctx.globalAlpha = 0.55 + 0.4 * clamp01(row[N + k]);
             ctx.fillStyle = cols[k];
-            ctx.fillRect(x, y, Math.ceil(seg), hh);
-            x += seg;
+            ctx.fillRect(Math.round(x), y, Math.ceil(seg), hh);
+            x += row[k] * w;
         }
     }
     ctx.globalAlpha = 1;
 
-    // Trace each internal boundary (cumulative weight) down the horizon so its
-    // migration is legible even when it barely moves: near-vertical = stable.
-    ctx.strokeStyle = textColor; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.8;
+    // Trace each internal boundary (cumulative weight) down the horizon in the
+    // background colour - a clean seam whose migration reads as it moves.
+    ctx.strokeStyle = gridColor; ctx.lineWidth = 1.5;
     for (let k = 0; k < N - 1; k++) {
         ctx.beginPath();
         for (let i = 0; i < n; i++) {
             let cum = 0;
             for (let j = 0; j <= k; j++) cum += river[i][j];
-            const x = cum * w, y = i * rh + rh / 2;
+            const x = cum * w, y = top + i * rh + rh / 2;
             i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
         }
         ctx.stroke();
     }
-    ctx.globalAlpha = 1;
 
-    // Band headers + percentages at the oldest (top) and newest (bottom) rows,
-    // each centered under its band so you can read what a color is worth.
+    // Percentage splits stay ON the chart: solid black on a white halo, legible
+    // over any band colour and theme. EVERY module is labelled at both the
+    // oldest and newest row (so 3 modules => 6 numbers, always), not just the
+    // ones with a wide band. A module that sat the step out shows its true 0% at
+    // its band position (the right edge for the sparse trailing core).
+    const label = (text, x, y) => {
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = 3.5; ctx.strokeStyle = '#ffffff'; ctx.strokeText(text, x, y);
+        ctx.fillStyle = '#000000'; ctx.fillText(text, x, y);
+    };
     const pct = (v) => (v * 100).toFixed(1) + '%';
-    const bandCenters = (row) => {
-        const out = []; let c = 0;
-        for (let k = 0; k < N; k++) { out.push((c + row[k] / 2) * w); c += row[k]; }
-        return out;
-    };
-    ctx.font = '11px sans-serif'; ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'center';
-    bandCenters(river[0]).forEach((cx, k) => {
-        ctx.fillStyle = cols[k];
-        ctx.fillText(labels[k] || `core ${String.fromCharCode(65 + k)}`, clampX(cx), 14);
-    });
+    ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
     const labelRow = (row, y, baseline) => {
-        ctx.textBaseline = baseline; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
-        bandCenters(row).forEach((cx, k) => {
-            ctx.fillStyle = cols[k];
-            ctx.fillText(pct(row[k]), clampX(cx), y);
-        });
+        ctx.textBaseline = baseline;
+        let c = 0;
+        for (let k = 0; k < N; k++) {
+            // A 0-width band sits at the seam (c); nudge it inward so its number
+            // clears the neighbour's rather than stacking on the boundary.
+            const centre = row[k] < 0.02 ? c - 0.03 : c + row[k] / 2;
+            c += row[k];
+            label(pct(row[k]), clampX(centre * w), y);
+        }
     };
-    labelRow(river[0], 32, 'top');            // oldest
-    labelRow(river[n - 1], h - 8, 'bottom');  // newest
+    labelRow(river[0], top + 13, 'top');       // oldest
+    labelRow(river[n - 1], h - 8, 'bottom');   // newest
     ctx.textBaseline = 'alphabetic';
 }
 

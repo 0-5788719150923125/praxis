@@ -23,11 +23,6 @@ class_name Exporter
 ## All three steps are separate processes, polled by PID; status ("Analyzing… / Rendering… /
 ## Finalizing… / Saved ✓") shows here in the main window. Nothing to watch, nothing to force-quit.
 
-# Show the Export button after this many seconds of playback - no need to watch the
-# whole thing. For songs too short to reach that, show it partway through instead
-# (SHORT_FRACTION), so short clips still get a button.
-const EXPORT_DELAY := 30.0
-const SHORT_FRACTION := 0.5
 const Bake := preload("res://scripts/bake.gd")
 
 # Output quality presets, offered when the Export button is pressed. The render renders
@@ -58,6 +53,13 @@ var _pct := 0            # last progress read from the render/bake process
 var _song_dur := 0.0     # song length captured at export START (the live song may end mid-transcode)
 var _quality: Dictionary = QUALITIES[DEFAULT_QUALITY]
 var _announced := false  # one-shot console note the first time export becomes ready
+var _note_t := 0.0       # countdown for self-clearing informational notes
+
+## Synthesis hook: a mode whose audio is REPRODUCIBLE ON DEMAND (the voice is
+## a pure function of the text and the seed) registers a provider that renders
+## the current take to disk and returns its path. Export then works from the
+## very first moment - the click IS the trigger that makes the audio.
+var take_provider := Callable()
 
 
 func _ready() -> void:
@@ -168,6 +170,11 @@ func _process(dt: float) -> void:
 				_state = "idle"
 	# The button fades in once eligible (idle, not mid-export, past the delay) and
 	# fades out otherwise - never a hard pop.
+	# an informational note (e.g. "nothing to export yet") clears itself
+	if _note_t > 0.0 and _state == "idle":
+		_note_t -= dt
+		if _note_t <= 0.0:
+			_status.visible = false
 	var want := _state == "idle" and _can_export()
 	if want and not _announced:
 		_announced = true
@@ -176,21 +183,17 @@ func _process(dt: float) -> void:
 	_btn.visible = _btn.modulate.a > 0.02
 
 
-# Eligible once playback passes the delay (30s), or partway through a song too short
-# to reach it. A streamed take (synthesis mode) doesn't know its length until the
-# WHOLE take finishes synthesizing (see Spectrum.song_length) - which, since the
-# worker paces itself to real time, is roughly as far off as the take is long, often
-# well past EXPORT_DELAY. Gating on length left synthesis sessions without the export
-# button every other mode gets by then, so streaming sessions use the same flat
-# EXPORT_DELAY instead; a click before the take is actually written to disk fails
-# gracefully via _on_path's "No song to export" check, same as any other export error.
+# THE BUTTON IS ALWAYS ELIGIBLE. History, because this exact gate regressed
+# repeatedly: eligibility was time-gated (30s of playback / half the song),
+# then length-gated for streams, then time-gated again by a concurrent edit
+# whose premise (that synthesis paces to real time) was wrong - and in
+# synthesis sessions EVERY throw/edit resets the playback clock via the
+# stream restart cycle, so a time gate can NEVER be satisfied while the user
+# iterates. Each version hid the button from someone. Timing heuristics do
+# not belong on a button's visibility: the button always shows, and a click
+# with nothing exportable yet says so and does nothing (see _on_export).
 func _can_export() -> bool:
-	if Spectrum.is_streaming():
-		return Spectrum.current.time >= EXPORT_DELAY
-	var length := Spectrum.song_length()
-	if length <= 0.0:
-		return false
-	return Spectrum.current.time >= minf(EXPORT_DELAY, length * SHORT_FRACTION)
+	return true
 
 
 # Refresh the cached percentage from the worker process (ignore mid-write misreads).
@@ -201,7 +204,22 @@ func _poll_pct() -> void:
 
 
 # Step 0: pick the output resolution / fps. Pop the menu up by the button.
+# A click with nothing to export yet (no song loaded; a streamed take still
+# synthesizing) explains itself instead of opening a doomed dialog.
 func _on_export() -> void:
+	_song = Spectrum.audio_path()
+	if _song.is_empty() and take_provider.is_valid():
+		# synthesis: make the take right now (seconds - the voice renders far
+		# above real time), then export it like any song
+		_set_status("⏳  Rendering the take…", Color(0.95, 0.92, 0.7))
+		await get_tree().process_frame
+		_song = String(take_provider.call())
+		_status.visible = false
+	if _song.is_empty():
+		_note_t = 4.0
+		_set_status("⚠  Nothing to export yet - play or speak something first",
+			Color(1.0, 0.85, 0.6))
+		return
 	var btn_rect := _btn.get_global_rect()
 	_quality_menu.reset_size()
 	var pos := Vector2i(btn_rect.position) + Vector2i(0, -int(_quality_menu.get_contents_minimum_size().y) - 8)
@@ -216,7 +234,10 @@ func _on_quality(id: int) -> void:
 
 
 func _on_path(out_path: String) -> void:
-	_song = Spectrum.audio_path()
+	# _song was resolved at click time (_on_export) - the live audio path, or a
+	# take the provider rendered on demand. Re-read only as a fallback.
+	if _song.is_empty():
+		_song = Spectrum.audio_path()
 	if _song.is_empty():
 		_fail("⚠  No song to export")
 		return
@@ -226,6 +247,10 @@ func _on_path(out_path: String) -> void:
 	# Capture the duration NOW, while the song is loaded: the transcode (esp. 4K) runs for minutes, by
 	# which point the live song may have ended/unloaded and Spectrum.song_length() would read 0.
 	_song_dur = Spectrum.song_length()
+	if _song_dur <= 0.0 and _song.get_extension().to_lower() == "wav":
+		# a provider-rendered take Spectrum hasn't finished streaming: PCM16
+		# mono WAV, so the file itself says how long it is
+		_song_dur = maxf(0.0, float(_file_size(_song) - 44) / (2.0 * float(Voice.SR)))
 	# Movie Maker records to this intermediate AVI (beside the final file, on the same disk); we then
 	# transcode it to the chosen .mp4 and delete it. The AVI is only ever scratch - it never ships,
 	# so its 4 GB/RIFF index limit (which corrupts 4K exports) can't reach the user.

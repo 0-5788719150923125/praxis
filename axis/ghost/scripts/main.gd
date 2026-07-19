@@ -214,6 +214,10 @@ func _open_synth_editor() -> void:
 	editor.begin_stream = _begin_synth_stream
 	_synth_editor = editor
 	add_child(editor)
+	# exports are ready from the very first moment: the exporter can ask the
+	# editor to render the current text into a take on demand
+	if _chrome.exporter != null:
+		_chrome.exporter.take_provider = editor.export_take
 	_feedback = _chrome.attach_feedback()
 
 

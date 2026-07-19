@@ -195,6 +195,7 @@ func is_streaming() -> bool:
 ## FRESH playback object comes back - the old one is dead, push to this one.
 func restart_stream() -> AudioStreamGeneratorPlayback:
 	_stream_length = 0.0
+	_loaded_path = ""    # the old take's file no longer matches what is playing
 	_player.stop()
 	_player.play()
 	return _player.get_stream_playback()

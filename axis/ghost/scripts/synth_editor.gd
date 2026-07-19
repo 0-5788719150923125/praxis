@@ -277,6 +277,25 @@ func _build_panel() -> void:
 	box.add_child(_belt_rows)
 
 
+## The exporter's take provider: render the CURRENT text through the voice
+## once, write the WAV + subtitle sidecar, and hand back the path. Synchronous
+## on purpose - synthesis runs far above real time, so this is seconds, and it
+## guarantees the exported take matches exactly what the panel says right now
+## (never a stale file from before an edit or a throw).
+func export_take() -> String:
+	var text := _text.text.strip_edges()
+	if text.is_empty():
+		return ""
+	var result := Voice.render(text, _current_spec())
+	DirAccess.make_dir_recursive_absolute("user://synth")
+	var base := "user://synth/take_%06x" % (hash(str(_lineage)) & 0xFFFFFF)
+	var wav := Voice.write_wav(base + ".wav", result.pcm)
+	var side := FileAccess.open(base + ".json", FileAccess.WRITE)
+	side.store_string(JSON.stringify({"words": result.words}))
+	side.close()
+	return wav
+
+
 func _current_spec() -> Voice.Spec:
 	var spec := Voice.Spec.from_traits(_traits, int(_lineage[0]), _lineage)
 	spec.adrenochrome = _working_genome.duplicate()
