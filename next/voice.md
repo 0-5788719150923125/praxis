@@ -151,9 +151,72 @@ interesting happens in layer 3.
   changes (text, seed, and the plan-baked lilt / pace / drawl) **restart the stream in
   place** after an idle debounce - generator buffer cleared, karaoke clock rebased via
   `time_base`, the scene session untouched. `--say` applies immediately on boot.
+- [x] **Rung 2.5 - the walk and the belt** (the "comes in hot, stays hot" fix). The
+  reading is now STATEFUL: `ProsodyWalk`, a homeostatic word-by-word walk over sliding
+  EMAs - **arousal** opens hot and settles (hot = fast, settled = slow: pace finally
+  varies), **spent emphasis** is a windowed EMA that spaces emphases out (an emphasis
+  suppresses the next until it decays; emphasized words get a pre-pause, stretch, rise),
+  **breath debt** forces real pauses in unpunctuated text, and a seeded **motif
+  vocabulary** (tilt / lean / gap gestures) recurs per sentence - habits, not wander.
+  The genome is sampled through a **lineage**: a linear chain of seeds where the root
+  samples every parameter and each later seed perturbs by 0.6^generation - Evolve
+  refines a kept reading instead of re-rolling it. The editor's **belt** (7 slots)
+  captures {lineage, traits}: capturing IS the labeling - a kept seed reproduces its
+  reading exactly, and the lineage records how it was found. All deterministic; breath
+  emergence and lineage byte-determinism are asserted in voice_check.
+- [x] **Rung 2.75 - the inventory and the attention reward.** The belt became an active
+  population with implicit reward. The signal is **hold time**: while a reading plays,
+  every seed shaping it accrues listened seconds - nobody labels roboticness by hand,
+  you vote by not switching it off. Each belt entry tracks plays, hold seconds, kept
+  (restores), evolved (children spawned), caught (descendants captured); the
+  **acceptance metric** is hold-per-play relative to the belt's collective average
+  (1.0x = average, above = the belt favors it), shown per seed in the inventory rows.
+  Each row has a **toggle**: synthesis blends 1+N genomes - a fixed population PRIOR
+  (the range midpoints, outside anyone's influence - the regularizer) + the working
+  lineage + every toggled seed, uniform mean, motif vocabularies pooled. Release prunes.
+  All deterministic per (lineage set, text); blend determinism asserted in voice_check.
+- [x] **Rung 2.9 - sparse activations over the prose** (motifs v2). Ghost's `Activation`
+  discipline applied to words: four independent channels (stretch / pitch / echo /
+  swell), each a thresholded nonlinearity over seeded drive with a fast-attack
+  slow-decay refractory - events are sparse and self-spacing (~0-1 echo strikes per 44
+  words, lineage-dependent). Firing feeds a damped **resonance ring** that colours the
+  following seconds and invites neighbouring firings (events cluster, then die out).
+  **Pitch attractors**: a pooled per-voice anchor shelf the melody continuously
+  gravitates toward (genome `gravity`), with pitch activations jumping most of the way -
+  the GLaDOS / Miku musical-quantization quality, earned honestly. **Echo** is a real
+  feedback delay line in the synthesis output; only activated words are sent into it,
+  and it rings through the pauses. All genome-carried: Evolve and the belt select over
+  every one of these behaviours.
+- [x] **Rung 2.95 - the throw loop.** The interface collapsed to one gesture: **Throw ->
+  it grows or it doesn't -> Keep or don't.** A throw parents itself from the belt
+  weighted by acceptance (sometimes wild), inheriting lineage + traits with
+  generation-decaying jitter, and speaks immediately. The belt integrates itself: no
+  toggles, no blend controls - ancestors accrue hold time from their descendants'
+  listening, so the acceptance that picks parents reflects what a seed's LINE produces.
+  Each kept seed is an inspectable property: its tooltip reads out the genome's
+  implications (temperament, breath span, pitch gravity, ring, strike bar, pace range)
+  plus the behavioral ledger. The user's whole job is the collecting, archiving, and
+  preservation of lineage; the system's whole job is making every throw worth throwing.
+  Cross-seed influence statistics (who lifts whom) deferred - go simple first.
+- [x] **Rung 2.99 - reward profiles + catch mechanics.** The signal inverted on use: a
+  QUICK catch means the ear knew immediately; a long listen means deliberating. So
+  reward is profiled, user-selected per session: **Snap** (default - decision latency
+  earns: 2.4·8/(8+t)), **Drift** (sitting with it earns), **Hunt** (distance earns) -
+  and the profile also shapes the throws themselves (Hunt ranges wilder). Keep became a
+  catch ATTEMPT: integration difficulty = nearest-neighbor distance from the candidate
+  to the bank in trait+genome space; foreign seeds fight the ball (p = 1 - 0.75·d) and
+  can break free - retry allowed, but in Snap the clock keeps running. A caught seed
+  records its reward and difficulty; ancestors share the reward. Acceptance now reads
+  20·reward + hold/30 per play - the profile shapes how value is earned, the reading is
+  uniform. The catch is animated: a code-drawn orb in the seed's hue closes on the
+  voice, wobbles (each wobble a contest), then settles with a ring or bursts into
+  shards. The roll is decided before the orb appears; the orb tells you.
 - [ ] **Rung 3 - landmarks.** Deposit-style labels in the Workspace on the opening; the
   nonlinear activation model; content-keyed re-firing over the full sequence; A/B against
-  the unlabeled rendition. This is where the sparse-generalization bet is tested.
+  the unlabeled rendition. This is where the sparse-generalization bet is tested. (The
+  belt is the coarse version: whole-reading labels. Landmarks are the fine version:
+  within-reading labels. Same philosophy, two grains. The acceptance metric is the
+  training signal both grains will eventually share.)
 - [ ] **Rung 4 - the actor.** Voice as a Cast kind, utterances as Track spans, subtitles
   rendered from the same spans, export through the bake. A storyboard that *speaks*.
   (First slice shipped early, outside the Cast: the `--synth` editor plays a rendered take

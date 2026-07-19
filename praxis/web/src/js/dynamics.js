@@ -2280,11 +2280,14 @@ function renderParamField(canvas, data) {
 }
 
 /**
- * Regime river: the two memory cores as species-over-time bands (after NEAT
+ * Regime river: the N memory cores as species-over-time bands (after NEAT
  * Fig. 7). Time runs DOWN the EMA horizon (newest at the bottom); each row is
- * split by the blend weight (band width = share), and brightness = each core's
- * forecast fitness. Colors are theme-aware (accent = energy core A, next palette
- * hue = EML core B). The floor shows as a width neither band drops below.
+ * split by the blend weights (band width = share), and brightness = each core's
+ * forecast fitness. Colors are theme-aware (accent = core A, next palette hues
+ * for B, C, ...). The floor shows as a width no band drops below. Row layout is
+ * [w_0..w_{N-1}, fit_0..fit_{N-1}]; N is inferred as row.length / 2, so this
+ * renders 2, 3, or more regimes without change. Band names come from
+ * ``data.labels``.
  */
 function renderRegimeRiver(canvas, data, options) {
     const river = (data && data.river) || [];
@@ -2295,50 +2298,65 @@ function renderRegimeRiver(canvas, data, options) {
     const ctx = canvas.getContext('2d');
     const { gridColor, textColor } = getThemeColors();
     ctx.fillStyle = gridColor; ctx.fillRect(0, 0, w, h);
-    const colA = chartLineColor(0), colB = chartLineColor(1);  // energy, EML
     const n = river.length, rh = h / n;
+    const N = Math.max(1, Math.floor(river[0].length / 2));  // regimes per row
+    const labels = (data && data.labels) || [];
+    const cols = Array.from({ length: N }, (_, k) => chartLineColor(k));
     const clamp01 = (v) => Math.max(0, Math.min(1, v));
+    const clampX = (x) => Math.max(24, Math.min(w - 24, x));
+
+    // Each row: N stacked horizontal segments, left-to-right by cumulative
+    // weight (width = share, brightness = fitness).
     for (let i = 0; i < n; i++) {
-        const [wa, wb, fa, fb] = river[i];
-        const y = i * rh, xa = wa * w, hh = Math.ceil(rh);
-        ctx.globalAlpha = 0.2 + 0.8 * clamp01(fa);
-        ctx.fillStyle = colA; ctx.fillRect(0, y, xa, hh);
-        ctx.globalAlpha = 0.2 + 0.8 * clamp01(fb);
-        ctx.fillStyle = colB; ctx.fillRect(xa, y, w - xa, hh);
+        const row = river[i], y = i * rh, hh = Math.ceil(rh);
+        let x = 0;
+        for (let k = 0; k < N; k++) {
+            const seg = row[k] * w;
+            ctx.globalAlpha = 0.2 + 0.8 * clamp01(row[N + k]);
+            ctx.fillStyle = cols[k];
+            ctx.fillRect(x, y, Math.ceil(seg), hh);
+            x += seg;
+        }
     }
     ctx.globalAlpha = 1;
 
-    // Trace the boundary down the whole horizon so its migration is legible even
-    // when it barely moves: a near-vertical line means a stable split.
-    ctx.strokeStyle = textColor; ctx.lineWidth = 2; ctx.globalAlpha = 0.9;
-    ctx.beginPath();
-    for (let i = 0; i < n; i++) {
-        const x = river[i][0] * w, y = i * rh + rh / 2;
-        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    // Trace each internal boundary (cumulative weight) down the horizon so its
+    // migration is legible even when it barely moves: near-vertical = stable.
+    ctx.strokeStyle = textColor; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.8;
+    for (let k = 0; k < N - 1; k++) {
+        ctx.beginPath();
+        for (let i = 0; i < n; i++) {
+            let cum = 0;
+            for (let j = 0; j <= k; j++) cum += river[i][j];
+            const x = cum * w, y = i * rh + rh / 2;
+            i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        }
+        ctx.stroke();
     }
-    ctx.stroke();
     ctx.globalAlpha = 1;
 
-    // Band headers.
-    ctx.fillStyle = textColor; ctx.font = '11px sans-serif';
-    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
-    ctx.fillText('energy (A)', 6, 14);
-    ctx.textAlign = 'right'; ctx.fillText('EML (B)', w - 6, 14);
-
-    // The boundary split as percentages at the oldest (top) and newest (bottom)
-    // ends - so you can read what the colors are worth and whether it moved.
+    // Band headers + percentages at the oldest (top) and newest (bottom) rows,
+    // each centered under its band so you can read what a color is worth.
     const pct = (v) => (v * 100).toFixed(1) + '%';
-    const labelSplit = (row, y, baseline) => {
-        const xa = row[0] * w;
-        ctx.textBaseline = baseline;
-        ctx.fillStyle = colA;
-        ctx.textAlign = 'right'; ctx.fillText(pct(row[0]), Math.max(38, xa - 5), y);
-        ctx.fillStyle = colB;
-        ctx.textAlign = 'left'; ctx.fillText(pct(row[1]), Math.min(w - 38, xa + 5), y);
+    const bandCenters = (row) => {
+        const out = []; let c = 0;
+        for (let k = 0; k < N; k++) { out.push((c + row[k] / 2) * w); c += row[k]; }
+        return out;
     };
-    ctx.font = 'bold 12px sans-serif';
-    labelSplit(river[0], 30, 'top');            // oldest
-    labelSplit(river[n - 1], h - 8, 'bottom');  // newest
+    ctx.font = '11px sans-serif'; ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'center';
+    bandCenters(river[0]).forEach((cx, k) => {
+        ctx.fillStyle = cols[k];
+        ctx.fillText(labels[k] || `core ${String.fromCharCode(65 + k)}`, clampX(cx), 14);
+    });
+    const labelRow = (row, y, baseline) => {
+        ctx.textBaseline = baseline; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
+        bandCenters(row).forEach((cx, k) => {
+            ctx.fillStyle = cols[k];
+            ctx.fillText(pct(row[k]), clampX(cx), y);
+        });
+    };
+    labelRow(river[0], 32, 'top');            // oldest
+    labelRow(river[n - 1], h - 8, 'bottom');  // newest
     ctx.textBaseline = 'alphabetic';
 }
 

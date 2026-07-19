@@ -14,7 +14,7 @@ Praxis is built around 47 pluggable registries. The feature categories below lin
 - [Halting / early exit](halting.md) (2) - Per-token mechanisms for early exit from recurrent depth loops.
 - [Input encoders](encoders.md) (21) - Front-end encoders, including the byte-latent and abstractinator variants.
 - [Layer-routing controllers](controllers.md) (8) - Decide which expert / block a token visits at each depth. Enables out-of-order layers and graph-style routing.
-- [Long-term memory](memory.md) (6) - Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced as a layer (MAL) or a gate (MAG). Selected with ``--memory-type``; default is ``none``.
+- [Long-term memory](memory.md) (7) - Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced as a layer (MAL) or a gate (MAG). Selected with ``--memory-type``; default is ``none``.
 - [Loss functions](losses.md) (9) - Per-token criteria. Most accept optional ``loss_weights`` for task-weighted training.
 - [Mixture-of-widths](width.md) (7) - Per-depth deflation of each block's inner rank over the recurrent loop (a helically-precessing low-rank slice), turning deep recurrence into a population of narrow voters. Selected with ``--width-type``; default is ``none`` (full width).
 - [Normalization layers](normalization.md) (5) - LayerNorm/RMSNorm variants, including SandwichNorm (required for stable recurrent-depth bias).

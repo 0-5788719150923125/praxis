@@ -62,6 +62,15 @@ def build_memory_model(config, spec: dict) -> nn.Module:
         kwargs["num_layers"] = spec.get("layers", 2)
     if "hidden_dim" in params:
         kwargs["hidden_dim"] = int(config.hidden_size * spec.get("expansion", 1.0))
+    # Forward any extra dense-specific constructor args the profile names, but
+    # only to variants that actually declare them (e.g. KAN's num_grids /
+    # grid_spacing). A shared spec can carry a KAN knob harmlessly: cores whose
+    # dense doesn't take it (mlp, eml_tree) just skip it. Guards against
+    # re-passing dims/activation already handled above or off the cfg.
+    _reserved = {"num_layers", "hidden_dim", "config", "self", "activation"}
+    for key, value in spec.items():
+        if key in params and key not in _reserved and key not in kwargs:
+            kwargs[key] = value
     model = dense_cls(cfg, **kwargs)
     _materialize_lazy(model, config.hidden_size)
     return model

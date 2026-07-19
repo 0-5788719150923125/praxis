@@ -19,6 +19,7 @@ from praxis.memory.neural_memory import (
 from praxis.memory.surfacings import (
     MemoryAsGate,
     MemoryAsLayer,
+    MemoryBandSmear,
     MemoryBase,
     MemoryDualSmear,
 )
@@ -96,6 +97,33 @@ MEMORY_REGISTRY: Dict[str, Optional[dict]] = {
         parallel_scan=True,
         write_objective="predictive",
     ),
+    # mal_energy_dual + a THIRD memory core: a geometric-grid KAN (dense_c=kan).
+    # Its RBF centers are log-magnitude spaced with per-center widths - a
+    # coarse-to-fine radial cascade ("fractal zoom") over the amplitude axis,
+    # rather than the codec's harmonic basis (A) or the EML log-minus-exponent
+    # regime (B). num_grids is kept small (6) because a KAN memory net replicates
+    # its spline matrix per chunk as a fast weight; a geometric grid resolves the
+    # dynamic range with fewer centers, keeping that cost near the other cores.
+    # The bandit floors every arm, so the KAN can't be starved before it matures.
+    # Third module of abstractinator-c; everything else tracks mal_energy_dual.
+    "mal_energy_triple": dict(
+        surfacing="band_smear",
+        dense="mlp",
+        dense_b="eml_tree",
+        dense_c="kan",
+        num_grids=6,
+        grid_spacing="geometric",
+        layers=2,
+        expansion=0.5,
+        chunk_size=64,
+        momentum=True,
+        activation="serpent",
+        use_energy=True,
+        segment=True,
+        segment_block=16,
+        parallel_scan=True,
+        write_objective="predictive",
+    ),
     "mag": dict(
         surfacing="mag",
         dense="mlp",
@@ -138,6 +166,14 @@ MEMORY_PROFILE_DESCRIPTIONS: Dict[str, str] = {
         "memory represents content in the same oscillatory basis as the "
         "abstractinator harmonic codec it stores."
     ),
+    "mal_energy_triple": (
+        "mal_energy_dual plus a third memory core: a geometric-grid KAN whose "
+        "radial basis centers are log-magnitude spaced with per-center widths - a "
+        "coarse-to-fine ('fractal zoom') cascade over the amplitude axis. Three "
+        "opposed function-class regimes (harmonic energy, EML log-minus-exponent, "
+        "multi-scale radial) compete under one floored inverse-surprise bandit, "
+        "so none can be starved by the LM loss. abstractinator-c's memory."
+    ),
     "mag": (
         "Memory-as-Gate (Titans): a memory branch run parallel to attention "
         "and blended with it through a learned gate."
@@ -149,7 +185,8 @@ MEMORY_PROFILE_DESCRIPTIONS: Dict[str, str] = {
 _SURFACINGS: Dict[str, Type[nn.Module]] = {
     "mal": MemoryAsLayer,
     "mag": MemoryAsGate,
-    "dual_smear": MemoryDualSmear,
+    "dual_smear": MemoryBandSmear,  # N=2 (back-compat name)
+    "band_smear": MemoryBandSmear,  # N arms
 }
 
 

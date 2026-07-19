@@ -60,7 +60,7 @@ func setup(text: String, spec: Voice.Spec, base: String) -> void:
 
 ## The session seed source: same text + same trait vector = the same show.
 func fingerprint() -> int:
-	var trait_sig := ""
+	var trait_sig := str(_spec.reading) + str(_spec.influences) + ";"
 	for key in Voice.TRAIT_KEYS:
 		trait_sig += "%s=%.3f;" % [key, float(_spec.traits.get(key, 0.0))]
 	return hash(trait_sig + JSON.stringify(_segs.size()) + str(_segs))

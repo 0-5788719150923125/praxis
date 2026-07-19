@@ -257,55 +257,83 @@ _VALUE_EMA: float = 0.99
 _RIVER_HORIZON: int = round(1.0 / (1.0 - _VALUE_EMA))
 
 
-class MemoryDualSmear(MemoryBase):
-    """Two test-time memory cores of DIFFERENT function-class regimes, combined
-    by a REWARD-protected blend rather than a loss-trained router.
+# Short display names for the regime bands (river headers + blend charts). Keyed
+# by dense variant; unknown variants fall back to the raw key.
+_REGIME_NAMES = {
+    "mlp": "energy",
+    "eml_tree": "EML",
+    "kan": "fractal-KAN",
+}
 
-    Core A is the profile's memory (the exponential energy regime); core B swaps
-    the memory net's function class to ``spec['dense_b']`` (e.g. the EML tree's
-    ``e^x - Log(y)``, the log-minus-exponent regime). A router trained on the LM
-    loss would collapse this: early on the granular EML core predicts worse, the
-    gradient downweights it, and it is starved before it can mature (rich-get-
-    richer). So the blend weight is NOT a learned router - it is a self-contained
-    bandit with a floor:
 
-      * The reward each core earns is how well it forecasts the *same* NextLat
-        target (its scale-free surprise; lower = better), so the two are directly
-        comparable. Core B's share tracks a slow EMA of that reward.
-      * The weight is DETACHED from the LM gradient (read off buffers), so the
+class MemoryBandSmear(MemoryBase):
+    """A bank of N test-time memory cores, each a DIFFERENT function-class regime,
+    combined by a REWARD-protected blend rather than a loss-trained router.
+
+    Arm 0 is the profile's own memory net (``spec['dense']``, the exponential
+    energy regime); each further arm swaps the memory net's function class to
+    ``spec['dense_b']``, ``spec['dense_c']``, ... (e.g. the EML tree's
+    ``e^x - Log(y)`` log-minus-exponent regime, or a geometric-grid KAN's
+    multi-scale radial cascade). A router trained on the LM loss would collapse
+    this: early on a granular core predicts worse, the gradient downweights it,
+    and it is starved before it can mature (rich-get-richer). So the blend is NOT
+    a learned router - it is a self-contained bandit with a floor:
+
+      * Each core's reward is how well it forecasts the *same* NextLat target
+        (its scale-free surprise; lower = better), so the arms are directly
+        comparable. Each arm's share tracks a slow EMA of that reward.
+      * The weights are DETACHED from the LM gradient (read off buffers), so the
         greedy loss can't collapse the mix; the cores' readouts still train
         through the blend, only the balance is reward-driven.
-      * A floor on both cores means neither can fully win - the "pull to center"
-        is structural, not a hope, so the opposed regimes loop on a stable axis
-        instead of one warping outward.
+      * A floor on every arm means none can fully win or vanish - the "pull to
+        center" is structural, so the opposed regimes loop on a stable simplex.
 
-    Each core keeps its own test-time state; the state is the pair.
+    N=2 reproduces the original dual EXACTLY: the inverse-surprise share
+    ``(1/s_i) / Σ(1/s_j)`` is ``sa/(sa+sb)`` for two arms, and the floored weight
+    is the same affine map. Each core keeps its own test-time state; the state is
+    the tuple of per-core states.
     """
 
     metric_descriptions = {
         "memory_blend_b": {
             "description": (
-                "Reward-driven weight on the EML (log-minus-exponent) core B vs "
-                "the exponential core A - a bandit over each core's forecast "
-                "quality (surprise), floored so neither collapses. 0.5 = the two "
-                "regimes balance (the center); a slow rise above 0.5 means EML is "
-                "earning its granular keep; a fall toward the floor (0.1) means it "
-                "is not. Not gradient-trained - it can't be starved by the loss."
+                "Reward-driven weight on the second core (B) vs the exponential "
+                "core A - a bandit over each core's forecast quality (surprise), "
+                "floored so neither collapses. 0.5 = the regimes balance (the "
+                "center); a slow rise means B is earning its granular keep; a fall "
+                "toward the floor (0.1) means it is not. Not gradient-trained - it "
+                "can't be starved by the loss."
             ),
             "chart": {
-                "title": "Dual-Memory Blend (EML earned share)",
-                "y_label": "weight on core B (EML)",
+                "title": "Memory Blend (core B earned share)",
+                "y_label": "weight on core B",
                 "y_scale": "linear",
                 "group": "memory",
                 "group_order": 20,
                 "order": 13,
             },
         },
+        "memory_blend_c": {
+            "description": (
+                "Reward-driven weight on the third core (C, e.g. the geometric-KAN "
+                "multi-scale radial regime) - same floored surprise bandit as core "
+                "B. A rise means the third regime is winning forecast share; a fall "
+                "to the floor means the other two carry it."
+            ),
+            "chart": {
+                "title": "Memory Blend (core C earned share)",
+                "y_label": "weight on core C",
+                "y_scale": "linear",
+                "group": "memory",
+                "group_order": 20,
+                "order": 15,
+            },
+        },
         "memory_regime_river": {
             "description": (
-                "The two memory regimes as a species-over-time river (after NEAT, "
+                "The memory regimes as a species-over-time river (after NEAT, "
                 "Figure 7): time runs down the EMA horizon, each row split by the "
-                "blend weight (band width = a regime's share), brightness = that "
+                "blend weights (band width = a regime's share), brightness = that "
                 "regime's forecast fitness. The floor shows as a width no band "
                 "falls below - protection made visible, extinction ruled out."
             ),
@@ -321,9 +349,14 @@ class MemoryDualSmear(MemoryBase):
 
     def __init__(self, config, spec):
         super().__init__(config)
-        spec_b = {**spec, "dense": spec.get("dense_b", "eml_tree")}
+        # Arm 0 = spec['dense']; further arms = dense_b, dense_c, dense_d ...
+        denses = [spec[k] for k in ("dense", "dense_b", "dense_c", "dense_d") if spec.get(k)]
+        if len(denses) < 2:
+            denses = (denses + ["eml_tree"])[:2]  # never fewer than two arms
+        self._denses = denses
 
-        def _core(s):
+        def _core(dense_name):
+            s = {**spec, "dense": dense_name}
             return NeuralMemory(
                 dim=self.hidden_size,
                 model=build_memory_model(config, s),
@@ -336,64 +369,71 @@ class MemoryDualSmear(MemoryBase):
                 write_objective=s.get("write_objective", "recon"),
             )
 
-        self.mem_a = _core(spec)
-        self.mem_b = _core(spec_b)
-        # Slow EMAs of each core's surprise (its forecast error on the shared
-        # NextLat target). Buffers, so they carry no gradient and resume cleanly.
-        # Init equal -> the blend starts at the center (0.5).
-        self.register_buffer("value_a", torch.ones(()))
-        self.register_buffer("value_b", torch.ones(()))
-        self._last_blend_b: Optional[float] = None
-        # Rolling (weight_b, value_a, value_b) over exactly the EMA horizon, for
-        # the regime-river card. Not a buffer (viz only, need not resume).
+        self.mems = nn.ModuleList([_core(d) for d in denses])
+        # Slow EMAs of each core's surprise (forecast error on the shared NextLat
+        # target). A buffer, so it carries no gradient and resumes cleanly. Init
+        # equal -> the blend starts at the center (1/N each).
+        self.register_buffer("values", torch.ones(len(denses)))
+        self._labels = [
+            f"{_REGIME_NAMES.get(d, d)} ({chr(65 + i)})" for i, d in enumerate(denses)
+        ]
+        self._last_weights: Optional[list] = None
+        # Rolling (weights, values) over exactly the EMA horizon, for the
+        # regime-river card. Not a buffer (viz only, need not resume).
         self._history: deque = deque(maxlen=_RIVER_HORIZON)
 
-    def _blend_weight_b(self) -> float:
-        """Core B's weight in [floor, 1-floor] from the inverse-surprise share
-        (lower surprise = more weight), read off the detached value EMAs."""
-        sa = float(self.value_a)
-        sb = float(self.value_b)
-        # Inverse-surprise share: b's fraction of forecast quality. Scale-free,
-        # so no gain/temperature to tune. Equal surprises -> 0.5.
-        share_b = sa / (sa + sb + 1e-8)
-        return _BLEND_FLOOR + (1.0 - 2.0 * _BLEND_FLOOR) * share_b
+    def _blend_weights(self) -> torch.Tensor:
+        """Per-arm weight in ``[floor, 1-(N-1)*floor]`` from the inverse-surprise
+        share (lower surprise = more weight), read off the detached value EMAs.
+        Scale-free (no gain/temperature to tune); equal surprises -> 1/N each."""
+        inv = 1.0 / self.values.clamp_min(1e-8)
+        share = inv / inv.sum()
+        n = share.numel()
+        return _BLEND_FLOOR + (1.0 - n * _BLEND_FLOOR) * share
 
     def forward(self, stream, attn_output, state=None):
-        sa, sb = state if state is not None else (None, None)
-        ret_a, sa = self.mem_a(stream, sa)
-        ret_b, sb = self.mem_b(stream, sb)
+        states = list(state) if state is not None else [None] * len(self.mems)
         # Act on the running estimate, then update it (standard bandit order).
-        w_b = self._blend_weight_b()
-        retrieved = (1.0 - w_b) * ret_a + w_b * ret_b
-        self._last_blend_b = w_b
+        w = self._blend_weights()
+        rets, new_states = [], []
+        for i, mem in enumerate(self.mems):
+            r, si = mem(stream, states[i])
+            rets.append(r)
+            new_states.append(si)
+        retrieved = sum(float(w[i]) * rets[i] for i in range(len(rets)))
+        self._last_weights = [float(x) for x in w]
         with torch.no_grad():
-            for buf, mem in ((self.value_a, self.mem_a), (self.value_b, self.mem_b)):
+            for i, mem in enumerate(self.mems):
                 s = mem.last_surprise_norm
                 if s is not None:
-                    buf.mul_(_VALUE_EMA).add_((1.0 - _VALUE_EMA) * float(s))
-            self._history.append((w_b, float(self.value_a), float(self.value_b)))
-        return stream + retrieved, (sa, sb)
+                    self.values[i].mul_(_VALUE_EMA).add_((1.0 - _VALUE_EMA) * float(s))
+            self._history.append(
+                (list(self._last_weights), [float(v) for v in self.values])
+            )
+        return stream + retrieved, tuple(new_states)
 
     def dashboard_snapshots(self) -> dict:
         """The regime river: per-step (band widths, band fitnesses) over the EMA
         horizon. Fitness = surprise min-maxed across the window and inverted
         (lowest surprise = brightest), so brightness tracks forecast quality the
-        way NEAT's brightness tracks species fitness."""
+        way NEAT's brightness tracks species fitness. Row layout is
+        ``[w_0..w_{N-1}, fit_0..fit_{N-1}]`` (N=2 -> [wa, wb, fa, fb])."""
         if not self._history:
             return {}
-        wb = [h[0] for h in self._history]
-        va = [h[1] for h in self._history]
-        vb = [h[2] for h in self._history]
-        allv = va + vb
-        lo, hi = min(allv), max(allv)
+        weights = [h[0] for h in self._history]
+        vals = [h[1] for h in self._history]
+        flat = [v for row in vals for v in row]
+        lo, hi = min(flat), max(flat)
         rng = (hi - lo) or 1.0
         fit = lambda v: 1.0 - (v - lo) / rng  # lower surprise -> brighter
-        # Each row: [width_a, width_b, fitness_a, fitness_b].
-        river = [[1.0 - wb[i], wb[i], fit(va[i]), fit(vb[i])] for i in range(len(wb))]
+        river = [
+            weights[i] + [fit(v) for v in vals[i]] for i in range(len(weights))
+        ]
         return {
             "memory_regime_river": {
                 "status": "ok",
                 "river": river,
+                "labels": self._labels,
                 "horizon": _RIVER_HORIZON,
             }
         }
@@ -413,8 +453,16 @@ class MemoryDualSmear(MemoryBase):
 
     def training_metrics(self) -> dict:
         out = {}
-        out.update(self._core_metrics(self.mem_a, "a"))
-        out.update(self._core_metrics(self.mem_b, "b"))
-        if self._last_blend_b is not None:
-            out["memory_blend_b"] = self._last_blend_b
+        for i, mem in enumerate(self.mems):
+            out.update(self._core_metrics(mem, chr(97 + i)))  # a, b, c, ...
+        if self._last_weights is not None:
+            # Arm 0 is the reference; report each further arm's earned share as
+            # memory_blend_b, memory_blend_c, ...
+            for i in range(1, len(self._last_weights)):
+                out[f"memory_blend_{chr(ord('a') + i)}"] = self._last_weights[i]
         return out
+
+
+# Back-compat alias: the surfacing registry and older references use the "dual"
+# name; the class is now N-arm (N=2 is byte-identical to the old dual).
+MemoryDualSmear = MemoryBandSmear

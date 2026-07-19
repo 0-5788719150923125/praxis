@@ -3,7 +3,7 @@
 
 Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced as a layer (MAL) or a gate (MAG). Selected with ``--memory-type``; default is ``none``.
 
-Registry: ``praxis.MEMORY_REGISTRY`` (6 entries)
+Registry: ``praxis.MEMORY_REGISTRY`` (7 entries)
 
 ## `mag`
 
@@ -39,6 +39,14 @@ feature frequencies join the test-time fast weights, so the surprise update re-t
 memory's harmonic geometry online - a second test-time adaptation axis on top of the
 weight update - and the memory represents content in the same oscillatory basis as the
 abstractinator harmonic codec it stores.
+
+## `mal_energy_triple`
+
+mal_energy_dual plus a third memory core: a geometric-grid KAN whose radial basis
+centers are log-magnitude spaced with per-center widths - a coarse-to-fine ('fractal
+zoom') cascade over the amplitude axis. Three opposed function-class regimes (harmonic
+energy, EML log-minus-exponent, multi-scale radial) compete under one floored inverse-
+surprise bandit, so none can be starved by the LM loss. abstractinator-c's memory.
 
 ## `none`
 

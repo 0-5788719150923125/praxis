@@ -413,3 +413,76 @@ def test_sequential_matches_parallel_scan(kwargs):
             assert torch.allclose(
                 getattr(st_p, field)[k], getattr(st_s, field)[k], atol=1e-4
             )
+
+
+# --- N-arm reward-bandit memory bank (dual / triple smear) ------------------
+
+BAND_PROFILES = {"mal_energy_dual": 2, "mal_energy_triple": 3}
+
+
+@pytest.mark.parametrize("memory_type,n_arms", list(BAND_PROFILES.items()))
+def test_band_smear_arms_state_and_output(memory_type, n_arms):
+    """A band-smear block runs N cores, changes activations vs no memory, and
+    returns a tuple of N per-core NeuralMemStates."""
+    torch.manual_seed(0)
+    x = torch.randn(2, 16, 64)
+    torch.manual_seed(1)
+    plain = TransformerBlock(_block_config("none"))
+    out_plain, _, _, _ = plain(x, attention_mask=None)
+    torch.manual_seed(1)
+    block = TransformerBlock(_block_config(memory_type))
+    out_mem, _, state, _ = block(x, attention_mask=None)
+    assert len(block.memory.mems) == n_arms
+    assert isinstance(state, tuple) and len(state) == n_arms
+    assert all(isinstance(s, NeuralMemState) for s in state)
+    assert not torch.allclose(out_plain, out_mem)
+
+
+@pytest.mark.parametrize("memory_type,n_arms", list(BAND_PROFILES.items()))
+def test_band_smear_backprops_all_cores(memory_type, n_arms):
+    """Backward reaches every core's meta-learned params (no arm is detached)."""
+    block = TransformerBlock(_block_config(memory_type))
+    x = torch.randn(2, 16, 64)
+    out, _, _, _ = block(x, attention_mask=None)
+    out.sum().backward()
+    assert len(block.memory.mems) == n_arms
+    for mem in block.memory.mems:
+        grads = [p.grad for p in mem.memory_model.parameters()]
+        assert grads and all(g is not None and torch.isfinite(g).all() for g in grads)
+
+
+@pytest.mark.parametrize("memory_type,n_arms", list(BAND_PROFILES.items()))
+def test_band_smear_blend_weights_and_river(memory_type, n_arms):
+    """Blend weights form a floored simplex (sum to 1, each >= floor); the river
+    snapshot carries 2N columns + N labels; equal surprises at init -> 1/N each
+    (so N=2 reproduces the old dual's 0.5 center)."""
+    from praxis.memory.surfacings import _BLEND_FLOOR
+
+    block = TransformerBlock(_block_config(memory_type))
+    x = torch.randn(2, 16, 64)
+    block(x, attention_mask=None)
+    bank = block.memory
+    w = bank._last_weights
+    assert len(w) == n_arms
+    assert abs(sum(w) - 1.0) < 1e-5
+    assert min(w) >= _BLEND_FLOOR - 1e-6
+    assert all(abs(wi - 1.0 / n_arms) < 1e-6 for wi in w)  # equal at init
+    snap = bank.dashboard_snapshots()["memory_regime_river"]
+    assert len(snap["river"][0]) == 2 * n_arms
+    assert len(snap["labels"]) == n_arms
+
+
+def test_band_smear_end_to_end_training_step():
+    """The triple-memory model completes a forward/backward/step with finite
+    loss (logits-driven, to sidestep the model's label-shift handling)."""
+    torch.manual_seed(0)
+    model = PraxisForCausalLM(_block_config("mal_energy_triple"))
+    opt = torch.optim.SGD(model.parameters(), lr=1e-3)
+    input_ids = torch.randint(0, 256, (2, 16))
+    logits = model(input_ids=input_ids).logits
+    loss = torch.nn.functional.cross_entropy(
+        logits[:, :-1].reshape(-1, logits.size(-1)), input_ids[:, 1:].reshape(-1)
+    )
+    assert torch.isfinite(loss)
+    loss.backward()
+    opt.step()

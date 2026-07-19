@@ -28,6 +28,7 @@ class KolmogorovArnoldNetwork(BaseDense):
         grid_min: float = -2.0,
         grid_max: float = 2.0,
         num_grids: int = 8,
+        grid_spacing: str = "linear",
         use_base_update: bool = True,
         spline_weight_init_scale: float = 0.1,
     ) -> None:
@@ -39,6 +40,12 @@ class KolmogorovArnoldNetwork(BaseDense):
             grid_min: Minimum grid value for RBF
             grid_max: Maximum grid value for RBF
             num_grids: Number of grid points
+            grid_spacing: ``"linear"`` (uniform centers, stock FastKAN) or
+                ``"geometric"`` (log-magnitude centers with per-center widths - a
+                coarse-to-fine radial cascade, dense near 0 and sparse far out).
+                The geometric grid resolves multiple scales with fewer centers,
+                so it keeps ``num_grids`` (and the fast-weight cost when this is a
+                test-time memory net) low while covering a wide dynamic range.
             use_base_update: Whether to use base update
             spline_weight_init_scale: Scale for weight initialization
         """
@@ -49,7 +56,7 @@ class KolmogorovArnoldNetwork(BaseDense):
         self.input_dim: int = input_dim
         self.output_dim: int = output_dim
         self.rbf: RadialBasisFunction = RadialBasisFunction(
-            grid_min, grid_max, num_grids
+            grid_min, grid_max, num_grids, spacing=grid_spacing
         )
         self.spline_linear: SplineLinear = SplineLinear(
             input_dim * num_grids, output_dim, spline_weight_init_scale
@@ -155,6 +162,7 @@ class RadialBasisFunction(nn.Module):
         denominator: Optional[
             float
         ] = None,  # larger denominators lead to smoother basis
+        spacing: str = "linear",
     ) -> None:
         """
         Initialize radial basis function module.
@@ -164,14 +172,52 @@ class RadialBasisFunction(nn.Module):
             grid_max: Maximum grid value
             num_grids: Number of grid points
             denominator: Denominator for RBF calculation (larger values = smoother basis)
+            spacing: ``"linear"`` for uniform centers (single width) or
+                ``"geometric"`` for log-magnitude centers, each with its own
+                width set to its neighbour gap - a coarse-to-fine cascade.
+
+        The grid and per-center widths are fixed BUFFERS, not parameters, so a
+        test-time memory net that replicates its fast weights per chunk never
+        copies or surprise-updates them: the multi-scale basis stays put.
         """
         super().__init__()
         self.grid_min: float = grid_min
         self.grid_max: float = grid_max
         self.num_grids: int = num_grids
-        grid = torch.linspace(grid_min, grid_max, num_grids)
-        self.grid: nn.Parameter = torch.nn.Parameter(grid, requires_grad=False)
-        self.denominator: float = denominator or (grid_max - grid_min) / (num_grids - 1)
+        self.spacing: str = spacing
+        if spacing == "geometric":
+            grid, denom = self._geometric_grid(grid_min, grid_max, num_grids)
+        else:
+            grid = torch.linspace(grid_min, grid_max, num_grids)
+            step = (grid_max - grid_min) / (num_grids - 1)
+            denom = torch.full((num_grids,), float(denominator or step))
+        self.register_buffer("grid", grid)
+        self.register_buffer("denom", denom)
+        # Back-compat scalar (plot_curve / callers read `.denominator`); the
+        # forward path uses the per-center `denom` buffer.
+        self.denominator: float = float(denom.mean())
+
+    @staticmethod
+    def _geometric_grid(
+        grid_min: float, grid_max: float, num_grids: int
+    ) -> Tuple[Tensor, Tensor]:
+        """Symmetric log-magnitude centers (factor-2 geometric), each width set
+        to its nearest-neighbour gap so the bumps tile at every scale."""
+        m = max(abs(grid_min), abs(grid_max))
+        half = num_grids // 2
+        exps = torch.arange(half - 1, -1, -1, dtype=torch.float32)
+        mags = m * (0.5**exps)  # smallest .. m, geometric
+        if num_grids % 2 == 1:
+            grid = torch.cat([-mags.flip(0), torch.zeros(1), mags])
+        else:
+            grid = torch.cat([-mags.flip(0), mags])
+        grid, _ = torch.sort(grid)
+        gaps = torch.full_like(grid, float("inf"))
+        d = grid[1:] - grid[:-1]
+        gaps[:-1] = torch.minimum(gaps[:-1], d)
+        gaps[1:] = torch.minimum(gaps[1:], d)
+        denom = gaps.clamp_min(1e-3)
+        return grid, denom
 
     def forward(self, x: Tensor) -> Tensor:
         """
@@ -183,7 +229,7 @@ class RadialBasisFunction(nn.Module):
         Returns:
             RBF values for the input
         """
-        return torch.exp(-(((x[..., None] - self.grid) / self.denominator) ** 2))
+        return torch.exp(-(((x[..., None] - self.grid) / self.denom) ** 2))
 
 
 if __name__ == "__main__":

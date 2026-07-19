@@ -23,6 +23,7 @@ func _init() -> void:
 	var failures := 0
 	failures += _check_vowels()
 	failures += _check_traits()
+	failures += _check_readings()
 	failures += _check_sentence()
 	if failures == 0:
 		print("voice_check: ALL OK")
@@ -105,6 +106,52 @@ func _check_traits() -> int:
 	return bad
 
 
+## The reading lineage: different roots read differently, the same lineage is
+## byte-deterministic, and breath pauses EMERGE in unpunctuated text (the walk's
+## breath debt coming due - the text below has no punctuation at all).
+func _check_readings() -> int:
+	var text := "the machine spoke slowly and the whole room listened to every single word it said without a sound"
+	var bad := 0
+	var a := Voice_.render(text, Voice_.Spec.from_traits({}, 0, [11]))
+	var b := Voice_.render(text, Voice_.Spec.from_traits({}, 0, [22]))
+	if a.pcm == b.pcm:
+		print("voice_check: FAIL - two reading roots produced identical audio")
+		bad += 1
+	var c1 := Voice_.render(text, Voice_.Spec.from_traits({}, 0, [11, 5]))
+	var c2 := Voice_.render(text, Voice_.Spec.from_traits({}, 0, [11, 5]))
+	if c1.pcm != c2.pcm:
+		print("voice_check: FAIL - the same lineage is not deterministic")
+		bad += 1
+	if c1.pcm == a.pcm:
+		print("voice_check: FAIL - an evolved child did not differ from its parent")
+		bad += 1
+	var segs := Voice_.plan(text, Voice_.Spec.from_traits({}, 0, [11]))
+	var breaths := 0
+	for s in segs:
+		if s.p == "SIL" and s.dur >= 0.1 and int(s.sentence) >= 0:
+			breaths += 1
+	if breaths < 1:
+		print("voice_check: FAIL - no breath emerged in a long unpunctuated sentence")
+		bad += 1
+	# the 1+N blend: a toggled influence must change the reading, deterministically
+	var inf1 := Voice_.Spec.from_traits({}, 0, [11])
+	inf1.influences = [[22]]
+	var inf2 := Voice_.Spec.from_traits({}, 0, [11])
+	inf2.influences = [[22]]
+	var i1 := Voice_.render(text, inf1)
+	if i1.pcm == a.pcm:
+		print("voice_check: FAIL - a toggled influence did not change the reading")
+		bad += 1
+	if i1.pcm != Voice_.render(text, inf2).pcm:
+		print("voice_check: FAIL - the influence blend is not deterministic")
+		bad += 1
+	print("voice_check: readings ok - lineage + blend deterministic, %d breath(s) emerged" % breaths)
+	DirAccess.make_dir_recursive_absolute(OUT_DIR)
+	Voice_.write_wav(OUT_DIR + "/voice_reading_a.wav", a.pcm)
+	Voice_.write_wav(OUT_DIR + "/voice_reading_b.wav", b.pcm)
+	return bad
+
+
 func _check_sentence() -> int:
 	var spec := _spec()
 	var text := "Once upon a time, a small voice spoke from the machine. It was not human, but it was alive."
@@ -140,6 +187,13 @@ func _check_sentence() -> int:
 	if absf(other.dur - result.dur) < 0.001:
 		print("voice_check: FAIL - two sampled voices produced identical durations")
 		bad += 1
+	# voice quality extremes: the air line low (breathy static) vs closed (clear)
+	var airy := Voice_.render("The city listened, and the lights began to move.",
+		Voice_.Spec.from_traits({"air": 0.9, "breath": 0.5}))
+	Voice_.write_wav(OUT_DIR + "/voice_quality_airy.wav", airy.pcm)
+	var clear := Voice_.render("The city listened, and the lights began to move.",
+		Voice_.Spec.from_traits({"air": -1.0, "breath": -0.6}))
+	Voice_.write_wav(OUT_DIR + "/voice_quality_clear.wav", clear.pcm)
 	# audition set: the question contour and a handful of rolled speakers
 	# (bimodal register - expect clearly different PEOPLE, not takes)
 	var q := Voice_.render("Is it alive? It is alive.", spec)
