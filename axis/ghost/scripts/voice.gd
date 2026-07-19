@@ -43,8 +43,20 @@ const ECHO_FB := 0.45                 # feedback per repeat
 const AGC_TARGET := 0.32              # the steady sine amplitude to normalize toward
 const AGC_MAX_BOOST := 2.5
 const AGC_MIN_GAIN := 0.2
-const CEIL := 0.8                     # smooth tanh ceiling
-const SBED_MAX := 0.1                 # static floor cap (~voice level, not ceiling)
+const CEIL := 0.8                     # the amplitude ceiling the dampener works to
+# The COSINE DAMPENER: below the knee the wave passes untouched; above it the
+# amplitude pays a cosine penalty that reaches ZERO gain at the ceiling - a
+# spike is not flattened into a plateau (a plateau still thumps), it is
+# suppressed into nothing, and the floor's static drowns the hole.
+const DAMP_KNEE := 0.55               # fraction of CEIL where the penalty begins
+const SBED_MAX := 0.06                # static bed cap - QUIETER than the voice
+# The LONG floor: static ACCUMULATES like falling snow. Distortion raises a
+# floor that settles over a ~60 s window and never returns to true zero -
+# the medium's grain is always there; heavy moments deepen it rather than
+# summoning noise from silence (a bed that gates fully on/off is itself a
+# perceptible event - the residual "clicking" was the gating).
+const FLOOR_MIN := 0.004              # the permanent faint hiss (~-48 dB)
+const FLOOR_DECAY := 0.99999924       # per-sample: ~60 s settle window
 
 
 ## The speaker's trait axes, each in [-1, 1]. THE TRAIT VECTOR IS THE VOICE:
@@ -664,7 +676,7 @@ static func synth_state(spec: Spec) -> Dictionary:
 		"f0sm": spec.f0_base * 1.12, "phase": 0.0, "ampsm": 0.0,
 		"pulse": _pulse_table(0.4, 0.16), "pulse_lax": _pulse_table(0.58, 0.34),
 		"tension": 0.5, "nlp": 0.0, "tilt_y": 0.0, "prev": 0.0, "nampsm": 0.0,
-		"level": 0.05, "agc": 1.0, "sbed": 0.0,
+		"level": 0.05, "agc": 1.0, "sbed": 0.0, "sfloor": FLOOR_MIN,
 		"ebuf": _zeroes(int(ECHO_DELAY * SR)), "eidx": 0,
 		"words": [], "phones": [], "wopen": {},
 	}
@@ -786,6 +798,7 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 		var level: float = state.level
 		var agc: float = state.agc
 		var sbed: float = state.sbed
+		var sfloor: float = state.sfloor
 		var phase: float = state.phase
 		for _s in m:
 			phase += inc
@@ -841,15 +854,25 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 				AGC_MIN_GAIN, AGC_MAX_BOOST)
 			agc += 0.0009 * (want - agc)                    # ~50 ms gain glide
 			var v := outv * agc
-			var vc := CEIL * tanh(v / CEIL)
-			# the excess the ceiling ate = how distorted this stretch is
+			# the cosine dampener (see the consts): a progressive penalty on
+			# high amplitudes, reaching zero gain at the ceiling
+			var vc := v
+			var va := absf(v) / CEIL
+			if va > DAMP_KNEE:
+				var du := clampf((va - DAMP_KNEE) / (1.0 - DAMP_KNEE), 0.0, 1.0)
+				vc = v * cos(du * PI * 0.5)
+			# the amplitude the dampener ate = how distorted this stretch is
 			var excess := absf(v) - absf(vc)
 			var starget := minf(excess * 0.6, SBED_MAX)
 			if starget > sbed:
 				sbed += 0.001 * (starget - sbed)            # ramp in (~45 ms)
 			else:
 				sbed += 0.00013 * (starget - sbed)          # decay out (~350 ms)
-			out.append(vc * (1.0 - 0.4 * sbed / SBED_MAX) + hiss * sbed)
+			# the snow: the bed's activity feeds a floor that settles over
+			# ~60 s and never fully melts - static shifts, it never gates
+			sfloor = maxf(maxf(sfloor * FLOOR_DECAY, sbed * 0.6), FLOOR_MIN)
+			var bed := maxf(sbed, sfloor)
+			out.append(vc * (1.0 - 0.4 * bed / SBED_MAX) + hiss * bed)
 		state.phase = phase
 		state.tension = tension
 		state.nlp = nlp
@@ -858,6 +881,7 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 		state.level = level
 		state.agc = agc
 		state.sbed = sbed
+		state.sfloor = sfloor
 		state.ebuf = ebuf            # packed arrays are CoW: persist the written copy
 		state.eidx = eidx
 		done += m
