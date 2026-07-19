@@ -462,11 +462,22 @@ class CrystalVearHead(BaseHead):
         )
         self.bank = VEAR(vcfg, experts=experts)
 
-    def _route(self, hidden_states: Tensor) -> Tensor:
-        """Per-sequence routing probs ``[B, N]`` (mirrors SMEAR's routing)."""
+    def _route(self, hidden_states: Tensor, mask: Optional[Tensor] = None) -> Tensor:
+        """Per-sequence routing probs ``[B, N]`` (mirrors SMEAR's routing).
+
+        ``mask`` (``[B, T]``, 1 = real) excludes padding from the sequence
+        pooling: without it, padding shifts the mean and can flip the discrete
+        crystal selection, so a padded batch routes differently from the same
+        sequence unpadded - which breaks batched multi-token inference. Masked,
+        the routing is padding-invariant.
+        """
         v = self.bank
         if hidden_states.dim() >= 3:
-            router_input = hidden_states.mean(dim=1)
+            if mask is not None:
+                m = mask.to(hidden_states.dtype).unsqueeze(-1)  # [B, T, 1]
+                router_input = (hidden_states * m).sum(1) / m.sum(1).clamp_min(1.0)
+            else:
+                router_input = hidden_states.mean(dim=1)
         else:
             router_input = hidden_states.reshape(-1, hidden_states.shape[-1]).mean(
                 dim=0, keepdim=True
@@ -476,26 +487,32 @@ class CrystalVearHead(BaseHead):
         logits = F.linear(router_input, weight, v.router.bias)
         probs = torch.softmax(logits, dim=-1)
         if v.training and v.dropout_rate > 0:
-            mask = torch.bernoulli(torch.ones_like(probs) * (1 - v.dropout_rate))
-            probs = probs * mask
+            dmask = torch.bernoulli(torch.ones_like(probs) * (1 - v.dropout_rate))
+            probs = probs * dmask
             probs = probs / (probs.sum(dim=-1, keepdim=True) + 1e-8)
         return probs
 
     def forward(self, hidden_states: Tensor, **kwargs: Any) -> Tensor:
         if self.pre_projection is not None:
             hidden_states = self.pre_projection(hidden_states)
-        probs = self._route(hidden_states)  # [B, N] (post-dropout)
-        # VEAR discrete: sharpen, then batch-mean -> one merged center-set. Done
-        # with plain tensor ops (no functional_call), which is faster and keeps
-        # the head out of any functional_call/autograd edge cases.
+        mask = kwargs.get("attention_mask", None)
+        probs = self._route(hidden_states, mask)  # [B, N] (post-dropout)
         sharp = probs.pow(self._sharpen)
-        sharp = sharp / sharp.sum(dim=-1, keepdim=True).clamp_min(1e-8)
-        ew = sharp.mean(dim=0)  # [N]
+        sharp = sharp / sharp.sum(dim=-1, keepdim=True).clamp_min(1e-8)  # [B, N]
         experts = self.bank.experts
-        merged_centers = sum(ew[i] * experts[i].centers for i in range(len(experts)))
-        # One merged crystal applied to every token (CrystalClassifier distance
-        # math inlined; identical to functional_call'ing experts[0] with merged).
-        return self._crystal_logits(hidden_states, merged_centers, experts[0])
+        if self.training:
+            # Training keeps the batch-mean merge (one crystal per batch, the
+            # documented honest limit); unchanged, so a live run is undisturbed.
+            ew = sharp.mean(dim=0)
+            merged = sum(ew[i] * experts[i].centers for i in range(len(experts)))
+            return self._crystal_logits(hidden_states, merged, experts[0])
+        # Inference routes PER-SEQUENCE: each sequence gets its own merged
+        # crystal from its own (masked) routing, so a batched forward equals each
+        # sequence run alone - the invariant batched multi-token decode needs.
+        # For batch=1 (plain greedy) this is identical to the batch-mean above.
+        stacked = torch.stack([e.centers for e in experts], dim=0)  # [N, V, D]
+        merged = torch.einsum("bn,nvd->bvd", sharp, stacked)  # [B, V, D]
+        return self._crystal_logits_perseq(hidden_states, merged, experts[0])
 
     def _crystal_logits(self, x: Tensor, centers: Tensor, ref: nn.Module) -> Tensor:
         """CrystalClassifier.forward, but with externally-merged ``centers`` (the
@@ -518,6 +535,24 @@ class CrystalVearHead(BaseHead):
             )
             pseudo_logits = torch.log(prob)
         return pseudo_logits.view(*orig_shape[:-1], ref.vocab_size).to(out_dtype)
+
+    def _crystal_logits_perseq(self, x: Tensor, centers: Tensor, ref: nn.Module) -> Tensor:
+        """Like ``_crystal_logits`` but with a per-sequence center set:
+        ``x`` ``[B, T, D]``, ``centers`` ``[B, V, D]`` -> logits ``[B, T, V]``."""
+        out_dtype = x.dtype
+        xf = x.float()  # [B, T, D]
+        c = centers.float()  # [B, V, D]
+        xx = (xf * xf).sum(-1, keepdim=True)  # [B, T, 1]
+        cc = (c * c).sum(-1).unsqueeze(1)  # [B, 1, V]
+        cx = torch.einsum("btd,bvd->btv", xf, c)  # [B, T, V]
+        dist_sq = (cc + xx - 2.0 * cx).clamp_min(ref.eps)
+        dist_sq = torch.nan_to_num(dist_sq, nan=1e9, posinf=1e9)
+        dist_sq = dist_sq / dist_sq.amin(dim=-1, keepdim=True)
+        pseudo_logits = -ref.n * torch.log(dist_sq)
+        if ref.label_smoothing > 0.0:
+            prob = torch.softmax(pseudo_logits, dim=-1) + ref.label_smoothing / ref.vocab_size
+            pseudo_logits = torch.log(prob)
+        return pseudo_logits.to(out_dtype)
 
     @property
     def classifier(self) -> nn.Module:

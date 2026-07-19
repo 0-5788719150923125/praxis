@@ -11,6 +11,8 @@ Ghost's own flags follow the Godot separator: `godot --path axis/ghost -- <ghost
 | `--no-splash` |  | Boot straight to auto mode, bundled/no audio. |  |
 | `--seed` | `<N>` | Override the session seed (default derives from the audio's own content fingerprint, so the same song replays the same show). |  |
 | `--dial-demo` |  | Auto-turn the first Dial hands-free (demos, renders). |  |
+| `--synth` | `[text-file]` | Open the voice-synthesis editor: write or paste a script, sample a voice by seed, Speak renders a WAV take and plays it as a normal session (scenes react to the narration; karaoke subtitles track it). |  |
+| `--say` |  | With `--synth`: speak the loaded text immediately on boot (automation, demos, headless checks). |  |
 | `--mask-edit` | `<session.json>` | Open the Mask Lab editor on a session (also creates one from a video path). |  |
 | `--mask-render` | `<session.json>` | Render a Mask Lab session to video (used with `--write-movie`). | _internal_ |
 | `--export` |  | Marks a Movie Maker render process (set by the exporter; `Boot` shrinks the window early). | _internal_ |

@@ -15,6 +15,10 @@ var _assistant: Node = null
 var _workspace: Node = null
 var _exporter: Node = null
 var _mask_editor: Node = null
+var _synth_editor: Node = null
+var _synth_active := false           # a synth take is playing as the session
+var _stream: Node = null             # the live VoiceStream feeding the session
+var _subtitles: Node = null          # karaoke overlay, present when the audio has a sidecar
 var _status_t := 0.0     # throttle for writing render progress (export mode)
 
 # Export render mode: this instance was relaunched by the exporter in Movie Maker
@@ -32,6 +36,12 @@ func _ready() -> void:
 		return
 	if args.has("--mask-edit"):
 		_open_mask_editor(_arg_value(args, "--mask-edit"))
+		return
+	# Synthesis mode: the voice editor (see synth_editor.gd). Unlike mask mode it
+	# DOES use Director/Spectrum - a rendered take plays as a normal session so the
+	# scenes react to the narration - but the session starts on Speak, not at boot.
+	if args.has("--synth"):
+		_open_synth_editor()
 		return
 	_export_mode = args.has("--export")
 	if _export_mode:
@@ -85,6 +95,7 @@ func _show_splash() -> void:
 	var splash := preload("res://scripts/splash.gd").new()
 	splash.start_session = _on_splash_start
 	splash.start_mask = _on_splash_mask
+	splash.start_synth = _open_synth_editor
 	_splash = splash
 	add_child(splash)
 
@@ -112,6 +123,7 @@ func _on_splash_mask(video_path: String) -> void:
 func _begin_session(audio_path := "") -> void:
 	Spectrum.begin(audio_path)
 	Director.attach(self)
+	_attach_subtitles()
 	if _export_mode:
 		return                         # render clean: no overlays (the Director fades the video ends)
 	_feedback = preload("res://scripts/feedback.gd").new()
@@ -130,6 +142,12 @@ func _begin_session(audio_path := "") -> void:
 # SEQUENCE replays is the board's own `loop` field; the-point's `loop: false` keeps
 # streaming its tail.) Auto mode returns home as before.
 func _on_song_finished() -> void:
+	# A synth take is endless like a manual session: loop the narration in place
+	# so the show stays up while the user iterates in the editor.
+	if _synth_active:
+		Spectrum.replay()
+		print("ghost: take looped (synthesis session continues)")
+		return
 	if Director.is_manual():
 		Spectrum.replay()
 		print("ghost: song looped (manual session continues)")
@@ -148,11 +166,12 @@ func _end_session() -> void:
 		if not _feedback.closed.is_connected(_end_session):
 			_feedback.closed.connect(_end_session, CONNECT_ONE_SHOT)
 		return
-	for n in [_feedback, _workspace, _splash]:
+	for n in [_feedback, _workspace, _splash, _subtitles]:
 		if n != null and is_instance_valid(n):
 			n.queue_free()
 	_feedback = null
 	_workspace = null
+	_subtitles = null
 	Director.detach()
 	Spectrum.stop()
 	_show_splash()
@@ -193,6 +212,82 @@ func _arg_value(args: PackedStringArray, flag: String) -> String:
 	if i >= 0 and i + 1 < args.size():
 		return args[i + 1]
 	return ""
+
+
+## --synth: the voice-synthesis editor. Each Speak renders a WAV take and plays it
+## as a fresh session (new fingerprint, new show); the take loops when it ends,
+## like a manual session, so the show stays up while the user iterates.
+func _open_synth_editor() -> void:
+	# The exporter is persistent here for the same reason as in the normal flow:
+	# a synth take exports exactly like a song (the relaunch boots
+	# `--audio take.wav --export`, and the sidecar gives the render subtitles).
+	# Guarded: reached both from the splash (exporter already exists) and from a
+	# direct `--synth` boot (it doesn't).
+	if _exporter == null or not is_instance_valid(_exporter):
+		_exporter = preload("res://scripts/exporter.gd").new()
+		add_child(_exporter)
+	var editor := preload("res://scripts/synth_editor.gd").new()
+	editor.begin_stream = _begin_synth_stream
+	_synth_editor = editor
+	add_child(editor)
+	if not Spectrum.song_finished.is_connected(_on_song_finished):
+		Spectrum.song_finished.connect(_on_song_finished)
+
+
+## Start (or restart) the session on a live VoiceStream: audio begins the same
+## frame Speak was clicked - the stream synthesizes ahead of the playhead and
+## the analyzer bus hears it like a song. Streamed takes loop endlessly inside
+## the stream itself (song_finished never fires for a generator).
+func _begin_synth_stream(stream: Node) -> void:
+	if _synth_active:
+		Director.detach()
+		Spectrum.stop()
+	if _stream != null and is_instance_valid(_stream):
+		_stream.queue_free()
+	_stream = stream
+	add_child(stream)
+	var pb: AudioStreamGeneratorPlayback = Spectrum.begin_stream(stream.fingerprint(), Voice.SR)
+	stream.attach_playback(pb)
+	Director.attach(self)
+	_attach_live_subtitles(stream)
+	stream.completed.connect(_on_stream_completed)
+	_synth_active = true
+
+
+## Subtitles for a live stream: share the stream's growing word array directly;
+## the sidecar file doesn't exist yet (the take is still being synthesized).
+func _attach_live_subtitles(stream: Node) -> void:
+	if _subtitles != null and is_instance_valid(_subtitles):
+		_subtitles.queue_free()
+	var subs := preload("res://scripts/subtitles.gd").new()
+	subs.words = stream.words
+	_subtitles = subs
+	add_child(subs)
+
+
+func _on_stream_completed(dur: float, wav_path: String) -> void:
+	Spectrum.set_stream_info(wav_path, dur)
+	if _subtitles != null and is_instance_valid(_subtitles):
+		_subtitles.loop_length = dur
+	print("ghost: take complete (%.1fs) -> %s" % [dur, wav_path])
+
+
+## Karaoke subtitles are session content, not editor chrome: whenever the
+## session's audio has a sidecar timing map (a synth take), attach the overlay -
+## live sessions, reopened takes, and export renders alike. Music without a
+## sidecar gets nothing.
+func _attach_subtitles() -> void:
+	if _subtitles != null and is_instance_valid(_subtitles):
+		_subtitles.queue_free()
+	_subtitles = null
+	var side: String = Subtitles.sidecar_for(Spectrum.audio_path())
+	if side.is_empty():
+		return
+	var subs := preload("res://scripts/subtitles.gd").new()
+	if subs.load_sidecar(side):
+		_subtitles = subs
+		add_child(subs)
+		print("ghost: subtitles attached (%d words)" % (subs.words as Array).size())
 
 
 ## --mask-render <session.json>: the export relaunch. No splash, no Director - just

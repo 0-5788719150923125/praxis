@@ -119,17 +119,36 @@ interesting happens in layer 3.
 
 ## Rungs (each falsifiable before the next)
 
-- [ ] **Rung 0 - the vowel.** One sound-font sample, pitch-tracked and looped as a source;
-  two-formant filter; does a sustained /a/ vs /i/ vs /u/ read unambiguously? A headless test
-  script writing WAVs, judged by ear. This is the go/no-go for exotic sources.
-- [ ] **Rung 1 - the word.** Phoneme table (formant targets + durations + noise shaping for
-  a starter consonant set), script-to-phoneme expansion with author-supplied pronunciation,
-  formant interpolation. One word, then one sentence, robotic on purpose.
-- [ ] **Rung 2 - the population.** Prosody parameter bag sampled from ranges; Fujisaki-style
-  EMA realization of f0/energy; render the script N times seeded; pick renditions by ear.
-  First moment the "distribution of voices" exists.
+- [x] **Rung 0 - the vowel.** SHIPPED (pulse-train source first; sampled sound-font sources
+  remain the open half): `Voice` synthesizes vowels through a three-formant cascade, and
+  `tests/voice_check.gd` verifies them *objectively* - Goertzel probes show /AA/ dominating
+  its F1 region by ~200x and /IY/ its F2 region by ~4x. Judged-by-ear still pending (the
+  human half). Exotic sources move to a later rung: the source is behind one function.
+- [x] **Rung 1 - the word.** SHIPPED: `Phonemes` (table + digraph/magic-e rules + exceptions
+  + `[K AE T]` inline phonetics), full sentences render with monotonic word/phoneme timing
+  maps, stops/fricatives/aspiration included. Robotic on purpose; ears will find the gaps.
+- [~] **Rung 2 - the population.** Half shipped, now trait-shaped: **the speaker is a
+  trait vector** (`Voice.TRAIT_KEYS`: pitch / lilt / tract / pace / breath / grit / drawl,
+  each in [-1,1]) - the ZERO vector is the hand-curated default speaker (its centres live
+  in `Spec.from_traits`, tune them there), a seed only initializes the sliders, and the
+  vector itself is the replicable identity (autosaved; asserted byte-identical in
+  `tests/voice_check.gd`). The N-render batch + side-by-side audition is still open.
+- [x] **Real-time streaming (was: eliminate the pre-render wait).** Synthesis measured
+  ~30x real time in GDScript, so `VoiceStream` runs a sliding window: a ~0.35s prebuffer
+  is synthesized in the Speak click's own frame, pushed into an `AudioStreamGenerator` on
+  Spectrum's analyzed bus (`Spectrum.begin_stream`), and a budgeted per-frame pump keeps
+  ~1.2s of lead ahead of the playhead - onset is instant, scenes react to the voice as it
+  is being made, subtitles grow live from the shared timing array, and the WAV + sidecar
+  land in the background for export. Finished takes loop endlessly inside the stream
+  (a generator never emits song_finished), with subtitle time wrapped by the take length.
+  Output level is a fixed calibrated gain (`Voice.OUT_GAIN`; raw cascade peak ~3.3 across
+  trait extremes) instead of retroactive normalization, so live == WAV == loop passes.
 - [ ] **Rung 3 - landmarks.** Deposit-style labels in the Workspace on the opening; the
   nonlinear activation model; content-keyed re-firing over the full sequence; A/B against
   the unlabeled rendition. This is where the sparse-generalization bet is tested.
 - [ ] **Rung 4 - the actor.** Voice as a Cast kind, utterances as Track spans, subtitles
   rendered from the same spans, export through the bake. A storyboard that *speaks*.
+  (First slice shipped early, outside the Cast: the `--synth` editor plays a rendered take
+  as a normal session - scenes react to the narration through Spectrum - with karaoke
+  subtitles filling word-by-word on the exact synthesis timings, hue riding the live
+  harmonic signature.)

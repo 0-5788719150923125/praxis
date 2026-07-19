@@ -147,6 +147,43 @@ func _bake_cache_path() -> String:
 	return "user://bake_%d.spec" % hash(p + "_" + str(sz))
 
 
+## Generator ring size (seconds) for streamed sessions - see begin_stream().
+const STREAM_BUFFER := 4.0
+
+var _streaming := false
+var _stream_length := 0.0
+
+
+## Begin a STREAMED session: no file - the caller pushes PCM into the returned
+## generator playback as it produces it ([VoiceStream]), and the analyzer bus
+## hears it exactly like a song, so features/signature/scenes all just work.
+## `fp` stands in for the file fingerprint as the session seed source (the
+## caller derives it from its own content - e.g. text + voice traits - so the
+## same input replays the same show). The audio path / length are unknown at
+## start; the caller reports them via set_stream_info() once the take is done.
+func begin_stream(fp: int, sr: int) -> AudioStreamGeneratorPlayback:
+	stop()
+	var gen := AudioStreamGenerator.new()
+	gen.mix_rate = sr
+	gen.buffer_length = STREAM_BUFFER
+	_player.stream = gen
+	song_hash = fp
+	_loaded_path = ""
+	_streaming = true
+	_has_audio = true
+	# play() first, then the caller pushes its prebuffer in this same frame -
+	# so pushed sample N plays at N / sr and timing maps cannot drift.
+	_player.play()
+	return _player.get_stream_playback()
+
+
+## The streamed take is fully synthesized: it now has a real file (for the
+## exporter's relaunch) and a known length (for the exporter's progress math).
+func set_stream_info(path: String, length: float) -> void:
+	_loaded_path = path
+	_stream_length = length
+
+
 ## Restart the loaded song from the top WITHOUT touching any session state - no
 ## reseed, no reload, the fingerprint and analyzers carry straight on. Manual mode
 ## loops the audio endlessly with this; whether the VISUALS restart is the
@@ -164,6 +201,8 @@ func stop() -> void:
 	_has_audio = false
 	_idle_time = 0.0
 	_override_path = ""
+	_streaming = false
+	_stream_length = 0.0
 	song_hash = 0
 	current = AudioFeatures.new()
 
@@ -182,6 +221,8 @@ func audio_path() -> String:
 ## Length of the loaded song in seconds (0 when idle / unknown). The exporter uses
 ## it with the playback position ([member current].time) to know it is near the end.
 func song_length() -> float:
+	if _streaming:
+		return _stream_length            # 0 until the take finishes synthesizing
 	if _has_audio and _player != null and _player.stream != null:
 		return _player.stream.get_length()
 	return 0.0

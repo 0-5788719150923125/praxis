@@ -586,11 +586,16 @@ class TerminalInterface(Callback):
                         self.text = self._streaming.text
                         self.inference_time_ema = None
 
-        max_new_tokens = 1
-
-        # Chance to generate extra tokens
-        while random.random() < 0.1:
-            max_new_tokens += 1
+        # Request a full speculative draft window so each step exercises MTP:
+        # byte-latent MTP lands up to mtp_depth+1 tokens per ~2 forwards. Models
+        # without live MTP fall back to 1 token + the old geometric tail (keeps
+        # the slow typewriter feel where there's nothing to draft).
+        max_new_tokens = self.generator.draft_window
+        if max_new_tokens <= 1:
+            max_new_tokens = 1
+            # Chance to generate extra tokens
+            while random.random() < 0.1:
+                max_new_tokens += 1
 
         # Time the inference call
         inference_start = time.time()

@@ -77,7 +77,7 @@ The lifecycle around the scenes: boot, splash, the Director's scheduling/transit
 
 - [`main.gd`](../scripts/main.gd) **main** - ghost entry point.
 - [`boot.gd`](../scripts/boot.gd) **boot** - Boot - the earliest hook (first autoload), for things that must happen before the window is ever drawn into. In export-render mode (--export) it keeps the render window out of the way as early as GDScript can - off-screen, no focus - so it barely flickers into view before the render takes over. ...
-- [`splash.gd`](../scripts/splash.gd) **Splash** - the start screen.
+- [`splash.gd`](../scripts/splash.gd) **Splash** - the start screen: every mode, always visible.
 - [`director.gd`](../scripts/director.gd) **director** - Director - the scene registry, scheduler, and transition engine (autoload).
 - [`workspace.gd`](../scripts/workspace.gd) **Workspace** - the manual-mode authoring surface (scaffolding).
 - [`dial.gd`](../scripts/dial.gd) **Dial** - the first live performance control (the semi-automatic mode's first lever).
@@ -128,6 +128,16 @@ Reusable composed characters - sampled stacks of primitives, not bespoke meshes.
 
 - [`eye_body.gd`](../scripts/eye_body.gd) **EyeBody** - a real-3D human eyeball, drawn through a `Lens3D` with a real light.
 - [`prism_body.gd`](../scripts/prism_body.gd) **PrismBody** - the browser Prism, ported (praxis web, dark mode).
+
+### Synthesis (voice)
+
+Text to narrated audio, no generative AI and no recordings: the phoneme front end, the source-filter synthesizer, and the synthesis editor with karaoke subtitles. Design and rungs: next/voice.md at the repo root.
+
+- [`phonemes.gd`](../scripts/phonemes.gd) **Phonemes** - the phoneme inventory and the text-to-phoneme expansion.
+- [`voice.gd`](../scripts/voice.gd) **Voice** - the source-filter speech synthesizer (rungs 0-2 of next/voice.md).
+- [`voice_stream.gd`](../scripts/voice_stream.gd) **VoiceStream** - real-time speech: synthesis races just ahead of playback.
+- [`synth_editor.gd`](../scripts/synth_editor.gd) **SynthEditor** - the synthesis surface: text in, narrated show out, live.
+- [`subtitles.gd`](../scripts/subtitles.gd) **Subtitles** - the karaoke overlay, session-owned rather than editor-owned.
 
 ### Storyboards & stage
 

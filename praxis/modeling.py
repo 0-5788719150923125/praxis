@@ -608,7 +608,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         skip_logits = is_cut_ce and self.training and labels is not None
 
         logits, classifier, hidden_states, backward_logits = self._compute_logits(
-            outputs, input_ids, skip_logits
+            outputs, input_ids, skip_logits, attention_mask
         )
 
         self._apply_recall_policies(
@@ -659,6 +659,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         outputs: "PraxisModelOutput",
         input_ids: torch.Tensor,
         skip_logits: bool,
+        attention_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[nn.Module], torch.Tensor, Optional[torch.Tensor]]:
         """Turn trunk hidden states into logits.
 
@@ -691,7 +692,10 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 # Encoder produced features; the head classifies them - the
                 # same path as standalone mode.
                 if not skip_logits:
-                    logits = self.head(decoder_embeds)
+                    logits = self.head(
+                        decoder_embeds,
+                        **_head_mask_kwargs(self.head, attention_mask),
+                    )
                 classifier = self.head.classifier
             hidden_states = decoder_embeds
 
@@ -702,7 +706,9 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 outputs.losses.add_loss(key, value)
         elif hidden_states.size(-1) != self.config.vocab_size:
             if not skip_logits:
-                logits = self.head(hidden_states)
+                logits = self.head(
+                    hidden_states, **_head_mask_kwargs(self.head, attention_mask)
+                )
             # Always keep the classifier reference (needed for cut-CE).
             classifier = self.head.classifier
             if self.backward_head is not None and not skip_logits:
@@ -954,21 +960,56 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         return super().generate(inputs, generation_config=generation_config, **kwargs)
 
     @torch.no_grad()
-    def _spec_logits_and_hidden(self, generated):
+    def _spec_logits_and_hidden(self, generated, attention_mask=None):
         """Vocab logits + the hidden the MTP drafts from, for one prefix.
 
         Byte-latent: the shared head classifies the byte-level decoder hidden
         (``_compute_logits`` returns it as ``hidden_states``), so drafting rides
         that same byte space. Token models: head over the trunk's last hidden.
+
+        ``attention_mask`` right-pads a batch of ragged prefixes; the byte-latent
+        core is padding-invariant, so masked rows read identically to their
+        unpadded form (the basis for lossless batched-prefix verification).
         """
-        base_out = PraxisModel.forward(self, input_ids=generated)
+        base_out = PraxisModel.forward(
+            self, input_ids=generated, attention_mask=attention_mask
+        )
         if self.encoder:
             logits, _, hidden, _ = self._compute_logits(
-                base_out, generated, skip_logits=False
+                base_out, generated, skip_logits=False, attention_mask=attention_mask
             )
             return logits, hidden
         hidden = base_out.last_hidden_state
         return self.head(hidden), hidden
+
+    @torch.no_grad()
+    def _verify_prefixes_batched(self, generated, candidates):
+        """Lossless byte-latent verification via batched truncated prefixes.
+
+        For each ``k`` in ``1..n`` build ``P_k = generated + candidates[:k]`` and
+        read the model's prediction at ``P_k``'s LAST real position. That read is
+        causal (nothing follows it) and the byte-latent core is padding-invariant,
+        so it equals exactly what byte-by-byte greedy would predict after
+        committing ``candidates[:k]``. All ``n`` prefixes ride one right-padded,
+        mask-gated forward instead of ``n`` sequential ones.
+
+        Returns ``pred_logits[k-1]`` = next-token logits following
+        ``generated + candidates[:k]``, shape ``[n, vocab]``.
+        """
+        g = generated.size(1)
+        n = candidates.size(1)
+        full = g + n
+        device = generated.device
+        rows = generated.new_zeros((n, full))  # PAD_ID = 0 (byte tokenizer)
+        mask = generated.new_zeros((n, full))
+        last_pos = torch.empty(n, dtype=torch.long, device=device)
+        for k in range(1, n + 1):
+            length = g + k
+            rows[k - 1, :length] = torch.cat([generated[0], candidates[0, :k]])
+            mask[k - 1, :length] = 1
+            last_pos[k - 1] = length - 1
+        logits, _ = self._spec_logits_and_hidden(rows, attention_mask=mask)
+        return logits[torch.arange(n, device=device), last_pos]
 
     @torch.no_grad()
     def _speculative_generate(self, input_ids, generation_config, **kwargs):
@@ -984,16 +1025,30 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         land per two full forwards instead of one byte per forward, dropping the
         forward count.
 
-        IMPORTANT - byte-latent is NOT greedy-lossless (unlike a plain token
-        model on this path). Byte-latent patching is non-causal within a partial
-        patch: appending the draft bytes changes the last patch's representation
-        and shifts the verify forward's prediction at earlier positions, so an
-        accepted byte is not guaranteed to equal what byte-by-byte greedy would
-        print. The output stays the model's own argmax over real contexts (a
-        coherent decoding) but is APPROXIMATE, not identical to greedy. Verified:
-        appending bytes changes an earlier position's argmax.
+        Greedy is lossless on both paths (up to floating-point argmax ties).
+        Byte-latent patching is non-causal within a partial patch (appending
+        draft bytes shifts the last patch's earlier predictions), so a single
+        verify forward over ``generated + candidates`` reads contaminated
+        positions - the old approximate scheme. We instead verify each truncated
+        prefix ``P_k = generated + candidates[:k]`` at its OWN last real position
+        - a causal, padding-invariant read - batched into one masked forward
+        (``_verify_prefixes_batched``). In exact arithmetic each accepted byte
+        equals what byte-by-byte greedy would print; the only residual
+        divergences are argmax ties where the batched matmul's reduction order
+        flips two logits within ~1e-3 of each other (an inherent property of
+        batched GEMM, and points where greedy is itself ill-defined). (With
+        ``do_sample`` the per-position reads are causal but acceptance stays
+        equality-based, so sampling remains approximate; greedy is the
+        guarantee.)
         """
         from types import SimpleNamespace
+
+        from transformers import (
+            LogitsProcessorList,
+            RepetitionPenaltyLogitsProcessor,
+            TopKLogitsWarper,
+            TopPLogitsWarper,
+        )
 
         max_new_tokens = getattr(generation_config, "max_new_tokens", 100)
         do_sample = getattr(generation_config, "do_sample", False)
@@ -1002,6 +1057,35 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         return_dict = kwargs.get("return_dict_in_generate", False)
 
         eos_set = make_eos_set(eos_token_id)
+
+        # Context-dependent logits processing. The terminal relies on
+        # repetition_penalty (default 1.15) to keep the rolling contexts from
+        # degenerating; the spec sampler must honor it or byte-latent runs drift.
+        # Each read is penalized over ITS OWN prefix, so greedy-with-penalty
+        # stays lossless vs byte-by-byte greedy-with-penalty (the penalty is a
+        # deterministic function of the committed prefix).
+        rep_penalty = getattr(generation_config, "repetition_penalty", 1.0) or 1.0
+        top_k = getattr(generation_config, "top_k", None)
+        top_p = getattr(generation_config, "top_p", None)
+        penalizers = LogitsProcessorList()
+        if rep_penalty != 1.0:
+            penalizers.append(RepetitionPenaltyLogitsProcessor(penalty=rep_penalty))
+        warpers = LogitsProcessorList()
+        if do_sample:
+            if top_k:
+                warpers.append(TopKLogitsWarper(int(top_k)))
+            if top_p is not None and top_p < 1.0:
+                warpers.append(TopPLogitsWarper(float(top_p)))
+
+        def pick(raw_logits, context_ids):
+            """Argmax/sample a token from ``raw_logits`` ([1, vocab]) with the
+            repetition penalty (+ warpers) evaluated over ``context_ids``."""
+            scores = penalizers(context_ids, raw_logits)
+            if do_sample and temperature > 0:
+                scores = warpers(context_ids, scores)
+                probs = F.softmax(scores / temperature, dim=-1)
+                return torch.multinomial(probs, 1).squeeze(-1)
+            return scores.argmax(dim=-1)
 
         generated = input_ids
         # Byte-latent keeps its byte table on the encoder side, so
@@ -1013,9 +1097,9 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             # Main model forward pass to get hidden states
             main_logits, hidden_states = self._spec_logits_and_hidden(generated)
 
-            # Sample first token from main model
+            # First token: main forward's last position, penalized over `generated`.
             last_logits = main_logits[:, -1, :]
-            token_0 = sample_token(last_logits, do_sample, temperature)
+            token_0 = pick(last_logits, generated)
             token_0_2d = token_0.unsqueeze(1)
 
             if token_0.item() in eos_set:
@@ -1032,17 +1116,37 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             candidates = torch.cat([token_0_2d, draft_ids], dim=1)
             n_candidates = candidates.size(1)
 
-            # Verify all candidates in one forward pass
-            verify_input = torch.cat([generated, candidates], dim=1)
-            verify_logits, _ = self._spec_logits_and_hidden(verify_input)
+            # Greedy target following prefix P_k = generated + candidates[:k]; the
+            # penalty context is that same prefix. Byte-latent reads each prefix's
+            # OWN last position (lossless); token models read one causal verify.
+            def prefix_ids(k):
+                if k == 0:
+                    return generated
+                return torch.cat([generated, candidates[:, :k]], dim=1)
 
-            # Check agreement at each position
-            gen_len = generated.size(1)
+            if self.encoder:
+                pred_logits = self._verify_prefixes_batched(generated, candidates)
+
+                def raw_at(k):
+                    return last_logits if k == 0 else pred_logits[k - 1 : k]
+
+            else:
+                verify_input = torch.cat([generated, candidates], dim=1)
+                verify_logits, _ = self._spec_logits_and_hidden(verify_input)
+                gen_len = generated.size(1)
+
+                def raw_at(k):
+                    return verify_logits[:, gen_len - 1 + k, :]
+
+            def target_at(k):
+                return pick(raw_at(k), prefix_ids(k))
+
+            def bonus_at():
+                return pick(raw_at(n_candidates), prefix_ids(n_candidates))
+
             accepted = 0
-
             for i in range(n_candidates):
-                v_logits = verify_logits[:, gen_len - 1 + i, :]
-                v_token = sample_token(v_logits, do_sample, temperature)
+                v_token = target_at(i)
 
                 if v_token.item() == candidates[:, i].item():
                     accepted += 1
@@ -1055,7 +1159,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                             return SimpleNamespace(sequences=generated)
                         return generated
                 else:
-                    # Divergence: keep accepted prefix + verified token
+                    # Divergence: keep accepted prefix + the true greedy token.
                     parts = [generated]
                     if accepted > 0:
                         parts.append(candidates[:, :accepted])
@@ -1064,13 +1168,12 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                     num_new += accepted + 1
                     break
             else:
-                # All candidates accepted — also take a bonus token
+                # All candidates accepted — also take a bonus token.
                 generated = torch.cat([generated, candidates], dim=1)
                 num_new += n_candidates
 
                 if num_new < max_new_tokens:
-                    bonus_logits = verify_logits[:, gen_len - 1 + n_candidates, :]
-                    bonus = sample_token(bonus_logits, do_sample, temperature)
+                    bonus = bonus_at()
                     generated = torch.cat([generated, bonus.unsqueeze(1)], dim=1)
                     num_new += 1
                     if bonus.item() in eos_set:
@@ -1233,6 +1336,36 @@ def make_eos_set(eos_token_id) -> set:
     if isinstance(eos_token_id, (list, tuple)):
         return set(eos_token_id)
     return set()
+
+
+@functools.lru_cache(maxsize=None)
+def _head_accepts_mask(head_type: type) -> bool:
+    """Whether a head's ``forward`` takes an ``attention_mask`` (named or via
+    ``**kwargs``). Composed heads (Parallel/Sequential) and the crystal router
+    do; simple terminals (linear/harmonic/flow) take only hidden states."""
+    import inspect
+
+    try:
+        params = inspect.signature(head_type.forward).parameters
+    except (ValueError, TypeError):
+        return True
+    return any(
+        p.kind is p.VAR_KEYWORD or name == "attention_mask"
+        for name, p in params.items()
+    )
+
+
+def _head_mask_kwargs(head: nn.Module, attention_mask) -> dict:
+    """``{attention_mask: ...}`` only when the head accepts it - the mask reaches
+    the crystal router for per-sequence pad-masked routing (lossless batched
+    multi-token decode) without breaking heads that don't take one."""
+    if attention_mask is None:
+        return {}
+    return (
+        {"attention_mask": attention_mask}
+        if _head_accepts_mask(type(head))
+        else {}
+    )
 
 
 def sample_token(

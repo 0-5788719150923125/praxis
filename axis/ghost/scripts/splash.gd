@@ -1,24 +1,24 @@
 extends CanvasLayer
 class_name Splash
 
-## Splash - the start screen.
+## Splash - the start screen: every mode, always visible.
 ##
-## The session's front door: import a clip from disk, then pick how the show is
-## driven by clicking a mode button (there is no separate "start" - the mode button
-## *is* start). One Import dialog accepts audio OR video - the extension it sees
-## picks the KIND (see VIDEO_EXTS), and the kind picks which buttons are even shown:
-##   audio kind -> Auto (the Director picks scenes, cuts on the music) and Manual
-##                 (open the workspace to orchestrate by hand).
-##   video kind -> Mask only (see mask_editor.gd: key two colors apart, place
-##                 markers, export). Auto/Manual don't apply to a video import and
-##                 Mask doesn't apply to an audio one, so only the relevant set ever
-##                 shows - no dead buttons that error if clicked for the wrong kind.
+## The front door lists all four instruments as a column of mode rows - name,
+## one-line description, and what each consumes - so nothing is hidden behind
+## an import kind (an earlier design showed only the buttons matching the last
+## import, which read as "modes missing" once there were four):
+##   Auto      - the seeded show; the Director picks scenes, cuts on the music.
+##   Manual    - the workspace + storyboards; orchestrate the show by hand.
+##   Synthesis - write a script, ghost speaks it; the show reacts to the voice.
+##   Mask Lab  - chroma-key effects over an imported video clip.
+## A mode button *is* start - there is no separate start button.
 ##
-## Both the audio and video path (and which kind was active) are remembered
-## independently (user://ghost.cfg) and restored on the next launch. Clicking a mode
-## calls back into main - start_session.call(audio, manual: bool) for Auto/Manual,
-## start_mask.call(video_path) for Mask - then frees the splash. Built in code (no
-## .tscn).
+## One Import dialog accepts audio OR video; the extension routes it to the
+## right slot (VIDEO_EXTS), both slots are remembered independently
+## (user://ghost.cfg) and shown side by side. Auto/Manual use the song slot,
+## Mask Lab uses the clip slot, Synthesis needs no import at all. Clicking a
+## mode calls back into main (start_session / start_synth / start_mask), then
+## frees the splash. Built in code (no .tscn).
 
 const CFG_PATH := "user://ghost.cfg"
 const VIDEO_EXTS := ["mp4", "mov", "mkv", "webm", "avi"]
@@ -36,14 +36,12 @@ const ASSISTANT_KEYS := ["", "claude_cli"]
 ## Set by main before the splash enters the tree.
 var start_session: Callable    # start_session.call(audio_path: String, manual: bool)
 var start_mask: Callable       # start_mask.call(video_path: String)
+var start_synth: Callable      # start_synth.call()
 
 var _audio_path := ""
 var _video_path := ""
-var _kind := "audio"           # "audio" or "video" - which import is active
 var _assistant_backend := ""
 var _caption: Label
-var _audio_buttons: Control
-var _mask_buttons: Control
 var _file_dialog: FileDialog
 
 
@@ -51,7 +49,6 @@ func _ready() -> void:
 	layer = 200
 	_load_last_song()
 	_load_last_video()
-	_load_last_kind()
 	_assistant_backend = assistant_backend()
 	_build_ui()
 
@@ -68,8 +65,8 @@ func _build_ui() -> void:
 
 	var col := VBoxContainer.new()
 	col.alignment = BoxContainer.ALIGNMENT_CENTER
-	col.add_theme_constant_override("separation", 16)
-	col.custom_minimum_size = Vector2(560, 0)
+	col.add_theme_constant_override("separation", 14)
+	col.custom_minimum_size = Vector2(640, 0)
 	center.add_child(col)
 
 	var title := Label.new()
@@ -80,14 +77,15 @@ func _build_ui() -> void:
 	col.add_child(title)
 
 	var sub := Label.new()
-	sub.text = "a spectral music visualizer"
+	sub.text = "a spectral audio-visual instrument"
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	sub.add_theme_color_override("font_color", Color(0.55, 0.62, 0.75))
 	col.add_child(sub)
 
-	col.add_child(_spacer(12))
+	col.add_child(_spacer(10))
 
-	# --- Import (audio OR video - the extension picks the slot; both remembered) ---
+	# --- Import (audio OR video - the extension picks the slot; both remembered
+	# and both shown, since different modes below consume different slots) ---
 	var song_row := HBoxContainer.new()
 	song_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	song_row.add_theme_constant_override("separation", 12)
@@ -95,7 +93,7 @@ func _build_ui() -> void:
 
 	var load_btn := Button.new()
 	load_btn.text = "Import…"
-	load_btn.tooltip_text = "A song for Auto/Manual, or a video clip for Mask"
+	load_btn.tooltip_text = "A song for Auto/Manual, or a video clip for Mask Lab"
 	load_btn.custom_minimum_size = Vector2(150, 40)
 	load_btn.pressed.connect(_open_file_dialog)
 	song_row.add_child(load_btn)
@@ -103,48 +101,21 @@ func _build_ui() -> void:
 	_caption = Label.new()
 	_caption.add_theme_color_override("font_color", Color(0.7, 0.78, 0.9))
 	song_row.add_child(_caption)
+	_refresh_caption()
 
-	col.add_child(_spacer(16))
+	col.add_child(_spacer(12))
 
-	# --- Mode buttons (each one starts the session) - only the group matching the
-	# active import kind is ever visible, so there's never a button on screen that
-	# doesn't apply to what's loaded (see _refresh_mode).
-	var btn_slot := CenterContainer.new()
-	col.add_child(btn_slot)
+	# --- The mode list: one row per instrument, all always visible ---
+	_add_mode_row(col, "Auto  ▶", "The seeded show - scenes chosen for you, cut on the music.",
+		"uses the song", _start_auto)
+	_add_mode_row(col, "Manual  ▶", "Orchestrate by hand - the workspace, storyboards, dials.",
+		"uses the song", _start_manual)
+	_add_mode_row(col, "Synthesis  ▶", "Write a script; ghost speaks it and the show reacts to the voice.",
+		"no import needed", _start_synth)
+	_add_mode_row(col, "Mask Lab  ▶", "Chroma-key effects over a video - markers, tracks, renders.",
+		"uses the clip", _start_mask)
 
-	_audio_buttons = HBoxContainer.new()
-	_audio_buttons.alignment = BoxContainer.ALIGNMENT_CENTER
-	_audio_buttons.add_theme_constant_override("separation", 20)
-	btn_slot.add_child(_audio_buttons)
-
-	var auto_btn := Button.new()
-	auto_btn.text = "Auto  ▶"
-	auto_btn.tooltip_text = "Scenes chosen for you, cut on the music"
-	auto_btn.custom_minimum_size = Vector2(190, 52)
-	auto_btn.pressed.connect(_start_auto)
-	_audio_buttons.add_child(auto_btn)
-
-	var manual_btn := Button.new()
-	manual_btn.text = "Manual  ▶"
-	manual_btn.tooltip_text = "Open the workspace to orchestrate scenes by hand"
-	manual_btn.custom_minimum_size = Vector2(190, 52)
-	manual_btn.pressed.connect(_start_manual)
-	_audio_buttons.add_child(manual_btn)
-
-	_mask_buttons = HBoxContainer.new()
-	_mask_buttons.alignment = BoxContainer.ALIGNMENT_CENTER
-	btn_slot.add_child(_mask_buttons)
-
-	var mask_btn := Button.new()
-	mask_btn.text = "Mask  ▶"
-	mask_btn.tooltip_text = "Key two colors apart in an imported clip and place markers"
-	mask_btn.custom_minimum_size = Vector2(190, 52)
-	mask_btn.pressed.connect(_start_mask)
-	_mask_buttons.add_child(mask_btn)
-
-	_refresh_mode()
-
-	col.add_child(_spacer(4))
+	col.add_child(_spacer(6))
 	var asst_row := HBoxContainer.new()
 	asst_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	asst_row.add_theme_constant_override("separation", 10)
@@ -182,33 +153,54 @@ func _build_ui() -> void:
 	add_child(_file_dialog)
 
 
+## One mode row: the start button on the left, description + input hint beside
+## it. Every mode is always clickable - a missing import is handled by the mode
+## itself (Auto idles without a song, Mask Lab prompts for a clip).
+func _add_mode_row(col: VBoxContainer, name: String, desc: String, uses: String, action: Callable) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 16)
+	col.add_child(row)
+
+	var btn := Button.new()
+	btn.text = name
+	btn.custom_minimum_size = Vector2(180, 52)
+	btn.pressed.connect(action)
+	row.add_child(btn)
+
+	var text_col := VBoxContainer.new()
+	text_col.alignment = BoxContainer.ALIGNMENT_CENTER
+	text_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(text_col)
+
+	var desc_label := Label.new()
+	desc_label.text = desc
+	desc_label.add_theme_color_override("font_color", Color(0.7, 0.78, 0.9))
+	text_col.add_child(desc_label)
+
+	var uses_label := Label.new()
+	uses_label.text = uses
+	uses_label.add_theme_font_size_override("font_size", 12)
+	uses_label.add_theme_color_override("font_color", Color(0.42, 0.48, 0.58))
+	text_col.add_child(uses_label)
+
+
 func _spacer(h: int) -> Control:
 	var s := Control.new()
 	s.custom_minimum_size = Vector2(0, h)
 	return s
 
 
-func _audio_caption() -> String:
+func _refresh_caption() -> void:
+	var parts: Array[String] = []
 	if not _audio_path.is_empty():
-		return "♪ " + _audio_path.get_file()
-	if ResourceLoader.exists("res://audio/song.wav"):
-		return "(using bundled audio/song.wav)"
-	return "(no song — Auto will idle-animate)"
-
-
-func _video_caption() -> String:
+		parts.append("♪ " + _audio_path.get_file())
+	elif ResourceLoader.exists("res://audio/song.wav"):
+		parts.append("♪ bundled audio/song.wav")
+	else:
+		parts.append("♪ none (Auto will idle-animate)")
 	if not _video_path.is_empty():
-		return "🎬 " + _video_path.get_file()
-	return "(no clip imported yet)"
-
-
-## Show the caption and button group for the active kind; hide the other entirely -
-## the point being there is never a visible button that doesn't apply to what's
-## loaded (see class doc).
-func _refresh_mode() -> void:
-	_caption.text = _video_caption() if _kind == "video" else _audio_caption()
-	_audio_buttons.visible = _kind == "audio"
-	_mask_buttons.visible = _kind == "video"
+		parts.append("🎬 " + _video_path.get_file())
+	_caption.text = "   ".join(parts)
 
 
 func _open_file_dialog() -> void:
@@ -219,13 +211,10 @@ func _on_file_selected(path: String) -> void:
 	if VIDEO_EXTS.has(path.get_extension().to_lower()):
 		_video_path = path
 		_save_last_video(path)
-		_kind = "video"
 	else:
 		_audio_path = path
 		_save_last_song(path)
-		_kind = "audio"
-	_save_last_kind(_kind)
-	_refresh_mode()
+	_refresh_caption()
 
 
 # --- Start (a mode button click) --------------------------------------------
@@ -243,6 +232,12 @@ func _start(manual: bool) -> void:
 		_save_last_song(_audio_path)
 	if start_session.is_valid():
 		start_session.call(_audio_path, manual)
+	queue_free()
+
+
+func _start_synth() -> void:
+	if start_synth.is_valid():
+		start_synth.call()
 	queue_free()
 
 
@@ -285,26 +280,6 @@ func _save_last_video(path: String) -> void:
 	var cfg := ConfigFile.new()
 	cfg.load(CFG_PATH)
 	cfg.set_value("video", "last", path)
-	cfg.save(CFG_PATH)
-
-
-func _load_last_kind() -> void:
-	var cfg := ConfigFile.new()
-	if cfg.load(CFG_PATH) != OK:
-		return
-	var k := String(cfg.get_value("ui", "kind", "audio"))
-	# Only honor a remembered "video" kind if that clip is still actually on disk -
-	# otherwise Mask would be the only button shown with nothing for it to open.
-	if k == "video" and not _video_path.is_empty():
-		_kind = "video"
-	else:
-		_kind = "audio"
-
-
-func _save_last_kind(kind: String) -> void:
-	var cfg := ConfigFile.new()
-	cfg.load(CFG_PATH)
-	cfg.set_value("ui", "kind", kind)
 	cfg.save(CFG_PATH)
 
 

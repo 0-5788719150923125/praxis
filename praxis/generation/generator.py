@@ -103,6 +103,19 @@ class Generator:
         """
         return self.backend.max_positions
 
+    @property
+    def draft_window(self) -> int:
+        """Tokens worth requesting per step to actually exercise multi-token
+        drafting: the speculative width (``mtp_depth + 1``) when byte-latent MTP
+        is live, else 1. A caller that asks for fewer than this spends its whole
+        budget on the main forward's token and never uses the MTP drafts."""
+        model = self.model
+        mtp = getattr(model, "mtp", None)
+        if mtp is not None and getattr(mtp, "byte_level", False):
+            depth = getattr(getattr(model, "config", None), "mtp_depth", 1) or 1
+            return int(depth) + 1
+        return 1
+
     def request_generation(self, prompt, kwargs={}) -> str:
         """
         Submit a generation request and return a request ID.

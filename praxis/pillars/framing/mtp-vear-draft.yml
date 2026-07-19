@@ -1,0 +1,89 @@
+# Gated on the vear MTP bank (and K=4, so the figure never lies about the
+# window). Follows the harmonic-bottleneck addendum (order 12): the bottleneck
+# fragment says what the codes are; this one says what the head does with the
+# stream - prediction as a short curve over a bounded, periodic window, the
+# fox chart's argument (fig:density) restated at the generation scale, with
+# its own figure. Claims stay inside what the run measures (per-depth draft
+# acceptance, repulsion), with the falsifier named - the paper's standard.
+section: harmonic
+order: 13
+requires:
+  mtp_type: [vear]
+  mtp_depth: ["==4"]
+body: >
+  \subsubsection*{Prediction as a short curve: the sliding-window draft}
+
+  This run also trains a byte-level multi-token head~\cite{gloeckle2024mtp}:
+  beside the next byte, four future bytes are read off the same trunk state,
+  each through a light harmonic depth-transform drawn from a shared pool by a
+  fixed sliding window - depth $k$ is the uniform parameter merge of experts
+  $[k, k{+}1, k{+}2]$, cyclically, so adjacent depths share two of three
+  experts, and a repulsion penalty on the pool keeps its geometries distinct.
+  There is no router; the window is the routing, and the layout bakes in the
+  correlation the task already has, since adjacent depths predict adjacent
+  positions. At inference the draft is speculative~\cite{leviathan2023fast}:
+  up to $K{+}1 = 5$ bytes land per two full forwards, and greedy decode is
+  exact. Exactness is not free here - byte-latent patching is non-causal
+  within a partial patch, so an appended draft byte can shift earlier
+  predictions - and the verify pass earns it by reading each truncated
+  prefix at its own last position, where nothing follows to contaminate the
+  read; sampled decoding accepts drafts by match against a fresh sample and
+  remains approximate.
+
+  The reason this belongs in the present section is what it does to the unit
+  of prediction. The received picture of Figure~\ref{fig:density}'s top panel
+  lands one position-local loss everywhere - the uniform-density assumption
+  restated as supervision. With $K$ losses read off one state, the objective
+  couples the window: the loss at $t{+}3$ propagates backward into the
+  representation at $t$, and what the head emits is a short curve over four
+  future positions rather than four independent point estimates. That is the
+  multi-token dependence the continuous-latent program buys with an
+  unbounded, full-sequence latent~\cite{calm2025}, bought here over a bounded
+  window that repeats: local, cyclic, parameter-shared, riding a mostly
+  discrete code stream whose continuous remainder is small. The same coupling,
+  contained - a small periodic field where the full-sequence model raises one
+  unbounded one.
+
+  Figure~\ref{fig:mtp-window} redraws the fox strip as this head reads it,
+  and the reading closes with its own instrument. If the window is a genuine
+  curve, density inside it is once again a shape rather than a constant, and
+  that shape is already measured: the per-depth draft-acceptance profile -
+  the expected accepted-run length that sets the achievable speedup - is the
+  within-window analogue of the density curve, logged per head. The failure
+  mode is equally concrete: a flat acceptance profile alongside a collapsed
+  repulsion term (the pool settled into one geometry) would mean the window
+  bought nothing that independent heads lacked, and both series are on the
+  dashboard, so the claim arrives with its refutation instrumented.
+
+  \begin{figure}[t] \centering \begin{tikzpicture}[x=0.44cm, y=0.44cm]
+  \tikzset{cb/.style={draw=black!30, line width=0.2pt},
+  tok/.style={font=\bfseries\scriptsize, text=white, inner sep=0pt}}
+  \foreach \c in {0,...,15}{
+  \pgfmathtruncatemacro{\shade}{round(62*exp(-mod(\c,4)/2.0) + 10)}
+  \fill[blue!\shade] (\c,0) rectangle (\c+1,-1);
+  \draw[cb] (\c,0) rectangle (\c+1,-1); }
+  \foreach \ch/\c in {T/0,h/1,e/2,q/3,u/4,i/5,c/6,k/7,b/8,r/9,o/10,w/11,n/12,f/13,o/14,x/15}{
+  \node[tok] at (\c+0.5,-0.5) {\contour{black}{\ch}}; }
+  \draw[black!45, line width=0.5pt, domain=0:16, samples=440, smooth]
+  plot (\x, {0.55 + (0.05 + 0.28*exp(-mod(\x,4)/1.4))
+  * sin(mod(140*mod(\x,4) + 30*mod(\x,4)*mod(\x,4), 360))});
+  \foreach \w in {0,4,8,12}{
+  \draw[black!45, line width=0.5pt] (\w+0.12,-1.15) -- (\w+0.12,-1.42) -- (\w+3.88,-1.42) -- (\w+3.88,-1.15); }
+  \draw[->, dashed, black!55, line width=0.5pt] (7.5,-1.75) to[bend left=25] (4.5,-1.75);
+  \node[font=\scriptsize, text=black!55, anchor=west] at (8.15,-1.85) {loss at $t{+}3$ reaches $t$};
+  \node[font=\scriptsize, text=black!55] at (2.0,-2.35) {$K{=}4$ draft};
+  \node[font=\footnotesize] at (8,-3.3) {byte-latent MTP (ours)};
+  \node[font=\scriptsize, text=black!55] at (8,-4.3) {bounded, periodic over $K{=}4$};
+  \end{tikzpicture} \caption{The fox in windows: the strip of
+  Figure~\ref{fig:density}, reorganized as this run's generation reads it -
+  draft windows of $K{=}4$ bytes, each carrying its own short curve. Shade is
+  the within-window density profile the acceptance metric measures: heavy
+  where the draft is fresh off the trunk state, thinning as draft depth
+  grows, restarting at every reseed. The dashed return is the training-time
+  coupling that makes the window a curve rather than four independent
+  points: all four losses land on one state, so supervision at the window's
+  tip reaches its head. Where the continuous-latent program raises one
+  unbounded field over the whole sequence, this head repeats a small
+  periodic one - the same dependence, contained. Schematic, not measured;
+  the measured object is the per-depth acceptance profile.}
+  \label{fig:mtp-window} \end{figure}

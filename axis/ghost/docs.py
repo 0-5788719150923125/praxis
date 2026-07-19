@@ -143,6 +143,14 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
         ["eye_body.gd", "prism_body.gd"],
     ),
     (
+        "Synthesis (voice)",
+        "Text to narrated audio, no generative AI and no recordings: the "
+        "phoneme front end, the source-filter synthesizer, and the synthesis "
+        "editor with karaoke subtitles. Design and rungs: next/voice.md at "
+        "the repo root.",
+        ["phonemes.gd", "voice.gd", "voice_stream.gd", "synth_editor.gd", "subtitles.gd"],
+    ),
+    (
         "Storyboards & stage",
         "Manual mode as data: the YAML-subset parser, the storyboard loader, "
         "and the Cast/Actions/Track stack that renders a described scene. "
@@ -210,6 +218,21 @@ CLI_FLAGS: List[Tuple[str, str, str, bool]] = [
         False,
     ),
     ("--dial-demo", "", "Auto-turn the first Dial hands-free (demos, renders).", False),
+    (
+        "--synth",
+        "[text-file]",
+        "Open the voice-synthesis editor: write or paste a script, sample a "
+        "voice by seed, Speak renders a WAV take and plays it as a normal "
+        "session (scenes react to the narration; karaoke subtitles track it).",
+        False,
+    ),
+    (
+        "--say",
+        "",
+        "With `--synth`: speak the loaded text immediately on boot "
+        "(automation, demos, headless checks).",
+        False,
+    ),
     (
         "--mask-edit",
         "<session.json>",
