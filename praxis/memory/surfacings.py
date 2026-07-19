@@ -35,6 +35,7 @@ class MemoryBase(nn.Module):
         stream: Tensor,
         attn_output: Tensor,
         state: Optional[NeuralMemState] = None,
+        current_depth: int = 0,
     ) -> Tuple[Tensor, Optional[NeuralMemState]]:
         return stream, state
 
@@ -196,7 +197,7 @@ class MemorySurfacing(MemoryBase):
             write_objective=spec.get("write_objective", "recon"),
         )
 
-    def forward(self, stream, attn_output, state=None):
+    def forward(self, stream, attn_output, state=None, current_depth: int = 0):
         raise NotImplementedError
 
     def training_metrics(self) -> dict:
@@ -220,7 +221,7 @@ class MemorySurfacing(MemoryBase):
 class MemoryAsLayer(MemorySurfacing):
     """MAL: memory as its own residual sub-layer within the block."""
 
-    def forward(self, stream, attn_output, state=None):
+    def forward(self, stream, attn_output, state=None, current_depth: int = 0):
         retrieved, state = self.mem(stream, state)
         return stream + retrieved, state
 
@@ -236,7 +237,7 @@ class MemoryAsGate(MemorySurfacing):
         nn.init.zeros_(self.gate.weight)
         nn.init.constant_(self.gate.bias, -3.0)
 
-    def forward(self, stream, attn_output, state=None):
+    def forward(self, stream, attn_output, state=None, current_depth: int = 0):
         retrieved, state = self.mem(stream, state)
         g = self.gate(stream).sigmoid()
         return g * retrieved + (1 - g) * stream, state
@@ -355,6 +356,25 @@ class MemoryBandSmear(MemoryBase):
             denses = (denses + ["eml_tree"])[:2]  # never fewer than two arms
         self._denses = denses
 
+        # Sparse KAN: the geometric-grid KAN core is by far the most expensive to
+        # run (spline matrix replicated per chunk as a fast weight, then a
+        # test-time double-backward), and it runs at EVERY recurrent step. A
+        # ``kan_sparse={period, phase}`` spec fires it only when
+        # ``current_depth % period == phase`` - e.g. period=4, phase=3 runs it at
+        # the 4th recurrent step and every 4th after (5 of 21 depths here), so
+        # the other steps blend just the two cheap cores. It's a sparse
+        # specialist: a few well-placed modules, not one per step. (With the vear
+        # router the experts are parameter-merged, so structure must be identical
+        # across them - the gate is a runtime skip, not a per-layer structural
+        # change; recurrent step is the only stable, deterministic axis here.)
+        rule = spec.get("kan_sparse")
+        self._active_rule = []
+        for d in denses:
+            if d == "kan" and rule:
+                self._active_rule.append((int(rule["period"]), int(rule["phase"])))
+            else:
+                self._active_rule.append(None)  # always on
+
         def _core(dense_name):
             s = {**spec, "dense": dense_name}
             return NeuralMemory(
@@ -378,38 +398,61 @@ class MemoryBandSmear(MemoryBase):
             f"{_REGIME_NAMES.get(d, d)} ({chr(65 + i)})" for i, d in enumerate(denses)
         ]
         self._last_weights: Optional[list] = None
+        # Each arm's earned share the last time it was ACTIVE (a sparse arm skips
+        # most steps, so its running metric would otherwise read 0 at the last
+        # depth). None until the arm first fires.
+        self._recent_weight: list = [None] * len(denses)
         # Rolling (weights, values) over exactly the EMA horizon, for the
         # regime-river card. Not a buffer (viz only, need not resume).
         self._history: deque = deque(maxlen=_RIVER_HORIZON)
 
-    def _blend_weights(self) -> torch.Tensor:
-        """Per-arm weight in ``[floor, 1-(N-1)*floor]`` from the inverse-surprise
-        share (lower surprise = more weight), read off the detached value EMAs.
-        Scale-free (no gain/temperature to tune); equal surprises -> 1/N each."""
-        inv = 1.0 / self.values.clamp_min(1e-8)
-        share = inv / inv.sum()
-        n = share.numel()
-        return _BLEND_FLOOR + (1.0 - n * _BLEND_FLOOR) * share
+    def _is_active(self, i: int, current_depth: int) -> bool:
+        """Whether arm ``i`` runs at this recurrent step. Always-on unless it has
+        a sparse rule (period, phase): active iff current_depth % period == phase."""
+        rule = self._active_rule[i]
+        return rule is None or (current_depth % rule[0]) == rule[1]
 
-    def forward(self, stream, attn_output, state=None):
+    def _blend_weights(self, active: list) -> list:
+        """Per-arm weight from the inverse-surprise share (lower surprise = more
+        weight), read off the detached value EMAs, over the ACTIVE arms only.
+        Inactive (sparse-skipped) arms get weight 0; the active arms share the
+        full mass, each floored. Scale-free; equal surprises -> 1/k each."""
+        idx = [i for i, a in enumerate(active) if a]
+        inv = torch.stack([1.0 / self.values[i].clamp_min(1e-8) for i in idx])
+        share = inv / inv.sum()
+        k = len(idx)
+        w_active = _BLEND_FLOOR + (1.0 - k * _BLEND_FLOOR) * share
+        w = [0.0] * len(active)
+        for j, i in enumerate(idx):
+            w[i] = float(w_active[j])
+        return w
+
+    def forward(self, stream, attn_output, state=None, current_depth: int = 0):
         states = list(state) if state is not None else [None] * len(self.mems)
+        active = [self._is_active(i, current_depth) for i in range(len(self.mems))]
         # Act on the running estimate, then update it (standard bandit order).
-        w = self._blend_weights()
-        rets, new_states = [], []
+        w = self._blend_weights(active)
+        retrieved, new_states = None, []
         for i, mem in enumerate(self.mems):
+            if not active[i]:
+                new_states.append(states[i])  # skipped: no forward, state passes through
+                continue
             r, si = mem(stream, states[i])
-            rets.append(r)
             new_states.append(si)
-        retrieved = sum(float(w[i]) * rets[i] for i in range(len(rets)))
-        self._last_weights = [float(x) for x in w]
+            contrib = w[i] * r
+            retrieved = contrib if retrieved is None else retrieved + contrib
+        self._last_weights = w
         with torch.no_grad():
             for i, mem in enumerate(self.mems):
+                if not active[i]:
+                    continue
+                self._recent_weight[i] = w[i]
                 s = mem.last_surprise_norm
                 if s is not None:
                     self.values[i].mul_(_VALUE_EMA).add_((1.0 - _VALUE_EMA) * float(s))
-            self._history.append(
-                (list(self._last_weights), [float(v) for v in self.values])
-            )
+            self._history.append((list(w), [float(v) for v in self.values]))
+        if retrieved is None:  # no arm active (never, with A/B always on)
+            return stream, tuple(new_states)
         return stream + retrieved, tuple(new_states)
 
     def dashboard_snapshots(self) -> dict:
@@ -455,11 +498,12 @@ class MemoryBandSmear(MemoryBase):
         out = {}
         for i, mem in enumerate(self.mems):
             out.update(self._core_metrics(mem, chr(97 + i)))  # a, b, c, ...
-        if self._last_weights is not None:
-            # Arm 0 is the reference; report each further arm's earned share as
-            # memory_blend_b, memory_blend_c, ...
-            for i in range(1, len(self._last_weights)):
-                out[f"memory_blend_{chr(ord('a') + i)}"] = self._last_weights[i]
+        # Arm 0 is the reference; report each further arm's earned share when it
+        # last ran as memory_blend_b, memory_blend_c, ... A sparse arm reports
+        # its most-recent active share (not 0 from a step it sat out).
+        for i in range(1, len(self._recent_weight)):
+            if self._recent_weight[i] is not None:
+                out[f"memory_blend_{chr(ord('a') + i)}"] = self._recent_weight[i]
         return out
 
 

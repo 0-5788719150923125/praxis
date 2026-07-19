@@ -184,6 +184,11 @@ func set_stream_info(path: String, length: float) -> void:
 	_stream_length = length
 
 
+## True while the session is a streamed take (synthesis mode).
+func is_streaming() -> bool:
+	return _streaming
+
+
 ## Cycle the streaming generator for an in-place content restart. A generator's
 ## ring buffer cannot be cleared while playback is active (clear_buffer errors),
 ## so the restart is a stop/play cycle: playback position rebases to 0 and a

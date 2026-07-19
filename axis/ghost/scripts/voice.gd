@@ -32,6 +32,19 @@ const OUT_GAIN := 0.26
 # (including the pauses). Fixed model-agnostic constants, per the house rule.
 const ECHO_DELAY := 0.17              # seconds
 const ECHO_FB := 0.45                 # feedback per repeat
+# The BROADCAST stage v2: aggressive sliding-window normalization. A slow
+# level tracker follows the voice; gain steers the output toward a steady
+# target amplitude (normalizing "around a sine" - naive AGC, deliberately);
+# a smooth tanh ceiling absorbs residual transients with NO corner (a hard
+# limiter's corner IS a click); and where the ceiling works, a static bed
+# fades in with a ramp and decays slowly - a floor of fuzz at the VOICE'S
+# level, never an impulse. (v1 scaled the mask to the ceiling: every
+# transient injected static ~10x louder than the voice. The pops WERE v1.)
+const AGC_TARGET := 0.32              # the steady sine amplitude to normalize toward
+const AGC_MAX_BOOST := 2.5
+const AGC_MIN_GAIN := 0.2
+const CEIL := 0.8                     # smooth tanh ceiling
+const SBED_MAX := 0.1                 # static floor cap (~voice level, not ceiling)
 
 
 ## The speaker's trait axes, each in [-1, 1]. THE TRAIT VECTOR IS THE VOICE:
@@ -52,6 +65,11 @@ class Spec:
 	var influences: Array = []        # toggled belt lineages blended into the walk
 	                                  # (each an Array of seeds); the population PRIOR
 	                                  # joins automatically - the 1 of 1+N.
+	var adrenochrome := {}            # a FROZEN genome, annealed during the hook
+	                                  # (see the editor's reel): when present it
+	                                  # replaces the lineage-derived walk genome -
+	                                  # the seed's identity (motifs, anchors, gates)
+	                                  # still flows from the lineage.
 	var f0_base := 130.0              # speaking pitch floor (Hz)
 	var f0_accent := 4.0              # accent bump strength (semitones)
 	var f0_decl := 3.0                # declination span per sentence (semitones)
@@ -182,6 +200,8 @@ class ProsodyWalk:
 	var _refract := {}                # per-channel fast-attack / slow-decay bar
 	var _ring_amp := 0.0              # resonance: a firing rings; the ring decays
 	var _ring_ph := 0.0
+	var _swing := 0.0                 # cadence wobble: activations kick it, it decays -
+	                                  # a perturbation folded back into the running pace
 	var _gate: RandomNumberGenerator  # order-dependent stochastic gates (deterministic)
 
 	## The population average, created at initialization and OUTSIDE any
@@ -192,28 +212,40 @@ class ProsodyWalk:
 		"heat": 1.35, "baseline": 0.375, "settle": 0.11, "breath_span": 9.5,
 		"spend_window": 2.4, "lean": 1.0, "pace_hot": 0.91, "pace_calm": 1.21,
 		"act_thr": 1.9, "act_gain": 1.0, "gravity": 0.2, "ring": 0.6,
+		"hesit_bias": 0.25, "swing_kick": 0.14,
 	}
 	const PRIOR_MOTIF_SEED := 314159
 	# The channels a word can sparsely ACTIVATE on - each independent, each
 	# with its own refractory. What firing does: stretch = the word's own
 	# timescale pulls long; pitch = a jump toward an attractor; echo = the word
-	# rings through the delay line; swell = a crescendo across the word.
-	const ACT_CHANNELS := ["stretch", "pitch", "echo", "swell"]
+	# rings through the delay line; swell = a crescendo across the word;
+	# hesit = a hesitation lands BEFORE the word (unfilled gap, or a filled
+	# "um" - the %HESITATION of the transcripts).
+	const ACT_CHANNELS := ["stretch", "pitch", "echo", "swell", "hesit"]
 
 	## Blended construction: `lineages` is the working reading first, then any
 	## toggled belt influences. The genome is the uniform mean of the PRIOR
 	## plus every lineage's genome (1+N voices in the average); the motif
 	## vocabulary pools everyone's gestures. Deterministic per lineage set.
-	func _init(lineages: Array) -> void:
-		var genomes: Array = [PRIOR.duplicate()]
-		for lineage in lineages:
-			genomes.append(_lineage_genome(lineage))
-		p = {}
-		for key in PRIOR:
-			var v := 0.0
-			for g in genomes:
-				v += g[key]
-			p[key] = v / genomes.size()
+	## An `override` genome (adrenochrome - annealed during the hook, frozen at
+	## catch) replaces the blend outright: it was already integrated with the
+	## party's forces when it froze.
+	func _init(lineages: Array, override: Dictionary = {}) -> void:
+		if not override.is_empty():
+			p = override.duplicate()
+			for key in PRIOR:            # a frozen genome from an older build
+				if not p.has(key):       # inherits new params from the prior
+					p[key] = PRIOR[key]
+		else:
+			var genomes: Array = [PRIOR.duplicate()]
+			for lineage in lineages:
+				genomes.append(_lineage_genome(lineage))
+			p = {}
+			for key in PRIOR:
+				var v := 0.0
+				for g in genomes:
+					v += g[key]
+				p[key] = v / genomes.size()
 		_motifs = _motif_bank(PRIOR_MOTIF_SEED)
 		for lineage in lineages:
 			_motifs.append_array(_motif_bank(int(lineage[0])))
@@ -232,6 +264,24 @@ class ProsodyWalk:
 		_gate.seed = hash(str(lineages))
 		arousal = p.heat
 		motif = _motifs[0]
+
+	## A deterministic coin for the planner (order-stable per lineage set).
+	func gate_chance(chance: float) -> bool:
+		return _gate.randf() < chance
+
+	## Every sentence ending gets its own shape - fixed constants were cloning
+	## the closings ("the living rooooom" always identical). Questions rise by a
+	## varied amount; statements mostly fall, variably deep, occasionally flat;
+	## the final lengthening is drawn fresh each sentence.
+	func sentence_end(question: bool) -> Dictionary:
+		var stretch := _gate.randf_range(0.75, 1.45)
+		if question:
+			return {"stretch": stretch,
+				"f1": _gate.randf_range(3.5, 6.5), "f2": _gate.randf_range(1.0, 3.0)}
+		var deep := _gate.randf_range(-4.0, -1.0)
+		if _gate.randf() < 0.12:
+			deep = _gate.randf_range(-0.5, 0.6)
+		return {"stretch": stretch, "f1": deep, "f2": deep * 0.45}
 
 	func nearest_anchor(semis: float) -> float:
 		var best := 0.0
@@ -261,6 +311,8 @@ class ProsodyWalk:
 			"act_gain": root.randf_range(0.6, 1.4),      # activation strength when fired
 			"gravity": root.randf_range(0.0, 0.45),      # continuous pull toward pitch attractors
 			"ring": root.randf_range(0.3, 0.9),          # resonance: how hard a firing rings
+			"hesit_bias": root.randf_range(-0.3, 0.9),   # extra bar for hesitations (high = fluent)
+			"swing_kick": root.randf_range(0.05, 0.28),  # cadence wobble per activation
 		}
 		for i in range(1, lineage.size()):
 			var pr := RandomNumberGenerator.new()
@@ -290,7 +342,27 @@ class ProsodyWalk:
 	## position 0..1 in the sentence). Returns the planner's modifiers.
 	func word(stressed: bool, nsyll: int, est_dur: float, frac: float, punct: bool) -> Dictionary:
 		var norm: float = clampf(arousal / p.heat, 0.0, 1.0)
-		var pace: float = lerpf(p.pace_calm, p.pace_hot, norm)
+		# sparse activations first: their kicks fold back into this word's pace
+		var acts := {}
+		var kick := 0.0
+		for c in ACT_CHANNELS:
+			_refract[c] *= exp(-est_dur / 2.5)
+			var bar: float = p.act_thr + _refract[c] \
+				+ (p.hesit_bias if c == "hesit" else 0.0)
+			var drive: float = _gate.randfn(0.0, 1.0) + _ring_amp * 0.5
+			var a: float = maxf(0.0, drive - bar) * p.act_gain
+			if a > 0.0:
+				_refract[c] += 1.2
+				_ring_amp = minf(_ring_amp + p.ring * a * 0.5, 1.5)
+				kick += a
+			acts[c] = clampf(a, 0.0, 1.5)
+		if kick > 0.0:
+			# the wobble: any strike knocks the cadence off its line - rushing
+			# or dragging by seeded coin - and the offset decays back
+			_swing += (1.0 if _gate.randf() < 0.5 else -1.0) * p.swing_kick * kick
+		var pace: float = lerpf(p.pace_calm, p.pace_hot, norm) \
+			* (1.0 + clampf(_swing, -0.3, 0.45))
+		_swing *= exp(-est_dur / 2.0)
 		var emph := 0.0
 		var pre_pause := 0.0
 		if stressed and spent < 0.4:
@@ -308,20 +380,6 @@ class ProsodyWalk:
 			spent *= 0.5
 		elif punct:
 			breath = maxf(breath - p.breath_span * 0.6, 0.0)   # punctuation is half a breath
-		# sparse activations: each channel is a thresholded nonlinearity over a
-		# seeded drive plus the resonance ring. Firing raises that channel's own
-		# bar (fast attack) which then decays slowly - so events are SPARSE and
-		# self-spacing; firing also feeds the ring, so events resonate: one
-		# strike colours the next seconds and invites a neighbour.
-		var acts := {}
-		for c in ACT_CHANNELS:
-			_refract[c] *= exp(-est_dur / 2.5)
-			var drive: float = _gate.randfn(0.0, 1.0) + _ring_amp * 0.5
-			var a: float = maxf(0.0, drive - (p.act_thr + _refract[c])) * p.act_gain
-			if a > 0.0:
-				_refract[c] += 1.2
-				_ring_amp = minf(_ring_amp + p.ring * a * 0.5, 1.5)
-			acts[c] = clampf(a, 0.0, 1.5)
 		var ring_st: float = p.ring * _ring_amp * sin(_ring_ph) * 1.5
 		_ring_amp *= exp(-est_dur / 0.9)
 		_ring_ph += est_dur * TAU * 1.3
@@ -381,11 +439,14 @@ const _VOICELESS := ["P", "T", "K", "F", "TH", "S", "SH", "HH"]
 ## - microprosody: vowels after voiceless consonants start slightly higher;
 ## - the multi-timescale [ProsodyField] wanders pitch, tempo and loudness
 ##   continuously (seeded per voice).
-## Pure data; `synth` realizes it through the EMAs.
-static func plan(text: String, spec: Spec) -> Array:
+## Pure data; `synth` realizes it through the EMAs. `events`, if provided, is
+## filled with the strike times: `{t, kind, a}` per sparse activation - the
+## planner knows exactly when every effect will hit, which is what makes the
+## bite dynamics (catch-when-it-strikes) possible downstream.
+static func plan(text: String, spec: Spec, events: Array = []) -> Array:
 	var segs: Array = []
 	var field := ProsodyField.new(int(spec.reading[0]))
-	var walk := ProsodyWalk.new([spec.reading] + spec.influences)
+	var walk := ProsodyWalk.new([spec.reading] + spec.influences, spec.adrenochrome)
 	var t_cursor := 0.12
 	var sentences := Phonemes.parse(text)
 	for si in sentences.size():
@@ -410,6 +471,27 @@ static func plan(text: String, spec: Spec) -> Array:
 					nsyll += 1
 			var mods := walk.word(w.stressed, nsyll, est_dur,
 				float(wi) / maxf(1.0, float(words.size() - 1)), w.pause_after != "none")
+			for c in mods.acts:
+				if float(mods.acts[c]) > 0.0:
+					events.append({"t": t_cursor, "kind": c, "a": float(mods.acts[c])})
+			# a spontaneous hesitation lands BEFORE the word: an unfilled gap,
+			# or (by seeded coin) a filled "um" - low, flat, reduced
+			var hes: float = mods.acts.hesit
+			if hes > 0.0 and not w.get("hesit", false):
+				if walk.gate_chance(0.45):
+					var hdur := 0.14 + 0.14 * hes
+					t_cursor += hdur + 0.05
+					segs.append({"p": "AH", "dur": hdur, "word": -1, "sentence": si,
+						"text": "", "word_start": false, "word_end": false,
+						"semitones": -2.0, "amp": 0.5, "reduce": 0.6, "echo": 0.0})
+					segs.append(_sil(0.05, si))
+				else:
+					var gdur := 0.1 + 0.25 * hes
+					t_cursor += gdur
+					segs.append(_sil(gdur, si))
+			var fin := {}
+			if last_word:
+				fin = walk.sentence_end(question)
 			if mods.pre_pause > 0.0:
 				t_cursor += mods.pre_pause
 				segs.append(_sil(mods.pre_pause, si))
@@ -457,9 +539,15 @@ static func plan(text: String, spec: Spec) -> Array:
 						amp *= 1.0 + acts.swell * lerpf(-0.12, 0.3,
 							float(pi) / maxf(1.0, float((w.phones as Array).size() - 1)))
 				if last_word and pi >= (w.phones as Array).size() - 2:
-					dur *= spec.final_lengthen
+					dur *= spec.final_lengthen * float(fin.stretch)
 				dur *= 1.0 + 0.12 * field.sample("rate", t_cursor)
 				amp *= 1.0 + 0.15 * field.sample("amp", t_cursor)
+				# an authored %HESITATION: low, flat, quiet, fully reduced
+				if w.get("hesit", false):
+					amp *= 0.55
+					reduce = 0.6
+					semis = -2.0 + field.sample("f0", t_cursor) * 0.3
+					dur *= 1.5
 				t_cursor += dur
 				wsegs.append({
 					"p": p, "dur": dur, "word": wi, "sentence": si,
@@ -467,15 +555,16 @@ static func plan(text: String, spec: Spec) -> Array:
 					"word_end": pi == (w.phones as Array).size() - 1,
 					"semitones": semis, "amp": amp, "reduce": reduce,
 					"echo": clampf(0.55 * acts.echo, 0.0, 0.9),
+					"display": w.get("display", w.text),
 				})
-			# terminal contours land on the sentence's last word's vowels:
-			# a question RISES into the end, a statement falls further
+			# terminal contours land on the sentence's last word's vowels, with
+			# a freshly drawn shape each sentence (see Walk.sentence_end)
 			if last_word:
 				var vsegs: Array = wsegs.filter(func(s): return _ptype(s.p) == "vowel")
 				if vsegs.size() > 0:
-					vsegs[-1].semitones += 5.0 if question else -2.5
+					vsegs[-1].semitones += float(fin.f1)
 				if vsegs.size() > 1:
-					vsegs[-2].semitones += 2.0 if question else -1.2
+					vsegs[-2].semitones += float(fin.f2)
 			# a comma word carries a small continuation rise (the "not done yet" cue)
 			elif w.pause_after == "comma":
 				for k in range(wsegs.size() - 1, -1, -1):
@@ -574,7 +663,8 @@ static func synth_state(spec: Spec) -> Dictionary:
 		"ftg": [500.0 * spec.formant_scale, 1400.0 * spec.formant_scale, 2400.0 * spec.formant_scale],
 		"f0sm": spec.f0_base * 1.12, "phase": 0.0, "ampsm": 0.0,
 		"pulse": _pulse_table(0.4, 0.16), "pulse_lax": _pulse_table(0.58, 0.34),
-		"tension": 0.5, "nlp": 0.0, "tilt_y": 0.0,
+		"tension": 0.5, "nlp": 0.0, "tilt_y": 0.0, "prev": 0.0, "nampsm": 0.0,
+		"level": 0.05, "agc": 1.0, "sbed": 0.0,
 		"ebuf": _zeroes(int(ECHO_DELAY * SR)), "eidx": 0,
 		"words": [], "phones": [], "wopen": {},
 	}
@@ -654,7 +744,9 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 	var is_diph: bool = entry.has("f2")
 	var f0_target: float = spec.f0_base * pow(2.0, seg.semitones / 12.0) * 1.06
 	var done := 0
-	var prev := 0.0
+	# radiation memory CONTINUES across segments - resetting it clicked at
+	# every phoneme boundary (a pop per segment; the "static")
+	var prev: float = state.prev
 	var period_gain := 1.0
 	while done < n:
 		var m := mini(FRAME, n - done)
@@ -669,6 +761,10 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 			state.fsm[k] = lerpf(state.fsm[k], state.ftg[k], fa)
 		state.f0sm = lerpf(state.f0sm, f0_target, pa)
 		state.ampsm = lerpf(state.ampsm, vamp, aa)
+		# the noise path gets an envelope too: frication switching on/off
+		# abruptly was a click per consonant
+		state.nampsm = lerpf(state.nampsm, namp, aa)
+		var nsm: float = state.nampsm
 		r1.tune(state.fsm[0], 60.0 + state.fsm[0] * 0.06)
 		r2.tune(state.fsm[1], 90.0 + state.fsm[1] * 0.05)
 		r3.tune(state.fsm[2], 150.0)
@@ -687,6 +783,9 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 		var ebuf: PackedFloat32Array = state.ebuf
 		var eidx: int = state.eidx
 		var esize := ebuf.size()
+		var level: float = state.level
+		var agc: float = state.agc
+		var sbed: float = state.sbed
 		var phase: float = state.phase
 		for _s in m:
 			phase += inc
@@ -697,8 +796,14 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 				inc = state.f0sm * (1.0 + rng.randfn(0.0, spec.jitter)) * 64.0 / SR
 				period_gain = 1.0 + rng.randfn(0.0, spec.shimmer)
 				tension = clampf(lerpf(tension, rng.randf(), 0.3), 0.0, 1.0)
+			# interpolated wavetable read: the raw int() lookup stair-stepped
+			# the pulse - audible as gritty aliasing static
 			var pidx := int(phase)
-			var src := lerpf(pulse_lax[pidx], pulse[pidx], tension) * amp * period_gain
+			var pfrac := phase - float(pidx)
+			var pnext := pidx + 1 if pidx < 63 else 0
+			var src := lerpf(
+				lerpf(pulse_lax[pidx], pulse_lax[pnext], pfrac),
+				lerpf(pulse[pidx], pulse[pnext], pfrac), tension) * amp * period_gain
 			var hiss := rng.randf() * 2.0 - 1.0
 			# aspiration is pitch-synchronous: air leaks during the OPEN phase
 			# of the cycle, not as a steady decoupled hiss floor
@@ -712,11 +817,11 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 			src = tilt_y
 			var y: float
 			if asp_cascade:
-				y = r3.step(r2.step(r1.step(hiss * namp * 0.5)))
+				y = r3.step(r2.step(r1.step(hiss * nsm * 0.5)))
 			else:
 				y = r3.step(r2.step(r1.step(src)))
-				if namp > 0.0:
-					y += nr.step(hiss) * namp
+				if nsm > 0.0001:
+					y += nr.step(hiss) * nsm
 			# radiation: first difference brightens the spectrum like lips do
 			var rad := y - prev * 0.96
 			prev = y
@@ -726,11 +831,33 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 			eidx += 1
 			if eidx >= esize:
 				eidx = 0
-			out.append((rad + e * 0.8) * OUT_GAIN)
+			# the broadcast stage v2 (see the consts): follow the level slowly,
+			# normalize aggressively toward the sine target, absorb what's left
+			# in a smooth tanh ceiling, and let a static floor ramp in and
+			# decay around the distorted stretches - never an impulse
+			var outv := (rad + e * 0.8) * OUT_GAIN
+			level += 0.0003 * (absf(outv) - level)          # ~150 ms tracker
+			var want := clampf(AGC_TARGET / maxf(level * 1.6, 0.001),
+				AGC_MIN_GAIN, AGC_MAX_BOOST)
+			agc += 0.0009 * (want - agc)                    # ~50 ms gain glide
+			var v := outv * agc
+			var vc := CEIL * tanh(v / CEIL)
+			# the excess the ceiling ate = how distorted this stretch is
+			var excess := absf(v) - absf(vc)
+			var starget := minf(excess * 0.6, SBED_MAX)
+			if starget > sbed:
+				sbed += 0.001 * (starget - sbed)            # ramp in (~45 ms)
+			else:
+				sbed += 0.00013 * (starget - sbed)          # decay out (~350 ms)
+			out.append(vc * (1.0 - 0.4 * sbed / SBED_MAX) + hiss * sbed)
 		state.phase = phase
 		state.tension = tension
 		state.nlp = nlp
 		state.tilt_y = tilt_y
+		state.prev = prev
+		state.level = level
+		state.agc = agc
+		state.sbed = sbed
 		state.ebuf = ebuf            # packed arrays are CoW: persist the written copy
 		state.eidx = eidx
 		done += m
@@ -743,7 +870,8 @@ static func _record_timing(state: Dictionary, seg: Dictionary, t0: float, t1: fl
 	var key := "%d:%d" % [seg.sentence, seg.word]
 	if seg.word_start and not state.wopen.has(key):
 		state.wopen[key] = state.words.size()
-		state.words.append({"text": seg.text, "t0": t0, "t1": t1, "sentence": seg.sentence})
+		state.words.append({"text": seg.get("display", seg.text),
+			"t0": t0, "t1": t1, "sentence": seg.sentence})
 	if state.wopen.has(key):
 		state.words[state.wopen[key]].t1 = t1
 

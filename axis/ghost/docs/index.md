@@ -18,7 +18,7 @@ core. The commitments:
    reproducible and the offline export byte-stable.
 2. **Declarative where a human authors.** Storyboards describe scenes as
    data (cast + verbs on a timeline, every number a sampleable range);
-   Mask Lab effects are table-driven (`MASK_EFFECTS` / `EFFECT_CONTROLS`);
+   Masking effects are table-driven (`MASK_EFFECTS` / `EFFECT_CONTROLS`);
    the scene roster, forces, and visual layers are literal registries.
    Adding to a registry is the extension mechanism - not new control flow.
 3. **Sampled, not baked ("cattle, not pets").** Every tunable constant is a
@@ -40,7 +40,7 @@ core. The commitments:
 - [Layers](layers.md) - the visual-component registry (weather, skies, atmosphere).
 - [Forces](forces.md) - the physics-primitive registry particles compose.
 - [Stage](stage.md) - storyboard actors (Cast) and verbs (Actions) + the Track runner.
-- [Mask Lab](masklab.md) - the video chroma-key editor: model, effects, headless tools.
+- [Masking](masklab.md) - the video chroma-key editor: model, effects, headless tools.
 - [CLI flags](cli.md) - every ghost command-line flag.
 
 ## Directory layout
@@ -49,9 +49,9 @@ core. The commitments:
 - `scenes/` - The Godot entry scene (`main.tscn`). Everything else is code-built.
 - `scripts/` - All GDScript. Per-script map in [docs/index.md](../docs/index.md); the subsystem groups are described there too.
 - `scripts/scenes/` - The visualizer scene catalogue - one class per scene. See [docs/scenes.md](../docs/scenes.md).
-- `shaders/` - The two GPU surfaces: `flame.gdshader` (fire layer), `mask_split.gdshader` (all Mask Lab effects).
+- `shaders/` - The two GPU surfaces: `flame.gdshader` (fire layer), `mask_split.gdshader` (all Masking effects).
 - `storyboards/` - Manual-mode scene scores (YAML; JSON accepted). [storyboards/README.md](../storyboards/README.md) is the data spec.
-- `masks/` - Saved Mask Lab sessions, one directory per source video (runtime, git-ignored).
+- `masks/` - Saved Masking sessions, one directory per source video (runtime, git-ignored).
 - `tests/` - Headless check scripts (`godot --headless --script tests/<x>.gd`).
 - `reference/` - Reference imagery scenes were prototyped from.
 - `docs/` - Generated documentation. Regenerate with `python docs.py`; do not edit by hand.
@@ -77,6 +77,7 @@ The lifecycle around the scenes: boot, splash, the Director's scheduling/transit
 
 - [`main.gd`](../scripts/main.gd) **main** - ghost entry point.
 - [`boot.gd`](../scripts/boot.gd) **boot** - Boot - the earliest hook (first autoload), for things that must happen before the window is ever drawn into. In export-render mode (--export) it keeps the render window out of the way as early as GDScript can - off-screen, no focus - so it barely flickers into view before the render takes over. ...
+- [`chrome.gd`](../scripts/chrome.gd) **Chrome** - the shared session furniture every mode of ghost carries.
 - [`splash.gd`](../scripts/splash.gd) **Splash** - the start screen: every mode, always visible.
 - [`director.gd`](../scripts/director.gd) **director** - Director - the scene registry, scheduler, and transition engine (autoload).
 - [`workspace.gd`](../scripts/workspace.gd) **Workspace** - the manual-mode authoring surface (scaffolding).
@@ -136,7 +137,7 @@ Text to narrated audio, no generative AI and no recordings: the phoneme front en
 - [`phonemes.gd`](../scripts/phonemes.gd) **Phonemes** - the phoneme inventory and the text-to-phoneme expansion.
 - [`voice.gd`](../scripts/voice.gd) **Voice** - the source-filter speech synthesizer (rungs 0-2 of next/voice.md).
 - [`voice_stream.gd`](../scripts/voice_stream.gd) **VoiceStream** - real-time speech on its own thread: render lag cannot break it.
-- [`synth_editor.gd`](../scripts/synth_editor.gd) **SynthEditor** - the synthesis surface. The entire loop is one gesture:
+- [`synth_editor.gd`](../scripts/synth_editor.gd) **SynthEditor** - the synthesis surface. The loop is a fishing trip:
 - [`subtitles.gd`](../scripts/subtitles.gd) **Subtitles** - the karaoke overlay, session-owned rather than editor-owned.
 
 ### Storyboards & stage
@@ -149,9 +150,9 @@ Manual mode as data: the YAML-subset parser, the storyboard loader, and the Cast
 - [`actions.gd`](../scripts/actions.gd) **Actions** - the verb registry for data-driven scenes (see scenes/stage.gd).
 - [`track.gd`](../scripts/track.gd) **Track** - the timeline runner for data-driven scenes (see scenes/stage.gd).
 
-### Mask Lab
+### Masking
 
-The video chroma-key masking editor - a second app surface inside ghost. See [masklab.md](masklab.md).
+The video chroma-key masking editor - a second app surface inside ghost. See [masking.md](masking.md).
 
 - [`mask_session.gd`](../scripts/mask_session.gd) **MaskSession** - the data model for one mask-mode editing session.
 - [`mask_editor.gd`](../scripts/mask_editor.gd) **MaskEditor** - the mask-mode authoring surface.

@@ -264,14 +264,14 @@ SURFACINGS = ["mal", "mal_energy", "mal_energy_serpent", "mag"]
 _ENERGY_SURFACINGS = {"mal_energy", "mal_energy_serpent"}
 
 
-def _block_config(memory_type):
+def _block_config(memory_type, depth=2):
     return PraxisConfig(
         vocab_size=256,
         hidden_size=64,
         embed_size=64,
         num_heads=4,
         num_queries=1,
-        depth=2,
+        depth=depth,
         num_layers=2,
         memory_type=memory_type,
     )
@@ -427,11 +427,11 @@ def test_band_smear_arms_state_and_output(memory_type, n_arms):
     torch.manual_seed(0)
     x = torch.randn(2, 16, 64)
     torch.manual_seed(1)
-    plain = TransformerBlock(_block_config("none"))
+    plain = TransformerBlock(_block_config("none", depth=8))
     out_plain, _, _, _ = plain(x, attention_mask=None)
     torch.manual_seed(1)
-    block = TransformerBlock(_block_config(memory_type))
-    out_mem, _, state, _ = block(x, attention_mask=None)
+    block = TransformerBlock(_block_config(memory_type, depth=8))
+    out_mem, _, state, _ = block(x, attention_mask=None, current_depth=3)
     assert len(block.memory.mems) == n_arms
     assert isinstance(state, tuple) and len(state) == n_arms
     assert all(isinstance(s, NeuralMemState) for s in state)
@@ -441,9 +441,9 @@ def test_band_smear_arms_state_and_output(memory_type, n_arms):
 @pytest.mark.parametrize("memory_type,n_arms", list(BAND_PROFILES.items()))
 def test_band_smear_backprops_all_cores(memory_type, n_arms):
     """Backward reaches every core's meta-learned params (no arm is detached)."""
-    block = TransformerBlock(_block_config(memory_type))
+    block = TransformerBlock(_block_config(memory_type, depth=8))
     x = torch.randn(2, 16, 64)
-    out, _, _, _ = block(x, attention_mask=None)
+    out, _, _, _ = block(x, attention_mask=None, current_depth=3)
     out.sum().backward()
     assert len(block.memory.mems) == n_arms
     for mem in block.memory.mems:
@@ -458,9 +458,9 @@ def test_band_smear_blend_weights_and_river(memory_type, n_arms):
     (so N=2 reproduces the old dual's 0.5 center)."""
     from praxis.memory.surfacings import _BLEND_FLOOR
 
-    block = TransformerBlock(_block_config(memory_type))
+    block = TransformerBlock(_block_config(memory_type, depth=8))
     x = torch.randn(2, 16, 64)
-    block(x, attention_mask=None)
+    block(x, attention_mask=None, current_depth=3)  # firing depth: all arms active
     bank = block.memory
     w = bank._last_weights
     assert len(w) == n_arms
@@ -476,7 +476,7 @@ def test_band_smear_end_to_end_training_step():
     """The triple-memory model completes a forward/backward/step with finite
     loss (logits-driven, to sidestep the model's label-shift handling)."""
     torch.manual_seed(0)
-    model = PraxisForCausalLM(_block_config("mal_energy_triple"))
+    model = PraxisForCausalLM(_block_config("mal_energy_triple", depth=8))
     opt = torch.optim.SGD(model.parameters(), lr=1e-3)
     input_ids = torch.randint(0, 256, (2, 16))
     logits = model(input_ids=input_ids).logits
@@ -486,3 +486,31 @@ def test_band_smear_end_to_end_training_step():
     assert torch.isfinite(loss)
     loss.backward()
     opt.step()
+
+
+def test_band_smear_sparse_kan_gate():
+    """mal_energy_triple gates its KAN core by recurrent step (period 4, phase 3):
+    non-firing steps skip its forward (weight 0, 2-arm renorm, no grad); firing
+    steps run all three and the KAN receives gradient. Fresh block per check so a
+    prior call's surprise EMA doesn't perturb the at-init 1/3 shares."""
+    x = torch.randn(2, 16, 64)
+
+    # Non-firing depth -> KAN (arm 2) sits out; A/B renormalize to 0.5 each.
+    off = TransformerBlock(_block_config("mal_energy_triple", depth=8))
+    assert off.memory._active_rule[2] == (4, 3)  # KAN is the sparse arm
+    off(x, attention_mask=None, current_depth=0)
+    assert off.memory._last_weights[2] == 0.0
+    assert abs(off.memory._last_weights[0] - 0.5) < 1e-6
+    assert abs(sum(off.memory._last_weights) - 1.0) < 1e-6
+
+    # Firing depth on a fresh block -> all three active, equal at init, and the
+    # KAN core receives gradient through the blend.
+    on = TransformerBlock(_block_config("mal_energy_triple", depth=8))
+    out, _, _, _ = on(x, attention_mask=None, current_depth=3)
+    assert out.requires_grad
+    assert all(abs(w - 1.0 / 3) < 1e-6 for w in on.memory._last_weights)
+    out.sum().backward()
+    kan_grads = [p.grad for p in on.memory.mems[2].memory_model.parameters()]
+    assert kan_grads and all(
+        g is not None and torch.isfinite(g).all() for g in kan_grads
+    )

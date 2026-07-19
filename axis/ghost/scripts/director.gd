@@ -719,7 +719,7 @@ func _listen_echo(dt: float) -> bool:
 
 
 func _should_change() -> bool:
-	if _locked >= 0 or _held:
+	if _locked >= 0 or _held or _game_paced:
 		return false
 	# In manual mode, a non-looping storyboard with NO tail holds its final scene forever (checked
 	# FIRST, before the fixed-hold check below, so the last entry's `hold` can't try to re-cut into
@@ -816,6 +816,45 @@ func next() -> void:
 ## Scenes keep animating; only the Director's exit logic is paused.
 func hold(on: bool) -> void:
 	_held = on
+
+
+## GAME PACING (synthesis mode): the fishing game owns the cuts. Autonomous
+## music-driven scene changes stop entirely - a scene changes when a catch
+## jumps it (or Space skips manually) - so each new scene reads as a REWARD,
+## not weather. Distinct from hold(): the feedback console toggles that and
+## must not accidentally release the game's grip.
+var _game_paced := false
+
+func set_game_paced(on: bool) -> void:
+	_game_paced = on
+
+
+## The METAMORPHOSIS bus: while a catch is being reeled in, its influence
+## contorts the current scene - every GhostScene reads this in tick() and
+## stretches its motion tempo, zoom-breathing, and pan-sweeps by it. 0 = no
+## contortion; big catches push past 1.
+var aura := 0.0
+
+func set_aura(v: float) -> void:
+	aura = clampf(v, 0.0, 1.5)
+
+
+## Jump the show to the scene a seed OWNS: the index derives from the seed
+## value, so each seed's scene is part of its identity - catching it, or
+## restoring it from the belt, brings back its place in the catalogue.
+var _jump_next := -1
+
+func jump(seed_val: int) -> void:
+	if _host == null:
+		return
+	_jump_next = absi(seed_val) % maxi(SCENES.size(), 1)
+	next()
+
+
+## The scene name a seed value maps to (for tooltips and ledgers).
+func scene_title(seed_val: int) -> String:
+	var i := absi(seed_val) % maxi(SCENES.size(), 1)
+	return String(SCENES[i].script.resource_path).get_file().get_basename()
 
 
 ## A typed snapshot of the scene currently on screen, for the feedback console.
@@ -997,6 +1036,10 @@ func _finish_transition() -> void:
 # far more often than recent duplicates: a soft priority queue, not a hard rotation.
 # Still driven by the seeded _rng, so a given song yields the same sequence.
 func _pick_index() -> int:
+	if _jump_next >= 0:
+		var j := _jump_next
+		_jump_next = -1
+		return j
 	if _locked >= 0:
 		return _locked
 	if SCENES.size() <= 1:

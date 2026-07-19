@@ -150,11 +150,23 @@ static func parse(text: String) -> Array:
 			bare = bare.substr(0, bare.length() - 1)
 		bare = bare.to_lower().strip_edges()
 		bare = bare.lstrip("\"'(").rstrip("\"')")
+		# %HESITATION (the ASR transcript token for a filled pause): an authored
+		# "um" - low, flat, reduced. Shows as an ellipsis in the karaoke.
+		if bare.begins_with("%"):
+			words.append({"text": "…", "display": "…", "phones": ["AH", "M"],
+				"stressed": false, "pause_after": pause, "punct": punct, "hesit": true})
+			if pause == "stop" and words.size() > 0:
+				sentences.append(words)
+				words = []
+			continue
 		if bare.length() > 0:
 			var phones := word_to_phones(bare)
 			if phones.size() > 0:
 				words.append({
 					"text": bare,
+					"display": token.trim_suffix("\n"),   # the SOURCE spelling,
+					# caps and punctuation intact - normalization is for the
+					# phoneme lookup, never for the reader's eyes
 					"phones": phones,
 					"stressed": not FUNCTION_WORDS.has(bare),
 					"pause_after": pause,
@@ -206,7 +218,8 @@ static func _literal_word(token: String) -> Dictionary:
 			phones.append_array(["T", "SH"])
 		elif key == "JH":
 			phones.append_array(["D", "ZH"])
-	return {"text": inner.to_lower(), "phones": phones, "stressed": true, "pause_after": "none"}
+	return {"text": inner.to_lower(), "display": inner, "phones": phones,
+		"stressed": true, "pause_after": "none"}
 
 
 ## One lowercase word -> phoneme keys, via exceptions, magic-e, digraphs, singles.

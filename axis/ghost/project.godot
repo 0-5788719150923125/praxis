@@ -17,6 +17,13 @@ config/features=PackedStringArray("4.6", "Forward Plus")
 boot_splash/show_image=false
 config/icon="res://icon.svg"
 
+[audio]
+
+; A fatter driver buffer so heavy scenes (a saturated machine preempting the
+; audio callback) cannot crackle the output. Latency is irrelevant here -
+; nothing is interactive at audio rate.
+driver/output_latency=40
+
 [autoload]
 
 Boot="*res://scripts/boot.gd"

@@ -6,7 +6,7 @@ the source of record and generate the documentation from it, so the docs
 cannot drift from the code. Here the source of record is the GDScript
 itself - every script carries a leading `##` doc comment, the scene roster
 is the literal `Director.SCENES` array, the component registries are
-literal `const REGISTRY := {...}` dictionaries, and the Mask Lab effect
+literal `const REGISTRY := {...}` dictionaries, and the Masking effect
 table is `MASK_EFFECTS` / `EFFECT_CONTROLS`. This script parses all of
 that statically (no Godot boot required) and writes:
 
@@ -15,7 +15,7 @@ that statically (no Godot boot required) and writes:
   docs/layers.md      - the Layer registry (visual components).
   docs/forces.md      - the Primitives registry (physics forces).
   docs/stage.md       - the storyboard stage: Cast actors + Actions verbs.
-  docs/masklab.md     - the Mask Lab: effects, controls, CLI.
+  docs/masking.md     - the Masking: effects, controls, CLI.
   docs/cli.md         - every ghost command-line flag.
 
 It also patches README.md between `<!-- AUTODOC:NAME:BEGIN/END -->` marker
@@ -81,6 +81,7 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
         [
             "main.gd",
             "boot.gd",
+            "chrome.gd",
             "splash.gd",
             "director.gd",
             "workspace.gd",
@@ -159,9 +160,9 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
         ["yaml.gd", "storyboard.gd", "cast.gd", "actions.gd", "track.gd"],
     ),
     (
-        "Mask Lab",
+        "Masking",
         "The video chroma-key masking editor - a second app surface inside "
-        "ghost. See [masklab.md](masklab.md).",
+        "ghost. See [masking.md](masking.md).",
         [
             "mask_session.gd",
             "mask_editor.gd",
@@ -236,14 +237,14 @@ CLI_FLAGS: List[Tuple[str, str, str, bool]] = [
     (
         "--mask-edit",
         "<session.json>",
-        "Open the Mask Lab editor on a session (also creates one from a "
+        "Open the Masking editor on a session (also creates one from a "
         "video path).",
         False,
     ),
     (
         "--mask-render",
         "<session.json>",
-        "Render a Mask Lab session to video (used with `--write-movie`).",
+        "Render a Masking session to video (used with `--write-movie`).",
         True,
     ),
     (
@@ -303,7 +304,7 @@ TOP_LEVEL: List[Tuple[str, str]] = [
         "The visualizer scene catalogue - one class per scene. See "
         "[docs/scenes.md](docs/scenes.md).",
     ),
-    ("shaders/", "The two GPU surfaces: `flame.gdshader` (fire layer), `mask_split.gdshader` (all Mask Lab effects)."),
+    ("shaders/", "The two GPU surfaces: `flame.gdshader` (fire layer), `mask_split.gdshader` (all Masking effects)."),
     (
         "storyboards/",
         "Manual-mode scene scores (YAML; JSON accepted). "
@@ -311,7 +312,7 @@ TOP_LEVEL: List[Tuple[str, str]] = [
     ),
     (
         "masks/",
-        "Saved Mask Lab sessions, one directory per source video (runtime, "
+        "Saved Masking sessions, one directory per source video (runtime, "
         "git-ignored).",
     ),
     ("tests/", "Headless check scripts (`godot --headless --script tests/<x>.gd`)."),
@@ -742,7 +743,7 @@ def _render_stage_doc(cast: Script, actions: Script, track: Script) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Mask Lab page
+# Masking page
 # ---------------------------------------------------------------------------
 
 
@@ -762,7 +763,7 @@ def _render_masklab_doc(session: Script, editor: Script) -> str:
             controls[int(lm.group(1))] = (groups, note)
     lines = [
         AUTOGEN_HEADER,
-        "# Mask Lab",
+        "# Masking",
         "",
         "The video chroma-key masking editor - a second app surface inside "
         "ghost, separate from the audio visualizer. Open it on a session (or "
@@ -904,7 +905,7 @@ core. The commitments:
    reproducible and the offline export byte-stable.
 2. **Declarative where a human authors.** Storyboards describe scenes as
    data (cast + verbs on a timeline, every number a sampleable range);
-   Mask Lab effects are table-driven (`MASK_EFFECTS` / `EFFECT_CONTROLS`);
+   Masking effects are table-driven (`MASK_EFFECTS` / `EFFECT_CONTROLS`);
    the scene roster, forces, and visual layers are literal registries.
    Adding to a registry is the extension mechanism - not new control flow.
 3. **Sampled, not baked ("cattle, not pets").** Every tunable constant is a
@@ -1042,7 +1043,7 @@ def main() -> int:
         ("layers", "Layers", "the visual-component registry (weather, skies, atmosphere)."),
         ("forces", "Forces", "the physics-primitive registry particles compose."),
         ("stage", "Stage", "storyboard actors (Cast) and verbs (Actions) + the Track runner."),
-        ("masklab", "Mask Lab", "the video chroma-key editor: model, effects, headless tools."),
+        ("masklab", "Masking", "the video chroma-key editor: model, effects, headless tools."),
         ("cli", "CLI flags", "every ghost command-line flag."),
     ]
 
@@ -1072,7 +1073,7 @@ def main() -> int:
         _render_stage_doc(scripts["cast"], scripts["actions"], scripts["track"]),
     )
     _write_if_changed(
-        DOCS / "masklab.md",
+        DOCS / "masking.md",
         _render_masklab_doc(scripts["mask_session"], scripts["mask_editor"]),
     )
     _write_if_changed(DOCS / "cli.md", _render_cli_doc(_scan_flags()))

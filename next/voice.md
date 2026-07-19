@@ -211,6 +211,62 @@ interesting happens in layer 3.
   uniform. The catch is animated: a code-drawn orb in the seed's hue closes on the
   voice, wobbles (each wobble a contest), then settles with a ring or bursts into
   shards. The roll is decided before the orb appears; the orb tells you.
+- [x] **Rung 2.995 - disfluency and wobble** (the "same-y endings" fix). Diagnosis
+  confirmed: fixed terminal constants cloned every sentence closing. Now
+  `sentence_end()` draws each ending fresh (lengthening 0.75-1.45x, falls of varied
+  depth, 12% flat, questions rising by varied amounts). **Hesitation** joined the
+  activation channels: sparse gaps or filled "um"s land BEFORE words (genome
+  `hesit_bias` makes some voices fluent, some halting); the authored `%HESITATION`
+  token (the ASR-transcript format from the Ephemeral Rift podcast) always renders one,
+  shown as an ellipsis in the karaoke. **Swing**: every activation kicks a cadence
+  offset (rush or drag by seeded coin) that folds back into the running pace and
+  decays - the perturbation-into-the-approximation wiring. Export from synthesis mode
+  fixed: streamed takes are eligible the moment they complete. Still open from the
+  transcript's texture: word repeats and false starts ("welcome welcome", "the that").
+- [x] **Rung 2.999 - bites and cards.** The catch got its temporal skill and its
+  judgment step. **Bites**: the planner knows exactly when every strike will play, so
+  the stream publishes its event times; a strike opens a detection window that decays
+  (tau 2s) - catch odds are dominated by bite freshness, thin when the water is still.
+  The effect is genome-carried regardless: land the seed at any moment and it strikes
+  again forever. **Cards**: a successful catch presents the seed as a constellation -
+  lines seeded random from the lineage, colour attuned to cosine similarity against the
+  party's centre (kin warm, foreign cold; 18-dim trait+genome space). **Accept** folds
+  it in and every member's colour re-attunes to the new party (how, you learn by
+  doing); **Release** (or throwing again) changes nothing. Hold or fold. Layout: status
+  under the gesture, card next, belt always last, orb anchored at the button.
+- [x] **Rung 2.9999 - easy fishing and the adrenochrome.** The game slowed down to be
+  playable: bites are LATENT - a strike latches an anchor that pulls for minutes (45s
+  decay, occasionally leaving on its own), no reflexes required. The two axes are
+  **Throw** and **Pull**: pull while it holds and the hook sets or is lost. A set hook
+  begins the REEL - up to minutes long, scaled by integration difficulty and profile -
+  during which the **adrenochrome** anneals: the candidate's genome steps through the
+  party's force field (high-acceptance members attract, low-acceptance repel, the
+  prior always gently pulls) under cooling noise, integrating with the belt and
+  straining against it, then FREEZES. The frozen creature carries an explicit genome
+  (`Spec.adrenochrome` overrides the walk; identity - motifs, anchors, gates - stays
+  lineage-derived), joins the belt on Accept, and the working voice BECOMES it - you
+  hear what you caught. Children inherit frozen genomes verbatim. The **HUD**: an LCD
+  water panel between the text and the buttons - the constellation, the line bellying
+  while something pulls, the taut thrum + progress arc + countdown during the reel -
+  with the reward profiles as a three-toggle switchboard on its edge.
+- [x] **Rung 2.99999 - scenes as reward (the metamorphosis).** In synthesis sessions
+  the Director is GAME PACED: autonomous music-driven cuts stop entirely; a scene
+  changes when a catch jumps it (each seed owns a scene, derived from its lineage -
+  "haunts spires" in the ledger - and restoring a seed returns to its place), so every
+  new scene reads as a reward earned, not weather. And the **metamorphosis**: while
+  the reel runs, `Director.aura` contorts the CURRENT scene at the base-class level -
+  motion tempo stretches, the frame zoom-breathes and pan-sweeps, scaled by reel
+  progress times catch difficulty, so a foreign catch bends the world BIG before the
+  jump releases it. Discipline-safe (zoom + pan only, flat content never rolls).
+- [ ] **Rung 3.0 - the room (physical properties).** The hunch that physics is what's
+  still missing. Candidates, roughly in order of reach: **room acoustics** - a seeded
+  impulse-response-ish reverb (a large hall vs a quiet booth as a genome axis; the echo
+  bus is the seed of this, generalized from one delay tap to a small tap cloud);
+  **the crowd** - background voices speaking from DIFFERENT chunks of the same text,
+  much quieter, lowpassed, unsynchronized (a second/third VoiceStream mixed low - the
+  murmur of a room full of readers); **air** between voice and listener (distance =
+  lowpass + reverb ratio). All genome-carried, all catchable. The fuzzy-radio ideal:
+  the voice should sound like it comes from SOMEWHERE.
 - [ ] **Rung 3 - landmarks.** Deposit-style labels in the Workspace on the opening; the
   nonlinear activation model; content-keyed re-firing over the full sequence; A/B against
   the unlabeled rendition. This is where the sparse-generalization bet is tested. (The

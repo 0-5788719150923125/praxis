@@ -13,8 +13,8 @@ Ghost's own flags follow the Godot separator: `godot --path axis/ghost -- <ghost
 | `--dial-demo` |  | Auto-turn the first Dial hands-free (demos, renders). |  |
 | `--synth` | `[text-file]` | Open the voice-synthesis editor: write or paste a script, sample a voice by seed, Speak renders a WAV take and plays it as a normal session (scenes react to the narration; karaoke subtitles track it). |  |
 | `--say` |  | With `--synth`: speak the loaded text immediately on boot (automation, demos, headless checks). |  |
-| `--mask-edit` | `<session.json>` | Open the Mask Lab editor on a session (also creates one from a video path). |  |
-| `--mask-render` | `<session.json>` | Render a Mask Lab session to video (used with `--write-movie`). | _internal_ |
+| `--mask-edit` | `<session.json>` | Open the Masking editor on a session (also creates one from a video path). |  |
+| `--mask-render` | `<session.json>` | Render a Masking session to video (used with `--write-movie`). | _internal_ |
 | `--export` |  | Marks a Movie Maker render process (set by the exporter; `Boot` shrinks the window early). | _internal_ |
 | `--use-bake` |  | Drive `Spectrum` from the song's cached bake instead of the live analyzer. | _internal_ |
 | `--bake-file` | `<path>` | Explicit spectrum-bake cache for a render (implies `--use-bake`). | _internal_ |

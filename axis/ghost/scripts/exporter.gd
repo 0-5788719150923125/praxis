@@ -57,6 +57,7 @@ var _done_t := 0.0
 var _pct := 0            # last progress read from the render/bake process
 var _song_dur := 0.0     # song length captured at export START (the live song may end mid-transcode)
 var _quality: Dictionary = QUALITIES[DEFAULT_QUALITY]
+var _announced := false  # one-shot console note the first time export becomes ready
 
 
 func _ready() -> void:
@@ -168,13 +169,24 @@ func _process(dt: float) -> void:
 	# The button fades in once eligible (idle, not mid-export, past the delay) and
 	# fades out otherwise - never a hard pop.
 	var want := _state == "idle" and _can_export()
+	if want and not _announced:
+		_announced = true
+		print("ghost: export ready (⤓ bottom-right)")
 	_btn.modulate.a = lerpf(_btn.modulate.a, 1.0 if want else 0.0, 1.0 - exp(-6.0 * dt))
 	_btn.visible = _btn.modulate.a > 0.02
 
 
 # Eligible once playback passes the delay (30s), or partway through a song too short
-# to reach it.
+# to reach it. A streamed take (synthesis mode) doesn't know its length until the
+# WHOLE take finishes synthesizing (see Spectrum.song_length) - which, since the
+# worker paces itself to real time, is roughly as far off as the take is long, often
+# well past EXPORT_DELAY. Gating on length left synthesis sessions without the export
+# button every other mode gets by then, so streaming sessions use the same flat
+# EXPORT_DELAY instead; a click before the take is actually written to disk fails
+# gracefully via _on_path's "No song to export" check, same as any other export error.
 func _can_export() -> bool:
+	if Spectrum.is_streaming():
+		return Spectrum.current.time >= EXPORT_DELAY
 	var length := Spectrum.song_length()
 	if length <= 0.0:
 		return false

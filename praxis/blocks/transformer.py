@@ -115,9 +115,10 @@ class TransformerBlock(nn.Module):
 
         # =========== Long-term Memory ============
         # current_state carries the per-sequence NeuralMemState across depth;
-        # a no-op memory passes both through unchanged.
+        # a no-op memory passes both through unchanged. current_depth lets a
+        # surfacing gate expensive cores by recurrent step (sparse memory).
         attn_merged, current_state = self.memory(
-            attn_merged, attn_output, current_state
+            attn_merged, attn_output, current_state, current_depth=current_depth
         )
 
         # =========== FeedForward Block ===========

@@ -1,47 +1,70 @@
 extends CanvasLayer
 class_name SynthEditor
 
-## SynthEditor - the synthesis surface. The entire loop is one gesture:
+## SynthEditor - the synthesis surface. The loop is a fishing trip:
 ##
-##   THROW -> it grows or it doesn't -> KEEP or don't.
+##   THROW into the unknown -> something ANCHORS and pulls (for a long while)
+##   -> PULL to set the hook -> the REEL: the adrenochrome anneals toward and
+##   against your party, then FREEZES -> ACCEPT or RELEASE.
 ##
-## Nothing else is exposed - no sliders, no toggles, no seed fields. EVERY
-## property (the voice's trait vector and the reading's prosody genome) lives
-## inside each seed, travels with every throw, and is inspectable on the belt
-## (a seed's tooltip reads out its genome and ledger). The listening ear stays
-## free to judge the audio, which is the whole point.
+## A throw speaks a new candidate immediately. Its planned strikes (echo,
+## stretch, pitch, hesitation - the sparse activations) are the **bites**: when
+## one plays, a detection window opens and decays (an EMA over the moment) -
+## catch quickly after the hit and the odds are strong; wait and the trace
+## fades. It is never gone from the GENOME though: land the seed at any moment
+## and every effect it carries is kept forever, and will strike again.
 ##
-## A throw produces a new candidate and speaks it immediately. The belt does
-## the integration implicitly: throws parent themselves from kept seeds
-## weighted by **acceptance** (hold time per play - you vote by not switching
-## it off), inheriting lineage + traits with generation-decaying jitter;
-## sometimes a throw goes wild (fresh root, fresh voice) so the population
-## never inbreeds. Ancestors accrue hold time from their descendants'
-## listening, so a seed's acceptance reflects what its LINE produces. The
-## **background voice** - what you hear before any seed exists - is the
-## population average: the acceptance-weighted mean of the belt's traits, or
-## the hand-curated default (the zero vector) on a fresh install.
+## A successful catch is not yet a keep: it presents a **card** - the seed
+## drawn as a constellation (lines seeded random, colour attuned to the cosine
+## similarity between the candidate and the party's centre). **Accept** folds
+## it into the belt - and every member's colour re-attunes to the new party,
+## in ways you only learn by doing it. **Release** changes nothing. The game
+## is integration: reading the colour shifts, knowing when to hold, when to
+## fold. Throwing again folds a pending card.
 ##
-## The lyrics box takes a plain paragraph (`[K AE T]` phonetic escapes).
-## Draft, voice, lineage, and belt autosave. `--say` speaks on boot.
+## Reward profiles (Drift / Snap / Hunt) shape how throws range and how
+## catches earn. Acceptance (hold time + rewards vs the belt average) weights
+## parent selection; ancestors earn from their line. Everything autosaves.
 
 const CFG := "user://ghost.cfg"
 const AUTOSAVE_DELAY_MS := 800
 const BELT_MAX := 7                 # a small cache; old captures fall off the end
 
-## Reward profiles: the user picks what kind of session this is, and the
-## profile shapes BOTH how throws range (wild chance, jitter) and how catches
-## earn. The signal insight: a QUICK catch means the ear knew immediately -
-## droning on means deliberating - so decision latency, not watch length, is
-## the default reward (Snap). Drift restores the sit-with-it mode; Hunt pays
-## for catching seeds that are far from the bank.
+# Easy fishing: bites are LATENT - a strike latches an anchor that pulls for a
+# long while (slow decay), occasionally letting go on its own. No reflexes.
+const ANCHOR_TAU := 45.0            # seconds: how slowly an anchored pull fades
+const ANCHOR_VANISH := 0.03         # chance per check that the pull just leaves
+const ANCHOR_CHECK := 5.0           # seconds between vanish checks
+# Nibbles: each DISTINCT fresh strike that lands while the anchor still holds
+# counts as one - patience (sitting through several) steadies the pull odds,
+# rather than the anchor just re-latching to the same ceiling each time.
+const NIBBLE_MAX := 5
+const NIBBLE_BONUS := 0.05          # added to pull odds per accumulated nibble
+# The reel: once the hook sets, the ADRENOCHROME accumulates - a genome
+# annealing toward the party's attractors and against its repulsors, freezing
+# at the end. Sit and wait; the calculation is the catch.
+const HOOK_STEPS := 140             # anneal steps across the reel
+
+# The three MODES of fishing - what the line is doing, not just how reward is
+# scored (each still earns differently):
+# DRIFT - the crab cage: the cast is left behind while you keep moving, so the
+#   line's scale grows with time - metres become miles become lightyears. The
+#   cosmos opens (more planets visible at distance), and the longer the drift,
+#   the more foreign the next throw pulls in. Time sitting with it earns.
+# ANCHOR - freeze in place and search THIS area: throws stay tight around the
+#   current candidate, the pull rarely leaves on its own. Quick, decisive
+#   catches earn.
+# REEL - retrieval: pulling toward you. The retrieval speed is data- and
+#   learning-dependent - a seasoned belt (accumulated hold statistics) reels
+#   faster, because it can preview the catch's influence more accurately.
+#   Foreignness earns.
 const PROFILES := {
-	"drift": {"label": "Drift", "wild": 0.15, "jitter": 0.8,
-		"tip": "Sit with it. Long listening earns; catches never rush you."},
-	"snap": {"label": "Snap", "wild": 0.2, "jitter": 1.0,
-		"tip": "Trust the gut. The quicker the catch, the higher the reward."},
-	"hunt": {"label": "Hunt", "wild": 0.45, "jitter": 1.5,
-		"tip": "Range widely. Hard-to-integrate seeds earn the most when caught."},
+	"drift": {"label": "Drift", "wild": 0.15, "jitter": 0.8, "vanish": 0.03,
+		"tip": "The crab cage: leave the cast behind. The line's scale grows - miles, lightyears - the cosmos opens, and time earns."},
+	"anchor": {"label": "Anchor", "wild": 0.05, "jitter": 0.6, "vanish": 0.008,
+		"tip": "Freeze in place and search this area. Throws stay close, the pull holds. Quick decisive catches earn."},
+	"reel": {"label": "Reel", "wild": 0.45, "jitter": 1.5, "vanish": 0.03,
+		"tip": "Retrieval. A seasoned belt reels faster - accumulated statistics preview the catch's influence. Foreignness earns."},
 }
 
 var begin_stream: Callable          # set by main: (stream: VoiceStream) -> void
@@ -56,13 +79,32 @@ var _belt: Array = []               # kept seeds: [{lineage, traits, m}]
 var _reading_label: Label
 var _belt_rows: VBoxContainer
 var _inv_labels: Array = []         # metrics Label per inventory row
-var _metrics_t := 0.0               # throttle for inventory refresh/persist
-var _profile := "snap"              # active reward profile key
-var _profile_btn: OptionButton
-var _throw_ms := 0                  # when the current candidate started playing
-var _catching := false              # a catch attempt (orb animation) is in flight
-var _dirty := false                 # autosave pending
-var _restart_pending := false       # structural change awaiting the debounce
+var _inv_glyphs: Array = []         # SeedGlyph per inventory row
+var _catch_btn: Button
+var _card: PanelContainer           # the reel (annealing) and the pending catch
+var _card_glyph: Control
+var _card_label: Label
+var _accept_btn: Button
+var _release_btn: Button
+var _pending := {}                  # {d, reward, traits, genome} frozen, undecided
+var _loop_len := 0.0                # take length once complete (time wrapping)
+var _anchor := 0.0                  # the latent pull: latched by strikes, slow to fade
+var _vanish_t := 0.0                # timer for the pull-leaves-on-its-own check
+var _nibbles := 0                   # distinct fresh strikes felt since the anchor was last empty
+var _last_strike_t := -999.0        # stream-local time of the last strike counted as a nibble
+var _hook := {}                     # the live reel: rng, step, t, duration, members,
+                                    # traits, genome (annealing), d, reward
+var _working_genome := {}           # adrenochrome carried by the WORKING candidate
+var _metrics_t := 0.0
+var _status_t2 := 0.0               # throttle for the calm line readout
+var _profile := "anchor"
+var _profile_btns := {}             # switchboard: profile key -> toggle Button
+var _hud: Control                   # the LCD water (custom drawn)
+var _hud_glyph: Control             # the candidate constellation living in it
+var _throw_ms := 0
+var _catching := false
+var _dirty := false
+var _restart_pending := false
 var _last_edit_ms := 0
 
 
@@ -74,10 +116,7 @@ func _ready() -> void:
 	var i := args.find("--synth")
 	if i >= 0 and i + 1 < args.size() and FileAccess.file_exists(args[i + 1]):
 		_text.text = FileAccess.get_file_as_string(args[i + 1])
-	# connect AFTER initial load so restoring the draft doesn't mark it dirty
 	_text.text_changed.connect(_mark_structural)
-	# implicit speaking: the loaded draft speaks on its own - immediately with
-	# --say, after the normal debounce otherwise
 	if not _text.text.strip_edges().is_empty():
 		if args.has("--say"):
 			_apply.call_deferred()
@@ -94,86 +133,161 @@ func _build_panel() -> void:
 	box.add_theme_constant_override("separation", 8)
 	_panel.add_child(box)
 
+	var title_row := HBoxContainer.new()
+	box.add_child(title_row)
 	var title := Label.new()
 	title.text = "Synthesis"
 	title.add_theme_font_size_override("font_size", 20)
-	box.add_child(title)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_row.add_child(title)
+	var hide := Button.new()
+	hide.text = "–"
+	hide.tooltip_text = "Hide panel (F2)"
+	hide.custom_minimum_size = Vector2(28, 28)
+	hide.pressed.connect(func(): _panel.visible = false)
+	title_row.add_child(hide)
 
 	var hint := Label.new()
-	hint.text = "Write and it speaks. Throw until something grows; Keep what does."
+	hint.text = "Write and it speaks. Throw; pull when it anchors; let the reel run; hold or fold."
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hint.add_theme_font_size_override("font_size", 12)
 	hint.modulate = Color(1, 1, 1, 0.6)
 	box.add_child(hint)
 
 	_text = TextEdit.new()
-	_text.custom_minimum_size = Vector2(360, 220)
+	_text.custom_minimum_size = Vector2(360, 180)
 	_text.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
 	_text.placeholder_text = "Once upon a time..."
 	box.add_child(_text)
 
-	# --- The loop: Throw / Keep ---
+	# --- The HUD: the water. A dedicated LCD readout where the fishing is
+	# drawn - the candidate's constellation, the line that visibly pulls when
+	# something anchors, the reel's progress while the adrenochrome forms -
+	# with the reward switchboard on its right edge.
+	var hud_panel := PanelContainer.new()
+	var hud_style := StyleBoxFlat.new()
+	hud_style.bg_color = Color(0.015, 0.045, 0.03, 0.96)
+	hud_style.border_color = Color(0.25, 0.55, 0.4, 0.55)
+	hud_style.set_border_width_all(1)
+	hud_style.set_corner_radius_all(4)
+	hud_style.set_content_margin_all(6)
+	hud_panel.add_theme_stylebox_override("panel", hud_style)
+	box.add_child(hud_panel)
+	var hud_col := VBoxContainer.new()
+	hud_col.add_theme_constant_override("separation", 2)
+	hud_panel.add_child(hud_col)
+	var hud_row := HBoxContainer.new()
+	hud_row.add_theme_constant_override("separation", 8)
+	hud_col.add_child(hud_row)
+	_hud = Hud.new()
+	_hud.editor = self
+	_hud.custom_minimum_size = Vector2(0, 84)
+	_hud.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hud_row.add_child(_hud)
+	_hud_glyph = SeedGlyph.new()
+	_hud_glyph.position = Vector2(10, 18)
+	_hud_glyph.size = Vector2(48, 48)
+	_hud.add_child(_hud_glyph)
+	var board := VBoxContainer.new()
+	board.add_theme_constant_override("separation", 4)
+	hud_row.add_child(board)
+	for key in PROFILES:
+		var b := Button.new()
+		b.text = PROFILES[key].label
+		b.toggle_mode = true
+		b.focus_mode = Control.FOCUS_NONE
+		b.custom_minimum_size = Vector2(64, 24)
+		b.add_theme_font_size_override("font_size", 11)
+		b.tooltip_text = PROFILES[key].tip
+		b.button_pressed = key == _profile
+		var pkey: String = key
+		b.pressed.connect(func():
+			_profile = pkey
+			_sync_switchboard()
+			_persist())
+		board.add_child(b)
+		_profile_btns[key] = b
+	# the readout line lives IN the HUD - this is a wearable, and the text is
+	# part of the instrument, not chrome below it
+	_status = Label.new()
+	_status.text = "ready - write and it speaks"
+	_status.add_theme_font_size_override("font_size", 11)
+	_status.add_theme_color_override("font_color", Color(0.55, 0.95, 0.75, 0.85))
+	hud_col.add_child(_status)
+
+	# --- The loop: Throw / Pull ---
 	var loop_row := HBoxContainer.new()
 	loop_row.add_theme_constant_override("separation", 8)
 	box.add_child(loop_row)
 	var throw := Button.new()
 	throw.text = "Throw"
-	throw.custom_minimum_size = Vector2(120, 40)
-	throw.tooltip_text = ("A new candidate - voice and reading in one seed - "
-		+ "parented from the belt by acceptance (sometimes wild), spoken immediately")
+	throw.custom_minimum_size = Vector2(110, 40)
+	throw.tooltip_text = ("Into the unknown: a new candidate, parented from the "
+		+ "belt by acceptance (sometimes wild), spoken immediately. Folds a pending card.")
 	throw.pressed.connect(_throw)
 	loop_row.add_child(throw)
-	var keep := Button.new()
-	keep.text = "Keep"
-	keep.custom_minimum_size = Vector2(90, 40)
-	keep.tooltip_text = ("A catch ATTEMPT: seeds far from your bank fight the "
-		+ "ball - it may break free. Retry costs nothing but time.")
-	keep.pressed.connect(_attempt_catch)
-	loop_row.add_child(keep)
+	_catch_btn = Button.new()
+	_catch_btn.text = "Pull"
+	_catch_btn.custom_minimum_size = Vector2(90, 40)
+	_catch_btn.tooltip_text = ("Set the hook. Something anchored will pull for a "
+		+ "long while - pull while it does and the hook sets or is lost; a slack "
+		+ "line almost never sets. Let it nibble: each fresh strike while it holds "
+		+ "steadies your odds. A rougher, more jittery line means a harder catch.")
+	_catch_btn.pressed.connect(_pull)
+	loop_row.add_child(_catch_btn)
 	_reading_label = Label.new()
 	_reading_label.add_theme_font_size_override("font_size", 12)
 	_reading_label.modulate = Color(1, 1, 1, 0.7)
 	loop_row.add_child(_reading_label)
 
-	# --- The reward profile: what kind of session is this? ---
-	var reward_row := HBoxContainer.new()
-	reward_row.add_theme_constant_override("separation", 8)
-	box.add_child(reward_row)
-	var reward_label := Label.new()
-	reward_label.text = "Reward"
-	reward_label.add_theme_font_size_override("font_size", 12)
-	reward_label.modulate = Color(1, 1, 1, 0.6)
-	reward_row.add_child(reward_label)
-	_profile_btn = OptionButton.new()
-	_profile_btn.focus_mode = Control.FOCUS_NONE
-	for key in PROFILES:
-		_profile_btn.add_item(PROFILES[key].label)
-	var keys := PROFILES.keys()
-	_profile_btn.select(maxi(0, keys.find(_profile)))
-	_profile_btn.tooltip_text = PROFILES[_profile].tip
-	_profile_btn.item_selected.connect(func(idx: int):
-		_profile = keys[idx]
-		_profile_btn.tooltip_text = PROFILES[_profile].tip
-		_persist())
-	reward_row.add_child(_profile_btn)
+	# --- The card: a caught seed awaiting judgment (hold or fold) ---
+	_card = PanelContainer.new()
+	_card.visible = false
+	box.add_child(_card)
+	var card_row := HBoxContainer.new()
+	card_row.add_theme_constant_override("separation", 10)
+	_card.add_child(card_row)
+	_card_glyph = SeedGlyph.new()
+	_card_glyph.custom_minimum_size = Vector2(64, 64)
+	card_row.add_child(_card_glyph)
+	var card_col := VBoxContainer.new()
+	card_col.alignment = BoxContainer.ALIGNMENT_CENTER
+	card_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card_row.add_child(card_col)
+	_card_label = Label.new()
+	_card_label.add_theme_font_size_override("font_size", 12)
+	card_col.add_child(_card_label)
+	var card_btns := HBoxContainer.new()
+	card_btns.add_theme_constant_override("separation", 8)
+	card_col.add_child(card_btns)
+	_accept_btn = Button.new()
+	_accept_btn.text = "Accept"
+	_accept_btn.tooltip_text = "Fold it into the party - every member's colour re-attunes"
+	_accept_btn.pressed.connect(_accept_catch)
+	card_btns.add_child(_accept_btn)
+	_release_btn = Button.new()
+	_release_btn.text = "Release"
+	_release_btn.tooltip_text = "Let it go - nothing changes"
+	_release_btn.pressed.connect(_release_catch)
+	card_btns.add_child(_release_btn)
 
+	# --- The belt/bag: ALWAYS last ---
 	_belt_rows = VBoxContainer.new()
 	_belt_rows.add_theme_constant_override("separation", 4)
 	box.add_child(_belt_rows)
 
-	_status = Label.new()
-	_status.text = "ready - write and it speaks"
-	_status.modulate = Color(1, 1, 1, 0.7)
-	box.add_child(_status)
-
-	var hide := Button.new()
-	hide.text = "Hide panel (F2)"
-	hide.pressed.connect(func(): _panel.visible = false)
-	box.add_child(hide)
-
 
 func _current_spec() -> Voice.Spec:
-	return Voice.Spec.from_traits(_traits, int(_lineage[0]), _lineage)
+	var spec := Voice.Spec.from_traits(_traits, int(_lineage[0]), _lineage)
+	spec.adrenochrome = _working_genome.duplicate()
+	return spec
+
+
+func _sync_switchboard() -> void:
+	for key in _profile_btns:
+		var b: Button = _profile_btns[key]
+		if is_instance_valid(b):
+			b.set_pressed_no_signal(key == _profile)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -181,46 +295,53 @@ func _unhandled_input(event: InputEvent) -> void:
 		_panel.visible = not _panel.visible
 
 
-# ---- the loop: throw, keep, release ----------------------------------------
-#
-# The reward signal is HOLD TIME: while a reading plays, its exact seed (if
-# kept) and every belt ANCESTOR of it accrue listened seconds - a parent earns
-# from what its line produces. Acceptance = hold-per-play vs the belt's
-# collective average; throws pick parents by it. catch = a descendant kept,
-# keep = restored, evolve = thrown from, release = deleted.
+# ---- the loop: throw, bite, catch, accept / release ------------------------
 
 
-## The one gesture. A fresh candidate: usually a child of a belt seed picked by
-## acceptance (inheriting lineage + traits with generation-decaying jitter),
-## sometimes wild. Speaks immediately; the listening decides its fate.
 func _throw() -> void:
+	if not _pending.is_empty():
+		_release_catch()             # throwing again folds the pending card
+	if not _hook.is_empty():
+		_hook = {}                   # abandoning the reel loses the creature
+		Director.set_aura(0.0)
+		_card.visible = false
+		_status.text = "the line snapped - thrown again"
+	_anchor = 0.0
+	_nibbles = 0
+	_last_strike_t = -999.0
 	var prof: Dictionary = PROFILES[_profile]
-	if _belt.is_empty() or randf() < float(prof.wild):
+	# the crab cage: a long drift pulls the next throw from further away -
+	# wilder odds, wider jitter, the cage hauled in from wherever it got to
+	var drift := _drift_norm()
+	if _belt.is_empty() or randf() < float(prof.wild) + 0.3 * drift:
 		_lineage = [randi() % 1000000]
 		var rng := RandomNumberGenerator.new()
 		rng.seed = _lineage[0]
 		_traits = Voice.Spec.sample(rng).traits
-		_status.text = "thrown (wild)"
+		_working_genome = {}         # wild = a fresh lineage-derived genome
+		_status.text = "thrown (wild) - the water is quiet"
 	else:
 		var parent: Dictionary = _pick_parent()
 		parent.m.evolves += 1
 		_lineage = (parent.lineage as Array).duplicate()
 		_lineage.append(randi() % 1000000)
-		var jitter: float = 0.22 * pow(0.75, _lineage.size() - 1) * float(prof.jitter)
+		var jitter: float = 0.22 * pow(0.75, _lineage.size() - 1) * float(prof.jitter) \
+			* (1.0 + 1.5 * drift)
 		var t: Dictionary = parent.traits
 		_traits = {}
 		for key in Voice.TRAIT_KEYS:
 			_traits[key] = clampf(
 				float(t.get(key, 0.0)) + randfn(0.0, maxf(jitter, 0.06)), -1.0, 1.0)
-		_status.text = "thrown (from %s)" % _seed_name(parent.lineage)
+		# a child of an adrenochrome seed inherits the frozen genome verbatim -
+		# the reading still varies (gates, motifs, field ride the new lineage)
+		_working_genome = (parent.get("genome", {}) as Dictionary).duplicate()
+		_status.text = "thrown (from %s) - the water is quiet" % _seed_name(parent.lineage)
 	_throw_ms = Time.get_ticks_msec()
 	_update_reading_label()
 	_persist()
 	_apply()
 
 
-## Acceptance-weighted parent pick: the belt's collective judgment shapes what
-## gets thrown next - the integration the user never has to do by hand.
 func _pick_parent() -> Dictionary:
 	var weights: Array = []
 	var total := 0.0
@@ -236,31 +357,32 @@ func _pick_parent() -> Dictionary:
 	return _belt[-1]
 
 
-## The population-average background: the voice that exists before any seed
-## does - the acceptance-weighted mean of the belt's traits, or the curated
-## default (the zero vector) when the belt is empty.
-func _background_traits() -> Dictionary:
-	var t := {}
-	if _belt.is_empty():
-		return t
-	var total := 0.0
-	for e in _belt:
-		total += 0.1 + _acceptance(e)
-	for key in Voice.TRAIT_KEYS:
-		var v := 0.0
-		for e in _belt:
-			v += float((e.traits as Dictionary).get(key, 0.0)) * (0.1 + _acceptance(e))
-		t[key] = v / maxf(total, 0.001)
-	return t
+## A strike playing right now (within the last ~1.2s) - the moment a latent
+## pull LATCHES onto the line. Not the catch window: the anchor persists long
+## after, fading slowly. The effect is genome-carried either way. Returns
+## (amplitude, event time) so callers can tell a genuinely NEW strike (a fresh
+## nibble) apart from the same strike still sitting in the trailing window.
+func _fresh_strike() -> Vector2:
+	if _stream == null or not is_instance_valid(_stream):
+		return Vector2(0.0, -1.0)
+	var t: float = Spectrum.current.time - _stream.time_base
+	if _loop_len > 0.0:
+		t = fmod(t, _loop_len)
+	var best := 0.0
+	var best_t := -1.0
+	for e in _stream.events:
+		var dt: float = t - float(e.t)
+		if dt >= 0.0 and dt < 1.2 and float(e.a) >= best:
+			best = float(e.a)
+			best_t = float(e.t)
+	return Vector2(best, best_t)
 
 
-## Integration difficulty: how far the candidate sits from the NEAREST seed in
-## the bank, in combined trait + genome space. Harmonic with your collection =
-## an easy catch; foreign = it fights the ball. Empty belt = moderate.
 func _candidate_difficulty() -> float:
 	if _belt.is_empty():
 		return 0.35
-	var cg: Dictionary = Voice.ProsodyWalk._lineage_genome(_lineage)
+	var cg: Dictionary = _working_genome if not _working_genome.is_empty() \
+		else Voice.ProsodyWalk._lineage_genome(_lineage)
 	var best := 1.0
 	for e in _belt:
 		var dt := 0.0
@@ -268,46 +390,83 @@ func _candidate_difficulty() -> float:
 			var dv: float = float(_traits.get(key, 0.0)) \
 				- float((e.traits as Dictionary).get(key, 0.0))
 			dt += dv * dv
-		dt = sqrt(dt / Voice.TRAIT_KEYS.size()) / 0.9      # ~[0,1]
-		var eg: Dictionary = Voice.ProsodyWalk._lineage_genome(e.lineage)
+		dt = sqrt(dt / Voice.TRAIT_KEYS.size()) / 0.9
+		var eg: Dictionary = _member_genome(e)
 		var dg := 0.0
-		for key in cg:
-			dg += absf(float(cg[key]) - float(eg[key])) / maxf(absf(float(
-				Voice.ProsodyWalk.PRIOR[key])), 0.001)
-		dg = (dg / cg.size()) / 0.35                        # ~[0,1]
+		for key in Voice.ProsodyWalk.PRIOR:
+			var prior: float = float(Voice.ProsodyWalk.PRIOR[key])
+			dg += absf(float(cg.get(key, prior)) - float(eg.get(key, prior))) \
+				/ maxf(absf(prior), 0.001)
+		dg = (dg / Voice.ProsodyWalk.PRIOR.size()) / 0.35
 		best = minf(best, 0.5 * clampf(dt, 0.0, 1.0) + 0.5 * clampf(dg, 0.0, 1.0))
 	return clampf(best, 0.0, 1.0)
 
 
-## The catch reward, by profile. Snap: decision latency - the quicker the ear
-## knew, the more it earns. Drift: time spent sitting with it. Hunt: how far
-## from the bank the caught seed was.
 func _catch_reward(difficulty: float) -> float:
 	var t_s: float = (Time.get_ticks_msec() - _throw_ms) / 1000.0
 	match _profile:
 		"drift":
 			return 2.4 * clampf(t_s / 45.0, 0.0, 1.0)
-		"hunt":
+		"reel":
 			return 0.4 + 2.0 * difficulty
 		_:
 			return 2.4 * 8.0 / (8.0 + t_s)
 
 
-## Keep is a catch ATTEMPT: roll against integration difficulty, animate the
-## orb, then commit or break free. Retrying is allowed - but in Snap the clock
-## keeps running, so hesitation costs.
-func _attempt_catch() -> void:
-	if _catching:
+## How far the crab cage has drifted (0..1 over ~5 minutes) - drift mode only.
+func _drift_norm() -> float:
+	if _profile != "drift":
+		return 0.0
+	return clampf((Time.get_ticks_msec() - _throw_ms) / 1000.0 / 300.0, 0.0, 1.0)
+
+
+## The drifted line's length, in honest units - the wire's timescale changing.
+func _drift_caption() -> String:
+	var meters := pow(10.0, 1.0 + 14.5 * _drift_norm())
+	if meters < 1000.0:
+		return "≈ %d m" % int(meters)
+	if meters < 1.0e7:
+		return "≈ %.1f km" % (meters / 1000.0)
+	if meters < 1.0e10:
+		return "≈ %.0f mi" % (meters / 1609.34)
+	if meters < 1.0e14:
+		return "≈ %.2f au" % (meters / 1.496e11)
+	return "≈ %.2f ly" % (meters / 9.461e15)
+
+
+## Planets become visible further out as the cage drifts - the cosmos opens.
+func _planet_threshold() -> float:
+	return 0.72 - 0.25 * _drift_norm()
+
+
+## Reel-mode retrieval speed: data- and learning-dependent. The belt's
+## accumulated statistics (hold time + earned reward = what the party has
+## LEARNED) preview the catch's influence, so a seasoned party reels faster.
+func _retrieval_factor() -> float:
+	var knowledge := 0.0
+	for e in _belt:
+		knowledge += e.m.s + 20.0 * float(e.m.get("r", 0.0))
+	return clampf(1.5 / (1.0 + knowledge / 400.0), 0.45, 1.5)
+
+
+## PULL - the second axis. Something anchored pulls for a long while; pull
+## while it does and the hook SETS or is LOST. Lost: the pull may persist for
+## another try, or leave. Set: the reel begins - the long accumulation.
+func _pull() -> void:
+	if _catching or not _hook.is_empty() or not _pending.is_empty():
 		return
 	for e in _belt:
 		if e.lineage == _lineage:
 			_status.text = "already on the belt"
 			return
 	var d := _candidate_difficulty()
-	var success := randf() < 1.0 - 0.75 * d
+	var nibble_bonus: float = NIBBLE_BONUS * float(_nibbles)
+	var p := clampf(0.1 + 0.6 * minf(_anchor, 1.0) - 0.2 * d + nibble_bonus, 0.03, 0.9)
+	var success := randf() < p
 	var wobbles := 3 if success else 1 + randi() % 3
 	_catching = true
 	var orb := CatchOrb.new()
+	orb.anchor = _hud.get_global_rect().get_center()
 	orb.hue = float(hash(str(_lineage)) % 360) / 360.0
 	orb.wobbles = wobbles
 	orb.success = success
@@ -316,38 +475,209 @@ func _attempt_catch() -> void:
 		orb.queue_free()
 		_catching = false
 		if success:
-			_commit_catch(d)
+			_begin_hook(d)
 		else:
-			_status.text = "broke free (%s catch) - again?" % _difficulty_word(d))
+			# lost - and by coin, the pull persists for another try or leaves
+			if randf() < 0.6:
+				_status.text = "the hook did not set - it is still pulling"
+			else:
+				_anchor = 0.0
+				_nibbles = 0
+				_last_strike_t = -999.0
+				_status.text = "the hook did not set - the pull is gone")
 
 
-func _commit_catch(difficulty: float) -> void:
-	var reward := _catch_reward(difficulty)
+## Hook set: the reel begins. Duration scales with integration difficulty (a
+## foreign creature takes longer to integrate) and the reward profile. During
+## the reel the ADRENOCHROME anneals: each step the genome moves toward the
+## party's attractors (high-acceptance members) and away from its repulsors,
+## under cooling noise - integrating with you, and pulling against it.
+func _begin_hook(d: float) -> void:
+	_anchor = 0.0
+	_nibbles = 0
+	_last_strike_t = -999.0
+	var profile_scale := 1.0
+	match _profile:
+		"anchor":
+			profile_scale = 0.7
+		"drift":
+			profile_scale = 1.4
+		"reel":
+			profile_scale = _retrieval_factor()
+	var members: Array = []
+	var accs: Array = []
+	for e in _belt:
+		accs.append(_acceptance(e))
+	for i in _belt.size():
+		var e: Dictionary = _belt[i]
+		members.append({
+			"traits": (e.traits as Dictionary).duplicate(),
+			"g": _member_genome(e),
+			"w": 0.1 + float(accs[i]),
+			"sign": 1.0 if float(accs[i]) >= 1.0 else -1.0,
+		})
+	# the PRIOR is always a gentle attractor - the anchor no party can lose
+	members.append({"traits": {}, "g": Voice.ProsodyWalk.PRIOR.duplicate(),
+		"w": 0.4, "sign": 1.0})
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash("adrenochrome") ^ hash(str(_lineage))
+	_hook = {
+		"rng": rng, "step": 0, "t": 0.0,
+		"duration": lerpf(45.0, 240.0, d) * profile_scale,
+		"members": members, "d": d, "reward": _catch_reward(d),
+		"traits": _traits.duplicate(),
+		"genome": Voice.ProsodyWalk._lineage_genome(_lineage) \
+			if _working_genome.is_empty() else _working_genome.duplicate(),
+	}
+	_hud_glyph.seed_hash = hash(str(_lineage))
+	_status.text = "hook set - the reel begins"
+
+
+## One anneal step: the adrenochrome moves through the party's force field.
+## Deterministic per (lineage, party snapshot); noise cools toward the freeze.
+func _adreno_step() -> void:
+	var h := _hook
+	var rng: RandomNumberGenerator = h.rng
+	var cool: float = 1.0 - float(h.step) / float(HOOK_STEPS)
+	for key in Voice.TRAIT_KEYS:
+		var x: float = float(h.traits.get(key, 0.0))
+		var force := 0.0
+		for m in h.members:
+			force += m.sign * m.w * (float((m.traits as Dictionary).get(key, 0.0)) - x)
+		x += 0.02 * force + rng.randfn(0.0, 0.035 * cool)
+		h.traits[key] = clampf(x, -1.0, 1.0)
+	for key in Voice.ProsodyWalk.PRIOR:
+		var prior: float = float(Voice.ProsodyWalk.PRIOR[key])
+		var span: float = maxf(absf(prior), 0.05)
+		var x: float = float(h.genome.get(key, prior))
+		var force := 0.0
+		for m in h.members:
+			force += m.sign * m.w * (float((m.g as Dictionary).get(key, prior)) - x)
+		x += 0.02 * force + rng.randfn(0.0, 0.04 * span * cool)
+		h.genome[key] = clampf(x, prior - 1.5 * span, prior + 1.5 * span)
+	h.step += 1
+
+
+## The freeze: the reel completes, the adrenochrome stops moving, and what it
+## became is presented for judgment.
+func _finish_hook() -> void:
+	var h := _hook
+	_hook = {}
+	# the catch: contortion releases, and the show JUMPS to the scene this
+	# seed owns - the reward, and part of the seed's genome forever
+	Director.set_aura(0.0)
+	Director.jump(hash(str(_lineage)))
+	_pending = {"d": h.d, "reward": h.reward,
+		"traits": h.traits, "genome": h.genome,
+		"scene": Director.scene_title(hash(str(_lineage)))}
+	var fit := _relative_fit_of(h.traits, _lineage, h.genome)
+	_card_glyph.seed_hash = hash(str(_lineage))
+	_card_glyph.fit = fit
+	_card_glyph.queue_redraw()
+	_card_label.text = "the adrenochrome froze · %s\n%s" % [
+		_seed_name(_lineage), _fit_verdict(fit)]
+	_card_label.add_theme_color_override("font_color", SeedGlyph.fit_color(fit))
+	_accept_btn.visible = true
+	_release_btn.visible = true
+	_card.visible = true
+	_status.text = "caught - hold or fold?"
+
+
+## How close a belt member sits to the CURRENT candidate (cosine in the shared
+## trait+genome space) - the HUD draws members as tiny planets only when this
+## is genuinely high; the cosmos stays sparse.
+func _member_closeness(e: Dictionary) -> float:
+	return _cosine(
+		_seed_vector(e.traits, e.lineage, _member_genome(e)),
+		_seed_vector(_traits, _lineage, _working_genome))
+
+
+## A seed's genome: the frozen adrenochrome if it carries one, else derived
+## from the lineage as always.
+func _member_genome(e: Dictionary) -> Dictionary:
+	if e.has("genome") and not (e.genome as Dictionary).is_empty():
+		return e.genome
+	return Voice.ProsodyWalk._lineage_genome(e.lineage)
+
+
+## Any candidate's fit (given explicit traits/genome, e.g. the mid-anneal
+## adrenochrome), RELATIVE to the party's own spread: raw cosines cluster too
+## tightly to see, so the scale stretches over what the bag actually contains.
+func _relative_fit_of(traits: Dictionary, lineage: Array, genome: Dictionary = {}) -> float:
+	if _belt.is_empty():
+		return 0.6
+	var party := _party_vector()
+	var sims: Array = [_cosine(_seed_vector(traits, lineage, genome), party)]
+	for e in _belt:
+		sims.append(_cosine(_seed_vector(e.traits, e.lineage, _member_genome(e)), party))
+	var norm := _relative_norm(sims)
+	return norm[0]
+
+
+func _fit_verdict(fit: float) -> String:
+	if fit < 0.25:
+		return "NOT a good fit for your party"
+	if fit < 0.5:
+		return "an uneasy fit - it would pull the party"
+	if fit < 0.75:
+		return "a workable fit"
+	return "kin - it belongs with this party"
+
+
+## Min-max stretch a list to [0,1]; a degenerate spread parks everyone at 0.6
+## (no information = no alarm).
+func _relative_norm(values: Array) -> Array:
+	var lo := 1e9
+	var hi := -1e9
+	for v in values:
+		lo = minf(lo, float(v))
+		hi = maxf(hi, float(v))
+	var out: Array = []
+	if hi - lo < 0.05:
+		for _v in values:
+			out.append(0.6)
+		return out
+	for v in values:
+		out.append((float(v) - lo) / (hi - lo))
+	return out
+
+
+## Accept the FROZEN creature: it joins the belt with its annealed traits and
+## adrenochrome genome, and - the payoff - the working candidate BECOMES it:
+## the stream restarts so you hear what you caught.
+func _accept_catch() -> void:
+	if _pending.is_empty():
+		return
+	var reward: float = _pending.reward
 	for e in _belt:
 		if _is_prefix(e.lineage, _lineage):
-			e.m.catches += 1        # its line lives on - attachment, earned
-			e.m.r += reward * 0.5   # ancestors share the catch
+			e.m.catches += 1
+			e.m.r += reward * 0.5
+	_traits = (_pending.traits as Dictionary).duplicate()
+	_working_genome = (_pending.genome as Dictionary).duplicate()
 	_belt.append({
 		"lineage": _lineage.duplicate(), "traits": _traits.duplicate(),
+		"genome": _working_genome.duplicate(),
+		"scene": _pending.get("scene", ""),
 		"m": {"s": 0.0, "acts": 1, "restores": 0, "evolves": 0, "catches": 0,
-			"r": reward, "d": difficulty,
+			"r": reward, "d": _pending.d,
 			"t": int(Time.get_unix_time_from_system())},
 	})
 	while _belt.size() > BELT_MAX:
 		_belt.pop_front()
-	_rebuild_belt()
+	_pending = {}
+	_card.visible = false
+	_rebuild_belt()                  # every member's colour re-attunes here
 	_persist()
-	_status.text = "caught! +%.1f (belt %d/%d)" % [reward, _belt.size(), BELT_MAX]
+	_status.text = "accepted +%.1f - hear what you caught (belt %d/%d)" % [
+		reward, _belt.size(), BELT_MAX]
+	_apply()
 
 
-func _difficulty_word(d: float) -> String:
-	if d < 0.25:
-		return "easy"
-	if d < 0.5:
-		return "firm"
-	if d < 0.75:
-		return "hard"
-	return "wild"
+func _release_catch() -> void:
+	_pending = {}
+	_card.visible = false
+	_status.text = "released - nothing changes"
 
 
 func _restore_capture(idx: int) -> void:
@@ -358,7 +688,11 @@ func _restore_capture(idx: int) -> void:
 	entry.m.acts += 1
 	_lineage = (entry.lineage as Array).duplicate()
 	_traits = (entry.traits as Dictionary).duplicate()
+	_working_genome = (entry.get("genome", {}) as Dictionary).duplicate()
 	_throw_ms = Time.get_ticks_msec()
+	# the seed's scene is part of its identity: restoring it returns there
+	if not String(entry.get("scene", "")).is_empty():
+		Director.jump(hash(str(_lineage)))
 	_update_reading_label()
 	_persist()
 	_apply()
@@ -383,12 +717,72 @@ func _seed_name(lineage: Array) -> String:
 func _update_reading_label() -> void:
 	_reading_label.text = "%s · %s catch" % [
 		_seed_name(_lineage), _difficulty_word(_candidate_difficulty())]
+	if _hud_glyph != null and is_instance_valid(_hud_glyph):
+		_hud_glyph.seed_hash = hash(str(_lineage))
+		_hud_glyph.fit = _relative_fit_of(_traits, _lineage, _working_genome)
+		_hud_glyph.queue_redraw()
 
 
-## Acceptance: catch rewards (weighted heavily - a catch is a decision) plus
-## hold time, per play, relative to the belt's collective average. 1.0x = an
-## average seed; above = the belt favors it. The profile shapes how reward is
-## EARNED; this reads it uniformly.
+func _difficulty_word(d: float) -> String:
+	if d < 0.25:
+		return "easy"
+	if d < 0.5:
+		return "firm"
+	if d < 0.75:
+		return "hard"
+	return "wild"
+
+
+# ---- similarity: the party, the vectors, the colours -----------------------
+
+
+## A seed as a vector: its traits plus its genome (as deltas off the PRIOR),
+## the space the constellation colours attune in. An explicit genome (frozen
+## or mid-anneal adrenochrome) takes precedence over lineage derivation.
+func _seed_vector(traits: Dictionary, lineage: Array, genome: Dictionary = {}) -> PackedFloat32Array:
+	var v := PackedFloat32Array()
+	for key in Voice.TRAIT_KEYS:
+		v.append(float(traits.get(key, 0.0)))
+	var g: Dictionary = genome if not genome.is_empty() \
+		else Voice.ProsodyWalk._lineage_genome(lineage)
+	for key in Voice.ProsodyWalk.PRIOR:
+		var prior: float = float(Voice.ProsodyWalk.PRIOR[key])
+		v.append((float(g.get(key, prior)) - prior) / maxf(absf(prior), 0.001))
+	return v
+
+
+## The party's centre: acceptance-weighted mean of the belt's vectors.
+func _party_vector() -> PackedFloat32Array:
+	var dims := Voice.TRAIT_KEYS.size() + Voice.ProsodyWalk.PRIOR.size()
+	var v := PackedFloat32Array()
+	v.resize(dims)
+	if _belt.is_empty():
+		return v
+	var total := 0.0
+	for e in _belt:
+		var w := 0.1 + _acceptance(e)
+		total += w
+		var sv := _seed_vector(e.traits, e.lineage)
+		for i in dims:
+			v[i] += sv[i] * w
+	for i in dims:
+		v[i] /= maxf(total, 0.001)
+	return v
+
+
+func _cosine(a: PackedFloat32Array, b: PackedFloat32Array) -> float:
+	var dot := 0.0
+	var na := 0.0
+	var nb := 0.0
+	for i in mini(a.size(), b.size()):
+		dot += a[i] * b[i]
+		na += a[i] * a[i]
+		nb += b[i] * b[i]
+	if na < 0.000001 or nb < 0.000001:
+		return 0.0
+	return dot / (sqrt(na) * sqrt(nb))
+
+
 func _seed_value(e: Dictionary) -> float:
 	return 20.0 * float(e.m.get("r", 0.0)) + e.m.s / 30.0
 
@@ -408,10 +802,16 @@ func _rebuild_belt() -> void:
 	for child in _belt_rows.get_children():
 		child.queue_free()
 	_inv_labels = []
+	_inv_glyphs = []
 	for i in _belt.size():
 		var entry: Dictionary = _belt[i]
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 6)
+		var glyph := SeedGlyph.new()
+		glyph.custom_minimum_size = Vector2(24, 24)
+		glyph.seed_hash = hash(str(entry.lineage))
+		row.add_child(glyph)
+		_inv_glyphs.append(glyph)
 		var slot := Button.new()
 		slot.text = _seed_name(entry.lineage)
 		slot.custom_minimum_size = Vector2(96, 26)
@@ -422,7 +822,7 @@ func _rebuild_belt() -> void:
 		metrics.add_theme_font_size_override("font_size", 11)
 		metrics.modulate = Color(1, 1, 1, 0.65)
 		metrics.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		metrics.mouse_filter = Control.MOUSE_FILTER_PASS   # tooltips need hover
+		metrics.mouse_filter = Control.MOUSE_FILTER_PASS
 		row.add_child(metrics)
 		_inv_labels.append(metrics)
 		var release := Button.new()
@@ -435,7 +835,19 @@ func _rebuild_belt() -> void:
 	_refresh_inventory()
 
 
+## The bag keeps reflecting fit: each member's colour is its RELATIVE standing
+## in the current party - similarity to the centre blended with its own
+## acceptance record (the receptance) - restretched every refresh, so an
+## Accept genuinely shifts every colour.
 func _refresh_inventory() -> void:
+	var party := _party_vector()
+	var sims: Array = []
+	var accs: Array = []
+	for e in _belt:
+		sims.append(_cosine(_seed_vector(e.traits, e.lineage), party))
+		accs.append(_acceptance(e))
+	var sim_n := _relative_norm(sims)
+	var acc_n := _relative_norm(accs)
 	for i in mini(_belt.size(), _inv_labels.size()):
 		var e: Dictionary = _belt[i]
 		var label: Label = _inv_labels[i]
@@ -443,13 +855,14 @@ func _refresh_inventory() -> void:
 			continue
 		label.text = "%.0fs·%d× %.1fx" % [e.m.s, int(e.m.acts), _acceptance(e)]
 		label.tooltip_text = _seed_tooltip(e)
+		if i < _inv_glyphs.size() and is_instance_valid(_inv_glyphs[i]):
+			var glyph: SeedGlyph = _inv_glyphs[i]
+			glyph.fit = 0.55 * float(sim_n[i]) + 0.45 * float(acc_n[i])
+			glyph.queue_redraw()
 
 
-## The seed as an inspectable property: its behavioral ledger plus what its
-## genome DOES to the model - temperament, breath, gravity, ring, strike bar -
-## and the voice it carries.
 func _seed_tooltip(e: Dictionary) -> String:
-	var g: Dictionary = Voice.ProsodyWalk._lineage_genome(e.lineage)
+	var g: Dictionary = _member_genome(e)
 	var tv := ""
 	for key in Voice.TRAIT_KEYS:
 		var v := float((e.traits as Dictionary).get(key, 0.0))
@@ -467,7 +880,8 @@ func _seed_tooltip(e: Dictionary) -> String:
 		g.heat, g.baseline, 0.693 / maxf(g.settle, 0.001),
 		g.breath_span, g.lean, g.gravity, g.ring, g.act_thr,
 		g.pace_hot, g.pace_calm,
-		("voice: " + tv) if not tv.is_empty() else "voice: near default"]
+		(("voice: " + tv) if not tv.is_empty() else "voice: near default")
+			+ (("\nhaunts " + str(e.scene)) if not str(e.get("scene", "")).is_empty() else "")]
 
 
 # ---- the implicit loop: debounce -> persist + apply ------------------------
@@ -484,9 +898,6 @@ func _process(delta: float) -> void:
 		_persist()
 		if _restart_pending:
 			_apply()
-	# The attention reward: while a reading plays, its exact seed and every
-	# belt ANCESTOR of it accrue hold time - a parent earns from its line.
-	# Moving on stops the accrual; that IS the signal.
 	if _stream != null and is_instance_valid(_stream) and _stream.words.size() > 0:
 		for e in _belt:
 			if e.lineage == _lineage or _is_prefix(e.lineage, _lineage):
@@ -496,6 +907,60 @@ func _process(delta: float) -> void:
 			_metrics_t = 0.0
 			_refresh_inventory()
 			_persist()
+		# the latent water: strikes LATCH an anchor that pulls for a long
+		# while (slow decay), and sometimes just leaves. Easy fishing - no
+		# reflexes; the HUD shows the line bending for as long as it lasts.
+		if _hook.is_empty():
+			var strike := _fresh_strike()
+			var s: float = strike.x
+			if s > 0.0:
+				_anchor = clampf(maxf(_anchor, 0.45 + 0.45 * minf(s, 1.2)), 0.0, 1.2)
+				# a genuinely NEW strike (not just the same one still trailing)
+				# is a nibble - sitting through several steadies the odds
+				if strike.y > _last_strike_t + 0.01:
+					_last_strike_t = strike.y
+					_nibbles = mini(_nibbles + 1, NIBBLE_MAX)
+			_anchor *= exp(-delta / ANCHOR_TAU)
+			if _anchor < 0.05:
+				_anchor = 0.0
+				_nibbles = 0
+				_last_strike_t = -999.0
+			_vanish_t += delta
+			if _vanish_t >= ANCHOR_CHECK:
+				_vanish_t = 0.0
+				# anchored searching holds its pull; drifting lines lose theirs
+				if _anchor > 0.0 and randf() < float(PROFILES[_profile].vanish):
+					_anchor = 0.0
+					_nibbles = 0
+					_last_strike_t = -999.0
+			_status_t2 += delta
+			if _status_t2 >= 0.5 and _pending.is_empty() and not _catching:
+				_status_t2 = 0.0
+				if _anchor > 0.1:
+					_status.text = "something is pulling (%d nibble%s felt) - set the hook when ready" % [
+						_nibbles, "" if _nibbles == 1 else "s"]
+				elif _status.text.begins_with("something is pulling"):
+					_status.text = "the line is slack"
+		else:
+			# THE REEL: wall time advances the anneal; the adrenochrome forms
+			_hook.t += delta
+			var progress: float = clampf(_hook.t / float(_hook.duration), 0.0, 1.0)
+			while _hook.step < int(progress * HOOK_STEPS):
+				_adreno_step()
+			# the metamorphosis: pulling the fish closer contorts the CURRENT
+			# scene, and a foreign catch contorts it BIG
+			Director.set_aura(progress * (0.4 + 1.1 * float(_hook.d)))
+			_status_t2 += delta
+			if _status_t2 >= 0.5:
+				_status_t2 = 0.0
+				var left := int(maxf(float(_hook.duration) - _hook.t, 0.0))
+				_status.text = "reeling - the adrenochrome is forming (%d:%02d)" % [
+					int(left / 60.0), left % 60]
+				_hud_glyph.fit = _relative_fit_of(_hook.traits, _lineage, _hook.genome)
+				_hud_glyph.queue_redraw()
+			if progress >= 1.0:
+				_finish_hook()
+		_hud.queue_redraw()
 
 
 func _exit_tree() -> void:
@@ -517,6 +982,7 @@ func _persist() -> void:
 	cfg.set_value("synth", "lineage", _lineage)
 	cfg.set_value("synth", "belt", _belt)
 	cfg.set_value("synth", "profile", _profile)
+	cfg.set_value("synth", "adreno", _working_genome)
 	cfg.save(CFG)
 
 
@@ -527,13 +993,16 @@ func _load_persisted() -> void:
 		_traits = cfg.get_value("synth", "traits", {})
 		_lineage = cfg.get_value("synth", "lineage", [1])
 		_belt = cfg.get_value("synth", "belt", [])
-		_profile = str(cfg.get_value("synth", "profile", "snap"))
+		_profile = str(cfg.get_value("synth", "profile", "anchor"))
+		# older saves used the reward-flavour names; map them onto the modes
+		if _profile == "snap":
+			_profile = "anchor"
+		elif _profile == "hunt":
+			_profile = "reel"
 		if not PROFILES.has(_profile):
-			_profile = "snap"
-		if _profile_btn != null:
-			_profile_btn.select(maxi(0, (PROFILES.keys() as Array).find(_profile)))
-			_profile_btn.tooltip_text = PROFILES[_profile].tip
-		# migrate entries kept before the metrics/reward ledger existed
+			_profile = "anchor"
+		_working_genome = cfg.get_value("synth", "adreno", {})
+		_sync_switchboard()
 		for e in _belt:
 			if not e.has("m"):
 				e.m = {"s": 0.0, "acts": 0, "restores": 0, "evolves": 0,
@@ -541,21 +1010,36 @@ func _load_persisted() -> void:
 			if not e.m.has("r"):
 				e.m.r = 0.0
 				e.m.d = 0.35
-			e.erase("active")        # toggles are gone; the belt integrates itself
+			e.erase("active")
 	if _traits.is_empty():
-		_traits = _background_traits()   # the population-average background
+		_traits = _background_traits()
 	_update_reading_label()
 	_rebuild_belt()
 
 
-## Start the stream, or restart the running one in place with the current text
-## and voice. The scene session persists across restarts.
+## The population-average background: the voice before any seed exists.
+func _background_traits() -> Dictionary:
+	var t := {}
+	if _belt.is_empty():
+		return t
+	var total := 0.0
+	for e in _belt:
+		total += 0.1 + _acceptance(e)
+	for key in Voice.TRAIT_KEYS:
+		var v := 0.0
+		for e in _belt:
+			v += float((e.traits as Dictionary).get(key, 0.0)) * (0.1 + _acceptance(e))
+		t[key] = v / maxf(total, 0.001)
+	return t
+
+
 func _apply() -> void:
 	_restart_pending = false
 	var text := _text.text.strip_edges()
 	if text.is_empty():
 		_status.text = "write something and it will speak"
 		return
+	_loop_len = 0.0
 	var spec := _current_spec()
 	if _stream != null and is_instance_valid(_stream):
 		_stream.restart(text, spec)
@@ -563,19 +1047,20 @@ func _apply() -> void:
 	var stream: VoiceStream = preload("res://scripts/voice_stream.gd").new()
 	stream.setup(text, spec, "user://synth/take_%06x" % (hash(str(_lineage)) & 0xFFFFFF))
 	stream.completed.connect(func(dur: float, _wav: String):
-		_status.text = "take complete (%.1fs) - looping, export-ready" % dur)
+		_loop_len = dur)
 	_stream = stream
 	if begin_stream.is_valid():
 		begin_stream.call(stream)
 
 
-## The catch animation, code-drawn: an orb in the seed's own hue closes on the
-## voice, wobbles like the catch is being fought, then either settles with a
-## soft ring (caught) or bursts into shards (broke free). Purely visual - the
-## roll is decided before the orb appears; the orb TELLS you.
+## The catch animation, anchored beside the button that was pressed: an orb in
+## the seed's hue closes on the voice, wobbles (each a contest), then settles
+## with a ring (caught) or bursts into shards (slipped away). The roll is
+## decided before the orb appears; the orb TELLS you.
 class CatchOrb:
 	extends Control
 	signal finished
+	var anchor := Vector2.ZERO
 	var hue := 0.5
 	var wobbles := 3
 	var success := true
@@ -599,37 +1084,179 @@ class CatchOrb:
 			finished.emit()
 
 	func _draw() -> void:
-		var centre := get_viewport_rect().size * 0.5 + Vector2(0.0, 120.0)
+		var centre := anchor if anchor != Vector2.ZERO \
+			else get_viewport_rect().size * 0.5
 		var body := Color.from_hsv(hue, 0.6, 0.95)
 		var rim := Color(1, 1, 1, 0.9)
 		if _t < CLOSE:
-			# closing in: a wide ring collapses onto the voice
 			var u := _t / CLOSE
-			var r := lerpf(90.0, 26.0, u * u)
+			var r := lerpf(56.0, 18.0, u * u)
 			draw_arc(centre, r, 0.0, TAU, 40, Color(body, u * 0.9), 3.0)
-			draw_circle(centre, 26.0 * u, Color(body, u * 0.55))
+			draw_circle(centre, 18.0 * u, Color(body, u * 0.55))
 			return
 		var tw := _t - CLOSE
 		if tw < wobbles * WOBBLE:
-			# the fight: the orb rocks - each wobble a fresh contest
 			var k := int(tw / WOBBLE)
 			var u := fmod(tw, WOBBLE) / WOBBLE
-			var rock: float = sin(u * TAU * 1.5) * (1.0 - u) * 10.0 * (1.0 + 0.3 * k)
+			var rock: float = sin(u * TAU * 1.5) * (1.0 - u) * 8.0 * (1.0 + 0.3 * k)
 			var pos := centre + Vector2(rock, -absf(rock) * 0.3)
-			draw_circle(pos, 26.0, Color(body, 0.85))
-			draw_arc(pos, 26.0, 0.0, TAU, 32, rim, 2.0)
-			draw_circle(pos + Vector2(-7, -8), 5.0, Color(1, 1, 1, 0.5))
+			draw_circle(pos, 18.0, Color(body, 0.85))
+			draw_arc(pos, 18.0, 0.0, TAU, 32, rim, 2.0)
+			draw_circle(pos + Vector2(-5, -6), 3.5, Color(1, 1, 1, 0.5))
 			return
-		# the verdict
 		var u := (_t - CLOSE - wobbles * WOBBLE) / RESULT
 		if success:
-			# settle: the orb rests, a soft ring blesses it
-			draw_circle(centre, 26.0, Color(body, 0.85 * (1.0 - u * 0.4)))
-			draw_arc(centre, 26.0 + u * 46.0, 0.0, TAU, 40,
+			draw_circle(centre, 18.0, Color(body, 0.85 * (1.0 - u * 0.4)))
+			draw_arc(centre, 18.0 + u * 34.0, 0.0, TAU, 40,
 				Color(1, 1, 1, 0.7 * (1.0 - u)), 2.5)
 		else:
-			# broke free: shards fly, the orb is gone
 			for i in 7:
 				var a := TAU * float(i) / 7.0 + hue * TAU
-				var p := centre + Vector2(cos(a), sin(a)) * (12.0 + u * 70.0)
-				draw_circle(p, 4.5 * (1.0 - u), Color(body, 0.8 * (1.0 - u)))
+				var p := centre + Vector2(cos(a), sin(a)) * (9.0 + u * 52.0)
+				draw_circle(p, 3.5 * (1.0 - u), Color(body, 0.8 * (1.0 - u)))
+
+
+## The HUD: the water, drawn like an LCD readout. The candidate's
+## constellation lives at the left; the LINE runs from it across the panel -
+## slack and faint when nothing pulls, bending and throbbing downward while
+## something is anchored (for as long as it pulls - minutes, not moments);
+## during the reel a progress arc winds around the constellation and the
+## countdown ticks in the corner while the adrenochrome forms.
+class Hud:
+	extends Control
+	var editor: SynthEditor
+
+	func _draw() -> void:
+		if editor == null:
+			return
+		var s := size
+		var glyph_c := Vector2(34.0, s.y * 0.5)
+		var t := Time.get_ticks_msec() / 1000.0
+		var line_col := Color(0.4, 0.85, 0.65, 0.35)
+		var y0: float = s.y * 0.5
+		if not editor._hook.is_empty():
+			# the reel: progress arc + countdown
+			var progress: float = clampf(editor._hook.t / float(editor._hook.duration), 0.0, 1.0)
+			draw_arc(glyph_c, 30.0, -PI / 2.0, -PI / 2.0 + TAU * progress, 48,
+				Color(1.0, 0.75, 0.3, 0.9), 2.5)
+			var left := int(maxf(float(editor._hook.duration) - editor._hook.t, 0.0))
+			draw_string(get_theme_default_font(), Vector2(s.x - 52.0, s.y - 10.0),
+				"%d:%02d" % [int(left / 60.0), left % 60], HORIZONTAL_ALIGNMENT_LEFT,
+				-1, 12, Color(1.0, 0.75, 0.3, 0.9))
+			# tension: the line thrums taut while reeling
+			var pts := PackedVector2Array()
+			for i in 25:
+				var u := float(i) / 24.0
+				var x := lerpf(64.0, s.x - 12.0, u)
+				pts.append(Vector2(x, y0 + sin(u * 14.0 + t * 9.0) * 2.0))
+			draw_polyline(pts, Color(1.0, 0.75, 0.3, 0.5), 1.0)
+			_draw_party_planets(s)   # the attractors, visible while they pull
+			return
+		# the line: slack when quiet, pulled into a deepening belly while
+		# something is anchored - throbbing slowly, the easy-fishing signal.
+		# The catch's DIFFICULTY is animated into the same line: a hard catch
+		# trembles rough and shifts toward red, an easy one stays calm and
+		# green - so a failed pull reads as "it was always going to be hard",
+		# not an unexplained coin flip.
+		var pull: float = clampf(editor._anchor, 0.0, 1.2)
+		var d: float = editor._candidate_difficulty() if pull > 0.05 else 0.0
+		var belly: float = pull * (s.y * 0.3) * (1.0 + 0.15 * sin(t * 2.2))
+		var pts := PackedVector2Array()
+		for i in 25:
+			var u := float(i) / 24.0
+			var x := lerpf(64.0, s.x - 12.0, u)
+			var jitter: float = sin(u * 41.0 + t * 23.0) * d * 5.0 * pull
+			pts.append(Vector2(x, y0 + sin(u * PI) * belly + jitter))
+		var c := line_col if pull <= 0.05 \
+			else Color.from_hsv(lerpf(0.42, 0.0, clampf(d, 0.0, 1.0)), 0.85, 0.9,
+				0.5 + 0.4 * minf(pull, 1.0))
+		draw_polyline(pts, c, 1.5)
+		# the CAST POINT (the green dot) respects the mode: anchored it holds
+		# mid-water; drifting it recedes with the cage as the wire's scale
+		# grows (the caption says in what units); reel mode sits close in
+		var cast_u := 0.5
+		match editor._profile:
+			"drift":
+				cast_u = lerpf(0.45, 0.94, editor._drift_norm())
+			"reel":
+				cast_u = 0.35
+		var cp := Vector2(lerpf(64.0, s.x - 12.0, cast_u),
+			y0 + sin(cast_u * PI) * belly)
+		var cast_r: float = lerpf(3.2, 1.6, editor._drift_norm())   # far = small
+		draw_circle(cp, cast_r + (1.2 * sin(t * 2.2) if pull > 0.05 else 0.0),
+			Color(0.5, 0.95, 0.8, 0.75))
+		if editor._profile == "drift":
+			draw_string(get_theme_default_font(), Vector2(66.0, s.y - 8.0),
+				editor._drift_caption(), HORIZONTAL_ALIGNMENT_LEFT, -1, 11,
+				Color(0.4, 0.85, 0.65, 0.7))
+		if pull > 0.05:
+			# nibbles felt so far - brightening ticks above the line; fill up
+			# toward NIBBLE_MAX as patience accumulates
+			for i in editor._nibbles:
+				var nx := lerpf(70.0, s.x - 20.0, float(i) / float(SynthEditor.NIBBLE_MAX - 1))
+				draw_circle(Vector2(nx, y0 - 14.0), 2.0, Color(1.0, 0.9, 0.5, 0.75))
+		_draw_party_planets(s)
+
+	## The party's influence in the cosmos - SPARSELY: a member appears as a
+	## tiny planet only when it is genuinely close to the current candidate,
+	## drifting nearer the constellation the closer it sits. Never forced:
+	## a distant party leaves an empty sky.
+	func _draw_party_planets(s: Vector2) -> void:
+		var threshold: float = editor._planet_threshold()
+		for i in editor._belt.size():
+			var e: Dictionary = editor._belt[i]
+			var closeness: float = editor._member_closeness(e)
+			if closeness < threshold:
+				continue
+			var u: float = clampf((1.0 - closeness) / maxf(1.0 - threshold, 0.05), 0.06, 1.0)
+			var rng := RandomNumberGenerator.new()
+			rng.seed = hash(str(e.lineage)) ^ 77
+			var pos := Vector2(
+				lerpf(74.0, s.x * 0.8, u),
+				s.y * 0.5 + rng.randf_range(-0.3, 0.3) * s.y)
+			var r: float = 2.0 + 2.0 * clampf((closeness - 0.72) / 0.28, 0.0, 1.0)
+			var col := Color.WHITE
+			if i < editor._inv_glyphs.size() and is_instance_valid(editor._inv_glyphs[i]):
+				col = SeedGlyph.fit_color(editor._inv_glyphs[i].fit)
+			draw_circle(pos, r, Color(col, 0.8))
+			# the ring that makes it a planet, tilted by its own seed
+			var tilt := rng.randf_range(0.2, 0.9)
+			draw_arc(pos, r + 1.6, tilt, tilt + PI * 1.1, 12, Color(col, 0.45), 1.0)
+
+
+## A seed drawn as a constellation: the LINES are seeded random (the seed's
+## own fingerprint); the COLOUR is the fit wheel - a relative scalar projected
+## red (a poor fit) through amber to green (kin), loud on purpose: a colour
+## ring frames the glyph, and a poor fit FRAZZLES the constellation itself
+## (scattered points, jagged lines) while kin draws calm and tight. When the
+## party changes, every colour shifts; how, you learn by doing it.
+class SeedGlyph:
+	extends Control
+	var seed_hash := 0
+	var fit := 0.6                   # 0 poor .. 1 kin, RELATIVE within the bag
+
+	static func fit_color(f: float) -> Color:
+		return Color.from_hsv(lerpf(0.0, 0.42, clampf(f, 0.0, 1.0)), 0.9, 1.0)
+
+	func _draw() -> void:
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_hash
+		var s := size
+		var col := fit_color(fit)
+		var frazzle: float = (1.0 - clampf(fit, 0.0, 1.0)) * minf(s.x, s.y) * 0.14
+		var n := 5 + rng.randi() % 4
+		var pts: Array = []
+		for _i in n:
+			var p := Vector2(
+				rng.randf_range(s.x * 0.18, s.x * 0.82),
+				rng.randf_range(s.y * 0.18, s.y * 0.82))
+			# a poor fit scatters its stars off their seats
+			p += Vector2(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0)) * frazzle
+			pts.append(p)
+		for i in range(1, n):
+			var j := rng.randi_range(0, i - 1)
+			draw_line(pts[i], pts[j], Color(col, 0.55), 1.0)
+		for p in pts:
+			draw_circle(p, 2.0, col)
+		# the ring: the fit colour, unmissable even at 24 px
+		draw_arc(s * 0.5, minf(s.x, s.y) * 0.5 - 1.5, 0.0, TAU, 32, Color(col, 0.9), 2.0)

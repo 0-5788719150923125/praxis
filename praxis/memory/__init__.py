@@ -113,6 +113,11 @@ MEMORY_REGISTRY: Dict[str, Optional[dict]] = {
         dense_c="kan",
         num_grids=6,
         grid_spacing="geometric",
+        # Sparse KAN: the costly third core fires only at the 4th recurrent step
+        # and every 4th after (current_depth % 4 == 3) - 5 of 21 depths - so it
+        # runs ~1/4 as often. The two cheap cores (energy, EML) stay dense; on
+        # skipped steps the blend renormalizes over just those two.
+        kan_sparse=dict(period=4, phase=3),
         layers=2,
         expansion=0.5,
         chunk_size=64,

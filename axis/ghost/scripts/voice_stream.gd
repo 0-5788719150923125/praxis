@@ -27,10 +27,15 @@ signal completed(dur: float, wav_path: String)
 signal restarted(base: float)
 
 const PREBUFFER := 0.3              # synthesized + pushed before the thread takes over
-const TARGET_LEAD := 0.6            # audio kept ahead of the playhead (also retune latency)
+# Deep lead: the ring holds seconds of finished audio, so even a machine
+# saturated by a heavy scene (which can preempt this worker AND the audio
+# callback) has a fat cushion. Nothing needs low mid-stream latency anymore -
+# the sliders that once retuned live are gone; the loop is throw/restart.
+const TARGET_LEAD := 2.5
 const SEG_CHUNK := 4                # segments per synth() call on the worker
 
 var words: Array = []               # main-thread copy for Subtitles (shared by reference)
+var events: Array = []              # planned strike times [{t, kind, a}] - the bites
 var take_base := ""                 # user://synth/take_<id> (wav + json on completion)
 var time_base := 0.0                # playback time at the current content's start
 
@@ -49,12 +54,14 @@ var _words_dirty := false
 var _done := false
 var _finish_info: Array = []        # [dur, wav_path] once, mutex-guarded
 var _emitted_done := false
+var _underruns := 0                 # telemetry: times the ring went dry (see worker)
 
 
 func setup(text: String, spec: Voice.Spec, base: String) -> void:
 	_spec = spec
 	take_base = base
-	_segs = Voice.plan(text, spec)
+	events.clear()
+	_segs = Voice.plan(text, spec, events)
 	_state = Voice.synth_state(spec)
 
 
@@ -90,7 +97,8 @@ func retune(spec: Voice.Spec) -> void:
 func restart(text: String, spec: Voice.Spec) -> void:
 	_stop_worker()
 	_spec = spec
-	_segs = Voice.plan(text, spec)
+	events.clear()
+	_segs = Voice.plan(text, spec, events)
 	_state = Voice.synth_state(spec)
 	_next_seg = 0
 	_pcm = PackedFloat32Array()
@@ -140,7 +148,9 @@ func _exit_tree() -> void:
 func _start_worker() -> void:
 	_cancel = false
 	_thread = Thread.new()
-	_thread.start(_worker_loop)
+	# HIGH priority: when a heavy scene saturates every core, the voice must
+	# win the scheduler - the render is ALLOWED to lag; the audio is not.
+	_thread.start(_worker_loop, Thread.PRIORITY_HIGH)
 
 
 func _stop_worker() -> void:
@@ -152,10 +162,11 @@ func _stop_worker() -> void:
 
 
 func _worker_loop() -> void:
+	var started := false
 	while not _cancel:
 		var worked := false
+		var queued := _generator_capacity() - int(_playback.get_frames_available())
 		if _next_seg < _segs.size():
-			var queued := _generator_capacity() - int(_playback.get_frames_available())
 			var consumed := maxi(0, _pushed - queued)
 			if float(_pcm.size() - consumed) / Voice.SR < TARGET_LEAD:
 				_synth_one_chunk()
@@ -163,6 +174,15 @@ func _worker_loop() -> void:
 				worked = true
 				if _next_seg >= _segs.size():
 					_finish_take()
+		# underrun telemetry: the generator ring going dry mid-take is the one
+		# thing that must never happen silently - if you ever see this line,
+		# the audio stuttered and we know exactly which layer failed
+		if started and queued <= 0 and _pushed > 0:
+			_underruns += 1
+			if _underruns == 1 or _underruns % 50 == 0:
+				print("ghost: VOICE UNDERRUN x%d (ring dry - report this)" % _underruns)
+		if queued > 0:
+			started = true
 		_push_available()
 		if not worked:
 			OS.delay_msec(4)

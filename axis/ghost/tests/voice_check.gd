@@ -171,6 +171,16 @@ func _check_sentence() -> int:
 	if words.size() > 0 and absf(words[words.size() - 1].t1 - result.dur) > 1.0:
 		print("voice_check: FAIL - last word ends %.2fs but audio is %.2fs" % [words[words.size() - 1].t1, result.dur])
 		bad += 1
+	# authored %HESITATION: parses into a filled "um" shown as an ellipsis
+	var hsegs := Voice_.plan("%HESITATION welcome, welcome.", Voice_.Spec.from_traits({}))
+	var found_hesit := false
+	for s in hsegs:
+		if s.text == "…":
+			found_hesit = true
+			break
+	if not found_hesit:
+		print("voice_check: FAIL - %HESITATION did not produce a filled pause word")
+		bad += 1
 	DirAccess.make_dir_recursive_absolute(OUT_DIR)
 	var path := Voice_.write_wav(OUT_DIR + "/voice_sentence.wav", result.pcm)
 	# the sidecar timing map, exactly as the synth editor writes it - so a

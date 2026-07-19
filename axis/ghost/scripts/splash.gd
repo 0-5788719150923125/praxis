@@ -10,13 +10,13 @@ class_name Splash
 ##   Auto      - the seeded show; the Director picks scenes, cuts on the music.
 ##   Manual    - the workspace + storyboards; orchestrate the show by hand.
 ##   Synthesis - write a script, ghost speaks it; the show reacts to the voice.
-##   Mask Lab  - chroma-key effects over an imported video clip.
+##   Masking  - chroma-key effects over an imported video clip.
 ## A mode button *is* start - there is no separate start button.
 ##
 ## One Import dialog accepts audio OR video; the extension routes it to the
 ## right slot (VIDEO_EXTS), both slots are remembered independently
 ## (user://ghost.cfg) and shown side by side. Auto/Manual use the song slot,
-## Mask Lab uses the clip slot, Synthesis needs no import at all. Clicking a
+## Masking uses the clip slot, Synthesis needs no import at all. Clicking a
 ## mode calls back into main (start_session / start_synth / start_mask), then
 ## frees the splash. Built in code (no .tscn).
 
@@ -93,7 +93,7 @@ func _build_ui() -> void:
 
 	var load_btn := Button.new()
 	load_btn.text = "Import…"
-	load_btn.tooltip_text = "A song for Auto/Manual, or a video clip for Mask Lab"
+	load_btn.tooltip_text = "A song for Auto/Manual, or a video clip for Masking"
 	load_btn.custom_minimum_size = Vector2(150, 40)
 	load_btn.pressed.connect(_open_file_dialog)
 	song_row.add_child(load_btn)
@@ -112,7 +112,7 @@ func _build_ui() -> void:
 		"uses the song", _start_manual)
 	_add_mode_row(col, "Synthesis  ▶", "Write a script; ghost speaks it and the show reacts to the voice.",
 		"no import needed", _start_synth)
-	_add_mode_row(col, "Mask Lab  ▶", "Chroma-key effects over a video - markers, tracks, renders.",
+	_add_mode_row(col, "Masking  ▶", "Chroma-key effects over a video - markers, tracks, renders.",
 		"uses the clip", _start_mask)
 
 	col.add_child(_spacer(6))
@@ -155,7 +155,7 @@ func _build_ui() -> void:
 
 ## One mode row: the start button on the left, description + input hint beside
 ## it. Every mode is always clickable - a missing import is handled by the mode
-## itself (Auto idles without a song, Mask Lab prompts for a clip).
+## itself (Auto idles without a song, Masking prompts for a clip).
 func _add_mode_row(col: VBoxContainer, name: String, desc: String, uses: String, action: Callable) -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 16)

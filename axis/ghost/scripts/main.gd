@@ -11,9 +11,8 @@ const Bake := preload("res://scripts/bake.gd")
 
 var _splash: Node = null
 var _feedback: Node = null
-var _assistant: Node = null
+var _chrome: Node = null             # shared session furniture (exporter/assistant/feedback)
 var _workspace: Node = null
-var _exporter: Node = null
 var _mask_editor: Node = null
 var _synth_editor: Node = null
 var _synth_active := false           # a synth take is playing as the session
@@ -37,12 +36,6 @@ func _ready() -> void:
 	if args.has("--mask-edit"):
 		_open_mask_editor(_arg_value(args, "--mask-edit"))
 		return
-	# Synthesis mode: the voice editor (see synth_editor.gd). Unlike mask mode it
-	# DOES use Director/Spectrum - a rendered take plays as a normal session so the
-	# scenes react to the narration - but the session starts on Speak, not at boot.
-	if args.has("--synth"):
-		_open_synth_editor()
-		return
 	_export_mode = args.has("--export")
 	if _export_mode:
 		# Background render: Boot (first autoload) already hid the window as early as
@@ -57,25 +50,25 @@ func _ready() -> void:
 	# upscale of the 1080p base - while the coordinate system scales *proportionally*, so
 	# UI and scene content keep their relative size and snap back exactly when the window
 	# returns to its original size. (Export overrides this; see _apply_export_resolution.)
-	# The exporter is persistent (created once, never torn down): an in-flight render
-	# and its status must survive the song ending and the return to the home screen.
-	_exporter = preload("res://scripts/exporter.gd").new()
-	add_child(_exporter)
-	# Always present, regardless of the splash's Assistant dropdown (see
-	# splash.gd) - it's also the feedback browser (review/delete old
-	# submissions), which shouldn't require opting into AI dispatch to use.
-	# Assistant itself gates actually DISPATCHING anything on the persisted
-	# backend choice; this just controls whether the console exists at all.
-	# Persistent (created once, never torn down) for the same reason as the
-	# exporter: a queued/running claude subprocess and its conversation
-	# history must survive a song ending and a new session beginning, not get
-	# torn down and duplicated by the next _begin_session() call - see the
-	# signal (re)connect there.
-	_assistant = preload("res://scripts/assistant.gd").new()
-	add_child(_assistant)
-	# When the current song finishes: an AUTO session returns to the home screen; a
-	# MANUAL session is endless - loop the audio and leave the visualization alone.
+	# The CHROME is the shared session furniture - exporter, assistant, and the
+	# per-session ` feedback console - created ONCE here for every interactive
+	# mode, so a mode can never again ship without them (see chrome.gd for the
+	# lesson that forced this). Persistent across sessions by design: an
+	# in-flight export and a queued assistant dispatch must survive session
+	# churn and the return to the home screen.
+	_chrome = preload("res://scripts/chrome.gd").new()
+	add_child(_chrome)
+	# When the current song finishes: an AUTO session returns to the home screen;
+	# MANUAL and SYNTH sessions are endless - handled inside _on_song_finished.
 	Spectrum.song_finished.connect(_on_song_finished)
+	# Synthesis mode: the voice editor (see synth_editor.gd). Unlike mask mode it
+	# DOES use Director/Spectrum - a rendered take plays as a normal session so
+	# the scenes react to the narration - but the session starts on the first
+	# throw, not at boot. Checked here, BELOW the chrome, deliberately: synth is
+	# an interactive mode and gets the full furniture like every other.
+	if args.has("--synth"):
+		_open_synth_editor()
+		return
 	if _wants_direct_boot():
 		_begin_session()                 # CLI flags / --no-splash: skip the splash
 	else:
@@ -126,14 +119,7 @@ func _begin_session(audio_path := "") -> void:
 	_attach_subtitles()
 	if _export_mode:
 		return                         # render clean: no overlays (the Director fades the video ends)
-	_feedback = preload("res://scripts/feedback.gd").new()
-	add_child(_feedback)               # press ` to critique a scene
-	# _assistant itself is created once in _ready() (see the exporter's own
-	# persistence comment) - a fresh _feedback node needs a fresh connection
-	# to it every _begin_session() call, but the assistant instance and its
-	# in-flight/queued work must not be recreated.
-	if _assistant != null and is_instance_valid(_assistant):
-		_feedback.submitted.connect(_assistant.enqueue)
+	_feedback = _chrome.attach_feedback()   # press ` to critique a scene
 
 
 # The song ended. Manual mode never exits to the home screen: restart the audio in
@@ -166,12 +152,15 @@ func _end_session() -> void:
 		if not _feedback.closed.is_connected(_end_session):
 			_feedback.closed.connect(_end_session, CONNECT_ONE_SHOT)
 		return
-	for n in [_feedback, _workspace, _splash, _subtitles]:
+	for n in [_workspace, _splash, _subtitles]:
 		if n != null and is_instance_valid(n):
 			n.queue_free()
+	_chrome.detach_feedback()
 	_feedback = null
 	_workspace = null
 	_subtitles = null
+	Director.set_game_paced(false)
+	Director.set_aura(0.0)
 	Director.detach()
 	Spectrum.stop()
 	_show_splash()
@@ -218,20 +207,14 @@ func _arg_value(args: PackedStringArray, flag: String) -> String:
 ## as a fresh session (new fingerprint, new show); the take loops when it ends,
 ## like a manual session, so the show stays up while the user iterates.
 func _open_synth_editor() -> void:
-	# The exporter is persistent here for the same reason as in the normal flow:
-	# a synth take exports exactly like a song (the relaunch boots
-	# `--audio take.wav --export`, and the sidecar gives the render subtitles).
-	# Guarded: reached both from the splash (exporter already exists) and from a
-	# direct `--synth` boot (it doesn't).
-	if _exporter == null or not is_instance_valid(_exporter):
-		_exporter = preload("res://scripts/exporter.gd").new()
-		add_child(_exporter)
+	# No furniture wiring here: the chrome (exporter + assistant, created in
+	# _ready for every interactive mode) already covers it - a synth take
+	# exports exactly like a song, and ` feedback works over the running show.
 	var editor := preload("res://scripts/synth_editor.gd").new()
 	editor.begin_stream = _begin_synth_stream
 	_synth_editor = editor
 	add_child(editor)
-	if not Spectrum.song_finished.is_connected(_on_song_finished):
-		Spectrum.song_finished.connect(_on_song_finished)
+	_feedback = _chrome.attach_feedback()
 
 
 ## Start (or restart) the session on a live VoiceStream: audio begins the same
@@ -249,6 +232,9 @@ func _begin_synth_stream(stream: Node) -> void:
 	var pb: AudioStreamGeneratorPlayback = Spectrum.begin_stream(stream.fingerprint(), Voice.SR)
 	stream.attach_playback(pb)
 	Director.attach(self)
+	# synthesis is GAME PACED: the fishing owns the cuts - a scene changes when
+	# a catch jumps it, so each new scene reads as a reward, not weather
+	Director.set_game_paced(true)
 	_attach_live_subtitles(stream)
 	stream.completed.connect(_on_stream_completed)
 	stream.restarted.connect(_on_stream_restarted)

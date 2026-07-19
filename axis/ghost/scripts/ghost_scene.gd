@@ -223,9 +223,21 @@ func set_shot(s) -> void:
 ## and apply the assigned shot's base framing. Call this at the top of update().
 func tick(f: AudioFeatures, delta: float) -> void:
 	_life += delta
-	mod.advance(delta * float(behavior.speed), f.energy)
+	# The METAMORPHOSIS: while a catch is being reeled in (synthesis mode),
+	# Director.aura contorts the running scene - motion tempo stretches, the
+	# frame zoom-breathes and pan-sweeps, growing with the pull. Discipline-
+	# safe (zoom + pan only, never roll/shear) and base-level, so it reaches
+	# every scene, static behaviors included. Zero-cost when aura is 0.
+	var aura: float = Director.aura
+	mod.advance(delta * float(behavior.speed) * (1.0 + aura * 0.8), f.energy)
 	if shot != null:
 		shot.apply(view, f, _life)
+	if aura > 0.001:
+		# same additive convention as drift_view's zoom/offset contributions
+		view.zoom += aura * 0.35 * sin(_life * 0.6 + 1.3)
+		view.offset += Vector2(
+			aura * 0.16 * sin(_life * 0.37),
+			aura * 0.11 * sin(_life * 0.29))
 
 
 ## Organic camera drift, added *on top* of the shot's base framing (set in tick),
