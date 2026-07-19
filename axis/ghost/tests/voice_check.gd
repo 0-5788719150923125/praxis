@@ -140,4 +140,16 @@ func _check_sentence() -> int:
 	if absf(other.dur - result.dur) < 0.001:
 		print("voice_check: FAIL - two sampled voices produced identical durations")
 		bad += 1
+	# audition set: the question contour and a handful of rolled speakers
+	# (bimodal register - expect clearly different PEOPLE, not takes)
+	var q := Voice_.render("Is it alive? It is alive.", spec)
+	Voice_.write_wav(OUT_DIR + "/voice_question.wav", q.pcm)
+	for s in [3, 12, 31, 47]:
+		var vr := RandomNumberGenerator.new()
+		vr.seed = s
+		var vspec := Voice_.Spec.sample(vr)
+		var take := Voice_.render("The city listened, and the lights began to move.", vspec)
+		Voice_.write_wav(OUT_DIR + "/voice_roll_%d.wav" % s, take.pcm)
+		print("voice_check: roll %d  pitch=%.2f tract=%.2f -> f0 %.0f Hz" % [
+			s, vspec.traits.pitch, vspec.traits.tract, vspec.f0_base])
 	return bad

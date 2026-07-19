@@ -251,6 +251,7 @@ func _begin_synth_stream(stream: Node) -> void:
 	Director.attach(self)
 	_attach_live_subtitles(stream)
 	stream.completed.connect(_on_stream_completed)
+	stream.restarted.connect(_on_stream_restarted)
 	_synth_active = true
 
 
@@ -270,6 +271,15 @@ func _on_stream_completed(dur: float, wav_path: String) -> void:
 	if _subtitles != null and is_instance_valid(_subtitles):
 		_subtitles.loop_length = dur
 	print("ghost: take complete (%.1fs) -> %s" % [dur, wav_path])
+
+
+## The stream replaced its content in place (an implicit re-speak): rebase the
+## karaoke clock and forget the previous take's loop length until the new take
+## finishes.
+func _on_stream_restarted(base: float) -> void:
+	if _subtitles != null and is_instance_valid(_subtitles):
+		_subtitles.time_base = base
+		_subtitles.loop_length = 0.0
 
 
 ## Karaoke subtitles are session content, not editor chrome: whenever the

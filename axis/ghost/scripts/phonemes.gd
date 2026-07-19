@@ -140,10 +140,13 @@ static func parse(text: String) -> Array:
 			words.append(_literal_word(token))
 			continue
 		var pause := "none"
+		var punct := ""
 		var bare := token
 		while bare.length() > 0 and bare[bare.length() - 1] in ".,!?;:\n":
 			var c := bare[bare.length() - 1]
 			pause = "stop" if c in ".!?\n" else "comma"
+			if punct.is_empty() and c != "\n":
+				punct = c            # the terminal mark drives the contour (?, !, .)
 			bare = bare.substr(0, bare.length() - 1)
 		bare = bare.to_lower().strip_edges()
 		bare = bare.lstrip("\"'(").rstrip("\"')")
@@ -155,6 +158,7 @@ static func parse(text: String) -> Array:
 					"phones": phones,
 					"stressed": not FUNCTION_WORDS.has(bare),
 					"pause_after": pause,
+					"punct": punct,
 				})
 		if pause == "stop" and words.size() > 0:
 			sentences.append(words)

@@ -1,26 +1,31 @@
 extends CanvasLayer
 class_name SynthEditor
 
-## SynthEditor - the synthesis surface: text in, narrated show out, live.
+## SynthEditor - the synthesis surface: everything is live, nothing is a render.
 ##
-## A left panel holds the **lyrics box** (a plain paragraph, `[K AE T]`
-## phonetic escapes allowed) and the **speaker as a trait vector**: one slider
-## per [Voice] trait axis (pitch, lilt, tract, pace, breath, grit, drawl). The
-## zero vector is the hand-curated default speaker; **Roll** initializes the
-## sliders from a seed, **Default** returns to the curated centre - but the
-## sliders themselves are the voice's identity, so any speaker is replicated by
-## its vector (autosaved), never by the gestures that found it.
-##
-## **Speak is real-time**: it hands a [VoiceStream] to main and audio starts
-## the same frame - synthesis runs ~30x real time and stays a sliding window
-## ahead of the playhead, so there is no pre-render wait at all. The show
-## reacts to the voice as it is spoken (the stream feeds [Spectrum]'s analyzed
-## bus), karaoke subtitles grow live from the stream's timing map, and the WAV
-## + sidecar land in the background once the take finishes (export-ready). The
-## draft autosaves (text, seed, traits) debounced after every edit and on exit.
+## There is no Speak button. **Speaking is implicit**: the persisted draft
+## starts speaking shortly after the surface opens, and from then on every
+## adjustment applies itself -
+## - **timbre traits** (pitch, tract, breath, grit) retune the running stream
+##   IMMEDIATELY ([method VoiceStream.retune]): drag a slider and the voice
+##   bends while it speaks, landing ~[constant VoiceStream.TARGET_LEAD]s later.
+## - **structural changes** (the text, the seed, and the plan-baked traits:
+##   lilt, pace, drawl - they shape durations and pauses, not just the sound)
+##   restart the stream in place after a short idle debounce, without touching
+##   the scene session.
+## The lyrics box takes a plain paragraph (`[K AE T]` phonetic escapes); the
+## speaker is a trait vector whose zero point is the hand-curated default
+## ([method Voice.Spec.from_traits] holds the centres); Roll/Reroll initialize
+## the sliders from a seed, but the vector itself is the replicable identity.
+## Draft, seed, and traits autosave debounced and on exit. `--say` applies the
+## loaded text immediately on boot (skipping the debounce) for automation.
 
 const CFG := "user://ghost.cfg"
 const AUTOSAVE_DELAY_MS := 800
+
+## Traits the running stream can absorb without a re-plan; the rest are baked
+## into segment durations/pauses by Voice.plan and need a restart.
+const TIMBRE := ["pitch", "tract", "breath", "grit"]
 
 var begin_stream: Callable          # set by main: (stream: VoiceStream) -> void
 
@@ -29,7 +34,9 @@ var _text: TextEdit
 var _seed_edit: LineEdit
 var _status: Label
 var _sliders := {}                  # trait key -> HSlider
-var _dirty := false
+var _stream: VoiceStream = null
+var _dirty := false                 # autosave pending
+var _restart_pending := false       # structural change awaiting the debounce
 var _last_edit_ms := 0
 
 
@@ -42,12 +49,15 @@ func _ready() -> void:
 	if i >= 0 and i + 1 < args.size() and FileAccess.file_exists(args[i + 1]):
 		_text.text = FileAccess.get_file_as_string(args[i + 1])
 	# connect AFTER initial load so restoring the draft doesn't mark it dirty
-	_text.text_changed.connect(_mark_dirty)
-	_seed_edit.text_changed.connect(func(_t): _mark_dirty())
-	# --say: speak the loaded text immediately on boot (automation, demos, and
-	# the headless streaming check). Deferred so main has wired begin_stream.
-	if args.has("--say"):
-		_on_speak.call_deferred()
+	_text.text_changed.connect(_mark_structural)
+	_seed_edit.text_changed.connect(func(_t): _mark_structural())
+	# implicit speaking: the loaded draft speaks on its own - immediately with
+	# --say, after the normal debounce otherwise
+	if not _text.text.strip_edges().is_empty():
+		if args.has("--say"):
+			_apply.call_deferred()
+		else:
+			_mark_structural()
 
 
 func _build_panel() -> void:
@@ -65,7 +75,7 @@ func _build_panel() -> void:
 	box.add_child(title)
 
 	var hint := Label.new()
-	hint.text = "Write or paste the script. [K AE T] spells a word phonetically."
+	hint.text = "Write and it speaks. [K AE T] spells a word phonetically. Timbre sliders bend the voice live."
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hint.add_theme_font_size_override("font_size", 12)
 	hint.modulate = Color(1, 1, 1, 0.6)
@@ -110,18 +120,12 @@ func _build_panel() -> void:
 	defaults.tooltip_text = "The hand-curated default speaker (all traits zero)"
 	defaults.pressed.connect(func():
 		for key in _sliders:
-			(_sliders[key] as HSlider).value = 0.0
-		_mark_dirty())
+			(_sliders[key] as HSlider).set_value_no_signal(0.0)
+		_mark_structural())
 	row.add_child(defaults)
 
-	var speak := Button.new()
-	speak.text = "Speak"
-	speak.custom_minimum_size = Vector2(0, 36)
-	speak.pressed.connect(_on_speak)
-	box.add_child(speak)
-
 	_status = Label.new()
-	_status.text = "ready"
+	_status.text = "ready - write and it speaks"
 	_status.modulate = Color(1, 1, 1, 0.7)
 	box.add_child(_status)
 
@@ -145,10 +149,21 @@ func _trait_row(key: String) -> Control:
 	slider.step = 0.01
 	slider.value = 0.0
 	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	slider.value_changed.connect(func(_v): _mark_dirty())
+	slider.value_changed.connect(func(_v): _on_trait_changed(key))
 	row.add_child(slider)
 	_sliders[key] = slider
 	return row
+
+
+## A moved slider: timbre bends the live stream this instant; plan-baked traits
+## queue a debounced restart. Either way the vector autosaves.
+func _on_trait_changed(key: String) -> void:
+	_dirty = true
+	_last_edit_ms = Time.get_ticks_msec()
+	if TIMBRE.has(key) and _stream != null and is_instance_valid(_stream) and not _restart_pending:
+		_stream.retune(_current_spec())
+	elif not TIMBRE.has(key):
+		_restart_pending = true
 
 
 func _trait_values() -> Dictionary:
@@ -158,13 +173,21 @@ func _trait_values() -> Dictionary:
 	return t
 
 
+func _current_spec() -> Voice.Spec:
+	return Voice.Spec.from_traits(_trait_values(), _seed_int())
+
+
+func _seed_int() -> int:
+	return int(_seed_edit.text) if _seed_edit.text.is_valid_int() else hash(_seed_edit.text)
+
+
 func _roll_traits() -> void:
 	var rng := RandomNumberGenerator.new()
-	rng.seed = int(_seed_edit.text) if _seed_edit.text.is_valid_int() else hash(_seed_edit.text)
+	rng.seed = _seed_int()
 	var spec := Voice.Spec.sample(rng)
 	for key in _sliders:
 		(_sliders[key] as HSlider).set_value_no_signal(float(spec.traits.get(key, 0.0)))
-	_mark_dirty()
+	_mark_structural()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -172,17 +195,20 @@ func _unhandled_input(event: InputEvent) -> void:
 		_panel.visible = not _panel.visible
 
 
-# ---- autosave --------------------------------------------------------------
+# ---- the implicit loop: debounce -> persist + apply ------------------------
 
 
-func _mark_dirty() -> void:
+func _mark_structural() -> void:
 	_dirty = true
+	_restart_pending = true
 	_last_edit_ms = Time.get_ticks_msec()
 
 
 func _process(_delta: float) -> void:
 	if _dirty and Time.get_ticks_msec() - _last_edit_ms >= AUTOSAVE_DELAY_MS:
 		_persist()
+		if _restart_pending:
+			_apply()
 
 
 func _exit_tree() -> void:
@@ -215,21 +241,26 @@ func _load_persisted() -> void:
 			(_sliders[key] as HSlider).set_value_no_signal(float(t.get(key, 0.0)))
 
 
-# ---- speak -----------------------------------------------------------------
-
-
-func _on_speak() -> void:
+## Start the stream, or restart the running one in place with the current text
+## and voice. The scene session persists across restarts.
+func _apply() -> void:
+	_restart_pending = false
 	var text := _text.text.strip_edges()
 	if text.is_empty():
-		_status.text = "nothing to say"
+		_status.text = "write something and it will speak"
 		return
-	_persist()
-	var spec := Voice.Spec.from_traits(_trait_values(),
-		int(_seed_edit.text) if _seed_edit.text.is_valid_int() else hash(_seed_edit.text))
+	var spec := _current_spec()
+	if _stream != null and is_instance_valid(_stream):
+		_stream.restart(text, spec)
+		_status.text = "speaking"
+		return
 	var stream: VoiceStream = preload("res://scripts/voice_stream.gd").new()
 	stream.setup(text, spec, "user://synth/take_%s" % _seed_edit.text.validate_filename())
 	stream.completed.connect(func(dur: float, _wav: String):
-		_status.text = "take complete (%.1fs) - looping; export-ready" % dur)
+		_status.text = "take complete (%.1fs) - looping, export-ready" % dur)
+	stream.restarted.connect(func(_base: float):
+		_status.text = "speaking")
+	_stream = stream
 	_status.text = "speaking"
 	if begin_stream.is_valid():
 		begin_stream.call(stream)

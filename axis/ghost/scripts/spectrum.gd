@@ -184,6 +184,17 @@ func set_stream_info(path: String, length: float) -> void:
 	_stream_length = length
 
 
+## Cycle the streaming generator for an in-place content restart. A generator's
+## ring buffer cannot be cleared while playback is active (clear_buffer errors),
+## so the restart is a stop/play cycle: playback position rebases to 0 and a
+## FRESH playback object comes back - the old one is dead, push to this one.
+func restart_stream() -> AudioStreamGeneratorPlayback:
+	_stream_length = 0.0
+	_player.stop()
+	_player.play()
+	return _player.get_stream_playback()
+
+
 ## Restart the loaded song from the top WITHOUT touching any session state - no
 ## reseed, no reload, the fingerprint and analyzers carry straight on. Manual mode
 ## loops the audio endlessly with this; whether the VISUALS restart is the

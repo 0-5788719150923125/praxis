@@ -17,6 +17,8 @@ class_name Subtitles
 var words: Array = []               # [{text, t0, t1, sentence}] - may still be GROWING
                                     # (a live VoiceStream shares its array by reference)
 var loop_length := 0.0              # >0 once a streamed take loops: wrap time by this
+var time_base := 0.0                # playback time when the current content started
+                                    # (a stream restarted in place rebases here)
 var _hue_sm := 0.6
 var _overlay: Control
 
@@ -60,7 +62,9 @@ class Overlay:
 	func _draw() -> void:
 		if owner_node == null or owner_node.words.is_empty():
 			return
-		var t: float = Spectrum.current.time
+		var t: float = Spectrum.current.time - owner_node.time_base
+		if t < 0.0:
+			return
 		if owner_node.loop_length > 0.0:
 			t = fmod(t, owner_node.loop_length)
 		var line: Array = _current_sentence(t)

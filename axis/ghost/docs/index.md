@@ -135,8 +135,8 @@ Text to narrated audio, no generative AI and no recordings: the phoneme front en
 
 - [`phonemes.gd`](../scripts/phonemes.gd) **Phonemes** - the phoneme inventory and the text-to-phoneme expansion.
 - [`voice.gd`](../scripts/voice.gd) **Voice** - the source-filter speech synthesizer (rungs 0-2 of next/voice.md).
-- [`voice_stream.gd`](../scripts/voice_stream.gd) **VoiceStream** - real-time speech: synthesis races just ahead of playback.
-- [`synth_editor.gd`](../scripts/synth_editor.gd) **SynthEditor** - the synthesis surface: text in, narrated show out, live.
+- [`voice_stream.gd`](../scripts/voice_stream.gd) **VoiceStream** - real-time speech on its own thread: render lag cannot break it.
+- [`synth_editor.gd`](../scripts/synth_editor.gd) **SynthEditor** - the synthesis surface: everything is live, nothing is a render.
 - [`subtitles.gd`](../scripts/subtitles.gd) **Subtitles** - the karaoke overlay, session-owned rather than editor-owned.
 
 ### Storyboards & stage

@@ -134,15 +134,23 @@ interesting happens in layer 3.
   vector itself is the replicable identity (autosaved; asserted byte-identical in
   `tests/voice_check.gd`). The N-render batch + side-by-side audition is still open.
 - [x] **Real-time streaming (was: eliminate the pre-render wait).** Synthesis measured
-  ~30x real time in GDScript, so `VoiceStream` runs a sliding window: a ~0.35s prebuffer
-  is synthesized in the Speak click's own frame, pushed into an `AudioStreamGenerator` on
-  Spectrum's analyzed bus (`Spectrum.begin_stream`), and a budgeted per-frame pump keeps
-  ~1.2s of lead ahead of the playhead - onset is instant, scenes react to the voice as it
-  is being made, subtitles grow live from the shared timing array, and the WAV + sidecar
-  land in the background for export. Finished takes loop endlessly inside the stream
-  (a generator never emits song_finished), with subtitle time wrapped by the take length.
+  ~30x real time in GDScript, so `VoiceStream` runs a sliding window: a ~0.3s prebuffer
+  is synthesized in the triggering frame, pushed into an `AudioStreamGenerator` on
+  Spectrum's analyzed bus (`Spectrum.begin_stream`), and a **worker thread** keeps ~0.6s
+  of lead ahead of the playhead - production is fully decoupled from the render loop, so
+  a lagging scene cannot break the audio. Onset is instant, scenes react to the voice as
+  it is being made, subtitles grow live from mutex-drained timing snapshots, and the WAV
+  + sidecar land in the background for export. Finished takes loop endlessly on the
+  thread (a generator never emits song_finished), subtitle time wrapped by take length.
   Output level is a fixed calibrated gain (`Voice.OUT_GAIN`; raw cascade peak ~3.3 across
   trait extremes) instead of retroactive normalization, so live == WAV == loop passes.
+- [x] **Implicit speaking (no Speak button).** The surface is an instrument: the loaded
+  draft speaks on open, timbre traits (pitch / tract / breath / grit) **retune the
+  running stream immediately** (`VoiceStream.retune` - an atomic spec swap the worker
+  reads per chunk, landing ~0.6s later: the voice bends while it speaks), and structural
+  changes (text, seed, and the plan-baked lilt / pace / drawl) **restart the stream in
+  place** after an idle debounce - generator buffer cleared, karaoke clock rebased via
+  `time_base`, the scene session untouched. `--say` applies immediately on boot.
 - [ ] **Rung 3 - landmarks.** Deposit-style labels in the Workspace on the opening; the
   nonlinear activation model; content-keyed re-firing over the full sequence; A/B against
   the unlabeled rendition. This is where the sparse-generalization bet is tested.

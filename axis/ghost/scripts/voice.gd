@@ -65,10 +65,10 @@ class Spec:
 		var breath := _tv(t, "breath")
 		var grit := _tv(t, "grit")
 		var drawl := _tv(t, "drawl")
-		s.f0_base = 130.0 * pow(2.0, 0.55 * pitch)
+		s.f0_base = 130.0 * pow(2.0, 0.85 * pitch)
 		s.f0_accent = 4.0 * pow(2.0, 0.8 * lilt)
 		s.f0_decl = 3.0 * pow(2.0, 0.5 * lilt)
-		s.formant_scale = pow(2.0, 0.16 * tract)
+		s.formant_scale = pow(2.0, 0.22 * tract)
 		s.rate = pow(2.0, 0.35 * pace)
 		s.breath = 0.05 * pow(2.5, breath)
 		s.jitter = 0.012 * pow(2.2, grit)
@@ -81,14 +81,52 @@ class Spec:
 	static func _tv(t: Dictionary, key: String) -> float:
 		return clampf(float(t.get(key, 0.0)), -1.0, 1.0)
 
-	## A seeded roll of the trait vector around the curated default (the
-	## population axis: reroll the seed, meet a new speaker).
+	## A seeded roll of the trait vector - BIMODAL by register: the roll first
+	## picks a speaker register (male / female), which sets correlated pitch
+	## and vocal-tract centres far apart, then scatters the remaining traits
+	## widely. Rolls are meant to sound like DIFFERENT PEOPLE, not takes of one.
 	static func sample(rng: RandomNumberGenerator) -> Spec:
 		var seed_value_ := int(rng.seed)
-		var t := {}
+		var register := -0.75 if rng.randf() < 0.5 else 0.75
+		var t := {
+			"pitch": clampf(register + rng.randfn(0.0, 0.25), -1.0, 1.0),
+			"tract": clampf(0.6 * register + rng.randfn(0.0, 0.2), -1.0, 1.0),
+		}
 		for key in TRAIT_KEYS:
-			t[key] = clampf(rng.randfn(0.0, 0.45), -1.0, 1.0)
+			if not t.has(key):
+				t[key] = clampf(rng.randfn(0.0, 0.55), -1.0, 1.0)
 		return from_traits(t, seed_value_)
+
+
+## The ModBank move applied to speech: seeded oscillators stacked at several
+## TIMESCALES (phrase ~4s, breath group ~1.4s, word ~0.45s), each timescale a
+## couple of incommensurate sinusoids, summed per channel (pitch semitones,
+## tempo, loudness). This is the continuous-harmonic dynamics layer: the
+## completely-linear reading was declination alone; the field makes the melody
+## wander the way attention does - slowly at the phrase scale, faster at the
+## word scale - deterministically per voice seed.
+class ProsodyField:
+	var _osc := {}                   # channel -> [[amp, freq_hz, phase], ...]
+
+	func _init(seed_value: int) -> void:
+		var rng := RandomNumberGenerator.new()
+		rng.seed = hash("prosody_field") ^ seed_value
+		for channel in ["f0", "rate", "amp"]:
+			var bank: Array = []
+			for scale in [[4.0, 1.0], [1.4, 0.55], [0.45, 0.3]]:  # [period s, weight]
+				for _i in 2:
+					bank.append([
+						scale[1] * rng.randf_range(0.6, 1.2),
+						(1.0 / scale[0]) * rng.randf_range(0.7, 1.4),
+						rng.randf_range(0.0, TAU),
+					])
+			_osc[channel] = bank
+
+	func sample(channel: String, t: float) -> float:
+		var v := 0.0
+		for o in _osc[channel]:
+			v += o[0] * sin(TAU * o[1] * t + o[2])
+		return v
 
 
 # Two-pole resonator (the Klatt building block): y = A x + B y1 + C y2.
@@ -122,57 +160,109 @@ static func render(text: String, spec: Spec) -> Dictionary:
 	return synth(segs, spec)
 
 
-## Plan text into synthesis segments: per-phoneme durations (rate, phrase-final
-## lengthening), pauses from punctuation, and per-segment f0 targets (declination
-## + accent bumps). Pure data; `synth` realizes it.
+# Voiceless obstruents raise the f0 of the following vowel a touch
+# (microprosody) - a small cue human ears expect and flat synthesis lacks.
+const _VOICELESS := ["P", "T", "K", "F", "TH", "S", "SH", "HH"]
+
+
+## Plan text into synthesis segments. Beyond phoneme durations and pauses, the
+## plan carries the whole prosodic reading:
+## - stress: accented vowels lengthen, brighten and rise; unstressed ones
+##   shorten, quieten and REDUCE (formants pulled toward schwa);
+## - contours: declination across the sentence, final lowering at a period,
+##   a rise at a question mark, a continuation rise into a comma;
+## - microprosody: vowels after voiceless consonants start slightly higher;
+## - the multi-timescale [ProsodyField] wanders pitch, tempo and loudness
+##   continuously (seeded per voice).
+## Pure data; `synth` realizes it through the EMAs.
 static func plan(text: String, spec: Spec) -> Array:
 	var segs: Array = []
+	var field := ProsodyField.new(spec.seed_value)
+	var t_cursor := 0.12
 	var sentences := Phonemes.parse(text)
 	for si in sentences.size():
 		var words: Array = sentences[si]
-		# total vowel count drives the declination slope through the sentence
 		var vowels_total := 0
 		for w in words:
 			for p in w.phones:
 				if _ptype(p) == "vowel":
 					vowels_total += 1
 		var vseen := 0
+		var question: bool = words.size() > 0 and String(words[-1].get("punct", "")) == "?"
 		for wi in words.size():
 			var w: Dictionary = words[wi]
 			var accent_at := Phonemes.stress_vowel(w.phones) if w.stressed else -1
 			var last_word: bool = wi == words.size() - 1
+			var wsegs: Array = []
 			for pi in (w.phones as Array).size():
 				var p: String = w.phones[pi]
 				var entry: Dictionary = Phonemes.TABLE.get(p, {})
 				if entry.is_empty():
 					continue
 				var dur: float = entry.get("dur", 80.0) * 0.001 / spec.rate
-				if last_word and pi >= (w.phones as Array).size() - 2:
-					dur *= spec.final_lengthen
+				var amp := 1.0
+				var reduce := 0.0
+				var semis := 0.0
 				var is_vowel := _ptype(p) == "vowel"
 				if is_vowel:
 					vseen += 1
-				# declination: log-linear fall across the sentence, EMA-realized in synth
-				var decl := -spec.f0_decl * (float(vseen) / maxf(1.0, float(vowels_total)))
-				var accent := spec.f0_accent if (is_vowel and pi == accent_at) else 0.0
-				segs.append({
+					# declination falls across the sentence; the field wanders on top
+					semis -= spec.f0_decl * (float(vseen) / maxf(1.0, float(vowels_total)))
+					if pi == accent_at:
+						dur *= 1.25
+						amp = 1.15
+						semis += spec.f0_accent
+					elif not w.stressed:
+						dur *= 0.8
+						amp = 0.85
+						reduce = 0.35   # vowel reduction: drift toward schwa
+					if pi > 0 and _VOICELESS.has(w.phones[pi - 1]):
+						semis += 0.8    # microprosody after voiceless consonants
+					semis += field.sample("f0", t_cursor)
+				if last_word and pi >= (w.phones as Array).size() - 2:
+					dur *= spec.final_lengthen
+				dur *= 1.0 + 0.12 * field.sample("rate", t_cursor)
+				amp *= 1.0 + 0.15 * field.sample("amp", t_cursor)
+				t_cursor += dur
+				wsegs.append({
 					"p": p, "dur": dur, "word": wi, "sentence": si,
-					"text": w.text, "word_start": pi == 0, "word_end": pi == (w.phones as Array).size() - 1,
-					"semitones": decl + accent,
+					"text": w.text, "word_start": pi == 0,
+					"word_end": pi == (w.phones as Array).size() - 1,
+					"semitones": semis, "amp": amp, "reduce": reduce,
 				})
+			# terminal contours land on the sentence's last word's vowels:
+			# a question RISES into the end, a statement falls further
+			if last_word:
+				var vsegs: Array = wsegs.filter(func(s): return _ptype(s.p) == "vowel")
+				if vsegs.size() > 0:
+					vsegs[-1].semitones += 5.0 if question else -2.5
+				if vsegs.size() > 1:
+					vsegs[-2].semitones += 2.0 if question else -1.2
+			# a comma word carries a small continuation rise (the "not done yet" cue)
+			elif w.pause_after == "comma":
+				for k in range(wsegs.size() - 1, -1, -1):
+					if _ptype(wsegs[k].p) == "vowel":
+						wsegs[k].semitones += 1.8
+						break
+			segs.append_array(wsegs)
 			var pause: String = w.pause_after
 			if pause != "none":
-				segs.append({
-					"p": "SIL", "dur": spec.pause_comma if pause == "comma" else spec.pause_stop,
-					"word": -1, "sentence": si, "text": "", "word_start": false, "word_end": false,
-					"semitones": 0.0,
-				})
+				var pdur: float = spec.pause_comma if pause == "comma" else spec.pause_stop
+				t_cursor += pdur
+				segs.append(_sil(pdur, si))
+			elif not last_word:
+				# a whisper of articulation space between running words
+				t_cursor += 0.015
+				segs.append(_sil(0.015, si))
 	# a breath of silence at both ends so playback and analysis never clip a boundary
-	var lead := {"p": "SIL", "dur": 0.12, "word": -1, "sentence": -1, "text": "",
-		"word_start": false, "word_end": false, "semitones": 0.0}
-	segs.push_front(lead)
-	segs.append(lead.duplicate())
+	segs.push_front(_sil(0.12, -1))
+	segs.append(_sil(0.12, -1))
 	return segs
+
+
+static func _sil(dur: float, si: int) -> Dictionary:
+	return {"p": "SIL", "dur": dur, "word": -1, "sentence": si, "text": "",
+		"word_start": false, "word_end": false, "semitones": 0.0, "amp": 1.0, "reduce": 0.0}
 
 
 static func _ptype(p: String) -> String:
@@ -212,12 +302,12 @@ static func synth(segs: Array, spec: Spec, from_seg := 0, to_seg := -1, state :=
 				_run_frames(out, state, spec, noise_rng, seg, entry, 0.0, 0.22, seg.dur, true)
 			_:
 				# vowel / glide / nasal: periodic source through the cascade
-				var amp := 1.0
+				var amp: float = seg.get("amp", 1.0)
 				if entry.type == "glide":
-					amp = 0.75
+					amp *= 0.75
 				elif entry.type == "nasal":
-					amp = 0.45
-				_retarget(state, _seg_formants(entry, 0.0, spec), spec)
+					amp *= 0.45
+				_retarget(state, _seg_formants(entry, 0.0, spec, seg.get("reduce", 0.0)), spec)
 				_run_frames(out, state, spec, noise_rng, seg, entry, amp, 0.0, seg.dur)
 		var t1 := float(out.size()) / SR
 		_record_timing(state, seg, t0, t1)
@@ -263,14 +353,20 @@ static func _pulse_table() -> PackedFloat32Array:
 	return t
 
 
-static func _seg_formants(entry: Dictionary, u: float, spec: Spec) -> Array:
+# Schwa - the neutral vowel unstressed vowels reduce toward.
+const _SCHWA := [640.0, 1190.0, 2390.0]
+
+
+static func _seg_formants(entry: Dictionary, u: float, spec: Spec, reduce := 0.0) -> Array:
 	var f: Array = entry.get("f", [500.0, 1400.0, 2400.0])
 	var f2: Array = entry.get("f2", f)
-	return [
-		lerpf(f[0], f2[0], u) * spec.formant_scale,
-		lerpf(f[1], f2[1], u) * spec.formant_scale,
-		lerpf(f[2], f2[2], u) * spec.formant_scale,
-	]
+	var out: Array = []
+	for k in 3:
+		var v := lerpf(f[k], f2[k], u)
+		if reduce > 0.0:
+			v = lerpf(v, _SCHWA[k], reduce)
+		out.append(v * spec.formant_scale)
+	return out
 
 
 static func _next_formants(segs: Array, i: int, spec: Spec) -> Array:
@@ -308,7 +404,7 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 		var m := mini(FRAME, n - done)
 		var u := float(done) / maxf(1.0, float(n))
 		if is_diph:
-			state.ftg = _seg_formants(entry, u, spec)
+			state.ftg = _seg_formants(entry, u, spec, seg.get("reduce", 0.0))
 		# EMAs: formants ~18 ms, f0 ~35 ms, amplitude ~8 ms time constants
 		var fa := 1.0 - exp(-float(m) / (SR * 0.018))
 		var pa := 1.0 - exp(-float(m) / (SR * 0.035))
