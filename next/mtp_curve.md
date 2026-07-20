@@ -96,6 +96,14 @@ Final round of refinements (also 2026-07-20):
   unstable at the tip", so velocity belongs at the right and stability at
   the left. The mirrored placement (entry top-left / exit bottom-right) was
   proposed first and is wrong on all four counts.
+- **The echo window** - a dotted clone of the K-wide band, scaled 1.25x
+  about its centre and offset down-left by an equal *visual* amount (0.30cm
+  each way; the axes are unequally scaled, so the x/y unit offsets differ).
+  Larger because it is nearer - the same window one scale out. This carries
+  the exponential/multi-scale claim with no label at all: the window is a
+  rung, not a fixed span, so a single K encodes the whole landscape's shape
+  rather than one altitude. The bottom label row and title sit below its
+  lower edge; don't let them drift back up into it.
 - **Vertical phase-locking** - a second frequency wave runs down the depth
   axis, left of the blocks and right of the t+K labels: the same field,
   read across the steps. Must be clearly periodic like the horizontal one:

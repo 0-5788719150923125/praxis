@@ -36,6 +36,17 @@ const QUALITIES := [
 ]
 const DEFAULT_QUALITY := 1
 
+# Checkable item in the quality menu: for a synthesis take, record the Synthesis
+# workspace itself (panel and all) instead of a silent narration - and since
+# nobody is there to click Throw/Pull in a background render, the game plays
+# itself (see synth_editor.gd's `autopilot`). Meaningless for a plain song
+# export (no game to automate), so it's disabled when there's no take_provider.
+const UI_TOGGLE_ID := 1000
+# Generous but arbitrary: a catch's own reel alone can run 45-240s (see
+# synth_editor.gd's _begin_hook), so no fixed window guarantees a full throw
+# -> catch -> hold/fold cycle. This is long enough to usually show one.
+const SYNTH_AUTOPLAY_DURATION := 150.0
+
 var _btn: Button
 var _status: Label
 var _dialog: FileDialog
@@ -58,6 +69,7 @@ var _prepping := false   # a provider take is rendering (async) - ignore re-clic
 var _stall_t := 0.0      # seconds since the render last showed ANY sign of life
 var _stall_frac := -1.0  # high-water fractional progress the watchdog has seen
 var _stall_size := 0     # high-water size of the movie file being written
+var _synth_autoplay := false   # UI_TOGGLE_ID checked at export time (synth takes only)
 
 # The watchdog exists for ONE failure: a render that can never finish (the
 # audio failed to load, so the session has no end and Movie Maker records
@@ -129,6 +141,15 @@ func _build_ui() -> void:
 	_quality_menu = PopupMenu.new()
 	for i in QUALITIES.size():
 		_quality_menu.add_item(QUALITIES[i].label, i)
+	_quality_menu.add_separator()
+	_quality_menu.add_check_item("Automate the Synthesis game (record the UI)", UI_TOGGLE_ID)
+	_quality_menu.set_item_tooltip(_quality_menu.get_item_index(UI_TOGGLE_ID),
+		"Synthesis takes only: instead of a silent narration, plays the fishing game\n"
+		+ "itself - Throw, Pull, hold or fold - live, with its panel visible in the video.")
+	# Checkable items close the popup like any other by default - that would eat the
+	# toggle on the very click meant to set it, so only quality items (uncheckable)
+	# close it.
+	_quality_menu.hide_on_checkable_item_selection = false
 	_quality_menu.id_pressed.connect(_on_quality)
 	add_child(_quality_menu)
 
@@ -289,6 +310,10 @@ func _on_export() -> void:
 		_set_status("⚠  Nothing to export yet - play or speak something first",
 			Color(1.0, 0.85, 0.6))
 		return
+	# Only a synthesis take has a game to automate - grey the toggle out otherwise
+	# rather than hide it, matching the export button's own never-hide-it rule.
+	var ui_idx := _quality_menu.get_item_index(UI_TOGGLE_ID)
+	_quality_menu.set_item_disabled(ui_idx, not take_provider.is_valid())
 	var btn_rect := _btn.get_global_rect()
 	_quality_menu.reset_size()
 	var pos := Vector2i(btn_rect.position) + Vector2i(0, -int(_quality_menu.get_contents_minimum_size().y) - 8)
@@ -297,6 +322,10 @@ func _on_export() -> void:
 
 
 func _on_quality(id: int) -> void:
+	if id == UI_TOGGLE_ID:
+		_synth_autoplay = not _synth_autoplay
+		_quality_menu.set_item_checked(_quality_menu.get_item_index(UI_TOGGLE_ID), _synth_autoplay)
+		return
 	_quality = QUALITIES[id]
 	_dialog.current_file = "ghost_%s.mp4" % _quality.tag
 	_dialog.popup_centered()

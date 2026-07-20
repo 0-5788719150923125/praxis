@@ -44,6 +44,43 @@ const NIBBLE_BONUS := 0.05          # added to pull odds per accumulated nibble
 # annealing toward the party's attractors and against its repulsors, freezing
 # at the end. Sit and wait; the calculation is the catch.
 const HOOK_STEPS := 140             # anneal steps across the reel
+
+# THE TOLL - the karma. This game extracts something from a creature by
+# dragging it home against its will, and nobody does that for free: the cost
+# comes back through the only channel the player actually inhabits, the VOICE
+# THEY HAVE TO LISTEN TO. The toll grows with how foreign the catch is (it has
+# nothing to do with kin, who cost nothing) and with how far it has already
+# been reeled in, and it works four ways at once:
+#   1. every repulsion the party exerts is amplified - the further in it comes,
+#      the harder your own collection shoves it away;
+#   2. the population prior loses its grip - the anchor that keeps any voice
+#      ordinary stops holding a creature this foreign;
+#   3. the annealing schedule inverts, COOLING becomes HEATING - it does not
+#      settle as it nears, it comes apart;
+#   4. the roughness axes fray directly, so the damage is audible rather than
+#      merely statistical.
+# Kin (difficulty ~0) anneal calmly exactly as they always did.
+const TOLL_REPEL := 2.5             # extra repulsion at full toll
+const TOLL_PRIOR_LOSS := 0.75       # how much of the prior's grip the toll dissolves
+const TOLL_HEAT := 3.0              # noise multiplier at full toll (vs cooling at none)
+const TOLL_GENOME_SPAN := 2.0       # extra genome clamp width at full toll
+# Both deformation terms are quadratic in the toll: kin pay nothing at all, and
+# the cost climbs steeply only once you are genuinely dragging something that
+# does not belong. They are also deliberately STRONG - a linear nudge was
+# measured losing to the party's own forces by ~10:1, which left a foreign
+# catch arriving no uglier than kin (worse, occasionally SMOOTHER, when the
+# party happened to sit on the rough side of the axis).
+const TOLL_FRAY := 0.14             # saturating drive toward damage (roughness axes)
+const TOLL_EXTREME := 0.01          # drive away from the ordinary (every other axis)
+# The axes that make a voice sound DAMAGED rather than merely different:
+# glottal roughness, breath noise, and the static band. These are also all
+# live-retunable, so the fraying is heard while the reel runs, not after it.
+const FRAY_KEYS := ["grit", "air", "breath"]
+# A voice may become hideous, but it must remain a VOICE: unbounded pace genes
+# would stretch a take to many times its length, and every future playback,
+# render and export of that seed would pay it forever.
+const PACE_MIN := 0.55
+const PACE_MAX := 2.2
 # The trust region: a fresh draw is normalized RELATIVE to the pool being
 # harmonized with (the party's centre; the curated default when the belt is
 # empty). A candidate landing beyond the radius is pulled back onto it -
@@ -609,9 +646,10 @@ func _begin_hook(d: float) -> void:
 			"w": 0.1 + float(accs[i]),
 			"sign": 1.0 if float(accs[i]) >= 1.0 else -1.0,
 		})
-	# the PRIOR is always a gentle attractor - the anchor no party can lose
+	# the PRIOR is a gentle attractor - the anchor that keeps a voice ordinary.
+	# Flagged, because the toll dissolves ITS grip specifically (see the consts)
 	members.append({"traits": {}, "g": Voice.ProsodyWalk.PRIOR.duplicate(),
-		"w": 0.4, "sign": 1.0})
+		"w": 0.4, "sign": 1.0, "prior": true})
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash("adrenochrome") ^ hash(str(_lineage))
 	# the FIGHT is seeded per lineage: this creature always fights this way
@@ -632,29 +670,68 @@ func _begin_hook(d: float) -> void:
 	_status.text = "hook set - the fight begins"
 
 
-## One anneal step: the adrenochrome moves through the party's force field.
-## Deterministic per (lineage, party snapshot); noise cools toward the freeze.
+## One anneal step: the frozen genome moves through the party's force field.
+## Deterministic per (lineage, party snapshot). For KIN the noise cools toward
+## the freeze, as it always did; for a foreign creature THE TOLL inverts that
+## (see the TOLL_ constants) - the party shoves harder, the prior lets go, the
+## noise heats, and the voice frays, all in proportion to how far in it has
+## been dragged. The player hears every step of it: the reel retunes the live
+## stream from these traits while it runs.
 func _adreno_step() -> void:
 	var h := _hook
 	var rng: RandomNumberGenerator = h.rng
-	var cool: float = 1.0 - float(h.step) / float(HOOK_STEPS)
+	var prog: float = float(h.step) / float(HOOK_STEPS)
+	var cool: float = 1.0 - prog
+	var toll: float = float(h.d) * prog
+	var agitation: float = cool + TOLL_HEAT * toll
 	for key in Voice.TRAIT_KEYS:
 		var x: float = float(h.traits.get(key, 0.0))
 		var force := 0.0
 		for m in h.members:
-			force += m.sign * m.w * (float((m.traits as Dictionary).get(key, 0.0)) - x)
-		x += 0.02 * force + rng.randfn(0.0, 0.035 * cool)
+			var w: float = float(m.w)
+			if float(m.sign) < 0.0:
+				w *= 1.0 + TOLL_REPEL * toll          # repulsions amplify
+			elif bool(m.get("prior", false)):
+				w *= 1.0 - TOLL_PRIOR_LOSS * toll     # the ordinary loses its grip
+			force += float(m.sign) * w * (float((m.traits as Dictionary).get(key, 0.0)) - x)
+		x += 0.02 * force + rng.randfn(0.0, 0.035 * agitation)
+		if FRAY_KEYS.has(key):
+			# a creature dragged home does not polish, it FRAYS - saturating
+			# toward the rail rather than slamming into the clamp every step
+			x += TOLL_FRAY * toll * toll * (1.0 - x)
+		else:
+			# every other axis flees the ordinary in whatever direction it
+			# already leans: the voice becomes more itself, past comfort
+			x += TOLL_EXTREME * toll * toll * signf(x)
 		h.traits[key] = clampf(x, -1.0, 1.0)
+	var span_mult: float = 1.5 + TOLL_GENOME_SPAN * toll
 	for key in Voice.ProsodyWalk.PRIOR:
 		var prior: float = float(Voice.ProsodyWalk.PRIOR[key])
 		var span: float = maxf(absf(prior), 0.05)
 		var x: float = float(h.genome.get(key, prior))
 		var force := 0.0
 		for m in h.members:
-			force += m.sign * m.w * (float((m.g as Dictionary).get(key, prior)) - x)
-		x += 0.02 * force + rng.randfn(0.0, 0.04 * span * cool)
-		h.genome[key] = clampf(x, prior - 1.5 * span, prior + 1.5 * span)
+			var w: float = float(m.w)
+			if float(m.sign) < 0.0:
+				w *= 1.0 + TOLL_REPEL * toll
+			elif bool(m.get("prior", false)):
+				w *= 1.0 - TOLL_PRIOR_LOSS * toll
+			force += float(m.sign) * w * (float((m.g as Dictionary).get(key, prior)) - x)
+		x += 0.02 * force + rng.randfn(0.0, 0.04 * span * agitation)
+		x = clampf(x, prior - span_mult * span, prior + span_mult * span)
+		if key == "pace_hot" or key == "pace_calm":
+			x = clampf(x, PACE_MIN, PACE_MAX)         # hideous, but still a voice
+		h.genome[key] = x
 	h.step += 1
+
+
+## How badly this reel is deforming its catch, 0..1 - the toll made legible.
+## Drives the status line and the HUD, so the cost is something the player can
+## watch arrive rather than only discover at the freeze.
+func _hook_toll() -> float:
+	if _hook.is_empty():
+		return 0.0
+	return clampf(float(_hook.d) * float(_hook.progress), 0.0, 1.0)
 
 
 ## The freeze: the reel completes, the adrenochrome stops moving, and what it
@@ -673,7 +750,7 @@ func _finish_hook() -> void:
 	_card_glyph.seed_hash = hash(str(_lineage))
 	_card_glyph.fit = fit
 	_card_glyph.queue_redraw()
-	_card_label.text = "the adrenochrome froze · %s\n%s" % [
+	_card_label.text = "it has stopped changing · %s\n%s" % [
 		_seed_name(_lineage), _fit_verdict(fit)]
 	_card_label.add_theme_color_override("font_color", SeedGlyph.fit_color(fit))
 	_accept_btn.visible = true
@@ -1103,10 +1180,16 @@ func _process(delta: float) -> void:
 			_status_t2 += delta
 			if _status_t2 >= 0.5:
 				_status_t2 = 0.0
+				var pc := int(float(h.progress) * 100.0)
+				var toll := _hook_toll()
 				if h.run > 0.35:
-					_status.text = "it runs - the line pays out (%d%%)" % int(float(h.progress) * 100.0)
+					_status.text = "it runs - the line pays out (%d%%)" % pc
+				elif toll > 0.55:
+					_status.text = "reeling - its voice is coming apart (%d%%)" % pc
+				elif toll > 0.25:
+					_status.text = "reeling - something in it is bending (%d%%)" % pc
 				else:
-					_status.text = "reeling - the adrenochrome is forming (%d%%)" % int(float(h.progress) * 100.0)
+					_status.text = "reeling - it changes as it comes (%d%%)" % pc
 				_hud_glyph.fit = _relative_fit_of(h.traits, _lineage, h.genome)
 				_hud_glyph.queue_redraw()
 			if float(h.progress) >= 1.0:
@@ -1295,8 +1378,14 @@ class Hud:
 			# the duration is not fixed anymore; a run pays line back out
 			var progress: float = clampf(float(editor._hook.progress), 0.0, 1.0)
 			var run: float = float(editor._hook.get("run", 0.0))
+			# the toll bleeds the readout: an easy catch reels in clean amber,
+			# a foreign one sickens toward violet as it is dragged in - the
+			# cost is visible while it accrues, not only at the freeze
+			var toll: float = editor._hook_toll()
+			var arc_col := Color(1.0, 0.75, 0.3, 0.9).lerp(
+				Color(0.75, 0.25, 0.95, 0.95), toll)
 			draw_arc(glyph_c, 30.0, -PI / 2.0, -PI / 2.0 + TAU * progress, 48,
-				Color(1.0, 0.75, 0.3, 0.9), 2.5)
+				arc_col, 2.5 + 1.5 * toll)
 			draw_string(get_theme_default_font(), Vector2(s.x - 52.0, s.y - 10.0),
 				"%d%%" % int(progress * 100.0), HORIZONTAL_ALIGNMENT_LEFT,
 				-1, 12, Color(1.0, 0.75, 0.3, 0.9))
@@ -1306,9 +1395,12 @@ class Hud:
 			for i in 25:
 				var u := float(i) / 24.0
 				var x := lerpf(64.0, s.x - 12.0, u)
+				# the toll adds a second, faster tremor riding the taut line
 				pts.append(Vector2(x, y0 + sin(u * 14.0 + t * (9.0 + 14.0 * run))
-					* (2.0 + 9.0 * run)))
-			draw_polyline(pts, Color(1.0, lerpf(0.75, 0.4, run), 0.3, 0.5 + 0.3 * run), 1.0)
+					* (2.0 + 9.0 * run)
+					+ sin(u * 37.0 - t * 21.0) * 3.5 * toll))
+			draw_polyline(pts, arc_col.lerp(
+				Color(1.0, lerpf(0.75, 0.4, run), 0.3, 0.5 + 0.3 * run), 0.5), 1.0)
 			_draw_party_planets(s)   # the attractors, visible while they pull
 			return
 		# the line: slack when quiet, pulled into a deepening belly while
