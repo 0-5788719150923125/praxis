@@ -11,8 +11,20 @@
 // The spinning, flying 2x4 board is both hilarious and profound - it's a literal
 // construction tool oscillating through 3D space, just like the network oscillates
 // between expert perspectives to "build" understanding.
+import { accentHsl } from './state.js';
+
+// Hue this file's own bolt palette is authored at (matches the green accent) -
+// the baseline 'rotate' mode measures its hue delta against. This is a
+// property of THIS palette, not theme data, so it stays a local constant
+// rather than living in CSS with the rest of the theme interface below.
 //
-import { currentAccentHue } from './state.js';
+// Module-level, not declared next to where it's used inside the IIFE below:
+// Tendril construction happens synchronously during initPrismWhenReady's own
+// setup, well before execution would otherwise reach a same-scope `const`
+// declared later in the file, and a `const` still in its temporal dead zone
+// at that point throws instead of reading its value - exactly what silently
+// killed the whole animation the first time a theme constant landed there.
+const PRISM_BASE_HUE = 161;
 
 // Wait for canvas to be available (created by renderAppStructure)
 (function initPrismWhenReady() {
@@ -1267,16 +1279,36 @@ import { currentAccentHue } from './state.js';
         return document.documentElement.getAttribute('data-theme') !== 'dark';
     }
 
-    // Accent re-tint: the green palette is the default; any other accent (the logs
-    // panel's blue, the offline snapshot's orange, ...) rotates every bolt's hue so
-    // the whole animation follows. Derived from the actual --accent-hue delta (matching
-    // charts.js's chart-line rotation) rather than a per-name check, so a new accent
-    // needs no change here - green mode is the delta-0 case, still a no-op.
-    const PRISM_BASE_HUE = 161; // hue the bolt palette is authored at (matches green accent)
+    // Accent re-tint: the green palette is the default; how another accent (the
+    // logs panel's blue, the offline snapshot's orange, ...) re-tints it is
+    // declared entirely in CSS (variables.css's --accent-tint-mode/-rotate),
+    // not here - a new accent needs only its own [data-accent] CSS block, never
+    // a change to this file. Two strategies:
+    //   'rotate' (default) shifts every bolt's hue by a fixed or hue-delta-
+    //     derived amount - keeps this palette's spread, so it reads as a
+    //     "family" of the target color.
+    //   'pin' collapses every color onto the accent's own hue/sat (accentHsl,
+    //     shared with the rest of the app's accent system), keeping only the
+    //     source's lightness - guarantees hitting one exact color, for accents
+    //     whose target would otherwise land outside this palette's hue spread
+    //     (rotating this file's wide green spread far enough to reach orange
+    //     overshot some of it past red into magenta).
+    function accentTintMode() {
+        return getComputedStyle(document.documentElement).getPropertyValue('--accent-tint-mode').trim() || 'rotate';
+    }
     function accentHueRotation() {
-        return currentAccentHue() - PRISM_BASE_HUE;
+        const override = getComputedStyle(document.documentElement).getPropertyValue('--accent-tint-rotate').trim();
+        if (override) return parseFloat(override) || 0;
+        const [hue] = accentHsl();
+        return hue - PRISM_BASE_HUE;
     }
     function tintForAccent(c) {
+        if (accentTintMode() === 'pin') {
+            const [hue, sat] = accentHsl();
+            const [, , l] = rgbToHsl(c.r, c.g, c.b);
+            const [r, g, b] = hslToRgb(hue, sat, l);
+            return { r, g, b };
+        }
         const rot = accentHueRotation();
         if (!rot) return c;
         const [h, s, l] = rgbToHsl(c.r, c.g, c.b);

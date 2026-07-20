@@ -389,7 +389,7 @@ export function accentRgb() {
 }
 
 /** The central accent as [hue°, sat 0-1, lum 0-1], read off <html> to match CSS --accent. */
-function accentHsl() {
+export function accentHsl() {
     const hue = currentAccentHue();
     const css = (name, fallback) => {
         if (typeof document === 'undefined') return fallback;

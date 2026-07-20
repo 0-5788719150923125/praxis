@@ -13,6 +13,22 @@
     --accent: hsl(var(--accent-hue) var(--accent-sat) var(--accent-lum));
     --accent-deep: hsl(var(--accent-hue) 49% 18%);
 
+    /* Hand-drawn canvas art (prism.js's logo animation) can't just read --accent
+       like CSS does - it re-tints a whole authored palette of literal RGB colors
+       at draw time, and how it should do that varies per accent: --accent-tint-mode
+       picks the strategy ('rotate', the default, shifts every source color's hue by
+       a fixed or --accent-hue-delta-derived amount - keeps the palette's spread, so
+       it stays a "family" of the target color; 'pin' collapses every source color
+       onto exactly this block's --accent-hue/--accent-sat, keeping only the source's
+       lightness - guarantees hitting one exact color instead of a rotated family,
+       which matters when the source palette's hue spread is wide enough that a
+       rotation can overshoot past the target, as it did rotating this file's greens
+       toward orange). --accent-tint-rotate optionally overrides the rotate amount
+       (rotate mode only) for a hand-tuned degree that isn't the literal hue delta.
+       A new accent needs only its own [data-accent] block below - prism.js has no
+       per-name logic and reads only these custom properties. */
+    --accent-tint-mode: rotate;
+
     /* Brand Colors (derived from the accent) */
     --primary: var(--accent-deep);
     --primary-light: var(--accent);
@@ -105,20 +121,25 @@
 
 /* Logs mode: shift the entire accent to blue (applies to both light + dark themes).
    Set on <html> while the logs panel is open; everything derived from --accent /
-   --accent-hue (lines, links, accents, the Praxis animation) re-tints to blue. */
+   --accent-hue (lines, links, accents, the Praxis animation) re-tints to blue.
+   --accent-tint-rotate is a hand-picked degree for prism.js's palette (not the
+   literal --accent-hue-delta of 51°) - it read better tuned by eye than derived. */
 [data-accent="blue"] {
     --accent-hue: 212;
     --accent-sat: 72%;
     --accent-lum: 50%;
+    --accent-tint-rotate: 100;
 }
 
 /* Offline mode: a frozen/dead export (no live server behind it) shifts the
    entire accent to OSU "Beaver Orange" (#D73F09) - a clear "this page isn't
    running" signal. Pushed by whichever integration serves the frozen
    snapshot, via the theme registry in js/theme.js; nothing in the frontend
-   decides "offline" on its own. */
+   decides "offline" on its own. "pin" (see --accent-tint-mode above) because
+   this needs to hit that exact official color, not a rotated approximation. */
 [data-accent="orange"] {
     --accent-hue: 16;
     --accent-sat: 92%;
     --accent-lum: 44%;
+    --accent-tint-mode: pin;
 }
