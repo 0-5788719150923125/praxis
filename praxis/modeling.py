@@ -1373,11 +1373,7 @@ def _head_mask_kwargs(head: nn.Module, attention_mask) -> dict:
     multi-token decode) without breaking heads that don't take one."""
     if attention_mask is None:
         return {}
-    return (
-        {"attention_mask": attention_mask}
-        if _head_accepts_mask(type(head))
-        else {}
-    )
+    return {"attention_mask": attention_mask} if _head_accepts_mask(type(head)) else {}
 
 
 def sample_token(

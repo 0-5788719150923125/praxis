@@ -536,7 +536,9 @@ class CrystalVearHead(BaseHead):
             pseudo_logits = torch.log(prob)
         return pseudo_logits.view(*orig_shape[:-1], ref.vocab_size).to(out_dtype)
 
-    def _crystal_logits_perseq(self, x: Tensor, centers: Tensor, ref: nn.Module) -> Tensor:
+    def _crystal_logits_perseq(
+        self, x: Tensor, centers: Tensor, ref: nn.Module
+    ) -> Tensor:
         """Like ``_crystal_logits`` but with a per-sequence center set:
         ``x`` ``[B, T, D]``, ``centers`` ``[B, V, D]`` -> logits ``[B, T, V]``."""
         out_dtype = x.dtype
@@ -550,7 +552,10 @@ class CrystalVearHead(BaseHead):
         dist_sq = dist_sq / dist_sq.amin(dim=-1, keepdim=True)
         pseudo_logits = -ref.n * torch.log(dist_sq)
         if ref.label_smoothing > 0.0:
-            prob = torch.softmax(pseudo_logits, dim=-1) + ref.label_smoothing / ref.vocab_size
+            prob = (
+                torch.softmax(pseudo_logits, dim=-1)
+                + ref.label_smoothing / ref.vocab_size
+            )
             pseudo_logits = torch.log(prob)
         return pseudo_logits.to(out_dtype)
 

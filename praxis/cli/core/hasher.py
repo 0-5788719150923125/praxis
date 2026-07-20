@@ -49,7 +49,9 @@ def resolve_exclude_from_hash(exclude_from_hash=None):
     """Effective exclusion list: the static defaults (or a caller-supplied base)
     plus anything loaded integrations declared. Integration exclusions are
     always merged so an integration flag never silently changes a run's hash."""
-    base = list(DEFAULT_EXCLUDE_FROM_HASH if exclude_from_hash is None else exclude_from_hash)
+    base = list(
+        DEFAULT_EXCLUDE_FROM_HASH if exclude_from_hash is None else exclude_from_hash
+    )
     for flag in _integration_hash_exclusions():
         if flag and flag not in base:
             base.append(flag)

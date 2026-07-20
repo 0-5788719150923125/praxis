@@ -64,7 +64,11 @@ DUMP_ENDPOINTS: List[Tuple[str, str, str]] = [
     ("/api/runs", "runs.json", "json"),
     ("/api/config", "config.yaml", "text"),
     ("/api/metrics?since=0&limit=1000&downsample=lttb", "metrics.json", "json"),
-    ("/api/data-metrics?since=0&limit=1000&downsample=lttb", "data-metrics.json", "json"),
+    (
+        "/api/data-metrics?since=0&limit=1000&downsample=lttb",
+        "data-metrics.json",
+        "json",
+    ),
     ("/api/dynamics?since=0&limit=1000", "dynamics.json", "json"),
     ("/api/head_snapshots", "head_snapshots.json", "json"),
     ("/api/activation_curves", "activation_curves.json", "json"),
@@ -312,11 +316,17 @@ def _apt_install_node() -> bool:
     try:
         subprocess.run(
             ["apt-get", "update", "-qq"],
-            check=True, capture_output=True, text=True, timeout=300,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=300,
         )
         subprocess.run(
             ["apt-get", "install", "-y", "-qq", "nodejs", "npm"],
-            check=True, capture_output=True, text=True, timeout=900,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=900,
         )
     except Exception as exc:
         _log(
@@ -349,7 +359,10 @@ def _ensure_wrangler() -> Optional[List[str]]:
         try:
             subprocess.run(
                 ["npm", "install", "-g", "wrangler"],
-                check=True, capture_output=True, text=True, timeout=900,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=900,
             )
         except Exception as exc:
             _log(f"npm install -g wrangler failed: {exc}")
@@ -393,7 +406,10 @@ def _cf(method: str, path: str, token: str, body: Optional[dict] = None) -> dict
         _CF_API + path,
         data=data,
         method=method,
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
     )
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
@@ -404,7 +420,9 @@ def _cf(method: str, path: str, token: str, body: Optional[dict] = None) -> dict
             errs = "; ".join(e.get("message", "") for e in payload.get("errors") or [])
         except Exception:
             errs = exc.reason
-        raise RuntimeError(f"{method} {path} -> HTTP {exc.code}: {errs or '?'}") from None
+        raise RuntimeError(
+            f"{method} {path} -> HTTP {exc.code}: {errs or '?'}"
+        ) from None
 
 
 def _project_subdomain(account: str, project: str, token: str) -> Optional[str]:
@@ -418,7 +436,9 @@ def _project_subdomain(account: str, project: str, token: str) -> Optional[str]:
     return (body.get("result") or {}).get("subdomain")
 
 
-def _ensure_project_api(account: str, project: str, prod_branch: str, token: str) -> Optional[str]:
+def _ensure_project_api(
+    account: str, project: str, prod_branch: str, token: str
+) -> Optional[str]:
     """Create the Pages project if missing (REST) and return its canonical
     subdomain. Idempotent."""
     sub = _project_subdomain(account, project, token)
@@ -453,10 +473,14 @@ def _ensure_dns_cname(account: str, domain: str, subdomain: str, token: str) -> 
     do it ourselves, pointing at the project's *canonical* subdomain."""
     zone = _find_zone(account, domain, token)
     if zone is None:
-        _log(f"no Cloudflare zone owns {domain}; add a proxied CNAME -> {subdomain} manually")
+        _log(
+            f"no Cloudflare zone owns {domain}; add a proxied CNAME -> {subdomain} manually"
+        )
         return False
     zid, _zname = zone
-    recs = _cf("GET", f"/zones/{zid}/dns_records?name={domain}", token).get("result") or []
+    recs = (
+        _cf("GET", f"/zones/{zid}/dns_records?name={domain}", token).get("result") or []
+    )
     for r in recs:
         if r.get("type") == "CNAME":
             if r.get("content") == subdomain and r.get("proxied"):
@@ -465,7 +489,12 @@ def _ensure_dns_cname(account: str, domain: str, subdomain: str, token: str) -> 
                 "PATCH",
                 f"/zones/{zid}/dns_records/{r['id']}",
                 token,
-                {"type": "CNAME", "name": domain, "content": subdomain, "proxied": True},
+                {
+                    "type": "CNAME",
+                    "name": domain,
+                    "content": subdomain,
+                    "proxied": True,
+                },
             )
             _log(f"updated CNAME {domain} -> {subdomain}")
             return True
@@ -485,7 +514,9 @@ def _ensure_dns_cname(account: str, domain: str, subdomain: str, token: str) -> 
     return True
 
 
-def _ensure_domain_attached(account: str, project: str, domain: str, token: str) -> None:
+def _ensure_domain_attached(
+    account: str, project: str, domain: str, token: str
+) -> None:
     api = f"/accounts/{account}/pages/projects/{project}/domains"
     names = [d.get("name") for d in (_cf("GET", api, token).get("result") or [])]
     if domain not in names:
@@ -497,7 +528,11 @@ def _revalidate_domain(account: str, project: str, domain: str, token: str) -> N
     """Nudge Cloudflare to re-check the domain now that the CNAME exists (the
     first validation fails if it ran before DNS). Harmless once active."""
     try:
-        _cf("PATCH", f"/accounts/{account}/pages/projects/{project}/domains/{domain}", token)
+        _cf(
+            "PATCH",
+            f"/accounts/{account}/pages/projects/{project}/domains/{domain}",
+            token,
+        )
     except RuntimeError:
         pass
 
@@ -511,7 +546,9 @@ def ensure_infrastructure(project: str) -> Optional[str]:
     token = os.getenv("CLOUDFLARE_API_TOKEN")
     account = os.getenv("CLOUDFLARE_ACCOUNT_ID")
     if not token or not account:
-        _log("CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID not set; publishing disabled")
+        _log(
+            "CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID not set; publishing disabled"
+        )
         return None
 
     prod_branch = (os.getenv("CLOUDFLARE_PAGES_PRODUCTION_BRANCH") or "main").strip()
@@ -558,7 +595,11 @@ def deploy_content(
         branch = _branch_alias(run_hash)
         target = f"https://{branch}.{subdomain}" if subdomain else f"branch '{branch}'"
 
-    env = {**os.environ, "CLOUDFLARE_API_TOKEN": token, "CLOUDFLARE_ACCOUNT_ID": account}
+    env = {
+        **os.environ,
+        "CLOUDFLARE_API_TOKEN": token,
+        "CLOUDFLARE_ACCOUNT_ID": account,
+    }
     cmd = base + [
         "pages",
         "deploy",
@@ -571,7 +612,9 @@ def deploy_content(
     ]
     _log(f"uploading snapshot to '{project}' (branch '{branch}' -> {target})...")
     try:
-        result = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=600)
+        result = subprocess.run(
+            cmd, env=env, capture_output=True, text=True, timeout=600
+        )
     except Exception as exc:
         _log(f"upload failed to launch: {exc}")
         return False

@@ -351,7 +351,9 @@ class MemoryBandSmear(MemoryBase):
     def __init__(self, config, spec):
         super().__init__(config)
         # Arm 0 = spec['dense']; further arms = dense_b, dense_c, dense_d ...
-        denses = [spec[k] for k in ("dense", "dense_b", "dense_c", "dense_d") if spec.get(k)]
+        denses = [
+            spec[k] for k in ("dense", "dense_b", "dense_c", "dense_d") if spec.get(k)
+        ]
         if len(denses) < 2:
             denses = (denses + ["eml_tree"])[:2]  # never fewer than two arms
         self._denses = denses
@@ -435,7 +437,9 @@ class MemoryBandSmear(MemoryBase):
         retrieved, new_states = None, []
         for i, mem in enumerate(self.mems):
             if not active[i]:
-                new_states.append(states[i])  # skipped: no forward, state passes through
+                new_states.append(
+                    states[i]
+                )  # skipped: no forward, state passes through
                 continue
             r, si = mem(stream, states[i])
             new_states.append(si)
@@ -469,9 +473,7 @@ class MemoryBandSmear(MemoryBase):
         lo, hi = min(flat), max(flat)
         rng = (hi - lo) or 1.0
         fit = lambda v: 1.0 - (v - lo) / rng  # lower surprise -> brighter
-        river = [
-            weights[i] + [fit(v) for v in vals[i]] for i in range(len(weights))
-        ]
+        river = [weights[i] + [fit(v) for v in vals[i]] for i in range(len(weights))]
         return {
             "memory_regime_river": {
                 "status": "ok",
