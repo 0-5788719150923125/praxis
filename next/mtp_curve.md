@@ -96,10 +96,12 @@ Final round of refinements (also 2026-07-20):
   unstable at the tip", so velocity belongs at the right and stability at
   the left. The mirrored placement (entry top-left / exit bottom-right) was
   proposed first and is wrong on all four counts.
-- **The echo window** - a dotted clone of the K-wide band, scaled 1.25x
-  about its centre and offset down-left by an equal *visual* amount (0.30cm
-  each way; the axes are unequally scaled, so the x/y unit offsets differ).
-  Larger because it is nearer - the same window one scale out. This carries
+- **The echo window** - a dotted clone of the K-wide band at 1.25x, anchored
+  by its TOP-RIGHT CORNER at the centre of the band's top-right token box
+  (cell 11 of the trunk row). That anchor is the point: the echo's angle
+  nests inside the first window's angle, which is what makes the scaling
+  legible - a centre-scale-plus-small-offset version was too subtle to
+  read. Larger because it is nearer - the same window one scale out. Carries
   the exponential/multi-scale claim with no label at all: the window is a
   rung, not a fixed span, so a single K encodes the whole landscape's shape
   rather than one altitude. The bottom label row and title sit below its

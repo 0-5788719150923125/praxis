@@ -221,6 +221,7 @@ func _open_synth_editor() -> void:
 	# exports exactly like a song, and ` feedback works over the running show.
 	var editor := preload("res://scripts/synth_editor.gd").new()
 	editor.begin_stream = _begin_synth_stream
+	editor.end_stream = _end_synth_stream
 	_synth_editor = editor
 	add_child(editor)
 	# exports are ready from the very first moment: the exporter can ask the
@@ -253,6 +254,26 @@ func _begin_synth_stream(stream: Node) -> void:
 	stream.completed.connect(_on_stream_completed)
 	stream.restarted.connect(_on_stream_restarted)
 	_synth_active = true
+
+
+## Release the line: tear the synthesis session back down to the state the
+## editor boots in - no voice, no show, no Director - while the editor itself
+## stays open. The mirror of _begin_synth_stream; the next throw rebuilds
+## everything from scratch.
+func _end_synth_stream() -> void:
+	if not _synth_active:
+		return
+	if _stream != null and is_instance_valid(_stream):
+		_stream.queue_free()
+	_stream = null
+	if _subtitles != null and is_instance_valid(_subtitles):
+		_subtitles.queue_free()
+	_subtitles = null
+	Director.set_game_paced(false)
+	Director.set_aura(0.0)
+	Director.detach()
+	Spectrum.stop()
+	_synth_active = false
 
 
 ## Subtitles for a live stream: share the stream's growing word array directly;

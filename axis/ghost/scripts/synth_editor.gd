@@ -112,6 +112,7 @@ const PROFILES := {
 }
 
 var begin_stream: Callable          # set by main: (stream: VoiceStream) -> void
+var end_stream: Callable            # set by main: () -> void, tears the session down
 
 var _panel: PanelContainer
 var _text: TextEdit
@@ -153,6 +154,8 @@ var _last_edit_ms := 0
 var _cast := false                  # silent until the first throw of the session
 var _landed := false                # the working voice is a landed/kept catch
 var _retune_t := 0.0                # reel audition retune pacing
+var _line_btn: Button               # Throw when the water is empty, Release once cast
+var _line_gen := 0                  # bumped on release: in-flight animations check it
 
 
 func _ready() -> void:
@@ -171,6 +174,7 @@ func _ready() -> void:
 		_landed = true
 		_update_reading_label()
 		_apply.call_deferred()
+	_sync_line_button()
 
 
 func _build_panel() -> void:
@@ -268,13 +272,13 @@ func _build_panel() -> void:
 	var loop_row := HBoxContainer.new()
 	loop_row.add_theme_constant_override("separation", 8)
 	box.add_child(loop_row)
-	var throw := Button.new()
-	throw.text = "Throw"
-	throw.custom_minimum_size = Vector2(110, 40)
-	throw.tooltip_text = ("Into the unknown: a new candidate, parented from the "
-		+ "belt by acceptance (sometimes wild), spoken immediately. Folds a pending card.")
-	throw.pressed.connect(_throw)
-	loop_row.add_child(throw)
+	# ONE button for the line itself: Throw while the water is empty, Release
+	# once something is out there - including while a catch is hooked, so a
+	# fight can always be abandoned. Releasing returns everything to baseline.
+	_line_btn = Button.new()
+	_line_btn.custom_minimum_size = Vector2(110, 40)
+	_line_btn.pressed.connect(_on_line_button)
+	loop_row.add_child(_line_btn)
 	_catch_btn = Button.new()
 	_catch_btn.text = "Pull"
 	_catch_btn.custom_minimum_size = Vector2(90, 40)
@@ -315,7 +319,9 @@ func _build_panel() -> void:
 	_accept_btn.pressed.connect(_accept_catch)
 	card_btns.add_child(_accept_btn)
 	_release_btn = Button.new()
-	_release_btn.text = "Release"
+	# "Fold", not "Release": the line has its own Release now, and this is the
+	# other decision entirely - hold or fold the catch you are being shown
+	_release_btn.text = "Fold"
 	_release_btn.tooltip_text = "Let it go - nothing changes"
 	_release_btn.pressed.connect(_release_catch)
 	card_btns.add_child(_release_btn)
@@ -400,6 +406,66 @@ func _unhandled_input(event: InputEvent) -> void:
 # ---- the loop: throw, bite, catch, accept / release ------------------------
 
 
+## The line button: one gesture, two meanings, decided by whether anything is
+## out on the water.
+func _on_line_button() -> void:
+	if _cast:
+		_release_line()
+	else:
+		_throw()
+
+
+## Keep the line button honest about what it will do.
+func _sync_line_button() -> void:
+	if _line_btn == null or not is_instance_valid(_line_btn):
+		return
+	if _cast:
+		_line_btn.text = "Release"
+		_line_btn.tooltip_text = ("Cut the line and return to still water: the voice "
+			+ "stops, the candidate is let go, and whatever was hooked is lost. "
+			+ "Your belt is untouched.")
+	else:
+		_line_btn.text = "Throw"
+		_line_btn.tooltip_text = ("Into the unknown: a new candidate, parented from the "
+			+ "belt by acceptance (sometimes wild), spoken immediately.")
+	# nothing on the water can be pulled - and a pull there would roll the odds
+	# against a candidate that isn't swimming yet
+	if _catch_btn != null and is_instance_valid(_catch_btn):
+		_catch_btn.disabled = not _cast
+
+
+## RELEASE - back to baseline. The water goes quiet (the session is torn down,
+## not just muted), the working candidate is let go, and anything hooked or
+## waiting for judgment is abandoned. The belt keeps everything it earned.
+func _release_line() -> void:
+	_line_gen += 1                   # in-flight orb animations must not resurrect a hook
+	_pending = {}
+	_card.visible = false
+	_hook = {}
+	_anchor = 0.0
+	_nibbles = 0
+	_last_strike_t = -999.0
+	_catching = false
+	_loop_len = 0.0
+	Director.set_aura(0.0)
+	if end_stream.is_valid():
+		end_stream.call()
+	_stream = null
+	_cast = false
+	_landed = false
+	# no active seed: the working candidate returns to the population baseline
+	# (the party's own blend, or the curated default when the belt is empty)
+	_lineage = [1]
+	_traits = _background_traits()
+	_working_genome = {}
+	_restart_pending = false
+	_sync_line_button()
+	_update_reading_label()
+	_refresh_inventory()
+	_persist()
+	_status.text = "released - the water is still"
+
+
 func _throw() -> void:
 	if not _pending.is_empty():
 		_release_catch()             # throwing again folds the pending card
@@ -442,6 +508,7 @@ func _throw() -> void:
 		_working_genome = (parent.get("genome", {}) as Dictionary).duplicate()
 		_status.text = "thrown (from %s) - the water is quiet" % _seed_name(parent.lineage)
 	_throw_ms = Time.get_ticks_msec()
+	_sync_line_button()
 	_update_reading_label()
 	_persist()
 	_apply()
@@ -585,6 +652,9 @@ func _reel_power() -> float:
 func _pull() -> void:
 	if _catching or not _hook.is_empty() or not _pending.is_empty():
 		return
+	if not _cast:
+		_status.text = "nothing is out there - throw first"
+		return
 	for e in _belt:
 		if e.lineage == _lineage:
 			_status.text = "already on the belt"
@@ -595,6 +665,7 @@ func _pull() -> void:
 	var success := randf() < p
 	var wobbles := 3 if success else 1 + randi() % 3
 	_catching = true
+	var gen := _line_gen             # a release mid-animation must void this pull
 	var orb := CatchOrb.new()
 	orb.anchor = _hud.get_global_rect().get_center()
 	orb.hue = float(hash(str(_lineage)) % 360) / 360.0
@@ -603,6 +674,8 @@ func _pull() -> void:
 	add_child(orb)
 	orb.finished.connect(func():
 		orb.queue_free()
+		if gen != _line_gen:
+			return                   # the line was cut while the orb was closing
 		_catching = false
 		if success:
 			_begin_hook(d)
@@ -873,6 +946,7 @@ func _restore_capture(idx: int) -> void:
 	_traits = (entry.traits as Dictionary).duplicate()
 	_working_genome = (entry.get("genome", {}) as Dictionary).duplicate()
 	_throw_ms = Time.get_ticks_msec()
+	_sync_line_button()
 	# the seed's scene is part of its identity: restoring it returns there
 	if not String(entry.get("scene", "")).is_empty():
 		Director.jump(hash(str(_lineage)))
