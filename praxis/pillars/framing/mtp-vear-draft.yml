@@ -1,20 +1,27 @@
-# Gated on the vear MTP bank (and K=4, so the figure never lies about the
-# window). Follows the harmonic-bottleneck addendum (order 12): the bottleneck
-# fragment says what the codes are; this one says what the head does with the
-# stream - prediction as a short curve over a bounded, periodic window, the
-# fox chart's argument (fig:density) restated at the generation scale, with
-# its own figure. Claims stay inside what the run measures (per-depth draft
-# acceptance, repulsion), with the falsifier named - the paper's standard.
+# Gated on the vear MTP bank alone - the prose is K-generic (abstractinator-b
+# ran K=4, -c runs K=16) and the figure is an explicit K=4 schematic. Follows
+# the harmonic-bottleneck addendum (order 12): the bottleneck fragment says
+# what the codes are; this one says what the head does with the stream. The
+# reading (user-corrected several times, keep it): depth k predicts t+k for
+# EVERY t (training), and at inference the stack advances K per step - each
+# row of the figure is a successive MTP STEP re-deriving the full sequence,
+# slid K left, never a fragment. Spaces stay as byte-wide white teeth (pure
+# entropy, the patch boundaries); density is per-patch (heavy at the patch
+# head, decaying through the tail) and deepens per step; a fixed K-wide
+# window shows the stream sliding through, K per step; wiggly strands tie
+# every EARLIER view to the first token of the final one (phase-locking - the
+# final row is what they resolve into, so it draws no strand). Claims
+# stay inside what the run measures (per-depth draft acceptance, repulsion),
+# with the falsifier named - the paper's standard.
 section: harmonic
 order: 13
 requires:
   mtp_type: [vear]
-  mtp_depth: ["==4"]
 body: >
   \subsubsection*{Prediction as a short curve: the sliding-window draft}
 
   This run also trains a byte-level multi-token head~\cite{gloeckle2024mtp}:
-  beside the next byte, four future bytes are read off the same trunk state,
+  beside the next byte, the next $K$ bytes are read off the same trunk state,
   each through a light harmonic depth-transform drawn from a shared pool by a
   fixed sliding window - depth $k$ is the uniform parameter merge of experts
   $[k, k{+}1, k{+}2]$, cyclically, so adjacent depths share two of three
@@ -22,7 +29,7 @@ body: >
   There is no router; the window is the routing, and the layout bakes in the
   correlation the task already has, since adjacent depths predict adjacent
   positions. At inference the draft is speculative~\cite{leviathan2023fast}:
-  up to $K{+}1 = 5$ bytes land per two full forwards, and greedy decode is
+  up to $K{+}1$ bytes land per two full forwards, and greedy decode is
   exact. Exactness is not free here - byte-latent patching is non-causal
   within a partial patch, so an appended draft byte can shift earlier
   predictions - and the verify pass earns it by reading each truncated
@@ -34,56 +41,152 @@ body: >
   of prediction. The received picture of Figure~\ref{fig:density}'s top panel
   lands one position-local loss everywhere - the uniform-density assumption
   restated as supervision. With $K$ losses read off one state, the objective
-  couples the window: the loss at $t{+}3$ propagates backward into the
-  representation at $t$, and what the head emits is a short curve over four
-  future positions rather than four independent point estimates. That is the
-  multi-token dependence the continuous-latent program buys with an
-  unbounded, full-sequence latent~\cite{calm2025}, bought here over a bounded
-  window that repeats: local, cyclic, parameter-shared, riding a mostly
-  discrete code stream whose continuous remainder is small. The same coupling,
-  contained - a small periodic field where the full-sequence model raises one
-  unbounded one.
+  couples the window: the loss at the window's tip propagates backward into
+  the representation at $t$, and what the head emits is a short curve over
+  $K$ future positions rather than $K$ independent point estimates. And the
+  draft depths are not $K$-byte gadgets bolted to the tip. Depth $k$
+  predicts position $t{+}k$ for every $t$ at once, so each depth's output is
+  the full sequence again, shifted by $k$: the $K$ slots are $K$ near-copies
+  of the sequence, sharing representation by construction - all of them read
+  the same trunk, adjacent depths share two of three experts - and
+  distinguished chiefly by their shift. At inference tempo the stack moves
+  $K$ at a time: each step commits a $K$-wide column and re-derives the
+  whole view from its new head, and a single byte still traces a diagonal
+  through the succession of views - re-predicted at every pass, each pass
+  bolstering or refuting the one before it. The hypothesis, stated plainly:
+  this is multi-scale timeseries modeling - full-sequence views at $K$-byte
+  strides, heavily shared, each depth free to settle anywhere between the
+  window's granularity and the sequence's span, in exactly the sense the
+  unbounded-latent program is continuous~\cite{calm2025} - and the distinct
+  geometries the repulsion preserves are the room each depth has to choose
+  its scale. And every view stays tied to the head - the first token, the
+  hum the whole corpus shares - so the depths are phase-locked: every
+  feature contributes to every representation.
 
-  Figure~\ref{fig:mtp-window} redraws the fox strip as this head reads it,
-  and the reading closes with its own instrument. If the window is a genuine
-  curve, density inside it is once again a shape rather than a constant, and
-  that shape is already measured: the per-depth draft-acceptance profile -
-  the expected accepted-run length that sets the achievable speedup - is the
-  within-window analogue of the density curve, logged per head. The failure
-  mode is equally concrete: a flat acceptance profile alongside a collapsed
-  repulsion term (the pool settled into one geometry) would mean the window
-  bought nothing that independent heads lacked, and both series are on the
-  dashboard, so the claim arrives with its refutation instrumented.
+  Figure~\ref{fig:mtp-window} redraws the fox strip as this head reads it -
+  not $K$-byte fragments cut from the sequence but the whole sequence
+  re-derived step after step, slid $K$ at a time - and the strip now keeps
+  its spaces: byte-latent patching cuts on them, so each space stays in the
+  lattice as a tooth, a byte-wide cell holding no content, pure entropy.
+  Density is drawn per patch - heaviest at a patch's first byte, where the
+  information arrives, decaying through its predictable tail - the
+  characters float leftward off their cells the way the density figure
+  floats them, and each step runs denser than the last as context
+  accumulates. The reading closes
+  with its own instrument: if each step is a genuine re-approximation,
+  density inside the window is once again a shape rather than a constant,
+  and that shape is already measured - the per-depth draft-acceptance
+  profile, the expected accepted-run length that sets the achievable
+  speedup, is the within-window analogue of the density curve, logged per
+  head. The failure mode is equally concrete: a flat acceptance profile
+  alongside a collapsed repulsion term (the pool settled into one geometry)
+  would mean the depths bought nothing that independent heads lacked, and
+  both series are on the dashboard, so the claim arrives with its
+  refutation instrumented.
 
-  \begin{figure}[t] \centering \begin{tikzpicture}[x=0.44cm, y=0.44cm]
+  \begin{figure}[!tp] \centering \begin{tikzpicture}[x=0.36cm, y=0.44cm]
   \tikzset{cb/.style={draw=black!30, line width=0.2pt},
-  tok/.style={font=\bfseries\scriptsize, text=white, inner sep=0pt}}
-  \foreach \c in {0,...,15}{
-  \pgfmathtruncatemacro{\shade}{round(62*exp(-mod(\c,4)/2.0) + 10)}
-  \fill[blue!\shade] (\c,0) rectangle (\c+1,-1);
+  tok/.style={font=\bfseries\scriptsize, text=white, inner sep=0pt},
+  strand/.style={decorate,
+  decoration={snake, amplitude=0.5pt, segment length=4.5pt}}}
+  \node[font=\scriptsize, text=black!55, anchor=west] at (0,1.45) {the sequence - one field, drawn in frequencies};
+  \draw[black!45, line width=0.5pt, domain=0:25, samples=460, smooth]
+  plot (\x, {0.55 + (0.08 + 0.24*exp(-(\x/3.5)^2) + 0.24*exp(-((25-\x)/1.4)^2)) * sin(mod(50*\x + 15*\x*\x, 360))});
+  \draw[black!45, line width=0.5pt, domain=0:6.1, samples=320, smooth]
+  plot ({-0.55 + (0.06 + 0.22*exp(-(\x/1.6)^2) + 0.22*exp(-((6.1-\x)/0.9)^2)) * sin(mod(120*\x + 45*\x*\x, 360))}, {-\x});
+  \foreach \c/\l/\r in {0/32/4,1/4/0,2/0/0,4/35/5,5/5/0,6/0/0,7/0/0,8/0/0,10/40/7,11/7/0,12/0/0,13/0/0,14/0/0,16/45/8,17/8/0,18/0/0,20/48/9,21/9/0,22/0/0,23/0/0,24/0/0}{
+  \shade[left color=blue!\l, right color=blue!\r] (\c,0) rectangle (\c+1,-1);
   \draw[cb] (\c,0) rectangle (\c+1,-1); }
-  \foreach \ch/\c in {T/0,h/1,e/2,q/3,u/4,i/5,c/6,k/7,b/8,r/9,o/10,w/11,n/12,f/13,o/14,x/15}{
-  \node[tok] at (\c+0.5,-0.5) {\contour{black}{\ch}}; }
-  \draw[black!45, line width=0.5pt, domain=0:16, samples=440, smooth]
-  plot (\x, {0.55 + (0.05 + 0.28*exp(-mod(\x,4)/1.4))
-  * sin(mod(140*mod(\x,4) + 30*mod(\x,4)*mod(\x,4), 360))});
-  \foreach \w in {0,4,8,12}{
-  \draw[black!45, line width=0.5pt] (\w+0.12,-1.15) -- (\w+0.12,-1.42) -- (\w+3.88,-1.42) -- (\w+3.88,-1.15); }
-  \draw[->, dashed, black!55, line width=0.5pt] (7.5,-1.75) to[bend left=25] (4.5,-1.75);
-  \node[font=\scriptsize, text=black!55, anchor=west] at (8.15,-1.85) {loss at $t{+}3$ reaches $t$};
-  \node[font=\scriptsize, text=black!55] at (2.0,-2.35) {$K{=}4$ draft};
-  \node[font=\footnotesize] at (8,-3.3) {byte-latent MTP (ours)};
-  \node[font=\scriptsize, text=black!55] at (8,-4.3) {bounded, periodic over $K{=}4$};
-  \end{tikzpicture} \caption{The fox in windows: the strip of
-  Figure~\ref{fig:density}, reorganized as this run's generation reads it -
-  draft windows of $K{=}4$ bytes, each carrying its own short curve. Shade is
-  the within-window density profile the acceptance metric measures: heavy
-  where the draft is fresh off the trunk state, thinning as draft depth
-  grows, restarting at every reseed. The dashed return is the training-time
-  coupling that makes the window a curve rather than four independent
-  points: all four losses land on one state, so supervision at the window's
-  tip reaches its head. Where the continuous-latent program raises one
-  unbounded field over the whole sequence, this head repeats a small
-  periodic one - the same dependence, contained. Schematic, not measured;
-  the measured object is the per-depth acceptance profile.}
+  \foreach \ch/\px in {T/0.30,h/0.63,e/1.46,q/4.30,u/4.54,i/5.15,c/6.05,k/7.24,b/10.30,r/10.54,o/11.15,w/12.05,n/13.24,f/16.30,o/16.63,x/17.46,j/20.30,u/20.54,m/21.15,p/22.05,s/23.24}{
+  \node[tok] at (\px, -0.5) {\contour{black}{\ch}}; }
+  \foreach \c in {3,9,15,19}{
+  \fill[white] (\c,0) rectangle (\c+1,-1);
+  \draw[cb] (\c,0) rectangle (\c+1,-1); }
+  \foreach \c/\l/\r in {0/47/10,1/10/0,2/0/0,3/0/0,4/0/0,6/53/12,7/12/0,8/0/0,9/0/0,10/0/0,12/59/15,13/15/0,14/0/0,16/64/16,17/16/0,18/0/0,19/0/0,20/0/0}{
+  \shade[left color=blue!\l, right color=blue!\r] (\c,-1.7) rectangle (\c+1,-2.7);
+  \draw[cb] (\c,-1.7) rectangle (\c+1,-2.7); }
+  \foreach \ch/\px in {q/0.30,u/0.48,i/0.93,c/1.62,k/2.51,b/6.30,r/6.48,o/6.93,w/7.62,n/8.51,f/12.30,o/12.55,x/13.17,j/16.30,u/16.48,m/16.93,p/17.62,s/18.51}{
+  \node[tok] at (\px, -2.2) {\contour{black}{\ch}}; }
+  \foreach \c in {5,11,15}{
+  \fill[white] (\c,-1.7) rectangle (\c+1,-2.7);
+  \draw[cb] (\c,-1.7) rectangle (\c+1,-2.7); }
+  \foreach \c in {21,...,24}{ \draw[cb, dashed] (\c,-1.7) rectangle (\c+1,-2.7); }
+  \foreach \c/\l/\r in {0/0/0,2/65/18,3/18/2,4/2/0,5/0/0,6/0/0,8/72/20,9/20/3,10/3/0,12/77/22,13/22/3,14/3/0,15/0/0,16/0/0}{
+  \shade[left color=blue!\l, right color=blue!\r] (\c,-2.8) rectangle (\c+1,-3.8);
+  \draw[cb] (\c,-2.8) rectangle (\c+1,-3.8); }
+  \foreach \ch/\px in {k/0.30,b/2.30,r/2.42,o/2.72,w/3.18,n/3.77,f/8.30,o/8.47,x/8.88,j/12.30,u/12.42,m/12.72,p/13.18,s/13.77}{
+  \node[tok] at (\px, -3.3) {\contour{black}{\ch}}; }
+  \foreach \c in {1,7,11}{
+  \fill[white] (\c,-2.8) rectangle (\c+1,-3.8);
+  \draw[cb] (\c,-2.8) rectangle (\c+1,-3.8); }
+  \foreach \c in {17,...,24}{ \draw[cb, dashed] (\c,-2.8) rectangle (\c+1,-3.8); }
+  \foreach \c/\l/\r in {0/6/0,1/0/0,2/0/0,4/85/27,5/27/7,6/7/0,8/91/29,9/29/8,10/8/1,11/1/0,12/0/0}{
+  \shade[left color=blue!\l, right color=blue!\r] (\c,-3.9) rectangle (\c+1,-4.9);
+  \draw[cb] (\c,-3.9) rectangle (\c+1,-4.9); }
+  \foreach \ch/\px in {o/0.30,w/0.39,n/0.62,f/4.30,o/4.39,x/4.62,j/8.30,u/8.37,m/8.54,p/8.79,s/9.12}{
+  \node[tok] at (\px, -4.4) {\contour{black}{\ch}}; }
+  \foreach \c in {3,7}{
+  \fill[white] (\c,-3.9) rectangle (\c+1,-4.9);
+  \draw[cb] (\c,-3.9) rectangle (\c+1,-4.9); }
+  \foreach \c in {13,...,24}{ \draw[cb, dashed] (\c,-3.9) rectangle (\c+1,-4.9); }
+  \foreach \c/\l/\r in {0/95/31,1/31/9,2/9/2,4/97/33,5/33/10,6/10/2,7/2/0,8/0/0}{
+  \shade[left color=blue!\l, right color=blue!\r] (\c,-5.0) rectangle (\c+1,-6.0);
+  \draw[cb] (\c,-5.0) rectangle (\c+1,-6.0); }
+  \foreach \ch/\px in {f/0.30,o/0.33,x/0.39,j/4.30,u/4.32,m/4.37,p/4.44,s/4.54}{
+  \node[tok] at (\px, -5.5) {\contour{black}{\ch}}; }
+  \foreach \c in {3}{
+  \fill[white] (\c,-5.0) rectangle (\c+1,-6.0);
+  \draw[cb] (\c,-5.0) rectangle (\c+1,-6.0); }
+  \foreach \c in {9,...,24}{ \draw[cb, dashed] (\c,-5.0) rectangle (\c+1,-6.0); }
+  \node[font=\scriptsize, text=black!55, anchor=east] at (-1.05,-2.2) {$t{+}K$};
+  \node[font=\scriptsize, text=black!55, anchor=east] at (-1.05,-3.3) {$t{+}2K$};
+  \node[font=\scriptsize, text=black!55, anchor=east] at (-1.05,-4.4) {$t{+}3K$};
+  \node[font=\scriptsize, text=black!55, anchor=east] at (-1.05,-5.5) {$t{+}4K$};
+  \draw[black!75, line width=0.8pt, rounded corners=1.5pt] (8.03,0.05) rectangle (11.97,-6.15);
+  \draw[strand, black, line width=1.3pt] (11.5,-0.5) to[bend right=10] (0.7,-5.15);
+  \draw[strand, white, line width=0.6pt] (11.5,-0.5) to[bend right=10] (0.7,-5.15);
+  \draw[strand, black, line width=1.3pt] (10.5,-2.2) to[bend right=10] (0.7,-5.15);
+  \draw[strand, white, line width=0.6pt] (10.5,-2.2) to[bend right=10] (0.7,-5.15);
+  \draw[strand, black, line width=1.3pt] (10.5,-3.3) to[bend right=10] (0.7,-5.15);
+  \draw[strand, white, line width=0.6pt] (10.5,-3.3) to[bend right=10] (0.7,-5.15);
+  \draw[strand, black, line width=1.3pt] (11.5,-4.4) to[bend right=10] (0.7,-5.15);
+  \draw[strand, white, line width=0.6pt] (11.5,-4.4) to[bend right=10] (0.7,-5.15);
+  \node[font=\scriptsize, text=black!55, anchor=north west] at (0.1,-6.35) {phase-locked at the head};
+  \node[font=\scriptsize, text=black!55, anchor=north west] at (10.2,-6.35) {the stream slides through $K$ per step};
+  \node[font=\footnotesize] at (12.5,-7.7) {byte-latent MTP (ours)};
+  \node[font=\scriptsize, text=black!55] at (12.5,-8.6) {each step re-derives the full sequence, $K$ further along};
+  \end{tikzpicture} \caption{The fox at every step: the strip of
+  Figure~\ref{fig:density}, reorganized as this head reads it. \textbf{Top:}
+  the sequence, its field drawn in frequencies. The spaces stay in the
+  lattice as teeth - byte-wide white cells holding no content, pure entropy:
+  the boundaries byte-latent patching cuts on. \textbf{Below:} successive
+  MTP steps. A step advances the stream $K$ bytes and re-derives the full
+  sequence from its new head, so each row is the whole sequence again, slid
+  $K$ left - never a $K$-byte fragment (dashed cells: not yet written).
+  Density is per patch, heaviest at a patch's first byte and decaying
+  through its predictable tail all the way to white - every patch keeps a
+  white stretch where genuinely little information lives - and the
+  characters melt out of their boxes the same way, pooling toward each
+  patch's head, spilling over the cell walls, leaving the right of every
+  window sparse - and they crowd further left with every step, each patch
+  compressing toward its own head until the last row holds each patch's
+  bytes stacked on a single position. Each step runs denser than the last as context
+  accumulates, and every row darkens along $T$, because later positions
+  compress the full sequence so far, however many tokens remain to
+  attend to; the final row runs densest of all, its white regions
+  narrowest - information densifying as it twists toward the final
+  representation, $t{+}4K$. The outlined band is a fixed $K$-wide window: the
+  stream slides through it, one column of $K$ per step - in standard
+  byte-latent decoding it would advance one cell at a time. The wiggly
+  strands run from the window's last content byte, at every earlier step, to
+  the first token of the final sequence - the one they all resolve into, so
+  it draws no strand of its own: every window is connected to both the
+  future and the past of every sequence - phase-locking, every feature
+  contributing to every representation. The locking runs down the depth axis too - the
+  vertical wave at the left is the same field read across the steps,
+  humming at the trunk, chirping into $t{+}4K$. One byte still traces a diagonal through the
+  succession of views, $K$ cells left per step, re-predicted and bolstered
+  or refuted at every pass. Schematic (drawn at $K{=}4$; the mechanism is
+  $K$-generic), not measured; the measured object is the per-depth
+  acceptance profile.}
   \label{fig:mtp-window} \end{figure}

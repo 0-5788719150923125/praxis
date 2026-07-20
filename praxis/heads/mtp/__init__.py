@@ -29,6 +29,14 @@ MTP_REGISTRY = {
     "conv": ConvMTPModule,
 }
 
+# Speculative width control. Fixed, model-agnostic constants: the width itself
+# is learned from the run's own accepted-run lengths (see MultiTokenPrediction).
+# Decay is a slow EMA so a single unlucky commit cannot collapse the window;
+# the margin is how far above the current run we keep probing, so a model whose
+# drafts improve can widen again without any external signal.
+_ACCEPT_EMA_DECAY: float = 0.9
+_ACCEPT_WIDTH_MARGIN: int = 2
+
 
 def _is_byte_latent(encoder_type) -> bool:
     """True for a byte-latent (BLT/Abstractinator) encoder. Lazy import: the
@@ -101,6 +109,16 @@ class MultiTokenPrediction(nn.Module):
 
         self._draft_accs: list = []
 
+        # Speculative width adapts to the accepted-run length this model
+        # actually delivers. Acceptance stops at the FIRST divergence, so every
+        # drafted/verified candidate past that point is pure waste - and on the
+        # byte-latent path the verify is a batch of one row PER candidate, so
+        # that waste is linear in the width. Start optimistic (full depth) and
+        # let the observed runs pull it down; the margin keeps a probe above the
+        # current run so the width can climb back as the drafts improve.
+        self._accept_ema: float = float(self.num_depths)
+        self._accept_seen: int = 0
+
         # Non-byte encoder path (e.g. CALM) owns a projection + head for
         # patch-level MTP; byte-level and token paths reuse the model's head.
         if self.encoder_path and not self.byte_level:
@@ -117,6 +135,30 @@ class MultiTokenPrediction(nn.Module):
             f"type='{self.mtp_type}', "
             f"depths={self.num_depths})"
         )
+
+    @property
+    def draft_width(self) -> int:
+        """How many drafts to actually produce per speculative step.
+
+        Acceptance stops at the first divergence, so a step that commits a run
+        of ``r`` bytes never uses candidate ``r+1`` onward - it only pays for
+        them, in a sequential draft per depth and (byte-latent) one verify row
+        per candidate. Width therefore tracks the measured run length rather
+        than ``num_depths``: the useful window, not the trained one. Bounded by
+        ``num_depths``, and never below 1 so drafting cannot switch itself off.
+        """
+        import math
+
+        width = math.ceil(self._accept_ema) + _ACCEPT_WIDTH_MARGIN
+        return max(1, min(self.num_depths, int(width)))
+
+    def note_accepted(self, run_length: int) -> None:
+        """Record one speculative commit's accepted-run length (EMA input)."""
+        run = max(0, int(run_length))
+        self._accept_ema = (
+            _ACCEPT_EMA_DECAY * self._accept_ema + (1.0 - _ACCEPT_EMA_DECAY) * run
+        )
+        self._accept_seen += 1
 
     def prepare_inputs(
         self,
@@ -326,28 +368,35 @@ class MultiTokenPrediction(nn.Module):
         return losses
 
     @torch.no_grad()
-    def draft_next_tokens(self, hidden_state, first_token_id, embed_fn, head_fn):
+    def draft_next_tokens(
+        self, hidden_state, first_token_id, embed_fn, head_fn, max_depths=None
+    ):
         """Draft N additional tokens greedily using MTP modules.
 
-        Used at inference for speculative decoding on the standard
-        (token-level) path only. Each MTP depth takes the previous depth's
-        hidden state and the last predicted token's embedding to produce a
-        draft for the next position.
+        Used at inference for speculative decoding. Each MTP depth takes the
+        previous depth's hidden state and the last predicted token's embedding
+        to produce a draft for the next position. Depths run sequentially, each
+        paying a head evaluation, so ``max_depths`` (default: ``draft_width``)
+        bounds the work to the window acceptance can actually use.
 
         Args:
             hidden_state: Hidden state at last position [batch, 1, hidden_size]
             first_token_id: Token predicted by main model [batch, 1]
             embed_fn: nn.Embedding for token embeddings
             head_fn: Head module for computing logits
+            max_depths: Depths to run; ``None`` uses the adaptive draft width
 
         Returns:
-            Tensor of drafted token IDs [batch, num_depths]
+            Tensor of drafted token IDs [batch, min(max_depths, num_depths)]
         """
+        limit = self.draft_width if max_depths is None else int(max_depths)
+        limit = max(0, min(self.num_depths, limit))
+
         drafted = []
         h_prev = hidden_state
         prev_token = first_token_id
 
-        for k in range(self.num_depths):
+        for k in range(limit):
             token_embeds = embed_fn(prev_token)
             h_k = self._run_depth(k, h_prev, token_embeds, None)
             logits = head_fn(h_k)

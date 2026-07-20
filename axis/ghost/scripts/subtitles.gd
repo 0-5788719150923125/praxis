@@ -120,11 +120,30 @@ class Overlay:
 		var lh := float(fs) + 12.0
 		var hue := _harmonic_hue()
 		var bright := Color.from_hsv(hue, 0.55, 1.0)
-		var spoken := Color.from_hsv(hue, 0.25, 0.55)
-		var waiting := Color(1, 1, 1, 0.28)
+		# on a dark plate these can sit brighter than they did over raw scene:
+		# spoken words stay readable instead of dissolving, and waiting words
+		# read as dim-but-present rather than nearly invisible
+		var spoken := Color.from_hsv(hue, 0.3, 0.72)
+		var waiting := Color(1, 1, 1, 0.5)
 		var gap := 14.0
 		var cursor: float = owner_node._cursor
 		var y: float = vp.y - 70.0 - (lines.size() - 1) * lh
+		# THE PLATE: scenes range from black voids to white-hot fields, so
+		# colour alone can never keep text legible. Each line gets a rounded
+		# dark plate sized to its own width (a full-width band would read as
+		# broadcast furniture and cover the show), and every glyph is drawn
+		# once in near-black underneath - the plate carries most of the
+		# contrast, the shadow catches the edges over bright content.
+		for row in lines:
+			var total := -gap
+			for item in row:
+				total += item.w + gap
+			var pad := 12.0
+			var plate := Rect2((vp.x - total) * 0.5 - pad, y - float(fs) - 4.0,
+				total + pad * 2.0, lh + 2.0)
+			draw_rect(plate, Color(0.04, 0.04, 0.05, 0.72), true)
+			y += lh
+		y = vp.y - 70.0 - (lines.size() - 1) * lh
 		for row in lines:
 			var total := -gap
 			for item in row:
@@ -135,6 +154,10 @@ class Overlay:
 				var lit: float = clampf(cursor - float(item.idx), 0.0, 1.0)
 				var text: String = w.text
 				var pos := Vector2(x, y)
+				# the shadow, under every state - the edge that survives a
+				# bright frame bleeding past the plate
+				draw_string(font, pos + Vector2(1.5, 1.5), text,
+					HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0, 0, 0, 0.85))
 				if lit >= 1.0:
 					draw_string(font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, spoken)
 				elif lit <= 0.0:

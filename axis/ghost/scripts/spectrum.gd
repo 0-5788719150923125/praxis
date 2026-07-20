@@ -189,6 +189,24 @@ func is_streaming() -> bool:
 	return _streaming
 
 
+## Did audio actually load for this session? An export render checks this: a
+## render with no audio never ends (song_finished cannot fire) and would
+## record silence indefinitely.
+func has_audio() -> bool:
+	return _has_audio
+
+
+## Fade the streaming player out over a breath (~two frames) so a restart's
+## stop/play cycle never truncates the waveform mid-cycle - the raw cut WAS an
+## audible pop on every throw and edit. restart_stream() restores the volume.
+func fade_stream(dur := 0.04) -> void:
+	if _player == null or not _streaming:
+		return
+	var tw := create_tween()
+	tw.tween_property(_player, "volume_db", -60.0, dur)
+	await tw.finished
+
+
 ## Cycle the streaming generator for an in-place content restart. A generator's
 ## ring buffer cannot be cleared while playback is active (clear_buffer errors),
 ## so the restart is a stop/play cycle: playback position rebases to 0 and a
@@ -197,6 +215,7 @@ func restart_stream() -> AudioStreamGeneratorPlayback:
 	_stream_length = 0.0
 	_loaded_path = ""    # the old take's file no longer matches what is playing
 	_player.stop()
+	_player.volume_db = 0.0          # undo any fade_stream() cut
 	_player.play()
 	return _player.get_stream_playback()
 
@@ -215,6 +234,7 @@ func replay() -> void:
 func stop() -> void:
 	if _player != null:
 		_player.stop()
+		_player.volume_db = 0.0      # a mid-fade session end must not mute the next
 	_has_audio = false
 	_idle_time = 0.0
 	_override_path = ""

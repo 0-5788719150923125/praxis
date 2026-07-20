@@ -33,6 +33,12 @@ const PREBUFFER := 0.3              # synthesized + pushed before the thread tak
 # the sliders that once retuned live are gone; the loop is throw/restart.
 const TARGET_LEAD := 2.5
 const SEG_CHUNK := 4                # segments per synth() call on the worker
+# PRESENCE: how close the voice is to the caster. The fishing loop drives it
+# (far cast = quiet and dark, anchored = nearer, the reel brings it in); it is
+# applied at PUSH time - the WAV take stays the canonical full-presence render.
+# Gain glides per sample (~0.2 s) and a one-pole lowpass darkens distance
+# (~500 Hz far away, effectively open when landed).
+const P_GLIDE := 0.00022            # per-sample presence glide
 
 var words: Array = []               # main-thread copy for Subtitles (shared by reference)
 var events: Array = []              # planned strike times [{t, kind, a}] - the bites
@@ -55,6 +61,11 @@ var _done := false
 var _finish_info: Array = []        # [dur, wav_path] once, mutex-guarded
 var _emitted_done := false
 var _underruns := 0                 # telemetry: times the ring went dry (see worker)
+var _presence := 1.0                # target, set from the main thread (atomic)
+var _pg := 0.0                      # worker-side glided gain (streams fade IN)
+var _lp := 0.0                      # distance lowpass state
+var _restarting := false            # restart() is async (fade-cut); latest wins
+var _restart_queue: Array = []
 
 
 func setup(text: String, spec: Voice.Spec, base: String) -> void:
@@ -87,15 +98,33 @@ func attach_playback(pb: AudioStreamGeneratorPlayback) -> void:
 ## Swap the voice mid-stream (timbre traits: pitch, tract, breath, grit). An
 ## atomic reference swap read by the worker at its next chunk - the bend lands
 ## about TARGET_LEAD seconds after the gesture. Plan-baked traits (pace, drawl,
-## lilt) and text changes need restart() instead.
+## lilt) and text changes need restart() instead. The reel uses this: the
+## working voice's timbre bends toward the annealing adrenochrome as the
+## catch is pulled closer - the wait is the audition.
 func retune(spec: Voice.Spec) -> void:
 	_spec = spec
 
 
+## Where the voice stands relative to the caster, 0 (far / silent) .. 1
+## (landed). Applied by the push path with its own glide; safe from any thread.
+func set_presence(p: float) -> void:
+	_presence = clampf(p, 0.0, 1.0)
+
+
 ## Replace the content in place: new plan, cleared generator buffer, timing
 ## rebased - the session and scene continue, only the voice's content changes.
+## A coroutine: the old audio fades out over a breath before the stop/play
+## cycle (the raw cut truncated the waveform mid-cycle - an audible pop on
+## every throw and edit). Callers fire and forget; overlapping calls queue,
+## latest wins.
 func restart(text: String, spec: Voice.Spec) -> void:
+	if _restarting:
+		_restart_queue = [text, spec]
+		return
+	_restarting = true
 	_stop_worker()
+	if _playback != null:
+		await Spectrum.fade_stream()
 	_spec = spec
 	events.clear()
 	_segs = Voice.plan(text, spec, events)
@@ -113,11 +142,18 @@ func restart(text: String, spec: Voice.Spec) -> void:
 		# instead, which rebases playback time to 0 and yields a fresh playback
 		_playback = Spectrum.restart_stream()
 	time_base = 0.0
+	_pg = 0.0                        # fade the new content in from silence
+	_lp = 0.0
 	_synth_chunks(int(PREBUFFER * Voice.SR))
 	_push_available()
 	_snapshot_words()
 	restarted.emit(time_base)
 	_start_worker()
+	_restarting = false
+	if not _restart_queue.is_empty():
+		var queued: Array = _restart_queue
+		_restart_queue = []
+		restart(queued[0], queued[1])
 
 
 ## Main thread, per frame: drain the worker's word snapshots into the shared
@@ -225,8 +261,22 @@ func _push_available() -> void:
 			break
 		var buf := PackedVector2Array()
 		buf.resize(n)
+		var target := _presence
+		var kk := 0.0
 		for i in n:
+			_pg += (target - _pg) * P_GLIDE
 			var v := _pcm[src + i]
+			if _pg < 0.995:
+				# distance: darker and a little quieter the further out it
+				# swims - the FILTER carries the distance cue; the gain is
+				# linear (squaring it buried a fresh cast at ~8% amplitude,
+				# inaudible at full volume). The coefficient refreshes every
+				# 64 samples as the glide moves.
+				if (i & 63) == 0:
+					var cut := 500.0 * pow(2.0, 4.4 * _pg)
+					kk = 1.0 - exp(-TAU * cut / Voice.SR)
+				_lp += kk * (v - _lp)
+				v = _lp * _pg
 			buf[i] = Vector2(v, v)
 		_playback.push_buffer(buf)
 		_pushed += n

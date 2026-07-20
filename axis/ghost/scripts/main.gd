@@ -44,6 +44,15 @@ func _ready() -> void:
 		# it cannot be set from here). Run clean and quit when the song ends.
 		Spectrum.song_finished.connect(func(): get_tree().quit())
 		_begin_session()
+		# A render with no audio has NO END: song_finished never fires, so Movie
+		# Maker records silence until something kills it (one such run reached
+		# 5.7 GB). An export is defined by its audio - if it didn't load, say so
+		# loudly and exit non-zero so the exporter reports a failure instead of
+		# leaving the user watching 0% forever.
+		if not Spectrum.has_audio():
+			printerr("ghost: EXPORT ABORTED - the audio did not load (%s)" %
+				_arg_value(args, "--audio"))
+			get_tree().quit(1)
 		return
 	# The live window stretches in "canvas_items" mode (set in project.godot): 2D is
 	# rasterized at the window's native pixel resolution - so fullscreen is crisp, not an
@@ -218,6 +227,7 @@ func _open_synth_editor() -> void:
 	# editor to render the current text into a take on demand
 	if _chrome.exporter != null:
 		_chrome.exporter.take_provider = editor.export_take
+		_chrome.exporter.take_ready = editor.can_export_take
 	_feedback = _chrome.attach_feedback()
 
 

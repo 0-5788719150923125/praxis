@@ -54,12 +54,27 @@ var _song_dur := 0.0     # song length captured at export START (the live song m
 var _quality: Dictionary = QUALITIES[DEFAULT_QUALITY]
 var _announced := false  # one-shot console note the first time export becomes ready
 var _note_t := 0.0       # countdown for self-clearing informational notes
+var _prepping := false   # a provider take is rendering (async) - ignore re-clicks
+var _stall_t := 0.0      # seconds since the render's progress last advanced
+var _stall_pct := -1     # the high-water progress mark the watchdog has seen
+
+# A render that never advances is broken, not slow: even 4K writes frames
+# steadily, so a whole minute without the playback position moving means the
+# render cannot finish (the failure mode was audio that did not load - such a
+# session has no end and recorded silence until the disk filled).
+const STALL_LIMIT := 60.0
 
 ## Synthesis hook: a mode whose audio is REPRODUCIBLE ON DEMAND (the voice is
 ## a pure function of the text and the seed) registers a provider that renders
 ## the current take to disk and returns its path. Export then works from the
 ## very first moment - the click IS the trigger that makes the audio.
 var take_provider := Callable()
+
+## Optional companion to [member take_provider]: returns true when the provider
+## has something worth rendering (in synthesis: at least one seed on the belt,
+## or a voice already cast). When it returns false the button greys out - a
+## click could only produce a video of nothing.
+var take_ready := Callable()
 
 
 func _ready() -> void:
@@ -138,7 +153,25 @@ func _process(dt: float) -> void:
 		"rendering":
 			if OS.is_process_running(_render_pid):
 				_poll_pct()
-				_set_status("⏺  Rendering %s …  %d%%" % [_out.get_file(), _pct], Color(0.95, 0.92, 0.7))
+				# STALL WATCHDOG: the render reports progress from playback
+				# position, so a render that cannot advance (audio that failed
+				# to load - a session with no audio never ends) sits at 0%
+				# forever and fills the disk. Give it a generous grace period,
+				# then kill it and report the failure.
+				_stall_t += dt
+				if _pct > _stall_pct:
+					_stall_pct = _pct
+					_stall_t = 0.0
+				if _stall_t > STALL_LIMIT:
+					OS.kill(_render_pid)
+					_clear_override()
+					DirAccess.remove_absolute(_avi)
+					_fail("⚠  Render stalled at %d%% - no progress for %ds (see console)"
+						% [_pct, int(STALL_LIMIT)])
+					push_warning("ghost export: render stalled; killed pid %d" % _render_pid)
+				else:
+					_set_status("⏺  Rendering %s …  %d%%" % [_out.get_file(), _pct],
+						Color(0.95, 0.92, 0.7))
 			else:
 				_clear_override()                # render finished -> restore live resolution
 				# The render only reports success by PID exit; make sure it actually produced the AVI
@@ -181,19 +214,36 @@ func _process(dt: float) -> void:
 		print("ghost: export ready (⤓ bottom-right)")
 	_btn.modulate.a = lerpf(_btn.modulate.a, 1.0 if want else 0.0, 1.0 - exp(-6.0 * dt))
 	_btn.visible = _btn.modulate.a > 0.02
+	# greyed, never gone: nothing to render yet (see _can_export's history)
+	var content := _has_content()
+	_btn.disabled = not content
+	_btn.tooltip_text = ("Render this visualization + audio to a video file (in the background)"
+		if content else
+		"Nothing to render yet - catch a seed (or play a song) first")
 
 
-# THE BUTTON IS ALWAYS ELIGIBLE. History, because this exact gate regressed
+# THE BUTTON IS ALWAYS VISIBLE. History, because this exact gate regressed
 # repeatedly: eligibility was time-gated (30s of playback / half the song),
 # then length-gated for streams, then time-gated again by a concurrent edit
 # whose premise (that synthesis paces to real time) was wrong - and in
 # synthesis sessions EVERY throw/edit resets the playback clock via the
 # stream restart cycle, so a time gate can NEVER be satisfied while the user
-# iterates. Each version hid the button from someone. Timing heuristics do
-# not belong on a button's visibility: the button always shows, and a click
-# with nothing exportable yet says so and does nothing (see _on_export).
+# iterates. Each version HID the button from someone.
+#
+# So the rule is: never hide it, and never gate it on TIMING. It may only be
+# DISABLED (greyed, still there, with a tooltip that says why) for the one
+# honest reason - there is no content: no song loaded, and no provider that
+# could make one (synthesis with an empty belt and nothing cast).
 func _can_export() -> bool:
 	return true
+
+
+func _has_content() -> bool:
+	if not Spectrum.audio_path().is_empty():
+		return true
+	if not take_provider.is_valid():
+		return false
+	return not take_ready.is_valid() or bool(take_ready.call())
 
 
 # Refresh the cached percentage from the worker process (ignore mid-write misreads).
@@ -204,18 +254,18 @@ func _poll_pct() -> void:
 
 
 # Step 0: pick the output resolution / fps. Pop the menu up by the button.
-# A click with nothing to export yet (no song loaded; a streamed take still
-# synthesizing) explains itself instead of opening a doomed dialog.
+# THE PICKERS COME FIRST - the same order as every other session: quality,
+# then path, then the background pipeline. A synthesis take that still needs
+# rendering is made in _on_path, AFTER the user commits - doing it here made
+# the click sit on "Rendering the take…" with no dialog in sight, which read
+# as a button that never asks anything (and a cancel cost a wasted render).
+# A click with nothing to export and no way to make it explains itself
+# instead of opening a doomed dialog.
 func _on_export() -> void:
+	if _prepping:
+		return
 	_song = Spectrum.audio_path()
-	if _song.is_empty() and take_provider.is_valid():
-		# synthesis: make the take right now (seconds - the voice renders far
-		# above real time), then export it like any song
-		_set_status("⏳  Rendering the take…", Color(0.95, 0.92, 0.7))
-		await get_tree().process_frame
-		_song = String(take_provider.call())
-		_status.visible = false
-	if _song.is_empty():
+	if _song.is_empty() and not take_provider.is_valid():
 		_note_t = 4.0
 		_set_status("⚠  Nothing to export yet - play or speak something first",
 			Color(1.0, 0.85, 0.6))
@@ -234,8 +284,26 @@ func _on_quality(id: int) -> void:
 
 
 func _on_path(out_path: String) -> void:
-	# _song was resolved at click time (_on_export) - the live audio path, or a
-	# take the provider rendered on demand. Re-read only as a fallback.
+	# RE-ENTRANCY GUARD, and it is load-bearing: this method awaits a take
+	# render, and the native file dialog can deliver file_selected more than
+	# once (and the user can re-export while a take is still rendering). Two
+	# overlapping runs rendered the SAME take file from two threads - a reader
+	# in another process (the export render itself) opened it mid-write and
+	# saw a truncated WAV, which is how a render ended up recording silence
+	# forever. write_wav is atomic now; this keeps the work from doubling too.
+	if _prepping:
+		return
+	# _song was resolved at click time (_on_export) - the live audio path. A
+	# synthesis session without a finished take renders one NOW, after the
+	# quality and path are committed: the provider is a coroutine that runs
+	# the synthesis on a worker thread (rendering it on the main thread froze
+	# the window while the audio kept playing), and awaiting a coroutine
+	# through a Callable is verified to work - the await is required.
+	if _song.is_empty() and take_provider.is_valid():
+		_prepping = true
+		_set_status("⏳  Rendering the take…", Color(0.95, 0.92, 0.7))
+		_song = String(await take_provider.call())
+		_prepping = false
 	if _song.is_empty():
 		_song = Spectrum.audio_path()
 	if _song.is_empty():
@@ -293,14 +361,26 @@ func _start_render() -> void:
 	var project := ProjectSettings.globalize_path("res://")
 	var args := PackedStringArray([
 		"--path", project, "--write-movie", _avi, "--fixed-fps", str(_quality.fps),
-		"--", "--export", "--bake-file", _cache, "--seed", str(Director.session_seed()),
-		"--audio", _song])
+		"--", "--export", "--bake-file", _cache, "--audio", _song])
+	# THE SEED: pin it only when there is a live session to reproduce. Without
+	# one (exporting a take straight from the belt - no cast, no show watched
+	# yet) passing session_seed() would pin the render to 0, which is not a
+	# session, just a constant. Omitting --seed lets the render resolve the
+	# seed the way every songless boot does: from the AUDIO'S OWN fingerprint
+	# (see Director._resolve_seed) - spectral determinism, so the same take
+	# always renders the same show, and the show belongs to the voice.
+	var seed_val := Director.session_seed()
+	if seed_val != 0:
+		args.append("--seed")
+		args.append(str(seed_val))
 	if Director.is_manual():
 		args.append("--storyboard")
 		args.append(Director.storyboard_source())   # the loadable name/path, NOT the display name
 	_render_pid = OS.create_process(exe, args)
 	if _render_pid > 0:
 		_state = "rendering"
+		_stall_t = 0.0
+		_stall_pct = -1
 		print("ghost: rendering %dx%d @ %d fps (pid %d) -> %s" % [
 			_quality.w, _quality.h, _quality.fps, _render_pid, _avi])
 	else:

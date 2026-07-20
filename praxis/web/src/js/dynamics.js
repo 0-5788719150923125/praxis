@@ -2305,6 +2305,22 @@ function renderRegimeRiver(canvas, data, options) {
     const clamp01 = (v) => Math.max(0, Math.min(1, v));
     const clampX = (x) => Math.max(24, Math.min(w - 24, x));
 
+    // Display smoothing (leaky integrator). The N per-step weights sum to 1, so a
+    // sparse core firing (the KAN takes ~1/3 on the 1-in-4 steps it runs) forces
+    // A and B to dip in lockstep - a hard square wave that reads as jagged spikes
+    // across every band. But the residual stream CARRIES a regime's contribution
+    // forward after it is added; it does not vanish the instant that core sits a
+    // step out. So each band is shown as a causal EMA (old -> new) of its true
+    // per-step weight and fitness: the square wave becomes a peak that rises when
+    // the core fires and relaxes as later steps fill in. This is a moving average
+    // of the REAL weights - nothing invented - and a per-column EMA preserves the
+    // sum-to-1 width, so rows still fill the chart exactly.
+    const SMOOTH = 0.3;  // EMA weight on the current step; lower = flatter bands
+    const flow = river.map((r) => r.slice());
+    for (let i = 1; i < flow.length; i++)
+        for (let j = 0; j < flow[i].length; j++)
+            flow[i][j] = SMOOTH * river[i][j] + (1 - SMOOTH) * flow[i - 1][j];
+
     // Legend strip (top): a swatch + name per regime, ALL N shown regardless of
     // band widths - so a sparse core (the KAN is 0-width on most rows) is always
     // named, the way every other card's legend works. Drawn on the plain
@@ -2330,7 +2346,7 @@ function renderRegimeRiver(canvas, data, options) {
     // The LAST band is drawn to the right edge so a row always fills the full
     // width exactly (no rounding gap on the right).
     for (let i = 0; i < n; i++) {
-        const row = river[i], y = top + i * rh, hh = Math.ceil(rh);
+        const row = flow[i], y = top + i * rh, hh = Math.ceil(rh);
         let x = 0;
         for (let k = 0; k < N; k++) {
             const seg = (k === N - 1) ? (w - x) : row[k] * w;
@@ -2349,7 +2365,7 @@ function renderRegimeRiver(canvas, data, options) {
         ctx.beginPath();
         for (let i = 0; i < n; i++) {
             let cum = 0;
-            for (let j = 0; j <= k; j++) cum += river[i][j];
+            for (let j = 0; j <= k; j++) cum += flow[i][j];
             const x = cum * w, y = top + i * rh + rh / 2;
             i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
         }
@@ -2357,10 +2373,10 @@ function renderRegimeRiver(canvas, data, options) {
     }
 
     // Percentage splits stay ON the chart: solid black on a white halo, legible
-    // over any band colour and theme. EVERY module is labelled at both the
-    // oldest and newest row (so 3 modules => 6 numbers, always), not just the
-    // ones with a wide band. A module that sat the step out shows its true 0% at
-    // its band position (the right edge for the sparse trailing core).
+    // over any band colour and theme. EVERY module is labelled at both the oldest
+    // and newest row (so 3 modules => 6 numbers, always). The numbers are the
+    // smoothed shares, so they match the visible band widths - a sparse core
+    // reads its recent (leaky-integrated) contribution, not a stark 0%.
     const label = (text, x, y) => {
         ctx.lineJoin = 'round';
         ctx.lineWidth = 3.5; ctx.strokeStyle = '#ffffff'; ctx.strokeText(text, x, y);
@@ -2372,15 +2388,15 @@ function renderRegimeRiver(canvas, data, options) {
         ctx.textBaseline = baseline;
         let c = 0;
         for (let k = 0; k < N; k++) {
-            // A 0-width band sits at the seam (c); nudge it inward so its number
+            // A near-zero band sits at the seam (c); nudge it inward so its number
             // clears the neighbour's rather than stacking on the boundary.
             const centre = row[k] < 0.02 ? c - 0.03 : c + row[k] / 2;
             c += row[k];
             label(pct(row[k]), clampX(centre * w), y);
         }
     };
-    labelRow(river[0], top + 13, 'top');       // oldest
-    labelRow(river[n - 1], h - 8, 'bottom');   // newest
+    labelRow(flow[0], top + 13, 'top');        // oldest
+    labelRow(flow[n - 1], h - 8, 'bottom');    // newest
     ctx.textBaseline = 'alphabetic';
 }
 

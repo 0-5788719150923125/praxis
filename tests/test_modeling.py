@@ -354,6 +354,14 @@ def spec_config():
     )
 
 
+@pytest.fixture
+def deep_spec_config(spec_config):
+    """The drafting stack at abstractinator-c's width, where the cost of
+    drafting/verifying candidates acceptance never reaches actually bites."""
+    spec_config.mtp_depth = 16
+    return spec_config
+
+
 def test_byte_latent_padding_invariance(spec_config):
     """Right-padded + masked prefixes read identically to their unpadded form.
 
@@ -540,3 +548,64 @@ def test_draft_window_from_mtp_depth(spec_config):
         assert gen.draft_window == 1  # no MTP -> single-token throttle
     finally:
         model.mtp = saved
+
+
+def test_draft_width_tracks_accepted_runs(deep_spec_config):
+    """Speculative width follows the accepted-run length, not the trained depth.
+
+    Every candidate past the first divergence is discarded but still costs a
+    sequential draft and (byte-latent) its own verify row, so a wide mtp_depth
+    whose drafts rarely land makes each step pay O(depth) to commit a byte or
+    two. The width must fall toward what acceptance delivers, and climb back
+    when the drafts start landing.
+    """
+    torch.manual_seed(0)
+    model = PraxisForCausalLM(deep_spec_config).eval()
+    mtp = model.mtp
+    depth = deep_spec_config.mtp_depth
+
+    assert mtp.draft_width == depth  # optimistic at init
+
+    for _ in range(60):
+        mtp.note_accepted(1)  # short runs: the window should close in
+    narrow = mtp.draft_width
+    assert narrow < depth
+    assert narrow >= 1  # never switches drafting off
+
+    for _ in range(120):
+        mtp.note_accepted(depth)  # drafts land again
+    assert mtp.draft_width > narrow
+    assert mtp.draft_width <= depth  # bounded by trained depth
+
+
+def test_narrow_width_still_matches_byte_by_byte_greedy(deep_spec_config):
+    """Truncating the draft width changes only how much work is thrown away.
+
+    Acceptance stops at the first divergence either way, so a narrowed window
+    must still emit exactly what byte-by-byte greedy emits (up to argmax ties).
+    """
+    from transformers import GenerationConfig
+
+    torch.manual_seed(0)
+    model = PraxisForCausalLM(deep_spec_config).eval()
+    for _ in range(60):
+        model.mtp.note_accepted(1)  # force a narrow window
+    assert model.mtp.draft_width < deep_spec_config.mtp_depth
+
+    torch.manual_seed(7)
+    prompt = torch.randint(4, 260, (1, 24))
+    n_new = 6
+    gc = GenerationConfig(max_new_tokens=n_new, do_sample=False)
+
+    with torch.no_grad():
+        # A commit lands a whole accepted run, so the spec path may overshoot
+        # the budget; compare over the bytes that were actually requested.
+        spec = model._speculative_generate(prompt, gc)[0, prompt.size(1) :][:n_new]
+        greedy = prompt
+        for _ in range(n_new):
+            step = model(input_ids=greedy).logits[0, -1]
+            nxt = step.argmax().view(1, 1)
+            greedy = torch.cat([greedy, nxt], dim=1)
+        greedy = greedy[0, prompt.size(1) :]
+
+    assert spec.tolist() == greedy.tolist()

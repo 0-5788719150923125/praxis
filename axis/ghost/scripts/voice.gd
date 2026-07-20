@@ -22,40 +22,57 @@ const SR := 22050
 const FRAME := 64                     # samples per parameter update (~2.9 ms)
 const TWO_PI := TAU
 # Fixed output gain in place of retroactive normalization (streaming cannot
-# know the future peak). Calibrated: the cascade's raw peak is ~3.3 and nearly
-# invariant across trait extremes (2.6-3.3 measured), so this lands peaks
-# around 0.85 - and live playback, the WAV, and loop passes are all identical.
-const OUT_GAIN := 0.26
+# know the future peak; the cascade's raw output is nearly invariant across
+# trait extremes). Staged for LOUDNESS, not peaks: 0.26 kept every peak under
+# the ceiling unaided but left speech near -24 dBFS RMS - inaudibly quiet at
+# full volume. 0.55 lands RMS around -17 dBFS; the stressed-vowel peaks that
+# now cross LIMIT are exactly what the lookahead limiter exists to catch.
+const OUT_GAIN := 0.55
 # The echo bus: a feedback delay line the output always passes through. Sends
 # are zero except on echo-activated words, so the line is silent until a word
 # is thrown into it - then it rings, decaying, through whatever follows
 # (including the pauses). Fixed model-agnostic constants, per the house rule.
 const ECHO_DELAY := 0.17              # seconds
 const ECHO_FB := 0.45                 # feedback per repeat
-# The BROADCAST stage v2: aggressive sliding-window normalization. A slow
-# level tracker follows the voice; gain steers the output toward a steady
-# target amplitude (normalizing "around a sine" - naive AGC, deliberately);
-# a smooth tanh ceiling absorbs residual transients with NO corner (a hard
-# limiter's corner IS a click); and where the ceiling works, a static bed
-# fades in with a ramp and decays slowly - a floor of fuzz at the VOICE'S
-# level, never an impulse. (v1 scaled the mask to the ceiling: every
-# transient injected static ~10x louder than the voice. The pops WERE v1.)
-const AGC_TARGET := 0.32              # the steady sine amplitude to normalize toward
-const AGC_MAX_BOOST := 2.5
-const AGC_MIN_GAIN := 0.2
-const CEIL := 0.8                     # the amplitude ceiling the dampener works to
-# The COSINE DAMPENER: below the knee the wave passes untouched; above it the
-# amplitude pays a cosine penalty that reaches ZERO gain at the ceiling - a
-# spike is not flattened into a plateau (a plateau still thumps), it is
-# suppressed into nothing, and the floor's static drowns the hole.
-const DAMP_KNEE := 0.55               # fraction of CEIL where the penalty begins
-const SBED_MAX := 0.06                # static bed cap - QUIETER than the voice
-# The LONG floor: static ACCUMULATES like falling snow. Distortion raises a
-# floor that settles over a ~60 s window and never returns to true zero -
-# the medium's grain is always there; heavy moments deepen it rather than
-# summoning noise from silence (a bed that gates fully on/off is itself a
-# perceptible event - the residual "clicking" was the gating).
-const FLOOR_MIN := 0.004              # the permanent faint hiss (~-48 dB)
+# The BROADCAST stage v3: a one-block LOOKAHEAD peak limiter. The v2 chain
+# (AGC toward a sine target -> cosine dampener -> masking static) measured as
+# the dominant artifact source (see next/voice_rca.md): speech has a crest
+# factor of ~13x, not a sine's 1.4x, so the AGC pegged at max boost ~95% of
+# the time and drove the dampener to ZERO one voiced sample in ten - it
+# manufactured the crackle it existed to prevent. The limiter uses the one
+# advantage a synthesizer has over a radio station: the next block is already
+# known before the current one is emitted. Output runs one 64-sample block
+# behind synthesis; each incoming block's peak sets a LINEAR gain ramp across
+# the outgoing block, so no sample ever exceeds LIMIT and the gain curve has
+# no corners (a corner is a click). Clean passages pass through untouched.
+const SOFT_CEIL := 0.8                # tanh saturation ceiling: peaks ROUND into
+                                      # warmth (monotonic - never a hole like the
+                                      # old cosine fold, never a corner). Output
+                                      # cannot exceed this; the WAV is always safe
+const SOFT_DRIVE_MAX := 2.0           # max drive into the ceiling before the gain
+                                      # ramp trims (beyond ~2x, tanh is flat anyway)
+const LIMIT_RELEASE := 1.045          # gain recovery per block (~70 ms to unity)
+# The syllable LEVELER, sharing the limiter's ramp: a bounded 2:1 compressor
+# on the block envelope - the honest version of what the old AGC reached for.
+# Speech here has a ~22 dB crest, so gain staging alone cannot land the take
+# at a human-audible RMS without the ceiling chewing on every stressed vowel;
+# the leveler evens vowel peaks a few dB and lifts quiet stretches a few dB,
+# hard-bounded so the walk's dynamics (emphasis, swells, arousal) survive.
+const COMP_TARGET := 0.42             # envelope level the leveler steers toward.
+                                      # NOTE the units: fast attack + slow release
+                                      # means cenv rides a vowel's NEAR-PEAK
+                                      # envelope (~0.35-0.5 here), not its mean -
+                                      # a "mean-|x|"-sized target quietly cut
+                                      # every vowel by ~3 dB and pinned the RMS
+const COMP_MIN := 0.62                # never cut more than ~4 dB
+const COMP_MAX := 1.5                 # never lift more than ~3.5 dB
+# The static bed survives as what it was always meant to be: a MASK. It rises
+# only where the limiter genuinely worked, rides in and out smoothly, and the
+# long floor idles a hair above true zero - the medium's grain, no longer a
+# hiss (v2's bed sat above -40 dB for 97% of a take; the floor rests ~-56 dB
+# now, and a bed that gated fully on/off would itself be a perceptible event).
+const SBED_MAX := 0.03                # bed cap - well under the voice
+const FLOOR_MIN := 0.0015             # the permanent faint grain (~-56 dB)
 const FLOOR_DECAY := 0.99999924       # per-sample: ~60 s settle window
 
 
@@ -89,11 +106,11 @@ class Spec:
 	var rate := 1.0                   # tempo multiplier (>1 = faster)
 	var breath := 0.05                # aspiration mixed into voiced frames
 	var jitter := 0.012               # per-period f0 noise (organic, not robotic)
-	var shimmer := 0.06               # per-period amplitude noise
+	var shimmer := 0.04               # per-period amplitude noise
 	var pause_comma := 0.18           # seconds
 	var pause_stop := 0.42
 	var final_lengthen := 1.25        # phrase-final syllable stretch
-	var air_gain := 0.1               # static-band strength (noise above the air line)
+	var air_gain := 0.07              # static-band strength (noise above the air line)
 	var air_cut := 3000.0             # the air line: above it the voice goes to static
 
 	## Realize a trait vector. The constants here ARE the curated default
@@ -119,14 +136,18 @@ class Spec:
 		s.rate = pow(2.0, 0.35 * pace)
 		s.breath = 0.05 * pow(2.5, breath)
 		s.jitter = 0.012 * pow(2.2, grit)
-		s.shimmer = 0.06 * pow(2.2, grit)
+		# shimmer above ~8% reads as pathological roughness, not character -
+		# the old 13% top of range was part of the crackle
+		s.shimmer = 0.04 * pow(2.2, grit)
 		s.pause_comma = 0.18 * pow(1.6, drawl)
 		s.pause_stop = 0.42 * pow(1.6, drawl)
 		s.final_lengthen = 1.25 * pow(1.25, drawl)
 		# the air trait: how much of the upper spectrum tunes to static, and
 		# where that line sits (high air = the line drops, more of the voice
-		# is breath-noise - the multi-band harmonic/noise mix)
-		s.air_gain = 0.1 * pow(3.0, air)
+		# is breath-noise - the multi-band harmonic/noise mix). The old top of
+		# range (0.3) drowned the harmonics entirely: rolls came out as
+		# whisper-static with no trackable pitch, reading as broken voices
+		s.air_gain = 0.07 * pow(2.6, air)
 		s.air_cut = 3000.0 * pow(2.0, -0.7 * air)
 		return s
 
@@ -427,6 +448,37 @@ class Reso:
 		return y
 
 
+# Anti-resonator: a biquad NOTCH (zero pair ON the unit circle, pole pair just
+# inside it), unity gain at DC and Nyquist by construction. The nasal murmur's
+# missing ingredient - a nasal is defined by the energy the side cavity
+# REMOVES, and running M/N/NG through poles alone made a buzzy hum. The poles
+# are not optional: a bare zero pair normalized at DC amplifies the top octave
+# ~30x and sprays spikes through the radiation stage; the notch removes ONLY
+# the anti-formant region.
+class AntiReso:
+	var b1 := 0.0                     # shared cosine term (numerator + poles)
+	var pr := 0.0                     # pole radius (notch width)
+	var g := 1.0
+	var x1 := 0.0
+	var x2 := 0.0
+	var y1 := 0.0
+	var y2 := 0.0
+
+	func tune(f: float, bw: float) -> void:
+		var w := TWO_PI * clampf(f, 50.0, SR * 0.45) / SR
+		pr = exp(-PI * bw / SR)
+		b1 = 2.0 * cos(w)
+		g = (1.0 - pr * b1 + pr * pr) / (2.0 - b1)
+
+	func step(x: float) -> float:
+		var y := g * (x - b1 * x1 + x2) + pr * b1 * y1 - pr * pr * y2
+		x2 = x1
+		x1 = x
+		y2 = y1
+		y1 = y
+		return y
+
+
 ## Synthesize a paragraph. Returns:
 ## `{pcm: PackedFloat32Array, sr, dur, words: [{text,t0,t1,sentence}], phones: [{p,t0,t1,word}]}`.
 ## Deterministic per (text, spec). Heavy (a few seconds of compute per ten
@@ -601,6 +653,29 @@ static func plan(text: String, spec: Spec, events: Array = []) -> Array:
 	# a breath of silence at both ends so playback and analysis never clip a boundary
 	segs.push_front(_sil(0.12, -1))
 	segs.append(_sil(0.12, -1))
+	# f0 continuity: the melody is a WORD property, not a vowel property.
+	# semitones were only ever computed on vowels, so every consonant and
+	# silence targeted 0 st and the f0 EMA dived toward the base mid-word - a
+	# picket-fence melody (measured: 4-5 st swings INSIDE words). Consonants
+	# now sit on the line between their neighbouring vowels, and silences
+	# pre-position toward the NEXT vowel (inaudible - the amplitude is zero -
+	# but the EMA arrives on pitch instead of gliding in from neutral).
+	var next_v := 0.0
+	var next_semis := PackedFloat32Array()
+	next_semis.resize(segs.size())
+	for i in range(segs.size() - 1, -1, -1):
+		if _ptype(String(segs[i].p)) == "vowel":
+			next_v = float(segs[i].semitones)
+		next_semis[i] = next_v
+	var prev_v := next_semis[0]
+	for i in segs.size():
+		var seg: Dictionary = segs[i]
+		if _ptype(String(seg.p)) == "vowel":
+			prev_v = float(seg.semitones)
+		elif String(seg.p) == "SIL":
+			seg.semitones = next_semis[i]
+		else:
+			seg.semitones = lerpf(prev_v, next_semis[i], 0.6)
 	return segs
 
 
@@ -633,9 +708,20 @@ static func synth(segs: Array, spec: Spec, from_seg := 0, to_seg := -1, state :=
 			"stop":
 				# closure (voiced stops keep a faint murmur), then an 8 ms burst
 				var murmur := 0.06 if entry.get("voiced", false) else 0.0
-				_run_frames(out, state, spec, noise_rng, seg, entry, murmur, 0.0, seg.dur * 0.65)
+				_run_frames(out, state, spec, noise_rng, seg, entry, murmur, 0.0, seg.dur * 0.6)
 				state.noise.tune(entry.burst_f * spec.formant_scale, entry.burst_bw)
-				_run_frames(out, state, spec, noise_rng, seg, entry, murmur, 0.5, maxf(0.008, seg.dur * 0.12))
+				# the release is shaped by where the mouth is GOING: retarget
+				# the cascade to the next phone so the burst carries the coming
+				# vowel's transition (locus-lite) instead of landing as a tick
+				_retarget(state, _next_formants(segs, i, spec), spec)
+				_run_frames(out, state, spec, noise_rng, seg, entry, murmur, 0.35, maxf(0.008, seg.dur * 0.12), false, true)
+				if not entry.get("voiced", false):
+					# voice onset time: a voiceless release leaks aspiration
+					# through the ONCOMING vowel's formants before the folds
+					# start - snapping from burst straight into full voicing
+					# is one of the loudest "synthetic" tells there is
+					_retarget(state, _next_formants(segs, i, spec), spec)
+					_run_frames(out, state, spec, noise_rng, seg, entry, 0.0, 0.16, seg.dur * 0.3, true)
 			"fric":
 				state.noise.tune(entry.noise_f * spec.formant_scale, entry.noise_bw)
 				var v := 0.5 if entry.get("voiced", false) else 0.0
@@ -656,8 +742,15 @@ static func synth(segs: Array, spec: Spec, from_seg := 0, to_seg := -1, state :=
 				_run_frames(out, state, spec, noise_rng, seg, entry, amp, 0.0, seg.dur)
 		var t1 := float(out.size()) / SR
 		_record_timing(state, seg, t0, t1)
-	state.pcm = out
 	var done: bool = to_seg >= segs.size()
+	if done:
+		# flush the limiter's pending block (trailing silence by construction)
+		var pend: PackedFloat32Array = state.lim_buf
+		var gflush: float = state.lim_g
+		for k in pend.size():
+			out.append(pend[k] * gflush)
+		state.lim_buf = PackedFloat32Array()
+	state.pcm = out
 	return {
 		"pcm": out, "sr": SR, "dur": float(out.size()) / SR,
 		"words": state.words, "phones": state.phones, "done": done, "state": state,
@@ -671,12 +764,15 @@ static func synth_state(spec: Spec) -> Dictionary:
 	return {
 		"rng": rng, "pcm": PackedFloat32Array(),
 		"r1": Reso.new(), "r2": Reso.new(), "r3": Reso.new(), "noise": Reso.new(),
+		"r4": Reso.new(), "r5": Reso.new(), "anti": AntiReso.new(), "anti_mix": 0.0,
 		"fsm": [500.0 * spec.formant_scale, 1400.0 * spec.formant_scale, 2400.0 * spec.formant_scale],
 		"ftg": [500.0 * spec.formant_scale, 1400.0 * spec.formant_scale, 2400.0 * spec.formant_scale],
 		"f0sm": spec.f0_base * 1.12, "phase": 0.0, "ampsm": 0.0,
 		"pulse": _pulse_table(0.4, 0.16), "pulse_lax": _pulse_table(0.58, 0.34),
 		"tension": 0.5, "nlp": 0.0, "tilt_y": 0.0, "prev": 0.0, "nampsm": 0.0,
-		"level": 0.05, "agc": 1.0, "sbed": 0.0, "sfloor": FLOOR_MIN,
+		"jit": 1.0, "pgain": 1.0,
+		"lim_buf": PackedFloat32Array(), "lim_g": 1.0, "lim_need": 1.0, "cenv": 0.0,
+		"sbed": 0.0, "sfloor": FLOOR_MIN,
 		"ebuf": _zeroes(int(ECHO_DELAY * SR)), "eidx": 0,
 		"words": [], "phones": [], "wopen": {},
 	}
@@ -746,27 +842,57 @@ static func _retarget(state: Dictionary, f: Array, _spec: Spec) -> void:
 ## noise path; `asp_cascade` sends noise through the formant cascade (for HH).
 static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 		rng: RandomNumberGenerator, seg: Dictionary, entry: Dictionary,
-		vamp: float, namp: float, dur: float, asp_cascade := false) -> void:
+		vamp: float, namp: float, dur: float, asp_cascade := false,
+		burst := false) -> void:
 	var n := int(round(dur * SR))
+	if burst:
+		# a plosive burst is a TRANSIENT: instant attack, exponential decay.
+		# The EMA's slow-attack/hard-cut envelope was the burst reversed -
+		# every T and K landed as a pop instead of a release (every click the
+		# detector found sat inside a voiceless stop)
+		state.nampsm = maxf(float(state.nampsm), namp)
+		namp = 0.0
 	var r1: Reso = state.r1
 	var r2: Reso = state.r2
 	var r3: Reso = state.r3
+	var r4: Reso = state.r4
+	var r5: Reso = state.r5
+	var anti: AntiReso = state.anti
 	var nr: Reso = state.noise
 	var pulse: PackedFloat32Array = state.pulse
 	var is_diph: bool = entry.has("f2")
+	var ttype := String(entry.get("type", "sil"))
 	var f0_target: float = spec.f0_base * pow(2.0, seg.semitones / 12.0) * 1.06
 	var done := 0
 	# radiation memory CONTINUES across segments - resetting it clicked at
 	# every phoneme boundary (a pop per segment; the "static")
 	var prev: float = state.prev
-	var period_gain := 1.0
+	# ... and so do the per-period draws: period_gain resetting to 1.0 at every
+	# segment boundary was a mid-cycle gain step per phoneme, and the jitter
+	# draw being overwritten at every FRAME boundary left the cycle lengths
+	# nearly metronomic - the oldest robot-voice cue there is
+	var period_gain: float = state.pgain
+	var jit: float = state.jit
+	# coarticulation speed is articulator-dependent, not one constant: the
+	# tract glides slowly into vowels/glides/nasals and releases fast out of a
+	# burst - a single fast EMA read as plastic morphs between postures
+	var ftau := 0.018
+	if ttype == "vowel":
+		ftau = 0.024
+	elif ttype == "glide" or ttype == "nasal":
+		ftau = 0.032
+	elif ttype == "stop":
+		ftau = 0.012
+	# the nasal zero engages by MIX (the anti-resonator itself runs on every
+	# sample so its state never sees a switch-on transient)
+	var anti_target := 1.0 if ttype == "nasal" else 0.0
 	while done < n:
 		var m := mini(FRAME, n - done)
 		var u := float(done) / maxf(1.0, float(n))
 		if is_diph:
 			state.ftg = _seg_formants(entry, u, spec, seg.get("reduce", 0.0))
-		# EMAs: formants ~18 ms, f0 ~35 ms, amplitude ~8 ms time constants
-		var fa := 1.0 - exp(-float(m) / (SR * 0.018))
+		# EMAs: formants (per-type tau above), f0 ~35 ms, amplitude ~8 ms
+		var fa := 1.0 - exp(-float(m) / (SR * ftau))
 		var pa := 1.0 - exp(-float(m) / (SR * 0.035))
 		var aa := 1.0 - exp(-float(m) / (SR * 0.008))
 		for k in 3:
@@ -776,11 +902,19 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 		# the noise path gets an envelope too: frication switching on/off
 		# abruptly was a click per consonant
 		state.nampsm = lerpf(state.nampsm, namp, aa)
+		state.anti_mix = lerpf(state.anti_mix, anti_target, aa)
 		var nsm: float = state.nampsm
+		var amix: float = state.anti_mix
 		r1.tune(state.fsm[0], 60.0 + state.fsm[0] * 0.06)
 		r2.tune(state.fsm[1], 90.0 + state.fsm[1] * 0.05)
 		r3.tune(state.fsm[2], 150.0)
-		var inc: float = state.f0sm * 64.0 / SR
+		# the upper poles: fixed presence formants. Three resonators left
+		# nothing above 3 kHz but noise (the hollow AM-radio timbre); F4/F5
+		# give the voice a top, the way Klatt's five-pole cascade did
+		r4.tune(3400.0 * spec.formant_scale, 320.0)
+		r5.tune(4700.0 * spec.formant_scale, 420.0)
+		anti.tune(1000.0 * spec.formant_scale, 350.0)
+		var inc: float = state.f0sm * jit * 64.0 / SR
 		var amp: float = state.ampsm
 		var pulse_lax: PackedFloat32Array = state.pulse_lax
 		var tension: float = state.tension
@@ -795,18 +929,18 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 		var ebuf: PackedFloat32Array = state.ebuf
 		var eidx: int = state.eidx
 		var esize := ebuf.size()
-		var level: float = state.level
-		var agc: float = state.agc
-		var sbed: float = state.sbed
-		var sfloor: float = state.sfloor
 		var phase: float = state.phase
+		var blk := PackedFloat32Array()
+		blk.resize(m)
 		for _s in m:
 			phase += inc
 			if phase >= 64.0:
 				phase -= 64.0
 				# per-period organic variation: jitter the pitch, shimmer the
-				# gain, and wander the glottal TENSION - no two cycles alike
-				inc = state.f0sm * (1.0 + rng.randfn(0.0, spec.jitter)) * 64.0 / SR
+				# gain, and wander the glottal TENSION - no two cycles alike.
+				# The draws live in state and hold until the NEXT period.
+				jit = 1.0 + rng.randfn(0.0, spec.jitter)
+				inc = state.f0sm * jit * 64.0 / SR
 				period_gain = 1.0 + rng.randfn(0.0, spec.shimmer)
 				tension = clampf(lerpf(tension, rng.randf(), 0.3), 0.0, 1.0)
 			# interpolated wavetable read: the raw int() lookup stair-stepped
@@ -830,11 +964,24 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 			src = tilt_y
 			var y: float
 			if asp_cascade:
-				y = r3.step(r2.step(r1.step(hiss * nsm * 0.5)))
+				y = r5.step(r4.step(r3.step(r2.step(r1.step(hiss * nsm * 0.5)))))
 			else:
-				y = r3.step(r2.step(r1.step(src)))
+				var excite := src
+				var nband := 0.0
 				if nsm > 0.0001:
-					y += nr.step(hiss) * nsm
+					nband = nr.step(hiss) * nsm
+					if burst:
+						# a release excites the TRACT, not the room: a bare
+						# wideband tick added after the cascade reads as a
+						# pop; through the formants it reads as a consonant
+						excite += nband * 2.2
+						nband = 0.0
+				y = r5.step(r4.step(r3.step(r2.step(r1.step(excite)))))
+				y += nband
+			# the nasal zero: blend toward the anti-resonated path while a
+			# nasal speaks (the murmur is DEFINED by removed energy)
+			var yz := anti.step(y)
+			y = lerpf(y, yz, amix)
 			# radiation: first difference brightens the spectrum like lips do
 			var rad := y - prev * 0.96
 			prev = y
@@ -844,44 +991,65 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 			eidx += 1
 			if eidx >= esize:
 				eidx = 0
-			# the broadcast stage v2 (see the consts): follow the level slowly,
-			# normalize aggressively toward the sine target, absorb what's left
-			# in a smooth tanh ceiling, and let a static floor ramp in and
-			# decay around the distorted stretches - never an impulse
-			var outv := (rad + e * 0.8) * OUT_GAIN
-			level += 0.0003 * (absf(outv) - level)          # ~150 ms tracker
-			var want := clampf(AGC_TARGET / maxf(level * 1.6, 0.001),
-				AGC_MIN_GAIN, AGC_MAX_BOOST)
-			agc += 0.0009 * (want - agc)                    # ~50 ms gain glide
-			var v := outv * agc
-			# the cosine dampener (see the consts): a progressive penalty on
-			# high amplitudes, reaching zero gain at the ceiling
-			var vc := v
-			var va := absf(v) / CEIL
-			if va > DAMP_KNEE:
-				var du := clampf((va - DAMP_KNEE) / (1.0 - DAMP_KNEE), 0.0, 1.0)
-				vc = v * cos(du * PI * 0.5)
-			# the amplitude the dampener ate = how distorted this stretch is
-			var excess := absf(v) - absf(vc)
-			var starget := minf(excess * 0.6, SBED_MAX)
+			blk[_s] = (rad + e * 0.8) * OUT_GAIN
+		# the broadcast stage v3 (see the consts): emit the PREVIOUS block
+		# under a linear gain ramp whose endpoint already respects THIS
+		# block's peak - lookahead limiting with no corners and no pumping
+		var pend: PackedFloat32Array = state.lim_buf
+		var pk := 0.0
+		var bsum := 0.0
+		for i in m:
+			var av := absf(blk[i])
+			pk = maxf(pk, av)
+			bsum += av
+		# the leveler: block envelope with fast attack / slow release drives
+		# a bounded 2:1 gain; the limiter needs then constrain the SAME ramp
+		# endpoint, so peaks are still guaranteed under LIMIT with no corners
+		var cenv: float = state.cenv
+		var bmean := bsum / maxf(float(m), 1.0)
+		if bmean > cenv:
+			cenv = lerpf(cenv, bmean, 0.35)      # ~8 ms attack
+		else:
+			cenv = lerpf(cenv, bmean, 0.024)     # ~120 ms release
+		state.cenv = cenv
+		var gc := clampf(sqrt(COMP_TARGET / maxf(cenv, 0.02)), COMP_MIN, COMP_MAX)
+		var need_new: float = SOFT_CEIL * SOFT_DRIVE_MAX / maxf(pk, 0.0001)
+		var g0: float = state.lim_g
+		var g1: float = minf(gc, minf(float(state.lim_need), need_new))
+		g1 = minf(g1, g0 * LIMIT_RELEASE)
+		var np := pend.size()
+		var sbed: float = state.sbed
+		var sfloor: float = state.sfloor
+		for i in np:
+			var gg := lerpf(g0, g1, (float(i) + 1.0) / float(np))
+			# the soft ceiling: saturation confined to the peaks - loud
+			# moments round into fuzzy-radio warmth instead of clipping
+			var s := SOFT_CEIL * tanh(pend[i] * gg / SOFT_CEIL)
+			# the mask covers HARD limiting only - routine peak-shaving needs
+			# no cover, and a bed that rose with it re-installed the hiss and
+			# ducked the whole voice (measured -3 dB and +10 dB of high-band
+			# noise). It rides in (~45 ms) and out (~350 ms); the long floor
+			# keeps it from ever gating fully.
+			var starget := clampf((0.72 - gg) * 1.5, 0.0, 1.0) * SBED_MAX
 			if starget > sbed:
-				sbed += 0.001 * (starget - sbed)            # ramp in (~45 ms)
+				sbed += 0.001 * (starget - sbed)
 			else:
-				sbed += 0.00013 * (starget - sbed)          # decay out (~350 ms)
-			# the snow: the bed's activity feeds a floor that settles over
-			# ~60 s and never fully melts - static shifts, it never gates
+				sbed += 0.00013 * (starget - sbed)
 			sfloor = maxf(maxf(sfloor * FLOOR_DECAY, sbed * 0.6), FLOOR_MIN)
 			var bed := maxf(sbed, sfloor)
-			out.append(vc * (1.0 - 0.4 * bed / SBED_MAX) + hiss * bed)
+			out.append(s + (rng.randf() * 2.0 - 1.0) * bed)
+		state.lim_buf = blk
+		state.lim_need = need_new
+		state.lim_g = g1
+		state.sbed = sbed
+		state.sfloor = sfloor
 		state.phase = phase
 		state.tension = tension
 		state.nlp = nlp
 		state.tilt_y = tilt_y
 		state.prev = prev
-		state.level = level
-		state.agc = agc
-		state.sbed = sbed
-		state.sfloor = sfloor
+		state.pgain = period_gain
+		state.jit = jit
 		state.ebuf = ebuf            # packed arrays are CoW: persist the written copy
 		state.eidx = eidx
 		done += m
@@ -902,13 +1070,22 @@ static func _record_timing(state: Dictionary, seg: Dictionary, t0: float, t1: fl
 
 ## Write PCM16 mono WAV. Returns the globalized path (playable by Spectrum,
 ## ffmpeg, anything).
+##
+## ATOMIC: the bytes go to a temp file that is renamed into place at the end.
+## A take can be read by another PROCESS (the export bake, the export render)
+## while something re-renders the same take here - and FileAccess.WRITE
+## truncates on open, so a plain write left a reader holding an empty or
+## half-written WAV. That is exactly how an export died: the render process
+## opened a truncated take, logged "no audio loaded", and then recorded
+## silence forever because a session with no audio never ends.
 static func write_wav(path: String, pcm: PackedFloat32Array) -> String:
 	var bytes := PackedByteArray()
 	bytes.resize(pcm.size() * 2)
 	for i in pcm.size():
 		var v := int(clampf(pcm[i], -1.0, 1.0) * 32767.0)
 		bytes.encode_s16(i * 2, v)
-	var f := FileAccess.open(path, FileAccess.WRITE)
+	var tmp := path + ".part"
+	var f := FileAccess.open(tmp, FileAccess.WRITE)
 	f.store_buffer("RIFF".to_ascii_buffer())
 	f.store_32(36 + bytes.size())
 	f.store_buffer("WAVE".to_ascii_buffer())
@@ -924,4 +1101,11 @@ static func write_wav(path: String, pcm: PackedFloat32Array) -> String:
 	f.store_32(bytes.size())
 	f.store_buffer(bytes)
 	f.close()
-	return ProjectSettings.globalize_path(path)
+	# rename over the destination: readers see the old take or the new one,
+	# never a partial one
+	var abs_tmp := ProjectSettings.globalize_path(tmp)
+	var abs_out := ProjectSettings.globalize_path(path)
+	if DirAccess.rename_absolute(abs_tmp, abs_out) != OK:
+		push_warning("ghost: could not finalize WAV at " + abs_out)
+		return abs_tmp
+	return abs_out

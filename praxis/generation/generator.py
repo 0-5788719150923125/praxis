@@ -106,14 +106,23 @@ class Generator:
     @property
     def draft_window(self) -> int:
         """Tokens worth requesting per step to actually exercise multi-token
-        drafting: the speculative width (``mtp_depth + 1``) when byte-latent MTP
-        is live, else 1. A caller that asks for fewer than this spends its whole
-        budget on the main forward's token and never uses the MTP drafts."""
+        drafting when byte-latent MTP is live, else 1. A caller that asks for
+        fewer spends its whole budget on the main forward's token and never
+        uses the MTP drafts.
+
+        This is the *achievable* window (``mtp.draft_width + 1``), not the
+        trained depth. Asking for ``mtp_depth + 1`` bytes when acceptance only
+        delivers a couple per commit does not make the step wider - it makes
+        the step loop, paying another main forward and another verify batch per
+        few bytes, which is how a large ``mtp_depth`` turns into a slow step."""
         model = self.model
         mtp = getattr(model, "mtp", None)
         if mtp is not None and getattr(mtp, "byte_level", False):
-            depth = getattr(getattr(model, "config", None), "mtp_depth", 1) or 1
-            return int(depth) + 1
+            width = getattr(mtp, "draft_width", None)
+            if width is None:
+                depth = getattr(getattr(model, "config", None), "mtp_depth", 1) or 1
+                width = int(depth)
+            return int(width) + 1
         return 1
 
     def request_generation(self, prompt, kwargs={}) -> str:

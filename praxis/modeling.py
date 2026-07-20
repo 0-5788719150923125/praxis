@@ -1107,7 +1107,13 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 num_new += 1
                 break
 
-            # Draft additional tokens with MTP
+            # Draft additional tokens with MTP. The width is the run length
+            # acceptance actually delivers (mtp.draft_width), not the trained
+            # depth: candidates past the first divergence are discarded, but
+            # each one still costs a sequential draft here and - on the
+            # byte-latent path - its own row in the verify batch below. Cutting
+            # the width cannot change what gets committed, only how much is
+            # thrown away, so greedy stays lossless.
             draft_ids = self.mtp.draft_next_tokens(
                 hidden_states[:, -1:, :], token_0_2d, embed_fn, self.head
             )
@@ -1166,11 +1172,17 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                     parts.append(v_token.unsqueeze(1))
                     generated = torch.cat(parts, dim=1)
                     num_new += accepted + 1
+                    # The run ended here, so the width this step used was right
+                    # (or too wide) - feed the observed run back.
+                    self.mtp.note_accepted(accepted)
                     break
             else:
                 # All candidates accepted — also take a bonus token.
                 generated = torch.cat([generated, candidates], dim=1)
                 num_new += n_candidates
+                # The window filled: the run was at least this long, so the EMA
+                # is pulled UP and the next step probes wider.
+                self.mtp.note_accepted(n_candidates)
 
                 if num_new < max_new_tokens:
                     bonus = bonus_at()

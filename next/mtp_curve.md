@@ -1,9 +1,10 @@
 # MTP turns the vector into a curve - the sliding-window fox
 
-> Status: **in the paper** (2026-07-18) - framing fragment
-> `praxis/pillars/framing/mtp-vear-draft.yml` (gated on `mtp_type: vear`,
-> `mtp_depth: 4`, so only an abstractinator-b-shaped run renders it), with its
-> own figure (`fig:mtp-window`) - the sliding-window variant of the
+> Status: **in the paper** (2026-07-18, corrected 2026-07-20) - framing
+> fragment `praxis/pillars/framing/mtp-vear-draft.yml` (gated on
+> `mtp_type: vear` alone; the prose is K-generic since abstractinator-c
+> raised K to 8, the figure is an explicit K=4 schematic), with its own
+> figure (`fig:mtp-window`) - the sliding-window variant of the
 > boxes-and-arrows fox strip. Sibling to
 > [information_density.md](information_density.md), which owns the original
 > fox chart (`fig:density`) and the density-as-shape reading this note extends
@@ -24,6 +25,87 @@ Because all K losses land on the same trunk state, supervision propagates
 representation at t. That is multi-token dependence - the property the fox
 chart (`fig:density`) says the uniform next-token objective lacks, and the
 property CALM bought with its unbounded, full-sequence continuous latent.
+
+## The correction (2026-07-20, twice)
+
+Two wrong drafts before the right one, both worth remembering:
+
+1. **Disjoint blocks** (first figure): K-byte draft chunks tiling the
+   sequence. That's the *inference* decode, not the hypothesis - speculative
+   decoding tiles; training is dense.
+2. **Windows as compressed clones** (second figure): each K=4 window
+   carrying a miniature of the whole sequence, four ghost boxes tethered to
+   the strip. Closer, but still treats the window as the object.
+
+The right object: **each draft depth IS the full sequence, shifted.** Depth
+k predicts t+k for *every* t at once, so its output is the sequence again,
+shifted left by k - K near-duplicate full-sequence views, sharing
+representation by construction (one trunk; adjacent depths share 2/3
+experts), distinguished chiefly by their shift. Content compresses toward
+the head as each shift retires the tip - information goes dense on the
+left. Each depth is free to settle anywhere between the window's
+granularity and the full sequence's span: multi-scale timeseries modeling.
+
+The window then stops being a box of its own: a decode step is a **column**
+through the stack, and one byte's K re-predictions (successive states
+bolstering or refuting) are a **diagonal**. Both slices fall out of the same
+lattice, which is what makes the stacked figure readable where the ghost
+boxes weren't. The column's width carries the mode distinction: standard
+byte-latent decoding is a one-cell column (one byte per forward); MTP
+advances a **K-wide** front through every depth at once. And the top of the
+figure keeps the frequency wave from the density chart, because the
+representation is frequencies throughout.
+
+Final round of refinements (also 2026-07-20):
+
+- **Rows slide by K, not 1** - because MTP advances K per step, the rows are
+  successive *steps* (t+K, t+2K, ...), each re-deriving the full sequence
+  from K further along. Needed a longer sentence: "The quick brown fox
+  jumps" (25 bytes). The outlined band became a fixed K-wide window the
+  stream slides through, one column per step.
+- **Spaces restored as teeth** - byte-latent patching cuts on them, so each
+  space stays in the lattice as a byte-wide *white* cell: no content, pure
+  entropy. Full width, not half - a space is a byte and occupies a real
+  position, and full-width teeth keep the column grid aligned across rows
+  shifted by K.
+- **Density localized per patch** - heaviest at each patch's first byte
+  (where the information arrives), decaying through the predictable tail;
+  each step's row runs denser than the last, so density grows over T+N as
+  context accumulates. Drawn as chained per-cell gradients (fig:density's
+  technique) so each patch is one smooth gradient, times a ramp rising
+  along T - later positions compress the full sequence so far, so every
+  row darkens toward its tip - times the per-step multiplier. Every patch
+  in every row decays to genuine WHITE (a white stretch where little
+  information lives) - t+4K included, by explicit decision: it is the
+  densest row with the narrowest white, but never fully saturated. Don't
+  force color into it. Teeth stay white everywhere (they are boundaries,
+  not gradient).
+- **Vertical phase-locking** - a second frequency wave runs down the depth
+  axis, left of the blocks and right of the t+K labels: the same field,
+  read across the steps. Must be clearly periodic like the horizontal one:
+  low-frequency hum at the trunk, high-frequency chirp into t+4K.
+- **Strands replace the token diagonal** - wiggly lines (snake decoration;
+  `decorations.pathmorphing` now loaded in `research/main.tex`) from the
+  left edge of the K-wide window band at each row to the first token of the
+  final sequence, drawn white with a black casing (like the glyph contours)
+  and ABOVE all other elements so they stay visible. They attach at the
+  center of the rightmost content byte inside the band per row (never a
+  tooth or dashed cell), not the band's edge: every window connected to both the future and the past of
+  every sequence - phase-locking, every feature contributing to every
+  representation. (Not from the row tails - that was wrong.) Four strands,
+  not five: the final row is what they all resolve into, so it draws none of
+  its own - a strand from it to itself curved the wrong way, which was the
+  tell.
+- **Characters melt, like fig:density's** - glyphs are not bound to their
+  token boxes; per patch they pool toward the head with the density chart's
+  power-law drift (`x = p + 0.3 + (L-0.6)*(i/L)^1.8`),
+  spilling over cell walls and leaving the right of every window sparse.
+  Box-centered glyphs sold the wrong idea - uniform density. Horizontal melt
+  only: the vertical baseline drift the other charts use was distracting
+  here, so glyphs stay vertically centered. The melt tightens per row - each
+  patch's glyphs squeeze toward *its own* patch head (never a global pull
+  toward the strip head; glyphs must stay inside their colored patch), until
+  t+4K stacks each patch's bytes on a single position.
 
 ## The contrast with CALM
 

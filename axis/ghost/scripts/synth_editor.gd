@@ -44,6 +44,13 @@ const NIBBLE_BONUS := 0.05          # added to pull odds per accumulated nibble
 # annealing toward the party's attractors and against its repulsors, freezing
 # at the end. Sit and wait; the calculation is the catch.
 const HOOK_STEPS := 140             # anneal steps across the reel
+# The trust region: a fresh draw is normalized RELATIVE to the pool being
+# harmonized with (the party's centre; the curated default when the belt is
+# empty). A candidate landing beyond the radius is pulled back onto it -
+# extremes stay reachable by DRIFTING (the cage widens the region), they just
+# stop being a routine dice roll onto a broken voice (grit x air x pitch all
+# at the far edge at once synthesized as clicks and static, not character).
+const TEMPER_RADIUS := 0.85
 
 # The three MODES of fishing - what the line is doing, not just how reward is
 # scored (each still earns differently):
@@ -106,6 +113,9 @@ var _catching := false
 var _dirty := false
 var _restart_pending := false
 var _last_edit_ms := 0
+var _cast := false                  # silent until the first throw of the session
+var _landed := false                # the working voice is a landed/kept catch
+var _retune_t := 0.0                # reel audition retune pacing
 
 
 func _ready() -> void:
@@ -117,11 +127,13 @@ func _ready() -> void:
 	if i >= 0 and i + 1 < args.size() and FileAccess.file_exists(args[i + 1]):
 		_text.text = FileAccess.get_file_as_string(args[i + 1])
 	_text.text_changed.connect(_mark_structural)
-	if not _text.text.strip_edges().is_empty():
-		if args.has("--say"):
-			_apply.call_deferred()
-		else:
-			_mark_structural()
+	# the water is SILENT at launch - no auto-speak; the first throw casts the
+	# voice. --say (demos, headless checks) counts as a thrown-and-landed cast.
+	if args.has("--say") and not _text.text.strip_edges().is_empty():
+		_cast = true
+		_landed = true
+		_update_reading_label()
+		_apply.call_deferred()
 
 
 func _build_panel() -> void:
@@ -148,7 +160,7 @@ func _build_panel() -> void:
 	title_row.add_child(hide)
 
 	var hint := Label.new()
-	hint.text = "Write and it speaks. Throw; pull when it anchors; let the reel run; hold or fold."
+	hint.text = "Write, then throw - the water is silent until you cast. Pull when it anchors; the reel is the fight; hold or fold."
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hint.add_theme_font_size_override("font_size", 12)
 	hint.modulate = Color(1, 1, 1, 0.6)
@@ -210,7 +222,7 @@ func _build_panel() -> void:
 	# the readout line lives IN the HUD - this is a wearable, and the text is
 	# part of the instrument, not chrome below it
 	_status = Label.new()
-	_status.text = "ready - write and it speaks"
+	_status.text = "the water is silent - write, then throw"
 	_status.add_theme_font_size_override("font_size", 11)
 	_status.add_theme_color_override("font_color", Color(0.55, 0.95, 0.75, 0.85))
 	hud_col.add_child(_status)
@@ -278,22 +290,56 @@ func _build_panel() -> void:
 
 
 ## The exporter's take provider: render the CURRENT text through the voice
-## once, write the WAV + subtitle sidecar, and hand back the path. Synchronous
-## on purpose - synthesis runs far above real time, so this is seconds, and it
-## guarantees the exported take matches exactly what the panel says right now
-## (never a stale file from before an edit or a throw).
+## once, write the WAV + subtitle sidecar, and hand back the path. A COROUTINE:
+## the snapshot (text + spec + take name) is taken on the main thread so the
+## worker never touches live UI or fishing state, then the render AND the
+## per-sample WAV encode run on a WorkerThreadPool task while the app keeps
+## drawing. Running them synchronously froze the whole window for as long as
+## the draft was long (synthesis is ~20x real time and the WAV encode is a
+## GDScript loop too) - and because the voice plays from its own thread, the
+## audio kept going, so the stall read as a hang, not a wait.
+## Is there anything worth exporting? The export does NOT need the live player
+## running - it renders from the seeds. A belt with seeds can always speak (the
+## voice is the party's blend even before a cast); a voice already cast can
+## speak as itself. An empty belt with nothing cast has no voice to render, and
+## the button greys out.
+func can_export_take() -> bool:
+	return not _text.text.strip_edges().is_empty() and (_cast or not _belt.is_empty())
+
+
 func export_take() -> String:
 	var text := _text.text.strip_edges()
 	if text.is_empty():
 		return ""
-	var result := Voice.render(text, _current_spec())
+	# The export is independent of the realtime game: with nothing cast, the
+	# take is read by the PARTY - the acceptance-weighted blend of the belt,
+	# which is the same background voice the water would speak with. The
+	# lineages on the belt also join as influences, so the export reflects the
+	# whole collection rather than one arbitrary working candidate.
+	var spec := _current_spec()
+	if not _cast and not _belt.is_empty():
+		spec = Voice.Spec.from_traits(_background_traits(), int(_lineage[0]), _lineage)
+		spec.adrenochrome = _working_genome.duplicate()
+		var infl: Array = []
+		for e in _belt:
+			infl.append((e.lineage as Array).duplicate())
+		spec.influences = infl
+	# distinct from the live stream's take file: the stream's worker may still
+	# be synthesizing the SAME lineage and would race this write on completion
+	var base := "user://synth/take_%06x_export" % (hash(str(_lineage)) & 0xFFFFFF)
 	DirAccess.make_dir_recursive_absolute("user://synth")
-	var base := "user://synth/take_%06x" % (hash(str(_lineage)) & 0xFFFFFF)
-	var wav := Voice.write_wav(base + ".wav", result.pcm)
-	var side := FileAccess.open(base + ".json", FileAccess.WRITE)
-	side.store_string(JSON.stringify({"words": result.words}))
-	side.close()
-	return wav
+	var done := {}
+	var task := WorkerThreadPool.add_task(func():
+		var result := Voice.render(text, spec)
+		var wav := Voice.write_wav(base + ".wav", result.pcm)
+		var side := FileAccess.open(base + ".json", FileAccess.WRITE)
+		side.store_string(JSON.stringify({"words": result.words}))
+		side.close()
+		done["wav"] = wav)
+	while not WorkerThreadPool.is_task_completed(task):
+		await get_tree().process_frame
+	WorkerThreadPool.wait_for_task_completion(task)
+	return String(done.get("wav", ""))
 
 
 func _current_spec() -> Voice.Spec:
@@ -328,6 +374,8 @@ func _throw() -> void:
 	_anchor = 0.0
 	_nibbles = 0
 	_last_strike_t = -999.0
+	_cast = true                     # the first throw breaks the silence
+	_landed = false                  # a fresh candidate swims far away
 	var prof: Dictionary = PROFILES[_profile]
 	# the crab cage: a long drift pulls the next throw from further away -
 	# wilder odds, wider jitter, the cage hauled in from wherever it got to
@@ -336,7 +384,7 @@ func _throw() -> void:
 		_lineage = [randi() % 1000000]
 		var rng := RandomNumberGenerator.new()
 		rng.seed = _lineage[0]
-		_traits = Voice.Spec.sample(rng).traits
+		_traits = _temper_traits(Voice.Spec.sample(rng).traits, drift)
 		_working_genome = {}         # wild = a fresh lineage-derived genome
 		_status.text = "thrown (wild) - the water is quiet"
 	else:
@@ -351,6 +399,7 @@ func _throw() -> void:
 		for key in Voice.TRAIT_KEYS:
 			_traits[key] = clampf(
 				float(t.get(key, 0.0)) + randfn(0.0, maxf(jitter, 0.06)), -1.0, 1.0)
+		_traits = _temper_traits(_traits, drift)
 		# a child of an adrenochrome seed inherits the frozen genome verbatim -
 		# the reading still varies (gates, motifs, field ride the new lineage)
 		_working_genome = (parent.get("genome", {}) as Dictionary).duplicate()
@@ -359,6 +408,30 @@ func _throw() -> void:
 	_update_reading_label()
 	_persist()
 	_apply()
+
+
+## Normalize a candidate's trait vector against the pool it must harmonize
+## with: the party's acceptance-weighted centre ({} = the curated default when
+## the belt is empty) anchors a trust region of TEMPER_RADIUS (RMS over the
+## trait axes); a draw beyond it is pulled back onto the boundary, direction
+## intact. Drifting widens the region - foreignness is EARNED by the cage,
+## not rolled.
+func _temper_traits(t: Dictionary, drift: float) -> Dictionary:
+	var center := _background_traits()
+	var radius := TEMPER_RADIUS * (1.0 + 0.8 * drift)
+	var dist := 0.0
+	for key in Voice.TRAIT_KEYS:
+		var dv := float(t.get(key, 0.0)) - float(center.get(key, 0.0))
+		dist += dv * dv
+	dist = sqrt(dist / Voice.TRAIT_KEYS.size())
+	if dist <= radius:
+		return t
+	var scale := radius / dist
+	var out := {}
+	for key in Voice.TRAIT_KEYS:
+		var c := float(center.get(key, 0.0))
+		out[key] = clampf(c + (float(t.get(key, 0.0)) - c) * scale, -1.0, 1.0)
+	return out
 
 
 func _pick_parent() -> Dictionary:
@@ -458,14 +531,15 @@ func _planet_threshold() -> float:
 	return 0.72 - 0.25 * _drift_norm()
 
 
-## Reel-mode retrieval speed: data- and learning-dependent. The belt's
-## accumulated statistics (hold time + earned reward = what the party has
-## LEARNED) preview the catch's influence, so a seasoned party reels faster.
-func _retrieval_factor() -> float:
+## Accumulated information is POWER on the line: a seasoned belt (hold time +
+## earned reward = what the party has LEARNED) resonates with a hooked catch
+## and retrieves it faster - in EVERY mode; knowledge is not a mode. This is
+## the reel's side of the fight: power against the creature's runs.
+func _reel_power() -> float:
 	var knowledge := 0.0
 	for e in _belt:
 		knowledge += e.m.s + 20.0 * float(e.m.get("r", 0.0))
-	return clampf(1.5 / (1.0 + knowledge / 400.0), 0.45, 1.5)
+	return clampf(0.9 + knowledge / 600.0, 0.9, 2.2)
 
 
 ## PULL - the second axis. Something anchored pulls for a long while; pull
@@ -522,7 +596,7 @@ func _begin_hook(d: float) -> void:
 		"drift":
 			profile_scale = 1.4
 		"reel":
-			profile_scale = _retrieval_factor()
+			profile_scale = 1.0      # knowledge now powers the reel globally
 	var members: Array = []
 	var accs: Array = []
 	for e in _belt:
@@ -540,16 +614,22 @@ func _begin_hook(d: float) -> void:
 		"w": 0.4, "sign": 1.0})
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash("adrenochrome") ^ hash(str(_lineage))
+	# the FIGHT is seeded per lineage: this creature always fights this way
+	var frng := RandomNumberGenerator.new()
+	frng.seed = hash("fight") ^ hash(str(_lineage))
 	_hook = {
 		"rng": rng, "step": 0, "t": 0.0,
+		"progress": 0.0, "run": 0.0, "run_t": frng.randf_range(2.0, 6.0),
+		"frng": frng, "power": _reel_power(),
 		"duration": lerpf(45.0, 240.0, d) * profile_scale,
 		"members": members, "d": d, "reward": _catch_reward(d),
 		"traits": _traits.duplicate(),
 		"genome": Voice.ProsodyWalk._lineage_genome(_lineage) \
 			if _working_genome.is_empty() else _working_genome.duplicate(),
 	}
+	_retune_t = 0.0
 	_hud_glyph.seed_hash = hash(str(_lineage))
-	_status.text = "hook set - the reel begins"
+	_status.text = "hook set - the fight begins"
 
 
 ## One anneal step: the adrenochrome moves through the party's force field.
@@ -672,6 +752,7 @@ func _accept_catch() -> void:
 		if _is_prefix(e.lineage, _lineage):
 			e.m.catches += 1
 			e.m.r += reward * 0.5
+	_landed = true                   # the caught voice speaks at full presence
 	_traits = (_pending.traits as Dictionary).duplicate()
 	_working_genome = (_pending.genome as Dictionary).duplicate()
 	_belt.append({
@@ -696,6 +777,10 @@ func _accept_catch() -> void:
 func _release_catch() -> void:
 	_pending = {}
 	_card.visible = false
+	# the reel's audition bent the stream's timbre toward the adrenochrome;
+	# a fold hands the body back to the working candidate
+	if _stream != null and is_instance_valid(_stream):
+		_stream.retune(_current_spec())
 	_status.text = "released - nothing changes"
 
 
@@ -705,6 +790,8 @@ func _restore_capture(idx: int) -> void:
 	var entry: Dictionary = _belt[idx]
 	entry.m.restores += 1
 	entry.m.acts += 1
+	_cast = true
+	_landed = true                   # a belt seed is already yours: full voice
 	_lineage = (entry.lineage as Array).duplicate()
 	_traits = (entry.traits as Dictionary).duplicate()
 	_working_genome = (entry.get("genome", {}) as Dictionary).duplicate()
@@ -734,9 +821,19 @@ func _seed_name(lineage: Array) -> String:
 
 
 func _update_reading_label() -> void:
+	# before anything is thrown there IS no candidate: the persisted (or
+	# default) working lineage is only a parent-to-be, and naming it - with a
+	# difficulty word scored against an empty belt - put a phantom seed on a
+	# line that has never touched the water
+	if not _cast:
+		_reading_label.text = "nothing on the line"
+		if _hud_glyph != null and is_instance_valid(_hud_glyph):
+			_hud_glyph.visible = false
+		return
 	_reading_label.text = "%s · %s catch" % [
 		_seed_name(_lineage), _difficulty_word(_candidate_difficulty())]
 	if _hud_glyph != null and is_instance_valid(_hud_glyph):
+		_hud_glyph.visible = true
 		_hud_glyph.seed_hash = hash(str(_lineage))
 		_hud_glyph.fit = _relative_fit_of(_traits, _lineage, _working_genome)
 		_hud_glyph.queue_redraw()
@@ -921,6 +1018,19 @@ func _process(delta: float) -> void:
 		for e in _belt:
 			if e.lineage == _lineage or _is_prefix(e.lineage, _lineage):
 				e.m.s += delta
+		# PRESENCE: how near the voice is to the caster. A fresh cast swims
+		# far (darker, a few dB down - clearly AUDIBLE; distance is the
+		# filter's job, silence belongs only to the un-cast water); an
+		# anchored pull brings it closer; the reel drags it in - and a RUN
+		# drags it back out; landed = full voice.
+		var presence := 1.0
+		if not _landed:
+			if _hook.is_empty():
+				presence = 0.55 + 0.25 * clampf(_anchor, 0.0, 1.0)
+			else:
+				presence = clampf(0.6 + 0.4 * float(_hook.progress)
+					- 0.2 * float(_hook.run), 0.3, 1.0)
+		_stream.set_presence(presence)
 		_metrics_t += delta
 		if _metrics_t >= 5.0:
 			_metrics_t = 0.0
@@ -961,23 +1071,45 @@ func _process(delta: float) -> void:
 				elif _status.text.begins_with("something is pulling"):
 					_status.text = "the line is slack"
 		else:
-			# THE REEL: wall time advances the anneal; the adrenochrome forms
-			_hook.t += delta
-			var progress: float = clampf(_hook.t / float(_hook.duration), 0.0, 1.0)
-			while _hook.step < int(progress * HOOK_STEPS):
+			# THE REEL is a FIGHT, not a timer: progress is the belt's power
+			# against the creature's RUNS. A run pays line back out (progress
+			# can regress; the voice drops away mid-pull); knowledge reels
+			# harder. Everything hooked lands eventually - the wait is the
+			# accumulation (the adrenochrome anneals step by step) AND the
+			# audition (presence and timbre close in as it nears), so the
+			# hold-or-fold decision is informed by the time it surfaces.
+			var h := _hook
+			h.t += delta
+			h.run = maxf(float(h.run) - delta / 2.2, 0.0)
+			h.run_t = float(h.run_t) - delta
+			if float(h.run_t) <= 0.0:
+				var frng: RandomNumberGenerator = h.frng
+				h.run_t = frng.randf_range(4.0, 12.0) / (0.4 + float(h.d))
+				h.run = frng.randf_range(0.5, 1.0) * (0.35 + 0.65 * float(h.d))
+			var rate: float = float(h.power) / float(h.duration) * (1.0 - 1.3 * float(h.run))
+			h.progress = clampf(float(h.progress) + rate * delta, 0.0, 1.0)
+			while h.step < int(float(h.progress) * HOOK_STEPS):
 				_adreno_step()
+			# the audition: every couple of seconds the stream's TIMBRE bends
+			# toward the annealing adrenochrome (atomic retune; the reading
+			# stays the thrown plan until an Accept restarts it in full)
+			_retune_t += delta
+			if _retune_t >= 2.0:
+				_retune_t = 0.0
+				_stream.retune(Voice.Spec.from_traits(h.traits, int(_lineage[0]), _lineage))
 			# the metamorphosis: pulling the fish closer contorts the CURRENT
 			# scene, and a foreign catch contorts it BIG
-			Director.set_aura(progress * (0.4 + 1.1 * float(_hook.d)))
+			Director.set_aura(float(h.progress) * (0.4 + 1.1 * float(h.d)))
 			_status_t2 += delta
 			if _status_t2 >= 0.5:
 				_status_t2 = 0.0
-				var left := int(maxf(float(_hook.duration) - _hook.t, 0.0))
-				_status.text = "reeling - the adrenochrome is forming (%d:%02d)" % [
-					int(left / 60.0), left % 60]
-				_hud_glyph.fit = _relative_fit_of(_hook.traits, _lineage, _hook.genome)
+				if h.run > 0.35:
+					_status.text = "it runs - the line pays out (%d%%)" % int(float(h.progress) * 100.0)
+				else:
+					_status.text = "reeling - the adrenochrome is forming (%d%%)" % int(float(h.progress) * 100.0)
+				_hud_glyph.fit = _relative_fit_of(h.traits, _lineage, h.genome)
 				_hud_glyph.queue_redraw()
-			if progress >= 1.0:
+			if float(h.progress) >= 1.0:
 				_finish_hook()
 		_hud.queue_redraw()
 
@@ -1054,9 +1186,14 @@ func _background_traits() -> Dictionary:
 
 func _apply() -> void:
 	_restart_pending = false
+	if not _cast:
+		# edits before the first throw only shape the draft - the water stays
+		# silent until a voice is actually cast into it
+		_status.text = "the water is silent - throw to cast a voice"
+		return
 	var text := _text.text.strip_edges()
 	if text.is_empty():
-		_status.text = "write something and it will speak"
+		_status.text = "write something, then throw"
 		return
 	_loop_len = 0.0
 	var spec := _current_spec()
@@ -1154,21 +1291,24 @@ class Hud:
 		var line_col := Color(0.4, 0.85, 0.65, 0.35)
 		var y0: float = s.y * 0.5
 		if not editor._hook.is_empty():
-			# the reel: progress arc + countdown
-			var progress: float = clampf(editor._hook.t / float(editor._hook.duration), 0.0, 1.0)
+			# the reel: progress arc + the FIGHT. Percent, not a countdown -
+			# the duration is not fixed anymore; a run pays line back out
+			var progress: float = clampf(float(editor._hook.progress), 0.0, 1.0)
+			var run: float = float(editor._hook.get("run", 0.0))
 			draw_arc(glyph_c, 30.0, -PI / 2.0, -PI / 2.0 + TAU * progress, 48,
 				Color(1.0, 0.75, 0.3, 0.9), 2.5)
-			var left := int(maxf(float(editor._hook.duration) - editor._hook.t, 0.0))
 			draw_string(get_theme_default_font(), Vector2(s.x - 52.0, s.y - 10.0),
-				"%d:%02d" % [int(left / 60.0), left % 60], HORIZONTAL_ALIGNMENT_LEFT,
+				"%d%%" % int(progress * 100.0), HORIZONTAL_ALIGNMENT_LEFT,
 				-1, 12, Color(1.0, 0.75, 0.3, 0.9))
-			# tension: the line thrums taut while reeling
+			# tension: taut thrum while reeling; a RUN whips the line hard
+			# and shifts it toward red - the push and pull, visible
 			var pts := PackedVector2Array()
 			for i in 25:
 				var u := float(i) / 24.0
 				var x := lerpf(64.0, s.x - 12.0, u)
-				pts.append(Vector2(x, y0 + sin(u * 14.0 + t * 9.0) * 2.0))
-			draw_polyline(pts, Color(1.0, 0.75, 0.3, 0.5), 1.0)
+				pts.append(Vector2(x, y0 + sin(u * 14.0 + t * (9.0 + 14.0 * run))
+					* (2.0 + 9.0 * run)))
+			draw_polyline(pts, Color(1.0, lerpf(0.75, 0.4, run), 0.3, 0.5 + 0.3 * run), 1.0)
 			_draw_party_planets(s)   # the attractors, visible while they pull
 			return
 		# the line: slack when quiet, pulled into a deepening belly while
