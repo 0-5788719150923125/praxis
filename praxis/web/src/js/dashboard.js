@@ -3,18 +3,26 @@
  * Renders a terminal-styled dashboard from streamed metrics data
  */
 
-import { statusLabel } from './state.js';
+import { statusLabel, state } from './state.js';
+import { getOfflineAccent } from './theme.js';
 
 // Persistent UI state across re-renders (survives tab switches; resets on reload).
 let logPanelOpen = false;
 
 // Opening the logs flips the whole app to the blue accent (the "hidden mode"). The
 // flag lives on <html> so every tab + the Praxis animation re-tint, and it persists
-// across tab navigation because we never clear it on re-render.
+// across tab navigation because we never clear it on re-render. Closing it restores
+// the registered offline accent (if any) rather than clearing it outright - an
+// offline export must stay red once the logs panel closes again.
 function applyLogAccent() {
     if (typeof document === 'undefined') return;
-    if (logPanelOpen) document.documentElement.setAttribute('data-accent', 'blue');
-    else document.documentElement.removeAttribute('data-accent');
+    if (logPanelOpen) {
+        document.documentElement.setAttribute('data-accent', 'blue');
+    } else if (getOfflineAccent()) {
+        document.documentElement.setAttribute('data-accent', getOfflineAccent());
+    } else {
+        document.documentElement.removeAttribute('data-accent');
+    }
 }
 
 /**
@@ -191,6 +199,26 @@ function drawSparkline(data, canvasId) {
     ctx.textAlign = 'left';
     ctx.fillText(fmt(max, 4), padding, 10);
     ctx.fillText(fmt(min, 4), padding, height - 2);
+}
+
+// The sparklines are hand-drawn canvases, not Chart.js instances (compare
+// setupAccentRetint in charts.js), so an accent/theme flip only ever reaches
+// them via a redraw. In live mode the ~2Hz metrics_snapshot tick redraws them
+// anyway, so this went unnoticed; on a frozen/offline export that tick fires
+// once and never again, so without this observer a theme change (the offline
+// red accent, or a light/dark toggle) never appears on these charts at all.
+let _sparklineThemeRedrawReady = false;
+export function setupSparklineThemeRedraw() {
+    if (_sparklineThemeRedrawReady || typeof document === 'undefined') return;
+    _sparklineThemeRedrawReady = true;
+    new MutationObserver(() => {
+        const m = state.liveMetrics.data;
+        if (!m) return;
+        drawSparkline(m.loss_history, 'ld-sparkline-canvas');
+        if (hasSwarm(m)) drawSparkline(m.swarm_loss_history, 'ld-swarm-sparkline-canvas');
+    }).observe(document.documentElement, {
+        attributes: true, attributeFilter: ['data-accent', 'data-theme'],
+    });
 }
 
 /**

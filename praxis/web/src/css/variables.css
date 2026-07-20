@@ -111,3 +111,13 @@
     --accent-sat: 72%;
     --accent-lum: 50%;
 }
+
+/* Offline mode: a frozen/dead export (no live server behind it) shifts the
+   entire accent to red - a clear "this page isn't running" signal. Pushed by
+   whichever integration serves the frozen snapshot, via the theme registry in
+   js/theme.js; nothing in the frontend decides "offline" on its own. */
+[data-accent="red"] {
+    --accent-hue: 0;
+    --accent-sat: 72%;
+    --accent-lum: 50%;
+}

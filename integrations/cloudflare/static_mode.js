@@ -11,6 +11,8 @@
  *      static files under /data/, filters KB search client-side, and returns an
  *      offline stub for every write/interactive endpoint.
  *   3. Greys out the controls that can't work offline (chat, swarm, downloads).
+ *   4. Pushes the "red" accent into the frontend's offline-theme registry
+ *      (js/theme.js) - a dead page should look dead, not the live green.
  *
  * None of this touches the real frontend source - it lives entirely here.
  */
@@ -18,6 +20,13 @@
   'use strict';
 
   var DATA = '/data/';
+
+  // --- 0. flag this export as offline in the theme registry ---------------
+  // Runs synchronously, before main.js (a deferred module) ever executes, so
+  // theme.js's applyOfflineAccent() sees it on its very first read - no flash
+  // of the live green accent before the switch to red.
+  window.PRAXIS_THEME_REGISTRY = window.PRAXIS_THEME_REGISTRY || {};
+  window.PRAXIS_THEME_REGISTRY.offlineAccent = 'red';
 
   // --- 1. websocket stub with frozen-snapshot replay ----------------------
 

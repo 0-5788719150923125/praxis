@@ -48,13 +48,34 @@ KB_TYPES = "doc,note,code"
 CARD_SEED = 42
 CARD_SIDES = ("front", "back")
 CARD_THEMES = ("light", "dark")
-CARD_HUE = "161"  # the frontend's default --accent-hue
+# Matches [data-accent="red"]'s --accent-hue in variables.css - every export
+# from this integration is the offline/red snapshot, so the pre-rendered card
+# must match, or its chrome-colored crop would clash against the rest of the
+# (red-tinted) page.
+CARD_HUE = "0"
 
 OFFLINE_MESSAGE = (
     "You are viewing an offline snapshot of the Praxis dashboard. "
     "Live features (chat, generation, the swarm, and the metrics stream) are "
     "disabled - this page is a periodic capture, not a running server."
 )
+
+# The export runs in-process against the test client, which resolves
+# request.host to "localhost" regardless of the domain the snapshot is later
+# served from. There is no git smart-HTTP server behind a static Pages
+# deployment anyway (see README "What can't come along"), so any git URL that
+# would otherwise point at localhost is rewritten to the public mirror.
+GITHUB_MIRROR_URL = "https://github.com/0-5788719150923125/praxis"
+
+
+def _is_localhost_url(url: Optional[str]) -> bool:
+    if not url:
+        return False
+    try:
+        host = urllib.parse.urlparse(url).hostname
+    except Exception:
+        return False
+    return host in ("localhost", "127.0.0.1", "::1")
 
 # Read-only endpoints to dump verbatim: (request path, output file, kind).
 # kind is "binary" for files served as-is; everything else is written bytewise
@@ -94,6 +115,18 @@ _SHIM_TAG = '<script src="/static/js/static_mode.js"></script>'
 
 def _log(msg: str) -> None:
     print(f"[cloudflare] {msg}")
+
+
+def _ascii_only(text: str) -> str:
+    """Strip non-ASCII characters from CLI output before it reaches _log().
+
+    wrangler decorates its own success/status lines with unicode symbols
+    (sparkles, checkmarks); the terminal dashboard's LOGS panel doesn't render
+    those and shows the Unicode replacement character in their place. None of
+    the informative content (branch names, URLs, messages) is ever non-ASCII,
+    so a straight filter loses nothing but the decoration.
+    """
+    return "".join(ch for ch in text if ord(ch) < 128).strip()
 
 
 def _load_env() -> None:
@@ -180,9 +213,36 @@ def _export_endpoints(client: Any, data: Path) -> None:
     for path, out_name, _kind in DUMP_ENDPOINTS:
         try:
             resp = client.get(path)
-            (data / out_name).write_bytes(resp.get_data())
+            payload = resp.get_data()
+            if out_name == "agents.json":
+                payload = _rewrite_agents_localhost(payload)
+            (data / out_name).write_bytes(payload)
         except Exception as exc:  # one bad endpoint never kills the export
             _log(f"warning: {path} dump failed: {exc}")
+
+
+def _rewrite_agents_localhost(payload: bytes) -> bytes:
+    """Point self-instance entries at the GitHub mirror instead of localhost.
+
+    Only self-instances (this run, captured via the in-process test client)
+    are affected; real peer/remote entries keep their actual URLs.
+    """
+    try:
+        parsed = json.loads(payload)
+    except Exception:
+        return payload
+    agents = parsed.get("agents") if isinstance(parsed, dict) else None
+    if not isinstance(agents, list):
+        return payload
+    changed = False
+    for agent in agents:
+        if isinstance(agent, dict) and _is_localhost_url(agent.get("url")):
+            agent["url"] = GITHUB_MIRROR_URL
+            agent["masked_url"] = GITHUB_MIRROR_URL
+            changed = True
+    if not changed:
+        return payload
+    return json.dumps(parsed).encode("utf-8")
 
 
 def _export_spec(client: Any, data: Path, app: Any) -> None:
@@ -208,7 +268,22 @@ def _export_spec(client: Any, data: Path, app: Any) -> None:
             payload = json.dumps({"status": "no_data"}).encode("utf-8")
             _log("spec: no live payload and no on-disk spec.json")
 
+    payload = _rewrite_spec_localhost(payload)
     (data / "spec.json").write_bytes(payload)
+
+
+def _rewrite_spec_localhost(payload: bytes) -> bytes:
+    """Point the Identity tab's git clone/remote commands at the GitHub mirror
+    instead of the localhost URL baked in by the in-process test client."""
+    try:
+        parsed = json.loads(payload)
+    except Exception:
+        return payload
+    if not isinstance(parsed, dict) or not _is_localhost_url(parsed.get("git_url")):
+        return payload
+    parsed["git_url"] = GITHUB_MIRROR_URL
+    parsed["masked_git_url"] = GITHUB_MIRROR_URL
+    return json.dumps(parsed).encode("utf-8")
 
 
 def _export_cards(client: Any, data: Path, out: Path) -> None:
@@ -620,11 +695,12 @@ def deploy_content(
         return False
 
     if result.returncode != 0:
-        _log(f"upload failed (exit {result.returncode}): {result.stderr.strip()[:500]}")
+        stderr = _ascii_only(result.stderr)[:500]
+        _log(f"upload failed (exit {result.returncode}): {stderr}")
         return False
 
     tail = [ln for ln in result.stdout.splitlines() if ln.strip()]
-    _log("upload succeeded. " + (tail[-1].strip() if tail else ""))
+    _log("upload succeeded. " + (_ascii_only(tail[-1]) if tail else ""))
     return True
 
 

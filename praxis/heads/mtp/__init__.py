@@ -33,9 +33,11 @@ MTP_REGISTRY = {
 # is learned from the run's own accepted-run lengths (see MultiTokenPrediction).
 # Decay is a slow EMA so a single unlucky commit cannot collapse the window;
 # the margin is how far above the current run we keep probing, so a model whose
-# drafts improve can widen again without any external signal.
+# drafts improve can widen again without any external signal. Margin 1 keeps a
+# single growth-probe above the current run (margin 2 wasted a second verify row
+# every step, since acceptance stops at the first divergence).
 _ACCEPT_EMA_DECAY: float = 0.9
-_ACCEPT_WIDTH_MARGIN: int = 2
+_ACCEPT_WIDTH_MARGIN: int = 1
 
 
 def _is_byte_latent(encoder_type) -> bool:
@@ -113,10 +115,14 @@ class MultiTokenPrediction(nn.Module):
         # actually delivers. Acceptance stops at the FIRST divergence, so every
         # drafted/verified candidate past that point is pure waste - and on the
         # byte-latent path the verify is a batch of one row PER candidate, so
-        # that waste is linear in the width. Start optimistic (full depth) and
-        # let the observed runs pull it down; the margin keeps a probe above the
-        # current run so the width can climb back as the drafts improve.
-        self._accept_ema: float = float(self.num_depths)
+        # that waste is linear in the width. Start CONSERVATIVE (one draft) and
+        # let the observed runs pull it UP: a fresh or low-acceptance model then
+        # generates near-autoregressively and only widens the verify batch once
+        # it earns longer runs, so a large mtp_depth costs nothing extra at
+        # inference until the drafts actually land. (Starting at full depth made
+        # every early step pay a depth-wide verify while the EMA slowly warmed
+        # down - a startup cost that scaled with mtp_depth.)
+        self._accept_ema: float = 1.0
         self._accept_seen: int = 0
 
         # Non-byte encoder path (e.g. CALM) owns a projection + head for

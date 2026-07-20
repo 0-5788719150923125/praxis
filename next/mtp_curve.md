@@ -104,8 +104,10 @@ Final round of refinements (also 2026-07-20):
   read. Larger because it is nearer - the same window one scale out. Carries
   the exponential/multi-scale claim with no label at all: the window is a
   rung, not a fixed span, so a single K encodes the whole landscape's shape
-  rather than one altitude. The bottom label row and title sit below its
-  lower edge; don't let them drift back up into it.
+  rather than one altitude. The lattice's own label row keeps its line just
+  under the final row and the echo's dotted edge passes BEHIND it (labels
+  are drawn after the echo) - the echo must not push the lattice's labels
+  around. Only the title/subtitle sit clear below the echo's lower edge.
 - **Vertical phase-locking** - a second frequency wave runs down the depth
   axis, left of the blocks and right of the t+K labels: the same field,
   read across the steps. Must be clearly periodic like the horizontal one:

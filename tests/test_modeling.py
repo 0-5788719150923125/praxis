@@ -533,14 +533,19 @@ def test_speculative_honors_repetition_penalty(spec_config):
 
 
 def test_draft_window_from_mtp_depth(spec_config):
-    """The terminal sizes its per-step budget off the draft window so each step
-    exercises MTP; without live MTP it collapses to a single token."""
+    """The terminal sizes its per-step budget off the ADAPTIVE draft window, so a
+    step exercises MTP without over-drafting; without live MTP it collapses to a
+    single token."""
     from praxis.generation.generator import Generator
 
     torch.manual_seed(0)
     model = PraxisForCausalLM(spec_config).eval()
     gen = Generator(model=model, tokenizer=None, device="cpu")
-    assert gen.draft_window == spec_config.mtp_depth + 1  # live byte-latent MTP
+    # The window tracks the adaptive width (draft_width + 1), which starts
+    # conservative: a fresh model drafts narrowly and widens only as runs land,
+    # so a large mtp_depth costs nothing extra until acceptance earns it.
+    assert gen.draft_window == model.mtp.draft_width + 1
+    assert model.mtp.draft_width < spec_config.mtp_depth  # conservative at init
 
     saved = model.mtp
     model.mtp = None
@@ -555,25 +560,26 @@ def test_draft_width_tracks_accepted_runs(deep_spec_config):
 
     Every candidate past the first divergence is discarded but still costs a
     sequential draft and (byte-latent) its own verify row, so a wide mtp_depth
-    whose drafts rarely land makes each step pay O(depth) to commit a byte or
-    two. The width must fall toward what acceptance delivers, and climb back
-    when the drafts start landing.
+    whose drafts rarely land would make each step pay O(depth) to commit a byte
+    or two. The width starts CONSERVATIVE and only climbs toward the trained
+    depth as acceptance actually delivers longer runs.
     """
     torch.manual_seed(0)
     model = PraxisForCausalLM(deep_spec_config).eval()
     mtp = model.mtp
     depth = deep_spec_config.mtp_depth
 
-    assert mtp.draft_width == depth  # optimistic at init
+    assert mtp.draft_width < depth  # conservative at init, not the full depth
+    assert mtp.draft_width >= 1
 
     for _ in range(60):
-        mtp.note_accepted(1)  # short runs: the window should close in
+        mtp.note_accepted(1)  # short runs keep the window closed in
     narrow = mtp.draft_width
     assert narrow < depth
     assert narrow >= 1  # never switches drafting off
 
     for _ in range(120):
-        mtp.note_accepted(depth)  # drafts land again
+        mtp.note_accepted(depth)  # drafts land again -> widen toward the depth
     assert mtp.draft_width > narrow
     assert mtp.draft_width <= depth  # bounded by trained depth
 

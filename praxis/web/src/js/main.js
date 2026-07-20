@@ -16,6 +16,8 @@ import { CLICK_HANDLERS, delegateClick } from './events.js';
 import { executeAction } from './actions.js';
 import { beginPrewarm, endPrewarm } from './prefetch.js';
 import { setupAccentRetint } from './charts.js';
+import { setupSparklineThemeRedraw } from './dashboard.js';
+import { applyOfflineAccent } from './theme.js';
 import './prism.js';
 
 // Mode-aware input cues, all basketball: Read invites a query ("> Look"),
@@ -74,6 +76,11 @@ function getLifecycleFunction(name) {
  * Initialize the application
  */
 function init() {
+    // Apply any offline theme an integration registered before this module ran
+    // (e.g. the Cloudflare static snapshot flagging itself red) - before the
+    // first paint, so nothing flashes the live-default accent first.
+    applyOfflineAccent();
+
     // Disable Chart.js tooltips on touch devices: the tap-triggered labels
     // cover the chart and can't be dismissed. Taps synthesize mouse/click
     // events too, so we strip all events on hover-less devices.
@@ -90,6 +97,7 @@ function init() {
 
     // Charts auto-recolor when the accent (logs blue mode) flips - no Refresh needed.
     setupAccentRetint();
+    setupSparklineThemeRedraw();
 
     // Set API URL
     const pathPrefix = window.location.pathname.endsWith('/')

@@ -163,10 +163,10 @@ body: >
   \node[font=\scriptsize, text=black!55, anchor=east] at (26.2,1.45) {enters with velocity};
   \draw[->, black!55, line width=0.5pt] (25.5,0.62) -- (26.75,1.2);
   \draw[->, black!55, line width=0.5pt] (-0.58,-6.45) -- (-1.55,-7.05);
-  \node[font=\scriptsize, text=black!55, anchor=north west] at (1.25,-8.55) {phase-locks at the head};
-  \node[font=\scriptsize, text=black!55, anchor=north west] at (12.2,-8.55) {pulls $K$ through each step};
+  \node[font=\scriptsize, text=black!55, anchor=north west] at (1.25,-6.1) {phase-locks at the head};
+  \node[font=\scriptsize, text=black!55, anchor=north west] at (11.6,-6.1) {pulls $K$ through each step};
   \node[font=\footnotesize] at (12.5,-9.7) {byte-latent MTP (ours)};
-  \node[font=\scriptsize, text=black!55] at (12.5,-10.6) {each step re-derives the full sequence, $K$ further along};
+  \node[font=\scriptsize, text=black!55] at (12.5,-10.6) {each step re-derives the full sequence, with a band of $K$ bytes transforming through it};
   \end{tikzpicture} \caption{The fox at every step: the strip of
   Figure~\ref{fig:density}, reorganized as this head reads it. \textbf{Top:}
   the sequence, its field drawn in frequencies. The spaces stay in the
