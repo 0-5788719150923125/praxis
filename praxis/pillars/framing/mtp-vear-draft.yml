@@ -87,9 +87,8 @@ body: >
   \begin{figure}[!tp] \centering \begin{tikzpicture}[x=0.36cm, y=0.44cm]
   \tikzset{cb/.style={draw=black!30, line width=0.2pt},
   tok/.style={font=\bfseries\scriptsize, text=white, inner sep=0pt},
-  strand/.style={decorate,
-  decoration={snake, amplitude=0.5pt, segment length=4.5pt}}}
-  \node[font=\scriptsize, text=black!55, anchor=west] at (0,1.45) {the sequence - one field, drawn in frequencies};
+  }
+  \node[font=\scriptsize, text=black!55, anchor=west] at (0,1.45) {one sequence, drawn as a field of frequencies};
   \draw[black!45, line width=0.5pt, domain=0:25, samples=460, smooth]
   plot (\x, {0.55 + (0.08 + 0.24*exp(-(\x/3.5)^2) + 0.24*exp(-((25-\x)/1.4)^2)) * sin(mod(50*\x + 15*\x*\x, 360))});
   \draw[black!45, line width=0.5pt, domain=0:6.1, samples=320, smooth]
@@ -143,18 +142,29 @@ body: >
   \node[font=\scriptsize, text=black!55, anchor=east] at (-1.05,-4.4) {$t{+}3K$};
   \node[font=\scriptsize, text=black!55, anchor=east] at (-1.05,-5.5) {$t{+}4K$};
   \draw[black!75, line width=0.8pt, rounded corners=1.5pt] (8.03,0.05) rectangle (11.97,-6.15);
-  \draw[strand, black, line width=1.3pt] (11.5,-0.5) to[bend right=10] (0.7,-5.15);
-  \draw[strand, white, line width=0.6pt] (11.5,-0.5) to[bend right=10] (0.7,-5.15);
-  \draw[strand, black, line width=1.3pt] (10.5,-2.2) to[bend right=10] (0.7,-5.15);
-  \draw[strand, white, line width=0.6pt] (10.5,-2.2) to[bend right=10] (0.7,-5.15);
-  \draw[strand, black, line width=1.3pt] (10.5,-3.3) to[bend right=10] (0.7,-5.15);
-  \draw[strand, white, line width=0.6pt] (10.5,-3.3) to[bend right=10] (0.7,-5.15);
-  \draw[strand, black, line width=1.3pt] (11.5,-4.4) to[bend right=10] (0.7,-5.15);
-  \draw[strand, white, line width=0.6pt] (11.5,-4.4) to[bend right=10] (0.7,-5.15);
-  \node[font=\scriptsize, text=black!55, anchor=north west] at (0.1,-6.35) {phase-locked at the head};
-  \node[font=\scriptsize, text=black!55, anchor=north west] at (10.2,-6.35) {the stream slides through $K$ per step};
-  \node[font=\footnotesize] at (12.5,-7.7) {byte-latent MTP (ours)};
-  \node[font=\scriptsize, text=black!55] at (12.5,-8.6) {each step re-derives the full sequence, $K$ further along};
+  \draw[black, line width=1.3pt] plot[domain=0:1, samples=340, smooth]
+  ({11.5 + \x*(-10.880) + (0.012 + 0.30*exp(-((\x/0.30)^2)) + 0.085*exp(-(((1-\x)/0.15)^2)))*sin(mod(360*(1.0*\x + 8.5*\x*\x), 360))*(1.3077)}, {-0.5 + \x*(-4.750) + (0.012 + 0.30*exp(-((\x/0.30)^2)) + 0.085*exp(-(((1-\x)/0.15)^2)))*sin(mod(360*(1.0*\x + 8.5*\x*\x), 360))*(-2.0051)});
+  \draw[white, line width=0.6pt] plot[domain=0:1, samples=340, smooth]
+  ({11.5 + \x*(-10.880) + (0.012 + 0.30*exp(-((\x/0.30)^2)) + 0.085*exp(-(((1-\x)/0.15)^2)))*sin(mod(360*(1.0*\x + 8.5*\x*\x), 360))*(1.3077)}, {-0.5 + \x*(-4.750) + (0.012 + 0.30*exp(-((\x/0.30)^2)) + 0.085*exp(-(((1-\x)/0.15)^2)))*sin(mod(360*(1.0*\x + 8.5*\x*\x), 360))*(-2.0051)});
+  \draw[black, line width=1.3pt] plot[domain=0:1, samples=340, smooth]
+  ({10.5 + \x*(-9.880) + (0.012 + 0.30*exp(-((\x/0.30)^2)) + 0.085*exp(-(((1-\x)/0.15)^2)))*sin(mod(360*(1.0*\x + 8.5*\x*\x), 360))*(0.9806)}, {-2.2 + \x*(-3.050) + (0.012 + 0.30*exp(-((\x/0.30)^2)) + 0.085*exp(-(((1-\x)/0.15)^2)))*sin(mod(360*(1.0*\x + 8.5*\x*\x), 360))*(-2.1264)});
+  \draw[white, line width=0.6pt] plot[domain=0:1, samples=340, smooth]
+  ({10.5 + \x*(-9.880) + (0.012 + 0.30*exp(-((\x/0.30)^2)) + 0.085*exp(-(((1-\x)/0.15)^2)))*sin(mod(360*(1.0*\x + 8.5*\x*\x), 360))*(0.9806)}, {-2.2 + \x*(-3.050) + (0.012 + 0.30*exp(-((\x/0.30)^2)) + 0.085*exp(-(((1-\x)/0.15)^2)))*sin(mod(360*(1.0*\x + 8.5*\x*\x), 360))*(-2.1264)});
+  \draw[black, line width=1.3pt] plot[domain=0:1, samples=340, smooth]
+  ({10.5 + \x*(-9.880) + (0.012 + 0.30*exp(-((\x/0.30)^2)) + 0.085*exp(-(((1-\x)/0.15)^2)))*sin(mod(360*(1.0*\x + 8.5*\x*\x), 360))*(0.6514)}, {-3.3 + \x*(-1.950) + (0.012 + 0.30*exp(-((\x/0.30)^2)) + 0.085*exp(-(((1-\x)/0.15)^2)))*sin(mod(360*(1.0*\x + 8.5*\x*\x), 360))*(-2.2094)});
+  \draw[white, line width=0.6pt] plot[domain=0:1, samples=340, smooth]
+  ({10.5 + \x*(-9.880) + (0.012 + 0.30*exp(-((\x/0.30)^2)) + 0.085*exp(-(((1-\x)/0.15)^2)))*sin(mod(360*(1.0*\x + 8.5*\x*\x), 360))*(0.6514)}, {-3.3 + \x*(-1.950) + (0.012 + 0.30*exp(-((\x/0.30)^2)) + 0.085*exp(-(((1-\x)/0.15)^2)))*sin(mod(360*(1.0*\x + 8.5*\x*\x), 360))*(-2.2094)});
+  \draw[black, line width=1.3pt] plot[domain=0:1, samples=340, smooth]
+  ({11.5 + \x*(-10.880) + (0.012 + 0.30*exp(-((\x/0.30)^2)) + 0.085*exp(-(((1-\x)/0.15)^2)))*sin(mod(360*(1.0*\x + 8.5*\x*\x), 360))*(0.2640)}, {-4.4 + \x*(-0.850) + (0.012 + 0.30*exp(-((\x/0.30)^2)) + 0.085*exp(-(((1-\x)/0.15)^2)))*sin(mod(360*(1.0*\x + 8.5*\x*\x), 360))*(-2.2624)});
+  \draw[white, line width=0.6pt] plot[domain=0:1, samples=340, smooth]
+  ({11.5 + \x*(-10.880) + (0.012 + 0.30*exp(-((\x/0.30)^2)) + 0.085*exp(-(((1-\x)/0.15)^2)))*sin(mod(360*(1.0*\x + 8.5*\x*\x), 360))*(0.2640)}, {-4.4 + \x*(-0.850) + (0.012 + 0.30*exp(-((\x/0.30)^2)) + 0.085*exp(-(((1-\x)/0.15)^2)))*sin(mod(360*(1.0*\x + 8.5*\x*\x), 360))*(-2.2624)});
+  \node[font=\scriptsize, text=black!55, anchor=east] at (26.2,1.45) {enters with velocity};
+  \draw[->, black!55, line width=0.5pt] (25.5,0.62) -- (26.75,1.2);
+  \draw[->, black!55, line width=0.5pt] (-0.58,-6.45) -- (-1.55,-7.05);
+  \node[font=\scriptsize, text=black!55, anchor=north west] at (1.25,-6.1) {phase-locks at the head};
+  \node[font=\scriptsize, text=black!55, anchor=north west] at (11.6,-6.1) {pulls $K$ through each step};
+  \node[font=\footnotesize] at (12.5,-7.5) {byte-latent MTP (ours)};
+  \node[font=\scriptsize, text=black!55] at (12.5,-8.4) {each step re-derives the full sequence, $K$ further along};
   \end{tikzpicture} \caption{The fox at every step: the strip of
   Figure~\ref{fig:density}, reorganized as this head reads it. \textbf{Top:}
   the sequence, its field drawn in frequencies. The spaces stay in the
@@ -180,11 +190,18 @@ body: >
   byte-latent decoding it would advance one cell at a time. The wiggly
   strands run from the window's last content byte, at every earlier step, to
   the first token of the final sequence - the one they all resolve into, so
-  it draws no strand of its own: every window is connected to both the
+  it draws no strand of its own. Each strand carries its own direction in
+  its frequency: a slow, wide wobble where it leaves the window, smoothing
+  through the middle, tightening into a fast oscillation as it integrates at
+  the target. every window is connected to both the
   future and the past of every sequence - phase-locking, every feature
   contributing to every representation. The locking runs down the depth axis too - the
   vertical wave at the left is the same field read across the steps,
-  humming at the trunk, chirping into $t{+}4K$. One byte still traces a diagonal through the
+  humming at the trunk, chirping into $t{+}4K$. The corner arrows name the
+  diagonal every byte travels: it enters at the tip, where the state is
+  least settled, and leaves past the head of the deepest step, compressed
+  into the shape the rows resolve to - the slide and the strands both run
+  along that axis. One byte still traces a diagonal through the
   succession of views, $K$ cells left per step, re-predicted and bolstered
   or refuted at every pass. Schematic (drawn at $K{=}4$; the mechanism is
   $K$-generic), not measured; the measured object is the per-depth

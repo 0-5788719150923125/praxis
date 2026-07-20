@@ -80,6 +80,22 @@ Final round of refinements (also 2026-07-20):
   densest row with the narrowest white, but never fully saturated. Don't
   force color into it. Teeth stay white everywhere (they are boundaries,
   not gradient).
+- **Entry/exit corner arrows** - both arrows kept, but only ONE label each
+  side, on two label rows total (four rows read as clutter): top line is
+  "the sequence..." left + "enters with velocity" right, above the
+  horizontal wave; bottom line is "phase-locked at the head" left (with the
+  exit arrow) + "pull K through each step" right. The "exits with
+  stability" label is gone - the arrow carries it. Each arrow projects from
+  just off the END of its own frequency band (entry off the horizontal
+  wave's right end, exit off the vertical wave's bottom end), so both sit at
+  matching offsets and read as the fields continuing out of frame.
+  The diagonal is fixed by the figure, not by taste: rows
+  slide left, so a byte's trajectory is top-right -> bottom-left; the
+  strands run that way; density is heaviest bottom-left; and body.tex
+  already states hidden states are "extremely stable at the head and
+  unstable at the tip", so velocity belongs at the right and stability at
+  the left. The mirrored placement (entry top-left / exit bottom-right) was
+  proposed first and is wrong on all four counts.
 - **Vertical phase-locking** - a second frequency wave runs down the depth
   axis, left of the blocks and right of the t+K labels: the same field,
   read across the steps. Must be clearly periodic like the horizontal one:
@@ -95,7 +111,12 @@ Final round of refinements (also 2026-07-20):
   representation. (Not from the row tails - that was wrong.) Four strands,
   not five: the final row is what they all resolve into, so it draws none of
   its own - a strand from it to itself curved the wrong way, which was the
-  tell.
+  tell. The strands encode their own direction as a chirp: wide slow wobble
+  at the source, near-smooth through the middle, tightening into fast
+  oscillation as they integrate at the target. Drawn as explicit parametric
+  plots (not the uniform `snake` decoration, which reads directionless),
+  with the offset taken perpendicular in *visual* space since the tikz axes
+  are unequally scaled (x=0.36cm, y=0.44cm).
 - **Characters melt, like fig:density's** - glyphs are not bound to their
   token boxes; per patch they pool toward the head with the density chart's
   power-law drift (`x = p + 0.3 + (L-0.6)*(i/L)^1.8`),

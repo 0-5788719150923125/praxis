@@ -55,14 +55,23 @@ var _quality: Dictionary = QUALITIES[DEFAULT_QUALITY]
 var _announced := false  # one-shot console note the first time export becomes ready
 var _note_t := 0.0       # countdown for self-clearing informational notes
 var _prepping := false   # a provider take is rendering (async) - ignore re-clicks
-var _stall_t := 0.0      # seconds since the render's progress last advanced
-var _stall_pct := -1     # the high-water progress mark the watchdog has seen
+var _stall_t := 0.0      # seconds since the render last showed ANY sign of life
+var _stall_frac := -1.0  # high-water fractional progress the watchdog has seen
+var _stall_size := 0     # high-water size of the movie file being written
 
-# A render that never advances is broken, not slow: even 4K writes frames
-# steadily, so a whole minute without the playback position moving means the
-# render cannot finish (the failure mode was audio that did not load - such a
-# session has no end and recorded silence until the disk filled).
-const STALL_LIMIT := 60.0
+# The watchdog exists for ONE failure: a render that can never finish (the
+# audio failed to load, so the session has no end and Movie Maker records
+# silence until the disk fills). It must never fire on a render that is merely
+# SLOW - heavy scenes at 4K can spend minutes on a few seconds of video.
+#
+# The first version measured INTEGER PERCENT and killed a healthy 720p render
+# of a 344 s take: one percent point is 3.4 s of video there, which a heavy
+# scene can easily take longer than a minute to produce. Percent is far too
+# coarse to mean "alive". Liveness is now two independent fine-grained
+# signals - the FRACTIONAL playback position and the movie file GROWING on
+# disk - and either one counts, with a much longer fuse.
+const STALL_LIMIT := 300.0
+const STALL_MIN_GROWTH := 65536   # bytes; below this the file is not really moving
 
 ## Synthesis hook: a mode whose audio is REPRODUCIBLE ON DEMAND (the voice is
 ## a pure function of the text and the seed) registers a provider that renders
@@ -153,24 +162,34 @@ func _process(dt: float) -> void:
 		"rendering":
 			if OS.is_process_running(_render_pid):
 				_poll_pct()
-				# STALL WATCHDOG: the render reports progress from playback
-				# position, so a render that cannot advance (audio that failed
-				# to load - a session with no audio never ends) sits at 0%
-				# forever and fills the disk. Give it a generous grace period,
-				# then kill it and report the failure.
+				# STALL WATCHDOG (see the consts): alive = the playback
+				# position advanced at ALL, or the movie file grew. A slow
+				# render satisfies both; only a render that cannot finish
+				# satisfies neither.
 				_stall_t += dt
-				if _pct > _stall_pct:
-					_stall_pct = _pct
+				var frac := Bake.read_progress()
+				if frac > _stall_frac:
+					_stall_frac = frac
+					_stall_t = 0.0
+				var sz := _file_size(_avi)
+				if sz > _stall_size + STALL_MIN_GROWTH:
+					_stall_size = sz
 					_stall_t = 0.0
 				if _stall_t > STALL_LIMIT:
 					OS.kill(_render_pid)
 					_clear_override()
 					DirAccess.remove_absolute(_avi)
-					_fail("⚠  Render stalled at %d%% - no progress for %ds (see console)"
-						% [_pct, int(STALL_LIMIT)])
-					push_warning("ghost export: render stalled; killed pid %d" % _render_pid)
+					_fail("⚠  Render stalled at %d%% - frozen for %d min (see console)"
+						% [_pct, int(STALL_LIMIT / 60.0)])
+					push_warning("ghost export: render stalled (no frames, no progress); killed pid %d"
+						% _render_pid)
 				else:
-					_set_status("⏺  Rendering %s …  %d%%" % [_out.get_file(), _pct],
+					# one decimal, deliberately: whole percents on a long take
+					# sit still for minutes on heavy scenes, which reads as a
+					# freeze. A moving number is the difference between "slow"
+					# and "hung" for the person watching it.
+					_set_status("⏺  Rendering %s …  %.1f%%" % [
+						_out.get_file(), maxf(_stall_frac, 0.0) * 100.0],
 						Color(0.95, 0.92, 0.7))
 			else:
 				_clear_override()                # render finished -> restore live resolution
@@ -380,7 +399,8 @@ func _start_render() -> void:
 	if _render_pid > 0:
 		_state = "rendering"
 		_stall_t = 0.0
-		_stall_pct = -1
+		_stall_frac = -1.0
+		_stall_size = 0
 		print("ghost: rendering %dx%d @ %d fps (pid %d) -> %s" % [
 			_quality.w, _quality.h, _quality.fps, _render_pid, _avi])
 	else:

@@ -454,14 +454,70 @@ func draw_surface(ci: CanvasItem, lens: Lens3D, u: float, lit: float, shimmer: f
 			draw_quad(ci, q.poly, q.cols)                  # water: flat translucent
 
 
-# Screen-space area of a quad (shoelace). Near-zero => the quad is edge-on / collapsed /
-# folded, which makes draw_colored_polygon's triangulation fail - so we skip those.
+# Screen-space area of a quad (shoelace), computed RELATIVE TO THE FIRST VERTEX.
+# Near-zero => the quad is edge-on / collapsed / folded, which makes
+# draw_colored_polygon's triangulation fail - so we skip those.
+#
+# The translation is what makes the test trustworthy: a quad projected just past
+# the near plane lands at coordinates in the millions, and the raw shoelace on
+# those loses every significant digit to cancellation - it reported healthy area
+# for triangles that were collinear to the triangulator, which is exactly the
+# "Invalid polygon data, triangulation failed" spam. Subtracting p[0] first keeps
+# the products at the scale of the quad's own edges, where the difference is real.
 static func _quad_area(p: PackedVector2Array) -> float:
+	if p.size() < 3:
+		return 0.0
+	var o := p[0]
 	var a := 0.0
-	for i in p.size():
+	for i in range(1, p.size()):
 		var j := (i + 1) % p.size()
-		a += p[i].x * p[j].y - p[j].x * p[i].y
+		if j == 0:
+			break
+		var u1 := p[i] - o
+		var v1 := p[j] - o
+		a += u1.x * v1.y - v1.x * u1.y
 	return absf(a) * 0.5
+
+
+# The screen extent (longest edge from the first vertex) - the scale a degeneracy
+# test has to be judged against.
+static func _poly_extent(p: PackedVector2Array) -> float:
+	var e := 0.0
+	for i in range(1, p.size()):
+		e = maxf(e, (p[i] - p[0]).length())
+	return e
+
+
+# Godot stores these points as float32 (`real_t`) and its triangulator
+# recomputes the polygon's area IN FLOAT32 to choose a winding order. At the
+# coordinate magnitudes a quad just past the near plane projects to, that
+# computation loses every significant digit - measured: a triangle of true area
+# +3500 px² sitting at coordinates ~1e6 evaluates to -32768 in float32. The
+# flipped SIGN sends ear-clipping down the reversed winding, where every
+# candidate ear fails and the whole polygon is rejected: "Invalid polygon data,
+# triangulation failed", drawing nothing. GDScript's own arithmetic is double
+# precision, so an area check here looks perfectly healthy and waves it through.
+# Hence a PRECISION-AWARE floor: the area must be large enough to survive a
+# float32 evaluation at this triangle's own coordinate scale (the float32
+# mantissa is 24 bits, so the error in a shoelace over coordinates of magnitude
+# c is on the order of c² · 1e-6).
+const _F32_AREA_EPS := 1.0e-6
+
+
+## Is this triangle/quad safe to hand to the rasterizer? Finite, big enough to
+## survive float32 at its own coordinate scale (see above), and not a sliver
+## that is collinear at its own length.
+static func _poly_ok(p: PackedVector2Array) -> bool:
+	var c := 0.0
+	for v in p:
+		if not (is_finite(v.x) and is_finite(v.y)):
+			return false
+		c = maxf(c, maxf(absf(v.x), absf(v.y)))
+	var area := _quad_area(p)
+	if not is_finite(area) or area <= maxf(0.04, c * c * _F32_AREA_EPS):
+		return false
+	var ext := _poly_extent(p)
+	return ext > 0.001 and area > ext * 0.0005
 
 
 static func _lit(c: Color, k: float) -> Color:
@@ -478,16 +534,16 @@ static func draw_quad(ci: CanvasItem, poly: PackedVector2Array, cols: PackedColo
 		uvs := PackedVector2Array(), tex: Texture2D = null) -> void:
 	if poly.size() < 4:
 		return
-	var textured := tex != null and uvs.size() >= 4
+	var textured := tex != null and uvs.size() >= 4 and cols.size() >= 4
 	var t1 := PackedVector2Array([poly[0], poly[1], poly[2]])
-	if _quad_area(t1) > 0.04:
+	if _poly_ok(t1):
 		if textured:
 			ci.draw_polygon(t1, PackedColorArray([cols[0], cols[1], cols[2]]),
 				PackedVector2Array([uvs[0], uvs[1], uvs[2]]), tex)
 		else:
 			ci.draw_polygon(t1, PackedColorArray([cols[0], cols[1], cols[2]]))
 	var t2 := PackedVector2Array([poly[0], poly[2], poly[3]])
-	if _quad_area(t2) > 0.04:
+	if _poly_ok(t2):
 		if textured:
 			ci.draw_polygon(t2, PackedColorArray([cols[0], cols[2], cols[3]]),
 				PackedVector2Array([uvs[0], uvs[2], uvs[3]]), tex)
