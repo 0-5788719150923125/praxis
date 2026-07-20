@@ -77,8 +77,8 @@ function getLifecycleFunction(name) {
  */
 function init() {
     // Apply any offline theme an integration registered before this module ran
-    // (e.g. the Cloudflare static snapshot flagging itself red) - before the
-    // first paint, so nothing flashes the live-default accent first.
+    // (e.g. the Cloudflare static snapshot flagging itself orange) - before
+    // the first paint, so nothing flashes the live-default accent first.
     applyOfflineAccent();
 
     // Disable Chart.js tooltips on touch devices: the tap-triggered labels

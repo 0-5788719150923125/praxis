@@ -48,11 +48,11 @@ KB_TYPES = "doc,note,code"
 CARD_SEED = 42
 CARD_SIDES = ("front", "back")
 CARD_THEMES = ("light", "dark")
-# Matches [data-accent="red"]'s --accent-hue in variables.css - every export
-# from this integration is the offline/red snapshot, so the pre-rendered card
-# must match, or its chrome-colored crop would clash against the rest of the
-# (red-tinted) page.
-CARD_HUE = "0"
+# Matches [data-accent="orange"]'s --accent-hue in variables.css (OSU "Beaver
+# Orange", #D73F09) - every export from this integration is the offline
+# snapshot, so the pre-rendered card must match, or its chrome-colored crop
+# would clash against the rest of the (orange-tinted) page.
+CARD_HUE = "16"
 
 OFFLINE_MESSAGE = (
     "You are viewing an offline snapshot of the Praxis dashboard. "

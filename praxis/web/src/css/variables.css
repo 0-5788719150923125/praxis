@@ -113,11 +113,12 @@
 }
 
 /* Offline mode: a frozen/dead export (no live server behind it) shifts the
-   entire accent to red - a clear "this page isn't running" signal. Pushed by
-   whichever integration serves the frozen snapshot, via the theme registry in
-   js/theme.js; nothing in the frontend decides "offline" on its own. */
-[data-accent="red"] {
-    --accent-hue: 0;
-    --accent-sat: 72%;
-    --accent-lum: 50%;
+   entire accent to OSU "Beaver Orange" (#D73F09) - a clear "this page isn't
+   running" signal. Pushed by whichever integration serves the frozen
+   snapshot, via the theme registry in js/theme.js; nothing in the frontend
+   decides "offline" on its own. */
+[data-accent="orange"] {
+    --accent-hue: 16;
+    --accent-sat: 92%;
+    --accent-lum: 44%;
 }

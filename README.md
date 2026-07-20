@@ -1,6 +1,6 @@
 # praxis
 
-_Praxis is the process by which a theory, lesson, or skill is enacted, embodied, realized, applied, or put into practice._
+_The process by which a theory, lesson, or skill is enacted, embodied, realized, applied, or put into practice._
 
 ---
 
@@ -162,7 +162,7 @@ To apply [dev](environments/dev.yml) settings within your [environment](environm
 
 ## use with transformers
 
-`PraxisForCausalLM` is a real `PreTrainedModel` + `GenerationMixin`, so once registered, any Praxis checkpoint works with the `transformers` Auto* classes:
+`PraxisForCausalLM` is a real `PreTrainedModel` + `GenerationMixin`, so once registered, any Praxis checkpoint works with the `transformers` Auto\* classes:
 
 ```py
 from transformers import AutoModelForCausalLM, AutoTokenizer

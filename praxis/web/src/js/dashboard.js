@@ -206,7 +206,7 @@ function drawSparkline(data, canvasId) {
 // them via a redraw. In live mode the ~2Hz metrics_snapshot tick redraws them
 // anyway, so this went unnoticed; on a frozen/offline export that tick fires
 // once and never again, so without this observer a theme change (the offline
-// red accent, or a light/dark toggle) never appears on these charts at all.
+// orange accent, or a light/dark toggle) never appears on these charts at all.
 let _sparklineThemeRedrawReady = false;
 export function setupSparklineThemeRedraw() {
     if (_sparklineThemeRedrawReady || typeof document === 'undefined') return;

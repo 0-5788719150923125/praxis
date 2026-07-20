@@ -7,7 +7,7 @@
  * a plain classic <script>, injected ahead of the deferred `type="module"`
  * scripts, so the write always lands first). This module is the only thing
  * that reads the registry - nothing else in the frontend hardcodes "offline"
- * or "red"; a normal live run leaves the registry empty and nothing changes.
+ * or "orange"; a normal live run leaves the registry empty and nothing changes.
  */
 
 export function getOfflineAccent() {

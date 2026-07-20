@@ -12,6 +12,8 @@
 // construction tool oscillating through 3D space, just like the network oscillates
 // between expert perspectives to "build" understanding.
 //
+import { currentAccentHue } from './state.js';
+
 // Wait for canvas to be available (created by renderAppStructure)
 (function initPrismWhenReady() {
     const canvas = document.getElementById('prism-canvas');
@@ -1265,11 +1267,14 @@
         return document.documentElement.getAttribute('data-theme') !== 'dark';
     }
 
-    // Accent re-tint: the green palette is the default; the logs panel's blue accent
-    // rotates every bolt's hue so the whole animation goes blue. Green mode = no-op
-    // (rotation 0), so the normal look is unchanged. Read off <html>, like the theme.
+    // Accent re-tint: the green palette is the default; any other accent (the logs
+    // panel's blue, the offline snapshot's orange, ...) rotates every bolt's hue so
+    // the whole animation follows. Derived from the actual --accent-hue delta (matching
+    // charts.js's chart-line rotation) rather than a per-name check, so a new accent
+    // needs no change here - green mode is the delta-0 case, still a no-op.
+    const PRISM_BASE_HUE = 161; // hue the bolt palette is authored at (matches green accent)
     function accentHueRotation() {
-        return document.documentElement.getAttribute('data-accent') === 'blue' ? 100 : 0;
+        return currentAccentHue() - PRISM_BASE_HUE;
     }
     function tintForAccent(c) {
         const rot = accentHueRotation();
