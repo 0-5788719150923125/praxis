@@ -257,9 +257,31 @@ class ProsodyWalk:
 		"heat": 1.35, "baseline": 0.375, "settle": 0.11, "breath_span": 9.5,
 		"spend_window": 2.4, "lean": 1.0, "pace_hot": 0.91, "pace_calm": 1.21,
 		"act_thr": 1.9, "act_gain": 1.0, "gravity": 0.2, "ring": 0.6,
-		"hesit_bias": 0.25, "swing_kick": 0.14,
+		"hesit_bias": 0.25, "swing_kick": 0.14, "verve": 0.4,
 	}
 	const PRIOR_MOTIF_SEED := 314159
+
+	# ELABORATION - the one tunable scalar, 0..1, along the spectrum the user asked
+	# for: at 0 a longer lineage REFINES (each generation a smaller nudge, 0.6^gen,
+	# the voice settling toward its parent - the original behaviour); toward 1 a
+	# longer lineage ELABORATES (perturbation decays far slower, the melodic shelf
+	# grows, activations fire more - the voice getting more creative the deeper it
+	# goes). It multiplies each seed's own `verve` gene, so the population still
+	# varies: some lineages elaborate, some settle, and this dial sets how far the
+	# whole spectrum can swing. 0 reproduces the old voices EXACTLY.
+	const ELABORATION := 0.5
+
+	# Sane bounds per gene: an elaborate deep lineage perturbs hard, and a gene
+	# driven past these stops being a voice (negative pace, a threshold so low
+	# every word fires). Generous enough that refined (low-elaboration) lineages
+	# never touch them, so they change nothing at ELABORATION 0.
+	const G_BOUNDS := {
+		"heat": [0.6, 2.4], "baseline": [0.1, 0.9], "settle": [0.02, 0.35],
+		"breath_span": [3.0, 20.0], "spend_window": [0.8, 5.0], "lean": [0.3, 2.2],
+		"pace_hot": [0.6, 1.1], "pace_calm": [0.9, 1.7], "act_thr": [0.6, 3.2],
+		"act_gain": [0.3, 2.2], "gravity": [0.0, 0.8], "ring": [0.15, 1.4],
+		"hesit_bias": [-0.6, 1.2], "swing_kick": [0.02, 0.45], "verve": [0.0, 1.0],
+	}
 	# The channels a word can sparsely ACTIVATE on - each independent, each
 	# with its own refractory. What firing does: stretch = the word's own
 	# timescale pulls long; pitch = a jump toward an attractor; echo = the word
@@ -291,6 +313,18 @@ class ProsodyWalk:
 				for g in genomes:
 					v += g[key]
 				p[key] = v / genomes.size()
+		# DEPTH-ELABORATION: how much this READING has earned the right to elaborate -
+		# its verve x the global dial x how deep the lineage runs (nothing at depth 1,
+		# rising over ~4 generations). Zero when ELABORATION is 0, so it changes
+		# nothing there. It fires the sparse activations harder and grows the shelf.
+		var read: Array = lineages[0] if not lineages.is_empty() else []
+		var depth: int = read.size()
+		var elab: float = clampf(float(p.get("verve", 0.4)) * ELABORATION, 0.0, 1.0) \
+			* clampf(float(depth - 1) / 3.0, 0.0, 1.0)
+		if elab > 0.0:
+			p.act_thr = maxf(0.6, float(p.act_thr) * (1.0 - 0.35 * elab))  # fire MORE often
+			p.act_gain = float(p.act_gain) * (1.0 + 0.5 * elab)           # ...and harder
+			p.ring = float(p.ring) * (1.0 + 0.5 * elab)                   # ...ringing longer
 		_motifs = _motif_bank(PRIOR_MOTIF_SEED)
 		for lineage in lineages:
 			_motifs.append_array(_motif_bank(int(lineage[0])))
@@ -303,6 +337,14 @@ class ProsodyWalk:
 			ar.seed = hash("anchors") ^ int(lineage[0])
 			for _i in 3:
 				_anchors.append(ar.randf_range(-6.0, 8.0))
+		# elaboration widens the melodic vocabulary: a deep, high-verve reading adds
+		# fresh anchors seeded by its later generations - more notes to jump between
+		if elab > 0.0 and depth > 1:
+			var extra: int = mini(int(round(elab * float(depth - 1) * 1.2)), 8)
+			for k in extra:
+				var er := RandomNumberGenerator.new()
+				er.seed = hash("elab_anchor") ^ int(read[mini(k + 1, depth - 1)]) ^ k
+				_anchors.append(er.randf_range(-7.0, 9.0))
 		for c in ACT_CHANNELS:
 			_refract[c] = 0.0
 		_gate = RandomNumberGenerator.new()
@@ -358,13 +400,23 @@ class ProsodyWalk:
 			"ring": root.randf_range(0.3, 0.9),          # resonance: how hard a firing rings
 			"hesit_bias": root.randf_range(-0.3, 0.9),   # extra bar for hesitations (high = fluent)
 			"swing_kick": root.randf_range(0.05, 0.28),  # cadence wobble per activation
+			"verve": root.randf_range(0.0, 0.9),         # this lineage's drive to elaborate with depth
 		}
+		# how fast the per-generation perturbation decays: at 0.6 (elaboration off)
+		# each generation is a small refinement that fades to nothing; toward 0.9
+		# (this lineage's verve x ELABORATION) it barely fades, so deep generations
+		# keep meaningfully developing the voice instead of freezing it.
+		var e: float = clampf(float(g.verve) * ELABORATION, 0.0, 1.0)
+		var decay: float = lerpf(0.6, 0.9, e)
 		for i in range(1, lineage.size()):
 			var pr := RandomNumberGenerator.new()
 			pr.seed = hash("walk_gen") ^ int(lineage[i]) ^ i
-			var scale := pow(0.6, i)
+			var scale := pow(decay, i)
 			for key in g:
 				g[key] *= 1.0 + pr.randfn(0.0, 0.18 * scale)
+		for key in G_BOUNDS:                             # keep an elaborate lineage a VOICE
+			if g.has(key):
+				g[key] = clampf(float(g[key]), float(G_BOUNDS[key][0]), float(G_BOUNDS[key][1]))
 		return g
 
 	static func _motif_bank(seed_value: int) -> Array:
@@ -658,8 +710,15 @@ static func plan(text: String, spec: Spec, events: Array = []) -> Array:
 				t_cursor += mods.breath_pause
 				segs.append(_sil(mods.breath_pause, si))
 			elif not last_word:
-				# a whisper of articulation space between running words
-				var gap: float = 0.015 * mods.gap
+				# LEGATO: the old 15ms silence between every running word dropped
+				# the voice to zero at each boundary - the single loudest robotic
+				# tell (a picket fence of gaps). Phase, amplitude and formants all
+				# persist across segments through the EMAs, so a much smaller gap
+				# lets consecutive words PHONATE THROUGH the boundary (the way a
+				# real voice slurs running words) while keeping a hair of
+				# articulation space. Real breaths/pauses still come from
+				# punctuation and the breath-debt branch above.
+				var gap: float = 0.004 * mods.gap
 				t_cursor += gap
 				segs.append(_sil(gap, si))
 	# a breath of silence at both ends so playback and analysis never clip a boundary

@@ -40,6 +40,19 @@ const SEG_CHUNK := 4                # segments per synth() call on the worker
 # (~500 Hz far away, effectively open when landed).
 const P_GLIDE := 0.00022            # per-sample presence glide
 
+# LOCATION RECEPTION: as the line nears the beacon (the source of the frequency
+# it is receiving), a resonant band TUNED to that source swells into the voice -
+# the "interesting auditory conditions" of a fishing spot, and a diverse timbral
+# colour to catch and blend. A state-variable bandpass (stable while the centre
+# stays well under Nyquist) blended by proximity, with a faint carrier of the
+# source riding the voice at close range. Applied at push time like presence, so
+# the canonical WAV take is untouched.
+const LOC_GLIDE := 0.0004           # per-sample smoothing of proximity/frequency
+const LOC_WET := 0.55               # max bandpass blend, at full proximity
+const LOC_BP_GAIN := 1.8            # make up the bandpass's attenuation
+const LOC_Q := 0.4                  # SVF damping (lower = more resonant)
+const LOC_CARRIER := 0.02           # faint carrier-tone amplitude at close range
+
 var words: Array = []               # main-thread copy for Subtitles (shared by reference)
 var events: Array = []              # planned strike times [{t, kind, a}] - the bites
 var take_base := ""                 # user://synth/take_<id> (wav + json on completion)
@@ -64,6 +77,15 @@ var _underruns := 0                 # telemetry: times the ring went dry (see wo
 var _presence := 1.0                # target, set from the main thread (atomic)
 var _pg := 0.0                      # worker-side glided gain (streams fade IN)
 var _lp := 0.0                      # distance lowpass state
+var _loc_prox := 0.0                # target proximity to the source (main-set, atomic)
+var _loc_freq := 400.0              # target source frequency Hz (main-set, atomic)
+var _loc_prox_s := 0.0              # worker-side smoothed proximity
+var _loc_freq_s := 400.0            # worker-side smoothed frequency
+var _svf_low := 0.0                 # state-variable filter states (worker-owned)
+var _svf_band := 0.0
+var _svf_f := 0.1                   # SVF frequency coefficient, refreshed periodically
+var _loc_env := 0.0                 # smoothed |signal| for the carrier ride
+var _loc_ph := 0.0                  # carrier phase
 var _restarting := false            # restart() is async (fade-cut); latest wins
 var _restart_queue: Array = []
 
@@ -109,6 +131,16 @@ func retune(spec: Voice.Spec) -> void:
 ## (landed). Applied by the push path with its own glide; safe from any thread.
 func set_presence(p: float) -> void:
 	_presence = clampf(p, 0.0, 1.0)
+
+
+## The fishing spot's acoustics: proximity to the source (0 far .. 1 sitting on
+## it) and the source's frequency (Hz). Set from the main thread, read per sample
+## by the push path. Freq clamped well under Nyquist to keep the resonator stable.
+func set_location(prox: float, freq: float) -> void:
+	_loc_prox = clampf(prox, 0.0, 1.0)
+	# kept under SR/6 (~3675 Hz) so the state-variable filter stays unconditionally
+	# stable; the voice's colour lives well below this anyway
+	_loc_freq = clampf(freq, 80.0, 3000.0)
 
 
 ## Replace the content in place: new plan, cleared generator buffer, timing
@@ -277,6 +309,24 @@ func _push_available() -> void:
 					kk = 1.0 - exp(-TAU * cut / Voice.SR)
 				_lp += kk * (v - _lp)
 				v = _lp * _pg
+			# LOCATION RECEPTION: a resonant band tuned to the source, swelling as
+			# the line nears the beacon, plus a faint carrier at close range (see
+			# the LOC_ consts). Off (skipped) when far from any source.
+			_loc_prox_s += (_loc_prox - _loc_prox_s) * LOC_GLIDE
+			if _loc_prox_s > 0.004:
+				_loc_freq_s += (_loc_freq - _loc_freq_s) * LOC_GLIDE
+				if (i & 31) == 0:
+					_svf_f = 2.0 * sin(PI * _loc_freq_s / Voice.SR)
+				_svf_low += _svf_f * _svf_band
+				var hi: float = v - _svf_low - LOC_Q * _svf_band
+				_svf_band += _svf_f * hi
+				v = lerpf(v, _svf_band * LOC_BP_GAIN, _loc_prox_s * LOC_WET)
+				_loc_env += (absf(v) - _loc_env) * 0.002
+				_loc_ph += TAU * _loc_freq_s / Voice.SR
+				if _loc_ph >= TAU:
+					_loc_ph -= TAU
+				v += LOC_CARRIER * _loc_prox_s * _loc_prox_s * sin(_loc_ph) * (0.4 + 2.0 * _loc_env)
+				v = clampf(v, -1.0, 1.0)   # a resonant boost can overshoot; keep it in range
 			buf[i] = Vector2(v, v)
 		_playback.push_buffer(buf)
 		_pushed += n

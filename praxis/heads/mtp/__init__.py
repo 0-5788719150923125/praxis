@@ -94,15 +94,22 @@ class MultiTokenPrediction(nn.Module):
             depth_config = copy.copy(config)
             depth_config.hidden_size = config.embed_size
 
-        # vear: one shared pool of light harmonic experts, sliding-window merged
-        # per depth (praxis/heads/mtp/vear.py). Other types: K independent
-        # per-depth modules from the registry.
+        # Bank types own ALL depths in one module (forward takes depth=k):
+        # vear = shared pool of light harmonic experts, sliding-window merged
+        # per depth (praxis/heads/mtp/vear.py); serpent_rnn = one shared gated
+        # serpent cell unrolled K times (praxis/heads/mtp/rnn.py). Other types:
+        # K independent per-depth modules from the registry.
         self.is_vear = config.mtp_type == "vear"
+        self.bank = None
+        self.depths = None
         if self.is_vear:
             from praxis.heads.mtp.vear import VearHarmonicMTPBank
 
             self.bank = VearHarmonicMTPBank(depth_config, self.num_depths)
-            self.depths = None
+        elif config.mtp_type == "serpent_rnn":
+            from praxis.heads.mtp.rnn import SerpentRNNMTPBank
+
+            self.bank = SerpentRNNMTPBank(depth_config, self.num_depths)
         else:
             module_cls = MTP_REGISTRY[config.mtp_type]
             self.depths = nn.ModuleList(
@@ -223,27 +230,31 @@ class MultiTokenPrediction(nn.Module):
             )
 
     def _run_depth(self, k: int, h, e, mask):
-        """Execute depth ``k``: a shared sliding-window merge (vear) or the k-th
-        independent per-depth module (transformer/conv)."""
-        if self.is_vear:
+        """Execute depth ``k``: a bank step (vear merge / serpent_rnn unroll)
+        or the k-th independent per-depth module (transformer/conv)."""
+        if self.bank is not None:
             return self.bank(h, e, mask, depth=k)
         return self.depths[k](h, e, mask)
 
     def training_metrics(self) -> dict:
-        """Multi-token eligibility (per-depth draft accuracy) + vear harmonic
-        field diagnostics."""
+        """Multi-token eligibility (per-depth draft accuracy) + the bank's own
+        diagnostics (vear/serpent_rnn harmonic field)."""
         out: dict = {}
         accs = getattr(self, "_draft_accs", []) or []
+        if accs and torch.is_tensor(accs[0]):
+            # The forward loop keeps these on-device; one sync here, at metric
+            # cadence, instead of K per training step.
+            accs = torch.stack(accs).tolist()
         for k, a in enumerate(accs):
-            out[f"mtp_draft_acc_d{k}"] = a
+            out[f"mtp_draft_acc_d{k}"] = float(a)
         if accs:
-            out["mtp_draft_acc"] = sum(accs) / len(accs)
-        if self.is_vear:
+            out["mtp_draft_acc"] = float(sum(accs)) / len(accs)
+        if self.bank is not None:
             out.update(self.bank.training_metrics())
         return out
 
     def dashboard_snapshots(self) -> dict:
-        return self.bank.dashboard_snapshots() if self.is_vear else {}
+        return self.bank.dashboard_snapshots() if self.bank is not None else {}
 
     def _draft_acc_descriptions(self) -> dict:
         """Per-depth draft-accuracy chart hints (one shared chart via
@@ -293,13 +304,13 @@ class MultiTokenPrediction(nn.Module):
 
     def field_metric_descriptions(self) -> dict:
         """Chart hints for the MTP diagnostics (draft accuracy always for
-        byte-latent; harmonic-field metrics for vear), for the descriptions
-        walker."""
+        byte-latent; the bank's own metrics for vear/serpent_rnn), for the
+        descriptions walker. Banks expose either a static class dict (vear) or
+        an instance method when the keys depend on depth (serpent_rnn)."""
         out = dict(self._draft_acc_descriptions())
-        if self.is_vear:
-            from praxis.heads.mtp.vear import VearHarmonicMTPBank
-
-            out.update(VearHarmonicMTPBank.metric_descriptions)
+        if self.bank is not None:
+            desc = getattr(self.bank, "metric_descriptions", None)
+            out.update(desc() if callable(desc) else (desc or {}))
         return out
 
     def forward(self, inputs: MTPInputs):
@@ -356,8 +367,11 @@ class MultiTokenPrediction(nn.Module):
             total_loss = total_loss + inputs.loss_fn(preds, targets)
             if discrete:
                 with torch.no_grad():
+                    # Stays on-device: an .item() here is a forced GPU sync per
+                    # depth per step; training_metrics() syncs the whole list
+                    # once at metric cadence instead.
                     draft_accs.append(
-                        float((preds.argmax(-1) == targets).float().mean().item())
+                        (preds.argmax(-1) == targets).float().mean()
                     )
 
             # Chain: this depth's output becomes input for next depth

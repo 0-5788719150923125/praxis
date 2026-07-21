@@ -532,6 +532,49 @@ def test_speculative_honors_repetition_penalty(spec_config):
                 break
 
 
+def test_serpent_rnn_mtp_bank(spec_config):
+    """serpent_rnn: one shared gated cell owns every depth. Builds inside the
+    byte-latent stack, produces the mtp loss and on-device draft-acc capture,
+    drafts at the adaptive width, and its parameter count is O(1) in depth
+    (only the K x (H+E) depth-embedding table grows with the unroll)."""
+    import copy
+
+    spec_config.mtp_type = "serpent_rnn"
+    torch.manual_seed(0)
+    model = PraxisForCausalLM(spec_config)
+    mtp = model.mtp
+    assert mtp.bank is not None and mtp.depths is None
+
+    # Training path: byte-level loss + per-depth draft-acc kept as tensors
+    # (the sync happens once in training_metrics, not per depth per step).
+    ids = torch.randint(4, 260, (2, 24))
+    hidden = torch.randn(2, 24, spec_config.embed_size)
+    inputs = mtp.prepare_inputs(hidden, ids, None, model.embeds, model.head)
+    losses = mtp(inputs)
+    assert torch.isfinite(losses.get_loss("mtp"))
+    assert mtp._draft_accs and all(torch.is_tensor(a) for a in mtp._draft_accs)
+    metrics = mtp.training_metrics()
+    assert isinstance(metrics["mtp_draft_acc"], float)
+    assert isinstance(metrics["mtp_rnn_gate_d0"], float)
+    assert metrics["mtp_rnn_depth_embed_d0"] == 0.0  # zero-init specialization
+
+    # Draft path: adaptive width, same cell.
+    with torch.no_grad():
+        drafted = mtp.draft_next_tokens(
+            hidden[:1, -1:, :], ids[:1, :1], model.embeds, model.head
+        )
+    assert drafted.shape == (1, mtp.draft_width)
+
+    # O(1) in depth: a 4x deeper unroll adds only depth-embedding rows.
+    from praxis.heads.mtp.rnn import SerpentRNNMTPBank
+
+    view = copy.copy(spec_config)
+    view.hidden_size = spec_config.embed_size  # byte-level depth space
+    n4 = sum(p.numel() for p in SerpentRNNMTPBank(view, 4).parameters())
+    n16 = sum(p.numel() for p in SerpentRNNMTPBank(view, 16).parameters())
+    assert n16 - n4 == 12 * (view.hidden_size + view.embed_size)
+
+
 def test_draft_window_from_mtp_depth(spec_config):
     """The terminal sizes its per-step budget off the ADAPTIVE draft window, so a
     step exercises MTP without over-drafting; without live MTP it collapses to a

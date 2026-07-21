@@ -398,10 +398,11 @@ class ArchitectureGroup:
         group.add_argument(
             "--mtp-type",
             type=str,
-            # "vear" is a byte-latent-only bank (shared harmonic-expert pool,
-            # sliding-window merged), special-cased in MultiTokenPrediction
-            # rather than a per-depth registry module.
-            choices=list(MTP_REGISTRY.keys()) + ["vear"],
+            # Bank types (one module owns all depths) are special-cased in
+            # MultiTokenPrediction rather than per-depth registry modules:
+            # "vear" = shared harmonic-expert pool, sliding-window merged;
+            # "serpent_rnn" = one shared gated serpent cell unrolled K times.
+            choices=list(MTP_REGISTRY.keys()) + ["vear", "serpent_rnn"],
             default=None,
             help="MTP module type (omit to disable MTP)",
         )

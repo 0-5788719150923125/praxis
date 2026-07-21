@@ -130,6 +130,7 @@ const DRIFT_VMAX := 1.0 / 180.0     # raw maximum odometer/sec - deliberately sl
 const DRIFT_ACCEL := (1.0 / 180.0 - 1.0 / 600.0) / 22.0   # ramp crawl -> raw max over ~22s of unbroken drift
 const WARP_CHARGE := 10.0           # seconds held at raw max before the drive charges
 const WARP_VEL := 1.0 / 16.0        # warp odometer/sec - the streaks that "move faster than velocity allows"
+const REEL_HOME_VEL := 1.0 / 120.0  # base retrieval odometer/sec in reel mode (scaled by _reel_power)
 const WARP_BURN := 0.32             # adrenochrome spent per second of warp
 const WARP_MIN := 0.4               # reserve needed to IGNITE a warp (a floored charge)
 # Adrenochrome is the currency the warp spends. It is minted by fishing: a
@@ -153,6 +154,7 @@ var _reading_label: Label
 var _belt_rows: VBoxContainer
 var _inv_labels: Array = []         # metrics Label per inventory row
 var _inv_glyphs: Array = []         # SeedGlyph per inventory row
+var _inv_slots: Array = []          # the name Button per row - the SLOT you click to cast
 var _catch_btn: Button
 var _card: PanelContainer           # the reel (annealing) and the pending catch
 var _card_glyph: Control
@@ -182,8 +184,8 @@ var _last_edit_ms := 0
 var _cast := false                  # silent until the first throw of the session
 var _landed := false                # the working voice is a landed/kept catch
 var _retune_t := 0.0                # reel audition retune pacing
-var _line_btn: Button               # Throw when the water is empty, Release once cast
 var _line_gen := 0                  # bumped on release: in-flight animations check it
+var _slotted_lineage: Array = []    # the seed currently cast FROM - re-clicking it releases; clicking another swaps bait
 # The drift journey (see the DRIFT_ constants). All reset by _drift_reset on a
 # throw / release / mode change - a new cast starts near, at a crawl.
 var _drift_dist := 0.0              # the odometer: 0..1, what every drift visual reads
@@ -204,6 +206,8 @@ func _ready() -> void:
 	layer = 10
 	_build_panel()
 	_load_persisted()
+	# the Collection is never empty: force a seed in if there is nothing to slot
+	_ensure_collection()
 	var args := OS.get_cmdline_user_args()
 	var i := args.find("--synth")
 	if i >= 0 and i + 1 < args.size() and FileAccess.file_exists(args[i + 1]):
@@ -303,7 +307,8 @@ func _build_panel() -> void:
 		var pkey: String = key
 		b.pressed.connect(func():
 			_profile = pkey
-			_drift_reset()           # switching modes restarts the journey
+			# NO reset: the position holds across modes - anchor stops where you
+			# drifted to, reel walks it back (see _advance_drift)
 			_sync_switchboard()
 			_persist())
 		board.add_child(b)
@@ -316,17 +321,13 @@ func _build_panel() -> void:
 	_status.add_theme_color_override("font_color", Color(0.55, 0.95, 0.75, 0.85))
 	hud_col.add_child(_status)
 
-	# --- The loop: Throw / Pull ---
+	# --- The loop: Pull ---
+	# There is no Throw button anymore: casting a line is done by SLOTTING a seed
+	# from the Collection (click a row to cast from it, click again to release -
+	# see _on_seed_clicked). Pull stays here to set the hook once something bites.
 	var loop_row := HBoxContainer.new()
 	loop_row.add_theme_constant_override("separation", 8)
 	box.add_child(loop_row)
-	# ONE button for the line itself: Throw while the water is empty, Release
-	# once something is out there - including while a catch is hooked, so a
-	# fight can always be abandoned. Releasing returns everything to baseline.
-	_line_btn = Button.new()
-	_line_btn.custom_minimum_size = Vector2(110, 40)
-	_line_btn.pressed.connect(_on_line_button)
-	loop_row.add_child(_line_btn)
 	_catch_btn = Button.new()
 	_catch_btn.text = "Pull"
 	_catch_btn.custom_minimum_size = Vector2(90, 40)
@@ -362,8 +363,8 @@ func _build_panel() -> void:
 	card_btns.add_theme_constant_override("separation", 8)
 	card_col.add_child(card_btns)
 	_accept_btn = Button.new()
-	_accept_btn.text = "Accept"
-	_accept_btn.tooltip_text = "Fold it into the party - every member's colour re-attunes"
+	_accept_btn.text = "Hold"
+	_accept_btn.tooltip_text = "Hold on to it - fold it into your Collection; every seed's colour re-attunes"
 	_accept_btn.pressed.connect(_accept_catch)
 	card_btns.add_child(_accept_btn)
 	_release_btn = Button.new()
@@ -374,7 +375,13 @@ func _build_panel() -> void:
 	_release_btn.pressed.connect(_release_catch)
 	card_btns.add_child(_release_btn)
 
-	# --- The belt/bag: ALWAYS last ---
+	# --- The Collection: your seeds, ALWAYS last. Click a seed to cast from it
+	# (slot it in), click it again to release. ---
+	var coll_title := Label.new()
+	coll_title.text = "Collection"
+	coll_title.add_theme_font_size_override("font_size", 13)
+	coll_title.add_theme_color_override("font_color", Color(0.55, 0.95, 0.75, 0.85))
+	box.add_child(coll_title)
 	_belt_rows = VBoxContainer.new()
 	_belt_rows.add_theme_constant_override("separation", 4)
 	box.add_child(_belt_rows)
@@ -454,32 +461,60 @@ func _unhandled_input(event: InputEvent) -> void:
 # ---- the loop: throw, bite, catch, accept / release ------------------------
 
 
-## The line button: one gesture, two meanings, decided by whether anything is
-## out on the water.
-func _on_line_button() -> void:
-	if _cast:
+## SLOTTING: click a Collection seed to cast a line from it (a fresh candidate
+## parented on that seed, spoken immediately); click the seed you are already
+## fishing (or any of its ancestors on the line) to RELEASE back to still water.
+## One line at a time - clicking a different seed switches the slot to it.
+func _on_seed_clicked(idx: int) -> void:
+	if idx < 0 or idx >= _belt.size():
+		return
+	# release ONLY when re-clicking the exact seed that's currently cast from (the
+	# bait that's out). Clicking any OTHER seed - including an ancestor on the same
+	# lit lineage - just SWAPS the bait: a new cast from that seed at the SAME
+	# position, no return to still water.
+	if _cast and _belt[idx].lineage == _slotted_lineage:
 		_release_line()
 	else:
-		_throw()
+		_throw_from(idx)
 
 
-## Keep the line button honest about what it will do.
+## Keep the Pull button and the slot highlights honest about the current line.
+## (Kept the old name so every existing call site still routes here.)
 func _sync_line_button() -> void:
-	if _line_btn == null or not is_instance_valid(_line_btn):
-		return
-	if _cast:
-		_line_btn.text = "Release"
-		_line_btn.tooltip_text = ("Cut the line and return to still water: the voice "
-			+ "stops, the candidate is let go, and whatever was hooked is lost. "
-			+ "Your belt is untouched.")
-	else:
-		_line_btn.text = "Throw"
-		_line_btn.tooltip_text = ("Into the unknown: a new candidate, parented from the "
-			+ "belt by acceptance (sometimes wild), spoken immediately.")
-	# nothing on the water can be pulled - and a pull there would roll the odds
-	# against a candidate that isn't swimming yet
 	if _catch_btn != null and is_instance_valid(_catch_btn):
+		# nothing on the water can be pulled - a pull there would roll the odds
+		# against a candidate that isn't swimming yet
 		_catch_btn.disabled = not _cast
+	_update_slot_highlights()
+
+
+## Colour the cast line's lineage as a GRADIENT by generation: the most recent
+## seed on the line burns full colour, and each older ancestor fades toward white,
+## so the family chain reads as a depth ramp instead of a flat block of green.
+func _update_slot_highlights() -> void:
+	# first pass: the span of lineage depths that are lit right now
+	var mn := 1 << 30
+	var mx := 0
+	for i in mini(_belt.size(), _inv_slots.size()):
+		var lin: Array = _belt[i].lineage
+		if _cast and (lin == _lineage or _is_prefix(lin, _lineage)):
+			mn = mini(mn, lin.size())
+			mx = maxi(mx, lin.size())
+	for i in mini(_belt.size(), _inv_slots.size()):
+		var b = _inv_slots[i]
+		if not is_instance_valid(b):
+			continue
+		var lin: Array = _belt[i].lineage
+		var active: bool = _cast and (lin == _lineage or _is_prefix(lin, _lineage))
+		if active:
+			# recent (deeper) = full colour; distant ancestor (shallower) = near white
+			var t: float = 1.0 if mx == mn else float(lin.size() - mn) / float(mx - mn)
+			var col := Color(1, 1, 1).lerp(Color(0.4, 1.0, 0.72), lerpf(0.12, 1.0, t))
+			b.add_theme_color_override("font_color", col)
+			b.add_theme_color_override("font_hover_color", col.lightened(0.15))
+		else:
+			b.remove_theme_color_override("font_color")
+			b.remove_theme_color_override("font_hover_color")
 
 
 ## RELEASE - back to baseline. The water goes quiet (the session is torn down,
@@ -501,6 +536,7 @@ func _release_line() -> void:
 	_stream = null
 	_cast = false
 	_landed = false
+	_slotted_lineage = []            # nothing is baited now
 	_drift_reset()                   # the journey ends with the line
 	# no active seed: the working candidate returns to the population baseline
 	# (the party's own blend, or the curated default when the belt is empty)
@@ -557,11 +593,74 @@ func _throw() -> void:
 		_working_genome = (parent.get("genome", {}) as Dictionary).duplicate()
 		_status.text = "thrown (from %s) - the water is quiet" % _seed_name(parent.lineage)
 	_throw_ms = Time.get_ticks_msec()
-	_drift_reset()                   # a fresh cast starts near, the wire at a crawl
+	# no drift reset: a throw casts from wherever the line already sits (you fish
+	# variations at your current spot); only a release returns home
 	_sync_line_button()
 	_update_reading_label()
 	_persist()
 	_apply()
+
+
+## Cast a line from a SPECIFIC Collection seed (the slotting click): a fresh
+## candidate parented on that seed, jittered by the profile, spoken at once. The
+## deliberate-parent sibling of _throw's weighted/wild pick - the child gets its
+## own lineage, so the reel/catch/accept loop grows the Collection from here.
+func _throw_from(idx: int) -> void:
+	if idx < 0 or idx >= _belt.size():
+		return
+	if not _pending.is_empty():
+		_release_catch()
+	if not _hook.is_empty():
+		_hook = {}
+		Director.set_aura(0.0)
+		_card.visible = false
+	_anchor = 0.0
+	_nibbles = 0
+	_last_strike_t = -999.0
+	_cast = true
+	_landed = false
+	var parent: Dictionary = _belt[idx]
+	parent.m.evolves += 1
+	var prof: Dictionary = PROFILES[_profile]
+	var drift := _drift_norm()
+	_lineage = (parent.lineage as Array).duplicate()
+	_lineage.append(randi() % 1000000)
+	var jitter: float = 0.22 * pow(0.75, _lineage.size() - 1) * float(prof.jitter) \
+		* (1.0 + 1.5 * drift)
+	var t: Dictionary = parent.traits
+	_traits = {}
+	for key in Voice.TRAIT_KEYS:
+		_traits[key] = clampf(
+			float(t.get(key, 0.0)) + randfn(0.0, maxf(jitter, 0.06)), -1.0, 1.0)
+	_traits = _temper_traits(_traits, drift)
+	_working_genome = (parent.get("genome", {}) as Dictionary).duplicate()
+	_slotted_lineage = (parent.lineage as Array).duplicate()   # this seed is the bait now
+	_status.text = "cast from %s" % _seed_name(parent.lineage)
+	_throw_ms = Time.get_ticks_msec()
+	# no drift reset - fish from wherever the line currently sits
+	_sync_line_button()
+	_update_reading_label()
+	_persist()
+	_apply()
+
+
+## The Collection is never empty: if there is nothing to slot, force one seed in
+## (a wild, tempered voice) so the player always has a line to cast. Called at
+## boot and after the last seed is deleted.
+func _ensure_collection() -> void:
+	if not _belt.is_empty():
+		return
+	var lin: Array = [randi() % 1000000]
+	var rng := RandomNumberGenerator.new()
+	rng.seed = int(lin[0])
+	var traits: Dictionary = _temper_traits(Voice.Spec.sample(rng).traits, 0.0)
+	_belt.append({
+		"lineage": lin, "traits": traits, "genome": {}, "scene": "",
+		"m": {"s": 0.0, "acts": 1, "restores": 0, "evolves": 0, "catches": 0,
+			"r": 0.5, "d": 0.35, "t": int(Time.get_unix_time_from_system())},
+	})
+	_rebuild_belt()
+	_persist()
 
 
 ## Normalize a candidate's trait vector against the pool it must harmonize
@@ -663,18 +762,16 @@ func _catch_reward(difficulty: float) -> float:
 			return 2.4 * 8.0 / (8.0 + t_s)
 
 
-## How far the crab cage has drifted (0..1) - drift mode only. This is the
-## ODOMETER now, not a wall clock: _advance_drift integrates the line's velocity
-## into it each frame, so it reads as distance travelled and can be surged by a
-## warp far past what raw time would give.
+## WHERE THE LINE IS (0..1) - a persistent LOCATION now, not a per-cast timer.
+## The odometer holds across mode changes and throws; only a RELEASE (still
+## water) returns it home. Drift travels out, anchor freezes here, reel retrieves
+## toward home - so the distance you earned is never lost by switching modes.
 func _drift_norm() -> float:
-	if _profile != "drift":
-		return 0.0
 	return clampf(_drift_dist, 0.0, 1.0)
 
 
-## Reset the drift journey to its start: a fresh cast (or a release, or leaving
-## drift mode) begins near, at a crawl, with the warp uncharged.
+## Reset the line all the way home - ONLY on release (still water). Mode changes
+## and throws no longer reset: anchoring stops where you are, reeling walks back.
 func _drift_reset() -> void:
 	_drift_dist = 0.0
 	_drift_vel = DRIFT_V0
@@ -682,36 +779,46 @@ func _drift_reset() -> void:
 	_warping = false
 
 
-## One frame of the drift journey: the line accelerates from a crawl toward its
-## raw maximum; the odometer accumulates that velocity. Hold the raw maximum for
-## WARP_CHARGE seconds and the drive charges - and once charged, if the reserve
-## can pay for it, the line WARPS: the odometer surges at WARP_VEL, far past raw
-## velocity, burning adrenochrome until the tank runs dry or the drift ends. This
-## is the whole loop: bank the reserve by fishing locally, spend it to reach the
-## deep field. Only runs in drift mode while a cast is out.
+## One frame of travel, per mode - the position PERSISTS, only the motion differs:
+##   DRIFT  - accelerate outward; hold raw max WARP_CHARGE s to charge the warp,
+##            which surges the odometer while it burns the reserve.
+##   ANCHOR - stop dead where you are (velocity 0, warp off); the position holds,
+##            so you fish under the conditions of wherever you drifted to.
+##   REEL   - retrieve: walk the line back toward home, faster with a seasoned
+##            belt (_reel_power) - the mirror of drifting out.
 func _advance_drift(delta: float) -> void:
-	if _profile != "drift" or not _cast:
+	if not _cast:
 		return
-	# accelerate toward the raw ceiling
-	_drift_vel = minf(_drift_vel + DRIFT_ACCEL * delta, DRIFT_VMAX)
-	var at_max: bool = _drift_vel >= DRIFT_VMAX - 0.000001
-	if at_max:
-		_drift_atmax += delta
-	else:
-		_drift_atmax = 0.0
-		_warping = false
-	# the warp: charged (held raw max long enough) AND the reserve can pay
-	var charged: bool = _drift_atmax >= WARP_CHARGE
-	if _warping:
-		if _reserve <= 0.0 or not charged:
+	match _profile:
+		"drift":
+			_drift_vel = minf(_drift_vel + DRIFT_ACCEL * delta, DRIFT_VMAX)
+			var at_max: bool = _drift_vel >= DRIFT_VMAX - 0.000001
+			if at_max:
+				_drift_atmax += delta
+			else:
+				_drift_atmax = 0.0
+				_warping = false
+			var charged: bool = _drift_atmax >= WARP_CHARGE
+			if _warping:
+				if _reserve <= 0.0 or not charged:
+					_warping = false
+			elif charged and _reserve >= WARP_MIN:
+				_warping = true
+			var vel := _drift_vel
+			if _warping:
+				vel = WARP_VEL
+				_reserve = maxf(_reserve - WARP_BURN * delta, 0.0)
+			_drift_dist = clampf(_drift_dist + vel * delta, 0.0, 1.0)
+		"anchor":
+			# stop dead - hold this spot, drop any charge
+			_drift_vel = 0.0
+			_drift_atmax = 0.0
 			_warping = false
-	elif charged and _reserve >= WARP_MIN:
-		_warping = true
-	var vel := _drift_vel
-	if _warping:
-		vel = WARP_VEL
-		_reserve = maxf(_reserve - WARP_BURN * delta, 0.0)
-	_drift_dist = clampf(_drift_dist + vel * delta, 0.0, 1.0)
+		"reel":
+			_drift_vel = 0.0
+			_drift_atmax = 0.0
+			_warping = false
+			_drift_dist = maxf(_drift_dist - REEL_HOME_VEL * _reel_power() * delta, 0.0)
 
 
 ## The drifted line's length, in honest units - the wire's timescale changing.
@@ -726,6 +833,25 @@ func _drift_caption() -> String:
 	if meters < 1.0e14:
 		return "≈ %.2f au" % (meters / 1.496e11)
 	return "≈ %.2f ly" % (meters / 9.461e15)
+
+
+## How near the line sits to the BEACON (the source at the line's end), 0..1 -
+## the same geometry the HUD draws (beacon at 0.8 of the travel, half-width 0.45),
+## so the audio effect and the visual approach agree. Peaks as you arrive on the
+## source and falls again once you overshoot past it.
+func _beacon_prox() -> float:
+	var pos_u := lerpf(0.14, 1.0, _drift_norm())
+	return clampf(1.0 - absf(pos_u - 0.8) / 0.45, 0.0, 1.0)
+
+
+## The source's frequency (Hz): a resonant band that SWEEPS UP with distance (so
+## different places sound different) plus a per-cast offset from the lineage (so
+## each line's source has its own colour). This is the band the reception filter
+## tunes to - the diverse patterns the player fishes for and blends.
+func _location_freq() -> float:
+	var h := float(hash(str(_lineage)) % 1000) / 1000.0
+	var base := 180.0 * pow(2.0, 3.0 * _drift_norm())
+	return clampf(base * (0.7 + 0.6 * h), 90.0, 3000.0)
 
 
 ## Planets become visible further out as the cage drifts - the cosmos opens.
@@ -1001,6 +1127,7 @@ func _accept_catch() -> void:
 			e.m.catches += 1
 			e.m.r += reward * 0.5
 	_landed = true                   # the caught voice speaks at full presence
+	_slotted_lineage = _lineage.duplicate()   # the caught seed is now the bait that's out
 	_reserve = minf(_reserve + reward, RESERVE_MAX)   # the catch mints adrenochrome for the warp
 	_traits = (_pending.traits as Dictionary).duplicate()
 	_working_genome = (_pending.genome as Dictionary).duplicate()
@@ -1018,7 +1145,7 @@ func _accept_catch() -> void:
 	_card.visible = false
 	_rebuild_belt()                  # every member's colour re-attunes here
 	_persist()
-	_status.text = "accepted +%.1f - hear what you caught (belt %d/%d)" % [
+	_status.text = "held +%.1f - hear what you caught (Collection %d/%d)" % [
 		reward, _belt.size(), BELT_MAX]
 	_apply()
 
@@ -1057,9 +1184,17 @@ func _restore_capture(idx: int) -> void:
 func _release_capture(idx: int) -> void:
 	if idx < 0 or idx >= _belt.size():
 		return
+	var removed: Dictionary = _belt[idx]
 	_belt.remove_at(idx)
+	# if the deleted seed's line (or a descendant of it) was out, cut it
+	if _cast and (removed.lineage == _lineage or _is_prefix(removed.lineage, _lineage)):
+		_release_line()
 	_rebuild_belt()
 	_persist()
+	# never leave the Collection empty: force a seed back and cast it automatically
+	if _belt.is_empty():
+		_ensure_collection()
+		_throw_from(0)
 
 
 func _is_prefix(a: Array, b: Array) -> bool:
@@ -1250,6 +1385,7 @@ func _rebuild_belt() -> void:
 		child.queue_free()
 	_inv_labels = []
 	_inv_glyphs = []
+	_inv_slots = []
 	for i in _belt.size():
 		var entry: Dictionary = _belt[i]
 		var row := HBoxContainer.new()
@@ -1262,9 +1398,11 @@ func _rebuild_belt() -> void:
 		var slot := Button.new()
 		slot.text = _seed_name(entry.lineage)
 		slot.custom_minimum_size = Vector2(96, 26)
+		slot.tooltip_text = "Slot this seed in - cast a line from it. Click again to release."
 		var idx := i
-		slot.pressed.connect(func(): _restore_capture(idx))
+		slot.pressed.connect(func(): _on_seed_clicked(idx))
 		row.add_child(slot)
+		_inv_slots.append(slot)
 		var metrics := Label.new()
 		metrics.add_theme_font_size_override("font_size", 11)
 		metrics.modulate = Color(1, 1, 1, 0.65)
@@ -1280,6 +1418,7 @@ func _rebuild_belt() -> void:
 		row.add_child(release)
 		_belt_rows.add_child(row)
 	_refresh_inventory()
+	_update_slot_highlights()        # fresh buttons: re-mark whichever is slotted
 
 
 ## The bag keeps reflecting fit: each member's colour is its RELATIVE standing
@@ -1383,6 +1522,10 @@ func _process(delta: float) -> void:
 				presence = clampf(0.6 + 0.4 * float(_hook.progress)
 					- 0.2 * float(_hook.run), 0.3, 1.0)
 		_stream.set_presence(presence)
+		# the fishing spot's acoustics: as the line nears the beacon (the source),
+		# a band tuned to it swells into the voice - interesting conditions to fish
+		# under, and diverse colour to catch
+		_stream.set_location(_beacon_prox(), _location_freq())
 		_metrics_t += delta
 		if _metrics_t >= 5.0:
 			_metrics_t = 0.0
@@ -1745,10 +1888,9 @@ class Hud:
 		var pull: float = clampf(editor._anchor, 0.0, 1.2)
 		var d: float = editor._candidate_difficulty() if pull > 0.05 else 0.0
 		var belly: float = pull * (s.y * 0.3) * (1.0 + 0.15 * sin(t * 2.2))
-		# in drift the WIRE ITSELF bows into an arc as we push out - the path we
-		# travel toward the thing at its far end, and overshoot along
-		var drift_arc: float = lerpf(0.0, s.y * 0.24, editor._drift_norm()) \
-			if editor._profile == "drift" else 0.0
+		# the WIRE bows into an arc by DISTANCE (in any mode - the position holds
+		# now), the path we travelled out toward the thing at its far end
+		var drift_arc: float = lerpf(0.0, s.y * 0.24, editor._drift_norm())
 		var swell := belly + drift_arc
 		var pts := PackedVector2Array()
 		for i in 25:
@@ -1760,9 +1902,12 @@ class Hud:
 			else Color.from_hsv(lerpf(0.42, 0.0, clampf(d, 0.0, 1.0)), 0.85, 0.9,
 				0.5 + 0.4 * minf(pull, 1.0))
 		draw_polyline(pts, c, 1.5)
-		# DRIFT travels toward a beacon (and overshoots it); anchor/reel hold a
-		# green cast dot in the water
-		if editor._profile == "drift":
+		# out at a distance (drifting there, anchored there, or reeling back) the
+		# beacon + travelling position show; the field freezes when anchored and
+		# reverses when reeling (both fall out of the odometer holding/shrinking).
+		# Only truly at home in anchor/reel do we fall back to a still cast dot.
+		var out_there: bool = editor._profile == "drift" or editor._drift_norm() > 0.003
+		if out_there:
 			_draw_drift_field(s, y0, swell)
 			_draw_drift_travel(s, y0, swell, t)
 		else:
@@ -1770,13 +1915,16 @@ class Hud:
 			var cp := Vector2(lerpf(64.0, s.x - 12.0, cast_u), y0 + sin(cast_u * PI) * belly)
 			draw_circle(cp, 3.2 + (1.2 * sin(t * 2.2) if pull > 0.05 else 0.0),
 				Color(0.5, 0.95, 0.8, 0.75))
-		if editor._profile == "drift":
-			# the honest distance, and the warp's state: charging, or lit and
-			# burning the reserve down toward the deep field
+		if out_there:
+			# the honest distance you're parked at, and (drift only) the warp state
 			var cap := editor._drift_caption()
 			var warp_txt := ""
 			var warp_col := Color(0.4, 0.85, 0.65, 0.7)
-			if editor._warping:
+			if editor._profile == "anchor":
+				warp_txt = "  ·  anchored"
+			elif editor._profile == "reel":
+				warp_txt = "  ·  reeling home"
+			elif editor._warping:
 				warp_txt = "  ·  ⚡ WARP  (reserve %.1f)" % editor._reserve
 				warp_col = Color(0.75, 0.85, 1.0, 0.9)
 			elif editor._drift_atmax >= SynthEditor.WARP_CHARGE:
