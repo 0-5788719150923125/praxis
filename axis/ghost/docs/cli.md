@@ -16,6 +16,7 @@ Ghost's own flags follow the Godot separator: `godot --path axis/ghost -- <ghost
 | `--mask-edit` | `<session.json>` | Open the Masking editor on a session (also creates one from a video path). |  |
 | `--mask-render` | `<session.json>` | Render a Masking session to video (used with `--write-movie`). | _internal_ |
 | `--export` |  | Marks a Movie Maker render process (set by the exporter; `Boot` shrinks the window early). | _internal_ |
+| `--synth-autopilot` |  | With `--export`: open the Synthesis panel over the take and let the fishing game play itself (random Throw/Pull/reel/hold-or-fold), so the UI is recorded into the video. Generates no audio and persists nothing (set by the exporter's 'Automate the Synthesis game' toggle). | _internal_ |
 | `--use-bake` |  | Drive `Spectrum` from the song's cached bake instead of the live analyzer. | _internal_ |
 | `--bake-file` | `<path>` | Explicit spectrum-bake cache for a render (implies `--use-bake`). | _internal_ |
 | `--bake-song` | `<path>` | `bake_runner`: the song to analyze. | _internal_ |

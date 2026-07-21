@@ -35,7 +35,7 @@ Praxis is built around 47 pluggable registries. The feature categories below lin
 
 - [CLI arguments](cli.md) - every `./launch` flag, grouped as in `--help`.
 - [Web stack](web.md) - dashboard, JSON API routes, and inference endpoints.
-- [Axis mobile app](../axis/axis/README.md) - archived Godot companion app for controlling Praxis.
+- [Vortex mobile app](../axis/vortex/README.md) - archived Godot companion app for controlling Praxis.
 - [nuTube](../axis/nutube/README.md) - local-first YouTube explorer with an on-device recommender (Godot, in development).
 
 ## Project layout

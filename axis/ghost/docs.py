@@ -258,6 +258,15 @@ CLI_FLAGS: List[Tuple[str, str, str, bool]] = [
         True,
     ),
     (
+        "--synth-autopilot",
+        "",
+        "With `--export`: open the Synthesis panel over the take and let the "
+        "fishing game play itself (random Throw/Pull/reel/hold-or-fold), so the "
+        "UI is recorded into the video. Generates no audio and persists nothing "
+        "(set by the exporter's 'Automate the Synthesis game' toggle).",
+        True,
+    ),
+    (
         "--use-bake",
         "",
         "Drive `Spectrum` from the song's cached bake instead of the live " "analyzer.",

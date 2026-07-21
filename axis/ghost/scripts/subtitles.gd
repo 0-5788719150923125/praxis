@@ -100,6 +100,19 @@ class Overlay:
 	const BASE_FS := 30
 	const MIN_FS := 20
 	const MAX_LINES := 3
+	# The colour is a GRADIENT keyed on the CHARACTER index across the whole
+	# sentence, not the word - so a band of hue drifts through the text spanning
+	# several words at once, and the reader can watch it flow rather than catch
+	# it word by word. HUE_SPAN sets how tight the band is (how much the hue
+	# turns from one glyph to the next); HUE_DRIFT sets how fast the whole band
+	# slides forward over time. LINGER is the payload of the request: a spoken
+	# glyph does NOT snap back to its resting dim the instant the voice leaves
+	# it - it holds its vivid gradient hue and cools over this many characters
+	# behind the cursor, so the colour stays long enough to rest the eye on and
+	# read what the change meant.
+	const HUE_SPAN := 0.011          # hue turned per character (band tightness)
+	const HUE_DRIFT := 0.02          # hue slid per second (the band flows)
+	const LINGER := 24.0             # characters a spoken glyph stays lit behind the cursor
 
 	func _draw() -> void:
 		if owner_node == null or owner_node.words.is_empty():
@@ -118,15 +131,15 @@ class Overlay:
 			fs -= 2
 			lines = _wrap(line_words, font, fs, max_w)
 		var lh := float(fs) + 12.0
-		var hue := _harmonic_hue()
-		var bright := Color.from_hsv(hue, 0.55, 1.0)
-		# on a dark plate these can sit brighter than they did over raw scene:
-		# spoken words stay readable instead of dissolving, and waiting words
-		# read as dim-but-present rather than nearly invisible
-		var spoken := Color.from_hsv(hue, 0.3, 0.72)
-		var waiting := Color(1, 1, 1, 0.5)
+		# the harmonic hue is now the BASE the gradient rides from, not the one
+		# colour of the whole line - each glyph turns off it by its position and
+		# by time (see _glyph_color)
+		var base_hue := _harmonic_hue()
+		var now := owner_node._now()
 		var gap := 14.0
-		var cursor: float = owner_node._cursor
+		# the cursor as a CHARACTER position within this sentence, so the lit
+		# front and the lingering trail are both measured in glyphs, not words
+		var ccur: float = _char_cursor(line_words)
 		var y: float = vp.y - 70.0 - (lines.size() - 1) * lh
 		# THE PLATE: scenes range from black voids to white-hot fields, so
 		# colour alone can never keep text legible. Each line gets a rounded
@@ -144,34 +157,70 @@ class Overlay:
 			draw_rect(plate, Color(0.04, 0.04, 0.05, 0.72), true)
 			y += lh
 		y = vp.y - 70.0 - (lines.size() - 1) * lh
+		# the pen advances glyph by glyph so the gradient can turn WITHIN a word,
+		# and so a spoken glyph keeps its own lingering colour independent of its
+		# neighbours - the whole reason to key on characters instead of words
 		for row in lines:
 			var total := -gap
 			for item in row:
 				total += item.w + gap
 			var x: float = (vp.x - total) * 0.5
 			for item in row:
-				var w: Dictionary = item.word
-				var lit: float = clampf(cursor - float(item.idx), 0.0, 1.0)
-				var text: String = w.text
-				var pos := Vector2(x, y)
-				# the shadow, under every state - the edge that survives a
-				# bright frame bleeding past the plate
-				draw_string(font, pos + Vector2(1.5, 1.5), text,
-					HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0, 0, 0, 0.85))
-				if lit >= 1.0:
-					draw_string(font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, spoken)
-				elif lit <= 0.0:
-					draw_string(font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, waiting)
-				else:
-					var chars := int(ceil(lit * text.length()))
-					draw_string(font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, waiting)
-					draw_string(font, pos, text.substr(0, chars),
-						HORIZONTAL_ALIGNMENT_LEFT, -1, fs, bright)
-					draw_rect(Rect2(pos.x, pos.y + 8.0, item.w * lit, 3.0), bright)
-				x += item.w + gap
+				var text: String = item.word.text
+				var ci: int = int(item.cstart)   # this word's first char, sentence-local
+				for ch in text.length():
+					var glyph := text.substr(ch, 1)
+					var cw := font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+					var pos := Vector2(x, y)
+					var col := _glyph_color(base_hue, ci + ch, ccur, now)
+					# the shadow, under every state - the edge that survives a
+					# bright frame bleeding past the plate
+					draw_string(font, pos + Vector2(1.5, 1.5), glyph,
+						HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0, 0, 0, 0.85))
+					draw_string(font, pos, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
+					x += cw
+				x += gap
 			y += lh
 
-	## The current sentence as [{idx (global), word, w (pixel width)}] items.
+	## A single glyph's colour: a hue that drifts by position AND time (the band
+	## flowing through the sentence), and a brightness that tells the reading
+	## state - a muted preview ahead of the voice, a vivid flare as it is spoken,
+	## then a slow cool over LINGER characters behind so the colour stays to be
+	## looked at rather than snapping dim the instant the word ends.
+	func _glyph_color(base_hue: float, ci: int, ccur: float, t: float) -> Color:
+		var hue := fposmod(base_hue + float(ci) * HUE_SPAN - t * HUE_DRIFT, 1.0)
+		var d := ccur - float(ci)                       # >0 spoken (behind), <=0 waiting (ahead)
+		if d <= 0.0:
+			# ahead of the voice: dim but present, faintly tinted so the coming
+			# colour is previewed rather than a wall of grey
+			return Color.from_hsv(hue, 0.22, 0.6, 0.92)
+		# spoken: full flare at the front, cooling to a resting tint over LINGER
+		var glow := clampf(1.0 - (d - 1.0) / LINGER, 0.0, 1.0)
+		var rest := Color.from_hsv(hue, 0.34, 0.7)
+		var vivid := Color.from_hsv(hue, 0.9, 1.0)
+		return rest.lerp(vivid, glow)
+
+	## The cursor expressed as a CHARACTER position within the current sentence:
+	## the word-level eye (owner._cursor) resolved through the per-word character
+	## offsets (item.cstart) the layout already carries. Past the last word it
+	## reads as the full length so the whole sentence lingers together.
+	func _char_cursor(items: Array) -> float:
+		if items.is_empty():
+			return 0.0
+		var cw := int(floor(owner_node._cursor))
+		var frac: float = owner_node._cursor - float(cw)
+		for it in items:
+			if int(it.idx) == cw:
+				return float(it.cstart) + frac * float(String(it.word.text).length())
+		var last: Dictionary = items[items.size() - 1]
+		if cw < int(items[0].idx):
+			return 0.0
+		return float(last.cstart) + float(String(last.word.text).length()) + 1.0
+
+	## The current sentence as [{idx (global), word, w (pixel width), cstart}]
+	## items. cstart is the word's first-character index WITHIN the sentence
+	## (words separated by one gap character), so colour can be keyed on the
+	## continuous character sequence rather than reset at every word.
 	func _current_sentence(t: float) -> Array:
 		var all: Array = owner_node.words
 		var si := -1
@@ -187,9 +236,11 @@ class Overlay:
 		if si < 0:
 			return []
 		var out: Array = []
+		var cstart := 0
 		for k in all.size():
 			if int(all[k].sentence) == si:
-				out.append({"idx": k, "word": all[k], "w": 0.0})
+				out.append({"idx": k, "word": all[k], "w": 0.0, "cstart": cstart})
+				cstart += String(all[k].text).length() + 1   # +1 for the inter-word gap
 		return out
 
 	## Greedy wrap into rows that fit max_w at the given font size; also fills

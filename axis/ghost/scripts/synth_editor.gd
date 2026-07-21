@@ -111,6 +111,34 @@ const PROFILES := {
 		"tip": "Retrieval. A seasoned belt reels faster - accumulated statistics preview the catch's influence. Foreignness earns."},
 }
 
+# THE DRIFT as a JOURNEY, not a clock. The old drift was pure wall-time, so the
+# cast dot crept a fixed sliver over five minutes and nothing on the wire ever
+# read as MOTION. Now the line has a velocity: it accelerates from a crawl to a
+# raw maximum the longer you leave the cast out, and an ODOMETER (_drift_dist,
+# 0..1) accumulates that velocity - the streaks, the cast dot, and the distance
+# caption all read the odometer, so drift finally looks like travel.
+#
+# Raw velocity alone can only ever inch you toward the deep field - the far
+# reaches (au, lightyears) sit past where patience can carry you in a sitting.
+# That is what the WARP is for, and it is your idea exactly: hold the raw
+# maximum for WARP_CHARGE seconds and the drive charges; once charged, if you
+# have banked enough ADRENOCHROME, the wire jumps FASTER than raw velocity could
+# ever go, spending the reserve as it burns. Explore locally to fill the tank,
+# then spend it to reach somewhere you could not otherwise get to in time.
+const DRIFT_V0 := 1.0 / 600.0       # odometer/sec at the start of a drift (a crawl)
+const DRIFT_VMAX := 1.0 / 180.0     # raw maximum odometer/sec - deliberately slow: the deep field is not free
+const DRIFT_ACCEL := (1.0 / 180.0 - 1.0 / 600.0) / 22.0   # ramp crawl -> raw max over ~22s of unbroken drift
+const WARP_CHARGE := 10.0           # seconds held at raw max before the drive charges
+const WARP_VEL := 1.0 / 16.0        # warp odometer/sec - the streaks that "move faster than velocity allows"
+const WARP_BURN := 0.32             # adrenochrome spent per second of warp
+const WARP_MIN := 0.4               # reserve needed to IGNITE a warp (a floored charge)
+# Adrenochrome is the currency the warp spends. It is minted by fishing: a
+# landed catch banks its reward, and patient nibbling trickles a little in. It
+# persists across runs with the belt, so a session's local exploration funds the
+# next session's jumps.
+const RESERVE_TRICKLE := 0.03       # adrenochrome/sec while a pull is anchored (patience pays)
+const RESERVE_MAX := 40.0           # a tank ceiling so it cannot grow unbounded
+
 var begin_stream: Callable          # set by main: (stream: VoiceStream) -> void
 var end_stream: Callable            # set by main: () -> void, tears the session down
 
@@ -156,6 +184,20 @@ var _landed := false                # the working voice is a landed/kept catch
 var _retune_t := 0.0                # reel audition retune pacing
 var _line_btn: Button               # Throw when the water is empty, Release once cast
 var _line_gen := 0                  # bumped on release: in-flight animations check it
+# The drift journey (see the DRIFT_ constants). All reset by _drift_reset on a
+# throw / release / mode change - a new cast starts near, at a crawl.
+var _drift_dist := 0.0              # the odometer: 0..1, what every drift visual reads
+var _drift_vel := 0.0              # current odometer/sec, ramping V0 -> VMAX (-> WARP_VEL)
+var _drift_atmax := 0.0            # seconds held at raw max, charging the warp
+var _warping := false              # the drive is lit and burning reserve right now
+var _reserve := 0.0               # banked adrenochrome - fishing mints it, the warp spends it
+# Autopilot: the game plays itself over a fixed take, for the UI-recorded export
+# (see main.gd's --synth-autopilot and exporter.gd). Random transitions on
+# timers; no live audio is generated (the take is the audio), and nothing is
+# persisted (a render must never mutate the player's real save).
+var _autopilot := false
+var _ap_t := 0.0                    # countdown to the autopilot's next decision
+var _belt_shadow_t := 0.0           # throttle for re-orienting belt moons to the cast
 
 
 func _ready() -> void:
@@ -175,6 +217,11 @@ func _ready() -> void:
 		_update_reading_label()
 		_apply.call_deferred()
 	_sync_line_button()
+	# UI-recorded export: the panel is visible and the game plays itself over the
+	# take (see _autopilot_tick). Loaded belt/reserve give it seeds to work with.
+	if args.has("--synth-autopilot"):
+		_autopilot = true
+		_ap_t = 1.5
 
 
 func _build_panel() -> void:
@@ -256,6 +303,7 @@ func _build_panel() -> void:
 		var pkey: String = key
 		b.pressed.connect(func():
 			_profile = pkey
+			_drift_reset()           # switching modes restarts the journey
 			_sync_switchboard()
 			_persist())
 		board.add_child(b)
@@ -453,6 +501,7 @@ func _release_line() -> void:
 	_stream = null
 	_cast = false
 	_landed = false
+	_drift_reset()                   # the journey ends with the line
 	# no active seed: the working candidate returns to the population baseline
 	# (the party's own blend, or the curated default when the belt is empty)
 	_lineage = [1]
@@ -508,6 +557,7 @@ func _throw() -> void:
 		_working_genome = (parent.get("genome", {}) as Dictionary).duplicate()
 		_status.text = "thrown (from %s) - the water is quiet" % _seed_name(parent.lineage)
 	_throw_ms = Time.get_ticks_msec()
+	_drift_reset()                   # a fresh cast starts near, the wire at a crawl
 	_sync_line_button()
 	_update_reading_label()
 	_persist()
@@ -602,18 +652,66 @@ func _catch_reward(difficulty: float) -> float:
 	var t_s: float = (Time.get_ticks_msec() - _throw_ms) / 1000.0
 	match _profile:
 		"drift":
-			return 2.4 * clampf(t_s / 45.0, 0.0, 1.0)
+			# earns by DISTANCE now, not raw seconds: a catch made out in the
+			# deep field (reached by warping, which spent the reserve to get
+			# there) is worth the most - the reserve you burn comes back through
+			# the foreign catches only the deep field holds
+			return 0.4 + 2.4 * _drift_norm()
 		"reel":
 			return 0.4 + 2.0 * difficulty
 		_:
 			return 2.4 * 8.0 / (8.0 + t_s)
 
 
-## How far the crab cage has drifted (0..1 over ~5 minutes) - drift mode only.
+## How far the crab cage has drifted (0..1) - drift mode only. This is the
+## ODOMETER now, not a wall clock: _advance_drift integrates the line's velocity
+## into it each frame, so it reads as distance travelled and can be surged by a
+## warp far past what raw time would give.
 func _drift_norm() -> float:
 	if _profile != "drift":
 		return 0.0
-	return clampf((Time.get_ticks_msec() - _throw_ms) / 1000.0 / 300.0, 0.0, 1.0)
+	return clampf(_drift_dist, 0.0, 1.0)
+
+
+## Reset the drift journey to its start: a fresh cast (or a release, or leaving
+## drift mode) begins near, at a crawl, with the warp uncharged.
+func _drift_reset() -> void:
+	_drift_dist = 0.0
+	_drift_vel = DRIFT_V0
+	_drift_atmax = 0.0
+	_warping = false
+
+
+## One frame of the drift journey: the line accelerates from a crawl toward its
+## raw maximum; the odometer accumulates that velocity. Hold the raw maximum for
+## WARP_CHARGE seconds and the drive charges - and once charged, if the reserve
+## can pay for it, the line WARPS: the odometer surges at WARP_VEL, far past raw
+## velocity, burning adrenochrome until the tank runs dry or the drift ends. This
+## is the whole loop: bank the reserve by fishing locally, spend it to reach the
+## deep field. Only runs in drift mode while a cast is out.
+func _advance_drift(delta: float) -> void:
+	if _profile != "drift" or not _cast:
+		return
+	# accelerate toward the raw ceiling
+	_drift_vel = minf(_drift_vel + DRIFT_ACCEL * delta, DRIFT_VMAX)
+	var at_max: bool = _drift_vel >= DRIFT_VMAX - 0.000001
+	if at_max:
+		_drift_atmax += delta
+	else:
+		_drift_atmax = 0.0
+		_warping = false
+	# the warp: charged (held raw max long enough) AND the reserve can pay
+	var charged: bool = _drift_atmax >= WARP_CHARGE
+	if _warping:
+		if _reserve <= 0.0 or not charged:
+			_warping = false
+	elif charged and _reserve >= WARP_MIN:
+		_warping = true
+	var vel := _drift_vel
+	if _warping:
+		vel = WARP_VEL
+		_reserve = maxf(_reserve - WARP_BURN * delta, 0.0)
+	_drift_dist = clampf(_drift_dist + vel * delta, 0.0, 1.0)
 
 
 ## The drifted line's length, in honest units - the wire's timescale changing.
@@ -903,6 +1001,7 @@ func _accept_catch() -> void:
 			e.m.catches += 1
 			e.m.r += reward * 0.5
 	_landed = true                   # the caught voice speaks at full presence
+	_reserve = minf(_reserve + reward, RESERVE_MAX)   # the catch mints adrenochrome for the warp
 	_traits = (_pending.traits as Dictionary).duplicate()
 	_working_genome = (_pending.genome as Dictionary).duplicate()
 	_belt.append({
@@ -1037,6 +1136,87 @@ func _party_vector() -> PackedFloat32Array:
 	return v
 
 
+## The candidate's bearing FROM the party, as a 3D vector for the HUD compass -
+## direction is otherwise near-impossible to reason about in an 8D trait space.
+## The eight trait axes collapse onto three legible ones the ear can name:
+##   X = brightness  (pitch, lilt)      - how high/lively vs low/flat
+##   Y = damage      (grit, air, breath) - the FRAY axes: smooth vs abraded
+##   Z = drive       (pace, drawl, tract) - clipped/urgent vs drawn-out
+## Each is the candidate-minus-party offset summed over its group, softened into
+## roughly [-1, 1]. With an empty belt the party is the origin, so the compass
+## simply reads the voice's own place - still a direction worth seeing.
+func _bearing_of(cand: PackedFloat32Array, party: PackedFloat32Array) -> Vector3:
+	var off := func(i: int) -> float:
+		return float(cand[i]) - float(party[i]) if i < cand.size() and i < party.size() else 0.0
+	# indices in Voice.TRAIT_KEYS order: pitch0 lilt1 tract2 pace3 breath4 grit5 drawl6 air7
+	var gx: float = off.call(0) + off.call(1)
+	var gy: float = off.call(5) + off.call(7) + off.call(4)
+	var gz: float = off.call(3) + off.call(6) + off.call(2)
+	return Vector3(clampf(gx * 0.7, -1.0, 1.0),
+		clampf(gy * 0.55, -1.0, 1.0), clampf(gz * 0.55, -1.0, 1.0))
+
+
+func _bearing3() -> Vector3:
+	return _bearing_of(_seed_vector(_traits, _lineage, _working_genome), _party_vector())
+
+
+## A belt member's bearing in the SHARED party frame - the same frame for every
+## member, so the planets' colours and their shadow directions are mutually
+## consistent and do NOT depend on which candidate is currently being fished
+## (that is why the shadows "point in directions, consistently, no matter which
+## one we're anchored to"). Only an Accept, which moves the party, re-orients
+## the whole sky.
+func _member_bearing(e: Dictionary, party: PackedFloat32Array) -> Vector3:
+	return _bearing_of(_seed_vector(e.traits, e.lineage, _member_genome(e)), party)
+
+
+## WHERE THE LINE SITS: the working candidate's position, pushed outward along
+## its own heading as the drift grows. This is the frame the belt's shadows are
+## read against, so the pattern of moons IS the map of the region relative to
+## where you are fishing - and it keeps shifting the further out you drift. With
+## nothing cast, the frame falls back to the party centre (home).
+func _cast_vector() -> PackedFloat32Array:
+	var party := _party_vector()
+	if not _cast:
+		return party
+	var cand := _seed_vector(_traits, _lineage, _working_genome)
+	var reach := 1.0 + 2.5 * _drift_norm()
+	var out := PackedFloat32Array()
+	out.resize(cand.size())
+	for i in cand.size():
+		var pv: float = party[i] if i < party.size() else 0.0
+		out[i] = pv + (float(cand[i]) - pv) * reach
+	return out
+
+
+## Re-orient every belt moon (and the big candidate moon) to the current cast.
+## Each seed's shadow now points and wanes by where it sits RELATIVE TO THE LINE,
+## so casting somewhere new - or drifting further - re-lights the whole belt: the
+## regions manifest as a changing pattern of phases. Cheap (belt <= 7); throttled
+## by the caller.
+func _update_belt_shadows() -> void:
+	var cast := _cast_vector()
+	for i in mini(_belt.size(), _inv_glyphs.size()):
+		var g = _inv_glyphs[i]
+		if not is_instance_valid(g):
+			continue
+		var b := _member_bearing(_belt[i], cast)
+		g.planet_dir = atan2(b.y, b.x)
+		g.planet_phase = b.z
+		g.queue_redraw()
+	# the big candidate planet: its OWN bearing from home, waxing full near the
+	# party and waning to a crescent (pointing the way it went) as the cast
+	# reaches out and the drift carries it further from home
+	if _hud_glyph != null and is_instance_valid(_hud_glyph):
+		var cb := _bearing3()
+		var depth: float = clampf(0.5 * Vector2(cb.x, cb.y).length() + _drift_norm(), 0.0, 1.0)
+		_hud_glyph.tint = SeedGlyph.behavior_color(cb)
+		_hud_glyph.is_planet = true
+		_hud_glyph.planet_dir = atan2(cb.y, cb.x)
+		_hud_glyph.planet_phase = 1.0 - 2.0 * depth
+		_hud_glyph.queue_redraw()
+
+
 func _cosine(a: PackedFloat32Array, b: PackedFloat32Array) -> float:
 	var dot := 0.0
 	var na := 0.0
@@ -1125,7 +1305,14 @@ func _refresh_inventory() -> void:
 		if i < _inv_glyphs.size() and is_instance_valid(_inv_glyphs[i]):
 			var glyph: SeedGlyph = _inv_glyphs[i]
 			glyph.fit = 0.55 * float(sim_n[i]) + 0.45 * float(acc_n[i])
+			# COLOUR is the seed's behaviour in the PARTY frame - an identity that
+			# stays put as you fish, so a seed keeps its hue and can be tracked. Its
+			# SHADOW is set separately, in the CAST frame, and re-orients live as
+			# you cast and drift (see _update_belt_shadows). Frazzle still = fit.
+			glyph.tint = SeedGlyph.behavior_color(_member_bearing(e, party))
+			glyph.is_planet = true
 			glyph.queue_redraw()
+	_update_belt_shadows()           # orient the moons to wherever the line sits now
 
 
 func _seed_tooltip(e: Dictionary) -> String:
@@ -1165,6 +1352,20 @@ func _process(delta: float) -> void:
 		_persist()
 		if _restart_pending:
 			_apply()
+	# the drift journey integrates every frame whether or not a stream is playing
+	# (it self-gates on drift mode + cast), so the odometer and warp advance the
+	# same in a live session and in the autopilot export
+	_advance_drift(delta)
+	# re-orient the belt's moons to the cast a few times a second, so the shadows
+	# track where the line sits and keep shifting as the drift reaches out
+	_belt_shadow_t += delta
+	if _belt_shadow_t >= 0.12:
+		_belt_shadow_t = 0.0
+		_update_belt_shadows()
+	if _autopilot:
+		_autopilot_tick(delta)
+		_hud.queue_redraw()
+		return
 	if _stream != null and is_instance_valid(_stream) and _stream.words.size() > 0:
 		for e in _belt:
 			if e.lineage == _lineage or _is_prefix(e.lineage, _lineage):
@@ -1213,6 +1414,10 @@ func _process(delta: float) -> void:
 					_anchor = 0.0
 					_nibbles = 0
 					_last_strike_t = -999.0
+			# patience pays: an anchored pull slowly mints adrenochrome for the
+			# warp - the "explore locally to fill the tank" half of the loop
+			if _anchor > 0.1:
+				_reserve = minf(_reserve + RESERVE_TRICKLE * delta, RESERVE_MAX)
 			_status_t2 += delta
 			if _status_t2 >= 0.5 and _pending.is_empty() and not _catching:
 				_status_t2 = 0.0
@@ -1222,53 +1427,96 @@ func _process(delta: float) -> void:
 				elif _status.text.begins_with("something is pulling"):
 					_status.text = "the line is slack"
 		else:
-			# THE REEL is a FIGHT, not a timer: progress is the belt's power
-			# against the creature's RUNS. A run pays line back out (progress
-			# can regress; the voice drops away mid-pull); knowledge reels
-			# harder. Everything hooked lands eventually - the wait is the
-			# accumulation (the adrenochrome anneals step by step) AND the
-			# audition (presence and timbre close in as it nears), so the
-			# hold-or-fold decision is informed by the time it surfaces.
-			var h := _hook
-			h.t += delta
-			h.run = maxf(float(h.run) - delta / 2.2, 0.0)
-			h.run_t = float(h.run_t) - delta
-			if float(h.run_t) <= 0.0:
-				var frng: RandomNumberGenerator = h.frng
-				h.run_t = frng.randf_range(4.0, 12.0) / (0.4 + float(h.d))
-				h.run = frng.randf_range(0.5, 1.0) * (0.35 + 0.65 * float(h.d))
-			var rate: float = float(h.power) / float(h.duration) * (1.0 - 1.3 * float(h.run))
-			h.progress = clampf(float(h.progress) + rate * delta, 0.0, 1.0)
-			while h.step < int(float(h.progress) * HOOK_STEPS):
-				_adreno_step()
-			# the audition: every couple of seconds the stream's TIMBRE bends
-			# toward the annealing adrenochrome (atomic retune; the reading
-			# stays the thrown plan until an Accept restarts it in full)
-			_retune_t += delta
-			if _retune_t >= 2.0:
-				_retune_t = 0.0
-				_stream.retune(Voice.Spec.from_traits(h.traits, int(_lineage[0]), _lineage))
-			# the metamorphosis: pulling the fish closer contorts the CURRENT
-			# scene, and a foreign catch contorts it BIG
-			Director.set_aura(float(h.progress) * (0.4 + 1.1 * float(h.d)))
-			_status_t2 += delta
-			if _status_t2 >= 0.5:
-				_status_t2 = 0.0
-				var pc := int(float(h.progress) * 100.0)
-				var toll := _hook_toll()
-				if h.run > 0.35:
-					_status.text = "it runs - the line pays out (%d%%)" % pc
-				elif toll > 0.55:
-					_status.text = "reeling - its voice is coming apart (%d%%)" % pc
-				elif toll > 0.25:
-					_status.text = "reeling - something in it is bending (%d%%)" % pc
-				else:
-					_status.text = "reeling - it changes as it comes (%d%%)" % pc
-				_hud_glyph.fit = _relative_fit_of(h.traits, _lineage, h.genome)
-				_hud_glyph.queue_redraw()
-			if float(h.progress) >= 1.0:
-				_finish_hook()
+			_advance_reel(delta)
 		_hud.queue_redraw()
+
+
+## One frame of the reel fight - the fish is dragged in, the adrenochrome
+## anneals, the scene contorts, and it lands when progress hits 1. Shared by the
+## live session and the autopilot (the live stream's timbre audition is skipped
+## when there is no stream, e.g. an export playing itself over a fixed take).
+func _advance_reel(delta: float) -> void:
+	if _hook.is_empty():
+		return
+	# THE REEL is a FIGHT, not a timer: progress is the belt's power against the
+	# creature's RUNS. A run pays line back out (progress can regress; the voice
+	# drops away mid-pull); knowledge reels harder. Everything hooked lands
+	# eventually - the wait is the accumulation (the adrenochrome anneals step by
+	# step) AND the audition (presence and timbre close in as it nears), so the
+	# hold-or-fold decision is informed by the time it surfaces.
+	var h := _hook
+	h.t += delta
+	h.run = maxf(float(h.run) - delta / 2.2, 0.0)
+	h.run_t = float(h.run_t) - delta
+	if float(h.run_t) <= 0.0:
+		var frng: RandomNumberGenerator = h.frng
+		h.run_t = frng.randf_range(4.0, 12.0) / (0.4 + float(h.d))
+		h.run = frng.randf_range(0.5, 1.0) * (0.35 + 0.65 * float(h.d))
+	var rate: float = float(h.power) / float(h.duration) * (1.0 - 1.3 * float(h.run))
+	h.progress = clampf(float(h.progress) + rate * delta, 0.0, 1.0)
+	while h.step < int(float(h.progress) * HOOK_STEPS):
+		_adreno_step()
+	# the audition: every couple of seconds the stream's TIMBRE bends toward the
+	# annealing adrenochrome (atomic retune; the reading stays the thrown plan
+	# until an Accept restarts it in full). No stream (export autopilot) = no
+	# audition to run.
+	_retune_t += delta
+	if _retune_t >= 2.0:
+		_retune_t = 0.0
+		if _stream != null and is_instance_valid(_stream):
+			_stream.retune(Voice.Spec.from_traits(h.traits, int(_lineage[0]), _lineage))
+	# the metamorphosis: pulling the fish closer contorts the CURRENT scene, and
+	# a foreign catch contorts it BIG
+	Director.set_aura(float(h.progress) * (0.4 + 1.1 * float(h.d)))
+	_status_t2 += delta
+	if _status_t2 >= 0.5:
+		_status_t2 = 0.0
+		var pc := int(float(h.progress) * 100.0)
+		var toll := _hook_toll()
+		if h.run > 0.35:
+			_status.text = "it runs - the line pays out (%d%%)" % pc
+		elif toll > 0.55:
+			_status.text = "reeling - its voice is coming apart (%d%%)" % pc
+		elif toll > 0.25:
+			_status.text = "reeling - something in it is bending (%d%%)" % pc
+		else:
+			_status.text = "reeling - it changes as it comes (%d%%)" % pc
+		_hud_glyph.fit = _relative_fit_of(h.traits, _lineage, h.genome)
+		_hud_glyph.queue_redraw()
+	if float(h.progress) >= 1.0:
+		_finish_hook()
+
+
+## The autopilot: for the UI-recorded export, the fishing plays itself so the
+## panel and HUD animate over a fixed take. A small state machine on random
+## timers walks the loop - Throw, let a bite build, Pull, ride the reel, then
+## hold or fold - driving the same verbs (and the same Director scene jumps on a
+## catch) a player would, but generating no audio of its own.
+func _autopilot_tick(delta: float) -> void:
+	_ap_t -= delta
+	if not _pending.is_empty():
+		# a catch is on the card: decide after a beat (mostly keep it)
+		if _ap_t <= 0.0:
+			if randf() < 0.7:
+				_accept_catch()
+			else:
+				_release_catch()
+			_ap_t = randf_range(1.5, 3.0)
+	elif not _hook.is_empty():
+		_advance_reel(delta)          # ride the fight to the freeze
+	elif _catching:
+		pass                          # the orb is deciding; wait it out
+	elif not _cast:
+		_throw()
+		_ap_t = randf_range(1.5, 3.5)
+	else:
+		# cast and searching: manufacture a bite, then set the hook once it holds
+		_anchor = clampf(_anchor + delta * (0.35 + 0.4 * randf()), 0.0, 1.15)
+		if _nibbles < NIBBLE_MAX and randf() < delta * 1.5:
+			_nibbles += 1
+		if _ap_t <= 0.0 and _anchor > 0.55:
+			_pull()
+			_ap_t = randf_range(2.5, 5.0)
 
 
 func _exit_tree() -> void:
@@ -1282,6 +1530,10 @@ func _notification(what: int) -> void:
 
 
 func _persist() -> void:
+	# a UI-recorded export plays the game to make a video, not to progress the
+	# save - it must never write over the player's real belt/reserve
+	if _autopilot:
+		return
 	_dirty = false
 	var cfg := ConfigFile.new()
 	cfg.load(CFG)
@@ -1291,6 +1543,7 @@ func _persist() -> void:
 	cfg.set_value("synth", "belt", _belt)
 	cfg.set_value("synth", "profile", _profile)
 	cfg.set_value("synth", "adreno", _working_genome)
+	cfg.set_value("synth", "reserve", _reserve)
 	cfg.save(CFG)
 
 
@@ -1310,6 +1563,7 @@ func _load_persisted() -> void:
 		if not PROFILES.has(_profile):
 			_profile = "anchor"
 		_working_genome = cfg.get_value("synth", "adreno", {})
+		_reserve = float(cfg.get_value("synth", "reserve", 0.0))
 		_sync_switchboard()
 		for e in _belt:
 			if not e.has("m"):
@@ -1343,6 +1597,10 @@ func _background_traits() -> Dictionary:
 
 func _apply() -> void:
 	_restart_pending = false
+	# autopilot performs over a FIXED take (the export's audio) - it must not
+	# synthesize a stream of its own; the throws are visual only
+	if _autopilot:
+		return
 	if not _cast:
 		# edits before the first throw only shape the draft - the water stays
 		# silent until a voice is actually cast into it
@@ -1476,6 +1734,7 @@ class Hud:
 			draw_polyline(pts, arc_col.lerp(
 				Color(1.0, lerpf(0.75, 0.4, run), 0.3, 0.5 + 0.3 * run), 0.5), 1.0)
 			_draw_party_planets(s)   # the attractors, visible while they pull
+			_draw_compass(s)         # where the catch sits, all through the fight
 			return
 		# the line: slack when quiet, pulled into a deepening belly while
 		# something is anchored - throbbing slowly, the easy-fishing signal.
@@ -1486,34 +1745,49 @@ class Hud:
 		var pull: float = clampf(editor._anchor, 0.0, 1.2)
 		var d: float = editor._candidate_difficulty() if pull > 0.05 else 0.0
 		var belly: float = pull * (s.y * 0.3) * (1.0 + 0.15 * sin(t * 2.2))
+		# in drift the WIRE ITSELF bows into an arc as we push out - the path we
+		# travel toward the thing at its far end, and overshoot along
+		var drift_arc: float = lerpf(0.0, s.y * 0.24, editor._drift_norm()) \
+			if editor._profile == "drift" else 0.0
+		var swell := belly + drift_arc
 		var pts := PackedVector2Array()
 		for i in 25:
 			var u := float(i) / 24.0
 			var x := lerpf(64.0, s.x - 12.0, u)
 			var jitter: float = sin(u * 41.0 + t * 23.0) * d * 5.0 * pull
-			pts.append(Vector2(x, y0 + sin(u * PI) * belly + jitter))
+			pts.append(Vector2(x, y0 + sin(u * PI) * swell + jitter))
 		var c := line_col if pull <= 0.05 \
 			else Color.from_hsv(lerpf(0.42, 0.0, clampf(d, 0.0, 1.0)), 0.85, 0.9,
 				0.5 + 0.4 * minf(pull, 1.0))
 		draw_polyline(pts, c, 1.5)
-		# the CAST POINT (the green dot) respects the mode: anchored it holds
-		# mid-water; drifting it recedes with the cage as the wire's scale
-		# grows (the caption says in what units); reel mode sits close in
-		var cast_u := 0.5
-		match editor._profile:
-			"drift":
-				cast_u = lerpf(0.45, 0.94, editor._drift_norm())
-			"reel":
-				cast_u = 0.35
-		var cp := Vector2(lerpf(64.0, s.x - 12.0, cast_u),
-			y0 + sin(cast_u * PI) * belly)
-		var cast_r: float = lerpf(3.2, 1.6, editor._drift_norm())   # far = small
-		draw_circle(cp, cast_r + (1.2 * sin(t * 2.2) if pull > 0.05 else 0.0),
-			Color(0.5, 0.95, 0.8, 0.75))
+		# DRIFT travels toward a beacon (and overshoots it); anchor/reel hold a
+		# green cast dot in the water
 		if editor._profile == "drift":
+			_draw_drift_field(s, y0, swell)
+			_draw_drift_travel(s, y0, swell, t)
+		else:
+			var cast_u: float = 0.35 if editor._profile == "reel" else 0.5
+			var cp := Vector2(lerpf(64.0, s.x - 12.0, cast_u), y0 + sin(cast_u * PI) * belly)
+			draw_circle(cp, 3.2 + (1.2 * sin(t * 2.2) if pull > 0.05 else 0.0),
+				Color(0.5, 0.95, 0.8, 0.75))
+		if editor._profile == "drift":
+			# the honest distance, and the warp's state: charging, or lit and
+			# burning the reserve down toward the deep field
+			var cap := editor._drift_caption()
+			var warp_txt := ""
+			var warp_col := Color(0.4, 0.85, 0.65, 0.7)
+			if editor._warping:
+				warp_txt = "  ·  ⚡ WARP  (reserve %.1f)" % editor._reserve
+				warp_col = Color(0.75, 0.85, 1.0, 0.9)
+			elif editor._drift_atmax >= SynthEditor.WARP_CHARGE:
+				warp_txt = "  ·  drive charged - need %.1f reserve" % SynthEditor.WARP_MIN \
+					if editor._reserve < SynthEditor.WARP_MIN else "  ·  drive charged"
+				warp_col = Color(0.9, 0.8, 1.0, 0.85)
+			elif editor._drift_vel >= SynthEditor.DRIFT_VMAX - 0.000001:
+				warp_txt = "  ·  charging warp %d%%" % int(editor._drift_atmax / SynthEditor.WARP_CHARGE * 100.0)
 			draw_string(get_theme_default_font(), Vector2(66.0, s.y - 8.0),
-				editor._drift_caption(), HORIZONTAL_ALIGNMENT_LEFT, -1, 11,
-				Color(0.4, 0.85, 0.65, 0.7))
+				cap + warp_txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, warp_col)
+		_draw_compass(s)
 		if pull > 0.05:
 			# nibbles felt so far - brightening ticks above the line; fill up
 			# toward NIBBLE_MAX as patience accumulates
@@ -1528,6 +1802,7 @@ class Hud:
 	## a distant party leaves an empty sky.
 	func _draw_party_planets(s: Vector2) -> void:
 		var threshold: float = editor._planet_threshold()
+		var party := editor._party_vector()
 		for i in editor._belt.size():
 			var e: Dictionary = editor._belt[i]
 			var closeness: float = editor._member_closeness(e)
@@ -1540,13 +1815,93 @@ class Hud:
 				lerpf(74.0, s.x * 0.8, u),
 				s.y * 0.5 + rng.randf_range(-0.3, 0.3) * s.y)
 			var r: float = 2.0 + 2.0 * clampf((closeness - 0.72) / 0.28, 0.0, 1.0)
-			var col := Color.WHITE
-			if i < editor._inv_glyphs.size() and is_instance_valid(editor._inv_glyphs[i]):
-				col = SeedGlyph.fit_color(editor._inv_glyphs[i].fit)
-			draw_circle(pos, r, Color(col, 0.8))
-			# the ring that makes it a planet, tilted by its own seed
-			var tilt := rng.randf_range(0.2, 0.9)
-			draw_arc(pos, r + 1.6, tilt, tilt + PI * 1.1, 12, Color(col, 0.45), 1.0)
+			# JUST DOTS here - too tiny to read a phase. Colour still carries the
+			# seed's behaviour so they can be told apart; the MOONS (the phase, the
+			# cast-relative shadow) live on the belt and the big candidate planet.
+			var col := SeedGlyph.behavior_color(editor._member_bearing(e, party))
+			draw_circle(pos, r, Color(col, 0.85))
+			draw_arc(pos, r + 1.4, 0.0, TAU, 12, Color(col, 0.4), 1.0)
+
+	## The DRIFT FIELD: a stream of motes flowing along the wire, scrolling by the
+	## odometer so the eye finally sees the drift as MOTION - crawling at raw
+	## velocity, and elongating into hyperspace streaks the instant the warp
+	## lights. Motes near the caster read bigger and brighter; the deep field
+	## thins to faint specks.
+	func _draw_drift_field(s: Vector2, y0: float, belly: float) -> void:
+		var warp: bool = editor._warping
+		# the whole field slides toward the caster as the odometer climbs; the
+		# multiplier just sets how many motes pass per unit of distance travelled
+		var scroll: float = editor._drift_dist * 42.0
+		var n := 18
+		for i in n:
+			var u: float = fposmod(float(i) / float(n) - scroll, 1.0)   # 0 caster .. 1 deep field
+			var x := lerpf(64.0, s.x - 12.0, u)
+			var yy := y0 + sin(u * PI) * belly
+			var a := lerpf(0.5, 0.07, u)                # near = bright, far = faint
+			if warp:
+				var u2: float = u + 0.06
+				if u2 < 1.0:                            # don't draw a streak across the wrap seam
+					draw_line(Vector2(x, yy),
+						Vector2(lerpf(64.0, s.x - 12.0, u2), y0 + sin(u2 * PI) * belly),
+						Color(0.72, 0.86, 1.0, a), lerpf(1.8, 0.5, u))
+			else:
+				draw_circle(Vector2(x, yy), lerpf(2.2, 0.8, u), Color(0.55, 0.9, 0.8, a))
+
+	## The drift as a JOURNEY TOWARD a beacon, not a recession from the cast. A
+	## marker (the thing at the line's end) sits ahead, and OUR dot travels the arc
+	## toward it - reaching it around 0.8 of the way and slipping PAST it toward
+	## the deep field as the odometer maxes or a warp surges. The beacon swells as
+	## we close on it (things loom as you near them) and dims once overshot, so a
+	## warp reads as arriving at (and blowing past) the target, not fleeing it.
+	func _draw_drift_travel(s: Vector2, y0: float, swell: float, t: float) -> void:
+		var norm: float = editor._drift_norm()
+		var x0 := 64.0
+		var x1 := s.x - 12.0
+		var yat := func(u: float) -> float: return y0 + sin(clampf(u, 0.0, 1.0) * PI) * swell
+		var xat := func(u: float) -> float: return lerpf(x0, x1, clampf(u, 0.0, 1.0))
+		var u_beacon := 0.8
+		var pos_u: float = lerpf(0.14, 1.0, norm)   # us: reaches the beacon ~0.8, beyond = overshoot
+		var prox: float = clampf(1.0 - absf(pos_u - u_beacon) / 0.45, 0.0, 1.0)
+		var passed: bool = pos_u > u_beacon + 0.01
+		# the beacon: the thing at the end of the line, looming as we near it
+		var bp := Vector2(xat.call(u_beacon), yat.call(u_beacon))
+		var br: float = lerpf(2.5, 6.5, prox)
+		var bcol := Color(1.0, 0.82, 0.4, lerpf(0.45, 1.0, prox) * (0.5 if passed else 1.0))
+		draw_arc(bp, br + 2.5 + sin(t * 3.0) * 1.0, 0.0, TAU, 20, bcol, 1.5)
+		draw_circle(bp, br, bcol)
+		# us: travelling toward and past it; a streak trails behind while warping
+		var pp := Vector2(xat.call(pos_u), yat.call(pos_u))
+		if editor._warping:
+			var tu: float = maxf(pos_u - 0.1, 0.0)
+			draw_line(Vector2(xat.call(tu), yat.call(tu)), pp, Color(0.72, 0.86, 1.0, 0.75), 2.0)
+		draw_circle(pp, 3.4, Color(0.5, 0.95, 0.8, 0.92))
+
+	## The 3D COMPASS: a small isometric gizmo (top-right of the wire) showing
+	## which way - and how far - the current candidate sits from the party in the
+	## three legible trait axes (see SynthEditor._bearing3). A bearing line with a
+	## dot at its tip, plus a dropped shadow that reads the Y (damage) axis as
+	## altitude, so up/down is felt as well as seen.
+	func _draw_compass(s: Vector2) -> void:
+		var b: Vector3 = editor._bearing3()
+		var o := Vector2(s.x - 40.0, 22.0)
+		var r := 15.0
+		# isometric basis: X to the lower-right, Y straight up, Z to the lower-left
+		var ex := Vector2(0.92, 0.40) * r
+		var ey := Vector2(0.0, -1.0) * r
+		var ez := Vector2(-0.92, 0.40) * r
+		# the axis cross, faint - each axis a different tint so X/Y/Z read apart
+		draw_line(o, o + ex, Color(1.0, 0.5, 0.5, 0.35), 1.0)
+		draw_line(o, o + ey, Color(0.5, 1.0, 0.6, 0.35), 1.0)
+		draw_line(o, o + ez, Color(0.6, 0.7, 1.0, 0.35), 1.0)
+		draw_circle(o, 1.5, Color(1, 1, 1, 0.4))
+		var tip := o + ex * b.x + ey * b.y + ez * b.z
+		# the ground point: the same bearing with its altitude (Y) flattened, so
+		# the vertical drop between them shows how high/low the voice sits
+		var ground := o + ex * b.x + ez * b.z
+		draw_line(ground, tip, Color(0.9, 0.95, 1.0, 0.25), 1.0)
+		draw_line(o, tip, Color(0.95, 0.98, 1.0, 0.85), 1.5)
+		draw_circle(ground, 1.3, Color(0.7, 0.8, 1.0, 0.4))
+		draw_circle(tip, 2.6, Color(1.0, 0.95, 0.8, 0.95))
 
 
 ## A seed drawn as a constellation: the LINES are seeded random (the seed's
@@ -1559,15 +1914,74 @@ class SeedGlyph:
 	extends Control
 	var seed_hash := 0
 	var fit := 0.6                   # 0 poor .. 1 kin, RELATIVE within the bag
+	# When set (alpha > 0), the glyph's COLOUR is this behaviour tint instead of
+	# the fit wheel - so a big belt is told apart by what each seed sounds like,
+	# not only how well it fits. The frazzle still reads fit (scatter = poor fit),
+	# so both signals survive: colour = behaviour, tightness = belonging.
+	var tint := Color(1, 1, 1, 0.0)
+	# When is_planet, the glyph's body is drawn as a MOON PHASE (see draw_planet)
+	# instead of just a ring - a second visible axis for telling seeds apart. The
+	# fingerprint dots draw on top and may fall into the cut, which is fine.
+	var is_planet := false
+	var planet_dir := 0.0            # the fixed direction the dark side points
+	var planet_phase := 0.0          # -1 thin crescent .. +1 near-full
 
 	static func fit_color(f: float) -> Color:
 		return Color.from_hsv(lerpf(0.0, 0.42, clampf(f, 0.0, 1.0)), 0.9, 1.0)
+
+	## A seed's behaviour as a full-spectrum colour, from its 3D bearing (see
+	## SynthEditor._bearing_of): HUE is the direction in the brightness/damage
+	## plane (the whole wheel, so distinct voices land on distinct hues), SAT is
+	## how far it sits from the party (kin wash out, foreigners burn), and VALUE
+	## rides the drive axis. Every trait axis therefore reaches the eye.
+	static func behavior_color(b: Vector3) -> Color:
+		var hue: float = fposmod(atan2(b.y, b.x) / TAU + 0.5, 1.0)
+		var mag: float = clampf(Vector2(b.x, b.y).length(), 0.0, 1.0)
+		var sat: float = clampf(0.4 + 0.6 * mag, 0.0, 1.0)
+		var val: float = clampf(0.72 + 0.28 * b.z, 0.4, 1.0)
+		return Color.from_hsv(hue, sat, val)
+
+	## Draw a seed AS A MOON: the lit body is built as an actual phase polygon -
+	## a bulging lit limb on the sunlit side and a terminator that curves by the
+	## phase - so the SHAPE itself is the anchor (a subtractive black mask over a
+	## near-black HUD showed nothing). shadow_dir is a fixed global angle for this
+	## seed (the dark side points there, consistently for every seed); phase
+	## (-1..1) is the SIGN FLIP - near +1 the lit face is toward us (near-full),
+	## near -1 the dark face is (a thin crescent). Only the lit part is drawn; the
+	## rest of the body simply is not there.
+	static func draw_planet(ci: CanvasItem, center: Vector2, r: float,
+			color: Color, shadow_dir: float, phase: float) -> void:
+		var k: float = clampf(phase, -0.85, 0.98)   # illumination bulge: +full .. -sliver
+		var lit: float = shadow_dir + PI            # the sunlit direction (opposite the shadow)
+		var cs := cos(lit)
+		var sn := sin(lit)
+		var pts := PackedVector2Array()
+		var steps := 18
+		# the lit limb: the outer semicircle facing the sun
+		for i in steps + 1:
+			var a := lerpf(-PI * 0.5, PI * 0.5, float(i) / float(steps))
+			var lx := r * cos(a)
+			var ly := r * sin(a)
+			pts.append(center + Vector2(lx * cs - ly * sn, lx * sn + ly * cs))
+		# the terminator: an ellipse arc back across, its bulge (and side) set by k
+		for i in steps + 1:
+			var y := lerpf(r, -r, float(i) / float(steps))
+			var lx := -k * sqrt(maxf(r * r - y * y, 0.0))
+			pts.append(center + Vector2(lx * cs - y * sn, lx * sn + y * cs))
+		ci.draw_colored_polygon(pts, color)
+		# a brighter lit-limb arc to catch the eye
+		ci.draw_arc(center, r, lit - PI * 0.5, lit + PI * 0.5, 20,
+			Color(color.lightened(0.4), 0.85), 1.0)
 
 	func _draw() -> void:
 		var rng := RandomNumberGenerator.new()
 		rng.seed = seed_hash
 		var s := size
-		var col := fit_color(fit)
+		var col := tint if tint.a > 0.0 else fit_color(fit)
+		# the body: a moon-phase disc when this glyph carries a bearing, else the
+		# plain fit ring. Drawn FIRST so the fingerprint sits on top of it.
+		if is_planet:
+			draw_planet(self, s * 0.5, minf(s.x, s.y) * 0.5 - 1.5, col, planet_dir, planet_phase)
 		var frazzle: float = (1.0 - clampf(fit, 0.0, 1.0)) * minf(s.x, s.y) * 0.14
 		var n := 5 + rng.randi() % 4
 		var pts: Array = []
@@ -1578,10 +1992,15 @@ class SeedGlyph:
 			# a poor fit scatters its stars off their seats
 			p += Vector2(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0)) * frazzle
 			pts.append(p)
+		# over a coloured moon the fingerprint needs contrast; on its own it keeps
+		# the fit colour it always had
+		var star := Color(col.lightened(0.55), 0.9) if is_planet else Color(col, 1.0)
+		var link := Color(col.lightened(0.4), 0.5) if is_planet else Color(col, 0.55)
 		for i in range(1, n):
 			var j := rng.randi_range(0, i - 1)
-			draw_line(pts[i], pts[j], Color(col, 0.55), 1.0)
+			draw_line(pts[i], pts[j], link, 1.0)
 		for p in pts:
-			draw_circle(p, 2.0, col)
-		# the ring: the fit colour, unmissable even at 24 px
-		draw_arc(s * 0.5, minf(s.x, s.y) * 0.5 - 1.5, 0.0, TAU, 32, Color(col, 0.9), 2.0)
+			draw_circle(p, 2.0, star)
+		if not is_planet:
+			# the ring: the fit colour, unmissable even at 24 px
+			draw_arc(s * 0.5, minf(s.x, s.y) * 0.5 - 1.5, 0.0, TAU, 32, Color(col, 0.9), 2.0)

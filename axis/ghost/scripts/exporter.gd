@@ -424,6 +424,12 @@ func _start_render() -> void:
 	if Director.is_manual():
 		args.append("--storyboard")
 		args.append(Director.storyboard_source())   # the loadable name/path, NOT the display name
+	# "Automate the Synthesis game (record the UI)" was checked: tell the render
+	# to open the Synthesis panel over the take and let it play itself (Throw /
+	# Pull / reel / hold-or-fold on timers). Without this flag the render runs
+	# clean, exactly as a plain song does.
+	if _synth_autoplay:
+		args.append("--synth-autopilot")
 	_render_pid = OS.create_process(exe, args)
 	if _render_pid > 0:
 		_state = "rendering"

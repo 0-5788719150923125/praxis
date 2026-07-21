@@ -87,7 +87,7 @@ Standalone subsystems, documented outside the registry map.
 
 - [CLI arguments](docs/cli.md) - every `./launch` flag, grouped as in `--help`.
 - [Web stack](docs/web.md) - dashboard, JSON API routes, and inference endpoints.
-- [Axis mobile app](axis/axis/README.md) - archived Godot companion app for controlling Praxis.
+- [Vortex mobile app](axis/vortex/README.md) - archived Godot companion app for controlling Praxis.
 - [nuTube](axis/nutube/README.md) - local-first YouTube explorer with an on-device recommender (Godot, in development).
 
 <!-- AUTODOC:SUBSYSTEMS:END -->
@@ -211,7 +211,7 @@ The Customs tab inspects the instantiated model. Its Architecture card renders t
 
 ## side projects
 
-The [`axis/`](./axis/README.md) directory holds standalone side projects that live in this repo but have little or no integration with Praxis. It currently contains [Axis](./axis/axis/README.md), an older Godot app for controlling Praxis, and [nuTube](./axis/nutube/README.md), an experiment in a local-first YouTube recommender that runs entirely on the device.
+The [`axis/`](./axis/README.md) directory holds standalone side projects that live in this repo but have little or no integration with Praxis. It currently contains [Vortex](./axis/vortex/README.md), an older Godot app for controlling Praxis, and [nuTube](./axis/nutube/README.md), an experiment in a local-first YouTube recommender that runs entirely on the device.
 
 </details>
 

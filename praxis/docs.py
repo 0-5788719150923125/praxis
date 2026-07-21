@@ -290,8 +290,8 @@ SUBSYSTEMS: List[Tuple[str, str, str]] = [
         "dashboard, JSON API routes, and inference endpoints.",
     ),
     (
-        "Axis mobile app",
-        "axis/axis/README.md",
+        "Vortex mobile app",
+        "axis/vortex/README.md",
         "archived Godot companion app for controlling Praxis.",
     ),
     (

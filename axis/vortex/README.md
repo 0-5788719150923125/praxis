@@ -1,6 +1,6 @@
-# Axis
+# Vortex
 
-Axis is a mobile companion app for controlling Praxis, built with [Godot](https://godotengine.org/) 4.3. It is an older, archived experiment: the app still runs, but the model-prompting flow almost certainly no longer talks to the current Praxis API.
+Vortex is a mobile companion app for controlling Praxis, built with [Godot](https://godotengine.org/) 4.3. It is an older, archived experiment: the app still runs, but the model-prompting flow almost certainly no longer talks to the current Praxis API.
 
 ## What it does
 

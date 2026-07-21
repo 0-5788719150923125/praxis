@@ -53,6 +53,14 @@ func _ready() -> void:
 			printerr("ghost: EXPORT ABORTED - the audio did not load (%s)" %
 				_arg_value(args, "--audio"))
 			get_tree().quit(1)
+			return
+		# "Automate the Synthesis game (record the UI)": the render otherwise runs
+		# clean, but with this flag the Synthesis panel opens over the take and
+		# plays itself (see synth_editor.gd's autopilot), so the UI is IN the
+		# video. It generates no audio - the take is the audio - and persists
+		# nothing, so a render never touches the player's real save.
+		if args.has("--synth-autopilot"):
+			_open_synth_autopilot()
 		return
 	# The live window stretches in "canvas_items" mode (set in project.godot): 2D is
 	# rasterized at the window's native pixel resolution - so fullscreen is crisp, not an
@@ -230,6 +238,17 @@ func _open_synth_editor() -> void:
 		_chrome.exporter.take_provider = editor.export_take
 		_chrome.exporter.take_ready = editor.can_export_take
 	_feedback = _chrome.attach_feedback()
+
+
+## Export autopilot: the Synthesis panel, playing itself over the take being
+## rendered. Deliberately NOT wired to begin_stream/end_stream - the editor must
+## not synthesize live audio (the export's --audio take IS the audio); it only
+## drives the panel, HUD, and Director scene jumps. The editor self-activates
+## its autopilot from the --synth-autopilot flag in its own _ready.
+func _open_synth_autopilot() -> void:
+	var editor := preload("res://scripts/synth_editor.gd").new()
+	_synth_editor = editor
+	add_child(editor)
 
 
 ## Start (or restart) the session on a live VoiceStream: audio begins the same

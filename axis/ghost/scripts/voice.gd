@@ -102,6 +102,12 @@ class Spec:
 	var f0_base := 130.0              # speaking pitch floor (Hz)
 	var f0_accent := 4.0              # accent bump strength (semitones)
 	var f0_decl := 3.0                # declination span per sentence (semitones)
+	# INFLECTION DEPTH: a single scalar on ALL melodic deviation from f0_base -
+	# accents, declination, the wander, the attractor pull, terminals, the lot.
+	# 1.0 is the natural speaker; toward 0 the whole contour collapses to a FLAT
+	# monotone (a robot/whisper register), above 1 it sings. Decoupled from
+	# f0_base, so a high, flat voice and a low, swooping one are both reachable.
+	var inflect := 1.0
 	var formant_scale := 1.0          # vocal tract length (bright .. dark)
 	var rate := 1.0                   # tempo multiplier (>1 = faster)
 	var breath := 0.05                # aspiration mixed into voiced frames
@@ -130,8 +136,14 @@ class Spec:
 		var drawl := _tv(t, "drawl")
 		var air := _tv(t, "air")
 		s.f0_base = 130.0 * pow(2.0, 0.85 * pitch)
-		s.f0_accent = 4.0 * pow(2.0, 0.8 * lilt)
-		s.f0_decl = 3.0 * pow(2.0, 0.5 * lilt)
+		# LILT is now the master inflection depth: it no longer scales the accent
+		# and declination in isolation (which left the wander and the attractor
+		# pull - the real "sing-song" - untouched); instead it drives `inflect`,
+		# a global scale on the whole melodic contour. lilt 0 = the natural
+		# speaker (unchanged), toward -1 flattens to a monotone, toward +1 sings.
+		s.f0_accent = 4.0
+		s.f0_decl = 3.0
+		s.inflect = clampf(1.0 + lilt, 0.06, 2.0)
 		s.formant_scale = pow(2.0, 0.22 * tract)
 		s.rate = pow(2.0, 0.35 * pace)
 		s.breath = 0.05 * pow(2.5, breath)
@@ -862,7 +874,9 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 	var pulse: PackedFloat32Array = state.pulse
 	var is_diph: bool = entry.has("f2")
 	var ttype := String(entry.get("type", "sil"))
-	var f0_target: float = spec.f0_base * pow(2.0, seg.semitones / 12.0) * 1.06
+	# inflection depth scales the whole deviation from base: at 0 the melody
+	# collapses to a flat monotone at f0_base, above 1 it exaggerates
+	var f0_target: float = spec.f0_base * pow(2.0, seg.semitones * spec.inflect / 12.0) * 1.06
 	var done := 0
 	# radiation memory CONTINUES across segments - resetting it clicked at
 	# every phoneme boundary (a pop per segment; the "static")
