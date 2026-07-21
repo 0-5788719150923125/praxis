@@ -3,7 +3,7 @@
 
 How a block's feedforward path is realized: MLP, GLU, KAN, polynomial, scatter, PEER, ... Selected with ``--ffn-type``; default is ``glu``.
 
-Registry: ``praxis.DENSE_REGISTRY`` (8 entries)
+Registry: ``praxis.DENSE_REGISTRY`` (9 entries)
 
 ## `arc` - ArcGLU
 
@@ -77,3 +77,15 @@ A scatter-based neural network layer that dynamically modifies weights during th
 forward pass based on input features.
 
 Source: [praxis/dense/scatter.py:15](../praxis/dense/scatter.py#L15)
+
+## `spline` - SplineNetwork
+
+Per-feature learned-knot hat-spline basis with a linear mixing readout.
+
+Each input feature owns ``num_knots`` knots (position + width), so every feature channel
+carries its own resolution profile over the activation axis. Init is a uniform grid over
+``[-knot_span, knot_span]`` with widths equal to the knot gap (adjacent hats tile the
+interval); everything after that is learned - or, as a memory net, surprise-updated at
+test time.
+
+Source: [praxis/dense/spline.py:39](../praxis/dense/spline.py#L39)

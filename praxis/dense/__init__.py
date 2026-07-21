@@ -7,6 +7,7 @@ from praxis.dense.mlp import MultiLayerPerceptron
 from praxis.dense.peer import ParameterEfficientExpertRetrieval
 from praxis.dense.poly import PolynomialExpansionMLP
 from praxis.dense.scatter import ScatterMLP
+from praxis.dense.spline import SplineNetwork
 
 DENSE_REGISTRY = dict(
     mlp=MultiLayerPerceptron,
@@ -17,4 +18,5 @@ DENSE_REGISTRY = dict(
     kan=KolmogorovArnoldNetwork,
     peer=ParameterEfficientExpertRetrieval,
     eml_tree=EMLTree,
+    spline=SplineNetwork,
 )

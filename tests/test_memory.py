@@ -488,6 +488,72 @@ def test_band_smear_end_to_end_training_step():
     opt.step()
 
 
+def test_band_smear_quad_spline_stagger():
+    """mal_energy_quad runs four regimes with the two grid cores STAGGERED
+    (spline fires at depth%4==1, KAN at depth%4==3), so no single step pays
+    both. The spline's knots/widths are Parameters (fast weights - the
+    adaptive-resolution thesis), unlike the KAN grid's frozen buffers; when the
+    spline fires it receives gradient and reports its earned share as
+    memory_blend_d."""
+    from praxis.dense.spline import SplineNetwork
+
+    torch.manual_seed(0)
+    x = torch.randn(2, 16, 64)
+    block = TransformerBlock(_block_config("mal_energy_quad", depth=8))
+    bank = block.memory
+    assert len(bank.mems) == 4
+    assert bank._active_rule[2] == (4, 3)  # KAN
+    assert bank._active_rule[3] == (4, 1)  # spline
+
+    # The spline arm's basis placement is fast weights, not frozen buffers.
+    spline_net = bank.mems[3].memory_model
+    assert isinstance(spline_net, SplineNetwork)
+    param_names = {n for n, _ in spline_net.named_parameters()}
+    assert {"knots", "log_widths"} <= param_names
+
+    # Depth 1: spline fires, KAN sits out; active arms share a floored simplex.
+    out, _, state, _ = block(x, attention_mask=None, current_depth=1)
+    w = bank._last_weights
+    assert w[2] == 0.0 and w[3] > 0.0
+    assert abs(sum(w) - 1.0) < 1e-5
+    assert state[2] is None and isinstance(state[3], NeuralMemState)
+    out.sum().backward()
+    grads = [p.grad for p in spline_net.parameters()]
+    assert grads and all(g is not None and torch.isfinite(g).all() for g in grads)
+    assert "memory_blend_d" in bank.training_metrics()
+
+    # Depth 3 on a fresh block: the mirror phase - KAN fires, spline sits out.
+    fresh = TransformerBlock(_block_config("mal_energy_quad", depth=8))
+    _, _, s3, _ = fresh(x, attention_mask=None, current_depth=3)
+    w3 = fresh.memory._last_weights
+    assert w3[3] == 0.0 and w3[2] > 0.0
+    assert s3[3] is None and isinstance(s3[2], NeuralMemState)
+
+
+def test_spline_dense_shapes_and_knot_gradients():
+    """The spline dense variant maps dim -> dim, stays finite on extreme
+    inputs (compact support: far-out values ride the base path), and its knot
+    positions/widths receive gradient - they must be learnable for the
+    test-time re-knotting thesis to apply."""
+    from praxis.dense.spline import SplineNetwork
+
+    class Cfg:
+        hidden_size = 32
+        activation = "gelu"
+
+    torch.manual_seed(0)
+    net = SplineNetwork(Cfg(), num_knots=6)
+    x = torch.randn(2, 16, 32, requires_grad=True)
+    y = net(x)
+    assert y.shape == x.shape
+    assert torch.isfinite(y).all()
+    y.sum().backward()
+    assert net.knots.grad is not None and torch.isfinite(net.knots.grad).all()
+    assert net.log_widths.grad is not None
+
+    assert torch.isfinite(net(torch.ones(1, 1, 32) * 1000)).all()
+
+
 def test_band_smear_sparse_kan_gate():
     """mal_energy_triple gates its KAN core by recurrent step (period 4, phase 3):
     non-firing steps skip its forward (weight 0, 2-arm renorm, no grad); firing

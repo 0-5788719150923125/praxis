@@ -129,6 +129,41 @@ MEMORY_REGISTRY: Dict[str, Optional[dict]] = {
         parallel_scan=True,
         write_objective="predictive",
     ),
+    # mal_energy_triple + a FOURTH memory core: a learned-knot spline
+    # (dense_d=spline). Compact-support hat basis whose knot positions AND
+    # widths are nn.Parameters - as memory fast weights, the test-time surprise
+    # update MOVES THE KNOTS, so resolution concentrates where the sequence is
+    # complex and coarsens where it is smooth. The adaptive-resolution
+    # counterpart to arm C's deliberately-frozen geometric grid: same basis
+    # count (6), same bandit, so the blend weights measure fixed vs learned
+    # placement head-to-head. The two grid-replicating cores fire on staggered
+    # phases of the same period-4 cycle (at most one expensive core per
+    # recurrent step), keeping step cost near the triple's. Fourth module of
+    # abstractinator-d; everything else tracks mal_energy_triple.
+    "mal_energy_quad": dict(
+        surfacing="band_smear",
+        dense="mlp",
+        dense_b="eml_tree",
+        dense_c="kan",
+        dense_d="spline",
+        num_grids=6,
+        grid_spacing="geometric",
+        num_knots=6,
+        sparse=dict(
+            kan=dict(period=4, phase=3),
+            spline=dict(period=4, phase=1),
+        ),
+        layers=2,
+        expansion=0.5,
+        chunk_size=64,
+        momentum=True,
+        activation="serpent",
+        use_energy=True,
+        segment=True,
+        segment_block=16,
+        parallel_scan=True,
+        write_objective="predictive",
+    ),
     "mag": dict(
         surfacing="mag",
         dense="mlp",
@@ -178,6 +213,16 @@ MEMORY_PROFILE_DESCRIPTIONS: Dict[str, str] = {
         "opposed function-class regimes (harmonic energy, EML log-minus-exponent, "
         "multi-scale radial) compete under one floored inverse-surprise bandit, "
         "so none can be starved by the LM loss. abstractinator-c's memory."
+    ),
+    "mal_energy_quad": (
+        "mal_energy_triple plus a fourth memory core: a learned-knot spline "
+        "whose compact-support hat basis has its knot positions and widths as "
+        "fast weights - the test-time surprise update re-knots the basis "
+        "online, concentrating resolution where the sequence is complex. The "
+        "adaptive-resolution counterpart to the KAN arm's fixed geometric "
+        "grid; the floored bandit measures fixed vs learned placement head-to-"
+        "head, with the two grid cores firing on staggered sparse phases so "
+        "per-step cost stays near the triple. abstractinator-d's memory."
     ),
     "mag": (
         "Memory-as-Gate (Titans): a memory branch run parallel to attention "

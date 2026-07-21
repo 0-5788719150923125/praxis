@@ -1,0 +1,20 @@
+# The serpent_rnn mechanism paragraph of the multi-token family: sits between
+# the generic intro (mtp-draft, order 13) and the shared short-curve/figure
+# body (mtp-draft-window, order 15). Gated on the shared-cell bank alone, so
+# the paper only describes the recurrence when the run actually built it.
+section: harmonic
+order: 14
+requires:
+  mtp_type: [serpent_rnn]
+body: >
+  The depth-transform here is one shared gated harmonic cell, unrolled $K$
+  times: each step blends the previous state with a post-normalized harmonic
+  candidate through a sigmoid gate - a convex update, so nothing compounds
+  across the unroll - and a zero-initialized per-depth signature is the only
+  parameter that distinguishes the depths. They begin as literally the same
+  function and differentiate only as far as the task pulls them apart; there
+  is no router and no merge, the recurrence is the routing. The cell is also
+  pointwise, so the drafted form at inference is exactly the trained form,
+  and its collapse modes are instrumented per depth: gates pinned at zero
+  (the cell ignoring its candidate) and signatures flat at zero (one
+  function serving every offset) would both show on the dashboard.

@@ -10,11 +10,11 @@ Praxis is built around 47 pluggable registries. The feature categories below lin
 - [Block-stacking decoders](decoders.md) (4) - How the stack of blocks is composed (sequential, parallel, weighted, ...).
 - [Data sampler strategies](data.md) (6) - How datasets are interleaved during training. Praxis trains on multiple datasets at once: at every step the trainer picks a dataset, draws a document, and tokenizes it (see ``InterleaveDataManager`` in ``praxis/data/datasets/manager.py``). The sampler chosen here decides *how* that pick is biased - either statically from configured weights, or adaptively based on document length, novelty, or per-dataset loss. Set with ``--sampler``; default is ``novelty``.
 - [Decoder block layouts](blocks.md) (9) - Top-level layer types the decoder stacks. Mix attention-based and recurrent designs freely.
-- [Feedforward experts](dense.md) (8) - How a block's feedforward path is realized: MLP, GLU, KAN, polynomial, scatter, PEER, ... Selected with ``--ffn-type``; default is ``glu``.
+- [Feedforward experts](dense.md) (9) - How a block's feedforward path is realized: MLP, GLU, KAN, polynomial, scatter, PEER, ... Selected with ``--ffn-type``; default is ``glu``.
 - [Halting / early exit](halting.md) (2) - Per-token mechanisms for early exit from recurrent depth loops.
 - [Input encoders](encoders.md) (21) - Front-end encoders, including the byte-latent and abstractinator variants.
 - [Layer-routing controllers](controllers.md) (8) - Decide which expert / block a token visits at each depth. Enables out-of-order layers and graph-style routing.
-- [Long-term memory](memory.md) (7) - Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced as a layer (MAL) or a gate (MAG). Selected with ``--memory-type``; default is ``none``.
+- [Long-term memory](memory.md) (8) - Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced as a layer (MAL) or a gate (MAG). Selected with ``--memory-type``; default is ``none``.
 - [Loss functions](losses.md) (9) - Per-token criteria. Most accept optional ``loss_weights`` for task-weighted training.
 - [Mixture-of-widths](width.md) (7) - Per-depth deflation of each block's inner rank over the recurrent loop (a helically-precessing low-rank slice), turning deep recurrence into a population of narrow voters. Selected with ``--width-type``; default is ``none`` (full width).
 - [Normalization layers](normalization.md) (5) - LayerNorm/RMSNorm variants, including SandwichNorm (required for stable recurrent-depth bias).

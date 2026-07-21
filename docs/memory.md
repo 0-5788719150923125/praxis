@@ -3,7 +3,7 @@
 
 Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced as a layer (MAL) or a gate (MAG). Selected with ``--memory-type``; default is ``none``.
 
-Registry: ``praxis.MEMORY_REGISTRY`` (7 entries)
+Registry: ``praxis.MEMORY_REGISTRY`` (8 entries)
 
 ## `mag`
 
@@ -31,6 +31,16 @@ fresh memory write.
 ## `mal_energy_dual`
 
 Value: `{'surfacing': 'dual_smear', 'dense': 'mlp', 'dense_b': 'eml_tree', 'layers': 2, 'expansion': 0.5, 'chunk_size': 64, 'momentum': True, 'activation': 'serpent', 'use_energy': True, 'segment': True, 'segment_block': 16, 'parallel_scan': True, 'write_objective': 'predictive'}`
+
+## `mal_energy_quad`
+
+mal_energy_triple plus a fourth memory core: a learned-knot spline whose compact-support
+hat basis has its knot positions and widths as fast weights - the test-time surprise
+update re-knots the basis online, concentrating resolution where the sequence is
+complex. The adaptive-resolution counterpart to the KAN arm's fixed geometric grid; the
+floored bandit measures fixed vs learned placement head-to-head, with the two grid cores
+firing on staggered sparse phases so per-step cost stays near the triple.
+abstractinator-d's memory.
 
 ## `mal_energy_serpent`
 

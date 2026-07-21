@@ -1,0 +1,29 @@
+# Opens the multi-token subsection whenever ANY mtp_type is configured - the
+# intro claims here (K losses off one state, speculative drafting, the
+# lossless truncated-prefix verify) are true of every MTP variant; everything
+# mechanism-specific lives in the order-14 fragments (mtp-vear-mechanism,
+# mtp-serpent-rnn-mechanism), and the shared "short curve" reading + fox
+# figure follow at order 15 (mtp-draft-window). Follows the
+# harmonic-bottleneck addendum (order 12): the bottleneck fragment says what
+# the codes are; this family says what the head does with the stream.
+section: harmonic
+order: 13
+requires:
+  mtp_type: "*"
+body: >
+  \subsubsection*{Prediction as a short curve: the multi-token draft}
+
+  This run also trains a byte-level multi-token head~\cite{gloeckle2024mtp}:
+  beside the next byte, the next $K$ bytes are read off the same trunk
+  state, each through a light depth-transform that chains on the one before
+  it - and the transforms are deliberately near-copies of one another, since
+  adjacent depths predict adjacent positions, so the correlation the task
+  already has is baked into how the transforms share their parameters rather
+  than relearned per depth. At inference the draft is
+  speculative~\cite{leviathan2023fast}: up to $K{+}1$ bytes land per two
+  full forwards, and greedy decode is exact. Exactness is not free here -
+  byte-latent patching is non-causal within a partial patch, so an appended
+  draft byte can shift earlier predictions - and the verify pass earns it by
+  reading each truncated prefix at its own last position, where nothing
+  follows to contaminate the read; sampled decoding accepts drafts by match
+  against a fresh sample and remains approximate.

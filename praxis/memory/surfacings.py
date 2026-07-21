@@ -264,6 +264,7 @@ _REGIME_NAMES = {
     "mlp": "energy",
     "eml_tree": "EML",
     "kan": "fractal-KAN",
+    "spline": "knot-spline",
 }
 
 
@@ -330,6 +331,23 @@ class MemoryBandSmear(MemoryBase):
                 "order": 15,
             },
         },
+        "memory_blend_d": {
+            "description": (
+                "Reward-driven weight on the fourth core (D, e.g. the learned-"
+                "knot spline's adaptive-resolution regime) - same floored "
+                "surprise bandit as cores B/C. Read against memory_blend_c: "
+                "D earning share the fixed geometric grid loses is the direct "
+                "fixed-vs-learned-placement verdict."
+            ),
+            "chart": {
+                "title": "Memory Blend (core D earned share)",
+                "y_label": "weight on core D",
+                "y_scale": "linear",
+                "group": "memory",
+                "group_order": 20,
+                "order": 16,
+            },
+        },
         "memory_regime_river": {
             "description": (
                 "The memory regimes as a species-over-time river (after NEAT, "
@@ -358,24 +376,29 @@ class MemoryBandSmear(MemoryBase):
             denses = (denses + ["eml_tree"])[:2]  # never fewer than two arms
         self._denses = denses
 
-        # Sparse KAN: the geometric-grid KAN core is by far the most expensive to
-        # run (spline matrix replicated per chunk as a fast weight, then a
-        # test-time double-backward), and it runs at EVERY recurrent step. A
-        # ``kan_sparse={period, phase}`` spec fires it only when
-        # ``current_depth % period == phase`` - e.g. period=4, phase=3 runs it at
-        # the 4th recurrent step and every 4th after (5 of 21 depths here), so
-        # the other steps blend just the two cheap cores. It's a sparse
-        # specialist: a few well-placed modules, not one per step. (With the vear
-        # router the experts are parameter-merged, so structure must be identical
-        # across them - the gate is a runtime skip, not a per-layer structural
-        # change; recurrent step is the only stable, deterministic axis here.)
-        rule = spec.get("kan_sparse")
+        # Sparse arms: grid-basis cores (KAN, spline) are by far the most
+        # expensive to run (basis matrix replicated per chunk as a fast weight,
+        # then a test-time double-backward), and by default every arm runs at
+        # EVERY recurrent step. A ``sparse={dense_name: {period, phase}}`` spec
+        # fires such an arm only when ``current_depth % period == phase`` - e.g.
+        # period=4, phase=3 runs it at the 4th recurrent step and every 4th
+        # after (5 of 21 depths); staggered phases keep at most one expensive
+        # core per step. On skipped steps the blend renormalizes over the active
+        # arms. It's a sparse specialist: a few well-placed modules, not one per
+        # step. (With the vear router the experts are parameter-merged, so
+        # structure must be identical across them - the gate is a runtime skip,
+        # not a per-layer structural change; recurrent step is the only stable,
+        # deterministic axis here.) ``kan_sparse`` is the back-compat spelling
+        # of ``sparse={"kan": ...}``.
+        rules = dict(spec.get("sparse") or {})
+        if spec.get("kan_sparse"):
+            rules.setdefault("kan", spec["kan_sparse"])
         self._active_rule = []
         for d in denses:
-            if d == "kan" and rule:
-                self._active_rule.append((int(rule["period"]), int(rule["phase"])))
-            else:
-                self._active_rule.append(None)  # always on
+            rule = rules.get(d)
+            self._active_rule.append(
+                (int(rule["period"]), int(rule["phase"])) if rule else None
+            )
 
         def _core(dense_name):
             s = {**spec, "dense": dense_name}

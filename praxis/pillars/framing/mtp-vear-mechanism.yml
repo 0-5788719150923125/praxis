@@ -1,0 +1,16 @@
+# The vear mechanism paragraph of the multi-token family: sits between the
+# generic intro (mtp-draft, order 13) and the shared short-curve/figure body
+# (mtp-draft-window, order 15). Gated on the vear bank alone, so the paper
+# only describes the sliding-window merge when the run actually built it.
+section: harmonic
+order: 14
+requires:
+  mtp_type: [vear]
+body: >
+  The depth-transform here is harmonic and drawn from a shared pool by a
+  fixed sliding window: depth $k$ is the uniform parameter merge of experts
+  $[k, k{+}1, k{+}2]$, cyclically, so adjacent depths share two of three
+  experts, and a repulsion penalty on the pool keeps its geometries
+  distinct. There is no router; the window is the routing. The distinct
+  geometries the repulsion preserves are the room each depth has to choose
+  its scale.

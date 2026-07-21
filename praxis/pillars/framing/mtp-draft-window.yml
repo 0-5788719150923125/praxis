@@ -1,42 +1,24 @@
-# Gated on the vear MTP bank alone - the prose is K-generic (abstractinator-b
-# ran K=4, -c runs K=16) and the figure is an explicit K=4 schematic. Follows
-# the harmonic-bottleneck addendum (order 12): the bottleneck fragment says
-# what the codes are; this one says what the head does with the stream. The
-# reading (user-corrected several times, keep it): depth k predicts t+k for
-# EVERY t (training), and at inference the stack advances K per step - each
-# row of the figure is a successive MTP STEP re-deriving the full sequence,
+# The shared body of the multi-token section: the "short curve" reading and
+# the fox figure. Gated on ANY mtp_type (the intro fragment mtp-draft.yml
+# opens the subsection; a per-mechanism paragraph at order 14 sits between).
+# The figure reading (user-corrected several times, keep it): depth k
+# predicts t+k for EVERY t (training), and at inference the stack advances K
+# per step - each row is a successive MTP STEP re-deriving the full sequence,
 # slid K left, never a fragment. Spaces stay as byte-wide white teeth (pure
 # entropy, the patch boundaries); density is per-patch (heavy at the patch
 # head, decaying through the tail) and deepens per step; a fixed K-wide
 # window shows the stream sliding through, K per step; wiggly strands tie
 # every EARLIER view to the first token of the final one (phase-locking - the
-# final row is what they resolve into, so it draws no strand). Claims
-# stay inside what the run measures (per-depth draft acceptance, repulsion),
-# with the falsifier named - the paper's standard.
+# final row is what they resolve into, so it draws no strand). Claims stay
+# inside what the run measures (per-depth draft acceptance, plus each
+# mechanism's own depth-distinctness readout), with the falsifier named -
+# the paper's standard. The prose is K-generic; the figure is an explicit
+# K=4 schematic.
 section: harmonic
-order: 13
+order: 15
 requires:
-  mtp_type: [vear]
+  mtp_type: "*"
 body: >
-  \subsubsection*{Prediction as a short curve: the sliding-window draft}
-
-  This run also trains a byte-level multi-token head~\cite{gloeckle2024mtp}:
-  beside the next byte, the next $K$ bytes are read off the same trunk state,
-  each through a light harmonic depth-transform drawn from a shared pool by a
-  fixed sliding window - depth $k$ is the uniform parameter merge of experts
-  $[k, k{+}1, k{+}2]$, cyclically, so adjacent depths share two of three
-  experts, and a repulsion penalty on the pool keeps its geometries distinct.
-  There is no router; the window is the routing, and the layout bakes in the
-  correlation the task already has, since adjacent depths predict adjacent
-  positions. At inference the draft is speculative~\cite{leviathan2023fast}:
-  up to $K{+}1$ bytes land per two full forwards, and greedy decode is
-  exact. Exactness is not free here - byte-latent patching is non-causal
-  within a partial patch, so an appended draft byte can shift earlier
-  predictions - and the verify pass earns it by reading each truncated
-  prefix at its own last position, where nothing follows to contaminate the
-  read; sampled decoding accepts drafts by match against a fresh sample and
-  remains approximate.
-
   The reason this belongs in the present section is what it does to the unit
   of prediction. The received picture of Figure~\ref{fig:density}'s top panel
   lands one position-local loss everywhere - the uniform-density assumption
@@ -48,7 +30,7 @@ body: >
   predicts position $t{+}k$ for every $t$ at once, so each depth's output is
   the full sequence again, shifted by $k$: the $K$ slots are $K$ near-copies
   of the sequence, sharing representation by construction - all of them read
-  the same trunk, adjacent depths share two of three experts - and
+  the same trunk, and adjacent depths share most of their transform - and
   distinguished chiefly by their shift. At inference tempo the stack moves
   $K$ at a time: each step commits a $K$-wide column and re-derives the
   whole view from its new head, and a single byte still traces a diagonal
@@ -57,8 +39,8 @@ body: >
   this is multi-scale timeseries modeling - full-sequence views at $K$-byte
   strides, heavily shared, each depth free to settle anywhere between the
   window's granularity and the sequence's span, in exactly the sense the
-  unbounded-latent program is continuous~\cite{calm2025} - and the distinct
-  geometries the repulsion preserves are the room each depth has to choose
+  unbounded-latent program is continuous~\cite{calm2025} - and the per-depth
+  distinctness the head preserves is the room each depth has to choose
   its scale. And every view stays tied to the head - the first token, the
   hum the whole corpus shares - so the depths are phase-locked: every
   feature contributes to every representation.
@@ -79,7 +61,8 @@ body: >
   profile, the expected accepted-run length that sets the achievable
   speedup, is the within-window analogue of the density curve, logged per
   head. The failure mode is equally concrete: a flat acceptance profile
-  alongside a collapsed repulsion term (the pool settled into one geometry)
+  alongside a collapsed depth-distinctness readout
+  (the transforms settled into one function; each mechanism logs its own)
   would mean the depths bought nothing that independent heads lacked, and
   both series are on the dashboard, so the claim arrives with its
   refutation instrumented.
