@@ -17,6 +17,13 @@ class TaskType(IntEnum):
     REASONING = 4
     RL = 5
     JOKE = 6
+    # Preference-pair material (e.g. Anthropic/hh-rlhf): the two sides of a
+    # chosen/rejected pair. CHOSEN trains as conversation data AND anchors the
+    # preference margin; REJECTED is contrast-only - it is structurally
+    # excluded from the main CE (see _build_loss_weights) and only ever
+    # trained through the preference policy's margin loss.
+    PREF_CHOSEN = 7
+    PREF_REJECTED = 8
 
 
 DEFAULT_TASK = TaskType.PRETRAIN

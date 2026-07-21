@@ -416,9 +416,7 @@ class MultiTokenPrediction(nn.Module):
                     # Stays on-device: an .item() here is a forced GPU sync per
                     # depth per step; training_metrics() syncs the whole list
                     # once at metric cadence instead.
-                    draft_accs.append(
-                        (preds.argmax(-1) == targets).float().mean()
-                    )
+                    draft_accs.append((preds.argmax(-1) == targets).float().mean())
 
             # Chain: this depth's output becomes input for next depth
             h_prev = h_k

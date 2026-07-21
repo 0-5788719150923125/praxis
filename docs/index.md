@@ -24,8 +24,8 @@ Praxis is built around 48 pluggable registries. The feature categories below lin
 - [Output heads](heads.md) (12) - LM heads (tied/untied, harmonic, crystal) and multi-token-prediction wrappers.
 - [Positional encoding](encoding.md) (5) - RoPE, ALiBi, NoPE and friends - the rotational / additive position priors injected into attention.
 - [Recurrent cells](recurrent.md) (2) - Minimal gated recurrent cells (GRU, MinGRU). Used by the recurrent block types and as a sequence mixer inside the byte-latent encoder.
-- [Residual connections](residuals.md) (3) - Standard residuals vs. hyper-connections.
-- [RL policies](policies.md) (6) - Reinforcement-learning policy losses (REINFORCE, GRPO, ...) for post-training.
+- [Residual connections](residuals.md) (4) - Standard residuals vs. hyper-connections.
+- [RL policies](policies.md) (7) - Reinforcement-learning policy losses (REINFORCE, GRPO, ...) for post-training.
 - [Sequence compression](compression.md) (3) - Strategies for reducing sequence length between layers.
 - [Sequence sorting](sorting.md) (5) - Optional reordering operations applied to the sequence.
 - [Token embeddings](embeddings.md) (14) - Input embedding layers, paired with the corresponding block type.

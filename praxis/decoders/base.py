@@ -287,6 +287,22 @@ class BaseDecoder(nn.Module):
         # Mono-forward goodness scores (per cut + mean), same transport.
         extras.update(self.mono.metrics())
 
+        # Residual-mix shares (SmearResidual): per-depth softmax over styles,
+        # averaged across instances (attn/ffn seams, all blocks). Dedupe by id
+        # - the smear/vear branch shares one block across positions.
+        from praxis.residuals import SmearResidual
+
+        mix_sums: Dict[str, float] = {}
+        mix_counts: Dict[str, int] = {}
+        seen_mixers: set = set()
+        for module in self.modules():
+            if isinstance(module, SmearResidual) and id(module) not in seen_mixers:
+                seen_mixers.add(id(module))
+                for key, value in module.style_shares().items():
+                    mix_sums[key] = mix_sums.get(key, 0.0) + value
+                    mix_counts[key] = mix_counts.get(key, 0) + 1
+        extras.update({k: mix_sums[k] / mix_counts[k] for k in mix_sums})
+
         # The remote count includes the live expert pool (orchestration), so the
         # dashboards' remote_layers reflects the swarm growing as peers join.
         remote_count = len(self.remotes)

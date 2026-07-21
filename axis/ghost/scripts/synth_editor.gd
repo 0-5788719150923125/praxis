@@ -28,7 +28,7 @@ class_name SynthEditor
 
 const CFG := "user://ghost.cfg"
 const AUTOSAVE_DELAY_MS := 800
-const BELT_MAX := 7                 # a small cache; old captures fall off the end
+const BELT_MAX := 23                # the Collection ceiling; oldest falls off past this
 
 # Easy fishing: bites are LATENT - a strike latches an anchor that pulls for a
 # long while (slow decay), occasionally letting go on its own. No reflexes.
@@ -130,7 +130,7 @@ const DRIFT_VMAX := 1.0 / 180.0     # raw maximum odometer/sec - deliberately sl
 const DRIFT_ACCEL := (1.0 / 180.0 - 1.0 / 600.0) / 22.0   # ramp crawl -> raw max over ~22s of unbroken drift
 const WARP_CHARGE := 10.0           # seconds held at raw max before the drive charges
 const WARP_VEL := 1.0 / 16.0        # warp odometer/sec - the streaks that "move faster than velocity allows"
-const REEL_HOME_VEL := 1.0 / 120.0  # base retrieval odometer/sec in reel mode (scaled by _reel_power)
+const REEL_DECAY := 0.45            # reel retrieval = EXPONENTIAL decay of the odometer (scaled by _reel_power) - unwinds from ANY distance in log-time, since the odometer is now unbounded
 # A catch hooked at the far reaches is on a longer line, so the fight is longer:
 # the reel duration stretches with how far the cage had drifted at the moment the
 # hook set (0 = home, 1 = the deep field). Bounded - the deep field costs more to
@@ -158,6 +158,7 @@ var _lineage: Array = [1]           # the reading's seed chain (root + refinemen
 var _belt: Array = []               # kept seeds: [{lineage, traits, m}]
 var _reading_label: Label
 var _belt_rows: VBoxContainer
+var _coll_title: Label              # "Collection  N/23" - the count lives here
 var _inv_labels: Array = []         # metrics Label per inventory row
 var _inv_glyphs: Array = []         # SeedGlyph per inventory row
 var _inv_slots: Array = []          # the name Button per row - the SLOT you click to cast
@@ -382,15 +383,21 @@ func _build_panel() -> void:
 	card_btns.add_child(_release_btn)
 
 	# --- The Collection: your seeds, ALWAYS last. Click a seed to cast from it
-	# (slot it in), click it again to release. ---
-	var coll_title := Label.new()
-	coll_title.text = "Collection"
-	coll_title.add_theme_font_size_override("font_size", 13)
-	coll_title.add_theme_color_override("font_color", Color(0.55, 0.95, 0.75, 0.85))
-	box.add_child(coll_title)
+	# (slot it in), click it again to release. Count shown by the title; the list
+	# scrolls once it outgrows its box, so nothing is hidden. ---
+	_coll_title = Label.new()
+	_coll_title.text = "Collection"
+	_coll_title.add_theme_font_size_override("font_size", 13)
+	_coll_title.add_theme_color_override("font_color", Color(0.55, 0.95, 0.75, 0.85))
+	box.add_child(_coll_title)
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(0, 300)      # ~10 rows tall, then scroll
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	box.add_child(scroll)
 	_belt_rows = VBoxContainer.new()
+	_belt_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_belt_rows.add_theme_constant_override("separation", 4)
-	box.add_child(_belt_rows)
+	scroll.add_child(_belt_rows)
 
 
 ## The exporter's take provider: render the CURRENT text through the voice
@@ -432,9 +439,15 @@ func export_take() -> String:
 	# be synthesizing the SAME lineage and would race this write on completion
 	var base := "user://synth/take_%06x_export" % (hash(str(_lineage)) & 0xFFFFFF)
 	DirAccess.make_dir_recursive_absolute("user://synth")
+	# capture the CURRENT anchor's reception (read editor state on the main thread):
+	# the export bakes the same location colour we're hearing here, so a take caught
+	# in a rich region of the drift curve exports sounding like that region
+	var loc_prox := _beacon_prox()
+	var loc_freq := _location_freq()
 	var done := {}
 	var task := WorkerThreadPool.add_task(func():
 		var result := Voice.render(text, spec)
+		result.pcm = VoiceStream.bake_location(result.pcm, loc_prox, loc_freq)
 		var wav := Voice.write_wav(base + ".wav", result.pcm)
 		var side := FileAccess.open(base + ".json", FileAccess.WRITE)
 		side.store_string(JSON.stringify({"words": result.words}))
@@ -772,8 +785,18 @@ func _catch_reward(difficulty: float) -> float:
 ## The odometer holds across mode changes and throws; only a RELEASE (still
 ## water) returns it home. Drift travels out, anchor freezes here, reel retrieves
 ## toward home - so the distance you earned is never lost by switching modes.
+## Clamped [0,1] - for the VISUAL layout (the line has finite length) and the
+## bounded gameplay quantities (reward, the reception band). The DISTANCE itself
+## is uncapped: read it from _drift_reach.
 func _drift_norm() -> float:
 	return clampf(_drift_dist, 0.0, 1.0)
+
+
+## The raw, UNBOUNDED odometer - how far the warp has actually carried the line.
+## Only the distance caption reads this; everything visual/gameplay uses the
+## clamped _drift_norm.
+func _drift_reach() -> float:
+	return maxf(_drift_dist, 0.0)
 
 
 ## Reset the line all the way home - ONLY on release (still water). Mode changes
@@ -814,7 +837,11 @@ func _advance_drift(delta: float) -> void:
 			if _warping:
 				vel = WARP_VEL
 				_reserve = maxf(_reserve - WARP_BURN * delta, 0.0)
-			_drift_dist = clampf(_drift_dist + vel * delta, 0.0, 1.0)
+			# NO upper cap: the odometer runs as far as it's driven. Distance is
+			# EXPONENTIAL in the odometer (see _drift_caption), so a constant warp
+			# reaches any distance in log-time - there is no 0.33ly ceiling, the
+			# whole point of the warp.
+			_drift_dist = maxf(_drift_dist + vel * delta, 0.0)
 		"anchor":
 			# stop dead - hold this spot, drop any charge
 			_drift_vel = 0.0
@@ -824,12 +851,18 @@ func _advance_drift(delta: float) -> void:
 			_drift_vel = 0.0
 			_drift_atmax = 0.0
 			_warping = false
-			_drift_dist = maxf(_drift_dist - REEL_HOME_VEL * _reel_power() * delta, 0.0)
+			# exponential retrieval, so even a deep-warp distance unwinds in a
+			# sensible ~log-time; snap the last sliver to home
+			_drift_dist *= exp(-REEL_DECAY * _reel_power() * delta)
+			if _drift_dist < 0.002:
+				_drift_dist = 0.0
 
 
-## The drifted line's length, in honest units - the wire's timescale changing.
+## The line's length, in honest units - UNCAPPED: it keeps climbing past a
+## lightyear (kly, Mly, Gly, then scientific) for as long as the warp drives the
+## odometer. The exponent is clamped only to keep the float finite.
 func _drift_caption() -> String:
-	var meters := pow(10.0, 1.0 + 14.5 * _drift_norm())
+	var meters := pow(10.0, minf(1.0 + 14.5 * _drift_reach(), 300.0))
 	if meters < 1000.0:
 		return "≈ %d m" % int(meters)
 	if meters < 1.0e7:
@@ -838,7 +871,18 @@ func _drift_caption() -> String:
 		return "≈ %.0f mi" % (meters / 1609.34)
 	if meters < 1.0e14:
 		return "≈ %.2f au" % (meters / 1.496e11)
-	return "≈ %.2f ly" % (meters / 9.461e15)
+	var ly := meters / 9.461e15
+	if ly < 1.0e3:
+		return "≈ %.2f ly" % ly
+	if ly < 1.0e6:
+		return "≈ %.1f kly" % (ly / 1.0e3)
+	if ly < 1.0e9:
+		return "≈ %.1f Mly" % (ly / 1.0e6)
+	if ly < 1.0e12:
+		return "≈ %.2f Gly" % (ly / 1.0e9)
+	# GDScript's % has no scientific specifier - build "M.Me+E" by hand
+	var e10 := int(floor(log(ly) / log(10.0)))
+	return "≈ %.1fe%d ly" % [ly / pow(10.0, float(e10)), e10]
 
 
 ## How near the line sits to the BEACON (the source at the line's end), 0..1 -
@@ -885,10 +929,10 @@ func _pull() -> void:
 	if not _cast:
 		_status.text = "nothing is out there - throw first"
 		return
-	for e in _belt:
-		if e.lineage == _lineage:
-			_status.text = "already on the belt"
-			return
+	# NO "already on the belt" refusal: a pull ALWAYS throws the pokeball. When the
+	# fished voice is one we already own (a landed catch we kept fishing), the catch
+	# becomes a fresh DESCENDANT at accept time (see _accept_catch) - so a rich spot
+	# on the drift curve can be worked again and again for new variations.
 	var d := _candidate_difficulty()
 	var nibble_bonus: float = NIBBLE_BONUS * float(_nibbles)
 	var p := clampf(0.1 + 0.6 * minf(_anchor, 1.0) - 0.2 * d + nibble_bonus, 0.03, 0.9)
@@ -1129,6 +1173,13 @@ func _accept_catch() -> void:
 	if _pending.is_empty():
 		return
 	var reward: float = _pending.reward
+	# a catch is ALWAYS a new seed: if we were fishing a voice we already own, fork
+	# a fresh descendant lineage so we keep the caught VARIATION, never a duplicate
+	for e in _belt:
+		if e.lineage == _lineage:
+			_lineage = _lineage.duplicate()
+			_lineage.append(randi() % 1000000)
+			break
 	for e in _belt:
 		if _is_prefix(e.lineage, _lineage):
 			e.m.catches += 1
@@ -1426,6 +1477,8 @@ func _rebuild_belt() -> void:
 		_belt_rows.add_child(row)
 	_refresh_inventory()
 	_update_slot_highlights()        # fresh buttons: re-mark whichever is slotted
+	if _coll_title != null and is_instance_valid(_coll_title):
+		_coll_title.text = "Collection  %d/%d" % [_belt.size(), BELT_MAX]
 
 
 ## The bag keeps reflecting fit: each member's colour is its RELATIVE standing
@@ -1869,9 +1922,12 @@ class Hud:
 				Color(0.75, 0.25, 0.95, 0.95), toll)
 			draw_arc(glyph_c, 30.0, -PI / 2.0, -PI / 2.0 + TAU * progress, 48,
 				arc_col, 2.5 + 1.5 * toll)
-			draw_string(get_theme_default_font(), Vector2(s.x - 52.0, s.y - 10.0),
-				"%d%%" % int(progress * 100.0), HORIZONTAL_ALIGNMENT_LEFT,
-				-1, 12, Color(1.0, 0.75, 0.3, 0.9))
+			# WHERE we're catching it, not a percentage - a percent is meaningless
+			# when the distance is a lightyear. The winding arc already carries the
+			# fight's progress visually.
+			draw_string(get_theme_default_font(), Vector2(66.0, s.y - 8.0),
+				editor._drift_caption(), HORIZONTAL_ALIGNMENT_LEFT, -1, 11,
+				Color(0.4, 0.85, 0.65, 0.75))
 			# tension: taut thrum while reeling; a RUN whips the line hard
 			# and shifts it toward red - the push and pull, visible
 			var pts := PackedVector2Array()
@@ -1987,7 +2043,7 @@ class Hud:
 		var warp: bool = editor._warping
 		# the whole field slides toward the caster as the odometer climbs; the
 		# multiplier just sets how many motes pass per unit of distance travelled
-		var scroll: float = editor._drift_dist * 42.0
+		var scroll: float = fposmod(editor._drift_dist * 42.0, 4096.0)   # wrap keeps fractional precision at deep-warp distances
 		var n := 18
 		for i in n:
 			var u: float = fposmod(float(i) / float(n) - scroll, 1.0)   # 0 caster .. 1 deep field

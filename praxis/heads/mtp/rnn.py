@@ -66,9 +66,7 @@ class SerpentRNNMTPBank(nn.Module):
         # Rolling per-depth gate means (buffer, not python state: indexed
         # in-place writes stay inside a compiled graph; a python-side .item()
         # here would force a device sync every depth).
-        self.register_buffer(
-            "gate_mean", torch.zeros(num_depths), persistent=False
-        )
+        self.register_buffer("gate_mean", torch.zeros(num_depths), persistent=False)
         self._materialize(hidden, embed)
 
     @torch.no_grad()
@@ -99,9 +97,7 @@ class SerpentRNNMTPBank(nn.Module):
     def _spectrum(self) -> Optional[tuple]:
         """The cell's Serpent parameters ``(alpha, gamma)`` as ``[D]``, or
         ``None`` while the activation is still lazy."""
-        if any(
-            isinstance(p, UninitializedParameter) for p in self.act.parameters()
-        ):
+        if any(isinstance(p, UninitializedParameter) for p in self.act.parameters()):
             return None
         return self.act.a.detach(), self.act.g.detach()
 

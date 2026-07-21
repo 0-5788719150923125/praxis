@@ -13,6 +13,7 @@ class DataFormat(Enum):
     CUSTOM = "custom"  # Custom format (user-defined)
     MESSAGES = "messages"  # Chat messages format
     HUMAN_ASSISTANT = "human_assistant"  # Raw "Human:/Assistant:" transcript (hh-rlhf)
+    PREFERENCE_PAIR = "preference_pair"  # chosen/rejected transcript pair (hh-rlhf)
     SODA = "soda"  # SODA dialogue format
     WIKI = "wiki"  # Wikipedia article format
     RL = "rl"  # Reinforcement learning format

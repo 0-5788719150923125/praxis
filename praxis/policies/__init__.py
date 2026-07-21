@@ -6,6 +6,7 @@ from praxis.policies.cot import ChainOfThought
 from praxis.policies.engagement import EngagementPolicy, JokePolicy
 from praxis.policies.grpo import GRPO
 from praxis.policies.harmonic_weight_rl import HarmonicWeightPolicy
+from praxis.policies.preference import PreferencePolicy
 from praxis.policies.reinforce import REINFORCE
 
 # Registry for RL algorithms
@@ -19,6 +20,9 @@ RL_POLICIES_REGISTRY = {
     # Forward-path joke reward (same machinery; dense grounding from well-rated
     # jokes, live signal from human approval via the Loop UI). PLAN.md section 7b.
     "joke": JokePolicy,
+    # Forward-path reference-free preference margin over chosen/rejected task
+    # tags (hh-rlhf card compliance). praxis/policies/preference.py.
+    "preference": PreferencePolicy,
     # Weight-editing controller (driven by a callback, not the forward pass).
     "harmonic_weight": HarmonicWeightPolicy,
     # "ppo": PPO,    # TODO: Implement PPO

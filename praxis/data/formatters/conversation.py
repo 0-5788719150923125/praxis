@@ -130,6 +130,38 @@ def format_human_assistant(
     return format_messages({"messages": messages}, ["messages"], tokenizer)
 
 
+def format_preference_pair(
+    document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
+) -> Dict:
+    """Preference pair (e.g. Anthropic/hh-rlhf ``chosen``/``rejected``): emit
+    ONE side per call, picked 50/50 at random, tagged with its preference task
+    so downstream consumers can tell the sides apart per token.
+
+    The card-compliant contract this implements: chosen text is tagged
+    ``PREF_CHOSEN`` (trains as conversation data and anchors the preference
+    margin); rejected text is tagged ``PREF_REJECTED`` (contrast-only - the
+    main CE excludes it, the preference policy pushes its likelihood down).
+    Byte-level block packing chunks documents arbitrarily, so the pairing is
+    carried per-token by task tags rather than per-row alignment; the
+    preference loss contrasts the two tag populations within a batch.
+    """
+    import random as _random
+
+    chosen_key = keys[0] if keys else "chosen"
+    rejected_key = keys[1] if len(keys) > 1 else "rejected"
+    take_rejected = _random.random() < 0.5
+    side_key = rejected_key if take_rejected else chosen_key
+
+    result = format_human_assistant(document, [side_key], tokenizer)
+    if result.get("messages"):
+        from praxis.tasks import TaskType
+
+        result.setdefault("metadata", {})["task_type"] = int(
+            TaskType.PREF_REJECTED if take_rejected else TaskType.PREF_CHOSEN
+        )
+    return result
+
+
 def format_soda(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer) -> str:
     """Format SODA dataset entries as conversations.
 

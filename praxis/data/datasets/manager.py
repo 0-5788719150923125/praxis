@@ -351,8 +351,11 @@ class InterleaveDataManager:
                         sampler, "dataset_path", f"sampler_{sampler_idx}"
                     )
                     document_data["metadata"]["dataset"] = dataset_name
-                    document_data["metadata"]["task_type"] = getattr(
-                        sampler, "task_type", 0
+                    # A formatter may tag the document itself (e.g. preference
+                    # pairs mark PREF_CHOSEN/PREF_REJECTED per draw); the
+                    # sampler-level task is the fallback, not an override.
+                    document_data["metadata"].setdefault(
+                        "task_type", getattr(sampler, "task_type", 0)
                     )
 
                     # Handle RL rewards if present

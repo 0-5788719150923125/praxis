@@ -20,6 +20,9 @@ FORMAT_TO_TASK = {
     DataFormat.COT: TaskType.REASONING,
     DataFormat.RL: TaskType.RL,
     DataFormat.JOKE: TaskType.JOKE,
+    # Sampler-level default only; the formatter overrides per document with
+    # PREF_CHOSEN / PREF_REJECTED depending on which side of the pair it drew.
+    DataFormat.PREFERENCE_PAIR: TaskType.PREF_CHOSEN,
     DataFormat.CUSTOM: DEFAULT_TASK,
 }
 
@@ -193,13 +196,15 @@ DATASETS = {
         keys=["personality", "utterances"],
         format=DataFormat.PERSONACHAT,
     ),
-    # Preference dataset, used SFT-style for now: only the `chosen` dialogues
-    # train (parsed from the raw Human:/Assistant: transcripts). The `rejected`
-    # column waits on a preference-based objective (see next/roadmap.md).
+    # Preference dataset, per the card's contract: never plain SFT. Each draw
+    # emits one side of a chosen/rejected pair, tagged PREF_CHOSEN or
+    # PREF_REJECTED per token. Chosen trains as conversation data AND anchors
+    # the preference margin; rejected is contrast-only (excluded from main CE,
+    # pushed down by rl_type: preference - praxis/policies/preference.py).
     "hh-rlhf": dict(
         path="Anthropic/hh-rlhf",
-        keys=["chosen"],
-        format=DataFormat.HUMAN_ASSISTANT,
+        keys=["chosen", "rejected"],
+        format=DataFormat.PREFERENCE_PAIR,
     ),
     "smoltalk": dict(
         path="HuggingFaceTB/smoltalk",

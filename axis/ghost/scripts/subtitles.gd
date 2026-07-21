@@ -113,6 +113,14 @@ class Overlay:
 	const HUE_SPAN := 0.011          # hue turned per character (band tightness)
 	const HUE_DRIFT := 0.02          # hue slid per second (the band flows)
 	const LINGER := 24.0             # characters a spoken glyph stays lit behind the cursor
+	# A SECOND channel: SATURATION ebbs and flows in slow bands along the text, at
+	# a tighter, differently-timed rhythm than the hue (two incommensurate waves so
+	# the pattern never quite repeats). It pulls the colour down toward a grounded,
+	# near-grey calm in the valleys and lets it burn full in the peaks - so the line
+	# is not a solid rainbow but stable regions with colour activity between them.
+	const SAT_SPAN := 0.17           # saturation band spatial frequency (a valley ~every 37 glyphs)
+	const SAT_DRIFT := 0.09          # the bands drift per second (their own rhythm)
+	const SAT_FLOOR := 0.14          # how far the grounded valleys desaturate (0 = grey)
 
 	func _draw() -> void:
 		if owner_node == null or owner_node.words.is_empty():
@@ -189,15 +197,22 @@ class Overlay:
 	## looked at rather than snapping dim the instant the word ends.
 	func _glyph_color(base_hue: float, ci: int, ccur: float, t: float) -> Color:
 		var hue := fposmod(base_hue + float(ci) * HUE_SPAN - t * HUE_DRIFT, 1.0)
+		# the saturation band at this glyph: two incommensurate waves -> organic,
+		# non-repeating valleys (grounded) and peaks (colourful). Scales the state's
+		# own saturation from a near-grey floor up to full.
+		var s1 := sin(float(ci) * SAT_SPAN - t * SAT_DRIFT)
+		var s2 := sin(float(ci) * SAT_SPAN * 1.73 + t * SAT_DRIFT * 0.5)
+		var sat_env := clampf(0.5 + 0.35 * s1 + 0.15 * s2, 0.0, 1.0)
+		var sm := lerpf(SAT_FLOOR, 1.0, sat_env)        # saturation multiplier
 		var d := ccur - float(ci)                       # >0 spoken (behind), <=0 waiting (ahead)
 		if d <= 0.0:
 			# ahead of the voice: dim but present, faintly tinted so the coming
 			# colour is previewed rather than a wall of grey
-			return Color.from_hsv(hue, 0.22, 0.6, 0.92)
+			return Color.from_hsv(hue, 0.22 * sm, 0.6, 0.92)
 		# spoken: full flare at the front, cooling to a resting tint over LINGER
 		var glow := clampf(1.0 - (d - 1.0) / LINGER, 0.0, 1.0)
-		var rest := Color.from_hsv(hue, 0.34, 0.7)
-		var vivid := Color.from_hsv(hue, 0.9, 1.0)
+		var rest := Color.from_hsv(hue, 0.34 * sm, 0.7)
+		var vivid := Color.from_hsv(hue, 0.9 * sm, 1.0)
 		return rest.lerp(vivid, glow)
 
 	## The cursor expressed as a CHARACTER position within the current sentence:

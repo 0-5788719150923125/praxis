@@ -29,6 +29,9 @@ class EngagementPolicy(nn.Module):
     # its own reward from labels, so the data pipeline needs no RL collection.
     is_weight_controller = False
     needs_rl_datasets = False
+    # Recall-family forward policy: shares the (logits, labels, mask) call
+    # signature; any number may coexist, partitioned by task tags.
+    is_recall = True
     # Metric namespace; subclasses (e.g. JokePolicy) override to reuse the same
     # recall-over-assistant-region machinery under a different chart family.
     prefix = "engagement"

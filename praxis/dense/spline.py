@@ -63,9 +63,7 @@ class SplineNetwork(BaseDense):
         init_knots = torch.linspace(-knot_span, knot_span, num_knots)
         gap = 2.0 * knot_span / max(num_knots - 1, 1)
         self.knots = nn.Parameter(init_knots.repeat(dim, 1))  # [dim, K]
-        self.log_widths = nn.Parameter(
-            torch.full((dim, num_knots), math.log(gap))
-        )
+        self.log_widths = nn.Parameter(torch.full((dim, num_knots), math.log(gap)))
         self.spline_linear = SplineLinear(
             dim * num_knots, dim, spline_weight_init_scale
         )

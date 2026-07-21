@@ -77,6 +77,7 @@ def _is_localhost_url(url: Optional[str]) -> bool:
         return False
     return host in ("localhost", "127.0.0.1", "::1")
 
+
 # Read-only endpoints to dump verbatim: (request path, output file, kind).
 # kind is "binary" for files served as-is; everything else is written bytewise
 # too, the label is just documentation of the content type.

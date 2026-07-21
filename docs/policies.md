@@ -3,7 +3,7 @@
 
 Reinforcement-learning policy losses (REINFORCE, GRPO, ...) for post-training.
 
-Registry: ``praxis.RL_POLICIES_REGISTRY`` (6 entries)
+Registry: ``praxis.RL_POLICIES_REGISTRY`` (7 entries)
 
 ## `cot` - ChainOfThought
 
@@ -72,7 +72,26 @@ grounding comes from quality-filtered (well-rated) jokes in the data mix; the li
 human-approval channel folds into the energy via ``ingest_live``. The model is rewarded
 for producing jokes a human approves - "the model seeks our approval".
 
-Source: [praxis/policies/engagement.py:193](../praxis/policies/engagement.py#L193)
+Source: [praxis/policies/engagement.py:196](../praxis/policies/engagement.py#L196)
+
+## `preference` - PreferencePolicy
+
+Base class for all neural network modules.
+
+Your models should also subclass this class.
+
+Modules can also contain other Modules, allowing them to be nested in a tree structure.
+You can assign the submodules as regular attributes::
+
+import torch.nn as nn     import torch.nn.functional as F
+
+class Model(nn.Module):         def __init__(self) -> None:
+super().__init__()             self.conv1 = nn.Conv2d(1, 20, 5)             self.conv2 =
+nn.Conv2d(20, 20, 5)
+
+def ...
+
+Source: [praxis/policies/preference.py:37](../praxis/policies/preference.py#L37)
 
 ## `reinforce` - REINFORCE
 

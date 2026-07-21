@@ -375,6 +375,15 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         if task_type_ids is not None:
             shifted_task = task_type_ids[..., -target_len:]
             weights = self.tasker(shifted_task.long())
+            # Preference contrast material is never imitated: rejected-tagged
+            # tokens are excluded from the main CE regardless of weighter
+            # profile - the preference policy's margin is their only training
+            # signal (the hh-rlhf card's contract).
+            from praxis.tasks import TaskType
+
+            weights = weights * (shifted_task != int(TaskType.PREF_REJECTED)).to(
+                weights.dtype
+            )
 
         if assistant_mask is not None:
             shifted_mask = assistant_mask[..., -target_len:].to(
@@ -1339,7 +1348,7 @@ def build_rl_policies(config):
         policy_cls = RL_POLICIES_REGISTRY[policy_key]
         if getattr(policy_cls, "is_weight_controller", False):
             continue
-        if rl_name in ("engagement", "joke"):
+        if getattr(policy_cls, "is_recall", False):
             recall[rl_name] = policy_cls(config)
         else:
             if policy is not None:

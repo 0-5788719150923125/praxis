@@ -143,6 +143,37 @@ func set_location(prox: float, freq: float) -> void:
 	_loc_freq = clampf(freq, 80.0, 3000.0)
 
 
+## Bake the LOCATION reception effect into a rendered take, OFFLINE, at a FIXED
+## anchor (prox, freq). The export path calls this so the file reproduces what the
+## live stream sounds like where the line is anchored - the same resonant band and
+## carrier the push loop applies per sample, just at a held position (no glide).
+## Mutates and returns pcm (PackedFloat32Array is copy-on-write - reassign the
+## result). A no-op far from any source.
+static func bake_location(pcm: PackedFloat32Array, prox: float, freq: float) -> PackedFloat32Array:
+	prox = clampf(prox, 0.0, 1.0)
+	if prox <= 0.004:
+		return pcm
+	freq = clampf(freq, 80.0, 3000.0)
+	var svf_low := 0.0
+	var svf_band := 0.0
+	var svf_f := 2.0 * sin(PI * freq / Voice.SR)
+	var env := 0.0
+	var ph := 0.0
+	for i in pcm.size():
+		var v := pcm[i]
+		svf_low += svf_f * svf_band
+		var hi: float = v - svf_low - LOC_Q * svf_band
+		svf_band += svf_f * hi
+		v = lerpf(v, svf_band * LOC_BP_GAIN, prox * LOC_WET)
+		env += (absf(v) - env) * 0.002
+		ph += TAU * freq / Voice.SR
+		if ph >= TAU:
+			ph -= TAU
+		v += LOC_CARRIER * prox * prox * sin(ph) * (0.4 + 2.0 * env)
+		pcm[i] = clampf(v, -1.0, 1.0)
+	return pcm
+
+
 ## Replace the content in place: new plan, cleared generator buffer, timing
 ## rebased - the session and scene continue, only the voice's content changes.
 ## A coroutine: the old audio fades out over a breath before the stop/play

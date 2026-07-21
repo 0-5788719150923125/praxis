@@ -3,7 +3,7 @@
 
 Standard residuals vs. hyper-connections.
 
-Registry: ``praxis.RESIDUAL_REGISTRY`` (3 entries)
+Registry: ``praxis.RESIDUAL_REGISTRY`` (4 entries)
 
 ## `hyper` - HyperConnection
 
@@ -22,6 +22,12 @@ shared across sequence length. In a recurrent stack the same block reads a diffe
 gain at each loop step, so the loop's amplitude profile over depth is itself learned.
 
 Source: [praxis/residuals/rezero.py:10](../praxis/residuals/rezero.py#L10)
+
+## `smear` - SmearResidual
+
+Per-depth soft mix over child residual connections.
+
+Source: [praxis/residuals/smear.py:47](../praxis/residuals/smear.py#L47)
 
 ## `standard` - ResidualConnection
 
