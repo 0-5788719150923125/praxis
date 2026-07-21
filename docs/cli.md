@@ -71,6 +71,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--memory` | bool | `False` | Use a long-term episodic memory module |
 | `--memory-type` | str | `none` | Titans-style long-term memory profile (choices: none, mal, mal_energy, mal_energy_serpent, mal_energy_dual, mal_energy_triple, mal_energy_quad, mag) |
 | `--mla` | bool | `False` | Use Multi-Head Latent Attention (MLA) |
+| `--mono-type` | str | `None` | Mono-forward graph cutting in the sequential decoder: detach hidden states on a cut schedule and train each segment from a local goodness score (omit to disable) (choices: cycle, final, layer) |
 | `--mta` | bool | `False` | Use Multi-Token Attention (MTA) |
 | `--mtp-depth` | int | `1` | Number of Multi-Token Prediction depths |
 | `--mtp-type` | str | `None` | MTP module type (omit to disable MTP) (choices: transformer, conv, vear, serpent_rnn) |

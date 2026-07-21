@@ -249,6 +249,13 @@ class MultiTokenPrediction(nn.Module):
             out[f"mtp_draft_acc_d{k}"] = float(a)
         if accs:
             out["mtp_draft_acc"] = float(sum(accs)) / len(accs)
+        # Realized speculative throughput, once generation has actually run:
+        # the accepted-run EMA and the width it drives. These are what the
+        # draft-acc CEILING cashes out as - the gap between them is verify-time
+        # rejection (sampling, patch non-causality).
+        if self._accept_seen > 0:
+            out["mtp_accept_run"] = float(self._accept_ema)
+            out["mtp_draft_width"] = float(self.draft_width)
         if self.bank is not None:
             out.update(self.bank.training_metrics())
         return out
@@ -308,6 +315,45 @@ class MultiTokenPrediction(nn.Module):
         descriptions walker. Banks expose either a static class dict (vear) or
         an instance method when the keys depend on depth (serpent_rnn)."""
         out = dict(self._draft_acc_descriptions())
+        out["mtp_accept_run"] = {
+            "description": (
+                "EMA of the accepted candidate run per speculative step (the "
+                "main token plus the drafts that survived verification); "
+                "committed bytes per step run one higher (the correcting or "
+                "bonus byte), and speculative speedup is roughly (this + 1) / "
+                "2 forwards. The REALIZED counterpart of the draft-accuracy "
+                "ceiling: with per-depth accept rate a the expectation is "
+                "1 + a + a^2 + ... - geometric, so the run length tracks the "
+                "text's entropy spacing (typically one word-fragment), not "
+                "mtp_depth. Only updates while generation runs."
+            ),
+            "chart": {
+                "title": "MTP Accepted Run (EMA)",
+                "y_label": "accepted candidates / step",
+                "y_scale": "linear",
+                "group": "mtp_field",
+                "group_order": 45,
+                "order": 47,
+            },
+        }
+        out["mtp_draft_width"] = {
+            "description": (
+                "Adaptive number of drafts attempted per speculative step: "
+                "ceil(accept EMA) + 1 probe, capped at mtp_depth and never "
+                "below 1. Sits at the fixed point width ~ mean run + 1, so "
+                "depths beyond it are trained but never drafted - the answer "
+                "to 'why does depth K print fewer than K bytes' is read "
+                "directly off this chart against mtp_accept_run."
+            ),
+            "chart": {
+                "title": "MTP Draft Width (adaptive)",
+                "y_label": "drafts attempted / step",
+                "y_scale": "linear",
+                "group": "mtp_field",
+                "group_order": 45,
+                "order": 48,
+            },
+        }
         if self.bank is not None:
             desc = getattr(self.bank, "metric_descriptions", None)
             out.update(desc() if callable(desc) else (desc or {}))

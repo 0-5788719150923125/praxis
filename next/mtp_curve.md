@@ -1,11 +1,12 @@
 # MTP turns the vector into a curve - the sliding-window fox
 
-> Status: **in the paper** (2026-07-18, corrected 2026-07-20) - framing
-> fragment `praxis/pillars/framing/mtp-vear-draft.yml` (gated on
-> `mtp_type: vear` alone; the prose is K-generic since abstractinator-c
-> raised K to 8, the figure is an explicit K=4 schematic), with its own
-> figure (`fig:mtp-window`) - the sliding-window variant of the
-> boxes-and-arrows fox strip. Sibling to
+> Status: **in the paper** (2026-07-18, corrected 2026-07-20; restructured
+> 2026-07-21) - now a three-fragment family in `praxis/pillars/framing/`:
+> `mtp-draft.yml` (intro, gated on ANY `mtp_type`), per-mechanism paragraphs
+> (`mtp-vear-mechanism.yml`, `mtp-serpent-rnn-mechanism.yml`), and
+> `mtp-draft-window.yml` (the short-curve reading + figure; prose K-generic,
+> figure an explicit K=4 schematic), with its own figure (`fig:mtp-window`)
+> - the sliding-window variant of the boxes-and-arrows fox strip. Sibling to
 > [information_density.md](information_density.md), which owns the original
 > fox chart (`fig:density`) and the density-as-shape reading this note extends
 > to the generation scale.
@@ -158,6 +159,41 @@ one, and the honest scoreboard is convergence behavior plus the per-depth
 the within-window information-density curve, measured - the fox chart's
 argument recurring at the generation scale, this time with an instrument
 already logged.
+
+## The throughput law (2026-07-21): commit length is entropy spacing, not K
+
+Recurring question, now with the run's own numbers: K=8 "only" prints ~4
+bytes per speculative step, and it feels like half the capacity is lost. It
+is not lost - it is compounded away, and the ceiling is a property of the
+TEXT, not the head.
+
+The law: acceptance stops at the first divergence, so with per-depth accept
+rate $a$ the expected committed bytes per step are
+$1 + \sum_{k \le K} a^k$ - a geometric series, brutally concave in $a$. At
+the measured profile (abstractinator-d peaked near $a \approx 0.8$, flat
+across all 8 depths), that is $1 + 3.2 \approx 4.2$: exactly the observed 4.
+Full-window acceptance happens $0.8^8 \approx 17\%$ of steps. Averaging 8
+would need $a \approx 0.97$ at every one of 8 offsets. Each +1 byte/step
+costs geometrically more accuracy - linear intuition (8 depths, 8 bytes) is
+simply the wrong law.
+
+The reading UNDER the law: the draft-acc profile is FLAT (d0 ~ d7 within a
+point). Depth doesn't set difficulty - position does. Byte text is bimodal:
+in-word bytes are near-deterministic at ANY offset, word-boundary bytes are
+hard at ANY offset. So accepted runs end at the next entropy spike, and the
+mean gap between spikes in English-like bytes is ~4-5 characters - one word
+fragment. "4 bytes per step" is the model committing one word-chunk per
+step and stopping at the boundary, where crossing would mean already
+knowing the NEXT word. This is the fox chart's density argument recurring
+at decode time: the white teeth (boundary entropy) are exactly where drafts
+die. The adaptive width therefore parks at ~mean-run+1 and never drafts
+depths 5-8 - correctly, since on the average step they'd be discarded work;
+they cost training compute only. Predictions this reading makes: accepted
+runs should stretch inside low-entropy stretches (whitespace runs,
+boilerplate, code indentation) and shrink in dense prose; and
+boundary-crossing accuracy (not depth count) is the only lever that raises
+throughput - it improves exactly as much as the model learns to know the
+next word.
 
 ## Pointers
 

@@ -15,6 +15,7 @@ from praxis import (
     HALTING_REGISTRY,
     HEAD_REGISTRY,
     MEMORY_REGISTRY,
+    MONO_REGISTRY,
     MTP_REGISTRY,
     NORMALIZATION_REGISTRY,
     ORCHESTRATION_REGISTRY,
@@ -412,4 +413,16 @@ class ArchitectureGroup:
             type=int,
             default=1,
             help="Number of Multi-Token Prediction depths",
+        )
+
+        group.add_argument(
+            "--mono-type",
+            type=str,
+            choices=sorted(MONO_REGISTRY.keys()),
+            default=None,
+            help=(
+                "Mono-forward graph cutting in the sequential decoder: detach "
+                "hidden states on a cut schedule and train each segment from a "
+                "local goodness score (omit to disable)"
+            ),
         )

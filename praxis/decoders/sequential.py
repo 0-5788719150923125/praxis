@@ -65,6 +65,9 @@ class SequentialDecoder(BaseDecoder):
 
         effective_depth = self.halting.get_depth()
         self.halting.seed(hidden_states)
+        # Mono-forward: reset per-forward state and stash the goodness target
+        # (labels for token models, the input stream for latent models).
+        self.mono.begin(hidden_states, labels)
 
         current_route: List[int] = []
         realized_widths: List[float] = []  # active width fraction per executed step
@@ -156,6 +159,11 @@ class SequentialDecoder(BaseDecoder):
             else:
                 losses.add_loss("decoder", decoder_loss)
 
+            # Mono-forward: if this step is a cut point, score goodness here
+            # and DETACH - no gradient crosses the cut, so each segment trains
+            # from its local loss in the same backward pass.
+            hidden_states = self.mono.cut(hidden_states, losses, current_depth)
+
             # Check halting strategy at loop boundaries
             if self.halting.check(hidden_states, current_depth):
                 break
@@ -205,6 +213,10 @@ class SequentialDecoder(BaseDecoder):
                 self._depth_metrics["depth/jump_concentration"] = max(s) / (
                     sum(s) / len(s) + 1e-8
                 )
+
+        # Mono-forward: the "final" schedule cuts here (one goodness at the
+        # top of the stack); every schedule lands its mean score as "mono".
+        hidden_states = self.mono.finalize(hidden_states, losses)
 
         hidden_states = self.compressor.expand_sequence(hidden_states, seq_len)
 

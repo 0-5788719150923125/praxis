@@ -131,6 +131,12 @@ const DRIFT_ACCEL := (1.0 / 180.0 - 1.0 / 600.0) / 22.0   # ramp crawl -> raw ma
 const WARP_CHARGE := 10.0           # seconds held at raw max before the drive charges
 const WARP_VEL := 1.0 / 16.0        # warp odometer/sec - the streaks that "move faster than velocity allows"
 const REEL_HOME_VEL := 1.0 / 120.0  # base retrieval odometer/sec in reel mode (scaled by _reel_power)
+# A catch hooked at the far reaches is on a longer line, so the fight is longer:
+# the reel duration stretches with how far the cage had drifted at the moment the
+# hook set (0 = home, 1 = the deep field). Bounded - the deep field costs more to
+# haul home, but never unboundedly. The old reel ignored distance entirely, so a
+# lightyears-out catch reeled in as fast as one at your feet.
+const REEL_DIST_STRETCH := 2.6      # max duration multiple, at the far end of the drift
 const WARP_BURN := 0.32             # adrenochrome spent per second of warp
 const WARP_MIN := 0.4               # reserve needed to IGNITE a warp (a floored charge)
 # Adrenochrome is the currency the warp spends. It is minted by fishing: a
@@ -956,7 +962,8 @@ func _begin_hook(d: float) -> void:
 		"rng": rng, "step": 0, "t": 0.0,
 		"progress": 0.0, "run": 0.0, "run_t": frng.randf_range(2.0, 6.0),
 		"frng": frng, "power": _reel_power(),
-		"duration": lerpf(45.0, 240.0, d) * profile_scale,
+		"duration": lerpf(45.0, 240.0, d) * profile_scale \
+			* lerpf(1.0, REEL_DIST_STRETCH, _drift_norm()),
 		"members": members, "d": d, "reward": _catch_reward(d),
 		"traits": _traits.duplicate(),
 		"genome": Voice.ProsodyWalk._lineage_genome(_lineage) \
@@ -1614,16 +1621,17 @@ func _advance_reel(delta: float) -> void:
 	_status_t2 += delta
 	if _status_t2 >= 0.5:
 		_status_t2 = 0.0
-		var pc := int(float(h.progress) * 100.0)
+		# the numeric percent lives ONCE, in the HUD next to the progress arc; the
+		# status line just describes what the reel is doing
 		var toll := _hook_toll()
 		if h.run > 0.35:
-			_status.text = "it runs - the line pays out (%d%%)" % pc
+			_status.text = "it runs - the line pays out"
 		elif toll > 0.55:
-			_status.text = "reeling - its voice is coming apart (%d%%)" % pc
+			_status.text = "reeling - its voice is coming apart"
 		elif toll > 0.25:
-			_status.text = "reeling - something in it is bending (%d%%)" % pc
+			_status.text = "reeling - something in it is bending"
 		else:
-			_status.text = "reeling - it changes as it comes (%d%%)" % pc
+			_status.text = "reeling - it changes as it comes"
 		_hud_glyph.fit = _relative_fit_of(h.traits, _lineage, h.genome)
 		_hud_glyph.queue_redraw()
 	if float(h.progress) >= 1.0:

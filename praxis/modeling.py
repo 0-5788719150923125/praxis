@@ -1039,7 +1039,9 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         batched GEMM, and points where greedy is itself ill-defined). (With
         ``do_sample`` the per-position reads are causal but acceptance stays
         equality-based, so sampling remains approximate; greedy is the
-        guarantee.)
+        guarantee. Candidate 0 - the main forward's own sample - is exempt
+        from re-verification: accepting it is distribution-exact, since it was
+        drawn from precisely the conditional the verify would re-sample.)
         """
         from types import SimpleNamespace
 
@@ -1150,8 +1152,17 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             def bonus_at():
                 return pick(raw_at(n_candidates), prefix_ids(n_candidates))
 
-            accepted = 0
-            for i in range(n_candidates):
+            # Candidate 0 is the main forward's own pick, so it is accepted
+            # outright. Greedy: the verify argmax is identical by construction.
+            # Sampled: the verify would re-draw from the SAME distribution
+            # token_0 was just sampled from - a fresh multinomial matches only
+            # with probability sum(p^2), so re-rolling adds no correctness
+            # (token_0 is already a valid sample of that conditional), it only
+            # rejects committed bytes and drags the width EMA down. Every step
+            # therefore commits at least token_0 plus one (correction or
+            # bonus); verification starts at the first true draft.
+            accepted = 1
+            for i in range(1, n_candidates):
                 v_token = target_at(i)
 
                 if v_token.item() == candidates[:, i].item():

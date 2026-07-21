@@ -45,6 +45,12 @@ class BaseDecoder(nn.Module):
         self.order = SORTING_REGISTRY.get(config.sorting_type)(config)
         halting_type = getattr(config, "halting_type", None) or "none"
         self.halting = HALTING_REGISTRY[halting_type](config)
+        # Mono-forward graph cutting (praxis/decoders/mono.py): a no-op unless
+        # config.mono_type names a cut schedule. Sequential-only; build_mono
+        # raises on other decoder types rather than silently never cutting.
+        from praxis.decoders.mono import build_mono
+
+        self.mono = build_mono(config)
         self.locals = nn.ModuleList()
         self.remotes: List[nn.Module] = []
 
@@ -277,6 +283,9 @@ class BaseDecoder(nn.Module):
         # Depth-trajectory (spectral-attractor) metrics, computed in the
         # SequentialDecoder forward; merged here so they flow with the rest.
         extras.update(getattr(self, "_depth_metrics", {}))
+
+        # Mono-forward goodness scores (per cut + mean), same transport.
+        extras.update(self.mono.metrics())
 
         # The remote count includes the live expert pool (orchestration), so the
         # dashboards' remote_layers reflects the swarm growing as peers join.

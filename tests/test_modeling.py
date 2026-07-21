@@ -532,6 +532,38 @@ def test_speculative_honors_repetition_penalty(spec_config):
                 break
 
 
+def test_speculative_sampled_auto_accepts_main_token(spec_config):
+    """Under sampling, candidate 0 (the main forward's own sample) is accepted
+    outright - re-drawing from the same distribution adds no correctness, only
+    spurious rejections that cost a committed byte and drag the width EMA
+    down. Post-fix invariant: every speculative step commits at least the main
+    token plus one, so the accept EMA (init 1.0, fed runs >= 1) never falls
+    below 1 - and the realized-throughput metrics surface once generation has
+    run."""
+    from types import SimpleNamespace
+
+    torch.manual_seed(0)
+    model = PraxisForCausalLM(spec_config).eval()
+    ids = torch.randint(4, 260, (1, 12))
+    gen_cfg = SimpleNamespace(
+        max_new_tokens=24,
+        do_sample=True,
+        temperature=1.0,
+        num_beams=1,
+        eos_token_id=None,
+        repetition_penalty=1.15,
+    )
+    torch.manual_seed(7)
+    out = model._speculative_generate(ids, gen_cfg)
+    assert out.shape[1] >= ids.shape[1] + 24  # sampled steps still commit
+    assert model.mtp._accept_seen > 0
+    assert model.mtp._accept_ema >= 1.0 - 1e-9
+
+    metrics = model.mtp.training_metrics()
+    assert metrics["mtp_accept_run"] >= 1.0 - 1e-9
+    assert 1 <= metrics["mtp_draft_width"] <= spec_config.mtp_depth
+
+
 def test_serpent_rnn_mtp_bank(spec_config):
     """serpent_rnn: one shared gated cell owns every depth. Builds inside the
     byte-latent stack, produces the mtp loss and on-device draft-acc capture,

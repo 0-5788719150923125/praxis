@@ -145,6 +145,16 @@ def _registries() -> List[Tuple]:
             praxis.MEMORY_PROFILE_DESCRIPTIONS,
         ),
         (
+            "mono",
+            "Mono-forward graph cutting",
+            praxis.MONO_REGISTRY,
+            "Sequential-decoder graph cutting: detach hidden states on a cut "
+            "schedule and train each segment from a local goodness score "
+            "(vocab CE for token models, next-patch-embedding prediction for "
+            "encoder models). Selected with ``--mono-type``; default is off.",
+            praxis.MONO_DESCRIPTIONS,
+        ),
+        (
             "normalization",
             "Normalization layers",
             praxis.NORMALIZATION_REGISTRY,
@@ -1266,6 +1276,7 @@ def _registry_attr(slug: str) -> str:
         "heads": "HEAD_REGISTRY + MTP_REGISTRY",
         "losses": "LOSS_REGISTRY",
         "memory": "MEMORY_REGISTRY",
+        "mono": "MONO_REGISTRY",
         "normalization": "NORMALIZATION_REGISTRY",
         "optimizers": "OPTIMIZER_PROFILES",
         "wrappers": "WRAPPER_REGISTRY",

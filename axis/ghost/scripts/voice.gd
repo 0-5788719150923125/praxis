@@ -248,6 +248,8 @@ class ProsodyWalk:
 	var _swing := 0.0                 # cadence wobble: activations kick it, it decays -
 	                                  # a perturbation folded back into the running pace
 	var _gate: RandomNumberGenerator  # order-dependent stochastic gates (deterministic)
+	var _mods: Array = []             # the finalized modulator set (blended, damped, pruned)
+	var _t := 0.0                     # utterance clock (seconds) the modulators ride
 
 	## The population average, created at initialization and OUTSIDE any
 	## lineage's influence: the midpoint of every genome range. It is always
@@ -257,9 +259,33 @@ class ProsodyWalk:
 		"heat": 1.35, "baseline": 0.375, "settle": 0.11, "breath_span": 9.5,
 		"spend_window": 2.4, "lean": 1.0, "pace_hot": 0.91, "pace_calm": 1.21,
 		"act_thr": 1.9, "act_gain": 1.0, "gravity": 0.2, "ring": 0.6,
-		"hesit_bias": 0.25, "swing_kick": 0.14, "verve": 0.4,
+		"hesit_bias": 0.25, "swing_kick": 0.14, "verve": 0.4, "damp": 0.35,
 	}
 	const PRIOR_MOTIF_SEED := 314159
+
+	# THE MODULATOR GENES - the alchemy. A lineage does not only refine scalars; it
+	# can spawn OSCILLATORS that ride a gene over the utterance, giving the voice a
+	# jagged route instead of a held level: a slow sine sway, a cosine that leads by
+	# a quarter turn, a triangle that ramps and reverses, a sawtooth that snaps back.
+	# Each generation may add one. But you cannot pile them on forever - that is the
+	# whole point. Three regularizers turn accumulation into BLENDING:
+	#   DAMPEN   - the `damp` gene scales every modulator's depth down; a heavily
+	#              damped lineage barely wavers however many it has spawned.
+	#   NORMALIZE - one fixed depth budget across ALL of a party's modulators. Add a
+	#              new one and it does not stack on top; it STEALS energy from the
+	#              rest. The set is renormalized to the budget, so the total motion
+	#              is bounded and a new gesture must earn its share by diluting the
+	#              others. This is the blend.
+	#   SUPPRESS  - once diluted, any modulator under a floor is dropped: the weak
+	#              ones the blend pushed under the threshold are pruned, not carried
+	#              dead. Bad features get suppressed rather than accumulating.
+	# The PRIOR contributes NO modulators (it is the calm regularizer), so a fuller
+	# party dilutes toward stillness unless the lineages keep earning motion.
+	const MOD_SHAPES := ["sine", "cosine", "triangle", "saw"]
+	const MOD_TARGETS := ["pace", "gravity"]   # the genes an oscillator can ride
+	const MOD_BUDGET := 1.15            # total post-dampen modulation depth a party may carry
+	const MOD_SUPPRESS := 0.06          # a normalized depth below this is pruned (bad ones die)
+	const MOD_RATE := [0.12, 1.6]       # oscillation rate range (cycles/sec over the utterance)
 
 	# ELABORATION - the one tunable scalar, 0..1, along the spectrum the user asked
 	# for: at 0 a longer lineage REFINES (each generation a smaller nudge, 0.6^gen,
@@ -281,6 +307,7 @@ class ProsodyWalk:
 		"pace_hot": [0.6, 1.1], "pace_calm": [0.9, 1.7], "act_thr": [0.6, 3.2],
 		"act_gain": [0.3, 2.2], "gravity": [0.0, 0.8], "ring": [0.15, 1.4],
 		"hesit_bias": [-0.6, 1.2], "swing_kick": [0.02, 0.45], "verve": [0.0, 1.0],
+		"damp": [0.0, 0.95],
 	}
 	# The channels a word can sparsely ACTIVATE on - each independent, each
 	# with its own refractory. What firing does: stretch = the word's own
@@ -325,6 +352,19 @@ class ProsodyWalk:
 			p.act_thr = maxf(0.6, float(p.act_thr) * (1.0 - 0.35 * elab))  # fire MORE often
 			p.act_gain = float(p.act_gain) * (1.0 + 0.5 * elab)           # ...and harder
 			p.ring = float(p.ring) * (1.0 + 0.5 * elab)                   # ...ringing longer
+		# THE MODULATOR BLEND: pool every lineage's spawned oscillators (the prior
+		# brings none - it is the still centre), then finalize the pile into one
+		# budgeted, pruned set. Elaboration eases the dampening, so a deep, high-verve
+		# reading keeps more of its jaggedness while a shallow one stays smooth. A
+		# frozen override carries no live modulators - it was already integrated.
+		if override.is_empty():
+			var raw_mods: Array = []
+			for lineage in lineages:
+				raw_mods.append_array(_lineage_mods(lineage))
+			var eff_damp: float = clampf(float(p.get("damp", 0.35)) * (1.0 - 0.5 * elab), 0.0, 0.95)
+			_mods = _finalize_mods(raw_mods, eff_damp)
+		else:
+			_mods = []
 		_motifs = _motif_bank(PRIOR_MOTIF_SEED)
 		for lineage in lineages:
 			_motifs.append_array(_motif_bank(int(lineage[0])))
@@ -401,6 +441,7 @@ class ProsodyWalk:
 			"hesit_bias": root.randf_range(-0.3, 0.9),   # extra bar for hesitations (high = fluent)
 			"swing_kick": root.randf_range(0.05, 0.28),  # cadence wobble per activation
 			"verve": root.randf_range(0.0, 0.9),         # this lineage's drive to elaborate with depth
+			"damp": root.randf_range(0.15, 0.55),        # how hard this lineage suppresses its own modulators
 		}
 		# how fast the per-generation perturbation decays: at 0.6 (elaboration off)
 		# each generation is a small refinement that fades to nothing; toward 0.9
@@ -418,6 +459,81 @@ class ProsodyWalk:
 			if g.has(key):
 				g[key] = clampf(float(g[key]), float(G_BOUNDS[key][0]), float(G_BOUNDS[key][1]))
 		return g
+
+	## One lineage's raw modulator set - the oscillators it has SPAWNED. The root
+	## may seed one; each later generation may add another, so a deep lineage carries
+	## more raw gestures. Raw, because nothing here is dampened, normalized, or
+	## pruned yet - that is _finalize_mods' job, run once the party is pooled. Depths
+	## are pre-budget; a generation spawns nothing ~40% of the time, so lineages
+	## differ in how much motion they bring.
+	static func _lineage_mods(lineage: Array) -> Array:
+		var out: Array = []
+		for i in lineage.size():
+			var mr := RandomNumberGenerator.new()
+			mr.seed = hash("walk_mod") ^ int(lineage[i]) ^ (i * 2654435761)
+			if i == 0 and mr.randf() < 0.35:
+				continue                                 # some roots start still
+			elif i > 0 and mr.randf() < 0.4:
+				continue                                 # not every generation adds motion
+			out.append({
+				"target": MOD_TARGETS[mr.randi() % MOD_TARGETS.size()],
+				"shape": MOD_SHAPES[mr.randi() % MOD_SHAPES.size()],
+				"rate": mr.randf_range(MOD_RATE[0], MOD_RATE[1]),
+				"depth": mr.randf_range(0.25, 1.0),      # pre-normalization weight
+				"phase": mr.randf_range(0.0, TAU),
+			})
+		return out
+
+	## The alchemy step: turn a pooled pile of raw modulators into a BLEND. Dampen
+	## every depth by `damp`, renormalize the whole set to one budget so a new
+	## gesture dilutes rather than stacks, then suppress (drop) anything the dilution
+	## pushed under the floor. Returns the surviving modulators with final depths.
+	static func _finalize_mods(raw: Array, damp: float) -> Array:
+		var keep: float = clampf(1.0 - damp, 0.0, 1.0)
+		var out: Array = []
+		var total := 0.0
+		for m in raw:
+			var d: float = float(m.depth) * keep
+			if d <= 0.0:
+				continue
+			var mm: Dictionary = (m as Dictionary).duplicate()
+			mm.depth = d
+			out.append(mm)
+			total += d
+		if total > MOD_BUDGET:                           # NORMALIZE: the fixed energy budget
+			var s: float = MOD_BUDGET / total
+			for m in out:
+				m.depth = float(m.depth) * s
+		var pruned: Array = []                           # SUPPRESS: the diluted weak ones die
+		for m in out:
+			if float(m.depth) >= MOD_SUPPRESS:
+				pruned.append(m)
+		return pruned
+
+	## Evaluate the summed modulation on one target at utterance time `t` (seconds),
+	## in roughly [-1, 1] after the budget. Each shape gives a different route: a
+	## smooth sine/cosine sway, a triangle that ramps then reverses, a saw that snaps.
+	func _mod(target: String, t: float) -> float:
+		if _mods.is_empty():
+			return 0.0
+		var s := 0.0
+		for m in _mods:
+			if m.target != target:
+				continue
+			var ph: float = t * float(m.rate) + float(m.phase) / TAU
+			var frac: float = ph - floor(ph)
+			var v := 0.0
+			match m.shape:
+				"sine":
+					v = sin(TAU * ph)
+				"cosine":
+					v = cos(TAU * ph)
+				"triangle":
+					v = 2.0 * absf(2.0 * frac - 1.0) - 1.0
+				"saw":
+					v = 2.0 * frac - 1.0
+			s += float(m.depth) * v
+		return s
 
 	static func _motif_bank(seed_value: int) -> Array:
 		var m := RandomNumberGenerator.new()
@@ -459,6 +575,9 @@ class ProsodyWalk:
 			_swing += (1.0 if _gate.randf() < 0.5 else -1.0) * p.swing_kick * kick
 		var pace: float = lerpf(p.pace_calm, p.pace_hot, norm) \
 			* (1.0 + clampf(_swing, -0.3, 0.45))
+		# the modulators ride here: a slow oscillation folded into the running pace,
+		# on whatever route (sine/cosine/triangle/saw) survived the blend
+		pace *= 1.0 + 0.22 * _mod("pace", _t)
 		_swing *= exp(-est_dur / 2.0)
 		var emph := 0.0
 		var pre_pause := 0.0
@@ -483,11 +602,14 @@ class ProsodyWalk:
 		# the EMAs advance by the word's own duration
 		arousal = lerpf(arousal, p.baseline, 1.0 - exp(-p.settle * est_dur))
 		spent *= exp(-est_dur / p.spend_window)
+		# gravity wavers on its own modulator route, then the clock advances
+		var gravity: float = clampf(float(p.gravity) * (1.0 + 0.6 * _mod("gravity", _t)), 0.0, 0.8)
+		_t += est_dur
 		return {
 			"pace": pace, "emph": emph, "pre_pause": pre_pause,
 			"breath_pause": breath_pause, "tilt": motif.tilt * (frac - 0.5),
 			"gap": motif.gap, "acts": acts, "ring_st": ring_st,
-			"gravity": p.gravity,
+			"gravity": gravity,
 		}
 
 
