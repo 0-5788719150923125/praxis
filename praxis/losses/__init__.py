@@ -3,6 +3,7 @@ from functools import partial
 import torch
 import torch.nn as nn
 
+from praxis.losses.batchmode import ModeBaselineCrossEntropyLoss, ModeCrossEntropyLoss
 from praxis.losses.contrastive_token import ContrastiveTokenLoss
 from praxis.losses.cross_entropy import CrossEntropyLoss
 from praxis.losses.focal import FocalLoss
@@ -28,6 +29,11 @@ LOSS_REGISTRY = {
     "focal_alpha": partial(
         alpha_vector_factory, cls=FocalLoss, alpha_start=0.5, alpha_end=1.5, gamma=2.0
     ),
+    # Mode-level criteria over the batch loss distribution: "mode_cross_entropy"
+    # is floored mode-as-target (consensus band leads, tail keeps FLOOR * lr);
+    # "mode_baseline_cross_entropy" is the deviation-above-mode fallback dual.
+    "mode_cross_entropy": ModeCrossEntropyLoss,
+    "mode_baseline_cross_entropy": ModeBaselineCrossEntropyLoss,
     "mile": MiLeLoss,
     "stablemax": StableMaxCrossEntropyLoss,
     "contrastive_token": ContrastiveTokenLoss,

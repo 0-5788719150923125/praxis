@@ -176,6 +176,36 @@ OPTIMIZER_METRIC_DESCRIPTIONS = {
             "order": 60,
         },
     },
+    "opt_geo_share": {
+        "description": (
+            "Mean spectral share across LionGeo's blended matrices: 0 = pure "
+            "sign updates (Lion geometry), 1 = pure orthogonalized updates "
+            "(Muon geometry). The hypergradient-adapted mixture's centre of "
+            "mass; the clamp floors it to [0.12, 0.88]."
+        ),
+        "chart": {
+            "title": "Geometry Share (spectral)",
+            "y_label": "share",
+            "y_scale": "linear",
+            "group": "optimizer",
+            "order": 65,
+        },
+    },
+    "opt_geo_share_spread": {
+        "description": (
+            "Max minus min spectral share across LionGeo's matrices. Near 0 = "
+            "every matrix agrees and a single global geometry would do; wide = "
+            "different matrices want different norm geometries, which is the "
+            "case the per-matrix SMEAR exists for."
+        ),
+        "chart": {
+            "title": "Geometry Share Spread",
+            "y_label": "max - min",
+            "y_scale": "linear",
+            "group": "optimizer",
+            "order": 66,
+        },
+    },
     "opt_sf_spread": {
         "description": (
             "Schedule-free iterate-vs-average spread ||z - x|| / ||x||: how far "
@@ -240,6 +270,20 @@ def _second_moment_provider(optimizer):
     return None
 
 
+def _geo_provider(optimizer):
+    """An optimizer in the stack exposing per-matrix geometry shares
+    (``get_smear_shares``), or None. LionGeo sits as a composite's primary, so
+    each level checks the node and its ``primary`` before unwrapping."""
+    o, depth = optimizer, 0
+    while o is not None and depth < 8:
+        for cand in (o, getattr(o, "primary", None)):
+            if cand is not None and hasattr(cand, "get_smear_shares"):
+                return cand
+        o = getattr(o, "optimizer", None)
+        depth += 1
+    return None
+
+
 def _momentum(state):
     for k in _MOMENTUM_KEYS:
         m = state.get(k)
@@ -262,6 +306,14 @@ def extract_optimizer_dynamics(optimizer) -> dict:
         return {}
 
     out = {"opt_lr": float(pgs[0].get("lr", 0.0))}
+
+    geo = _geo_provider(optimizer)
+    if geo is not None:
+        shares = geo.get_smear_shares()
+        if shares:
+            out["opt_geo_share"] = sum(shares) / len(shares)
+            out["opt_geo_share_spread"] = max(shares) - min(shares)
+
     m = float(getattr(sf, "momentum", 0.0)) if sf is not None else 0.0
     sf_ok = sf is not None and 0.0 < m < 1.0
 

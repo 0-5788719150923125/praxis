@@ -15,11 +15,11 @@ Praxis is built around 48 pluggable registries. The feature categories below lin
 - [Input encoders](encoders.md) (21) - Front-end encoders, including the byte-latent and abstractinator variants.
 - [Layer-routing controllers](controllers.md) (8) - Decide which expert / block a token visits at each depth. Enables out-of-order layers and graph-style routing.
 - [Long-term memory](memory.md) (8) - Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced as a layer (MAL) or a gate (MAG). Selected with ``--memory-type``; default is ``none``.
-- [Loss functions](losses.md) (9) - Per-token criteria. Most accept optional ``loss_weights`` for task-weighted training.
+- [Loss functions](losses.md) (11) - Per-token criteria. Most accept optional ``loss_weights`` for task-weighted training.
 - [Mixture-of-widths](width.md) (7) - Per-depth deflation of each block's inner rank over the recurrent loop (a helically-precessing low-rank slice), turning deep recurrence into a population of narrow voters. Selected with ``--width-type``; default is ``none`` (full width).
 - [Mono-forward graph cutting](mono.md) (3) - Sequential-decoder graph cutting: detach hidden states on a cut schedule and train each segment from a local goodness score (vocab CE for token models, next-patch-embedding prediction for encoder models). Selected with ``--mono-type``; default is off.
 - [Normalization layers](normalization.md) (5) - LayerNorm/RMSNorm variants, including SandwichNorm (required for stable recurrent-depth bias).
-- [Optimizer profiles](optimizers.md) (6) - Named optimizer presets (built on pytorch-optimizer). Selected with ``--optimizer``; default is ``Lion``. Each entry shows its concrete settings (lr, betas, weight decay, ...).
+- [Optimizer profiles](optimizers.md) (7) - Named optimizer presets (built on pytorch-optimizer). Selected with ``--optimizer``; default is ``Lion``. Each entry shows its concrete settings (lr, betas, weight decay, ...).
 - [Optimizer wrappers](wrappers.md) (8) - Composable wrappers layered onto the base optimizer with ``--optimizer-wrappers`` (a list, applied innermost-first). The schedule-free family runs without an LR schedule; the others keep it.
 - [Output heads](heads.md) (12) - LM heads (tied/untied, harmonic, crystal) and multi-token-prediction wrappers.
 - [Positional encoding](encoding.md) (5) - RoPE, ALiBi, NoPE and friends - the rotational / additive position priors injected into attention.

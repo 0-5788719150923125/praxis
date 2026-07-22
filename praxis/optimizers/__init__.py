@@ -165,6 +165,35 @@ def _create_muon(model, **profile):
     return CompositeOptimizer(primary, secondary, secondary_lr_ratio=ratio)
 
 
+def _create_lion_geo(model, **profile):
+    """Build LionGeo over the interior >=2D matrices, with the vocab-facing
+    params (embeddings/head/norms/biases) on a plain secondary via
+    :class:`CompositeOptimizer` - the same split as Muon, because the spectral
+    branch shares Muon's constraint (never orthogonalize an embedding)."""
+    from praxis.optimizers.lion_geo import LionGeo
+
+    secondary_name = profile.pop("secondary_optimizer", None) or "Lion"
+    secondary_wd = profile.pop("secondary_weight_decay", None)
+    profile = {
+        k: v for k, v in profile.items() if k not in ("optimizer_name", "wd_ban_list")
+    }
+    geo_params, vocab_params = _split_muon_params(model)
+    if not geo_params:  # nothing 2D to blend geometries over
+        raise ValueError("LionGeo: no >=2D interior params found")
+
+    primary = LionGeo(geo_params, **profile)
+    secondary, sec_lr = _build_secondary(
+        secondary_name, vocab_params, wd_override=secondary_wd
+    )
+    ratio = sec_lr / float(profile["lr"])
+    print(
+        f"[Optimizer] LionGeo+{secondary_name}: {len(geo_params)} matrices on the "
+        f"sign/spectral smear; {len(vocab_params)} vocab-facing params on "
+        f"{secondary_name} (lr ratio {ratio:.3g})."
+    )
+    return CompositeOptimizer(primary, secondary, secondary_lr_ratio=ratio)
+
+
 def _build_secondary(name, params, wd_override=None):
     """Build the composite's secondary optimizer over ``params``, with weight
     decay only on its >=2D members (embeddings/head), not norms/biases.
@@ -197,8 +226,11 @@ def get_optimizer(model, wrappers=(), *args, **kwargs):
     wrappers handle their own lr/weight-decay prep, so nothing here is
     special-cased.
     """
-    if str(kwargs.get("optimizer_name", "")).lower() == "muon":
+    base_name = str(kwargs.get("optimizer_name", "")).lower()
+    if base_name == "muon":
         optimizer = _create_muon(model, **kwargs)
+    elif base_name == "liongeo":
+        optimizer = _create_lion_geo(model, **kwargs)
     else:
         optimizer = create_optimizer(model, *args, **kwargs)
     _promote_tasker_lr(optimizer, model)
@@ -344,6 +376,26 @@ OPTIMIZER_PROFILES = {
         adamw_lr=0.0003,
         adamw_betas=(0.9, 0.95),
         adamw_wd=0.0,
+    ),
+    "LionGeo": dict(
+        # Lion's machinery, TWO geometries. sign() and Newton-Schulz are
+        # steepest descent under the elementwise-infinity and spectral norms
+        # respectively (Lion-K / Schatten-p family); LionGeo computes both
+        # normalizations of ONE shared Lion momentum and blends them per matrix
+        # with a SMEAR-style mixture whose logit adapts online by hypergradient
+        # descent, floored so neither geometry is ever extinguished. Both
+        # branches are RMS-matched to 1, so a single Lion-scale lr bounds the
+        # step regardless of where the blend settles. Weight decay is
+        # eliminated outright, as in MuonGeo (same rationale, same falsifier:
+        # watch the weight-norm cards). Interior matrices only; embeddings,
+        # the head, norms and biases go to the plain Lion secondary. Watch
+        # opt_geo_share / opt_geo_share_spread for where the mixture lands.
+        optimizer_name="LionGeo",
+        lr=0.0003,
+        betas=(0.95, 0.98),
+        weight_decay=0.0,
+        secondary_optimizer="Lion",
+        secondary_weight_decay=0.0,
     ),
     "Prodigy": dict(
         optimizer_name="Prodigy",

@@ -3,7 +3,7 @@
 
 Per-token criteria. Most accept optional ``loss_weights`` for task-weighted training.
 
-Registry: ``praxis.LOSS_REGISTRY`` (9 entries)
+Registry: ``praxis.LOSS_REGISTRY`` (11 entries)
 
 ## `contrastive_token` - ContrastiveTokenLoss
 
@@ -83,6 +83,21 @@ https://github.com/suu990901/LLaMA-MiLe-Loss Probably better than standard cross
 entropy, but uses more VRAM, so it's not the default in Praxis today.
 
 Source: [praxis/losses/mile.py:11](../praxis/losses/mile.py#L11)
+
+## `mode_baseline_cross_entropy` - ModeBaselineCrossEntropyLoss
+
+Floored mode-as-baseline: weight by deviation ABOVE the modal loss. The consensus band
+is the baseline (floor-level gradient only); tokens above it get pressure proportional
+to their deviation. The fallback dual of :class:`ModeCrossEntropyLoss`.
+
+Source: [praxis/losses/batchmode.py:176](../praxis/losses/batchmode.py#L176)
+
+## `mode_cross_entropy` - ModeCrossEntropyLoss
+
+Floored mode-as-target: per-token CE weighted by the loss-density at each token's own
+loss value (consensus band leads, tail keeps FLOOR).
+
+Source: [praxis/losses/batchmode.py:55](../praxis/losses/batchmode.py#L55)
 
 ## `stablemax` - StableMaxCrossEntropyLoss
 
