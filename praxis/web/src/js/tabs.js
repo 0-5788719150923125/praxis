@@ -331,18 +331,18 @@ function renderSpec(data, container) {
     // title isn't duplicated by an identical inner section title.
     const sheets = [
         {
+            title: 'Blueprint',
+            subtitle: 'Instantiated model module tree',
+            copyable: true,
+            build: () => present('architecture') ? createPreBlock(data.model_architecture) : '',
+        },
+        {
             title: 'Identity & Commands',
             subtitle: 'Run hashes, reproduce commands, parameter counts',
             build: () => ['hashes', 'commands', 'parameters']
                 .filter(present)
                 .map(id => renderSpecSections[id](data))
                 .join(''),
-        },
-        {
-            title: 'Blueprint',
-            subtitle: 'Instantiated model module tree',
-            copyable: true,
-            build: () => present('architecture') ? createPreBlock(data.model_architecture) : '',
         },
         {
             title: 'Arguments',
