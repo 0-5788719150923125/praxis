@@ -239,7 +239,7 @@ Hyperparameters affect the oscillation:
 
 ## Connection to The Paper
 
-From "The Blind Watchmaker":
+From "A Blind Watchmaker":
 
 > "Two observers, identical input, fundamentally different realities."
 

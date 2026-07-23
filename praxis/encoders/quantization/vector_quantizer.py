@@ -106,6 +106,14 @@ class VectorQuantizer(nn.Module):
             self.register_buffer("step", torch.zeros((), dtype=torch.long))
             self.register_buffer("last_hit_step", torch.zeros(self.K, dtype=torch.long))
             self.stale_after = int(stale_after)
+            # Telemetry (device-only; read by telemetry()/training_metrics at
+            # the dashboard's log interval, never synced in the step path)
+            self.register_buffer("reset_count_total", torch.zeros((), dtype=torch.long))
+            self.register_buffer("dead_code_count", torch.zeros((), dtype=torch.long))
+            # Host-side mirror of the reset cadence, used ONLY to gate the
+            # console log's syncs (may drift by one interval across a resume;
+            # the telemetry buffers above do not).
+            self._log_step = 0
 
     # ---------------------------
     # Internal helpers (tensor-only)
@@ -263,18 +271,27 @@ class VectorQuantizer(nn.Module):
             new_sum = torch.where(apply_rows.unsqueeze(1), cand_new, old_sum)
             self.ema_weight_sum.index_copy_(0, rand_idx, new_sum)
 
-        # Console log: how many codes were reset
-        resets = int(apply_rows.to(torch.int64).sum().item())
-        if resets > 0:
-            total_dead = int(dead_mask.to(torch.int64).sum().item())
-            logging.getLogger(__name__).info(
-                "VQ reset: %d/%d sampled codes were dead, reset %d (K=%d, %d dead total)",
-                int(dead_mask[rand_idx].to(torch.int64).sum().item()),
-                int(self.R_MAX),
-                resets,
-                int(self.K),
-                total_dead,
-            )
+        # Telemetry, tensor-only: cumulative resets + current dead census.
+        resets_t = apply_rows.to(torch.int64).sum()
+        self.reset_count_total.add_(resets_t)
+        self.dead_code_count.copy_(dead_mask.to(torch.int64).sum())
+
+        # Console log, gated to the reset cadence by a host counter - the
+        # previous version .item()-synced every training step to decide
+        # whether anything was reset.
+        self._log_step += 1
+        if self._log_step >= self.reset_interval:
+            self._log_step = 0
+            resets = int(resets_t.item())
+            if resets > 0:
+                logging.getLogger(__name__).info(
+                    "VQ reset: %d/%d sampled codes were dead, reset %d (K=%d, %d dead total)",
+                    int(dead_mask[rand_idx].to(torch.int64).sum().item()),
+                    int(self.R_MAX),
+                    resets,
+                    int(self.K),
+                    int(self.dead_code_count.item()),
+                )
 
         # Zero the step counter when reset actually fired
         keep = (~do_reset).to(self.steps_since_last_reset.dtype)
@@ -430,6 +447,10 @@ class MultiStageResidualVQ(nn.Module):
         # Sentinel pad vector in the D-space
         self.register_buffer("pad_vector", torch.zeros(D))
 
+        # Last per-stage perplexities, stashed detached each forward for the
+        # dashboard (float conversion happens only at the metrics interval).
+        self._last_stage_ppl: list = []
+
     def _compose_indices(self, idx_list: list[torch.Tensor]) -> torch.Tensor:
         base = 1
         composed = torch.zeros_like(idx_list[0])
@@ -472,7 +493,23 @@ class MultiStageResidualVQ(nn.Module):
         for p in ppl_list:
             perplexity = perplexity * p
 
+        self._last_stage_ppl = [p.detach() for p in ppl_list]
+
         return z_hat, total_loss, idx_comp, perplexity.detach()
+
+    @torch.no_grad()
+    def telemetry(self) -> Dict[str, float]:
+        """Per-stage VQ health for the dashboard: codebook perplexity, dead-code
+        fraction, and cumulative resets. Syncs to host; call only from the
+        metrics interval, never the step path."""
+        out: Dict[str, float] = {}
+        for s, stage in enumerate(self.stages):
+            if s < len(self._last_stage_ppl):
+                out[f"vq_perplexity_s{s}"] = float(self._last_stage_ppl[s])
+            if getattr(stage, "reset_codes", False):
+                out[f"vq_dead_frac_s{s}"] = float(stage.dead_code_count) / stage.K
+                out[f"vq_resets_s{s}"] = float(stage.reset_count_total)
+        return out
 
     # convenience accessors
     def stage_codebook(self, s: int) -> torch.Tensor:

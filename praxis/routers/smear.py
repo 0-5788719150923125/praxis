@@ -291,7 +291,7 @@ class SMEAR(nn.Module):
         Store routing metrics for expert convergence tracking.
 
         Tracks how routing probabilities evolve over training to visualize
-        convergence patterns similar to Figure 1 in "The Blind Watchmaker" paper.
+        convergence patterns similar to Figure 1 in "A Blind Watchmaker" paper.
 
         Metrics are stored with layer prefixes to support per-layer visualization
         when the same router is called at multiple layer positions.

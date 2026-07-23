@@ -148,3 +148,99 @@ class AbstractinatorEncoder(ByteLatentEncoder):
         self._last_vq_indices = vq_indices
         self._last_vq_perplexity = vq_perplexity
         return z_q, aux_loss + vq_loss
+
+    def training_metrics(self) -> dict:
+        """VQ health for the dashboard (read by DynamicsLogger at the log
+        interval - the same numbers the reset path prints to the terminal,
+        now charted over time). The harmonic bottleneck wraps the core RVQ,
+        so unwrap one level when present."""
+        core = self.quantizer
+        core = getattr(core, "quantizer", core)
+        out = {}
+        if hasattr(core, "telemetry"):
+            out.update(core.telemetry())
+        ppl = getattr(self, "_last_vq_perplexity", None)
+        if ppl is not None:
+            out["vq_perplexity"] = float(ppl)
+        return out
+
+    # Chart hints for the metrics above. Per-stage keys are declared for up to
+    # 4 residual stages; absent stages simply never emit their key.
+    metric_descriptions = {
+        "vq_perplexity": {
+            "description": (
+                "Composed codebook perplexity (product across residual "
+                "stages): the effective number of distinct composed codes in "
+                "use, out of K^depth. Falling toward 1 = codebook collapse; "
+                "healthy training climbs and then holds."
+            ),
+            "chart": {
+                "title": "VQ Perplexity (composed)",
+                "y_label": "effective codes",
+                "y_scale": "logarithmic",
+                "group": "vq",
+                "group_order": 74,
+                "order": 0,
+            },
+        },
+        **{
+            f"vq_perplexity_s{s}": {
+                "description": (
+                    f"Stage-{s} codebook perplexity: effective codes in use "
+                    "out of K at this residual stage. Later stages usually "
+                    "sit lower (they quantize what earlier stages left)."
+                ),
+                "chart": {
+                    "title": "VQ Stage Perplexity",
+                    "y_label": "effective codes",
+                    "y_scale": "logarithmic",
+                    "group": "vq",
+                    "order": 1,
+                    "series_group": "vq_stage_ppl",
+                    "series_label": f"stage {s}",
+                },
+            }
+            for s in range(4)
+        },
+        **{
+            f"vq_dead_frac_s{s}": {
+                "description": (
+                    f"Stage-{s} dead-code fraction: codes below the usage "
+                    "threshold (EMA cluster size < 1), the population the "
+                    "reset mechanism draws from. Persistently high = the "
+                    "codebook is oversized or the encoder output has "
+                    "collapsed onto few modes."
+                ),
+                "chart": {
+                    "title": "VQ Dead-Code Fraction",
+                    "y_label": "fraction of K",
+                    "y_scale": "linear",
+                    "group": "vq",
+                    "order": 2,
+                    "series_group": "vq_dead",
+                    "series_label": f"stage {s}",
+                },
+            }
+            for s in range(4)
+        },
+        **{
+            f"vq_resets_s{s}": {
+                "description": (
+                    f"Stage-{s} cumulative dead-code resets (the count the "
+                    "terminal 'VQ reset' log reports, accumulated). Read the "
+                    "slope: a sustained slope = ongoing codebook churn; "
+                    "flattening = the codebook has stabilized."
+                ),
+                "chart": {
+                    "title": "VQ Code Resets (cumulative)",
+                    "y_label": "codes reset",
+                    "y_scale": "linear",
+                    "group": "vq",
+                    "order": 3,
+                    "series_group": "vq_resets",
+                    "series_label": f"stage {s}",
+                },
+            }
+            for s in range(4)
+        },
+    }

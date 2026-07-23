@@ -139,7 +139,7 @@ After Layer 8 softmax:
 
 ### Rounding Errors in Exponential Space
 
-From "The Blind Watchmaker":
+From "A Blind Watchmaker":
 
 > "Floating-point rounding errors create a high-dimensional pattern space within numerical approximation artifacts."
 

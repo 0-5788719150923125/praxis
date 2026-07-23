@@ -19,7 +19,7 @@ def test_registry_discovered_from_yaml_documents():
 def test_default_is_blind_watchmaker():
     s = resolve_thread(None)
     assert s.key == DEFAULT_THREAD
-    assert s.title == "The Blind Watchmaker"
+    assert s.title == "A Blind Watchmaker"
     assert "framing" in s.pillars and "proofs" in s.pillars
     assert s.component("abstract").startswith("Do you exist")
     assert s.component("introduction").startswith("The dominant recipe")
@@ -28,7 +28,7 @@ def test_default_is_blind_watchmaker():
 
 def test_gooder_stub_is_minimal():
     s = resolve_thread("good_get_gooder")
-    assert s.pillars == ("runs", "evolution")
+    assert s.pillars == ("runs", "datasets", "evolution")
     assert "pretty good" in s.component("abstract")
     assert s.component("theory")  # plugs the body's \paperThreadTheory hook
 
