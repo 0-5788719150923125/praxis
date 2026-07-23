@@ -109,6 +109,69 @@ def test_uniform_floor_keeps_easy_task_from_starving():
 # --------------------------------------------------------------------------
 
 
+class _StubSampler:
+    """Minimal sampler for the refill loop: fixed task, canned document."""
+
+    def __init__(self, name, task_type):
+        self.dataset_path = name
+        self.task_type = task_type
+        self.weight = 1.0
+
+    def get_document(self):
+        return {
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "hello"},
+            ],
+            "metadata": {},
+        }
+
+
+def test_refill_in_tasker_mode_adapts_weights_and_logs_metrics(tmp_path):
+    """Regression: the refill dispatch skipped tasker mode entirely, so tasker
+    runs never adapted sampling weights toward the learned task targets and
+    logged an EMPTY data_metrics.db (no sampling-weights card - every
+    tasker-mode run in build/runs had 0 rows)."""
+    import sqlite3
+
+    _reset()
+    InterleaveDataManager.shared_weights = None
+    InterleaveDataManager.shared_weights_initialized = False
+    samplers = [_StubSampler("easy_ds", 0), _StubSampler("hard_ds", 1)]
+    m = InterleaveDataManager(
+        samplers,
+        [0.5, 0.5],
+        tokenizer=None,
+        block_size=64,
+        weighting_mode="tasker",
+        run_dir=str(tmp_path),
+        data_metrics_log_interval=10,
+        enable_chat_validation=False,
+    )
+    # The trainer reports: task 1 is hard (3x weight).
+    InterleaveDataManager.update_task_weights([1.0, 3.0])
+
+    for _ in range(3):
+        m._refill_message_queue(min_documents=64)
+        m.message_queue.message_queue.clear()  # force the next refill
+
+    # Sampling weights moved toward the hard task...
+    assert m.dynamic_weights[1] > m.dynamic_weights[0]
+    assert m.sampling_count > 0
+    # ...and the sampling-weights card has rows to render.
+    m.data_metrics_logger.close()
+    con = sqlite3.connect(tmp_path / "data_metrics.db")
+    rows = con.execute(
+        "select count(*), max(sampling_weights) from data_metrics"
+    ).fetchone()
+    con.close()
+    assert rows[0] > 0
+    assert "hard_ds" in rows[1]
+    _reset()
+    InterleaveDataManager.shared_weights = None
+    InterleaveDataManager.shared_weights_initialized = False
+
+
 def test_difficulty_weighter_output_upsamples_its_hard_task():
     _reset()
     # Feed the weighter a high loss on task 1 and a low loss on task 0, then

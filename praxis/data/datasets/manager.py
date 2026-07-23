@@ -411,9 +411,12 @@ class InterleaveDataManager:
                         )
                     elif self.weighting_mode == "novelty":
                         self._update_weights_after_sample(sampler_idx)
-                    elif self.weighting_mode == "uniform":
-                        # No weight adaptation, but still track per-sampler
-                        # counts and trigger the periodic metrics flush.
+                    elif self.weighting_mode in ("tasker", "uniform"):
+                        # tasker: pull the sampling weights toward the
+                        # task-learned targets (shared_task_weights). uniform:
+                        # no adaptation. Both need the per-sampler counts and
+                        # the periodic metrics flush this call performs - the
+                        # sampling-weights card has no data without it.
                         self._update_weights_after_sample(sampler_idx)
 
     def _update_weights_after_sample(
