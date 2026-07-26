@@ -1,6 +1,10 @@
 # Gated on the HALO objective (loss_func: halo). Lives in the harmonic section
 # beside the crystal-geometry discussion: HALO is the loss-side companion to the
 # crystal head, scoring by distance to centroids rather than dot-product logits.
+# The ring drawing is a proper captioned figure (fig:halo-ring): the shell
+# formula sits OUTSIDE the black disc in dark text with a leader to the dashed
+# target circle - the earlier light-orange label crossed the orange glow and
+# the white page edge and was unreadable on both.
 section: harmonic
 order: 25
 requires:
@@ -20,9 +24,35 @@ body: >
   This makes the bias-variance picture literal. Plotting the radial energy of a
   batch produces a single bright ring at the consensus radius - the embeddings
   that have settled into agreement - with darkness inside (the abstain sink) and
-  darkness outside (overconfident or scattered mass). The ring is bias: shared,
+  darkness outside (overconfident or scattered mass)
+  (Figure~\ref{fig:halo-ring}). The ring is bias: shared,
   converged structure. The dark interior and exterior are variance with no
   structure to show. The same separation we draw from the harmonic field as
   fanned strands appears here as a one-dimensional radial law.
 
-  \begin{center}\begin{tikzpicture}[scale=1.0]\fill[black] (0,0) circle (2.0); \draw[orange!90!red,line width=2pt,opacity=0.25] (0,0) circle (1.18); \draw[orange!90!red,line width=2pt,opacity=0.55] (0,0) circle (1.28); \draw[orange!90!red,line width=2pt,opacity=0.9] (0,0) circle (1.38); \draw[orange!90!red,line width=2pt,opacity=0.55] (0,0) circle (1.48); \draw[orange!90!red,line width=2pt,opacity=0.25] (0,0) circle (1.58); \draw[cyan!60!white,dashed,line width=0.5pt] (0,0) circle (1.38); \node[white,font=\scriptsize] at (0,0) {abstain sink}; \node[white,font=\scriptsize] at (0,-1.78) {variance}; \node[orange!80!white,font=\scriptsize] at (1.38,0.32) {$r=\sqrt{1-2/D}$};\end{tikzpicture}\end{center}
+  \begin{figure}[htbp] \centering \begin{tikzpicture}[scale=1.0]
+  \fill[black] (0,0) circle (2.0);
+  \draw[orange!90!red,line width=2pt,opacity=0.25] (0,0) circle (1.18);
+  \draw[orange!90!red,line width=2pt,opacity=0.55] (0,0) circle (1.28);
+  \draw[orange!90!red,line width=2pt,opacity=0.9] (0,0) circle (1.38);
+  \draw[orange!90!red,line width=2pt,opacity=0.55] (0,0) circle (1.48);
+  \draw[orange!90!red,line width=2pt,opacity=0.25] (0,0) circle (1.58);
+  \draw[cyan!60!white,dashed,line width=0.5pt] (0,0) circle (1.38);
+  \node[white,font=\scriptsize] at (0,0) {abstain sink};
+  \node[white,font=\scriptsize] at (0,-1.78) {variance};
+  \draw[cyan!60!black,dashed,line width=0.5pt] (1.251,0.583) -- (2.35,0.95);
+  \node[black!80,font=\scriptsize,anchor=west,align=left] at (2.4,0.95)
+  {consensus shell (bias)\\ $r=\sqrt{1-2/D}$};
+  \end{tikzpicture}
+  \caption{Radial energy under HALO, drawn schematically. Every embedding is
+  scored by its distance to the crystal centroids, and the objective drives
+  the batch onto a consensus shell of mean-square radius $r^2 = 1 - 2/D$
+  (dashed): settled, shared structure - bias as a single bright ring. Tokens
+  the model cannot place confidently fall inward to the abstain class at the
+  origin (the sink); overconfident or scattered mass drifts outside the
+  shell. Both dark regions are variance: deviation with no shared structure
+  to show. The measured counterparts are on the dashboard - mean radius
+  against shell radius, radius spread, and abstain rate - so the schematic's
+  claim (one tight ring, a quiet interior) is checked against the run, not
+  assumed.}
+  \label{fig:halo-ring} \end{figure}
