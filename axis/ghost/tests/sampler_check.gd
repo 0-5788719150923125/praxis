@@ -20,6 +20,10 @@ const TEXT := ("Once upon a time, the river spoke softly to the stones. "
 
 func _init() -> void:
 	var failures := 0
+	# the resonance drone rings through pauses by design - silence it here so
+	# the round-trip measures the SPEECH (the mic path measures humans, who
+	# bring no drone)
+	Voice_.DRONE = false
 	var hi := Voice_.render(TEXT, Voice_.Spec.from_traits({"pitch": 0.6, "pace": 0.45}))
 	var lo := Voice_.render(TEXT, Voice_.Spec.from_traits({"pitch": -0.6, "pace": -0.4}))
 	var a: Dictionary = Sampler_.analyze(hi.pcm, float(Voice_.SR))

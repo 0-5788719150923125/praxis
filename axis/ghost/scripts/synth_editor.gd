@@ -120,15 +120,18 @@ const PROFILES := {
 #
 # Raw velocity alone can only ever inch you toward the deep field - the far
 # reaches (au, lightyears) sit past where patience can carry you in a sitting.
-# That is what the WARP is for, and it is your idea exactly: hold the raw
-# maximum for WARP_CHARGE seconds and the drive charges; once charged, if you
-# have banked enough ADRENOCHROME, the wire jumps FASTER than raw velocity could
-# ever go, spending the reserve as it burns. Explore locally to fill the tank,
-# then spend it to reach somewhere you could not otherwise get to in time.
+# That is what the WARP is for: hold DRIFT for WARP_CHARGE seconds and the
+# drive charges; once charged, if you have banked enough ADRENOCHROME, the
+# wire jumps FASTER than raw velocity could ever go, spending the reserve as
+# it burns. THE CHARGE IS TIME SPENT DRIFTING, nothing else - it used to
+# require sitting at max velocity, which anchor/reel zeroed, so time-to-warp
+# swung from 0 s (drive already charged) to 40+ s (ramp from a dead stop plus
+# the hold) depending on mode history. Now it is the same short ritual from
+# ANY state: enter drift, hold 6 s, jump.
 const DRIFT_V0 := 1.0 / 600.0       # odometer/sec at the start of a drift (a crawl)
 const DRIFT_VMAX := 1.0 / 180.0     # raw maximum odometer/sec - deliberately slow: the deep field is not free
-const DRIFT_ACCEL := (1.0 / 180.0 - 1.0 / 600.0) / 22.0   # ramp crawl -> raw max over ~22s of unbroken drift
-const WARP_CHARGE := 10.0           # seconds held at raw max before the drive charges
+const DRIFT_ACCEL := (1.0 / 180.0 - 1.0 / 600.0) / 8.0    # ramp crawl -> raw max over ~8s of unbroken drift
+const WARP_CHARGE := 6.0            # seconds of unbroken DRIFT before the drive charges
 const WARP_VEL := 1.0 / 16.0        # warp odometer/sec - the streaks that "move faster than velocity allows"
 const REEL_DECAY := 0.45            # bare-line retrieval (no hook) = EXPONENTIAL decay of the odometer (scaled by _reel_power) - unwinds from ANY distance in log-time, since the odometer is now unbounded
 # THE FIGHT IS FOUGHT ON THE LINE (2026-07-27): a hook no longer runs an
@@ -191,6 +194,9 @@ var _last_strike_t := -999.0        # stream-local time of the last strike count
 var _hook := {}                     # the live reel: rng, step, t, d0, haul, members,
                                     # traits, genome (annealing), d, reward
 var _working_genome := {}           # adrenochrome carried by the WORKING candidate
+var _working_loc := {}              # the RECEPTION the candidate carries: the
+                                    # {prox, freq} acoustics of the spot it was
+                                    # caught at - a seed keeps its place's sound
 var _metrics_t := 0.0
 var _status_t2 := 0.0               # throttle for the calm line readout
 var _profile := "anchor"
@@ -211,7 +217,7 @@ var _slotted_lineage: Array = []    # the seed currently cast FROM - re-clicking
 # throw / release / mode change - a new cast starts near, at a crawl.
 var _drift_dist := 0.0              # the odometer: 0..1, what every drift visual reads
 var _drift_vel := 0.0              # current odometer/sec, ramping V0 -> VMAX (-> WARP_VEL)
-var _drift_atmax := 0.0            # seconds held at raw max, charging the warp
+var _warp_charge_t := 0.0          # seconds spent DRIFTING, charging the warp
 var _warping := false              # the drive is lit and burning reserve right now
 var _reserve := 0.0               # banked adrenochrome - fishing mints it, the warp spends it
 # Autopilot: the game plays itself over a fixed take, for the UI-recorded export
@@ -468,11 +474,12 @@ func export_take() -> String:
 	# be synthesizing the SAME lineage and would race this write on completion
 	var base := "user://synth/take_%06x_export" % (hash(str(_lineage)) & 0xFFFFFF)
 	DirAccess.make_dir_recursive_absolute("user://synth")
-	# capture the CURRENT anchor's reception (read editor state on the main thread):
-	# the export bakes the same location colour we're hearing here, so a take caught
-	# in a rich region of the drift curve exports sounding like that region
-	var loc_prox := _beacon_prox()
-	var loc_freq := _location_freq()
+	# capture the reception WE ARE HEARING (the resolver: the spot while
+	# exploring, the hook's frozen spot mid-fight, the seed's own carried
+	# colour when landed) - the export bakes exactly that
+	var rc := _reception()
+	var loc_prox := float(rc.prox)
+	var loc_freq := float(rc.freq)
 	var done := {}
 	var task := WorkerThreadPool.add_task(func():
 		var result := Voice.render(text, spec)
@@ -591,6 +598,7 @@ func _release_line() -> void:
 	_lineage = [1]
 	_traits = _background_traits()
 	_working_genome = {}
+	_working_loc = {}
 	_restart_pending = false
 	_sync_line_button()
 	_update_reading_label()
@@ -622,6 +630,7 @@ func _throw() -> void:
 		rng.seed = _lineage[0]
 		_traits = _temper_traits(Voice.Spec.sample(rng).traits, drift)
 		_working_genome = {}         # wild = a fresh lineage-derived genome
+		_working_loc = {}
 		_status.text = "thrown (wild) - the water is quiet"
 	else:
 		var parent: Dictionary = _pick_parent()
@@ -639,6 +648,7 @@ func _throw() -> void:
 		# a child of an adrenochrome seed inherits the frozen genome verbatim -
 		# the reading still varies (gates, motifs, field ride the new lineage)
 		_working_genome = (parent.get("genome", {}) as Dictionary).duplicate()
+		_working_loc = (parent.get("loc", {}) as Dictionary).duplicate()
 		_status.text = "thrown (from %s) - the water is quiet" % _seed_name(parent.lineage)
 	_throw_ms = Time.get_ticks_msec()
 	# no drift reset: a throw casts from wherever the line already sits (you fish
@@ -682,6 +692,7 @@ func _throw_from(idx: int) -> void:
 			float(t.get(key, 0.0)) + randfn(0.0, maxf(jitter, 0.06)), -1.0, 1.0)
 	_traits = _temper_traits(_traits, drift)
 	_working_genome = (parent.get("genome", {}) as Dictionary).duplicate()
+	_working_loc = (parent.get("loc", {}) as Dictionary).duplicate()
 	_slotted_lineage = (parent.lineage as Array).duplicate()   # this seed is the bait now
 	_status.text = "cast from %s" % _seed_name(parent.lineage)
 	_throw_ms = Time.get_ticks_msec()
@@ -833,12 +844,12 @@ func _drift_reach() -> float:
 func _drift_reset() -> void:
 	_drift_dist = 0.0
 	_drift_vel = DRIFT_V0
-	_drift_atmax = 0.0
+	_warp_charge_t = 0.0
 	_warping = false
 
 
 ## One frame of travel, per mode - the position PERSISTS, only the motion differs:
-##   DRIFT  - accelerate outward; hold raw max WARP_CHARGE s to charge the warp,
+##   DRIFT  - accelerate outward; hold DRIFT for WARP_CHARGE s to charge the warp,
 ##            which surges the odometer while it burns the reserve.
 ##   ANCHOR - stop dead where you are (velocity 0, warp off); the position holds,
 ##            so you fish under the conditions of wherever you drifted to.
@@ -851,14 +862,9 @@ func _advance_drift(delta: float) -> void:
 		return                       # the FIGHT owns the line - see _advance_reel
 	match _profile:
 		"drift":
-			_drift_vel = minf(_drift_vel + DRIFT_ACCEL * delta, DRIFT_VMAX)
-			var at_max: bool = _drift_vel >= DRIFT_VMAX - 0.000001
-			if at_max:
-				_drift_atmax += delta
-			else:
-				_drift_atmax = 0.0
-				_warping = false
-			var charged: bool = _drift_atmax >= WARP_CHARGE
+			_drift_vel = minf(maxf(_drift_vel, DRIFT_V0) + DRIFT_ACCEL * delta, DRIFT_VMAX)
+			_warp_charge_t += delta
+			var charged: bool = _warp_charge_t >= WARP_CHARGE
 			if _warping:
 				if _reserve <= 0.0 or not charged:
 					_warping = false
@@ -876,11 +882,11 @@ func _advance_drift(delta: float) -> void:
 		"anchor":
 			# stop dead - hold this spot, drop any charge
 			_drift_vel = 0.0
-			_drift_atmax = 0.0
+			_warp_charge_t = 0.0
 			_warping = false
 		"reel":
 			_drift_vel = 0.0
-			_drift_atmax = 0.0
+			_warp_charge_t = 0.0
 			_warping = false
 			# exponential retrieval, so even a deep-warp distance unwinds in a
 			# sensible ~log-time; snap the last sliver to home
@@ -916,13 +922,68 @@ func _drift_caption() -> String:
 	return "≈ %.1fe%d ly" % [ly / pow(10.0, float(e10)), e10]
 
 
-## How near the line sits to the BEACON (the source at the line's end), 0..1 -
-## the same geometry the HUD draws (beacon at 0.8 of the travel, half-width 0.45),
-## so the audio effect and the visual approach agree. Peaks as you arrive on the
-## source and falls again once you overshoot past it.
-func _beacon_prox() -> float:
-	var pos_u := lerpf(0.14, 1.0, _drift_norm())
-	return clampf(1.0 - absf(pos_u - 0.8) / 0.45, 0.0, 1.0)
+## THE RECEPTION RESOLVER - one rule for what colour the voice carries, and
+## the fix for "what I heard is not what I caught":
+##   hooked          -> the spot's acoustics FROZEN at hook-set (the reel keeps
+##                      sounding like the place as the line comes home)
+##   landed / uncast -> the working candidate's OWN stored reception - a caught
+##                      seed carries its fishing spot's sound forever
+##   exploring       -> the live interference FIELD (see _field_reception)
+func _reception() -> Dictionary:
+	if not _hook.is_empty() and _hook.has("loc"):
+		return _hook.loc
+	if not _cast or _landed:
+		if not _working_loc.is_empty():
+			return _working_loc
+		return {"prox": 0.0, "freq": 400.0}
+	return _field_reception()
+
+
+## The water as an INTERFERENCE FIELD: every belt seed is a SOURCE - its own
+## frequency (rooted in its voice's f0), at its own depth along the drift,
+## its strength set by how accepted it is - plus the water's own beacon (the
+## prior, so an empty belt still has structure). Amplitudes decay with
+## distance; the line hears the SUPERPOSITION: the nearest source dominates,
+## the centre frequency is the amplitude-weighted blend, and where two
+## comparable sources overlap their detune BEATS - a slow shimmer in the
+## band's strength and pitch. Regions between seeds sound genuinely
+## different from regions on top of one; deep seeds need the warp to reach.
+func _field_reception() -> Dictionary:
+	var x := minf(_drift_reach(), 2.0)
+	var t := float(Time.get_ticks_msec()) / 1000.0
+	var srcs: Array = [{"x": 0.8, "f": _location_freq(), "a0": 0.55}]
+	for e in _belt:
+		var hsh := absi(hash([e.lineage, "src"]))
+		var xi := 0.15 + 1.2 * float(hsh % 1000) / 1000.0
+		var pitch := clampf(float((e.traits as Dictionary).get("pitch", 0.0)), -1.0, 1.0)
+		var f0 := 130.0 * pow(2.0, 0.85 * pitch)
+		var fi := clampf(f0 * (3.0 + 2.0 * float((hsh / 1000) % 100) / 100.0), 90.0, 3000.0)
+		srcs.append({"x": xi, "f": fi,
+			"a0": 0.35 + 0.45 * clampf(_acceptance(e), 0.0, 1.5) / 1.5})
+	var amps: Array = []
+	var atot := 0.0
+	var amax := 0.0
+	var flog := 0.0
+	for s in srcs:
+		var a: float = float(s.a0) * exp(-absf(x - float(s.x)) / 0.20)
+		amps.append(a)
+		atot += a
+		amax = maxf(amax, a)
+		flog += a * log(float(s.f))
+	if atot < 0.003:
+		return {"prox": 0.0, "freq": 400.0}
+	var freq := exp(flog / atot)
+	var beat := 0.0
+	for i in srcs.size():
+		for j in range(i + 1, srcs.size()):
+			var ai: float = amps[i]
+			var aj: float = amps[j]
+			if ai < 0.02 or aj < 0.02:
+				continue                     # only genuinely overlapping pairs beat
+			var rate := clampf(absf(log(float(srcs[i].f) / float(srcs[j].f))) * 0.9, 0.05, 1.4)
+			beat += 2.0 * minf(ai, aj) / atot * cos(TAU * rate * t + float(i * 37 + j * 91))
+	return {"prox": clampf(amax * (1.0 + 0.30 * beat), 0.0, 1.0),
+		"freq": clampf(freq * (1.0 + 0.05 * beat), 90.0, 3000.0)}
 
 
 ## The source's frequency (Hz): a resonant band that SWEEPS UP with distance (so
@@ -1043,6 +1104,8 @@ func _begin_hook(d: float) -> void:
 		"progress": 0.0, "run": 0.0, "run_t": frng.randf_range(2.0, 6.0),
 		"frng": frng, "power": _reel_power(),
 		"d0": _drift_reach(),
+		"loc": _reception(),         # the SPOT's acoustics, frozen: the reel and
+		                             # the catch keep sounding like this place
 		"haul": lerpf(1.0, REEL_HAUL_FOREIGN, d) / profile_scale,
 		"members": members, "d": d, "reward": _catch_reward(d),
 		"traits": _traits.duplicate(),
@@ -1128,7 +1191,7 @@ func _finish_hook() -> void:
 	Director.set_aura(0.0)
 	Director.jump(hash(str(_lineage)))
 	_pending = {"d": h.d, "reward": h.reward,
-		"traits": h.traits, "genome": h.genome,
+		"traits": h.traits, "genome": h.genome, "loc": h.get("loc", {}),
 		"scene": Director.scene_title(hash(str(_lineage)))}
 	var fit := _relative_fit_of(h.traits, _lineage, h.genome)
 	_card_glyph.seed_hash = hash(str(_lineage))
@@ -1234,9 +1297,11 @@ func _accept_catch() -> void:
 	_reserve = minf(_reserve + reward, RESERVE_MAX)   # the catch mints adrenochrome for the warp
 	_traits = (_pending.traits as Dictionary).duplicate()
 	_working_genome = (_pending.genome as Dictionary).duplicate()
+	_working_loc = (_pending.get("loc", {}) as Dictionary).duplicate()
 	_belt.append({
 		"lineage": _lineage.duplicate(), "traits": _traits.duplicate(),
 		"genome": _working_genome.duplicate(),
+		"loc": _working_loc.duplicate(),
 		"scene": _pending.get("scene", ""),
 		"m": {"s": 0.0, "acts": 1, "restores": 0, "evolves": 0, "catches": 0,
 			"r": reward, "d": _pending.d,
@@ -1305,6 +1370,7 @@ func _restore_capture(idx: int) -> void:
 	_lineage = (entry.lineage as Array).duplicate()
 	_traits = (entry.traits as Dictionary).duplicate()
 	_working_genome = (entry.get("genome", {}) as Dictionary).duplicate()
+	_working_loc = (entry.get("loc", {}) as Dictionary).duplicate()
 	_throw_ms = Time.get_ticks_msec()
 	_sync_line_button()
 	# the seed's scene is part of its identity: restoring it returns there
@@ -1611,7 +1677,11 @@ func _seed_tooltip(e: Dictionary) -> String:
 		g.pace_hot, g.pace_calm,
 		(("voice: " + tv) if not tv.is_empty() else "voice: near default")
 			+ (("\nhaunts " + str(e.scene)) if not str(e.get("scene", "")).is_empty() else "")
-			+ (("\nechoed from a living voice: " + str(e.echo)) if e.has("echo") else "")]
+			+ (("\nechoed from a living voice: " + str(e.echo)) if e.has("echo") else "")
+			+ (("\ncarries its spot's reception: ~%d Hz at %d%%" % [
+				int(float((e.loc as Dictionary).get("freq", 0.0))),
+				int(100.0 * float((e.loc as Dictionary).get("prox", 0.0)))])
+				if e.has("loc") and float((e.get("loc", {}) as Dictionary).get("prox", 0.0)) > 0.05 else "")]
 
 
 # ---- the implicit loop: debounce -> persist + apply ------------------------
@@ -1659,10 +1729,11 @@ func _process(delta: float) -> void:
 				presence = clampf(0.6 + 0.4 * float(_hook.progress)
 					- 0.2 * float(_hook.run), 0.3, 1.0)
 		_stream.set_presence(presence)
-		# the fishing spot's acoustics: as the line nears the beacon (the source),
-		# a band tuned to it swells into the voice - interesting conditions to fish
-		# under, and diverse colour to catch
-		_stream.set_location(_beacon_prox(), _location_freq())
+		# the reception (see _reception): the spot's acoustics while exploring,
+		# the HOOK's frozen spot through the fight, the seed's own carried
+		# colour once landed - what you hear is what you catch, and it stays
+		var rc := _reception()
+		_stream.set_location(float(rc.prox), float(rc.freq))
 		_metrics_t += delta
 		if _metrics_t >= 5.0:
 			_metrics_t = 0.0
@@ -1834,6 +1905,7 @@ func _persist() -> void:
 	cfg.set_value("synth", "belt", _belt)
 	cfg.set_value("synth", "profile", _profile)
 	cfg.set_value("synth", "adreno", _working_genome)
+	cfg.set_value("synth", "loc", _working_loc)
 	cfg.set_value("synth", "reserve", _reserve)
 	cfg.save(CFG)
 
@@ -1854,6 +1926,7 @@ func _load_persisted() -> void:
 		if not PROFILES.has(_profile):
 			_profile = "anchor"
 		_working_genome = cfg.get_value("synth", "adreno", {})
+		_working_loc = cfg.get_value("synth", "loc", {})
 		_reserve = float(cfg.get_value("synth", "reserve", 0.0))
 		_sync_switchboard()
 		for e in _belt:
@@ -2080,12 +2153,12 @@ class Hud:
 			elif editor._warping:
 				warp_txt = "  ·  ⚡ WARP  (reserve %.1f)" % editor._reserve
 				warp_col = Color(0.75, 0.85, 1.0, 0.9)
-			elif editor._drift_atmax >= SynthEditor.WARP_CHARGE:
+			elif editor._warp_charge_t >= SynthEditor.WARP_CHARGE:
 				warp_txt = "  ·  drive charged - need %.1f reserve" % SynthEditor.WARP_MIN \
 					if editor._reserve < SynthEditor.WARP_MIN else "  ·  drive charged"
 				warp_col = Color(0.9, 0.8, 1.0, 0.85)
 			elif editor._drift_vel >= SynthEditor.DRIFT_VMAX - 0.000001:
-				warp_txt = "  ·  charging warp %d%%" % int(editor._drift_atmax / SynthEditor.WARP_CHARGE * 100.0)
+				warp_txt = "  ·  charging warp %d%%" % int(editor._warp_charge_t / SynthEditor.WARP_CHARGE * 100.0)
 			draw_string(get_theme_default_font(), Vector2(66.0, s.y - 8.0),
 				cap + warp_txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, warp_col)
 		_draw_compass(s)

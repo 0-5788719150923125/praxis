@@ -131,6 +131,27 @@ const NOISE_FX := true
 # with OUT_GAIN restaged for the S-clean signal. NOISE_FX stays off as the
 # last restore rung.
 const RAW_MODE := false
+# THE RESONANCE - ambience from the voice itself. A bank of SYMPATHETIC
+# STRINGS: ultra-narrow resonators tuned to the reading's ANCHOR notes (the
+# same shelf the melody gravitates toward - each seed carries its own chord),
+# excited by the voice's own output. When the melody lands on one of its
+# notes the string blooms and RINGS for seconds, holding long sustained
+# tones under and between the phrases - a drone that is not a separate
+# instrument but the voice resonating in its own space. Deterministic,
+# baked into the take (exports carry it; the scenes hear it). Static vars so
+# tests can silence the bank; the app treats them as constants.
+static var DRONE := true
+const DRONE_STRINGS := 6              # tones, tuned to the first anchor notes
+const DRONE_NEAR := 2.5               # st range of a note's proximity GLOW
+const DRONE_ATTACK := 0.3             # s for a landed note to swell in
+const DRONE_RELEASE := 4.0            # s for a left note to fade (the long hold)
+const DRONE_LEVEL := 0.0025           # per-tone level into the mix (pre OUT_GAIN):
+                                      # measured, the summed glow sits ~-18 dB
+                                      # under the take - ambience, not a duet
+# (a PASSIVE resonator bank was tried first and barely rang: a 1.6 Hz band
+# never accumulates energy from a jittering, vibrato-laden f0. The tones are
+# ACTIVE instead - envelope followers on melodic proximity - which is also
+# exactly the stated behavior: notes that trigger from the voice and hold.)
 const RAW_TRIM := 4.0                 # raw output trim. NOTE: the old "peaks
                                       # 0.98-1.11" calibration was measuring
                                       # S-NOISE - with frication seated (see
@@ -1082,7 +1103,7 @@ static func synth(segs: Array, spec: Spec, from_seg := 0, to_seg := -1, state :=
 static func synth_state(spec: Spec) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = spec.seed_value
-	return {
+	var st := {
 		"rng": rng, "pcm": PackedFloat32Array(),
 		"r1": Reso.new(), "r2": Reso.new(), "r3": Reso.new(), "noise": Reso.new(),
 		"r4": Reso.new(), "r5": Reso.new(), "anti": AntiReso.new(), "anti_mix": 0.0,
@@ -1101,8 +1122,41 @@ static func synth_state(spec: Spec) -> Dictionary:
 		"brsm": spec.breath, "airgsm": spec.air_gain, "aircsm": spec.air_cut,
 		"fssm": spec.formant_scale,
 		"ebuf": _zeroes(int(ECHO_DELAY * SR)), "eidx": 0, "elp": 0.0,
+		"dr_st": PackedFloat32Array(), "dr_f": PackedFloat32Array(),
+		"dr_ph": PackedFloat32Array(), "dr_env": PackedFloat32Array(),
+		"dr_out": 0.0, "dr_alt": false,
 		"words": [], "phones": [], "wopen": {},
 	}
+	# THE RESONANCE bank (see the DRONE consts): one tone per anchor note.
+	# The anchors are the walk's pitch attractors - rebuilt here exactly as
+	# plan() builds them (same lineage + frozen genome = same notes, incl. a
+	# recorded seed's MEASURED melodic modes), so the drone plays the notes
+	# the melody actually lands on.
+	if DRONE and not RAW_MODE:
+		var walk := ProsodyWalk.new([spec.reading] + spec.influences, spec.adrenochrome)
+		var seen: Array = []
+		# LOCAL arrays, assigned into the state once: appending through a
+		# `(st.x as PackedFloat32Array)` cast appends to a CoW COPY that is
+		# immediately discarded - the classic packed-array trap (this bank
+		# shipped EMPTY that way; measured as a -163 dB "drone")
+		var dsts := PackedFloat32Array()
+		var dfs := PackedFloat32Array()
+		for a in walk._anchors:
+			var stq := snappedf(float(a), 0.5)
+			if seen.has(stq):
+				continue
+			seen.append(stq)
+			dsts.append(float(a))
+			dfs.append(clampf(spec.f0_base * 1.06 * pow(2.0, float(a) / 12.0), 40.0, 900.0))
+			if dfs.size() >= DRONE_STRINGS:
+				break
+		st.dr_st = dsts
+		st.dr_f = dfs
+		var zeros := PackedFloat32Array()
+		zeros.resize(dfs.size())
+		st.dr_ph = zeros.duplicate()
+		st.dr_env = zeros
+	return st
 
 
 static func _zeroes(n: int) -> PackedFloat32Array:
@@ -1292,6 +1346,28 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 		var esize := ebuf.size()
 		var elp: float = state.elp
 		var elp_k: float = 1.0 - exp(-TAU * ECHO_LP / SR)
+		var dr_st: PackedFloat32Array = state.dr_st
+		var dr_f: PackedFloat32Array = state.dr_f
+		var dr_ph: PackedFloat32Array = state.dr_ph
+		var dr_env: PackedFloat32Array = state.dr_env
+		var dr_n := dr_f.size()
+		var dr_out: float = state.dr_out
+		var dr_alt: bool = state.dr_alt
+		if dr_n > 0:
+			# per FRAME: each tone's envelope chases melodic proximity - the
+			# note the melody is ON swells in; every other tone releases over
+			# seconds (the long hold). Voiced frames only ring the bank.
+			var semis_now := 12.0 * log(maxf(state.f0sm, 1.0) / (spec.f0_base * 1.06)) / log(2.0)
+			var vgate: float = 1.0 if vamp > 0.1 else 0.0
+			for k in dr_n:
+				# proximity GLOW, not a hard gate: the tone nearest the melody
+				# swells in proportion to how close it is; a left note holds
+				# its level and releases over seconds - the long sustain
+				var target: float = vgate * maxf(0.0, 1.0 - absf(semis_now - dr_st[k]) / DRONE_NEAR)
+				if target > dr_env[k]:
+					dr_env[k] = minf(dr_env[k] + float(m) / (SR * DRONE_ATTACK), target)
+				else:
+					dr_env[k] *= exp(-float(m) / (SR * DRONE_RELEASE))
 		var phase: float = state.phase
 		var blk := PackedFloat32Array()
 		blk.resize(m)
@@ -1375,7 +1451,24 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 			eidx += 1
 			if eidx >= esize:
 				eidx = 0
-			blk[_s] = (rad + e * 0.8) * OUT_GAIN
+			# THE RESONANCE: the anchor tones themselves (see the DRONE
+			# consts) - a sine with a soft octave for warmth, each held by
+			# its envelope. Half-rate stepped with a zero-order hold; the
+			# tones live far below where that matters.
+			if dr_n > 0:
+				if dr_alt:
+					var ssum := 0.0
+					for k in dr_n:
+						var ev := dr_env[k]
+						if ev > 0.002:
+							var ph := dr_ph[k] + TAU * dr_f[k] * 2.0 / SR
+							if ph >= TAU:
+								ph -= TAU
+							dr_ph[k] = ph
+							ssum += (sin(ph) + 0.35 * sin(ph * 2.0)) * ev
+					dr_out = ssum * DRONE_LEVEL
+				dr_alt = not dr_alt
+			blk[_s] = (rad + e * 0.8 + dr_out) * OUT_GAIN
 		if RAW_MODE:
 			# RAW bypass: no leveler, no limiter, no clip, no grain - the
 			# block goes out as synthesized, under one fixed measured-safe
@@ -1436,6 +1529,10 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 		state.ebuf = ebuf            # packed arrays are CoW: persist the written copy
 		state.eidx = eidx
 		state.elp = elp
+		state.dr_ph = dr_ph          # CoW again: the ring state must persist
+		state.dr_env = dr_env
+		state.dr_out = dr_out
+		state.dr_alt = dr_alt
 		done += m
 
 

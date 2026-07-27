@@ -340,3 +340,29 @@ idea remains open).
   (audio input driver teardown with enable_input on PipeWire) - everything
   is persisted before exit, nothing is lost; investigate with --verbose if
   it recurs.
+
+---
+
+## The Resonance (2026-07-27): ambience from the voice itself
+
+Ambient sustained tones, implemented as the voice resonating in its own
+space - no separate music system. A bank of up to 6 TONES tuned to the
+reading's ANCHOR notes (the walk's pitch attractors - each seed carries its
+own chord; a recorded seed's measured melodic modes become its drone). Each
+tone is an ACTIVE sine (+0.35 octave for warmth) with an envelope that
+GLOWS by melodic proximity: the note the melody is nearest swells in
+(~0.3 s), left notes release over ~4 s - long holds through pauses,
+triggered by and connected to the voice. Deterministic, baked into the
+take: exports carry it, the scenes hear it.
+
+Constants (voice.gd): DRONE (static, tests silence it), DRONE_STRINGS 6,
+DRONE_NEAR 2.5 st glow range, DRONE_ATTACK 0.3 / DRONE_RELEASE 4.0,
+DRONE_LEVEL 0.0025 (measured: drone-only -18.0 dB vs the take; the leveler
+pushes back on attenuation so this was tuned by A/B, not arithmetic).
+
+Two designs that FAILED first, both caught by direct A/B measurement
+(render DRONE on/off, diff): (1) passive sympathetic-string resonators at
+1.6 Hz bandwidth never accumulated energy from a jittering f0 (-163 dB);
+(2) the bank arrays were built via `(st.x as PackedFloat32Array).append()`
+- the packed-array CoW trap - and shipped EMPTY. Listen A/B:
+/tmp/ghost_scratch/drone_on.wav vs drone_off.wav.
