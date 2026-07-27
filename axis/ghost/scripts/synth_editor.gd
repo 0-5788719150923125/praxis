@@ -649,6 +649,7 @@ func _throw() -> void:
 		# the reading still varies (gates, motifs, field ride the new lineage)
 		_working_genome = (parent.get("genome", {}) as Dictionary).duplicate()
 		_working_loc = (parent.get("loc", {}) as Dictionary).duplicate()
+		_jump_to_seed_scene(parent.lineage)
 		_status.text = "thrown (from %s) - the water is quiet" % _seed_name(parent.lineage)
 	_throw_ms = Time.get_ticks_msec()
 	# no drift reset: a throw casts from wherever the line already sits (you fish
@@ -693,6 +694,7 @@ func _throw_from(idx: int) -> void:
 	_traits = _temper_traits(_traits, drift)
 	_working_genome = (parent.get("genome", {}) as Dictionary).duplicate()
 	_working_loc = (parent.get("loc", {}) as Dictionary).duplicate()
+	_jump_to_seed_scene(parent.lineage)
 	_slotted_lineage = (parent.lineage as Array).duplicate()   # this seed is the bait now
 	_status.text = "cast from %s" % _seed_name(parent.lineage)
 	_throw_ms = Time.get_ticks_msec()
@@ -1335,6 +1337,22 @@ func _release_catch() -> void:
 ## this voice was earned by being read aloud - it lands exactly where it
 ## was measured. Difficulty is how foreign it sits from the party's centre,
 ## so fishing FROM it later fights like the outsider it is.
+## A seed OWNS a scene (Director.jump derives it from the lineage hash - the
+## same identity the catch stamped into entry.scene). Clicking or casting a
+## seed brings its place back, DETERMINISTICALLY across runs - the session
+## fingerprint cannot do this, because every throw jitters the candidate.
+## Deduped so re-clicking the active seed doesn't re-cut the same scene.
+var _last_scene_jump := 0
+
+
+func _jump_to_seed_scene(lineage: Array) -> void:
+	var jh := hash(str(lineage))
+	if jh == _last_scene_jump:
+		return
+	_last_scene_jump = jh
+	Director.jump(jh)
+
+
 func _add_recorded_seed(traits: Dictionary, genome: Dictionary, report: String) -> void:
 	# the root is DETERMINISTIC in the measurement: the same voice, read the
 	# same way, echoes to the same seed - re-records are comparable, and the

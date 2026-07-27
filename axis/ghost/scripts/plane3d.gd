@@ -44,6 +44,15 @@ func draw_through(ci: CanvasItem, lens: Lens3D, u_px: float) -> void:
 		if pr.z <= lens.near:
 			return
 		poly.append(Vector2(pr.x, pr.y) * u_px)
+	# an edge-on plane projects to (near-)collinear points, which the canvas
+	# cannot triangulate ("Invalid polygon data" spam, quad dropped anyway) -
+	# same guard Mesh3D carries; edge-on it contributes nothing visible
+	var area := absf((poly[1].x - poly[0].x) * (poly[2].y - poly[0].y)
+		- (poly[2].x - poly[0].x) * (poly[1].y - poly[0].y)) \
+		+ absf((poly[2].x - poly[0].x) * (poly[3].y - poly[0].y)
+		- (poly[3].x - poly[0].x) * (poly[2].y - poly[0].y))
+	if area < 1.0:
+		return
 	ci.draw_colored_polygon(poly, color)
 	if edge.a > 0.0:
 		var e := poly.duplicate()

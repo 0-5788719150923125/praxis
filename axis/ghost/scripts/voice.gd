@@ -148,6 +148,19 @@ const DRONE_RELEASE := 4.0            # s for a left note to fade (the long hold
 const DRONE_LEVEL := 0.0025           # per-tone level into the mix (pre OUT_GAIN):
                                       # measured, the summed glow sits ~-18 dB
                                       # under the take - ambience, not a duet
+# The CONSONANCE TIDE: the ensemble breathes between two states. At LOW tide
+# the budget is tight and the LFOs deep - tones compete, ebb, pluck as
+# individuals. At HIGH tide the budget opens and the swells steady - the
+# tones are ALLOWED to gather into a held CHORD. The tide is a very slow
+# seeded cycle (one turn per ~25-50 s) blended with how sustained the voice
+# has been, so dense passages bloom chordal and sparse ones scatter.
+const DRONE_BUDGET_LO := 1.2          # tight: individuals (the ebb/pluck state)
+const DRONE_BUDGET_HI := 3.2          # open: the chord is allowed to stand
+# Each tone has a seeded CHARACTER (deterministic per lineage root + note):
+#   drone - slow attack, very long release, shallow slow breathing
+#   swell - long breathing attack, DEEP slow LFO: it ebbs, recedes, returns
+#   pluck - an EVENT, not a glow: fires when the melody ARRIVES on its note,
+#           instant attack with brighter partials, ~1 s decay
 # (a PASSIVE resonator bank was tried first and barely rang: a 1.6 Hz band
 # never accumulates energy from a jittering, vibrato-laden f0. The tones are
 # ACTIVE instead - envelope followers on melodic proximity - which is also
@@ -1124,6 +1137,11 @@ static func synth_state(spec: Spec) -> Dictionary:
 		"ebuf": _zeroes(int(ECHO_DELAY * SR)), "eidx": 0, "elp": 0.0,
 		"dr_st": PackedFloat32Array(), "dr_f": PackedFloat32Array(),
 		"dr_ph": PackedFloat32Array(), "dr_env": PackedFloat32Array(),
+		"dr_kind": PackedInt32Array(), "dr_atk": PackedFloat32Array(),
+		"dr_rel": PackedFloat32Array(), "dr_lr": PackedFloat32Array(),
+		"dr_lph": PackedFloat32Array(), "dr_p2": PackedFloat32Array(),
+		"dr_p3": PackedFloat32Array(), "dr_hi": PackedByteArray(),
+		"dr_tr": 0.03, "dr_tph": 0.0, "dr_ve": 0.0,
 		"dr_out": 0.0, "dr_alt": false,
 		"words": [], "phones": [], "wopen": {},
 	}
@@ -1152,10 +1170,60 @@ static func synth_state(spec: Spec) -> Dictionary:
 				break
 		st.dr_st = dsts
 		st.dr_f = dfs
+		var nd := dfs.size()
 		var zeros := PackedFloat32Array()
-		zeros.resize(dfs.size())
+		zeros.resize(nd)
 		st.dr_ph = zeros.duplicate()
 		st.dr_env = zeros
+		var trng := RandomNumberGenerator.new()
+		trng.seed = hash("tide") ^ int(spec.reading[0])
+		st.dr_tr = trng.randf_range(0.02, 0.045)   # tide rate (Hz)
+		st.dr_tph = trng.randf_range(0.0, TAU)
+		var kinds := PackedInt32Array()
+		var atks := PackedFloat32Array()
+		var rels := PackedFloat32Array()
+		var lrs := PackedFloat32Array()
+		var lphs := PackedFloat32Array()
+		var p2s := PackedFloat32Array()
+		var p3s := PackedFloat32Array()
+		for k in nd:
+			var pr := RandomNumberGenerator.new()
+			pr.seed = hash("resonance") ^ int(spec.reading[0]) ^ (k * 2654435761)
+			var roll := pr.randf()
+			if roll < 0.35:              # pluck
+				kinds.append(2)
+				atks.append(0.004)
+				rels.append(pr.randf_range(0.6, 1.3))
+				lrs.append(0.0)
+				lphs.append(0.0)
+				p2s.append(pr.randf_range(0.45, 0.6))
+				p3s.append(pr.randf_range(0.2, 0.35))
+			elif roll < 0.7:             # swell
+				kinds.append(1)
+				atks.append(pr.randf_range(1.2, 2.2))
+				rels.append(pr.randf_range(2.0, 3.5))
+				lrs.append(pr.randf_range(0.07, 0.2))
+				lphs.append(pr.randf_range(0.0, TAU))
+				p2s.append(pr.randf_range(0.25, 0.4))
+				p3s.append(0.0)
+			else:                        # drone
+				kinds.append(0)
+				atks.append(pr.randf_range(0.3, 0.6))
+				rels.append(pr.randf_range(5.0, 8.0))
+				lrs.append(pr.randf_range(0.04, 0.1))
+				lphs.append(pr.randf_range(0.0, TAU))
+				p2s.append(pr.randf_range(0.2, 0.4))
+				p3s.append(0.0)
+		st.dr_kind = kinds
+		st.dr_atk = atks
+		st.dr_rel = rels
+		st.dr_lr = lrs
+		st.dr_lph = lphs
+		st.dr_p2 = p2s
+		st.dr_p3 = p3s
+		var hi := PackedByteArray()
+		hi.resize(nd)
+		st.dr_hi = hi
 	return st
 
 
@@ -1353,21 +1421,61 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 		var dr_n := dr_f.size()
 		var dr_out: float = state.dr_out
 		var dr_alt: bool = state.dr_alt
+		var dr_p2: PackedFloat32Array = state.dr_p2
+		var dr_p3: PackedFloat32Array = state.dr_p3
+		var dr_gain := PackedFloat32Array()
 		if dr_n > 0:
-			# per FRAME: each tone's envelope chases melodic proximity - the
-			# note the melody is ON swells in; every other tone releases over
-			# seconds (the long hold). Voiced frames only ring the bank.
+			# per FRAME: the ENSEMBLE (see the DRONE consts). Every tone reads
+			# melodic proximity, but each responds in its own character -
+			# drones hold, swells breathe on their own LFO, plucks fire as
+			# EVENTS when the melody arrives on their note - and the budget
+			# makes them compete, so the resonance shifts instead of blending.
+			var dr_kind: PackedInt32Array = state.dr_kind
+			var dr_atk: PackedFloat32Array = state.dr_atk
+			var dr_rel: PackedFloat32Array = state.dr_rel
+			var dr_lr: PackedFloat32Array = state.dr_lr
+			var dr_lph: PackedFloat32Array = state.dr_lph
+			var dr_hi: PackedByteArray = state.dr_hi
+			var tnow := float(out.size()) / SR
 			var semis_now := 12.0 * log(maxf(state.f0sm, 1.0) / (spec.f0_base * 1.06)) / log(2.0)
 			var vgate: float = 1.0 if vamp > 0.1 else 0.0
+			# the consonance tide (see the DRONE consts): slow seeded cycle
+			# blended with a sustained-voice EMA - high tide = chordal
+			state.dr_ve = lerpf(float(state.dr_ve), vgate, 1.0 - exp(-float(m) / (SR * 2.5)))
+			var tide := clampf(0.5 + 0.5 * sin(TAU * float(state.dr_tr) * tnow + float(state.dr_tph)), 0.0, 1.0)
+			var tide_mix := clampf(0.55 * tide + 0.55 * float(state.dr_ve), 0.0, 1.0)
+			var esum := 0.0
 			for k in dr_n:
-				# proximity GLOW, not a hard gate: the tone nearest the melody
-				# swells in proportion to how close it is; a left note holds
-				# its level and releases over seconds - the long sustain
-				var target: float = vgate * maxf(0.0, 1.0 - absf(semis_now - dr_st[k]) / DRONE_NEAR)
-				if target > dr_env[k]:
-					dr_env[k] = minf(dr_env[k] + float(m) / (SR * DRONE_ATTACK), target)
+				var prox: float = maxf(0.0, 1.0 - absf(semis_now - dr_st[k]) / DRONE_NEAR)
+				if dr_kind[k] == 2:
+					# PLUCK: an arrival event - the melody crossing ONTO the
+					# note fires it at full strength (phase reset for a clean
+					# transient), then it only decays
+					var on_note: bool = vgate > 0.0 and prox > 0.6
+					if on_note and dr_hi[k] == 0:
+						dr_env[k] = 1.0
+						dr_ph[k] = 0.0
+					dr_hi[k] = 1 if on_note else 0
+					dr_env[k] *= exp(-float(m) / (SR * dr_rel[k]))
 				else:
-					dr_env[k] *= exp(-float(m) / (SR * DRONE_RELEASE))
+					# high tide flattens the LFOs: the swells steady and SYNC
+					# into the chord instead of ebbing against it
+					var depth: float = (0.25 if dr_kind[k] == 0 else 0.55) * (1.0 - 0.7 * tide_mix)
+					var lfo := 1.0 - depth * (0.5 + 0.5 * sin(TAU * dr_lr[k] * tnow + dr_lph[k]))
+					var target: float = vgate * prox * lfo
+					if target > dr_env[k]:
+						dr_env[k] = minf(dr_env[k] + float(m) / (SR * dr_atk[k]), target)
+					else:
+						dr_env[k] *= exp(-float(m) / (SR * dr_rel[k]))
+				esum += dr_env[k]
+			# the budget: a chord's total energy is capped, so a newly lit
+			# tone pushes the others back - motion, not accumulation
+			var budget := lerpf(DRONE_BUDGET_LO, DRONE_BUDGET_HI, tide_mix)
+			var scale := 1.0 if esum <= budget else budget / esum
+			dr_gain.resize(dr_n)
+			for k in dr_n:
+				dr_gain[k] = dr_env[k] * scale
+			state.dr_hi = dr_hi          # CoW: the pluck edge detector persists
 		var phase: float = state.phase
 		var blk := PackedFloat32Array()
 		blk.resize(m)
@@ -1426,7 +1534,7 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 						# a release excites the TRACT, not the room: a bare
 						# wideband tick added after the cascade reads as a
 						# pop; through the formants it reads as a consonant
-						excite += nband * 2.2
+						excite += nband * 2.8
 						nband = 0.0
 					else:
 						# frication (see the FRIC_ consts): the through-tract
@@ -1459,13 +1567,14 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 				if dr_alt:
 					var ssum := 0.0
 					for k in dr_n:
-						var ev := dr_env[k]
+						var ev := dr_gain[k]
 						if ev > 0.002:
 							var ph := dr_ph[k] + TAU * dr_f[k] * 2.0 / SR
 							if ph >= TAU:
 								ph -= TAU
 							dr_ph[k] = ph
-							ssum += (sin(ph) + 0.35 * sin(ph * 2.0)) * ev
+							ssum += (sin(ph) + dr_p2[k] * sin(ph * 2.0)
+								+ dr_p3[k] * sin(ph * 3.0)) * ev
 					dr_out = ssum * DRONE_LEVEL
 				dr_alt = not dr_alt
 			blk[_s] = (rad + e * 0.8 + dr_out) * OUT_GAIN

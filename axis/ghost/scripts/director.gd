@@ -571,6 +571,7 @@ func _tick_schedule(dt: float) -> void:
 	if _listen_echo(dt):
 		_beat_prev = Spectrum.current.beat
 		return                                      # re-localized: the cut is already underway
+	_paced_t += dt
 	if _should_change():
 		_begin_transition()
 	_beat_prev = Spectrum.current.beat
@@ -721,7 +722,11 @@ func _listen_echo(dt: float) -> bool:
 
 
 func _should_change() -> bool:
-	if _locked >= 0 or _held or _game_paced:
+	if _locked >= 0 or _held:
+		return false
+	if _game_paced and _paced_t < GAME_PACED_MIN:
+		# the fishing owns the MOMENTS (catches and seed jumps cut at once);
+		# past the floor, the normal harmonic exit logic below owns the tour
 		return false
 	# In manual mode, a non-looping storyboard with NO tail holds its final scene forever (checked
 	# FIRST, before the fixed-hold check below, so the last entry's `hold` can't try to re-cut into
@@ -826,6 +831,13 @@ func hold(on: bool) -> void:
 ## not weather. Distinct from hold(): the feedback console toggles that and
 ## must not accidentally release the game's grip.
 var _game_paced := false
+var _paced_t := 0.0          # seconds the current scene has held in game-paced mode
+const GAME_PACED_MIN := 12.0    # floor before the MUSICAL pacing may cut a
+                                # game-paced scene: a just-jumped seed scene gets
+                                # read as the reward it is, then the normal
+                                # harmonic exits (beat / movement / lull) own the
+                                # tour again. (A fixed 70 s hold was tried and
+                                # read as frozen - the music makes better cuts.)
 
 func set_game_paced(on: bool) -> void:
 	_game_paced = on
@@ -847,9 +859,15 @@ func set_aura(v: float) -> void:
 var _jump_next := -1
 
 func jump(seed_val: int) -> void:
-	if _host == null:
-		return
+	# the pending jump is stored EVEN WITHOUT a session: a seed clicked before
+	# the first throw must own the session's INITIAL scene too - _pick_index
+	# consumes _jump_next when attach() builds it. (The old early return made
+	# pre-session jumps silent no-ops, so the first scene of a run fell back
+	# to the session fingerprint - which the throw jitter re-rolls every cast:
+	# "the initial scene is ALWAYS different across runs.")
 	_jump_next = absi(seed_val) % maxi(SCENES.size(), 1)
+	if _host == null:
+		return                       # no session yet: the jump waits for attach()
 	next()
 
 
@@ -941,6 +959,7 @@ func _transition_alphas(k: float) -> Vector2:
 
 
 func _begin_transition() -> void:
+	_paced_t = 0.0
 	if SCENES.size() < 2:
 		_elapsed = 0.0
 		return
