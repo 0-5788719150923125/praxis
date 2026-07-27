@@ -38,7 +38,7 @@ const SEG_CHUNK := 4                # segments per synth() call on the worker
 # applied at PUSH time - the WAV take stays the canonical full-presence render.
 # Gain glides per sample (~0.2 s) and a one-pole lowpass darkens distance
 # (~500 Hz far away, effectively open when landed).
-const P_GLIDE := 0.00022            # per-sample presence glide
+const P_GLIDE := 0.00011            # per-sample presence glide (~0.2 s at 44.1k)
 
 # LOCATION RECEPTION: as the line nears the beacon (the source of the frequency
 # it is receiving), a resonant band TUNED to that source swells into the voice -
@@ -47,11 +47,15 @@ const P_GLIDE := 0.00022            # per-sample presence glide
 # stays well under Nyquist) blended by proximity, with a faint carrier of the
 # source riding the voice at close range. Applied at push time like presence, so
 # the canonical WAV take is untouched.
-const LOC_GLIDE := 0.0004           # per-sample smoothing of proximity/frequency
+const LOC_GLIDE := 0.0002           # per-sample smoothing of proximity/frequency
 const LOC_WET := 0.55               # max bandpass blend, at full proximity
 const LOC_BP_GAIN := 1.8            # make up the bandpass's attenuation
 const LOC_Q := 0.4                  # SVF damping (lower = more resonant)
 const LOC_CARRIER := 0.02           # faint carrier-tone amplitude at close range
+const LOC_CEIL := 0.95              # soft ceiling on the reception path: the old
+                                    # hard clamp CLIPPED near a beacon (the 1.8x
+                                    # resonant boost overshoots) - a click per
+                                    # overshooting peak; tanh rounds them instead
 
 var words: Array = []               # main-thread copy for Subtitles (shared by reference)
 var events: Array = []              # planned strike times [{t, kind, a}] - the bites
@@ -150,6 +154,8 @@ func set_location(prox: float, freq: float) -> void:
 ## Mutates and returns pcm (PackedFloat32Array is copy-on-write - reassign the
 ## result). A no-op far from any source.
 static func bake_location(pcm: PackedFloat32Array, prox: float, freq: float) -> PackedFloat32Array:
+	if Voice.RAW_MODE:
+		return pcm                   # raw diagnostic: no reception colour baked
 	prox = clampf(prox, 0.0, 1.0)
 	if prox <= 0.004:
 		return pcm
@@ -165,12 +171,12 @@ static func bake_location(pcm: PackedFloat32Array, prox: float, freq: float) -> 
 		var hi: float = v - svf_low - LOC_Q * svf_band
 		svf_band += svf_f * hi
 		v = lerpf(v, svf_band * LOC_BP_GAIN, prox * LOC_WET)
-		env += (absf(v) - env) * 0.002
+		env += (absf(v) - env) * 0.001
 		ph += TAU * freq / Voice.SR
 		if ph >= TAU:
 			ph -= TAU
 		v += LOC_CARRIER * prox * prox * sin(ph) * (0.4 + 2.0 * env)
-		pcm[i] = clampf(v, -1.0, 1.0)
+		pcm[i] = LOC_CEIL * tanh(v / LOC_CEIL)
 	return pcm
 
 
@@ -326,6 +332,16 @@ func _push_available() -> void:
 		buf.resize(n)
 		var target := _presence
 		var kk := 0.0
+		if Voice.RAW_MODE:
+			# raw diagnostic: the take reaches the bus untouched - no
+			# presence gain/lowpass, no location reception
+			for i in n:
+				var vr := _pcm[src + i]
+				buf[i] = Vector2(vr, vr)
+			_playback.push_buffer(buf)
+			_pushed += n
+			room -= n
+			continue
 		for i in n:
 			_pg += (target - _pg) * P_GLIDE
 			var v := _pcm[src + i]
@@ -336,7 +352,11 @@ func _push_available() -> void:
 				# inaudible at full volume). The coefficient refreshes every
 				# 64 samples as the glide moves.
 				if (i & 63) == 0:
-					var cut := 500.0 * pow(2.0, 4.4 * _pg)
+					# fidelity pass: the old curve (500 Hz floor) muffled any
+					# not-fully-landed voice into the reported dullness; the
+					# floor is higher and the filter opens sooner now -
+					# distance still darkens, it just stops strangling
+					var cut := 900.0 * pow(2.0, 4.0 * _pg)
 					kk = 1.0 - exp(-TAU * cut / Voice.SR)
 				_lp += kk * (v - _lp)
 				v = _lp * _pg
@@ -352,12 +372,12 @@ func _push_available() -> void:
 				var hi: float = v - _svf_low - LOC_Q * _svf_band
 				_svf_band += _svf_f * hi
 				v = lerpf(v, _svf_band * LOC_BP_GAIN, _loc_prox_s * LOC_WET)
-				_loc_env += (absf(v) - _loc_env) * 0.002
+				_loc_env += (absf(v) - _loc_env) * 0.001
 				_loc_ph += TAU * _loc_freq_s / Voice.SR
 				if _loc_ph >= TAU:
 					_loc_ph -= TAU
 				v += LOC_CARRIER * _loc_prox_s * _loc_prox_s * sin(_loc_ph) * (0.4 + 2.0 * _loc_env)
-				v = clampf(v, -1.0, 1.0)   # a resonant boost can overshoot; keep it in range
+				v = LOC_CEIL * tanh(v / LOC_CEIL)   # overshoot ROUNDS, never clips
 			buf[i] = Vector2(v, v)
 		_playback.push_buffer(buf)
 		_pushed += n

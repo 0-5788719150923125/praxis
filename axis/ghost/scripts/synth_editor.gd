@@ -130,13 +130,26 @@ const DRIFT_VMAX := 1.0 / 180.0     # raw maximum odometer/sec - deliberately sl
 const DRIFT_ACCEL := (1.0 / 180.0 - 1.0 / 600.0) / 22.0   # ramp crawl -> raw max over ~22s of unbroken drift
 const WARP_CHARGE := 10.0           # seconds held at raw max before the drive charges
 const WARP_VEL := 1.0 / 16.0        # warp odometer/sec - the streaks that "move faster than velocity allows"
-const REEL_DECAY := 0.45            # reel retrieval = EXPONENTIAL decay of the odometer (scaled by _reel_power) - unwinds from ANY distance in log-time, since the odometer is now unbounded
-# A catch hooked at the far reaches is on a longer line, so the fight is longer:
-# the reel duration stretches with how far the cage had drifted at the moment the
-# hook set (0 = home, 1 = the deep field). Bounded - the deep field costs more to
-# haul home, but never unboundedly. The old reel ignored distance entirely, so a
-# lightyears-out catch reeled in as fast as one at your feet.
-const REEL_DIST_STRETCH := 2.6      # max duration multiple, at the far end of the drift
+const REEL_DECAY := 0.45            # bare-line retrieval (no hook) = EXPONENTIAL decay of the odometer (scaled by _reel_power) - unwinds from ANY distance in log-time, since the odometer is now unbounded
+# THE FIGHT IS FOUGHT ON THE LINE (2026-07-27): a hook no longer runs an
+# abstract progress timer while the odometer freezes. Reeling hauls the
+# odometer itself home in LOG-time (each equal slice of the arc closes an
+# equal FACTOR of the distance - warp-fast from lightyears out, honest up
+# close), and a strong run reverses the haul: real line pays back OUT, the
+# arc rolls backwards, the distance caption climbs again. Progress = how
+# much of the (log-space) way home has been walked, so the arc, the HUD
+# caption, presence, and the beacon reception all read ONE odometer.
+const REEL_HOME := 0.02             # odometer value that counts as LANDED (~20 m)
+const HOOK_MIN_D0 := 0.12           # a strike snaps the slack out: the fight starts
+                                    # at least this far out, however close the cast
+const REEL_HAUL := 0.085            # log-distance hauled /s /unit power on a KIN
+                                    # catch - a full-drift kin fight lands in about
+                                    # the old 45 s / power; depth stretches it in
+                                    # log-time only (the warp answer)
+const REEL_HAUL_FOREIGN := 0.19     # foreign haul multiplier: yields line ~5x
+                                    # slower (the old 240 s duration, now emergent)
+const RUN_PAYOUT := 1.6             # how hard a run opposes the haul; above 1/run
+                                    # the net goes NEGATIVE and line pays out
 const WARP_BURN := 0.32             # adrenochrome spent per second of warp
 const WARP_MIN := 0.4               # reserve needed to IGNITE a warp (a floored charge)
 # Adrenochrome is the currency the warp spends. It is minted by fishing: a
@@ -174,7 +187,7 @@ var _anchor := 0.0                  # the latent pull: latched by strikes, slow 
 var _vanish_t := 0.0                # timer for the pull-leaves-on-its-own check
 var _nibbles := 0                   # distinct fresh strikes felt since the anchor was last empty
 var _last_strike_t := -999.0        # stream-local time of the last strike counted as a nibble
-var _hook := {}                     # the live reel: rng, step, t, duration, members,
+var _hook := {}                     # the live reel: rng, step, t, d0, haul, members,
                                     # traits, genome (annealing), d, reward
 var _working_genome := {}           # adrenochrome carried by the WORKING candidate
 var _metrics_t := 0.0
@@ -818,6 +831,8 @@ func _drift_reset() -> void:
 func _advance_drift(delta: float) -> void:
 	if not _cast:
 		return
+	if not _hook.is_empty():
+		return                       # the FIGHT owns the line - see _advance_reel
 	match _profile:
 		"drift":
 			_drift_vel = minf(_drift_vel + DRIFT_ACCEL * delta, DRIFT_VMAX)
@@ -1002,12 +1017,17 @@ func _begin_hook(d: float) -> void:
 	# the FIGHT is seeded per lineage: this creature always fights this way
 	var frng := RandomNumberGenerator.new()
 	frng.seed = hash("fight") ^ hash(str(_lineage))
+	# the strike takes the line TAUT: the fight starts from wherever the drift
+	# actually carried the line (at least HOOK_MIN_D0), and d0 is the anchor the
+	# progress arc measures the haul against - see _advance_reel
+	if _drift_dist < HOOK_MIN_D0:
+		_drift_dist = HOOK_MIN_D0
 	_hook = {
 		"rng": rng, "step": 0, "t": 0.0,
 		"progress": 0.0, "run": 0.0, "run_t": frng.randf_range(2.0, 6.0),
 		"frng": frng, "power": _reel_power(),
-		"duration": lerpf(45.0, 240.0, d) * profile_scale \
-			* lerpf(1.0, REEL_DIST_STRETCH, _drift_norm()),
+		"d0": _drift_reach(),
+		"haul": lerpf(1.0, REEL_HAUL_FOREIGN, d) / profile_scale,
 		"members": members, "d": d, "reward": _catch_reward(d),
 		"traits": _traits.duplicate(),
 		"genome": Voice.ProsodyWalk._lineage_genome(_lineage) \
@@ -1655,8 +1675,18 @@ func _advance_reel(delta: float) -> void:
 		var frng: RandomNumberGenerator = h.frng
 		h.run_t = frng.randf_range(4.0, 12.0) / (0.4 + float(h.d))
 		h.run = frng.randf_range(0.5, 1.0) * (0.35 + 0.65 * float(h.d))
-	var rate: float = float(h.power) / float(h.duration) * (1.0 - 1.3 * float(h.run))
-	h.progress = clampf(float(h.progress) + rate * delta, 0.0, 1.0)
+	# the fight plays out ON THE ODOMETER (see the REEL_ consts): the haul
+	# closes an equal FACTOR of the remaining distance per second - log-time,
+	# so a lightyears-deep hook still comes home - and a strong run turns the
+	# exponent POSITIVE: real line pays out, the distance caption climbs, and
+	# progress (the log-space fraction of the way home) rolls backwards. One
+	# odometer feeds the arc, the caption, presence, aura, and the beacon.
+	var haul: float = REEL_HAUL * float(h.haul) * float(h.power) \
+		* (1.0 - RUN_PAYOUT * float(h.run))
+	_drift_dist = maxf(_drift_dist * exp(-haul * delta), REEL_HOME)
+	h.progress = clampf(
+		log(float(h.d0) / _drift_dist) / log(float(h.d0) / REEL_HOME),
+		0.0, 1.0)
 	while h.step < int(float(h.progress) * HOOK_STEPS):
 		_adreno_step()
 	# the audition: every couple of seconds the stream's TIMBRE bends toward the
@@ -1895,8 +1925,9 @@ class CatchOrb:
 ## constellation lives at the left; the LINE runs from it across the panel -
 ## slack and faint when nothing pulls, bending and throbbing downward while
 ## something is anchored (for as long as it pulls - minutes, not moments);
-## during the reel a progress arc winds around the constellation and the
-## countdown ticks in the corner while the adrenochrome forms.
+## during the reel a progress arc winds around the constellation - reading the
+## LINE's actual distance home, rolling back when the catch runs - while the
+## live distance caption walks in below it and the adrenochrome forms.
 class Hud:
 	extends Control
 	var editor: SynthEditor
@@ -1910,8 +1941,9 @@ class Hud:
 		var line_col := Color(0.4, 0.85, 0.65, 0.35)
 		var y0: float = s.y * 0.5
 		if not editor._hook.is_empty():
-			# the reel: progress arc + the FIGHT. Percent, not a countdown -
-			# the duration is not fixed anymore; a run pays line back out
+			# the reel: progress arc + the FIGHT. The arc IS the distance now -
+			# the log-space fraction of the way home the haul has closed - so a
+			# run visibly rolls it backwards while the caption below climbs
 			var progress: float = clampf(float(editor._hook.progress), 0.0, 1.0)
 			var run: float = float(editor._hook.get("run", 0.0))
 			# the toll bleeds the readout: an easy catch reels in clean amber,

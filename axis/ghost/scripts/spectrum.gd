@@ -50,6 +50,10 @@ signal song_finished
 
 var _player: AudioStreamPlayer
 var _analyzer: AudioEffectSpectrumAnalyzerInstance
+var _tap: AudioEffectCapture          # the LIVE_TAP recorder (see the const)
+var _tap_ring := PackedFloat32Array()
+var _tap_pos := 0
+var _tap_filled := 0
 var _has_audio := false
 var _idle_time := 0.0
 var _override_path := ""        # song chosen on the splash; wins over CLI/default
@@ -149,6 +153,21 @@ func _bake_cache_path() -> String:
 
 ## Generator ring size (seconds) for streamed sessions - see begin_stream().
 const STREAM_BUFFER := 4.0
+
+## LIVE TAP (diagnostic, 2026-07-26): record the MASTER BUS - everything the
+## mixer actually hears (takes, loop seams, restarts, generator gaps) - into
+## a rolling ring, written to user://synth/live_tap.wav on quit. Context:
+## offline takes measure clean (silence floors below -70 dBFS, zero
+## saturation) while the ear still hears noise bursts live, so the open
+## question is WHERE between the synthesized block and the speaker the
+## artifact enters. If this capture CONTAINS the bursts, they are inside the
+## mix and analyzable; if it is clean while the ear hears them, the artifact
+## is post-mix (audio driver / OS - e.g. PipeWire xruns under scene load).
+## Flip off when the hunt is over. (Off since 2026-07-26 - the hunt ended:
+## the noise was frication routing, voice_rca.md sections 11-16. Re-arm any
+## time an ear/meter mismatch needs the actual mixer output on disk.)
+const LIVE_TAP := false
+const TAP_SECONDS := 120.0            # rolling window: the LAST two minutes
 
 var _streaming := false
 var _stream_length := 0.0
@@ -298,6 +317,45 @@ func seed_bias() -> int:
 	return _sig.bucket(12) * 0x2545F4914F6CDD1D   # spread the coarse harmonic bucket across the bits
 
 
+func _exit_tree() -> void:
+	_write_tap()
+
+
+## Dump the LIVE_TAP ring (oldest -> newest) as a WAV at the BUS mix rate -
+## this is the actual mixer output, not the synthesized take.
+func _write_tap() -> void:
+	if _tap == null or _tap_filled == 0:
+		return
+	var rate := int(AudioServer.get_mix_rate())
+	var n := _tap_filled
+	var start := (_tap_pos - n + _tap_ring.size()) % _tap_ring.size()
+	var bytes := PackedByteArray()
+	bytes.resize(n * 2)
+	for i in n:
+		var v := clampf(_tap_ring[(start + i) % _tap_ring.size()], -1.0, 1.0)
+		bytes.encode_s16(i * 2, int(v * 32767.0))
+	DirAccess.make_dir_recursive_absolute("user://synth")
+	var f := FileAccess.open("user://synth/live_tap.wav", FileAccess.WRITE)
+	f.store_buffer("RIFF".to_ascii_buffer())
+	f.store_32(36 + bytes.size())
+	f.store_buffer("WAVE".to_ascii_buffer())
+	f.store_buffer("fmt ".to_ascii_buffer())
+	f.store_32(16)
+	f.store_16(1)
+	f.store_16(1)
+	f.store_32(rate)
+	f.store_32(rate * 2)
+	f.store_16(2)
+	f.store_16(16)
+	f.store_buffer("data".to_ascii_buffer())
+	f.store_32(bytes.size())
+	f.store_buffer(bytes)
+	f.close()
+	print("ghost: live tap written -> %s (%.1fs @ %d Hz)" % [
+		ProjectSettings.globalize_path("user://synth/live_tap.wav"),
+		float(n) / float(rate), rate])
+
+
 # Install the analyzer on the Master bus and grab its instance.
 func _setup_analyzer() -> void:
 	var bus := AudioServer.get_bus_index("Master")
@@ -306,6 +364,14 @@ func _setup_analyzer() -> void:
 	AudioServer.add_bus_effect(bus, fx)
 	var idx := AudioServer.get_bus_effect_count(bus) - 1
 	_analyzer = AudioServer.get_bus_effect_instance(bus, idx)
+	if LIVE_TAP:
+		_tap = AudioEffectCapture.new()
+		_tap.buffer_length = 0.5
+		AudioServer.add_bus_effect(bus, _tap)
+		_tap_ring.resize(int(TAP_SECONDS * AudioServer.get_mix_rate()))
+		print("ghost: LIVE TAP armed - last %ds of the Master bus -> synth/live_tap.wav on quit (mix %d Hz, out latency %.1f ms, device '%s')"
+			% [int(TAP_SECONDS), int(AudioServer.get_mix_rate()),
+				AudioServer.get_output_latency() * 1000.0, AudioServer.get_output_device()])
 
 
 # Log-spaced band edges, computed once.
@@ -324,6 +390,17 @@ func _precompute_bands() -> void:
 
 
 func _process(delta: float) -> void:
+	# drain the LIVE_TAP capture into the rolling ring (mono-averaged)
+	if _tap != null:
+		while _tap.get_frames_available() > 0:
+			var got := _tap.get_buffer(mini(_tap.get_frames_available(), 4096))
+			if got.is_empty():
+				break
+			for v in got:
+				_tap_ring[_tap_pos] = (v.x + v.y) * 0.5
+				_tap_pos = (_tap_pos + 1) % _tap_ring.size()
+			_tap_filled = mini(_tap_filled + got.size(), _tap_ring.size())
+
 	var f := AudioFeatures.new()
 
 	if _has_audio and _player.playing:

@@ -23,7 +23,13 @@ func _init() -> void:
 	var failures := 0
 	failures += _check_vowels()
 	failures += _check_traits()
-	failures += _check_readings()
+	if Voice_.RAW_MODE:
+		# raw diagnostic bypass: the walk's audible realization is neutralized,
+		# so readings from different roots are IDENTICAL by design right now
+		print("voice_check: readings check SKIPPED (Voice.RAW_MODE is on)")
+	else:
+		failures += _check_readings()
+	failures += _check_ornament_aging()
 	failures += _check_sentence()
 	if failures == 0:
 		print("voice_check: ALL OK")
@@ -149,6 +155,72 @@ func _check_readings() -> int:
 	DirAccess.make_dir_recursive_absolute(OUT_DIR)
 	Voice_.write_wav(OUT_DIR + "/voice_reading_a.wav", a.pcm)
 	Voice_.write_wav(OUT_DIR + "/voice_reading_b.wav", b.pcm)
+	return bad
+
+
+## Ornaments AGE OUT across the lineage (the recency decay): a generation's
+## spawned modulator keeps its seeded gesture (shape/rate/phase) but loses
+## depth by ORN_DECAY for every generation that lands after it, until the
+## suppress floor prunes it - while the NEWEST generation always enters at
+## full strength, and the elaboration anchor shelf stays a bounded window.
+func _check_ornament_aging() -> int:
+	var bad := 0
+	var root := -1
+	for s in range(1, 200):
+		if Voice_.ProsodyWalk._lineage_mods([s]).size() > 0:
+			root = s
+			break
+	if root < 0:
+		print("voice_check: FAIL - no modulator-spawning root in 200 seeds")
+		return 1
+	var shallow: Array = Voice_.ProsodyWalk._lineage_mods([root])
+	var chain: Array = [root]
+	for g in 8:
+		chain.append(1000 + g)
+	var deep: Array = Voice_.ProsodyWalk._lineage_mods(chain)
+	var m0: Dictionary = shallow[0]
+	var mn: Dictionary = deep[0]
+	if mn.shape != m0.shape or absf(float(mn.rate) - float(m0.rate)) > 1e-6:
+		print("voice_check: FAIL - aging changed a gesture's identity, not just depth")
+		bad += 1
+	var expect: float = float(m0.depth) * pow(Voice_.ProsodyWalk.ORN_DECAY, chain.size() - 1)
+	if absf(float(mn.depth) - expect) > 1e-5 or float(mn.depth) >= float(m0.depth):
+		print("voice_check: FAIL - root modulator depth %.4f, expected aged %.4f" % [mn.depth, expect])
+		bad += 1
+	# the aged root gesture must DIE at the finalize stage while it survives
+	# in the shallow lineage (same damp either way)
+	var kept_shallow := false
+	for m in Voice_.ProsodyWalk._finalize_mods(shallow, 0.35):
+		if absf(float(m.rate) - float(m0.rate)) < 1e-6:
+			kept_shallow = true
+	var kept_deep := false
+	for m in Voice_.ProsodyWalk._finalize_mods(deep, 0.35):
+		if absf(float(m.rate) - float(m0.rate)) < 1e-6:
+			kept_deep = true
+	if not kept_shallow or kept_deep:
+		print("voice_check: FAIL - aging out: shallow kept=%s deep kept=%s (want true/false)"
+			% [kept_shallow, kept_deep])
+		bad += 1
+	# the newest generation enters at full, un-aged strength
+	var fresh := -1
+	for x in range(1, 200):
+		if Voice_.ProsodyWalk._lineage_mods([root, x]).size() == 2:
+			fresh = x
+			break
+	if fresh >= 0:
+		var pair: Array = Voice_.ProsodyWalk._lineage_mods([root, fresh])
+		if float(pair[1].depth) < 0.25 - 1e-6:
+			print("voice_check: FAIL - the newest generation's modulator arrived pre-aged")
+			bad += 1
+	# the anchor shelf is a window, not an archive: prior (3) + lineage (3)
+	# + at most 4 elaboration anchors, however deep the reading runs
+	var walk := Voice_.ProsodyWalk.new([chain])
+	if walk._anchors.size() > 10:
+		print("voice_check: FAIL - anchor shelf grew past the window (%d)" % walk._anchors.size())
+		bad += 1
+	if bad == 0:
+		print("voice_check: ornament aging ok - root gesture %.3f -> %.3f over %d generations, pruned; %d anchors"
+			% [m0.depth, mn.depth, chain.size() - 1, walk._anchors.size()])
 	return bad
 
 
