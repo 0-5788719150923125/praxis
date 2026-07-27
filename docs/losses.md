@@ -66,15 +66,15 @@ Hyperspherical Active Learning Objective (HALO) loss adapted for language modeli
 https://github.com/4rtemi5/halo
 
 Instead of standard cross-entropy over logits, HALO operates in embedding space using
-distance-based scoring against centroid vectors. The classifier's weight matrix serves
-as the centroids - one per vocab token.
+distance-based scoring against centroid vectors.
 
 Key components:
 - Gamma-scaled distance metric with learnable temperature
 - Abstain class acting as an origin sink at the theoretically ideal equilibrium
-- Geometric ...
+- Geometric regularizer encouraging embeddings toward the hyperspherical shell
+- ...
 
-Source: [praxis/losses/halo.py:12](../praxis/losses/halo.py#L12)
+Source: [praxis/losses/halo.py:18](../praxis/losses/halo.py#L18)
 
 ## `mile` - MiLeLoss
 

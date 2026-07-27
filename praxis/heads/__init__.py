@@ -2,6 +2,7 @@ from functools import partial
 
 from praxis.heads.crystal import CrystalClassifier, CrystalHead, CrystalVearHead
 from praxis.heads.forward import ForwardHead
+from praxis.heads.halo import HaloClassifier, HaloHead
 from praxis.heads.harmonic import HarmonicField, HarmonicHead
 from praxis.heads.mtp import MTP_REGISTRY, MultiTokenPrediction
 from praxis.heads.parallel import ParallelHead
@@ -80,6 +81,17 @@ def _prismatic4_branches() -> list:
     ]
 
 
+def _prismatic5_branches() -> list:
+    """prismatic4's arms plus a HALO distance arm. The HALO head is a DIRECT
+    branch (no harmonic field in front): HALOLoss scores the trunk embeddings,
+    so the arm must score those same features at inference - putting a
+    transform in front would train one feature space and score another (the
+    mismatch that scrambled the borrowed-crystal wiring). Its logits are
+    detached in the gate blend (see HaloHead.detach_in_blend), so the arm
+    trains purely under HALO while the gate learns whether to trust it."""
+    return _prismatic4_branches() + [HaloHead]
+
+
 HEAD_REGISTRY = dict(
     forward=ForwardHead,
     tied=TiedWeights,
@@ -116,4 +128,10 @@ HEAD_REGISTRY = dict(
     # of CrystalClassifiers (CRYSTAL_BANK_SIZE geometries): discrete, unique
     # output geometries voted per context. See CrystalVearHead, praxis/routers/vear.py.
     prismatic4=partial(ParallelHead, branches=_prismatic4_branches()),
+    # prismatic4 + a fourth arm: the HALO hyperspherical distance classifier
+    # (praxis/heads/halo.py). Pair with loss_func: halo - the loss detects the
+    # arm and runs its honest composite mode (mixture CE for gate + other
+    # arms, pure HALO geometry for this arm). The parallel gate-share card for
+    # the last branch is the live verdict on whether HALO's scoring competes.
+    prismatic5=partial(ParallelHead, branches=_prismatic5_branches()),
 )

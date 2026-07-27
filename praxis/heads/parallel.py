@@ -190,28 +190,46 @@ class ParallelHead(BaseHead):
         ``transform``/``_gate_combine`` instead."""
         if self.gate is None:
             return hidden_states
-        outs = [b(hidden_states, **kwargs) for b in self.branches]
+        # A branch marked detach_in_blend (the HALO arm) contributes its
+        # distribution to the mixture but no gradient flows into it from the
+        # blended CE: the gate still learns how much to trust the arm (its
+        # gradient rides the mixture weights), while the arm's parameters
+        # train solely under their own objective (HALOLoss's geometric
+        # terms). Keeps the gate share an uncontaminated verdict on the arm.
+        outs = [
+            (
+                b(hidden_states, **kwargs).detach()
+                if getattr(b, "detach_in_blend", False) and self.training
+                else b(hidden_states, **kwargs)
+            )
+            for b in self.branches
+        ]
         return self._gate_combine_logits(outs, self.gate(hidden_states))
 
     @property
     def classifier(self) -> Optional[nn.Module]:
         # The gated arms read out differently, so there is no shared linear
-        # projection for cut-CE (which is why crystal forbids it). But a
-        # centroid loss (HALO) only needs *a* centroid matrix: lend it the
-        # crystal arm's centers, preferring a branch that exposes ``centers``,
-        # then any weight-bearing branch. NB: HALO scores the pre-head
-        # embeddings against these centroids and ignores the gated logits, so
-        # the harmonic/gate machinery sees little gradient under it.
-        fallback = None
+        # projection for cut-CE (which is why crystal forbids it). A centroid
+        # loss (HALO) wants a dedicated HALO arm above all (``is_halo``, the
+        # prismatic5 branch): HALOLoss then runs its honest composite mode -
+        # CE on the blended logits for the gate/other arms, the geometric
+        # objective for the HALO arm - so every branch keeps a training
+        # signal. Lacking one, fall back to lending a crystal arm's centers,
+        # then any weight-bearing branch (the legacy side-loss mode; note the
+        # harmonic/gate machinery sees little gradient under it).
+        centers_fallback = None
+        weight_fallback = None
         for b in self.branches:
             c = getattr(b, "classifier", None)
             if c is None:
                 continue
-            if hasattr(c, "centers"):
+            if getattr(c, "is_halo", False):
                 return c
-            if fallback is None and hasattr(c, "weight"):
-                fallback = c
-        return fallback
+            if centers_fallback is None and hasattr(c, "centers"):
+                centers_fallback = c
+            if weight_fallback is None and hasattr(c, "weight"):
+                weight_fallback = c
+        return centers_fallback or weight_fallback
 
     def set_downstream(self, classifier: Optional[nn.Module]) -> None:
         """Point every branch's grad-ratio at the real downstream classifier."""

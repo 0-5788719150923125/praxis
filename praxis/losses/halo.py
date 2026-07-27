@@ -8,21 +8,46 @@ from torch import Tensor
 
 from praxis.losses.reduction import weighted_reduce
 
+# The one label-smoothing constant shared by the loss's distillation targets
+# and the HaloClassifier's abstain calibration (praxis/heads/halo.py imports
+# it). The two derivations must agree or the abstain equilibrium is computed
+# for a target distribution the loss never produces.
+HALO_LABEL_SMOOTHING: float = 0.1
+
 
 class HALOLoss(nn.Module):
     """
     Hyperspherical Active Learning Objective (HALO) loss adapted for language modeling.
     https://github.com/4rtemi5/halo
 
-    Instead of standard cross-entropy over logits, HALO operates in embedding space
-    using distance-based scoring against centroid vectors. The classifier's weight
-    matrix serves as the centroids - one per vocab token.
+    Instead of standard cross-entropy over logits, HALO operates in embedding
+    space using distance-based scoring against centroid vectors.
 
     Key components:
     - Gamma-scaled distance metric with learnable temperature
     - Abstain class acting as an origin sink at the theoretically ideal equilibrium
     - Geometric regularizer encouraging embeddings toward the hyperspherical shell
     - Distillation-based label smoothing using margin-aware soft targets
+
+    Two operating modes, keyed off the classifier:
+
+    1. **Honest mode** (classifier exposes ``is_halo``, i.e. a
+       :class:`~praxis.heads.halo.HaloClassifier` - the prismatic5 arm).
+       The classifier owns centroids/gamma/abstain; the loss delegates to it
+       so training and inference share ONE scoring function. The total loss
+       is composite: standard CE on the model's emitted logits (training the
+       gate and the non-HALO arms - the HALO arm's logits are detached in
+       the blend) PLUS the HALO geometric objective on the trunk embeddings
+       (the arm's sole training signal). No relative weight knob: 1:1.
+
+    2. **Legacy side-loss mode** (any other centroid matrix: a Linear head's
+       ``weight``, a crystal head's ``centers`` - e.g. CALM's geometric
+       mode). Pure HALO on (embeddings, centroids), as before, with the
+       official mean-centering applied when the centroids are trainable
+       (frozen instruments like CALM's codec are measured as-is), and gamma
+       calibrated from the MEASURED first-batch geometry instead of the
+       official ``r_sq_init = 2.0`` guess (which assumes randn centroids -
+       false for LM head inits like std 1/sqrt(D)).
     """
 
     def __init__(
@@ -30,7 +55,7 @@ class HALOLoss(nn.Module):
         vocab_size: int = 1024,
         learn_gamma: bool = True,
         distill: bool = True,
-        label_smoothing: float = 0.1,
+        label_smoothing: float = HALO_LABEL_SMOOTHING,
         reduction: str = "mean",
         *args: Any,
         **kwargs: Any,
@@ -42,23 +67,39 @@ class HALOLoss(nn.Module):
         self.label_smoothing = label_smoothing
         self.reduction = reduction
 
-        # D (embedding dim) is unknown until the first forward pass
-        self._initialized = False
         self.gamma = nn.Parameter(
             torch.tensor([0.0], dtype=torch.float32),
             requires_grad=learn_gamma,
         )
-        self.abstain_bias = 0.0
+        # Legacy-mode calibration state. Persistent buffers: on resume the
+        # loss must NOT recalibrate - refilling gamma would clobber the
+        # learned temperature, and a fresh abstain_bias would shift the
+        # equilibrium mid-run.
+        self.register_buffer(
+            "_calibrated", torch.zeros((), dtype=torch.bool), persistent=True
+        )
+        self.register_buffer(
+            "abstain_bias", torch.zeros((), dtype=torch.float32), persistent=True
+        )
+        self._D: Optional[float] = None
         self._last_stats = None
 
-    def _lazy_init(self, emb_dims: int) -> None:
-        """Initialize gamma and abstain bias once we know the embedding dimension."""
-        D = float(emb_dims)
+    def _calibrate(self, D: float, r_sq_init: float) -> None:
+        """Initialize gamma and the abstain bias from the measured initial
+        geometry (legacy mode only; the HaloClassifier calibrates itself).
+
+        The official formula assumes ``r_sq_init = 2.0`` (randn centroids,
+        unit-RMS embeddings). Here ``r_sq_init`` is the measured first-batch
+        mean of ``||x - c_t||^2 / D``. The denominator is floored at the
+        official value's (``2.0 - r_sq_target``), so gamma starts at most as
+        sharp as the reference default and softer when the cloud starts
+        farther out - it is learnable and can sharpen from there.
+        """
         K = float(self.vocab_size)
         r_sq_target = 1.0 - (2.0 / D)
 
-        r_sq_init = 2.0
-        init_gamma = 20.0 / (r_sq_init - r_sq_target)
+        denom = max(r_sq_init - r_sq_target, 2.0 - r_sq_target)
+        init_gamma = 20.0 / denom
 
         if self.label_smoothing > 0:
             max_prob = 1.0 - self.label_smoothing + (self.label_smoothing / K)
@@ -69,7 +110,6 @@ class HALOLoss(nn.Module):
 
         margin_ce = math.log(max_prob / min_prob)
         t_ideal = init_gamma * (1.0 - r_sq_target)
-        self.abstain_bias = t_ideal - margin_ce
 
         # Inverse softplus for gamma initialization
         if init_gamma > 20.0:
@@ -79,14 +119,13 @@ class HALOLoss(nn.Module):
 
         with torch.no_grad():
             self.gamma.fill_(gamma_start)
-
-        self._D = D
-        self._initialized = True
+            self.abstain_bias.fill_(t_ideal - margin_ce)
+            self._calibrated.fill_(True)
 
     def forward(
         self,
-        logits: Tensor,
-        labels: Tensor,
+        logits: Tensor = None,
+        labels: Tensor = None,
         embeddings: Tensor = None,
         classifier: nn.Module = None,
         loss_weights: Optional[Tensor] = None,
@@ -103,34 +142,12 @@ class HALOLoss(nn.Module):
         # so everything arrives aligned - just flatten.
         flat_labels = labels.view(-1)
         emb_dims = embeddings.shape[-1]
-
-        if not self._initialized:
-            self._lazy_init(emb_dims)
+        self._D = float(emb_dims)
 
         flat_emb = embeddings.contiguous().view(-1, emb_dims)
         flat_weights = loss_weights.reshape(-1) if loss_weights is not None else None
-        # HALO is a distance-to-centroid objective: a Linear head exposes its
-        # centroids as ``weight``, the crystal head as ``centers``.
-        centroids = getattr(classifier, "weight", None)
-        if centroids is None:
-            centroids = getattr(classifier, "centers", None)
-        if centroids is None:
-            raise RuntimeError(
-                "HALOLoss needs a centroid matrix on the classifier "
-                "(`weight` or `centers`)."
-            )
-        return self._halo_forward(flat_emb, flat_labels, centroids, flat_weights)
 
-    def _halo_forward(
-        self,
-        pos: Tensor,
-        target: Tensor,
-        centroids: Tensor,
-        loss_weights: Optional[Tensor] = None,
-    ) -> Tensor:
-        D = self._D
-        pos = pos.to(torch.float32)
-        cen = centroids.to(torch.float32)
+        is_halo_head = bool(getattr(classifier, "is_halo", False))
 
         # Normalize inputs to unit per-coordinate scale (RMS), matching the
         # shell target 1 - 2/D. HALO is hyperspherical: without this its r_sq,
@@ -138,26 +155,101 @@ class HALOLoss(nn.Module):
         # layer emitting large or drifting activations makes the loss magnitude
         # (and its gradient) track that norm - destabilizing training and any
         # loss-delta RL reward downstream. Normalizing decouples HALO from
-        # upstream scale and is the geometry the objective assumes.
+        # upstream scale and is the geometry the objective assumes. The
+        # HaloClassifier applies the IDENTICAL normalization at inference.
+        pos = flat_emb.to(torch.float32)
         pos = pos * torch.rsqrt(pos.pow(2).mean(dim=-1, keepdim=True).clamp_min(1e-6))
 
         # Mask out padding tokens before computing HALO
-        valid_mask = target != -100
+        valid_mask = flat_labels != -100
         if not valid_mask.any():
             return pos.new_zeros((), requires_grad=True)
 
         pos = pos[valid_mask]
-        target = target[valid_mask]
+        target = flat_labels[valid_mask]
         # Filter weights to match the post-mask token set so per-token
         # alignment is preserved end-to-end.
-        if loss_weights is not None:
-            loss_weights = loss_weights[valid_mask]
+        if flat_weights is not None:
+            flat_weights = flat_weights[valid_mask]
+
+        if is_halo_head:
+            # Honest mode: the classifier owns the geometry. Its centroids()
+            # are already mean-centered (official HALOModel behavior) and its
+            # gamma/abstain were calibrated exactly at construction.
+            cen = classifier.centroids()
+            gamma = classifier.gamma_value()
+            abstain_bias = float(classifier.abstain_bias)
+        else:
+            # Legacy mode: borrowed centroid matrix. A Linear head exposes its
+            # centroids as ``weight``, the crystal head as ``centers``.
+            centroids = getattr(classifier, "weight", None)
+            if centroids is None:
+                centroids = getattr(classifier, "centers", None)
+            if centroids is None:
+                raise RuntimeError(
+                    "HALOLoss needs a centroid matrix on the classifier "
+                    "(`weight` or `centers`)."
+                )
+            cen = centroids.to(torch.float32)
+            # Official HALOModel mean-centers the centroids every forward:
+            # under Zipfian targets the CE gradient pushes all centroids in a
+            # correlated frequency direction, walking the cloud off the
+            # abstain origin. Center only TRAINABLE centroids - a frozen
+            # matrix (CALM's codec instrument) can't drift and must be
+            # measured in its own geometry.
+            if centroids.requires_grad:
+                cen = cen - cen.mean(dim=0, keepdim=True)
+            if not bool(self._calibrated.item()):
+                with torch.no_grad():
+                    r_sq_init = (
+                        (pos - cen[target]).pow(2).mean(dim=-1).mean().item()
+                    )
+                self._calibrate(self._D, r_sq_init)
+            gamma = F.softplus(self.gamma)
+            abstain_bias = float(self.abstain_bias.item())
+
+        halo_loss = self._halo_terms(
+            pos, target, cen, gamma, abstain_bias, flat_weights
+        )
+        if not is_halo_head:
+            return halo_loss
+
+        # Honest-mode composite: standard CE on the model's emitted logits.
+        # This is the gate's and the non-HALO arms' training signal (the HALO
+        # arm's logits are detached in the parallel blend, so the geometric
+        # term above remains that arm's only teacher). Excludes -100 positions
+        # from the denominator; per-token task weights pass through.
+        flat_logits = logits.contiguous().view(-1, logits.shape[-1]).float()
+        ce_per_token = F.cross_entropy(
+            flat_logits, flat_labels, reduction="none", ignore_index=-100
+        )
+        ce_weights = (
+            loss_weights.reshape(-1)
+            if loss_weights is not None
+            else torch.ones_like(ce_per_token)
+        )
+        ce_loss = weighted_reduce(
+            ce_per_token, labels=flat_labels, loss_weights=ce_weights
+        )
+        return ce_loss + halo_loss
+
+    def _halo_terms(
+        self,
+        pos: Tensor,
+        target: Tensor,
+        cen: Tensor,
+        gamma: Tensor,
+        abstain_bias: float,
+        loss_weights: Optional[Tensor] = None,
+    ) -> Tensor:
+        """The HALO objective proper, on pre-masked, RMS-normalized embeddings
+        and mean-centered centroids, with gamma/abstain supplied by whichever
+        module owns them (see ``forward``)."""
+        D = self._D
 
         x_sq = pos.pow(2).mean(dim=-1, keepdim=True)
         y_sq = cen.pow(2).mean(dim=-1, keepdim=True)
         dot_product = (pos @ cen.T) / D
-
-        gamma = F.softplus(self.gamma)
 
         # Softmax is shift-invariant, so we factor out -(x_sq * gamma).
         # This leaves standard dot-product similarity with an L2 penalty on keys.
@@ -165,7 +257,7 @@ class HALOLoss(nn.Module):
 
         # The abstain class acts as an origin sink
         logit_abstain_shifted = torch.full(
-            (pos.size(0), 1), self.abstain_bias, dtype=pos.dtype, device=pos.device
+            (pos.size(0), 1), abstain_bias, dtype=pos.dtype, device=pos.device
         )
 
         # Shape: N x (K+1)

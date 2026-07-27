@@ -3,7 +3,7 @@
 
 LM heads (tied/untied, harmonic, crystal) and multi-token-prediction wrappers.
 
-Registry: ``praxis.HEAD_REGISTRY + MTP_REGISTRY`` (12 entries)
+Registry: ``praxis.HEAD_REGISTRY + MTP_REGISTRY`` (13 entries)
 
 ## `conv` - ConvMTPModule
 
@@ -61,7 +61,7 @@ identical in standalone and encoder modes.
 
 Source: [praxis/heads/harmonic.py:1037](../praxis/heads/harmonic.py#L1037)
 
-## `prismatic`, `prismatic3`, `prismatic3_repel`, `prismatic4` - ParallelHead
+## `prismatic`, `prismatic3`, `prismatic3_repel`, `prismatic4`, `prismatic5` - ParallelHead
 
 Gate-combined parallel branches; a SequentialHead stage or top head.
 
@@ -72,6 +72,7 @@ Presets:
 - `prismatic3` - `branches=[functools.partial(<class 'praxis.heads.stacked.SequentialHead'>, heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='learned', build_classifier=True, fast_weights=True)]), functools.partial(<class 'praxis.heads.stacked.SequentialHead'>, heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='input', build_classifier=False, fast_weights=True), <class 'praxis.heads.crystal.CrystalHead'>]), functools.partial(<class 'praxis.heads.stacked.SequentialHead'>, heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='pure', build_classifier=True, fast_weights=True)])]`
 - `prismatic3_repel` - `branches=[functools.partial(<class 'praxis.heads.stacked.SequentialHead'>, heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='learned', build_classifier=True, fast_weights=True)]), functools.partial(<class 'praxis.heads.stacked.SequentialHead'>, heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='input', build_classifier=False, fast_weights=True), <class 'praxis.heads.crystal.CrystalHead'>]), functools.partial(<class 'praxis.heads.stacked.SequentialHead'>, heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='pure', build_classifier=True, fast_weights=True)])], gate_repulsion=0.02`
 - `prismatic4` - `branches=[functools.partial(<class 'praxis.heads.stacked.SequentialHead'>, heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='learned', build_classifier=True, fast_weights=True)]), functools.partial(<class 'praxis.heads.stacked.SequentialHead'>, heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='input', build_classifier=False, fast_weights=True), <class 'praxis.heads.crystal.CrystalVearHead'>]), functools.partial(<class 'praxis.heads.stacked.SequentialHead'>, heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='pure', build_classifier=True, fast_weights=True)])]`
+- `prismatic5` - `branches=[functools.partial(<class 'praxis.heads.stacked.SequentialHead'>, heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='learned', build_classifier=True, fast_weights=True)]), functools.partial(<class 'praxis.heads.stacked.SequentialHead'>, heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='input', build_classifier=False, fast_weights=True), <class 'praxis.heads.crystal.CrystalVearHead'>]), functools.partial(<class 'praxis.heads.stacked.SequentialHead'>, heads=[functools.partial(<class 'praxis.heads.harmonic.HarmonicHead'>, amp_modulation='pure', build_classifier=True, fast_weights=True)]), <class 'praxis.heads.halo.HaloHead'>]`
 
 ## `tied` - TiedWeights
 
