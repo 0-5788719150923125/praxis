@@ -231,7 +231,7 @@ def test_schedulefree_rollback_restores_both_weight_and_z():
 def test_wave_mode_drives_and_rolls_back_the_optimizer_wave():
     # edit_mode="wave": the controller's action sets the WaveScheduleFree wave
     # (amp, cycles, phase); a non-helpful change restores the three scalars.
-    from praxis.optimizers.wave_schedule_free import WaveScheduleFree
+    from praxis.optimization.wave_schedule_free import WaveScheduleFree
 
     torch.manual_seed(0)
     policy = HarmonicWeightPolicy(_cfg())
@@ -262,7 +262,7 @@ def test_wave_mode_drives_and_rolls_back_the_optimizer_wave():
 
 
 def test_wave_mode_keeps_helpful_wave_change():
-    from praxis.optimizers.wave_schedule_free import WaveScheduleFree
+    from praxis.optimization.wave_schedule_free import WaveScheduleFree
 
     torch.manual_seed(0)
     policy = HarmonicWeightPolicy(_cfg())

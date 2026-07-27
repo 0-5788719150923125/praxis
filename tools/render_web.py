@@ -202,28 +202,124 @@ CONTEXTS = [
     },
 ]
 
+# The dashboard's SYSTEM panel. These are the REAL keys a live run streams, in
+# the order the producer inserts them: PraxisTrainerCallback._build_info_dict in
+# praxis/callbacks/lightning/terminal.py, which feeds both the CLI dashboard and
+# the web stream. Nothing else belongs here - the run's architecture choices
+# (encoder, attention, halting, sampler, ...) are the Customs tab's job and reach
+# the frontend through /api/spec (SPEC_ARGS), not through live metrics.
+#
+# Values describe the same canned --beta run as SPEC_ARGS / MODEL_ARCHITECTURE,
+# so the Terminal and Customs stills agree with each other.
+#
+# Deliberately absent, because a live run omits them too:
+#   policy      - info_dict["policy"] is rl_type; unset here, and the frontend
+#                 drops null-valued rows (dashboard.js renderInfoPanel).
+#   rank / node - only added when trainer.world_size > 1.
+#   debug/meta  - CLI-only extras; the web filters them (INTERNAL_INFO_KEYS).
 INFO = {
+    "device": "cuda:0",
+    "ram": "14.2GB/31.3GB",  # f"{ram_used}/{ram_total}", one decimal (utils/memory.py)
+    "vram": "1.6GB/8.0GB",  # driver-level actual_used/total for the run's GPU
     "optimizer": "Lion",
-    "scheduler": "cosine",
-    "sampler": "novelty",
-    "halting": "kl_divergence",
-    "encoder": "byte_latent",
-    "attention": "arc",
-    "device": "cuda",
-    "precision": "bf16",
+    "strategy": "naive",  # loss-combination strategy: NaiveSummation in the tree
+    "vocab_size": 264,  # byte-level: ByteEmbedding/ForwardHead vocab in the tree
+    "block_size": 256,  # sequence length of the training batch
     "batch_size": 16,
     "target_batch": 256,
+    "depth": 3,
+    "local_layers": 3,
+    "remote_layers": 0,
+    "hidden_size": 96,
+    "embed_size": 64,
     "dropout": 0.0,
-    "regularizers": "contrastive_isotropy",
 }
 
+# ---------------------------------------------------------------------------
+# Training cadence
+#
+# The dashboard advances on the RUN's clock, not the frame clock. A live
+# callback fires once per ``training_step`` (praxis/trainers/backpropagation.py),
+# and that single tick is what moves BATCH (``total_batch_idx``, the fit-wide
+# MICRO-batch counter), the EMA loss behind ERROR, one new point on the loss
+# sparkline, and the token total. RATE is ``avg_step_time`` - the EMA of the wall
+# time BETWEEN those ticks - so RATE is exactly the interval everything here
+# moves on, and nothing may tick faster than it.
+#
+# STEP is a different counter: ``trainer.global_step``, the OPTIMIZER step, which
+# only advances once per accumulation cycle (ACCUM = target_batch / batch_size,
+# see trainers/runtime.py). It is the SLOW one - STEP = BATCH // ACCUM, always.
+#
+# The loop fits BATCHES_PER_LOOP ticks into N_FRAMES x FRAME_MS, which fixes the
+# mean step time. Individual durations wander around it (a real avg_step_time EMA
+# does), over exactly one sine period, so they sum to the loop length and frame
+# 120 lands on the same state as frame 0.
+# ---------------------------------------------------------------------------
+
+BATCHES_PER_LOOP = 60  # kept above the 50-point sparkline window, so the loss
+# trace never visibly repeats inside a single view
+LOOP_S = N_FRAMES * FRAME_MS / 1000.0  # 12.0s of run time per loop
+STEP_TIME = LOOP_S / BATCHES_PER_LOOP  # 0.20s per batch -> the RATE readout
+STEP_JITTER = 0.18  # +/-18% slow wander in the per-batch duration
+ACCUM = INFO["target_batch"] // INFO["batch_size"]  # 16 batches per optimizer step
+TOKENS_PER_BATCH = INFO["batch_size"] * INFO["block_size"]  # 4096, as the trainer counts
+
+# Where the run stands when the loop opens. Everything else is DERIVED from it,
+# so the footer's figures agree with each other instead of drifting apart: AGE is
+# the batches run at STEP_TIME each, TOKENS is the batches times their token
+# count, STEP is the whole accumulation cycles inside BATCH.
+BATCH0 = 112848  # a whole number of accumulation cycles (7053 optimizer steps)
+TOKENS0_B = BATCH0 * TOKENS_PER_BATCH / 1e9  # 0.462B
+AGE0_H = BATCH0 * STEP_TIME / 3600.0  # 6.27h
+
+
+def _batch_duration(k):
+    """Wall seconds taken by batch k of the loop. One whole sine period across
+    the loop, so the durations sum to exactly LOOP_S."""
+    return STEP_TIME * (
+        1 + STEP_JITTER * math.sin(2 * math.pi * k / BATCHES_PER_LOOP)
+    )
+
+
+# Cumulative finish time of each batch in the loop.
+_BATCH_ENDS = []
+_acc = 0.0
+for _k in range(BATCHES_PER_LOOP):
+    _acc += _batch_duration(_k)
+    _BATCH_ENDS.append(_acc)
+
+
+def _batches_done(f):
+    """Batches finished by frame f. This is the ONLY clock the dashboard's
+    values move on - several frames pass between consecutive ticks."""
+    t = f * FRAME_MS / 1000.0
+    return sum(1 for end in _BATCH_ENDS if end <= t + 1e-9)
+
+
+def _rate_table():
+    """RATE per finished batch: an alpha=0.1 EMA over the step durations, the
+    same smoothing the trainer applies (backpropagation.py ``_update_ema``),
+    warmed to its steady state so the table is exactly periodic."""
+    ema = STEP_TIME
+    for _ in range(20):  # settle the EMA before sampling a period
+        for k in range(BATCHES_PER_LOOP):
+            ema = 0.1 * _batch_duration(k) + 0.9 * ema
+    table = []
+    for k in range(BATCHES_PER_LOOP):
+        ema = 0.1 * _batch_duration(k) + 0.9 * ema
+        table.append(ema)
+    return table
+
+
+_RATE = _rate_table()
+
 LOG_LINES = [
-    "praxis.trainer - INFO - resuming from checkpoint at step 14600",
+    "praxis.trainer - INFO - resuming from checkpoint at step 7000",
     "praxis.data - INFO - interleaving 6 datasets (sampler=novelty)",
-    "praxis.encoder - INFO - byte-latent codec frozen at step 12000",
+    "praxis.encoder - INFO - byte-latent codec frozen at step 6000",
     "lightning - INFO - validation pass: val_loss improved to 1.93",
     "praxis.sampler - INFO - difficulty reweight applied to 4 tasks",
-    "praxis.trainer - INFO - checkpoint written (step=14820)",
+    f"praxis.trainer - INFO - checkpoint written (step={BATCH0 // ACCUM})",
 ]
 
 SNAPSHOT = {
@@ -234,10 +330,10 @@ SNAPSHOT = {
     "accuracy": [0.318, 0.292],
     "fitness": None,
     "memory_churn": None,
-    "batch": 256,
-    "step": 14820,
-    "rate": 0.41,
-    "num_tokens": 0.834,
+    "batch": BATCH0,  # micro-batch counter (fast: one per RATE)
+    "step": BATCH0 // ACCUM,  # optimizer step (slow: one per ACCUM batches)
+    "rate": round(STEP_TIME, 2),
+    "num_tokens": round(TOKENS0_B, 3),
     "context_tokens": 512,
     "total_params": "3.38M",
     "local_layers": 3,
@@ -248,7 +344,7 @@ SNAPSHOT = {
     "seed": SEED,
     "arg_hash": ARG_HASH,
     "url": "localhost:2100",
-    "hours_elapsed": 6.27,
+    "hours_elapsed": round(AGE0_H, 2),
     "status_text": CONTEXTS[0]["text"],
     "contexts": CONTEXTS,
     "info": INFO,
@@ -289,9 +385,10 @@ def _ambient_shown_tail(f):
     return min(len(AMBIENT_TAIL), completed + within)
 
 
-# Jagged, periodic per-step loss. Periodic over 120 so the scrolling sparkline
-# loops seamlessly; the cubed pseudo-noise makes it spiky (mostly small jitter,
-# the occasional larger step) instead of a smooth wave.
+# Jagged per-BATCH loss - one value per training step, so it is indexed by the
+# batch counter, not the frame. Periodic over BATCHES_PER_LOOP so the scrolling
+# sparkline loops seamlessly; the cubed pseudo-noise makes it spiky (mostly small
+# jitter, the occasional larger step) instead of a smooth wave.
 def _noise_seq(n):
     seq, h = [], 0x9E3779B9
     for _ in range(n):
@@ -300,25 +397,59 @@ def _noise_seq(n):
     return seq
 
 
-_NOISE = _noise_seq(120)
+_NOISE = _noise_seq(BATCHES_PER_LOOP)
 
 
-def _loss_at(i):
-    jag = 0.075 * (_NOISE[i % 120] ** 3)  # spiky high-frequency jitter
-    drift = 0.045 * math.sin(2 * math.pi * i / 120)  # gentle seamless drift
-    return round(1.93 + drift + jag, 4)
+def _raw_loss_at(i):
+    """The RAW loss of batch i - jagged, as a per-batch loss is."""
+    jag = 0.075 * (_NOISE[i % BATCHES_PER_LOOP] ** 3)  # spiky per-batch jitter
+    drift = 0.045 * math.sin(2 * math.pi * i / BATCHES_PER_LOOP)  # seamless drift
+    return 1.93 + drift + jag
+
+
+def _error_table():
+    """What ERROR and the sparkline ACTUALLY carry: ``ema_loss``, not the raw
+    per-batch loss. The callback smooths with LOSS_EMA_ALPHA = 0.01
+    (praxis/metrics/ema.py) and pushes that single value to both the readout and
+    train_losses, whose last 50 entries are the chart (interface/state/
+    live_metrics.py). At alpha 0.01 each batch moves the line by ~1% of its gap,
+    so the trace is a slow smooth wander, NOT the raw jitter - a spiky sparkline
+    here would be claiming a per-batch swing no EMA that heavy could produce.
+    Warmed to the steady state so the table is exactly periodic."""
+    ema = _raw_loss_at(0)
+    for _ in range(400):  # settle: alpha 0.01 has a long memory
+        for k in range(BATCHES_PER_LOOP):
+            ema = 0.01 * _raw_loss_at(k) + 0.99 * ema
+    table = []
+    for k in range(BATCHES_PER_LOOP):
+        ema = 0.01 * _raw_loss_at(k) + 0.99 * ema
+        table.append(round(ema, 4))
+    return table
+
+
+_ERROR = _error_table()
 
 
 def _dashboard_snapshot(f):
-    """The live metrics for frame f: a jagged scrolling loss window, advancing
-    counters (BATCH, the optimizer step, slower than STEP), and the AMBIENT
-    paragraph with a few tail tokens trickling in every 3s."""
+    """The live metrics at frame f.
+
+    Every value here moves on the RUN's clock, not the capture's: the tick is one
+    training batch, RATE seconds apart, which at this cadence is several frames.
+    BATCH, ERROR + its new sparkline point and the token total advance together
+    on that tick; STEP only every ACCUM ticks. AGE and TOKENS are computed from
+    the same counter rather than animated, so over a 12s loop they hold still at
+    the dashboard's precision - which is what a live run looks like, a 3-decimal
+    billion-token readout does not visibly move in twelve seconds. The AMBIENT
+    paragraph is the exception: it comes from the inference thread, not the
+    training loop, so it trickles on its own ~3s cycle."""
     shown = _ambient_shown_tail(f)
     ambient_text = AMBIENT_BASE
     if shown:
         ambient_text += " " + " ".join(AMBIENT_TAIL[:shown])
 
-    history = [_loss_at(f - 49 + k) for k in range(50)]
+    done = _batches_done(f)  # ticks elapsed, NOT frames
+    batch = BATCH0 + done
+    history = [_ERROR[(done - 49 + k) % BATCHES_PER_LOOP] for k in range(50)]
     contexts = [
         {**CONTEXTS[0], "text": ambient_text, "tokens": AMBIENT_BASE_TOKENS + shown},
         CONTEXTS[1],
@@ -328,14 +459,16 @@ def _dashboard_snapshot(f):
         **SNAPSHOT,
         "loss": history[-1],
         "loss_history": history,
-        "step": 14820 + 3 * f,  # STEP: the faster counter
-        "batch": 3705 + f,  # BATCH: the optimizer step - slower, never static
-        "num_tokens": round(0.834 + f * 0.0007, 3),
-        "rate": round(0.41 + 0.05 * math.sin(f / 6.0), 2),
-        "hours_elapsed": round(6.27 + f * 0.0015, 2),
+        "batch": batch,  # one per tick
+        "step": batch // ACCUM,  # one per ACCUM ticks
+        "num_tokens": round(batch * TOKENS_PER_BATCH / 1e9, 3),
+        # The EMA as of the last FINISHED batch (index -1 at frame 0 carries the
+        # previous loop's final value, which keeps the wrap seamless).
+        "rate": round(_RATE[(done - 1) % BATCHES_PER_LOOP], 2),
+        "hours_elapsed": round(AGE0_H + (f * FRAME_MS / 1000.0) / 3600.0, 2),
         "status_text": ambient_text,
         "contexts": contexts,
-        "update_count": f + 1,
+        "update_count": done + 1,
     }
 
 

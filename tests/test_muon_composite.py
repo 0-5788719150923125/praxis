@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 from types import SimpleNamespace
 
-from praxis.optimizers import (
+from praxis.optimization import (
     CompositeOptimizer,
     _create_muon,
     _split_muon_params,

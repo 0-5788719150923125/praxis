@@ -5,7 +5,7 @@ import torch
 from transformers import AutoTokenizer
 
 from praxis import PraxisConfig, PraxisForCausalLM
-from praxis.optimizers import get_optimizer, get_optimizer_profile
+from praxis.optimization import get_optimizer, get_optimizer_profile
 from praxis.schedulers import get_scheduler_func
 from praxis.trainers import (
     TRAINER_REGISTRY,
@@ -73,7 +73,7 @@ class TestBackpropagationTrainer:
             scheduler=scheduler,
             hparams={"batch_size": 4, "device": "cpu"},
             tokenizer=tokenizer,
-            byte_latent=False,
+            byte_level=False,
         )
 
         assert trainer.model is not None
@@ -82,7 +82,7 @@ class TestBackpropagationTrainer:
         assert trainer.tokenizer is tokenizer
         assert (
             trainer.outputs_are_aligned is False
-        )  # byte_latent=False means outputs_are_aligned=False
+        )  # byte_level=False means outputs_are_aligned=False
 
     def test_trainer_forward_with_kwargs(self, setup_model, setup_tokenizer):
         """Test that BackpropagationTrainer forward accepts keyword arguments."""
@@ -100,7 +100,7 @@ class TestBackpropagationTrainer:
             scheduler=scheduler,
             hparams={"batch_size": 4, "device": "cpu"},
             tokenizer=tokenizer,
-            byte_latent=False,
+            byte_level=False,
         )
 
         batch_size = 2
@@ -130,7 +130,7 @@ class TestBackpropagationTrainer:
             scheduler=scheduler,
             hparams={"batch_size": 4, "device": "cpu"},
             tokenizer=tokenizer,
-            byte_latent=False,
+            byte_level=False,
         )
 
         batch_size = 2

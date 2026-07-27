@@ -1,5 +1,6 @@
 """Training-related CLI arguments."""
 
+from praxis.governors import GOVERNOR_REGISTRY
 from praxis.trainers import TRAINER_REGISTRY
 
 
@@ -28,6 +29,21 @@ class TrainingGroup:
                 "CUDA context (single host, low VRAM overhead), while "
                 "'mono_forward_ray' spawns one Ray actor per layer "
                 "(multi-host capable, ~300-500 MB CUDA context per actor)."
+            ),
+        )
+
+        group.add_argument(
+            "--governor",
+            type=str,
+            choices=list(GOVERNOR_REGISTRY.keys()),
+            default=None,
+            help=(
+                "Training-loop governor: a feedback controller over a loop "
+                "knob, driven by an endogenous signal. 'gns_batch' governs "
+                "the gradient-accumulation factor by tracking the measured "
+                "gradient noise scale (target_batch_size becomes the "
+                "ceiling). Default None keeps the static accumulation "
+                "factor. Can also be set in experiment YAML as 'governor'."
             ),
         )
 

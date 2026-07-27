@@ -97,6 +97,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
+| `--governor` | str | `None` | Training-loop governor: a feedback controller over a loop knob, driven by an endogenous signal. 'gns_batch' governs the gradient-accumulation factor by tracking the measured gradient noise scale (target_batch_size becomes the ceiling). Default None keeps the static accumulation factor. Can also be set in experiment YAML as 'governor'. (choices: gns_batch) |
 | `--max-steps` | int | `None` | Maximum number of training steps (None for infinite training) |
 | `--no-compile` | bool | `False` | Disable torch.compile of the model (slower, but cleaner stack traces and lower memory) |
 | `--ray-address` | str | `None` | Ray cluster address for --trainer-type mono_forward. Default None means 'start a fresh in-process Ray cluster' - correct for both the single-host Phase 2/3 path and the Phase 4 multi-raylet compose test (which exports RAY_ADDRESS=127.0.0.1:6379 in the environment, taking precedence over this flag). Pass an explicit address like '127.0.0.1:6379' to join a pre-existing cluster. Do NOT pass 'auto' unless a cluster definitely exists - 'auto' errors loud if nothing is running. |

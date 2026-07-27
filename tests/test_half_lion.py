@@ -3,8 +3,8 @@
 import torch
 import torch.nn as nn
 
-from praxis.optimizers.half_lion import HalfLion
-from praxis.optimizers.wrappers import WRAPPER_REGISTRY, wrappers_disable_schedule
+from praxis.optimization.half_lion import HalfLion
+from praxis.optimization.wrappers import WRAPPER_REGISTRY, wrappers_disable_schedule
 
 
 def _quadratic_problem():

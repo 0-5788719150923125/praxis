@@ -140,7 +140,7 @@ class LayerActor:
 
         # Build the optimizer. The actor owns per-layer + projection
         # params via a thin ``nn.Module`` shim so that
-        # :func:`praxis.optimizers.get_optimizer` sees the same
+        # :func:`praxis.optimization.get_optimizer` sees the same
         # ``named_parameters`` / ``named_modules`` surface it uses for
         # weight-decay banning under the backprop path.
         self._param_shim = _ActorParamShim(self.layer, self.projection)

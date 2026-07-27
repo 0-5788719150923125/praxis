@@ -74,11 +74,27 @@ def build_training_callbacks(
         )
 
     if get_trainer_capabilities(cfg.trainer_type).supports_accumulation_schedule:
-        callbacks.append(
-            AccumulationSchedule(
-                hparams["batch_size"] * cfg.num_nodes, hparams["target_batch_size"]
+        # A governor replaces the static accumulation factor with a feedback
+        # controller (e.g. gns_batch tracks the measured gradient noise
+        # scale; target_batch_size becomes the ceiling). Exactly one of the
+        # two owns trainer.accumulate_grad_batches.
+        governor = getattr(cfg, "governor", None)
+        if governor:
+            from praxis.governors import GOVERNOR_REGISTRY
+
+            callbacks.append(
+                GOVERNOR_REGISTRY[governor](
+                    batch_size=hparams["batch_size"] * cfg.num_nodes,
+                    target_batch_size=hparams["target_batch_size"],
+                )
             )
-        )
+        else:
+            callbacks.append(
+                AccumulationSchedule(
+                    hparams["batch_size"] * cfg.num_nodes,
+                    hparams["target_batch_size"],
+                )
+            )
 
     callbacks.append(
         PeriodicEvaluation(

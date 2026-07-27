@@ -155,6 +155,39 @@ export function setupTabCarousel() {
 }
 
 /**
+ * Hand the browser its pull-to-refresh back at the top of the Terminal scroller.
+ *
+ * The Terminal tab is the app's one NATIVE touch scroller (.terminal-container;
+ * see responsive.css), and it carries `overscroll-behavior: contain` so the
+ * rubber-band can't drag content past the sticky header/footer. That containment
+ * also eats the downward overscroll mobile Firefox turns into pull-to-refresh -
+ * on every other tab the gesture chains to the root and refreshes, here it hit a
+ * wall. So containment is made conditional: at scrollTop 0, where the scroller
+ * has nowhere left to go, the class comes off and the pull chains out to the
+ * browser. Anywhere else it stays on and the pull scrolls content as before.
+ *
+ * Bound once on the document (capture phase, passive): the terminal container is
+ * rebuilt on every tab switch, so nothing here holds a reference to it.
+ */
+export function setupTerminalPullRelease() {
+    const sync = (el) => el.classList.toggle('at-scroll-top', el.scrollTop <= 0);
+
+    // scroll doesn't bubble - capture catches it from any scroller in the page.
+    document.addEventListener('scroll', (e) => {
+        const el = e.target;
+        if (el instanceof Element && el.classList.contains('terminal-container')) sync(el);
+    }, { passive: true, capture: true });
+
+    // A container that has never been scrolled fires no scroll event, and a tab
+    // switch hands us a fresh one. Seat the class as the finger lands, before
+    // the browser resolves this gesture's scroll chain.
+    document.addEventListener('touchstart', (e) => {
+        const el = e.target.closest && e.target.closest('.terminal-container');
+        if (el) sync(el);
+    }, { passive: true, capture: true });
+}
+
+/**
  * Switch tabs by horizontal swipe over the content area (mobile only).
  * Swipe left -> next tab, swipe right -> previous tab. Order follows
  * state.tabs, so it matches the tab strip exactly.

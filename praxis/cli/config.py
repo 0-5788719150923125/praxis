@@ -62,6 +62,7 @@ class RunConfig:
     gradient_clip_val: float = 10.0
 
     # Training loop
+    governor: Optional[str] = None  # GOVERNOR_REGISTRY key; None = static factor
     max_steps: Optional[int] = None
     val_every: int = 1024
     use_dashboard: bool = False
@@ -156,6 +157,7 @@ class RunConfig:
             optimizer_wrappers=_resolve_optimizer_wrappers(get),
             disable_schedule=get("disable_schedule", False),
             gradient_clip_val=float(get("gradient_clip_val", 10.0)),
+            governor=get("governor"),
             max_steps=get("max_steps"),
             val_every=get("val_every", 1024),
             use_dashboard=get("use_dashboard", False),

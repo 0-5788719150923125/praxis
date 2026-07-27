@@ -3,8 +3,8 @@
 import torch
 import torch.nn as nn
 
-from praxis.optimizers.gated_schedule_free import GatedScheduleFree
-from praxis.optimizers.wrappers import (
+from praxis.optimization.gated_schedule_free import GatedScheduleFree
+from praxis.optimization.wrappers import (
     WRAPPER_REGISTRY,
     SequentialWrapper,
     wrappers_disable_schedule,
@@ -91,7 +91,7 @@ def test_registry_keys_and_disable_schedule():
 
 
 def test_wave_schedule_free_reduces_loss_and_gates_periodically():
-    from praxis.optimizers.wave_schedule_free import WaveScheduleFree
+    from praxis.optimization.wave_schedule_free import WaveScheduleFree
 
     model, X, Y = _quadratic_problem()
     opt = WaveScheduleFree(torch.optim.SGD(model.parameters(), lr=0.05), momentum=0.9)
@@ -108,7 +108,7 @@ def test_wave_schedule_free_reduces_loss_and_gates_periodically():
 
 
 def test_wave_set_wave_changes_the_gate():
-    from praxis.optimizers.wave_schedule_free import WaveScheduleFree
+    from praxis.optimization.wave_schedule_free import WaveScheduleFree
 
     model, _, _ = _quadratic_problem()
     opt = WaveScheduleFree(torch.optim.SGD(model.parameters(), lr=0.05))

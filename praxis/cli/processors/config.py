@@ -191,7 +191,7 @@ class ConfigBuilder:
 
         # Handle optimizer configuration
         if hasattr(args, "optimizer") and args.optimizer:
-            from praxis.optimizers import (
+            from praxis.optimization import (
                 get_optimizer_profile,
                 wrappers_disable_schedule,
             )

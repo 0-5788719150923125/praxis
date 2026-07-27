@@ -1,12 +1,12 @@
 from pytorch_optimizer import create_optimizer
 
-from praxis.optimizers.composite import CompositeOptimizer
-from praxis.optimizers.param_counter import (
+from praxis.optimization.composite import CompositeOptimizer
+from praxis.optimization.param_counter import (
     count_model_parameters,
     count_optimizer_parameters,
     get_parameter_stats,
 )
-from praxis.optimizers.wrappers import (
+from praxis.optimization.wrappers import (
     WRAPPER_REGISTRY,
     SequentialWrapper,
     wrappers_disable_schedule,
@@ -170,7 +170,7 @@ def _create_lion_geo(model, **profile):
     params (embeddings/head/norms/biases) on a plain secondary via
     :class:`CompositeOptimizer` - the same split as Muon, because the spectral
     branch shares Muon's constraint (never orthogonalize an embedding)."""
-    from praxis.optimizers.lion_geo import LionGeo
+    from praxis.optimization.lion_geo import LionGeo
 
     secondary_name = profile.pop("secondary_optimizer", None) or "Lion"
     secondary_wd = profile.pop("secondary_weight_decay", None)

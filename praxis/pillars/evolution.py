@@ -61,7 +61,7 @@ SUBSYSTEM_PREFIXES = {
     "activations": ["praxis/activations"],
     "compression": ["praxis/compression", "praxis/modules/compression"],
     "losses": ["praxis/losses"],
-    "optimizers": ["praxis/optimizers"],
+    "optimizers": ["praxis/optimization", "praxis/optimizers"],
     "policies": ["praxis/policies"],
     "web": ["praxis/web"],
     "paper": ["praxis/pillars", "research"],

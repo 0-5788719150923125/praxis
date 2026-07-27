@@ -4,8 +4,8 @@ import torch
 import torch.nn as nn
 
 from praxis.metrics.optimizer import extract_optimizer_dynamics
-from praxis.optimizers.low_rank_moment import LowRankSecondMoment
-from praxis.optimizers.wrappers import (
+from praxis.optimization.low_rank_moment import LowRankSecondMoment
+from praxis.optimization.wrappers import (
     WRAPPER_REGISTRY,
     SequentialWrapper,
     wrappers_disable_schedule,

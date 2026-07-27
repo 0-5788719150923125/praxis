@@ -1,4 +1,4 @@
-"""LionGeo: the SMEAR-of-norm-geometries optimizer (praxis/optimizers/lion_geo.py)
+"""LionGeo: the SMEAR-of-norm-geometries optimizer (praxis/optimization/lion_geo.py)
 and its composite/profile/metrics wiring."""
 
 import copy
@@ -9,9 +9,9 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
-from praxis.optimizers import get_optimizer, get_optimizer_profile
-from praxis.optimizers.composite import CompositeOptimizer
-from praxis.optimizers.lion_geo import ADAPT_RATE, LOGIT_CLAMP, LionGeo
+from praxis.optimization import get_optimizer, get_optimizer_profile
+from praxis.optimization.composite import CompositeOptimizer
+from praxis.optimization.lion_geo import ADAPT_RATE, LOGIT_CLAMP, LionGeo
 
 SHARE_FLOOR = float(torch.sigmoid(torch.tensor(-LOGIT_CLAMP)))
 SHARE_CEIL = float(torch.sigmoid(torch.tensor(LOGIT_CLAMP)))

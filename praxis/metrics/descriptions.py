@@ -199,5 +199,16 @@ def get_metric_descriptions(model: Any) -> Dict[str, Dict[str, Any]]:
 
     out.update(_collect_from(OPTIMIZER_METRIC_DESCRIPTIONS))
     out.update(_collect_from(RLCT_METRIC_DESCRIPTIONS))
+    # Governor telemetry is opt-in: only present when a governor callback has
+    # stashed metrics on the live model (see GNSBatchGovernor._stash).
+    _core = getattr(model, "_orig_mod", model)
+    if getattr(_core, "_governor_metrics", None) is not None:
+        from praxis.governors import GOVERNOR_METRIC_DESCRIPTIONS
+
+        out.update(_collect_from(GOVERNOR_METRIC_DESCRIPTIONS))
+        for key in GOVERNOR_METRIC_DESCRIPTIONS:
+            entry = out.get(key)
+            if entry is not None and "caller" not in entry:
+                entry["caller"] = "GNSBatchGovernor"
     _stamp_callers(out, model)
     return out

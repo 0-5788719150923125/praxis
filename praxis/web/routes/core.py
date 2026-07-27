@@ -18,7 +18,7 @@ from flask import (
 )
 
 from praxis.cli.loaders.experiments import load_rendered_config
-from praxis.optimizers import get_parameter_stats
+from praxis.optimization import get_parameter_stats
 from praxis.utils import mask_git_url
 
 from ..config import build_csp_policy

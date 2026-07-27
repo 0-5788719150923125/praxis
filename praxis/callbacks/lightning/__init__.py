@@ -8,6 +8,7 @@ from praxis.callbacks.lightning.brier_lm import BrierLMCallback
 from praxis.callbacks.lightning.dynamics import DynamicsLoggerCallback
 from praxis.callbacks.lightning.engagement_live import EngagementLiveRewardCallback
 from praxis.callbacks.lightning.evaluation import PeriodicEvaluation
+from praxis.callbacks.lightning.governor import GNSBatchGovernor
 from praxis.callbacks.lightning.harmonic_weight_rl import HarmonicWeightRLCallback
 from praxis.callbacks.lightning.host_memory import HostMemoryCallback
 from praxis.callbacks.lightning.memory_profiler import MemoryProfilerCallback
@@ -23,6 +24,7 @@ LIGHTNING_CALLBACK_REGISTRY = {
     "periodic_evaluation": PeriodicEvaluation,
     "terminal_interface": TerminalInterface,
     "accumulation_schedule": AccumulationSchedule,
+    "gns_batch_governor": GNSBatchGovernor,
     "metrics_logger": MetricsLoggerCallback,
     "dynamics_logger": DynamicsLoggerCallback,
     "rlct_landscape": RLCTLandscapeCallback,
@@ -40,6 +42,7 @@ __all__ = [
     "PeriodicEvaluation",
     "TerminalInterface",
     "AccumulationSchedule",
+    "GNSBatchGovernor",
     "MetricsLoggerCallback",
     "DynamicsLoggerCallback",
     "RLCTLandscapeCallback",

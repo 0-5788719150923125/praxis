@@ -22,7 +22,7 @@ from praxis.cli import RunConfig, create_praxis_config, integration_loader, pars
 from praxis.data import get_datamodules
 from praxis.data.runs import print_runs, setup_training_run
 from praxis.generation import Generator
-from praxis.optimizers import build_optimizer_and_scheduler, safe_parameter_stats
+from praxis.optimization import build_optimizer_and_scheduler, safe_parameter_stats
 from praxis.tokenizers import create_tokenizer
 from praxis.tokenizers.train import run_train_tokenizer_cli
 from praxis.trainers import (

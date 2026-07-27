@@ -101,6 +101,11 @@ function runColorIndex(run) {
 // Layer selection state for per-layer metrics
 const layerSelectionState = {};
 
+// Live step-slider inputs, per canvas: the step list and chart data as of the
+// LATEST render. The slider's input handler is bound once and reads through
+// this, so a growing series never leaves it indexing a stale array.
+const stepSliderData = {};
+
 // ETag caches for the metrics endpoints so a 304 Not Modified on a manual
 // refresh can short-circuit re-render.
 let lastMetricsEtag = null;
@@ -1035,11 +1040,15 @@ function renderMetricsCharts(data, container) {
 // ('B') to reveal that row again.
 //
 // Gesture hierarchy (uniform across every deck and card):
-//   1. GRIP - the top band of the head card (title chrome included). Never
-//      inner-scrolls: drives the seam + A/B anchor. Exists on every card,
-//      titled or not; opt out per card with class "deck-no-grip".
-//   2. BODY - scrolls the card's content while there's room, then behaves
-//      like the grip at the content edge.
+//   1. GRIP - the head card's HEADER: its top edge through the bottom of the
+//      title line, and no further (the description is body, not handle). The
+//      A/B slot handle, and ONLY that: it never inner-scrolls and never
+//      cycles. A vertical swipe flips the anchor immediately (no sustained-
+//      pull threshold, no cards spinning past first). Title-less cards use a
+//      fixed DECK_GRIP_H band; opt out per card with class "deck-no-grip".
+//   2. BODY - everything below the title, description included. Scrolls the
+//      card's content while there's room, then behaves like the grip at the
+//      content edge, and cycles cards past it.
 // Anchor flips are exclusive with cycling in both paths: a B->A lift locks
 // the gesture, and dropping to B takes a sustained pull (DECK_DROP_THRESHOLD).
 // ============================================================================
@@ -1061,10 +1070,15 @@ const DECK_DROP_THRESHOLD = 200; // px of SUSTAINED downward pull before the dec
 const DECK_SEAM = 88;            // finger px to flip one card AT the content edge (the "seam").
                                  // Eased slow-fast-slow so it pauses at the content end + anchor.
 const DECK_SEAM_FLING = 0.5;     // px/ms finger speed that commits a partial seam on release
-const DECK_GRIP_H = 56;          // px; the standard grip band at every card's top. Title
-                                 // chrome extends it, but the band exists on EVERY card
-                                 // (titled or bare), so the grip gesture is uniform deck-wide.
+const DECK_GRIP_H = 56;          // px; the grip band on TITLE-LESS cards (Identity's bare
+                                 // sheets), which have no header strip to measure. A titled
+                                 // card's grip is its header instead - card top through the
+                                 // title's own bottom edge, stopping short of the description.
                                  // Per-card opt-out: class "deck-no-grip".
+const DECK_GRIP_FLIP = 18;       // px of NET vertical travel on the grip that commits the
+                                 // A/B slot flip. Small on purpose - a title swipe should
+                                 // land the shift at once - but past finger jitter, so the
+                                 // direction it commits to is the one you meant.
 const DECK_WHEEL_STEP = 120;     // wheel px that advance one card
 const DECK_AXIS_LOCK = 10;       // px of travel before a drag commits to an axis. A
                                  // horizontal-dominant drag is a tab swipe (tabslide.js),
@@ -1857,20 +1871,25 @@ function bindDeckEvents(deck) {
         deck._scrollVel = 0;       // reset inner-scroll velocity for this gesture
         deck._scrollBody = null;
         deck._anchorLocked = false; // set once this gesture flips A<->B, then no cycling
-        // The GRIP: every card's standard stack-navigation handle. It is the
-        // title chrome where there is one, plus a fixed band at the card's top
-        // (DECK_GRIP_H) so title-less cards (e.g. the Identity tab's bare
-        // sheets) get the exact same handle. A grip drag never inner-scrolls -
-        // it drives the seam and the A/B anchor like a body drag at its content
-        // edge, so long content can be swiped past from the top. Taps are
-        // unaffected (only moves are interpreted). Cards opt out of the band
-        // with the "deck-no-grip" class.
+        // The GRIP: every card's A/B slot handle. It is the HEADER only - the
+        // card's top edge down through the bottom of its title line. The
+        // description below it is deliberately NOT part of the handle: it's
+        // often several lines tall, and swallowing that much of the card would
+        // leave too little surface to swipe cards from. Title-less cards (the
+        // Identity tab's bare sheets) have no strip to measure, so they fall
+        // back to a fixed DECK_GRIP_H band. A grip drag neither inner-scrolls
+        // nor cycles: a vertical swipe means "move this card between slots",
+        // and nothing else. Taps are unaffected (only moves are interpreted).
+        // Cards opt out with the "deck-no-grip" class.
         const head = deck._deck && deck._cards[deck._deck.activeIndex];
-        let grip = !!e.target.closest('.chart-title, .chart-subtitle, .chart-card-number')
+        let grip = !!e.target.closest('.chart-title, .chart-card-number')
             && !e.target.closest('.deck-card-scroll');
         if (!grip && head && !head.classList.contains('deck-no-grip')) {
-            const r = head.getBoundingClientRect();   // once per gesture, off the hot path
-            grip = lastY >= r.top && lastY <= r.top + DECK_GRIP_H;
+            // One rect pair per gesture, off the hot path.
+            const r = head.getBoundingClientRect();
+            const title = head.querySelector(':scope > .chart-title');
+            const bottom = title ? title.getBoundingClientRect().bottom : r.top + DECK_GRIP_H;
+            grip = lastY >= r.top && lastY <= bottom;
         }
         deck._gripDrag = grip;
     }, { passive: true });
@@ -1911,26 +1930,28 @@ function bindDeckEvents(deck) {
         fvel = dy / dt;               // px/ms finger speed (for the fling-commit on release)
         e.preventDefault();           // the deck owns the gesture (touch-action: none)
 
-        // Grip drag: the standard handle. Same anchor mechanics as a body drag
-        // at its content edge - at B an upward pull slots the deck to A (and
-        // locks, no cycling in the same gesture); otherwise it drives the seam
-        // both ways, with a sustained downward pull dropping back to B. The
-        // only difference from a body drag is that the grip never inner-scrolls.
+        // Grip drag: the A/B slot handle, exclusively. The finger's direction
+        // names a slot - up is A (lifted under the tab row), down is B (the
+        // floor) - and the deck goes there on the spot, then the gesture is
+        // locked for the rest of the drag. No inner scroll, no seam: a swipe
+        // that starts on a card's title is never an attempt to cycle, so it
+        // must not spin cards past on the way (the body's sustained-pull
+        // DECK_DROP_THRESHOLD used to burn 2-3 cards before the drop landed).
+        // Already in the named slot -> the gesture is simply consumed; cycling
+        // stays where it belongs, on the card body.
         if (deck._gripDrag) {
-            if (deck._seamAccum === 0 && deck._anchorTarget === 0 && dy > 0) {
-                const before = deck._anchorTarget;
-                seamAnchor(deck, dy);
-                if (deck._anchorTarget !== before) deck._anchorLocked = true;
-                return;
+            // Direction comes from NET displacement since touchstart, not this
+            // frame's delta: one jittery frame mid-swipe must not name the
+            // opposite slot and lock it in.
+            const net = deck._startY - y;
+            if (!deck._anchorLocked && (net > DECK_GRIP_FLIP || net < -DECK_GRIP_FLIP)) {
+                const slot = net > 0 ? 1 : 0;
+                if (deck._anchorTarget !== slot) {
+                    deck._backAccum = 0;
+                    setAnchor(deck, slot);
+                    deck._anchorLocked = true;
+                }
             }
-            if (deck._anchorLocked) return;
-            if (deck._seamAccum === 0) {
-                deck._seamBase = ((Math.round(deck._pos) % st.count) + st.count) % st.count;
-                deck._seamDir = dy > 0 ? 1 : -1;
-                seatTarget(deck, deck._seamBase + deck._seamDir, deck._seamDir);
-            }
-            seamAnchor(deck, dy);
-            advanceSeam(deck, dy);
             return;
         }
 
@@ -2513,6 +2534,18 @@ function renderStepSlider(canvasId, sortedSteps, currentStepIndex, agents, chart
     const container = document.getElementById(`layer-toggles-${canvasId}`);
     if (!container) return;
 
+    // The input handler is wired ONCE, but the series behind it grows with
+    // every poll. So it reads the step list and chart data from this live
+    // box, refreshed on each render, instead of closing over the arrays it
+    // was built with. Closing over them meant the slider's max tracked the
+    // GROWN series while its handler still indexed the ORIGINAL one: dragging
+    // to the right end read past that array, pinned `undefined` as the step,
+    // and greyed out every cell (indexOf(undefined) -> -1). It also meant a
+    // drag only ever replayed the first poll's weights.
+    const live = stepSliderData[canvasId] || (stepSliderData[canvasId] = {});
+    live.sortedSteps = sortedSteps;
+    live.chartData = chartData;
+
     // Check if slider already exists
     const existingSlider = document.getElementById(`step-slider-${canvasId}`);
     if (existingSlider) {
@@ -2562,17 +2595,31 @@ function renderStepSlider(canvasId, sortedSteps, currentStepIndex, agents, chart
         // event, but the grid recompute lands at most once per paint.
         let pendingRaf = 0;
         slider.addEventListener('input', (e) => {
-            const newIndex = parseInt(e.target.value);
-            valueDisplay.textContent = `${sortedSteps[newIndex]} / ${maxStep}`;
+            const steps = live.sortedSteps;
+            if (!steps || steps.length === 0) return;
+            const lastIdx = steps.length - 1;
+            // Clamp to a step that EXISTS. The track's max can outrun the data
+            // for a frame (a poll lands mid-drag, a resample returns fewer
+            // samples), and the last thing the slider may do is select a step
+            // the run hasn't reached - the far right is the latest step, never
+            // past it. Snap the thumb back so the track matches what's shown.
+            const raw = parseInt(e.target.value, 10);
+            const newIndex = Number.isFinite(raw) ? Math.min(Math.max(raw, 0), lastIdx) : lastIdx;
+            if (raw !== newIndex) e.target.value = newIndex;
+            if (parseInt(e.target.max, 10) !== lastIdx) e.target.max = lastIdx;
+            valueDisplay.textContent = `${steps[newIndex]} / ${steps[lastIdx]}`;
             // Pin to the chosen step VALUE so it survives a resample (see the
-            // value-tracking note in createExpertRoutingChart).
-            layerSelectionState[canvasId].selectedStep = sortedSteps[newIndex];
-            layerSelectionState[canvasId].pinned = true;
+            // value-tracking note in createExpertRoutingChart). Parking at the
+            // right end asks for "the latest step", not for step N forever, so
+            // it releases the pin and rejoins the live edge.
+            layerSelectionState[canvasId].selectedStep = steps[newIndex];
+            layerSelectionState[canvasId].pinned = newIndex < lastIdx;
             if (pendingRaf) return;
             pendingRaf = requestAnimationFrame(() => {
                 pendingRaf = 0;
-                const idx = sortedSteps.indexOf(layerSelectionState[canvasId].selectedStep);
-                updateHeatmapData(canvasId, sortedSteps, idx, chartData);
+                const cur = live.sortedSteps;
+                const idx = cur.indexOf(layerSelectionState[canvasId].selectedStep);
+                updateHeatmapData(canvasId, cur, idx >= 0 ? idx : cur.length - 1, live.chartData);
             });
         });
     }
@@ -2583,9 +2630,11 @@ function renderStepSlider(canvasId, sortedSteps, currentStepIndex, agents, chart
  */
 function updateHeatmapData(canvasId, sortedSteps, stepIndex, chartData) {
     const chart = charts[canvasId];
-    if (!chart) return;
+    if (!chart || !chartData || !sortedSteps || sortedSteps.length === 0) return;
 
-    const currentStep = sortedSteps[stepIndex];
+    // Last line of defence: an out-of-range index would read `undefined` as the
+    // step, match no sample, and paint the whole grid grey. Clamp to a real step.
+    const currentStep = sortedSteps[Math.min(Math.max(stepIndex, 0), sortedSteps.length - 1)];
     const { layerExpertMetrics, layers, maxExperts } = chartData;
 
     // Recalculate scatter data for new step

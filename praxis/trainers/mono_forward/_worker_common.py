@@ -18,7 +18,7 @@ import torch.nn as nn
 class ActorParamShim(nn.Module):
     """Minimal ``nn.Module`` wrapper over one worker's (layer, projection) pair.
 
-    :func:`praxis.optimizers.get_optimizer` calls
+    :func:`praxis.optimization.get_optimizer` calls
     :func:`pytorch_optimizer.create_optimizer`, which takes an
     ``nn.Module`` and walks ``named_parameters`` / ``named_modules``
     to apply the weight-decay ban list (LayerNorm, bias, etc.). Under
@@ -45,7 +45,7 @@ def build_optimizer(
 
     When an ``optimizer_config`` dict is provided (i.e. the trainer
     was constructed via main.py), this routes through
-    :func:`praxis.optimizers.get_optimizer` with the same wrapper keys the
+    :func:`praxis.optimization.get_optimizer` with the same wrapper keys the
     backprop path would use (``--optimizer`` / ``--optimizer-wrappers``), so
     they all honor their CLI selection under MF.
 
@@ -59,7 +59,7 @@ def build_optimizer(
             params += list(strategy.parameters())
         return torch.optim.Adam(params, lr=fallback_lr)
 
-    from praxis.optimizers import get_optimizer
+    from praxis.optimization import get_optimizer
 
     optimizer = get_optimizer(shim, wrappers=list(wrappers or []), **optimizer_config)
     extras: list = []

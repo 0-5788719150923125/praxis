@@ -177,6 +177,17 @@
         -webkit-overflow-scrolling: touch;
     }
 
+    /* ...except when the scroller is already at its top. `contain` swallows the
+       downward overscroll that mobile Firefox reads as pull-to-refresh, so the
+       Terminal tab was the one place the gesture died. At scrollTop 0 there is
+       nothing left to scroll toward anyway, so the chain is released and the
+       browser gets the pull; one pixel of scroll away from the top and `contain`
+       is back, keeping the rubber-band off the pinned header/footer. The class
+       is toggled in mobile.js (scroll + touchstart). */
+    .terminal-container.at-scroll-top {
+        overscroll-behavior-y: auto;
+    }
+
     .dashboard-frame {
         padding: 0.25rem;
         font-size: 0.5rem;

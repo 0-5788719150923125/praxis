@@ -1,8 +1,8 @@
 """Optimization-related CLI arguments."""
 
 from praxis import LOSS_REGISTRY, STRATEGIES_REGISTRY
-from praxis.optimizers import OPTIMIZER_PROFILES
-from praxis.optimizers.wrappers import WRAPPER_REGISTRY
+from praxis.optimization import OPTIMIZER_PROFILES
+from praxis.optimization.wrappers import WRAPPER_REGISTRY
 from praxis.tasks import TASK_WEIGHTER_REGISTRY
 
 

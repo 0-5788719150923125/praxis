@@ -375,7 +375,20 @@ class TerminalInterface(Callback):
                 data,
             )
 
-    def _build_info_dict(self, lm, seq_length, batch_size, local_layers, remote_layers):
+    @staticmethod
+    def _effective_batch(trainer, micro_batch):
+        """Actual rows per optimizer step, straight from the trainer:
+        accumulation factor x microbatch x world size. None when either
+        ingredient is unavailable (caller falls back to the config value)."""
+        accum = getattr(trainer, "accumulate_grad_batches", None)
+        if not accum or not micro_batch:
+            return None
+        world = max(int(getattr(trainer, "world_size", 1) or 1), 1)
+        return int(accum) * int(micro_batch) * world
+
+    def _build_info_dict(
+        self, trainer, lm, seq_length, batch_size, local_layers, remote_layers
+    ):
         """Build the model-info panel shared by the CLI dashboard and the web
         stream. One builder keeps the two surfaces from drifting; each caller
         only appends its surface-specific extras (CLI: debug/meta; web:
@@ -417,9 +430,21 @@ class TerminalInterface(Callback):
         info_dict["vocab_size"] = self.vocab_size
         info_dict["block_size"] = seq_length
         info_dict["batch_size"] = batch_size
-        info_dict["target_batch"] = self.target_batch_size or getattr(
-            lm.hparams, "target_batch_size", batch_size
+        # The ACTUAL effective batch, read straight off the trainer:
+        # accumulation factor x configured microbatch x ranks. Live under a
+        # batch governor (the factor moves between ticks) and honest under
+        # the static schedule too (a target below the physical batch is
+        # silently ignored; this shows what really happens). Only when no
+        # trainer is in reach does it fall back to the configured target.
+        live = self._effective_batch(
+            trainer, getattr(lm.hparams, "batch_size", batch_size)
         )
+        if live is not None:
+            info_dict["target_batch"] = live
+        else:
+            info_dict["target_batch"] = self.target_batch_size or getattr(
+                lm.hparams, "target_batch_size", batch_size
+            )
         info_dict["depth"] = self.depth
         info_dict["local_layers"] = local_layers
         info_dict["remote_layers"] = remote_layers
@@ -477,7 +502,7 @@ class TerminalInterface(Callback):
 
         # Update the info panel with device and memory information
         info_dict = self._build_info_dict(
-            lm, seq_length, batch_size, local_layers, remote_layers
+            trainer, lm, seq_length, batch_size, local_layers, remote_layers
         )
         info_dict["debug"] = self.debug
         info_dict["meta"] = [
@@ -524,7 +549,7 @@ class TerminalInterface(Callback):
 
         # Build info dict (shared with the CLI dashboard)
         info_dict = self._build_info_dict(
-            lm, seq_length, batch_size, local_layers, remote_layers
+            trainer, lm, seq_length, batch_size, local_layers, remote_layers
         )
 
         if trainer.world_size > 1:

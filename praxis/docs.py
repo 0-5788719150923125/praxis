@@ -109,6 +109,14 @@ def _registries() -> List[Tuple]:
             "RoPE, ALiBi, NoPE and friends - the rotational / additive position priors injected into attention.",
         ),
         (
+            "governors",
+            "Training-loop governors",
+            praxis.GOVERNOR_REGISTRY,
+            "Feedback controllers over loop-level knobs, driven by endogenous "
+            "signals - e.g. ``gns_batch`` governs the gradient-accumulation "
+            "factor by tracking the measured gradient noise scale.",
+        ),
+        (
             "halting",
             "Halting / early exit",
             praxis.HALTING_REGISTRY,
@@ -1272,6 +1280,7 @@ def _registry_attr(slug: str) -> str:
         "embeddings": "EMBEDDING_REGISTRY",
         "encoders": "ENCODER_REGISTRY",
         "encoding": "ENCODING_REGISTRY",
+        "governors": "GOVERNOR_REGISTRY",
         "halting": "HALTING_REGISTRY",
         "heads": "HEAD_REGISTRY + MTP_REGISTRY",
         "losses": "LOSS_REGISTRY",

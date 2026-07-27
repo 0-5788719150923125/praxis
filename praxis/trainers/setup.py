@@ -89,7 +89,7 @@ def assemble_model(cfg, config) -> ModelBundle:
     """Resolve the optimizer profile, build hparams, instantiate the model."""
     from transformers import AutoModelForCausalLM
 
-    from praxis.optimizers import get_optimizer_profile, wrappers_disable_schedule
+    from praxis.optimization import get_optimizer_profile, wrappers_disable_schedule
     from praxis.utils import initialize_lazy_modules
 
     optimizer_config, disable_schedule_from_optimizer = get_optimizer_profile(

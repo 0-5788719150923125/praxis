@@ -111,6 +111,10 @@ class DynamicsLoggerCallback(Callback):
             # stashed on the model by RLCTLandscapeCallback on its own cadence.
             dynamics.update(self._extract_rlct_dynamics(model))
 
+            # Batch governor telemetry (noise scale, effective batch),
+            # stashed by GNSBatchGovernor on its decision cadence.
+            dynamics.update(self._extract_governor_dynamics(model))
+
             if dynamics:
                 self._success_count += 1
                 if self._success_count <= 3:
@@ -347,6 +351,18 @@ class DynamicsLoggerCallback(Callback):
         """
         core = getattr(model, "_orig_mod", model)
         metrics = getattr(core, "_rlct_metrics", None)
+        if not isinstance(metrics, dict):
+            return {}
+        return {k: v for k, v in metrics.items() if isinstance(v, (int, float))}
+
+    def _extract_governor_dynamics(self, model) -> dict:
+        """Drain the batch-governor scalars stashed by GNSBatchGovernor.
+
+        The governor decides (and syncs) on its own cadence; we re-log the
+        standing values each dynamics tick, same as the RLCT stash.
+        """
+        core = getattr(model, "_orig_mod", model)
+        metrics = getattr(core, "_governor_metrics", None)
         if not isinstance(metrics, dict):
             return {}
         return {k: v for k, v in metrics.items() if isinstance(v, (int, float))}

@@ -7,8 +7,8 @@ from praxis.metrics.optimizer import (
     OPTIMIZER_METRIC_DESCRIPTIONS,
     extract_optimizer_dynamics,
 )
-from praxis.optimizers import get_optimizer, get_optimizer_profile
-from praxis.optimizers.wrappers import SequentialWrapper
+from praxis.optimization import get_optimizer, get_optimizer_profile
+from praxis.optimization.wrappers import SequentialWrapper
 
 
 def _stepped(optimizer, model, steps=5):

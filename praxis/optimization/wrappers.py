@@ -15,10 +15,10 @@ from typing import Iterable, List
 
 from pytorch_optimizer.optimizer import TRAC, Lookahead, OrthoGrad, ScheduleFreeWrapper
 
-from praxis.optimizers.gated_schedule_free import GatedScheduleFree
-from praxis.optimizers.half_lion import HalfLion
-from praxis.optimizers.low_rank_moment import LowRankSecondMoment
-from praxis.optimizers.wave_schedule_free import WaveScheduleFree
+from praxis.optimization.gated_schedule_free import GatedScheduleFree
+from praxis.optimization.half_lion import HalfLion
+from praxis.optimization.low_rank_moment import LowRankSecondMoment
+from praxis.optimization.wave_schedule_free import WaveScheduleFree
 
 SCHEDULE_FREE_MOMENTUM = 0.98
 
