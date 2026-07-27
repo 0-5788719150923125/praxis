@@ -279,3 +279,64 @@ interesting happens in layer 3.
   as a normal session - scenes react to the narration through Spectrum - with karaoke
   subtitles filling word-by-word on the exact synthesis timings, hue riding the live
   harmonic signature.)
+
+---
+
+## Echo a living voice (2026-07-27, shipped v1)
+
+The #3 idea from the noise-hunt era, built: the Listen button (synth editor
+loop row) opens a card-style modal - input device dropdown, a fixed
+prosody-rich passage to read (statements, a question, an unpunctuated run),
+Record/Stop. Recording = AudioStreamMicrophone -> muted VoiceIn bus ->
+AudioEffectRecord (stock Godot pattern; Master pulled to -60 dB while the
+mic is open so the looping take cannot bleed into the measurement;
+project.godot now enables driver input).
+
+The measurement (voice_sampler.gd analyze(), static, WorkerThreadPool):
+decimated autocorrelation f0 track with shortest-lag octave protection,
+energy envelope, boxcar-smoothed syllable-nucleus counting (an envelope
+autocorrelation tempo was tried and locked onto stress feet), pauses,
+periodicity, band ratios -> trait vector via the closed-form inversions of
+Spec.from_traits (tract is coarse: register + brightness coupling, no
+formant tracking in v1) + the MEASURED genome keys only (heat, breath_span,
+spend_window, lean, act_thr, pace_hot/calm) riding the adrenochrome
+contract - ProsodyWalk's PRIOR backfills the rest. Nothing of the audio
+survives but ~20 scalars.
+
+The seed: fresh root lineage, untempered (the trust region cages rolled
+strangers; this voice was earned by being read), difficulty = trait RMS
+distance from the party centre, belt entry shaped exactly like a catch.
+
+Validation: tests/sampler_check.gd round-trips the analysis against
+SYNTHESIZED voices with known traits - pitch recovers within tolerance,
+pace recovers direction, genome lands in G_BOUNDS, deterministic, and the
+minted spec renders. Known v1 coarseness: trait centers are calibrated for
+human speech (synth voices read slightly biased); tract is a proxy; anchors
+still come from the lineage seed, not the recording (the f0-histogram-modes
+idea remains open).
+
+---
+
+## Echo v2 (2026-07-27): formants, melodic modes, measured cadence
+
+- **LPC formant tracking**: Levinson-Durbin (order 10) on pre-emphasized
+  30 ms vowel-core frames, envelope peaks on a 25 Hz grid -> median F1/F2 ->
+  closed-form tract inversion against F1_REF/F2_REF 458/1720 (geometric
+  midpoint of tract +-0.7 renders measured by the same estimator).
+  Round-trip: +-0.7 truth recovers +-0.68.
+- **Melodic modes -> anchors**: smoothed 0.5-st histogram of the voiced
+  semitone track; up to 5 peaks ride the genome's reserved "anchors" key
+  (safe: every generic genome consumer iterates PRIOR's keys, verified) and
+  REPLACE the walk's seeded shelf outright in ProsodyWalk._init. Gravity is
+  measured too: the fraction of melody sitting on the modes.
+- **Cadence as a range**: pace_hot/pace_calm from 2 s windowed syllable-rate
+  p80/p20 - the recording's own fast and slow, not a heuristic. (The single
+  "speed" the tooltip shows is one END of the walk's journey, not a constant.)
+- **Ornament clamp**: echoed genomes ship damp 0.8 / verve 0.15 /
+  act_gain 0.7 - the rolled modulator/activation layer (the mystery "echo
+  and stuff") is starved; the root is now deterministic in the measurement.
+- Shutdown hardening: sampler _exit_tree stops the record effect + mic
+  stream. NOTE: glibc aborts at exit ("double free") may be engine-level
+  (audio input driver teardown with enable_input on PipeWire) - everything
+  is persisted before exit, nothing is lost; investigate with --verbose if
+  it recurs.

@@ -469,23 +469,35 @@ class ProsodyWalk:
 		# the pitch attractor set: the prior's anchors plus each lineage's own,
 		# pooled - the semitone shelf the melody gravitates toward (and jumps
 		# to on a pitch activation). This is the musical-quantization quality.
-		_anchors = [0.0, -2.0, 3.0]
-		for lineage in lineages:
-			var ar := RandomNumberGenerator.new()
-			ar.seed = hash("anchors") ^ int(lineage[0])
-			for _i in 3:
-				_anchors.append(ar.randf_range(-6.0, 8.0))
-		# elaboration widens the melodic vocabulary - as a WINDOW, not an archive:
-		# the extra anchors are seeded by the NEWEST generations (and capped low),
-		# so each refinement rotates old notes out instead of piling the shelf
-		# higher. A dense anchor shelf makes gravity meaningless - there is always
-		# a note nearby, so the melody stops quantizing and reads as chaos.
-		if elab > 0.0 and depth > 1:
-			var extra: int = mini(int(round(elab * float(depth - 1) * 1.2)), 4)
-			for k in extra:
-				var er := RandomNumberGenerator.new()
-				er.seed = hash("elab_anchor") ^ int(read[maxi(1, depth - 1 - k)]) ^ k
-				_anchors.append(er.randf_range(-7.0, 9.0))
+		# MEASURED anchors first: an echoed (recorded) seed carries its
+		# source's actual melodic modes - the f0 histogram's peaks - in the
+		# frozen genome's reserved "anchors" key. They REPLACE the seeded
+		# shelf outright: the recording's own notes are the vocabulary, and
+		# nothing rolled rides on top of them.
+		var measured: Array = override.get("anchors", []) if not override.is_empty() else []
+		if not measured.is_empty():
+			_anchors = [0.0]
+			for a in measured:
+				_anchors.append(float(a))
+		else:
+			_anchors = [0.0, -2.0, 3.0]
+			for lineage in lineages:
+				var ar := RandomNumberGenerator.new()
+				ar.seed = hash("anchors") ^ int(lineage[0])
+				for _i in 3:
+					_anchors.append(ar.randf_range(-6.0, 8.0))
+			# elaboration widens the melodic vocabulary - as a WINDOW, not an
+			# archive: the extra anchors are seeded by the NEWEST generations
+			# (and capped low), so each refinement rotates old notes out
+			# instead of piling the shelf higher. A dense anchor shelf makes
+			# gravity meaningless - there is always a note nearby, so the
+			# melody stops quantizing and reads as chaos.
+			if elab > 0.0 and depth > 1:
+				var extra: int = mini(int(round(elab * float(depth - 1) * 1.2)), 4)
+				for k in extra:
+					var er := RandomNumberGenerator.new()
+					er.seed = hash("elab_anchor") ^ int(read[maxi(1, depth - 1 - k)]) ^ k
+					_anchors.append(er.randf_range(-7.0, 9.0))
 		for c in ACT_CHANNELS:
 			_refract[c] = 0.0
 		_gate = RandomNumberGenerator.new()

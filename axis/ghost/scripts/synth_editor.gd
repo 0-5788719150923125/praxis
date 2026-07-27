@@ -177,6 +177,7 @@ var _inv_glyphs: Array = []         # SeedGlyph per inventory row
 var _inv_slots: Array = []          # the name Button per row - the SLOT you click to cast
 var _catch_btn: Button
 var _card: PanelContainer           # the reel (annealing) and the pending catch
+var _sampler: VoiceSampler          # echo-a-living-voice modal (the Listen button)
 var _card_glyph: Control
 var _card_label: Label
 var _accept_btn: Button
@@ -357,6 +358,15 @@ func _build_panel() -> void:
 		+ "steadies your odds. A rougher, more jittery line means a harder catch.")
 	_catch_btn.pressed.connect(_pull)
 	loop_row.add_child(_catch_btn)
+	var listen_btn := Button.new()
+	listen_btn.text = "Listen"
+	listen_btn.custom_minimum_size = Vector2(70, 40)
+	listen_btn.tooltip_text = ("Echo a living voice: read a short passage aloud "
+		+ "and the instrument mints a new seed that sits where your voice sits - "
+		+ "its pitch, tempo, pauses and breath, measured and re-synthesized. "
+		+ "The recording itself is never kept.")
+	listen_btn.pressed.connect(func(): _sampler.open())
+	loop_row.add_child(listen_btn)
 	_reading_label = Label.new()
 	_reading_label.add_theme_font_size_override("font_size", 12)
 	_reading_label.modulate = Color(1, 1, 1, 0.7)
@@ -394,6 +404,12 @@ func _build_panel() -> void:
 	_release_btn.tooltip_text = "Let it go - nothing changes"
 	_release_btn.pressed.connect(_release_catch)
 	card_btns.add_child(_release_btn)
+
+	# --- The sampler: echo a living voice into a brand-new seed (see
+	# voice_sampler.gd). A card-style panel, hidden until Listen opens it.
+	_sampler = VoiceSampler.new()
+	box.add_child(_sampler)
+	_sampler.seed_ready.connect(_add_recorded_seed)
 
 	# --- The Collection: your seeds, ALWAYS last. Click a seed to cast from it
 	# (slot it in), click it again to release. Count shown by the title; the list
@@ -1140,7 +1156,16 @@ func _member_closeness(e: Dictionary) -> float:
 ## from the lineage as always.
 func _member_genome(e: Dictionary) -> Dictionary:
 	if e.has("genome") and not (e.genome as Dictionary).is_empty():
-		return e.genome
+		# a stored genome may be PARTIAL - an echoed (recorded) seed carries
+		# only its MEASURED genes, and older saves may predate newer genes.
+		# Backfill from the PRIOR (the same contract ProsodyWalk applies to a
+		# frozen adrenochrome) so every consumer - the tooltip, the hook's
+		# annealing members - always sees a complete genome.
+		var g: Dictionary = e.genome
+		for key in Voice.ProsodyWalk.PRIOR:
+			if not g.has(key):
+				g[key] = Voice.ProsodyWalk.PRIOR[key]
+		return g
 	return Voice.ProsodyWalk._lineage_genome(e.lineage)
 
 
@@ -1236,6 +1261,37 @@ func _release_catch() -> void:
 	if _stream != null and is_instance_valid(_stream):
 		_stream.retune(_current_spec())
 	_status.text = "released - nothing changes"
+
+
+## A recorded seed enters the Collection like a catch: fresh root lineage,
+## measured traits, measured (partial) genome riding the adrenochrome
+## contract (ProsodyWalk backfills unmeasured genes from the PRIOR).
+## Deliberately NOT tempered: the trust region cages rolled strangers, but
+## this voice was earned by being read aloud - it lands exactly where it
+## was measured. Difficulty is how foreign it sits from the party's centre,
+## so fishing FROM it later fights like the outsider it is.
+func _add_recorded_seed(traits: Dictionary, genome: Dictionary, report: String) -> void:
+	# the root is DETERMINISTIC in the measurement: the same voice, read the
+	# same way, echoes to the same seed - re-records are comparable, and the
+	# few ornaments that survive the genome's damp are stable per person
+	var lin: Array = [absi(hash(str(traits)) ^ hash(report)) % 1000000]
+	var center := _background_traits()
+	var acc := 0.0
+	for key in Voice.TRAIT_KEYS:
+		var dv := float(traits.get(key, 0.0)) - float(center.get(key, 0.0))
+		acc += dv * dv
+	var d := clampf(sqrt(acc / float(Voice.TRAIT_KEYS.size())) / 0.9, 0.05, 1.0)
+	_belt.append({
+		"lineage": lin, "traits": traits.duplicate(), "genome": genome.duplicate(),
+		"scene": "", "echo": report,
+		"m": {"s": 0.0, "acts": 1, "restores": 0, "evolves": 0, "catches": 0,
+			"r": 0.6, "d": d, "t": int(Time.get_unix_time_from_system())},
+	})
+	while _belt.size() > BELT_MAX:
+		_belt.pop_front()
+	_rebuild_belt()
+	_persist()
+	_status.text = "a living voice echoed into the Collection - " + report
 
 
 func _restore_capture(idx: int) -> void:
@@ -1554,7 +1610,8 @@ func _seed_tooltip(e: Dictionary) -> String:
 		g.breath_span, g.lean, g.gravity, g.ring, g.act_thr,
 		g.pace_hot, g.pace_calm,
 		(("voice: " + tv) if not tv.is_empty() else "voice: near default")
-			+ (("\nhaunts " + str(e.scene)) if not str(e.get("scene", "")).is_empty() else "")]
+			+ (("\nhaunts " + str(e.scene)) if not str(e.get("scene", "")).is_empty() else "")
+			+ (("\nechoed from a living voice: " + str(e.echo)) if e.has("echo") else "")]
 
 
 # ---- the implicit loop: debounce -> persist + apply ------------------------

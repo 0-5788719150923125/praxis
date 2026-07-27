@@ -23,6 +23,8 @@ config/icon="res://icon.svg"
 ; audio callback) cannot crackle the output. Latency is irrelevant here -
 ; nothing is interactive at audio rate.
 driver/output_latency=40
+; the voice sampler (echo a living voice) records the microphone
+driver/enable_input=true
 
 [autoload]
 
