@@ -12,6 +12,14 @@ class_name Mesh3D
 const LIGHT := Vector3(0.35, -0.55, 0.75)   # upper-front key light (normalized below)
 const VIEW := Vector3(0.0, 0.0, 1.0)        # viewer direction, for specular highlights
 
+# The shared face batch (see TriBatch): every draw_through/draw_shaded call
+# appends its faces (and edge lines) in painter order and flushes ONCE at the
+# end - one canvas draw call per BODY instead of one per FACE. This is the
+# single highest-leverage batch in the codebase: every Scene3D (eyes, spires,
+# prisms, rocks) funnels through here, and the per-face draw_colored_polygon
+# calls were the reason those scenes ran at ~1 fps.
+static var _tb := TriBatch.new()
+
 
 # A projected triangle whose 2D area is sub-pixel (an edge-on or collapsed face)
 # can't be triangulated by the canvas - draw_colored_polygon rejects it. Skip those
@@ -373,13 +381,18 @@ func draw_shaded(ci: CanvasItem, basis: Basis, center: Vector2, scale: float,
 			poly.append(center + Vector2(p.x, p.y) * scale * (focal / denom))
 		if not ok or _degenerate(poly):      # edge-on faces project to a line - skip
 			continue
-		ci.draw_colored_polygon(poly, Color.from_hsv(hue, fsat, bright, face_alpha))
+		_tb.tri(poly[0], poly[1], poly[2], Color.from_hsv(hue, fsat, bright, face_alpha))
 		if edge == 1:
-			var e := poly.duplicate(); e.append(poly[0])
-			ci.draw_polyline(e, Color(0, 0, 0, 0.5), 1.0, true)
+			var ec := Color(0, 0, 0, 0.5)
+			_tb.line(poly[0], poly[1], ec)
+			_tb.line(poly[1], poly[2], ec)
+			_tb.line(poly[2], poly[0], ec)
 		elif edge == 2:
-			var e2 := poly.duplicate(); e2.append(poly[0])
-			ci.draw_polyline(e2, Color.from_hsv(hue, 0.15, 1.0, 0.7), 1.0, true)
+			var ec2 := Color.from_hsv(hue, 0.15, 1.0, 0.7)
+			_tb.line(poly[0], poly[1], ec2)
+			_tb.line(poly[1], poly[2], ec2)
+			_tb.line(poly[2], poly[0], ec2)
+	_tb.flush(ci)
 
 
 ## Build a gaussian alpha mask for the partial-reveal look: a coherent noise field
@@ -566,7 +579,8 @@ func draw_through(ci: CanvasItem, lens: Lens3D, u_px: float, basis: Basis, pos: 
 				var b := clampf(0.22 + 0.78 * maxf(0.0, nw.dot(light)) + glow + fgv + sp, 0.0, 1.0)
 				cols.append(Color.from_hsv(hue, clampf(sat * (1.0 - 0.6 * sp), 0.0, 1.0), b, face_alpha))
 			if ok and not _degenerate(poly):
-				ci.draw_polygon(poly, cols)
+				_tb.tri_colored(poly[0], poly[1], poly[2], cols[0], cols[1], cols[2])
+		_tb.flush(ci)
 		return
 
 	for fi in order:
@@ -600,10 +614,15 @@ func draw_through(ci: CanvasItem, lens: Lens3D, u_px: float, basis: Basis, pos: 
 			poly.append(Vector2(pr.x, pr.y) * u_px)
 		if not ok or _degenerate(poly):
 			continue
-		ci.draw_colored_polygon(poly, col)
+		_tb.tri(poly[0], poly[1], poly[2], col)
 		if edge == 1:
-			var e := poly.duplicate(); e.append(poly[0])
-			ci.draw_polyline(e, Color(0, 0, 0, 0.5), 1.0, true)
+			var ec := Color(0, 0, 0, 0.5)
+			_tb.line(poly[0], poly[1], ec)
+			_tb.line(poly[1], poly[2], ec)
+			_tb.line(poly[2], poly[0], ec)
 		elif edge == 2:
-			var e2 := poly.duplicate(); e2.append(poly[0])
-			ci.draw_polyline(e2, Color.from_hsv(hue, 0.15, 1.0, 0.7), 1.0, true)
+			var ec2 := Color.from_hsv(hue, 0.15, 1.0, 0.7)
+			_tb.line(poly[0], poly[1], ec2)
+			_tb.line(poly[1], poly[2], ec2)
+			_tb.line(poly[2], poly[0], ec2)
+	_tb.flush(ci)

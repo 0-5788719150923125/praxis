@@ -26,6 +26,9 @@ var _district := PackedFloat32Array()  # per-tile low-freq hue zone (city QUADRA
 var _origins: Array = []
 var _beat_prev := 0.0
 var _opick := 0
+var _forge := FrameForge.new()   # the city is built OFF-THREAD (see FrameForge):
+                                 # update() ships a snapshot, _draw() submits the
+                                 # finished packet - the UI never waits on tiles
 
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
@@ -84,84 +87,108 @@ func update(f: AudioFeatures, delta: float) -> void:
 		_opick += 1
 	_pulse.step(0.0, delta, 1.1)
 	_beat_prev = f.beat
-	queue_redraw()
+	# ship the frame's inputs to the worker: swarm fields DUPLICATED (main
+	# keeps stepping them), terrain/detail/district by reference (immutable
+	# after build), AudioFeatures fresh-per-frame upstream. The forge
+	# queue_redraws when the packet lands.
+	_forge.kick(Callable(get_script(), "_build_city"), {
+		"f": f, "g": G, "sizex": size.x, "u": unit(),
+		"dev": _dev.f.duplicate(), "pulse": _pulse.f.duplicate(),
+		"terrain": _terrain, "detail": _detail, "district": _district,
+		"hue": _hue, "city_hue": _city_hue,
+	}, self)
 
 
 func _draw() -> void:
 	begin_draw()
-	var u := unit()
-	var span := size.x * OVER
-	var tw := span / float(G) * 0.5         # tile half-width
+	_forge.submit(self)              # the whole city: prebuilt off-thread
+	_draw_fog(-size.x * OVER * 0.5, size.x * OVER, size.y * 0.5, unit())
+
+
+## The city builder - STATIC and PURE (the FrameForge contract): touches only
+## the snapshot, runs on a worker thread live (synchronously in exports, for
+## determinism), returns one packet chunk. This is the code that used to
+## block the UI for the whole tile loop.
+static func _build_city(s: Dictionary) -> Array:
+	var f: AudioFeatures = s.f
+	var g: int = s.g
+	var tb := TriBatch.new()
+	var span: float = float(s.sizex) * OVER
+	var tw := span / float(g) * 0.5           # tile half-width
 	var th := tw * 0.5                        # 2:1 iso
-	var z_ter := u * 0.16                     # hill height scale
-	var z_build := u * 0.12                   # building height scale
-	var build_gain := 0.55 + 0.3 * _f.energy
+	var z_ter: float = float(s.u) * 0.16      # hill height scale
+	var z_build: float = float(s.u) * 0.12    # building height scale
+	var build_gain := 0.55 + 0.3 * f.energy
+	var dev_f: PackedFloat32Array = s.dev
+	var pulse_f: PackedFloat32Array = s.pulse
+	var terrain: PackedFloat32Array = s.terrain
+	var detail: PackedFloat32Array = s.detail
+	var district_f: PackedFloat32Array = s.district
+	var hue0: float = s.hue
+	var city_hue: float = s.city_hue
 
 	# Back-to-front so nearer blocks overlap farther ones correctly.
-	for gy in G:
-		for gx in G:
-			var i := gy * G + gx
-			var dev := _dev.f[i]
-			var pulse := _pulse.f[i]
+	for gy in g:
+		for gx in g:
+			var i := gy * g + gx
+			var dev := dev_f[i]
+			var pulse := pulse_f[i]
 			# Each block bounces with its own spectral band - responsiveness, so the
 			# city moves with the music instead of standing as one static slab.
-			var react := _f.sample(clampf(_terrain[i] * 0.85, 0.0, 1.0))
+			var react := f.sample(clampf(terrain[i] * 0.85, 0.0, 1.0))
 			var building := dev * (build_gain + 0.7 * react)
-			var top_z := _terrain[i] * z_ter + building * z_build
+			var top_z := terrain[i] * z_ter + building * z_build
 			var cx := float(gx - gy) * tw
-			var cy := (float(gx + gy) - float(G - 1)) * th - top_z
+			var cy := (float(gx + gy) - float(g - 1)) * th - top_z
 			var side := building * z_build + 2.0
-			var det: float = _detail[i]
+			var det: float = detail[i]
 			# Hue: a DISTRICT base (broad zones so neighbours match) drifting with height, development
 			# and the colour pulse - a real varied field, and buildings vs ground read differently.
-			var district: float = _district[i] - 0.5
+			var district: float = district_f[i] - 0.5
 			var is_bldg := building > 0.12
-			var base_h: float = _city_hue if is_bldg else _hue
-			var hue := fposmod(base_h + 0.34 * district + 0.12 * _terrain[i] + 0.22 * dev + 0.20 * pulse, 1.0)
+			var base_h: float = city_hue if is_bldg else hue0
+			var hue := fposmod(base_h + 0.34 * district + 0.12 * terrain[i] + 0.22 * dev + 0.20 * pulse, 1.0)
 			# Value: terrain + development + audio + pulse, grained by the detail texture.
-			var lit := 0.08 + 0.52 * _terrain[i] + 0.28 * dev + 0.5 * react + 0.7 * pulse + 0.28 * (det - 0.5)
+			var lit := 0.08 + 0.52 * terrain[i] + 0.28 * dev + 0.5 * react + 0.7 * pulse + 0.28 * (det - 0.5)
 			# Cast shadow: taller buildings drop a soft dark diamond onto the ground toward the back-left
 			# (light reads from the front-right), grounding them instead of floating on flat colour.
 			if building > 0.25:
 				var so := building * z_build
 				var shp := Vector2(cx - tw * 0.5 - so * 0.35, cy + top_z - th * 0.4 - so * 0.15)
-				draw_colored_polygon(PackedVector2Array([
-					shp + Vector2(0, -th), shp + Vector2(tw, 0), shp + Vector2(0, th), shp + Vector2(-tw, 0)]),
+				tb.quad(shp + Vector2(0, -th), shp + Vector2(tw, 0),
+					shp + Vector2(0, th), shp + Vector2(-tw, 0),
 					Color(0, 0, 0, clampf(0.10 + 0.22 * clampf(building, 0.0, 1.5), 0.0, 0.4)))
-			_block(Vector2(cx, cy), tw, th, side, hue, clampf(lit, 0.05, 1.15), building, det)
-
-	_draw_fog(-span * 0.5, span, size.y * 0.5, u)
+			_block(tb, Vector2(cx, cy), tw, th, side, hue, clampf(lit, 0.05, 1.15), building, det)
+	return [{"pts": tb.pts, "cols": tb.cols, "idx": tb.idx}]
 
 
 # One iso block: front-left and front-right side quads (with floor/window detail on tall ones),
 # then the top diamond.
-func _block(base: Vector2, tw: float, th: float, side: float, hue: float, lit: float,
-		building := 0.0, det := 0.5) -> void:
+static func _block(tb: TriBatch, base: Vector2, tw: float, th: float, side: float,
+		hue: float, lit: float, building := 0.0, det := 0.5) -> void:
 	var down := Vector2(0, side)
 	var n_t := base + Vector2(0, -th)
 	var e_t := base + Vector2(tw, 0)
 	var s_t := base + Vector2(0, th)
 	var w_t := base + Vector2(-tw, 0)
-	draw_colored_polygon(PackedVector2Array([w_t, s_t, s_t + down, w_t + down]),
-		Color.from_hsv(hue, 0.5, lit * 0.55))
-	draw_colored_polygon(PackedVector2Array([s_t, e_t, e_t + down, s_t + down]),
-		Color.from_hsv(hue, 0.5, lit * 0.75))
+	tb.quad(w_t, s_t, s_t + down, w_t + down, Color.from_hsv(hue, 0.5, lit * 0.55))
+	tb.quad(s_t, e_t, e_t + down, s_t + down, Color.from_hsv(hue, 0.5, lit * 0.75))
 	# Building features: FLOOR bands + a few LIT WINDOWS on the two visible walls, so a tall block
 	# reads as a building with structure instead of a flat coloured slab. Only tall blocks, capped.
 	if building > 0.3 and side > 14.0:
 		var floors := clampi(int(side / 8.0), 2, 7)
-		_wall(w_t, s_t, down, floors, hue, lit * 0.55, det)          # left wall
-		_wall(s_t, e_t, down, floors, hue, lit * 0.75, det + 0.37)   # right wall
-	draw_colored_polygon(PackedVector2Array([n_t, e_t, s_t, w_t]),
-		Color.from_hsv(hue, 0.4, clampf(lit + 0.12, 0.0, 1.0)))
+		_wall(tb, w_t, s_t, down, floors, hue, lit * 0.55, det)          # left wall
+		_wall(tb, s_t, e_t, down, floors, hue, lit * 0.75, det + 0.37)   # right wall
+	tb.quad(n_t, e_t, s_t, w_t, Color.from_hsv(hue, 0.4, clampf(lit + 0.12, 0.0, 1.0)))
 
 
 # Draw floor bands + scattered lit windows on one skewed wall face (top edge a->b, height `down`).
-func _wall(a: Vector2, b: Vector2, down: Vector2, floors: int, hue: float, wlit: float, seed: float) -> void:
+static func _wall(tb: TriBatch, a: Vector2, b: Vector2, down: Vector2, floors: int,
+		hue: float, wlit: float, seed: float) -> void:
 	var fade := Color(0, 0, 0, 0.18)
 	for f in range(1, floors):
 		var v := float(f) / float(floors)
-		draw_line(a + down * v, b + down * v, fade, 1.0, true)        # floor band (a thin dark line)
+		tb.line(a + down * v, b + down * v, fade, 1.0)   # floor band (a thin dark line)
 	# A few windows, lit or dark by a stable per-cell hash (no flicker), on the mid floors.
 	var cols := 2
 	for f in floors:
@@ -177,7 +204,7 @@ func _wall(a: Vector2, b: Vector2, down: Vector2, floors: int, hue: float, wlit:
 			var p1 := a.lerp(b, uc + hw) + down * (vf - hh)
 			var p2 := a.lerp(b, uc + hw) + down * (vf + hh)
 			var p3 := a.lerp(b, uc - hw) + down * (vf + hh)
-			draw_colored_polygon(PackedVector2Array([p0, p1, p2, p3]),
+			tb.quad(p0, p1, p2, p3,
 				Color.from_hsv(fposmod(hue + 0.04, 1.0), 0.3, clampf(wlit * (1.4 + 0.8 * h), 0.0, 1.0)))
 
 

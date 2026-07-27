@@ -445,7 +445,7 @@ func collect_surface(lens: Lens3D, u: float, lit: float, shimmer: float, shadow:
 func draw_surface(ci: CanvasItem, lens: Lens3D, u: float, lit: float, shimmer: float) -> void:
 	ci.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED   # so the UVs > 1 tile
 	var quads := collect_surface(lens, u, lit, shimmer)
-	quads.sort_custom(func(a, b): return a.d > b.d)        # far first
+	quads = TriBatch.painter_sort(quads)   # native-key far-first sort (see TriBatch)
 	var tex := detail_texture()
 	for q in quads:
 		if q.has("uvs"):

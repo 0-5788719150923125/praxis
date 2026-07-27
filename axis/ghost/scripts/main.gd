@@ -20,12 +20,50 @@ var _stream: Node = null             # the live VoiceStream feeding the session
 var _subtitles: Node = null          # karaoke overlay, present when the audio has a sidecar
 var _status_t := 0.0     # throttle for writing render progress (export mode)
 
+# THE STAGE (2026-07-27): scenes no longer render in the root viewport. They
+# live inside a SubViewport presented through a TextureRect UNDER the UI, so
+# a heavy scene's cost can be governed independently: when the frame rate
+# sags, the governor renders the STAGE every 2nd/3rd frame (and at reduced
+# resolution) while the UI keeps compositing at full rate. The scenes get
+# slower; the instrument stays playable. Export mode bypasses the governor
+# entirely - renders are always full-rate, full-resolution.
+var _stage: SubViewport = null
+var _stage_view: TextureRect = null
+# The governor's metric is the cost of STAGE-ACTIVE frames ONLY. The blended
+# frame rate is a LIE while throttling: the skipped frames are cheap, the
+# average looks healthy, the governor de-escalates straight back into the
+# wall (measured: 7 fps -> level 2 -> "86 fps" -> level 0 -> 7 fps, forever).
+# Active-frame cost keeps reading the scene's true weight at any level.
+var _stage_cost := 0.0               # ms EMA of frames where the stage ran
+var _stage_good_t := 0.0             # seconds the cost has stayed comfortable
+var _stage_change_t := 0.0           # cooldown between level changes
+var _stage_was_active := true
+var _stage_level := 0
+var _stage_frame := 0
+# Capped at slow-motion (period 6): a deeper freeze-frame level was tried
+# and read as a broken scene - one engine tick per refresh advances the
+# SIMULATION 16 ms per 1.5 s, so the picture repainted but nothing moved.
+# 1/6 rate is visibly alive; the scene-side optimization work is what
+# raises the ceiling for real.
+# NO dynamic resolution: per-level render-target scaling was tried and
+# every level change REALLOCATED the SubViewport target while the backdrop
+# sampled it - black triangular chunks, split/stretched banding, and
+# uninitialized-VRAM colour noise on every heavy scene ENTRY (the cut
+# resets the level, then the escalation ladder resizes repeatedly). The
+# scenes are CPU-bound anyway; resolution bought little and cost all that.
+const STAGE_PERIODS := [1, 2, 3, 6]
+const STAGE_HEAVY_MS := 24.0         # active frame over this -> escalate
+const STAGE_GOOD_MS := 14.0          # under this, sustained -> de-escalate
+
 # Export render mode: this instance was relaunched by the exporter in Movie Maker
 # mode (--export). It runs the session clean (no overlays) and quits when the song
 # ends, so the recorded movie starts and stops with the music.
 var _export_mode := false
 
 func _ready() -> void:
+	# window-close is handled by _shutdown (see _notification): the WM close
+	# button must run our teardown, not the engine's default instant quit
+	get_tree().set_auto_accept_quit(false)
 	var args := OS.get_cmdline_user_args()
 	# Mask mode is a standalone authoring tool (see mask_editor.gd) - tied to one
 	# specific external clip, not the audio-reactive show - so it does not touch
@@ -132,7 +170,7 @@ func _on_splash_mask(video_path: String) -> void:
 
 func _begin_session(audio_path := "") -> void:
 	Spectrum.begin(audio_path)
-	Director.attach(self)
+	Director.attach(_stage_host())
 	_attach_subtitles()
 	if _export_mode:
 		return                         # render clean: no overlays (the Director fades the video ends)
@@ -183,6 +221,54 @@ func _end_session() -> void:
 	_show_splash()
 
 
+## The stage the Director attaches scenes to (created on first session). A
+## SubViewport with its own 3D world, shown through a TextureRect at child
+## index 0 - everything UI stacks above it in the ROOT viewport, which is
+## what keeps the instrument responsive when a scene gets heavy.
+func _stage_host() -> Node:
+	if _stage != null:
+		return _stage
+	_stage = SubViewport.new()
+	_stage.own_world_3d = true
+	_stage.transparent_bg = false
+	_stage.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	add_child(_stage)
+	_stage_view = TextureRect.new()
+	_stage_view.texture = _stage.get_texture()
+	_stage_view.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_stage_view.stretch_mode = TextureRect.STRETCH_SCALE
+	# the backdrop must never eat input: a fullscreen Control's default
+	# MOUSE_FILTER_STOP swallows every click that misses a panel
+	_stage_view.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_stage_view)
+	move_child(_stage_view, 0)       # the stage is the backdrop, always
+	get_viewport().size_changed.connect(_sync_stage_size)
+	# every scene gets a FRESH measurement: without this, a light scene that
+	# follows a heavy one stays imprisoned at the old level for the ~15 s the
+	# sparse active samples need to forgive (measured, and it read as broken)
+	Director.scene_cut.connect(func():
+		_stage_cost = 0.0
+		_stage_good_t = 0.0
+		if _stage_level > 0:
+			_stage_level = 0
+			_stage_change_t = 0.0
+			_sync_stage_size()
+			_stage.process_mode = Node.PROCESS_MODE_INHERIT
+			_stage.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+			print("ghost: stage governor -> level 0 (scene cut)"))
+	_sync_stage_size()
+	return _stage
+
+
+func _sync_stage_size() -> void:
+	if _stage == null:
+		return
+	var base := get_viewport().get_visible_rect().size
+	_stage.size = Vector2i(base.round())
+	_stage_view.position = Vector2.ZERO
+	_stage_view.size = base
+
+
 func _process(delta: float) -> void:
 	# The background render reports its progress (playback position / length) so the
 	# live app's exporter can show a percentage in the status notification.
@@ -193,6 +279,90 @@ func _process(delta: float) -> void:
 			var length := Spectrum.song_length()
 			if length > 0.0:
 				Bake.write_progress(Spectrum.current.time / length)
+		return
+	# ---- the stage governor: sacrifice SCENE rate, never UI rate ----------
+	# A heavy scene's active frame blocks the whole main loop for its full
+	# cost - Godot cannot paint UI mid-frame - so the only lever short of
+	# rewriting the scene is SPACING those frames out: the UI runs fluid
+	# between hitches, and at the freeze-frame level the backdrop becomes a
+	# slideshow while the instrument stays fully playable. The metric is the
+	# active-frame cost (see the var block: the blended fps is a lie here).
+	# Escalation is fast; de-escalation needs the ACTIVE frames themselves
+	# to have been cheap for a sustained stretch - a still-heavy scene keeps
+	# measuring heavy at any level, so the loop cannot oscillate.
+	if _stage == null:
+		return
+	var ms := delta * 1000.0
+	if _stage_was_active:
+		if _stage_cost <= 0.0:
+			_stage_cost = ms
+		else:
+			# asymmetric EMA: quick to forgive (a scene cut should release
+			# the throttle in a few active samples), steady to accuse
+			_stage_cost = lerpf(_stage_cost, ms, 0.35 if ms < _stage_cost else 0.12)
+	_stage_change_t += delta
+	var want := _stage_level
+	if _stage_cost > STAGE_HEAVY_MS:
+		_stage_good_t = 0.0
+		if _stage_level < STAGE_PERIODS.size() - 1:
+			want = _stage_level + 1
+	elif _stage_cost < STAGE_GOOD_MS:
+		_stage_good_t += delta
+		if _stage_good_t > 2.0 and _stage_level > 0:
+			want = _stage_level - 1
+			_stage_good_t = 0.0
+	else:
+		_stage_good_t = 0.0
+	if want != _stage_level and _stage_change_t > 0.4:
+		_stage_level = want
+		_stage_change_t = 0.0
+		_sync_stage_size()
+		print("ghost: stage governor -> level %d (active frame %.0f ms)" % [want, _stage_cost])
+		if want == 0:
+			_stage.process_mode = Node.PROCESS_MODE_INHERIT
+			_stage.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	_stage_frame += 1
+	var active: bool = _stage_level == 0 \
+		or _stage_frame % int(STAGE_PERIODS[_stage_level]) == 0
+	if _stage_level > 0:
+		if active:
+			_stage.process_mode = Node.PROCESS_MODE_INHERIT
+			_stage.render_target_update_mode = SubViewport.UPDATE_ONCE
+		else:
+			_stage.process_mode = Node.PROCESS_MODE_DISABLED
+	_stage_was_active = active
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		# DEFERRED: this notification is still propagating through the tree,
+		# so the children are LOCKED ("calling or emitting") - freeing them
+		# here errors out. One idle frame later they are free to free.
+		call_deferred("_shutdown")
+
+
+## WORKAROUND (2026-07-27): with audio input enabled (the voice sampler's
+## microphone; project.godot driver/enable_input), the engine's audio-driver
+## teardown aborts in glibc on this system ("double free" / "corrupted size
+## vs. prev_size" - PipeWire input stream finalization; appeared the day
+## enable_input landed and reproduces without ever recording). Every piece
+## of app state persists on change, and the stateful editors save in
+## _exit_tree - so: free main's children (their save hooks run), then leave
+## without the driver teardown. GHOST_CLEAN_EXIT=1 restores the normal quit
+## path for debugging; remove this whole workaround when upstream is fixed.
+func _shutdown() -> void:
+	if not OS.get_environment("GHOST_CLEAN_EXIT").is_empty():
+		get_tree().quit()
+		return
+	# queue_free, never free(): something in the tree is reliably mid-call at
+	# close time (even from a deferred hook) and free() errors on locked
+	# objects; the engine's own end-of-frame free handles that correctly and
+	# still runs every _exit_tree save hook (mask playhead etc.)
+	for child in get_children():
+		child.queue_free()
+	await get_tree().process_frame
+	print("ghost: bye (hard exit - audio-input teardown workaround, see main._shutdown)")
+	OS.kill(OS.get_process_id())
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -208,7 +378,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				if _mask_editor == null or not is_instance_valid(_mask_editor):
 					Director.next()
 			KEY_ESCAPE:
-				get_tree().quit()
+				call_deferred("_shutdown")   # outside the input propagation
+											 # (children are locked during it)
 
 
 ## The value following `flag` in the cmdline args, or "" if the flag is bare/absent
@@ -265,7 +436,7 @@ func _begin_synth_stream(stream: Node) -> void:
 	add_child(stream)
 	var pb: AudioStreamGeneratorPlayback = Spectrum.begin_stream(stream.fingerprint(), Voice.SR)
 	stream.attach_playback(pb)
-	Director.attach(self)
+	Director.attach(_stage_host())
 	# synthesis is GAME PACED: the fishing owns the cuts - a scene changes when
 	# a catch jumps it, so each new scene reads as a reward, not weather
 	Director.set_game_paced(true)

@@ -23,7 +23,7 @@ var _hclass := PackedFloat32Array()   # per-plot MAX height potential (reached o
 var _sky := PackedFloat32Array()      # per-plot "tower from the start" propensity (rare, for variety)
 var _phase := PackedFloat32Array()    # per-plot phase for the slow rearrange wobble
 var _maturity := 0.0                  # 0..1, rises over the scene: thresholds drop -> arms thicken, gaps fill
-var _shadow := ShadowField.new()      # light-space cast-shadow map (buildings shadow ground + each other)
+var _forge := FrameForge.new()        # off-thread frame builder (FrameForge contract)
 var _cores: Array = []                # the 1-2 valley cells the city grows out from (re-pinned each frame)
 var _light_az := 0.0
 var _light_el := 0.5
@@ -160,138 +160,176 @@ func update(f: AudioFeatures, delta: float) -> void:
 	_light_az += delta * 0.035 * _light_dir
 	_terrain.set_light(_light_az, _light_el)
 	_terrain.step_light(delta)
-	queue_redraw()
+	# Snapshot the frame into a job for the worker (see FrameForge): swarm and
+	# grown fields DUPLICATED (main keeps stepping them), immutable-after-build
+	# plot arrays by reference, terrain by reference (its light writes are
+	# benign in-place float updates), the lens copied (main re-orbits it).
+	var job := CityJob.new()
+	job.f = f
+	job.c = C
+	job.u = unit()
+	job.life = _life
+	job.glow = _glow
+	job.hue = _hue
+	job.maturity = _maturity
+	job.reveal = smoothstep(0.8, 1.0, view.presence)
+	job.terrain = _terrain
+	job.tex_rid = Terrain.detail_texture().get_rid()
+	job.dev = _dev.f.duplicate()
+	job.grown = _grown.duplicate()
+	job.detach = _detach
+	job.foot = _foot
+	job.hclass = _hclass
+	job.sky = _sky
+	job.phase = _phase
+	job.lens = Lens3D.new()
+	job.lens.eye = lens.eye
+	job.lens.look = lens.look
+	job.lens.up = lens.up
+	job.lens.fov = lens.fov
+	job.lens.near = lens.near
+	_forge.kick(job.run, {}, self, job)   # retain: a Callable alone will not keep the job alive
 
 
 func _draw() -> void:
 	begin_draw()
-	lens.prepare()
-	var u := unit()
-	var lit := clampf(0.7 + 0.4 * _glow + 0.3 * _f.energy, 0.4, 1.4)
 	texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
-	var bw := _terrain.half / float(C) * 0.62          # block half-footprint (world)
-	var bgain := 0.5 + 0.3 * _f.energy
-	# How deep each building is sunk INTO the terrain: its box starts below the surface and the merged
-	# land hides that buried part, so the visible base is ragged (cut by the ground), never a clean line.
-	var embed: float = 0.35 * _terrain.relief + 0.14
-	# The buildings are EMBEDDED below the surface, so while the scene fades IN (partial alpha) the
-	# semi-transparent terrain would let the buried geometry show through - reading as blocks under the
-	# ground. So the buildings only appear once the terrain is nearly opaque: hidden through the fade,
-	# then eased in over its last stretch (`presence` is the scene's transition opacity, 1 when settled).
-	var reveal: float = smoothstep(0.8, 1.0, view.presence)
-	# Pass A: compute every building and RASTERIZE it into the light-space shadow map. This must finish
-	# before anything is shaded, since a building can cast a shadow on the ground and on other buildings.
-	_shadow.build(_terrain.light_dir(), Vector3(-_terrain.half, -_terrain.relief, -_terrain.half),
-		Vector3(_terrain.half, _terrain.relief + 3.0, _terrain.half))
-	var blds: Array = []
-	for cy in C:
-		for cx in C:
-			if reveal < 0.02:                               # still fading the terrain in - no buildings yet
-				break
-			var i := cy * C + cx
-			var grown: float = _grown[i]
-			if grown < 0.02:                                # nothing built here yet (a gap / bare peak)
+	_forge.submit(self)
+
+
+## The whole frame off the main thread (the FrameForge job): shadow raster,
+## building realization, terrain merge, painter sort, batch runs. Reads only
+## its own members - a mid-job Director cut is harmless.
+class CityJob:
+	extends RefCounted
+
+	var f: AudioFeatures
+	var c := 30
+	var u := 1.0
+	var life := 0.0
+	var glow := 0.0
+	var hue := 0.0
+	var maturity := 0.0
+	var reveal := 1.0
+	var terrain: Terrain
+	var tex_rid := RID()
+	var lens: Lens3D
+	var dev := PackedFloat32Array()
+	var grown := PackedFloat32Array()
+	var detach := PackedFloat32Array()
+	var foot := PackedFloat32Array()
+	var hclass := PackedFloat32Array()
+	var sky := PackedFloat32Array()
+	var phase := PackedFloat32Array()
+
+	func run(_s: Dictionary) -> Array:
+		lens.prepare()
+		var lit := clampf(0.7 + 0.4 * glow + 0.3 * f.energy, 0.4, 1.4)
+		var bw := terrain.half / float(c) * 0.62          # block half-footprint (world)
+		var bgain := 0.5 + 0.3 * f.energy
+		# How deep each building is sunk INTO the terrain: the merged land hides the buried part,
+		# so the visible base is ragged (cut by the ground), never a clean line.
+		var embed: float = 0.35 * terrain.relief + 0.14
+		# Pass A: compute every building and RASTERIZE it into the light-space shadow map - it must
+		# finish before shading, since a building shadows the ground and other buildings.
+		var shadow := ShadowField.new()
+		shadow.build(terrain.light_dir(), Vector3(-terrain.half, -terrain.relief, -terrain.half),
+			Vector3(terrain.half, terrain.relief + 3.0, terrain.half))
+		var blds: Array = []
+		for cy in c:
+			for cx in c:
+				if reveal < 0.02:                       # still fading the terrain in - no buildings yet
+					break
+				var i := cy * c + cx
+				var grown_i: float = grown[i]
+				if grown_i < 0.02:                      # nothing built here yet (a gap / bare peak)
+					continue
+				var wx := (float(cx) / float(c - 1) - 0.5) * 2.0 * terrain.half
+				var wz := (float(cy) / float(c - 1) - 0.5) * 2.0 * terrain.half
+				var ground := terrain.height_at(wx, wz) * terrain.relief
+				var float_off: float = detach[i]
+				var dv := dev[i]
+				var react := f.sample(clampf(terrain.height_at(wx, wz) + 0.5, 0.0, 1.0))
+				# A slow per-plot wobble keeps the built skyline REARRANGING over time.
+				var wob := 0.85 + 0.28 * sin(life * 0.12 + float(phase[i]))
+				# CRITICAL MASS: blocks are built small and only reach their tall potential as their
+				# district densifies and the city matures; a rare few (`sky`) tower from the start.
+				var crit := clampf(dv * lerpf(0.28, 1.0, maturity), 0.0, 1.0)
+				var realize := clampf(maxf(Nonlinear.apply("spike", crit, 2.4), float(sky[i])), 0.0, 1.0)
+				var tall := lerpf(0.5, float(hclass[i]), realize)
+				var h := grown_i * tall * (0.42 + 0.4 * bgain + 0.5 * react) * wob
+				var bw_i := bw * float(foot[i])
+				var up := terrain.normal_world(wx, wz).lerp(Vector3.UP, 0.92).normalized()
+				var bx := up.cross(Vector3(1, 0, 0))
+				if bx.length() < 1e-3:
+					bx = up.cross(Vector3(0, 0, 1))
+				bx = bx.normalized()
+				var bz := bx.cross(up).normalized()
+				# Sink the base BELOW the surface so its bottom is buried; the top stays where it was.
+				var base := Vector3(wx, ground + float_off - embed, wz)
+				var htot := h + embed
+				var bhue := fposmod(hue + 0.12 * terrain.height_at(wx, wz) + 0.25 * dv, 1.0)
+				# The TERRAIN also shadows the building (a block in a hill's cast shadow darkens).
+				var tsh: float = terrain.shadow_at(wx, wz)
+				var blit := clampf(0.18 + 0.5 * dv + 0.5 * react + 0.6 * glow, 0.05, 1.2) * lit * (0.35 + 0.65 * tsh)
+				var ext := shadow.add_box(base, up, bx, bz, bw_i, htot)   # rasterize + self-shadow bias
+				blds.append({"base": base, "up": up, "bx": bx, "bz": bz, "w": bw_i, "h": htot,
+					"hue": bhue, "lit": blit, "ext": ext})
+
+		# ONE merged list: terrain quads + building faces, depth-sorted together so the land occludes
+		# the buried building bases and neighbours' shadows layer correctly.
+		var faces: Array = terrain.collect_surface(lens, u, lit, life, shadow)
+		for b in blds:
+			_block_faces(faces, shadow, b.base, b.up, b.bx, b.bz, b.w, b.h, b.hue, b.lit, float(b.ext))
+		faces = TriBatch.painter_sort(faces)
+		var tb := TriBatch.new()
+		for fc in faces:
+			if fc.has("uvs"):
+				tb.mark_run(true, tex_rid)
+				tb.quad_textured(fc.poly, fc.cols, fc.uvs)
+			else:
+				tb.mark_run(false, RID())
+				tb.quad_colored(fc.poly, fc.cols)
+		return tb.take_chunks()
+
+	# Append the camera-facing faces of one oriented box to `out` (each {poly, cols, d}), per-VERTEX
+	# shaded by the key light AND the cast-shadow map.
+	func _block_faces(out: Array, shadow: ShadowField, base: Vector3, up: Vector3, bx: Vector3,
+			bz: Vector3, w: float, h: float, bhue: float, lit: float, ext: float) -> void:
+		var top := base + up * h
+		var corners := [
+			base - bx * w - bz * w, base + bx * w - bz * w, base + bx * w + bz * w, base - bx * w + bz * w,
+			top - bx * w - bz * w, top + bx * w - bz * w, top + bx * w + bz * w, top - bx * w + bz * w]
+		var pr: Array = []
+		for cwld in corners:
+			var pj := lens.project(cwld)
+			pr.append(Vector3(pj.x * u, pj.y * u, pj.z))
+		var quads := [[4, 5, 6, 7, up],                     # top
+			[0, 1, 5, 4, -bz], [1, 2, 6, 5, bx], [2, 3, 7, 6, bz], [3, 0, 4, 7, -bx]]
+		for q in quads:
+			var i0: int = q[0]
+			var i1: int = q[1]
+			var i2: int = q[2]
+			var i3: int = q[3]
+			var fn: Vector3 = q[4]
+			var fc: Vector3 = (corners[i0] + corners[i1] + corners[i2] + corners[i3]) * 0.25
+			if fn.dot(lens.eye - fc) <= 0.0:                 # facing away
 				continue
-			var wx := (float(cx) / float(C - 1) - 0.5) * 2.0 * _terrain.half
-			var wz := (float(cy) / float(C - 1) - 0.5) * 2.0 * _terrain.half
-			var ground := _terrain.height_at(wx, wz) * _terrain.relief
-			var float_off: float = _detach[i]
-			var dev := _dev.at(cx, cy)
-			var react := _f.sample(clampf(_terrain.height_at(wx, wz) + 0.5, 0.0, 1.0))
-			# A slow per-plot wobble keeps the built skyline REARRANGING over time.
-			var wob := 0.85 + 0.28 * sin(_life * 0.12 + float(_phase[i]))
-			# CRITICAL MASS: how developed (local density `dev`) AND mature the district here is. A block
-			# is BUILT small, then only grows toward its tall potential as its surroundings fill in and
-			# the city matures - so most stay low (many small blocks) and TOWERS emerge later, in the
-			# dense core. Nonlinear (holds low, then surges past the threshold) so the transformation
-			# reads as natural, not linear. A rare few (`_sky`) tower from the start for variety.
-			var crit := clampf(dev * lerpf(0.28, 1.0, _maturity), 0.0, 1.0)
-			var realize := clampf(maxf(Nonlinear.apply("spike", crit, 2.4), float(_sky[i])), 0.0, 1.0)
-			var tall := lerpf(0.5, float(_hclass[i]), realize)   # small base .. this plot's full potential
-			var h := grown * tall * (0.42 + 0.4 * bgain + 0.5 * react) * wob
-			var bw_i := bw * float(_foot[i])
-			var up := _terrain.normal_world(wx, wz).lerp(Vector3.UP, 0.92).normalized()
-			var bx := up.cross(Vector3(1, 0, 0))
-			if bx.length() < 1e-3:
-				bx = up.cross(Vector3(0, 0, 1))
-			bx = bx.normalized()
-			var bz := bx.cross(up).normalized()
-			# Sink the base BELOW the surface so its bottom is buried; the top stays where it was.
-			var base := Vector3(wx, ground + float_off - embed, wz)
-			var htot := h + embed
-			var hue := fposmod(_hue + 0.12 * _terrain.height_at(wx, wz) + 0.25 * dev, 1.0)
-			# The TERRAIN also shadows the building (a block in a hill's cast shadow darkens).
-			var tsh: float = _terrain.shadow_at(wx, wz)
-			var blit := clampf(0.18 + 0.5 * dev + 0.5 * react + 0.6 * _glow, 0.05, 1.2) * lit * (0.35 + 0.65 * tsh)
-			var ext := _shadow.add_box(base, up, bx, bz, bw_i, htot)   # rasterize + get self-shadow bias
-			blds.append({"base": base, "up": up, "bx": bx, "bz": bz, "w": bw_i, "h": htot,
-				"hue": hue, "lit": blit, "ext": ext})
-
-	# ONE merged list: terrain quads (shadowed by the buildings) + every building face (per-vertex
-	# shadowed, so a neighbour's shadow LAYERS onto the block), depth-sorted together so the land also
-	# occludes the buried building bases. Then draw per entry type.
-	var faces: Array = _terrain.collect_surface(lens, u, lit, _life, _shadow)
-	for b in blds:
-		_block_faces(faces, b.base, b.up, b.bx, b.bz, b.w, b.h, b.hue, b.lit, float(b.ext), reveal)
-	faces.sort_custom(func(a, b): return a.d > b.d)
-	var tex := Terrain.detail_texture()
-	for fc in faces:
-		if fc.has("uvs"):
-			Terrain.draw_quad(self, fc.poly, fc.cols, fc.uvs, tex)   # terrain land
-		else:
-			Terrain.draw_quad(self, fc.poly, fc.cols)                # building face / water
-
-
-# Append the camera-facing faces of one oriented box to `out` (each {poly, cols, d}), per-VERTEX
-# shaded by the key light AND the cast-shadow map - so a neighbour's shadow lands as a real band on
-# the wall. `ext` is this box's own light-depth extent (its self-shadow bias).
-func _block_faces(out: Array, base: Vector3, up: Vector3, bx: Vector3, bz: Vector3, w: float, h: float,
-		hue: float, lit: float, ext: float, alpha := 1.0) -> void:
-	var top := base + up * h
-	# 4 base + 4 top corners.
-	var corners := [
-		base - bx * w - bz * w, base + bx * w - bz * w, base + bx * w + bz * w, base - bx * w + bz * w,
-		top - bx * w - bz * w, top + bx * w - bz * w, top + bx * w + bz * w, top - bx * w + bz * w]
-	var pr: Array = []
-	for cwld in corners:
-		pr.append(_terrain_proj(cwld))
-	# Faces as index quads + outward normal direction; draw only those facing the camera.
-	var quads := [[4, 5, 6, 7, up],                     # top
-		[0, 1, 5, 4, -bz], [1, 2, 6, 5, bx], [2, 3, 7, 6, bz], [3, 0, 4, 7, -bx]]
-	for q in quads:
-		var i0: int = q[0]
-		var i1: int = q[1]
-		var i2: int = q[2]
-		var i3: int = q[3]
-		var fn: Vector3 = q[4]
-		var fc: Vector3 = (corners[i0] + corners[i1] + corners[i2] + corners[i3]) * 0.25
-		if fn.dot(lens.eye - fc) <= 0.0:                 # facing away
-			continue
-		var p0: Vector3 = pr[i0]
-		var p1: Vector3 = pr[i1]
-		var p2: Vector3 = pr[i2]
-		var p3: Vector3 = pr[i3]
-		if p0.z <= lens.near or p1.z <= lens.near or p2.z <= lens.near or p3.z <= lens.near:
-			continue
-		var fpoly := PackedVector2Array([Vector2(p0.x, p0.y), Vector2(p1.x, p1.y),
-			Vector2(p2.x, p2.y), Vector2(p3.x, p3.y)])
-		if Terrain._quad_area(fpoly) < 1.0:        # edge-on face - skip (else triangulation fails)
-			continue
-		# Strong directional key light: the sunward faces are bright, the faces turned away fall into
-		# real shade - the contrast is what makes a block read as a lit SOLID instead of a flat card.
-		var shade := 0.34 + 0.72 * clampf(fn.dot(_terrain.light_dir()), 0.0, 1.0)
-		# Per-corner CAST shadow from the field (bias by this box's own depth extent so it doesn't
-		# shadow itself, but a taller neighbour's shadow still bands across it).
-		var cols := PackedColorArray()
-		for idx in [i0, i1, i2, i3]:
-			var sf: float = _shadow.factor(corners[idx], ext + 0.06)
-			var c := Color.from_hsv(hue, 0.45, clampf(lit * shade * sf, 0.0, 1.0))
-			c.a = alpha                                  # fade the buildings in AFTER the terrain (embed reveal)
-			cols.append(c)
-		out.append({"d": (p0.z + p1.z + p2.z + p3.z) * 0.25, "poly": fpoly, "cols": cols})
-
-
-# Project a world point to (screen x, screen y, camera depth).
-func _terrain_proj(wld: Vector3) -> Vector3:
-	var pr := lens.project(wld)
-	return Vector3(pr.x * unit(), pr.y * unit(), pr.z)
+			var p0: Vector3 = pr[i0]
+			var p1: Vector3 = pr[i1]
+			var p2: Vector3 = pr[i2]
+			var p3: Vector3 = pr[i3]
+			if p0.z <= lens.near or p1.z <= lens.near or p2.z <= lens.near or p3.z <= lens.near:
+				continue
+			var fpoly := PackedVector2Array([Vector2(p0.x, p0.y), Vector2(p1.x, p1.y),
+				Vector2(p2.x, p2.y), Vector2(p3.x, p3.y)])
+			if Terrain._quad_area(fpoly) < 1.0:        # edge-on face - skip
+				continue
+			var shade := 0.34 + 0.72 * clampf(fn.dot(terrain.light_dir()), 0.0, 1.0)
+			var cols := PackedColorArray()
+			for idx in [i0, i1, i2, i3]:
+				var sf: float = shadow.factor(corners[idx], ext + 0.06)
+				var cc := Color.from_hsv(bhue, 0.45, clampf(lit * shade * sf, 0.0, 1.0))
+				cc.a = reveal                          # fade the buildings in AFTER the terrain
+				cols.append(cc)
+			out.append({"d": (p0.z + p1.z + p2.z + p3.z) * 0.25, "poly": fpoly, "cols": cols})

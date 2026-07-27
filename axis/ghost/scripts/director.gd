@@ -1,5 +1,7 @@
 extends Node
 
+signal scene_cut                      # a new scene just took the stage (see main's governor)
+
 ## Director - the scene registry, scheduler, and transition engine (autoload).
 ##
 ## Holds every visualizer paired with a motion behavior, and changes scenes *with
@@ -1187,6 +1189,7 @@ func _make_scene() -> GhostScene:
 	# should still print the same bucket here, a useful observability signal. (See
 	# next/harmonic_seeding.md.)
 	print("ghost: cut -> %s  harmonic bucket %d" % [scene.scene_name, Spectrum.harmonic_bucket(12)])
+	scene_cut.emit()                  # the stage governor re-measures per scene
 	# Narrative tempo: higher sensitivity shrinks the hold (and any explicit min/max bounds), so the
 	# scene is shorter; the scene paces its keyframes as fractions of that shrunken hold, so events
 	# still all land. _cur_sens also feeds the auto-mode pacing bounds (see _scaled_bound).

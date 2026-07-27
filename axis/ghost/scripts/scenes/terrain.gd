@@ -133,6 +133,6 @@ func _draw_puffs(items: Array, col: Color, drift: float) -> void:
 		if scr_r < 1.5:
 			continue
 		vis.append({"sp": sp, "z": z, "r": scr_r, "d": float(it.dens)})
-	vis.sort_custom(func(a, b): return a.z > b.z)               # far first
+	vis = TriBatch.painter_sort(vis, "z")   # native-key far-first sort (see TriBatch)
 	for v in vis:
 		Layer.puff(self, v.sp, v.r, Color(col.r, col.g, col.b, clampf(col.a * float(v.d), 0.0, 0.5)))
