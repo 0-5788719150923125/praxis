@@ -36,6 +36,12 @@ var session: MaskSession = null
 var player: VideoStreamPlayer = null
 var selected: Variant = null   # the currently-selected marker Dictionary, or null
 var waveform_texture: Texture2D = null   # set by MaskEditor once generated; null draws nothing
+# Hi-res waveform slice for the zoomed-in view (see MaskEditor._poll_wave_hi):
+# same recipe as the base strip, rendered over just wavehi_span seconds, drawn
+# OVER the base wherever it applies. Progressive - stale/absent just means the
+# (soft) base shows.
+var wavehi_texture: Texture2D = null
+var wavehi_span := Vector2.ZERO
 ## The shared pixel<->time mapping - see timeline_view.gd. Set by MaskEditor
 ## (one instance shared with every track lane, so they all agree on where a
 ## second sits on screen). Never owned here anymore - multi-track needs the
@@ -168,6 +174,24 @@ func _draw() -> void:
 			var th := float(waveform_texture.get_height())
 			draw_texture_rect_region(waveform_texture, Rect2(wx0, 4, wx1 - wx0, size.y - 20),
 				Rect2(0, 0, tw, th), Color(0.55, 0.68, 0.85, 0.85))
+		# The crisp zoom slice, over the base for exactly its own span. The
+		# backing rect re-lays the strip background first - the two textures
+		# are both translucent, and hi-over-base without it doubled up into a
+		# brighter band that read as a selection.
+		if wavehi_texture != null and wavehi_span.y > wavehi_span.x:
+			var hx0 := maxf(tview.x_of(wavehi_span.x), wx0)
+			var hx1 := minf(tview.x_of(wavehi_span.y), wx1)
+			if hx1 > 0.0 and hx0 < size.x and hx1 > hx0:
+				var htw := float(wavehi_texture.get_width())
+				var hth := float(wavehi_texture.get_height())
+				# Map the clipped pixel range back into the slice's texture.
+				var full_x0 := tview.x_of(wavehi_span.x)
+				var full_w := maxf(tview.x_of(wavehi_span.y) - full_x0, 1.0)
+				var u0 := (hx0 - full_x0) / full_w * htw
+				var u1 := (hx1 - full_x0) / full_w * htw
+				draw_rect(Rect2(hx0, 4, hx1 - hx0, size.y - 20), Color(0.09, 0.10, 0.13, 1.0))
+				draw_texture_rect_region(wavehi_texture, Rect2(hx0, 4, hx1 - hx0, size.y - 20),
+					Rect2(u0, 0, u1 - u0, hth), Color(0.55, 0.68, 0.85, 0.85))
 	# Marker spans - a translucent tint across exactly the time range each marker's
 	# own ramp/damp occupies (see MaskSession.marker_span). Ramp = cool/green,
 	# damp = warm/orange; overlapping spans layer visibly.

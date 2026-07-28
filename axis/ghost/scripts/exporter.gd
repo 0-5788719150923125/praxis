@@ -124,11 +124,12 @@ func _build_ui() -> void:
 
 	_status = Label.new()
 	_status.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	# Shifted left in step with _btn above, so right-aligned text ends just clear of
-	# the (now icon-sized) button instead of the old wide button's edge.
-	_status.offset_left = -572
+	# Shifted left in step with _btn above, so right-aligned text ends just clear
+	# of the button row - which now includes the console's >_ slot at -156..-116
+	# (see console.gd), hence the -160 right edge.
+	_status.offset_left = -616
 	_status.offset_top = -64
-	_status.offset_right = -116
+	_status.offset_right = -160
 	_status.offset_bottom = -28
 	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_status.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.7))

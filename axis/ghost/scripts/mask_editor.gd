@@ -38,7 +38,13 @@ class_name MaskEditor
 ## file too, not just live. What you see while editing is what you get.
 
 const SHADER := preload("res://shaders/mask_split.gdshader")
+const PAINT_SIM_SHADER := preload("res://shaders/clown_paint.gdshader")
 const MASKS_DIR := "res://masks"
+## Ghost's OWN python venv - yt-dlp lives here, never the repo's venvs or the
+## system site-packages. user:// keeps it out of res:// (the editor's file
+## scanner must never crawl a venv) and out of git entirely.
+const YT_VENV_DIR := "user://ytdlp_venv"
+const YT_DL_DIR := MASKS_DIR + "/_downloads"   # inside /masks/ = already gitignored
 const PANEL_W := 320
 # Picked via _sort_dropdown - see _apply_sort for what each one does.
 const _SORT_MODES := ["A → Z", "Z → A", "Energy"]
@@ -114,10 +120,73 @@ var _track_runtime: Array = []
 var _import_dialog: FileDialog
 var _import_pid := -1
 var _import_pending := {}   # {source, video, index} - the lane is added up front, this tracks its transcode
+
+# --- YouTube / URL import runtime (see _start_url_import) ---
+var _yt_state := "idle"    # idle | venv | pip | downloading
+var _yt_pid := -1
+var _yt_url := ""
+var _yt_log := ""          # absolute path; the current step's combined stdout/stderr
+var _yt_started := 0.0     # unix time the download step began (newest-file fallback)
+var _yt_step_started := 0.0   # unix time the CURRENT step began - the elapsed readout
+var _yt_retried := false   # one automatic pip-upgrade retry per import (stale yt-dlp)
+var _yt_echoed := {}       # WARNING/ERROR lines already print()-echoed live (a set)
+
+# --- The clown face model (see _update_face_model): eyes / mouth / oval /
+# tint, fitted per capture tick, EMA-glided exactly like the anchor. Defaults
+# describe a plausible centered face so the paint shows before the first fit.
+var _clown_active := false
+var _face_eye_l_prev := Vector2(0.42, 0.40)
+var _face_eye_l_ema := Vector2(0.42, 0.40)
+var _face_eye_r_prev := Vector2(0.58, 0.40)
+var _face_eye_r_ema := Vector2(0.58, 0.40)
+var _face_mouth_prev := Vector2(0.5, 0.62)
+var _face_mouth_ema := Vector2(0.5, 0.62)
+var _face_r_prev := Vector2(0.14, 0.20)
+var _face_r_ema := Vector2(0.14, 0.20)
+var _face_tint_ema := Vector3(0.55, 0.1, -0.5)
+var _face_lum_ema := 0.5
+# Per-feature sizes, measured from each cluster's own spread, in PLAIN
+# SCREEN units (uv) - deliberately NOT eye-distance units: normalizing by
+# the pair re-coupled every feature's size to the pair's jitter and the
+# whole mask rescaled in lockstep. Each feature breathes on its own.
+var _face_eye_lr_prev := 0.035
+var _face_eye_lr_ema := 0.035
+var _face_eye_rr_prev := 0.035
+var _face_eye_rr_ema := 0.035
+var _face_mouth_r_prev := Vector2(0.05, 0.028)
+var _face_mouth_r_ema := Vector2(0.05, 0.028)
+# The face centroid (the coat channel's home + the cracks' local pull) and
+# the nose's OWN slow anchor - derived from eyes+mouth but smoothed on its
+# own clock, so it does not inherit the pair's frame jitter.
+var _face_c_prev := Vector2(0.5, 0.45)
+var _face_c_ema := Vector2(0.5, 0.45)
+var _face_nose_prev := Vector2(0.5, 0.52)
+var _face_nose_ema := Vector2(0.5, 0.52)
+# The face model's OWN capture cadence - faster than the echo ring's 0.35s,
+# because the mask must chase the face in near-real-time (the half-second
+# drift report), while the ring's semantics (8 slots x 0.35s of history)
+# must not change. A tick that coincides with an echo capture reuses its
+# image instead of paying a second readback.
+const _FACE_INTERVAL := 0.15
+var _face_slot := -1
+var _face_prev_lum := PackedFloat32Array()   # 96x54 luminance, for the mouth's motion cue
+var _face_motion_mean := 0.0                 # EMA of the face's ambient per-pixel motion
+var _face_bg_lum := 0.2                      # this frame's whole-frame mean luminance (the
+                                             #   brightness cue's floor - see _update_face_model)
+# The liquid paint simulation (see shaders/clown_paint.gdshader and
+# _step_paint_sim): a ping-pong SubViewport pair holding the persistent,
+# advected paint field the mask shader samples as u_clown_paint. Built
+# lazily on the first clown frame; stepped on playback-time deltas.
+var _paint_vps: Array = []
+var _paint_rects: Array = []
+var _paint_ping := 0
+var _paint_reset := true
+var _paint_last_pos := 0.0
+var _clown_fs := 1.0   # the live clown layer's Scale knob - the sim's target sizes ride it
 var _selected: Variant = null   # the marker Dictionary currently shown in the panel
 
 var _color_a: ColorPickerButton
-var _hue_a: HSlider   # numeric grading twin of _color_a - same hue_a field, precise dragging
+var _hue_a: HSlider   # the Morph slider (fx_tint - palette rotation), decoupled from _color_a
 var _threshold: HSlider
 var _threshold_label: Label
 var _grp_color: VBoxContainer   # "Key color" swatch, pinned above the sortable options below
@@ -241,6 +310,19 @@ var _wave_slot := 0
 
 var _waveform_pid := -1
 var _waveform_path := ""         # set once we know it; polled in _process until it exists
+
+# --- Hi-res waveform window (see _poll_wave_hi): the base strip is one
+# 4096px showwavespic over the WHOLE clip - ~4px/s on a long video, mush when
+# the timeline is zoomed well in. When the on-screen pixels-per-second
+# outresolves the base, the VISIBLE window (padded) is re-rendered at the
+# same recipe on an audio slice, async and debounced, and the timeline draws
+# it over the base for that span. Progressive: the base shows (soft) until
+# the crisp slice lands.
+const _WAVEHI_PATH := "user://wave_hi.png"
+var _wavehi_pid := -1
+var _wavehi_span := Vector2.ZERO   # [start, end] seconds the in-flight/loaded render covers
+var _wavehi_want := Vector2.ZERO   # latest desired window - the debounce reference
+var _wavehi_settle := 0.0          # seconds the desired window has held still
 var _audio_env := PackedFloat32Array()   # per-column amplitude from the waveform image (resonance)
 
 var _render_state := "idle"      # idle / rendering / transcoding / done
@@ -293,6 +375,9 @@ func _ready() -> void:
 func open_source(path: String) -> void:
 	if path.is_empty():
 		_prompt_for_source()
+		return
+	if _is_url(path):
+		_start_url_import(path)   # downloads, then re-enters here with the local file
 		return
 	if path.get_extension().to_lower() == "json":
 		_session_path = path
@@ -363,16 +448,25 @@ func _prep(source: String, dir: String, video: String, audio: String) -> void:
 	# long clips; theora is the only format VideoStreamPlayer decodes natively (see
 	# next/mask_mode_spike notes - WebM/H.264 need a GDExtension, so every source
 	# clip gets this one-time transcode regardless of its original codec).
+	# Written as .part and promoted on completion (see _promote_part): a
+	# half-written media file at its REAL name is scanned by the Godot editor's
+	# importer, and a truncated WAV wedges it in an infinite seek loop -
+	# hanging every editor boot AND every headless compile check (including
+	# the assistant's reload gate) until the file is deleted by hand.
 	var args := PackedStringArray([
 		"-y", "-loglevel", "error", "-i", source, "-an",
 		"-c:v", "libtheora", "-q:v", "6", "-g", "25",
 		"-progress", ProjectSettings.globalize_path(_PREP_PROGRESS_FILE), "-nostats",
-		ProjectSettings.globalize_path(video)])
+		"-f", "ogg", ProjectSettings.globalize_path(video) + ".part"])
 	_prep_video_pid = OS.create_process("ffmpeg", args)
 	_prep_state = "prepping_video" if _prep_video_pid > 0 else "idle"
 	if _prep_video_pid <= 0:
 		_set_status("⚠  Could not start ffmpeg (is it on PATH?)")
 	else:
+		# In the log too: for a long clip THIS is the slow stage (libtheora is
+		# single-threaded), and the console should say what's grinding.
+		print("ghost mask: prep started - transcoding %s (%.0fs) -> %s" % [
+			source, _prep_src_dur, video])
 		_touch_lock(abs_dir)
 		_set_status("⏳  Preparing clip (video)…  0%")
 
@@ -383,7 +477,7 @@ func _start_prep_audio() -> void:
 	var args := PackedStringArray([
 		"-y", "-loglevel", "error", "-i", String(_pending.source), "-vn",
 		"-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
-		ProjectSettings.globalize_path(_pending.audio)])
+		"-f", "wav", ProjectSettings.globalize_path(String(_pending.audio)) + ".part"])
 	_prep_audio_pid = OS.create_process("ffmpeg", args)
 	_prep_state = "prepping_audio" if _prep_audio_pid > 0 else "idle"
 	_set_status("⏳  Preparing clip (audio)…")
@@ -411,6 +505,21 @@ func _lock_path(dir: String) -> String:
 	return dir.path_join(".prep.lock")
 
 
+## Move a finished prep output from its .part name into place. Outputs are
+## written under a name the editor's importer ignores because a truncated
+## media file at its REAL name is not just garbage, it's a trap: a killed
+## prep left a half-written audio.wav whose WAV import looped forever on
+## seeks past EOF (audio_stream_wav.cpp), hanging every editor scan until
+## the file was hand-deleted. A missing .part (ffmpeg died at startup) is
+## a no-op here - the duration validation downstream reports it.
+func _promote_part(dest: String) -> void:
+	var abs_dest := ProjectSettings.globalize_path(dest)
+	if FileAccess.file_exists(abs_dest + ".part"):
+		if FileAccess.file_exists(abs_dest):
+			DirAccess.remove_absolute(abs_dest)
+		DirAccess.rename_absolute(abs_dest + ".part", abs_dest)
+
+
 func _touch_lock(abs_dir: String) -> void:
 	var f := FileAccess.open(_lock_path(abs_dir), FileAccess.WRITE)
 	if f != null:
@@ -434,9 +543,12 @@ func _fresh(path: String, now: float) -> bool:
 func _prep_looks_live(dir: String, video: String) -> bool:
 	var now := Time.get_unix_time_from_system()
 	var abs_dir := ProjectSettings.globalize_path(dir)
+	var abs_video := ProjectSettings.globalize_path(video)
 	return _fresh(_lock_path(abs_dir), now) \
-		or _fresh(ProjectSettings.globalize_path(video), now) \
-		or _fresh(abs_dir.path_join("audio.wav"), now)
+		or _fresh(abs_video, now) \
+		or _fresh(abs_video + ".part", now) \
+		or _fresh(abs_dir.path_join("audio.wav"), now) \
+		or _fresh(abs_dir.path_join("audio.wav.part"), now)
 
 
 ## Same `out_time_us=` polling exporter.gd's transcode step uses, against the
@@ -483,6 +595,7 @@ func _finish_session(source: String, video: String, audio: String) -> void:
 	session.duration = dur
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(_session_path.get_base_dir()))
 	session.save(ProjectSettings.globalize_path(_session_path))
+	print("ghost mask: session ready - %s (%.0fs)" % [_session_path, dur])
 	_ready_with_session()
 
 
@@ -548,6 +661,276 @@ static func _slugify(path: String) -> String:
 	while out.contains("__"):
 		out = out.replace("__", "_")
 	return out.trim_suffix("_").substr(0, 32)
+
+
+# --- YouTube / URL import: paste a URL where a file path is expected --------------
+# open_source() routes any http(s) source here. The pipeline is three polled
+# subprocesses (the same _process pattern as prep - never blocking):
+#   1. python3 -m venv user://ytdlp_venv        (once, on the first ever URL import)
+#   2. <venv>/bin/pip install --upgrade yt-dlp  (once; also the retry step)
+#   3. <venv>/bin/yt-dlp <url>  ->  masks/_downloads/<title>_<id>.<ext>
+# then the downloaded file re-enters open_source() and the normal ffmpeg->theora
+# prep takes over unchanged. The venv is DEDICATED so ghost owns its own yt-dlp
+# and can upgrade it without touching anything else - which matters because
+# YouTube breaking old yt-dlp versions is the norm, not the exception: a failed
+# download automatically re-runs step 2 once and retries.
+
+static func _is_url(path: String) -> bool:
+	return path.begins_with("http://") or path.begins_with("https://")
+
+
+## The video id, for cache hits and output matching (ported from nutube's
+## YouTubeSource.id_from_url). "" for URLs that don't look like YouTube - yt-dlp
+## handles plenty of other sites; those just skip the id-keyed cache.
+static func _youtube_id(url: String) -> String:
+	var u := url.strip_edges()
+	if u.contains("watch?v="):
+		u = u.get_slice("watch?v=", 1)
+	elif u.contains("youtu.be/"):
+		u = u.get_slice("youtu.be/", 1)
+	elif u.contains("/shorts/"):
+		u = u.get_slice("/shorts/", 1)
+	else:
+		return ""
+	for sep in ["?", "&", "#", "/"]:
+		u = u.get_slice(sep, 0)
+	return u
+
+
+func _yt_bin(tool_name: String) -> String:
+	return ProjectSettings.globalize_path(YT_VENV_DIR).path_join("bin").path_join(tool_name)
+
+
+func _yt_dl_dir() -> String:
+	return ProjectSettings.globalize_path(YT_DL_DIR)
+
+
+## Resolve a binary the way assistant.gd resolves claude: a GUI-launched Godot
+## doesn't inherit a shell PATH, so ask `which` explicitly.
+static func _which(prog: String) -> String:
+	var out := []
+	if OS.execute("which", [prog], out) == 0 and out.size() > 0:
+		var p := String(out[0]).strip_edges().split("\n")[0].strip_edges()
+		if not p.is_empty():
+			return p
+	return ""
+
+
+func _start_url_import(url: String) -> void:
+	if _yt_state != "idle":
+		_set_status("⏳  Another download is already running…")
+		return
+	_yt_url = url
+	_yt_retried = false
+	_yt_echoed = {}
+	DirAccess.make_dir_recursive_absolute(_yt_dl_dir())
+	print("ghost yt: import requested - ", url)
+	var cached := _yt_find_download()
+	if not cached.is_empty():
+		# Says so in the log too - otherwise a cache hit runs NO python at all
+		# and an empty console reads as "capture is broken", not "nothing ran".
+		print("ghost yt: using cached download - ", cached)
+		_set_status("✓  Already downloaded - opening the cached copy")
+		open_source(cached)
+		return
+	if FileAccess.file_exists(_yt_bin("yt-dlp")):
+		_yt_download()
+	else:
+		_yt_make_venv()
+
+
+func _yt_make_venv() -> void:
+	var py := _which("python3")
+	if py.is_empty():
+		py = _which("python")
+	if py.is_empty():
+		_set_status("⚠  No python3 on PATH - can't bootstrap yt-dlp")
+		return
+	print("ghost yt: bootstrapping venv at ", ProjectSettings.globalize_path(YT_VENV_DIR),
+		" with ", py)
+	_yt_pid = _yt_spawn_logged(py, PackedStringArray(
+		["-m", "venv", ProjectSettings.globalize_path(YT_VENV_DIR)]))
+	_yt_state = "venv" if _yt_pid > 0 else "idle"
+	_yt_step_started = Time.get_unix_time_from_system()
+	_set_status("⏳  Setting up ghost's download venv (one-time)…" if _yt_pid > 0
+		else "⚠  Could not start python3")
+
+
+func _yt_pip_install() -> void:
+	print("ghost yt: pip install --upgrade yt-dlp")
+	_yt_pid = _yt_spawn_logged(_yt_bin("pip"), PackedStringArray(
+		["install", "--upgrade", "yt-dlp"]))
+	_yt_state = "pip" if _yt_pid > 0 else "idle"
+	_yt_step_started = Time.get_unix_time_from_system()
+	_set_status("⏳  Installing yt-dlp into the venv…" if _yt_pid > 0
+		else "⚠  Could not start pip (venv incomplete?)")
+
+
+func _yt_download() -> void:
+	_yt_started = Time.get_unix_time_from_system()
+	_yt_step_started = _yt_started
+	# No codec constraints in the format pick - the prep transcodes to theora
+	# regardless, so "best up to 1080p" is all that matters. --restrict-filenames
+	# keeps the output shell-and-slug-safe; the title lands in the session slug.
+	# Runs as `python -u -m yt_dlp`, NOT the yt-dlp entry script: with stdout
+	# going to a file, python block-buffers it and the "[download] 42%" lines
+	# only landed in the log kilobytes at a time - the progress readout below
+	# read an empty file for minutes (the "black screen" report). -u makes the
+	# log stream line-by-line, same reason exporter's ffmpeg uses -progress.
+	var args := PackedStringArray([
+		"-u", "-m", "yt_dlp",
+		"-f", "bv*[height<=1080]+ba/b[height<=1080]",
+		"--no-playlist", "--restrict-filenames", "--newline",
+		# Under 100K/s yt-dlp assumes YouTube's anti-bot throttle and re-extracts
+		# instead of crawling for an hour; fragmented formats also parallelize.
+		"--throttled-rate", "100K", "--concurrent-fragments", "4"])
+	# YouTube's nsig/PO-token challenges need a JavaScript runtime. yt-dlp's
+	# default is deno, which is rarely installed - and with NO runtime the
+	# download still "works", just at the punitive fallback throttle (~40KB/s:
+	# the "0% to 1% took three minutes" report). Hand it whichever runtime this
+	# machine actually has, by explicit path - a GUI-launched Godot's PATH is
+	# not a shell's, so auto-detection can't be trusted either.
+	for rt in ["deno", "node"]:
+		var rt_bin := _which(rt)
+		if not rt_bin.is_empty():
+			args.append("--js-runtimes")
+			args.append(rt + ":" + rt_bin)
+	args.append_array(PackedStringArray([
+		"-o", _yt_dl_dir().path_join("%(title).40s_%(id)s.%(ext)s"),
+		_yt_url]))
+	# The exact command, in the log: whether --js-runtimes was engaged is the
+	# first thing to check when a download crawls (no runtime = YouTube's
+	# ~40KB/s anti-bot throttle).
+	print("ghost yt: exec ", _yt_bin("python"), " ", " ".join(args))
+	_yt_pid = _yt_spawn_logged(_yt_bin("python"), args)
+	_yt_state = "downloading" if _yt_pid > 0 else "idle"
+	# Status lands IMMEDIATELY, success or not - the first cut only reported
+	# failure here, so a clean start showed nothing until the download finished.
+	_set_status("⏳  Downloading…  connecting" if _yt_pid > 0
+		else "⚠  Could not start yt-dlp")
+
+
+## OS.create_process can't redirect output, and both the progress readout and any
+## failure diagnosis live in it - so the command runs through bash with stdout+
+## stderr sent to a log file this instance then tails. The command and its
+## arguments travel as REAL argv entries ("$@"), never interpolated into the
+## script string (assistant.gd's prompt-as-$1 discipline) - a URL is data.
+func _yt_spawn_logged(cmd: String, args: PackedStringArray) -> int:
+	_yt_log = _yt_dl_dir().path_join(".yt.log")
+	var script := "exec \"$@\" > \"%s\" 2>&1" % _yt_log
+	var full := PackedStringArray(["-c", script, "bash", cmd])
+	full.append_array(args)
+	return OS.create_process("/bin/bash", full)
+
+
+## The log's last 4KB. This is polled EVERY FRAME while a download runs (the
+## same cadence _read_prep_pct polls ffmpeg's progress file), and a long
+## --newline download writes tens of thousands of lines - reading the whole
+## file each frame would grow linearly with the download. The freshest
+## progress line always lives in the tail window.
+func _yt_tail_window() -> String:
+	if _yt_log.is_empty() or not FileAccess.file_exists(_yt_log):
+		return ""
+	var f := FileAccess.open(_yt_log, FileAccess.READ)
+	if f == null:
+		return ""
+	var sz := f.get_length()
+	if sz > 4096:
+		f.seek(sz - 4096)
+	return f.get_buffer(mini(int(sz), 4096)).get_string_from_utf8()
+
+
+## The freshest yt-dlp "[download]  42.3% of 10.5MiB at 2.1MiB/s ETA 00:04"
+## line, as display text - percent, size, speed and ETA ride along verbatim.
+func _yt_pct() -> String:
+	var best := ""
+	for line in _yt_tail_window().split("\n"):
+		if line.begins_with("[download]") and line.contains("%"):
+			best = line.substr(10).strip_edges()
+	return best
+
+
+func _yt_log_tail() -> String:
+	var lines := _yt_tail_window().strip_edges().split("\n")
+	return String(lines[lines.size() - 1]).substr(0, 160) if lines.size() > 0 else ""
+
+
+## The downloaded file for the current URL: id-matched when the URL is YouTube,
+## else the newest completed media file since the download began. Excludes
+## yt-dlp's own .part/.ytdl intermediates and the log.
+func _yt_find_download() -> String:
+	var dir := DirAccess.open(_yt_dl_dir())
+	if dir == null:
+		return ""
+	var id := _youtube_id(_yt_url)
+	var best := ""
+	var best_mtime := 0
+	for f in dir.get_files():
+		if f.ends_with(".part") or f.ends_with(".ytdl") or f.begins_with("."):
+			continue
+		var p := _yt_dl_dir().path_join(f)
+		if not id.is_empty():
+			if f.contains(id):
+				return p
+			continue
+		var mt := FileAccess.get_modified_time(p)
+		if mt >= int(_yt_started) and mt > best_mtime:
+			best_mtime = mt
+			best = p
+	return best
+
+
+## Everything a finished step logged - minus the [download] progress spam -
+## echoes into godot's own log via print(), which is what the in-app console
+## (chrome's >_ toggle) tails. yt-dlp's diagnostics (throttling, missing JS
+## runtime, geo blocks, format errors) otherwise die unseen in
+## masks/_downloads/.yt.log, unreadable from a compiled app.
+func _yt_echo_log(label: String) -> void:
+	if _yt_log.is_empty() or not FileAccess.file_exists(_yt_log):
+		return
+	var kept := PackedStringArray()
+	for line in FileAccess.get_file_as_string(_yt_log).split("\n"):
+		var s := line.strip_edges()
+		if not s.is_empty() and not s.begins_with("[download]"):
+			kept.append(s)
+	if kept.size() > 40:
+		kept = kept.slice(kept.size() - 40)
+	if kept.size() > 0:
+		print("ghost yt [", label, "]:\n  ", "\n  ".join(kept))
+
+
+## One venv/pip/download step just exited (see _process) - advance the machine.
+## OS.create_process gives no exit code, so success is judged by what the step
+## was supposed to produce (the binary, the file) - the same evidence-over-
+## status-code stance as _finish_session's duration check.
+func _yt_step_done() -> void:
+	var state := _yt_state
+	_yt_state = "idle"
+	_yt_echo_log(state)
+	match state:
+		"venv":
+			if FileAccess.file_exists(_yt_bin("pip")):
+				_yt_pip_install()
+			else:
+				_set_status("⚠  venv bootstrap failed: " + _yt_log_tail())
+		"pip":
+			if FileAccess.file_exists(_yt_bin("yt-dlp")):
+				_yt_download()
+			else:
+				_set_status("⚠  pip install yt-dlp failed: " + _yt_log_tail())
+		"downloading":
+			var file := _yt_find_download()
+			if not file.is_empty():
+				_set_status("✓  Downloaded " + file.get_file())
+				open_source(file)
+			elif not _yt_retried:
+				# The single most common failure mode is a stale yt-dlp
+				# (YouTube changed, old extractor broke) - upgrade once, retry.
+				_yt_retried = true
+				_set_status("⚠  Download failed - upgrading yt-dlp and retrying…")
+				_yt_pip_install()
+			else:
+				_set_status("⚠  Download failed: " + _yt_log_tail())
 
 
 # --- session ready: build preview + (unless render_mode) the editing UI -----------
@@ -662,6 +1045,137 @@ func _load_waveform(abs_path: String) -> void:
 		# showwavespic draws a symmetric column; its filled fraction IS the (sqrt-
 		# scaled) amplitude. 0.9 headroom so full-scale audio still reaches ~1.0.
 		_audio_env[x] = clampf(float(count) / (float(h) * 0.5 * 0.9), 0.0, 1.0)
+
+
+## Keep the timeline's waveform crisp under zoom. Every frame: harvest a
+## finished slice render, then decide whether the current view needs a new
+## one - only when the view outresolves the base strip, only after the view
+## has held still a beat (never mid-drag), and only one ffmpeg at a time.
+## Deliberately regenerates on demand instead of pre-baking LODs: the slice
+## render is a sub-second ffmpeg pass over a PCM window, and most sessions
+## never zoom past the base strip at all.
+func _poll_wave_hi(dt: float) -> void:
+	if session == null or _timeline == null or _tview == null \
+			or session.duration <= 0.0 or _waveform_path.is_empty():
+		return
+	if _wavehi_pid > 0 and not OS.is_process_running(_wavehi_pid):
+		_wavehi_pid = -1
+		var img := Image.load_from_file(ProjectSettings.globalize_path(_WAVEHI_PATH))
+		if img != null:
+			_timeline.wavehi_texture = ImageTexture.create_from_image(img)
+			_timeline.wavehi_span = _wavehi_span
+			_timeline.queue_redraw()
+	var span := _tview.visible_span()
+	if span <= 0.0 or _timeline.size.x <= 0.0:
+		return
+	var base_pps := 4096.0 / session.duration
+	var pps := _timeline.size.x / span
+	if pps <= base_pps * 1.4:
+		return   # the base strip still resolves this zoom
+	var pad := span * 0.5
+	var want := Vector2(
+		clampf(_tview.view_start - pad, 0.0, session.duration),
+		clampf(_tview.view_start + span + pad, 0.0, session.duration))
+	# Already covered at sufficient resolution? (The loaded slice may be wider
+	# than the view - panning inside it costs nothing.)
+	var cur: Vector2 = _timeline.wavehi_span
+	if cur.y > cur.x and cur.x <= _tview.view_start + 0.001 \
+			and cur.y >= _tview.view_start + span - 0.001 \
+			and 4096.0 / (cur.y - cur.x) >= pps * 0.9:
+		_wavehi_settle = 0.0
+		return
+	# Debounce: the desired window must hold still before ffmpeg fires, so a
+	# zoom gesture spawns one render at its end, not one per wheel tick.
+	if absf(want.x - _wavehi_want.x) > span * 0.05 or absf(want.y - _wavehi_want.y) > span * 0.05:
+		_wavehi_want = want
+		_wavehi_settle = 0.0
+		return
+	_wavehi_settle += dt
+	if _wavehi_settle < 0.35 or _wavehi_pid > 0:
+		return
+	_wavehi_settle = 0.0
+	_wavehi_span = want
+	# -ss/-t BEFORE -i: input seeking on PCM is sample-exact and skips the
+	# decode of everything outside the window.
+	_wavehi_pid = OS.create_process("ffmpeg", PackedStringArray([
+		"-y", "-loglevel", "error",
+		"-ss", str(want.x), "-t", str(want.y - want.x),
+		"-i", ProjectSettings.globalize_path(session.audio_path),
+		"-filter_complex", "showwavespic=s=4096x160:colors=white:scale=sqrt",
+		"-frames:v", "1", ProjectSettings.globalize_path(_WAVEHI_PATH)]))
+
+
+# --- the liquid paint sim (clown): ping-pong SubViewports ------------------------
+
+func _ensure_paint_sim() -> void:
+	if not _paint_vps.is_empty():
+		return
+	for i in 2:
+		var vp := SubViewport.new()
+		vp.size = Vector2i(256, 144)
+		vp.disable_3d = true
+		# Float buffers: the field decays multiplicatively, and 8-bit
+		# quantization makes low paint values stick instead of thinning out.
+		vp.use_hdr_2d = true
+		# The COAT lives in the alpha channel, and a non-transparent viewport
+		# FORCES alpha to 1 on its render target - the coat then read as
+		# "everywhere" and the paint covered the whole frame, background
+		# included. This is state, not a picture: keep every channel intact.
+		vp.transparent_bg = true
+		vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
+		vp.render_target_clear_mode = SubViewport.CLEAR_MODE_NEVER
+		var rect := ColorRect.new()
+		rect.size = Vector2(256, 144)
+		var m := ShaderMaterial.new()
+		m.shader = PAINT_SIM_SHADER
+		rect.material = m
+		vp.add_child(rect)
+		add_child(vp)
+		_paint_vps.append(vp)
+		_paint_rects.append(rect)
+
+
+## One simulation step per rendered frame while a clown layer is live (the
+## META mirror's bounded-feedback discipline): the ping viewport re-renders
+## sampling the pong's texture, then the mask materials sample the ping.
+## Stepped on PLAYBACK deltas - pause freezes the liquid, and a seek (or the
+## first frame) snaps the field to the targets instead of streaming paint
+## across the jump.
+func _step_paint_sim() -> void:
+	if not _clown_active or _player == null:
+		return
+	_ensure_paint_sim()
+	var pos := _player.stream_position
+	var dtp := pos - _paint_last_pos
+	_paint_last_pos = pos
+	var reset := _paint_reset or dtp < -0.05 or dtp > 0.5
+	dtp = clampf(dtp, 0.0, 0.1)
+	if dtp <= 0.0 and not reset:
+		return   # paused/held: the liquid holds; the mats keep last frame's field
+	var cm := _clown_model_now()
+	var mat: ShaderMaterial = _paint_rects[_paint_ping].material
+	mat.set_shader_parameter("u_prev", _paint_vps[1 - _paint_ping].get_texture())
+	mat.set_shader_parameter("u_dt", dtp)
+	mat.set_shader_parameter("u_reset", 1 if reset else 0)
+	mat.set_shader_parameter("u_time", pos)
+	var vt := _player.get_video_texture()
+	if vt != null and vt.get_height() > 0:
+		mat.set_shader_parameter("u_aspect", float(vt.get_width()) / float(vt.get_height()))
+	mat.set_shader_parameter("u_eye_l", cm.eye_l)
+	mat.set_shader_parameter("u_eye_r", cm.eye_r)
+	mat.set_shader_parameter("u_mouth", cm.mouth)
+	mat.set_shader_parameter("u_nose", cm.nose)
+	mat.set_shader_parameter("u_face_c", cm.face_c)
+	mat.set_shader_parameter("u_face_r", _face_r_ema)
+	mat.set_shader_parameter("u_eye_lr", cm.eye_lr)
+	mat.set_shader_parameter("u_eye_rr", cm.eye_rr)
+	mat.set_shader_parameter("u_mouth_r", cm.mouth_r)
+	mat.set_shader_parameter("u_scale", _clown_fs)
+	_paint_vps[_paint_ping].render_target_update_mode = SubViewport.UPDATE_ONCE
+	for m2 in [_mat_main, _mat_inset]:
+		m2.set_shader_parameter("u_clown_paint", _paint_vps[_paint_ping].get_texture())
+	_paint_ping = 1 - _paint_ping
+	_paint_reset = false
 
 
 ## The audio envelope at clip-time `t` (0 when unavailable), lightly smoothed so
@@ -1198,11 +1712,12 @@ func _start_track_import(source: String) -> void:
 	# Keep the audio this time (was -an): the track's own VideoStreamPlayer plays the
 	# embedded Vorbis, mixed alongside the main clip, with per-track mute/volume (see
 	# _sync_tracks). A source with no audio just yields a silent stream - no failure.
+	# .part + promote, same as the main prep - see _promote_part's doc.
 	var args := PackedStringArray([
 		"-y", "-loglevel", "error", "-i", source,
 		"-c:v", "libtheora", "-q:v", "6", "-g", "25",
 		"-c:a", "libvorbis", "-q:a", "4",
-		ProjectSettings.globalize_path(video)])
+		"-f", "ogg", ProjectSettings.globalize_path(video) + ".part"])
 	_import_pid = OS.create_process("ffmpeg", args)
 	if _import_pid <= 0:
 		_cancel_pending_track()     # couldn't even start ffmpeg - roll the lane back out
@@ -1230,6 +1745,7 @@ func _finish_track_import() -> void:
 		_import_pending = {}
 		return
 	var idx := int(_import_pending.index)
+	_promote_part(String(_import_pending.video))
 	var abs_video := ProjectSettings.globalize_path(String(_import_pending.video))
 	var dur := _probe_duration(abs_video)
 	if dur <= 0.0 or idx < 0 or idx >= session.tracks.size():
@@ -1656,7 +2172,6 @@ func _build_panel() -> void:
 	_color_a.edit_alpha = false
 	_color_a.tooltip_text = "The color this channel targets - what it keys or paints"
 	_color_a.color_changed.connect(func(c):
-		_hue_a.set_value_no_signal(c.h)
 		_edit("hue_a", c.h))
 	_grp_color.add_child(_color_a)
 	col.add_child(_label("Effect", "Which visual treatment this layer applies"))
@@ -1693,13 +2208,14 @@ func _build_panel() -> void:
 		"How strongly this layer's effect applies")
 	_intensity_label = _intensity_a.get_meta("field_label")
 	_register_option(_intensity_a)
-	# A dedicated grading slider on the same hue_a field the swatch above sets -
-	# color grading (the feedback that drove this) wants fine numeric dragging,
-	# not just a color-wheel pick. Kept in sync both ways: see _refresh_panel and
-	# _color_a's color_changed above.
-	_hue_a = _slider(_grp_options, "Hue", 0.0, 1.0, func(v):
-		_color_a.color = Color.from_hsv(v, 0.85, 0.9)
-		_edit("hue_a", v), "Shifts this layer's color - drag for fine color grading")
+	# Morph: its OWN field (fx_tint), deliberately decoupled from the color
+	# picker above. The old "Hue" slider was a second widget on hue_a and the
+	# linkage read as a bug ("changing hue changes the picker too") - now the
+	# picker says what to MASK and this says what color the drawn effect
+	# becomes (a palette hue rotation; 0 = the effect's natural colors).
+	_hue_a = _slider(_grp_options, "Morph", 0.0, 1.0, func(v):
+		_edit("fx_tint", v),
+		"Rotates this effect's own palette hue - 0 keeps its natural colors")
 	_register_option(_hue_a)
 
 	# Option rows, shown per the selected effect's needs (the control hierarchy,
@@ -2130,12 +2646,41 @@ func _maybe_capture_echo() -> void:
 			t = _echo_ring[slot % 8]
 		for mat in [_mat_main, _mat_inset]:
 			mat.set_shader_parameter("u_echo%d" % age, t)
+	# The face model runs on its own higher-res copy BEFORE _update_whisp_anchor
+	# destructively resizes img down to 48x27; claiming the face slot here means
+	# _maybe_capture_face never pays a second readback on the same frame.
+	if _clown_active:
+		_face_slot = int(pos / _FACE_INTERVAL)
+		_update_face_model(img)
 	_update_whisp_anchor(img)
 	# The track readback is chimera's alone - skip it entirely unless a chimera layer
 	# is actually rendering this frame (it usually isn't: the marker sits at one point
 	# in the timeline). This is what my earlier change was paying for everywhere.
 	if _chimera_active:
 		_update_track_frame()
+
+
+## The face model's own capture ticks, BETWEEN echo captures (see
+## _FACE_INTERVAL's doc). Same discipline as _maybe_capture_echo: only during
+## playback (or once when a scrub settles), never mid-drag - the readback is a
+## synchronous GPU stall and this one runs at ~7Hz while a clown layer is live.
+func _maybe_capture_face() -> void:
+	if not _clown_active or _player == null or session == null:
+		return
+	var pos := _player.stream_position
+	if not _playing and absf(pos - _prev_pos) >= 0.0005:
+		return
+	var slot := int(pos / _FACE_INTERVAL)
+	if slot == _face_slot:
+		return
+	var tex := _player.get_video_texture()
+	if tex == null:
+		return
+	var img := tex.get_image()
+	if img == null or img.is_empty():
+		return
+	_face_slot = slot
+	_update_face_model(img)
 
 
 ## The anchor uniform, glided per frame: lerp(prev EMA, latest EMA) by the
@@ -2163,6 +2708,25 @@ func _push_anchor() -> void:
 			mat.set_shader_parameter("u_wave_pos", _wave_pos)
 			mat.set_shader_parameter("u_wave_time", _wave_time)
 			mat.set_shader_parameter("u_wave_amp", _wave_amp)
+		# The clown face model PREDICTS instead of gliding: displaying
+		# lerp(prev, ema) put the mask a full tick behind the face - the
+		# "always drifting just behind any movement" report. Extrapolating
+		# along each feature's own velocity (ema + (ema - prev) * t) leads
+		# the fit by up to one tick, which cancels the capture+EMA delay;
+		# the cost is mild overshoot on direction reversals, which reads as
+		# the mask swinging - far better than trailing.
+		if _clown_active:
+			var cm := _clown_model_now()
+			mat.set_shader_parameter("u_clown_eye_l", cm.eye_l)
+			mat.set_shader_parameter("u_clown_eye_r", cm.eye_r)
+			mat.set_shader_parameter("u_clown_mouth", cm.mouth)
+			mat.set_shader_parameter("u_clown_face_r", _face_r_ema)
+			mat.set_shader_parameter("u_clown_eye_lr", cm.eye_lr)
+			mat.set_shader_parameter("u_clown_eye_rr", cm.eye_rr)
+			mat.set_shader_parameter("u_clown_mouth_r", cm.mouth_r)
+			mat.set_shader_parameter("u_clown_face_c", cm.face_c)
+			mat.set_shader_parameter("u_clown_tint", _face_tint_ema)
+			mat.set_shader_parameter("u_clown_lum", _face_lum_ema)
 
 
 ## The landmark anchor (whisp's field origin, chimera's graft window): the
@@ -2179,8 +2743,10 @@ func _update_whisp_anchor(img: Image) -> void:
 		# Fur joins whisp/chimera in driving the anchor: its Stickiness cue wants the
 		# key colour's centroid (with the motion-centroid fallback for flat footage) to
 		# track the surface the strands root on. Fur ignores u_anchor at Stickiness 0,
-		# so this has no effect on the existing look.
-		if e == 5 or e == MaskSession.EFFECT_CHIMERA or e == MaskSession.EFFECT_FUR:
+		# so this has no effect on the existing look. Clown rides the same frame -
+		# its whole makeup layout lives in the canonical space u_anchor defines.
+		if e == 5 or e == MaskSession.EFFECT_CHIMERA or e == MaskSession.EFFECT_FUR \
+				or e == MaskSession.EFFECT_CLOWN:
 			hue = float(m.get("hue_a", 0.0))
 			break
 	if hue < 0.0:
@@ -2361,6 +2927,314 @@ func _update_wave_impulses(motion: float) -> void:
 		_wave_slot = (_wave_slot + 1) % _WAVE_SLOTS
 	_wave_motion_ema = lerp(_wave_motion_ema, motion, 0.2)
 	_wave_dev_ema = lerp(_wave_dev_ema, absf(onset), 0.2)
+
+
+## Fit the clown face model from one capture: face mass -> centroid, spread
+## and tint; then the EYES as the two darkest clusters in the upper face band
+## (split left/right) and the MOUTH as the red/dark centroid below. Pure
+## heuristics, the crystal school - no landmark model, no ML - built for the
+## ASMR framing this effect targets: one person, near center, facing camera,
+## small head movement. Face mass prefers the marker's KEY colour (the picker
+## says what the face's material is - on natural footage, pick the skin tone);
+## a broad natural-skin rule backs it up, and a centered prior downweights
+## background and hands at the frame's edges. Results are EMA'd with prev/ema
+## pairs; _push_anchor glides the uniforms between ticks like the anchor.
+func _update_face_model(src: Image) -> void:
+	var hue := -1.0
+	for m in session.markers:
+		if int(m.get("effect_a", 0)) == MaskSession.EFFECT_CLOWN:
+			hue = float(m.get("hue_a", 0.0))
+			break
+	if hue < 0.0:
+		return
+	# prev catches up every tick, found or not - the push EXTRAPOLATES along
+	# (ema - prev), so prev must always be exactly one tick behind.
+	_face_eye_l_prev = _face_eye_l_ema
+	_face_eye_r_prev = _face_eye_r_ema
+	_face_mouth_prev = _face_mouth_ema
+	_face_r_prev = _face_r_ema
+	_face_eye_lr_prev = _face_eye_lr_ema
+	_face_eye_rr_prev = _face_eye_rr_ema
+	_face_mouth_r_prev = _face_mouth_r_ema
+	_face_c_prev = _face_c_ema
+	_face_nose_prev = _face_nose_ema
+	var tc := Color.from_hsv(hue, 1.0, 1.0)
+	var tl := 0.299 * tc.r + 0.587 * tc.g + 0.114 * tc.b
+	var tdir := Vector3(tc.r - tl, tc.g - tl, tc.b - tl).normalized()
+	# EVERY anatomical ratio below is computed in ASPECT-CORRECTED space
+	# (x scaled by the frame's aspect, so one unit means the same thing
+	# horizontally and vertically). Mixing raw uv axes is a real bug, not a
+	# rounding matter: on 16:9 it made the eye "distance" a width measure
+	# while eye-to-mouth stayed a height measure, so the mouth's true offset
+	# read ~1.75 instead of ~1.15 and the prior dragged the lips up under
+	# the nose.
+	var fasp := 1.7778
+	if src.get_height() > 0:
+		fasp = float(src.get_width()) / float(src.get_height())
+	var img: Image = src.duplicate()
+	img.resize(96, 54, Image.INTERPOLATE_BILINEAR)
+	if img.get_format() != Image.FORMAT_RGBA8:
+		img.convert(Image.FORMAT_RGBA8)
+	var data := img.get_data()
+	# Whole-frame mean luminance FIRST - the brightness cue below is relative
+	# to it (a face is bright against ITS OWN room, not against an absolute).
+	var bg_acc := 0.0
+	for k in 96 * 54:
+		var b4 := k * 4
+		bg_acc += 0.299 * float(data[b4]) + 0.587 * float(data[b4 + 1]) + 0.114 * float(data[b4 + 2])
+	_face_bg_lum = bg_acc / (255.0 * 96.0 * 54.0)
+	var lums := PackedFloat32Array()
+	lums.resize(96 * 54)
+	var wts := PackedFloat32Array()
+	wts.resize(96 * 54)
+	var reds := PackedFloat32Array()
+	reds.resize(96 * 54)
+	var acc := Vector2.ZERO
+	var accxx := 0.0
+	var accyy := 0.0
+	var wsum := 0.0
+	var lum_acc := 0.0
+	var red_acc := 0.0
+	var tint_acc := Vector3.ZERO
+	for y in 54:
+		for x in 96:
+			var idx := y * 96 + x
+			var base := idx * 4
+			var r := float(data[base]) / 255.0
+			var g := float(data[base + 1]) / 255.0
+			var b := float(data[base + 2]) / 255.0
+			var l := 0.299 * r + 0.587 * g + 0.114 * b
+			lums[idx] = l
+			reds[idx] = r - g
+			var pos := Vector2((float(x) + 0.5) / 96.0, (float(y) + 0.5) / 54.0)
+			var cr := r - l
+			var cg := g - l
+			var cb := b - l
+			# key-colour mass: the aligned projection (crystal's foundation)
+			var pr := maxf(0.0, cr * tdir.x + cg * tdir.y + cb * tdir.z)
+			# natural-skin fallback: warm chroma, red over blue, carried by
+			# real light - broad on purpose, the prior does the rejecting
+			var skin := 0.0
+			if cr > 0.01 and l > 0.15 and cr > cb:
+				skin = clampf(cr * 6.0, 0.0, 1.0) * clampf((cr - cb) * 4.0, 0.0, 1.0)
+			# LUMINANCE fallback, for the many faces that carry no usable
+			# chroma at all: near-monochrome grades, blue/grey night looks,
+			# a lit face against a dark room. Both cues above read ~0 there
+			# and the model simply stopped updating. Brightness relative to
+			# THIS frame's own mean (computed on the fly below via
+			# _face_bg_lum) is the one signal such footage always has.
+			var bright := smoothstep(_face_bg_lum + 0.06, _face_bg_lum + 0.30, l)
+			var prior := exp(-pos.distance_squared_to(Vector2(0.5, 0.45)) / 0.18)
+			var wt := maxf(maxf(pr * 2.2, skin * 0.9), bright * 0.85) * prior
+			wts[idx] = wt
+			acc += pos * wt
+			accxx += pos.x * pos.x * wt
+			accyy += pos.y * pos.y * wt
+			wsum += wt
+			lum_acc += l * wt
+			red_acc += (r - g) * wt
+			tint_acc += Vector3(cr, cg, cb) * wt
+	if wsum <= 0.5:
+		return   # nothing face-like this tick - keep the previous model
+	var c := acc / wsum
+	var rx := clampf(sqrt(maxf(1e-5, accxx / wsum - c.x * c.x)) * 1.9, 0.06, 0.30)
+	var ry := clampf(sqrt(maxf(1e-5, accyy / wsum - c.y * c.y)) * 1.9, 0.08, 0.36)
+	var mean_lum := lum_acc / wsum
+	var mean_red := red_acc / wsum
+	# Blurred face mass (separable box, radius 3): an EYE is a dark spot in a
+	# SKIN neighborhood. Weighting candidates by the pixel's own mass fails -
+	# an eye pixel itself carries no skin chroma - and weighting by a flat
+	# floor let the dark HAIR flanking the face win both clusters, which blew
+	# the eye distance (and with it every feature size) up to face width.
+	var wblur := PackedFloat32Array()
+	wblur.resize(96 * 54)
+	var wtmp := PackedFloat32Array()
+	wtmp.resize(96 * 54)
+	for y in 54:
+		for x in 96:
+			var s := 0.0
+			for k in range(-3, 4):
+				s += wts[y * 96 + clampi(x + k, 0, 95)]
+			wtmp[y * 96 + x] = s / 7.0
+	for y in 54:
+		for x in 96:
+			var s := 0.0
+			for k in range(-3, 4):
+				s += wtmp[clampi(y + k, 0, 53) * 96 + x]
+			wblur[y * 96 + x] = s / 7.0
+	# Second pass, inside the fitted oval only: eye clusters + mouth cluster,
+	# each with its own second moment - the drawn features take their SIZES
+	# from these spreads, so they breathe with the anatomy instead of holding
+	# a flat mask's fixed proportions.
+	var have_mo := _face_prev_lum.size() == 96 * 54
+	# The eye frame from the LAST tick - stable, already smoothed, and the
+	# mouth's search band rides it (see below).
+	var eye_mid := (_face_eye_l_ema + _face_eye_r_ema) * 0.5
+	# Eye separation in HEIGHT units (aspect-corrected) - the yardstick every
+	# ratio below is expressed in.
+	var eye_unit := maxf(((_face_eye_r_ema - _face_eye_l_ema)
+		* Vector2(fasp, 1.0)).length(), 0.02)
+	var el_acc := Vector2.ZERO
+	var ela_acc := Vector2.ZERO
+	var el2 := 0.0
+	var el_w := 0.0
+	var er_acc := Vector2.ZERO
+	var era_acc := Vector2.ZERO
+	var er2 := 0.0
+	var er_w := 0.0
+	var mo_acc := Vector2.ZERO
+	var mo2x := 0.0
+	var mo2y := 0.0
+	var mo_w := 0.0
+	var dm_sum := 0.0
+	var dm_n := 0.0
+	for y in 54:
+		for x in 96:
+			var idx := y * 96 + x
+			var pos := Vector2((float(x) + 0.5) / 96.0, (float(y) + 0.5) / 54.0)
+			var ex := (pos.x - c.x) / rx
+			var ey := (pos.y - c.y) / ry
+			if ex * ex + ey * ey > 1.3:
+				continue
+			var apos := Vector2(pos.x * fasp, pos.y)   # aspect-corrected twin of pos
+			var dm := absf(lums[idx] - _face_prev_lum[idx]) if have_mo else 0.0
+			dm_sum += dm
+			dm_n += 1.0
+			# EYES: darkness against the face's own mean, squared so real
+			# sockets dominate faint shading, weighted by the BLURRED face
+			# mass - dark-in-a-skin-neighborhood is an eye, dark-in-dark is
+			# hair. Band kept off the oval's flanks for the same reason.
+			if ey > -0.6 and ey < -0.05 and absf(ex) < 0.55:
+				var dk := maxf(0.0, mean_lum - lums[idx])
+				var we := dk * dk * wblur[idx]
+				if ex < 0.0:
+					el_acc += pos * we
+					ela_acc += apos * we
+					el2 += apos.length_squared() * we
+					el_w += we
+				else:
+					er_acc += pos * we
+					era_acc += apos * we
+					er2 += apos.length_squared() * we
+					er_w += we
+			# MOUTH: MOTION first - on a talking face the mouth out-moves
+			# everything else in the lower band, and unlike redness it can't
+			# lock onto a warm-lit chin and sit there forever (the static
+			# "swish" report). Ambient face motion (head sway, compression
+			# shimmer) is subtracted; redness-over-face-mean and darkness stay
+			# as tie-breakers for the quiet stretches.
+			# The search band hangs off the EYE PAIR (the detection that
+			# actually works), not the fitted oval: with the brightness cue
+			# the oval swells over hair and shoulders, and an oval-relative
+			# band put the mouth down on the chin.
+			var mrel := ((pos - eye_mid) * Vector2(fasp, 1.0)) / eye_unit
+			if mrel.y > 0.55 and mrel.y < 1.75 and absf(mrel.x) < 0.65:
+				# Anatomical prior: the mouth sits ~1.2 eye-distances below
+				# the eye line. Talking moves the whole lower face (jaw,
+				# cheeks, nostrils), so raw motion alone pulled the centroid
+				# up under the nose - the prior keeps it on the lips without
+				# pinning it there (a wide gaussian, not a fixed offset).
+				var mprior := exp(-pow((mrel.y - 1.15) / 0.38, 2.0))
+				var wm := (maxf(0.0, dm - _face_motion_mean * 1.3) * 6.0
+					+ maxf(0.0, reds[idx] - mean_red - 0.01) * 1.2
+					+ maxf(0.0, mean_lum - lums[idx]) * 0.3) * wblur[idx] * mprior
+				# SQUARED: the raw score is diffuse (compression shimmer and
+				# residual head motion leak everywhere), and a diffuse weight
+				# blew the cluster's variance to the clamps - the first cut
+				# drew face-wide lips. Squaring concentrates centroid AND
+				# spread on the actual peak: the moving mouth.
+				wm *= wm
+				mo_acc += pos * wm
+				mo2x += pos.x * pos.x * wm
+				mo2y += pos.y * pos.y * wm
+				mo_w += wm
+	_face_prev_lum = lums
+	if dm_n > 0.0:
+		_face_motion_mean = lerpf(_face_motion_mean, dm_sum / dm_n, 0.3)
+	_face_r_ema = _face_r_ema.lerp(Vector2(rx, ry), 0.15)
+	_face_c_ema = _face_c_ema.lerp(c, 0.3)
+	# Alphas run hot (0.3-0.35) on the fast _FACE_INTERVAL cadence: the EMA is
+	# a stabilizer for detection jitter, not the display's smoothing - the
+	# push extrapolates, so residual EMA lag is what the prediction covers.
+	if el_w > 0.005 and er_w > 0.005:
+		var el := el_acc / el_w
+		var er := er_acc / er_w
+		# Each eye's own spread -> its patch's own radius (eye-distance units,
+		# so the shader's frame consumes it directly). Independent per side.
+		var el_var := maxf(1e-6, el2 / el_w - (ela_acc / el_w).length_squared())
+		var er_var := maxf(1e-6, er2 / er_w - (era_acc / er_w).length_squared())
+		# Only a PLAUSIBLE pair updates the model: really apart, roughly
+		# level. A hair shadow winning one side for a tick just gets skipped.
+		if er.x - el.x > rx * 0.3 and absf(er.y - el.y) < ry * 0.45:
+			# Anatomy clamp: eye separation is ~0.9x the face's half-width.
+			# The clusters place the PAIR well but their spread still leans
+			# outward (sockets shade wider than pupils), so the separation is
+			# reined to the fitted face rather than trusted raw - it's the
+			# unit every feature scales by.
+			var mid := (el + er) * 0.5
+			var sep := ((er - el) * Vector2(fasp, 1.0)).length()
+			var facew := rx * fasp   # the face's half-width, same units as sep
+			var want := clampf(sep, facew * 0.55, facew * 1.05)
+			if sep > 1e-4:
+				el = mid + (el - mid) * (want / sep)
+				er = mid + (er - mid) * (want / sep)
+			_face_eye_l_ema = _face_eye_l_ema.lerp(el, 0.35)
+			_face_eye_r_ema = _face_eye_r_ema.lerp(er, 0.35)
+			# Sizes in raw uv - each eye's spread stands alone, uncoupled
+			# from how far apart the pair happens to read this tick.
+			_face_eye_lr_ema = lerpf(_face_eye_lr_ema,
+				clampf(sqrt(el_var) * 1.9, 0.015, 0.07), 0.3)
+			_face_eye_rr_ema = lerpf(_face_eye_rr_ema,
+				clampf(sqrt(er_var) * 1.9, 0.015, 0.07), 0.3)
+	if mo_w > 0.0001:
+		var mo := mo_acc / mo_w
+		_face_mouth_ema = _face_mouth_ema.lerp(mo, 0.35)
+		# The mouth's own width and height, separately - talking changes the
+		# vertical spread far more than the horizontal, and the lips follow.
+		var mvx := maxf(1e-6, mo2x / mo_w - mo.x * mo.x)
+		var mvy := maxf(1e-6, mo2y / mo_w - mo.y * mo.y)
+		# Caps ride the eye distance - a BOUND, not a normalization (the
+		# stored value stays raw uv, so the lips never rescale in lockstep
+		# with the eyes; this only stops a diffuse tick drawing a face-wide
+		# blob).
+		_face_mouth_r_ema = _face_mouth_r_ema.lerp(Vector2(
+			clampf(sqrt(mvx) * 1.9, 0.012, eye_unit * 0.62 / fasp),
+			clampf(sqrt(mvy) * 1.9, 0.008, eye_unit * 0.40)), 0.3)
+	if tint_acc.length() > 1e-4:
+		_face_tint_ema = _face_tint_ema.lerp((tint_acc / wsum).normalized(), 0.1)
+	_face_lum_ema = lerpf(_face_lum_ema, mean_lum, 0.1)
+	# The nose is DERIVED (mid-eyes toward mouth) but smoothed on its own,
+	# slower clock - it must not inherit the eye pair's tick-to-tick jitter.
+	# ~55% of the way from the eye line to the mouth is where a nose tip
+	# actually sits (0.40 put the ball up between the eyes).
+	_face_nose_ema = _face_nose_ema.lerp(
+		((_face_eye_l_ema + _face_eye_r_ema) * 0.5).lerp(_face_mouth_ema, 0.55), 0.15)
+	if OS.has_environment("GHOST_FACE_DEBUG"):
+		var em := (_face_eye_l_ema + _face_eye_r_ema) * 0.5
+		var eu := maxf(((_face_eye_r_ema - _face_eye_l_ema) * Vector2(fasp, 1.0)).length(), 0.02)
+		print("FACEDBG t=%.2f eyeL=%.3f,%.3f eyeR=%.3f,%.3f unit=%.3f mouth=%.3f,%.3f mouthU=%.2f moW=%.4f szL=%.3f szR=%.3f mr=%.3f,%.3f" % [
+			_player.stream_position if _player != null else 0.0,
+			_face_eye_l_ema.x, _face_eye_l_ema.y, _face_eye_r_ema.x, _face_eye_r_ema.y, eu,
+			_face_mouth_ema.x, _face_mouth_ema.y, (_face_mouth_ema.y - em.y) / eu, mo_w,
+			_face_eye_lr_ema, _face_eye_rr_ema, _face_mouth_r_ema.x, _face_mouth_r_ema.y])
+
+
+## The clown model's current display state - positions velocity-extrapolated
+## by the fraction through the capture tick (prediction cancels the capture +
+## EMA lag), sizes taken straight from their EMAs (predicting a size just
+## amplifies shape twitch). One source of truth for _push_anchor AND the
+## paint sim's deposit targets.
+func _clown_model_now() -> Dictionary:
+	var ff := clampf(fposmod(_player.stream_position, _FACE_INTERVAL) / _FACE_INTERVAL, 0.0, 1.0)
+	return {
+		"eye_l": _face_eye_l_ema + (_face_eye_l_ema - _face_eye_l_prev) * ff,
+		"eye_r": _face_eye_r_ema + (_face_eye_r_ema - _face_eye_r_prev) * ff,
+		"mouth": _face_mouth_ema + (_face_mouth_ema - _face_mouth_prev) * ff,
+		"nose": _face_nose_ema + (_face_nose_ema - _face_nose_prev) * ff,
+		"face_c": _face_c_ema + (_face_c_ema - _face_c_prev) * ff,
+		"eye_lr": _face_eye_lr_ema, "eye_rr": _face_eye_rr_ema,
+		"mouth_r": _face_mouth_r_ema,
+	}
 
 
 # --- undo/redo ---------------------------------------------------------------
@@ -2621,6 +3495,23 @@ func _poll_reload_check() -> void:
 ## dirty) so the current playhead is captured even after a pure play/scrub with no edit.
 func _exit_tree() -> void:
 	_save_session()
+	# Reap every subprocess THIS instance spawned. OS.create_process children
+	# are fully detached - close the app mid-prep and the ffmpeg transcode
+	# keeps running invisibly (no "godot" in ps), still touching video.ogv,
+	# and the NEXT launch reads the fresh mtime as "already in progress
+	# elsewhere" and waits on a writer the user can't see. Killing our own
+	# pids is safe - the ECHILD hazard is is_process_running on pids we did
+	# NOT spawn (see _prep_looks_live's doc). The half-written outputs are
+	# already handled: prep re-runs when the lock goes stale and
+	# _finish_session rejects truncated video, yt-dlp resumes its own .part.
+	for pid in [_prep_video_pid, _prep_audio_pid, _import_pid, _waveform_pid,
+			_wavehi_pid, _yt_pid, _reload_check_pid, _render_pid, _transcode_pid]:
+		if int(pid) > 0 and OS.is_process_running(int(pid)):
+			OS.kill(int(pid))
+	for job in _track_audio_jobs:
+		var jpid := int(job.get("pid", -1))
+		if jpid > 0 and OS.is_process_running(jpid):
+			OS.kill(jpid)
 	# Join the audio loader if it's still running, or Godot warns about an orphaned
 	# thread on close.
 	if _audio_thread != null and _audio_thread.is_started():
@@ -2640,7 +3531,7 @@ func _refresh_panel() -> void:
 	var m: Dictionary = _selected if _selected != null else MaskSession.DEFAULTS
 	_kind.select(int(m.get("kind", 0.0)))
 	_color_a.color = Color.from_hsv(float(m.get("hue_a", 0.02)), 0.85, 0.9)
-	_hue_a.set_value_no_signal(float(m.get("hue_a", 0.02)))
+	_hue_a.set_value_no_signal(float(m.get("fx_tint", 0.0)))
 	_threshold.set_value_no_signal(float(m.get("threshold", 0.24)))
 	_feather.set_value_no_signal(float(m.get("feather", 0.12)))
 	_sat_floor.set_value_no_signal(float(m.get("sat_floor", 0.18)))
@@ -2677,7 +3568,12 @@ func _update_effect_controls(effect_id: int) -> void:
 		and effect_id != MaskSession.EFFECT_SERPENT and effect_id != MaskSession.EFFECT_AREALIGHT \
 		and effect_id != MaskSession.EFFECT_META
 	_grp_color.visible = has_color
-	_show_field(_hue_a, has_color)   # the Hue row lives in _grp_options now, not under _grp_color
+	# Morph shows only where there's a palette to rotate (the fixed-palette
+	# emissives + crystal's glass + fur's key-tinted coat + clown's paint).
+	var has_morph: bool = effect_id in [1, 2, 5, MaskSession.EFFECT_CRYSTAL,
+		MaskSession.EFFECT_SNOW, MaskSession.EFFECT_FUR, MaskSession.EFFECT_SERPENT,
+		MaskSession.EFFECT_CLOWN]
+	_show_field(_hue_a, has_morph)
 	_show_field(_threshold, groups.has("keying") or groups.has("reach"), _threshold_label)
 	if groups.has("reach"):
 		_threshold_label.text = "Reach"
@@ -2713,9 +3609,14 @@ func _update_effect_controls(effect_id: int) -> void:
 	_fx_lag.tooltip_text = _fx_lag_label.tooltip_text
 	var is_snow := effect_id == MaskSession.EFFECT_SNOW
 	var is_arealight := effect_id == MaskSession.EFFECT_AREALIGHT
+	var is_clown := effect_id == MaskSession.EFFECT_CLOWN
 	if is_snow:
 		_fx_contrast_label.text = "Sensitivity"
 		_fx_contrast_label.tooltip_text = "How far snow's fall reaches toward the subject"
+	elif is_clown:
+		_fx_contrast_label.text = "Smear"
+		_fx_contrast_label.tooltip_text = "How ragged and smeared the paint is - drooping eye " + \
+			"patches, chewed edges, the mouth dragged into a grin"
 	elif is_arealight:
 		_fx_contrast_label.text = "Envelope"
 		_fx_contrast_label.tooltip_text = "Where along the rig's mood this sits - warm, soft, " + \
@@ -2733,9 +3634,13 @@ func _update_effect_controls(effect_id: int) -> void:
 		if is_snow else "Shifts the pattern vertically over the frame"
 	_fx_y.tooltip_text = _fx_y_label.tooltip_text
 	var is_crystal := effect_id == MaskSession.EFFECT_CRYSTAL
-	_fx_density_label.text = "Stickiness" if is_crystal else "Coverage"
-	_fx_density_label.tooltip_text = "Pull toward the tracked face's edges" \
-		if is_crystal else "How much of the keyed region the pattern consumes - 0 untouched, 1 fully devoured"
+	_fx_density_label.text = "Stickiness" if is_crystal else ("Wear" if is_clown else "Coverage")
+	if is_crystal:
+		_fx_density_label.tooltip_text = "Pull toward the tracked face's edges"
+	elif is_clown:
+		_fx_density_label.tooltip_text = "Cracks and chips in the white paint - 0 fresh coat, 1 ruined"
+	else:
+		_fx_density_label.tooltip_text = "How much of the keyed region the pattern consumes - 0 untouched, 1 fully devoured"
 	_fx_density.tooltip_text = _fx_density_label.tooltip_text
 	# "Strength" means something different for the two subtractive effects - the
 	# ambiguity the feedback flagged (an unlabeled, unexplained "Intensity").
@@ -3187,13 +4092,18 @@ func _apply_frame_state(p: Dictionary) -> void:
 	# itself on whatever's actually on screen, not on the session's marker list.
 	_chimera_active = false
 	_temporal_active = false
+	_clown_active = false
 	_meta_amount = 0.0
 	for l in layers:
 		var le := int(l.get("effect_a", 0))
 		if le == MaskSession.EFFECT_CHIMERA:
 			_chimera_active = true
+		if le == MaskSession.EFFECT_CLOWN:
+			_clown_active = true
+			_clown_fs = clampf(float(l.get("fx_scale", 1.0)), 0.3, 2.5)
 		if le == 5 or le == 7 or le == MaskSession.EFFECT_SNOW or le == MaskSession.EFFECT_ORACLE \
-				or le == MaskSession.EFFECT_SERPENT or le == MaskSession.EFFECT_CHIMERA:
+				or le == MaskSession.EFFECT_SERPENT or le == MaskSession.EFFECT_CHIMERA \
+				or le == MaskSession.EFFECT_CLOWN:
 			_temporal_active = true
 		# The META mirror's strength - the same env x intensity the shader gets as
 		# this layer's weight. Drives whether the (expensive) workspace readback runs
@@ -3220,6 +4130,7 @@ func _apply_frame_state(p: Dictionary) -> void:
 	var echo_lag := PackedInt32Array()
 	var lagf := PackedFloat32Array()   # raw fx_lag - fur's Coil knob (echo's use is baked into echo_w/echo_lag)
 	var sticks := PackedFloat32Array()   # raw fx_stick - fur's Stickiness (0 = today's free coat)
+	var tints := PackedFloat32Array()    # fx_tint - Morph, palette hue rotation (0 = natural)
 	var slot_frac := fposmod((_player.stream_position if _player != null else 0.0) / _ECHO_INTERVAL, 1.0)
 	for i in MaskSession.MAX_LAYERS:
 		if i < n:
@@ -3249,6 +4160,7 @@ func _apply_frame_state(p: Dictionary) -> void:
 			echo_lag.append(clampi(int(round(lag_slots)), 0, 7))
 			lagf.append(float(l.get("fx_lag", 0.35)))
 			sticks.append(clampf(float(l.get("fx_stick", 0.0)), 0.0, 1.0))
+			tints.append(clampf(float(l.get("fx_tint", 0.0)), 0.0, 1.0))
 			var w := PackedFloat32Array()
 			var wsum := 0.0
 			for k in 8:
@@ -3280,6 +4192,7 @@ func _apply_frame_state(p: Dictionary) -> void:
 			echo_lag.append(0)
 			lagf.append(0.0)
 			sticks.append(0.0)
+			tints.append(0.0)
 			for k in 8:
 				echo_w.append(1.0 if k == 0 else 0.0)
 			glows.append(1.0)
@@ -3330,6 +4243,7 @@ func _apply_frame_state(p: Dictionary) -> void:
 		mat.set_shader_parameter("u_l_elag", echo_lag)
 		mat.set_shader_parameter("u_l_lagf", lagf)
 		mat.set_shader_parameter("u_l_stick", sticks)
+		mat.set_shader_parameter("u_l_tint", tints)
 		mat.set_shader_parameter("u_l_tdir", tdirs)
 		# Chimera's graft source: the first track's live frame. The explicit
 		# flag matters - the sampler's default-black fallback must never read
@@ -3374,11 +4288,13 @@ func _process(_dt: float) -> void:
 			if OS.is_process_running(_prep_video_pid):
 				_set_status("⏳  Preparing clip (video)…  %d%%" % _read_prep_pct())
 				return
+			_promote_part(String(_pending.video))
 			_start_prep_audio()
 			return
 		"prepping_audio":
 			if OS.is_process_running(_prep_audio_pid):
 				return
+			_promote_part(String(_pending.audio))
 			_clear_lock(_pending.dir)
 			_prep_state = "idle"
 			_finish_session(_pending.source, _pending.video, _pending.audio)
@@ -3399,11 +4315,39 @@ func _process(_dt: float) -> void:
 			return
 		_:
 			pass
+	if _yt_state != "idle":
+		if _yt_pid > 0 and not OS.is_process_running(_yt_pid):
+			_yt_pid = -1
+			_yt_step_done()
+		else:
+			# Live readout every frame, exporter-style: a step with no percent
+			# of its own at least ticks its elapsed seconds, so a slow venv
+			# bootstrap or pip install never reads as a hang.
+			var el := int(Time.get_unix_time_from_system() - _yt_step_started)
+			match _yt_state:
+				"venv":
+					_set_status("⏳  Setting up ghost's download venv (one-time)…  %ds" % el)
+				"pip":
+					_set_status("⏳  Installing yt-dlp into the venv…  %ds" % el)
+				"downloading":
+					var pct := _yt_pct()
+					_set_status("⏳  Downloading…  " + (pct if not pct.is_empty()
+						else "connecting  %ds" % el))
+					# yt-dlp's WARNING/ERROR lines echo into godot's log the
+					# moment they appear (deduped) - a throttle warning is only
+					# useful WHILE the download crawls, not after it finishes.
+					for line in _yt_tail_window().split("\n"):
+						var s := line.strip_edges()
+						if (s.begins_with("WARNING") or s.begins_with("ERROR")) \
+								and not _yt_echoed.has(s):
+							_yt_echoed[s] = true
+							print("ghost yt: ", s)
 	if _waveform_pid > 0 and not OS.is_process_running(_waveform_pid):
 		_waveform_pid = -1
 		var abs_wave := ProjectSettings.globalize_path(_waveform_path)
 		if FileAccess.file_exists(abs_wave):
 			_load_waveform(abs_wave)
+	_poll_wave_hi(_dt)
 	if _import_pid > 0 and not OS.is_process_running(_import_pid):
 		_import_pid = -1
 		_finish_track_import()
@@ -3459,6 +4403,7 @@ func _process(_dt: float) -> void:
 	if _pip_view != null and _mask_wrap.visible:
 		_pip_view.texture = _player.get_video_texture()
 	_maybe_capture_echo()
+	_maybe_capture_face()
 	# META: while a meta layer is live, capture the editor's own frame for the mirror
 	# and (in export) lerp the editor chrome into view. Both are gated on _meta_amount
 	# so the expensive readback only ever runs during an actual meta section.
@@ -3467,6 +4412,7 @@ func _process(_dt: float) -> void:
 	if render_mode:
 		_apply_meta_chrome(_meta_amount)
 	_push_anchor()
+	_step_paint_sim()
 	# Standing A/V drift correction (see _play: video is the master clock).
 	# 0.15s tolerance sits above audio mix-chunk granularity so this never
 	# chatters. Video ahead of audio: seek audio forward (a silent skip -
@@ -3567,9 +4513,10 @@ func _build_status_label() -> void:
 	_status = Label.new()
 	_status.name = "MaskStatus"
 	_status.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	_status.offset_left = -548
+	# Right edge clears the console's >_ slot (-156..-116, see console.gd).
+	_status.offset_left = -592
 	_status.offset_top = -64
-	_status.offset_right = -116
+	_status.offset_right = -160
 	_status.offset_bottom = -28
 	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_status.visible = false

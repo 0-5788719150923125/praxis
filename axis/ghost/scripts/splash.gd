@@ -13,15 +13,24 @@ class_name Splash
 ##   Masking  - chroma-key effects over an imported video clip.
 ## A mode button *is* start - there is no separate start button.
 ##
-## One Import dialog accepts audio OR video; the extension routes it to the
-## right slot (VIDEO_EXTS), both slots are remembered independently
-## (user://ghost.cfg) and shown side by side. Auto/Manual use the song slot,
+## ONE source row imports everything: the picker button plus a free-form field
+## that accepts a URL or a raw file path. Whatever arrives is routed to the
+## right slot - http(s) URLs fill the clip slot (Masking's mask_editor
+## downloads them itself: yt-dlp in ghost's own venv, see mask_editor.gd
+## _start_url_import - a YouTube link is a first-class clip source, no manual
+## ripping), local paths route by extension (audio -> song, video -> clip).
+## Both slots are remembered independently (user://ghost.cfg), but they are
+## NOT displayed side by side anymore - a song caption next to a clip URL
+## read as "both will import". Instead each mode row below captions the
+## source IT consumes (Auto/Manual show the song, Masking shows the clip),
+## so the context is on the button that uses it. Auto/Manual use the song slot,
 ## Masking uses the clip slot, Synthesis needs no import at all. Clicking a
 ## mode calls back into main (start_session / start_synth / start_mask), then
 ## frees the splash. Built in code (no .tscn).
 
 const CFG_PATH := "user://ghost.cfg"
 const VIDEO_EXTS := ["mp4", "mov", "mkv", "webm", "avi"]
+const AUDIO_EXTS := ["wav", "mp3", "ogg", "oga", "flac"]
 
 ## The assistant dropdown: display name -> the persisted key (see
 ## assistant_backend()). "" (Off) means no assistant at all - main.gd and
@@ -41,8 +50,11 @@ var start_synth: Callable      # start_synth.call()
 var _audio_path := ""
 var _video_path := ""
 var _assistant_backend := ""
-var _caption: Label
 var _file_dialog: FileDialog
+var _source_edit: LineEdit
+var _uses_auto: Label     # per-mode source captions - see _refresh_sources
+var _uses_manual: Label
+var _uses_mask: Label
 
 
 func _ready() -> void:
@@ -84,36 +96,46 @@ func _build_ui() -> void:
 
 	col.add_child(_spacer(10))
 
-	# --- Import (audio OR video - the extension picks the slot; both remembered
-	# and both shown, since different modes below consume different slots) ---
-	var song_row := HBoxContainer.new()
-	song_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	song_row.add_theme_constant_override("separation", 12)
-	col.add_child(song_row)
+	# --- ONE source row: the picker + a free-form URL/path field. What each
+	# mode will actually consume is captioned on its own row below, not here.
+	var src_row := HBoxContainer.new()
+	src_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	src_row.add_theme_constant_override("separation", 12)
+	col.add_child(src_row)
 
 	var load_btn := Button.new()
 	load_btn.text = "Import…"
 	load_btn.tooltip_text = "A song for Auto/Manual, or a video clip for Masking"
 	load_btn.custom_minimum_size = Vector2(150, 40)
 	load_btn.pressed.connect(_open_file_dialog)
-	song_row.add_child(load_btn)
+	src_row.add_child(load_btn)
 
-	_caption = Label.new()
-	_caption.add_theme_color_override("font_color", Color(0.7, 0.78, 0.9))
-	song_row.add_child(_caption)
-	_refresh_caption()
+	_source_edit = LineEdit.new()
+	_source_edit.placeholder_text = "…or paste a URL / file path and press Enter"
+	_source_edit.tooltip_text = "A YouTube (or any http) URL fills the clip slot - Masking downloads it itself.\n" + \
+		"A local path routes by extension: audio → song, video → clip."
+	_source_edit.custom_minimum_size = Vector2(440, 34)
+	_source_edit.text_submitted.connect(_on_source_submitted)
+	# An invalid entry turns the text red (see _on_source_submitted); any
+	# editing clears the mark.
+	_source_edit.text_changed.connect(func(_t: String) -> void:
+		_source_edit.remove_theme_color_override("font_color"))
+	src_row.add_child(_source_edit)
 
 	col.add_child(_spacer(12))
 
-	# --- The mode list: one row per instrument, all always visible ---
-	_add_mode_row(col, "Auto  ▶", "The seeded show - scenes chosen for you, cut on the music.",
-		"uses the song", _start_auto)
-	_add_mode_row(col, "Manual  ▶", "Orchestrate by hand - the workspace, storyboards, dials.",
-		"uses the song", _start_manual)
-	_add_mode_row(col, "Synthesis  ▶", "Write a script; ghost speaks it and the show reacts to the voice.",
+	# --- The mode list: one row per instrument, all always visible. Each row's
+	# small caption is ITS source's live state (see _refresh_sources).
+	_uses_auto = _add_mode_row(col, "Auto  ▶",
+		"The seeded show - scenes chosen for you, cut on the music.", "", _start_auto)
+	_uses_manual = _add_mode_row(col, "Manual  ▶",
+		"Orchestrate by hand - the workspace, storyboards, dials.", "", _start_manual)
+	_add_mode_row(col, "Synthesis  ▶",
+		"Write a script; ghost speaks it and the show reacts to the voice.",
 		"no import needed", _start_synth)
-	_add_mode_row(col, "Masking  ▶", "Chroma-key effects over a video - markers, tracks, renders.",
-		"uses the clip", _start_mask)
+	_uses_mask = _add_mode_row(col, "Masking  ▶",
+		"Chroma-key effects over a video - markers, tracks, renders.", "", _start_mask)
+	_refresh_sources()
 
 	col.add_child(_spacer(6))
 	var asst_row := HBoxContainer.new()
@@ -153,10 +175,11 @@ func _build_ui() -> void:
 	add_child(_file_dialog)
 
 
-## One mode row: the start button on the left, description + input hint beside
-## it. Every mode is always clickable - a missing import is handled by the mode
-## itself (Auto idles without a song, Masking prompts for a clip).
-func _add_mode_row(col: VBoxContainer, name: String, desc: String, uses: String, action: Callable) -> void:
+## One mode row: the start button on the left, description + source caption
+## beside it. Every mode is always clickable - a missing import is handled by
+## the mode itself (Auto idles without a song, Masking prompts for a clip).
+## Returns the caption label so _refresh_sources can keep it current.
+func _add_mode_row(col: VBoxContainer, name: String, desc: String, uses: String, action: Callable) -> Label:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 16)
 	col.add_child(row)
@@ -182,6 +205,7 @@ func _add_mode_row(col: VBoxContainer, name: String, desc: String, uses: String,
 	uses_label.add_theme_font_size_override("font_size", 12)
 	uses_label.add_theme_color_override("font_color", Color(0.42, 0.48, 0.58))
 	text_col.add_child(uses_label)
+	return uses_label
 
 
 func _spacer(h: int) -> Control:
@@ -190,21 +214,58 @@ func _spacer(h: int) -> Control:
 	return s
 
 
-func _refresh_caption() -> void:
-	var parts: Array[String] = []
+## Each mode row captions the source IT will consume - the whole point of the
+## merged source row (a song caption sitting beside a clip URL read as "both
+## will import", which is never true: Auto/Manual take the song, Masking takes
+## the clip).
+func _refresh_sources() -> void:
+	var song: String
 	if not _audio_path.is_empty():
-		parts.append("♪ " + _audio_path.get_file())
+		song = "song: " + _audio_path.get_file()
 	elif ResourceLoader.exists("res://audio/song.wav"):
-		parts.append("♪ bundled audio/song.wav")
+		song = "song: bundled audio/song.wav"
 	else:
-		parts.append("♪ none (Auto will idle-animate)")
-	if not _video_path.is_empty():
-		parts.append("🎬 " + _video_path.get_file())
-	_caption.text = "   ".join(parts)
+		song = "no song - idle-animates"
+	_uses_auto.text = song
+	_uses_manual.text = song
+	_uses_mask.text = ("clip: " + _short_source(_video_path)) if not _video_path.is_empty() \
+		else "no clip - asks on start"
+
+
+static func _short_source(p: String) -> String:
+	if p.begins_with("http"):
+		var s := p.trim_prefix("https://").trim_prefix("http://").trim_prefix("www.")
+		return s.substr(0, 40) + ("…" if s.length() > 40 else "")
+	return p.get_file()
 
 
 func _open_file_dialog() -> void:
 	_file_dialog.popup_centered()
+
+
+## The free-form field: a URL or a raw file path, routed to the right slot.
+## Anything that is neither an existing file nor URL-shaped turns the entry
+## red instead of silently landing in a slot it can't fill.
+func _on_source_submitted(text: String) -> void:
+	var s := text.strip_edges()
+	if s.is_empty():
+		return
+	var is_url := s.begins_with("http://") or s.begins_with("https://")
+	if not is_url and not FileAccess.file_exists(s) and (s.begins_with("www.")
+			or s.to_lower().contains("youtu.be") or s.to_lower().contains("youtube.com")):
+		s = "https://" + s   # pasted without a scheme
+		is_url = true
+	if is_url:
+		_video_path = s
+		_save_last_video(s)
+		_source_edit.text = s
+		_refresh_sources()
+		return
+	var ext := s.get_extension().to_lower()
+	if FileAccess.file_exists(s) and (VIDEO_EXTS.has(ext) or AUDIO_EXTS.has(ext)):
+		_on_file_selected(s)
+	else:
+		_source_edit.add_theme_color_override("font_color", Color(1.0, 0.45, 0.4))
 
 
 func _on_file_selected(path: String) -> void:
@@ -214,7 +275,8 @@ func _on_file_selected(path: String) -> void:
 	else:
 		_audio_path = path
 		_save_last_song(path)
-	_refresh_caption()
+	_source_edit.text = path   # the field always shows the last import, either origin
+	_refresh_sources()
 
 
 # --- Start (a mode button click) --------------------------------------------
@@ -272,7 +334,8 @@ func _load_last_video() -> void:
 	if cfg.load(CFG_PATH) != OK:
 		return
 	var p := String(cfg.get_value("video", "last", ""))
-	if not p.is_empty() and FileAccess.file_exists(p):
+	# URLs are remembered too - "exists" only means anything for local files.
+	if not p.is_empty() and (p.begins_with("http") or FileAccess.file_exists(p)):
 		_video_path = p
 
 

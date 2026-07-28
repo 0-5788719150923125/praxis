@@ -17,6 +17,8 @@ class_name Chrome
 ##                   on the splash's backend setting, see assistant.gd).
 ## - **feedback**  - the ` console, created on demand per session via
 ##                   [method attach_feedback] and wired to the assistant.
+## - **console**   - the `>_` log viewer (a live tail of godot's own log
+##                   file), for anyone running ghost without a terminal.
 ##
 ## A future mode needs no wiring at all if main already made the Chrome -
 ## call attach_feedback() when a session starts, detach_feedback() when it
@@ -25,6 +27,7 @@ class_name Chrome
 var exporter: Node
 var assistant: Node
 var feedback: Node
+var console: Node
 
 
 func _ready() -> void:
@@ -32,6 +35,8 @@ func _ready() -> void:
 	add_child(exporter)
 	assistant = preload("res://scripts/assistant.gd").new()
 	add_child(assistant)
+	console = preload("res://scripts/console.gd").new()
+	add_child(console)
 
 
 ## The ` feedback console for the current session. Idempotent: returns the

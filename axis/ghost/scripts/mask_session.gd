@@ -103,6 +103,10 @@ const VECTOR_FIELDS := [
 	"fx_stick",         # fur: 0 = free coat everywhere (default look), 1 = strands cling
 	                    #   to natural anchors (key-colour concentration, the tracked
 	                    #   landmark/motion centroid, luminance) - see the shader's fur branch
+	"fx_tint",          # Morph: rotates the EFFECT'S OWN palette hue (0 = natural colors).
+	                    #   Decoupled from hue_a on purpose: the color picker says what to
+	                    #   MASK, this says what color the drawn effect becomes. The old Hue
+	                    #   slider was a second widget on hue_a and the linkage read as a bug.
 ]
 
 ## Global keying environment - lerped across transition windows (contract shape 1).
@@ -111,7 +115,7 @@ const GLOBAL_CONTINUOUS := ["threshold", "feather", "sat_floor"]
 ## values; only the layer's envelope varies over time.
 const LAYER_FIELDS := ["hue_a", "effect_a", "intensity_a", "fx_x", "fx_y",
 	"fx_scale", "fx_density", "resonance", "fx_contrast", "fx_speed", "fx_lag",
-	"fx_smooth", "fx_stick"]
+	"fx_smooth", "fx_stick", "fx_tint"]
 
 const MARKER_KINDS := ["ramp", "damp"]
 
@@ -246,7 +250,27 @@ const MAX_LAYERS := 6
 ## none at 0, a scattered handful by 1. The angles and the waxing/waning are
 ## automatic; the dial changes what the light IS, how MANY sources are live,
 ## and whether standalone flares exist at all.
-const MASK_EFFECTS := ["erase", "fire", "freeze", "smoke", "restore", "whisp", "crystal", "echo", "clear", "snow", "fur", "oracle", "serpent", "chimera", "arealight", "meta"]
+## "clown" - white-face paint drawn onto a DETECTED face: a white base coat,
+## black patches on the eyes, streaks running from under them, red smeared
+## lips - Joker-school makeup, where the heuristics' imperfection reads as
+## greasepaint rather than error. The editor fits a face model each capture
+## tick (see MaskEditor._update_face_model): face mass = the key colour's
+## projection (with a natural-skin fallback), weighted by a centered prior
+## (the ASMR framing this is built for) -> centroid + spread; the EYES are
+## the two darkest clusters in the upper face band, split left/right; the
+## MOUTH is the red/dark centroid below. All EMA-glided like the anchor. The
+## shader then draws in the EYE-LINE FRAME (origin mid-eyes, rotated to the
+## eye axis, unit = eye distance), so the paint, cracks, patches and lips are
+## anchored to the face and turn/scale with it. Presence is the face oval
+## times a face-tint colour match with a high floor - bold paint, not a faint
+## key-tint. Scale sizes the features, Pan nudges the whole layout (in eye
+## units) when detection is off-target, Coverage is relabeled Wear (cracks +
+## chips + erosion), Contrast is relabeled Smear (ragged edges, drooping
+## patches, the grin), Velocity paces the smear's breathing. Per-element
+## numbers (streak counts/lengths/angles, grin pull, asymmetry) are sampled
+## from hashes salted by the key hue - a new hue is a new clown. Fixed
+## white/black/red palette (Morph rotates it like any other effect).
+const MASK_EFFECTS := ["erase", "fire", "freeze", "smoke", "restore", "whisp", "crystal", "echo", "clear", "snow", "fur", "oracle", "serpent", "chimera", "arealight", "meta", "clown"]
 const EFFECT_RESTORE := 4
 const EFFECT_CRYSTAL := 6
 const EFFECT_CLEAR := 8
@@ -262,6 +286,7 @@ const EFFECT_AREALIGHT := 14
 ## a per-frame viewport readback), and this layer mixes it in by its envelope. See
 ## mask_editor.gd _capture_workspace / _meta_amount_of.
 const EFFECT_META := 15
+const EFFECT_CLOWN := 16
 
 ## THE CONTROL HIERARCHY: which panel option groups each effect actually consumes
 ## (the editor shows/hides accordingly - a slider that does nothing for the
@@ -288,6 +313,7 @@ const EFFECT_CONTROLS := {
 	13: ["pattern"],              # chimera (color steers the anchor/claim; scale=window, pan=graft offset, coverage=dominance, contrast=interleave sharpness)
 	14: ["pattern"],              # arealight (keyless; pattern group exists only to expose the single Envelope/contrast dial)
 	15: [],                       # meta (mirrors the workspace; keyless, no pattern - only intensity/duration/kind matter)
+	16: ["pattern"],              # clown (projection + tracked face frame: pan=layout nudge, scale=feature size, coverage=Wear, contrast=Smear)
 }
 
 ## Second level of the same rule, INSIDE the "pattern" group: which individual
@@ -331,7 +357,7 @@ const DEFAULTS := {
 	"pip_track": 0.0,
 	"fx_x": 0.0, "fx_y": 0.0, "fx_scale": 1.0, "fx_density": 0.45, "resonance": 0.0,
 	"fx_contrast": 0.5, "fx_speed": 1.0, "fx_lag": 0.35, "fx_smooth": 0.0,
-	"fx_stick": 0.0,
+	"fx_stick": 0.0, "fx_tint": 0.0,
 }
 
 var video_path := ""

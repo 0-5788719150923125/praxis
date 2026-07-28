@@ -94,6 +94,39 @@ uniform float u_l_lagf[6];
 // untouched; >0 pulls the strands toward natural anchors (see the fur branch).
 uniform float u_l_stick[6];
 
+// Morph (fx_tint): rotates the EFFECT'S OWN palette hue. 0 = identity - every
+// existing session renders unchanged. Deliberately decoupled from the key
+// colour (hue_a): the picker says what to MASK, this says what colour the
+// drawn effect becomes.
+uniform float u_l_tint[6];
+
+// The clown face model, fitted CPU-side each capture tick (see MaskEditor.
+// _update_face_model) and EMA-glided like u_anchor: both eyes, the mouth,
+// the face's semi-axes, its mean chroma direction and luminance. Defaults
+// describe a plausible centered face so the paint shows sensibly before the
+// first capture lands.
+uniform vec2 u_clown_eye_l = vec2(0.42, 0.40);
+uniform vec2 u_clown_eye_r = vec2(0.58, 0.40);
+uniform vec2 u_clown_mouth = vec2(0.5, 0.62);
+uniform vec2 u_clown_face_r = vec2(0.14, 0.20);
+uniform vec3 u_clown_tint = vec3(0.55, 0.1, -0.5);
+uniform float u_clown_lum = 0.5;
+uniform vec2 u_clown_face_c = vec2(0.5, 0.45);
+// Per-feature sizes, measured from each detected cluster's own spread
+// (eye-distance units) - each eye and the mouth carry their OWN live extent,
+// so the drawn features breathe with the anatomy (talking makes the lips
+// taller) instead of holding a flat mask's fixed proportions.
+uniform float u_clown_eye_lr = 0.30;
+uniform float u_clown_eye_rr = 0.30;
+uniform vec2 u_clown_mouth_r = vec2(0.28, 0.14);
+// The LIQUID PAINT field (see clown_paint.gdshader + MaskEditor.
+// _step_paint_sim): R = eye black, G = lip red, B = nose red. The features
+// are SAMPLED from this persistent, advected simulation instead of drawn as
+// fitted shapes - a model re-fit becomes a current in the paint (residue
+// flows into the new position) rather than a shape teleporting. Default
+// black = no features until the sim's first step lands.
+uniform sampler2D u_clown_paint : hint_default_black;
+
 // The first imported track's live frame, for chimera's graft. u_track_on
 // gates it explicitly - the default-black fallback must never be mistaken
 // for footage (a black graft window is worse than no graft).
@@ -147,6 +180,23 @@ vec3 rgb2hsv(vec3 c) {
 float hue_dist(float a, float b) {
 	float d = abs(a - b);
 	return min(d, 1.0 - d);
+}
+
+vec3 hsv2rgb(vec3 c) {
+	vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+	vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+	return c.z * mix(K.xxx, clamp(p - K.xxx, vec3(0.0), vec3(1.0)), c.y);
+}
+
+// Morph: rotate a palette colour's hue by t (0 or 1 = untouched). Saturation
+// and value survive, so a morphed flame is still a flame - just a green one.
+vec3 hue_shift(vec3 c, float t) {
+	if (t <= 0.002 || t >= 0.998) {
+		return c;
+	}
+	vec3 hsv = rgb2hsv(c);
+	hsv.x = fract(hsv.x + t);
+	return hsv2rgb(hsv);
 }
 
 // Lattice hash on a mod-289 permutation polynomial (ported from flame.gdshader):
@@ -551,7 +601,156 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		float facet = 0.45 + 0.55 * v1.z;
 		vec3 cryst = glass * facet * vec3(0.78, 0.90, 1.08);
 		cryst += vec3(0.72, 0.86, 1.0) * (edge1 * 0.55 + edge2 * 0.20) * (0.4 + 0.6 * con6);
+		cryst = hue_shift(cryst, u_l_tint[i]);   // Morph re-gels the whole glass
 		return vec4(mix(col.rgb, cryst, amt6), col.a);
+	}
+	if (effect == 16) {
+		// CLOWN - crystal-school anchoring, feature by feature. Earlier cuts
+		// drew everything in ONE eye-line frame, and every detection wobble
+		// rotated and rescaled the ENTIRE mask in lockstep - a uniform twitch
+		// that read far worse than any single feature drifting. There is no
+		// shared frame anymore; each element earns its anchor locally:
+		//   COAT    - the liquid field's face channel (screen-space, advected
+		//             - see clown_paint.gdshader) x a per-pixel face-tint
+		//             match: paint exists where the face material is;
+		//   CRACKS  - SCREEN-space lattice, translated (never rotated) by a
+		//             local pull toward the face centre and bent along the
+		//             picture's own structure by the tap-ring gradient - the
+		//             exact anchoring crystal is loved for;
+		//   EYES / LIPS / NOSE - sampled from their own liquid channels, each
+		//             deposited at its own detected position with its own
+		//             measured size: independent motion by construction;
+		//   STREAKS - rooted at each eye's live position, running SCREEN-down
+		//             (drips obey gravity, not the eye line).
+		float w16 = clamp(w, 0.0, 1.0);
+		vec2 asp16 = vec2(u_aspect, 1.0);
+		float fs16 = clamp(u_l_scale[i], 0.3, 2.5);
+		float smear16 = clamp(u_l_con[i], 0.0, 1.0);
+		float wear16 = clamp(u_l_dens[i], 0.0, 1.0);
+		float t16 = u_time * u_l_speed[i];
+		float salt16 = floor(u_l_hue[i] * 48.0) * 3.1 + float(i) * 17.0;
+		vec2 h1 = hash22(vec2(salt16, 3.7));
+		vec2 h2 = hash22(vec2(salt16, 9.1));
+		vec2 h3 = hash22(vec2(salt16, 15.3));
+		vec2 pan16 = u_l_off[i] * 0.25;   // plain screen nudge - no frame to ride
+		// Hand-painted edge wobble: screen-locked, breathing on the clip clock,
+		// chewed wider by Smear. Applied as a SAMPLING warp on the liquid.
+		vec2 wob16 = vec2(fbm(uv * asp16 * 5.5 + vec2(salt16, t16 * 0.11)),
+			fbm(uv * asp16 * 5.5 + vec2(salt16 + 9.7, -t16 * 0.09))) - 0.5;
+		vec2 puv16 = uv - pan16 + wob16 * (0.006 + 0.018 * smear16);
+		vec4 paint16 = texture(u_clown_paint, clamp(puv16, vec2(0.0), vec2(1.0)));
+		// COAT window: the face channel of the liquid - advected and decaying
+		// in screen space, with no oval geometry left to rotate.
+		float win16 = smoothstep(0.12, 0.5, paint16.a);
+		if (win16 * w16 <= 0.004) {
+			return col;
+		}
+		float lum16 = dot(col.rgb, vec3(0.299, 0.587, 0.114));
+		vec3 ch16 = col.rgb - vec3(lum16);
+		float chl16 = length(ch16);
+		vec3 ftd16 = normalize(u_clown_tint + vec3(1e-4));
+		float fr16 = max(0.0, dot(ch16, ftd16)) / max(chl16, 1e-4);
+		// Where a pixel carries NO chroma the match is UNKNOWN, and unknown
+		// must not penalize: monochrome/desaturated grades (a huge share of
+		// real footage) have nothing to align, and a 0.55 neutral held the
+		// whole mask at ~70% opacity - grey patches instead of black paint.
+		// The coat window already confines the paint spatially.
+		float match16 = mix(0.92, fr16, smoothstep(0.015, 0.06, chl16));
+		float dark16 = 0.15 + 0.85 * smoothstep(0.18, 0.55,
+			lum16 / max(u_clown_lum, 0.15));
+		vec3 white16 = vec3(0.93, 0.94, 0.96) * (0.55 + 0.65 * lum16);
+		// CRACKS: crystal's anchoring, verbatim in spirit - screen-space
+		// coordinates pulled (translated only, never rotated) toward the face
+		// centre so the lattice rides the head locally, then bent along the
+		// picture's own structure by the mid/wide gradient probe. Wear opens
+		// veins, drops voronoi chips, and mottles the coat between them.
+		float near16 = exp(-3.0 * length(uv - u_clown_face_c));
+		vec2 grad16 = vec2(0.0);
+		for (int g16 = 0; g16 < 8; g16++) {
+			float am16 = float(g16) * 0.7853981634 + 0.3926990817;
+			float aw16 = float(g16) * 0.7853981634 + 0.1963495409;
+			grad16 += vec2(cos(am16), sin(am16)) * taps[g16 + 9].z
+				+ vec2(cos(aw16), sin(aw16)) * taps[g16 + 17].z;
+		}
+		vec2 conform16 = vec2(-grad16.y, grad16.x)
+			* smoothstep(0.06, 0.30, length(grad16)) * 0.12;
+		vec2 pcr16 = ((uv - (u_clown_face_c - vec2(0.5)) * near16) * asp16 + pan16)
+			/ fs16 + conform16;
+		vec2 cvq16 = pcr16 * (7.0 + 4.5 * h3.y) + vec2(salt16 * 0.31, salt16 * 0.11);
+		float vein16 = pow(1.0 - abs(2.0 * fbm(cvq16) - 1.0), 7.0);
+		float crack16 = smoothstep(0.86 - 0.50 * wear16, 0.98, vein16)
+			* smoothstep(0.02, 0.20, wear16);
+		vec3 vch16 = voronoi_f1f2(pcr16 * 4.3 + salt16);
+		float chip16 = step(vch16.z, wear16 * 0.45)
+			* smoothstep(0.05, 0.28, vch16.y - vch16.x);
+		float erode16 = smoothstep(0.55, 0.95, fbm(pcr16 * 3.0 + salt16 * 0.7))
+			* wear16 * 0.7;
+		// FEATURES from their own liquid channels. The grin warps the red's
+		// sampling toward the mouth corners, scaled by the mouth's OWN width -
+		// not by the eye pair.
+		float grin16 = (0.10 + 0.50 * smear16) * (h1.x > 0.25 ? 1.0 : -0.6);
+		vec2 relm16 = (uv - u_clown_mouth) * asp16;
+		float goff16 = grin16 * relm16.x * relm16.x
+			/ max(u_clown_mouth_r.x * u_aspect * 2.4, 0.04) * 0.02;
+		float lipf16 = texture(u_clown_paint,
+			clamp(puv16 + vec2(0.0, goff16), vec2(0.0), vec2(1.0))).g;
+		float eyeM16 = smoothstep(0.20, 0.62, paint16.r);
+		float lipM16 = smoothstep(0.24, 0.68, lipf16);
+		float noseM16 = smoothstep(0.24, 0.68, paint16.b);
+		// STREAKS: rooted at each eye's live position (plus the Pan nudge the
+		// sampled features get), running screen-down with a per-streak tilt.
+		float streakM16 = 0.0;
+		for (int e16 = 0; e16 < 2; e16++) {
+			vec2 he16 = hash22(vec2(salt16, 21.0 + float(e16) * 4.0));
+			vec2 eyep16 = (e16 == 0 ? u_clown_eye_l : u_clown_eye_r) + pan16;
+			float er_r16 = clamp(e16 == 0 ? u_clown_eye_lr : u_clown_eye_rr,
+				0.012, 0.08) * fs16;
+			vec2 sroot16 = eyep16 * asp16 + vec2(0.0, er_r16 * 1.2);
+			for (int j16 = 0; j16 < 4; j16++) {
+				vec2 hs16 = hash22(vec2(salt16 + float(e16) * 31.0, 40.0 + float(j16) * 9.0));
+				if (hs16.x > 0.85) {
+					continue;
+				}
+				vec2 hq16 = hash22(vec2(salt16 + float(e16) * 31.0, 71.0 + float(j16) * 9.0));
+				float sang16 = (hs16.y - 0.5) * 0.8;
+				vec2 sdir16 = vec2(sin(sang16), cos(sang16));
+				vec2 rp16 = uv * asp16 - sroot16;
+				float along16 = dot(rp16, sdir16);
+				float across16 = dot(rp16, vec2(sdir16.y, -sdir16.x));
+				across16 += (vnoise(vec2(along16 * 9.0, salt16 + float(j16) * 5.0
+					+ sin(t16 * 0.3) * 0.4)) - 0.5) * 0.05 * (0.4 + 1.2 * smear16);
+				float slen16 = (0.10 + 0.34 * hq16.x * hq16.x) * fs16;
+				float swid16 = (0.012 + 0.020 * hq16.y) * fs16;
+				float band16 = (1.0 - smoothstep(swid16 * 0.35, swid16, abs(across16)))
+					* smoothstep(-0.015, 0.03, along16)
+					* (1.0 - smoothstep(slen16 * 0.45, slen16, along16));
+				streakM16 = max(streakM16, band16 * (0.6 + 0.4 * hq16.y));
+			}
+		}
+		// Presence: coat window x tint-match, the dark guard lifted wherever
+		// a FEATURE lands (they paint at full strength on the dark anatomy
+		// they were detected on).
+		float feat16 = max(max(eyeM16, streakM16), max(lipM16, noseM16));
+		float amt16 = clamp(w16 * win16 * (0.35 + 0.65 * match16)
+			* max(dark16, feat16 * 0.95), 0.0, 0.96);
+		if (amt16 <= 0.004) {
+			return col;
+		}
+		// COMPOSE back to front. Black and red keep a breath of the footage's
+		// light so the paint sits IN the scene's lighting; Morph rotates the
+		// whole palette at the end.
+		float coat16 = clamp(1.0 - chip16 * 0.9 - erode16, 0.0, 1.0);
+		vec3 base16 = mix(white16, white16 * 0.16, crack16);
+		vec3 painted16 = mix(col.rgb, base16, coat16 * 0.95);
+		vec3 black16 = vec3(0.05, 0.045, 0.055) + vec3(0.09) * lum16;
+		painted16 = mix(painted16, black16, clamp(eyeM16, 0.0, 1.0) * 0.95);
+		painted16 = mix(painted16, black16, clamp(streakM16, 0.0, 1.0) * 0.88);
+		vec3 red16 = vec3(0.78, 0.07, 0.11) * (0.75 + 0.5 * lum16);
+		painted16 = mix(painted16, red16, clamp(lipM16, 0.0, 1.0) * 0.95);
+		vec3 nose16 = vec3(0.86, 0.10, 0.12) * (0.85 + 0.4 * lum16);
+		painted16 = mix(painted16, nose16, clamp(noseM16, 0.0, 1.0) * 0.96);
+		painted16 = hue_shift(painted16, u_l_tint[i]);
+		return vec4(mix(col.rgb, painted16, amt16), col.a);
 	}
 	if (effect == 7) {
 		// ECHO - temporal lag. The target color's region stops being live: it
@@ -833,7 +1032,7 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		float mid = snow_layer(p9 * 1.15 + vec2(-0.4, 0.3) - drift9 * 0.85, thr9 * 0.55) * 0.65 * bg_mid;
 		float small = snow_layer(p9 * 2.3 + vec2(0.7, -0.5) - drift9 * 1.5, thr9) * 1.0 * bg_small;
 		float flake = clamp(big + mid + small, 0.0, 1.0);
-		vec3 snowc = vec3(0.88, 0.93, 1.0) * clamp(u_l_glow[i], 0.6, 1.6);
+		vec3 snowc = hue_shift(vec3(0.88, 0.93, 1.0), u_l_tint[i]) * clamp(u_l_glow[i], 0.6, 1.6);
 		// bg_small/bg_mid/bg_big are already folded into big/mid/small above -
 		// flake doesn't need a second gate here, only the layer's own weight.
 		float amt9 = clamp(flake * w, 0.0, 1.0);
@@ -1333,7 +1532,8 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		// never the key hue (the halo lessons hold).
 		emiss = mix(vec3(0.10, 0.42, 0.24), vec3(0.55, 0.95, 0.62), heat) * heat * 0.8;
 	}
-	outc += emiss * (glow * vol_conf * w);
+	// Morph rotates each effect's own emissive palette (identity at 0).
+	outc += hue_shift(emiss, u_l_tint[i]) * (glow * vol_conf * w);
 	if (effect == 5) {
 		// WAVE WASH - a head-turn impulse reads as a drop of the same paint
 		// whisp is already made of, caught in its current: confined to the

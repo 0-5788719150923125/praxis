@@ -82,6 +82,7 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
             "main.gd",
             "boot.gd",
             "chrome.gd",
+            "console.gd",
             "splash.gd",
             "director.gd",
             "workspace.gd",
@@ -293,6 +294,14 @@ ENGINE_FLAGS = {
     "--write-movie",
     "--fixed-fps",
     "--",
+    # yt-dlp/pip arguments (mask_editor's URL import subprocess), not ghost flags
+    "--newline",
+    "--no-playlist",
+    "--restrict-filenames",
+    "--upgrade",
+    "--throttled-rate",
+    "--concurrent-fragments",
+    "--js-runtimes",
 }
 
 # Top-level entries for the README LAYOUT block and docs/index.md.

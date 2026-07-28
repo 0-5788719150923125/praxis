@@ -102,10 +102,13 @@ def test_terminal_reports_live_effective_batch():
 
 
 def test_registry_builds_callback_with_ceiling():
-    gov = GOVERNOR_REGISTRY["gns_batch"](batch_size=16, target_batch_size=512)
+    gov = GOVERNOR_REGISTRY["gns_batch"](
+        batch_size=16, target_batch_size=512, val_every=1024
+    )
     assert isinstance(gov, GNSBatchGovernor)
     assert gov.controller.max_factor == 32
     assert gov.controller.min_factor == 2
+    assert gov.val_every == 1024
 
 
 # ── Lightning wiring (simulated hooks) ───────────────────────────────────
@@ -115,6 +118,8 @@ def _fake_trainer(factor=1):
     return SimpleNamespace(
         accumulate_grad_batches=factor,
         world_size=1,
+        global_step=0,
+        val_check_batch=None,
         fit_loop=SimpleNamespace(
             epoch_loop=SimpleNamespace(
                 batch_progress=SimpleNamespace(current=SimpleNamespace(ready=0))
@@ -129,14 +134,18 @@ def _set_grads(module, value):
 
 
 def _run_cycle(gov, trainer, module, k):
-    """Simulate one full accumulation cycle of k microbatches."""
+    """Simulate one full accumulation cycle of k microbatches, mirroring
+    Lightning's ordering: backward -> (step + global_step bump) -> batch_end
+    with the within-epoch batch index."""
+    cur = trainer.fit_loop.epoch_loop.batch_progress.current
     for i in range(k):
         _set_grads(module, 0.01 * (i + 1))
         gov.on_after_backward(trainer, module)
-        trainer.fit_loop.epoch_loop.batch_progress.current.ready += 1
+        cur.ready += 1
         if i == k - 1:
             gov.on_before_optimizer_step(trainer, module, None)
-        gov.on_train_batch_end(trainer, module, None, None, None)
+            trainer.global_step += 1
+        gov.on_train_batch_end(trainer, module, None, None, cur.ready - 1)
 
 
 def test_callback_undoes_lightning_loss_scaling():
@@ -196,6 +205,62 @@ def test_irregular_cycle_is_not_measured():
     gov.on_after_backward(trainer, module)  # only 1 of K=2 microbatches
     gov.on_before_optimizer_step(trainer, module, None)
     assert gov.estimator._updates == 0
+
+
+def test_validation_fires_on_exact_step_cadence():
+    """Every batch end the governor repoints Lightning's batch-modulo check
+    at the raw batch where the next val_every optimizer-step boundary lands,
+    so validation fires at global_step multiples regardless of the factor."""
+    gov = GNSBatchGovernor(batch_size=16, target_batch_size=512, val_every=3)
+    trainer = _fake_trainer()
+    module = nn.Linear(4, 4)
+    gov.on_train_start(trainer, module)
+    assert trainer.val_check_batch == GNSBatchGovernor.VAL_PARKED
+
+    _run_cycle(gov, trainer, module, k=2)  # global_step 1
+    _run_cycle(gov, trainer, module, k=2)  # global_step 2
+    # Mid-interval the target already points at the boundary batch (step 3
+    # at factor 2 lands on raw batch 6) - strictly ahead, so no early fire.
+    assert trainer.val_check_batch == 6
+
+    _run_cycle(gov, trainer, module, k=2)  # global_step 3: boundary
+    # Target equals the just-finished batch count: (5+1) % 6 == 0 fires NOW.
+    assert trainer.val_check_batch == 6
+
+    # After the boundary, the target moves a whole interval ahead - even
+    # across a factor change (steps 4-6 at factor 4 end on raw batch 18).
+    trainer.accumulate_grad_batches = 4
+    _run_cycle(gov, trainer, module, k=4)  # global_step 4
+    assert trainer.val_check_batch == 18
+    _run_cycle(gov, trainer, module, k=4)  # global_step 5
+    assert trainer.val_check_batch == 18
+    _run_cycle(gov, trainer, module, k=4)  # global_step 6: boundary
+    assert trainer.val_check_batch == 18  # == batches done: fires
+
+
+def test_validation_target_recovers_after_resume_gap():
+    """Cadence anchors to absolute global_step multiples: resuming at an
+    arbitrary step targets the NEXT boundary, no state carried over."""
+    gov = GNSBatchGovernor(batch_size=16, target_batch_size=512, val_every=1000)
+    trainer = _fake_trainer(factor=2)
+    trainer.global_step = 6100  # resumed mid-interval
+    trainer.fit_loop.epoch_loop.batch_progress.current.ready = 42000
+    module = nn.Linear(4, 4)
+    gov.on_train_start(trainer, module)
+    _run_cycle(gov, trainer, module, k=2)  # global_step 6101
+    # 899 steps to the 7000 boundary, at factor 2 from 42002 batches done.
+    assert trainer.val_check_batch == 42002 + 899 * 2
+
+
+def test_validation_cadence_disabled_without_val_every():
+    gov = GNSBatchGovernor(batch_size=16, target_batch_size=512)
+    trainer = _fake_trainer()
+    trainer.val_check_batch = "untouched"
+    module = nn.Linear(4, 4)
+    gov.on_train_start(trainer, module)
+    for _ in range(3):
+        _run_cycle(gov, trainer, module, k=2)
+    assert trainer.val_check_batch == "untouched"
 
 
 def test_state_dict_roundtrip_restores_factor():

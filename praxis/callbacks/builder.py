@@ -86,6 +86,10 @@ def build_training_callbacks(
                 GOVERNOR_REGISTRY[governor](
                     batch_size=hparams["batch_size"] * cfg.num_nodes,
                     target_batch_size=hparams["target_batch_size"],
+                    # Validation cadence in optimizer steps: the governor owns
+                    # it (the static raw-batch conversion below assumes a
+                    # fixed accumulation factor).
+                    val_every=cfg.val_every,
                 )
             )
         else:

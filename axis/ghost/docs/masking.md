@@ -39,7 +39,7 @@ Source: [scripts/mask_editor.gd](../scripts/mask_editor.gd)
 
 ## Effects
 
-16 effects (`MaskSession.MASK_EFFECTS`). The actual implementations live in [shaders/mask_split.gdshader](../shaders/mask_split.gdshader) - each marker becomes a shader layer, and `apply_layer()` dispatches per effect. Control groups: `keying` (threshold / feather / colorfulness steer the volumetric mask), `reach` (how wide around the key colour a restore acts), `pattern` (field placement / coverage / contrast / resonance), plus per-effect groups (`echo`, `snow`, `fur`). An effect with no groups exposes only the universal colour + intensity controls.
+17 effects (`MaskSession.MASK_EFFECTS`). The actual implementations live in [shaders/mask_split.gdshader](../shaders/mask_split.gdshader) - each marker becomes a shader layer, and `apply_layer()` dispatches per effect. Control groups: `keying` (threshold / feather / colorfulness steer the volumetric mask), `reach` (how wide around the key colour a restore acts), `pattern` (field placement / coverage / contrast / resonance), plus per-effect groups (`echo`, `snow`, `fur`). An effect with no groups exposes only the universal colour + intensity controls.
 
 | # | Effect | Control groups | Notes |
 | --- | --- | --- | --- |
@@ -59,6 +59,7 @@ Source: [scripts/mask_editor.gd](../scripts/mask_editor.gd)
 | 13 | `chimera` | `pattern` | color steers the anchor/claim; scale=window, pan=graft offset, coverage=dominance, contrast=interleave sharpness |
 | 14 | `arealight` | `pattern` | keyless; pattern group exists only to expose the single Envelope/contrast dial |
 | 15 | `meta` | - | mirrors the workspace; keyless, no pattern - only intensity/duration/kind matter |
+| 16 | `clown` | `pattern` | projection + tracked face frame: pan=layout nudge, scale=feature size, coverage=Wear, contrast=Smear |
 
 ## Headless marker insertion
 

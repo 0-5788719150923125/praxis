@@ -43,9 +43,29 @@ class GNSBatchGovernor(Callback):
     # sync (.item()) the governor performs; per-step work stays on device.
     decide_every = 16
 
-    def __init__(self, batch_size: int, target_batch_size: int) -> None:
+    # Initial placeholder for Lightning's batch-modulo validation check,
+    # in force only until the first batch ends and per-batch repointing takes
+    # over. A huge int (not float("inf"): inf flips Lightning's
+    # is_infinite_dataset branch, which validates on epoch's last batch).
+    VAL_PARKED = 1_000_000_000
+
+    def __init__(
+        self,
+        batch_size: int,
+        target_batch_size: int,
+        val_every: Optional[int] = None,
+    ) -> None:
         super().__init__()
         self.micro_batch = max(1, int(batch_size))
+        # Validation cadence in OPTIMIZER steps. The static trainer setup
+        # converts val_every to raw batches with the fixed factor, which a
+        # dynamic factor breaks (target/batch=32 put validation ~5000 steps
+        # apart while the governor ran at factor 2-4). The governor owns the
+        # cadence instead, AccumulationSchedule-style: every batch end it
+        # repoints ``trainer.val_check_batch`` at the raw-batch index where
+        # the next val_every boundary of global_step lands, so val points
+        # fall on the same steps as every static run.
+        self.val_every = int(val_every) if val_every else None
         self.controller = BatchTierController(
             micro_batch=self.micro_batch,
             max_factor=max(1, -(-int(target_batch_size) // self.micro_batch)),
@@ -79,6 +99,8 @@ class GNSBatchGovernor(Callback):
                 "rank-inconsistent; holding the initial factor."
             )
         trainer.accumulate_grad_batches = self._factor
+        if self.val_every:
+            trainer.val_check_batch = self.VAL_PARKED
         self._micro_count = 0
         self._small_sq = None
         self._stash(pl_module, noise_scale=None)
@@ -125,6 +147,9 @@ class GNSBatchGovernor(Callback):
     # ── actuation ─────────────────────────────────────────────────────────
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        # Runs on EVERY batch (before the stepped-only bookkeeping, which
+        # still consumes the pre-reset ``_stepped``/``_micro_count`` state).
+        self._patch_val_cadence(trainer, batch_idx)
         if not self._stepped:
             return
         self._stepped = False
@@ -135,6 +160,35 @@ class GNSBatchGovernor(Callback):
             self._pending = None
             trainer.accumulate_grad_batches = self._factor
             self._stash(pl_module, noise_scale=self.estimator.noise_scale())
+
+    def _patch_val_cadence(self, trainer, batch_idx) -> None:
+        """Live-repoint Lightning's validation trigger every batch.
+
+        Lightning fires validation when ``(batch_idx + 1) %
+        trainer.val_check_batch == 0``, checked right AFTER this hook - so
+        keeping ``val_check_batch`` equal to the absolute raw-batch index of
+        the next ``val_every`` optimizer-step boundary makes the modulo hit
+        exactly there (never at a multiple: the target always sits at most
+        one interval ahead). Stateless: recomputed each batch from
+        ``global_step`` and the live factor, so tier changes just move the
+        target, checkpoint resume needs no special handling, and the value
+        is always readable as "the batch validation will run on".
+        """
+        if not self.val_every:
+            return
+        step = int(getattr(trainer, "global_step", 0) or 0)
+        done = batch_idx + 1  # raw batches completed this epoch
+        if self._stepped and step > 0 and step % self.val_every == 0:
+            trainer.val_check_batch = done  # boundary lands on this batch
+            return
+        # Predict the boundary batch: remaining optimizer steps x current
+        # factor, minus the microbatches already consumed of the open cycle.
+        remaining = self.val_every - (step % self.val_every)
+        factor = max(int(trainer.accumulate_grad_batches or 1), 1)
+        into_cycle = 0 if self._stepped else self._micro_count
+        target = done + remaining * factor - into_cycle
+        # Strictly future: a stale estimate must never fire early.
+        trainer.val_check_batch = max(target, done + 1)
 
     @staticmethod
     def _aligned(trainer, factor: int) -> bool:

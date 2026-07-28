@@ -37,6 +37,22 @@ def _build_trainer_params(cfg, bundle, callbacks, logger):
     hparams = bundle.hparams
     caps = get_trainer_capabilities(cfg.trainer_type)
 
+    # val_every is in effective (optimizer) steps. The static conversion to
+    # raw dataloader batches below is only correct while the accumulation
+    # factor is fixed; under a batch governor the factor moves, so the
+    # governor callback owns the cadence instead - every batch end it
+    # repoints Lightning's check at the raw batch where the next val_every
+    # boundary of global_step lands. Here we just park the check on a value
+    # that never fires by itself until that per-batch repointing begins.
+    if getattr(cfg, "governor", None):
+        from praxis.callbacks.lightning.governor import GNSBatchGovernor
+
+        val_check_interval = GNSBatchGovernor.VAL_PARKED
+    else:
+        val_check_interval = (
+            cfg.val_every * hparams["target_batch_size"] // hparams["batch_size"]
+        )
+
     return dict(
         accelerator="cpu" if cfg.device == "cpu" else "gpu",
         strategy=(
@@ -64,9 +80,7 @@ def _build_trainer_params(cfg, bundle, callbacks, logger):
         enable_progress_bar=not cfg.use_dashboard and not cfg.headless,
         enable_model_summary=False,
         detect_anomaly=EnvironmentFeatures.is_enabled("detect_anomaly"),
-        val_check_interval=cfg.val_every
-        * hparams["target_batch_size"]
-        // hparams["batch_size"],
+        val_check_interval=val_check_interval,
         num_sanity_val_steps=0,
         limit_val_batches=16384 // hparams["batch_size"],
         log_every_n_steps=10,
