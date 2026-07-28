@@ -171,6 +171,7 @@ const _FACE_INTERVAL := 0.15
 var _face_slot := -1
 var _face_prev_lum := PackedFloat32Array()   # 96x54 luminance, for the mouth's motion cue
 var _face_motion_mean := 0.0                 # EMA of the face's ambient per-pixel motion
+var _face_red_ema := 0.02                    # mean (r-g) over the face - the lips' baseline
 var _face_bg_lum := 0.2                      # this frame's whole-frame mean luminance (the
                                              #   brightness cue's floor - see _update_face_model)
 # The liquid paint simulation (see shaders/clown_paint.gdshader and
@@ -1112,7 +1113,9 @@ func _ensure_paint_sim() -> void:
 		return
 	for i in 2:
 		var vp := SubViewport.new()
-		vp.size = Vector2i(256, 144)
+		# Finer than the echo ring: the deposits now carry per-pixel feature
+		# shape, and an eye socket is only a few texels wide at 256x144.
+		vp.size = Vector2i(384, 216)
 		vp.disable_3d = true
 		# Float buffers: the field decays multiplicatively, and 8-bit
 		# quantization makes low paint values stick instead of thinning out.
@@ -1125,7 +1128,7 @@ func _ensure_paint_sim() -> void:
 		vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
 		vp.render_target_clear_mode = SubViewport.CLEAR_MODE_NEVER
 		var rect := ColorRect.new()
-		rect.size = Vector2(256, 144)
+		rect.size = Vector2(384, 216)
 		var m := ShaderMaterial.new()
 		m.shader = PAINT_SIM_SHADER
 		rect.material = m
@@ -1161,6 +1164,12 @@ func _step_paint_sim() -> void:
 	var vt := _player.get_video_texture()
 	if vt != null and vt.get_height() > 0:
 		mat.set_shader_parameter("u_aspect", float(vt.get_width()) / float(vt.get_height()))
+		# The frame itself: the deposits read their evidence straight out of
+		# it (dark socket, red lip line, lit nose ridge) instead of stamping
+		# shapes - see clown_paint.gdshader.
+		mat.set_shader_parameter("u_frame", vt)
+	mat.set_shader_parameter("u_face_lum", _face_lum_ema)
+	mat.set_shader_parameter("u_face_red", _face_red_ema)
 	mat.set_shader_parameter("u_eye_l", cm.eye_l)
 	mat.set_shader_parameter("u_eye_r", cm.eye_r)
 	mat.set_shader_parameter("u_mouth", cm.mouth)
@@ -3203,6 +3212,7 @@ func _update_face_model(src: Image) -> void:
 	if tint_acc.length() > 1e-4:
 		_face_tint_ema = _face_tint_ema.lerp((tint_acc / wsum).normalized(), 0.1)
 	_face_lum_ema = lerpf(_face_lum_ema, mean_lum, 0.1)
+	_face_red_ema = lerpf(_face_red_ema, mean_red, 0.1)
 	# The nose is DERIVED (mid-eyes toward mouth) but smoothed on its own,
 	# slower clock - it must not inherit the eye pair's tick-to-tick jitter.
 	# ~55% of the way from the eye line to the mouth is where a nose tip

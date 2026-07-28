@@ -32,6 +32,15 @@ render_mode blend_disabled;
 // freezes the liquid and export traces the same currents.
 
 uniform sampler2D u_prev : hint_default_black;
+// The live frame + the face's own colour statistics: the deposits below are
+// EVIDENCE-DRIVEN, not stamped shapes. A landmark only says WHERE TO LOOK;
+// the pixels say what the feature's shape is (dark socket, red lip line, lit
+// nose ridge), the same way the white coat is a per-pixel face-tint match
+// rather than a fitted oval. Stamped ellipses were the "circles drawn over
+// the face" complaint.
+uniform sampler2D u_frame : hint_default_black;
+uniform float u_face_lum = 0.4;    // mean luminance over the detected face
+uniform float u_face_red = 0.02;   // mean (r - g) over it - lips are redder than THIS
 uniform float u_dt = 0.016;        // playback seconds advanced this step
 uniform int u_reset = 0;           // 1 = snap the field to the targets (seek/first frame)
 uniform float u_time = 0.0;        // playback clock, for the ooze wander
@@ -75,6 +84,13 @@ float ell(vec2 p, vec2 c, vec2 r) {
 	return 1.0 - smoothstep(0.72, 1.0, length((p - c) / max(r, vec2(1e-4))));
 }
 
+// A LOOK-HERE window: deliberately generous and very soft, so it bounds the
+// search without ever drawing its own edge - whatever shape survives is the
+// evidence's, not the window's.
+float win(vec2 p, vec2 c, vec2 r) {
+	return 1.0 - smoothstep(0.35, 1.0, length((p - c) / max(r, vec2(1e-4))));
+}
+
 // One channel's advected sample: paint drifts toward `attract` and wanders
 // under the shared ooze field. Each channel advects toward ITS OWN
 // attractor - the independence of the features lives here.
@@ -95,20 +111,62 @@ void fragment() {
 	vec2 mo = u_mouth * asp;
 	vec2 nc = u_nose * asp;
 	vec2 fc = u_face_c * asp;
-	// Targets: each feature's CURRENT ellipse, positioned at ITS detection,
-	// sized by ITS OWN measured spread in screen units - no shared frame, no
-	// shared scale, so nothing here can move or grow in lockstep.
-	float rl = clamp(u_eye_lr, 0.012, 0.08) * u_scale;
-	float rr = clamp(u_eye_rr, 0.012, 0.08) * u_scale;
-	float tblack = max(ell(p, el, vec2(rl, rl * 1.3)), ell(p, er, vec2(rr, rr * 1.3)));
-	// Lips are WIDE and shallow: the detected spread is the whole moving
-	// mouth region (jaw and cheeks included), so x is stretched and y is
-	// taken nearly raw - a square blob reads as a muzzle, not a mouth.
-	vec2 lr = vec2(clamp(u_mouth_r.x, 0.015, 0.055) * u_aspect * 1.45,
-		clamp(u_mouth_r.y, 0.010, 0.032) * 1.05) * u_scale;
-	float tlip = ell(p, mo, lr);
-	float nr = clamp(rl * 0.75 + rr * 0.75, 0.018, 0.07) * u_scale;
-	float tnose = ell(p, nc, vec2(nr, nr * 1.08));
+	// EVIDENCE, read from the frame at this texel. Everything is relative to
+	// the FACE's own statistics, never absolutes - the same discipline the
+	// mouth detector uses, and the only thing that survives a monochrome or
+	// heavily-graded clip.
+	// DILATED evidence: the max over a small ring, not the single texel.
+	// Raw per-pixel evidence traced a feature's outline (the lash line, the
+	// lip line) but never covered it - the paint has to fill the eye, the
+	// nose, the mouth. A max-filter grows each region outward from its own
+	// strongest pixels, so coverage comes from the anatomy's real extent and
+	// the contour stays organic (a floor would just redraw the disc).
+	float dark = 0.0;
+	float bright = 0.0;
+	float redness = -1.0;
+	for (int k = 0; k < 9; k++) {
+		vec2 off = vec2(0.0);
+		if (k > 0) {
+			float a = float(k - 1) * 0.7853981634;
+			off = vec2(cos(a), sin(a)) * 0.016;
+		}
+		vec3 c3 = texture(u_frame, clamp(UV + off / vec2(u_aspect, 1.0),
+			vec2(0.0), vec2(1.0))).rgb;
+		float l3 = dot(c3, vec3(0.299, 0.587, 0.114));
+		dark = max(dark, clamp((u_face_lum - l3) / max(u_face_lum, 0.08), 0.0, 1.0));
+		bright = max(bright, clamp((l3 - u_face_lum) / max(u_face_lum, 0.08), 0.0, 1.0));
+		redness = max(redness, c3.r - c3.g);
+	}
+	float fred = redness;
+	// EYES: the black covers what is actually DARK inside the look-window -
+	// socket, lashes, lid crease, brow - so it wraps the eye's own shape
+	// instead of capping a disc over it. Windows are per-eye and generous.
+	float rl = clamp(u_eye_lr, 0.012, 0.08) * u_scale * 1.75;
+	float rr = clamp(u_eye_rr, 0.012, 0.08) * u_scale * 1.75;
+	float eye_ev = smoothstep(0.04, 0.26, dark);
+	float wl = win(p, el, vec2(rl, rl * 1.15));
+	float wr = win(p, er, vec2(rr, rr * 1.15));
+	// The floor is small on purpose: it keeps a hint of paint where the
+	// evidence is weak without ever filling the window as a shape.
+	float tblack = max(wl, wr) * (0.22 + 0.78 * eye_ev);
+	// LIPS: redder than the face's own mean, or the dark line of the mouth
+	// itself - whichever is stronger. The look-window is wide and shallow
+	// (a mouth's proportions), the evidence draws the lips.
+	vec2 lr = vec2(clamp(u_mouth_r.x, 0.015, 0.055) * u_aspect * 1.9,
+		clamp(u_mouth_r.y, 0.010, 0.032) * 1.7) * u_scale;
+	float lip_ev = max(smoothstep(0.005, 0.075, fred - u_face_red),
+		smoothstep(0.07, 0.38, dark) * 0.9);
+	float tlip = win(p, mo, lr) * (0.18 + 0.82 * lip_ev);
+	// NOSE: the one feature with no reliable 2D signature - a nose is a 3D
+	// protrusion, so its evidence is the LIT RIDGE plus the shadow under the
+	// tip. Window-led with a higher floor, brightness-shaped so the ball
+	// still hugs the actual nose rather than sitting as a decal.
+	float nr = clamp(rl * 0.55 + rr * 0.55, 0.018, 0.075) * u_scale;
+	// Brightness leads. The shadow UNDER the nose is dark evidence too, and
+	// leaning on it bridged the ball into the lips - so the dark term is a
+	// weak, late-thresholded assist only, and the window stays compact.
+	float nose_ev = max(smoothstep(0.0, 0.22, bright), smoothstep(0.22, 0.55, dark) * 0.45);
+	float tnose = win(p, nc, vec2(nr, nr * 0.95)) * (0.42 + 0.58 * nose_ev);
 	// The coat's radii are CAPPED at a face-plausible size: on footage where
 	// the key hue washes the whole room, the fitted spread is the ROOM's,
 	// and an uncapped coat painted the wallpaper (again - the same lesson as
