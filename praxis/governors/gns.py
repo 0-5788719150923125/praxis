@@ -195,6 +195,37 @@ GOVERNOR_METRIC_DESCRIPTIONS: Dict[str, dict] = {
             "series_label": "effective batch",
         },
     },
+    "gov_next_val_batch": {
+        "description": (
+            "Raw-batch index the governor has pointed Lightning's validation "
+            "trigger at - the next val_every optimizer-step boundary. "
+            "Validation fires when the raw-batch count reaches this line."
+        ),
+        "chart": {
+            "title": "Batch Governor: Validation Target",
+            "y_label": "raw batches",
+            "y_scale": "linear",
+            "group": _GOV_GROUP,
+            "order": 30,
+            "series_group": "gov_val_cadence",
+            "series_label": "next val target",
+        },
+    },
+    "gov_raw_batches": {
+        "description": (
+            "Raw dataloader batches completed this epoch. When this line "
+            "meets the validation target, validation runs; a target that "
+            "gets crossed without a validation is a silent miss, visible "
+            "here immediately."
+        ),
+        # No title/axis: rides gov_next_val_batch's chart via series_group.
+        "chart": {
+            "group": _GOV_GROUP,
+            "order": 31,
+            "series_group": "gov_val_cadence",
+            "series_label": "raw batches",
+        },
+    },
     "gov_signal_sq": {
         "description": (
             "EMA of the unbiased |G|^2 estimate - squared norm of the true "

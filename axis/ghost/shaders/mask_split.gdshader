@@ -672,8 +672,11 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 			grad16 += vec2(cos(am16), sin(am16)) * taps[g16 + 9].z
 				+ vec2(cos(aw16), sin(aw16)) * taps[g16 + 17].z;
 		}
-		vec2 conform16 = vec2(-grad16.y, grad16.x)
-			* smoothstep(0.06, 0.30, length(grad16)) * 0.12;
+		// The picture's own structure tangent - what makes the cracks crawl
+		// with the skin instead of sliding over it. The streaks below bend
+		// through the SAME field (see there), so both deform with the face.
+		vec2 struct16 = vec2(-grad16.y, grad16.x) * smoothstep(0.06, 0.30, length(grad16));
+		vec2 conform16 = struct16 * 0.12;
 		vec2 pcr16 = ((uv - (u_clown_face_c - vec2(0.5)) * near16) * asp16 + pan16)
 			/ fs16 + conform16;
 		vec2 cvq16 = pcr16 * (7.0 + 4.5 * h3.y) + vec2(salt16 * 0.31, salt16 * 0.11);
@@ -694,37 +697,79 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 			/ max(u_clown_mouth_r.x * u_aspect * 2.4, 0.04) * 0.02;
 		float lipf16 = texture(u_clown_paint,
 			clamp(puv16 + vec2(0.0, goff16), vec2(0.0), vec2(1.0))).g;
-		float eyeM16 = smoothstep(0.20, 0.62, paint16.r);
-		float lipM16 = smoothstep(0.24, 0.68, lipf16);
-		float noseM16 = smoothstep(0.24, 0.68, paint16.b);
-		// STREAKS: rooted at each eye's live position (plus the Pan nudge the
-		// sampled features get), running screen-down with a per-streak tilt.
+		// Thresholds sit low because the field is RATE-LIMITED now (see the
+		// Settle knob): it converges toward the evidence rather than latching
+		// to its peak, so steady-state values are lower than they used to be
+		// and the old cuts read as thin paint.
+		float eyeM16 = smoothstep(0.12, 0.50, paint16.r);
+		float lipM16 = smoothstep(0.15, 0.55, lipf16);
+		float noseM16 = smoothstep(0.15, 0.55, paint16.b);
+		// STREAKS - run-down from the eye paint, on the CHEEKS. Three faults
+		// in the previous cut, all from treating them as free geometry: they
+		// rooted at the DETECTED eye radius (which is wider than the painted
+		// socket, so they started in clean white with a gap above them), they
+		// tilted symmetrically (so half of them ran inward, straight down
+		// over the nose and mouth), and they were sized in absolute screen
+		// units (thick bars). Now each one is GATED ON THE PAINT ITSELF at
+		// its root - no black there, no streak, so they are always attached -
+		// tilts strictly OUTWARD from the face's centre line, and is sized
+		// from its own eye's radius so it stays a run of makeup rather than
+		// a stripe.
 		float streakM16 = 0.0;
 		for (int e16 = 0; e16 < 2; e16++) {
-			vec2 he16 = hash22(vec2(salt16, 21.0 + float(e16) * 4.0));
 			vec2 eyep16 = (e16 == 0 ? u_clown_eye_l : u_clown_eye_r) + pan16;
 			float er_r16 = clamp(e16 == 0 ? u_clown_eye_lr : u_clown_eye_rr,
 				0.012, 0.08) * fs16;
-			vec2 sroot16 = eyep16 * asp16 + vec2(0.0, er_r16 * 1.2);
+			// Root INSIDE the patch, not below it: the paint gate decides
+			// where the run actually begins.
+			vec2 root_uv16 = eyep16 + vec2(0.0, er_r16 * 0.35);
+			float rootpaint16 = texture(u_clown_paint,
+				clamp(root_uv16 - pan16, vec2(0.0), vec2(1.0))).r;
+			float attach16 = smoothstep(0.14, 0.45, rootpaint16);
+			if (attach16 <= 0.01) {
+				continue;
+			}
+			vec2 sroot16 = root_uv16 * asp16;
+			// Which way is "away from the face" for this eye.
+			float outward16 = e16 == 0 ? -1.0 : 1.0;
 			for (int j16 = 0; j16 < 4; j16++) {
 				vec2 hs16 = hash22(vec2(salt16 + float(e16) * 31.0, 40.0 + float(j16) * 9.0));
-				if (hs16.x > 0.85) {
+				if (hs16.x > 0.8) {
 					continue;
 				}
 				vec2 hq16 = hash22(vec2(salt16 + float(e16) * 31.0, 71.0 + float(j16) * 9.0));
-				float sang16 = (hs16.y - 0.5) * 0.8;
+				// Down and OUT - never across the centre line. Gravity still
+				// dominates (cos of a small angle), so these read as runs,
+				// not as rays.
+				float sang16 = outward16 * (0.10 + 0.34 * hs16.y);
 				vec2 sdir16 = vec2(sin(sang16), cos(sang16));
-				vec2 rp16 = uv * asp16 - sroot16;
+				// CONFORM, like the cracks: the streak's coordinate is bent by
+				// the local structure tangent, so the run follows the cheek it
+				// is crossing and MORPHS as the face moves - rather than a
+				// rigid stripe that only translates with the eye. Weighted by
+				// how far down the run we are (a drip is pinned at its root
+				// and wanders more the further it travels), which also keeps
+				// the attachment to the eye paint exact.
+				vec2 rp0_16 = uv * asp16 - sroot16;
+				float along0_16 = dot(rp0_16, sdir16);
+				float slen16 = er_r16 * (1.6 + 7.0 * hq16.x * hq16.x);
+				float bend16 = clamp(along0_16 / max(slen16, 1e-4), 0.0, 1.0);
+				vec2 rp16 = rp0_16 + struct16 * (0.06 + 0.22 * bend16) * fs16;
 				float along16 = dot(rp16, sdir16);
 				float across16 = dot(rp16, vec2(sdir16.y, -sdir16.x));
-				across16 += (vnoise(vec2(along16 * 9.0, salt16 + float(j16) * 5.0
-					+ sin(t16 * 0.3) * 0.4)) - 0.5) * 0.05 * (0.4 + 1.2 * smear16);
-				float slen16 = (0.10 + 0.34 * hq16.x * hq16.x) * fs16;
-				float swid16 = (0.012 + 0.020 * hq16.y) * fs16;
-				float band16 = (1.0 - smoothstep(swid16 * 0.35, swid16, abs(across16)))
-					* smoothstep(-0.015, 0.03, along16)
-					* (1.0 - smoothstep(slen16 * 0.45, slen16, along16));
-				streakM16 = max(streakM16, band16 * (0.6 + 0.4 * hq16.y));
+				across16 += (vnoise(vec2(along16 * 11.0, salt16 + float(j16) * 5.0
+					+ sin(t16 * 0.3) * 0.4)) - 0.5) * 0.035 * (0.4 + 1.2 * smear16);
+				// Length and width scale off THIS eye - a big socket sheds a
+				// longer, heavier run - squared so most are short with the
+				// occasional long one.
+				float swid16 = er_r16 * (0.14 + 0.28 * hq16.y);
+				// Tapered: a run of paint narrows as it dries out.
+				float taper16 = 1.0 - 0.65 * clamp(along16 / max(slen16, 1e-4), 0.0, 1.0);
+				float halfw16 = max(swid16 * taper16, 1e-4);
+				float band16 = (1.0 - smoothstep(halfw16 * 0.30, halfw16, abs(across16)))
+					* smoothstep(-0.01, 0.02, along16)
+					* (1.0 - smoothstep(slen16 * 0.55, slen16, along16));
+				streakM16 = max(streakM16, band16 * attach16 * (0.6 + 0.4 * hq16.y));
 			}
 		}
 		// Presence: coat window x tint-match, the dark guard lifted wherever

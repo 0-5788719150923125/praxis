@@ -252,6 +252,34 @@ def test_validation_target_recovers_after_resume_gap():
     assert trainer.val_check_batch == 42002 + 899 * 2
 
 
+def test_validation_target_matches_abstractinator_f_resume():
+    """Replay the real resume shape from the 2026-07-28 run (checkpoint at
+    global_step 6656, raw batch 47104, factor 8, val_every 1024): the target
+    must point at step 7168's raw batch, 47104 + 512*8 = 51200, and the
+    telemetry stash must expose both sides of the cadence pair."""
+    gov = GNSBatchGovernor(batch_size=16, target_batch_size=512, val_every=1024)
+    gov.load_state_dict({"factor": 8, "steps": 6656, "estimator": {}})
+    trainer = _fake_trainer()
+    trainer.global_step = 6656
+    trainer.fit_loop.epoch_loop.batch_progress.current.ready = 47104
+    module = nn.Linear(4, 4)
+    gov.on_train_start(trainer, module)
+    assert trainer.accumulate_grad_batches == 8
+
+    _run_cycle(gov, trainer, module, k=8)  # global_step 6657
+    assert trainer.val_check_batch == 51200
+
+    stash = module._governor_metrics
+    # Stash refreshes on the decision cadence; force one to check the keys.
+    gov._steps = gov.decide_every - 1
+    for _ in range(gov.estimator.min_updates):
+        gov.estimator.update(small_sq=10.0, big_sq=6.0, b_small=16, b_big=128)
+    _run_cycle(gov, trainer, module, k=8)  # decision fires, stash updates
+    stash = module._governor_metrics
+    assert stash["gov_next_val_batch"] == 51200.0
+    assert stash["gov_raw_batches"] == 47120.0  # 47104 + 2 cycles of 8
+
+
 def test_validation_cadence_disabled_without_val_every():
     gov = GNSBatchGovernor(batch_size=16, target_batch_size=512)
     trainer = _fake_trainer()

@@ -59,7 +59,7 @@ Source: [scripts/mask_editor.gd](../scripts/mask_editor.gd)
 | 13 | `chimera` | `pattern` | color steers the anchor/claim; scale=window, pan=graft offset, coverage=dominance, contrast=interleave sharpness |
 | 14 | `arealight` | `pattern` | keyless; pattern group exists only to expose the single Envelope/contrast dial |
 | 15 | `meta` | - | mirrors the workspace; keyless, no pattern - only intensity/duration/kind matter |
-| 16 | `clown` | `pattern` | projection + tracked face frame: pan=layout nudge, scale=feature size, coverage=Wear, contrast=Smear |
+| 16 | `clown` | `pattern`, `clown` | pan=layout nudge, scale=feature size, coverage=Wear, contrast=Smear, + its own Bleed/Settle/Hollow |
 
 ## Headless marker insertion
 

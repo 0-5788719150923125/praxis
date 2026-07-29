@@ -270,6 +270,16 @@ const MAX_LAYERS := 6
 ## numbers (streak counts/lengths/angles, grin pull, asymmetry) are sampled
 ## from hashes salted by the key hue - a new hue is a new clown. Fixed
 ## white/black/red palette (Morph rotates it like any other effect).
+## Its own "clown" control group adds three knobs - clown-only views onto
+## stored fields other effects repurpose the same way (the groups never show
+## together): Bleed (fx_smooth) widens where each feature's paint may reach
+## and softens it as it travels; Settle (fx_lag) is how sticky the paint is
+## in time - it sets both the decay of orphaned paint and the RATE the new
+## paint rises at, so raising it trades a little tracking speed for shapes
+## that stop shimmering; Hollow (fx_stick) keeps the paint AROUND a feature
+## rather than over it - a radial hole in the eye and lip paint, gated on
+## brightness so it opens over a visible eyeball or teeth and closes again
+## on a blink or a shut mouth.
 const MASK_EFFECTS := ["erase", "fire", "freeze", "smoke", "restore", "whisp", "crystal", "echo", "clear", "snow", "fur", "oracle", "serpent", "chimera", "arealight", "meta", "clown"]
 const EFFECT_RESTORE := 4
 const EFFECT_CRYSTAL := 6
@@ -313,7 +323,7 @@ const EFFECT_CONTROLS := {
 	13: ["pattern"],              # chimera (color steers the anchor/claim; scale=window, pan=graft offset, coverage=dominance, contrast=interleave sharpness)
 	14: ["pattern"],              # arealight (keyless; pattern group exists only to expose the single Envelope/contrast dial)
 	15: [],                       # meta (mirrors the workspace; keyless, no pattern - only intensity/duration/kind matter)
-	16: ["pattern"],              # clown (projection + tracked face frame: pan=layout nudge, scale=feature size, coverage=Wear, contrast=Smear)
+	16: ["pattern", "clown"],     # clown (pan=layout nudge, scale=feature size, coverage=Wear, contrast=Smear, + its own Bleed/Settle/Hollow)
 }
 
 ## Second level of the same rule, INSIDE the "pattern" group: which individual
@@ -332,6 +342,11 @@ const PATTERN_KNOBS := {
 	# arealight reads ONLY contrast (relabeled Envelope in the editor) - the
 	# whole point is one dial, not a knob per light.
 	14: ["contrast"],
+	# clown draws no drifting pattern: Velocity only paced an almost
+	# invisible wobble and Resonance only grazed Wear, so both are hidden
+	# rather than left on screen doing nothing (the control hierarchy's whole
+	# point - "only show properties that can be used").
+	16: ["scale", "pan", "coverage", "contrast"],
 }
 
 ## The view-mode registry (see mask_editor.gd). Really a 2-axis matrix flattened to

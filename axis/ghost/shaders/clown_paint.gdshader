@@ -58,6 +58,11 @@ uniform float u_eye_lr = 0.035;
 uniform float u_eye_rr = 0.035;
 uniform vec2 u_mouth_r = vec2(0.05, 0.028);  // x in uv-x units, y in uv-y units
 uniform float u_scale = 1.0;       // the clown layer's Scale knob (feature sizes)
+// The three clown-specific knobs, each a view onto an existing per-layer
+// field (fx_smooth / fx_lag / fx_stick - see MaskSession's doc):
+uniform float u_bleed = 0.0;       // Bleed  - how far the paint spreads/softens
+uniform float u_settle = 0.35;     // Settle - how sticky the paint is in time
+uniform float u_hollow = 0.0;      // Hollow - keep the paint AROUND a feature
 
 float permf(float x) {
 	return mod(((x * 34.0) + 1.0) * x, 289.0);
@@ -124,6 +129,7 @@ void fragment() {
 	float dark = 0.0;
 	float bright = 0.0;
 	float redness = -1.0;
+	float bright0 = 0.0;   // the CENTRE tap only - see the hollow gate below
 	for (int k = 0; k < 9; k++) {
 		vec2 off = vec2(0.0);
 		if (k > 0) {
@@ -134,29 +140,51 @@ void fragment() {
 			vec2(0.0), vec2(1.0))).rgb;
 		float l3 = dot(c3, vec3(0.299, 0.587, 0.114));
 		dark = max(dark, clamp((u_face_lum - l3) / max(u_face_lum, 0.08), 0.0, 1.0));
-		bright = max(bright, clamp((l3 - u_face_lum) / max(u_face_lum, 0.08), 0.0, 1.0));
+		float b3 = clamp((l3 - u_face_lum) / max(u_face_lum, 0.08), 0.0, 1.0);
+		bright = max(bright, b3);
+		if (k == 0) {
+			bright0 = b3;
+		}
 		redness = max(redness, c3.r - c3.g);
 	}
 	float fred = redness;
 	// EYES: the black covers what is actually DARK inside the look-window -
 	// socket, lashes, lid crease, brow - so it wraps the eye's own shape
 	// instead of capping a disc over it. Windows are per-eye and generous.
-	float rl = clamp(u_eye_lr, 0.012, 0.08) * u_scale * 1.75;
-	float rr = clamp(u_eye_rr, 0.012, 0.08) * u_scale * 1.75;
+	float spread = 1.0 + 0.7 * u_bleed;
+	float rl = clamp(u_eye_lr, 0.012, 0.08) * u_scale * 1.75 * spread;
+	float rr = clamp(u_eye_rr, 0.012, 0.08) * u_scale * 1.75 * spread;
 	float eye_ev = smoothstep(0.04, 0.26, dark);
 	float wl = win(p, el, vec2(rl, rl * 1.15));
 	float wr = win(p, er, vec2(rr, rr * 1.15));
 	// The floor is small on purpose: it keeps a hint of paint where the
 	// evidence is weak without ever filling the window as a shape.
-	float tblack = max(wl, wr) * (0.22 + 0.78 * eye_ev);
+	// HOLLOW: a clown paints AROUND the eye, not over the eyeball. The hole
+	// is radial (predictable, tunable) but GATED ON BRIGHTNESS - a visible
+	// eyeball is the bright thing inside a dark socket, so the hole opens on
+	// an open eye and mostly closes on a blink, which is what stops the
+	// effect flickering shut every time she blinks.
+	// The gate reads THIS pixel's own brightness, never the dilated max: a
+	// closed eyelid sits next to bright cheek, and a dilated read opened the
+	// hole and erased the eye paint on every blink. No floor either - with
+	// nothing bright under the paint there is no eyeball to spare, so the
+	// hole simply closes.
+	float hole_gate = smoothstep(0.05, 0.30, bright0);
+	float dnl = length((p - el) / max(vec2(rl, rl * 1.15), vec2(1e-4)));
+	float dnr = length((p - er) / max(vec2(rr, rr * 1.15), vec2(1e-4)));
+	float hole_e = smoothstep(0.55, 0.0, min(dnl, dnr)) * hole_gate;
+	float tblack = max(wl, wr) * (0.22 + 0.78 * eye_ev) * (1.0 - u_hollow * hole_e);
 	// LIPS: redder than the face's own mean, or the dark line of the mouth
 	// itself - whichever is stronger. The look-window is wide and shallow
 	// (a mouth's proportions), the evidence draws the lips.
 	vec2 lr = vec2(clamp(u_mouth_r.x, 0.015, 0.055) * u_aspect * 1.9,
-		clamp(u_mouth_r.y, 0.010, 0.032) * 1.7) * u_scale;
+		clamp(u_mouth_r.y, 0.010, 0.032) * 1.7) * u_scale * spread;
 	float lip_ev = max(smoothstep(0.005, 0.075, fred - u_face_red),
 		smoothstep(0.07, 0.38, dark) * 0.9);
-	float tlip = win(p, mo, lr) * (0.18 + 0.82 * lip_ev);
+	// Same hollow rule for the lips: teeth are the bright thing inside an
+	// open mouth, so the centre clears when it opens and fills when shut.
+	float hole_m = smoothstep(0.45, 0.0, length((p - mo) / max(lr, vec2(1e-4)))) * hole_gate;
+	float tlip = win(p, mo, lr) * (0.18 + 0.82 * lip_ev) * (1.0 - u_hollow * hole_m);
 	// NOSE: the one feature with no reliable 2D signature - a nose is a 3D
 	// protrusion, so its evidence is the LIT RIDGE plus the shadow under the
 	// tip. Window-led with a higher floor, brightness-shaped so the ball
@@ -193,10 +221,17 @@ void fragment() {
 			+ texture(u_prev, UV - vec2(px.x, 0.0))
 			+ texture(u_prev, UV + vec2(0.0, px.y))
 			+ texture(u_prev, UV - vec2(0.0, px.y))) * 0.25;
-		vec4 carried = mix(adv, blur, 0.18);
-		// Decay what never arrives; deposit is instant and dominant.
-		float dec = exp(-u_dt / 0.5);
-		vec4 f = max(carried * dec - vec4(0.004 * u_dt * 60.0) * 0.02, vec4(0.0));
-		COLOR = max(f, tgt);
+		vec4 carried = mix(adv, blur, mix(0.10, 0.45, u_bleed));
+		// SETTLE sets both time constants: how long orphaned paint lingers,
+		// and how fast new paint rises. The deposit is RATE-LIMITED, not
+		// instant - slamming to full value the moment evidence spiked (and
+		// then decaying slowly) is exactly what made the feature shapes
+		// pulse frame to frame. Rising over ~0.1-0.4s low-passes the
+		// evidence's own noise without visibly lagging the face.
+		float tau_dec = mix(0.25, 1.6, clamp(u_settle, 0.0, 1.0));
+		float tau_up = mix(0.06, 0.40, clamp(u_settle, 0.0, 1.0));
+		vec4 f = carried * exp(-u_dt / tau_dec);
+		vec4 rise = max(vec4(0.0), tgt - f) * (1.0 - exp(-u_dt / tau_up));
+		COLOR = max(f + rise, vec4(0.0));
 	}
 }

@@ -81,6 +81,7 @@ class GNSBatchGovernor(Callback):
         self._small_sq: Optional[torch.Tensor] = None
         self._stepped = False
         self._distributed = False
+        self._val_boundary_logged = -1
         print(
             f"[Governor] gns_batch: effective batch in "
             f"[{self.controller.min_factor * self.micro_batch}, "
@@ -101,9 +102,16 @@ class GNSBatchGovernor(Callback):
         trainer.accumulate_grad_batches = self._factor
         if self.val_every:
             trainer.val_check_batch = self.VAL_PARKED
+            step = int(getattr(trainer, "global_step", 0) or 0)
+            next_boundary = (step // self.val_every + 1) * self.val_every
+            print(
+                f"[Governor] validation every {self.val_every} optimizer "
+                f"steps; resuming at step {step}, next boundary at step "
+                f"{next_boundary}"
+            )
         self._micro_count = 0
         self._small_sq = None
-        self._stash(pl_module, noise_scale=None)
+        self._stash(pl_module, noise_scale=None, trainer=trainer)
 
     def on_train_epoch_start(self, trainer, pl_module) -> None:
         # ``ready`` resets each epoch; a stale partial cycle must not pair a
@@ -142,7 +150,7 @@ class GNSBatchGovernor(Callback):
             noise = self.estimator.noise_scale()  # the one host sync
             desired = self.controller.desired_factor(self._factor, noise)
             self._pending = desired if desired != self._factor else None
-            self._stash(pl_module, noise_scale=noise)
+            self._stash(pl_module, noise_scale=noise, trainer=trainer)
 
     # ── actuation ─────────────────────────────────────────────────────────
 
@@ -159,7 +167,9 @@ class GNSBatchGovernor(Callback):
             self._factor = self._pending
             self._pending = None
             trainer.accumulate_grad_batches = self._factor
-            self._stash(pl_module, noise_scale=self.estimator.noise_scale())
+            self._stash(
+                pl_module, noise_scale=self.estimator.noise_scale(), trainer=trainer
+            )
 
     def _patch_val_cadence(self, trainer, batch_idx) -> None:
         """Live-repoint Lightning's validation trigger every batch.
@@ -180,6 +190,12 @@ class GNSBatchGovernor(Callback):
         done = batch_idx + 1  # raw batches completed this epoch
         if self._stepped and step > 0 and step % self.val_every == 0:
             trainer.val_check_batch = done  # boundary lands on this batch
+            if step != self._val_boundary_logged:
+                self._val_boundary_logged = step
+                print(
+                    f"[Governor] validation boundary: step {step} "
+                    f"(raw batch {done}); firing Lightning's check now"
+                )
             return
         # Predict the boundary batch: remaining optimizer steps x current
         # factor, minus the microbatches already consumed of the open cycle.
@@ -214,7 +230,7 @@ class GNSBatchGovernor(Callback):
         stacked = torch.stack([n.to(norms[0].device) for n in norms])
         return (stacked * stacked).sum().detach()
 
-    def _stash(self, pl_module, noise_scale: Optional[float]) -> None:
+    def _stash(self, pl_module, noise_scale: Optional[float], trainer=None) -> None:
         """Publish telemetry on the core model; DynamicsLoggerCallback drains
         it on its own cadence (mirrors the RLCT stash pattern)."""
         model = getattr(pl_module, "model", pl_module)
@@ -225,6 +241,19 @@ class GNSBatchGovernor(Callback):
         if noise_scale is not None:
             metrics["gov_noise_scale"] = float(noise_scale)
         metrics.update(self.estimator.internals())
+        # Validation-cadence diagnostics: where the trigger currently points
+        # vs how many raw batches have run. When the lines meet, validation
+        # fires - a silent miss is visible immediately on this pair.
+        if trainer is not None and self.val_every:
+            target = getattr(trainer, "val_check_batch", None)
+            if isinstance(target, int) and target < self.VAL_PARKED:
+                metrics["gov_next_val_batch"] = float(target)
+            try:
+                metrics["gov_raw_batches"] = float(
+                    trainer.fit_loop.epoch_loop.batch_progress.current.ready
+                )
+            except AttributeError:
+                pass
         core._governor_metrics = metrics
 
     # ── resume ────────────────────────────────────────────────────────────

@@ -184,6 +184,9 @@ var _paint_ping := 0
 var _paint_reset := true
 var _paint_last_pos := 0.0
 var _clown_fs := 1.0   # the live clown layer's Scale knob - the sim's target sizes ride it
+var _clown_bleed := 0.0    # its Bleed / Settle / Hollow knobs, fed to the paint sim
+var _clown_settle := 0.35
+var _clown_hollow := 0.0
 var _selected: Variant = null   # the marker Dictionary currently shown in the panel
 
 var _color_a: ColorPickerButton
@@ -214,6 +217,9 @@ var _gust: HSlider   # snow's own Gust slider - a second, independent view onto 
 var _undul: HSlider  # fur's Undulation - fur's view onto fx_smooth (same stored-field reuse as _gust)
 var _coil: HSlider   # fur's Coil - fur's view onto fx_lag (pushed raw as u_l_lagf; echo bakes its lag into u_l_ew)
 var _stick: HSlider  # fur's Stickiness - its OWN field (fx_stick, u_l_stick); 0 = today's free coat
+var _bleed: HSlider   # clown's Bleed   - its view onto fx_smooth (see _gust/_undul for the idiom)
+var _settle: HSlider  # clown's Settle  - its view onto fx_lag
+var _hollow: HSlider  # clown's Hollow  - its view onto fx_stick
 var _resonance: HSlider
 var _effect_a: OptionButton
 var _intensity_a: HSlider
@@ -475,10 +481,16 @@ func _prep(source: String, dir: String, video: String, audio: String) -> void:
 func _start_prep_audio() -> void:
 	_touch_lock(ProjectSettings.globalize_path(_pending.dir))   # bridge the gap while
 	# video.ogv's mtime goes stale and audio.wav doesn't exist yet - see _prep_looks_live.
+	# Two outputs, one decode: the PCM the waveform/envelope tooling needs,
+	# and the compressed sidecar playback actually attaches (see
+	# _ready_with_session for why the raw WAV is too slow to load live).
+	var abs_a := ProjectSettings.globalize_path(String(_pending.audio))
 	var args := PackedStringArray([
 		"-y", "-loglevel", "error", "-i", String(_pending.source), "-vn",
 		"-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
-		"-f", "wav", ProjectSettings.globalize_path(String(_pending.audio)) + ".part"])
+		"-f", "wav", abs_a + ".part",
+		"-vn", "-c:a", "libvorbis", "-q:a", "5",
+		"-f", "ogg", abs_a.get_basename() + ".ogg.part"])
 	_prep_audio_pid = OS.create_process("ffmpeg", args)
 	_prep_state = "prepping_audio" if _prep_audio_pid > 0 else "idle"
 	_set_status("⏳  Preparing clip (audio)…")
@@ -958,12 +970,27 @@ func _ready_with_session() -> void:
 	# deterministically. AudioStreamWAV's static loader is the runtime-safe path (plain
 	# load() has no loader for a raw .wav outside the import pipeline).
 	var abs_audio := ProjectSettings.globalize_path(session.audio_path)
-	if render_mode:
+	# THE COMPRESSED SIDECAR IS THE FAST PATH. audio.wav is raw PCM - about
+	# 10 MB per minute, so a 40-minute clip is ~420 MB and takes SECONDS to
+	# read however it is threaded. Vorbis decodes lazily, so the same audio
+	# as a ~30 MB .ogg attaches effectively instantly. Prep writes both now
+	# (see _start_prep_audio); sessions prepared before that derive theirs
+	# once, in the background, and are instant from the next open on. The WAV
+	# stays: ffmpeg reads it for the waveform strip and the resonance
+	# envelope. Same sidecar idea the imported tracks already use.
+	var abs_ogg := abs_audio.get_basename() + ".ogg"
+	if FileAccess.file_exists(abs_ogg):
+		_audio.stream = AudioStreamOggVorbis.load_from_file(abs_ogg)
+		_apply_main_volume()
+		print("ghost mask: audio ready from sidecar ", abs_ogg.get_file())
+	elif render_mode:
 		_audio.stream = AudioStreamWAV.load_from_file(abs_audio)
 		_apply_main_volume()
 	else:
 		_audio_thread = Thread.new()
 		_audio_thread.start(_load_wav_threaded.bind(abs_audio))
+		print("ghost mask: no audio sidecar yet - loading raw WAV (playback holds until it lands)")
+		_ensure_audio_ogg(abs_audio, abs_ogg)   # so the NEXT open skips all this
 
 	if render_mode:
 		_build_render_view()
@@ -1180,6 +1207,9 @@ func _step_paint_sim() -> void:
 	mat.set_shader_parameter("u_eye_rr", cm.eye_rr)
 	mat.set_shader_parameter("u_mouth_r", cm.mouth_r)
 	mat.set_shader_parameter("u_scale", _clown_fs)
+	mat.set_shader_parameter("u_bleed", _clown_bleed)
+	mat.set_shader_parameter("u_settle", _clown_settle)
+	mat.set_shader_parameter("u_hollow", _clown_hollow)
 	_paint_vps[_paint_ping].render_target_update_mode = SubViewport.UPDATE_ONCE
 	for m2 in [_mat_main, _mat_inset]:
 		m2.set_shader_parameter("u_clown_paint", _paint_vps[_paint_ping].get_texture())
@@ -2306,6 +2336,18 @@ func _build_panel() -> void:
 	# Stickiness - 0 keeps today's free coat exactly; higher values thin the strands
 	# away from natural anchors so the hair clings to the keyed surface, the tracked
 	# landmark/motion centroid, and brighter regions (see the shader's fur branch).
+	_bleed = _slider(_grp_options, "Bleed", 0.0, 1.0, func(v): _edit("fx_smooth", v),
+		"How far each feature's paint may spread from the anatomy it found, and " +
+		"how much it softens as it travels")
+	_register_option(_bleed)
+	_settle = _slider(_grp_options, "Settle", 0.0, 1.0, func(v): _edit("fx_lag", v),
+		"How sticky the paint is in time - higher holds its shape through " +
+		"detection wobble (steadier, a touch slower to follow)")
+	_register_option(_settle)
+	_hollow = _slider(_grp_options, "Hollow", 0.0, 1.0, func(v): _edit("fx_stick", v),
+		"Paint AROUND the eyes and mouth instead of over them - opens over a " +
+		"visible eyeball or teeth, closes again on a blink or a shut mouth")
+	_register_option(_hollow)
 	_stick = _slider(_grp_options, "Stickiness", 0.0, 1.0, func(v): _edit("fx_stick", v),
 		"0 is a free coat, 1 clings to the face/motion")
 	_register_option(_stick)
@@ -3095,6 +3137,8 @@ func _update_face_model(src: Image) -> void:
 	var mo2x := 0.0
 	var mo2y := 0.0
 	var mo_w := 0.0
+	var no_acc := Vector2.ZERO
+	var no_w := 0.0
 	var dm_sum := 0.0
 	var dm_n := 0.0
 	for y in 54:
@@ -3126,6 +3170,22 @@ func _update_face_model(src: Image) -> void:
 					era_acc += apos * we
 					er2 += apos.length_squared() * we
 					er_w += we
+			# This pixel in EYE-PAIR units (aspect-corrected), the frame both
+			# the nose and the mouth search in.
+			var mrel := ((pos - eye_mid) * Vector2(fasp, 1.0)) / eye_unit
+			# NOSE: the NOSTRIL PAIR - two small dark spots between the eye
+			# line and the mouth, close to the centre. It is the only
+			# dependable 2D signature a nose has: the tip's highlight walks
+			# around with the lighting, and deriving the nose from
+			# mid-eyes-to-mouth (what this did before) inherits the error of
+			# BOTH estimates, which is why the ball kept sitting off-centre
+			# while the evidence-detected lips tracked fine.
+			if mrel.y > 0.45 and mrel.y < 1.0 and absf(mrel.x) < 0.45:
+				var nprior := exp(-pow((mrel.y - 0.85) / 0.28, 2.0))
+				var wn := maxf(0.0, mean_lum - lums[idx]) * wblur[idx] * nprior
+				wn *= wn   # concentrate on the actual nostril darkness (see the mouth)
+				no_acc += pos * wn
+				no_w += wn
 			# MOUTH: MOTION first - on a talking face the mouth out-moves
 			# everything else in the lower band, and unlike redness it can't
 			# lock onto a warm-lit chin and sit there forever (the static
@@ -3136,7 +3196,6 @@ func _update_face_model(src: Image) -> void:
 			# actually works), not the fitted oval: with the brightness cue
 			# the oval swells over hair and shoulders, and an oval-relative
 			# band put the mouth down on the chin.
-			var mrel := ((pos - eye_mid) * Vector2(fasp, 1.0)) / eye_unit
 			if mrel.y > 0.55 and mrel.y < 1.75 and absf(mrel.x) < 0.65:
 				# Anatomical prior: the mouth sits ~1.2 eye-distances below
 				# the eye line. Talking moves the whole lower face (jaw,
@@ -3215,18 +3274,30 @@ func _update_face_model(src: Image) -> void:
 	_face_red_ema = lerpf(_face_red_ema, mean_red, 0.1)
 	# The nose is DERIVED (mid-eyes toward mouth) but smoothed on its own,
 	# slower clock - it must not inherit the eye pair's tick-to-tick jitter.
-	# ~55% of the way from the eye line to the mouth is where a nose tip
-	# actually sits (0.40 put the ball up between the eyes).
-	_face_nose_ema = _face_nose_ema.lerp(
-		((_face_eye_l_ema + _face_eye_r_ema) * 0.5).lerp(_face_mouth_ema, 0.55), 0.15)
+	# The nostril centroid is the BASE of the nose; the ball sits on the tip,
+	# just above it. Falls back to the old mid-eyes-to-mouth interpolation
+	# (~55% down) only when no nostril evidence turns up at all - flat
+	# lighting, a raised chin, a profile.
+	var nose_target := ((_face_eye_l_ema + _face_eye_r_ema) * 0.5).lerp(_face_mouth_ema, 0.55)
+	var nose_alpha := 0.15
+	if no_w > 0.0001:
+		nose_target = (no_acc / no_w) - Vector2(0.0, 0.14 * eye_unit)
+		nose_alpha = 0.3
+	# A wide sanity box around the face's own centre line - detection may be
+	# imperfect, but a nose never lands out on a cheek.
+	var nose_cx := (eye_mid.x + _face_mouth_ema.x) * 0.5
+	nose_target.x = clampf(nose_target.x, nose_cx - eye_unit * 0.30 / fasp,
+		nose_cx + eye_unit * 0.30 / fasp)
+	_face_nose_ema = _face_nose_ema.lerp(nose_target, nose_alpha)
 	if OS.has_environment("GHOST_FACE_DEBUG"):
 		var em := (_face_eye_l_ema + _face_eye_r_ema) * 0.5
 		var eu := maxf(((_face_eye_r_ema - _face_eye_l_ema) * Vector2(fasp, 1.0)).length(), 0.02)
-		print("FACEDBG t=%.2f eyeL=%.3f,%.3f eyeR=%.3f,%.3f unit=%.3f mouth=%.3f,%.3f mouthU=%.2f moW=%.4f szL=%.3f szR=%.3f mr=%.3f,%.3f" % [
+		print("FACEDBG t=%.2f eyeL=%.3f,%.3f eyeR=%.3f,%.3f unit=%.3f mouth=%.3f,%.3f mouthU=%.2f moW=%.4f szL=%.3f szR=%.3f mr=%.3f,%.3f nose=%.3f,%.3f noW=%.4f" % [
 			_player.stream_position if _player != null else 0.0,
 			_face_eye_l_ema.x, _face_eye_l_ema.y, _face_eye_r_ema.x, _face_eye_r_ema.y, eu,
 			_face_mouth_ema.x, _face_mouth_ema.y, (_face_mouth_ema.y - em.y) / eu, mo_w,
-			_face_eye_lr_ema, _face_eye_rr_ema, _face_mouth_r_ema.x, _face_mouth_r_ema.y])
+			_face_eye_lr_ema, _face_eye_rr_ema, _face_mouth_r_ema.x, _face_mouth_r_ema.y,
+			_face_nose_ema.x, _face_nose_ema.y, no_w])
 
 
 ## The clown model's current display state - positions velocity-extrapolated
@@ -3560,6 +3631,9 @@ func _refresh_panel() -> void:
 	_undul.set_value_no_signal(float(m.get("fx_smooth", 0.0)))
 	_coil.set_value_no_signal(float(m.get("fx_lag", 0.35)))
 	_stick.set_value_no_signal(float(m.get("fx_stick", 0.0)))
+	_bleed.set_value_no_signal(float(m.get("fx_smooth", 0.0)))
+	_settle.set_value_no_signal(float(m.get("fx_lag", 0.35)))
+	_hollow.set_value_no_signal(float(m.get("fx_stick", 0.0)))
 	_resonance.set_value_no_signal(float(m.get("resonance", 0.0)))
 	_update_effect_controls(int(m.get("effect_a", 0)))
 	_refresh_marker_label()
@@ -3613,6 +3687,9 @@ func _update_effect_controls(effect_id: int) -> void:
 	_show_field(_undul, groups.has("fur"))
 	_show_field(_coil, groups.has("fur"))
 	_show_field(_stick, groups.has("fur"))
+	_show_field(_bleed, groups.has("clown"))
+	_show_field(_settle, groups.has("clown"))
+	_show_field(_hollow, groups.has("clown"))
 	var is_oracle := effect_id == MaskSession.EFFECT_ORACLE
 	_fx_lag_label.text = "Lead (s)" if is_oracle else "Lag (s)"
 	_fx_lag_label.tooltip_text = "How far ahead it leads" if is_oracle else "How the past is worn"
@@ -3705,6 +3782,22 @@ func _on_scrub(t: float) -> void:
 
 
 func _play(on: bool) -> void:
+	# HOLD A START THE AUDIO ISN'T READY FOR. _ready_with_session already
+	# holds the AUTOstart until the threaded load attaches, but pressing play
+	# yourself walked straight past that guard: the video (the master clock)
+	# ran on while the stream was still loading, so the opening seconds
+	# played silent and the audio joined wherever the video had got to. Same
+	# hold, same recovery path - _poll_audio_thread starts playback the frame
+	# the stream lands, synced.
+	if on and _audio_thread != null and _audio_thread.is_started():
+		_autostart_pending = true
+		_playing = false
+		if _player != null:
+			_player.paused = true
+		_set_status("⏳  Loading audio…")
+		return
+	if not on:
+		_autostart_pending = false   # an explicit pause cancels a pending hold
 	_playing = on
 	if not _player.is_playing():
 		_player.play()
@@ -3722,6 +3815,19 @@ func _play(on: bool) -> void:
 		_audio.seek(_player.stream_position)
 	# Track audios are driven entirely by _sync_tracks (windowed play/seek/pause), so
 	# nothing to do for them here.
+
+
+## Derive the compressed playback sidecar for a session whose prep predates it
+## (see _ready_with_session). Fire-and-forget: this run still pays the slow WAV
+## load it already started, and every later open of this clip is instant. No
+## .part dance - the name is only ever read when it exists AND a session is
+## being opened, and a half-written .ogg simply fails to load and falls back.
+func _ensure_audio_ogg(abs_wav: String, abs_ogg: String) -> void:
+	if FileAccess.file_exists(abs_ogg) or not FileAccess.file_exists(abs_wav):
+		return
+	OS.create_process("ffmpeg", PackedStringArray([
+		"-y", "-loglevel", "error", "-i", abs_wav,
+		"-c:a", "libvorbis", "-q:a", "5", abs_ogg]))
 
 
 ## Worker-thread body: the blocking WAV read (see _ready_with_session). Returns the
@@ -3747,6 +3853,8 @@ func _poll_audio_thread() -> void:
 	# editor beats one frozen forever waiting on audio that will never arrive.
 	if _autostart_pending:
 		_autostart_pending = false
+		if _status != null and not render_mode:
+			_status.visible = false
 		_play(true)
 		return
 	if stream != null and _audio != null and _playing:
@@ -4111,6 +4219,9 @@ func _apply_frame_state(p: Dictionary) -> void:
 		if le == MaskSession.EFFECT_CLOWN:
 			_clown_active = true
 			_clown_fs = clampf(float(l.get("fx_scale", 1.0)), 0.3, 2.5)
+			_clown_bleed = clampf(float(l.get("fx_smooth", 0.0)), 0.0, 1.0)
+			_clown_settle = clampf(float(l.get("fx_lag", 0.35)), 0.0, 1.0)
+			_clown_hollow = clampf(float(l.get("fx_stick", 0.0)), 0.0, 1.0)
 		if le == 5 or le == 7 or le == MaskSession.EFFECT_SNOW or le == MaskSession.EFFECT_ORACLE \
 				or le == MaskSession.EFFECT_SERPENT or le == MaskSession.EFFECT_CHIMERA \
 				or le == MaskSession.EFFECT_CLOWN:
@@ -4305,6 +4416,7 @@ func _process(_dt: float) -> void:
 			if OS.is_process_running(_prep_audio_pid):
 				return
 			_promote_part(String(_pending.audio))
+			_promote_part(String(_pending.audio).get_basename() + ".ogg")
 			_clear_lock(_pending.dir)
 			_prep_state = "idle"
 			_finish_session(_pending.source, _pending.video, _pending.audio)
