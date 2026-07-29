@@ -184,14 +184,18 @@ const renderSpecSections = {
 
     'commands': (data) => {
         const cmdInfo = extractCommandInfo(data);
-        const downloadLink = `<a href="/api/config" download="${cmdInfo.expName}.yml" class="spec-link">Download</a>`;
 
         const steps = [
             { instruction: 'Clone from source:', code: `git clone ${data.git_url}` },
             { instruction: 'Move into directory:', code: 'cd praxis' },
-            { instruction: `${downloadLink} config, save it to:`, code: cmdInfo.configFilename },
-            { instruction: 'Reproduce experiment:', code: cmdInfo.reproduceCommand }
         ];
+        // Only offer the config download when the run actually carries a
+        // resolved experiment config (see extractCommandInfo).
+        if (cmdInfo.configFilename) {
+            const downloadLink = `<a href="/api/config" download="${cmdInfo.expName}.yml" class="spec-link">Download</a>`;
+            steps.push({ instruction: `${downloadLink} config, save it to:`, code: cmdInfo.configFilename });
+        }
+        steps.push({ instruction: 'Reproduce experiment:', code: cmdInfo.reproduceCommand });
 
         const stepsHtml = createStepsList(steps);
         return createSection('Commands', createWrapper(stepsHtml, 'spec-steps'));

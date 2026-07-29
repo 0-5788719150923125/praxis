@@ -214,6 +214,16 @@ def _export_endpoints(client: Any, data: Path) -> None:
     for path, out_name, _kind in DUMP_ENDPOINTS:
         try:
             resp = client.get(path)
+            if resp.status_code != 200:
+                # Never dump an error body under a data filename - a static
+                # site serving "Config file not found" as config.yaml is
+                # worse than the file being absent (the frontend hides the
+                # affordance when the data is missing).
+                _log(
+                    f"warning: {path} returned {resp.status_code}; "
+                    f"skipping {out_name}"
+                )
+                continue
             payload = resp.get_data()
             if out_name == "agents.json":
                 payload = _rewrite_agents_localhost(payload)

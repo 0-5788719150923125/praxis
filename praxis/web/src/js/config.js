@@ -262,9 +262,16 @@ export const extractCommandInfo = (data) => {
         ? data.command.replace('python main.py', './launch')
         : './launch';
 
-    const expMatch = command.match(/--([a-z0-9\-]+)/);
-    const expName = expMatch ? expMatch[1] : 'reproduce';
-    const configFilename = `experiments/${expName}.yml`;
+    // The experiment loader records the matched experiments/*.yml in
+    // args.config_file - the only authoritative source. Guessing from the
+    // first --flag mislabeled runs whose first flag was not an experiment
+    // (e.g. `./launch compose --publish-snapshot --abstractinator-f` became
+    // "experiments/publish-snapshot.yml"). No config_file means no valid
+    // experiment config: report none rather than inventing one.
+    const configFilename = (data.args && data.args.config_file) || null;
+    const expName = configFilename
+        ? configFilename.split('/').pop().replace(/\.ya?ml$/, '')
+        : null;
     const reproduceCommand = command + (command.includes('--reset') ? '' : ' --reset');
 
     return {

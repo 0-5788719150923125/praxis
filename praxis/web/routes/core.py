@@ -181,12 +181,34 @@ def get_config():
         config_file = current_app.config.get("config_file")
 
         if not config_file:
-            return Response("No experiment config file found", status=404)
+            return Response(
+                "No experiment config for this run: it was launched without "
+                "an experiment flag, so there is nothing to download.",
+                status=404,
+                mimetype="text/plain",
+            )
 
-        # Read the actual YAML file from disk
+        # Only a real experiments/*.yml is served; anything else in
+        # config_file (a guessed flag name, a stray path) is rejected loudly
+        # instead of leaking whatever happens to be at that path.
         config_path = Path(config_file)
+        experiments_dir = Path("experiments").resolve()
+        resolved = config_path.resolve()
+        if (
+            resolved.suffix not in (".yml", ".yaml")
+            or experiments_dir not in resolved.parents
+        ):
+            return Response(
+                f"Not a valid experiment config: {config_file}",
+                status=422,
+                mimetype="text/plain",
+            )
         if not config_path.exists():
-            return Response(f"Config file not found: {config_file}", status=404)
+            return Response(
+                f"Config file not found: {config_file}",
+                status=404,
+                mimetype="text/plain",
+            )
 
         # Resolve `extends` chain so published config is fully rendered
         config_data = load_rendered_config(config_path)

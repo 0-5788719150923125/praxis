@@ -200,10 +200,14 @@
     return origFetch(input, init);
   };
 
-  // --- 3. rewrite business-card <img> requests ----------------------------
-  // The card preview is an <img src>, not a fetch, so the patch above misses
-  // it. Static hosts ignore the query string, so we can't vary by seed anyway;
-  // redirect each card image to the pre-rendered file for its side/theme.
+  // --- 3. rewrite non-fetch /api/* references (img src, anchor href) ------
+  // The card preview is an <img src> and the config download is an <a href>
+  // NAVIGATION - neither goes through the fetch patch, so on a static host
+  // they'd land on the SPA fallback page instead of the dumped files.
+  // Static hosts ignore the query string, so the card can't vary by seed
+  // anyway; redirect each image to the pre-rendered file for its side/theme,
+  // and point the config link at the dumped YAML (its `download` attribute
+  // keeps the proper experiment filename).
 
   function rewriteCardImg(img) {
     var s = img.getAttribute('src') || '';
@@ -217,16 +221,33 @@
     } catch (e) {}
   }
 
-  function startCardObserver() {
-    document.querySelectorAll('img').forEach(rewriteCardImg);
+  function rewriteConfigLink(a) {
+    var h = a.getAttribute('href') || '';
+    if (h.indexOf('/api/config') !== 0) return;
+    a.setAttribute('href', DATA + 'config.yaml');
+  }
+
+  function rewriteEl(n) {
+    if (n.tagName === 'IMG') rewriteCardImg(n);
+    else if (n.tagName === 'A') rewriteConfigLink(n);
+  }
+
+  function rewriteTree(root) {
+    if (!root.querySelectorAll) return;
+    root.querySelectorAll('img').forEach(rewriteCardImg);
+    root.querySelectorAll('a').forEach(rewriteConfigLink);
+  }
+
+  function startRewriteObserver() {
+    rewriteTree(document);
     var mo = new MutationObserver(function (muts) {
       muts.forEach(function (m) {
-        if (m.type === 'attributes' && m.target.tagName === 'IMG') {
-          rewriteCardImg(m.target);
+        if (m.type === 'attributes') {
+          rewriteEl(m.target);
         } else if (m.type === 'childList') {
           m.addedNodes.forEach(function (n) {
-            if (n.tagName === 'IMG') rewriteCardImg(n);
-            else if (n.querySelectorAll) n.querySelectorAll('img').forEach(rewriteCardImg);
+            if (n.tagName) rewriteEl(n);
+            rewriteTree(n);
           });
         }
       });
@@ -235,11 +256,11 @@
       subtree: true,
       childList: true,
       attributes: true,
-      attributeFilter: ['src'],
+      attributeFilter: ['src', 'href'],
     });
   }
-  if (document.body) startCardObserver();
-  else document.addEventListener('DOMContentLoaded', startCardObserver);
+  if (document.body) startRewriteObserver();
+  else document.addEventListener('DOMContentLoaded', startRewriteObserver);
 
   // --- 4. grey out offline-only controls ----------------------------------
 
@@ -250,6 +271,11 @@
       '.tool-toggle[data-tool="loop"],' +
       '.contract-agree-btn,' +
       '.biz-btn[data-dl],' +
+      // Draw re-fetches /api/card/preview.svg with a fresh seed; the static
+      // export pins one pre-rendered SVG per side/theme, so redrawing is a
+      // server-only feature. (#arena-draw stays live: the arena reseeds a
+      // client-side sim.)
+      '#biz-card-draw,' +
       '#biz-card-download {' +
       'opacity:.4 !important;pointer-events:none !important;cursor:not-allowed !important;}';
     var style = document.createElement('style');
