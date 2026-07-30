@@ -32,8 +32,21 @@ class SequenceProbeCallback(Callback):
     """Fits the sequence-length distribution from a held-out probe."""
 
     # Fixed, model-agnostic constants (no per-experiment tuning).
-    window = 128  # optimizer steps between probe scorings
-    probe_rows = 8  # rows per probe batch; one probe forward per arm per window
+    #
+    # The window RAMPS: 16 optimizer steps, doubling to `window`. Early in
+    # training the loss moves fast, so a short window already carries signal,
+    # and the first cards then land ~16 steps in instead of ~128. Unequal
+    # windows are not a problem for the fit - it regresses on actual visit
+    # counts, and a varying window total actively helps identifiability by
+    # breaking the constant-sum collinearity between the arms.
+    #
+    # Note the unit: OPTIMIZER steps. The dashboard's counter is
+    # ``total_batch_idx`` (raw microbatches), which is larger by the
+    # accumulation factor - so a card due at optimizer step 112 shows up around
+    # batch 224 at accumulation 2.
+    warmup_window = 16  # first window length
+    window = 128  # steady-state optimizer steps between probe scorings
+    probe_rows = 4  # rows per probe batch; one probe forward per arm per window
 
     def __init__(self, block_size: int, sequence_multiplier_tiers=()) -> None:
         super().__init__()
@@ -43,6 +56,8 @@ class SequenceProbeCallback(Callback):
         self._visits: Dict[int, int] = {}
         self._last_loss: Optional[float] = None
         self._steps = 0
+        self._in_window = 0
+        self._window_len = min(self.warmup_window, self.window)
         self._aligned = False
         self._failed = False
 
@@ -65,9 +80,10 @@ class SequenceProbeCallback(Callback):
         """
         manager = self._val_manager(trainer)
         if manager is None:
-            print("[SeqProbe] no validation data manager; curriculum disarmed.")
-            SequenceProbe.reset()
-            self._failed = True
+            self._disarm(
+                "no validation data manager reachable from the trainer "
+                "(no validation datasets configured?)"
+            )
             return
 
         device = getattr(pl_module, "device", None)
@@ -88,14 +104,56 @@ class SequenceProbeCallback(Callback):
                 print(f"[SeqProbe] probe build failed for x{m}: {exc}")
 
         if not built:
-            print("[SeqProbe] probe is empty; curriculum disarmed.")
-            SequenceProbe.reset()
-            self._failed = True
+            self._disarm("every probe batch came back empty")
             return
 
         self._probe = built
         shapes = ", ".join(f"x{m}:{tuple(t.shape)}" for m, t in built)
-        print(f"[SeqProbe] probe built from held-out data ({shapes})")
+        print(
+            f"[SeqProbe] probe built from held-out data ({shapes}); "
+            f"seq_value/seq_tstat cards from optimizer step "
+            f"~{self.first_report_step()}, seq_prob mix from "
+            f"~{self.first_mix_step()} (OPTIMIZER steps - the dashboard's "
+            f"batch counter is larger by the accumulation factor)"
+        )
+
+    @classmethod
+    def window_lengths(cls, count: int) -> List[int]:
+        """The first ``count`` window lengths under the ramp."""
+        lengths, current = [], min(cls.warmup_window, cls.window)
+        for _ in range(count):
+            lengths.append(current)
+            current = min(cls.window, current * 2)
+        return lengths
+
+    @classmethod
+    def first_report_step(cls) -> int:
+        """Optimizer step at which seq_value/seq_tstat first appear.
+
+        Two windows, not one: the first scoring only anchors the probe's loss
+        level, so the earliest window with a delta to regress is the second.
+        """
+        return sum(cls.window_lengths(2))
+
+    @classmethod
+    def first_mix_step(cls) -> int:
+        """Optimizer step at which the seq_prob mix first appears.
+
+        One extra window over ``min_windows``: the first scoring only anchors
+        the probe's loss level, it produces no delta to regress.
+        """
+        return sum(cls.window_lengths(SequenceProbe.min_windows + 1))
+
+    def _disarm(self, reason: str) -> None:
+        """Stand down loudly. A silently inert controller looks exactly like a
+        missing dashboard card, which costs more to diagnose than it saves."""
+        print(
+            f"[SeqProbe] DISARMED: {reason}. The sequence-length mix falls back "
+            "to the fixed per-tier chances, and the seq_* dashboard cards will "
+            "not appear. Set seq_curriculum=fixed to make this explicit."
+        )
+        SequenceProbe.reset()
+        self._failed = True
 
     @staticmethod
     def _val_manager(trainer):
@@ -126,8 +184,12 @@ class SequenceProbeCallback(Callback):
         if self._failed or not SequenceProbe.enabled:
             return
         self._steps += 1
-        if self._steps % self.window:
+        self._in_window += 1
+        if self._in_window < self._window_len:
             return
+        self._in_window = 0
+        # Ramp toward the steady-state window once this one closes.
+        self._window_len = min(self.window, self._window_len * 2)
         loss = self._score_probe(pl_module)
         if loss is None:
             return
@@ -160,9 +222,7 @@ class SequenceProbeCallback(Callback):
                     losses.append(float(loss))
             return sum(losses) / len(losses) if losses else None
         except Exception as exc:
-            print(f"[SeqProbe] probe scoring failed: {exc}; curriculum disarmed.")
-            SequenceProbe.reset()
-            self._failed = True
+            self._disarm(f"probe scoring raised {type(exc).__name__}: {exc}")
             return None
         finally:
             model.train(was_training)

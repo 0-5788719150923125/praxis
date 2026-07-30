@@ -170,7 +170,7 @@ def _create_lion_geo(model, **profile):
     params (embeddings/head/norms/biases) on a plain secondary via
     :class:`CompositeOptimizer` - the same split as Muon, because the spectral
     branch shares Muon's constraint (never orthogonalize an embedding)."""
-    from praxis.optimization.lion_geo import LionGeo
+    from praxis.optimization.lion_geo import GEOMETRIES, LionGeo
 
     secondary_name = profile.pop("secondary_optimizer", None) or "Lion"
     secondary_wd = profile.pop("secondary_weight_decay", None)
@@ -188,7 +188,7 @@ def _create_lion_geo(model, **profile):
     ratio = sec_lr / float(profile["lr"])
     print(
         f"[Optimizer] LionGeo+{secondary_name}: {len(geo_params)} matrices on the "
-        f"sign/spectral smear; {len(vocab_params)} vocab-facing params on "
+        f"{'/'.join(GEOMETRIES)} smear; {len(vocab_params)} vocab-facing params on "
         f"{secondary_name} (lr ratio {ratio:.3g})."
     )
     return CompositeOptimizer(primary, secondary, secondary_lr_ratio=ratio)
@@ -378,12 +378,13 @@ OPTIMIZER_PROFILES = {
         adamw_wd=0.0,
     ),
     "LionGeo": dict(
-        # Lion's machinery, TWO geometries. sign() and Newton-Schulz are
-        # steepest descent under the elementwise-infinity and spectral norms
-        # respectively (Lion-K / Schatten-p family); LionGeo computes both
+        # Lion's machinery, THREE geometries. sign(), Newton-Schulz and the
+        # RMS-rescaled momentum are steepest descent under the
+        # elementwise-infinity, spectral and Frobenius norms respectively
+        # (Lion-K / Schatten-p family); LionGeo computes all three
         # normalizations of ONE shared Lion momentum and blends them per matrix
-        # with a SMEAR-style mixture whose logit adapts online by hypergradient
-        # descent, floored so neither geometry is ever extinguished. Both
+        # with a SMEAR-style softmax mixture whose logits adapt online by
+        # hypergradient descent, floored so no geometry is ever extinguished. All
         # branches are RMS-matched to 1, so a single Lion-scale lr bounds the
         # step regardless of where the blend settles. Weight decay is
         # eliminated outright, as in MuonGeo (same rationale, same falsifier:

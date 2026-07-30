@@ -178,32 +178,64 @@ OPTIMIZER_METRIC_DESCRIPTIONS = {
     },
     "opt_geo_share": {
         "description": (
-            "Mean spectral share across LionGeo's blended matrices: 0 = pure "
-            "sign updates (Lion geometry), 1 = pure orthogonalized updates "
-            "(Muon geometry). The hypergradient-adapted mixture's centre of "
-            "mass; the clamp floors it to [0.12, 0.88]."
+            "Mean share of the SPECTRAL arm across LionGeo's blended matrices: "
+            "the orthogonalized, Muon-like geometry. The three arm shares sum "
+            "to 1 at every matrix, so this chart reads as a mixture; the logit "
+            "clamp floors each arm so none is ever extinguished."
         ),
         "chart": {
-            "title": "Geometry Share (spectral)",
+            "title": "Geometry Mixture (share per norm)",
             "y_label": "share",
             "y_scale": "linear",
             "group": "optimizer",
             "order": 65,
+            "series_group": "geo_mixture",
+            "series_label": "spectral",
+        },
+    },
+    "opt_geo_share_sign": {
+        "description": (
+            "Mean share of the SIGN arm: Lion's geometry, steepest descent "
+            "under the elementwise-infinity norm. Discards gradient magnitude "
+            "coordinatewise."
+        ),
+        # No title/axis: rides opt_geo_share's chart via series_group.
+        "chart": {
+            "group": "optimizer",
+            "order": 66,
+            "series_group": "geo_mixture",
+            "series_label": "sign",
+        },
+    },
+    "opt_geo_share_frobenius": {
+        "description": (
+            "Mean share of the FROBENIUS arm: the RMS-rescaled momentum "
+            "itself, the only arm that does not whiten. Mass here means the "
+            "matrix prefers its gradient's own conditioning to either "
+            "normalization."
+        ),
+        # No title/axis: rides opt_geo_share's chart via series_group.
+        "chart": {
+            "group": "optimizer",
+            "order": 67,
+            "series_group": "geo_mixture",
+            "series_label": "frobenius",
         },
     },
     "opt_geo_share_spread": {
         "description": (
-            "Max minus min spectral share across LionGeo's matrices. Near 0 = "
-            "every matrix agrees and a single global geometry would do; wide = "
-            "different matrices want different norm geometries, which is the "
-            "case the per-matrix SMEAR exists for."
+            "Disagreement BETWEEN matrices: max minus min share across "
+            "LionGeo's matrices, averaged over the arms. Near 0 = every matrix "
+            "agrees and a single global geometry would do; wide = different "
+            "matrices want different norm geometries, which is the case the "
+            "per-matrix SMEAR exists for."
         ),
         "chart": {
             "title": "Geometry Share Spread",
             "y_label": "max - min",
             "y_scale": "linear",
             "group": "optimizer",
-            "order": 66,
+            "order": 68,
         },
     },
     "opt_sf_spread": {
@@ -309,10 +341,23 @@ def extract_optimizer_dynamics(optimizer) -> dict:
 
     geo = _geo_provider(optimizer)
     if geo is not None:
-        shares = geo.get_smear_shares()
-        if shares:
-            out["opt_geo_share"] = sum(shares) / len(shares)
-            out["opt_geo_share_spread"] = max(shares) - min(shares)
+        by_arm = (
+            geo.get_geometry_shares()
+            if hasattr(geo, "get_geometry_shares")
+            else {"spectral": geo.get_smear_shares()}
+        )
+        by_arm = {name: s for name, s in by_arm.items() if s}
+        for name, shares in by_arm.items():
+            # The spectral arm keeps the bare key: it is the series the card
+            # existed for before the mixture grew past two geometries.
+            key = "opt_geo_share" if name == "spectral" else f"opt_geo_share_{name}"
+            out[key] = sum(shares) / len(shares)
+        if by_arm:
+            # Between-matrix disagreement, averaged over arms. With two
+            # (complementary) arms this is exactly the old max-min spectral spread.
+            out["opt_geo_share_spread"] = sum(
+                max(s) - min(s) for s in by_arm.values()
+            ) / len(by_arm)
 
     m = float(getattr(sf, "momentum", 0.0)) if sf is not None else 0.0
     sf_ok = sf is not None and 0.0 < m < 1.0

@@ -3,6 +3,7 @@ and its composite/profile/metrics wiring."""
 
 import copy
 import importlib.util
+import math
 import types
 from pathlib import Path
 
@@ -11,10 +12,20 @@ import torch.nn as nn
 
 from praxis.optimization import get_optimizer, get_optimizer_profile
 from praxis.optimization.composite import CompositeOptimizer
-from praxis.optimization.lion_geo import ADAPT_RATE, LOGIT_CLAMP, LionGeo
+from praxis.optimization.lion_geo import (
+    ADAPT_RATE,
+    DIFF_DTYPE,
+    GEOMETRIES,
+    LOGIT_CLAMP,
+    LionGeo,
+)
 
-SHARE_FLOOR = float(torch.sigmoid(torch.tensor(-LOGIT_CLAMP)))
-SHARE_CEIL = float(torch.sigmoid(torch.tensor(LOGIT_CLAMP)))
+N_ARMS = len(GEOMETRIES)
+# The clamp alone bounds every share, whatever the centring does: with all
+# logits in [-C, C], w_i lies in [e^-2C / N, 1 / (1 + (N-1) e^-2C)].
+_SPREAD = math.exp(-2.0 * LOGIT_CLAMP)
+SHARE_FLOOR = _SPREAD / N_ARMS
+SHARE_CEIL = 1.0 / (1.0 + (N_ARMS - 1) * _SPREAD)
 
 
 def _quadratic_problem():
@@ -54,34 +65,60 @@ def test_state_and_share_floor():
         for p in group["params"]:
             state = opt.state[p]
             assert state["exp_avg"].shape == p.shape
-            assert state["geo_diff"].shape == p.shape
-            assert float(state["geo_logit"].abs()) <= LOGIT_CLAMP + 1e-6
-    shares = opt.get_smear_shares()
-    assert shares and all(SHARE_FLOOR - 1e-6 <= s <= SHARE_CEIL + 1e-6 for s in shares)
+            assert state["geo_diffs"].shape == (N_ARMS, *p.shape)
+            # Deviations feed a cosine only, so they are stored at half
+            # precision: that is what keeps the third arm off the memory bill.
+            assert state["geo_diffs"].dtype == DIFF_DTYPE
+            assert state["geo_logits"].shape == (N_ARMS,)
+            assert float(state["geo_logits"].abs().max()) <= LOGIT_CLAMP + 1e-6
+    by_arm = opt.get_geometry_shares()
+    assert set(by_arm) == set(GEOMETRIES)
+    for shares in by_arm.values():
+        assert shares  # no arm is extinguished, whatever the mixture chose
+        assert all(SHARE_FLOOR - 1e-6 <= s <= SHARE_CEIL + 1e-6 for s in shares)
+    # The mixture is a distribution: the arms sum to 1 at every matrix.
+    for per_matrix in zip(*by_arm.values()):
+        assert abs(sum(per_matrix) - 1.0) < 1e-5
+    assert opt.get_smear_shares() == by_arm["spectral"]
 
 
-def test_hypergradient_moves_logit_toward_aligned_branch():
-    """Planting geo_diff aligned with the next gradient must raise the spectral
-    logit; anti-aligned must lower it (the hypergradient's sign convention)."""
+def test_hypergradient_moves_logit_toward_aligned_arm():
+    """Planting a deviation aligned with the next gradient must raise that
+    arm's logit and lower the others (the hypergradient's sign convention,
+    plus the centring that keeps the softmax's common shift pinned)."""
     p = nn.Parameter(torch.randn(4, 4))
     opt = LionGeo([p], lr=0.01)
-    g = torch.randn(4, 4)
+    # Half-precision-exact, so storing it as a deviation round-trips losslessly
+    # and the planted cosine is exactly 1 - which is what makes the arithmetic
+    # below checkable to the last digit.
+    g = torch.randn(4, 4).to(DIFF_DTYPE).float()
     p.grad = g.clone()
-    opt.step()  # creates state; no geo_diff existed yet, logit still 0
-    assert float(opt.state[p]["geo_logit"]) == 0.0
+    opt.step()  # creates state; no geo_diffs existed yet, logits still 0
+    assert torch.equal(opt.state[p]["geo_logits"], torch.zeros(N_ARMS))
 
-    opt.state[p]["geo_diff"] = g.clone()  # perfectly aligned with next grad
+    spectral = GEOMETRIES.index("spectral")
+    aligned = torch.zeros(N_ARMS, *p.shape)  # zero rows contribute no cosine
+    aligned[spectral] = g.clone()
+    opt.state[p]["geo_diffs"] = aligned
     p.grad = g.clone()
     opt.step()
-    up = float(opt.state[p]["geo_logit"])
+    logits = opt.state[p]["geo_logits"]
+    up = float(logits[spectral])
     assert up > 0.0
-    # Jacobian at w=0.5 is 1.0, cosine is 1.0: the nudge is exactly ADAPT_RATE.
-    assert abs(up - ADAPT_RATE) < 1e-5
+    assert all(float(logits[i]) < 0.0 for i in range(N_ARMS) if i != spectral)
+    assert abs(float(logits.mean())) < 1e-6  # centred
+    # Uniform init: Jacobian is 4*(1/N)*(1-1/N), cosine is 1, and centring
+    # keeps (N-1)/N of the nudge on the arm that earned it.
+    w = 1.0 / N_ARMS
+    expected = ADAPT_RATE * 4.0 * w * (1.0 - w) * (1.0 - w)
+    assert abs(up - expected) < 1e-5
 
-    opt.state[p]["geo_diff"] = -g.clone()  # anti-aligned: pushes back down
+    anti = torch.zeros(N_ARMS, *p.shape)
+    anti[spectral] = -g.clone()  # anti-aligned: pushes back down
+    opt.state[p]["geo_diffs"] = anti
     p.grad = g.clone()
     opt.step()
-    assert float(opt.state[p]["geo_logit"]) < up
+    assert float(opt.state[p]["geo_logits"][spectral]) < up
 
 
 def test_state_dict_roundtrip():
@@ -90,10 +127,10 @@ def test_state_dict_roundtrip():
     _train(opt, model, X, Y, steps=5)
     # state_dict shares tensor references; snapshot it like a checkpoint would.
     saved = copy.deepcopy(opt.state_dict())
-    logit_before = float(opt.state[model.weight]["geo_logit"])
+    logits_before = opt.state[model.weight]["geo_logits"].clone()
     _train(opt, model, X, Y, steps=5)
     opt.load_state_dict(saved)
-    assert float(opt.state[model.weight]["geo_logit"]) == logit_before
+    assert torch.equal(opt.state[model.weight]["geo_logits"], logits_before)
     _train(opt, model, X, Y, steps=1)  # still steps after restore
 
 
@@ -136,7 +173,11 @@ def test_composite_build_split_and_metrics():
     opt.zero_grad()
     model(ids).sum().backward()  # grads present, as in on_before_optimizer_step
     out = extract_optimizer_dynamics(opt)
-    assert 0.0 < out["opt_geo_share"] < 1.0
+    keys = ["opt_geo_share"] + [
+        f"opt_geo_share_{name}" for name in GEOMETRIES if name != "spectral"
+    ]
+    assert all(0.0 < out[k] < 1.0 for k in keys)
+    assert abs(sum(out[k] for k in keys) - 1.0) < 1e-5  # one matrix: a distribution
     assert out["opt_geo_share_spread"] >= 0.0
     assert "opt_momentum_rms" in out  # exp_avg naming feeds the default suite
 
@@ -155,7 +196,8 @@ def test_abstractinator_e_resolves():
     cfg = loader.load_rendered_config(
         Path(__file__).resolve().parents[1] / "experiments" / "abstractinator-e.yml"
     )
-    assert cfg["optimizer"] == "LionGeo"
-    assert cfg["loss_func"] == "mode_cross_entropy"
+    assert cfg["optimizer"] == "LionGeo"  # the swap this experiment exists for
+    # Nothing pins loss_func/head_type here: -e sets those directly and they
+    # move with the live experiment. The inheritance below is the invariant.
     assert cfg["mtp_type"] == "serpent_rnn"  # -d inheritance intact
     assert cfg["residual_type"] == "smear"

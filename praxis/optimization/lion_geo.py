@@ -1,35 +1,53 @@
-"""LionGeo: one Lion momentum, two norm geometries, SMEAR-blended per matrix.
+"""LionGeo: one Lion momentum, N norm geometries, SMEAR-blended per matrix.
 
 Lion and Muon are endpoints of one family: sign() is steepest descent under
 the elementwise (vector-infinity) norm, and Newton-Schulz orthogonalization is
-steepest descent under the spectral norm (the Lion-K / Schatten-p view, where
-Schatten-p interpolates between them). Both normalizations are scale-invariant
-in their input, so they can share ONE momentum buffer - Lion's cheap state -
-and differ only in the geometry they impose on it:
+steepest descent under the spectral norm (the Lion-K / Schatten-p view). Read
+through the Schatten duality - for ``G = U S V^T`` the dual map under Schatten-p
+is ``U S^(q-1) V^T``, with q the conjugate exponent - that family has more than
+two members, and every member is a normalization of the SAME momentum:
 
     c      = lerp(m, g, 1 - beta1)          Lion's lookahead momentum
-    u_sign = sign(c)                        RMS exactly 1
-    u_spec = NS(c) * sqrt(max(rows, cols))  semi-orthogonal, RMS ~ 1
-    u      = lerp(u_sign, u_spec, w),       w = sigmoid(geo_logit)
+    u_sign = sign(c)                        elementwise infinity norm, RMS 1
+    u_spec = NS(c) * sqrt(max(rows, cols))  spectral norm, q=1 -> S^0, RMS ~ 1
+    u_frob = c * sqrt(numel) / ||c||        Frobenius, q=2 -> S^1, RMS exactly 1
+    u      = sum_i w_i u_i,  w = softmax(geo_logits)
 
-The branches are RMS-matched, so a single Lion-scale lr drives the blend and
-the convex mix is always a bounded step.
+The Frobenius arm is the one that does NOT whiten: sign discards magnitude
+coordinatewise and Newton-Schulz discards the singular-value profile outright,
+so with only those two, no setting of the mixture can simply follow the
+momentum's own conditioning. It costs no extra compute and no extra state.
+Every arm is RMS-matched, so a single Lion-scale lr drives the mixture and the
+convex combination is always a bounded step.
 
-The per-matrix mixture logit adapts by HYPERGRADIENT descent (Baydin et al.,
-2018): the realized loss sensitivity to the logit is <g_t, dp_t/dlogit>, and
-dp_t/dlogit is proportional to w(1-w) times the previous step's
-(u_spec - u_sign) difference direction. We keep that difference, take its
-cosine against the incoming gradient (norm-free, so the rate is a fixed
-model-agnostic constant), damp by the sigmoid Jacobian 4w(1-w), and clamp the
-logit to +/- LOGIT_CLAMP - a floor that keeps both geometries alive (shares
-stay within ~[0.12, 0.88]) so either can recover, the same floored-mixture
-rule as the memory bandit and the residual SMEAR.
+The mixture logits adapt by HYPERGRADIENT descent (Baydin et al., 2018). The
+realized loss sensitivity to logit i is <g_t, dp_t/dlogit_i>, and the softmax
+Jacobian gives dp_t/dlogit_i proportional to w_i (u_i - u_bar) evaluated at the
+previous step, where u_bar is the mixture that was actually applied. We keep
+those deviations, take each one's cosine against the incoming gradient
+(norm-free, so the rate stays a fixed model-agnostic constant), damp by
+4 w_i (1 - w_i), then CENTRE the logits - softmax is shift-invariant, so
+without centring the whole vector can drift into the clamp and pin the mixture
+for a reason that has nothing to do with geometry - and clamp to +/- LOGIT_CLAMP.
 
-State per matrix: exp_avg (the shared momentum; named so the optimizer
-dynamics suite reads it), geo_diff (previous u_spec - u_sign), geo_logit
-(scalar). Two tensors per param, the same footprint as Adam, plus one
-Newton-Schulz per matrix per step, the same compute as Muon. No syncs in the
-step path; ``get_smear_shares`` syncs only when the metrics interval reads it.
+The clamp is the mixture floor, and it is what keeps a badly-chosen arm
+recoverable: it bounds the logits, so the softmax Jacobian never reaches zero
+and a suppressed arm can always climb back. It is the same floored-mixture rule
+as the memory bandit, the residual SMEAR and the mode-loss floor. Its width
+depends on the arm count: two arms reach [0.12, 0.88], three arms reach roughly
+[0.02, 0.91] under the same clamp, because it now spreads over more logits.
+Adding the third geometry therefore also relaxes a mixture that was pinning
+against the two-arm bound.
+
+State per matrix: exp_avg (the shared momentum; named so the optimizer dynamics
+suite reads it), geo_diffs (previous u_i - u_bar, stacked, half precision),
+geo_logits. Against fp32 params that is 2.5x the parameter bytes for three arms,
+where the two-arm version was 2x - Adam's footprint. The deviations are what buy
+real credit assignment (which past choice improved the next gradient) rather than
+a greedy "which normalization matches the current gradient", which would need no
+state at all. Compute is one Newton-Schulz per matrix per step, the same as Muon,
+and the extra arm measured at about +5% step time. No syncs in the step path; the
+share accessors sync only when the metrics interval reads them.
 
 Intended for interior >=2D matrices only (the MuonGeo split): embeddings, the
 head, norms and biases route to a plain Lion secondary via CompositeOptimizer.
@@ -42,16 +60,29 @@ from torch.optim import Optimizer
 
 from pytorch_optimizer.optimizer.muon import zero_power_via_newton_schulz_5
 
+# Candidate geometries, in state order. Each arm costs one stored tensor per
+# matrix, so this tuple is the expressivity/memory dial.
+GEOMETRIES = ("sign", "spectral", "frobenius")
+
 # Hypergradient nudge per step, applied to a cosine in [-1, 1] damped by the
-# sigmoid Jacobian: ~50 consistently-aligned steps traverse the clamp range.
+# softmax Jacobian: on the order of a hundred consistently-aligned steps
+# traverse the clamp range.
 ADAPT_RATE = 0.05
-# Logit clamp = the mixture floor: sigmoid(+/-2) keeps shares in [0.119, 0.881].
+# Logit clamp = the mixture floor; see the module docstring for the reachable
+# share band, which depends on len(GEOMETRIES).
 LOGIT_CLAMP = 2.0
+
+# The stored deviations only ever feed a cosine - a direction test damped by
+# ADAPT_RATE - so they are kept at half precision. Norms are still reduced in
+# fp32. This is what keeps a third arm from doubling the optimizer's footprint.
+DIFF_DTYPE = torch.bfloat16
+
+EPS = 1e-12
 
 
 class LionGeo(Optimizer):
-    """SMEAR blend of sign (infinity-norm) and Newton-Schulz (spectral-norm)
-    updates over a shared Lion momentum, with hypergradient-adapted weights."""
+    """SMEAR blend of sign, Newton-Schulz and Frobenius updates over a shared
+    Lion momentum, with hypergradient-adapted mixture weights."""
 
     def __init__(self, params, lr=3e-4, betas=(0.95, 0.98), weight_decay=0.0):
         defaults = dict(lr=lr, betas=betas, weight_decay=weight_decay)
@@ -60,6 +91,23 @@ class LionGeo(Optimizer):
     def __str__(self) -> str:
         return "LionGeo"
 
+    @staticmethod
+    def _arm_directions(c: torch.Tensor) -> torch.Tensor:
+        """The candidate updates, stacked ``[len(GEOMETRIES), *c.shape]`` in
+        GEOMETRIES order. All are RMS-matched to ~1. Built by name, so
+        GEOMETRIES really is the dial: drop or reorder entries and the state,
+        the mixture and the metrics all follow."""
+        flat = c.reshape(c.size(0), -1)
+        arms = {
+            "sign": lambda: torch.sign(c),
+            "spectral": lambda: zero_power_via_newton_schulz_5(flat)
+            .to(c.dtype)
+            .reshape_as(c)
+            .mul_(math.sqrt(max(flat.shape))),
+            "frobenius": lambda: c * (math.sqrt(c.numel()) / c.norm().clamp_min(EPS)),
+        }
+        return torch.stack([arms[name]() for name in GEOMETRIES])
+
     @torch.no_grad()
     def step(self, closure=None):
         loss = None
@@ -67,6 +115,7 @@ class LionGeo(Optimizer):
             with torch.enable_grad():
                 loss = closure()
 
+        n_arms = len(GEOMETRIES)
         for group in self.param_groups:
             lr = float(group["lr"])
             beta1, beta2 = group["betas"]
@@ -76,51 +125,80 @@ class LionGeo(Optimizer):
                     continue
                 g = p.grad
                 state = self.state[p]
+                diff_dtype = DIFF_DTYPE if torch.finfo(p.dtype).bits > 16 else p.dtype
                 if "exp_avg" not in state:
                     state["exp_avg"] = torch.zeros_like(p)
-                    state["geo_logit"] = torch.zeros((), device=p.device)
+                    state["geo_logits"] = torch.zeros(n_arms, device=p.device)
+                    # Zero deviations make the first step's cosines exactly 0,
+                    # so the mixture starts uniform with no special-casing.
+                    state["geo_diffs"] = torch.zeros(
+                        (n_arms, *p.shape), dtype=diff_dtype, device=p.device
+                    )
                 m = state["exp_avg"]
-                logit = state["geo_logit"]
+                # Optimizer.load_state_dict casts every float state tensor to the
+                # param's dtype, so a resume can silently re-type both buffers.
+                # Restore them here rather than paying fp32 diffs (or a bf16
+                # logit accumulator) for the rest of the run.
+                logits = state["geo_logits"]
+                if logits.dtype != torch.float32:
+                    logits = state["geo_logits"] = logits.float()
+                d_prev = state["geo_diffs"]
+                if d_prev.dtype != diff_dtype:
+                    d_prev = state["geo_diffs"] = d_prev.to(diff_dtype)
 
-                # Hypergradient on the mixture: if the previous step's
-                # spectral-minus-sign direction still correlates with the new
-                # gradient, the spectral branch was the better descent
-                # direction there - raise its share (and vice versa).
-                d_prev = state.get("geo_diff")
-                if d_prev is not None:
-                    denom = (g.norm() * d_prev.norm()).clamp_min(1e-12)
-                    cos = (g * d_prev).sum() / denom
-                    w_now = torch.sigmoid(logit)
-                    jac = 4.0 * w_now * (1.0 - w_now)
-                    logit.add_(ADAPT_RATE * jac * cos).clamp_(-LOGIT_CLAMP, LOGIT_CLAMP)
+                # Hypergradient on the mixture: if an arm's previous deviation
+                # from the applied update still correlates with the new
+                # gradient, that arm was the better descent direction there -
+                # raise its share (and vice versa).
+                w_now = torch.softmax(logits, dim=0)
+                gf = g.reshape(1, -1)
+                df = d_prev.reshape(n_arms, -1)
+                denom = (
+                    torch.linalg.vector_norm(df, dim=1, dtype=torch.float32)
+                    * torch.linalg.vector_norm(gf, dtype=torch.float32)
+                ).clamp_min(EPS)
+                # Elementwise rather than a matvec: this promotes the half
+                # precision deviations to fp32, where a bf16 matmul would
+                # accumulate in bf16 on CPU and in fp32 on CUDA - a ~2e-3
+                # device-dependent split in the cosine, for no measured speedup.
+                cos = (df * gf).sum(dim=1) / denom
+                jac = 4.0 * w_now * (1.0 - w_now)
+                logits.add_(ADAPT_RATE * jac * cos)
+                # Centre before clamping: the clamp then bounds RELATIVE
+                # preference, not the softmax's free common shift.
+                logits.sub_(logits.mean()).clamp_(-LOGIT_CLAMP, LOGIT_CLAMP)
 
                 c = m.lerp(g, 1.0 - beta1)
-                u_sign = torch.sign(c)
-                flat = c.reshape(c.size(0), -1)
-                u_spec = (
-                    zero_power_via_newton_schulz_5(flat)
-                    .to(c.dtype)
-                    .reshape_as(c)
-                    .mul_(math.sqrt(max(flat.shape)))
-                )
-                update = torch.lerp(u_sign, u_spec, torch.sigmoid(logit))
+                u = self._arm_directions(c)
+                w = torch.softmax(logits, dim=0).to(u.dtype)
+                update = (u * w.view(-1, *([1] * c.dim()))).sum(dim=0)
 
                 if wd > 0:
                     p.mul_(1.0 - lr * wd)
                 p.add_(update, alpha=-lr)
 
-                state["geo_diff"] = u_spec - u_sign
+                # u is dead after the step; copy into the standing buffer rather
+                # than reallocating the deviations every step.
+                d_prev.copy_(u.sub_(update))
                 m.lerp_(g, 1.0 - beta2)
         return loss
 
     @torch.no_grad()
-    def get_smear_shares(self):
-        """Per-matrix spectral shares (sigmoid of the logits). Syncs to host;
-        call from the metrics interval, never the step path."""
-        shares = []
+    def get_geometry_shares(self) -> dict:
+        """Per-matrix mixture weights as ``{geometry: [share per matrix]}``.
+        Syncs to host; call from the metrics interval, never the step path."""
+        out = {name: [] for name in GEOMETRIES}
         for group in self.param_groups:
             for p in group["params"]:
-                logit = self.state.get(p, {}).get("geo_logit")
-                if logit is not None:
-                    shares.append(float(torch.sigmoid(logit)))
-        return shares
+                logits = self.state.get(p, {}).get("geo_logits")
+                if logits is None:
+                    continue
+                for name, share in zip(GEOMETRIES, torch.softmax(logits, dim=0)):
+                    out[name].append(float(share))
+        return out
+
+    @torch.no_grad()
+    def get_smear_shares(self):
+        """Per-matrix spectral shares: the historical one-number view, kept so
+        the opt_geo_share card stays continuous across the arm-count change."""
+        return self.get_geometry_shares()["spectral"]

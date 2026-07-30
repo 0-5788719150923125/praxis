@@ -3,7 +3,7 @@
 
 How a block's feedforward path is realized: MLP, GLU, KAN, polynomial, scatter, PEER, ... Selected with ``--ffn-type``; default is ``glu``.
 
-Registry: ``praxis.DENSE_REGISTRY`` (9 entries)
+Registry: ``praxis.DENSE_REGISTRY`` (10 entries)
 
 ## `arc` - ArcGLU
 
@@ -47,7 +47,7 @@ A multi-layer perceptron mapping ``input_dim -> input_dim``.
 
 Source: [praxis/dense/mlp.py:11](../praxis/dense/mlp.py#L11)
 
-## `peer` - ParameterEfficientExpertRetrieval
+## `peer`, `peer_glu` - ParameterEfficientExpertRetrieval
 
 This class implements the Parameter-Efficient Expert Retrieval (PEER) mechanism:
 https://arxiv.org/abs/2407.04153v1
@@ -60,7 +60,11 @@ Every dimension is derived from ``config`` unless explicitly overridden, so the 
 fits whatever model it is dropped into (see the two invariants on
 ``BANK_WIDTH_MULTIPLE`` and ...
 
-Source: [praxis/dense/peer.py:34](../praxis/dense/peer.py#L34)
+Source: [praxis/dense/peer.py:42](../praxis/dense/peer.py#L42)
+
+Presets:
+- `peer` - class defaults
+- `peer_glu` - `glu=True`
 
 ## `poly` - PolynomialExpansionMLP
 

@@ -13,14 +13,22 @@ ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 # The retrieval bank is budgeted against the dense FFN it replaces, so it tracks
 # the model instead of pinning an absolute expert count. Bank params are
-# 2 * num_experts * hidden (a down row + an up row per expert) while a GLU FFN is
-# ~4 * hidden^2, so num_experts = BANK_WIDTH_MULTIPLE * hidden holds the ratio at
-# (BANK_WIDTH_MULTIPLE / 2)x the dense FFN at EVERY width - the fixed count could
-# not, being linear in hidden against the dense FFN's quadratic (12x the GLU at
-# hidden=64, 0.68x at hidden=1024). 4 reproduces this module's historical
-# 32^2 = 1024 experts at the config's default hidden_size of 256: the existing
-# choice generalized, not a new tuning.
+# ROWS_PER_EXPERT * num_experts * hidden while a GLU FFN is ~4 * hidden^2, so
+# num_experts = BANK_WIDTH_MULTIPLE * hidden * 2 / ROWS_PER_EXPERT holds the
+# ratio at (BANK_WIDTH_MULTIPLE / 2)x the dense FFN at EVERY width - the fixed
+# count could not, being linear in hidden against the dense FFN's quadratic (12x
+# the GLU at hidden=64, 0.68x at hidden=1024). 4 reproduces this module's
+# historical 32^2 = 1024 experts at the config's default hidden_size of 256 in
+# the two-row case: the existing choice generalized, not a new tuning.
 BANK_WIDTH_MULTIPLE: int = 4
+
+# Rows a single expert occupies in the banks. An ungated expert is rank-1:
+# ``up_e * act(x . down_e)``, so two. A ``glu`` expert adds a gate vector, so
+# three - and the budget above divides by this, which is what keeps the two
+# variants comparable at equal parameter count rather than making `glu` a 1.5x
+# capacity increase wearing an architecture change's clothes.
+ROWS_PER_EXPERT: int = 2
+ROWS_PER_GLU_EXPERT: int = 3
 
 # Floor on the product-key sub-query width, below which the query is too narrow
 # to discriminate the key set. Fixed and model-agnostic.
@@ -55,6 +63,7 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         k: Optional[int] = None,
         offset_heads: bool = False,
         sparse: bool = False,
+        glu: bool = False,
     ):
         """
         Initialize the PEER module.
@@ -66,12 +75,23 @@ class ParameterEfficientExpertRetrieval(BaseDense):
                 attention-sized projection (hidden -> hidden), floored at
                 MIN_KEY_DIMS.
             num_experts: retrieval bank size, rounded to a perfect square.
-                Default: BANK_WIDTH_MULTIPLE * hidden_size, so the bank keeps a
-                constant ratio to the dense FFN at any width. NOTE: this is
+                Default: BANK_WIDTH_MULTIPLE * hidden_size * 2 /
+                rows_per_expert, so the bank keeps a constant PARAMETER ratio to
+                the dense FFN at any width and under either expert form. NOTE: this is
                 PEER's own bank, unrelated to `config.num_experts` (the router's
                 expert count) - the names collide but the quantities do not.
             num_heads: independent retrieval heads. Default: config.num_heads.
             k: experts retrieved per head. Default: TOP_K, clamped to num_keys.
+            glu: if True, every expert is a gated unit rather than a rank-1
+                projection: ``up_e * (act(x . gate_e) * (x . down_e))`` instead
+                of ``up_e * act(x . down_e)``. This is the same change SwiGLU
+                makes to a dense FFN, applied per retrieved expert - the
+                multiplicative term lets one expert suppress its own
+                contribution on a per-token basis, which a single activation
+                cannot. Costs a third bank row per expert, so the auto-sized
+                expert count shrinks by 2/3 to hold the parameter budget: the
+                comparison against ``peer`` is capacity-matched, trading expert
+                COUNT for per-expert expressiveness.
             sparse: if True, the expert banks emit sparse gradients (only the
                 selected rows get a grad/optimizer update), which is what lets
                 `num_experts` scale without paying dense grad + optimizer state
@@ -85,6 +105,10 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         self.num_heads: int = num_heads if num_heads is not None else config.num_heads
         self.offset_heads: bool = offset_heads
         self.num_sets: int = 1 if not self.offset_heads else self.num_heads
+        self.glu: bool = glu
+        self.rows_per_expert: int = (
+            ROWS_PER_GLU_EXPERT if glu else ROWS_PER_EXPERT
+        )
 
         # Product-Key retrieval factorizes the expert index into two key lookups,
         # so the bank is num_keys^2 by construction. Auto-sizing rounds the
@@ -92,7 +116,15 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         # per-head sets, so offset_heads redistributes the bank rather than
         # multiplying it.
         if num_experts is None:
-            budgeted_rows = BANK_WIDTH_MULTIPLE * hidden_size / self.num_sets
+            # The 2 / rows_per_expert factor is what makes `glu` capacity-matched
+            # against `peer` instead of 1.5x larger.
+            budgeted_rows = (
+                BANK_WIDTH_MULTIPLE
+                * hidden_size
+                * ROWS_PER_EXPERT
+                / self.rows_per_expert
+                / self.num_sets
+            )
             self.num_keys: int = max(2, round(math.sqrt(budgeted_rows)))
         else:
             assert (
@@ -172,6 +204,14 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         self.down = nn.Embedding(
             self.num_experts * self.num_sets, hidden_size, sparse=sparse
         )
+        # The gate half of a GLU expert. Kept as its own bank rather than a
+        # double-width `down` so the two projections can share `_project` and
+        # the sparse-gradient path unchanged.
+        self.gate = (
+            nn.Embedding(self.num_experts * self.num_sets, hidden_size, sparse=sparse)
+            if glu
+            else None
+        )
         self.act = ACT2FN[config.activation]
         self.dropout = nn.Dropout(config.dropout)
         self.up = nn.EmbeddingBag(
@@ -184,11 +224,14 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         nn.init.normal_(self.keys, std=keys_std)
         nn.init.xavier_uniform_(self.down.weight)
         nn.init.xavier_uniform_(self.up.weight)
+        if self.gate is not None:
+            nn.init.xavier_uniform_(self.gate.weight)
 
     def extra_repr(self) -> str:
         return (
             f"num_experts={self.num_experts} ({self.num_keys}^2), "
             f"key_dims={self.key_dims}, num_heads={self.num_heads}, k={self.k}, "
+            f"expert={'glu' if self.glu else 'rank1'}, "
             f"projection={'gather' if self._gathers() else 'dense'}"
         )
 
@@ -208,6 +251,11 @@ class ParameterEfficientExpertRetrieval(BaseDense):
 
         Sparse banks always gather: sparse gradients come from the embedding
         lookup, and projecting against ``.weight`` would densify them.
+
+        A ``glu`` expert projects twice (gate and value), so the dense path's
+        ``[b, n, N]`` intermediate is built twice - still far below the gather's
+        ``[b, n, h, k, d]`` at our bank sizes, and the smaller bank a gated
+        expert budgets shrinks it further.
         """
         return self.sparse or (
             self.num_experts * self.num_sets
@@ -278,8 +326,15 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         # Project the input onto each retrieved expert's down vector
         outputs = self._project(inputs, self.down, indices)
 
-        # Apply sigmoid scores to activated outputs, then drop whole experts
-        outputs = F.sigmoid(scores) * self.act(outputs)
+        # A GLU expert multiplies its activated gate by a linear branch, so the
+        # activation gates the value instead of merely shaping it.
+        if self.gate is not None:
+            outputs = self.act(self._project(inputs, self.gate, indices)) * outputs
+        else:
+            outputs = self.act(outputs)
+
+        # Apply sigmoid retrieval scores, then drop whole experts
+        outputs = F.sigmoid(scores) * outputs
         outputs = self.dropout(outputs)
 
         # Aggregate via EmbeddingBag: the score-weighted sum over (heads, k) is
@@ -304,18 +359,19 @@ if __name__ == "__main__":
         return sum(p.numel() for p in module.parameters())
 
     print(
-        f"{'hidden':>7} {'heads':>6} {'experts':>9} {'key_dims':>9} "
+        f"{'hidden':>7} {'heads':>6} {'expert':>7} {'experts':>9} {'key_dims':>9} "
         f"{'k':>3} {'GLU':>10} {'PEER':>10} {'ratio':>7} {'q_out/hidden':>13}"
     )
     for hidden_size in (32, 64, 128, 256, 512, 1024):
         for num_heads in (4, 16):
+          for glu in (False, True):
             config = PraxisConfig()
             config.hidden_size = hidden_size
             config.num_heads = num_heads
             config.activation = "gelu"
             config.dropout = 0.1
 
-            peer = ParameterEfficientExpertRetrieval(config)
+            peer = ParameterEfficientExpertRetrieval(config, glu=glu)
             dense = GatedLinearMLP(config)
             q_out = 2 * peer.num_heads * peer.key_dims
 
@@ -325,7 +381,8 @@ if __name__ == "__main__":
             assert peer.k <= peer.num_keys, "topk cannot outrun the key set"
 
             print(
-                f"{hidden_size:>7} {num_heads:>6} {peer.num_experts:>9} "
+                f"{hidden_size:>7} {num_heads:>6} "
+                f"{'glu' if glu else 'rank1':>7} {peer.num_experts:>9} "
                 f"{peer.key_dims:>9} {peer.k:>3} {count(dense):>10} "
                 f"{count(peer):>10} {count(peer)/count(dense):>6.2f}x "
                 f"{q_out/hidden_size:>12.2f}x"

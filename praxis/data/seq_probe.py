@@ -61,7 +61,13 @@ class SequenceProbe:
     forget = 0.98  # per-window decay of the normal equations (~50-window memory)
     ridge = 1e-6  # keeps the fit defined before the mixture has varied
     explore = 0.1  # uniform floor: every arm keeps being sampled and re-fit
-    min_windows = 8  # windows before the fit is trusted at all
+    # Windows before the fit is allowed to steer SAMPLING. Deliberately small:
+    # the posterior scoring is self-calibrating (thin evidence renders as a
+    # diffuse mix), so a long warm-up gate buys nothing and costs visibility -
+    # at 8 the first reported mix landed 1152 optimizer steps into a run, which
+    # reads as a missing dashboard card rather than a warming one. Reporting
+    # starts a window earlier still; see ``metrics``.
+    min_windows = 3
     posterior_samples = 512  # Thompson draws per refit; pure python, ~0.1ms
 
     _rng = random.Random(0)  # deterministic: the mix must survive a resume
@@ -151,7 +157,16 @@ class SequenceProbe:
 
         cls._solve()
         if cls._windows >= cls.min_windows:
+            first = cls.shared_probs is None
             cls._recompute()
+            if first and cls.shared_probs is not None:
+                mix = "  ".join(
+                    f"x{m}={cls.shared_probs[m]:.2f}" for m in cls.arms
+                )
+                print(
+                    f"[SeqProbe] fit engaged after {cls._windows} windows; "
+                    f"sampling mix {mix}"
+                )
 
     @classmethod
     def _solve(cls) -> None:
@@ -272,16 +287,26 @@ class SequenceProbe:
 
     @classmethod
     def metrics(cls) -> Dict[str, float]:
-        """Per-arm probability, fitted value and t-statistic, for logging."""
-        if not cls.enabled or cls.shared_probs is None:
+        """Per-arm fitted value, t-statistic, and sampling probability.
+
+        Value and evidence are reported from the FIRST completed window, before
+        the fit is trusted enough to steer sampling. That split is deliberate:
+        gating the telemetry on the same threshold as the actuation made the
+        dashboard cards appear only after ~1000 optimizer steps, which is
+        indistinguishable from a card that does not exist. The probability keys
+        stay absent until the mix is genuinely in force, so the mix card never
+        shows a distribution nothing is sampling from.
+        """
+        if not cls.enabled or cls._windows < 1:
             return {}
         out: Dict[str, float] = {}
         for i, m in enumerate(cls.arms):
-            out[f"seq_prob_x{m}"] = float(cls.shared_probs.get(m, 0.0))
             out[f"seq_value_x{m}"] = float(cls._beta[i]) if i < len(cls._beta) else 0.0
             out[f"seq_tstat_x{m}"] = (
                 float(cls._tstat[i]) if i < len(cls._tstat) else 0.0
             )
+            if cls.shared_probs is not None:
+                out[f"seq_prob_x{m}"] = float(cls.shared_probs.get(m, 0.0))
         return out
 
 

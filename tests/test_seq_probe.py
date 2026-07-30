@@ -180,3 +180,115 @@ def test_metric_descriptions_fold_in_when_armed():
     descs = get_metric_descriptions(armed)
     assert descs["seq_tstat_x2"]["caller"] == "SequenceProbe"
     assert descs["seq_value_x2"]["chart"]["series_group"] == "seq_value"
+
+
+# ── telemetry reaches the dashboard ──────────────────────────────────────
+
+
+def test_evidence_is_reported_before_the_fit_steers_sampling():
+    """Gating telemetry on the same threshold as actuation made the dashboard
+    cards appear ~1000 optimizer steps into a run, which is indistinguishable
+    from a card that does not exist. Value and evidence report from the first
+    completed window; the mix appears only once it is genuinely in force."""
+    SequenceProbe.enable(64, TIERS)
+    feed({1: 1.0, 2: 3.0, 4: 0.0}, windows=1)
+    early = SequenceProbe.metrics()
+    assert early, "nothing reported after the first window"
+    assert any(k.startswith("seq_value_x") for k in early)
+    assert any(k.startswith("seq_tstat_x") for k in early)
+    # The mix is not in force yet, so it must not be charted as if it were.
+    assert not any(k.startswith("seq_prob_x") for k in early)
+    assert SequenceProbe.shared_probs is None
+
+    feed({1: 1.0, 2: 3.0, 4: 0.0}, windows=SequenceProbe.min_windows)
+    later = SequenceProbe.metrics()
+    assert any(k.startswith("seq_prob_x") for k in later)
+
+
+def test_warmup_stays_short_enough_to_be_visible():
+    """A guard on the constants, not the code: the cards have to arrive early
+    enough in a run that their absence is not mistaken for a missing feature."""
+    from praxis.callbacks.lightning.seq_probe import SequenceProbeCallback as cb
+
+    assert cb.first_report_step() <= 64, cb.first_report_step()
+    assert cb.first_mix_step() <= 320, cb.first_mix_step()
+
+
+def test_advertised_arrival_matches_actual_arrival():
+    """The printed estimate has to be the truth. The first window only anchors
+    the probe's loss level - it produces no delta to regress - so an estimate
+    that forgets it is off by a whole window, which is how a working feature
+    gets reported as broken."""
+    from types import SimpleNamespace
+
+    import torch
+
+    from praxis.callbacks.lightning.seq_probe import SequenceProbeCallback
+
+    class Inner(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.p = torch.nn.Linear(2, 2)
+            self.loss = 3.0
+
+        def forward(self, input_ids=None, labels=None, **kw):
+            self.loss *= 0.98
+            return SimpleNamespace(loss=torch.tensor(self.loss))
+
+    module = SimpleNamespace(model=Inner(), device="cpu", outputs_are_aligned=False)
+    cb = SequenceProbeCallback(block_size=8, sequence_multiplier_tiers=TIERS)
+    cb._probe = [(1, torch.zeros(2, 8, dtype=torch.long))]
+    SequenceProbe.enable(8, TIERS)
+
+    batch = torch.zeros(2, 8, dtype=torch.long)
+    first_report = first_mix = None
+    for step in range(1, cb.first_mix_step() + 2):
+        cb.on_train_batch_start(None, module, batch, step)
+        cb.on_before_optimizer_step(None, module, None)
+        m = SequenceProbe.metrics()
+        if m and first_report is None:
+            first_report = step
+        if any(k.startswith("seq_prob_x") for k in m) and first_mix is None:
+            first_mix = step
+
+    assert first_report == cb.first_report_step(), (first_report, cb.first_report_step())
+    assert first_mix == cb.first_mix_step(), (first_mix, cb.first_mix_step())
+
+
+def test_window_ramps_so_the_first_window_is_short():
+    from praxis.callbacks.lightning.seq_probe import SequenceProbeCallback as cb
+
+    lengths = cb.window_lengths(5)
+    assert lengths[0] == cb.warmup_window
+    assert lengths[-1] == cb.window
+    assert lengths == sorted(lengths)  # monotone ramp, never a shrink
+
+
+def test_dynamics_extractor_surfaces_the_card_keys():
+    """The seq_mix card pattern-matches ^seq_prob_x\\d+$ off the dynamics
+    payload, so the extractor is the contract that matters."""
+    from praxis.callbacks.lightning.dynamics import DynamicsLoggerCallback
+
+    extract = DynamicsLoggerCallback._extract_seq_curriculum_dynamics
+    assert extract(object()) == {}  # disarmed: no keys, no card
+
+    SequenceProbe.enable(64, TIERS)
+    feed({1: 1.0, 2: 3.0, 4: 0.0}, windows=50)
+    payload = extract(object())
+    assert [k for k in payload if k.startswith("seq_prob_x")], sorted(payload)
+
+
+def test_callback_disarms_loudly_without_validation_data(capsys):
+    """A silently inert controller looks exactly like a missing card."""
+    from types import SimpleNamespace
+
+    from praxis.callbacks.lightning.seq_probe import SequenceProbeCallback
+
+    cb = SequenceProbeCallback(block_size=64, sequence_multiplier_tiers=TIERS)
+    trainer = SimpleNamespace(datamodule=SimpleNamespace(val_datasets=False))
+    cb.on_train_start(trainer, SimpleNamespace(device="cpu"))
+    out = capsys.readouterr().out
+    assert "DISARMED" in out
+    assert "will" in out and "not appear" in out  # names the consequence
+    assert cb._failed
+    assert not SequenceProbe.enabled

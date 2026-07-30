@@ -103,8 +103,9 @@ class DynamicsLoggerCallback(Callback):
             # abstain rate). The criterion opts in via training_metrics().
             dynamics.update(self._extract_loss_dynamics(model))
 
-            # Sequence-length curriculum: per-multiplier sampling mix +
-            # learning progress. Empty unless the adaptive curriculum is armed.
+            # Sequence-length curriculum: per-arm fitted value + evidence, and
+            # the sampling mix once the fit steers it. Empty unless
+            # seq_curriculum=probe is armed and a window has completed.
             dynamics.update(self._extract_seq_curriculum_dynamics())
 
             # RLCT landscape scalars (lambda-hat + LLC mean/max/min/std),
