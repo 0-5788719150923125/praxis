@@ -162,6 +162,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
+| `--chat-format` | str | `None` | Chat format from CHAT_FORMAT_REGISTRY. The entry owns the turn boundaries, the assistant mask, the halting contract and the tool-call layout as one unit. Unset = 'default' (ChatML). (choices: default, prose) |
 | `--tokenizer-num-examples` | int | `5000000` | The number of examples to use for tokenizer training |
 | `--tokenizer-train-type` | str | `unigram` | The type of tokenizer to train (choices: bpe, unigram) |
 | `--tokenizer-train-vocab-size` | int | `16384` | The vocab size for tokenizer training (choices: 1024, 2048, 4096, 8192, 16384, 32768, 65536) |

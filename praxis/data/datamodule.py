@@ -43,6 +43,9 @@ class PraxisDataModule(LightningDataModule):
             block_size,
             batch_size,
             sequence_multiplier_tiers,
+            # Only training follows the batch governor's plan; see the
+            # ``governed`` note in WeightedIterableDataset.
+            governed=True,
         )
         self.val_datasets = False
         if len(val_datasets) > 0:
@@ -79,6 +82,7 @@ class PraxisDataModule(LightningDataModule):
         batch_size,
         sequence_multiplier_tiers=(),
         enable_data_metrics_logging=True,
+        governed=False,
     ):
         # `uniform` forces every dataset to 1.0 regardless of what
         # DATASET_COLLECTIONS declared, so we just count datasets here.
@@ -104,6 +108,7 @@ class PraxisDataModule(LightningDataModule):
             enable_chat_validation=self.enable_chat_validation,
             strict_chat_validation=self.strict_chat_validation,
             weighting_mode=self.weighting_mode,
+            governed=governed,
         )
 
     def train_dataloader(self):

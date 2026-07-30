@@ -8,7 +8,7 @@ from typing import Dict, List
 from transformers import PreTrainedTokenizer
 
 from praxis.data.config import SYSTEM_PROMPT, sample_developer_prompt
-from praxis.tools import format_tool_input, format_tool_output
+from praxis.tokenizers.chat_templates import chat_format_of
 
 
 def _log_weighted_int(lo: int, hi: int) -> int:
@@ -160,6 +160,13 @@ def format_tool_calling(
         {"role": "user", "content": user_prompt},
     ]
 
+    # The chat format decides the call's LAYOUT, not just its rendering: with
+    # control tokens the call is a wrapped block inside an assistant turn,
+    # while a text-boundary format promotes it to a turn of its own so the
+    # boundary that opens it is a trained target. Ask the format rather than
+    # hard-coding either shape.
+    fmt = chat_format_of(tokenizer)
+
     # Rare get_tools() probe - the schema dump is byte-identical across
     # samples, so a high frequency makes it the most-memorized chunk in
     # this corpus. 1% is enough to teach "you can introspect your tools"
@@ -168,44 +175,19 @@ def format_tool_calling(
         from praxis.tools import get_tools_json_schema
 
         tools_json = json.dumps(get_tools_json_schema(), indent=2)
-        messages.append(
-            {
-                "role": "assistant",
-                "content": format_tool_input(tool_name="get_tools", arguments={}),
-            }
-        )
-        messages.append(
-            {
-                "role": "tool",
-                "content": format_tool_output(tools_json),
-            }
-        )
+        messages.extend(fmt.tool_call_messages("get_tools", {}, tools_json))
 
-    # Calc tool call. Three messages: assistant emits the call, tool
-    # emits the result, assistant emits the natural-language phrase.
-    # Splitting the tool result into its own role keeps it outside the
-    # assistant_mask region so the model isn't trained to predict
+    # Calc tool call: the call, the result, then the natural-language phrase.
+    # Keeping the tool result in a role of its own puts it outside the
+    # assistant_mask region, so the model is never trained to predict
     # runtime-injected content.
-    messages.append(
-        {
-            "role": "assistant",
-            "content": format_tool_input(
-                tool_name="calc",
-                arguments={"values": values, "op": operation},
-            ),
-        }
-    )
-    messages.append(
-        {
-            "role": "tool",
-            "content": format_tool_output(str(float(result))),
-        }
-    )
-    messages.append(
-        {
-            "role": "assistant",
-            "content": result_phrase,
-        }
+    messages.extend(
+        fmt.tool_call_messages(
+            "calc",
+            {"values": values, "op": operation},
+            str(float(result)),
+            reply=result_phrase,
+        )
     )
 
     # Return messages and metadata

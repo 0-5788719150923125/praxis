@@ -1006,7 +1006,7 @@ DYNAMICS_CHART_REGISTRY: list = [
         "title": "Sequence Length Mix",
         "subtitle": (
             "Learned sampling probability over the sequence-length multipliers "
-            "(constant token count). The adaptive curriculum samples more of the "
+            "(constant attention cost). The adaptive curriculum samples more of the "
             "length the model is improving fastest on; only present when "
             "seq_curriculum=adaptive."
         ),

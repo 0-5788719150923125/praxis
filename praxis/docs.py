@@ -283,10 +283,19 @@ INFRASTRUCTURE_PACKAGES: List[Tuple[str, str]] = [
     ),
     ("schedulers", "Learning-rate schedulers."),
     ("tasks", "Training task abstractions used by ``strategies``."),
-    ("tokenizers", "Tokenizer creation and registry."),
+    (
+        "tokenizers",
+        "Tokenizer creation and registry, plus ``CHAT_FORMAT_REGISTRY`` "
+        "(``--chat-format``): each entry pairs a chat template with the turn "
+        "boundaries, assistant mask, halting contract and tool-call layout that "
+        "have to agree with it. ``default`` is ChatML with control tokens; "
+        "``prose`` uses plain-text role boundaries and halts on stop strings.",
+    ),
     (
         "tools",
-        "Tool-calling support (in-band ``[TOOL_CALL]``/``[/TOOL_CALL]`` splices).",
+        "Tool-calling support. ``default`` splices in-band "
+        "``[TOOL_CALL]``/``[/TOOL_CALL]``; text-boundary formats promote the call "
+        "and its result to turns of their own, so role boundaries delimit them.",
     ),
     (
         "trainers",

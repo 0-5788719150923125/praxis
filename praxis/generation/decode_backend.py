@@ -7,11 +7,14 @@ plus a little metadata (device, positional capacity, eval-mode context,
 preferred sampling temperature). Everything else is shared.
 
 - :class:`ModelBackend` wraps ``model.generate`` (halt-and-resume native:
-  the boundary tokens sit in ``eos_token_id``).
+  the boundary tokens sit in ``eos_token_id``, and text boundaries in
+  ``stop_strings``, which transformers honours because the tokenizer is
+  passed through).
 - :class:`MonoForwardBackend` drives ``MonoForwardTrainer.generate``,
   whose streaming token iterator hops activations through Ray actors. It
   implements the same halt-and-resume contract by stopping its yield loop
-  when a produced token lands in the stop set.
+  when a produced token lands in the stop set, or when the decoded tail
+  completes a stop string.
 """
 
 from __future__ import annotations
@@ -52,9 +55,15 @@ class DecodeBackend(ABC):
         self, tokens: torch.Tensor, step_kwargs: Dict[str, Any]
     ) -> torch.Tensor:
         """Extend ``tokens`` until a halt token (any id in
-        ``step_kwargs['eos_token_id']``) or ``max_new_tokens``. Return the
-        full ``[1, L]`` sequence, including the halt token. Returns the
-        input unchanged when nothing was produced."""
+        ``step_kwargs['eos_token_id']``), a completed stop string (any of
+        ``step_kwargs['stop_strings']``), or ``max_new_tokens``. Return the
+        full ``[1, L]`` sequence, including the halt token or boundary.
+        Returns the input unchanged when nothing was produced.
+
+        Only tokens produced by THIS call can halt it: the caller resumes from
+        a sequence that already ends in the boundary it last halted on, so a
+        backend that re-tested the whole sequence would return zero new tokens
+        forever."""
 
 
 class ModelBackend(DecodeBackend):
@@ -136,9 +145,13 @@ class MonoForwardBackend(DecodeBackend):
     def generate_until_halt(
         self, tokens: torch.Tensor, step_kwargs: Dict[str, Any]
     ) -> torch.Tensor:
+        from praxis.generation.stopping import find_stop_cut, normalize_stop_strings
+
         stop_ids = self._stop_ids(step_kwargs)
+        stop_strings = normalize_stop_strings(step_kwargs.get("stop_strings"))
         max_new_tokens = int(step_kwargs.get("max_new_tokens", 100))
         top_k = step_kwargs.get("top_k")
+        prefix = tokens[0].tolist()
         produced = []
         for tok in self.trainer.generate(
             tokens.cpu(),
@@ -151,6 +164,16 @@ class MonoForwardBackend(DecodeBackend):
             produced.append(tok)
             if int(tok.view(-1)[0].item()) in stop_ids:
                 break
+            # Text-boundary halt. The scan starts at the prompt's length so the
+            # boundary we resumed from cannot re-halt this step; only one new
+            # token arrives per iteration, so the earliest completion is here.
+            if stop_strings:
+                ids = prefix + [int(t.view(-1)[0].item()) for t in produced]
+                keep = find_stop_cut(
+                    self.tokenizer, ids, len(ids) - 1, stop_strings
+                )
+                if keep is not None:
+                    break
         if not produced:
             return tokens
         new_ids = torch.stack(produced, dim=-1).to(tokens.device)

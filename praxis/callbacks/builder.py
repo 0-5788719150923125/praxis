@@ -90,6 +90,11 @@ def build_training_callbacks(
                     # it (the static raw-batch conversion below assumes a
                     # fixed accumulation factor).
                     val_every=cfg.val_every,
+                    # The governor owns the whole batch shape, so it also rolls
+                    # the sequence multiplier - once per accumulation cycle
+                    # rather than per microbatch, which is what makes the
+                    # microbatches within a cycle the same size.
+                    sequence_multiplier_tiers=hparams["sequence_multiplier_tiers"],
                 )
             )
         else:

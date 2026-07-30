@@ -19,6 +19,23 @@ TOOL_RESULT_OPEN = "[TOOL_RESULT]"
 TOOL_RESULT_CLOSE = "[/TOOL_RESULT]"
 
 
+def format_call_body(
+    tool_name: str, arguments: Dict[str, Any], indent: Optional[int] = None
+) -> str:
+    """The bare call JSON, with no delimiters of any kind.
+
+    This is the payload both tool styles carry: ``tool_style="tokens"`` wraps
+    it in ``[TOOL_CALL]``/``[/TOOL_CALL]``, while ``tool_style="roles"`` puts
+    it in a turn of its own where the surrounding role boundaries already
+    delimit it.
+
+    Example:
+        >>> format_call_body("calc", {"values": [1, 2], "op": "add"})
+        '{"name": "calc", "arguments": {"values": [1, 2], "op": "add"}}'
+    """
+    return json.dumps({"name": tool_name, "arguments": arguments}, indent=indent)
+
+
 def format_tool_input(
     tool_name: str, arguments: Dict[str, Any], indent: Optional[int] = None
 ) -> str:
@@ -33,8 +50,7 @@ def format_tool_input(
         >>> format_tool_input("calc", {"values": [1, 2], "op": "add"})
         '[TOOL_CALL]\\n{"name": "calc", "arguments": {"values": [1, 2], "op": "add"}}\\n[/TOOL_CALL]'
     """
-    tool_call_data = {"name": tool_name, "arguments": arguments}
-    json_str = json.dumps(tool_call_data, indent=indent)
+    json_str = format_call_body(tool_name, arguments, indent)
     return f"{TOOL_CALL_OPEN}\n{json_str}\n{TOOL_CALL_CLOSE}"
 
 
@@ -303,6 +319,93 @@ def has_tool_output_ids(token_ids: Sequence[int], tokenizer) -> bool:
     return result_close in rest
 
 
+# ----------------------------------------------------------------------
+# Text-boundary tool flow (``tool_style="roles"``). The call and its result
+# are turns in their own right, so the role boundaries that open them ARE the
+# delimiters - there is nothing left for a control token to mark:
+#
+#     ...\\n\\ncall\\n\\n{"name": ...}\\n\\ntool\\n\\n<result>\\n\\nassistant\\n\\n...
+#
+# The generator's three halt cases map across unchanged: the `call` boundary
+# opens the JSON (switch to greedy), the `result` boundary closes it (execute
+# and splice), any other role's boundary ends the turn.
+# ----------------------------------------------------------------------
+
+
+def classify_boundary_halt(text: str, fmt) -> Optional[str]:
+    """Which tool-flow boundary ``text`` ends on: ``"call_open"``,
+    ``"call_close"``, or ``None`` for anything else (including a plain
+    end-of-turn boundary, which the caller treats as done).
+    """
+    if fmt.tool_style != "roles":
+        return None
+    if text.endswith(fmt.boundary(fmt.call_role)):
+        return "call_open"
+    if text.endswith(fmt.boundary(fmt.result_role)):
+        return "call_close"
+    return None
+
+
+def find_pending_call_text(text: str, fmt) -> Optional[Dict[str, Any]]:
+    """Parse the call whose result boundary ``text`` just landed on.
+
+    Only called when generation halted on the result boundary, so the pending
+    call is unambiguously the last one: everything between the most recent
+    ``call`` boundary and the trailing ``result`` boundary. Returns ``None``
+    when there is no call to answer, or a dict with ``_malformed: True`` when
+    the body is not a JSON object - the caller splices an error result rather
+    than letting the model fabricate one.
+    """
+    call_boundary = fmt.boundary(fmt.call_role)
+    result_boundary = fmt.boundary(fmt.result_role)
+    if not text.endswith(result_boundary):
+        return None
+    body_end = len(text) - len(result_boundary)
+    start = text.rfind(call_boundary, 0, body_end)
+    if start != -1:
+        body_start = start + len(call_boundary)
+    else:
+        # A prompt long enough to be left-truncated (``_prepare_inputs`` caps it
+        # against max_position_embeddings) can lose the boundary's leading blank
+        # line, leaving the bare role line at position 0. The call is still
+        # executable, so recognise that form rather than dropping the call and
+        # letting the model invent its own result.
+        bare = call_boundary.lstrip("\n")
+        if not text.startswith(bare):
+            return None
+        body_start = len(bare)
+    body = text[body_start:body_end].strip()
+    try:
+        tool_data = json.loads(body)
+    except json.JSONDecodeError as exc:
+        return {
+            "_malformed": True,
+            "_error": f"tool call body is not valid JSON: {exc.msg}",
+            "_body": body,
+        }
+    if not isinstance(tool_data, dict):
+        return {
+            "_malformed": True,
+            "_error": "tool call body must be a JSON object, got "
+            f"{type(tool_data).__name__}",
+            "_body": body,
+        }
+    return tool_data
+
+
+def build_result_splice_text(result: Any, fmt) -> str:
+    """The text spliced after a ``result`` boundary: the real result, then the
+    boundary handing control back to the model.
+
+    Generation halted with the sequence ending in ``\\n\\ntool\\n\\n``, so the
+    result body follows directly and the reply boundary closes the tool turn -
+    byte-identical to what the training template renders for the same
+    exchange, which is the point (the model has to be IN distribution when it
+    resumes, or it stops mid-turn).
+    """
+    return f"{result}{fmt.boundary(fmt.reply_role)}"
+
+
 def build_result_splice_ids(tokenizer, result: Any) -> List[int]:
     """Encode the post-tool-call splice as a list of token ids.
 
@@ -317,9 +420,21 @@ def build_result_splice_ids(tokenizer, result: Any) -> List[int]:
     splice left the model in a context it had never been supervised in,
     so it tended to emit EOS instead of a natural-language reply.
 
+    Text-boundary formats take the role-boundary form above instead.
+
     Falls back to a plain-text encoding when the tokenizer is missing
     any of the required special-token ids (e.g. an older checkpoint).
     """
+    from praxis.tokenizers.chat_templates import chat_format_of
+
+    fmt = chat_format_of(tokenizer)
+    if fmt.tool_style == "roles":
+        return list(
+            tokenizer.encode(
+                build_result_splice_text(result, fmt), add_special_tokens=False
+            )
+        )
+
     result_open_id = _token_id_or_none(tokenizer, TOOL_RESULT_OPEN)
     result_close_id = _token_id_or_none(tokenizer, TOOL_RESULT_CLOSE)
     sep_id = getattr(tokenizer, "sep_token_id", None)

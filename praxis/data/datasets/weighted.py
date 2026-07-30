@@ -31,6 +31,7 @@ class WeightedIterableDataset(IterableDataset):
         enable_chat_validation: bool = True,
         strict_chat_validation: bool = False,
         weighting_mode: str = "novelty",
+        governed: bool = False,
     ):
         # Always use the new message queue system
         self.data_manager = InterleaveDataManager(
@@ -48,6 +49,13 @@ class WeightedIterableDataset(IterableDataset):
 
         self.batch_size = batch_size
         self.sequence_multiplier_tiers = tuple(sequence_multiplier_tiers)
+        # Only the TRAINING loader follows the batch governor's plan. The
+        # validation loader must keep a fixed shape - a val loss measured at a
+        # different batch size and sequence length every time is not comparable
+        # across steps - and, because the plan counts microbatches to know where
+        # an accumulation cycle ends, a validation pass drawing from it would
+        # also shift the training cycle's boundaries.
+        self.governed = bool(governed)
         self.rl_type = rl_type
         # Weight-edit controllers (e.g. harmonic_weight) reward via callback and
         # use no RL datasets, so skip the dataset-reward path and its logging.
@@ -57,12 +65,35 @@ class WeightedIterableDataset(IterableDataset):
         self.rl_uses_datasets = _rl_uses_datasets(rl_type)
         self.tokenizer = tokenizer  # Store tokenizer for reward extraction
 
+    def _next_shape(self):
+        """Rows and sequence multiplier for the next microbatch.
+
+        With a batch governor active the shape comes from the shared
+        ``BatchSchedule``, which holds the multiplier fixed for a whole
+        accumulation cycle and sizes rows from the governed effective batch -
+        so ``batch_size`` acts as a ceiling on one microbatch rather than a
+        floor under the effective batch. Without one, the original per-batch
+        multiplier roll at the static batch size.
+
+        Returns ``(nominal_rows, multiplier)``: ``get_batch`` applies the
+        ``m**2`` division itself, so the schedule's per-microbatch row count is
+        handed back in the nominal units that call expects.
+        """
+        if self.governed:
+            from praxis.data.batch_schedule import BatchSchedule
+
+            plan = BatchSchedule.next_microbatch()
+            if plan is not None:
+                return plan.nominal_rows, plan.multiplier
+        multiplier = sample_sequence_multiplier(
+            self.batch_size, self.sequence_multiplier_tiers
+        )
+        return self.batch_size, multiplier
+
     def __iter__(self):
         while True:
-            multiplier = sample_sequence_multiplier(
-                self.batch_size, self.sequence_multiplier_tiers
-            )
-            result = self.data_manager.get_batch(self.batch_size, multiplier)
+            nominal_rows, multiplier = self._next_shape()
+            result = self.data_manager.get_batch(nominal_rows, multiplier)
 
             # Extract batch and rewards
             batch = result["batch"]

@@ -8,7 +8,15 @@ from transformers import AutoTokenizer, PreTrainedTokenizer
 
 from .base import PraxisTokenizerBase
 from .char_level import CharLevelTokenizer
-from .chat_templates import get_chat_template
+from .chat_templates import (
+    CHAT_FORMAT_REGISTRY,
+    ChatFormat,
+    apply_chat_format,
+    chat_format_of,
+    get_chat_format,
+    get_chat_template,
+    resolve_chat_format,
+)
 from .standard import StandardTokenizer
 
 # ByteLevel depends on the byte-latent stack; tolerate its absence.
@@ -118,6 +126,7 @@ def create_tokenizer(
     encoder_type: Optional[str] = None,
     tokenizer_type: Optional[str] = None,
     cache_dir: Optional[str] = None,
+    chat_format: Optional[str] = None,
     **kwargs,
 ) -> PreTrainedTokenizer:
     """Create a tokenizer instance from :data:`TOKENIZER_REGISTRY`.
@@ -128,7 +137,15 @@ def create_tokenizer(
     to emit a compatibility warning when the chosen tokenizer can't
     produce the byte ids the encoder expects - there is no implicit
     override.
+
+    ``chat_format`` selects an entry from
+    :data:`~praxis.tokenizers.chat_templates.CHAT_FORMAT_REGISTRY` and is
+    applied last, so it wins over whatever template the tokenizer class (or a
+    hub download) installed. Unknown names are a hard error.
     """
+    # Validate before building anything: a typo here should fail the run
+    # immediately, not after a tokenizer download.
+    requested_format = resolve_chat_format(chat_format)
     if tokenizer_type is None:
         tokenizer_type = DEFAULT_TOKENIZER
 
@@ -163,10 +180,13 @@ def create_tokenizer(
             **kwargs,
         )
         if loaded is not None:
+            apply_chat_format(loaded, requested_format)
             return loaded
 
     factory = TOKENIZER_REGISTRY[tokenizer_type]
-    return factory(vocab_size=vocab_size, **kwargs)
+    tokenizer = factory(vocab_size=vocab_size, **kwargs)
+    apply_chat_format(tokenizer, requested_format)
+    return tokenizer
 
 
 def train_tokenizer(
@@ -220,6 +240,12 @@ __all__ = [
     # Registry
     "TOKENIZER_REGISTRY",
     "DEFAULT_TOKENIZER",
+    "CHAT_FORMAT_REGISTRY",
+    "ChatFormat",
+    "apply_chat_format",
+    "chat_format_of",
+    "get_chat_format",
+    "resolve_chat_format",
     # Factory functions
     "create_tokenizer",
     "train_tokenizer",

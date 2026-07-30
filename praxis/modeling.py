@@ -1061,6 +1061,8 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             TopPLogitsWarper,
         )
 
+        from praxis.generation.stopping import find_stop_cut, normalize_stop_strings
+
         max_new_tokens = getattr(generation_config, "max_new_tokens", 100)
         do_sample = getattr(generation_config, "do_sample", False)
         temperature = getattr(generation_config, "temperature", 1.0) or 1.0
@@ -1068,6 +1070,27 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         return_dict = kwargs.get("return_dict_in_generate", False)
 
         eos_set = make_eos_set(eos_token_id)
+
+        # Text-boundary chat formats halt on a string, not an id. This loop owns
+        # its sampling, so transformers' StopStringCriteria never runs here and
+        # the check has to be explicit - without it a prose-format turn always
+        # runs to max_new_tokens. `tokenizer` rides in through generate(**kwargs)
+        # exactly as StopStringCriteria requires it.
+        stop_strings = normalize_stop_strings(
+            getattr(generation_config, "stop_strings", None)
+        )
+        stop_tokenizer = kwargs.get("tokenizer")
+        stop_active = bool(stop_strings and stop_tokenizer is not None)
+
+        def stop_cut(seq, from_index: int):
+            """Truncated sequence when a stop string completed past
+            ``from_index``, else None."""
+            if not stop_active:
+                return None
+            keep = find_stop_cut(
+                stop_tokenizer, seq[0].tolist(), from_index, stop_strings
+            )
+            return None if keep is None else seq[:, :keep]
 
         # Context-dependent logits processing. The terminal relies on
         # repetition_penalty (default 1.15) to keep the rolling contexts from
@@ -1105,6 +1128,10 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         num_new = 0
 
         while num_new < max_new_tokens:
+            # Where this step's commits start, so the stop-string scan below
+            # only inspects bytes this step produced.
+            step_start = generated.size(1)
+
             # Main model forward pass to get hidden states
             main_logits, hidden_states = self._spec_logits_and_hidden(generated)
 
@@ -1210,6 +1237,16 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                     num_new += 1
                     if bonus.item() in eos_set:
                         break
+
+            # Text-boundary halt. Checked once per step rather than per
+            # candidate: a speculative run commits several bytes at once, so the
+            # boundary can complete mid-run, and find_stop_cut returns the
+            # earliest completion. Drafted bytes past it belong to a turn this
+            # model does not get to write, so they are dropped.
+            cut = stop_cut(generated, step_start)
+            if cut is not None:
+                generated = cut
+                break
 
         if return_dict:
             return SimpleNamespace(sequences=generated)

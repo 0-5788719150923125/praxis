@@ -5,6 +5,7 @@ import re
 import time
 from typing import Any, Dict, List, Optional
 
+from praxis.tokenizers.chat_templates import chat_format_of
 from praxis.tools import get_tool_input_pattern, get_tool_output_pattern
 
 api_logger = logging.getLogger("praxis.web")
@@ -117,16 +118,52 @@ def format_messages_to_chatml(messages: List[Dict[str, str]], tokenizer: Any) ->
     Raises:
         ValueError: If an invalid role is provided
     """
-    # Validate message roles
+    # Validate message roles against the active format's vocabulary, minus the
+    # tool-flow roles: those carry runtime-injected content, so accepting them
+    # from an API caller would let a client fabricate a tool result.
+    fmt = chat_format_of(tokenizer)
+    allowed = set(fmt.roles) - {fmt.call_role, fmt.result_role}
     for message in messages:
         role = message.get("role", "").strip()
-        if role not in {"system", "developer", "user", "assistant"}:
+        if role not in allowed:
             raise ValueError(f"Invalid role: {role}")
 
     # Apply the chat template and add assistant generation prompt
     return tokenizer.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
     )
+
+
+def _extract_reply_text_boundaries(generated_text: str, fmt) -> str:
+    """Reply extraction for text-boundary formats.
+
+    The reply runs from the last boundary opening a ``reply_role`` turn to the
+    next boundary of any kind, and the tool exchange in between is plumbing the
+    client should not see. Everything is ordinary text here, so this is string
+    slicing rather than token bookkeeping.
+    """
+    start_marker = fmt.boundary(fmt.reply_role)
+    start_index = generated_text.rfind(start_marker)
+    if start_index == -1:
+        # The prompt's own generation cue has no leading blank line when it
+        # opens the document; fall back to that shape before giving up.
+        bare = start_marker.lstrip("\n")
+        start_index = generated_text.rfind(bare)
+        if start_index == -1:
+            return generated_text.strip()
+        start_index += len(bare)
+    else:
+        start_index += len(start_marker)
+
+    reply = generated_text[start_index:]
+    # Cut at whatever boundary ends the turn. Every role is a candidate: the
+    # model can halt on a stop boundary, or drift into one we don't halt on.
+    cut = len(reply)
+    for role in fmt.roles:
+        idx = reply.find(fmt.boundary(role))
+        if idx != -1:
+            cut = min(cut, idx)
+    return reply[:cut].strip()
 
 
 def extract_assistant_reply(generated_text: str, tokenizer: Any) -> str:
@@ -139,6 +176,11 @@ def extract_assistant_reply(generated_text: str, tokenizer: Any) -> str:
     Returns:
         Extracted assistant reply text
     """
+    fmt = chat_format_of(tokenizer)
+    if fmt.text_boundaries:
+        reply = _extract_reply_text_boundaries(generated_text, fmt)
+        return reply or _EMPTY_REPLY_PLACEHOLDER
+
     # Find the pattern that marks the start of the assistant's response
     assistant_start = f"{tokenizer.bos_token}assistant"
 

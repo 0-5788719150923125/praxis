@@ -1,8 +1,9 @@
 """Learned curriculum over sequence-length multipliers.
 
-The data pipeline trades batch size for sequence length at constant token
-count (see ``SEQUENCE_MULTIPLIER_TIERS`` in manager.py): a multiplier ``m``
-yields ``block_size*m`` length, ``batch_size//m**2`` rows. Today the tier is
+The data pipeline trades batch size for sequence length at constant ATTENTION
+COST (see ``SEQUENCE_MULTIPLIER_TIERS`` in manager.py): a multiplier ``m``
+yields ``block_size*m`` length and ``rows//m**2`` rows, so ``rows*len**2`` is
+invariant while the token count falls as ``1/m``. Today the tier is
 rolled from fixed per-tier chances. This replaces that roll, when enabled,
 with an adaptive distribution the *training dynamics* control: a bandit over
 the multipliers driven by **learning progress** - sample more of the length

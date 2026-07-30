@@ -42,6 +42,10 @@ class RunConfig:
 
     encoder_type: Optional[str] = None
     tokenizer_type: Optional[str] = None
+    # CHAT_FORMAT_REGISTRY key. The format owns the turn boundaries, the
+    # assistant mask, the halting contract and the tool-call layout together
+    # (praxis/tokenizers/chat_templates.py); None = "default" (ChatML).
+    chat_format: Optional[str] = None
     no_docs: bool = False
 
     # Shortcut modes
@@ -147,6 +151,7 @@ class RunConfig:
             target_batch_size=get("target_batch_size", batch_size),
             encoder_type=encoder_type,
             tokenizer_type=get("tokenizer_type"),
+            chat_format=get("chat_format"),
             no_docs=get("no_docs", False),
             list_runs=get("list_runs", False),
             train_tokenizer=get("train_tokenizer", False),

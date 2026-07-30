@@ -1,15 +1,19 @@
 """Text generation with request queuing and inline tool calling support.
 
-Tool calls are marked by atomic special tokens ``[TOOL_CALL]`` /
-``[/TOOL_CALL]``. Both boundaries sit in the tokenizer's
-``eos_token_id`` set so generation halts at each one:
+The active chat format (``CHAT_FORMAT_REGISTRY``) decides what a tool-call
+boundary looks like; this loop's state machine is the same either way. Under
+``tool_style="tokens"`` the boundaries are the atomic ``[TOOL_CALL]`` /
+``[/TOOL_CALL]`` ids; under ``tool_style="roles"`` they are the role-name
+boundaries opening the ``call`` and ``tool`` turns. Both sit in the step's halt
+set - ``eos_token_id`` for ids, ``stop_strings`` for text - so generation stops
+at each one:
 
-- On ``[TOOL_CALL]`` open, we switch to deterministic decoding (greedy,
-  no temperature/top-k/top-p) for the JSON body - any sampling noise in
-  there breaks the downstream parse.
-- On ``[/TOOL_CALL]`` close, we execute the tool, splice the real
-  ``[TOOL_RESULT]`` block (with role transitions matching the chat
-  template), restore the caller's sampling params, and resume.
+- On the CALL boundary, we switch to deterministic decoding (greedy, no
+  temperature/top-k/top-p) for the JSON body - any sampling noise in there
+  breaks the downstream parse.
+- On the RESULT boundary, we execute the tool, splice the real result (with
+  role transitions matching the chat template), restore the caller's sampling
+  params, and resume.
 """
 
 import logging
@@ -22,10 +26,13 @@ import torch
 
 from praxis.generation.decode_backend import ModelBackend
 from praxis.generation.request import GenerationRequest
+from praxis.tokenizers.chat_templates import chat_format_of
 from praxis.tools import (
     STOP_TOOL_LOOP,
     build_result_splice_ids,
+    classify_boundary_halt,
     execute_tool_call,
+    find_pending_call_text,
     find_unprocessed_tool_call_ids,
     tool_token_ids,
 )
@@ -71,28 +78,88 @@ class Generator:
 
         print(f"[TOOLS]: Loaded {len(self.tools)} tools.")
 
+    @property
+    def chat_format(self):
+        """The active chat format. Owns the turn boundaries, the halting
+        contract and the tool-call layout as one unit."""
+        return chat_format_of(self.tokenizer)
+
     def _eos_token_id_list(self) -> Optional[list]:
         """Build the eos_token_id list for a chat-style generation.
 
-        Generation halts on any of these. Both tool-call boundaries are
-        included when the tokenizer knows about them: halting on
-        ``[TOOL_CALL]`` open lets us switch to deterministic decoding for
-        the JSON body, halting on ``[/TOOL_CALL]`` close lets us execute
-        the tool before resuming.
+        Generation halts on any of these. Turn terminators come from the
+        format's ``stop_token_names``; the tool-call boundaries are added when
+        the format marks them with control tokens and the tokenizer knows the
+        ids - halting on ``[TOOL_CALL]`` open lets us switch to deterministic
+        decoding for the JSON body, halting on ``[/TOOL_CALL]`` close lets us
+        execute the tool before resuming.
+
+        Text-boundary formats declare no halt ids at all and return None here;
+        ``_stop_strings`` carries their contract instead.
         """
-        ids = []
-        eos = getattr(self.tokenizer, "eos_token_id", None)
-        if eos is not None:
-            ids.append(int(eos))
-        sep = getattr(self.tokenizer, "sep_token_id", None)
-        if sep is not None:
-            ids.append(int(sep))
-        tt = tool_token_ids(self.tokenizer)
-        for key in ("call_open", "call_close"):
-            tid = tt.get(key)
-            if tid is not None and tid not in ids:
-                ids.append(int(tid))
+        fmt = self.chat_format
+        ids = fmt.stop_token_ids(self.tokenizer)
+        if fmt.tool_style == "tokens":
+            tt = tool_token_ids(self.tokenizer)
+            for key in ("call_open", "call_close"):
+                tid = tt.get(key)
+                if tid is not None and tid not in ids:
+                    ids.append(int(tid))
         return ids or None
+
+    def _stop_strings(self) -> Optional[list]:
+        """Text boundaries that halt a step, for formats that use them.
+
+        These already include the tool-flow boundaries: the format lists the
+        ``call`` and ``result`` roles among its ``stop_roles`` precisely so this
+        loop gets control at each one.
+        """
+        stops = self.chat_format.stop_strings()
+        return list(stops) or None
+
+    def _halt_text(self, tokens: torch.Tensor, fmt) -> str:
+        """Decode just enough of the tail to recognise a text boundary.
+
+        Every token decodes to at least one character, so a window as long as
+        the longest boundary always contains it; the slack covers a
+        multi-character token straddling its start.
+        """
+        longest = max((len(fmt.boundary(r)) for r in fmt.roles), default=0)
+        window = longest + 4
+        tail = tokens[0, -window:].tolist()
+        return self.tokenizer.decode(tail, skip_special_tokens=False)
+
+    def _classify_halt(self, tokens: torch.Tensor, fmt) -> Optional[str]:
+        """Name the boundary generation just halted on.
+
+        Returns ``"call_open"``, ``"call_close"``, or None for a plain turn
+        terminator (which the caller treats as done). Token-boundary formats
+        read the last id; text-boundary formats read the decoded tail.
+        """
+        if fmt.tool_style == "roles":
+            return classify_boundary_halt(self._halt_text(tokens, fmt), fmt)
+        tt = tool_token_ids(self.tokenizer)
+        last_token = int(tokens[0, -1].item())
+        if tt.get("call_open") is not None and last_token == tt["call_open"]:
+            return "call_open"
+        if tt.get("call_close") is not None and last_token == tt["call_close"]:
+            return "call_close"
+        return None
+
+    def _pending_call(self, tokens: torch.Tensor, fmt) -> Optional[Tuple[Dict, int]]:
+        """The call awaiting execution, plus the index to splice its result at.
+
+        Text-boundary formats halt with the result boundary at the very end of
+        the sequence, so the splice point is the end; token-boundary formats
+        scan for the first unanswered ``[TOOL_CALL]`` and splice just past its
+        close, which may sit mid-sequence.
+        """
+        token_list = tokens[0].tolist()
+        if fmt.tool_style == "roles":
+            text = self.tokenizer.decode(token_list, skip_special_tokens=False)
+            call = find_pending_call_text(text, fmt)
+            return None if call is None else (call, len(token_list))
+        return find_unprocessed_tool_call_ids(token_list, self.tokenizer)
 
     def _max_positions(self) -> Optional[int]:
         """The model's positional capacity (max_position_embeddings).
@@ -219,6 +286,9 @@ class Generator:
         eos_list = self._eos_token_id_list()
         if eos_list:
             gen_kwargs["eos_token_id"] = eos_list
+        stop_strings = self._stop_strings()
+        if stop_strings:
+            gen_kwargs["stop_strings"] = stop_strings
         # Caller overrides win, except for our own keys handled below.
         gen_kwargs.update(request.kwargs)
 
@@ -253,25 +323,33 @@ class Generator:
         into deterministic decoding for the JSON body and (b) execute the
         tool when it closes.
 
-        The state machine has three halt-token cases:
-          - ``[TOOL_CALL]`` open  -> enter deterministic mode and keep going
-          - ``[/TOOL_CALL]`` close -> execute, splice the real result, exit
+        The state machine has three halt cases, named by the format rather
+        than by a literal token:
+          - CALL boundary   -> enter deterministic mode and keep going
+          - RESULT boundary -> execute, splice the real result, exit
             deterministic mode and keep going
-          - ``[EOS]`` / ``[SEP]`` / max_new_tokens hit -> done
+          - any other turn terminator / max_new_tokens hit -> done
 
-        ``[TOOL_RESULT]`` blocks the model emits itself are ignored: a call
-        is only marked "processed" after we splice a real result for it.
+        Results the model emits itself are ignored: a call is only marked
+        "processed" after we splice a real result for it.
         """
         input_ids, gen_kwargs, max_new_tokens, skip_special_tokens = (
             self._prepare_inputs(request)
         )
 
-        tt = tool_token_ids(self.tokenizer)
-        call_open_id = tt.get("call_open")
-        call_close_id = tt.get("call_close")
-        tools_enabled = bool(
-            self.tools and self.call_tool and call_close_id is not None
-        )
+        fmt = self.chat_format
+        if fmt.tool_style == "roles":
+            # The loop can only intercept a call if the format actually halts on
+            # both boundaries; a format that named them but left them out of
+            # stop_roles would run the JSON straight into the reply.
+            boundaries_detectable = (
+                fmt.call_role in fmt.stop_roles and fmt.result_role in fmt.stop_roles
+            )
+        else:
+            boundaries_detectable = (
+                tool_token_ids(self.tokenizer).get("call_close") is not None
+            )
+        tools_enabled = bool(self.tools and self.call_tool and boundaries_detectable)
 
         start_time = time.time()
         history: list = []
@@ -301,13 +379,13 @@ class Generator:
                     tokens = extended
                     break
                 tokens = extended
-                last_token = int(tokens[0, -1].item())
+                halt = self._classify_halt(tokens, fmt)
 
-                if tools_enabled and last_token == call_open_id:
+                if tools_enabled and halt == "call_open":
                     in_tool_call = True
                     continue
 
-                if tools_enabled and last_token == call_close_id:
+                if tools_enabled and halt == "call_close":
                     if tool_call_depth >= self.max_tool_calls_per_request:
                         _log.info(
                             f"[TOOL_SAFETY] Max tool-call depth "
@@ -322,9 +400,7 @@ class Generator:
                         break
 
                     token_list = tokens[0].tolist()
-                    unprocessed = find_unprocessed_tool_call_ids(
-                        token_list, self.tokenizer
-                    )
+                    unprocessed = self._pending_call(tokens, fmt)
                     if unprocessed is None:
                         in_tool_call = False
                         break
@@ -355,7 +431,7 @@ class Generator:
                     in_tool_call = False
                     continue
 
-                # EOS / SEP / max-tokens halt: done.
+                # Turn terminator / max-tokens halt: done.
                 break
 
             # Some vocabs (e.g. tokenmonster) can halt on a partial token -

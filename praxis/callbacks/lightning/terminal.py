@@ -105,20 +105,26 @@ class TerminalInterface(Callback):
         # special tokens that would otherwise trigger false positives.
         ignored_n_grams = []
         if tokenizer:
-            ignored_n_grams = [
-                t
-                for t in [
-                    tokenizer.bos_token,
-                    tokenizer.eos_token,
-                    tokenizer.pad_token,
-                    tokenizer.sep_token,
-                    f"{tokenizer.bos_token}system",
-                    f"{tokenizer.bos_token}developer",
-                    f"{tokenizer.bos_token}user",
-                    f"{tokenizer.bos_token}assistant",
-                ]
-                if t is not None
+            from praxis.tokenizers.chat_templates import chat_format_of
+
+            fmt = chat_format_of(tokenizer)
+            candidates = [
+                tokenizer.bos_token,
+                tokenizer.eos_token,
+                tokenizer.pad_token,
+                tokenizer.sep_token,
             ]
+            # Turn boundaries recur by construction, so they must not read as
+            # degeneracy. A text-boundary format's boundaries are plain strings
+            # long enough to trip the byte-level 13-gram detector on their own
+            # (`\n\nassistant\n\n` is 14 characters), which would reset the
+            # rolling context every time the model changed speaker.
+            for role in fmt.roles:
+                boundary = fmt.boundary(role)
+                candidates.append(
+                    boundary if boundary else f"{tokenizer.bos_token}{role}"
+                )
+            ignored_n_grams = [t for t in candidates if t]
 
         # One rolling context per ContextBlock (default: 3 temperature experiments).
         # The factory stamps each with this run's tuning; the primary (chance 1.0)
@@ -379,7 +385,16 @@ class TerminalInterface(Callback):
     def _effective_batch(trainer, micro_batch):
         """Actual rows per optimizer step, straight from the trainer:
         accumulation factor x microbatch x world size. None when either
-        ingredient is unavailable (caller falls back to the config value)."""
+        ingredient is unavailable (caller falls back to the config value).
+
+        Under a batch governor the microbatch rows are governed too, so the
+        configured ``batch_size`` is only a ceiling; read the live plan instead
+        or the panel reports a batch the run never used."""
+        from praxis.data.batch_schedule import BatchSchedule
+
+        plan = BatchSchedule.current()
+        if plan is not None:
+            micro_batch = plan.micro_rows
         accum = getattr(trainer, "accumulate_grad_batches", None)
         if not accum or not micro_batch:
             return None

@@ -8,13 +8,16 @@ the learning-progress bandit inside the data pipeline): one controller per
 knob, each driven by the signal native to that knob, registered here.
 
 Entries are selected by the ``governor`` experiment key. Each registry value
-is a builder ``(batch_size, target_batch_size, val_every) -> Callback``
-invoked by the training callback assembly; builders import their Lightning
-callback lazily so this package stays importable without Lightning.
+is a builder ``(batch_size, target_batch_size, val_every,
+sequence_multiplier_tiers) -> Callback`` invoked by the training callback
+assembly; builders import their Lightning callback lazily so this package stays
+importable without Lightning.
 
-``gns_batch`` - governs the gradient-accumulation factor (the effective
-batch) by tracking the measured gradient noise scale. See
-``praxis/governors/gns.py`` for the estimator and rationale.
+``gns_batch`` - governs the effective batch (rows per optimizer step) by
+tracking the measured gradient noise scale. ``batch_size`` and
+``target_batch_size`` are both ceilings (one microbatch, one step);
+``praxis/data/batch_schedule.py`` factorizes the governed row count against
+them. See ``praxis/governors/gns.py`` for the estimator and rationale.
 """
 
 from praxis.governors.gns import (
@@ -24,13 +27,19 @@ from praxis.governors.gns import (
 )
 
 
-def _build_gns_batch(batch_size: int, target_batch_size: int, val_every=None):
+def _build_gns_batch(
+    batch_size: int,
+    target_batch_size: int,
+    val_every=None,
+    sequence_multiplier_tiers=(),
+):
     from praxis.callbacks.lightning.governor import GNSBatchGovernor
 
     return GNSBatchGovernor(
         batch_size=batch_size,
         target_batch_size=target_batch_size,
         val_every=val_every,
+        sequence_multiplier_tiers=sequence_multiplier_tiers,
     )
 
 

@@ -35,6 +35,8 @@ from typing import Any, Dict, Optional
 
 import torch
 
+from praxis.data.batch_schedule import MIN_MICRO_BATCHES
+
 
 class GradientNoiseEstimator:
     """Two-point gradient noise scale estimator (McCandlish et al., App. A).
@@ -116,7 +118,16 @@ class GradientNoiseEstimator:
 
 
 class BatchTierController:
-    """Doubling/halving accumulation tiers tracking the measured noise scale.
+    """Doubling/halving tiers over the effective batch, tracking B_noise.
+
+    The controlled quantity is the effective batch in ROWS per optimizer step,
+    not an accumulation factor. That distinction is the whole point: an
+    accumulation factor is only meaningful relative to a fixed microbatch, and
+    tying the two made ``batch_size`` a floor under the governed range (factor
+    >= 2 meant effective batch >= 2*batch_size, so a microbatch sized for the
+    GPU forbade every small batch). Rows have no such coupling -
+    :func:`praxis.data.batch_schedule.plan_cycle` factorizes whatever row count
+    lands here into microbatches that respect the ceiling.
 
     The tier moves one step at a time and only when the measured B_noise sits
     more than ``deadband`` (in log2 units) away from the current effective
@@ -126,30 +137,42 @@ class BatchTierController:
     up-threshold of tier k equals tier k+1's effective batch (move up only
     once B_noise has actually reached the next tier) and the EMA must swing a
     full 2x to flap; 0.75 left only a 1.41x window, which live estimates
-    crossed routinely (observed 32<->64 flapping in abstractinator-f). The
-    floor of 2 keeps the two-point estimator alive (one microbatch has no
-    second measurement point); the ceiling is the configured
-    target_batch_size.
+    crossed routinely (observed 32<->64 flapping in abstractinator-f).
+
+    The floor is ``MIN_MICRO_BATCHES`` rows - one row per microbatch at the
+    estimator's two-point minimum, the smallest batch that can still be
+    measured. Whether such a batch is ever optimal is an empirical question the
+    governor is now able to answer instead of assume. The ceiling is the
+    configured target_batch_size.
     """
 
     deadband = 1.0  # log2 distance before a tier move; net hysteresis 2*db - 1
 
-    def __init__(self, micro_batch: int, max_factor: int) -> None:
-        self.micro_batch = max(1, int(micro_batch))
-        self.min_factor = 2
-        self.max_factor = max(self.min_factor, int(max_factor))
+    def __init__(self, max_rows: int, min_rows: int = MIN_MICRO_BATCHES) -> None:
+        self.min_rows = max(1, int(min_rows))
+        self.max_rows = max(self.min_rows, int(max_rows))
 
-    def clamp(self, factor: int) -> int:
-        return max(self.min_factor, min(self.max_factor, int(factor)))
+    def clamp(self, rows: int) -> int:
+        return max(self.min_rows, min(self.max_rows, int(rows)))
 
-    def desired_factor(self, current: int, noise_scale: Optional[float]) -> int:
-        """Next accumulation factor given the measured noise scale (rows)."""
+    def desired_rows(
+        self, current: int, noise_scale: Optional[float], measured: Optional[float] = None
+    ) -> int:
+        """Next effective batch (rows) given the measured noise scale (rows).
+
+        ``measured`` is the mean effective batch actually delivered since the
+        last decision. It differs from ``current`` when the sequence-length
+        multiplier's attention budget caps microbatch rows below the target, and
+        regulating against what ran - rather than what was requested - keeps the
+        controller from chasing a target it never reached.
+        """
         current = self.clamp(current)
         if noise_scale is None or noise_scale <= 0.0:
             return current
-        gap = math.log2(noise_scale / (current * self.micro_batch))
+        reference = measured if measured and measured > 0 else float(current)
+        gap = math.log2(noise_scale / reference)
         if gap > self.deadband:
-            return self.clamp(min(current * 2, self.max_factor))
+            return self.clamp(current * 2)
         if gap < -self.deadband:
             return self.clamp(current // 2)
         return current
@@ -181,11 +204,10 @@ GOVERNOR_METRIC_DESCRIPTIONS: Dict[str, dict] = {
     },
     "gov_effective_batch": {
         "description": (
-            "Live effective batch (accumulation factor x microbatch rows). "
-            "Moves in doubling tiers, one tier per decision, with a "
-            "log2-deadband so estimator jitter can't flap it. Floor 2x "
-            "microbatch (the estimator needs two points), ceiling "
-            "target_batch_size."
+            "Rows the optimizer actually stepped on (microbatch rows x "
+            "accumulation). Tracks the target except when a long-sequence "
+            "cycle's attention budget caps microbatch rows below it - the gap "
+            "between this and the target line is that effect."
         ),
         # No title/axis: rides gov_noise_scale's chart via series_group.
         "chart": {
@@ -193,6 +215,75 @@ GOVERNOR_METRIC_DESCRIPTIONS: Dict[str, dict] = {
             "order": 11,
             "series_group": "gov_tracking",
             "series_label": "effective batch",
+        },
+    },
+    "gov_target_batch": {
+        "description": (
+            "Governed effective batch: the row count the controller is asking "
+            "for. Moves in doubling tiers, one tier per decision, with a "
+            "log2-deadband so estimator jitter can't flap it. Floor 2 rows "
+            "(the estimator's two-point minimum, one row each), ceiling "
+            "target_batch_size. Note this is NOT bounded below by batch_size - "
+            "that is a per-microbatch ceiling only."
+        ),
+        # No title/axis: rides gov_noise_scale's chart via series_group.
+        "chart": {
+            "group": _GOV_GROUP,
+            "order": 12,
+            "series_group": "gov_tracking",
+            "series_label": "target batch",
+        },
+    },
+    "gov_micro_rows": {
+        "description": (
+            "Rows in each microbatch - the governed effective batch divided by "
+            "the accumulation factor, then divided by multiplier^2 when the "
+            "sequence curriculum lengthens the batch (which holds attention "
+            "cost per microbatch constant). Bounded above by batch_size; it "
+            "sits AT that ceiling whenever the effective batch is large enough "
+            "to fill it, which is what keeps the GPU busy at large batches "
+            "without forbidding small ones."
+        ),
+        "chart": {
+            "title": "Batch Governor: Cycle Shape",
+            "y_label": "count",
+            "y_scale": "logarithmic",
+            "group": _GOV_GROUP,
+            "order": 30,
+            "series_group": "gov_shape",
+            "series_label": "microbatch rows",
+        },
+    },
+    "gov_accum": {
+        "description": (
+            "Microbatches per optimizer step. Derived from the effective batch "
+            "and the batch_size ceiling alone - never from the sequence "
+            "multiplier, so it changes only when the governor moves a tier and "
+            "Lightning's step boundaries stay aligned. Minimum 2: the "
+            "two-point noise estimator needs a second measurement point."
+        ),
+        # No title/axis: rides gov_micro_rows' chart via series_group.
+        "chart": {
+            "group": _GOV_GROUP,
+            "order": 31,
+            "series_group": "gov_shape",
+            "series_label": "accumulation",
+        },
+    },
+    "gov_seq_multiplier": {
+        "description": (
+            "Sequence-length multiplier for the current accumulation cycle, "
+            "rolled once per cycle (not per microbatch) so every microbatch in "
+            "a step has the same shape - required for Lightning's uniform "
+            "1/accum loss scaling to average correctly, and for the "
+            "estimator's two points to be comparable."
+        ),
+        # No title/axis: rides gov_micro_rows' chart via series_group.
+        "chart": {
+            "group": _GOV_GROUP,
+            "order": 32,
+            "series_group": "gov_shape",
+            "series_label": "seq multiplier",
         },
     },
     "gov_signal_sq": {

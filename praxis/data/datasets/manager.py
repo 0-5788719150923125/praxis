@@ -16,8 +16,12 @@ from praxis.logging.data_metrics_logger import DataMetricsLogger
 WEIGHTING_MODES = ("static", "dynamic", "novelty", "loss", "tasker", "uniform")
 
 # Sequence-multiplier tiers: (multiplier, per-batch chance), highest first.
-# A batch trades size for length at constant token count - dividing batch
-# size by multiplier^2 - so a tier is only eligible when batch_size >= m^2.
+# A batch trades size for length at constant ATTENTION COST: rows divide by
+# multiplier^2 while length multiplies by it, so rows*len^2 is invariant (and
+# rows*len - the token count - falls as 1/m). A tier is therefore only eligible
+# when the row budget has m^2 rows to give up. Under a batch governor that
+# budget is the governed rows per microbatch, not the static batch_size; see
+# praxis/data/batch_schedule.py.
 SEQUENCE_MULTIPLIER_TIERS = ((8, 0.001), (4, 0.01), (2, 0.1))
 
 
@@ -261,10 +265,12 @@ class InterleaveDataManager:
         Get a batch of sequences using the message queue.
 
         Args:
-            batch_size: Number of sequences in the batch
-            sequence_multiplier: Sequence length factor; batch size divides
-                by its square so token count stays constant. Positional
-                capacity is sized against the same tiers at config time.
+            batch_size: Nominal number of sequences; the effective row count
+                is this divided by ``sequence_multiplier**2``.
+            sequence_multiplier: Sequence length factor; the row count divides
+                by its square so ATTENTION COST stays constant (token count
+                falls as 1/multiplier). Positional capacity is sized against
+                the same tiers at config time.
 
         Returns:
             Dictionary with batch data and metadata

@@ -65,6 +65,7 @@ def main():
         encoder_type=cfg.encoder_type,
         tokenizer_type=cfg.tokenizer_type,
         cache_dir=run.cache_dir,
+        chat_format=cfg.chat_format,
     )
     # The tokenizer owns vocab_size, so the config reconciles against it.
     config = create_praxis_config(args, tokenizer)

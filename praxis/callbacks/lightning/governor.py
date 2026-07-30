@@ -1,10 +1,11 @@
 """Lightning wiring for the gradient-noise-scale batch governor.
 
 Replaces the static ``AccumulationSchedule`` when ``governor: gns_batch`` is
-set: instead of a fixed accumulation factor derived from target_batch_size,
-the factor tracks the measured gradient noise scale (see
-``praxis/governors/gns.py``), with target_batch_size reinterpreted as the
-ceiling.
+set. The governed quantity is the EFFECTIVE BATCH in rows per optimizer step,
+tracking the measured gradient noise scale (see ``praxis/governors/gns.py``);
+``praxis/data/batch_schedule.py`` factorizes it into rows-per-microbatch and an
+accumulation factor. ``target_batch_size`` is the ceiling on the effective
+batch, ``batch_size`` the ceiling on one microbatch - neither is a floor.
 
 Timing contract with Lightning 2.x automatic optimization:
 
@@ -22,10 +23,15 @@ Timing contract with Lightning 2.x automatic optimization:
   aligned at a step boundary; up-moves may need to wait one extra cycle. The
   commit logic defers until ``ready % new == 0``.
 
+Row counts feeding the estimator are read from the batches that actually
+arrived, never from the plan: the plan is shared state the data pipeline may
+lag on, and a two-point estimate built from assumed batch sizes would be
+silently wrong rather than merely stale.
+
 Distributed note: with multiple ranks the first-microbatch gradient is
 rank-local while the accumulated one is all-reduced, so the two-point pair
 is inconsistent - the governor is built for the single-process runs Praxis
-actually does; it logs a warning and holds the initial factor otherwise.
+actually does; it logs a warning and holds the initial batch otherwise.
 """
 
 from typing import Any, Dict, Optional
@@ -33,11 +39,25 @@ from typing import Any, Dict, Optional
 import torch
 from lightning.pytorch.callbacks import Callback
 
+from praxis.data.batch_schedule import MIN_MICRO_BATCHES, BatchSchedule, plan_cycle
 from praxis.governors.gns import BatchTierController, GradientNoiseEstimator
 
 
+def _batch_rows(batch) -> Optional[int]:
+    """Row count of a produced batch, whatever container the pipeline used."""
+    if torch.is_tensor(batch):
+        return int(batch.size(0))
+    if isinstance(batch, dict):
+        ids = batch.get("input_ids")
+        if torch.is_tensor(ids):
+            return int(ids.size(0))
+    if isinstance(batch, (list, tuple)) and batch:
+        return _batch_rows(batch[0])
+    return None
+
+
 class GNSBatchGovernor(Callback):
-    """Governs ``trainer.accumulate_grad_batches`` from the gradient noise scale."""
+    """Governs the effective batch (rows/step) from the gradient noise scale."""
 
     # Optimizer steps between tier decisions. Each decision is the one host
     # sync (.item()) the governor performs; per-step work stays on device.
@@ -54,9 +74,12 @@ class GNSBatchGovernor(Callback):
         batch_size: int,
         target_batch_size: int,
         val_every: Optional[int] = None,
+        sequence_multiplier_tiers=(),
     ) -> None:
         super().__init__()
-        self.micro_batch = max(1, int(batch_size))
+        # Rows per microbatch, at most. Sized to what the GPU holds; it no
+        # longer bounds the governed range in either direction.
+        self.row_ceiling = max(1, int(batch_size))
         # Validation cadence in OPTIMIZER steps. The static trainer setup
         # converts val_every to raw batches with the fixed factor, which a
         # dynamic factor breaks (target/batch=32 put validation ~5000 steps
@@ -66,27 +89,38 @@ class GNSBatchGovernor(Callback):
         # the next val_every boundary of global_step lands, so val points
         # fall on the same steps as every static run.
         self.val_every = int(val_every) if val_every else None
-        self.controller = BatchTierController(
-            micro_batch=self.micro_batch,
-            max_factor=max(1, -(-int(target_batch_size) // self.micro_batch)),
-        )
+        self.controller = BatchTierController(max_rows=int(target_batch_size))
         self.estimator = GradientNoiseEstimator()
-        # Start at the floor: early training is the noise-dominated regime
-        # where small batches are the efficient ones, and the estimator will
-        # raise the tier as soon as the measurements say otherwise.
-        self._factor = self.controller.min_factor
+        # Start where one microbatch fills the ceiling: the smallest effective
+        # batch that still uses the whole GPU per forward, given the
+        # estimator's two-microbatch minimum. Below this the step simply has
+        # fewer rows to spend, so utilization must fall - that is inherent, not
+        # a policy. Starting here preserves the pre-governor step-0 behaviour
+        # while leaving the range open in both directions.
+        self._rows = self.controller.clamp(self.row_ceiling * MIN_MICRO_BATCHES)
         self._pending: Optional[int] = None
         self._steps = 0
         self._micro_count = 0
+        self._micro_rows: Optional[int] = None  # observed rows, microbatch 1
+        self._cycle_rows = 0  # observed rows accumulated this cycle
         self._small_sq: Optional[torch.Tensor] = None
         self._stepped = False
         self._distributed = False
+        # Delivered-rows mean over the decision window; the controller
+        # regulates against this rather than the requested target.
+        self._delivered_sum = 0.0
+        self._delivered_n = 0
+        BatchSchedule.enable(
+            row_ceiling=self.row_ceiling,
+            effective_rows=self._rows,
+            tiers=sequence_multiplier_tiers,
+        )
+        plan = plan_cycle(self._rows, self.row_ceiling)
         print(
             f"[Governor] gns_batch: effective batch in "
-            f"[{self.controller.min_factor * self.micro_batch}, "
-            f"{self.controller.max_factor * self.micro_batch}] rows "
-            f"(microbatch {self.micro_batch}), starting at "
-            f"{self._factor * self.micro_batch}"
+            f"[{self.controller.min_rows}, {self.controller.max_rows}] rows, "
+            f"microbatch <= {self.row_ceiling} rows; starting at "
+            f"{self._rows} rows ({plan.accum} x {plan.micro_rows})"
         )
 
     # ── lifecycle ─────────────────────────────────────────────────────────
@@ -96,9 +130,9 @@ class GNSBatchGovernor(Callback):
         if self._distributed:
             print(
                 "[Governor] world_size > 1: two-point estimator pairs are "
-                "rank-inconsistent; holding the initial factor."
+                "rank-inconsistent; holding the initial batch."
             )
-        trainer.accumulate_grad_batches = self._factor
+        self._publish(trainer)
         if self.val_every:
             trainer.val_check_batch = self.VAL_PARKED
             step = int(getattr(trainer, "global_step", 0) or 0)
@@ -108,18 +142,50 @@ class GNSBatchGovernor(Callback):
                 f"steps; resuming at step {step}, next boundary at step "
                 f"{next_boundary}"
             )
-        self._micro_count = 0
-        self._small_sq = None
+        self._reset_cycle()
         self._stash(pl_module, noise_scale=None)
 
     def on_train_epoch_start(self, trainer, pl_module) -> None:
         # ``ready`` resets each epoch; a stale partial cycle must not pair a
         # first-microbatch norm with the wrong accumulated gradient.
-        self._micro_count = 0
-        self._small_sq = None
+        self._reset_cycle()
         self._stepped = False
 
+    def _reset_cycle(self) -> None:
+        self._micro_count = 0
+        self._micro_rows = None
+        self._cycle_rows = 0
+        self._small_sq = None
+
+    def _publish(self, trainer) -> None:
+        """Push the governed row count into the shared plan and Lightning.
+
+        Both sides read from the same factorization, so the accumulation factor
+        Lightning steps on and the microbatch rows the data pipeline builds can
+        never disagree about how many rows a step contains.
+        """
+        BatchSchedule.set_effective_rows(self._rows)
+        BatchSchedule.restart_cycle()
+        trainer.accumulate_grad_batches = plan_cycle(
+            self._rows, self.row_ceiling
+        ).accum
+
     # ── measurement ───────────────────────────────────────────────────────
+
+    def on_train_batch_start(self, trainer, pl_module, batch, batch_idx) -> None:
+        """Record the rows this microbatch actually carries.
+
+        The estimator's ``b_small``/``b_big`` must be true row counts. Reading
+        them here rather than assuming the plan's value keeps the estimate
+        correct even when the data pipeline is a cycle behind (a forked worker,
+        or the dataloader's one-batch lead).
+        """
+        rows = _batch_rows(batch)
+        if rows is None:
+            return
+        if self._micro_count == 0:
+            self._micro_rows = rows
+        self._cycle_rows += rows
 
     def on_after_backward(self, trainer, pl_module) -> None:
         self._micro_count += 1
@@ -130,26 +196,46 @@ class GNSBatchGovernor(Callback):
         k = int(trainer.accumulate_grad_batches)
         if (
             not self._distributed
-            and k >= 2
+            and k >= MIN_MICRO_BATCHES
             and self._small_sq is not None
+            and self._micro_rows
             and self._micro_count == k  # full, regular cycle only
         ):
             big_sq = self._grad_sq_norm(pl_module)
-            if big_sq is not None:
+            # Homogeneous cycles are the estimator's precondition: the two
+            # points differ only in how many rows they average over, which the
+            # per-cycle multiplier makes true (see batch_schedule). A cycle
+            # whose rows are not a clean k-multiple of the first microbatch
+            # means the pipeline changed shape mid-cycle, so skip the pair
+            # rather than fold a mismatched measurement into the EMA.
+            homogeneous = self._cycle_rows == self._micro_rows * k
+            if big_sq is not None and homogeneous:
                 # Undo Lightning's 1/K loss scaling on the first microbatch.
                 self.estimator.update(
                     small_sq=self._small_sq * (k * k),
                     big_sq=big_sq,
-                    b_small=float(self.micro_batch),
-                    b_big=float(k * self.micro_batch),
+                    b_small=float(self._micro_rows),
+                    b_big=float(self._cycle_rows),
                 )
+        if self._cycle_rows:
+            self._delivered_sum += float(self._cycle_rows)
+            self._delivered_n += 1
         self._stepped = True
         self._steps += 1
         if self._steps % self.decide_every == 0 and self.estimator.ready:
             noise = self.estimator.noise_scale()  # the one host sync
-            desired = self.controller.desired_factor(self._factor, noise)
-            self._pending = desired if desired != self._factor else None
+            desired = self.controller.desired_rows(
+                self._rows, noise, measured=self._delivered_mean()
+            )
+            self._pending = desired if desired != self._rows else None
             self._stash(pl_module, noise_scale=noise)
+            self._delivered_sum = 0.0
+            self._delivered_n = 0
+
+    def _delivered_mean(self) -> Optional[float]:
+        if self._delivered_n <= 0:
+            return None
+        return self._delivered_sum / self._delivered_n
 
     # ── actuation ─────────────────────────────────────────────────────────
 
@@ -160,13 +246,19 @@ class GNSBatchGovernor(Callback):
         if not self._stepped:
             return
         self._stepped = False
-        self._micro_count = 0
-        self._small_sq = None
-        if self._pending is not None and self._aligned(trainer, self._pending):
-            self._factor = self._pending
-            self._pending = None
-            trainer.accumulate_grad_batches = self._factor
-            self._stash(pl_module, noise_scale=self.estimator.noise_scale())
+        last_cycle_rows = self._cycle_rows
+        self._reset_cycle()
+        if self._pending is not None:
+            accum = plan_cycle(self._pending, self.row_ceiling).accum
+            if self._aligned(trainer, accum):
+                self._rows = self._pending
+                self._pending = None
+                self._publish(trainer)
+                self._stash(
+                    pl_module,
+                    noise_scale=self.estimator.noise_scale(),
+                    delivered=last_cycle_rows,
+                )
 
     def _patch_val_cadence(self, trainer, batch_idx) -> None:
         """Live-repoint Lightning's validation trigger every batch.
@@ -221,16 +313,30 @@ class GNSBatchGovernor(Callback):
         stacked = torch.stack([n.to(norms[0].device) for n in norms])
         return (stacked * stacked).sum().detach()
 
-    def _stash(self, pl_module, noise_scale: Optional[float]) -> None:
+    def _stash(
+        self,
+        pl_module,
+        noise_scale: Optional[float],
+        delivered: Optional[int] = None,
+    ) -> None:
         """Publish telemetry on the core model; DynamicsLoggerCallback drains
-        it on its own cadence (mirrors the RLCT stash pattern)."""
+        it on its own cadence (mirrors the RLCT stash pattern).
+
+        ``gov_effective_batch`` reports rows that actually ran when we have a
+        completed cycle to report, falling back to the target. The two differ
+        when a long-sequence cycle's attention budget caps microbatch rows, and
+        the chart should show the batch the optimizer saw.
+        """
         model = getattr(pl_module, "model", pl_module)
         core = getattr(model, "_orig_mod", model)
+        rows = delivered if delivered else self._delivered_mean()
         metrics: Dict[str, float] = {
-            "gov_effective_batch": float(self._factor * self.micro_batch),
+            "gov_effective_batch": float(rows if rows else self._rows),
+            "gov_target_batch": float(self._rows),
         }
         if noise_scale is not None:
             metrics["gov_noise_scale"] = float(noise_scale)
+        metrics.update(BatchSchedule.metrics())
         metrics.update(self.estimator.internals())
         core._governor_metrics = metrics
 
@@ -238,14 +344,25 @@ class GNSBatchGovernor(Callback):
 
     def state_dict(self) -> Dict[str, Any]:
         return {
-            "factor": self._factor,
+            "effective_rows": self._rows,
             "steps": self._steps,
             "estimator": self.estimator.state_dict(),
         }
 
     def load_state_dict(self, state: Dict[str, Any]) -> None:
-        self._factor = self.controller.clamp(int(state.get("factor", self._factor)))
+        # Accept the pre-rows checkpoint key: older runs stored an accumulation
+        # factor against the then-fixed microbatch, which is the same thing
+        # expressed in units of batch_size.
+        if "effective_rows" in state:
+            rows = int(state["effective_rows"])
+        elif "factor" in state:
+            rows = int(state["factor"]) * self.row_ceiling
+        else:
+            rows = self._rows
+        self._rows = self.controller.clamp(rows)
         self._steps = int(state.get("steps", 0))
         est = state.get("estimator")
         if isinstance(est, dict):
             self.estimator.load_state_dict(est)
+        BatchSchedule.set_effective_rows(self._rows)
+        BatchSchedule.restart_cycle()

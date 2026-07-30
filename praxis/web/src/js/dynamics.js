@@ -1091,10 +1091,16 @@ function renderHeatmap2D(canvas, data, options = {}) {
 
     for (let i = 0; i < rows; i++) {
         const row = grid[i];
+        // Bottom origin: grid row 0 (the y_range low end - e.g. the lowest
+        // temporal frequency of the harmonic spectrum) renders at the BOTTOM,
+        // matching the paper's matplotlib figures (origin="lower" in
+        // praxis/pillars/spectrum.py and geometries.py) and the rotated
+        // "lo .. hi" y-axis label, which reads upward.
+        const imgRow = rows - 1 - i;
         for (let j = 0; j < cols; j++) {
             const v = scaleFn(row[j]) / peakScaled;
             const [r, g, b] = sampleColormap('praxis_heat', v);
-            const idx = (i * cols + j) * 4;
+            const idx = (imgRow * cols + j) * 4;
             img.data[idx] = r;
             img.data[idx + 1] = g;
             img.data[idx + 2] = b;

@@ -24,7 +24,7 @@ SEQ_CURRICULUM_DESCRIPTIONS = {
     "fixed": (
         "Roll the static per-tier chances in ``SEQUENCE_MULTIPLIER_TIERS`` "
         "(the default). Each batch independently trades batch size for "
-        "sequence length at constant token count, with fixed probabilities."
+        "sequence length at constant attention cost, with fixed probabilities."
     ),
     "adaptive": (
         "Let a learning-progress bandit control the sequence-length mix. The "
