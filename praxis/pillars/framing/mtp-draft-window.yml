@@ -32,7 +32,7 @@ body: >
   predicts position $t{+}k$ for every $t$ at once, so each depth's output is
   the full sequence again, shifted by $k$: the $K$ slots are $K$ near-copies
   of the sequence, sharing representation by construction - all of them read
-  the same trunk, and adjacent depths share most of their transform - and
+  the same trunk, whatever the bank above does with its depths - and
   distinguished chiefly by their shift. At inference tempo the stack moves
   $K$ at a time: each step commits a $K$-wide column and re-derives the
   whole view from its new head, and a single byte still traces a diagonal

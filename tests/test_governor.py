@@ -250,9 +250,7 @@ def test_irregular_cycle_is_not_measured():
     trainer = _fake_trainer()
     module = nn.Linear(4, 4)
     gov.on_train_start(trainer, module)
-    gov.on_train_batch_start(
-        trainer, module, torch.zeros(16, 8, dtype=torch.long), 0
-    )
+    gov.on_train_batch_start(trainer, module, torch.zeros(16, 8, dtype=torch.long), 0)
     _set_grads(module, 0.1)
     gov.on_after_backward(trainer, module)  # only 1 of K=2 microbatches
     gov.on_before_optimizer_step(trainer, module, None)

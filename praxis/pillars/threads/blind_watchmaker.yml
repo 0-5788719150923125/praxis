@@ -82,7 +82,8 @@ introduction:
   can move in one without paying in the other.
 
 
-  We ground this in mechanisms that already run in Praxis, not in metaphor. The
+  We ground this in mechanisms that already run in Praxis, each with a diagnostic
+  that reads it. The
   harmonic head (Section~\ref{sec:manifold}) builds a two-dimensional standing wave
   over (position, feature) from a learned grid of frequency amplitudes with irrational,
   frozen phases. A \textit{static} amplitude grid produces the same field for every

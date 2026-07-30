@@ -169,9 +169,7 @@ class MonoForwardBackend(DecodeBackend):
             # token arrives per iteration, so the earliest completion is here.
             if stop_strings:
                 ids = prefix + [int(t.view(-1)[0].item()) for t in produced]
-                keep = find_stop_cut(
-                    self.tokenizer, ids, len(ids) - 1, stop_strings
-                )
+                keep = find_stop_cut(self.tokenizer, ids, len(ids) - 1, stop_strings)
                 if keep is not None:
                     break
         if not produced:

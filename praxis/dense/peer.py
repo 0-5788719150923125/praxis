@@ -106,9 +106,7 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         self.offset_heads: bool = offset_heads
         self.num_sets: int = 1 if not self.offset_heads else self.num_heads
         self.glu: bool = glu
-        self.rows_per_expert: int = (
-            ROWS_PER_GLU_EXPERT if glu else ROWS_PER_EXPERT
-        )
+        self.rows_per_expert: int = ROWS_PER_GLU_EXPERT if glu else ROWS_PER_EXPERT
 
         # Product-Key retrieval factorizes the expert index into two key lookups,
         # so the bank is num_keys^2 by construction. Auto-sizing rounds the
@@ -364,26 +362,26 @@ if __name__ == "__main__":
     )
     for hidden_size in (32, 64, 128, 256, 512, 1024):
         for num_heads in (4, 16):
-          for glu in (False, True):
-            config = PraxisConfig()
-            config.hidden_size = hidden_size
-            config.num_heads = num_heads
-            config.activation = "gelu"
-            config.dropout = 0.1
+            for glu in (False, True):
+                config = PraxisConfig()
+                config.hidden_size = hidden_size
+                config.num_heads = num_heads
+                config.activation = "gelu"
+                config.dropout = 0.1
 
-            peer = ParameterEfficientExpertRetrieval(config, glu=glu)
-            dense = GatedLinearMLP(config)
-            q_out = 2 * peer.num_heads * peer.key_dims
+                peer = ParameterEfficientExpertRetrieval(config, glu=glu)
+                dense = GatedLinearMLP(config)
+                q_out = 2 * peer.num_heads * peer.key_dims
 
-            inputs = torch.randn(2, 16, hidden_size)
-            outputs = peer(inputs, current_depth=0)
-            assert outputs.shape == inputs.shape, (outputs.shape, inputs.shape)
-            assert peer.k <= peer.num_keys, "topk cannot outrun the key set"
+                inputs = torch.randn(2, 16, hidden_size)
+                outputs = peer(inputs, current_depth=0)
+                assert outputs.shape == inputs.shape, (outputs.shape, inputs.shape)
+                assert peer.k <= peer.num_keys, "topk cannot outrun the key set"
 
-            print(
-                f"{hidden_size:>7} {num_heads:>6} "
-                f"{'glu' if glu else 'rank1':>7} {peer.num_experts:>9} "
-                f"{peer.key_dims:>9} {peer.k:>3} {count(dense):>10} "
-                f"{count(peer):>10} {count(peer)/count(dense):>6.2f}x "
-                f"{q_out/hidden_size:>12.2f}x"
-            )
+                print(
+                    f"{hidden_size:>7} {num_heads:>6} "
+                    f"{'glu' if glu else 'rank1':>7} {peer.num_experts:>9} "
+                    f"{peer.key_dims:>9} {peer.k:>3} {count(dense):>10} "
+                    f"{count(peer):>10} {count(peer)/count(dense):>6.2f}x "
+                    f"{q_out/hidden_size:>12.2f}x"
+                )

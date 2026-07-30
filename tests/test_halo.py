@@ -91,9 +91,7 @@ def _composite_setup(B=2, T=8, H=16, V=32):
 
 def test_composite_trains_both_paths():
     loss_fn, clf, embeddings, logits, labels = _composite_setup()
-    loss = loss_fn(
-        logits=logits, labels=labels, embeddings=embeddings, classifier=clf
-    )
+    loss = loss_fn(logits=logits, labels=labels, embeddings=embeddings, classifier=clf)
     assert torch.isfinite(loss)
     loss.backward()
     # CE path reaches the emitted logits (gate + non-HALO arms)...
@@ -107,9 +105,7 @@ def test_composite_trains_both_paths():
 def test_composite_exceeds_plain_ce():
     """The composite must contain the mixture CE exactly (1:1, no knob)."""
     loss_fn, clf, embeddings, logits, labels = _composite_setup()
-    loss = loss_fn(
-        logits=logits, labels=labels, embeddings=embeddings, classifier=clf
-    )
+    loss = loss_fn(logits=logits, labels=labels, embeddings=embeddings, classifier=clf)
     ce = F.cross_entropy(logits.reshape(-1, 32), labels.reshape(-1))
     assert float(loss) > float(ce)
 

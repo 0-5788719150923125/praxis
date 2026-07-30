@@ -1,0 +1,16 @@
+# The conv mechanism paragraph of the multi-token family (order 14). Like the
+# transformer bank this mode previously had no paragraph of its own. Still one
+# module per depth - the saving is in the module, not in sharing across depths -
+# so it must not inherit the intro's old parameter-sharing framing either.
+section: harmonic
+order: 14
+requires:
+  mtp_type: [conv]
+body: >
+  The depth-transform here is a stack of dilated causal convolutions per depth
+  rather than a full attention block: normalize, convolve under a causal mask at
+  widening dilations, and add the result back. The saving is inside the module -
+  a fixed receptive field bought with a kernel instead of an all-pairs score -
+  and not across depths, which still carry independent parameters. It is the
+  cheap end of the per-depth-module family: the same $K$-modules shape as the
+  transformer bank, at a fraction of the cost per module.

@@ -65,7 +65,12 @@ func _initialize() -> void:
 		mat.set_shader_parameter("u_roil", 0.65)
 		mat.set_shader_parameter("u_cling", 0.35)
 		mat.set_shader_parameter("u_wisp", 0.5)
-		mat.set_shader_parameter("u_scale", 1.2)
+		# The silhouette transform, exercised at a real magnification: the
+		# guard must hold with the shadow scaled up and shoved toward her,
+		# which is exactly when a stencil-shaped bug would show.
+		mat.set_shader_parameter("u_pivot", Vector2(0.70, 0.46))
+		mat.set_shader_parameter("u_sil_scale", 2.2)
+		mat.set_shader_parameter("u_pan", Vector2(-0.10, 0.05))
 		vps[ping].render_target_update_mode = SubViewport.UPDATE_ONCE
 		await process_frame
 		await process_frame

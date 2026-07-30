@@ -160,9 +160,7 @@ class SequenceProbe:
             first = cls.shared_probs is None
             cls._recompute()
             if first and cls.shared_probs is not None:
-                mix = "  ".join(
-                    f"x{m}={cls.shared_probs[m]:.2f}" for m in cls.arms
-                )
+                mix = "  ".join(f"x{m}={cls.shared_probs[m]:.2f}" for m in cls.arms)
                 print(
                     f"[SeqProbe] fit engaged after {cls._windows} windows; "
                     f"sampling mix {mix}"

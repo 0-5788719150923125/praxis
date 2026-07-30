@@ -305,7 +305,19 @@ const MAX_LAYERS := 6
 ## the resulting subject flood actually covers the middle of the frame - the
 ## test that stops her warm skin from voting the cream door in as the wall);
 ## setting it deliberately biases the choice hard toward the picked hue.
-## Scale sizes the mass, Pan nudges it, Coverage is relabeled Loom (how far it
+## THE SHADOW IS AN OBJECT, not a stencil. Scale magnifies the whole detected
+## silhouette about its own centroid and Pan translates it, both applied to the
+## SOURCE region inside the field sim - so the entire body grows and moves
+## together, and her own silhouette is carved out of the result afterwards.
+## Past about 1.5 the head leaves the top of the frame and it reads as
+## something much taller than she is. (Treating the region as a fixed
+## permission mask instead - the first cut - meant Pan slid the mass around
+## underneath an unmoving stencil, so nothing but a few stray wisps appeared to
+## move, and Scale changed only a noise frequency. Note also that magnification
+## is a WINDOW: at scale S the screen shows a 1/S neighbourhood of the pivot,
+## which is why the pivot sits where the shadow is solid rather than at its
+## base, where it borders her and dissolves into void.)
+## Coverage is relabeled Loom (how far it
 ## grows outward along the cast direction - the looming), Contrast is
 ## relabeled Roil (turbulence in the currents and the fluctuation of the
 ## silhouette), Velocity is how fast the essence climbs, and Resonance swells

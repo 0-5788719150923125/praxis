@@ -219,7 +219,9 @@ class SignalHandlerCallback(Callback):
 
             time.sleep(5.0)  # Give Lightning 5 seconds to stop gracefully
             if self.signal_count == 1:  # Only if still on first signal
-                self._emit("\n⏱️  Timeout waiting for graceful shutdown, forcing exit...\n")
+                self._emit(
+                    "\n⏱️  Timeout waiting for graceful shutdown, forcing exit...\n"
+                )
                 os._exit(130)
 
         watchdog = threading.Thread(target=force_exit_watchdog, daemon=True)

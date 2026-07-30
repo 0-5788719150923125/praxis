@@ -251,7 +251,10 @@ def test_advertised_arrival_matches_actual_arrival():
         if any(k.startswith("seq_prob_x") for k in m) and first_mix is None:
             first_mix = step
 
-    assert first_report == cb.first_report_step(), (first_report, cb.first_report_step())
+    assert first_report == cb.first_report_step(), (
+        first_report,
+        cb.first_report_step(),
+    )
     assert first_mix == cb.first_mix_step(), (first_mix, cb.first_mix_step())
 
 

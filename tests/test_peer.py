@@ -114,9 +114,7 @@ def test_repr_names_the_expert_form():
 
 def test_explicit_expert_count_overrides_the_budget():
     """Registry profiles may pin the bank; the rows factor must not fight it."""
-    module = ParameterEfficientExpertRetrieval(
-        make_config(), num_experts=256, glu=True
-    )
+    module = ParameterEfficientExpertRetrieval(make_config(), num_experts=256, glu=True)
     assert module.num_experts == 256
     assert module.num_keys == 16
 

@@ -41,12 +41,20 @@ uniform float u_aspect = 1.7778;
 // move), so the editor EMAs it hard - re-deriving it per frame is exactly how
 // the clown earned its uniform twitch.
 uniform vec2 u_dir = vec2(1.0, 0.0);
+// THE SILHOUETTE TRANSFORM. The shadow is an OBJECT, not a stencil: it is
+// scaled about `u_pivot` (its own base, so growth goes UP and outward - a
+// thing looming over her, taller than she is) and translated by u_pan. The
+// first cut treated the detected region as a fixed permission mask and slid
+// the mass around underneath it, which meant Pan moved nothing but a few
+// stray wisps and Scale only changed a noise frequency.
+uniform vec2 u_pivot = vec2(0.75, 0.62);
+uniform float u_sil_scale = 1.0;
+uniform vec2 u_pan = vec2(0.0, 0.0);
 uniform float u_loom = 0.45;       // Coverage: how far the mass grows outward along u_dir
 uniform float u_rise = 1.0;        // Velocity: how fast the essence climbs
 uniform float u_roil = 0.5;        // Contrast: turbulence in the currents
 uniform float u_cling = 0.35;      // Cling: persistence in time
 uniform float u_wisp = 0.0;        // Wisp: how readily essence detaches and rises
-uniform float u_scale = 1.0;       // Scale: overall size of the mass
 
 float permf(float x) {
 	return mod(((x * 34.0) + 1.0) * x, 289.0);
@@ -79,6 +87,22 @@ float fbmu(vec2 p) {
 	return s;
 }
 
+// Screen position -> silhouette-source position. Inverse of "scale about the
+// pivot, then translate", because we are asking what content LANDS here.
+vec2 to_region(vec2 uv) {
+	return (uv - u_pan - u_pivot) / max(u_sil_scale, 0.05) + u_pivot;
+}
+
+// Sampled with explicit bounds: outside the frame there is simply no shadow,
+// and letting the sampler clamp would smear the frame's edge row outward into
+// a false silhouette once the thing is scaled up past the picture.
+vec4 region_at(vec2 p) {
+	if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0) {
+		return vec4(0.0);
+	}
+	return texture(u_region, p);
+}
+
 // Divergence-free-ish wander: the gradient of a scalar noise, rotated 90
 // degrees. Curl rather than plain noise because a plain noise velocity field
 // has sources and sinks - the mass visibly pools and drains at fixed spots,
@@ -103,7 +127,7 @@ void fragment() {
 	// the strongest region cell found means growth can only ever bloom AWAY
 	// from her, never toward her. The falloff with distance travelled is what
 	// makes it thin as it looms rather than ending in a hard wall.
-	float reach = (0.03 + 0.34 * clamp(u_loom, 0.0, 1.0)) * clamp(u_scale, 0.3, 2.5);
+	float reach = 0.03 + 0.34 * clamp(u_loom, 0.0, 1.0);
 	// The region arrives at grid resolution, and sampling it straight gives the
 	// mass a STAIRCASE edge - the detector's own cell grid, plainly visible in
 	// the picture. Jittering every lookup by a little noise dissolves that
@@ -112,17 +136,20 @@ void fragment() {
 	vec2 jit = vec2(fbmu(uv * asp * 9.0 + vec2(3.1, u_time * 0.05)),
 		fbmu(uv * asp * 9.0 + vec2(11.7, -u_time * 0.04))) - 0.5;
 	jit *= 0.035;
+	// Everything about WHERE the silhouette is happens in region space, so the
+	// whole body scales and moves together instead of sliding under a stencil.
+	vec2 ruv = to_region(uv);
 	float allow = 0.0;
 	for (int k = 0; k < 10; k++) {
 		float f = float(k) / 9.0;
-		vec2 s = uv + jit - (u_dir / asp) * (f * reach);
-		float reg = texture(u_region, clamp(s, vec2(0.0), vec2(1.0))).r;
+		vec2 s = ruv + jit - (u_dir / asp) * (f * reach);
+		float reg = region_at(s).r;
 		// Gentle falloff: at 0.72 the loomed extension died away to almost
 		// nothing and the mass read as a thin rind on the shadow's near edge
 		// rather than a body looming out of it.
 		allow = max(allow, reg * (1.0 - 0.45 * f * f));
 	}
-	vec3 here = texture(u_region, uv + jit).rgb;
+	vec3 here = region_at(ruv + jit).rgb;
 	// NEVER on her. Independent of anything the simulation does downstream -
 	// even if the field advects into her, this is a hard multiply at the source
 	// and again at render time.

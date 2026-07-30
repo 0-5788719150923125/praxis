@@ -810,14 +810,14 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		// mass inside it and lets essence rise off the top. This branch only
 		// has to turn that field into light lost.
 		vec2 asp17 = vec2(u_aspect, 1.0);
-		vec2 pan17 = u_l_off[i] * 0.25;
-		// TWO fetches on purpose. The mass is read at the panned position (Pan
-		// is a nudge for when the detector sits slightly off), but the GUARD is
-		// read UNPANNED - otherwise winding Pan far enough would walk the mass
-		// straight onto her, and "never on top of her" is the one property this
-		// effect is not allowed to trade away for a knob.
-		vec4 fld = texture(u_umbra_field, clamp(uv - pan17, vec2(0.0), vec2(1.0)));
-		float allow17 = texture(u_umbra_field, uv).a;
+		// No pan here. Scale and Pan are applied to the SILHOUETTE ITSELF
+		// inside the field sim, so the whole body moves and grows together and
+		// the guard is carved out of it afterwards. Panning the sampling here
+		// instead just slid the mass under a fixed stencil - Pan appeared to
+		// move nothing but a few stray wisps, which is exactly what it was
+		// doing.
+		vec4 fld = texture(u_umbra_field, uv);
+		float allow17 = fld.a;
 		float w17 = clamp(w, 0.0, 1.0);
 		if (allow17 * w17 <= 0.003) {
 			return col;
@@ -840,9 +840,12 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		// outline is never die-cut and never the same twice.
 		float edge17 = fbm(uv * asp17 * 7.0 + vec2(t17 * 0.25, -t17 * 0.55)) - 0.5;
 		float d17 = fld.r * wave17 + edge17 * 0.20 * con17;
-		float body17 = smoothstep(0.10, 0.44, d17) * allow17;
-		float trail17 = smoothstep(0.05, 0.34, fld.g) * allow17;
-		float depth17 = 0.30 + 0.70 * clamp(u_l_stick[i], 0.0, 1.0);   // Depth
+		// Saturates early: this is a BODY, not a veil. Reported as "just the
+		// normal shadow, maybe a little darker" when the mass only reached
+		// full opacity at its very core.
+		float body17 = smoothstep(0.06, 0.26, d17) * allow17;
+		float trail17 = smoothstep(0.04, 0.28, fld.g) * allow17;
+		float depth17 = 0.55 + 0.45 * clamp(u_l_stick[i], 0.0, 1.0);   // Depth
 		float amt17 = shade_amount(
 			clamp((body17 + trail17 * 0.55) * depth17 * w17, 0.0, 1.0), uv);
 		if (amt17 <= 0.003) {

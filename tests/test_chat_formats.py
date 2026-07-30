@@ -138,9 +138,7 @@ def test_prose_trains_the_boundary_that_ends_the_turn(prose_tokenizer):
     assert len(mask) == len(ids)
 
     text = prose_tokenizer.decode(ids, skip_special_tokens=False)
-    trained = "".join(
-        prose_tokenizer.decode([t]) for t, m in zip(ids, mask) if m
-    )
+    trained = "".join(prose_tokenizer.decode([t]) for t, m in zip(ids, mask) if m)
     # First assistant turn ends by naming the next speaker.
     assert "Paris is the capital of France.\n\nuser\n\n" in trained
     # The user's own words are never a target.
@@ -428,13 +426,9 @@ def test_api_roles_exclude_runtime_injected_turns(prose_tokenizer):
     from praxis.web.utils.formatters import format_messages_to_chatml
 
     with pytest.raises(ValueError, match="Invalid role"):
-        format_messages_to_chatml(
-            [{"role": "tool", "content": "999"}], prose_tokenizer
-        )
+        format_messages_to_chatml([{"role": "tool", "content": "999"}], prose_tokenizer)
     with pytest.raises(ValueError, match="Invalid role"):
-        format_messages_to_chatml(
-            [{"role": "call", "content": "{}"}], prose_tokenizer
-        )
+        format_messages_to_chatml([{"role": "call", "content": "{}"}], prose_tokenizer)
     # Ordinary roles still render.
     assert format_messages_to_chatml(
         [{"role": "user", "content": "hi"}], prose_tokenizer
@@ -575,7 +569,10 @@ def test_speculative_decode_without_stop_strings_runs_on(prose_tokenizer):
     """Control: the halt comes from the stop strings, not from the script."""
     prompt = "user\n\nhi\n\nassistant\n\n"
     text = _run_scripted(
-        prose_tokenizer, prompt, "Hello there!\n\nuser\n\nkeeps going", (),
+        prose_tokenizer,
+        prompt,
+        "Hello there!\n\nuser\n\nkeeps going",
+        (),
         max_new_tokens=40,
     )
     assert text.startswith(prompt + "Hello there!\n\nuser\n\nkeeps going")
@@ -587,7 +584,7 @@ def test_speculative_decode_without_stop_strings_runs_on(prose_tokenizer):
 
 MULTIBYTE = [
     {"role": "system", "content": "“quoted”"},
-    {"role": "user", "content": "Calculate √1156 \U0001F600"},
+    {"role": "user", "content": "Calculate √1156 \U0001f600"},
     {"role": "assistant", "content": "— the answer is 34."},
     {"role": "user", "content": "and été?"},
     {"role": "assistant", "content": "Summer."},
@@ -787,8 +784,10 @@ def test_separator_is_supervised_only_after_a_generated_turn(prose_tokenizer):
     manager = MessageQueueManager(
         tokenizer=prose_tokenizer, block_size=4096, enable_chat_validation=False
     )
-    ends_generated = [{"role": "user", "content": "hi"},
-                      {"role": "assistant", "content": "yo"}]
+    ends_generated = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "yo"},
+    ]
     ends_prompt = [{"role": "user", "content": "unanswered"}]
 
     ids, mask = manager._tokenize_doc(

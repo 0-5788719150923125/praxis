@@ -2,13 +2,27 @@
 # the generic intro (mtp-draft, order 13) and the shared short-curve/figure
 # body (mtp-draft-window, order 15). Gated on the shared-cell bank alone, so
 # the paper only describes the recurrence when the run actually built it.
+#
+# Opens by denying the per-depth-module picture outright (2026-07-30). The
+# intro used to assert K transforms sharing parameters, which is the one shape
+# this bank does not have - it is a single cell unrolled, O(1) params in depth.
+# That framing now lives in mtp-vear-mechanism, where it is true.
 section: harmonic
 order: 14
 requires:
   mtp_type: [serpent_rnn]
 body: >
-  The depth-transform here is one shared gated harmonic cell, unrolled $K$
-  times: each step blends the previous state with a post-normalized harmonic
+  There is no per-depth transform here at all, which is the sharpest form the
+  correlation argument takes. The chained computation - previous depth's state
+  plus the next position's embedding, in, this depth's state out - already is a
+  recurrence, so this bank models it as one: a single gated harmonic cell,
+  unrolled $K$ times, with parameters $O(1)$ in the draft depth rather than
+  scaling with it. Where a per-depth bank spends $K$ modules and hopes they
+  converge on near-copies, and where a merged pool builds the overlap in by
+  construction, the recurrent cell has nothing left to share, because there is
+  only one of it.
+
+  Concretely: each step blends the previous state with a post-normalized harmonic
   candidate through a sigmoid gate - a convex update, so nothing compounds
   across the unroll - and a zero-initialized per-depth signature is the only
   parameter that distinguishes the depths. They begin as literally the same

@@ -1,0 +1,23 @@
+# The transformer mechanism paragraph of the multi-token family: sits between
+# the generic intro (mtp-draft, order 13) and the shared short-curve/figure body
+# (mtp-draft-window, order 15). This mode had NO mechanism paragraph before, so
+# a transformer-bank run rendered the intro's parameter-sharing prose with
+# nothing to correct it - which is precisely backwards, since this is the one
+# bank that shares nothing. Named plainly here so the claim lands only on the
+# run that has it.
+section: harmonic
+order: 14
+requires:
+  mtp_type: [transformer]
+body: >
+  The depth-transform here is the original design~\cite{gloeckle2024mtp}: a full
+  transformer block per depth, $K$ of them, each normalizing the previous
+  depth's hidden state alongside the next position's embedding, projecting the
+  pair back to width, and running the result through its own block. The depths
+  share the trunk and nothing else - every block carries an independent set of
+  parameters, and the correlation between adjacent positions is something each
+  depth rediscovers rather than something the bank supplies. That is the honest
+  cost of this variant and the reason the alternatives below it exist: capacity
+  scales with $K$, and what it buys is spent re-deriving a relationship the task
+  already guarantees. It is the baseline the other banks are measured against,
+  not the configuration we advocate.

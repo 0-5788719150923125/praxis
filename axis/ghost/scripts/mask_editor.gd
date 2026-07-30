@@ -214,6 +214,8 @@ var _umb_repick_in := 0
 var _umb_dir_ema := Vector2(1.0, 0.0)
 var _umb_subj_c := Vector2(0.5, 0.55)
 var _umb_shad_c := Vector2(0.75, 0.40)
+var _umb_pivot := Vector2(0.75, 0.62)   # the silhouette's base - Scale rears UP from here
+var _umb_pan := Vector2.ZERO
 var _umb_have := false
 var _umb_region_img: Image = null        # RGBA8 _UMB_W x _UMB_H: R=linked shadow,
 var _umb_region_tex: ImageTexture = null #   G=shadowness, B=subject mask
@@ -1341,7 +1343,10 @@ func _step_umbra_sim() -> void:
 	mat.set_shader_parameter("u_roil", _umb_roil)
 	mat.set_shader_parameter("u_cling", _umb_cling)
 	mat.set_shader_parameter("u_wisp", _umb_wisp)
-	mat.set_shader_parameter("u_scale", _umb_scale)
+	# The silhouette transform - see umbra_field.gdshader's to_region().
+	mat.set_shader_parameter("u_pivot", _umb_pivot)
+	mat.set_shader_parameter("u_sil_scale", _umb_scale)
+	mat.set_shader_parameter("u_pan", _umb_pan)
 	_umb_vps[_umb_ping].render_target_update_mode = SubViewport.UPDATE_ONCE
 	for m2 in [_mat_main, _mat_inset]:
 		m2.set_shader_parameter("u_umbra_field", _umb_vps[_umb_ping].get_texture())
@@ -3578,7 +3583,13 @@ func _umb_analyse(dir: Vector3, mag: float, lit: float) -> void:
 		# from erasing its own middle.
 		llit = maxf(llit, floor_lit)
 		var ratio := _umb_lum[i] / maxf(llit, 1e-3)
-		var dark := 1.0 - smoothstep(0.60, 0.88, ratio)
+		# GENEROUS on purpose. A real cast shadow is mostly PENUMBRA, and a
+		# tight window (0.60..0.88) kept only the dark core - about 7% of the
+		# frame where the visible shadow covers nearer 15%, so the effect had
+		# nothing like the whole shadow to animate. The chroma match is what
+		# keeps this honest; darkness only has to say "dimmer than this wall
+		# is elsewhere", not "very dark".
+		var dark := 1.0 - smoothstep(0.85, 1.02, ratio)
 		_umb_shadow[i] = _umb_match[i] * dark
 
 
@@ -3670,7 +3681,7 @@ func _umb_solve(aspect: float) -> Dictionary:
 					break
 			if touch:
 				edge.append(i)
-	var shad_n := _umb_flood(_umb_shad, edge, _umb_shadow, 0.45, _umb_subj, int(n * 0.45))
+	var shad_n := _umb_flood(_umb_shad, edge, _umb_shadow, 0.30, _umb_subj, int(n * 0.55))
 	# Scene coherence. Under the RIGHT surface the subject flood covers the
 	# middle of the frame; under the wrong one (her warm skin voting the cream
 	# door in as "the wall") the "subject" comes out as the far wall instead,
@@ -3763,6 +3774,22 @@ func _update_umbra_model(src: Image) -> void:
 	var shad_c := hacc / maxf(hw, 1.0)
 	_umb_subj_c = subj_c
 	_umb_shad_c = shad_c
+	# THE PIVOT the silhouette magnifies about. It must sit where the shadow is
+	# SOLID, because magnification is also a WINDOW: at scale S the screen can
+	# only show a 1/S-sized neighbourhood of the pivot. Anchoring at the
+	# silhouette's base (the obvious choice for "rears upward") put that window
+	# on the strip where the shadow borders her and dissolves into void, so
+	# scaling UP made the mass shrink - measured, coverage fell 19% -> 4% going
+	# from scale 1.0 to 3.5.
+	# The centroid keeps the window on the body; biasing it a little toward the
+	# base still throws the head off the top first, which is the look wanted.
+	var ylow := shad_c.y
+	for y2 in _UMB_H:
+		for x2 in _UMB_W:
+			if _umb_shad[y2 * _UMB_W + x2] != 0:
+				ylow = maxf(ylow, (float(y2) + 0.5) / float(_UMB_H))
+	var pivot := Vector2(shad_c.x, lerpf(shad_c.y, ylow, 0.35))
+	_umb_pivot = _umb_pivot.lerp(pivot, 0.12) if _umb_have else pivot
 	var d := (shad_c - subj_c) * Vector2(aspect, 1.0)
 	if d.length() > 1e-4:
 		# Deliberately glacial. The light is furniture: it does not move, and a
@@ -4836,7 +4863,11 @@ func _apply_frame_state(p: Dictionary) -> void:
 		if le == MaskSession.EFFECT_UMBRA:
 			_umbra_active = true
 			_umb_hue = float(l.get("hue_a", 0.0))
-			_umb_scale = clampf(float(l.get("fx_scale", 1.0)), 0.3, 2.5)
+			# Scale is a real geometric scale of the silhouette now, so it gets
+			# room to actually loom - at 1.0 the ghost is exactly her own
+			# shadow, and past ~1.5 its head leaves the top of the frame.
+			_umb_scale = clampf(float(l.get("fx_scale", 1.0)), 0.4, 5.0)
+			_umb_pan = Vector2(float(l.get("fx_x", 0.0)), float(l.get("fx_y", 0.0))) * 0.25
 			# Resonance folds in here exactly as it does for the shader's
 			# density array below - the loom breathes with the audio, so on a
 			# talking clip the ghost surges when the subject speaks.

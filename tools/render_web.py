@@ -262,7 +262,9 @@ LOOP_S = N_FRAMES * FRAME_MS / 1000.0  # 12.0s of run time per loop
 STEP_TIME = LOOP_S / BATCHES_PER_LOOP  # 0.20s per batch -> the RATE readout
 STEP_JITTER = 0.18  # +/-18% slow wander in the per-batch duration
 ACCUM = INFO["target_batch"] // INFO["batch_size"]  # 16 batches per optimizer step
-TOKENS_PER_BATCH = INFO["batch_size"] * INFO["block_size"]  # 4096, as the trainer counts
+TOKENS_PER_BATCH = (
+    INFO["batch_size"] * INFO["block_size"]
+)  # 4096, as the trainer counts
 
 # Where the run stands when the loop opens. Everything else is DERIVED from it,
 # so the footer's figures agree with each other instead of drifting apart: AGE is
@@ -276,9 +278,7 @@ AGE0_H = BATCH0 * STEP_TIME / 3600.0  # 6.27h
 def _batch_duration(k):
     """Wall seconds taken by batch k of the loop. One whole sine period across
     the loop, so the durations sum to exactly LOOP_S."""
-    return STEP_TIME * (
-        1 + STEP_JITTER * math.sin(2 * math.pi * k / BATCHES_PER_LOOP)
-    )
+    return STEP_TIME * (1 + STEP_JITTER * math.sin(2 * math.pi * k / BATCHES_PER_LOOP))
 
 
 # Cumulative finish time of each batch in the loop.

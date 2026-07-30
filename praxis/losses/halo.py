@@ -201,9 +201,7 @@ class HALOLoss(nn.Module):
                 cen = cen - cen.mean(dim=0, keepdim=True)
             if not bool(self._calibrated.item()):
                 with torch.no_grad():
-                    r_sq_init = (
-                        (pos - cen[target]).pow(2).mean(dim=-1).mean().item()
-                    )
+                    r_sq_init = (pos - cen[target]).pow(2).mean(dim=-1).mean().item()
                 self._calibrate(self._D, r_sq_init)
             gamma = F.softplus(self.gamma)
             abstain_bias = float(self.abstain_bias.item())

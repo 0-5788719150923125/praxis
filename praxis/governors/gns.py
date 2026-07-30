@@ -156,7 +156,10 @@ class BatchTierController:
         return max(self.min_rows, min(self.max_rows, int(rows)))
 
     def desired_rows(
-        self, current: int, noise_scale: Optional[float], measured: Optional[float] = None
+        self,
+        current: int,
+        noise_scale: Optional[float],
+        measured: Optional[float] = None,
     ) -> int:
         """Next effective batch (rows) given the measured noise scale (rows).
 

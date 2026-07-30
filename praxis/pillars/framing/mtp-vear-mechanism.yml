@@ -11,6 +11,9 @@ body: >
   fixed sliding window: depth $k$ is the uniform parameter merge of experts
   $[k, k{+}1, k{+}2]$, cyclically, so adjacent depths share two of three
   experts, and a repulsion penalty on the pool keeps its geometries
-  distinct. There is no router; the window is the routing. The distinct
-  geometries the repulsion preserves are the room each depth has to choose
-  its scale.
+  distinct. There is no router; the window is the routing. This is where the
+  correlation between adjacent positions stops being something each depth
+  relearns: the transforms are deliberately near-copies of one another, and the
+  overlap is written into how they are built rather than discovered by every
+  depth on its own. The distinct geometries the repulsion preserves are the room
+  each depth has to choose its scale.
