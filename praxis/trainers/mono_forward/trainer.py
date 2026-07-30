@@ -1914,7 +1914,10 @@ class MonoForwardTrainer:
         # also feeds the back-compat status_text.
         if self._live_metrics is not None:
             self._live_metrics.contexts = contexts
-        self._push_live_metrics_status(streams.primary.text)
+        # display_text, not text: the CLI and the browser break on different
+        # character sets, so the shown copy is normalized (see
+        # praxis/generation/streaming.py::normalize_display_breaks).
+        self._push_live_metrics_status(streams.primary.display_text)
 
     def _ensure_context_streams(self):
         """Lazily construct the ``ContextStreams`` (one StreamingContext per

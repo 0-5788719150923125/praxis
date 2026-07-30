@@ -684,18 +684,25 @@ class TerminalInterface(Callback):
                 0.9 * self.inference_time_ema + 0.1 * inference_time
             )
 
+        # Both sinks render the DISPLAY copy, not the raw buffer: the CLI wraps
+        # with str.splitlines() while the browser only breaks on LF/CR, so an
+        # exotic separator (\v, \f, U+2028, ...) showed a line break in one and
+        # vanished in the other. `self.text` stays byte-exact - it is what the
+        # prompt-token count is measured against.
+        display = self._streaming.display_text
+
         # Update display (the CLI shows the primary context)
         if self.dashboard and hasattr(self.dashboard, "update_status"):
-            self.dashboard.update_status(self.text)
+            self.dashboard.update_status(display)
             if self._streaming.text == self._streaming.initial_text:
                 self.dashboard.force_redraw()
         elif not self.headless:
-            self.print(self.text)
+            self.print(display)
 
         # Web streaming: every block as `contexts`, plus the primary as the
         # back-compat status_text. The browser renders Unicode natively.
         if hasattr(self, "live_metrics"):
-            self.live_metrics.status_text = self.text
+            self.live_metrics.status_text = display
             self.live_metrics.contexts = contexts
             # Bump the counter so the web emitter pushes this even when no
             # training step is running - otherwise inference updates stall on

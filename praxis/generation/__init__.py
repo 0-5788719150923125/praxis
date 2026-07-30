@@ -11,6 +11,7 @@ from praxis.generation.request import GenerationRequest
 from praxis.generation.runtime import bos_prompt, swap_inference_generator
 from praxis.generation.streaming import (
     StreamingContext,
+    normalize_display_breaks,
     random_char_seed,
     random_text_seed,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "GenerationRequest",
     "MonoForwardGenerator",
     "StreamingContext",
+    "normalize_display_breaks",
     "random_char_seed",
     "random_text_seed",
     "ContextBlock",

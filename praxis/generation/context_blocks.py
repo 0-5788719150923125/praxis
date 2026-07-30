@@ -149,7 +149,9 @@ class ContextStreams:
                 "description": b.description,
                 "temperature": b.temperature,
                 "chance": b.chance,
-                "text": c.text,
+                # display_text, not text: the browser breaks on fewer characters
+                # than the CLI does, so the shown copy is normalized to agree.
+                "text": c.display_text,
                 "tokens": self._token_counter(c.text) if self._token_counter else None,
             }
             for b, c in zip(self.blocks, self.contexts)

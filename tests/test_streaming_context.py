@@ -163,3 +163,73 @@ def test_quorum_degeneracy_reanchors_all_paths():
         streams.step(lambda t, temp: "   " if temp <= 0.5 else t + "x")
     assert streams.anchor == "B"
     assert [c.text for c in streams.contexts] == ["B", "B", "B"]
+
+
+# ---------------------------------------------- display vs prompt line breaks
+#
+# The CLI dashboard wraps with str.splitlines(); the browser's
+# `white-space: pre-wrap` only breaks on LF / CR / CRLF. Python's set is
+# strictly larger, so a byte-level model emitting \v, \f, U+0085 or U+2028
+# produced a line break in the terminal that silently vanished in the web
+# Terminal tab. The DISPLAY copy is normalized so both agree; the PROMPT copy
+# must not be, or the model conditions on bytes it never produced.
+
+EXOTIC_BREAKS = ["\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", " ", " "]
+
+
+@pytest.mark.parametrize("sep", EXOTIC_BREAKS)
+def test_display_text_normalizes_breaks_the_browser_ignores(sep):
+    ctx = StreamingContext(initial_text="a")
+    ctx.update(f"one{sep}two")
+
+    # The prompt copy is untouched - byte-exact is the contract.
+    assert ctx.text == f"one{sep}two"
+
+    # The display copy breaks where the CLI already did.
+    assert ctx.display_text == "one\ntwo"
+
+
+@pytest.mark.parametrize("sep", EXOTIC_BREAKS)
+def test_both_renderers_agree_on_line_count(sep):
+    """The actual invariant: same number of lines in the terminal and the web.
+
+    The CLI counts with splitlines(); the browser counts LF (having already
+    collapsed CRLF). Before normalizing, these disagreed by one per separator.
+    """
+    ctx = StreamingContext(initial_text="a")
+    ctx.update(f"alpha{sep}beta{sep}gamma")
+
+    cli_lines = ctx.display_text.splitlines()
+    browser_lines = ctx.display_text.replace("\r\n", "\n").split("\n")
+    assert cli_lines == browser_lines == ["alpha", "beta", "gamma"]
+
+    # And the raw buffer is where they diverged.
+    assert len(ctx.text.splitlines()) != len(ctx.text.split("\n"))
+
+
+def test_display_text_leaves_ordinary_whitespace_alone():
+    ctx = StreamingContext(initial_text="a")
+    ctx.update("keep\nthese\r\nand\ttabs  and spaces")
+    assert ctx.display_text == "keep\nthese\r\nand\ttabs  and spaces"
+
+
+def test_context_payload_ships_the_display_copy():
+    """The web reads ContextStreams.payload(); that is the copy that must be
+    normalized, while token counts stay measured against the raw buffer."""
+    from praxis.generation.context_blocks import ContextBlock, ContextStreams
+
+    blocks = [
+        ContextBlock(name="Primary", description="test", temperature=0.5, chance=1.0)
+    ]
+    streams = ContextStreams(
+        context_factory=lambda b: StreamingContext(initial_text="a"),
+        blocks=blocks,
+        token_counter=len,
+    )
+    streams.contexts[0].text = "one two"
+
+    entry = streams.payload()[0]
+    assert entry["text"] == "one\ntwo"
+    # len() stands in for the tokenizer here: counted on the raw buffer, whose
+    # U+2028 is several bytes to a byte-level tokenizer where \n is one.
+    assert entry["tokens"] == len("one two")

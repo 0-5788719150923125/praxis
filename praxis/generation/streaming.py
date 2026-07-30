@@ -56,6 +56,48 @@ def random_char_seed() -> str:
     return random_text_seed(1)
 
 
+# Characters Python's str.splitlines() breaks on but CSS `white-space: pre-wrap`
+# does not. The two renderers of a rolling context disagreed on exactly this
+# set: the CLI wraps with `text.splitlines()` (praxis/interface/rendering/
+# utils.py::wrap_text), while the browser only breaks on the CSS segment breaks
+# LF / CR / CRLF. A byte-level model reaches every one of these - \v and \f are
+# single bytes, NEL and the Unicode separators are two and three - so the same
+# passage showed a line break in the terminal and ran together in the web
+# Terminal tab.
+#
+# CR/CRLF are deliberately absent: both renderers already break on them.
+_SPLITLINES_ONLY_BREAKS = (
+    "\v"  # 0x0B line tabulation
+    "\f"  # 0x0C form feed
+    "\x1c"  # file separator
+    "\x1d"  # group separator
+    "\x1e"  # record separator
+    "\x85"  # U+0085 NEL
+    "\u2028"  # line separator
+    "\u2029"  # paragraph separator
+)
+
+_DISPLAY_BREAK_MAP = str.maketrans({c: "\n" for c in _SPLITLINES_ONLY_BREAKS})
+
+
+def normalize_display_breaks(text: str) -> str:
+    """Rewrite exotic line separators to ``\\n`` for display.
+
+    Called on the DISPLAY copy of a rolling context only - never on the buffer
+    the next generation is prompted with, which must stay byte-exact or the
+    model conditions on something it did not produce. The substitution is 1:1 in
+    characters but NOT in bytes (U+2028 is three bytes, ``\\n`` is one), so
+    token counts stay measured against the raw buffer.
+
+    This normalizes toward the CLI's existing appearance rather than away from
+    it: the terminal already showed a break at these characters, so the web
+    gains the break and the terminal is untouched.
+    """
+    if not text:
+        return text
+    return text.translate(_DISPLAY_BREAK_MAP)
+
+
 class StreamingContext:
     """Ongoing text buffer with reset-on-degeneracy semantics.
 
@@ -109,6 +151,17 @@ class StreamingContext:
     def initial_text(self) -> str:
         """Most recent seed (the value reset() snaps back to)."""
         return self._initial_text
+
+    @property
+    def display_text(self) -> str:
+        """The buffer as it should be SHOWN, not as it is prompted.
+
+        ``text`` is what the next generation conditions on and stays byte-exact.
+        This is the copy the CLI dashboard and the web Terminal tab render, with
+        exotic line separators folded to ``\\n`` so the two agree on where the
+        lines are - see :func:`normalize_display_breaks`.
+        """
+        return normalize_display_breaks(self.text)
 
     def set_seed_source(self, factory: Callable[[], str], reseed: bool = True) -> None:
         """Point this context at a (possibly shared) seed source.
