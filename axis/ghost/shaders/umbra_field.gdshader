@@ -55,6 +55,15 @@ uniform float u_rise = 1.0;        // Velocity: how fast the essence climbs
 uniform float u_roil = 0.5;        // Contrast: turbulence in the currents
 uniform float u_cling = 0.35;      // Cling: persistence in time
 uniform float u_wisp = 0.0;        // Wisp: how readily essence detaches and rises
+// THE GHOST'S EYES (channel B). Positions are already in screen space and
+// already carry the lead - see MaskEditor._umb_solve_eyes. Deposited into the
+// field rather than drawn at render time so they inherit the same ooze and
+// advection as the body: amorphous sockets that breathe, not two ellipses
+// stuck on a mask.
+uniform vec2 u_eye_l = vec2(0.5, 0.4);
+uniform vec2 u_eye_r = vec2(0.6, 0.4);
+uniform float u_eye_rad = 0.05;
+uniform float u_eye_amt = 0.0;     // Gaze: 0 = no eyes at all
 
 float permf(float x) {
 	return mod(((x * 34.0) + 1.0) * x, 289.0);
@@ -224,11 +233,27 @@ void fragment() {
 	w *= 1.0 - smoothstep(0.20, 0.55, subj);
 	w = clamp(w, 0.0, 1.2);
 
+	// --- EYES. Two soft sockets, roughened by the same noise family as the
+	// body so their outline is ragged rather than elliptical, and only ever
+	// present where there is mass to cut them out of - eyes floating on bare
+	// wall would read as two spots, not as a face.
+	float er = max(u_eye_rad, 0.004);
+	float wob = fbmu(uv * asp * 7.0 + vec2(-u_time * 0.06, u_time * 0.11)) - 0.5;
+	float dl = length((uv - u_eye_l) * asp) / er + wob * 0.55;
+	float dr = length((uv - u_eye_r) * asp) / er + wob * 0.55;
+	float socket = max(1.0 - smoothstep(0.35, 1.0, dl), 1.0 - smoothstep(0.35, 1.0, dr));
+	float eyes_tgt = clamp(u_eye_amt, 0.0, 1.0) * socket * smoothstep(0.05, 0.30, m);
+	float eprev = texture(u_prev, clamp(uv - vel * dt, vec2(0.0), vec2(1.0))).b;
+	// Faster than the body: the eyes must track her, not drift with the smoke,
+	// or the lead they were given is lost to the field's own inertia.
+	float e = eprev * exp(-dt / 0.16);
+	e += max(0.0, eyes_tgt - e) * (1.0 - exp(-dt / 0.07));
+	e = clamp(e, 0.0, 1.0);
+
 	if (u_reset == 1) {
 		m = tgt;
 		w = 0.0;
+		e = eyes_tgt;
 	}
-	// B stays 0: reserved for the facial transference pass (loose eye/mouth
-	// voids deposited into the mass, led slightly ahead of her own motion).
-	COLOR = vec4(m, w, 0.0, allow);
+	COLOR = vec4(m, w, e, allow);
 }

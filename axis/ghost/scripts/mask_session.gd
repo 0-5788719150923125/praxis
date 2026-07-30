@@ -78,7 +78,8 @@ const VECTOR_FIELDS := [
 	"time",             # seconds into the clip
 	"kind",             # 0=ramp (eases in before the anchor) / 1=damp (accumulates after)
 	"hue_a",            # THE layer's target hue, 0..1
-	"hue_b",            # legacy, unused
+	"hue_b",            # umbra's ACCENT hue - the colour of the ghost's eyes
+	                    #   (was "legacy, unused"; 0.0 = red, the default)
 	"threshold",        # key distance threshold, 0..1 (global)
 	"feather",          # edge softness, 0..1 (global)
 	"sat_floor",        # minimum saturation to key at all, 0..1 (global)
@@ -113,9 +114,17 @@ const VECTOR_FIELDS := [
 const GLOBAL_CONTINUOUS := ["threshold", "feather", "sat_floor"]
 ## What each marker's LAYER carries (contract shape 3) - baked at the marker's own
 ## values; only the layer's envelope varies over time.
+## NOTE the last four. threshold/feather/sat_floor are ALSO resolved as global
+## keying scalars (see resolve()), but a layer that wants to read them PER
+## LAYER must find them here - anything absent from this list simply is not in
+## the layer dictionary, and a `layer.get("threshold", 0.24)` then returns the
+## default forever, silently. That is exactly how umbra's Reach/Lead/Gaze
+## shipped inert. hue_b was dead weight ("legacy, unused") and is now umbra's
+## accent hue - the colour of the ghost's eyes.
 const LAYER_FIELDS := ["hue_a", "effect_a", "intensity_a", "fx_x", "fx_y",
 	"fx_scale", "fx_density", "resonance", "fx_contrast", "fx_speed", "fx_lag",
-	"fx_smooth", "fx_stick", "fx_tint"]
+	"fx_smooth", "fx_stick", "fx_tint",
+	"threshold", "feather", "sat_floor", "hue_b"]
 
 const MARKER_KINDS := ["ramp", "damp"]
 
@@ -322,6 +331,24 @@ const MAX_LAYERS := 6
 ## relabeled Roil (turbulence in the currents and the fluctuation of the
 ## silhouette), Velocity is how fast the essence climbs, and Resonance swells
 ## the loom with the audio - on a talking clip the ghost surges when she
+## THE GHOST'S EYES (Gaze) are hollow sockets cut into the mass, tracking hers.
+## They are anchored to the VISIBLE mass, not to anatomy: carrying her eyes
+## across the cast offset and then through the silhouette magnification is
+## geometrically correct and useless, because a ghost twice her size genuinely
+## has its head above the frame - eyes and looming would be mutually exclusive.
+## So the sockets sit in the upper body of the mass wherever that lands, and
+## her movement drives their DEVIATION from that rest position, amplified. The
+## socket also carries a faint cold ember scaled BY Depth, because hollowing
+## works by letting the wall show back through and at full Depth there is
+## nothing left to reveal.
+## LEAD extrapolates her motion along a smoothed velocity so the ghost turns
+## fractionally BEFORE she does - the puppeteering read. It is a PREDICTION,
+## not a look-ahead: honest for a few tenths of a second and capped, because
+## past that it overshoots on every direction reversal. A true look-ahead
+## needs a pre-pass over the clip.
+## REACH closes the band of untouched wall between the mass and the woman
+## casting it - right at her outline the pixels are a blend of her and the wall
+## and read as cleanly neither, so the shadow stops short of her.
 ## speaks. Its own "umbra" group adds three (existing stored fields reused the
 ## way fur/snow/clown reuse them, no schema growth): Wisp (fx_smooth) is how
 ## readily essence detaches and rises, Cling (fx_lag) is how long the mass
@@ -422,7 +449,8 @@ const VIEW_MODES := ["pip", "masked", "raw", "pip_raw", "masked_pip", "masked_pi
 ## - just the source video, no shader pass at all - so nothing is masked/effected
 ## until you explicitly place a marker or toggle the view yourself.
 const DEFAULTS := {
-	"kind": 0.0, "hue_a": 0.02, "hue_b": 0.58, "threshold": 0.24, "feather": 0.12,
+	# hue_b 0.0 = RED - umbra's eyes, the only consumer of this once-dead field.
+	"kind": 0.0, "hue_a": 0.02, "hue_b": 0.0, "threshold": 0.24, "feather": 0.12,
 	"sat_floor": 0.18, "swap": 0.0, "effect_a": 0, "effect_b": 0,
 	"intensity_a": 1.0, "intensity_b": 0.0, "duration": 1.0, "view_mode": 2.0,
 	"pip_track": 0.0,

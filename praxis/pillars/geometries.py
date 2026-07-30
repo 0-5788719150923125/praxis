@@ -248,19 +248,44 @@ def render_png(geo, index):
     return os.path.relpath(out, RESEARCH_DIR)
 
 
+# Float-page height budget, all in \linewidth units so the arithmetic is
+# resolution- and paper-independent. A fixed 0.46 panel width overflowed as soon
+# as the bank produced 5 heads: three rows plus a seven-line caption ran past
+# \textheight and the caption printed over the page number. The grid now shrinks
+# to fit instead, which leaves the common 1-2 row case untouched.
+_PANEL_ASPECT = 1.08  # rendered panel height / width (3x3in axes + title strip)
+_TEXT_HEIGHT = 1.55  # article \textheight / \linewidth (~1.59), with margin
+_CAPTION_ALLOWANCE = 0.30  # caption + \captionsetup skip, ~8 lines
+_MAX_PANEL_WIDTH = 0.46  # two-up width; never exceeded, only reduced
+_ROW_GAP_PT = 6
+
+
+def _panel_width(n_rows: int) -> float:
+    """Panel width (in \\linewidth) that keeps ``n_rows`` plus the caption inside
+    the text block. Returns the two-up default whenever the grid already fits."""
+    if n_rows < 1:
+        return _MAX_PANEL_WIDTH
+    budget = _TEXT_HEIGHT - _CAPTION_ALLOWANCE
+    return min(_MAX_PANEL_WIDTH, budget / (n_rows * _PANEL_ASPECT))
+
+
 def figure_tex(paths, geometries):
     """The ``\\paperGeometryFigure`` macro: a 2-column grid of the panels.
 
     ``[tbp]`` lets it take a dedicated float page if the block is too tall to sit
     with text, which keeps it near its section instead of drifting to the end.
+    Panel width scales down past two rows so the caption cannot overrun the
+    footer - see ``_panel_width``.
     """
+    width = _panel_width((len(paths) + 1) // 2)
     rows = []
     for i in range(0, len(paths), 2):
         cells = " \\hfill\n  ".join(
-            f"\\includegraphics[width=0.46\\linewidth]{{{p}}}" for p in paths[i : i + 2]
+            f"\\includegraphics[width={width:.3f}\\linewidth]{{{p}}}"
+            for p in paths[i : i + 2]
         )
         rows.append(cells)
-    body = " \\\\[6pt]\n  ".join(rows)
+    body = f" \\\\[{_ROW_GAP_PT}pt]\n  ".join(rows)
     grid_desc = (
         f"the top-2 PCA projection of a head's vocabulary centers, binned to a "
         f"{GRID_SIZE}$\\times${GRID_SIZE} density grid (log color) - the same "

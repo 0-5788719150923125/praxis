@@ -1,0 +1,53 @@
+# Section 5 ("The exponential edge"), the empirical grounding: floating-point
+# arithmetic is itself a computational nonlinearity, and the optimizer cannot
+# see it. This is also where the term "measurement-induced rounding" is defined,
+# which Section 9's limitations paragraph cites back to - it was being used
+# there with no antecedent a reader could recall.
+#
+# Source: Jakob Foerster, "Nonlinear Computation in Deep Linear Networks"
+# (OpenAI, September 2017). Numbers are the post's own: a deep linear network
+# under backprop gets 92% MNIST test, the SAME network under evolution
+# strategies with activations held in float32's nonlinear range gets 96.7%
+# (>99% train). Mechanism is underflow/denormals NEAR ZERO - do not describe it
+# as the large-magnitude end, which is a different boundary.
+#
+# Unconditional (no requires): the claim is about float arithmetic, so it holds
+# for every run. It lives here rather than in body.tex anyway - the prose is
+# thread-specific (it lands on this paper's cumulative-selection argument), and
+# body.tex is meant to drain toward a skeleton, not grow.
+section: edge
+order: 10
+body: >
+  There is a sharper version of this available, and it is empirical rather than
+  rhetorical. A network's arithmetic is not the arithmetic of the reals it is
+  written in terms of; it is floating point, and floating point stops being
+  linear near zero, where underflow and denormals bend addition and
+  multiplication away from the operations they approximate. That bend is
+  ordinarily treated as a defect to be normalized away. It is also a resource: a
+  network built entirely from linear layers - no activation function anywhere -
+  can be trained to exploit it, and doing so lifts the same architecture from
+  the $92\%$ MNIST test accuracy a linear model is entitled to, up to
+  $96.7\%$~\cite{foerster2017nonlinear}. The nonlinearity a deep network is
+  supposed to require was supplied, in that experiment, by rounding error alone.
+
+  Two details of how it had to be done matter more here than the accuracy. The
+  first is that the activations were deliberately held small enough to sit in
+  the range where float32 is nonlinear - the result depends on parking the
+  computation at a numeric boundary rather than at a comfortable scale, which is
+  the same discipline normalization performs for the softmax, run toward the
+  opposite edge. The second is that gradient descent could not find it.
+  Symbolic differentiation differentiates the idealized operation, not the one
+  the hardware executed, so backpropagation is structurally blind to a
+  nonlinearity living in the low-order bits; the parameters had to be found by
+  evolution strategies, which need only the loss and never the derivative.
+  Variation the gradient cannot see, selection performed by the loss: the blind
+  watchmaker of Section~\ref{sec:watchmaker}, arrived at from the numerics
+  rather than from the argument.
+
+  We take two things from this. Numerically, that a representation living close
+  to the edge of its own precision is doing computation there rather than merely
+  tolerating error - so \textit{measurement-induced rounding}, a cast or a
+  snapshot that nudges a value across one of those boundaries, is a perturbation
+  of the computation and not just of the report of it. And methodologically,
+  that the interesting nonlinearity in a system can be the one its optimizer is
+  constitutionally unable to look at.

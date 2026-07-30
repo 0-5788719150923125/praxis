@@ -217,6 +217,24 @@ var _umb_subj_c := Vector2(0.5, 0.55)
 var _umb_shad_c := Vector2(0.75, 0.40)
 var _umb_pivot := Vector2(0.75, 0.62)   # the silhouette's base - Scale rears UP from here
 var _umb_pan := Vector2.ZERO
+var _umb_reach := 0.24   # Reach  (threshold) - how close the mass comes to her
+var _umb_lead := 0.19    # Lead   (feather)   - seconds the ghost moves AHEAD of her
+# THE GHOST'S EYES. Her own eyes, carried across the cast offset into the
+# shadow and through the silhouette transform, then LED by a velocity estimate
+# so the ghost turns fractionally before she does - the puppeteering read.
+var _umb_eye_l := Vector2(0.5, 0.4)
+var _umb_eye_r := Vector2(0.6, 0.4)
+var _umb_eye_rad := 0.05
+var _umb_eyes_ok := false
+# The look-ahead eye track (see _umb_ensure_track): her eyes for the WHOLE
+# clip, fitted up front, so playback can read the frame she has not reached.
+var _umb_track := PackedVector3Array()   # (eye_mid.x, eye_mid.y, separation); z<=0 = no face
+var _umb_track_rest := Vector2(0.5, 0.35)
+var _umb_track_state := "none"           # none | decoding | fitting | ready | failed
+var _umb_track_raw := ""
+var _umb_track_pid := -1
+var _umb_track_thread: Thread = null
+var _umb_eye_amt := 0.0   # Gaze (sat_floor) - how strongly the eyes read
 var _umb_have := false
 var _umb_region_img: Image = null        # RGBA8 _UMB_W x _UMB_H: R=linked shadow,
 var _umb_region_tex: ImageTexture = null #   G=shadowness, B=subject mask
@@ -288,6 +306,10 @@ var _hollow: HSlider  # clown's Hollow  - its view onto fx_stick
 var _wisp: HSlider        # umbra's Wisp  - its view onto fx_smooth
 var _cling: HSlider       # umbra's Cling - its view onto fx_lag
 var _umbra_depth: HSlider # umbra's Depth - its view onto fx_stick
+var _umbra_reach: HSlider # umbra's Reach - its view onto threshold (umbra never keys)
+var _umbra_lead: HSlider  # umbra's Lead  - its view onto feather
+var _umbra_gaze: HSlider  # umbra's Gaze  - its view onto sat_floor
+var _color_eye: ColorPickerButton   # umbra's eye colour - hue_b, pushed as u_l_accent
 var _resonance: HSlider
 var _effect_a: OptionButton
 var _intensity_a: HSlider
@@ -410,6 +432,8 @@ var _avi := ""
 # change in a burst (and unconditionally on close), so work persists across
 # reloads without a save button and without writing once per slider-drag pixel.
 var _dirty := false
+var _syncing := false   # true while _refresh_panel repaints controls - _edit must ignore echoes
+var _modal_depth := 0   # open popups (colour pickers, dropdowns) - suspends the cursor auto-hide
 var _autosave_cooldown := 0.0
 const _AUTOSAVE_DELAY := 0.4
 
@@ -1090,6 +1114,22 @@ func _ready_with_session() -> void:
 	# VideoStreamPlayer won't accept a seek the same frame it starts playing.
 	if not render_mode and session.playhead > 0.05:
 		_pending_restore = session.playhead
+	# SELECT WHATEVER GOVERNS THE PLAYHEAD, so the panel opens showing the
+	# session's real settings.
+	# Nothing did this before: _selected stayed null until you clicked a marker
+	# or playback happened to cross one, and _refresh_panel falls back to
+	# MaskSession.DEFAULTS when nothing is selected. So every control - the wall
+	# colour swatch included - came up displaying a default while the marker sat
+	# there holding the values you had set. Nothing was ever lost on disk; the
+	# panel simply was not reading it. Re-picking the colour from that state
+	# then wrote a fresh near-identical hue, which is why the stored value
+	# drifted a little on every restart instead of staying put.
+	if not render_mode and not session.markers.is_empty():
+		var gov: Variant = _governing_marker(
+			session.playhead if session.playhead > 0.0 else 0.0)
+		if gov == null:
+			gov = session.markers[0]   # playhead sits before the first marker
+		_select_marker(gov)
 
 
 ## Kick off (or discover already-cached) the timeline's waveform image - fully
@@ -1348,6 +1388,10 @@ func _step_umbra_sim() -> void:
 	mat.set_shader_parameter("u_pivot", _umb_pivot)
 	mat.set_shader_parameter("u_sil_scale", _umb_scale)
 	mat.set_shader_parameter("u_pan", _umb_pan)
+	mat.set_shader_parameter("u_eye_l", _umb_eye_l)
+	mat.set_shader_parameter("u_eye_r", _umb_eye_r)
+	mat.set_shader_parameter("u_eye_rad", _umb_eye_rad)
+	mat.set_shader_parameter("u_eye_amt", _umb_eye_amt if _umb_eyes_ok else 0.0)
 	_umb_vps[_umb_ping].render_target_update_mode = SubViewport.UPDATE_ONCE
 	for m2 in [_mat_main, _mat_inset]:
 		m2.set_shader_parameter("u_umbra_field", _umb_vps[_umb_ping].get_texture())
@@ -2143,6 +2187,10 @@ func _build_chrome() -> void:
 	_refresh_lanes()
 
 	_build_panel()
+	# Every popup in the editor joins the modal counter that suspends the
+	# cursor auto-hide (see _guard_popups). Walked from the whole tree, not
+	# just the panel, so the toolbar's dropdowns are covered too.
+	_guard_popups(self)
 
 
 ## The META mirror source: the editor's OWN previous frame, read back from the main
@@ -2526,6 +2574,33 @@ func _build_panel() -> void:
 		"How much light the mass swallows - some of the wall always survives " +
 		"inside it, so it deepens the shadow rather than cutting a hole")
 	_register_option(_umbra_depth)
+	_umbra_reach = _slider(_grp_options, "Reach", 0.0, 1.0, func(v): _edit("threshold", v),
+		"How close the mass comes to the body casting it - raise it to close " +
+		"the band of untouched wall between them, lower it to keep well clear")
+	_register_option(_umbra_reach)
+	_umbra_lead = _slider(_grp_options, "Lead", 0.0, 0.5, func(v): _edit("feather", v),
+		"How far AHEAD of her the ghost moves - it turns before she does, so " +
+		"it reads as the thing making her move rather than following her")
+	_register_option(_umbra_lead)
+	_umbra_gaze = _slider(_grp_options, "Gaze", 0.0, 1.0, func(v): _edit("sat_floor", v),
+		"Hollow eyes in the mass, tracking hers across the cast offset - " +
+		"0 is a faceless shadow")
+	_register_option(_umbra_gaze)
+	# The eye colour needed a control of its own. hue_b was wired through to the
+	# shader but nothing could edit it, so the eyes were stuck on whatever the
+	# session happened to have stored - 0.58, cyan, for anything saved before
+	# the default changed. "Cannot change their color" was literally true.
+	var eye_lbl := _label("Eye color", "The colour the ghost's eyes burn - red by default")
+	_grp_options.add_child(eye_lbl)
+	_color_eye = ColorPickerButton.new()
+	_color_eye.focus_mode = Control.FOCUS_NONE
+	_color_eye.custom_minimum_size = Vector2(0, 32)
+	_color_eye.edit_alpha = false
+	_color_eye.tooltip_text = eye_lbl.tooltip_text
+	_color_eye.set_meta("field_label", eye_lbl)
+	_color_eye.color_changed.connect(func(c): _edit("hue_b", c.h))
+	_grp_options.add_child(_color_eye)
+	_register_option(_color_eye)
 
 	# Every marker is a ramp or a damp - there is no plain/neutral marker (see
 	# MaskSession class doc). Both transition TO this marker's values; the kind is
@@ -2778,6 +2853,8 @@ func _effect_menu(col: VBoxContainer, cb: Callable) -> OptionButton:
 ## marker - no separate "create" step needed for the common case). Defaults to a
 ## ramp when auto-created this way; press +Damp explicitly for the other kind.
 func _edit(field: String, value: float) -> void:
+	if _syncing:
+		return   # a programmatic panel repaint, not the user - see _refresh_panel
 	var m: Variant = _selected
 	if m == null:
 		_push_undo("", "created a marker")   # about to create one - always its own boundary
@@ -3824,21 +3901,31 @@ func _update_umbra_model(src: Image) -> void:
 	for i in n:
 		_umb_tmp[i] = 1.0 if _umb_subj[i] != 0 else 0.0
 	_umb_blur(_umb_tmp, _umb_wmass, 2, 2)
+	# REACH closes the gap between the mass and the woman casting it. Right at
+	# her outline the pixels are a BLEND of her and the wall, so they read as
+	# neither cleanly - they fall to the subject flood and the shadow stops
+	# short, leaving the visible band of ungraded wall between the two.
+	# Two moves, one knob: shrink the subject mask's safety dilation, and grow
+	# the shadow mask. At 0 this is exactly the old conservative behaviour.
+	var reach := clampf(_umb_reach, 0.0, 1.0)
+	var sub_gain := lerpf(1.35, 0.55, reach)
+	var shad_gain := lerpf(1.0, 1.9, reach)
 	# Straight into a byte buffer: 5184 set_pixel() calls at ~7Hz is real cost
 	# for no reason when create_from_data takes the whole thing at once.
 	if _umb_bytes.size() != n * 4:
 		_umb_bytes.resize(n * 4)
 	for i in n:
 		var b4 := i * 4
-		_umb_bytes[b4] = int(clampf(_umb_wlum[i], 0.0, 1.0) * 255.0)
+		_umb_bytes[b4] = int(clampf(_umb_wlum[i] * shad_gain, 0.0, 1.0) * 255.0)
 		_umb_bytes[b4 + 1] = int(clampf(_umb_shadow[i], 0.0, 1.0) * 255.0)
-		_umb_bytes[b4 + 2] = int(clampf(_umb_wmass[i] * 1.35, 0.0, 1.0) * 255.0)
+		_umb_bytes[b4 + 2] = int(clampf(_umb_wmass[i] * sub_gain, 0.0, 1.0) * 255.0)
 		_umb_bytes[b4 + 3] = 255
 	_umb_region_img = Image.create_from_data(_UMB_W, _UMB_H, false, Image.FORMAT_RGBA8, _umb_bytes)
 	if _umb_region_tex == null:
 		_umb_region_tex = ImageTexture.create_from_image(_umb_region_img)
 	else:
 		_umb_region_tex.update(_umb_region_img)
+	_umb_solve_eyes(subj_c, shad_c)
 	_umb_have = true
 	if OS.has_environment("GHOST_UMBRA_DEBUG"):
 		print("UMBDBG t=%.2f ref=(%.2f,%.2f,%.2f) mag=%.3f lit=%.2f subj=%d shad=%d " % [
@@ -3846,7 +3933,335 @@ func _update_umbra_model(src: Image) -> void:
 			_umb_ref_mag, _umb_ref_lit, int(res.subj_n), int(res.shad_n)]
 			+ "dir=(%.2f,%.2f) subjc=(%.2f,%.2f) shadc=(%.2f,%.2f) score=%.2f" % [
 			_umb_dir_ema.x, _umb_dir_ema.y, subj_c.x, subj_c.y, shad_c.x, shad_c.y,
-			float(res.score)])
+			float(res.score)]
+			+ " eyeL=(%.2f,%.2f) eyeR=(%.2f,%.2f) rad=%.3f ok=%s herEye=(%.2f,%.2f)" % [
+			_umb_eye_l.x, _umb_eye_l.y, _umb_eye_r.x, _umb_eye_r.y, _umb_eye_rad,
+			str(_umb_eyes_ok), _face_eye_l_ema.x, _face_eye_l_ema.y])
+
+
+## --- THE EYE TRACK: a real look-ahead, not a prediction ---------------------
+##
+## Velocity extrapolation cannot anticipate a word or a flick of the head; it
+## can only continue whatever just happened, which on real footage is mostly
+## detection jitter. To move BEFORE she does, the future has to be known, so
+## the whole clip is analysed up front: ffmpeg decodes it once at grid
+## resolution and one sample per _UMBRA_INTERVAL, a worker thread fits her eyes
+## in every frame, and playback then simply reads the track at `t + Lead`.
+##
+## Deterministic by construction (a pure function of the clip), so the live
+## preview and the export relaunch lead by exactly the same amount, and the
+## per-frame cost at playback is one array lookup.
+func _umb_ensure_track() -> void:
+	if _umb_track_state != "none" or session == null or session.video_path.is_empty():
+		return
+	var src := ProjectSettings.globalize_path(session.video_path)
+	if not FileAccess.file_exists(src):
+		return
+	# user:// deliberately: a raw dump inside res://masks would be scanned by
+	# the editor's importer, which is the same class of trouble the truncated
+	# audio.wav caused (see _promote_part).
+	var dir := OS.get_user_data_dir() + "/umbra_tracks"
+	DirAccess.make_dir_recursive_absolute(dir)
+	_umb_track_raw = dir + "/" + str(hash(session.video_path)) + ".raw"
+	var args := PackedStringArray([
+		"-y", "-loglevel", "error", "-i", src,
+		"-vf", "scale=%d:%d,fps=%f" % [_UMB_W, _UMB_H, 1.0 / _UMBRA_INTERVAL],
+		"-f", "rawvideo", "-pix_fmt", "rgb24", _umb_track_raw + ".part"])
+	_umb_track_pid = OS.create_process("ffmpeg", args)
+	if _umb_track_pid <= 0:
+		_umb_track_state = "failed"
+		return
+	_umb_track_state = "decoding"
+	_set_status("⏳  Reading ahead for the umbra…")
+
+
+## Poll the decode, then hand the raw dump to a worker thread. Called per frame
+## while an umbra layer is live; both halves are cheap no-ops once done.
+func _umb_poll_track() -> void:
+	if _umb_track_state == "decoding":
+		if OS.is_process_running(_umb_track_pid):
+			return
+		if not FileAccess.file_exists(_umb_track_raw + ".part"):
+			_umb_track_state = "failed"
+			return
+		DirAccess.rename_absolute(_umb_track_raw + ".part", _umb_track_raw)
+		_umb_track_thread = Thread.new()
+		_umb_track_thread.start(_umb_fit_track_threaded.bind(_umb_track_raw))
+		_umb_track_state = "fitting"
+		_set_status("⏳  Reading ahead for the umbra…")
+		return
+	if _umb_track_state == "fitting":
+		if _umb_track_thread == null or _umb_track_thread.is_alive():
+			return
+		var got: Variant = _umb_track_thread.wait_to_finish()
+		_umb_track_thread = null
+		_umb_track = got if got is PackedVector3Array else PackedVector3Array()
+		# HER RESTING PLACE, from the whole clip at once rather than an EMA
+		# chasing it. Deviations are measured from this, so the ghost's gaze is
+		# steady when she is and swings only when she actually moves.
+		var acc := Vector2.ZERO
+		var n := 0
+		for s in _umb_track:
+			if s.z > 0.0:
+				acc += Vector2(s.x, s.y)
+				n += 1
+		_umb_track_rest = acc / maxf(float(n), 1.0) if n > 0 else Vector2(0.5, 0.35)
+		_umb_track_state = "ready" if n > 4 else "failed"
+		if OS.has_environment("GHOST_UMBRA_DEBUG"):
+			print("UMBDBG track %s: %d samples, %d with a face, rest=(%.3f,%.3f)"
+				% [_umb_track_state, _umb_track.size(), n, _umb_track_rest.x, _umb_track_rest.y])
+
+
+## Worker: fit her eyes in every sampled frame of the raw dump.
+## Returns PackedVector3Array of (eye_mid.x, eye_mid.y, eye_separation); z <= 0
+## marks a frame where no face was found, so lookups can skip it.
+func _umb_fit_track_threaded(path: String) -> PackedVector3Array:
+	var out := PackedVector3Array()
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return out
+	var stride := _UMB_W * _UMB_H * 3
+	var total := int(f.get_length() / stride)
+	for k in total:
+		out.append(_umb_fit_eyes(f.get_buffer(stride)))
+	f.close()
+	return out
+
+
+## One frame's eye fit, on a raw rgb24 grid buffer. Deliberately the same
+## school as the clown's face model: an EYE is a DARK spot in a SKIN
+## neighbourhood, so candidates are weighted by the BLURRED face mass - dark
+## weighted by its own mass finds nothing (an eye carries no skin colour), and
+## dark weighted by a flat floor lets the hair either side of the face win,
+## which blows the pair apart.
+func _umb_fit_eyes(buf: PackedByteArray) -> Vector3:
+	var n := _UMB_W * _UMB_H
+	if buf.size() < n * 3:
+		return Vector3(0.5, 0.35, -1.0)
+	var lum := PackedFloat32Array(); lum.resize(n)
+	var mass := PackedFloat32Array(); mass.resize(n)
+	var mean_l := 0.0
+	for i in n:
+		var b := i * 3
+		var r := float(buf[b]) / 255.0
+		var g := float(buf[b + 1]) / 255.0
+		var bl := float(buf[b + 2]) / 255.0
+		lum[i] = 0.299 * r + 0.587 * g + 0.114 * bl
+		mean_l += lum[i]
+	mean_l /= float(n)
+	var acc := Vector2.ZERO
+	var wsum := 0.0
+	for y in _UMB_H:
+		for x in _UMB_W:
+			var i := y * _UMB_W + x
+			var b := i * 3
+			var r := float(buf[b]) / 255.0
+			var g := float(buf[b + 1]) / 255.0
+			var bl := float(buf[b + 2]) / 255.0
+			var l := lum[i]
+			var cr := r - l
+			var cb := bl - l
+			var skin := 0.0
+			if cr > 0.01 and l > 0.15 and cr > cb:
+				skin = clampf(cr * 6.0, 0.0, 1.0) * clampf((cr - cb) * 4.0, 0.0, 1.0)
+			# the brightness cue that carries near-monochrome grades
+			var bright: float = smoothstep(mean_l + 0.06, mean_l + 0.30, l)
+			var px := (float(x) + 0.5) / float(_UMB_W)
+			var py := (float(y) + 0.5) / float(_UMB_H)
+			var prior: float = exp(-(pow((px - 0.5) * 1.7778, 2.0) + pow(py - 0.45, 2.0)) / 0.18)
+			var wt := maxf(skin * 0.9, bright * 0.85) * prior
+			mass[i] = wt
+			acc += Vector2(px, py) * wt
+			wsum += wt
+	if wsum <= 0.5:
+		return Vector3(0.5, 0.35, -1.0)
+	var c := acc / wsum
+	# The face's own half-width, aspect-corrected - the yardstick every
+	# constraint below is expressed in. Without it the eye search has no sense
+	# of scale and happily returns the hair on either side of the head as a
+	# "pair", which is what made the sockets enormous and far too far apart.
+	# Measured over the EYE BAND only. Taken across the whole mass it is her
+	# shoulders and arms as much as her head, which inflated it to the point
+	# that the separation constraint below permitted almost anything.
+	var vxx := 0.0
+	var vw := 0.0
+	for y in _UMB_H:
+		var pyb := (float(y) + 0.5) / float(_UMB_H)
+		if pyb > c.y + 0.02 or pyb < c.y - 0.22:
+			continue
+		for x in _UMB_W:
+			var i := y * _UMB_W + x
+			var dxp := ((float(x) + 0.5) / float(_UMB_W) - c.x) * 1.7778
+			vxx += dxp * dxp * mass[i]
+			vw += mass[i]
+	var half_w: float = clampf(sqrt(maxf(1e-5, vxx / maxf(vw, 1e-5))) * 1.35, 0.04, 0.26)
+	# separable box blur of the mass, radius 3 - the "skin neighbourhood"
+	var mb := PackedFloat32Array(); mb.resize(n)
+	var tmp := PackedFloat32Array(); tmp.resize(n)
+	for y in _UMB_H:
+		for x in _UMB_W:
+			var s := 0.0
+			for k in range(-3, 4):
+				s += mass[y * _UMB_W + clampi(x + k, 0, _UMB_W - 1)]
+			tmp[y * _UMB_W + x] = s / 7.0
+	for y in _UMB_H:
+		for x in _UMB_W:
+			var s2 := 0.0
+			for k in range(-3, 4):
+				s2 += tmp[clampi(y + k, 0, _UMB_H - 1) * _UMB_W + x]
+			mb[y * _UMB_W + x] = s2 / 7.0
+	# two darkest clusters in the upper face band, split left/right of centre
+	var la := Vector2.ZERO
+	var lw := 0.0
+	var ra := Vector2.ZERO
+	var rw := 0.0
+	for y in _UMB_H:
+		for x in _UMB_W:
+			var i := y * _UMB_W + x
+			var px2 := (float(x) + 0.5) / float(_UMB_W)
+			var py2 := (float(y) + 0.5) / float(_UMB_H)
+			if py2 > c.y + 0.02 or py2 < c.y - 0.22:
+				continue
+			# Inside the FACE, not merely above its centroid: an eye sits well
+			# within the head's half-width, and letting candidates range to the
+			# frame edge is how hair wins both clusters.
+			if absf((px2 - c.x) * 1.7778) > half_w * 0.85:
+				continue
+			var dark := maxf(0.0, mean_l - lum[i])
+			var wv := dark * mb[i]
+			wv *= wv
+			if wv <= 0.0:
+				continue
+			if px2 < c.x:
+				la += Vector2(px2, py2) * wv; lw += wv
+			else:
+				ra += Vector2(px2, py2) * wv; rw += wv
+	if lw <= 1e-6 or rw <= 1e-6:
+		return Vector3(c.x, c.y - 0.08, -1.0)
+	var el := la / lw
+	var er := ra / rw
+	# SEPARATION COMES FROM THE HEAD'S WIDTH, not from the fitted pair.
+	# The darkest-cluster fit locates the MIDPOINT reliably - two dark regions
+	# either side of the face centre average to about the right place even when
+	# one of them is really an eyebrow or a strand of hair - but their spacing
+	# is exactly the quantity that degrades, and it was coming back at 0.37
+	# where a face that size supports about 0.12. Human eye separation is
+	# close to half the head's width, which is a far steadier thing to measure.
+	var sep_fit := absf(er.x - el.x) * 1.7778
+	if sep_fit < half_w * 0.30 or sep_fit > half_w * 2.2:
+		return Vector3(c.x, c.y - 0.08, -1.0)   # the fit disagrees with the anatomy
+	# 0.45, calibrated against her actual face on the reference clip rather than
+	# from the textbook "eyes are half a head apart": the mass-derived half_w
+	# still runs wide because the eye band catches hair and neck, and at 0.90
+	# the ghost's eyes came out twice her spacing.
+	return Vector3((el.x + er.x) * 0.5, (el.y + er.y) * 0.5, half_w * 0.45)
+
+
+## The track sampled at clip time `t`, already carrying the Lead. Returns
+## z <= 0 when no usable sample exists there.
+func _umb_track_at(t: float) -> Vector3:
+	if _umb_track.is_empty():
+		return Vector3(0.5, 0.35, -1.0)
+	var fpos := t / _UMBRA_INTERVAL
+	var i := clampi(int(floor(fpos)), 0, _umb_track.size() - 1)
+	var j := clampi(i + 1, 0, _umb_track.size() - 1)
+	var a := _umb_track[i]
+	var b := _umb_track[j]
+	if a.z <= 0.0:
+		return b
+	if b.z <= 0.0:
+		return a
+	return a.lerp(b, clampf(fpos - float(i), 0.0, 1.0))
+
+
+## Where the GHOST's eyes sit, in screen space.
+##
+## Her eyes are known in screen space (the face model). The shadow is her,
+## displaced - so carrying her eyes across the CAST OFFSET (shadow centroid
+## minus subject centroid) lands them at the corresponding point of the
+## silhouette. That result then rides the same magnify-about-pivot-and-pan
+## transform the rest of the body does, so the eyes stay put in the ghost no
+## matter how it is scaled or moved.
+##
+## THE LEAD is what sells the puppeteering: the ghost has to arrive before she
+## does. This extrapolates along a smoothed velocity rather than the raw
+## frame-to-frame delta, because the raw delta is mostly detection jitter and
+## multiplying jitter by a lead time is just amplified twitch.
+func _umb_solve_eyes(subj_c: Vector2, shad_c: Vector2) -> void:
+	if _umb_track_state != "ready" or _player == null:
+		_umb_eyes_ok = false
+		return
+	# THE LEAD IS A LOOK-AHEAD. The track holds her eyes for the WHOLE clip, so
+	# this reads the frame she has not reached yet and the ghost genuinely
+	# moves first - it anticipates a word or a turn of the head, which no
+	# amount of extrapolating the last two samples ever could.
+	var t_ahead := _player.stream_position + clampf(_umb_lead, 0.0, 2.0)
+	var s := _umb_track_at(t_ahead)
+	if s.z <= 0.0:
+		_umb_eyes_ok = false
+		return
+	var her := Vector2(s.x, s.y)
+	var unit := maxf(0.02, s.z)
+	var dev := her - _umb_track_rest
+
+	# THE EYES ARE ANCHORED TO THE VISIBLE MASS, NOT TO ANATOMY.
+	# Carrying her eyes across the cast offset and then through the silhouette
+	# magnification is geometrically correct and useless: at Scale 2.2 it put
+	# them at y = -0.45, off the top of the frame, because a ghost twice her
+	# size genuinely has its head above the picture. Eyes and looming would be
+	# mutually exclusive. So the sockets sit in the upper body of the mass
+	# WHEREVER that lands on screen, and her movement drives their DEVIATION
+	# from that rest position - amplified, so a small turn of her head throws
+	# the ghost's gaze further than her own.
+	var head := (shad_c - _umb_pivot) * _umb_scale + _umb_pivot + _umb_pan
+	# Modest, and NOT multiplied by the scale: the transform has already moved
+	# this point: adding a scale-multiplied lift on top drove the sockets into
+	# the top edge clamp at y=0.05 and pinned them there.
+	# Barely any lift at all. The transformed centroid IS the middle of the
+	# visible mass - which is where there is something to cut sockets OUT of.
+	# Lifting off it put them in the thin upper fringe, where hollowing 92% of
+	# very little left the sockets no brighter than the body around them.
+	head.y -= 0.02
+	head += dev * 1.9
+	# A small nudge outward, clear of her outline - at the raw shadow centroid
+	# the inner socket lands on the guarded band and has no mass to be cut from.
+	# Deliberately fixed rather than proportional to the fitted separation:
+	# scaling it by `unit` compounded a bad fit into a mass-wide displacement,
+	# which is how the pair ended up straddling the mass edge with one socket
+	# out on bare wall.
+	head += _umb_dir_ema * 0.045
+	head.x = clampf(head.x, 0.06, 0.94)
+	# Floor well clear of the frame edge: jammed at 0.08 the sockets sat in the
+	# top strip where the wall itself is darkest, so hollowing them revealed
+	# almost nothing to see.
+	head.y = clampf(head.y, 0.10, 0.80)
+	var sc := clampf(_umb_scale, 0.6, 2.4)
+	# Bounded, and horizontal: the fitted separation is itself a clamped
+	# estimate, and multiplying its high end by the silhouette scale put the
+	# two sockets a sixth of the frame apart, reading as unrelated holes.
+	var asp := 1.7778
+	var vt2 := _player.get_video_texture()
+	if vt2 != null and vt2.get_height() > 0:
+		asp = float(vt2.get_width()) / float(vt2.get_height())
+	# HER separation, carried into the ghost and grown WITH the umbra. The
+	# ceiling is high enough that Scale genuinely moves it instead of pinning
+	# it at a clamp (both the spacing and the radius used to sit on their
+	# limits, which is why the eyes never changed size with the mass).
+	# DAMPED growth rather than a hard ceiling. Scaling the spacing linearly and
+	# then clamping it meant the clamp bound from about Scale 1.5 upward, so
+	# the eyes stopped responding to Scale entirely - the "they do not adjust
+	# with scale" report. A sub-linear exponent lets them keep growing with the
+	# umbra all the way up without ever reaching the width that read as two
+	# unrelated holes. At Scale 1 they match HER spacing exactly.
+	var esc: float = pow(sc, 0.6)
+	var half := Vector2(clampf(unit / asp * 0.5 * esc, 0.010, 0.14), 0.0)
+	_umb_eye_l = head - half
+	_umb_eye_r = head + half
+	# Sized FROM the spacing, so a socket is always a plausible fraction of the
+	# gap between the pair rather than an independent number that can swell
+	# until the two overlap.
+	_umb_eye_rad = clampf(half.x * 0.62, 0.008, 0.075)
+	_umb_eyes_ok = true
 
 
 ## Choose the wall. Buckets cells by their chroma vector's own angle (a surface
@@ -4231,7 +4646,8 @@ func _exit_tree() -> void:
 	# already handled: prep re-runs when the lock goes stale and
 	# _finish_session rejects truncated video, yt-dlp resumes its own .part.
 	for pid in [_prep_video_pid, _prep_audio_pid, _import_pid, _waveform_pid,
-			_wavehi_pid, _yt_pid, _reload_check_pid, _render_pid, _transcode_pid]:
+			_wavehi_pid, _yt_pid, _reload_check_pid, _render_pid, _transcode_pid,
+			_umb_track_pid]:
 		if int(pid) > 0 and OS.is_process_running(int(pid)):
 			OS.kill(int(pid))
 	for job in _track_audio_jobs:
@@ -4243,6 +4659,9 @@ func _exit_tree() -> void:
 	if _audio_thread != null and _audio_thread.is_started():
 		_audio_thread.wait_to_finish()
 		_audio_thread = null
+	if _umb_track_thread != null and _umb_track_thread.is_started():
+		_umb_track_thread.wait_to_finish()
+		_umb_track_thread = null
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
 
@@ -4253,10 +4672,69 @@ func _select_marker(m: Dictionary) -> void:
 	_refresh_panel()
 
 
+## Wire every popup under `n` into the modal counter, once, at build time.
+## Walks rather than naming them so a control added later is covered for free -
+## the cursor bug this exists for was reported on the colour picker, but every
+## dropdown in the panel had exactly the same hole.
+func _guard_popups(n: Node) -> void:
+	var p: Popup = null
+	if n is ColorPickerButton:
+		p = (n as ColorPickerButton).get_popup()
+	elif n is OptionButton:
+		p = (n as OptionButton).get_popup()
+	elif n is MenuButton:
+		p = (n as MenuButton).get_popup()
+	if p != null and not p.about_to_popup.is_connected(_on_modal_open):
+		p.about_to_popup.connect(_on_modal_open)
+		p.popup_hide.connect(_on_modal_close)
+	for c in n.get_children():
+		_guard_popups(c)
+
+
+func _on_modal_open() -> void:
+	_modal_depth += 1
+	_cursor_idle_t = 0.0
+	# Show it immediately rather than waiting for the next frame's elif: the
+	# click that opens a picker is the same gesture that needs to keep aiming.
+	if Input.mouse_mode == Input.MOUSE_MODE_HIDDEN:
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+
+func _on_modal_close() -> void:
+	_modal_depth = maxi(0, _modal_depth - 1)
+	_cursor_idle_t = 0.0
+
+
 func _refresh_panel() -> void:
+	# Every slider below is written with set_value_no_signal, but a
+	# ColorPickerButton has no such door - assigning `color` can emit
+	# color_changed, which lands in _edit. With nothing selected _edit CREATES a
+	# marker, so merely repainting the panel could mint one stamped with the
+	# DEFAULT hue. Guard the whole sync rather than the two pickers, so any
+	# control added here later is safe by default.
+	# The flag is only ever meant to be true INSIDE this call. If
+	# _refresh_panel_inner ever aborts partway - a null control, a bad index -
+	# GDScript unwinds the function and the reset below never runs, and from
+	# that moment every _edit() in the session returns early and silently
+	# discards the user's work. That failure is indistinguishable from "nothing
+	# saves". _process clears it defensively every frame for exactly that
+	# reason; this reset is the normal path, that one is the seatbelt.
+	_syncing = true
+	_refresh_panel_inner()
+	_syncing = false
+
+
+func _refresh_panel_inner() -> void:
 	var m: Dictionary = _selected if _selected != null else MaskSession.DEFAULTS
+	if OS.has_environment("GHOST_PANEL_DEBUG"):
+		print("PANELDBG selected=%s hue_a=%.4f hue_b=%.4f thr=%.3f feather=%.3f sat=%.3f scale=%.3f"
+			% [str(_selected != null), float(m.get("hue_a", -1)), float(m.get("hue_b", -1)),
+			float(m.get("threshold", -1)), float(m.get("feather", -1)),
+			float(m.get("sat_floor", -1)), float(m.get("fx_scale", -1))])
 	_kind.select(int(m.get("kind", 0.0)))
 	_color_a.color = Color.from_hsv(float(m.get("hue_a", 0.02)), 0.85, 0.9)
+	if _color_eye != null:
+		_color_eye.color = Color.from_hsv(float(m.get("hue_b", 0.0)), 0.88, 1.0)
 	_hue_a.set_value_no_signal(float(m.get("fx_tint", 0.0)))
 	_threshold.set_value_no_signal(float(m.get("threshold", 0.24)))
 	_feather.set_value_no_signal(float(m.get("feather", 0.12)))
@@ -4279,6 +4757,17 @@ func _refresh_panel() -> void:
 	_bleed.set_value_no_signal(float(m.get("fx_smooth", 0.0)))
 	_settle.set_value_no_signal(float(m.get("fx_lag", 0.35)))
 	_hollow.set_value_no_signal(float(m.get("fx_stick", 0.0)))
+	# Umbra's six. Every control in this panel is a VIEW onto a stored field and
+	# has to be re-read here, or it shows its construction value (0) while the
+	# marker holds something else - and the next drag then writes from that
+	# wrong starting point. These were added without their sync lines, which is
+	# why umbra's settings appeared to reset on every restart.
+	_wisp.set_value_no_signal(float(m.get("fx_smooth", 0.0)))
+	_cling.set_value_no_signal(float(m.get("fx_lag", 0.35)))
+	_umbra_depth.set_value_no_signal(float(m.get("fx_stick", 0.0)))
+	_umbra_reach.set_value_no_signal(float(m.get("threshold", 0.24)))
+	_umbra_lead.set_value_no_signal(float(m.get("feather", 0.12)))
+	_umbra_gaze.set_value_no_signal(float(m.get("sat_floor", 0.18)))
 	_resonance.set_value_no_signal(float(m.get("resonance", 0.0)))
 	_update_effect_controls(int(m.get("effect_a", 0)))
 	_refresh_marker_label()
@@ -4350,6 +4839,10 @@ func _update_effect_controls(effect_id: int) -> void:
 	_show_field(_wisp, groups.has("umbra"))
 	_show_field(_cling, groups.has("umbra"))
 	_show_field(_umbra_depth, groups.has("umbra"))
+	_show_field(_umbra_reach, groups.has("umbra"))
+	_show_field(_umbra_lead, groups.has("umbra"))
+	_show_field(_umbra_gaze, groups.has("umbra"))
+	_show_field(_color_eye, groups.has("umbra"))
 	var is_oracle := effect_id == MaskSession.EFFECT_ORACLE
 	_fx_lag_label.text = "Lead (s)" if is_oracle else "Lag (s)"
 	_fx_lag_label.tooltip_text = "How far ahead it leads" if is_oracle else "How the past is worn"
@@ -4909,6 +5402,11 @@ func _apply_frame_state(p: Dictionary) -> void:
 			_umb_rise = maxf(0.05, float(l.get("fx_speed", 1.0)))
 			_umb_wisp = clampf(float(l.get("fx_smooth", 0.0)), 0.0, 1.0)
 			_umb_cling = clampf(float(l.get("fx_lag", 0.35)), 0.0, 1.0)
+			# Three umbra-only views onto fields the keying group owns for
+			# other effects (umbra never keys, so they are free here).
+			_umb_reach = clampf(float(l.get("threshold", 0.24)), 0.0, 1.0)
+			_umb_lead = clampf(float(l.get("feather", 0.12)), 0.0, 0.5) * 1.6
+			_umb_eye_amt = clampf(float(l.get("sat_floor", 0.18)), 0.0, 1.0)
 		if le == MaskSession.EFFECT_CLOWN:
 			_clown_active = true
 			_clown_fs = clampf(float(l.get("fx_scale", 1.0)), 0.3, 2.5)
@@ -4945,6 +5443,7 @@ func _apply_frame_state(p: Dictionary) -> void:
 	var lagf := PackedFloat32Array()   # raw fx_lag - fur's Coil knob (echo's use is baked into echo_w/echo_lag)
 	var sticks := PackedFloat32Array()   # raw fx_stick - fur's Stickiness (0 = today's free coat)
 	var tints := PackedFloat32Array()    # fx_tint - Morph, palette hue rotation (0 = natural)
+	var accents := PackedFloat32Array()  # hue_b - umbra's ghost-eye colour (0 = red)
 	var slot_frac := fposmod((_player.stream_position if _player != null else 0.0) / _ECHO_INTERVAL, 1.0)
 	for i in MaskSession.MAX_LAYERS:
 		if i < n:
@@ -4975,6 +5474,7 @@ func _apply_frame_state(p: Dictionary) -> void:
 			lagf.append(float(l.get("fx_lag", 0.35)))
 			sticks.append(clampf(float(l.get("fx_stick", 0.0)), 0.0, 1.0))
 			tints.append(clampf(float(l.get("fx_tint", 0.0)), 0.0, 1.0))
+			accents.append(clampf(float(l.get("hue_b", 0.0)), 0.0, 1.0))
 			var w := PackedFloat32Array()
 			var wsum := 0.0
 			for k in 8:
@@ -5007,6 +5507,7 @@ func _apply_frame_state(p: Dictionary) -> void:
 			lagf.append(0.0)
 			sticks.append(0.0)
 			tints.append(0.0)
+			accents.append(0.0)
 			for k in 8:
 				echo_w.append(1.0 if k == 0 else 0.0)
 			glows.append(1.0)
@@ -5058,6 +5559,7 @@ func _apply_frame_state(p: Dictionary) -> void:
 		mat.set_shader_parameter("u_l_lagf", lagf)
 		mat.set_shader_parameter("u_l_stick", sticks)
 		mat.set_shader_parameter("u_l_tint", tints)
+		mat.set_shader_parameter("u_l_accent", accents)
 		mat.set_shader_parameter("u_l_tdir", tdirs)
 		# Chimera's graft source: the first track's live frame. The explicit
 		# flag matters - the sampler's default-black fallback must never read
@@ -5097,6 +5599,13 @@ func _apply_frame_state(p: Dictionary) -> void:
 # --- per-frame: push the timeline's blended params into the shader ---------------
 
 func _process(_dt: float) -> void:
+	# SEATBELT. _syncing is only valid inside a single synchronous
+	# _refresh_panel() call, so finding it still set at the top of a frame means
+	# that call aborted midway. Left latched it silently swallows every
+	# subsequent edit - the user's settings appear to save and are simply
+	# dropped. Clearing it here bounds the damage to one repaint instead of the
+	# rest of the session.
+	_syncing = false
 	match _prep_state:
 		"prepping_video":
 			if OS.is_process_running(_prep_video_pid):
@@ -5229,6 +5738,9 @@ func _process(_dt: float) -> void:
 		_apply_meta_chrome(_meta_amount)
 	_push_anchor()
 	_step_paint_sim()
+	if _umbra_active:
+		_umb_ensure_track()
+		_umb_poll_track()
 	_step_umbra_sim()
 	# Standing A/V drift correction (see _play: video is the master clock).
 	# 0.15s tolerance sits above audio mix-chunk granularity so this never
@@ -5304,7 +5816,14 @@ func _process(_dt: float) -> void:
 	# _input() above resets the timer and un-hides on any motion, and pausing
 	# (or a mouse click, which also fires motion-adjacent hover) restores it
 	# immediately rather than leaving an editor with a phantom-hidden pointer.
-	if _playing:
+	# ... and NEVER while a popup is up. A colour picker or a dropdown is an
+	# embedded SUBWINDOW: mouse motion inside it never reaches this node's
+	# _input(), so the idle timer keeps running, the auto-hide fires, and the
+	# pointer vanishes inside the one place it most needs to be visible - with
+	# no way to un-hide it, because moving the mouse is exactly what stopped
+	# being heard. Suspending the timer here also un-hides on the way in, via
+	# the elif.
+	if _playing and _modal_depth <= 0:
 		_cursor_idle_t += _dt
 		if _cursor_idle_t >= _CURSOR_HIDE_DELAY and Input.mouse_mode == Input.MOUSE_MODE_VISIBLE:
 			Input.mouse_mode = Input.MOUSE_MODE_HIDDEN

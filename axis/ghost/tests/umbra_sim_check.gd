@@ -71,6 +71,12 @@ func _initialize() -> void:
 		mat.set_shader_parameter("u_pivot", Vector2(0.70, 0.46))
 		mat.set_shader_parameter("u_sil_scale", 2.2)
 		mat.set_shader_parameter("u_pan", Vector2(-0.10, 0.05))
+		# Eyes ON, and deliberately placed half over the subject: the sockets
+		# must never become a way for the effect to reach her.
+		mat.set_shader_parameter("u_eye_l", Vector2(0.52, 0.38))
+		mat.set_shader_parameter("u_eye_r", Vector2(0.66, 0.38))
+		mat.set_shader_parameter("u_eye_rad", 0.06)
+		mat.set_shader_parameter("u_eye_amt", 0.9)
 		vps[ping].render_target_update_mode = SubViewport.UPDATE_ONCE
 		await process_frame
 		await process_frame

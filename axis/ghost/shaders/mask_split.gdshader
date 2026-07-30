@@ -99,6 +99,8 @@ uniform float u_l_stick[6];
 // colour (hue_a): the picker says what to MASK, this says what colour the
 // drawn effect becomes.
 uniform float u_l_tint[6];
+// Per-layer ACCENT hue (hue_b). Umbra's ghost-eye colour; 0 = red.
+uniform float u_l_accent[6];
 
 // The clown face model, fitted CPU-side each capture tick (see MaskEditor.
 // _update_face_model) and EMA-glided like u_anchor: both eyes, the mouth,
@@ -851,9 +853,15 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		float d17 = core17 * (0.70 + 0.30 * wave17) + edge17 * 0.55 * con17 * rim17;
 		float body17 = clamp(d17, 0.0, 1.0);
 		float trail17 = smoothstep(0.04, 0.28, fld.g) * allow17;
+		// EYES - cut as HOLLOWS, not as darker patches. The mass is already
+		// near-black, so anything darker is invisible inside it; letting the
+		// lit wall show back through is the only value that reads, and it is
+		// the classic hollow-socket look besides.
+		float eye17 = clamp(fld.b, 0.0, 1.0);
 		float depth17 = 0.55 + 0.45 * clamp(u_l_stick[i], 0.0, 1.0);   // Depth
 		float amt17 = shade_amount(
 			clamp((body17 + trail17 * 0.55) * depth17 * w17, 0.0, 1.0), uv);
+		amt17 *= 1.0 - 0.92 * eye17;
 		if (amt17 <= 0.003) {
 			return col;
 		}
@@ -868,6 +876,17 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		// red for something angrier.
 		vec3 cool17 = hue_shift(vec3(0.44, 0.50, 0.64), u_l_tint[i]);
 		dark17 = mix(dark17, dark17 * cool17, 0.38 * body17);
+		// THE EYES BURN. Hollowing alone only reveals whatever wall lies behind
+		// the socket, and where the ghost's head sits that wall is already
+		// near-black - measured, the sockets came back at luminance 33 against
+		// a body at 31, real structure that was simply invisible. So the
+		// socket is lit in its own accent colour (hue_b, red by default),
+		// which reads on any background.
+		// Still scaled BY Depth: the deeper the mass, the less the hollow can
+		// reveal on its own, so Gaze keeps meaning the same thing across the
+		// whole Depth range instead of dying at one end of it.
+		vec3 iris17 = hsv2rgb(vec3(fract(u_l_accent[i] + u_l_tint[i]), 0.88, 1.0));
+		dark17 += iris17 * eye17 * w17 * (0.30 + 0.55 * depth17);
 		return vec4(dark17, col.a);
 	}
 	if (effect == 7) {

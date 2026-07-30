@@ -12,7 +12,7 @@ requires:
 body: >
   \subsection{A geometry of energy: the consensus shell and the abstain sink}
 
-  When the objective is HALO~\cite{halo,pisoni-halo} rather than cross-entropy, the loss stops
+  When the objective is HALO~\cite{halo} rather than cross-entropy, the loss stops
   reading logits and starts reading geometry directly. Each token embedding is
   scored by its distance to a set of centroids - here the crystal centers, so the
   loss and the head share one geometry - and the objective drives every embedding
