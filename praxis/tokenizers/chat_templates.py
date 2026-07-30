@@ -149,6 +149,68 @@ class ChatFormat:
         """True when turns are delimited by text rather than control tokens."""
         return self.boundary_style == "text"
 
+    def render_segments(
+        self,
+        messages: List[Dict[str, str]],
+        tokenizer,
+        add_generation_prompt: bool = False,
+        omit_leading_bos: bool = False,
+    ) -> List[Tuple[str, bool]]:
+        """The document as ordered ``(text, is_generated)`` segments.
+
+        This exists because ``return_assistant_tokens_mask`` cannot be trusted
+        here. HuggingFace implements it by recording CHARACTER offsets of the
+        ``{% generation %}`` spans and mapping them through the tokenizer's
+        offset table - which assumes a character maps to a bounded, tracked span
+        of tokens. Under a byte-level tokenizer one non-ASCII character is
+        several tokens, and the mapping slips: measured on the byte tokenizer,
+        every multi-byte character before a span shifted the ``prose`` mask two
+        tokens (cumulatively), and a multi-byte character at the start of a span
+        shifted the ``default`` mask by its byte length. The result was a
+        silently misaligned prompt-loss mask on any text containing a curly
+        quote, an accent, an em dash or an emoji - it trained on some prompt
+        tokens and skipped some assistant ones.
+
+        Tokenizing segment by segment and concatenating sidesteps offsets
+        entirely: each segment's own token count IS its span. The join must be
+        byte-identical to what the Jinja template renders, which
+        ``tests/test_chat_formats.py`` asserts for both formats.
+        """
+        segments: List[Tuple[str, bool]] = []
+        if not messages:
+            return segments
+
+        if self.text_boundaries:
+            # Boundary opens the document, then each turn owns the tail that
+            # names the next speaker (the tail is INSIDE a generated turn's
+            # span, which is what makes the halt signal a trained target).
+            segments.append((f"{messages[0].get('role', '')}\n\n", False))
+            last = len(messages) - 1
+            for i, message in enumerate(messages):
+                role = message.get("role", "")
+                tail = (
+                    "\n\n"
+                    if i == last
+                    else f"\n\n{messages[i + 1].get('role', '')}\n\n"
+                )
+                text = f"{message.get('content', '')}{tail}"
+                segments.append((text, role in self.generated_roles))
+            if add_generation_prompt:
+                segments.append((f"{self.reply_role}\n\n", False))
+            return segments
+
+        bos = getattr(tokenizer, "bos_token", "") or ""
+        sep = getattr(tokenizer, "sep_token", "") or ""
+        for i, message in enumerate(messages):
+            role = message.get("role", "")
+            opener = "" if (i == 0 and omit_leading_bos) else bos
+            segments.append((f"{opener}{role}\n", False))
+            body = f"{message.get('content', '')}\n{sep}\n"
+            segments.append((body, role in self.generated_roles))
+        if add_generation_prompt:
+            segments.append((f"{bos}{self.reply_role}\n", False))
+        return segments
+
     def boundary(self, role: str) -> str:
         """The text that opens ``role``'s turn.
 
@@ -302,6 +364,44 @@ def get_chat_format(tokenizer_or_name: Any = None) -> ChatFormat:
             if candidate.template == template:
                 return candidate
     return DEFAULT_FORMAT
+
+
+def tokenize_with_mask(
+    tokenizer,
+    messages: List[Dict[str, str]],
+    add_generation_prompt: bool = False,
+    omit_leading_bos: bool = False,
+) -> Optional[Tuple[List[int], List[int]]]:
+    """``(ids, assistant_mask)`` built segment-wise, or None if unsupported.
+
+    Returns None unless the tokenizer declares ``context_free_tokenization`` -
+    that piece-wise encoding concatenates to the same ids as encoding the whole
+    string. Byte- and char-level tokenizers satisfy it (no merges, so a token
+    never spans a segment boundary); BPE and unigram do NOT, because a merge can
+    straddle the boundary and piece-wise encoding would silently change the
+    tokenization. Those keep HuggingFace's offset-based mask, which is correct
+    for them precisely because their characters map to tokens cleanly.
+
+    So this is not a general replacement - it is the path for the tokenizers
+    whose character-to-token map is not 1:1, which is exactly where the offset
+    mask breaks. See ``ChatFormat.render_segments``.
+    """
+    if not getattr(tokenizer, "context_free_tokenization", False):
+        return None
+    fmt = get_chat_format(tokenizer)
+    segments = fmt.render_segments(
+        messages,
+        tokenizer,
+        add_generation_prompt=add_generation_prompt,
+        omit_leading_bos=omit_leading_bos,
+    )
+    ids: List[int] = []
+    mask: List[int] = []
+    for text, generated in segments:
+        piece = tokenizer.encode(text, add_special_tokens=False)
+        ids.extend(piece)
+        mask.extend([1 if generated else 0] * len(piece))
+    return ids, mask
 
 
 def apply_chat_format(tokenizer, name_or_format: Any = None) -> ChatFormat:

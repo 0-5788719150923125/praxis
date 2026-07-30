@@ -3,8 +3,8 @@
 Praxis varies three things about a batch during training, each driven by its
 own signal:
 
-* the **sequence-length multiplier** ``m`` - chosen by the learning-progress
-  bandit in :mod:`praxis.data.seq_curriculum`, deciding what LENGTH to train on;
+* the **sequence-length multiplier** ``m`` - chosen by the probe curriculum in
+  :mod:`praxis.data.seq_probe`, deciding what LENGTH to train on;
 * the **effective batch** ``B_eff`` (rows consumed per optimizer step) - chosen
   by the gradient-noise-scale governor in :mod:`praxis.governors.gns`, deciding
   how many SAMPLES the step averages over;
@@ -49,8 +49,8 @@ Three properties matter, and each is a constraint the old wiring violated:
    ``accum`` uniformly, which only averages correctly when they are the same
    size, and the estimator's two points are only comparable when they are drawn
    from the same distribution. Resampling per cycle instead of per microbatch
-   fixes both, and matches the curriculum's own decision unit: it observes one
-   loss per optimizer step.
+   fixes both, and gives the curriculum a clean unit to count: one arm visit per
+   optimizer step, which is the regressor its fit is built on.
 
 On the ``m**2``: it holds ATTENTION COST constant, not token count. Rows scale
 as ``1/m**2`` while length scales as ``m``, so ``rows * len**2`` is invariant
@@ -61,7 +61,7 @@ cards rather than assuming away: at large ``m`` the attention budget caps
 regulates against the delivered mean, so neither the controller nor the chart
 believes a batch size that never ran.
 
-Cross-process note: like ``SequenceCurriculum`` and the sampler weights, the
+Cross-process note: like the sampler weights and the probe curriculum, the
 schedule is class-level state - the governor writes it, the data pipeline reads
 it. Praxis forces the ``spawn`` start method (``configure_multiprocessing``),
 which makes ``num_workers=0``, so the dataset iterates in the same process and

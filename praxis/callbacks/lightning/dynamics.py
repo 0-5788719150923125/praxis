@@ -330,13 +330,13 @@ class DynamicsLoggerCallback(Callback):
             return {}
 
     def _extract_seq_curriculum_dynamics(self) -> dict:
-        """Adaptive sequence-length curriculum telemetry (class-level state,
-        not a model module): per-multiplier sampling probability + learning
-        progress. Empty when the curriculum is disabled."""
+        """Sequence-length curriculum telemetry (class-level state, not a model
+        module): per-multiplier sampling probability, plus the fitted arm values
+        and their t-statistics. Empty unless the probe curriculum is armed."""
         try:
-            from praxis.data.seq_curriculum import SequenceCurriculum
+            from praxis.data.seq_probe import SequenceProbe
 
-            return SequenceCurriculum.metrics()
+            return SequenceProbe.metrics()
         except Exception as e:
             print(f"[DynamicsLogger] seq curriculum metrics failed: {e}")
             return {}

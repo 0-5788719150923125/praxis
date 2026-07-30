@@ -59,6 +59,19 @@ def build_training_callbacks(
 
     callbacks = [SignalHandlerCallback()]
 
+    # Probe-attribution sequence curriculum: needs the trainer (to reach the
+    # validation data manager) and the model (to score the probe), so it lives
+    # here rather than being armed in the data pipeline like `adaptive`.
+    if getattr(cfg, "seq_curriculum", None) == "probe":
+        from praxis.callbacks.lightning.seq_probe import SequenceProbeCallback
+
+        callbacks.append(
+            SequenceProbeCallback(
+                block_size=hparams["block_size"],
+                sequence_multiplier_tiers=hparams["sequence_multiplier_tiers"],
+            )
+        )
+
     if not cfg.no_checkpoints:
         callbacks.append(
             ModelCheckpoint(

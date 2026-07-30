@@ -210,5 +210,14 @@ def get_metric_descriptions(model: Any) -> Dict[str, Dict[str, Any]]:
             entry = out.get(key)
             if entry is not None and "caller" not in entry:
                 entry["caller"] = "GNSBatchGovernor"
+    # Same pattern for the probe-attribution sequence curriculum.
+    if getattr(_core, "_seq_probe_metrics", None) is not None:
+        from praxis.data.seq_probe import SEQ_PROBE_METRIC_DESCRIPTIONS
+
+        out.update(_collect_from(SEQ_PROBE_METRIC_DESCRIPTIONS))
+        for key in SEQ_PROBE_METRIC_DESCRIPTIONS:
+            entry = out.get(key)
+            if entry is not None and "caller" not in entry:
+                entry["caller"] = "SequenceProbe"
     _stamp_callers(out, model)
     return out

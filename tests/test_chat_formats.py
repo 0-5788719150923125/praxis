@@ -569,3 +569,109 @@ def test_speculative_decode_without_stop_strings_runs_on(prose_tokenizer):
     )
     assert text.startswith(prompt + "Hello there!\n\nuser\n\nkeeps going")
     assert len(text) > len(prompt + "Hello there!\n\nuser\n\n")
+
+
+# ------------------------------------------- assistant mask on non-ASCII text
+
+
+MULTIBYTE = [
+    {"role": "system", "content": "“quoted”"},
+    {"role": "user", "content": "Calculate √1156 \U0001F600"},
+    {"role": "assistant", "content": "— the answer is 34."},
+    {"role": "user", "content": "and été?"},
+    {"role": "assistant", "content": "Summer."},
+]
+
+
+def _trained_text(tok, messages):
+    from praxis.tokenizers.chat_templates import tokenize_with_mask
+
+    ids, mask = tokenize_with_mask(tok, messages)
+    return tok.decode([t for t, m in zip(ids, mask) if m], skip_special_tokens=False)
+
+
+@pytest.mark.parametrize("fmt_name", ["default", "prose"])
+def test_mask_is_exact_on_multibyte_text(fmt_name):
+    """HuggingFace's return_assistant_tokens_mask maps CHARACTER offsets to token
+    spans, which slips wherever one character is several tokens. Measured on the
+    byte tokenizer before the fix: every multi-byte character before a span shifted
+    the prose mask two tokens (cumulatively, so 'The answer' became 'r is'), and a
+    multi-byte character starting a span shifted the default mask by its byte
+    length. That is a silently corrupted SFT objective on any text with a curly
+    quote, accent, em dash or emoji - which is most real text."""
+    tok = tokenizer_for(fmt_name)
+    trained = _trained_text(tok, MULTIBYTE)
+    # Every assistant turn, whole and unshifted.
+    assert "— the answer is 34." in trained
+    assert "Summer." in trained
+    # And nothing from a prompt turn.
+    assert "quoted" not in trained
+    assert "1156" not in trained
+    assert "été" not in trained
+
+
+@pytest.mark.parametrize("fmt_name", ["default", "prose"])
+def test_segment_join_is_byte_identical_to_the_template(fmt_name):
+    """The segment split only stays safe while it renders exactly what Jinja
+    does - otherwise the fix silently changes the training data."""
+    tok = tokenizer_for(fmt_name)
+    fmt = chat_format_of(tok)
+    cases = [CONVERSATION, MULTIBYTE, [{"role": "user", "content": "solo"}]]
+    for messages in cases:
+        for add_gen in (False, True):
+            for omit in (False, True):
+                kwargs = {"add_generation_prompt": add_gen}
+                if omit:
+                    kwargs["omit_leading_bos"] = True
+                jinja = tok.apply_chat_template(messages, tokenize=False, **kwargs)
+                segments = fmt.render_segments(
+                    messages,
+                    tok,
+                    add_generation_prompt=add_gen,
+                    omit_leading_bos=omit,
+                )
+                assert "".join(text for text, _ in segments) == jinja
+
+
+@pytest.mark.parametrize("fmt_name", ["default", "prose"])
+def test_segment_ids_match_whole_string_encoding(fmt_name):
+    """Piece-wise encoding is only equivalent for merge-free tokenizers; this is
+    the property that licenses the whole approach."""
+    from praxis.tokenizers.chat_templates import tokenize_with_mask
+
+    tok = tokenizer_for(fmt_name)
+    ids, mask = tokenize_with_mask(tok, MULTIBYTE)
+    whole = tok.encode(
+        tok.apply_chat_template(MULTIBYTE, tokenize=False), add_special_tokens=False
+    )
+    assert ids == whole
+    assert len(mask) == len(ids)
+
+
+def test_bpe_keeps_the_offset_mask():
+    """A merge can straddle a segment boundary, so piece-wise encoding would
+    change BPE's tokenization. Those tokenizers must decline the segment path -
+    and they do not need it: their characters map to tokens cleanly."""
+    from praxis.tokenizers.chat_templates import tokenize_with_mask
+    from praxis.tokenizers.standard import StandardTokenizer
+
+    bpe = StandardTokenizer(tokenizer_type="bpe", vocab_size=1024)
+    assert not getattr(bpe, "context_free_tokenization", False)
+    assert tokenize_with_mask(bpe, CONVERSATION) is None
+
+
+def test_packer_uses_the_exact_mask(prose_tokenizer):
+    """End to end through the packer: no assistant content may be dropped and no
+    prompt content admitted, on multi-byte text."""
+    from praxis.data.datasets.message_queue import MessageQueueManager
+
+    manager = MessageQueueManager(tokenizer=prose_tokenizer, block_size=4096)
+    manager.add_document({"messages": MULTIBYTE, "metadata": {}})
+    batch = manager.get_batch(batch_size=1)
+    seq, mask = batch["batch"][0], batch["assistant_mask"][0]
+    trained = prose_tokenizer.decode(
+        [int(t) for t, m in zip(seq, mask) if m], skip_special_tokens=False
+    )
+    assert "— the answer is 34." in trained
+    assert "Summer." in trained
+    assert "1156" not in trained

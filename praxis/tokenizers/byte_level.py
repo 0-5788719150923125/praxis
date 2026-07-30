@@ -47,6 +47,13 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast, PraxisToolTokensMixin):
         # UNK is not used in ByteLatent
     }
 
+    # No merges: every byte encodes independently, so tokenizing text in
+    # pieces and concatenating equals tokenizing the whole. That is what
+    # lets the assistant mask be built segment-wise instead of through
+    # HuggingFace's character-offset mapping, which slips on multi-byte
+    # characters here (see chat_templates.tokenize_with_mask).
+    context_free_tokenization = True
+
     # Special token IDs matching BLT constants
     PAD_ID = 0
     BOS_ID = 1

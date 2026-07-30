@@ -1005,15 +1005,18 @@ DYNAMICS_CHART_REGISTRY: list = [
         "type": "seq_mix",
         "title": "Sequence Length Mix",
         "subtitle": (
-            "Learned sampling probability over the sequence-length multipliers "
-            "(constant attention cost). The adaptive curriculum samples more of the "
-            "length the model is improving fastest on; only present when "
-            "seq_curriculum=adaptive."
+            "Sampling probability over the sequence-length multipliers "
+            "(constant attention cost). Under seq_curriculum=probe this is the "
+            "posterior probability that each length is the best teacher, fit by "
+            "attributing a held-out probe's improvement to the arm mixture - "
+            "read the companion t-statistic card to tell a real preference from "
+            "a leader the evidence does not support. Absent under "
+            "seq_curriculum=fixed."
         ),
         "key_pattern": r"^seq_prob_x\d+$",
         "legend": True,
         "order": 55,
-        "caller": "SequenceCurriculum",
+        "caller": "SequenceProbe",
     },
     {
         "key": "width_profile",

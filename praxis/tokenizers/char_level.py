@@ -83,6 +83,12 @@ class CharLevelTokenizer(
     embedding-row grow on load, handled in the model loader).
     """
 
+    # One codepoint, one token, no merges: tokenizing text in pieces and
+    # concatenating equals tokenizing the whole, which is what lets the
+    # assistant mask be built segment-wise rather than through HuggingFace's
+    # character-offset mapping (see chat_templates.tokenize_with_mask).
+    context_free_tokenization = True
+
     SPECIAL_TOKEN_STRINGS = {
         "pad_token": "[PAD]",
         "bos_token": "[BOS]",

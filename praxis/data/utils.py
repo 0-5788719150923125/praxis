@@ -64,15 +64,18 @@ def get_datamodules(
         list(validation_datasets) if validation_datasets else ["validation"]
     )
 
-    # Arm the adaptive sequence-length curriculum (no-op otherwise). Done here,
-    # in the main process before any dataloader fork, so the controller's class
-    # state is in place when the sampler first rolls a multiplier.
-    if seq_curriculum == "adaptive":
-        from praxis.data.seq_curriculum import SequenceCurriculum
+    # An unrecognized curriculum must fail here rather than silently degrade to
+    # the fixed roll: experiment yaml values are applied with setattr and so
+    # bypass the CLI's choice validation entirely.
+    from praxis.data import SEQ_CURRICULUM_REGISTRY
 
-        SequenceCurriculum.enable(
-            hparams["block_size"], hparams["sequence_multiplier_tiers"]
+    if seq_curriculum not in SEQ_CURRICULUM_REGISTRY:
+        raise ValueError(
+            f"Unknown seq_curriculum={seq_curriculum!r}. "
+            f"Valid choices: {sorted(SEQ_CURRICULUM_REGISTRY)}"
         )
+    # `probe` is armed by SequenceProbeCallback (it needs the trainer to reach
+    # the validation data manager); `fixed` needs no state at all.
 
     train_data = []
     skipped_datasets = []  # (path, reason) for the web notification bell

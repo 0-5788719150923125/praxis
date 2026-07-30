@@ -106,33 +106,54 @@ class MessageQueueManager:
         if not messages:
             return None
 
+        # Tokenizers whose character-to-token map is not 1:1 (byte, char) get the
+        # mask built segment-wise. HuggingFace's return_assistant_tokens_mask
+        # maps CHARACTER offsets to token spans, which slips on multi-byte
+        # characters there and silently misaligns the prompt-loss mask - it
+        # trained on some prompt tokens and skipped some assistant ones on any
+        # text with a curly quote, accent, em dash or emoji. See
+        # praxis/tokenizers/chat_templates.py::tokenize_with_mask.
+        from praxis.tokenizers.chat_templates import tokenize_with_mask
+
         try:
-            encoded = self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=True,
-                add_generation_prompt=False,
-                omit_leading_bos=omit_leading_bos,
-                return_dict=True,
-                return_assistant_tokens_mask=True,
+            direct = tokenize_with_mask(
+                self.tokenizer, messages, omit_leading_bos=omit_leading_bos
             )
         except Exception as e:
-            self.validation_stats["template_application_errors"] += 1
+            print(f"[WARNING] segment-wise mask failed ({e}); using offsets")
+            direct = None
 
-            print("=" * 80)
-            print("[CRITICAL ERROR] Failed to apply chat template!")
-            print(f"Error: {e}")
-            print(f"Document metadata: {metadata}")
-            print(f"Messages structure:")
-            for i, msg in enumerate(messages):
-                role = msg.get("role", "MISSING_ROLE")
-                content_preview = str(msg.get("content", "MISSING_CONTENT"))[:200]
-                print(f"  [{i}] role={role}, content={content_preview}...")
-            print("=" * 80)
+        if direct is not None:
+            ids, masks = direct
+            encoded = {"input_ids": ids, "assistant_masks": masks}
+        else:
+            try:
+                encoded = self.tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=True,
+                    add_generation_prompt=False,
+                    omit_leading_bos=omit_leading_bos,
+                    return_dict=True,
+                    return_assistant_tokens_mask=True,
+                )
+            except Exception as e:
+                self.validation_stats["template_application_errors"] += 1
 
-            import traceback
+                print("=" * 80)
+                print("[CRITICAL ERROR] Failed to apply chat template!")
+                print(f"Error: {e}")
+                print(f"Document metadata: {metadata}")
+                print(f"Messages structure:")
+                for i, msg in enumerate(messages):
+                    role = msg.get("role", "MISSING_ROLE")
+                    content_preview = str(msg.get("content", "MISSING_CONTENT"))[:200]
+                    print(f"  [{i}] role={role}, content={content_preview}...")
+                print("=" * 80)
 
-            traceback.print_exc()
-            return None
+                import traceback
+
+                traceback.print_exc()
+                return None
 
         ids = encoded["input_ids"]
         if isinstance(ids, list) and ids and isinstance(ids[0], list):

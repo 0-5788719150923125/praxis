@@ -13,11 +13,11 @@ SAMPLER_REGISTRY = {
 }
 
 # Sequence-length curriculum registry. "fixed" rolls the static per-tier
-# chances; "adaptive" lets a learning-progress bandit (seq_curriculum.py)
-# control the distribution over multipliers. Selected via --seq-curriculum.
+# chances; "probe" fits the distribution from a held-out probe (seq_probe.py).
+# Selected via --seq-curriculum.
 SEQ_CURRICULUM_REGISTRY = {
     "fixed": "fixed",
-    "adaptive": "adaptive",
+    "probe": "probe",
 }
 
 SEQ_CURRICULUM_DESCRIPTIONS = {
@@ -26,13 +26,15 @@ SEQ_CURRICULUM_DESCRIPTIONS = {
         "(the default). Each batch independently trades batch size for "
         "sequence length at constant attention cost, with fixed probabilities."
     ),
-    "adaptive": (
-        "Let a learning-progress bandit control the sequence-length mix. The "
-        "trainer feeds each batch's length + loss back; the controller samples "
-        "more of the multiplier the model is currently improving fastest on "
-        "(loss-decrease rate, z-scored so absolute scale doesn't matter), with "
-        "a uniform exploration floor. A self-paced length curriculum, made safe "
-        "by the constant-token-count trade. See ``praxis/data/seq_curriculum.py``."
+    "probe": (
+        "Fit the sequence-length mix by attributing a held-out probe's "
+        "improvement to the arm mixture that produced it: every window of "
+        "optimizer steps, re-score a fixed probe and regress its loss decrease "
+        "onto the window's per-arm visit counts (recursive least squares with "
+        "forgetting). The coefficients are each arm's measured value in "
+        "held-out loss, scored as t-statistics so an absence of signal renders "
+        "as a uniform mix rather than a confident one. Costs one probe forward "
+        "per arm per window. See ``praxis/data/seq_probe.py``."
     ),
 }
 

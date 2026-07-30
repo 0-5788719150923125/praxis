@@ -38,13 +38,15 @@ def sample_sequence_multiplier(
 ) -> int:
     """Pick a sequence-length multiplier for this batch.
 
-    When the adaptive curriculum is armed it samples from the learned
-    distribution; otherwise (and during its cold start) it rolls the fixed
-    per-tier chances, highest multiplier first.
+    When the probe curriculum is armed and its fit is trusted, it samples from
+    the fitted distribution; otherwise (and during its cold start) it rolls the
+    fixed per-tier chances, highest multiplier first.
     """
-    from praxis.data.seq_curriculum import SequenceCurriculum
+    from praxis.data.seq_probe import SequenceProbe
 
-    learned = SequenceCurriculum.sample(batch_size, tiers, rng)
+    # Returns None until the probe fit is trusted, which is what makes the
+    # fixed roll below the cold-start path.
+    learned = SequenceProbe.sample(batch_size, tiers, rng)
     if learned is not None:
         return learned
     for multiplier, chance in tiers:

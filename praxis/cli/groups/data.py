@@ -81,8 +81,8 @@ class DataGroup:
             type=str,
             default="fixed",
             choices=SEQ_CURRICULUM_REGISTRY.keys(),
-            help="Sequence-length curriculum: 'fixed' (roll the static per-tier "
-            "chances) or 'adaptive' (a learning-progress bandit samples more of "
-            "the multiplier the model is improving fastest on, at constant token "
-            "count). See praxis/data/seq_curriculum.py.",
+            help="Sequence-length curriculum. 'fixed' rolls the static per-tier "
+            "chances. 'probe' fits the mix by regressing a held-out probe's "
+            "improvement onto the arm mixture that produced it, so each length's "
+            "value is measured in held-out loss. See praxis/data/seq_probe.py.",
         )

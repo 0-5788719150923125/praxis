@@ -616,33 +616,41 @@ def test_terminal_reports_governed_microbatch_rows():
 # ── dynamic sequence lengths under the governor ──────────────────────────
 
 
-def test_adaptive_curriculum_still_drives_the_multiplier():
-    """The governor rolls the multiplier now, but the roll still goes through
-    SequenceCurriculum - the learned distribution must reach the batches."""
-    from praxis.data.datasets.manager import SEQUENCE_MULTIPLIER_TIERS
-    from praxis.data.seq_curriculum import SequenceCurriculum
+def _arm_probe_toward(best, tiers, windows=120):
+    """Fit the probe curriculum so ``best`` is the clear winner."""
+    from praxis.data.seq_probe import SequenceProbe
 
+    SequenceProbe.reset()
+    SequenceProbe.enable(64, tiers)
+    values = {m: (3.0 if m == best else 0.0) for m in SequenceProbe.arms}
+    rng = random.Random(0)
+    for _ in range(windows):
+        visits = {m: rng.randint(0, 40) for m in SequenceProbe.arms}
+        delta = sum(values[m] * c for m, c in visits.items()) + rng.gauss(0.0, 5.0)
+        SequenceProbe.observe_window(visits, delta)
+    return SequenceProbe
+
+
+def test_learned_curriculum_still_drives_the_multiplier():
+    """The governor rolls the multiplier now, but the roll still goes through the
+    curriculum controller - its fitted distribution must reach the batches."""
+    from praxis.data.datasets.manager import SEQUENCE_MULTIPLIER_TIERS
+
+    probe = _arm_probe_toward(4, SEQUENCE_MULTIPLIER_TIERS)
     try:
-        SequenceCurriculum.enable(block_size=64, tiers=SEQUENCE_MULTIPLIER_TIERS)
-        # Make the 4x arm the clear learning-progress winner.
-        for _ in range(30):
-            SequenceCurriculum.observe(64 * 4, 5.0)
-            SequenceCurriculum.observe(64 * 4, 1.0)
-            SequenceCurriculum.observe(64 * 1, 5.0)
-            SequenceCurriculum.observe(64 * 1, 4.99)
-        assert SequenceCurriculum.shared_probs[4] > 0.5
+        assert probe.shared_probs[4] > 0.5
 
         BatchSchedule.enable(
             row_ceiling=64, effective_rows=512, tiers=SEQUENCE_MULTIPLIER_TIERS
         )
         rng = random.Random(1)
         drawn = [BatchSchedule.next_microbatch(rng).multiplier for _ in range(400)]
-        # The learned preference shows up in what the pipeline actually builds,
+        # The fitted preference shows up in what the pipeline actually builds,
         # not just in the controller's table.
         assert drawn.count(4) / len(drawn) > 0.5
         assert len(set(drawn)) > 1  # the explore floor keeps other arms alive
     finally:
-        SequenceCurriculum.reset()
+        probe.reset()
 
 
 def test_multiplier_arms_narrow_as_the_batch_descends():
@@ -651,11 +659,10 @@ def test_multiplier_arms_narrow_as_the_batch_descends():
     so the reachable lengths shrink with the batch. The bandit keeps its
     estimates - only what is drawn changes.
 
-    Armed with the adaptive curriculum, whose uniform explore floor gives every
+    Armed with the probe curriculum, whose uniform explore floor gives every
     ELIGIBLE arm a real share; the raw tier chances (1%, 0.1%) are too thin to
     read an eligibility set off a finite sample."""
     from praxis.data.datasets.manager import SEQUENCE_MULTIPLIER_TIERS as tiers
-    from praxis.data.seq_curriculum import SequenceCurriculum
 
     def drawn_lengths(effective_rows, ceiling):
         BatchSchedule.enable(
@@ -664,13 +671,12 @@ def test_multiplier_arms_narrow_as_the_batch_descends():
         rng = random.Random(2)
         return {BatchSchedule.next_microbatch(rng).multiplier for _ in range(300)}
 
+    # No arm is better than any other here, so the fit stays diffuse and every
+    # eligible arm keeps a real share - which is what makes the eligibility set
+    # readable off a finite sample.
+    probe = _arm_probe_toward(None, tiers)
     try:
-        SequenceCurriculum.enable(block_size=64, tiers=tiers)
-        for _ in range(20):  # any observations at all populate the distribution
-            for m in (1, 2, 4, 8):
-                SequenceCurriculum.observe(64 * m, 3.0)
-                SequenceCurriculum.observe(64 * m, 2.5)
-        assert SequenceCurriculum.shared_probs is not None
+        assert probe.shared_probs is not None
 
         assert drawn_lengths(128, 64) == {1, 2, 4, 8}
         assert drawn_lengths(32, 64) == {1, 2, 4}
@@ -678,7 +684,7 @@ def test_multiplier_arms_narrow_as_the_batch_descends():
         # At the floor only the base length is affordable.
         assert drawn_lengths(2, 64) == {1}
     finally:
-        SequenceCurriculum.reset()
+        probe.reset()
 
 
 def test_positional_capacity_still_covers_every_drawn_length():
