@@ -88,10 +88,8 @@ introduction:
   frozen phases. A \textit{static} amplitude grid produces the same field for every
   input: it is the corpus-average rhythm, maximum bias, a flat-by-construction prior.
   Making those amplitudes depend on the input adds \textit{structured} variance
-  - deviation that still respects the learned harmonic constraints. The CALM codec
-  (Section~\ref{sec:harmonic}) shows the same physics from the other side: a continuous-latent
-  autoregressor that reconstructs sequences near-perfectly by phase-locking its
-  latent features to a dominant rhythm. From these two we draw a scaling conjecture
+  - deviation that still respects the learned harmonic constraints. \paperFramingIntro{}
+  From these two we draw a scaling conjecture
   (Section~\ref{sec:scaling}): the mean costs linearly, interference costs logarithmically.
 
 

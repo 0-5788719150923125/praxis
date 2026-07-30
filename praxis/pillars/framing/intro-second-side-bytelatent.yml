@@ -1,0 +1,18 @@
+# Introduction: the byte-latent variant of the "second side" evidence. CALM is
+# still cited here, and deliberately - it is the prior demonstration that a
+# continuous latent phase-locks to a corpus rhythm, which is the physics the
+# paper is arguing. What changes is the claim's ownership: it is named as
+# established prior work, not as machinery this run carries, and the forward
+# reference points at the encoder section this run actually fills.
+section: intro
+order: 10
+requires:
+  codec_mode: [byte_latent]
+body: >
+  The encoder side shows the same physics from the other direction
+  (Section~\ref{sec:harmonic}). A continuous-latent codec reaches near-perfect
+  reconstruction by phase-locking its latent features to a dominant
+  rhythm~\cite{calm2025}; the byte-latent encoder this run uses reaches the
+  rhythm without a reconstruction objective at all, by cutting the stream at
+  boundaries the data supplies and letting the cadence of the patch stream carry
+  it. Two different bottlenecks, the same standing structure underneath.

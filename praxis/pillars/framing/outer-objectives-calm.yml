@@ -1,0 +1,26 @@
+# Section 3.2 ("The outer representation"), CALM variant: the two-objectives
+# paragraph, which was hardcoded in body.tex complete with run names
+# ("calm-d: K=8; the plain byte profile, K=16"). The reconstruct-past /
+# predict-future duality it describes is a property of the CALM codec's two
+# losses, so a byte-latent run reading that paragraph was being told about
+# machinery it does not have. One of three mutually-exclusive codec_mode
+# variants; K is described by tokenizer granularity rather than by naming runs.
+section: outer
+order: 10
+requires:
+  codec_mode: [calm]
+body: >
+  Two objectives sit at the two temporal extremes of a patch. The codec is an
+  autoencoder over $K$ contiguous tokens - $K$ scaling with tokenizer
+  granularity, a handful for subword units and sixteen for raw bytes: it
+  \textit{reconstructs} the patch it has already consumed, a $K$-scaled
+  cross-entropy that anchors the already-observed - the past, relative to the
+  decision boundary. It does so over a separable harmonic basis that keeps only
+  the lowest total-frequency modes, so smooth-across-patch structure compresses
+  into few coefficients and the cost of holding a patch falls as $K$ grows rather
+  than rising. The outer decoder then \textit{predicts} the next latent, $z_p
+  \mapsto z_{p+1}$, which decodes to the unobserved next patch - the future,
+  $T{+}1$ tokens ahead. One loss reconstructs what is behind the boundary; the
+  other predicts what is in front of it. The interior of the patch is never a
+  target in itself - it is reconstructed only as a by-product of pinning both
+  ends.

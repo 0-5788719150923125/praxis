@@ -1,0 +1,14 @@
+# Introduction: standard-tokenization variant. No codec and no patching, so the
+# "other side" is not an encoder at all - the head carries the whole argument.
+# Saying so is stronger than borrowing a codec result the run does not produce.
+section: intro
+order: 10
+requires:
+  codec_mode: [standard]
+body: >
+  This run carries no codec and no patching bottleneck, so the head carries the
+  argument alone - which makes it the cleanest test of it. A continuous-latent
+  codec reaches the same standing structure from the encoder
+  side~\cite{calm2025}; that the geometry appears here too, written directly over
+  per-feature embeddings with nothing compressing the input, is evidence it
+  belongs to the latent space rather than to any one bottleneck.

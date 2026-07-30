@@ -65,13 +65,22 @@
 \IfFileExists{conjectures.tex}{\input{conjectures.tex}}{}
 \providecommand{\paperConjectures}{}
 \providecommand{\paperFramingHarmonic}{}
-\providecommand{\paperFramingAbstract}{the CALM continuous-latent codec~\cite{calm2025}.}
+% Clean-checkout fallback only: names no specific codec, because which one the
+% run uses is exactly what framing/abstract-codec-*.yml decides.
+\providecommand{\paperFramingAbstract}{an input representation chosen per run - a
+continuous-latent codec, a byte-latent encoder, or plain tokenization. The same
+geometry reaches its finest, per-feature form in a plain transformer, so across
+these approaches it is the granularity that changes, not the geometry.}
+\providecommand{\paperFramingManifold}{}
+\providecommand{\paperFramingOuter}{}
+\providecommand{\paperFramingIntro}{}
 \providecommand{\paperFramingConstructor}{}
 \providecommand{\paperFramingScaling}{}
 \providecommand{\paperFramingFramework}{}
 \providecommand{\paperFramingDiscussion}{}
 \providecommand{\paperFramingConclusion}{}
 \providecommand{\paperRecurrentSteps}{several}
+\providecommand{\paperPhysicalLayers}{a handful of}
 \providecommand{\paperLicenseEpoch}{2026.43936818164358193}
 \providecommand{\paperHeadName}{harmonic head}
 \providecommand{\paperHoyerConcentration}{}

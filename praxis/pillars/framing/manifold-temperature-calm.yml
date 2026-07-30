@@ -1,0 +1,16 @@
+# Section 2 (bias-variance manifold), temperature paragraph: the concrete
+# mechanism that makes "temperature as a coordinate" literal for this run. CALM
+# variant - the patch vote. Was hardcoded in body.tex, which put a CALM claim in
+# front of every reader regardless of what the run actually samples. Compatible
+# with the HALO variant (order 20); when neither fires the paragraph simply ends
+# on the general claim, which is self-contained.
+section: manifold
+order: 10
+requires:
+  codec_mode: [calm]
+body: >
+  CALM makes this literal: rather than perturbing a latent continuously, it votes
+  over decoded patches~\cite{calm2025}, so temperature selects how many candidate
+  latents must agree before a patch is emitted. Temperature is not adding
+  randomness to a fixed distribution; it is choosing where on the manifold to
+  stand.

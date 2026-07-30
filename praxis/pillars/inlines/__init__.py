@@ -72,6 +72,22 @@ def _recurrent_steps() -> Optional[int]:
     return resolve_config(experiment).get("recurrent_steps")
 
 
+@provider("physical_layers")
+def _physical_layers() -> Optional[int]:
+    """How many distinct physical layers the current run stacks (``num_layers``),
+    as opposed to the ``depth`` it unrolls them to. The recurrent prose needs
+    both numbers - N layers turned over K steps - and hardcoding either one bakes
+    a single run's shape into every build. ``None`` when the run is not
+    recurrent, which is also when that prose is gated off."""
+    from praxis.pillars.framing import newest_experiment, resolve_config
+
+    experiment = newest_experiment()
+    if not experiment:
+        return None
+    config = resolve_config(experiment)
+    return config.get("num_layers") if config.get("recurrent") else None
+
+
 @provider("license_epoch")
 def _license_epoch() -> Optional[str]:
     """The LICENSE copyright stamp: a fractional year rewritten at every launch

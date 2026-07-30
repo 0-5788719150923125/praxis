@@ -1,0 +1,19 @@
+# Section 3.2 ("The outer representation"), standard-tokenization variant: no
+# codec, no patch, so the two-pole structure has nothing to attach to. Rather
+# than assert a duality this run does not have, the fragment says so and hands
+# the section's argument to the sinks, which is where the surrounding prose
+# (ghostmax at the head, dropoff at the tip) carries it anyway.
+section: outer
+order: 10
+requires:
+  codec_mode: [standard]
+body: >
+  This run has no codec and no patch, so the two-pole structure has nothing to
+  attach to: the objective is next-token cross-entropy at every position, the
+  interior-running regime described above, and the addressed unit is the
+  per-position feature field the harmonic head writes over rather than a
+  compressed span. The outer reading therefore rests entirely on the attention
+  sinks below rather than on a pair of objectives - which is worth stating
+  plainly, because it makes this run the control for the claim. If pressure
+  migrates to the rim here, where no codec is pinning the ends, the sinks are
+  doing that work on their own.

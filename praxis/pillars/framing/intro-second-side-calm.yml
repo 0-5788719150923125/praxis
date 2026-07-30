@@ -1,0 +1,16 @@
+# Introduction: the second, independent piece of evidence for the same physics -
+# the encoder side, paired with the harmonic head that precedes it. CALM variant,
+# which is the sentence that used to be welded into the thread's introduction
+# prose unconditionally. It forward-references sec:harmonic, and on a byte-latent
+# run that section does not contain CALM at all, so the promise was not kept.
+#
+# Rendered inline (mid-paragraph, no subsection) - the thread's introduction
+# supplies the surrounding sentences.
+section: intro
+order: 10
+requires:
+  codec_mode: [calm]
+body: >
+  The CALM codec (Section~\ref{sec:harmonic}) shows the same physics from the
+  other side: a continuous-latent autoregressor that reconstructs sequences
+  near-perfectly by phase-locking its latent features to a dominant rhythm.

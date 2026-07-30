@@ -1,0 +1,26 @@
+# Section 2 (bias-variance manifold), temperature paragraph: the HALO variant of
+# the "temperature is a coordinate" mechanism. Under a distance-scored objective
+# the dial is literally a radius, which is the same reading the consensus-shell
+# figure already draws - so this claims nothing the halo-energy-ring fragment
+# (section: harmonic, order 25) does not already carry. Forward-references
+# fig:halo-ring; both fragments gate on uses_halo, so the reference cannot dangle.
+section: manifold
+order: 20
+requires:
+  uses_halo: true
+  # Mutually exclusive with the CALM variant (order 10): both fragments close on
+  # the same summarizing sentence, so a run that is both CALM and HALO must pick
+  # one. CALM wins there because the patch vote is the more specific mechanism.
+  codec_mode: [byte_latent, standard]
+body: >
+  Under the HALO objective this run trains against, the dial acquires a direct
+  geometric reading. Scores are distances to the crystal centroids rather than
+  dot-product logits (Section~\ref{sec:harmonic}), so temperature scales a
+  distance: it sets how far off the consensus shell a sample is permitted to
+  land. Low temperature pins the draw to the ring itself - the settled, shared
+  structure that is the bias term - while raising it admits the abstain interior
+  and the scattered exterior alike (Figure~\ref{fig:halo-ring}). On this
+  objective the coordinate is not a metaphor but a radius, and the same dial that
+  reads as noise elsewhere reads here as a position on a one-dimensional radial
+  law. Temperature is not adding randomness to a fixed distribution; it is
+  choosing where on the manifold to stand.

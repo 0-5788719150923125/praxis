@@ -23,8 +23,9 @@ body: >
   at once. Forward, the recurrent loop propels generation and is never required to
   emit a stop: the halting gate is a convergence check, not an exit, so generation
   is a continuous autonomous stream rather than a program that terminates.
-  Sideways, a pool of remote experts votes - stochastically sampled, mixed by a
-  CALM-style expert vote - and trains without blocking, so a slow peer never stalls
+  Sideways, a pool of remote experts votes - stochastically sampled, mixed by an
+  expert vote in the style of CALM's patch vote~\cite{calm2025} - and trains
+  without blocking, so a slow peer never stalls
   the others; its update simply lags and lands on a later pass. Computation is
   lagged as much as propelled, and the model commits to neither a halt nor a
   barrier. It approximates both by doing neither.

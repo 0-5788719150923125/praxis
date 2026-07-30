@@ -1,0 +1,9 @@
+# The distinct-physical-layer count for the current run, paired with
+# paperRecurrentSteps in the "watch in the depth dimension" prose (N layers
+# turned over K steps). That prose used to name calm-d's two layers outright,
+# which was simply wrong on any other run. Absent (fallback kept) when the run
+# is not recurrent - in which case the prose is gated off too.
+macro: paperPhysicalLayers
+provider: physical_layers
+format: "{value}"
+fallback: "a handful of"

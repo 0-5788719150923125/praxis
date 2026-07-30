@@ -1,6 +1,9 @@
 # Enables only in recurrent mode - when the same physical layers are revisited
-# across depth (depth > num_layers), as in calm-d's 2 layers over 4 steps. Arc
-# attention/GLU make the per-step turning explicit via current_depth.
+# across depth (depth > num_layers). Arc attention/GLU make the per-step turning
+# explicit via current_depth. Both counts in the prose are inlines
+# (paperPhysicalLayers x paperRecurrentSteps) rather than literals: this used to
+# say "in calm-d, two physical layers", which was wrong on every other recurrent
+# run and put a CALM run name in front of readers of a byte-latent paper.
 section: scaling
 order: 30
 requires:
@@ -9,9 +12,9 @@ proofs: [lemma-xor-circle]
 body: >
   The watch has a second axis of motion, and it is the one the architecture
   actually runs on. In recurrent mode Praxis does not stack a distinct gear per
-  layer; it applies the same small mesh again and again - in calm-d, two physical
-  layers turned over \paperRecurrentSteps{} recurrent steps - so depth is not a
-  taller machine but the same machine revisited. ArcAttention and ArcGLU make the
+  layer; it applies the same small mesh again and again - here \paperPhysicalLayers{}
+  physical layers turned over \paperRecurrentSteps{} recurrent steps - so depth is
+  not a taller machine but the same machine revisited. ArcAttention and ArcGLU make the
   turning explicit: each carries a \texttt{current\_depth} signal and warps its
   rotary phase and its gate per step, so the same weights present a different face
   at every revolution while the frozen coupling underneath is never re-cut.

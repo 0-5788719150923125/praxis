@@ -1,0 +1,32 @@
+# Section 3.2 ("The outer representation"), byte-latent variant. The honest
+# difference from the CALM variant: there are not two losses here. A byte-latent
+# run trains end-to-end on byte cross-entropy alone (the Abstractinator's VQ
+# commitment term is an auxiliary on the bottleneck, not a second objective over
+# the patch), so the reconstruct/predict duality is implicit in the architecture
+# rather than written into the loss. Claiming the two-objective structure for
+# this run would be claiming machinery it does not have.
+section: outer
+order: 10
+requires:
+  codec_mode: [byte_latent]
+body: >
+  The same two temporal poles are present here, but they are carried by the
+  architecture rather than written into the loss. This run trains end-to-end on
+  byte cross-entropy alone - there is no second reconstruction objective over the
+  patch, and no per-patch latent trained to round-trip. What creates the pressure
+  at the ends is the bottleneck's position in the stack. The local encoder must
+  compress a span of bytes into a single patch vector well enough that the local
+  decoder can restore those bytes, which anchors the \textit{already-consumed}
+  span; the global transformer over patch vectors must carry that representation
+  forward to the next patch, which anchors the \textit{unobserved} continuation.
+  One objective, two poles: the byte loss lands at both ends of the bottleneck
+  and passes through its interior without ever making that interior a target.
+
+  The patch boundaries themselves are content-adaptive, so the model is not
+  imposing a grid on the stream but reading one off it - the cut points follow
+  the data's own segmentation rather than a fixed stride, and the patch stream
+  inherits that cadence. Where a reconstructing codec pins its ends with an
+  explicit loss at each, a byte-latent encoder pins them with a bottleneck the
+  gradient has to pass through in both directions. The reading in the rest of
+  this section - that learning pressure migrates to the rim of the window rather
+  than its middle - is unchanged; only the mechanism that puts it there differs.
