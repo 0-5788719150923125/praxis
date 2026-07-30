@@ -280,7 +280,44 @@ const MAX_LAYERS := 6
 ## rather than over it - a radial hole in the eye and lip paint, gated on
 ## brightness so it opens over a visible eyeball or teeth and closes again
 ## on a blink or a shut mouth.
-const MASK_EFFECTS := ["erase", "fire", "freeze", "smoke", "restore", "whisp", "crystal", "echo", "clear", "snow", "fur", "oracle", "serpent", "chimera", "arealight", "meta", "clown"]
+## "umbra" - a ghost that lives in the subject's OWN cast shadow. Not drawn
+## over her and never on her: the editor finds the shadow she throws onto the
+## wall behind her and grows an amorphous, fluctuating black mass inside it,
+## looming outward and away, with essence trailing upward off its top like
+## smoke. See MaskEditor._update_umbra_model for the detector and
+## shaders/umbra_field.gdshader for the mass itself.
+## THE DETECTOR, in one line: match the SURFACE first, then ask whether it is
+## dimmed. A cast shadow is the same wall under less light, so it keeps the
+## wall's chroma DIRECTION while losing luminance - measured on real footage
+## the shadow matches the lit wall to dot=+0.99 while skin, hair, a black
+## shirt and a cream door all sit at -0.75..-0.96. Luminance alone cannot do
+## this (her hair and the shadow are the same brightness); chroma direction
+## separates them with an enormous margin. So: pick the wall's chroma
+## direction, score every cell's alignment with it, and only then ask which of
+## those wall cells are darker than the wall's own local lit level.
+## LINKAGE is structural, not a similarity score. Two flood fills on the grid:
+## the SUBJECT grows from the most not-the-wall cell near frame centre, and
+## the SHADOW grows only from cells touching the subject and may never enter
+## it - so anything it reaches is contiguous with her by construction, which
+## is exactly what "the shadow is linked to the human" means.
+## The KEY COLOUR names the wall the shadow falls on. Leave it and the editor
+## picks the surface automatically (chroma-direction buckets, scored by whether
+## the resulting subject flood actually covers the middle of the frame - the
+## test that stops her warm skin from voting the cream door in as the wall);
+## setting it deliberately biases the choice hard toward the picked hue.
+## Scale sizes the mass, Pan nudges it, Coverage is relabeled Loom (how far it
+## grows outward along the cast direction - the looming), Contrast is
+## relabeled Roil (turbulence in the currents and the fluctuation of the
+## silhouette), Velocity is how fast the essence climbs, and Resonance swells
+## the loom with the audio - on a talking clip the ghost surges when she
+## speaks. Its own "umbra" group adds three (existing stored fields reused the
+## way fur/snow/clown reuse them, no schema growth): Wisp (fx_smooth) is how
+## readily essence detaches and rises, Cling (fx_lag) is how long the mass
+## persists, Depth (fx_stick) is how dark it gets. Morph cools or warms the
+## core. The mass DARKENS rather than paints black - a shadow keeps the
+## surface's hue, so it multiplies, and shade_amount's ceiling keeps the
+## wall's own texture alive inside it (a flat black fill reads as a decal).
+const MASK_EFFECTS := ["erase", "fire", "freeze", "smoke", "restore", "whisp", "crystal", "echo", "clear", "snow", "fur", "oracle", "serpent", "chimera", "arealight", "meta", "clown", "umbra"]
 const EFFECT_RESTORE := 4
 const EFFECT_CRYSTAL := 6
 const EFFECT_CLEAR := 8
@@ -297,6 +334,7 @@ const EFFECT_AREALIGHT := 14
 ## mask_editor.gd _capture_workspace / _meta_amount_of.
 const EFFECT_META := 15
 const EFFECT_CLOWN := 16
+const EFFECT_UMBRA := 17
 
 ## THE CONTROL HIERARCHY: which panel option groups each effect actually consumes
 ## (the editor shows/hides accordingly - a slider that does nothing for the
@@ -324,6 +362,7 @@ const EFFECT_CONTROLS := {
 	14: ["pattern"],              # arealight (keyless; pattern group exists only to expose the single Envelope/contrast dial)
 	15: [],                       # meta (mirrors the workspace; keyless, no pattern - only intensity/duration/kind matter)
 	16: ["pattern", "clown"],     # clown (pan=layout nudge, scale=feature size, coverage=Wear, contrast=Smear, + its own Bleed/Settle/Hollow)
+	17: ["pattern", "umbra"],     # umbra (colour picker names the wall; coverage=Loom, contrast=Roil, + its own Wisp/Cling/Depth)
 }
 
 ## Second level of the same rule, INSIDE the "pattern" group: which individual
@@ -347,6 +386,11 @@ const PATTERN_KNOBS := {
 	# rather than left on screen doing nothing (the control hierarchy's whole
 	# point - "only show properties that can be used").
 	16: ["scale", "pan", "coverage", "contrast"],
+	# umbra is deliberately ABSENT (so it shows all six): it is the first
+	# effect that genuinely reads every one of them. Velocity is the essence's
+	# climb rate and Resonance swells the loom with the audio - on a talking
+	# clip the ghost surges when the subject speaks, which is the single best
+	# thing this effect does.
 }
 
 ## The view-mode registry (see mask_editor.gd). Really a 2-axis matrix flattened to

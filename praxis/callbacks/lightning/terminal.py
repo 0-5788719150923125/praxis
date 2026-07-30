@@ -20,6 +20,10 @@ class TerminalInterface(Callback):
     A single pane of glass containing charts and information.
     """
 
+    # Class-level default so the flag is readable on any instance, including
+    # before __init__ finishes and from the signal handler's cleanup thread.
+    _shutting_down = False
+
     def __init__(
         self,
         tokenizer,
@@ -64,6 +68,10 @@ class TerminalInterface(Callback):
         self.url = url
         self.use_dashboard = use_dashboard
         self.dashboard = dashboard  # Use existing dashboard if provided
+        # Set once a shutdown has been requested. Training keeps stepping for a
+        # short while after Ctrl+C, and anything this callback writes in that
+        # window lands on the restored terminal rather than in the dashboard.
+        self._shutting_down = False
         self.progress_bar = progress_bar
         self.device = device
         self.quiet = quiet
@@ -584,8 +592,40 @@ class TerminalInterface(Callback):
         super().on_load_checkpoint(trainer, lm, checkpoint)
         self.start_time = checkpoint.get("start_time", datetime.now())
 
+    def _show_context(self, display: str, at_seed: bool = False) -> None:
+        """Route one rolling-context update to whichever surface owns the screen.
+
+        Three states, and the third is the one that leaked. A run with a live
+        dashboard hands it the text. A run that never had one prints. A run
+        CONFIGURED for one that no longer has it is mid-teardown - the dashboard
+        has already released the terminal - so printing would drop the rolling
+        context into the shutdown output, which is what made a clean cancel look
+        like it was dumping internals.
+
+        The reference is snapshotted because shutdown nulls ``self.dashboard``
+        from the cleanup thread and can land between the guard and the calls.
+        """
+        if self._shutting_down:
+            return
+        dashboard = self.dashboard
+        if dashboard is not None and hasattr(dashboard, "update_status"):
+            dashboard.update_status(display)
+            if at_seed:
+                dashboard.force_redraw()
+        elif not self.headless and not self.use_dashboard:
+            self.print(display)
+
+    def begin_shutdown(self):
+        """Stop emitting anything to the terminal; a shutdown is in progress.
+
+        Called from the signal handler's cleanup thread before it tears the
+        dashboard down. Idempotent and safe from any thread - it only sets a
+        flag the hooks read.
+        """
+        self._shutting_down = True
+
     def _generate_text(self, lm, batch_idx=0, interval=10):
-        if not self.generator:
+        if not self.generator or self._shutting_down:
             return
 
         # Warmup: start with 120s interval at step 0, linearly decrease to
@@ -691,13 +731,13 @@ class TerminalInterface(Callback):
         # prompt-token count is measured against.
         display = self._streaming.display_text
 
-        # Update display (the CLI shows the primary context)
-        if self.dashboard and hasattr(self.dashboard, "update_status"):
-            self.dashboard.update_status(display)
-            if self._streaming.text == self._streaming.initial_text:
-                self.dashboard.force_redraw()
-        elif not self.headless:
-            self.print(display)
+        # Update display (the CLI shows the primary context).
+        # at_seed reads the STREAM's current seed, not the callback's copy: the
+        # seed re-rolls on every degeneracy reset, so only the stream knows what
+        # "back at the start" currently means.
+        self._show_context(
+            display, at_seed=self._streaming.text == self._streaming.initial_text
+        )
 
         # Web streaming: every block as `contexts`, plus the primary as the
         # back-compat status_text. The browser renders Unicode natively.

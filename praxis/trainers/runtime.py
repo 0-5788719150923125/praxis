@@ -215,6 +215,24 @@ def run_training(
         return 130
 
     except Exception:
+        # A shutdown already in flight reclassifies this as a cancellation.
+        # Tearing a running trainer down races with the code still executing in
+        # it - a dataloader closing under a fetch, a stream going away under a
+        # print - and those raise ordinary exceptions that arrive here. Reported
+        # as "fatal error" they dump a full traceback rooted wherever the main
+        # thread happened to be, which reads as a crash the user has to
+        # investigate. The user asked for this stop; say so and exit 130.
+        from praxis.utils.cuda_shutdown import get_cuda_shutdown_manager
+
+        if get_cuda_shutdown_manager().is_shutting_down():
+            print("\n[TRAIN] Interrupted by user")
+            if os.environ.get("PRAXIS_DEBUG_SHUTDOWN"):
+                traceback.print_exc()
+            signal.signal(signal.SIGINT, cleanup_signal_handler)
+            signal.signal(signal.SIGTERM, cleanup_signal_handler)
+            graceful_shutdown(api_server, exit_code=130, reason="interrupted")
+            return 130
+
         if (
             progress_bar is not None
             and hasattr(progress_bar, "dashboard")

@@ -96,8 +96,19 @@ class BatchPlan(NamedTuple):
 
 
 # Fixed, model-agnostic constant (no per-experiment tuning): the two-point
-# noise-scale estimator needs a second measurement point, so a step is never
-# a single microbatch. This is the ONLY reason the minimum is 2 rather than 1.
+# noise-scale estimator needs a second measurement point, so a MEASURING step is
+# never a single microbatch. This is the ONLY reason the minimum is 2 rather
+# than 1 - and it is the only reason a step ever splits when the whole effective
+# batch already fits under the ceiling.
+#
+# That distinction matters. Above the ceiling the split is forced by memory and
+# the second point is free. At or below it, forcing accum=2 buys the estimator
+# its pair at the price of running two forwards where one would do: at an
+# effective batch of 4 rows with a 64-row ceiling, 2 microbatches of 2 rows
+# instead of 1 microbatch of 4 - double the step cost for the same data, on a
+# GPU with 16x the headroom. The governor therefore pays this only on the
+# windows it actually measures (see GNSBatchGovernor.MEASURE_EVERY) and passes
+# ``min_micro_batches=1`` the rest of the time.
 MIN_MICRO_BATCHES = 2
 
 
@@ -155,16 +166,28 @@ class BatchSchedule:
     row_ceiling: int = 0  # batch_size: rows per microbatch, at most
     effective_rows: int = 0  # governed B_eff, in rows per optimizer step
     tiers: Tuple = ()  # sequence-multiplier tiers, for resampling
+    # Microbatches per step, minimum. MIN_MICRO_BATCHES while the governor is
+    # measuring the noise scale, 1 while it is not - a step only splits below
+    # the ceiling to buy the estimator's second point, and that is not needed
+    # on every step. See MIN_MICRO_BATCHES above.
+    min_micro: int = MIN_MICRO_BATCHES
 
     _plan: Optional[BatchPlan] = None
     _micro_index: int = 0  # microbatches emitted in the open cycle
 
     @classmethod
-    def enable(cls, row_ceiling: int, effective_rows: int, tiers=()) -> None:
+    def enable(
+        cls,
+        row_ceiling: int,
+        effective_rows: int,
+        tiers=(),
+        min_micro: int = MIN_MICRO_BATCHES,
+    ) -> None:
         cls.enabled = True
         cls.row_ceiling = max(1, int(row_ceiling))
         cls.effective_rows = max(MIN_MICRO_BATCHES, int(effective_rows))
         cls.tiers = tuple(tiers)
+        cls.min_micro = max(1, int(min_micro))
         cls._plan = None
         cls._micro_index = 0
 
@@ -174,12 +197,13 @@ class BatchSchedule:
         cls.row_ceiling = 0
         cls.effective_rows = 0
         cls.tiers = ()
+        cls.min_micro = MIN_MICRO_BATCHES
         cls._plan = None
         cls._micro_index = 0
 
     @classmethod
-    def set_effective_rows(cls, rows: int) -> None:
-        """Governor hook: retarget the effective batch.
+    def set_effective_rows(cls, rows: int, min_micro: Optional[int] = None) -> None:
+        """Governor hook: retarget the effective batch (and the split minimum).
 
         Takes effect at the next cycle boundary, never mid-cycle - changing
         microbatch rows partway through would break both the uniform ``1/accum``
@@ -188,6 +212,8 @@ class BatchSchedule:
         if not cls.enabled:
             return
         cls.effective_rows = max(MIN_MICRO_BATCHES, int(rows))
+        if min_micro is not None:
+            cls.min_micro = max(1, int(min_micro))
 
     @classmethod
     def accum(cls) -> int:
@@ -198,7 +224,17 @@ class BatchSchedule:
         """
         if not cls.enabled:
             return MIN_MICRO_BATCHES
-        return plan_cycle(cls.effective_rows, cls.row_ceiling).accum
+        return cls._plan_now().accum
+
+    @classmethod
+    def _plan_now(cls, multiplier: int = 1) -> BatchPlan:
+        """Factorize the current target under the current split minimum."""
+        return plan_cycle(
+            cls.effective_rows,
+            cls.row_ceiling,
+            multiplier,
+            min_micro_batches=cls.min_micro,
+        )
 
     @classmethod
     def current(cls) -> Optional[BatchPlan]:
@@ -237,9 +273,9 @@ class BatchSchedule:
         """
         from praxis.data.datasets.manager import sample_sequence_multiplier
 
-        base = plan_cycle(cls.effective_rows, cls.row_ceiling).micro_rows
+        base = cls._plan_now().micro_rows
         multiplier = sample_sequence_multiplier(base, cls.tiers, rng)
-        return plan_cycle(cls.effective_rows, cls.row_ceiling, multiplier)
+        return cls._plan_now(multiplier)
 
     @classmethod
     def restart_cycle(cls) -> None:

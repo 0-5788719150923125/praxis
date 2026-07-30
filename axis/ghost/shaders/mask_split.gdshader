@@ -127,6 +127,12 @@ uniform vec2 u_clown_mouth_r = vec2(0.28, 0.14);
 // black = no features until the sim's first step lands.
 uniform sampler2D u_clown_paint : hint_default_black;
 
+// UMBRA's persistent shadow-mass field (see shaders/umbra_field.gdshader and
+// MaskEditor._step_umbra_sim): R = mass density, G = rising essence,
+// B = reserved for the facial transference pass, A = the guard (where the mass
+// is permitted to exist - already excludes the subject herself).
+uniform sampler2D u_umbra_field : hint_default_black;
+
 // The first imported track's live frame, for chimera's graft. u_track_on
 // gates it explicitly - the default-black fallback must never be mistaken
 // for footage (a black graft window is worse than no graft).
@@ -796,6 +802,64 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		painted16 = mix(painted16, nose16, clamp(noseM16, 0.0, 1.0) * 0.96);
 		painted16 = hue_shift(painted16, u_l_tint[i]);
 		return vec4(mix(col.rgb, painted16, amt16), col.a);
+	}
+	if (effect == 17) {
+		// UMBRA - a ghost inside the subject's own cast shadow. Every question
+		// of WHERE was settled upstream: the editor's detector finds the shadow
+		// she is linked to and the field sim (umbra_field.gdshader) grows the
+		// mass inside it and lets essence rise off the top. This branch only
+		// has to turn that field into light lost.
+		vec2 asp17 = vec2(u_aspect, 1.0);
+		vec2 pan17 = u_l_off[i] * 0.25;
+		// TWO fetches on purpose. The mass is read at the panned position (Pan
+		// is a nudge for when the detector sits slightly off), but the GUARD is
+		// read UNPANNED - otherwise winding Pan far enough would walk the mass
+		// straight onto her, and "never on top of her" is the one property this
+		// effect is not allowed to trade away for a knob.
+		vec4 fld = texture(u_umbra_field, clamp(uv - pan17, vec2(0.0), vec2(1.0)));
+		float allow17 = texture(u_umbra_field, uv).a;
+		float w17 = clamp(w, 0.0, 1.0);
+		if (allow17 * w17 <= 0.003) {
+			return col;
+		}
+		float con17 = clamp(u_l_con[i], 0.0, 1.0);      // Roil
+		float sc17 = clamp(u_l_scale[i], 0.3, 2.5);
+		float t17 = u_time * u_l_speed[i];
+		// Internal structure: two ridged octaves drifting UPWARD, so the mass
+		// reads as currents flowing through a body rather than as a texture
+		// pasted on it. Ridged (not plain fbm) because the creases are what
+		// make it look like flame/smoke rather than cloud.
+		// Drifting FAST upward - at 0.22 the currents crawled and the mass read
+		// as a still image with a texture on it.
+		vec2 q17 = uv * asp17 * (5.0 * sc17) + vec2(t17 * 0.10, -t17 * 0.85);
+		float rid17 = 1.0 - abs(2.0 * fbm(q17) - 1.0);
+		float rid2_17 = 1.0 - abs(2.0 * fbm(q17 * 2.3 + 7.1) - 1.0);
+		float wave17 = mix(1.0, 0.30 + 0.95 * (rid17 * 0.66 + rid2_17 * 0.34),
+			0.25 + 0.75 * con17);
+		// The silhouette itself breathes - the edge threshold wanders, so the
+		// outline is never die-cut and never the same twice.
+		float edge17 = fbm(uv * asp17 * 7.0 + vec2(t17 * 0.25, -t17 * 0.55)) - 0.5;
+		float d17 = fld.r * wave17 + edge17 * 0.20 * con17;
+		float body17 = smoothstep(0.10, 0.44, d17) * allow17;
+		float trail17 = smoothstep(0.05, 0.34, fld.g) * allow17;
+		float depth17 = 0.30 + 0.70 * clamp(u_l_stick[i], 0.0, 1.0);   // Depth
+		float amt17 = shade_amount(
+			clamp((body17 + trail17 * 0.55) * depth17 * w17, 0.0, 1.0), uv);
+		if (amt17 <= 0.003) {
+			return col;
+		}
+		// LIGHT LOST, NOT BLACK PAINT. A shadow is the same surface under less
+		// illumination, so a plain multiply is the physically right operation:
+		// it keeps the wall's hue and its texture, and shade_amount's ceiling
+		// guarantees some of the footage always survives inside the mass. A
+		// flat black fill here reads as a hole cut in the picture.
+		vec3 dark17 = col.rgb * (1.0 - amt17);
+		// What the mass took away is the warm key light, so the deepest core
+		// cools. Morph re-gels that - toward blue for a colder haunt, toward
+		// red for something angrier.
+		vec3 cool17 = hue_shift(vec3(0.44, 0.50, 0.64), u_l_tint[i]);
+		dark17 = mix(dark17, dark17 * cool17, 0.38 * body17);
+		return vec4(dark17, col.a);
 	}
 	if (effect == 7) {
 		// ECHO - temporal lag. The target color's region stops being live: it

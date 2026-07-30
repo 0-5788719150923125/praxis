@@ -259,8 +259,12 @@ GOVERNOR_METRIC_DESCRIPTIONS: Dict[str, dict] = {
             "Microbatches per optimizer step. Derived from the effective batch "
             "and the batch_size ceiling alone - never from the sequence "
             "multiplier, so it changes only when the governor moves a tier and "
-            "Lightning's step boundaries stay aligned. Minimum 2: the "
-            "two-point noise estimator needs a second measurement point."
+            "Lightning's step boundaries stay aligned. Normally the minimum "
+            "the ceiling requires, which is 1 once the whole effective batch "
+            "fits in one microbatch. It rises to 2 on the measuring windows "
+            "(1 in 4) where the two-point estimator needs a second point - "
+            "above the ceiling that split is forced anyway, so every step "
+            "measures there and this never drops below 2."
         ),
         # No title/axis: rides gov_micro_rows' chart via series_group.
         "chart": {

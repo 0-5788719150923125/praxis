@@ -232,7 +232,9 @@ def test_up_move_defers_until_aligned_boundary():
     gov._steps = gov.decide_every - 1  # next step triggers a decision
 
     _run_cycle(gov, trainer, module, k=2)  # decision fires at ready=2
-    assert gov._pending == 64  # rows: 32 -> 64, which needs accum 4
+    # (rows, measuring): 32 -> 64, which needs accum 4. Above the ceiling the
+    # split is forced by memory, so the window stays a measuring one.
+    assert gov._pending == (64, True)
     assert trainer.accumulate_grad_batches == 2  # deferred: 2 % 4 != 0
 
     _run_cycle(gov, trainer, module, k=2)  # boundary at ready=4 commits
@@ -738,3 +740,120 @@ def test_validation_draws_do_not_shift_the_training_cycle():
     for _ in range(10):  # a whole validation pass mid-cycle
         val._next_shape()
     assert BatchSchedule._micro_index == 2  # still two into the open cycle
+
+
+# ------------------------------------------------- measurement duty cycle
+#
+# Splitting a step into two microbatches is forced by memory above the row
+# ceiling and free there. At or below it the split exists ONLY to give the
+# two-point estimator its second point - so paying it on every step ran two
+# forwards where one would do (an effective batch of 4 rows against a 64-row
+# ceiling ran 2x2 instead of 1x4). The governor pays it on the windows it
+# actually measures instead.
+
+
+def test_small_batch_uses_one_microbatch_when_not_measuring():
+    """The reported bug: 4 governed rows under a 64-row ceiling ran 2x2."""
+    gov = GNSBatchGovernor(batch_size=64, target_batch_size=1024)
+
+    exploit = gov._plan(4, measuring=False)
+    assert (exploit.accum, exploit.micro_rows) == (1, 4)
+    assert exploit.delivered_rows == 4
+
+    measure = gov._plan(4, measuring=True)
+    assert (measure.accum, measure.micro_rows) == (2, 2)
+    assert measure.delivered_rows == 4  # same data either way
+
+
+def test_split_above_the_ceiling_is_unchanged():
+    """Where memory forces >= 2 microbatches the second point is free, so the
+    duty cycle must never reduce it - and never stop measuring."""
+    gov = GNSBatchGovernor(batch_size=64, target_batch_size=1024)
+    for rows in (128, 256, 1024):
+        assert gov._plan(rows, measuring=False) == gov._plan(rows, measuring=True)
+        assert gov._split_is_free(rows)
+        assert gov._should_measure(rows)
+
+
+def test_duty_cycle_only_applies_below_the_ceiling():
+    gov = GNSBatchGovernor(batch_size=64, target_batch_size=1024)
+    # Small batch: measures on 1 window in MEASURE_EVERY.
+    measured = []
+    for _ in range(gov.MEASURE_EVERY * 3):
+        gov._windows += 1
+        measured.append(gov._should_measure(4))
+    assert sum(measured) == 3
+    # Large batch: every window, regardless of the counter.
+    assert all(gov._should_measure(256) for _ in range(gov.MEASURE_EVERY * 3))
+
+
+def test_estimator_is_not_fed_by_unsplit_steps():
+    """With accum=1 there is no pair; folding one in would corrupt the EMA."""
+    gov = GNSBatchGovernor(batch_size=64, target_batch_size=1024)
+    trainer = _fake_trainer()
+    module = nn.Linear(4, 4)
+    gov.on_train_start(trainer, module)
+    gov._rows, gov._measuring = 4, False
+    gov._publish(trainer)
+    assert trainer.accumulate_grad_batches == 1
+
+    _run_cycle(gov, trainer, module, k=1, rows=4)
+    assert gov.estimator._updates == 0
+    # ...but the delivered rows still reach the controller, so a window with no
+    # measurement is not a window with no bookkeeping.
+    assert gov._delivered_mean() == 4
+
+
+def test_measuring_change_goes_through_the_aligned_commit():
+    """Turning measuring on/off moves accum, so it must not bypass alignment -
+    an unaligned factor change produces a short, mis-scaled cycle."""
+    gov = GNSBatchGovernor(batch_size=64, target_batch_size=1024)
+    trainer = _fake_trainer()
+    module = nn.Linear(4, 4)
+    gov.on_train_start(trainer, module)
+
+    gov._rows, gov._measuring = 8, True
+    gov._publish(trainer)
+    assert trainer.accumulate_grad_batches == 2
+
+    # Pend a switch to exploiting (accum 2 -> 1) at an odd `ready`.
+    cur = trainer.fit_loop.epoch_loop.batch_progress.current
+    cur.ready = 3
+    gov._pending = (8, False)
+    gov._stepped = True
+    gov.on_train_batch_end(trainer, module, None, None, cur.ready - 1)
+    # accum 1 divides everything, so ready=3 IS aligned and it commits.
+    assert trainer.accumulate_grad_batches == 1
+    assert gov._measuring is False
+
+
+def test_schedule_agrees_with_the_governor_about_accum():
+    """The data pipeline and Lightning read the split minimum from the same
+    place; if they disagreed the pipeline would build cycles of the wrong
+    length for the factor the trainer steps on."""
+    from praxis.data.batch_schedule import BatchSchedule
+
+    gov = GNSBatchGovernor(batch_size=64, target_batch_size=1024)
+    trainer = _fake_trainer()
+    try:
+        for rows, measuring in ((4, False), (4, True), (256, False)):
+            gov._rows, gov._measuring = rows, measuring
+            gov._publish(trainer)
+            assert BatchSchedule.accum() == trainer.accumulate_grad_batches
+            plan = BatchSchedule.next_microbatch()
+            assert plan.accum == trainer.accumulate_grad_batches
+    finally:
+        BatchSchedule.reset()
+
+
+def test_resume_returns_to_measuring():
+    """The restored EMA was fitted on gradients this run never saw; taking a
+    fresh window before the first decision costs one window."""
+    gov = GNSBatchGovernor(batch_size=64, target_batch_size=1024)
+    gov._rows, gov._measuring = 4, False
+    state = gov.state_dict()
+
+    fresh = GNSBatchGovernor(batch_size=64, target_batch_size=1024)
+    fresh.load_state_dict(state)
+    assert fresh._rows == 4
+    assert fresh._measuring is True

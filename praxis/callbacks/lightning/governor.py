@@ -23,6 +23,13 @@ Timing contract with Lightning 2.x automatic optimization:
   aligned at a step boundary; up-moves may need to wait one extra cycle. The
   commit logic defers until ``ready % new == 0``.
 
+The accumulation factor is the minimum the ceiling requires, EXCEPT on the
+measuring windows that buy the estimator its second point. Once the governed
+effective batch fits in one microbatch that minimum is 1, so a small batch runs
+one forward per step instead of two - see ``MEASURE_EVERY``. The measuring flag
+travels through the same aligned-commit path as a tier change, because it moves
+the factor and Lightning cares about nothing else.
+
 Row counts feeding the estimator are read from the batches that actually
 arrived, never from the plan: the plan is shared state the data pipeline may
 lag on, and a two-point estimate built from assumed batch sizes would be
@@ -34,12 +41,18 @@ is inconsistent - the governor is built for the single-process runs Praxis
 actually does; it logs a warning and holds the initial batch otherwise.
 """
 
-from typing import Any, Dict, Optional
+import math
+from typing import Any, Dict, Optional, Tuple
 
 import torch
 from lightning.pytorch.callbacks import Callback
 
-from praxis.data.batch_schedule import MIN_MICRO_BATCHES, BatchSchedule, plan_cycle
+from praxis.data.batch_schedule import (
+    MIN_MICRO_BATCHES,
+    BatchPlan,
+    BatchSchedule,
+    plan_cycle,
+)
 from praxis.governors.gns import BatchTierController, GradientNoiseEstimator
 
 
@@ -62,6 +75,24 @@ class GNSBatchGovernor(Callback):
     # Optimizer steps between tier decisions. Each decision is the one host
     # sync (.item()) the governor performs; per-step work stays on device.
     decide_every = 16
+
+    # Decision windows between MEASURING windows, when measuring is not free.
+    #
+    # The two-point estimator needs a step split into at least two microbatches.
+    # Above the row ceiling that split is forced by memory anyway, so every step
+    # measures at no cost. At or below the ceiling it is not: splitting a 4-row
+    # batch into 2x2 runs two forwards where one would do, doubling step cost
+    # for identical data. Paying that on every step is the wrong trade, because
+    # the measurement is CONSUMED once per `decide_every` steps - 15 of every 16
+    # splits bought nothing the controller reads.
+    #
+    # One measuring window in four keeps the estimator fed (16 observations per
+    # measuring window against `min_updates=8` and an ~20-observation EMA
+    # memory) while cutting the tax from 100% of small-batch steps to 25%. The
+    # cost is staleness: with the batch below the ceiling, a change in B_noise
+    # is seen up to three windows late. B_noise tracks the loss, which does not
+    # move that fast.
+    MEASURE_EVERY = 4
 
     # Initial placeholder for Lightning's batch-modulo validation check,
     # in force only until the first batch ends and per-batch repointing takes
@@ -98,7 +129,12 @@ class GNSBatchGovernor(Callback):
         # a policy. Starting here preserves the pre-governor step-0 behaviour
         # while leaving the range open in both directions.
         self._rows = self.controller.clamp(self.row_ceiling * MIN_MICRO_BATCHES)
-        self._pending: Optional[int] = None
+        # Whether the current window splits its steps for the estimator. True to
+        # start: the initial batch is two full microbatches, so the split is
+        # forced by memory and the measurement is free.
+        self._measuring = True
+        self._windows = 0
+        self._pending: Optional[Tuple[int, bool]] = None
         self._steps = 0
         self._micro_count = 0
         self._micro_rows: Optional[int] = None  # observed rows, microbatch 1
@@ -114,14 +150,46 @@ class GNSBatchGovernor(Callback):
             row_ceiling=self.row_ceiling,
             effective_rows=self._rows,
             tiers=sequence_multiplier_tiers,
+            min_micro=self._min_micro(self._measuring),
         )
-        plan = plan_cycle(self._rows, self.row_ceiling)
+        plan = self._plan(self._rows, self._measuring)
         print(
             f"[Governor] gns_batch: effective batch in "
             f"[{self.controller.min_rows}, {self.controller.max_rows}] rows, "
             f"microbatch <= {self.row_ceiling} rows; starting at "
-            f"{self._rows} rows ({plan.accum} x {plan.micro_rows})"
+            f"{self._rows} rows ({plan.accum} x {plan.micro_rows}). Below "
+            f"{self.row_ceiling * MIN_MICRO_BATCHES} rows a step fits in one "
+            f"microbatch, so it splits only on 1 window in "
+            f"{self.MEASURE_EVERY} to sample the noise scale."
         )
+
+    # ── plan shape ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _min_micro(measuring: bool) -> int:
+        """Microbatches per step, minimum, for a measuring / exploiting window.
+
+        1 when not measuring: the ONLY reason to split a step that already fits
+        in one microbatch is the estimator's second point.
+        """
+        return MIN_MICRO_BATCHES if measuring else 1
+
+    def _plan(self, rows: int, measuring: bool) -> BatchPlan:
+        return plan_cycle(
+            rows, self.row_ceiling, min_micro_batches=self._min_micro(measuring)
+        )
+
+    def _split_is_free(self, rows: int) -> bool:
+        """True when the ceiling forces >= 2 microbatches regardless.
+
+        There the second measurement point costs nothing, so the governor never
+        stops measuring - the duty cycle exists only for the regime where the
+        split is the sole reason the step is divided at all.
+        """
+        return math.ceil(rows / self.row_ceiling) >= MIN_MICRO_BATCHES
+
+    def _should_measure(self, rows: int) -> bool:
+        return self._split_is_free(rows) or self._windows % self.MEASURE_EVERY == 0
 
     # ── lifecycle ─────────────────────────────────────────────────────────
 
@@ -164,11 +232,11 @@ class GNSBatchGovernor(Callback):
         Lightning steps on and the microbatch rows the data pipeline builds can
         never disagree about how many rows a step contains.
         """
-        BatchSchedule.set_effective_rows(self._rows)
+        BatchSchedule.set_effective_rows(
+            self._rows, min_micro=self._min_micro(self._measuring)
+        )
         BatchSchedule.restart_cycle()
-        trainer.accumulate_grad_batches = plan_cycle(
-            self._rows, self.row_ceiling
-        ).accum
+        trainer.accumulate_grad_batches = self._plan(self._rows, self._measuring).accum
 
     # ── measurement ───────────────────────────────────────────────────────
 
@@ -222,12 +290,26 @@ class GNSBatchGovernor(Callback):
             self._delivered_n += 1
         self._stepped = True
         self._steps += 1
-        if self._steps % self.decide_every == 0 and self.estimator.ready:
-            noise = self.estimator.noise_scale()  # the one host sync
-            desired = self.controller.desired_rows(
-                self._rows, noise, measured=self._delivered_mean()
+        if self._steps % self.decide_every == 0:
+            self._windows += 1
+            noise = (
+                self.estimator.noise_scale() if self.estimator.ready else None
+            )  # the one host sync
+            desired = (
+                self.controller.desired_rows(
+                    self._rows, noise, measured=self._delivered_mean()
+                )
+                if noise is not None
+                else self._rows
             )
-            self._pending = desired if desired != self._rows else None
+            # The window's measuring mode is part of the plan, so a change in it
+            # alone still has to go through the aligned commit - it moves accum.
+            measuring = self._should_measure(desired)
+            self._pending = (
+                (desired, measuring)
+                if (desired != self._rows or measuring != self._measuring)
+                else None
+            )
             self._stash(pl_module, noise_scale=noise)
             self._delivered_sum = 0.0
             self._delivered_n = 0
@@ -249,9 +331,10 @@ class GNSBatchGovernor(Callback):
         last_cycle_rows = self._cycle_rows
         self._reset_cycle()
         if self._pending is not None:
-            accum = plan_cycle(self._pending, self.row_ceiling).accum
+            rows, measuring = self._pending
+            accum = self._plan(rows, measuring).accum
             if self._aligned(trainer, accum):
-                self._rows = self._pending
+                self._rows, self._measuring = rows, measuring
                 self._pending = None
                 self._publish(trainer)
                 self._stash(
@@ -346,6 +429,7 @@ class GNSBatchGovernor(Callback):
         return {
             "effective_rows": self._rows,
             "steps": self._steps,
+            "windows": self._windows,
             "estimator": self.estimator.state_dict(),
         }
 
@@ -361,8 +445,17 @@ class GNSBatchGovernor(Callback):
             rows = self._rows
         self._rows = self.controller.clamp(rows)
         self._steps = int(state.get("steps", 0))
+        self._windows = int(state.get("windows", 0))
         est = state.get("estimator")
         if isinstance(est, dict):
             self.estimator.load_state_dict(est)
-        BatchSchedule.set_effective_rows(self._rows)
+        # Resume MEASURING regardless of which phase the checkpoint stopped in.
+        # The estimator's EMA is restored but the run's gradients are not the
+        # ones it was fitted on; taking a fresh window of observations before
+        # the first decision costs one window and avoids steering on a stale
+        # fit. Free anyway whenever the batch sits above the ceiling.
+        self._measuring = True
+        BatchSchedule.set_effective_rows(
+            self._rows, min_micro=self._min_micro(self._measuring)
+        )
         BatchSchedule.restart_cycle()

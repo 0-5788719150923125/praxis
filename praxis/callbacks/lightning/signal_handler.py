@@ -23,6 +23,12 @@ class SignalHandlerCallback(Callback):
         self.signal_count = 0
         self.trainer_ref = None
         self.datamodule_ref = None
+        # Bound here, not only in on_fit_start: a signal arriving before the
+        # fit starts (dataset setup can take minutes) otherwise raised
+        # AttributeError inside the cleanup thread, skipping every remaining
+        # step - dataloaders, CUDA, wandb, and the force-exit watchdog that is
+        # the last line of defence against a hung shutdown.
+        self.terminal_interface = None
         self.shutdown_lock = threading.Lock()
         self.cuda_manager = get_cuda_shutdown_manager()
 
@@ -53,37 +59,82 @@ class SignalHandlerCallback(Callback):
         signal.signal(signal.SIGINT, self._handle_signal)
         signal.signal(signal.SIGTERM, self._handle_signal)
 
+    @staticmethod
+    def _emit(message: str) -> None:
+        """Print from signal context without ever raising.
+
+        Python delivers a signal handler on the MAIN thread between bytecodes,
+        so anything this raises surfaces as an exception at whatever line the
+        main thread happened to be executing - a traceback rooted in unrelated
+        code (a matmul, an optimizer scan) that the caller then has no way to
+        recognise as "the user pressed Ctrl+C". A closed or detached stdout is
+        enough to trigger it: printing to one raises ValueError("I/O operation
+        on closed file"), and a clean cancellation gets reported as a crash.
+
+        stdout is tried first (the dashboard captures it into the log panel),
+        then the process's real stderr, then nothing at all. Silence is the
+        correct last resort here - the shutdown itself still proceeds.
+        """
+        for stream in (sys.stdout, sys.__stderr__):
+            try:
+                if stream is None or getattr(stream, "closed", False):
+                    continue
+                stream.write(message)
+                stream.flush()
+                return
+            except Exception:
+                continue
+
     def _handle_signal(self, signum, frame):
-        """Handle shutdown signals with minimal operations in signal context."""
-        with self.shutdown_lock:
-            self.signal_count += 1
+        """Handle shutdown signals with minimal operations in signal context.
 
-            if self.signal_count == 1:
-                # First signal: Minimal work in signal handler
-                print(f"\n🛑 Gracefully stopping training...")
+        Total by construction: nothing here may propagate, because an exception
+        escaping a signal handler is indistinguishable from a genuine crash in
+        the code it interrupted. Each step is independently guarded so a failure
+        in one (a dead stream, a half-torn-down trainer) cannot skip the rest.
+        """
+        try:
+            with self.shutdown_lock:
+                self.signal_count += 1
+                count = self.signal_count
+        except Exception:
+            count = 1
 
-                # Set flags only - no complex operations in signal handler
+        if count == 1:
+            # Flag FIRST, announce second: the flag is what stops training and
+            # what lets teardown tell a cancellation from a crash, so it must
+            # not be downstream of an I/O call that can fail.
+            try:
                 self.cuda_manager.request_shutdown()
+            except Exception:
+                pass
+            try:
                 if self.trainer_ref is not None:
                     self.trainer_ref.should_stop = True
-
-                # Defer all cleanup to a thread outside signal context
+            except Exception:
+                pass
+            self._emit("\n🛑 Gracefully stopping training...\n")
+            # Defer all cleanup to a thread outside signal context
+            try:
                 threading.Thread(target=self._deferred_cleanup, daemon=True).start()
+            except Exception:
+                pass
+            # DON'T re-send the signal - just return and let Lightning handle
+            # shutdown.
+            return
 
-                # DON'T re-send the signal - just return and let Lightning handle shutdown
-                return
-
-            elif self.signal_count == 2:
-                # Second signal: Still try to be gentle
-                print(f"\n⚠️  Forcing shutdown...")
-                # Perform immediate cleanup before exit
+        if count == 2:
+            # Second signal: Still try to be gentle
+            self._emit("\n⚠️  Forcing shutdown...\n")
+            try:
                 self._immediate_cleanup()
-                sys.exit(130)
+            except Exception:
+                pass
+            sys.exit(130)
 
-            else:
-                # Third+ signal: immediate hard exit
-                print(f"\n💀 Emergency exit!")
-                os._exit(130)
+        # Third+ signal: immediate hard exit
+        self._emit("\n💀 Emergency exit!\n")
+        os._exit(130)
 
     def _immediate_cleanup(self):
         """Perform immediate critical cleanup before forced exit."""
@@ -107,15 +158,26 @@ class SignalHandlerCallback(Callback):
         """Perform cleanup operations outside of signal handler context."""
         # This runs in a separate thread, avoiding signal handler restrictions
 
-        # 1. Restore terminal immediately (most important)
-        if self.terminal_interface and hasattr(self.terminal_interface, "dashboard"):
+        # 1. Restore terminal immediately (most important).
+        #
+        # Tell the interface it is shutting down BEFORE nulling the dashboard.
+        # Training keeps running for a few batches after the signal, and the
+        # inference hook falls back to printing when it finds no dashboard - so
+        # nulling it first dumps rolling-context text straight onto the restored
+        # terminal, mixed into whatever the shutdown is reporting.
+        terminal = getattr(self, "terminal_interface", None)
+        if terminal is not None:
             try:
-                dashboard = self.terminal_interface.dashboard
+                terminal.begin_shutdown()
+            except Exception:
+                pass
+            try:
+                dashboard = getattr(terminal, "dashboard", None)
                 if dashboard:
                     dashboard.stop()
                     dashboard.__exit__(None, None, None)
-                    self.terminal_interface.dashboard = None
-            except:
+                    terminal.dashboard = None
+            except Exception:
                 pass
 
         # Always try to restore cursor visibility
@@ -126,18 +188,20 @@ class SignalHandlerCallback(Callback):
             pass
 
         # 2. Stop dataloaders
-        if self.datamodule_ref and isinstance(self.datamodule_ref, PraxisDataModule):
-            try:
+        try:
+            if self.datamodule_ref and isinstance(
+                self.datamodule_ref, PraxisDataModule
+            ):
                 self.datamodule_ref.shutdown_dataloaders(timeout=0.5)
-            except:
-                pass
+        except Exception:
+            pass
 
         # 3. Quick CUDA cleanup
-        if torch.cuda.is_available():
-            try:
+        try:
+            if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            except:
-                pass
+        except Exception:
+            pass
 
         # 4. Signal wandb to finish
         try:
@@ -155,7 +219,7 @@ class SignalHandlerCallback(Callback):
 
             time.sleep(5.0)  # Give Lightning 5 seconds to stop gracefully
             if self.signal_count == 1:  # Only if still on first signal
-                print("\n⏱️  Timeout waiting for graceful shutdown, forcing exit...")
+                self._emit("\n⏱️  Timeout waiting for graceful shutdown, forcing exit...\n")
                 os._exit(130)
 
         watchdog = threading.Thread(target=force_exit_watchdog, daemon=True)

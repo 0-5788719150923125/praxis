@@ -39,6 +39,7 @@ class_name MaskEditor
 
 const SHADER := preload("res://shaders/mask_split.gdshader")
 const PAINT_SIM_SHADER := preload("res://shaders/clown_paint.gdshader")
+const UMBRA_SIM_SHADER := preload("res://shaders/umbra_field.gdshader")
 const MASKS_DIR := "res://masks"
 ## Ghost's OWN python venv - yt-dlp lives here, never the repo's venvs or the
 ## system site-packages. user:// keeps it out of res:// (the editor's file
@@ -187,6 +188,66 @@ var _clown_fs := 1.0   # the live clown layer's Scale knob - the sim's target si
 var _clown_bleed := 0.0    # its Bleed / Settle / Hollow knobs, fed to the paint sim
 var _clown_settle := 0.35
 var _clown_hollow := 0.0
+
+# --- UMBRA: the ghost in the subject's own cast shadow (see
+# _update_umbra_model and shaders/umbra_field.gdshader). The detector works on
+# a coarse grid - a cast shadow is a REGION, and regions survive downsampling
+# in a way the clown's eye sockets never did.
+const _UMB_W := 96
+const _UMB_H := 54
+const _UMBRA_INTERVAL := 0.15   # same cadence as the face model, same reasoning
+var _umbra_active := false
+var _umb_slot := -1
+# The wall the shadow falls on, as a chroma DIRECTION plus its lit level. A
+# near-static property of the scene, so it is EMA'd hard and the (more
+# expensive) multi-hypothesis re-pick only runs occasionally - see
+# _umb_repick_in.
+var _umb_ref_dir := Vector3(0.0, 0.0, 0.0)
+var _umb_ref_mag := 0.05
+var _umb_ref_lit := 0.6
+var _umb_ref_valid := false
+var _umb_repick_in := 0
+# The cast direction (her centroid -> the shadow's), aspect-corrected unit.
+# The light does not move, so this is smoothed almost to a constant: measured
+# over 15s of the reference clip it holds to +-3.6 degrees, and letting it
+# wander per-frame is exactly how the clown earned its uniform twitch.
+var _umb_dir_ema := Vector2(1.0, 0.0)
+var _umb_subj_c := Vector2(0.5, 0.55)
+var _umb_shad_c := Vector2(0.75, 0.40)
+var _umb_have := false
+var _umb_region_img: Image = null        # RGBA8 _UMB_W x _UMB_H: R=linked shadow,
+var _umb_region_tex: ImageTexture = null #   G=shadowness, B=subject mask
+# Scratch buffers, allocated once - this runs at ~7Hz and must not churn the heap.
+var _umb_lum := PackedFloat32Array()
+var _umb_cr := PackedFloat32Array()
+var _umb_cg := PackedFloat32Array()
+var _umb_cb := PackedFloat32Array()
+var _umb_cmag := PackedFloat32Array()
+var _umb_match := PackedFloat32Array()
+var _umb_shadow := PackedFloat32Array()
+var _umb_tmp := PackedFloat32Array()
+var _umb_tmp2 := PackedFloat32Array()
+var _umb_wmass := PackedFloat32Array()
+var _umb_wlum := PackedFloat32Array()
+var _umb_subj := PackedByteArray()
+var _umb_shad := PackedByteArray()
+var _umb_queue := PackedInt32Array()
+var _umb_bytes := PackedByteArray()
+# The umbra field simulation (ping-pong SubViewport pair, same discipline as
+# the clown's paint sim: stepped on PLAYBACK deltas so pause freezes it and
+# export traces the identical currents).
+var _umb_vps: Array = []
+var _umb_rects: Array = []
+var _umb_ping := 0
+var _umb_reset := true
+var _umb_last_pos := 0.0
+var _umb_hue := -1.0     # the live layer's key hue (biases the wall pick); <0 = none
+var _umb_loom := 0.45    # Coverage, with the audio swell already folded in
+var _umb_rise := 1.0     # Velocity
+var _umb_roil := 0.5     # Contrast
+var _umb_wisp := 0.0     # Wisp   (fx_smooth)
+var _umb_cling := 0.35   # Cling  (fx_lag)
+var _umb_scale := 1.0    # Scale
 var _selected: Variant = null   # the marker Dictionary currently shown in the panel
 
 var _color_a: ColorPickerButton
@@ -194,6 +255,7 @@ var _hue_a: HSlider   # the Morph slider (fx_tint - palette rotation), decoupled
 var _threshold: HSlider
 var _threshold_label: Label
 var _grp_color: VBoxContainer   # "Key color" swatch, pinned above the sortable options below
+var _key_color_label: Label     # retitled per effect (umbra's picker names the WALL, not a key)
 var _grp_options: VBoxContainer   # every effect option (label+slider pairs), reordered by _apply_sort
 var _options: Array = []          # [{label: Label, control: Control}], creation order - see _register_option
 var _sort_mode := 2                # index into _SORT_MODES - defaults to Energy, see _apply_sort
@@ -220,6 +282,9 @@ var _stick: HSlider  # fur's Stickiness - its OWN field (fx_stick, u_l_stick); 0
 var _bleed: HSlider   # clown's Bleed   - its view onto fx_smooth (see _gust/_undul for the idiom)
 var _settle: HSlider  # clown's Settle  - its view onto fx_lag
 var _hollow: HSlider  # clown's Hollow  - its view onto fx_stick
+var _wisp: HSlider        # umbra's Wisp  - its view onto fx_smooth
+var _cling: HSlider       # umbra's Cling - its view onto fx_lag
+var _umbra_depth: HSlider # umbra's Depth - its view onto fx_stick
 var _resonance: HSlider
 var _effect_a: OptionButton
 var _intensity_a: HSlider
@@ -1217,6 +1282,95 @@ func _step_paint_sim() -> void:
 	_paint_reset = false
 
 
+## UMBRA's field simulation host - the same ping-pong pair the clown's paint
+## uses, and for the same two hard-won reasons: transparent_bg because the
+## GUARD lives in the alpha channel and a non-transparent viewport FORCES
+## alpha to 1 (which would permit the mass everywhere, including on her), and
+## CLEAR_MODE_NEVER because the field IS the state.
+func _ensure_umbra_sim() -> void:
+	if not _umb_vps.is_empty():
+		return
+	for i in 2:
+		var vp := SubViewport.new()
+		vp.size = Vector2i(384, 216)
+		vp.disable_3d = true
+		vp.use_hdr_2d = true
+		vp.transparent_bg = true
+		vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
+		vp.render_target_clear_mode = SubViewport.CLEAR_MODE_NEVER
+		var rect := ColorRect.new()
+		rect.size = Vector2(384, 216)
+		var m := ShaderMaterial.new()
+		m.shader = UMBRA_SIM_SHADER
+		rect.material = m
+		vp.add_child(rect)
+		add_child(vp)
+		_umb_vps.append(vp)
+		_umb_rects.append(rect)
+
+
+## One simulation step per rendered frame while an umbra layer is live.
+## Stepped on PLAYBACK deltas, so pause freezes the mass mid-curl and the
+## export relaunch traces the identical currents; a seek snaps the field to its
+## targets rather than streaming smoke across the jump.
+func _step_umbra_sim() -> void:
+	if not _umbra_active or _player == null:
+		return
+	_ensure_umbra_sim()
+	var pos := _player.stream_position
+	var dtp := pos - _umb_last_pos
+	_umb_last_pos = pos
+	var reset := _umb_reset or dtp < -0.05 or dtp > 0.5
+	dtp = clampf(dtp, 0.0, 0.1)
+	if dtp <= 0.0 and not reset:
+		return
+	if not _umb_have or _umb_region_tex == null:
+		return   # no verdict yet - leave the field alone rather than deposit noise
+	var mat: ShaderMaterial = _umb_rects[_umb_ping].material
+	mat.set_shader_parameter("u_prev", _umb_vps[1 - _umb_ping].get_texture())
+	mat.set_shader_parameter("u_region", _umb_region_tex)
+	mat.set_shader_parameter("u_dt", dtp)
+	mat.set_shader_parameter("u_reset", 1 if reset else 0)
+	mat.set_shader_parameter("u_time", pos)
+	var vt := _player.get_video_texture()
+	if vt != null and vt.get_height() > 0:
+		mat.set_shader_parameter("u_aspect", float(vt.get_width()) / float(vt.get_height()))
+	mat.set_shader_parameter("u_dir", _umb_dir_ema)
+	mat.set_shader_parameter("u_loom", _umb_loom)
+	mat.set_shader_parameter("u_rise", _umb_rise)
+	mat.set_shader_parameter("u_roil", _umb_roil)
+	mat.set_shader_parameter("u_cling", _umb_cling)
+	mat.set_shader_parameter("u_wisp", _umb_wisp)
+	mat.set_shader_parameter("u_scale", _umb_scale)
+	_umb_vps[_umb_ping].render_target_update_mode = SubViewport.UPDATE_ONCE
+	for m2 in [_mat_main, _mat_inset]:
+		m2.set_shader_parameter("u_umbra_field", _umb_vps[_umb_ping].get_texture())
+	_umb_ping = 1 - _umb_ping
+	_umb_reset = false
+
+
+## The umbra model's own capture tick. Same discipline as _maybe_capture_face:
+## only during playback (or once when a scrub settles), never mid-drag - the
+## readback is a synchronous GPU stall.
+func _maybe_capture_umbra() -> void:
+	if not _umbra_active or _player == null or session == null:
+		return
+	var pos := _player.stream_position
+	if not _playing and absf(pos - _prev_pos) >= 0.0005:
+		return
+	var slot := int(pos / _UMBRA_INTERVAL)
+	if slot == _umb_slot:
+		return
+	var tex := _player.get_video_texture()
+	if tex == null:
+		return
+	var img := tex.get_image()
+	if img == null or img.is_empty():
+		return
+	_umb_slot = slot
+	_update_umbra_model(img)
+
+
 ## The audio envelope at clip-time `t` (0 when unavailable), lightly smoothed so
 ## the wisps swell rather than flicker frame-to-frame.
 func _env_at(t: float) -> float:
@@ -2204,7 +2358,8 @@ func _build_panel() -> void:
 	_grp_color = VBoxContainer.new()
 	_grp_color.add_theme_constant_override("separation", 8)
 	col.add_child(_grp_color)
-	_grp_color.add_child(_label("Key color", "The color this channel targets - what it keys or paints"))
+	_key_color_label = _label("Key color", "The color this channel targets - what it keys or paints")
+	_grp_color.add_child(_key_color_label)
 	_color_a = ColorPickerButton.new()
 	_color_a.focus_mode = Control.FOCUS_NONE
 	_color_a.custom_minimum_size = Vector2(0, 40)
@@ -2351,6 +2506,20 @@ func _build_panel() -> void:
 	_stick = _slider(_grp_options, "Stickiness", 0.0, 1.0, func(v): _edit("fx_stick", v),
 		"0 is a free coat, 1 clings to the face/motion")
 	_register_option(_stick)
+	# Umbra's own three - the same stored fields fur/snow/clown reuse under
+	# their own names (the groups never show together, so no schema growth).
+	_wisp = _slider(_grp_options, "Wisp", 0.0, 1.0, func(v): _edit("fx_smooth", v),
+		"How readily essence tears off the top of the mass and rises away, " +
+		"like smoke leaving a fire")
+	_register_option(_wisp)
+	_cling = _slider(_grp_options, "Cling", 0.0, 1.0, func(v): _edit("fx_lag", v),
+		"How long the shadow-mass holds its shape - higher is heavier and " +
+		"slower to follow her, lower is thinner and more restless")
+	_register_option(_cling)
+	_umbra_depth = _slider(_grp_options, "Depth", 0.0, 1.0, func(v): _edit("fx_stick", v),
+		"How much light the mass swallows - some of the wall always survives " +
+		"inside it, so it deepens the shadow rather than cutting a hole")
+	_register_option(_umbra_depth)
 
 	# Every marker is a ramp or a damp - there is no plain/neutral marker (see
 	# MaskSession class doc). Both transition TO this marker's values; the kind is
@@ -3318,6 +3487,423 @@ func _clown_model_now() -> Dictionary:
 	}
 
 
+# --- umbra: the cast-shadow detector -----------------------------------------
+
+## Separable box blur over the grid, via a RUNNING SUM - O(cells), not
+## O(cells x radius). The radii this detector wants are wide (a shadow is
+## big), and the naive form is what would make a ~7Hz GDScript pass expensive.
+## Edges CLAMP rather than wrap: wrapping folds the door on the left into the
+## wall on the right, which is precisely the contamination the whole detector
+## is built to avoid.
+func _umb_blur(src: PackedFloat32Array, dst: PackedFloat32Array, rx: int, ry: int) -> void:
+	var tmp := _umb_tmp2
+	if tmp.size() != src.size():
+		tmp.resize(src.size())
+		_umb_tmp2 = tmp
+	var wx := float(rx * 2 + 1)
+	for y in _UMB_H:
+		var row := y * _UMB_W
+		var acc := 0.0
+		for k in range(-rx, rx + 1):
+			acc += src[row + clampi(k, 0, _UMB_W - 1)]
+		for x in _UMB_W:
+			tmp[row + x] = acc / wx
+			acc -= src[row + clampi(x - rx, 0, _UMB_W - 1)]
+			acc += src[row + clampi(x + rx + 1, 0, _UMB_W - 1)]
+	var wy := float(ry * 2 + 1)
+	for x in _UMB_W:
+		var acc2 := 0.0
+		for k in range(-ry, ry + 1):
+			acc2 += tmp[clampi(k, 0, _UMB_H - 1) * _UMB_W + x]
+		for y in _UMB_H:
+			dst[y * _UMB_W + x] = acc2 / wy
+			acc2 -= tmp[clampi(y - ry, 0, _UMB_H - 1) * _UMB_W + x]
+			acc2 += tmp[clampi(y + ry + 1, 0, _UMB_H - 1) * _UMB_W + x]
+
+
+## Cell membership for ONE surface hypothesis: how much each cell looks like
+## `dir`-coloured material, and how much of that material is in shadow.
+##
+## MATCH THE SURFACE FIRST. A cast shadow is the same wall under less light,
+## so it keeps the wall's chroma DIRECTION and loses luminance. On the
+## reference clip the shadow aligns with the lit wall at dot=+0.99 while skin
+## (-0.96), hair (-0.96), a black shirt (-0.90), the mic (-0.80) and a cream
+## door (-0.75) all sit far away - and her hair is at the SAME luminance as
+## the shadow, so nothing luminance-based could have separated them. Leading
+## with darkness (and treating chroma as a bonus) was the first design, and it
+## simultaneously kept her whole face and threw away the shadow's own core.
+func _umb_analyse(dir: Vector3, mag: float, lit: float) -> void:
+	var n := _UMB_W * _UMB_H
+	# Is this surface coloured enough for a direction test to mean anything?
+	var chromatic := smoothstep(0.015, 0.040, mag)
+	for i in n:
+		var cmag := _umb_cmag[i]
+		var align := 0.0
+		if cmag > 1e-5:
+			align = (_umb_cr[i] * dir.x + _umb_cg[i] * dir.y + _umb_cb[i] * dir.z) / cmag
+		# Same material under less light also means proportionally LESS chroma,
+		# so a cell far off the expected magnitude is some other material that
+		# merely happens to point the same way.
+		var expect := mag * clampf(_umb_lum[i] / maxf(lit, 1e-3), 0.05, 1.5)
+		var rel := cmag / (expect + 1e-6)
+		var magfit := smoothstep(0.20, 0.70, rel) * (1.0 - smoothstep(1.9, 3.8, rel))
+		var chroma_match := smoothstep(0.35, 0.85, align) * magfit
+		# A COLOURLESS wall cannot be matched by direction at all (grey rooms,
+		# monochrome grades - the footage class that broke the clown's first
+		# cut). There the only honest statement is "a shadow on grey is also
+		# grey", so fall back to matching colourlessness itself.
+		var neutral := 1.0 - smoothstep(0.020, 0.055, cmag)
+		_umb_match[i] = neutral + chromatic * (chroma_match - neutral)
+	# The local lit level, estimated ONLY from cells that matched this surface.
+	# Estimating it from the neighbourhood at large is contaminated by whatever
+	# object is sitting there (her own bright face raising the bar right where
+	# the shadow is), which is what made the first cut classify her cheek as
+	# shadowed wall.
+	if _umb_wmass.size() != n:
+		_umb_wmass.resize(n)
+		_umb_wlum.resize(n)
+	for i in n:
+		_umb_tmp[i] = 1.0 if _umb_match[i] > 0.5 else 0.0
+	_umb_blur(_umb_tmp, _umb_wmass, 14, 9)
+	for i in n:
+		_umb_tmp[i] = _umb_lum[i] * (1.0 if _umb_match[i] > 0.5 else 0.0)
+	_umb_blur(_umb_tmp, _umb_wlum, 14, 9)
+	var floor_lit := lit * 0.55
+	for i in n:
+		var llit := lit
+		if _umb_wmass[i] > 0.02:
+			llit = _umb_wlum[i] / _umb_wmass[i]
+		# A neighbourhood that is MOSTLY shadow would drag its own reference
+		# down and declare itself lit; the floor is what stops a large shadow
+		# from erasing its own middle.
+		llit = maxf(llit, floor_lit)
+		var ratio := _umb_lum[i] / maxf(llit, 1e-3)
+		var dark := 1.0 - smoothstep(0.60, 0.88, ratio)
+		_umb_shadow[i] = _umb_match[i] * dark
+
+
+## Flood fill over the grid from `seeds`, through cells where `pass_fn` holds.
+## Returns how many cells were claimed. Iterative with a preallocated queue -
+## recursion depth on a 96x54 grid is not something to hand to GDScript.
+func _umb_flood(out: PackedByteArray, seeds: PackedInt32Array, field: PackedFloat32Array,
+		thr: float, blocked: PackedByteArray, limit: int) -> int:
+	var n := _UMB_W * _UMB_H
+	for i in n:
+		out[i] = 0
+	if _umb_queue.size() < n:
+		_umb_queue.resize(n)
+	var head := 0
+	var tail := 0
+	for s in seeds:
+		if out[s] == 0 and field[s] > thr and (blocked.is_empty() or blocked[s] == 0):
+			out[s] = 1
+			_umb_queue[tail] = s
+			tail += 1
+	var claimed := 0
+	while head < tail and claimed < limit:
+		var idx := _umb_queue[head]
+		head += 1
+		claimed += 1
+		var x := idx % _UMB_W
+		var y := idx / _UMB_W
+		for d in 4:
+			var nx := x + (1 if d == 0 else (-1 if d == 1 else 0))
+			var ny := y + (1 if d == 2 else (-1 if d == 3 else 0))
+			if nx < 0 or nx >= _UMB_W or ny < 0 or ny >= _UMB_H:
+				continue
+			var ni := ny * _UMB_W + nx
+			if out[ni] != 0 or field[ni] <= thr:
+				continue
+			if not blocked.is_empty() and blocked[ni] != 0:
+				continue
+			out[ni] = 1
+			if tail < n:
+				_umb_queue[tail] = ni
+				tail += 1
+	return claimed
+
+
+## Run both floods for the CURRENT contents of _umb_match/_umb_shadow, and
+## score how coherent the resulting scene is. Returns {score, subj_n, shad_n}.
+##
+## LINKAGE IS STRUCTURAL. The subject flood grows from the most not-this-wall
+## cell near frame centre; the shadow flood may only start from cells TOUCHING
+## the subject and may never enter it. So every cell the shadow flood reaches
+## is contiguous with her - "the shadow is linked to the human" is not a
+## similarity score here, it is the shape of the search.
+func _umb_solve(aspect: float) -> Dictionary:
+	var n := _UMB_W * _UMB_H
+	# foreign = not this surface. Reuse _umb_tmp as the flood's field.
+	var best := -1.0
+	var seed := 0
+	for y in _UMB_H:
+		for x in _UMB_W:
+			var i := y * _UMB_W + x
+			var foreign := 1.0 - _umb_match[i]
+			_umb_tmp[i] = foreign
+			var px := (float(x) + 0.5) / float(_UMB_W)
+			var py := (float(y) + 0.5) / float(_UMB_H)
+			# the ASMR framing prior the face model leans on too
+			var dx := (px - 0.5) * aspect
+			var dy := py - 0.55
+			var prior: float = exp(-(dx * dx / 0.30 + dy * dy / 0.45))
+			var sc := foreign * prior
+			if sc > best:
+				best = sc
+				seed = i
+	var seeds := PackedInt32Array([seed])
+	var subj_n := _umb_flood(_umb_subj, seeds, _umb_tmp, 0.5, PackedByteArray(), n)
+	# Seed the shadow from the subject's own boundary.
+	var edge := PackedInt32Array()
+	for y in _UMB_H:
+		for x in _UMB_W:
+			var i := y * _UMB_W + x
+			if _umb_subj[i] != 0:
+				continue
+			var touch := false
+			for d in 4:
+				var nx := x + (1 if d == 0 else (-1 if d == 1 else 0))
+				var ny := y + (1 if d == 2 else (-1 if d == 3 else 0))
+				if nx >= 0 and nx < _UMB_W and ny >= 0 and ny < _UMB_H \
+						and _umb_subj[ny * _UMB_W + nx] != 0:
+					touch = true
+					break
+			if touch:
+				edge.append(i)
+	var shad_n := _umb_flood(_umb_shad, edge, _umb_shadow, 0.45, _umb_subj, int(n * 0.45))
+	# Scene coherence. Under the RIGHT surface the subject flood covers the
+	# middle of the frame; under the wrong one (her warm skin voting the cream
+	# door in as "the wall") the "subject" comes out as the far wall instead,
+	# which covers almost none of the prior. That mismatch IS the test.
+	# NOT penalised for claiming a large area: under the right hypothesis the
+	# subject legitimately absorbs every other non-wall surface (the door, the
+	# mic), which is harmless - it only ever means "no ghost there". Penalising
+	# it was what handed three of eight test frames to the door.
+	var cov := 0.0
+	var pw := 0.0
+	for y in _UMB_H:
+		for x in _UMB_W:
+			var i := y * _UMB_W + x
+			var px2 := (float(x) + 0.5) / float(_UMB_W)
+			var py2 := (float(y) + 0.5) / float(_UMB_H)
+			var dx2 := (px2 - 0.5) * aspect
+			var dy2 := py2 - 0.55
+			var pr: float = exp(-(dx2 * dx2 / 0.30 + dy2 * dy2 / 0.45))
+			pw += pr
+			if _umb_subj[i] != 0:
+				cov += pr
+	cov = cov / maxf(pw, 1e-5)
+	var frac := float(subj_n) / float(n)
+	var sane := cov * (1.0 - smoothstep(0.93, 0.99, frac))
+	var score := sane * (0.35 + 0.65 * smoothstep(10.0, 220.0, float(shad_n)))
+	return {"score": score, "subj_n": subj_n, "shad_n": shad_n}
+
+
+## THE UMBRA MODEL, fitted per capture tick. Finds the surface the subject's
+## shadow falls on, the shadow region linked to her, and the direction the
+## light throws it - then packs the verdict into a small texture the field
+## simulation deposits into. See MaskSession's "umbra" doc for the whole idea.
+func _update_umbra_model(src: Image) -> void:
+	var n := _UMB_W * _UMB_H
+	if _umb_lum.size() != n:
+		_umb_lum.resize(n); _umb_cr.resize(n); _umb_cg.resize(n); _umb_cb.resize(n)
+		_umb_cmag.resize(n); _umb_match.resize(n); _umb_shadow.resize(n)
+		_umb_tmp.resize(n); _umb_subj.resize(n); _umb_shad.resize(n)
+	var aspect := 1.7778
+	if src.get_height() > 0:
+		aspect = float(src.get_width()) / float(src.get_height())
+	var img: Image = src.duplicate()
+	img.resize(_UMB_W, _UMB_H, Image.INTERPOLATE_BILINEAR)
+	if img.get_format() != Image.FORMAT_RGBA8:
+		img.convert(Image.FORMAT_RGBA8)
+	var data := img.get_data()
+	for i in n:
+		var b := i * 4
+		var r := float(data[b]) / 255.0
+		var g := float(data[b + 1]) / 255.0
+		var bl := float(data[b + 2]) / 255.0
+		var l := 0.299 * r + 0.587 * g + 0.114 * bl
+		_umb_lum[i] = l
+		var cr := r - l
+		var cg := g - l
+		var cb := bl - l
+		_umb_cr[i] = cr; _umb_cg[i] = cg; _umb_cb[i] = cb
+		_umb_cmag[i] = sqrt(cr * cr + cg * cg + cb * cb)
+	# --- which surface is the shadow on?
+	# The re-pick is the only expensive part (it runs the whole solve once per
+	# candidate), and the answer is a property of the ROOM, not of the frame -
+	# so it runs on the first tick and occasionally after, and the rest of the
+	# time the stored reference is simply reused.
+	_umb_repick_in -= 1
+	if not _umb_ref_valid or _umb_repick_in <= 0:
+		_umb_repick_in = 40   # ~6s at the 0.15s capture cadence
+		_umb_pick_reference(aspect)
+	if not _umb_ref_valid:
+		_umb_have = false
+		return
+	_umb_analyse(_umb_ref_dir, _umb_ref_mag, _umb_ref_lit)
+	var res := _umb_solve(aspect)
+	if int(res.shad_n) < 8 or int(res.subj_n) < 8:
+		_umb_have = false
+		return
+	# --- centroids and the cast direction
+	var sacc := Vector2.ZERO
+	var hacc := Vector2.ZERO
+	var sw := 0.0
+	var hw := 0.0
+	for y in _UMB_H:
+		for x in _UMB_W:
+			var i := y * _UMB_W + x
+			var p := Vector2((float(x) + 0.5) / float(_UMB_W), (float(y) + 0.5) / float(_UMB_H))
+			if _umb_subj[i] != 0:
+				sacc += p; sw += 1.0
+			if _umb_shad[i] != 0:
+				hacc += p; hw += 1.0
+	var subj_c := sacc / maxf(sw, 1.0)
+	var shad_c := hacc / maxf(hw, 1.0)
+	_umb_subj_c = subj_c
+	_umb_shad_c = shad_c
+	var d := (shad_c - subj_c) * Vector2(aspect, 1.0)
+	if d.length() > 1e-4:
+		# Deliberately glacial. The light is furniture: it does not move, and a
+		# per-frame direction is a per-frame twitch in everything downstream.
+		_umb_dir_ema = (_umb_dir_ema.lerp(d.normalized(), 0.06)).normalized()
+	# --- pack the verdict for the field sim
+	# SOFTEN BOTH MASKS BEFORE UPLOAD. The floods are binary and the grid is
+	# coarse, so handing them over as-is drew the detector's own cell staircase
+	# straight into the picture (plainly visible in the first render). Blurred,
+	# they become ramps the field can feather across.
+	# Note the asymmetry: blurring the SUBJECT mask makes its exclusion start
+	# EARLIER (the guard ramps up before the hard edge), which is the safe
+	# direction - the one property this effect may not trade away is staying
+	# off her.
+	for i in n:
+		_umb_tmp[i] = 1.0 if _umb_shad[i] != 0 else 0.0
+	_umb_blur(_umb_tmp, _umb_wlum, 2, 2)
+	for i in n:
+		_umb_tmp[i] = 1.0 if _umb_subj[i] != 0 else 0.0
+	_umb_blur(_umb_tmp, _umb_wmass, 2, 2)
+	# Straight into a byte buffer: 5184 set_pixel() calls at ~7Hz is real cost
+	# for no reason when create_from_data takes the whole thing at once.
+	if _umb_bytes.size() != n * 4:
+		_umb_bytes.resize(n * 4)
+	for i in n:
+		var b4 := i * 4
+		_umb_bytes[b4] = int(clampf(_umb_wlum[i], 0.0, 1.0) * 255.0)
+		_umb_bytes[b4 + 1] = int(clampf(_umb_shadow[i], 0.0, 1.0) * 255.0)
+		_umb_bytes[b4 + 2] = int(clampf(_umb_wmass[i] * 1.35, 0.0, 1.0) * 255.0)
+		_umb_bytes[b4 + 3] = 255
+	_umb_region_img = Image.create_from_data(_UMB_W, _UMB_H, false, Image.FORMAT_RGBA8, _umb_bytes)
+	if _umb_region_tex == null:
+		_umb_region_tex = ImageTexture.create_from_image(_umb_region_img)
+	else:
+		_umb_region_tex.update(_umb_region_img)
+	_umb_have = true
+	if OS.has_environment("GHOST_UMBRA_DEBUG"):
+		print("UMBDBG t=%.2f ref=(%.2f,%.2f,%.2f) mag=%.3f lit=%.2f subj=%d shad=%d " % [
+			_player.stream_position, _umb_ref_dir.x, _umb_ref_dir.y, _umb_ref_dir.z,
+			_umb_ref_mag, _umb_ref_lit, int(res.subj_n), int(res.shad_n)]
+			+ "dir=(%.2f,%.2f) subjc=(%.2f,%.2f) shadc=(%.2f,%.2f) score=%.2f" % [
+			_umb_dir_ema.x, _umb_dir_ema.y, subj_c.x, subj_c.y, shad_c.x, shad_c.y,
+			float(res.score)])
+
+
+## Choose the wall. Buckets cells by their chroma vector's own angle (a surface
+## is a material is one direction), takes the largest few by area, and runs the
+## whole solve for each - the winner is the hypothesis that produces a coherent
+## scene, not the one that looks best locally. Every LOCAL statistic is
+## contaminated by the fact that her skin, hair and shirt are warm exactly like
+## the cream door, which is what defeated area-based and luminance-spread-based
+## picks on the reference clip.
+##
+## The key colour biases this hard: point the picker at the wall and that
+## surface wins outright. Left alone, the automatic choice stands.
+func _umb_pick_reference(aspect: float) -> void:
+	var n := _UMB_W * _UMB_H
+	const NB := 12
+	var cnt := PackedInt32Array(); cnt.resize(NB)
+	var sx := PackedFloat32Array(); sx.resize(NB)
+	var sy := PackedFloat32Array(); sy.resize(NB)
+	var sz := PackedFloat32Array(); sz.resize(NB)
+	var lums: Array = []
+	for b in NB:
+		cnt[b] = 0; sx[b] = 0.0; sy[b] = 0.0; sz[b] = 0.0
+		lums.append(PackedFloat32Array())
+	for i in n:
+		var cmag := _umb_cmag[i]
+		if cmag <= 0.015:
+			continue
+		var dx := _umb_cr[i] / cmag
+		var dy := _umb_cg[i] / cmag
+		var dz := _umb_cb[i] / cmag
+		var ang: float = atan2(dz - dy, dx - dy)
+		var b := int((ang + PI) / TAU * float(NB)) % NB
+		if b < 0:
+			b += NB
+		cnt[b] += 1
+		sx[b] += _umb_cr[i]; sy[b] += _umb_cg[i]; sz[b] += _umb_cb[i]
+		lums[b].append(_umb_lum[i])
+	# rank buckets by area, keep the top few as hypotheses
+	var order: Array = []
+	for b in NB:
+		if cnt[b] >= 40:
+			order.append(b)
+	order.sort_custom(func(a, c): return cnt[a] > cnt[c])
+	if order.is_empty():
+		_umb_ref_valid = false
+		return
+	# The picked key colour's own chroma direction - what the user means by
+	# "this is the wall".
+	var want := Vector3.ZERO
+	if _umb_hue >= 0.0:
+		var kc := Color.from_hsv(_umb_hue, 1.0, 1.0)
+		var kl := 0.299 * kc.r + 0.587 * kc.g + 0.114 * kc.b
+		want = Vector3(kc.r - kl, kc.g - kl, kc.b - kl).normalized()
+	var best_score := -1.0
+	var best_dir := Vector3.ZERO
+	var best_mag := 0.05
+	var best_lit := 0.6
+	for k in mini(3, order.size()):
+		var b: int = order[k]
+		var mean := Vector3(sx[b], sy[b], sz[b]) / float(cnt[b])
+		var mag := mean.length()
+		if mag <= 1e-5:
+			continue
+		var dir := mean / mag
+		var ls: PackedFloat32Array = lums[b]
+		var sorted := Array(ls)
+		sorted.sort()
+		var lit: float = sorted[clampi(int(float(sorted.size()) * 0.88), 0, sorted.size() - 1)]
+		_umb_analyse(dir, mag, lit)
+		var r := _umb_solve(aspect)
+		var score := float(r.score)
+		if int(r.shad_n) < 8:
+			score *= 0.2
+		# An explicit pick should win outright without silently overriding a
+		# confident automatic answer when the picked hue matches nothing here.
+		if _umb_hue >= 0.0:
+			score *= 1.0 + 1.6 * maxf(0.0, dir.dot(want))
+		if score > best_score:
+			best_score = score
+			best_dir = dir
+			best_mag = mag
+			best_lit = lit
+	if best_score < 0.0:
+		_umb_ref_valid = false
+		return
+	if _umb_ref_valid and best_dir.dot(_umb_ref_dir) > 0.5:
+		# same surface as before - glide, so bucket quantization can't make the
+		# reference (and with it every threshold) jitter between ticks
+		_umb_ref_dir = _umb_ref_dir.lerp(best_dir, 0.25).normalized()
+		_umb_ref_mag = lerpf(_umb_ref_mag, best_mag, 0.25)
+		_umb_ref_lit = lerpf(_umb_ref_lit, best_lit, 0.25)
+	else:
+		_umb_ref_dir = best_dir
+		_umb_ref_mag = best_mag
+		_umb_ref_lit = best_lit
+	_umb_ref_valid = true
+
+
 # --- undo/redo ---------------------------------------------------------------
 
 ## Snapshot markers + the primary clip's trim + every track onto the undo
@@ -3656,7 +4242,19 @@ func _update_effect_controls(effect_id: int) -> void:
 	# emissives + crystal's glass + fur's key-tinted coat + clown's paint).
 	var has_morph: bool = effect_id in [1, 2, 5, MaskSession.EFFECT_CRYSTAL,
 		MaskSession.EFFECT_SNOW, MaskSession.EFFECT_FUR, MaskSession.EFFECT_SERPENT,
-		MaskSession.EFFECT_CLOWN]
+		MaskSession.EFFECT_CLOWN, MaskSession.EFFECT_UMBRA]
+	# Umbra's picker is not a key at all - it names the SURFACE the shadow
+	# falls on, which is the one piece of scene knowledge the detector cannot
+	# always infer alone. Saying so on the label is the difference between a
+	# working effect and a confusing one.
+	if _key_color_label != null:
+		if effect_id == MaskSession.EFFECT_UMBRA:
+			_key_color_label.text = "Wall color"
+			_key_color_label.tooltip_text = "The surface the shadow falls on - " + \
+				"pick it off the wall behind her. Leave it and the detector chooses on its own"
+		else:
+			_key_color_label.text = "Key color"
+			_key_color_label.tooltip_text = "The color this channel targets - what it keys or paints"
 	_show_field(_hue_a, has_morph)
 	_show_field(_threshold, groups.has("keying") or groups.has("reach"), _threshold_label)
 	if groups.has("reach"):
@@ -3690,6 +4288,9 @@ func _update_effect_controls(effect_id: int) -> void:
 	_show_field(_bleed, groups.has("clown"))
 	_show_field(_settle, groups.has("clown"))
 	_show_field(_hollow, groups.has("clown"))
+	_show_field(_wisp, groups.has("umbra"))
+	_show_field(_cling, groups.has("umbra"))
+	_show_field(_umbra_depth, groups.has("umbra"))
 	var is_oracle := effect_id == MaskSession.EFFECT_ORACLE
 	_fx_lag_label.text = "Lead (s)" if is_oracle else "Lag (s)"
 	_fx_lag_label.tooltip_text = "How far ahead it leads" if is_oracle else "How the past is worn"
@@ -3697,9 +4298,14 @@ func _update_effect_controls(effect_id: int) -> void:
 	var is_snow := effect_id == MaskSession.EFFECT_SNOW
 	var is_arealight := effect_id == MaskSession.EFFECT_AREALIGHT
 	var is_clown := effect_id == MaskSession.EFFECT_CLOWN
+	var is_umbra := effect_id == MaskSession.EFFECT_UMBRA
 	if is_snow:
 		_fx_contrast_label.text = "Sensitivity"
 		_fx_contrast_label.tooltip_text = "How far snow's fall reaches toward the subject"
+	elif is_umbra:
+		_fx_contrast_label.text = "Roil"
+		_fx_contrast_label.tooltip_text = "Turbulence in the mass - how hard the currents " + \
+			"churn inside it and how much its silhouette fluctuates"
 	elif is_clown:
 		_fx_contrast_label.text = "Smear"
 		_fx_contrast_label.tooltip_text = "How ragged and smeared the paint is - drooping eye " + \
@@ -3721,11 +4327,21 @@ func _update_effect_controls(effect_id: int) -> void:
 		if is_snow else "Shifts the pattern vertically over the frame"
 	_fx_y.tooltip_text = _fx_y_label.tooltip_text
 	var is_crystal := effect_id == MaskSession.EFFECT_CRYSTAL
-	_fx_density_label.text = "Stickiness" if is_crystal else ("Wear" if is_clown else "Coverage")
+	if is_crystal:
+		_fx_density_label.text = "Stickiness"
+	elif is_clown:
+		_fx_density_label.text = "Wear"
+	elif is_umbra:
+		_fx_density_label.text = "Loom"
+	else:
+		_fx_density_label.text = "Coverage"
 	if is_crystal:
 		_fx_density_label.tooltip_text = "Pull toward the tracked face's edges"
 	elif is_clown:
 		_fx_density_label.tooltip_text = "Cracks and chips in the white paint - 0 fresh coat, 1 ruined"
+	elif is_umbra:
+		_fx_density_label.tooltip_text = "How far the mass grows outward along the cast " + \
+			"direction, away from her - the looming"
 	else:
 		_fx_density_label.tooltip_text = "How much of the keyed region the pattern consumes - 0 untouched, 1 fully devoured"
 	_fx_density.tooltip_text = _fx_density_label.tooltip_text
@@ -4211,11 +4827,25 @@ func _apply_frame_state(p: Dictionary) -> void:
 	_chimera_active = false
 	_temporal_active = false
 	_clown_active = false
+	_umbra_active = false
 	_meta_amount = 0.0
 	for l in layers:
 		var le := int(l.get("effect_a", 0))
 		if le == MaskSession.EFFECT_CHIMERA:
 			_chimera_active = true
+		if le == MaskSession.EFFECT_UMBRA:
+			_umbra_active = true
+			_umb_hue = float(l.get("hue_a", 0.0))
+			_umb_scale = clampf(float(l.get("fx_scale", 1.0)), 0.3, 2.5)
+			# Resonance folds in here exactly as it does for the shader's
+			# density array below - the loom breathes with the audio, so on a
+			# talking clip the ghost surges when the subject speaks.
+			var ures := float(l.get("resonance", 0.0))
+			_umb_loom = clampf(float(l.get("fx_density", 0.45)) + 0.5 * ures * (env - 0.35), 0.0, 1.0)
+			_umb_roil = clampf(float(l.get("fx_contrast", 0.5)), 0.0, 1.0)
+			_umb_rise = maxf(0.05, float(l.get("fx_speed", 1.0)))
+			_umb_wisp = clampf(float(l.get("fx_smooth", 0.0)), 0.0, 1.0)
+			_umb_cling = clampf(float(l.get("fx_lag", 0.35)), 0.0, 1.0)
 		if le == MaskSession.EFFECT_CLOWN:
 			_clown_active = true
 			_clown_fs = clampf(float(l.get("fx_scale", 1.0)), 0.3, 2.5)
@@ -4526,6 +5156,7 @@ func _process(_dt: float) -> void:
 		_pip_view.texture = _player.get_video_texture()
 	_maybe_capture_echo()
 	_maybe_capture_face()
+	_maybe_capture_umbra()
 	# META: while a meta layer is live, capture the editor's own frame for the mirror
 	# and (in export) lerp the editor chrome into view. Both are gated on _meta_amount
 	# so the expensive readback only ever runs during an actual meta section.
@@ -4535,6 +5166,7 @@ func _process(_dt: float) -> void:
 		_apply_meta_chrome(_meta_amount)
 	_push_anchor()
 	_step_paint_sim()
+	_step_umbra_sim()
 	# Standing A/V drift correction (see _play: video is the master clock).
 	# 0.15s tolerance sits above audio mix-chunk granularity so this never
 	# chatters. Video ahead of audio: seek audio forward (a silent skip -
