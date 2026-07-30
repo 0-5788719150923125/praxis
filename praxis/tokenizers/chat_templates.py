@@ -130,6 +130,10 @@ class ChatFormat:
         result_role: Role carrying the tool result. Its boundary is where the
             runtime intercepts, executes, and splices the real result.
         reply_role: Role the runtime hands control back to after a tool result.
+        document_separator: Tokenizer attribute naming the id the packer writes
+            at the end of each document. ``None`` writes nothing. See
+            ``MessageQueueManager._tokenize_doc`` for why this is not optional
+            in practice.
     """
 
     name: str
@@ -143,11 +147,25 @@ class ChatFormat:
     call_role: str = "call"
     result_role: str = "tool"
     reply_role: str = "assistant"
+    document_separator: Optional[str] = "eos_token_id"
 
     @property
     def text_boundaries(self) -> bool:
         """True when turns are delimited by text rather than control tokens."""
         return self.boundary_style == "text"
+
+    @property
+    def uses_tool_tokens(self) -> bool:
+        """Whether rendered text ever contains the atomic tool-control tokens.
+
+        Tokenizers consult this before REGISTERING those tokens, because an id
+        the data never contains is still an id the output head can sample. The
+        byte-level head is exactly ``byte_alphabet_size`` wide (264 with the
+        tool tokens), so under ``prose`` four of those logits were reachable by
+        sampling and unreachable by training - which is why generations came
+        back with ``[TOOL_CALL]`` in them.
+        """
+        return self.tool_style == "tokens"
 
     def render_segments(
         self,
@@ -242,6 +260,57 @@ class ChatFormat:
                 ids.append(int(tid))
         return ids
 
+    def document_separator_id(self, tokenizer) -> Optional[int]:
+        """Id the packer appends after each document, or ``None``."""
+        if not self.document_separator:
+            return None
+        tid = getattr(tokenizer, self.document_separator, None)
+        return None if tid is None else int(tid)
+
+    # Named control ids that could conceivably reach the output head. Bytes
+    # start at OFFSET=4 in the byte-latent layout, so all four exist whether or
+    # not a format uses them - the ids below OFFSET are structural (the space
+    # patcher force-cuts on ``tokens < OFFSET``) and renumbering them would
+    # move every byte.
+    _NAMED_CONTROL_IDS = (
+        "pad_token_id",
+        "bos_token_id",
+        "eos_token_id",
+        "sep_token_id",
+    )
+
+    def produced_token_names(self) -> Tuple[str, ...]:
+        """Control tokens the training data actually makes a target."""
+        produced = {self.document_separator} if self.document_separator else set()
+        if not self.text_boundaries:
+            produced |= {"bos_token_id", "sep_token_id"}
+        return tuple(n for n in self._NAMED_CONTROL_IDS if n in produced)
+
+    def suppressed_token_ids(self, tokenizer) -> List[int]:
+        """Control ids to keep out of samples (``generate(suppress_tokens=)``).
+
+        Conditioning on a symbol the loss never makes a target is one thing;
+        SAMPLING it is another. Under ``prose`` the turn boundaries are plain
+        text, so ``[BOS]`` and ``[SEP]`` are never targets, yet they still hold
+        ids 1 and 3 - and two untrained logits out of 260 are enough for a
+        generation to come back with a bracketed token in it. ``[PAD]`` is in
+        the same position under both formats: the packer zero-fills the tail of
+        an under-filled sequence and the mask zeroes it out.
+
+        The document separator is deliberately NOT suppressed: the packer
+        writes it and the model is trained to produce it, so emitting it is the
+        model correctly ending a document.
+        """
+        produced = set(self.produced_token_names())
+        ids: List[int] = []
+        for name in self._NAMED_CONTROL_IDS:
+            if name in produced:
+                continue
+            tid = getattr(tokenizer, name, None)
+            if tid is not None and int(tid) not in ids:
+                ids.append(int(tid))
+        return ids
+
     def tool_call_messages(
         self,
         tool_name: str,
@@ -305,10 +374,13 @@ PROSE_FORMAT = ChatFormat(
     # inherits exactly the defect this format exists to remove.
     generated_roles=("assistant", "call"),
     boundary_style="text",
-    # No halt ids at all: [EOS] never appears in either template's output, and
-    # carrying a stop id the data never contains is the dead weight `default`
-    # already has. max_new_tokens is the backstop.
-    stop_token_names=(),
+    # The TEMPLATE emits no control token, but the PACKER terminates every
+    # document with `document_separator` - so [EOS] does occur in the data, as
+    # the one control token this format keeps, and halting on it is honest
+    # rather than dead weight. The stop STRINGS below remain the primary halt:
+    # a turn normally ends by naming the next speaker, and only the last turn
+    # of a document reaches the separator.
+    stop_token_names=("eos_token_id",),
     stop_roles=("user", "system", "developer", "call", "tool"),
     tool_style="roles",
 )

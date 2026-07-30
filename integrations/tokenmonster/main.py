@@ -188,6 +188,7 @@ class TokenMonsterTokenizer(
         vocab_name: str = f"{DEFAULT_DATASET}-32000-{DEFAULT_MODE}-v1",
         vocab_file: Optional[str] = None,
         chat_template: Optional[str] = None,
+        chat_format: Optional[Any] = None,
         **kwargs,
     ):
         if vocab_file is not None and Path(vocab_file).exists():
@@ -210,9 +211,18 @@ class TokenMonsterTokenizer(
             self.SPECIAL_TOKEN_STRINGS["eos_token"]: self.EOS_ID,
             self.SPECIAL_TOKEN_STRINGS["sep_token"]: self.SEP_ID,
         }
+        # Tool tokens sit between the named specials and the TokenMonster ids,
+        # so skipping them shifts `_offset` down by 4. That is self-consistent
+        # (vocab_size and every encode/decode path derive from `_offset`), but
+        # it does mean a prose checkpoint's ids are not a default checkpoint's.
         next_id = max(self._special_id_map.values()) + 1
-        for idx, tok in enumerate(self.TOOL_SPECIAL_TOKEN_STRINGS):
-            self._special_id_map[tok] = next_id + idx
+        self._tool_special_id_map: Dict[str, int] = {}
+        if self._wants_tool_tokens(chat_format):
+            self._tool_special_id_map = {
+                tok: next_id + idx
+                for idx, tok in enumerate(self.TOOL_SPECIAL_TOKEN_STRINGS)
+            }
+        self._special_id_map.update(self._tool_special_id_map)
         self._id_to_special = {v: k for k, v in self._special_id_map.items()}
         self._offset = max(self._special_id_map.values()) + 1
 
@@ -220,7 +230,7 @@ class TokenMonsterTokenizer(
             kwargs.setdefault(name, value)
         # HF requires an unk_token; reuse PAD rather than add a 5th named special.
         kwargs.setdefault("unk_token", self.SPECIAL_TOKEN_STRINGS["pad_token"])
-        self._inject_tool_tokens_kwargs(kwargs)
+        self._inject_tool_tokens_kwargs(kwargs, chat_format)
 
         super().__init__(**kwargs)
 

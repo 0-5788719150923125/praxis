@@ -183,8 +183,12 @@ def create_tokenizer(
             apply_chat_format(loaded, requested_format)
             return loaded
 
+    # The format has to reach the CONSTRUCTOR, not just apply_chat_format:
+    # which control tokens exist is decided while the vocab is being built, and
+    # byte_alphabet_size (hence the model's output head) is derived from it.
+    # apply_chat_format still binds template + record afterwards.
     factory = TOKENIZER_REGISTRY[tokenizer_type]
-    tokenizer = factory(vocab_size=vocab_size, **kwargs)
+    tokenizer = factory(vocab_size=vocab_size, chat_format=requested_format, **kwargs)
     apply_chat_format(tokenizer, requested_format)
     return tokenizer
 

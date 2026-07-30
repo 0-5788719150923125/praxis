@@ -1104,6 +1104,16 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         penalizers = LogitsProcessorList()
         if rep_penalty != 1.0:
             penalizers.append(RepetitionPenaltyLogitsProcessor(penalty=rep_penalty))
+        # This loop owns its sampling, so transformers never builds its own
+        # processor list - suppress_tokens has to be honored here explicitly or
+        # a control token the format never trains stays sampleable.
+        suppress = getattr(generation_config, "suppress_tokens", None)
+        if suppress:
+            from transformers import SuppressTokensLogitsProcessor
+
+            penalizers.append(
+                SuppressTokensLogitsProcessor(list(suppress), device=input_ids.device)
+            )
         warpers = LogitsProcessorList()
         if do_sample:
             if top_k:

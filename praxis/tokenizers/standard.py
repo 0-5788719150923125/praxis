@@ -49,6 +49,7 @@ class StandardTokenizer(
         vocab_size: int = 32768,
         dropout: float = 0.1,
         chat_template: Optional[str] = None,
+        chat_format: Optional[Any] = None,
         **kwargs,
     ):
         """
@@ -65,6 +66,8 @@ class StandardTokenizer(
         self.tokenizer_type = tokenizer_type
         self._vocab_size = vocab_size
         self.dropout = dropout
+        # Recorded before super().__init__ so _create_tokenizer can consult it.
+        self._tool_tokens_wanted = self._wants_tool_tokens(chat_format)
 
         # Initialize named special tokens
         for token_name, token_value in self.SPECIAL_TOKENS.items():
@@ -73,7 +76,7 @@ class StandardTokenizer(
 
         # Register tool tokens so skip_special_tokens strips them and
         # the underlying tokenizer encodes them as single ids.
-        self._inject_tool_tokens_kwargs(kwargs)
+        self._inject_tool_tokens_kwargs(kwargs, chat_format)
 
         # Create or use provided tokenizer object
         if tokenizer_object is None:
@@ -86,9 +89,10 @@ class StandardTokenizer(
 
         # Ensure the underlying tokenizer has the tool tokens even when
         # constructed from a preloaded tokenizer_object.
-        self.add_special_tokens(
-            {"additional_special_tokens": list(self.TOOL_SPECIAL_TOKEN_STRINGS)}
-        )
+        if self._tool_tokens_wanted:
+            self.add_special_tokens(
+                {"additional_special_tokens": list(self.TOOL_SPECIAL_TOKEN_STRINGS)}
+            )
 
         # Set chat template
         if chat_template is None:
@@ -120,10 +124,10 @@ class StandardTokenizer(
         tokenizer.decoder = decoders.ByteLevel()
         tokenizer.post_processor = processors.ByteLevel()
 
-        # Add special tokens (named + tool-control)
-        all_special_tokens = list(self.SPECIAL_TOKENS.values()) + list(
-            self.TOOL_SPECIAL_TOKEN_STRINGS
-        )
+        # Add special tokens (named + tool-control when the format uses them)
+        all_special_tokens = list(self.SPECIAL_TOKENS.values())
+        if self._tool_tokens_wanted:
+            all_special_tokens += list(self.TOOL_SPECIAL_TOKEN_STRINGS)
         tokenizer.add_special_tokens(all_special_tokens)
 
         return tokenizer
@@ -148,9 +152,9 @@ class StandardTokenizer(
             vocab_size = self._vocab_size
 
         # Get all special tokens (named + tool-control + caller-provided)
-        all_special_tokens = list(self.SPECIAL_TOKENS.values()) + list(
-            self.TOOL_SPECIAL_TOKEN_STRINGS
-        )
+        all_special_tokens = list(self.SPECIAL_TOKENS.values())
+        if getattr(self, "_tool_tokens_wanted", True):
+            all_special_tokens += list(self.TOOL_SPECIAL_TOKEN_STRINGS)
         additional_special_tokens = kwargs.get("additional_special_tokens", [])
         all_special_tokens = list(set(all_special_tokens + additional_special_tokens))
 

@@ -206,9 +206,17 @@ def test_prose_boundary_costs_fewer_patches(prose_tokenizer):
 # --------------------------------------------------------------- halting
 
 
-def test_prose_declares_stop_strings_not_ids(prose_tokenizer, default_tokenizer):
+def test_prose_halts_on_strings_plus_the_one_retained_id(
+    prose_tokenizer, default_tokenizer
+):
+    """Turn boundaries are strings; the document separator is the sole id.
+
+    prose keeps exactly one control token - the packer's document separator -
+    and halting on it is honest because the data contains it. Any OTHER id
+    would be dead weight, so the list is pinned to length one.
+    """
     prose = chat_format_of(prose_tokenizer)
-    assert prose.stop_token_ids(prose_tokenizer) == []
+    assert prose.stop_token_ids(prose_tokenizer) == [prose_tokenizer.eos_token_id]
     assert "\n\nuser\n\n" in prose.stop_strings()
 
     default = chat_format_of(default_tokenizer)
@@ -453,8 +461,11 @@ def test_prose_survives_the_packer(prose_tokenizer):
         assert seq.shape == mask.shape
         text = prose_tokenizer.decode(seq, skip_special_tokens=False)
         assert "[BOS]" not in text
-        # Doc-to-doc seams still read as a boundary.
-        assert "Tokyo.\n\nsystem\n\n" in text
+        assert "[SEP]" not in text
+        assert "[TOOL_CALL]" not in text
+        # Doc-to-doc seams read as a boundary, with the one retained control
+        # token marking where one document ended and the next began.
+        assert "Tokyo.\n\n[EOS]system\n\n" in text
     assert manager.get_validation_stats()["documents_skipped"] == 0
 
 
@@ -675,3 +686,156 @@ def test_packer_uses_the_exact_mask(prose_tokenizer):
     assert "— the answer is 34." in trained
     assert "Summer." in trained
     assert "1156" not in trained
+
+
+# ------------------------------------------------- control-token inventory
+#
+# The head is exactly as wide as the tokenizer's alphabet, so every id the
+# format cannot make a target is an id sampling can still pick. These pin the
+# inventory in both directions: what must not exist, and what must.
+
+
+def test_prose_does_not_register_the_tool_tokens(prose_tokenizer, default_tokenizer):
+    """No [TOOL_CALL] id under prose - it lays tool calls out as ordinary turns.
+
+    Registering them anyway is not cosmetic: byte_alphabet_size counts them and
+    the model's output head is sized from it, so four logits would exist that no
+    training example can ever make a target.
+    """
+    assert not prose_tokenizer.tool_tokens_registered
+    assert "[TOOL_CALL]" not in prose_tokenizer.get_vocab()
+    assert prose_tokenizer.tool_call_token_id is None
+    # The string is now ordinary text, so it encodes to its bytes.
+    assert len(prose_tokenizer.encode("[TOOL_CALL]")) == len("[TOOL_CALL]")
+
+    # default keeps them: its template renders them as atomic markers.
+    assert default_tokenizer.tool_tokens_registered
+    assert default_tokenizer.encode("[TOOL_CALL]") == [
+        default_tokenizer.tool_call_token_id
+    ]
+
+
+def test_alphabet_and_head_shrink_together(prose_tokenizer, default_tokenizer):
+    """The tokenizer's alphabet IS the byte-latent head width.
+
+    A tokenizer that drops tokens without the encoder following would leave the
+    head sized for ids the tokenizer can no longer produce, which is the same
+    defect with the sign flipped.
+    """
+    from types import SimpleNamespace
+
+    from praxis.encoders.byte_latent.config import create_base_config
+
+    def head_width(tok):
+        cfg = SimpleNamespace(
+            byte_vocab_size=tok.byte_alphabet_size,
+            hidden_size=64,
+            embed_size=32,
+            dropout=0.0,
+            epsilon=1e-5,
+            max_position_embeddings=1024,
+            meta=[],
+        )
+        return create_base_config(cfg).local_vocab_size
+
+    assert default_tokenizer.byte_alphabet_size == 264  # 256 + 4 named + 4 tool
+    assert prose_tokenizer.byte_alphabet_size == 260  # tool tokens gone
+    assert head_width(default_tokenizer) == 264
+    assert head_width(prose_tokenizer) == 260
+
+
+def test_every_document_ends_with_the_separator(prose_tokenizer, default_tokenizer):
+    """Packing needs the seam to be findable.
+
+    create_block_ids segments the local encoder's attention on this id; without
+    it a packed sequence is one block and the encoder attends across unrelated
+    documents. Both formats terminate documents, prose included - it is the one
+    control token prose keeps.
+    """
+    from praxis.data.datasets.message_queue import MessageQueueManager
+    from praxis.utils import create_block_ids
+
+    for tok in (prose_tokenizer, default_tokenizer):
+        manager = MessageQueueManager(
+            tokenizer=tok, block_size=4096, enable_chat_validation=False
+        )
+        for _ in range(3):
+            manager.add_document({"messages": CONVERSATION, "metadata": {}})
+        seq = manager.get_batch(batch_size=1)["batch"][0]
+        sep = chat_format_of(tok).document_separator_id(tok)
+        assert sep == tok.eos_token_id
+        positions = (seq == sep).nonzero().flatten().tolist()
+        assert len(positions) == 3
+        # Each separator closes its document's block: one block per document
+        # instead of one block for the whole packed sequence.
+        blocks = create_block_ids(seq.unsqueeze(0), sep)[0].tolist()
+        for pos in positions:
+            assert blocks[pos] == blocks[pos - 1]  # separator ends its own doc
+            assert blocks[pos + 1] == blocks[pos] + 1  # next doc is a new block
+        assert len(set(blocks)) >= 3
+
+
+def test_separator_is_supervised_only_after_a_generated_turn(prose_tokenizer):
+    """The separator must not become another conditioned-on-never-produced id.
+
+    That asymmetry - [BOS] appearing at every turn while masked out of the loss -
+    is precisely what prose was built to remove, so the separator inherits the
+    document's last mask value instead of being pinned to 0.
+    """
+    from praxis.data.datasets.message_queue import MessageQueueManager
+
+    manager = MessageQueueManager(
+        tokenizer=prose_tokenizer, block_size=4096, enable_chat_validation=False
+    )
+    ends_generated = [{"role": "user", "content": "hi"},
+                      {"role": "assistant", "content": "yo"}]
+    ends_prompt = [{"role": "user", "content": "unanswered"}]
+
+    ids, mask = manager._tokenize_doc(
+        {"messages": ends_generated, "metadata": {}}, omit_leading_bos=False
+    )
+    assert int(ids[-1]) == prose_tokenizer.eos_token_id
+    assert int(mask[-1]) == 1
+
+    ids, mask = manager._tokenize_doc(
+        {"messages": ends_prompt, "metadata": {}}, omit_leading_bos=False
+    )
+    assert int(ids[-1]) == prose_tokenizer.eos_token_id
+    assert int(mask[-1]) == 0
+
+
+def test_unproducible_control_ids_are_suppressed(prose_tokenizer, default_tokenizer):
+    """Ids 0-3 are structural to the BLT byte layout and cannot be renumbered,
+    so the ones a format never trains are kept out of samples instead.
+
+    The document separator is exempt in both formats: the model IS trained to
+    produce it, and suppressing it would remove the model's own halt signal.
+    """
+    prose = chat_format_of(prose_tokenizer)
+    suppressed = prose.suppressed_token_ids(prose_tokenizer)
+    assert set(suppressed) == {
+        prose_tokenizer.pad_token_id,
+        prose_tokenizer.bos_token_id,
+        prose_tokenizer.sep_token_id,
+    }
+    assert prose_tokenizer.eos_token_id not in suppressed
+
+    # default renders BOS and SEP, so only PAD is unreachable there.
+    default = chat_format_of(default_tokenizer)
+    assert default.suppressed_token_ids(default_tokenizer) == [
+        default_tokenizer.pad_token_id
+    ]
+
+
+def test_generator_passes_suppression_to_the_sampler(prose_tokenizer):
+    """A declared suppression that never reaches generate() is decoration."""
+    from praxis.generation.generator import Generator
+
+    gen = object.__new__(Generator)
+    gen.tokenizer = prose_tokenizer
+    ids = prose_tokenizer.encode("user\n\nhi\n\nassistant\n\n")
+    suppress = chat_format_of(prose_tokenizer).suppressed_token_ids(prose_tokenizer)
+    assert suppress  # guards against the assertion below passing vacuously
+    assert prose_tokenizer.eos_token_id not in suppress
+    assert all(0 <= t < prose_tokenizer.byte_alphabet_size for t in suppress)
+    assert all(t not in suppress for t in ids)

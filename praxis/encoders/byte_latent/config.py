@@ -67,8 +67,15 @@ def create_base_config(praxis_config) -> ByteLatentConfig:
             )
 
     return ByteLatentConfig(
-        local_vocab_size=BYTE_UNITS + OFFSET + NUM_TOOL_TOKENS,
-        # 256 bytes + 4 named specials + 4 tool-control specials = 264
+        # Follow the tokenizer instead of assuming the maximum layout. The CLI
+        # sets byte_vocab_size from tokenizer.byte_alphabet_size, which counts
+        # only the control tokens the chat format actually registered: 264 with
+        # the tool tokens (256 bytes + 4 named specials + 4 tool specials), 260
+        # without. This IS the model's output head width, so a format that
+        # never renders a token must not leave a logit for it - otherwise
+        # sampling emits an id no training example can ever make a target.
+        local_vocab_size=getattr(praxis_config, "byte_vocab_size", None)
+        or (BYTE_UNITS + OFFSET + NUM_TOOL_TOKENS),
         dim=praxis_config.hidden_size,
         dim_token_emb=praxis_config.embed_size,
         dim_global=praxis_config.hidden_size,

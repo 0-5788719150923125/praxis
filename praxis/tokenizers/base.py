@@ -23,6 +23,16 @@ class PraxisToolTokensMixin:
       to ``PreTrainedTokenizer[Fast].__init__``. Subclasses call this
       before ``super().__init__``.
 
+    Registration is CONDITIONAL on the chat format. A format that lays tool
+    calls out as ordinary turns (``tool_style="roles"``, i.e. ``prose``) never
+    renders these strings, and registering them anyway is not free: on the
+    byte- and char-level tokenizers they occupy real ids past the alphabet,
+    ``byte_alphabet_size`` counts them, and the model's output head is sized
+    from that. Four logits the training data can never make a target are still
+    four logits sampling can pick, which is exactly how ``[TOOL_CALL]`` shows
+    up in a ``prose`` run's generations. Pass ``chat_format`` and they are
+    skipped; the ids simply do not exist.
+
     Subclasses are still responsible for *where in the vocab* the tokens
     land (char- and byte-level tokenizers pin specific high ids so
     existing checkpoints stay valid; the standard HF tokenizer lets HF
@@ -37,32 +47,88 @@ class PraxisToolTokensMixin:
         "[/TOOL_RESULT]",
     ]
 
-    @classmethod
-    def _inject_tool_tokens_kwargs(cls, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    @staticmethod
+    def _wants_tool_tokens(chat_format: Any = None) -> bool:
+        """Whether ``chat_format`` renders the atomic tool-control tokens.
+
+        ``None`` means "unspecified", which resolves to the default format -
+        so a directly-instantiated tokenizer keeps every token it used to have.
+        """
+        from .chat_templates import get_chat_format
+
+        return get_chat_format(chat_format).uses_tool_tokens
+
+    def _inject_tool_tokens_kwargs(
+        self,
+        kwargs: Dict[str, Any],
+        chat_format: Any = None,
+        wanted: Optional[bool] = None,
+    ) -> Dict[str, Any]:
         """Append tool token strings to ``additional_special_tokens`` in
-        place (and return the dict for call-site convenience)."""
+        place (and return the dict for call-site convenience). A format that
+        does not use them leaves the kwargs untouched.
+
+        Also records the decision on the instance, so ``tool_tokens_registered``
+        answers from what was actually built rather than re-deriving it from a
+        ``chat_format`` attribute that ``save_pretrained`` does not preserve.
+
+        ``wanted`` overrides the format lookup, for callers that resolved the
+        question some other way - a reloaded vocab file decides from its own
+        contents, and the recorded flag has to match what was actually built or
+        the property contradicts the vocab.
+        """
+        self._tool_tokens_wanted = (
+            self._wants_tool_tokens(chat_format) if wanted is None else bool(wanted)
+        )
+        if not self._tool_tokens_wanted:
+            return kwargs
         existing = list(kwargs.get("additional_special_tokens") or [])
-        for tok in cls.TOOL_SPECIAL_TOKEN_STRINGS:
+        for tok in self.TOOL_SPECIAL_TOKEN_STRINGS:
             if tok not in existing:
                 existing.append(tok)
         kwargs["additional_special_tokens"] = existing
         return kwargs
 
     @property
-    def tool_call_token_id(self) -> int:
-        return int(self.convert_tokens_to_ids("[TOOL_CALL]"))
+    def tool_tokens_registered(self) -> bool:
+        """Whether this instance actually carries the tool-control tokens."""
+        wanted = getattr(self, "_tool_tokens_wanted", None)
+        if wanted is None:
+            # Tokenizer built without going through _inject_tool_tokens_kwargs
+            # (e.g. a hub download): fall back to what its vocab says, once -
+            # this is read per tool-id lookup inside the generation loop and
+            # get_vocab() rebuilds a whole dict.
+            wanted = "[TOOL_CALL]" in self.get_vocab()
+            self._tool_tokens_wanted = wanted
+        return bool(wanted)
+
+    def _tool_token_id(self, token: str) -> Optional[int]:
+        """Id of ``token``, or ``None`` when the format did not register it.
+
+        Returning ``None`` rather than falling through to
+        ``convert_tokens_to_ids`` matters: an unregistered string resolves to
+        the UNK id (which is ``[PAD]`` here), so the lenient path would hand
+        back a plausible-looking id 0 and splice padding into a tool call.
+        """
+        if not self.tool_tokens_registered:
+            return None
+        return int(self.convert_tokens_to_ids(token))
 
     @property
-    def tool_call_end_token_id(self) -> int:
-        return int(self.convert_tokens_to_ids("[/TOOL_CALL]"))
+    def tool_call_token_id(self) -> Optional[int]:
+        return self._tool_token_id("[TOOL_CALL]")
 
     @property
-    def tool_result_token_id(self) -> int:
-        return int(self.convert_tokens_to_ids("[TOOL_RESULT]"))
+    def tool_call_end_token_id(self) -> Optional[int]:
+        return self._tool_token_id("[/TOOL_CALL]")
 
     @property
-    def tool_result_end_token_id(self) -> int:
-        return int(self.convert_tokens_to_ids("[/TOOL_RESULT]"))
+    def tool_result_token_id(self) -> Optional[int]:
+        return self._tool_token_id("[TOOL_RESULT]")
+
+    @property
+    def tool_result_end_token_id(self) -> Optional[int]:
+        return self._tool_token_id("[/TOOL_RESULT]")
 
 
 class PraxisTokenizerBase(ABC):

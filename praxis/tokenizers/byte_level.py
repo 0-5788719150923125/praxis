@@ -1,6 +1,6 @@
 """ByteLevel tokenizer implementation for Praxis with HuggingFace compatibility."""
 
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from tokenizers import Tokenizer, decoders, models, normalizers, pre_tokenizers
 from transformers import PreTrainedTokenizerFast
@@ -34,7 +34,18 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast, PraxisToolTokensMixin):
 
     Tool-control tokens (see ``PraxisToolTokensMixin``) are appended
     past the byte range so existing byte ids (OFFSET..OFFSET+255) stay
-    valid in saved checkpoints.
+    valid in saved checkpoints. They are registered only when the chat
+    format actually renders them, because ``byte_alphabet_size`` sizes the
+    model's output head: an unused control token is a sampleable logit with
+    no training signal behind it.
+
+    The four ids BELOW ``OFFSET`` are a different matter and always stay.
+    They are structural to the BLT byte layout - bytes are ``b + OFFSET``
+    throughout the stack, and the space patcher force-cuts a patch at
+    ``tokens < OFFSET`` - so they cannot be dropped without renumbering
+    every byte. ``[EOS]`` earns its place there as the packer's
+    document separator (see MessageQueueManager); ``[BOS]``/``[SEP]`` are
+    used by the ``default`` format's turn boundaries.
     """
 
     # Only 4 unique named special tokens matching BLT IDs exactly
@@ -69,6 +80,7 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast, PraxisToolTokensMixin):
         add_bos: bool = False,  # Don't add BOS by default for byte-level
         add_eos: bool = False,  # Don't add EOS by default for byte-level
         chat_template: Optional[str] = None,
+        chat_format: Optional[Any] = None,
         **kwargs,
     ):
         """
@@ -87,6 +99,10 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast, PraxisToolTokensMixin):
             add_bos: Whether to add BOS token automatically
             add_eos: Whether to add EOS token automatically
             chat_template: Chat template for conversation formatting
+            chat_format: ``ChatFormat`` (or registry name) the tokenizer will
+                be used with. Decides whether the tool-control tokens are
+                registered at all, and therefore ``byte_alphabet_size``.
+                ``None`` resolves to the default format, keeping all 264 ids.
             **kwargs: Additional arguments passed to parent class
         """
         self.vocab_size_unit_1 = vocab_size_unit_1
@@ -95,12 +111,18 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast, PraxisToolTokensMixin):
         self.add_bos = add_bos
         self.add_eos = add_eos
 
-        # Tool-control token ids land immediately past the byte range.
+        # Tool-control token ids land immediately past the byte range - but
+        # only when the format renders them. Empty map = the ids don't exist,
+        # which every vocab/encode/decode path below reads from.
         self._tool_token_start_id = vocab_size_unit_1 + OFFSET
-        self._tool_special_id_map: Dict[str, int] = {
-            tok: self._tool_token_start_id + idx
-            for idx, tok in enumerate(self.TOOL_SPECIAL_TOKEN_STRINGS)
-        }
+        self._tool_special_id_map: Dict[str, int] = (
+            {
+                tok: self._tool_token_start_id + idx
+                for idx, tok in enumerate(self.TOOL_SPECIAL_TOKEN_STRINGS)
+            }
+            if self._wants_tool_tokens(chat_format)
+            else {}
+        )
 
         # Initialize named-special tokens from kwargs or use defaults
         for token_name, token_value in self.SPECIAL_TOKENS.items():
@@ -112,7 +134,7 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast, PraxisToolTokensMixin):
             kwargs["unk_token"] = "[PAD]"  # Use PAD as unknown token
 
         # Register tool tokens so ``skip_special_tokens`` recognises them.
-        self._inject_tool_tokens_kwargs(kwargs)
+        self._inject_tool_tokens_kwargs(kwargs, chat_format)
 
         # Create or use provided tokenizer object
         if tokenizer_object is None:
@@ -364,10 +386,14 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast, PraxisToolTokensMixin):
     @property
     def byte_alphabet_size(self) -> int:
         """Number of distinct ids the tokenizer can emit (bytes + named
-        specials + tool specials). Use this to size byte-level embedding
-        tables; ``vocab_size`` is the model's external vocab and may be
-        much larger (e.g. for hash-embedding bucket counts)."""
-        return self.vocab_size_unit_1 + OFFSET + len(self.TOOL_SPECIAL_TOKEN_STRINGS)
+        specials + tool specials ACTUALLY registered). Use this to size
+        byte-level embedding tables; ``vocab_size`` is the model's external
+        vocab and may be much larger (e.g. for hash-embedding bucket counts).
+
+        Counts the live tool map rather than the class-level string list, so a
+        format that skips the tool tokens gets a 260-wide alphabet - and the
+        output head shrinks with it (praxis/encoders/byte_latent/config.py)."""
+        return self.vocab_size_unit_1 + OFFSET + len(self._tool_special_id_map)
 
     @property
     def vocab_size(self) -> int:

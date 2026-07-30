@@ -21,7 +21,7 @@ import inspect
 import json
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from transformers import PreTrainedTokenizer
 
@@ -103,6 +103,7 @@ class CharLevelTokenizer(
         self,
         vocab_file: Optional[str] = None,
         chat_template: Optional[str] = None,
+        chat_format: Optional[Any] = None,
         add_bos: bool = False,
         add_eos: bool = False,
         pad_token_id: Optional[int] = None,
@@ -114,11 +115,13 @@ class CharLevelTokenizer(
         # Token IDs: explicit kwargs > persisted vocab > PraxisConfig defaults.
         persisted_ids: Dict[str, int] = {}
         persisted_observed: Set[int] = set()
+        persisted_registered: List[str] = []
         if vocab_file is not None and os.path.exists(vocab_file):
             with open(vocab_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
             persisted_ids = data.get("special_token_ids", {})
             persisted_observed = {int(cp) for cp in data.get("observed_codepoints", [])}
+            persisted_registered = list(data.get("tool_special_token_strings") or [])
 
         def _resolve(name: str, explicit: Optional[int]) -> int:
             if explicit is not None:
@@ -153,13 +156,23 @@ class CharLevelTokenizer(
                 and k
                 not in ("pad_token_id", "bos_token_id", "eos_token_id", "sep_token_id")
             }
+        # Which tool tokens exist is a property of the SAVED vocab, not of the
+        # caller: reloading with a different answer changes vocab_size, and the
+        # output head is sized from it. An explicit chat_format still wins, so a
+        # deliberate format change is possible; silence defers to the file.
+        if chat_format is not None or not persisted_ids:
+            wants_tool_tokens = self._wants_tool_tokens(chat_format)
+        else:
+            wants_tool_tokens = bool(persisted_registered)
+
         self._tool_special_id_map: Dict[str, int] = {}
         next_tool_id = self._offset + BMP_SIZE
-        for idx, tok in enumerate(self.TOOL_SPECIAL_TOKEN_STRINGS):
-            key = _tool_token_persist_key(tok)
-            self._tool_special_id_map[tok] = persisted_tool_ids.get(
-                key, next_tool_id + idx
-            )
+        if wants_tool_tokens:
+            for idx, tok in enumerate(self.TOOL_SPECIAL_TOKEN_STRINGS):
+                key = _tool_token_persist_key(tok)
+                self._tool_special_id_map[tok] = persisted_tool_ids.get(
+                    key, next_tool_id + idx
+                )
 
         # Unified lookup tables.
         self._special_id_map.update(self._tool_special_id_map)
@@ -170,7 +183,7 @@ class CharLevelTokenizer(
         # HF requires an unk_token; reuse PAD rather than add a 5th named special.
         kwargs.setdefault("unk_token", self.SPECIAL_TOKEN_STRINGS["pad_token"])
         # Register tool tokens so skip_special_tokens strips them at decode time.
-        self._inject_tool_tokens_kwargs(kwargs)
+        self._inject_tool_tokens_kwargs(kwargs, chat_format, wanted=wants_tool_tokens)
 
         self.add_bos = add_bos
         self.add_eos = add_eos
@@ -188,7 +201,10 @@ class CharLevelTokenizer(
 
     @property
     def vocab_size(self) -> int:
-        return BMP_SIZE + self._offset + len(self.TOOL_SPECIAL_TOKEN_STRINGS)
+        # Counts the tool tokens actually registered, not the class-level list:
+        # a format that skips them must not leave a hole in the vocab that the
+        # output head still allocates logits for.
+        return BMP_SIZE + self._offset + len(self._tool_special_id_map)
 
     @property
     def offset(self) -> int:
@@ -322,7 +338,9 @@ class CharLevelTokenizer(
             "bmp_size": BMP_SIZE,
             "offset": self._offset,
             "special_token_strings": self.SPECIAL_TOKEN_STRINGS,
-            "tool_special_token_strings": self.TOOL_SPECIAL_TOKEN_STRINGS,
+            # What this vocab ACTUALLY registered, not the class-level list -
+            # a reload has to reproduce the same width (see __init__).
+            "tool_special_token_strings": list(self._tool_special_id_map),
             "special_token_ids": special_token_ids,
             "observed_codepoints": sorted(self._observed),
         }

@@ -9,6 +9,10 @@ from transformers import PreTrainedTokenizer
 from praxis.data.validators import ChatTemplateValidator
 from praxis.tasks import DEFAULT_TASK
 
+# Sentinel for "separator id not looked up yet", so that a legitimate None
+# (format declares no separator) is cached instead of re-resolved per document.
+_UNRESOLVED = object()
+
 
 class MessageQueueManager:
     """
@@ -21,6 +25,10 @@ class MessageQueueManager:
     sequence's position 0 a real BOS -> role transition, matching inference,
     without discarding tokens. A doc that overflows the sequence boundary
     has its tail carried over to the next sequence.
+
+    Every document is terminated with the chat format's `document_separator`
+    id, which is what makes a packed sequence's document boundaries visible
+    downstream - see `_terminate_doc`.
 
     Per-token side channels travel with the tokens through packing:
         task_type_ids: int8 task ID per token, copied from doc metadata.
@@ -51,6 +59,7 @@ class MessageQueueManager:
         self.block_size = block_size
         self.enable_chat_validation = enable_chat_validation
         self.strict_chat_validation = strict_chat_validation
+        self._sep_id: Any = _UNRESOLVED
 
         # Structured message queue (docs not yet tokenized).
         self.message_queue = deque()
@@ -190,7 +199,51 @@ class MessageQueueManager:
                 self.validation_stats["documents_skipped"] += 1
                 return None
 
-        return doc_tokens, assistant_mask
+        return self._terminate_doc(doc_tokens, assistant_mask)
+
+    def _terminate_doc(
+        self, doc_tokens: torch.Tensor, assistant_mask: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Append the format's document separator to a tokenized document.
+
+        Packing concatenates unrelated documents into one sequence, and two
+        pieces of the stack need to know where one ends:
+
+        * ``create_block_ids`` (praxis/modeling.py) segments the local
+          byte-level encoder's attention on this id, so without it every packed
+          sequence is a single block and the encoder attends across documents.
+        * The byte-latent space patcher force-cuts a patch at ``tokens <
+          OFFSET``, so the seam gets its own patch instead of merging one
+          document's last word into the next document's first.
+
+        Neither template emitted this id before - the ``default`` format writes
+        ``[BOS]``/``[SEP]`` and never ``[EOS]``, so the block-isolation path was
+        inert for every chat run. This is the one control token ``prose`` keeps,
+        and it is added AFTER validation because the validator checks the
+        template's own output.
+
+        The mask copies the document's last position rather than being pinned to
+        0 or 1: the separator is supervised exactly when the document ends on a
+        generated turn. Zeroing it unconditionally would recreate the defect
+        ``prose`` exists to remove - a symbol the model conditions on at every
+        document end but is never trained to produce.
+        """
+        sep_id = self._separator_id()
+        if sep_id is None or doc_tokens.numel() == 0:
+            return doc_tokens, assistant_mask
+        sep = torch.tensor([sep_id], dtype=doc_tokens.dtype)
+        tail = assistant_mask[-1:].clone()
+        return torch.cat([doc_tokens, sep]), torch.cat([assistant_mask, tail])
+
+    def _separator_id(self) -> Optional[int]:
+        """The document-separator id for this tokenizer's chat format."""
+        if self._sep_id is _UNRESOLVED:
+            from praxis.tokenizers.chat_templates import chat_format_of
+
+            self._sep_id = chat_format_of(self.tokenizer).document_separator_id(
+                self.tokenizer
+            )
+        return self._sep_id
 
     def get_batch(
         self, batch_size: int, sequence_multiplier: int = 1

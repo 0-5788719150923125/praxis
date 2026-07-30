@@ -289,6 +289,11 @@ class Generator:
         stop_strings = self._stop_strings()
         if stop_strings:
             gen_kwargs["stop_strings"] = stop_strings
+        # Control ids the format's data never makes a target must not be
+        # sampleable either - see ChatFormat.suppressed_token_ids.
+        suppress = self.chat_format.suppressed_token_ids(self.tokenizer)
+        if suppress:
+            gen_kwargs["suppress_tokens"] = suppress
         # Caller overrides win, except for our own keys handled below.
         gen_kwargs.update(request.kwargs)
 
