@@ -88,6 +88,49 @@ def _physical_layers() -> Optional[int]:
     return config.get("num_layers") if config.get("recurrent") else None
 
 
+@provider("arc_turning")
+def _arc_turning() -> Optional[str]:
+    """The clause naming which Arc modules make the recurrent turn explicit.
+
+    Two independent switches: ``attention_type`` starting with ``arc``
+    (ArcAttention, which warps the rotary phase per depth) and ``ffn_type ==
+    "arc"`` (ArcGLU, which warps the gate). The recurrent-watch prose used to
+    assert both unconditionally, which is false in both directions - the
+    abstractinator family runs arc attention with a PEER feedforward, and
+    several recurrent runs (delta, mike, theta, wavelet) use neither. Returns
+    ``None`` when neither is configured, so the sentence drops out entirely
+    rather than naming a module the run did not build.
+
+    Prose lives here rather than in the yaml because subject and verb agreement
+    differ per case; the invariant tail stays in the inline's format string.
+    (Same shape as ``head_name``, which also returns a rendered noun phrase.)"""
+    from praxis.pillars.framing import newest_experiment, resolve_config
+
+    experiment = newest_experiment()
+    if not experiment:
+        return None
+    config = resolve_config(experiment)
+    depth_signal = r"a \texttt{current\_depth} signal"
+    has_attn = str(config.get("attention_type", "")).startswith("arc")
+    has_glu = config.get("ffn_type") == "arc"
+    if has_attn and has_glu:
+        return (
+            "ArcAttention and ArcGLU make the turning explicit: each carries "
+            f"{depth_signal} and warps its rotary phase and its gate per step"
+        )
+    if has_attn:
+        return (
+            "ArcAttention makes the turning explicit: it carries "
+            f"{depth_signal} and warps its rotary phase per step"
+        )
+    if has_glu:
+        return (
+            "ArcGLU makes the turning explicit: it carries "
+            f"{depth_signal} and warps its gate per step"
+        )
+    return None
+
+
 @provider("license_epoch")
 def _license_epoch() -> Optional[str]:
     """The LICENSE copyright stamp: a fractional year rewritten at every launch

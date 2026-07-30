@@ -1,0 +1,11 @@
+# Which Arc modules make the recurrent turn explicit, for the current run. The
+# recurrent-watch fragment used to name ArcAttention AND ArcGLU outright; the
+# abstractinator family runs arc attention with a PEER feedforward (no ArcGLU),
+# and delta/mike/theta/wavelet are recurrent with neither. The provider composes
+# the subject and mechanism so verb agreement is right in each case, and returns
+# None when no Arc module is configured - the empty fallback then omits the
+# sentence rather than printing a claim the run cannot support.
+macro: paperArcTurning
+provider: arc_turning
+format: " {value}, so the same weights present a different face at every revolution while the frozen coupling underneath is never re-cut."
+fallback: ""
