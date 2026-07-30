@@ -172,7 +172,10 @@ void fragment() {
 	// drifts upward - the mass is continuously churning even where the region
 	// underneath it never moves.
 	float churn = fbmu(uv * asp * 3.4 + vec2(u_time * 0.10, -u_time * 0.42));
-	float tgt = allow * (0.52 + 0.48 * clamp(here.g, 0.0, 1.0)) * (0.50 + 1.00 * churn);
+	// The churn MODULATES a solid deposit, it does not gate one. At 0.50+1.00x
+	// it could drop the target to half and the resulting thin patches read as
+	// holes in the ghost; the floor keeps the body continuous.
+	float tgt = allow * (0.62 + 0.38 * clamp(here.g, 0.0, 1.0)) * (0.78 + 0.44 * churn);
 
 	// --- ADVECTION (semi-Lagrangian: sample where this parcel came FROM)
 	vec4 prev0 = texture(u_prev, uv);

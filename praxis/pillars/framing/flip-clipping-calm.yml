@@ -1,0 +1,53 @@
+# Section 4 (information density), the "where would such a flip come from?"
+# answer. CALM variant: the attack dial, which is the prose that used to sit
+# unconditionally in body.tex.
+#
+# ACCURACY NOTE (2026-07-30): the premise is that the clip binds at nearly every
+# step, and that is a CALM-regime fact, not a property of the architecture. The
+# threshold is the same everywhere (gradient_clip_val defaults to 10 and no
+# experiment overrides it); what differs is the gradient norm that meets it -
+# calm-a-2 logged opt_grad_norm spiking ~80x to ~1471 at the codec freeze, far
+# above the cap, while the byte-latent runs sit under it and clip rarely
+# engages. Stating it unconditionally told byte-latent readers their run was
+# direction-only when it is not. Two sibling fragments answer the same question
+# for the runs that do not clip.
+section: flip
+order: 10
+requires:
+  codec_mode: [calm]
+body: >
+  The error source deserves its own dial, and the dial its own name. Training in
+  this regime leans on heavy gradient clipping - constantly - and clipping is an
+  operation the gradient cannot see: it lives in the update rule, not the loss,
+  so gradient descent never learns to compensate for an error it is structurally
+  blind to. In a model whose parameters are amplitudes of periodic functions,
+  though, the cap has a precise meaning. A bounded parameter step is a bounded
+  motion of the spectrum, and when the cap binds at nearly every step - the
+  regime the continuous-latent codec actually runs in, where the gradient norm
+  sits orders of magnitude above the threshold - descent becomes direction-only,
+  its magnitude pinned to the threshold: the loudness of every event is erased
+  and only its direction kept. The threshold is then the learning speed itself,
+  and we call it the \textit{attack} - the envelope on how fast an amplitude is
+  allowed to rise, the term borrowed from the synthesizer because it names the
+  same quantity there. (\textit{Velocity} is already spoken for: it is the
+  per-step motion of the state itself, the quantity the smoothness prior
+  regulates.) Turn the attack down and the model learns slower; turn it up,
+  faster. And because the amplitudes it governs live on the exponential edge
+  (Section~\ref{sec:scaling}), what the cap discards is not noise but a
+  systematic truncation of exactly the largest events - a \textit{bias}, in the
+  statistician's sense, injected inside the variance of the sampled updates.
+  Bias manifesting within the variance of sampling is a verifiable property: the
+  clipped-update distribution carries its truncation boundary on its face.
+
+  What survives the truncation is the architecture's business, and this is where
+  the watchmaker earns its title early. The frozen basis retains the
+  consequences of a clipped step - a perturbed state relaxes back toward the
+  standing shape rather than diverging - and subsequent evaluations of the loss
+  select among those consequences. Variation the gradient cannot see, retention
+  the basis provides, selection the loss performs: cumulative selection
+  (Section~\ref{sec:watchmaker}), with gradient descent as the blind part.
+  Stated so it can die: the coherence this architecture reaches should depend on
+  the forced error being \textit{present}, not merely on the update magnitudes
+  it enforces - train with the attack matched by an unclipped schedule of the
+  same step size, and if expressiveness survives the removal unchanged, the
+  errors were passengers and this paragraph is wrong.

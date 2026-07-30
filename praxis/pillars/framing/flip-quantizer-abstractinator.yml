@@ -1,0 +1,55 @@
+# Section 4 (information density), the "where would such a flip come from?"
+# answer for a run whose encoder carries a residual VQ bottleneck. The clipping
+# answer does not apply here (the cap rarely binds outside the CALM regime), but
+# the argument does not need clipping - it needs a variation source the gradient
+# cannot see, and the straight-through estimator is one by construction:
+# vector_quantizer.py:342 computes z_q_ste = z + (z_q - z).detach(), so the
+# forward pass takes a discrete snap the backward pass is never shown.
+#
+# This is a tighter fit than clipping ever was, because the preceding paragraph
+# asks for the flip in SYMBOL OCCUPANCY coordinates and a VQ index is literally
+# a symbol. Falsifier uses instruments that already log: vq_perplexity (the
+# encoder's own metric_descriptions call a fall toward 1 codebook collapse) and
+# the per-stage vq_dead_frac_s{k} / vq_resets_s{k} telemetry.
+section: flip
+order: 10
+requires:
+  uses_abstractinator: [true]
+body: >
+  It does not come from gradient clipping here. That reading belongs to the
+  continuous-latent regime, where the gradient norm sits far above the cap and
+  the clip binds at nearly every step; this run trains under the same threshold
+  but rarely reaches it, so descent keeps its magnitudes and nothing is
+  truncated. The argument does not depend on clipping, though - it depends on
+  there being a source of variation the gradient cannot see, and this encoder
+  builds one into its forward pass.
+
+  The residual quantizer snaps each patch latent to the nearest entry of a
+  learned codebook, stage after stage, and passes the result forward through a
+  straight-through estimator: the backward pass is handed the identity while the
+  forward pass used the snapped vector. The gradient is therefore computed for a
+  point the network did not evaluate. That is the same structural blindness the
+  clipped regime gets from its update rule, but arrived at more directly - the
+  error is not a cap applied after the fact, it is the bottleneck's operating
+  principle, and no schedule can remove it without removing the codes.
+
+  It also lands in exactly the coordinates the previous paragraph asked for. A
+  snap does not shade a value; it moves the state from one codebook entry to
+  another, and a codebook entry \textit{is} a symbol. The silent flip that
+  registers nothing in norm - a hair of movement in the latent, a different code
+  selected - is not a hypothetical event to be looked for here but the ordinary
+  behavior of the mechanism. Symbol occupancy is not a proxy for what the
+  quantizer does; it is a readout of it.
+
+  What survives the snap is the architecture's business, and this is where the
+  watchmaker earns its title early. The frozen basis retains the consequences of
+  a quantized step - a perturbed state relaxes back toward the standing shape
+  rather than diverging - and subsequent evaluations of the loss select among
+  those consequences. Variation the gradient cannot see, retention the basis
+  provides, selection the loss performs: cumulative selection
+  (Section~\ref{sec:watchmaker}), with gradient descent as the blind part. The
+  falsifier is instrumented and already on the dashboard: if the codes stop
+  moving there are no flips, and the reading is dead. A composed codebook
+  perplexity collapsing toward one, or a dead-code fraction climbing while the
+  reset counter runs, would each say the same thing - that the bottleneck has
+  settled into a handful of entries and stopped supplying variation at all.

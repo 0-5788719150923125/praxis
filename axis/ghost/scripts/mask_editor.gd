@@ -206,6 +206,7 @@ var _umb_ref_dir := Vector3(0.0, 0.0, 0.0)
 var _umb_ref_mag := 0.05
 var _umb_ref_lit := 0.6
 var _umb_ref_valid := false
+var _umb_ref_cov := 0.0     # scene-coherence of the winning hypothesis (the confidence gate)
 var _umb_repick_in := 0
 # The cast direction (her centroid -> the shadow's), aspect-corrected unit.
 # The light does not move, so this is smoothed almost to a constant: measured
@@ -3707,7 +3708,7 @@ func _umb_solve(aspect: float) -> Dictionary:
 	var frac := float(subj_n) / float(n)
 	var sane := cov * (1.0 - smoothstep(0.93, 0.99, frac))
 	var score := sane * (0.35 + 0.65 * smoothstep(10.0, 220.0, float(shad_n)))
-	return {"score": score, "subj_n": subj_n, "shad_n": shad_n}
+	return {"score": score, "subj_n": subj_n, "shad_n": shad_n, "cov": cov}
 
 
 ## THE UMBRA MODEL, fitted per capture tick. Finds the surface the subject's
@@ -3756,6 +3757,19 @@ func _update_umbra_model(src: Image) -> void:
 	var res := _umb_solve(aspect)
 	if int(res.shad_n) < 8 or int(res.subj_n) < 8:
 		_umb_have = false
+		return
+	# HARD CONFIDENCE GATE - draw NOTHING rather than something wrong.
+	# `cov` is how much of the centred prior the subject flood claims. When the
+	# scene is read correctly she is in the middle of frame and this sits near
+	# 0.8; when it is read inside out (the wall taken for the subject) it falls
+	# to ~0.5. Below the floor the model is not describing this scene at all,
+	# and the guard built from it would be protecting the wrong thing - which
+	# is exactly how the effect ended up painted across her face.
+	if float(res.cov) < 0.60:
+		_umb_have = false
+		if OS.has_environment("GHOST_UMBRA_DEBUG"):
+			print("UMBDBG t=%.2f REJECTED cov=%.2f (scene read incoherent - drawing nothing)"
+				% [_player.stream_position, float(res.cov)])
 		return
 	# --- centroids and the cast direction
 	var sacc := Vector2.ZERO
@@ -3886,10 +3900,10 @@ func _umb_pick_reference(aspect: float) -> void:
 		var kc := Color.from_hsv(_umb_hue, 1.0, 1.0)
 		var kl := 0.299 * kc.r + 0.587 * kc.g + 0.114 * kc.b
 		want = Vector3(kc.r - kl, kc.g - kl, kc.b - kl).normalized()
-	var best_score := -1.0
-	var best_dir := Vector3.ZERO
-	var best_mag := 0.05
-	var best_lit := 0.6
+	# PASS 1 - score every candidate on scene coherence ALONE, with no
+	# reference to the picked colour whatsoever.
+	var cands: Array = []
+	var top_base := 0.0
 	for k in mini(3, order.size()):
 		var b: int = order[k]
 		var mean := Vector3(sx[b], sy[b], sz[b]) / float(cnt[b])
@@ -3903,21 +3917,39 @@ func _umb_pick_reference(aspect: float) -> void:
 		var lit: float = sorted[clampi(int(float(sorted.size()) * 0.88), 0, sorted.size() - 1)]
 		_umb_analyse(dir, mag, lit)
 		var r := _umb_solve(aspect)
-		var score := float(r.score)
+		var base := float(r.score)
 		if int(r.shad_n) < 8:
-			score *= 0.2
-		# An explicit pick should win outright without silently overriding a
-		# confident automatic answer when the picked hue matches nothing here.
-		if _umb_hue >= 0.0:
-			score *= 1.0 + 1.6 * maxf(0.0, dir.dot(want))
-		if score > best_score:
-			best_score = score
-			best_dir = dir
-			best_mag = mag
-			best_lit = lit
-	if best_score < 0.0:
+			base *= 0.2
+		cands.append({"dir": dir, "mag": mag, "lit": lit, "base": base, "cov": float(r.cov)})
+		top_base = maxf(top_base, base)
+	if cands.is_empty():
 		_umb_ref_valid = false
 		return
+	# PASS 2 - the picked colour BREAKS TIES between plausible surfaces; it may
+	# never force an implausible one.
+	#
+	# This used to be an unconditional x(1 + 1.6 * affinity), up to x2.4, while
+	# coherence only separates the right answer from the wrong one by about
+	# x1.66. The stored default hue is 0.02 - reddish - which aligns with her
+	# skin and the cream door, so a freshly placed marker actively drove the
+	# detector to call HER the wall. It then read the scene inside out: the
+	# teal wall became the "subject", she became the "shadow", and because the
+	# guard is built from the subject mask the effect drew straight over her.
+	# Every earlier test hardcoded a teal pick and so never saw it.
+	var plausible := top_base * 0.75
+	var best: Dictionary = cands[0]
+	var best_score := -1.0
+	for c in cands:
+		var score: float = c.base
+		if _umb_hue >= 0.0 and score >= plausible:
+			score *= 1.0 + 0.45 * maxf(0.0, (c.dir as Vector3).dot(want))
+		if score > best_score:
+			best_score = score
+			best = c
+	var best_dir: Vector3 = best.dir
+	var best_mag: float = best.mag
+	var best_lit: float = best.lit
+	_umb_ref_cov = float(best.cov)
 	if _umb_ref_valid and best_dir.dot(_umb_ref_dir) > 0.5:
 		# same surface as before - glide, so bucket quantization can't make the
 		# reference (and with it every threshold) jitter between ticks

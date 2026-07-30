@@ -839,11 +839,17 @@ vec4 apply_layer(vec4 col, int i, vec3 taps[25], vec2 uv, sampler2D tex) {
 		// The silhouette itself breathes - the edge threshold wanders, so the
 		// outline is never die-cut and never the same twice.
 		float edge17 = fbm(uv * asp17 * 7.0 + vec2(t17 * 0.25, -t17 * 0.55)) - 0.5;
-		float d17 = fld.r * wave17 + edge17 * 0.20 * con17;
-		// Saturates early: this is a BODY, not a veil. Reported as "just the
-		// normal shadow, maybe a little darker" when the mass only reached
-		// full opacity at its very core.
-		float body17 = smoothstep(0.06, 0.26, d17) * allow17;
+		// ONE BODY, NOT A FIELD OF CLOUDS. The mass's EXISTENCE comes from the
+		// density alone; Roil only shades the inside of it and wobbles its rim.
+		// Multiplying the density by the noise before thresholding (the first
+		// cut) let the noise punch holes clean through the middle, which is
+		// what turned the ghost into scattered patches with gaps between them.
+		float core17 = smoothstep(0.05, 0.30, fld.r) * allow17;
+		// Rim band - peaks where the body's edge is, zero deep inside - so the
+		// silhouette fluctuates without the interior ever breaking up.
+		float rim17 = core17 * (1.0 - core17) * 4.0;
+		float d17 = core17 * (0.70 + 0.30 * wave17) + edge17 * 0.55 * con17 * rim17;
+		float body17 = clamp(d17, 0.0, 1.0);
 		float trail17 = smoothstep(0.04, 0.28, fld.g) * allow17;
 		float depth17 = 0.55 + 0.45 * clamp(u_l_stick[i], 0.0, 1.0);   // Depth
 		float amt17 = shade_amount(

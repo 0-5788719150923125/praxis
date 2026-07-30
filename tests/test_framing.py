@@ -25,7 +25,7 @@ from praxis.pillars.thread import THREAD_REGISTRY
 
 # One fragment from each family must fire, and only one. Keyed by the section
 # anchor the family renders into.
-EXCLUSIVE_SECTIONS = ["abstract", "intro", "outer"]
+EXCLUSIVE_SECTIONS = ["abstract", "intro", "outer", "flip"]
 
 # Representative experiments covering all three codec modes.
 CODEC_EXPERIMENTS = {

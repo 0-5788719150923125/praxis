@@ -1,0 +1,30 @@
+# Section 4 (information density), the "where would such a flip come from?"
+# answer for runs with neither the CALM clipping regime nor a quantizer: plain
+# byte-latent (no VQ) and standard tokenization. The honest answer is that we do
+# not have one, and saying so is better than importing the attack dial from a
+# regime this run is not in. Fires when uses_abstractinator is false and the
+# codec is not CALM, so it can never collide with its two siblings.
+section: flip
+order: 10
+requires:
+  codec_mode: [byte_latent, standard]
+  uses_abstractinator: [false]
+body: >
+  We do not have an answer for this run, and the honest move is to say so rather
+  than borrow one. The forced-error reading we develop elsewhere rests on
+  gradient clipping that binds at nearly every step, which is a property of the
+  continuous-latent regime and not of the architecture: the threshold is the
+  same here, but the gradient norm rarely reaches it, so descent keeps its
+  magnitudes and nothing is systematically truncated. Nor does this run carry a
+  quantizer, whose straight-through estimator would supply the same blindness by
+  construction. Both of those are variation the gradient cannot see; this
+  configuration has neither, and we will not manufacture a third.
+
+  That leaves the question of Section~\ref{sec:definitions}'s silent flip open
+  here, which is worth stating plainly because it makes this configuration the
+  control. If symbol occupancy still hops - if the state moves between clusters
+  of the learned geometry without a forced error anywhere in the update rule -
+  then the flips were never the clipping's doing, and the reading that ties them
+  to it is weaker than it appears. The occupancy profile is measured the same
+  way in every configuration, so the comparison is available whenever the runs
+  are put side by side.
