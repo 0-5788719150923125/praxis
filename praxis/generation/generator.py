@@ -319,7 +319,18 @@ class Generator:
             budget = max(1, mpe - max_new_tokens)
             truncate_to = budget if truncate_to is None else min(truncate_to, budget)
         if truncate_to is not None and input_ids.size(1) > truncate_to:
-            input_ids = input_ids[:, -truncate_to:]
+            start = input_ids.size(1) - truncate_to
+            # A token index is not always a character boundary. On the
+            # byte-level tokenizer a token IS a byte, so cutting here splits
+            # multi-byte characters, and the severed continuation bytes come
+            # back from decode as U+FFFD - which a rolling context then
+            # re-encodes into three real bytes and carries forever. Tokenizers
+            # that know their own layout move the cut to the next boundary;
+            # the rest (one token = whole characters) have nothing to fix.
+            align = getattr(self.tokenizer, "align_left_cut", None)
+            if align is not None:
+                start = align(input_ids[0].tolist(), start)
+            input_ids = input_ids[:, start:]
 
         return input_ids, gen_kwargs, max_new_tokens, skip_special_tokens
 

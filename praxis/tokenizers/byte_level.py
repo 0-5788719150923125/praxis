@@ -383,6 +383,82 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast, PraxisToolTokensMixin):
         flush()
         return "".join(out)
 
+    # UTF-8 lead byte -> total sequence length. A byte outside these ranges is
+    # either ASCII (complete on its own) or a continuation.
+    _UTF8_LEAD_LENGTHS = ((0xC0, 0xE0, 2), (0xE0, 0xF0, 3), (0xF0, 0xF8, 4))
+
+    def _byte_at(self, token_ids: List[int], index: int) -> Optional[int]:
+        """The raw byte a position holds, or None if it holds a special id."""
+        if index < 0 or index >= len(token_ids):
+            return None
+        value = int(token_ids[index]) - OFFSET
+        return value if 0 <= value < 256 else None
+
+    def incomplete_tail(self, token_ids: List[int]) -> bool:
+        """Whether the sequence stops partway through a UTF-8 character.
+
+        The rolling contexts (StreamingContext) are TEXT buffers: each round
+        decodes the whole sequence, hands the string back as the next prompt,
+        and re-encodes it. A generation step commits only a few bytes, so it
+        regularly ends on the lead byte of a multi-byte character - which
+        ``decode`` turns into U+FFFD, and re-encoding turns that single
+        replacement character into three real bytes (EF BF BD) that stay in the
+        prompt for as long as the buffer lives. One truncated character becomes
+        a permanent artifact the model then conditions on and imitates.
+
+        The generator asks for a few more tokens whenever this is True (see
+        ``Generator._process_single_request``), so the character completes
+        instead. Only a VALID prefix counts: bytes that cannot be finished no
+        matter what follows are reported complete, or the strip loop below would
+        eat the whole buffer chasing a tail that can never resolve.
+        """
+        # 4 bytes is the longest UTF-8 sequence, so the lead is within reach.
+        for back in range(min(4, len(token_ids))):
+            byte = self._byte_at(token_ids, len(token_ids) - 1 - back)
+            if byte is None or byte < 0x80:
+                return False  # special token or ASCII: a complete boundary
+            if byte < 0xC0:
+                continue  # continuation byte; keep walking back to the lead
+            for low, high, length in self._UTF8_LEAD_LENGTHS:
+                if low <= byte < high:
+                    return back + 1 < length
+            return False  # 0xF8..0xFF is not a legal lead
+        return False
+
+    def strip_incomplete_tail(self, token_ids: List[int]) -> List[int]:
+        """Drop a trailing partial character so the sequence ends on a boundary.
+
+        The fallback for when asking for more tokens did not complete it.
+        Bounded by construction: a UTF-8 prefix is at most 3 bytes short.
+        """
+        ids = list(token_ids)
+        while ids and self.incomplete_tail(ids):
+            ids.pop()
+        return ids
+
+    def align_left_cut(self, token_ids: List[int], start: int) -> int:
+        """Move a left-truncation point forward onto a character boundary.
+
+        Prompts are truncated by TOKEN index (``Generator._prepare_inputs``),
+        and here a token is one byte - so an unaligned cut lands inside a
+        multi-byte character about a third of the time on text that has any.
+        The severed continuation bytes decode to U+FFFD, which the rolling
+        context re-encodes into three real bytes; those make the buffer longer
+        in bytes than in characters, which guarantees the NEXT round truncates
+        too. That is the ratchet: once one replacement character appears, the
+        context keeps minting more.
+
+        Advancing past at most three continuation bytes costs a character and
+        ends it.
+        """
+        limit = min(start + 4, len(token_ids))
+        while start < limit:
+            byte = self._byte_at(token_ids, start)
+            if byte is None or byte < 0x80 or byte >= 0xC0:
+                break  # special token, ASCII, or a lead byte: a valid start
+            start += 1
+        return start
+
     @property
     def byte_alphabet_size(self) -> int:
         """Number of distinct ids the tokenizer can emit (bytes + named

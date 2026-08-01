@@ -58,7 +58,7 @@ import copy
 import math
 import os
 import time
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 import torch
 
@@ -78,6 +78,29 @@ _RAY_MISSING_MSG = (
     "For single-host training without Ray, use --trainer-type mono_forward "
     "(the in-process profile).\n"
 )
+
+
+def mask_suppressed_tokens(
+    logits: torch.Tensor, suppress_tokens: Optional[Sequence[int]]
+) -> torch.Tensor:
+    """Drive ``suppress_tokens`` to -inf, returning a fresh tensor.
+
+    The chat format declares which control ids its data never makes a target
+    (``ChatFormat.suppressed_token_ids``). Conditioning on such an id is one
+    thing; SAMPLING it is another - under the prose format ``[BOS]`` and
+    ``[SEP]`` hold ids 1 and 3 out of a 260-wide byte head and are trained
+    nowhere, so leaving them reachable puts a bracketed token in generations
+    the model was structurally forbidden from learning.
+
+    ``generate`` samples for itself, so no transformers logits processor runs
+    over it and the mask has to be applied by hand. Callers apply it before
+    temperature/top-k and before argmax so it binds on both decode policies.
+    """
+    if not suppress_tokens:
+        return logits
+    masked = logits.clone()
+    masked[:, list(suppress_tokens)] = float("-inf")
+    return masked
 
 
 class MonoForwardTrainer:
@@ -1688,6 +1711,7 @@ class MonoForwardTrainer:
         do_sample: bool = False,
         temperature: float = 1.0,
         top_k: Optional[int] = None,
+        suppress_tokens: Optional[List[int]] = None,
     ) -> Iterator[torch.Tensor]:
         """Autoregressive generation routed through the active actors.
 
@@ -1721,6 +1745,13 @@ class MonoForwardTrainer:
             eos_token_id: Optional EOS id for early-stop. Defaults to
                 ``self._config.eos_token_id`` if present. ``None`` means
                 "never stop early; always produce ``max_new_tokens``".
+            suppress_tokens: Ids the active chat format never makes a
+                training target (``ChatFormat.suppressed_token_ids``).
+                This loop samples for itself, so no transformers logits
+                processor runs here - without an explicit mask an untrained
+                control id stays reachable by sampling and shows up in
+                generations as a bracketed token the model was structurally
+                forbidden from learning.
 
         Yields:
             1-D (shape ``[batch]``) long tensors, one per decoded
@@ -1785,7 +1816,9 @@ class MonoForwardTrainer:
             # default (deterministic for tests); the demo hook turns on
             # ``do_sample`` to avoid the "5 5 5 5 5 5" degenerate
             # greedy-decode pathology undertrained models exhibit.
-            step_logits = logits[:, -1, :]
+            # Before the temperature/top-k warp and before argmax, so a
+            # suppressed id can neither be sampled nor win greedily.
+            step_logits = mask_suppressed_tokens(logits[:, -1, :], suppress_tokens)
             if do_sample:
                 if temperature != 1.0:
                     step_logits = step_logits / max(temperature, 1e-5)
@@ -1893,10 +1926,17 @@ class MonoForwardTrainer:
             if not tokens:
                 return None
             full_ids = torch.cat([prompt_ids, torch.stack(tokens, dim=-1)], dim=-1)
+            ids = full_ids[0].tolist()
+            # Committing a couple of tokens per fire regularly stops partway
+            # through a multi-byte character. This buffer is TEXT: the decode
+            # would turn that into U+FFFD and the next round would re-encode it
+            # as three real bytes that stay in the prompt for good. Drop the
+            # partial character instead; the model rewrites it next fire.
+            strip = getattr(self.tokenizer, "strip_incomplete_tail", None)
+            if strip is not None:
+                ids = strip(ids)
             try:
-                return self.tokenizer.decode(
-                    full_ids[0].tolist(), skip_special_tokens=False
-                )
+                return self.tokenizer.decode(ids, skip_special_tokens=False)
             except Exception as exc:  # pragma: no cover - defensive
                 print(
                     f"[MF] Inference hook @ batch {completed_batches}: "

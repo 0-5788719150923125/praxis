@@ -160,6 +160,11 @@ class MonoForwardBackend(DecodeBackend):
             do_sample=bool(step_kwargs.get("do_sample", True)),
             temperature=float(step_kwargs.get("temperature", 1.0)),
             top_k=int(top_k) if top_k else None,
+            # This loop owns its sampling, so transformers never builds a
+            # processor list for it - the format's unproducible control ids
+            # have to be masked explicitly, exactly as the speculative path
+            # does (praxis/modeling.py::_speculative_generate).
+            suppress_tokens=step_kwargs.get("suppress_tokens"),
         ):
             produced.append(tok)
             if int(tok.view(-1)[0].item()) in stop_ids:

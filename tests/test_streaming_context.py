@@ -233,3 +233,104 @@ def test_context_payload_ships_the_display_copy():
     # len() stands in for the tokenizer here: counted on the raw buffer, whose
     # U+2028 is several bytes to a byte-level tokenizer where \n is one.
     assert entry["tokens"] == len("one two")
+
+
+# ── the prompt the buffer feeds back ─────────────────────────────────────
+#
+# The buffer is text, so every round re-encodes it. On a byte-level tokenizer
+# a token is a byte, and the generator truncates prompts by token index - so an
+# unaligned cut severs a multi-byte character, decode yields U+FFFD, and the
+# next encode turns that one character into three real bytes. Those bytes make
+# the buffer longer in bytes than in characters, which guarantees the next
+# round truncates too. The context ends up minting replacement characters
+# indefinitely and prompting the model with a sequence its training data
+# essentially never contains.
+
+
+def _prose_byte_tokenizer():
+    """The run's tokenizer: byte-level ids under the text-boundary format."""
+    from praxis.tokenizers.byte_level import ByteLevelTokenizer
+    from praxis.tokenizers.chat_templates import PROSE_FORMAT, apply_chat_format
+
+    tok = ByteLevelTokenizer(chat_format=PROSE_FORMAT)
+    apply_chat_format(tok, PROSE_FORMAT)
+    return tok
+
+
+def _generator_with(tokenizer, max_positions=4096):
+    """A Generator wired to a stub backend; only _prepare_inputs is exercised."""
+    from types import SimpleNamespace
+
+    from praxis.generation.generator import Generator
+
+    backend = SimpleNamespace(
+        model=None,
+        device="cpu",
+        max_positions=max_positions,
+        tokenizer=tokenizer,
+        default_sampling_temperature=None,
+    )
+    return Generator(tokenizer=tokenizer, device="cpu", backend=backend)
+
+
+def test_prompt_truncation_lands_on_a_character_boundary():
+    from praxis.generation.request import GenerationRequest
+
+    tok = _prose_byte_tokenizer()
+    gen = _generator_with(tok)
+    text = "日本語のテキストです"
+
+    for budget in range(4, len(tok.encode(text))):
+        request = GenerationRequest(
+            id="t",
+            prompt=text,
+            kwargs=dict(max_new_tokens=4, truncate_to=budget, skip_special_tokens=False),
+        )
+        input_ids, _, _, _ = gen._prepare_inputs(request)
+        decoded = tok.decode(input_ids[0].tolist(), skip_special_tokens=False)
+        assert "�" not in decoded, f"severed character at truncate_to={budget}"
+
+
+def test_prompt_truncation_still_respects_the_budget():
+    """Alignment moves the cut forward, never backward - the prompt must not
+    grow past what the positional budget allows."""
+    from praxis.generation.request import GenerationRequest
+
+    tok = _prose_byte_tokenizer()
+    gen = _generator_with(tok)
+    for budget in range(4, 30):
+        request = GenerationRequest(
+            id="t",
+            prompt="日本語のテキストです",
+            kwargs=dict(max_new_tokens=4, truncate_to=budget, skip_special_tokens=False),
+        )
+        input_ids, _, _, _ = gen._prepare_inputs(request)
+        assert input_ids.size(1) <= budget
+
+
+def test_truncation_is_unchanged_for_tokenizers_without_the_hook():
+    """One token = whole characters there, so there is nothing to align and
+    the cut must stay exactly where the budget puts it."""
+    from types import SimpleNamespace
+
+    from praxis.generation.request import GenerationRequest
+
+    from praxis.tokenizers.chat_templates import PROSE_FORMAT
+
+    class _Whole:
+        chat_format = PROSE_FORMAT
+        eos_token_id = 0
+
+        def encode(self, text, **kwargs):
+            return [ord(c) for c in text]
+
+    tok = _Whole()
+    assert not hasattr(tok, "align_left_cut")
+    gen = _generator_with(tok)
+    request = GenerationRequest(
+        id="t",
+        prompt="abcdefghij",
+        kwargs=dict(max_new_tokens=1, truncate_to=4, skip_special_tokens=False),
+    )
+    input_ids, _, _, _ = gen._prepare_inputs(request)
+    assert input_ids[0].tolist() == [ord(c) for c in "ghij"]

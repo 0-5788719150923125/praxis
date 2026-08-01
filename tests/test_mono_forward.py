@@ -883,3 +883,54 @@ def test_inprocess_does_not_require_ray():
             f"{src} contains a top-level 'import ray'; "
             "this defeats the in-process backend's no-Ray guarantee."
         )
+
+
+# ---------------------------------------------------------------------------
+# Unproducible control ids must not be sampleable on this decode path either.
+# MonoForwardBackend runs its own sampling loop, so transformers never builds a
+# logits-processor list for it - without an explicit mask a format's untrained
+# control ids stay reachable and turn up in generations as bracketed tokens.
+# ---------------------------------------------------------------------------
+
+
+def test_suppressed_tokens_are_unreachable_under_both_decode_policies():
+    from praxis.trainers.mono_forward.trainer import mask_suppressed_tokens
+
+    logits = torch.zeros(1, 8)
+    logits[0, 3] = 10.0  # would win greedily and dominate any sample
+    masked = mask_suppressed_tokens(logits, [1, 3])
+
+    assert masked[0, 3] == float("-inf")
+    assert masked[0, 1] == float("-inf")
+    assert int(masked.argmax(dim=-1)) != 3
+    assert float(torch.softmax(masked, dim=-1)[0, 3]) == 0.0
+    # The caller's tensor is untouched; the mask returns its own copy.
+    assert logits[0, 3] == 10.0
+
+
+def test_masking_is_a_no_op_when_the_format_suppresses_nothing():
+    from praxis.trainers.mono_forward.trainer import mask_suppressed_tokens
+
+    logits = torch.randn(1, 8)
+    assert mask_suppressed_tokens(logits, None) is logits
+    assert mask_suppressed_tokens(logits, []) is logits
+
+
+def test_backend_forwards_the_formats_suppression_list():
+    """The Generator puts ChatFormat.suppressed_token_ids in step_kwargs; the
+    backend is the only thing that can carry it into the sampling loop."""
+    from praxis.generation.decode_backend import MonoForwardBackend
+
+    seen = {}
+
+    class _StubTrainer:
+        def generate(self, input_ids, **kwargs):
+            seen.update(kwargs)
+            yield torch.tensor([7])
+
+    backend = MonoForwardBackend(trainer=_StubTrainer(), tokenizer=_ToyTokenizer())
+    backend.generate_until_halt(
+        torch.tensor([[5]]),
+        {"max_new_tokens": 1, "do_sample": True, "suppress_tokens": [0, 1, 3]},
+    )
+    assert seen["suppress_tokens"] == [0, 1, 3]
