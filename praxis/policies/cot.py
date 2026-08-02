@@ -38,6 +38,10 @@ class ChainOfThought(nn.Module):
     - Can be extended with REINFORCE for more complex scenarios
     """
 
+    # Chain-of-thought traces; see the `dataset_collections` contract in
+    # praxis/policies/__init__.py.
+    dataset_collections = ("cot",)
+
     def __init__(self, config):
         super().__init__()
         self.config = config

@@ -31,6 +31,7 @@ from praxis.tokenizers.chat_templates import (
     chat_format_of,
     get_chat_template,
     resolve_chat_format,
+    tokenize_with_mask,
 )
 from praxis.tools import (
     build_result_splice_text,
@@ -351,6 +352,42 @@ def test_prose_call_turn_is_supervised(prose_tokenizer):
     assert '"name": "calc"' in trained
     # The call turn hands off to the tool, and that handoff is trained.
     assert "\n\ntool\n\n" in trained
+
+
+def test_prose_call_boundary_is_supervised(prose_tokenizer):
+    """The boundary that OPENS a call must be trained, not just its body.
+
+    Every boundary is the tail of the turn before it, and a tail is supervised
+    only when that turn is generated. Running `user` straight into `call` puts
+    `\\n\\ncall\\n\\n` in the user turn's tail, so the model could continue a
+    call it was handed but never decide to open one - the same defect as an
+    untrainable `[BOS]`, relocated. The empty `assistant` turn is what moves
+    the boundary inside a generated span.
+    """
+    doc = format_tool_calling({}, [], prose_tokenizer)
+    ids, mask = tokenize_with_mask(prose_tokenizer, doc["messages"])
+    trained = "".join(prose_tokenizer.decode([t]) for t, m in zip(ids, mask) if m)
+    assert "\n\ncall\n\n" in trained
+
+
+def test_prose_call_follows_the_generation_prompt(prose_tokenizer):
+    """Training has to show the call from the position inference starts at.
+
+    `_prepare_inputs` renders with `add_generation_prompt=True`, so a request
+    ends at the reply boundary. If no assistant turn preceded the call in
+    training, the model would have to open one from a context it never saw.
+    """
+    fmt = chat_format_of(prose_tokenizer)
+    doc = format_tool_calling({}, [], prose_tokenizer)
+    rendered = prose_tokenizer.apply_chat_template(doc["messages"], tokenize=False)
+
+    prompt_tail = prose_tokenizer.apply_chat_template(
+        [{"role": "user", "content": "x"}], tokenize=False, add_generation_prompt=True
+    )
+    assert prompt_tail.endswith(f"{fmt.reply_role}\n\n")
+
+    # The continuation inference asks for: reply boundary, then the call.
+    assert f"{fmt.reply_role}\n\n{fmt.boundary(fmt.call_role)}" in rendered
 
 
 # ------------------------------------------------------------- validation

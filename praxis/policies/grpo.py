@@ -32,6 +32,10 @@ class GRPO(nn.Module):
     - Group normalization provides implicit baseline without critic network
     """
 
+    # Reward-carrying RL documents; see the `dataset_collections` contract in
+    # praxis/policies/__init__.py.
+    dataset_collections = ("rl",)
+
     def __init__(self, config):
         super().__init__()
         self.config = config

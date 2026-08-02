@@ -328,6 +328,29 @@ class ChatFormat:
 
         ``reply`` is optional: some samples exercise a call purely to show the
         result (the ``get_tools`` probe) and never speak afterwards.
+
+        Under ``roles`` the exchange opens with an EMPTY ``reply_role`` turn,
+        which is what makes the call reachable at all. Two things force it:
+
+        1. Every boundary is the tail of the turn BEFORE it, and a tail is
+           supervised only when that turn is in ``generated_roles``. Running
+           ``user`` straight into ``call`` puts ``\\n\\ncall\\n\\n`` in the user
+           turn's tail, so the call's own opening boundary is never a training
+           target - the model can continue a call it was handed but can never
+           decide to open one. That is exactly the defect this format exists to
+           remove, relocated from ``[BOS]`` to the call boundary.
+        2. Inference starts from ``add_generation_prompt=True``, so the prompt
+           ends at ``reply_role``'s boundary. A layout with no ``assistant``
+           turn before the call never shows the model that position, so even a
+           supervised boundary would be one it had to reach from a context it
+           had never seen.
+
+        An empty turn fixes both: the tail lands inside a generated span, and
+        the rendered ``...assistant\\n\\n\\n\\ncall\\n\\n`` is precisely the
+        continuation inference asks for. The content is empty deliberately - a
+        fixed lead-in phrase ("Let me calculate that") would be the single
+        most-repeated string in the tool corpus and the easiest thing in it to
+        memorize, which is the same reason the ``get_tools`` probe is rare.
         """
         from praxis.tools.tags import (
             format_call_body,
@@ -337,6 +360,7 @@ class ChatFormat:
 
         if self.tool_style == "roles":
             messages = [
+                {"role": self.reply_role, "content": ""},
                 {
                     "role": self.call_role,
                     "content": format_call_body(tool_name, arguments),

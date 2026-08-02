@@ -652,6 +652,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             input_ids,
             attention_mask,
             skip_logits,
+            assistant_mask,
         )
         loss = self._finalize_loss(loss, outputs.losses, labels)
 
@@ -869,6 +870,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         input_ids: torch.Tensor,
         attention_mask: Optional[torch.Tensor],
         skip_logits: bool,
+        assistant_mask: Optional[torch.Tensor] = None,
     ) -> None:
         """Accumulate training-only auxiliary losses into the container:
         task-weight anchor, head aux losses, MTP, and the regularizers."""
@@ -903,6 +905,19 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 if getattr(self.mtp, "byte_level", False)
                 else self.get_input_embeddings()
             )
+            # MTP consumes UNDETACHED hidden states and the shared head, so its
+            # loss trains the trunk and the head like any other objective. Left
+            # unweighted it does that at every position, including the ones
+            # assistant_mask zeroes - prompt text would keep shaping the trunk
+            # through the auxiliary path no matter what the mask said. Only the
+            # prompt mask is passed on: task weights are the main objective's
+            # difficulty curriculum and coupling the draft head to the tasker
+            # would be a separate decision.
+            mtp_weights = (
+                None
+                if getattr(self.config, "no_mask_prompts", False)
+                else assistant_mask
+            )
             mtp_inputs = self.mtp.prepare_inputs(
                 hidden_states=hidden_states,
                 input_ids=input_ids,
@@ -910,6 +925,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 embed_fn=mtp_embed_fn,
                 head=self.head,
                 patch_embeds=outputs.patch_embeds if self.encoder else None,
+                loss_weights=mtp_weights,
             )
             outputs.losses.add_loss_container(self.mtp(mtp_inputs))
 
@@ -957,11 +973,18 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # Speculative decode: token models directly; byte-latent encoders via
         # byte-level MTP (the encoder's custom_generate above returned None, so
         # we own the loop here). Both are greedy-lossless.
+        # `num_beams` is UNSET (None), not 1, on a transformers>=5 default
+        # GenerationConfig - and `getattr` finds the attribute, so its own
+        # default never applies. Comparing that None to 1 silently disabled
+        # speculative decoding on every real call: the tests pass num_beams=1
+        # explicitly, so they exercised a path production never took. `or 1`
+        # reads unset/0 as single-beam, which is what both mean here.
+        num_beams = getattr(generation_config, "num_beams", None) or 1
         spec_ok = (
             self.mtp is not None
             and not self.training
             and generation_config is not None
-            and getattr(generation_config, "num_beams", 1) == 1
+            and num_beams == 1
             and (not self.encoder or getattr(self.mtp, "byte_level", False))
         )
         if spec_ok:

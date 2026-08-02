@@ -287,46 +287,62 @@ def test_mask_entropy_preds_at_special_tokens():
 
 
 def test_packed_rnn():
-    # Create test data
+    """Every packed document is processed, each with a fresh hidden state.
+
+    This test previously asserted the opposite - that positions after the first
+    EOS came back as ZEROS - which pinned a silent bug as the contract. Under
+    ``chat_format: default`` nothing emitted ``[EOS]``, so the truncation was a
+    no-op and the assertion held vacuously; ``prose`` made the packer's document
+    separator real and the same code started dropping every document after the
+    first, returning the bare residual for it with no error.
+    """
     batch_size, seq_len, feature_dim = 2, 5, 3
     hidden_dim = 4
 
-    # Sample features and input IDs
     x = torch.randn(batch_size, seq_len, feature_dim)
     input_ids = torch.ones(batch_size, seq_len, dtype=torch.long)
 
-    # Set EOS tokens at different positions
-    input_ids[0, 2] = 0  # First sequence: EOS at position 2
-    # Second sequence: no EOS (should use full length)
+    input_ids[0, 2] = 0  # First row: document boundary at position 2
+    # Second row: no EOS, so one document spanning the whole row.
 
-    # Create RNN module
     rnn = nn.LSTM(feature_dim, hidden_dim, batch_first=True)
-
-    # Run packed RNN
     output = packed_rnn_block(rnn, x, input_ids, eos_token_id=0)
 
-    # Basic sanity checks
-    assert output.shape == (
-        batch_size,
-        seq_len,
-        hidden_dim,
-    ), f"Expected shape {(batch_size, seq_len, hidden_dim)}, got {output.shape}"
+    assert output.shape == (batch_size, seq_len, hidden_dim)
 
-    # Verify post-EOS values are zero for the first sequence
-    post_eos_mean = output[0, 3:].abs().mean().item()
-    print(f"Post-EOS activation (should be near 0): {post_eos_mean}")
-    assert (
-        post_eos_mean < 1e-5
-    ), f"Expected near-zero activations after EOS, got {post_eos_mean}"
+    # The document AFTER the boundary is real work, not padding.
+    assert output[0, 3:].abs().mean().item() > 1e-5
+    assert output[1].abs().mean().item() > 1e-5
 
-    # Verify second sequence has non-zero values throughout
-    seq2_mean = output[1].abs().mean().item()
-    print(f"Second sequence activation (should be > 0): {seq2_mean}")
-    assert (
-        seq2_mean > 1e-5
-    ), f"Expected non-zero activations for second sequence, got {seq2_mean}"
+    # Each document is an independent sequence: block 1 is positions 0..2
+    # (create_block_ids increments AFTER the EOS, so the EOS closes its own
+    # block), block 2 is positions 3..4, and each starts from a zero state.
+    first, _ = rnn(x[0:1, :3])
+    second, _ = rnn(x[0:1, 3:])
+    assert torch.allclose(output[0:1, :3], first, atol=1e-5)
+    assert torch.allclose(output[0:1, 3:], second, atol=1e-5)
 
-    print("All tests passed!")
+    # A row with no boundary must be bit-identical to a plain full-length run,
+    # which is what keeps `chat_format: default` runs unchanged.
+    whole, _ = rnn(x[1:2])
+    assert torch.allclose(output[1:2], whole, atol=1e-5)
+
+
+def test_packed_rnn_matches_explicit_block_ids():
+    """The derived-from-EOS path and the passed-in block_ids path agree."""
+    from praxis.utils import create_block_ids
+
+    x = torch.randn(2, 6, 3)
+    input_ids = torch.ones(2, 6, dtype=torch.long)
+    input_ids[0, 1] = 0
+    input_ids[0, 4] = 0
+
+    rnn = nn.LSTM(3, 4, batch_first=True)
+    derived = packed_rnn_block(rnn, x, input_ids, eos_token_id=0)
+    explicit = packed_rnn_block(
+        rnn, x, input_ids, eos_token_id=0, block_ids=create_block_ids(input_ids, 0)
+    )
+    assert torch.allclose(derived, explicit, atol=1e-6)
 
 
 def test_topk_mean_pooling():

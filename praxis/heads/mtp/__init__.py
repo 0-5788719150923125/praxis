@@ -51,6 +51,27 @@ def _is_byte_latent(encoder_type) -> bool:
     return is_byte_latent_encoder(encoder_type)
 
 
+def _weighted_mean(per_position: torch.Tensor, weights: Optional[torch.Tensor]):
+    """Mean of ``per_position``, restricted to ``weights`` when given.
+
+    Normalizing by the weight sum (not the element count) keeps the loss on the
+    same scale as the unweighted mean, so masking changes WHICH positions are
+    trained without also shrinking the gradient. A batch whose weights are all
+    zero contributes nothing rather than dividing by zero.
+    """
+    if weights is None:
+        return per_position.mean()
+    weights = weights.reshape(-1).to(per_position.dtype)
+    return (per_position * weights).sum() / weights.sum().clamp(min=1.0)
+
+
+def _masked_ce(preds: torch.Tensor, targets: torch.Tensor, weights):
+    per_position = F.cross_entropy(
+        preds.reshape(-1, preds.size(-1)), targets.reshape(-1), reduction="none"
+    )
+    return _weighted_mean(per_position, weights)
+
+
 @dataclass
 class MTPInputs:
     """Bundled inputs for an MTP forward pass."""
@@ -61,6 +82,12 @@ class MTPInputs:
     head: nn.Module
     loss_fn: Callable
     attention_mask: Optional[torch.Tensor] = None
+    # Per-position 0/1 weights over ``input_ids`` positions, or None to train
+    # every position. This is the prompt-loss mask: without it the MTP loss
+    # reaches the trunk and the SHARED output head at positions the main CE
+    # deliberately zeroes, which quietly defeats `assistant_mask` (and makes
+    # `--no-mask-prompts` mean nothing) through an auxiliary objective.
+    loss_weights: Optional[torch.Tensor] = None
 
 
 class MultiTokenPrediction(nn.Module):
@@ -181,6 +208,7 @@ class MultiTokenPrediction(nn.Module):
         embed_fn,
         head,
         patch_embeds=None,
+        loss_weights=None,
     ):
         """Build path-appropriate MTPInputs for the current execution path.
 
@@ -192,6 +220,12 @@ class MultiTokenPrediction(nn.Module):
             embed_fn: Input embedding function (nn.Embedding)
             head: LM head module (token path) — ignored on encoder path
             patch_embeds: Patch embeddings from encoder (encoder path only)
+            loss_weights: Per-position prompt-loss weights over ``input_ids``,
+                or None to train every position. Dropped on the patch path,
+                whose targets are patch embeddings: the weights are indexed by
+                token position and there is no correct way to align them to
+                patches here, and silently mis-aligning a mask is worse than
+                not applying one.
         """
         if self.byte_level:
             # Byte-latent: h_0 is the byte-level decoder hidden (embed_size),
@@ -203,10 +237,9 @@ class MultiTokenPrediction(nn.Module):
                 embeds=embed_fn(input_ids),
                 targets=input_ids,
                 head=head,
-                loss_fn=lambda p, t: F.cross_entropy(
-                    p.reshape(-1, p.size(-1)), t.reshape(-1)
-                ),
+                loss_fn=_masked_ce,
                 attention_mask=attention_mask,
+                loss_weights=loss_weights,
             )
         elif self.encoder_path:
             return MTPInputs(
@@ -214,8 +247,9 @@ class MultiTokenPrediction(nn.Module):
                 embeds=self.embed_proj(patch_embeds),
                 targets=patch_embeds,
                 head=self.patch_head,
-                loss_fn=lambda p, t: F.mse_loss(p, t),
+                loss_fn=lambda p, t, w: F.mse_loss(p, t),
                 attention_mask=attention_mask,
+                loss_weights=None,
             )
         else:
             return MTPInputs(
@@ -223,10 +257,9 @@ class MultiTokenPrediction(nn.Module):
                 embeds=embed_fn(input_ids),
                 targets=input_ids,
                 head=head,
-                loss_fn=lambda p, t: F.cross_entropy(
-                    p.reshape(-1, p.size(-1)), t.reshape(-1)
-                ),
+                loss_fn=_masked_ce,
                 attention_mask=attention_mask,
+                loss_weights=loss_weights,
             )
 
     def _run_depth(self, k: int, h, e, mask):
@@ -410,13 +443,27 @@ class MultiTokenPrediction(nn.Module):
             preds = preds[:, :min_out].contiguous()
             targets = targets[:, :min_out].contiguous()
 
-            total_loss = total_loss + inputs.loss_fn(preds, targets)
+            # Weights follow the TARGET, matching the main CE convention: the
+            # weight on predicting absolute position p is the mask at p. The
+            # target here is `input_ids[offset + 1 + i]`, so the same slice
+            # applied to the targets applies to the weights.
+            weights = None
+            if inputs.loss_weights is not None:
+                weights = inputs.loss_weights[:, offset + 1 :][:, :min_out]
+
+            total_loss = total_loss + inputs.loss_fn(preds, targets, weights)
             if discrete:
                 with torch.no_grad():
                     # Stays on-device: an .item() here is a forced GPU sync per
                     # depth per step; training_metrics() syncs the whole list
                     # once at metric cadence instead.
-                    draft_accs.append((preds.argmax(-1) == targets).float().mean())
+                    #
+                    # Masked like the loss: this is the speculative-decoding
+                    # eligibility signal, and drafting only ever happens inside
+                    # a generated turn, so accuracy over prompt positions is not
+                    # the accept rate it is read as.
+                    correct = (preds.argmax(-1) == targets).float()
+                    draft_accs.append(_weighted_mean(correct.reshape(-1), weights))
 
             # Chain: this depth's output becomes input for next depth
             h_prev = h_k

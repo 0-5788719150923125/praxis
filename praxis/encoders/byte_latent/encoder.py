@@ -917,54 +917,76 @@ def packed_rnn_block(
     """
     Efficiently use packed sequences within transformer architecture.
 
-    Sequence lengths come from ``block_ids`` when provided (preferred), and
-    fall back to scanning ``input_ids`` for ``eos_token_id`` otherwise. Both
-    paths truncate at the first sequence end - pack_padded_sequence cannot
-    represent multiple sub-sequences inside a single batch row.
+    EVERY packed document is processed, each as its own sequence with its own
+    fresh hidden state. ``pack_padded_sequence`` cannot represent two
+    sub-sequences inside one batch row, so the blocks are first re-laid out one
+    per row, run, and scattered back.
+
+    This used to keep only each row's FIRST block: ``pad_packed_sequence``
+    zero-fills past the given length, so every position after the first
+    document came back as zeros and ``RecurrentBlock`` returned the bare
+    residual for it - silently, with no error. That was inert under
+    ``chat_format: default``, whose template emits no ``[EOS]``: block ids were
+    uniformly 1 and the truncation was a no-op. ``prose`` made the packer's
+    document separator real (see ``MessageQueueManager._terminate_doc``), which
+    turned the same code path live and wrong at once.
+
+    Peak memory is ``num_blocks * longest_block``, which exceeds
+    ``batch * seq_len`` when one long document shares a batch with many short
+    ones. The transient is the padded re-layout only; the RNN itself sees the
+    compacted PackedSequence.
 
     Args:
         rnn: nn.RNN module (or compatible RNN type like GRU, LSTM)
         x: Feature tensor of shape [batch_size, seq_len, features]
         input_ids: Token IDs of shape [batch_size, seq_len]
-        eos_token_id: Fallback ID to split on when block_ids is None
+        eos_token_id: ID to split on when block_ids is None
         block_ids: Optional block IDs of shape [batch_size, seq_len]
 
     Returns:
         Processed tensor of shape [batch_size, seq_len, hidden_size]
     """
+    from praxis.utils import create_block_ids
+
     batch_size, seq_len = input_ids.size()
     device = x.device
+    features = x.size(-1)
 
-    lengths = torch.full((batch_size,), seq_len, device=device)
+    if block_ids is None:
+        block_ids = create_block_ids(input_ids, eos_token_id)
 
-    if block_ids is not None:
-        # create_block_ids increments AFTER an EOS, so positions in block 1
-        # already include the EOS. Counting them gives the same length the
-        # legacy EOS scan produced (``first_EOS_pos + 1``).
-        first_block = block_ids[:, :1]
-        in_first = (block_ids == first_block).long()
-        lengths = in_first.sum(dim=1).clamp(min=1, max=seq_len)
-    else:
-        for i in range(batch_size):
-            eos_positions = (input_ids[i] == eos_token_id).nonzero(as_tuple=True)[0]
-            if len(eos_positions) > 0:
-                # +1 to include the EOS token in the sequence
-                lengths[i] = min(int(eos_positions[0]) + 1, seq_len)
+    # Block ids are a per-row cumsum, so a block is a contiguous run and
+    # column 0 always opens one - which is what keeps a block from spanning
+    # two batch rows once the sequence is flattened.
+    starts = torch.ones_like(block_ids, dtype=torch.bool)
+    starts[:, 1:] = block_ids[:, 1:] != block_ids[:, :-1]
+    flat_starts = starts.reshape(-1)
 
-    # Create packed sequence
+    # Global block index per position, and each position's offset within it.
+    block_index = flat_starts.cumsum(0) - 1
+    num_blocks = int(flat_starts.sum())
+    flat_pos = torch.arange(batch_size * seq_len, device=device)
+    block_start_pos = flat_pos[flat_starts]
+    within = flat_pos - block_start_pos[block_index]
+
+    lengths = torch.zeros(num_blocks, dtype=torch.long, device=device)
+    lengths.scatter_add_(0, block_index, torch.ones_like(block_index))
+    max_len = int(lengths.max())
+
+    # One block per row, then pack. Padding is never read back out: the
+    # scatter below only gathers real (block, offset) pairs.
+    laid_out = x.new_zeros(num_blocks, max_len, features)
+    laid_out[block_index, within] = x.reshape(-1, features)
+
     packed_x = nn.utils.rnn.pack_padded_sequence(
-        x, lengths.cpu(), batch_first=True, enforce_sorted=False
+        laid_out, lengths.cpu(), batch_first=True, enforce_sorted=False
     )
-
-    # Process with RNN
     packed_output, _ = rnn(packed_x)
-
-    # Unpack back to regular tensor
     output, _ = rnn_utils.pad_packed_sequence(
-        packed_output, batch_first=True, total_length=seq_len
+        packed_output, batch_first=True, total_length=max_len
     )
 
-    return output
+    return output[block_index, within].reshape(batch_size, seq_len, -1)
 
 
 class RecurrentBlock(nn.Module):

@@ -106,6 +106,34 @@ def resolves_to_weight_controller(name):
     return bool(getattr(_policy_for(name), "is_weight_controller", False))
 
 
+def rl_dataset_collections(name):
+    """Dataset collections an ``rl_type`` entry needs in ``train_datasets``.
+
+    Every RL policy here is bound to particular data, and the binding used to
+    be invisible: ``rl_type`` and ``train_datasets`` are separate config keys,
+    so an experiment could name a policy and simply not get it. The failure is
+    silent rather than loud - a policy filters by task tag (``task_types``,
+    ``PREF_CHOSEN``/``PREF_REJECTED``) or by a reward field, and when nothing in
+    the mix carries that tag it scores zero positions, emits no loss, and logs
+    nothing to distinguish "off" from "on but starved".
+
+    Declaring the binding on the policy class lets ``get_dataset_configs`` pull
+    the collection in automatically, so an experiment sets ``rl_type`` alone and
+    the pairing cannot drift. Weight-editing controllers reward from a callback
+    and declare none.
+
+    Unregistered names (the legacy ``cot-reinforce``) keep the historical
+    fail-open mapping rather than resolving to nothing, since loading no data
+    is the failure this function exists to prevent.
+    """
+    cls = _policy_for(name)
+    if cls is None:
+        return ("cot",) if "cot" in name else ("rl",)
+    if getattr(cls, "is_weight_controller", False):
+        return ()
+    return tuple(getattr(cls, "dataset_collections", ()) or ())
+
+
 def needs_rl_datasets(name):
     """Whether an ``rl_type`` name requires the RL/cot data collection. Weight
     controllers reward from a callback and some forward policies (e.g.
@@ -130,6 +158,7 @@ __all__ = [
     "normalize_rl_types",
     "resolves_to_weight_controller",
     "needs_rl_datasets",
+    "rl_dataset_collections",
     "EngagementPolicy",
     "JokePolicy",
 ]

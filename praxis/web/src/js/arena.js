@@ -2,7 +2,9 @@
  * The spider, raised - a seeded creature living in a large 3D room,
  * watched from above like a fish tank (the Arena card on the Identity
  * tab). Pure mechanics, no backend: all randomness derives from the
- * model hash, so each model is one creature in one room.
+ * model hash and from UTC, so each model is one creature in one room -
+ * and every viewer, anywhere, is watching the same moment of it. See
+ * "world clock" below for how that is kept true.
  *
  * Everything is a coupled spectrum, the business-card move in 3D. A
  * seeded latent genome passes through a random tanh net, so body plan
@@ -48,6 +50,28 @@ function mulberry32(seed) {
         return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
 }
+
+// ------------------------------------------------------------ world clock
+
+/* One world, one clock. Nothing here reads the local frame rate or the
+   moment the page happened to load: seeds come from UTC, and the physics
+   advances on a FIXED step counted from the epoch. A screen opened just
+   now replays the steps it missed until it reaches the same step index
+   as a screen that has been open for an hour - so two viewers anywhere
+   are watching the same animal do the same thing at the same time.
+ *
+ * EPISODE_MS is the re-seat cadence: on each boundary every instance,
+ * fresh or long-running, re-rolls the spawn and the decision stream from
+ * the episode's salt. That is what bounds the replay - a fresh load
+ * never has to catch up more than one episode of steps. */
+const EPISODE_MS = 10 * 60e3;
+const WEATHER_MS = 3600e3;         // regional weather turns over hourly
+const SIM_DT = 1 / 30;             // fixed physics step, seconds
+const SIM_MS = SIM_DT * 1000;
+const EPISODE_STEPS = Math.floor(EPISODE_MS / SIM_MS);
+// Replay is spread across frames instead of blocking the load: a fresh
+// viewer fast-forwards visibly for a beat, then locks onto the clock.
+const CATCHUP_MS = 8;
 
 /* Population genetics, not a single genome: seed a pool of latent
    genomes, draw a handful of parents, and blend PER TRAIT - every trait
@@ -1471,17 +1495,27 @@ class Creature {
 // ------------------------------------------------------------------- ink
 
 class Inker {
-    constructor(rng, boilHz, sketch) {
-        this.rng = rng;
+    constructor(seedStr, boilHz, sketch) {
+        this.seedStr = seedStr;
         this.boilHz = boilHz;
         this.sketch = sketch;
         this.jit = new Map();
+        this.cell = -1;
         this.last = -1e9;
+        this.rng = mulberry32(fnv1a(seedStr + ':b0'));
     }
 
+    /* The jitter re-rolls on a grid of the world clock, not on elapsed
+       frame time, and each cell re-seeds its own stream - so a 30 Hz
+       screen and a 144 Hz screen shake the same strokes the same way,
+       and a viewer that skipped cells (backgrounded tab, replay) lands
+       back on the shared pattern instead of a private one. */
     boil(t) {
-        if (t - this.last < 1 / this.boilHz) return;
+        const cell = Math.floor(t * this.boilHz);
+        if (cell === this.cell) return;
+        this.cell = cell;
         this.last = t;
+        this.rng = mulberry32(fnv1a(this.seedStr + ':b' + cell));
         this.jit.clear();
     }
 
@@ -2653,46 +2687,30 @@ class Arena {
         this.canvas = canvas;
         this.seedStr = seedStr;
         this.ctx = canvas.getContext('2d');
-        // Observation is 1-to-1: every page load is a fresh sighting of
-        // the same animal in the same REGION, but never the same spot or
-        // the same moment. Regional traits stay hash-bound; geometry,
-        // spawn, and the decision stream re-roll per observation. Weather
-        // keeps an hourly regional cadence.
-        const obsSalt = ':o' + Date.now();
-        const weatherEpoch = ':w' + Math.floor(Date.now() / 3600e3);
+        // The place is eternal: habitat and geometry come from the model
+        // hash alone, so reloading returns to the same room rather than
+        // building a new one. Only the RUNTIME - where the animal is and
+        // what it decides - turns over, on the shared episode clock, and
+        // weather keeps its own hourly regional cadence.
 
         // Habitat first: it sets the room's scale, and the creature is
         // born into whatever space this seed grows.
         const envRng = mulberry32(fnv1a(seedStr + ':env'));
         this.hab = sampleHabitat(envRng);
         setRoom(this.hab.roomW, this.hab.roomD, this.hab.roomH);
-        const geoRng = mulberry32(fnv1a(seedStr + ':geo' + obsSalt));
-        this.terrain = finishTerrain(buildTerrain(geoRng, this.hab, seedStr + obsSalt));
+        const geoRng = mulberry32(fnv1a(seedStr + ':geo'));
+        this.terrain = finishTerrain(buildTerrain(geoRng, this.hab, seedStr));
         // Enclosure is now literal: the fraction of faces that exist.
         const fmat = this.terrain.facesMat;
         this.enclosure = ['wallB', 'wallL', 'wallR', 'ceiling']
             .filter(f2 => fmat[f2] !== 'none').length / 4;
-        this.creature = new Creature(seedStr, obsSalt);
-        this.creature.terrainRef = this.terrain;
-        this.creature.enclosure = this.enclosure;
-        this.creature.faces = fmat;
-        this.creature.seat();
-        this.inker = new Inker(
-            mulberry32(fnv1a(seedStr + ':ink')),
-            this.creature.p.boilHz,
-            this.creature.p.sketch,
-        );
         this.envSalt = seedStr;
-        this.envInker = new Inker(
-            mulberry32(fnv1a(seedStr + ':env-ink')), 0.12,
-            this.creature.p.sketch * 0.6 * this.hab.noise,
-        );
         this.flair = envRng() * Math.PI * 2;
 
         // Sparse seeded grain: stipple on the floor and the back wall -
         // roughness scales with the habitat's noise gene.
         const dots = Math.round(70 * this.hab.noise);
-        const dotRng = mulberry32(fnv1a(seedStr + ':dots' + obsSalt));
+        const dotRng = mulberry32(fnv1a(seedStr + ':dots'));
         const rm = this.terrain.roam, vt = this.terrain.vast;
         // Two-thirds of the grain lands where the creature lives, the
         // rest scatters across the vast plane.
@@ -2710,16 +2728,10 @@ class Arena {
         }));
 
         this.t = 0;
+        this.simStep = 0;
         this.lastTs = null;
-        // The following camera: world-anchored center, gentle pans, slow
-        // distance zoom. Boxed scenes never move it.
         this.camX = ROOM_W / 2;
         this.camZ = 0;
-        this.zoom = 1;
-        this.panX = false;
-        this.panZ = false;
-        this.camYoff = 0;
-        this.lostT = 0;       // seconds the creature has been off-canvas
         // Distant scenery freezes into an offscreen layer; only the band
         // around the creature renders live. See draw().
         this.scene = document.createElement('canvas');
@@ -2729,52 +2741,22 @@ class Arena {
         this.itemsEpoch = '';
         this.frameNo = 0;
 
-        // Weather: its own seed stream so habitats never reroll.
-        const wRng = mulberry32(fnv1a(seedStr + ':weather' + weatherEpoch));
-        this.weather = sampleWeather(wRng, this.hab, this.terrain.facesMat);
-        const wth = this.weather;
-        const count = Math.round((WEATHER_COUNT[wth.material] || 0) * wth.density);
-        const yMax = wth.material === 'bubbles'
-            ? ROOM_H * 0.85 : Math.max(6, ROOM_H * 1.5);
-        this.partYMax = yMax;
-        // Fog banks: big soft blobs that drift with the wind and billow,
-        // masking some of the scene while other patches stay clear.
-        const fogN = wth.fog > 0 ? 6 + Math.round(wth.fog * 16) : 0;
-        // Fog lives in WORLD space: banks sit where they sit while the
-        // camera travels; leaving one behind, a new one wraps in ahead.
-        this.fogBlobs = Array.from({ length: fogN }, () => ({
-            x: ROOM_W / 2 + (wRng() - 0.5) * 64,
-            z: 2 + wRng() * 26,
-            y: 0.2 + wRng() * 1.8,
-            rx: 4 + wRng() * 8,
-            ry: 1.0 + wRng() * 2.0,
-            ph: wRng() * Math.PI * 2,
-            sp: 0.5 + wRng(),
-        }));
-        if (wth.fog > 0.55) {
-            // Heavy cover: wide sheets hugging the ground.
-            for (let i = 0; i < 3; i++) {
-                this.fogBlobs.push({
-                    x: ROOM_W / 2 + (wRng() - 0.5) * 60,
-                    z: 3 + wRng() * 20,
-                    y: 0.15 + wRng() * 0.4,
-                    rx: 12 + wRng() * 10,
-                    ry: 1.2 + wRng() * 1.2,
-                    ph: wRng() * Math.PI * 2,
-                    sp: 0.3 + wRng() * 0.5,
-                });
-            }
-        }
-        // Particles live in WORLD space and wrap around the camera
-        // window: real parallax (near flakes sweep, far ones crawl)
-        // instead of a field glued to the lens.
-        this.particles = Array.from({ length: count }, () => ({
-            x: ROOM_W / 2 + (wRng() - 0.5) * 48,
-            y: wRng() * yMax,
-            z: wRng() * 30,
-            ph: wRng() * Math.PI * 2,
-            sp: 0.7 + wRng() * 0.6,
-        }));
+        // The animal, its ink, and the sky: all clocked to UTC, so every
+        // viewer is on the same episode and the same weather hour.
+        const now = Date.now();
+        this.episode = -1;
+        this.weatherHour = -1;
+        this.beginEpisode(Math.floor(now / EPISODE_MS));
+        this.inker = new Inker(
+            seedStr + ':ink',
+            this.creature.p.boilHz,
+            this.creature.p.sketch,
+        );
+        this.envInker = new Inker(
+            seedStr + ':env-ink', 0.12,
+            this.creature.p.sketch * 0.6 * this.hab.noise,
+        );
+        this.setWeather(Math.floor(now / WEATHER_MS));
         this.colors = { line: '#888', accent: '#4a8', shade: '#888' };
         this.colorTick = 0;
         this.raf = null;
@@ -2795,6 +2777,168 @@ class Arena {
             this.io.observe(canvas);
         }
         this.resize();
+    }
+
+    /* A sighting. The room and the animal are hash-bound and eternal;
+       this is the part that turns over - where it stands, what it wants,
+       and the stream of decisions it will make from here. Every viewer
+       crosses the boundary at the same UTC instant, and a page that has
+       been open for hours re-seats alongside one opened a second ago. */
+    beginEpisode(ep) {
+        this.episode = ep;
+        const salt = ':e' + ep;
+        this.creature = new Creature(this.seedStr, salt);
+        this.creature.terrainRef = this.terrain;
+        this.creature.enclosure = this.enclosure;
+        this.creature.faces = this.terrain.facesMat;
+        this.creature.seat();
+        this.simStep = 0;
+        this.t = 0;
+        // Camera home: framed on the new spawn, all easing state cleared
+        // so the replay that follows is the same for everyone.
+        const w0 = toWorld(SURFACES[this.creature.surface],
+            this.creature.a, this.creature.b, this.creature.h);
+        this.camX = w0.x;
+        this.camZ = 0;
+        this.zoom = 1;
+        this.panX = false;
+        this.panZ = false;
+        this.camYoff = 0;
+        this.lostT = 0;        // seconds the creature has been off-canvas
+        this.lastW0 = null;
+        this.vemaX = 0;
+        this.vemaZ = 0;
+        this.itemsCache = null;
+        this.itemsEpoch = '';
+        this.sceneStamp.boil = NaN;
+        if (this.weather) this.seedSky();   // absent on the first call
+    }
+
+    /* What the sky IS - snow or ash or clear, how hard the wind blows -
+       turns over on the hour, worldwide. */
+    setWeather(hour) {
+        this.weatherHour = hour;
+        const wRng = mulberry32(fnv1a(this.seedStr + ':weather:w' + hour));
+        this.weather = sampleWeather(wRng, this.hab, this.terrain.facesMat);
+        this.seedSky();
+    }
+
+    /* Where the flakes and the banks actually ARE re-rolls every episode,
+       on the same boundary as the animal. Drift accumulates, so pinning
+       placement to the hour would mean a fresh load had to replay an hour
+       of it to stand where a long-open screen stands. */
+    seedSky() {
+        const wth = this.weather;
+        const wRng = mulberry32(fnv1a(
+            `${this.seedStr}:sky:w${this.weatherHour}:e${this.episode}`));
+        const count = Math.round((WEATHER_COUNT[wth.material] || 0) * wth.density);
+        const yMax = wth.material === 'bubbles'
+            ? ROOM_H * 0.85 : Math.max(6, ROOM_H * 1.5);
+        this.partYMax = yMax;
+        // Fog banks: big soft blobs that drift with the wind and billow,
+        // masking some of the scene while other patches stay clear.
+        const fogN = wth.fog > 0 ? 6 + Math.round(wth.fog * 16) : 0;
+        // Fog lives in WORLD space: banks sit where they sit while the
+        // camera travels; leaving one behind, a new one wraps in ahead.
+        this.fogBlobs = Array.from({ length: fogN }, () => ({
+            x: this.camX + (wRng() - 0.5) * 64,
+            z: 2 + wRng() * 26,
+            y: 0.2 + wRng() * 1.8,
+            rx: 4 + wRng() * 8,
+            ry: 1.0 + wRng() * 2.0,
+            ph: wRng() * Math.PI * 2,
+            sp: 0.5 + wRng(),
+        }));
+        if (wth.fog > 0.55) {
+            // Heavy cover: wide sheets hugging the ground.
+            for (let i = 0; i < 3; i++) {
+                this.fogBlobs.push({
+                    x: this.camX + (wRng() - 0.5) * 60,
+                    z: 3 + wRng() * 20,
+                    y: 0.15 + wRng() * 0.4,
+                    rx: 12 + wRng() * 10,
+                    ry: 1.2 + wRng() * 1.2,
+                    ph: wRng() * Math.PI * 2,
+                    sp: 0.3 + wRng() * 0.5,
+                });
+            }
+        }
+        // Particles live in WORLD space and wrap around the camera
+        // window: real parallax (near flakes sweep, far ones crawl)
+        // instead of a field glued to the lens.
+        this.particles = Array.from({ length: count }, () => ({
+            x: this.camX + (wRng() - 0.5) * 48,
+            y: wRng() * yMax,
+            z: wRng() * 30,
+            ph: wRng() * Math.PI * 2,
+            sp: 0.7 + wRng() * 0.6,
+        }));
+    }
+
+    /* Sky drift, on the fixed step with everything else - it used to ride
+       the frame dt, which made every screen's snow fall its own way. */
+    stepWeather(dt) {
+        const wth = this.weather;
+        if (!wth) return;
+        const wind = this.windSignal();
+        const t = this.t;
+        for (const fb of this.fogBlobs) {
+            fb.x += (wind * 0.55 + Math.sin(t * 0.13 + fb.ph) * 0.12) * dt * fb.sp * 8;
+            // World-anchored: wrap into the window around the camera,
+            // so departed banks regenerate ahead instead of tagging along.
+            while (fb.x - this.camX > 34) fb.x -= 68;
+            while (fb.x - this.camX < -34) fb.x += 68;
+            while (fb.z - this.camZ > 28) fb.z -= 28;
+            while (fb.z - this.camZ < 0) fb.z += 28;
+        }
+        if (!this.particles.length) return;
+        const fall = WEATHER_FALL[wth.material] * (0.6 + 0.7 * wth.density);
+        const dusty = wth.material === 'dust';
+        const yMax = this.partYMax;
+        for (const pt of this.particles) {
+            const flut = wth.flutter * Math.sin(t * (2 + pt.sp) + pt.ph);
+            pt.y += fall * pt.sp * dt;
+            pt.x += (wind * (dusty ? 2.2 : 1) + flut * 0.6) * dt;
+            pt.z += Math.cos(t * 0.7 + pt.ph) * 0.2 * dt;
+            if (pt.y < 0) pt.y += yMax;
+            if (pt.y > yMax) pt.y -= yMax;
+            while (pt.x - this.camX > 24) pt.x -= 48;
+            while (pt.x - this.camX < -24) pt.x += 48;
+            while (pt.z - this.camZ > 30) pt.z -= 30;
+            while (pt.z - this.camZ < 0) pt.z += 30;
+        }
+    }
+
+    /* Pull the simulation up to the wall clock. The step index is a pure
+       function of UTC, so catching up and keeping up are the same act:
+       a screen that just opened (or came back from a hidden tab) replays
+       the steps it missed until it stands on the same index as everyone
+       else. Replay is budgeted per frame so the page never stalls; the
+       viewer sees a brief fast-forward instead.
+
+       Returns the number of steps taken, which draw() uses to decide
+       whether the drawn twin should be snapped rather than chased. */
+    advance() {
+        const now = Date.now();
+        const ep = Math.floor(now / EPISODE_MS);
+        if (ep !== this.episode) this.beginEpisode(ep);
+        const hour = Math.floor(now / WEATHER_MS);
+        if (hour !== this.weatherHour) this.setWeather(hour);
+        const target = Math.min(EPISODE_STEPS,
+            Math.floor((now - this.episode * EPISODE_MS) / SIM_MS));
+        const deadline = performance.now() + CATCHUP_MS;
+        let n = 0;
+        while (this.simStep < target) {
+            this.simStep++;
+            this.t = this.simStep * SIM_DT;
+            this.creature.env = { wind: this.windSignal() };
+            this.creature.step(SIM_DT, this.t);
+            this.updateCamera(SIM_DT);
+            this.stepWeather(SIM_DT);
+            // Clock reads are not free: check the budget every 32 steps.
+            if ((++n & 31) === 0 && performance.now() > deadline) break;
+        }
+        return n;
     }
 
     resize() {
@@ -2848,6 +2992,7 @@ class Arena {
             // Idle (no physics, no draw) while off-screen, backgrounded, or a tab
             // slide is compositing. The rAF is re-queued so it resumes instantly
             // when conditions clear; lastTs is reset so dt doesn't jump on resume.
+            // The world clock keeps running regardless - coming back replays.
             if (!this.onscreen || document.hidden || window.__animPaused) {
                 this.lastTs = null;
                 this.raf = requestAnimationFrame(tick);
@@ -2856,15 +3001,16 @@ class Arena {
             if (this.lastTs == null) this.lastTs = ts;
             const dt = Math.min(0.05, (ts - this.lastTs) / 1000);
             this.lastTs = ts;
-            this.t += dt;
             if (--this.colorTick <= 0) {
                 this.refreshColors();
                 this.onFrame?.();
                 this.colorTick = 30;
             }
-            this.creature.env = { wind: this.windSignal() };
-            this.creature.step(dt, this.t);
-            this.updateCamera(dt);
+            // Physics on the world clock; the frame only draws what it
+            // finds. A long replay leaves the drawn twin - the springs
+            // that trail the rig - far behind, so it re-seats instead of
+            // streaking across the room to catch up.
+            if (this.advance() > 8) this.creature.ink.clear();
             this.draw(dt);
             this.raf = requestAnimationFrame(tick);
         };
@@ -3405,16 +3551,8 @@ class Arena {
         }
         live.push(...envDynamicItems(this.terrain, P, this.colors, this.t));
         if (this.fogBlobs && this.fogBlobs.length) {
-            const wind = this.windSignal();
             const fogA = 0.1 + 0.32 * this.weather.fog;
             for (const fb of this.fogBlobs) {
-                fb.x += (wind * 0.55 + Math.sin(this.t * 0.13 + fb.ph) * 0.12) * dt * fb.sp * 8;
-                // World-anchored: wrap into the window around the camera,
-                // so departed banks regenerate ahead instead of tagging along.
-                while (fb.x - this.camX > 34) fb.x -= 68;
-                while (fb.x - this.camX < -34) fb.x += 68;
-                while (fb.z - this.camZ > 28) fb.z -= 28;
-                while (fb.z - this.camZ < 0) fb.z += 28;
                 const wz = fb.z;
                 live.push({
                     z: wz,
@@ -3457,7 +3595,7 @@ class Arena {
         }
         ctx.globalAlpha = 1;
 
-        this.drawWeather(ctx, dt);
+        this.drawWeather(ctx);
     }
 
     /* The particle system: a camera-wrapped volume of simple strokes.
@@ -3475,35 +3613,23 @@ class Arena {
             * (this.terrain.facesMat.ceiling !== 'none' ? 0.25 : 1);
     }
 
-    drawWeather(ctx, dt) {
+    /* Positions come from stepWeather() on the fixed step; this pass is
+       pure paint. World-anchored, camera-wrapped: the region of weather
+       is wherever the view is, but each particle holds its world
+       position - parallax comes free from the projection. */
+    drawWeather(ctx) {
         const wth = this.weather;
         if (!wth || !this.particles.length) return;
         const t = this.t;
         const windNow = this.windSignal();
         const fall = WEATHER_FALL[wth.material] * (0.6 + 0.7 * wth.density);
         const mat = wth.material;
-        const bubbles = mat === 'bubbles';
-        const yMax = this.partYMax;
         ctx.strokeStyle = mat === 'ash' || mat === 'dust' || mat === 'leaves'
             ? this.colors.grain : this.colors.line;
         ctx.fillStyle = ctx.strokeStyle;
         ctx.lineWidth = 1;
 
         for (const pt of this.particles) {
-            const flut = wth.flutter * Math.sin(t * (2 + pt.sp) + pt.ph);
-            pt.y += fall * pt.sp * dt;
-            pt.x += (windNow * (mat === 'dust' ? 2.2 : 1) + flut * 0.6) * dt;
-            pt.z += Math.cos(t * 0.7 + pt.ph) * 0.2 * dt;
-            // World-anchored, camera-wrapped: the region of weather is
-            // wherever the view is, but each particle holds its world
-            // position - parallax comes free from the projection.
-            if (pt.y < 0) pt.y += yMax;
-            if (pt.y > yMax) pt.y -= yMax;
-            while (pt.x - this.camX > 24) pt.x -= 48;
-            while (pt.x - this.camX < -24) pt.x += 48;
-            while (pt.z - this.camZ > 30) pt.z -= 30;
-            while (pt.z - this.camZ < 0) pt.z += 30;
-
             const wx = pt.x;
             const wz = pt.z;
             const pp = this.project({ x: wx, y: pt.y, z: wz });

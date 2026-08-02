@@ -12,6 +12,23 @@ import { SCROLL_TAU, SCROLL_MIN_VEL } from './momentum.js';
 // Chart instances storage (exported for hybrid mode)
 export const charts = {};
 
+// ── Axis tick formatting ────────────────────────────────────────────────────
+// Readable text for the magnitudes these charts actually carry. Log scales
+// used to push EVERY tick through toExponential(0), which renders a batch size
+// of 1024 as "1e+3" and an MTP draft width of 2 as "2e+0". Scientific notation
+// costs a reader nothing at 3.7e-5 and costs real effort at 1024, so it is now
+// kept for the magnitudes that need it and plain digits used everywhere else.
+// Log axes place ticks at 1/2/5 x 10^k, so three significant figures always
+// covers the fractional ones.
+export function formatAxisTick(value) {
+    if (!Number.isFinite(value)) return '';
+    if (value === 0) return '0';
+    const abs = Math.abs(value);
+    if (abs >= 1e6 || abs < 1e-3) return value.toExponential(0);
+    if (Number.isInteger(value)) return value.toLocaleString();
+    return String(Number(value.toPrecision(3)));
+}
+
 // ── In-place chart upsert ───────────────────────────────────────────────────
 // Pour fresh data (and options - they embed theme colors) into a live Chart
 // instance instead of destroy+recreate. Recreating on every metrics poll is
@@ -2283,12 +2300,7 @@ function createRunComparisonChart(canvasId, label, runs, metricKey) {
                     },
                     ticks: {
                         color: textColor,
-                        callback: (value) => {
-                            if (Math.abs(value) >= 1000) {
-                                return value.toExponential(2);
-                            }
-                            return value.toFixed(3);
-                        }
+                        callback: formatAxisTick
                     },
                     grid: { color: gridColor }
                 }

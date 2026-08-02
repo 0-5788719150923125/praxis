@@ -39,6 +39,11 @@ class PreferencePolicy(nn.Module):
     needs_rl_datasets = False
     is_recall = True
     prefix = "preference"
+    # PREF_CHOSEN / PREF_REJECTED come only from hh-rlhf
+    # (DataFormat.PREFERENCE_PAIR), so the margin has nothing to score without
+    # this collection. See ChatFormat-independent tagging in
+    # praxis/data/formatters/conversation.py::format_preference_pair.
+    dataset_collections = ("preference",)
     # Margin sharpness (SimPO's beta). Fixed, model-agnostic: 2.0 sits in the
     # paper's stable range and the loss is scale-bounded by logsigmoid anyway.
     BETA = 2.0

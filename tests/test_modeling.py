@@ -564,6 +564,92 @@ def test_speculative_sampled_auto_accepts_main_token(spec_config):
     assert 1 <= metrics["mtp_draft_width"] <= spec_config.mtp_depth
 
 
+def test_generate_dispatches_to_speculative_by_default(spec_config):
+    """A DEFAULT GenerationConfig must reach the speculative path.
+
+    Every other spec test builds its config with `num_beams=1` spelled out, so
+    they all exercised a path production never took: on transformers>=5 a
+    default GenerationConfig leaves `num_beams` as None, `getattr` finds the
+    attribute so its fallback never applies, and `None == 1` is False. That
+    silently routed every real generation through the plain HF loop - no
+    drafting, and `mtp_accept_run`/`mtp_draft_width` permanently absent from
+    the dashboard because `_accept_seen` never left zero. Pin the DEFAULT.
+    """
+    from transformers import GenerationConfig
+
+    torch.manual_seed(0)
+    model = PraxisForCausalLM(spec_config).eval()
+    assert getattr(GenerationConfig(), "num_beams", 1) != 1, (
+        "sanity: this test is only meaningful while an unset num_beams is not 1"
+    )
+
+    ids = torch.randint(4, 260, (1, 12))
+    with torch.no_grad():
+        out = model.generate(
+            ids, generation_config=GenerationConfig(max_new_tokens=16, do_sample=False)
+        )
+
+    assert out.shape[1] > ids.shape[1]
+    assert model.mtp._accept_seen > 0, "speculative decoding did not run"
+
+    # ...which is what puts the two realized-throughput metrics on the wire.
+    metrics = model.mtp.training_metrics()
+    assert "mtp_accept_run" in metrics
+    assert 1 <= metrics["mtp_draft_width"] <= spec_config.mtp_depth
+
+
+def test_mtp_honors_the_prompt_mask(spec_config):
+    """MTP takes UNDETACHED hidden states and the SHARED head, so an unweighted
+    auxiliary CE trains the trunk on positions `assistant_mask` zeroes - prompt
+    text keeps shaping the model no matter what the mask says. Passing the mask
+    through is what makes `--no-mask-prompts` mean something."""
+    torch.manual_seed(0)
+    model = PraxisForCausalLM(spec_config)
+    mtp = model.mtp
+    # The vear bank routes stochastically while training, so two identical
+    # calls do not agree; eval mode is what makes these comparisons about the
+    # weights rather than about the sampling.
+    model.eval()
+
+    ids = torch.randint(4, 260, (2, 24))
+    hidden = torch.randn(2, 24, spec_config.embed_size)
+
+    # Mask keeping only the back half - a prompt/answer split.
+    mask = torch.zeros(2, 24, dtype=torch.uint8)
+    mask[:, 12:] = 1
+
+    unmasked = mtp(mtp.prepare_inputs(hidden, ids, None, model.embeds, model.head))
+    masked = mtp(
+        mtp.prepare_inputs(
+            hidden, ids, None, model.embeds, model.head, loss_weights=mask
+        )
+    )
+    assert torch.isfinite(masked.get_loss("mtp"))
+    # Different positions -> a different loss. Equality would mean the weights
+    # were accepted and then dropped on the floor.
+    assert not torch.allclose(masked.get_loss("mtp"), unmasked.get_loss("mtp"))
+
+    # An all-ones mask must reproduce the unweighted loss exactly, so masking
+    # changes WHICH positions train without rescaling the gradient.
+    ones = torch.ones(2, 24, dtype=torch.uint8)
+    all_on = mtp(
+        mtp.prepare_inputs(
+            hidden, ids, None, model.embeds, model.head, loss_weights=ones
+        )
+    )
+    assert torch.allclose(all_on.get_loss("mtp"), unmasked.get_loss("mtp"), atol=1e-6)
+
+    # An all-zero mask contributes nothing rather than dividing by zero.
+    zeros = torch.zeros(2, 24, dtype=torch.uint8)
+    none_on = mtp(
+        mtp.prepare_inputs(
+            hidden, ids, None, model.embeds, model.head, loss_weights=zeros
+        )
+    )
+    assert torch.isfinite(none_on.get_loss("mtp"))
+    assert none_on.get_loss("mtp").detach().item() == pytest.approx(0.0, abs=1e-6)
+
+
 def test_serpent_rnn_mtp_bank(spec_config):
     """serpent_rnn: one shared gated cell owns every depth. Builds inside the
     byte-latent stack, produces the mtp loss and on-device draft-acc capture,

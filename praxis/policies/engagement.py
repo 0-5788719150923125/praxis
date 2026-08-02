@@ -39,6 +39,14 @@ class EngagementPolicy(nn.Module):
     # task space, or they duplicate each other's reward and gradient. None =
     # score everything (single-policy runs).
     task_types: Optional[Tuple[int, ...]] = (TaskType.CONVERSATION,)
+    # Dataset collections this policy needs in `train_datasets`. `task_types`
+    # above is a HARD filter, so a policy whose tags nothing emits scores zero
+    # positions and contributes nothing - silently, with no error. Declaring
+    # the binding lets get_dataset_configs pull the collection in, so an
+    # experiment sets `rl_type` alone. `print` is the purpose-built grounding
+    # here: its assistant turn is `question\nanswer`, which is the span the
+    # recall reward is meant to score.
+    dataset_collections: Tuple[str, ...] = ("print",)
 
     # REINFORCE baseline EMA horizon (~100 steps). Fixed, model-agnostic.
     REWARD_BASELINE_DECAY = 0.99
@@ -208,3 +216,6 @@ class JokePolicy(EngagementPolicy):
     # the live signal.
     loop_mode = "calibration"
     task_types = (TaskType.JOKE,)
+    # Only `rated-jokes` (DataFormat.JOKE) carries TaskType.JOKE, so without
+    # this collection the policy is a no-op.
+    dataset_collections = ("joke",)

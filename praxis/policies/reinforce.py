@@ -17,6 +17,10 @@ class REINFORCE(nn.Module):
     from the INTELLECT-2-RL dataset's solve_rate scores.
     """
 
+    # Reward-carrying RL documents; see ChatFormat-independent
+    # `dataset_collections` contract in praxis/policies/__init__.py.
+    dataset_collections = ("rl",)
+
     def __init__(self, config):
         super().__init__()
         self.config = config

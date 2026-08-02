@@ -141,6 +141,14 @@ DATASET_COLLECTIONS = dict(
     rl={
         "intellect-rl": DEFAULT_WEIGHT,
     },
+    # The dense grounding for `rl_type: preference`. PreferencePolicy scores
+    # only positions tagged PREF_CHOSEN / PREF_REJECTED, and hh-rlhf
+    # (DataFormat.PREFERENCE_PAIR) is the sole source of those tags - so the
+    # policy is inert without it. Pulled in automatically by the policy's
+    # `dataset_collections`; it also rides along inside `focused`.
+    preference={
+        "hh-rlhf": DEFAULT_WEIGHT,
+    },
     print={
         "synthetic-print": PRINT_WEIGHT,
     },

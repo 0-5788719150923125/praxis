@@ -6,7 +6,7 @@
 import { state, CONSTANTS, chartLineColor } from './state.js';
 import { fetchAPI } from './api.js';
 import { createTabHeader, pdfButton } from './components.js';
-import { formatRelativeTime, initChartDeck, applyChartTheme, upsertChart } from './charts.js';
+import { formatRelativeTime, initChartDeck, applyChartTheme, upsertChart, formatAxisTick } from './charts.js';
 import { sampleColormap } from './colormaps.js';
 import { dedupe, hasRealContent } from './prefetch.js';
 
@@ -906,9 +906,7 @@ function baseChartOptions(yLabel, yType, textColor, gridColor, tooltipBg) {
                 title: { display: true, text: yLabel, color: textColor },
                 ticks: {
                     color: textColor,
-                    callback: yType === 'logarithmic'
-                        ? (value) => value.toExponential(0)
-                        : undefined
+                    callback: yType === 'logarithmic' ? formatAxisTick : undefined
                 },
                 grid: { color: gridColor }
             }
@@ -1132,7 +1130,8 @@ function renderHeatmap2D(canvas, data, options = {}) {
     ctx.restore();
 
     ctx.textAlign = 'right';
-    const peakLabel = options.color_scale === 'log' ? `log peak ${peak.toExponential(2)}` : `peak ${peak.toExponential(2)}`;
+    const peakPart = formatAxisTick(peak);
+    const peakLabel = options.color_scale === 'log' ? `log peak ${peakPart}` : `peak ${peakPart}`;
     ctx.fillText(peakLabel, w - 4, mt + 12);
 }
 
