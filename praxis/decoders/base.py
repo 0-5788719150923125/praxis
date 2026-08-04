@@ -198,6 +198,25 @@ class BaseDecoder(nn.Module):
             processed_states = self.genome(processed_states)
         return processed_states
 
+    @staticmethod
+    def sorting_offset(past_key_values: Any) -> int:
+        """Absolute position of this chunk's first token.
+
+        The sorting slot's positional field is anchored to ABSOLUTE position
+        (see ``praxis/sorting/decay.py``), but cached decode feeds the decoder
+        only the new suffix - so it needs the cached length to continue from,
+        exactly like ``self.embeds(input_ids, offset=...)`` in modeling.py.
+        MUST be read before the layers write to the cache, or it would already
+        include the chunk we are about to encode.
+        """
+        past_length = getattr(past_key_values, "past_length", None)
+        if not callable(past_length):
+            return 0
+        try:
+            return int(past_length())
+        except Exception:
+            return 0
+
     def post_decoding(self, states: Tensor) -> Tensor:
         """
         Process states after going through all layers.

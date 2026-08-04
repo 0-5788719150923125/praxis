@@ -63,6 +63,10 @@ class SequentialDecoder(BaseDecoder):
 
         _, seq_len, _ = hidden_states.shape
 
+        # Read before the layers write to the cache: the sorting slot's field is
+        # anchored to absolute position, and cached decode only feeds the suffix.
+        sort_offset = self.sorting_offset(past_key_values)
+
         effective_depth = self.halting.get_depth()
         self.halting.seed(hidden_states)
         # Mono-forward: reset per-forward state and stash the goodness target
@@ -225,6 +229,6 @@ class SequentialDecoder(BaseDecoder):
         self.controller.post_forward(hidden_states, current_route)
 
         # Apply feature sorting
-        hidden_states = self.order(hidden_states)
+        hidden_states = self.order(hidden_states, offset=sort_offset)
 
         return hidden_states, past_key_values, current_state, losses

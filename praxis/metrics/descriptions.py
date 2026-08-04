@@ -93,6 +93,15 @@ def _candidates(model: Any) -> Iterable[Dict[str, Any]]:
         if arc_descs:
             yield arc_descs
 
+    # The decoder's sorting slot, when it holds a learnable positional field
+    # (decay_bias / amplitude_field); the stateless sorts declare nothing.
+    decoder = getattr(model, "decoder", None)
+    order = getattr(decoder, "order", None) if decoder is not None else None
+    if order is not None:
+        descs = getattr(type(order), "metric_descriptions", None)
+        if isinstance(descs, dict):
+            yield descs
+
     # MTP harmonic-field diagnostics (vear bank's Serpent spectrum).
     mtp = getattr(model, "mtp", None)
     if mtp is not None and hasattr(mtp, "field_metric_descriptions"):

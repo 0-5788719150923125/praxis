@@ -86,6 +86,10 @@ class DynamicsLoggerCallback(Callback):
             # Titans memory diagnostics (surprise), averaged across layers.
             dynamics.update(self._extract_memory_dynamics(model))
 
+            # Sorting-slot positional field (bias norm, decay length, modulation
+            # depth). Empty unless sorting_type names a learnable field.
+            dynamics.update(self._extract_sorting_dynamics(model))
+
             # MTP harmonic-field diagnostics (vear bank's Serpent spectrum).
             dynamics.update(self._extract_mtp_dynamics(model))
 
@@ -313,6 +317,25 @@ class DynamicsLoggerCallback(Callback):
             except Exception as e:
                 print(f"[DynamicsLogger] {reg.name} training_metrics() failed: {e}")
         return out
+
+    def _extract_sorting_dynamics(self, model) -> dict:
+        """Delegate to the decoder's sorting slot (``decoder.order``).
+
+        Only the learnable positional fields (``decay_bias``,
+        ``amplitude_field``) opt in via ``training_metrics()``; ``none`` and the
+        stateless sorts have none, so this is empty for them. Without it the
+        slot is invisible - which is how a zero-init field can grow into a real
+        term with nothing on the dashboard to show for it.
+        """
+        decoder = getattr(model, "decoder", None)
+        order = getattr(decoder, "order", None) if decoder is not None else None
+        if order is None or not hasattr(order, "training_metrics"):
+            return {}
+        try:
+            return order.training_metrics()
+        except Exception as e:
+            print(f"[DynamicsLogger] order.training_metrics() failed: {e}")
+            return {}
 
     def _extract_encoder_dynamics(self, model) -> dict:
         """Delegate to a loss-owning encoder's own diagnostics (e.g. CALM).

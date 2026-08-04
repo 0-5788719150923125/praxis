@@ -54,6 +54,10 @@ class ParallelDecoder(BaseDecoder):
                 - Updated layer states
                 - Auxiliary loss container
         """
+        # Read before the layers write to the cache: the sorting slot's field is
+        # anchored to absolute position, and cached decode only feeds the suffix.
+        sort_offset = self.sorting_offset(past_key_values)
+
         sequential_experts: List[nn.Module] = list(self.locals) + list(self.remotes)
         ordered_experts: List[nn.Module] = self.controller.sort_experts(
             sequential_experts.copy()
@@ -124,7 +128,7 @@ class ParallelDecoder(BaseDecoder):
         hidden_states = self.post_decoding(hidden_states)
 
         # Apply feature sorting
-        hidden_states = self.order(hidden_states)
+        hidden_states = self.order(hidden_states, offset=sort_offset)
 
         return hidden_states, past_key_values, current_state, losses
 

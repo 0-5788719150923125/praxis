@@ -31,7 +31,7 @@ Everything else - the per-depth biases, the segment memory, ghostmax, the cached
 path, the dropoff ablation - is inherited unchanged. Only the three subclass hooks and
 the tensors whose shapes depend on the head count are replaced.
 
-Source: [praxis/attention/single.py:84](../praxis/attention/single.py#L84)
+Source: [praxis/attention/single.py:86](../praxis/attention/single.py#L86)
 
 Presets:
 - `arc_single` - class defaults
