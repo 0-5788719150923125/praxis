@@ -57,17 +57,19 @@ and flip sign to reach an output the removed heads could have produced. SiLU
 can do both; sigmoid cannot. The two classes gate differently on purpose, and
 ``arc_gate_negative`` reports whether that freedom is ever used.
 
-Head width is untouched. The single head is ``config.head_size or hidden_size
-// config.num_heads`` wide - the same number the positional encoding module
-builds its rotary bands from, so nothing has to be special-cased there, and
-``head_size`` is the dial if one head turns out to be too narrow. ``num_heads``
-therefore keeps doing a job here: it sets the head's width, not the count.
+Head width is ``head_size``, and only ``head_size``. ``patch_config`` below
+corrects the head COUNT to 1 and touches nothing else, so width still falls out
+of the standing rule - ``head_size or hidden_size // num_heads`` - which with
+the count already corrected means an unset ``head_size`` gives one head
+spanning the full hidden size. Set ``head_size`` to narrow it; at
+abstractinator-g's width the flex kernel needs it narrowed, since a head_dim of
+90 asks for more Triton shared memory than the card has.
 
-Which makes the config ambiguous, so ``patch_config`` below resolves it rather
-than leaving the module and the config to disagree: the width is pinned into
-``head_size`` and the counts are rewritten to 1, in that order, before anything
-reads them. config.json then reports the model that was actually built, and the
-inherited __init__ chain sizes itself correctly with no head-count overrides.
+Rewriting the count is what keeps the config honest: config.json, the
+blueprint tab, the Arguments card and every module reading ``config.num_heads``
+all report the 1 head that was actually built, and the inherited __init__ chain
+sizes the output projection, the blend gate and the memory buffers from it with
+no head-count overrides in this class.
 """
 
 from contextlib import contextmanager
@@ -131,26 +133,29 @@ class SingleHeadArcAttention(ArcAttention):
 
     @classmethod
     def patch_config(cls, config) -> None:
-        """Rewrite the head fields so the config describes what actually runs.
+        """Correct the head COUNT, and only the count.
 
-        ``num_heads`` means WIDTH here, not count, so it is spent before it is
-        overwritten: pinning ``head_size`` first freezes the head at exactly
-        the width the multi-head layout would have given it, and every consumer
-        that derives ``head_dim`` as ``head_size or hidden_size // num_heads``
-        - this module and, separately, the positional encoding - then agrees on
-        that number without any of them special-casing single-head.
+        ``head_size`` is deliberately not touched. It is already the knob for
+        head width, and an earlier version of this hook derived a width from
+        ``num_heads`` before overwriting it - which quietly made ``num_heads``
+        a second width control, so editing it from 3 to 1 tripled ``head_dim``
+        from 30 to 90 and blew the Triton shared-memory limit on the flex
+        kernel. One knob, one meaning: ``num_heads`` is a count and is
+        overridden here; ``head_size`` is a width and belongs to the config.
 
-        Everything downstream is left honest by construction: with the counts
-        corrected, the inherited __init__ chain sizes the output projection,
-        the blend gate and the memory buffers for one head on its own, and
-        config.json reports 1.
+        Width therefore falls out of the standing rule
+        (``head_size or hidden_size // num_heads``, as CausalAttention and the
+        encoding modules both apply it) with ``num_heads`` already corrected to
+        1 - so an unset ``head_size`` gives one head spanning the full hidden
+        size, exactly what that rule predicts for a single head. Set
+        ``head_size`` to narrow it. Both this module and the positional
+        encoding read the same patched config, so they agree either way with
+        no special-casing.
 
         Idempotent, because it runs both from the CLI (so the config object is
         truthful from the moment it exists) and from ``__init__`` (so a config
         built directly, as tests do, still yields a correctly shaped module).
-        On the second pass ``head_size`` is already set and wins the ``or``.
         """
-        config.head_size = config.head_size or config.hidden_size // config.num_heads
         config.num_heads = 1
         config.num_queries = 1
 

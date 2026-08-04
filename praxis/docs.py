@@ -317,6 +317,12 @@ SUBSYSTEMS: List[Tuple[str, str, str]] = [
         "dashboard, JSON API routes, and inference endpoints.",
     ),
     (
+        "ghost",
+        "axis/ghost/README.md",
+        "spectral audio visualizer and video masking editor (Godot, standalone), "
+        "with its own generated reference under `axis/ghost/docs/`.",
+    ),
+    (
         "Vortex mobile app",
         "axis/vortex/README.md",
         "archived Godot companion app for controlling Praxis.",

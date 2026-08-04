@@ -110,6 +110,12 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
         ],
     ),
     (
+        "Rendering & performance",
+        "How a heavy scene stays interactive: thousands of shapes in one "
+        "draw call, and the geometry for them built off the main thread.",
+        ["tri_batch.gd", "frame_forge.gd"],
+    ),
+    (
         "Composition registries",
         "The two shared registries scenes compose by key - appearance "
         "(`Layer`) and physics (`Primitives`) - plus the particle substrate "
@@ -147,14 +153,16 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
     (
         "Synthesis (voice)",
         "Text to narrated audio, no generative AI and no recordings: the "
-        "phoneme front end, the source-filter synthesizer, and the synthesis "
-        "editor with karaoke subtitles. Design and rungs: next/voice.md at "
-        "the repo root.",
+        "phoneme front end, the source-filter synthesizer, the threaded "
+        "real-time stream, the synthesis editor with karaoke subtitles, and "
+        "the microphone sampler that mints a seed from a living voice. "
+        "Design and rungs: next/voice.md at the repo root.",
         [
             "phonemes.gd",
             "voice.gd",
             "voice_stream.gd",
             "synth_editor.gd",
+            "voice_sampler.gd",
             "subtitles.gd",
         ],
     ),
@@ -1085,7 +1093,7 @@ def main() -> int:
             "storyboard actors (Cast) and verbs (Actions) + the Track runner.",
         ),
         (
-            "masklab",
+            "masking",
             "Masking",
             "the video chroma-key editor: model, effects, headless tools.",
         ),

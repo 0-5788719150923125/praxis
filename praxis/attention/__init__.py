@@ -30,8 +30,8 @@ ATTENTION_REGISTRY: Dict[str, Callable[..., nn.Module]] = {
     "arc_dropoff": partial(ArcAttention, dropoff="warp"),
     # Arc with ONE head: shared Q/K representation, per-dimension affine
     # reads of it, and a SiLU output gate (Mega, arXiv:2209.10655) in place
-    # of Arc's sigmoid. num_heads keeps setting the head's WIDTH; only the
-    # count drops. See praxis/attention/single.py.
+    # of Arc's sigmoid. Overrides num_heads/num_queries to 1; head width is
+    # head_size as usual. See praxis/attention/single.py.
     "arc_single": SingleHeadArcAttention,
     "arc_single_dropoff": partial(SingleHeadArcAttention, dropoff="warp"),
 }
@@ -44,8 +44,9 @@ def patch_attention_config(config: Any, args: Any = None) -> None:
     here, because the config is not a private argument list: it is serialized
     to ``config.json``, rendered in the blueprint tab, and read by every other
     module in the stack. ``arc_single`` runs ONE head whatever ``num_heads``
-    says, and reads ``num_heads`` as the head's WIDTH instead - so without this
-    the config would advertise a head count no module ever built.
+    says - so without this the config would advertise a head count no module
+    ever built. Every rewrite is printed, because the failure mode this exists
+    to prevent is precisely a number changing where nobody can see it.
 
     Pass ``args`` (the parsed CLI namespace) to carry the same correction back
     there. It is a SECOND record of the same numbers, not a copy of the config:
@@ -69,14 +70,25 @@ def patch_attention_config(config: Any, args: Any = None) -> None:
     if patch is None:
         return
 
-    before = dict(vars(config)) if args is not None else None
+    # Diff rather than naming fields, so a future patch_config that corrects
+    # some other knob is reported and mirrored without editing this function.
+    before = dict(vars(config))
     patch(config)
-    if before is None:
+    changed = {
+        key: (old, getattr(config, key, old))
+        for key, old in before.items()
+        if getattr(config, key, old) != old
+    }
+    if not changed:
         return
 
-    # Diff rather than naming fields, so a future patch_config that corrects
-    # some other knob stays reported correctly without editing this function.
-    for key, old in before.items():
-        new = getattr(config, key, old)
-        if new != old and hasattr(args, key):
-            setattr(args, key, new)
+    # Say so out loud. A silent rewrite is how a config ends up describing a
+    # model nobody built - and how an edit that looks like a no-op turns out
+    # not to be one.
+    summary = ", ".join(f"{k} {o!r} -> {n!r}" for k, (o, n) in sorted(changed.items()))
+    print(f"[CONFIG] {config.attention_type} overrides {summary}")
+
+    if args is not None:
+        for key, (_, new) in changed.items():
+            if hasattr(args, key):
+                setattr(args, key, new)

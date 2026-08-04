@@ -40,7 +40,7 @@ core. The commitments:
 - [Layers](layers.md) - the visual-component registry (weather, skies, atmosphere).
 - [Forces](forces.md) - the physics-primitive registry particles compose.
 - [Stage](stage.md) - storyboard actors (Cast) and verbs (Actions) + the Track runner.
-- [Masking](masklab.md) - the video chroma-key editor: model, effects, headless tools.
+- [Masking](masking.md) - the video chroma-key editor: model, effects, headless tools.
 - [CLI flags](cli.md) - every ghost command-line flag.
 
 ## Directory layout
@@ -101,6 +101,13 @@ What every scene is built on: the `GhostScene` base, the camera, framing pools, 
 - [`filament.gd`](../scripts/filament.gd) **Filament** - an organic growing path: root, tendril, lightning, or thread.
 - [`swarm.gd`](../scripts/swarm.gd) **Swarm** - a scalar field over a grid that evolves by *local* rules.
 
+### Rendering & performance
+
+How a heavy scene stays interactive: thousands of shapes in one draw call, and the geometry for them built off the main thread.
+
+- [`tri_batch.gd`](../scripts/tri_batch.gd) **TriBatch** - one canvas draw call for thousands of shapes.
+- [`frame_forge.gd`](../scripts/frame_forge.gd) **FrameForge** - scene geometry built OFF the main thread: the foundational fix for UI lag, not another mitigation.
+
 ### Composition registries
 
 The two shared registries scenes compose by key - appearance (`Layer`) and physics (`Primitives`) - plus the particle substrate the forces act on.
@@ -133,12 +140,13 @@ Reusable composed characters - sampled stacks of primitives, not bespoke meshes.
 
 ### Synthesis (voice)
 
-Text to narrated audio, no generative AI and no recordings: the phoneme front end, the source-filter synthesizer, and the synthesis editor with karaoke subtitles. Design and rungs: next/voice.md at the repo root.
+Text to narrated audio, no generative AI and no recordings: the phoneme front end, the source-filter synthesizer, the threaded real-time stream, the synthesis editor with karaoke subtitles, and the microphone sampler that mints a seed from a living voice. Design and rungs: next/voice.md at the repo root.
 
 - [`phonemes.gd`](../scripts/phonemes.gd) **Phonemes** - the phoneme inventory and the text-to-phoneme expansion.
 - [`voice.gd`](../scripts/voice.gd) **Voice** - the source-filter speech synthesizer (rungs 0-2 of next/voice.md).
 - [`voice_stream.gd`](../scripts/voice_stream.gd) **VoiceStream** - real-time speech on its own thread: render lag cannot break it.
 - [`synth_editor.gd`](../scripts/synth_editor.gd) **SynthEditor** - the synthesis surface. The loop is a fishing trip:
+- [`voice_sampler.gd`](../scripts/voice_sampler.gd) **VoiceSampler** - "echo a living voice": record the player reading a fixed passage, MEASURE the voice (never keep it), and mint a brand-new seed whose traits and prosody genome mimic the source.
 - [`subtitles.gd`](../scripts/subtitles.gd) **Subtitles** - the karaoke overlay, session-owned rather than editor-owned.
 
 ### Storyboards & stage
@@ -174,11 +182,5 @@ The in-app authoring loop: capture reproducible critiques, browse them, and disp
 
 - [`feedback.gd`](../scripts/feedback.gd) **FeedbackConsole** - the authoring feedback channel.
 - [`assistant.gd`](../scripts/assistant.gd) **Assistant** - the feedback browser, and (opt-in) tight Claude Code integration.
-
-### Unsorted (add to `SCRIPT_GROUPS` in docs.py)
-
-- [`frame_forge.gd`](../scripts/frame_forge.gd) - FrameForge - scene geometry built OFF the main thread: the foundational fix for UI lag, not another mitigation.
-- [`tri_batch.gd`](../scripts/tri_batch.gd) - TriBatch - one canvas draw call for thousands of shapes.
-- [`voice_sampler.gd`](../scripts/voice_sampler.gd) - VoiceSampler - "echo a living voice": record the player reading a fixed passage, MEASURE the voice (never keep it), and mint a brand-new seed whose traits and prosody genome mimic the source.
 
 Scene scripts (45) are catalogued separately in [scenes.md](scenes.md).
