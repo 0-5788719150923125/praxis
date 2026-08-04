@@ -33,11 +33,27 @@ for a reason that has nothing to do with geometry - and clamp to +/- LOGIT_CLAMP
 The clamp is the mixture floor, and it is what keeps a badly-chosen arm
 recoverable: it bounds the logits, so the softmax Jacobian never reaches zero
 and a suppressed arm can always climb back. It is the same floored-mixture rule
-as the memory bandit, the residual SMEAR and the mode-loss floor. Its width
-depends on the arm count: two arms reach [0.12, 0.88], three arms reach roughly
-[0.02, 0.91] under the same clamp, because it now spreads over more logits.
-Adding the third geometry therefore also relaxes a mixture that was pinning
-against the two-arm bound.
+as the memory bandit, the residual SMEAR and the mode-loss floor.
+
+Its width follows from CENTRING, not from the arm count. Centred logits sum to
+zero, so the widest reachable configuration puts one logit at +LOGIT_CLAMP and
+spreads -LOGIT_CLAMP/(n-1) across the rest. At LOGIT_CLAMP = 2 that gives:
+
+    2 arms -> [0.018, 0.982]      3 arms -> [0.024, 0.909]
+    4 arms -> [0.023, 0.828]
+
+The ceiling falls as arms are added (one arm can dominate less) while the floor
+sits near 0.02 throughout. So adding arms does NOT widen the band - three arms
+are slightly tighter than two.
+
+What widened it was the move to a centred softmax. The previous single-logit
+form, w = sigmoid(logit) with the same +/-2 clamp, reached only [0.119, 0.881],
+because one logit carried the whole relative preference; centring splits the
+clamp across both, so the RELATIVE logit now spans +/-4. That old bound was
+genuinely binding - on the -f run, opt_geo_share_spread peaked at 0.7616 against
+a band width of 0.881 - 0.119 = 0.7616 exactly, i.e. individual matrices sat
+pinned at both ends of it. The relief came from the reparameterization; the
+third geometry was along for the ride.
 
 State per matrix: exp_avg (the shared momentum; named so the optimizer dynamics
 suite reads it), geo_diffs (previous u_i - u_bar, stacked, half precision),

@@ -46,14 +46,27 @@ class VEAR(SMEAR):
     """Variance-driven Experts with Adaptive Routing (sharpened, repelled SMEAR)."""
 
     # --- discrete: sharpen routing before SMEAR's batch-mean merge -------------
-    def _merge_expert_parameters(self, routing_probs: Tensor, current_depth: int = 0):
+    def _merge_expert_parameters(
+        self,
+        routing_probs: Tensor,
+        current_depth: int = 0,
+        router_probs: Optional[Tensor] = None,
+    ):
         # Sharpen so the batch-mean merge SELECTS a near-single expert rather than
         # averaging. The variance-driven repulsion is NOT here: it's a parameter-
         # only loss surfaced via aux_loss() so it can't escape a checkpointed
         # forward (double-backward) or get added once per recurrent depth.
         sharp = routing_probs.pow(VEAR_SHARPEN)
         sharp = sharp / sharp.sum(dim=-1, keepdim=True).clamp_min(1e-8)
-        return super()._merge_expert_parameters(sharp, current_depth)
+        # Forward the UNSHARPENED probabilities for diagnostics. Without this the
+        # routing metrics measure VEAR_SHARPEN rather than the router: p**4 drives
+        # the batch-mean to float-exact one-hot, so routing_entropy saturates and
+        # stops responding to the weights at all. See SMEAR._log_routing_metrics.
+        return super()._merge_expert_parameters(
+            sharp,
+            current_depth,
+            router_probs=routing_probs if router_probs is None else router_probs,
+        )
 
     def router_aux_loss(self) -> dict:
         """Variance-driven repulsion as a named loss, collected ONCE per step

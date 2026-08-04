@@ -30,6 +30,19 @@ from praxis.tasks.weighter import (
 )
 
 # Starting-value dict reused by fixed and learnable bias_pretrain variants.
+#
+# EVERY TaskType must appear here. `_targets_to_tensor` seeds from
+# `torch.ones(len(TaskType))` (weighter.py) and only overwrites listed keys, so
+# a task added to the enum after this dict was written silently inherits 1.0 -
+# i.e. 3.3x `conversation` - and nothing reports it. That is exactly what
+# happened to `joke`: paired with `rated-jokes` at PRINT_WEIGHT=5.0 (forced into
+# the mix by JokePolicy.dataset_collections), it ran at 5x sampling and 3.3x
+# per-token weight for the whole abstractinator-d..g line. See next/rl.md.
+#
+# The dynamic weighter does NOT absorb a wrong value here: DifficultyTaskLoss-
+# Weighter._effective() returns `targets * clamp(ratio**gamma, 0.1, 4.0)`, so
+# these are a multiplicative BASE the curriculum moves around, not a prior it
+# can overrule.
 BIAS_PRETRAIN_TARGETS: Dict[str, float] = {
     "pretrain": 1.0,
     "instruction": 0.3,
@@ -37,6 +50,17 @@ BIAS_PRETRAIN_TARGETS: Dict[str, float] = {
     "tool_call": 0.2,
     "reasoning": 0.5,
     "rl": 0.5,
+    # Joke text is conversation content; it gets conversation's weight. Its
+    # 5x sampling weight is a separate lever (praxis/data/config.py::joke).
+    "joke": 0.3,
+    # Preference sides. Chosen text trains as ordinary conversation data (the
+    # SFT anchor of the ORPO-shaped objective), so it matches `conversation`.
+    "pref_chosen": 0.3,
+    # Rejected text is contrast-only and is hard-excluded from the main CE in
+    # _build_loss_weights; 0.0 states that here rather than leaving it implicit
+    # in one call site. PreferencePolicy selects its own tokens by task tag and
+    # is unaffected by this value.
+    "pref_rejected": 0.0,
 }
 
 

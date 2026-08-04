@@ -51,7 +51,7 @@ class ActivationRegularizer(BaseRegularizer):
         self.beta = beta
         self._metrics: dict = {}
 
-    def forward(self, hidden_states: Tensor, input_ids: Tensor) -> Tensor:
+    def forward(self, hidden_states: Tensor, input_ids: Tensor, **_) -> Tensor:
         # hidden_states: [B, T, D]. Mean-reduce so the constants stay width- and
         # length-independent.
         ar = hidden_states.pow(2).mean()

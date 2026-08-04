@@ -653,6 +653,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             attention_mask,
             skip_logits,
             assistant_mask,
+            classifier,
         )
         loss = self._finalize_loss(loss, outputs.losses, labels)
 
@@ -871,6 +872,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         attention_mask: Optional[torch.Tensor],
         skip_logits: bool,
         assistant_mask: Optional[torch.Tensor] = None,
+        classifier: Optional[nn.Module] = None,
     ) -> None:
         """Accumulate training-only auxiliary losses into the container:
         task-weight anchor, head aux losses, MTP, and the regularizers."""
@@ -930,8 +932,13 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             outputs.losses.add_loss_container(self.mtp(mtp_inputs))
 
         # Additive representation-shaping regularizers (REGULARIZER_REGISTRY).
+        # `classifier` is passed as optional context, not stored: a regularizer
+        # holding a reference to the readout would register it a second time and
+        # duplicate its parameters in state_dict and the optimizer.
         for reg in self.reg:
-            outputs.losses.add_loss(reg.name, reg(hidden_states, input_ids))
+            outputs.losses.add_loss(
+                reg.name, reg(hidden_states, input_ids, classifier=classifier)
+            )
 
     def _finalize_loss(
         self, loss, losses: LossContainer, labels: Optional[torch.Tensor]

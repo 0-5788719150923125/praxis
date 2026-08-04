@@ -3,7 +3,7 @@
 
 Self-attention variants, from vanilla causal MHA to compressive-memory and per-depth-biased variants.
 
-Registry: ``praxis.ATTENTION_REGISTRY`` (8 entries)
+Registry: ``praxis.ATTENTION_REGISTRY`` (10 entries)
 
 ## `arc`, `arc_dropoff` - ArcAttention
 
@@ -23,6 +23,20 @@ Presets:
 - `arc` - class defaults
 - `arc_dropoff` - `dropoff='warp'`
 
+## `arc_single`, `arc_single_dropoff` - SingleHeadArcAttention
+
+ArcAttention with one head, a shared Q/K representation, and a SiLU gate.
+
+Everything else - the per-depth biases, the segment memory, ghostmax, the cached decode
+path, the dropoff ablation - is inherited unchanged. Only the three subclass hooks and
+the tensors whose shapes depend on the head count are replaced.
+
+Source: [praxis/attention/single.py:84](../praxis/attention/single.py#L84)
+
+Presets:
+- `arc_single` - class defaults
+- `arc_single_dropoff` - `dropoff='warp'`
+
 ## `causal` - CausalAttention
 
 Causal self-attention using PyTorch's FlexAttention API. Provides efficient attention
@@ -40,7 +54,7 @@ ghostmax, RoPE/ALiBi, GQA from the parent). Between segments, an ELU+1 kernel me
 accumulates key-value context and a learned gate blends memory retrieval with local
 attention output.
 
-Source: [praxis/attention/infini.py:71](../praxis/attention/infini.py#L71)
+Source: [praxis/attention/infini.py:83](../praxis/attention/infini.py#L83)
 
 ## `modular` - ModularAttention
 

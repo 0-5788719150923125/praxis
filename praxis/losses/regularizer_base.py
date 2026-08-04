@@ -13,12 +13,17 @@ class BaseRegularizer(nn.Module):
     Subclasses set ``name`` (the loss-container tag), may declare
     ``metric_descriptions`` (dashboard chart hints), and may override
     ``training_metrics`` to surface per-step diagnostics.
+
+    ``**ctx`` carries optional extras the model can supply that not every
+    regularizer wants (currently ``classifier``, the output readout). Accept and
+    ignore what you don't use - the model passes the same context to all of
+    them, so a regularizer that needs nothing extra keeps working unchanged.
     """
 
     name = "regularizer"
     metric_descriptions: dict = {}
 
-    def forward(self, hidden_states: Tensor, input_ids: Tensor) -> Tensor:
+    def forward(self, hidden_states: Tensor, input_ids: Tensor, **ctx) -> Tensor:
         raise NotImplementedError
 
     def training_metrics(self) -> dict:

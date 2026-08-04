@@ -56,6 +56,7 @@ class Patcher:
         self.config = config
         self.entropy_model: Optional[nn.Module] = None
 
+    @torch.compiler.disable
     def patch(
         self,
         tokens: torch.Tensor,
@@ -65,6 +66,31 @@ class Patcher:
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Create patches from input tokens.
+
+        Runs EAGER. How many patches a sequence yields depends on the bytes in
+        it, so every mode here mints a shape torch.compile cannot know at trace
+        time - ``find_space_patch_start_ids`` slices by a 0-d tensor
+        (``[:, :max_patches]``) after boolean-mask indexing, ``_space_patching``
+        reads ``.item()`` per boundary, and ``_split_large_patches`` walks a
+        ``.tolist()``. Traced, those become unbacked symbols that survive into
+        Inductor's ``tensorify_python_scalars`` pass and fail there with a bare
+        ``KeyError: s<N>``, which is what took down the first compiled
+        abstractinator run.
+
+        Disabling the whole entry point rather than patching each site is
+        deliberate. The patch count is genuinely data-dependent, so no
+        rewrite makes it static without changing what a patch IS; and letting
+        Dynamo trace partway in only splits the function into resume frames
+        that still carry the symbolic slice. Eager here costs nothing that
+        matters - this is index arithmetic on a [batch, seq] integer tensor -
+        and everything downstream then sees a concrete ``patch_lengths``,
+        whose shape is an ordinary backed symbol the rest of the graph
+        compiles against normally.
+
+        Mirrors the same call in CALM's ``_register_energy_loss``: the
+        dynamic-shape region runs eager, the transformer compiles around the
+        graph break. ``torch.compiler.disable`` is inert when nothing is
+        compiling, so the uncompiled path is unchanged.
 
         Args:
             tokens: Input token tensor of shape [batch_size, seq_len]

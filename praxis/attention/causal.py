@@ -101,6 +101,23 @@ class CausalAttention(nn.Module):
         # Key is (seq_len, kv_len, device_str) tuple
         self.block_mask_cache = {}
 
+    @classmethod
+    def patch_config(cls, config) -> None:
+        """Correct the config fields that would otherwise misdescribe this module.
+
+        Most mechanisms build exactly what the config asks for, so this is a
+        no-op for them. It exists for the ones that cannot - a mechanism that
+        fixes its own head count, say - because the config is not a private
+        argument list: it is serialized to ``config.json``, rendered in the
+        blueprint tab, and read by every other module in the stack. A field
+        the attention silently disagrees with is a field that describes a
+        model nobody built.
+
+        Called for the selected ``attention_type`` by
+        :func:`praxis.attention.patch_attention_config`, and again from the
+        implementing class's own ``__init__``, so it MUST be idempotent.
+        """
+
     @contextmanager
     def head_budget(self, kv_keep: Tensor):
         """Coherently restrict attention to a subset of KV heads (and their GQA

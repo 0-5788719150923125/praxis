@@ -1,4 +1,5 @@
 import copy
+import math
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
@@ -130,6 +131,11 @@ class SMEAR(nn.Module):
 
         routing_probs = F.softmax(logits, dim=-1)  # [batch_size, num_experts]
 
+        # The router's OWN opinion, captured before expert dropout and before any
+        # subclass transform. This is what the routing diagnostics are computed
+        # on; see _log_routing_metrics for why that distinction matters.
+        router_probs = routing_probs
+
         # Apply expert dropout during training (drop entire experts)
         if self.training and self.dropout_rate > 0:
             # Create dropout mask for experts
@@ -143,7 +149,9 @@ class SMEAR(nn.Module):
             )
 
         # Merge expert parameters based on routing probabilities
-        merged_state_dict = self._merge_expert_parameters(routing_probs, current_depth)
+        merged_state_dict = self._merge_expert_parameters(
+            routing_probs, current_depth, router_probs=router_probs
+        )
 
         # Use the first expert as the base module structure
         base_module = self.experts[0]
@@ -203,14 +211,24 @@ class SMEAR(nn.Module):
         return parameter_names
 
     def _merge_expert_parameters(
-        self, routing_probs: torch.Tensor, current_depth: int = 0
+        self,
+        routing_probs: torch.Tensor,
+        current_depth: int = 0,
+        router_probs: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """
         Merge expert parameters based on routing probabilities.
 
         Args:
-            routing_probs: Routing probabilities of shape [batch_size, num_experts]
+            routing_probs: Probabilities the merge actually uses, shape
+                [batch_size, num_experts]. Subclasses may transform these
+                (VEAR sharpens by ``p**4``), so they are NOT the router's output.
             current_depth: Current layer depth for per-layer metric tracking
+            router_probs: The router's own pre-transform, pre-dropout output.
+                Defaults to ``routing_probs`` (correct for plain SMEAR, where the
+                merge uses exactly what the router emitted). Subclasses that
+                transform the probabilities MUST forward the original here or the
+                diagnostics describe the transform instead of the router.
 
         Returns:
             Dictionary of merged parameters
@@ -225,7 +243,12 @@ class SMEAR(nn.Module):
         expert_weights = routing_probs.mean(dim=0)  # [num_experts]
 
         # Log expert convergence metrics for visualization (with layer prefix)
-        self._log_routing_metrics(expert_weights, routing_probs, current_depth)
+        self._log_routing_metrics(
+            expert_weights,
+            routing_probs if router_probs is None else router_probs,
+            current_depth,
+            merge_weights=expert_weights,
+        )
 
         # Iterate over all parameter names
         self.parameter_names = self._collect_parameter_names(self.experts[0])
@@ -281,17 +304,45 @@ class SMEAR(nn.Module):
                 return None
         return getattr(submodule, parts[-1], None)
 
+    @staticmethod
+    def _entropy(probs: torch.Tensor, dim: int = -1) -> torch.Tensor:
+        """Shannon entropy in nats, numerically safe.
+
+        ``clamp_min``, NOT ``+ eps``. Adding an epsilon pushes a weight of exactly
+        1.0 above 1, which makes ``log`` positive and the resulting "entropy"
+        slightly NEGATIVE. That artifact is how the old routing_entropy reported
+        ``-0.00000`` under VEAR, and a negative entropy is also the tell that the
+        distribution had saturated to one-hot in float.
+        """
+        p = probs.clamp_min(1e-12)
+        # clamp_min(0) on the result too: a single-expert router gives
+        # -(1.0 * log(1.0)) = -0.0, and a negative zero is noise on a log axis.
+        return (-(p * p.log()).sum(dim=dim)).clamp_min(0.0)
+
     def _log_routing_metrics(
         self,
         expert_weights: torch.Tensor,
         routing_probs: torch.Tensor,
         current_depth: int = 0,
+        merge_weights: Optional[torch.Tensor] = None,
     ) -> None:
         """
         Store routing metrics for expert convergence tracking.
 
-        Tracks how routing probabilities evolve over training to visualize
-        convergence patterns similar to Figure 1 in "A Blind Watchmaker" paper.
+        WHAT IS MEASURED ON WHAT. Every diagnostic here describes the ROUTER, so
+        it is computed on ``routing_probs`` = the router's own pre-transform,
+        pre-dropout output. The single exception is
+        ``expert_{i}_routing_weight`` / ``routing_merge_entropy``, which describe
+        the MERGE and therefore use the post-transform weights.
+
+        That split exists because VEAR sharpens by ``p**4`` before merging
+        (praxis/routers/vear.py). Measuring the router's diagnostics on the
+        sharpened probabilities made every one of them report VEAR's own
+        exponent rather than anything the router learned: entropy saturated to
+        float-exact one-hot and became insensitive to the weights entirely -
+        bit-identical across models whose losses differed by 5%. A metric that
+        cannot vary with the thing it claims to measure is worse than absent,
+        because it reads as a finding.
 
         Metrics are stored with layer prefixes to support per-layer visualization
         when the same router is called at multiple layer positions.
@@ -302,37 +353,42 @@ class SMEAR(nn.Module):
 
         Args:
             expert_weights: Mean routing probability per expert [num_experts]
-            routing_probs: Full routing probabilities [batch_size, num_experts]
+            routing_probs: The ROUTER's probabilities [batch_size, num_experts],
+                before any subclass transform and before expert dropout
             current_depth: Current layer depth for per-layer metric tracking
+            merge_weights: Batch-mean weights the merge actually used. Differs
+                from the router's own mean whenever a subclass transforms them.
         """
         try:
             layer_prefix = f"layer_{current_depth}_"
 
-            # Per-expert routing weights (mean across batch)
-            # These show individual expert convergence trajectories
+            # Per-expert weights the MERGE used - individual expert convergence
+            # trajectories, i.e. which experts are actually being applied.
             for i, weight in enumerate(expert_weights):
                 self._metrics[f"{layer_prefix}expert_{i}_routing_weight"] = (
                     weight.item()
                 )
 
-            # Entropy: H = -Σ(p_i * log(p_i))
-            # Measures routing balance: high = balanced, low = collapsed
-            probs = expert_weights + 1e-10  # Avoid log(0)
-            entropy = -(probs * probs.log()).sum()
-            self._metrics[f"{layer_prefix}routing_entropy"] = entropy.item()
+            n = routing_probs.size(-1)
+            router_mean = routing_probs.mean(dim=0)  # [num_experts]
+
+            # Entropy of the router's batch-mean: aggregate expert LOAD BALANCE.
+            # High = the batch spreads across experts; low = the whole batch is
+            # landing on one expert.
+            h_mean = self._entropy(router_mean)
+            self._metrics[f"{layer_prefix}routing_entropy"] = h_mean.item()
 
             # Concentration: max batch-mean weight (1/N balanced .. 1.0 hogging).
             self._metrics[f"{layer_prefix}routing_concentration"] = (
-                expert_weights.max().item()
+                router_mean.max().item()
             )
 
             # Variance of the batch-mean, NORMALIZED to [0, 1]. Raw variance maxes
             # at (N-1)/N^2 (~0.19 for N=4), so the raw number reads misleadingly
             # small; here 0 = perfectly balanced load, 1 = collapsed onto one expert.
-            n = expert_weights.numel()
             max_var = (n - 1) / (n * n) if n > 1 else 1.0
             self._metrics[f"{layer_prefix}routing_variance"] = (
-                expert_weights.var(unbiased=False) / max_var
+                router_mean.var(unbiased=False) / max_var
             ).item()
 
             # --- Specialization, computed PER SEQUENCE (before the batch-mean) ---
@@ -344,12 +400,38 @@ class SMEAR(nn.Module):
             # routing_peak: mean per-sequence top weight (1/N uniform .. 1.0 committed).
             peak = routing_probs.max(dim=-1).values.mean()
             self._metrics[f"{layer_prefix}routing_peak"] = peak.item()
-            # routing_specialization: peak rescaled to [0, 1] - 0 = uniform routing,
-            # 1 = every sequence commits to a single expert. The VEAR gauge to watch.
+            # Mean per-sequence entropy: how undecided a TYPICAL routing decision
+            # is, as opposed to how balanced the aggregate load is.
+            h_seq = self._entropy(routing_probs, dim=-1).mean()
+            self._metrics[f"{layer_prefix}routing_entropy_seq"] = h_seq.item()
+
             if n > 1:
+                # routing_specialization: peak rescaled to [0, 1] - 0 = uniform
+                # routing, 1 = every sequence commits to a single expert.
                 self._metrics[f"{layer_prefix}routing_specialization"] = (
                     (n * peak - 1.0) / (n - 1)
                 ).item()
+
+                # INPUT DEPENDENCE: I(input; expert) = H(mean p) - mean H(p),
+                # normalized by log(N) to [0, 1]. This is the number that answers
+                # "is the router reading its input at all". Zero means every
+                # sequence in the batch got the same routing distribution, so the
+                # router is a constant; one means each sequence commits to a
+                # different expert. Neither load balance nor specialization can
+                # distinguish those cases on its own - a router that sends the
+                # WHOLE batch to one expert scores maximum specialization.
+                mi = (h_mean - h_seq) / math.log(n)
+                self._metrics[f"{layer_prefix}routing_input_dependence"] = (
+                    mi.clamp(0.0, 1.0).item()
+                )
+
+            # Entropy of the weights the MERGE used. For plain SMEAR this equals
+            # routing_entropy; under VEAR the gap between them IS the sharpening,
+            # so reading the two together shows how much p**4 is doing.
+            if merge_weights is not None:
+                self._metrics[f"{layer_prefix}routing_merge_entropy"] = (
+                    self._entropy(merge_weights).item()
+                )
         except Exception:
             # Silently fail if metric computation fails - don't break training
             pass
@@ -459,6 +541,9 @@ class SMEAR(nn.Module):
 
         routing_probs = F.softmax(logits, dim=-1)  # [batch_size, num_experts]
 
+        # Router's own opinion, before dropout and before any subclass transform.
+        router_probs = routing_probs
+
         # Apply expert dropout during training (drop entire experts)
         if self.training and self.dropout_rate > 0:
             # Create dropout mask for experts
@@ -472,7 +557,9 @@ class SMEAR(nn.Module):
             )
 
         # Merge expert parameters based on routing probabilities
-        merged_state_dict = self._merge_expert_parameters(routing_probs)
+        merged_state_dict = self._merge_expert_parameters(
+            routing_probs, router_probs=router_probs
+        )
 
         # Use the first expert as the base module structure
         base_module = self.experts[0]

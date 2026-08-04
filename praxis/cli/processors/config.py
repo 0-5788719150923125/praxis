@@ -226,4 +226,18 @@ class ConfigBuilder:
         # These will be caught by PraxisConfig's **kwargs and passed through
         all_kwargs = {**filtered_kwargs, **experimental_kwargs}
 
-        return PraxisConfig(**all_kwargs)
+        config = PraxisConfig(**all_kwargs)
+
+        # The selected attention mechanism gets the last word on the fields
+        # that describe it. Almost all of them build exactly what was asked
+        # for and this changes nothing; the ones that don't (arc_single fixes
+        # its head count at 1 and reads num_heads as the head's width) would
+        # otherwise leave config.json, the blueprint tab and every module that
+        # reads config.num_heads describing a model nobody built. ``args`` is
+        # passed so the correction reaches the Arguments card too, which
+        # serializes the namespace rather than the config.
+        from praxis.attention import patch_attention_config
+
+        patch_attention_config(config, args)
+
+        return config

@@ -60,7 +60,7 @@ class ContrastiveIsotropyLoss(BaseRegularizer):
         self.margin = margin
         self._metrics: dict = {}
 
-    def forward(self, hidden_states: Tensor, input_ids: Tensor) -> Tensor:
+    def forward(self, hidden_states: Tensor, input_ids: Tensor, **_) -> Tensor:
         # hidden_states: [B, T, D] last-layer reps. Cost is O(T^2 * D) per
         # sequence; fine at experiment scale, revisit with chunking for long T.
         h = F.normalize(hidden_states, dim=-1)

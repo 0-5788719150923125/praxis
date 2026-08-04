@@ -7,15 +7,28 @@ reference-free (SimPO-style) margin needs only the model's own likelihoods:
 push the mean per-token log-probability of chosen text above that of rejected
 text through a logistic margin.
 
-Byte-level block packing chunks documents arbitrarily, so true per-pair row
-alignment does not survive the pipeline. The pairing is instead carried by
-per-token task tags (``PREF_CHOSEN`` / ``PREF_REJECTED``, emitted by
-``format_preference_pair``), and the margin contrasts the two tag POPULATIONS
-within a batch - the chunk-level analogue of the pairwise loss, honestly an
-unpaired approximation. The overall objective is ORPO-shaped: chosen text
-keeps flowing through the main CE (the SFT anchor), rejected text is excluded
-from the main CE entirely (``_build_loss_weights``) and appears only here,
-being pushed down relative to chosen.
+DISABLED BY DEFAULT, AND THE CONTRAST IS NOT PAIRED. No experiment lists this in
+``rl_type``; see next/rl.md. The reason is not that packing loses the row
+alignment - it is that ``format_preference_pair`` emits exactly ONE side per
+call, chosen 50/50 at random (praxis/data/formatters/conversation.py). A pair's
+two halves are therefore never co-resident by construction, so the margin below
+contrasts one random hh-rlhf conversation's chosen text against a DIFFERENT
+random conversation's rejected text. What it measures is largely the difficulty,
+length and domain gap between two unrelated documents, not a preference. Live
+metrics agree it is not working: preference_rejected_logp rose over the
+abstractinator-g run (rejected text becoming MORE likely) while the margin
+shrank.
+
+Restoring a real pairwise objective needs a formatter change, not a policy
+change: emit both sides with a shared pair id and thread that id alongside the
+task tags, then contrast within a pair id. Specified in next/rl.md.
+
+The margin contrasts the two tag POPULATIONS (``PREF_CHOSEN`` /
+``PREF_REJECTED``) within a batch - the chunk-level analogue of the pairwise
+loss, honestly an unpaired approximation. The overall objective is ORPO-shaped:
+chosen text keeps flowing through the main CE (the SFT anchor), rejected text is
+excluded from the main CE entirely (``_build_loss_weights``) and appears only
+here, being pushed down relative to chosen.
 
 Recall-family policy (like engagement/joke): any number coexist, partitioned
 by task tags, invoked with ``(logits, labels, assistant_mask, task_type_ids)``
@@ -47,6 +60,12 @@ class PreferencePolicy(nn.Module):
     # Margin sharpness (SimPO's beta). Fixed, model-agnostic: 2.0 sits in the
     # paper's stable range and the loss is scale-bounded by logsigmoid anyway.
     BETA = 2.0
+    # Minimum tokens on EACH side before a margin is computed. A mean per-token
+    # log-prob over a handful of bytes is not a statistic - the live run reached
+    # populations as small as ONE byte, and every such batch injected pure noise
+    # into the objective at full weight. Skipping is the correct behaviour: the
+    # chosen side still trains through the main CE either way.
+    MIN_SIDE_TOKENS = 32
 
     def __init__(self, config):
         super().__init__()
@@ -97,9 +116,10 @@ class PreferencePolicy(nn.Module):
         rejected = valid & (shift_task == int(TaskType.PREF_REJECTED))
         n_chosen = int(chosen.sum())
         n_rejected = int(rejected.sum())
-        # The margin needs both populations; a batch carrying only one side
-        # contributes nothing (its chosen text still trains via the main CE).
-        if n_chosen == 0 or n_rejected == 0:
+        # The margin needs both populations, each large enough to mean anything
+        # (see MIN_SIDE_TOKENS); a batch that fails either test contributes
+        # nothing, and its chosen text still trains via the main CE.
+        if n_chosen < self.MIN_SIDE_TOKENS or n_rejected < self.MIN_SIDE_TOKENS:
             return None, {}
 
         safe_labels = shift_labels.clamp(min=0)
@@ -115,11 +135,23 @@ class PreferencePolicy(nn.Module):
         lp_rejected = (logprob * rejected.float()).sum() / n_rejected
         margin = lp_chosen - lp_rejected
 
-        loss = self.rl_weight * -F.logsigmoid(self.BETA * margin)
+        # Scale by this policy's share of the batch. The two side likelihoods
+        # are each normalised by their OWN token count, while the main CE
+        # normalises over every supervised position (praxis/losses/reduction.py),
+        # so an unscaled term applied `rl_weight` of force to a population of a
+        # few dozen bytes - measured at ~2.7x the main CE's per-token gradient on
+        # the tokens it touched. Weighting by (n_chosen + n_rejected)/n_total
+        # makes the term contribute in proportion to how much of the batch is
+        # actually preference data, which is what rl_weight reads as.
+        n_total = int((shift_labels != IGNORE_INDEX).sum())
+        share = (n_chosen + n_rejected) / max(n_total, 1)
+
+        loss = self.rl_weight * share * -F.logsigmoid(self.BETA * margin)
 
         p = self.prefix
         self._metrics = {
             f"{p}_margin": float(margin.detach()),
+            f"{p}_share": share,
             f"{p}_chosen_logp": float(lp_chosen.detach()),
             f"{p}_rejected_logp": float(lp_rejected.detach()),
             f"{p}_chosen_tokens": float(n_chosen),

@@ -4,12 +4,17 @@ import torch.nn as nn
 
 from praxis.losses.activation import ActivationRegularizer
 from praxis.losses.contrastive_isotropy import ContrastiveIsotropyLoss
+from praxis.losses.harmonic_kl import HarmonicKLRegularizer
 
 # Additive representation-shaping losses. Add an option here (not a new CLI
 # flag) to make it selectable; the model runs every name in config.regularizers.
 REGULARIZER_REGISTRY = {
     "contrastive_isotropy": ContrastiveIsotropyLoss,
     "activation": ActivationRegularizer,
+    # KL between the output readout and a slow EMA of itself - the trust region
+    # the RL path never had, and a direct test of the paper's constitutive-basis
+    # claim. Opt-in; see praxis/losses/harmonic_kl.py and next/rl.md.
+    "harmonic_kl": HarmonicKLRegularizer,
 }
 
 # Resolves config.regularizers when left unset (None). Empty list disables all.

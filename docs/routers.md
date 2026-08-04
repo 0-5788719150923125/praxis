@@ -79,7 +79,7 @@ SMEAR dynamically merges expert parameters based on routing probabilities, rathe
 routing inputs to multiple experts. This enables more efficient parameter sharing and
 adaptation to input patterns.
 
-Source: [praxis/routers/smear.py:22](../praxis/routers/smear.py#L22)
+Source: [praxis/routers/smear.py:23](../praxis/routers/smear.py#L23)
 
 ## `taxus`
 

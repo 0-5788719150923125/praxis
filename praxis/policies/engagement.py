@@ -1,12 +1,36 @@
 """Forward-path REINFORCE on the engagement-prediction reward (PLAN.md P3).
 
+DISABLED BY DEFAULT. No experiment lists this in ``rl_type``; see next/rl.md for
+the audit that took it out of the abstractinator line. The bounds and the
+persistent baseline below are real fixes, but they do not repair the two
+design-level defects, which are stated here so nobody re-enables this expecting
+a policy gradient:
+
+1. THIS IS NOT A POLICY GRADIENT. The reward is computed from
+   ``pred_ids = argmax(logits)`` while the log-prob that gets weighted is the
+   GROUND-TRUTH label's. REINFORCE requires ``log pi(a)`` for the action ``a``
+   that earned the reward; these are different objects. Substituting
+   ``logprob = -ce``, the term is really ``+rl_weight * advantage * CE``: a
+   per-row reweighting of the ordinary cross-entropy by how well the row was
+   already predicted. Rows the model gets right are amplified, rows it gets
+   wrong are suppressed - a rich-get-richer ratchet on the current output
+   distribution, which is a mode-collapse operator, not an exploration signal.
+   Making it a real policy gradient requires sampling the action (rollouts),
+   which this forward-path contract has no way to do.
+2. THE REWARD IS MAXIMISED BY SAYING LESS. ``recall`` is
+   ``|set(pred) & set(target)| / |set(pred)|`` over DISTINCT ids, which is
+   precision, not recall, and its optimum is to emit ONE distinct id that
+   appears in the target. On a ~260-symbol byte alphabet the two sets also
+   nearly always overlap, so the value is near-constant and carries almost no
+   information about whether the answer was right.
+
 Dense (simulated-user) path: over the assistant region of each example, the
 model's predicted answer tokens A_hat are scored against the ground-truth answer
 tokens R (the labels) by recall - "did the model anticipate its own answer". That
 recall plus the homeostatic energy is the reward (against a slow reward-EMA
-baseline); the policy gradient reweights the LM's own log-probs over the answer
-tokens. No extra
-parameters and no RL dataset - the reward is computed from labels, not carried in.
+baseline); the term reweights the LM's own log-probs over the answer tokens. No
+extra parameters and no RL dataset - the reward is computed from labels, not
+carried in.
 
 This is the teacher-forced dense proxy used to validate that the signal moves a
 small model before the live, generation-time channel (P4/P5) exists.
@@ -50,6 +74,16 @@ class EngagementPolicy(nn.Module):
 
     # REINFORCE baseline EMA horizon (~100 steps). Fixed, model-agnostic.
     REWARD_BASELINE_DECAY = 0.99
+    # Advantage magnitude cap. The baseline is an EMA, so early in a run (and
+    # on any restart before it re-converges) the raw advantage can reach the
+    # full reward range; capping it keeps one transient from dominating a step.
+    ADVANTAGE_CLIP = 1.0
+    # Floor on the per-token log-prob entering the weighted term. With a
+    # negative advantage the term is `-|adv| * logprob`, which is unbounded
+    # below as p(label) -> 0 - i.e. minimising it is served by making the
+    # correct token arbitrarily unlikely. The floor bounds that regime. It does
+    # NOT make the estimator valid (see module docstring); it caps the damage.
+    LOGPROB_FLOOR = -20.0
 
     def __init__(self, config):
         super().__init__()
@@ -62,7 +96,18 @@ class EngagementPolicy(nn.Module):
         # model activates, which drives the policy to suppress its own answer
         # tokens (unbounded-negative loss + inference degeneration). The reward
         # EMA keeps advantages zero-mean and balanced.
-        self.reward_baseline = 0.0
+        #
+        # A BUFFER, not a float. As a plain attribute this was absent from
+        # state_dict, so it re-zeroed on every process restart, not just on
+        # --reset. Reward reaches ~1.9 within a few steps (recall saturates and
+        # the homeostatic energy climbs fast) while the baseline is still ~0, so
+        # each restart injected several hundred steps of one-sided positive
+        # advantage - an effective learning-rate multiplier on whatever data
+        # this policy happened to tag. That burst, not the steady state, is what
+        # over-imprinted the joke corpus on the abstractinator runs.
+        self.register_buffer(
+            "reward_baseline", torch.zeros((), dtype=torch.float32), persistent=True
+        )
         self._metrics: dict = {}
 
     @torch.no_grad()
@@ -146,13 +191,17 @@ class EngagementPolicy(nn.Module):
         energy = self.energy.update(activation_rate)
         reward = torch.tensor(recalls, dtype=torch.float32, device=device) + energy
 
-        # Advantage against the reward-EMA baseline (zero-mean, balanced).
+        # Advantage against the reward-EMA baseline (zero-mean, balanced), capped
+        # so a cold or stale baseline cannot hand one step an outsized update.
         # Update the baseline *after* computing the advantage so it doesn't peek
         # at the current sample.
-        advantage = (reward - self.reward_baseline).detach()  # [B]
+        baseline = float(self.reward_baseline)
+        advantage = (
+            (reward - baseline).clamp(-self.ADVANTAGE_CLIP, self.ADVANTAGE_CLIP).detach()
+        )  # [B]
         scoped_reward = float(sum(reward[i].item() for i in scoped) / len(scoped))
-        self.reward_baseline = (
-            self.REWARD_BASELINE_DECAY * self.reward_baseline
+        self.reward_baseline.fill_(
+            self.REWARD_BASELINE_DECAY * baseline
             + (1.0 - self.REWARD_BASELINE_DECAY) * scoped_reward
         )
 
@@ -167,9 +216,20 @@ class EngagementPolicy(nn.Module):
             shift_labels.shape
         )  # [B, T-1]
 
+        # Bound the negative-advantage regime (see LOGPROB_FLOOR).
+        logprob = logprob.clamp(min=self.LOGPROB_FLOOR)
+
         adv_tok = advantage.unsqueeze(1).expand_as(logprob)
         weighted = (logprob * adv_tok) * mask.float()
-        denom = mask.float().sum().clamp(min=1.0)
+        # Normalise over EVERY supervised position in the batch, not just the
+        # ones this policy tags. The main CE reduces as sum(w*ce)/sum(w) over all
+        # valid positions (praxis/losses/reduction.py), so dividing by the tagged
+        # count instead made the per-token force `rl_weight / f_task` - i.e. a
+        # policy tagging 2% of the batch got ~50x the leverage its weight
+        # advertised, and the rarer the data the harder it pushed. With the
+        # shared denominator, rl_weight is the honest per-token ratio to the
+        # main CE.
+        denom = (shift_labels != IGNORE_INDEX).float().sum().clamp(min=1.0)
         policy_loss = -(weighted.sum() / denom)
         loss = self.rl_weight * policy_loss
 
@@ -179,7 +239,7 @@ class EngagementPolicy(nn.Module):
             f"{p}_activation_rate": activation_rate,
             f"{p}_recall": float(sum(recalls[i] for i in scoped) / len(scoped)),
             f"{p}_reward": scoped_reward,
-            f"{p}_reward_baseline": self.reward_baseline,
+            f"{p}_reward_baseline": float(self.reward_baseline),
             f"{p}_advantage": float(
                 sum(advantage[i].item() for i in scoped) / len(scoped)
             ),

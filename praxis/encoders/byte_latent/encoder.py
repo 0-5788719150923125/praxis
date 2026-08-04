@@ -907,6 +907,7 @@ def create_patch_block_ids(
     return patch_block_ids
 
 
+@torch.compiler.disable
 def packed_rnn_block(
     rnn: nn.Module,
     x: torch.Tensor,
@@ -916,6 +917,16 @@ def packed_rnn_block(
 ) -> torch.Tensor:
     """
     Efficiently use packed sequences within transformer architecture.
+
+    Runs EAGER, for the same reason ``Patcher.patch`` does: the block count and
+    the longest block are properties of where the document separators landed,
+    so ``num_blocks`` and ``max_len`` below are read out of tensor data and
+    become shapes. ``pack_padded_sequence`` also requires its lengths on the
+    CPU, which is a host sync no graph can contain. Only reached under
+    ``local_architecture: recurrent`` (the abstractinator profiles use conv),
+    so this is pre-emptive rather than a fix for an observed failure - but it
+    is the same trap and would surface the moment a recurrent profile is
+    compiled.
 
     EVERY packed document is processed, each as its own sequence with its own
     fresh hidden state. ``pack_padded_sequence`` cannot represent two

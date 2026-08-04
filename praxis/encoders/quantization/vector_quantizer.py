@@ -460,7 +460,25 @@ class MultiStageResidualVQ(nn.Module):
             composed = composed + idx * base
         return composed
 
+    @torch.compiler.disable
     def forward(self, z: torch.Tensor):
+        """Runs EAGER, recursively - the per-stage quantizers with it.
+
+        Quantization is branch-on-data throughout: ``forbidden_mask.any()`` and
+        ``is_pad.any()`` below are Python ``if``s over tensor contents, the
+        codebook reset path mutates buffers in place under a training guard,
+        and the whole thing is index arithmetic rather than arithmetic that
+        wants a fused kernel. Traced, those conditions become symbols that
+        reach Inductor's ``tensorify_python_scalars`` and die there with a bare
+        ``KeyError: s<N>`` (with ``Patcher.patch`` already disabled, this was
+        the second and final source of that failure in the abstractinator
+        stack).
+
+        The boundary is drawn here rather than at ``HarmonicResidualVQ.forward``
+        on purpose: the harmonic analysis/synthesis rotations around this call
+        are dense matmuls worth compiling, and they stay in the graph. What
+        goes eager is only the codebook lookup.
+        """
         B, Q, _ = z.shape
 
         # Detect pad sentinels

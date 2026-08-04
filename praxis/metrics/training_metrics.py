@@ -818,12 +818,63 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "title": "SMEAR Routing Entropy (Balance)",
         "y_label": "Entropy",
         "description": (
-            "Per-depth routing entropy for SMEAR routers (one line per layer). "
-            "High = balanced soft-merge across experts; low = the router is "
-            "collapsing onto a single expert."
+            "Per-depth entropy of the batch-MEAN routing weights (one line per "
+            "layer). High = the batch spreads across experts; low = the whole "
+            "batch is landing on one expert. Measured on the ROUTER's own output, "
+            "before expert dropout and before any subclass transform - under VEAR "
+            "this is the pre-sharpening distribution, so it reports what the "
+            "router learned rather than VEAR's p**4 exponent."
         ),
         "key_pattern": r"^layer_\d+_routing_entropy$",
         "order": 200,
+    },
+    {
+        "key": "smear_routing_entropy_seq",
+        "type": "multi_expert_line",
+        "title": "SMEAR Routing Entropy (per-sequence)",
+        "y_label": "Entropy",
+        "description": (
+            "Mean entropy of the PER-SEQUENCE routing distribution - how undecided "
+            "a typical single routing decision is, as opposed to how balanced the "
+            "aggregate load is. Read against Routing Entropy (Balance): equal "
+            "values mean every sequence routes alike, and a gap means different "
+            "sequences are choosing differently."
+        ),
+        "key_pattern": r"^layer_\d+_routing_entropy_seq$",
+        "order": 205,
+    },
+    {
+        "key": "smear_routing_input_dependence",
+        "type": "multi_expert_line",
+        "title": "SMEAR/VEAR Routing Input Dependence",
+        "y_label": "I(input; expert) / log N",
+        "description": (
+            "Normalized mutual information between the input and the expert "
+            "choice: H(mean p) - mean H(p), divided by log(num_experts). THE "
+            "gauge for whether the router is reading its input at all. 0 = every "
+            "sequence in the batch received the same routing distribution, so the "
+            "router is effectively a constant; 1 = each sequence commits to a "
+            "different expert. Neither load balance nor specialization can "
+            "distinguish those cases alone - a router that sends the WHOLE batch "
+            "to one expert scores maximum specialization while learning nothing."
+        ),
+        "key_pattern": r"^layer_\d+_routing_input_dependence$",
+        "order": 235,
+    },
+    {
+        "key": "smear_routing_merge_entropy",
+        "type": "multi_expert_line",
+        "title": "SMEAR/VEAR Merge Entropy (post-transform)",
+        "y_label": "Entropy",
+        "description": (
+            "Entropy of the batch-mean weights the parameter merge ACTUALLY used. "
+            "For plain SMEAR this equals Routing Entropy (Balance); under VEAR the "
+            "gap between the two is exactly what the p**4 sharpening is doing, so "
+            "reading them together shows how much of the discreteness is learned "
+            "versus imposed."
+        ),
+        "key_pattern": r"^layer_\d+_routing_merge_entropy$",
+        "order": 245,
     },
     {
         "key": "smear_routing_concentration",

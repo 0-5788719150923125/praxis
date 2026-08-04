@@ -11,6 +11,7 @@ Based on "Leave No Context Behind":
 https://arxiv.org/abs/2404.07143
 """
 
+import os
 from typing import Optional, Tuple
 
 import torch
@@ -25,19 +26,30 @@ _DEFAULT_SEGMENT_SIZE = 256
 # One-shot NaN/inf detection inside the compressive-memory path. Helps
 # pinpoint whether memory state explodes between segments. Remove once
 # the Infini/Arc training stability story is settled.
+#
+# OFF by default, because it is not cheap: `if not t.isfinite().all()` reads a
+# CUDA tensor into a Python bool, which is a full device synchronization. It
+# runs ten times per segment (four on retrieve, six on update), per layer, per
+# recurrent depth pass, and only stops once it has actually caught something -
+# so on a HEALTHY run it stalls the pipeline hundreds of times per step and
+# never turns itself off. Measured cost of arming it: ~5% of a train step at
+# abstractinator-g's dimensions (one segment), ~13% at hidden 512 / seq 1024
+# (four segments), and it grows with segment count. Set PRAXIS_INFINI_DIAG=1
+# to arm it while chasing a divergence.
+_MEMORY_DIAG_ENABLED = os.environ.get("PRAXIS_INFINI_DIAG") == "1"
 _MEMORY_DIAG_FIRED = False
 
 
 def _check_memory_finite(name: str, **tensors: Tensor) -> None:
     """Print a one-shot diagnostic if any tensor contains NaN/inf.
 
-    Intentionally cheap (single ``.isfinite().all()`` per tensor) and
-    bounded (only the first hit prints, then it's a no-op). The values
-    inspected are the actual memory-update inputs/outputs so the print
-    points directly at where the explosion started.
+    Bounded (only the first hit prints, then it's a no-op) and gated behind
+    PRAXIS_INFINI_DIAG. The values inspected are the actual memory-update
+    inputs/outputs so the print points directly at where the explosion
+    started.
     """
     global _MEMORY_DIAG_FIRED
-    if _MEMORY_DIAG_FIRED:
+    if not _MEMORY_DIAG_ENABLED or _MEMORY_DIAG_FIRED:
         return
     for label, t in tensors.items():
         if not torch.isfinite(t).all():
