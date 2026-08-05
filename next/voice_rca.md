@@ -1491,3 +1491,236 @@ path, and an accepted catch's `override` genome replaces the blend outright. The
 alchemy layer switches itself off the moment you catch anything.
 
 Gates: `voice_check`, `g2p_check` OK; compile clean; synthesis-mode boot clean.
+
+---
+
+## 27. Round twenty-two (2026-08-05) - the interference field, built
+
+Continues §26 (the audit). Two design questions from the user drove the shape of
+this: how should seed influence COMBINE, and should generated values be allowed
+to go NEGATIVE so that combining can subtract.
+
+### How influence combined before
+
+Three different rules, none of them chosen deliberately, all in the same game:
+
+- `_field_reception` summed amplitudes ARITHMETICALLY but blended their
+  frequencies as an amplitude-weighted GEOMETRIC mean - additive in one
+  quantity and multiplicative in another, in one function.
+- `_adreno_step` summed SIGNED forces, the sign a hard +-1 threshold on whether
+  a seed's acceptance beat the belt mean.
+- `_party_vector` and `_background_traits` take positive-weighted arithmetic
+  means, so nothing there can ever subtract.
+
+So the answer to "are we adding or multiplying" was: both, in different places,
+by accident.
+
+### `scripts/voice_field.gd`
+
+The rule is now named and selectable. `COMBINE` has four modes, and they are
+different instruments rather than four spellings of a sum:
+
+- **sum** - superposition, the physical default. A chord.
+- **product** - each source multiplies what came before, so one source sitting
+  on a null silences the whole belt. A gate: the field goes quiet in specific
+  PLACES rather than merely getting weaker.
+- **max** - the strongest source wins outright. The belt as territories.
+- **ring** - only the PAIRWISE products survive, so a lone seed radiates nothing
+  and the field is made entirely of relationships between seeds. The most
+  literal reading of interference.
+
+Which one a voice's water obeys is derived from its lineage root, so it is a
+property you fish for and inherit rather than a setting - and all four are
+reachable in play instead of one being hardcoded.
+
+### On negative values
+
+Amplitudes are now SIGNED and continuous: `tanh((acceptance - 1) * gain)`, so a
+seed the belt likes less than average subtracts. That replaces a binary +-1 that
+existed only inside the anneal.
+
+But the sign flag is the weaker half of the idea, and worth saying plainly: the
+stronger half is PHASE. Each source carries a wave VECTOR, so `cos(k . (p - x))`
+already spans [-1, +1] as a function of WHERE THE CANDIDATE STANDS. Two seeds
+reinforce here, partially cancel a step away, and null completely a step
+further. That is interference rather than the addition of signed numbers, and it
+is what makes distance and ANGLE matter instead of just membership. A signed
+scalar per seed gives you subtraction; a phase gives you a pattern.
+
+It is also the structural guard against the collapse failure mode: `cos` has
+zero spatial mean, so the field perturbs WITHOUT biasing toward the belt's
+centroid, which a fourth attraction term would.
+
+### Everything derived, nothing rolled
+
+- position - the seed's own `_seed_vector`, projected into 3 axes
+- strength - its acceptance (the same weight the anneal and party already use)
+- range - `ring * (1 - damp)`: `ring` is how far its resonance carries and
+  `damp` how hard it absorbs, so the seed's REACH was already in its genome.
+  Normalized against the belt's own median so ranges are in this belt's units.
+  Measured span 3.0x on a 9-seed belt, and the gene ranges allow ~40x.
+- wave vector / phase - the seed's strongest lineage modulator's rate and phase
+
+Three axes rather than the full 25, for a measured reason: a random offset's
+projection onto a source's wave vector has sd ~0.58 in 3-D and ~0.20 in 25-D. In
+25-D nearly every pair of directions is near-orthogonal, `cos` sits near zero
+almost everywhere, and ANGLE STOPS DISCRIMINATING - the field would degenerate
+into pure distance falloff, which is the thing being fixed.
+
+### Wired at three sites
+
+- **`_temper_traits`** - the cage's CENTRE now moves with the field instead of
+  only widening. Previously distance inflated a trust region still bolted to the
+  belt's centre of mass, so a candidate far out was normalized toward the same
+  point as one sitting on the belt. Far out the field dies and the centre
+  returns to the plain centroid, so the old behaviour is the limit case.
+- **`_adreno_step`** - the reel hauls the line home, so the candidate crosses
+  the interference pattern on the way in and the anneal sees a CHANGING field
+  whose shape depends on the cast bearing. Weighted by `cool`, so the field
+  matters most early in the fight.
+- **`_field_reception`** - re-based on the same field, so what the player HEARS
+  and what the catch FEELS are one geometry rather than two independent
+  inventions both called interference. The old version placed sources at
+  `hash([lineage, "src"])` on one axis with a single shared falloff and clamped
+  the listener at 2.0. Its wall-clock beat survives as live shimmer only - a
+  clock must never reach the trait path.
+
+### `tests/field_check.gd` - the first test the fishing loop has ever had
+
+    determinism   identical, and independent of belt array order
+    falloff       monotonic beyond the belt's extent, decays to 0.0% of edge
+    angle         spread 1.64 across bearings at equal radius (needs > 0.50)
+    range         3.0x span; dropping the longest-range seed moves the field
+                  0.0763 vs 0.0128 for the shortest
+    polarity      8/10 probes point OPPOSITE an all-positive belt
+    budget        prox 0.741 at 4 seeds vs 1.000 at 22 (needs under 2x)
+    modes         sum 0.48  product 0.69  max 0.40  ring 0.08, all distinct
+
+The polarity and angle checks are the ones that would catch "we shipped a fourth
+attractor"; the budget check catches the belt homogenizing as it fills.
+
+One test assumption was wrong and got corrected rather than the code: falloff is
+NOT monotonic from the origin, because the sources are not at the origin and
+energy rightly rises as you approach one. It is measured from outside the belt's
+extent now.
+
+### Not done
+
+- `_drift_dist` is still a scalar radius. The candidate now moves a real
+  POSITION through the field along its bearing, but the odometer itself stays a
+  magnitude, because the fight math, the HUD arc and the caption are all defined
+  on it as one.
+- The HUD still draws belt moons at `hash`-derived positions rather than the
+  field's real ones, so the picture and the physics disagree visually.
+- `Spec.influences` - the pooled-oscillator blend that is the belt's audible
+  alchemy - is still assigned only in `export_take` and never on a live path,
+  and an accepted catch's frozen genome replaces the blend outright. This is a
+  separate mechanism from the field and may be the larger share of the original
+  complaint.
+- No end-to-end assertion that CAUGHT voices vary with distance and bearing;
+  the field is tested in isolation, and driving the full loop headlessly is a
+  bigger harness than this round justified.
+
+Gates: `field_check`, `voice_check`, `g2p_check`, `pure_say` all OK; compile
+clean; both `--synth` and default boot clean; docs regenerated with no warnings.
+
+---
+
+## 28. Round twenty-three (2026-08-05) - the belt composes instead of selecting
+
+User's question: if the first seed does not sing, can a second one added to the
+belt bring that mode in, and can a third modulate it further? Then, on seeing
+the first answer: the influences should also change WHICH words are held, not
+just make the signal stronger.
+
+### What the belt did before: it SELECTED
+
+A throw called `_pick_parent` - an acceptance-weighted roulette over the belt -
+and the child was a jittered copy of that ONE seed. So:
+
+- Could a second seed bring singing? Only by winning the roulette. Adding a
+  singer to the belt did not let other lines pick up the mode; it added a
+  lottery ticket.
+- Could a third modulate it? No. The rest of the belt reached the candidate
+  only through the trust region (which binds ~1% of throws) and, since §27, the
+  field bias on its centre. Neither composes a mode.
+
+The acceptance-weighted blend that IS the composition, `_background_traits`,
+already existed - used for the export take, for release, and as the trust
+region's centre, but never to derive a throw.
+
+### `_ensemble_traits`
+
+    out = dominant + sum_i w_i * (member_i - dominant)
+
+- one seed on the belt, or no contributors drawn: byte-identical to before
+- `w > 0` pulls the child toward that member, so a non-singing line can take on
+  song from a singer partway, and a further contributor can push it further
+- `w < 0` pushes the child AWAY. Combination that can only add is how a
+  collection converges on one voice; the signed weight is what keeps variance
+  alive while still composing. This is the user's own earlier point about
+  negative values, applied where it does the most work.
+- always an interpolation around the dominant, so no combination runs away
+- the DOMINANT keeps its lineage, so identity, genome, the seed's scene and
+  "restoring a seed returns to its place" are untouched
+
+How many contribute is gated by the FIELD energy from §27: sitting among the
+belt draws more of it in, drifting away leaves the dominant alone. The two
+mechanics agree on "near = modulated, far = stable" rather than each having
+their own idea of distance.
+
+### The sustain bank - variety along the spectrum, not a louder signal
+
+Blending the `song` scalar alone only changes how MUCH a voice sings. Every
+voice had ONE sustain cycle (`sustain_period`, `sustain_phase`), so two belts
+with the same average `song` held the same syllables at different volumes.
+
+`Spec.sustain_bank` is now a list of `[period, phase, weight]`, one per
+contributing voice, summed by `Spec.sustain_wave`. Because the periods are
+incommensurate the held positions form a long non-repeating pattern instead of
+a metronome, and because the weights are signed a contributor can SUPPRESS a
+position the dominant would have held. Empty bank = the single-cycle behaviour,
+so nothing changed for a voice with no contributors.
+
+Measured (`tests/ensemble_check.gd`, new), held syllables out of the first 60 at
+identical mean drive:
+
+    solo      [1, 7, 18, 24, 29, 35, 40, 46, 57]
+    + w       [7, 29, 51]
+    - w       [18, 40]
+
+    overlap: solo vs +w 0.20,  solo vs -w 0.22,  +w vs -w 0.00
+
+The positive and negative contributors hold DISJOINT sets. Adding a seed
+rearranges the cadence rather than turning it up, which is what was asked for.
+
+Other checks in the same gate: a non-singer at -0.60 with one singer on the belt
+reaches song 0.08 (just across), a second contributor takes it to 0.40 - so
+"can a third modulate it further" is a clear yes precisely because one is not
+enough; a negative weight takes a singer from 0.50 down to 0.32; and child
+spread over 4000 random belts is 0.580 against a parent spread of 0.578, so
+composing is not averaging.
+
+### Not done, and one warning
+
+- `Spec.influences` is STILL dead on live paths, and deliberately so for now.
+  Reviving it naively would make things worse, not better: `ProsodyWalk._init`
+  blends genes as a uniform mean of PRIOR plus every lineage, so each extra
+  influence pulls the genome further toward the population centre - the same
+  halving that was measured confining the melody genes. Its GOOD half (pooling
+  each lineage's modulators and anchors, which is additive vocabulary rather
+  than averaging) is worth reviving separately from its gene averaging, and
+  that is a change inside ProsodyWalk rather than the editor.
+- An accepted catch carries a frozen `adrenochrome` genome, and
+  `ProsodyWalk._init` SKIPS the blend entirely when an override is present and
+  sets `_mods = []`. So a caught voice has no pooled modulators at all. That is
+  deliberate ("it was already integrated when it froze") but it means the belt
+  contributes nothing to a caught voice's genome, ever. Changing it would alter
+  every caught voice's sound, so it wants an ear before a commit.
+- The sustain bank is built from the ensemble at throw time and carried on the
+  live spec. It is NOT persisted, so reloading a session rebuilds it from the
+  belt as it stands then.
+
+Gates: `ensemble_check`, `field_check`, `song_check`, `voice_check`,
+`g2p_check`, `pure_say` all OK; compile clean; `--synth` and `--say` boots
+clean; docs regenerated with no warnings.

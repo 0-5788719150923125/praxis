@@ -88,6 +88,22 @@ const PACE_MAX := 2.2
 # stop being a routine dice roll onto a broken voice (grit x air x pitch all
 # at the far edge at once synthesized as clicks and static, not character).
 const TEMPER_RADIUS := 0.85
+# How hard the interference field pushes a candidate, and the hard ceiling on
+# any one axis. The field colours a voice; it must never relocate one, or it
+# becomes a fourth attractor and every catch near the belt converges.
+const FIELD_LIFT := 0.55
+const FIELD_MAX := 0.25
+# How many belt members beyond the dominant parent may colour a throw, and how
+# far each may pull it. Bounded so a combination is always a perturbation of one
+# recognizable parent rather than a march toward the belt's mean.
+const ENSEMBLE_MAX := 2
+const ENSEMBLE_W := 0.45
+
+
+# Who contributed to the current candidate and how much - recorded by
+# _ensemble_traits so the sustain bank can be built from the same combination
+# rather than re-rolling one.
+var _ensemble_last: Array = []
 
 # The three MODES of fishing - what the line is doing, not just how reward is
 # scored (each still earns differently):
@@ -498,6 +514,7 @@ func export_take() -> String:
 func _current_spec() -> Voice.Spec:
 	var spec := Voice.Spec.from_traits(_traits, int(_lineage[0]), _lineage)
 	spec.adrenochrome = _working_genome.duplicate()
+	spec.sustain_bank = _sustain_bank()
 	return spec
 
 
@@ -639,7 +656,9 @@ func _throw() -> void:
 		_lineage.append(randi() % 1000000)
 		var jitter: float = 0.22 * pow(0.75, _lineage.size() - 1) * float(prof.jitter) \
 			* (1.0 + 1.5 * drift)
-		var t: Dictionary = parent.traits
+		var erng := RandomNumberGenerator.new()
+		erng.seed = hash(str(_lineage))
+		var t: Dictionary = _ensemble_traits(parent, erng)
 		_traits = {}
 		for key in Voice.TRAIT_KEYS:
 			_traits[key] = clampf(
@@ -686,7 +705,11 @@ func _throw_from(idx: int) -> void:
 	_lineage.append(randi() % 1000000)
 	var jitter: float = 0.22 * pow(0.75, _lineage.size() - 1) * float(prof.jitter) \
 		* (1.0 + 1.5 * drift)
-	var t: Dictionary = parent.traits
+	# the deliberate-parent cast composes too - slotting a seed says which voice
+	# LEADS, not that the rest of the collection stops existing
+	var erng := RandomNumberGenerator.new()
+	erng.seed = hash(str(_lineage))
+	var t: Dictionary = _ensemble_traits(parent, erng)
 	_traits = {}
 	for key in Voice.TRAIT_KEYS:
 		_traits[key] = clampf(
@@ -731,7 +754,18 @@ func _ensure_collection() -> void:
 ## intact. Drifting widens the region - foreignness is EARNED by the cage,
 ## not rolled.
 func _temper_traits(t: Dictionary, drift: float) -> Dictionary:
+	# The cage's CENTRE moves with the field, it does not just widen. Previously
+	# distance only inflated a trust region still bolted to the belt's centre of
+	# mass, so a candidate thirty lightyears out was still normalized toward the
+	# same point as one sitting on top of the belt - which is most of why
+	# drifting stopped changing anything. Now the field displaces the centre, so
+	# where you stand decides what "ordinary" even means; far out the field dies,
+	# the centre returns to the plain centroid, and the old behaviour is the
+	# limit case rather than the only case.
 	var center := _background_traits()
+	var bias := _field_bias(_field_at_candidate().vec)
+	for key in bias:
+		center[key] = clampf(float(center.get(key, 0.0)) + float(bias[key]), -1.0, 1.0)
 	var radius := TEMPER_RADIUS * (1.0 + 0.8 * drift)
 	var dist := 0.0
 	for key in Voice.TRAIT_KEYS:
@@ -746,6 +780,85 @@ func _temper_traits(t: Dictionary, drift: float) -> Dictionary:
 		var c := float(center.get(key, 0.0))
 		out[key] = clampf(c + (float(t.get(key, 0.0)) - c) * scale, -1.0, 1.0)
 	return out
+
+
+## A throw's traits as a COMBINATION of belt members, not a copy of one.
+##
+## `_pick_parent` picks exactly one seed and the child was a jittered copy of
+## it, so the belt SELECTED rather than COMPOSED: adding a singer to the belt
+## did not let other lines pick up singing, it only added a lottery ticket, and
+## a third seed could not modulate a mode a second one had contributed. The
+## acceptance-weighted blend that IS the composition (`_background_traits`)
+## already existed and was never used to derive a throw.
+##
+## The form is `dominant + sum_i w_i * (member_i - dominant)`, which has the
+## properties this needs:
+##   - one seed on the belt, or no contributors drawn: identical to before
+##   - w > 0 pulls the child toward that member - a non-singing line can take
+##     on song from a singer on the belt, partway, and a third contributor can
+##     push it further
+##   - w < 0 pushes the child AWAY from that member. Combination that can
+##     SUBTRACT is the whole point: averaging toward the belt is how a
+##     collection collapses onto one voice, and a signed weight is what keeps
+##     variance alive while still composing.
+##   - bounded, and always an interpolation around the dominant, so no
+##     combination can run away
+##
+## The DOMINANT keeps its lineage, so identity, the genome, the seed's scene
+## and "restoring a seed returns to its place" are all unchanged - the others
+## contribute traits only.
+##
+## How many contribute is gated by the FIELD: sitting among the belt draws more
+## of it in, drifting away leaves the dominant alone. Same "near = modulated,
+## far = stable" rule the field itself follows, so the two mechanics agree.
+func _ensemble_traits(dominant: Dictionary, rng: RandomNumberGenerator) -> Dictionary:
+	_ensemble_last = []
+	var base: Dictionary = (dominant.traits as Dictionary)
+	var out := {}
+	for key in Voice.TRAIT_KEYS:
+		out[key] = float(base.get(key, 0.0))
+	if _belt.size() < 2:
+		return out
+	var energy: float = clampf(float(_field_at_candidate().energy), 0.0, 1.0)
+	var reach: float = clampf(0.25 + 0.55 * energy, 0.0, 0.9)
+	var pool: Array = []
+	for e in _belt:
+		if e.lineage != dominant.lineage:
+			pool.append(e)
+	pool.shuffle()
+	var taken := 0
+	for e in pool:
+		if taken >= ENSEMBLE_MAX or rng.randf() > reach:
+			break
+		taken += 1
+		# signed and bounded; acceptance decides how much say a member has, its
+		# SIGN decides whether the child leans into it or away from it
+		var w: float = rng.randf_range(-ENSEMBLE_W, ENSEMBLE_W) \
+			* clampf(0.35 + _acceptance(e), 0.0, 1.6)
+		_ensemble_last.append({"traits": (e.traits as Dictionary).duplicate(), "w": w})
+		for key in Voice.TRAIT_KEYS:
+			var m: float = float((e.traits as Dictionary).get(key, 0.0))
+			out[key] = clampf(float(out[key]) + w * (m - float(out[key])), -1.0, 1.0)
+	return out
+
+
+## The sustain bank for the current combination: the dominant's own cycle plus
+## one per contributor, each at the SIGNED weight it contributed with.
+##
+## Blending the `song` scalar alone only changes how MUCH a voice sings. The
+## bank is what makes a combination sing DIFFERENTLY: each contributor brings
+## its own period and phase, the periods are incommensurate, and a negative
+## weight suppresses positions the dominant would have held. So two belts with
+## identical average `song` hold different words, and adding a third seed
+## rearranges the cadence instead of merely turning it up.
+func _sustain_bank() -> Array:
+	var bank: Array = []
+	var own := Voice.Spec.sustain_cycle(_traits)
+	bank.append([own[0], own[1], 1.0])
+	for c in _ensemble_last:
+		var cyc := Voice.Spec.sustain_cycle(c.traits)
+		bank.append([cyc[0], cyc[1], float(c.w)])
+	return bank
 
 
 func _pick_parent() -> Dictionary:
@@ -969,6 +1082,29 @@ func _reception() -> Dictionary:
 ## band's strength and pitch. Regions between seeds sound genuinely
 ## different from regions on top of one; deep seeds need the warp to reach.
 func _field_reception() -> Dictionary:
+	# GEOMETRY, not hashes. The old version placed every source at a position
+	# derived from `hash([lineage, "src"])` on a single axis, gave them all one
+	# shared falloff length of 0.20, and clamped the listener's distance at 2.0 -
+	# so "closer to other seeds" meant nothing, no seed could be longer-ranged
+	# than another, and past the clamp the water stopped changing. It now reads
+	# the same [VoiceField] the candidate's traits do, so what the player HEARS
+	# and what the catch FEELS are the same field by construction rather than
+	# two independent inventions that happen to both be called interference.
+	var fld := _field_at_candidate()
+	var t := float(Time.get_ticks_msec()) / 1000.0
+	if float(fld.prox) < 0.003:
+		return {"prox": 0.0, "freq": _location_freq()}
+	# the beat survives as LIVE SHIMMER only: a wall clock must never reach the
+	# trait path (it would break determinism), but the water is allowed to move
+	# while you sit in it.
+	var shimmer: float = 0.12 * float(fld.energy) * sin(TAU * 0.23 * t)
+	return {"prox": clampf(float(fld.prox) * (1.0 + shimmer), 0.0, 1.0),
+		"freq": clampf(float(fld.freq) * (1.0 + 0.05 * shimmer), 90.0, 3000.0)}
+
+
+## Superseded by _field_reception's use of [VoiceField]; kept only for the
+## empty-belt beacon frequency.
+func _field_reception_legacy() -> Dictionary:
 	var x := minf(_drift_reach(), 2.0)
 	var t := float(Time.get_ticks_msec()) / 1000.0
 	var srcs: Array = [{"x": 0.8, "f": _location_freq(), "a0": 0.55}]
@@ -1151,6 +1287,18 @@ func _adreno_step() -> void:
 	var cool: float = 1.0 - prog
 	var toll: float = float(h.d) * prog
 	var agitation: float = cool + TOLL_HEAT * toll
+	# THE FIGHT DRAGS THE CATCH BACK THROUGH THE FIELD. The reel hauls the line
+	# home, so `_drift_free` shrinks step by step and the candidate crosses the
+	# interference pattern on its way in - the anneal therefore sees a CHANGING
+	# field whose shape depends on the bearing the cast went out on. Before
+	# this, the anneal's only spatial input was a sum of springs that collapses
+	# algebraically to one attractor and one stiffness, so the belt's size and
+	# arrangement were invisible to it however many seeds were on the belt.
+	# Weighted by `cool` so the field matters most early in the fight, before
+	# the freeze - a catch should be decided near where it was hooked.
+	var fld := _field_at_candidate()
+	var fbias := _field_bias((fld.vec as Vector3) * cool)
+	var fheat: float = 1.0 + 0.5 * float(fld.energy)
 	for key in Voice.TRAIT_KEYS:
 		var x: float = float(h.traits.get(key, 0.0))
 		var force := 0.0
@@ -1161,7 +1309,8 @@ func _adreno_step() -> void:
 			elif bool(m.get("prior", false)):
 				w *= 1.0 - TOLL_PRIOR_LOSS * toll     # the ordinary loses its grip
 			force += float(m.sign) * w * (float((m.traits as Dictionary).get(key, 0.0)) - x)
-		x += 0.02 * force + rng.randfn(0.0, 0.035 * agitation)
+		x += 0.02 * force + float(fbias.get(key, 0.0)) * 0.12 \
+			+ rng.randfn(0.0, 0.035 * agitation * fheat)
 		if FRAY_KEYS.has(key):
 			# a creature dragged home does not polish, it FRAYS - saturating
 			# toward the rail rather than slamming into the clamp every step
@@ -1497,6 +1646,81 @@ func _seed_vector(traits: Dictionary, lineage: Array, genome: Dictionary = {}) -
 		var spread: float = (float(b[1]) - float(b[0])) if b.size() == 2 else maxf(absf(prior), 0.001)
 		v.append((float(g.get(key, prior)) - prior) / maxf(spread, 0.001))
 	return v
+
+
+## THE INTERFERENCE FIELD (see [VoiceField]) - the belt as sources in space.
+##
+## Built fresh from the belt because acceptance moves as you listen. `scale` is
+## the belt's own median pairwise distance, so ranges are expressed in the units
+## of THIS belt rather than a constant: a tight belt has a tight field.
+func _field_sources() -> Array:
+	if _belt.is_empty():
+		return []
+	var vecs: Array = []
+	var reach: Array = []
+	for e in _belt:
+		var g: Dictionary = _member_genome(e)
+		vecs.append(_seed_vector(e.traits, e.lineage, g))
+		reach.append(maxf(float(g.get("ring", 0.6)) * (1.0 - float(g.get("damp", 0.35))), 0.02))
+	var dists: Array = []
+	for i in vecs.size():
+		for j in range(i + 1, vecs.size()):
+			dists.append((VoiceField.frame(vecs[i]) - VoiceField.frame(vecs[j])).length())
+	dists.sort()
+	reach.sort()
+	var scale: float = dists[dists.size() / 2] if not dists.is_empty() else 1.0
+	var rnorm: float = reach[reach.size() / 2]
+	var out: Array = []
+	for i in _belt.size():
+		var e: Dictionary = _belt[i]
+		out.append(VoiceField.source(e.traits, _member_genome(e), e.lineage,
+			_acceptance(e), vecs[i], rnorm, maxf(scale, 0.05)))
+	return out
+
+
+## Which combination rule THIS voice's water obeys. Derived from the lineage
+## root, so it is a property you fish for and inherit rather than a setting -
+## and so the four rules in [VoiceField.COMBINE] are all actually reachable in
+## play instead of one being hardcoded.
+func _field_mode() -> String:
+	if _lineage.is_empty():
+		return "sum"
+	var i := absi(hash([_lineage[0], "field"])) % VoiceField.COMBINE.size()
+	return String(VoiceField.COMBINE[i])
+
+
+## Where the candidate stands: its own place, pushed outward along its bearing
+## from the party by however far the line has been carried. The odometer stays a
+## scalar radius - the fight math, the HUD arc and the caption are all defined
+## on it as a magnitude - but it now moves a real POSITION through a real field,
+## which is what makes distance change the voice instead of only the caption.
+func _field_at_candidate() -> Dictionary:
+	var srcs := _field_sources()
+	if srcs.is_empty():
+		return {"vec": Vector3.ZERO, "energy": 0.0, "prox": 0.0, "freq": 400.0}
+	var cand := VoiceField.frame(_seed_vector(_traits, _lineage, _working_genome))
+	var party := VoiceField.frame(_party_vector())
+	var u := (cand - party)
+	u = u.normalized() if u.length() > 0.0001 else Vector3(0.0, 0.0, 1.0)
+	return VoiceField.evaluate(srcs, cand + u * _drift_free(), _field_mode())
+
+
+## Lift a field vector back into trait deltas - the frame's transpose. Bounded
+## hard: the field COLOURS a candidate, it never relocates one.
+func _field_bias(vec: Vector3) -> Dictionary:
+	var b := {}
+	var put := func(key: String, v: float) -> void:
+		b[key] = clampf(v * 0.55 * FIELD_LIFT, -FIELD_MAX, FIELD_MAX)
+	put.call("pitch", vec.x)
+	put.call("lilt", vec.x)
+	put.call("song", vec.x * 0.7)
+	put.call("grit", vec.y)
+	put.call("air", vec.y)
+	put.call("breath", vec.y)
+	put.call("pace", vec.z)
+	put.call("drawl", vec.z)
+	put.call("tract", vec.z)
+	return b
 
 
 ## The party's centre: acceptance-weighted mean of the belt's vectors.

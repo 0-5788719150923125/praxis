@@ -145,6 +145,7 @@ Text to narrated audio, no generative AI and no recordings: the phoneme front en
 - [`phonemes.gd`](../scripts/phonemes.gd) **Phonemes** - the phoneme inventory and the text-to-phoneme expansion.
 - [`phrasing.gd`](../scripts/phrasing.gd) **Phrasing** - sentence-level prominence, derived from the TEXT.
 - [`voice.gd`](../scripts/voice.gd) **Voice** - the source-filter speech synthesizer (rungs 0-2 of next/voice.md).
+- [`voice_field.gd`](../scripts/voice_field.gd) **VoiceField** - the belt as a field of interfering sources.
 - [`voice_stream.gd`](../scripts/voice_stream.gd) **VoiceStream** - real-time speech on its own thread: render lag cannot break it.
 - [`synth_editor.gd`](../scripts/synth_editor.gd) **SynthEditor** - the synthesis surface. The loop is a fishing trip:
 - [`voice_sampler.gd`](../scripts/voice_sampler.gd) **VoiceSampler** - "echo a living voice": record the player reading a fixed passage, MEASURE the voice (never keep it), and mint a brand-new seed whose traits and prosody genome mimic the source.

@@ -161,6 +161,7 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
             "phonemes.gd",
             "phrasing.gd",
             "voice.gd",
+            "voice_field.gd",
             "voice_stream.gd",
             "synth_editor.gd",
             "voice_sampler.gd",

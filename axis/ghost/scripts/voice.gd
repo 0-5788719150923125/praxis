@@ -299,6 +299,14 @@ class Spec:
 	var beat := 0.42                  # seconds per beat when singing
 	var sustain_period := 5.0         # syllables per sustain cycle
 	var sustain_phase := 0.0          # where in that cycle this voice starts
+	# THE SUSTAIN BANK: [period, phase, weight] per contributing voice. One
+	# cycle can only decide HOW MUCH a voice sings; several incommensurate
+	# cycles decide WHERE it sings, and that is the difference between a belt
+	# that makes a stronger signal and a belt that makes a different one. Signed
+	# weights, so a contributor can suppress a position another one holds rather
+	# than only ever adding notes. Empty = the voice's own single cycle, which
+	# is exactly the behaviour before the bank existed.
+	var sustain_bank: Array = []
 	var air_gain := 0.07              # static-band strength (noise above the air line)
 	var air_cut := 3000.0             # the air line: above it the voice goes to static
 
@@ -358,11 +366,42 @@ class Spec:
 		# voice starts. Derived from traits the speaker already has, so a
 		# drawling singer holds notes further apart than a brisk one and no
 		# separate roll is needed.
-		s.sustain_period = clampf(5.0 * pow(1.7, drawl) * pow(1.4, -pace), 3.0, 16.0)
-		s.sustain_phase = fposmod(lilt * 3.7 + grit * 1.3, 1.0)
+		var cyc := sustain_cycle(t)
+		s.sustain_period = float(cyc[0])
+		s.sustain_phase = float(cyc[1])
 		s.air_gain = 0.02 * pow(2.6, air)
 		s.air_cut = 3000.0 * pow(2.0, -0.7 * air)
 		return s
+
+	## A voice's own sustain cycle - [syllables per cycle, phase] - from the
+	## traits it already has, so a drawling singer holds notes further apart than
+	## a brisk one. Static so the belt can ask what any member's cycle would be
+	## without realizing a whole Spec for it.
+	static func sustain_cycle(t: Dictionary) -> Array:
+		var drawl := _tv(t, "drawl")
+		var pace := _tv(t, "pace")
+		var lilt := _tv(t, "lilt")
+		var grit := _tv(t, "grit")
+		return [clampf(5.0 * pow(1.7, drawl) * pow(1.4, -pace), 3.0, 16.0),
+			fposmod(lilt * 3.7 + grit * 1.3, 1.0)]
+
+
+	## The sustain drive at syllable `i`: the weighted sum of every contributing
+	## cycle, mapped to [0, 1]. Incommensurate periods mean the held positions
+	## form a long non-repeating pattern rather than a metronome, and signed
+	## weights mean contributors can cancel - so two seeds do not merely sing
+	## louder together, they sing in different PLACES together.
+	static func sustain_wave(spec: Spec, i: int) -> float:
+		if (spec.sustain_bank as Array).is_empty():
+			return 0.5 + 0.5 * sin(TAU * (float(i) / spec.sustain_period + spec.sustain_phase))
+		var acc := 0.0
+		var wsum := 0.0
+		for e in spec.sustain_bank:
+			var period: float = maxf(float(e[0]), 1.0)
+			acc += float(e[2]) * sin(TAU * (float(i) / period + float(e[1])))
+			wsum += absf(float(e[2]))
+		return clampf(0.5 + 0.5 * acc / maxf(wsum, 0.001), 0.0, 1.0)
+
 
 	static func _tv(t: Dictionary, key: String) -> float:
 		return clampf(float(t.get(key, 0.0)), -1.0, 1.0)
@@ -1077,8 +1116,7 @@ static func plan(text: String, spec: Spec, events: Array = []) -> Array:
 						# Same thresholded-drive idiom as the activation
 						# channels, so it is sparse and self-spacing by
 						# construction rather than by a rate constant.
-						var cyc: float = 0.5 + 0.5 * sin(TAU * (
-							float(syll_i) / spec.sustain_period + spec.sustain_phase))
+						var cyc: float = Spec.sustain_wave(spec, syll_i)
 						var drive: float = 0.62 * cyc + 0.55 * prom \
 							+ (0.28 if w.pause_after != "none" else 0.0)
 						if drive > SUSTAIN_BAR:
