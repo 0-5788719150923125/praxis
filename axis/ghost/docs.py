@@ -159,6 +159,7 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
         "Design and rungs: next/voice.md at the repo root.",
         [
             "phonemes.gd",
+            "phrasing.gd",
             "voice.gd",
             "voice_stream.gd",
             "synth_editor.gd",

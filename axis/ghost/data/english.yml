@@ -1,0 +1,202 @@
+# English pronunciation data for the [Phonemes] front end.
+#
+# This file is DATA, not configuration - it is the language, and it is external
+# so it can be read, diffed and corrected without touching the synthesizer.
+# Phoneme keys are the ones in Phonemes.TABLE (ARPABET-ish). CH and JH are
+# written as-is here and expanded to T SH / D ZH on load.
+#
+# Order of application in Phonemes.word_to_phones:
+#   1. lexicon        - exact word, wins outright
+#   2. suffixes       - strip, pronounce the STEM through this same pipeline,
+#                       reattach with the suffix's own rule
+#   3. letter rules   - digraphs, magic-e, silent e, singles (in phonemes.gd)
+#
+# English's most frequent words are also its most irregular, so the lexicon is
+# where the intelligibility is: letter rules cannot get `we`, `head`, `one` or
+# `because` right, and those are the words a listener leans on hardest.
+
+# ---------------------------------------------------------------- lexicon
+lexicon:
+  # WHAT BELONGS HERE, now that CMUdict answers 126k words: only the places we
+  # disagree with the dictionary ON PURPOSE. 387 of the previous 414 entries
+  # were byte-identical to CMUdict, and because they carried no stress digits
+  # they OVERRODE the dictionary's stress with "primary on the first vowel" -
+  # mis-stressing about, because, before, between, again and 51 other very
+  # common words. A redundant override is not free; it is a silent regression.
+  #
+  # Reduced narrator forms do NOT belong here either. CMUdict lists function
+  # words in their citation shape (`has` as HH AE1 Z), and the fix is to strip
+  # the STRESS, not to rewrite the vowel: `function_words` below forces stress
+  # 0, and the existing per-syllable reduction then centralizes the vowel and
+  # shortens it at synthesis time. Spelling the reduced vowel out here would
+  # duplicate that machinery and freeze one degree of reduction for every
+  # speaker and every tempo.
+  #
+  # Stress digits are required on anything polysyllabic. 0 unstressed,
+  # 1 primary, 2 secondary, exactly as CMUdict writes them.
+
+  # Homographs. Neither reading is wrong; without part-of-speech tagging the
+  # system must pick one, and these pick the reading commoner in narrative
+  # prose - `live` as the verb ("I live upstairs") over the adjective, which is
+  # what CMUdict ships. Documented so a wrong one is a known cost, not a bug.
+  live: L IH1 V
+  lives: L IH1 V Z
+
+  # Not in CMUdict at all.
+  archiving: AA1 R K AY0 V IH0 NG
+  narrating: N EH1 R EY0 T IH0 NG
+
+# ---------------------------------------------------------------- function words
+#
+# Words that carry no sentence accent in English. [Phrasing] reduces them and
+# never places a nucleus on one. The built-in list in phonemes.gd was 33 entries
+# and missed most auxiliaries and pronouns, so `has`, `will` and `we` were being
+# read as content words and taking accents that belong to the verb.
+function_words:
+  - the
+  - a
+  - an
+  - of
+  - to
+  - in
+  - on
+  - at
+  - by
+  - for
+  - and
+  - or
+  - but
+  - nor
+  - so
+  - if
+  - as
+  - than
+  - then
+  - that
+  - this
+  - these
+  - those
+  - with
+  - from
+  - into
+  - onto
+  - upon
+  - over
+  - under
+  - about
+  - after
+  - before
+  - is
+  - are
+  - was
+  - were
+  - be
+  - been
+  - being
+  - am
+  - has
+  - have
+  - had
+  - do
+  - does
+  - did
+  - will
+  - would
+  - shall
+  - should
+  - can
+  - could
+  - may
+  - might
+  - must
+  - it
+  - its
+  - i
+  - me
+  - my
+  - you
+  - your
+  # NOTE: the standalone possessives (mine, yours, ours, theirs, hers) are
+  # deliberately NOT here - they are predicates that carry focus, as in
+  # "the far end is YOURS", and listing them moved that nucleus onto `end`.
+  - he
+  - him
+  - his
+  - she
+  - her
+  - we
+  - us
+  - our
+  - they
+  - them
+  - their
+  - there
+  - here
+  - who
+  - whom
+  - whose
+  - which
+  - what
+  - when
+  - where
+  - how
+  - not
+  - no
+  - some
+  - any
+  - such
+  - too
+  - also
+  - just
+  - only
+  - very
+  - up
+  - out
+  - off
+  - down
+
+# ---------------------------------------------------------------- clitics
+#
+# Split at the apostrophe: the HEAD goes through this same pipeline, the
+# clitic appends. Contractions whose head changes shape (don't, won't, can't)
+# are whole-word lexicon entries above instead.
+clitics:
+  "n't": AH N T
+  "'re": ER
+  "'ve": V
+  "'ll": L
+  "'d": D
+  "'m": M
+
+# ---------------------------------------------------------------- suffixes
+#
+# Each entry: the spelling, how to rebuild the stem, and what to append.
+# `voiced_split` picks by the last phone of the stem, which is why the stem has
+# to be pronounced FIRST - the letter rules cannot know whether the `d` of
+# `watched` is a syllable without knowing the stem ends in a /tsh/.
+#
+#   add     - phones appended unconditionally
+#   split   - {after: [phones], use: [...]} chosen by the stem's last phone
+#   undouble- drop a doubled final consonant from the stem (stopped -> stop)
+#   restore_e - try the stem with a final `e` first (hoping -> hope)
+suffixes:
+  - spelling: ing
+    add: [IH, NG]
+    undouble: true
+    restore_e: true
+  - spelling: ed
+    undouble: true
+    restore_e: true
+    syllabic_after: [T, D]
+    syllabic: [IH, D]
+    voiceless_after: [P, K, F, TH, S, SH, HH]
+    voiceless: [T]
+    otherwise: [D]
+  - spelling: ly
+    add: [L, IY]
+  - spelling: ness
+    add: [N, AH, S]
+  - spelling: ment
+    add: [M, AH, N, T]
+  - spelling: ful
+    add: [F, AH, L]

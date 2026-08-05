@@ -10,6 +10,7 @@ regenerates all of them, the research-side analogue of
 - ``framing.tex`` - component-gated prose for the current run (:mod:`framing`)
 - ``geometries.tex`` + ``figures/`` - Center PCA density figure (:mod:`geometries`)
 - ``inlines.tex`` - single-value substitutions (:mod:`inlines`)
+- ``optimization.tex`` - how the run was trained (:mod:`optimization`)
 
 Run it, then build the PDF::
 
@@ -34,6 +35,7 @@ from praxis.pillars import (
     ghostmax,
     halting,
     inlines,
+    optimization,
     proofs,
     runs,
     spectrum,
@@ -154,6 +156,13 @@ def _step_inlines(ctx):
     return i
 
 
+def _step_optimization(ctx):
+    o = optimization.export_optimization(ctx["experiment"])
+    print(f"optimization: {o.get('optimizer') or '(unresolved)'}"
+          + (f" on {o['experiment']}" if o.get("experiment") else ""))
+    return o
+
+
 def _step_conjectures(ctx):
     c = conjectures.export_conjectures()
     print(f"conjectures: {c['count']} collected")
@@ -188,6 +197,7 @@ STEPS = {
     "halting": _step_halting,
     "ghostmax": _step_ghostmax,
     "inlines": _step_inlines,
+    "optimization": _step_optimization,
     "conjectures": _step_conjectures,
     "proofs": _step_proofs,
 }
@@ -258,7 +268,7 @@ def main():
         "--title",
         default=None,
         choices=sorted(THREAD_REGISTRY),
-        help="paper thread (layout) to build; default blind_watchmaker",
+        help="paper thread (layout) to build; default blind_watchmaking",
     )
     args = ap.parse_args()
 

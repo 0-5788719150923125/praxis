@@ -10,16 +10,16 @@ from praxis.pillars.thread import (
 
 
 def test_registry_discovered_from_yaml_documents():
-    assert "blind_watchmaker" in THREAD_REGISTRY
+    assert "blind_watchmaking" in THREAD_REGISTRY
     assert "good_get_gooder" in THREAD_REGISTRY
     for thread in THREAD_REGISTRY.values():
         assert thread.title and thread.pillars
 
 
-def test_default_is_blind_watchmaker():
+def test_default_is_blind_watchmaking():
     s = resolve_thread(None)
     assert s.key == DEFAULT_THREAD
-    assert s.title == "A Blind Watchmaker"
+    assert s.title == "Blind Watchmaking"
     assert "framing" in s.pillars and "proofs" in s.pillars
     assert s.component("abstract").startswith("Do you exist")
     assert s.component("introduction").startswith("The dominant recipe")

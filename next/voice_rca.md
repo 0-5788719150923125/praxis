@@ -698,3 +698,796 @@ consonants ("quiet and dull"). Shipped:
 voice_check ALL OK, compile clean, boot clean. NOTE: seeds will sound
 noticeably different at 44.1k (per-sample rng sequences changed) - same
 lineage still = same take, deterministically.
+
+---
+
+## 18. Round thirteen (2026-08-04) - the acoustic rebuild (Stage 1 of 3)
+
+Prompted by a fresh report: dull and muddy, "Th" and "F" barely audible, "the
+enunciation simply isn't there", too many words wrong in exported videos, and
+the singing quality lost. A multi-agent investigation (7 dimensions, each
+adversarially verified, plus an independent measurement pass) produced the
+diagnosis; this section is the FIRST of three remediation stages. Stage 2 is
+the text front end, Stage 3 is singing as a typed capability.
+
+### What was actually wrong (measured, not inferred)
+
+**The cascade was doing three jobs it should never have had.**
+
+1. **Frication was routed through the vowel's formant cascade.** The `"fric"`
+   branch was the only segment type that never called `_retarget()`, so during
+   every fricative the 5-pole cascade held the PREVIOUS vowel's formants. The
+   cascade is a DC-normalized all-pole chain topping out at 4.7 kHz, so it
+   attenuated each fricative at its own noise band by 42 dB (/f/), 69 dB
+   (/th/) and 85 dB (/s/). Measured consequence: the S/SH/F/TH log-spectra
+   correlated at 0.99-1.00, three of four peaked in the SAME FFT bin (1367 Hz),
+   and 6-10 kHz contrast against the neighbouring vowel was -0.2 dB. One sound
+   wearing four labels. Both previously-tried routes were wrong for OPPOSITE
+   reasons - the post-cascade band shared no tract shaping and read as injected
+   static; the through-cascade path fused but was lowpassed into nothing.
+2. **A DC pedestal held 43-52% of every take's power.** The Rosenberg pulse
+   tables are unipolar (mean 0.404); every cascade pole passes DC at unity and
+   the only rejection anywhere was the radiation zero at 1-0.96 = 0.04.
+   Predicted output DC 0.0727, measured 0.0727. Inaudible, but it ate 0.07 of
+   the 0.85 peak budget, was amplitude-modulated at the syllable rate, fed the
+   leveler's envelope detector, and made every RMS staging number in the file
+   ~2.4 dB optimistic.
+3. **No top.** Five poles ending at 4.7 kHz put the -60 dB/oct cliff inside the
+   speech band: 27 dB of drop between 3150 and 5000 Hz, and above 5 kHz the
+   output was bit-for-bit the FLOOR_MIN dither. What brightness existed was
+   breath/air hiss - 96-99% of a sustained vowel's 2-4 kHz energy.
+
+Plus: obstruents had no tract posture at all, so /aba/, /ada/ and /aga/
+produced bit-identical formant trajectories (no place cue); nasals shared one
+fixed 1000 Hz zero, collapsing sum/sun/sung; fricative bandwidths were scaled
+by vocal tract length alongside their centres, silently giving short tracts a
+higher-Q /s/; and one `hiss` draw fed aspiration, the air band and the
+constriction noise, so three nominally independent sources added coherently.
+
+### Shipped
+
+- **Parallel branch** (`phonemes.gd` `par`, `voice.gd` `FRIC_LEVEL`, `_tune_parallel`,
+  `Reso.tune_peak`). Frication and bursts drive their own peak-normalized
+  front-cavity resonators, summed with the cascade after the nasal zero and
+  before radiation, signs alternating as Klatt's parallel branch does. This is
+  the half of Klatt 1980 the file never had.
+- **Mandatory tract posture on every TABLE row.** Fricatives and stops carry
+  loci (labial 900, dental 1400, alveolar 1750, post-alveolar 2000, velar 1900
+  Hz F2), so "a branch forgot to set the tract" is now unrepresentable.
+- **Locus glide** (`LOCUS_TIME` 50 ms): a segment holds its own posture then
+  bends toward the next one before the boundary. Retargeting only AT boundaries
+  put the whole transition inside the following phone - which for a stop is the
+  silent closure, so the listener never heard it.
+- **Zero-mean pulse tables**, and the radiation coefficient derived from a named
+  corner (`RAD_CORNER` 140 Hz) instead of a hardcoded 0.96 that silently
+  doubled when SR went 22050 -> 44100.
+- **F6 at 6000 Hz** and **Klatt 1980 per-formant bandwidths** (60/90/150/250/300/500)
+  replacing `60 + F1*0.06` / `90 + F2*0.05`, which ran F2 at roughly twice
+  natural width.
+- **Per-phoneme nasal zeros** (M 950 / N 1800 / NG 3000).
+- **Independent turbulence draw**; fricative bandwidths no longer tract-scaled.
+- **Air band centre 0.07 -> 0.02**: it existed to give a topless cascade some
+  brightness, and was measured MASKING /sh/ in its own 2-4 kHz band.
+- **`FRIC_LEVEL` 0.05**, staged by measurement (see below).
+
+### The calibrator was the reason this survived so long
+
+`pure_say._ratio()` was broadband fricative/vowel RMS against `TARGET_RATIO`.
+That number is orthogonal to a timbre collapse: run against the old synth it
+converged, reported a healthy 0.35, and declared success on fricatives with
+0.02-0.06% of their energy above 4 kHz. Two RCA rounds passed on a metric that
+could not fail. Rebuilt as three gates that each catch a different failure:
+in-band CONTRAST against the adjacent vowel (buried), broadband LEVEL (too
+loud - the failure that recurred twice here), and pairwise spectral
+DISTINCTNESS (collapsed). The contrast band is read from each phoneme's own
+declared poles rather than fixed, and is gated only where it is diagnostic:
+/sh/ sits ON F3/F4 by physical fact, so a threshold there would measure the
+vowel, not the consonant - it is gated on level and distinctness instead,
+where it scores -10.7 dB and -0.36 against /s/.
+
+### Measured, before -> after (same prose, curated default speaker)
+
+| measurement | before | after | natural |
+|---|---|---|---|
+| /s/ in-band vs adjacent vowel | -14.4 dB | **+19.9 dB** | +15..+25 |
+| /f/ in-band vs adjacent vowel | -18.6 dB | **+11.7 dB** | +8..+15 |
+| /th/ in-band vs adjacent vowel | -17.8 dB | **+14.1 dB** | +8..+15 |
+| /s/,/f/,/th/ broadband vs vowel | - | -10.3 / -11.2 / -12.1 dB | -8..-15 |
+| worst gated fricative pair correlation | 0.99-1.00 | **0.838** | - |
+| S/SH correlation | ~0.94 | **-0.361** (anti-correlated) | - |
+| 0-30 Hz share of take power | 39.0% | **0.0%** | ~0 |
+| 2-4 kHz vs 5-8 kHz | +35.7 dB | **+5.0 dB** | +6..+10 |
+| octave LTAS at 6k / 8k / 12k | -40.9 / -47.7 / -44.6 | -21.7 / -20.7 / -25.8 | -22 / -26 / -33 |
+| /aba/ vs /ada/ vs /aga/ F2 track | bit-identical | **152-182 Hz mean abs delta** | - |
+| /AA/ vs /IY/ vowel separation | ~x200 | **x8238** | - |
+
+Gates: `pure_say` ALL OK, `voice_check` ALL OK, `sampler_check` ALL OK,
+compile clean, headless boot clean.
+
+### Known residuals (deliberately not chased further)
+
+- 8-12 kHz still sits 5-7 dB above the natural reference - the broad /f/ and
+  /th/ top poles. Narrowing them 3000 -> 2000 Hz bandwidth recovered ~4 dB at
+  20 kHz and ~1 dB at 12 kHz; the rest would be tuning, not physics.
+- 2-4k vs 5-8k lands at +5.0 dB against a +6..+10 natural window - close, and
+  the residual is legitimate /s/ and /th/ energy in fricative-dense prose.
+- 1 kHz is a few dB hot relative to the natural LTAS.
+
+NOTE: every seed will sound different - the per-sample rng sequence changed
+(an independent turbulence draw) and the acoustics moved substantially. Same
+lineage still reproduces the same take, deterministically.
+
+---
+
+## 19. Round fourteen (2026-08-04) - "father" and "yours", and what they exposed
+
+Ear report after §18 landed: better, but the F in "father" is completely
+silent and the "rs" in "yours" is too. Two specific words turned out to
+implicate FOUR separate defects, three of them introduced by §18 itself.
+`tests/phone_dump.gd` (new) is the tool that made this tractable: it prints
+every phoneme of an utterance with its position, duration, broadband RMS and
+three band energies, so a word reported by ear becomes a measurement.
+
+### The DSP half (three bugs, all mine from §18)
+
+1. **The forward locus glide was erasing the cue it existed to create.** A
+   voiceless fricative is silent through the tract, so gliding its posture
+   toward the next vowel spends the transition where nobody can hear it and
+   then hands the vowel over already sitting on its own target. Measured on
+   "father": /AE/ began at F2 1720 (its own target) with no transition at all.
+   Voiceless obstruents now HOLD their locus and let the following vowel carry
+   the movement. After: /AE/ onset F2 1394 -> steady 1701, a real labial
+   transition. For /f/ and /th/, whose own noise is weak, that transition IS
+   the primary place cue - which is why "silent" was a fair description of a
+   phoneme that was measurably present as hiss.
+2. **The glide window ate short segments.** `min(LOCUS_TIME, n*0.5)` let a
+   97 ms /r/ spend 48 ms travelling away from the low, close-spaced F2/F3 that
+   defines an /r/, and with the 32 ms glide EMA lagging on top it never
+   arrived. Capped at `LOCUS_SHARE` 0.35. After: /r/ reaches F2 1125 / F3 1378.
+3. **Klatt's sign alternation was wrong for the diffuse fricatives.**
+   Alternating the parallel poles stops a null forming between narrow,
+   separated resonators (/s/, /sh/) but /f/'s poles at 1400 and 4800 Hz are
+   1600 and 2800 Hz wide - they overlap almost entirely, so opposite signs made
+   them CANCEL. Caught because raising /f/'s shoulder amplitude made it
+   QUIETER. Sign is now data (a negative amplitude in the table), not a rule.
+   /f/ 0-1 kHz improved 6 dB and the F/TH spectral correlation fell 0.911 ->
+   0.615. Its low shoulder was also restored (0.15 -> 0.30) - the §18 level
+   pass had thinned /f/ and /th/ into pure high hiss with no body.
+
+### The front-end half (and the opening of Stage 2)
+
+Both reported words were ALSO mispronounced, independently of any DSP:
+
+    father -> F AE TH ER      (voiceless th)
+    yours  -> Y AW R S        (wrong vowel, unvoiced suffix)
+    comes  -> K AA M EH S     (phantom syllable)
+
+Four rules shipped, all in `phonemes.gd`:
+
+- **`-s` morphology**, one level: strip a final plural / third-person `-s`,
+  pronounce the STEM, reattach with voicing assimilation (Z / S / syllabic
+  IH Z). Going through the stem also lets the exceptions dictionary and
+  magic-e do their work, so one pass fixes the vowel, the consonant and the
+  spurious syllable together. The strip test is orthographic and deliberately
+  conservative - a wrong strip invents a word, which is worse than missing one.
+- **`th` voicing**: function words (`the`, `them`, `then`, `than`, `those`),
+  intervocalic (`father`, `mother`, `together`), and the `-the$` spelling
+  (`bathe`, `breathe`). Was unconditionally voiceless.
+- **General silent final `e`**, which magic-e could not reach because it only
+  inspects single letters and these have a digraph in the slot it checks.
+  Soft c/g are now tested against the ORIGINAL spelling, since the dropped `e`
+  is exactly the letter that softens them.
+- **Word-final `y`** (AY in a monosyllable, IY otherwise) and **word-final `o`**,
+  plus a `HARD_G` list for the common Germanic words the soft-g rule broke.
+
+Measured:
+
+    father -> F AE DH ER      mother -> M AA DH ER     together -> T AA G EH DH ER
+    yours  -> Y AO R Z        comes  -> K AH M Z       gives    -> G IH V Z
+    goes   -> G OW Z          wishes -> W IH SH IH Z   bathe    -> B AE DH
+    large  -> L AA R D ZH     every  -> EH V ER IY     try      -> T R AY
+    thin/path/both -> TH (correctly voiceless)   bus/gas/yes -> unstripped
+
+### Known residuals
+
+- No vowel reduction or stress, so `father` keeps AE where it wants AA and
+  `village` takes a magic-e EY where it wants an unstressed IH. This is the
+  syllabification + stress stage, still ahead.
+- `change`/`danger` read the `ng` digraph and lose the soft g. Not guessed at:
+  the same spelling is genuinely NG in `singer`, `longer`, `finger`, `anger`,
+  so fixing one breaks the other without morphology.
+- LIVE-ONLY RISK, unverified: `voice_stream.gd:359` applies a distance lowpass
+  at `900 * 2^(4*presence)` Hz whenever presence < 0.995. At a half-landed
+  presence that is ~3.6 kHz, which would remove /f/ and /s/ entirely while
+  leaving vowels intact - exactly the reported symptom. It is bypassed at full
+  presence and converges in about a second, so it is probably not what was
+  heard, but any consonant report from inside the fishing loop should check it.
+
+Gates: `pure_say`, `voice_check`, `sampler_check`, `loader_check` all OK;
+compile clean; headless boot clean.
+
+---
+
+## 20. Round fifteen (2026-08-04) - the front end becomes data
+
+Report: still only ~50% intelligible without subtitles. Correct - and the
+measurement says the remaining barrier is the FRONT END, not the acoustics.
+Graded against a hand-written reference over the vocabulary of a real chapter
+(`rift/books/north-star/chapters/01-reruns.md`, 1530 tokens, 482 types), the
+letter rules were mispronouncing words that carry most of the listening load.
+
+### Why this became the architecture work too
+
+The fix list was almost entirely DATA, not code: `we`/`me`/`he`/`she`/`be` all
+read with EH, `head` as HH IY D, `cushion` as K AH SH IH AA N, `watched` as
+W AE T SH EH D, `couldn't` as K AW L D N T. Letter rules cannot reach any of
+these, and English's most frequent words are also its most irregular. So the
+typed-pipeline question answered itself: the front end now loads its language
+from disk.
+
+**`data/english.yml`** - external, MiniYaml, three sections:
+- `lexicon` (420 entries): the irregular high-frequency core, organised by the
+  RULE CLASS each entry defeats (`ea` as EH, `ou` as AH, `oo` as UH before k/d,
+  `ea`/`ai` before r as EH, unstressed `-or` as ER, `-all`/`-old`, syllabic
+  `-le`, `-ion`, compounds). Grouped that way so the file reads as an argument
+  rather than a word list, and so the next person can see what is missing.
+- `clitics`: contractions split at the apostrophe, head pronounced through the
+  same pipeline. Heads that change shape (`don't`, `won't`, `can't`) are whole
+  lexicon entries instead - `do` + `n't` gives D UW AH N T.
+- `suffixes`: `-ing`, `-ed`, `-ly`, `-ness`, `-ment`, `-ful`, with undoubling
+  (`stopped -> stop`) and e-restoration (`hoping -> hope`).
+
+The pipeline order is now lexicon -> clitic -> suffix -> letter rules, and the
+suffix stage is the one that needed the typing: whether the `-ed` of `watched`
+is a syllable, a /t/ or a /d/ depends on the last PHONE of the stem, so the
+stem must be pronounced BEFORE the suffix can be chosen. A flat letter table
+cannot express that dependency, which is exactly why it produced a phantom
+syllable on every past-tense verb in the book.
+
+### The measurement, which is the real deliverable
+
+`tests/g2p_check.gd` grades against `data/reference.yml` - hand-written from
+knowledge, independent of what the front end produces, never a snapshot of its
+output - weighted by TOKEN frequency in the chapter. Type-level error rates
+flatter the system badly: an error on `the` costs 130 times what an error on
+`syndicate` costs.
+
+    before this round:  token-weighted WER ~35% (measured in the §18 audit)
+    after:              token-weighted WER 0.0% over the graded set
+                        (110 types, 1054 of 1530 tokens = 69% of the text)
+
+Also new: `tests/g2p_dump.gd` (every distinct word of a text with its phonemes,
+ordered by corpus frequency) and `tests/phone_dump.gd` from §19. Between them a
+word reported by ear becomes a measurement in one command.
+
+### Honest limits
+
+- The graded set is the top 110 types. The other 31% of tokens are the tail,
+  where the error rate is real but unmeasured. Spot-checking it drove the last
+  batch of lexicon entries (`good`, `air`, `swear`, `actor`, `history`,
+  `sometimes`), and there will be more.
+- **No stress and no vowel reduction yet.** Every syllable still gets its full
+  vowel and roughly equal weight, so the reading chants. This is the single
+  largest remaining intelligibility AND naturalness item: English listeners
+  segment running speech by stress pattern, so flat stress costs word
+  boundaries, not just naturalness. It is also what the user meant by "the same
+  word might sound different at different positions".
+- `change`/`danger` still lose their soft g to the `ng` digraph, unfixable
+  without morphology (`singer`, `longer`, `finger` are genuinely NG).
+- Two MiniYaml constraints the data file has to respect, both found the hard
+  way: duplicate keys are rejected outright, and a bare key containing an
+  apostrophe fails to scan - contraction keys must be quoted.
+
+Gates: `g2p_check`, `pure_say`, `voice_check`, `sampler_check` all OK; compile
+clean; headless boot clean. Listen: /tmp/ghost_scratch/chapter01.wav (the
+chapter's opening through the current chain).
+
+---
+
+## 21. Round sixteen (2026-08-04) - CMUdict, and the stress that came with it
+
+Report: no major difference from §20, still muddy. Correct, and the reason is
+that §20 fixed WHICH phonemes get spoken without touching HOW LONG each one
+lasts. Every syllable still arrived at roughly equal length and full vowel
+quality, so the reading chanted - and when the phonemes are already right, that
+is most of what "muddy" means.
+
+The user also asked whether hand-building a lexicon was making this harder than
+it needed to be. It was.
+
+### CMUdict, vendored
+
+`data/cmudict.dict` - 126,052 words, BSD-2-Clause, attribution in
+`data/cmudict.LICENSE`. This is a DICTIONARY, not a model: the same kind of
+1980s data table the phoneme inventory already is, and it does not touch the
+no-generative-AI / no-recordings constraints. Measured cost: 3.3 MB, 117 ms to
+read and index once at first speech.
+
+It beat the hand-written lexicon on every word I spot-checked. But the reason
+it matters is not coverage - it is the STRESS DIGITS:
+
+    father    F AA1 DH ER0
+    cushion   K UH1 SH AH0 N
+    because   B IH0 K AO1 Z
+    photograph  F OW1 T AH0 G R AE2 F
+    photography F AH0 T AA1 G R AH0 F IY0
+
+That last pair is the thing the user described as "the same word sounding
+different at different positions" - the stress MOVES, and everything about the
+rhythm follows it. A hand list could have supplied pronunciations; supplying
+correct lexical stress for 126k words by hand was never going to happen, and
+stress is the input the rhythm work needed.
+
+Lookup order is now: `data/english.yml` overrides (where we disagree on
+purpose) -> CMUdict -> clitics -> suffixes -> letter rules. The hand-written
+lexicon stays as the override layer and as the fallback if the dict is absent.
+
+### What the stress marks bought
+
+- **Accent placement.** `stress_vowel()` returned the FIRST vowel of a content
+  word; it now returns the PRIMARY-stressed one. The earlier audit measured the
+  old behaviour wrong on ~32% of multisyllabic content tokens.
+- **Vowel reduction, per syllable.** Unstressed vowels are now 0.62x duration,
+  0.78x amplitude and 0.7 toward schwa; secondary stress 0.88x / 0.92x / 0.25.
+  Reduction used to fire only on whole function WORDS.
+- **A real schwa to reduce toward.** `_SCHWA` was `[640, 1190, 2390]` - byte
+  identical to AH's own formant target - so reducing an AH toward schwa moved
+  it nowhere, and AH is the vowel English reduces to. Now `[500, 1500, 2500]`,
+  a genuinely central vowel.
+
+Measured on the chapter's opening:
+
+    stressed content vowels    195-393 ms at -12 to -16 dB
+    reduced function vowels     72-79  ms at -21 to -25 dB
+
+    vowel duration CV        0.55   (natural English running speech: 0.50-0.60)
+    vowel duration p90/p10   3.4x   (natural: 3-4x)
+
+Total take duration barely moved (89.2 s -> 89.0 s), which is the correct
+result rather than a null one: English redistributes time between syllables at
+a roughly constant rate, it does not spend more of it.
+
+### Honest limits
+
+- Take-level envelope dynamics moved only 7.6 -> 7.8 dB sd. The rhythm change
+  is in DURATION, which that statistic does not capture; do not read it as the
+  change having failed, and do not read the duration numbers as proof the ear
+  will agree either. This one is for the ear.
+- `yours` now reads Y UH R Z (CMUdict's rhotic form) against Y AO R Z in the
+  reference; both are current English, and the gate passes at 0.4%.
+- Still no PHRASE-level prosody: no phrase-final lengthening beyond the
+  existing terminal stretch, no de-accenting of repeated information, no
+  emphasis driven by the sentence's own structure. That is the next layer of
+  "the same word sounds different at different positions" and it is not done.
+- Everything here is LEXICAL stress. Sentence stress (which word in the clause
+  carries the nuclear accent) is still the walk's seeded guess, not analysis.
+
+Gates: `g2p_check` 0.4% token WER, `pure_say`, `voice_check`, `sampler_check`
+all OK; compile clean; headless boot clean.
+Listen: /tmp/ghost_scratch/chapter01_stress.wav against chapter01.wav (the same
+excerpt before the stress work).
+
+---
+
+## 22. Round seventeen (2026-08-04) - the walk stops inventing prosody
+
+The user's question, and it was the right one: use the dictionary's stress as
+the BASELINE and apply the walk as a modulation on top, rather than letting the
+walk generate the prosody itself.
+
+That is exactly what was wrong. §21 wired lexical stress into duration and
+reduction, but the pitch ACCENT was still this, in `ProsodyWalk.word()`:
+
+    if _gate.randf() < 0.22 * appetite + (0.18 if frac > 0.7 else 0.0):
+        emph = clampf(appetite * (1.0 - spent), 0.4, 1.4)
+
+A coin flip that both INVENTED the accent and PLACED it. The same sentence
+stressed different words on different seeds, and no seed stressed them where
+English does. The walk was generating prosody when it should only have been
+colouring it.
+
+### `scripts/phrasing.gd` - sentence stress from the text
+
+A new typed stage between [Phonemes] and `plan()`. Nothing in it is seeded: the
+same text always gets the same phrasing, and the voice's temperament decides how
+HARD it leans, never WHERE. Four parser-free rules:
+
+1. **Content vs function** - function words carry no accent. The list moved to
+   `data/english.yml` and grew from 33 entries to ~100; `has`, `will` and `we`
+   were being read as content words and taking accents off the verb. Function-word
+   CONTRACTIONS (`we're`, `it's`) resolve through their head.
+   Deliberately NOT function words: the standalone possessives (`mine`, `yours`,
+   `ours`) - they are predicates that carry focus, and listing them moved the
+   nucleus of "the far end is YOURS" onto `end`.
+2. **The nuclear accent** - the last content word before a boundary carries its
+   phrase's main accent. The single most audible prosodic event in a clause, and
+   it was entirely absent before.
+3. **De-accenting given information** - a content word said in the last ~14 words
+   is old news and drops to 0.45x. This is why "I bought a CAR. The car was RED"
+   does not stress `car` twice.
+4. **Stress clash** - two full accents in adjacent words is not English rhythm;
+   the earlier one steps back.
+
+Measured on the chapter's own sentences (`tests/phrasing_dump.gd`, new):
+
+    in the BEGINNING was the [COUCH,] and the couch(0.31) was with [FATHER.]
+    it's not the KIND of WRONG i can [EXPLAIN.]
+    the FAR END is [YOURS.]
+
+The second `couch` de-accents to 0.31 on its repeat; the nuclei land where a
+reader would put them.
+
+### The inversion in the walk
+
+`word()` now takes `prominence` and returns `emph = prominence * appetite *
+(1 - 0.55 * spent)`. The spent-emphasis EMA still spaces the big leans out, but
+it can no longer DELETE an accent the sentence structure requires. The seeded
+extra push survives as a multiplier on words that are already prominent - the
+speaker's own reading of an emphatic word, not the invention of one. In `plan()`
+the accent's SIZE now scales with prominence, so a nucleus lands hard and a
+de-accented repeat barely rises; every content word taking the same full accent
+is a list being read, not a sentence.
+
+### Honest limits
+
+- Take-level envelope statistics moved very little across all three rounds
+  (7.6 -> 7.8 -> 7.4 dB sd; total duration 89.2 -> 89.0 -> 86.8 s). The change is
+  in WHERE the length and pitch go, not how much there is of either, and this
+  statistic cannot see that. It is not evidence the change worked; the phrasing
+  dump and the ear are.
+- **Contrastive focus is not attempted.** "I said the RED one" needs syntax or an
+  author's mark. If a sentence's real focus is not its last content word, this
+  stage will put the nucleus in the wrong place, confidently.
+- No syntactic phrasing: boundaries come from punctuation only, so a long
+  unpunctuated clause gets one nucleus at its end rather than being broken into
+  intermediate phrases the way a reader would.
+- Rule 3 keys on the exact surface word, so `couch`/`couches` and `is`/`was` do
+  not count as repeats.
+
+Gates: `g2p_check` 0.4% token WER, `pure_say`, `voice_check`, `sampler_check`
+all OK; compile clean; headless boot clean.
+Listen: /tmp/ghost_scratch/chapter01_phrased.wav against chapter01_stress.wav
+(lexical stress only) and chapter01.wav (neither).
+
+---
+
+## 23. Round eighteen (2026-08-04) - the override layer was a silent regression
+
+User's question: are `english.yml` and `reference.yml` redundant now that
+CMUdict is in? Measured: **387 of 414 lexicon entries were byte-identical to
+CMUdict**, and 105 of 110 reference entries were too. But the redundancy was
+not the problem - it was the symptom.
+
+### The bug the redundancy was hiding
+
+`english.yml` is the OVERRIDE layer: it wins over CMUdict. Its entries carried
+no stress digits, so they went through `_with_default_stress`, which marks the
+FIRST vowel primary. For 56 of those words the primary stress is not on the
+first vowel, so the override was actively mis-stressing them:
+
+    about    should be AH0 B AW1 T   -> stressed A-bout
+    because  should be B IH0 K AO1 Z -> stressed BE-cause
+    before, between, again, another, believe, begin, afternoon, ... (56 total)
+
+Every one is high frequency. §21 wired stress into the rhythm and §22 built the
+phrasing on top of it, and this layer was quietly feeding both of them wrong
+stress for the commonest polysyllables in the text. A redundant override is not
+free; it is a regression with no symptom until something starts reading it.
+
+### What `english.yml` keeps
+
+Four lexicon entries: two homographs where the system must pick a reading
+without part-of-speech tagging (`live`/`lives` as the verb, which is commoner in
+prose than CMUdict's adjective), and two words CMUdict does not contain. The
+suffix, clitic and function-word tables stay - CMUdict does not supply those.
+Overrides may now carry stress digits, and must when polysyllabic.
+
+**Reduced narrator forms were tried here and removed on principle.** CMUdict
+lists function words in citation shape (`has` as HH AE1 Z), and the fix is to
+strip the STRESS, not rewrite the vowel: `function_words` forces stress 0 and
+the existing per-syllable reduction then centralizes and shortens the vowel at
+synthesis time. Spelling `HH AH0 Z` into the lexicon would duplicate machinery
+that already exists and freeze one degree of reduction for every speaker and
+tempo.
+
+### A second bug that fell out of testing it
+
+Stress-flattening applied to ALL function words, so `about`, `between`, `under`
+and `after` came back with no stressed vowel at all. English reduces the
+MONOSYLLABIC function words; polysyllabic prepositions keep their internal
+stress and simply take no sentence accent - which is Phrasing's job and already
+handled. Now gated on syllable count.
+
+### `reference.yml` repurposed
+
+Grading dictionary words against a hand-written list mostly measured "did the
+dictionary load". It now grades the paths CMUdict does NOT answer, in four
+groups - `words` (a smoke set incl. our overrides), `derived` (suffixes,
+clitics, plural voicing), `fallback` (out-of-dictionary), and `stress` (the
+index of the primary-stressed vowel, `-1` for a reduced function word).
+
+That last group is the important addition: **nothing in the suite tested stress
+before**, and stress is what the whole rhythm now hangs off. It is also what
+caught both bugs above. The token-weighted WER number is gone with the old
+file; it had become a measure of CMUdict's coverage rather than of our work.
+
+    g2p_check: words 9/9   derived 9/9   fallback 2/2   stress 17/17
+
+`english.yml` 414 lexicon entries -> 4. Gates: `g2p_check`, `pure_say`,
+`voice_check`, `sampler_check` all OK; compile clean; boot clean.
+
+---
+
+## 24. Round nineteen (2026-08-04) - the staircase, recovered from git
+
+User: nothing sounds like singing, the text is never slow enough, a cadence has
+speed-ups and slow-downs, and the earliest versions could do it - go look.
+
+### What the archaeology found
+
+`git show 11d3c2a8:axis/ghost/scripts/voice.gd` (the first commit, 2026-07-18,
+386 lines). Its entire melody was one line:
+
+    "semitones": decl + accent,
+
+Every phone got the sentence's declination; only the stressed vowel got the
+accent bump; silences reset to 0.0. No wander, no attractor shelf, no walk, no
+continuity pass. The contour was a STAIRCASE - discrete pitch levels, held flat
+across each segment, with instant transitions and a hard reset at every pause.
+That is what sounded like singing, and it was an accident of the code being
+unfinished.
+
+Every naturalness fix since has sanded it off, and the biggest was the f0
+continuity pass in fcb4f58f, which lerps every consonant onto the line between
+its neighbouring vowels. That turned the steps into a continuous glide - a
+correct fix for the "picket fence" complaint it was written for, and the thing
+that made singing unreachable.
+
+### `song`: the ninth trait axis
+
+Not a style layer over speech - it swaps four behaviours at once, because that
+is what the difference between speaking and singing actually is:
+
+- **Notes.** A sung vowel takes a whole number of BEATS rather than its natural
+  length, and a prominent syllable takes more beats than a weak one
+  (`1 + round(prom * 2)`). That is where the cadence comes from: uniform
+  stretching gives a drone, integer beats give long-short patterns that speed
+  up and slow down against a pulse. The beat follows the speaker's own tempo
+  and drawl, so it needs no separate roll.
+- **Steps.** The continuity glide is gated by `1 - song`, so at the top of the
+  axis a consonant HOLDS the note it is inside instead of gliding toward the
+  next one. This is the original staircase, restored as a capability rather
+  than an accident.
+- **Scale.** The anchor-shelf pull goes to 0.95, engaging fully by song 0.5.
+  Quantization is the defining feature, so it does not fade in; what fades in
+  along the axis is note LENGTH.
+- **Vibrato.** 5.5 Hz, 0.38 st, ramped in over 180 ms so short notes do not
+  wobble. Without it a held quantized note reads as a robotic tone, not a sung
+  one. The ProsodyField wander is also scaled by `1 - song`: a held note has to
+  be still for the vibrato to read as vibrato rather than drift.
+
+Only the upper half of the trait axis sings, so the curated default and half of
+every roll stay pure speech and a singing voice is something you FIND.
+
+Separately, and for speech too: `rate` widened from `2^(0.35*pace)` to
+`2^(0.55*pace)`. The slow end could only reach 1.28x slower than neutral, which
+is not slow enough for a deliberate reading.
+
+### Measured (`tests/song_check.gd`, new)
+
+    song   median note   p90     on-note   |df0/dt|
+    0.0        71 ms    143 ms    35.2%    382 cents/s
+    0.5       456 ms   1161 ms    54.1%    103 cents/s
+    1.0       933 ms   1911 ms    61.2%     85 cents/s
+
+Speech vowels were measured at a median of 104 ms with only 0.17% reaching
+400 ms, which is why no seed could ever sing however it was rolled. 61.2% of
+voiced time on-note matches the 59.7% the earlier counterfactual predicted for
+a forced pull, so the quantizer is now doing what the documentation always
+claimed it did.
+
+### Three bugs the measurement caught
+
+- **The metric measured the vibrato and called it bad tuning.** A +-38 cent
+  waver spends most of its cycle outside a 25 cent window, so a perfectly
+  quantized note scored ~40%. The tuning check now smooths over one vibrato
+  period first.
+- **The drone bank was detuned from the melody**, as suspected in §21 but not
+  then fixed. Strings were tuned to the raw anchor while the melody realizes it
+  at `anchor * inflect`, so any voice with `inflect != 1` had its drone a
+  growing interval out of tune with the note it was answering - and the
+  proximity test compared inflect-scaled units against raw ones. Both now use
+  the realized pitch. This matters far more for a singing voice, since the
+  drone is tuned to the same shelf the melody now sits on.
+- The synth realizes `... * 1.06`, a fixed +1.01 st offset that has to come off
+  a tracked f0 before it means anything against the shelf. Without it the
+  tuning number was meaningless.
+
+### Honest limits
+
+- Intelligibility is unchanged by any of this. `song` makes a voice sing; it
+  does not make a spoken reading easier to follow, and the standing complaint
+  (~50% without subtitles) is NOT addressed here.
+- At song 1.0 the notes are long (median 933 ms, max 2.16 s). That is the top
+  of the axis and meant to be extreme, but a chapter read at 1.0 would take
+  hours.
+- Vibrato is a fixed rate and depth. Real vibrato varies with pitch, loudness
+  and effort, and accelerates slightly into a held note.
+- The beat grid quantizes DURATION but nothing aligns notes to a shared bar
+  line, so there is no metre - phrases do not start on a downbeat.
+
+Gates: `g2p_check`, `pure_say`, `voice_check`, `sampler_check` all OK; compile
+clean; boot clean. Listen: /tmp/ghost_scratch/song_0.wav, song_5.wav,
+song_10.wav - the same sentence at three points along the axis.
+
+---
+
+## 25. Round twenty (2026-08-04) - singing gets a cadence, and stops being the default
+
+Two reports after §24 shipped `song`: ~90% of fished seeds were singers, and the
+singing voices held a near-constant cadence, turning a 7 minute read into 15.
+
+### Why almost everything sang
+
+`Spec.sample` gave `song` the same `randfn(0, 0.55)` as the timbre axes, so half
+of all WILD rolls were above zero before the belt touched them. Then the belt
+compounds it: `_pick_parent` is acceptance-weighted, children inherit with
+generation-decaying jitter, and `_temper_traits` pulls every draw toward the
+party's centre. One kept singer drags its whole line across the line, and the
+trust region then holds it there.
+
+`song` is a MODE, not a shade, so it is now drawn with an explicit incidence
+(`SONG_INCIDENCE` 0.28) and the negative draw is pushed clear of zero
+(`[-1.0, -0.25]`) so a non-singer's children do not cross by jitter alone.
+Measured over 4000 wild rolls: **29% sing at all, 17% sing strongly.** The roll
+has to sit below the rate you want to meet in play, because the belt only ever
+amplifies what it is given.
+
+### Why every sung word was slow
+
+The beat grid stretched EVERY vowel onto 1-3 beats. That is a drone, not a
+cadence - and it is the same mistake as reading every content word with a full
+accent. Music alternates: notes are HELD at the joints of a phrase and RUN
+through in between, and the contrast IS the music. The user's framing, which is
+the right one: "you could be rapping one minute, and singing the next."
+
+**The sustain gate.** A syllable is held when a slow seeded cycle over the
+syllable count, its prominence, and whether it ends a phrase add up past
+`SUSTAIN_BAR`. Same thresholded-drive idiom as the activation channels, so it is
+sparse and self-spacing by construction rather than by a rate constant. The
+cycle's period and phase are derived from `drawl`, `pace`, `lilt` and `grit` -
+traits the speaker already has - so a drawling singer holds notes further apart
+than a brisk one and no new roll is needed. A syllable that is NOT held runs at
+`SONG_RUN` 0.72 of its spoken length, floored at `SONG_RUN_MIN` 75 ms.
+
+Two things fell out of that and both had to be fixed:
+
+- **Runs were too fast to have a pitch.** At 49 ms the f0 EMA (35 ms) never
+  reached target, so the fast passages smeared off-key and the tuning number
+  fell straight back to speech levels. A singer ARRIVES on a pitch where a
+  speaker glides onto it, so the f0 time constant is now `lerp(35 ms, 12 ms,
+  song)` - which is also the original staircase's character.
+- **The terminal contour was knocking the held notes off the scale.** The
+  sentence-ending fall and the comma rise are applied AFTER the anchor pull, and
+  they land on the longest vowels in the reading - which, when singing, are
+  exactly the syllables the sustain gate chose, because a phrase ending is one
+  of the things that makes a syllable worth holding. So the one note a listener
+  had the best chance of hearing as a pitch was guaranteed to sit 1 to 6.5
+  semitones off the shelf. `_resnap` re-quantizes after the contour, which turns
+  a fall into a fall TO A NOTE - which is what a cadence is. This was logged as
+  a MINOR finding back in the §21 investigation and was not minor at all once
+  the sustain gate started choosing the same syllables.
+
+### Measured
+
+    song  median  p90     on-note  held-note  |df0/dt|  total  spread  sustained
+    0.0     71 ms  143 ms   35.2%    38.5%    382 c/s    5.8s  CV 0.49    0%
+    0.5     74 ms  691 ms   57.8%    80.0%    227 c/s    7.1s  CV 1.35   10%
+    1.0     72 ms 1175 ms   74.2%    91.6%     90 c/s    8.6s  CV 1.75   15%
+
+"held-note" is tuning restricted to frames that are actually still (under
+50 cents/s). Once most syllables became short runs, the overall figure was
+dominated by transitions, which is not where a tune lives - and it was the
+metric that exposed the terminal-contour bug: 34.4% before the re-snap, 91.6%
+after.
+
+Total length is now 1.22x speech at song 0.5 and 1.48x at 1.0, against roughly
+2x before, and the syllable spread went from CV 0.49 (speech) to 1.75. Long
+notes at the joints, runs in between.
+
+### Honest limits
+
+- The sustained fraction is 10-15%, chosen by the drive threshold rather than
+  targeted. It is an allowance, as asked, not a rule - but nothing guarantees a
+  particular density, and a text whose prominences fall out of phase with the
+  cycle will hold fewer notes.
+- Still no METRE: the beat grid quantizes duration, but nothing aligns notes to
+  a shared bar line, so phrases do not start on a downbeat and two voices
+  reading together would not agree on a pulse.
+- Intelligibility is untouched by any of this.
+
+---
+
+## 26. Round twenty-one (2026-08-04) - the fishing field: audit, and two fixes
+
+User's report: seeds stop changing as you drift further out, and the belt's
+"interference" does not behave like interference. Audited by three independent
+agents plus skeptics. Their findings, after verification:
+
+1. **Distance is a clock, not a position.** `_drift_dist` is a scalar odometer
+   integrated from time and velocity; the outward leg reads nothing about
+   traits, genome or belt, and has no direction. `_cast_vector` DOES move the
+   candidate through the real 25-D space as the odometer grows, but its only
+   consumer is the moon-phase drawing. So "distance" and "interference" are not
+   connected today.
+2. **Every gameplay consumer of drift saturated at odometer 1.0**, which the
+   warp crosses in ~16 s. Past that only the caption changed. This alone is the
+   reported symptom, and it was a clamp rather than a physics.
+3. **The anneal cannot express interference in principle.** `_adreno_step` is a
+   sum of linear springs, which reduces exactly to `W * (tbar - x)` - one
+   attractor and one stiffness however many seeds there are. It also collapses
+   harder as the belt fills: caught-trait spread falls 0.152 -> 0.012 per axis.
+4. **Its force is distance-INDEPENDENT** - a `(m - x)` term means a member
+   sitting FAR from the candidate pulls HARDER, the exact inverse of the intent.
+5. **An interference field already exists** (`_field_reception`): per-source
+   exponential falloff, amplitude-weighted centre frequency, pairwise beats,
+   with per-seed strength from acceptance and per-seed frequency from pitch.
+   But it drives the audio reception filter only, never traits or genome; its
+   source positions are lineage HASHES rather than the seeds' coordinates; it
+   has one shared falloff length so no seed can be long-range and another
+   short-range; and its phase is wall-clock times array indices.
+6. **The trust region widens with drift but its centre never moves**, so
+   distance only inflates a cage still bolted to the belt's centroid.
+7. **The metric was broken before any field could sit on it.** `_seed_vector`
+   normalized each genome delta by `|prior|`, so a gene's weight was inversely
+   proportional to how big its numbers happen to be: `hesit_bias` (prior 0.25)
+   counted 38x more per unit than `breath_span` (prior 9.5) and carried 31% of
+   all variance alone, with effective dimensionality ~7.6 of 25.
+
+### Shipped now (the two cheapest, and #7 is a prerequisite for everything else)
+
+- **`_seed_vector` normalizes by each gene's own G_BOUNDS spread.** Every
+  distance, bearing, acceptance-weighted centre and the catch card's kinship
+  colour were mostly reading one arbitrary gene. G_BOUNDS is the range the gene
+  is actually sampled and clamped over, so it is the honest unit.
+- **`_drift_free()`**: `log1p(_drift_reach())`, unbounded but soft-compressed,
+  now feeding the three quantities that should keep growing with distance - the
+  wild-throw chance, the child jitter, and (through them) how far a throw lands
+  from the belt. Near field is unchanged in feel (log1p is ~x for small x); a
+  long haul keeps paying with diminishing returns instead of hitting a wall.
+  Reward, the reception band and anything laid out against a finite on-screen
+  line deliberately still read the clamped `_drift_norm`.
+
+### The field itself - designed, NOT built
+
+Full design note in the workflow output. In brief: run the field in the existing
+3-axis frame (brightness / damage / drive) extended with `song` and the genome
+folded through a baked hyperplane bank - justified by measurement, not taste
+(a random cast's projection onto a source's wave vector has sd 0.58 in 3-D and
+0.20 in 25-D, where 90% of casts land inside |cos| < 0.33 and angle stops
+discriminating). Per seed, all DERIVED rather than rolled: position from
+`_seed_vector`, strength from acceptance, range from `ring * (1 - damp)`
+normalized against the belt's median pairwise distance (~40x span, so
+long-range beacons and point-blank seeds fall out of genes that already mean
+reach and absorption), wave vector and phase from the seed's strongest
+`_lineage_mods` entry. Field:
+
+    a_i  = A_i * exp(-d_i / L_i)
+    th_i = dot(k_i, p - x_i) + phi_i
+    M    = sum_i a_i * cos(th_i) * unit(x_i - p)
+
+`k_i` is a vector, so phase depends on distance AND angle and sources reinforce
+or cancel by geometry. `cos` has zero spatial mean, so `M` perturbs without
+biasing toward the centroid - the structural guard against the collapse failure
+mode. Migration is seven steps, each leaving a working game, starting with a
+standalone `scripts/voice_field.gd` plus `tests/field_check.gd` and no call
+sites. Do NOT ship the later steps before the metric fix, or the field is a
+field over `hesit_bias`.
+
+Noted as possibly the larger share of the complaint, and a separate mechanism:
+`Spec.influences` - the pooled-oscillator blend that IS the belt's audible
+alchemy - is assigned in exactly one place (`export_take`) and never on a live
+path, and an accepted catch's `override` genome replaces the blend outright. The
+alchemy layer switches itself off the moment you catch anything.
+
+Gates: `voice_check`, `g2p_check` OK; compile clean; synthesis-mode boot clean.

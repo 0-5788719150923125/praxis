@@ -1,0 +1,53 @@
+# Backs interference-capacity. Derives the one sentence the scaling conjecture
+# rests on - that K components address exponentially many configurations -
+# which the paper previously asserted. Part (iii) is the new content: the
+# envelope caps capacity unless high-frequency amplitude grows against it,
+# which is measurable on the spectrum heatmap the head already exposes.
+kind: proposition
+supports: [interference-capacity]
+statement: >
+  Let the harmonic field over $n$ positions be
+  $b(c)[x] = \sum_{k=1}^{K} c_k \cos\!\left(2\pi f_k x / n + \varphi_k\right)$
+  with distinct integer frequencies $0 < f_k < n/2$ and any fixed phases
+  $\varphi_k$. Then:
+  \emph{(i)} the modes are mutually orthogonal with squared norm $n/2$
+  \emph{whatever the phases are}, so $c \mapsto b(c)$ is injective and
+  $\lVert b(c) - b(c') \rVert_2 = \sqrt{n/2}\, \lVert c - c' \rVert_2$;
+  \emph{(ii)} consequently, if each coefficient is resolvable to a precision
+  $\varepsilon$ over a range $R$, the field admits at least
+  $(R/\varepsilon)^K$ mutually distinguishable configurations, so expressing
+  $N$ of them requires only $K = \lceil \log N / \log(R/\varepsilon) \rceil$
+  components;
+  \emph{(iii)} the count is in \emph{effective} coefficients $c_k = w_k a_k$.
+  Under a fixed envelope $w_k = f_k^{-\alpha}$ with raw amplitudes $a_k$
+  confined to a fixed range, $\log(\text{count}) = \sum_k \log(1 + R w_k /
+  \varepsilon)$, which converges for $\alpha > 1$ and grows only like $\log K$
+  at $\alpha = 1$: capacity saturates in $K$ unless the model grows
+  high-frequency amplitude against the envelope.
+proof: >
+  \emph{(i)} Expand the inner product of two modes:
+  $\sum_{x=0}^{n-1} \cos(2\pi f x/n + \varphi)\cos(2\pi g x/n + \psi) =
+  \tfrac{1}{2}\sum_x \left[ \cos(2\pi (f-g)x/n + \varphi - \psi) +
+  \cos(2\pi (f+g)x/n + \varphi + \psi) \right]$.
+  For $f \neq g$ with $f, g \in (0, n/2)$ neither $f-g$ nor $f+g$ is
+  $\equiv 0 \pmod n$, so both sums are geometric series over a full period and
+  vanish. For $f = g$ the first term contributes $n/2$ and the second vanishes
+  because $2f \not\equiv 0 \pmod n$. The Gram matrix is therefore $(n/2)I$
+  regardless of $\varphi$; the map has full rank $K$, and Parseval gives the
+  stated isometry.
+
+  \emph{(ii)} An isometry carries an $\varepsilon$-separated set in coefficient
+  space to a $\sqrt{n/2}\,\varepsilon$-separated set of fields. The axis-aligned
+  grid of spacing $\varepsilon$ on $[0,R]^K$ is such a set and has
+  $(\lfloor R/\varepsilon \rfloor + 1)^K$ points. Taking logarithms and solving
+  for $K$ gives the stated bound.
+
+  \emph{(iii)} Substitute $c_k = w_k a_k$ and bound
+  $\log(1 + R k^{-\alpha}/\varepsilon) \le R k^{-\alpha}/\varepsilon$; the sum
+  converges by comparison with $\sum_k k^{-\alpha}$ for $\alpha > 1$ and
+  diverges logarithmically at $\alpha = 1$.
+
+  The count is a statement about which fields are \emph{representable and
+  mutually resolvable}, not about which are reachable by gradient descent - the
+  representational layer of the three-way split this paper draws elsewhere, and
+  the layer on which universal approximation is likewise silent about cost.

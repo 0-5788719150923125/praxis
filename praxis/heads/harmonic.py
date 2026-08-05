@@ -32,21 +32,67 @@ IRR_T: float = math.pi
 IRR_D: float = math.e
 ALPHA: float = 1.0  # radial 1/f^alpha pink-noise decay
 AMPLITUDE_INIT_STD: float = 1.0
-# Forward-shift smoothness aux loss weight. The closed-form prior for
-# "b_t predicts b_{t+1}" in our 2D Fourier basis with frozen Weyl phases
-# reduces to a quadratic penalty on temporal frequency, normalized by
-# amplitude norm. Set to 0 to disable.
-# See next/harmony.md for the derivation.
-SMOOTHNESS_LAMBDA: float = 0.01
+# Forward-shift smoothness prior. The closed-form for "b_t predicts b_{t+1}" in
+# our 2D Fourier basis with frozen Weyl phases reduces to a quadratic penalty on
+# temporal frequency, normalized by amplitude norm (see next/harmony.md), giving
+# a scale-free S in [0, 1]: 0 = all mass at f_t=1, ~1/3 = isotropic, 1 = all mass
+# at f_t=F_t.
+#
+# The strength is no longer a fixed weight. A fixed lambda is the wrong shape of
+# constant: it sets the EQUILIBRIUM the prior settles at, but nothing about the
+# problem tells you what value produces the smoothness you want, and if the prior
+# is losing its fight against NLL you cannot tell without re-tuning. So lambda is
+# a Lagrange multiplier on a constraint whose TARGET is measured from the data:
+#
+#   S_target = normalized 2nd spectral moment of the hidden states the field
+#              multiplies - the same statistic S, computed on the signal instead
+#              of the grid. "The field should vary across position at the rate
+#              the signal it multiplies does."
+#   lambda  <- softplus(rho),  rho += eta * (S - S_target)     [dual ascent]
+#
+# The two quantities are on one scale by construction, and measurably so: white
+# hidden states give 0.340 against the grid's isotropic 0.341. lambda now rises
+# on its own when the prior is losing and relaxes when it has won, so the run
+# reports where the prior settled rather than being told.
+#
+# What is left is honestly still three constants, but they are a different KIND
+# of constant: an initial condition (continuity with the fixed-lambda runs), an
+# approach rate, and a safety cap. None of them sets the equilibrium - the data
+# does. The rate is the one that needed care: a controller must be SLOWER than
+# the plant it steers, and an amplitude grid being dragged by a regularizer
+# against NLL is a slow plant. A sweep over dual rate x grid-response time (100x
+# range) puts 0.003 as the only value that never pins against the cap and still
+# reaches the target; 0.3 saturates the cap on half of all steps, and 0.001
+# leaves the constraint unmet. Below 0.003 the prior is simply weak, above it
+# the multiplier outruns the grid and slams the cap - which is a visible
+# failure, not a silent one, because lambda is logged.
+SMOOTHNESS_LAMBDA_INIT: float = 0.01  # lambda at step 0 = the old fixed value
+SMOOTHNESS_DUAL_ETA: float = 0.003  # dual ascent rate on rho; see note below
+SMOOTHNESS_LAMBDA_MAX: float = 1.0  # cap: aux = lambda*S <= 1, under byte NLL
+SMOOTHNESS_TARGET_EMA: float = 0.99  # target is a batch estimate; smooth it
+SMOOTHNESS_PROBE_ROWS: int = 2  # sequences sampled for the target measurement
+SMOOTHNESS_PROBE_LEN: int = 256  # positions sampled for the target measurement
 
-# Amplitude modulation: an envelope over the temporal-frequency (f_t) axis,
-# applied as ``amp[f_t, :] *= env[f_t]``. "static" seeds a single mid-band
-# oscillation; "learned" makes the envelope a handful of learnable cosine
-# coefficients so the wave adapts. The envelope's basis is zero at f_t -> 0,
-# so it cannot reintroduce the flat (constant-over-position) mode that the bare
-# grid settles into. See ``HarmonicField`` and ``next/harmony.md``.
+# Amplitude modulation: a separable envelope over the frequency grid, applied
+# as ``amp[f_t, f_d] *= env[f_t, f_d]``. "static" seeds a single mid-band
+# oscillation; "learned" lets the coefficients adapt. The envelope's basis is
+# zero at f -> 0 on both axes, so it cannot reintroduce the flat
+# (constant-over-position) mode that the bare grid settles into. See
+# ``HarmonicField`` and ``next/harmony.md``.
+#
+# The mode counts are COMPLETE (K_t = F_t, K_d = F_d), not truncated, and so are
+# derived from the grid rather than set by hand. The previous truncation to six
+# f_t modes was a hard cap doing the job of a prior: it bounded the
+# input-conditional delta - the variance axis - to six degrees of freedom on one
+# axis, while the static grid it modulates has F_t*F_d. By the interference-
+# capacity proposition (research/body.tex, Sec. 5) the configurations a harmonic
+# field can distinguish are counted in the SPREAD of its spectrum, so a delta
+# capped at six coefficients cannot carry them however large the grid grows.
+# Completeness costs O(F_t + F_d) coefficients and is a strict generalisation:
+# the f_d coefficients are zero-initialised, so at init the envelope is exactly
+# the old f_t profile broadcast over f_d, bit for bit. The smoothness prior and
+# the tanh depth remain the (soft) controls on how much of the new room is used.
 AMP_MOD_DEPTH: float = 0.5  # peak envelope modulation, tanh-bounded
-AMP_MOD_BASIS_K: int = 6  # learned envelope = K low-frequency f_t modes
 
 # Fast weights: a per-token, delta-rule recurrent overlay on the spectrum. A small
 # linear-attention memory (ELU+1 kernel, delta write, z-normalized - the
@@ -71,16 +117,17 @@ COEFF_EMA: float = 0.9
 # of this conditional shaping; revisit if they do not.
 
 
-def _envelope_basis(F_t: int, K: int) -> torch.Tensor:
-    """``[F_t, K]`` sine modes over the f_t axis.
+def _envelope_basis(n: int, K: int) -> torch.Tensor:
+    """``[n, K]`` sine modes over one frequency axis of length ``n``.
 
-    Mode ``k`` is ``sin(pi*k*f_t/F_t)`` - a smooth wave that vanishes at
-    ``f_t -> 0``, so any combination of modes leaves the flat DC component
-    untouched. Mode 1 is a single hump peaking mid-band.
+    Mode ``k`` is ``sin(pi*k*f/n)`` - a smooth wave that vanishes at ``f -> 0``,
+    so any combination of modes leaves the flat DC component untouched. Mode 1
+    is a single hump peaking mid-band. Used for both the f_t and f_d axes; at
+    ``K = n`` the modes form a complete basis for that axis.
     """
-    ft = np.arange(1, F_t + 1, dtype=np.float64).reshape(-1, 1)
+    f = np.arange(1, n + 1, dtype=np.float64).reshape(-1, 1)
     k = np.arange(1, K + 1, dtype=np.float64).reshape(1, -1)
-    return torch.from_numpy(np.sin(np.pi * ft * k / F_t)).to(torch.float32)
+    return torch.from_numpy(np.sin(np.pi * f * k / n)).to(torch.float32)
 
 
 def _spectrum_2d(
@@ -158,6 +205,8 @@ class HarmonicField(nn.Module):
                 "downward by the smoothness aux loss."
             ),
             "chart": {
+                "series_group": "harmonic_smooth_pair",
+                "series_label": "field (grid)",
                 "title": "Forward-Shift Smoothness",
                 "y_label": "Forward-Shift Smoothness",
                 "y_scale": "linear",
@@ -178,6 +227,81 @@ class HarmonicField(nn.Module):
                 "y_scale": "linear",
                 "group": "harmonic_head",
                 "order": 45,
+            },
+        },
+        "harmonic_smooth_lambda": {
+            "description": (
+                "The smoothness prior's Lagrange multiplier. Starts at 0.01 - "
+                "the old fixed weight - and then moves on its own: it rises "
+                "while the field is rougher than the signal it multiplies and "
+                "relaxes once it is smoother. Reading it tells you whether the "
+                "prior is winning its fight with NLL, which a fixed weight "
+                "never could. Pinned at the 1.0 cap means the constraint is "
+                "unreachable and the target is wrong, not the multiplier."
+            ),
+            "chart": {
+                "title": "Smoothness Multiplier",
+                "y_label": "lambda",
+                "y_scale": "logarithmic",
+                "group": "harmonic_head",
+                "order": 48,
+            },
+        },
+        "harmonic_smooth_target": {
+            "description": (
+                "The measured smoothness target: the normalized second "
+                "spectral moment of the hidden states the field multiplies, "
+                "EMA-smoothed. Same statistic and same scale as "
+                "harmonic_smoothness, so the two are directly comparable - the "
+                "gap between them is the constraint violation driving the "
+                "multiplier. Near 1/3 means the signal still looks like noise; "
+                "falling means the trunk is developing temporal structure."
+            ),
+            "chart": {
+                "title": "Smoothness vs Target",
+                "y_label": "normalized 2nd spectral moment",
+                "y_scale": "linear",
+                "group": "harmonic_head",
+                "order": 49,
+                "series_group": "harmonic_smooth_pair",
+                "series_label": "target (signal)",
+            },
+        },
+        "harmonic_env_fd_share": {
+            "description": (
+                "Share of envelope coefficient energy sitting on the FEATURE "
+                "axis (f_d) rather than the temporal axis (f_t). Exactly 0 at "
+                "init, because the f_d coefficients are zero-seeded and the "
+                "envelope starts as a pure f_t profile broadcast across "
+                "features. A value that stays at 0 means the model never used "
+                "the feature axis and the envelope is still effectively "
+                "row-wise - the direct falsifier for completing the basis."
+            ),
+            "chart": {
+                "title": "Envelope Feature-Axis Share",
+                "y_label": "f_d share of coeff energy",
+                "y_scale": "linear",
+                "group": "harmonic_head",
+                "order": 46,
+            },
+        },
+        "harmonic_env_modes": {
+            "description": (
+                "Effective number of active envelope modes - the participation "
+                "ratio of the coefficient vector, so a value of 1 means one "
+                "mode carries everything and F_t+F_d means all are equally "
+                "used. 1.0 at init (a single mid-band hump). This counts the "
+                "degrees of freedom the variance axis is actually spending; "
+                "the interference-capacity proposition says configurations are "
+                "carried by spread, so a value pinned near 1 is a variance "
+                "axis with nothing to spend."
+            ),
+            "chart": {
+                "title": "Envelope Effective Modes",
+                "y_label": "Effective modes",
+                "y_scale": "logarithmic",
+                "group": "harmonic_head",
+                "order": 47,
             },
         },
         "harmonic_fast_norm": {
@@ -417,13 +541,26 @@ class HarmonicField(nn.Module):
             )
         self.amp_modulation = amp_modulation
         if amp_modulation != "off":
+            # Complete sine bases on both grid axes; the coefficient vector is
+            # the concatenation [c_t (F_t), c_d (F_d)], so K is derived from the
+            # grid rather than chosen.
             self.register_buffer(
                 "amp_basis",
-                _envelope_basis(self.F_t, AMP_MOD_BASIS_K),
+                _envelope_basis(self.F_t, self.F_t),
                 persistent=False,
             )
-            coeffs = torch.zeros(AMP_MOD_BASIS_K)
+            self.register_buffer(
+                "amp_basis_d",
+                _envelope_basis(self.F_d, self.F_d),
+                persistent=False,
+            )
+            self.amp_K = self.F_t + self.F_d
+            coeffs = torch.zeros(self.amp_K)
             if amp_modulation != "pure":
+                # Coefficient 0 is the first f_t mode: a single mid-band hump,
+                # exactly the old init. Every f_d coefficient starts at zero, so
+                # the envelope is constant along f_d until the model learns
+                # otherwise - identical to the previous row-wise envelope.
                 coeffs[0] = 1.0  # "pure" has no static base envelope
             if amp_modulation in ("learned", "input"):
                 self.amp_coeffs = nn.Parameter(coeffs)
@@ -444,7 +581,7 @@ class HarmonicField(nn.Module):
                 # the static spectrum. ``_last_input_coeffs`` keeps a
                 # representative coeff set (mean over the last batch) so the
                 # strands snapshot can rebuild the conditional field with no batch.
-                self.amp_input = nn.Linear(self.D, AMP_MOD_BASIS_K, bias=False)
+                self.amp_input = nn.Linear(self.D, self.amp_K, bias=False)
                 nn.init.zeros_(self.amp_input.weight)
                 self.register_buffer(
                     "_last_input_coeffs", coeffs.clone(), persistent=False
@@ -455,6 +592,21 @@ class HarmonicField(nn.Module):
         # its per-token read drives rank-r grid factors. ``fast_u`` zero-init (so
         # the overlay is exactly zero at init, identity start) while ``fast_v``
         # seeds the other factor so gradients still flow.
+        # Smoothness constraint state. ``smooth_rho`` is the dual variable
+        # (lambda = softplus(rho)); ``smooth_target`` is the EMA of the measured
+        # hidden-state roughness. Both are persistent - they are learned state,
+        # not derived, so a resumed run must not reset them to the cold start.
+        # The dual step is taken here rather than by the model optimizer on
+        # purpose: LionGeo routes scalars to a SIGN-based Lion secondary, which
+        # discards the violation magnitude and (at its lr=3e-4) moves the
+        # multiplier far too slowly to reach equilibrium inside a run.
+        self.register_buffer(
+            "smooth_rho",
+            torch.tensor(math.log(math.expm1(SMOOTHNESS_LAMBDA_INIT))),
+            persistent=True,
+        )
+        self.register_buffer("smooth_target", torch.tensor(-1.0), persistent=True)
+
         self.fast_weights = bool(fast_weights)
         if self.fast_weights:
             self.fast_rank = FAST_WEIGHT_RANK
@@ -587,17 +739,69 @@ class HarmonicField(nn.Module):
         amps = self.amplitudes
         env = self._envelope()
         if env is not None:
-            amps = amps * env.unsqueeze(1)  # modulate each f_t row by env[f_t]
+            amps = amps * env  # per-cell envelope over the (f_t, f_d) grid
         scaled = (
             torch.complex(self.spec_real.to(device), self.spec_imag.to(device)) * amps
         )
         b = self._eval_field(scaled, seq_len, device)
         return b.to(dtype) if dtype is not None else b
 
+    @torch.no_grad()
+    def _update_smoothness_dual(self, hidden_states: Tensor) -> None:
+        """Measure the target from the incoming signal and take one dual step.
+
+        Runs on the field's INPUT, which is upstream of its own output, so the
+        measurement is not reading back the field it is about to constrain. The
+        trunk does adapt to the field across steps - that is true of any
+        regularizer - but within a forward there is no loop.
+        """
+        if not self.training or SMOOTHNESS_DUAL_ETA <= 0.0:
+            return
+        h = hidden_states
+        if h.dim() != 3 or h.shape[-2] < 4:
+            return  # too short for a meaningful temporal statistic
+        # The target is an EMA-smoothed setpoint, not a precision measurement,
+        # so it is read from a slice: a couple of sequences and a bounded window
+        # keep the cost off the step time regardless of batch or context size.
+        h = h[: SMOOTHNESS_PROBE_ROWS, : SMOOTHNESS_PROBE_LEN].detach().float()
+        c = h - h.mean(dim=-2, keepdim=True)
+        # Forward-shift energy, which is what "b_t predicts b_{t+1}" literally
+        # asks for - and cheaper than the spectrum, since no transform is
+        # needed. It is the same quantity smoothness() approximates: the DFT of
+        # a first difference scales |X(f)| by 4 sin^2(pi f / N), whose small-f
+        # limit is the quadratic weight the grid statistic uses. The 1/6 is
+        # derived, not fitted: white noise has spectral second moment 1/3 and
+        # difference ratio E|x_t - x_{t+1}|^2 / E|x_t|^2 = 2, so 1/6 puts the
+        # two statistics on one scale (checked: 0.333 vs 0.335 on white input).
+        denom = c.pow(2).sum()
+        if not torch.isfinite(denom) or denom <= 0:
+            return
+        diff = c[:, 1:] - c[:, :-1]
+        target = (diff.pow(2).sum() / (6.0 * denom)).clamp(0.0, 1.0)
+
+        prev = self.smooth_target
+        self.smooth_target.copy_(
+            target
+            if float(prev) < 0.0  # first observation seeds the EMA
+            else SMOOTHNESS_TARGET_EMA * prev + (1.0 - SMOOTHNESS_TARGET_EMA) * target
+        )
+        violation = self.smoothness().detach() - self.smooth_target
+        if not torch.isfinite(violation):
+            return
+        rho_max = math.log(math.expm1(SMOOTHNESS_LAMBDA_MAX))
+        self.smooth_rho.copy_(
+            (self.smooth_rho + SMOOTHNESS_DUAL_ETA * violation).clamp(-20.0, rho_max)
+        )
+
+    def smooth_lambda(self) -> Tensor:
+        """The current multiplier, softplus(rho), bounded by the cap."""
+        return F.softplus(self.smooth_rho).clamp(max=SMOOTHNESS_LAMBDA_MAX)
+
     def forward(self, hidden_states: Tensor) -> Tensor:
         seq_len = hidden_states.shape[-2]
         device = hidden_states.device
         dtype = hidden_states.dtype
+        self._update_smoothness_dual(hidden_states)
         if self.amp_modulation in ("input", "pure"):
             b = self._field_conditional(hidden_states)
         else:
@@ -623,7 +827,7 @@ class HarmonicField(nn.Module):
             COEFF_EMA * self._last_input_coeffs + (1.0 - COEFF_EMA) * rep
         )
         env = self._env_from_coeffs(coeffs)  # [B, F_t]
-        amps = self.amplitudes.unsqueeze(0) * env.unsqueeze(-1)  # [B, F_t, F_d]
+        amps = self.amplitudes.unsqueeze(0) * env  # [B, F_t, F_d]
         return self._build_field(amps, seq_len, device).to(hidden_states.dtype)
 
     def _build_field(self, amps: Tensor, seq_len: int, device: torch.device) -> Tensor:
@@ -635,13 +839,26 @@ class HarmonicField(nn.Module):
         return self._eval_field(scaled, seq_len, device)
 
     def _env_from_coeffs(self, coeffs: Tensor) -> Tensor:
-        """Envelope over f_t from coefficient rows ``[..., K]`` -> ``[..., F_t]``.
-        ``1 + depth*tanh(...)`` stays positive and bounded; "pure" drops the
-        base 1 (the field is the conditional delta alone) and applies the
-        per-band gain."""
-        mod = AMP_MOD_DEPTH * torch.tanh(coeffs @ self.amp_basis.T)
+        """Envelope over the grid from coefficient rows ``[..., K]`` ->
+        ``[..., F_t, F_d]``.
+
+        The coefficient vector splits into an f_t block and an f_d block; each
+        maps through its own complete sine basis and the two profiles are summed
+        INSIDE the tanh, so the envelope is separable in the tanh argument and
+        bounded whatever the two axes do. ``1 + depth*tanh(...)`` stays positive;
+        "pure" drops the base 1 (the field is the conditional delta alone) and
+        applies the per-f_t-band gain.
+
+        With the f_d block at zero this is the old f_t-only envelope broadcast
+        across f_d, which is what makes the completion a strict generalisation.
+        """
+        c_t, c_d = coeffs[..., : self.F_t], coeffs[..., self.F_t :]
+        arg = (c_t @ self.amp_basis.T).unsqueeze(-1) + (
+            c_d @ self.amp_basis_d.T
+        ).unsqueeze(-2)
+        mod = AMP_MOD_DEPTH * torch.tanh(arg)
         if self.amp_modulation == "pure":
-            return mod * self.amp_gain
+            return mod * self.amp_gain.unsqueeze(-1)
         return 1.0 + mod
 
     def _envelope(self) -> Optional[Tensor]:
@@ -661,7 +878,7 @@ class HarmonicField(nn.Module):
         amps = self.amplitudes.detach()
         env = self._envelope()
         if env is not None:
-            amps = amps * env.detach().unsqueeze(1)
+            amps = amps * env.detach()
         if self.fast_weights:
             amps = amps + self._fast_repr.detach()
         return amps
@@ -690,11 +907,11 @@ class HarmonicField(nn.Module):
         amps = self.amplitudes.detach().cpu()
         if coeffs is not None:
             env = self._env_from_coeffs(coeffs.to(self.amp_basis.device))
-            amps = amps * env.detach().cpu().unsqueeze(1)
+            amps = amps * env.detach().cpu()
         else:
             env = self._envelope()
             if env is not None:
-                amps = amps * env.detach().cpu().unsqueeze(1)
+                amps = amps * env.detach().cpu()
         if grid_delta is not None:
             amps = amps + grid_delta.detach().cpu()
         scaled = torch.complex(self.spec_real.cpu(), self.spec_imag.cpu()) * amps
@@ -751,6 +968,38 @@ class HarmonicField(nn.Module):
                 "var_energy": (var_e / ref).to(torch.float32).tolist(),
                 "n": int(self.D),
                 "separated": float((var_e.sum() / total).item()),
+            }
+
+    def envelope_split(self) -> dict:
+        """How many envelope degrees of freedom the field is actually using.
+
+        :meth:`capacity_split` reads the *energy* the variance axis carries;
+        this reads its *dimensionality*, which is the quantity the
+        interference-capacity proposition counts. Two numbers, both from the
+        coefficient vector currently driving the envelope:
+
+        - ``harmonic_env_fd_share`` - fraction of coefficient energy on the
+          feature axis. Zero at init by construction.
+        - ``harmonic_env_modes`` - participation ratio ``(sum c^2)^2 / sum c^4``,
+          the effective count of active modes. One at init.
+
+        Both are scale-free, so neither moves merely because the envelope grew.
+        """
+        if self.amp_modulation == "off":
+            return {}
+        with torch.no_grad():
+            coeffs = (
+                self._last_input_coeffs
+                if self.amp_modulation in ("input", "pure")
+                else self.amp_coeffs
+            ).detach().float()
+            c2 = coeffs.pow(2)
+            total = c2.sum().clamp_min(1e-12)
+            fd_share = c2[self.F_t :].sum() / total
+            modes = total.pow(2) / c2.pow(2).sum().clamp_min(1e-24)
+            return {
+                "harmonic_env_fd_share": float(fd_share.item()),
+                "harmonic_env_modes": float(modes.item()),
             }
 
     def capacity_split(self) -> dict:
@@ -963,7 +1212,7 @@ class HarmonicField(nn.Module):
             amps = self.amplitudes.detach().cpu()
             env = self._envelope()
             if env is not None:
-                amps = amps * env.detach().cpu().unsqueeze(1)
+                amps = amps * env.detach().cpu()
             c = torch.complex(self.spec_real.cpu(), self.spec_imag.cpu()) * amps
             mag = c.abs().flatten()
             phase = torch.angle(c).flatten()
@@ -1028,10 +1277,15 @@ class HarmonicField(nn.Module):
         from the field at t+1. For our basis, this reduces to "low temporal
         frequency mass." Replaces the prior Hoyer loss, which knew nothing
         about which cells should win.
+
+        ``lambda`` is the dual variable maintained by
+        :meth:`_update_smoothness_dual` and is detached here: the multiplier is
+        a coefficient on this term, not something autograd should push around.
+        It is only ever moved by the constraint violation.
         """
-        if SMOOTHNESS_LAMBDA <= 0.0:
+        if SMOOTHNESS_DUAL_ETA <= 0.0 and SMOOTHNESS_LAMBDA_INIT <= 0.0:
             return None
-        return SMOOTHNESS_LAMBDA * self.smoothness()
+        return self.smooth_lambda().detach() * self.smoothness()
 
 
 class HarmonicHead(BaseHead):
@@ -1166,6 +1420,13 @@ class HarmonicHead(BaseHead):
             "harmonic_concentration": float(self.field.concentration().item()),
             "harmonic_smoothness": float(self.field.smoothness().item()),
             "harmonic_env_depth": self.field.envelope_depth(),
+            "harmonic_smooth_lambda": float(self.field.smooth_lambda().item()),
+            **(
+                {"harmonic_smooth_target": float(self.field.smooth_target.item())}
+                if float(self.field.smooth_target) >= 0.0
+                else {}
+            ),
+            **self.field.envelope_split(),
             **self.field.capacity_split(),
         }
         if self.field.fast_weights:

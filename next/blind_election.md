@@ -44,7 +44,7 @@ costume. Three near-exact mappings to machinery already in the tree:
   [temperament_bias_variance.md](temperament_bias_variance.md) makes with bias and
   variance: don't fuse two orthogonal quantities into one partisan dial.
 
-The name rhymes with Blind Watchmaker on purpose; the kinship is the aggregation-
+The name rhymes with Blind Watchmaking on purpose; the kinship is the aggregation-
 of-many-small-decisions-into-one-emergent-outcome shape.
 
 ## The two hard problems (lead with these, they are the point)

@@ -3,7 +3,7 @@
 import torch
 import torch.nn.functional as F
 
-from praxis.heads.harmonic import AMP_MOD_BASIS_K, FAST_EPS, FAST_SEGMENT, HarmonicField
+from praxis.heads.harmonic import FAST_EPS, FAST_SEGMENT, HarmonicField
 
 
 def _field(mode):
@@ -35,7 +35,9 @@ def test_learned_envelope_is_trainable_and_gets_gradient():
     assert f.envelope_depth() > 0.0
     param_names = {n for n, _ in f.named_parameters()}
     assert "amp_coeffs" in param_names
-    assert f.amp_coeffs.numel() == AMP_MOD_BASIS_K
+    # Coefficient count is derived from the grid: a complete sine basis per axis.
+    assert f.amp_coeffs.numel() == f.F_t + f.F_d
+    assert f.amp_K == f.F_t + f.F_d
 
     x = torch.randn(2, 8, 16, requires_grad=True)
     f(x).sum().backward()

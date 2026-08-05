@@ -99,8 +99,8 @@ class BaseDecoder(nn.Module):
                 self.locals.append(expert)
         elif config.router_type == "prismatic":
             # For Prismatic with architectural diversity, create experts with different encoding
-            # Philosophy: Test "Blind Watchmaker" hypothesis - architectural diversity
-            # reveals patterns single approaches cannot discover
+            # Philosophy: Test the "Blind Watchmaking" hypothesis - architectural
+            # diversity reveals patterns single approaches cannot discover
             expert_blocks = []
             encodings = ["alibi", "rope"]  # Expert 0: ALiBi, Expert 1: RoPE
 

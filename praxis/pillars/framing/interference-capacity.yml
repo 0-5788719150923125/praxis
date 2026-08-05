@@ -1,0 +1,60 @@
+# Scaling-section fragment, slotted directly after the conjecture is stated.
+# Carries proof-interference-capacity, which derives the "exponentially many
+# configurations" claim the conjecture leans on. No requires: the proposition is
+# about the harmonic basis itself, so it holds for any run that builds one.
+section: interference
+order: 10
+proofs: [proof-interference-capacity]
+body: >
+  The exponential count is the half of that claim the rest of it rests on, so it
+  is worth deriving rather than asserting. It follows from one property of the
+  basis, and the property is less exotic than the machinery around it suggests.
+
+  Modes at distinct frequencies are orthogonal \emph{whatever their phases}. The
+  phase of a sinusoid does not affect its inner product with a sinusoid at a
+  different frequency - the cross terms integrate over a full period either way.
+  So the map from a coefficient vector to a field is a scaled isometry: distances
+  in coefficient space are distances in field space, exactly, with no compression
+  and nothing lost in the transform. Whatever the model can distinguish among its
+  amplitudes, it can distinguish among its fields.
+
+  That is what makes the counting argument sound rather than merely suggestive.
+  Fix a resolution - the finest difference in a coefficient the rest of the
+  network can still act on. The distinguishable amplitude settings are then a
+  grid in $K$ dimensions, and a grid in $K$ dimensions has exponentially many
+  points in $K$. The isometry carries every one of them to a distinct, equally
+  separated field. Expressing $N$ configurations therefore costs $\log N$
+  components, which is the conjecture's logarithmic side, now with a derivation
+  under it.
+
+  This also settles what the frozen phases are for, and it is not orthogonality -
+  orthogonality was free. Freezing buys a \emph{fixed} basis: the same modes
+  describe every input, so an amplitude configuration means the same thing from
+  one forward pass to the next and the count above is a count of stable,
+  reusable configurations rather than of momentary coincidences. Weyl
+  equidistribution chooses \emph{which} fixed basis, spreading the phases so no
+  region of the torus is left unaddressed. Neither is doing the work the
+  isometry does.
+
+  Part \emph{(iii)} is a constraint the derivation produces on its own, and it
+  cuts against a reading of the spectrum this paper otherwise encourages. The
+  count is in \emph{effective} coefficients - amplitude after the $1/f^\alpha$
+  envelope. If the raw amplitudes stay within a fixed range while the envelope
+  attenuates the high frequencies, the capacity does not grow exponentially in
+  $K$ at all; for $\alpha > 1$ it converges to a constant, and adding components
+  buys nothing. Interference capacity is available only if the model spends
+  amplitude against the envelope where the envelope is suppressing it.
+
+  Read that alongside the concentration measure and the two axes come apart
+  again, in a way that is checkable rather than interpretive. A spectrum
+  collapsing onto a few low-frequency cells - rising Hoyer concentration - is the
+  bias axis doing exactly what Section~\ref{sec:manifold} says it should: the
+  corpus rhythm crystallising. But it is also, by the proposition, a spectrum of
+  low interference capacity. The two readings are not in conflict, because they
+  are readings of different parameters: the static grid is where concentration
+  belongs, and the input-conditional delta is where capacity has to live. The
+  falsifier is on the dashboard already. If the delta's spectrum concentrates
+  alongside the static grid rather than staying spread - and in particular if its
+  high-frequency mass decays with the envelope instead of resisting it - then the
+  variance axis has no room to carry configurations, and the logarithmic regime
+  is unreachable in this architecture whatever the counting argument permits.

@@ -1,7 +1,7 @@
 """Paper threads: which theory the LaTeX system argues, and with what.
 
-The generator sprawl had quietly pigeonholed itself to one paper (the Blind
-Watchmaker) because the title and prose were welded into research/main.tex.
+The generator sprawl had quietly pigeonholed itself to one paper (Blind
+Watchmaking) because the title and prose were welded into research/main.tex.
 A thread pulls the theory out into data: each yaml document under
 ``praxis/pillars/threads/`` is one layout -
 
@@ -17,7 +17,7 @@ There is one master (main.tex) and one body (body.tex); threads reconfigure
 them rather than forking them. The long-term direction is to migrate the
 body's inline prose into thread components as-data until the body is a
 skeleton. ``--title`` selects a thread at runtime, exactly like the other
-registries; the Blind Watchmaker layout is the default.
+registries; the Blind Watchmaking layout is the default.
 """
 
 import glob
@@ -33,7 +33,7 @@ THREADS_DIR = os.path.join(os.path.dirname(__file__), "threads")
 TITLE_TEX = os.path.join(RESEARCH_DIR, "title.tex")
 THREAD_TEX = os.path.join(RESEARCH_DIR, "thread.tex")
 
-DEFAULT_THREAD = "blind_watchmaker"
+DEFAULT_THREAD = "blind_watchmaking"
 
 # Component key -> the body.tex hook macro it fills. Order = emission order;
 # "abstract" is special-cased (wrapped in the abstract environment).

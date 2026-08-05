@@ -11,12 +11,12 @@ Amplitude modulation coupled through BOTH axes (sequence and feature).
 
 Two complementary, norm-surviving components, identity at init:
 
-* additive positional decay bias (sequence): ``+ g(t)*v``, ``g(t)=1-t/T`` -
-  strong absolute-position shaping on the oldest context, ~0 at the tail
-  (same as ``decay_bias``; additive, so a per-position norm can't divide it
-  out, and the predictive tail keeps its content).
+* additive positional decay bias (sequence): ``+ g(t)*v``,
+  ``g(t) = exp(-t/tau)`` - inherited wholesale from ``decay_bias``.
 * multiplicative per-feature frequency modulation (feature x sequence):
-  ``* (1 + ...
+  ``* (1 + tanh(a_d)*sin(2*pi*t/lambda_d + phi_d))``. Each feature ``d``
+  oscillates over the sequence at its own wavelength ``lambda_d`` (a
+  geometric spectrum ...
 
 Source: [praxis/sorting/amplitude.py:15](../praxis/sorting/amplitude.py#L15)
 

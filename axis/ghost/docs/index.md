@@ -143,6 +143,7 @@ Reusable composed characters - sampled stacks of primitives, not bespoke meshes.
 Text to narrated audio, no generative AI and no recordings: the phoneme front end, the source-filter synthesizer, the threaded real-time stream, the synthesis editor with karaoke subtitles, and the microphone sampler that mints a seed from a living voice. Design and rungs: next/voice.md at the repo root.
 
 - [`phonemes.gd`](../scripts/phonemes.gd) **Phonemes** - the phoneme inventory and the text-to-phoneme expansion.
+- [`phrasing.gd`](../scripts/phrasing.gd) **Phrasing** - sentence-level prominence, derived from the TEXT.
 - [`voice.gd`](../scripts/voice.gd) **Voice** - the source-filter speech synthesizer (rungs 0-2 of next/voice.md).
 - [`voice_stream.gd`](../scripts/voice_stream.gd) **VoiceStream** - real-time speech on its own thread: render lag cannot break it.
 - [`synth_editor.gd`](../scripts/synth_editor.gd) **SynthEditor** - the synthesis surface. The loop is a fishing trip:

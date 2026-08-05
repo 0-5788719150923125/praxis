@@ -1,4 +1,4 @@
-title: A Blind Watchmaker
+title: Blind Watchmaking
 subtitle: Harmonic Latent Spaces and the Geometry of Bias and Variance
 pillars:
   - runs
@@ -11,6 +11,7 @@ pillars:
   - halting
   - ghostmax
   - inlines
+  - optimization
   - conjectures
   - proofs
 abstract:
@@ -34,9 +35,11 @@ abstract:
   a harmonic head that writes a learned standing wave over its features, and \paperFramingAbstract
   In both, the classical bias-variance tradeoff stops being a single dial. A static,
   population-average rhythm (the spectrum the field phase-locks to) is pure bias;
-  an input-conditional modulation of that rhythm is structured variance; and because
-  the two live on orthogonal axes of a harmonic latent space, they can be lowered
-  together rather than traded against each other. This reframing motivates a central
+  an input-conditional modulation of that rhythm is structured variance; and we argue
+  the two occupy orthogonal axes of a harmonic latent space, so that they can be
+  lowered together rather than traded against each other - an interpretation of the
+  diagnostics this architecture exposes, offered with its falsifier rather than as a
+  theorem. This reframing motivates a central
   conjecture: consensus modeling - learning the mean of a corpus - scales linearly
   in the patterns it must express, while harmonic modeling, which composes patterns
   by interference, scales logarithmically, because $K$ frequency components address
@@ -47,7 +50,8 @@ conclusion:
   learn are set by the shape of the space its weights may occupy, and a harmonic
   latent space reshapes the oldest tradeoff in the field: bias becomes a static,
   population-average spectrum, variance becomes an input-conditional modulation,
-  and because they live on orthogonal axes they can be lowered together. From that
+  and the paper's structural claim is that they live on orthogonal axes and can
+  therefore be lowered together. From that
   decoupling follows a conjecture stated plainly - that learning the mean costs
   linearly while composing by interference costs logarithmically - and a framework
   built to test it rather than to argue it. And from that, in turn, follows the

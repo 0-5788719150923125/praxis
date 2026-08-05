@@ -44,27 +44,72 @@ const TABLE := {
 	"Y": {"type": "glide", "f": [280.0, 2250.0, 2950.0], "dur": 60.0},
 	"R": {"type": "glide", "f": [310.0, 1060.0, 1380.0], "dur": 75.0},
 	"L": {"type": "glide", "f": [360.0, 1300.0, 2700.0], "dur": 70.0},
-	# nasals (weak murmur through low formants)
-	"M": {"type": "nasal", "f": [280.0, 900.0, 2200.0], "dur": 70.0},
-	"N": {"type": "nasal", "f": [280.0, 1700.0, 2600.0], "dur": 65.0},
-	"NG": {"type": "nasal", "f": [280.0, 2300.0, 2750.0], "dur": 75.0},
-	# fricatives: noise_f / noise_bw shape the frication; voiced ones add the buzz
-	"S": {"type": "fric", "voiced": false, "noise_f": 6200.0, "noise_bw": 2600.0, "namp": 0.6, "dur": 105.0},
-	"Z": {"type": "fric", "voiced": true, "noise_f": 6200.0, "noise_bw": 2600.0, "namp": 0.35, "dur": 90.0},
-	"SH": {"type": "fric", "voiced": false, "noise_f": 2700.0, "noise_bw": 1600.0, "namp": 0.6, "dur": 110.0},
-	"ZH": {"type": "fric", "voiced": true, "noise_f": 2700.0, "noise_bw": 1600.0, "namp": 0.35, "dur": 95.0},
-	"F": {"type": "fric", "voiced": false, "noise_f": 4500.0, "noise_bw": 4000.0, "namp": 0.55, "dur": 95.0},
-	"V": {"type": "fric", "voiced": true, "noise_f": 4500.0, "noise_bw": 4000.0, "namp": 0.3, "dur": 70.0},
-	"TH": {"type": "fric", "voiced": false, "noise_f": 5500.0, "noise_bw": 4500.0, "namp": 0.45, "dur": 90.0},
-	"DH": {"type": "fric", "voiced": true, "noise_f": 5500.0, "noise_bw": 4500.0, "namp": 0.18, "dur": 60.0},
-	# stops: closure then a short burst; burst_f centres the burst noise
-	"P": {"type": "stop", "voiced": false, "burst_f": 900.0, "burst_bw": 1600.0, "dur": 90.0},
-	"B": {"type": "stop", "voiced": true, "burst_f": 900.0, "burst_bw": 1600.0, "dur": 75.0},
-	"T": {"type": "stop", "voiced": false, "burst_f": 4200.0, "burst_bw": 2600.0, "dur": 90.0},
-	"D": {"type": "stop", "voiced": true, "burst_f": 4200.0, "burst_bw": 2600.0, "dur": 75.0},
-	"K": {"type": "stop", "voiced": false, "burst_f": 1900.0, "burst_bw": 1400.0, "dur": 95.0},
-	"G": {"type": "stop", "voiced": true, "burst_f": 1900.0, "burst_bw": 1400.0, "dur": 80.0},
+	# nasals: a murmur through low poles MINUS a side-cavity zero. The zero is
+	# per-place - it is the whole difference between sum, sun and sung, and one
+	# shared 1000 Hz notch collapsed all three onto each other.
+	"M": {"type": "nasal", "f": [280.0, 900.0, 2200.0], "zero": 950.0, "dur": 70.0},
+	"N": {"type": "nasal", "f": [280.0, 1700.0, 2600.0], "zero": 1800.0, "dur": 65.0},
+	"NG": {"type": "nasal", "f": [280.0, 2300.0, 2750.0], "zero": 3000.0, "dur": 75.0},
+	# Obstruents. Two independent things, and conflating them is what made every
+	# fricative sound the same:
+	#   `f`   - the TRACT POSTURE (the locus). Where the articulators are, which
+	#           is what bends the neighbouring vowel's formants. This is the
+	#           primary place cue for /f/ and /th/, whose own noise is weak.
+	#   `par` - the PARALLEL BRANCH: [centre Hz, bandwidth Hz, amplitude] triples
+	#           describing the front-cavity resonances the turbulence excites.
+	#           These are summed AFTER the cascade, never through it: the cascade
+	#           is an all-pole lowpass whose top pole sits near 4.7 kHz, so
+	#           routing frication through it removed 42 dB at /f/, 69 dB at /th/
+	#           and 85 dB at /s/ and left all four sibilants correlated at 0.99.
+	#           (Klatt 1980 splits cascade and parallel for exactly this reason.)
+	#   `namp`- the branch's overall level; FRIC_LEVEL in [Voice] seats the set.
+	# Bandwidths here are ABSOLUTE and are NOT scaled by vocal tract length; only
+	# the centres are (a short tract raises the resonance, it does not sharpen it).
+	"S": {"type": "fric", "voiced": false, "f": [320.0, 1750.0, 2600.0],
+		"par": [[5300.0, 500.0, 1.0], [7400.0, 700.0, 0.65]], "namp": 1.0, "dur": 105.0},
+	"Z": {"type": "fric", "voiced": true, "f": [320.0, 1750.0, 2600.0],
+		"par": [[5300.0, 500.0, 1.0], [7400.0, 700.0, 0.65]], "namp": 0.5, "dur": 90.0},
+	# /sh/ carries the highest amplitude of any English fricative - and it needs
+	# it here, because its band overlaps the vowel's own F4/F5 where /s/'s does
+	# not, so equal amplitude left it 20 dB short of /s/ in contrast.
+	"SH": {"type": "fric", "voiced": false, "f": [320.0, 2000.0, 2500.0],
+		"par": [[2400.0, 300.0, 1.0], [3600.0, 500.0, 0.55]], "namp": 1.8, "dur": 110.0},
+	"ZH": {"type": "fric", "voiced": true, "f": [320.0, 2000.0, 2500.0],
+		"par": [[2400.0, 300.0, 1.0], [3600.0, 500.0, 0.55]], "namp": 0.9, "dur": 95.0},
+	# /f/ and /th/ are labiodental and dental: almost no front cavity, so their
+	# spectra are FLAT and DIFFUSE rather than peaked, and quiet in absolute
+	# terms. They are audible because they sit in 4-10 kHz where vowels have
+	# nothing - the cue is spectral CONTRAST against the neighbour, not level.
+	"F": {"type": "fric", "voiced": false, "f": [320.0, 900.0, 2200.0],
+		"par": [[1400.0, 1600.0, 0.30], [4800.0, 2800.0, 0.90], [8600.0, 2000.0, 0.70]],
+		"namp": 0.38, "dur": 95.0},
+	"V": {"type": "fric", "voiced": true, "f": [320.0, 900.0, 2200.0],
+		"par": [[1400.0, 1600.0, 0.30], [4800.0, 2800.0, 0.90], [8600.0, 2000.0, 0.70]],
+		"namp": 0.22, "dur": 70.0},
+	"TH": {"type": "fric", "voiced": false, "f": [320.0, 1400.0, 2400.0],
+		"par": [[1600.0, 1600.0, 0.30], [5800.0, 2800.0, 0.90], [9200.0, 2000.0, 0.65]],
+		"namp": 0.34, "dur": 90.0},
+	"DH": {"type": "fric", "voiced": true, "f": [320.0, 1400.0, 2400.0],
+		"par": [[1600.0, 1600.0, 0.30], [5800.0, 2800.0, 0.90], [9200.0, 2000.0, 0.65]],
+		"namp": 0.18, "dur": 60.0},
+	# stops: closure at the locus, then a burst through the parallel branch.
+	# The three classic burst shapes: labial diffuse-falling, alveolar
+	# diffuse-rising, velar compact (a single mid peak - the "velar pinch").
+	"P": {"type": "stop", "voiced": false, "f": [320.0, 900.0, 2200.0],
+		"par": [[900.0, 900.0, 1.0], [2200.0, 1600.0, 0.55]], "namp": 0.9, "dur": 90.0},
+	"B": {"type": "stop", "voiced": true, "f": [320.0, 900.0, 2200.0],
+		"par": [[900.0, 900.0, 1.0], [2200.0, 1600.0, 0.55]], "namp": 0.6, "dur": 75.0},
+	"T": {"type": "stop", "voiced": false, "f": [320.0, 1750.0, 2600.0],
+		"par": [[4000.0, 900.0, 1.0], [6800.0, 1200.0, 0.75]], "namp": 1.0, "dur": 90.0},
+	"D": {"type": "stop", "voiced": true, "f": [320.0, 1750.0, 2600.0],
+		"par": [[4000.0, 900.0, 1.0], [6800.0, 1200.0, 0.75]], "namp": 0.65, "dur": 75.0},
+	"K": {"type": "stop", "voiced": false, "f": [320.0, 1900.0, 2250.0],
+		"par": [[1800.0, 350.0, 1.0], [3100.0, 800.0, 0.45]], "namp": 0.95, "dur": 95.0},
+	"G": {"type": "stop", "voiced": true, "f": [320.0, 1900.0, 2250.0],
+		"par": [[1800.0, 350.0, 1.0], [3100.0, 800.0, 0.45]], "namp": 0.6, "dur": 80.0},
 	# affricates are expanded at parse time: CH -> T SH, JH -> D ZH
+	# /h/ is glottal: its noise DOES belong in the cascade (the whole tract is
+	# the filter), which is why it has no `par` and no posture of its own.
 	"HH": {"type": "asp", "dur": 65.0},
 	"SIL": {"type": "sil", "dur": 1.0},
 }
@@ -93,6 +138,32 @@ const SINGLES := {
 
 # The magic-e long vowels (`make`, `time`, `hope`): V C e$ -> long V, e dropped.
 const LONG := {"a": "EY", "e": "IY", "i": "AY", "o": "OW", "u": "UW"}
+
+const VOWEL_LETTERS := "aeiouy"
+
+# `th` is VOICED (DH) in three environments and voiceless everywhere else.
+# It was unconditionally voiceless, which is wrong on some of the highest
+# frequency words in English - `father` and `mother` came out with the `th` of
+# `thin`. These are the function words that carry a voiced initial `th`; the
+# intervocalic and `-the$` cases are handled by rule in word_to_phones.
+const TH_VOICED := ["the", "this", "that", "these", "those", "them", "then",
+	"than", "there", "their", "they", "though", "thus", "thence", "thee",
+	"thy", "thine", "themselves", "therefore"]
+
+# `g` before e/i/y is SOFT (as in `age`, `magic`) often enough to be the
+# default, but hard in a set of very common Germanic words. Listing the hard
+# ones is the smaller and safer change: flipping the default would break the
+# Latinate majority (`large`, `change`, `region`, `energy`, `message`).
+# Suffixed forms reduce to these stems through the morphology pass below.
+const HARD_G := ["get", "give", "given", "giving", "getting", "girl", "gift",
+	"begin", "began", "begun", "beginning", "forget", "forgive", "together",
+	"target", "tiger", "anger", "angry", "eager", "finger", "hunger", "gear",
+	"geese", "gate", "gone", "girth", "gild"]
+
+# Phones after which a plural / third-person `-s` stays voiceless.
+const VOICELESS_PHONES := ["P", "T", "K", "F", "TH", "S", "SH", "HH"]
+# ... and after which it becomes a whole syllable (`buses`, `wishes`).
+const SIBILANT_PHONES := ["S", "Z", "SH", "ZH"]
 
 # Common irregular words the rules would butcher. Small on purpose - the author
 # writes `[.]` phonetics for anything else.
@@ -160,7 +231,8 @@ static func parse(text: String) -> Array:
 				words = []
 			continue
 		if bare.length() > 0:
-			var phones := word_to_phones(bare)
+			var got := lookup(bare)
+			var phones: Array = got.phones
 			if phones.size() > 0:
 				words.append({
 					"text": bare,
@@ -168,7 +240,8 @@ static func parse(text: String) -> Array:
 					# caps and punctuation intact - normalization is for the
 					# phoneme lookup, never for the reader's eyes
 					"phones": phones,
-					"stressed": not FUNCTION_WORDS.has(bare),
+					"stress": got.stress,
+					"stressed": not is_function_word(bare),
 					"pause_after": pause,
 					"punct": punct,
 				})
@@ -218,14 +291,217 @@ static func _literal_word(token: String) -> Dictionary:
 			phones.append_array(["T", "SH"])
 		elif key == "JH":
 			phones.append_array(["D", "ZH"])
+	var st := _with_default_stress(phones)
 	return {"text": inner.to_lower(), "display": inner, "phones": phones,
-		"stressed": true, "pause_after": "none"}
+		"stress": st.stress, "stressed": true, "pause_after": "none"}
 
 
-## One lowercase word -> phoneme keys, via exceptions, magic-e, digraphs, singles.
+# ---- the external language data ---------------------------------------------
+#
+# `data/english.yml` holds the pronunciation LEXICON and the SUFFIX table. It is
+# data, not configuration: the language itself, external so it can be read and
+# corrected without touching the synthesizer, and so a wrong word is a one-line
+# diff instead of a code change. The built-in EXCEPTIONS above remain the
+# fallback, so a missing or malformed file degrades to the old behaviour rather
+# than breaking speech.
+const DATA_PATH := "res://data/english.yml"
+# CMUdict: 126k words with LEXICAL STRESS, vendored (BSD-2-Clause, see
+# data/cmudict.LICENSE). Hand-building a lexicon was the wrong instinct - this
+# is a dictionary, not a model, exactly the kind of 1980s-technology data table
+# the phoneme inventory already is, and it carries the one thing a hand list
+# could never supply cheaply: which syllable of every word is stressed. That is
+# what drives vowel reduction and duration, so the dictionary is not a shortcut
+# past the interesting work, it is the input the interesting work needed.
+# Measured: 3.3 MB, 117 ms to read and index once, at first speech.
+const CMUDICT_PATH := "res://data/cmudict.dict"
+
+static var _lexicon := {}                 # our overrides (data/english.yml)
+static var _cmu := {}                     # word -> raw "F AA1 DH ER0"
+static var _clitics := {}
+static var _function_words := {}
+static var _suffixes: Array = []
+static var _loaded := false
+
+
+static func _load_data() -> void:
+	if _loaded:
+		return
+	_loaded = true
+	if FileAccess.file_exists(CMUDICT_PATH):
+		var cf := FileAccess.open(CMUDICT_PATH, FileAccess.READ)
+		var txt := cf.get_as_text()
+		cf.close()
+		for line in txt.split("\n", false):
+			var sp := line.find(" ")
+			if sp > 0:
+				_cmu[line.substr(0, sp)] = line.substr(sp + 1)
+	else:
+		push_warning("phonemes: %s missing - falling back to letter rules" % CMUDICT_PATH)
+	if not FileAccess.file_exists(DATA_PATH):
+		push_warning("phonemes: %s missing - falling back to built-in EXCEPTIONS" % DATA_PATH)
+		return
+	var f := FileAccess.open(DATA_PATH, FileAccess.READ)
+	var res := MiniYaml.parse(f.get_as_text())
+	f.close()
+	if not res.ok:
+		push_warning("phonemes: %s - %s" % [DATA_PATH, res.error])
+		return
+	var data: Dictionary = res.data if res.data is Dictionary else {}
+	for w in (data.get("lexicon", {}) as Dictionary):
+		# stored RAW so stress digits survive: an override without them silently
+		# fell back to "primary stress on the first vowel", which mis-stressed 56
+		# high-frequency words (about, because, before, between, again ...) the
+		# moment CMUdict arrived. An override must be able to carry stress.
+		_lexicon[String(w)] = String(data.lexicon[w])
+	for fw in (data.get("function_words", []) as Array):
+		_function_words[String(fw)] = true
+	for c in (data.get("clitics", {}) as Dictionary):
+		_clitics[String(c)] = _split_phones(String(data.clitics[c]))
+	for entry in (data.get("suffixes", []) as Array):
+		if entry is Dictionary and entry.has("spelling"):
+			_suffixes.append(entry)
+
+
+## "K AE T" (or a list) -> ["K", "AE", "T"], expanding the affricates.
+static func _split_phones(spec: String) -> Array:
+	var out: Array = []
+	for p in spec.split(" ", false):
+		var key := String(p).to_upper()
+		if key == "CH":
+			out.append_array(["T", "SH"])
+		elif key == "JH":
+			out.append_array(["D", "ZH"])
+		elif TABLE.has(key):
+			out.append(key)
+	return out
+
+
+static func _phone_list(v: Variant) -> Array:
+	if v is Array:
+		var out: Array = []
+		for p in v:
+			out.append_array(_split_phones(String(p)))
+		return out
+	return _split_phones(String(v))
+
+
+## One lowercase word -> `{phones: [String], stress: [int]}`, the arrays
+## parallel. Stress is 0 (unstressed / consonant), 1 (primary) or 2 (secondary),
+## and is the signal the whole rhythm of the reading hangs off: which vowels
+## reduce to schwa, which get length, and which carries the pitch accent.
+static func lookup(word: String) -> Dictionary:
+	_load_data()
+	# our overrides win: data/english.yml is where we disagree with the
+	# dictionary on purpose (reduced narrator forms, house pronunciations)
+	var got: Dictionary
+	if _lexicon.has(word):
+		got = _parse_cmu(String(_lexicon[word]))
+	elif _cmu.has(word):
+		got = _parse_cmu(String(_cmu[word]))
+	else:
+		got = _with_default_stress(word_to_phones(word))
+	# A FUNCTION WORD IS UNSTRESSED, whatever the dictionary says. CMUdict lists
+	# citation forms (`has` as HH AE1 Z), which is right for a word said alone
+	# and wrong for one said in a sentence - and a stress-1 mark stops the
+	# reduction stage from touching it, so every `has`, `for` and `your` came
+	# out at full length and full vowel quality. Stripping the stress here lets
+	# the existing machinery reduce them, at whatever depth the speaker and the
+	# tempo call for, instead of freezing one reduced spelling into the lexicon.
+	# ... but only a MONOSYLLABIC one. English reduces `the`, `of`, `at`, `for`;
+	# it does not flatten `about`, `between`, `under` or `after`, which keep
+	# their internal stress pattern even when the sentence gives them no accent.
+	# Flattening those made `about` come back with no stressed vowel at all.
+	# Not being accented is Phrasing's job, and it already handles both cases.
+	if is_function_word(word) and _syllables(got.phones as Array) <= 1:
+		var flat: Array = []
+		for _i in (got.stress as Array).size():
+			flat.append(0)
+		got.stress = flat
+	return got
+
+
+static func _syllables(phones: Array) -> int:
+	var n := 0
+	for p in phones:
+		if TABLE.get(p, {}).get("type", "") == "vowel":
+			n += 1
+	return n
+
+
+## "F AA1 DH ER0" -> phones + stress, expanding the affricates.
+static func _parse_cmu(spec: String) -> Dictionary:
+	var phones: Array = []
+	var stress: Array = []
+	# an entry with no digits at all gets the default marking instead, so a
+	# hand-written override may omit them for a monosyllable
+	var marked := false
+	for t in spec.split(" ", false):
+		var c := String(t)[String(t).length() - 1]
+		if c >= "0" and c <= "9":
+			marked = true
+			break
+	for tok in spec.split(" ", false):
+		var t := String(tok)
+		var st := 0
+		var last := t[t.length() - 1]
+		if last >= "0" and last <= "9":
+			st = int(last)
+			t = t.substr(0, t.length() - 1)
+		if t == "CH":
+			phones.append_array(["T", "SH"])
+			stress.append_array([0, 0])
+		elif t == "JH":
+			phones.append_array(["D", "ZH"])
+			stress.append_array([0, 0])
+		elif TABLE.has(t):
+			phones.append(t)
+			stress.append(st)
+	if not marked:
+		return _with_default_stress(phones)
+	return {"phones": phones, "stress": stress}
+
+
+## Phones with no marks of their own: primary stress on the first vowel, which
+## is right for the short function words data/english.yml holds and a harmless
+## default elsewhere (the dictionary answers almost everything real).
+static func _with_default_stress(phones: Array) -> Dictionary:
+	var stress: Array = []
+	var seen := false
+	for p in phones:
+		var is_v: bool = TABLE.get(p, {}).get("type", "") == "vowel"
+		stress.append(1 if (is_v and not seen) else 0)
+		if is_v:
+			seen = true
+	return {"phones": phones.duplicate(), "stress": stress}
+
+
+## One lowercase word -> phoneme keys: lexicon, then suffixes, then letter rules.
 static func word_to_phones(word: String) -> Array:
+	_load_data()
+	if _lexicon.has(word):
+		return (_parse_cmu(String(_lexicon[word])).phones as Array)
+	if _cmu.has(word):
+		return (_parse_cmu(String(_cmu[word])).phones as Array)
 	if EXCEPTIONS.has(word):
 		return (EXCEPTIONS[word] as Array).duplicate()
+	var cl := _try_clitic(word)
+	if not cl.is_empty():
+		return cl
+	var suf := _try_suffix(word)
+	if not suf.is_empty():
+		return suf
+	# MORPHOLOGY, one level: strip a final plural / third-person `-s`, pronounce
+	# the STEM, then reattach the suffix with voicing assimilation. Letter rules
+	# alone cannot do this - they produced `comes` as K AA M EH S (a phantom
+	# syllable), `gives` as D ZH IH V EH S, and `yours` as Y AW R S instead of
+	# Y AO R Z. Going through the stem also lets the exceptions dictionary and
+	# the magic-e rule do their work, which is why this one pass fixes the
+	# vowel, the consonant and the spurious syllable at the same time.
+	var stem := _s_stem(word)
+	if not stem.is_empty():
+		var sp := word_to_phones(stem)          # stem never ends in a strippable -s
+		if sp.size() > 0:
+			return _attach_s(sp, stem)
 	var w := word
 	var long_vowel_at := -1
 	# magic-e: ...V C e$ (consonant not r/w) -> long vowel, silent e
@@ -235,6 +511,14 @@ static func word_to_phones(word: String) -> Array:
 		if LONG.has(vow) and not (cons in "aeiourw"):
 			long_vowel_at = w.length() - 3
 			w = w.substr(0, w.length() - 1)
+	# ... and the GENERAL silent final e, which magic-e cannot reach because it
+	# only inspects single letters: `bathe` and `breathe` have a digraph in the
+	# slot it checks, so they kept a whole spurious EH syllable. A final `e` is
+	# silent unless the word is tiny (`be`, `he`, `the`) or the `e` follows
+	# another vowel (`see`, `free`, `toe`), which is what those tests protect.
+	if w.length() >= 4 and w[w.length() - 1] == "e" \
+			and not VOWEL_LETTERS.contains(w[w.length() - 2]):
+		w = w.substr(0, w.length() - 1)
 	var phones: Array = []
 	var i := 0
 	while i < w.length():
@@ -246,6 +530,13 @@ static func word_to_phones(word: String) -> Array:
 		for span in [4, 3, 2]:
 			if i + span <= w.length():
 				var chunk := w.substr(i, span)
+				# `th` is the one digraph whose value is contextual, so it is
+				# decided here rather than in the table
+				if chunk == "th":
+					phones.append("DH" if _th_voiced(word, w, i) else "TH")
+					i += 2
+					matched = true
+					break
 				if DIGRAPHS.has(chunk):
 					phones.append_array(DIGRAPHS[chunk])
 					i += span
@@ -254,14 +545,26 @@ static func word_to_phones(word: String) -> Array:
 		if matched:
 			continue
 		var c := w[i]
+		var last: bool = i == w.length() - 1
 		if SINGLES.has(c):
 			# word-initial y is the glide, not the vowel
 			if c == "y" and i == 0:
 				phones.append("Y")
-			# soft c / g before e, i, y
-			elif c == "c" and i + 1 < w.length() and w[i + 1] in "eiy":
+			# word-final y: AY in a monosyllable (`try`, `sky`, `fly`), IY
+			# otherwise (`every`, `really`, `happy`) - it was IH for all of them
+			elif c == "y" and last:
+				phones.append("AY" if not _has_vowel_before(w, i) else "IY")
+			# word-final o is the long one: `go`, `no`, `so` (and `goes` reaches
+			# it through the -es stem)
+			elif c == "o" and last and w.length() <= 3:
+				phones.append("OW")
+			# soft c / g before e, i, y - tested against the ORIGINAL spelling,
+			# because a dropped silent e is exactly the letter that softens them
+			# (`large`, `change`, `village` lose their trigger otherwise)
+			elif c == "c" and i + 1 < word.length() and word[i + 1] in "eiy":
 				phones.append("S")
-			elif c == "g" and i + 1 < w.length() and w[i + 1] in "eiy" and word != "give" and word != "get":
+			elif c == "g" and i + 1 < word.length() and word[i + 1] in "eiy" \
+					and not HARD_G.has(word):
 				phones.append_array(["D", "ZH"])
 			else:
 				phones.append_array(SINGLES[c])
@@ -269,11 +572,177 @@ static func word_to_phones(word: String) -> Array:
 	return phones
 
 
+static func _has_vowel_before(w: String, i: int) -> bool:
+	for k in i:
+		if VOWEL_LETTERS.contains(w[k]):
+			return true
+	return false
+
+
+## Is this `th` voiced? Three environments, checked against the ORIGINAL word
+## (so a dropped magic-e still counts):
+##   a function word starting in th-  (the, this, them, those, then, than)
+##   between two vowels              (father, mother, other, together, weather)
+##   the `-the$` spelling            (bathe, breathe, clothe, soothe)
+static func _th_voiced(word: String, w: String, i: int) -> bool:
+	if i == 0 and TH_VOICED.has(word):
+		return true
+	# `aeiou`, NOT VOWEL_LETTERS: a preceding `y` is a word-joint far more often
+	# than a real vowel here, and it voiced the `th` in `everything`.
+	if i > 0 and i + 2 < w.length():
+		if "aeiou".contains(w[i - 1]) and "aeiou".contains(w[i + 2]):
+			return true
+	return word.ends_with("the") and i + 3 == word.length()
+
+
+## Split a contraction at its apostrophe and pronounce the head through this
+## same pipeline. `'s` reuses the plural's voicing rule, since it is the same
+## clitic. Contractions whose HEAD changes shape (don't, won't, can't) are
+## whole-word lexicon entries instead - `do` + `n't` would give D UW AH N T.
+static func _try_clitic(word: String) -> Array:
+	var at := word.rfind("'")
+	if at <= 0 or at >= word.length() - 1:
+		return []
+	var head := word.substr(0, at)
+	var tail := word.substr(at)
+	var hp := word_to_phones(head)
+	if hp.is_empty():
+		return []
+	if tail == "'s":
+		return _attach_s(hp, head)
+	# `n't` carries the n from the head's spelling, so match on it too
+	if _clitics.has(tail):
+		return hp + (_clitics[tail] as Array)
+	if tail == "'t" and head.ends_with("n"):
+		var stem := word_to_phones(head.substr(0, head.length() - 1))
+		if not stem.is_empty() and _clitics.has("n't"):
+			return stem + (_clitics["n't"] as Array)
+	return []
+
+
+## Try each suffix in `data/english.yml`: strip the spelling, rebuild a stem
+## (undoubling `stopped -> stop`, restoring a dropped `e` in `hoping -> hope`),
+## pronounce that stem through this same pipeline, then reattach.
+##
+## The stem has to be pronounced BEFORE the suffix can be chosen: whether the
+## `-ed` of `watched` is a syllable, a /t/ or a /d/ depends on the last PHONE of
+## the stem, which the letter rules cannot know from spelling. That dependency
+## is the whole reason a flat rule table produced `watched` as W AE T SH EH D.
+static func _try_suffix(word: String) -> Array:
+	for s in _suffixes:
+		var sp := String(s.spelling)
+		if not word.ends_with(sp) or word.length() < sp.length() + 2:
+			continue
+		var base := word.substr(0, word.length() - sp.length())
+		for stem in _stem_candidates(base, s):
+			var sph := word_to_phones(stem)
+			if sph.is_empty():
+				continue
+			return _attach_suffix(sph, s)
+	return []
+
+
+## The spellings to try for a stem, best first.
+static func _stem_candidates(base: String, s: Dictionary) -> Array:
+	var out: Array = []
+	var n := base.length()
+	out.append(base)
+	# `hoping -> hope`: the stem's silent e was dropped before the suffix, and
+	# restoring it lets magic-e fire again. Tried SECOND, because trying it
+	# first turned `labeled` into `labele` -> L AE B IY L D; a stem that the
+	# lexicon or the plain rules already know is always the better answer.
+	if bool(s.get("restore_e", false)) and n >= 2 and not VOWEL_LETTERS.contains(base[n - 1]):
+		out.append(base + "e")
+	# `stopped -> stop`, `running -> run`: a final consonant was doubled to keep
+	# the preceding vowel short
+	if bool(s.get("undouble", false)) and n >= 3 and base[n - 1] == base[n - 2] \
+			and not VOWEL_LETTERS.contains(base[n - 1]):
+		out.append(base.substr(0, n - 1))
+	return out
+
+
+static func _attach_suffix(phones: Array, s: Dictionary) -> Array:
+	var out: Array = phones.duplicate()
+	if s.has("add"):
+		out.append_array(_phone_list(s.add))
+		return out
+	var last := String(out[out.size() - 1])
+	if _phone_list(s.get("syllabic_after", [])).has(last):
+		out.append_array(_phone_list(s.get("syllabic", [])))
+	elif _phone_list(s.get("voiceless_after", [])).has(last):
+		out.append_array(_phone_list(s.get("voiceless", [])))
+	else:
+		out.append_array(_phone_list(s.get("otherwise", [])))
+	return out
+
+
+## The stem of a plural / third-person `-s`, or "" when the final `s` belongs to
+## the word itself. No lexicon here, so the test is orthographic and deliberately
+## conservative - a wrong strip invents a word, which is worse than missing one:
+##   `ss$`             never (glass, class, less)
+##   vowel + `s$`      never (bus, gas, yes, plus) - real suffixed forms after a
+##                     vowel are spelled `-es` and caught below
+##   vowel + `es$`     strip both (goes, toes, shoes)
+##   sibilant + `es$`  strip both, syllabic (buses, boxes, wishes, churches)
+##   otherwise `s$`    strip the s only, keeping any `e` so magic-e still fires
+##                     (comes -> come, gives -> give, makes -> make)
+static func _s_stem(word: String) -> String:
+	var n := word.length()
+	if n < 4 or not word.ends_with("s") or word.ends_with("ss"):
+		return ""
+	var prev := word[n - 2]
+	if prev != "e":
+		if VOWEL_LETTERS.contains(prev):
+			return ""                       # bus, gas, yes, plus, focus
+		return word.substr(0, n - 1)        # dogs, yours, cats, lands
+	var prev2 := word[n - 3]
+	if VOWEL_LETTERS.contains(prev2) or prev2 in "sxzhc":
+		return word.substr(0, n - 2)        # goes, toes / buses, boxes, wishes
+	return word.substr(0, n - 1)            # comes, gives, makes, hopes
+
+
+## Reattach the `-s`: syllabic after a sibilant, voiceless after a voiceless
+## phone, voiced otherwise. `stem` only decides the syllabic case for spellings
+## whose `e` we already dropped.
+static func _attach_s(phones: Array, stem: String) -> Array:
+	var out: Array = phones.duplicate()
+	var last := String(out[out.size() - 1])
+	if SIBILANT_PHONES.has(last):
+		out.append_array(["IH", "Z"])
+	elif VOICELESS_PHONES.has(last):
+		out.append("S")
+	else:
+		out.append("Z")
+	return out
+
+
+## Does this word carry no sentence accent? Data-driven (data/english.yml
+## `function_words`), falling back to the built-in list.
+static func is_function_word(word: String) -> bool:
+	_load_data()
+	var table: Variant = _function_words if not _function_words.is_empty() else null
+	if table == null:
+		return FUNCTION_WORDS.has(word)
+	if _function_words.has(word):
+		return true
+	# a contraction of function words is still a function word: `we're`, `it's`
+	# and `you've` were being read as content and taking accents off the verb
+	var at := word.rfind("'")
+	if at > 0:
+		return _function_words.has(word.substr(0, at))
+	return false
+
+
 ## Index (into phones) of the vowel that carries the word's accent: the first
 ## vowel of a stressed word. -1 if the word has no vowel.
-static func stress_vowel(phones: Array) -> int:
+static func stress_vowel(phones: Array, stress: Array = []) -> int:
+	if not stress.is_empty():
+		for want in [1, 2]:
+			for i in mini(phones.size(), stress.size()):
+				if int(stress[i]) == want \
+						and TABLE.get(phones[i], {}).get("type", "") == "vowel":
+					return i
 	for i in phones.size():
-		var entry: Dictionary = TABLE.get(phones[i], {})
-		if entry.get("type", "") == "vowel":
+		if TABLE.get(phones[i], {}).get("type", "") == "vowel":
 			return i
 	return -1

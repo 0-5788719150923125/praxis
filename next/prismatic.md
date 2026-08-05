@@ -2,7 +2,7 @@
 
 ## Overview
 
-Prismatic v7.0 returns to the core hypothesis of "A Blind Watchmaker": **architectural diversity reveals patterns single approaches cannot discover**.
+Prismatic v7.0 returns to the core hypothesis of "Blind Watchmaking": **architectural diversity reveals patterns single approaches cannot discover**.
 
 **Core Concept:**
 - **N experts** with cycling positional encodings via modulus
@@ -180,7 +180,7 @@ config = PraxisConfig(
 
 ### The Computational Substrate Hypothesis
 
-**From "A Blind Watchmaker":**
+**From "Blind Watchmaking":**
 > "Floating-point rounding errors create high-dimensional pattern spaces within numerical approximation artifacts. Different architectural constraints force different traversals through this space."
 
 **ALiBi traversal:**

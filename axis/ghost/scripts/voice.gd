@@ -28,17 +28,14 @@ const SR := 44100
 const FRAME := 64                     # samples per parameter update (~1.45 ms)
 const TWO_PI := TAU
 # Fixed output gain in place of retroactive normalization (streaming cannot
-# know the future peak; the cascade's raw output is nearly invariant across
-# trait extremes). HISTORY: every staging number before 2026-07-26 was
-# S-CONTAMINATED - the untrimmed frication set the peaks (1.5-1.75 at 0.55,
-# driving the old tanh into 37-52 fuzz bursts/min), and the leveler lived
-# off S energy. With frication seated (FRIC_THRU), the true voiced peak is
-# staged BY MEASUREMENT, and re-staged whenever the physics under it move:
-# 2.0 was measured against the 22050 signal; the 44.1k move halved the
-# radiation tilt at speech frequencies (~-6 dB across the voice, crest down
-# to 8-10x), leaving peaks at 0.29-0.39 and the leveler pinned again. 4.5
-# stages 44.1k peaks at ~0.65-0.9 - just under LIMIT, ramp work rare, zero
-# saturation measured - and lands RMS near -18 dBFS.
+# know the future peak). This number is STAGED BY MEASUREMENT and re-staged
+# whenever the physics under it move, which they have three times: the 22050
+# calibration, the 44.1 kHz move, and now the 2026-08-04 rebuild (zero-mean
+# source, parallel frication branch, sixth cascade pole, Klatt bandwidths).
+# Every staging number before that rebuild was measuring something other than
+# the voice: first S-noise setting the peaks, then a DC pedestal holding
+# 43-52% of the take's power. See `python build/scratchpad.py run` for the
+# harness that produced the current value.
 const OUT_GAIN := 4.5
 # The echo bus: a feedback delay line the output always passes through. Sends
 # are zero except on echo-activated words, so the line is silent until a word
@@ -165,40 +162,78 @@ const DRONE_BUDGET_HI := 3.2          # open: the chord is allowed to stand
 # never accumulates energy from a jittering, vibrato-laden f0. The tones are
 # ACTIVE instead - envelope followers on melodic proximity - which is also
 # exactly the stated behavior: notes that trigger from the voice and hold.)
-const RAW_TRIM := 4.0                 # raw output trim. NOTE: the old "peaks
-                                      # 0.98-1.11" calibration was measuring
-                                      # S-NOISE - with frication seated (see
-                                      # FRIC_TRIM) the true voiced peaks are
-                                      # ~0.2 at OUT_GAIN 0.35; 4.0 restages raw
-                                      # takes to ~0.8 peak / ~-25 dBFS RMS.
-                                      # OUT_GAIN/leveler deserve the same
-                                      # honest recalibration when the chain
-                                      # is restored - every prior staging
-                                      # number was S-contaminated.
-# FRICATION - the answer to the months-long "noise injection" reports, in
-# two stages. STAGE ONE (level): untrimmed, every /S/ measured +13 dB over
-# the loudest vowel and dominated the take's energy. STAGE TWO (character,
-# the ear test): the level ladder proved ANY audible amount of the
-# post-cascade band reads as injected static - the isolated frication
-# signal measures clean (broadband, no impulses), but it is added AFTER the
-# vocal tract, so it shares no formant shaping or coarticulation with the
-# voice and the ear hears a SECOND SOURCE. The burst path learned this
-# exact lesson already ("through the formants it reads as a consonant").
-#   FRIC_TRIM - gain of the post-cascade band. 0.0 = the user-validated
-#               "decent" state: voiceless fricatives go silent (their slot
-#               and length remain; voiced ones keep their murmur).
-#   FRIC_THRU - gain of frication routed THROUGH the cascade, burst-style:
-#               shaped by the mouth posture, fused with the voice. 0.0
-#               until the pure_say ladder passes the ear test.
-# Static vars (not consts) ONLY so tests/pure_say.gd can sweep them; the
-# app treats both as constants.
-static var FRIC_TRIM := 0.0
-static var FRIC_THRU := 0.18          # the pure_say-calibrated seat AT 44.1k
-                                      # (the radiation tilt halved at speech
-                                      # frequencies, so the old 0.06 no longer
-                                      # applies): achieved fric/vowel ratio
-                                      # ~0.35 - a step crisper than the first
-                                      # -12 dB seat, per the clarity request
+const RAW_TRIM := 4.0                 # raw (RAW_MODE) output trim, staged by
+                                      # the same measurement pass as OUT_GAIN
+# FRICATION - the end of the multi-round "noise injection" saga. Both earlier
+# routes were wrong, for OPPOSITE reasons, and the ear was right both times:
+#   post-cascade band  - added AFTER the tract, sharing no formant shaping with
+#                        the voice, so the ear segregated it as a second source
+#                        ("injected static").
+#   through-the-cascade - shaped by the tract, so it FUSED - but the cascade is
+#                        a DC-normalized all-pole chain whose top pole sits at
+#                        ~4.7 kHz, and it removed 42 dB at /f/'s band, 69 dB at
+#                        /th/'s and 85 dB at /s/'s. Measured consequence: the
+#                        S/SH/F/TH log-spectra correlated at 0.99-1.00, three
+#                        of the four peaked in the SAME FFT bin (1367 Hz), and
+#                        6-10 kHz contrast against the neighbouring vowel was
+#                        -0.2 dB. One sound wearing four labels; "the
+#                        enunciation simply isn't there" was literal.
+# The answer is the one Klatt 1980 shipped and that this file only ever had
+# half of: a PARALLEL branch. Frication and bursts drive their own front-cavity
+# resonators (Phonemes.TABLE `par`), summed with the cascade output before the
+# radiation stage - shaped like a consonant, fused by sharing the lip
+# transform and the phoneme's tract POSTURE, but never lowpassed by the vowel.
+# FRIC_LEVEL seats the whole branch; per-phoneme balance lives in the table.
+# A static var (not a const) ONLY so tests/pure_say.gd can sweep it.
+static var FRIC_LEVEL := 0.05
+# RADIATION - lip radiation is a differentiator, realized as `y - RAD_A*y[n-1]`.
+# The coefficient is a CORNER FREQUENCY, not a magic number: hardcoding 0.96
+# pinned the corner to the sample rate, so the 22050 -> 44100 move silently
+# doubled it (143 -> 287 Hz) and tilted +3.95 dB of low end back in, which was
+# then compensated with a flat OUT_GAIN lift - a level fix for a tilt problem.
+const RAD_CORNER := 140.0             # Hz; SR-independent by construction
+static var RAD_A := exp(-TWO_PI * RAD_CORNER / SR)
+# How long before a segment ends the tract starts moving toward the NEXT
+# posture. Real English formant transitions run 40-80 ms; the locus is reached
+# at the boundary and the EMA carries the rest into the following phone.
+const LOCUS_TIME := 0.050             # seconds
+# ...but never more than this share of the segment, so a short glide or nasal
+# still reaches its own target before it starts leaving it.
+const LOCUS_SHARE := 0.35
+# VIBRATO - the cue that separates a held SUNG note from a held robotic tone.
+# 5.5 Hz is the centre of the measured human range (5-7 Hz); depth is in
+# semitones and is scaled by `Spec.song`, so a speaking voice has none. It
+# ramps in over VIB_ONSET so short notes do not wobble - vibrato on a 90 ms
+# syllable reads as a fault, not as singing.
+const VIB_RATE := 5.5                 # Hz
+const VIB_DEPTH := 0.38               # semitones at song = 1
+const VIB_ONSET := 0.18               # seconds for the waver to reach full depth
+# How often a WILD roll sings at all. Not 0.5: the belt compounds whatever it is
+# given, so the roll has to sit below the rate you actually want to meet.
+const SONG_INCIDENCE := 0.28
+# A sung syllable that is NOT sustained runs FASTER than it would be spoken.
+# This is what makes a cadence a cadence: without it every note is long, the
+# reading takes twice as long as the same text spoken, and the result is a drone
+# rather than a phrase. Real singing alternates - held notes at the joints, runs
+# in between, and the contrast is the music.
+const SONG_RUN := 0.72
+# The sustain gate: a syllable is held when a slow seeded cycle, its prominence
+# and its phrase position add up past this. Sustained fraction lands ~20-30%.
+const SUSTAIN_BAR := 0.92
+const SONG_RUN_MIN := 0.075          # s; a run note still has to be audible as a pitch
+# CASCADE BANDWIDTHS (Klatt 1980 nominal). These were `60 + F1*0.06` and
+# `90 + F2*0.05`, which put B2 near 145 Hz for a back vowel - roughly twice
+# natural - smearing F2 into F1 and costing 3.4 to 7.1 dB of F2 prominence.
+# They are damping values, so they do NOT scale with vocal tract length.
+const BW := [60.0, 90.0, 150.0, 250.0, 300.0, 500.0]
+# The sixth cascade pole. Five poles topping out at 4.7 kHz put the -60 dB/oct
+# cliff right where speech still needs energy: measured 27 dB of drop between
+# 3150 and 5000 Hz, and above 5 kHz the output was bit-for-bit the dither
+# floor. A uniform 17.5 cm tube keeps resonating at ~1.1 kHz intervals; F6
+# continues the series and moves the cliff up an octave. This costs high end
+# above 10 kHz (each added pole steepens the asymptote) - which is free now
+# that frication has left the cascade for the parallel branch.
+const F6 := 6000.0
 
 
 ## The speaker's trait axes, each in [-1, 1]. THE TRAIT VECTOR IS THE VOICE:
@@ -206,7 +241,7 @@ static var FRIC_THRU := 0.18          # the pure_say-calibrated seat AT 44.1k
 ## live in Spec.from_traits - tune them there), a seed only *initializes* the
 ## vector, and any UI modulation edits it directly - so a speaker is replicated
 ## by replaying the vector, never by replaying the gesture that found it.
-const TRAIT_KEYS := ["pitch", "lilt", "tract", "pace", "breath", "grit", "drawl", "air"]
+const TRAIT_KEYS := ["pitch", "lilt", "tract", "pace", "breath", "grit", "drawl", "air", "song"]
 
 ## One voice: a trait vector realized into concrete synthesis parameters.
 class Spec:
@@ -241,6 +276,29 @@ class Spec:
 	var pause_comma := 0.18           # seconds
 	var pause_stop := 0.42
 	var final_lengthen := 1.25        # phrase-final syllable stretch
+	# SONG in [0, 1]: how much this voice SINGS rather than speaks. Not a style
+	# layer on top of speech - it swaps four behaviours at once, because that is
+	# what the difference actually is:
+	#   notes    - vowels stretch onto a BEAT GRID instead of taking their
+	#              natural length, and prominent syllables take more beats than
+	#              weak ones, which is what makes a cadence rather than a drone
+	#   steps    - the f0-continuity glide is switched off, so the melody moves
+	#              in discrete steps held flat across a note, and the note
+	#              SUSTAINS through the consonants instead of dipping
+	#   scale    - the anchor-shelf pull goes to ~1, so pitches land ON notes
+	#   vibrato  - a periodic 5.5 Hz waver, which is the cue that separates a
+	#              held sung note from a held robotic tone
+	# Archaeology: the earliest build (11d3c2a8, "ship it") had no continuity
+	# pass, no wander and no attractor shelf - `semitones` was decl + accent,
+	# held flat per segment, and silences reset to base. That accidental
+	# staircase is what sounded like singing, and every naturalness fix since
+	# has been sanding it off. This makes it a capability instead of an
+	# accident, so the speaking voice keeps its glide and a sung voice can ask
+	# for the staircase on purpose.
+	var song := 0.0
+	var beat := 0.42                  # seconds per beat when singing
+	var sustain_period := 5.0         # syllables per sustain cycle
+	var sustain_phase := 0.0          # where in that cycle this voice starts
 	var air_gain := 0.07              # static-band strength (noise above the air line)
 	var air_cut := 3000.0             # the air line: above it the voice goes to static
 
@@ -260,6 +318,7 @@ class Spec:
 		var grit := _tv(t, "grit")
 		var drawl := _tv(t, "drawl")
 		var air := _tv(t, "air")
+		var song := _tv(t, "song")
 		s.f0_base = 130.0 * pow(2.0, 0.85 * pitch)
 		# LILT is now the master inflection depth: it no longer scales the accent
 		# and declination in isolation (which left the wander and the attractor
@@ -270,7 +329,9 @@ class Spec:
 		s.f0_decl = 3.0
 		s.inflect = clampf(1.0 + lilt, 0.06, 2.0)
 		s.formant_scale = pow(2.0, 0.22 * tract)
-		s.rate = pow(2.0, 0.35 * pace)
+		# widened from 0.35: the slow end could only reach 1.28x slower than
+		# neutral, which is not slow enough for a deliberate reading
+		s.rate = pow(2.0, 0.55 * pace)
 		s.breath = 0.05 * pow(2.5, breath)
 		s.jitter = 0.012 * pow(2.2, grit)
 		# shimmer above ~8% reads as pathological roughness, not character -
@@ -281,10 +342,25 @@ class Spec:
 		s.final_lengthen = 1.25 * pow(1.25, drawl)
 		# the air trait: how much of the upper spectrum tunes to static, and
 		# where that line sits (high air = the line drops, more of the voice
-		# is breath-noise - the multi-band harmonic/noise mix). The old top of
-		# range (0.3) drowned the harmonics entirely: rolls came out as
-		# whisper-static with no trackable pitch, reading as broken voices
-		s.air_gain = 0.07 * pow(2.6, air)
+		# is breath-noise - the multi-band harmonic/noise mix). Centre dropped
+		# 0.07 -> 0.02 in the 2026-08-04 rebuild: the air band existed to give
+		# a five-pole cascade some top, and was measured supplying 96-99% of
+		# the vowel's brightness - i.e. the "bright" was hiss, not voice. With
+		# F6 on the cascade the harmonics carry their own top, and the hiss was
+		# actively MASKING consonants: it sat squarely in /sh/'s 2-5 kHz band
+		# only the upper half of the axis sings, so the curated default and half
+		# the population stay pure speech and singing is something you FIND
+		s.song = clampf(song, 0.0, 1.0)
+		# the beat follows the speaker's own tempo and drawl - a slow, drawling
+		# voice sings slow - so it needs no separate roll
+		s.beat = clampf(0.42 / s.rate * pow(1.45, drawl), 0.16, 1.10)
+		# how many syllables per sustain cycle, and where in that cycle this
+		# voice starts. Derived from traits the speaker already has, so a
+		# drawling singer holds notes further apart than a brisk one and no
+		# separate roll is needed.
+		s.sustain_period = clampf(5.0 * pow(1.7, drawl) * pow(1.4, -pace), 3.0, 16.0)
+		s.sustain_phase = fposmod(lilt * 3.7 + grit * 1.3, 1.0)
+		s.air_gain = 0.02 * pow(2.6, air)
 		s.air_cut = 3000.0 * pow(2.0, -0.7 * air)
 		return s
 
@@ -302,6 +378,16 @@ class Spec:
 			"pitch": clampf(register + rng.randfn(0.0, 0.25), -1.0, 1.0),
 			"tract": clampf(0.6 * register + rng.randfn(0.0, 0.2), -1.0, 1.0),
 		}
+		# SONG is a MODE, not a shade, so it is not drawn like the timbre axes.
+		# As a plain N(0, 0.55) it put half of all wild rolls above zero, and the
+		# belt then compounds that: acceptance-weighted parents plus a trust
+		# region centred on the party mean means one kept singer pulls its whole
+		# line toward singing, which is how ~90% of found seeds ended up sung.
+		# An explicit incidence keeps singing something you FIND rather than the
+		# default, and the negative draw is pushed well clear of zero so a
+		# non-singer's children do not drift across the line by jitter alone.
+		t["song"] = rng.randf_range(0.15, 1.0) if rng.randf() < SONG_INCIDENCE \
+			else rng.randf_range(-1.0, -0.25)
 		for key in TRAIT_KEYS:
 			if not t.has(key):
 				t[key] = clampf(rng.randfn(0.0, 0.55), -1.0, 1.0)
@@ -705,7 +791,8 @@ class ProsodyWalk:
 
 	## Advance one word (est_dur seconds of speech, nsyll syllables, frac = its
 	## position 0..1 in the sentence). Returns the planner's modifiers.
-	func word(stressed: bool, nsyll: int, est_dur: float, frac: float, punct: bool) -> Dictionary:
+	func word(stressed: bool, nsyll: int, est_dur: float, frac: float, punct: bool,
+			prominence := 0.5) -> Dictionary:
 		var norm: float = clampf(arousal / p.heat, 0.0, 1.0)
 		# sparse activations first: their kicks fold back into this word's pace
 		var acts := {}
@@ -731,13 +818,24 @@ class ProsodyWalk:
 		# on whatever route (sine/cosine/triangle/saw) survived the blend
 		pace *= 1.0 + 0.22 * _mod("pace", _t)
 		_swing *= exp(-est_dur / 2.0)
+		# EMPHASIS: the BASELINE comes from the text ([Phrasing] - which words
+		# this clause leans on), and the walk decides how hard THIS SPEAKER
+		# leans on it. Previously this was a coin flip that both invented the
+		# accent and placed it, so the same sentence stressed different words
+		# on different seeds and no seed stressed them where English does. The
+		# walk should colour prosody, never generate it.
 		var emph := 0.0
 		var pre_pause := 0.0
-		if stressed and spent < 0.4:
+		if stressed:
 			var appetite: float = p.lean * motif.lean * (0.5 + 0.5 * (1.0 - norm))
-			if _gate.randf() < 0.22 * appetite + (0.18 if frac > 0.7 else 0.0):
-				emph = clampf(appetite * (1.0 - spent), 0.4, 1.4)
-				spent += 0.55
+			# spent-emphasis still spaces the BIG leans out; it can no longer
+			# delete an accent the sentence structure requires
+			emph = clampf(prominence * appetite * (1.0 - 0.55 * spent), 0.0, 1.6)
+			spent += 0.42 * prominence
+			# an extra push, still seeded and still self-spacing - this is the
+			# speaker's own reading of an already-prominent word
+			if prominence > 0.7 and spent < 0.9 and _gate.randf() < 0.3 * appetite:
+				emph *= 1.35
 				pre_pause = 0.04 + 0.09 * emph * (1.0 - norm)
 		var breath_pause := 0.0
 		breath += nsyll
@@ -773,11 +871,27 @@ class Reso:
 	var y1 := 0.0
 	var y2 := 0.0
 
+	## CASCADE normalization: unity gain at DC. Correct for a chain of poles
+	## modelling one tube, where the product must not drift with tuning.
 	func tune(f: float, bw: float) -> void:
 		var r := exp(-PI * bw / SR)
 		c = -r * r
 		b = 2.0 * r * cos(TWO_PI * clampf(f, 50.0, SR * 0.45) / SR)
 		a = 1.0 - b - c
+
+	## PARALLEL normalization: unity gain AT RESONANCE, so the amplitude a
+	## caller passes alongside the pole is the peak it actually gets. A
+	## DC-normalized resonator's peak gain scales with f/bw, which would make
+	## every parallel amplitude in the phoneme table a lie about its own level.
+	func tune_peak(f: float, bw: float) -> void:
+		var w := TWO_PI * clampf(f, 50.0, SR * 0.45) / SR
+		var r := exp(-PI * bw / SR)
+		c = -r * r
+		b = 2.0 * r * cos(w)
+		# |1 - b e^-jw - c e^-2jw| at the resonance, inverted
+		var re := 1.0 - b * cos(w) - c * cos(2.0 * w)
+		var im := b * sin(w) + c * sin(2.0 * w)
+		a = sqrt(re * re + im * im)
 
 	func step(x: float) -> float:
 		var y := a * x + b * y1 + c * y2
@@ -850,7 +964,14 @@ static func plan(text: String, spec: Spec, events: Array = []) -> Array:
 	var field := ProsodyField.new(int(spec.reading[0]))
 	var walk := ProsodyWalk.new([spec.reading] + spec.influences, spec.adrenochrome)
 	var t_cursor := 0.12
+	# a syllable counter that runs across the WHOLE text, not per sentence, so
+	# the sustain cycle is continuous through the reading instead of resetting
+	# at every full stop
+	var syll_i := 0
 	var sentences := Phonemes.parse(text)
+	# SENTENCE stress, from the text's own structure - deterministic, unseeded,
+	# and the baseline the walk modulates rather than replaces
+	Phrasing.annotate(sentences)
 	for si in sentences.size():
 		var words: Array = sentences[si]
 		var vowels_total := 0
@@ -863,7 +984,8 @@ static func plan(text: String, spec: Spec, events: Array = []) -> Array:
 		walk.begin_sentence(question)
 		for wi in words.size():
 			var w: Dictionary = words[wi]
-			var accent_at := Phonemes.stress_vowel(w.phones) if w.stressed else -1
+			var wstress: Array = w.get("stress", [])
+			var accent_at := Phonemes.stress_vowel(w.phones, wstress) if w.stressed else -1
 			var last_word: bool = wi == words.size() - 1
 			var nsyll := 0
 			var est_dur := 0.0
@@ -871,8 +993,9 @@ static func plan(text: String, spec: Spec, events: Array = []) -> Array:
 				est_dur += Phonemes.TABLE.get(p, {}).get("dur", 80.0) * 0.001 / spec.rate
 				if _ptype(p) == "vowel":
 					nsyll += 1
+			var prom: float = float(w.get("prominence", 0.5))
 			var mods := walk.word(w.stressed, nsyll, est_dur,
-				float(wi) / maxf(1.0, float(words.size() - 1)), w.pause_after != "none")
+				float(wi) / maxf(1.0, float(words.size() - 1)), w.pause_after != "none", prom)
 			for c in mods.acts:
 				if float(mods.acts[c]) > 0.0:
 					events.append({"t": t_cursor, "kind": c, "a": float(mods.acts[c])})
@@ -920,29 +1043,94 @@ static func plan(text: String, spec: Spec, events: Array = []) -> Array:
 				var reduce := 0.0
 				var semis := 0.0
 				var is_vowel := _ptype(p) == "vowel"
+				# LEXICAL STRESS (from the dictionary) is what gives the reading
+				# a rhythm instead of a chant. English listeners segment running
+				# speech BY stress pattern, so a flat reading costs word
+				# boundaries, not just naturalness - every syllable arriving at
+				# equal length and equal vowel quality is most of what "muddy"
+				# means when the phonemes are already right.
+				var lex_st: int = int(wstress[pi]) if pi < wstress.size() else 0
 				if is_vowel:
 					vseen += 1
+					syll_i += 1
+					if lex_st == 0:
+						# unstressed: shorter, quieter, and CENTRALIZED - the
+						# vowel loses its identity toward schwa, which is what
+						# makes the stressed syllables stand out
+						dur *= 0.62
+						amp *= 0.78
+						reduce = 0.7
+					elif lex_st == 2:
+						dur *= 0.88
+						amp *= 0.92
+						reduce = 0.25
 					dur *= 1.0 + 0.25 * acts.stretch   # vowels carry most of the pull
+					if spec.song > 0.0:
+						# THE SUSTAIN GATE. Stretching every vowel onto the beat
+						# grid made a drone that took twice as long as speech -
+						# a constant cadence is not a cadence. Music alternates:
+						# notes are HELD at the joints of a phrase and RUN
+						# through in between, and that contrast is the music.
+						# A slow seeded cycle over syllables supplies the
+						# periodicity, prominence says which words deserve to be
+						# held, and a phrase ending is a natural place to land.
+						# Same thresholded-drive idiom as the activation
+						# channels, so it is sparse and self-spacing by
+						# construction rather than by a rate constant.
+						var cyc: float = 0.5 + 0.5 * sin(TAU * (
+							float(syll_i) / spec.sustain_period + spec.sustain_phase))
+						var drive: float = 0.62 * cyc + 0.55 * prom \
+							+ (0.28 if w.pause_after != "none" else 0.0)
+						if drive > SUSTAIN_BAR:
+							var hold: float = clampf(
+								(drive - SUSTAIN_BAR) / (1.45 - SUSTAIN_BAR), 0.0, 1.0)
+							var beats: float = 1.0 + round(hold * 2.0)
+							dur = lerpf(dur, beats * spec.beat, spec.song)
+						else:
+							# run past it, faster than it would be spoken - but
+							# not so fast it stops being a note. Below ~75 ms
+							# there is not enough voiced time to hear a pitch,
+							# however quickly the f0 arrives.
+							dur = maxf(dur * lerpf(1.0, SONG_RUN, spec.song),
+								lerpf(dur, SONG_RUN_MIN, spec.song))
 					# declination falls across the sentence; the field wanders on top
 					semis -= spec.f0_decl * (float(vseen) / maxf(1.0, float(vowels_total)))
 					semis += mods.tilt      # the sentence motif's slope
 					semis += mods.ring_st   # the resonance ring from recent firings
 					if pi == accent_at:
-						dur *= 1.25 * (1.0 + 0.4 * mods.emph)
-						amp = 1.15 * (1.0 + 0.25 * mods.emph)
-						semis += spec.f0_accent + 2.2 * mods.emph
+						# the accent's SIZE now tracks how prominent this word
+						# is in its clause: a nucleus lands hard, a de-accented
+						# repeat barely rises. Every content word getting the
+						# same full accent is a list being read, not a sentence.
+						dur *= 1.0 + 0.5 * prom * (1.0 + 0.4 * mods.emph)
+						amp *= 1.0 + 0.34 * prom * (1.0 + 0.25 * mods.emph)
+						semis += spec.f0_accent * prom + 2.2 * mods.emph
 					elif not w.stressed:
-						dur *= 0.8
-						amp = 0.85
-						reduce = 0.35   # vowel reduction: drift toward schwa
+						# a function word: reduced as a whole, on top of
+						# whatever its own syllables asked for
+						dur *= 0.85
+						amp *= 0.9
+						reduce = maxf(reduce, 0.5)   # vowel reduction: drift toward schwa
 					if pi > 0 and _VOICELESS.has(w.phones[pi - 1]):
 						semis += 0.8    # microprosody after voiceless consonants
 					if not RAW_MODE:
-						semis += field.sample("f0", t_cursor)
+						# the wander is what makes speech sound unstudied and
+						# what makes a sung note sound out of tune - a held
+						# note has to be STILL for the vibrato to read as
+						# vibrato rather than drift
+						semis += field.sample("f0", t_cursor) * (1.0 - spec.song)
 					# pitch attractors: the melody is continuously pulled toward
 					# the voice's anchor shelf (gravity), and a pitch activation
 					# JUMPS most of the way there - musical quantization
+					# singing is quantized pitch: the shelf stops being a gentle
+					# attractor and becomes the scale the melody is confined to
 					var pull: float = clampf(0.3 * mods.gravity + 0.55 * acts.pitch, 0.0, 0.85)
+					# quantization engages EARLY and fully: a half-applied pull
+					# parks the pitch midway between its natural value and the
+					# note, which measured worse-tuned than plain speech. Being
+					# on a scale is the defining feature, so it is not something
+					# to fade in - what fades in over the axis is note LENGTH.
+					pull = maxf(pull, clampf(spec.song * 2.0, 0.0, 1.0) * 0.95)
 					if pull > 0.0:
 						semis = lerpf(semis, walk.nearest_anchor(semis), pull)
 					# a swell activation is a crescendo across the word
@@ -975,13 +1163,16 @@ static func plan(text: String, spec: Spec, events: Array = []) -> Array:
 				var vsegs: Array = wsegs.filter(func(s): return _ptype(s.p) == "vowel")
 				if vsegs.size() > 0:
 					vsegs[-1].semitones += float(fin.f1)
+					_resnap(vsegs[-1], walk, spec)
 				if vsegs.size() > 1:
 					vsegs[-2].semitones += float(fin.f2)
+					_resnap(vsegs[-2], walk, spec)
 			# a comma word carries a small continuation rise (the "not done yet" cue)
 			elif w.pause_after == "comma":
 				for k in range(wsegs.size() - 1, -1, -1):
 					if _ptype(wsegs[k].p) == "vowel":
 						wsegs[k].semitones += 1.8
+						_resnap(wsegs[k], walk, spec)
 						break
 			segs.append_array(wsegs)
 			var pause: String = w.pause_after
@@ -1022,16 +1213,34 @@ static func plan(text: String, spec: Spec, events: Array = []) -> Array:
 		if _ptype(String(segs[i].p)) == "vowel":
 			next_v = float(segs[i].semitones)
 		next_semis[i] = next_v
+	# ... and at song = 1 the factor goes to 0, so a consonant HOLDS the note it
+	# is inside instead of gliding toward the next one. That is the staircase.
+	var glide: float = 0.6 * (1.0 - spec.song)
 	var prev_v := next_semis[0]
 	for i in segs.size():
 		var seg: Dictionary = segs[i]
 		if _ptype(String(seg.p)) == "vowel":
 			prev_v = float(seg.semitones)
 		elif String(seg.p) == "SIL":
-			seg.semitones = next_semis[i]
+			seg.semitones = lerpf(prev_v, next_semis[i], 1.0 - spec.song)
 		else:
-			seg.semitones = lerpf(prev_v, next_semis[i], 0.6)
+			seg.semitones = lerpf(prev_v, next_semis[i], glide)
 	return segs
+
+
+## Re-quantize a vowel after the terminal contour has moved it. The sentence
+## ending and the comma rise are applied AFTER the per-vowel anchor pull, and
+## they land on the LONGEST vowels in the reading - and, when singing, on
+## exactly the syllables the sustain gate chose to hold, because a phrase
+## ending is one of the things that makes a syllable worth holding. So the one
+## note a listener has the best chance of hearing as a pitch was guaranteed to
+## sit 1 to 6.5 semitones off the shelf. Musically this turns a fall into a
+## fall TO A NOTE, which is what a cadence is.
+static func _resnap(seg: Dictionary, walk: ProsodyWalk, spec: Spec) -> void:
+	if spec.song <= 0.0:
+		return
+	var pull: float = clampf(spec.song * 2.0, 0.0, 1.0) * 0.95
+	seg.semitones = lerpf(float(seg.semitones), walk.nearest_anchor(float(seg.semitones)), pull)
 
 
 static func _sil(dur: float, si: int) -> Dictionary:
@@ -1057,34 +1266,59 @@ static func synth(segs: Array, spec: Spec, from_seg := 0, to_seg := -1, state :=
 		var seg: Dictionary = segs[i]
 		var entry: Dictionary = Phonemes.TABLE.get(seg.p, {"type": "sil"})
 		var t0 := float(out.size()) / SR
+		# where the mouth goes NEXT. A segment's own posture holds for most of
+		# its length and then glides toward this over the last LOCUS_TIME - the
+		# locus mechanism (Haskins). Retargeting only at segment boundaries put
+		# the whole transition inside the FOLLOWING phone, which for a stop is
+		# the silent closure, so the listener never heard it - and the F2
+		# transition is the primary place cue for exactly the consonants whose
+		# own noise is weakest.
+		var nxt := _next_formants(segs, i, spec)
 		match String(entry.get("type", "sil")):
 			"sil":
 				_run_frames(out, state, spec, noise_rng, seg, entry, 0.0, 0.0, seg.dur)
 			"stop":
-				# closure (voiced stops keep a faint murmur), then an 8 ms burst
+				# closure at the stop's OWN locus (voiced stops keep a faint
+				# murmur), then a burst through the parallel branch
 				var murmur := 0.06 if entry.get("voiced", false) else 0.0
+				_retarget(state, _seg_formants(entry, 0.0, spec), spec)
 				_run_frames(out, state, spec, noise_rng, seg, entry, murmur, 0.0, seg.dur * 0.6)
-				state.noise.tune(entry.burst_f * spec.formant_scale, entry.burst_bw)
+				_tune_parallel(state, entry, spec)
 				# the release is shaped by where the mouth is GOING: retarget
 				# the cascade to the next phone so the burst carries the coming
-				# vowel's transition (locus-lite) instead of landing as a tick
-				_retarget(state, _next_formants(segs, i, spec), spec)
-				_run_frames(out, state, spec, noise_rng, seg, entry, murmur, 0.35, maxf(0.008, seg.dur * 0.12), false, true)
+				# vowel's transition instead of landing as a tick
+				_retarget(state, nxt, spec)
+				_run_frames(out, state, spec, noise_rng, seg, entry, murmur,
+					float(entry.get("namp", 1.0)) * 0.35, maxf(0.008, seg.dur * 0.12), false, true)
 				if not entry.get("voiced", false):
 					# voice onset time: a voiceless release leaks aspiration
 					# through the ONCOMING vowel's formants before the folds
 					# start - snapping from burst straight into full voicing
 					# is one of the loudest "synthetic" tells there is
-					_retarget(state, _next_formants(segs, i, spec), spec)
+					_retarget(state, nxt, spec)
 					_run_frames(out, state, spec, noise_rng, seg, entry, 0.0, 0.16, seg.dur * 0.3, true)
 			"fric":
-				state.noise.tune(entry.noise_f * spec.formant_scale, entry.noise_bw)
-				var v := 0.5 if entry.get("voiced", false) else 0.0
-				_run_frames(out, state, spec, noise_rng, seg, entry, v, entry.namp, seg.dur)
+				# the posture is the fricative's own (this branch was the ONE
+				# that never set one - the whole "F and TH are inaudible" bug),
+				# and the frication itself rides the parallel branch.
+				# A VOICELESS fricative gets NO forward glide: the tract is
+				# silent through it, so moving toward the next vowel here spends
+				# the transition where nobody can hear it and delivers the vowel
+				# already sitting on its own target. Holding the locus instead
+				# makes the VOWEL's onset carry the place cue - which for /f/
+				# and /th/ is the primary cue, their own noise being weak.
+				# Reported as "the F in father is completely silent": the F was
+				# audible as hiss but had no articulatory signature at all.
+				_tune_parallel(state, entry, spec)
+				var voiced: bool = entry.get("voiced", false)
+				var v := 0.5 if voiced else 0.0
+				_retarget(state, _seg_formants(entry, 0.0, spec), spec)
+				_run_frames(out, state, spec, noise_rng, seg, entry, v, entry.namp, seg.dur,
+					false, false, nxt if voiced else [])
 			"asp":
-				# aspiration through wherever the formants are heading (the EMA is
-				# already moving toward the next phone's targets)
-				_retarget(state, _next_formants(segs, i, spec), spec)
+				# /h/ is glottal: its noise belongs in the CASCADE (the whole
+				# tract is its filter), aimed where the formants are heading
+				_retarget(state, nxt, spec)
 				_run_frames(out, state, spec, noise_rng, seg, entry, 0.0, 0.22, seg.dur, true)
 			_:
 				# vowel / glide / nasal: periodic source through the cascade
@@ -1094,7 +1328,7 @@ static func synth(segs: Array, spec: Spec, from_seg := 0, to_seg := -1, state :=
 				elif entry.type == "nasal":
 					amp *= 0.45
 				_retarget(state, _seg_formants(entry, 0.0, spec, seg.get("reduce", 0.0)), spec)
-				_run_frames(out, state, spec, noise_rng, seg, entry, amp, 0.0, seg.dur)
+				_run_frames(out, state, spec, noise_rng, seg, entry, amp, 0.0, seg.dur, false, false, nxt)
 		var t1 := float(out.size()) / SR
 		_record_timing(state, seg, t0, t1)
 	var done: bool = to_seg >= segs.size()
@@ -1118,13 +1352,19 @@ static func synth_state(spec: Spec) -> Dictionary:
 	rng.seed = spec.seed_value
 	var st := {
 		"rng": rng, "pcm": PackedFloat32Array(),
-		"r1": Reso.new(), "r2": Reso.new(), "r3": Reso.new(), "noise": Reso.new(),
-		"r4": Reso.new(), "r5": Reso.new(), "anti": AntiReso.new(), "anti_mix": 0.0,
+		"r1": Reso.new(), "r2": Reso.new(), "r3": Reso.new(),
+		"r4": Reso.new(), "r5": Reso.new(), "r6": Reso.new(),
+		"anti": AntiReso.new(), "anti_mix": 0.0, "anti_f": 950.0,
+		# the PARALLEL branch (see FRIC_LEVEL): front-cavity resonators driven
+		# by turbulence, summed with the cascade rather than filtered by it
+		"par": [Reso.new(), Reso.new(), Reso.new()],
+		"par_a": _zeroes(3), "par_n": 0,
 		"fsm": [500.0 * spec.formant_scale, 1400.0 * spec.formant_scale, 2400.0 * spec.formant_scale],
 		"ftg": [500.0 * spec.formant_scale, 1400.0 * spec.formant_scale, 2400.0 * spec.formant_scale],
 		"f0sm": spec.f0_base * 1.12, "phase": 0.0, "ampsm": 0.0,
 		"pulse": _pulse_table(0.4, 0.16), "pulse_lax": _pulse_table(0.58, 0.34),
 		"tension": 0.5, "nlp": 0.0, "tilt_y": 0.0, "prev": 0.0, "nampsm": 0.0,
+		"vib_ph": 0.0,
 		"nroute": 0,
 		"jit": 1.0, "pgain": 1.0,
 		"lim_buf": PackedFloat32Array(), "lim_g": 1.0, "lim_need": 1.0, "cenv": 0.0,
@@ -1164,8 +1404,15 @@ static func synth_state(spec: Spec) -> Dictionary:
 			if seen.has(stq):
 				continue
 			seen.append(stq)
-			dsts.append(float(a))
-			dfs.append(clampf(spec.f0_base * 1.06 * pow(2.0, float(a) / 12.0), 40.0, 900.0))
+			# tune to the pitch the melody will ACTUALLY realize. The strings
+			# were tuned to the raw anchor while the melody plays it at
+			# anchor * inflect, so every voice with inflect != 1 had its drone
+			# a growing interval out of tune with the note it was answering -
+			# and `semis_now` below is already in inflect-scaled units, so the
+			# proximity test disagreed with the tuning too.
+			var a_real: float = float(a) * spec.inflect
+			dsts.append(a_real)
+			dfs.append(clampf(spec.f0_base * 1.06 * pow(2.0, a_real / 12.0), 40.0, 900.0))
 			if dfs.size() >= DRONE_STRINGS:
 				break
 		st.dr_st = dsts
@@ -1242,9 +1489,20 @@ static func _zeroes(n: int) -> PackedFloat32Array:
 # darker) - and every cycle plays a different mix of the two, so no two glottal
 # cycles share a spectrum. Differentiated at synth time by the radiation
 # first-difference, which is folded into the output stage.
+## ZERO-MEAN by construction. A Rosenberg pulse is a FLOW: it is unipolar, and
+## its mean (0.404 for the tense table) is a DC term. Every cascade pole passes
+## DC at unity, and the only rejection anywhere downstream is the radiation
+## zero, so that pedestal survived into the output at 0.0727 and held 43-52% of
+## every take's total power - inaudible, but eating 0.07 of the 0.85 peak
+## budget, amplitude-modulated at the syllable rate, and feeding the leveler's
+## envelope detector. The physical model is not wrong (flow really is unipolar);
+## what is wrong is asking a single first-order radiation zero to remove it.
+## Subtracting the mean here makes the source what the cascade should see and
+## makes every RMS staging number in this file honest.
 static func _pulse_table(open_len: float, close_len: float) -> PackedFloat32Array:
 	var t := PackedFloat32Array()
 	t.resize(64)
+	var sum := 0.0
 	for i in 64:
 		var u := float(i) / 64.0
 		var v := 0.0
@@ -1253,11 +1511,18 @@ static func _pulse_table(open_len: float, close_len: float) -> PackedFloat32Arra
 		elif u < open_len + close_len:
 			v = cos(PI * (u - open_len) / (2.0 * close_len))
 		t[i] = v
+		sum += v
+	var mean := sum / 64.0
+	for i in 64:
+		t[i] -= mean
 	return t
 
 
-# Schwa - the neutral vowel unstressed vowels reduce toward.
-const _SCHWA := [640.0, 1190.0, 2390.0]
+# Schwa - the neutral vowel unstressed vowels reduce toward. This was
+# [640, 1190, 2390], which is IDENTICAL to AH's own target, so reducing an AH
+# toward "schwa" moved it nowhere - and AH is the vowel English reduces to.
+# A true schwa is central: F1 and F2 pulled toward the neutral tube.
+const _SCHWA := [500.0, 1500.0, 2500.0]
 
 
 static func _seg_formants(entry: Dictionary, u: float, spec: Spec, reduce := 0.0) -> Array:
@@ -1284,6 +1549,25 @@ static func _retarget(state: Dictionary, f: Array, _spec: Spec) -> void:
 	state.ftg = f
 
 
+## Point the PARALLEL branch at this obstruent's front-cavity resonances (the
+## `par` triples in Phonemes.TABLE). Centres scale with vocal tract length;
+## bandwidths do NOT - a shorter tube raises a resonance, it does not sharpen
+## it, and scaling both was silently giving short tracts a higher-Q /s/ than
+## long ones. Resonators are PEAK-normalized, so the table's third column is
+## the gain it actually gets.
+static func _tune_parallel(state: Dictionary, entry: Dictionary, spec: Spec) -> void:
+	var par: Array = entry.get("par", [])
+	var bank: Array = state.par
+	var amps: PackedFloat32Array = state.par_a
+	var n := mini(par.size(), bank.size())
+	for k in n:
+		var p: Array = par[k]
+		(bank[k] as Reso).tune_peak(float(p[0]) * spec.formant_scale, float(p[1]))
+		amps[k] = float(p[2])
+	state.par_a = amps
+	state.par_n = n
+
+
 ## The inner loop: run `dur` seconds in FRAME-sized chunks. Per frame: EMA the
 ## formants toward their targets (coarticulation), EMA f0 toward the segment's
 ## semitone offset (Fujisaki realization), retune the cascade, then fill samples
@@ -1292,18 +1576,17 @@ static func _retarget(state: Dictionary, f: Array, _spec: Spec) -> void:
 static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 		rng: RandomNumberGenerator, seg: Dictionary, entry: Dictionary,
 		vamp: float, namp: float, dur: float, asp_cascade := false,
-		burst := false) -> void:
+		burst := false, to_f: Array = []) -> void:
 	var n := int(round(dur * SR))
-	# NOISE ROUTE tracking: aspiration (VOT/HH) and bursts send their noise
-	# THROUGH the formant cascade; fricatives and their decay tails ride the
-	# post-cascade band. The envelope (nampsm) must not survive a switch from
-	# the cascade route to the band route: re-emitting a burst/VOT leftover as
-	# the raw band snapped a burst-tuned noise band on in ONE sample ~1 ms
-	# into the vowel after every stop - measured as the largest remaining
-	# click class (|d| ~0.3, post-cascade band tap stepping 0 -> 0.27).
-	# Fricative->vowel tails are UNAFFECTED: both sides are band-routed.
-	var route := 1 if (asp_cascade or burst) else 0
-	if int(state.nroute) == 1 and route == 0:
+	# NOISE ROUTE tracking: aspiration (VOT, /h/) is GLOTTAL noise and excites
+	# the whole tract, so it runs through the cascade; frication and bursts are
+	# generated at a constriction and excite only the cavity in front of it, so
+	# they run through the PARALLEL branch. The envelope (nampsm) must not
+	# survive a route switch: re-emitting a leftover on the other bus snapped a
+	# burst-tuned band on in ONE sample ~1 ms into the vowel after every stop -
+	# measured as the largest remaining click class (|d| ~0.3).
+	var route := 1 if asp_cascade else 0
+	if int(state.nroute) != route:
 		state.nampsm = 0.0
 	state.nroute = route
 	# BOTH envelopes (noise and voiced amplitude) are RAMPED per sample between
@@ -1325,14 +1608,18 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 	var r3: Reso = state.r3
 	var r4: Reso = state.r4
 	var r5: Reso = state.r5
+	var r6: Reso = state.r6
 	var anti: AntiReso = state.anti
-	var nr: Reso = state.noise
+	var par: Array = state.par
+	var par_a: PackedFloat32Array = state.par_a
+	var par_n: int = state.par_n
 	var pulse: PackedFloat32Array = state.pulse
 	var is_diph: bool = entry.has("f2")
 	var ttype := String(entry.get("type", "sil"))
 	# inflection depth scales the whole deviation from base: at 0 the melody
 	# collapses to a flat monotone at f0_base, above 1 it exaggerates
 	var f0_target: float = spec.f0_base * pow(2.0, seg.semitones * spec.inflect / 12.0) * 1.06
+	var vib_on: bool = spec.song > 0.0 and ttype != "sil"
 	var done := 0
 	# radiation memory CONTINUES across segments - resetting it clicked at
 	# every phoneme boundary (a pop per segment; the "static")
@@ -1354,23 +1641,63 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 	elif ttype == "stop":
 		ftau = 0.012
 	# the nasal zero engages by MIX (the anti-resonator itself runs on every
-	# sample so its state never sees a switch-on transient)
+	# sample so its state never sees a switch-on transient), and its FREQUENCY
+	# is the phoneme's own: the side-cavity zero is the entire acoustic
+	# difference between m, n and ng, and one shared notch collapsed them.
 	var anti_target := 1.0 if ttype == "nasal" else 0.0
+	if ttype == "nasal":
+		state.anti_f = float(entry.get("zero", 950.0))
+	# THE LOCUS GLIDE: hold this segment's own posture, then bend toward the
+	# next one over the final LOCUS_TIME. Consonant PLACE lives in the F2
+	# transition on the neighbouring vowel, not in the consonant's own steady
+	# state - so the movement has to happen while the vowel is still sounding.
+	var base_f: Array = (state.ftg as Array).duplicate()
+	var glide_n := 0.0
+	if not to_f.is_empty():
+		# never spend more than LOCUS_SHARE of a segment leaving its own
+		# target. At half, a 97 ms /r/ spent 48 ms travelling away from the
+		# low F3 that IS an /r/, and with the glide EMA lagging on top it
+		# never arrived - reported as the "rs" in "yours" being inaudible.
+		glide_n = minf(LOCUS_TIME * SR, float(n) * LOCUS_SHARE)
 	while done < n:
 		var m := mini(FRAME, n - done)
 		var u := float(done) / maxf(1.0, float(n))
 		if is_diph:
-			state.ftg = _seg_formants(entry, u, spec, seg.get("reduce", 0.0))
+			base_f = _seg_formants(entry, u, spec, seg.get("reduce", 0.0))
+		if glide_n > 0.0:
+			# 0 until the glide window opens, reaching 1 exactly at the
+			# boundary, so the target is continuous across segments
+			var w := clampf((float(done) - (float(n) - glide_n)) / glide_n, 0.0, 1.0)
+			var g: Array = []
+			for k in 3:
+				g.append(lerpf(float(base_f[k]), float(to_f[k]), w))
+			state.ftg = g
+		else:
+			state.ftg = base_f
 		# EMAs: formants (per-type tau above), f0 ~35 ms, amplitude ~8 ms
 		var fa := 1.0 - exp(-float(m) / (SR * ftau))
-		var pa := 1.0 - exp(-float(m) / (SR * 0.035))
+		# f0 approach: ~35 ms speaking, ~12 ms singing. A singer ARRIVES on a
+		# pitch; a speaker glides onto it. With the speech constant, a 50 ms run
+		# note never reached its target at all and the fast passages smeared
+		# off-key - measured as on-note falling back to speech levels the moment
+		# runs were introduced. It is also the original staircase's character.
+		var pa := 1.0 - exp(-float(m) / (SR * lerpf(0.035, 0.012, spec.song)))
 		var aa := 1.0 - exp(-float(m) / (SR * 0.008))
 		# ... and the retune glide (~60 ms): spec scalars read per frame, so a
 		# live retune() bends them instead of stepping them mid-stream
 		var ra := 1.0 - exp(-float(m) / (SR * 0.06))
 		for k in 3:
 			state.fsm[k] = lerpf(state.fsm[k], state.ftg[k], fa)
-		state.f0sm = lerpf(state.f0sm, f0_target, pa)
+		var f0_t := f0_target
+		if vib_on:
+			# time INSIDE this note drives the onset ramp; the phase runs on the
+			# take's own clock so the waver is continuous across a held note's
+			# internal segment boundaries
+			var t_in := float(done) / SR
+			var depth: float = VIB_DEPTH * spec.song * clampf(t_in / VIB_ONSET, 0.0, 1.0)
+			state.vib_ph = fposmod(float(state.vib_ph) + TAU * VIB_RATE * float(m) / SR, TAU)
+			f0_t *= pow(2.0, depth * sin(float(state.vib_ph)) / 12.0)
+		state.f0sm = lerpf(state.f0sm, f0_t, pa)
 		state.ampsm = lerpf(state.ampsm, vamp, aa)
 		# the noise path gets an envelope too: frication switching on/off
 		# abruptly was a click per consonant
@@ -1385,15 +1712,17 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 		var breath_g: float = float(state.brsm) if NOISE_FX else 0.0
 		var airg: float = float(state.airgsm) if NOISE_FX else 0.0
 		var fs: float = state.fssm
-		r1.tune(state.fsm[0], 60.0 + state.fsm[0] * 0.06)
-		r2.tune(state.fsm[1], 90.0 + state.fsm[1] * 0.05)
-		r3.tune(state.fsm[2], 150.0)
-		# the upper poles: fixed presence formants. Three resonators left
-		# nothing above 3 kHz but noise (the hollow AM-radio timbre); F4/F5
-		# give the voice a top, the way Klatt's five-pole cascade did
-		r4.tune(3400.0 * fs, 320.0)
-		r5.tune(4700.0 * fs, 420.0)
-		anti.tune(1000.0 * fs, 350.0)
+		r1.tune(state.fsm[0], BW[0])
+		r2.tune(state.fsm[1], BW[1])
+		r3.tune(state.fsm[2], BW[2])
+		# the upper poles: fixed presence formants continuing the uniform-tube
+		# series. Three resonators left nothing above 3 kHz but noise (the
+		# hollow AM-radio timbre); F4-F6 give the voice a top, the way Klatt's
+		# multi-pole cascade did.
+		r4.tune(3400.0 * fs, BW[3])
+		r5.tune(4700.0 * fs, BW[4])
+		r6.tune(F6 * fs, BW[5])
+		anti.tune(float(state.anti_f) * fs, 350.0)
 		var inc: float = state.f0sm * jit * 64.0 / SR
 		var amp: float = state.ampsm
 		var pulse_lax: PackedFloat32Array = state.pulse_lax
@@ -1516,40 +1845,48 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 			# effort tilt (one-pole lowpass, coefficient driven by amp)
 			tilt_y += tilt_k * (src - tilt_y)
 			src = tilt_y
-			# the noise resonator runs EVERY sample: freezing it through the
-			# aspirated (VOT) branch kept its burst-era ring frozen in state,
-			# and the first voiced sample after the VOT re-added that stale
-			# ring all at once - an impulse through the radiation stage, the
-			# measured one-sample click ~1 ms into the vowel after T/K/P
-			var nres := nr.step(hiss)
+			# turbulence gets its OWN draw. Sharing one `hiss` sample between
+			# the aspiration, the air band and the constriction noise made
+			# three nominally independent sources add coherently (+6 dB
+			# instead of +3) and correlated their spectra.
+			var turb := rng.randf() * 2.0 - 1.0
 			var y: float
 			if asp_cascade:
-				y = r5.step(r4.step(r3.step(r2.step(r1.step(hiss * nsm_s * 0.5)))))
+				# GLOTTAL noise (/h/, VOT): the source is at the folds, so the
+				# whole tract filters it - the cascade is correct here
+				y = r6.step(r5.step(r4.step(r3.step(r2.step(r1.step(hiss * nsm_s * 0.5))))))
 			else:
-				var excite := src
-				var nband := 0.0
-				if nsm_s > 0.0001:
-					nband = nres * nsm_s
-					if burst:
-						# a release excites the TRACT, not the room: a bare
-						# wideband tick added after the cascade reads as a
-						# pop; through the formants it reads as a consonant
-						excite += nband * 2.8
-						nband = 0.0
-					else:
-						# frication (see the FRIC_ consts): the through-tract
-						# path fuses with the voice like a burst does; the
-						# post-cascade band is the old injected-static path
-						excite += nband * FRIC_THRU
-						nband *= FRIC_TRIM
-				y = r5.step(r4.step(r3.step(r2.step(r1.step(excite)))))
-				y += nband
+				y = r6.step(r5.step(r4.step(r3.step(r2.step(r1.step(src))))))
 			# the nasal zero: blend toward the anti-resonated path while a
-			# nasal speaks (the murmur is DEFINED by removed energy)
+			# nasal speaks (the murmur is DEFINED by removed energy). This is
+			# a property of the VOICED side branch, so it sits before the
+			# parallel sum, not after.
 			var yz := anti.step(y)
 			y = lerpf(y, yz, amix)
-			# radiation: first difference brightens the spectrum like lips do
-			var rad := y - prev * 0.96
+			# THE PARALLEL BRANCH (see FRIC_LEVEL): frication and bursts are
+			# generated AT a constriction and excite only the cavity in front
+			# of it. Their resonators are peak-normalized and summed here -
+			# beside the cascade, never through it. Signs alternate, as Klatt's
+			# parallel branch does, so adjacent peaks do not cancel in the
+			# valley between them. The bank runs every sample so its ring is
+			# never stale (a frozen resonator dumped its whole state on resume
+			# as a one-sample click into the following vowel).
+			# Sign is DATA, not a rule. Klatt alternates successive parallel
+			# formants to stop a null forming in the valley between them, which
+			# is right for narrow well-separated poles (/s/, /sh/) and actively
+			# wrong for the diffuse ones: /f/'s 1400 Hz and 4800 Hz poles are
+			# 1600 and 2800 Hz wide, so they overlap almost entirely and
+			# opposite signs made them CANCEL - measured as /f/ losing level in
+			# 1-3 kHz when its shoulder amplitude was raised. A negative
+			# amplitude in the table inverts a pole where that is wanted.
+			var pout := 0.0
+			for k in par_n:
+				pout += (par[k] as Reso).step(turb) * par_a[k]
+			if nsm_s > 0.0001 and not asp_cascade:
+				y += pout * nsm_s * FRIC_LEVEL
+			# radiation: first difference brightens the spectrum like lips do.
+			# Both branches pass through it, because both radiate from the lips.
+			var rad := y - prev * RAD_A
 			prev = y
 			# the echo bus: silent until a word is sent into it, then it rings.
 			# Damped in the loop (see ECHO_LP) - every repeat comes back darker

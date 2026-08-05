@@ -6,4 +6,9 @@ claim: >
   Learning a corpus as a consensus mean costs resources linearly in the patterns
   expressed, while composing it by harmonic interference costs only
   logarithmically, so the coverage-versus-resources slope a basis buys is
-  measurable and basis-dependent.
+  measurable and basis-dependent. The representational half is no longer
+  conjectural - the amplitude-to-field map is an isometry, so a $K$-dimensional
+  resolution grid carries to exponentially many separated fields - which leaves
+  two things to measure: whether gradient descent reaches those configurations,
+  and whether the spectrum stays spread enough to hold them, since capacity
+  saturates in $K$ under a fixed envelope with bounded amplitudes.

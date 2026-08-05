@@ -1,0 +1,68 @@
+# Ground truth for tests/g2p_check.gd.
+#
+# WHAT THIS FILE IS FOR CHANGED when CMUdict arrived. Grading 110 dictionary
+# words against a hand-written list mostly measured "did the dictionary load" -
+# 105 of the 110 were byte-identical to CMUdict, so the gate was circular and
+# nearly free to pass. The paths that can actually break are the ones CMUdict
+# does NOT answer, so those are what this grades now.
+#
+#   words     - a smoke set of very common dictionary hits (does the chain
+#               resolve at all, and does the override layer still win)
+#   derived   - suffixes, clitics and plurals: forms CMUdict may not list, built
+#               by stripping to a stem and reattaching with voicing. This is the
+#               stage that produced `watched` as W AE T SH EH D.
+#   fallback  - words absent from CMUdict entirely, so the letter rules answer.
+#   stress    - the index of the PRIMARY-stressed vowel, counting vowels only
+#               from 0. Nothing else in the suite tests stress, and stress is
+#               what the whole rhythm now hangs off: a wrong mark here is a word
+#               leaned on in the wrong place, which is audible where a wrong
+#               schwa is not. `-1` asserts NO stressed vowel, which is what a
+#               function word must come back as.
+
+words:
+  the: DH AH
+  you: Y UW
+  couch: K AW T SH
+  cushion: K UH SH AH N
+  father: F AA DH ER
+  because: B IH K AO Z
+  everything: EH V R IY TH IH NG
+  remote: R IH M OW T
+  # our deliberate homograph pick, which must keep beating the dictionary
+  live: L IH V
+
+derived:
+  watched: W AA T SH T          # -ed after an affricate: voiceless, no syllable
+  folded: F OW L D AH D         # -ed after D: syllabic
+  called: K AO L D              # -ed after L: voiced
+  going: G OW IH NG             # -ing on a two-letter stem
+  yours: Y UH R Z               # -s after R: voiced
+  cats: K AE T S                # -s after T: voiceless
+  wishes: W IH SH IH Z          # -s after a sibilant: syllabic
+  "couldn't": K UH D AH N T     # clitic split at the apostrophe
+  "you've": Y UW V
+
+fallback:
+  archiving: AA R K AY V IH NG  # supplied by data/english.yml, absent from CMUdict
+  narrating: N EH R EY T IH NG
+
+stress:
+  # content words: the primary-stressed vowel, counting vowels from 0
+  father: 0        # FA-ther
+  because: 1       # be-CAUSE   <- was 0 while english.yml overrode the stress
+  about: 1         # a-BOUT - a POLYSYLLABIC function word keeps its stress
+  between: 1       # be-TWEEN
+  again: 1         # a-GAIN
+  afternoon: 2     # af-ter-NOON
+  cushion: 0       # CU-shion
+  photograph: 0    # PHO-to-graph
+  photography: 1   # pho-TOG-ra-phy
+  surrendered: 1   # sur-REN-dered
+  # MONOSYLLABIC function words carry no stress, whatever the dictionary lists
+  the: -1
+  and: -1
+  has: -1
+  for: -1
+  your: -1
+  was: -1
+  are: -1

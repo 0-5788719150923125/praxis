@@ -623,7 +623,7 @@ func _throw() -> void:
 	var prof: Dictionary = PROFILES[_profile]
 	# the crab cage: a long drift pulls the next throw from further away -
 	# wilder odds, wider jitter, the cage hauled in from wherever it got to
-	var drift := _drift_norm()
+	var drift := _drift_free()
 	if _belt.is_empty() or randf() < float(prof.wild) + 0.3 * drift:
 		_lineage = [randi() % 1000000]
 		var rng := RandomNumberGenerator.new()
@@ -681,7 +681,7 @@ func _throw_from(idx: int) -> void:
 	var parent: Dictionary = _belt[idx]
 	parent.m.evolves += 1
 	var prof: Dictionary = PROFILES[_profile]
-	var drift := _drift_norm()
+	var drift := _drift_free()
 	_lineage = (parent.lineage as Array).duplicate()
 	_lineage.append(randi() % 1000000)
 	var jitter: float = 0.22 * pow(0.75, _lineage.size() - 1) * float(prof.jitter) \
@@ -839,6 +839,24 @@ func _drift_norm() -> float:
 ## clamped _drift_norm.
 func _drift_reach() -> float:
 	return maxf(_drift_dist, 0.0)
+
+
+## The FREEDOM the distance buys, unbounded but soft-compressed.
+##
+## `_drift_norm` clamps at 1.0, which the warp crosses in about 16 seconds, and
+## every gameplay consumer read that clamp - so past sixteen seconds of travel
+## the throw got no wilder, the jitter no wider and the trust region no looser,
+## and the only thing that changed was the caption. That is exactly the reported
+## "with increased distance the voice essentially stops changing": it was true,
+## and it was a clamp rather than a physics.
+##
+## log1p keeps the near field identical in feel (it is ~x for small x) while
+## letting a long haul keep paying, with diminishing returns instead of a wall.
+## The bounded quantities - reward, the reception band, anything laid out
+## against a line of finite length on screen - deliberately still read the
+## clamped `_drift_norm`.
+func _drift_free() -> float:
+	return log(1.0 + _drift_reach())
 
 
 ## Reset the line all the way home - ONLY on release (still water). Mode changes
@@ -1466,7 +1484,18 @@ func _seed_vector(traits: Dictionary, lineage: Array, genome: Dictionary = {}) -
 		else Voice.ProsodyWalk._lineage_genome(lineage)
 	for key in Voice.ProsodyWalk.PRIOR:
 		var prior: float = float(Voice.ProsodyWalk.PRIOR[key])
-		v.append((float(g.get(key, prior)) - prior) / maxf(absf(prior), 0.001))
+		# normalize by the gene's OWN SPREAD, not by the magnitude of its prior.
+		# Dividing by |prior| made a gene's weight in this space inversely
+		# proportional to how big its numbers happen to be: `hesit_bias` (prior
+		# 0.25) counted 38x more per unit than `breath_span` (prior 9.5), and
+		# measured 31% of all variance on its own, with effective dimensionality
+		# ~7.6 of 25. Every distance, every bearing, every acceptance-weighted
+		# centre and the catch card's kinship colour were all mostly reading one
+		# arbitrary gene. G_BOUNDS is the range the gene is actually sampled and
+		# clamped over, so it is the honest unit.
+		var b: Array = Voice.ProsodyWalk.G_BOUNDS.get(key, [])
+		var spread: float = (float(b[1]) - float(b[0])) if b.size() == 2 else maxf(absf(prior), 0.001)
+		v.append((float(g.get(key, prior)) - prior) / maxf(spread, 0.001))
 	return v
 
 

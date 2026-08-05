@@ -12,4 +12,9 @@ claim: >
   toward the origin rather than trading off along a frontier; the claim is
   falsified the moment the measured (bias, variance) trajectory bends into a
   Pareto frontier, or the cross-curvature between the two mode bands stays
-  bounded away from zero.
+  bounded away from zero. Orthogonality alone is not sufficient: by the
+  interference-capacity proposition the variance axis carries configurations
+  only while the input-conditional spectrum stays spread, so a delta whose
+  amplitudes concentrate alongside the static baseline - or decay with the
+  $1/f^{\alpha}$ envelope instead of resisting it - leaves the axes orthogonal
+  and the second one empty, which refutes the useful form of the claim.

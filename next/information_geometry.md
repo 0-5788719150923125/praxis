@@ -89,7 +89,7 @@ This version routes around them differently than the hash-gate did:
    relaxes back toward the standing shape instead of diverging, so the
    flip's consequences survive long enough to be evaluated); the next loss
    evaluations are the selection. Variation + retention + selection is
-   cumulative selection - the paper's own Blind Watchmaker thread, with
+   cumulative selection - the paper's own Blind Watchmaking thread, with
    gradient descent as the blind part. The watch still gets built, by a
    mechanism the gradient never sees.
 
