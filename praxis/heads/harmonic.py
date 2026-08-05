@@ -600,12 +600,12 @@ class HarmonicField(nn.Module):
         # purpose: LionGeo routes scalars to a SIGN-based Lion secondary, which
         # discards the violation magnitude and (at its lr=3e-4) moves the
         # multiplier far too slowly to reach equilibrium inside a run.
+        self._smooth_rho = math.log(math.expm1(SMOOTHNESS_LAMBDA_INIT))
+        self._smooth_target = -1.0
         self.register_buffer(
-            "smooth_rho",
-            torch.tensor(math.log(math.expm1(SMOOTHNESS_LAMBDA_INIT))),
-            persistent=True,
+            "_smooth_rho_buf", torch.tensor(self._smooth_rho), persistent=True
         )
-        self.register_buffer("smooth_target", torch.tensor(-1.0), persistent=True)
+        self.register_buffer("_smooth_target_buf", torch.tensor(-1.0), persistent=True)
 
         self.fast_weights = bool(fast_weights)
         if self.fast_weights:
@@ -746,6 +746,7 @@ class HarmonicField(nn.Module):
         b = self._eval_field(scaled, seq_len, device)
         return b.to(dtype) if dtype is not None else b
 
+    @torch._dynamo.disable
     @torch.no_grad()
     def _update_smoothness_dual(self, hidden_states: Tensor) -> None:
         """Measure the target from the incoming signal and take one dual step.
@@ -754,6 +755,17 @@ class HarmonicField(nn.Module):
         measurement is not reading back the field it is about to constrain. The
         trunk does adapt to the field across steps - that is true of any
         regularizer - but within a forward there is no loop.
+
+        The dual state lives in PYTHON FLOATS, not in the buffers, and this
+        method is hidden from Dynamo. Both are deliberate. A buffer mutated
+        in-place inside a compiled forward bumps its autograd version counter
+        between the point AOTAutograd saves tensors and the point backward runs
+        them, which aborts the step with "variable needed for gradient
+        computation has been modified by an inplace operation". Keeping the
+        controller in plain Python takes it out of the traced graph entirely:
+        nothing autograd saved can be mutated, because the controller never
+        touches a tensor autograd knows about. The buffers still exist, and are
+        synced at checkpoint time only (see ``_save_to_state_dict``).
         """
         if not self.training or SMOOTHNESS_DUAL_ETA <= 0.0:
             return
@@ -777,25 +789,52 @@ class HarmonicField(nn.Module):
         if not torch.isfinite(denom) or denom <= 0:
             return
         diff = c[:, 1:] - c[:, :-1]
-        target = (diff.pow(2).sum() / (6.0 * denom)).clamp(0.0, 1.0)
+        target = float((diff.pow(2).sum() / (6.0 * denom)).clamp(0.0, 1.0))
+        if not math.isfinite(target):
+            return
 
-        prev = self.smooth_target
-        self.smooth_target.copy_(
+        prev = self._smooth_target
+        self._smooth_target = (
             target
-            if float(prev) < 0.0  # first observation seeds the EMA
+            if prev < 0.0  # first observation seeds the EMA
             else SMOOTHNESS_TARGET_EMA * prev + (1.0 - SMOOTHNESS_TARGET_EMA) * target
         )
-        violation = self.smoothness().detach() - self.smooth_target
-        if not torch.isfinite(violation):
+        violation = float(self.smoothness()) - self._smooth_target
+        if not math.isfinite(violation):
             return
         rho_max = math.log(math.expm1(SMOOTHNESS_LAMBDA_MAX))
-        self.smooth_rho.copy_(
-            (self.smooth_rho + SMOOTHNESS_DUAL_ETA * violation).clamp(-20.0, rho_max)
+        self._smooth_rho = min(
+            max(self._smooth_rho + SMOOTHNESS_DUAL_ETA * violation, -20.0), rho_max
         )
 
-    def smooth_lambda(self) -> Tensor:
-        """The current multiplier, softplus(rho), bounded by the cap."""
-        return F.softplus(self.smooth_rho).clamp(max=SMOOTHNESS_LAMBDA_MAX)
+    def smooth_lambda(self) -> float:
+        """The current multiplier, softplus(rho), bounded by the cap.
+
+        A plain float on purpose: it enters :meth:`aux_loss` as a scalar
+        coefficient, so no tensor owned by the controller is ever part of the
+        autograd graph.
+        """
+        rho = self._smooth_rho
+        lam = rho + math.log1p(math.exp(-rho)) if rho > 0 else math.log1p(math.exp(rho))
+        return min(lam, SMOOTHNESS_LAMBDA_MAX)
+
+    @property
+    def smooth_target(self) -> float:
+        """The EMA-smoothed measured target, or -1 before the first batch."""
+        return self._smooth_target
+
+    def _save_to_state_dict(self, destination, prefix, keep_vars):
+        """Sync the Python-float controller state into its buffers, so the
+        checkpoint carries where the multiplier had settled."""
+        self._smooth_rho_buf.fill_(self._smooth_rho)
+        self._smooth_target_buf.fill_(self._smooth_target)
+        super()._save_to_state_dict(destination, prefix, keep_vars)
+
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
+        if prefix + "_smooth_rho_buf" in state_dict:
+            self._smooth_rho = float(self._smooth_rho_buf)
+            self._smooth_target = float(self._smooth_target_buf)
 
     def forward(self, hidden_states: Tensor) -> Tensor:
         seq_len = hidden_states.shape[-2]
@@ -1285,7 +1324,7 @@ class HarmonicField(nn.Module):
         """
         if SMOOTHNESS_DUAL_ETA <= 0.0 and SMOOTHNESS_LAMBDA_INIT <= 0.0:
             return None
-        return self.smooth_lambda().detach() * self.smoothness()
+        return self.smooth_lambda() * self.smoothness()
 
 
 class HarmonicHead(BaseHead):
@@ -1420,10 +1459,10 @@ class HarmonicHead(BaseHead):
             "harmonic_concentration": float(self.field.concentration().item()),
             "harmonic_smoothness": float(self.field.smoothness().item()),
             "harmonic_env_depth": self.field.envelope_depth(),
-            "harmonic_smooth_lambda": float(self.field.smooth_lambda().item()),
+            "harmonic_smooth_lambda": float(self.field.smooth_lambda()),
             **(
-                {"harmonic_smooth_target": float(self.field.smooth_target.item())}
-                if float(self.field.smooth_target) >= 0.0
+                {"harmonic_smooth_target": float(self.field.smooth_target)}
+                if self.field.smooth_target >= 0.0
                 else {}
             ),
             **self.field.envelope_split(),
