@@ -36,6 +36,22 @@ VEAR_SHARPEN: float = 4.0
 # Weight on the inter-expert repulsion (mean off-diagonal |cosine| of the router's
 # per-expert affinity rows). Drives experts to distinct niches -> unique geometries.
 VEAR_REPULSION: float = 0.01
+# Load-balancing bias step. VEAR's merge weights an expert by its batch-mean
+# routing probability, so an expert that stops being selected stops receiving
+# gradient, stops improving, and is never worth selecting again. Measured on
+# abstractinator-g: routing_input_dependence rose to 0.2-0.46 mid-run and then
+# decayed to ~1e-5 on nine of eleven layers, with three of four merge weights at
+# ~1e-21 - experts that had gone dark, not experts that had specialised. This
+# rate is the floor under that: a fixed, gradient-free nudge toward equal usage
+# ACROSS batches. It leaves the p**4 sharpening alone (it moves which expert a
+# batch picks, not how hard it picks), so within-batch discreteness is
+# untouched. DeepSeek-V3 uses the same rule at the same 1e-3 scale.
+# DISABLED pending a reproduction harness. Set to 0.001 to re-enable. At 0.0
+# every part of the mechanism is a no-op: _balance_bias returns its logits
+# untouched and both _observe_usage and step_balance return immediately, so the
+# routing path is bit-identical to before this was added. The buffer stays
+# registered either way, so checkpoints written with it loaded still resume.
+VEAR_BALANCE_RATE: float = 0.0
 # Upper bound on the current_depth sweep that materializes per-depth lazy
 # ModuleList entries (e.g. ArcGLU.act) before the first merge. Early-exits as soon
 # as no uninitialized params remain, so this is just a safety ceiling.
@@ -44,6 +60,12 @@ _MAX_INIT_DEPTH: int = 128
 
 class VEAR(SMEAR):
     """Variance-driven Experts with Adaptive Routing (sharpened, repelled SMEAR)."""
+
+    # Opt in to SMEAR's across-batch load balancing. Plain SMEAR leaves it off:
+    # it merges by the router's own probabilities, so a weak expert still gets a
+    # proportional share of gradient. VEAR's p**4 drives the merge to one-hot,
+    # which removes that share and is what makes the floor necessary here.
+    balance_rate: float = VEAR_BALANCE_RATE
 
     # --- discrete: sharpen routing before SMEAR's batch-mean merge -------------
     def _merge_expert_parameters(
@@ -77,6 +99,11 @@ class VEAR(SMEAR):
         (double-backward). Training-only."""
         if not self.training or len(self.experts) < 2:
             return {}
+        # This hook is the once-per-step, outside-the-forward channel, so it is
+        # also where the load-balancing bias advances. Stepping it in the forward
+        # would double-step it under gradient checkpointing and make the
+        # recomputed pass disagree with the original.
+        self.step_balance()
         return {"vear_repulsion": VEAR_REPULSION * self._inter_expert_repulsion()}
 
     def _inter_expert_repulsion(self) -> Tensor:

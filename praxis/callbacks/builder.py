@@ -287,6 +287,15 @@ def build_training_callbacks(
 
         callbacks.append(SpiderCallback())
 
+    # Serves queued API generations every step. Added before TerminalInterface
+    # so a request that arrived during the last step is answered before the
+    # terminal spends its own turn generating, and so that it runs whether or
+    # not the terminal is drawing (--quiet).
+    if generator is not None:
+        from praxis.callbacks.lightning import GenerationQueueCallback
+
+        callbacks.append(GenerationQueueCallback(generator))
+
     # TerminalInterface routes dashboard/console output and manages the
     # dashboard internally when use_dashboard=True.
     callbacks.append(

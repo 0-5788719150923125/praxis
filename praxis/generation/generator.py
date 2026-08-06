@@ -25,7 +25,7 @@ from typing import Any, Dict, Optional, Tuple
 import torch
 
 from praxis.generation.decode_backend import ModelBackend
-from praxis.generation.request import GenerationRequest
+from praxis.generation.request import GenerationRequest, GenerationResult
 from praxis.tokenizers.chat_templates import chat_format_of
 from praxis.tools import (
     STOP_TOOL_LOOP,
@@ -373,10 +373,31 @@ class Generator:
         initial_len = tokens.shape[1]
         in_tool_call = False
         tool_call_depth = 0
+        # Tokens the MODEL produced, counted directly rather than derived from
+        # the sequence length. A spliced tool result grows the sequence without
+        # the model having written any of it, so the derived form charged the
+        # splice to the caller's budget: one ~800-byte `get_tools` result
+        # against the web default of 256 drove `remaining` negative and broke
+        # the loop before the model ever spoke.
+        produced = 0
+        # Where the model's current turn starts, in tokens. It begins after the
+        # prompt and moves past each result we splice, so it always names text
+        # the runtime wrote rather than a boundary the model may have written
+        # itself. See GenerationResult.reply_start.
+        reply_start_tokens = initial_len
 
         with self.backend.eval_mode():
             while True:
-                remaining = max_new_tokens - (tokens.shape[1] - initial_len)
+                remaining = max_new_tokens - produced
+                # Counting model output alone stops a splice from spending the
+                # caller's budget, but it also drops the bound the derived form
+                # gave for free: prompt + everything since has to stay inside
+                # the positional capacity that `_prepare_inputs` sized the
+                # prompt against. A splice cut back to `mpe` leaves `produced`
+                # small and the context already full, so clamp here too.
+                mpe = self._max_positions()
+                if mpe is not None:
+                    remaining = min(remaining, mpe - tokens.shape[1])
                 if remaining <= 0:
                     break
 
@@ -394,6 +415,7 @@ class Generator:
                 if extended.shape[1] <= tokens.shape[1]:
                     tokens = extended
                     break
+                produced += extended.shape[1] - tokens.shape[1]
                 tokens = extended
                 halt = self._classify_halt(tokens, fmt)
 
@@ -443,6 +465,23 @@ class Generator:
                     tokens = torch.tensor(
                         [spliced], dtype=torch.long, device=tokens.device
                     )
+                    # Both splice styles end by handing control back to the
+                    # reply role, so the end of the splice opens a new turn and
+                    # the anchor belongs there - but only when the splice went
+                    # in at the END. `find_unprocessed_tool_call_ids` scans from
+                    # the front, so a stale unanswered call in the PROMPT puts
+                    # the insertion mid-sequence; taking the anchor to the end
+                    # of that splice would drag it backwards over text the
+                    # model had already written. Shift for the insertion, then
+                    # advance only if the splice really is further along.
+                    dropped = max(0, len(token_list) + len(result_ids) - len(spliced))
+                    if call_end_index <= reply_start_tokens:
+                        reply_start_tokens += len(result_ids)
+                    reply_start_tokens = max(
+                        reply_start_tokens, call_end_index + len(result_ids)
+                    )
+                    # `spliced[-mpe:]` above drops tokens off the front.
+                    reply_start_tokens = max(0, reply_start_tokens - dropped)
                     tool_call_depth += 1
                     in_tool_call = False
                     continue
@@ -469,7 +508,34 @@ class Generator:
                 if strip is not None and incomplete_tail(tokens[0].tolist()):
                     tokens = tokens[:, : len(strip(tokens[0].tolist()))]
 
-        return self.tokenizer.decode(tokens[0], skip_special_tokens=skip_special_tokens)
+        ids = tokens[0]
+        text = self.tokenizer.decode(ids, skip_special_tokens=skip_special_tokens)
+        return GenerationResult(
+            text, self._reply_start_char(ids, reply_start_tokens, text, skip_special_tokens)
+        )
+
+    def _reply_start_char(
+        self,
+        ids: torch.Tensor,
+        reply_start_tokens: int,
+        text: str,
+        skip_special_tokens: bool,
+    ) -> Optional[int]:
+        """Character offset in ``text`` where the model's turn starts.
+
+        Decoding the prefix and taking its length assumes piece-wise decoding
+        concatenates, which holds for byte- and char-level vocabs but not for
+        every BPE. Rather than trust it, check that the prefix really is one:
+        ``None`` tells the reader to fall back to scanning for a boundary,
+        which is what it did before this offset existed.
+        """
+        try:
+            prefix = self.tokenizer.decode(
+                ids[:reply_start_tokens], skip_special_tokens=skip_special_tokens
+            )
+        except Exception:
+            return None
+        return len(prefix) if text.startswith(prefix) else None
 
     def fulfill_requests(self, max_requests: int = None) -> int:
         """
@@ -485,7 +551,19 @@ class Generator:
                 break
 
             request = self.request_queue.get()
-            result = self._process_single_request(request)
+            try:
+                result = self._process_single_request(request)
+            except Exception as exc:
+                # This runs inside the training loop, so a request that blows
+                # up must not take the run down with it. Store the prompt back
+                # (what the synchronous path already does) so the waiting
+                # client gets a response instead of hanging to its timeout.
+                _log.error(f"Generation request {request.id} failed: {exc}")
+                result = GenerationResult(
+                    request.prompt
+                    if isinstance(request.prompt, str)
+                    else str(request.prompt)
+                )
             self.results[request.id] = result
             self._result_order.append(request.id)
             self._evict_old_results()

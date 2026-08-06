@@ -364,6 +364,16 @@ def find_pending_call_text(text: str, fmt) -> Optional[Dict[str, Any]]:
     start = text.rfind(call_boundary, 0, body_end)
     if start != -1:
         body_start = start + len(call_boundary)
+        # An already-answered call is not pending. Once a result has been
+        # spliced, a later halt on the result boundary rfinds that SAME call
+        # and hands json.loads its body plus the spliced result plus the reply
+        # that followed - which fails to parse, so a fabricated error result
+        # gets spliced over a turn that was already answered correctly. The
+        # token-style path skips answered calls explicitly (see
+        # ``find_unprocessed_tool_call_ids``); this is its text-style twin.
+        for role in (fmt.result_role, fmt.reply_role):
+            if text.find(fmt.boundary(role), body_start, body_end) != -1:
+                return None
     else:
         # A prompt long enough to be left-truncated (``_prepare_inputs`` caps it
         # against max_position_embeddings) can lose the boundary's leading blank

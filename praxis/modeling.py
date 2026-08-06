@@ -1262,6 +1262,15 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                     # The run ended here, so the width this step used was right
                     # (or too wide) - feed the observed run back.
                     self.mtp.note_accepted(accepted)
+                    # The correction token is committed like any other, so it
+                    # can be the halt token. Without this test a halt landing on
+                    # the first divergence is swallowed and the next step
+                    # resumes from a sequence that already ended - which is how
+                    # a turn runs to max_new_tokens despite emitting [EOS].
+                    if v_token.item() in eos_set:
+                        if return_dict:
+                            return SimpleNamespace(sequences=generated)
+                        return generated
                     break
             else:
                 # All candidates accepted — also take a bonus token.

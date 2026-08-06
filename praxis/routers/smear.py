@@ -64,6 +64,14 @@ class SMEAR(nn.Module):
         # Use actual number of experts, not config.num_experts
         self.router_norm = nn.LayerNorm(self.hidden_size)
         self.router = nn.Linear(self.hidden_size, len(self.experts))
+        # Load-balancing state. Registered up front - registering a buffer
+        # inside the forward mutates the module while a compiled graph holds
+        # saved tensors, which is how this first surfaced.
+        self._expert_bias = [0.0] * len(self.experts)
+        self._usage_accum = None
+        self.register_buffer(
+            "_expert_bias_buf", torch.zeros(len(self.experts)), persistent=True
+        )
 
         # Metrics storage for convergence tracking
         self._metrics = {}
@@ -128,6 +136,7 @@ class SMEAR(nn.Module):
         # Apply weight normalization without modifying in-place
         normalized_weight = F.normalize(self.router.weight, dim=1)
         logits = F.linear(router_input, normalized_weight, self.router.bias)
+        logits = self._balance_bias(logits)
 
         routing_probs = F.softmax(logits, dim=-1)  # [batch_size, num_experts]
 
@@ -135,6 +144,7 @@ class SMEAR(nn.Module):
         # subclass transform. This is what the routing diagnostics are computed
         # on; see _log_routing_metrics for why that distinction matters.
         router_probs = routing_probs
+        self._observe_usage(router_probs)
 
         # Apply expert dropout during training (drop entire experts)
         if self.training and self.dropout_rate > 0:
@@ -209,6 +219,112 @@ class SMEAR(nn.Module):
         for name, _ in module.named_parameters(recurse=False):
             parameter_names.append(prefix + name)
         return parameter_names
+
+    # --- across-batch load balancing (opt-in; SMEAR itself leaves it off) ------
+    # Rate at which the per-expert routing bias corrects usage imbalance. Zero
+    # disables the mechanism entirely, which is SMEAR's default.
+    balance_rate: float = 0.0
+
+    def _balance_bias(self, logits: torch.Tensor) -> torch.Tensor:
+        """Add the load-balancing bias to the router logits.
+
+        Built as a FRESH tensor from Python floats every call rather than read
+        from a mutated buffer. A buffer that is both read into the autograd
+        graph and mutated in place has its version counter bumped between the
+        point AOTAutograd saves tensors and the point backward replays them,
+        which aborts the step under torch.compile. Python state cannot alias
+        anything autograd saved.
+        """
+        if self.balance_rate <= 0.0:
+            return logits
+        bias = torch.tensor(
+            self._expert_bias, device=logits.device, dtype=logits.dtype
+        )
+        return logits + bias
+
+    @torch._dynamo.disable
+    @torch.no_grad()
+    def _observe_usage(self, router_probs: torch.Tensor) -> None:
+        """Stash this forward's expert usage for the once-per-step balance step.
+
+        Recording only - it must not change what the forward returns, because a
+        gradient-checkpointed forward is recomputed during backward and the
+        recomputation has to match the original exactly. Stepping the bias here
+        would break that (the second pass would see a different bias), which is
+        the same hazard VEAR documents for its repulsion loss.
+        """
+        if self.balance_rate <= 0.0 or not self.training:
+            return
+        u = router_probs.detach().float().mean(dim=0)
+        if torch.isfinite(u).all():
+            self._usage_accum = [float(x) for x in u]
+
+    @torch.no_grad()
+    def step_balance(self) -> None:
+        """Nudge the per-expert bias toward equal usage ACROSS batches.
+
+        This is the aux-loss-free load-balancing rule (DeepSeek-V3): the bias on
+        an under-used expert rises and on an over-used one falls, by a fixed
+        step, until usage evens out. No gradient, so it cannot double-backward
+        through the checkpointed forward or accumulate once per recurrent depth -
+        the two reasons VEAR keeps its repulsion parameter-only.
+
+        The granularity is deliberate. The merge is ``routing_probs.mean(dim=0)``,
+        one geometry per batch, so WITHIN-batch agreement is the design (it is
+        what makes the merge discrete) and only ACROSS-batch diversity is left to
+        balance. Correcting usage here therefore does not fight VEAR's ``p**4``
+        sharpening: it changes which expert a batch commits to, never how hard it
+        commits. The failure it targets is the one that follows from the merge:
+        an expert whose weight sits near zero receives near-zero gradient, stops
+        improving, and so is never worth routing to again - rich-get-richer with
+        no floor. The bias is that floor.
+        """
+        usage = getattr(self, "_usage_accum", None)
+        if self.balance_rate <= 0.0 or not self.training or not usage:
+            return
+        n = len(usage)
+        if len(self._expert_bias) != n:
+            self._expert_bias = [0.0] * n
+        self._usage_accum = None
+        target = 1.0 / n
+        step = self.balance_rate
+        # Sign rule, not proportional: the correction is rate-limited, so a
+        # single pathological batch cannot slam the bias, and the equilibrium is
+        # set by how often an expert is over- or under-used rather than by how
+        # badly it was on any one step.
+        for k in range(n):
+            self._expert_bias[k] += step if usage[k] < target else -step
+        # Re-center so the bias expresses only a RELATIVE preference; without
+        # this the whole vector can drift and swamp the router's own logits.
+        mean_b = sum(self._expert_bias) / n
+        self._expert_bias = [b - mean_b for b in self._expert_bias]
+
+    def _save_to_state_dict(self, destination, prefix, keep_vars):
+        """Carry the routing bias into the checkpoint, so a resumed run keeps the
+        balance it had reached instead of re-deriving it over a few thousand
+        steps."""
+        if self._expert_bias:
+            self._expert_bias_buf.copy_(
+                torch.tensor(self._expert_bias, dtype=self._expert_bias_buf.dtype)
+            )
+        super()._save_to_state_dict(destination, prefix, keep_vars)
+
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        """Restore the routing bias, tolerating checkpoints written before it
+        existed.
+
+        Lightning loads with ``strict=True``, so a buffer added after a
+        checkpoint was written aborts the resume on a missing key. Seeding the
+        default into ``state_dict`` before delegating means the key is present,
+        the load is clean, and an older checkpoint simply starts the balancer
+        from zero - which is its cold-start value anyway. Any new persistent
+        buffer needs this, or it silently makes every prior checkpoint
+        unloadable."""
+        key = prefix + "_expert_bias_buf"
+        if key not in state_dict:
+            state_dict[key] = self._expert_bias_buf.detach().clone()
+        super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
+        self._expert_bias = [float(x) for x in self._expert_bias_buf]
 
     def _merge_expert_parameters(
         self,
@@ -425,6 +541,14 @@ class SMEAR(nn.Module):
                     mi.clamp(0.0, 1.0).item()
                 )
 
+            # How hard the load balancer is working. Zero = the router balances
+            # itself and the bias is inert; growing = it is holding open a door
+            # the router keeps trying to close.
+            if self.balance_rate > 0.0 and getattr(self, "_expert_bias", None):
+                self._metrics[f"{layer_prefix}routing_balance_bias"] = float(
+                    max(self._expert_bias) - min(self._expert_bias)
+                )
+
             # Entropy of the weights the MERGE used. For plain SMEAR this equals
             # routing_entropy; under VEAR the gap between them IS the sharpening,
             # so reading the two together shows how much p**4 is doing.
@@ -538,11 +662,13 @@ class SMEAR(nn.Module):
         # Apply weight normalization without modifying in-place
         normalized_weight = F.normalize(self.router.weight, dim=1)
         logits = F.linear(router_input, normalized_weight, self.router.bias)
+        logits = self._balance_bias(logits)
 
         routing_probs = F.softmax(logits, dim=-1)  # [batch_size, num_experts]
 
         # Router's own opinion, before dropout and before any subclass transform.
         router_probs = routing_probs
+        self._observe_usage(router_probs)
 
         # Apply expert dropout during training (drop entire experts)
         if self.training and self.dropout_rate > 0:

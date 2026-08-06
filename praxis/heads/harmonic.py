@@ -831,10 +831,17 @@ class HarmonicField(nn.Module):
         super()._save_to_state_dict(destination, prefix, keep_vars)
 
     def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        """Restore the dual state, tolerating checkpoints written before it
+        existed. Same reasoning as SMEAR._load_from_state_dict: Lightning loads
+        strictly, so an added persistent buffer must seed its own default or it
+        makes every earlier checkpoint unloadable."""
+        for name in ("_smooth_rho_buf", "_smooth_target_buf"):
+            key = prefix + name
+            if key not in state_dict:
+                state_dict[key] = getattr(self, name).detach().clone()
         super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
-        if prefix + "_smooth_rho_buf" in state_dict:
-            self._smooth_rho = float(self._smooth_rho_buf)
-            self._smooth_target = float(self._smooth_target_buf)
+        self._smooth_rho = float(self._smooth_rho_buf)
+        self._smooth_target = float(self._smooth_target_buf)
 
     def forward(self, hidden_states: Tensor) -> Tensor:
         seq_len = hidden_states.shape[-2]

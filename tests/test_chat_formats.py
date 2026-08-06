@@ -12,11 +12,14 @@ rather than an exception:
 - the tool flow's three boundaries must classify unambiguously.
 """
 
+import contextlib
+
 import pytest
 import torch
 
 from praxis.data.formatters.tools import format_tool_calling
 from praxis.data.validators import ChatTemplateValidator
+from praxis.generation.request import GenerationRequest
 from praxis.generation.stopping import (
     find_stop_cut,
     normalize_stop_strings,
@@ -447,6 +450,86 @@ def test_reply_extraction_under_prose(prose_tokenizer):
     )
 
 
+@pytest.mark.parametrize("role", ["user", "system", "developer", "tool", "call"])
+def test_empty_prose_turn_does_not_leak_the_next_speaker(prose_tokenizer, role):
+    """The seam case: the prompt already supplied the boundary's blank line.
+
+    A generation prompt ends `...assistant\\n\\n`, so a model that writes
+    nothing and goes straight to naming the next speaker emits only
+    `<role>\\n\\n`. The full sequence ends in a real stop string and generation
+    halts correctly - but the slice handed to the extractor is missing the
+    leading `\\n\\n`, so a cut that only looks for the full `\\n\\n<role>\\n\\n`
+    form returns the bare role word as if it were the model's answer.
+    """
+    from praxis.web.utils.formatters import (
+        _EMPTY_REPLY_PLACEHOLDER,
+        extract_assistant_reply,
+    )
+
+    prompt = prose_tokenizer.apply_chat_template(
+        [{"role": "user", "content": "hi"}],
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+    text = f"{prompt}{role}\n\n"
+    assert extract_assistant_reply(text, prose_tokenizer) == _EMPTY_REPLY_PLACEHOLDER
+
+
+def test_prose_reply_keeps_a_role_word_that_is_only_prose(prose_tokenizer):
+    """The cut needs the boundary's trailing blank line, not just the word."""
+    from praxis.web.utils.formatters import extract_assistant_reply
+
+    prompt = prose_tokenizer.apply_chat_template(
+        [{"role": "user", "content": "hi"}],
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+    text = f"{prompt}call me back later.\n\nuser\n\n"
+    assert extract_assistant_reply(text, prose_tokenizer) == "call me back later."
+
+
+def test_prose_reply_cuts_at_the_document_separator(prose_tokenizer):
+    """Prose keeps [EOS] as a halt id, so a turn can end on it.
+
+    `skip_special_tokens=False` on the inference path means it decodes to the
+    literal string, which the role-boundary cut cannot see.
+    """
+    from praxis.web.utils.formatters import (
+        _EMPTY_REPLY_PLACEHOLDER,
+        extract_assistant_reply,
+    )
+
+    prompt = prose_tokenizer.apply_chat_template(
+        [{"role": "user", "content": "hi"}],
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+    eos = prose_tokenizer.eos_token
+    assert extract_assistant_reply(f"{prompt}Hello there.\n\n{eos}", prose_tokenizer) == (
+        "Hello there."
+    )
+    assert (
+        extract_assistant_reply(f"{prompt}{eos}", prose_tokenizer)
+        == _EMPTY_REPLY_PLACEHOLDER
+    )
+
+
+def test_answered_call_is_not_pending_again(prose_tokenizer):
+    """A spliced result ends the call. Re-finding it fabricates an error.
+
+    Halting on the result boundary a second time in one request would rfind the
+    same `call` turn and hand json.loads its body PLUS the spliced result and
+    the reply that followed - which fails to parse, so an error result gets
+    spliced over a turn that was already answered correctly.
+    """
+    fmt = chat_format_of(prose_tokenizer)
+    answered = (
+        'user\n\nWhat is 2+2?\n\nassistant\n\n\n\ncall\n\n{"name": "calc", '
+        '"arguments": {}}\n\ntool\n\n4\n\nassistant\n\nIt is 4.\n\ntool\n\n'
+    )
+    assert find_pending_call_text(answered, fmt) is None
+
+
 def test_reply_extraction_strips_tool_plumbing_under_default(default_tokenizer):
     from praxis.web.utils.formatters import extract_assistant_reply
 
@@ -498,6 +581,260 @@ def test_prose_survives_the_packer(prose_tokenizer):
         # token marking where one document ended and the next began.
         assert "Tokyo.\n\n[EOS]system\n\n" in text
     assert manager.get_validation_stats()["documents_skipped"] == 0
+
+
+# ------------------------------------------------- reply anchoring end-to-end
+
+
+class _ScriptedBackend:
+    """Emits a fixed byte script, halting exactly as the real decode loops do.
+
+    Drives the real ``Generator``, so these exercise the whole endpoint path -
+    prompt construction, the halt contract, the tool state machine, and reply
+    extraction - with the model's output pinned instead of sampled.
+    """
+
+    model = None
+    default_sampling_temperature = None
+
+    def __init__(self, tokenizer, script):
+        self.tokenizer = tokenizer
+        self.device = "cpu"
+        self.max_positions = None
+        self.pending = list(tokenizer.encode(script, add_special_tokens=False))
+
+    @contextlib.contextmanager
+    def eval_mode(self):
+        yield
+
+    def generate_until_halt(self, tokens, step_kwargs):
+        stops = normalize_stop_strings(step_kwargs.get("stop_strings"))
+        eos = step_kwargs.get("eos_token_id") or []
+        eos = set(eos if isinstance(eos, (list, tuple)) else [eos])
+        budget = int(step_kwargs.get("max_new_tokens", 100))
+        start = tokens.shape[1]
+        ids = tokens[0].tolist()
+        produced = 0
+        while self.pending and produced < budget:
+            ids.append(self.pending.pop(0))
+            produced += 1
+            if ids[-1] in eos:
+                break
+            if stops and find_stop_cut(self.tokenizer, ids, start, stops) is not None:
+                break
+        return torch.tensor([ids], dtype=torch.long)
+
+
+def _scripted_reply(
+    tokenizer, script, max_new_tokens=200, tools=None, call_tool=None, messages=None
+):
+    from praxis.generation.generator import Generator
+    from praxis.web.utils.formatters import generate_from_messages
+
+    generator = Generator(
+        backend=_ScriptedBackend(tokenizer, script),
+        tokenizer=tokenizer,
+        synchronous=True,
+    )
+    generator.tools = {} if tools is None else tools
+    if call_tool is not None:
+        generator.call_tool = call_tool
+    return generate_from_messages(
+        messages or [{"role": "user", "content": "What is 2+2?"}],
+        generator,
+        tokenizer,
+        max_new_tokens=max_new_tokens,
+        timeout=10.0,
+    )
+
+
+@pytest.mark.parametrize(
+    "script,expected",
+    [
+        ("It is 4.\n\nuser\n\n", "It is 4."),
+        # A second assistant turn ends the first one. It used to ANCHOR the
+        # reply, so everything the model actually said was discarded.
+        (
+            "Sure, here goes.\n\nassistant\n\nSecond thought.\n\nuser\n\n",
+            "Sure, here goes.",
+        ),
+        # ...and when the second turn ran out of budget, the whole reply was
+        # reported as an empty turn.
+        ("The answer is 4.\n\nassistant\n\n", "The answer is 4."),
+    ],
+)
+def test_prose_reply_is_anchored_where_the_runtime_wrote(
+    prose_tokenizer, script, expected
+):
+    assert _scripted_reply(prose_tokenizer, script) == expected
+
+
+def test_default_reply_is_anchored_where_the_runtime_wrote(default_tokenizer):
+    """Same defect, same fix, under control-token boundaries."""
+    reply = _scripted_reply(default_tokenizer, "first part[BOS]assistant\nsecond part[SEP]")
+    assert reply == "first part"
+
+
+@pytest.mark.parametrize(
+    "script,expected",
+    [
+        # The model repeating the boundary the prompt just wrote is noise. The
+        # cut treats a reply-role boundary as end-of-turn, so without skipping
+        # the repetition first it zeroed the reply that followed.
+        ("assistant\n\nHere is the answer.\n\nuser\n\n", "Here is the answer."),
+        ("\n\nassistant\n\nHere is the answer.\n\nuser\n\n", "Here is the answer."),
+    ],
+)
+def test_prose_seam_repetition_does_not_eat_the_reply(
+    prose_tokenizer, script, expected
+):
+    assert _scripted_reply(prose_tokenizer, script) == expected
+
+
+def test_seam_cut_needs_the_boundary_to_be_the_whole_turn(prose_tokenizer):
+    """A role word merely OPENING ordinary prose is not an empty turn.
+
+    Unreachable from the decode loop - every role here is a stop string, so
+    generation halts at the seam and the slice really is just the boundary -
+    but `extract_assistant_reply` is public and also takes bare strings.
+    """
+    from praxis.web.utils.formatters import (
+        _EMPTY_REPLY_PLACEHOLDER,
+        _extract_reply_text_boundaries,
+    )
+
+    fmt = chat_format_of(prose_tokenizer)
+    empty = _extract_reply_text_boundaries("user\n\n", fmt, prose_tokenizer, 0)
+    assert empty == ""
+    kept = _extract_reply_text_boundaries(
+        "call\n\nme back later.", fmt, prose_tokenizer, 0
+    )
+    assert kept == "call\n\nme back later."
+    assert _EMPTY_REPLY_PLACEHOLDER  # the caller substitutes it for `empty`
+
+
+def test_default_turn_opener_repetition_does_not_eat_the_reply(default_tokenizer):
+    """`[BOS]` is samplable under `default`, so the model can restate the opener.
+
+    Anchoring on the runtime offset put that BOS at offset 0 of the slice, where
+    the end-of-turn cut read it as an immediately-empty turn.
+    """
+    reply = _scripted_reply(default_tokenizer, "[BOS]assistant\nIt is 4.[SEP]")
+    assert reply == "It is 4."
+
+
+def test_default_other_role_opener_still_ends_the_turn(default_tokenizer):
+    """Only the REPLY role's opener is noise; `[BOS]user` genuinely ends it."""
+    reply = _scripted_reply(default_tokenizer, "It is 4.[BOS]user\nnext question[SEP]")
+    assert reply == "It is 4."
+
+
+def test_tool_splice_anchors_the_turn_it_opens(default_tokenizer):
+    """The splice ends with a role transition, so it opens a new reply turn.
+
+    `build_result_splice_ids` writes `\\n[SEP]\\n[BOS]assistant\\n` after the
+    result, which is the boundary the reply belongs to.
+    """
+    script = (
+        "Checking now.\n[TOOL_CALL]\n"
+        '{"name": "get_time", "arguments": {}}\n[/TOOL_CALL]\n'
+        "It is noon.[SEP]"
+    )
+    reply = _scripted_reply(
+        default_tokenizer,
+        script,
+        tools={"get_time": {}},
+        call_tool=lambda name, args: "noon",
+    )
+    assert reply == "It is noon."
+
+
+def test_stale_prompt_call_does_not_drag_the_anchor_backwards(default_tokenizer):
+    """A splice landing MID-sequence must not move the anchor past the reply.
+
+    `find_unprocessed_tool_call_ids` scans from the front, so an unanswered
+    `[TOOL_CALL]` sitting in the PROMPT gets its result spliced in the middle.
+    Anchoring at the end of that splice threw away everything the model had
+    already written.
+    """
+    messages = [
+        {"role": "user", "content": "time?"},
+        {
+            "role": "assistant",
+            "content": '[TOOL_CALL]\n{"name": "get_time", "arguments": {}}\n[/TOOL_CALL]',
+        },
+        {"role": "user", "content": "and now?"},
+    ]
+    script = (
+        "The time is definitely noon.\n[TOOL_CALL]\n"
+        '{"name": "get_time", "arguments": {}}\n[/TOOL_CALL]'
+    )
+    reply = _scripted_reply(
+        default_tokenizer,
+        script,
+        tools={"get_time": {}},
+        call_tool=lambda name, args: "noon",
+        messages=messages,
+    )
+    assert "The time is definitely noon." in reply
+
+
+def test_generation_stays_inside_the_positional_capacity(prose_tokenizer):
+    """Budgeting on model output alone dropped the total-length bound.
+
+    `_prepare_inputs` caps the prompt at `mpe - max_new_tokens` precisely so the
+    context can never overflow learned positions. A tool result spliced in is
+    not model output, so it does not spend the budget - but it does spend the
+    context, and the loop has to notice.
+    """
+    from praxis.generation.generator import Generator
+
+    script = (
+        '\n\ncall\n\n{"name": "get_time", "arguments": {}}\n\ntool\n\n'
+        "and here is a long tail.\n\nuser\n\n"
+    )
+    backend = _ScriptedBackend(prose_tokenizer, script)
+    backend.max_positions = 256
+    generator = Generator(backend=backend, tokenizer=prose_tokenizer)
+    generator.tools = {"get_time": {}}
+    generator.call_tool = lambda name, args: "R" * 900
+    request = GenerationRequest(
+        id="t",
+        prompt="user\n\nhi\n\nassistant\n\n",
+        kwargs={"max_new_tokens": 128},
+    )
+    out = generator._process_single_request(request)
+    assert len(prose_tokenizer.encode(str(out), add_special_tokens=False)) <= 256
+
+
+def test_bare_string_still_falls_back_to_scanning(prose_tokenizer):
+    """Callers holding plain text (not a GenerationResult) keep working."""
+    from praxis.web.utils.formatters import extract_assistant_reply
+
+    raw = "user\n\nWhat is 2+2?\n\nassistant\n\nIt is 4.\n\nuser\n\n"
+    assert extract_assistant_reply(raw, prose_tokenizer) == "It is 4."
+
+
+def test_spliced_tool_result_does_not_spend_the_caller_budget(prose_tokenizer):
+    """The model did not write the tool result, so it must not be charged for it.
+
+    `remaining` used to be derived from the sequence length, which the splice
+    grows: one fat result against the web default of 256 drove it negative and
+    broke the loop before the model ever spoke.
+    """
+    result = "x" * 800
+    script = (
+        '\n\ncall\n\n{"name": "get_time", "arguments": {}}\n\ntool\n\n'
+        + "I looked it up." + "\n\nuser\n\n"
+    )
+    reply = _scripted_reply(
+        prose_tokenizer,
+        script,
+        max_new_tokens=64,
+        tools={"get_time": {}},
+        call_tool=lambda name, args: result,
+    )
+    assert reply.startswith("I looked")
 
 
 # ------------------------------------------------- speculative decode halt

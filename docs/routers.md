@@ -97,4 +97,4 @@ Value: `functools.partial(<function praxis.routers.create_taxus_with_dynamic_bud
 
 Variance-driven Experts with Adaptive Routing (sharpened, repelled SMEAR).
 
-Source: [praxis/routers/vear.py:45](../praxis/routers/vear.py#L45)
+Source: [praxis/routers/vear.py:61](../praxis/routers/vear.py#L61)
