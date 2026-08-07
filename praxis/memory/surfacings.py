@@ -469,15 +469,31 @@ class MemoryBandSmear(MemoryBase):
             contrib = w[i] * r
             retrieved = contrib if retrieved is None else retrieved + contrib
         self._last_weights = w
-        with torch.no_grad():
-            for i, mem in enumerate(self.mems):
-                if not active[i]:
-                    continue
-                self._recent_weight[i] = w[i]
-                s = mem.last_surprise_norm
-                if s is not None:
-                    self.values[i].mul_(_VALUE_EMA).add_((1.0 - _VALUE_EMA) * float(s))
-            self._history.append((list(w), [float(v) for v in self.values]))
+        # Training-only: the bandit's reward EMA is model STATE, and _blend_weights
+        # reads it back at :446, so advancing it on an inference forward changes
+        # what the next inference forward computes. Two identical forwards then
+        # disagree (measured 3.5e-04, and 7.2e-03 through prismatic5's crystal
+        # route, against 0.0e+00 with memory_type: none), which is a real problem
+        # for the byte-latent speculative decoder: _spec_logits_and_hidden and
+        # _verify_prefixes_batched are SEPARATE forwards, so the verify scores the
+        # drafts under a blend the drafting pass already moved. That turns the
+        # greedy-lossless guarantee into lossless-up-to-drift, and it is drift the
+        # accept test (an exact id comparison, modeling.py:1244) reads as a
+        # divergence, so it silently costs accepted bytes. The arms' forecast
+        # quality is a property of the training distribution anyway; generation
+        # should read the mix, not rewrite it.
+        if self.training:
+            with torch.no_grad():
+                for i, mem in enumerate(self.mems):
+                    if not active[i]:
+                        continue
+                    self._recent_weight[i] = w[i]
+                    s = mem.last_surprise_norm
+                    if s is not None:
+                        self.values[i].mul_(_VALUE_EMA).add_(
+                            (1.0 - _VALUE_EMA) * float(s)
+                        )
+                self._history.append((list(w), [float(v) for v in self.values]))
         if retrieved is None:  # no arm active (never, with A/B always on)
             return stream, tuple(new_states)
         return stream + retrieved, tuple(new_states)

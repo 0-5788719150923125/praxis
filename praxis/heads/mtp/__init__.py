@@ -350,15 +350,18 @@ class MultiTokenPrediction(nn.Module):
         out = dict(self._draft_acc_descriptions())
         out["mtp_accept_run"] = {
             "description": (
-                "EMA of the accepted candidate run per speculative step (the "
-                "main token plus the drafts that survived verification); "
-                "committed bytes per step run one higher (the correcting or "
-                "bonus byte), and speculative speedup is roughly (this + 1) / "
-                "2 forwards. The REALIZED counterpart of the draft-accuracy "
-                "ceiling: with per-depth accept rate a the expectation is "
-                "1 + a + a^2 + ... - geometric, so the run length tracks the "
-                "text's entropy spacing (typically one word-fragment), not "
-                "mtp_depth. Only updates while generation runs."
+                "EMA of the candidates that survived verification per "
+                "speculative step. Committed bytes per step run one higher "
+                "(the correcting or bonus byte), and a step now costs ONE "
+                "forward, so speculative speedup is roughly this + 1. The "
+                "REALIZED counterpart of the draft-accuracy ceiling: with "
+                "per-depth accept rate a the expectation is a + a^2 + ... - "
+                "geometric, so the run tracks the text's entropy spacing "
+                "(typically one word-fragment), not mtp_depth. Reads near 0 "
+                "under SAMPLING even when drafts are good: acceptance is an "
+                "equality test, which two independent draws pass only with "
+                "probability sum(p^2). Greedy is the number to judge drafting "
+                "by. Only updates while generation runs."
             ),
             "chart": {
                 "title": "MTP Accepted Run (EMA)",
@@ -477,6 +480,23 @@ class MultiTokenPrediction(nn.Module):
             if self.is_vear and self.training:
                 losses.add_loss("mtp_vear_repulsion", self.bank.repulsion_loss())
         return losses
+
+    @torch.no_grad()
+    def bridge_hidden(self, hidden_state, token_id, embed_fn):
+        """Estimate the hidden at ``token_id``'s position from the exact hidden
+        one position earlier.
+
+        A speculative step always commits one byte past the block its verify
+        forward actually read - the correction that ended a run, or the bonus
+        that followed a full one - so the next step has no measured hidden to
+        draft from. Depth 0 is trained for precisely this map, ``(hidden at p,
+        token at p+1) -> hidden at p+1``, which is the same step
+        ``draft_next_tokens`` takes internally. Only DRAFT QUALITY rides on the
+        estimate: every committed byte is still confirmed against a real
+        forward, so an inaccurate bridge costs accept rate and never
+        correctness.
+        """
+        return self._run_depth(0, hidden_state, embed_fn(token_id), None)
 
     @torch.no_grad()
     def draft_next_tokens(

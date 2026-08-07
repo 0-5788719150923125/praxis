@@ -29,6 +29,14 @@ class BaseHead(nn.Module, ABC):
     # generic TiedWeights head. Compositions inherit it from their terminal.
     self_ties: bool = False
 
+    # True if position ``t``'s logits depend only on positions ``0..t``, so
+    # reading position ``t`` out of a longer row equals running the prefix
+    # ending at ``t`` on its own. Heads that pool the whole sequence to route
+    # or normalize (SMEAR-style ``mean(dim=1)``) must declare False: the
+    # speculative decoder reads a whole candidate block out of ONE forward and
+    # falls back to re-encoding a row per candidate when this is False.
+    causal_readout: bool = True
+
     def __init__(self, config: ConfigType, encoder: Optional[nn.Module] = None) -> None:
         super().__init__()
         self.config = config

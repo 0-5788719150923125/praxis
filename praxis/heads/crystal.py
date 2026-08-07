@@ -492,27 +492,105 @@ class CrystalVearHead(BaseHead):
             probs = probs / (probs.sum(dim=-1, keepdim=True) + 1e-8)
         return probs
 
+    def _route_causal(
+        self, hidden_states: Tensor, mask: Optional[Tensor] = None
+    ) -> Tensor:
+        """Per-POSITION routing probs ``[B, T, N]`` from the PREFIX mean.
+
+        ``_route`` pools the whole sequence, so the crystal chosen for position
+        ``t`` depends on bytes after ``t``. That is a future read in a causal LM,
+        and it is the single thing that made speculative verification expensive:
+        appending draft bytes shifted the pooled mean and moved every earlier
+        logit, so ``_speculative_generate`` could not verify a block in one row
+        and fell back to one full re-encode per candidate.
+
+        The cumulative mean removes it. At position ``t`` this is the mean over
+        ``0..t``, which is exactly the sequence mean ``_route`` would compute for
+        a prefix ending at ``t`` - so reading position ``t`` of a long row equals
+        running that prefix alone. At the LAST real position the two agree
+        identically, so single-step greedy decoding is bit-for-bit unchanged;
+        only the earlier positions of a multi-position read move, and those were
+        the contaminated ones.
+        """
+        v = self.bank
+        x = hidden_states
+        if mask is not None:
+            m = mask.to(x.dtype).unsqueeze(-1)  # [B, T, 1]
+            router_input = (x * m).cumsum(1) / m.cumsum(1).clamp_min(1.0)
+        else:
+            count = torch.arange(1, x.size(1) + 1, device=x.device, dtype=x.dtype)
+            router_input = x.cumsum(1) / count.view(1, -1, 1)
+        router_input = v.router_norm(router_input)
+        weight = F.normalize(v.router.weight, dim=1)
+        logits = F.linear(router_input, weight, v.router.bias)
+        return torch.softmax(logits, dim=-1)
+
     def forward(self, hidden_states: Tensor, **kwargs: Any) -> Tensor:
         if self.pre_projection is not None:
             hidden_states = self.pre_projection(hidden_states)
         mask = kwargs.get("attention_mask", None)
-        probs = self._route(hidden_states, mask)  # [B, N] (post-dropout)
-        sharp = probs.pow(self._sharpen)
-        sharp = sharp / sharp.sum(dim=-1, keepdim=True).clamp_min(1e-8)  # [B, N]
         experts = self.bank.experts
         if self.training:
             # Training keeps the batch-mean merge (one crystal per batch, the
             # documented honest limit); unchanged, so a live run is undisturbed.
+            probs = self._route(hidden_states, mask)  # [B, N] (post-dropout)
+            sharp = probs.pow(self._sharpen)
+            sharp = sharp / sharp.sum(dim=-1, keepdim=True).clamp_min(1e-8)
             ew = sharp.mean(dim=0)
             merged = sum(ew[i] * experts[i].centers for i in range(len(experts)))
             return self._crystal_logits(hidden_states, merged, experts[0])
-        # Inference routes PER-SEQUENCE: each sequence gets its own merged
-        # crystal from its own (masked) routing, so a batched forward equals each
-        # sequence run alone - the invariant batched multi-token decode needs.
-        # For batch=1 (plain greedy) this is identical to the batch-mean above.
-        stacked = torch.stack([e.centers for e in experts], dim=0)  # [N, V, D]
-        merged = torch.einsum("bn,nvd->bvd", sharp, stacked)  # [B, V, D]
-        return self._crystal_logits_perseq(hidden_states, merged, experts[0])
+        # Inference routes PER POSITION on the prefix mean, so every position is
+        # a causal read: a batched forward equals each sequence run alone (the
+        # padding invariance batched decode needs) AND a long row equals each of
+        # its prefixes run alone (the property single-row speculative
+        # verification needs).
+        if hidden_states.dim() < 3:
+            probs = self._route(hidden_states, mask)
+            sharp = probs.pow(self._sharpen)
+            sharp = sharp / sharp.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+            stacked = torch.stack([e.centers for e in experts], dim=0)  # [N, V, D]
+            merged = torch.einsum("bn,nvd->bvd", sharp, stacked)  # [B, V, D]
+            return self._crystal_logits_perseq(hidden_states, merged, experts[0])
+        sharp = self._route_causal(hidden_states, mask).pow(self._sharpen)
+        sharp = sharp / sharp.sum(dim=-1, keepdim=True).clamp_min(1e-8)  # [B, T, N]
+        return self._crystal_logits_perpos(hidden_states, sharp, experts[0])
+
+    def _crystal_logits_perpos(
+        self, x: Tensor, sharp: Tensor, ref: nn.Module
+    ) -> Tensor:
+        """``_crystal_logits`` with a per-POSITION center set.
+
+        ``x`` ``[B, T, D]``, ``sharp`` ``[B, T, N]`` -> logits ``[B, T, V]``,
+        without ever materializing the ``[B, T, V, D]`` merged centers. Both
+        terms of ``||x - c||^2`` that depend on ``c`` are cheap in the mixing
+        weights: the cross term is linear (accumulate one expert at a time), and
+        the center norm is the quadratic form ``s^T G s`` over the precomputed
+        Gram ``G[n, m, v] = C_n[v] . C_m[v]``, which is only ``[N, N, V]``.
+        """
+        out_dtype = x.dtype
+        xf = x.float()  # [B, T, D]
+        centers = [e.centers.float() for e in self.bank.experts]
+        s = sharp.float()  # [B, T, N]
+        xx = (xf * xf).sum(-1, keepdim=True)  # [B, T, 1]
+        cx = None  # sum_n s_n (x . C_n)
+        for n, c in enumerate(centers):
+            term = s[..., n : n + 1] * (xf @ c.T)  # [B, T, V]
+            cx = term if cx is None else cx + term
+        stacked = torch.stack(centers, dim=0)  # [N, V, D]
+        gram = torch.einsum("nvd,mvd->nmv", stacked, stacked)  # [N, N, V]
+        ss = (s.unsqueeze(-1) * s.unsqueeze(-2)).flatten(-2)  # [B, T, N*N]
+        cc = ss @ gram.flatten(0, 1)  # [B, T, V]
+        dist_sq = (cc + xx - 2.0 * cx).clamp_min(ref.eps)
+        dist_sq = torch.nan_to_num(dist_sq, nan=1e9, posinf=1e9)
+        dist_sq = dist_sq / dist_sq.amin(dim=-1, keepdim=True)
+        pseudo_logits = -ref.n * torch.log(dist_sq)
+        if ref.label_smoothing > 0.0:
+            prob = (
+                torch.softmax(pseudo_logits, dim=-1)
+                + ref.label_smoothing / ref.vocab_size
+            )
+            pseudo_logits = torch.log(prob)
+        return pseudo_logits.to(out_dtype)
 
     def _crystal_logits(self, x: Tensor, centers: Tensor, ref: nn.Module) -> Tensor:
         """CrystalClassifier.forward, but with externally-merged ``centers`` (the

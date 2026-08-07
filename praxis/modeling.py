@@ -1054,33 +1054,41 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
     def _speculative_generate(self, input_ids, generation_config, **kwargs):
         """MTP-based speculative decoding for faster inference.
 
-        For each step:
-        1. Run main model forward to get hidden states and next-token logits
-        2. Draft N additional tokens greedily via MTP modules
-        3. Verify all N+1 candidates in a single main model forward pass
-        4. Accept the longest prefix where main model agrees with draft
+        ONE model forward per step. Each step:
+        1. Draft N candidates from the hidden states carried out of the previous
+           step's forward (the MTP bank; a few tenths of a percent of a forward)
+        2. Run ONE forward over ``generated + candidates``
+        3. Read position ``gen_len-1+k`` for the true next byte after
+           ``generated + candidates[:k]``, and accept up to the first divergence
+        4. Carry that same forward's hidden states into the next step
 
-        Byte-latent encoders take this path via byte-level MTP: up to N+1 bytes
-        land per two full forwards instead of one byte per forward, dropping the
-        forward count.
+        This works because every stage of the stack is causal, so position ``t``
+        of a long row equals running the prefix ending at ``t`` on its own. That
+        was NOT always true here. The scheme this replaces blamed byte-latent
+        patching ("non-causal within a partial patch") and verified each
+        truncated prefix ``P_k`` in its own re-encoded row, costing ``1 + N``
+        full-prefix forwards per step. The byte-latent core is in fact exactly
+        causal under append: the space patcher is prefix-monotone, the local
+        conv encoder/decoder are causal, and ``decoder_patch_ids_from_lengths``
+        drops patch 0 so byte ``t`` gathers a patch that closed at or before
+        ``t`` - no byte ever reads the open patch. The real contamination was a
+        head that pooled the whole sequence to route (see ``BaseHead.
+        causal_readout``). Heads that still do keep the truncated-prefix
+        verifier, ``_verify_prefixes_batched``, which remains correct.
 
-        Greedy is lossless on both paths (up to floating-point argmax ties).
-        Byte-latent patching is non-causal within a partial patch (appending
-        draft bytes shifts the last patch's earlier predictions), so a single
-        verify forward over ``generated + candidates`` reads contaminated
-        positions - the old approximate scheme. We instead verify each truncated
-        prefix ``P_k = generated + candidates[:k]`` at its OWN last real position
-        - a causal, padding-invariant read - batched into one masked forward
-        (``_verify_prefixes_batched``). In exact arithmetic each accepted byte
-        equals what byte-by-byte greedy would print; the only residual
-        divergences are argmax ties where the batched matmul's reduction order
-        flips two logits within ~1e-3 of each other (an inherent property of
-        batched GEMM, and points where greedy is itself ill-defined). (With
-        ``do_sample`` the per-position reads are causal but acceptance stays
-        equality-based, so sampling remains approximate; greedy is the
-        guarantee. Candidate 0 - the main forward's own sample - is exempt
-        from re-verification: accepting it is distribution-exact, since it was
-        drawn from precisely the conditional the verify would re-sample.)
+        A step always commits one byte past the block it verified - the
+        correction that ended a run, or the bonus that followed a full one - so
+        no forward has ever seen that position and its hidden is supplied by
+        ``mtp.bridge_hidden``. That estimate steers only the NEXT step's drafts;
+        every committed byte is still confirmed against a real read, so a poor
+        bridge costs accept rate and never correctness.
+
+        Greedy is lossless (up to floating-point argmax ties, where greedy is
+        itself ill-defined). With ``do_sample`` acceptance stays equality-based,
+        so sampling remains approximate; greedy is the guarantee. Candidate 0 is
+        exempt from re-verification only when it was drawn from a MEASURED
+        hidden, where accepting it is distribution-exact; when it came from the
+        bridge it is verified like any other candidate.
         """
         from types import SimpleNamespace
 
@@ -1167,49 +1175,82 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         embed_fn = self.embeds if self.encoder else self.get_input_embeddings()
         num_new = 0
 
+        # A head whose logits at position t depend on bytes after t (SMEAR-style
+        # sequence pooling) cannot have a whole candidate block read out of one
+        # row, and falls back to the truncated-prefix verifier below - correct,
+        # but a full re-encode per candidate. Default False so a head that has
+        # not declared the property takes the safe path.
+        single_row = bool(getattr(self.head, "causal_readout", False))
+
+        # Hidden states aligned with `generated`, so the MTP has something to
+        # draft from without a forward of its own. Rebuilt from each step's
+        # verify forward. `first_exact` records whether its LAST position came
+        # from a real forward or from the MTP bridge.
+        h_row = None
+        first_exact = False
+
         while num_new < max_new_tokens:
             # Where this step's commits start, so the stop-string scan below
             # only inspects bytes this step produced.
             step_start = generated.size(1)
+            gen_len = generated.size(1)
 
-            # Main model forward pass to get hidden states
-            main_logits, hidden_states = self._spec_logits_and_hidden(generated)
+            if h_row is None:
+                # Only the first step (or the fallback path, which drops h_row
+                # every step because its verifier returns no hidden states).
+                main_logits, h_row = self._spec_logits_and_hidden(generated)
+                last_logits = main_logits[:, -1, :]
+                first_exact = True
+            else:
+                # The trunk already ran over these positions last step; only the
+                # head is re-applied, which is a few percent of a forward.
+                last_logits = self.head(h_row)[:, -1, :]
 
-            # First token: main forward's last position, penalized over `generated`.
-            last_logits = main_logits[:, -1, :]
+            # First candidate: the model's own next-byte pick when `h_row` ends
+            # on a measured position, a draft when it ends on the bridge. The
+            # verify below reads position gen_len-1 either way, so this is
+            # confirmed like any other candidate rather than trusted.
             token_0 = pick(last_logits, generated)
             token_0_2d = token_0.unsqueeze(1)
-
-            if token_0.item() in eos_set:
-                generated = torch.cat([generated, token_0_2d], dim=1)
-                num_new += 1
-                break
 
             # Draft additional tokens with MTP. The width is the run length
             # acceptance actually delivers (mtp.draft_width), not the trained
             # depth: candidates past the first divergence are discarded, but
-            # each one still costs a sequential draft here and - on the
-            # byte-latent path - its own row in the verify batch below. Cutting
-            # the width cannot change what gets committed, only how much is
-            # thrown away, so greedy stays lossless.
+            # each one still costs a sequential draft here and one more column
+            # in the verify row. Cutting the width cannot change what gets
+            # committed, only how much is thrown away, so greedy stays lossless.
             draft_ids = self.mtp.draft_next_tokens(
-                hidden_states[:, -1:, :], token_0_2d, embed_fn, self.head
+                h_row[:, -1:, :], token_0_2d, embed_fn, self.head
             )
 
-            # Combine: main prediction + drafts → [batch, 1+N]
+            # Combine: first pick + drafts → [batch, 1+N]
             candidates = torch.cat([token_0_2d, draft_ids], dim=1)
             n_candidates = candidates.size(1)
 
             # Greedy target following prefix P_k = generated + candidates[:k]; the
-            # penalty context is that same prefix. Byte-latent reads each prefix's
-            # OWN last position (lossless); token models read one causal verify.
+            # penalty context is that same prefix.
             def prefix_ids(k):
                 if k == 0:
                     return generated
                 return torch.cat([generated, candidates[:, :k]], dim=1)
 
-            if self.encoder:
+            if single_row:
+                # ONE causal forward over prefix + candidates. Position
+                # gen_len-1+k carries the true next-byte logits after
+                # `generated + candidates[:k]` AND the hidden at that prefix's
+                # last byte, so this single row supplies both the verification
+                # and the next step's drafting state.
+                row = torch.cat([generated, candidates], dim=1)
+                verify_logits, verify_hidden = self._spec_logits_and_hidden(row)
+
+                def raw_at(k):
+                    return verify_logits[:, gen_len - 1 + k, :]
+
+            elif self.encoder:
+                # Non-causal head: byte-latent must read each prefix's OWN last
+                # position, batched behind a mask (lossless, but n re-encodes).
                 pred_logits = self._verify_prefixes_batched(generated, candidates)
+                verify_hidden = None
 
                 def raw_at(k):
                     return last_logits if k == 0 else pred_logits[k - 1 : k]
@@ -1217,7 +1258,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             else:
                 verify_input = torch.cat([generated, candidates], dim=1)
                 verify_logits, _ = self._spec_logits_and_hidden(verify_input)
-                gen_len = generated.size(1)
+                verify_hidden = None
 
                 def raw_at(k):
                     return verify_logits[:, gen_len - 1 + k, :]
@@ -1225,20 +1266,27 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             def target_at(k):
                 return pick(raw_at(k), prefix_ids(k))
 
-            def bonus_at():
-                return pick(raw_at(n_candidates), prefix_ids(n_candidates))
+            def carry(exact_len, token):
+                """Next step's `h_row`: measured through `exact_len` positions,
+                bridged for the one byte past them."""
+                if verify_hidden is None:
+                    return None
+                exact = verify_hidden[:, :exact_len, :]
+                bridged = self.mtp.bridge_hidden(
+                    exact[:, -1:, :], token.unsqueeze(1), embed_fn
+                )
+                return torch.cat([exact, bridged], dim=1)
 
-            # Candidate 0 is the main forward's own pick, so it is accepted
-            # outright. Greedy: the verify argmax is identical by construction.
-            # Sampled: the verify would re-draw from the SAME distribution
-            # token_0 was just sampled from - a fresh multinomial matches only
-            # with probability sum(p^2), so re-rolling adds no correctness
-            # (token_0 is already a valid sample of that conditional), it only
-            # rejects committed bytes and drags the width EMA down. Every step
-            # therefore commits at least token_0 plus one (correction or
-            # bonus); verification starts at the first true draft.
-            accepted = 1
-            for i in range(1, n_candidates):
+            # Under sampling, a candidate 0 drawn from a MEASURED hidden is
+            # already a valid draw from the conditional the verify would
+            # re-sample; a fresh multinomial matches only with probability
+            # sum(p^2), so re-rolling adds no correctness and only drags the
+            # width EMA down. Greedy verifies from 0 - the read is real and
+            # confirms by construction - which is what keeps it lossless when
+            # candidate 0 came from the bridge instead.
+            skip_first = do_sample and first_exact
+            accepted = 1 if skip_first else 0
+            for i in range(accepted, n_candidates):
                 v_token = target_at(i)
 
                 if v_token.item() == candidates[:, i].item():
@@ -1262,6 +1310,8 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                     # The run ended here, so the width this step used was right
                     # (or too wide) - feed the observed run back.
                     self.mtp.note_accepted(accepted)
+                    h_row = carry(gen_len + accepted, v_token)
+                    first_exact = False
                     # The correction token is committed like any other, so it
                     # can be the halt token. Without this test a halt landing on
                     # the first divergence is swallowed and the next step
@@ -1279,11 +1329,15 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 # The window filled: the run was at least this long, so the EMA
                 # is pulled UP and the next step probes wider.
                 self.mtp.note_accepted(n_candidates)
+                h_row = verify_hidden
+                first_exact = verify_hidden is not None
 
                 if num_new < max_new_tokens:
-                    bonus = bonus_at()
+                    bonus = target_at(n_candidates)
                     generated = torch.cat([generated, bonus.unsqueeze(1)], dim=1)
                     num_new += 1
+                    h_row = carry(gen_len + n_candidates, bonus)
+                    first_exact = False
                     if bonus.item() in eos_set:
                         break
 

@@ -426,6 +426,97 @@ def test_batched_verify_matches_single_row(spec_config):
     assert max_diff < 5e-2, f"batched verify diverges from single-row by {max_diff:.2e}"
 
 
+def test_readout_is_causal_under_append(spec_config):
+    """Appending bytes must not move ANY earlier logit.
+
+    This is the property the one-forward speculative step rests on: a whole
+    candidate block is verified by reading positions gen_len-1+k out of a
+    single row, which is only lossless if each of those positions equals the
+    prefix ending there run on its own. Every stage of the byte-latent stack
+    is already causal (prefix-monotone space patching, causal conv local
+    encoder/decoder, and decoder_patch_ids never gathering the open patch);
+    the head is the piece that had to be fixed, because a SMEAR-style
+    ``mean(dim=1)`` route let a draft byte reach back and re-route every
+    earlier position. A head that reintroduces sequence pooling must set
+    ``causal_readout = False`` rather than break this.
+    """
+    torch.manual_seed(0)
+    model = PraxisForCausalLM(spec_config).eval()
+    assert model.head.causal_readout, "spec_config's head must declare causal readout"
+    base = torch.randint(4, 260, (1, 24))
+
+    # Information test: two rows of the SAME length differing only in the tail.
+    # Both tails are alphanumeric bytes ('x' / 'y'), which the space patcher
+    # never cuts on, so the two rows patch to the same number of patches and
+    # every kernel sees identical shapes. Anything above zero here is then a
+    # genuine future read rather than reduction-order noise.
+    from praxis.encoders.byte_latent.constants import OFFSET
+
+    x_id, y_id = OFFSET + ord("x"), OFFSET + ord("y")
+    with torch.no_grad():
+        a = model(input_ids=torch.cat([base, torch.full((1, 3), x_id)], 1)).logits
+        b = model(input_ids=torch.cat([base, torch.full((1, 3), y_id)], 1)).logits
+    leak = (a[:, :24] - b[:, :24]).abs().max().item()
+    assert leak == 0.0, f"tail bytes moved earlier logits by {leak:.2e}"
+
+    # Length test: a longer row vs the prefix run alone. Shapes differ here, so
+    # batched-GEMM reduction order moves the last bits; only float noise should
+    # remain, and the argmax must not move at all.
+    with torch.no_grad():
+        short = model(input_ids=base).logits
+    drift = (a[:, :24] - short).abs().max().item()
+    assert drift < 1e-4, f"lengthening the row moved earlier logits by {drift:.2e}"
+    flips = (a[0, :24].argmax(-1) != short[0].argmax(-1)).sum().item()
+    assert flips == 0, f"{flips} argmax flips from lengthening the row"
+
+
+def test_speculative_uses_one_forward_per_step(spec_config):
+    """A causal-readout head decodes with ONE model forward per step.
+
+    The scheme this replaced ran a main forward plus a verify forward whose
+    batch held one re-encoded row PER candidate, so a step cost 1 + n
+    full-prefix forwards. Now the single verify row carries both the
+    verification and the next step's drafting hidden, so total forwards must
+    not exceed the number of speculative steps (plus the one that primes the
+    loop).
+    """
+    from types import SimpleNamespace
+
+    torch.manual_seed(0)
+    model = PraxisForCausalLM(spec_config).eval()
+    ids = torch.randint(4, 260, (1, 16))
+
+    seen = []
+    original = PraxisForCausalLM._spec_logits_and_hidden
+
+    def counting(self, generated, attention_mask=None):
+        seen.append(generated.shape)
+        return original(self, generated, attention_mask)
+
+    PraxisForCausalLM._spec_logits_and_hidden = counting
+    try:
+        out = model._speculative_generate(
+            ids,
+            SimpleNamespace(
+                max_new_tokens=24,
+                do_sample=False,
+                temperature=1.0,
+                num_beams=1,
+                eos_token_id=None,
+                repetition_penalty=1.0,
+            ),
+        )
+    finally:
+        PraxisForCausalLM._spec_logits_and_hidden = original
+
+    produced = out.shape[1] - ids.shape[1]
+    assert produced > 0
+    # Every forward is a single row: no per-candidate re-encode survives.
+    assert all(s[0] == 1 for s in seen), f"batched verify rows leaked back in: {seen}"
+    # At worst one forward per committed byte, plus the priming forward.
+    assert len(seen) <= produced + 1, f"{len(seen)} forwards for {produced} bytes"
+
+
 def test_speculative_matches_byte_by_byte_greedy(spec_config):
     """Greedy speculative decoding == byte-by-byte greedy, up to float ties.
 
@@ -532,14 +623,25 @@ def test_speculative_honors_repetition_penalty(spec_config):
                 break
 
 
-def test_speculative_sampled_auto_accepts_main_token(spec_config):
-    """Under sampling, candidate 0 (the main forward's own sample) is accepted
-    outright - re-drawing from the same distribution adds no correctness, only
-    spurious rejections that cost a committed byte and drag the width EMA
-    down. Post-fix invariant: every speculative step commits at least the main
-    token plus one, so the accept EMA (init 1.0, fed runs >= 1) never falls
-    below 1 - and the realized-throughput metrics surface once generation has
-    run."""
+def test_speculative_sampled_always_commits(spec_config):
+    """Under sampling every step commits at least one byte, drawn from a REAL
+    conditional, and the realized-throughput metrics stay in range.
+
+    Candidate 0 is auto-accepted only when it was sampled from a MEASURED
+    hidden: re-drawing from the same distribution adds no correctness, only
+    spurious rejections. When it came from ``mtp.bridge_hidden`` instead (the
+    common case - every step commits one byte past the block its forward read)
+    it is an approximate draw, so it is verified like any other candidate and
+    the step falls back to committing the verify's own sample. That byte is
+    still exact, so progress is guaranteed and no committed byte ever comes
+    from the bridge.
+
+    The accept EMA therefore MAY sit below 1 under sampling, and that is the
+    honest reading: equality-based acceptance of a sampled draft succeeds with
+    probability ~sum(p^2), so drafts genuinely rarely survive. The old
+    invariant (EMA >= 1 always) was an artifact of auto-accepting candidate 0
+    unconditionally, which counted a byte the drafts had not earned.
+    """
     from types import SimpleNamespace
 
     torch.manual_seed(0)
@@ -557,10 +659,10 @@ def test_speculative_sampled_auto_accepts_main_token(spec_config):
     out = model._speculative_generate(ids, gen_cfg)
     assert out.shape[1] >= ids.shape[1] + 24  # sampled steps still commit
     assert model.mtp._accept_seen > 0
-    assert model.mtp._accept_ema >= 1.0 - 1e-9
+    assert model.mtp._accept_ema >= 0.0
 
     metrics = model.mtp.training_metrics()
-    assert metrics["mtp_accept_run"] >= 1.0 - 1e-9
+    assert metrics["mtp_accept_run"] >= 0.0
     assert 1 <= metrics["mtp_draft_width"] <= spec_config.mtp_depth
 
 

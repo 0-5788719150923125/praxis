@@ -60,6 +60,12 @@ class ParallelHead(BaseHead):
     # the gradient stays finite. Fixed, model-agnostic.
     _REPULSION_EPS = 1e-2
 
+    @property
+    def causal_readout(self) -> bool:
+        """A gated combination is causal only if every branch is: one
+        sequence-pooling branch contaminates the combined logits."""
+        return all(getattr(b, "causal_readout", False) for b in self.branches)
+
     def __init__(
         self,
         config: Any,
