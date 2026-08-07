@@ -44,7 +44,7 @@ Praxis is organized as 50 pluggable registries. The feature categories below lin
 - [Sequence compression](docs/compression.md) (3)
 - [Sequence sorting](docs/sorting.md) (5)
 - [Token embeddings](docs/embeddings.md) (14)
-- [Token routers](docs/routers.md) (13)
+- [Token routers](docs/routers.md) (15)
 - [Training strategies](docs/strategies.md) (4)
 - [Training-loop governors](docs/governors.md) (1)
 

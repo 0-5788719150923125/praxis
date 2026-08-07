@@ -2,6 +2,7 @@ from functools import partial
 from typing import Optional, TypeVar
 
 from praxis.routers.arc import ArcMixture
+from praxis.routers.arc_smear import ArcSMEAR, ArcVEAR
 from praxis.routers.distance import Distance
 from praxis.routers.mixture_of_depths import MixtureOfDepths
 from praxis.routers.prismatic import Prismatic
@@ -107,6 +108,11 @@ ROUTER_REGISTRY = dict(
     # VEAR: variance-driven SMEAR - sharpened routing + inter-expert repulsion for
     # discrete, unique geometries (praxis/routers/vear.py).
     vear=VEAR,
+    # Depth-aware variants: a zero-init per-recurrent-pass bias on the router
+    # logits, so each pass merges its own expert mixture instead of every depth
+    # sharing one routing (praxis/routers/arc_smear.py). Identity at init.
+    arc_smear=ArcSMEAR,
+    arc_vear=ArcVEAR,
     distance=Distance,
     prismatic=Prismatic,
     taxus=create_taxus_with_dynamic_budget,

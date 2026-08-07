@@ -3,7 +3,7 @@
 
 Token-routing mechanisms, including the Mixture-of-Depths family that skips a fraction of tokens per layer.
 
-Registry: ``praxis.ROUTER_REGISTRY`` (13 entries)
+Registry: ``praxis.ROUTER_REGISTRY`` (15 entries)
 
 ## `arc_mixture` - ArcMixture
 
@@ -16,6 +16,22 @@ the router weight vector, so the routing *direction* (not just a uniform thresho
 specializes per pass. Zero-init coefficients mean the model starts identical to ...
 
 Source: [praxis/routers/arc.py:48](../praxis/routers/arc.py#L48)
+
+## `arc_smear` - ArcSMEAR
+
+SMEAR with a per-recurrent-pass routing bias.
+
+Source: [praxis/routers/arc_smear.py:84](../praxis/routers/arc_smear.py#L84)
+
+## `arc_vear` - ArcVEAR
+
+VEAR with a per-recurrent-pass routing bias.
+
+Keeps VEAR's sharpening, repulsion and balancing; the bias is applied to the logits
+beforehand, so it changes which expert a pass concentrates on rather than how sharply it
+concentrates.
+
+Source: [praxis/routers/arc_smear.py:92](../praxis/routers/arc_smear.py#L92)
 
 ## `distance` - Distance
 
@@ -79,7 +95,7 @@ SMEAR dynamically merges expert parameters based on routing probabilities, rathe
 routing inputs to multiple experts. This enables more efficient parameter sharing and
 adaptation to input patterns.
 
-Source: [praxis/routers/smear.py:23](../praxis/routers/smear.py#L23)
+Source: [praxis/routers/smear.py:29](../praxis/routers/smear.py#L29)
 
 ## `taxus`
 

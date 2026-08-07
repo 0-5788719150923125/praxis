@@ -17,6 +17,27 @@ from praxis.orchestration import EXPERT_REGISTRY
 from praxis.sorting import SORTING_REGISTRY
 from praxis.width import WIDTH_REGISTRY
 
+
+def _wants_expert_bank(router_type: Optional[str]) -> bool:
+    """Whether this router is built with a BANK of experts to merge.
+
+    Asks the registered class, not a hardcoded name list: SMEAR-family routers
+    raise at construction without ``experts=``, so a new subclass (arc_smear,
+    arc_vear) that was not in the list silently got the single-block branch and
+    then failed to build. Distance is not a SMEAR subclass but takes the same
+    bank, so it stays named.
+    """
+    if not router_type:
+        return False
+    from praxis.routers import ROUTER_REGISTRY
+    from praxis.routers.smear import SMEAR
+
+    cls = ROUTER_REGISTRY.get(router_type)
+    cls = getattr(cls, "func", cls)  # unwrap functools.partial entries
+    return router_type == "distance" or (
+        isinstance(cls, type) and issubclass(cls, SMEAR)
+    )
+
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
@@ -79,7 +100,7 @@ class BaseDecoder(nn.Module):
             expert = LocalLayer(config, block=block)
             for i in range(self.num_layers):
                 self.locals.append(expert)
-        elif config.router_type in ("smear", "vear", "distance"):
+        elif _wants_expert_bank(config.router_type):
             # For SMEAR/VEAR and Distance routers with multiple experts, create a single LocalLayer
             # that manages all experts and reuse it across all positions
             expert_blocks = []

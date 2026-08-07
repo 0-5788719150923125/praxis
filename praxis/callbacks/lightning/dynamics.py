@@ -120,6 +120,10 @@ class DynamicsLoggerCallback(Callback):
             # stashed by GNSBatchGovernor on its decision cadence.
             dynamics.update(self._extract_governor_dynamics(model))
 
+            # Per-module compute-time attribution (coverage, dominant share),
+            # stashed by ComputeProfilerCallback on its sampling cadence.
+            dynamics.update(self._extract_compute_dynamics(model))
+
             if dynamics:
                 self._success_count += 1
                 if self._success_count <= 3:
@@ -375,6 +379,20 @@ class DynamicsLoggerCallback(Callback):
         """
         core = getattr(model, "_orig_mod", model)
         metrics = getattr(core, "_rlct_metrics", None)
+        if not isinstance(metrics, dict):
+            return {}
+        return {k: v for k, v in metrics.items() if isinstance(v, (int, float))}
+
+    def _extract_compute_dynamics(self, model) -> dict:
+        """Drain the compute-profiler scalars stashed by ComputeProfilerCallback.
+
+        The profiler samples one step in ``interval`` and EMA-smooths across
+        samples; we re-log the standing value each dynamics tick, same as the
+        RLCT stash. Empty until the first profiled step lands (and always under
+        torch.compile, where the profiler installs nothing).
+        """
+        core = getattr(model, "_orig_mod", model)
+        metrics = getattr(core, "_compute_metrics", None)
         if not isinstance(metrics, dict):
             return {}
         return {k: v for k, v in metrics.items() if isinstance(v, (int, float))}

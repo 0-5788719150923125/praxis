@@ -129,3 +129,49 @@ def test_sparse_gated_banks_stay_sparse():
     assert module._gathers()  # sparse always gathers
     out = module(torch.randn(2, 8, 64), current_depth=0)
     assert out.shape == (2, 8, 64)
+
+
+# ── odd hidden_size ─────────────────────────────────────────────────────────
+# There used to be an `assert (hidden_size % 2) == 0` here, inherited from
+# reference product-key implementations that project to `dim` and `.chunk(2)`
+# it. This one emits `key_dims * num_heads * 2` from the query net instead, so
+# the halving never touches the model width. These pin that.
+
+ODD_WIDTHS = [33, 65, 111, 257]
+
+
+@pytest.mark.parametrize("hidden_size", ODD_WIDTHS)
+@pytest.mark.parametrize("expert", ["peer", "peer_glu"])
+def test_odd_hidden_size_builds_and_runs(hidden_size, expert):
+    config = make_config(hidden_size=hidden_size, num_heads=4)
+    module = DENSE_REGISTRY[expert](config)
+
+    x = torch.randn(2, 8, hidden_size, requires_grad=True)
+    y = module(x)
+    assert y.shape == x.shape
+    assert torch.isfinite(y).all()
+
+    y.square().mean().backward()
+    grads = [p.grad for p in module.parameters() if p.grad is not None]
+    assert grads, "no parameter received a gradient"
+    assert all(torch.isfinite(g).all() for g in grads)
+
+
+@pytest.mark.parametrize("expert", ["peer", "peer_glu"])
+def test_odd_width_matches_its_even_neighbour(expert):
+    """Parity is not a cliff: 111 and 112 size the bank identically."""
+    odd = DENSE_REGISTRY[expert](make_config(hidden_size=111, num_heads=4))
+    even = DENSE_REGISTRY[expert](make_config(hidden_size=112, num_heads=4))
+    assert odd.num_experts == even.num_experts
+    assert odd.key_dims == even.key_dims
+    assert odd.num_keys == even.num_keys
+
+
+def test_key_dims_floor_holds_at_a_tiny_odd_width():
+    """hidden_size // (2 * num_heads) floors to 0 here; MIN_KEY_DIMS catches it."""
+    from praxis.dense.peer import MIN_KEY_DIMS
+
+    module = DENSE_REGISTRY["peer"](make_config(hidden_size=3, num_heads=4))
+    assert module.key_dims == MIN_KEY_DIMS
+    x = torch.randn(2, 4, 3)
+    assert module(x).shape == x.shape

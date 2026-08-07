@@ -61,6 +61,12 @@ _MAX_INIT_DEPTH: int = 128
 class VEAR(SMEAR):
     """Variance-driven Experts with Adaptive Routing (sharpened, repelled SMEAR)."""
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Latch for _ensure_experts_initialized; see there for why the guard
+        # itself, not the work it guards, was the per-forward cost.
+        self._experts_ready: bool = False
+
     # Opt in to SMEAR's across-batch load balancing. Plain SMEAR leaves it off:
     # it merges by the router's own probabilities, so a weak expert still gets a
     # proportional share of gradient. VEAR's p**4 drives the merge to one-hot,
@@ -130,6 +136,13 @@ class VEAR(SMEAR):
         lazy type), then fall back to a sibling-borrow probe for anything not
         indexed by depth. Gated on uninitialized params -> a one-time no-op after."""
 
+        # The materialization is one-time, but the CHECK was not: with nothing
+        # left uninitialized - the steady state from step 2 onward - `any()`
+        # cannot short-circuit and rescans every parameter of every expert, on
+        # every forward, at every recurrent depth. Latch it instead.
+        if self._experts_ready:
+            return
+
         def any_uninit() -> bool:
             return any(
                 isinstance(p, UninitializedParameter)
@@ -138,6 +151,7 @@ class VEAR(SMEAR):
             )
 
         if not any_uninit():
+            self._experts_ready = True
             return
         args = list(expert_args)
         # Router-mode expert args: (inputs, attention_mask, past_key_values,
@@ -156,6 +170,8 @@ class VEAR(SMEAR):
                         e(*args)
             if any_uninit():  # stragglers not reached by the depth sweep
                 self._materialize_lazy_siblings(expert_args[0].device)
+        # Only latch once nothing is lazy; a straggler must keep the slow path.
+        self._experts_ready = not any_uninit()
 
     def _materialize_lazy_siblings(self, device) -> None:
         """Probe still-lazy entries of any per-depth ``ModuleList`` (only one

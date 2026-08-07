@@ -134,6 +134,10 @@ def _recipe_head_snapshots(model):
     rlct = getattr(model, "_rlct_landscape", None)
     if isinstance(rlct, dict):
         snapshots.update(rlct)
+    # Per-module compute-time treemap, stashed by ComputeProfilerCallback.
+    compute = getattr(model, "_compute_profile", None)
+    if isinstance(compute, dict):
+        snapshots.update(compute)
     return {
         "status": "ok" if snapshots else "no_data",
         "snapshots": snapshots,

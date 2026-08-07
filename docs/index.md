@@ -29,7 +29,7 @@ Praxis is built around 50 pluggable registries. The feature categories below lin
 - [Sequence compression](compression.md) (3) - Strategies for reducing sequence length between layers.
 - [Sequence sorting](sorting.md) (5) - Optional reordering operations applied to the sequence.
 - [Token embeddings](embeddings.md) (14) - Input embedding layers, paired with the corresponding block type.
-- [Token routers](routers.md) (13) - Token-routing mechanisms, including the Mixture-of-Depths family that skips a fraction of tokens per layer.
+- [Token routers](routers.md) (15) - Token-routing mechanisms, including the Mixture-of-Depths family that skips a fraction of tokens per layer.
 - [Training strategies](strategies.md) (4) - Multi-task / task-weighting strategies used by the trainer.
 - [Training-loop governors](governors.md) (1) - Feedback controllers over loop-level knobs, driven by endogenous signals - e.g. ``gns_batch`` governs the gradient-accumulation factor by tracking the measured gradient noise scale.
 

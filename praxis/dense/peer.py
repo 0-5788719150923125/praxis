@@ -147,7 +147,17 @@ class ParameterEfficientExpertRetrieval(BaseDense):
         self.hidden_size: int = hidden_size
         self.sparse: bool = sparse
 
-        assert (hidden_size % 2) == 0, "`hidden_size` should be divisible by 2"
+        # No parity constraint on hidden_size. Every use of it here is a
+        # projection width, never a split: the `2` throughout is the
+        # product-key half count, which the query net *emits*
+        # (`key_dims * num_heads * 2`) rather than carving out of the model
+        # width. The one arithmetic contact, `hidden_size // (2 * num_heads)`,
+        # is a floor already guarded by MIN_KEY_DIMS. Reference product-key
+        # implementations assert on evenness because they project to `dim` and
+        # `.chunk(2)` it; this one does not, so the assert that used to live
+        # here was inherited, not earned. Verified at odd widths (111, 65, 257,
+        # 33, 3): correct output shape, finite grads, and the same expert
+        # count and key_dims as the neighbouring even width.
 
         class Permute(nn.Module):
             """Permute dimensions of tensor for product key memory."""

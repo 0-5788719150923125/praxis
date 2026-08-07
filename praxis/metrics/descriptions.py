@@ -219,6 +219,16 @@ def get_metric_descriptions(model: Any) -> Dict[str, Dict[str, Any]]:
             entry = out.get(key)
             if entry is not None and "caller" not in entry:
                 entry["caller"] = "GNSBatchGovernor"
+    # Same pattern for the compute profiler: only present once a profiled step
+    # has landed, so a run that never profiles (torch.compile) shows no empty card.
+    if getattr(_core, "_compute_profile", None) is not None:
+        from praxis.metrics.compute import COMPUTE_METRIC_DESCRIPTIONS
+
+        out.update(_collect_from(COMPUTE_METRIC_DESCRIPTIONS))
+        for key in COMPUTE_METRIC_DESCRIPTIONS:
+            entry = out.get(key)
+            if entry is not None and "caller" not in entry:
+                entry["caller"] = "ComputeProfiler"
     # Same pattern for the probe-attribution sequence curriculum.
     if getattr(_core, "_seq_probe_metrics", None) is not None:
         from praxis.data.seq_probe import SEQ_PROBE_METRIC_DESCRIPTIONS

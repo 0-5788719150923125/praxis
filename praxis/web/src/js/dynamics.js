@@ -3,7 +3,7 @@
  * Tracks per-layer gradient flow, update ratios, and per-expert dynamics.
  */
 
-import { state, CONSTANTS, chartLineColor } from './state.js';
+import { state, CONSTANTS, chartLineColor, currentAccentHue } from './state.js';
 import { fetchAPI } from './api.js';
 import { createTabHeader, pdfButton } from './components.js';
 import { formatRelativeTime, initChartDeck, applyChartTheme, upsertChart, formatAxisTick } from './charts.js';
@@ -2405,8 +2405,266 @@ function renderRegimeRiver(canvas, data, options) {
     ctx.textBaseline = 'alphabetic';
 }
 
+/**
+ * Squarified treemap layout (Bruls, Huizing & van Wijk).
+ *
+ * Lays `items` ({value, ...}) into the rect, greedily filling strips along the
+ * shorter side and closing a strip when adding the next item would worsen its
+ * worst aspect ratio. Returns [{item, x, y, w, h}] - tiles whose AREA is
+ * proportional to value, which is the whole point: share is readable as size.
+ */
+function squarifyLayout(items, x0, y0, w0, h0) {
+    const out = [];
+    const vals = (items || []).filter((it) => it.value > 0);
+    if (!vals.length || w0 <= 1 || h0 <= 1) return out;
+    const total = vals.reduce((s, it) => s + it.value, 0);
+    if (total <= 0) return out;
+
+    const scale = (w0 * h0) / total;
+    const queue = vals
+        .map((it) => ({ ref: it, area: it.value * scale }))
+        .sort((a, b) => b.area - a.area);
+
+    const worst = (row, side) => {
+        if (!row.length || side <= 0) return Infinity;
+        let sum = 0, mx = -Infinity, mn = Infinity;
+        for (const r of row) {
+            sum += r.area;
+            if (r.area > mx) mx = r.area;
+            if (r.area < mn) mn = r.area;
+        }
+        if (sum <= 0 || mn <= 0) return Infinity;
+        const s2 = sum * sum, side2 = side * side;
+        return Math.max((side2 * mx) / s2, s2 / (side2 * mn));
+    };
+
+    let x = x0, y = y0, w = w0, h = h0, i = 0;
+    while (i < queue.length && w > 0.5 && h > 0.5) {
+        const side = Math.min(w, h);
+        const row = [];
+        while (i < queue.length) {
+            if (row.length && worst(row.concat([queue[i]]), side) > worst(row, side)) break;
+            row.push(queue[i]);
+            i++;
+        }
+        if (!row.length) break;
+        const rowArea = row.reduce((s, r) => s + r.area, 0);
+        if (w >= h) {
+            const thick = Math.min(w, rowArea / h);
+            let cy = y;
+            for (const r of row) {
+                const rh = (r.area / rowArea) * h;
+                out.push({ item: r.ref, x, y: cy, w: thick, h: rh });
+                cy += rh;
+            }
+            x += thick;
+            w -= thick;
+        } else {
+            const thick = Math.min(h, rowArea / w);
+            let cx = x;
+            for (const r of row) {
+                const rw = (r.area / rowArea) * w;
+                out.push({ item: r.ref, x: cx, y, w: rw, h: thick });
+                cx += rw;
+            }
+            y += thick;
+            h -= thick;
+        }
+    }
+    return out;
+}
+
+/**
+ * Compute-time treemap: where the training step's GPU time goes.
+ *
+ * Outer tiles are module CLASSES, subdivided into the individual modules of
+ * that class - qdirstat for compute. A ranked table underneath carries the
+ * numbers the tiles cannot hold. Both are drawn on the one canvas the card
+ * shell provides, so nothing here fights the deck's DOM.
+ *
+ * Payload: praxis/metrics/compute.py :: ComputeProfiler.snapshot().
+ */
+function renderComputeTreemap(canvas, data, options = {}) {
+    const groups = (data?.groups || []).filter((g) => g.ms > 0);
+    if (!groups.length) return;
+
+    const wrapper = canvas.parentElement;
+    const cssW = wrapper.clientWidth || 800;
+    const cssH = wrapper.clientHeight || 400;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    canvas.style.width = `${cssW}px`;
+    canvas.style.height = `${cssH}px`;
+
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const { textColor, gridColor } = getThemeColors();
+    const isDark = state.theme === 'dark';
+    const muted = isDark ? 'rgba(224,224,224,0.62)' : 'rgba(31,31,31,0.62)';
+    const hue0 = currentAccentHue();
+
+    // Classes get rotating hues off the brand accent so tiles stay on-palette
+    // and distinguishable; the non-module buckets are deliberately colourless
+    // so nobody reads them as a slow layer. Returns the lightness too, so the
+    // label can pick its own contrast rather than trusting the page theme -
+    // a pale tile in dark mode still needs dark text.
+    const tileStyle = (g, idx, depth) => {
+        if (g.outside) return { fill: isDark ? 'hsl(0,0%,34%)' : 'hsl(0,0%,74%)', lum: isDark ? 34 : 74 };
+        if (g.residual) return { fill: isDark ? 'hsl(0,0%,27%)' : 'hsl(0,0%,82%)', lum: isDark ? 27 : 82 };
+        const hue = (hue0 + idx * 47) % 360;
+        const lum = isDark ? 36 + depth * 11 : 66 - depth * 9;
+        return { fill: `hsl(${hue}, ${isDark ? 38 : 46}%, ${lum}%)`, lum };
+    };
+    const inkFor = (lum) => (lum > 52 ? '#101010' : '#f4f4f4');
+    const ellipsize = (s, max) => {
+        if (ctx.measureText(s).width <= max) return s;
+        let out = s;
+        while (out.length > 1 && ctx.measureText(`${out}…`).width > max) out = out.slice(0, -1);
+        return `${out}…`;
+    };
+
+    const headerH = 20;
+    const tableRows = Math.min(8, groups.reduce((n, g) => n + (g.children?.length || 0), 0));
+    const tableH = tableRows ? 22 + tableRows * 15 : 0;
+    const mapTop = headerH;
+    const mapH = Math.max(60, cssH - headerH - tableH - 6);
+
+    // ── header ────────────────────────────────────────────────────────────
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = muted;
+    ctx.textAlign = 'left';
+    // Compiled runs can only see the forward pass (aot_autograd collapses
+    // backward into one opaque node), so say so rather than letting the card
+    // imply it covers the whole step.
+    const fwdOnly = data.mode === 'forward';
+    const cov = typeof data.coverage === 'number' ? `${(data.coverage * 100).toFixed(0)}% attributed` : '';
+    const left = `${data.samples ?? 0} samples · 1 step in ${data.interval ?? '?'} · EMA α=${data.ema_alpha ?? '?'}`;
+    ctx.fillText(left, 2, mapTop / 2);
+    ctx.textAlign = 'right';
+    const right = fwdOnly ? `forward only (compiled) · ${cov}` : cov;
+    ctx.fillText(right, cssW - 2, mapTop / 2);
+
+    // ── treemap ───────────────────────────────────────────────────────────
+    const outer = squarifyLayout(
+        groups.map((g) => ({ value: g.ms, group: g })),
+        0, mapTop, cssW, mapH
+    );
+
+    outer.forEach((cell, idx) => {
+        const g = cell.item.group;
+        const kids = (g.children || []).filter((c) => c.ms > 0);
+
+        const base = tileStyle(g, idx, 0);
+        ctx.fillStyle = base.fill;
+        ctx.fillRect(cell.x, cell.y, cell.w, cell.h);
+
+        // Subdivide into individual modules when there is room to see them.
+        let ink = inkFor(base.lum);
+        if (kids.length > 1 && cell.w > 34 && cell.h > 26) {
+            const sub = tileStyle(g, idx, 1);
+            const inner = squarifyLayout(
+                kids.map((c) => ({ value: c.ms, child: c })),
+                cell.x + 1, cell.y + 1, Math.max(0, cell.w - 2), Math.max(0, cell.h - 2)
+            );
+            ctx.fillStyle = sub.fill;
+            for (const tile of inner) {
+                ctx.fillRect(tile.x, tile.y, Math.max(0, tile.w - 1), Math.max(0, tile.h - 1));
+            }
+            if (inner.length) ink = inkFor(sub.lum);
+        }
+
+        ctx.strokeStyle = isDark ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.85)';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(cell.x, cell.y, cell.w, cell.h);
+
+        // Label only where it fits, and truncate on a character boundary - a
+        // silently clipped "ConvBloc" reads as a different class than ConvBlock.
+        if (cell.w > 46 && cell.h > 24) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(cell.x, cell.y, cell.w, cell.h);
+            ctx.clip();
+            ctx.textAlign = 'left';
+            ctx.fillStyle = ink;
+            ctx.font = '600 11px system-ui, sans-serif';
+            ctx.fillText(ellipsize(g.name, cell.w - 8), cell.x + 4, cell.y + 11);
+            if (cell.h > 38) {
+                ctx.font = '10px system-ui, sans-serif';
+                ctx.globalAlpha = 0.82;
+                ctx.fillText(`${(g.share * 100).toFixed(1)}%`, cell.x + 4, cell.y + 24);
+                ctx.globalAlpha = 1;
+            }
+            ctx.restore();
+        }
+    });
+
+    if (!tableH) return;
+
+    // ── ranked table ──────────────────────────────────────────────────────
+    const rows = [];
+    for (const g of groups) {
+        for (const c of g.children || []) {
+            if (c.ms > 0) rows.push({ ...c, cls: g.name });
+        }
+    }
+    rows.sort((a, b) => b.ms - a.ms);
+
+    const top = mapTop + mapH + 6;
+    ctx.strokeStyle = gridColor;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, top);
+    ctx.lineTo(cssW, top);
+    ctx.stroke();
+
+    const colShare = cssW - 4;
+    const colBwd = colShare - 46;
+    const colFwd = colBwd - 46;
+    const colCalls = colFwd - 42;
+    const nameW = Math.max(60, colCalls - 18);
+
+    ctx.font = '10px system-ui, sans-serif';
+    ctx.fillStyle = muted;
+    ctx.textAlign = 'left';
+    ctx.fillText('MODULE', 2, top + 11);
+    ctx.textAlign = 'right';
+    ctx.fillText('calls', colCalls, top + 11);
+    ctx.fillText('fwd', colFwd, top + 11);
+    ctx.fillText('bwd', colBwd, top + 11);
+    ctx.fillText('share', colShare, top + 11);
+
+    const fit = (s, max) => {
+        if (ctx.measureText(s).width <= max) return s;
+        let out = s;
+        while (out.length > 3 && ctx.measureText(`…${out}`).width > max) out = out.slice(1);
+        return `…${out}`;
+    };
+
+    rows.slice(0, tableRows).forEach((r, i) => {
+        const y = top + 26 + i * 15;
+        ctx.font = '10px system-ui, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillStyle = textColor;
+        // Right-truncate from the LEFT: module paths differ in their tail
+        // (…locals.1.block.attn), so the head is the disposable part.
+        ctx.fillText(fit(r.name, nameW), 2, y);
+        ctx.textAlign = 'right';
+        ctx.fillStyle = muted;
+        ctx.fillText(r.calls >= 0.05 ? r.calls.toFixed(1) : '-', colCalls, y);
+        ctx.fillText(r.fwd_ms > 0 ? r.fwd_ms.toFixed(1) : '-', colFwd, y);
+        ctx.fillText(r.bwd_ms > 0 ? r.bwd_ms.toFixed(1) : '-', colBwd, y);
+        ctx.fillStyle = textColor;
+        ctx.fillText(`${(r.share * 100).toFixed(1)}%`, colShare, y);
+    });
+}
+
 const SNAPSHOT_RENDERERS = {
     heatmap_2d: renderHeatmap2D,
+    compute_treemap: renderComputeTreemap,
     regime_river: renderRegimeRiver,
     halo_ring: renderHaloRing,
     harmonic_spiral: renderHarmonicSpiral,

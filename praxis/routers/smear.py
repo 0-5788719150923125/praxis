@@ -10,6 +10,12 @@ import torch.nn.functional as F
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
+# Merges between refreshes of the routing diagnostics, counted per depth. The
+# diagnostics cost ~10 host-device syncs and the merge runs once per recurrent
+# depth per step, so computing them every time paid ~60 syncs a step for numbers
+# the dashboard samples every 10. Matches DynamicsLoggerCallback's log_freq.
+ROUTING_METRICS_INTERVAL: int = 10
+
 
 @dataclass
 class SMEARConfig:
@@ -75,6 +81,10 @@ class SMEAR(nn.Module):
 
         # Metrics storage for convergence tracking
         self._metrics = {}
+        # Per-depth tick counters for the routing-diagnostics cadence. Keyed by
+        # depth, not global: the metrics carry a layer prefix, so a single
+        # counter would refresh some depths and starve others.
+        self._metric_ticks: Dict[int, int] = {}
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(num_experts={len(self.experts)})"
@@ -132,11 +142,7 @@ class SMEAR(nn.Module):
         router_input = inputs.mean(dim=1)  # Average across sequence length
         router_input = self.router_norm(router_input)  # Layer norm on input
 
-        # Get logits with normalized router weights
-        # Apply weight normalization without modifying in-place
-        normalized_weight = F.normalize(self.router.weight, dim=1)
-        logits = F.linear(router_input, normalized_weight, self.router.bias)
-        logits = self._balance_bias(logits)
+        logits = self._route_logits(router_input, current_depth)
 
         routing_probs = F.softmax(logits, dim=-1)  # [batch_size, num_experts]
 
@@ -358,22 +364,35 @@ class SMEAR(nn.Module):
         # Compute the mean routing probability across the batch for each expert
         expert_weights = routing_probs.mean(dim=0)  # [num_experts]
 
-        # Log expert convergence metrics for visualization (with layer prefix)
-        self._log_routing_metrics(
-            expert_weights,
-            routing_probs if router_probs is None else router_probs,
-            current_depth,
-            merge_weights=expert_weights,
-        )
+        # Log expert convergence metrics for visualization (with layer prefix).
+        # Sampled, not every merge: the diagnostics carry ~10 `.item()` calls,
+        # each a host-device sync that stalls the pipeline, and the merge runs
+        # once per recurrent depth (again during the checkpointed backward). The
+        # dashboard reads these on a 10-step cadence anyway, so refreshing them
+        # every merge bought nothing. `self._metrics` keeps the last value, so
+        # `get_metrics()` still reports between refreshes - a step function, the
+        # same shape as the RLCT and governor telemetry.
+        if self._should_log_metrics(current_depth):
+            # Under no_grad: every quantity in here is read out with `.item()`
+            # into a plain dict and never reaches the loss, so tracking grads
+            # through it only built graph nodes nothing would ever traverse.
+            with torch.no_grad():
+                self._log_routing_metrics(
+                    expert_weights,
+                    routing_probs if router_probs is None else router_probs,
+                    current_depth,
+                    merge_weights=expert_weights,
+                )
 
-        # Iterate over all parameter names
-        self.parameter_names = self._collect_parameter_names(self.experts[0])
+        # The expert structure is fixed once the experts exist, so this walk is
+        # done once rather than on every merge. It used to be rebuilt here on
+        # each call - the assignment reads like a cache but was recomputed.
+        if not self.parameter_names:
+            self.parameter_names = self._collect_parameter_names(self.experts[0])
+
         for param_name in self.parameter_names:
-            # Initialize the merged parameter with zeros
-            merged_param: Optional[torch.Tensor] = None
-
+            params = []
             for expert_idx, expert in enumerate(self.experts):
-                # Get the parameter from the expert
                 param = self._get_module_parameter(expert, param_name)
 
                 if param is None:
@@ -385,18 +404,55 @@ class SMEAR(nn.Module):
                 if param.device != expert_weights.device:
                     param = param.to(expert_weights.device)
 
-                # Weight the parameter by the expert's routing probability
-                weighted_param = param * expert_weights[expert_idx]
+                params.append(param)
 
-                if merged_param is None:
-                    merged_param = weighted_param
-                else:
-                    merged_param = merged_param + weighted_param
-
-            assert merged_param is not None, "Merged parameter should not be None"
-            merged_state_dict[param_name] = merged_param
+            # One stack + one contraction per parameter, instead of a python
+            # loop issuing 2*E elementwise kernels. Same arithmetic
+            # (sum_e w_e * p_e) and the same autograd graph.
+            #
+            # The merge is launch-bound, not FLOP-bound: measured 880 aten ops
+            # per forward (320 select, 320 mul, 240 add) to do 2.66 MFLOP, ~250x
+            # over the bandwidth floor. This rewrite is worth 1.4x on the merge
+            # forward and 1.9x fwd+bwd - NOT the 4x an isolated loop benchmark
+            # suggested, because it leaves untouched the ~1.9ms of pure-python
+            # `_get_module_parameter` attribute walks (320 getattr chains).
+            # End to end that is ~5% of step time on abstractinator-g, and it is
+            # a small-model eager effect: at greater width, or under
+            # torch.compile, the launches would fuse and this would not matter.
+            stacked = torch.stack(params)  # [num_experts, *param_shape]
+            merged_state_dict[param_name] = torch.tensordot(
+                expert_weights.to(stacked.dtype), stacked, dims=([0], [0])
+            )
 
         return merged_state_dict
+
+    def _route_logits(
+        self, router_input: torch.Tensor, current_depth: int
+    ) -> torch.Tensor:
+        """Routing logits for this input, before softmax.
+
+        The single place routing is decided, so depth-aware subclasses override
+        here instead of duplicating either forward. Base SMEAR ignores
+        ``current_depth``: one router serves every recurrent pass, which is why
+        the merged geometry is identical at every depth (see ArcSMEAR).
+        """
+        # Weight normalization, applied without modifying in-place.
+        normalized_weight = F.normalize(self.router.weight, dim=1)
+        logits = F.linear(router_input, normalized_weight, self.router.bias)
+        return self._balance_bias(logits)
+
+    def _should_log_metrics(self, current_depth: int) -> bool:
+        """Whether to recompute the routing diagnostics for this depth now.
+
+        Counted per depth so every depth refreshes on the same cadence. Under
+        gradient checkpointing the forward re-runs during backward and ticks
+        this a second time, which only halves the effective period - the
+        diagnostics write to a plain dict and never enter the autograd graph,
+        so the recomputed pass taking a different branch is harmless.
+        """
+        seen = self._metric_ticks.get(current_depth, 0)
+        self._metric_ticks[current_depth] = seen + 1
+        return (seen % ROUTING_METRICS_INTERVAL) == 0
 
     def _get_module_parameter(
         self, module: nn.Module, param_name: str
@@ -658,11 +714,9 @@ class SMEAR(nn.Module):
         router_input = inputs.mean(dim=1)  # Average across sequence length
         router_input = self.router_norm(router_input)  # Layer norm on input
 
-        # Get logits with normalized router weights
-        # Apply weight normalization without modifying in-place
-        normalized_weight = F.normalize(self.router.weight, dim=1)
-        logits = F.linear(router_input, normalized_weight, self.router.bias)
-        logits = self._balance_bias(logits)
+        # Direct mode has no recurrent depth of its own; depth 0 keeps
+        # depth-aware subclasses well-defined here.
+        logits = self._route_logits(router_input, 0)
 
         routing_probs = F.softmax(logits, dim=-1)  # [batch_size, num_experts]
 

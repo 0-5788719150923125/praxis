@@ -1003,9 +1003,9 @@ function renderMetricsCharts(data, container) {
             return `
             <div class="chart-card" data-deck-index="${i}" data-card-key="${config.key}">
                 <div class="chart-title">${config.title}</div>
-                ${config.description ? `<div class="chart-subtitle">${config.description}</div>` : ''}
                 ${stepSliderHTML}
                 <div class="deck-card-scroll">
+                    ${config.description ? `<div class="chart-subtitle">${config.description}</div>` : ''}
                     <div class="chart-wrapper">
                         <canvas id="${config.canvasId}"></canvas>
                     </div>
@@ -1080,6 +1080,36 @@ const DECK_PEEK = 18;            // px each fanned card peeks past the head (com
 const DECK_SCALE_STEP = 0.045;   // scale shrink per rank behind the head
 const DECK_MAX_FAN = 3;          // cards drawn behind the head
 const DECK_MIN_CHART_H = 192;    // px; smallest a chart shrinks to under mobile pressure (keeps it readable)
+
+// Floor on a mobile card's height, as a fraction of the uniform slot. Cards are
+// sized to their content so a short one does not trail dead space - but taken
+// all the way down, a very short head card (measured: 334px against a 529px
+// slot) leaves ~195px of the card BEHIND it showing, which reads as clutter
+// rather than as a fan.
+//
+// The fan cards render at the full slot, so the reveal is (slot - head height).
+// This fraction therefore buys buffer directly: 0.75 left ~132px showing, which
+// is barely different from no floor at all. 0.9 leaves ~53px - about the
+// designed fan peek (DECK_MAX_FAN * DECK_PEEK = 54px), i.e. the staircase looks
+// like a staircase again rather than a stack of exposed cards. That is also the
+// practical ceiling: at 1.0 every card is the slot and the whitespace this
+// sizing removes comes straight back.
+const DECK_MIN_CARD_FRAC = 0.9;
+
+/** The card's description, once initChartDeck has moved it into the scroll body. */
+function subtitleOf(card) {
+    return card.querySelector(':scope > .deck-card-scroll > .chart-subtitle')
+        || card.querySelector(':scope > .chart-subtitle');
+}
+
+/** Height including vertical margins - offsetHeight alone drops the 1rem gap. */
+function outerHeight(el) {
+    if (!el) return 0;
+    const s = getComputedStyle(el);
+    return el.offsetHeight
+        + (parseFloat(s.marginTop) || 0)
+        + (parseFloat(s.marginBottom) || 0);
+}
 const DECK_SWIPE_STEP = 70;      // finger px that advance one card (1:1 during the drag)
 const DECK_DROP_THRESHOLD = 200; // px of SUSTAINED downward pull before the deck drops to B
                                  // (reveals the header). Deliberately high (~two cards' worth)
@@ -1126,7 +1156,12 @@ export function initChartDeck(deck, opts = {}) {
 
     // Chart decks ship cards with no scroll body; give each a .deck-card-scroll
     // (idempotent) so tall cards scroll internally on mobile like the fan-down sheets.
-    // Title/subtitle/toggles/number stay pinned outside; only the body content scrolls.
+    // Title/toggles/number stay pinned outside; the SUBTITLE scrolls with the chart.
+    // Keeping the description pinned made it chrome the chart had to fit around, so a
+    // long one squeezed the canvas toward DECK_MIN_CHART_H on a phone - worst on the
+    // dense cards whose description is the reason you'd read them. Scrolling it means
+    // you page past the text to a full-height chart instead of shrinking the chart to
+    // make room for text you have already read.
     // Runs before measure; on the dynamics deck it runs before Chart.js mounts (the
     // canvas is moved while still empty) and no-ops once wrapped, so a live canvas is
     // never reparented.
@@ -1137,7 +1172,6 @@ export function initChartDeck(deck, opts = {}) {
             body.className = 'deck-card-scroll';
             Array.from(card.children).forEach(ch => {
                 if (ch.classList.contains('chart-title') ||
-                    ch.classList.contains('chart-subtitle') ||
                     ch.classList.contains('layer-toggles')) return;
                 body.appendChild(ch);
             });
@@ -1301,21 +1335,48 @@ function measureDeck(deck) {
         // expanded cap, compact the chart (down to DECK_MIN_CHART_H) so it stays
         // expressive but avoids an inner scroll. Chart.js (responsive) re-fits
         // the canvas when the wrapper resizes.
+        // ONLY when the card would otherwise overflow its slot. A card that
+        // already fits keeps its natural chart height and never scrolls - the
+        // layout it had before any of this. Sizing every chart to the body
+        // instead stretched short charts tall and gave every card a forced
+        // scroll, which is worse than the problem it solved.
         if (wrapper && h > capH) {
-            const chrome = h - wrapper.offsetHeight;   // title/subtitle/toggles/padding
-            wrapper.style.height = `${Math.max(DECK_MIN_CHART_H, capH - chrome)}px`;
+            // SHRINK the chart to fit; never hand it the whole scroll body.
+            // Handing it the body produced a canvas taller than it is wide AND
+            // forced a scroll, where compressing would have fit and looked
+            // right.
+            const chromeWithText = h - wrapper.offsetHeight;  // title+subtitle+padding
+            // A chart taller than it is wide reads badly on a phone, so cap by
+            // width as well - a short chart beats a stretched one.
+            const maxByAspect = wrapper.clientWidth || capH;
+            wrapper.style.height = `${Math.min(
+                Math.max(DECK_MIN_CHART_H, capH - chromeWithText),
+                Math.max(DECK_MIN_CHART_H, maxByAspect),
+            )}px`;
+            // Only when even DECK_MIN_CHART_H will not fit beside the text does
+            // the card still overflow - and then the description scrolls, as a
+            // last resort rather than a first move.
             h = c.offsetHeight || 0;                   // re-measure after compacting
         }
-        // On mobile, pin EVERY card to its slot (not just the tall ones). Short
-        // cards then end their boxes at the same height, so the fanned cards
-        // behind the head share one even bottom edge - a constant-spacing
-        // staircase down the floor, instead of ragged edges set by each card's
-        // content. (Desktop keeps natural height: it grows the deck and peeks
-        // upward, so even bottoms don't apply there.)
+        // On mobile a card is capped at its slot but NOT stretched to it: a card
+        // whose content ends early ends there. Pinning every card to the slot
+        // gave the fan an even bottom edge, but it also padded every short card
+        // with dead space - a 272px chart in a 529px box leaves ~196px of empty
+        // card, which reads as a layout bug rather than a design. Ragged fan
+        // bottoms are the better trade: they follow the content.
+        // (Desktop keeps natural height: it grows the deck and peeks upward.)
         // deck-compact cards (the business card) keep their natural height
         // everywhere: forcing them to the slot stretches them vertically.
         const compact = c.classList.contains('deck-compact');
-        const pin = compact ? 0 : (mobile ? capH : (h > usableH ? usableH : 0));
+        // Content height, floored so the sparsest cards still cover the fan,
+        // then capped at the slot. deck-compact is exempt: it is deliberately
+        // small and owns its own proportions.
+        const minCardH = Math.round(usableH * DECK_MIN_CARD_FRAC);
+        const pin = compact
+            ? 0
+            : (mobile
+                ? Math.min(Math.max(h, minCardH), capH)
+                : (h > usableH ? usableH : 0));
         if (pin) {
             // Mobile forces an exact slot height (even fan bottoms); desktop
             // only caps an overflowing card (max-height), leaving natural height.
@@ -1332,7 +1393,10 @@ function measureDeck(deck) {
         // _capped cards are re-sized per-frame by renderDeck (per-card slot).
         c._capped = !compact && (mobile || h > usableH);
         if (compact) return Math.min(h, usableH);
-        return mobile ? capH : Math.min(h, usableH);
+        // Report the height the card was actually pinned to, not the slot -
+        // the fan positions cards from this, so a short card must contribute
+        // its real height or the staircase spaces itself off empty air.
+        return mobile ? pin : Math.min(h, usableH);
     });
     deck._usableH = usableH;
     if (mobile) {
@@ -1427,7 +1491,16 @@ function renderDeck(deck) {
             // 1 seated) so the height never pops.
             const slotH = Math.max(120, H[order[k]] || fallbackH);
             const grow = a >= 1 ? 0 : 1 - a;
-            const mh = `${Math.round(fallbackH + (Math.max(fallbackH, slotH) - fallbackH) * grow)}px`;
+            // Interpolate toward the card's OWN measured height, which may now be
+            // SHORTER than the uniform slot - a card whose content ends early
+            // ends there instead of trailing dead space. The old
+            // Math.max(fallbackH, slotH) clamped every card up to the slot,
+            // which was invisible while _cardH was only ever the slot or the
+            // expanded band, and silently discarded the shorter heights once
+            // they became possible. Fan cards still sit at the uniform slot
+            // (grow 0) so the staircase stays even; only the seated head takes
+            // its own height.
+            const mh = `${Math.round(fallbackH + (slotH - fallbackH) * grow)}px`;
             if (card._mh !== mh) {
                 card.style.height = mh;
                 card.style.maxHeight = mh;

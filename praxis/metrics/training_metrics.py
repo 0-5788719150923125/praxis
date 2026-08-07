@@ -812,6 +812,28 @@ COMPOSITE_METRIC_REGISTRY: list = [
     # Prismatic's single global routing/* scalars above. multi_expert_line
     # draws one line per matched key; these cards auto-hide until a SMEAR
     # router is active and emitting (availableMetrics gates on key presence).
+    # Depth-aware routing (arc_smear / arc_vear). Auto-hides for the plain
+    # routers, which emit neither key.
+    {
+        "key": "router_depth_bias",
+        "type": "multi_expert_line",
+        "title": "Router Depth Specialization",
+        "y_label": "specialization / cosine",
+        "description": (
+            "Whether the recurrent passes have learned to route DIFFERENTLY. "
+            "arc_smear/arc_vear give each pass its own additive bias on the "
+            "router logits; specialization is that table's between-depth "
+            "variance over total energy (0 = every pass merges the same expert "
+            "mixture, which is also the value at zero-init; higher = the passes "
+            "have diverged), and similarity is the mean pairwise cosine between "
+            "the per-pass biases (~1 = all leaning the same way). Both start at "
+            "0 by construction, so early flatness is 'nothing learned yet', not "
+            "collapse. Absent under the plain smear/vear routers, which share "
+            "one routing across every pass."
+        ),
+        "key_pattern": r"^router_depth_(specialization|similarity)$",
+        "order": 199,
+    },
     {
         "key": "smear_routing_entropy",
         "type": "multi_expert_line",

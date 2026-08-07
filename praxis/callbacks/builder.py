@@ -40,6 +40,7 @@ def build_training_callbacks(
     from praxis.callbacks.lightning import (
         AccumulationSchedule,
         BrierLMCallback,
+        ComputeProfilerCallback,
         DynamicsLoggerCallback,
         EngagementLiveRewardCallback,
         HarmonicWeightRLCallback,
@@ -206,6 +207,21 @@ def build_training_callbacks(
         f"[Setup] Adding DynamicsLoggerCallback (router_type={config.router_type}, "
         f"num_experts={num_experts}, log_freq={log_freq})"
     )
+
+    # Per-module compute-time attribution (the "why is this slow" treemap).
+    # Always on: in eager the idle hooks measure at +0.1% per step and the
+    # sampled window is one step in 100, so there is nothing to gate. Under
+    # torch.compile the callback installs nothing and says why - hooks there
+    # cost +120% on EVERY step (Dynamo ignores hooks attached after the first
+    # compiled forward, so they cannot be added just for the sampled step) and
+    # Inductor's fusion misattributes the kernels anyway.
+    #
+    # Ordered BEFORE the dynamics logger deliberately: both act on
+    # on_before_optimizer_step and Lightning runs callbacks in list order, so
+    # the profiler must close its window and stash first or the logger drains
+    # a stale value and the card lags a full log_freq behind.
+    callbacks.append(ComputeProfilerCallback())
+
     callbacks.append(
         DynamicsLoggerCallback(
             run_dir=cache_dir, num_experts=num_experts, log_freq=log_freq

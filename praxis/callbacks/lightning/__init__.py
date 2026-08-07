@@ -5,6 +5,7 @@ These callbacks are designed to work with PyTorch Lightning training framework.
 
 from praxis.callbacks.lightning.accumulation import AccumulationSchedule
 from praxis.callbacks.lightning.brier_lm import BrierLMCallback
+from praxis.callbacks.lightning.compute_profiler import ComputeProfilerCallback
 from praxis.callbacks.lightning.dynamics import DynamicsLoggerCallback
 from praxis.callbacks.lightning.engagement_live import EngagementLiveRewardCallback
 from praxis.callbacks.lightning.evaluation import PeriodicEvaluation
@@ -32,6 +33,7 @@ LIGHTNING_CALLBACK_REGISTRY = {
     "rlct_landscape": RLCTLandscapeCallback,
     "brier_lm": BrierLMCallback,
     "memory_profiler": MemoryProfilerCallback,
+    "compute_profiler": ComputeProfilerCallback,
     "host_memory": HostMemoryCallback,
     "harmonic_weight_rl": HarmonicWeightRLCallback,
     "engagement_live": EngagementLiveRewardCallback,
@@ -51,6 +53,7 @@ __all__ = [
     "RLCTLandscapeCallback",
     "BrierLMCallback",
     "MemoryProfilerCallback",
+    "ComputeProfilerCallback",
     "HostMemoryCallback",
     "HarmonicWeightRLCallback",
     "EngagementLiveRewardCallback",
