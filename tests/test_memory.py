@@ -580,3 +580,236 @@ def test_band_smear_sparse_kan_gate():
     assert kan_grads and all(
         g is not None and torch.isfinite(g).all() for g in kan_grads
     )
+
+
+# --- one-core-per-pass memory bank (depth bank) -----------------------------
+#
+# Deliberately NOT in BAND_PROFILES or SURFACINGS: those suites assert contracts
+# this surfacing breaks by construction (every arm active in one forward, a
+# floored simplex of blend weights, a bare `.mem`). The precedent is
+# test_band_smear_quad_spline_stagger - a dedicated test for a profile where
+# arms sit out. `_block_config` builds num_layers=2, so the pass index is
+# `current_depth // 2` and depth=8 gives exactly four passes for the four cores.
+
+
+def _sweep(block, x, depths):
+    """Run a block over consecutive depths the way SequentialDecoder does,
+    threading the memory state and returning the final hidden states."""
+    state, hidden = None, x
+    for depth in depths:
+        hidden, _, state, _ = block(
+            hidden, attention_mask=None, current_state=state, current_depth=depth
+        )
+    return hidden, state
+
+
+def test_depth_bank_runs_exactly_one_core_per_pass():
+    """Pass p runs core p % N and nothing else: one state slot advances per
+    call, the assignment is keyed to the PASS (current_depth // num_layers, so
+    both depths of a two-layer pass share a core), and it wraps past the bank
+    instead of running off its end."""
+    torch.manual_seed(0)
+    x = torch.randn(2, 16, 64)
+    torch.manual_seed(1)
+    plain = TransformerBlock(_block_config("none", depth=8))
+    out_plain, _, _, _ = plain(x, attention_mask=None)
+    torch.manual_seed(1)
+    block = TransformerBlock(_block_config("mal_energy_bank", depth=8))
+    bank = block.memory
+    assert len(bank.mems) == 4
+
+    # num_layers=2 -> two depths per pass, and the bank wraps at pass 4.
+    assert [bank._core_index(d) for d in range(10)] == [0, 0, 1, 1, 2, 2, 3, 3, 0, 0]
+
+    out_mem, _, state, _ = block(x, attention_mask=None, current_depth=4)
+    assert not torch.allclose(out_plain, out_mem)
+    assert isinstance(state, tuple) and len(state) == 4
+    # Only the pass's own core wrote a state; the rest stay untouched.
+    assert isinstance(state[2], NeuralMemState)
+    assert [state[i] for i in (0, 1, 3)] == [None, None, None]
+
+
+def test_depth_bank_backprop_follows_the_assignment():
+    """A single pass gives gradient to its core alone (that is the compute
+    saving made visible); a forward deep enough to cycle the whole bank gives
+    gradient to every core."""
+    x = torch.randn(2, 16, 64)
+
+    one = TransformerBlock(_block_config("mal_energy_bank", depth=8))
+    out, _, _, _ = one(x, attention_mask=None, current_depth=0)  # pass 0 -> core A
+    out.sum().backward()
+    assert all(p.grad is not None for p in one.memory.mems[0].memory_model.parameters())
+    for mem in list(one.memory.mems)[1:]:
+        assert all(p.grad is None for p in mem.memory_model.parameters())
+
+    full = TransformerBlock(_block_config("mal_energy_bank", depth=8))
+    out, _ = _sweep(full, x, range(8))  # four passes -> the whole cycle
+    out.sum().backward()
+    for mem in full.memory.mems:
+        grads = [p.grad for p in mem.memory_model.parameters()]
+        assert grads and all(g is not None and torch.isfinite(g).all() for g in grads)
+
+
+def test_depth_bank_use_tracks_the_pass_budget():
+    """*_memory_core_use is the halting distribution read through the bank: a
+    forward cut short leaves the late cores at 0 occupancy and emits no
+    diagnostics for them at all (rather than a stale repeat of an earlier
+    step), while a full cycle splits evenly."""
+    x = torch.randn(2, 16, 64)
+
+    halted = TransformerBlock(_block_config("mal_energy_bank", depth=8))
+    _sweep(halted, x, range(4))  # two of four passes, as an early exit would
+    metrics = halted.memory.training_metrics()
+    assert [metrics[f"{c}_memory_core_use"] for c in "abcd"] == [0.5, 0.5, 0.0, 0.0]
+    assert "a_memory_surprise_norm" in metrics and "b_memory_surprise_norm" in metrics
+    for letter in ("c", "d"):  # never reached -> nothing to report
+        assert not [k for k in metrics if k.startswith(f"{letter}_memory_s")]
+        assert f"{letter}_memory_gain" not in metrics
+
+    full = TransformerBlock(_block_config("mal_energy_bank", depth=8))
+    _sweep(full, x, range(8))
+    metrics = full.memory.training_metrics()
+    assert [metrics[f"{c}_memory_core_use"] for c in "abcd"] == [0.25] * 4
+    for letter in "abcd":
+        assert metrics[f"{letter}_memory_gain"] > 0.0
+
+
+def test_depth_bank_river_widths_are_occupancy():
+    """The river carries 2N columns + N labels like the regime river, but the
+    widths are occupancy rather than blend weights - so they still sum to 1
+    (exactly one core per pass), and the card stays empty until every core has
+    reported a surprise, rather than painting filler."""
+    x = torch.randn(2, 16, 64)
+    block = TransformerBlock(_block_config("mal_energy_bank", depth=8))
+    bank = block.memory
+
+    _sweep(block, x, range(8))
+    assert bank.dashboard_snapshots() == {}  # settled only by the NEXT forward
+    _sweep(block, x, range(8))
+
+    snap = bank.dashboard_snapshots()["memory_depth_river"]
+    assert len(snap["labels"]) == 4
+    row = snap["river"][0]
+    assert len(row) == 8
+    assert abs(sum(row[:4]) - 1.0) < 1e-6
+    assert all(0.0 <= f <= 1.0 for f in row[4:])
+
+
+def test_depth_bank_river_brightness_is_per_band_and_inverted():
+    """Brightness is min-maxed WITHIN a band and inverted, so the two axes stay
+    independent: the lowest surprise a core has recently shown is its brightest
+    row, and a band whose own range is wide cannot dim a band whose range is
+    narrow (they sit at different depths and share no scale)."""
+    block = TransformerBlock(_block_config("mal_energy_bank", depth=8))
+    bank = block.memory
+    bank._passes_seen = 4
+
+    # Band A swings over a wide range, band B over a narrow one at a much
+    # higher level; C and D are flat. Rows are (oldest -> newest).
+    for surprises in ([1.0, 90.0, 5.0, 5.0], [3.0, 91.0, 5.0, 5.0]):
+        bank._core_surprise = list(surprises)
+        bank._settle_forward()
+
+    rows = bank.dashboard_snapshots()["memory_depth_river"]["river"]
+    assert len(rows) == 2
+    fits = [row[4:] for row in rows]
+    assert fits[0][0] == 1.0 and fits[1][0] == 0.0  # A: 1.0 < 3.0 -> brighter
+    assert fits[0][1] == 1.0 and fits[1][1] == 0.0  # B: its own range, not A's
+    assert fits[0][2] == fits[1][2] == 0.5  # flat band stays mid-bright
+    assert fits[0][3] == fits[1][3] == 0.5
+
+
+def test_depth_bank_river_waits_for_every_core_to_report():
+    """A row is held back until every core has reported a surprise, so the card
+    opens on real fitnesses instead of filler for the deep cores the model has
+    not reached yet."""
+    block = TransformerBlock(_block_config("mal_energy_bank", depth=8))
+    bank = block.memory
+    bank._passes_seen = 4
+
+    bank._core_surprise = [0.5, 0.5, 0.5, None]  # spline never reached
+    bank._settle_forward()
+    assert bank.dashboard_snapshots() == {}
+
+    bank._core_surprise[3] = 0.5
+    bank._settle_forward()
+    assert len(bank.dashboard_snapshots()["memory_depth_river"]["river"]) == 1
+
+
+def test_depth_bank_ignores_eval_forwards():
+    """Generation runs inside the training loop in eval mode, at whatever depth
+    the KL exit picks. Its occupancy must not land in the cards: an eval
+    forward leaves the accounting exactly as the last training forward left
+    it."""
+    x = torch.randn(2, 16, 64)
+    block = TransformerBlock(_block_config("mal_energy_bank", depth=8))
+    _sweep(block, x, range(8))  # training: the full four-pass cycle
+    bank = block.memory
+    trained = bank.training_metrics()
+
+    block.eval()
+    with torch.no_grad():
+        _sweep(block, x, range(2))  # a shallow decode: one pass, core A only
+    assert bank.training_metrics() == trained
+    assert bank._passes_seen == 4
+
+
+def test_depth_bank_settles_per_forward_for_every_layer_position():
+    """The forward boundary is the first pass, not depth 0. With distinct
+    physical layers the decoder gives block j only depths congruent to j, so a
+    depth-0 key would never reset block 1 and its occupancy would ratchet to an
+    all-time maximum instead of reporting this forward."""
+    x = torch.randn(2, 16, 64)
+    block = TransformerBlock(_block_config("mal_energy_bank", depth=8))
+    bank = block.memory  # num_layers=2: block 1 sees depths 1, 3, 5, 7
+
+    _sweep(block, x, [1, 3, 5, 7])  # a deep forward - all four passes
+    assert [bank.training_metrics()[f"{c}_memory_core_use"] for c in "abcd"] == [
+        0.25
+    ] * 4
+
+    _sweep(block, x, [1, 3])  # a shallow one - the counter must fall back
+    assert [bank.training_metrics()[f"{c}_memory_core_use"] for c in "abcd"] == [
+        0.5,
+        0.5,
+        0.0,
+        0.0,
+    ]
+
+
+def test_depth_bank_routing_is_a_pure_function_of_depth():
+    """Nothing this surfacing tracks feeds the output, so two identical eval
+    forwards agree exactly - what the byte-latent speculative decoder needs
+    from anything on this path (draft and verify are separate forwards)."""
+    x = torch.randn(2, 16, 64)
+    block = TransformerBlock(_block_config("mal_energy_bank", depth=8)).eval()
+    with torch.no_grad():
+        first, _ = _sweep(block, x, range(8))
+        second, _ = _sweep(block, x, range(8))
+    assert torch.equal(first, second)
+
+
+def test_depth_bank_warns_when_the_recurrence_cannot_reach_every_core(capsys):
+    """A bank deeper than the pass budget carries cores that can never run;
+    that is a config error worth saying out loud rather than silently paying
+    for dead parameters."""
+    TransformerBlock(_block_config("mal_energy_bank", depth=2))  # 1 pass, 4 cores
+    out = capsys.readouterr().out
+    assert "depth_bank" in out and "can never run" in out
+    assert "kan" in out and "spline" in out
+
+
+def test_depth_bank_end_to_end_training_step():
+    """The bank completes a forward/backward/step with finite loss (logits-
+    driven, to sidestep the model's label-shift handling)."""
+    torch.manual_seed(0)
+    model = PraxisForCausalLM(_block_config("mal_energy_bank", depth=8))
+    opt = torch.optim.SGD(model.parameters(), lr=1e-3)
+    input_ids = torch.randint(0, 256, (2, 16))
+    logits = model(input_ids=input_ids).logits
+    loss = torch.nn.functional.cross_entropy(
+        logits[:, :-1].reshape(-1, logits.size(-1)), input_ids[:, 1:].reshape(-1)
+    )
+    assert torch.isfinite(loss)
+    loss.backward()
+    opt.step()

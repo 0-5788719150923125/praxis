@@ -489,8 +489,18 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         use_cache: bool = True,
         **kwargs,
     ) -> dict:
-        # Encoders (e.g. byte-latent CALM) repatch the whole sequence each
-        # step, so the prefix isn't stable - caching would be incorrect.
+        # NB: this path is HF's generate() loop. Byte-latent models with MTP
+        # never reach it - generate() dispatches to _speculative_generate first
+        # - so the encoder branch here only covers encoder models decoding
+        # without MTP.
+        #
+        # Why the encoder cannot cache: NOT "the prefix isn't stable" (the old
+        # reason, and false - the space patcher is prefix-monotone and the local
+        # conv encoder is causal, so closed patches never move). The blocker is
+        # units. `past_length()` counts TRUNK positions, which are patches, while
+        # `input_ids` is bytes, so the suffix slice below would cut the wrong
+        # amount. Caching an encoder stack means caching at patch granularity and
+        # dropping the open patch each step, not slicing tokens here.
         if not use_cache or self.encoder:
             return {
                 "input_ids": input_ids,

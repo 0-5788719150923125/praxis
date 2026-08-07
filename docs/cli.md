@@ -69,7 +69,7 @@ Handled by the `./launch` wrapper itself (before Python), so they do not appear 
 | `--max-position-embeddings` | int | `None` | Maximum positional capacity (defaults to block_size when unset) |
 | `--mega` | bool | `False` | Equip the attention mechanism with exponentially-moving average-based gating |
 | `--memory` | bool | `False` | Use a long-term episodic memory module |
-| `--memory-type` | str | `none` | Titans-style long-term memory profile (choices: none, mal, mal_energy, mal_energy_serpent, mal_energy_dual, mal_energy_triple, mal_energy_quad, mag) |
+| `--memory-type` | str | `none` | Titans-style long-term memory profile (choices: none, mal, mal_energy, mal_energy_serpent, mal_energy_dual, mal_energy_triple, mal_energy_quad, mal_energy_bank, mag) |
 | `--mla` | bool | `False` | Use Multi-Head Latent Attention (MLA) |
 | `--mono-type` | str | `None` | Mono-forward graph cutting in the sequential decoder: detach hidden states on a cut schedule and train each segment from a local goodness score (omit to disable) (choices: cycle, final, layer) |
 | `--mta` | bool | `False` | Use Multi-Token Attention (MTA) |

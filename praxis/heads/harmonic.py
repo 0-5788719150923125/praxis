@@ -103,8 +103,16 @@ AMP_MOD_DEPTH: float = 0.5  # peak envelope modulation, tanh-bounded
 # is just the field of the per-token delta, added to the base field.
 FAST_WEIGHT_RANK: int = 2  # rank of the per-token grid delta
 FAST_MEM_DIM: int = 32  # key/value width of the delta-rule memory
-FAST_SEGMENT: int = 64  # memory bank refreshes per segment; queries stay per-token
+# How often the compressed bank refreshes. The read is bank + within-segment
+# causal prefix, so this is a compression granularity, NOT a blind spot: every
+# token still sees every earlier token, whatever the segment size. Bigger
+# segments mean fewer steps of the sequential bank recurrence (cheaper) and more
+# of the context served exactly rather than through the compressed bank.
+FAST_SEGMENT: int = 64
 FAST_WEIGHT_SCALE: float = 0.25  # per-cell cap; keeps the slow grid foundational
+# Forwards between refreshes of the snapshot-only `_fast_repr` readout. Nothing
+# in training reads it; the dashboard samples it far slower than every step.
+FAST_REPR_INTERVAL: int = 25
 FAST_EPS: float = 1e-6
 # Smoothing for the reported input-conditional envelope (the "input" arm's separate
 # pooled-envelope pathway). The raw per-batch coeffs swing hard step to step; the
@@ -529,6 +537,17 @@ class HarmonicField(nn.Module):
             persistent=False,
         )
 
+        # Position x temporal-frequency phase table, [T, F_t]. Depends only on
+        # (T, F_t), never on the input, but was rebuilt on every forward - twice,
+        # once in _eval_field and again in _field_fast - as arange + arange +
+        # mul + cos + sin. Precomputed here and sliced to seq_len instead;
+        # sequences longer than T fall back to computing (see _phase_table).
+        pos = torch.arange(self.T, dtype=torch.float32).unsqueeze(1)
+        freq = torch.arange(1, self.F_t + 1, dtype=torch.float32)
+        pos_ang = 2 * math.pi * pos * freq / self.T
+        self.register_buffer("pos_cos", torch.cos(pos_ang), persistent=False)
+        self.register_buffer("pos_sin", torch.sin(pos_ang), persistent=False)
+
         self.amplitudes = nn.Parameter(torch.empty(self.F_t, self.F_d))
         nn.init.normal_(self.amplitudes, mean=0.0, std=AMPLITUDE_INIT_STD)
 
@@ -623,6 +642,15 @@ class HarmonicField(nn.Module):
             self.register_buffer(
                 "_fast_repr", torch.zeros(self.F_t, self.F_d), persistent=False
             )
+            # Lower-triangular mask for the WITHIN-segment causal read, so a
+            # token attends to its own segment's prefix (itself included) and
+            # nothing later. Without this half, a token sees only whole prior
+            # segments and is blind to everything since the last boundary.
+            self.register_buffer(
+                "fast_causal",
+                torch.ones(FAST_SEGMENT, FAST_SEGMENT).tril().bool(),
+                persistent=False,
+            )
 
     def _fast_retrieve(self, hidden_states: Tensor) -> Tensor:
         """Per-token read ``[B, L, d]`` from a delta-rule linear-attention memory
@@ -669,8 +697,23 @@ class HarmonicField(nn.Module):
             mem = mem + b_mat[:, n] - a_mat[:, n] @ mem
         mem_stack = torch.stack(mems, dim=1)  # [B, N, d, d]
 
-        dq = torch.einsum("bnsd,bnd->bns", qk, z_prior) + FAST_EPS
-        reads = torch.einsum("bnsd,bnde->bnse", qk, mem_stack) / dq.unsqueeze(-1)
+        # Cross-segment: the compressed bank of everything before this segment.
+        num = torch.einsum("bnsd,bnde->bnse", qk, mem_stack)  # [B, N, S, d]
+        den = torch.einsum("bnsd,bnd->bns", qk, z_prior)  # [B, N, S]
+
+        # Within-segment: the causal prefix the bank cannot hold yet. Without
+        # this the read is blind from the last segment boundary to the token
+        # itself - a whole segment's worth, for every token - and segment 0 is
+        # blind entirely, since its bank is the initial zeros. Standard chunked
+        # linear attention: score against the segment's own keys, mask to the
+        # causal prefix, and extend the SAME z normalizer so the two halves are
+        # one weighted average rather than two scales glued together.
+        scores = torch.einsum("bnsd,bntd->bnst", qk, kk)  # [B, N, S, S]
+        scores = scores.masked_fill(~self.fast_causal[:seg, :seg], 0.0)
+        num = num + torch.einsum("bnst,bnte->bnse", scores, vv)
+        den = den + scores.sum(dim=-1)
+
+        reads = num / (den + FAST_EPS).unsqueeze(-1)
         return reads.reshape(b_size, n_seg * seg, d)[:, :seq_len]
 
     def _field_fast(self, hidden_states: Tensor) -> Tensor:
@@ -686,11 +729,9 @@ class HarmonicField(nn.Module):
         self._update_fast_repr(u, v)
 
         device = hidden_states.device
-        t = torch.arange(seq_len, device=device, dtype=torch.float32)
-        f_t = torch.arange(1, self.F_t + 1, device=device, dtype=torch.float32)
-        ang = 2 * math.pi * t.unsqueeze(1) * f_t / self.T  # [L, F_t]
-        cos_a = torch.cos(ang).view(1, seq_len, 1, self.F_t)
-        sin_a = torch.sin(ang).view(1, seq_len, 1, self.F_t)
+        ca, sa = self._phase_table(seq_len, device)  # shared with _eval_field
+        cos_a = ca.view(1, seq_len, 1, self.F_t)
+        sin_a = sa.view(1, seq_len, 1, self.F_t)
         p_re, p_im = self.spec_real.to(device), self.spec_imag.to(device)
         c = torch.einsum("blrf,fd->blrd", u * cos_a, p_re) - torch.einsum(
             "blrf,fd->blrd", u * sin_a, p_im
@@ -703,7 +744,16 @@ class HarmonicField(nn.Module):
     def _update_fast_repr(self, u: Tensor, v: Tensor) -> None:
         """[F_t, F_d] representative of the overlay for the snapshots: the
         rank-factored outer product of the batch-time-mean factors. No EMA - the
-        mean over B*L tokens is already a stable readout of a stable state."""
+        mean over B*L tokens is already a stable readout of a stable state.
+
+        Refreshed on a cadence, not every forward: nothing in training reads
+        ``_fast_repr`` - it exists for the dashboard snapshot - and recomputing
+        it per call was ~9% of the overlay for a number sampled far more slowly
+        than that. The last value stands in between refreshes.
+        """
+        self._repr_tick = (getattr(self, "_repr_tick", 0) + 1) % FAST_REPR_INTERVAL
+        if self._repr_tick != 1:
+            return
         with torch.no_grad():
             scale = FAST_WEIGHT_SCALE / self.fast_rank
             u_m, v_m = u.mean(dim=(0, 1)), v.mean(dim=(0, 1))  # [r, F_t], [r, F_d]
@@ -724,11 +774,24 @@ class HarmonicField(nn.Module):
         into irfft2's ortho norm, preserving spectral energy: field std stays
         ~ amp std * sqrt(F_t * F_d / (T * D)), independent of T scale.
         """
+        cos_a, sin_a = self._phase_table(seq_len, device)
+        a = cos_a @ scaled.real - sin_a @ scaled.imag
+        return (2.0 / math.sqrt(self.T * self.D)) * (a @ self.basis_d.to(device))
+
+    def _phase_table(self, seq_len: int, device: torch.device):
+        """``(cos, sin)`` of ``2*pi*t*f_t/T`` for ``t`` in ``0..seq_len-1``.
+
+        Sliced from the precomputed ``[T, F_t]`` buffers - these are constants
+        of the module, not of the input. Sequences longer than ``T`` are
+        computed on the spot; the field is band-limited to period ``T``, so that
+        path is only reachable if a config asks for positions past one period.
+        """
+        if seq_len <= self.T:
+            return self.pos_cos[:seq_len].to(device), self.pos_sin[:seq_len].to(device)
         t = torch.arange(seq_len, device=device, dtype=torch.float32)
         f_t = torch.arange(1, self.F_t + 1, device=device, dtype=torch.float32)
-        ang = 2 * math.pi * t.unsqueeze(1) * f_t / self.T  # [L, F_t]
-        a = torch.cos(ang) @ scaled.real - torch.sin(ang) @ scaled.imag
-        return (2.0 / math.sqrt(self.T * self.D)) * (a @ self.basis_d.to(device))
+        ang = 2 * math.pi * t.unsqueeze(1) * f_t / self.T
+        return torch.cos(ang), torch.sin(ang)
 
     def _field(
         self,

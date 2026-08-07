@@ -253,7 +253,10 @@ def test_fast_weights_overlay_reads_as_variance():
 
 def _reference_delta_loop(field, hs):
     """The plain sequential delta-rule loop the vectorized _fast_retrieve must
-    reproduce. Kept here as the ground truth for the closed-form rewrite."""
+    reproduce. Kept here as the ground truth for the closed-form rewrite.
+
+    Two halves per segment: the compressed bank of everything before it, and a
+    causally-masked read over its own tokens."""
     q, k, v = field.fast_qkv(hs.float()).split(field.fast_mem, dim=-1)
     sig_q, sig_k = F.elu(q) + 1.0, F.elu(k) + 1.0
     b, L, _ = q.shape
@@ -263,7 +266,15 @@ def _reference_delta_loop(field, hs):
     for s in range(0, L, FAST_SEGMENT):
         e = min(s + FAST_SEGMENT, L)
         sq, sk, sv = sig_q[:, s:e], sig_k[:, s:e], v[:, s:e]
-        reads.append((sq @ mem) / (sq @ z + FAST_EPS))
+        # Read = compressed bank of PRIOR segments + this segment's causal
+        # prefix, sharing one z normalizer. The prefix half is what stops a
+        # token being blind from the last segment boundary up to itself.
+        span = e - s
+        causal = torch.ones(span, span, dtype=torch.bool).tril()
+        scores = (sq @ sk.transpose(-2, -1)).masked_fill(~causal, 0.0)
+        num = sq @ mem + scores @ sv
+        den = sq @ z + scores.sum(dim=-1, keepdim=True)
+        reads.append(num / (den + FAST_EPS))
         retrieved = (sk @ mem) / (sk @ z + FAST_EPS)
         mem = mem + sk.transpose(-2, -1) @ (sv - retrieved)
         z = z + sk.sum(dim=1, keepdim=True).transpose(-2, -1)
@@ -273,6 +284,7 @@ def _reference_delta_loop(field, hs):
 def test_fast_retrieve_matches_sequential_loop():
     # The vectorized affine-recurrence form must equal the naive per-segment loop
     # to float precision, across exact-multiple, ragged-tail, and sub-segment L.
+    # Covers both halves of the read: bank and within-segment causal prefix.
     for L in [50, 64, 200, 256, 513]:
         torch.manual_seed(L)
         f = _fast_field("learned", max_positions=1024)
@@ -282,3 +294,150 @@ def test_fast_retrieve_matches_sequential_loop():
         got, want = f._fast_retrieve(x), _reference_delta_loop(f, x)
         assert got.shape == (3, L, f.fast_mem)
         torch.testing.assert_close(got, want, atol=1e-5, rtol=0.0)
+
+
+# ── fast-weight overlay: the single-segment case ────────────────────────────
+
+
+def test_every_token_sees_every_earlier_token():
+    """The read must cover the whole causal prefix, not whole prior segments.
+
+    Before the within-segment term, a token saw only completed segments: it was
+    blind from the last segment boundary up to itself, and segment 0 was blind
+    entirely. Perturbing token t must now move the read of every token >= t.
+    """
+    import torch
+
+    from praxis.heads.harmonic import FAST_SEGMENT, HarmonicField
+
+    torch.manual_seed(0)
+    field = HarmonicField(hidden_dim=32, max_positions=256, fast_weights=True)
+    with torch.no_grad():
+        for mod in (field.fast_u, field.fast_v, field.fast_qkv):
+            mod.weight.normal_(0, 0.3)
+
+    seq_len = FAST_SEGMENT * 2
+    x = torch.randn(1, seq_len, 32)
+    base = field._fast_retrieve(x)
+    noise = 1e-4  # fp32 cross-talk floor is ~1e-6 of the perturbed magnitude
+
+    for t in (0, 1, FAST_SEGMENT - 1, FAST_SEGMENT, seq_len - 2):
+        y = x.clone()
+        y[0, t] += 5.0
+        delta = (field._fast_retrieve(y) - base).abs().sum(-1)[0]
+        moved = (delta > noise).nonzero().flatten()
+        assert moved.numel() > 0, f"token {t} influenced nothing"
+        assert moved.min().item() == t, f"token {t} first moved read {moved.min().item()}"
+        assert moved.max().item() == seq_len - 1
+
+
+def test_read_is_strictly_causal():
+    """No token may influence the read of an earlier token."""
+    import torch
+
+    from praxis.heads.harmonic import FAST_SEGMENT, HarmonicField
+
+    torch.manual_seed(0)
+    field = HarmonicField(hidden_dim=32, max_positions=256, fast_weights=True)
+    with torch.no_grad():
+        for mod in (field.fast_u, field.fast_v, field.fast_qkv):
+            mod.weight.normal_(0, 0.3)
+
+    seq_len = FAST_SEGMENT * 2
+    x = torch.randn(1, seq_len, 32)
+    base = field._fast_retrieve(x)
+    for t in (FAST_SEGMENT // 2, FAST_SEGMENT, seq_len - 1):
+        y = x.clone()
+        y[0, t] += 5.0
+        delta = (field._fast_retrieve(y) - base).abs().sum(-1)[0]
+        assert delta[:t].max().item() < 1e-4, f"token {t} leaked backwards"
+
+
+def test_overlay_is_live_at_a_single_segment():
+    """The whole reason for the within-segment term: a short sequence used to
+    read an empty bank and produce exactly nothing."""
+    import torch
+
+    from praxis.heads.harmonic import FAST_SEGMENT, HarmonicField
+
+    torch.manual_seed(0)
+    field = HarmonicField(hidden_dim=32, max_positions=256, fast_weights=True)
+    with torch.no_grad():
+        for mod in (field.fast_u, field.fast_v, field.fast_qkv):
+            mod.weight.normal_(0, 0.3)
+
+    x1 = torch.randn(2, FAST_SEGMENT, 32)
+    x2 = torch.randn(2, FAST_SEGMENT, 32)
+    assert field._fast_retrieve(x1).abs().max().item() > 0.0
+    overlay1, overlay2 = field._field_fast(x1), field._field_fast(x2)
+    assert (overlay1 - overlay2).abs().max().item() > 0.0, "not input-dependent"
+    assert overlay1.std(dim=1).max().item() > 0.0, "not varying across tokens"
+
+
+def test_single_segment_early_out_keeps_gradients_attached():
+    """Zero grad, not absent grad: the optimizer must see what it saw before."""
+    import torch
+
+    from praxis.heads.harmonic import HarmonicField
+
+    field = HarmonicField(hidden_dim=32, max_positions=256, fast_weights=True)
+    x = torch.randn(2, 16, 32, requires_grad=True)
+    field._field_fast(x).sum().backward()
+
+    grad = field.fast_qkv.weight.grad
+    assert grad is not None, "fast_qkv detached from the graph"
+    assert grad.abs().max().item() == 0.0
+
+
+def test_phase_table_matches_on_the_fly_computation():
+    import math
+
+    import torch
+
+    from praxis.heads.harmonic import HarmonicField
+
+    field = HarmonicField(hidden_dim=48, max_positions=128)
+    for seq_len in (1, 16, 64, 128):
+        cos_a, sin_a = field._phase_table(seq_len, torch.device("cpu"))
+        t = torch.arange(seq_len, dtype=torch.float32).unsqueeze(1)
+        f_t = torch.arange(1, field.F_t + 1, dtype=torch.float32)
+        ang = 2 * math.pi * t * f_t / field.T
+        assert torch.allclose(cos_a, torch.cos(ang), atol=1e-6)
+        assert torch.allclose(sin_a, torch.sin(ang), atol=1e-6)
+
+
+def test_phase_table_handles_sequences_past_one_period():
+    """seq_len > T falls off the precomputed table and must still be correct."""
+    import math
+
+    import torch
+
+    from praxis.heads.harmonic import HarmonicField
+
+    field = HarmonicField(hidden_dim=16, max_positions=32)
+    seq_len = 70  # > T
+    cos_a, sin_a = field._phase_table(seq_len, torch.device("cpu"))
+    assert cos_a.shape == (seq_len, field.F_t)
+    t = torch.arange(seq_len, dtype=torch.float32).unsqueeze(1)
+    f_t = torch.arange(1, field.F_t + 1, dtype=torch.float32)
+    ang = 2 * math.pi * t * f_t / field.T
+    assert torch.allclose(cos_a, torch.cos(ang), atol=1e-6)
+
+
+def test_fast_repr_refreshes_on_a_cadence():
+    import torch
+
+    from praxis.heads.harmonic import FAST_REPR_INTERVAL, HarmonicField
+
+    field = HarmonicField(hidden_dim=32, max_positions=256, fast_weights=True)
+    with torch.no_grad():
+        field.fast_u.weight.normal_(0, 0.3)
+    x = torch.randn(2, 16, 32)
+
+    field._field_fast(x)
+    first = field._fast_repr.clone()
+    for _ in range(FAST_REPR_INTERVAL - 2):  # still inside the period
+        with torch.no_grad():
+            field.fast_u.weight.normal_(0, 0.3)
+        field._field_fast(x)
+    assert torch.equal(field._fast_repr, first), "refreshed inside the period"

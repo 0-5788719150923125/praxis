@@ -3,7 +3,7 @@
 
 Titans-style test-time-learned memory modules (Behrouz et al. 2024), surfaced as a layer (MAL) or a gate (MAG). Selected with ``--memory-type``; default is ``none``.
 
-Registry: ``praxis.MEMORY_REGISTRY`` (8 entries)
+Registry: ``praxis.MEMORY_REGISTRY`` (9 entries)
 
 ## `mag`
 
@@ -28,9 +28,25 @@ hold, instead of an echo the model just routes around. The update grid is segmen
 surprise spikes (EM-LLM-style events, capped at chunk_size) so a context shift starts a
 fresh memory write.
 
+## `mal_energy_bank`
+
+The four regimes of mal_energy_quad spread ALONG the recurrence instead of stacked at
+every step: recurrent pass p runs core p % 4 and nothing else, so a step costs ONE
+memory core no matter how many the bank holds. The bank is ordered cheapest-first, so
+the pass a regime sits at is the price of reaching it - pass 0's core runs on every
+forward, while the grid cores are only reached when the pass budget goes that deep (a
+sampled loop count in training, a KL early exit at inference). No blend and no bandit:
+each core reads a different depth's stream, so a share between them would measure depth
+rather than forecast quality, and routing stays a pure function of current_depth.
+abstractinator-h's memory.
+
 ## `mal_energy_dual`
 
-Value: `{'surfacing': 'dual_smear', 'dense': 'mlp', 'dense_b': 'eml_tree', 'layers': 2, 'expansion': 0.5, 'chunk_size': 64, 'momentum': True, 'activation': 'serpent', 'use_energy': True, 'segment': True, 'segment_block': 16, 'parallel_scan': True, 'write_objective': 'predictive'}`
+Two energy-memory cores of opposed function-class regimes - the serpent-activation MLP
+(exponential/harmonic) and the EML tree's log-minus-exponent - run at EVERY recurrent
+step and combined by a floored inverse-surprise bandit rather than a loss-trained
+router, so neither can be starved before it matures. Two memory forwards and two test-
+time updates per step is the price.
 
 ## `mal_energy_quad`
 

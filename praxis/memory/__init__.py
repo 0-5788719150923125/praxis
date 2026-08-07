@@ -21,6 +21,7 @@ from praxis.memory.surfacings import (
     MemoryAsLayer,
     MemoryBandSmear,
     MemoryBase,
+    MemoryDepthBank,
     MemoryDualSmear,
 )
 
@@ -164,6 +165,38 @@ MEMORY_REGISTRY: Dict[str, Optional[dict]] = {
         parallel_scan=True,
         write_objective="predictive",
     ),
+    # The same four regimes as mal_energy_quad, spread ALONG the recurrence
+    # instead of stacked at every step. Pass p runs core p % 4 and nothing else,
+    # so a step costs ONE memory core regardless of how many the bank holds -
+    # against the band smear, where the two cheap arms are always on and a step
+    # never costs fewer than two. The bank is ordered cheapest-first, so the
+    # depth a regime sits at is the price of reaching it: pass 0's core runs on
+    # every forward, and the grid cores are only reached when the pass budget
+    # goes that deep (a sampled loop count in training, a KL exit at inference).
+    # No bandit and no blend - the cores read different depths, so an
+    # inverse-surprise share between them would measure depth rather than
+    # forecast quality, and routing stays a pure function of current_depth.
+    # abstractinator-h's memory; everything else tracks mal_energy_quad.
+    "mal_energy_bank": dict(
+        surfacing="depth_bank",
+        dense="mlp",
+        dense_b="eml_tree",
+        dense_c="kan",
+        dense_d="spline",
+        num_grids=6,
+        grid_spacing="geometric",
+        num_knots=6,
+        layers=2,
+        expansion=0.5,
+        chunk_size=64,
+        momentum=True,
+        activation="serpent",
+        use_energy=True,
+        segment=True,
+        segment_block=16,
+        parallel_scan=True,
+        write_objective="predictive",
+    ),
     "mag": dict(
         surfacing="mag",
         dense="mlp",
@@ -224,6 +257,30 @@ MEMORY_PROFILE_DESCRIPTIONS: Dict[str, str] = {
         "head, with the two grid cores firing on staggered sparse phases so "
         "per-step cost stays near the triple. abstractinator-d's memory."
     ),
+    # mal_energy_dual has no entry by long-standing omission; the two profiles
+    # below are the ones the abstractinator thread actually chooses between, so
+    # they say what they are rather than dumping a spec dict into the docs.
+    "mal_energy_dual": (
+        "Two energy-memory cores of opposed function-class regimes - the "
+        "serpent-activation MLP (exponential/harmonic) and the EML tree's "
+        "log-minus-exponent - run at EVERY recurrent step and combined by a "
+        "floored inverse-surprise bandit rather than a loss-trained router, so "
+        "neither can be starved before it matures. Two memory forwards and two "
+        "test-time updates per step is the price."
+    ),
+    "mal_energy_bank": (
+        "The four regimes of mal_energy_quad spread ALONG the recurrence "
+        "instead of stacked at every step: recurrent pass p runs core p % 4 and "
+        "nothing else, so a step costs ONE memory core no matter how many the "
+        "bank holds. The bank is ordered cheapest-first, so the pass a regime "
+        "sits at is the price of reaching it - pass 0's core runs on every "
+        "forward, while the grid cores are only reached when the pass budget "
+        "goes that deep (a sampled loop count in training, a KL early exit at "
+        "inference). No blend and no bandit: each core reads a different "
+        "depth's stream, so a share between them would measure depth rather "
+        "than forecast quality, and routing stays a pure function of "
+        "current_depth. abstractinator-h's memory."
+    ),
     "mag": (
         "Memory-as-Gate (Titans): a memory branch run parallel to attention "
         "and blended with it through a learned gate."
@@ -237,6 +294,7 @@ _SURFACINGS: Dict[str, Type[nn.Module]] = {
     "mag": MemoryAsGate,
     "dual_smear": MemoryBandSmear,  # N=2 (back-compat name)
     "band_smear": MemoryBandSmear,  # N arms
+    "depth_bank": MemoryDepthBank,  # N arms, one per recurrent pass
 }
 
 

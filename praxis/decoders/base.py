@@ -111,6 +111,26 @@ class BaseDecoder(nn.Module):
                     block = BLOCK_REGISTRY[config.block_type](config)
                 expert_blocks.append(block)
 
+            # The long-term memory is SHARED across the bank rather than
+            # replicated into it. A SMEAR-family router merges the experts'
+            # parameters into one geometry per depth, so a per-expert memory
+            # would be N banks of test-time weights collapsed to a single
+            # executing copy - N-1 of them existing only to be averaged away.
+            # It is also the wrong object to route: the memory's weights are
+            # meta-learned INITIAL conditions for a test-time update, not part
+            # of the geometry the router is choosing between, and its surfacing
+            # keeps its own per-forward state (a depth bank's occupancy, a band
+            # smear's reward EMA) which the merge does not carry anyway -
+            # buffers are not merged. Sharing the module makes those the same
+            # object for every expert, so the bank costs one memory instead of
+            # num_experts and the merge has nothing memory-shaped to stack.
+            # Only the transformer block carries one; other block types (mru,
+            # recurrent, ssm, ...) have no memory attribute to tie.
+            shared_memory = getattr(expert_blocks[0], "memory", None)
+            if shared_memory is not None:
+                for block in expert_blocks[1:]:
+                    block.memory = shared_memory
+
             # Create a single LocalLayer with all expert blocks
             expert = LocalLayer(
                 config, block=expert_blocks[0], expert_blocks=expert_blocks

@@ -551,3 +551,368 @@ class MemoryBandSmear(MemoryBase):
 # Back-compat alias: the surfacing registry and older references use the "dual"
 # name; the class is now N-arm (N=2 is byte-identical to the old dual).
 MemoryDualSmear = MemoryBandSmear
+
+
+# Bank positions are POSITIONAL: core i is whatever ``dense``/``dense_b``/... the
+# profile names at that slot. The chart series are labelled by letter for that
+# reason - a profile that reorders its bank would make a name-based legend lie,
+# while the letter stays true. The regime NAMES ride the river card instead,
+# where they are read off the live spec (_REGIME_NAMES).
+_BANK_LETTERS = "abcdefgh"
+
+
+def _per_core_charts(
+    suffix: str,
+    title: str,
+    y_label: str,
+    description: str,
+    base_order: int,
+    y_scale: str = "linear",
+    arms: int = 4,
+) -> dict:
+    """One chart per metric family, one line per bank position.
+
+    The class declares five families over a four-core bank; twenty separate
+    cards would bury the thing worth seeing (the regimes side by side), so each
+    family shares a ``series_group`` and renders as one multi-line chart. Keys
+    the run never emits are pruned by the frontend, so declaring the full bank
+    here costs nothing to a profile that holds fewer arms.
+    """
+    return {
+        f"{letter}_{suffix}": {
+            "description": description,
+            "chart": {
+                "title": title,
+                "y_label": y_label,
+                "y_scale": y_scale,
+                "group": "memory",
+                "group_order": 20,
+                "order": base_order + i,
+                "series_group": f"depth_bank_{suffix}",
+                "series_label": letter.upper(),
+            },
+        }
+        for i, letter in enumerate(_BANK_LETTERS[:arms])
+    }
+
+
+class MemoryDepthBank(MemoryBase):
+    """ONE test-time memory core per recurrent pass, drawn from a bank of N
+    function-class regimes - the depth axis IS the router.
+
+    ``MemoryBandSmear`` stacks its bank at every step: each arm runs and the
+    outputs are blended, so the cheap arms cost N memory forwards and N
+    test-time updates per recurrent step (the sparse rules trim the grid arms,
+    but the two cheap ones are always on - never fewer than 2 cores per step).
+    Here the bank is spread ALONG the recurrence instead. Pass p runs core
+    ``p % N`` and nothing else, so step cost is exactly one core no matter how
+    many regimes the bank holds, and each regime specializes to its own station
+    in the recurrence rather than competing for the same one.
+
+    The assignment is keyed to the PASS index (``current_depth // num_layers``)
+    because that is the unit halting can actually cut at: the KL check only
+    fires at loop boundaries (praxis/halting/kl.py:154), and training does not
+    check at all - it samples a loop COUNT up front (kl.py:122-133). So the bank
+    is declared cheapest-first and the pass a core sits at is the price of
+    reaching it:
+
+      * pass 0's core runs on every forward - the memory the model always has.
+      * later cores are reached only when the pass budget goes that deep. In
+        training that is the log-normal Poisson's tail; at inference it is
+        inputs whose latent has not converged by then. Either way an easy input
+        never pays for the expensive regimes at all, which is the saving - and
+        the same fact means a late core sees proportionally fewer gradient
+        steps, which is the cost. Read ``*_memory_core_use`` for the actual
+        split; it is the experiment, not a diagnostic.
+
+    There is no bandit and no blend here, deliberately. The band smear's arms
+    are comparable because they forecast the SAME NextLat target from the same
+    stream; these read a different depth's stream each, so an inverse-surprise
+    share between them would be measuring depth, not forecast quality. Routing
+    is therefore a pure function of ``current_depth`` - bit-identical on every
+    forward, which the byte-latent speculative decoder needs (the note at
+    :472 records what a state-mutating blend cost it). Nothing this class
+    tracks feeds the output; it is all diagnostic.
+    """
+
+    metric_descriptions = {
+        "memory_depth_river": {
+            "description": (
+                "The bank as a species-over-time river (after NEAT, Figure 7): "
+                "time runs down the recent-forwards horizon, each row split by "
+                "how many of that forward's passes each core actually ran (band "
+                "width = occupancy, NOT a blend weight - only one core runs per "
+                "pass). Brightness is that core's forecast quality against its "
+                "OWN recent range, since the cores read different depths and do "
+                "not share a scale. A late band narrowing to nothing is the "
+                "model exiting before it ever reaches that regime."
+            ),
+            "snapshot": {
+                "title": "Memory Depth Bank",
+                "renderer": "regime_river",
+                "group": "memory",
+                "group_order": 20,
+                "order": 5,
+            },
+        },
+        **_per_core_charts(
+            "memory_core_use",
+            "Memory Core Use",
+            "passes run / passes taken",
+            (
+                "Share of the forward's recurrent passes that ran this core - "
+                "fixed by the assignment (pass p runs core p % N) and by how "
+                "deep the pass budget went, so the four lines are the halting "
+                "distribution read through the bank. A shallow forward pushes "
+                "core A's share toward 1 and pins the late cores at 0; a "
+                "forward that completes the cycle settles every share at 1/N. "
+                "A late core sitting near 0 is a regime the model never pays "
+                "for - the compute saving, and equally the reason it may never "
+                "mature."
+            ),
+            base_order=10,
+        ),
+        **_per_core_charts(
+            "memory_surprise_norm",
+            "Memory Core Surprise (norm)",
+            "surprise (normalized)",
+            (
+                "Per-core surprise in RMS-normalized space - the scale-free "
+                "next-latent (Huber) forecast error the energy update actually "
+                "optimizes, reported for the core that ran. NOT comparable "
+                "across cores the way the band smear's arms are: each sits at a "
+                "different recurrent pass and reads a different stream. Read "
+                "each line against its own history."
+            ),
+            base_order=20,
+        ),
+        **_per_core_charts(
+            "memory_surprise",
+            "Memory Core Surprise (raw)",
+            "surprise",
+            (
+                "Per-core RAW reconstruction loss at the cold init weights. "
+                "Scale-sensitive (a core's free output scale can dominate it); "
+                "the normalized chart is the quantity the update optimizes."
+            ),
+            base_order=30,
+            y_scale="logarithmic",
+        ),
+        **_per_core_charts(
+            "memory_gain",
+            "Memory Core Gain",
+            "retrieved / stream",
+            (
+                "Per-core output magnitude relative to the residual stream at "
+                "its own pass. Unlike the band smear there is no blend to "
+                "divide the contribution, so a core writes at full weight when "
+                "it runs; decay toward 0 means the model is routing around that "
+                "regime rather than around the memory as a whole."
+            ),
+            base_order=40,
+        ),
+        **_per_core_charts(
+            "memory_write",
+            "Memory Core Write",
+            "delta-W / W0",
+            (
+                "Per-core relative size of the test-time weight update "
+                "(||W_T - W0|| / ||W0||). Near 0 means that regime's update is "
+                "inert - it is being carried as parameters without memorizing."
+            ),
+            base_order=50,
+        ),
+    }
+
+    def __init__(self, config, spec) -> None:
+        super().__init__(config)
+        denses = [
+            spec[k] for k in ("dense", "dense_b", "dense_c", "dense_d") if spec.get(k)
+        ]
+        if len(denses) < 2:
+            raise ValueError(
+                "depth_bank needs at least two cores (dense + dense_b); a "
+                "one-core bank is just the mal/mal_energy surfacing."
+            )
+        self._denses = denses
+
+        def _core(dense_name):
+            s = {**spec, "dense": dense_name}
+            return NeuralMemory(
+                dim=self.hidden_size,
+                model=build_memory_model(config, s),
+                chunk_size=s.get("chunk_size", 64),
+                momentum=s.get("momentum", True),
+                use_energy=s.get("use_energy", False),
+                segment=s.get("segment", False),
+                segment_block=s.get("segment_block", 16),
+                parallel_scan=s.get("parallel_scan", True),
+                write_objective=s.get("write_objective", "recon"),
+            )
+
+        self.mems = nn.ModuleList([_core(d) for d in denses])
+        # The pass index, not the raw depth: halting can only cut on a whole
+        # num_layers cycle, so keying the bank to the cycle makes every possible
+        # exit land on a core boundary. With num_layers=1 the two coincide.
+        self.num_layers = max(1, int(getattr(config, "num_layers", 1) or 1))
+        max_loops = max(1, int(getattr(config, "depth", 1) or 1)) // self.num_layers
+        if max_loops < len(denses):
+            unreachable = ", ".join(denses[max_loops:])
+            print(
+                f"[MEMORY] depth_bank: {len(denses)} cores but only {max_loops} "
+                f"recurrent pass(es) - {unreachable} can never run. Drop the "
+                "unreachable arms from the profile or raise depth."
+            )
+        self._labels = [
+            f"{_REGIME_NAMES.get(d, d)} ({chr(65 + i)})" for i, d in enumerate(denses)
+        ]
+        # Deepest pass index reached in the forward being assembled, the raw
+        # depth of the previous call (how _track finds a forward boundary), and
+        # the per-core diagnostics captured while each core ran.
+        self._passes_seen = 0
+        self._last_depth: Optional[int] = None
+        self._core_stats: list = [None] * len(denses)
+        # Last surprise each core reported while ACTIVE - the river's brightness
+        # source, kept across forwards so a core that sat this one out still
+        # paints its band rather than dropping to a fake zero.
+        self._core_surprise: list = [None] * len(denses)
+        self._history: deque = deque(maxlen=_RIVER_HORIZON)
+
+    def _core_index(self, current_depth: int) -> int:
+        """Which core runs at this recurrent step. Wraps, so a controller that
+        overruns config.depth still lands on a real core."""
+        return (int(current_depth) // self.num_layers) % len(self.mems)
+
+    def _use_fractions(self, passes: int) -> list:
+        """Share of the forward's passes that ran each core. Exactly one core
+        runs per pass, so these sum to 1 - which is what the river renderer
+        assumes of its band widths."""
+        counts = [0] * len(self.mems)
+        for p in range(passes):
+            counts[p % len(self.mems)] += 1
+        return [c / passes for c in counts]
+
+    def _settle_forward(self) -> None:
+        """Fold the finished forward into the river. There is no pass-end
+        callback, so the next forward's first pass settles the previous one -
+        the same idiom KL halting uses for its peak EMA
+        (praxis/halting/kl.py:105). Held back until every core has reported
+        once, so the card starts with real fitnesses rather than filler."""
+        if self._passes_seen <= 0 or any(s is None for s in self._core_surprise):
+            return
+        self._history.append(
+            (self._use_fractions(self._passes_seen), list(self._core_surprise))
+        )
+
+    def _track(self, core: int, depth: int) -> None:
+        """Per-forward accounting for the cards, and the ONLY place this class
+        writes state.
+
+        Training-only, deliberately. Generation runs INSIDE the training loop
+        (praxis/callbacks/lightning/generation_queue.py drains the queue from
+        on_train_batch_end, and the decode backend flips the model to eval), at
+        whatever depth the KL early exit picks - so an ungated counter would let
+        a decode overwrite the training forward's occupancy and the river would
+        paint the decode instead of the run.
+
+        A forward starts at pass 0 that did not ADVANCE from the previous call.
+        That boundary holds however the decoder hands out depths: a shared
+        expert-bank block sees every depth (so pass 0 spans num_layers
+        consecutive, increasing depths - not a new forward), while distinct
+        LocalLayers see only their own residue class (so block j never sees
+        depth 0 at all and its first pass starts at depth j). Under gradient
+        checkpointing the recompute replays depths in reverse; with num_layers
+        1 it cannot reach pass 0, since depth 0 is the one depth
+        ``should_checkpoint`` always declines. Everything else here is
+        idempotent under replay anyway - _passes_seen only takes a max, and the
+        stats are rewritten with the values they already hold.
+        """
+        pass_index = depth // self.num_layers
+        if pass_index == 0 and (self._last_depth is None or depth <= self._last_depth):
+            self._settle_forward()
+            self._passes_seen = 0
+            self._core_stats = [None] * len(self.mems)
+        self._last_depth = depth
+        self._passes_seen = max(self._passes_seen, pass_index + 1)
+        # Snapshot the core's diagnostics WHILE they are fresh. NeuralMemory's
+        # last_* attributes are overwritten by every call and reset nowhere, so
+        # reading them after the forward would report a core that sat this one
+        # out as if it had just run.
+        self._core_stats[core] = self._core_metrics(self.mems[core])
+        surprise = self._core_stats[core].get("memory_surprise_norm")
+        if surprise is not None:
+            self._core_surprise[core] = surprise
+
+    def forward(self, stream, attn_output, state=None, current_depth: int = 0):
+        states = list(state) if state is not None else [None] * len(self.mems)
+        i = self._core_index(current_depth)
+        retrieved, states[i] = self.mems[i](stream, states[i])
+        if self.training:
+            self._track(i, int(current_depth))
+        return stream + retrieved, tuple(states)
+
+    def dashboard_snapshots(self) -> dict:
+        """The depth bank as a river: per-forward (band widths, band fitness).
+        Widths are occupancy - the share of passes that reached each core - so a
+        halted forward simply has no late bands. Fitness is min-maxed WITHIN a
+        band and inverted, not across bands: the cores read different depths, so
+        a shared normalization would paint depth rather than forecast quality.
+        Row layout is ``[use_0..use_{N-1}, fit_0..fit_{N-1}]``, the layout the
+        regime_river renderer reads."""
+        if not self._history:
+            return {}
+        uses = [h[0] for h in self._history]
+        vals = [h[1] for h in self._history]
+        n = len(self.mems)
+        fits = [[0.5] * n for _ in vals]
+        for i in range(n):
+            col = [row[i] for row in vals]
+            lo, hi = min(col), max(col)
+            rng = hi - lo
+            if rng <= 0:
+                continue  # flat band: leave it mid-bright rather than all-or-nothing
+            for r, v in enumerate(col):
+                fits[r][i] = 1.0 - (v - lo) / rng  # lower surprise -> brighter
+        return {
+            "memory_depth_river": {
+                "status": "ok",
+                "river": [uses[r] + fits[r] for r in range(len(uses))],
+                "labels": self._labels,
+                "horizon": _RIVER_HORIZON,
+            }
+        }
+
+    def _core_metrics(self, mem) -> dict:
+        out = {}
+        for attr, key in (
+            ("last_surprise", "memory_surprise"),
+            ("last_surprise_norm", "memory_surprise_norm"),
+            ("last_gain", "memory_gain"),
+            ("last_write", "memory_write"),
+        ):
+            v = getattr(mem, attr, None)
+            if v is not None:
+                out[key] = float(v)
+        return out
+
+    def training_metrics(self) -> dict:
+        """Per-core diagnostics for the cores that ran in the last TRAINING
+        forward, plus every core's share of that forward's passes.
+
+        The two families are deliberately asymmetric. Occupancy is reported for
+        every core, including the unreached ones - a hard 0 there is the signal
+        the experiment is read on. The surprise/gain/write families are dropped
+        for a core the forward never reached, since NeuralMemory's last_*
+        attributes are never cleared and would otherwise repeat a value from an
+        earlier step; the collector skips absent keys, so those lines just go
+        sparse where the model exited above the core."""
+        out = {}
+        for i, stats in enumerate(self._core_stats):
+            if not stats:
+                continue
+            letter = _BANK_LETTERS[i]
+            out.update({f"{letter}_{key}": value for key, value in stats.items()})
+        if self._passes_seen > 0:
+            for i, use in enumerate(self._use_fractions(self._passes_seen)):
+                out[f"{_BANK_LETTERS[i]}_memory_core_use"] = use
+        return out

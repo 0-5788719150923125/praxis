@@ -1,0 +1,48 @@
+# Replaces the two-regime fragment (order 56, memory_type carries "dual") when
+# the memory bank is spread along the recurrence instead of blended at every
+# step. Same slot, same Titans parent (order 55), but a different claim: the
+# regimes are not held in competition by a protected bandit, they are priced by
+# depth. Only rendered when the run actually assigns one core per pass, so the
+# selection prose and the depth prose can never both appear.
+section: harmonic
+order: 56
+requires:
+  memory_type: ["*bank*"]
+body: >
+  \subsection*{A memory bank priced by depth}
+
+  That memory need not run one function class, and it need not run all of them
+  at once. This model carries a bank of memory regimes of deliberately opposed
+  curve shape - an exponential energy score, the log-minus-exponent regime of
+  an EML tree~\cite{abdo2026eml}, a fixed multi-scale radial cascade, and a
+  compact-support basis whose knot positions are themselves updated at test
+  time - and assigns each to a station in the recurrence rather than blending
+  them. One regime runs per recurrent pass, and no more.
+
+  What makes this a claim rather than an economy is the ordering. The trunk
+  already halts on latent convergence, in the recurrent-depth
+  sense~\cite{geiping2025recurrentdepth}: an input whose latent has stopped
+  moving exits early and the remaining passes are never executed. Ordering the
+  bank cheapest-first therefore turns depth into a price list. The first
+  regime is the memory every input has; the expensive ones are reached only by
+  inputs that earned the depth to reach them. Nothing selects the memory - the
+  halting decision the model was already making selects it, and the module
+  keeps the blind, local, continuous discipline described above, since the
+  choice is a function of position in the recurrence and never of content.
+
+  This is the cumulative-selection reading applied to compute rather than to
+  variation. A protected competition holds several regimes alive by refusing to
+  let the loss extinguish the weak one; a depth-priced bank holds them alive by
+  charging for them separately, so a regime that is rarely reached is rarely
+  paid for rather than starved out of the mixture. The two mechanisms answer
+  the same rich-get-richer failure from opposite directions, and they are
+  mutually exclusive here by construction.
+
+  The falsifier is sharp and it cuts both ways. Every pass records which regime
+  ran and how hard that regime wrote into the residual stream. A late regime
+  that is seldom reached and contributes nothing when it is was never earning
+  its parameters, and the bank should be shorter. A late regime seldom reached
+  but written to hard when it is reached is the result the ordering predicts:
+  a specialist the model pays for exactly when it needs one. If instead the
+  shallow regimes carry every input equally well, depth was not a meaningful
+  price and the bank is an ordering without a gradient.

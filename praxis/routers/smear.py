@@ -388,7 +388,23 @@ class SMEAR(nn.Module):
         # done once rather than on every merge. It used to be rebuilt here on
         # each call - the assignment reads like a cache but was recomputed.
         if not self.parameter_names:
-            self.parameter_names = self._collect_parameter_names(self.experts[0])
+            names = self._collect_parameter_names(self.experts[0])
+            # Drop anything the bank SHARES by reference (today: the long-term
+            # memory, tied across experts in praxis/decoders/base.py). Merging a
+            # tensor with itself under weights that sum to 1 is the identity, so
+            # this is arithmetic-free - it just stops paying the stack, the
+            # tensordot and the python attribute walk for a parameter no routing
+            # decision can move. functional_call leaves an absent name bound to
+            # the module's own parameter, which is that same shared tensor.
+            self.parameter_names = [
+                name
+                for name in names
+                if any(
+                    self._get_module_parameter(expert, name)
+                    is not self._get_module_parameter(self.experts[0], name)
+                    for expert in self.experts[1:]
+                )
+            ]
 
         for param_name in self.parameter_names:
             params = []
