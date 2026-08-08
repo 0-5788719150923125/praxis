@@ -130,6 +130,28 @@ through in `axis/.stignore`.
 
 No Android Studio required - the Gradle wrapper does everything.
 
+## How ranking works
+
+Scoring is a set of separable rules in `core/ranking`, each returning 0..1 plus a
+sentence explaining itself. `Ranker` takes a weighted sum for the order but takes
+the *explanation* from whichever single rule contributed most, so a card names the
+actual reason it beat the others rather than summarising arithmetic.
+
+- `QueryOverlapRule` - overlap with the search box. Stands down entirely when the
+  box is empty, letting the affinity rules decide.
+- `ChannelAffinityRule` - how often you have opened videos from that channel,
+  scaled against your most-watched channel rather than an absolute count.
+- `TitleTermRule` - subject matter learned from titles you have opened, as
+  unigrams and bigrams over content words. Averaged across the title's own grams
+  so a long title cannot win by containing more words.
+
+The only training signal is opening a video. Counts live in `affinity.json` as
+two maps of integers - nothing latent, readable by a person, which is the whole
+premise of the algorithm living on the device.
+
+Adding a signal - watch time, recency, co-occurrence, an on-device embedding -
+means adding an entry to `RULE_REGISTRY`, not editing a scoring function.
+
 ## How the index gets built
 
 There is no follow button. **Every search you run is saved as a term**, and the
@@ -146,7 +168,9 @@ terms are only run when you search or tap one.
 
 Working: search fans out through the registry, saves the term, and folds results
 into the local index; the index ranks and explains itself on every card; tapping
-a card plays in-app in HD. Sharing or opening a YouTube link from any other app
+a card plays in-app in HD. Backing out of a native video docks it to a mini
+player above the tab bar so it keeps playing while you browse; tap to expand, X
+to stop. Sharing or opening a YouTube link from any other app
 indexes it. Three tabs at the bottom - Feed, Terms and Settings.
 
 HD works by taking YouTube's separate video-only and audio-only tracks and

@@ -7,6 +7,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import eco.src.nutube.core.ranking.Affinity
+import eco.src.nutube.core.ranking.RankingContext
+import eco.src.nutube.core.ranking.Ranker
+import eco.src.nutube.core.ranking.Tokens
 import kotlinx.serialization.json.Json
 import okio.FileSystem
 import okio.Path
@@ -28,6 +32,7 @@ class LocalIndex(
 ) {
 
 	private val json = Json { ignoreUnknownKeys = true }
+	private val ranker = Ranker()
 	private val mutex = Mutex()
 	private val _items = MutableStateFlow<List<FeedItem>>(emptyList())
 	val items: StateFlow<List<FeedItem>> = _items.asStateFlow()
@@ -101,33 +106,15 @@ class LocalIndex(
 	}
 
 	/**
-	 * Rank the index against [query] and annotate each result with why it surfaced.
-	 * An empty query returns a default slice so the feed is never blank.
+	 * Rank the index and annotate each result with why it surfaced.
+	 *
+	 * The scoring itself lives in [eco.src.nutube.core.ranking.RULE_REGISTRY];
+	 * this only supplies the pool and the context. Adding a signal is a new rule,
+	 * not a change here.
 	 */
-	fun recommend(query: String, limit: Int = 50): List<FeedItem> {
-		val terms = tokenize(query)
-		val pool = _items.value
-		if (terms.isEmpty()) {
-			return pool.take(limit).map { it.copy(reason = "From your local index") }
-		}
-		return pool
-			.map { it to score(it, terms) }
-			.sortedByDescending { it.second }
-			.take(limit)
-			.map { (item, s) ->
-				item.copy(reason = if (s <= 0.0) "Loosely related" else "Matches your search by tag overlap")
-			}
+	fun recommend(query: String, affinity: Affinity = Affinity(), limit: Int = 50): List<FeedItem> {
+		val ctx = RankingContext(queryTerms = Tokens.words(query), affinity = affinity)
+		return ranker.rank(_items.value, ctx, limit)
 	}
 
-	private fun score(item: FeedItem, terms: List<String>): Double {
-		val haystack = tokenize(
-			item.title + " " + item.author + " " + item.tags.joinToString(" ")
-		).toSet()
-		return terms.count { it in haystack }.toDouble() / terms.size
-	}
-
-	private fun tokenize(text: String): List<String> =
-		text.lowercase()
-			.split(Regex("[^\\p{L}\\p{N}]+"))
-			.filter { it.length > 1 }
 }

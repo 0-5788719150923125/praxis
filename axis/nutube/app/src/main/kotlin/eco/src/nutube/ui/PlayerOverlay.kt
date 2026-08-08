@@ -61,7 +61,6 @@ fun PlayerOverlay(
 	mode: PlaybackMode,
 	inPip: Boolean,
 	playback: NativePlayback,
-	onNativeActive: (Boolean) -> Unit,
 	onClose: () -> Unit,
 ) {
 	BackHandler(enabled = true) { onClose() }
@@ -89,7 +88,7 @@ fun PlayerOverlay(
 		return
 	}
 
-	NativePlayer(item, inPip, playback, onNativeActive)
+	NativePlayer(item, inPip, playback)
 }
 
 @OptIn(UnstableApi::class)
@@ -98,7 +97,6 @@ private fun NativePlayer(
 	item: FeedItem,
 	inPip: Boolean,
 	playback: NativePlayback,
-	onNativeActive: (Boolean) -> Unit,
 ) {
 	val lifecycle = LocalLifecycleOwner.current.lifecycle
 	val error by playback.error.collectAsStateWithLifecycle()
@@ -122,13 +120,6 @@ private fun NativePlayer(
 	// cannot restart what is already playing.
 	LaunchedEffect(item.key, streams) {
 		streams?.let { playback.prepare(item.key, it) }
-	}
-
-	// Tells the Activity a native video is live, so leaving the app can go to
-	// picture-in-picture rather than abandoning playback.
-	DisposableEffect(Unit) {
-		onNativeActive(true)
-		onDispose { onNativeActive(false) }
 	}
 
 	// Backgrounding without entering picture-in-picture should stop the audio
@@ -195,24 +186,11 @@ private fun NativePlayer(
 	BackHandler(enabled = buttonFullscreen) { buttonFullscreen = false }
 
 	val surface: @Composable (Modifier) -> Unit = { mod ->
-		AndroidView(
-			factory = { context ->
-				LayoutInflater.from(context)
-					.inflate(R.layout.native_player_view, null) as PlayerView
-			},
-			// Re-attaching every time matters: the view is reused across videos, and
-			// leaving a stale player on it is what produced audio with a black screen.
-			update = { view ->
-				if (view.player !== playback.player) view.player = playback.player
-				view.useController = !inPip
-				view.setControllerVisibilityListener(
-					PlayerView.ControllerVisibilityListener { visibility ->
-						controlsUp = visibility == View.VISIBLE
-					}
-				)
-				view.setFullscreenButtonClickListener { buttonFullscreen = !buttonFullscreen }
-			},
-			onRelease = { it.player = null },
+		NativeSurface(
+			playback = playback,
+			useController = !inPip,
+			onControlsVisible = { controlsUp = it },
+			onFullscreenClick = { buttonFullscreen = !buttonFullscreen },
 			modifier = mod,
 		)
 	}
@@ -270,6 +248,40 @@ private fun NativePlayer(
 
 /** Matches `show_timeout` in the player layout, so both fade together. */
 private const val CONTROLS_TIMEOUT_MS = 3_000L
+
+/**
+ * The player's video surface, hosted wherever it is needed.
+ *
+ * Shared by the expanded player and the docked bar so that moving between them
+ * is a reparent rather than a rebuild.
+ */
+@OptIn(UnstableApi::class)
+@Composable
+fun NativeSurface(
+	playback: NativePlayback,
+	useController: Boolean,
+	modifier: Modifier = Modifier,
+	onControlsVisible: (Boolean) -> Unit = {},
+	onFullscreenClick: () -> Unit = {},
+) {
+	AndroidView(
+		factory = { context ->
+			LayoutInflater.from(context).inflate(R.layout.native_player_view, null) as PlayerView
+		},
+		// Re-attaching every time matters: the view is reused across videos, and
+		// leaving a stale player on it is what produced audio with a black screen.
+		update = { view ->
+			if (view.player !== playback.player) view.player = playback.player
+			view.useController = useController
+			view.setControllerVisibilityListener(
+				PlayerView.ControllerVisibilityListener { onControlsVisible(it == View.VISIBLE) }
+			)
+			view.setFullscreenButtonClickListener { onFullscreenClick() }
+		},
+		onRelease = { it.player = null },
+		modifier = modifier,
+	)
+}
 
 @Composable
 private fun Caption(item: FeedItem, quality: String?, modifier: Modifier = Modifier) {

@@ -8,6 +8,7 @@ import eco.src.nutube.core.FeedItem
 import eco.src.nutube.core.PlaybackMode
 import eco.src.nutube.core.SourceRegistry
 import eco.src.nutube.core.VideoSource
+import eco.src.nutube.core.ranking.AffinityStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -18,6 +19,7 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
 	private val index = (app as NuTubeApp).index
 	private val bank = (app as NuTubeApp).terms
 	private val settings = (app as NuTubeApp).settings
+	private val affinity: AffinityStore = (app as NuTubeApp).affinity
 
 	/** Platforms currently plugged in, for the settings list. */
 	val sources: List<VideoSource> get() = SourceRegistry.all()
@@ -76,6 +78,7 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
 	init {
 		viewModelScope.launch {
 			settings.load()
+			affinity.load()
 			bank.load()
 			index.load()
 			rerank()
@@ -89,8 +92,19 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
 	}
 
 	private fun rerank() {
-		_feed.value = index.recommend(query)
+		_feed.value = index.recommend(query, affinity.affinity.value)
 		_revision.value++
+	}
+
+	/**
+	 * Opening a video is the only training signal there is. Recorded here, read
+	 * back by the ranking rules on the next re-rank.
+	 */
+	fun recordOpen(item: FeedItem) {
+		viewModelScope.launch {
+			affinity.recordOpen(item.author, item.title)
+			rerank()
+		}
 	}
 
 	/**

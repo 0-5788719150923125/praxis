@@ -62,6 +62,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import eco.src.nutube.R
 import eco.src.nutube.core.FeedItem
+import eco.src.nutube.core.PlaybackMode
 
 /**
  * Logo and search over a feed of cards, closer to the Godot prototype's look than
@@ -86,6 +87,9 @@ fun NuTubeScreen(model: FeedViewModel, inPip: Boolean = false) {
 	var tab by rememberSaveable { mutableStateOf(Tab.Feed) }
 	var query by rememberSaveable { mutableStateOf("") }
 	var playing by remember { mutableStateOf<FeedItem?>(null) }
+	// Docked vs expanded. Backing out of a native video docks it instead of
+	// stopping it, so the feed comes back and the video carries on.
+	var expanded by remember { mutableStateOf(false) }
 	val snackbar = remember { SnackbarHostState() }
 
 	val listState = rememberLazyListState()
@@ -110,6 +114,22 @@ fun NuTubeScreen(model: FeedViewModel, inPip: Boolean = false) {
 	}
 	LaunchedEffect(tab) { dismissKeyboard(keyboard, focus) }
 
+	val playingMode = playing?.let { modes[it.source]?.playback ?: model.playbackMode(it.source) }
+	val dockable = playingMode == PlaybackMode.NATIVE
+
+	fun stopPlayback() {
+		playing = null
+		expanded = false
+		model.stopNativePlayback()
+	}
+
+	// The Activity asks this before going to system picture-in-picture, and a
+	// docked video is still playing, so presence follows the video and not the
+	// expanded overlay.
+	LaunchedEffect(playing, dockable) {
+		model.setNativePlaybackActive(playing != null && dockable)
+	}
+
 	LaunchedEffect(error) {
 		error?.let { snackbar.showSnackbar(it); model.clearError() }
 	}
@@ -132,7 +152,16 @@ fun NuTubeScreen(model: FeedViewModel, inPip: Boolean = false) {
 			}
 		},
 		bottomBar = {
-			NavigationBar(containerColor = Surface) {
+			Column {
+				playing?.takeIf { !expanded && dockable }?.let { item ->
+					MiniPlayer(
+						item = item,
+						playback = model.playback,
+						onExpand = { expanded = true },
+						onClose = { stopPlayback() },
+					)
+				}
+				NavigationBar(containerColor = Surface) {
 				Tab.entries.forEach { entry ->
 					NavigationBarItem(
 						selected = tab == entry,
@@ -157,6 +186,7 @@ fun NuTubeScreen(model: FeedViewModel, inPip: Boolean = false) {
 						),
 					)
 				}
+				}
 			}
 		},
 	) { padding ->
@@ -168,7 +198,13 @@ fun NuTubeScreen(model: FeedViewModel, inPip: Boolean = false) {
 				verticalArrangement = Arrangement.spacedBy(14.dp),
 			) {
 				items(feed, key = { it.key }) { item ->
-					FeedCard(item) { dismissKeyboard(keyboard, focus); playing = item }
+					FeedCard(item) {
+						dismissKeyboard(keyboard, focus)
+						// Opening is the signal the ranking rules learn from.
+						model.recordOpen(item)
+						playing = item
+						expanded = true
+					}
 				}
 			}
 
@@ -193,14 +229,15 @@ fun NuTubeScreen(model: FeedViewModel, inPip: Boolean = false) {
 		}
 	}
 
-	playing?.let { item ->
+	playing?.takeIf { expanded || inPip }?.let { item ->
 		PlayerOverlay(
 			item = item,
-			mode = modes[item.source]?.playback ?: model.playbackMode(item.source),
+			mode = playingMode ?: PlaybackMode.EMBED,
 			inPip = inPip,
 			playback = model.playback,
-			onNativeActive = model::setNativePlaybackActive,
-			onClose = { playing = null; model.stopNativePlayback() },
+			// Native docks; the embedded player owns its own playback and cannot be
+			// carried into a bar, so backing out of it stops.
+			onClose = { if (dockable) expanded = false else stopPlayback() },
 		)
 	}
 	}
