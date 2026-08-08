@@ -28,6 +28,12 @@ interface VideoSource {
 	 */
 	fun embedUrl(itemId: String): String? = null
 
+	/**
+	 * This platform's own terms and required notices, rendered in Settings beside
+	 * its playback toggle. Null for a platform that asks for nothing.
+	 */
+	val terms: PlatformTerms? get() = null
+
 	/** True if this source recognises [url] as one of its own. */
 	fun handles(url: String): Boolean
 

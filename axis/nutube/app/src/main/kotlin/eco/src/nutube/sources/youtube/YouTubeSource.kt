@@ -1,6 +1,8 @@
 package eco.src.nutube.sources.youtube
 
 import eco.src.nutube.core.FeedItem
+import eco.src.nutube.core.LegalLink
+import eco.src.nutube.core.PlatformTerms
 import eco.src.nutube.core.PlaybackStreams
 import eco.src.nutube.core.VideoSource
 import kotlinx.coroutines.Dispatchers
@@ -25,6 +27,29 @@ object YouTubeSource : VideoSource {
 	override val displayName = "YouTube"
 
 	private val service = ServiceList.YouTube
+
+	/**
+	 * Embed mode uses the IFrame Player API, which section 1 of the API Services
+	 * Terms defines as an API Client - so those terms genuinely apply to it.
+	 * Native mode uses no YouTube API at all, which puts it outside that
+	 * agreement rather than in compliance with it. The distinction matters enough
+	 * to state, since it is the whole basis on which someone picks a mode.
+	 */
+	override val terms = PlatformTerms(
+		embedNote = "Embedded playback uses YouTube's official player through the " +
+			"IFrame Player API, under YouTube's API Services Terms of Service. Its " +
+			"advertisements run, its views count and its creators are paid.",
+		nativeNote = "Native playback does not use YouTube's API and is not covered " +
+			"by those terms. It is off by default and turning it on is your choice.",
+		links = listOf(
+			LegalLink("YouTube Terms of Service", "https://www.youtube.com/t/terms"),
+			LegalLink("Google Privacy Policy", "https://policies.google.com/privacy"),
+			LegalLink(
+				"YouTube API Services Terms",
+				"https://developers.google.com/youtube/terms/api-services-terms-of-service",
+			),
+		),
+	)
 	private val ID = Regex("(?:v=|youtu\\.be/|/shorts/|/embed/|/live/)([A-Za-z0-9_-]{11})")
 
 	override fun handles(url: String): Boolean =
