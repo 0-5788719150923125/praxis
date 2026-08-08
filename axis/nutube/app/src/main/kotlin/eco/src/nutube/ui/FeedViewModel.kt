@@ -14,9 +14,13 @@ import kotlinx.coroutines.launch
 class FeedViewModel(app: Application) : AndroidViewModel(app) {
 
 	private val index = (app as NuTubeApp).index
+	private val bank = (app as NuTubeApp).terms
 
 	private val _feed = MutableStateFlow<List<FeedItem>>(emptyList())
 	val feed: StateFlow<List<FeedItem>> = _feed.asStateFlow()
+
+	/** The saved search terms, newest first. This is the subscription list. */
+	val terms: StateFlow<List<String>> = bank.terms
 
 	private val _busy = MutableStateFlow(false)
 	val busy: StateFlow<Boolean> = _busy.asStateFlow()
@@ -28,6 +32,7 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
 
 	init {
 		viewModelScope.launch {
+			bank.load()
 			index.load()
 			rerank()
 		}
@@ -44,20 +49,47 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
 	}
 
 	/**
-	 * Explicit network step: ask every registered platform for the current query
-	 * and fold the results into the index. Local ranking still decides the order.
+	 * Run the current query against every registered platform, save the term, and
+	 * fold the results into the index crediting that term.
+	 *
+	 * Saving the term is the point: the bank of terms is what a crawler will
+	 * eventually re-run on a schedule to keep the index fresh.
 	 */
 	fun discover() {
 		val q = query.trim()
 		if (q.isEmpty() || _busy.value) return
 		viewModelScope.launch {
 			_busy.value = true
+			val term = bank.add(q)
 			val found = SourceRegistry.searchAll(q)
 			if (found.isEmpty()) _error.value = "nothing came back for \"$q\""
-			else { index.upsertAll(found); rerank() }
+			else { index.upsertAll(found, term = term); rerank() }
 			_busy.value = false
 		}
 	}
+
+	/** Re-run a saved term, refreshing whatever it holds. */
+	fun refreshTerm(term: String) {
+		if (_busy.value) return
+		viewModelScope.launch {
+			_busy.value = true
+			val found = SourceRegistry.searchAll(term)
+			if (found.isNotEmpty()) { index.upsertAll(found, term = bank.normalise(term)); rerank() }
+			_busy.value = false
+		}
+	}
+
+	/** Drop a term and everything only it was holding. */
+	fun removeTerm(term: String) {
+		viewModelScope.launch {
+			bank.remove(term)
+			index.removeTerm(bank.normalise(term))
+			rerank()
+		}
+	}
+
+	/** How many items would be lost if [term] were removed right now. */
+	fun exclusiveCount(term: String): Int = index.countOwnedBy(bank.normalise(term))
 
 	fun indexUrl(url: String) {
 		viewModelScope.launch {

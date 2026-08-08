@@ -3,6 +3,7 @@ package eco.src.nutube
 import android.app.Application
 import eco.src.nutube.core.LocalIndex
 import eco.src.nutube.core.SourceRegistry
+import eco.src.nutube.core.TermBank
 import eco.src.nutube.sources.youtube.NewPipeDownloader
 import eco.src.nutube.sources.youtube.YouTubeSource
 import okio.Path.Companion.toOkioPath
@@ -15,6 +16,10 @@ class NuTubeApp : Application() {
 	lateinit var index: LocalIndex
 		private set
 
+	/** Saved searches - the subscription list the index is built from. */
+	lateinit var terms: TermBank
+		private set
+
 	override fun onCreate() {
 		super.onCreate()
 		// NewPipeExtractor is a singleton and must be handed a Downloader before use.
@@ -24,5 +29,6 @@ class NuTubeApp : Application() {
 		SourceRegistry.register(YouTubeSource)
 
 		index = LocalIndex(filesDir.resolve("index.json").toOkioPath())
+		terms = TermBank(filesDir.resolve("terms.json").toOkioPath())
 	}
 }

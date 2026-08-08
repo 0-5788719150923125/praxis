@@ -11,10 +11,10 @@ import androidx.compose.ui.unit.sp
 
 // Carried over from the Godot prototype, which drew muted text at
 // Color(0.6, 0.65, 0.72) over a near-black panel.
-val Ink = Color(0xFF0F1115)
+val Ink = Color(0xFF12141A)
 val Surface = Color(0xFF171A21)
 val SurfaceHigh = Color(0xFF1F232C)
-val Accent = Color(0xFFE8503A)
+val Accent = Color(0xFF1F6FEB)
 val Muted = Color(0xFF99A6B8)
 val Bright = Color(0xFFE8EAF0)
 

@@ -88,11 +88,24 @@ through in `axis/.stignore`.
 
 No Android Studio required - the Gradle wrapper does everything.
 
+## How the index gets built
+
+There is no follow button. **Every search you run is saved as a term**, and the
+term is credited with whatever it surfaced. The Terms tab is that list: tap a
+term to re-run it, or remove it to drop the term and everything only it was
+holding. Videos reachable from a surviving term stay, and videos added by hand -
+a shared link - are never evicted, because no term put them there.
+
+That list is the input a crawler will eventually re-run on a schedule to keep
+the index fresh without anyone searching. The crawler is not written yet; today
+terms are only run when you search or tap one.
+
 ## Status
 
-Working: search fans out through the registry and folds results into the local
-index; the index ranks and explains itself on every card; tapping a card plays
-in-app in HD. Sharing or opening a YouTube link from any other app indexes it.
+Working: search fans out through the registry, saves the term, and folds results
+into the local index; the index ranks and explains itself on every card; tapping
+a card plays in-app in HD. Sharing or opening a YouTube link from any other app
+indexes it. Two tabs at the bottom - Feed and Terms.
 
 HD works by taking YouTube's separate video-only and audio-only tracks and
 merging them with ExoPlayer's `MergingMediaSource` - the muxed stream it also

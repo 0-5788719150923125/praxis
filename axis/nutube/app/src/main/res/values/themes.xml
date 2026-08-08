@@ -1,7 +1,12 @@
 <resources>
-	<!-- Window-level theme only; everything inside is Compose Material3. -->
+	<!-- Window-level theme only; everything inside is Compose. -->
 	<style name="Theme.NuTube" parent="android:Theme.Material.NoActionBar">
 		<item name="android:statusBarColor">@android:color/transparent</item>
 		<item name="android:navigationBarColor">@android:color/transparent</item>
+		<item name="android:windowBackground">@color/ic_launcher_background</item>
+		<!-- Without these the Android 12+ splash falls back to a bare icon on a
+		     system-coloured field, which is where the stray white triangle came from. -->
+		<item name="android:windowSplashScreenBackground">@color/ic_launcher_background</item>
+		<item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
 	</style>
 </resources>

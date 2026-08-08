@@ -5,7 +5,8 @@
 #
 #   ./run.sh                    boot the AVD if needed, build, install, launch, tail logs
 #   ./run.sh --quiet            same, but do not tail logcat
-#   ./run.sh --wipe             cold-boot the AVD with fresh data first
+#   ./run.sh --cold             ignore the saved snapshot but keep app data
+#   ./run.sh --wipe             cold-boot the AVD with fresh data, and drop the snapshot
 #   ./run.sh --headless         run the emulator with no window (useful over ssh)
 #   ./run.sh --logs             just tail logs against whatever is already running
 #   ./run.sh --url <youtube>    launch via a VIEW intent, to exercise the deep link
@@ -30,11 +31,14 @@ export ANDROID_HOME="$SDK" ANDROID_SDK_ROOT="$SDK"
 ADB="$SDK/platform-tools/adb"
 EMULATOR="$SDK/emulator/emulator"
 AVD="${NUTUBE_AVD:-Medium_Phone_API_35}"
+# Our own "a session is live" marker; see the snapshot handling below.
+RUNNING_MARKER="${TMPDIR:-/tmp}/nutube-emulator.running"
 PKG=eco.src.nutube
 ACTIVITY="$PKG/.MainActivity"
 
 TAIL_LOGS=1
 WIPE=0
+COLD=0
 APK_ONLY=0
 WINDOW="-gpu host"
 URL=""
@@ -42,12 +46,15 @@ URL=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--quiet)    TAIL_LOGS=0 ;;
-		--wipe)     WIPE=1 ;;
+		--wipe)     WIPE=1; COLD=1 ;;
+		--cold)     COLD=1 ;;
 		--headless) WINDOW="-no-window -gpu swiftshader_indirect" ;;
 		--logs)     exec "$ADB" logcat -v color -s "$PKG:V" AndroidRuntime:E ExoPlayer:I ;;
 		--url)      shift; URL="${1:-}" ;;
 		--apk)      APK_ONLY=1 ;;
-		--stop)     "$ADB" emu kill 2>/dev/null || true; echo "emulator stopped"; exit 0 ;;
+		--stop)     "$ADB" emu kill 2>/dev/null || true
+		            rm -f "$RUNNING_MARKER"
+		            echo "emulator stopped (snapshot saved for the next quick boot)"; exit 0 ;;
 		-h|--help)  sed -n '3,20p' "$0" | sed 's/^# \?//'; exit 0 ;;
 		*)          echo "unknown flag: $1" >&2; exit 1 ;;
 	esac
@@ -81,13 +88,21 @@ if [ -z "$(online)" ]; then
 		exit 1
 	}
 
-	# The emulator wants ~3G of real RAM. Booting it onto an already-full box
-	# does not fail cleanly - it drags the whole desktop into swap thrash, so
-	# refuse up front instead.
+	# Read what the AVD actually asks for rather than overriding it. Passing
+	# -memory/-cores that disagree with config.ini invalidates the saved snapshot,
+	# which is what forced --wipe on every run.
+	AVD_DIR=$(awk -F= '/^path=/ {print $2}' "$HOME/.android/avd/$AVD.ini" 2>/dev/null)
+	GUEST_MB=$(awk -F'= *' '/^hw.ramSize/ {v=$2; sub(/[Gg]$/,"",v); print (v ~ /^[0-9]+$/ && v < 64) ? v*1024 : v}' \
+		"$AVD_DIR/config.ini" 2>/dev/null)
+	GUEST_MB=${GUEST_MB:-2048}
+
+	# Booting onto an already-full box does not fail cleanly - it drags the whole
+	# desktop into swap thrash, so refuse up front instead.
 	AVAIL_MB=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo)
 	SWAP_FREE_MB=$(awk '/SwapFree/ {print int($2/1024)}' /proc/meminfo)
-	if [ "$AVAIL_MB" -lt "${NUTUBE_MIN_MB:-4500}" ]; then
-		echo "only ${AVAIL_MB}MB available (${SWAP_FREE_MB}MB swap free) - the emulator needs ~3G." >&2
+	NEED_MB=$((GUEST_MB + 1500))
+	if [ "$AVAIL_MB" -lt "${NUTUBE_MIN_MB:-$NEED_MB}" ]; then
+		echo "only ${AVAIL_MB}MB available (${SWAP_FREE_MB}MB swap free); $AVD needs ~${NEED_MB}MB." >&2
 		echo "free some up, or plug in a phone and rerun. Common culprits:" >&2
 		echo "  du -sh /tmp/* | sort -rh | head      # /tmp is tmpfs here, it costs RAM" >&2
 		echo "  docker stats --no-stream" >&2
@@ -96,13 +111,27 @@ if [ -z "$(online)" ]; then
 		exit 1
 	fi
 
-	echo ":: booting $AVD (${AVAIL_MB}MB available)"
-	# Cap the guest explicitly rather than inheriting whatever the AVD was
-	# created with, so one bad config cannot take the host down.
-	BOOT_FLAGS=(-avd "$AVD" $WINDOW -memory "${NUTUBE_RAM:-2048}" -cores "${NUTUBE_CORES:-2}"
-		-netdelay none -netspeed full)
-	[ "$WIPE" = 1 ] && BOOT_FLAGS+=(-wipe-data -no-snapshot-load)
+	# A snapshot saved while the host was thrashing, or from a session that was
+	# force-killed, restores that wedged state on every later boot - which is what
+	# made --wipe feel mandatory. The emulator's own lock files survive a clean
+	# exit and so cannot tell us anything, hence our own marker: written at boot,
+	# removed only by `--stop`. Present with no qemu alive means the last session
+	# died on its feet, so its snapshot is not to be trusted.
+	SNAPSHOT="$AVD_DIR/snapshots/default_boot"
+	if [ "$COLD" = 0 ] && [ -f "$RUNNING_MARKER" ] && ! pgrep qemu-system >/dev/null 2>&1; then
+		echo ":: last session did not exit through --stop - discarding its snapshot"
+		COLD=1
+	fi
+	if [ "$COLD" = 1 ] && [ -d "$SNAPSHOT" ]; then
+		rm -rf "$SNAPSHOT"
+	fi
+
+	echo ":: booting $AVD (${GUEST_MB}MB guest, ${AVAIL_MB}MB host available)"
+	BOOT_FLAGS=(-avd "$AVD" $WINDOW -netdelay none -netspeed full)
+	[ "$COLD" = 1 ] && BOOT_FLAGS+=(-no-snapshot-load)
+	[ "$WIPE" = 1 ] && BOOT_FLAGS+=(-wipe-data)
 	# Detach so the emulator outlives this script; its log goes to a file.
+	: > "$RUNNING_MARKER"
 	nohup "$EMULATOR" "${BOOT_FLAGS[@]}" >/tmp/nutube-emulator.log 2>&1 &
 
 	echo ":: waiting for device"

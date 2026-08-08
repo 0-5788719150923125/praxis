@@ -16,10 +16,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -27,6 +30,9 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -42,7 +48,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusManager
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.SoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -59,15 +69,30 @@ import eco.src.nutube.core.FeedItem
  * title slot - the title slot reserves room for navigation and action icons, so a
  * TextField placed there gets squeezed past the right edge.
  */
+private enum class Tab(val label: String) { Feed("Feed"), Terms("Terms") }
+
 @Composable
 fun NuTubeScreen(model: FeedViewModel) {
 	val feed by model.feed.collectAsStateWithLifecycle()
+	val terms by model.terms.collectAsStateWithLifecycle()
 	val busy by model.busy.collectAsStateWithLifecycle()
 	val error by model.error.collectAsStateWithLifecycle()
 
+	var tab by rememberSaveable { mutableStateOf(Tab.Feed) }
 	var query by rememberSaveable { mutableStateOf("") }
 	var playing by remember { mutableStateOf<FeedItem?>(null) }
 	val snackbar = remember { SnackbarHostState() }
+
+	val listState = rememberLazyListState()
+	val keyboard = LocalSoftwareKeyboardController.current
+	val focus = LocalFocusManager.current
+
+	// Scrolling the feed is a clear signal the user is done typing. Without this
+	// the keyboard sits open over half the screen until it is dismissed by hand.
+	LaunchedEffect(listState.isScrollInProgress) {
+		if (listState.isScrollInProgress) dismissKeyboard(keyboard, focus)
+	}
+	LaunchedEffect(tab) { dismissKeyboard(keyboard, focus) }
 
 	LaunchedEffect(error) {
 		error?.let { snackbar.showSnackbar(it); model.clearError() }
@@ -79,22 +104,61 @@ fun NuTubeScreen(model: FeedViewModel) {
 		topBar = {
 			Column(Modifier.statusBarsPadding().padding(horizontal = 16.dp)) {
 				Brand()
-				SearchField(
-					value = query,
-					busy = busy,
-					onValueChange = { query = it; model.onQueryChanged(it) },
-					onSubmit = model::discover,
-				)
+				if (tab == Tab.Feed) {
+					SearchField(
+						value = query,
+						busy = busy,
+						onValueChange = { query = it; model.onQueryChanged(it) },
+						onSubmit = { dismissKeyboard(keyboard, focus); model.discover() },
+					)
+				}
+			}
+		},
+		bottomBar = {
+			NavigationBar(containerColor = Surface) {
+				Tab.entries.forEach { entry ->
+					NavigationBarItem(
+						selected = tab == entry,
+						onClick = { tab = entry },
+						icon = {
+							Icon(
+								if (entry == Tab.Feed) Icons.Filled.PlayArrow else Icons.Filled.List,
+								contentDescription = entry.label,
+							)
+						},
+						label = { Text(entry.label) },
+						colors = NavigationBarItemDefaults.colors(
+							selectedIconColor = Accent,
+							selectedTextColor = Accent,
+							indicatorColor = SurfaceHigh,
+							unselectedIconColor = Muted,
+							unselectedTextColor = Muted,
+						),
+					)
+				}
 			}
 		},
 	) { padding ->
-		LazyColumn(
-			modifier = Modifier.fillMaxSize().padding(padding),
-			contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp),
-			verticalArrangement = Arrangement.spacedBy(14.dp),
-		) {
-			items(feed, key = { it.key }) { item ->
-				FeedCard(item) { playing = item }
+		when (tab) {
+			Tab.Feed -> LazyColumn(
+				state = listState,
+				modifier = Modifier.fillMaxSize().padding(padding),
+				contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp),
+				verticalArrangement = Arrangement.spacedBy(14.dp),
+			) {
+				items(feed, key = { it.key }) { item ->
+					FeedCard(item) { dismissKeyboard(keyboard, focus); playing = item }
+				}
+			}
+
+			Tab.Terms -> Box(Modifier.fillMaxSize()) {
+				TermsScreen(
+					terms = terms,
+					exclusiveCount = model::exclusiveCount,
+					onRefresh = model::refreshTerm,
+					onRemove = model::removeTerm,
+					contentPadding = padding,
+				)
 			}
 		}
 	}
@@ -102,6 +166,12 @@ fun NuTubeScreen(model: FeedViewModel) {
 	playing?.let { item ->
 		PlayerOverlay(item = item, onClose = { playing = null })
 	}
+}
+
+private fun dismissKeyboard(keyboard: SoftwareKeyboardController?, focus: FocusManager) {
+	keyboard?.hide()
+	// Hiding alone leaves the field focused, so the next tap re-opens the keyboard.
+	focus.clearFocus()
 }
 
 @Composable

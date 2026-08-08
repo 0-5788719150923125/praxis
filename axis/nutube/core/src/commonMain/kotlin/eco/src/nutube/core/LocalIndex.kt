@@ -43,15 +43,50 @@ class LocalIndex(
 
 	suspend fun upsert(item: FeedItem) = upsertAll(listOf(item))
 
-	suspend fun upsertAll(incoming: List<FeedItem>) {
+	/**
+	 * Fold [incoming] into the index, crediting [term] for anything it surfaced.
+	 *
+	 * Existing items keep the terms they already had - the same video can be
+	 * reachable from several searches, and every one of them is a reason to keep
+	 * it. Items arriving with no term were added by hand and are marked as such.
+	 */
+	suspend fun upsertAll(incoming: List<FeedItem>, term: String? = null) {
 		if (incoming.isEmpty()) return
 		mutex.withLock {
 			val byKey = _items.value.associateByTo(LinkedHashMap()) { it.key }
-			incoming.forEach { byKey[it.key] = it }
+			incoming.forEach { fresh ->
+				val existing = byKey[fresh.key]
+				byKey[fresh.key] = fresh.copy(
+					terms = (existing?.terms.orEmpty() + listOfNotNull(term)).distinct(),
+					manual = existing?.manual ?: (term == null),
+				)
+			}
 			_items.value = byKey.values.toList()
 		}
 		save()
 	}
+
+	/**
+	 * Forget a search term and everything only it was holding.
+	 *
+	 * An item reachable from another surviving term stays, minus the credit. An
+	 * item added by hand stays regardless - no term put it there, so no term can
+	 * take it away.
+	 */
+	suspend fun removeTerm(term: String) {
+		mutex.withLock {
+			_items.value = _items.value.mapNotNull { item ->
+				if (term !in item.terms) return@mapNotNull item
+				val remaining = item.terms - term
+				if (remaining.isEmpty() && !item.manual) null else item.copy(terms = remaining)
+			}
+		}
+		save()
+	}
+
+	/** How many items [term] is currently the only holder of. */
+	fun countOwnedBy(term: String): Int =
+		_items.value.count { term in it.terms && it.terms.size == 1 && !it.manual }
 
 	fun has(key: String): Boolean = _items.value.any { it.key == key }
 

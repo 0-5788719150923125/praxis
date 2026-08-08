@@ -28,6 +28,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
@@ -61,7 +64,34 @@ fun PlayerOverlay(item: FeedItem, onClose: () -> Unit) {
 			.onFailure { failure = it.message ?: "could not resolve a stream" }
 	}
 
-	val player = remember { ExoPlayer.Builder(context).build().apply { playWhenReady = true } }
+	val player = remember {
+		ExoPlayer.Builder(context)
+			// The defaults are tuned for local media. Streaming googlevideo over a
+			// phone connection wants a deeper buffer before it starts, and much more
+			// headroom after, or the first stall never recovers.
+			.setLoadControl(
+				DefaultLoadControl.Builder()
+					.setBufferDurationsMs(
+						/* minBufferMs = */ 30_000,
+						/* maxBufferMs = */ 120_000,
+						/* bufferForPlaybackMs = */ 2_500,
+						/* bufferForPlaybackAfterRebufferMs = */ 5_000,
+					)
+					.build()
+			)
+			.build()
+			.apply { playWhenReady = true }
+	}
+
+	DisposableEffect(player) {
+		val listener = object : Player.Listener {
+			override fun onPlayerError(e: PlaybackException) {
+				failure = e.errorCodeName + (e.message?.let { ": $it" } ?: "")
+			}
+		}
+		player.addListener(listener)
+		onDispose { player.removeListener(listener) }
+	}
 
 	LaunchedEffect(streams) {
 		val current = streams ?: return@LaunchedEffect
@@ -69,10 +99,20 @@ fun PlayerOverlay(item: FeedItem, onClose: () -> Unit) {
 		val http = DefaultHttpDataSource.Factory()
 			.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0")
 			.setAllowCrossProtocolRedirects(true)
+			// The reason the first few seconds played and then froze: ExoPlayer opens
+			// at position 0 with no length, so it sends no Range header, and
+			// googlevideo throttles an open-ended GET to a trickle after the initial
+			// burst. Seeking recovered it because a seek *does* send a Range. Setting
+			// a default Range makes the very first request a ranged one too - the
+			// player only overrides this header when it computes a range of its own.
+			.setDefaultRequestProperties(mapOf("Range" to "bytes=0-"))
 
 		when (current) {
 			is PlaybackStreams.Single ->
-				player.setMediaItem(MediaItem.fromUri(current.url))
+				player.setMediaSource(
+					ProgressiveMediaSource.Factory(http)
+						.createMediaSource(MediaItem.fromUri(current.url))
+				)
 
 			is PlaybackStreams.Split -> {
 				val factory = ProgressiveMediaSource.Factory(http)

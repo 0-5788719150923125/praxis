@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-	<color name="ic_launcher_background">#0F1115</color>
+	<!-- The plate colour from the Godot icon, shared by the launcher background
+	     and the splash so the app never flashes a different shade. -->
+	<color name="ic_launcher_background">#12141A</color>
 </resources>
