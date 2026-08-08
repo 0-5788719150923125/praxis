@@ -5,6 +5,7 @@
 #
 #   ./run.sh                    boot the AVD if needed, build, install, launch, tail logs
 #   ./run.sh --quiet            same, but do not tail logcat
+#   ./run.sh --warm             opt in to snapshot quick-boot (see the note below)
 #   ./run.sh --cold             ignore the saved snapshot but keep app data
 #   ./run.sh --wipe             cold-boot the AVD with fresh data, and drop the snapshot
 #   ./run.sh --headless         run the emulator with no window (useful over ssh)
@@ -39,6 +40,7 @@ ACTIVITY="$PKG/.MainActivity"
 TAIL_LOGS=1
 WIPE=0
 COLD=0
+WARM=0
 APK_ONLY=0
 WINDOW="-gpu host"
 URL=""
@@ -48,13 +50,14 @@ while [ $# -gt 0 ]; do
 		--quiet)    TAIL_LOGS=0 ;;
 		--wipe)     WIPE=1; COLD=1 ;;
 		--cold)     COLD=1 ;;
+		--warm)     WARM=1 ;;
 		--headless) WINDOW="-no-window -gpu swiftshader_indirect" ;;
 		--logs)     exec "$ADB" logcat -v color -s "$PKG:V" AndroidRuntime:E ExoPlayer:I ;;
 		--url)      shift; URL="${1:-}" ;;
 		--apk)      APK_ONLY=1 ;;
 		--stop)     "$ADB" emu kill 2>/dev/null || true
 		            rm -f "$RUNNING_MARKER"
-		            echo "emulator stopped (snapshot saved for the next quick boot)"; exit 0 ;;
+		            echo "emulator stopped"; exit 0 ;;
 		-h|--help)  sed -n '3,20p' "$0" | sed 's/^# \?//'; exit 0 ;;
 		*)          echo "unknown flag: $1" >&2; exit 1 ;;
 	esac
@@ -101,6 +104,7 @@ if [ -z "$(online)" ]; then
 	AVAIL_MB=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo)
 	SWAP_FREE_MB=$(awk '/SwapFree/ {print int($2/1024)}' /proc/meminfo)
 	NEED_MB=$((GUEST_MB + 1500))
+	[ "$WARM" = 0 ] && echo ":: cold boot (snapshots off; --warm to enable)"
 	if [ "$AVAIL_MB" -lt "${NUTUBE_MIN_MB:-$NEED_MB}" ]; then
 		echo "only ${AVAIL_MB}MB available (${SWAP_FREE_MB}MB swap free); $AVD needs ~${NEED_MB}MB." >&2
 		echo "free some up, or plug in a phone and rerun. Common culprits:" >&2
@@ -111,35 +115,37 @@ if [ -z "$(online)" ]; then
 		exit 1
 	fi
 
-	# A snapshot saved while the host was thrashing, or from a session that was
-	# force-killed, restores that wedged state on every later boot - which is what
-	# made --wipe feel mandatory. The emulator's own lock files survive a clean
-	# exit and so cannot tell us anything, hence our own marker: written at boot,
-	# removed only by `--stop`. Present with no qemu alive means the last session
-	# died on its feet, so its snapshot is not to be trusted.
+	# Snapshots are off by default, and that is deliberate. The emulator writes
+	# `default_boot` on exit even when the device never finished booting, so one
+	# interrupted launch poisons every launch after it: black screen, you kill it,
+	# it saves the black screen, repeat. -no-snapshot-save breaks that loop for
+	# good. We reinstall the APK every run anyway, so a warm snapshot only ever
+	# bought boot time. `--warm` opts back in if you want that time back.
 	SNAPSHOT="$AVD_DIR/snapshots/default_boot"
-	if [ "$COLD" = 0 ] && [ -f "$RUNNING_MARKER" ] && ! pgrep qemu-system >/dev/null 2>&1; then
+	if [ "$WARM" = 0 ]; then
+		rm -rf "$SNAPSHOT"
+	elif [ -f "$RUNNING_MARKER" ] && ! pgrep qemu-system >/dev/null 2>&1; then
 		echo ":: last session did not exit through --stop - discarding its snapshot"
-		COLD=1
-	fi
-	if [ "$COLD" = 1 ] && [ -d "$SNAPSHOT" ]; then
 		rm -rf "$SNAPSHOT"
 	fi
 
 	echo ":: booting $AVD (${GUEST_MB}MB guest, ${AVAIL_MB}MB host available)"
 	BOOT_FLAGS=(-avd "$AVD" $WINDOW -netdelay none -netspeed full)
+	[ "$WARM" = 0 ] && BOOT_FLAGS+=(-no-snapshot-save -no-snapshot-load)
 	[ "$COLD" = 1 ] && BOOT_FLAGS+=(-no-snapshot-load)
 	[ "$WIPE" = 1 ] && BOOT_FLAGS+=(-wipe-data)
 	# Detach so the emulator outlives this script; its log goes to a file.
 	: > "$RUNNING_MARKER"
 	nohup "$EMULATOR" "${BOOT_FLAGS[@]}" >/tmp/nutube-emulator.log 2>&1 &
 
-	echo ":: waiting for device"
+	echo ":: waiting for device - a cold boot shows a black screen for 1-3 minutes"
+	echo "   (killing it here is what poisons the next launch, so let it run)"
 	"$ADB" wait-for-device
 	# wait-for-device returns as soon as adb connects, which is long before
 	# Android has finished starting.
-	for _ in $(seq 1 180); do
+	for i in $(seq 1 240); do
 		[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ] && break
+		[ $((i % 15)) = 0 ] && echo "   still booting... $((i * 2))s"
 		sleep 2
 	done
 	[ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" = "1" ] || {

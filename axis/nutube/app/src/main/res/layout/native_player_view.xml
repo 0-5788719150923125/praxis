@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+	The surface type is the point of this file.
+
+	PlayerView defaults to a SurfaceView, whose surface dies with the view. The
+	player outlives the view so that picture-in-picture keeps its position, and
+	ExoPlayer keeps a decoder alive whenever the next video has the same format -
+	so on the second video the old decoder was still pointed at a destroyed
+	surface. Frames decoded, went nowhere, and the result was audio over black.
+
+	A TextureView's surface is owned by the view hierarchy and survives being
+	reattached, so the decoder always has somewhere to draw. The cost is giving up
+	hardware overlay composition, which is a real but modest power difference and
+	the right trade for a player that has to survive PiP.
+-->
+<androidx.media3.ui.PlayerView
+	xmlns:android="http://schemas.android.com/apk/res/android"
+	xmlns:app="http://schemas.android.com/apk/res-auto"
+	android:layout_width="match_parent"
+	android:layout_height="match_parent"
+	android:background="@android:color/black"
+	app:surface_type="texture_view"
+	app:resize_mode="fit"
+	app:show_buffering="when_playing"
+	app:use_controller="true"
+	app:show_timeout="3000" />

@@ -19,6 +19,15 @@ interface VideoSource {
 	/** Shown in the UI when more than one source is active. */
 	val displayName: String
 
+	/**
+	 * A page for the platform's own embedded player, or null if it has none.
+	 *
+	 * When present this is the default playback route: the platform serves its
+	 * own ads and counts its own view, so the creator is credited exactly as if
+	 * the video had been opened on the platform itself.
+	 */
+	fun embedUrl(itemId: String): String? = null
+
 	/** True if this source recognises [url] as one of its own. */
 	fun handles(url: String): Boolean
 

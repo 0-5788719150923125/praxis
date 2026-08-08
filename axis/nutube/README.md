@@ -3,6 +3,48 @@
 A local-first way to explore video platforms, starting with YouTube. Nothing is
 hosted here: nuTube is a pure client that pulls from sources it does not own.
 
+## Unresolved: ads, views, and who pays for the video
+
+**This is an open design question, not a settled position. Read it before
+building on this.**
+
+nuTube reaches YouTube through NewPipeExtractor, which speaks InnerTube - the
+private API the YouTube site and apps use - rather than the YouTube Data API.
+That means no key, no quota, and no account. It also means three things that
+have not been resolved:
+
+**Ads are not shown, and cannot practically be.** The extractor returns content
+stream URLs directly; YouTube's ads are separate streams plus tracking beacons
+that must fire against Google's ad infrastructure. Skipping them is not a feature
+this app implements, it is what not implementing ads looks like. Building them
+would not help either - ad revenue only flows when an impression is reported and
+trusted, so the result would be the burden of ads with none of the payout.
+
+**Views very likely do not count.** View counting depends on playback progress
+pings (`videostats_playback_url` and friends in the player response) that this
+client does not send. A creator gets no credit for a view through here. That is
+the same for every keyless client, and it is the part of this design that is
+hardest to feel good about.
+
+**Google Play is not an option.** Third-party YouTube clients are removed for
+circumventing monetization, independent of the terms-of-service question.
+Distribution is sideload, F-Droid or Obtainium. Note also Android's developer
+verification rollout: enforcement begins 2026-09-30 in Brazil, Indonesia,
+Singapore and Thailand and expands globally in 2027, after which unverified apps
+on certified devices install only through an advanced flow with a 24-hour wait.
+`adb install` is unaffected.
+
+**How this is handled today.** Playback is a per-platform setting, and **embed
+mode is the default**. Embed mode loads YouTube's own IFrame player - the
+sanctioned embedding API - and gets out of its way: no JS bridge, no
+`enablejsapi`, nothing that reads or rewrites what the page loads. Its ads run,
+its view is counted, its creator is paid. Native mode is opt-in per platform
+under Settings, and its description states plainly what it takes away.
+
+That does not make the app submittable to Google Play - review looks at what an
+app can do, not what it defaults to - and it does not settle the question. It
+just puts the choice with the person who is actually party to YouTube's terms.
+
 ## The idea
 
 The recommendation algorithm lives on the device. There is no remote ranking
@@ -105,11 +147,17 @@ terms are only run when you search or tap one.
 Working: search fans out through the registry, saves the term, and folds results
 into the local index; the index ranks and explains itself on every card; tapping
 a card plays in-app in HD. Sharing or opening a YouTube link from any other app
-indexes it. Two tabs at the bottom - Feed and Terms.
+indexes it. Three tabs at the bottom - Feed, Terms and Settings.
 
 HD works by taking YouTube's separate video-only and audio-only tracks and
 merging them with ExoPlayer's `MergingMediaSource` - the muxed stream it also
 offers stops at 720p and is kept only as a fallback.
+
+Playback is per-platform under Settings, defaulting to the embedded player.
+Native mode adds hardware decode, HD via merged video and audio tracks, and
+picture-in-picture when you leave the app; embed mode pauses instead, since the
+page owns its own player. Closing a video uses the system back gesture rather
+than a button.
 
 Not built yet: the background crawler (`WorkManager` is a dependency but unused),
 persistence beyond a JSON file, background audio and PiP (manifest and

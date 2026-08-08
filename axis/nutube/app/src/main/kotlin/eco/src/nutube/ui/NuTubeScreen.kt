@@ -2,6 +2,7 @@ package eco.src.nutube.ui
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,6 +23,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Card
@@ -69,13 +71,16 @@ import eco.src.nutube.core.FeedItem
  * title slot - the title slot reserves room for navigation and action icons, so a
  * TextField placed there gets squeezed past the right edge.
  */
-private enum class Tab(val label: String) { Feed("Feed"), Terms("Terms") }
+private enum class Tab(val label: String) { Feed("Feed"), Terms("Terms"), Settings("Settings") }
 
 @Composable
-fun NuTubeScreen(model: FeedViewModel) {
+fun NuTubeScreen(model: FeedViewModel, inPip: Boolean = false) {
 	val feed by model.feed.collectAsStateWithLifecycle()
 	val terms by model.terms.collectAsStateWithLifecycle()
 	val busy by model.busy.collectAsStateWithLifecycle()
+	// Collected so a settings write recomposes the switch and the player route.
+	val modes by model.playbackModes.collectAsStateWithLifecycle()
+	val revision by model.revision.collectAsStateWithLifecycle()
 	val error by model.error.collectAsStateWithLifecycle()
 
 	var tab by rememberSaveable { mutableStateOf(Tab.Feed) }
@@ -87,10 +92,21 @@ fun NuTubeScreen(model: FeedViewModel) {
 	val keyboard = LocalSoftwareKeyboardController.current
 	val focus = LocalFocusManager.current
 
-	// Scrolling the feed is a clear signal the user is done typing. Without this
-	// the keyboard sits open over half the screen until it is dismissed by hand.
-	LaunchedEffect(listState.isScrollInProgress) {
-		if (listState.isScrollInProgress) dismissKeyboard(keyboard, focus)
+	// New ranking, new order - so go back to where the best results now are. A
+	// search that re-ranks below the current scroll position looks like a search
+	// that did nothing.
+	LaunchedEffect(revision) {
+		if (revision > 0 && listState.firstVisibleItemIndex > 0) listState.scrollToItem(0)
+	}
+
+	// Dragging the feed is a clear signal the user is done typing; without this the
+	// keyboard sits open over half the screen until dismissed by hand. It watches
+	// drags specifically rather than any scroll, because the jump-to-top above is
+	// also a scroll and would otherwise close the keyboard on every keystroke.
+	LaunchedEffect(listState.interactionSource) {
+		listState.interactionSource.interactions.collect { interaction ->
+			if (interaction is DragInteraction.Start) dismissKeyboard(keyboard, focus)
+		}
 	}
 	LaunchedEffect(tab) { dismissKeyboard(keyboard, focus) }
 
@@ -98,7 +114,8 @@ fun NuTubeScreen(model: FeedViewModel) {
 		error?.let { snackbar.showSnackbar(it); model.clearError() }
 	}
 
-	Scaffold(
+	Box(Modifier.fillMaxSize()) {
+	if (!inPip) Scaffold(
 		containerColor = MaterialTheme.colorScheme.background,
 		snackbarHost = { SnackbarHost(snackbar) },
 		topBar = {
@@ -122,7 +139,11 @@ fun NuTubeScreen(model: FeedViewModel) {
 						onClick = { tab = entry },
 						icon = {
 							Icon(
-								if (entry == Tab.Feed) Icons.Filled.PlayArrow else Icons.Filled.List,
+								when (entry) {
+									Tab.Feed -> Icons.Filled.PlayArrow
+									Tab.Terms -> Icons.Filled.List
+									Tab.Settings -> Icons.Filled.Settings
+								},
 								contentDescription = entry.label,
 							)
 						},
@@ -160,11 +181,28 @@ fun NuTubeScreen(model: FeedViewModel) {
 					contentPadding = padding,
 				)
 			}
+
+			Tab.Settings -> Box(Modifier.fillMaxSize()) {
+				SettingsScreen(
+					sources = model.sources,
+					modeFor = { id -> modes[id]?.playback ?: model.playbackMode(id) },
+					onModeChange = model::setPlaybackMode,
+					contentPadding = padding,
+				)
+			}
 		}
 	}
 
 	playing?.let { item ->
-		PlayerOverlay(item = item, onClose = { playing = null })
+		PlayerOverlay(
+			item = item,
+			mode = modes[item.source]?.playback ?: model.playbackMode(item.source),
+			inPip = inPip,
+			playback = model.playback,
+			onNativeActive = model::setNativePlaybackActive,
+			onClose = { playing = null; model.stopNativePlayback() },
+		)
+	}
 	}
 }
 

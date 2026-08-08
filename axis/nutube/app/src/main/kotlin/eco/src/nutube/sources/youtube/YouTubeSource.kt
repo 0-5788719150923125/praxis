@@ -34,6 +34,17 @@ object YouTubeSource : VideoSource {
 
 	private fun watchUrl(id: String) = "https://www.youtube.com/watch?v=$id"
 
+	/**
+	 * YouTube's official IFrame embed - the one route Google sanctions.
+	 *
+	 * Loading this page plays the real YouTube player: its ads run, its view is
+	 * counted, and the creator is paid exactly as on youtube.com. No key and no
+	 * account are involved; this is the documented embedding API.
+	 */
+	override fun embedUrl(itemId: String): String =
+		"https://www.youtube.com/embed/$itemId?autoplay=1&playsinline=1"
+
+
 	override suspend fun search(query: String, limit: Int): Result<List<FeedItem>> =
 		withContext(Dispatchers.IO) {
 			runCatching {
