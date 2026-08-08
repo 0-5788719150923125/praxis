@@ -127,6 +127,16 @@ TRAINING = {
     ),
 }
 
+# Sources for wrappers that implement a published method. Keyed by wrapper name;
+# a wrapper absent here simply renders uncited. Applied to described and bare
+# wrappers alike, so the whole schedule-free family is sourced even though only
+# the base one carries a blurb.
+WRAPPER_CITES = {
+    "schedule_free": "defazio2024schedulefree",
+    "gated_schedule_free": "defazio2024schedulefree",
+    "wave_schedule_free": "defazio2024schedulefree",
+}
+
 WRAPPERS = {
     "schedule_free": (
         "no learning-rate schedule; the wrapper Polyak-averages the iterate "
@@ -244,8 +254,14 @@ def section_tex(facts: Dict) -> str:
         )
 
     named = [(w, WRAPPERS.get(w)) for w in facts["wrappers"]]
-    described = [f"{_tt(w)} ({d})" for w, d in named if d]
-    bare = [_tt(w) for w, d in named if not d]
+
+    def _cited(w: str) -> str:
+        """The wrapper's name, followed by its source when it has one."""
+        key = WRAPPER_CITES.get(w)
+        return _tt(w) + (f"~\\cite{{{key}}}" if key else "")
+
+    described = [f"{_cited(w)} ({d})" for w, d in named if d]
+    bare = [_cited(w) for w, d in named if not d]
     if described or bare:
         parts.append("Wrapped by " + ", ".join(described + bare) + ".")
 

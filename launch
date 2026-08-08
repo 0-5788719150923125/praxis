@@ -126,10 +126,14 @@ parse_compose_args() {
 
 # Print the first free TCP port at or above $1. Actually binding is the only
 # probe that matches what Docker will do: a connect test misses ports that are
-# bound but not listening, and parsing `ss` misses other netns bindings. No
-# SO_REUSEADDR, so we stay as conservative as docker-proxy. If the probe cannot
-# run at all we echo the requested port and let Docker report the conflict -
-# a broken check must never block a launch.
+# bound but not listening, and parsing `ss` misses other netns bindings.
+# SO_REUSEADDR is required to match it: Docker sets it when publishing, so a
+# bare bind is STRICTER than Docker and reports EADDRINUSE for a port that only
+# has lingering TIME_WAIT sockets - which is exactly the state left behind for
+# ~60s after stopping a run whose dashboard had open connections. Without it,
+# relaunching promptly rolled the run off 2100 for no reason. If the probe
+# cannot run at all we echo the requested port and let Docker report the
+# conflict - a broken check must never block a launch.
 find_free_port() {
     python3 - "$1" "$PORT_SEARCH_SPAN" 2>/dev/null <<'PY' || echo "$1"
 import socket, sys
@@ -137,6 +141,7 @@ import socket, sys
 start, span = int(sys.argv[1]), int(sys.argv[2])
 for port in range(start, start + span):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             probe.bind(("0.0.0.0", port))
         except OSError:

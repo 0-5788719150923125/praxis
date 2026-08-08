@@ -30,8 +30,10 @@ figures/
 *.aux
 *.bbl
 *.blg
+*.brf
 *.fls
 *.log
+*.out
 *.fdb_latexmk
 *.synctex.gz
 datasets.tex
