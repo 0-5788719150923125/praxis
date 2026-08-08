@@ -396,6 +396,7 @@ class CausalAttention(nn.Module):
         past_key_values: Optional[Tensor] = None,
         block_ids: Optional[Tensor] = None,
         current_depth: int = 0,
+        positions: Optional[Tensor] = None,
     ) -> Tuple[Tensor, Optional[Tensor], float]:
         """
         Forward pass of the FlexAttention module.
@@ -443,7 +444,9 @@ class CausalAttention(nn.Module):
         # Apply positional encoding to Q/K (no-op for ALiBi/NoPE, rotates
         # for RoPE/HoPE). Must happen before ghostmax so the ghost token
         # remains a pristine zero.
-        q, k, v = self.encoding.before_scores(q, k, v, current_depth=current_depth)
+        q, k, v = self.encoding.before_scores(
+            q, k, v, current_depth=current_depth, positions=positions
+        )
 
         # Dropoff ablation: optionally withhold the causal tip at one depth step.
         k, v = self._maybe_dropoff(k, v, current_depth)

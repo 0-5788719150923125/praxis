@@ -62,6 +62,7 @@ class SyntaxesAttention(nn.Module):
         block_ids: Optional[Tensor] = None,
         current_depth: int = 0,
         offset: int = 0,
+        positions: Optional[Tensor] = None,
     ) -> Tuple[Tensor, Optional[Union[Tensor, DynamicCache]], Union[int, float]]:
         """Forward pass of Syntaxes attention - all queries attend to recent context K/V."""
         batch_size, seq_len, hidden_size = inputs.shape

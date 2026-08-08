@@ -38,6 +38,7 @@ class SequentialDecoder(BaseDecoder):
         block_ids: Optional[Tensor] = None,
         losses: LossContainer = None,
         labels: Optional[Tensor] = None,
+        positions: Optional[Tensor] = None,
     ) -> Tuple[
         Tensor, Optional[Union[List[Any], Dict[str, Any]]], Optional[List[Any]], Tensor
     ]:
@@ -142,6 +143,7 @@ class SequentialDecoder(BaseDecoder):
                     should_checkpoint(
                         self.training, current_depth, self.checkpoint_every
                     ),
+                    positions,
                 )
 
             # Update route immediately after expert execution

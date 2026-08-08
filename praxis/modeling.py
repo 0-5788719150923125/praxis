@@ -155,6 +155,21 @@ class PraxisModel(PreTrainedModel):
             )
             halting.record_metrics = stage != "preflight"
 
+        # Byte-timeline positions for the trunk. A patched sequence hands the
+        # decoder one vector per PATCH, so an implicit arange makes every
+        # position-indexed mechanism downstream (RoPE theta, the per-depth
+        # positional zoom, ALiBi slopes) measure "patches elapsed" rather than
+        # elapsed input. Under content-adaptive patching that clock's tick
+        # length is data-dependent - a patch is one byte for a lone "a" and ten
+        # for a long word - so equal position deltas mean unequal spans of
+        # text. The exclusive prefix sum of patch_lengths is the byte offset
+        # each patch starts at, which restores a uniform clock without giving
+        # up content-aligned boundaries. None when there is no encoder, and the
+        # encodings fall back to arange exactly as before.
+        positions = None
+        if patch_lengths is not None:
+            positions = torch.cumsum(patch_lengths, dim=1) - patch_lengths
+
         last_hidden_state, new_key_values, new_state, losses = self.decoder(
             inputs,
             attention_mask,
@@ -163,6 +178,7 @@ class PraxisModel(PreTrainedModel):
             block_ids,
             losses,
             labels,
+            positions,
         )
 
         return PraxisModelOutput(

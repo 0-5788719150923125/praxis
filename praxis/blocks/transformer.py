@@ -69,6 +69,7 @@ class TransformerBlock(nn.Module):
         current_depth: int = 0,
         block_ids: Optional[Tensor] = None,
         router_weights: Optional[Tensor] = None,
+        positions: Optional[Tensor] = None,
         *args: Any,
         **kwargs: Any,
     ) -> Tuple[
@@ -103,8 +104,16 @@ class TransformerBlock(nn.Module):
         attn_input = self.attn_norm(self.attn_res.format_state(residual), mode="pre")
         if self.use_scaler:
             attn_input = norm_scaling(attn_input, current_depth)
+        # Keyword, and only when present: the None path stays byte-identical to
+        # the call that predates the positions channel.
+        pos_kwarg = {} if positions is None else {"positions": positions}
         attn_output, past_key_values, aux_loss = self.attn(
-            attn_input, attention_mask, past_key_values, block_ids, current_depth
+            attn_input,
+            attention_mask,
+            past_key_values,
+            block_ids,
+            current_depth,
+            **pos_kwarg,
         )
         # Apply post-normalization (if configured)
         attn_output = self.attn_norm(attn_output, mode="post")

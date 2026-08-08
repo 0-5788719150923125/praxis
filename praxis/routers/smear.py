@@ -131,6 +131,7 @@ class SMEAR(nn.Module):
         current_state: Optional[torch.Tensor],
         current_depth: int,
         block_ids: Optional[torch.Tensor],
+        positions: Optional[torch.Tensor] = None,
     ) -> Tuple[
         torch.Tensor,
         Optional[Union[torch.Tensor, List, Dict]],
@@ -181,6 +182,10 @@ class SMEAR(nn.Module):
             current_depth,
             block_ids,
         )
+        # By KEYWORD, not position: the block's 7th positional slot is
+        # router_weights, and only when present so blocks predating the
+        # positions channel keep their exact previous call.
+        forward_kwargs = {} if positions is None else {"positions": positions}
 
         # Apply the merged parameters using functional_call. tie_weights=False is
         # REQUIRED. This is functional_call's OWN arg (not model weight-tying - the
@@ -191,7 +196,11 @@ class SMEAR(nn.Module):
         # time"). Verified on a model with zero tied weights. Only bites under the
         # smear/vear shared-expert recurrent reuse.
         result = torch.func.functional_call(
-            base_module, merged_state_dict, forward_args, {}, tie_weights=False
+            base_module,
+            merged_state_dict,
+            forward_args,
+            forward_kwargs,
+            tie_weights=False,
         )
 
         # Handle different return formats
@@ -683,13 +692,17 @@ class SMEAR(nn.Module):
 
     def _is_router_mode(self, args: tuple, kwargs: dict) -> bool:
         """Check if we're in router mode based on arguments."""
-        # Router mode if we have 7 positional args or 'layer' in kwargs
-        return len(args) == 7 or "layer" in kwargs
+        # Router mode if we have 7 positional args or 'layer' in kwargs. 8 when
+        # LocalLayer appends the byte-timeline positions - miscounting there
+        # falls through to direct mode, which reads the BLOCK as the input
+        # tensor and dies inside the residual with a bare AttributeError.
+        return len(args) in (7, 8) or "layer" in kwargs
 
     def _parse_router_args(self, args: tuple, kwargs: dict) -> tuple:
         """Parse arguments for router mode."""
-        if len(args) == 7:
-            # Positional arguments
+        if len(args) in (7, 8):
+            # Positional arguments (8 when the byte-timeline positions are
+            # threaded through; see PraxisModel.forward).
             return args
         else:
             # Keyword arguments

@@ -29,6 +29,7 @@ def create_forward(
     current_depth: int,
     block_ids: Optional[Tensor],
     should_checkpoint: bool = False,
+    positions: Optional[Tensor] = None,
 ) -> Optional[Tuple[Tensor, Any, Any, Tensor, Optional[bool]]]:
     """
     Create and execute a forward pass function for an expert module with optional checkpointing.
@@ -61,6 +62,7 @@ def create_forward(
         current_state: Optional[Any],
         current_depth: int,
         block_ids: Optional[Tensor],
+        positions: Optional[Tensor] = None,
     ) -> Tuple[Tensor, Any, Any, Tensor, Optional[bool]]:
         """
         Custom forward function that can be used with gradient checkpointing.
@@ -86,6 +88,9 @@ def create_forward(
             hidden_states, attention_mask, current_depth
         )
         # Forward pass
+        # Only forwarded when present, so every block type that predates the
+        # positions channel keeps its exact previous call signature.
+        extra = {} if positions is None else {"positions": positions}
         states, layer_kv, state_update, aux_loss, exit_signal = expert(
             hidden_states,
             attention_mask,
@@ -93,6 +98,7 @@ def create_forward(
             current_state,
             current_depth,
             block_ids,
+            **extra,
         )
         # Remove context from both hidden states and attention mask
         states, attention_mask = controller.remove_context(states, attention_mask)
@@ -109,6 +115,7 @@ def create_forward(
                 current_state,
                 current_depth,
                 block_ids,
+                positions,
                 use_reentrant=False,
             )
         else:
@@ -119,6 +126,7 @@ def create_forward(
                 current_state,
                 current_depth,
                 block_ids,
+                positions,
             )
     except (P2PDaemonError, P2PHandlerError) as e:
         print(e)

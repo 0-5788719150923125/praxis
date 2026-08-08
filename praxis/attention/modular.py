@@ -182,6 +182,7 @@ class ModularAttention(nn.Module):
         past_key_values: Optional[Union[Tensor, DynamicCache]] = None,
         block_ids: Optional[Tensor] = None,
         current_depth: int = 0,
+        positions: Optional[Tensor] = None,
     ) -> Tuple[Tensor, Optional[Union[Tensor, DynamicCache]], Union[int, float]]:
         """
         Forward pass of the attention module.
@@ -282,6 +283,13 @@ class ModularAttention(nn.Module):
                 start_idx,
                 chunk_block_ids,
                 current_depth,
+                # Sliced to the chunk, so the explicit positions line up with
+                # the chunk's own sequence length rather than the full row.
+                (
+                    None
+                    if positions is None
+                    else positions[:, start_idx : start_idx + current_chunk_size]
+                ),
             )
 
             outputs.append(chunk_output)
@@ -308,6 +316,7 @@ class ModularAttention(nn.Module):
         offset: int = 0,
         block_ids: Optional[Tensor] = None,
         current_depth: int = 0,
+        positions: Optional[Tensor] = None,
     ) -> Tensor:
         """
         Process a chunk of the attention computation.
@@ -341,6 +350,7 @@ class ModularAttention(nn.Module):
                 offset=offset,
                 block_ids=block_ids,
                 current_depth=current_depth,
+                positions=positions,
             )
 
             # Concatenate back
@@ -355,6 +365,7 @@ class ModularAttention(nn.Module):
                 offset=offset,
                 block_ids=block_ids,
                 current_depth=current_depth,
+                positions=positions,
             )
 
         # Compute attention scores

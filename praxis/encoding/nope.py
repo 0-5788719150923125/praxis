@@ -39,6 +39,7 @@ class NoPE(nn.Module):
         offset: int = 0,
         block_ids: Optional[torch.Tensor] = None,
         current_depth: int = 0,
+        positions: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Apply scaling to queries before computing attention scores.
@@ -50,6 +51,8 @@ class NoPE(nn.Module):
             offset: Position offset (unused in NoPE, for API compatibility)
             block_ids: Optional block IDs for segmented attention
             current_depth: Recurrent depth pass (unused in NoPE)
+            positions: Optional explicit [batch, seq_len] positions (unused in
+                NoPE, for API compatibility)
 
         Returns:
             Tuple of (scaled_queries, keys, values)

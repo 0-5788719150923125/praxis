@@ -264,6 +264,14 @@ class TerminalDashboard:
     def force_redraw(self):
         """Force a full redraw."""
         self.previous_frame = None
+        # The differential renderer keeps its own copy of the last frame;
+        # clearing ours alone left it happily diffing against stale state,
+        # which is why a corrupted line never healed on its own.
+        self.differential_renderer.reset()
+
+    def resync_screen(self):
+        """Rewrite every cell on the next frame without clearing (no flicker)."""
+        self.differential_renderer.request_repaint()
 
     # Metric update methods - delegate to state
     def update_seed(self, seed):
@@ -334,8 +342,11 @@ class TerminalDashboard:
 
     def _update_screen(self, new_frame):
         """Update the terminal screen with a new frame."""
-        # Correct borders for all lines
-        new_frame = self.frame_builder.correct_borders(new_frame)
+        # Normalize against the real terminal width, not the frame's own idea
+        # of it. This is the single chokepoint every frame passes through.
+        new_frame = self.frame_builder.correct_borders(
+            new_frame, self._get_terminal_size().columns
+        )
 
         # Use differential renderer for efficient character-level updates
         self.differential_renderer.render_frame(new_frame, self.dashboard_output)
@@ -350,7 +361,7 @@ class TerminalDashboard:
 
         # Check if terminal size has changed
         if current_size != self.previous_size:
-            self.previous_frame = None  # Force full redraw
+            self.force_redraw()  # Terminal resized - clear and redraw
             self.previous_size = current_size
 
         width, height = current_size
@@ -591,7 +602,7 @@ class TerminalDashboard:
         if key.lower() == "l":
             self.fullscreen_log_mode = not self.fullscreen_log_mode
             # Clear the screen when switching modes
-            self.previous_frame = None
+            self.force_redraw()
             # Reset scroll position when entering/exiting fullscreen
             if not self.fullscreen_log_mode:
                 self.log_scroll_offset = 0
@@ -608,31 +619,31 @@ class TerminalDashboard:
             if key.name == "KEY_UP":
                 # Scroll up (show older logs)
                 self.log_scroll_offset = min(self.log_scroll_offset + 1, max_scroll)
-                self.previous_frame = None  # Force redraw
+                self.force_redraw()
             elif key.name == "KEY_DOWN":
                 # Scroll down (show newer logs)
                 self.log_scroll_offset = max(self.log_scroll_offset - 1, 0)
-                self.previous_frame = None  # Force redraw
+                self.force_redraw()
             elif key.name == "KEY_PGUP":
                 # Page up (scroll by full page)
                 self.log_scroll_offset = min(
                     self.log_scroll_offset + available_height, max_scroll
                 )
-                self.previous_frame = None  # Force redraw
+                self.force_redraw()
             elif key.name == "KEY_PGDOWN":
                 # Page down (scroll by full page)
                 self.log_scroll_offset = max(
                     self.log_scroll_offset - available_height, 0
                 )
-                self.previous_frame = None  # Force redraw
+                self.force_redraw()
             elif key.name == "KEY_HOME":
                 # Jump to beginning (oldest logs)
                 self.log_scroll_offset = max_scroll
-                self.previous_frame = None  # Force redraw
+                self.force_redraw()
             elif key.name == "KEY_END":
                 # Jump to end (newest logs)
                 self.log_scroll_offset = 0
-                self.previous_frame = None  # Force redraw
+                self.force_redraw()
 
     def _create_fullscreen_log_frame(self):
         """Create a fullscreen view of the log output with scrolling support."""
@@ -657,6 +668,9 @@ class TerminalDashboard:
         else:
             title = " LOG VIEW (Press 'L' to return to dashboard) "
 
+        # The title lands in frame[0], which everything downstream measures
+        # itself against, so normalize it before splicing.
+        title = self.text_utils.normalize_cells(title)
         title_start = (width - len(title)) // 2
         if title_start > 0 and title_start + len(title) < width - 1:
             top_border = (
@@ -695,13 +709,16 @@ class TerminalDashboard:
             # If we have fewer logs than screen space, pad at the top with empty lines
             visible_logs = [""] * (available_height - len(log_entries)) + log_entries
 
-        # Add each log line to the frame with proper borders and padding
+        # Add each log line to the frame with proper borders and padding.
+        # Measure in terminal columns, not str length: a log line carrying a
+        # tab or an emoji is wider than len() thinks, and eyeballing it with
+        # len() is what used to push the right rail off the edge.
         for log_line in visible_logs:
-            # Truncate or pad the log line to fit within content area
-            if len(log_line) > content_width:
-                formatted_line = log_line[: content_width - 3] + "..."
+            cells = self.text_utils.normalize_cells(log_line)
+            if len(cells) > content_width:
+                formatted_line = cells[: content_width - 3] + "..."
             else:
-                formatted_line = log_line.ljust(content_width)
+                formatted_line = cells.ljust(content_width)
 
             # Add borders and 2-char buffer on the left
             frame.append(f"║ {formatted_line} ║")
@@ -714,10 +731,19 @@ class TerminalDashboard:
 
     def _run_dashboard(self):
         """Main dashboard rendering loop."""
+        frames = 0
         try:
             with managed_terminal(self.term, self.terminal_manager):
                 while self.running:
                     try:
+                        # Belt and braces: rewrite the whole screen every ~30s.
+                        # correct_borders() already guarantees the frame itself
+                        # is sane, but nothing stops another process writing to
+                        # our terminal. This heals that without a visible clear.
+                        frames += 1
+                        if frames % 300 == 0:
+                            self.resync_screen()
+
                         # Check for keyboard input (non-blocking)
                         key = self.term.inkey(timeout=0.01)
                         if key:
@@ -735,8 +761,12 @@ class TerminalDashboard:
                         else:
                             new_frame = self._create_frame()
 
+                        # correct_borders() inside _update_screen repairs the
+                        # frame; if it arrived misaligned we also resync the
+                        # screen, since the previous frame may have shipped
+                        # broken before the repair existed.
                         if not self.frame_builder.check_border_alignment(new_frame):
-                            self.previous_frame = None
+                            self.resync_screen()
                         self._update_screen(new_frame)
                         time.sleep(0.1)
                     except Exception as e:

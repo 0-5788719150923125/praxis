@@ -52,6 +52,7 @@ class ALiBi(NoPE):
         offset: int = 0,
         block_ids: Optional[torch.Tensor] = None,
         current_depth: int = 0,
+        positions: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Pass through inputs unchanged (ALiBi applies biases after score computation).

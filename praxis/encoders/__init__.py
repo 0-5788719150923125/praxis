@@ -67,6 +67,37 @@ AbstractinatorHarmonicSerpent = partial(
     bottleneck="harmonic_serpent",
 )
 
+# Mean-pooled variant. The default "max" pooling (pooling_downsample ->
+# patch_reduce with "amax") carries a systematic length bias: the expectation of
+# a max over n vectors grows like sqrt(2 ln n), so under space patching - where n
+# runs from 1 (a lone "a", a punctuation run, a control byte) to 10+ - the patch
+# vector's magnitude encodes how many bytes happened to fall in the patch,
+# before any content does. HarmonicResidualVQ then RMS-normalizes onto the
+# sphere, which erases that magnitude but not the direction bias it induced, and
+# an information-poor one-byte patch arrives at the shared codebook carrying the
+# same spectral energy as a full word.
+#
+# Mean pooling is not magnitude-neutral either - a mean over n shrinks like
+# 1/sqrt(n), so it carries the INVERSE bias (measured on a 6/1/5-byte patch
+# triple: max gives norms 3.93/1.41/3.07, avg gives 1.07/1.41/1.39). The
+# difference that matters is in DIRECTION, and it survives the RMS
+# normalization that discards magnitude. A mean is an unbiased estimate of the
+# patch's content direction at every n; only its variance depends on n. A max
+# is an order statistic, so which coordinates it selects - and therefore the
+# direction it points - shifts systematically as n grows. That is the part the
+# sphere projection cannot undo.
+#
+# Note the pooling mode is matched by substring in pooling_downsample - the key
+# is "avg", not "mean"; "mean" matches nothing and trips its assert.
+#
+# A separate registry entry rather than a changed default, so the -a..-h
+# lineage keeps building the encoder it was measured with and the A/B stays a
+# one-line encoder_type swap.
+AbstractinatorHarmonicSerpentAvg = partial(
+    AbstractinatorHarmonicSerpent,
+    downsampling_method="avg",
+)
+
 # CALM profiles. Defaults track the paper (arXiv 2510.27688). Tokenizer-
 # specific variants exist because K ("one word of meaning per latent")
 # scales with tokenizer granularity: BPE=4, char=8, byte=16.
@@ -310,6 +341,7 @@ ENCODER_REGISTRY = dict(
     # Residual codes as harmonic amplitudes (the CALM-bridge conjecture, run)
     abstractinator_harmonic=AbstractinatorHarmonic,
     abstractinator_harmonic_serpent=AbstractinatorHarmonicSerpent,
+    abstractinator_harmonic_serpent_avg=AbstractinatorHarmonicSerpentAvg,
     # CALM: token-chunk VAE + energy head (arXiv 2510.27688).
     # Tokenizer-specific variants adjust K: BPE=4, char=8, byte=16.
     # calm_small is the smoke-test profile.

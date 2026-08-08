@@ -208,8 +208,13 @@ class VEAR(SMEAR):
 
     def _router_forward(self, *args):
         # args = (layer, inputs, attention_mask, past_key_values, current_state,
-        #         current_depth, block_ids); experts are called with args[1:].
-        self._ensure_experts_initialized(tuple(args[1:]))
+        #         current_depth, block_ids[, positions]); experts are called with
+        # args[1:]. The trailing positions - present only when an encoder
+        # supplies a byte timeline - is sliced off: lazy expert init shape-probes
+        # the block positionally, and the block's 7th positional slot is
+        # router_weights, so passing it here would feed positions to the FFN
+        # gate.
+        self._ensure_experts_initialized(tuple(args[1:7]))
         return super()._router_forward(*args)
 
     def _direct_forward(self, inputs: Tensor, current_state: Optional[Tensor]):

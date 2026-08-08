@@ -73,6 +73,7 @@ class MixtureOfDepths(nn.Linear):
         current_state: Optional[Tensor],
         current_depth: int,
         block_ids: Optional[Tensor],
+        positions: Optional[Tensor] = None,
     ) -> Tuple[Tensor, Optional[Union[Tensor, List, Dict]], Optional[Tensor], float]:
         """
         Forward pass with selective token routing based on capacity.

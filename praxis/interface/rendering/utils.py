@@ -9,12 +9,71 @@ import wcwidth
 class TextUtils:
     """Utilities for text rendering and manipulation."""
 
+    # Single-column stand-in for anything we cannot render in one cell.
+    # Must be plain ASCII: U+FFFD and friends are East Asian *Ambiguous*, so a
+    # terminal configured for CJK renders them two columns wide and the whole
+    # frame shears by one character.
+    SAFE_CHAR = "?"
+    TAB_WIDTH = 4
+
+    # Printable ASCII and the box-drawing block are all exactly one column, so
+    # a line made only of those needs no work at all. This runs on every line
+    # of every frame at 10 fps; the regex scan keeps it in C.
+    _CELL_SAFE = re.compile(r"^[\x20-\x7e─-╿]*$")
+
     def __init__(self):
         self.ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
     def strip_ansi(self, text):
         """Remove ANSI escape sequences from the text."""
         return self.ansi_escape.sub("", text)
+
+    def normalize_cells(self, text):
+        """
+        Return ``text`` rewritten so every character occupies exactly one
+        terminal column.
+
+        This is the invariant the whole dashboard rests on: once it holds,
+        a string index *is* a terminal column, which is what lets the
+        differential renderer address the screen with absolute cursor moves.
+        Anything that would break it is rewritten:
+
+        - width 1  -> kept as-is
+        - width 0  -> dropped (combining marks, zero-width joiners): the
+          terminal gives them no column, so keeping them would slide every
+          later character one cell left of where we think it is
+        - width 2  -> ``SAFE_CHAR`` (CJK, emoji)
+        - width -1 -> ``SAFE_CHAR`` (control chars), except tab, which is
+          expanded to spaces because the terminal expands it too
+        """
+        if not text:
+            return ""
+        if self._CELL_SAFE.match(text):
+            return text
+
+        result = []
+        for char in text:
+            if char == "\t":
+                result.append(" " * self.TAB_WIDTH)
+                continue
+            width = wcwidth.wcwidth(char)
+            if width == 1:
+                result.append(char)
+            elif width == 0:
+                continue
+            else:
+                result.append(self.SAFE_CHAR)
+
+        return "".join(result)
+
+    def fit_to_width(self, text, width):
+        """Normalize text and force it to exactly ``width`` terminal columns."""
+        if width <= 0:
+            return ""
+        cells = self.normalize_cells(text)
+        if len(cells) >= width:
+            return cells[:width]
+        return cells + " " * (width - len(cells))
 
     def sanitize_text(self, text):
         """
@@ -46,38 +105,15 @@ class TextUtils:
         """Truncate text to fit within a given width, accounting for wide characters."""
         if not text:
             return ""
-
-        # Sanitize the input text first
-        sanitized_text = self.sanitize_text(text)
-
-        current_width = 0
-        result = []
-        for char in sanitized_text:
-            char_width = wcwidth.wcwidth(char)
-            if char_width < 0:
-                char_width = 1  # Treat any remaining problematic characters as width 1
-            if current_width + char_width > width:
-                break
-            result.append(char)
-            current_width += char_width
-
-        return "".join(result)
+        return self.normalize_cells(text)[: max(0, width)]
 
     def visual_ljust(self, string, width):
         """Left-justify a string to a specified width, considering character display width."""
-        if not string:
-            return " " * width
-
-        # Sanitize the input string first
-        sanitized_string = self.sanitize_text(string)
-
-        visual_width = sum(max(wcwidth.wcwidth(char), 0) for char in sanitized_string)
-        padding = max(0, width - visual_width)
-        return sanitized_string + " " * padding
+        return self.fit_to_width(string, width)
 
     def visual_len(self, s):
         """Calculate the visual display width of a string."""
-        return sum(max(wcwidth.wcwidth(char), 0) for char in s)
+        return len(self.normalize_cells(s))
 
     def wrap_text(self, text, width):
         """Wrap text to fit within a given width, preserving newlines."""

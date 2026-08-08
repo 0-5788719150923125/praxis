@@ -302,23 +302,27 @@ class Patcher:
         batch_size, seq_len = tokens.shape
         device = tokens.device
 
+        # The lengths must cover the next-token slot too when it is requested,
+        # exactly as ``_space_patching`` does via ``seq_len_with_next``.
+        # ``_postprocess_patch_lengths`` asserts the total equals
+        # ``tokens.numel() + include_next_token * batch``, so ignoring the flag
+        # here made every static-mode forward die on that assert.
+        total = seq_len + (1 if include_next_token else 0)
+
         # Calculate number of patches
-        num_patches = (seq_len + patch_size - 1) // patch_size
+        num_patches = (total + patch_size - 1) // patch_size
 
         # Create uniform patch lengths
         patch_lengths = torch.full(
             (batch_size, num_patches), patch_size, device=device, dtype=torch.long
         )
 
-        # Handle last patch if sequence doesn't divide evenly
-        last_patch_size = seq_len % patch_size
+        # Handle last patch if the stream doesn't divide evenly. The FIRST patch
+        # stays at patch_size, which is what decoder_patch_ids_from_lengths
+        # asserts against nb_boe (= patch_size - 1) for non-space modes.
+        last_patch_size = total % patch_size
         if last_patch_size > 0:
             patch_lengths[:, -1] = last_patch_size
-
-        # Create boundaries at patch edges
-        boundaries = torch.zeros(batch_size, seq_len, device=device, dtype=torch.bool)
-        for i in range(patch_size - 1, seq_len, patch_size):
-            boundaries[:, i] = True
 
         return self._postprocess_patch_lengths(
             patch_lengths, tokens, include_next_token, scores=None

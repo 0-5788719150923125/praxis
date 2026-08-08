@@ -12,6 +12,7 @@ class TerminalDifferentialRenderer:
     def __init__(self, term):
         self.term = term
         self.previous_frame: Optional[List[str]] = None
+        self.repaint_pending = False
 
     def render_frame(self, new_frame: List[str], dashboard_output) -> None:
         """
@@ -24,6 +25,19 @@ class TerminalDifferentialRenderer:
         # First frame or size changed - full redraw
         if self.previous_frame is None or len(self.previous_frame) != len(new_frame):
             self._full_redraw(new_frame, dashboard_output)
+            self.previous_frame = new_frame.copy()
+            self.repaint_pending = False
+            return
+
+        # A resync was requested: rewrite every cell without clearing, so the
+        # screen is restored from whatever state it drifted into (a stray write
+        # from another process, a dropped escape sequence) with no flicker.
+        if self.repaint_pending:
+            self.repaint_pending = False
+            self._apply_updates(
+                [(row, 0, line) for row, line in enumerate(new_frame)],
+                dashboard_output,
+            )
             self.previous_frame = new_frame.copy()
             return
 
@@ -43,7 +57,12 @@ class TerminalDifferentialRenderer:
     def _full_redraw(self, frame: List[str], dashboard_output) -> None:
         """Perform a full screen redraw."""
         print(
-            self.term.home + self.term.clear + self.term.white + "\n".join(frame),
+            "\033[?2026h"  # Begin synchronized update
+            + self.term.home
+            + self.term.clear
+            + self.term.white
+            + "\n".join(frame)
+            + "\033[?2026l",  # End synchronized update
             end="",
             file=dashboard_output,
         )
@@ -82,9 +101,10 @@ class TerminalDifferentialRenderer:
                     changes.append((change_start, i, new_padded[change_start:i]))
                     in_change = False
 
-        # Handle change extending to end
+        # Handle change extending to end. Do NOT rstrip: trailing spaces here
+        # are erasures of characters that are still on screen.
         if in_change:
-            changes.append((change_start, max_len, new_padded[change_start:].rstrip()))
+            changes.append((change_start, max_len, new_padded[change_start:]))
 
         return changes
 
@@ -131,5 +151,10 @@ class TerminalDifferentialRenderer:
         dashboard_output.flush()
 
     def reset(self) -> None:
-        """Reset the renderer state."""
+        """Reset the renderer state, forcing a clear-and-redraw next frame."""
         self.previous_frame = None
+        self.repaint_pending = False
+
+    def request_repaint(self) -> None:
+        """Ask for every cell to be rewritten on the next frame, without a clear."""
+        self.repaint_pending = True

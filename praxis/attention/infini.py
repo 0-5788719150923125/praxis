@@ -445,6 +445,7 @@ class InfiniAttention(CausalAttention):
         past_key_values: Optional[Tensor] = None,
         block_ids: Optional[Tensor] = None,
         current_depth: int = 0,
+        positions: Optional[Tensor] = None,
     ) -> Tuple[Tensor, Optional[Tensor], float]:
         from praxis.attention.cache import PraxisCache
 
@@ -470,7 +471,7 @@ class InfiniAttention(CausalAttention):
         v = v.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
 
         q, k, v = self.encoding.before_scores(
-            q, k, v, offset=offset, current_depth=current_depth
+            q, k, v, offset=offset, current_depth=current_depth, positions=positions
         )
         k, v = self._adjust_kv(k, v, current_depth)
 
