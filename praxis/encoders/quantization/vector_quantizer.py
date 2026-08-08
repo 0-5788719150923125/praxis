@@ -7,7 +7,6 @@ Ported from abstractinator with adaptations for praxis:
 - Compile-friendly design (no .item() in forward path)
 """
 
-import logging
 from typing import Dict, List, Optional, Tuple
 
 import torch
@@ -110,10 +109,6 @@ class VectorQuantizer(nn.Module):
             # the dashboard's log interval, never synced in the step path)
             self.register_buffer("reset_count_total", torch.zeros((), dtype=torch.long))
             self.register_buffer("dead_code_count", torch.zeros((), dtype=torch.long))
-            # Host-side mirror of the reset cadence, used ONLY to gate the
-            # console log's syncs (may drift by one interval across a resume;
-            # the telemetry buffers above do not).
-            self._log_step = 0
 
     # ---------------------------
     # Internal helpers (tensor-only)
@@ -276,22 +271,13 @@ class VectorQuantizer(nn.Module):
         self.reset_count_total.add_(resets_t)
         self.dead_code_count.copy_(dead_mask.to(torch.int64).sum())
 
-        # Console log, gated to the reset cadence by a host counter - the
-        # previous version .item()-synced every training step to decide
-        # whether anything was reset.
-        self._log_step += 1
-        if self._log_step >= self.reset_interval:
-            self._log_step = 0
-            resets = int(resets_t.item())
-            if resets > 0:
-                logging.getLogger(__name__).info(
-                    "VQ reset: %d/%d sampled codes were dead, reset %d (K=%d, %d dead total)",
-                    int(dead_mask[rand_idx].to(torch.int64).sum().item()),
-                    int(self.R_MAX),
-                    resets,
-                    int(self.K),
-                    int(self.dead_code_count.item()),
-                )
+        # No console log here, deliberately. Every number the old INFO line
+        # printed is already a chart off the two buffers above - vq_resets_s{s}
+        # from reset_count_total and vq_dead_frac_s{s} from dead_code_count,
+        # declared in praxis/encoders/abstractinator/encoder.py - so printing it
+        # was duplicating a card into the terminal AND forcing four .item()
+        # device syncs on the reset cadence to build a string nobody reads.
+        # Codebook health is a time series; read it as one.
 
         # Zero the step counter when reset actually fired
         keep = (~do_reset).to(self.steps_since_last_reset.dtype)

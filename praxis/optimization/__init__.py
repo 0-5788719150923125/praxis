@@ -209,12 +209,36 @@ def _build_secondary(name, params, wd_override=None):
     if wd_override is not None:
         wd = wd_override
     base_lr = float(profile.get("lr", 1e-3))
-    decay = [p for p in params if p.ndim >= 2]
-    nodecay = [p for p in params if p.ndim < 2]
+    # Gradient centralization subtracts a gradient's mean over every dim but the
+    # first. When the trailing dims are all 1 that mean IS the element, so GC
+    # annihilates the gradient to exactly zero and the param is frozen at its
+    # init for the entire run - silently, since it still gets optimizer state
+    # and a step count. Such params get their own group with GC off rather than
+    # a warning, because there is no configuration in which zeroing them is
+    # what was wanted. (Cost us the learnable per-depth RoPE theta, which is
+    # nn.Embedding-shaped [depth, 1]; see praxis/encoding/rope.py.)
+    def _gc_degenerate(p):
+        return p.ndim > 1 and all(s == 1 for s in p.shape[1:])
+
+    frozen_by_gc = (
+        [p for p in params if _gc_degenerate(p)] if profile.get("use_gc") else []
+    )
+    # Identity, not ``in``: tensor __eq__ is elementwise and would raise here.
+    gc_ids = {id(p) for p in frozen_by_gc}
+    rest = [p for p in params if id(p) not in gc_ids]
+    decay = [p for p in rest if p.ndim >= 2]
+    nodecay = [p for p in rest if p.ndim < 2]
     groups = [
         {"params": decay, "weight_decay": wd},
         {"params": nodecay, "weight_decay": 0.0},
     ]
+    if frozen_by_gc:
+        groups.append({"params": frozen_by_gc, "weight_decay": wd, "use_gc": False})
+        print(
+            f"[Optimizer] {len(frozen_by_gc)} param(s) with GC-degenerate shapes "
+            f"({', '.join(sorted({str(tuple(p.shape)) for p in frozen_by_gc}))}) "
+            "moved to a use_gc=False group; GC would zero their gradients."
+        )
     return load_optimizer(name.lower())(groups, **profile), base_lr
 
 

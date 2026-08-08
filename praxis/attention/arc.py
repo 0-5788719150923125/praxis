@@ -32,6 +32,7 @@ class ArcAttention(InfiniAttention):
     # Depth-specialization diagnostics (see praxis.metrics.specialization),
     # averaged across ArcAttention layers and surfaced to the Dynamics tab.
     metric_descriptions = {
+        **InfiniAttention.metric_descriptions,
         "arc_qkv_specialization": {
             "description": (
                 "Depth-specific fraction of the per-depth QKV bias "
@@ -148,7 +149,7 @@ class ArcAttention(InfiniAttention):
         """Whether the per-depth biases are specializing or collapsing."""
         from praxis.metrics.specialization import depth_dispersion
 
-        out = {}
+        out = super().training_metrics()
         weight = self.depth_bias.weight
         qkv = depth_dispersion(weight[:, : self.qkv_dim])
         if qkv is not None:

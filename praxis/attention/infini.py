@@ -11,6 +11,7 @@ Based on "Leave No Context Behind":
 https://arxiv.org/abs/2404.07143
 """
 
+import math
 import os
 from typing import Optional, Tuple
 
@@ -90,8 +91,56 @@ class InfiniAttention(CausalAttention):
     learned gate blends memory retrieval with local attention output.
     """
 
+    metric_descriptions = {
+        "attn_span": {
+            "description": (
+                "Mean attended lookback distance as a fraction of the uniform "
+                "expectation: E_attn[i-j] / (i/2), averaged over queries. 1.0 = "
+                "attention has no distance preference at all (a query's mass is "
+                "spread as if position did not exist); below 1 = recency-biased, "
+                "the local dependency prior Mega's damped EMA supplies "
+                "explicitly; above 1 = biased toward distant context. This "
+                "measures POSITION structure, not sharpness - concentrated but "
+                "position-blind scores still read ~1.0. Encodings that only "
+                "rotate phase (RoPE/HoPE/ArcHoPE) impose no envelope, so a "
+                "reading pinned at 1.0 means any locality is being learned "
+                "through content alone."
+            ),
+            "chart": {
+                "title": "Attention Span",
+                "y_label": "Fraction of uniform",
+                "y_scale": "linear",
+                "group": "arc",
+                "group_order": 30,
+                "order": 40,
+                "series_group": "attn_span",
+                "series_label": "span / uniform",
+            },
+        },
+        "attn_memory_share": {
+            "description": (
+                "Mean sigmoid(betas), the share of the attention output taken "
+                "from compressive memory rather than local attention. Pinned at "
+                "0.5 means the blend never moved off its zero init - and when "
+                "the sequence fits in one segment the memory branch is "
+                "identically zero, so that half of the output is a hard zero."
+            ),
+            "chart": {
+                "title": "Attention Span",
+                "y_label": "Fraction of uniform",
+                "y_scale": "linear",
+                "group": "arc",
+                "group_order": 30,
+                "order": 41,
+                "series_group": "attn_span",
+                "series_label": "memory share",
+            },
+        },
+    }
+
     def __init__(self, config, **kwargs) -> None:
         super().__init__(config, **kwargs)
+        self._attn_span: Optional[Tensor] = None
 
         # Segment size for chunked processing — repurpose window_size,
         # then clear it so the parent uses simple causal masking within
@@ -135,6 +184,50 @@ class InfiniAttention(CausalAttention):
             self.init_mem.expand(batch_size, -1, -1, -1).to(device),
             self.init_z.expand(batch_size, -1, -1, -1).to(device),
         )
+
+    def _record_span(self, seg_q: Tensor, seg_k: Tensor) -> None:
+        """Stash the attended lookback distance, as a fraction of uniform.
+
+        Recomputes scores for batch element 0 of the first segment rather than
+        reading the real ones: the fast path is flex_attention, which never
+        materializes a score matrix to borrow. That makes this a measure of the
+        score GEOMETRY (Q/K plus whatever the encoding did to the phase) under a
+        plain causal softmax - the ghost column and the memory blend are
+        deliberately outside it, since the question is whether attention prefers
+        near tokens, not what the block finally emits.
+
+        One [1, H, S, S] matmul per forward, training only. Skipped under
+        compile, where writing an attribute breaks the graph (same reason as
+        SingleHeadArcAttention._record_gate).
+        """
+        if not self.training or torch.compiler.is_compiling():
+            return
+        seq_len = seg_q.size(2)
+        if seq_len < 2:
+            return
+        with torch.no_grad():
+            q0 = seg_q[:1].float()
+            k0 = self._expand_gqa(seg_k[:1], seg_k[:1])[0].float()
+            scores = (q0 @ k0.transpose(-2, -1)) / math.sqrt(self.head_dim)
+            idx = torch.arange(seq_len, device=scores.device)
+            future = idx[:, None] < idx[None, :]
+            scores = scores.masked_fill(future, float("-inf"))
+            weights = torch.softmax(scores, dim=-1)
+            dist = (idx[:, None] - idx[None, :]).clamp(min=0).float()
+            span = (weights * dist).sum(dim=-1)  # [1, H, S]
+            # Uniform over a query's i+1 causal keys has mean lookback i/2.
+            uniform = idx.float() / 2.0
+            keep = uniform > 0  # query 0 sees only itself; the ratio is undefined
+            self._attn_span = (span[..., keep] / uniform[keep]).mean()
+
+    def training_metrics(self) -> dict:
+        # CausalAttention declares none, so this is the root of the chain;
+        # ArcAttention chains up to it.
+        out: dict = {}
+        if self._attn_span is not None:
+            out["attn_span"] = self._attn_span.item()
+        out["attn_memory_share"] = torch.sigmoid(self.betas).mean().item()
+        return out
 
     def _retrieve_memory(
         self, q: Tensor, memory_states: Tensor, memory_z: Tensor
@@ -437,6 +530,9 @@ class InfiniAttention(CausalAttention):
             seg_v = v[:, :, start:end]
             seg_len = end - start
             seg_block_ids = block_ids[:, start:end] if block_ids is not None else None
+
+            if start == 0:
+                self._record_span(seg_q, seg_k)
 
             # Retrieve from memory (context from all prior segments)
             memory_output = self._retrieve_memory(seg_q, memory_states, memory_z)

@@ -48,11 +48,31 @@ class RoPE(NoPE):
         s = math.log(THETA_INIT / THETA_MIN) / math.log(THETA_MAX / THETA_MIN)
         z_init = math.log(s / (1.0 - s))
         self.log_theta_base = nn.Parameter(torch.full((1,), z_init))
-        self.depth_log_theta = nn.Embedding(self.depth, 1)
-        nn.init.zeros_(self.depth_log_theta.weight)
+        # Held as a flat [depth] vector, NOT nn.Embedding(depth, 1). Gradient
+        # centralization (`use_gc`, on the composite's secondary optimizer)
+        # subtracts a gradient's mean over every dim but the first, so for any
+        # shape whose trailing dims are all 1 that mean IS the element and the
+        # gradient is annihilated to exactly zero. As an Embedding this param
+        # sat bit-exactly at its zero init for a whole run while
+        # ``log_theta_base`` (1D, so GC skips it) trained normally.
+        self.depth_log_theta = nn.Parameter(torch.zeros(self.depth))
         self._cached_cos: Optional[torch.Tensor] = None
         self._cached_sin: Optional[torch.Tensor] = None
         self._cached_seq_length: Optional[int] = None
+        self._register_load_state_dict_pre_hook(self._migrate_depth_log_theta)
+
+    @staticmethod
+    def _migrate_depth_log_theta(state_dict, prefix, *args, **kwargs) -> None:
+        """Fold pre-existing ``depth_log_theta.weight`` [depth, 1] into [depth].
+
+        The param used to be an nn.Embedding. Checkpoints written before the
+        shape change carry the old key, and every one of them holds exactly
+        zeros there (gradient centralization annihilated it - the reason for
+        the change), so this only keeps a resume from failing on a missing key.
+        """
+        old = prefix + "depth_log_theta.weight"
+        if old in state_dict:
+            state_dict[prefix + "depth_log_theta"] = state_dict.pop(old).reshape(-1)
 
     @property
     def theta(self) -> float:
@@ -62,8 +82,8 @@ class RoPE(NoPE):
 
     def _effective_theta(self, current_depth: int) -> torch.Tensor:
         """Bounded, learned theta for a given recurrent depth."""
-        idx = torch.tensor(current_depth, device=self.log_theta_base.device)
-        z = self.log_theta_base + self.depth_log_theta(idx).squeeze(-1)
+        idx = int(current_depth) % self.depth
+        z = self.log_theta_base + self.depth_log_theta[idx]
         # span**sigmoid(z) written as exp(sigmoid(z)*log(span)): a scalar-base
         # power's backward needs log(base), which inductor can't lower when
         # dynamic=True makes the scalar a symbolic float (NYI log symbolic float).

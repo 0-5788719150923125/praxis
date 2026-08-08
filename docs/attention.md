@@ -54,7 +54,7 @@ ghostmax, RoPE/ALiBi, GQA from the parent). Between segments, an ELU+1 kernel me
 accumulates key-value context and a learned gate blends memory retrieval with local
 attention output.
 
-Source: [praxis/attention/infini.py:83](../praxis/attention/infini.py#L83)
+Source: [praxis/attention/infini.py:84](../praxis/attention/infini.py#L84)
 
 ## `modular` - ModularAttention
 
