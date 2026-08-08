@@ -28,10 +28,14 @@ BUILD_INPUTS=(Dockerfile compose.yml)
 # here may take multiple values (nargs-style) and comma-separated lists.
 MOUNT_FLAGS=(--data-path)
 
-# CLI flags whose values publish container ports, as "<flag>:<env-var>" pairs.
-# The env var is read by the compose file's ${VAR} substitution; unset means
-# compose falls back to its own defaults (2100 / 29500).
-PORT_FLAGS=(--port:PRAXIS_PORT --master-port:PRAXIS_MASTER_PORT)
+# CLI flags whose values publish container ports, as "<flag>:<env-var>:<default>"
+# triples. The env var is read by the compose file's ${VAR} substitution, which
+# maps <port>:<port>, so host and container always agree. The default mirrors
+# the Python CLI's own default for the flag.
+PORT_FLAGS=(--port:PRAXIS_PORT:2100 --master-port:PRAXIS_MASTER_PORT:29500)
+
+# How many ports to walk past a busy one before giving up.
+PORT_SEARCH_SPAN=64
 
 # In-container identity: HOME for the re-exec'd host user, and the venv dir
 # (a named volume in Docker, a plain directory on the host).
@@ -80,8 +84,9 @@ autobuild_image() {
 parse_compose_args() {
     RESOLVED_ARGS=()
     EXTRA_VOLUMES=""
+    EXPLICIT_PORTS=""
     local mounting=false expect_env=""
-    local arg flag env_var
+    local arg flag rest env_var
     for arg in "$@"; do
         if [ -n "$expect_env" ]; then
             export "$expect_env"="$arg"
@@ -108,10 +113,68 @@ parse_compose_args() {
             if [ "$arg" = "$flag" ]; then mounting=true; break; fi
         done
         for pair in "${PORT_FLAGS[@]}"; do
-            flag="${pair%%:*}"; env_var="${pair#*:}"
-            if [ "$arg" = "$flag" ]; then expect_env="$env_var"; break; fi
+            flag="${pair%%:*}"; rest="${pair#*:}"; env_var="${rest%%:*}"
+            if [ "$arg" = "$flag" ]; then
+                expect_env="$env_var"
+                EXPLICIT_PORTS="$EXPLICIT_PORTS $env_var"
+                break
+            fi
         done
         RESOLVED_ARGS+=("$arg")
+    done
+}
+
+# Print the first free TCP port at or above $1. Actually binding is the only
+# probe that matches what Docker will do: a connect test misses ports that are
+# bound but not listening, and parsing `ss` misses other netns bindings. No
+# SO_REUSEADDR, so we stay as conservative as docker-proxy. If the probe cannot
+# run at all we echo the requested port and let Docker report the conflict -
+# a broken check must never block a launch.
+find_free_port() {
+    python3 - "$1" "$PORT_SEARCH_SPAN" 2>/dev/null <<'PY' || echo "$1"
+import socket, sys
+
+start, span = int(sys.argv[1]), int(sys.argv[2])
+for port in range(start, start + span):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        try:
+            probe.bind(("0.0.0.0", port))
+        except OSError:
+            continue
+    print(port)
+    break
+else:
+    print(start)
+PY
+}
+
+# Choose host ports that are actually free, so a live training run holding 2100
+# no longer blocks a second container. Two rules:
+#   - A port we picked ourselves is also appended to the in-container args, or
+#     the app would keep listening on the default while compose published the
+#     rolled one. (--port and --host-name are excluded from the run hash, so
+#     this cannot change a run's identity.)
+#   - A port the user named explicitly is never moved. --master-port has to
+#     match across nodes in a distributed run, and an explicit --port usually
+#     has something already pointed at it. We warn instead.
+allocate_ports() {
+    local pair flag rest env_var default requested chosen
+    for pair in "${PORT_FLAGS[@]}"; do
+        flag="${pair%%:*}"; rest="${pair#*:}"
+        env_var="${rest%%:*}"; default="${rest##*:}"
+        requested="${!env_var:-$default}"
+        chosen=$(find_free_port "$requested")
+
+        if [ "$chosen" = "$requested" ]; then
+            export "$env_var"="$requested"
+        elif [[ " $EXPLICIT_PORTS " == *" $env_var "* ]]; then
+            echo "[DOCKER] Warning: $flag $requested is already in use; honoring it anyway." >&2
+            export "$env_var"="$requested"
+        else
+            echo "[DOCKER] Port $requested is in use - serving $flag on $chosen instead."
+            export "$env_var"="$chosen"
+            RESOLVED_ARGS+=("$flag" "$chosen")
+        fi
     done
 }
 
@@ -142,7 +205,18 @@ cmd_compose() {
     # written into the bind-mounted repo are host-owned, not root.
     export HOST_UID="$(id -u)" HOST_GID="$(id -g)"
 
-    docker compose -f "$cf" run --rm --remove-orphans --service-ports $EXTRA_VOLUMES agent ./launch "${RESOLVED_ARGS[@]}"
+    # A test run serves nothing, so it needs no published ports at all. Asking
+    # for them anyway is what made `./launch compose test` collide with a live
+    # training run. Everything else publishes, on a port we know is free.
+    local service_ports="--service-ports"
+    if [ "${RESOLVED_ARGS[0]:-}" = "test" ]; then
+        service_ports=""
+        echo "[DOCKER] Test run - not publishing any host ports."
+    else
+        allocate_ports
+    fi
+
+    docker compose -f "$cf" run --rm --remove-orphans $service_ports $EXTRA_VOLUMES agent ./launch "${RESOLVED_ARGS[@]}"
 }
 
 # ── In-container user setup ──────────────────────────────────────────────────

@@ -21,6 +21,12 @@ DEFAULT_EXCLUDE_FROM_HASH = [
     "--node-rank",
     "--master-addr",
     "--master-port",
+    # Where the run is *served* is infrastructure, not architecture. These have
+    # to stay out of the hash or a run that rolled to a free port (see the
+    # launcher's allocate_ports) would get a different identity - and a
+    # different checkpoint directory - than the same run on the default port.
+    "--host-name",
+    "--port",
     "--infer-every",
     "--profile-memory",
     "--profile-memory-start",
