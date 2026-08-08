@@ -266,7 +266,9 @@ def extract_assistant_reply(generated_text: str, tokenizer: Any) -> str:
     # at the turn opener, so the model emitting it again is noise. Without this
     # the BOS cut below lands on offset 0 and reports an empty turn. Only the
     # REPLY role's opener is skipped - `[BOS]user` really does end this turn.
-    turn_opener = f"{tokenizer.bos_token}{fmt.reply_role}" if tokenizer.bos_token else ""
+    turn_opener = (
+        f"{tokenizer.bos_token}{fmt.reply_role}" if tokenizer.bos_token else ""
+    )
     while turn_opener and generated_text.startswith(turn_opener, start_index):
         start_index += len(turn_opener)
         if generated_text[start_index : start_index + 1] == "\n":

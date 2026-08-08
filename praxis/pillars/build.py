@@ -158,8 +158,10 @@ def _step_inlines(ctx):
 
 def _step_optimization(ctx):
     o = optimization.export_optimization(ctx["experiment"])
-    print(f"optimization: {o.get('optimizer') or '(unresolved)'}"
-          + (f" on {o['experiment']}" if o.get("experiment") else ""))
+    print(
+        f"optimization: {o.get('optimizer') or '(unresolved)'}"
+        + (f" on {o['experiment']}" if o.get("experiment") else "")
+    )
     return o
 
 

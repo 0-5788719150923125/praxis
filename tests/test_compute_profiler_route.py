@@ -159,6 +159,14 @@ def test_payload_is_json_serialisable_end_to_end():
     groups = round_tripped["compute_profile"]["groups"]
     # every field the JS renderer reads must survive the trip
     for g in groups:
-        assert {"name", "ms", "share", "calls", "outside", "residual", "children"} <= set(g)
+        assert {
+            "name",
+            "ms",
+            "share",
+            "calls",
+            "outside",
+            "residual",
+            "children",
+        } <= set(g)
         for child in g["children"]:
             assert {"name", "ms", "share", "fwd_ms", "bwd_ms", "calls"} <= set(child)

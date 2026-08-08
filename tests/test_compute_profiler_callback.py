@@ -108,7 +108,8 @@ def test_eager_model_gets_the_full_profile(capsys):
 
     assert cb._installed and cb.profiler.forward_only is False
     deep = [
-        m for _, m in model.named_modules()
+        m
+        for _, m in model.named_modules()
         if getattr(m, "_praxis_scope", "").startswith("encoder.fc|")
     ]
     assert deep, "eager mode must instrument leaf modules"

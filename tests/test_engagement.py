@@ -181,7 +181,9 @@ class TestRlDatasetBinding:
         assert ids.count("hh-rlhf") == 1
 
     def test_weight_controller_leaves_the_mix_alone(self):
-        assert self._ids(["print"], None) == self._ids(["print"], "harmonic_weight_wave")
+        assert self._ids(["print"], None) == self._ids(
+            ["print"], "harmonic_weight_wave"
+        )
 
 
 class TestLiveDrainCallback:

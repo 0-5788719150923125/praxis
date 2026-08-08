@@ -93,7 +93,9 @@ def test_every_mtp_type_has_a_mechanism_paragraph():
         for m in frag.requires.get("mtp_type", [])
         if m != "*"
     }
-    assert not modes - covered, f"mtp_type with no mechanism paragraph: {modes - covered}"
+    assert (
+        not modes - covered
+    ), f"mtp_type with no mechanism paragraph: {modes - covered}"
 
 
 # ─── Prose lint: stock phrases a reader notices ──────────────────────────────

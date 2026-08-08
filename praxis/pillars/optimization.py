@@ -171,9 +171,9 @@ def resolve(experiment: Optional[str] = None) -> Dict:
     cfg = resolve_config(name) if name else {}
 
     optimizer = str(cfg.get("optimizer") or "AdamW")
-    profile = {
-        k.lower(): v for k, v in OPTIMIZER_PROFILES.items()
-    }.get(optimizer.lower(), {})
+    profile = {k.lower(): v for k, v in OPTIMIZER_PROFILES.items()}.get(
+        optimizer.lower(), {}
+    )
 
     trainer = str(cfg.get("trainer_type") or "")
     if cfg.get("orchestration_type") == "swarm":
@@ -231,7 +231,9 @@ def section_tex(facts: Dict) -> str:
         )
     if bits:
         parts.append(
-            "The configured settings are " + "; ".join(bits) + "."
+            "The configured settings are "
+            + "; ".join(bits)
+            + "."
             + (
                 " A weight decay of zero is a deliberate departure, not an "
                 "oversight; its falsifier is stated in "
@@ -245,9 +247,7 @@ def section_tex(facts: Dict) -> str:
     described = [f"{_tt(w)} ({d})" for w, d in named if d]
     bare = [_tt(w) for w, d in named if not d]
     if described or bare:
-        parts.append(
-            "Wrapped by " + ", ".join(described + bare) + "."
-        )
+        parts.append("Wrapped by " + ", ".join(described + bare) + ".")
 
     parts.append(
         TRAINING[facts["method"]]

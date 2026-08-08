@@ -681,9 +681,9 @@ def test_generate_dispatches_to_speculative_by_default(spec_config):
 
     torch.manual_seed(0)
     model = PraxisForCausalLM(spec_config).eval()
-    assert getattr(GenerationConfig(), "num_beams", 1) != 1, (
-        "sanity: this test is only meaningful while an unset num_beams is not 1"
-    )
+    assert (
+        getattr(GenerationConfig(), "num_beams", 1) != 1
+    ), "sanity: this test is only meaningful while an unset num_beams is not 1"
 
     ids = torch.randint(4, 260, (1, 12))
     with torch.no_grad():

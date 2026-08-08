@@ -252,9 +252,7 @@ class SMEAR(nn.Module):
         """
         if self.balance_rate <= 0.0:
             return logits
-        bias = torch.tensor(
-            self._expert_bias, device=logits.device, dtype=logits.dtype
-        )
+        bias = torch.tensor(self._expert_bias, device=logits.device, dtype=logits.dtype)
         return logits + bias
 
     @torch._dynamo.disable
@@ -618,9 +616,9 @@ class SMEAR(nn.Module):
                 # distinguish those cases on its own - a router that sends the
                 # WHOLE batch to one expert scores maximum specialization.
                 mi = (h_mean - h_seq) / math.log(n)
-                self._metrics[f"{layer_prefix}routing_input_dependence"] = (
-                    mi.clamp(0.0, 1.0).item()
-                )
+                self._metrics[f"{layer_prefix}routing_input_dependence"] = mi.clamp(
+                    0.0, 1.0
+                ).item()
 
             # How hard the load balancer is working. Zero = the router balances
             # itself and the bias is inert; growing = it is holding open a door
@@ -634,9 +632,9 @@ class SMEAR(nn.Module):
             # routing_entropy; under VEAR the gap between them IS the sharpening,
             # so reading the two together shows how much p**4 is doing.
             if merge_weights is not None:
-                self._metrics[f"{layer_prefix}routing_merge_entropy"] = (
-                    self._entropy(merge_weights).item()
-                )
+                self._metrics[f"{layer_prefix}routing_merge_entropy"] = self._entropy(
+                    merge_weights
+                ).item()
         except Exception:
             # Silently fail if metric computation fails - don't break training
             pass

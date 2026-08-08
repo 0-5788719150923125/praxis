@@ -838,7 +838,7 @@ class HarmonicField(nn.Module):
         # The target is an EMA-smoothed setpoint, not a precision measurement,
         # so it is read from a slice: a couple of sequences and a bounded window
         # keep the cost off the step time regardless of batch or context size.
-        h = h[: SMOOTHNESS_PROBE_ROWS, : SMOOTHNESS_PROBE_LEN].detach().float()
+        h = h[:SMOOTHNESS_PROBE_ROWS, :SMOOTHNESS_PROBE_LEN].detach().float()
         c = h - h.mean(dim=-2, keepdim=True)
         # Forward-shift energy, which is what "b_t predicts b_{t+1}" literally
         # asks for - and cheaper than the spectrum, since no transform is
@@ -1098,10 +1098,14 @@ class HarmonicField(nn.Module):
             return {}
         with torch.no_grad():
             coeffs = (
-                self._last_input_coeffs
-                if self.amp_modulation in ("input", "pure")
-                else self.amp_coeffs
-            ).detach().float()
+                (
+                    self._last_input_coeffs
+                    if self.amp_modulation in ("input", "pure")
+                    else self.amp_coeffs
+                )
+                .detach()
+                .float()
+            )
             c2 = coeffs.pow(2)
             total = c2.sum().clamp_min(1e-12)
             fd_share = c2[self.F_t :].sum() / total

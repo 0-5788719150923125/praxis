@@ -165,9 +165,7 @@ def test_vear_latches_the_expert_init_check():
 # ── depth-aware routing ─────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize(
-    "arc_cls,base_cls", [(ArcSMEAR, SMEAR), (ArcVEAR, VEAR)]
-)
+@pytest.mark.parametrize("arc_cls,base_cls", [(ArcSMEAR, SMEAR), (ArcVEAR, VEAR)])
 def test_identity_at_init(arc_cls, base_cls):
     """Zero-init bias => the depth-aware router IS its parent at step 0."""
     torch.manual_seed(7)
@@ -248,7 +246,9 @@ def test_depth_metric_chart_is_registered():
     from praxis.metrics import COMPOSITE_METRIC_REGISTRY
     import re
 
-    entry = next(e for e in COMPOSITE_METRIC_REGISTRY if e["key"] == "router_depth_bias")
+    entry = next(
+        e for e in COMPOSITE_METRIC_REGISTRY if e["key"] == "router_depth_bias"
+    )
     pattern = re.compile(entry["key_pattern"])
     assert pattern.match("router_depth_specialization")
     assert pattern.match("router_depth_similarity")

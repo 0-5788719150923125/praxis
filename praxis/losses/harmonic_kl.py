@@ -65,6 +65,7 @@ except Exception:  # pragma: no cover
     def _no_compile(fn):
         return fn
 
+
 # EMA horizon for the teacher, ~1/(1 - decay) = 1000 steps. Long on purpose:
 # "mostly never changes" is a claim about the run, not about the last few steps,
 # and a short horizon degenerates into penalising the current step's own update.

@@ -511,7 +511,8 @@ class Generator:
         ids = tokens[0]
         text = self.tokenizer.decode(ids, skip_special_tokens=skip_special_tokens)
         return GenerationResult(
-            text, self._reply_start_char(ids, reply_start_tokens, text, skip_special_tokens)
+            text,
+            self._reply_start_char(ids, reply_start_tokens, text, skip_special_tokens),
         )
 
     def _reply_start_char(

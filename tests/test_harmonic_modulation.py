@@ -327,7 +327,9 @@ def test_every_token_sees_every_earlier_token():
         delta = (field._fast_retrieve(y) - base).abs().sum(-1)[0]
         moved = (delta > noise).nonzero().flatten()
         assert moved.numel() > 0, f"token {t} influenced nothing"
-        assert moved.min().item() == t, f"token {t} first moved read {moved.min().item()}"
+        assert (
+            moved.min().item() == t
+        ), f"token {t} first moved read {moved.min().item()}"
         assert moved.max().item() == seq_len - 1
 
 

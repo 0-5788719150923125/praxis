@@ -502,7 +502,8 @@ class ComputeProfiler:
         groups: Dict[str, dict] = {}
         for row in rows:
             grp = groups.setdefault(
-                row["cls"], {"name": row["cls"], "ms": 0.0, "calls": 0.0, "children": []}
+                row["cls"],
+                {"name": row["cls"], "ms": 0.0, "calls": 0.0, "children": []},
             )
             grp["ms"] += row["ms"]
             grp["calls"] += row["calls"]

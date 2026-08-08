@@ -209,6 +209,7 @@ def _build_secondary(name, params, wd_override=None):
     if wd_override is not None:
         wd = wd_override
     base_lr = float(profile.get("lr", 1e-3))
+
     # Gradient centralization subtracts a gradient's mean over every dim but the
     # first. When the trailing dims are all 1 that mean IS the element, so GC
     # annihilates the gradient to exactly zero and the param is frozen at its

@@ -505,9 +505,9 @@ def test_prose_reply_cuts_at_the_document_separator(prose_tokenizer):
         add_generation_prompt=True,
     )
     eos = prose_tokenizer.eos_token
-    assert extract_assistant_reply(f"{prompt}Hello there.\n\n{eos}", prose_tokenizer) == (
-        "Hello there."
-    )
+    assert extract_assistant_reply(
+        f"{prompt}Hello there.\n\n{eos}", prose_tokenizer
+    ) == ("Hello there.")
     assert (
         extract_assistant_reply(f"{prompt}{eos}", prose_tokenizer)
         == _EMPTY_REPLY_PLACEHOLDER
@@ -671,7 +671,9 @@ def test_prose_reply_is_anchored_where_the_runtime_wrote(
 
 def test_default_reply_is_anchored_where_the_runtime_wrote(default_tokenizer):
     """Same defect, same fix, under control-token boundaries."""
-    reply = _scripted_reply(default_tokenizer, "first part[BOS]assistant\nsecond part[SEP]")
+    reply = _scripted_reply(
+        default_tokenizer, "first part[BOS]assistant\nsecond part[SEP]"
+    )
     assert reply == "first part"
 
 
@@ -825,7 +827,8 @@ def test_spliced_tool_result_does_not_spend_the_caller_budget(prose_tokenizer):
     result = "x" * 800
     script = (
         '\n\ncall\n\n{"name": "get_time", "arguments": {}}\n\ntool\n\n'
-        + "I looked it up." + "\n\nuser\n\n"
+        + "I looked it up."
+        + "\n\nuser\n\n"
     )
     reply = _scripted_reply(
         prose_tokenizer,

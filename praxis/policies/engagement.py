@@ -197,7 +197,9 @@ class EngagementPolicy(nn.Module):
         # at the current sample.
         baseline = float(self.reward_baseline)
         advantage = (
-            (reward - baseline).clamp(-self.ADVANTAGE_CLIP, self.ADVANTAGE_CLIP).detach()
+            (reward - baseline)
+            .clamp(-self.ADVANTAGE_CLIP, self.ADVANTAGE_CLIP)
+            .detach()
         )  # [B]
         scoped_reward = float(sum(reward[i].item() for i in scoped) / len(scoped))
         self.reward_baseline.fill_(

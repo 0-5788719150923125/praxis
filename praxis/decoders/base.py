@@ -38,6 +38,7 @@ def _wants_expert_bank(router_type: Optional[str]) -> bool:
         isinstance(cls, type) and issubclass(cls, SMEAR)
     )
 
+
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 

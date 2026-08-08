@@ -284,7 +284,9 @@ def test_prompt_truncation_lands_on_a_character_boundary():
         request = GenerationRequest(
             id="t",
             prompt=text,
-            kwargs=dict(max_new_tokens=4, truncate_to=budget, skip_special_tokens=False),
+            kwargs=dict(
+                max_new_tokens=4, truncate_to=budget, skip_special_tokens=False
+            ),
         )
         input_ids, _, _, _ = gen._prepare_inputs(request)
         decoded = tok.decode(input_ids[0].tolist(), skip_special_tokens=False)
@@ -302,7 +304,9 @@ def test_prompt_truncation_still_respects_the_budget():
         request = GenerationRequest(
             id="t",
             prompt="日本語のテキストです",
-            kwargs=dict(max_new_tokens=4, truncate_to=budget, skip_special_tokens=False),
+            kwargs=dict(
+                max_new_tokens=4, truncate_to=budget, skip_special_tokens=False
+            ),
         )
         input_ids, _, _, _ = gen._prepare_inputs(request)
         assert input_ids.size(1) <= budget

@@ -135,7 +135,10 @@ def test_noop_paths_return_zero():
     # No classifier supplied (the other regularizers' call shape).
     assert float(HarmonicKLRegularizer()(h, None)) == 0.0
     # 2-D input.
-    assert float(HarmonicKLRegularizer()(torch.randn(4, 8), None, classifier=_readout())) == 0.0
+    assert (
+        float(HarmonicKLRegularizer()(torch.randn(4, 8), None, classifier=_readout()))
+        == 0.0
+    )
     # Parameter-free readout: disables itself rather than pretending to work.
     reg = HarmonicKLRegularizer()
     assert float(reg(h, None, classifier=nn.Identity())) == 0.0

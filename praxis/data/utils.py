@@ -323,9 +323,7 @@ def add_collection(config, collection_name, target_key, skip_existing=False):
         Updated configuration dictionary
     """
     if collection_name in DATASET_COLLECTIONS:
-        present = (
-            {e.get("_id") for e in config[target_key]} if skip_existing else set()
-        )
+        present = {e.get("_id") for e in config[target_key]} if skip_existing else set()
         for dataset_name, weight in DATASET_COLLECTIONS[collection_name].items():
             if dataset_name in present:
                 continue
