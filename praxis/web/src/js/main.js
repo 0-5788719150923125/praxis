@@ -775,16 +775,22 @@ function setCursorAfterPrefix() {
     }
 }
 
+// Every prefix any mode can leave behind. Matching only the *current* mode's
+// prefix would miss a box stranded as "< " that has since flipped to Read.
+const ALL_PREFIXES = [...new Set(['read', 'evaluate', 'print'].map(prefixForMode))];
+
+/** Strip whichever mode prefix the value carries, if any. */
+function inputBody(value) {
+    const prefix = ALL_PREFIXES.find((p) => value.startsWith(p));
+    return prefix ? value.slice(prefix.length) : value;
+}
+
 /**
- * True when the box holds nothing but its prefix - the state the input is left
- * in by hidePlaceholder(), and what an empty restored value looks like.
+ * True when the box holds nothing but a prefix - the state hidePlaceholder()
+ * leaves it in, and what an emptied or restored value looks like.
  */
 function isInputEffectivelyEmpty(input) {
-    const prefix = inputPrefix();
-    const body = input.value.startsWith(prefix)
-        ? input.value.slice(prefix.length)
-        : input.value;
-    return body.trim() === '';
+    return inputBody(input.value).trim() === '';
 }
 
 /**
