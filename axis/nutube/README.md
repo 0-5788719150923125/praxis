@@ -1,26 +1,82 @@
 # nuTube
 
-A local-first way to explore YouTube, built with [Godot](https://godotengine.org/) 4.6 for mobile. Everyone hates the algorithm - so nuTube tries to build a different one that runs entirely on your device.
+A local-first way to explore video platforms, starting with YouTube. Nothing is
+hosted here: nuTube is a pure client that pulls from sources it does not own.
 
 ## The idea
 
-The recommendation algorithm lives on `localhost`, inside the app. There is no remote ranking service: nuTube keeps a small index on the device and ranks it with simple, inspectable local algorithms - keyword overlap today, embedding similarity searches and watch-history feedback later. You can read exactly why something was surfaced.
+The recommendation algorithm lives on the device. There is no remote ranking
+service - nuTube keeps a small index locally and ranks it with simple,
+inspectable rules, so every card can tell you why it surfaced. Keyword overlap
+today; watch-history feedback and better scoring later.
 
-If it works for YouTube, the same shape extends to other video platforms: a central, on-device indexer where every source plugs in behind one generic item type, and a single local ranking brain decides what to show across all of them.
+If it works for YouTube, the shape extends: every source plugs in behind one
+generic `FeedItem`, and a single local ranker decides what to show across all of
+them.
+
+## Why Kotlin, and what happened to the Godot version
+
+The prototype lived in Godot and is kept at [`godot/`](godot/) for reference. It
+worked, and the two things people worry about with a game engine - idle battery
+drain and UI lag - both turned out to be solvable. Godot can genuinely stop
+redrawing when idle (`OS.low_processor_usage_mode` plus
+`RenderingServer.viewport_set_update_mode(..., VIEWPORT_UPDATE_DISABLED)` on the
+root viewport takes GPU draw calls to zero, measured).
+
+What killed it was everything an aggregator needs that lives on the JVM:
+
+- **Playback.** Godot's `VideoStream` has exactly one subclass,
+  `VideoStreamTheora`. YouTube serves DASH with separate VP9/AV1/H.264 video and
+  audio. ExoPlayer handles it, hardware-decoded, on a surface Android can hand
+  straight to the display controller.
+- **Extraction.** oEmbed gives a title and an author and nothing else - no
+  search, no channel listings. Real extraction means running YouTube's player
+  JavaScript to decipher stream URLs, and GDScript has no JS engine.
+  NewPipeExtractor does it with Rhino.
+- **Background indexing.** Android has had no background execution without
+  `WorkManager` or a foreground service since API 26, and neither is reachable
+  from GDScript. A crawler that runs while the app is closed has to be Kotlin.
+
+Each of those alone forced JVM code into the project. Together they meant Godot
+would have been a UI shell over a Kotlin app.
 
 ## Layout
 
-- `scenes/main.tscn` - the main screen: a search bar over a feed.
-- `scripts/main.gd` - wires the UI to the index, renders thumbnail cards, and shows a detail overlay (tap a card) with an explicit "Watch on YouTube" handoff.
-- `scripts/youtube.gd` - `YouTubeSource`: resolves a watch URL into a feed item using YouTube's key-free endpoints (oEmbed for title/author, the thumbnail CDN for the image). No API key, no OAuth. Thumbnails are cached under `user://cache/`.
-- `scripts/local_index.gd` - autoloaded as `LocalIndex`; the on-device store and recommender. Sources populate it via `upsert`; the index persists to `user://index.json`. This is the part to grow: a real source crawler and a better scorer.
+- `app/src/main/kotlin/.../data/` - `FeedItem`, the source-agnostic item type,
+  and `LocalIndex`, the on-device store and ranker. This is the part to grow.
+- `app/src/main/kotlin/.../source/` - `YouTubeSource` over NewPipeExtractor
+  (search, resolve, stream URLs) and `NewPipeDownloader`, its OkHttp transport.
+- `app/src/main/kotlin/.../ui/` - Compose feed, view model, and the ExoPlayer
+  overlay.
+- `godot/` - the original Godot 4.6 prototype, frozen.
 
-## Caching
+## Building
 
-The first launch fetches metadata and thumbnails over the network; everything is then written to `user://` (the index as JSON, thumbnails as JPGs). Later launches render straight from disk and fetch nothing - `LocalIndex.needs_fetch()` gates the network so only genuinely-new videos are requested.
+Needs JDK 17 and the Android SDK. `local.properties` points at the SDK and is
+git-ignored, so it needs writing once per machine:
 
-Network fetches use `HTTPClient` over an explicitly-resolved IPv4 address rather than the `HTTPRequest` node. On a host with no working IPv6 route, `HTTPRequest` stalls ~12s per connection waiting for the IPv6 connect to time out before falling back (it has no Happy-Eyeballs racing); resolving IPv4 ourselves - with a TLS common-name override so the certificate still validates against the hostname - drops a cold fetch from ~30s to under a second. See the header comment in `youtube.gd`.
+```sh
+echo "sdk.dir=$HOME/Android/Sdk" > local.properties
+JAVA_HOME=/usr/lib/jvm/java-17-openjdk ./gradlew :app:assembleDebug
+```
+
+The APK lands in `app/build/outputs/apk/debug/`. `./gradlew installDebug` pushes
+it to a connected device.
+
+No Android Studio required - the Gradle wrapper does everything, and the Kotlin
+LSP in an editor covers the rest.
 
 ## Status
 
-Early scaffold. On launch it resolves three hardcoded videos (see `SEED_VIDEOS` in `main.gd`) and renders their thumbnails and titles; the search box re-ranks them locally. There is no crawler, similarity model, or in-app playback yet - tapping a card opens a detail view whose "Watch" button hands off to the system browser / YouTube app. Open `project.godot` in the Godot editor to poke at it.
+Scaffold. Search hits YouTube and folds results into the local index; the index
+ranks and explains itself; tapping a card plays in-app. Sharing or opening a
+YouTube link from any other app indexes it.
+
+Not built yet: the background crawler (`WorkManager` is wired as a dependency
+but unused), persistence beyond a JSON file, background audio and PiP (the
+manifest and permissions are in place, the `MediaSessionService` is not), and
+any ranking smarter than keyword overlap.
+
+Playback currently prefers YouTube's HLS/DASH manifest and falls back to the
+best progressive stream, which YouTube caps at 720p. Proper adaptive playback
+means feeding ExoPlayer the separate video and audio tracks.

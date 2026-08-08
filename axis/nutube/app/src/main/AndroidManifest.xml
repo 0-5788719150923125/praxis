@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+	<uses-permission android:name="android.permission.INTERNET" />
+	<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+	<!-- Screen-off audio playback needs a foreground service. -->
+	<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+	<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
+	<application
+		android:name=".NuTubeApp"
+		android:allowBackup="true"
+		android:icon="@mipmap/ic_launcher"
+		android:label="@string/app_name"
+		android:supportsRtl="true"
+		android:theme="@style/Theme.NuTube">
+
+		<activity
+			android:name=".MainActivity"
+			android:exported="true"
+			android:supportsPictureInPicture="true"
+			android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
+			android:theme="@style/Theme.NuTube">
+
+			<intent-filter>
+				<action android:name="android.intent.action.MAIN" />
+				<category android:name="android.intent.category.LAUNCHER" />
+			</intent-filter>
+
+			<!-- Share a YouTube link from any app straight into the index. This is the
+			     integration Godot could not have without a Kotlin plugin. -->
+			<intent-filter>
+				<action android:name="android.intent.action.SEND" />
+				<category android:name="android.intent.category.DEFAULT" />
+				<data android:mimeType="text/plain" />
+			</intent-filter>
+
+			<intent-filter android:autoVerify="false">
+				<action android:name="android.intent.action.VIEW" />
+				<category android:name="android.intent.category.DEFAULT" />
+				<category android:name="android.intent.category.BROWSABLE" />
+				<data android:scheme="https" android:host="www.youtube.com" android:pathPrefix="/watch" />
+				<data android:scheme="https" android:host="youtu.be" />
+				<data android:scheme="https" android:host="m.youtube.com" android:pathPrefix="/watch" />
+			</intent-filter>
+		</activity>
+	</application>
+</manifest>
