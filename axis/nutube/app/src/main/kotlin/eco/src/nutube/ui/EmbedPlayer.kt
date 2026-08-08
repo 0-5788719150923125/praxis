@@ -38,7 +38,11 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun EmbedPlayer(url: String, modifier: Modifier = Modifier) {
+fun EmbedPlayer(
+	url: String,
+	modifier: Modifier = Modifier,
+	onFullscreenChange: (Boolean) -> Unit = {},
+) {
 	val lifecycle = LocalLifecycleOwner.current.lifecycle
 	val webRef = remember { mutableStateOf<WebView?>(null) }
 	val fullscreenView = remember { mutableStateOf<View?>(null) }
@@ -62,6 +66,11 @@ fun EmbedPlayer(url: String, modifier: Modifier = Modifier) {
 						webViewClient = WebViewClient()
 						webChromeClient = object : WebChromeClient() {
 							override fun onShowCustomView(view: View, cb: CustomViewCallback) {
+								// The page's own fullscreen button. We cannot see the
+								// player's controls without a JS bridge we deliberately
+								// do not have, so this is the only signal there is - and
+								// it is the one that matters for the system bars.
+								onFullscreenChange(true)
 								fullscreenView.value = view
 								host.addView(
 									view,
@@ -73,6 +82,7 @@ fun EmbedPlayer(url: String, modifier: Modifier = Modifier) {
 							}
 
 							override fun onHideCustomView() {
+								onFullscreenChange(false)
 								fullscreenView.value?.let { host.removeView(it) }
 								fullscreenView.value = null
 							}

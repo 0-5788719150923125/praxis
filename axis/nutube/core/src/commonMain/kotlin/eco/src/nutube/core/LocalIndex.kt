@@ -79,10 +79,13 @@ class LocalIndex(
 	 * take it away.
 	 */
 	suspend fun removeTerm(term: String) {
+		val key = Query.canonical(term)
 		mutex.withLock {
 			_items.value = _items.value.mapNotNull { item ->
-				if (term !in item.terms) return@mapNotNull item
-				val remaining = item.terms - term
+				// Credits may have been written under an older spelling of the same
+				// term, so compare canonically rather than by string.
+				val remaining = item.terms.filterNot { Query.canonical(it) == key }
+				if (remaining.size == item.terms.size) return@mapNotNull item
 				if (remaining.isEmpty() && !item.manual) null else item.copy(terms = remaining)
 			}
 		}
@@ -90,8 +93,12 @@ class LocalIndex(
 	}
 
 	/** How many items [term] is currently the only holder of. */
-	fun countOwnedBy(term: String): Int =
-		_items.value.count { term in it.terms && it.terms.size == 1 && !it.manual }
+	fun countOwnedBy(term: String): Int {
+		val key = Query.canonical(term)
+		return _items.value.count { item ->
+			!item.manual && item.terms.size == 1 && Query.canonical(item.terms[0]) == key
+		}
+	}
 
 	fun has(key: String): Boolean = _items.value.any { it.key == key }
 

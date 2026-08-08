@@ -37,8 +37,17 @@ object SourceRegistry {
 	 * so one platform being down or rate-limited still leaves a usable feed.
 	 */
 	suspend fun searchAll(query: String, limitPerSource: Int = 20): List<FeedItem> = coroutineScope {
+		val parsed = Query.parse(query)
 		all()
-			.map { source -> async { source.search(query, limitPerSource).getOrDefault(emptyList()) } }
+			.map { source ->
+				async {
+					if (parsed.isChannel) {
+						source.channelVideos(parsed.channel!!).getOrDefault(emptyList())
+					} else {
+						source.search(parsed.text, limitPerSource).getOrDefault(emptyList())
+					}
+				}
+			}
 			.awaitAll()
 			.flatten()
 	}

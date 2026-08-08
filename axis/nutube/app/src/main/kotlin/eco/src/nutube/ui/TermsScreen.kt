@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -37,6 +38,8 @@ import androidx.compose.ui.unit.dp
 fun TermsScreen(
 	terms: List<String>,
 	exclusiveCount: (String) -> Int,
+	label: (String) -> String,
+	isChannel: (String) -> Boolean,
 	onRefresh: (String) -> Unit,
 	onRemove: (String) -> Unit,
 	contentPadding: PaddingValues,
@@ -79,7 +82,21 @@ fun TermsScreen(
 					verticalAlignment = Alignment.CenterVertically,
 				) {
 					Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
-						Text(term, style = MaterialTheme.typography.titleMedium, color = Bright)
+						Row(verticalAlignment = Alignment.CenterVertically) {
+							if (isChannel(term)) {
+								Icon(
+									Icons.Filled.Person,
+									contentDescription = "Channel",
+									tint = Accent,
+									modifier = Modifier.size(16.dp).padding(end = 2.dp),
+								)
+							}
+							Text(
+								label(term),
+								style = MaterialTheme.typography.titleMedium,
+								color = Bright,
+							)
+						}
 						val owned = exclusiveCount(term)
 						Text(
 							if (owned == 0) "nothing depends on this alone"

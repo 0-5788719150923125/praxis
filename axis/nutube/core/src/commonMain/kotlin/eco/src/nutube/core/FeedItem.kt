@@ -17,9 +17,15 @@ data class FeedItem(
 	val url: String,
 	val title: String = "",
 	val author: String = "",
+	/** Canonical channel URL - the only unambiguous way to name a channel. */
+	val authorUrl: String = "",
 	val thumbnailUrl: String = "",
 	val durationSeconds: Long = 0,
 	val viewCount: Long = -1,
+	/** Epoch millis, or 0 when the platform did not say. */
+	val uploadedAt: Long = 0,
+	/** The platform's own phrasing ("2 years ago"), kept when it is all we get. */
+	val uploadedText: String = "",
 	val tags: List<String> = emptyList(),
 	/**
 	 * Which saved search terms surfaced this item. An item can be reached by

@@ -38,6 +38,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
@@ -50,6 +51,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.focus.FocusManager
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
@@ -141,14 +143,6 @@ fun NuTubeScreen(model: FeedViewModel, inPip: Boolean = false) {
 		topBar = {
 			Column(Modifier.statusBarsPadding().padding(horizontal = 16.dp)) {
 				Brand()
-				if (tab == Tab.Feed) {
-					SearchField(
-						value = query,
-						busy = busy,
-						onValueChange = { query = it; model.onQueryChanged(it) },
-						onSubmit = { dismissKeyboard(keyboard, focus); model.discover() },
-					)
-				}
 			}
 		},
 		bottomBar = {
@@ -190,11 +184,19 @@ fun NuTubeScreen(model: FeedViewModel, inPip: Boolean = false) {
 			}
 		},
 	) { padding ->
+		Box(Modifier.fillMaxSize()) {
 		when (tab) {
 			Tab.Feed -> LazyColumn(
 				state = listState,
 				modifier = Modifier.fillMaxSize().padding(padding),
-				contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp),
+				// Room for the floating search to sit over the feed without ever
+				// covering the last card.
+				contentPadding = PaddingValues(
+					start = 16.dp,
+					end = 16.dp,
+					top = 12.dp,
+					bottom = SEARCH_LANE + 24.dp,
+				),
 				verticalArrangement = Arrangement.spacedBy(14.dp),
 			) {
 				items(feed, key = { it.key }) { item ->
@@ -212,6 +214,8 @@ fun NuTubeScreen(model: FeedViewModel, inPip: Boolean = false) {
 				TermsScreen(
 					terms = terms,
 					exclusiveCount = model::exclusiveCount,
+					label = model::termLabel,
+					isChannel = model::isChannelTerm,
 					onRefresh = model::refreshTerm,
 					onRemove = model::removeTerm,
 					contentPadding = padding,
@@ -227,6 +231,34 @@ fun NuTubeScreen(model: FeedViewModel, inPip: Boolean = false) {
 				)
 			}
 		}
+
+		// The search floats over the feed rather than sitting above it: the list
+		// scrolls underneath, and the thing you reach for most is the thing
+		// closest to your thumb.
+		if (tab == Tab.Feed) {
+			SearchField(
+				value = query,
+				busy = busy,
+				onValueChange = { query = it; model.onQueryChanged(it) },
+				onSubmit = { dismissKeyboard(keyboard, focus); model.discover() },
+				modifier = Modifier
+					.align(Alignment.BottomCenter)
+					// Above the tab bar when idle, above the keyboard when typing -
+					// whichever is taller, never both stacked. Summing them (a bottom
+					// padding plus imePadding) lifted the pill into the middle of the
+					// feed as soon as the keyboard opened.
+					.padding(
+						start = 16.dp,
+						end = 16.dp,
+						// Scaffold already shrinks this content area to the top of the
+						// keyboard, so the only inset to add is the bar below. Adding
+						// the IME height as well - directly, or via imePadding - lifts
+						// the pill twice and strands it in the middle of the feed.
+						bottom = padding.calculateBottomPadding() + 12.dp,
+					),
+			)
+		}
+		}
 	}
 
 	playing?.takeIf { expanded || inPip }?.let { item ->
@@ -235,6 +267,8 @@ fun NuTubeScreen(model: FeedViewModel, inPip: Boolean = false) {
 			mode = playingMode ?: PlaybackMode.EMBED,
 			inPip = inPip,
 			playback = model.playback,
+			following = model.isFollowing(item),
+			onToggleFollow = { model.toggleFollow(item) },
 			// Native docks; the embedded player owns its own playback and cannot be
 			// carried into a bar, so backing out of it stops.
 			onClose = { if (dockable) expanded = false else stopPlayback() },
@@ -265,39 +299,50 @@ private fun Brand() {
 	}
 }
 
+/** Height the feed reserves so the floating search never hides the last card. */
+private val SEARCH_LANE = 84.dp
+
+
 @Composable
 private fun SearchField(
 	value: String,
 	busy: Boolean,
 	onValueChange: (String) -> Unit,
 	onSubmit: () -> Unit,
+	modifier: Modifier = Modifier,
 ) {
-	TextField(
-		value = value,
-		onValueChange = onValueChange,
-		placeholder = { Text("Search your index", color = Muted) },
-		singleLine = true,
-		shape = RoundedCornerShape(12.dp),
-		colors = TextFieldDefaults.colors(
-			focusedContainerColor = SurfaceHigh,
-			unfocusedContainerColor = SurfaceHigh,
-			focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
-			unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
-		),
-		trailingIcon = {
-			if (busy) {
-				CircularProgressIndicator(Modifier.padding(14.dp).size(18.dp), strokeWidth = 2.dp)
-			} else {
-				IconButton(onClick = onSubmit) {
-					Icon(Icons.Filled.Search, contentDescription = "Find more on YouTube", tint = Accent)
+	Surface(
+		shape = RoundedCornerShape(28.dp),
+		color = SurfaceHigh,
+		shadowElevation = 10.dp,
+		modifier = modifier.fillMaxWidth(),
+	) {
+		TextField(
+			value = value,
+			onValueChange = onValueChange,
+			placeholder = { Text("Search, or @channel", color = Muted) },
+			singleLine = true,
+			shape = RoundedCornerShape(28.dp),
+			colors = TextFieldDefaults.colors(
+				focusedContainerColor = SurfaceHigh,
+				unfocusedContainerColor = SurfaceHigh,
+				focusedIndicatorColor = Color.Transparent,
+				unfocusedIndicatorColor = Color.Transparent,
+			),
+			trailingIcon = {
+				if (busy) {
+					CircularProgressIndicator(Modifier.padding(14.dp).size(18.dp), strokeWidth = 2.dp)
+				} else {
+					IconButton(onClick = onSubmit) {
+						Icon(Icons.Filled.Search, contentDescription = "Find more on YouTube", tint = Accent)
+					}
 				}
-			}
-		},
-		keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-		keyboardActions = KeyboardActions(onSearch = { onSubmit() }),
-		// Width comes from the parent's padding, not from a title slot's leftovers.
-		modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
-	)
+			},
+			keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+			keyboardActions = KeyboardActions(onSearch = { onSubmit() }),
+			modifier = Modifier.fillMaxWidth(),
+		)
+	}
 }
 
 @Composable
@@ -335,9 +380,13 @@ private fun FeedCard(item: FeedItem, onClick: () -> Unit) {
 					color = Bright,
 					maxLines = 2,
 				)
-				if (item.author.isNotEmpty()) {
+				val byline = listOfNotNull(
+					item.author.takeIf { it.isNotEmpty() },
+					uploadedLabel(item).takeIf { it.isNotEmpty() },
+				).joinToString("  ·  ")
+				if (byline.isNotEmpty()) {
 					Text(
-						item.author,
+						byline,
 						style = MaterialTheme.typography.bodySmall,
 						color = Muted,
 						modifier = Modifier.padding(top = 3.dp),

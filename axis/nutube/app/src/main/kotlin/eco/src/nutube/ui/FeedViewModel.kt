@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import eco.src.nutube.NuTubeApp
 import eco.src.nutube.core.FeedItem
 import eco.src.nutube.core.PlaybackMode
+import eco.src.nutube.core.Query
 import eco.src.nutube.core.SourceRegistry
 import eco.src.nutube.core.VideoSource
 import eco.src.nutube.core.ranking.AffinityStore
@@ -150,6 +151,62 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
 	/** How many items would be lost if [term] were removed right now. */
 	fun exclusiveCount(term: String): Int = index.countOwnedBy(bank.normalise(term))
 
+	/**
+	 * The saved term that follows this item's channel, or null.
+	 *
+	 * Comparing term strings is not enough: `channel:@the-arc` and
+	 * `channel:https://www.youtube.com/channel/UC...` name the same channel and
+	 * neither is wrong, so identity is checked against every form the channel is
+	 * known by. An item that the channel pull itself brought in already carries
+	 * the term, which settles it without any comparison at all.
+	 */
+	private fun followedTerm(item: FeedItem): String? {
+		item.terms.firstOrNull { Query.channelOf(it) != null }?.let { return it }
+
+		val known = listOfNotNull(
+			item.authorUrl.takeIf { it.isNotBlank() },
+			Query.handleFrom(item.authorUrl),
+			item.author.takeIf { it.isNotBlank() },
+		)
+		if (known.isEmpty()) return null
+		return bank.terms.value.firstOrNull { term ->
+			val id = Query.channelOf(term) ?: return@firstOrNull false
+			known.any { it.equals(id, ignoreCase = true) }
+		}
+	}
+
+	fun isFollowing(item: FeedItem): Boolean = followedTerm(item) != null
+
+	/**
+	 * Following is just a saved term. There is no separate subscription list -
+	 * `channel: <name>` goes in the same bank as every other search, shows up in
+	 * the Terms tab, and is dropped the same way.
+	 */
+	fun toggleFollow(item: FeedItem) {
+		if (item.author.isBlank() || _busy.value) return
+		val existing = followedTerm(item)
+		val term = existing ?: Query.channelTerm(item.author, item.authorUrl)
+		viewModelScope.launch {
+			if (existing != null) {
+				bank.remove(existing)
+				index.removeTerm(bank.normalise(existing))
+			} else {
+				_busy.value = true
+				try {
+					val saved = bank.add(term)
+					val found = SourceRegistry.searchAll(term)
+					if (found.isEmpty()) _error.value = "no videos found for ${item.author}"
+					else index.upsertAll(found, term = saved)
+				} finally {
+					// Without this a single failure leaves the flag set and every
+					// later follow returns silently at the busy guard.
+					_busy.value = false
+				}
+			}
+			rerank()
+		}
+	}
+
 	fun indexUrl(url: String) {
 		viewModelScope.launch {
 			_busy.value = true
@@ -158,6 +215,36 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
 				.onFailure { _error.value = it.message ?: "could not resolve link" }
 			_busy.value = false
 		}
+	}
+
+	fun isChannelTerm(term: String): Boolean = Query.channelOf(term) != null
+
+	/**
+	 * What a term should read as.
+	 *
+	 * Channels are always shown by their name, whichever way they were followed.
+	 * A typed `@handle` and a tapped Follow store different identifiers - a handle
+	 * and a channel URL, because those are what each path can name exactly - but
+	 * showing both spellings made one subscription look like two kinds of thing.
+	 *
+	 * The name is found through the videos the term itself pulled in, which works
+	 * identically for both paths since every item carries the term that surfaced
+	 * it. The stored identifier is only ever a fallback for a term that has not
+	 * yet matched anything.
+	 */
+	fun termLabel(term: String): String {
+		val id = Query.channelOf(term) ?: return term
+		val key = Query.canonical(term)
+		val named = index.items.value
+			.firstOrNull { item ->
+				item.author.isNotBlank() &&
+					item.terms.any { Query.canonical(it) == key }
+			}
+			?.author
+		if (named != null) return named
+		if (id.startsWith("@")) return id
+		// Nothing indexed yet: a bare id still reads better than a whole URL.
+		return id.substringAfterLast('/').ifBlank { id }
 	}
 
 	fun clearError() { _error.value = null }

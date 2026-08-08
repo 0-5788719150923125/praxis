@@ -40,6 +40,17 @@ interface VideoSource {
 	/** Search the platform. Results are not yet in the index; the caller decides. */
 	suspend fun search(query: String, limit: Int = 20): Result<List<FeedItem>>
 
+	/**
+	 * Everything a channel has published, as far as [limit] allows.
+	 *
+	 * Paged rather than capped at a page, because following a channel should mean
+	 * its back catalogue and not its most recent handful. [limit] is a safety
+	 * ceiling, not a target - a source must stop there even if more remain, so a
+	 * huge channel cannot turn one follow into thousands of requests.
+	 */
+	suspend fun channelVideos(channel: String, limit: Int = 200): Result<List<FeedItem>> =
+		Result.failure(UnsupportedOperationException("$displayName cannot list channels"))
+
 	/** Turn a single URL into an indexable item. */
 	suspend fun resolve(url: String): Result<FeedItem>
 

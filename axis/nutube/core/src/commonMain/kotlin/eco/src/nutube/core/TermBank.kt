@@ -36,7 +36,12 @@ class TermBank(
 		if (!fs.exists(path)) return@withContext
 		runCatching {
 			json.decodeFromString<List<String>>(fs.read(path) { readUtf8() })
-		}.onSuccess { _terms.value = it }
+		}.onSuccess { stored ->
+			// Re-normalise on the way in. The canonical form has changed once
+			// already, and a term written under an older one would otherwise sit
+			// in the list unmatched by anything - including its own delete button.
+			_terms.value = stored.map { normalise(it) }.distinct()
+		}
 		Unit
 	}
 
@@ -48,20 +53,35 @@ class TermBank(
 		val term = normalise(raw)
 		if (term.isEmpty()) return null
 		mutex.withLock {
-			_terms.value = listOf(term) + _terms.value.filterNot { it == term }
+			_terms.value = listOf(term) + _terms.value.filterNot { normalise(it) == term }
 		}
 		save()
 		return term
 	}
 
+	/**
+	 * Remove by identity rather than by string.
+	 *
+	 * The stored spelling is not necessarily the one being handed in - it may
+	 * predate a change to the canonical form - so both sides are normalised
+	 * before comparing. Matching raw strings is what left terms in the list that
+	 * their own delete button could not reach.
+	 */
 	suspend fun remove(term: String) {
 		val key = normalise(term)
-		mutex.withLock { _terms.value = _terms.value.filterNot { it == key } }
+		mutex.withLock { _terms.value = _terms.value.filterNot { normalise(it) == key } }
 		save()
 	}
 
-	/** Collapse case and whitespace so "Lock Picking" and "lock  picking" are one term. */
-	fun normalise(raw: String): String = raw.trim().lowercase().replace(Regex("\\s+"), " ")
+	/**
+	 * Collapse case and whitespace so "Lock Picking" and "lock  picking" are one
+	 * term, and route channel terms through [Query.canonical] so the same channel
+	 * cannot be followed twice under two spellings.
+	 */
+	fun normalise(raw: String): String {
+		val tidy = raw.trim().lowercase().replace(Regex("\\s+"), " ")
+		return Query.canonical(tidy)
+	}
 
 	private suspend fun save() = withContext(Dispatchers.Default) {
 		runCatching {

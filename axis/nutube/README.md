@@ -154,21 +154,34 @@ means adding an entry to `RULE_REGISTRY`, not editing a scoring function.
 
 ## How the index gets built
 
-There is no follow button. **Every search you run is saved as a term**, and the
+**Every search you run is saved as a term**, and the
 term is credited with whatever it surfaced. The Terms tab is that list: tap a
 term to re-run it, or remove it to drop the term and everything only it was
 holding. Videos reachable from a surviving term stay, and videos added by hand -
 a shared link - are never evicted, because no term put them there.
 
+Following a channel is the same mechanism. `channel: <name>` asks a platform for
+that channel's uploads rather than running a keyword search, and pages to the end
+of the back catalogue rather than stopping at a page - so the Follow button in
+the player just writes one more term. There is no separate subscription list, no
+second storage, and the crawler will treat a follow exactly like a search.
+
+Channel identity is exact on purpose. A display name is not unique - several
+channels are called "Arc" - so `channel:` accepts an `@handle`, a channel id or a
+channel URL and resolves those directly, falling back to a name search only when
+given nothing better. Follow always stores the canonical channel, and follow
+state is matched by channel identity rather than by term text, since the same
+channel can legitimately be written several ways.
+
 That list is the input a crawler will eventually re-run on a schedule to keep
 the index fresh without anyone searching. The crawler is not written yet; today
-terms are only run when you search or tap one.
+terms are only run when you search, tap one, or follow a channel.
 
 ## Status
 
 Working: search fans out through the registry, saves the term, and folds results
 into the local index; the index ranks and explains itself on every card; tapping
-a card plays in-app in HD. Backing out of a native video docks it to a mini
+a card plays in-app in HD. Cards carry upload dates. Backing out of a native video docks it to a mini
 player above the tab bar so it keeps playing while you browse; tap to expand, X
 to stop. Sharing or opening a YouTube link from any other app
 indexes it. Three tabs at the bottom - Feed, Terms and Settings.

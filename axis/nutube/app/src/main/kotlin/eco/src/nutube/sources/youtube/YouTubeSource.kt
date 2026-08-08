@@ -9,6 +9,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.schabi.newpipe.extractor.Image
 import org.schabi.newpipe.extractor.ServiceList
+import org.schabi.newpipe.extractor.Page
+import org.schabi.newpipe.extractor.channel.ChannelInfo
+import org.schabi.newpipe.extractor.channel.ChannelInfoItem
+import org.schabi.newpipe.extractor.channel.tabs.ChannelTabInfo
+import org.schabi.newpipe.extractor.channel.tabs.ChannelTabs
+import org.schabi.newpipe.extractor.linkhandler.ListLinkHandler
 import org.schabi.newpipe.extractor.search.SearchInfo
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
@@ -82,6 +88,36 @@ object YouTubeSource : VideoSource {
 			}
 		}
 
+	/**
+	 * A channel's uploads, paged to the end or to [limit], whichever comes first.
+	 *
+	 * The channel is found by name through search, because a follow starts from a
+	 * video's author string rather than a channel URL. Paging stops at [limit] so
+	 * one follow on a prolific channel cannot become an unbounded crawl.
+	 */
+	override suspend fun channelVideos(channel: String, limit: Int): Result<List<FeedItem>> =
+		withContext(Dispatchers.IO) {
+			runCatching {
+				val channelUrl = resolveChannelUrl(channel)
+				val videosTab: ListLinkHandler = ChannelInfo.getInfo(service, channelUrl)
+					.tabs
+					.firstOrNull { ChannelTabs.VIDEOS in it.contentFilters }
+					?: error("\"$channel\" publishes no videos tab")
+
+				val out = mutableListOf<FeedItem>()
+				var page = ChannelTabInfo.getInfo(service, videosTab)
+				out += page.relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { it.toFeedItem() }
+
+				var next: Page? = page.nextPage
+				while (next != null && out.size < limit) {
+					val more = ChannelTabInfo.getMoreItems(service, videosTab, next)
+					out += more.items.filterIsInstance<StreamInfoItem>().mapNotNull { it.toFeedItem() }
+					next = more.nextPage
+				}
+				out.take(limit)
+			}
+		}
+
 	override suspend fun resolve(url: String): Result<FeedItem> = withContext(Dispatchers.IO) {
 		runCatching {
 			val videoId = idFromUrl(url) ?: error("not a YouTube video URL: $url")
@@ -92,9 +128,12 @@ object YouTubeSource : VideoSource {
 					url = watchUrl(videoId),
 					title = info.name.orEmpty(),
 					author = info.uploaderName.orEmpty(),
+					authorUrl = info.uploaderUrl.orEmpty(),
 					thumbnailUrl = info.thumbnails.best(),
 					durationSeconds = info.duration,
 					viewCount = info.viewCount,
+					uploadedAt = info.uploadDate?.offsetDateTime()?.toInstant()?.toEpochMilli() ?: 0L,
+					uploadedText = info.textualUploadDate.orEmpty(),
 					tags = info.tags.orEmpty(),
 				)
 			}
@@ -140,6 +179,31 @@ object YouTubeSource : VideoSource {
 			}
 		}
 
+	/**
+	 * Turn whatever the user typed into exactly one channel.
+	 *
+	 * A handle, a channel id or a URL each name one channel, so they are used
+	 * directly. A display name does not - several channels can be called "Arc" -
+	 * so it goes through search, and an exact case-insensitive name match is
+	 * preferred over whatever the platform happened to rank first.
+	 */
+	private fun resolveChannelUrl(channel: String): String {
+		val id = channel.trim()
+		if (id.startsWith("http")) return id
+		if (id.startsWith("@")) return "https://www.youtube.com/$id"
+		if (CHANNEL_ID.matches(id)) return "https://www.youtube.com/channel/$id"
+
+		val handler = service.searchQHFactory.fromQuery(id, listOf("channels"), "")
+		val hits = SearchInfo.getInfo(service, handler)
+			.relatedItems
+			.filterIsInstance<ChannelInfoItem>()
+		return (hits.firstOrNull { it.name.equals(id, ignoreCase = true) } ?: hits.firstOrNull())
+			?.url
+			?: error("no channel matching \"$id\". Try its @handle for an exact match.")
+	}
+
+	private val CHANNEL_ID = Regex("^UC[A-Za-z0-9_-]{22}$")
+
 	private fun StreamInfoItem.toFeedItem(): FeedItem? {
 		val videoId = idFromUrl(url) ?: return null
 		return FeedItem(
@@ -148,6 +212,7 @@ object YouTubeSource : VideoSource {
 			url = url,
 			title = name.orEmpty(),
 			author = uploaderName.orEmpty(),
+			authorUrl = uploaderUrl.orEmpty(),
 			thumbnailUrl = thumbnails.best(),
 			durationSeconds = duration,
 			viewCount = viewCount,

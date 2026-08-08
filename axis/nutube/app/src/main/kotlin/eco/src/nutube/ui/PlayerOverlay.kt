@@ -4,6 +4,8 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,6 +17,7 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -25,6 +28,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
@@ -61,6 +65,8 @@ fun PlayerOverlay(
 	mode: PlaybackMode,
 	inPip: Boolean,
 	playback: NativePlayback,
+	following: Boolean,
+	onToggleFollow: () -> Unit,
 	onClose: () -> Unit,
 ) {
 	BackHandler(enabled = true) { onClose() }
@@ -70,25 +76,39 @@ fun PlayerOverlay(
 	}
 
 	if (embedUrl != null) {
-		if (inPip) {
-			Box(Modifier.fillMaxSize().background(Ink)) {
-				EmbedPlayer(url = embedUrl, modifier = Modifier.fillMaxSize())
-			}
-			return
-		}
+		var pageFullscreen by remember(item.key) { mutableStateOf(false) }
+		val landscape =
+			LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+		val fullscreen = inPip || pageFullscreen || landscape
+		SystemBars(hidden = fullscreen && !inPip)
+
+		// One call site, whatever the shape. Branching the tree on `fullscreen`
+		// would tear the WebView down and rebuild it on every rotation, and a
+		// rebuilt WebView reloads the page and restarts the video. Only the
+		// modifier and the chrome around it change.
 		Box(
-			Modifier.fillMaxSize().background(Ink).safeDrawingPadding(),
+			Modifier
+				.fillMaxSize()
+				.background(Ink)
+				.then(if (fullscreen) Modifier else Modifier.blockBehind().safeDrawingPadding()),
 			contentAlignment = Alignment.Center,
 		) {
 			Column(Modifier.fillMaxWidth()) {
-				EmbedPlayer(url = embedUrl, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f))
-				Caption(item, quality = null)
+				EmbedPlayer(
+					url = embedUrl,
+					// A fixed 16:9 box would overflow a landscape screen; the page
+					// letterboxes inside whatever it is given.
+					modifier = if (fullscreen) Modifier.fillMaxSize()
+					else Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+					onFullscreenChange = { pageFullscreen = it },
+				)
+				if (!fullscreen) Caption(item, null, following, onToggleFollow)
 			}
 		}
 		return
 	}
 
-	NativePlayer(item, inPip, playback)
+	NativePlayer(item, inPip, playback, following, onToggleFollow)
 }
 
 @OptIn(UnstableApi::class)
@@ -97,6 +117,8 @@ private fun NativePlayer(
 	item: FeedItem,
 	inPip: Boolean,
 	playback: NativePlayback,
+	following: Boolean,
+	onToggleFollow: () -> Unit,
 ) {
 	val lifecycle = LocalLifecycleOwner.current.lifecycle
 	val error by playback.error.collectAsStateWithLifecycle()
@@ -151,33 +173,16 @@ private fun NativePlayer(
 	val fullscreen = buttonFullscreen || landscape
 	var controlsUp by remember { mutableStateOf(true) }
 
-	val activity = LocalActivity.current
-	val localView = LocalView.current
-	val bars: WindowInsetsControllerCompat? = remember(activity) {
-		activity?.window?.let { WindowCompat.getInsetsController(it, localView) }?.apply {
-			systemBarsBehavior =
-				WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-		}
-	}
+	SystemBars(hidden = fullscreen && !inPip && !controlsUp)
 
+	// The controls' own timeout is what drives the bars down. PlayerView only
+	// auto-shows its controls when playback is idle, paused or ended, so during
+	// normal playback there may be no visible-to-gone transition to hook.
 	LaunchedEffect(fullscreen, controlsUp, inPip) {
-		val systemBars = WindowInsetsCompat.Type.systemBars()
-		if (!fullscreen || inPip) {
-			bars?.show(systemBars)
-			return@LaunchedEffect
-		}
-		if (controlsUp) {
-			bars?.show(systemBars)
+		if (fullscreen && !inPip && controlsUp) {
 			delay(CONTROLS_TIMEOUT_MS)
 			controlsUp = false
-		} else {
-			bars?.hide(systemBars)
 		}
-	}
-
-	// A safety net: however the player leaves, the bars come back.
-	DisposableEffect(bars) {
-		onDispose { bars?.show(WindowInsetsCompat.Type.systemBars()) }
 	}
 
 	// Back exits fullscreen before it closes the player, which is what the gesture
@@ -209,7 +214,7 @@ private fun NativePlayer(
 	}
 
 	Box(
-		Modifier.fillMaxSize().background(Ink.copy(alpha = 0.97f)).safeDrawingPadding(),
+		Modifier.fillMaxSize().background(Ink.copy(alpha = 0.97f)).blockBehind().safeDrawingPadding(),
 		contentAlignment = Alignment.Center,
 	) {
 		Column(Modifier.fillMaxWidth()) {
@@ -241,6 +246,8 @@ private fun NativePlayer(
 					is PlaybackStreams.Single -> s.label
 					null -> null
 				},
+				following = following,
+				onToggleFollow = onToggleFollow,
 			)
 		}
 	}
@@ -283,19 +290,85 @@ fun NativeSurface(
 	)
 }
 
+/**
+ * Hides or restores the status and navigation bars for as long as this is in the
+ * composition.
+ *
+ * Shared by both playback modes: the native player hides them while fullscreen
+ * and its controls are down, the embedded player while the page is fullscreen.
+ * Either way, leaving the player restores them, so no path out can strand the
+ * app without its bars.
+ */
 @Composable
-private fun Caption(item: FeedItem, quality: String?, modifier: Modifier = Modifier) {
+private fun SystemBars(hidden: Boolean) {
+	val activity = LocalActivity.current
+	val localView = LocalView.current
+	val bars = remember(activity) {
+		activity?.window?.let { WindowCompat.getInsetsController(it, localView) }?.apply {
+			systemBarsBehavior =
+				WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+		}
+	}
+	val systemBars = WindowInsetsCompat.Type.systemBars()
+
+	LaunchedEffect(bars, hidden) {
+		if (hidden) bars?.hide(systemBars) else bars?.show(systemBars)
+	}
+	DisposableEffect(bars) { onDispose { bars?.show(systemBars) } }
+}
+
+/**
+ * Swallows taps and drags that land on the dimmed area around the player.
+ *
+ * The overlay is drawn over the feed but does not block it by default, so a tap
+ * beside the video reached whatever card happened to be underneath and started
+ * playing it. The player's own controls and buttons still work: they are drawn
+ * above this and are hit-tested first.
+ */
+private fun Modifier.blockBehind(): Modifier = composed {
+	clickable(
+		interactionSource = remember { MutableInteractionSource() },
+		indication = null,
+		onClick = {},
+	)
+}
+
+@Composable
+private fun Caption(
+	item: FeedItem,
+	quality: String?,
+	following: Boolean,
+	onToggleFollow: () -> Unit,
+	modifier: Modifier = Modifier,
+) {
 	Column(modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 20.dp)) {
 		Text(item.title, style = MaterialTheme.typography.titleMedium, color = Bright)
-		Row {
-			if (item.author.isNotEmpty()) {
-				Text(item.author, style = MaterialTheme.typography.bodySmall, color = Muted)
+
+		Row(verticalAlignment = Alignment.CenterVertically) {
+			val byline = listOfNotNull(
+				item.author.takeIf { it.isNotEmpty() },
+				uploadedLabel(item).takeIf { it.isNotEmpty() },
+			).joinToString("  ·  ")
+			if (byline.isNotEmpty()) {
+				Text(byline, style = MaterialTheme.typography.bodySmall, color = Muted)
 			}
 			if (!quality.isNullOrEmpty()) {
 				Text(
 					"  ·  $quality",
 					style = MaterialTheme.typography.bodySmall,
 					color = Accent.copy(alpha = 0.8f),
+				)
+			}
+		}
+
+		// Following writes `channel: <author>` into the term bank, so the channel's
+		// back catalogue is pulled in and stays part of what the ranker sees.
+		if (item.author.isNotEmpty()) {
+			TextButton(onClick = onToggleFollow, modifier = Modifier.padding(top = 6.dp)) {
+				Text(
+					if (following) "Following ${item.author}" else "Follow ${item.author}",
+					style = MaterialTheme.typography.bodySmall,
+					color = if (following) Muted else Accent,
 				)
 			}
 		}
