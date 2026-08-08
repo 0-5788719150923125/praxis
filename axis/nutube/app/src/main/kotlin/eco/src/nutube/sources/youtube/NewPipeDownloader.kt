@@ -1,4 +1,4 @@
-package ink.luciferian.nutube.source
+package eco.src.nutube.sources.youtube
 
 import okhttp3.OkHttpClient
 import okhttp3.Request as OkRequest

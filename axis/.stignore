@@ -42,6 +42,9 @@
 // Machine-specific SDK path - syncing it would point the phone at a path that
 // does not exist there.
 (?d)local.properties
+// ...except the one we hand-publish for installing on the phone. A negation
+// only counts if it comes before the pattern it overrides.
+!/nutube/nutube.apk
 (?d)*.apk
 (?d)*.aab
 (?d)*.jks

@@ -1,11 +1,11 @@
-package ink.luciferian.nutube.ui
+package eco.src.nutube.ui
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import ink.luciferian.nutube.NuTubeApp
-import ink.luciferian.nutube.data.FeedItem
-import ink.luciferian.nutube.source.YouTubeSource
+import eco.src.nutube.NuTubeApp
+import eco.src.nutube.core.FeedItem
+import eco.src.nutube.core.SourceRegistry
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -44,17 +44,17 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
 	}
 
 	/**
-	 * Explicit network step: pull fresh results for the current query and fold them
-	 * into the index. Local ranking still decides the order afterwards.
+	 * Explicit network step: ask every registered platform for the current query
+	 * and fold the results into the index. Local ranking still decides the order.
 	 */
 	fun discover() {
 		val q = query.trim()
 		if (q.isEmpty() || _busy.value) return
 		viewModelScope.launch {
 			_busy.value = true
-			YouTubeSource.search(q)
-				.onSuccess { index.upsertAll(it); rerank() }
-				.onFailure { _error.value = it.message ?: "search failed" }
+			val found = SourceRegistry.searchAll(q)
+			if (found.isEmpty()) _error.value = "nothing came back for \"$q\""
+			else { index.upsertAll(found); rerank() }
 			_busy.value = false
 		}
 	}
@@ -62,7 +62,7 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
 	fun indexUrl(url: String) {
 		viewModelScope.launch {
 			_busy.value = true
-			YouTubeSource.resolve(url)
+			SourceRegistry.resolve(url)
 				.onSuccess { index.upsert(it); rerank() }
 				.onFailure { _error.value = it.message ?: "could not resolve link" }
 			_busy.value = false

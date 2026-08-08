@@ -9,6 +9,7 @@
 #   ./run.sh --headless         run the emulator with no window (useful over ssh)
 #   ./run.sh --logs             just tail logs against whatever is already running
 #   ./run.sh --url <youtube>    launch via a VIEW intent, to exercise the deep link
+#   ./run.sh --apk              just build and drop nutube.apk here, no device needed
 #   ./run.sh --stop             shut the emulator down
 #
 # Uses whatever device is already connected, so plugging in a real phone and
@@ -29,11 +30,12 @@ export ANDROID_HOME="$SDK" ANDROID_SDK_ROOT="$SDK"
 ADB="$SDK/platform-tools/adb"
 EMULATOR="$SDK/emulator/emulator"
 AVD="${NUTUBE_AVD:-Medium_Phone_API_35}"
-PKG=ink.luciferian.nutube
+PKG=eco.src.nutube
 ACTIVITY="$PKG/.MainActivity"
 
 TAIL_LOGS=1
 WIPE=0
+APK_ONLY=0
 WINDOW="-gpu host"
 URL=""
 
@@ -44,12 +46,28 @@ while [ $# -gt 0 ]; do
 		--headless) WINDOW="-no-window -gpu swiftshader_indirect" ;;
 		--logs)     exec "$ADB" logcat -v color -s "$PKG:V" AndroidRuntime:E ExoPlayer:I ;;
 		--url)      shift; URL="${1:-}" ;;
+		--apk)      APK_ONLY=1 ;;
 		--stop)     "$ADB" emu kill 2>/dev/null || true; echo "emulator stopped"; exit 0 ;;
 		-h|--help)  sed -n '3,20p' "$0" | sed 's/^# \?//'; exit 0 ;;
 		*)          echo "unknown flag: $1" >&2; exit 1 ;;
 	esac
 	shift
 done
+
+# Syncthing excludes build/ directories, so park a copy where it will sync.
+publish_apk() {
+	local built=app/build/outputs/apk/debug/app-debug.apk
+	[ -f "$built" ] || { echo "no APK at $built" >&2; return 1; }
+	cp "$built" nutube.apk
+	echo ":: nutube.apk ($(du -h nutube.apk | cut -f1)) - syncs to the phone from here"
+}
+
+if [ "$APK_ONLY" = 1 ]; then
+	echo ":: building"
+	./gradlew :app:assembleDebug --console=plain -q
+	publish_apk
+	exit 0
+fi
 
 online() { "$ADB" devices | awk 'NR>1 && $2=="device" {print $1; exit}'; }
 
@@ -108,6 +126,8 @@ echo ":: device $DEVICE"
 
 echo ":: building"
 ./gradlew :app:installDebug --console=plain -q
+
+publish_apk
 
 echo ":: launching"
 if [ -n "$URL" ]; then

@@ -5,3 +5,6 @@ local.properties
 *.iml
 .kotlin/
 captures/
+
+# Built artifact, copied here so Syncthing can reach it (build/ is excluded).
+nutube.apk

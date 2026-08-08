@@ -1,19 +1,18 @@
 plugins {
 	alias(libs.plugins.android.application)
 	alias(libs.plugins.kotlin.compose)
-	alias(libs.plugins.kotlin.serialization)
 }
 
 android {
-	namespace = "ink.luciferian.nutube"
+	namespace = "eco.src.nutube"
 	compileSdk = 37
 
 	defaultConfig {
-		applicationId = "ink.luciferian.nutube"
+		applicationId = "eco.src.nutube"
 		minSdk = 26
 		targetSdk = 37
-		versionCode = 1
-		versionName = "0.1"
+		versionCode = 2
+		versionName = "0.2"
 	}
 
 	buildTypes {
@@ -25,16 +24,10 @@ android {
 	}
 
 	compileOptions {
-		// NewPipeExtractor uses java.time / java.util.stream, so desugar them for minSdk 26.
+		// NewPipeExtractor uses java.time / java.util.stream.
 		isCoreLibraryDesugaringEnabled = true
 		sourceCompatibility = JavaVersion.VERSION_17
 		targetCompatibility = JavaVersion.VERSION_17
-	}
-
-	kotlin {
-		compilerOptions {
-			jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
-		}
 	}
 
 	buildFeatures {
@@ -47,10 +40,12 @@ android {
 }
 
 dependencies {
+	implementation(project(":core"))
+
 	implementation(libs.androidx.core.ktx)
 	implementation(libs.androidx.lifecycle.runtime.ktx)
-	implementation(libs.androidx.lifecycle.viewmodel.compose)
 	implementation(libs.androidx.lifecycle.runtime.compose)
+	implementation(libs.androidx.lifecycle.viewmodel.compose)
 	implementation(libs.androidx.activity.compose)
 
 	implementation(platform(libs.androidx.compose.bom))
@@ -73,8 +68,8 @@ dependencies {
 	implementation(libs.coil.network.okhttp)
 	implementation(libs.okhttp)
 
+	// JVM-only, which is exactly why the YouTube source cannot live in :core.
 	implementation(libs.newpipe.extractor)
-	implementation(libs.kotlinx.serialization.json)
 
 	coreLibraryDesugaring(libs.desugar.jdk.libs)
 }

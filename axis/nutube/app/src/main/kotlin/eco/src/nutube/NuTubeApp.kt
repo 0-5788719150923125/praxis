@@ -1,8 +1,11 @@
-package ink.luciferian.nutube
+package eco.src.nutube
 
 import android.app.Application
-import ink.luciferian.nutube.data.LocalIndex
-import ink.luciferian.nutube.source.NewPipeDownloader
+import eco.src.nutube.core.LocalIndex
+import eco.src.nutube.core.SourceRegistry
+import eco.src.nutube.sources.youtube.NewPipeDownloader
+import eco.src.nutube.sources.youtube.YouTubeSource
+import okio.Path.Companion.toOkioPath
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.localization.ContentCountry
 import org.schabi.newpipe.extractor.localization.Localization
@@ -16,6 +19,10 @@ class NuTubeApp : Application() {
 		super.onCreate()
 		// NewPipeExtractor is a singleton and must be handed a Downloader before use.
 		NewPipe.init(NewPipeDownloader, Localization("en", "US"), ContentCountry("US"))
-		index = LocalIndex(filesDir.resolve("index.json"))
+
+		// Platforms plug in here. commonMain never names a concrete source.
+		SourceRegistry.register(YouTubeSource)
+
+		index = LocalIndex(filesDir.resolve("index.json").toOkioPath())
 	}
 }

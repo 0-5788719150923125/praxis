@@ -42,13 +42,33 @@ would have been a UI shell over a Kotlin app.
 
 ## Layout
 
-- `app/src/main/kotlin/.../data/` - `FeedItem`, the source-agnostic item type,
-  and `LocalIndex`, the on-device store and ranker. This is the part to grow.
-- `app/src/main/kotlin/.../source/` - `YouTubeSource` over NewPipeExtractor
-  (search, resolve, stream URLs) and `NewPipeDownloader`, its OkHttp transport.
-- `app/src/main/kotlin/.../ui/` - Compose feed, view model, and the ExoPlayer
-  overlay.
+Kotlin Multiplatform, split so that a second platform is an added target rather
+than a rewrite.
+
+- `core/` - the multiplatform module, `commonMain` only. `FeedItem`, `LocalIndex`
+  (the on-device store and ranker), `VideoSource` (the contract every platform
+  implements), `SourceRegistry` (which platforms are plugged in), and
+  `PlaybackStreams`. Nothing here touches an Android or JVM API; it uses okio
+  rather than `java.io` for exactly that reason. Adding `iosArm64()` or `jvm()`
+  to `core/build.gradle.kts` is the whole change needed to run this logic
+  elsewhere.
+- `app/` - the Android application. The Compose UI, the ExoPlayer overlay, and
+  `sources/youtube/`, which implements `VideoSource` over NewPipeExtractor.
 - `godot/` - the original Godot 4.6 prototype, frozen.
+
+The one thing that does not generalise: **NewPipeExtractor is a Java library**,
+so the YouTube source can only ever live in a JVM target. An iOS build would
+share the index, the ranker and the registry, but would need its own extraction
+path and its own player. That is a real limit on how much KMP buys here, and it
+is worth knowing before betting on it.
+
+### Adding a platform
+
+Implement `VideoSource` and register it in `NuTubeApp.onCreate`. Everything above
+the interface - the index, the ranking, the feed, the player - is written against
+`FeedItem` and never learns which platform an item came from. `SourceRegistry`
+fans a search out across every registered source concurrently and drops the ones
+that fail, so a rate-limited platform degrades instead of breaking the feed.
 
 ## Building
 
@@ -57,26 +77,28 @@ git-ignored, so it needs writing once per machine:
 
 ```sh
 echo "sdk.dir=$HOME/Android/Sdk" > local.properties
-JAVA_HOME=/usr/lib/jvm/java-17-openjdk ./gradlew :app:assembleDebug
+./run.sh --apk        # build only; drops nutube.apk in this directory
+./run.sh              # boot the emulator, install, launch, tail logs
+./run.sh --help       # the rest
 ```
 
-The APK lands in `app/build/outputs/apk/debug/`. `./gradlew installDebug` pushes
-it to a connected device.
+`nutube.apk` sits at the project root rather than under `app/build/` because
+Syncthing excludes build directories; it is git-ignored but explicitly allowed
+through in `axis/.stignore`.
 
-No Android Studio required - the Gradle wrapper does everything, and the Kotlin
-LSP in an editor covers the rest.
+No Android Studio required - the Gradle wrapper does everything.
 
 ## Status
 
-Scaffold. Search hits YouTube and folds results into the local index; the index
-ranks and explains itself; tapping a card plays in-app. Sharing or opening a
-YouTube link from any other app indexes it.
+Working: search fans out through the registry and folds results into the local
+index; the index ranks and explains itself on every card; tapping a card plays
+in-app in HD. Sharing or opening a YouTube link from any other app indexes it.
 
-Not built yet: the background crawler (`WorkManager` is wired as a dependency
-but unused), persistence beyond a JSON file, background audio and PiP (the
-manifest and permissions are in place, the `MediaSessionService` is not), and
-any ranking smarter than keyword overlap.
+HD works by taking YouTube's separate video-only and audio-only tracks and
+merging them with ExoPlayer's `MergingMediaSource` - the muxed stream it also
+offers stops at 720p and is kept only as a fallback.
 
-Playback currently prefers YouTube's HLS/DASH manifest and falls back to the
-best progressive stream, which YouTube caps at 720p. Proper adaptive playback
-means feeding ExoPlayer the separate video and audio tracks.
+Not built yet: the background crawler (`WorkManager` is a dependency but unused),
+persistence beyond a JSON file, background audio and PiP (manifest and
+permissions are in place, the `MediaSessionService` is not), and any ranking
+smarter than keyword overlap.

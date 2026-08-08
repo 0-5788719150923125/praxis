@@ -1,12 +1,14 @@
-package ink.luciferian.nutube.data
+package eco.src.nutube.core
 
 import kotlinx.serialization.Serializable
 
 /**
- * One indexed video, from any source.
+ * One indexed video, from any platform.
  *
  * Deliberately source-agnostic, the same shape the Godot prototype used: a source
  * plugs in behind this type and the ranker never learns which platform it came from.
+ * [source] carries the [VideoSource.id] that produced it, so playback can be routed
+ * back to the right implementation.
  */
 @Serializable
 data class FeedItem(
@@ -21,4 +23,7 @@ data class FeedItem(
 	val tags: List<String> = emptyList(),
 	/** Populated by the ranker, not persisted as truth. */
 	val reason: String = "",
-)
+) {
+	/** Stable across platforms, since ids are only unique within a source. */
+	val key: String get() = "$source:$id"
+}

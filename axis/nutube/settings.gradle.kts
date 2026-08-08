@@ -17,4 +17,5 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "nuTube"
+include(":core")
 include(":app")
