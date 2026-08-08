@@ -38,3 +38,5 @@ mono_crash.*.json
 # Auto-generated import metadata - Godot regenerates these on editor open.
 *.uid
 *.import
+# ghost voice listening probes (regenerated on demand, never committed)
+0*.wav

@@ -52,3 +52,5 @@ static/.chat_render.log
 
 # CloudFlare Pages deployment artifacts (generated at launch)
 .wrangler
+# ghost voice measurement artifacts (rendered WAVs, timing sidecars, reports)
+axis/ghost/build/

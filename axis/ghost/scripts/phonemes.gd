@@ -66,47 +66,57 @@ const TABLE := {
 	# Bandwidths here are ABSOLUTE and are NOT scaled by vocal tract length; only
 	# the centres are (a short tract raises the resonance, it does not sharpen it).
 	"S": {"type": "fric", "voiced": false, "f": [320.0, 1750.0, 2600.0],
-		"par": [[5300.0, 500.0, 1.0], [7400.0, 700.0, 0.65]], "namp": 1.0, "dur": 105.0},
+		"namp": 1.0,
+		"pa": [0, 0, 0, 0, 0, 0, 0.7943], "ab": 0, "dur": 105.0},
 	"Z": {"type": "fric", "voiced": true, "f": [320.0, 1750.0, 2600.0],
-		"par": [[5300.0, 500.0, 1.0], [7400.0, 700.0, 0.65]], "namp": 0.5, "dur": 90.0},
+		"namp": 0.5,
+		"pa": [0, 0, 0, 0, 0, 0, 0.7943], "ab": 0, "dur": 90.0},
 	# /sh/ carries the highest amplitude of any English fricative - and it needs
 	# it here, because its band overlaps the vowel's own F4/F5 where /s/'s does
 	# not, so equal amplitude left it 20 dB short of /s/ in contrast.
 	"SH": {"type": "fric", "voiced": false, "f": [320.0, 2000.0, 2500.0],
-		"par": [[2400.0, 300.0, 1.0], [3600.0, 500.0, 0.55]], "namp": 1.8, "dur": 110.0},
+		"namp": 3.35,
+		"pa": [0, 0, 0.7079, 0.2512, 0.2512, 0.1995, 0], "ab": 0, "dur": 110.0},
 	"ZH": {"type": "fric", "voiced": true, "f": [320.0, 2000.0, 2500.0],
-		"par": [[2400.0, 300.0, 1.0], [3600.0, 500.0, 0.55]], "namp": 0.9, "dur": 95.0},
+		"namp": 1.675,
+		"pa": [0, 0, 0.7079, 0.2512, 0.2512, 0.1995, 0], "ab": 0, "dur": 95.0},
 	# /f/ and /th/ are labiodental and dental: almost no front cavity, so their
 	# spectra are FLAT and DIFFUSE rather than peaked, and quiet in absolute
 	# terms. They are audible because they sit in 4-10 kHz where vowels have
 	# nothing - the cue is spectral CONTRAST against the neighbour, not level.
 	"F": {"type": "fric", "voiced": false, "f": [320.0, 900.0, 2200.0],
-		"par": [[1400.0, 1600.0, 0.30], [4800.0, 2800.0, 0.90], [8600.0, 2000.0, 0.70]],
-		"namp": 0.38, "dur": 95.0},
+		"namp": 0.226,
+		"pa": [0, 0, 0, 0, 0, 0, 0], "ab": 0.7079, "dur": 95.0},
 	"V": {"type": "fric", "voiced": true, "f": [320.0, 900.0, 2200.0],
-		"par": [[1400.0, 1600.0, 0.30], [4800.0, 2800.0, 0.90], [8600.0, 2000.0, 0.70]],
-		"namp": 0.22, "dur": 70.0},
+		"namp": 0.131,
+		"pa": [0, 0, 0, 0, 0, 0, 0], "ab": 0.7079, "dur": 70.0},
 	"TH": {"type": "fric", "voiced": false, "f": [320.0, 1400.0, 2400.0],
-		"par": [[1600.0, 1600.0, 0.30], [5800.0, 2800.0, 0.90], [9200.0, 2000.0, 0.65]],
-		"namp": 0.34, "dur": 90.0},
+		"namp": 0.20,
+		"pa": [0, 0, 0, 0, 0, 0.0251, 0], "ab": 0.2512, "dur": 90.0},
 	"DH": {"type": "fric", "voiced": true, "f": [320.0, 1400.0, 2400.0],
-		"par": [[1600.0, 1600.0, 0.30], [5800.0, 2800.0, 0.90], [9200.0, 2000.0, 0.65]],
-		"namp": 0.18, "dur": 60.0},
+		"namp": 0.106,
+		"pa": [0, 0, 0, 0, 0, 0.0251, 0], "ab": 0.2512, "dur": 60.0},
 	# stops: closure at the locus, then a burst through the parallel branch.
 	# The three classic burst shapes: labial diffuse-falling, alveolar
 	# diffuse-rising, velar compact (a single mid peak - the "velar pinch").
 	"P": {"type": "stop", "voiced": false, "f": [320.0, 900.0, 2200.0],
-		"par": [[900.0, 900.0, 1.0], [2200.0, 1600.0, 0.55]], "namp": 0.9, "dur": 90.0},
+		"namp": 0.9,
+		"pa": [0, 0, 0, 0, 0, 0, 0], "ab": 1.4125, "dur": 90.0},
 	"B": {"type": "stop", "voiced": true, "f": [320.0, 900.0, 2200.0],
-		"par": [[900.0, 900.0, 1.0], [2200.0, 1600.0, 0.55]], "namp": 0.6, "dur": 75.0},
+		"namp": 0.6,
+		"pa": [0, 0, 0, 0, 0, 0, 0], "ab": 1.4125, "dur": 75.0},
 	"T": {"type": "stop", "voiced": false, "f": [320.0, 1750.0, 2600.0],
-		"par": [[4000.0, 900.0, 1.0], [6800.0, 1200.0, 0.75]], "namp": 1.0, "dur": 90.0},
+		"namp": 1.0,
+		"pa": [0, 0, 0.0316, 0.1778, 0.7079, 1.4125, 0], "ab": 0, "dur": 90.0},
 	"D": {"type": "stop", "voiced": true, "f": [320.0, 1750.0, 2600.0],
-		"par": [[4000.0, 900.0, 1.0], [6800.0, 1200.0, 0.75]], "namp": 0.65, "dur": 75.0},
+		"namp": 0.65,
+		"pa": [0, 0, 0.2239, 1, 1.2589, 1, 0], "ab": 0, "dur": 75.0},
 	"K": {"type": "stop", "voiced": false, "f": [320.0, 1900.0, 2250.0],
-		"par": [[1800.0, 350.0, 1.0], [3100.0, 800.0, 0.45]], "namp": 0.95, "dur": 95.0},
+		"namp": 0.95,
+		"pa": [0, 0, 0.4467, 0.1413, 0.1778, 0.1778, 0], "ab": 0, "dur": 95.0},
 	"G": {"type": "stop", "voiced": true, "f": [320.0, 1900.0, 2250.0],
-		"par": [[1800.0, 350.0, 1.0], [3100.0, 800.0, 0.45]], "namp": 0.6, "dur": 80.0},
+		"namp": 0.6,
+		"pa": [0, 0, 0.4467, 0.1413, 0.1778, 0.1778, 0], "ab": 0, "dur": 80.0},
 	# affricates are expanded at parse time: CH -> T SH, JH -> D ZH
 	# /h/ is glottal: its noise DOES belong in the cascade (the whole tract is
 	# the filter), which is why it has no `par` and no posture of its own.

@@ -3,9 +3,9 @@
 
 Front-end encoders, including the byte-latent and abstractinator variants.
 
-Registry: ``praxis.ENCODER_REGISTRY`` (22 entries)
+Registry: ``praxis.ENCODER_REGISTRY`` (23 entries)
 
-## `abstractinator`, `abstractinator_harmonic`, `abstractinator_harmonic_serpent`, `abstractinator_harmonic_serpent_avg` - AbstractinatorEncoder
+## `abstractinator`, `abstractinator_harmonic`, `abstractinator_harmonic_serpent`, `abstractinator_harmonic_serpent_avg`, `abstractinator_harmonic_serpent_vocab_bank` - AbstractinatorEncoder
 
 BLT encoder with a multi-stage residual VQ bottleneck between the local encoder and the
 global transformer.
@@ -21,6 +21,7 @@ Presets:
 - `abstractinator_harmonic` - `bottleneck='harmonic', bottleneck_ratio=0.5, embeddings='byte_hash', local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', vq_codebook_size=16384`
 - `abstractinator_harmonic_serpent` - `bottleneck='harmonic_serpent', bottleneck_ratio=0.5, embeddings='byte_hash', local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', vq_codebook_size=16384`
 - `abstractinator_harmonic_serpent_avg` - `bottleneck='harmonic_serpent', bottleneck_ratio=0.5, downsampling_method='avg', embeddings='byte_hash', local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', vq_codebook_size=16384`
+- `abstractinator_harmonic_serpent_vocab_bank` - `bottleneck='harmonic_serpent', bottleneck_ratio=0.5, embeddings='byte_hash', local_architecture='conv', n_layers_decoder=3, n_layers_encoder=3, patching_mode='space', vq_codebook_size=None`
 
 ## `byte_latent`, `byte_latent_conv`, `byte_latent_conv_small`, `byte_latent_transformer` - ByteLatentEncoder
 

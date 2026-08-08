@@ -1,0 +1,990 @@
+{
+ "engine": {
+  "drone": false,
+  "fric_level": 0.075,
+  "noise_fx": false,
+  "out_gain": 3.2,
+  "raw_mode": false
+ },
+ "fixtures": {
+  "narration": {
+   "dur": 24.85,
+   "peak_db": -3.62,
+   "rms_db": -22.72,
+   "levels": {
+    "reference_vowel_rms": 0.07545936133416616,
+    "classes": {
+     "vowel": {
+      "n": 85,
+      "db_re_vowel": 0.0
+     },
+     "sibilant": {
+      "n": 17,
+      "db_re_vowel": -2.94,
+      "target": [
+       -8.0,
+       2.0
+      ],
+      "pass": true
+     },
+     "weak_fric": {
+      "n": 19,
+      "db_re_vowel": -16.83,
+      "target": [
+       -25.0,
+       -10.0
+      ],
+      "pass": true
+     },
+     "stop_voiceless": {
+      "n": 29,
+      "db_re_vowel": -15.29,
+      "target": [
+       -15.0,
+       -5.0
+      ],
+      "pass": false
+     },
+     "stop_voiced": {
+      "n": 26,
+      "db_re_vowel": -18.34,
+      "target": [
+       -20.0,
+       -6.0
+      ],
+      "pass": true
+     },
+     "nasal": {
+      "n": 25,
+      "db_re_vowel": -5.21,
+      "target": [
+       -12.0,
+       -2.0
+      ],
+      "pass": true
+     },
+     "liquid": {
+      "n": 17,
+      "db_re_vowel": -1.54,
+      "target": [
+       -8.0,
+       1.0
+      ],
+      "pass": true
+     },
+     "glide": {
+      "n": 5,
+      "db_re_vowel": -1.35,
+      "target": [
+       -8.0,
+       1.0
+      ],
+      "pass": true
+     }
+    },
+    "phones": {
+     "AA": {
+      "n": 3,
+      "db_re_vowel": -3.44
+     },
+     "AE": {
+      "n": 9,
+      "db_re_vowel": -0.25
+     },
+     "AH": {
+      "n": 23,
+      "db_re_vowel": -3.44
+     },
+     "AO": {
+      "n": 4,
+      "db_re_vowel": 1.04
+     },
+     "AW": {
+      "n": 5,
+      "db_re_vowel": 3.32
+     },
+     "AY": {
+      "n": 4,
+      "db_re_vowel": 2.11
+     },
+     "B": {
+      "n": 7,
+      "db_re_vowel": -19.36
+     },
+     "D": {
+      "n": 17,
+      "db_re_vowel": -17.94
+     },
+     "DH": {
+      "n": 12,
+      "db_re_vowel": -18.43
+     },
+     "EH": {
+      "n": 6,
+      "db_re_vowel": 2.31
+     },
+     "ER": {
+      "n": 5,
+      "db_re_vowel": -0.55
+     },
+     "EY": {
+      "n": 2,
+      "db_re_vowel": 1.85
+     },
+     "F": {
+      "n": 3,
+      "db_re_vowel": -17.85
+     },
+     "G": {
+      "n": 2,
+      "db_re_vowel": -18.43
+     },
+     "HH": {
+      "n": 6,
+      "db_re_vowel": -0.84
+     },
+     "IH": {
+      "n": 10,
+      "db_re_vowel": -3.02
+     },
+     "IY": {
+      "n": 6,
+      "db_re_vowel": -0.88
+     },
+     "K": {
+      "n": 8,
+      "db_re_vowel": -11.92
+     },
+     "L": {
+      "n": 11,
+      "db_re_vowel": -0.94
+     },
+     "M": {
+      "n": 6,
+      "db_re_vowel": -3.98
+     },
+     "N": {
+      "n": 16,
+      "db_re_vowel": -5.19
+     },
+     "NG": {
+      "n": 3,
+      "db_re_vowel": -8.51
+     },
+     "OW": {
+      "n": 6,
+      "db_re_vowel": 6.57
+     },
+     "P": {
+      "n": 3,
+      "db_re_vowel": -22.8
+     },
+     "R": {
+      "n": 6,
+      "db_re_vowel": -2.76
+     },
+     "S": {
+      "n": 11,
+      "db_re_vowel": -5.38
+     },
+     "SH": {
+      "n": 3,
+      "db_re_vowel": 4.66
+     },
+     "T": {
+      "n": 18,
+      "db_re_vowel": -16.33
+     },
+     "TH": {
+      "n": 2,
+      "db_re_vowel": -14.73
+     },
+     "UW": {
+      "n": 2,
+      "db_re_vowel": -2.2
+     },
+     "V": {
+      "n": 2,
+      "db_re_vowel": -11.25
+     },
+     "W": {
+      "n": 5,
+      "db_re_vowel": -1.35
+     },
+     "Z": {
+      "n": 3,
+      "db_re_vowel": -9.06
+     }
+    }
+   },
+   "vowel_space": {
+    "stressed": {
+     "n": 34,
+     "hull_bark2": 18.48
+    },
+    "reduced": {
+     "n": 51,
+     "hull_bark2": 6.46
+    },
+    "ratio": 0.35,
+    "ratio_min": 0.4,
+    "n_sufficient": true,
+    "pass": false,
+    "per_vowel_hz": {
+     "AA": [
+      631,
+      1276,
+      3
+     ],
+     "AE": [
+      623,
+      1700,
+      9
+     ],
+     "AH": [
+      575,
+      1339,
+      23
+     ],
+     "AO": [
+      554,
+      1010,
+      4
+     ],
+     "AW": [
+      591,
+      1047,
+      5
+     ],
+     "AY": [
+      535,
+      1543,
+      4
+     ],
+     "EH": [
+      514,
+      1842,
+      6
+     ],
+     "ER": [
+      490,
+      1397,
+      5
+     ],
+     "EY": [
+      437,
+      1991,
+      2
+     ],
+     "IH": [
+      388,
+      1868,
+      10
+     ],
+     "IY": [
+      312,
+      2097,
+      6
+     ],
+     "OW": [
+      454,
+      861,
+      6
+     ],
+     "UW": [
+      335,
+      1016,
+      2
+     ]
+    }
+   },
+   "boundaries": {
+    "n_gaps": 29,
+    "median_trough_db": {
+     "<15ms": -7.99,
+     ">=40ms": -240.0
+    },
+    "counts": {
+     "<15ms": 17,
+     ">=40ms": 12
+    },
+    "threshold_db": -25.0,
+    "pass": true
+   },
+   "bands_db": {
+    "0-300": -5.59,
+    "300-800": -2.14,
+    "800-1500": -14.11,
+    "1500-2500": -13.84,
+    "2500-4000": -17.66,
+    "4000-6000": -19.79,
+    "6000-8000": -24.09,
+    "8000-14000": -28.12
+   },
+   "artifacts": {
+    "clicks_per_sec": 4.59,
+    "click_events": 114,
+    "max_step": 0.2029,
+    "pct_above_knee_0p7": 0.0,
+    "pct_above_limit_0p85": 0.0,
+    "peak": 0.6588,
+    "clicks_per_sec_max": 0.35,
+    "pass": false
+   },
+   "tilt": {
+    "db_per_octave": -6.3,
+    "target": [
+     -11.0,
+     -4.0
+    ],
+    "pass": true
+   },
+   "tilt_by_class": {
+    "vowel": {
+     "db_per_octave": -14.71,
+     "n_tokens": 85,
+     "target": [
+      -11.0,
+      -4.0
+     ],
+     "pass": false
+    },
+    "obstruent": {
+     "db_per_octave": -1.55,
+     "n_tokens": 91,
+     "target": [
+      -4.0,
+      4.0
+     ],
+     "pass": true
+    }
+   }
+  },
+  "consonants": {
+   "dur": 19.54,
+   "peak_db": -4.48,
+   "rms_db": -23.09,
+   "levels": {
+    "reference_vowel_rms": 0.07891159266346079,
+    "classes": {
+     "vowel": {
+      "n": 62,
+      "db_re_vowel": 0.0
+     },
+     "sibilant": {
+      "n": 25,
+      "db_re_vowel": -1.66,
+      "target": [
+       -8.0,
+       2.0
+      ],
+      "pass": true
+     },
+     "weak_fric": {
+      "n": 17,
+      "db_re_vowel": -12.52,
+      "target": [
+       -25.0,
+       -10.0
+      ],
+      "pass": true
+     },
+     "stop_voiceless": {
+      "n": 23,
+      "db_re_vowel": -15.89,
+      "target": [
+       -15.0,
+       -5.0
+      ],
+      "pass": false
+     },
+     "stop_voiced": {
+      "n": 16,
+      "db_re_vowel": -19.12,
+      "target": [
+       -20.0,
+       -6.0
+      ],
+      "pass": true
+     },
+     "nasal": {
+      "n": 18,
+      "db_re_vowel": -6.11,
+      "target": [
+       -12.0,
+       -2.0
+      ],
+      "pass": true
+     },
+     "liquid": {
+      "n": 6,
+      "db_re_vowel": -2.62,
+      "target": [
+       -8.0,
+       1.0
+      ],
+      "pass": true
+     },
+     "glide": {
+      "n": 2,
+      "db_re_vowel": -3.84,
+      "target": [
+       -8.0,
+       1.0
+      ],
+      "pass": true
+     }
+    },
+    "phones": {
+     "AA": {
+      "n": 1,
+      "db_re_vowel": 5.08
+     },
+     "AE": {
+      "n": 4,
+      "db_re_vowel": 3.58
+     },
+     "AH": {
+      "n": 19,
+      "db_re_vowel": -4.23
+     },
+     "AO": {
+      "n": 2,
+      "db_re_vowel": 2.47
+     },
+     "AY": {
+      "n": 1,
+      "db_re_vowel": 2.66
+     },
+     "B": {
+      "n": 3,
+      "db_re_vowel": -18.55
+     },
+     "D": {
+      "n": 11,
+      "db_re_vowel": -19.65
+     },
+     "DH": {
+      "n": 10,
+      "db_re_vowel": -11.55
+     },
+     "EH": {
+      "n": 7,
+      "db_re_vowel": 4.11
+     },
+     "ER": {
+      "n": 8,
+      "db_re_vowel": -3.58
+     },
+     "EY": {
+      "n": 4,
+      "db_re_vowel": 2.03
+     },
+     "F": {
+      "n": 3,
+      "db_re_vowel": -17.52
+     },
+     "G": {
+      "n": 2,
+      "db_re_vowel": -17.34
+     },
+     "IH": {
+      "n": 11,
+      "db_re_vowel": -1.23
+     },
+     "IY": {
+      "n": 2,
+      "db_re_vowel": -0.93
+     },
+     "K": {
+      "n": 8,
+      "db_re_vowel": -11.76
+     },
+     "L": {
+      "n": 2,
+      "db_re_vowel": -3.16
+     },
+     "M": {
+      "n": 5,
+      "db_re_vowel": -5.1
+     },
+     "N": {
+      "n": 9,
+      "db_re_vowel": -6.22
+     },
+     "NG": {
+      "n": 4,
+      "db_re_vowel": -7.28
+     },
+     "OW": {
+      "n": 2,
+      "db_re_vowel": 6.09
+     },
+     "OY": {
+      "n": 1,
+      "db_re_vowel": 3.58
+     },
+     "P": {
+      "n": 6,
+      "db_re_vowel": -25.06
+     },
+     "R": {
+      "n": 4,
+      "db_re_vowel": -2.36
+     },
+     "S": {
+      "n": 11,
+      "db_re_vowel": -5.58
+     },
+     "SH": {
+      "n": 5,
+      "db_re_vowel": 4.44
+     },
+     "T": {
+      "n": 9,
+      "db_re_vowel": -16.88
+     },
+     "TH": {
+      "n": 1,
+      "db_re_vowel": -19.17
+     },
+     "V": {
+      "n": 3,
+      "db_re_vowel": -10.77
+     },
+     "W": {
+      "n": 2,
+      "db_re_vowel": -3.84
+     },
+     "Z": {
+      "n": 3,
+      "db_re_vowel": -9.47
+     },
+     "ZH": {
+      "n": 6,
+      "db_re_vowel": -0.7
+     }
+    }
+   },
+   "vowel_space": {
+    "stressed": {
+     "n": 32,
+     "hull_bark2": 13.26
+    },
+    "reduced": {
+     "n": 30,
+     "hull_bark2": 2.97
+    },
+    "ratio": 0.224,
+    "ratio_min": 0.4,
+    "n_sufficient": true,
+    "pass": false,
+    "per_vowel_hz": {
+     "AA": [
+      699,
+      1045,
+      1
+     ],
+     "AE": [
+      661,
+      1712,
+      4
+     ],
+     "AH": [
+      577,
+      1343,
+      19
+     ],
+     "AO": [
+      563,
+      842,
+      2
+     ],
+     "AY": [
+      559,
+      1604,
+      1
+     ],
+     "EH": [
+      516,
+      1833,
+      7
+     ],
+     "ER": [
+      478,
+      1388,
+      8
+     ],
+     "EY": [
+      441,
+      1977,
+      4
+     ],
+     "IH": [
+      403,
+      1947,
+      11
+     ],
+     "IY": [
+      310,
+      2254,
+      2
+     ],
+     "OW": [
+      482,
+      896,
+      2
+     ],
+     "OY": [
+      467,
+      1396,
+      1
+     ]
+    }
+   },
+   "boundaries": {
+    "n_gaps": 35,
+    "median_trough_db": {
+     "<15ms": -8.47,
+     ">=40ms": -240.0
+    },
+    "counts": {
+     "<15ms": 24,
+     ">=40ms": 11
+    },
+    "threshold_db": -25.0,
+    "pass": true
+   },
+   "bands_db": {
+    "0-300": -5.5,
+    "300-800": -2.66,
+    "800-1500": -15.41,
+    "1500-2500": -10.91,
+    "2500-4000": -14.06,
+    "4000-6000": -17.44,
+    "6000-8000": -22.52,
+    "8000-14000": -26.36
+   },
+   "artifacts": {
+    "clicks_per_sec": 5.68,
+    "click_events": 111,
+    "max_step": 0.2072,
+    "pct_above_knee_0p7": 0.0,
+    "pct_above_limit_0p85": 0.0,
+    "peak": 0.5969,
+    "clicks_per_sec_max": 0.35,
+    "pass": false
+   },
+   "tilt": {
+    "db_per_octave": -5.41,
+    "target": [
+     -11.0,
+     -4.0
+    ],
+    "pass": true
+   },
+   "tilt_by_class": {
+    "vowel": {
+     "db_per_octave": -12.79,
+     "n_tokens": 62,
+     "target": [
+      -11.0,
+      -4.0
+     ],
+     "pass": false
+    },
+    "obstruent": {
+     "db_per_octave": -2.59,
+     "n_tokens": 81,
+     "target": [
+      -4.0,
+      4.0
+     ],
+     "pass": true
+    }
+   }
+  },
+  "pairs": {
+   "dur": 14.26,
+   "peak_db": -5.7,
+   "rms_db": -24.93,
+   "levels": {
+    "reference_vowel_rms": 0.07752010469420866,
+    "classes": {
+     "vowel": {
+      "n": 39,
+      "db_re_vowel": 0.0
+     },
+     "sibilant": {
+      "n": 8,
+      "db_re_vowel": -4.01,
+      "target": [
+       -8.0,
+       2.0
+      ],
+      "pass": true
+     },
+     "weak_fric": {
+      "n": 5,
+      "db_re_vowel": -18.47,
+      "target": [
+       -25.0,
+       -10.0
+      ],
+      "pass": true
+     },
+     "stop_voiceless": {
+      "n": 18,
+      "db_re_vowel": -17.09,
+      "target": [
+       -15.0,
+       -5.0
+      ],
+      "pass": false
+     },
+     "stop_voiced": {
+      "n": 9,
+      "db_re_vowel": -19.36,
+      "target": [
+       -20.0,
+       -6.0
+      ],
+      "pass": true
+     },
+     "nasal": {
+      "n": 20,
+      "db_re_vowel": -4.62,
+      "target": [
+       -12.0,
+       -2.0
+      ],
+      "pass": true
+     },
+     "liquid": {
+      "n": 2,
+      "db_re_vowel": -6.09,
+      "target": [
+       -8.0,
+       1.0
+      ],
+      "pass": true
+     },
+     "glide": {
+      "n": 2,
+      "db_re_vowel": -0.47,
+      "target": [
+       -8.0,
+       1.0
+      ],
+      "pass": true
+     }
+    },
+    "phones": {
+     "AE": {
+      "n": 4,
+      "db_re_vowel": 2.61
+     },
+     "AH": {
+      "n": 6,
+      "db_re_vowel": 2.42
+     },
+     "AO": {
+      "n": 1,
+      "db_re_vowel": 5.72
+     },
+     "B": {
+      "n": 6,
+      "db_re_vowel": -19.02
+     },
+     "D": {
+      "n": 3,
+      "db_re_vowel": -20.08
+     },
+     "DH": {
+      "n": 2,
+      "db_re_vowel": -19.36
+     },
+     "EH": {
+      "n": 1,
+      "db_re_vowel": 0.43
+     },
+     "ER": {
+      "n": 6,
+      "db_re_vowel": -4.55
+     },
+     "F": {
+      "n": 1,
+      "db_re_vowel": -18.64
+     },
+     "IH": {
+      "n": 21,
+      "db_re_vowel": -0.81
+     },
+     "K": {
+      "n": 2,
+      "db_re_vowel": -12.46
+     },
+     "L": {
+      "n": 1,
+      "db_re_vowel": -5.71
+     },
+     "M": {
+      "n": 2,
+      "db_re_vowel": -2.86
+     },
+     "N": {
+      "n": 17,
+      "db_re_vowel": -4.83
+     },
+     "NG": {
+      "n": 1,
+      "db_re_vowel": -5.0
+     },
+     "P": {
+      "n": 4,
+      "db_re_vowel": -23.18
+     },
+     "R": {
+      "n": 1,
+      "db_re_vowel": -6.5
+     },
+     "S": {
+      "n": 5,
+      "db_re_vowel": -6.17
+     },
+     "SH": {
+      "n": 1,
+      "db_re_vowel": 3.65
+     },
+     "T": {
+      "n": 12,
+      "db_re_vowel": -16.66
+     },
+     "TH": {
+      "n": 2,
+      "db_re_vowel": -17.59
+     },
+     "W": {
+      "n": 2,
+      "db_re_vowel": -0.47
+     },
+     "Z": {
+      "n": 1,
+      "db_re_vowel": -11.19
+     },
+     "ZH": {
+      "n": 1,
+      "db_re_vowel": -2.09
+     }
+    }
+   },
+   "vowel_space": {
+    "stressed": {
+     "n": 29,
+     "hull_bark2": 8.72
+    },
+    "reduced": {
+     "n": 10,
+     "hull_bark2": 1.07
+    },
+    "ratio": 0.123,
+    "ratio_min": 0.4,
+    "n_sufficient": false,
+    "pass": true,
+    "per_vowel_hz": {
+     "AE": [
+      662,
+      1718,
+      4
+     ],
+     "AH": [
+      630,
+      1214,
+      6
+     ],
+     "AO": [
+      509,
+      824,
+      1
+     ],
+     "EH": [
+      543,
+      1833,
+      1
+     ],
+     "ER": [
+      454,
+      1386,
+      6
+     ],
+     "IH": [
+      404,
+      1963,
+      21
+     ]
+    }
+   },
+   "boundaries": {
+    "n_gaps": 19,
+    "median_trough_db": {
+     "<15ms": -5.89,
+     ">=40ms": -240.0
+    },
+    "counts": {
+     "<15ms": 9,
+     ">=40ms": 10
+    },
+    "threshold_db": -25.0,
+    "pass": true
+   },
+   "bands_db": {
+    "0-300": -4.13,
+    "300-800": -2.93,
+    "800-1500": -15.07,
+    "1500-2500": -13.97,
+    "2500-4000": -18.2,
+    "4000-6000": -19.32,
+    "6000-8000": -23.16,
+    "8000-14000": -27.46
+   },
+   "artifacts": {
+    "clicks_per_sec": 4.98,
+    "click_events": 71,
+    "max_step": 0.1845,
+    "pct_above_knee_0p7": 0.0,
+    "pct_above_limit_0p85": 0.0,
+    "peak": 0.5187,
+    "clicks_per_sec_max": 0.35,
+    "pass": false
+   },
+   "tilt": {
+    "db_per_octave": -5.41,
+    "target": [
+     -11.0,
+     -4.0
+    ],
+    "pass": true
+   },
+   "tilt_by_class": {
+    "vowel": {
+     "db_per_octave": -13.33,
+     "n_tokens": 39,
+     "target": [
+      -11.0,
+      -4.0
+     ],
+     "pass": false
+    },
+    "obstruent": {
+     "db_per_octave": -1.17,
+     "n_tokens": 40,
+     "target": [
+      -4.0,
+      4.0
+     ],
+     "pass": true
+    }
+   }
+  }
+ }
+}

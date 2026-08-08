@@ -94,7 +94,12 @@ class AbstractinatorEncoder(ByteLatentEncoder):
         )
 
         D = config.hidden_size
-        K = vq_codebook_size if vq_codebook_size is not None else 1024
+        # None means "size the bank to the token vocabulary", which is what this
+        # module's docstring has always claimed and what a hardcoded 1024 was
+        # silently doing instead. Identical at the configs in this lineage
+        # (vocab_size IS 1024), so this makes the documented behaviour real
+        # without moving any existing run.
+        K = vq_codebook_size if vq_codebook_size is not None else config.vocab_size
 
         vq_kwargs = dict(
             K=K,
@@ -109,11 +114,12 @@ class AbstractinatorEncoder(ByteLatentEncoder):
         )
         if bottleneck == "rvq":
             self.quantizer = MultiStageResidualVQ(D=D, **vq_kwargs)
-        elif bottleneck in ("harmonic", "harmonic_serpent"):
+        elif bottleneck in ("harmonic", "harmonic_serpent", "harmonic_gdn"):
             self.quantizer = HarmonicResidualVQ(
                 dim=D,
                 latent_dim=max(1, int(D * bottleneck_ratio)),
                 nonlinear=(bottleneck == "harmonic_serpent"),
+                normalization=("gdn" if bottleneck == "harmonic_gdn" else "rms"),
                 **vq_kwargs,
             )
         else:
@@ -162,11 +168,39 @@ class AbstractinatorEncoder(ByteLatentEncoder):
         ppl = getattr(self, "_last_vq_perplexity", None)
         if ppl is not None:
             out["vq_perplexity"] = float(ppl)
+        # Compander anisotropy, when a GDN is in the frame. gamma starts flat at
+        # 1/L (the isotropic sphere projection), so the coefficient of variation
+        # over gamma is exactly 0 at init and rises only if the normalizer has
+        # found a reason to treat directions differently. Without this the -j
+        # run has no way to say whether the compander did anything or simply sat
+        # at its initialization.
+        gdn = getattr(self.quantizer, "gdn", None)
+        if gdn is not None:
+            g = gdn.gamma_sqrt.detach().pow(2)
+            out["vq_gdn_anisotropy"] = float(g.std() / (g.mean() + 1e-12))
         return out
 
     # Chart hints for the metrics above. Per-stage keys are declared for up to
     # 4 residual stages; absent stages simply never emit their key.
     metric_descriptions = {
+        "vq_gdn_anisotropy": {
+            "description": (
+                "Coefficient of variation of the GDN compander's gamma matrix. "
+                "0 = the normalizer is still the isotropic sphere projection it "
+                "was initialized as (its init value, so a flat line at 0 means "
+                "the compander is inert and the run is a no-op); rising = it is "
+                "allocating quantizer resolution unevenly across harmonic "
+                "directions, which is the mechanism the run is testing."
+            ),
+            "chart": {
+                "title": "GDN Anisotropy",
+                "y_label": "std / mean of gamma",
+                "y_scale": "linear",
+                "group": "vq",
+                "group_order": 74,
+                "order": 4,
+            },
+        },
         "vq_perplexity": {
             "description": (
                 "Composed codebook perplexity (product across residual "

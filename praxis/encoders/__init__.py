@@ -98,6 +98,84 @@ AbstractinatorHarmonicSerpentAvg = partial(
     downsampling_method="avg",
 )
 
+# Codebook sized to the token vocabulary instead of the inherited 16384.
+# `None` selects AbstractinatorEncoder's documented default (config.vocab_size),
+# which the module's docstring always claimed and a hardcoded 1024 was standing
+# in for. MEASURED on -h/-i at step 6k-10k: roughly 470 and 218 effective codes
+# in use at stages 0 and 1 against K=16384, i.e. under 3% utilization, with
+# ~140k cumulative dead-code resets - eight full turnovers of the bank. A bank
+# that large is not giving the model choices, it is giving the reset mechanism
+# something to churn.
+#
+# Not capacity-matched, deliberately: this REMOVES parameters. The codebook is
+# an nn.Parameter (vector_quantizer.py), so the bank costs optimizer state as
+# well as weights.
+#
+# The honest caveat on the rule: tying K to vocab_size is a coincidence of
+# scale, not a principle - the bank indexes patch latents, not tokens. It lands
+# in the right place here because the measurements say ~1k is right AND
+# vocab_size is 1024. If the tokenizer changes (tokenmonster, a wider byte
+# alphabet), K would move for no reason and should be pinned explicitly.
+AbstractinatorHarmonicSerpentVocabBank = partial(
+    AbstractinatorHarmonicSerpent,
+    vq_codebook_size=None,
+)
+
+# Both VQ-side fixes at once (abstractinator-i). Bundled deliberately: with a
+# fixed compute budget the efficient search is coarse-to-fine, not one variable
+# at a time - group the changes that push the same direction on the same
+# suspected fault, and pay for isolation only when deciding between survivors.
+# The fault here is a bottleneck that is not earning its parameters.
+#
+#   1. K = config.vocab_size (1024) instead of 16384. See the entry above.
+#   2. NO Serpent on the analysis transform (`AbstractinatorHarmonic`, not
+#      ...Serpent). Serpent is PERIODIC, and it sits immediately before
+#      quantization. A periodic map is not injective: two distinct patch latents
+#      can land on the same point, which is a direct attack on the one thing a
+#      quantizer exists to do. Removing it makes the frame a pure rotation plus
+#      the sphere projection.
+#
+# `bottleneck_ratio` stays 0.5. The coverage argument says a SMALLER codebook
+# wants a smaller latent space (N codes give ~N^(1/d) resolution per axis, so
+# 1024 points in 111 dims is sparser than in 55), and -h's own telemetry
+# exonerates the ratio anyway - dead fraction fell monotonically to 0.27/0.097
+# at ratio 0.5. The starvation appeared only under avg pooling.
+#
+# The bundle stays readable because K's effect is PREDICTABLE. -h used ~470
+# codes at stage 0, so K alone predicts vq_dead_frac_s0 settling near 0.5
+# (470/1024 utilization). Landing meaningfully below 0.5 means dropping Serpent
+# contributed; landing at 0.5 means K did the work and Serpent was neutral.
+AbstractinatorHarmonicVocabBank = partial(
+    AbstractinatorHarmonic,
+    vq_codebook_size=None,
+)
+
+# -i plus a learned compander in place of the fixed RMS normalization
+# (abstractinator-j). The sphere projection is the ISOTROPIC SPECIAL CASE of
+# GDN - gamma_ij = 1/L, beta = 1e-5 - so the module initializes bit-identical to
+# -i and the run measures only whether anisotropy earns anything.
+#
+# Why a compander belongs here specifically. Classical quantization theory says
+# a fixed codebook should spend resolution where the source density is, and a
+# monotonic warp is how you arrange that (mu-law; GDN is the learned
+# multivariate version, and it is what neural image codecs put in front of their
+# quantizer). The measured fault in this stack is that patch directions
+# CONCENTRATE and the bank starves - -i's avg-pooling run drove dead fraction to
+# 0.85 doing exactly that, and max pooling's only virtue is that its order
+# statistic disperses them by accident. A compander does that deliberately.
+#
+# Curvature, not periodicity. Companding needs INVERTIBILITY, so the warp has to
+# be monotonic; a periodic map is not injective and can alias two distinct patch
+# latents onto one point. That is why Serpent comes out at -i and stays out
+# here. The trunk has periodic structure in abundance (ArcHoPE's Serpent phase
+# warp, Serpent in every expert) - the bottleneck is the one place where telling
+# things apart is the entire job.
+AbstractinatorHarmonicGDNVocabBank = partial(
+    AbstractinatorHarmonic,
+    bottleneck="harmonic_gdn",
+    vq_codebook_size=None,
+)
+
 # CALM profiles. Defaults track the paper (arXiv 2510.27688). Tokenizer-
 # specific variants exist because K ("one word of meaning per latent")
 # scales with tokenizer granularity: BPE=4, char=8, byte=16.
@@ -342,6 +420,9 @@ ENCODER_REGISTRY = dict(
     abstractinator_harmonic=AbstractinatorHarmonic,
     abstractinator_harmonic_serpent=AbstractinatorHarmonicSerpent,
     abstractinator_harmonic_serpent_avg=AbstractinatorHarmonicSerpentAvg,
+    abstractinator_harmonic_serpent_vocab_bank=AbstractinatorHarmonicSerpentVocabBank,
+    abstractinator_harmonic_vocab_bank=AbstractinatorHarmonicVocabBank,
+    abstractinator_harmonic_gdn_vocab_bank=AbstractinatorHarmonicGDNVocabBank,
     # CALM: token-chunk VAE + energy head (arXiv 2510.27688).
     # Tokenizer-specific variants adjust K: BPE=4, char=8, byte=16.
     # calm_small is the smoke-test profile.

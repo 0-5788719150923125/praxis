@@ -7,6 +7,15 @@
 // The (?d) prefix marks a pattern as deletable, so Syncthing may clean these up
 // rather than refusing to remove a directory that contains them.
 
+// --- voice listening probes ----------------------------------------------
+// Hand-staged probe renders at /ghost/NN_name.wav, a few MB each. These exist
+// precisely to be heard on a device OTHER than the machine that rendered them:
+// the desktop's audio path has previously added clicks and static that were
+// not in the file at all, so the phone is the control. This negation must stay
+// ABOVE the (?d)*.wav rule below - a negation only counts if it comes before
+// the pattern it overrides. Regenerated on demand; safe to delete anytime.
+!/ghost/0*.wav
+
 // --- big media and render artifacts -------------------------------------
 // ghost exports its renders next to the project. ghost_4k.avi alone is 4.8G.
 (?d)*.avi
