@@ -63,7 +63,10 @@ export const state = {
                 inputId: 'message-input',
                 inputRows: 1
             }),
-            onActivate: null,
+            // Switching back to Gymnasium re-asserts the input placeholder:
+            // tabbing away while the box was focused leaves it holding a bare
+            // prefix, and no blur fires to put the cue back.
+            onActivate: 'syncInputPlaceholder',
             onDeactivate: null
         },
         {

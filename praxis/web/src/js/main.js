@@ -60,7 +60,8 @@ const lifecycleFunctions = {
     renderCurrentMetrics,
     loadSpec,
     loadAgents,
-    loadResearchMetrics
+    loadResearchMetrics,
+    syncInputPlaceholder
 };
 
 /**
@@ -461,6 +462,18 @@ function setupEventListeners() {
         messageInput.addEventListener('select', handleInputSelect);
     }
 
+    // Recover the placeholder on every path that can strand the box holding a
+    // bare prefix. None of these reliably fire a blur on the textarea, which is
+    // the only thing that used to restore it:
+    //   pageshow        - bfcache restore and mobile session restore
+    //   visibilitychange- app switch / screen lock on mobile
+    //   focus           - desktop window refocus (no element blur on tab-out)
+    window.addEventListener('pageshow', syncInputPlaceholder);
+    window.addEventListener('focus', syncInputPlaceholder);
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) syncInputPlaceholder();
+    });
+
     // System prompt editing
     const systemPrompt = document.getElementById('developer-prompt');
     if (systemPrompt) {
@@ -715,10 +728,7 @@ function handleInputFocus() {
  * Handle input blur
  */
 function handleInputBlur(e) {
-    const input = e.target;
-    if (input.value === inputPrefix() || input.value === '') {
-        showPlaceholder();
-    }
+    if (isInputEffectivelyEmpty(e.target)) showPlaceholder();
 }
 
 /**
@@ -763,6 +773,39 @@ function setCursorAfterPrefix() {
     if (input) {
         input.setSelectionRange(inputPrefix().length, inputPrefix().length);
     }
+}
+
+/**
+ * True when the box holds nothing but its prefix - the state the input is left
+ * in by hidePlaceholder(), and what an empty restored value looks like.
+ */
+function isInputEffectivelyEmpty(input) {
+    const prefix = inputPrefix();
+    const body = input.value.startsWith(prefix)
+        ? input.value.slice(prefix.length)
+        : input.value;
+    return body.trim() === '';
+}
+
+/**
+ * Re-assert the placeholder from whatever the DOM actually holds.
+ *
+ * The placeholder is faked with the textarea's value (so the "> "/"< " prefix
+ * can live in the text), which leaves it exposed in a way a native placeholder
+ * attribute would not be: focusing strips it to the bare prefix, and only blur
+ * puts it back. Backgrounding a mobile tab, or a bfcache/session restore, never
+ * fires that blur - so the box keeps a lone "< " and reads as empty forever.
+ *
+ * The DOM is the truth here, not state.isShowingPlaceholder: a restore can hand
+ * back a value the flag knows nothing about. Only ever fills an empty box, so
+ * text the user typed (or a value the browser restored) is never clobbered.
+ */
+export function syncInputPlaceholder() {
+    const input = document.getElementById('message-input');
+    if (!input) return;
+    // Mid-edit: a bare prefix is the correct focused-and-empty state.
+    if (document.activeElement === input) return;
+    if (isInputEffectivelyEmpty(input)) showPlaceholder();
 }
 
 /**
