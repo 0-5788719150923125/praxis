@@ -72,6 +72,10 @@ const EPISODE_STEPS = Math.floor(EPISODE_MS / SIM_MS);
 // Replay is spread across frames instead of blocking the load: a fresh
 // viewer fast-forwards visibly for a beat, then locks onto the clock.
 const CATCHUP_MS = 8;
+// Steps of backlog we are willing to DRAW through. Beyond this the replay is
+// fast enough to read as the creature ping-ponging around the room, so those
+// frames are simulated but not drawn.
+const CATCHUP_DRAW_MAX = 8;
 
 /* Population genetics, not a single genome: seed a pool of latent
    genomes, draw a handful of parents, and blend PER TRAIT - every trait
@@ -2938,6 +2942,9 @@ class Arena {
             // Clock reads are not free: check the budget every 32 steps.
             if ((++n & 31) === 0 && performance.now() > deadline) break;
         }
+        // What the budget could not consume this frame. Non-zero means we are
+        // still replaying and the frame is not worth drawing yet.
+        this.backlog = target - this.simStep;
         return n;
     }
 
@@ -2985,15 +2992,47 @@ class Arena {
         });
     }
 
+    /* Whether a frame is worth computing.
+       IntersectionObserver is necessary but nowhere near sufficient inside a
+       card deck: the deck STACKS its cards in one place, so every card -
+       including this one sitting fully occluded behind Blueprint - reports as
+       intersecting. The sim was therefore running full physics+draw on every
+       frame of the Architecture tab regardless of which card you were reading,
+       which is what dragged that tab to ~7fps on a throttled phone while
+       Research (33 static chart canvases) held 30. Only the deck's head card
+       is actually visible; outside a deck there is no .chart-card and the
+       IntersectionObserver answer stands on its own. */
+    get shouldDraw() {
+        if (!this.onscreen || document.hidden || window.__animPaused) return false;
+        const card = this.canvas.closest('.chart-card');
+        return !card || card.classList.contains('deck-active');
+    }
+
     start() {
         if (this.raf) return;
         const tick = (ts) => {
             if (!this.canvas.isConnected) { this.stop(); return; }
-            // Idle (no physics, no draw) while off-screen, backgrounded, or a tab
-            // slide is compositing. The rAF is re-queued so it resumes instantly
-            // when conditions clear; lastTs is reset so dt doesn't jump on resume.
-            // The world clock keeps running regardless - coming back replays.
-            if (!this.onscreen || document.hidden || window.__animPaused) {
+
+            // The world clock NEVER stops. This card is globally deterministic -
+            // two people opening it at the same instant see the same creature in
+            // the same place - so the sim advances on every frame we are given,
+            // whatever is on screen. It is the cheap half: SIM_DT is 1/30s, so a
+            // 60Hz frame owes half a physics step. Gating this too (rather than
+            // just the draw) is what let a backlog build while the card sat
+            // behind another in the deck.
+            const steps = this.advance();
+
+            // The DRAW is the expensive half - gradients, quads, a full-frame
+            // composite - and only it gates on visibility. Two situations hold
+            // the last frame instead:
+            //   - nothing worth drawing: occluded, backgrounded, mid tab-slide.
+            //   - still replaying a backlog. advance() is budgeted to CATCHUP_MS
+            //     per frame, so a large one takes many frames; drawing those is
+            //     what reads as the creature ping-ponging around the room at
+            //     replay speed. Catch up invisibly, then draw the settled state.
+            // rAF is re-queued either way so it resumes the instant conditions
+            // clear, and lastTs resets so dt never jumps on resume.
+            if (!this.shouldDraw || this.backlog > CATCHUP_DRAW_MAX) {
                 this.lastTs = null;
                 this.raf = requestAnimationFrame(tick);
                 return;
@@ -3006,11 +3045,10 @@ class Arena {
                 this.onFrame?.();
                 this.colorTick = 30;
             }
-            // Physics on the world clock; the frame only draws what it
-            // finds. A long replay leaves the drawn twin - the springs
-            // that trail the rig - far behind, so it re-seats instead of
-            // streaking across the room to catch up.
-            if (this.advance() > 8) this.creature.ink.clear();
+            // A long replay leaves the drawn twin - the springs that trail the
+            // rig - far behind, so it re-seats instead of streaking across the
+            // room to catch up.
+            if (steps > CATCHUP_DRAW_MAX) this.creature.ink.clear();
             this.draw(dt);
             this.raf = requestAnimationFrame(tick);
         };

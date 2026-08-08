@@ -1059,10 +1059,13 @@ function renderMetricsCharts(data, container) {
 // Gesture hierarchy (uniform across every deck and card):
 //   1. GRIP - the head card's HEADER: its top edge through the bottom of the
 //      title line, and no further (the description is body, not handle). The
-//      A/B slot handle, and ONLY that: it never inner-scrolls and never
-//      cycles. A vertical swipe flips the anchor immediately (no sustained-
-//      pull threshold, no cards spinning past first). Title-less cards use a
-//      fixed DECK_GRIP_H band; opt out per card with class "deck-no-grip".
+//      A/B slot handle first: a vertical swipe flips the anchor immediately
+//      (no sustained-pull threshold, no cards spinning past first). It never
+//      inner-scrolls. When the swipe names the slot the deck is ALREADY in,
+//      the handle has nothing to move, so the rest of that drag cycles cards -
+//      the cheap way past a card whose body is a long document, which from the
+//      BODY would mean flicking through all of its text first. Title-less
+//      cards use a fixed DECK_GRIP_H band; opt out with class "deck-no-grip".
 //   2. BODY - everything below the title, description included. Scrolls the
 //      card's content while there's room, then behaves like the grip at the
 //      content edge, and cycles cards past it.
@@ -1961,6 +1964,8 @@ function bindDeckEvents(deck) {
         deck._scrollVel = 0;       // reset inner-scroll velocity for this gesture
         deck._scrollBody = null;
         deck._anchorLocked = false; // set once this gesture flips A<->B, then no cycling
+        deck._gripCycling = false;  // set once a grip drag turns into card cycling
+        deck._gripCycled = false;   // set once that cycling has committed its one card
         // The GRIP: every card's A/B slot handle. It is the HEADER only - the
         // card's top edge down through the bottom of its title line. The
         // description below it is deliberately NOT part of the handle: it's
@@ -2034,14 +2039,38 @@ function bindDeckEvents(deck) {
             // frame's delta: one jittery frame mid-swipe must not name the
             // opposite slot and lock it in.
             const net = deck._startY - y;
-            if (!deck._anchorLocked && (net > DECK_GRIP_FLIP || net < -DECK_GRIP_FLIP)) {
+            if (!deck._anchorLocked && !deck._gripCycling
+                && (net > DECK_GRIP_FLIP || net < -DECK_GRIP_FLIP)) {
                 const slot = net > 0 ? 1 : 0;
                 if (deck._anchorTarget !== slot) {
                     deck._backAccum = 0;
                     setAnchor(deck, slot);
                     deck._anchorLocked = true;
+                    return;
                 }
+                // Already in the slot this direction names: the handle has
+                // nothing left to move, and the gesture used to die here. Spend
+                // the rest of the drag cycling cards instead - still no inner
+                // scroll, so it's the cheap way past a card whose body is a long
+                // document (Architecture's Blueprint / Arguments are ~800px and
+                // ~2800px of text; reaching their content edge to cycle from the
+                // BODY costs ten-odd flicks). One title swipe per card.
+                deck._gripCycling = true;
             }
+            if (!deck._gripCycling || deck._gripCycled) return;
+            // ONE card per grip drag. The body cycles 1:1 for as long as you
+            // keep pulling, but the grip is a discrete handle: a long title
+            // drag spinning three cards past is the same "burned cards"
+            // complaint the grip was introduced to fix.
+            if (deck._seamAccum === 0) {
+                // Pure cycling: seamAnchor is deliberately not called, so a grip
+                // drag can never also drift the A/B anchor.
+                deck._seamBase = ((Math.round(deck._pos) % st.count) + st.count) % st.count;
+                deck._seamDir = dy > 0 ? 1 : -1;
+                seatTarget(deck, deck._seamBase + deck._seamDir, deck._seamDir);
+            }
+            advanceSeam(deck, dy);
+            if (deck._seamAccum === 0) deck._gripCycled = true;   // committed
             return;
         }
 
