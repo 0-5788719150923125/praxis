@@ -10,8 +10,25 @@ extends GhostScene
 ## hue gradient and a gentle sway; the audio sharpens and brightens them (through a
 ## nonlinear curve) without ever stepping. Classy, fluid, different every seed.
 
+## The contour's ARCHETYPE. One formula spans star, flower, cog and soft polygon, but only
+## in specific corners of its parameter space, so the seed picks a FAMILY first and samples
+## inside it - which is why two seeds now differ in silhouette rather than in the third
+## decimal of the same shape.
+##
+## The two facts that decide a family: small n1 with small n2/n3 drives the radius to
+## collapse between lobes (a star), while n1 = n2 = n3 well above 1 is a SUPERELLIPSE -
+## flat sides, sharp corners, a polygon. `tie` marks the second case, because sampling the
+## three apart lands near n2 = n3 = 2, which is a circle exactly, whatever n1 does.
+const FORMS := {
+	"star":    {"m": [5, 12],  "n1": [0.16, 0.38], "n2": [0.35, 0.85], "n3": [0.35, 0.85]},
+	"flower":  {"m": [4, 9],   "n1": [0.45, 0.95], "n2": [0.30, 1.10], "n3": [0.30, 1.10]},
+	"ripple":  {"m": [14, 26], "n1": [0.70, 1.40], "n2": [1.10, 1.60], "n3": [2.20, 3.20]},
+	"cog":     {"m": [10, 18], "tie": [5.0, 14.0]},
+	"polygon": {"m": [3, 7],   "tie": [4.0, 12.0]},
+}
+
 var _f: AudioFeatures = AudioFeatures.new()
-var _hue := 0.0
+var _sch: Scheme = null
 var _spin := 0.0
 var _morph := 0.0
 var _sharp := 0.0
@@ -19,19 +36,54 @@ var _sharp := 0.0
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	framing = "plane"
-	_hue = rng.randf()
+	# Nothing about a rosette says what colour it is, so any mood is fair - it was a bare
+	# random hue before, which varied but never related to itself.
+	_sch = Scheme.pick(rng)
+	var keys := FORMS.keys()
+	var form := String(keys[rng.randi() % keys.size()])
+	var fm: Dictionary = FORMS[form]
+	var m_r: Array = fm["m"]
+	var m := float(rng.randi_range(int(m_r[0]), int(m_r[1])))
+	var n1 := 0.0
+	var n2 := 0.0
+	var n3 := 0.0
+	if fm.has("tie"):
+		var tie_r: Array = fm["tie"]
+		n1 = rng.randf_range(float(tie_r[0]), float(tie_r[1]))
+		n2 = n1
+		n3 = n1
+	else:
+		var n1_r: Array = fm["n1"]
+		var n2_r: Array = fm["n2"]
+		var n3_r: Array = fm["n3"]
+		n1 = rng.randf_range(float(n1_r[0]), float(n1_r[1]))
+		n2 = rng.randf_range(float(n2_r[0]), float(n2_r[1]))
+		n3 = rng.randf_range(float(n3_r[0]), float(n3_r[1]))
+	var layers := rng.randi_range(1, 5)
+	# Either the stack sweeps base -> accent (a two-tone rosette) or it stays one colour
+	# with each ring drifted slightly off it. Two quite different objects.
+	var gradient := rng.randf() < 0.55
+	var hues: Array = []
+	for i in layers:
+		hues.append(_sch.hue_at(i, layers) if gradient else _sch.vary(rng, 0.6))
 	return {
-		"m": float(rng.randi_range(3, 9)),          # symmetry (lobes)
-		"n1": rng.randf_range(0.30, 0.9),
-		"n2": rng.randf_range(0.4, 1.7),
-		"n3": rng.randf_range(0.4, 1.7),
-		"layers": rng.randi_range(2, 4),
-		"radius": rng.randf_range(0.24, 0.34),
-		"hue_step": rng.randf_range(0.03, 0.12),
-		"width": rng.randf_range(1.5, 3.0),
+		"form": form,
+		"mood": _sch.name,
+		"hue": _sch.hue,
+		"m": m,                                      # symmetry (lobes)
+		"n1": n1,
+		"n2": n2,
+		"n3": n3,
+		"layers": layers,
+		"hues": hues,
+		"gradient": gradient,
+		"radius": rng.randf_range(0.18, 0.40),
+		"width": rng.randf_range(1.0, 4.0),
 		"spin_rate": rng.randf_range(-0.10, 0.10),
 		"m_step": rng.randf() < 0.5,                 # neighbouring layers shift symmetry
-		"samples": 260,
+		# Enough samples to keep a high-lobe contour smooth - a 26-fold ripple traced at a
+		# fixed 260 points showed its faceting.
+		"samples": clampi(int(m) * 26, 240, 600),
 	}
 
 
@@ -64,9 +116,11 @@ func _draw() -> void:
 		var scale := base_r * (1.0 - 0.20 * layer)
 		var rot := _spin + float(layer) * 0.22 + 0.1 * sin(_morph + layer)
 		var curve := _superform(m, n1_eff, n2 + breathe, n3 - breathe, int(params.samples), scale, rot)
-		var h := fposmod(_hue + float(params.hue_step) * layer + 0.05 * _f.treble, 1.0)
-		var val := clampf(0.55 + 0.35 * _f.energy + 0.2 * _sharp, 0.2, 1.0)
-		draw_polyline(curve, Color.from_hsv(h, 0.5, val, 0.92), float(params.width), true)
+		var hues: Array = params.hues
+		var h := fposmod(float(hues[layer]) + 0.05 * _f.treble, 1.0)
+		# Value still rides the audio; the mood supplies the character it rides on.
+		var vmul := clampf(0.62 + 0.40 * _f.energy + 0.22 * _sharp, 0.25, 1.15)
+		draw_polyline(curve, _sch.color(h, 0.85, vmul, 0.92), float(params.width), true)
 
 
 # A closed superformula contour: r(θ) = (|cos(mθ/4)|^n2 + |sin(mθ/4)|^n3)^(-1/n1).

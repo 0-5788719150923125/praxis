@@ -6,41 +6,73 @@ extends GhostScene
 ## spectrum, so the skyline rises and falls with the track. Windows light up in a
 ## grid, flickering with the beat. Back layers are dimmer and shorter for depth.
 ## All axis-aligned rectangles - drawn static and upright, no triangulation.
+##
+## Which city it is varies per session: a [Scheme] mood colours the blocks and its accent
+## lights the windows (so the lit grid contrasts the mass by construction, the way sodium
+## windows sit against a blue-grey tower), and a sampled PROFILE decides the silhouette -
+## a crowded low downtown, a handful of wide towers, or a broad flat sprawl.
+
+## Skyline profiles. Building count, width and height are one decision, not three: many
+## narrow blocks read as downtown density, few wide ones as a tower cluster, and the window
+## grid has to follow the facade it sits on.
+const PROFILES := {
+	"dense":   {"layers": [3, 4], "count": [16, 26], "w": [0.50, 0.95], "max_h": [0.35, 0.62],
+		"wcols": [2, 3], "wrows": [5, 10]},
+	"towers":  {"layers": [2, 3], "count": [5, 9],   "w": [0.95, 1.70], "max_h": [0.62, 0.95],
+		"wcols": [3, 5], "wrows": [8, 14]},
+	"mixed":   {"layers": [2, 3], "count": [8, 14],  "w": [0.55, 1.35], "max_h": [0.45, 0.80],
+		"wcols": [2, 4], "wrows": [4, 9]},
+	"lowrise": {"layers": [2, 4], "count": [12, 20], "w": [0.70, 1.30], "max_h": [0.22, 0.44],
+		"wcols": [2, 4], "wrows": [3, 6]},
+}
 
 var _f: AudioFeatures = AudioFeatures.new()
 var _layers: Array = []
+var _sch: Scheme
 
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	framing = "field"
-	var layer_count := rng.randi_range(2, 3)
+	_sch = Scheme.pick(rng)
+	var profile := String(PROFILES.keys()[rng.randi() % PROFILES.size()])
+	var pf: Dictionary = PROFILES[profile]
+	var layer_count := rng.randi_range(int(pf.layers[0]), int(pf.layers[1]))
 	for l in layer_count:
 		var buildings: Array = []
-		var count := rng.randi_range(8, 14)
+		var count := rng.randi_range(int(pf.count[0]), int(pf.count[1]))
 		for b in count:
 			buildings.append({
-				"w": rng.randf_range(0.55, 1.35),
+				"w": rng.randf_range(float(pf.w[0]), float(pf.w[1])),
 				"band": rng.randf(),
-				"wcols": rng.randi_range(2, 4),
-				"wrows": rng.randi_range(4, 9),
+				"wcols": rng.randi_range(int(pf.wcols[0]), int(pf.wcols[1])),
+				"wrows": rng.randi_range(int(pf.wrows[0]), int(pf.wrows[1])),
 				"phase": rng.randf() * TAU,
+				# Each block sits a little off the scheme's base hue, so a row of towers is
+				# a family of related greys/blues rather than one flat repeated colour.
+				"hue": _sch.vary(rng, 0.6),
 			})
 		var depth := float(l) / float(maxi(1, layer_count - 1))
 		_layers.append({"buildings": buildings, "depth": depth})
 	# Weather, composed from the shared Layer registry - the same snow/rain that are
-	# scenes on their own, falling over the skyline (integration, not bespoke code).
+	# scenes on their own, falling over the skyline (integration, not bespoke code). It takes
+	# the scheme's accent, so the sky is lit by the same city.
 	var weather := rng.randf()
 	if weather < 0.30:
-		add_layer("stars", rng, {"z": "back", "count": rng.randi_range(80, 140), "hue": 0.6})
-		add_layer("snow", rng, {"count": rng.randi_range(70, 120), "hue": 0.58, "fall": 0.09})
+		add_layer("stars", rng, {"z": "back", "count": rng.randi_range(80, 140),
+			"hue": _sch.accent, "sat": _sch.sat * 0.3})
+		add_layer("snow", rng, {"count": rng.randi_range(70, 120),
+			"hue": _sch.accent, "sat": _sch.sat * 0.25, "fall": 0.09})
 	elif weather < 0.50:
-		add_layer("rain", rng, {"count": rng.randi_range(100, 170), "hue": 0.6, "slant": 0.22})
+		add_layer("rain", rng, {"count": rng.randi_range(100, 170),
+			"hue": _sch.accent, "sat": _sch.sat * 0.4, "slant": 0.22})
 	elif weather < 0.65:
-		add_layer("stars", rng, {"z": "back", "count": rng.randi_range(90, 160), "hue": 0.62})
+		add_layer("stars", rng, {"z": "back", "count": rng.randi_range(90, 160),
+			"hue": _sch.accent, "sat": _sch.sat * 0.3})
 	return {
-		"hue": rng.randf(),
-		"max_h": rng.randf_range(0.45, 0.80),
-		"win_hue": rng.randf(),
+		"mood": _sch.name,
+		"profile": profile,
+		"layers": layer_count,
+		"max_h": rng.randf_range(float(pf.max_h[0]), float(pf.max_h[1])),
 	}
 
 
@@ -61,9 +93,7 @@ func _draw() -> void:
 	# The baseline sits BELOW the visible bottom, so the buildings run off the bottom
 	# edge - no black bar under the skyline (the old 0.92 left a strip).
 	var ground := halfh * 1.18
-	var hue: float = params.hue
 	var max_h: float = params.max_h
-	var win_hue: float = params.win_hue
 
 	for li in _layers.size():
 		var layer: Dictionary = _layers[li]
@@ -79,9 +109,11 @@ func _draw() -> void:
 			var h := max_h * size.y * (0.22 + 0.78 * loud) * (0.5 + 0.5 * depth)
 			var top := ground - h
 			var shade := 0.10 + 0.16 * depth + 0.12 * loud
-			var hh := fposmod(hue + 0.05 * depth, 1.0)
-			draw_rect(Rect2(x, top, w, ground - top), Color.from_hsv(hh, 0.4, shade))
-			_windows(x, top, w, ground, bd, loud, depth, win_hue)
+			var hh := fposmod(float(bd.hue) + 0.05 * depth, 1.0)
+			# Saturation/value SCALE the mood, so an ash city stays grey concrete and a
+			# violet one stays violet without either restating absolute numbers.
+			draw_rect(Rect2(x, top, w, ground - top), _sch.color(hh, 0.6, shade * 1.15))
+			_windows(x, top, w, ground, bd, loud, depth)
 
 	draw_layers("front")         # snow / rain falling over the city
 
@@ -95,7 +127,7 @@ func _whash(a: int, b: int, salt: float) -> float:
 
 # A grid of lit windows on one building face; which are lit drifts with time and
 # flares with loudness/beat.
-func _windows(x: float, top: float, w: float, ground: float, bd: Dictionary, loud: float, depth: float, win_hue: float) -> void:
+func _windows(x: float, top: float, w: float, ground: float, bd: Dictionary, loud: float, depth: float) -> void:
 	var cols := int(bd.wcols)
 	var rows := int(bd.wrows)
 	var pad := w * 0.16
@@ -128,7 +160,9 @@ func _windows(x: float, top: float, w: float, ground: float, bd: Dictionary, lou
 			var thr := _whash(wx * 2 + 1, wy * 2 + 7, phase)   # per-window sparsity
 			if activation > 0.12 + 0.7 * thr:
 				var bv := clampf(0.55 + 0.5 * activation, 0.0, 1.0)
-				var col := Color.from_hsv(fposmod(win_hue + 0.05 * cband, 1.0), 0.35,
-					bv * (0.7 + 0.3 * depth), 0.9)
+				# Lit windows sit on the scheme's ACCENT - the contrast against the block
+				# mass is the mood's own complement, not a second unrelated hue.
+				var col := _sch.color(fposmod(_sch.accent + 0.05 * cband, 1.0), 0.5,
+					bv * (0.7 + 0.3 * depth) * 1.6, 0.9)
 				var wx_left := x + pad + wx * cell_w
 				draw_rect(Rect2(wx_left, wy_top, ww, wh), col)

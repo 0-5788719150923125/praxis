@@ -11,9 +11,28 @@ extends Scene3D
 ## the glass catches the light by how each shard faces the camera. The old version
 ## was flat shards sliding in the 2D plane; this one is dimensional.
 
+## Glass takes a tint; it does not take a soil colour. Everything cool or jewelled
+## reads as glass, plus the warm ones that read as hot or amber glass - what is left
+## out is the organic/earthy end (verdant, toxic, sodium), which reads as liquid.
+const GLASS_MOODS := ["glacier", "teal", "abyss", "violet", "magenta",
+	"rose", "bone", "ash", "brass", "dawn", "ember"]
+
+## The intact pane. It used to be a near-circle or a near-square and nothing else,
+## so every shatter started from one of two silhouettes.
+const PANES := ["disc", "rect", "polygon", "portrait"]
+
+## How finely the pane is divided before the first beat lands. Coarse panes throw a
+## few big planes of glass; fine ones craze into splinters.
+const GRAINS := {
+	"coarse": {"cuts": [7, 14], "growth": 4},
+	"medium": {"cuts": [18, 34], "growth": 3},
+	"fine": {"cuts": [38, 58], "growth": 2},
+}
+
 var _f: AudioFeatures = AudioFeatures.new()
 var _rng := RandomNumberGenerator.new()
 var _shards: Array = []
+var _sch: Scheme
 var _hue := 0.0
 var _oneshot := false
 var _fired := false
@@ -26,30 +45,28 @@ var _max_shards := 60        # stop cracking once the pane is this finely divide
 var _cracks: Array = []      # transient bright fracture flashes ({a, b world endpoints, age})
 
 const PANE := 1.25       # pane half-size, world units
+# The mood brightness the glass shading was tuned against; exposure is expressed
+# relative to it, so a dim mood really is dimmer glass and a bright one glares.
+const NOMINAL_VAL := 0.85
 
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	framing = "plane"
 	_rng.seed = rng.randi()
-	_hue = rng.randf()
+	_sch = Scheme.among(GLASS_MOODS, rng)
+	_hue = _sch.hue
 	_oneshot = rng.randf() < 0.4
 	lifecycle = "oneshot" if _oneshot else "loop"
-	lens.fov = rng.randf_range(40.0, 52.0)
+	lens.fov = rng.randf_range(38.0, 58.0)
 	_angle = rng.randf_range(0.35, 0.7)
 
-	# The intact pane (a disc or a rectangle), fractured into shards.
-	var base := PackedVector2Array()
-	if rng.randf() < 0.5:
-		var n := rng.randi_range(12, 18)
-		for i in n:
-			var a := TAU * float(i) / float(n)
-			base.append(Vector2(cos(a), sin(a)) * PANE)
-	else:
-		var hw := PANE * rng.randf_range(0.85, 1.1)
-		var hh := PANE * rng.randf_range(0.6, 1.0)
-		base = PackedVector2Array([Vector2(-hw, -hh), Vector2(hw, -hh), Vector2(hw, hh), Vector2(-hw, hh)])
+	var form := String(PANES[rng.randi() % PANES.size()])
+	var gname := String(GRAINS.keys()[rng.randi() % GRAINS.size()])
+	var grain: Dictionary = GRAINS[gname]
+	var base := _pane(form, rng)
+	var cuts: Array = grain["cuts"]
 	var impact := Vector2(rng.randf_range(-1, 1), rng.randf_range(-1, 1)) * PANE * 0.4
-	var shards := Geo.fracture(base, rng.randi_range(18, 34), impact, PANE * 0.12, rng)
+	var shards := Geo.fracture(base, rng.randi_range(int(cuts[0]), int(cuts[1])), impact, PANE * 0.12, rng)
 	for poly: PackedVector2Array in shards:
 		var cen := Geo.centroid(poly)
 		var local := PackedVector2Array()
@@ -67,7 +84,9 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 			"basis": Basis.IDENTITY,
 			"vel": Vector3.ZERO,
 			"spin": Vector3.ZERO,
-			"hue": fposmod(_hue + 0.22 * cen.length() / PANE + 0.12 * chan, 1.0),
+			# Centre shards hold the scheme's base; the rim travels toward its accent,
+			# so the pane is a graded piece of one glass rather than a hue plus a number.
+			"hue": _toward_accent(0.75 * cen.length() / PANE + 0.25 * chan),
 			"noise": Vector3(rng.randf_range(-1, 1), rng.randf_range(-1, 1), rng.randf_range(-1, 1)),
 			"chan": chan,
 			"resonance": rng.randf_range(0.6, 1.0),   # how strongly this shard answers its band
@@ -76,8 +95,42 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	# Cracks are driven by the music, not a clock: harmonic stress accumulates and releases as
 	# a connected fracture at a sampled threshold (see update / _fracture_run).
 	_stress_thresh = rng.randf_range(2.6, 5.5)
-	_max_shards = mini(72, _shards.size() * 3)
-	return {}
+	# Coarse panes have the most room left to crack into; fine ones are near done.
+	_max_shards = mini(110, _shards.size() * int(grain["growth"]))
+	return {"mood": _sch.name, "pane": form, "grain": gname, "shards": _shards.size()}
+
+
+## The intact pane, before anything cracks. Each form is a different silhouette to
+## fracture: a round port, a landscape sheet, a cut window, a tall panel.
+func _pane(form: String, rng: RandomNumberGenerator) -> PackedVector2Array:
+	var base := PackedVector2Array()
+	match form:
+		"disc":
+			var n := rng.randi_range(12, 20)
+			for i in n:
+				var a := TAU * float(i) / float(n)
+				base.append(Vector2(cos(a), sin(a)) * PANE)
+		"polygon":
+			var n := rng.randi_range(5, 8)
+			var turn := rng.randf() * TAU
+			for i in n:
+				var a := TAU * float(i) / float(n) + turn
+				base.append(Vector2(cos(a), sin(a)) * PANE)
+		"portrait":
+			var hw := PANE * rng.randf_range(0.42, 0.68)
+			var hh := PANE * rng.randf_range(1.02, 1.30)
+			base = PackedVector2Array([Vector2(-hw, -hh), Vector2(hw, -hh), Vector2(hw, hh), Vector2(-hw, hh)])
+		_:
+			var hw := PANE * rng.randf_range(0.70, 1.35)
+			var hh := PANE * rng.randf_range(0.50, 1.10)
+			base = PackedVector2Array([Vector2(-hw, -hh), Vector2(hw, -hh), Vector2(hw, hh), Vector2(-hw, hh)])
+	return base
+
+
+## A hue `t` of the way from the scheme's base to its accent, the short way round.
+func _toward_accent(t: float) -> float:
+	var d := fposmod(_sch.accent - _sch.hue + 0.5, 1.0) - 0.5
+	return fposmod(_sch.hue + d * t, 1.0)
 
 
 func finished() -> bool:
@@ -206,7 +259,7 @@ func _child_from(parent: Dictionary, piece: PackedVector2Array, kick: Vector3, h
 	return {
 		"poly": local, "home": home, "pos": pos, "basis": basis,
 		"vel": Vector3(parent.vel) + kick, "spin": Vector3(parent.spin),
-		"hue": fposmod(float(parent.hue) + _rng.randf_range(-0.02, 0.02), 1.0),
+		"hue": fposmod(float(parent.hue) + _rng.randf_range(-1.0, 1.0) * _sch.spread * 0.4, 1.0),
 		"noise": Vector3(_rng.randf_range(-1, 1), _rng.randf_range(-1, 1), _rng.randf_range(-1, 1)),
 		"chan": clampf(float(parent.chan) + _rng.randf_range(-0.05, 0.05), 0.0, 1.0),
 		"resonance": float(parent.resonance), "lev": float(parent.lev),
@@ -299,10 +352,12 @@ func _draw() -> void:
 		# and brightens. Drawn back-to-front (above), so the alpha layers compose correctly.
 		var val := clampf(0.30 + 0.45 * res + 0.28 * face, 0.1, 1.0)
 		var alpha := clampf(0.24 + 0.5 * res + 0.16 * face, 0.2, 0.92)
-		draw_colored_polygon(poly, Color.from_hsv(s.hue, 0.4, val, alpha))
+		draw_colored_polygon(poly, _sch.color(s.hue, 0.55, val / NOMINAL_VAL, alpha))
 		var edge := poly.duplicate()
 		edge.append(poly[0])
-		draw_polyline(edge, Color.from_hsv(s.hue, 0.15, 1.0, clampf(0.18 + 0.4 * res + 0.4 * scatter, 0.0, 1.0)), 1.0, true)
+		# The rim is a specular highlight: white whatever the mood, only faintly tinted.
+		draw_polyline(edge, Color.from_hsv(s.hue, _sch.sat * 0.22, 1.0,
+			clampf(0.18 + 0.4 * res + 0.4 * scatter, 0.0, 1.0)), 1.0, true)
 
 	# Fracture flashes: a bright streak along each freshly formed crack, fading as it ages -
 	# the visible "new break" the eye catches before it settles into the permanent seam.

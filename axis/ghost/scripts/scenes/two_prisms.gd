@@ -14,6 +14,24 @@ extends GhostScene
 ##
 ## Arrives by morph from `eye_prism` (`morph_in = "eye2prism"`): reuses the live blue prism and
 ## bursts the red at the eye's slot. Hands off to `prism_swarm` (`morph_out = "prisms"`).
+##
+## The pair takes a [Scheme] mood: the lead on its base hue, the counter on the mood's opposed
+## hue. Both ride on the BODIES as offsets from [constant HUE_BLUE] / [constant HUE_RED] (the
+## convention `eye_prism` established), so a body handed across a morph keeps its colour and this
+## scene inherits whatever the eye crystallized into instead of snapping back to blue. When that
+## happens the red is re-derived from the arriving hue, so the pair is always ONE mood's
+## opposition rather than two unrelated ones.
+
+## The pair's staging - separation and size together, since the two only read well in
+## combination: two big prisms crowded together overlap, two small ones far apart lose the
+## relationship. The old build rolled a 0.03-wide band of each and could only ever be "paired".
+## Each entry leaves room for the SPECIALIZE phase, where the lead swells by half again -
+## a measured clearance, since "close" originally crossed into overlap once it did.
+const STAGING := {
+	"close":  {"off": [0.10, 0.13], "size": [0.10, 0.13]},
+	"paired": {"off": [0.14, 0.17], "size": [0.16, 0.20]},
+	"apart":  {"off": [0.24, 0.30], "size": [0.20, 0.25]},
+}
 
 var _f: AudioFeatures = AudioFeatures.new()
 var _blue: PrismBody
@@ -30,6 +48,9 @@ var _burst := 0.0                   # the red's form-in flash envelope
 var _lock := 0.0                    # 0 free .. 1 red phase-locked to blue
 var _lockflash := 0.0
 var _rspin := 1.0                   # red's own spin scale (damped to 0 when it "holds steady")
+var _lead_off := 0.0                # the mood, as an offset from HUE_BLUE, carried on the body
+var _sep := -0.6                    # lead -> counter hue distance; survives a morph so the pair stays a pair
+var _red_cast := 0.0                # the red body's own small per-instance hue cast
 const HUE_BLUE := 0.6
 const HUE_RED := 0.0
 
@@ -49,16 +70,43 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	morph_out = "prisms"
 	_blue = PrismBody.new(rng.randi())
 	_red = PrismBody.new(rng.randi())
-	_base = rng.randf_range(0.16, 0.20)
+	# One mood, two roles. `+=` rather than `=` so each body keeps the small cast it rolled for
+	# itself - the pair are two prisms of one colour family, not two copies of one hue.
+	var sch := Scheme.pick(rng)
+	var lead := sch.vary(rng)
+	var counter := sch.opposed(lead)
+	_sep = wrapf(counter - lead, -0.5, 0.5)
+	_lead_off = wrapf(lead - HUE_BLUE, -0.5, 0.5)
+	_red_cast = _red.hue_shift
+	_blue.hue_shift += _lead_off
+	_red.hue_shift += wrapf(counter - HUE_RED, -0.5, 0.5)
+	var stage := String(STAGING.keys()[rng.randi() % STAGING.size()])
+	var st: Dictionary = STAGING[stage]
+	var size_band: Array = st["size"]
+	var off_band: Array = st["off"]
+	_base = rng.randf_range(float(size_band[0]), float(size_band[1]))
 	_bscale = _base
 	_rscale = _base
-	var off := rng.randf_range(0.14, 0.17)
-	_banch = Vector2(off, 0.0)
-	_ranch = Vector2(-off, 0.0)
+	var off := rng.randf_range(float(off_band[0]), float(off_band[1]))
+	# The pair's AXIS, not just its gap: level is only one of the ways two things can face
+	# each other, and a leaning pair re-composes the whole frame.
+	var tilt := rng.randf_range(-0.55, 0.55)
+	var axis := Vector2(cos(tilt), sin(tilt))
+	_banch = axis * off
+	_ranch = -axis * off
 	_bpos = _banch
 	_rpos = _ranch
 	_t = 0.0
-	return {}
+	return {"mood": sch.name, "staging": stage, "lead": lead, "counter": counter,
+		"tilt": tilt, "offset": off, "size": _base, "forms": [_blue.form, _red.form]}
+
+
+# The prism family's second hue: the mood's own accent, never closer to the lead than Scheme.opposed allows.
+# Several moods keep their accent within a few hundredths of the base, and two prisms that close
+# together stop reading as an opposition - which is the whole point of this scene. Those are
+# pushed out along the DIRECTION the mood already chose rather than replaced by a generic
+# complement, so verdant still turns amber and glacier still turns violet. Measured against the
+# drifted lead, not the mood's nominal hue, since `vary` moves it.
 
 
 # Arrived from eye_prism: keep the live blue prism, and burst the red in at the eye's slot.
@@ -68,6 +116,12 @@ func begin_morph(from: GhostScene) -> void:
 		return
 	if p.has("blue"):
 		_blue = p["blue"]
+		# The arriving body carries the mood the eye crystallized into. Re-derive the red from
+		# THAT hue at the separation this build rolled, so the morph lands one mood's opposition
+		# instead of the eye's colour beside an unrelated red.
+		_lead_off = _blue.hue_shift
+		var lead := fposmod(HUE_BLUE + _lead_off, 1.0)
+		_red.hue_shift = _red_cast + wrapf(fposmod(lead + _sep, 1.0) - HUE_RED, -0.5, 0.5)
 	_banch = p.get("blue_slot", _banch)
 	_ranch = p.get("eye_slot", _ranch)
 	_bpos = _banch
@@ -144,9 +198,11 @@ func _draw() -> void:
 	var u := unit()
 	var bc := _bpos * u
 	var rc := _rpos * u
-	# The red bursts into being where the eye was: a bright flash that fades as it forms.
+	# The red bursts into being where the eye was: a bright flash that fades as it forms. The
+	# flash is the counter's own colour, so it is not a red bloom on a green prism.
 	if _burst > 0.001:
-		draw_circle(rc, _rscale * u * (0.6 + 1.6 * _burst), Color(1.0, 0.5, 0.4, 0.5 * _burst))
+		var fc := Color.from_hsv(fposmod(HUE_RED + _red.hue_shift, 1.0), 0.5, 1.0)
+		draw_circle(rc, _rscale * u * (0.6 + 1.6 * _burst), Color(fc.r, fc.g, fc.b, 0.5 * _burst))
 		draw_circle(rc, _rscale * u * (0.3 + 0.7 * _burst), Color(1, 1, 1, 0.6 * _burst))
 	_blue.draw(self, bc, _bscale * u, HUE_BLUE, 1.0)
 	_red.draw(self, rc, _rscale * u, HUE_RED, clampf(1.0 - _burst * 0.5, 0.0, 1.0))

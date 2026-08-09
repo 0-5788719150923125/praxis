@@ -22,11 +22,38 @@ const EDGES := [
 	[APEX, BACK, true], [APEX, LEFT, true], [APEX, RIGHT, true],
 	[BACK, LEFT, false], [LEFT, RIGHT, false], [RIGHT, BACK, false]]
 
+## The shell's form, and how often each is rolled. The tetra family (the browser
+## geometry, plus the same topology stretched into a spire or squashed into a slab)
+## carries most of the weight, because the tetrahedron IS the prism's identity - the
+## five-point bipyramid and the octahedron are the deviation, not the default.
+const FORM_WEIGHTS := {
+	"tetra": 0.30, "spire": 0.16, "slab": 0.16, "bipyramid": 0.20, "octa": 0.18,
+}
+# Axis scale per tetra-family form: one topology, three proportions.
+const FORM_SCALE := {
+	"tetra": Vector3(1.0, 1.0, 1.0),
+	"spire": Vector3(0.72, 1.45, 0.72),
+	"slab":  Vector3(1.28, 0.66, 1.28),
+}
+
 const TENDRIL_MAX_LEN := 0.46     # keep tendrils inside the shell
+
+## The rolled shell, so a scene can report what it actually built.
+var form := "tetra"
+## Hue offset in turns, added to whatever hue a caller draws this body with. Small by
+## default (a "blue" prism stays blue, a "red" one red), but a scene may set it
+## outright - see `eye_prism`, which crystallizes its eye on a [Scheme] mood this way.
+## It rides on the INSTANCE so a body handed across a morph keeps its colour.
+var hue_shift := 0.0
 
 var rot := Vector3.ZERO
 var _vel := Vector3.ZERO
 var _rng := RandomNumberGenerator.new()
+var _verts: Array = VERTS         # this body's own shell (form-dependent)
+var _edges: Array = EDGES
+var _max_len := TENDRIL_MAX_LEN   # this body's tendril reach
+var _dens_lo := 10                # tendril count at rest ..
+var _dens_hi := 42                # .. and at full energy
 var _tendrils: Array = []
 var _energy := 0.0
 var _breath := 0.0               # the shared LIGHT pulse - a multi-wave breathing (browser's spawn
@@ -44,14 +71,75 @@ func _init(seed_value := 0) -> void:
 	_rng.seed = seed_value
 	_vel = Vector3(_rng.randf_range(0.18, 0.42), _rng.randf_range(0.28, 0.55), _rng.randf_range(0.08, 0.22))
 	rot = Vector3(_rng.randf() * TAU, _rng.randf() * TAU, _rng.randf() * TAU)
-	for i in 12:
+	form = _roll_form()
+	_build_shell(form)
+	# Reach and density were one number for every prism ghost has ever drawn: a sparse
+	# body now reads as a wire skeleton with a few long feelers, a dense one as a lit core.
+	_max_len = _rng.randf_range(0.32, 0.50)
+	_dens_lo = _rng.randi_range(5, 16)
+	_dens_hi = _dens_lo + _rng.randi_range(16, 48)
+	hue_shift = _rng.randf_range(-0.045, 0.045)
+	for i in maxi(4, _dens_lo):
 		_tendrils.append(_new_tendril())
+
+
+# Roll a form off FORM_WEIGHTS (weights need not sum to 1 - they are normalised here).
+func _roll_form() -> String:
+	var total := 0.0
+	for k in FORM_WEIGHTS:
+		total += float(FORM_WEIGHTS[k])
+	var pick := _rng.randf() * total
+	for k in FORM_WEIGHTS:
+		pick -= float(FORM_WEIGHTS[k])
+		if pick <= 0.0:
+			return String(k)
+	return "tetra"
+
+
+# Build this body's vertices and edges. Every form keeps the same contract as the
+# browser tetra: points roughly on a 0.5-radius shell, and edges flagged `is_apex` for
+# the ones that meet at a pole (those read brighter, which is what gives the solid a
+# top and a bottom instead of a uniform cage).
+func _build_shell(f: String) -> void:
+	if FORM_SCALE.has(f):
+		var s: Vector3 = FORM_SCALE[f]
+		_verts = []
+		for v in VERTS:
+			_verts.append((v as Vector3) * s)
+		_edges = []
+		for e in EDGES:
+			_edges.append([(e[0] as Vector3) * s, (e[1] as Vector3) * s, e[2]])
+		return
+	if f == "bipyramid":
+		# Two apices over a shared triangle: the tetra with its base pulled to a point.
+		var top := Vector3(0.0, -0.62, 0.0)
+		var bot := Vector3(0.0, 0.62, 0.0)
+		var ring: Array = [Vector3(0.0, 0.0, -0.577), Vector3(-0.5, 0.0, 0.289),
+			Vector3(0.5, 0.0, 0.289)]
+		_verts = [top, bot, ring[0], ring[1], ring[2]]
+		_edges = []
+		for i in 3:
+			_edges.append([top, ring[i], true])
+			_edges.append([bot, ring[i], true])
+			_edges.append([ring[i], ring[(i + 1) % 3], false])
+		return
+	# octa: six points on the axes, the ring squared off rather than triangular.
+	var up := Vector3(0.0, -0.58, 0.0)
+	var dn := Vector3(0.0, 0.58, 0.0)
+	var belt: Array = [Vector3(0.5, 0.0, 0.0), Vector3(0.0, 0.0, 0.5),
+		Vector3(-0.5, 0.0, 0.0), Vector3(0.0, 0.0, -0.5)]
+	_verts = [up, dn, belt[0], belt[1], belt[2], belt[3]]
+	_edges = []
+	for i in 4:
+		_edges.append([up, belt[i], true])
+		_edges.append([dn, belt[i], true])
+		_edges.append([belt[i], belt[(i + 1) % 4], false])
 
 
 func _new_tendril() -> Dictionary:
 	var dir: Vector3
 	if _rng.randf() < 0.30:                                  # aim some at the corners/edges
-		dir = (VERTS[_rng.randi() % VERTS.size()]
+		dir = (_verts[_rng.randi() % _verts.size()]
 			+ Vector3(_rng.randf_range(-0.3, 0.3), _rng.randf_range(-0.3, 0.3), _rng.randf_range(-0.3, 0.3)))
 	else:
 		var phi := _rng.randf() * TAU
@@ -59,13 +147,26 @@ func _new_tendril() -> Dictionary:
 		dir = Vector3(cos(theta) * cos(phi), sin(theta), cos(theta) * sin(phi))
 	if dir.length() < 1e-4:
 		dir = Vector3.UP
+	dir = dir.normalized()
 	return {
-		"dir": dir.normalized(),
-		"len": _rng.randf_range(0.30, TENDRIL_MAX_LEN),
+		"dir": dir,
+		# Reach is scaled by how far the shell actually is in THAT direction, so a
+		# squashed slab's tendrils stay inside it and a spire's can run its length.
+		"len": _rng.randf_range(_max_len * 0.65, _max_len) * _shell_reach(dir),
 		"life": 0.0, "maxlife": _rng.randf_range(0.7, 1.6),
 		"op": 0.0, "grow": true, "prog": 0.0,
 		"wave": _rng.randf_range(0.015, 0.035), "phase": _rng.randf() * TAU,
 		"thick": _rng.randf_range(0.8, 2.0)}
+
+
+# How far the shell sits in a given direction, relative to the browser tetra's. Only
+# the stretched forms are anisotropic; the bipyramid and the octa are near enough to
+# round that 1.0 holds.
+func _shell_reach(dir: Vector3) -> float:
+	if not FORM_SCALE.has(form):
+		return 1.0
+	var s: Vector3 = FORM_SCALE[form]
+	return absf(dir.x) * s.x + absf(dir.y) * s.y + absf(dir.z) * s.z
 
 
 ## Advance the core and rotation. `drive` (0..1) is the audio energy - it surges the
@@ -81,7 +182,7 @@ func update(dt: float, drive: float) -> void:
 		+ (0.5 + 0.5 * sin(_t * 9.3 - 0.7)) * 0.2
 	_breath = clampf(bw * (0.5 + 1.15 * _energy), 0.0, 1.3)
 	rot += _vel * dt * (0.4 + 0.7 * _energy)               # looks around faster when lively
-	var want := int(lerpf(10.0, 42.0, _energy))            # surge with energy
+	var want := int(lerpf(float(_dens_lo), float(_dens_hi), _energy))   # surge with energy
 	while _tendrils.size() < want:
 		_tendrils.append(_new_tendril())
 	for td in _tendrils:
@@ -142,6 +243,7 @@ func _project(p: Vector3, center: Vector2, scale: float) -> Vector2:
 ## Draw the prism at [param center], [param scale] px, in [param hue] (blue ≈ 0.6,
 ## red ≈ 0.0). [param fade] (0..1) scales overall opacity for transitions.
 func draw(ci: CanvasItem, center: Vector2, scale: float, hue: float, fade := 1.0) -> void:
+	hue = fposmod(hue + hue_shift, 1.0)         # the body's own cast, carried across morphs
 	var basis := Basis.from_euler(rot)
 	var c := center + _disp * scale             # the focal point, dislodged from the anchor `center`
 	# Project tendril tips once, for edge illumination.
@@ -150,7 +252,7 @@ func draw(ci: CanvasItem, center: Vector2, scale: float, hue: float, fade := 1.0
 		tips.append((td.dir as Vector3) * (float(td.len) * float(td.prog)))
 
 	# Edges, lit where tendrils pass near them (the wireframe flickers with the core).
-	for e in EDGES:
+	for e in _edges:
 		var a: Vector3 = basis * e[0]
 		var b: Vector3 = basis * e[1]
 		var illum := 0.0

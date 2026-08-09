@@ -10,11 +10,30 @@ extends Scene3D
 ## may be a rock, a hybrid, a platonic solid, or nothing at all, and is kept small so it
 ## no longer dominates the frame. It can also bleed a faint sky (stars / fog) behind the
 ## ring, composed from the shared [Layer] registry.
+##
+## The ring's LAYOUT is sampled too ([constant RINGS]): even, woven, stepped or
+## scalloped, so alternate panels can step in and out of the circle or stand at
+## different heights instead of the one flat band of identical panels it always was,
+## and the panels themselves run from tall blades to stubby tiles. Colour comes from
+## one [Scheme] - the band grades from its base hue to its accent round the ring, the
+## core body wears the accent, and the sky behind agrees instead of being fixed blue.
 
 const BASE_H := 0.16          # bar half-height at rest
-const PANEL_H := 0.42         # half-height of each panel (uniform: they SLIDE, they don't grow)
-const SLIDE_AMP := 0.85       # how far a panel travels up/down along its single (vertical) axis
 const SLIDE_MID := 0.5        # band level that sits a panel at the ring's resting height
+# The mood brightness the panel lighting was tuned against; exposure is expressed
+# relative to it, so a dim mood really is a dimmer ring and a bright one glares.
+const NOMINAL_VAL := 0.85
+
+## Ring layouts. The panels used to be one evenly spaced circle at a single radius
+## with a single resting height, every time; this is the choice that decides the
+## ring's silhouette before anything moves. `stagger` steps alternate panels in and
+## out of the circle, `lift` stands them at alternating heights.
+const RINGS := {
+	"even": {"stagger": 0.0, "lift": 0.0},
+	"woven": {"stagger": 0.10, "lift": 0.0},
+	"stepped": {"stagger": 0.0, "lift": 0.24},
+	"scalloped": {"stagger": 0.06, "lift": 0.13},
+}
 
 var _f: AudioFeatures = AudioFeatures.new()
 var _bars: Array = []         # parallel to `planes`: {t} spectrum coordinate
@@ -23,12 +42,15 @@ var _core_basis := Basis.IDENTITY
 var _core_scale := 0.45
 var _core_spin := Vector3(0.08, 0.22, 0.0)
 var _has_core := true
+var _sch: Scheme
 var _hue := 0.0
 var _glow := 0.0
 var _yaw := 0.0
 # Sampled camera + ring (set in build_params).
 var _R := 2.3
 var _bar_w := 0.13
+var _panel_h := 0.42          # half-height of each panel (uniform: they SLIDE, they don't grow)
+var _slide := 0.85            # how far a panel travels along its single (vertical) axis
 var _orbit_dist := 5.4
 var _pitch_base := 0.30
 var _pitch_amp := 0.08
@@ -53,11 +75,16 @@ var _twist_speed := 0.2
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	framing = "field"                       # the lens is the camera; keep 2D shots gentle
-	_hue = rng.randf()
+	# A ring of lit panels is abstract - every mood suits it, so take the whole set.
+	_sch = Scheme.pick(rng)
+	_hue = _sch.hue
 	# Sample the whole shot: lens, orbit, ring - so the angle and framing vary every time.
 	lens.fov = rng.randf_range(54.0, 78.0)  # wide lens => forced perspective
 	_R = rng.randf_range(1.9, 2.8)
 	_bar_w = rng.randf_range(0.09, 0.17)
+	# Panel proportions: tall blades through to stubby tiles, and how far they travel.
+	_panel_h = rng.randf_range(0.22, 0.70)
+	_slide = rng.randf_range(0.55, 1.20)
 	_orbit_dist = rng.randf_range(4.6, 7.0)
 	_pitch_base = rng.randf_range(0.10, 0.55)
 	_pitch_amp = rng.randf_range(0.03, 0.12)
@@ -78,7 +105,12 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_twist_speed = rng.randf_range(0.08, 0.28) * (1.0 if rng.randf() < 0.5 else -1.0)
 	_twist_a = rng.randf() * TAU
 
-	var count := rng.randi_range(28, 50)
+	var lname := String(RINGS.keys()[rng.randi() % RINGS.size()])
+	var ring: Dictionary = RINGS[lname]
+	var stagger := float(ring["stagger"]) * rng.randf_range(0.6, 1.4)
+	var lift := float(ring["lift"]) * rng.randf_range(0.6, 1.4)
+	# From a sparse colonnade of wide blades to a dense fine-toothed band.
+	var count := rng.randi_range(14, 72)
 	for i in count:
 		var a := float(i) / float(count) * TAU
 		# Palindrome spectrum mapping: t runs 0 -> 1 -> 0 around the ring, so the value at the
@@ -87,24 +119,32 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		# loop-edge.) Every panel is one continuous circle; each just slides on its own Y axis.
 		var u := float(i) / float(count)
 		var t := 1.0 - absf(2.0 * u - 1.0)
-		var c := Vector3(cos(a) * _R, BASE_H, sin(a) * _R)
+		# Alternating panels step out of the circle and stand higher, by layout - the
+		# ring is no longer obliged to be a single flat band of identical panels.
+		var alt := 1.0 if i % 2 == 0 else -1.0
+		var r := _R * (1.0 + stagger * alt)
+		var y := lift * alt * _panel_h
+		var c := Vector3(cos(a) * r, BASE_H + y, sin(a) * r)
 		var uax := Vector3(-sin(a), 0.0, cos(a)) * _bar_w      # tangential width
-		var vax := Vector3.UP * PANEL_H
-		var pl := Plane3D.new(c, uax, vax, Color.from_hsv(_hue, 0.7, 0.8, 0.9))
+		var vax := Vector3.UP * _panel_h
+		var pl := Plane3D.new(c, uax, vax, _sch.base(1.0, 0.95, 0.9))
 		pl.edge = Color(1, 1, 1, 0.22)
 		add_plane(pl)
 		# Store each panel's LOCAL ring position + tangent so the whole ring can be re-oriented
 		# by _ring_basis each frame (the panel slides along the ring's local up).
-		_bars.append({"t": t, "a": a, "bx": cos(a) * _R, "bz": sin(a) * _R, "ul": uax})
+		_bars.append({"t": t, "a": a, "bx": cos(a) * r, "bz": sin(a) * r, "y": y, "ul": uax})
 
 	_make_core(rng)
-	# Cross-scene bleed: a faint sky behind the ring, sometimes.
+	# Cross-scene bleed: a faint sky behind the ring, sometimes. The sky belongs to the
+	# same scheme as the ring - a hardcoded blue star field fought half the moods.
 	var bg := rng.randf()
 	if bg < 0.40:
-		add_layer("stars", rng, {"z": "back", "count": rng.randi_range(70, 130), "hue": 0.6})
+		add_layer("stars", rng, {"z": "back", "count": rng.randi_range(70, 130), "hue": _sch.accent})
 	elif bg < 0.58:
-		add_layer("fog", rng, {"z": "back", "hue": _hue, "sat": 0.25, "alpha": 0.03, "count": 5})
-	return {"count": count}
+		add_layer("fog", rng, {"z": "back", "hue": _sch.vary(rng), "sat": _sch.sat * 0.35,
+			"alpha": 0.03, "count": 5})
+	return {"count": count, "mood": _sch.name, "ring": lname,
+		"panel_h": _panel_h, "slide": _slide}
 
 
 # The central body: by seed a rock, a hybrid, a platonic solid, or nothing - and small,
@@ -162,23 +202,36 @@ func update(f: AudioFeatures, delta: float) -> void:
 		var d := absf(wrapf(float(bar.a) - _twist_a, -PI, PI))
 		var w := 1.0 - smoothstep(0.0, _twist_w, d)
 		var ang := w * _twist_max
-		var radial := Vector3(float(bar.bx), 0.0, float(bar.bz)) / _R       # unit outward
+		# Normalized, not divided by _R: staggered layouts sit panels off the nominal radius.
+		var radial := Vector3(float(bar.bx), 0.0, float(bar.bz)).normalized()
 		var axis := Vector3.UP * cos(ang) + radial * sin(ang)              # up -> outward (-> inverted)
 		# Each panel SLIDES along its (possibly twisted) axis by its band, then the whole ring is
 		# re-oriented by the tumble basis - so the undulating circle also rolls and tilts as a body.
-		var local := Vector3(float(bar.bx), 0.0, float(bar.bz)) + axis * (SLIDE_AMP * (amp - SLIDE_MID))
+		var local := Vector3(float(bar.bx), float(bar.y), float(bar.bz)) \
+			+ axis * (_slide * (amp - SLIDE_MID))
 		pl.center = _ring_basis * local
 		pl.u_axis = _ring_basis * (bar.ul as Vector3)
-		pl.v_axis = _ring_basis * (axis * PANEL_H)
+		pl.v_axis = _ring_basis * (axis * _panel_h)
 		var lit := clampf(0.30 + 0.70 * band + 0.45 * _glow, 0.0, 1.0)
-		pl.color = Color.from_hsv(fposmod(_hue + 0.25 * float(bar.t) + 0.05 * _glow, 1.0), 0.7, lit, 0.9)
+		# Round the ring the panels travel from the scheme's base hue to its accent, so
+		# the band is graded within one mood instead of an arbitrary quarter-turn away.
+		pl.color = _sch.color(_toward_accent(0.85 * float(bar.t) + 0.15 * _glow),
+			1.0, lit / NOMINAL_VAL, 0.9)
 
 	bodies.clear()
 	if _has_core and _core != null:
 		_core_basis = _core_basis * Basis.from_euler(_core_spin * delta)
+		# The core reads AGAINST the ring: the scheme's own accent, which is a chosen
+		# partner for the base rather than a blind half-turn away from it.
 		add_body(_core, _core_basis, Vector3.ZERO, _core_scale,
-			fposmod(_hue + 0.5, 1.0), 0.5, 2, 0.9, 0.3 + 0.5 * _glow)
+			_sch.accent, _sch.sat * 0.8, 2, 0.9, 0.3 + 0.5 * _glow)
 	queue_redraw()
+
+
+## A hue `t` of the way from the scheme's base to its accent, the short way round.
+func _toward_accent(t: float) -> float:
+	var d := fposmod(_sch.accent - _sch.hue + 0.5, 1.0) - 0.5
+	return fposmod(_sch.hue + d * t, 1.0)
 
 
 func _draw() -> void:

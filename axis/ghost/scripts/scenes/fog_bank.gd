@@ -8,26 +8,47 @@ extends GhostScene
 ## bank lurches on the beat and coasts down (velocity + decay, not a uniform drift).
 ## `bed` + stacked `fog` layers - atmosphere from pure composition.
 
+# How heavy the bank is. A thin one barely veils the colour and a deep one buries it in
+# sheets, which is the difference between a glow with mist over it and weather - so the
+# sheet count, their opacity and the bed's brightness all move together.
+const BANKS := {
+	"thin":    {"sheets": [1, 1], "alpha": [0.020, 0.035], "count": [4, 6],  "val": [0.46, 0.60]},
+	"rolling": {"sheets": [2, 3], "alpha": [0.030, 0.050], "count": [5, 8],  "val": [0.38, 0.54]},
+	"deep":    {"sheets": [3, 4], "alpha": [0.040, 0.070], "count": [6, 10], "val": [0.28, 0.44]},
+}
+
+
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	render_kind = "canvas"
 	framing = "field"
-	var hue: float = rng.randf()
-	var warm := rng.randf() < 0.5
+	# Any mood is fair here: the bank is the constant, the colour under it is the variable.
+	var sch := Scheme.pick(rng)
+	var keys := BANKS.keys()
+	var bank := String(keys[rng.randi() % keys.size()])
+	var b: Dictionary = BANKS[bank]
+	var val_r: Array = b["val"]
+	var alpha_r: Array = b["alpha"]
+	var cnt_r: Array = b["count"]
+	var sheet_r: Array = b["sheets"]
 	# A bright, saturated bed so the colour reads strongly *through* the fog above it.
-	add_layer("bed", rng, {"hue": hue, "sat": rng.randf_range(0.6, 0.85),
-		"val": rng.randf_range(0.42, 0.58), "pools": rng.randi_range(4, 6)})
-	# One or two fog sheets, each a different tint and drift, for depth. Kept light so
-	# the bank veils the colour rather than burying it in white.
-	var sheets := rng.randi_range(1, 2)
+	add_layer("bed", rng, {
+		"hue": sch.hue,
+		"sat": clampf(sch.sat * rng.randf_range(0.85, 1.2), 0.05, 1.0),
+		"val": rng.randf_range(float(val_r[0]), float(val_r[1])),
+		"pools": rng.randi_range(3, 7),
+	})
+	var sheets := rng.randi_range(int(sheet_r[0]), int(sheet_r[1]))
 	for i in sheets:
-		var tint := fposmod(hue + (0.04 if warm else -0.4) + 0.06 * i, 1.0)
+		# The stack walks from the base hue toward the accent, so a pile of sheets is one
+		# family of tints rather than an arbitrary offset invented per sheet.
+		var tint: float = sch.hue_at(i + 1, sheets + 1)
 		add_layer("fog", rng, {
 			"hue": tint,
-			"sat": rng.randf_range(0.12, 0.3),
-			"alpha": rng.randf_range(0.03, 0.05),
-			"count": rng.randi_range(5, 7),
+			"sat": clampf(sch.sat * rng.randf_range(0.2, 0.5), 0.03, 0.6),
+			"alpha": rng.randf_range(float(alpha_r[0]), float(alpha_r[1])),
+			"count": rng.randi_range(int(cnt_r[0]), int(cnt_r[1])),
 		})
-	return {"hue": hue}
+	return {"hue": sch.hue, "mood": sch.name, "bank": bank, "sheets": sheets}
 
 
 func update(f: AudioFeatures, delta: float) -> void:

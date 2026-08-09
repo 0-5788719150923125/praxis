@@ -11,18 +11,38 @@ extends GhostScene
 ##   thread    - long smooth threads flowing across on the flow, barely branching.
 ## Audio drives the strikes / growth surge and the brightness; nonlinearity (the
 ## flow's meander, the spike-shaped drive, the asymmetric flare) is what animates it.
+## Each life draws its colour from a [Scheme] mood in its own plausible set, and its
+## count/weight from a density, so no two storms are the same storm.
 
+# `moods` is the set of [Scheme] moods that still read as this life - a bolt can be
+# any colour a discharge takes (cold blue, violet, near-white, ionised green) but not
+# a warm sodium orange, which reads as fire; threads can be any fibre. `sat_mul`
+# scales whatever saturation the mood carries, which is how lightning stays close to
+# white while nerves stay vivid, without either restating an absolute number.
 const MODES := {
-	"lightning": {"variant": "lightning", "count_lo": 4, "count_hi": 7, "grow": 1.6,
-		"fade": 1.1, "strike": true, "hue": 0.60, "sat": 0.35, "w_lo": 3.0, "w_hi": 5.0,
+	"lightning": {"variant": "lightning", "count_lo": 3, "count_hi": 8, "grow": 1.6,
+		"fade": 1.1, "strike": true, "sat_mul": 0.6, "w_lo": 3.0, "w_hi": 5.0,
+		"moods": ["glacier", "violet", "bone", "magenta", "teal", "abyss", "toxic"],
 		"len_lo": 0.55, "len_hi": 0.85, "evolve": 0.10, "jitter": 0.0, "cluster": 0.55},
-	"neural": {"variant": "tendril", "count_lo": 7, "count_hi": 12, "grow": 0.5,
-		"fade": 0.0, "strike": false, "hue": 0.75, "sat": 0.7, "w_lo": 3.0, "w_hi": 6.0,
+	"neural": {"variant": "tendril", "count_lo": 6, "count_hi": 14, "grow": 0.5,
+		"fade": 0.0, "strike": false, "sat_mul": 1.0, "w_lo": 3.0, "w_hi": 6.0,
+		"moods": ["violet", "magenta", "rose", "teal", "toxic", "abyss", "ember"],
 		"len_lo": 0.35, "len_hi": 0.55, "evolve": 0.05, "jitter": 0.012, "cluster": 0.55},
-	"thread": {"variant": "thread", "count_lo": 5, "count_hi": 9, "grow": 0.42,
-		"fade": 0.0, "strike": false, "hue": 0.50, "sat": 0.6, "w_lo": 2.0, "w_hi": 4.0,
+	"thread": {"variant": "thread", "count_lo": 4, "count_hi": 10, "grow": 0.42,
+		"fade": 0.0, "strike": false, "sat_mul": 0.9, "w_lo": 2.0, "w_hi": 4.0,
+		"moods": ["teal", "glacier", "bone", "verdant", "ash", "dawn", "brass", "rose"],
 		"len_lo": 0.6, "len_hi": 0.95, "evolve": 0.08, "jitter": 0.006, "cluster": 0.4},
 }
+
+# HOW MANY, HOW THICK. Each mode used to run one count range, so a lightning storm
+# was always 4-7 bolts of the same weight. Trading count against width keeps the ink
+# on screen roughly constant while the SILHOUETTE changes completely: a few heavy
+# strands, or a fine web of many.
+const DENSITIES := [
+	{"name": "sparse", "count": 0.55, "width": 1.5},
+	{"name": "even", "count": 1.0, "width": 1.0},
+	{"name": "dense", "count": 1.8, "width": 0.7},
+]
 
 var _f: AudioFeatures = AudioFeatures.new()
 var _rng := RandomNumberGenerator.new()
@@ -31,6 +51,9 @@ var _cfg: Dictionary
 var _mode := "lightning"
 var _fils: Array = []
 var _hue := 0.0
+var _accent := 0.5           # the scheme's partner hue - the sprouting bud and the tip
+var _sat := 0.5              # the strand's saturation, mood times the mode's multiplier
+var _wmul := 1.0             # density's width trade: fewer strands are thicker
 var _glow := 0.0
 var _spark := 0.0            # a rare SPONTANEOUS activation pulse - keeps the scene alive in dead air
 var _beat_prev := 0.0
@@ -56,10 +79,16 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_strike_mode = bool(_cfg.strike)
 	# Lightning converges on a point: the spread bolts all strike toward it.
 	_converge = Vector2(rng.randf_range(-0.35, 0.35), rng.randf_range(0.0, 0.45))
-	_hue = fposmod(float(_cfg.hue) + rng.randf_range(-0.08, 0.08), 1.0)
+	var sch := Scheme.among(_cfg.moods, rng)
+	_hue = sch.hue
+	_accent = sch.accent
+	_sat = clampf(sch.sat * float(_cfg.sat_mul), 0.03, 1.0)
+	var dens: Dictionary = DENSITIES[rng.randi() % DENSITIES.size()]
+	_wmul = float(dens["width"])
 	_flow = Flow2D.new(rng.randi(), rng.randf_range(2.0, 3.5), float(_cfg.evolve))
 	_strike_period = rng.randf_range(1.1, 2.0)
-	var count := rng.randi_range(int(_cfg.count_lo), int(_cfg.count_hi))
+	var count := maxi(2, roundi(rng.randi_range(int(_cfg.count_lo), int(_cfg.count_hi))
+		* float(dens["count"])))
 	for i in count:
 		var fil := {"fil": null, "grown": 0.0, "life": 0.0, "mature": 0.0,
 			"origin": Vector2.ZERO, "heading": 0.0, "active": false,
@@ -93,7 +122,8 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		if not any_persist and not _fils.is_empty():
 			_fils[0].persist = true
 			_fils[0].rest_floor = _rng.randf_range(0.10, 0.16)
-	return {}
+	return {"mode": _mode, "mood": sch.name, "density": String(dens["name"]), "hue": _hue,
+		"count": count}
 
 
 # Where a path starts and which way it heads, by mode.
@@ -139,7 +169,7 @@ func _regrow(fil: Dictionary) -> void:
 	var reach: float = float(fil.get("reach", 1.0))
 	var steps := int(round(_rng.randi_range(10, 18) * clampf(reach, 1.0, 3.0)))
 	var length := _rng.randf_range(float(_cfg.len_lo), float(_cfg.len_hi)) * reach
-	var width := _rng.randf_range(float(_cfg.w_lo), float(_cfg.w_hi))
+	var width := _rng.randf_range(float(_cfg.w_lo), float(_cfg.w_hi)) * _wmul
 	fil.heading += _rng.randf_range(-0.4, 0.4)
 	fil.fil = Filament.grow(String(_cfg.variant), fil.origin, fil.heading, length, width,
 		steps, _flow, _rng, float(_cfg.get("cluster", 0.0)))
@@ -390,17 +420,19 @@ func _draw() -> void:
 		var eased_grown: float = Nonlinear.apply("smoothstep", clampf(float(fil.grown), 0.0, 1.0))
 		# A glowing bud where the strand sprouts - a complementary node, alive with energy.
 		var bud_v: float = clampf(0.25 + 0.7 * _f.energy + 0.5 * _glow, 0.0, 1.0) * _life_alpha
-		var bud := Color.from_hsv(fposmod(_hue + 0.5, 1.0), 0.3, 1.0, 0.5 * bud_v)
+		# The bud and the tip take the scheme's accent - a related second hue rather
+		# than a flat complement, so the node reads as part of the same organism.
+		var bud := Color.from_hsv(_accent, clampf(_sat * 0.6, 0.0, 1.0), 1.0, 0.5 * bud_v)
 		var bsz: float = u * (0.006 + 0.010 * bud_v)
 		Layer.glow(self, Vector2(fil.origin) * u, bsz * 3.0, bud, 4)
-		var tip := Color.from_hsv(fposmod(_hue + 0.5, 1.0), 0.2, 1.0, 0.9 * _life_alpha)
+		var tip := Color.from_hsv(_accent, clampf(_sat * 0.4, 0.0, 1.0), 1.0, 0.9 * _life_alpha)
 		var jitter := float(_cfg.jitter) * (0.6 + 0.6 * _f.energy)
 		fil.fil.draw_growing(self, u, eased_grown, _color_for, tip, jitter, _life)
 
 
 func _color_for(depth: int, along := 0.0) -> Color:
 	var h := fposmod(_hue + 0.04 * float(depth), 1.0)
-	var sat: float = float(_cfg.sat) * (0.6 + 0.4 * float(depth == 0))
+	var sat: float = _sat * (0.6 + 0.4 * float(depth == 0))
 	var band := 0.08 * sin(along * 30.0 + float(depth) * 1.5)        # a faint grain along the strand
 	var v := clampf(0.45 + 0.4 * _f.energy + 0.45 * _glow + band, 0.1, 1.0)
 	return Color.from_hsv(h, sat, v, 0.92 * _seg_alpha(depth))

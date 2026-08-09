@@ -17,124 +17,124 @@ Registry: `Layer.REGISTRY` in [scripts/layer.gd](../scripts/layer.gd) (21 entrie
 
 Bed - a full-frame colour wash: a soft vertical gradient plus a few slow colour pools that breathe with the spectrum. The "colours underneath / inside" that fog, snow, or stars sit on; on its own it is a calm aurora-of-colour ground.
 
-Source: [scripts/layer.gd:209](../scripts/layer.gd#L209)
+Source: [scripts/layer.gd:211](../scripts/layer.gd#L211)
 
 ## `surface` - Surface
 
 Surface - the lit water SURFACE far above: a bright wash of light pouring down from a distant sun in the sky, and drifting CAUSTIC ripples (the refracted light-net). Fills the "dead space" at the top of the underwater scenes with a real light source and topological refraction. Soft, additive, brightest at the top and fading into the depths; brightens and shimmers with the music.
 
-Source: [scripts/layer.gd:1716](../scripts/layer.gd#L1716)
+Source: [scripts/layer.gd:1718](../scripts/layer.gd#L1718)
 
 ## `kelp` - Kelp
 
 Kelp - the sea FLOOR: tall soft kelp fronds swaying up from the bottom, and a few blurry bioluminescent glows pooled among them - abstract, transparent, all out of focus in the deep water. Anchors the underwater scenes with a floor and life instead of empty blue below.
 
-Source: [scripts/layer.gd:1785](../scripts/layer.gd#L1785)
+Source: [scripts/layer.gd:1787](../scripts/layer.gd#L1787)
 
 ## `fog` - Fog
 
 Fog - big faint blobs rolling across the frame, diffusing whatever is behind them. A tempo-kicked swirl gives the bank velocity that decays (feedback: not uniform).
 
-Source: [scripts/layer.gd:267](../scripts/layer.gd#L267)
+Source: [scripts/layer.gd:269](../scripts/layer.gd#L269)
 
 ## `snow` - Snow
 
 Snow - a drift of falling flakes. Soft out-of-focus dots for the many small ones, a procedural six-fold dendrite for the few large near ones. Async by construction: each flake has its own depth (parallax fall speed), sway phase, and spin. Gusts ride the energy/treble. Wraps seamlessly, so it is an endless field at any aspect.
 
-Source: [scripts/layer.gd:319](../scripts/layer.gd#L319)
+Source: [scripts/layer.gd:321](../scripts/layer.gd#L321)
 
 ## `rain` - Rain
 
 Rain - fast streaks falling at a wind-blown slant, with faint splash flecks near the floor. Density and slant ride the audio. Cheap line draws, many of them.
 
-Source: [scripts/layer.gd:403](../scripts/layer.gd#L403)
+Source: [scripts/layer.gd:405](../scripts/layer.gd#L405)
 
 ## `fireflies` - Fireflies
 
 Fireflies - warm motes wandering a curl-noise flow field, blinking async. Each has its own glow phase; a beat lights the subset whose threshold it crosses (the embers trick), so the meadow sparkles in ripples, not in unison.
 
-Source: [scripts/layer.gd:446](../scripts/layer.gd#L446)
+Source: [scripts/layer.gd:448](../scripts/layer.gd#L448)
 
 ## `stars` - Stars
 
 Stars - a parallax starfield that twinkles, with the occasional shooting star streaking across. A nebula-quiet backdrop; pairs with bed/fog/aurora.
 
-Source: [scripts/layer.gd:512](../scripts/layer.gd#L512)
+Source: [scripts/layer.gd:514](../scripts/layer.gd#L514)
 
 ## `aurora` - Aurora
 
 Aurora - slow flowing curtains of light. A few horizontal ribbons, each a wavy band whose vertical wander and brightness ride a band of the spectrum. Green / violet by default; deeply atmospheric over stars.
 
-Source: [scripts/layer.gd:583](../scripts/layer.gd#L583)
+Source: [scripts/layer.gd:585](../scripts/layer.gd#L585)
 
 ## `petals` - Petals
 
 Petals - drifting petals / leaves that tumble as they fall, riding a curl-noise breeze. Flat quads rotating slowly (the flat-subject discipline: drift + spin, never fake depth). Warm or pink by default; a soft botany weather.
 
-Source: [scripts/layer.gd:675](../scripts/layer.gd#L675)
+Source: [scripts/layer.gd:677](../scripts/layer.gd#L677)
 
 ## `dust` - Dust
 
 Dust - tiny slow motes adrift in a soft light shaft. Subtle; reads as floating particles in a sunbeam. Great as a faint overlay on any scene.
 
-Source: [scripts/layer.gd:762](../scripts/layer.gd#L762)
+Source: [scripts/layer.gd:764](../scripts/layer.gd#L764)
 
 ## `bubbles` - Bubbles
 
 Bubbles - underwater bubbles released in BURSTS (gurgles) from bed emitters, rising, meandering, and POPPING near the surface. Not a tidy field of identical discs: a few vents trickle bubbles and periodically (and on beats - a burp) belch a cluster of mostly-tiny ones, which ascend at size-dependent speeds and burst into a quick ring.
 
-Source: [scripts/layer.gd:818](../scripts/layer.gd#L818)
+Source: [scripts/layer.gd:820](../scripts/layer.gd#L820)
 
 ## `embers` - Embers
 
 Embers - warm sparks rising on the wind, twinkling and flaring async (the embers scene, as a reusable layer). A beat lights only the subset above its own threshold.
 
-Source: [scripts/layer.gd:986](../scripts/layer.gd#L986)
+Source: [scripts/layer.gd:988](../scripts/layer.gd#L988)
 
 ## `cosmos` - Cosmos
 
 Cosmos - large, distant background bodies that give a star field DEPTH instead of just dots: a shaded PLANET (a lit crescent over a dark globe, sometimes ringed), a soft coloured NEBULA cloud, or a slowly turning spiral GALAXY. Few, dim, drawn behind the stars (z = back). Seeded; a scene adds it sometimes so the void isn't barren.
 
-Source: [scripts/layer.gd:1038](../scripts/layer.gd#L1038)
+Source: [scripts/layer.gd:1040](../scripts/layer.gd#L1040)
 
 ## `clouds` - Clouds
 
 Clouds - soft cloud masses drifting horizontally across the sky, wrapping at the edges. Each cloud is a clump of overlapping soft puffs; the wind picks up with energy.
 
-Source: [scripts/layer.gd:1134](../scripts/layer.gd#L1134)
+Source: [scripts/layer.gd:1136](../scripts/layer.gd#L1136)
 
 ## `fire` - Fire
 
 Fire - a living flame. The BODY is one shared GPU temperature field (see shaders/flame.gdshader) on a quad child item: heat SOURCES along the bed - each fed by its own harmonic band - raise columns that rising domain-warped noise carves into licks; tongues pinch free, climb and dissolve. On top, CPU SPARKS ride a curl-noise wind out of the hottest regions and crackle up on beats. The dynamic range is the point: a quiet passage sits as a seam of embers, a swell sends columns up the frame - and WHERE it roars is the spectrum (bass at the centre, treble at the rim).
 
-Source: [scripts/layer.gd:1186](../scripts/layer.gd#L1186)
+Source: [scripts/layer.gd:1188](../scripts/layer.gd#L1188)
 
 ## `rays` - Rays
 
 Rays - god-rays / light shafts angling down from the top edge, swaying slowly, brighter at the top and fading to nothing below. The underwater (and fog-lit) light cue.
 
-Source: [scripts/layer.gd:1416](../scripts/layer.gd#L1416)
+Source: [scripts/layer.gd:1418](../scripts/layer.gd#L1418)
 
 ## `planet` - Planet
 
 Planet - a REAL 3D sphere: a smooth-shaded `Mesh3D` icosphere drawn through a private `Lens3D`, exactly the way the eye's sclera is built, so it is genuinely round and lit with a true terminator (not a flat stack of discs). Opaque, so the stars behind it are occluded. Drawn AFTER the stars by the scene for that occlusion.
 
-Source: [scripts/layer.gd:1461](../scripts/layer.gd#L1461)
+Source: [scripts/layer.gd:1463](../scripts/layer.gd#L1463)
 
 ## `volumetric` - Volumetric
 
 Volumetric - REAL 3D clouds / fog. A field of soft gaussian puffs placed in 3D space, lit VOLUMETRICALLY (sorted from the sun inward, accumulating optical depth, so puffs facing the sun are bright and those buried behind others fall into shadow), depth-sorted and projected through a private `Lens3D`, drifting and billowing over time. Simulated dynamics, not a flat 2D sprite - and being atmospheric it washes well over other scenes (the LAYER transition can stack it).
 
-Source: [scripts/layer.gd:1509](../scripts/layer.gd#L1509)
+Source: [scripts/layer.gd:1511](../scripts/layer.gd#L1511)
 
 ## `veil` - Veil
 
 Veil - a composable harmonic OBSCURING layer: drifting gaussian masses (snow squalls, rain sheets, haze) that swell with musical intensity and fade out between, softening and hiding the scene behind. The general form of the snow whiteout, so ANY scene can add moving patterns of visibility and obscuration. Tint with hue/sat/val; floor/gain/max shape how the swell maps to opacity. Add it last (front) so it veils what is beneath.
 
-Source: [scripts/layer.gd:1688](../scripts/layer.gd#L1688)
+Source: [scripts/layer.gd:1690](../scripts/layer.gd#L1690)
 
 ## `flare` - Flare
 
 Flare - a lens flare drawn IN FRONT: a bright off-frame source with a starburst and anamorphic streak, plus a chain of translucent "ghost" discs and rings marching along the line from the source through the optical centre to the far side (where real lens flares sit). Its brightness pulses with the harmonics, and a barrel "fisheye" bows the whole chain outward. Composable, so any scene can wear a flare over the top. Add it LAST (front).
 
-Source: [scripts/layer.gd:1620](../scripts/layer.gd#L1620)
+Source: [scripts/layer.gd:1622](../scripts/layer.gd#L1622)

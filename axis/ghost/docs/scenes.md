@@ -21,6 +21,8 @@ Cityscape - a skyline of rectangles that grows with the music.
 
 Layered rows of buildings; each building's height tracks a slice of the spectrum, so the skyline rises and falls with the track. Windows light up in a grid, flickering with the beat. Back layers are dimmer and shorter for depth. All axis-aligned rectangles - drawn static and upright, no triangulation.
 
+Which city it is varies per session: a `Scheme` mood colours the blocks and its accent lights the windows (so the lit grid contrasts the mass by construction, the way sodium windows sit against a blue-grey tower), and a sampled PROFILE decides the silhouette - a crowded low downtown, a handful of wide towers, or a broad flat sprawl.
+
 layers: `rain`, `snow`, `stars`
 
 Source: [scripts/scenes/cityscape.gd](../scripts/scenes/cityscape.gd) (extends `GhostScene`)
@@ -49,7 +51,7 @@ Source: [scripts/scenes/embers.gd](../scripts/scenes/embers.gd) (extends `GhostS
 
 Filaments - the procedural-growth primitive, showcased.
 
-One scene, three lives chosen by seed, all the same `Filament` mechanism on a curl-noise `Flow2D` field - proof that the primitive composes: lightning - arcs that strike on the beat: a jagged forked path floods in fast, blazes, then fades, and re-strikes on the next hit (slow-motion bolts). neural    - tendrils that creep from scattered seeds and slowly regrow, a living network coiling through the frame. thread    - long smooth threads flowing across on the flow, barely branching. Audio drives the strikes / growth surge and the brightness; nonlinearity (the flow's meander, the spike-shaped drive, the asymmetric flare) is what animates it.
+One scene, three lives chosen by seed, all the same `Filament` mechanism on a curl-noise `Flow2D` field - proof that the primitive composes: lightning - arcs that strike on the beat: a jagged forked path floods in fast, blazes, then fades, and re-strikes on the next hit (slow-motion bolts). neural    - tendrils that creep from scattered seeds and slowly regrow, a living network coiling through the frame. thread    - long smooth threads flowing across on the flow, barely branching. Audio drives the strikes / growth surge and the brightness; nonlinearity (the flow's meander, the spike-shaped drive, the asymmetric flare) is what animates it. Each life draws its colour from a `Scheme` mood in its own plausible set, and its count/weight from a density, so no two storms are the same storm.
 
 Source: [scripts/scenes/filaments.gd](../scripts/scenes/filaments.gd) (extends `GhostScene`)
 
@@ -79,6 +81,8 @@ Gaussian landscape - rolling terrain with fog in the valleys.
 
 A heightfield built from a handful of Gaussian bumps, drawn as rows of filled ridgelines receding toward a horizon (near rows occlude far ones). Each bump's height is driven by a slice of the spectrum, so peaks rise and fall with the music. Over the low ground sits a translucent fog whose top edge undulates and scrolls sideways - the valleys breathing in a gentle wind while the peaks stay clear above it.
 
+The land is not one shape or one colour: a `Scheme` mood colours the ridgelines (with the fog and the sky layers on its accent, so the weather belongs to the same evening), and a sampled RELIEF picks the landform - broad dunes, rolling hills, a crowded range of narrow ridges, or a couple of massifs - along with how finely it is drawn.
+
 layers: `snow`, `stars`
 
 Source: [scripts/scenes/gaussian_landscape.gd](../scripts/scenes/gaussian_landscape.gd) (extends `GhostScene`)
@@ -97,6 +101,8 @@ Metropolis - a city of thousands of blocks growing over a countryside.
 
 A large isometric landscape: Gaussian hills carry a grid of blocks whose heights and colours are driven by a `Swarm` field - no per-block scripting. By seed: growth - development creeps outward from a few seeds, the city spreading across the hills over time, breathing with the music. pulse  - the city is already built; colour pulses are injected on the beat and ripple outward across the blocks as expanding fronts. A second WAVE swarm always carries the colour pulses. Fog pools in the low ground. The grid is drawn far larger than the frame, so it runs off every edge.
 
+What KIND of place it is is one roll, not several. The hue was already free here, but the character never was: always a 48x48 grid on the same rolling hills at the same mid saturation, so every seed built the same city in a different colour. A [constant CHARACTER] now decides palette, block size, how flat the land is, how tall the buildings stand and how broad the hue districts are together - because those are the same decision. Ground takes the `Scheme`'s base and the buildings its counter hue, which is what the old "+0.3 to 0.6" offset was reaching for.
+
 Source: [scripts/scenes/metropolis.gd](../scripts/scenes/metropolis.gd) (extends `GhostScene`)
 
 ### `planes` (scene3d, drift, static)
@@ -104,6 +110,8 @@ Source: [scripts/scenes/metropolis.gd](../scripts/scenes/metropolis.gd) (extends
 Planes - the spectrum as a ring of real planes under a forced-perspective camera.
 
 A deliberate echo of `spectrum_ring`: the bars are genuine `Plane3D` quads standing on a ground plane in a circle, with an optional `Mesh3D` body tumbling at the centre, projected and depth-sorted through one `Lens3D`. Nearly everything is sampled per scene so it is never the same shot twice: the lens / orbit (distance, pitch, yaw direction and speed), the ring radius and bar geometry, and the central body - which may be a rock, a hybrid, a platonic solid, or nothing at all, and is kept small so it no longer dominates the frame. It can also bleed a faint sky (stars / fog) behind the ring, composed from the shared `Layer` registry.
+
+The ring's LAYOUT is sampled too ([constant RINGS]): even, woven, stepped or scalloped, so alternate panels can step in and out of the circle or stand at different heights instead of the one flat band of identical panels it always was, and the panels themselves run from tall blades to stubby tiles. Colour comes from one `Scheme` - the band grades from its base hue to its accent round the ring, the core body wears the accent, and the sky behind agrees instead of being fixed blue.
 
 layers: `fog`, `stars`
 
@@ -115,7 +123,7 @@ Rocks - faceted stones in real 3D, sampled from a small material/geometry spec.
 
 Each rock is a `Mesh3D` rotated by a genuine 3D basis and drawn depth-sorted and shaded. The look is a *sampled configuration* of composable layers rather than a fixed scene: a geometry family, a surface texture, a material (gloss / roughness), and - sometimes - a partial **wireframe reveal**. Style (seeded) sets the character: plain   - smooth rounded mass, satin sheen. rough   - craggy boulder, matte, dark facet relief. crystal - faceted gem, bright edges, glossy. hybrid  - a geometric base (cube / octa / tetra) with rock crusting over part of it (gaussian-masked growth) - part machined, part grown. Independently, any rock may be **partially revealed**: a gaussian alpha mask punches holes in its coat (a sampled masking threshold, sparse bare patches through to half-and-half) so the wireframe lattice shows through - half-realistic, half-skeletal. Mode (seeded) sets the motion: `pulse` (breathe), `explode` (faces burst out on the beat), `crumble` (faces push apart once, then the scene ends).
 
-Nothing here is one fixed constant per style: the material, responsiveness, and reveal are all *sampled per rock* around the style's centre, so two rocks of a kind still differ - every computation perturbed by sampling.
+Nothing here is one fixed constant per style: the material, responsiveness, and reveal are all *sampled per rock* around the style's centre, so two rocks of a kind still differ - every computation perturbed by sampling. Colour is a `Scheme` mood chosen to suit the style (matte stone gets the earthy moods, the gem gets the jewel ones), and the stones either share a tight hue FAMILY or spread base-to-accent across the set. The composition is sampled too - a couple of colossal boulders, a resting cluster, or a wide scatter of scree - so the same subject is framed differently each time it is seeded.
 
 Source: [scripts/scenes/rocks.gd](../scripts/scenes/rocks.gd) (extends `GhostScene`)
 
@@ -128,6 +136,8 @@ Built on the `Filament` primitive: each root follows a curl-noise `Flow2D` field
 Roots emerge the way real ones do: mostly as **laterals** sprouting from a point partway along an *existing* root (at an angle to that parent), only occasionally as a fresh taproot from the central seed. So the system spreads from many points across the branches instead of every strand radiating from one origin.
 
 Each root runs an independent **lifecycle**, staggered and rate-varied so the field is asynchronous (no uniform bands): it grows slowly to full, holds, then **retires** gracefully - either FADING out (alpha to zero) or REWINDING (the front retracts back toward its attachment point, collapsing inward) - before regrowing from a fresh site. It never clears and pops back in. Audio surges the growth front (a nonlinear `spike`, so beats lunge it and quiet barely moves) and carries colour and glow.
+
+Neither the colour nor the silhouette is fixed. A SEASON is the first thing the seed chooses, and it bundles everything a season actually changes - the `Scheme` moods on offer, how dense the growth is, how thick and how long and how branched, how hard the colour turns from base to tip, and what is in the air. Spring is pale and dense and fine, summer lush and deep, autumn sparse and bare and hard-turning, winter a few thick structural limbs with the saturation drained out. Within the season a growth HABIT sets the form, from a few long thick taproots through a dense fine mat to sparse long creepers.
 
 Source: [scripts/scenes/rooted_growth.gd](../scripts/scenes/rooted_growth.gd) (extends `GhostScene`)
 
@@ -145,6 +155,8 @@ Spectrum ring - the spectrum bent into a circle.
 
 The whole band array is laid around a ring; each band pushes a bar outward by its energy. The ring breathes with energy, spins at a seeded rate, flashes on the beat, and the whole frame drifts/tilts on its own through the view.
 
+The hue used to be a bare `randf()` - varied, but unrelated to anything, so the bars swept an arbitrary span from it. It now runs base -> accent along a `Scheme` mood, which also sets the ring's saturation and how bright it sits. Two other rolls decide what the ring IS: how a bar is drawn, and which way it grows off the rim - the same audio mapping, three silhouettes.
+
 Source: [scripts/scenes/spectrum_ring.gd](../scripts/scenes/spectrum_ring.gd) (extends `GhostScene`)
 
 ### `strata` (canvas, drift)
@@ -153,13 +165,15 @@ Strata - stacked waveform planes receding into depth.
 
 Horizontal planes are stacked back-to-front; each is a waveform whose height comes from a slice of the spectrum plus a traveling sine, and each is filled down to the foot of the frame as a translucent sheet. Nearer planes sit over farther ones, and the view's tilt skews the whole stack, so it reads as planes of light lying in space. Far planes scroll slower than near ones - parallax.
 
+By seed the stack is a few big slabs or a deep receding pile ([constant STACKS]), each plane's edge follows one of three laws ([constant PROFILES]) - swells, ridgelines or stepped terraces - and the whole thing is coloured from one `Scheme`, depth carrying the palette from its base hue to its accent.
+
 Source: [scripts/scenes/strata.gd](../scripts/scenes/strata.gd) (extends `GhostScene`)
 
 ### `voxel_blocks` (canvas, static)
 
 Voxel blocks - an isometric heightfield equalizer.
 
-A grid of iso cubes whose stack height tracks the spectrum, a 3D equalizer terrain. By seed it is one of two scales: plot - a small grid held centred in the frame (the original look). city - thousands of blocks spilling off every edge, the camera down among them like a skyline. City blocks carry a structural base height so the skyline stands even in quiet, with the spectrum bouncing on top. Either way an `Activation` decides who moves: with sparsity some columns stay rooted (a still skyline) while others rise and fall - so it is not one uniform wall of motion (the "some could stay stationary" ask). Three flat faces per cube, painted back-to-front; always at least a one-block floor so it reads in silence.
+A grid of iso cubes whose stack height tracks the spectrum, a 3D equalizer terrain. By seed it is one of three scales (see [constant SCALES]): plot    - a small grid held centred in the frame (the original look). terrace - a mid grid that just overflows the frame, stacks running tall. city    - thousands of blocks spilling off every edge, the camera down among them like a skyline. City blocks carry a structural base height so the skyline stands even in quiet, the spectrum bouncing on top. The iso squash and the colour scheme are sampled too, so the same grid can be looked down on steeply or almost edge-on, in any of `Scheme`'s moods. Whichever it is, an `Activation` decides who moves: with sparsity some columns stay rooted (a still skyline) while others rise and fall - so it is not one uniform wall of motion (the "some could stay stationary" ask). Three flat faces per cube, painted back-to-front; always at least a one-block floor so it reads in silence.
 
 Source: [scripts/scenes/voxel_blocks.gd](../scripts/scenes/voxel_blocks.gd) (extends `GhostScene`)
 
@@ -168,6 +182,8 @@ Source: [scripts/scenes/voxel_blocks.gd](../scripts/scenes/voxel_blocks.gd) (ext
 Wire solid - a translucent polyhedron on the unified 3D path.
 
 A true cube / octahedron / tetrahedron / icosahedron (`Mesh3D`) projected through a `Lens3D`: perspective, depth sorted, faces faint and edges bright so you see *through* it. Because it is genuinely 3D it rotates slowly and continuously - that is how the volume reveals itself. Migrated off the old centred draw_shaded projector onto `Scene3D`: the body now lives in a camera world (it could share the frame with planes or other bodies), and the lens eases in instead of a fixed focal. Rotation is gentle; energy only nudges its pace, and audio drives the glow.
+
+The hue was already free, but everything AROUND it was not: the solid was always a regular polyhedron at 1:1:1 proportions and always mid-saturation, so every seed produced the same object in a different colour. Now a [constant SOLID] rolls the form and the proportions together, and a `Scheme` supplies the saturation as well as the hue - which is what makes an ash body read as smoked glass and a toxic one as acid, rather than both reading as "a coloured shape".
 
 Source: [scripts/scenes/wire_solid.gd](../scripts/scenes/wire_solid.gd) (extends `Scene3D`)
 
@@ -179,7 +195,7 @@ Weather & atmosphere - composed from the shared Layer registry (see scripts/laye
 
 Aurora - slow curtains of light over a starlit night.
 
-Wavy ribbons drift and undulate, each tied to a band of the spectrum so the curtains brighten and ripple with the music, hung over a faint starfield and a dark bed. The northern-lights corner. `bed` + `stars` + `aurora`, themed green / cyan / violet.
+Wavy ribbons drift and undulate, each tied to a band of the spectrum so the curtains brighten and ripple with the music, hung over a faint starfield and a dark bed. The northern-lights corner. `bed` + `stars` + `aurora`, in whichever of the sky's own colours the seed draws - and as broad drapes, fine ribbons, or a doubled curtain.
 
 layers: `aurora`, `bed`, `stars`
 
@@ -189,7 +205,7 @@ Source: [scripts/scenes/aurora.gd](../scripts/scenes/aurora.gd) (extends `GhostS
 
 Bubbles - an underwater drift of rising bubbles in coloured depths.
 
-Bubbles wobble upward with rim highlights, fine suspended particles hang in the water, and a deep cool bed with slow colour pools gives the sense of light filtering down from above. Teal, deep blue, or green by seed. `bed` + `dust` + `bubbles`.
+Bubbles wobble upward with rim highlights, fine suspended particles hang in the water, and a bed with slow colour pools gives the sense of light filtering down from above. The water's colour comes from a `Scheme` and its CHARACTER from a column below, so a mineral spring and a black trench are different places rather than the same picture recoloured. `bed` (+ `surface`) + `kelp` + `dust` + `bubbles`.
 
 layers: `bed`, `bubbles`, `dust`, `kelp`, `surface`
 
@@ -199,9 +215,9 @@ Source: [scripts/scenes/bubbles.gd](../scripts/scenes/bubbles.gd) (extends `Ghos
 
 Clouds - REAL 3D cloud masses drifting across the sky, lit by the sun.
 
-A coloured sky bed (cool day or warm dusk), sometimes a few stars behind, and a `Volumetric` cloudscape: soft gaussian puffs placed in 3D, self-shadowed (bright sunlit tops, darker undersides) and drifting/billowing over time. `bed` + `stars?` + `volumetric`.
+A coloured sky bed, sometimes stars behind, sometimes haze rolling in front, and a `Volumetric` cloudscape: soft gaussian puffs placed in 3D, self-shadowed (bright sunlit tops, darker undersides) and drifting/billowing over time. The seed picks a WEATHER first and the weather decides both which moods the sky may be drawn from and what else is in the frame. `bed` + `stars?` + `volumetric` + `haze?`.
 
-layers: `bed`, `stars`, `volumetric`
+layers: `bed`, `fog`, `stars`, `volumetric`
 
 Source: [scripts/scenes/clouds.gd](../scripts/scenes/clouds.gd) (extends `GhostScene`)
 
@@ -211,6 +227,8 @@ Fire - a living flame attuned to the harmonics.
 
 One GPU temperature field (see `Layer.Fire` / shaders/flame.gdshader): heat sources along the bed, each listening to its own harmonic band (bass at the centre, treble at the rim), raise columns that rising turbulence carves into licks. CPU sparks crackle out of whichever region is roaring, and smoke sometimes hazes the top. Quiet passages sit as embers; powerful ones send columns up the frame.
 
+The flame's own colours are the shader's (a real fire is the temperature of its fuel), so what the seed varies here is the HEARTH around it: the ambient the fire burns in, how wide it is laid, and how much smoke it throws.
+
 layers: `bed`, `fire`, `fog`
 
 Source: [scripts/scenes/fire.gd](../scripts/scenes/fire.gd) (extends `GhostScene`)
@@ -219,7 +237,7 @@ Source: [scripts/scenes/fire.gd](../scripts/scenes/fire.gd) (extends `GhostScene
 
 Fireflies - a dusk meadow sparkling with wandering lights.
 
-Warm motes drift along a curl-noise breeze and blink on their own phase; a beat lights the subset whose threshold it crosses (the embers trick), so the field twinkles in ripples rather than in unison. A deep dusk bed and a breath of low fog set the mood; faint dust hangs in the air. `bed` + `fog` + `dust` + `fireflies`.
+Motes drift along a curl-noise breeze and blink on their own phase; a beat lights the subset whose threshold it crosses (the embers trick), so the field twinkles in ripples rather than in unison. The night comes from a `Scheme` and the lights from that scheme's accent, so the pair is harmonious whichever night is drawn - a warm amber over teal dusk, a cold bioluminescent green over indigo. `bed` + `fog` + `dust` + `fireflies`.
 
 layers: `bed`, `dust`, `fireflies`, `fog`
 
@@ -237,9 +255,9 @@ Source: [scripts/scenes/fog_bank.gd](../scripts/scenes/fog_bank.gd) (extends `Gh
 
 ### `fog_volume` (canvas, drift)
 
-Fog volume - REAL 3D fog: a low, wide bank of soft gaussian puffs receding into depth, lit volumetrically (a brighter sunward edge fading into a dim core) and slowly drifting. A genuine haze with simulated dynamics, not a flat 2D wash. `bed` + `volumetric` (fog mode).
+Fog volume - REAL 3D fog: a low, wide bank of soft gaussian puffs receding into depth, lit volumetrically (a brighter sunward edge fading into a dim core) and slowly drifting. A genuine haze with simulated dynamics, not a flat 2D wash. `bed` + `volumetric` (fog mode), and depending on the AIR the seed draws: stars above it, or 2D sheets rolling through it.
 
-layers: `bed`, `volumetric`
+layers: `bed`, `fog`, `stars`, `volumetric`
 
 Source: [scripts/scenes/fog_volume.gd](../scripts/scenes/fog_volume.gd) (extends `GhostScene`)
 
@@ -247,7 +265,7 @@ Source: [scripts/scenes/fog_volume.gd](../scripts/scenes/fog_volume.gd) (extends
 
 Motes - dust adrift in a shaft of light.
 
-The quietest scene: a soft beam of light cuts the frame and countless fine motes hang and turn in it on a slow curl-noise current, brightening as they cross the shaft. A warm, still, contemplative interlude. `bed` + a `dust` layer with its shaft enabled; a breath of `fog` for depth.
+The quietest scene: light cuts the frame and countless fine motes hang and turn in it on a slow curl-noise current, brightening as they cross the beam. The colour of the light is a `Scheme` - late sun, a cold north window, green light under leaves - and the room's shadow is that scheme's accent, so the two agree. `bed` + `fog` + a `dust` layer.
 
 layers: `bed`, `dust`, `fog`
 
@@ -255,11 +273,11 @@ Source: [scripts/scenes/motes.gd](../scripts/scenes/motes.gd) (extends `GhostSce
 
 ### `petals` (canvas, drift)
 
-Petals - blossom or leaves drifting down on a soft breeze.
+Petals - blossom, leaves or ash drifting down on a soft breeze.
 
-Flat petals tumble (in-plane spin + flutter, the flat-subject discipline) as they fall, riding a curl-noise breeze, with fine dust hanging in the warm light. Cherry pink, autumn amber, or green leaves by seed, over a gentle bed. `bed` + `dust` + `petals`.
+Flat petals tumble (in-plane spin + flutter, the flat-subject discipline) as they fall, riding a curl-noise breeze, with fine dust hanging in the light. The seed picks the FALL first - cherry blossom, autumn leaves, spring green, or ash coming down over a burnt ground - and that decides the palette, how many are in the air, how heavily they drop, whether a sunbeam reaches in, and whether a second tree is shedding alongside the first. `bed` + `dust` + `petals` (+ a second `petals`, + `veil`).
 
-layers: `bed`, `dust`, `petals`
+layers: `bed`, `dust`, `petals`, `veil`
 
 Source: [scripts/scenes/petals.gd](../scripts/scenes/petals.gd) (extends `GhostScene`)
 
@@ -267,9 +285,9 @@ Source: [scripts/scenes/petals.gd](../scripts/scenes/petals.gd) (extends `GhostS
 
 Rainfall - slanting rain over a brooding sky, fog rolling through it.
 
-Fast streaks fall at a wind-blown slant whose angle sways with the bass; a low, desaturated colour bed and drifting fog give it weather and depth. Density and slant ride the audio, so a loud passage is a downpour. `bed` + `fog` + `rain` composed.
+Fast streaks fall at a wind-blown slant whose angle sways with the bass; a low colour bed and drifting fog give it weather and depth. Density and slant ride the audio, so a loud passage is a downpour. The seed picks the STORM first - hanging mist, drizzle, steady rain, downpour, or rain in a lit street at night - and the storm decides its own palette along with its density. `bed` + `fog` + `rain` + `veil` (+ `flare`).
 
-layers: `bed`, `fog`, `rain`, `veil`
+layers: `bed`, `flare`, `fog`, `rain`, `veil`
 
 Source: [scripts/scenes/rainfall.gd](../scripts/scenes/rainfall.gd) (extends `GhostScene`)
 
@@ -277,9 +295,9 @@ Source: [scripts/scenes/rainfall.gd](../scripts/scenes/rainfall.gd) (extends `Gh
 
 Snowfall - a quiet field of falling snow over a soft colour bed.
 
-The atmospheric weather scene (distinct from `snowflakes`, the hero crystal field): dozens of out-of-focus flakes drift down and gust sideways with the treble, a few near ones crisp into six-fold dendrites, all over a cool gradient that breathes with the music. By seed it sometimes rolls low fog along the ground. Pure component composition - `bed` + `snow` (+ `fog`) from the `Layer` registry, no bespoke code.
+The atmospheric weather scene (distinct from `snowflakes`, the hero crystal field): flakes drift down and gust sideways with the treble over a gradient that breathes with the music. The seed picks the KIND of snow first - fine powder, fat lazy flurry, a driven blizzard, a still hard frost - and that decides how many flakes there are, how big, how fast they fall and how many of them crisp into six-fold dendrites, so the silhouette changes with the weather and not just the tint. Pure component composition - `bed` + `snow` (+ `volumetric` fog, + `veil`) from the `Layer` registry.
 
-layers: `bed`, `snow`, `volumetric`
+layers: `bed`, `snow`, `veil`, `volumetric`
 
 Source: [scripts/scenes/snowfall.gd](../scripts/scenes/snowfall.gd) (extends `GhostScene`)
 
@@ -297,7 +315,7 @@ Source: [scripts/scenes/snowflakes.gd](../scripts/scenes/snowflakes.gd) (extends
 
 Starfield - a deep night sky, twinkling, with the occasional shooting star.
 
-A parallax field of stars over a near-black nebula bed and a wisp of coloured fog; brighter stars glow, and every so often a meteor streaks across (more often on a beat). Calm and vast - the celestial corner of the catalogue. `bed` + `fog` + `stars`.
+A parallax field of stars over a near-black nebula bed and a wisp of coloured fog; brighter stars glow, and every so often a meteor streaks across (more often on a beat). Calm and vast - the celestial corner of the catalogue. The seed picks WHERE in the galaxy the sky is looked at from first, and that decides the crowding, the dust and the company as one choice. `bed` + `fog` + `stars` (+ `cosmos` / `volumetric` / `planet` / `flare`).
 
 layers: `bed`, `cosmos`, `flare`, `fog`, `planet`, `stars`, `volumetric`
 
@@ -309,7 +327,7 @@ Underwater - looking up through flowing water: shafts of light from the surface,
 
 A blue-green bed, swaying god-`Rays` from the surface above, and `Bubbles` drifting up through them. The light shafts brighten with the music; the whole frame drifts gently.
 
-layers: `bed`, `bubbles`, `kelp`, `rays`, `surface`
+layers: `bed`, `bubbles`, `dust`, `kelp`, `rays`, `surface`
 
 Source: [scripts/scenes/underwater.gd](../scripts/scenes/underwater.gd) (extends `GhostScene`)
 
@@ -321,7 +339,7 @@ Worlds & projections - real 3D terrain, cities on it, latent geometry.
 
 Projection - a PCA-style density map of a latent geometry, eye-shaped.
 
-A nod to the research paper's geometry figure and the dashboard's projection maps: a 3D point cloud shaped like a CALM model's latent centers - an elongated blob with a dense pupil nucleus and an iris ring, the "single eye" those gaussian-ish latents settle into - projected through a slowly tumbling 3D pose down to 2D (the top-2 projection) and rendered as a **binned density grid with log colour**, exactly the figure's look. Audio drives DRAMATIC poses: the pupil dilates, the eye stretches, and beats snap the projection to a new angle. Nonlinear activations shape the cloud and the drive. One eye, varied by seed.
+A nod to the research paper's geometry figure and the dashboard's projection maps: a 3D point cloud shaped like a CALM model's latent centers - an elongated blob with a dense pupil nucleus and an iris ring, the "single eye" those gaussian-ish latents settle into - projected through a slowly tumbling 3D pose down to 2D (the top-2 projection) and rendered as a **binned density grid with log colour**, exactly the figure's look. Audio drives DRAMATIC poses: the pupil dilates, the eye stretches, and beats snap the projection to a new angle. Nonlinear activations shape the cloud and the drive. One eye, varied by seed - its structure ([constant FORMS]: a plain iris, two concentric bands, or an iris with a sparse corona), its elongation, where the pupil sits (so it can look aside), how many latents there are and how coarsely they bin ([constant BINS]) are all sampled, and the colormap is one `Scheme`'s ramp.
 
 Source: [scripts/scenes/projection.gd](../scripts/scenes/projection.gd) (extends `GhostScene`)
 
@@ -351,6 +369,8 @@ Terrain city - blocks rising as a city over real 3D terrain, growing nonlinearly
 
 The metropolis idea on the `Terrain` foundation: a `Swarm` development field creeps across a landscape (rolling hills / mesa), and where it has grown, blocks stand on the surface - **upright** (real buildings are vertical whatever the ground does), with only a faint lean toward the terrain normal so the field is not a perfectly rigid grid. Heights are driven by development x a per-block spectral band (nonlinear), so the skyline rises with the music. Some plots **detach**, their blocks floating a little off the ground. Camera orbits under a wide lens; the city grows over time from a few seeds.
 
+Land, layout and colour are all sampled per session rather than fixed. The terrain is any of four landforms under any climate that suits it; the LAYOUT decides whether the city reads as sparse dendritic arms, a broad sprawl, thin ribbons along the ridges or several separate towns; the SKYLINE law decides whether heights are even or a rare few spires tower over everything; and a `Scheme` mood colours the blocks, developed districts walking toward its accent.
+
 Source: [scripts/scenes/terrain_city.gd](../scripts/scenes/terrain_city.gd) (extends `Scene3D`)
 
 ## The-point scenes
@@ -363,6 +383,8 @@ Eye - a single human eye in the black void (the-point, scene 1).
 
 A real-3D floating eyeball (`EyeBody`) - sclera sphere, recessed iris, glossy cornea - drawn through the `Scene3D` camera with a real light, no eyelids, no blink. It looks around in centre-preferring saccades by rotating in 3D. The pupil dilates with the audio. Declares `morph_out = "eye"` so the Director can morph it into two_eyes (the split) rather than cutting.
 
+The iris colour comes from a `Scheme` mood and the eye's size on screen from a named tier, so two seeds are two different eyes at two different distances rather than the same golf-ball in the same brown.
+
 morph out: `eye`
 
 Source: [scripts/scenes/eye.gd](../scripts/scenes/eye.gd) (extends `Scene3D`)
@@ -373,6 +395,8 @@ Eye + prism - the right eye becomes its digital self (the-point, scenes 3-5).
 
 The two eyes' composition continues, but the RIGHT eye dissolves and CRYSTALLIZES into the glowing BLUE wireframe `PrismBody` while the LEFT human eye remains, watching. Then the prism "looks around" the void on its own; and toward the end the remaining eye begins to TREMBLE and vibrate, faster and faster, light building around it - the riser into the drop. Arrives by morph from `two_eyes` (`morph_in = "eyes"`): it reuses the SAME two EyeBody instances, so nothing jumps - the left eye simply keeps looking while the right one turns to crystal in place. Hands off to `two_prisms` (`morph_out = "eye2prism"`): the live blue PrismBody plus the trembling eye's slot, so the drop can burst a red prism there.
 
+"Blue" is now a mood rather than a constant: the crystal takes a cool `Scheme` - glacier, abyss, teal, violet, ash - carried on the `PrismBody` itself as a hue offset from [constant HUE_BLUE], so `two_prisms` (which draws that same live body at HUE_BLUE) inherits the colour across the morph instead of popping back to blue. The eyes take an iris mood, and the pair's composition a named spacing.
+
 morph in: `eyes` · morph out: `eye2prism`
 
 Source: [scripts/scenes/eye_prism.gd](../scripts/scenes/eye_prism.gd) (extends `Scene3D`)
@@ -381,7 +405,9 @@ Source: [scripts/scenes/eye_prism.gd](../scripts/scenes/eye_prism.gd) (extends `
 
 Prism - a single living wireframe tetrahedron (from "the-point").
 
-A see-through 4-point prism with a living neural core, ported from the browser Prism via `PrismBody`: glowing edges only, tendrils flowing from the centre, hovering and slowly "looking around". Blue or red by seed. The camera holds (the brief: static, forward-facing); the core comes to life with the audio.
+A see-through 4-point prism with a living neural core, ported from the browser Prism via `PrismBody`: glowing edges only, tendrils flowing from the centre, hovering and slowly "looking around". The camera holds (the brief: static, forward-facing); the core comes to life with the audio.
+
+Colour is a `Scheme` mood rather than the old blue-or-red coin flip. Only the hue reaches the body (it draws its own saturation from the browser's palette), and every hue is a plausible crystal, so nothing is excluded. The shell - tetra, spire, slab, bipyramid, octa - is rolled by `PrismBody` itself; the liberty this scene takes on top is PRESENCE.
 
 Source: [scripts/scenes/prism.gd](../scripts/scenes/prism.gd) (extends `GhostScene`)
 
@@ -390,6 +416,8 @@ Source: [scripts/scenes/prism.gd](../scripts/scenes/prism.gd) (extends `GhostSce
 Prism split - one prism strains, then breaks into two (from "the-point").
 
 It begins as a SINGLE blue `PrismBody` at centre. Energy builds a TENSION: a red clone is pulled out of it as a faint SHADE, stretching toward its anchor but held back by an attractor BOND between them (a taut filament). When the tension crosses its breaking point, the bond SNAPS - a flash - and the freed clone SPRINGS to its anchor with an overshoot, both prisms settling to the left/right anchors. Thereafter each prism strains against its own anchor (the rubber-band core in `PrismBody`), so the pair keeps straining and springing with the music. The whole split is driven by energy: a quiet passage barely stretches it; a surge breaks it.
+
+Colour and geometry both come off one roll. The pair takes a `Scheme` mood - the original on its base hue, the clone on the mood's counter hue (see [method Scheme.opposed]) - so "blue splits into red" is now one outcome of many rather than the only one. The structural liberty is the SPLIT ITSELF: which way the thing comes apart, which is this scene's whole composition.
 
 Source: [scripts/scenes/prism_split.gd](../scripts/scenes/prism_split.gd) (extends `GhostScene`)
 
@@ -401,6 +429,8 @@ Prism swarm - the swarm forms, flies the track, splits into a helix, and jumps (
 
 The only scene where the camera travels (the brief allows motion from the swarm on): it flies forward a touch slower than the swarm, so the formation pulls ahead and recedes into the void. Arrives by morph from `two_prisms` (`morph_in = "prisms"`): the live blue prism leads the swarm.
 
+Both liberties this scene takes are about the SWARM: a [constant FORMATION] decides how many prisms there are and how the track carries them (a lean three-body pair, the seven-strong file the sequence was designed around, or a shoal of a dozen small ones on a tight fast helix), and a `Scheme` mood decides the two strands' colours. The strand hues ride on the BODIES as offsets from [constant HUE_BLUE] / [constant HUE_RED], the convention the rest of the prism family uses, so the lead handed over by `two_prisms` keeps its colour - and the strand it joins is re-based onto that colour, rather than the swarm reverting to blue the moment it arrives.
+
 morph in: `prisms`
 
 Source: [scripts/scenes/prism_swarm.gd](../scripts/scenes/prism_swarm.gd) (extends `Scene3D`)
@@ -410,6 +440,8 @@ Source: [scripts/scenes/prism_swarm.gd](../scripts/scenes/prism_swarm.gd) (exten
 Two eyes - the single eye split into two (the-point, scene 2).
 
 Two real-3D eyeballs (`EyeBody`) that *verge*: both aim at one shared 3D focus point, so they toe in on a near point and run parallel on a far one - real binocular gaze, not two eyes locked to the same direction. The focus drifts in depth (near -> far -> extreme distance) and lingers at the extremes, with the pupils accommodating. Declares `morph_in = "eye"`: arriving from the single eye it plays the split (the same eye dividing). Occasionally one eye diverges - the nonlinear deviation, not the default.
+
+Colour comes from a `Scheme` mood (the same iris moods the single eye draws from), and the pair's PLACEMENT from a named spacing - crowded, human, or wide-set - so the composition itself changes with the seed and not only the eyes' colour.
 
 morph in: `eye` · morph out: `eyes`
 
@@ -423,6 +455,8 @@ The trembling eye BURSTS into the glowing RED `PrismBody` on the beat drop; now 
 
 Arrives by morph from `eye_prism` (`morph_in = "eye2prism"`): reuses the live blue prism and bursts the red at the eye's slot. Hands off to `prism_swarm` (`morph_out = "prisms"`).
 
+The pair takes a `Scheme` mood: the lead on its base hue, the counter on the mood's opposed hue. Both ride on the BODIES as offsets from [constant HUE_BLUE] / [constant HUE_RED] (the convention `eye_prism` established), so a body handed across a morph keeps its colour and this scene inherits whatever the eye crystallized into instead of snapping back to blue. When that happens the red is re-derived from the arriving hue, so the pair is always ONE mood's opposition rather than two unrelated ones.
+
 morph in: `eye2prism` · morph out: `prisms`
 
 Source: [scripts/scenes/two_prisms.gd](../scripts/scenes/two_prisms.gd) (extends `GhostScene`)
@@ -435,7 +469,11 @@ Present under `scripts/scenes/` but not registered in `Director.SCENES` - reacha
 
 Orbits - harmonograph curves that morph with the music.
 
-Each curve is a damped sum of sines in x and y - the figure a harmonograph pen traces. A slow global phase advances every frame, so the figure breathes and folds through itself continuously, and the per-axis amplitudes are driven by the spectrum, so loud passages swell the curve outward. Incommensurate frequencies mean the trace rarely returns to the same shape.
+Each curve is a damped sum of sines in x and y - the figure a harmonograph pen traces. A slow global phase advances every frame, so the figure breathes and folds through itself continuously, and the per-axis amplitudes are driven by the spectrum, so loud passages swell the curve outward.
+
+The seed picks a FIGURE first, and the four figures are different curves, not different tunings of one: incommensurate frequencies fold a rosette that never repeats, small integer ratios close into a braid, a carrier plus a fast epicycle loops petals around an open ring, and a heavily damped pair spirals inward to a point. Colour comes from a shared `Scheme` mood, so a session is not one hue every time.
+
+layers: `bed`
 
 Source: [scripts/scenes/orbits.gd](../scripts/scenes/orbits.gd) (extends `GhostScene`)
 
@@ -446,6 +484,8 @@ Stage - the data-driven scene: its entire content comes from the storyboard entr
 Where every other scene is code that rolls a look from a seed, a stage is a RENDERER for a description: the entry's `cast:` names actors from the `Cast` registry (with sampled-range params), its `track:` schedules `Actions` verbs over them (see `Track`), and `camera:` places the `Lens3D`. Nothing here knows about eyes or prisms specifically - new performers and verbs extend the registries, and scene behavior is authored in the data.
 
 - scene: stage hold: 4 camera: {eye: [0, 0, 4.0], look: [0, 0, 0], fov: 48} cast: - {id: left, kind: eye, at: [0, 0, 0], radius: [0.30, 0.40]} track: nominal: 4 spans: - {at: 0.5, action: blink, target: left}
+
+A stage is deliberately WITHOUT a look of its own, and that is why it has no colour scheme or shape table like the other scenes: everything visible belongs to the actors the board names, so variety here means giving `Cast` and `Actions` more to offer, and adding a palette roll in this file would only fight the entry that asked for a colour.
 
 Continuity: a stage declares `morph_out = morph_in = "stage"`, so when two stage entries run back to back the Director plays a morph and [method begin_morph] adopts the previous entry's LIVE actors by matching id - a body continues across the cut (new slots come from the new entry; identity, pose and verb latches ride along). Set `carry: false` on an entry to open with a clean cut instead.
 

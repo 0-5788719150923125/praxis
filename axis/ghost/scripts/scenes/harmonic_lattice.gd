@@ -9,6 +9,26 @@ extends GhostScene
 
 const OVER := 1.35   # draw this much beyond the screen, for view motion headroom
 
+# How finely the field is divided. This is the one choice that decides whether the
+# lattice reads as a few big panels or a fine mesh, and every lattice used to be
+# built inside the same middling band, so they all read alike.
+const DENSITIES := {
+	"coarse": {"cols": [4, 8], "rows": [3, 6], "fill": [0.60, 0.95]},
+	"medium": {"cols": [8, 18], "rows": [5, 12], "fill": [0.55, 0.85]},
+	"fine": {"cols": [18, 28], "rows": [10, 17], "fill": [0.45, 0.80]},
+}
+
+# The cell itself. `turn` is the polygon's resting rotation in whole turns - an
+# eighth stands a 4-gon on its edge (the old "square"), none leaves it on its point
+# (the old "diamond"). Those two were the entire vocabulary before.
+const FORMS := {
+	"square": {"sides": 4, "turn": 0.125},
+	"diamond": {"sides": 4, "turn": 0.0},
+	"triangle": {"sides": 3, "turn": 0.25},
+	"hex": {"sides": 6, "turn": 0.0},
+	"disc": {"sides": 14, "turn": 0.0},
+}
+
 var _phase := 0.0
 var _hue_t := 0.0     # flowing-hue clock: advances with the audio so the palette drifts
 var _f: AudioFeatures = AudioFeatures.new()
@@ -20,26 +40,44 @@ var _sig := PackedFloat32Array()   # the 12 chroma channels + coarse shape (cont
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	framing = "field"
-	var cols := rng.randi_range(8, 18)
-	var rows := rng.randi_range(5, 12)
+	# A lattice is abstract geometry - no mood is wrong for it, so take the whole set.
+	var sch := Scheme.pick(rng)
+	var dname := String(DENSITIES.keys()[rng.randi() % DENSITIES.size()])
+	var den: Dictionary = DENSITIES[dname]
+	var fname := String(FORMS.keys()[rng.randi() % FORMS.size()])
+	var form: Dictionary = FORMS[fname]
+	var cr: Array = den["cols"]
+	var rr: Array = den["rows"]
+	var fr: Array = den["fill"]
+	var cols := rng.randi_range(int(cr[0]), int(cr[1]))
+	var rows := rng.randi_range(int(rr[0]), int(rr[1]))
 	var sparsity := 0.0 if rng.randf() < 0.4 else rng.randf_range(0.35, 0.7)
 	_act = Activation.new(cols * rows, rng, sparsity)
 	_light = Lighting.new(rng)
+	# The gradients across the field travel from the scheme's base hue toward its
+	# accent rather than an arbitrary distance, so the whole grid stays one family.
+	var to_accent := fposmod(sch.accent - sch.hue + 0.5, 1.0) - 0.5
 	return {
 		"cols": cols,
 		"rows": rows,
-		"hue": rng.randf(),
-		"hue_flow": rng.randf_range(0.2, 0.8),       # horizontal hue gradient (existing)
-		"hue_flow_y": rng.randf_range(0.05, 0.45),   # vertical hue gradient
-		"hue_wave": rng.randf_range(0.05, 0.16),     # amplitude of the travelling hue wave
+		"mood": sch.name,
+		"density": dname,
+		"form": fname,
+		"hue": sch.hue,
+		"hue_flow": to_accent * rng.randf_range(0.6, 1.6),    # horizontal hue gradient
+		"hue_flow_y": to_accent * rng.randf_range(0.10, 0.60),  # vertical hue gradient
+		"hue_wave": sch.spread * rng.randf_range(0.8, 2.2),   # amplitude of the travelling hue wave
 		"hue_drift": rng.randf_range(0.10, 0.40),    # how fast the whole palette flows
-		"sat": rng.randf_range(0.55, 0.75),
-		"sat_var": rng.randf_range(0.05, 0.20),      # saturation variance across the field
+		"sat": sch.sat,
+		"sat_var": sch.sat * rng.randf_range(0.08, 0.28),   # saturation variance across the field
+		"val": 0.75 + 0.30 * sch.val,                # the mood's brightness character
 		"wave_freq": rng.randf_range(1.5, 4.0),
 		"wave_speed": rng.randf_range(0.5, 2.0),
-		"cell_fill": rng.randf_range(0.55, 0.85),
+		"cell_fill": rng.randf_range(float(fr[0]), float(fr[1])),
 		"spin": rng.randf_range(0.0, 1.0),
-		"diamond": rng.randf() < 0.5,
+		"sides": int(form["sides"]),
+		"turn": float(form["turn"]),
+		"aspect": rng.randf_range(0.70, 1.45),       # stretched cells: bars, not only squares
 	}
 
 
@@ -75,7 +113,10 @@ func _draw() -> void:
 	var sat_var: float = params.sat_var
 	var wave_freq: float = params.wave_freq
 	var spin: float = params.spin
-	var diamond: bool = params.diamond
+	var val_mul: float = params.val
+	var sides: int = params.sides
+	var turn: float = params.turn
+	var aspect: float = params.aspect
 	var origin := -field * 0.5
 
 	for r in rows:
@@ -110,18 +151,20 @@ func _draw() -> void:
 			var dh: float = _ch.x - h
 			h = fposmod(h + (dh - round(dh)) * 0.4 * _ch.y, 1.0)
 			var sat := clampf(sat0 + sat_var * sin((t - rt) * PI + _hue_t * 1.3) - 0.25 * lit, 0.0, 1.0)
-			var val := clampf(0.28 + 0.3 * e + 0.55 * lit + 0.4 * _light.glow(), 0.05, 1.0)
-			_draw_cell(pos, s, e * spin, Color.from_hsv(h, sat, val), diamond)
+			var val := clampf((0.28 + 0.3 * e + 0.55 * lit + 0.4 * _light.glow()) * val_mul, 0.05, 1.0)
+			_draw_cell(pos, s, e * spin, Color.from_hsv(h, sat, val), sides, turn, aspect)
 
 
-func _draw_cell(pos: Vector2, s: float, rot: float, col: Color, diamond: bool) -> void:
-	var half := s * 0.5
-	var base_rot := rot * PI + (PI * 0.25 if diamond else 0.0)
-	var pts := PackedVector2Array([
-		Vector2(-half, -half), Vector2(half, -half),
-		Vector2(half, half), Vector2(-half, half),
-	])
+func _draw_cell(pos: Vector2, s: float, rot: float, col: Color, sides: int, turn: float, aspect: float) -> void:
+	# Size every form by its INRADIUS, so a cell spans the same width across its flats
+	# whatever it has for corners (a 4-gon comes out exactly the old square). Capped,
+	# because a triangle's true circumradius would spill into its neighbours.
+	var r := s * 0.5 * minf(1.3, 1.0 / cos(PI / float(sides)))
+	var base_rot := rot * PI + turn * TAU
 	var out := PackedVector2Array()
-	for p in pts:
-		out.append(pos + p.rotated(base_rot))
+	for i in sides:
+		# The cell as a regular n-gon, stretched on one axis - a 4-gon at an eighth
+		# turn is the original square, so the old look is still in the set.
+		var a := TAU * float(i) / float(sides)
+		out.append(pos + Vector2(cos(a) * r * aspect, sin(a) * r / aspect).rotated(base_rot))
 	draw_colored_polygon(out, col)

@@ -7,6 +7,25 @@ extends Scene3D
 ## blink. It looks around in centre-preferring saccades by rotating in 3D. The pupil
 ## dilates with the audio. Declares `morph_out = "eye"` so the Director can morph it
 ## into two_eyes (the split) rather than cutting.
+##
+## The iris colour comes from a [Scheme] mood and the eye's size on screen from a
+## named tier, so two seeds are two different eyes at two different distances rather
+## than the same golf-ball in the same brown.
+
+## Iris moods. An eye can be brown, amber, hazel, green, grey or blue - and, this
+## being ghost, something no eye ever was. Magenta and rose are left out: at iris
+## saturation they read as blood, not as an eye.
+const IRIS_MOODS := ["dawn", "ember", "sodium", "brass", "bone", "verdant", "toxic",
+	"teal", "glacier", "abyss", "ash", "violet"]
+
+## World radius tiers. This was locked at 0.30-0.40 - a quarter-frame golf-ball every
+## single time. The tiers are the three READS: a distant speck in the void, a portrait,
+## and an eye pressed up against the lens.
+const SIZES := {
+	"distant":  [0.16, 0.24],
+	"portrait": [0.28, 0.40],
+	"looming":  [0.46, 0.62],
+}
 
 var _f: AudioFeatures = AudioFeatures.new()
 var _eye: EyeBody
@@ -19,12 +38,20 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	framing = "plane"
 	morph_out = "eye"
 	_rng.seed = rng.randi()
-	_eye = EyeBody.new(rng.randi())
+	var sch := Scheme.among(IRIS_MOODS, rng)
+	# vary() rather than the mood's flat base hue, so two seeds landing on the same
+	# mood are still two different eyes.
+	_eye = EyeBody.new(rng.randi(), sch.vary(rng))
 	_eye.autonomous = false              # driven by the focus point below
+	var size_name := String(SIZES.keys()[rng.randi() % SIZES.size()])
+	var band: Array = SIZES[size_name]
+	# The lens itself stays fixed: two_eyes and eye_prism build their own cameras at
+	# these exact settings, and a differing fov would pop the size at the morph.
 	lens.eye = Vector3(0, 0, 4.0)        # static, forward-facing camera (per the brief)
 	lens.look = Vector3.ZERO
 	lens.fov = 48.0
-	return {"radius": rng.randf_range(0.30, 0.40)}   # world radius -> a golf-ball on screen
+	return {"radius": rng.randf_range(float(band[0]), float(band[1])),
+		"mood": sch.name, "size": size_name, "hue": _eye.hue}
 
 
 ## Hand the eye's identity (colour, gaze, size) to a morph target, so the split is

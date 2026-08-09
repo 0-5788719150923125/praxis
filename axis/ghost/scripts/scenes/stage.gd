@@ -19,6 +19,11 @@ extends Scene3D
 ##       spans:
 ##         - {at: 0.5, action: blink, target: left}
 ##
+## A stage is deliberately WITHOUT a look of its own, and that is why it has no colour
+## scheme or shape table like the other scenes: everything visible belongs to the actors
+## the board names, so variety here means giving [Cast] and [Actions] more to offer, and
+## adding a palette roll in this file would only fight the entry that asked for a colour.
+##
 ## Continuity: a stage declares `morph_out = morph_in = "stage"`, so when two stage
 ## entries run back to back the Director plays a morph and [method begin_morph]
 ## adopts the previous entry's LIVE actors by matching id - a body continues across
@@ -63,7 +68,14 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	if typeof(spec.get("track")) == TYPE_DICTIONARY:
 		_track = Track.new(spec["track"], rng)
 		_nominal = _track.nominal
-	return {}
+	# A stage chooses nothing of its own - it reports what the BOARD chose, so a probe
+	# reading params can see that this scene's variety lives in the storyboard and in
+	# the Cast registry rather than in a table here.
+	var kinds: Array = []
+	for a in _actors.values():
+		kinds.append(a.kind)
+	return {"cast": kinds, "actors": _actors.keys(), "elastic": _elastic,
+		"nominal": _nominal, "carry": morph_in != ""}
 
 
 ## The live actors, for the next stage entry to adopt.

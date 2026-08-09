@@ -177,9 +177,9 @@ _Weather & atmosphere_
 - **`fire`** (canvas, drift) - a living flame attuned to the harmonics.
 - **`fireflies`** (canvas, drift) - a dusk meadow sparkling with wandering lights.
 - **`fog_bank`** (canvas, drift) - rolling coloured fog, light glowing from within.
-- **`fog_volume`** (canvas, drift) - REAL 3D fog: a low, wide bank of soft gaussian puffs receding into depth, lit volumetrically (a brighter sunward edge fading into a dim core) and slowly drifting. A genuine haze with simulated dynamics, not a flat 2D wash. `bed` + `volumetric` (fog mode).
+- **`fog_volume`** (canvas, drift) - REAL 3D fog: a low, wide bank of soft gaussian puffs receding into depth, lit volumetrically (a brighter sunward edge fading into a dim core) and slowly drifting. A genuine haze with simulated dynamics, not a flat 2D wash. `bed` + `volumetric` (fog mode), and depending on the AIR the seed draws: ...
 - **`motes`** (canvas, drift) - dust adrift in a shaft of light.
-- **`petals`** (canvas, drift) - blossom or leaves drifting down on a soft breeze.
+- **`petals`** (canvas, drift) - blossom, leaves or ash drifting down on a soft breeze.
 - **`rainfall`** (canvas, drift) - slanting rain over a brooding sky, fog rolling through it.
 - **`snowfall`** (canvas, drift) - a quiet field of falling snow over a soft colour bed.
 - **`snowflakes`** (canvas, drift) - a field of several dozen crystal dendrites, restored and multiplied.

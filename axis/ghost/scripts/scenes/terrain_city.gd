@@ -9,8 +9,40 @@ extends Scene3D
 ## by development x a per-block spectral band (nonlinear), so the skyline rises with the
 ## music. Some plots **detach**, their blocks floating a little off the ground. Camera
 ## orbits under a wide lens; the city grows over time from a few seeds.
+##
+## Land, layout and colour are all sampled per session rather than fixed. The terrain is any
+## of four landforms under any climate that suits it; the LAYOUT decides whether the city
+## reads as sparse dendritic arms, a broad sprawl, thin ribbons along the ridges or several
+## separate towns; the SKYLINE law decides whether heights are even or a rare few spires
+## tower over everything; and a [Scheme] mood colours the blocks, developed districts
+## walking toward its accent.
 
-const C := 30                    # city grid is C x C plots
+## Which climates suit which landform - a mesa is not verdant, a canyon is not tundra.
+const TERRAINS := {
+	"hills":   ["temperate", "verdant", "tundra", "arid"],
+	"mesa":    ["arid", "temperate"],
+	"valleys": ["verdant", "temperate", "tundra"],
+	"canyon":  ["arid", "temperate"],
+}
+## City layouts. The ridged "arm" field's frequency and how hard off-ridge plots are
+## penalised decide the whole plan together, so they are sampled as a set: high frequency
+## plus a hard penalty gives thin ribbons, low frequency plus a soft one gives sprawl.
+const LAYOUTS := {
+	"dendritic": {"arm": [1.6, 2.4], "penalty": 0.90, "band": [0.46, 0.64], "cores": [1, 2], "detach": 0.12},
+	"sprawl":    {"arm": [0.9, 1.4], "penalty": 0.45, "band": [0.35, 0.60], "cores": [2, 3], "detach": 0.08},
+	"ribbon":    {"arm": [2.6, 3.6], "penalty": 1.10, "band": [0.52, 0.70], "cores": [1, 1], "detach": 0.15},
+	"towns":     {"arm": [2.0, 3.0], "penalty": 0.70, "band": [0.44, 0.62], "cores": [3, 4], "detach": 0.10},
+}
+## Skyline laws - how tall potential is DISTRIBUTED over the plots. A high exponent means
+## almost everything is low with a rare tower; a low one means an even mid-rise mass.
+const SKYLINES := {
+	"spires":  {"exp": 4.6, "hbase": 0.7, "hspan": 3.4, "foot": 0.9, "sky": 0.06},
+	"even":    {"exp": 1.4, "hbase": 1.1, "hspan": 1.2, "foot": 0.7, "sky": 0.02},
+	"stepped": {"exp": 3.2, "hbase": 0.9, "hspan": 2.5, "foot": 1.0, "sky": 0.05},
+	"slabs":   {"exp": 2.0, "hbase": 0.8, "hspan": 1.8, "foot": 1.5, "sky": 0.03},
+}
+
+var C := 30                      # city grid is C x C plots - density is sampled, not fixed
 
 var _f: AudioFeatures = AudioFeatures.new()
 var _terrain: Terrain
@@ -29,6 +61,10 @@ var _light_az := 0.0
 var _light_el := 0.5
 var _light_dir := 1.0
 var _hue := 0.0
+var _hue_dev := 0.25      # hue walk toward the scheme accent per unit development
+var _hue_elev := 0.12     # ... and per unit terrain height
+var _sat := 0.45          # block saturation, from the mood
+var _vmul := 1.0          # block value multiplier, from the mood
 var _glow := 0.0
 var _yaw := 0.0
 var _dist := 7.5
@@ -38,16 +74,36 @@ var _beat_prev := 0.0
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	framing = "field"
-	var ttype := "mesa" if rng.randf() < 0.5 else "hills"
+	var ttype := String(TERRAINS.keys()[rng.randi() % TERRAINS.size()])
+	var climates: Array = TERRAINS[ttype]
+	var climate := String(climates[rng.randi() % climates.size()])
+	# Plot size is the city's grain: a coarse grid gives big blocks on a small town, a fine
+	# one a dense field of smaller buildings over the same land.
+	C = rng.randi_range(26, 34)
 	_terrain = Terrain.new()
-	_terrain.build(rng, ttype, 3.0, rng.randf_range(0.35, 0.55), null,
-		"verdant" if rng.randf() < 0.5 else "temperate")
-	_hue = fposmod(rng.randf() + 0.5, 1.0)
-	# The city grows from just ONE or TWO cores, each seeded in a LOW valley (easy ground): sample a
+	_terrain.build(rng, ttype, 3.0, rng.randf_range(0.35, 0.55), null, climate)
+	# Buildings take a [Scheme] mood - concrete-grey, brass, bone, or a lit-up violet or teal
+	# night - rather than one arbitrary hue rotated off the terrain's.
+	var sch := Scheme.among(["ash", "bone", "brass", "sodium", "dawn", "glacier",
+		"abyss", "violet", "teal", "ember", "rose"], rng)
+	_hue = sch.hue
+	_sat = sch.sat * 0.65
+	_vmul = sch.val * 1.15
+	# Development walks the blocks toward the accent (the short way round), so the built-up
+	# core reads as a different, related colour from the frontier instead of a fixed swing.
+	var to_accent := fposmod(sch.accent - sch.hue + 0.5, 1.0) - 0.5
+	_hue_dev = to_accent * rng.randf_range(0.35, 0.9)
+	_hue_elev = to_accent * rng.randf_range(0.1, 0.4)
+	var layout := String(LAYOUTS.keys()[rng.randi() % LAYOUTS.size()])
+	var lay: Dictionary = LAYOUTS[layout]
+	var skyline := String(SKYLINES.keys()[rng.randi() % SKYLINES.size()])
+	var sky_law: Dictionary = SKYLINES[skyline]
+	# The city grows from a few cores, each seeded in a LOW valley (easy ground): sample a
 	# handful of central cells and keep the lowest. Development creeps outward from there; the cores
-	# are re-pinned every frame so the origin never fades.
+	# are re-pinned every frame so the origin never fades. How MANY cores is the layout's call -
+	# one origin gives a single town, several give separate settlements that grow together.
 	_dev = Swarm.new(C, C, Swarm.GROW, rng, 0)
-	for k in rng.randi_range(1, 2):
+	for k in rng.randi_range(int(lay.cores[0]), int(lay.cores[1])):
 		var bx := C / 2
 		var by := C / 2
 		var blo := 1e9
@@ -72,7 +128,11 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_phase.resize(C * C)
 	# A ridged "arm" field: its branching high ridges become the channels the city builds ALONG, so
 	# development reads as dendritic ARMS reaching out from the core rather than a filled blob.
-	var armf := Field.make("ridged", rng.randi(), rng.randf_range(1.5, 2.4), 3)
+	var armf := Field.make("ridged", rng.randi(), rng.randf_range(float(lay.arm[0]), float(lay.arm[1])), 3)
+	var band0: float = float(lay.band[0])
+	var band1: float = float(lay.band[1])
+	var penalty: float = float(lay.penalty)
+	var hexp: float = float(sky_law.exp)
 	for cy in C:
 		for cx in C:
 			var i := cy * C + cx
@@ -88,21 +148,22 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 			# field can build (a strong OFF-ridge penalty keeps the rest bare whatever the development),
 			# so the city is a sparse DENDRITIC network of arms rather than a solid blob. Elevation adds
 			# a gentle bias (lower ground a touch likelier); noise ragged-ifies the frontier.
-			_thresh[i] = 0.05 + 0.2 * elev + (1.0 - smoothstep(0.46, 0.64, arm)) * 0.9 + rng.randf_range(-0.03, 0.05)
+			_thresh[i] = 0.05 + 0.2 * elev + (1.0 - smoothstep(band0, band1, arm)) * penalty + rng.randf_range(-0.03, 0.05)
 			_grown[i] = 0.0
-			# Footprint + MAX-height potential: a skewed distribution - most plots modest, a rare few are
-			# big anchors. But this height is only ever REALISED once the district hits critical mass (see
+			# Footprint + MAX-height potential, distributed by the SKYLINE law: a steep exponent
+			# leaves most plots modest with a rare big anchor, a shallow one gives an even mid-rise
+			# mass. Either way the height is only REALISED once the district hits critical mass (see
 			# the draw): blocks start SMALL and grow taller as their surroundings develop.
-			var big := pow(rng.randf(), 3.2)                             # strongly skewed: MOST plots small
-			_foot[i] = 0.5 + 1.0 * big
-			_hclass[i] = 0.9 + 2.5 * big + rng.randf_range(-0.1, 0.3)     # tall POTENTIAL (a rare few big)
+			var big := pow(rng.randf(), hexp)
+			_foot[i] = 0.5 + float(sky_law.foot) * big
+			_hclass[i] = float(sky_law.hbase) + float(sky_law.hspan) * big + rng.randf_range(-0.1, 0.3)
 			# A rare few plots are skyscrapers FROM THE START (variety) - most are 0 (grow up naturally).
-			_sky[i] = rng.randf_range(0.55, 1.0) if rng.randf() < 0.06 else 0.0
+			_sky[i] = rng.randf_range(0.55, 1.0) if rng.randf() < float(sky_law.sky) else 0.0
 			_phase[i] = rng.randf() * TAU
-	# Per-plot detach: a few districts float off the ground.
+	# Per-plot detach: a few districts float off the ground (how many is the layout's).
 	_detach.resize(C * C)
 	for i in C * C:
-		_detach[i] = rng.randf_range(0.10, 0.30) if rng.randf() < 0.12 else 0.0
+		_detach[i] = rng.randf_range(0.10, 0.30) if rng.randf() < float(lay.detach) else 0.0
 	lens.fov = rng.randf_range(56.0, 72.0)
 	_dist = rng.randf_range(6.5, 8.5)
 	_pitch = rng.randf_range(0.34, 0.55)
@@ -112,7 +173,8 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_light_dir = 1.0 if rng.randf() < 0.5 else -1.0
 	_light_el = rng.randf_range(0.34, 0.52)
 	_terrain.set_light(_light_az, _light_el)
-	return {"type": ttype}
+	return {"type": ttype, "climate": climate, "mood": sch.name,
+		"layout": layout, "skyline": skyline, "grid": C}
 
 
 func _plot_wx(cx: int) -> float:
@@ -171,6 +233,10 @@ func update(f: AudioFeatures, delta: float) -> void:
 	job.life = _life
 	job.glow = _glow
 	job.hue = _hue
+	job.hue_dev = _hue_dev
+	job.hue_elev = _hue_elev
+	job.sat = _sat
+	job.vmul = _vmul
 	job.maturity = _maturity
 	job.reveal = smoothstep(0.8, 1.0, view.presence)
 	job.terrain = _terrain
@@ -209,6 +275,10 @@ class CityJob:
 	var life := 0.0
 	var glow := 0.0
 	var hue := 0.0
+	var hue_dev := 0.25
+	var hue_elev := 0.12
+	var sat := 0.45
+	var vmul := 1.0
 	var maturity := 0.0
 	var reveal := 1.0
 	var terrain: Terrain
@@ -268,7 +338,7 @@ class CityJob:
 				# Sink the base BELOW the surface so its bottom is buried; the top stays where it was.
 				var base := Vector3(wx, ground + float_off - embed, wz)
 				var htot := h + embed
-				var bhue := fposmod(hue + 0.12 * terrain.height_at(wx, wz) + 0.25 * dv, 1.0)
+				var bhue := fposmod(hue + hue_elev * terrain.height_at(wx, wz) + hue_dev * dv, 1.0)
 				# The TERRAIN also shadows the building (a block in a hill's cast shadow darkens).
 				var tsh: float = terrain.shadow_at(wx, wz)
 				var blit := clampf(0.18 + 0.5 * dv + 0.5 * react + 0.6 * glow, 0.05, 1.2) * lit * (0.35 + 0.65 * tsh)
@@ -329,7 +399,11 @@ class CityJob:
 			var cols := PackedColorArray()
 			for idx in [i0, i1, i2, i3]:
 				var sf: float = shadow.factor(corners[idx], ext + 0.06)
-				var cc := Color.from_hsv(bhue, 0.45, clampf(lit * shade * sf, 0.0, 1.0))
+				# Saturation and brightness carry the mood, so an ash city is grey concrete
+				# and a violet one glows - the lighting maths is untouched either way.
+				var cc := Color.from_hsv(bhue, sat, clampf(lit * shade * sf * vmul, 0.0, 1.0))
+				# A plot below the waterline is IN the lake, not on it (see Terrain.submerged).
+				cc = terrain.submerged(cc, corners[idx].y)
 				cc.a = reveal                          # fade the buildings in AFTER the terrain
 				cols.append(cc)
 			out.append({"d": (p0.z + p1.z + p2.z + p3.z) * 0.25, "poly": fpoly, "cols": cols})

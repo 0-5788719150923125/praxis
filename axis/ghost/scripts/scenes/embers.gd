@@ -11,6 +11,12 @@ extends GhostScene
 ## carry the audio. (The old version pulsed every spark's size with the global beat
 ## and burst them all from centre together - one synchronized throb. Fixed.)
 
+## The cloud's FORM at rest - where the sparks live before the wind and the beats move
+## them. A drift of embers hangs as a loose cloud, rises off a fire as a plume, or rides
+## the rim of an updraft as a ring: one physics, three silhouettes. Without this the scene
+## was always the same disc of sparks however it was seeded.
+const FORMS := ["cloud", "plume", "ring"]
+
 var _f: AudioFeatures = AudioFeatures.new()
 var _sys: ParticleSystem
 var _t := 0.0
@@ -21,17 +27,36 @@ var _ch := Vector2.ZERO       # live tonal colour (hue, strength) from the harmo
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	render_kind = "particles"
 	_sys = ParticleSystem.new()
-	var base_hue := rng.randf_range(0.02, 0.12)     # warm
-	var n := rng.randi_range(80, 160)
+	# Sparks are not only orange: magnesium burns green, a welding arc violet, a street
+	# flare rose. The set stays LIGHT-coloured - nothing that would read as cold water.
+	var sch := Scheme.among(
+		["ember", "sodium", "dawn", "brass", "rose", "magenta", "violet", "toxic", "bone"], rng)
+	var form := String(FORMS[rng.randi() % FORMS.size()])
+	var n := rng.randi_range(60, 220)
+	# The whole cloud's grain: some seeds are fine dust, some are fat drifting cinders.
+	var grain := rng.randf_range(0.7, 1.8)
+	var spread := rng.randf_range(0.18, 0.46)      # how far the form reaches
+	var ring_w := rng.randf_range(0.04, 0.14)      # ring thickness, if it is a ring
+	var stalk := rng.randf_range(0.05, 0.16)       # plume width at its base
 	for i in n:
 		var a := rng.randf() * TAU
-		# A wider, looser cloud (not a tight central clump) so the sparks no longer feel
-		# bunched; the spawn radius itself varies per spark.
-		var r := sqrt(rng.randf()) * rng.randf_range(0.22, 0.40)
+		var home: Vector2
+		match form:
+			"plume":
+				# Dense at the base, fanning as it rises - pow() biases the draw downward.
+				var y: float = 0.45 - 0.95 * pow(rng.randf(), 2.0)
+				home = Vector2(rng.randf_range(-1.0, 1.0) * (stalk + 0.55 * spread * (0.45 - y)), y)
+			"ring":
+				var r_ring: float = spread * (1.0 + rng.randf_range(-1.0, 1.0) * ring_w)
+				home = Vector2(cos(a), sin(a)) * r_ring
+			_:
+				# A wide, loose cloud (not a tight central clump); the spawn radius itself
+				# varies per spark.
+				home = Vector2(cos(a), sin(a)) * sqrt(rng.randf()) * rng.randf_range(spread * 0.6, spread)
 		var p := Particle.new()
-		p.home = Vector2(cos(a), sin(a)) * r
-		p.radius = rng.randf_range(0.004, 0.012)
-		p.hue = fposmod(base_hue + rng.randf_range(-0.04, 0.07), 1.0)
+		p.home = home
+		p.radius = clampf(rng.randf_range(0.003, 0.011) * grain, 0.002, 0.020)
+		p.hue = sch.vary(rng)
 		p.noise = Vector2(rng.randf_range(-1, 1), rng.randf_range(-1, 1))
 		# Per-particle flare threshold (some embers catch on a faint beat, some need a
 		# hard one), a twinkle phase/rate, and a mobility multiplier so each rides the
@@ -49,7 +74,14 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_sys.add_force("wind", {"amp": 0.24, "freq": 0.3, "lift": -0.14})   # negative y = rise
 	_sys.add_force("spring", {"k": 0.5})
 	_sys.add_force("drag", {"k": 1.1})
-	return {"hue": base_hue}
+	return {
+		"hue": sch.hue,
+		"mood": sch.name,
+		"form": form,
+		"count": n,
+		# Carried so the draw keeps the mood's own character instead of one baked constant.
+		"sat": clampf(sch.sat * rng.randf_range(0.7, 1.05), 0.15, 1.0),
+	}
 
 
 func update(f: AudioFeatures, delta: float) -> void:
@@ -104,6 +136,6 @@ func _draw() -> void:
 		# the warm cloud drifts in colour with the music's key.
 		var dh: float = _ch.x - p.hue
 		dh = dh - round(dh)
-		var col := Color.from_hsv(fposmod(p.hue + dh * 0.4 * _ch.y, 1.0), 0.6, v)
+		var col := Color.from_hsv(fposmod(p.hue + dh * 0.4 * _ch.y, 1.0), float(params.sat), v)
 		draw_circle(c, r * (2.0 + 2.0 * flare), Color(col.r, col.g, col.b, (0.08 + 0.18 * flare) * (0.4 + 0.6 * harm)))
 		draw_circle(c, r, Color(col.r, col.g, col.b, alpha))

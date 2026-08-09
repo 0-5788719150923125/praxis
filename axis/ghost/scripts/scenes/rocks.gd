@@ -19,10 +19,35 @@ extends GhostScene
 ##
 ## Nothing here is one fixed constant per style: the material, responsiveness, and reveal
 ## are all *sampled per rock* around the style's centre, so two rocks of a kind still
-## differ - every computation perturbed by sampling.
+## differ - every computation perturbed by sampling. Colour is a [Scheme] mood chosen to
+## suit the style (matte stone gets the earthy moods, the gem gets the jewel ones), and the
+## stones either share a tight hue FAMILY or spread base-to-accent across the set. The
+## composition is sampled too - a couple of colossal boulders, a resting cluster, or a wide
+## scatter of scree - so the same subject is framed differently each time it is seeded.
 
 enum Mode { PULSE, EXPLODE, CRUMBLE }
-const STYLES := ["plain", "rough", "crystal", "hybrid"]
+## ARRANGEMENTS - how many stones and how big, sampled as a set. The old build was always
+## 2-4 zoomed-in stones, so every rocks scene had the same composition however it was
+## seeded; these are three genuinely different readings of the same subject (a couple of
+## colossi filling the frame, a resting cluster, a wide scatter of small stones).
+## A scatter carries its own style list: scree is chips and shards, not polished masses -
+## and the smooth style is the heaviest mesh (subdivided twice further), which a dozen of
+## would cost real frame time for a look that scale hides anyway.
+const ARRANGEMENTS := {
+	"boulders": {"count": [1, 3],  "zoom": [1.9, 2.8], "spread": [0.0, 0.45], "radius": [0.12, 0.22],
+		"styles": ["plain", "rough", "crystal", "hybrid"]},
+	"cluster":  {"count": [3, 5],  "zoom": [1.4, 2.2], "spread": [0.0, 0.65], "radius": [0.10, 0.20],
+		"styles": ["plain", "rough", "crystal", "hybrid"]},
+	"scree":    {"count": [6, 10], "zoom": [0.8, 1.2], "spread": [0.20, 1.0], "radius": [0.07, 0.16],
+		"styles": ["rough", "crystal", "hybrid"]},
+}
+## Which moods a stone of each style can be. Stone is mineral, so the earthy moods carry the
+## matte styles while the faceted gem gets the jewel ones - within that, any of them.
+const STYLE_MOODS := {
+	"plain":   ["ash", "bone", "brass", "dawn", "sodium", "abyss", "glacier", "verdant"],
+	"rough":   ["ash", "bone", "brass", "ember", "dawn", "sodium", "verdant", "abyss"],
+	"crystal": ["violet", "magenta", "teal", "glacier", "rose", "toxic", "abyss", "ember"],
+}
 # Per-style material CENTRES (each rock samples around these, below): [edge, sat, gloss, roughness].
 const MATERIAL := {
 	"plain":   {"edge": 0, "sat": 0.30, "gloss": 0.18, "rough": 0.6},
@@ -45,7 +70,11 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	render_kind = "mesh3d"
 	texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED   # so the panned reveal mask wraps seamlessly
 	_mode = rng.randi_range(0, 2)
-	_style = STYLES[rng.randi_range(0, STYLES.size() - 1)]
+	# Composition first: it decides which stone styles belong in it (see ARRANGEMENTS).
+	var arrangement := String(ARRANGEMENTS.keys()[rng.randi() % ARRANGEMENTS.size()])
+	var arr: Dictionary = ARRANGEMENTS[arrangement]
+	var styles: Array = arr.styles
+	_style = String(styles[rng.randi() % styles.size()])
 	lifecycle = "oneshot" if _mode == Mode.CRUMBLE else "loop"
 
 	var mat: Dictionary = MATERIAL[_style]
@@ -54,39 +83,41 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	# others mostly wireframe-revealed - the masking is a spectrum, not a flag.
 	var reveal_chance := 0.0 if rng.randf() < 0.3 else rng.randf_range(0.3, 0.9)
 
-	var base_hue := rng.randf()
-	# Each rock gets a DISTINCT colour, spread across a sampled span around the base hue (so
-	# some scenes are a tight family, others a wide spread) and distributed by index so no
-	# two stones read the same - per the note that different shapes want different colours.
-	var hue_span := rng.randf_range(0.22, 0.72)
-	var hue_dir := 1.0 if rng.randf() < 0.5 else -1.0
-	# Fewer, bigger, more spread-out rocks: a zoomed-in cluster where the largest run off
-	# the edges rather than sitting tidily centred. The overall scale is sampled per scene
-	# so some shows are a few colossal boulders, others a looser scatter of mid stones.
-	var count := rng.randi_range(2, 4)
-	var zoom := rng.randf_range(1.5, 2.6)            # > 1 pushes rocks bigger / off-frame
+	# Colour comes from a shared [Scheme] mood suited to the style, so a session of rocks is
+	# ash-grey or bone or lurid gem rather than one arbitrary hue every time.
+	var sch := Scheme.pick(rng) if _style == "hybrid" else Scheme.among(STYLE_MOODS[_style], rng)
+	# Two ways a set of stones can relate: a tight FAMILY (all near the base hue, one stone
+	# type) or a SPREAD from base to accent (a mixed deposit, each stone its own mineral).
+	var family := rng.randf() < 0.45
+	var count := rng.randi_range(int(arr.count[0]), int(arr.count[1]))
+	var zoom := rng.randf_range(float(arr.zoom[0]), float(arr.zoom[1]))   # > 1 pushes rocks off-frame
 	for i in count:
-		var hue_t := float(i) / float(maxi(1, count - 1))   # 0..1 across the rocks
 		# Sample the geometry family for this rock (the start of the spec pattern).
 		var mesh := Mesh3D.hybrid(rng) if _style == "hybrid" else Mesh3D.rock(_style, rng)
 		var spin := Vector3(
 			rng.randf_range(-1, 1), rng.randf_range(-1, 1), rng.randf_range(-0.4, 0.4))
 		# Spread wide - well past the frame edges, so big rocks are only partly on screen.
-		var spread := rng.randf_range(0.0, 0.65)
+		var spread := rng.randf_range(float(arr.spread[0]), float(arr.spread[1]))
 		var ang := rng.randf() * TAU
+		# Family: everyone drifts a little off the base. Spread: the i-th of `count` related
+		# hues, base through accent, so no two stones read the same.
+		var hue := sch.vary(rng) if family else fposmod(
+			sch.hue_at(i, count) + rng.randf_range(-0.02, 0.02), 1.0)
 		var rock := {
 			"mesh": mesh,
 			"verts0": mesh.verts.duplicate(),   # pristine geometry, for the collision dent
 			"center": Vector2(cos(ang), sin(ang)) * spread + Vector2(
 				rng.randf_range(-0.12, 0.12), rng.randf_range(-0.10, 0.10)),
-			"radius": rng.randf_range(0.10, 0.20) * zoom,   # zoomed in; the biggest overflow the frame
-			"hue": fposmod(base_hue + hue_dir * (hue_t - 0.5) * hue_span + rng.randf_range(-0.04, 0.04), 1.0),
+			"radius": rng.randf_range(float(arr.radius[0]), float(arr.radius[1])) * zoom,
+			"hue": hue,
 			"basis": Basis.from_euler(Vector3(rng.randf() * TAU, rng.randf() * TAU, 0.0)),
 			"spin": spin.normalized() * rng.randf_range(0.07, 0.16),   # gentle
 			"e": 0.0,
 			"glow": 0.0,
-			# Material sampled around the style centre - perturbed, not a shared constant.
-			"sat": clampf(float(mat.sat) + rng.randf_range(-0.14, 0.14), 0.0, 1.0),
+			# Material sampled around the style centre, then SCALED by the mood's own
+			# saturation - ash stones come out grey, toxic ones lurid, from the same style.
+			"sat": clampf(float(mat.sat) * (0.35 + 1.3 * sch.sat)
+				+ rng.randf_range(-0.10, 0.10), 0.0, 1.0),
 			"gloss": clampf(float(mat.gloss) * rng.randf_range(0.7, 1.3), 0.0, 1.0),
 			"rough": clampf(float(mat.rough) + rng.randf_range(-0.12, 0.12), 0.05, 1.0),
 			"react": rng.randf_range(0.75, 1.3),   # per-rock responsiveness to the audio
@@ -105,8 +136,10 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 			var threshold := rng.randf_range(-0.35, 0.0)
 			rock.rtex = Mesh3D.reveal_texture(rng, threshold,
 				rng.randf_range(0.10, 0.22), rng.randf_range(0.03, 0.07))
-			rock.wire = Color.from_hsv(
-				float(rock.hue), rng.randf_range(0.0, 0.2), 1.0, rng.randf_range(0.6, 0.85))
+			# The lattice under the coat reads as the mood's ACCENT, near-white, so the
+			# skeletal half still belongs to the same scene as the stone half.
+			rock.wire = sch.color(sch.accent, rng.randf_range(0.1, 0.4),
+				1.4, rng.randf_range(0.6, 0.85))
 				# Each revealed rock's crust drifts at its own slow rate/direction, so the mask
 				# is always gently panning rather than holding a fixed (looping) pattern.
 			rock.pan_rate = rng.randf_range(0.015, 0.055) * (1.0 if rng.randf() < 0.5 else -1.0)
@@ -119,7 +152,8 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	# Some instances have everyone stir; others keep most rocks rooted.
 	var sparsity := 0.0 if rng.randf() < 0.4 else rng.randf_range(0.3, 0.7)
 	_act = Activation.new(count, rng, sparsity)
-	return {}
+	return {"mood": sch.name, "style": _style, "arrangement": arrangement,
+		"count": count, "hues": "family" if family else "spread"}
 
 
 # Push overlapping rock centres apart over a few relaxation passes until they only lightly

@@ -27,14 +27,23 @@ extends GhostScene
 
 const MODES := ["orrery", "trains", "clockwork", "chorus", "split", "split"]   # split weighted up
 
-# A small set of restrained metal tints (hue, saturation). No rainbow: one cold metal,
-# desaturated, so the picture reads as machined material lit in the dark.
-const METALS := [
-	[0.58, 0.18],   # steel blue
-	[0.09, 0.22],   # brass / bronze
-	[0.04, 0.20],   # copper
-	[0.10, 0.05],   # bone / nickel
-	[0.62, 0.10],   # gunmetal
+# METAL. This used to be five hardcoded tints, which meant five machines forever.
+# The restraint that keeps gears from going steampunk-clipart is not the SHORT LIST
+# though - it is the low saturation. So the list becomes any mood a worked metal
+# plausibly takes (blued steel, nickel, brass, copper, verdigris, anodised), and the
+# restraint becomes a CAP: whatever mood is drawn, its saturation is scaled down and
+# clamped, so the wheels always read as machined material lit in the dark.
+const METAL_MOODS := ["ash", "bone", "brass", "sodium", "ember", "glacier", "abyss",
+	"teal", "verdant", "violet"]
+const SAT_CAP := 0.34
+
+# FINISH. Every gear rolled flat-or-wire independently at a fixed 40%, so every
+# machine was the same mongrel mix. A shop builds to one spec: a skeletal frame of
+# spoked wheels, solid plate cogs, or a machine assembled from both.
+const FINISHES := [
+	{"name": "skeletal", "flat": 0.04},
+	{"name": "mixed", "flat": 0.40},
+	{"name": "plate", "flat": 0.88},
 ]
 
 var _f: AudioFeatures = AudioFeatures.new()
@@ -43,6 +52,12 @@ var _gears: Array = []        # each: {group, pos, R, teeth, phase, omega, depth
 var _groups: Array = []       # each: motion driver shared by its gears (see _new_group)
 var _hue := 0.58
 var _sat := 0.18
+var _glow_hue := 0.08        # the scheme's accent: the hub light, a colour the metal is not
+var _glow_sat := 0.10
+var _flat_p := 0.4           # this machine's finish: chance any one wheel is a solid plate
+var _spoke_pool: Array = [3, 4, 5, 6]   # its spoke vocabulary (usually one repeated count)
+var _mod_mul := 1.0          # tooth-size multiplier: fine teeth or chunky ones, machine-wide
+var _wear := 0.45            # how corroded this machine is - 0 for a pristine one
 var _glow := 0.0
 var _beat_pulse := 0.0
 var _beat_prev := 0.0
@@ -54,9 +69,26 @@ var _light_sigma := 0.8       # angular width of the lit arc of teeth
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_rng.seed = rng.randi()
 	framing = "subject"                       # a mechanism is a subject: allow the slow push-in
-	var metal: Array = METALS[rng.randi() % METALS.size()]
-	_hue = fposmod(float(metal[0]) + rng.randf_range(-0.02, 0.02), 1.0)
-	_sat = float(metal[1])
+	var sch := Scheme.among(METAL_MOODS, rng)
+	_hue = sch.hue
+	_sat = clampf(sch.sat * rng.randf_range(0.30, 0.60), 0.04, SAT_CAP)
+	# The hub light is the scheme's accent, unclamped-ish: the one warm/cold spark in
+	# an otherwise grey mechanism, and harmonious with the metal by construction.
+	_glow_hue = sch.accent
+	_glow_sat = clampf(sch.sat * 0.55, 0.03, 0.55)
+	var finish: Dictionary = FINISHES[rng.randi() % FINISHES.size()]
+	_flat_p = float(finish["flat"])
+	# Most machines are built to ONE spoke pattern, as a single shop would; a minority
+	# are assembled from mixed parts.
+	var spokes_all := [3, 4, 5, 6, 8]
+	_spoke_pool = spokes_all if rng.randf() < 0.35 \
+		else [spokes_all[rng.randi() % spokes_all.size()]]
+	# Tooth size, machine-wide: a fine-toothed instrument or a chunky mill drive. Every
+	# module sample below scales by this, so meshing stays exact - only the grain changes.
+	_mod_mul = rng.randf_range(0.7, 1.6)
+	# Wear: a quarter of machines come out of the crate pristine, the rest corroded to
+	# varying degrees.
+	_wear = 0.0 if rng.randf() < 0.25 else rng.randf_range(0.20, 0.85)
 	_light_ang = rng.randf_range(-PI, PI)
 	_light_drift = rng.randf_range(-0.06, 0.06)
 	_light_sigma = rng.randf_range(0.5, 1.05)
@@ -82,16 +114,17 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	# Some free, unmeshed gears - teeth need not always connect. (Skip for split: it is already
 	# a deliberate composition.)
 	if mode != "split" and rng.randf() < 0.55:
-		_build_free(rng, rng.randi_range(1, 2))
+		_build_free(rng, rng.randi_range(1, 3))
 	# A gear or two behind the others, counter-rotating, for depth.
-	_build_bg(rng, 1 if mode == "split" else rng.randi_range(1, 2))
+	_build_bg(rng, 1 if mode == "split" else rng.randi_range(1, 3))
 	# A vast, dim, almost-still wheel arcing behind it all, sometimes - extra depth and gravity.
-	if rng.randf() < 0.35:
+	if rng.randf() < 0.40:
 		_build_backdrop(rng)
 
 	# Paint far wheels first so near ones occlude them.
 	_gears.sort_custom(func(a, b): return float(a.depth) < float(b.depth))
-	return {"mode": mode}
+	return {"mode": mode, "mood": sch.name, "finish": String(finish["name"]),
+		"tooth_scale": _mod_mul, "wear": _wear, "gears": _gears.size()}
 
 
 # --- group + gear construction ----------------------------------------------
@@ -132,7 +165,7 @@ func _add_gear(group: int, pos: Vector2, R: float, teeth: int, phase: float,
 	# (the flank angle), so teeth range from slim and pointed to broad and blocky across gears.
 	var tw := _rng.randf_range(0.08, 0.26)                    # tip half-width
 	var bw := _rng.randf_range(0.30, 0.46)                    # root (base) half-width - always > tw
-	var style := "flat" if _rng.randf() < 0.4 else "wire"     # some solid flat-colour, some skeletal
+	var style := "flat" if _rng.randf() < _flat_p else "wire"  # per the machine's finish
 	var pts := PackedVector2Array()
 	for k in teeth:
 		var a0 := float(k) * p
@@ -143,7 +176,7 @@ func _add_gear(group: int, pos: Vector2, R: float, teeth: int, phase: float,
 			pts.append(Vector2(cos(angs[j]), sin(angs[j])) * rads[j])
 	pts.append(pts[0])                                        # close the rim
 
-	var spoke_n: int = [3, 4, 5, 6][_rng.randi() % 4]
+	var spoke_n: int = int(_spoke_pool[_rng.randi() % _spoke_pool.size()])
 	var spokes := []
 	var s0 := _rng.randf_range(-PI, PI)
 	for i in spoke_n:
@@ -152,7 +185,7 @@ func _add_gear(group: int, pos: Vector2, R: float, teeth: int, phase: float,
 	# Rust: some wheels carry corroded patches - soft orange-brown blobs in their alpha, pinned
 	# to the wheel (polar a, d) so they turn with it, mottling the metal as a worn texture.
 	var rust := []
-	if _rng.randf() < 0.45:
+	if _rng.randf() < _wear:
 		for i in _rng.randi_range(4, 9):
 			rust.append({"a": _rng.randf_range(-PI, PI), "d": _rng.randf_range(0.10, root_r * 0.9),
 				"r": root_r * _rng.randf_range(0.12, 0.36), "al": _rng.randf_range(0.18, 0.45)})
@@ -189,13 +222,13 @@ func _mesh(parent: Dictionary, alpha: float, child_teeth: int) -> Array:
 func _build_orrery(rng: RandomNumberGenerator) -> void:
 	var depth := rng.randf_range(0.45, 0.9)
 	var grp := _new_group("smooth", rng, depth)
-	var module := rng.randf_range(0.018, 0.030)
-	var rc := rng.randf_range(0.28, 0.42)
+	var module := rng.randf_range(0.018, 0.030) * _mod_mul
+	var rc := rng.randf_range(0.24, 0.48)
 	var nc := maxi(9, roundi(2.0 * rc / module))
 	var centre := Vector2(rng.randf_range(-0.12, 0.12), rng.randf_range(-0.12, 0.12))
 	var driver := _add_gear(grp, centre, rc, nc, rng.randf_range(-PI, PI), 1.0, depth)
 	_groups[grp].tooth_step = TAU / float(nc)
-	var sat := rng.randi_range(3, 6)
+	var sat := rng.randi_range(3, 8)
 	for i in sat:
 		var rs := rng.randf_range(0.10, 0.19)
 		var ns := maxi(7, roundi(2.0 * rs / module))
@@ -210,15 +243,15 @@ func _build_orrery(rng: RandomNumberGenerator) -> void:
 func _build_train(rng: RandomNumberGenerator, kind: String) -> void:
 	var depth := rng.randf_range(0.30, 0.95)
 	var grp := _new_group(kind, rng, depth)
-	var module := rng.randf_range(0.020, 0.032)
-	var r0 := rng.randf_range(0.13, 0.24)
+	var module := rng.randf_range(0.020, 0.032) * _mod_mul
+	var r0 := rng.randf_range(0.10, 0.28)
 	var n0 := maxi(8, roundi(2.0 * r0 / module))
 	_groups[grp].tooth_step = TAU / float(n0)
 	var pos := Vector2(rng.randf_range(-0.55, 0.55), rng.randf_range(-0.45, 0.45))
 	var prev := _add_gear(grp, pos, r0, n0, rng.randf_range(-PI, PI), 1.0, depth)
-	var chain := rng.randi_range(1, 3)
+	var chain := rng.randi_range(1, 5)
 	for c in chain:
-		var rn := rng.randf_range(0.09, 0.20)
+		var rn := rng.randf_range(0.07, 0.22)
 		var nn := maxi(7, roundi(2.0 * rn / module))
 		var a := rng.randf_range(-PI, PI)
 		var npos: Vector2 = prev.pos + Vector2(cos(a), sin(a)) * (float(prev.R) + rn)
@@ -232,14 +265,17 @@ func _build_train(rng: RandomNumberGenerator, kind: String) -> void:
 func _build_chorus(rng: RandomNumberGenerator) -> void:
 	var depth := rng.randf_range(0.45, 0.9)
 	var ticking := rng.randf() < 0.65          # lean toward click-turn over smooth
-	var module := rng.randf_range(0.022, 0.032)
-	var r := rng.randf_range(0.11, 0.17)
-	var n := maxi(8, roundi(2.0 * r / module))
+	var module := rng.randf_range(0.022, 0.032) * _mod_mul
 	var dir := 1.0 if rng.randf() < 0.5 else -1.0
-	var cols := rng.randi_range(3, 5)
-	var rows := rng.randi_range(2, 3)
-	var gx := rng.randf_range(0.30, 0.42)
-	var gy := gx
+	# A chorus is a WALL, so the grid is sized first and the wheels are then fitted to
+	# it: a wide sparse rank of small clocks and a tight block of big ones are both
+	# choruses, but a fixed spacing could only ever draw one of them.
+	var cols := rng.randi_range(2, 6)
+	var rows := rng.randi_range(2, 4)
+	var gx := minf(rng.randf_range(0.30, 0.50), 1.75 / maxf(1.0, float(cols - 1)))
+	var gy := minf(gx, 1.25 / maxf(1.0, float(rows - 1)))
+	var r := minf(rng.randf_range(0.09, 0.22), minf(gx, gy) * 0.46)
+	var n := maxi(8, roundi(2.0 * r / module))
 	var x0 := -gx * float(cols - 1) / 2.0
 	var y0 := -gy * float(rows - 1) / 2.0
 	var count := cols * rows
@@ -278,9 +314,9 @@ func _build_split(rng: RandomNumberGenerator) -> void:
 	var big_x := -0.55 if big_left else 0.55
 	var cl_x := 0.5 if big_left else -0.5
 	# The few big wheels, stacked down one side.
-	var bmod := rng.randf_range(0.022, 0.034)
+	var bmod := rng.randf_range(0.022, 0.034) * _mod_mul
 	var by := -0.32
-	for i in rng.randi_range(2, 3):
+	for i in rng.randi_range(2, 4):
 		var depth := rng.randf_range(0.5, 0.95)
 		var grp := _new_group("tick" if rng.randf() < 0.4 else "smooth", rng, depth)
 		_groups[grp].dir = 1.0 if rng.randf() < 0.5 else -1.0
@@ -291,8 +327,8 @@ func _build_split(rng: RandomNumberGenerator) -> void:
 			rng.randf_range(-PI, PI), 1.0, depth)
 		by += r * 1.5
 	# The cluster of many small wheels on the other side.
-	var cmod := rng.randf_range(0.018, 0.030)
-	for i in rng.randi_range(16, 22):
+	var cmod := rng.randf_range(0.018, 0.030) * _mod_mul
+	for i in rng.randi_range(10, 26):
 		var depth := rng.randf_range(0.35, 0.95)
 		var grp := _new_group("tick" if rng.randf() < 0.5 else "smooth", rng, depth)
 		_groups[grp].dir = 1.0 if rng.randf() < 0.5 else -1.0
@@ -313,8 +349,8 @@ func _build_backdrop(rng: RandomNumberGenerator) -> void:
 	var depth := rng.randf_range(0.05, 0.18)
 	var grp := _new_group("smooth", rng, depth)
 	_groups[grp].speed = rng.randf_range(0.03, 0.10)         # ponderous
-	var module := rng.randf_range(0.030, 0.050)
-	var r := rng.randf_range(0.75, 1.25)                     # larger than the frame
+	var module := rng.randf_range(0.030, 0.050) * _mod_mul
+	var r := rng.randf_range(0.70, 1.55)                     # larger than the frame
 	var n := maxi(24, roundi(2.0 * r / module))
 	_groups[grp].tooth_step = TAU / float(n)
 	var pos := Vector2(rng.randf_range(-0.5, 0.5), rng.randf_range(-0.5, 0.5))
@@ -329,8 +365,8 @@ func _build_free(rng: RandomNumberGenerator, n: int) -> void:
 		var depth := rng.randf_range(0.35, 0.95)
 		var grp := _new_group("tick" if rng.randf() < 0.45 else "smooth", rng, depth)
 		_groups[grp].dir = 1.0 if rng.randf() < 0.5 else -1.0
-		var module := rng.randf_range(0.020, 0.034)
-		var r := rng.randf_range(0.10, 0.26)
+		var module := rng.randf_range(0.020, 0.034) * _mod_mul
+		var r := rng.randf_range(0.08, 0.30)
 		var teeth := maxi(8, roundi(2.0 * r / module))
 		_groups[grp].tooth_step = TAU / float(teeth)
 		var pos := Vector2(rng.randf_range(-0.6, 0.6), rng.randf_range(-0.5, 0.5))
@@ -346,8 +382,8 @@ func _build_bg(rng: RandomNumberGenerator, n: int) -> void:
 		var grp := _new_group("tick" if rng.randf() < 0.3 else "smooth", rng, depth)
 		_groups[grp].speed = rng.randf_range(0.05, 0.18)        # ponderous
 		_groups[grp].dir = 1.0 if rng.randf() < 0.5 else -1.0   # counter-rotates vs the foreground
-		var module := rng.randf_range(0.026, 0.045)
-		var r := rng.randf_range(0.30, 0.70)
+		var module := rng.randf_range(0.026, 0.045) * _mod_mul
+		var r := rng.randf_range(0.26, 0.85)
 		var teeth := maxi(16, roundi(2.0 * r / module))
 		_groups[grp].tooth_step = TAU / float(teeth)
 		var pos := Vector2(rng.randf_range(-0.45, 0.45), rng.randf_range(-0.4, 0.4))   # overlap centre
@@ -444,4 +480,4 @@ func _draw_gear(g: Dictionary, u: float) -> void:
 	# Hub glow, flaring on the beat.
 	var gv := clampf(0.12 + 0.7 * _glow, 0.0, 1.0) * af
 	Layer.glow(self, centre, float(g.hub_r) * sc * (1.3 + 1.4 * _glow),
-		Color.from_hsv(fposmod(_hue + 0.04, 1.0), _sat * 0.6, 1.0, 0.5 * gv), 4)
+		Color.from_hsv(_glow_hue, _glow_sat, 1.0, 0.5 * gv), 4)

@@ -10,6 +10,29 @@ extends Scene3D
 ## EyeBody instances, so nothing jumps - the left eye simply keeps looking while the right
 ## one turns to crystal in place. Hands off to `two_prisms` (`morph_out = "eye2prism"`): the
 ## live blue PrismBody plus the trembling eye's slot, so the drop can burst a red prism there.
+##
+## "Blue" is now a mood rather than a constant: the crystal takes a cool [Scheme] -
+## glacier, abyss, teal, violet, ash - carried on the [PrismBody] itself as a hue
+## offset from [constant HUE_BLUE], so `two_prisms` (which draws that same live body at
+## HUE_BLUE) inherits the colour across the morph instead of popping back to blue. The
+## eyes take an iris mood, and the pair's composition a named spacing.
+
+## Iris moods, matching `eye.gd` and `two_eyes.gd` - the same face arrives here.
+const IRIS_MOODS := ["dawn", "ember", "sodium", "brass", "bone", "verdant", "toxic",
+	"teal", "glacier", "abyss", "ash", "violet"]
+
+## What the eye crystallizes INTO. Cool and mineral only: the warm end belongs to the
+## red prism that bursts out of the other eye at the drop, and two warm prisms would
+## lose the opposition the whole sequence is built on.
+const CRYSTAL_MOODS := ["glacier", "abyss", "teal", "violet", "ash", "toxic"]
+
+## The pair's placement, as [radius band, half-separation in EYE RADII] - the same
+## table `two_eyes` composes from, since this scene continues that shot.
+const COMPOSITION := {
+	"crowded": {"rad": [0.26, 0.33], "gap": [1.5, 1.9]},
+	"human":   {"rad": [0.22, 0.30], "gap": [2.1, 2.7]},
+	"wide":    {"rad": [0.17, 0.22], "gap": [2.9, 3.4]},
+}
 
 var _f: AudioFeatures = AudioFeatures.new()
 var _rng := RandomNumberGenerator.new()
@@ -25,7 +48,8 @@ var _flash := 0.0              # the form-flash envelope at the crystallize mome
 var _focus := Vector3(0, 0, 6.0)
 var _focus_target := Vector3(0, 0, 6.0)
 var _focus_dwell := 0.0
-const HUE_BLUE := 0.6
+var _glow := Color(0.7, 0.82, 1.0)   # the crystallization light, tinted by the crystal's mood
+const HUE_BLUE := 0.6                # the base `two_prisms` draws the handed-over body at
 
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
@@ -34,20 +58,34 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	morph_in = "eyes"
 	morph_out = "eye2prism"
 	_rng.seed = rng.randi()
-	var h := rng.randf_range(0.05, 0.6)
+	var iris := Scheme.among(IRIS_MOODS, rng)
+	var h := iris.vary(rng)
 	_eye = EyeBody.new(rng.randi(), h)
 	_reye = EyeBody.new(rng.randi(), h)
 	_eye.autonomous = false
 	_reye.autonomous = false
 	_blue = PrismBody.new(rng.randi())
-	_off = rng.randf_range(0.24, 0.30)
-	_eye_rad = rng.randf_range(0.24, 0.30)
+	# The crystal's colour rides on the BODY as an offset from HUE_BLUE, because the
+	# body outlives this scene: two_prisms keeps drawing it at HUE_BLUE and gets this
+	# mood for free, with no jump at the hand-off.
+	var crystal := Scheme.among(CRYSTAL_MOODS, rng)
+	var chue := crystal.vary(rng)
+	_blue.hue_shift = wrapf(chue - HUE_BLUE, -0.5, 0.5)
+	_glow = Color.from_hsv(chue, 0.30, 1.0)     # the light the crystallization throws
+	var comp := String(COMPOSITION.keys()[rng.randi() % COMPOSITION.size()])
+	var c: Dictionary = COMPOSITION[comp]
+	var rad_band: Array = c["rad"]
+	var gap_band: Array = c["gap"]
+	_eye_rad = rng.randf_range(float(rad_band[0]), float(rad_band[1]))
+	_off = minf(_eye_rad * rng.randf_range(float(gap_band[0]), float(gap_band[1])), 0.75)
 	lens.eye = Vector3(0, 0, 4.0)
 	lens.look = Vector3.ZERO
 	lens.fov = 48.0
 	_t = 0.0
 	_crys = 0.0
-	return {}
+	return {"mood": iris.name, "crystal": crystal.name, "crystal_hue": chue,
+		"composition": comp, "radius": _eye_rad, "offset": _off,
+		"prism_form": _blue.form, "hue": h}
 
 
 # Arrived from two_eyes: keep BOTH live eyes (the left survives, the right crystallizes),
@@ -169,7 +207,8 @@ func _draw() -> void:
 		_reye.draw(self, lens, u, Vector3(_off, 0, 0), _eye_rad, clampf(1.0 - _crys, 0.0, 1.0))
 	_blue.draw(self, pc, pscale, HUE_BLUE, smoothstep(0.0, 1.0, _crys))
 	if _flash > 0.001:
-		draw_circle(pc, pscale * (0.6 + 1.2 * _flash), Color(0.75, 0.86, 1.0, 0.5 * _flash))
+		var fc := _glow.lerp(Color(1, 1, 1), 0.25)
+		draw_circle(pc, pscale * (0.6 + 1.2 * _flash), Color(fc.r, fc.g, fc.b, 0.5 * _flash))
 		draw_circle(pc, pscale * (0.3 + 0.6 * _flash), Color(1, 1, 1, 0.6 * _flash))
 
 
@@ -183,4 +222,5 @@ func _draw_eye_light(pj: Vector3, u: float, k: float) -> void:
 	for i in rings:
 		var fr := 1.0 - float(i) / float(rings - 1)      # 1 rim .. 0 core
 		var rr := base * (1.2 + 3.0 * fr) * (0.7 + 0.5 * k)
-		draw_circle(c, rr, Color(0.7, 0.82, 1.0, clampf(0.05 * k * (1.0 - 0.85 * fr), 0.0, 0.3)))
+		draw_circle(c, rr, Color(_glow.r, _glow.g, _glow.b,
+			clampf(0.05 * k * (1.0 - 0.85 * fr), 0.0, 0.3)))

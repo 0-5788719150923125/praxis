@@ -9,6 +9,22 @@ extends GhostScene
 ## left/right anchors. Thereafter each prism strains against its own anchor (the rubber-band core in
 ## [PrismBody]), so the pair keeps straining and springing with the music. The whole split is driven
 ## by energy: a quiet passage barely stretches it; a surge breaks it.
+##
+## Colour and geometry both come off one roll. The pair takes a [Scheme] mood - the
+## original on its base hue, the clone on the mood's counter hue (see [method
+## Scheme.opposed]) - so "blue splits into red" is now one outcome of many rather than
+## the only one. The structural liberty is the SPLIT ITSELF: which way the thing comes
+## apart, which is this scene's whole composition.
+
+## How the prism comes apart. `angle` is the axis the two halves separate along (0 =
+## sideways), `throw` how far each ends up from centre, `size` the body scale that
+## still reads at that separation - a tight vertical cleave wants smaller prisms than
+## a wide lateral break, so the three travel together rather than being rolled apart.
+const SPLIT := {
+	"lateral":  {"angle": [0.00, 0.12], "throw": [0.30, 0.38], "size": [0.26, 0.34]},
+	"diagonal": {"angle": [0.45, 0.85], "throw": [0.28, 0.34], "size": [0.24, 0.30]},
+	"cleave":   {"angle": [1.30, 1.75], "throw": [0.20, 0.27], "size": [0.20, 0.26]},
+}
 
 var _f: AudioFeatures = AudioFeatures.new()
 var _blue: PrismBody
@@ -21,6 +37,11 @@ var _bxv := 0.0
 var _rxv := 0.0
 var _rop := 0.0            # red opacity (a faint shade before the break, full after)
 var _snap := 0.0           # break-flash envelope
+var _axis := Vector2.RIGHT # the direction the two halves separate along
+var _throw := 0.32         # how far each settles from centre, in unit-fractions
+var _lead := 0.6           # the original's hue ..
+var _counter := 0.0        # .. and the clone's
+var _bond_col := Color(0.7, 0.85, 1.0)   # the taut filament, tinted by the mood
 
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
@@ -28,7 +49,27 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	framing = "field"
 	_blue = PrismBody.new(rng.randi())
 	_red = PrismBody.new(rng.randi())
-	return {"radius": rng.randf_range(0.26, 0.34)}
+	var sch := Scheme.pick(rng)
+	_lead = sch.vary(rng)
+	_counter = sch.opposed(_lead)
+	_bond_col = Color.from_hsv(_lead, 0.25, 1.0)      # a pale filament of the original's colour
+	var split := String(SPLIT.keys()[rng.randi() % SPLIT.size()])
+	var s: Dictionary = SPLIT[split]
+	var ang := _band(s["angle"], rng) * (1.0 if rng.randf() < 0.5 else -1.0)   # mirrored half the time
+	_axis = Vector2(cos(ang), sin(ang))
+	_throw = _band(s["throw"], rng)
+	return {"radius": _band(s["size"], rng), "mood": sch.name, "split": split,
+		"angle": ang, "throw": _throw, "lead": _lead, "counter": _counter,
+		"forms": [_blue.form, _red.form]}
+
+
+# A value from a [lo, hi] table band.
+func _band(b, rng: RandomNumberGenerator) -> float:
+	var a: Array = b
+	return rng.randf_range(float(a[0]), float(a[1]))
+
+
+# The prism family's second hue: the mood's own accent, never closer to the lead than
 
 
 func update(f: AudioFeatures, delta: float) -> void:
@@ -71,17 +112,18 @@ func update(f: AudioFeatures, delta: float) -> void:
 func _draw() -> void:
 	begin_draw()
 	var u := unit()
-	var anchor := 0.32 * u
+	var anchor := _throw * u
 	var spread := clampf(maxf(absf(_bx), absf(_rx)), 0.0, 1.0)
 	var sc := float(params.radius) * u * (1.0 - 0.12 * spread)   # shrink a touch as they part
-	var bc := Vector2(_bx * anchor, 0.0)
-	var rc := Vector2(_rx * anchor, 0.0)
+	# The halves travel along the rolled split axis; -1/+1 stay the two ends of it.
+	var bc := _axis * (_bx * anchor)
+	var rc := _axis * (_rx * anchor)
 	# The attractor bond: a taut filament from the original to the emerging clone - brightening as
 	# the tension winds up and FLASHING white as it snaps.
 	if _tension > 0.02 or _snap > 0.01:
 		_draw_bond(bc, rc, clampf(0.1 * _tension + 0.95 * _snap, 0.0, 1.0))
-	_blue.draw(self, bc, sc, 0.6, 1.0)
-	_red.draw(self, rc, sc, 0.0, clampf(_rop, 0.0, 1.0))
+	_blue.draw(self, bc, sc, _lead, 1.0)
+	_red.draw(self, rc, sc, _counter, clampf(_rop, 0.0, 1.0))
 
 
 # The stretching attractor bond between the two centres: a slightly bowed, glowing filament whose
@@ -89,7 +131,10 @@ func _draw() -> void:
 func _draw_bond(a: Vector2, b: Vector2, k: float) -> void:
 	if k <= 0.001:
 		return
-	var mid := (a + b) * 0.5 + Vector2(0.0, 5.0 * sin(_life * 2.5))
+	# The bow is PERPENDICULAR to the split axis, so a vertical cleave sags sideways
+	# rather than along its own line (where the bow would be invisible).
+	var perp := Vector2(-_axis.y, _axis.x)
+	var mid := (a + b) * 0.5 + perp * (5.0 * sin(_life * 2.5))
 	var pts := PackedVector2Array([a, mid, b])
-	draw_polyline(pts, Color(0.7, 0.85, 1.0, k * 0.3), 8.0, true)
+	draw_polyline(pts, Color(_bond_col.r, _bond_col.g, _bond_col.b, k * 0.3), 8.0, true)
 	draw_polyline(pts, Color(1.0, 1.0, 1.0, k * 0.85), 2.0, true)

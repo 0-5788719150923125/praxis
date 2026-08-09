@@ -22,9 +22,23 @@ extends GhostScene
 
 const Flow2D := preload("res://scripts/flow.gd")
 
+# COATS. The scene grew one pelt forever - 160-230 strands, all 0.34-0.62 long -
+# so every seed was the same animal in a different colour. A coat is a whole habit
+# of growth: how many strands, how long, how thick, and how many segments they bend
+# through (few long segments read as stiff spines, many short ones as soft hair).
+const COATS := [
+	{"name": "shag", "tufts": [160, 230], "length": [0.34, 0.62], "width": [1.3, 3.0], "steps": [14, 22]},
+	{"name": "down", "tufts": [260, 360], "length": [0.13, 0.26], "width": [1.0, 2.2], "steps": [7, 12]},
+	{"name": "mane", "tufts": [90, 140], "length": [0.55, 0.95], "width": [2.4, 5.0], "steps": [18, 28]},
+	{"name": "quill", "tufts": [70, 120], "length": [0.40, 0.72], "width": [3.0, 6.5], "steps": [6, 10]},
+]
+
 var _flow: Flow2D
 var _hue := 0.02
 var _comp_hue := 0.52
+var _accent := 0.10       # the scheme's partner hue - the light the fur leans toward
+var _sat := 0.62          # the coat's saturation character, from the scheme
+var _val := 0.85          # ... and its value character
 var _tufts: Array = []
 var _bright: Array = []   # {pos, phase, band, r}
 var _dark: Array = []     # {pos, phase, band, r} - the repelling, opposing-hue patches
@@ -35,40 +49,52 @@ var _sway_gain := 0.0     # EMA'd energy, widens the sway with the music
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	render_kind = "canvas"
 	framing = "field"
-	_hue = rng.randf()
+	# Any mood: fur comes in every colour there is, and the mood carries the coat's
+	# saturation and value too - a "bone" pelt is pale AND washed out, an "ember" one
+	# saturated AND bright, which a bare random hue could never say.
+	var sch := Scheme.pick(rng)
+	_hue = sch.hue
+	_accent = sch.accent
+	_sat = sch.sat
+	_val = sch.val
+	# The repulsors stay the true OPPOSING hue rather than the scheme's accent: the
+	# whole mechanism is fur recoiling from its own opposite, and a harmonious
+	# partner would not read as opposition.
 	_comp_hue = fposmod(_hue + 0.5, 1.0)
+	var coat: Dictionary = COATS[rng.randi() % COATS.size()]
 	_flow = Flow2D.new(rng.randi(), rng.randf_range(1.1, 2.0), 0.035)
-	add_layer("bed", rng, {"hue": _comp_hue, "sat": 0.22, "val": 0.07, "pools": 2})
+	add_layer("bed", rng, {"hue": _comp_hue, "sat": _sat * 0.4, "val": _val * 0.09,
+		"pools": rng.randi_range(2, 3)})
 
-	for i in rng.randi_range(2, 4):
+	for i in rng.randi_range(1, 5):
 		_bright.append({
 			"pos": Vector2(rng.randf_range(-0.55, 0.55), rng.randf_range(-0.5, 0.55)),
-			"phase": rng.randf() * TAU, "band": rng.randi() % 4, "r": rng.randf_range(0.16, 0.30),
+			"phase": rng.randf() * TAU, "band": rng.randi() % 4, "r": rng.randf_range(0.12, 0.36),
 		})
-	for i in rng.randi_range(2, 3):
+	for i in rng.randi_range(1, 4):
 		_dark.append({
 			"pos": Vector2(rng.randf_range(-0.55, 0.55), rng.randf_range(-0.5, 0.55)),
-			"phase": rng.randf() * TAU, "band": rng.randi() % 4, "r": rng.randf_range(0.20, 0.36),
+			"phase": rng.randf() * TAU, "band": rng.randi() % 4, "r": rng.randf_range(0.16, 0.40),
 		})
 
-	var n := rng.randi_range(160, 230)      # dense
+	var n := rng.randi_range(int(coat["tufts"][0]), int(coat["tufts"][1]))
 	for i in n:
 		var root := Vector2(rng.randf_range(-0.8, 0.8), rng.randf_range(-0.65, 0.75))
 		var bias0 := _bias_dir(root)
-		var length := rng.randf_range(0.34, 0.62)          # long - winter coat / flowing hair
-		var steps := rng.randi_range(14, 22)
-		var width := rng.randf_range(1.3, 3.0)
+		var length := rng.randf_range(float(coat["length"][0]), float(coat["length"][1]))
+		var steps := rng.randi_range(int(coat["steps"][0]), int(coat["steps"][1]))
+		var width := rng.randf_range(float(coat["width"][0]), float(coat["width"][1]))
 		var fil := Filament.grow("fur", Vector2.ZERO, bias0, length, width, steps,
 			_flow, rng, 0.0, bias0)
 		_tufts.append({
 			"root": root, "fil": fil, "base_ang": bias0, "lean_ema": bias0,
 			"sway_phase": rng.randf() * TAU, "sway_rate": rng.randf_range(0.5, 1.3),
 			"sway_amt": rng.randf_range(0.03, 0.09),
-			"hue_off": rng.randf_range(-0.035, 0.035),
+			"hue_off": rng.randf_range(-sch.spread, sch.spread),
 			"grown_delay": rng.randf_range(0.0, 1.1), "grown_dur": rng.randf_range(0.5, 1.1),
 			"grown": 0.0, "depth": rng.randf(),
 		})
-	return {"hue": _hue}
+	return {"hue": _hue, "mood": sch.name, "coat": String(coat["name"])}
 
 
 ## Weighted pull toward every bright point plus weighted push away from every dark
@@ -140,11 +166,13 @@ func _draw() -> void:
 func _draw_hotspots(u: float) -> void:
 	for b in _bright:
 		var pulse := 0.55 + 0.45 * sin(_life * 0.6 + float(b.phase))
-		var c := Color.from_hsv(fposmod(_hue - 0.06, 1.0), 0.25, 1.0, 0.10 * pulse)
+		# The light is the scheme's accent, so the thing the fur leans toward belongs
+		# to the same palette as the fur itself.
+		var c := Color.from_hsv(_accent, clampf(_sat * 0.45, 0.0, 1.0), 1.0, 0.10 * pulse)
 		Layer.puff(self, (b.pos as Vector2) * u, float(b.r) * u * 1.4, c)
 	for d in _dark:
 		var pulse := 0.55 + 0.45 * sin(_life * 0.5 + float(d.phase) + 1.7)
-		var c := Color.from_hsv(_comp_hue, 0.6, 0.22, 0.16 * pulse)
+		var c := Color.from_hsv(_comp_hue, clampf(_sat + 0.15, 0.0, 1.0), 0.22, 0.16 * pulse)
 		Layer.puff(self, (d.pos as Vector2) * u, float(d.r) * u * 1.3, c)
 
 
@@ -154,11 +182,13 @@ func _draw_hotspots(u: float) -> void:
 ## not just its overall angle.
 func _color_for(depth: int, along: float, tf: Dictionary) -> Color:
 	var h := fposmod(_hue + float(tf.hue_off) + 0.05 * along, 1.0)
-	var v := clampf(0.22 + 0.5 * along + 0.30 * _f.bass + 0.25 * _sway_gain, 0.08, 1.0)
-	var sat := clampf(0.62 - 0.18 * along, 0.15, 0.85)
+	# The mood's own value/saturation character scales the gradient, so a pale coat
+	# stays pale from root to tip instead of every pelt arriving at the same contrast.
+	var v := clampf(_val * (0.26 + 0.6 * along) + 0.30 * _f.bass + 0.25 * _sway_gain, 0.08, 1.0)
+	var sat := clampf(_sat * (1.05 - 0.3 * along), 0.05, 0.95)
 	return Color.from_hsv(h, sat, v, 0.9)
 
 
 func _tip_color(tf: Dictionary) -> Color:
 	var h := fposmod(_hue + float(tf.hue_off) - 0.04, 1.0)
-	return Color.from_hsv(h, 0.35, 1.0, 0.7)
+	return Color.from_hsv(h, clampf(_sat * 0.55, 0.0, 1.0), 1.0, 0.7)

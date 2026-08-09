@@ -4,8 +4,24 @@ extends GhostScene
 ##
 ## A see-through 4-point prism with a living neural core, ported from the browser
 ## Prism via [PrismBody]: glowing edges only, tendrils flowing from the centre,
-## hovering and slowly "looking around". Blue or red by seed. The camera holds (the
-## brief: static, forward-facing); the core comes to life with the audio.
+## hovering and slowly "looking around". The camera holds (the brief: static,
+## forward-facing); the core comes to life with the audio.
+##
+## Colour is a [Scheme] mood rather than the old blue-or-red coin flip. Only the hue
+## reaches the body (it draws its own saturation from the browser's palette), and
+## every hue is a plausible crystal, so nothing is excluded. The shell - tetra,
+## spire, slab, bipyramid, octa - is rolled by [PrismBody] itself; the liberty this
+## scene takes on top is PRESENCE.
+
+## How much of the frame the prism claims. A solitary body has no count and no
+## arrangement to vary, so scale IS its silhouette: a mote lost in the void and a
+## shape that overruns the view are different shots of the same object, and the old
+## 0.30-0.40 band could only ever give the middle one.
+const PRESENCE := {
+	"distant":  [0.15, 0.21],
+	"portrait": [0.28, 0.38],
+	"looming":  [0.48, 0.62],
+}
 
 var _f: AudioFeatures = AudioFeatures.new()
 var _prism: PrismBody
@@ -15,9 +31,13 @@ var _hue := 0.6
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	render_kind = "scene3d"
 	framing = "plane"                          # the prism hovers; keep the view square-on
-	_hue = 0.6 if rng.randf() < 0.5 else 0.0   # electric blue or deep red
+	var sch := Scheme.pick(rng)
+	_hue = sch.vary(rng)
 	_prism = PrismBody.new(rng.randi())
-	return {"radius": rng.randf_range(0.30, 0.40)}
+	var pres := String(PRESENCE.keys()[rng.randi() % PRESENCE.size()])
+	var band: Array = PRESENCE[pres]
+	return {"radius": rng.randf_range(float(band[0]), float(band[1])),
+		"mood": sch.name, "hue": _hue, "presence": pres, "form": _prism.form}
 
 
 func update(f: AudioFeatures, delta: float) -> void:

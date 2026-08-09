@@ -7,9 +7,27 @@ extends GhostScene
 ## down to the foot of the frame as a translucent sheet. Nearer planes sit over
 ## farther ones, and the view's tilt skews the whole stack, so it reads as planes
 ## of light lying in space. Far planes scroll slower than near ones - parallax.
+##
+## By seed the stack is a few big slabs or a deep receding pile ([constant STACKS]),
+## each plane's edge follows one of three laws ([constant PROFILES]) - swells,
+## ridgelines or stepped terraces - and the whole thing is coloured from one
+## [Scheme], depth carrying the palette from its base hue to its accent.
 
 const OVER := 1.4
 const COLS := 72       # samples across each plane
+
+## The law each plane's edge follows. Every stack used to be the same smooth sine
+## crest, so the silhouette never changed however the seed moved - this is the
+## choice that decides whether the stack reads as swells, ridges or terraces.
+const PROFILES := ["smooth", "ridge", "terrace"]
+
+## How many planes, and how thick they sit. Few planes read as big slabs of light;
+## many read as a dense stack receding.
+const STACKS := {
+	"slabs": {"planes": [3, 5], "amp": [0.10, 0.22], "alpha": [0.30, 0.62]},
+	"stack": {"planes": [5, 9], "amp": [0.06, 0.13], "alpha": [0.35, 0.55]},
+	"deep": {"planes": [10, 17], "amp": [0.04, 0.09], "alpha": [0.22, 0.42]},
+}
 
 var _f: AudioFeatures = AudioFeatures.new()
 var _t := 0.0
@@ -17,14 +35,30 @@ var _t := 0.0
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	framing = "field"
+	# Planes of light are abstract: no mood is wrong, so take the whole set.
+	var sch := Scheme.pick(rng)
+	var kname := String(STACKS.keys()[rng.randi() % STACKS.size()])
+	var st: Dictionary = STACKS[kname]
+	var pl: Array = st["planes"]
+	var am: Array = st["amp"]
+	var al: Array = st["alpha"]
+	# Depth carries the palette from the scheme's base to its accent, so the far
+	# planes end on a hue that belongs with the near ones.
+	var to_accent := fposmod(sch.accent - sch.hue + 0.5, 1.0) - 0.5
 	return {
-		"planes": rng.randi_range(5, 9),
-		"hue": rng.randf(),
-		"hue_span": rng.randf_range(0.15, 0.5),
-		"wave_k": rng.randf_range(1.5, 4.0),    # spatial frequency across x
-		"amp": rng.randf_range(0.06, 0.13),     # crest height, fraction of unit
+		"planes": rng.randi_range(int(pl[0]), int(pl[1])),
+		"stack": kname,
+		"mood": sch.name,
+		"profile": String(PROFILES[rng.randi() % PROFILES.size()]),
+		"steps": rng.randi_range(4, 11),        # terrace profile: how many treads
+		"hue": sch.hue,
+		"hue_span": to_accent * rng.randf_range(0.5, 1.3),
+		"sat": sch.sat,
+		"val": 0.75 + 0.30 * sch.val,           # the mood's brightness character
+		"wave_k": rng.randf_range(1.0, 5.5),    # spatial frequency across x
+		"amp": rng.randf_range(float(am[0]), float(am[1])),   # crest height, fraction of unit
 		"scroll": rng.randf_range(0.15, 0.45),
-		"alpha": rng.randf_range(0.35, 0.55),
+		"alpha": rng.randf_range(float(al[0]), float(al[1])),
 	}
 
 
@@ -53,6 +87,10 @@ func _draw() -> void:
 	var hue_span: float = params.hue_span
 	var wave_k: float = params.wave_k
 	var alpha: float = params.alpha
+	var sat: float = params.sat
+	var val_mul: float = params.val
+	var profile: String = params.profile
+	var steps: int = params.steps
 
 	# Far (top) to near (bottom): later draws cover earlier -> depth ordering.
 	for i in planes:
@@ -68,7 +106,8 @@ func _draw() -> void:
 		for c in COLS:
 			var fx := float(c) / float(COLS - 1)
 			var x := left + fx * field.x
-			var wave := 0.6 * sin(wave_k * fx * TAU + phase) + 0.4 * (_f.sample(fx) - 0.5) * 2.0
+			var wave := _shape(profile, wave_k * fx + phase / TAU, steps) * 0.6 \
+				+ 0.4 * (_f.sample(fx) - 0.5) * 2.0
 			# Clamp every crest above the closing edge, so the band is always a
 			# simple (non-self-intersecting) polygon that can be triangulated.
 			var y := minf(base_y - wave * crest, foot - 1.0)
@@ -78,7 +117,8 @@ func _draw() -> void:
 		pts[COLS + 1] = Vector2(left, foot)
 
 		var h := fposmod(hue + hue_span * depth, 1.0)
-		var fill := Color.from_hsv(h, 0.6, 0.25 + 0.6 * (0.3 + loud) * (0.4 + depth), alpha)
+		var fill := Color.from_hsv(h, clampf(sat * 0.85, 0.0, 1.0),
+			clampf((0.25 + 0.6 * (0.3 + loud) * (0.4 + depth)) * val_mul, 0.0, 1.0), alpha)
 		draw_colored_polygon(pts, fill)
 
 		# A brighter crest line for definition.
@@ -86,5 +126,21 @@ func _draw() -> void:
 		line.resize(COLS)
 		for c in COLS:
 			line[c] = pts[c]
-		var lcol := Color.from_hsv(h, 0.4, 0.7 + 0.3 * loud, 0.7)
+		var lcol := Color.from_hsv(h, clampf(sat * 0.55, 0.0, 1.0),
+			clampf((0.7 + 0.3 * loud) * val_mul, 0.0, 1.0), 0.7)
 		draw_polyline(line, lcol, 1.5 + 2.0 * depth, true)
+
+
+## The crest law, in [-1, 1], as a function of position along the plane (`s` is in
+## whole cycles). Only the SHAPE of the edge differs - the drive behind it, and how
+## it scrolls, are untouched.
+func _shape(profile: String, s: float, steps: int) -> float:
+	match profile:
+		"ridge":
+			# A triangle wave: hard peaks and straight flanks, ridgelines not swells.
+			return 4.0 * absf(s - floor(s) - 0.5) - 1.0
+		"terrace":
+			# Quantised into treads, so each plane is a stepped bench of light.
+			return round(sin(s * TAU) * float(steps)) / float(steps)
+		_:
+			return sin(s * TAU)

@@ -8,6 +8,27 @@ extends Scene3D
 ## extreme distance) and lingers at the extremes, with the pupils accommodating. Declares
 ## `morph_in = "eye"`: arriving from the single eye it plays the split (the same eye
 ## dividing). Occasionally one eye diverges - the nonlinear deviation, not the default.
+##
+## Colour comes from a [Scheme] mood (the same iris moods the single eye draws from),
+## and the pair's PLACEMENT from a named spacing - crowded, human, or wide-set - so
+## the composition itself changes with the seed and not only the eyes' colour.
+
+## Iris moods, matching `eye.gd` so a split keeps the family (see its note on why
+## magenta/rose are out).
+const IRIS_MOODS := ["dawn", "ember", "sodium", "brass", "bone", "verdant", "toxic",
+	"teal", "glacier", "abyss", "ash", "violet"]
+
+## Where the eyes sit, as [radius band, half-separation in EYE RADII]. Radius was
+## locked at 0.24-0.30 and separation at 0.55-0.72, one face forever; expressing the
+## separation as a multiple of the radius keeps the eyes from ever overlapping while
+## letting the face be crowded (predatory, front-set) or wide (prey, alien). Real
+## human proportion is about 2.6 radii, which is what "human" holds.
+const SPACING := {
+	"crowded": {"rad": [0.26, 0.34], "gap": [1.5, 1.9]},
+	"human":   {"rad": [0.22, 0.30], "gap": [2.1, 2.7]},
+	"wide":    {"rad": [0.17, 0.22], "gap": [2.9, 3.4]},
+}
+const OFF_MAX := 0.75      # world x that still lands inside the frame on a tall aspect
 
 var _f: AudioFeatures = AudioFeatures.new()
 var _rng := RandomNumberGenerator.new()
@@ -29,16 +50,29 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	morph_in = "eye"
 	morph_out = "eyes"
 	_rng.seed = rng.randi()
-	var h := rng.randf_range(0.05, 0.6)        # two IDENTICAL eyes: same colour
+	var sch := Scheme.among(IRIS_MOODS, rng)
+	var h := sch.vary(rng)                     # two eyes of ONE face: normally same colour
+	# Heterochromia, rarely: the second eye takes the mood's accent instead. A real
+	# thing real faces do, kept rare so the pair still reads as a pair. A morph-in
+	# from the single eye overrides both hues below - one eye dividing cannot land
+	# two colours.
+	var hetero := rng.randf() < 0.14
+	var h2 := sch.accent if hetero else h
 	_left = EyeBody.new(rng.randi(), h)
-	_right = EyeBody.new(rng.randi(), h)
+	_right = EyeBody.new(rng.randi(), h2)
 	_left.autonomous = false                   # driven by the shared focus below
 	_right.autonomous = false
 	lens.eye = Vector3(0, 0, 4.0)
 	lens.look = Vector3.ZERO
 	lens.fov = 48.0
-	_eye_rad = rng.randf_range(0.24, 0.30)
-	return {"radius": _eye_rad, "offset": rng.randf_range(0.55, 0.72)}
+	var spacing := String(SPACING.keys()[rng.randi() % SPACING.size()])
+	var sp: Dictionary = SPACING[spacing]
+	var rad_band: Array = sp["rad"]
+	var gap_band: Array = sp["gap"]
+	_eye_rad = rng.randf_range(float(rad_band[0]), float(rad_band[1]))
+	var off := minf(_eye_rad * rng.randf_range(float(gap_band[0]), float(gap_band[1])), OFF_MAX)
+	return {"radius": _eye_rad, "offset": off, "mood": sch.name, "spacing": spacing,
+		"heterochromia": hetero, "hue": h}
 
 
 # Arrived from the single eye: become that exact eye (colour, gaze, size) at centre,

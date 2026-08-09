@@ -127,6 +127,7 @@ The unified software-3D renderer: a positionable perspective camera, mesh/plane 
 - [`mesh3d.gd`](../scripts/mesh3d.gd) **Mesh3D** - a tiny software 3D mesh for the 2D canvas.
 - [`geometry.gd`](../scripts/geometry.gd) **Geo** - small reusable polygon helpers (area, centroid, convex split, fracture). Shared geometry, not a scene's private code - the fracture that shatters glass can shatter anything.
 - [`field.gd`](../scripts/field.gd) **Field** - a composable procedural scalar field; the universal "texture / modulation".
+- [`scheme.gd`](../scripts/scheme.gd) **Scheme** - a scene's colour identity, drawn from a named mood.
 - [`palette.gd`](../scripts/palette.gd) **Palette** - a colour ramp sampled by a scalar (0..1). The colour half of the texture story: a `Field` gives a scalar (height, mottle, development); a Palette turns it into colour. Themed presets map terrain elevation to believable bands (water -> shore -> green -> rock -> snow), but a Palette colours anything ...
 - [`terrain.gd`](../scripts/terrain.gd) **Terrain** - a heightfield assembled from `Field`s and drawn through a `Lens3D`.
 - [`shadow_field.gd`](../scripts/shadow_field.gd) **ShadowField** - A cheap CPU SHADOW MAP in light space - the honest version of "cast shadows" for the canvas 3D scenes. Occluders (buildings, spires) are rasterized into a grid on the plane perpendicular to the light; each cell keeps the occluder surface CLOSEST to the light. A surface point is then in shadow if ...
@@ -140,9 +141,10 @@ Reusable composed characters - sampled stacks of primitives, not bespoke meshes.
 
 ### Synthesis (voice)
 
-Text to narrated audio, no generative AI and no recordings: the phoneme front end, the source-filter synthesizer, the threaded real-time stream, the synthesis editor with karaoke subtitles, and the microphone sampler that mints a seed from a living voice. Design and rungs: next/voice.md at the repo root.
+Text to narrated audio in two paths: ghost's own source-filter synthesizer (no models, no weights, fully inspectable, and the only path that can sing), and a small local neural voice run by a subprocess host. Shared between them: the text front end and its normalization, the threaded real-time stream, karaoke subtitles, and the buffer effects. Design: next/voice.md and VOICE_PLAN.md at the repo root.
 
 - [`phonemes.gd`](../scripts/phonemes.gd) **Phonemes** - the phoneme inventory and the text-to-phoneme expansion.
+- [`text_norm.gd`](../scripts/text_norm.gd) **TextNorm** - turn written English into speakable words, before anything else.
 - [`phrasing.gd`](../scripts/phrasing.gd) **Phrasing** - sentence-level prominence, derived from the TEXT.
 - [`voice.gd`](../scripts/voice.gd) **Voice** - the source-filter speech synthesizer (rungs 0-2 of next/voice.md).
 - [`voice_field.gd`](../scripts/voice_field.gd) **VoiceField** - the belt as a field of interfering sources.
@@ -150,6 +152,9 @@ Text to narrated audio, no generative AI and no recordings: the phoneme front en
 - [`synth_editor.gd`](../scripts/synth_editor.gd) **SynthEditor** - the synthesis surface. The loop is a fishing trip:
 - [`voice_sampler.gd`](../scripts/voice_sampler.gd) **VoiceSampler** - "echo a living voice": record the player reading a fixed passage, MEASURE the voice (never keep it), and mint a brand-new seed whose traits and prosody genome mimic the source.
 - [`subtitles.gd`](../scripts/subtitles.gd) **Subtitles** - the karaoke overlay, session-owned rather than editor-owned.
+- [`voice_host.gd`](../scripts/voice_host.gd) **VoiceHost** - Godot's end of the neural voice subprocess (see VOICE_PLAN.md).
+- [`generative_editor.gd`](../scripts/generative_editor.gd) **GenerativeEditor** - the neural synthesis path (VOICE_PLAN.md P4).
+- [`voice_fx.gd`](../scripts/voice_fx.gd) **VoiceFX** - the ambience from Synthesis, over any PCM.
 
 ### Storyboards & stage
 

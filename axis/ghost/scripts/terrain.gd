@@ -12,6 +12,10 @@ class_name Terrain
 
 const RES := 112                 # grid resolution (RES x RES vertices)
 const KNEE := 0.72               # height above which the ceiling turns soft
+# Water. Both are fractions of THIS map's deepest point (see `_wdepth`), not of the
+# datum, so a shallow pond still reads as a full body of water rather than a tint.
+const WATER_OPAQUE := 0.45       # depth at which the bed stops showing through
+const WATER_SURF := 0.16         # width of the bright surf band just off the waterline
 
 var res := RES
 var half := 3.0                  # world half-extent in x and z
@@ -34,6 +38,8 @@ var _shadow_row := 0                 # incremental shadow-refresh cursor (row be
 const SHADOW_MIN := 0.42            # ground brightness where fully in a mountain's cast shadow
 var _fog_level := -1.0               # world height below which valley fog pools (< min = no fog)
 var _fog_col := Color(0.62, 0.66, 0.72)
+var _wdepth := 0.0                   # deepest point of the SMOOTHED water column (0 = the map is dry)
+var _wsub := PackedFloat32Array()    # per-vertex water column, smoothed (see _measure_water)
 
 # Biome colour sets [h, s, v] for grass / dirt / low rock / high rock / snow / sand /
 # water. A climate gives the natural look (green lowland, brown+grey rock, snow peaks,
@@ -158,6 +164,61 @@ func build(rng: RandomNumberGenerator, type_: String, world_half := 3.0,
 		hi = maxf(hi, hv)
 	_fog_level = maxf(water, lo) + 0.11 * (hi - lo)
 	_fog_col = Color(0.66, 0.70, 0.76) if _biome_on else Color(0.60, 0.62, 0.70)
+	_measure_water()
+
+
+## Work out whether this map has water at all, and how thick the column is at each vertex.
+##
+## Several recipes set a water level no ground on the map ever reaches - measured over 48 seeds
+## each, mountains, canyon and mesa are dry EVERY time, yet they were all still drawing the full
+## sheet, which showed up as a flat blue apron poking out under the near rim (the heightfield has
+## no side skirt) across 3-14% of the frame. A dry map must render no water at all.
+##
+## The column is then SMOOTHED, and that is what the shading reads rather than the raw depth. The
+## micro-relief overlaid on every heightfield has amplitude 0.09, which in a shallow lake is the
+## same order as the lake's whole depth: keying transparency to the raw bed made 25% of adjacent
+## vertex pairs jump by a quarter of the range, so the water read as mottled noise instead of a
+## surface. Blurring a field that is ZERO on land also tapers it to nothing at the shoreline on its
+## own, which is the shore feather - no separate edge case. `_wdepth` is the max of the SMOOTHED
+## field so the deepest point still reaches full opacity, and every ramp scales to this map rather
+## than to the datum, letting a 4%-submerged valley read as strongly as an 80%-submerged archipelago.
+func _measure_water() -> void:
+	_wdepth = 0.0
+	_wsub = PackedFloat32Array()
+	if water <= 0.0:
+		return
+	var n := res * res
+	var col := PackedFloat32Array()
+	col.resize(n)
+	var any := false
+	for i in n:
+		var s := water - hgrid[i]
+		col[i] = s if s > 0.0 else 0.0
+		any = any or s > 0.0
+	if not any:
+		return
+	var tmp := PackedFloat32Array()
+	tmp.resize(n)
+	for _p in 4:
+		for gy in res:
+			for gx in res:
+				var acc := 0.0
+				var c := 0
+				for dy in [-1, 0, 1]:
+					for dx in [-1, 0, 1]:
+						var nx: int = gx + dx
+						var ny: int = gy + dy
+						if nx >= 0 and nx < res and ny >= 0 and ny < res:
+							acc += col[ny * res + nx]
+							c += 1
+				tmp[gy * res + gx] = acc / float(c)
+		for i in n:
+			col[i] = tmp[i]
+	for i in n:
+		_wdepth = maxf(_wdepth, col[i])
+	if _wdepth <= 0.0:
+		return
+	_wsub = col
 
 
 # Resolve a climate's material colours (jittered per seed so no two are identical).
@@ -381,10 +442,27 @@ func _cast_at(gx: int, gy: int) -> float:
 	return lerpf(1.0, SHADOW_MIN, shade)
 
 
-## Build the terrain's projected quads (land + water) for this frame, UNSORTED, so a caller can MERGE
-## them with its own geometry (buildings, spires) and depth-sort everything together - which is what
-## lets the terrain OCCLUDE props embedded in it (a hill in front hides a buried building base). Each
-## quad is {d, poly, cols, [uvs]}; land quads carry uvs (detail texture), water quads don't.
+## Build the terrain's projected quads for this frame, UNSORTED, so a caller can MERGE them with its
+## own geometry (buildings, spires) and depth-sort everything together - which is what lets the
+## terrain OCCLUDE props embedded in it (a hill in front hides a buried building base). Each quad is
+## {d, poly, cols, uvs}.
+##
+## WATER IS PART OF THIS SURFACE, not a sheet over it. It used to be a separate 22x22 translucent
+## grid at y=0 spanning the whole map, depth-sorted against the 112x112 land - and a shoreline is an
+## INTERPENETRATION, which a painter's sort over whole quads cannot resolve without splitting them.
+## Nothing split them, so the 5x coarser water cell carried one depth key against the ~25 land quads
+## it covered and won or lost as a block: measured, 20-40% of DRY land quads were painted over by
+## the sheet and 34-45% of submerged ones punched through it. That is the reported jaggedness, and
+## since each cell also got ONE flat colour (the land is Gouraud-shaded) it is the blockiness too.
+##
+## So the water is drawn where water actually IS: the visible surface is the heightfield CLIPPED AT
+## THE DATUM. A submerged vertex is lifted to y = 0 - which is exactly the water surface - and
+## coloured as water in proportion to how deep it is. The lift equals the depth, so it vanishes at
+## the waterline and the mesh never tears; the waterline itself is the land's own contour at full
+## grid resolution rather than a staircase off a coarser lattice; and the colour interpolates
+## between vertices like every other surface here. It also costs nothing: no extra quads, no
+## separate untextured run (which was measured at 894 extra batch cuts, i.e. ~895 draw calls a
+## frame instead of 1), and no alpha at all - the surface is opaque again.
 func collect_surface(lens: Lens3D, u: float, lit: float, shimmer: float, shadow: ShadowField = null) -> Array:
 	var n := res * res
 	var sv := PackedVector2Array()
@@ -405,11 +483,43 @@ func collect_surface(lens: Lens3D, u: float, lit: float, shimmer: float, shadow:
 	var uvg := PackedVector2Array()
 	uvg.resize(n)
 	var tile := 5.0 / maxf(0.5, half)                        # fine grain (many small repeats, not a few stretched)
+	var wet := _wsub.size() == n
+	# WATER CONSTANTS, hoisted. The shading below is written out inline rather than called per
+	# vertex because an archipelago submerges ~10k of them: as a helper doing its own normalize()
+	# calls and Colour lerps it measured 22.3 ms/frame, which is a whole 60fps budget on the one
+	# scene that runs collect_surface on the main thread.
+	var lx := _light_dir.x
+	var ly := _light_dir.y
+	var lz := _light_dir.z
+	# THE SUN'S GLITTER PATH, placed rather than searched for. For a flat surface at y = 0, a
+	# directional light and a fixed eye, the mirror image of the sun sits at exactly one point on
+	# the plane - so the highlight's centre is a frame constant and its falloff is a cheap function
+	# of distance from it. A per-vertex half-vector costs three normalize() calls; a single
+	# frame-constant one is cheap but degenerate, since n.h is then near-constant too and h^32
+	# either vanishes or whites out the whole sea depending on where the camera happens to be.
+	var g_on := _light_dir.y > 0.05 and lens.eye.y > 0.0
+	var g_t := (lens.eye.y / _light_dir.y) if g_on else 0.0
+	var g_x := lens.eye.x + g_t * _light_dir.x
+	var g_z := lens.eye.z + g_t * _light_dir.z
+	var g_k := 9.0 / maxf(0.25, half * half)                 # highlight tightness, in world units
+	var w_op := 1.0 / maxf(0.01, WATER_OPAQUE * _wdepth)      # 1 / the depth at which the bed vanishes
+	var w_surf := 1.0 / maxf(0.004, WATER_SURF * _wdepth)     # 1 / the surf band's width
+	var w_deep := 1.0 / maxf(0.01, _wdepth)                   # 1 / the deepest column
+	var wcr := _water_col.r
+	var wcg := _water_col.g
+	var wcb := _water_col.b
 	for i in n:
-		var pr := lens.project(_world[i])
+		var p: Vector3 = _world[i]
+		# Clip the surface at the water datum (see the note above): a submerged vertex IS the
+		# water surface, so it sits at y = 0. The LIFT tests the true height, so the waterline is
+		# the land's own contour exactly; the shading below reads the smoothed column instead.
+		var sub := 0.0
+		if wet and hgrid[i] < water:
+			p.y = 0.0
+			sub = _wsub[i]
+		var pr := lens.project(p)
 		sv[i] = Vector2(pr.x, pr.y) * u
 		dep[i] = pr.z
-		var p: Vector3 = _world[i]
 		uvg[i] = Vector2(p.x, p.z) * tile
 		# Soft drifting cloud shadow. Two GENTLE orthogonal bands only - the old diagonal (p.x+p.z)
 		# term drew a directional grain that, drifting, read as a diagonal shimmer over the surface.
@@ -419,8 +529,56 @@ func collect_surface(lens: Lens3D, u: float, lit: float, shimmer: float, shadow:
 		var ndotl := clampf(_vnorm[i].dot(_light_dir), 0.0, 1.0)
 		var key := 0.55 + 0.6 * ndotl                 # ambient floor + directional term
 		# Cast shadows from the scene's occluders (buildings/spires) land on the ground here too.
-		var occ := shadow.factor(_world[i]) if shadow != null else 1.0
+		var occ := shadow.factor(p) if shadow != null else 1.0
 		var col := _lit(_vcol[i], lit * cloud * key * _cast[i] * occ)
+		# WATER, composited over the bed rather than floated above it: shallow water shows the
+		# ground through it, deep water hides it entirely. `sub` is 0 at the waterline, so the
+		# transition is the land's own contour and it feathers instead of stepping.
+		#
+		# Two crossing swells give the surface a real perturbed normal, which earns a diffuse term
+		# against the same key light the land uses and a tight specular glint - the sun's path
+		# across the water being most of what reads as water at all. The swells are functions of
+		# WORLD position, never of the grid indices: the old sheet's sin(gx * 0.7 + gy * 0.5) was
+		# one value per QUAD, which both flat-shaded it and pinned the pattern to the lattice, so
+		# it marched over the map as a hard-edged plaid instead of travelling as waves.
+		if sub > 0.0:
+			var wa := p.x * 2.7 + p.z * 1.1 + shimmer * 0.85
+			var wb := p.z * 3.3 - p.x * 0.9 - shimmer * 0.62
+			var ca := cos(wa)
+			var cb := cos(wb)
+			var nx := -(2.7 * ca - 0.9 * cb) * 0.055        # surface slope, i.e. the wave normal
+			var nz := -(1.1 * ca + 3.3 * cb) * 0.055        # (unnormalized; the y term is 1)
+			# 1/|n| to first order - the slopes are under 0.2, where this is good to ~0.5% and
+			# saves a sqrt on every submerged vertex.
+			var ninv := 1.0 - 0.5 * (nx * nx + nz * nz)
+			var wkey := 0.55 + 0.55 * clampf((nx * lx + ly + nz * lz) * ninv, 0.0, 1.0)
+			# Glint: the glitter path's falloff (a rational, not an exp - this is per vertex),
+			# broken up by whether the wave face is tilted toward the light, so crests flash and
+			# troughs stay dark instead of the whole highlight lighting as one disc.
+			var gdx := p.x - g_x
+			var gdz := p.z - g_z
+			var sp := 0.0
+			if g_on:
+				sp = clampf(0.5 + 3.2 * (nx * lx + nz * lz), 0.0, 1.0) \
+					/ (1.0 + (gdx * gdx + gdz * gdz) * g_k)
+			# Depth: 0 at the shore, 1 at this map's deepest point. The body absorbs red first as
+			# it thickens, so a basin darkens toward its middle - that gradient is what makes it
+			# read as a basin rather than as a film.
+			var dr := clampf(sub * w_deep, 0.0, 1.0)
+			var pale := 0.16 * (1.0 - dr)                   # thin water is paler
+			# Surf: a band peaking just OFF the waterline, not on it - at the line itself the water
+			# is transparent and the brightening would be composited away to nothing.
+			var bnd := clampf(sub * w_surf, 0.0, 2.0)
+			var shd := _cast[i] * occ
+			var gl := sp * 0.85 * lit * shd + clampf(bnd * (2.0 - bnd), 0.0, 1.0) * 0.16 * lit
+			var wk := lit * cloud * shd * wkey
+			var wcol_r := minf((wcr + (1.0 - wcr) * pale) * (1.0 - 0.62 * dr) * wk + gl, 1.35)
+			var wcol_g := minf((wcg + (1.0 - wcg) * pale) * (1.0 - 0.40 * dr) * wk + gl, 1.35)
+			var wcol_b := minf((wcb + (1.0 - wcb) * pale) * (1.0 - 0.12 * dr) * wk + gl, 1.35)
+			var o := clampf(sub * w_op, 0.0, 1.0)
+			o = o * o * (3.0 - 2.0 * o)                     # smoothstep, so the shore feathers
+			col = Color(col.r + (wcol_r - col.r) * o, col.g + (wcol_g - col.g) * o,
+				col.b + (wcol_b - col.b) * o, 1.0)
 		# Valley fog: a thin drifting haze pooling in the deepest LAND hollows (never over water,
 		# never on the ridges), thickest at the very bottom and feathering out quickly upward.
 		if hgrid[i] > water and hgrid[i] < _fog_level:
@@ -444,49 +602,47 @@ func collect_surface(lens: Lens3D, u: float, lit: float, shimmer: float, shadow:
 			quads.append({"d": (dep[i0] + dep[i1] + dep[i2] + dep[i3]) * 0.25, "poly": poly,
 				"cols": PackedColorArray([vc[i0], vc[i1], vc[i3], vc[i2]]),
 				"uvs": PackedVector2Array([uvg[i0], uvg[i1], uvg[i3], uvg[i2]])})
-	# Water plane (a coarse translucent grid at y=0), shimmering, depth-sorted with the land.
-	if water > 0.0:
-		var wc := _water_col
-		var wr := 22
-		for gy in wr:
-			for gx in wr:
-				var c0 := _wpt(gx, gy, wr, lens, u)
-				var c1 := _wpt(gx + 1, gy, wr, lens, u)
-				var c2 := _wpt(gx, gy + 1, wr, lens, u)
-				var c3 := _wpt(gx + 1, gy + 1, wr, lens, u)
-				if c0.z <= lens.near or c1.z <= lens.near or c2.z <= lens.near or c3.z <= lens.near:
-					continue
-				var wpoly := PackedVector2Array([Vector2(c0.x, c0.y), Vector2(c1.x, c1.y),
-					Vector2(c3.x, c3.y), Vector2(c2.x, c2.y)])
-				if _quad_area(wpoly) < 0.25:
-					continue
-				var sh := 0.85 + 0.15 * sin(shimmer * 1.3 + float(gx) * 0.7 + float(gy) * 0.5)
-				var wcol := Color(wc.r * sh * lit, wc.g * sh * lit, wc.b * sh * lit, 0.62)
-				quads.append({"d": (c0.z + c1.z + c2.z + c3.z) * 0.25, "poly": wpoly,
-					"cols": PackedColorArray([wcol, wcol, wcol, wcol])})
 	return quads
 
 
-## Project + depth-sort + draw the terrain surface (and water) - the standalone path for scenes that
-## draw ONLY terrain. Scenes with props embedded in the land use collect_surface() and merge instead.
+## Tint a PROP's vertex colour for the water it stands in - buildings, spire shafts, anything a
+## scene embeds in the land. Returns `c` unchanged above the waterline and on dry maps.
+##
+## The surface itself now hides what is under it (the water is part of the mesh, opaque where it is
+## deep), but a wall face spanning the waterline is one quad with one depth key, so it sorts wholly
+## in front of or behind the water and a building in a lake otherwise reads as standing ON it.
+## This puts the water back where the geometry cannot: on the submerged part of the prop.
+func submerged(c: Color, world_y: float) -> Color:
+	if _wdepth <= 0.0 or world_y >= 0.0:
+		return c
+	var dr := clampf(-world_y / maxf(0.01, _wdepth * relief), 0.0, 1.0)
+	return c.lerp(Color(_water_col.r * 0.45, _water_col.g * 0.62, _water_col.b * 0.85),
+		0.35 + 0.5 * dr)
+
+
+## Project + depth-sort + draw the terrain surface - the standalone path for scenes that draw ONLY
+## terrain. Scenes with props embedded in the land use collect_surface() and merge instead.
 func draw_surface(ci: CanvasItem, lens: Lens3D, u: float, lit: float, shimmer: float) -> void:
 	ci.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED   # so the UVs > 1 tile
 	var quads := collect_surface(lens, u, lit, shimmer)
 	quads = TriBatch.painter_sort(quads)   # native-key far-first sort (see TriBatch)
 	var tex := detail_texture()
-	# BATCHED (was one draw_colored_polygon PER QUAD). At RES 112 the grid is
-	# ~12k quads, so the old path issued ~12k draw calls a frame while every
-	# other 3D scene here already funnels through TriBatch. Runs are cut only
-	# where the texture binding actually changes - land is textured, water is
-	# not - so a typical frame is two runs instead of twelve thousand calls.
+	# BATCHED (was one draw_colored_polygon PER QUAD). At RES 112 the grid is ~12k quads, so the old
+	# path issued ~12k draw calls a frame while every other 3D scene here already funnels through
+	# TriBatch. Every surface quad is textured now that the water is part of the land mesh, so a
+	# frame is a single run.
+	#
+	# The run switch below is set_run, the CANVAS-mode one that flushes to `ci`. It used to be
+	# mark_run - the WORKER-side switch, whose chunks are only ever drained by take_chunks(), which
+	# this path never calls. Every run but the last was therefore accumulated and silently dropped:
+	# reproduced headless at 8 of 10 triangles lost. It only bit when a run switch actually
+	# happened, i.e. only when the terrain had water, which is why 5 of this scene's 6 landforms
+	# rendered mostly nothing while `hills` looked fine.
 	var tb := TriBatch.new()
-	var textured := true
 	tb.set_run(ci, true, tex.get_rid() if tex != null else RID())
 	for q in quads:
 		var want: bool = q.has("uvs")
-		if want != textured:
-			textured = want
-			tb.mark_run(want, tex.get_rid() if (want and tex != null) else RID())
+		tb.set_run(ci, want, tex.get_rid() if (want and tex != null) else RID())
 		if want:
 			tb.quad_textured(q.poly, q.cols, q.uvs)
 		else:
@@ -621,11 +777,3 @@ static func detail_texture() -> Texture2D:
 		img.generate_mipmaps()
 		_dtex = ImageTexture.create_from_image(img)
 	return _dtex
-
-
-# A water-plane grid point (y = 0), projected to screen-pixels + depth.
-func _wpt(gx: int, gy: int, wr: int, lens: Lens3D, u: float) -> Vector3:
-	var wx := (float(gx) / float(wr) - 0.5) * 2.0 * half
-	var wz := (float(gy) / float(wr) - 0.5) * 2.0 * half
-	var pr := lens.project(Vector3(wx, 0.0, wz))
-	return Vector3(pr.x * u, pr.y * u, pr.z)

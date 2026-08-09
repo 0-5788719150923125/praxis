@@ -139,6 +139,7 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
             "mesh3d.gd",
             "geometry.gd",
             "field.gd",
+            "scheme.gd",
             "palette.gd",
             "terrain.gd",
             "shadow_field.gd",
@@ -152,13 +153,16 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
     ),
     (
         "Synthesis (voice)",
-        "Text to narrated audio, no generative AI and no recordings: the "
-        "phoneme front end, the source-filter synthesizer, the threaded "
-        "real-time stream, the synthesis editor with karaoke subtitles, and "
-        "the microphone sampler that mints a seed from a living voice. "
-        "Design and rungs: next/voice.md at the repo root.",
+        "Text to narrated audio in two paths: ghost's own source-filter "
+        "synthesizer (no models, no weights, fully inspectable, and the only "
+        "path that can sing), and a small local neural voice run by a "
+        "subprocess host. Shared between them: the text front end and its "
+        "normalization, the threaded real-time stream, karaoke subtitles, and "
+        "the buffer effects. Design: next/voice.md and VOICE_PLAN.md at the "
+        "repo root.",
         [
             "phonemes.gd",
+            "text_norm.gd",
             "phrasing.gd",
             "voice.gd",
             "voice_field.gd",
@@ -166,6 +170,9 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
             "synth_editor.gd",
             "voice_sampler.gd",
             "subtitles.gd",
+            "voice_host.gd",
+            "generative_editor.gd",
+            "voice_fx.gd",
         ],
     ),
     (
