@@ -42,6 +42,8 @@ class Base:
 		return float(cfg.get(k, d))
 	func flag(k: String, d: bool) -> bool:
 		return bool(cfg.get(k, d))
+	func txt(k: String, d: String) -> String:
+		return String(cfg.get(k, d))
 
 	## Base hue this layer themes around (a scene can tint a layer to its palette).
 	func hue() -> float:
@@ -1792,13 +1794,37 @@ class Kelp:
 	func _init(seed_rng: RandomNumberGenerator, c: Dictionary = {}) -> void:
 		super(seed_rng, c)
 		_hue = num("hue", 0.48)
+		# PLANT FORM. Every underwater scene grew the same tall wavy strands,
+		# because height, width and sway were fixed ranges. A form is a whole
+		# growth habit - how tall, how broad, how stiff, how much it leans - so
+		# a reef of short stiff fans reads as a different place from a kelp
+		# forest, not as the same place recoloured.
+		var form := txt("form", "kelp")
+		var hs := Vector2(0.55, 1.25)      # height range, unit fractions
+		var ws := Vector2(0.02, 0.055)     # width
+		var sw := Vector2(0.05, 0.16)      # sway amplitude at the tip
+		var rt := Vector2(0.3, 0.8)        # sway rate
+		var ln := 0.12                     # lean
+		match form:
+			"grass":                       # seagrass: short, dense, quick
+				hs = Vector2(0.18, 0.42); ws = Vector2(0.010, 0.024)
+				sw = Vector2(0.10, 0.24); rt = Vector2(0.7, 1.5); ln = 0.06
+			"fan":                         # sea fans / gorgonians: broad, stiff
+				hs = Vector2(0.28, 0.62); ws = Vector2(0.07, 0.16)
+				sw = Vector2(0.01, 0.05); rt = Vector2(0.15, 0.4); ln = 0.22
+			"whip":                        # sea whips: very tall, thin, slow
+				hs = Vector2(0.95, 1.6); ws = Vector2(0.008, 0.02)
+				sw = Vector2(0.14, 0.30); rt = Vector2(0.2, 0.5); ln = 0.05
+			"bulb":                        # bladder wrack: stubby and fat
+				hs = Vector2(0.30, 0.70); ws = Vector2(0.09, 0.20)
+				sw = Vector2(0.04, 0.11); rt = Vector2(0.4, 0.9); ln = 0.16
 		for i in int(num("fronds", 14)):
 			_fronds.append({
 				"x": seed_rng.randf_range(-1.05, 1.05),
-				"h": seed_rng.randf_range(0.55, 1.25),                 # height (unit fractions)
-				"w": seed_rng.randf_range(0.02, 0.055),
-				"sway": seed_rng.randf_range(0.05, 0.16), "rate": seed_rng.randf_range(0.3, 0.8),
-				"phase": seed_rng.randf() * TAU, "lean": seed_rng.randf_range(-0.12, 0.12),
+				"h": seed_rng.randf_range(hs.x, hs.y),
+				"w": seed_rng.randf_range(ws.x, ws.y),
+				"sway": seed_rng.randf_range(sw.x, sw.y), "rate": seed_rng.randf_range(rt.x, rt.y),
+				"phase": seed_rng.randf() * TAU, "lean": seed_rng.randf_range(-ln, ln),
 				"hue_off": seed_rng.randf_range(-0.06, 0.10), "bright": seed_rng.randf_range(0.5, 1.0)})
 		for i in int(num("glows", 4)):
 			_glows.append({

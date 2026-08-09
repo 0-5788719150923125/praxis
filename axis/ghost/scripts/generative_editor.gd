@@ -589,6 +589,13 @@ func _plan(body: String) -> void:
 	_elapsed = 0.0
 	_sub_words.clear()          # cleared in place: Subtitles holds this by reference
 
+	_chunks = _build_chunks(body)
+
+
+## Pure: text in, chunk plan out. Shared by playback and by export, so an export
+## cannot disturb the reading in progress.
+func _build_chunks(body: String) -> Array:
+	var out: Array = []
 	var toks: Array = []
 	var words: Array = []
 	var sentences := 0
@@ -638,12 +645,13 @@ func _plan(body: String) -> void:
 		sentence_no += 1
 		sentences += 1
 		if sentences >= CHUNK_SENTENCES:
-			_chunks.append({"tokens": toks, "words": words})
+			out.append({"tokens": toks, "words": words})
 			toks = []
 			words = []
 			sentences = 0
 	if not toks.is_empty():
-		_chunks.append({"tokens": toks, "words": words})
+		out.append({"tokens": toks, "words": words})
+	return out
 
 
 ## The selected preset, and the resample ratio it implies.
@@ -806,6 +814,125 @@ func _read_wav(path: String) -> PackedFloat32Array:
 	for i in n:
 		out[i] = float(bytes.decode_s16(44 + i * 2)) / 32768.0
 	return out
+
+
+# --- export ------------------------------------------------------------------
+
+
+## Gate for the export button. The procedural path asks whether a seed has been
+## caught; here the only requirements are text and a loaded voice.
+func can_export_take() -> bool:
+	return not _text.text.strip_edges().is_empty() \
+		and not _voice_meta.is_empty() and _host != null and _host.is_up()
+
+
+## Render the WHOLE text to one WAV, independent of whatever is playing.
+##
+## A coroutine, because the host answers asynchronously and the exporter awaits
+## this. It deliberately does NOT reuse the playback queue: export must capture
+## the entire reading including the part not yet spoken, and must not disturb a
+## reading in progress.
+func export_take() -> String:
+	var body := _text.text.strip_edges()
+	if body.is_empty() or _voices.selected < 0:
+		return ""
+	var chunks := _build_chunks(body)
+	if chunks.is_empty():
+		return ""
+	var vid := String(_voice_meta[_voices.selected].get("id", ""))
+	var t := _tone_preset()
+	var ratio := _pitch_ratio()
+	var stamp := Time.get_ticks_msec()
+	var pcm := PackedFloat32Array()
+	var words: Array = []
+	var elapsed := 0.0
+
+	for i in chunks.size():
+		_set_status("Rendering for export: %d of %d…" % [i + 1, chunks.size()])
+		var id := _host.request("", vid, TAKE_DIR + "/export_%d_%d.wav" % [stamp, i],
+			{"length_scale": ratio / maxf(_rate.value * float(t["pace"]), 0.1),
+			 "noise_scale": float(t["noise"]), "noise_w": float(t["noise_w"]),
+			 "speaker": int(_speaker.value), "tokens": chunks[i]["tokens"]}, null)
+		var res: Array = []
+		while true:
+			res = await _host.synthesized
+			if int(res[0]) == id:
+				break
+		var out: Dictionary = res[1]
+		var wav := String(out.get("wav", ""))
+		if wav.is_empty():
+			continue
+		var part := _read_wav(wav)
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(wav))
+		if absf(ratio - 1.0) > 0.001:
+			part = _resample(part, ratio)
+		if i > 0:
+			var gap := PackedFloat32Array()
+			gap.resize(int(SENTENCE_GAP * float(_sr)))
+			pcm.append_array(gap)
+			elapsed += SENTENCE_GAP
+		var by_index := {}
+		for sp in out.get("tokens", []):
+			by_index[int((sp as Dictionary).get("index", -1))] = sp
+		for w in chunks[i]["words"]:
+			var span: Variant = by_index.get(int(w["index"]))
+			if span == null:
+				continue
+			words.append({"text": String(w["text"]), "sentence": int(w["sentence"]),
+				"t0": float((span as Dictionary).get("t0", 0.0)) / ratio + elapsed,
+				"t1": float((span as Dictionary).get("t1", 0.0)) / ratio + elapsed})
+		pcm.append_array(part)
+		elapsed += float(part.size()) / float(_sr)
+
+	if pcm.is_empty():
+		return ""
+	# the ambience the user has been listening to belongs in the render, so the
+	# export matches the audition - a fresh chain, since the live one is
+	# mid-reading and carries its own tails
+	var fx := VoiceFX.new()
+	fx.pad_seed = hash(body)
+	fx.setup(_sr)
+	fx.echo_wet = _fx_echo.value
+	fx.resonance = _fx_res.value
+	fx.presence = _fx_presence.value
+	fx.pad = clampf(_fx_pad.value + float(t["amb"]), 0.0, 1.0)
+	pcm = fx.process(pcm)
+
+	var path := TAKE_DIR + "/take_%d.wav" % stamp
+	var abs_path := _write_wav(path, pcm)
+	if not words.is_empty():
+		var side := FileAccess.open(path.get_basename() + ".json", FileAccess.WRITE)
+		if side != null:
+			side.store_string(JSON.stringify({"words": words}))
+			side.close()
+	_set_status("Rendered %.1fs for export." % elapsed)
+	return abs_path
+
+
+## PCM16 mono WAV, written atomically - the exporter's render process may open
+## this file while we are still writing it otherwise, which is how a truncated
+## take once made a render record silence forever.
+func _write_wav(path: String, pcm: PackedFloat32Array) -> String:
+	var tmp := path + ".part"
+	var f := FileAccess.open(tmp, FileAccess.WRITE)
+	if f == null:
+		return ""
+	var bytes := PackedByteArray()
+	bytes.resize(pcm.size() * 2)
+	for i in pcm.size():
+		bytes.encode_s16(i * 2, int(clampf(pcm[i], -1.0, 1.0) * 32767.0))
+	f.store_buffer("RIFF".to_ascii_buffer()); f.store_32(36 + bytes.size())
+	f.store_buffer("WAVE".to_ascii_buffer()); f.store_buffer("fmt ".to_ascii_buffer())
+	f.store_32(16); f.store_16(1); f.store_16(1); f.store_32(_sr)
+	f.store_32(_sr * 2); f.store_16(2); f.store_16(16)
+	f.store_buffer("data".to_ascii_buffer()); f.store_32(bytes.size())
+	f.store_buffer(bytes)
+	f.close()
+	var abs_tmp := ProjectSettings.globalize_path(tmp)
+	var abs_out := ProjectSettings.globalize_path(path)
+	if DirAccess.rename_absolute(abs_tmp, abs_out) != OK:
+		return abs_tmp
+	return abs_out
 
 
 # --- subtitles ----------------------------------------------------------------

@@ -11,6 +11,7 @@ class_name Terrain
 ## surface normal so other scenes can stand things on it (blocks, water, growth).
 
 const RES := 112                 # grid resolution (RES x RES vertices)
+const KNEE := 0.72               # height above which the ceiling turns soft
 
 var res := RES
 var half := 3.0                  # world half-extent in x and z
@@ -74,6 +75,15 @@ func build(rng: RandomNumberGenerator, type_: String, world_half := 3.0,
 		palette = pal if pal != null else Palette.named("earth", rng)
 		_water_col = palette.at(0.0)
 	var height := _recipe(rng)
+	# REGIONAL RELIEF. Every recipe used one amplitude across the whole map, so
+	# the mountains were the same height everywhere and the eye read it as a
+	# uniform crinkled sheet. This is a very low-frequency field that scales the
+	# heightfield's DEVIATION from its own mid-line: whole districts sit low and
+	# rolling while others rise into real massifs, which is what a landscape
+	# actually does. Frequency well under 1 so a single map spans only two or
+	# three regions rather than a checkerboard of them.
+	var regions := Field.make("fbm", rng.randi(), rng.randf_range(0.35, 0.65), 2)
+	var region_depth := rng.randf_range(0.45, 0.85)
 	# Surface texture: a coarse mottle plus a fine grain and a rocky ridged striation,
 	# combined - so the land reads as a textured material, not a bare coloured mesh.
 	var mottle := Field.make("fbm", rng.randi(), 14.0, 4)
@@ -92,7 +102,10 @@ func build(rng: RandomNumberGenerator, type_: String, world_half := 3.0,
 	for gy in res:
 		for gx in res:
 			var p := Vector2(float(gx) / float(res - 1) - 0.5, float(gy) / float(res - 1) - 0.5) * 2.0
-			hgrid[gy * res + gx] = height.at(p)
+			var h := height.at(p)
+			# lerp toward the mid-line where the region is low, away where high
+			var amp := 1.0 - region_depth * (1.0 - regions.at(p))
+			hgrid[gy * res + gx] = 0.5 + (h - 0.5) * amp
 	_smooth(1)        # a single pass: knock down grid-scale aliasing but KEEP the recipe's detail
 	# Micro-relief: overlay fine GEOMETRIC detail over the whole surface so the land reads as
 	# textured ground, not low-res smooth blobs. Three octaves - a coarse roll, a ridged grain,
@@ -109,7 +122,7 @@ func build(rng: RandomNumberGenerator, type_: String, world_half := 3.0,
 		for gx in res:
 			var i := gy * res + gx
 			var p := Vector2(float(gx) / float(res - 1) - 0.5, float(gy) / float(res - 1) - 0.5) * 2.0
-			hgrid[i] = clampf(hgrid[i] + (micro.at(p) - 0.5) * micro_amp, 0.0, 1.0)
+			hgrid[i] = _soft_ceiling(hgrid[i] + (micro.at(p) - 0.5) * micro_amp)
 	for gy in res:
 		for gx in res:
 			var i := gy * res + gx
@@ -242,6 +255,20 @@ func _recipe(rng: RandomNumberGenerator) -> Field:
 			water = 0.0
 			var warpf := Field.make("fbm", rng.randi(), f * 0.5)
 			return Field.make("fbm", rng.randi(), f, 4).warp(warpf, 0.4).offset(0.05)
+
+
+## A soft ceiling instead of a hard clamp.
+##
+## clampf(h, 0, 1) makes every peak that reaches the top a PLATEAU at exactly
+## the same altitude - and with ridged fields feeding it, a great many of them
+## do. That is the flatness: not that the peaks are too low, but that they are
+## all identical and table-topped. This compresses the last stretch instead, so
+## heights approach 1.0 asymptotically and each summit keeps its own height.
+static func _soft_ceiling(h: float) -> float:
+	if h <= KNEE:
+		return maxf(h, 0.0)
+	var over := (h - KNEE) / (1.0 - KNEE)
+	return KNEE + (1.0 - KNEE) * (1.0 - exp(-over))
 
 
 # World height (relief units, water-relative) at continuous world (wx, wz), bilinear.
@@ -447,11 +474,24 @@ func draw_surface(ci: CanvasItem, lens: Lens3D, u: float, lit: float, shimmer: f
 	var quads := collect_surface(lens, u, lit, shimmer)
 	quads = TriBatch.painter_sort(quads)   # native-key far-first sort (see TriBatch)
 	var tex := detail_texture()
+	# BATCHED (was one draw_colored_polygon PER QUAD). At RES 112 the grid is
+	# ~12k quads, so the old path issued ~12k draw calls a frame while every
+	# other 3D scene here already funnels through TriBatch. Runs are cut only
+	# where the texture binding actually changes - land is textured, water is
+	# not - so a typical frame is two runs instead of twelve thousand calls.
+	var tb := TriBatch.new()
+	var textured := true
+	tb.set_run(ci, true, tex.get_rid() if tex != null else RID())
 	for q in quads:
-		if q.has("uvs"):
-			draw_quad(ci, q.poly, q.cols, q.uvs, tex)      # land: modulated by the detail texture
+		var want: bool = q.has("uvs")
+		if want != textured:
+			textured = want
+			tb.mark_run(want, tex.get_rid() if (want and tex != null) else RID())
+		if want:
+			tb.quad_textured(q.poly, q.cols, q.uvs)
 		else:
-			draw_quad(ci, q.poly, q.cols)                  # water: flat translucent
+			tb.quad_colored(q.poly, q.cols)
+	tb.flush(ci)
 
 
 # Screen-space area of a quad (shoelace), computed RELATIVE TO THE FIRST VERTEX.

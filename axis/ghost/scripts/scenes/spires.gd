@@ -29,7 +29,25 @@ const MODES := 4                 # cosine modes that define the radius-vs-height
 var _f: AudioFeatures = AudioFeatures.new()
 var _terrain: Terrain
 var _spires: Array = []
-var _hue := 0.10                 # brass / gold
+# CITY PALETTES. The hue was a single hardcoded band (0.07-0.13), so every city
+# ever generated was brass. Each entry is a whole material mood: the stone hue,
+# how far individual towers drift from it, a saturation bias, and the colour of
+# a lit window - which is what actually sells the material, since a window is
+# the only self-lit thing in the scene.
+const PALETTES := [
+	{"name": "brass",     "hue": 0.10, "spread": 0.05, "sat": 0.00, "win": Color(0.95, 0.74, 0.36)},
+	{"name": "verdigris", "hue": 0.44, "spread": 0.05, "sat": -0.08, "win": Color(0.98, 0.86, 0.52)},
+	{"name": "sodium",    "hue": 0.06, "spread": 0.03, "sat": 0.10, "win": Color(1.00, 0.62, 0.24)},
+	{"name": "glacier",   "hue": 0.55, "spread": 0.06, "sat": -0.12, "win": Color(0.78, 0.90, 1.00)},
+	{"name": "ember",     "hue": 0.98, "spread": 0.04, "sat": 0.08, "win": Color(1.00, 0.52, 0.30)},
+	{"name": "bone",      "hue": 0.09, "spread": 0.03, "sat": -0.22, "win": Color(0.92, 0.88, 0.74)},
+	{"name": "violet",    "hue": 0.74, "spread": 0.06, "sat": -0.04, "win": Color(0.86, 0.72, 1.00)},
+]
+
+var _hue := 0.10                 # the chosen palette's stone hue
+var _sat_bias := 0.0
+var _win_col := Color(0.95, 0.74, 0.36)
+var _palette_name := "brass"
 var _glow := 0.0
 var _yaw := 0.0
 var _dist := 8.0
@@ -53,7 +71,20 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	var ttype: String = "hills" if rng.randf() < 0.6 else "mesa"
 	_terrain.build(rng, ttype, 3.0, rng.randf_range(0.4, 0.6), null,
 		"temperate" if rng.randf() < 0.5 else "tundra")
-	_hue = rng.randf_range(0.07, 0.13)
+	var pal: Dictionary = PALETTES[rng.randi() % PALETTES.size()]
+	_palette_name = String(pal["name"])
+	_hue = fposmod(float(pal["hue"]) + rng.randf_range(-0.02, 0.02), 1.0)
+	_sat_bias = float(pal["sat"])
+	_win_col = pal["win"]
+	var spread := float(pal["spread"])
+
+	# LAYOUT VARIETY. Every slot always got a spire and the height law was the
+	# same each time, so the footprint and the skyline were identical from seed
+	# to seed - only the noise under them changed. `density` opens plazas and
+	# gaps; `core` decides whether the tall towers cluster downtown (positive),
+	# ring the edge (negative), or spread evenly (near zero).
+	var density := rng.randf_range(0.62, 1.0)
+	var core := rng.randf_range(-0.55, 0.9)
 	# The shared profile modes: low modes shape the broad form, higher modes add fine tiers. Each is
 	# pinned to a spectral band, so the whole city's silhouette morphs coherently as the sound shifts.
 	for k in MODES:
@@ -76,9 +107,14 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 			var cxn := float(gx) / float(C - 1) * 2.0 - 1.0
 			var cyn := float(gy) / float(C - 1) * 2.0 - 1.0
 			var t := clampf(sqrt(cxn * cxn + cyn * cyn) / 1.415 + rng.randf_range(-0.06, 0.06), 0.0, 1.0)
+			if rng.randf() > density:
+				continue                     # a plaza, a park, a hole in the block
 			var bulk := rng.randf_range(0.4, 1.0)
 			var base_r := _terrain.half / float(C) * (0.40 + 0.7 * bulk)
-			var height := rng.randf_range(1.0, 2.1) * (1.2 - 0.3 * bulk)
+			# `core` bends the skyline: >0 puts the towers downtown, <0 rings them
+			# around a low middle, ~0 is an even sprawl. t is 0 at centre, 1 at rim.
+			var law := 1.0 + core * (0.5 - t) * 1.6
+			var height := rng.randf_range(1.0, 2.1) * (1.2 - 0.3 * bulk) * clampf(law, 0.35, 2.0)
 			# Per-spire mode deviations + phases: a family resemblance to the global style, each unique.
 			var mamp: Array = []
 			var mph: Array = []
@@ -92,7 +128,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 				"base_r": base_r, "height": height, "taper": rng.randf_range(0.6, 1.4),
 				"body": rng.randf_range(0.12, 0.68), "tiers": rng.randi_range(3, 6),
 				"twist": rng.randf_range(-0.6, 0.6), "mamp": mamp, "mph": mph,
-				"hue": fposmod(_hue + rng.randf_range(-0.05, 0.06), 1.0),
+				"hue": fposmod(_hue + rng.randf_range(-spread, spread), 1.0),
 				"delay": clampf(t * 0.45 + rng.randf_range(0.0, 0.22), 0.0, 0.62),
 				"grow": 0.0})
 	lens.fov = rng.randf_range(46.0, 56.0)
@@ -104,7 +140,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_light_dir = 1.0 if rng.randf() < 0.5 else -1.0
 	_light_el = rng.randf_range(0.34, 0.5)
 	_terrain.set_light(_light_az, _light_el)
-	return {"type": ttype}
+	return {"type": ttype, "palette": _palette_name}
 
 
 func _slot(g: int) -> float:
@@ -150,6 +186,8 @@ func update(f: AudioFeatures, delta: float) -> void:
 	for s in _spires:
 		sp.append((s as Dictionary).duplicate())
 	job.spires = sp
+	job.win_col = _win_col
+	job.sat_bias = _sat_bias
 	job.lens = Lens3D.new()
 	job.lens.eye = lens.eye
 	job.lens.look = lens.look
@@ -192,6 +230,8 @@ class SpireJob:
 	var fog_near := 6.0
 	var fog_far := 20.0
 	var fog_col := Color(0.05, 0.06, 0.09)
+	var win_col := Color(0.95, 0.74, 0.36)
+	var sat_bias := 0.0
 
 	func run(_s: Dictionary) -> Array:
 		lens.prepare()
@@ -352,7 +392,7 @@ class SpireJob:
 		if area < 0.5:
 			return
 		var val := clampf((0.66 + 0.5 * band + 0.5 * glow) * lit, 0.28, 1.5)
-		var sat := clampf(0.42 + 0.14 * sin((thue + uu) * 12.0) + 0.1 * band, 0.2, 0.68)
+		var sat := clampf(0.42 + sat_bias + 0.14 * sin((thue + uu) * 12.0) + 0.1 * band, 0.12, 0.78)
 		var col := Color.from_hsv(fposmod(thue + 0.05 * uu, 1.0), sat, val)
 		var shade := 0.40 + 0.66 * clampf(nrm.normalized().dot(ldir), 0.0, 1.0)
 		var cols := PackedColorArray()
@@ -388,7 +428,9 @@ class SpireJob:
 			var h := fposmod(sin((wseed + float(c_i) * 5.7) * 12.9898) * 43758.5453, 1.0)
 			var pane: Color
 			if h > 0.78:
-				pane = Color(0.95, 0.68 + 0.2 * band, 0.32, reveal)                # a lit window (minority)
+				# the palette's own lit-window colour, brightened by the band
+				pane = Color(win_col.r, clampf(win_col.g + 0.2 * band, 0.0, 1.0),
+					win_col.b, reveal)                                     # a lit window (minority)
 			else:
 				pane = Color(wall.r * 0.14, wall.g * 0.12, wall.b * 0.18, reveal)  # a dark recess (most)
 			var frame := PackedVector2Array([

@@ -97,6 +97,11 @@ var take_provider := Callable()
 ## click could only produce a video of nothing.
 var take_ready := Callable()
 
+## Whether this mode has a UI worth recording. Only the fishing game does; the
+## generative path has a text box and some sliders, and an option offering to
+## "record the game" there is noise.
+var automation_available := false
+
 
 func _ready() -> void:
 	layer = 250          # above the splash (200), so status shows on the home screen too
@@ -311,10 +316,15 @@ func _on_export() -> void:
 		_set_status("⚠  Nothing to export yet - play or speak something first",
 			Color(1.0, 0.85, 0.6))
 		return
-	# Only a synthesis take has a game to automate - grey the toggle out otherwise
-	# rather than hide it, matching the export button's own never-hide-it rule.
+	# Only the FISHING game has a game to automate. take_provider is no longer a
+	# proxy for that - the generative path sets one too - so the option is driven
+	# by an explicit flag and REMOVED rather than greyed where it is meaningless,
+	# since a permanently disabled item just invites the question of what it is.
 	var ui_idx := _quality_menu.get_item_index(UI_TOGGLE_ID)
-	_quality_menu.set_item_disabled(ui_idx, not take_provider.is_valid())
+	if automation_available and ui_idx < 0:
+		_quality_menu.add_check_item("Automate the Synthesis game (record the UI)", UI_TOGGLE_ID)
+	elif not automation_available and ui_idx >= 0:
+		_quality_menu.remove_item(ui_idx)
 	var btn_rect := _btn.get_global_rect()
 	_quality_menu.reset_size()
 	var pos := Vector2i(btn_rect.position) + Vector2i(0, -int(_quality_menu.get_contents_minimum_size().y) - 8)
@@ -366,8 +376,35 @@ func _on_path(out_path: String) -> void:
 	_song_dur = Spectrum.song_length()
 	if _song_dur <= 0.0 and _song.get_extension().to_lower() == "wav":
 		# a provider-rendered take Spectrum hasn't finished streaming: PCM16
-		# mono WAV, so the file itself says how long it is
-		_song_dur = maxf(0.0, float(_file_size(_song) - 44) / (2.0 * float(Voice.SR)))
+		# mono WAV, so the file itself says how long it is.
+		#
+		# READ THE RATE FROM THE HEADER. This assumed Voice.SR (44100), which is
+		# only true for the procedural synthesizer's own takes; a neural voice
+		# renders at its model's rate - Piper is 22050 - so a generative export
+		# reported exactly HALF its length and the render stopped halfway
+		# through, which is what "it only produced 5 seconds" was.
+		_song_dur = maxf(0.0, float(_file_size(_song) - 44)
+			/ (2.0 * float(_wav_rate(_song))))
+	# Say what was decided, in the terminal. Every export failure so far has been
+	# a disagreement about WHICH file and HOW LONG - a stale path, or a duration
+	# read at the wrong sample rate that cut the render in half - and neither is
+	# visible from the UI.
+	print("ghost/export: take=%s  %.2fs @ %d Hz  ->  %s"
+		% [_song, _song_dur, _wav_rate(_song) if _song.get_extension().to_lower() == "wav" else 0, _out])
+	if _song_dur <= 0.5:
+		printerr("ghost/export: WARNING - the take reads as %.2fs. The render stops "
+			% _song_dur + "when the audio ends, so the video will be that short.")
+
+	# Say what was decided, in the terminal. Every export problem so far has been
+	# a disagreement about WHICH file or HOW LONG - a duration read at the wrong
+	# sample rate halved one render - and neither is visible from the UI.
+	print("ghost/export: take=%s" % _song)
+	print("ghost/export: %.2fs @ %d Hz -> %s" % [_song_dur,
+		_wav_rate(_song) if _song.get_extension().to_lower() == "wav" else 0, _out])
+	if _song_dur <= 1.0:
+		printerr("ghost/export: WARNING - the take reads as %.2fs, so the render "
+			% _song_dur + "will stop there. Check the text in the panel.")
+
 	# Movie Maker records to this intermediate AVI (beside the final file, on the same disk); we then
 	# transcode it to the chosen .mp4 and delete it. The AVI is only ever scratch - it never ships,
 	# so its 4 GB/RIFF index limit (which corrupts 4K exports) can't reach the user.
@@ -532,6 +569,19 @@ func _repair_avi_sizes(path: String) -> void:
 			break
 		pos += 8 + csize + (csize & 1)
 	f.close()
+
+
+## The sample rate a WAV declares, from its fmt chunk (canonical 44-byte header,
+## rate at byte 24). Falls back to the procedural synthesizer's rate if the file
+## cannot be read, which is the only rate that was ever assumed before.
+static func _wav_rate(path: String) -> int:
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null or f.get_length() < 44:
+		return Voice.SR
+	f.seek(24)
+	var rate := f.get_32()
+	f.close()
+	return rate if rate > 0 else Voice.SR
 
 
 func _file_size(path: String) -> int:

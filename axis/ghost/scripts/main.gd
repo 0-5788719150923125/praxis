@@ -412,6 +412,7 @@ func _open_synth_editor(mode := "fishing") -> void:
 	if _chrome.exporter != null:
 		_chrome.exporter.take_provider = editor.export_take
 		_chrome.exporter.take_ready = editor.can_export_take
+		_chrome.exporter.automation_available = true
 	_feedback = _chrome.attach_feedback()
 
 
@@ -426,6 +427,14 @@ func _open_generative_editor() -> void:
 	_synth_editor = editor
 	_generative = editor
 	add_child(editor)
+	# Export was left wired to the fishing game's rules, so the button stayed
+	# greyed with "catch a seed first" - a gate that has no meaning on this path.
+	# Here the requirement is simply text and a loaded voice.
+	if _chrome.exporter != null:
+		_chrome.exporter.take_provider = editor.export_take
+		_chrome.exporter.take_ready = editor.can_export_take
+		_chrome.exporter.automation_available = false
+		# no fishing game on this path, so nothing to record
 	_feedback = _chrome.attach_feedback()
 
 
