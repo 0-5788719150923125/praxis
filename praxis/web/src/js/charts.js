@@ -3162,6 +3162,81 @@ async function createExpertRoutingChart(canvasId, agents) {
     });
 }
 
+// Split a metric key on its separators: "router_depth_specialization" ->
+// ["router", "depth", "specialization"].
+function metricKeySegments(key) {
+    return key.split(/[_/]/).filter(Boolean);
+}
+
+/**
+ * Resolve each matched key in a multi-series family to a colour slot and a
+ * legend label.
+ *
+ * Two kinds of family land here. NUMBERED ones (expert_N, layer_N, or a
+ * trailing digit) key off their own number, so expert 3 keeps one colour across
+ * every card and every run. NAMED ones - members distinguished by a word rather
+ * than an index, e.g. router_depth_specialization vs router_depth_similarity -
+ * have no number to find; every one of them used to fall through to index 0 and
+ * the label "Series 0", so the card drew each series in the same colour under
+ * the same name. They now take a slot each, labelled by the segments that
+ * actually differ between them ("Specialization", "Similarity").
+ *
+ * Named keys are sorted before slots are handed out, because the key order here
+ * comes from Object.keys() on the metrics payload and must not decide colours.
+ */
+function resolveSeriesIdentities(keys, seriesNoun) {
+    const identities = new Map();
+    const named = [];
+    let maxNumbered = -1;
+
+    keys.forEach((key) => {
+        const expertMatch = key.match(/expert[_/](\d+)/);
+        const layerMatch = key.match(/layer[_/](\d+)/);
+        const trailingMatch = key.match(/(\d+)\s*$/);
+        const numbered = expertMatch || layerMatch || trailingMatch;
+        if (!numbered) {
+            named.push(key);
+            return;
+        }
+        const noun = expertMatch ? 'Expert'
+            : layerMatch ? 'Layer'
+            : (seriesNoun || 'Series');
+        const index = parseInt(numbered[1], 10);
+        identities.set(key, { index, label: `${noun} ${numbered[1]}` });
+        maxNumbered = Math.max(maxNumbered, index);
+    });
+
+    if (named.length === 0) return identities;
+
+    // Drop the leading segments every named key shares, keeping at least one
+    // segment on the shortest key. Compared segment-wise, not character-wise:
+    // "specialization" and "similarity" share the letter "s", which a raw
+    // common-prefix would strip into "pecialization" and "imilarity".
+    const segments = named.map(metricKeySegments);
+    let shared = 0;
+    if (segments.length > 1) {
+        const first = segments[0];
+        while (
+            shared < first.length - 1 &&
+            segments.every(s => shared < s.length - 1 && s[shared] === first[shared])
+        ) {
+            shared++;
+        }
+    }
+
+    named.slice().sort().forEach((key, i) => {
+        const all = metricKeySegments(key);
+        const distinct = all.slice(shared);
+        const parts = distinct.length ? distinct : all.slice(-1);
+        identities.set(key, {
+            index: maxNumbered + 1 + i,
+            label: parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' '),
+        });
+    });
+
+    return identities;
+}
+
 /**
  * Create multi-expert chart for any expert-indexed metric (e.g., architecture selection)
  * Generic version that works with any keyPattern
@@ -3188,23 +3263,14 @@ function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern,
         console.log(`[createMultiExpertChart] Found ${expertKeys.length} keys matching pattern:`, expertKeys);
         maxExperts = Math.max(maxExperts, expertKeys.length);
 
+        // Colour slot + legend label per series. Expert-indexed (MoE routers),
+        // layer-indexed (per-depth router scalars), trailing-numbered, or named
+        // - see resolveSeriesIdentities. The key_pattern in the registry decides
+        // which keys land here; this just draws whatever axis they carry.
+        const identities = resolveSeriesIdentities(expertKeys, options.series_noun);
+
         expertKeys.forEach((expertKey) => {
-            // Series index + noun: expert-indexed (MoE routers) or layer-indexed
-            // (per-depth router scalars, e.g. SMEAR entropy). The key_pattern in
-            // the registry decides which keys land here; this just labels and
-            // colors each line sensibly for whichever axis it carries.
-            const expertMatch = expertKey.match(/expert[_/](\d+)/);
-            const layerMatch = expertKey.match(/layer[_/](\d+)/);
-            // Fallback for non-expert/non-layer series (e.g. val_brier_1..4):
-            // take the trailing number so each line gets a distinct index and
-            // color, and let the registry name the axis via series_noun.
-            const trailingMatch = expertKey.match(/(\d+)\s*$/);
-            const seriesNum = expertMatch ? expertMatch[1]
-                : layerMatch ? layerMatch[1]
-                : trailingMatch ? trailingMatch[1] : '0';
-            const seriesNoun = expertMatch ? 'Expert'
-                : layerMatch ? 'Layer'
-                : (options.series_noun || 'Series');
+            const identity = identities.get(expertKey);
             const values = metrics[expertKey] || [];
 
             console.log(`[createMultiExpertChart] Key: ${expertKey}, Values length: ${values.length}, First: ${values[0]}, Last: ${values[values.length-1]}`);
@@ -3217,8 +3283,8 @@ function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern,
 
             console.log(`[createMultiExpertChart] Data points after filtering: ${data.length}, First x: ${data[0]?.x}, Last x: ${data[data.length-1]?.x}`);
 
-            const color = chartLineColor(parseInt(seriesNum));
-            const label = agents.length > 1 ? `${agent.name} - ${seriesNoun} ${seriesNum}` : `${seriesNoun} ${seriesNum}`;
+            const color = chartLineColor(identity.index);
+            const label = agents.length > 1 ? `${agent.name} - ${identity.label}` : identity.label;
 
             allDatasets.push({
                 label: label,
