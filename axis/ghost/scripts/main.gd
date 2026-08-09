@@ -16,6 +16,7 @@ var _workspace: Node = null
 var _mask_editor: Node = null
 var _synth_editor: Node = null
 var _synth_active := false           # a synth take is playing as the session
+var _generative: Node = null         # the generative editor, when that mode is up
 var _stream: Node = null             # the live VoiceStream feeding the session
 var _subtitles: Node = null          # karaoke overlay, present when the audio has a sidecar
 var _status_t := 0.0     # throttle for writing render progress (export mode)
@@ -394,7 +395,10 @@ func _arg_value(args: PackedStringArray, flag: String) -> String:
 ## --synth: the voice-synthesis editor. Each Speak renders a WAV take and plays it
 ## as a fresh session (new fingerprint, new show); the take loops when it ends,
 ## like a manual session, so the show stays up while the user iterates.
-func _open_synth_editor() -> void:
+func _open_synth_editor(mode := "fishing") -> void:
+	if mode == "neural":
+		_open_generative_editor()
+		return
 	# No furniture wiring here: the chrome (exporter + assistant, created in
 	# _ready for every interactive mode) already covers it - a synth take
 	# exports exactly like a song, and ` feedback works over the running show.
@@ -409,6 +413,48 @@ func _open_synth_editor() -> void:
 		_chrome.exporter.take_provider = editor.export_take
 		_chrome.exporter.take_ready = editor.can_export_take
 	_feedback = _chrome.attach_feedback()
+
+
+## The generative path: a small local neural voice, run by the voice host
+## subprocess. Deliberately a SEPARATE editor rather than a backend swap inside
+## synth_editor - the fishing game's economy is defined over the procedural
+## engine's 25-dimensional genome and a neural backend exposes a speaker id and
+## three scalars, so one UI cannot serve both. See VOICE_PLAN.md section 6.
+func _open_generative_editor() -> void:
+	var editor := preload("res://scripts/generative_editor.gd").new()
+	editor.begin_stream = _begin_generative_stream
+	_synth_editor = editor
+	_generative = editor
+	add_child(editor)
+	_feedback = _chrome.attach_feedback()
+
+
+## ONE session for the whole chapter. The generative path used to start a fresh
+## session per chunk, which meant the Director re-cut and the harmonic seed
+## re-derived every few sentences - reported as "the scene is changing too
+## often". A generator playback instead lets the editor push each chunk's PCM
+## into a single continuous stream, so the show sees one unbroken take however
+## many chunks it was made from. Subtitles ride the same array, which
+## Subtitles.words explicitly allows to keep growing.
+func _begin_generative_stream(fp: int, sr: int, words: Array) -> AudioStreamGeneratorPlayback:
+	# TEAR DOWN FIRST. This is called again every time the reading restarts - a
+	# new text, a voice change, a tone change - and it used to attach a fresh
+	# Director stage on top of the previous one without detaching. The old scene
+	# stayed in the tree with nothing driving it, so it sat frozen behind the
+	# new one and they piled up as settings were changed.
+	Director.detach()
+	Spectrum.stop()
+	var pb: AudioStreamGeneratorPlayback = Spectrum.begin_stream(fp, sr)
+	Director.attach(_stage_host())
+	if _subtitles != null and is_instance_valid(_subtitles):
+		_subtitles.queue_free()
+	var subs := preload("res://scripts/subtitles.gd").new()
+	subs.words = words          # shared by reference; the editor appends to it
+	_subtitles = subs
+	add_child(subs)
+	if _generative != null and is_instance_valid(_generative):
+		_generative.subtitles = subs   # the editor re-bases its clock per frame
+	return pb
 
 
 ## Export autopilot: the Synthesis panel, playing itself over the take being

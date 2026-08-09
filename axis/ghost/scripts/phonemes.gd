@@ -216,6 +216,12 @@ const FUNCTION_WORDS := [
 static func parse(text: String) -> Array:
 	var sentences: Array = []
 	var words: Array = []
+	# Normalize FIRST: fold typographic punctuation to ASCII and turn numerals,
+	# ordinals, currency, times and dotted abbreviations into words. Before this
+	# stage existed, a numeral produced an empty phone array and vanished from
+	# the utterance without a trace, and a curly apostrophe defeated both the
+	# contraction split and the dictionary key. See TextNorm.
+	text = TextNorm.normalize(text)
 	for token in _tokenize(text):
 		if token.begins_with("["):
 			words.append(_literal_word(token))
@@ -223,6 +229,13 @@ static func parse(text: String) -> Array:
 		var pause := "none"
 		var punct := ""
 		var bare := token
+		# ORDER MATTERS (2026-08-09). The wrapper strip used to run AFTER this
+		# loop, so a token like `early,"` failed the loop's very first test on
+		# the closing quote and exited immediately: pause stayed "none", punct
+		# stayed empty, and every line of dialogue lost its terminal contour and
+		# its pause. Strip wrappers, then terminal punctuation, then any wrapper
+		# the punctuation was hiding.
+		bare = bare.lstrip("\"'(").rstrip("\"')")
 		while bare.length() > 0 and bare[bare.length() - 1] in ".,!?;:\n":
 			var c := bare[bare.length() - 1]
 			pause = "stop" if c in ".!?\n" else "comma"

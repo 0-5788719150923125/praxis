@@ -45,7 +45,7 @@ const ASSISTANT_KEYS := ["", "claude_cli"]
 ## Set by main before the splash enters the tree.
 var start_session: Callable    # start_session.call(audio_path: String, manual: bool)
 var start_mask: Callable       # start_mask.call(video_path: String)
-var start_synth: Callable      # start_synth.call()
+var start_synth: Callable      # start_synth.call(mode: "fishing"|"neural")
 
 var _audio_path := ""
 var _video_path := ""
@@ -130,9 +130,16 @@ func _build_ui() -> void:
 		"The seeded show - scenes chosen for you, cut on the music.", "", _start_auto)
 	_uses_manual = _add_mode_row(col, "Manual  ▶",
 		"Orchestrate by hand - the workspace, storyboards, dials.", "", _start_manual)
+	# Two separate modes rather than one with a sub-choice: the paths are not
+	# variants of each other. Synthesis has a genome, a belt and a fishing loop;
+	# Generative has a speaker id and three scalars. See VOICE_PLAN.md section 6.
 	_add_mode_row(col, "Synthesis  ▶",
 		"Write a script; ghost speaks it and the show reacts to the voice.",
-		"no import needed", _start_synth)
+		"no import needed", func() -> void: _choose_synth("fishing"))
+	_add_mode_row(col, "Generative  ▶",
+		"The same, in a small local neural voice - clearer, at the cost of "
+		+ "a downloaded model.", "downloads a voice once",
+		func() -> void: _choose_synth("neural"))
 	_uses_mask = _add_mode_row(col, "Masking  ▶",
 		"Chroma-key effects over a video - markers, tracks, renders.", "", _start_mask)
 	_refresh_sources()
@@ -297,9 +304,9 @@ func _start(manual: bool) -> void:
 	queue_free()
 
 
-func _start_synth() -> void:
+func _choose_synth(mode: String) -> void:
 	if start_synth.is_valid():
-		start_synth.call()
+		start_synth.call(mode)
 	queue_free()
 
 

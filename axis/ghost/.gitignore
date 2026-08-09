@@ -38,5 +38,7 @@ mono_crash.*.json
 # Auto-generated import metadata - Godot regenerates these on editor open.
 *.uid
 *.import
-# ghost voice listening probes (regenerated on demand, never committed)
-0*.wav
+# ghost voice listening probes (regenerated on demand, never committed).
+# Numbered NN_name.wav at this directory's root - the earlier `0*.wav` missed
+# everything from 10 onward.
+/[0-9][0-9]_*.wav

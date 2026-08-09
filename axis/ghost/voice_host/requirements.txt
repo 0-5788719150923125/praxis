@@ -1,0 +1,41 @@
+# ghost voice host dependencies. Deliberately tiny.
+#
+# We run Piper's voice models DIRECTLY through onnxruntime and supply phoneme
+# ids ourselves, which means none of the following are installed and none of
+# their licenses reach a shipped build:
+#
+#   piper-tts        GPL-3.0-or-later since v1.3.0, because the wheel vendors
+#                    eSpeak-NG. This is the whole reason for the direct-ONNX
+#                    approach. The voice .onnx / .onnx.json files are DATA from
+#                    an MIT-tagged repository and carry none of that.
+#   phonemizer,      all eSpeak-NG wrappers, all GPL, all unnecessary because
+#   espeakng-loader  ghost has its own G2P (scripts/phonemes.gd + CMUdict).
+#   torch,           not needed for inference; onnxruntime is the whole runtime.
+#   transformers
+#
+# onnxruntime is MIT, numpy is BSD-3-Clause.
+
+onnxruntime>=1,<2
+numpy>=1.24
+
+# eSpeak-NG, used ONLY as a phonemizer for the neural path.
+#
+# These voices were trained on eSpeak's transcriptions, so eSpeak's answer is
+# the correct one FOR THIS MODEL whatever a dictionary says. Measured over the
+# 481 unique words of a real chapter, translating ghost's own CMUdict-derived
+# ARPAbet into eSpeak's symbol set still disagreed with eSpeak on 32% of words -
+# and the residue was not mapping error but genuine lexicon disagreement
+# ("was" is W AA0 Z in CMUdict and wʌz in eSpeak). That gap is what made "was"
+# come out as "wars".
+#
+# LICENSING: espeakng-loader ships the GPLv3 eSpeak-NG library. This is fine for
+# a personal, non-distributed build, which is what ghost is; if that ever
+# changes, set phonemizer="ghost" and the ARPAbet path takes over with no other
+# code change. ghost's own [K AE T] overrides take precedence either way.
+espeakng-loader>=0.2
+phonemizer>=3.2
+
+# Build/patch time only, and optional: used once per voice to expose the VITS
+# duration predictor as a graph output so we get exact per-phoneme timings.
+# Apache 2.0. Not required to synthesize.
+onnx>=1.15
