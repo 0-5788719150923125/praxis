@@ -129,7 +129,20 @@ const FLOOR_MIN := 0.0015             # the permanent faint grain (~-56 dB)
 # is real but it costs 10 dB of consonant contrast to buy. The principled end
 # state is aspiration tied to the glottal open quotient and seated ~10-12 dB
 # lower; until that lands, off.
-const NOISE_FX := false
+# 2026-08-09: back ON, but TRIMMED. Turning it off bought +10 dB of consonant
+# contrast and cost the masking that had been hiding an artifact class we now
+# know is INHERENT to this method rather than a bug in ghost: the user compared
+# against DECtalk, the commercial gold standard of Klatt-lineage synthesis, and
+# found the same clicks and static there, quieter and less frequent. Gating
+# noise sources on and off and retuning ringing resonators produces transients;
+# DECtalk masked its own under an 8-bit-era noise floor. Seven separate
+# mechanisms were tested and refuted here before that comparison was made.
+#
+# So the goal is minimize-and-mask, not eliminate. NOISE_TRIM seats breath and
+# air ~12 dB under their old level: enough floor to bury the transients, far
+# short of the 90% of vowel power at 2.5-4 kHz they used to supply.
+const NOISE_FX := true
+const NOISE_TRIM := 0.25
 # RAW BYPASS (diagnostic, 2026-07-26): true = every seed plays the BASE
 # synthesis and nothing else, to bisect "base synthesis vs modulations".
 # Disables, at plan time: the walk's realized modifiers (pace, emphasis,
@@ -1912,9 +1925,9 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 		# says so. Attack keeps the existing ramp (a burst must stay a
 		# transient); only the release is bounded, plus a real floor so the
 		# tail cannot crawl.
-		var nrel := aa if namp > float(state.nampsm) else 1.0 - exp(-float(m) / (SR * 0.0025))
+		var nrel := aa if namp > float(state.nampsm) else 1.0 - exp(-float(m) / (SR * 0.005))
 		state.nampsm = lerpf(state.nampsm, namp, nrel)
-		if namp <= 0.0 and float(state.nampsm) < 0.004:
+		if namp <= 0.0 and float(state.nampsm) < 0.0005:
 			state.nampsm = 0.0
 		state.anti_mix = lerpf(state.anti_mix, anti_target, aa)
 		state.brsm = lerpf(float(state.brsm), spec.breath, ra)
@@ -1923,8 +1936,8 @@ static func _run_frames(out: PackedFloat32Array, state: Dictionary, spec: Spec,
 		state.fssm = lerpf(float(state.fssm), spec.formant_scale, ra)
 		var nsm: float = state.nampsm
 		var amix: float = state.anti_mix
-		var breath_g: float = float(state.brsm) if NOISE_FX else 0.0
-		var airg: float = float(state.airgsm) if NOISE_FX else 0.0
+		var breath_g: float = float(state.brsm) * NOISE_TRIM if NOISE_FX else 0.0
+		var airg: float = float(state.airgsm) * NOISE_TRIM if NOISE_FX else 0.0
 		var fs: float = state.fssm
 		r1.tune(state.fsm[0], BW[0])
 		r2.tune(state.fsm[1], BW[1])

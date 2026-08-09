@@ -527,6 +527,34 @@ the parallel branch derived from the cascade's own formants - which Klatt p.981 
 what prevents frication "dissociating from the rest of the speech signal", and which is the real
 answer to the RCA's second-source finding.
 
+### THE FINDING THAT REFRAMES ALL OF THIS (2026-08-09)
+
+The user listened to DECtalk "Perfect Paul" - the commercial descendant of Klatt's synthesizer, the
+gold standard of this entire method, and the most-heard formant synthesizer in history - and
+reported that **it has the same clicks, pops and static**, quieter and less frequent, but
+unmistakably the same artifact class. He also found it "sort of hard to understand" and judged it
+close to what ghost already produces.
+
+**So there was never a single bug to find.** These artifacts are inherent to the method: gating
+noise sources on and off, and retuning resonators while they ring, produces transients. The seven
+refuted hypotheses below were not failures of investigation - they were accumulating evidence that
+the premise was wrong. Read that table as a map of where NOT to look again.
+
+Two consequences:
+
+1. **The goal is minimize-and-mask, not eliminate.** DECtalk masked its own artifacts under an
+   8-bit-era noise floor. Setting `NOISE_FX = false` on 2026-08-08 bought +10 dB of consonant
+   contrast and threw that masking away. It is now back at `NOISE_TRIM = 0.25` (~12 dB under the
+   old level): enough floor to bury the transients, far short of the 90% of vowel power at
+   2.5-4 kHz breath and air used to supply.
+2. **The ceiling is now known, and it is two different numbers.** Intelligibility in this class is
+   essentially solved - DECtalk scored 97% on the Modified Rhyme Test against 97-99% for natural
+   speech - so nothing physical stands between ghost and a voice that needs no subtitles.
+   Naturalness has a hard ceiling well below human, because a simplified source through a handful
+   of poles discards what the ear reads as a person. No tuning closes that. If the requirement is
+   natural, the requirement needs a different method; if it is "stylized and alive" as
+   next/voice.md states, this method can reach it.
+
 ### Round 2b: the clicks are still unsolved, and here is everything they are not
 
 Seven interventions, each with a plausible mechanism, each measured. **None moved the click rate**,

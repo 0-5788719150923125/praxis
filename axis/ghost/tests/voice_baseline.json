@@ -2,17 +2,17 @@
  "engine": {
   "drone": false,
   "fric_level": 0.075,
-  "noise_fx": false,
+  "noise_fx": true,
   "out_gain": 3.2,
   "raw_mode": false
  },
  "fixtures": {
   "narration": {
    "dur": 24.85,
-   "peak_db": -3.62,
-   "rms_db": -22.72,
+   "peak_db": -3.59,
+   "rms_db": -22.84,
    "levels": {
-    "reference_vowel_rms": 0.07545936133416616,
+    "reference_vowel_rms": 0.07533966041932635,
     "classes": {
      "vowel": {
       "n": 85,
@@ -20,7 +20,7 @@
      },
      "sibilant": {
       "n": 17,
-      "db_re_vowel": -2.94,
+      "db_re_vowel": -5.09,
       "target": [
        -8.0,
        2.0
@@ -29,7 +29,7 @@
      },
      "weak_fric": {
       "n": 19,
-      "db_re_vowel": -16.83,
+      "db_re_vowel": -13.86,
       "target": [
        -25.0,
        -10.0
@@ -38,16 +38,16 @@
      },
      "stop_voiceless": {
       "n": 29,
-      "db_re_vowel": -15.29,
+      "db_re_vowel": -14.08,
       "target": [
        -15.0,
        -5.0
       ],
-      "pass": false
+      "pass": true
      },
      "stop_voiced": {
       "n": 26,
-      "db_re_vowel": -18.34,
+      "db_re_vowel": -13.35,
       "target": [
        -20.0,
        -6.0
@@ -56,7 +56,7 @@
      },
      "nasal": {
       "n": 25,
-      "db_re_vowel": -5.21,
+      "db_re_vowel": -5.19,
       "target": [
        -12.0,
        -2.0
@@ -65,7 +65,7 @@
      },
      "liquid": {
       "n": 17,
-      "db_re_vowel": -1.54,
+      "db_re_vowel": -1.52,
       "target": [
        -8.0,
        1.0
@@ -74,7 +74,7 @@
      },
      "glide": {
       "n": 5,
-      "db_re_vowel": -1.35,
+      "db_re_vowel": -1.34,
       "target": [
        -8.0,
        1.0
@@ -85,215 +85,215 @@
     "phones": {
      "AA": {
       "n": 3,
-      "db_re_vowel": -3.44
+      "db_re_vowel": -3.42
      },
      "AE": {
       "n": 9,
-      "db_re_vowel": -0.25
+      "db_re_vowel": -0.22
      },
      "AH": {
       "n": 23,
-      "db_re_vowel": -3.44
+      "db_re_vowel": -3.41
      },
      "AO": {
       "n": 4,
-      "db_re_vowel": 1.04
+      "db_re_vowel": 1.09
      },
      "AW": {
       "n": 5,
-      "db_re_vowel": 3.32
+      "db_re_vowel": 3.34
      },
      "AY": {
       "n": 4,
-      "db_re_vowel": 2.11
+      "db_re_vowel": 2.13
      },
      "B": {
       "n": 7,
-      "db_re_vowel": -19.36
+      "db_re_vowel": -7.72
      },
      "D": {
       "n": 17,
-      "db_re_vowel": -17.94
+      "db_re_vowel": -16.76
      },
      "DH": {
       "n": 12,
-      "db_re_vowel": -18.43
+      "db_re_vowel": -18.02
      },
      "EH": {
       "n": 6,
-      "db_re_vowel": 2.31
+      "db_re_vowel": 2.34
      },
      "ER": {
       "n": 5,
-      "db_re_vowel": -0.55
+      "db_re_vowel": -0.54
      },
      "EY": {
       "n": 2,
-      "db_re_vowel": 1.85
+      "db_re_vowel": 1.87
      },
      "F": {
       "n": 3,
-      "db_re_vowel": -17.85
+      "db_re_vowel": -7.62
      },
      "G": {
       "n": 2,
-      "db_re_vowel": -18.43
+      "db_re_vowel": -18.44
      },
      "HH": {
       "n": 6,
-      "db_re_vowel": -0.84
+      "db_re_vowel": -0.82
      },
      "IH": {
       "n": 10,
-      "db_re_vowel": -3.02
+      "db_re_vowel": -3.0
      },
      "IY": {
       "n": 6,
-      "db_re_vowel": -0.88
+      "db_re_vowel": -1.22
      },
      "K": {
       "n": 8,
-      "db_re_vowel": -11.92
+      "db_re_vowel": -11.9
      },
      "L": {
       "n": 11,
-      "db_re_vowel": -0.94
+      "db_re_vowel": -0.92
      },
      "M": {
       "n": 6,
-      "db_re_vowel": -3.98
+      "db_re_vowel": -3.97
      },
      "N": {
       "n": 16,
-      "db_re_vowel": -5.19
+      "db_re_vowel": -5.18
      },
      "NG": {
       "n": 3,
-      "db_re_vowel": -8.51
+      "db_re_vowel": -8.47
      },
      "OW": {
       "n": 6,
-      "db_re_vowel": 6.57
+      "db_re_vowel": 6.58
      },
      "P": {
       "n": 3,
-      "db_re_vowel": -22.8
+      "db_re_vowel": -11.3
      },
      "R": {
       "n": 6,
-      "db_re_vowel": -2.76
+      "db_re_vowel": -2.74
      },
      "S": {
       "n": 11,
-      "db_re_vowel": -5.38
+      "db_re_vowel": -5.11
      },
      "SH": {
       "n": 3,
-      "db_re_vowel": 4.66
+      "db_re_vowel": -2.38
      },
      "T": {
       "n": 18,
-      "db_re_vowel": -16.33
+      "db_re_vowel": -15.9
      },
      "TH": {
       "n": 2,
-      "db_re_vowel": -14.73
+      "db_re_vowel": -14.15
      },
      "UW": {
       "n": 2,
-      "db_re_vowel": -2.2
+      "db_re_vowel": -2.18
      },
      "V": {
       "n": 2,
-      "db_re_vowel": -11.25
+      "db_re_vowel": -9.04
      },
      "W": {
       "n": 5,
-      "db_re_vowel": -1.35
+      "db_re_vowel": -1.34
      },
      "Z": {
       "n": 3,
-      "db_re_vowel": -9.06
+      "db_re_vowel": -8.97
      }
     }
    },
    "vowel_space": {
     "stressed": {
      "n": 34,
-     "hull_bark2": 18.48
+     "hull_bark2": 18.44
     },
     "reduced": {
      "n": 51,
-     "hull_bark2": 6.46
+     "hull_bark2": 6.53
     },
-    "ratio": 0.35,
+    "ratio": 0.354,
     "ratio_min": 0.4,
     "n_sufficient": true,
     "pass": false,
     "per_vowel_hz": {
      "AA": [
-      631,
-      1276,
+      628,
+      1281,
       3
      ],
      "AE": [
-      623,
-      1700,
+      641,
+      1683,
       9
      ],
      "AH": [
-      575,
-      1339,
+      567,
+      1341,
       23
      ],
      "AO": [
-      554,
-      1010,
+      547,
+      1006,
       4
      ],
      "AW": [
-      591,
-      1047,
+      590,
+      1033,
       5
      ],
      "AY": [
-      535,
-      1543,
+      534,
+      1541,
       4
      ],
      "EH": [
-      514,
-      1842,
+      511,
+      1835,
       6
      ],
      "ER": [
-      490,
+      484,
       1397,
       5
      ],
      "EY": [
       437,
-      1991,
+      1996,
       2
      ],
      "IH": [
-      388,
-      1868,
+      384,
+      1886,
       10
      ],
      "IY": [
-      312,
-      2097,
+      305,
+      2092,
       6
      ],
      "OW": [
-      454,
-      861,
+      451,
+      857,
       6
      ],
      "UW": [
-      335,
-      1016,
+      332,
+      1008,
       2
      ]
     }
@@ -301,8 +301,8 @@
    "boundaries": {
     "n_gaps": 29,
     "median_trough_db": {
-     "<15ms": -7.99,
-     ">=40ms": -240.0
+     "<15ms": -7.88,
+     ">=40ms": -39.14
     },
     "counts": {
      "<15ms": 17,
@@ -312,27 +312,27 @@
     "pass": true
    },
    "bands_db": {
-    "0-300": -5.59,
-    "300-800": -2.14,
-    "800-1500": -14.11,
-    "1500-2500": -13.84,
-    "2500-4000": -17.66,
-    "4000-6000": -19.79,
-    "6000-8000": -24.09,
-    "8000-14000": -28.12
+    "0-300": -5.48,
+    "300-800": -2.03,
+    "800-1500": -14.26,
+    "1500-2500": -16.52,
+    "2500-4000": -20.38,
+    "4000-6000": -25.34,
+    "6000-8000": -19.11,
+    "8000-14000": -23.54
    },
    "artifacts": {
-    "clicks_per_sec": 4.59,
-    "click_events": 114,
-    "max_step": 0.2029,
+    "clicks_per_sec": 6.08,
+    "click_events": 151,
+    "max_step": 0.3853,
     "pct_above_knee_0p7": 0.0,
     "pct_above_limit_0p85": 0.0,
-    "peak": 0.6588,
+    "peak": 0.6613,
     "clicks_per_sec_max": 0.35,
     "pass": false
    },
    "tilt": {
-    "db_per_octave": -6.3,
+    "db_per_octave": -4.87,
     "target": [
      -11.0,
      -4.0
@@ -341,7 +341,7 @@
    },
    "tilt_by_class": {
     "vowel": {
-     "db_per_octave": -14.71,
+     "db_per_octave": -13.56,
      "n_tokens": 85,
      "target": [
       -11.0,
@@ -350,7 +350,7 @@
      "pass": false
     },
     "obstruent": {
-     "db_per_octave": -1.55,
+     "db_per_octave": 3.03,
      "n_tokens": 91,
      "target": [
       -4.0,
@@ -362,10 +362,10 @@
   },
   "consonants": {
    "dur": 19.54,
-   "peak_db": -4.48,
-   "rms_db": -23.09,
+   "peak_db": -5.08,
+   "rms_db": -23.46,
    "levels": {
-    "reference_vowel_rms": 0.07891159266346079,
+    "reference_vowel_rms": 0.07889552856375603,
     "classes": {
      "vowel": {
       "n": 62,
@@ -373,7 +373,7 @@
      },
      "sibilant": {
       "n": 25,
-      "db_re_vowel": -1.66,
+      "db_re_vowel": -4.82,
       "target": [
        -8.0,
        2.0
@@ -382,7 +382,7 @@
      },
      "weak_fric": {
       "n": 17,
-      "db_re_vowel": -12.52,
+      "db_re_vowel": -10.45,
       "target": [
        -25.0,
        -10.0
@@ -391,16 +391,16 @@
      },
      "stop_voiceless": {
       "n": 23,
-      "db_re_vowel": -15.89,
+      "db_re_vowel": -13.65,
       "target": [
        -15.0,
        -5.0
       ],
-      "pass": false
+      "pass": true
      },
      "stop_voiced": {
       "n": 16,
-      "db_re_vowel": -19.12,
+      "db_re_vowel": -15.11,
       "target": [
        -20.0,
        -6.0
@@ -409,7 +409,7 @@
      },
      "nasal": {
       "n": 18,
-      "db_re_vowel": -6.11,
+      "db_re_vowel": -6.1,
       "target": [
        -12.0,
        -2.0
@@ -418,7 +418,7 @@
      },
      "liquid": {
       "n": 6,
-      "db_re_vowel": -2.62,
+      "db_re_vowel": -2.61,
       "target": [
        -8.0,
        1.0
@@ -427,7 +427,7 @@
      },
      "glide": {
       "n": 2,
-      "db_re_vowel": -3.84,
+      "db_re_vowel": -3.83,
       "target": [
        -8.0,
        1.0
@@ -438,55 +438,55 @@
     "phones": {
      "AA": {
       "n": 1,
-      "db_re_vowel": 5.08
+      "db_re_vowel": 5.1
      },
      "AE": {
       "n": 4,
-      "db_re_vowel": 3.58
+      "db_re_vowel": 3.6
      },
      "AH": {
       "n": 19,
-      "db_re_vowel": -4.23
+      "db_re_vowel": -4.22
      },
      "AO": {
       "n": 2,
-      "db_re_vowel": 2.47
+      "db_re_vowel": 2.48
      },
      "AY": {
       "n": 1,
-      "db_re_vowel": 2.66
+      "db_re_vowel": 2.67
      },
      "B": {
       "n": 3,
-      "db_re_vowel": -18.55
+      "db_re_vowel": -8.3
      },
      "D": {
       "n": 11,
-      "db_re_vowel": -19.65
+      "db_re_vowel": -17.99
      },
      "DH": {
       "n": 10,
-      "db_re_vowel": -11.55
+      "db_re_vowel": -11.4
      },
      "EH": {
       "n": 7,
-      "db_re_vowel": 4.11
+      "db_re_vowel": 4.12
      },
      "ER": {
       "n": 8,
-      "db_re_vowel": -3.58
+      "db_re_vowel": -3.66
      },
      "EY": {
       "n": 4,
-      "db_re_vowel": 2.03
+      "db_re_vowel": 2.04
      },
      "F": {
       "n": 3,
-      "db_re_vowel": -17.52
+      "db_re_vowel": -8.03
      },
      "G": {
       "n": 2,
-      "db_re_vowel": -17.34
+      "db_re_vowel": -17.47
      },
      "IH": {
       "n": 11,
@@ -494,7 +494,7 @@
      },
      "IY": {
       "n": 2,
-      "db_re_vowel": -0.93
+      "db_re_vowel": -0.92
      },
      "K": {
       "n": 8,
@@ -502,7 +502,7 @@
      },
      "L": {
       "n": 2,
-      "db_re_vowel": -3.16
+      "db_re_vowel": -3.15
      },
      "M": {
       "n": 5,
@@ -510,134 +510,134 @@
      },
      "N": {
       "n": 9,
-      "db_re_vowel": -6.22
+      "db_re_vowel": -6.21
      },
      "NG": {
       "n": 4,
-      "db_re_vowel": -7.28
+      "db_re_vowel": -7.27
      },
      "OW": {
       "n": 2,
-      "db_re_vowel": 6.09
+      "db_re_vowel": 6.1
      },
      "OY": {
       "n": 1,
-      "db_re_vowel": 3.58
+      "db_re_vowel": 3.56
      },
      "P": {
       "n": 6,
-      "db_re_vowel": -25.06
+      "db_re_vowel": -13.81
      },
      "R": {
       "n": 4,
-      "db_re_vowel": -2.36
+      "db_re_vowel": -2.35
      },
      "S": {
       "n": 11,
-      "db_re_vowel": -5.58
+      "db_re_vowel": -5.3
      },
      "SH": {
       "n": 5,
-      "db_re_vowel": 4.44
+      "db_re_vowel": -2.12
      },
      "T": {
       "n": 9,
-      "db_re_vowel": -16.88
+      "db_re_vowel": -15.62
      },
      "TH": {
       "n": 1,
-      "db_re_vowel": -19.17
+      "db_re_vowel": -17.1
      },
      "V": {
       "n": 3,
-      "db_re_vowel": -10.77
+      "db_re_vowel": -8.85
      },
      "W": {
       "n": 2,
-      "db_re_vowel": -3.84
+      "db_re_vowel": -3.83
      },
      "Z": {
       "n": 3,
-      "db_re_vowel": -9.47
+      "db_re_vowel": -9.44
      },
      "ZH": {
       "n": 6,
-      "db_re_vowel": -0.7
+      "db_re_vowel": -4.8
      }
     }
    },
    "vowel_space": {
     "stressed": {
      "n": 32,
-     "hull_bark2": 13.26
+     "hull_bark2": 13.55
     },
     "reduced": {
      "n": 30,
-     "hull_bark2": 2.97
+     "hull_bark2": 4.29
     },
-    "ratio": 0.224,
+    "ratio": 0.317,
     "ratio_min": 0.4,
     "n_sufficient": true,
     "pass": false,
     "per_vowel_hz": {
      "AA": [
-      699,
-      1045,
+      698,
+      1043,
       1
      ],
      "AE": [
       661,
-      1712,
+      1710,
       4
      ],
      "AH": [
-      577,
-      1343,
+      565,
+      1339,
       19
      ],
      "AO": [
-      563,
-      842,
+      559,
+      837,
       2
      ],
      "AY": [
-      559,
-      1604,
+      560,
+      1600,
       1
      ],
      "EH": [
-      516,
-      1833,
+      525,
+      1824,
       7
      ],
      "ER": [
-      478,
-      1388,
+      461,
+      1374,
       8
      ],
      "EY": [
-      441,
+      442,
       1977,
       4
      ],
      "IH": [
-      403,
-      1947,
+      397,
+      1962,
       11
      ],
      "IY": [
-      310,
-      2254,
+      305,
+      1755,
       2
      ],
      "OW": [
-      482,
-      896,
+      475,
+      881,
       2
      ],
      "OY": [
-      467,
-      1396,
+      464,
+      1401,
       1
      ]
     }
@@ -645,8 +645,8 @@
    "boundaries": {
     "n_gaps": 35,
     "median_trough_db": {
-     "<15ms": -8.47,
-     ">=40ms": -240.0
+     "<15ms": -8.18,
+     ">=40ms": -38.54
     },
     "counts": {
      "<15ms": 24,
@@ -656,36 +656,36 @@
     "pass": true
    },
    "bands_db": {
-    "0-300": -5.5,
-    "300-800": -2.66,
-    "800-1500": -15.41,
-    "1500-2500": -10.91,
-    "2500-4000": -14.06,
-    "4000-6000": -17.44,
-    "6000-8000": -22.52,
-    "8000-14000": -26.36
+    "0-300": -5.15,
+    "300-800": -2.3,
+    "800-1500": -16.15,
+    "1500-2500": -15.48,
+    "2500-4000": -17.33,
+    "4000-6000": -22.32,
+    "6000-8000": -17.33,
+    "8000-14000": -21.79
    },
    "artifacts": {
-    "clicks_per_sec": 5.68,
-    "click_events": 111,
-    "max_step": 0.2072,
+    "clicks_per_sec": 6.65,
+    "click_events": 130,
+    "max_step": 0.4358,
     "pct_above_knee_0p7": 0.0,
     "pct_above_limit_0p85": 0.0,
-    "peak": 0.5969,
+    "peak": 0.5574,
     "clicks_per_sec_max": 0.35,
     "pass": false
    },
    "tilt": {
-    "db_per_octave": -5.41,
+    "db_per_octave": -3.52,
     "target": [
      -11.0,
      -4.0
     ],
-    "pass": true
+    "pass": false
    },
    "tilt_by_class": {
     "vowel": {
-     "db_per_octave": -12.79,
+     "db_per_octave": -11.82,
      "n_tokens": 62,
      "target": [
       -11.0,
@@ -694,7 +694,7 @@
      "pass": false
     },
     "obstruent": {
-     "db_per_octave": -2.59,
+     "db_per_octave": 2.77,
      "n_tokens": 81,
      "target": [
       -4.0,
@@ -706,10 +706,10 @@
   },
   "pairs": {
    "dur": 14.26,
-   "peak_db": -5.7,
-   "rms_db": -24.93,
+   "peak_db": -5.77,
+   "rms_db": -24.99,
    "levels": {
-    "reference_vowel_rms": 0.07752010469420866,
+    "reference_vowel_rms": 0.07761488472629982,
     "classes": {
      "vowel": {
       "n": 39,
@@ -717,7 +717,7 @@
      },
      "sibilant": {
       "n": 8,
-      "db_re_vowel": -4.01,
+      "db_re_vowel": -6.12,
       "target": [
        -8.0,
        2.0
@@ -726,7 +726,7 @@
      },
      "weak_fric": {
       "n": 5,
-      "db_re_vowel": -18.47,
+      "db_re_vowel": -14.83,
       "target": [
        -25.0,
        -10.0
@@ -735,16 +735,16 @@
      },
      "stop_voiceless": {
       "n": 18,
-      "db_re_vowel": -17.09,
+      "db_re_vowel": -14.7,
       "target": [
        -15.0,
        -5.0
       ],
-      "pass": false
+      "pass": true
      },
      "stop_voiced": {
       "n": 9,
-      "db_re_vowel": -19.36,
+      "db_re_vowel": -10.28,
       "target": [
        -20.0,
        -6.0
@@ -753,7 +753,7 @@
      },
      "nasal": {
       "n": 20,
-      "db_re_vowel": -4.62,
+      "db_re_vowel": -4.63,
       "target": [
        -12.0,
        -2.0
@@ -762,7 +762,7 @@
      },
      "liquid": {
       "n": 2,
-      "db_re_vowel": -6.09,
+      "db_re_vowel": -6.1,
       "target": [
        -8.0,
        1.0
@@ -771,7 +771,7 @@
      },
      "glide": {
       "n": 2,
-      "db_re_vowel": -0.47,
+      "db_re_vowel": -0.49,
       "target": [
        -8.0,
        1.0
@@ -782,7 +782,7 @@
     "phones": {
      "AE": {
       "n": 4,
-      "db_re_vowel": 2.61
+      "db_re_vowel": 2.62
      },
      "AH": {
       "n": 6,
@@ -790,23 +790,23 @@
      },
      "AO": {
       "n": 1,
-      "db_re_vowel": 5.72
+      "db_re_vowel": 5.7
      },
      "B": {
       "n": 6,
-      "db_re_vowel": -19.02
+      "db_re_vowel": -8.0
      },
      "D": {
       "n": 3,
-      "db_re_vowel": -20.08
+      "db_re_vowel": -18.25
      },
      "DH": {
       "n": 2,
-      "db_re_vowel": -19.36
+      "db_re_vowel": -18.93
      },
      "EH": {
       "n": 1,
-      "db_re_vowel": 0.43
+      "db_re_vowel": 0.45
      },
      "ER": {
       "n": 6,
@@ -814,7 +814,7 @@
      },
      "F": {
       "n": 1,
-      "db_re_vowel": -18.64
+      "db_re_vowel": -8.25
      },
      "IH": {
       "n": 21,
@@ -826,7 +826,7 @@
      },
      "L": {
       "n": 1,
-      "db_re_vowel": -5.71
+      "db_re_vowel": -5.72
      },
      "M": {
       "n": 2,
@@ -834,15 +834,15 @@
      },
      "N": {
       "n": 17,
-      "db_re_vowel": -4.83
+      "db_re_vowel": -4.84
      },
      "NG": {
       "n": 1,
-      "db_re_vowel": -5.0
+      "db_re_vowel": -5.01
      },
      "P": {
       "n": 4,
-      "db_re_vowel": -23.18
+      "db_re_vowel": -12.23
      },
      "R": {
       "n": 1,
@@ -850,76 +850,76 @@
      },
      "S": {
       "n": 5,
-      "db_re_vowel": -6.17
+      "db_re_vowel": -5.75
      },
      "SH": {
       "n": 1,
-      "db_re_vowel": 3.65
+      "db_re_vowel": -2.68
      },
      "T": {
       "n": 12,
-      "db_re_vowel": -16.66
+      "db_re_vowel": -16.2
      },
      "TH": {
       "n": 2,
-      "db_re_vowel": -17.59
+      "db_re_vowel": -16.67
      },
      "W": {
       "n": 2,
-      "db_re_vowel": -0.47
+      "db_re_vowel": -0.49
      },
      "Z": {
       "n": 1,
-      "db_re_vowel": -11.19
+      "db_re_vowel": -11.07
      },
      "ZH": {
       "n": 1,
-      "db_re_vowel": -2.09
+      "db_re_vowel": -8.81
      }
     }
    },
    "vowel_space": {
     "stressed": {
      "n": 29,
-     "hull_bark2": 8.72
+     "hull_bark2": 9.18
     },
     "reduced": {
      "n": 10,
-     "hull_bark2": 1.07
+     "hull_bark2": 1.56
     },
-    "ratio": 0.123,
+    "ratio": 0.17,
     "ratio_min": 0.4,
     "n_sufficient": false,
     "pass": true,
     "per_vowel_hz": {
      "AE": [
       662,
-      1718,
+      1722,
       4
      ],
      "AH": [
-      630,
-      1214,
+      622,
+      1212,
       6
      ],
      "AO": [
-      509,
-      824,
+      491,
+      819,
       1
      ],
      "EH": [
-      543,
-      1833,
+      539,
+      1831,
       1
      ],
      "ER": [
-      454,
-      1386,
+      438,
+      1362,
       6
      ],
      "IH": [
-      404,
-      1963,
+      396,
+      1978,
       21
      ]
     }
@@ -927,8 +927,8 @@
    "boundaries": {
     "n_gaps": 19,
     "median_trough_db": {
-     "<15ms": -5.89,
-     ">=40ms": -240.0
+     "<15ms": -5.82,
+     ">=40ms": -37.01
     },
     "counts": {
      "<15ms": 9,
@@ -938,36 +938,36 @@
     "pass": true
    },
    "bands_db": {
-    "0-300": -4.13,
-    "300-800": -2.93,
-    "800-1500": -15.07,
-    "1500-2500": -13.97,
-    "2500-4000": -18.2,
-    "4000-6000": -19.32,
-    "6000-8000": -23.16,
-    "8000-14000": -27.46
+    "0-300": -4.08,
+    "300-800": -2.88,
+    "800-1500": -15.25,
+    "1500-2500": -15.74,
+    "2500-4000": -20.63,
+    "4000-6000": -24.63,
+    "6000-8000": -18.13,
+    "8000-14000": -22.1
    },
    "artifacts": {
-    "clicks_per_sec": 4.98,
-    "click_events": 71,
-    "max_step": 0.1845,
+    "clicks_per_sec": 5.75,
+    "click_events": 82,
+    "max_step": 0.4237,
     "pct_above_knee_0p7": 0.0,
     "pct_above_limit_0p85": 0.0,
-    "peak": 0.5187,
+    "peak": 0.5143,
     "clicks_per_sec_max": 0.35,
     "pass": false
    },
    "tilt": {
-    "db_per_octave": -5.41,
+    "db_per_octave": -3.88,
     "target": [
      -11.0,
      -4.0
     ],
-    "pass": true
+    "pass": false
    },
    "tilt_by_class": {
     "vowel": {
-     "db_per_octave": -13.33,
+     "db_per_octave": -12.04,
      "n_tokens": 39,
      "target": [
       -11.0,
@@ -976,7 +976,7 @@
      "pass": false
     },
     "obstruent": {
-     "db_per_octave": -1.17,
+     "db_per_octave": 3.07,
      "n_tokens": 40,
      "target": [
       -4.0,
