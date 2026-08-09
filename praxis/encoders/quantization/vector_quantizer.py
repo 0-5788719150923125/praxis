@@ -7,6 +7,7 @@ Ported from abstractinator with adaptations for praxis:
 - Compile-friendly design (no .item() in forward path)
 """
 
+import math
 from typing import Dict, List, Optional, Tuple
 
 import torch
@@ -513,6 +514,25 @@ class MultiStageResidualVQ(nn.Module):
             if getattr(stage, "reset_codes", False):
                 out[f"vq_dead_frac_s{s}"] = float(stage.dead_code_count) / stage.K
                 out[f"vq_resets_s{s}"] = float(stage.reset_count_total)
+            # Utilization read off the EMA cluster sizes rather than the current
+            # batch. The perplexity above is exp(entropy) of a PER-BATCH count
+            # histogram, so it cannot exceed the number of vectors in the batch,
+            # and that ceiling MOVES as the sequence-length curriculum changes
+            # how many patches a batch yields - a falling perplexity can be the
+            # curriculum rather than the codebook. The EMA carries ~1/(1-decay)
+            # batches of history and has no such cap, and dividing by log(K)
+            # makes the result comparable across codebook sizes, which the raw
+            # dead-code fraction is not (it thresholds on an absolute cluster
+            # size, so shrinking K flatters it mechanically).
+            ema = getattr(stage, "ema_cluster_size", None)
+            if ema is not None:
+                c = ema.float()
+                total = c.sum()
+                if float(total) > 0:
+                    p = c / total
+                    p = p[p > 0]
+                    h = float(-(p * p.log()).sum())
+                    out[f"vq_usage_entropy_s{s}"] = h / math.log(max(stage.K, 2))
         return out
 
     # convenience accessors

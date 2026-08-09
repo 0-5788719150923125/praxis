@@ -218,6 +218,32 @@ class AbstractinatorEncoder(ByteLatentEncoder):
             },
         },
         **{
+            f"vq_usage_entropy_s{s}": {
+                "description": (
+                    f"Stage-{s} codebook utilization: entropy of the EMA code-"
+                    "usage distribution divided by log(K), so 1.0 = the whole "
+                    "bank used uniformly and 0 = collapsed onto a single code. "
+                    "Read this in preference to the stage perplexity beside it. "
+                    "Perplexity is exp(entropy) of a PER-BATCH histogram, so it "
+                    "is capped by the number of patches in a batch and that cap "
+                    "moves with the sequence-length curriculum; this is an EMA "
+                    "over many batches and is normalized by K, so it is "
+                    "comparable both across time and across codebook sizes."
+                ),
+                "chart": {
+                    "title": "VQ Codebook Utilization",
+                    "y_label": "entropy / log(K)",
+                    "y_scale": "linear",
+                    "group": "vq",
+                    "group_order": 74,
+                    "order": 1,
+                    "series_group": "vq_usage_entropy",
+                    "series_label": f"stage {s}",
+                },
+            }
+            for s in range(4)
+        },
+        **{
             f"vq_perplexity_s{s}": {
                 "description": (
                     f"Stage-{s} codebook perplexity: effective codes in use "

@@ -30,6 +30,14 @@ const SR := 44100
 # content - as a piecewise-linear corner whose position quantized to 1/64 of a
 # period, so the closure edge landed differently every cycle. That is the
 # "synthetic grain" the reference read described. 512 costs 4 KB.
+# Melody: how many semitones the ORNAMENTS may contribute in total, on top of
+# the structural reading. Ornaments are the motif tilt, the activation ring,
+# microprosody and the ProsodyField wander.
+const MELODY_DECOR := 2.5
+# Spontaneous hesitations and filled "uh"s. A property of spontaneous speech,
+# not of a person, and roughly 900 unrequested "uh"s across a 140k-word book.
+# Belongs to a future spontaneous register, not to the narrator.
+const DISFLUENCY := false
 const PULSE_N := 512
 const FRAME := 64                     # samples per parameter update (~1.45 ms)
 const TWO_PI := TAU
@@ -317,7 +325,7 @@ class Spec:
 	                                  # the seed's identity (motifs, anchors, gates)
 	                                  # still flows from the lineage.
 	var f0_base := 130.0              # speaking pitch floor (Hz)
-	var f0_accent := 4.0              # accent bump strength (semitones)
+	var f0_accent := 2.8              # accent bump strength (semitones)
 	var f0_decl := 3.0                # declination span per sentence (semitones)
 	# INFLECTION DEPTH: a single scalar on ALL melodic deviation from f0_base -
 	# accents, declination, the wander, the attractor pull, terminals, the lot.
@@ -390,7 +398,7 @@ class Spec:
 		# pull - the real "sing-song" - untouched); instead it drives `inflect`,
 		# a global scale on the whole melodic contour. lilt 0 = the natural
 		# speaker (unchanged), toward -1 flattens to a monotone, toward +1 sings.
-		s.f0_accent = 4.0
+		s.f0_accent = 2.8
 		s.f0_decl = 3.0
 		s.inflect = clampf(1.0 + lilt, 0.06, 2.0)
 		s.formant_scale = pow(2.0, 0.22 * tract)
@@ -946,7 +954,11 @@ class ProsodyWalk:
 				pre_pause = 0.04 + 0.09 * emph * (1.0 - norm)
 		var breath_pause := 0.0
 		breath += nsyll
-		if breath >= p.breath_span and not punct:
+		# 1.6x margin: unwritten breaths fired on 7.5% of words with 41% landing
+		# mid-phrase, because this is a syllable counter with no reference to
+		# syntax. Proper placement needs Phrasing to choose the site from the
+		# legal ones; until then, rarer.
+		if breath >= p.breath_span * 1.6 and not punct:
 			breath_pause = 0.12 + 0.28 * (1.0 - norm)
 			breath = 0.0
 			arousal = maxf(arousal - 0.12, 0.2)
@@ -1137,7 +1149,7 @@ static func plan(text: String, spec: Spec, events: Array = []) -> Array:
 			# a spontaneous hesitation lands BEFORE the word: an unfilled gap,
 			# or (by seeded coin) a filled "um" - low, flat, reduced
 			var hes: float = mods.acts.hesit
-			if hes > 0.0 and not w.get("hesit", false):
+			if DISFLUENCY and hes > 0.0 and not w.get("hesit", false):
 				if walk.gate_chance(0.45):
 					var hdur := 0.14 + 0.14 * hes
 					t_cursor += hdur + 0.05
@@ -1169,6 +1181,7 @@ static func plan(text: String, spec: Spec, events: Array = []) -> Array:
 				var amp := 1.0
 				var reduce := 0.0
 				var semis := 0.0
+				var decor := 0.0   # ornament budget, see MELODY_DECOR
 				var is_vowel := _ptype(p) == "vowel"
 				# LEXICAL STRESS (from the dictionary) is what gives the reading
 				# a rhythm instead of a chant. English listeners segment running
@@ -1233,14 +1246,25 @@ static func plan(text: String, spec: Spec, events: Array = []) -> Array:
 								lerpf(dur, SONG_RUN_MIN, spec.song))
 					# declination falls across the sentence; the field wanders on top
 					semis -= spec.f0_decl * (float(vseen) / maxf(1.0, float(vowels_total)))
-					semis += mods.tilt      # the sentence motif's slope
-					semis += mods.ring_st   # the resonance ring from recent firings
+					# DECORATIVE terms accumulate separately and share a budget
+					# (see MELODY_DECOR). Seven melodic terms used to sum with
+					# no ceiling at all, measured at a p50 sentence span of 8.95
+					# semitones and a p95 of 13.89 - which is the "inflection is
+					# all over the place" report. Structural terms (declination,
+					# the prominence-scaled accent, terminal contours, comma
+					# rises) are the reading and stay unbounded; the ornaments
+					# compete for a fixed share.
+					decor += mods.tilt      # the sentence motif's slope
+					decor += mods.ring_st   # the resonance ring from recent firings
 					if pi == accent_at:
 						# the accent's SIZE now tracks how prominent this word
 						# is in its clause: a nucleus lands hard, a de-accented
 						# repeat barely rises. Every content word getting the
 						# same full accent is a list being read, not a sentence.
-						dur *= 1.0 + 0.5 * prom * (1.0 + 0.4 * mods.emph)
+						# capped: this reached 1.7x, and with phrase-final
+						# stretch on top the measured stressed:unstressed
+						# duration ratio was 3.07:1 against a published ~1.9:1
+						dur *= 1.0 + 0.25 * prom * (1.0 + 0.4 * mods.emph)
 						amp *= 1.0 + 0.34 * prom * (1.0 + 0.25 * mods.emph)
 						semis += spec.f0_accent * prom + 2.2 * mods.emph
 					elif not w.stressed:
@@ -1250,13 +1274,13 @@ static func plan(text: String, spec: Spec, events: Array = []) -> Array:
 						amp *= 0.9
 						reduce = maxf(reduce, 0.5)   # vowel reduction: drift toward schwa
 					if pi > 0 and _VOICELESS.has(w.phones[pi - 1]):
-						semis += 0.8    # microprosody after voiceless consonants
+						decor += 0.8    # microprosody after voiceless consonants
 					if not RAW_MODE:
 						# the wander is what makes speech sound unstudied and
 						# what makes a sung note sound out of tune - a held
 						# note has to be STILL for the vibrato to read as
 						# vibrato rather than drift
-						semis += field.sample("f0", t_cursor) * (1.0 - spec.song)
+						decor += field.sample("f0", t_cursor) * (1.0 - spec.song)
 					# pitch attractors: the melody is continuously pulled toward
 					# the voice's anchor shelf (gravity), and a pitch activation
 					# JUMPS most of the way there - musical quantization
@@ -1291,7 +1315,8 @@ static func plan(text: String, spec: Spec, events: Array = []) -> Array:
 					"p": p, "dur": dur, "word": wi, "sentence": si,
 					"text": w.text, "word_start": pi == 0,
 					"word_end": pi == (w.phones as Array).size() - 1,
-					"semitones": semis, "amp": amp, "reduce": reduce,
+					"semitones": semis + clampf(decor, -MELODY_DECOR, MELODY_DECOR),
+					"amp": amp, "reduce": reduce,
 					"echo": clampf(0.55 * acts.echo, 0.0, 0.9),
 					"display": w.get("display", w.text),
 				})
