@@ -17,7 +17,15 @@ SPEC_SNAPSHOT_FILENAME = "spec.json"
 
 
 def _serialise_args(args, excluded_attrs: set) -> dict:
-    """Convert argparse.Namespace to a JSON-safe dict."""
+    """Convert argparse.Namespace to a JSON-safe dict.
+
+    ``args`` may be None: ``praxis.cli.get_cli_args()`` returns None when the
+    CLI was never initialized, which is the normal state under a test runner
+    and for any process that boots the web server without parsing argv. There
+    are simply no args to report then, so report none.
+    """
+    if args is None:
+        return {}
     out = {}
     for key, value in vars(args).items():
         if key in excluded_attrs:

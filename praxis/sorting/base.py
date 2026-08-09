@@ -9,6 +9,12 @@ class NoSort(nn.Module):
     Base class for sorting mechanisms. This implementation does not perform any sorting.
     """
 
+    # Whether this module reorders what it is given. The registry slot also
+    # hosts differentiable positional-bias fields (decay_bias, amplitude_field)
+    # that reuse the hook without permuting anything, so "is registered here"
+    # does not imply "sorts" - ask this instead of matching on the key name.
+    permutes: bool = False
+
     def __init__(self, config):
         super().__init__()
         self.config = config

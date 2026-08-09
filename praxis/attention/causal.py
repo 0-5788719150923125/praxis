@@ -175,14 +175,27 @@ class CausalAttention(nn.Module):
             if hasattr(self, name):
                 swap(self, name, getattr(self, name)[:, q_keep])
 
-        saved = (self.num_query_heads, self.num_heads)
+        # Scalars derived from the head counts have to narrow along with the
+        # tensors they index, and be restored with them. ``qkv_dim`` is the
+        # split point between depth_bias's qkv columns and its output tail;
+        # subclasses re-read it on every forward (arc.py:131, :146), so leaving
+        # it at full width makes the sliced table index its own output columns
+        # as if they were qkv channels.
+        saved_scalars = {
+            name: getattr(self, name)
+            for name in ("num_query_heads", "num_heads", "qkv_dim")
+            if hasattr(self, name)
+        }
         self.num_query_heads, self.num_heads = int(q_keep.numel()), int(kv_keep.numel())
+        if "qkv_dim" in saved_scalars:
+            self.qkv_dim = int(qkv_rows.numel())
         try:
             yield
         finally:
             for store, name, old in reversed(swaps):
                 store[name] = old
-            self.num_query_heads, self.num_heads = saved
+            for name, old in saved_scalars.items():
+                setattr(self, name, old)
 
     def _import_flex_attention(self) -> None:
         """Import FlexAttention components (GPU only - falls back to SDPA on CPU)."""

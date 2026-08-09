@@ -9,6 +9,8 @@ class SinkhornSort(NoSort):
     Sorting mechanism using a differentiable approximation based on optimal transport.
     """
 
+    permutes = True
+
     def __init__(self, config):
         super().__init__(config)
         self.ascending = getattr(config, "sort_ascending", False)

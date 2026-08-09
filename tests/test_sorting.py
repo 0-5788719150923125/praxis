@@ -36,9 +36,15 @@ class TestSorting:
         self, sorting_type, batch_size, seq_length, feature_dim, ascending
     ):
         """Test that sorting modules preserve tensor shapes."""
-        # Create config with appropriate parameters
+        # Create config with appropriate parameters. hidden_size must match the
+        # feature dim: the positional-bias fields in this registry allocate
+        # [hidden_size] parameters and fall back to identity when the width
+        # disagrees, which would quietly stop exercising them.
         config = self.MockConfig(
-            sort_ascending=ascending, sinkhorn_temperature=0.1, sinkhorn_iterations=5
+            hidden_size=feature_dim,
+            sort_ascending=ascending,
+            sinkhorn_temperature=0.1,
+            sinkhorn_iterations=5,
         )
 
         # Instantiate the sorting module
@@ -57,19 +63,11 @@ class TestSorting:
     @pytest.mark.parametrize("ascending", SORT_DIRECTIONS)
     def test_sorting_correctness(self, sorting_type, ascending):
         """Test that sorting modules sort values correctly."""
-        # Skip test for NoSort as it doesn't actually sort
-        if sorting_type == "none":
-            return
-
-        # Create config with very low temperature for precise sorting
-        config = self.MockConfig(
-            sort_ascending=ascending,
-            sinkhorn_temperature=0.001,  # Even lower temperature for more precise sorting
-            sinkhorn_iterations=15,  # More iterations for better convergence
-        )
-
-        # Instantiate the sorting module
-        sorter = SORTING_REGISTRY[sorting_type](config)
+        # Only the entries that actually permute have a sort order to check.
+        # "none" and the positional-bias fields share this registry slot
+        # without reordering anything.
+        if not SORTING_REGISTRY[sorting_type].permutes:
+            pytest.skip(f"{sorting_type} does not permute its input")
 
         # Create specifically designed test tensor where sorting result is predictable
         # Use a tensor with values in random order - make the differences larger
@@ -79,6 +77,17 @@ class TestSorting:
 
         # Add batch and sequence dimensions
         x = values.view(1, 1, -1).expand(2, 3, -1)
+
+        # Create config with very low temperature for precise sorting
+        config = self.MockConfig(
+            hidden_size=x.shape[-1],
+            sort_ascending=ascending,
+            sinkhorn_temperature=0.001,  # Even lower temperature for more precise sorting
+            sinkhorn_iterations=15,  # More iterations for better convergence
+        )
+
+        # Instantiate the sorting module
+        sorter = SORTING_REGISTRY[sorting_type](config)
 
         # Apply sorting
         y = sorter(x)
@@ -131,9 +140,12 @@ class TestSorting:
     @pytest.mark.parametrize("sorting_type", list(SORTING_REGISTRY.keys()))
     def test_gradient_flow(self, sorting_type):
         """Test that gradients flow through sorting modules."""
-        # Create config
+        # Create config (hidden_size matches the 4-wide input built below)
         config = self.MockConfig(
-            sort_ascending=False, sinkhorn_temperature=0.1, sinkhorn_iterations=5
+            hidden_size=4,
+            sort_ascending=False,
+            sinkhorn_temperature=0.1,
+            sinkhorn_iterations=5,
         )
 
         # Instantiate the sorting module
@@ -175,9 +187,12 @@ class TestSorting:
     @pytest.mark.parametrize("sorting_type", list(SORTING_REGISTRY.keys()))
     def test_deterministic_behavior(self, sorting_type):
         """Test that sorting modules produce consistent outputs for the same inputs."""
-        # Create config
+        # Create config (hidden_size matches the 4-wide input built below)
         config = self.MockConfig(
-            sort_ascending=False, sinkhorn_temperature=0.1, sinkhorn_iterations=5
+            hidden_size=4,
+            sort_ascending=False,
+            sinkhorn_temperature=0.1,
+            sinkhorn_iterations=5,
         )
 
         # Instantiate the sorting module

@@ -1629,6 +1629,11 @@ class TransformerBlock(nn.Module):
                 self.head_size = None  # Will use default: hidden_size // num_heads
                 self.encoding = getattr(base_config, "encoding", "rope")
                 self.window_size = window_size
+                # The encoding registry sizes per-depth parameters from this
+                # (RoPE learns a theta per depth). This local block runs once
+                # per forward rather than in the recurrent loop, so it has a
+                # single depth to index.
+                self.depth = 1
 
         # CausalAttention with sliding window
         attn_config = AttentionConfig(config, window_size)

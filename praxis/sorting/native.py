@@ -9,6 +9,8 @@ class NativeSort(NoSort):
     Sorting mechanism that uses torch.sort() to sort the feature dimension of the input.
     """
 
+    permutes = True
+
     def __init__(self, config):
         super().__init__(config)
         self.ascending = getattr(config, "sort_ascending", False)

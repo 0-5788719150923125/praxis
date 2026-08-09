@@ -5,6 +5,8 @@ import torch
 from torch import nn
 
 from praxis import EMBEDDING_REGISTRY, ENCODER_REGISTRY
+from praxis.heads import HEAD_REGISTRY
+from praxis.modeling import resolve_head_type
 from praxis.encoders.byte_latent.encoder import (
     create_patch_block_ids,
     mask_entropy_preds_at_special_tokens,
@@ -36,6 +38,13 @@ def module_setup(request, config):
     profile = getattr(module, "embedding_profile", None)
     if profile:
         module.set_embeddings(EMBEDDING_REGISTRY[profile](config, encoder=module))
+    # Mirror PraxisForCausalLM again: loss-owning encoders (CALM) do not own a
+    # token classifier, they borrow the LM head and apply it internally, so
+    # decode() cannot classify until the head is injected.
+    if hasattr(module, "set_head"):
+        head_type = resolve_head_type(config, has_encoder=True)
+        head_cls = HEAD_REGISTRY.get(head_type, HEAD_REGISTRY["forward"])
+        module.set_head(head_cls(config, encoder=module))
     return module, config
 
 
