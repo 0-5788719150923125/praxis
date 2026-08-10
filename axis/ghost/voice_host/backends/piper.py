@@ -592,7 +592,14 @@ class PiperBackend(Backend):
             got = self._espeak([str(tokens[i]["text"]) for i in need], espeak_voice)
             espoke = dict(zip(need, got))
 
-        out: list = []
+        # LEAD-IN. The model starts its utterance at the very first phoneme, and its onset
+        # ramp lands ON that phoneme rather than before it: measured, a sentence-initial
+        # "The" began 12 ms in and got 81 ms at a third of its neighbour's amplitude - short
+        # and mushy enough to be heard as missing entirely ("the voice starts at cartoon").
+        # A word-space ahead of the first token gives the onset somewhere to happen that is
+        # not a word. It costs a few tens of ms of silence at the head of each utterance,
+        # which the chunk seam was already providing anyway.
+        out: list = [(" ", 0)]
         for i, t in enumerate(tokens):
             if t.get("arpa"):
                 for ch, _ in arpabet.to_symbols([str(x) for x in t["arpa"]]):
