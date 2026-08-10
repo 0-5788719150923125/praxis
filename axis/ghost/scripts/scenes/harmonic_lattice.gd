@@ -167,4 +167,4 @@ func _draw_cell(pos: Vector2, s: float, rot: float, col: Color, sides: int, turn
 		# turn is the original square, so the old look is still in the set.
 		var a := TAU * float(i) / float(sides)
 		out.append(pos + Vector2(cos(a) * r * aspect, sin(a) * r / aspect).rotated(base_rot))
-	draw_colored_polygon(out, col)
+	fill_aa(out, col)

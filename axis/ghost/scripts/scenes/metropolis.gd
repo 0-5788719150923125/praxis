@@ -255,7 +255,9 @@ static func _wall(tb: TriBatch, a: Vector2, b: Vector2, down: Vector2, floors: i
 	var fade := Color(0, 0, 0, 0.18)
 	for f in range(1, floors):
 		var v := float(f) / float(floors)
-		tb.line(a + down * v, b + down * v, fade, 1.0)   # floor band (a thin dark line)
+		# Hard-edged on purpose: these are faint dark bands, several thousand of them on a dense
+		# grid, and they gain nothing from the feather that a wireframe edge does (see TriBatch.line).
+		tb.line(a + down * v, b + down * v, fade, 1.0, false)   # floor band (a thin dark line)
 	# A few windows, lit or dark by a stable per-cell hash (no flicker), on the mid floors.
 	var cols := 2
 	for f in floors:

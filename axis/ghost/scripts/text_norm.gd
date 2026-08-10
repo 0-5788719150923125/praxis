@@ -235,11 +235,25 @@ static func _expand_abbrev(text: String) -> String:
 	var out: Array = []
 	for raw in text.split(" ", false):
 		var tok := String(raw)
-		var lower := tok.to_lower()
+		# A WRAPPER MUST NOT HIDE THE ABBREVIATION. The match was against the whole token, so
+		# `"Mr.` never equalled `mr.`: the period survived as a period and the sentence broke
+		# inside the name. That was invisible while punctuation only shaped intonation, but it
+		# is a real silence now that a full stop carries a measured pause - a rest dropped in
+		# the middle of `"Mr. Smith,"`. Strip the wrappers, match, put them back.
+		var head := ""
+		var body := tok
+		while body.length() > 0 and body[0] in "\"'(":
+			head += body[0]
+			body = body.substr(1)
+		var tail := ""
+		while body.length() > 0 and body[body.length() - 1] in "\"')":
+			tail = body[body.length() - 1] + tail
+			body = body.substr(0, body.length() - 1)
+		var lower := body.to_lower()
 		var matched := false
 		for key in ABBREV:
 			if lower == key + ".":
-				out.append(String(ABBREV[key]))
+				out.append(head + String(ABBREV[key]) + tail)
 				matched = true
 				break
 		if not matched:

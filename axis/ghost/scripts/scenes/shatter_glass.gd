@@ -352,7 +352,7 @@ func _draw() -> void:
 		# and brightens. Drawn back-to-front (above), so the alpha layers compose correctly.
 		var val := clampf(0.30 + 0.45 * res + 0.28 * face, 0.1, 1.0)
 		var alpha := clampf(0.24 + 0.5 * res + 0.16 * face, 0.2, 0.92)
-		draw_colored_polygon(poly, _sch.color(s.hue, 0.55, val / NOMINAL_VAL, alpha))
+		fill_aa(poly, _sch.color(s.hue, 0.55, val / NOMINAL_VAL, alpha))
 		var edge := poly.duplicate()
 		edge.append(poly[0])
 		# The rim is a specular highlight: white whatever the mood, only faintly tinted.

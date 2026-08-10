@@ -47,6 +47,52 @@ HOP_LENGTH = 256
 # split costs nothing and needs no text.
 SENTENCE_END = {".", "!", "?"}
 
+# PAUSE AFTER PUNCTUATION - EXTRA seconds of real silence at `pause_scale` = 1.0, on top of
+# whatever the model already does rather than instead of it.
+#
+# WHY IT EXISTS. A VITS model gets punctuation as a phoneme id and decides for itself how long to
+# dwell. The report was "the model runs through commas and periods, and especially colons, too
+# quickly". The model still SEES the mark, so its intonation is untouched; this only lengthens the
+# rest the mark is asking for.
+#
+# WHY THESE NUMBERS - measured, not guessed. Span of the token owning the mark,
+# en_US-ljspeech-medium, same sentence throughout:
+#   no mark 0.279 s | "," 0.430 (+0.151) | ";" 0.465 (+0.186) | ":" 0.580 (+0.301)
+# Piper is NOT skipping these, and the colon already rests twice as long as a comma. So the
+# reported "colons run through" was never the model: ghost was sending every colon to it AS A
+# COMMA (generative_editor.gd collapsed the mark before it left Godot). Fixing that is most of the
+# cure. This table is the seasoning, and it stays small deliberately - an earlier draft added
+# 0.26 s to a colon, making it a ~0.58 s rest, longer than a full stop, which inverts the
+# punctuation hierarchy. The ordering : > ; > , is preserved so the marks stay distinguishable.
+#
+# The three sentence-final marks are 0.32 because that is EXACTLY the `sentence_gap` default this
+# file has always shipped: the table subsumes that parameter rather than stacking on it, so
+# `pause_scale` = 1.0 with no explicit `sentence_gap` reproduces the old behaviour sample for
+# sample. A caller still sending `sentence_gap` still wins for . ! ? - it is the same knob.
+#
+# Anyone wanting more reaches for the Pause slider, which runs to 10x (see
+# generative_editor.MAX_PAUSE_SCALE); the base stays calibrated to what the model actually does.
+PAUSE_AFTER: dict[str, float] = {
+    ",": 0.10,
+    ";": 0.13,
+    ":": 0.16,
+    # Sentence-final marks ARE the sentence gap - unified, never added to it (see _gap_for).
+    ".": 0.32,
+    "!": 0.32,
+    "?": 0.32,
+}
+
+# Longest silence to leave BETWEEN two sentences, however far pause_scale is pushed - it is
+# the one gap that compounds over a whole chapter. Mirrors generative_editor.SEAM_CEILING.
+SEAM_CEILING = 1.2
+
+# Click avoidance for spliced silence - see _splice_pauses.
+SPLICE_SEARCH_MS = 3.0     # how far the cut may move to find a quieter sample
+SPLICE_FADE_MS = 2.0       # raised-cosine ramp into and out of the silence
+SPLICE_ENV_MS = 4.0        # moving-average window used to find the quiet PLACE
+SPLICE_REACH_MS = 70.0     # how far forward the cut may look for the real gap
+SPLICE_BACK_MS = 0.0       # ...and how far back: none, see _quiet_point
+
 
 def _split_sentences(phones: list) -> list[list]:
     """Break a phone stream at sentence-final punctuation, keeping the mark."""
@@ -59,6 +105,237 @@ def _split_sentences(phones: list) -> list[list]:
     if cur and any(str(x).strip() for x in cur):
         out.append(cur)
     return out or [list(phones)]
+
+
+def _pause_scale(params: dict) -> float:
+    """The user's pause multiplier. 1.0 = the table, 0.0 = none, 2.0 = double."""
+    try:
+        return max(0.0, float(params.get("pause_scale", 1.0)))
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def _pause_for(mark: str, params: dict) -> float:
+    """Seconds to insert after a MID-SENTENCE mark. Unknown marks get nothing."""
+    return PAUSE_AFTER.get(str(mark), 0.0) * _pause_scale(params)
+
+
+def _gap_for(mark: str, params: dict) -> float:
+    """Seconds between two sentences, for a sentence ending in `mark`.
+
+    Unified with PAUSE_AFTER rather than added to it: a full stop's pause is
+    this gap and nothing else, so `pause_scale` cannot double-count it.
+    """
+    raw = params.get("sentence_gap")
+    if raw is None:
+        base = PAUSE_AFTER.get(str(mark), PAUSE_AFTER["."])
+    else:
+        try:
+            base = float(raw)
+        except (TypeError, ValueError):
+            base = PAUSE_AFTER["."]
+    # Capped to match the editor's own seam ceiling (generative_editor.SEAM_CEILING): the
+    # gap between sentences compounds over a whole chapter, so it is the one place the
+    # slider is deliberately not linear. Mid-sentence marks are uncapped.
+    return min(max(0.0, base * _pause_scale(params)), SEAM_CEILING)
+
+
+def _quiet_point(audio, want: int, search: int, lo: int, hi: int,
+                 env: int, reach: int, back: int) -> int:
+    """The best sample to cut at: the quietest PLACE near `want`, not merely the
+    quietest sample.
+
+    The first version searched a couple of milliseconds for the minimum of |x|,
+    which on voiced material is a zero crossing - that stops the cut clicking,
+    but every period of a vowel has a zero crossing, so it would happily cut
+    straight through the middle of one. "We, we, unbearably we." exposed it: the
+    model's token boundary for a short word ending in a vowel sits at 27% of that
+    word's own peak, so the silence went in mid-vowel and the vowel resumed after
+    it. Heard as the word being truncated and strange, which is exactly what it
+    was - a hole punched in a vowel.
+
+    So the search is two-stage. First find the quietest ENVELOPE (a short moving
+    average of |x|) over a much wider window - that lands in the real gap between
+    the words rather than on an arbitrary zero of the carrier. Then refine to the
+    nearest zero crossing inside it, which is what keeps the edges click-free.
+
+    `hi` bounds the forward reach at the next token's start, so a pause can never
+    migrate into the following word.
+    """
+    import numpy as np
+    n = int(audio.size)
+    want = min(max(int(want), 0), n)
+    lo = max(0, min(int(lo), n))
+    top = min(n, max(int(hi), 0)) if hi else n
+    # NEVER EARLIER THAN THE NOMINAL POINT. A cut before the mark's own token ends would put
+    # the silence inside that token's own word, and would shift the token by its own pause.
+    # The gap we are looking for is always at or after the boundary, so `back` is only ever a
+    # refinement allowance, never a licence to precede it.
+    # THE CUT LIVES IN [token end, next token start], and nowhere else.
+    #   - never EARLIER than the nominal end, or the silence lands inside the mark's own word
+    #     and that word shifts by its own pause;
+    #   - never LATER than the next token's start, or the silence lands inside the FOLLOWING
+    #     word, and the shift rule (a span's start is inclusive, its end is not) stops lining up.
+    # With no bound from the caller there is no safe room to move at all, so the cut stays put -
+    # every production call site passes the bound.
+    if not hi:
+        return max(want, lo)
+    low = max(lo, want - max(0, back))
+    high = min(top, want + max(1, reach))
+    if low >= high:
+        return max(want, lo)
+    # Stage 1: envelope trough. Cumulative sum gives the moving average in one pass.
+    w = max(1, int(env))
+    mag = np.abs(audio[low:high]).astype(np.float64)
+    if mag.size > w:
+        c = np.concatenate(([0.0], np.cumsum(mag)))
+        smooth = (c[w:] - c[:-w]) / float(w)
+        centre = low + w // 2 + int(np.argmin(smooth))
+    else:
+        centre = low + int(np.argmin(mag))
+    # Stage 2: nearest zero crossing to that trough, so neither new edge steps.
+    zl = max(lo, want, centre - search)
+    zh = min(top, centre + search + 1)
+    if zl >= zh:
+        return max(centre, lo)
+    win = np.abs(audio[zl:zh])
+    best = float(win.min())
+    cand = np.nonzero(win <= best + 1e-6)[0] + zl
+    return int(cand[np.argmin(np.abs(cand - centre))])
+
+
+def _ramp(seg, n: int, fade_in: bool, fade_out: bool) -> None:
+    """Raised-cosine fade at the edges of `seg`, in place."""
+    import numpy as np
+    k = min(int(n), int(seg.size))
+    if k <= 0:
+        return
+    w = (0.5 - 0.5 * np.cos(np.pi * (np.arange(k) + 0.5) / k)).astype(seg.dtype)
+    if fade_in:
+        seg[:k] *= w
+    if fade_out:
+        seg[seg.size - k:] *= w[::-1]
+
+
+def _splice_pauses(audio, points, sr: int):
+    """Insert real silence INTO an utterance without re-synthesizing it.
+
+    `points` is [(time_seconds, pause_seconds)], ascending; each time is the
+    NOMINAL end of the token or phone carrying the mark. Returns
+    `(audio, inserted)` where `inserted` is [(nominal_time, actual_seconds)] and
+    the actual seconds are sample-exact, so a timing shifted by them can never
+    drift away from the waveform. With nothing to insert the input array is
+    returned untouched - byte-identical, not merely equal.
+
+    NOT a sentence split. Splitting at every comma would make each clause its own
+    utterance and hand it sentence-final intonation, which is a worse defect than
+    the one being fixed. The sentence is synthesized whole, prosody intact, and
+    the silence is spliced in afterwards.
+
+    CLICKS. Cutting a waveform at an arbitrary sample and butting digital zero
+    against it is a step discontinuity, which is a click - this project has been
+    bitten by exactly that before. Two cheap defences, both applied:
+      1. the cut moves up to SPLICE_SEARCH_MS to the quietest sample in reach,
+         i.e. the nearest zero crossing on voiced material, so the two new edges
+         are already near zero;
+      2. a SPLICE_FADE_MS raised-cosine ramp out of the speech and back into it,
+         which removes the residual slope discontinuity the zero crossing leaves.
+    The ramp is only ever applied to samples the search has already established
+    are near-silent, so it costs no audible speech; alone it would be enough, but
+    2 ms of ramp on a loud sample is itself faintly audible, hence both.
+    """
+    import numpy as np
+    # A point may carry a third field: the time of the next token, which bounds how far
+    # the cut may slide forward. Two-field points (the older form, and the tests) mean
+    # 'no bound'.
+    pts = [(float(p[0]), float(p[1]), (float(p[2]) if len(p) > 2 else 0.0))
+           for p in points if float(p[1]) > 0.0]
+    if not pts:
+        return audio, []
+    pts.sort(key=lambda p: p[0])
+    search = max(1, int(round(SPLICE_SEARCH_MS * sr / 1000.0)))
+    env = max(1, int(round(SPLICE_ENV_MS * sr / 1000.0)))
+    reach = max(1, int(round(SPLICE_REACH_MS * sr / 1000.0)))
+    back = max(0, int(round(SPLICE_BACK_MS * sr / 1000.0)))
+    fade = max(1, int(round(SPLICE_FADE_MS * sr / 1000.0)))
+
+    pieces: list = []
+    inserted: list = []
+    prev = 0
+    need_in = False
+    for t, secs, limit in pts:
+        pad = int(round(secs * sr))
+        if pad <= 0:
+            continue
+        hi = int(round(limit * sr)) if limit > 0.0 else 0
+        cut = max(prev, _quiet_point(audio, int(round(t * sr)), search, prev,
+                                     hi, env, reach, back))
+        seg = np.array(audio[prev:cut], dtype=audio.dtype, copy=True)
+        _ramp(seg, fade, need_in, True)
+        pieces.append(seg)
+        pieces.append(np.zeros(pad, dtype=audio.dtype))
+        # The shift is keyed to where the silence ACTUALLY went, not to the nominal
+        # mark: the cut may now slide tens of milliseconds to reach the gap between
+        # the words, and a timing shifted from the nominal point would drift off the
+        # waveform by that much. `hi` keeps the cut at or before the next token's
+        # start, so the mark's own token still ends before it and only what follows
+        # moves.
+        # max(): the cut is at or after the mark in SAMPLES, but a sample index divided by
+        # the rate can land a hair BELOW the nominal seconds (round(0.25*22050)/22050 =
+        # 0.24997), and that hair flips the end-exclusive comparison in _shift - the mark's
+        # own token would then be shifted by its own pause. Never report earlier than the
+        # mark; report the real position whenever the cut genuinely moved.
+        # Clamped into [mark, next token start] for the same rounding reason at BOTH ends:
+        # a sample index converted back to seconds can land a hair either side of the
+        # boundary it was derived from, and either hair flips a comparison in _shift -
+        # below the mark shifts the mark's own token, above the next token's start stops
+        # that token shifting at all.
+        at = max(t, cut / float(sr))
+        if limit > 0.0:
+            at = min(at, limit)
+        inserted.append((at, pad / float(sr)))
+        prev, need_in = cut, True
+    if not inserted:
+        return audio, []
+    tail = np.array(audio[prev:], dtype=audio.dtype, copy=True)
+    _ramp(tail, fade, need_in, False)
+    pieces.append(tail)
+    return np.concatenate(pieces), inserted
+
+
+_warned_unaligned = False
+
+
+def _warn_unaligned(marks) -> None:
+    """Say so, once, when a mid-sentence pause was asked for and cannot be placed.
+
+    Splicing needs the duration predictor's spans to know WHERE the mark ends.
+    An unpatched voice has none - the same condition that costs the subtitles -
+    and the pause would otherwise just quietly not happen, which is exactly the
+    complaint this feature exists to answer.
+    """
+    global _warned_unaligned
+    if _warned_unaligned or not marks:
+        return
+    _warned_unaligned = True
+    print("ghost/voice: no alignment output from this voice, so pauses after "
+          + " ".join(sorted(set(marks)))
+          + " cannot be placed (sentence pauses are unaffected)", file=sys.stderr)
+
+
+def _shift(t: float, inserted, inclusive: bool) -> float:
+    """`t` moved later by every pause inserted before it.
+
+    A span's START is inclusive (a pause landing exactly on it happened first,
+    so the span begins after it) and its END is not (a pause landing exactly on
+    the end belongs after the span, which is what puts the mark's own token in
+    front of its own silence instead of underneath it).
+    """
+    add = 0.0
+    for at, dur in inserted:
+        if at < t or (inclusive and at <= t):
+            add += dur
+    return t + add
 
 # Phoneme id stream shape, from piper1-gpl docs/ALIGNMENTS.md:
 #   [BOS, PAD, id, PAD, id, PAD, ..., EOS]
@@ -353,7 +630,6 @@ class PiperBackend(Backend):
             return self._synth_tokens(list(tokens), voice, out_path, params, cfg, sess)
         sentences = _split_sentences(list(phonemes))
         if len(sentences) > 1:
-            gap = float(params.get("sentence_gap", 0.32))
             chunks, phones_all, cursor = [], [], 0.0
             for si, sent in enumerate(sentences):
                 sub = self.synthesize(text, voice, out_path + f".s{si}",
@@ -370,9 +646,12 @@ class PiperBackend(Backend):
                 cursor += len(a) / sub["sample_rate"]
                 if si < len(sentences) - 1:
                     import numpy as _np
-                    sil = _np.zeros(int(gap * sub["sample_rate"]), dtype=_np.float32)
-                    chunks.append(sil)
-                    cursor += gap
+                    # the mark this sentence ended on decides its own pause
+                    gap = _gap_for(str(sent[-1]).strip() if sent else "", params)
+                    pad = int(round(gap * sub["sample_rate"]))
+                    if pad > 0:
+                        chunks.append(_np.zeros(pad, dtype=_np.float32))
+                        cursor += pad / sub["sample_rate"]
             import numpy as _np
             joined = _np.concatenate(chunks) if chunks else _np.zeros(1, dtype=_np.float32)
             sr = int(cfg["audio"]["sample_rate"])
@@ -448,6 +727,28 @@ class PiperBackend(Backend):
         if len(outputs) > 1:
             phone_times = self._durations(outputs[1], owner, phonemes, sample_rate)
 
+        # Mid-sentence marks arrive on this path as phones of their own (see
+        # arpabet.PUNCT_PASSTHROUGH), so each one already has a span to splice
+        # after. Needs the durations: without them there is no place to cut, and
+        # that is the same condition under which there are no subtitles either.
+        points, unplaceable = [], []
+        for i, sym in enumerate(phonemes):
+            mark = str(sym).strip()
+            if mark in SENTENCE_END or _pause_for(mark, params) <= 0.0:
+                continue          # . ! ? are the gap between sentences, above
+            if i < len(phone_times):
+                nxt = phone_times[i + 1]["t0"] if i + 1 < len(phone_times) else 0.0
+                points.append((float(phone_times[i]["t1"]), _pause_for(mark, params),
+                               float(nxt)))
+            else:
+                unplaceable.append(mark)
+        _warn_unaligned(unplaceable)
+        if points:
+            audio, inserted = _splice_pauses(audio, points, sample_rate)
+            for ph in phone_times:
+                ph["t0"] = round(_shift(ph["t0"], inserted, True), 4)
+                ph["t1"] = round(_shift(ph["t1"], inserted, False), 4)
+
         self._write_wav(out_path, audio, sample_rate)
         return {
             "wav": out_path,
@@ -464,6 +765,13 @@ class PiperBackend(Backend):
         Tokens carry their own text, so the sentence split happens HERE on the
         punctuation ghost already parsed, and the phonemizer sees whole words
         with their boundaries intact.
+
+        TWO KINDS OF PAUSE, one table. A sentence-final mark ends a group and its
+        pause is the silence BETWEEN groups, exactly as before. Every other mark
+        (, ; :) stays inside its group - the sentence is synthesized whole and
+        the silence is spliced into the audio afterwards, so a comma never gets
+        the falling intonation of a sentence end. Both are `PAUSE_AFTER` seconds
+        times `pause_scale`.
         """
         import numpy as np
         phonemizer = str(params.get("phonemizer", "espeak"))
@@ -478,25 +786,43 @@ class PiperBackend(Backend):
             groups.append(cur)
 
         sr = int(cfg["audio"]["sample_rate"])
-        gap = float(params.get("sentence_gap", 0.32))
         chunks: list = []
         times: list = []
         cursor = 0.0
         base = 0
         for gi, group in enumerate(groups):
             audio, per_token = self._run(group, voice, params, cfg, sess, phonemizer)
+            # mid-sentence marks: splice their silence into this group's audio
+            points, unplaceable = [], []
+            for ti, tok in enumerate(group):
+                mark = str(tok.get("punct", ""))
+                if mark in SENTENCE_END or _pause_for(mark, params) <= 0.0:
+                    continue          # . ! ? are the gap between groups, below
+                if ti in per_token:
+                    # The third field bounds how far the cut may slide forward: the next
+                    # token's start, so a pause can never end up inside the word after it.
+                    nxt = per_token.get(ti + 1)
+                    points.append((float(per_token[ti][1]), _pause_for(mark, params),
+                                   float(nxt[0]) if nxt is not None else 0.0))
+                else:
+                    unplaceable.append(mark)
+            _warn_unaligned(unplaceable)
+            audio, inserted = _splice_pauses(audio, points, sr)
             for ti, span in per_token.items():
                 # float(): numpy scalars are not JSON-serializable and the
                 # protocol is JSON
                 times.append({"index": base + ti,
-                              "t0": round(float(span[0]) + cursor, 4),
-                              "t1": round(float(span[1]) + cursor, 4)})
+                              "t0": round(_shift(float(span[0]), inserted, True) + cursor, 4),
+                              "t1": round(_shift(float(span[1]), inserted, False) + cursor, 4)})
             chunks.append(audio)
             cursor += len(audio) / sr
             base += len(group)
             if gi < len(groups) - 1:
-                chunks.append(np.zeros(int(gap * sr), dtype=np.float32))
-                cursor += gap
+                gap = _gap_for(str(group[-1].get("punct", "")) if group else "", params)
+                pad = int(round(gap * sr))
+                if pad > 0:
+                    chunks.append(np.zeros(pad, dtype=np.float32))
+                    cursor += pad / sr
         joined = np.concatenate(chunks) if chunks else np.zeros(1, dtype=np.float32)
         self._write_wav(out_path, joined, sr)
         return {"wav": out_path, "sample_rate": sr,

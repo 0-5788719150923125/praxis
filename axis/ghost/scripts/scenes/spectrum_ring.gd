@@ -149,7 +149,7 @@ func _bar(a: Vector2, b: Vector2, dir: Vector2, col: Color, form: String, thickn
 	if form == "wedge":
 		var perp := Vector2(-dir.y, dir.x)
 		var w := thickness * 0.9
-		draw_colored_polygon(PackedVector2Array([a - perp * w, a + perp * w,
+		fill_aa(PackedVector2Array([a - perp * w, a + perp * w,
 			b + perp * w * 0.18, b - perp * w * 0.18]), col)
 	elif form == "tick":
 		# Dash count is capped rather than derived from the bar length alone: a long

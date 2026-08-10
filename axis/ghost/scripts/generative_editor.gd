@@ -52,8 +52,28 @@ const LOOKAHEAD_SECONDS := 9.0
 # The silence between sentences. The host inserts this BETWEEN sentences inside
 # one chunk; with one sentence per chunk it has no pair to sit between, so the
 # boundary is made here instead. Without it the reading runs sentences together
-# - the "rushed" problem, reintroduced by the chunk size.
+# - the "rushed" problem, reintroduced by the chunk size. This is the figure at
+# Pause 1.0; the slider scales it, and the host is sent the same pair so the two
+# sides of a seam agree (see _seam_gap).
+# Ceiling for the Pause slider. 2 was the first guess and it was far too timid: measured
+# end to end through the real host, scale 2 stretched a 4.3 s sentence by only 0.81 s -
+# spread over three marks, which reads as no change at all. Scale 10 stretches the same
+# sentence by 3.46 s and gives a colon a 1.7 s rest, which is unmistakable. The base table
+# stays conservative (it is calibrated to what the model already does) and this opens the
+# range instead, so the choice is the reader's rather than baked in.
+const MAX_PAUSE_SCALE := 10.0
+# Longest silence to leave between two sentences, however far the slider is pushed.
+const SEAM_CEILING := 1.2
 const SENTENCE_GAP := 0.32
+# The punctuation marks the host is allowed to receive.
+#
+# A mark is phonemized as part of its word, so whatever is sent here has to have
+# an entry in the selected voice's phoneme_id_map - piper.py raises loudly on a
+# symbol that does not, and rightly so. This list is the contract: anything else
+# a text might end a word with (a bare newline, an em dash, a stray glyph the
+# normalizer let through) falls back to the coarse pause_after mapping instead of
+# being forwarded verbatim.
+const PUNCT_ALLOWED := [".", ",", "!", "?", ":", ";"]
 # One sentence per chunk. Two made every tone or pace change wait for the larger
 # buffer to drain; one halves that latency, and costs nothing now that the
 # inter-sentence gap is inserted at chunk boundaries too (see _drain_ready).
@@ -87,6 +107,7 @@ var _go: Button
 var _status: Label
 var _rate: HSlider
 var _rate_row: HBoxContainer
+var _pause: HSlider
 var _voice_meta: Array = []
 var _want_voice := ""          # remembered selection, applied once voices load
 
@@ -121,6 +142,8 @@ var _speaker_row: HBoxContainer
 var _stream_open := false      # explicit: a null playback must not retry forever
 var _epoch := 0                # bumped on a pace change; stale replies are dropped
 var _repace_timer: Timer
+var _scene_hold: HSlider
+var _flourish: HSlider
 var _dirty := false
 var _last_edit_ms := 0
 
@@ -335,6 +358,35 @@ func _build_panel() -> void:
 	_rate.value_changed.connect(func(_v: float) -> void: _repace_timer.start())
 	_rate_row.add_child(_rate)
 
+	# PAUSE. How long the reading rests on punctuation, as a multiple of the
+	# host's default rests (roughly: a tenth of a second on a comma, a quarter on
+	# a colon, a third at a sentence end). VITS runs straight through a comma and
+	# especially through a colon, so the silence is spliced in around the mark by
+	# the host rather than asked of the model.
+	#
+	# Always visible, unlike Pace: this needs no duration_control, because the
+	# host is inserting silence rather than asking the model for a different
+	# length. And it is NOT a live buffer effect like Echo/Ambience - it changes
+	# what gets synthesized, so it takes the debounced re-plan path below, the
+	# same one a pace change takes.
+	var prow := HBoxContainer.new()
+	prow.add_theme_constant_override("separation", 8)
+	box.add_child(prow)
+	var pl := Label.new()
+	pl.text = "Pause"
+	pl.custom_minimum_size = Vector2(72, 0)
+	pl.add_theme_font_size_override("font_size", 12)
+	prow.add_child(pl)
+	_pause = HSlider.new()
+	_pause.min_value = 0.0
+	_pause.max_value = 10.0
+	_pause.step = 0.05
+	_pause.value = 1.0
+	_pause.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_pause.tooltip_text = "How long to rest on punctuation - commas, semicolons, colons and sentence ends. 1 is the natural rest the model already takes; 0 runs straight through. Measured on one sentence: 1 adds about a third of a second across it, 2 about four fifths, 10 about three and a half - at 10 a colon rests for well over a second. Takes effect from the next chunk; already-generated audio keeps its pauses."
+	_pause.value_changed.connect(func(_v: float) -> void: _repace_timer.start())
+	prow.add_child(_pause)
+
 	# Debounced rather than immediate: a slider drag emits a value per pixel,
 	# and each change throws away work in flight. One re-plan per gesture.
 	_repace_timer = Timer.new()
@@ -351,6 +403,31 @@ func _build_panel() -> void:
 	_fx_res = _fx_slider(box, "Resonance", 0.0)
 	_fx_presence = _fx_slider(box, "Presence", 1.0)
 	_fx_pad = _fx_slider(box, "Ambience", 0.0)
+
+	# --- THE PICTURE, not the voice ------------------------------------------
+	# These two live here, with every other option, rather than off in the shared
+	# chrome: one place to reach for a setting beats an architecturally tidier
+	# second home nobody finds. They drive the [Director], so they persist and
+	# apply in every mode - this panel is just where you turn them.
+	#
+	# NOT called "pace" or "pacing". Those words are already taken by the voice
+	# slider three rows up, and the same word on two sliders that do unrelated
+	# things is how someone ends up afraid to touch either.
+	var sep := HSeparator.new()
+	box.add_child(sep)
+	_scene_hold = _director_slider(box, "Scene hold", Director.PACING_MIN, Director.PACING_MAX, 0.05,
+		Director.pacing,
+		"How long each visual scene stays on screen before the show cuts to the next. 1 is the "
+		+ "default; 2 roughly doubles it. The music still decides where in the range each scene "
+		+ "lands, so the variety is kept - the whole range just moves. Nothing to do with the "
+		+ "speaking voice.",
+		func(v: float) -> void: Director.set_pacing(v))
+	_flourish = _director_slider(box, "Flourishes", Director.FLOURISH_MIN, Director.FLOURISH_MAX, 0.05,
+		Director.flourish,
+		"How often the show breaks its rhythm - a burst of two or three quick cuts, or a run of "
+		+ "beat-synced punches on the current scene. 0 turns them off entirely, 1 is the default. "
+		+ "Set this to 0 first if the cutting feels busy: it separates 'too often' from 'too fast'.",
+		func(v: float) -> void: Director.set_flourish(v))
 
 	_status = Label.new()
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -376,6 +453,7 @@ func _persist() -> void:
 	cfg.set_value("generative", "text", _text.text)
 	cfg.set_value("generative", "voice", _selected_voice_id())
 	cfg.set_value("generative", "pace", _rate.value)
+	cfg.set_value("generative", "pause", _pause.value)
 	cfg.set_value("generative", "echo", _fx_echo.value)
 	cfg.set_value("generative", "resonance", _fx_res.value)
 	cfg.set_value("generative", "presence", _fx_presence.value)
@@ -391,6 +469,7 @@ func _load_persisted() -> void:
 		return
 	_text.text = str(cfg.get_value("generative", "text", ""))
 	_rate.value = float(cfg.get_value("generative", "pace", 1.0))
+	_pause.value = float(cfg.get_value("generative", "pause", 1.0))
 	_want_voice = str(cfg.get_value("generative", "voice", ""))
 	_fx_echo.value = float(cfg.get_value("generative", "echo", 0.0))
 	_fx_res.value = float(cfg.get_value("generative", "resonance", 0.0))
@@ -423,6 +502,31 @@ func _notification(what: int) -> void:
 
 ## One labelled 0..1 slider, live: these are buffer effects, so a change is
 ## audible on the very next frame rather than needing a re-synthesis.
+## One labelled slider that drives the [Director] directly. Unlike the voice controls these need
+## no re-plan and no persistence here - the Director clamps, applies immediately to the scene on
+## screen, and owns its own saved value.
+func _director_slider(box: VBoxContainer, name: String, lo: float, hi: float, step: float,
+		initial: float, tip: String, apply: Callable) -> HSlider:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	box.add_child(row)
+	var l := Label.new()
+	l.text = name
+	l.custom_minimum_size = Vector2(72, 0)
+	l.add_theme_font_size_override("font_size", 12)
+	row.add_child(l)
+	var sl := HSlider.new()
+	sl.min_value = lo
+	sl.max_value = hi
+	sl.step = step
+	sl.value = clampf(initial, lo, hi)
+	sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sl.tooltip_text = tip
+	sl.value_changed.connect(apply)
+	row.add_child(sl)
+	return sl
+
+
 func _fx_slider(box: VBoxContainer, name: String, initial: float) -> HSlider:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
@@ -632,10 +736,23 @@ func _build_chunks(body: String) -> Array:
 				# needs it re-attached to the phone itself
 				var d: int = lex[i]
 				arpa.append(String(ph[i]) + (str(d) if d >= 0 else ""))
-			var punct := ""
-			match String(w.pause_after):
-				"stop": punct = "."
-				"comma": punct = ","
+			# SEND THE REAL MARK. phonemes.gd already walks the terminal
+			# punctuation off each word and records it verbatim (including the
+			# case where a quote was hiding it - `early,"`); this used to
+			# collapse it back to "." or "," via the coarse pause_after class,
+			# which is where the reading lost its colons - heard as a comma -
+			# and its question marks, heard as a full stop, so the interrogative
+			# contour was never even asked for.
+			#
+			# pause_after stays as the fallback for a word whose mark has no
+			# printable form (a line break), and the allow-list keeps anything
+			# unexpected away from the voice's phoneme_id_map.
+			var punct := String(w.get("punct", ""))
+			if not PUNCT_ALLOWED.has(punct):
+				punct = ""
+				match String(w.pause_after):
+					"stop": punct = "."
+					"comma": punct = ","
 			var tok := {"text": String(w.text), "punct": punct, "fallback": arpa}
 			if bool(w.get("literal", false)):
 				tok["arpa"] = arpa
@@ -665,6 +782,27 @@ func _pitch_ratio() -> float:
 	return pow(2.0, float(_tone_preset()["semis"]) / 12.0)
 
 
+## The Pause setting, as the multiplier the host expects. Null-guarded because
+## export_take and _pump are both reachable from outside this editor's own
+## lifecycle, and a missing slider should read as "the default rests", never as
+## zero - silently deleting every pause would be the worst possible failure.
+func _pause_scale() -> float:
+	if _pause == null:
+		return 1.0
+	return clampf(_pause.value, 0.0, MAX_PAUSE_SCALE)
+
+
+## The silence at a chunk seam. The host inserts the same figure between
+## sentences INSIDE a chunk, so a seam and an interior boundary stay the same
+## length however the reading happens to have been cut up.
+func _seam_gap() -> float:
+	# Mid-sentence marks scale all the way - that is the complaint this slider answers.
+	# The gap BETWEEN sentences is capped, because it is the one that compounds: at 10x an
+	# uncapped seam is 3.2 s of dead air after every single sentence, which over a chapter is
+	# not a longer rest, it is a broken reading. 1.2 s is already a long, deliberate beat.
+	return minf(SENTENCE_GAP * _pause_scale(), SEAM_CEILING)
+
+
 ## Keep LOOKAHEAD chunks in flight and start playback as soon as the chunk we
 ## are waiting for exists.
 ## How much finished audio is waiting to be heard: decoded but not yet pushed,
@@ -691,6 +829,7 @@ func _pump() -> void:
 			{"length_scale": r / maxf(_rate.value * float(t["pace"]), 0.1),
 			 "noise_scale": float(t["noise"]), "noise_w": float(t["noise_w"]),
 			 "speaker": int(_speaker.value),
+			 "sentence_gap": SENTENCE_GAP, "pause_scale": _pause_scale(),
 			 "tokens": _chunks[idx]["tokens"]}, null)
 		_req_chunk[id] = {"idx": idx, "epoch": _epoch}
 
@@ -718,11 +857,15 @@ func _drain_ready() -> void:
 		if absf(ratio - 1.0) > 0.001:
 			pcm = _resample(pcm, ratio)
 		if _next_to_play > 1:
-			# a breath between sentences, at the seam the host cannot see
+			# a breath between sentences, at the seam the host cannot see.
+			# Scaled by Pause like every other rest, or the control would do
+			# nothing at all at CHUNK_SENTENCES = 1 - every sentence boundary in
+			# the reading IS a seam, and they would all stay 0.32 s.
+			var seam := _seam_gap()
 			var gap := PackedFloat32Array()
-			gap.resize(int(SENTENCE_GAP * float(_sr)))
+			gap.resize(int(seam * float(_sr)))
 			_pending.append_array(gap)
-			_elapsed += SENTENCE_GAP
+			_elapsed += seam
 		if not _stream_open:
 			# same text, same music: the pad's note choices are seeded
 			_fx.pad_seed = hash(_text.text)
@@ -775,7 +918,8 @@ func _repace() -> void:
 	_req_chunk.clear()
 	_in_flight = 0
 	_next_to_request = _next_to_play
-	_set_status("Pace %.2fx - regenerating from chunk %d…" % [_rate.value, _next_to_play + 1])
+	_set_status("Pace %.2fx, pause %.2fx - regenerating from chunk %d…"
+		% [_rate.value, _pause_scale(), _next_to_play + 1])
 	_pump()
 
 
@@ -852,7 +996,9 @@ func export_take() -> String:
 		var id := _host.request("", vid, TAKE_DIR + "/export_%d_%d.wav" % [stamp, i],
 			{"length_scale": ratio / maxf(_rate.value * float(t["pace"]), 0.1),
 			 "noise_scale": float(t["noise"]), "noise_w": float(t["noise_w"]),
-			 "speaker": int(_speaker.value), "tokens": chunks[i]["tokens"]}, null)
+			 "speaker": int(_speaker.value),
+			 "sentence_gap": SENTENCE_GAP, "pause_scale": _pause_scale(),
+			 "tokens": chunks[i]["tokens"]}, null)
 		var res: Array = []
 		while true:
 			res = await _host.synthesized
@@ -867,10 +1013,11 @@ func export_take() -> String:
 		if absf(ratio - 1.0) > 0.001:
 			part = _resample(part, ratio)
 		if i > 0:
+			var seam := _seam_gap()
 			var gap := PackedFloat32Array()
-			gap.resize(int(SENTENCE_GAP * float(_sr)))
+			gap.resize(int(seam * float(_sr)))
 			pcm.append_array(gap)
-			elapsed += SENTENCE_GAP
+			elapsed += seam
 		var by_index := {}
 		for sp in out.get("tokens", []):
 			by_index[int((sp as Dictionary).get("index", -1))] = sp

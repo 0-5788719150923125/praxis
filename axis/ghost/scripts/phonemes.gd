@@ -253,6 +253,32 @@ static func parse(text: String) -> Array:
 				sentences.append(words)
 				words = []
 			continue
+		# A DASH standing alone is a rest, not a word. ghost's own prose style writes an
+		# aside as " - " rather than with an em dash, so this is the common case in the
+		# book text this engine exists to read - and the mark has no phoneme of its own,
+		# so it is voiced as the rest a reader would take there.
+		if bare.length() > 0 and _is_dash(bare):
+			pause = "comma"
+			punct = ","          # a hyphen means nothing to the model; a comma is the rest
+			bare = ""
+		# A MARK WITH NO WORD OF ITS OWN used to vanish outright: nothing was appended, so
+		# its pause and its mark went with it. A spaced dash produced no rest at all, and
+		# neither did a comma left adrift by a stray space ("one , two"). Hand it to the
+		# word BEFORE, which is where the reader actually breathes.
+		if bare.is_empty() and pause != "none" and words.size() > 0:
+			var prev: Dictionary = words[words.size() - 1]
+			# Never downgrade: a stop already claimed is stronger than this comma.
+			if String(prev.get("pause_after", "none")) != "stop":
+				prev["pause_after"] = pause
+				if String(prev.get("punct", "")).is_empty():
+					prev["punct"] = punct
+			# AND KEEP IT VISIBLE. `display` is what the reader sees in the subtitles, and a
+			# mark that lost its own word would vanish from the page as well as the mouth -
+			# "a black breath - the glass going dark" was being SHOWN without its dash.
+			# Normalization is for the phoneme lookup, never for the reader's eyes.
+			var mark := token.strip_edges()
+			if not mark.is_empty() and mark != "\n":
+				prev["display"] = String(prev.get("display", "")) + " " + mark
 		if bare.length() > 0:
 			var got := lookup(bare)
 			var phones: Array = got.phones
@@ -273,6 +299,7 @@ static func parse(text: String) -> Array:
 			words = []
 	if words.size() > 0:
 		sentences.append(words)
+	_resolve_homographs(sentences)
 	return sentences
 
 
@@ -315,8 +342,12 @@ static func _literal_word(token: String) -> Dictionary:
 		elif key == "JH":
 			phones.append_array(["D", "ZH"])
 	var st := _with_default_stress(phones)
+	# `literal` is what makes ghost's own ARPAbet BEAT eSpeak downstream (see
+	# generative_editor._build_chunks). Without it an inline [K AE T] was quietly
+	# re-phonemized by eSpeak like any other word - the documented escape hatch for a
+	# mispronounced name did nothing at all on the generative path.
 	return {"text": inner.to_lower(), "display": inner, "phones": phones,
-		"stress": st.stress, "stressed": true, "pause_after": "none"}
+		"stress": st.stress, "stressed": true, "pause_after": "none", "literal": true}
 
 
 # ---- the external language data ---------------------------------------------
@@ -769,3 +800,80 @@ static func stress_vowel(phones: Array, stress: Array = []) -> int:
 		if TABLE.get(phones[i], {}).get("type", "") == "vowel":
 			return i
 	return -1
+
+## Is this token nothing but dash characters? A spaced dash is an aside, not a word.
+static func _is_dash(t: String) -> bool:
+	if t.is_empty():
+		return false
+	for i in t.length():
+		if not (t[i] == "-" or t[i] == "\u2013" or t[i] == "\u2014"):
+			return false
+	return true
+
+
+## Words ghost pronounces ITSELF, because eSpeak reads them wrong.
+##
+## eSpeak picks these from its own part-of-speech guess, and on some very common constructions it
+## is confidently wrong: "the way a prisoner lives in his cell" comes back with the NOUN reading
+## (lˈaɪvz), because it parses "prisoner lives" as a compound noun. Sentence context does not
+## rescue it - measured, the whole-sentence transcription returns the same wrong answer as the word
+## in isolation, so this is not something a phonemizer setting can fix.
+##
+## Each entry gives the reading to use by DEFAULT and the reading to switch to when the word before
+## or after says otherwise. The resolved word is marked `literal`, which makes ghost's own ARPAbet
+## win for that word only - the rest of the sentence still gets eSpeak's transcription, so nothing
+## else about the reading changes.
+##
+## Add sparingly and only where eSpeak is measurably wrong: a bad rule here mispronounces a word
+## that was previously fine, which is worse than the occasional homograph.
+const SPEAK_AS := {
+	"lives": {
+		"base": "L IH1 V Z",       # the VERB - "a prisoner lives here"
+		"alt": "L AY1 V Z",        # the NOUN  - "their lives changed"
+		"alt_prev": ["the", "their", "our", "your", "my", "his", "her", "its", "these",
+			"those", "many", "all", "both", "few", "several", "countless", "other",
+			"two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+			"young", "past"],
+		"alt_next": ["were", "are", "of", "matter", "lost", "hang", "depend"],
+	},
+	# HUMS. eSpeak spells these out instead of humming them - measured, it returns
+	#   "hmm" -> həm ("hem"),  "hm" -> ˌeɪtʃˈɛm ("aitch em"),  "mmm" -> ˌɛmˌɛmˈɛm ("em em em").
+	#
+	# A hum is NASAL MURMUR: nearly all of its energy sits below 500 Hz, with no vowel
+	# formants above it. Measured on this voice, share of spectral energy under 500 Hz -
+	#   "M M"    80.6%  (0.155 s)   <- a hum
+	#   "M"      90.7%  (0.064 s)   right shape, too short to register
+	#   "HH M"   41.5%              the HH puts 57% into 0.5-2 kHz: heard as "em"
+	#   "HH AH M" 32.2%             indistinguishable from the real word "hum" (28.0%)
+	# So no H and no vowel, and doubled because the voice has no syllabic m - a single
+	# one is over before it reads as anything. This is the second attempt: "HH M" was
+	# chosen for having no vowel, which was right in principle, but the H alone carries
+	# enough mid-band energy to be heard as one.
+	"hm": {"base": "M M"},
+	"hmm": {"base": "M M"},
+	"hmmm": {"base": "M M M"},
+	"mm": {"base": "M M"},
+	"mmm": {"base": "M M M"},
+}
+
+
+## Pick each homograph's reading from its neighbours, once the whole sentence is known.
+static func _resolve_homographs(sentences: Array) -> void:
+	for s in sentences:
+		var sent: Array = s
+		for i in sent.size():
+			var w: Dictionary = sent[i]
+			var key := String(w.get("text", "")).to_lower()
+			if not SPEAK_AS.has(key) or bool(w.get("literal", false)):
+				continue                      # an authored [L IH V Z] outranks the table
+			var rule: Dictionary = SPEAK_AS[key]
+			var prev := String(sent[i - 1].get("text", "")).to_lower() if i > 0 else ""
+			var nxt := String(sent[i + 1].get("text", "")).to_lower() if i + 1 < sent.size() else ""
+			# An entry with no `alt` is a plain override: one reading, always.
+			var alt: bool = rule.has("alt") \
+				and ((rule.get("alt_prev", []) as Array).has(prev) \
+					or (rule.get("alt_next", []) as Array).has(nxt))
+			var got := _parse_cmu(String(rule["alt"] if alt else rule["base"]))
+			w["phones"] = got.phones
+			w["stress"] = got.stress
+			w["literal"] = true

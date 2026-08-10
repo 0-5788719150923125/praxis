@@ -19,10 +19,6 @@ class_name Chrome
 ##                   [method attach_feedback] and wired to the assistant.
 ## - **console**   - the `>_` log viewer (a live tail of godot's own log
 ##                   file), for anyone running ghost without a terminal.
-##
-## A future mode needs no wiring at all if main already made the Chrome -
-## call attach_feedback() when a session starts, detach_feedback() when it
-## ends. New shared furniture belongs HERE, not in a mode's branch.
 
 var exporter: Node
 var assistant: Node
@@ -37,6 +33,10 @@ func _ready() -> void:
 	add_child(assistant)
 	console = preload("res://scripts/console.gd").new()
 	add_child(console)
+	# Persistent like the rest of the furniture, and deliberately NOT gated on a
+	# live session: the value it edits is a saved preference the Director reads at
+	# startup, so setting it on the home screen already governs the first hold of
+	# the next song.
 
 
 ## The ` feedback console for the current session. Idempotent: returns the

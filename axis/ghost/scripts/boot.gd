@@ -24,3 +24,78 @@ func _enter_tree() -> void:
 		return
 	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_NO_FOCUS, true)
 	DisplayServer.window_set_position(Vector2i(-5000, -5000))   # X11 honors this
+
+
+## TOOLTIP WRAPPING, applied to the whole app.
+##
+## Godot's built-in tooltip is a Label with autowrap OFF, and there is no theme item to change
+## that: the default theme exposes only `shadow_offset_x/y`, `outline_size` and `font_size` for
+## `TooltipLabel`, so no Theme resource can fix it. The label simply grows to fit, and a long
+## description runs off the side of the screen - measured, 79 characters is 636 px, so ghost's
+## longest tooltip renders about 3,400 px wide on a 1920 px display.
+##
+## Since the WIDTH cannot be constrained, the TEXT is re-flowed instead: real newlines inserted at
+## a measured pixel width, using the same font and size the tooltip will draw with. Hooked from
+## `node_added` so it covers every mode, every dialog and anything added later without each call
+## site having to remember - the request was for this to be global, and 68 scattered
+## `tooltip_text` assignments is exactly the kind of thing that goes stale.
+##
+## Re-flowing is IDEMPOTENT (a wrapped paragraph collapses back to one line and re-wraps to the
+## same result), which is what lets it run again on every hover - so a tooltip whose text is
+## rewritten at runtime, as the mask editor's readouts are, stays wrapped too. Blank-line
+## paragraph breaks an author wrote on purpose are preserved.
+const TIP_MAX_PX := 480.0
+
+
+func _ready() -> void:
+	get_tree().node_added.connect(_hook_tooltip)
+
+
+func _hook_tooltip(n: Node) -> void:
+	if not (n is Control):
+		return
+	var c: Control = n
+	# On hover, because that also catches tooltips rewritten after the control was built.
+	if not c.mouse_entered.is_connected(_wrap_tooltip):
+		c.mouse_entered.connect(_wrap_tooltip.bind(c))
+	# And once now, for controls that never emit mouse_entered themselves (a Label defaults to
+	# MOUSE_FILTER_IGNORE) but whose tooltip is surfaced through an ancestor.
+	_wrap_tooltip.call_deferred(c)
+
+
+func _wrap_tooltip(c: Control) -> void:
+	if not is_instance_valid(c) or c.tooltip_text.is_empty():
+		return
+	var wrapped := wrap_tip(c.tooltip_text, TIP_MAX_PX)
+	if wrapped != c.tooltip_text:
+		c.tooltip_text = wrapped
+
+
+## Re-flow `text` so no line exceeds `max_px` in the tooltip's own font. Public, so anything that
+## builds a tooltip string by hand can pre-wrap it the same way.
+static func wrap_tip(text: String, max_px := TIP_MAX_PX) -> String:
+	var f: Font = ThemeDB.fallback_font
+	if f == null or max_px <= 0.0:
+		return text
+	var fsize := ThemeDB.get_default_theme().get_font_size("font_size", "TooltipLabel")
+	if fsize <= 0:
+		fsize = ThemeDB.fallback_font_size
+	var paras: Array = []
+	for para in text.split("\n\n"):
+		var lines: Array = []
+		var line := ""
+		for word in String(para).replace("\n", " ").split(" ", false):
+			var w := String(word)
+			if line.is_empty():
+				line = w
+				continue
+			var probe := line + " " + w
+			if f.get_string_size(probe, HORIZONTAL_ALIGNMENT_LEFT, -1, fsize).x > max_px:
+				lines.append(line)
+				line = w
+			else:
+				line = probe
+		if not line.is_empty():
+			lines.append(line)
+		paras.append("\n".join(lines))
+	return "\n\n".join(paras)

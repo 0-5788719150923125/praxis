@@ -118,14 +118,51 @@ func quad_colored(p: PackedVector2Array, c: PackedColorArray) -> void:
 	idx.append(base + 3)
 
 
+## Width of the alpha falloff carried along each side of a line, in pixels.
+##
+## This is ghost's antialiasing for edges, and it has to be, because nothing else is. Every line
+## here is geometry - a thin quad - not a line primitive, so `draw_line`'s own `antialiased` flag
+## never applies to it; and Godot's msaa_2d does almost nothing for this drawing path (measured:
+## the fraction of edge pixels with no partial coverage moves only 75.0% -> 73.8% going from MSAA
+## off to 8x, and in the export's "viewport" stretch mode MSAA is inert entirely - frames come out
+## byte-identical at 0, 4x and 8x). A hard-edged 1px quad of bright colour on ghost's near-black
+## backgrounds is the worst case there is: it steps, and it crawls as the geometry turns.
+##
+## 0.8 px rather than a full pixel: wide enough to give the rasterizer a real gradient to
+## interpolate, narrow enough that a 1px line still reads as 1px rather than as a soft smear.
+const FEATHER := 0.8
+
+
 ## A line as a thin quad, so it batches (and layers!) with the fills around
 ## it - a separate multiline call would break the painter's order.
-func line(a: Vector2, b: Vector2, col: Color, width := 1.0) -> void:
+##
+## Emitted as three quads: a solid core, and a fading skirt down each side (see [constant FEATHER]).
+## That is 6 triangles where this used to cost 2, which is the price of the only antialiasing this
+## renderer has. Pass `soft = false` for bulk hairline work that does not need it - the floor bands
+## behind a city's windows, say - to get the old single-quad form back.
+func line(a: Vector2, b: Vector2, col: Color, width := 1.0, soft := true) -> void:
 	var d := b - a
 	if d.length_squared() < 0.000001:
 		return
-	var n := Vector2(-d.y, d.x).normalized() * (width * 0.5)
-	quad(a - n, b - n, b + n, a + n, col)
+	var u := Vector2(-d.y, d.x).normalized()
+	if not soft:
+		var n := u * (width * 0.5)
+		quad(a - n, b - n, b + n, a + n, col)
+		return
+	# Keep a real core even for hairlines, so a thin line stays a line rather than becoming two
+	# feathers meeting in the middle (which reads as a dimmer, blurrier line, not a smoother one).
+	var hw := maxf(width * 0.5, 0.4)
+	var i0 := a - u * hw
+	var i1 := b - u * hw
+	var i2 := b + u * hw
+	var i3 := a + u * hw
+	quad(i0, i1, i2, i3, col)
+	var fade := Color(col.r, col.g, col.b, 0.0)
+	var o := u * (hw + FEATHER)
+	quad_colored(PackedVector2Array([a - o, b - o, i1, i0]),
+		PackedColorArray([fade, fade, col, col]))
+	quad_colored(PackedVector2Array([i2, i3, a + o, b + o]),
+		PackedColorArray([col, col, fade, fade]))
 
 
 ## A CONVEX polygon as a fan (matches draw_colored_polygon on convex input).

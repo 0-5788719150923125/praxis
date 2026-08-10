@@ -152,6 +152,30 @@ const TRIGGER_BAG := [Trigger.BEAT, Trigger.BEAT, Trigger.BEAT, Trigger.MOVEMENT
 ## (see GhostScene.event_scale), so a busy session never makes the individual motions look sped-up.
 ## A storyboard overrides this with a top-level `sensitivity` (and per-entry `sensitivity`).
 @export var sensitivity: float = 1.0
+## Scene-transition PACING: a plain MULTIPLIER on how long a scene holds before it cuts. 1.0 is the
+## tuned baseline, >1 lets scenes linger (fewer cuts pulling attention off the listening), <1 cuts
+## faster. It multiplies the auto-mode hold bounds - and a burst's quick-cut bounds - so the
+## music-driven variance is kept EXACTLY: both the minimum and the maximum move together, their
+## ratio never changes, and a driving passage still cuts faster than a calm one. Deliberately a
+## multiplier and never a floor/offset/clamp, which would flatten the calm end of the distribution
+## onto one length and kill that variance.
+## Distinct from `sensitivity`, which is narrative TEMPO and also compresses each scene's internal
+## keyframe clock: this knob only changes how long a scene stays on screen, never how it animates,
+## and never how long a dissolve takes (transition_time / layer_time). Authored storyboard timings
+## (`hold:` / `min_hold:` / `max_hold:`) stay literal - an author who wrote `hold: 16` means 16.
+## Set it through [method set_pacing]; persisted to `user://ghost.cfg`, `[director] pacing`.
+var pacing: float = 1.0
+## Bounds applied on every write to `pacing` (a quarter-speed to a quadruple-length show).
+## How readily the show throws a FLOURISH - a burst of quick cuts, or a run of beat-synced
+## punches. 1.0 is the tuned default, 0.0 turns them off entirely, and the top of the range makes
+## them a regular feature. Separate from `pacing` on purpose: pacing is how long an ordinary scene
+## holds, this is how often the show breaks that rhythm, and the reported problem was that raising
+## one while the other ran hot cancelled it out.
+var flourish: float = 1.0
+const FLOURISH_MIN := 0.0
+const FLOURISH_MAX := 4.0
+const PACING_MIN := 0.25
+const PACING_MAX := 4.0
 ## Seconds a dip/blend takes end to end (cuts are instant). A DIP spends the middle
 ## of this in darkness, so a little long reads as a deliberate breath between scenes.
 @export var transition_time: float = 2.0
@@ -174,6 +198,19 @@ var _style: Style = Style.CUT
 var _trigger: Trigger = Trigger.BEAT
 var _beat_prev := 0.0
 var _audio_ema := 0.0        # smoothed audio level (fast attack, slow release) for the silence guard
+# The material's OWN normal level: a slow running mean of _audio_ema (~LEVEL_REF_TAU seconds of
+# music time, about one section). Absolute loudness is a property of the CONTENT, not of the moment -
+# measured narration lives around 0.09-0.14 where a mastered track sits near 0.40 - so every "is the
+# music leaning in?" test measures the fast level against THIS, never against a constant (see _lean).
+# BIAS-CORRECTED (the Adam trick: carry the EMA of a constant 1 and divide by it), so at ten seconds
+# in it is the honest mean of ten seconds rather than a plain EMA still climbing out of its zero
+# start. Without the correction the whole opening reads as one enormous surge - the reference is far
+# below the level purely because it began at zero - and a session reliably flurried in its first
+# minute, which is the one place a show should be settling in.
+var _audio_ref := 0.0
+var _ref_acc := 0.0
+var _ref_w := 0.0
+const LEVEL_REF_TAU := 30.0
 var _bookend_time := 6.0     # seconds of the start fade-up-from-black and end fade-down-to-black
 # Rapid-fire BURST: a sparse, harmonic-gated flurry of quick jump cuts (a cinematic "3 quick
 # scenes" effect) breaking up the slow holds. While a burst is live the holds shrink to a few
@@ -181,7 +218,30 @@ var _bookend_time := 6.0     # seconds of the start fade-up-from-black and end f
 var _burst_left := 0         # quick scenes remaining in the burst (0 = normal pacing)
 var _burst_min := 1.5        # this burst's minimum hold (s)
 var _burst_max := 4.0        # this burst's maximum hold (s)
-var _flurry_cd := 0          # scenes until another flurry (burst or stinger) may start - keeps them rare
+# Scenes until the next flurry of each kind may start - what keeps them rare. ONE counter used to
+# serve both, and that quietly starved the burst: the stinger rolls on every BEAT (a few times a
+# second) while the burst rolls once per CUT (a few times a minute), so whenever the shared counter
+# reached zero the stinger had two orders of magnitude more chances to spend it first, and the burst
+# essentially never got the budget. Two counters, plus the mutual exclusion below (neither kind may
+# begin while the other is live), keep the "never two flurries at once" property that sharing was
+# really there for, without one kind eating the other's turn.
+var _burst_cd := 0
+var _flurry_cd := 0
+var _cue_prev := 0.0    # _elapsed at the last cue offer (see _cue_taken)
+# Chance of a burst at an eligible cut: BURST_BASE on an ordinary moment, BURST_BASE + BURST_GAIN
+# when the material is leaning in hard, the whole thing scaled by `flourish` (the user's slider).
+# A burst gets ONE roll per CUT - a slow clock, a handful of rolls a minute - and then owes a long
+# cooldown, so these are per-scene odds, not the per-second kind.
+#
+# These are the ORIGINAL 1.2%/5%, restored. They were briefly raised to 5%/15% on the argument that
+# the old numbers had never been exercised (they sat behind a level gate no spoken session could
+# open - see _lean). That reasoning was sound and the conclusion was wrong: once _lean made the
+# gate reachable, the SAME odds that had been inert became live, and quadrupling them on top put a
+# flurry almost every subtitle - measured 29 cuts in 184 s against a 25-cut baseline. Fixing the
+# gate was the whole fix; the odds needed nothing.
+const BURST_BASE := 0.012
+const BURST_GAIN := 0.05
+const FLURRY_CD_MIN := 6     # never fewer scenes between flurries, whatever the pacing (see _flurry_spacing)
 # Rapid-fire STINGER: instead of cutting through different scenes (jarring at speed), a run of
 # beat-synced PUNCHES that contort / recolour / zoom the CURRENT scene - BANG, BANG, BANG - then
 # settle. A universal modulation: it rides the SceneView pulse + node tint, so it works on any scene.
@@ -231,9 +291,89 @@ var _cursor_t := 0.0                 # the cursor's continuous schedule-time cla
 var dials: Array = []
 var _dial_demo := false              # --dial-demo: scripted turning, for headless renders/demos
 
+# --- pacing persistence (user://ghost.cfg, mirroring GenerativeEditor._persist/_load_persisted) ---
+# ONE cfg file serves the whole app (splash's remembered song, [synth], [generative], ...), so every
+# write is a read-modify-write of just the [director] section - never a fresh ConfigFile.save().
+const CFG := "user://ghost.cfg"
+const PACING_SAVE_DELAY_MS := 400    # debounce: a slider DRAG must not write the disk per frame
+var _pacing_dirty := false
+var _pacing_edit_ms := 0
+
+
+# The Director is an autoload, so this runs long before attach() builds the first scene - which is
+# exactly the point: the very first hold of a session must already use the remembered pacing.
+func _ready() -> void:
+	_load_pacing()
+
+
+## Set the scene-transition pacing multiplier (see [member pacing]) and remember it for next time.
+## Safe to call on every frame of a slider drag: an unchanged value is a no-op and the disk write is
+## debounced (see the top of _process).
+##
+## The change takes effect on the scene ALREADY on screen, not just the next one. The hold bounds are
+## re-derived from `pacing` every frame in _should_change / _ready_to_exit, so nothing caches them -
+## and that is the behaviour we want: someone reaching for this slider is reacting to the cutting
+## they are watching right now, so dragging it up should stretch THIS scene rather than make them sit
+## through one more cut to hear the difference. The one exception is a live BURST, whose bounds were
+## sampled when the burst started (see _maybe_start_burst) and stay fixed for its 2-3 cuts, because a
+## flurry re-scaled halfway through would come out visibly uneven. Dragging DOWNWARD can push the new
+## maximum below the elapsed hold and cut immediately; that is the faster cutting being asked for,
+## and it can only happen once per scene.
+func set_pacing(v: float) -> void:
+	var p := clampf(v, PACING_MIN, PACING_MAX)
+	if is_equal_approx(p, pacing):
+		return
+	pacing = p
+	_pacing_dirty = true
+	_pacing_edit_ms = Time.get_ticks_msec()
+
+
+
+## The flourish knob. Same debounced-save contract as set_pacing, same file.
+func set_flourish(v: float) -> void:
+	var f := clampf(v, FLOURISH_MIN, FLOURISH_MAX)
+	if is_equal_approx(f, flourish):
+		return
+	flourish = f
+	_pacing_edit_ms = Time.get_ticks_msec()
+	_pacing_dirty = true
+
+
+func _load_pacing() -> void:
+	var cfg := ConfigFile.new()
+	if cfg.load(CFG) != OK:
+		return
+	pacing = clampf(float(cfg.get_value("director", "pacing", 1.0)), PACING_MIN, PACING_MAX)
+	flourish = clampf(float(cfg.get_value("director", "flourish", 1.0)), FLOURISH_MIN, FLOURISH_MAX)
+
+
+func _save_pacing() -> void:
+	_pacing_dirty = false
+	var cfg := ConfigFile.new()
+	cfg.load(CFG)                     # read-modify-write: never clobber [synth] / [generative] / splash
+	cfg.set_value("director", "pacing", pacing)
+	cfg.set_value("director", "flourish", flourish)
+	cfg.save(CFG)
+
 
 func attach(host: Node) -> void:
 	_host = host
+	# A fresh session hears fresh material: forget the last song's level, its reference, and any
+	# flurry state. attach() runs again on every new take in synthesis mode, so without this a quiet
+	# piece following a loud one would spend its opening judged against the loud one's level - and a
+	# session interrupted mid-flurry would resume owing the old one's quick cuts or its cooldown.
+	_audio_ema = 0.0
+	_ref_acc = 0.0
+	_ref_w = 0.0
+	_audio_ref = 0.0
+	_burst_left = 0
+	_burst_cd = 0
+	_sting_left = 0
+	_flurry_cd = 0
+	if not is_equal_approx(pacing, 1.0):
+		# Worth a line: "the scenes change too fast/slow" is a common feedback report, and this says
+		# straight away whether the session was running with a non-default hold multiplier.
+		print("ghost: scene pacing x%.2f (holds stretched from the remembered slider)" % pacing)
 	_session_seed = _resolve_seed()
 	print("ghost: session seed %d (%s)" % [_session_seed, _seed_source()])
 	_rng.seed = _session_seed ^ 0x1234567
@@ -318,6 +458,7 @@ func detach() -> void:
 	_swaps = 0
 	_step = 0
 	_elapsed = 0.0
+	_cue_prev = 0.0
 	_held = false
 	_kind_last = {}
 	_storyboard_seq = []
@@ -402,7 +543,18 @@ func _schedule_starts() -> Array:
 	for item in _storyboard_seq:
 		out.append(acc)
 		var sens := clampf(float(item.get("sensitivity", sbs)), 0.05, 20.0)
-		var dur: float = float(item["hold"]) if item.has("hold") else float(item.get("min_hold", min_hold))
+		# Authored timings are literal here too. Only the UNAUTHORED fallback - an entry that gave no
+		# timing at all, and so exits through _scaled_bound's auto branch at runtime - carries `pacing`,
+		# so this estimate keeps mirroring what those entries actually do. Computed once at storyboard
+		# load and then frozen: it is the [Echo] map's coordinate system, and re-deriving it mid-session
+		# would move the schedule times the already-recorded fingerprints were filed under.
+		var dur: float = 0.0
+		if item.has("hold"):
+			dur = float(item["hold"])
+		elif item.has("min_hold"):
+			dur = float(item["min_hold"])
+		else:
+			dur = min_hold * pacing
 		acc += maxf(0.5, dur / sens)
 	_sched_end = acc
 	return out
@@ -429,29 +581,77 @@ func _biased(n: int) -> int:
 
 func _arm() -> void:
 	_elapsed = 0.0
+	_cue_prev = 0.0
 	_beat_prev = Spectrum.current.beat
 	if _flurry_cd > 0:
-		_flurry_cd -= 1            # count down the spacing between flurries
+		_flurry_cd -= 1            # count down the spacing between flurries of each kind
+	if _burst_cd > 0:
+		_burst_cd -= 1
 	if _burst_left == 0:
 		_maybe_start_burst()       # rarely, kick off a rapid-fire CUT burst on this scene
 	# In a burst, exits land on the beat (quick + musical); otherwise the weighted cue bag.
 	_trigger = Trigger.BEAT if _burst_left > 0 else TRIGGER_BAG[_biased(TRIGGER_BAG.size())]
 
 
+# How hard the music is LEANING IN right now, 0..1, measured against the material's own normal
+# level rather than an absolute one - the surge, not the loudness. Returns -1 when the question is
+# meaningless, which is the one place an ABSOLUTE test still belongs: this instant is silent, or the
+# material's own normal level is silence. `silence_floor` is reused for both (it is already the
+# "nothing is playing" line the cut logic trusts), so a dead track, a silent tail, and a session with
+# no audio at all can never flurry no matter how favourable the ratio between two tiny numbers looks.
+#
+# This replaced a pair of hard `_audio_ema < 0.15` / `>= 0.2` gates. Those are levels a mastered
+# track clears at rest (measured ~0.40) and speech mostly does not (measured ~0.09-0.14), so a spoken
+# session could not fire a burst or a stinger even once - across ~50 minutes of real headless
+# sessions, neither ever fired. A ratio has no genre baked into it: it fires on the passage where
+# this material leans in, whatever this material happens to be.
+func _lean() -> float:
+	if _audio_ema < silence_floor or _audio_ref < silence_floor:
+		return -1.0
+	return clampf((_audio_ema - _audio_ref) / _audio_ref, 0.0, 1.0)
+
+
+# The shared flurry drive: how emphatic this moment is, 0..1, on the spike curve (sharp onset, quick
+# saturation). `movement` is already content-relative (short-term flux over the passage's own
+# baseline); `lean` supplies the loudness half in the same relative currency.
+func _flurry_drive(lean: float) -> float:
+	return Nonlinear.apply("spike", clampf(Spectrum.current.movement + 0.5 * lean, 0.0, 1.0), 2.5)
+
+
 # A sparse, NON-LINEAR chance to start a rapid-fire CUT burst: only in the auto show, only with
-# real audio, weighted up by how much the music is moving right now (a spike curve on movement +
-# energy). Rare on purpose, with a long cooldown after, so it does not chain into a dozen cuts.
+# audible material, weighted up by how much that material is moving right now (a spike curve on
+# movement + lean). Rare on purpose, with a long cooldown after, so it never chains into a dozen
+# cuts - and never on top of a live stinger, which would read as the show glitching rather than
+# as one deliberate flourish.
 func _maybe_start_burst() -> void:
-	if not _storyboard_seq.is_empty() or _locked >= 0 or _audio_ema < 0.15 or _flurry_cd > 0:
+	if not _storyboard_seq.is_empty() or _locked >= 0 or _burst_cd > 0 or _sting_left > 0:
 		return
-	var f := Spectrum.current
-	var drive: float = Nonlinear.apply("spike", clampf(f.movement + 0.5 * f.energy, 0.0, 1.0), 2.5)
-	if _rng.randf() < 0.012 + 0.05 * drive:        # ~1.2% baseline, up to ~6% on a strong moment
+	var lean := _lean()
+	if lean < 0.0:
+		return
+	if _rng.randf() < (BURST_BASE + BURST_GAIN * _flurry_drive(lean)) * flourish:
 		_burst_left = _rng.randi_range(2, 3)       # short - normalizes after a couple of cuts
-		_burst_min = _rng.randf_range(1.0, 2.0)
-		_burst_max = _rng.randf_range(3.0, 5.0)
-		_flurry_cd = _rng.randi_range(14, 26)      # then a long stretch of normal pacing
+		# The flurry is part of the show's character, so it rides the same `pacing` multiplier as the
+		# normal holds instead of staying stubbornly quick while everything around it lengthens. Scaled
+		# HERE, where the pair is sampled, so one burst keeps consistent cut lengths from start to end.
+		_burst_min = _rng.randf_range(1.0, 2.0) * pacing
+		_burst_max = _rng.randf_range(3.0, 5.0) * pacing
+		_burst_cd = _flurry_spacing()              # then a long stretch of normal pacing
 		print("ghost: BURST x%d  (%.1f-%.1fs cuts)" % [_burst_left, _burst_min, _burst_max])
+
+
+# Scenes to wait before the next flurry of the same kind. Counted in CUTS, not seconds, because a
+# flurry is a STRUCTURAL event - "one flourish every ~N scenes" is a statement about the shape of
+# the show - and a seconds-based spacing would silently make the flourish a bigger and bigger part
+# of the cutting the calmer the passage.
+#
+# Divided by `pacing` for the one thing cuts are NOT a good clock for: the user's own tempo. At
+# pacing 3.0 scenes hold three times as long, so a fixed 14-26 cuts is three times the wall-clock
+# wait - the slider would quietly delete the flourish from exactly the slow, lingering show that
+# most needs punctuating. Dividing keeps the spacing roughly constant in listening time while the
+# count itself stays a cut count. Floored at FLURRY_CD_MIN so it can never degenerate into chaining.
+func _flurry_spacing() -> int:
+	return maxi(FLURRY_CD_MIN, int(round(float(_rng.randi_range(14, 26)) / pacing)))
 
 
 # `--scene N` (or `--scene name`) pins a single scene for authoring - no changes.
@@ -503,6 +703,10 @@ var _time_debt := 0.0
 
 
 func _process(delta: float) -> void:
+	# Flush a pending pacing write FIRST, above the no-scene guard: the slider also lives in chrome,
+	# which is up on the splash and between songs, where there is no scene attached to the Director.
+	if _pacing_dirty and Time.get_ticks_msec() - _pacing_edit_ms >= PACING_SAVE_DELAY_MS:
+		_save_pacing()
 	if _current == null:
 		return
 
@@ -567,6 +771,12 @@ func _tick_schedule(dt: float) -> void:
 	# read as silence but a genuinely dead track (or its silent tail) does.
 	var e: float = Spectrum.current.energy
 	_audio_ema = lerpf(_audio_ema, e, 1.0 - exp(-(8.0 if e > _audio_ema else 0.6) * dt))
+	# ... and the slow reference it is judged against (see _audio_ref). Symmetric and much slower than
+	# the level itself, so it settles on what the material normally does and a surge stands out.
+	var ra := 1.0 - exp(-dt / LEVEL_REF_TAU)
+	_ref_acc = lerpf(_ref_acc, _audio_ema, ra)
+	_ref_w = lerpf(_ref_w, 1.0, ra)
+	_audio_ref = _ref_acc / maxf(_ref_w, 1e-4)
 	_drive_stinger(dt, bf)                          # rapid-fire beat-synced modulation of THIS scene
 	if _listen_echo(dt):
 		_beat_prev = Spectrum.current.beat
@@ -608,11 +818,13 @@ func _drive_stinger(delta: float, bf: float) -> void:
 			_sting_rot = _rng.randf_range(-0.09, 0.09)
 			_sting_skew = _rng.randf_range(-0.06, 0.06)
 			_sting_flash = _rng.randf_range(0.20, 0.5)
-		elif _flurry_cd == 0 and _audio_ema >= 0.2:  # else maybe begin a run (rare, harmonic-gated)
-			var drive: float = Nonlinear.apply("spike", clampf(f.movement + 0.5 * f.energy, 0.0, 1.0), 2.5)
-			if _rng.randf() < 0.02 + 0.07 * drive:
+		elif _flurry_cd == 0 and _burst_left == 0:   # else maybe begin a run (rare, harmonic-gated)
+			# Same content-relative gate as the burst (see _lean): the old absolute `_audio_ema >= 0.2`
+			# is a music level, so spoken sessions never punched once either.
+			var lean := _lean()
+			if lean >= 0.0 and _rng.randf() < (0.02 + 0.07 * _flurry_drive(lean)) * flourish:
 				_sting_left = _rng.randi_range(2, 4)  # BANG, BANG (, BANG)
-				_flurry_cd = _rng.randi_range(14, 26)
+				_flurry_cd = _flurry_spacing()
 				print("ghost: STINGER x%d" % _sting_left)
 	_sting = maxf(0.0, _sting - delta * 6.0)         # quick decay between beats
 	var p := _sting * _sting                         # eased punch (snappy attack, soft tail)
@@ -724,7 +936,10 @@ func _listen_echo(dt: float) -> bool:
 func _should_change() -> bool:
 	if _locked >= 0 or _held:
 		return false
-	if _game_paced and _paced_t < GAME_PACED_MIN:
+	if _game_paced and _paced_t < GAME_PACED_MIN * pacing:
+		# `* pacing` because this floor is a hold duration like any other: left fixed it would be the
+		# one gate the slider cannot move, and below pacing 1.0 a flat 12 s would swallow the whole
+		# shortened range and make the control inert in synthesis mode.
 		# the fishing owns the MOMENTS (catches and seed jumps cut at once);
 		# past the floor, the normal harmonic exit logic below owns the tour
 		return false
@@ -764,7 +979,52 @@ func _should_change() -> bool:
 		return true
 	if not _ready_to_exit(ex):
 		return false
-	return _trigger_fires(ex)
+	if not _trigger_fires(ex):
+		return false
+	# A CUE IS AN OFFER, NOT AN ORDER. See _cue_taken: the minimum hold used to be a hard gate,
+	# and on speech the very next onset - a few hundredths of a second later - always took it, so
+	# every scene exited at almost exactly the minimum. Now the offer is accepted on a probability
+	# that ramps with how long the scene has already run.
+	var lo_h: float = _burst_min if _burst_left > 0 else _scaled_bound(ex, "min", min_hold)
+	return _cue_taken(lo_h, hi)
+
+
+## Take this cue, or let it pass? A ramp, not a gate.
+##
+## THE BUG THIS FIXES. `min_hold` was a hard gate: once the scene had held that long, the next
+## trigger cut. On speech the beat detector fires an onset several times a second, so "the next
+## trigger" is always within a frame or two of the gate opening - measured, a 7.29 s median with an
+## IQR of 0.94 s, i.e. every scene exiting at essentially the same instant. Raising the hold just
+## moved the metronome: at the top of the Scene hold slider it cut every ~15 s almost on the dot.
+##
+## So eligibility no longer decides anything by itself. Past the minimum, an arriving cue is
+## ACCEPTED with a probability that starts near zero and rises the longer the scene has run:
+## possible at the minimum, likely by the backstop. `u` is the position through the window and the
+## hazard goes as u², so the first seconds past the gate are genuinely unlikely to cut while a
+## scene that has already run a long time is under real pressure to.
+##
+## IT IS A RATE PER SECOND, not a chance per cue, and that distinction is the whole point: speech
+## offers cues constantly and music offers them sparsely, and integrating the hazard over the time
+## since the last offer makes both content types produce the same distribution of scene lengths.
+## A per-cue probability would cut speech ten times faster than music for no musical reason.
+##
+## CUE_TOTAL is the integrated hazard across the whole window - the expected number of "cut now"
+## events if the scene somehow survived to the backstop. Around 4 puts the median a little past
+## halfway and leaves only a couple of percent to reach the backstop. Because both bounds scale
+## together with `pacing`, the SHAPE of the distribution is identical at every setting: the slider
+## stretches the spread, it does not flatten it.
+const CUE_TOTAL := 4.0
+
+
+func _cue_taken(lo: float, hi: float) -> bool:
+	var span := maxf(0.001, hi - lo)
+	var u := clampf((_elapsed - lo) / span, 0.0, 1.0)
+	var hazard := 3.0 * CUE_TOTAL / span * u * u     # per second; integrates to CUE_TOTAL over span
+	# Time since the LAST offer, floored at the moment this scene became eligible so the first cue
+	# past the gate cannot claim credit for the whole hold before it.
+	var dt := maxf(0.0, _elapsed - maxf(_cue_prev, lo))
+	_cue_prev = _elapsed
+	return _rng.randf() < 1.0 - exp(-hazard * dt)
 
 
 # Scene holds scale with the music's DRIVE: how hard it is pushing RIGHT NOW. A loud, fast, active
@@ -781,9 +1041,12 @@ func _pacing_scale() -> float:
 
 # A hold bound: a storyboard-explicit value is taken literally (already sensitivity-scaled in
 # _make_scene); the auto-mode default is pace-scaled AND divided by the active sensitivity, so a
-# higher tempo also makes auto cuts come faster (more of the catalogue in the same time).
+# higher tempo also makes auto cuts come faster (more of the catalogue in the same time), then
+# multiplied by the user's `pacing`. Multiplying LAST and multiplying BOTH bounds by the same factor
+# is what preserves the show's variance: _pacing_scale still swings the hold by ~3.4x across the
+# music's drive, and max/min keeps its exact ratio - the whole distribution just slides longer.
 func _scaled_bound(ex: Dictionary, key: String, base: float) -> float:
-	return float(ex[key]) if ex.has(key) else base * _pacing_scale() / maxf(0.05, _cur_sens)
+	return float(ex[key]) if ex.has(key) else base * _pacing_scale() * pacing / maxf(0.05, _cur_sens)
 
 
 # Eligibility: a oneshot when its sequence ends, a loop after the minimum hold (a short one in a
@@ -962,6 +1225,7 @@ func _begin_transition() -> void:
 	_paced_t = 0.0
 	if SCENES.size() < 2:
 		_elapsed = 0.0
+		_cue_prev = 0.0
 		return
 	var burst_cut := _burst_left > 0      # leaving a burst scene -> a hard jump cut, no morph/blend
 	if _burst_left > 0:
@@ -1172,10 +1436,16 @@ func _parse_exit(item: Dictionary) -> Dictionary:
 	if item.has("hold"):
 		return {"hold": float(item["hold"])}
 	if item.has("exit"):
+		# An authored bound is literal; an absent one falls back to the Director's OWN defaults, which
+		# are not the author's timing, so they carry `pacing` like every other default bound (without
+		# it, `exit: beat` alone would be the one entry shape that ignores the slider while a bare
+		# entry - which exits through _scaled_bound's auto branch - obeys it). Both bounds take the
+		# same factor, so the spread between them is untouched. Baked when the scene is built, so a
+		# pacing change reaches these entries at the next cut rather than mid-scene.
 		return {
 			"trigger": _trigger_from_name(String(item["exit"])),
-			"min": float(item.get("min_hold", min_hold)),
-			"max": float(item.get("max_hold", max_hold))}
+			"min": float(item["min_hold"]) if item.has("min_hold") else min_hold * pacing,
+			"max": float(item["max_hold"]) if item.has("max_hold") else max_hold * pacing}
 	var d := {}
 	if item.has("min_hold"):
 		d["min"] = float(item["min_hold"])
@@ -1264,6 +1534,8 @@ func _make_scene() -> GhostScene:
 
 
 func _exit_tree() -> void:
+	if _pacing_dirty:
+		_save_pacing()          # quitting mid-debounce must not lose the last slider position
 	# Free live scenes so they don't report as leaked when the app quits.
 	if is_instance_valid(_current):
 		_current.queue_free()
