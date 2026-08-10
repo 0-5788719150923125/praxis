@@ -109,6 +109,19 @@ class LearnableTaskLossWeighter(TaskLossWeighter):
         # own param group.
         self.lr_multiplier = float(lr_multiplier)
 
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        # Same tolerance DifficultyTaskLossWeighter has: a checkpoint written
+        # before a TaskType was appended carries a shorter ``raw``, and a plain
+        # load would fail on the size mismatch. Pad with 0.0, which is the init
+        # value and makes the new task's weight exactly its target.
+        key = prefix + "raw"
+        saved = state_dict.get(key)
+        if saved is not None and saved.numel() < self.raw.numel():
+            padded = torch.zeros_like(self.raw)
+            padded[: saved.numel()] = saved
+            state_dict[key] = padded
+        super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
+
     def _effective(self) -> torch.Tensor:
         return 2.0 * self.targets * torch.sigmoid(self.raw)
 

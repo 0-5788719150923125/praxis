@@ -24,6 +24,17 @@ class TaskType(IntEnum):
     # trained through the preference policy's margin loss.
     PREF_CHOSEN = 7
     PREF_REJECTED = 8
+    # Files read off local disk: --data-path directories and the repo-root
+    # `praxis` dataset. Split out of PRETRAIN because the two have opposite
+    # economics. Web-scale pretraining corpora are effectively infinite and
+    # never repeat; a handful of local repos is a few MB that the model sees
+    # again and again within a single epoch. Folded together they shared one
+    # loss-weight line AND one difficulty EMA, so the curriculum could not
+    # tell an unrepeatable token from an overfit one. They are also heavily
+    # oversampled: each --data-path entry is its own sampler (see
+    # praxis/data/utils.py), so 14 directories outnumber the web corpora in
+    # the mix. See BIAS_PRETRAIN_TARGETS for the weight this carries.
+    LOCAL = 9
 
 
 DEFAULT_TASK = TaskType.PRETRAIN

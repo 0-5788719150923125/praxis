@@ -45,6 +45,17 @@ from praxis.tasks.weighter import (
 # can overrule.
 BIAS_PRETRAIN_TARGETS: Dict[str, float] = {
     "pretrain": 1.0,
+    # Local files (--data-path dirs + the repo-root `praxis` dataset) are a few
+    # MB seen over and over, against effectively infinite web pretraining data,
+    # and they are oversampled on top of that - one sampler per directory. 0.1
+    # is deliberately aggressive: under the difficulty weighter's [0.1, 4.0]
+    # clamp the effective weight lands in [0.01, 0.4], so local can never reach
+    # even half of `pretrain` no matter how hard it looks. Note this is doing
+    # double duty under `sampler_mode: tasker`, where a dataset's pull is
+    # `static_weight x task_weight` (manager.py::_compute_weights) - so this
+    # cuts the sampling share too, which is the other half of the problem. The
+    # 0.2 `loss_uniform_mix` floor keeps it from starving outright.
+    "local": 0.1,
     "instruction": 0.3,
     "conversation": 0.3,
     "tool_call": 0.2,

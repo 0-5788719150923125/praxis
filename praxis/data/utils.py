@@ -25,6 +25,7 @@ from praxis.data.datasets.network_retry import (
     is_skippable_load_error,
     reset_hub_session,
 )
+from praxis.tasks import TaskType
 
 
 def get_datamodules(
@@ -275,6 +276,12 @@ def get_dataset(format, tokenizer, seed, *args, **kwargs):
         name = os.path.basename(first.rstrip("/\\")) if first else "custom-files"
         dataset = MultiDirectoryDataset(tokenizer, directories=directories, name=name)
         dataset.weight = DIR_WEIGHT
+        # This branch takes no config dict, so there is nothing for
+        # resolve_task_type to read - assign LOCAL directly. Before this line
+        # existed the sampler kept the base-class DEFAULT_TASK (PRETRAIN) from
+        # PraxisSampler.__init__, which made every --data-path directory
+        # indistinguishable from fineweb to the task weighter.
+        dataset.task_type = int(TaskType.LOCAL)
         return dataset
     elif format == "synthetic-tool-calling":
         dataset_config = args[0] if args else {}

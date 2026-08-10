@@ -370,6 +370,11 @@ DATASETS = {
         type="directory",
         path="./",
         name="praxis",
+        # Same economics as a --data-path directory: one small repo read off
+        # disk and revisited constantly, not unrepeatable web text. Declared
+        # here rather than inferred, because resolve_task_type only reaches
+        # FORMAT_TO_TASK via `format`, which directory entries don't set.
+        task_type="local",
         allowed_extensions=[
             ".bib",
             ".cfg",

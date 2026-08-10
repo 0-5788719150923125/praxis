@@ -100,6 +100,8 @@ class Overlay:
 	const BASE_FS := 30
 	const MIN_FS := 20
 	const MAX_LINES := 3
+	## The frame height every hard-coded pixel below is expressed against.
+	const REF_H := 1080.0
 	# The colour is a GRADIENT keyed on the CHARACTER index across the whole
 	# sentence, not the word - so a band of hue drifts through the text spanning
 	# several words at once, and the reader can watch it flow rather than catch
@@ -132,23 +134,31 @@ class Overlay:
 		var font := get_theme_default_font()
 		var vp := get_viewport_rect().size
 		var max_w := vp.x * 0.92
+		# EVERY PIXEL NUMBER BELOW IS RELATIVE TO A 1080-TALL FRAME. The export renders at a
+		# multiple of the delivered size and lets ffmpeg resolve it back down (that supersample is
+		# ghost's only antialiasing - see exporter.QUALITIES), so a subtitle sized in literal
+		# pixels came out 1/1.5 as large in the file as it looks in the viewer. Sizing off the
+		# viewport instead makes the type occupy the same FRACTION of the frame at any render
+		# resolution, which is what "the same size" actually means.
+		var k := vp.y / float(REF_H)
 		# wrap first, shrink only as a last resort
-		var fs := BASE_FS
+		var fs := int(round(BASE_FS * k))
+		var min_fs := int(round(MIN_FS * k))
 		var lines := _wrap(line_words, font, fs, max_w)
-		while lines.size() > MAX_LINES and fs > MIN_FS:
-			fs -= 2
+		while lines.size() > MAX_LINES and fs > min_fs:
+			fs -= maxi(1, int(round(2.0 * k)))
 			lines = _wrap(line_words, font, fs, max_w)
-		var lh := float(fs) + 12.0
+		var lh := float(fs) + 12.0 * k
 		# the harmonic hue is now the BASE the gradient rides from, not the one
 		# colour of the whole line - each glyph turns off it by its position and
 		# by time (see _glyph_color)
 		var base_hue := _harmonic_hue()
 		var now := owner_node._now()
-		var gap := 14.0
+		var gap := 14.0 * k
 		# the cursor as a CHARACTER position within this sentence, so the lit
 		# front and the lingering trail are both measured in glyphs, not words
 		var ccur: float = _char_cursor(line_words)
-		var y: float = vp.y - 70.0 - (lines.size() - 1) * lh
+		var y: float = vp.y - 70.0 * k - (lines.size() - 1) * lh
 		# THE PLATE: scenes range from black voids to white-hot fields, so
 		# colour alone can never keep text legible. Each line gets a rounded
 		# dark plate sized to its own width (a full-width band would read as
@@ -159,12 +169,12 @@ class Overlay:
 			var total := -gap
 			for item in row:
 				total += item.w + gap
-			var pad := 12.0
-			var plate := Rect2((vp.x - total) * 0.5 - pad, y - float(fs) - 4.0,
-				total + pad * 2.0, lh + 2.0)
+			var pad := 12.0 * k
+			var plate := Rect2((vp.x - total) * 0.5 - pad, y - float(fs) - 4.0 * k,
+				total + pad * 2.0, lh + 2.0 * k)
 			draw_rect(plate, Color(0.04, 0.04, 0.05, 0.72), true)
 			y += lh
-		y = vp.y - 70.0 - (lines.size() - 1) * lh
+		y = vp.y - 70.0 * k - (lines.size() - 1) * lh
 		# the pen advances glyph by glyph so the gradient can turn WITHIN a word,
 		# and so a spoken glyph keeps its own lingering colour independent of its
 		# neighbours - the whole reason to key on characters instead of words
@@ -183,7 +193,7 @@ class Overlay:
 					var col := _glyph_color(base_hue, ci + ch, ccur, now)
 					# the shadow, under every state - the edge that survives a
 					# bright frame bleeding past the plate
-					draw_string(font, pos + Vector2(1.5, 1.5), glyph,
+					draw_string(font, pos + Vector2(1.5 * k, 1.5 * k), glyph,
 						HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0, 0, 0, 0.85))
 					draw_string(font, pos, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
 					x += cw
