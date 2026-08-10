@@ -100,6 +100,26 @@ What every scene is built on: the `GhostScene` base, the camera, framing pools, 
 - [`flow.gd`](../scripts/flow.gd) **Flow2D** - a divergence-free curl-noise vector field.
 - [`filament.gd`](../scripts/filament.gd) **Filament** - an organic growing path: root, tendril, lightning, or thread.
 - [`swarm.gd`](../scripts/swarm.gd) **Swarm** - a scalar field over a grid that evolves by *local* rules.
+- [`sim_clock.gd`](../scripts/sim_clock.gd) **SimClock** - a fixed-rate tick accumulator for scenes that run a SIMULATION.
+
+### Generative form
+
+Self-contained generators a scene composes rather than hand-models - each one samples a space of shapes from a seed and hands back plain geometry. The `cattle, not pets` discipline, made into parts.
+
+- [`crystal.gd`](../scripts/crystal.gd) **Crystal** - a BANK of snow crystals, generated once from sampled morphology.
+- [`glyphs.gd`](../scripts/glyphs.gd) **GlyphSet** - a seeded alphabet of invented characters, baked as pen-ready ink.
+- [`wallpaper_group.gd`](../scripts/wallpaper_group.gd) **WallpaperGroup** - the seventeen plane symmetry groups, as a table plus an enumerator.
+- [`branch3d.gd`](../scripts/branch3d.gd) **Branch3D** - a bracketed L-system that emits segments in THREE dimensions, plus the tapered-tube loft that turns them into drawable faces.
+- [`contour.gd`](../scripts/contour.gd) **Contour** - isolines out of a sampled field, and the vocabulary a technical sheet is annotated with.
+
+### Simulation substrates
+
+Running physical systems whose STATE is the picture, rather than drawings of one: a granular automaton, a flock with a spatial hash, a plate's standing waves, and a water surface.
+
+- [`grains.gd`](../scripts/grains.gd) **Grains** - a cellular automaton of MATTER: one material per cell, moved by local rules.
+- [`boids.gd`](../scripts/boids.gd) **Boids** - a flock that decides together, over packed arrays and a uniform grid hash.
+- [`plate_field.gd`](../scripts/plate_field.gd) **PlateField** - the standing-wave field of a driven plate, baked onto a grid.
+- [`wave_field.gd`](../scripts/wave_field.gd) **WaveField** - an analytic water surface: a sum of Gerstner components carrying its own closed-form gradient.
 
 ### Rendering & performance
 
@@ -190,4 +210,4 @@ The in-app authoring loop: capture reproducible critiques, browse them, and disp
 - [`feedback.gd`](../scripts/feedback.gd) **FeedbackConsole** - the authoring feedback channel.
 - [`assistant.gd`](../scripts/assistant.gd) **Assistant** - the feedback browser, and (opt-in) tight Claude Code integration.
 
-Scene scripts (45) are catalogued separately in [scenes.md](scenes.md).
+Scene scripts (55) are catalogued separately in [scenes.md](scenes.md).

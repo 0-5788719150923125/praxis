@@ -145,6 +145,58 @@ func setup(sr: int) -> void:
 	_rng.seed = pad_seed
 
 
+## Teach the pad its key BEFORE processing, from a buffer that has not been heard yet.
+##
+## The pad is an independent instrument but a key-SLAVED one: `_tonic` is derived from
+## the tracked pitch of the voice, two octaves down, and `_start_tone` refuses to
+## schedule anything while it is zero. That is exactly right in the steady state and
+## exactly wrong at the head of a take, because a leading silence has no pitch - the
+## estimator returns 0 on any window under its energy floor - so a bed asked to play
+## over an intro would sit mute through all of it and only fade up once the narration
+## it was supposed to introduce had already begun.
+##
+## So: scan forward for the first genuinely voiced window, take its pitch, and set the
+## tonic directly. One pass over at most a few seconds of audio, and it does not touch
+## the resonators or the echo line, so the chain is still cold when [method process]
+## starts. The glide in `process` then carries the key onward as the reader moves.
+##
+## The resonance deliberately gets no equivalent. It is a sympathetic bank excited only
+## by the dry signal, so it has nothing to ring from until the voice arrives, and
+## priming it would be inventing an excitation that was never played.
+func prime_key(buf: PackedFloat32Array) -> void:
+	if _track.is_empty():
+		setup(sample_rate)
+	var win := _track.size()
+	if win <= 0 or buf.size() < win:
+		return
+	# SKIP THE SILENCE CHEAPLY FIRST. The buffer this is called on opens with the whole
+	# intro of digital zeros, and the intro is the thing that is several seconds long -
+	# so a scan that starts at sample 0 and gives up after a fixed couple of seconds
+	# examines nothing but the padding and always comes back empty. (It did. The pad
+	# stayed silent through the entire intro and the measurement is what caught it.)
+	# A scalar amplitude test costs one compare per sample and finds the voice exactly.
+	var first := -1
+	for i in buf.size():
+		if absf(buf[i]) > 0.004:
+			first = i
+			break
+	if first < 0:
+		return                                  # the whole take is silent
+	# From there, two seconds is generous: it is four times the longest gap the
+	# scheduler leaves before its first tone, and bounding it keeps a 20-minute chapter
+	# off the critical path.
+	var limit := mini(buf.size() - win, first + int(2.0 * float(sample_rate)))
+	var pos := first
+	while pos <= limit:
+		var chunk := buf.slice(pos, pos + win)
+		var f := _estimate_pitch(chunk)
+		if f > 0.0:
+			_pitch = f
+			_tonic = f * 0.25
+			return
+		pos += win
+
+
 ## Process in place. `buf` is mono float samples; returns the same array so the
 ## copy-on-write semantics of PackedFloat32Array cannot silently drop the work.
 func process(buf: PackedFloat32Array) -> PackedFloat32Array:

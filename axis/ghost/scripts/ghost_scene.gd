@@ -239,6 +239,40 @@ static func fill_aa_on(ci: CanvasItem, pts: PackedVector2Array, col: Color, widt
 	ci.draw_polyline(ring, col, width, true)
 
 
+## Flood the whole frame with one bright, flat ground - the HIGH-KEY counterpart to
+## [Layer]'s `bed`, and the thing that makes a light scene possible at all.
+##
+## `bed` cannot do this, and not by accident: it paints top / middle / bottom at
+## val*0.5, val*1.0 and val*0.35 around a default val of 0.32, so its brightest
+## possible pixel is a mid tone and its edges are always darker than its centre. That
+## is exactly right for a luminous subject floating in a dark frame, which is what 29
+## of the catalogue's scenes are. It is exactly wrong for paper, daylight, or water
+## seen from above, where the ground IS the subject and must read as flat and bright.
+##
+## Three deliberate differences from `bed`:
+##   FLAT, not vignetted. A survey sheet has no gradient toward its corners; the
+##   moment it does, it reads as a spotlight on paper rather than as paper.
+##   PLAIN FILL, never fill_aa. The antialiased variant strokes the outline on top of
+##   the fill, and on a full-frame quad that rim lands exactly on the frame edge - a
+##   bright hairline all the way round. There is no silhouette here worth smoothing.
+##   OVERSIZED. Same 1.15 overdraw the layers get, so camera drift never exposes a
+##   corner. Call it FIRST in _draw, right after begin_draw.
+##
+## [param tint] is a gentle audio-driven wash toward the accent, applied at low
+## strength - a bright scene reacts by shifting temperature, not by dimming, because
+## dimming a high-key frame just makes it look broken.
+func paint_ground(hue: float, sat := 0.06, val := 0.94, tint := 0.0, tint_hue := 0.0) -> void:
+	var h := hue
+	if tint > 0.001:
+		var d := tint_hue - hue
+		h = fposmod(hue + (d - round(d)) * clampf(tint, 0.0, 1.0) * 0.5, 1.0)
+	var col := Color.from_hsv(fposmod(h, 1.0), clampf(sat, 0.0, 1.0), clampf(val, 0.0, 1.0))
+	var x := size.x * 0.5 * 1.15 / maxf(0.001, view.zoom_actual())
+	var y := size.y * 0.5 * 1.15 / maxf(0.001, view.zoom_actual())
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(-x, -y), Vector2(x, -y), Vector2(x, y), Vector2(-x, y)]), col)
+
+
 ## The shorter screen axis - use it to size geometry independent of aspect.
 func unit() -> float:
 	return minf(size.x, size.y)

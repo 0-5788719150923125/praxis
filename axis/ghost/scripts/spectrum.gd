@@ -54,6 +54,66 @@ var _tap: AudioEffectCapture          # the LIVE_TAP recorder (see the const)
 var _tap_ring := PackedFloat32Array()
 var _tap_pos := 0
 var _tap_filled := 0
+## THE BOOKEND - held silence before the content and after it.
+##
+## A show used to begin on its first sample and end on its last, which reads as abrupt
+## however gracefully the picture fades: [method Director._bookend_fade] eases the
+## image up from black over the opening seconds, but those are the opening seconds OF
+## THE NARRATION, so the first words are spoken behind a dark screen and the last are
+## still landing as it goes out. Nothing was ever added to the timeline.
+##
+## These two add it. [member lead_in] holds playback for that many seconds while the
+## session clock runs anyway; [member tail] keeps the session alive that long after the
+## audio ends, before [signal song_finished] is emitted.
+##
+## THE CLOCK IS THE WHOLE DESIGN. [member current].time reads `_hold` during the hold,
+## `lead_in + playback_position` while playing, and `lead_in + length + _tail_t` during
+## the tail - ONE continuous timeline across all three. That is not a convenience; it is
+## what makes everything downstream correct for free. The bookend fade, Echo's cursor,
+## the subtitle time base and the exporter's progress all read this clock, and the
+## obvious alternative - simply delaying `play()` - DOUBLE-FADES, because during the
+## hold `time` would be the idle clock ramping the fade up, and then `play()` snaps it
+## back to zero and it fades from black a second time.
+##
+## Why not simply write silence into the audio file, which sounds simpler: the session
+## seed is derived from the audio's own fingerprint, so padding the file makes the same
+## script render a DIFFERENT show, and it invalidates the spectrum bake cache. It also
+## could not work for auto mode, where the song belongs to the user.
+var lead_in := 0.0
+var tail := 0.0
+
+## Whether the loaded audio ALREADY CONTAINS the bookend silence.
+##
+## Two mechanisms are needed, because the two modes own their audio differently:
+##
+##   AUTO / MANUAL play a song that belongs to the user and must not be rewritten, so
+##   the hold is performed here at playback time and the intro is genuinely silent.
+##
+##   SYNTHESIS renders its own take, so the silence is written INTO the PCM - and that
+##   is strictly better there, because the ambience pad is a filter over the buffer:
+##   given real samples to write into, it swells during the intro and the analyzer
+##   HEARS it, so the scenes have something to move to instead of idling through a
+##   dead five seconds. A held player cannot produce that; there is nothing to filter.
+##
+## When this is true the clock needs no offset (the file's own position already spans
+## the bookend) and playback must not be held or deferred - but [member lead_in] and
+## [member tail] are still set, because the fade windows are read from them.
+var bookend_baked := false
+
+## Seconds over which the AUDIO is ramped in and out, alongside the picture. Applied to
+## the MASTER BUS rather than the player, deliberately: the analyzer is a bus EFFECT and
+## runs BEFORE the bus's output volume, so a master ramp is heard and recorded without
+## dimming what the scenes see. Fading the player instead would dim the visuals a second
+## time on top of the bookend's own fade, and the picture would sink twice as fast as
+## the sound.
+var fade_audio := true
+
+var _hold := 0.0                # counts up through the lead-in
+var _held := false              # lead-in running: the player has NOT been started yet
+var _tail_t := 0.0              # counts up through the tail
+var _tailing := false           # audio has ended; running out the tail before signalling
+var _bus_db := 0.0              # master trim we applied, so it can be put back exactly
+
 var _has_audio := false
 var _idle_time := 0.0
 var _override_path := ""        # song chosen on the splash; wins over CLI/default
@@ -116,7 +176,20 @@ func begin(path := "") -> void:
 				push_warning("ghost: bake file missing/empty: %s" % bake_file)
 		elif OS.get_cmdline_user_args().has("--use-bake"):
 			_bake()                              # direct-CLI fallback (bakes in-process)
-		_player.play()
+		# A synthesis take writes its own bookend into its PCM (so the ambience pad has
+		# real samples to swell into) and records the fact in its sidecar. Believe the
+		# file over the request: holding playback for a file that already opens with
+		# five seconds of silence would give ten.
+		_adopt_baked_bookend()
+		# The lead-in holds the FIRST SAMPLE, not the session: the clock below starts
+		# running immediately, so scenes animate and the picture fades up through the
+		# hold. _process starts playback when the hold is spent.
+		_hold = 0.0
+		_tail_t = 0.0
+		_tailing = false
+		_held = lead_in > 0.001 and not bookend_baked
+		if not _held:
+			_player.play()
 
 
 # Pre-analyze the loaded song into a spectrum timeline (export render only). Blocks
@@ -261,11 +334,91 @@ func stop() -> void:
 	_stream_length = 0.0
 	song_hash = 0
 	current = AudioFeatures.new()
+	# Put the master back where we found it. The bookend trims a GLOBAL bus, so a
+	# session that ended mid-fade would otherwise hand the next one a quiet mixer -
+	# and on the home screen there is nothing playing to make that audible until it
+	# is far too late to work out why.
+	_held = false
+	_tailing = false
+	_hold = 0.0
+	_tail_t = 0.0
+	if absf(_bus_db) > 0.0001:
+		_bus_db = 0.0
+		AudioServer.set_bus_volume_db(0, 0.0)
 
 
 func _on_player_finished() -> void:
-	if _has_audio:
-		song_finished.emit()
+	if not _has_audio:
+		return
+	# Run the tail out before telling anyone the song ended - the export quits on this
+	# signal (main.gd), so the deferral IS the outro. Godot's movie writer records the
+	# audio bus, so the held silence is captured with the picture and the two stay
+	# locked without any container-level padding.
+	if tail > 0.001 and not bookend_baked and not _tailing:
+		_tailing = true
+		_tail_t = 0.0
+		return
+	song_finished.emit()
+
+
+## Read the loaded take's sidecar and adopt the bookend it was rendered with, if any.
+##
+## The sidecar is the same JSON the karaoke subtitles come from, so this costs one small
+## file read on a path that already existed. A take that carries `bookend` was padded at
+## render time and its word timings are ALREADY shifted to match, which is why this sets
+## `bookend_baked` rather than trying to reconcile two offsets.
+func _adopt_baked_bookend() -> void:
+	bookend_baked = false
+	if _loaded_path.is_empty():
+		return
+	var side := _loaded_path.get_basename() + ".json"
+	if not FileAccess.file_exists(side):
+		return
+	var parsed = JSON.parse_string(FileAccess.get_file_as_string(side))
+	if typeof(parsed) != TYPE_DICTIONARY:
+		return
+	var bk = (parsed as Dictionary).get("bookend")
+	if typeof(bk) != TYPE_DICTIONARY:
+		return
+	lead_in = maxf(0.0, float((bk as Dictionary).get("in", 0.0)))
+	tail = maxf(0.0, float((bk as Dictionary).get("out", 0.0)))
+	bookend_baked = lead_in > 0.001 or tail > 0.001
+
+
+## How far the session clock runs AHEAD of the player's own position. Zero when the
+## bookend is baked into the file, because then the file's position already spans it.
+func _clock_offset() -> float:
+	return 0.0 if bookend_baked else lead_in
+
+
+## The audio's own length, without the bookend - what the player is actually playing.
+func _content_length() -> float:
+	if _streaming:
+		return _stream_length
+	if _has_audio and _player != null and _player.stream != null:
+		return _player.stream.get_length()
+	return 0.0
+
+
+## Ramp the master bus in over the lead-in and out over the tail, so the sound arrives
+## and leaves with the picture. Equal-power rather than linear: a linear ramp on a
+## sustained bed audibly dips through its middle, because perceived loudness follows
+## roughly the square root of power.
+func _apply_bookend_gain(t: float) -> void:
+	if not _has_audio:
+		return
+	var g := 1.0
+	if lead_in > 0.001:
+		g = minf(g, clampf(t / lead_in, 0.0, 1.0))
+	if tail > 0.001:
+		var total := song_length()
+		if total > 0.0:
+			g = minf(g, clampf((total - t) / tail, 0.0, 1.0))
+	var want := -80.0 if g <= 0.0005 else linear_to_db(sqrt(g))
+	if absf(want - _bus_db) < 0.05:
+		return
+	_bus_db = want
+	AudioServer.set_bus_volume_db(0, want)
 
 
 ## The filesystem path of the song actually loaded (or "" if idle). The exporter
@@ -277,11 +430,16 @@ func audio_path() -> String:
 ## Length of the loaded song in seconds (0 when idle / unknown). The exporter uses
 ## it with the playback position ([member current].time) to know it is near the end.
 func song_length() -> float:
-	if _streaming:
-		return _stream_length            # 0 until the take finishes synthesizing
-	if _has_audio and _player != null and _player.stream != null:
-		return _player.stream.get_length()
-	return 0.0
+	# The WHOLE timeline, bookend included, because that is the clock `current.time`
+	# runs on. Everything that compares a position against this - the bookend fade,
+	# Echo's arc roll, the exporter's percentage - would be wrong by the bookend
+	# otherwise, and the fade in particular would go to black before the tail.
+	var content := _content_length()
+	if content <= 0.0:
+		return 0.0                       # streaming and not yet measured: unknown
+	if bookend_baked:
+		return content                   # the file already spans the bookend
+	return lead_in + content + tail
 
 
 ## The current perceptual harmonic descriptor (12 chroma + coarse shape, normalised). For
@@ -403,16 +561,37 @@ func _process(delta: float) -> void:
 
 	var f := AudioFeatures.new()
 
+	# --- the bookend clock (see lead_in / tail) ---
+	# Held silence counts as session time so the picture can fade up through it, but the
+	# bands stay zero, which is what the intro is FOR: the scenes idle, the Director's
+	# cut trigger sits under its silence floor and holds one shot, and nothing lurches.
+	if _held:
+		_hold += delta
+		if _hold >= lead_in:
+			_player.play()
+			_held = false
+	elif _tailing:
+		_tail_t += delta
+		if _tail_t >= tail:
+			_tailing = false
+			song_finished.emit()
+
 	if _has_audio and _player.playing:
-		f.time = _player.get_playback_position()
+		f.time = _clock_offset() + _player.get_playback_position()
 		if _baked:
 			_fill_bands_baked(f)
 		else:
 			_fill_bands(f)
+	elif _held or _tailing:
+		# Bookend silence: the clock is continuous with the playing branch above, so
+		# nothing downstream can tell the difference except that it is quiet.
+		f.time = _hold if _held else lead_in + _content_length() + _tail_t
 	else:
 		_idle_time += delta
 		f.time = _idle_time
 		# bands stay zero; scenes idle-animate on f.time
+	if fade_audio:
+		_apply_bookend_gain(f.time)
 
 	# Overall energy: mean of the spectrum, lightly smoothed.
 	var sum := 0.0

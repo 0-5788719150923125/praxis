@@ -72,12 +72,57 @@ const ABBREV := {
 const CURRENCY := {"$": "dollars", "£": "pounds", "€": "euros", "¥": "yen"}
 
 
-## The entry point. Fold, expand, and hand back plain ASCII words.
+## The entry point. Strip markup, fold, expand, and hand back plain ASCII words.
 static func normalize(text: String) -> String:
-	var s := _fold(text)
+	var s := _strip_markdown(text)
+	s = _fold(s)
 	s = _expand_numbers(s)
 	s = _expand_abbrev(s)
 	return s
+
+
+## Remove Markdown's own punctuation, which is TYPOGRAPHY and must never be spoken.
+##
+## Found by auditing a real manuscript: scripts arrive as `.md` files, and an emphasis
+## marker is not silent to a phonemizer - it is a WORD. Measured, eSpeak returns
+##   "*I will never hurt you*"  ->  "ASTERISK I will never hurt you ASTERISK"
+##   "**bold** word"            ->  "asteriskasterisk bold asteriskasterisk word"
+## which is not a mispronunciation but a whole extra spoken word at each end of every
+## emphasised phrase, and there were three chapters full of them. Nothing anywhere
+## warned about it; it would simply have been read aloud that way.
+##
+## Underscore emphasis is left alone deliberately - eSpeak already drops `_like this_`
+## correctly, and stripping underscores here would damage identifiers a technical book
+## legitimately quotes.
+static func _strip_markdown(text: String) -> String:
+	var out := ""
+	var at_line_start := true
+	var i := 0
+	while i < text.length():
+		var c := text[i]
+		if c == "\n":
+			at_line_start = true
+			out += c
+			i += 1
+			continue
+		# Heading hashes and blockquote arrows, but only where they are structural -
+		# at the head of a line. A `#` inside a sentence usually means "number", and a
+		# `>` usually means "greater than"; neither should be touched there.
+		if at_line_start and (c == "#" or c == ">"):
+			while i < text.length() and (text[i] == "#" or text[i] == ">" or text[i] == " "):
+				i += 1
+			continue
+		if c != " " and c != "\t":
+			at_line_start = false
+		# Emphasis, strikethrough and inline code. Dropped outright rather than folded to
+		# a break: they mark a span, they do not mark a pause, and turning them into
+		# commas would put rests where the writing has none.
+		if c == "*" or c == "`" or c == "~":
+			i += 1
+			continue
+		out += c
+		i += 1
+	return out
 
 
 static func _fold(text: String) -> String:

@@ -68,6 +68,17 @@ func snap() -> void:
 	_bias_zoom = bias_zoom
 
 
+## The zoom actually in force this frame - the eased value with the transition bias and
+## the stinger punch folded in, i.e. exactly the scale [method matrix] will apply.
+##
+## A scene that must cover the WHOLE frame whatever the camera is doing (a full-bleed
+## ground; see GhostScene.paint_ground) needs this: at zoom z, the visible half-extent
+## in the scene's own coordinates is size * 0.5 / z, so a quad sized off the raw
+## viewport falls short the moment the camera pulls back.
+func zoom_actual() -> float:
+	return _zoom * _bias_zoom * pulse_zoom
+
+
 ## The transform a scene pushes at the top of _draw, for the given viewport size.
 func matrix(size: Vector2) -> Transform2D:
 	var origin := size * 0.5 + (_off + _bias_off) * size

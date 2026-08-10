@@ -235,15 +235,28 @@ static func parse(text: String) -> Array:
 		# stayed empty, and every line of dialogue lost its terminal contour and
 		# its pause. Strip wrappers, then terminal punctuation, then any wrapper
 		# the punctuation was hiding.
-		bare = bare.lstrip("\"'(").rstrip("\"')")
-		while bare.length() > 0 and bare[bare.length() - 1] in ".,!?;:\n":
-			var c := bare[bare.length() - 1]
-			pause = "stop" if c in ".!?\n" else "comma"
-			if punct.is_empty() and c != "\n":
-				punct = c            # the terminal mark drives the contour (?, !, .)
-			bare = bare.substr(0, bare.length() - 1)
-		bare = bare.to_lower().strip_edges()
-		bare = bare.lstrip("\"'(").rstrip("\"')")
+		# ... and it has to REPEAT, which the two-pass version above did not. A token can
+		# interleave wrappers and marks - `know."` followed by a line break arrives as
+		# `know."\n` - and one pass of each peels the newline, stops at the quote, then
+		# peels the quote and leaves the FULL STOP welded to the word. Measured on the
+		# manuscript: `you.`, `week.`, `dog.`, `free.`, `window.` and a dozen more reached
+		# the dictionary with a period attached, which means they missed it - and any such
+		# word would also have missed the homograph table, so `record."` at the end of a
+		# line of dialogue would have been read as the noun whatever the sentence said.
+		# Peel to a fixpoint instead.
+		while true:
+			var before := bare
+			bare = bare.lstrip("\"'(").rstrip("\"')")
+			while bare.length() > 0 and bare[bare.length() - 1] in ".,!?;:\n":
+				var c := bare[bare.length() - 1]
+				pause = "stop" if c in ".!?\n" else "comma"
+				if punct.is_empty() and c != "\n":
+					punct = c            # the terminal mark drives the contour (?, !, .)
+				bare = bare.substr(0, bare.length() - 1)
+			bare = bare.strip_edges()
+			if bare == before:
+				break
+		bare = bare.to_lower()
 		# %HESITATION (the ASR transcript token for a filled pause): an authored
 		# "um" - low, flat, reduced. Shows as an ellipsis in the karaoke.
 		if bare.begins_with("%"):
@@ -370,6 +383,7 @@ const DATA_PATH := "res://data/english.yml"
 const CMUDICT_PATH := "res://data/cmudict.dict"
 
 static var _lexicon := {}                 # our overrides (data/english.yml)
+static var _names := {}                   # invented words / proper nouns (data/english.yml `names:`)
 static var _cmu := {}                     # word -> raw "F AA1 DH ER0"
 static var _clitics := {}
 static var _function_words := {}
@@ -407,6 +421,14 @@ static func _load_data() -> void:
 		# high-frequency words (about, because, before, between, again ...) the
 		# moment CMUdict arrived. An override must be able to carry stress.
 		_lexicon[String(w)] = String(data.lexicon[w])
+	# NAMES - words no dictionary has, and the neural backend's own guess is wrong for.
+	# Kept apart from `lexicon` because they are resolved differently: a lexicon entry
+	# only reaches the PROCEDURAL voice, since the neural path sends text to eSpeak and
+	# uses ghost's own phones for a word only when it is marked `literal`. An invented
+	# proper noun has to beat eSpeak, so these are loaded into the same table the
+	# homograph resolver writes through, which sets that flag.
+	for nm in (data.get("names", {}) as Dictionary):
+		_names[String(nm).to_lower()] = String(data.names[nm])
 	for fw in (data.get("function_words", []) as Array):
 		_function_words[String(fw)] = true
 	for c in (data.get("clitics", {}) as Dictionary):
@@ -527,6 +549,53 @@ static func _with_default_stress(phones: Array) -> Dictionary:
 		if is_v:
 			seen = true
 	return {"phones": phones.duplicate(), "stress": stress}
+
+
+## Is this word ANSWERED, or is the front end guessing at it?
+##
+## The distinction the audit tool turns on. Everything below is a real answer from a real
+## source; anything else falls through to the letter-to-sound rules, which are
+## deliberately 1980s technology and will mispronounce an invented word or an unusual
+## proper noun without any indication that they have. A hyphenated compound counts as
+## known when every part of it is, since the tokenizer splits it before it ever reaches
+## the rules, and a plural or possessive of a known stem is handled by the morphology
+## step rather than by guessing.
+static func is_known(word: String) -> bool:
+	_load_data()
+	var w := word.to_lower().strip_edges()
+	if w.is_empty():
+		return true
+	if _names.has(w) or _lexicon.has(w) or _cmu.has(w) or EXCEPTIONS.has(w):
+		return true
+	if w.contains("-"):
+		for part in w.split("-", false):
+			if not is_known(String(part)):
+				return false
+		return true
+	# A PRODUCTIVE AFFIX IS NOT AN UNKNOWN WORD. `unmaking`, `watchmaker's` and
+	# `reproducible` are not gaps in the dictionary, they are regular English built out
+	# of parts the dictionary has - and both this front end and eSpeak's letter-to-sound
+	# rules handle them correctly. Reporting them as risks buries the two or three words
+	# that genuinely are risks under a hundred that are not, which is how an audit gets
+	# ignored. One level of stripping at each end is enough for ordinary prose.
+	for suf in ["'s", "s'", "es", "ed", "ing", "er", "est", "ly", "ness", "ment", "ful",
+			"able", "ible", "ist", "ism", "s", "'"]:
+		if w.length() > suf.length() + 2 and w.ends_with(suf):
+			var stem := w.substr(0, w.length() - suf.length())
+			if _known_stem(stem) or _known_stem(stem + "e"):
+				return true
+	for pre in ["un", "re", "non", "pre", "mid", "over", "under", "anti", "de", "dis",
+			"mis", "sub", "inter", "counter", "self"]:
+		if w.length() > pre.length() + 2 and w.begins_with(pre):
+			if is_known(w.substr(pre.length())):
+				return true
+	return false
+
+
+## A stem answered outright, without recursing back through the affix stripping (which
+## would let a word validate itself through an unbounded chain of prefixes).
+static func _known_stem(stem: String) -> bool:
+	return _cmu.has(stem) or _lexicon.has(stem) or _names.has(stem) or EXCEPTIONS.has(stem)
 
 
 ## One lowercase word -> phoneme keys: lexicon, then suffixes, then letter rules.
@@ -826,6 +895,28 @@ static func _is_dash(t: String) -> bool:
 ##
 ## Add sparingly and only where eSpeak is measurably wrong: a bad rule here mispronounces a word
 ## that was previously fine, which is worse than the occasional homograph.
+# Shared by `record` / `records`, which take the same contexts. Named constants rather than
+# two inline copies, so the pair can never drift apart.
+#
+#   VERB_PREV - a subject pronoun, modal, or infinitive marker: only a verb can follow.
+#   VERB_NEXT - a determiner or quantifier opening an OBJECT, so the word is transitive.
+#   NOUN_PREV - a determiner or preposition directly before it, which always makes it a noun
+#               ("for the record", "on record"). Vetoes VERB_NEXT, so "the record a clerk
+#               kept" does not switch on that "a".
+const _RECORD_VERB_PREV := ["i", "we", "they", "you", "he", "she", "who", "to", "will",
+	"would", "shall", "should", "can", "could", "cannot", "must", "may", "might",
+	"do", "does", "did", "don't", "didn't", "never", "not", "also", "please", "let",
+	"help", "helps", "helped", "carefully", "dutifully", "faithfully"]
+const _RECORD_VERB_NEXT := ["a", "an", "the", "no", "every", "each", "all", "any", "some",
+	"this", "that", "these", "those", "his", "her", "its", "their", "our", "my", "your",
+	"it", "them", "him", "everything", "nothing", "what", "how", "only", "both",
+	"more", "less", "fewer", "several", "many", "much",
+	"two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"]
+const _RECORD_NOUN_PREV := ["the", "a", "an", "this", "that", "these", "those", "his", "her",
+	"its", "their", "my", "your", "our", "every", "each", "one", "another", "same",
+	"new", "old", "world", "official", "public", "written", "permanent", "track",
+	"on", "off", "for", "of", "in", "into", "by", "with", "at", "from", "without"]
+
 const SPEAK_AS := {
 	"lives": {
 		"base": "L IH1 V Z",       # the VERB - "a prisoner lives here"
@@ -835,6 +926,38 @@ const SPEAK_AS := {
 			"two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
 			"young", "past"],
 		"alt_next": ["were", "are", "of", "matter", "lost", "hang", "depend"],
+	},
+	# RECORD. The same failure as `lives`, found the same way: eSpeak reads the VERB as the NOUN
+	# whenever the subject is a plural noun rather than a pronoun, because it parses "<noun>
+	# record" as a compound. Measured -
+	#   "They record no discrepancy."         -> ɹᵻkˈɔːɹd   correct (verb)
+	#   "He records everything."              -> ɹᵻkˈɔːɹdz  correct (verb)
+	#   "The ledgers record no discrepancy."  -> ɹˈɛkɚd     WRONG  (noun)
+	#   "The ledger records no discrepancy."  -> ɹˈɛkɚdz    WRONG  (noun)
+	#   "Historians record the year."         -> ɹˈɛkɚd     WRONG  (noun)
+	#
+	# Every noun context it already gets right ("the record shows", "a record of", "record
+	# player", "she broke the record") returns ɹˈɛkɚd, and `base` here maps through
+	# arpabet.to_symbols to exactly ɹˈɛkɚd - so a rule that does NOT fire changes nothing.
+	# That is the safety property: this can only ever alter the reading it fires on.
+	#
+	# The switch is keyed to what FOLLOWS, because a transitive verb takes an object - a
+	# determiner or quantifier after the word means it is being DONE, not held. `keep_prev`
+	# vetoes the one construction that test would otherwise fool ("the record a clerk kept"),
+	# since a determiner or preposition directly before the word always makes it the noun.
+	"record": {
+		"base": "R EH1 K ER0 D",      # the NOUN - "the record shows", "a record of"
+		"alt": "R IH0 K AO1 R D",     # the VERB - "the ledgers record no discrepancy"
+		"alt_prev": _RECORD_VERB_PREV,
+		"alt_next": _RECORD_VERB_NEXT,
+		"keep_prev": _RECORD_NOUN_PREV,
+	},
+	"records": {
+		"base": "R EH1 K ER0 D Z",
+		"alt": "R IH0 K AO1 R D Z",
+		"alt_prev": _RECORD_VERB_PREV,
+		"alt_next": _RECORD_VERB_NEXT,
+		"keep_prev": _RECORD_NOUN_PREV,
 	},
 	# HUMS. eSpeak spells these out instead of humming them - measured, it returns
 	#   "hmm" -> həm ("hem"),  "hm" -> ˌeɪtʃˈɛm ("aitch em"),  "mmm" -> ˌɛmˌɛmˈɛm ("em em em").
@@ -864,13 +987,31 @@ static func _resolve_homographs(sentences: Array) -> void:
 		for i in sent.size():
 			var w: Dictionary = sent[i]
 			var key := String(w.get("text", "")).to_lower()
-			if not SPEAK_AS.has(key) or bool(w.get("literal", false)):
-				continue                      # an authored [L IH V Z] outranks the table
+			if bool(w.get("literal", false)):
+				continue                      # an authored [L IH V Z] outranks every table
+			# A NAME beats everything else here. These are words no dictionary holds -
+			# invented ones, coined ones, proper nouns - so there is no reading to weigh
+			# them against; whatever the file says is simply what they are called.
+			if _names.has(key):
+				var nm := _parse_cmu(String(_names[key]))
+				w["phones"] = nm.phones
+				w["stress"] = nm.stress
+				w["literal"] = true
+				continue
+			if not SPEAK_AS.has(key):
+				continue
 			var rule: Dictionary = SPEAK_AS[key]
 			var prev := String(sent[i - 1].get("text", "")).to_lower() if i > 0 else ""
 			var nxt := String(sent[i + 1].get("text", "")).to_lower() if i + 1 < sent.size() else ""
 			# An entry with no `alt` is a plain override: one reading, always.
-			var alt: bool = rule.has("alt") \
+			#
+			# `keep_prev` is a VETO, checked first and beating both alt lists. Without it a
+			# rule keyed to the following word cannot tell "the ledgers record a loss" (verb)
+			# from "the record a clerk kept" (noun) - the word after is "a" in both. A
+			# determiner or preposition immediately before the word settles it, so that case
+			# is answered by the left neighbour and never reaches the right one.
+			var vetoed: bool = (rule.get("keep_prev", []) as Array).has(prev)
+			var alt: bool = rule.has("alt") and not vetoed \
 				and ((rule.get("alt_prev", []) as Array).has(prev) \
 					or (rule.get("alt_next", []) as Array).has(nxt))
 			var got := _parse_cmu(String(rule["alt"] if alt else rule["base"]))

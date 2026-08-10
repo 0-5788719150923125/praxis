@@ -107,6 +107,32 @@ SCRIPT_GROUPS: List[Tuple[str, str, List[str]]] = [
             "flow.gd",
             "filament.gd",
             "swarm.gd",
+            "sim_clock.gd",
+        ],
+    ),
+    (
+        "Generative form",
+        "Self-contained generators a scene composes rather than hand-models - "
+        "each one samples a space of shapes from a seed and hands back plain "
+        "geometry. The `cattle, not pets` discipline, made into parts.",
+        [
+            "crystal.gd",
+            "glyphs.gd",
+            "wallpaper_group.gd",
+            "branch3d.gd",
+            "contour.gd",
+        ],
+    ),
+    (
+        "Simulation substrates",
+        "Running physical systems whose STATE is the picture, rather than "
+        "drawings of one: a granular automaton, a flock with a spatial hash, "
+        "a plate's standing waves, and a water surface.",
+        [
+            "grains.gd",
+            "boids.gd",
+            "plate_field.gd",
+            "wave_field.gd",
         ],
     ),
     (

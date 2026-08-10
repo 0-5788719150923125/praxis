@@ -170,6 +170,12 @@ func _on_splash_mask(video_path: String) -> void:
 
 
 func _begin_session(audio_path := "") -> void:
+	# THE BOOKEND, decided before the first sample - Spectrum.begin starts playback, so
+	# it cannot be set afterwards. Whether the silence is HELD here or already baked into
+	# the audio is resolved inside begin(), which is the only place that knows which file
+	# actually got loaded.
+	Spectrum.lead_in = Director.intro_hold
+	Spectrum.tail = Director.outro_hold
 	Spectrum.begin(audio_path)
 	Director.attach(_stage_host())
 	_attach_subtitles()

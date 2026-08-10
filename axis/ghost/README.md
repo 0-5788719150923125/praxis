@@ -146,7 +146,7 @@ Each scene is a small combination of shapes; behavior decides how it moves. The 
 
 <!-- AUTODOC:SCENES:BEGIN -->
 
-43 scenes in the auto rotation (45 on disk). One line each - the full catalogue, with every scene's own documentation, is [docs/scenes.md](docs/scenes.md).
+53 scenes in the auto rotation (55 on disk). One line each - the full catalogue, with every scene's own documentation, is [docs/scenes.md](docs/scenes.md).
 
 _Core catalogue_
 
@@ -192,6 +192,19 @@ _Worlds & projections_
 - **`spires`** (scene3d, drift) - a fractal metropolis of harmonic spires over a landscape.
 - **`terrain`** (scene3d, drift, static) - real 3D landscapes built from the composable `Field` / `Terrain` foundation.
 - **`terrain_city`** (scene3d, drift) - blocks rising as a city over real 3D terrain, growing nonlinearly.
+
+_Depth, standing waves_
+
+- **`canopy`** (scene3d, drift) - trees growing on real terrain, from taproot to leaf, through one season.
+- **`chladni`** (particles, drift, static) - grains walking to the places a plate is not moving.
+- **`cloth`** (canvas, drift) - a sheet on a line, and the wind deciding how long it stays whole.
+- **`contour_map`** (canvas, drift) - the terrain from directly above, as a printed survey sheet.
+- **`falling_sand`** (swarm, drift, static) - a world of matter you never draw, only rule.
+- **`glyphs`** (canvas, drift) - an invented script, written live, one stroke at a time.
+- **`murmuration`** (particles, drift) - thousands of birds deciding together, against a bright sky.
+- **`neural_field`** (scene3d, drift) - a layered network in real depth, lit only where the harmony routes.
+- **`tidepool`** (canvas, drift, static) - sunlight through a hand's depth of moving water.
+- **`wallpaper`** (canvas, drift, static) - one motif, one symmetry group, and the whole plane follows.
 
 _The-point scenes_
 
@@ -280,17 +293,17 @@ Set `render_kind` in `build_params` so the scene is typed (`canvas` is the defau
 
 The long arc is simple to state and enormous to fill: **ghost should be able to model anything physical.** Every scene is a recipe of sampled primitives; the goal is to keep growing the primitive kit until the catalogue spans the natural world, so that pointing it at a song can summon _any_ phenomenon, alone or in combination. Most rows below reuse primitives that already exist (`Mesh3D`, `Swarm`, `Filament`, `Flow2D`, `Lighting`, `Lens3D`, the force registry); the work is composing them and lifting their numbers into sampled ranges.
 
-- **Weather & atmosphere** - snow, rain, fog, fireflies, stars, aurora, petals, bubbles, dust, clouds (shipped as `Layer` components and scenes); still open: wind streaks, hail, heat shimmer, a lightning storm.
+- **Weather & atmosphere** - snow, rain, fog, fireflies, stars, aurora, petals, bubbles, dust, clouds (shipped as `Layer` components and scenes), with precipitation DENSITY now driven by the music rather than fixed at build; still open: wind streaks, hail, heat shimmer, a lightning storm.
 - **Light & shadow** - a positioned, moving light casting real shadows; day/night sweeps; god rays through fog; caustics; refraction through the glass and prism. Beyond `Lighting`'s 2D hotspots toward true occlusion.
-- **Crystals & symmetry** - snowflakes (shipped), mineral lattices, growth by accretion, kaleidoscopic symmetry groups.
+- **Crystals & symmetry** - snowflakes (shipped, as a sampled `Crystal` bank over the Nakaya habits: plates, dendrites, needles, columns, bullets, riming) and the 17 plane symmetry groups (`WallpaperGroup`); still open: mineral lattices, growth by accretion.
 - **Geology & terrain** - heightfields from the `Field`/`Terrain` foundation (shipped); still open: erosion, rivers, plate motion, volcanoes. Terrain as the stage other scenes stand on.
 - **Structures & cities** - a `Swarm` city growing on real terrain (shipped); still open: bridges, lattice frameworks, ruins, roads and districts.
-- **Botany & growth** - trees and branching (L-systems on `Filament`), leaves, vines, flowers, forests as fields.
-- **Fluids** - water surfaces and waves, ripples, smoke, curl-noise flow (`Flow2D`), whirlpools. Audio as the disturbance source.
+- **Botany & growth** - trees and branching in real 3D on real terrain (shipped: `Branch3D` + `canopy`); still open: vines, flowers, undergrowth.
+- **Fluids** - water surfaces, waves and caustics (shipped: `WaveField` + `tidepool`), liquids that pour and pool (`Grains`), curl-noise flow (`Flow2D`); still open: smoke, whirlpools.
 - **Celestial & orbital** - planetary systems and n-body gravity, moons and rings, galaxies, comets, constellations.
-- **Particle physics & mechanics** - collisions, soft bodies and cloth, springs and chains, harmonographs, shattering, explosions.
-- **Biology & emergence** - cells and tissues, flocking, reaction-diffusion, predator-prey, ant trails, slime molds.
-- **Waves & fields** - interference and standing waves, EM and gravitational fields, ripples on a membrane, the spectrum itself as a field.
+- **Particle physics & mechanics** - cloth as a tearing Verlet sheet (shipped: `cloth`), granular collision and repose (`Grains`), shattering (`Geo`); still open: springs and chains, harmonographs, explosions.
+- **Biology & emergence** - flocking with a spatial hash (shipped: `Boids` + `murmuration`); still open: cells and tissues, reaction-diffusion, predator-prey, ant trails, slime molds.
+- **Waves & fields** - standing waves and nodal figures on a driven plate (shipped: `PlateField` + `chladni`, where the audio is the literal physical input rather than a modulator); still open: EM and gravitational fields, interference.
 - **Chemistry & matter** - molecules and bonds, crystallization, phase changes, diffusion, combustion.
 
 Filling any one row is a scene; filling the map is the package. The unifying mechanism is the scene-spec pipeline below.
@@ -326,6 +339,10 @@ Filling any one row is a scene; filling the map is the package. The unifying mec
 - **Masking**: the marker/layer data model, 18 effects, multi-track lanes, YouTube import, and headless render.
 - Video export via an offline `SpectrumBake`, and the shared `Chrome` furniture (export, feedback, assistant, log console) every mode inherits.
 - Interactivity under load: `TriBatch` batched drawing and off-thread geometry via `FrameForge`.
+- **Simulation as a scene kind**: `SimClock`, the fixed-rate tick accumulator every running system advances on. Not a convenience - the Director pre-warms each scene with a dozen `update()` calls before its first frame and can sub-step fifteen times in one frame, so a system that advanced per call would be finished before it was seen.
+- **The bookend**: held silence before the first sound and after the last, on one continuous session clock, with picture and sound fading together. In Synthesis the silence is written into the take's own PCM so the ambience bed swells through the intro and the analyzer hears it; elsewhere playback is simply held.
+- **Pronunciation as data**: a `names:` block for invented words and proper nouns that outranks the neural backend, a context-sensitive homograph table, Markdown stripped before it can be spoken aloud, and `tests/pronounce_audit.gd` - which reads a script and reports every uncertain word BEFORE it is rendered, rather than after it is heard.
+- **The gates**: a whole-catalogue smoke probe that builds, updates, renders and frees every registered scene at several seeds, plus checks for the bookend clock, the weather's dynamic range, the pad-led intro, and pronunciation.
 
 ## Status
 

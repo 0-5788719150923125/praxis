@@ -72,6 +72,25 @@ const SCENES := [
 	{"script": preload("res://scripts/scenes/terrain.gd"), "behavior": "static"},
 	{"script": preload("res://scripts/scenes/terrain_city.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/spires.gd"), "behavior": "drift"},
+	# Simulation, structure and graphic work - the batch that widened the catalogue past
+	# "particles over a colour bed" and "a body in a void", which between them were most
+	# of what came before. Each of these is a language nothing else here speaks: a running
+	# physical state, a real symmetry group, a written script, a routed graph, a plant in
+	# depth, standing waves.
+	{"script": preload("res://scripts/scenes/chladni.gd"), "behavior": "static"},
+	{"script": preload("res://scripts/scenes/chladni.gd"), "behavior": "drift"},
+	{"script": preload("res://scripts/scenes/wallpaper.gd"), "behavior": "static"},
+	{"script": preload("res://scripts/scenes/wallpaper.gd"), "behavior": "drift"},
+	{"script": preload("res://scripts/scenes/glyphs.gd"), "behavior": "drift"},
+	{"script": preload("res://scripts/scenes/falling_sand.gd"), "behavior": "static"},
+	{"script": preload("res://scripts/scenes/falling_sand.gd"), "behavior": "drift"},
+	{"script": preload("res://scripts/scenes/neural_field.gd"), "behavior": "drift"},
+	{"script": preload("res://scripts/scenes/canopy.gd"), "behavior": "drift"},
+	{"script": preload("res://scripts/scenes/cloth.gd"), "behavior": "drift"},
+	{"script": preload("res://scripts/scenes/murmuration.gd"), "behavior": "drift"},
+	{"script": preload("res://scripts/scenes/tidepool.gd"), "behavior": "drift"},
+	{"script": preload("res://scripts/scenes/tidepool.gd"), "behavior": "static"},
+	{"script": preload("res://scripts/scenes/contour_map.gd"), "behavior": "drift"},
 	# "the-point" scenes (camera holds, per the brief).
 	{"script": preload("res://scripts/scenes/eye.gd"), "behavior": "static"},
 	{"script": preload("res://scripts/scenes/two_eyes.gd"), "behavior": "static"},
@@ -106,6 +125,16 @@ const ATMOSPHERIC := [
 	"res://scripts/scenes/embers.gd", "res://scripts/scenes/clouds.gd",
 	"res://scripts/scenes/underwater.gd", "res://scripts/scenes/fire.gd",
 	"res://scripts/scenes/clouds.gd", "res://scripts/scenes/fog_volume.gd",
+	# The soft-edged half of the new bright scenes. A LAYER dissolve suits them for the
+	# same reason it suits the weather - they are full-frame fields with no silhouette to
+	# collide with, and arriving through a wash rather than out of a beat of black is
+	# kinder to a high-key image.
+	#
+	# The HARD-edged new ones are deliberately NOT here. A printed survey sheet or a flat
+	# wallpaper pattern half-dissolved over another scene reads as a rendering fault
+	# rather than as a transition; those want the clean dip, and a bright picture fading
+	# up from black is a perfectly good entrance - it is a cut onto white that would jar.
+	"res://scripts/scenes/tidepool.gd", "res://scripts/scenes/murmuration.gd",
 ]
 
 enum Style { CUT, DIP, FADE, LAYER }
@@ -299,6 +328,24 @@ const PACING_SAVE_DELAY_MS := 400    # debounce: a slider DRAG must not write th
 var _pacing_dirty := false
 var _pacing_edit_ms := 0
 
+## THE BOOKEND, in seconds - held silence before the first sound and after the last.
+## Applied by [method main._begin_session] to [member Spectrum.lead_in] / [member
+## Spectrum.tail], and read back by [method _bookend_fade] so the picture arrives exactly
+## as the silence ends rather than over the opening words.
+##
+## The defaults are not round numbers by accident. The ambience pad swells over
+## [constant VoiceFX.PAD_ATTACK] = 3.5 s and releases over [constant
+## VoiceFX.PAD_RELEASE] = 7 s, and its first tone is scheduled half a second in - so an
+## intro much under 5 s hands the voice a bed that is still climbing, and an outro much
+## under 6 s cuts the bed off mid-decay. These are the shortest values that let the
+## ambience actually complete its own gesture at each end.
+const INTRO_MIN := 0.0
+const INTRO_MAX := 15.0
+const OUTRO_MIN := 0.0
+const OUTRO_MAX := 20.0
+var intro_hold := 5.0
+var outro_hold := 6.0
+
 
 # The Director is an autoload, so this runs long before attach() builds the first scene - which is
 # exactly the point: the very first hold of a session must already use the remembered pacing.
@@ -329,6 +376,29 @@ func set_pacing(v: float) -> void:
 
 
 
+## The intro / outro holds, in seconds. Same debounced-save contract as set_pacing.
+##
+## These take effect on the NEXT session rather than the running one, and that is not a
+## limitation being worked around: the lead-in is a decision made when playback starts,
+## and there is no coherent meaning to growing it once the audio is already speaking.
+func set_intro_hold(v: float) -> void:
+	var s := clampf(v, INTRO_MIN, INTRO_MAX)
+	if is_equal_approx(s, intro_hold):
+		return
+	intro_hold = s
+	_pacing_edit_ms = Time.get_ticks_msec()
+	_pacing_dirty = true
+
+
+func set_outro_hold(v: float) -> void:
+	var s := clampf(v, OUTRO_MIN, OUTRO_MAX)
+	if is_equal_approx(s, outro_hold):
+		return
+	outro_hold = s
+	_pacing_edit_ms = Time.get_ticks_msec()
+	_pacing_dirty = true
+
+
 ## The flourish knob. Same debounced-save contract as set_pacing, same file.
 func set_flourish(v: float) -> void:
 	var f := clampf(v, FLOURISH_MIN, FLOURISH_MAX)
@@ -345,6 +415,8 @@ func _load_pacing() -> void:
 		return
 	pacing = clampf(float(cfg.get_value("director", "pacing", 1.0)), PACING_MIN, PACING_MAX)
 	flourish = clampf(float(cfg.get_value("director", "flourish", 1.0)), FLOURISH_MIN, FLOURISH_MAX)
+	intro_hold = clampf(float(cfg.get_value("director", "intro", intro_hold)), INTRO_MIN, INTRO_MAX)
+	outro_hold = clampf(float(cfg.get_value("director", "outro", outro_hold)), OUTRO_MIN, OUTRO_MAX)
 
 
 func _save_pacing() -> void:
@@ -353,6 +425,8 @@ func _save_pacing() -> void:
 	cfg.load(CFG)                     # read-modify-write: never clobber [synth] / [generative] / splash
 	cfg.set_value("director", "pacing", pacing)
 	cfg.set_value("director", "flourish", flourish)
+	cfg.set_value("director", "intro", intro_hold)
+	cfg.set_value("director", "outro", outro_hold)
 	cfg.save(CFG)
 
 
@@ -678,10 +752,21 @@ func _bookend_fade() -> float:
 	var slen := Spectrum.song_length()
 	if slen <= 0.0:
 		return 1.0                                    # idle / no song: no bookend
-	var fade := maxf(0.5, _bookend_time)
 	var t := Spectrum.current.time
-	var a_in := clampf(t / fade, 0.0, 1.0)            # 0 at the very start -> 1 after `fade`
-	var a_out := clampf((slen - t) / fade, 0.0, 1.0)  # 1 -> 0 over the final `fade` seconds
+	# PAST THE END IS NOT BLACK. A synthesis take reports its length once, then loops
+	# inside the generator without restarting the player, so the playback position runs
+	# on past it monotonically - and the old `(slen - t)/fade` then held at 0 forever,
+	# leaving the stage permanently dark with no way back. An overrun means the length
+	# is stale, not that the show is over.
+	if t > slen + 0.5:
+		return 1.0
+	# The fade windows follow the BOOKEND when there is one, so the picture arrives
+	# exactly as the held silence ends rather than over the opening words. Without a
+	# bookend it falls back to the per-song sampled length, which is the old behaviour.
+	var fade_in := maxf(0.5, Spectrum.lead_in if Spectrum.lead_in > 0.001 else _bookend_time)
+	var fade_out := maxf(0.5, Spectrum.tail if Spectrum.tail > 0.001 else _bookend_time)
+	var a_in := clampf(t / fade_in, 0.0, 1.0)           # 0 at the very start -> 1 after fade_in
+	var a_out := clampf((slen - t) / fade_out, 0.0, 1.0)  # 1 -> 0 over the final fade_out seconds
 	return minf(a_in, a_out)
 
 

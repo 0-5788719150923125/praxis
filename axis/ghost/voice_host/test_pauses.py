@@ -414,15 +414,59 @@ def test_byte_identical_to_head():
     for case, (kind, items, params) in CASES.items():
         got = run_case(kind, items, params)
         r = ref[case]
-        if case.endswith("_marks_scale1"):
-            ok(got["sha256"] != r["sha256"], f"{case}: DIFFERS from HEAD, as intended")
-            ok(got["bytes"] > r["bytes"],
-               f"{case}: longer by {(got['bytes'] - r['bytes']) // 2} samples")
-        else:
-            eq(got["sha256"], r["sha256"], f"{case}: byte-identical to HEAD")
+        # A ONE-TIME MIGRATION ASSERTION, now retired. The two *_marks cases used to
+        # assert they DIFFERED from HEAD, because the punctuation splice was the change
+        # being landed and its whole point was to make those cases longer. That
+        # expectation is self-invalidating: once the change was committed, HEAD contained
+        # it, current matched HEAD, and "must differ" could never pass again - which is
+        # exactly how it was found, failing identically with and without the edit under
+        # review. Every case now asserts byte-identity, which is the property actually
+        # worth guarding from here on: nothing changes the audio unless it means to.
+        eq(got["sha256"], r["sha256"], f"{case}: byte-identical to HEAD")
 
 
 # -- runner ----------------------------------------------------------------
+
+@check
+def check_syllabic_fold():
+    """A syllabic consonant a voice cannot spell becomes schwa + consonant.
+
+    eSpeak marks the American glottalized -ten/-tain family with U+0329: "written" comes
+    back as /r\u026a\u0294n\u0329/, "certain" as /s\u025c\u0294n\u0329/, "gotten" as /g\u0251\u0294n\u0329/. Four of the five
+    installed voices carry that symbol in their 157-entry maps; en_US-libritts-high
+    carries 130 and does not, and there the mark was simply dropped - leaving a glottal
+    stop and a bare consonant with nothing to stand as the second syllable. Across
+    north-star that is 146 tokens over 19 word types, led by "written" (51), "certain"
+    (34) and "gotten" (15), so it is not an edge case.
+
+    A syllabic consonant IS a schwa plus that consonant, and eSpeak spells the
+    un-glottalized members of the same family that way itself ("sudden" -> /s\u028cd\u0259n/),
+    so this is a faithful rewrite rather than a patch over a gap.
+    """
+    from backends.piper import PiperBackend, SYLLABIC, SCHWA
+    fold = PiperBackend._fold_syllabic
+    poor = {c: [i] for i, c in enumerate("\u0279\u026a\u0294n" + SCHWA + "\u02c8")}   # no U+0329, like libritts-high
+    rich = dict(poor)
+    rich[SYLLABIC] = [99]
+
+    stream = [("\u0279", 0), ("\u026a", 0), ("\u0294", 1), ("n", 1), (SYLLABIC, 1)]
+
+    out, folded = fold(stream, poor)
+    ok(folded, "a voice without U+0329 folds it")
+    eq("".join(c for c, _ in out), "\u0279\u026a\u0294" + SCHWA + "n",
+       "written becomes schwa + n")
+    ok(all(c in poor for c, _ in out),
+       "nothing survives that the voice cannot spell")
+    eq([i for _, i in out], [0, 0, 1, 1, 1],
+       "the inserted schwa inherits the base's source index (karaoke alignment)")
+
+    out2, folded2 = fold(stream, rich)
+    ok(not folded2, "a voice that CAN spell U+0329 is left alone")
+    eq(out2, stream, "the rich-map stream is unchanged")
+
+    out3, _ = fold([(SYLLABIC, 0)], poor)
+    eq(out3, [], "a stray mark with no base is discarded, not turned into a leading schwa")
+
 
 def main() -> int:
     if "--reference" in sys.argv:

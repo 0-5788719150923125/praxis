@@ -47,6 +47,46 @@ lexicon:
   narrating: N EH1 R EY0 T IH0 NG
 
 # ---------------------------------------------------------------- function words
+# ---------------------------------------------------------------- names
+# INVENTED WORDS AND PROPER NOUNS - the things no dictionary has and no
+# letter-to-sound rule can be expected to get right.
+#
+# This is the anti-whack-a-mole list. Anything here is spoken EXACTLY as written
+# below, in every mode, and it outranks the neural backend's own guess: entries are
+# marked `literal`, which is what makes ghost's phones beat eSpeak's transcription
+# for that one word while leaving the rest of the sentence untouched. Adding a word
+# here needs no code change and no rebuild.
+#
+# HOW TO WRITE ONE. ARPAbet, space separated, with a stress digit on the vowel that
+# carries the accent: 1 primary, 2 secondary, 0 unstressed. The vowels are
+# AA AE AH AO AW AY EH ER EY IH IY OW OY UH UW; the consonants are the obvious
+# letters plus CH JH SH ZH TH DH NG Y W R L HH. So `B IY1 UW0 K S` reads BEE-ooks,
+# stressed on the first syllable.
+#
+# HOW TO CHECK ONE. `tests/pronounce_audit.gd` reads a script and reports every word
+# it considers risky, this list included, so a chapter can be audited before it is
+# rendered rather than after it is heard.
+#
+# A word can also be overridden inline in the script itself as `[B IY1 UW0 K S]`,
+# which wins over everything here - use that for a one-off, and this list for
+# anything that recurs.
+names:
+  # From north-star chapter 15, which is the only chapter carrying invented words.
+  # eSpeak reads these as `bˌaɪoʊˈʌks` (by-oh-UKS) and `ˈɛndʒˌændɪdʒˈɑːɹɹə` - note
+  # that the second one spells the leading N out loud as the letter "en", which is
+  # not a plausible reading of anything.
+  #
+  # THESE TWO ARE JUDGEMENT CALLS, not measurements, because the words belong to
+  # somebody else's invented universe and there is no authority to check them
+  # against. Both are the most natural English reading of the spelling. If either is
+  # wrong, this line is the only place that needs changing.
+  #   biouks    BEE-ooks       (the alternative reading is BYE-ohks: B AY1 OW0 K S)
+  #   njandejara nyahn-deh-JAH-ruh, treating Nj- as the prenasalized palatal it
+  #             looks like, rather than as a spelled-out letter
+  biouk: B IY1 UW0 K
+  biouks: B IY1 UW0 K S
+  njandejara: N Y AA0 N D EH0 JH AA1 R AH0
+
 #
 # Words that carry no sentence accent in English. [Phrasing] reduces them and
 # never places a nucleus on one. The built-in list in phonemes.gd was 33 entries

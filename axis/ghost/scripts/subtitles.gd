@@ -20,10 +20,30 @@ class_name Subtitles
 ## everywhere the take plays: the live synthesis session, a plain `--audio`
 ## boot, and the export render, where no editor exists.
 
+## THE LINE ONLY EXISTS WHILE THERE IS SOMETHING TO READ.
+##
+## The sentence to show used to be chosen as "the current one, or else the first one not
+## yet spoken", with no bound on how far ahead that was - so through a five second intro,
+## before a word had been said, the opening line sat on screen the whole time waiting for
+## a voice. The same at the end: nothing brought it off, so it hung through the outro.
+##
+## [constant LEAD] is how long before its first word a line may appear, and [constant
+## HANG] how long after its last it stays. Both are longer than an ordinary gap between
+## sentences, deliberately: at a normal seam the next line's window opens before the
+## previous one's closes, so the overlay never blinks between sentences. It only leaves
+## when the speaking genuinely stops.
+const LEAD := 0.8
+const HANG := 0.7
+## Seconds to ease in and out over. The whole overlay eases like everything else here -
+## a line that snapped on at full brightness would be the only hard cut in the frame.
+const FADE := 0.3
+
 var words: Array = []               # [{text, t0, t1, sentence}] - may still be GROWING
                                     # (a live VoiceStream shares its array by reference)
 var loop_length := 0.0              # >0 once a streamed take loops: wrap time by this
 var time_base := 0.0                # playback time when the current content started
+## 0..1, eased. Multiplies every alpha the overlay draws, plate included.
+var presence := 0.0
 var _cursor := 0.0                  # the narrator's eye: global word progress, eased
 var _hue_sm := 0.6
 var _overlay: Control
@@ -78,10 +98,52 @@ func _target(t: float) -> float:
 	return last_end
 
 
+## Should anything be on screen at time [param t], and how strongly? 1 while the current
+## sentence is within its LEAD/HANG window, 0 otherwise. Computed against the SENTENCE's
+## own span rather than the nearest word, so a line does not dim in its internal pauses.
+func _presence_target(t: float) -> float:
+	if words.is_empty():
+		return 0.0
+	var si := -1
+	var lo := 0.0
+	var hi := 0.0
+	for w in words:
+		var t0 := float(w.t0)
+		var t1 := float(w.t1)
+		if t >= t0 - LEAD and t < t1 + HANG:
+			si = int(w.sentence)
+			break
+	if si < 0:
+		return 0.0
+	var seen := false
+	for w in words:
+		if int(w.sentence) != si:
+			continue
+		if not seen:
+			lo = float(w.t0)
+			seen = true
+		hi = float(w.t1)
+	if not seen:
+		return 0.0
+	return 1.0 if t >= lo - LEAD and t < hi + HANG else 0.0
+
+
 func _process(delta: float) -> void:
 	if words.is_empty():
+		presence = 0.0
 		return
-	var target := _target(_now())
+	var now := _now()
+	presence = lerpf(presence, _presence_target(now), 1.0 - exp(-delta / maxf(0.01, FADE)))
+	# Snap the tail of the ease to zero. An exponential never actually arrives, and a
+	# plate at alpha 0.003 is still a plate - over a dark scene it is invisible, over a
+	# bright one it is a faint grey bar sitting at the bottom of the frame for the whole
+	# silence, which is the complaint in miniature.
+	if presence < 0.004:
+		presence = 0.0
+	# The CURSOR keeps tracking through all of this, deliberately. It is eased over
+	# several seconds, so freezing it while the line is hidden would leave it stale when
+	# the next sentence arrives and it would visibly race to catch up on screen.
+	var target := _target(now)
 	var gap := target - _cursor
 	if absf(gap) > 3.0:
 		_cursor = target             # a loop seam or a restart: snap, don't chase
@@ -126,6 +188,13 @@ class Overlay:
 
 	func _draw() -> void:
 		if owner_node == null or owner_node.words.is_empty():
+			return
+		# Nothing is being read: draw nothing at all, plate included. This is the
+		# whole point of `presence` - an empty line still drew its dark plate, so
+		# through the intro there was a black bar across the bottom of the frame
+		# waiting for words.
+		var vis: float = owner_node.presence
+		if vis <= 0.01:
 			return
 		var t: float = owner_node._now()
 		var line_words: Array = _current_sentence(t)
@@ -172,7 +241,7 @@ class Overlay:
 			var pad := 12.0 * k
 			var plate := Rect2((vp.x - total) * 0.5 - pad, y - float(fs) - 4.0 * k,
 				total + pad * 2.0, lh + 2.0 * k)
-			draw_rect(plate, Color(0.04, 0.04, 0.05, 0.72), true)
+			draw_rect(plate, Color(0.04, 0.04, 0.05, 0.72 * vis), true)
 			y += lh
 		y = vp.y - 70.0 * k - (lines.size() - 1) * lh
 		# the pen advances glyph by glyph so the gradient can turn WITHIN a word,
@@ -191,10 +260,11 @@ class Overlay:
 					var cw := font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 					var pos := Vector2(x, y)
 					var col := _glyph_color(base_hue, ci + ch, ccur, now)
+					col.a *= vis
 					# the shadow, under every state - the edge that survives a
 					# bright frame bleeding past the plate
 					draw_string(font, pos + Vector2(1.5 * k, 1.5 * k), glyph,
-						HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0, 0, 0, 0.85))
+						HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0, 0, 0, 0.85 * vis))
 					draw_string(font, pos, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
 					x += cw
 				x += gap
@@ -255,7 +325,11 @@ class Overlay:
 				break
 		if si < 0:
 			for w in all:
-				if t < float(w.t0):
+				# BOUNDED BY LEAD. Without the second condition this reads "the first
+				# sentence not yet spoken", however far off that is - which is why the
+				# opening line sat on screen through the whole intro, before a word had
+				# been said.
+				if t < float(w.t0) and float(w.t0) - t <= Subtitles.LEAD:
 					si = int(w.sentence)
 					break
 		if si < 0:

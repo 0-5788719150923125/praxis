@@ -37,6 +37,13 @@ class Base:
 		# Derive a private, deterministic stream from the scene's build rng so a layer's
 		# own runtime randomness (gusts, retargets) is reproducible per session.
 		rng.seed = seed_rng.randi()
+		# SEED THE CLOCK, not just the randomness. `t` started at 0 in every layer of
+		# every session, and several layers drive slow patterns straight off it - the snow
+		# squall centres and the rain's slant sway among them. Those therefore traced the
+		# IDENTICAL path with the IDENTICAL phase in every session of every song: they
+		# looked procedural and were a fixed animation. An offset costs nothing and makes
+		# them genuinely per-session. Large, because the periods involved run to 90 s.
+		t = rng.randf() * 600.0
 
 	func num(k: String, d: float) -> float:
 		return float(cfg.get(k, d))
@@ -140,6 +147,21 @@ static func squall_centers(time: float) -> Array:
 ## (fast swell, slow clear) so squalls build and fade rather than strobe.
 static func coverage_drive(f: AudioFeatures) -> float:
 	return clampf(0.25 * f.energy + 0.55 * f.bass + 1.6 * f.flux + 0.2 * f.beat, 0.0, 1.0)
+
+
+## Harmonic "density" drive in [0, 1]: how HARD it should be precipitating right now. The
+## companion to [method coverage_drive], and deliberately a different mix - coverage is
+## about haze and obscuration, density is about how many particles there are, which is
+## the drizzle-to-downpour axis a weather scene never had. Pair with an EMA in the caller.
+##
+## The gains are set against what these features MEASURE rather than their nominal range.
+## `f.energy` is the arithmetic mean over all 64 bands, so it rarely passes 0.5 even on a
+## loud passage; `f.flux` is a mean of positive per-band deltas and typically sits between
+## 0.01 and 0.05. Writing `1.0 * f.energy` and calling the range covered is how the old
+## mappings ended up delivering half their nominal headroom. These numbers are chosen so
+## an ordinary loud passage actually reaches the top of the range.
+static func density_drive(f: AudioFeatures) -> float:
+	return clampf(1.5 * f.energy + 0.7 * f.bass + 5.0 * f.flux + 0.15 * f.beat, 0.0, 1.0)
 
 
 ## An ellipse outline as a point ring (for a wobbling bubble rim, etc.).
@@ -321,9 +343,11 @@ class Fog:
 class Snow:
 	extends Base
 	var _flakes: Array = []
-	var _fall := 0.0
 	var _gust := 0.0
 	var _coverage := 0.0     # harmonic-driven density: swells into obscuring squalls, then clears
+	var _density := 0.6      # how many of the allocated flakes are currently VISIBLE (0..1)
+	var _bank: Array = []    # shared crystal geometries (see [Crystal])
+	var _tb := TriBatch.new()
 
 	func _init(seed_rng: RandomNumberGenerator, c: Dictionary = {}) -> void:
 		super(seed_rng, c)
@@ -332,6 +356,13 @@ class Snow:
 		# so a few near ones read bigger without the field looking like a scatter of large
 		# shapes (feedback: "many more small flecks, far fewer large").
 		var smax: float = num("size", 0.006)
+		# THE CRYSTAL BANK. A few dozen genuinely different crystals, shared across the
+		# whole field - which is what "no two alike" actually needs. Habit weights come
+		# from the weather (see snowfall.gd's SNOWS), because habit is a function of the
+		# conditions, not of the individual flake.
+		var habits: Dictionary = cfg.get("habits", {"stellar": 0.6, "sectored": 0.2, "plate": 0.2})
+		_bank = Crystal.bank(seed_rng, int(num("bank", 20)), habits,
+			num("complexity", 0.5), num("rime", 0.0))
 		for i in n:
 			var depth := seed_rng.randf_range(0.3, 1.0)        # near flakes are bigger + faster
 			var sz := pow(seed_rng.randf(), 2.0)               # skew toward small
@@ -343,10 +374,27 @@ class Snow:
 				"sway_rate": seed_rng.randf_range(0.3, 0.9),
 				"phase": seed_rng.randf() * TAU,
 				"spin": seed_rng.randf_range(-1.0, 1.0),
-				"shape": seed_rng.randf(),
-				# Only the nearest, largest flakes ever become drawn crystals, and rarely -
-				# so detailed dendrites are an occasional accent, not the norm.
-				"crystal": seed_rng.randf() < num("crystal_frac", 0.06) and depth > 0.8 and sz > 0.6,
+				"tilt": seed_rng.randf() * TAU,
+				"tilt_rate": seed_rng.randf_range(0.2, 0.8) * (1.0 if seed_rng.randf() < 0.5 else -1.0),
+				# A STABLE RANK, and the reason density can be an audio-driven scalar at
+				# all. Fading by `density - rank` means the same flakes always occupy the
+				# same positions in the ordering, so a swell brings back exactly the
+				# flakes it dismissed instead of a fresh scatter, and nothing is ever
+				# spawned or destroyed. Growing the array instead would need a new flake
+				# to enter off-frame and fall in, which at these speeds is 3 to 111
+				# seconds of latency - useless as a musical response - and would have to
+				# draw from the rng on an audio-conditioned event, which makes the random
+				# stream a function of the feature stream and would let an export diverge
+				# from the preview it was made from.
+				"rank": seed_rng.randf(),
+				"crystal": seed_rng.randi() % maxi(1, _bank.size()),
+				# THE GATE, corrected. It used to also require depth > 0.8 and a squared
+				# size roll > 0.6, which silently multiplied the configured fraction by
+				# 0.064: a preset asking for 10-20% crystals produced about one. The size
+				# condition survives only as the DRAW-time legibility check below, where
+				# it belongs - there is no point drawing a dendrite smaller than its own
+				# line width - and the fraction now means what it says.
+				"is_crystal": seed_rng.randf() < num("crystal_frac", 0.06),
 			})
 
 	func update(f: AudioFeatures, dt: float, h: Vector2) -> void:
@@ -356,10 +404,30 @@ class Snow:
 		# flux), clears SLOWLY - so the snow thickens into an obscuring squall on a big moment, then
 		# thins back out. This is what fades the view toward a heavy whiteout and back.
 		_coverage = lerpf(_coverage, Layer.coverage_drive(f), 1.0 - exp(-(3.0 if Layer.coverage_drive(f) > _coverage else 0.8) * dt))
+		# DENSITY - the drizzle-to-downpour axis the music never had. Same fast-attack,
+		# slow-release shape as the coverage, but it moves the flake COUNT rather than the
+		# haze, so a loud passage genuinely snows harder instead of only snowing brighter.
+		var want: float = clampf(num("density_floor", 0.35)
+			+ num("density_gain", 0.85) * Layer.density_drive(f), 0.0, 1.0)
+		_density = lerpf(_density, want, 1.0 - exp(-(2.2 if want > _density else 0.5) * dt))
 		var speed: float = num("fall", 0.10) * (1.0 + 0.5 * f.energy)
-		_fall += speed * dt
 		for fl in _flakes:
-			fl.y = fposmod(fl.y + speed * float(fl.depth) * dt, 1.0)
+			var y0: float = fl.y
+			fl.y = fposmod(y0 + speed * float(fl.depth) * dt, 1.0)
+			fl.tilt = float(fl.tilt) + float(fl.tilt_rate) * dt * (0.4 + 1.6 * f.treble)
+			# RE-ROLL AT THE WRAP. Only `y` ever moved before, so every flake fell down
+			# its own fixed column forever and the whole field was exactly periodic - a
+			# blizzard repeated itself every 2.9 to 16.7 seconds, which is most of why it
+			# read as wallpaper. The wrap happens off-frame, so re-siting the flake there
+			# is invisible. It uses a HASH of the flake's own identity and wrap count
+			# rather than the shared rng, because rng draws timed by an audio-dependent
+			# wrap schedule would make the sequence differ between the live analyzer and
+			# the offline export bake.
+			if fl.y < y0:
+				var k := int(fl.phase * 10007.0) ^ (int(t) * 31)
+				fl.x = float(hash([k, "x"]) & 0xFFFF) / 65535.0
+				fl.phase = float(hash([k, "p"]) & 0xFFFF) / 65535.0 * TAU
+				fl.crystal = int(hash([k, "c"]) & 0x7FFFFFFF) % maxi(1, _bank.size())
 
 	func draw(ci: CanvasItem, u: float) -> void:
 		var base_h: float = num("hue", 0.58)
@@ -373,7 +441,17 @@ class Snow:
 				Layer.puff(ci, Vector2(sc.x * half.x, sc.y * half.y) * u,
 					(0.55 + 0.45 * _coverage) * maxf(half.x, half.y) * u,
 					Color.from_hsv(base_h, sat * 0.5, 1.0, va))
+		# Crystals go through one batched submission rather than 30 line calls each. That
+		# is what makes drawn crystals affordable as the norm: at blizzard counts the
+		# per-shape path would issue upward of 14,000 draw calls a frame, which is inside
+		# the band that motivated TriBatch existing at all. (No reset is needed here -
+		# flush() empties the buffers itself, so the batch is already clean.)
 		for fl in _flakes:
+			# Rank fade - the density knob. Skipping the draw entirely below the threshold
+			# keeps the DRAW cost proportional to what is visible while the loop stays O(n).
+			var vis: float = smoothstep(0.0, 0.14, _density - float(fl.rank))
+			if vis < 0.02:
+				continue
 			var sway: float = (fl.sway_amp + 0.04 * _gust) * sin(t * fl.sway_rate + fl.phase)
 			var px: float = (fl.x * 2.0 - 1.0) * half.x + sway
 			var py: float = (fl.y * 2.0 - 1.0) * half.y
@@ -387,15 +465,34 @@ class Snow:
 			for sc in centers:
 				sw = maxf(sw, exp(-nrm.distance_squared_to(sc) / 0.35))
 			var cov := clampf(0.55 + _coverage * (0.35 + 0.85 * sw), 0.0, 1.4)
-			var a0: float = clampf(0.5 + 0.4 * float(fl.depth), 0.3, 0.95) * cov
+			var a0: float = clampf(0.5 + 0.4 * float(fl.depth), 0.3, 0.95) * cov * vis
 			var col := Color.from_hsv(base_h, sat, 1.0, clampf(a0, 0.0, 1.0))
-			if fl.crystal and r > 3.5:
-				var ang: float = t * 0.4 * float(fl.spin) + fl.phase
-				Layer.draw_flake(ci, pos, r * 2.1, ang,
-					Color(col.r, col.g, col.b, col.a * 0.9), maxf(1.0, r * 0.28), 6, fl.shape)
+			if fl.is_crystal and r > 2.2 and not _bank.is_empty():
+				_draw_crystal(_bank[int(fl.crystal) % _bank.size()], pos, r * 2.1,
+					float(fl.tilt), Color(col.r, col.g, col.b, col.a * 0.9), maxf(0.9, r * 0.22))
 			else:
 				ci.draw_circle(pos, r * 1.8, Color(col.r, col.g, col.b, col.a * 0.18))
 				ci.draw_circle(pos, r, Color(col.r, col.g, col.b, col.a * bright))
+		_tb.flush(ci)
+
+	## One banked crystal, placed. The crystal TUMBLES rather than spinning in plane: a
+	## six-fold figure turning about its own centre barely reads, because it maps onto
+	## itself every sixty degrees, whereas foreshortening one axis makes it visibly a
+	## plate turning in space and thinning to a line edge-on.
+	func _draw_crystal(shape: Crystal.Shape, c: Vector2, r: float, tilt: float,
+			col: Color, width: float) -> void:
+		var ex := Vector2(cos(tilt * 0.7), sin(tilt * 0.7)) * r
+		var ey := Vector2(-ex.y, ex.x) * cos(tilt)          # the foreshortened axis
+		if not shape.fill.is_empty():
+			var poly := PackedVector2Array()
+			for p in shape.fill:
+				poly.append(c + ex * p.x + ey * p.y)
+			_tb.poly(poly, Color(col.r, col.g, col.b, col.a * 0.22))
+		for i in shape.size():
+			var a := shape.a[i]
+			var b := shape.b[i]
+			_tb.line(c + ex * a.x + ey * a.y, c + ex * b.x + ey * b.y,
+				col, maxf(0.7, width * shape.w[i]))
 
 
 # ---------------------------------------------------------------------------------
@@ -406,6 +503,8 @@ class Rain:
 	extends Base
 	var _drops: Array = []
 	var _slant := 0.18
+	var _density := 0.6
+	var _tb := TriBatch.new()
 
 	func _init(seed_rng: RandomNumberGenerator, c: Dictionary = {}) -> void:
 		super(seed_rng, c)
@@ -416,28 +515,52 @@ class Rain:
 				"x": seed_rng.randf(), "y": seed_rng.randf(), "depth": depth,
 				"len": seed_rng.randf_range(0.03, 0.07) * depth,
 				"speed": seed_rng.randf_range(0.9, 1.5) * depth,
+				"rank": seed_rng.randf(),        # see Snow: the density ordering
+				"phase": seed_rng.randf() * TAU,
 			})
 
 	func update(f: AudioFeatures, dt: float, h: Vector2) -> void:
 		super(f, dt, h)
-		_slant = num("slant", 0.16) + 0.12 * sin(t * 0.3) + 0.1 * f.bass
+		# THE SLANT IS SMOOTHED NOW, and that is a correctness fix rather than a polish
+		# one. It shears every drop's x by slant*y, so it moves POSITION and not just
+		# direction - and it took f.bass in raw, which meant a bass transient scissored
+		# the whole sheet sideways by up to 60 px in a single frame. Easing it keeps the
+		# wind-blown look while making the wind behave like weather instead of like a
+		# jump cut.
+		var want_slant: float = num("slant", 0.16) + 0.12 * sin(t * 0.3) + 0.16 * f.bass
+		_slant = lerpf(_slant, want_slant, 1.0 - exp(-2.5 * dt))
+		var want: float = clampf(num("density_floor", 0.35)
+			+ num("density_gain", 0.85) * Layer.density_drive(f), 0.0, 1.0)
+		_density = lerpf(_density, want, 1.0 - exp(-(2.5 if want > _density else 0.6) * dt))
 		var spd: float = num("fall", 1.1) * (1.0 + 0.3 * f.energy)
 		for d in _drops:
-			d.y = fposmod(d.y + spd * float(d.speed) * dt, 1.0)
+			var y0: float = d.y
+			d.y = fposmod(y0 + spd * float(d.speed) * dt, 1.0)
+			# Re-site off-frame at the wrap, for the same reason as the snow: every drop
+			# otherwise falls down one fixed column forever and the sheet is exactly
+			# periodic. Hashed, not drawn from the rng, so an export cannot diverge.
+			if d.y < y0:
+				var k := int(d.phase * 10007.0) ^ (int(t) * 31)
+				d.x = float(hash([k, "rx"]) & 0xFFFF) / 65535.0
 
 	func draw(ci: CanvasItem, u: float) -> void:
 		var col := Color.from_hsv(num("hue", 0.58), num("sat", 0.14), 0.9)
 		var w: float = maxf(1.0, num("width", 1.5))
+		var dir := Vector2(_slant, 1.0).normalized()
 		for d in _drops:
+			var vis: float = smoothstep(0.0, 0.14, _density - float(d.rank))
+			if vis < 0.02:
+				continue
 			var py: float = (d.y * 2.0 - 1.0) * half.y
 			# Shear x by slant*y so each drop travels ALONG its streak (dx/dy == slant),
 			# i.e. the rain falls in the same direction the lines point - wind-blown - not
 			# straight down past a tilted streak.
 			var px: float = (d.x * 2.0 - 1.0) * half.x + _slant * py
 			var top := Vector2(px, py) * u
-			var bottom := top + Vector2(_slant, 1.0).normalized() * float(d.len) * u
-			var a: float = 0.15 + 0.35 * float(d.depth)
-			ci.draw_line(top, bottom, Color(col.r, col.g, col.b, a), w * float(d.depth), true)
+			var bottom := top + dir * float(d.len) * u
+			var a: float = (0.15 + 0.35 * float(d.depth)) * vis
+			_tb.line(top, bottom, Color(col.r, col.g, col.b, a), w * float(d.depth))
+		_tb.flush(ci)
 
 
 # ---------------------------------------------------------------------------------

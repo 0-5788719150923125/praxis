@@ -106,7 +106,22 @@ func _launch(scene: CanvasItem) -> void:
 ## scene with no packet yet builds its FIRST one inline so a fresh cut
 ## never shows an empty backdrop.
 func submit(ci: CanvasItem) -> void:
-	if _has_pending and (_sync or _packet.is_empty()):
+	# `not _busy` is load-bearing and was missing. The inline first build exists so a
+	# fresh cut never shows an empty backdrop, but without that guard it fires WHILE a
+	# worker build of the same job is already in flight - so the builder runs twice at
+	# once, on two threads.
+	#
+	# For a pure builder over a snapshot that is merely wasted work, which is why it went
+	# unnoticed. For a JOB OBJECT that carries state it is a data race: murmuration's job
+	# advances a shared Boids flock, whose packed arrays are copy-on-write, and two
+	# concurrent `step()` calls tore them mid-reallocation - the flock reported more birds
+	# than its position arrays held and indexing went out of bounds. It surfaced as three
+	# stray "Out of bounds get index" errors across two hundred scene builds, which is
+	# exactly the shape of a race and nothing like the shape of an indexing mistake.
+	#
+	# Skipping the inline build here costs at most one frame of empty backdrop, and only
+	# on the frame a worker is already busy producing the real thing.
+	if _has_pending and (_sync or (_packet.is_empty() and not _busy)):
 		var t0 := Time.get_ticks_usec()
 		_packet = _pending_builder.call(_pending_snapshot)
 		_pending_snapshot = {}

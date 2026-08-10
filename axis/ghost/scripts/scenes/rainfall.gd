@@ -17,25 +17,25 @@ const STORMS := {
 		"moods": ["glacier", "ash", "bone", "abyss", "teal", "violet", "dawn", "verdant"],
 		"count": [55, 95], "fall": [0.5, 0.8], "slant": [0.05, 0.18], "width": [0.9, 1.1],
 		"fog_a": [0.08, 0.12], "fog_n": [6, 10], "val": [0.16, 0.26], "sat": [0.4, 0.7],
-		"veil": 0.50, "flare": 0.08, "streak": 0,
+		"density": [0.20, 0.55], "veil": 0.50, "flare": 0.08, "streak": 0,
 	},
 	"drizzle": {
 		"moods": ["ash", "glacier", "abyss", "bone", "teal", "violet", "verdant", "dawn"],
 		"count": [70, 110], "fall": [0.8, 1.1], "slant": [0.08, 0.24], "width": [1.0, 1.2],
 		"fog_a": [0.05, 0.075], "fog_n": [5, 9], "val": [0.14, 0.24], "sat": [0.35, 0.65],
-		"veil": 0.42, "flare": 0.12, "streak": 0,
+		"density": [0.28, 0.70], "veil": 0.42, "flare": 0.12, "streak": 0,
 	},
 	"steady": {
 		"moods": ["abyss", "ash", "glacier", "teal", "violet", "bone", "verdant", "brass"],
 		"count": [120, 180], "fall": [1.05, 1.4], "slant": [0.12, 0.32], "width": [1.2, 1.45],
 		"fog_a": [0.04, 0.06], "fog_n": [5, 8], "val": [0.13, 0.22], "sat": [0.4, 0.75],
-		"veil": 0.48, "flare": 0.15, "streak": 0,
+		"density": [0.45, 0.85], "veil": 0.48, "flare": 0.15, "streak": 0,
 	},
 	"downpour": {
 		"moods": ["abyss", "ash", "violet", "glacier", "teal", "brass", "bone", "ember"],
 		"count": [200, 300], "fall": [1.35, 1.75], "slant": [0.2, 0.45], "width": [1.5, 1.8],
 		"fog_a": [0.03, 0.05], "fog_n": [4, 7], "val": [0.10, 0.18], "sat": [0.45, 0.8],
-		"veil": 0.62, "flare": 0.20, "streak": 0,
+		"density": [0.68, 0.95], "veil": 0.62, "flare": 0.20, "streak": 0,
 	},
 	"lit": {
 		# Rain in a lit street at night: the streaks take the LAMP's colour, not the sky's,
@@ -43,7 +43,7 @@ const STORMS := {
 		"moods": ["sodium", "ember", "magenta", "brass", "violet", "toxic", "rose", "teal", "dawn"],
 		"count": [150, 260], "fall": [1.1, 1.6], "slant": [0.15, 0.40], "width": [1.2, 1.8],
 		"fog_a": [0.03, 0.06], "fog_n": [4, 8], "val": [0.10, 0.18], "sat": [0.7, 1.0],
-		"veil": 0.40, "flare": 0.85, "streak": 2,
+		"density": [0.50, 0.90], "veil": 0.40, "flare": 0.85, "streak": 2,
 	},
 }
 
@@ -78,6 +78,12 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		"sat": clampf(sch.sat * (0.7 if int(st["streak"]) > 0 else 0.3), 0.05, 0.8),
 		"count": count, "fall": rng.randf_range(float(st["fall"][0]), float(st["fall"][1])),
 		"slant": rng.randf_range(float(st["slant"][0]), float(st["slant"][1])), "width": width,
+		# The drizzle-to-downpour axis, now owned by the music instead of by the seed
+		# alone: the storm sets how hard it rains at its quietest and how much harder a
+		# loud passage pushes it. A downpour is already near its ceiling, so it swells
+		# little; a mist has most of its range still ahead of it.
+		"density_floor": float(st["density"][0]),
+		"density_gain": float(st["density"][1]),
 	})
 	# Harmonic obscuring veil: drifting grey sheets of rain that thicken on loud passages and soften
 	# the view, then clear - moving patterns of visibility riding the music (the snow-squall effect,

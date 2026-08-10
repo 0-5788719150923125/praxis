@@ -78,6 +78,12 @@ const PUNCT_ALLOWED := [".", ",", "!", "?", ":", ";"]
 # buffer to drain; one halves that latency, and costs nothing now that the
 # inter-sentence gap is inserted at chunk boundaries too (see _drain_ready).
 const CHUNK_SENTENCES := 1
+## Seconds of audio that must be queued before the first sample is heard, when there is
+## no intro to serve as the lead. Chunks are one sentence, and a short opening sentence
+## (1.13 s, measured) cannot cover the synthesis of a long second one (14.49 s), so
+## playback starves without a floor here. It is a LOWER bound on latency-to-first-word,
+## which is why it is not larger.
+const LIVE_PREROLL := 2.5
 
 # TONE PRESETS.
 #
@@ -144,6 +150,9 @@ var _epoch := 0                # bumped on a pace change; stale replies are drop
 var _repace_timer: Timer
 var _scene_hold: HSlider
 var _flourish: HSlider
+var _intro: HSlider
+var _lead_in := 0.0        # the intro seeded into _pending by _plan, in seconds
+var _outro: HSlider
 var _dirty := false
 var _last_edit_ms := 0
 
@@ -428,6 +437,19 @@ func _build_panel() -> void:
 		+ "beat-synced punches on the current scene. 0 turns them off entirely, 1 is the default. "
 		+ "Set this to 0 first if the cutting feels busy: it separates 'too often' from 'too fast'.",
 		func(v: float) -> void: Director.set_flourish(v))
+	_intro = _director_slider(box, "Intro", Director.INTRO_MIN, Director.INTRO_MAX, 0.5,
+		Director.intro_hold,
+		"Seconds of held opening before the narration starts, so the video fades up onto "
+		+ "something instead of beginning mid-word. If Ambience is on, the bed plays alone "
+		+ "through it. Applies to the next render, not the take already playing. Under about "
+		+ "4s the bed is still swelling when the voice arrives; 0 turns the intro off.",
+		func(v: float) -> void: Director.set_intro_hold(v))
+	_outro = _director_slider(box, "Outro", Director.OUTRO_MIN, Director.OUTRO_MAX, 0.5,
+		Director.outro_hold,
+		"Seconds held after the last word, fading picture and sound out together. The "
+		+ "ambience bed takes about 7s to decay, so a shorter outro will cut its tail off. "
+		+ "0 ends the video on the final syllable.",
+		func(v: float) -> void: Director.set_outro_hold(v))
 
 	_status = Label.new()
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -691,6 +713,18 @@ func _plan(body: String) -> void:
 	_pending = PackedFloat32Array()
 	_read = 0
 	_elapsed = 0.0
+	# THE INTRO, seeded HERE rather than at the moment the stream opens, and the
+	# placement is the whole trick: `_elapsed` is the clock every word span and every
+	# seam is measured against, so starting it at the end of the silence offsets the
+	# entire reading - subtitles included - with no other code needing to know.
+	#
+	# Inserting it later would put it AFTER the first sentence, which is exactly the bug
+	# this replaces: the audition spoke its opening line, then went quiet for five
+	# seconds, then carried on.
+	_lead_in = maxf(0.0, Director.intro_hold)
+	if _lead_in > 0.0:
+		_pending.resize(int(_lead_in * float(_sr)))
+		_elapsed = _lead_in
 	_sub_words.clear()          # cleared in place: Subtitles holds this by reference
 
 	_chunks = _build_chunks(body)
@@ -866,7 +900,35 @@ func _drain_ready() -> void:
 			gap.resize(int(seam * float(_sr)))
 			_pending.append_array(gap)
 			_elapsed += seam
+		# the model timed each chunk from zero; shift into stream time
+		for w in take["words"]:
+			var d: Dictionary = (w as Dictionary).duplicate()
+			# the model timed this at its own (slower) rate; resampling divided
+			# every duration by the ratio, so the timings must follow
+			d["t0"] = float(d["t0"]) / ratio + _elapsed
+			d["t1"] = float(d["t1"]) / ratio + _elapsed
+			_sub_words.append(d)
+		_pending.append_array(pcm)
+		_elapsed += float(pcm.size()) / float(_sr)
+		_set_status("Chunk %d of %d - %.0fs of audio ready."
+			% [_next_to_play, _chunks.size(), _elapsed])
+		# HOLD THE FIRST SAMPLE UNTIL THERE IS A LEAD. Chunks are one sentence each
+		# (CHUNK_SENTENCES = 1), and sentence lengths are wildly uneven: measured on
+		# chapter 3, the opening sentence renders to 1.13 s and the next to 14.49 s. The
+		# stream used to open on whatever the first chunk happened to be, so playback
+		# drained that 1.13 s and then starved for as long as the 14.49 s sentence took
+		# to synthesize. Nothing was wrong with the audio - no chunk carries more than
+		# 0.27 s of internal silence - it simply ran out.
+		#
+		# So wait for a real lead before starting. The intro doubles as that lead, which
+		# is why this is one condition and not two, and the floor covers the case where
+		# the intro is turned off entirely. Once open it stays open: the drain is
+		# continuous from here and a mid-reading stall is the pump's business, not this.
 		if not _stream_open:
+			var have := float(_pending.size() - _read) / float(_sr)
+			var lead := maxf(_lead_in, LIVE_PREROLL)
+			if have < lead and _next_to_play < _chunks.size():
+				continue          # keep accumulating; nothing is lost, it is all queued
 			# same text, same music: the pad's note choices are seeded
 			_fx.pad_seed = hash(_text.text)
 			# the preset nudges the bed: a mood is carried by the room as much
@@ -888,18 +950,6 @@ func _drain_ready() -> void:
 			# first push.
 			if _playback != null:
 				_ring_capacity = int(_playback.get_frames_available())
-		# the model timed each chunk from zero; shift into stream time
-		for w in take["words"]:
-			var d: Dictionary = (w as Dictionary).duplicate()
-			# the model timed this at its own (slower) rate; resampling divided
-			# every duration by the ratio, so the timings must follow
-			d["t0"] = float(d["t0"]) / ratio + _elapsed
-			d["t1"] = float(d["t1"]) / ratio + _elapsed
-			_sub_words.append(d)
-		_pending.append_array(pcm)
-		_elapsed += float(pcm.size()) / float(_sr)
-		_set_status("Chunk %d of %d - %.0fs of audio ready."
-			% [_next_to_play, _chunks.size(), _elapsed])
 
 
 
@@ -1033,6 +1083,24 @@ func export_take() -> String:
 
 	if pcm.is_empty():
 		return ""
+	# THE BOOKEND, written into the take itself. Held silence at the head and tail of the
+	# render, so the video opens and closes on something rather than starting mid-word.
+	#
+	# It goes in HERE, before the effects chain, and that ordering is the entire point.
+	# VoiceFX is a filter, not a source: given real samples to write into, the ambience
+	# pad - which is an independent instrument on its own clock, unlike the resonance,
+	# which can only ring when the voice excites it - swells through the intro and decays
+	# through the outro. Pad the PCM afterwards and both ends are digital silence.
+	var intro := maxf(0.0, Director.intro_hold)
+	var outro := maxf(0.0, Director.outro_hold)
+	if intro > 0.0 or outro > 0.0:
+		var padded := PackedFloat32Array()
+		padded.resize(int(intro * float(_sr)) + pcm.size() + int(outro * float(_sr)))
+		var head := int(intro * float(_sr))
+		for i in pcm.size():
+			padded[head + i] = pcm[i]
+		pcm = padded
+
 	# the ambience the user has been listening to belongs in the render, so the
 	# export matches the audition - a fresh chain, since the live one is
 	# mid-reading and carries its own tails
@@ -1043,16 +1111,35 @@ func export_take() -> String:
 	fx.resonance = _fx_res.value
 	fx.presence = _fx_presence.value
 	fx.pad = clampf(_fx_pad.value + float(t["amb"]), 0.0, 1.0)
+	# SEED THE KEY, or the intro is silent anyway. The pad picks its tonic from the
+	# tracked pitch of the voice, and the tracker returns 0 on silence - so during a
+	# leading pad of pure zeros `_tonic` never rises off 0, `_start_tone` refuses to
+	# schedule anything, and the bed only begins once the narration has already started,
+	# which is precisely backwards. Measuring the voice FIRST and handing the chain its
+	# key up front is what lets the bed be playing before the first word.
+	if intro > 0.0:
+		fx.prime_key(pcm)
 	pcm = fx.process(pcm)
 
 	var path := TAKE_DIR + "/take_%d.wav" % stamp
 	var abs_path := _write_wav(path, pcm)
-	if not words.is_empty():
+	if not words.is_empty() or intro > 0.0 or outro > 0.0:
 		var side := FileAccess.open(path.get_basename() + ".json", FileAccess.WRITE)
 		if side != null:
-			side.store_string(JSON.stringify({"words": words}))
+			# Word timings shift with the audio they describe. Doing it here, once,
+			# keeps every consumer honest: the karaoke overlay, the live session and
+			# the export render all read this file and none of them needs to know a
+			# bookend exists.
+			var shifted: Array = []
+			for w in words:
+				var d: Dictionary = (w as Dictionary).duplicate()
+				d["t0"] = float(d.get("t0", 0.0)) + intro
+				d["t1"] = float(d.get("t1", 0.0)) + intro
+				shifted.append(d)
+			side.store_string(JSON.stringify({
+				"words": shifted, "bookend": {"in": intro, "out": outro}}))
 			side.close()
-	_set_status("Rendered %.1fs for export." % elapsed)
+	_set_status("Rendered %.1fs for export (%.0fs intro, %.0fs outro)." % [elapsed, intro, outro])
 	return abs_path
 
 

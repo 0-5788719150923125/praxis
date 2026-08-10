@@ -341,6 +341,25 @@ def _shift(t: float, inserted, inclusive: bool) -> float:
 #   [BOS, PAD, id, PAD, id, PAD, ..., EOS]
 BOS, EOS, PAD = 1, 2, 0
 
+# U+0329 COMBINING VERTICAL LINE BELOW - the IPA "syllabic" mark. eSpeak puts it on a
+# consonant that is carrying a syllable on its own, which in American English is mostly
+# the glottalized -ten/-tain family: "written" comes back as /ɹˈɪʔn̩/, "certain" as
+# /sˈɜːʔn̩/, "gotten" as /ɡˈɑːʔn̩/.
+#
+# Not every voice can spell it. Measured across the five installed here, four carry
+# 157-symbol maps that include it and en_US-libritts-high carries a 130-symbol map that
+# does not - and on that voice the mark was simply dropped, leaving /ɹˈɪʔn/: a glottal
+# stop and a bare consonant with nothing to stand as the second syllable. Across
+# north-star that is 146 tokens of 19 word types, and they are not rare words - "written"
+# 51 times, "certain" 34, "gotten" 15.
+#
+# So substitute rather than drop. A syllabic consonant IS a schwa plus that consonant -
+# it is the same sound written more tightly, and eSpeak itself spells the un-glottalized
+# members of the family that way already ("prison" -> /pɹˈɪzən/, "sudden" -> /sˈʌdən/).
+# Inserting the schwa BEFORE the base gives /ɹˈɪʔən/, which every voice can say.
+SYLLABIC = "\u0329"
+SCHWA = "\u0259"
+
 # Commercially clean English voices only. Verified MODEL_CARD by MODEL_CARD,
 # 2026-08-09. Anything not on this list needs its card read before it is added.
 VOICES: dict[str, dict] = {
@@ -686,6 +705,9 @@ class PiperBackend(Backend):
         # and after the last one, per piper1-gpl docs/ALIGNMENTS.md. Emitting it
         # AFTER instead drops the pad that follows BOS, which shifts the whole
         # stream by one relative to what the model was trained on.
+        # (ghost's own ARPAbet carries no syllabic mark, so this is a no-op here -
+        # it runs for symmetry with the eSpeak path rather than because it fires.)
+        symbols, _folded = self._fold_syllabic(symbols, pmap)
         ids: list[int] = [BOS]
         owner: list[int] = [-1]
         missing: list[str] = []
@@ -838,6 +860,45 @@ class PiperBackend(Backend):
                 "sentences": len(groups)}
 
 
+    @staticmethod
+    def _fold_syllabic(symbols: list, pmap: dict) -> tuple[list, bool]:
+        """Rewrite syllabic consonants this voice cannot spell as schwa + consonant.
+
+        The mark FOLLOWS its base in the stream, so the schwa is inserted one place
+        back - `[.., ("n", i), ("\u0329", i)]` becomes `[.., ("\u0259", i), ("n", i)]`.
+        The inserted symbol keeps the base's source index, so per-token alignment (and
+        the karaoke timing built on it) is unaffected.
+
+        A no-op on the four voices whose maps do carry U+0329, and on any voice that
+        somehow lacks a schwa there is nothing better to do than fall through to the
+        existing drop.
+        """
+        # LOOK AT THE STREAM BEFORE LOOKING AT THE MAP. Two reasons, and the second is
+        # the load-bearing one: most utterances contain no syllabic mark at all, so
+        # probing is wasted work - and a phoneme_id_map is not always an inert dict.
+        # The test harness's stand-in ALLOCATES AN ID on first lookup, so probing it for
+        # two symbols that never appear silently shifted every subsequent id by two and
+        # changed the synthesized audio. Cheap early-out, no side effects.
+        if not any(sym == SYLLABIC for sym, _ in symbols):
+            return symbols, False
+        # .get() rather than `in`: that same stand-in supports lookup but not membership.
+        if pmap.get(SYLLABIC) is not None or pmap.get(SCHWA) is None:
+            return symbols, False
+        out: list = []
+        folded = False
+        for sym, src in symbols:
+            if sym == SYLLABIC:
+                if out:
+                    out.insert(len(out) - 1, (SCHWA, out[-1][1]))
+                    folded = True
+                # A mark with nothing in front of it has no base to be syllabic ON, so
+                # it is discarded rather than turned into a stray leading schwa - which
+                # would be an invented vowel at the head of the utterance.
+                continue
+            out.append((sym, src))
+        return out, folded
+
+
     def _run(self, group: list, voice: str, params: dict, cfg: dict, sess,
              phonemizer: str):
         """One sentence: symbols -> ids -> audio, plus per-token time spans."""
@@ -845,6 +906,8 @@ class PiperBackend(Backend):
         pmap: dict = cfg["phoneme_id_map"]
         symbols = self._symbols(group, phonemizer,
                                 str(cfg.get("espeak", {}).get("voice", "en-us")))
+        # eSpeak is where U+0329 comes from, so this is the call that matters.
+        symbols, folded = self._fold_syllabic(symbols, pmap)
         ids: list[int] = [BOS]
         owner: list[int] = [-1]
         missing: list[str] = []
@@ -862,13 +925,19 @@ class PiperBackend(Backend):
         owner.append(-1)
         ids.append(EOS)
         owner.append(-1)
+        if folded and SYLLABIC not in self._warned_symbols:
+            self._warned_symbols.add(SYLLABIC)
+            print("ghost/voice: this voice has no U+0329 (syllabic); writing it as a "
+                  "schwa before the consonant instead", file=sys.stderr)
         if missing:
             # DROP, do not fail. eSpeak emits marks that a given voice's map may
-            # not carry - U+0329 (syllabic) is the common one, on words like
-            # "prison" where it marks a syllabic consonant. The base phoneme is
-            # already in the stream, so dropping the mark costs a nuance;
-            # raising costs the whole request, which is how a cosmetic gap
-            # became "request failed" and stopped playback dead.
+            # not carry, and raising costs the whole request - which is how a
+            # cosmetic gap once became "request failed" and stopped playback dead.
+            #
+            # The one that actually mattered, U+0329, is no longer dropped at all;
+            # it is rewritten above (see the SYLLABIC constant). Anything still
+            # landing here is genuinely unhandled, so say so plainly rather than
+            # describing it as a nuance.
             #
             # Reported once per symbol per process, to stderr, which ghost now
             # echoes to the terminal - visible without being fatal.
