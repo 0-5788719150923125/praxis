@@ -26,5 +26,19 @@ class BaseRegularizer(nn.Module):
     def forward(self, hidden_states: Tensor, input_ids: Tensor, **ctx) -> Tensor:
         raise NotImplementedError
 
+    def reset(self) -> None:
+        """Drop any state accumulated during a forward. Called at the START of
+        every model forward, unconditionally.
+
+        ``forward`` is only invoked when the model is training AND has labels,
+        so a regularizer that collects state from other modules mid-forward
+        cannot rely on its own call to clear that state - a labels-free
+        training forward would leave it behind. Anything still holding an
+        autograd graph then survives into a later iteration, where the
+        parameters it references have already been modified in place by the
+        optimizer, and backward dies with "one of the variables needed for
+        gradient computation has been modified by an inplace operation".
+        Override this to make that impossible."""
+
     def training_metrics(self) -> dict:
         return {}

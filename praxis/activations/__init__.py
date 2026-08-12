@@ -3,6 +3,7 @@ from transformers.activations import ACT2CLS, ClassInstantier
 
 from praxis.activations.jagged_sine import JaggedSine
 from praxis.activations.nmda import NMDA
+from praxis.activations.ouroboros import Ouroboros
 from praxis.activations.periodic_relu import PeriodicReLU
 from praxis.activations.serf import SERF
 from praxis.activations.serpent import Serpent
@@ -15,6 +16,7 @@ from praxis.activations.snake import Snake
 ACTIVATION_MAP = dict(
     jagged_sin=JaggedSine,
     nmda=NMDA,
+    ouroboros=Ouroboros,
     periodic_relu=PeriodicReLU,
     prelu=PReLU,
     serf=SERF,

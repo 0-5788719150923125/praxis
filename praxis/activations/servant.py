@@ -51,8 +51,11 @@ class Servant(Serpent):
         # Velocity coupling starts at zero: Servant == Serpent at init.
         initial_v = torch.zeros(feature_shape, dtype=dtype, device=device)
         # Center the live energy signal on the first batch's mean log-energy.
+        # Shape [1], never 0-dim: the schedule_free optimizer wrapper swaps
+        # parameters via `x.view(torch.uint8).bitwise_xor_(...)`, which raises on
+        # a 0-dim tensor. Broadcasting against [..., 1] is unaffected.
         s = x.detach().square().mean(dim=-1).clamp_min(ENERGY_EPS).sqrt()
-        initial_ref = s.log().mean().to(dtype=dtype)
+        initial_ref = s.log().mean().to(dtype=dtype).reshape(1)
         self._materialize(("v", initial_v), ("log_s_ref", initial_ref))
 
     def _effective_frequency(self, a: Tensor, x: Tensor) -> Tensor:

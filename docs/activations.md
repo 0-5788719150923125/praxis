@@ -3,7 +3,7 @@
 
 Pointwise nonlinearities used inside blocks and heads.
 
-Registry: ``praxis.ACTIVATION_REGISTRY`` (34 entries)
+Registry: ``praxis.ACTIVATION_REGISTRY`` (35 entries)
 
 ## `gelu` - GELUActivation
 
@@ -129,6 +129,20 @@ long-term reference memory, thus enhancing a process that is similar to memory
 consolidation in the mammalian brain. https://openreview.net/forum?id=vKpVJxplmB
 
 Source: [praxis/activations/nmda.py:8](../praxis/activations/nmda.py#L8)
+
+## `ouroboros` - Ouroboros
+
+Serpent applied recurrently, with a per-feature, per-token gate that lets a feature stop
+iterating once it has converged.
+
+h_0    = 0,  open_0 = 1     a_eff  = a * (1 + MOD_MAX * tanh(w) * h_k)     y      =
+serpent(x, a_eff, b, g)     logit  = u_k + p * m(x) + q * conv(x, y)     z_k    =
+hard_concrete(logit)     open_k = open_{k-1} * z_k          # closed stays closed     x
+= x + open_k * (y - x)     h_{k+1}= tanh(h_k + (y - x))
+
+WHY THE GATE IS THE POINT. A pointwise map applied N ...
+
+Source: [praxis/activations/ouroboros.py:103](../praxis/activations/ouroboros.py#L103)
 
 ## `periodic_relu` - PeriodicReLU
 

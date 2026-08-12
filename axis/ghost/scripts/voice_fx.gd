@@ -22,9 +22,44 @@ class_name VoiceFX
 ## signal, and the tones sit at consonant intervals above the tracked pitch, so
 ## the chord follows the narration's register instead of fighting it.
 
-# --- echo (after voice.gd's bus: 170 ms, damped in the loop) -----------------
-const ECHO_DELAY := 0.17
-const ECHO_LP := 1400.0        # every repeat comes back darker
+# --- echo: a room at the bottom of the dial, a slapback at the top ------------
+#
+# THE SETTING CHOOSES THE CHARACTER, NOT JUST THE LEVEL. It used to choose only
+# the level: one tap at a fixed 170 ms with a fixed 0.42 feedback, so measured
+# across the whole dial the delay was 170 ms and the tail ran 0.85-1.36 s at
+# EVERY setting - 5 to 8 discrete repeats whether the slider was at 0.05 or 0.5.
+# Turning it down made the same effect quieter and never made it a smaller one.
+#
+# That is unusable on speech for a reason that gain cannot fix. Past roughly
+# 50 ms the precedence effect stops fusing a repeat with the direct sound and
+# the ear hears a separate event, so a discrete repeat stays plainly audible
+# far below where a diffuse room would - detection thresholds for speech at
+# this delay sit around -20 to -25 dB, and the old dial's first repeat is
+# -26 dB at 0.05 and -20 dB at 0.10. It was AT the audibility threshold at the
+# very bottom of its travel. Worse, 170 ms is about one syllable at a normal
+# reading pace, so each repeat lands on the next word: maximally smearing.
+#
+# So the tap SHORTENS as the dial comes down, until it is inside the fusion
+# window and reads as the room the voice is in; the feedback and the damping
+# come down with it, and a second incommensurate tap keeps even the long
+# setting from being a single hard image.
+const ECHO_DELAY := 0.17       # the longest tap, and the delay line's size
+const ECHO_NEAR := 0.028       # the shortest: inside the ~50 ms fusion window
+const ECHO_TAP2 := 0.61        # second tap as a fraction of the first, deliberately
+                               # not a simple ratio - a 1/2 or 1/3 tap re-lands on
+                               # the first one's repeats and rebuilds a single image
+const ECHO_TAP2_MIX := 0.30
+const ECHO_LP := 1400.0        # every repeat comes back darker...
+const ECHO_LP_NEAR := 650.0    # ...and a small dark room is darker still
+const ECHO_FB_NEAR := 0.12     # one repeat and gone, rather than a five-tap tail
+## The dial's taper. Above 1 so the bottom of the travel is genuinely quiet -
+## the useful settings for narration all live down there, and a linear dial spent
+## most of its length on levels that bury the voice. Not much above 1, though: at
+## a square taper 0.05 lands at -52 dB, which is inaudible, and dead travel at the
+## bottom of a dial is its own kind of broken. 1.5 puts 0.05 at -39 dB and 0.20 at
+## -21 dB, both of which do something, and both of which are a ROOM at those
+## settings rather than a repeat (see ECHO_NEAR).
+const ECHO_TAPER := 1.5
 
 # --- resonance ---------------------------------------------------------------
 const TONES := 4
@@ -94,6 +129,13 @@ var pad_duck := PAD_DUCK       # how far the bed steps back under speech
 var _echo := PackedFloat32Array()
 var _echo_i := 0
 var _echo_lp := 0.0
+# Resolved from echo_wet whenever it moves (the slider is live), not per sample.
+var _echo_k := -1.0            # the setting these were resolved for
+var _echo_n1 := 0              # near tap, in samples behind the write head
+var _echo_n2 := 0              # far tap
+var _echo_gain := 0.0
+var _echo_fb := 0.0
+var _echo_a := 0.0             # damping coefficient
 var _res_re := PackedFloat32Array()
 var _res_im := PackedFloat32Array()
 var _res_env := PackedFloat32Array()
@@ -197,11 +239,40 @@ func prime_key(buf: PackedFloat32Array) -> void:
 		pos += win
 
 
+## Turn the echo dial into an actual room: tap times, feedback, damping and gain.
+##
+## Everything moves together, which is the whole point - see the constants above
+## for why a dial that moved only the gain was unusable on speech. The dial's own
+## `echo_feedback` still sets the TOP of the feedback travel, so a caller that
+## deliberately wants a long tail still gets one at a high setting.
+##
+## Cheap and idempotent: the slider is live, so this runs once per buffer and
+## returns immediately unless the setting actually moved.
+func _resolve_echo() -> void:
+	var k := clampf(echo_wet, 0.0, 1.0)
+	if is_equal_approx(k, _echo_k):
+		return
+	_echo_k = k
+	var sz := maxi(1, _echo.size())
+	# The tap shortens toward the fusion window as the dial comes down. `k` is
+	# used raw here (not tapered) because this is about CHARACTER: the room should
+	# already be small by the time the level is subtle.
+	var d1 := lerpf(ECHO_NEAR, ECHO_DELAY, k)
+	_echo_n1 = clampi(int(round(d1 * sample_rate)), 1, sz - 1)
+	_echo_n2 = clampi(int(round(d1 * ECHO_TAP2 * sample_rate)), 1, sz - 1)
+	_echo_fb = lerpf(ECHO_FB_NEAR, echo_feedback, k)
+	_echo_a = 1.0 - exp(-TAU * lerpf(ECHO_LP_NEAR, ECHO_LP, k) / sample_rate)
+	# The LEVEL is tapered, so the bottom of the dial is genuinely quiet on top of
+	# being genuinely small.
+	_echo_gain = pow(k, ECHO_TAPER)
+
+
 ## Process in place. `buf` is mono float samples; returns the same array so the
 ## copy-on-write semantics of PackedFloat32Array cannot silently drop the work.
 func process(buf: PackedFloat32Array) -> PackedFloat32Array:
 	if _echo.is_empty():
 		setup(sample_rate)
+	_resolve_echo()
 	var n := buf.size()
 	var res_step := PackedFloat32Array()
 	res_step.resize(TONES)
@@ -288,13 +359,15 @@ func process(buf: PackedFloat32Array) -> PackedFloat32Array:
 				_next_note = PAD_GAP * _rng.randf_range(0.7, 1.8)
 				_start_tone()
 
-		# --- echo: darker on every repeat ---
+		# --- echo: a room down low, a slapback up high, darker on every repeat ---
 		if echo_wet > 0.0:
-			var back := _echo[_echo_i]
-			_echo_lp += (back - _echo_lp) * (1.0 - exp(-TAU * ECHO_LP / sample_rate))
-			wet += _echo_lp * echo_wet
-			_echo[_echo_i] = dry + _echo_lp * echo_feedback
-			_echo_i = (_echo_i + 1) % _echo.size()
+			var sz := _echo.size()
+			var back := _echo[(_echo_i + sz - _echo_n1) % sz] * (1.0 - ECHO_TAP2_MIX) \
+				+ _echo[(_echo_i + sz - _echo_n2) % sz] * ECHO_TAP2_MIX
+			_echo_lp += (back - _echo_lp) * _echo_a
+			wet += _echo_lp * _echo_gain
+			_echo[_echo_i] = dry + _echo_lp * _echo_fb
+			_echo_i = (_echo_i + 1) % sz
 
 		# --- presence: distance is a filter first, a gain second ---
 		if presence < 0.995:

@@ -596,6 +596,14 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         assistant_mask: Optional[torch.Tensor] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
 
+        # Unconditionally, before anything runs: regularizers that collect state
+        # from other modules during the forward get to drop whatever the last
+        # one left behind. `_add_auxiliary_losses` only calls them when training
+        # AND labels are present, so a labels-free training forward would
+        # otherwise strand live autograd graphs for a later step to consume.
+        for reg in self.reg:
+            reg.reset()
+
         # Encoder-owned self-supervised warmup (e.g. CALM's autoencoder). While
         # active, train ONLY the encoder's objective and skip the global
         # transformer + head entirely; the rest of the model stays locked. This

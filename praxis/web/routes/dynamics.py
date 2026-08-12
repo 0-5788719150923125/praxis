@@ -647,6 +647,11 @@ def get_activation_curves():
         return response
 
 
+# Activation classes already reported as unsamplable, so the warning is emitted
+# once rather than on every poll of /api/activation_curves.
+_SAMPLE_FAILURES: set = set()
+
+
 def _activation_classes() -> tuple:
     """Module subclasses we treat as activations when walking a model.
 
@@ -717,6 +722,11 @@ def _sample_activation(
     parameters broadcast; we tile across the param's feature size and average
     over features to get a single representative curve per module.
     """
+    # Size the probe by the FEATURE axis, not by numel. Activation parameters
+    # broadcast against the last dim, and an activation may carry a parameter
+    # with extra leading axes - Ouroboros' per-step gate bias is [MAX_STEPS, D].
+    # Using numel there asks for MAX_STEPS * D features, the forward cannot
+    # broadcast, and the module silently vanishes from the chart.
     param_dim = 1
     for p in module.parameters(recurse=False):
         if p is None:
@@ -724,11 +734,11 @@ def _sample_activation(
         if isinstance(p, UninitializedParameter):
             return None
         try:
-            numel = p.numel()
+            size = p.shape[-1] if p.dim() > 0 else 1
         except Exception:
-            numel = 1
-        if numel > param_dim:
-            param_dim = numel
+            size = 1
+        if size > param_dim:
+            param_dim = size
 
     try:
         x_base = torch.linspace(
@@ -776,7 +786,18 @@ def _sample_activation(
 
         return {"x": xs, "forward": forward, "backward": backward, **band}
 
-    except Exception:
+    except Exception as e:
+        # Never silently. A sampling failure used to drop the module from the
+        # chart with no trace anywhere, which reads as "this activation is not
+        # in the model" - the hardest kind of bug to notice. Warn once per
+        # class so the polled endpoint cannot spam the log.
+        key = type(module).__name__
+        if key not in _SAMPLE_FAILURES:
+            _SAMPLE_FAILURES.add(key)
+            api_logger.warning(
+                f"[activation_curves] cannot sample {key}, omitting it from the "
+                f"chart: {type(e).__name__}: {e}"
+            )
         return None
 
 
@@ -876,10 +897,11 @@ def _representative_feature_index(module, param_dim: int) -> int:
     plotted curve preserves the actual shape.
     """
     for p in module.parameters(recurse=False):
-        if p is None or p.dim() == 0:
+        # Rank on true per-feature vectors only. A parameter with leading axes
+        # (e.g. [MAX_STEPS, D]) would flatten to an index out of range for the
+        # D columns actually plotted.
+        if p is None or p.dim() != 1 or p.shape[-1] != param_dim:
             continue
-        if p.numel() != param_dim:
-            continue
-        sorted_idx = torch.argsort(p.detach().flatten())
+        sorted_idx = torch.argsort(p.detach())
         return int(sorted_idx[param_dim // 2].item())
     return 0
