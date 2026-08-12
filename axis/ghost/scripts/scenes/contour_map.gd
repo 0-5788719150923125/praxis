@@ -106,6 +106,14 @@ const SIMPLIFY_PX := 0.35
 const KINDS := ["fbm", "fbm", "ridged", "billow", "cells"]
 
 var _forge: FrameForge
+var _slot := WarpSlot.new()            # the running build reports its offset here
+# The warp the packet CURRENTLY ON SCREEN was built at. Everything drawn live is placed
+# against this, and the packet itself is translated by the difference to the live warp -
+# see _draw. Without it the marks slid smoothly while the contours stepped on the
+# extraction cadence, which is what "the plane kept jumping" and "a compass detached and
+# floating around" both were: annotations adrift from the map they annotate.
+var _pkt_warp := Vector2.ZERO
+var _pkt_valid := false
 var _sim := SimClock.new(60.0)
 var _tb := TriBatch.new()
 var _prng := RandomNumberGenerator.new()
@@ -180,6 +188,9 @@ var _sweep_prev := 0.0
 var _prev_beat := 0.0
 var _prev_mv := 0.0
 var _pick := 0
+var _pick_k := 0.0          # the highlight's position on the index ladder, eased
+var _pick_seeded := false
+var _pick_level := 0        # the committed index line, moved only past a hysteresis band
 
 # The label pass: anchors collected while the paperwork is drawn, flushed as one textured
 # triangle array afterwards (the same ramp-texture path [GlyphSet] bakes for).
@@ -257,7 +268,8 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	# Movement is a section-change score that spends most of a track low, so a threshold
 	# near 0.5 rewarps only at real changes and one near 0.2 keeps the land always moving.
 	_mv_thr = rng.randf_range(0.20, 0.50)
-	_warp_secs = rng.randf_range(6.0, 15.0)
+	# ... and slower, for the same reason.
+	_warp_secs = rng.randf_range(14.0, 30.0)
 	_margin = rng.randf_range(0.030, 0.075)
 	_grat_lo = rng.randf_range(0.22, 0.45)
 	_grat_hi = minf(1.0, _grat_lo + rng.randf_range(0.25, 0.50))
@@ -283,7 +295,11 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	# next one is audio-conditioned and an rng draw there would diverge in an export.
 	var n_ring := rng.randi_range(4, 9)
 	for i in n_ring:
-		_ring.append(Vector2(rng.randf_range(-0.55, 0.55), rng.randf_range(-0.55, 0.55)))
+		# MUCH SMALLER THAN IT WAS. These were +-0.55 of a sheet, so two consecutive
+		# entries could be a full sheet-width apart and the map crossed itself in the ease
+		# time - a lurch rather than a survey. A map should be a stable thing you can read,
+		# with the camera's own gentle drift providing the motion.
+		_ring.append(Vector2(rng.randf_range(-0.16, 0.16), rng.randf_range(-0.16, 0.16)))
 	_warp_a = _ring[0]
 	_warp_b = _ring[0]
 
@@ -335,7 +351,6 @@ func update(f: AudioFeatures, delta: float) -> void:
 		return
 	_ensure_sites()
 	_ch = chroma_hue()
-	_pick_index()
 	# Events, not integration: an edge stays one edge however many times the Director
 	# substeps this frame.
 	if f.beat > 0.55 and _prev_beat <= 0.55:
@@ -353,6 +368,10 @@ func update(f: AudioFeatures, delta: float) -> void:
 # fifteen times in a frame, pre-warms twelve deep and lets Echo fast-forward, and a sweep
 # advanced once per update() call would have crossed the sheet before its first frame.
 func _step(dt: float) -> void:
+	# The highlight migrates on the FIXED clock like everything else that integrates: it
+	# is called from here rather than from update(), which the Director substeps up to
+	# fifteen times in one frame and pre-warms twelve deep.
+	_pick_index(dt)
 	if _warp_t < 1.0:
 		_warp_t = minf(1.0, _warp_t + dt / maxf(0.5, _warp_secs))
 	var period := maxf(2.0, clampf(_f.beat_period, 0.25, 1.6) * _sweep_beats)
@@ -448,6 +467,13 @@ func _ensure_sites() -> void:
 		_sites.append(e)
 
 
+## Take the warp offset of the build whose packet is currently on screen.
+func _adopt_packet_warp() -> void:
+	if _slot.valid:
+		_pkt_warp = _slot.warp
+		_pkt_valid = true
+
+
 func _warp_now() -> Vector2:
 	var t := clampf(_warp_t, 0.0, 1.0)
 	return _warp_a.lerp(_warp_b, t * t * (3.0 - 2.0 * t))
@@ -476,11 +502,31 @@ func _site_pos(i: int) -> Vector2:
 # The audio: which contour is inked, and the survey marks
 # ---------------------------------------------------------------------------------
 
-# The harmony picks an ALTITUDE. chroma_hue's angle is the music's tonal centre, and it
-# is mapped straight across the index contours - so a chord change re-inks the sheet at a
-# different height without a single line moving. With no tonal content at all the middle
-# index line is inked, which is what a plain printed sheet would do anyway.
-func _pick_index() -> void:
+# The harmony picks an ALTITUDE, and it MIGRATES there rather than arriving.
+#
+# chroma_hue's angle is the music's tonal centre, and it used to be mapped straight across
+# the index contours: `_pick = first + int(t * n) * _index_every`. Two things made that the
+# worst mark on the sheet. The inked line is the one saturated colour here and it appears
+# at EVERY occurrence of its elevation, so it is not one loop but loops all over the map -
+# and an instant re-pick relights all of them somewhere else at once. Worse, hue is
+# CIRCULAR while an elevation ladder is not, so a small harmonic move across the wrap
+# (0.99 to 0.01) threw the highlight from the top of the country to the bottom. Reported
+# as pink loops appearing and vanishing every few seconds, and reading as the whole map
+# jumping - which it effectively was, since the pink was most of what the eye tracked.
+#
+# So the pick eases through the ladder at a bounded rate instead. One index line at a time,
+# to an ADJACENT elevation, which on a contour map reads as a tide line rising and falling
+# over the land - continuous, legible, and exactly the kind of motion a map can carry.
+# A hue wrap now costs a slow sweep across the ladder rather than a flash.
+## Index lines per second the highlight may travel. Deliberately slow, and the slowness is
+## doing two jobs. A sheet may only carry two or three index contours, so "adjacent" is
+## still a large visual change - every loop at that elevation, everywhere on the map. And
+## a slow crossing gives free hysteresis: a fleeting harmonic wobble never completes the
+## trip, so the highlight settles instead of oscillating across a boundary. Four seconds
+## per line is a tide, not a switch.
+const PICK_RATE := 0.25
+
+func _pick_index(dt: float) -> void:
 	var first := posmod(-_index_phase, _index_every)
 	var n := 0
 	var k := first
@@ -491,7 +537,22 @@ func _pick_index() -> void:
 		_pick = _levels / 2
 		return
 	var t := _ch.x if _ch.y > 0.02 else 0.5
-	_pick = first + mini(n - 1, int(t * float(n))) * _index_every
+	var target := clampf(t * float(n), 0.0, float(n - 1))
+	if not _pick_seeded:
+		_pick_k = target
+		_pick_level = clampi(int(round(target)), 0, n - 1)
+		_pick_seeded = true
+	else:
+		_pick_k = move_toward(_pick_k, target, PICK_RATE * dt)
+	# HYSTERESIS, not rounding. A slow travel rate alone does NOT settle this - measured,
+	# it changed just as often. With the target alternating between two levels the eased
+	# position simply hovers near the half-way mark, and round() then flips on every
+	# micro-crossing: 21 changes in twenty seconds, which is the flashing being fixed.
+	# The line only moves once the position has committed three quarters of the way to a
+	# neighbour, so a hovering target holds the current elevation instead of straddling it.
+	if absf(_pick_k - float(_pick_level)) > 0.75:
+		_pick_level = clampi(_pick_level + (1 if _pick_k > float(_pick_level) else -1), 0, n - 1)
+	_pick = first + clampi(_pick_level, 0, n - 1) * _index_every
 
 
 # A beat plants the next station: the summit nearest the sweep line, so marks appear
@@ -576,6 +637,7 @@ func _kick() -> void:
 	job.half = Vector2(size.x, size.y) * 0.5 * SHEET
 	job.fspan = Vector2(size.x, size.y) * (SHEET * _span / u)
 	job.off = _warp_now() * job.fspan
+	job.warp = _warp_now()
 	job.lo = _lo
 	job.step = _step_v
 	job.count = _levels
@@ -610,6 +672,7 @@ func _kick() -> void:
 	job.hatch_w = maxf(0.7, _w_minor * 0.8)
 	job.band_lo = _lo + float(_pick) * _step_v
 	job.band_hi = job.band_lo + float(_index_every) * _step_v
+	job.slot = _slot
 	_forge.kick(job.run, {}, self, job)
 
 
@@ -636,8 +699,10 @@ func _pick_color() -> Color:
 	var d := _ch.x - h
 	h = fposmod(h + (d - round(d)) * _ch.y * 0.5, 1.0)
 	if _blueprint:
-		return Color.from_hsv(h, clampf(_ink_s + 0.35, 0.0, 1.0), 1.0, 0.95)
-	return Color.from_hsv(h, clampf(_ink_s + 0.45, 0.0, 1.0), clampf(_ink_v + 0.28, 0.0, 0.8), 0.95)
+		return Color.from_hsv(h, clampf(_ink_s + 0.35, 0.0, 1.0), 1.0, 0.80)
+	# 0.80 rather than 0.95: this line is not one mark but every loop at its elevation, so
+	# it covers far more of the sheet than "the one saturated mark" suggests.
+	return Color.from_hsv(h, clampf(_ink_s + 0.40, 0.0, 1.0), clampf(_ink_v + 0.28, 0.0, 0.8), 0.80)
 
 
 func _water_color() -> Color:
@@ -669,7 +734,23 @@ func _draw() -> void:
 	if size.x < 4.0:
 		return
 	draw_layers("back")
+	_adopt_packet_warp()
+	# GLIDE THE SHEET. The warp is a pure translation of the sampling window - the offset
+	# moves the window, the land does not move - so displaying a packet built at one offset
+	# as though it were built at another is EXACT, not an approximation, everywhere except
+	# the strip of new ground at the leading edge that the next extraction brings in.
+	#
+	# That is what turns a re-extraction from a jump into a refresh: the map slides
+	# continuously at the warp's own speed and the lines are simply redrawn underneath it
+	# every cadence. Before this the sheet sat still for up to a second and then snapped
+	# several percent of its width sideways.
+	var d := _warp_now() - _pkt_warp if _pkt_valid else Vector2.ZERO
+	if d != Vector2.ZERO:
+		draw_set_transform_matrix(view.matrix(size) * Transform2D(0.0, Vector2.ONE, 0.0,
+			Vector2(-d.x * size.x * SHEET, -d.y * size.y * SHEET)))
 	_forge.submit(self)          # water, hatching, the plates, every contour
+	if d != Vector2.ZERO:
+		draw_set_transform_matrix(view.matrix(size))
 	_paperwork()
 	_labels()
 	draw_layers("front")
@@ -827,6 +908,14 @@ func _ensure_idx(quads: int) -> void:
 ## the field, extracts, smooths and simplifies every contour, and returns the finished
 ## triangle chunks - water first, then hatching, then the out-of-register plate, then the
 ## minor lines, the index lines, and the inked one last.
+## Where a finished build reports the offset it was drawn at. One per scene, shared by
+## every job, so whichever build actually ran is the one whose offset is read.
+class WarpSlot:
+	extends RefCounted
+	var warp := Vector2.ZERO
+	var valid := false
+
+
 class SheetJob:
 	extends RefCounted
 
@@ -836,6 +925,14 @@ class SheetJob:
 	var half := Vector2.ZERO         # the sheet's half extent in pixels
 	var fspan := Vector2.ONE         # the same, in field units
 	var off := Vector2.ZERO          # the window's position on the continent
+	## The warp offset in SHEET fractions this packet was built at, written into the shared
+	## slot when the build finishes. It goes through a slot rather than being read off the
+	## job because the scene cannot tell WHICH job ran: [FrameForge] keeps one worker and
+	## replaces the pending snapshot when a newer kick arrives, so most kicked jobs are
+	## dropped without ever running. A slot every job writes to always holds the offset of
+	## the build whose packet is actually on screen.
+	var warp := Vector2.ZERO
+	var slot: WarpSlot
 	var lo := 0.1
 	var step := 0.06
 	var count := 14
@@ -864,9 +961,15 @@ class SheetJob:
 	var band_lo := 0.0
 	var band_hi := 0.0
 
+	func _publish() -> void:
+		if slot != null:
+			slot.warp = warp
+			slot.valid = true
+
 	func run(_s: Dictionary) -> Array:
 		var tb := TriBatch.new()
 		if nx < 2 or ny < 2 or count <= 0:
+			_publish()
 			return tb.take_chunks()
 		var h := PackedFloat32Array()
 		h.resize(nx * ny)
@@ -912,4 +1015,5 @@ class SheetJob:
 			Contour.stroke(tb, levels[k], index_col, w_index, org, cell, true)
 		if pick >= 0 and pick < count:
 			Contour.stroke(tb, levels[pick], pick_col, w_pick, org, cell, true)
+		_publish()
 		return tb.take_chunks()

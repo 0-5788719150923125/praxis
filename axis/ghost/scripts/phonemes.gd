@@ -222,7 +222,9 @@ static func parse(text: String) -> Array:
 	# the utterance without a trace, and a curly apostrophe defeated both the
 	# contraction split and the dictionary key. See TextNorm.
 	text = TextNorm.normalize(text)
-	for token in _tokenize(text):
+	var toks := _tokenize(text)
+	for ti in toks.size():
+		var token: String = toks[ti]
 		if token.begins_with("["):
 			words.append(_literal_word(token))
 			continue
@@ -262,7 +264,7 @@ static func parse(text: String) -> Array:
 		if bare.begins_with("%"):
 			words.append({"text": "…", "display": "…", "phones": ["AH", "M"],
 				"stressed": false, "pause_after": pause, "punct": punct, "hesit": true})
-			if pause == "stop" and words.size() > 0:
+			if pause == "stop" and words.size() > 0 and _ends_sentence(toks, ti):
 				sentences.append(words)
 				words = []
 			continue
@@ -307,7 +309,7 @@ static func parse(text: String) -> Array:
 					"pause_after": pause,
 					"punct": punct,
 				})
-		if pause == "stop" and words.size() > 0:
+		if pause == "stop" and words.size() > 0 and _ends_sentence(toks, ti):
 			sentences.append(words)
 			words = []
 	if words.size() > 0:
@@ -603,6 +605,24 @@ static func word_to_phones(word: String) -> Array:
 	_load_data()
 	if _lexicon.has(word):
 		return (_parse_cmu(String(_lexicon[word])).phones as Array)
+	# A HYPHENATED COMPOUND IS ITS PARTS. TextNorm used to split these before the
+	# tokenizer ever saw them, which pronounced them correctly but deleted the hyphen
+	# from the text - and the karaoke line shows the source spelling, so "twenty-five"
+	# was subtitled as "twenty five". The hyphen stays now, so the decomposition has to
+	# happen here instead: each part goes through this same pipeline and gets its own
+	# dictionary entry. Without it the letter rules read the whole thing as one run of
+	# characters and lose real sounds - "off-by-one" came out with no /w/ in "one".
+	if word.contains("-") and not _cmu.has(word):
+		var joined: Array = []
+		var any_part := false
+		for part in word.split("-", false):
+			var p := String(part)
+			if p.is_empty():
+				continue
+			any_part = true
+			joined.append_array(word_to_phones(p))
+		if any_part and not joined.is_empty():
+			return joined
 	if _cmu.has(word):
 		return (_parse_cmu(String(_cmu[word])).phones as Array)
 	if EXCEPTIONS.has(word):
@@ -878,6 +898,42 @@ static func _is_dash(t: String) -> bool:
 		if not (t[i] == "-" or t[i] == "\u2013" or t[i] == "\u2014"):
 			return false
 	return true
+
+
+## Is the terminal mark on token [param at] really the end of a sentence?
+##
+## A DIALOGUE TAG IS NOT A NEW SENTENCE. Prose attributes speech by closing the quotation
+## and continuing the same sentence in lower case:
+##
+##     "Do you think Jesus would do this?" you asked.
+##     "Hmm," you said, the remote still raised.
+##
+## The question mark is inside the quotation because it belongs to what was SAID, not to
+## the sentence containing it - so splitting there put "you asked." on a subtitle card of
+## its own, orphaned from the line it belongs to. Written English has a simple, reliable
+## signal for this and it is not the quotation: a genuine new sentence begins with a
+## CAPITAL. A lower-case word after a full stop is a continuation, whether it follows a
+## dialogue tag or an abbreviation this front end failed to expand.
+##
+## THE PAUSE IS UNAFFECTED, deliberately. A reader does rest at the close of a quotation
+## before the attribution, so `pause_after` and the terminal contour are left exactly as
+## they were - this changes only how the words are GROUPED, which is what the karaoke
+## draws. The voice is untouched.
+static func _ends_sentence(toks: PackedStringArray, at: int) -> bool:
+	if at + 1 >= toks.size():
+		return true
+	var nxt := String(toks[at + 1])
+	# Skip anything that carries no case of its own, so an opening quote or bracket before
+	# the next word does not hide it.
+	var i := 0
+	while i < nxt.length() and nxt[i] in "\"\'([" :
+		i += 1
+	if i >= nxt.length():
+		return true
+	var c := nxt[i]
+	# Only a lower-case LETTER continues. A digit, a symbol or a capital all start
+	# something new - "He counted. 5 was missing." is two sentences.
+	return not (c >= "a" and c <= "z")
 
 
 ## Words ghost pronounces ITSELF, because eSpeak reads them wrong.

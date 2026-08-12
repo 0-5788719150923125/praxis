@@ -19,11 +19,15 @@ class_name Chrome
 ##                   [method attach_feedback] and wired to the assistant.
 ## - **console**   - the `>_` log viewer (a live tail of godot's own log
 ##                   file), for anyone running ghost without a terminal.
+## - **scrubber**  - the seek bar, revealed by pointing near the bottom of the
+##                   frame; arrow keys step it without aiming. Hidden entirely
+##                   when the audio cannot be seeked (a synthesis generator).
 
 var exporter: Node
 var assistant: Node
 var feedback: Node
 var console: Node
+var scrubber: Node
 
 
 func _ready() -> void:
@@ -33,6 +37,12 @@ func _ready() -> void:
 	add_child(assistant)
 	console = preload("res://scripts/console.gd").new()
 	add_child(console)
+	# The seek bar. Furniture rather than a mode's own control precisely because the
+	# lesson at the top of this file is that anything a mode has to remember to add is a
+	# thing some mode will forget - and reviewing a long take is not specific to any one
+	# of them. It hides itself when the session cannot be seeked (see Spectrum.seekable).
+	scrubber = preload("res://scripts/scrubber.gd").new()
+	add_child(scrubber)
 	# Persistent like the rest of the furniture, and deliberately NOT gated on a
 	# live session: the value it edits is a saved preference the Director reads at
 	# startup, so setting it on the home screen already governs the first hold of

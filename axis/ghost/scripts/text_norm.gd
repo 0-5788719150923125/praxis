@@ -69,15 +69,28 @@ const ABBREV := {
 	"fig": "figure", "no": "number", "vol": "volume", "ch": "chapter",
 }
 
+## Abbreviations that are ALSO ordinary English words, and so need evidence before being
+## treated as abbreviations at all. See [method _abbrev_fits].
+##   NEEDS_NUMBER - a reference mark, followed by the number it refers to
+##   NEEDS_NAME   - a title, followed by the name it titles
+const NEEDS_NUMBER := ["no", "fig", "vol", "ch"]
+const NEEDS_NAME := ["mr", "mrs", "ms", "dr", "st", "mt", "prof", "rev", "sr", "jr"]
+
 const CURRENCY := {"$": "dollars", "£": "pounds", "€": "euros", "¥": "yen"}
 
 
 ## The entry point. Strip markup, fold, expand, and hand back plain ASCII words.
+##
+## ABBREVIATIONS ARE RESOLVED BEFORE NUMERALS, and the order is load-bearing rather than
+## incidental. The abbreviations that are also ordinary words - `no` above all - can only
+## be told apart by what FOLLOWS them: "No. 5" is a number, "the answer was no." is not.
+## Run the numeral expansion first and that evidence is gone, because by then the 5 has
+## become the word "five" and nothing distinguishes the two cases at all.
 static func normalize(text: String) -> String:
 	var s := _strip_markdown(text)
 	s = _fold(s)
-	s = _expand_numbers(s)
 	s = _expand_abbrev(s)
+	s = _expand_numbers(s)
 	return s
 
 
@@ -202,8 +215,22 @@ static func _is_digits(s: String) -> bool:
 ## FOLDED text, so it only ever sees ASCII.
 static func _expand_numbers(text: String) -> String:
 	var out: Array = []
+	var starts := true                  # is the next token the start of a sentence?
 	for raw in text.split(" ", false):
-		out.append(_expand_token(String(raw)))
+		var tok := String(raw)
+		var done := _expand_token(tok)
+		# A NUMERAL OPENING A SENTENCE KEEPS ITS CAPITAL. "5 was missing." expands to
+		# "five was missing", which is wrong on its own terms - a sentence starts with a
+		# capital - and it also destroys the one signal the sentence splitter has: a
+		# lower-case word after a full stop is read as a continuation (a dialogue tag),
+		# so the expansion silently welded two sentences into one subtitle card.
+		if starts and done != tok and done.length() > 0:
+			done = done.substr(0, 1).to_upper() + done.substr(1)
+		out.append(done)
+		# The next token starts a sentence if this one ended one. Closing wrappers are
+		# stripped first so `it."` counts.
+		var tail := tok.rstrip("\"')]")
+		starts = tail.length() > 0 and tail[tail.length() - 1] in ".!?"
 	return " ".join(out)
 
 
@@ -258,12 +285,25 @@ static func _expand_core(tok: String) -> String:
 	# thousands separators: 1,200
 	if tok.contains(",") and _is_digits(tok.replace(",", "")):
 		return cardinal(int(tok.replace(",", "")))
-	# hyphenated ranges and compounds: 1939-1945, twenty-one
+	# NUMERIC ranges only: 1939-1945, 3-4. The split used to run on ANY hyphenated token,
+	# which quietly deleted the hyphen from every compound in the text - "twenty-five"
+	# reached the subtitles as "twenty five", and so did "self-report", "hundred-year"
+	# and "off-by-one". A hyphen is part of how the word is spelled, and the karaoke line
+	# shows the source spelling, so removing it is a visible error even where the sound is
+	# unaffected. Split only where a number is genuinely involved; everything else is a
+	# word and stays whole, which the tokenizer and both phonemizers already handle.
 	if tok.contains("-") and tok.length() > 1:
-		var parts: Array = []
-		for piece in tok.split("-", false):
-			parts.append(_expand_core(String(piece)))
-		return " ".join(parts)
+		var pieces := tok.split("-", false)
+		var numeric := false
+		for piece in pieces:
+			if _is_digits(String(piece)):
+				numeric = true
+				break
+		if numeric:
+			var parts: Array = []
+			for piece in pieces:
+				parts.append(_expand_core(String(piece)))
+			return " ".join(parts)
 	# bare digits: a plausible year reads as pairs, everything else as a cardinal
 	if _is_digits(tok):
 		var n := int(tok)
@@ -278,7 +318,9 @@ static func _expand_core(tok: String) -> String:
 ## actually present - "no" the word must not become "number".
 static func _expand_abbrev(text: String) -> String:
 	var out: Array = []
-	for raw in text.split(" ", false):
+	var words := text.split(" ", false)
+	for i in words.size():
+		var raw := words[i]
 		var tok := String(raw)
 		# A WRAPPER MUST NOT HIDE THE ABBREVIATION. The match was against the whole token, so
 		# `"Mr.` never equalled `mr.`: the period survived as a period and the sentence broke
@@ -297,10 +339,41 @@ static func _expand_abbrev(text: String) -> String:
 		var lower := body.to_lower()
 		var matched := false
 		for key in ABBREV:
-			if lower == key + ".":
+			if lower == key + "." and _abbrev_fits(key, words, i):
 				out.append(head + String(ABBREV[key]) + tail)
 				matched = true
 				break
 		if not matched:
 			out.append(tok)
 	return " ".join(out)
+
+
+## Is this really the abbreviation, or the ordinary word spelled the same way that
+## happens to end a sentence?
+##
+## The distinction the table could not make. `no` -> `number` fired on any token ending
+## in a period, and a sentence-final "no" ALWAYS ends in a period - so "The answer was
+## no." was spoken, and subtitled, as "The answer was number". The guard the original
+## comment claimed ("only when the period is actually present") is no guard at all,
+## because the period is exactly what a sentence-final word has.
+##
+## What separates them is what comes NEXT:
+##   a reference abbreviation is followed by its number  - "No. 5", "fig. 3", "ch. 12"
+##   a title is followed by the name it titles           - "Mr. Smith", "St. Paul"
+## Everything else in the table ("etc.", "vs.", "approx.") is never an ordinary English
+## word, so it needs no evidence and keeps expanding unconditionally.
+static func _abbrev_fits(key: String, words: PackedStringArray, at: int) -> bool:
+	var needs_number := NEEDS_NUMBER.has(key)
+	var needs_name := NEEDS_NAME.has(key)
+	if not needs_number and not needs_name:
+		return true
+	if at + 1 >= words.size():
+		return false                     # nothing follows: it ended a sentence, so it is the word
+	var nxt := String(words[at + 1]).lstrip("\"'(")
+	if nxt.is_empty():
+		return false
+	if needs_number:
+		return nxt[0] >= "0" and nxt[0] <= "9"
+	# a title needs a capitalised word after it, which is what a name looks like
+	return nxt[0] >= "A" and nxt[0] <= "Z"
+

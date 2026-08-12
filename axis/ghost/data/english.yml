@@ -42,6 +42,16 @@ lexicon:
   live: L IH1 V
   lives: L IH1 V Z
 
+  # `read` is the same call as `live` above, and a starker one: CMUdict carries the
+  # PAST tense as its only entry (`read R EH1 D`), so ghost's own G2P said "red" for
+  # every reading of the word, present and past alike - including "how to read the
+  # water". eSpeak, which the neural path normally uses, says /riːd/ here and agrees
+  # with the present tense on 42 of 46 measurable occurrences across north-star, so
+  # the present is both the commoner reading in this prose and the one the two front
+  # ends should agree on. The past tense stays reachable by writing it inline as
+  # [R EH1 D], which is what tests/pronounce_audit.gd flags every occurrence for.
+  read: R IY1 D
+
   # Not in CMUdict at all.
   archiving: AA1 R K AY0 V IH0 NG
   narrating: N EH1 R EY0 T IH0 NG

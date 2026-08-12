@@ -272,3 +272,84 @@ def test_prismatic5_end_to_end_composite_loss():
     # ...the mixture CE trains the gate and reaches the trunk.
     assert head.gate.weight.grad is not None
     assert trunk.grad is not None and trunk.grad.abs().sum() > 0
+
+
+# ── detach_in_blend: which objective trains the HALO arm ─────────────────
+#
+# Not a correctness switch - a measurement one. Detached, the arm's gate share
+# is an uncontaminated verdict on HALO's scoring function; attached, CE also
+# reaches it and the verdict is traded for the chance the arm becomes useful.
+# prismatic5 detaches, prismatic6 attaches, and neither should drift silently.
+
+
+def _halo_arm(head):
+    arms = [b for b in head.branches if isinstance(b, HaloHead)]
+    assert len(arms) == 1, f"expected exactly one HALO arm, got {len(arms)}"
+    return arms[0]
+
+
+def _ce_reaches(head, arm):
+    """True when the blended CE puts gradient on the arm's own centroids."""
+    head.train()
+    head.zero_grad(set_to_none=True)
+    head(torch.randn(2, 8, head.output_dims()[0])).sum().backward()
+    g = arm.lm_head.centers.grad
+    return g is not None and bool(g.abs().sum() > 0)
+
+
+def test_class_default_detaches():
+    """The bare head keeps the original honest-contract default."""
+    assert HaloHead.detach_in_blend is True
+    assert HaloHead(_cfg()).detach_in_blend is True
+
+
+def test_constructor_overrides_per_instance():
+    """Per-instance override, so a profile can choose without moving the
+    default out from under the profiles already running."""
+    assert HaloHead(_cfg(), detach_in_blend=False).detach_in_blend is False
+    assert HaloHead(_cfg(), detach_in_blend=True).detach_in_blend is True
+    # None leaves the class default alone.
+    assert HaloHead(_cfg(), detach_in_blend=None).detach_in_blend is True
+
+
+def test_prismatic5_arm_stays_detached():
+    """abstractinator-j runs this; its gate share is only a clean verdict
+    while CE is kept off the arm."""
+    torch.manual_seed(0)
+    head = HEAD_REGISTRY["prismatic5"](_cfg())
+    arm = _halo_arm(head)
+    assert arm.detach_in_blend is True
+    assert not _ce_reaches(head, arm)
+
+
+@pytest.mark.parametrize("name", ["prismatic6", "prismatic6_vear"])
+def test_prismatic6_arm_is_attached(name):
+    """The detached measurement is complete (0.00125 gate share over 22k
+    steps in -j), so prismatic6 lets CE train the arm too."""
+    torch.manual_seed(0)
+    head = HEAD_REGISTRY[name](_cfg())
+    arm = _halo_arm(head)
+    assert arm.detach_in_blend is False
+    assert _ce_reaches(head, arm)
+
+
+def test_geometric_objective_runs_either_way():
+    """Attaching changes what ALSO trains the arm, never whether HALOLoss
+    finds it - composite mode keys off is_halo, not off detachment."""
+    for name in ("prismatic5", "prismatic6"):
+        head = HEAD_REGISTRY[name](_cfg())
+        clf = head.classifier
+        assert getattr(clf, "is_halo", False), f"{name} lost composite mode"
+
+
+def test_detach_is_training_only():
+    """Inference always blends the real logits; detachment is a gradient
+    concern, so it must not change what the model emits."""
+    torch.manual_seed(0)
+    head = HEAD_REGISTRY["prismatic5"](_cfg())
+    x = torch.randn(2, 8, head.output_dims()[0])
+    head.eval()
+    with torch.no_grad():
+        out = head(x)
+    assert out.requires_grad is False
+    assert torch.isfinite(out).all()

@@ -98,6 +98,15 @@ var _shifts: Dictionary = {}      # finished line -> its frozen centring shift
 var _shift_cur := 0.0
 var _scroll := 0.0
 var _scroll_to := 0.0
+# THE CAMERA. The page used to be framed whole - a sheet of small sparse characters with
+# its margins showing - which reads as a screenshot of a document rather than as writing
+# happening. The view now sits IN the text: glyphs are large enough to overflow the frame,
+# and the camera follows the pen instead of the paper, with a slow independent downward
+# creep so the frame is never quite still even while a single character is being drawn.
+var _cam := Vector2.ZERO          # eased camera centre, in the same unit space as _cx/_cy
+var _cam_drift := 0.0             # seconds, for the bounded breath (see _track_pen)
+var _zoom_in := 2.6               # how far the framing is pushed past whole-page
+var _drift_rate := 0.006
 
 # The spiral's own cursor: arc length along the coil, and how far the whole coil has
 # been drawn back in toward the centre.
@@ -127,6 +136,7 @@ var _margin := 0.08
 var _col_frac := 0.48
 var _line_h := 1.6
 var _bpg := 2
+var _char_beats := 0.5    # fraction of a beat one character takes to write
 var _break_thr := 0.35
 var _press_lvl := 0.0             # smoothed nib pressure, 0..1
 var _ease := 0.6                  # how much the stroke reveal is eased
@@ -174,6 +184,14 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_col_frac = rng.randf_range(0.38, 0.60)
 	_line_h = rng.randf_range(1.30, 2.10)
 	_bpg = rng.randi_range(1, 4)
+	# 0.25 to 0.8 of a beat per character: at a 120 bpm estimate that is 2.5 to 8 a
+	# second, which spans a quick scribble and a deliberate hand.
+	_char_beats = rng.randf_range(0.25, 0.80)
+	# How far into the text the camera sits. At 1.0 the whole page is in frame, which is
+	# the old look; past 2 the writing runs off both edges and the eye has to follow it.
+	_zoom_in = rng.randf_range(2.1, 3.4)
+	# Slow enough to be felt rather than watched - a few percent of a line height a second.
+	_drift_rate = rng.randf_range(0.004, 0.011)
 	# Movement is a 0..1 section-change score that spends most of a track low, so a
 	# threshold up near 0.5 gives long words broken only at real changes and one down
 	# at 0.2 gives short, choppy ones. Both read as a language; sample the whole range.
@@ -220,6 +238,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	d["margin"] = _margin
 	d["line_height"] = _line_h
 	d["beats_per_glyph"] = _bpg
+	d["char_beats"] = _char_beats
 	d["break_threshold"] = _break_thr
 	d["reveal_ease"] = _ease
 	d["prefill"] = _prefill
@@ -240,6 +259,7 @@ func update(f: AudioFeatures, delta: float) -> void:
 	_f = f
 	tick(f, delta)
 	drift_view(f, 0.02, 0.03)           # a page barely moves; it is being read
+	_track_pen(delta)
 	update_layers(f, delta)
 	queue_redraw()
 	if size.x < 4.0:
@@ -253,12 +273,16 @@ func update(f: AudioFeatures, delta: float) -> void:
 	# A character is COMMITTED on the beat, every _bpg beats. Event, not integration -
 	# so it belongs here and not in the sim step (the Director may substep an identical
 	# frame several times, and one edge stays one edge).
-	var beat_edge: bool = f.beat > 0.55 and _beat_prev <= 0.55
+	# THE HAND DOES NOT WAIT FOR THE BAR LINE. A character used to be committed only on
+	# every _bpg'th beat, while the reveal finished in 0.82 of that interval - so the pen
+	# wrote, then sat on a finished character doing nothing for the remainder, every single
+	# time. With _bpg up to 4 that is a pause of over a second between characters, which is
+	# what "long pauses between each character being drawn" was.
+	#
+	# The tempo still sets the SPEED (see _span), which is the part worth keeping; it no
+	# longer gates the handover. A finished character commits immediately and the next one
+	# starts in the same frame, so the writing is continuous - which is what writing is.
 	_beat_prev = f.beat
-	if beat_edge:
-		_beats += 1
-		if _beats % _bpg == 0:
-			_commit()
 	if f.movement > _break_thr and _mv_prev <= _break_thr:
 		_pending_word = true
 	_mv_prev = f.movement
@@ -279,14 +303,16 @@ func _step(dt: float) -> void:
 		_reveal = minf(1.0, _reveal + dt / span)
 	else:
 		return                          # silence: the nib rests where it is, mid-stroke
-	if _reveal >= 1.0:
-		_hold += dt
-		# Music with no detectable beats (a drone, a held pad) would otherwise park a
-		# finished character under the nib forever, so a backstop commits at a beat and
-		# a half of the current tempo. Silence never reaches it - the reveal is frozen
-		# above, so a half-written character stays half-written.
-		if _hold > span * 1.6:
-			_commit()
+	while _reveal >= 1.0:
+		# Commit and carry the OVERSHOOT into the next character rather than discarding it,
+		# so a fast hand does not lose a fraction of a character's worth of progress at
+		# every handover - which would reintroduce a small stutter in place of the large
+		# one. A while loop because a long substep can span more than one character.
+		var over := (_reveal - 1.0) * span
+		_commit()
+		_reveal = minf(0.999, over / maxf(0.0001, _span()))
+		if over <= 0.0:
+			break
 	_scroll = lerpf(_scroll, _scroll_to, 1.0 - exp(-9.0 * dt))
 	_sshift = lerpf(_sshift, _sshift_to, 1.0 - exp(-6.0 * dt))
 
@@ -295,7 +321,13 @@ func _step(dt: float) -> void:
 # missing or absurd tempo estimate cannot stall or sprint the hand. 0.82 leaves the
 # nib a breath at the end of each character rather than arriving exactly on the cut.
 func _span() -> float:
-	return maxf(0.12, float(_bpg) * clampf(_f.beat_period, 0.25, 1.6) * 0.82)
+	# A FRACTION of a beat, not a whole number of them. `_bpg` was an integer count of
+	# beats per character because a character was committed ON a beat - with that gate gone
+	# it is only a speed, and the integer floor made the slowest hands write at roughly one
+	# character a second, which is sedate even for careful handwriting. A real hand runs
+	# two to six a second. The 0.82 breath is gone too: it existed to land the reveal just
+	# before the beat that would commit it, and there is no such beat now.
+	return maxf(0.08, _char_beats * clampf(_f.beat_period, 0.25, 1.6))
 
 
 # ---------------------------------------------------------------------------------
@@ -489,11 +521,63 @@ func _draw() -> void:
 	if size.x < 4.0 or _gs == null or _gs.count() == 0:
 		return
 	var u := unit()
+	_frame(u)
 	_rules(u)
 	_ink(u)
-	_nib(u)
+	# NO NIB. A wedge marking where the ink stops was drawn here, and it read as a
+	# cursor sitting on the page rather than as a pen: it has no hand, no shaft and no
+	# motion blur, so at any size it is a floating arrowhead. The ink arriving IS the
+	# indication that something is writing, and it is a better one.
 	if not _paper:
 		draw_layers("front")
+
+
+## Push the view into the text: zoom past whole-page and centre on the tracked pen.
+##
+## Composed onto the scene's view matrix rather than into [member view] itself, so it
+## replaces its own contribution every frame instead of accumulating one.
+func _frame(u: float) -> void:
+	var z := _zoom_in
+	draw_set_transform_matrix(view.matrix(size)
+		* Transform2D(0.0, Vector2(z, z), 0.0, -_cam * u * z))
+
+
+## Follow the pen, loosely.
+##
+## Eased hard (a ~1.4 s time constant) rather than locked to the nib: a camera that pinned
+## the pen would make the PAGE move under a stationary point, which is the opposite of
+## reading and is nauseating at this zoom. Loose tracking lets the character being written
+## drift across the frame and the camera catch up between words, which is how an eye
+## actually follows a hand.
+##
+## The downward creep is independent of the writing and never stops, so a held character
+## or a silent passage still has motion in the frame - without it, "the pen rests where it
+## is" would freeze the entire scene.
+func _track_pen(delta: float) -> void:
+	# The downward travel comes from the WRITING - _cy steps down a line at a time as the
+	# hand fills the page, and the camera follows it. An accumulator was wrong here and
+	# would have been a slow catastrophe: it grows without bound, so after a few minutes
+	# the camera would be somewhere below the page with the text long out of frame.
+	#
+	# What the accumulator was reaching for - motion in the frame even while the pen is
+	# holding a character - is a bounded breath instead.
+	_cam_drift += delta
+	var breath := sin(_cam_drift * _drift_rate * TAU * 12.0) * _line_step * 0.18
+	# THE PEN'S DRAWN POSITION, not its page position. `_cy` is an absolute coordinate on an
+	# endless page: it only ever increases, and when it passes `_bottom` the page answers by
+	# scrolling (`_scroll_to += _line_step`) rather than by resetting it - so every glyph is
+	# actually drawn at `p.y - _scroll` (see _pose). Aiming the camera at the raw `_cy` walked it
+	# downward by exactly one line per line written, off the bottom of the page, and the writing
+	# left the frame for good - which is the unbounded-accumulator catastrophe this function's own
+	# comment above was written to avoid, arriving through the other door.
+	var target := Vector2(_cx + _adv * 0.5, _cy - _scroll - _line_step * 0.25 + breath)
+	_cam = _cam.lerp(target, 1.0 - exp(-0.7 * delta))
+	# NOTE the camera is NOT written into `view`. Doing that compounds: `view.zoom` and
+	# `view.offset` are only re-set each frame by the assigned SHOT, and a scene running
+	# without one - the catalogue smoke gate builds every scene shotless - multiplies its
+	# own zoom by _zoom_in every frame. Measured before it was caught: zoom reached 3.9e13
+	# after one second and inf within half a minute. The framing is applied as its own
+	# transform at draw time instead, which is idempotent by construction.
 
 
 # Faint ruling under the writing. Cheap (a dozen antialiased lines) and it is what

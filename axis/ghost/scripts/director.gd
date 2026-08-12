@@ -79,8 +79,22 @@ const SCENES := [
 	# depth, standing waves.
 	{"script": preload("res://scripts/scenes/chladni.gd"), "behavior": "static"},
 	{"script": preload("res://scripts/scenes/chladni.gd"), "behavior": "drift"},
-	{"script": preload("res://scripts/scenes/wallpaper.gd"), "behavior": "static"},
-	{"script": preload("res://scripts/scenes/wallpaper.gd"), "behavior": "drift"},
+	# wallpaper is DEREGISTERED, not deleted. Judged in the field: "everything about it
+	# looked bad - the colours, the way the patterns were exactly the same everywhere, and
+	# no movement at all besides a camera that shifted every once in a while."
+	#
+	# That is not a bug report, it is the design being wrong, and the design is mine. The
+	# scene's stated bet was that a perfectly synchronized RE-INK of a static tiling would
+	# be dramatic where motion would be cheap. It is not: an unchanging motif repeated to
+	# the frame edge reads as a background texture, and a lattice glide on the beat reads
+	# as the camera slipping rather than as the pattern stepping. The palette compounded it
+	# - a black keyline against saturated inks on paper has to be composed, and these are
+	# sampled.
+	#
+	# The file and [WallpaperGroup] stay: the seventeen plane groups are correct, tested
+	# and reusable, and a motif worth repeating would still want them. What is missing is a
+	# reason for the eye to stay, and that is a redesign rather than a tuning pass - one
+	# that should be done where it can actually be looked at, which is what --scene is for.
 	{"script": preload("res://scripts/scenes/glyphs.gd"), "behavior": "drift"},
 	{"script": preload("res://scripts/scenes/falling_sand.gd"), "behavior": "static"},
 	{"script": preload("res://scripts/scenes/falling_sand.gd"), "behavior": "drift"},
@@ -1562,7 +1576,13 @@ func _make_scene() -> GhostScene:
 	# seed (that broke run-to-run reproducibility); the seed is deterministic per song. Same music
 	# should still print the same bucket here, a useful observability signal. (See
 	# next/harmonic_seeding.md.)
-	print("ghost: cut -> %s  harmonic bucket %d" % [scene.scene_name, Spectrum.harmonic_bucket(12)])
+	# STAMPED WITH THE SONG POSITION, always. Without it the cut list is an ordered list of names
+	# and nothing else, and the only question anyone actually asks of it - "what was on screen at
+	# 8:23?" - cannot be answered from a finished render at all. That is not hypothetical: a scene
+	# shipped 29 seconds of pure black into an export and the log could not name it.
+	var _t := maxf(Spectrum.current.time, 0.0)
+	print("ghost: cut -> %s  at %d:%05.2f  harmonic bucket %d"
+		% [scene.scene_name, int(_t / 60.0), fmod(_t, 60.0), Spectrum.harmonic_bucket(12)])
 	scene_cut.emit()                  # the stage governor re-measures per scene
 	# Narrative tempo: higher sensitivity shrinks the hold (and any explicit min/max bounds), so the
 	# scene is shorter; the scene paces its keyframes as fractions of that shrunken hold, so events

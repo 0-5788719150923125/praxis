@@ -165,27 +165,70 @@ class HaloClassifier(nn.Module):
 class HaloHead(BaseHead):
     """LM head emitting HALO distance logits; the honest HALO arm.
 
-    As a ParallelHead branch its logits are DETACHED in the gate blend
-    (``detach_in_blend``): the mixture CE trains the gate's opinion of the
-    arm (and the other arms), while the arm's own parameters train purely
-    under HALOLoss's geometric objective. The gate share is then an
-    uncontaminated verdict on whether HALO's scoring earns its keep.
+    ``detach_in_blend`` decides what trains this arm, and it is a measurement
+    choice rather than a correctness one.
+
+    DETACHED (the default, prismatic5): the mixture CE trains the gate's
+    opinion of the arm and the other arms, while this arm's parameters train
+    purely under HALOLoss's geometric objective. The gate share is then an
+    uncontaminated verdict on whether HALO's SCORING FUNCTION earns mass
+    against CE-trained arms - a high share cannot be explained away as "CE
+    dragged this arm into being a decent CE head."
+
+    ATTACHED (prismatic6): CE also reaches the arm, so it trains under both
+    objectives. The verdict is given up; the arm gets a chance to be useful.
+
+    The reason prismatic6 attaches: the detached measurement has been made and
+    it came back at 0.00125 gate share over 22k steps in abstractinator-j,
+    never once above its initialization. Continuing to detach buys a number
+    already known. Attaching asks the different question - whether the arm was
+    CE-trainable all along and the pure-instrument framing was costing a
+    working arm.
+
+    What flips it back: if `halo_gamma` runs away or `halo_mean_radius` drifts
+    off `halo_shell_radius`, CE is pulling the calibration (it wants a sharp
+    mixture; the geometric objective wants tokens settled on a shell at a
+    specific radius) and the arm should go back to being a pure instrument.
+
+    Either way the arm STAYS. ParallelHead.classifier finds it by ``is_halo``
+    to put HALOLoss in composite mode, and without one the loss falls back to
+    its legacy side-loss path where the harmonic and gate machinery see almost
+    no gradient. Detachment governs the arm's training signal, not whether the
+    objective runs.
     """
 
     # Centers must keep their unit-std init (the calibration ground truth);
     # tying them to the token embedding would re-anchor both geometries.
     self_ties = False
 
-    # See class docstring; ParallelHead reads this in its terminal blend.
+    # Class-level default; the constructor may override per instance so a head
+    # profile can choose without changing the ones already running. See the
+    # class docstring; ParallelHead reads it in its terminal blend.
     detach_in_blend = True
 
-    def __init__(self, config: Any, encoder: Optional[nn.Module] = None) -> None:
+    # HALOLoss scores the TRUNK embeddings, so this arm must score those same
+    # features at inference. When a ParallelHead carries a shared stem, this
+    # arm opts out of it and keeps reading the raw hidden states - putting a
+    # transform in front would train one feature space and score another.
+    reads_trunk = True
+
+    def __init__(
+        self,
+        config: Any,
+        encoder: Optional[nn.Module] = None,
+        detach_in_blend: Optional[bool] = None,
+    ) -> None:
         super().__init__(config, encoder)
         if config.loss_func == "cut_cross_entropy":
             raise ValueError(
                 "HaloHead is incompatible with loss_func='cut_cross_entropy' "
                 "(cut-CE assumes a dot-product classifier)"
             )
+        # Instance attribute shadows the class default; ParallelHead's getattr
+        # finds this first. None leaves the class default in place, so every
+        # existing profile is untouched.
+        if detach_in_blend is not None:
+            self.detach_in_blend = bool(detach_in_blend)
         dims = self.output_dims()
         if dims is None:
             raise ValueError(

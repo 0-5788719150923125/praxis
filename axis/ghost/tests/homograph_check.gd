@@ -88,6 +88,55 @@ const MARKUP := [
 	["(aside),\nnext", ["aside", "next"]],
 ]
 
+# TEXT NORMALIZATION - what is SAID and what is SEEN, which are not the same string and
+# had drifted apart in three separate ways. Each entry is (source, spoken, displayed).
+const NORMALIZE := [
+	# `no` -> `number` fired on any token ending in a period, and a sentence-final "no"
+	# always ends in a period. "The answer was no." was spoken as "was number".
+	["The answer was no.", "the answer was no", "The answer was no."],
+	["The answer was no, and it stayed no.", "the answer was no and it stayed no",
+		"The answer was no, and it stayed no."],
+	# ... while the genuine abbreviation must still expand, which is why the test for it
+	# is what FOLLOWS rather than the period itself.
+	["See No. 5 in the ledger.", "see number five in the ledger",
+		"See number five in the ledger."],
+	["Mr. Smith arrived.", "mister smith arrived", "mister Smith arrived."],
+	# Every hyphenated token was split, which deleted the hyphen from the SUBTITLE even
+	# where the sound was unaffected: "twenty-five" was shown as "twenty five".
+	["He gave me twenty-five dollars.", "he gave me twenty-five dollars",
+		"He gave me twenty-five dollars."],
+	["a self-report in the registry", "a self-report in the registry",
+		"a self-report in the registry"],
+	# ... but a NUMERIC range is genuinely two numbers and must still be spoken as such.
+	["The war ran 1939-1945.", "the war ran nineteen thirty nine nineteen forty five",
+		"The war ran nineteen thirty nine nineteen forty five."],
+	# An interrupted clause keeps its dash on screen - it is the grammar of the
+	# interruption - while contributing only a rest to the reading.
+	["That is the thing about you that I could never -",
+		"that is the thing about you that i could never",
+		"That is the thing about you that I could never -"],
+]
+
+# SENTENCE GROUPING - what lands on one subtitle card. (source, expected blocks)
+#
+# Prose attributes speech by closing the quotation and continuing in lower case, so the
+# terminal mark belongs to what was SAID rather than to the sentence containing it.
+# Splitting there orphaned "you asked." onto a card of its own.
+const GROUPING := [
+	["\"Do you think Jesus would do this?\" you asked. Not loud.",
+		["\"Do you think Jesus would do this?\" you asked.", "Not loud."]],
+	["\"Stop!\" he shouted. She did not.",
+		["\"Stop!\" he shouted.", "She did not."]],
+	["\"Hmm,\" you said, the remote still raised.",
+		["\"Hmm,\" you said, the remote still raised."]],
+	# ... and a real boundary must still break, which is the whole risk of the heuristic
+	["\"I know.\" Then he left.", ["\"I know.\"", "Then he left."]],
+	["The answer was no. It stayed no.", ["The answer was no.", "It stayed no."]],
+	# A numeral opening a sentence is capitalised on expansion, both because that is
+	# correct and because otherwise it reads as a lower-case continuation and merges.
+	["He counted. 5 was missing.", ["He counted.", "Five was missing."]],
+]
+
 # The same trap, checked for the thing that actually breaks: a homograph in the position
 # where the tokenizer used to fail must still resolve.
 const SWITCHES_TRAILING := [
@@ -102,13 +151,15 @@ func _init() -> void:
 	fails += _run("names", NAMES)
 	fails += _run("trailing", SWITCHES_TRAILING)
 	fails += _markup()
+	fails += _normalize()
+	fails += _grouping()
 	if fails > 0:
 		print("homograph_check: %d FAILURE(S)" % fails)
 		quit(1)
 		return
 	print("homograph_check: ALL OK (%d cases)"
 		% (SWITCHES.size() + HOLDS.size() + NAMES.size() + MARKUP.size()
-			+ SWITCHES_TRAILING.size()))
+			+ SWITCHES_TRAILING.size() + NORMALIZE.size() + GROUPING.size()))
 	quit()
 
 
@@ -130,6 +181,51 @@ func _markup() -> int:
 				% ["markup", c[0], str(want), str(got)])
 			bad += 1
 	print("homograph_check: %-9s %d/%d" % ["markup", MARKUP.size() - bad, MARKUP.size()])
+	return bad
+
+
+## Both strings at once. Checking only what is spoken would have passed happily through
+## every one of these: the hyphen and the trailing dash are invisible to the voice and
+## wrong only on screen, and `no` -> `number` was wrong in both but reported as a
+## subtitle fault first.
+func _normalize() -> int:
+	var bad := 0
+	for c in NORMALIZE:
+		var said: Array = []
+		var seen: Array = []
+		for s in Phonemes.parse(TextNorm.normalize(String(c[0]))):
+			for w in s:
+				said.append(String(w.get("text", "")))
+				seen.append(String(w.get("display", w.get("text", ""))))
+		var got_said := " ".join(PackedStringArray(said))
+		var got_seen := " ".join(PackedStringArray(seen))
+		if got_said != String(c[1]):
+			print("  %-9s %-42s SAID want: %s" % ["normalize", c[0], c[1]])
+			print("  %-9s %-42s      got : %s" % ["", "", got_said])
+			bad += 1
+		elif got_seen != String(c[2]):
+			print("  %-9s %-42s SEEN want: %s" % ["normalize", c[0], c[2]])
+			print("  %-9s %-42s      got : %s" % ["", "", got_seen])
+			bad += 1
+	print("homograph_check: %-9s %d/%d" % ["normalize", NORMALIZE.size() - bad, NORMALIZE.size()])
+	return bad
+
+
+## How the words are DIVIDED, which the voice never sees - it is what the karaoke draws.
+func _grouping() -> int:
+	var bad := 0
+	for c in GROUPING:
+		var got: Array = []
+		for sent in Phonemes.parse(TextNorm.normalize(String(c[0]))):
+			var line: Array = []
+			for w in sent:
+				line.append(String(w.get("display", w.get("text", ""))))
+			got.append(" ".join(PackedStringArray(line)))
+		if got != (c[1] as Array):
+			print("  %-9s %-46s want: %s" % ["grouping", c[0], str(c[1])])
+			print("  %-9s %-46s got : %s" % ["", "", str(got)])
+			bad += 1
+	print("homograph_check: %-9s %d/%d" % ["grouping", GROUPING.size() - bad, GROUPING.size()])
 	return bad
 
 

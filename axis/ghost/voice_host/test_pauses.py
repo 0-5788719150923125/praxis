@@ -411,6 +411,10 @@ def _reference_results():
 def test_byte_identical_to_head():
     ref = _reference_results()
     print("    (reference = HEAD:voice_host/backends/piper.py, same fake voice)")
+    print("    NOTE: this compares against the last COMMIT. If you changed synthesis on")
+    print("    purpose - a lead-in, a splice, a phoneme rewrite - it is supposed to fail")
+    print("    here, and it goes green again once the change is committed. Read the diff")
+    print("    before assuming a regression.")
     for case, (kind, items, params) in CASES.items():
         got = run_case(kind, items, params)
         r = ref[case]

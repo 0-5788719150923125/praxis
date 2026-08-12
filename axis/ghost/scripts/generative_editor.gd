@@ -147,6 +147,10 @@ var _speaker: SpinBox
 var _speaker_row: HBoxContainer
 var _stream_open := false      # explicit: a null playback must not retry forever
 var _epoch := 0                # bumped on a pace change; stale replies are dropped
+# THE PREDICTED TIMELINE. The scrub bar used to be scaled by how much audio had been
+# DECODED, which grows as the reading is synthesized - so the bar's own length changed
+# under the pointer and dragging to "near the end" meant near the end of the first thirty
+# seconds. A timeline has to know how long the thing is before it plays it.
 var _repace_timer: Timer
 var _scene_hold: HSlider
 var _flourish: HSlider
@@ -609,10 +613,20 @@ func _on_synthesized(id: int, result: Dictionary) -> void:
 		return
 	var meta: Dictionary = _req_chunk[id]
 	_req_chunk.erase(id)
-	if int(meta["epoch"]) != _epoch:
-		return          # generated at the old pace and already superseded
-	var idx: int = int(meta["idx"])
+	# THE SLOT IS FREED WHETHER OR NOT THE RESULT IS WANTED, and this has to happen BEFORE
+	# the epoch check. It did not, and that is what made seeking slower than a cold start:
+	# an abandoned request still occupies the host - the protocol has no cancel - so a jump
+	# that zeroed the counter let _pump send a full lookahead on top of work already
+	# queued, and the chunk actually being waited for ended up third or fourth in line.
+	# Counting abandoned work as in-flight means the new request enters the queue exactly
+	# when a slot frees, which without a cancel is the best available.
 	_in_flight = maxi(0, _in_flight - 1)
+	if int(meta["epoch"]) != _epoch:
+		# Superseded by a pace change or a jump. Nothing to keep, but the pump may now
+		# have room it did not have a moment ago.
+		_pump()
+		return
+	var idx: int = int(meta["idx"])
 
 	var wav := String(result.get("wav", ""))
 	if wav.is_empty():
@@ -713,6 +727,12 @@ func _plan(body: String) -> void:
 	_pending = PackedFloat32Array()
 	_read = 0
 	_elapsed = 0.0
+	# No scrub hooks are registered by this editor (see the withdrawal note above
+	# _repace), but clear them anyway: a file session opened earlier in the same process
+	# may have left some, and they must not describe a reading that no longer exists.
+	Spectrum.scrub_pos = Callable()
+	Spectrum.scrub_len = Callable()
+	Spectrum.scrub_seek = Callable()
 	# THE INTRO, seeded HERE rather than at the moment the stream opens, and the
 	# placement is the whole trick: `_elapsed` is the clock every word span and every
 	# seam is measured against, so starting it at the end of the silence offsets the
@@ -941,6 +961,8 @@ func _drain_ready() -> void:
 			_stream_open = true
 			if begin_stream.is_valid():
 				_playback = begin_stream.call(hash(_text.text), _sr, _sub_words)
+			# NO SCRUB HOOKS HERE. Seeking a live generator was implemented and is
+			# WITHDRAWN - see the note above _seek_take.
 			# MEASURE the ring, do not compute it. Godot sizes a generator's
 			# buffer to a power of two (131071 frames measured), not to
 			# STREAM_BUFFER * sample_rate (88200) - so the computed figure made
@@ -952,6 +974,30 @@ func _drain_ready() -> void:
 				_ring_capacity = int(_playback.get_frames_available())
 
 
+
+## SEEKING A LIVE GENERATOR IS WITHDRAWN, and this note is the record of why.
+##
+## It was built, it worked in the sense that the playhead moved, and it was wrong in two
+## ways that only showed up in use. A generator's ring cannot be cleared while playback is
+## active, so every seek had to stop and restart the stream - and repeated restarts left
+## the session audibly wrong, the voice doubling and then trebling as more seeks were made,
+## with the Director's transitions stalling alongside it. Neither reproduced in a headless
+## measurement (a freshly synthesized take autocorrelates clean, with no delayed copy), and
+## guessing further at engine-side playback state without being able to run the UI is how
+## the first two attempts at this shipped.
+##
+## The deeper problem is that it could not have served its purpose anyway. The reason to
+## scrub is to check what a given moment WILL LOOK LIKE when exported - and a seek cannot
+## answer that here, because the Director is a simulation rather than a function of time:
+## its scene choice and hold schedule evolve from the events it has actually seen, so
+## seeking forward shows the scene that happens to be up rather than the one the export
+## will have. A control that answers a different question from the one being asked is worse
+## than no control.
+##
+## What DOES answer it: render the take, then open the rendered file. A file boot is
+## seekable for real (one operation, no restart - see Spectrum.seek) and replays the same
+## deterministic show from the same seed, so scrubbing it shows exactly what the export
+## will contain. `--scene <name>` remains the fastest way to inspect one scene.
 
 ## Re-generate everything not yet committed to the stream, at the new pace.
 ##
@@ -965,8 +1011,8 @@ func _repace() -> void:
 		return
 	_epoch += 1                     # in-flight replies from the old pace are now stale
 	_ready_takes.clear()
-	_req_chunk.clear()
-	_in_flight = 0
+	# Same reasoning as _jump_to_chunk: the host keeps computing what it was given, so the
+	# accounting for it has to survive or the pump will pile more on top.
 	_next_to_request = _next_to_play
 	_set_status("Pace %.2fx, pause %.2fx - regenerating from chunk %d…"
 		% [_rate.value, _pause_scale(), _next_to_play + 1])

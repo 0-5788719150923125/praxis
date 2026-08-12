@@ -411,7 +411,26 @@ class CrystalVearHead(BaseHead):
         config: Any,
         encoder: Optional[nn.Module] = None,
         n_experts: int = CRYSTAL_BANK_SIZE,
+        sharpen: Optional[float] = None,
     ) -> None:
+        """``sharpen`` is the routing exponent, and it is the ONLY thing that
+        separates a VEAR bank from a SMEAR one here.
+
+        ``probs.pow(s)`` renormalized: ``s = VEAR_SHARPEN`` (4.0, the default)
+        drives routing toward a near-discrete pick, so one crystal's geometry
+        dominates the merge. ``s = 1.0`` leaves the softmax untouched, which is
+        exactly SMEAR - every expert contributes in proportion to its routing
+        probability and every expert therefore receives gradient on every step.
+
+        The trade is real in both directions. Sharpening keeps the merged
+        centers close to ONE trained geometry; a soft blend is a convex
+        combination of distinct center sets, and averaging points that live on a
+        shell pulls the result toward the origin, which is a geometry no expert
+        was trained to be. Softening pays for that with gradient to every
+        expert instead of near-winner-take-all, which is what a bank needs if
+        the experts are meant to specialize rather than compete. Repulsion is
+        orthogonal and stays on in both modes.
+        """
         super().__init__(config, encoder)
         if config.loss_func == "cut_cross_entropy":
             raise ValueError(
@@ -422,7 +441,7 @@ class CrystalVearHead(BaseHead):
         from praxis.routers.vear import VEAR, VEAR_REPULSION, VEAR_SHARPEN
 
         self._rep_scale = float(VEAR_REPULSION)
-        self._sharpen = float(VEAR_SHARPEN)
+        self._sharpen = float(VEAR_SHARPEN if sharpen is None else sharpen)
         n_cfg = getattr(config, "crystal_n", None)
         smoothing = float(
             getattr(config, "crystal_label_smoothing", DEFAULT_LABEL_SMOOTHING) or 0.0
@@ -642,7 +661,8 @@ class CrystalVearHead(BaseHead):
         return self.bank.experts[0]
 
     def compose_repr(self) -> str:
-        return f"CrystalVearBank({self.n_experts})"
+        mode = "Smear" if self._sharpen == 1.0 else "Vear"
+        return f"Crystal{mode}Bank({self.n_experts})"
 
     def aux_losses(self) -> dict:
         out: dict = {}

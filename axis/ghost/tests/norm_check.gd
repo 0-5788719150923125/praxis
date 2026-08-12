@@ -20,7 +20,12 @@ const CASES := [
 	["I counted 42 of them.", "forty two"],
 	["Chapter 7 begins.", "seven"],
 	["He was 1 of 3.", "one"],
-	["1985 was a long time ago.", "nineteen eighty five"],
+	# Capitalised because it OPENS the sentence. A spelled-out numeral is a word like any
+	# other and a sentence starts with a capital - and the subtitle shows this string. It
+	# also matters mechanically: the sentence splitter reads a lower-case word after a full
+	# stop as a continuation (a dialogue tag), so an uncapitalised expansion would weld
+	# "1985 was a long time ago." onto the previous sentence's subtitle card.
+	["1985 was a long time ago.", "Nineteen eighty five"],
 	["It happened in 2003.", "two thousand three"],
 	["The year 1900 passed.", "nineteen hundred"],
 	["She paid $5.", "five dollars"],

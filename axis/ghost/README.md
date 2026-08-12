@@ -146,7 +146,7 @@ Each scene is a small combination of shapes; behavior decides how it moves. The 
 
 <!-- AUTODOC:SCENES:BEGIN -->
 
-53 scenes in the auto rotation (55 on disk). One line each - the full catalogue, with every scene's own documentation, is [docs/scenes.md](docs/scenes.md).
+52 scenes in the auto rotation (55 on disk). One line each - the full catalogue, with every scene's own documentation, is [docs/scenes.md](docs/scenes.md).
 
 _Core catalogue_
 
@@ -195,8 +195,11 @@ _Worlds & projections_
 
 _Depth, standing waves_
 
-- **`canopy`** (scene3d, drift) - trees growing on real terrain, from taproot to leaf, through one season.
 - **`chladni`** (particles, drift, static) - grains walking to the places a plate is not moving.
+
+_That should be done where it can actually be looked at, which is what --scene is for_
+
+- **`canopy`** (scene3d, drift) - trees growing on real terrain, from taproot to leaf, through one season.
 - **`cloth`** (canvas, drift) - a sheet on a line, and the wind deciding how long it stays whole.
 - **`contour_map`** (canvas, drift) - the terrain from directly above, as a printed survey sheet.
 - **`falling_sand`** (swarm, drift, static) - a world of matter you never draw, only rule.
@@ -204,7 +207,6 @@ _Depth, standing waves_
 - **`murmuration`** (particles, drift) - thousands of birds deciding together, against a bright sky.
 - **`neural_field`** (scene3d, drift) - a layered network in real depth, lit only where the harmony routes.
 - **`tidepool`** (canvas, drift, static) - sunlight through a hand's depth of moving water.
-- **`wallpaper`** (canvas, drift, static) - one motif, one symmetry group, and the whole plane follows.
 
 _The-point scenes_
 

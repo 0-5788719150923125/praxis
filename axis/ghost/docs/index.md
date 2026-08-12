@@ -85,6 +85,7 @@ The lifecycle around the scenes: boot, splash, the Director's scheduling/transit
 - [`dial.gd`](../scripts/dial.gd) **Dial** - the first live performance control (the semi-automatic mode's first lever).
 - [`dial_widget.gd`](../scripts/dial_widget.gd) **DialWidget** - the on-screen face of a `Dial` (see that class for what turning does).
 - [`volume_knob.gd`](../scripts/volume_knob.gd) **VolumeKnob** - A pull-rope volume control. Click-and-HOLD the knob, then drag AWAY from it: a rope stretches from the knob (the anchor) to your cursor, and the farther you pull the louder it gets - but the ceiling is ASYMPTOTIC (v = 1 - e^(-d/D0)), so "max" is approached, never reached. Let go and the level is ...
+- [`scrubber.gd`](../scripts/scrubber.gd) **Scrubber** - a seek bar for the session, so a ten minute take can be reviewed.
 
 ### Scene substrate
 

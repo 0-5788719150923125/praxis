@@ -341,6 +341,10 @@ def _shift(t: float, inserted, inclusive: bool) -> float:
 #   [BOS, PAD, id, PAD, id, PAD, ..., EOS]
 BOS, EOS, PAD = 1, 2, 0
 
+# Word-spaces prepended to every utterance so the model's onset ramp does not land on
+# the first real word. Two, by measurement - see the table in _symbols.
+LEAD_IN_SPACES = 2
+
 # U+0329 COMBINING VERTICAL LINE BELOW - the IPA "syllabic" mark. eSpeak puts it on a
 # consonant that is carrying a syllable on its own, which in American English is mostly
 # the glottalized -ten/-tain family: "written" comes back as /ɹˈɪʔn̩/, "certain" as
@@ -604,21 +608,57 @@ class PiperBackend(Backend):
         stay pronounceable whichever phonemizer is in use.
         """
         import arpabet
+        # A token whose text is only whitespace must never reach the batch, and the
+        # result must be checked rather than trusted. phonemizer DROPS an empty or
+        # whitespace-only input instead of returning "" for it - measured, [" ", "the"]
+        # comes back as ["ðə"], one item for two - and the zip below then pairs every
+        # remaining word with its NEIGHBOUR'S phonemes and lets the last one fall
+        # through to ghost's ARPAbet. Silently. The whole tail of a sentence would be
+        # spoken one word out of step, and the one word that reached the fallback would
+        # take CMUdict's reading, which for a homograph is not the same reading eSpeak
+        # would have given.
         need = [i for i, t in enumerate(tokens)
-                if not t.get("arpa") and t.get("text")]
+                if not t.get("arpa") and str(t.get("text", "")).strip()]
         espoke: dict[int, str] = {}
         if need and phonemizer == "espeak":
-            got = self._espeak([str(tokens[i]["text"]) for i in need], espeak_voice)
+            words = [str(tokens[i]["text"]).strip() for i in need]
+            got = self._espeak(words, espeak_voice)
+            if len(got) != len(words):
+                # Alignment is not recoverable from a short batch - there is no way to
+                # know WHICH one was dropped - so redo it one word at a time. Slower,
+                # and it happens on approximately no sentences, but a wrong-by-one
+                # sentence is not something to ship for the sake of one call.
+                print("ghost/voice: phonemizer returned %d results for %d words; "
+                      "re-running individually to keep alignment"
+                      % (len(got), len(words)), file=sys.stderr)
+                got = [(self._espeak([w], espeak_voice) or [""])[0] for w in words]
             espoke = dict(zip(need, got))
 
-        # LEAD-IN. The model starts its utterance at the very first phoneme, and its onset
-        # ramp lands ON that phoneme rather than before it: measured, a sentence-initial
-        # "The" began 12 ms in and got 81 ms at a third of its neighbour's amplitude - short
-        # and mushy enough to be heard as missing entirely ("the voice starts at cartoon").
-        # A word-space ahead of the first token gives the onset somewhere to happen that is
-        # not a word. It costs a few tens of ms of silence at the head of each utterance,
-        # which the chunk seam was already providing anyway.
-        out: list = [(" ", 0)]
+        # LEAD-IN. The model starts its utterance at the very first phoneme and its onset
+        # ramp lands ON that phoneme rather than before it, so the opening word comes out
+        # short and weak - weak enough to be heard as missing ("the voice starts at
+        # cartoon"; later, "The is skipped entirely"). Word-spaces ahead of the first
+        # token give the onset somewhere to happen that is not a word.
+        #
+        # HOW MANY was measured, against a criterion that does not depend on taste: the
+        # opening word should be no weaker than the SAME word later in the same sentence.
+        # Comparing token 0 against token 4 of "The spoon gone past the gills." - both
+        # "the" - over 8 runs each, which averages out the scatter of a stochastic
+        # duration predictor:
+        #
+        #   lead   initial "the"   duration vs mid   amplitude vs mid
+        #     0        76 ms            0.70              1.30
+        #     1        97 ms            0.91              0.67    <- was here
+        #     2       122 ms            1.06              0.95    <- parity on both axes
+        #     3       151 ms            1.28              1.18    <- overshoots, drawls
+        #
+        # One space fixed the DURATION and left the amplitude at two thirds, which is why
+        # the word kept being reported as dropped after the first attempt: it was the
+        # right diagnosis and half the dose. Two reaches parity on both axes. Three makes
+        # the opening word longer and louder than the same word mid-sentence, which reads
+        # as a drawl on the first syllable of every utterance. The cost is a few tens of
+        # ms of silence at the head, which the chunk seam was already providing anyway.
+        out: list = [(" ", 0)] * LEAD_IN_SPACES
         for i, t in enumerate(tokens):
             if t.get("arpa"):
                 for ch, _ in arpabet.to_symbols([str(x) for x in t["arpa"]]):

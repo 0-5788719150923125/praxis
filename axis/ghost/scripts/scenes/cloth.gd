@@ -105,6 +105,10 @@ extends GhostScene
 ## blocks the main thread.
 const SOLVE_BUDGET := 7000
 
+## Draw-time subdivision per simulated cell. 2 quadruples the triangle count and removes
+## the faceting; 3 is smoother on a very coarse sheet and rarely worth it. 1 disables it.
+const SUBDIV := 2
+
 ## Yield strain stored on constraints that must NEVER tear - shear diagonals and bend
 ## constraints. They are removed only as a consequence of the structural edge they cross
 ## giving way, never on their own, which is what keeps a tear on the weave.
@@ -1090,8 +1094,78 @@ func _draw() -> void:
 			var b := a + 1
 			var d := a + _cols
 			var e := d + 1
-			tb.quad_colored(
-				PackedVector2Array([_spos[a], _spos[b], _spos[e], _spos[d]]),
-				PackedColorArray([_ncol[a], _ncol[b], _ncol[e], _ncol[d]]))
+			if SUBDIV <= 1:
+				tb.quad_colored(
+					PackedVector2Array([_spos[a], _spos[b], _spos[e], _spos[d]]),
+					PackedColorArray([_ncol[a], _ncol[b], _ncol[e], _ncol[d]]))
+			else:
+				_emit_smooth(tb, r2, c2)
 	tb.flush(self)
 	draw_layers("front")
+
+
+## One cell, emitted as a SUBDIV x SUBDIV patch on a smooth interpolant.
+##
+## The sheet was drawn as one flat quad per simulated cell, which is why it read as
+## "block-like shapes in the waves": the shading was already smooth (per-node normals, a
+## cross product each), but the GEOMETRY was piecewise flat, so every fold had visible
+## facets and the silhouette was a polygon with one corner per node.
+##
+## Raising the mesh instead is not available. The solver is `constraints x iterations` per
+## tick and measured 5.4-7.9 ms per update on the main thread at the CURRENT size, so
+## doubling the nodes would double that and blow the frame - and [constant SOLVE_BUDGET]
+## would claw the iterations back down, leaving the cloth softer than before.
+##
+## So the smoothing goes where it is free: Catmull-Rom across the existing grid at draw
+## time. It costs triangles, which are batched into one call anyway, and no simulation at
+## all. Catmull-Rom rather than bilinear because bilinear subdivision of a flat quad is
+## still that flat quad - it adds vertices without adding curvature. The spline reads the
+## neighbouring row and column, so a fold genuinely rounds.
+func _emit_smooth(tb: TriBatch, r: int, c: int) -> void:
+	var n := SUBDIV
+	for sj in n:
+		var v0 := float(sj) / float(n)
+		var v1 := float(sj + 1) / float(n)
+		for si in n:
+			var u0 := float(si) / float(n)
+			var u1 := float(si + 1) / float(n)
+			tb.quad_colored(
+				PackedVector2Array([
+					_surf(r, c, u0, v0), _surf(r, c, u1, v0),
+					_surf(r, c, u1, v1), _surf(r, c, u0, v1)]),
+				PackedColorArray([
+					_shade(r, c, u0, v0), _shade(r, c, u1, v0),
+					_shade(r, c, u1, v1), _shade(r, c, u0, v1)]))
+
+
+## The screen position at (u, v) inside cell (r, c), Catmull-Rom in both axes. Indices are
+## CLAMPED at the sheet's border rather than wrapped: a wrap would join the two edges of a
+## hanging sheet and drag its corners toward each other.
+func _surf(r: int, c: int, u: float, v: float) -> Vector2:
+	var rows := PackedVector2Array()
+	rows.resize(4)
+	for k in 4:
+		var rr := clampi(r - 1 + k, 0, _rows - 1) * _cols
+		rows[k] = _cr(
+			_spos[rr + clampi(c - 1, 0, _cols - 1)], _spos[rr + clampi(c, 0, _cols - 1)],
+			_spos[rr + clampi(c + 1, 0, _cols - 1)], _spos[rr + clampi(c + 2, 0, _cols - 1)], u)
+	return _cr(rows[0], rows[1], rows[2], rows[3], v)
+
+
+## Colour is only bilinear. The nodes already carry smoothly-varying normals, so the
+## shading has no facets to remove - and a spline through colours can overshoot outside
+## [0,1] and produce a bright rim on a fold, which is worse than the faceting it fixes.
+func _shade(r: int, c: int, u: float, v: float) -> Color:
+	var i0 := r * _cols + c
+	var i1 := i0 + 1
+	var i2 := i0 + _cols
+	var i3 := i2 + 1
+	return _ncol[i0].lerp(_ncol[i1], u).lerp(_ncol[i2].lerp(_ncol[i3], u), v)
+
+
+static func _cr(p0: Vector2, p1: Vector2, p2: Vector2, p3: Vector2, t: float) -> Vector2:
+	var t2 := t * t
+	var t3 := t2 * t
+	return 0.5 * ((2.0 * p1) + (-p0 + p2) * t
+		+ (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
+		+ (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3)

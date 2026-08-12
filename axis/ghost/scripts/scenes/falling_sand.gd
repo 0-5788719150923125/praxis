@@ -66,6 +66,9 @@ const MAX_PENDING := 8
 ## A silo is a plain column and the pile is one cone; an hourglass chokes the pour at a
 ## waist and holds a second pile above it; ledges break the fall into cascades; open sides
 ## let everything walk off the edge, so it never fills and reads as an outdoor drift.
+## The chamber roll, weighted. See where it is used.
+const SHAPE_BAG := ["ledges", "ledges", "ledges", "hourglass", "hourglass", "silo", "open"]
+
 const CHAMBERS := {
 	"silo": {"wall": [2, 4], "pillars": [0, 2], "hatch_n": [1, 2], "hatch_w": [0.09, 0.24]},
 	"hourglass": {"wall": [2, 3], "waist": [0.44, 0.62], "gap": [0.045, 0.13], "span": [0.16, 0.30],
@@ -128,15 +131,26 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_hue_base = sch.hue
 	# The grid stays landscape and modest: the sweep is O(cells) and runs every tick, and
 	# past ~25k the worker stops keeping up with a 30 Hz clock on a busy chamber.
-	_w = rng.randi_range(160, 216)
-	_h = clampi(int(round(float(_w) * rng.randf_range(0.55, 0.60))), 88, 128)
+	# FINER GRAIN. This was 160-216 wide, which puts a cell at 9-12 screen pixels on a
+	# 1920 frame - coarse enough that the sand read as tiles rather than as sand, which is
+	# what "rather large particles" meant. 240-300 lands a cell at 6.4-8.0 px. The sweep is
+	# O(cells) and measured at 0.53 us/cell worst case (a half-full grid, every row
+	# active), so the ceiling is real - but a chamber is mostly empty or settled and the
+	# per-row activity mask skips those, and the whole sim runs inside a FrameForge job
+	# where falling behind costs a slower pour rather than a dropped frame.
+	_w = rng.randi_range(240, 300)
+	_h = clampi(int(round(float(_w) * rng.randf_range(0.55, 0.60))), 132, 180)
 	_run_cap = rng.randi_range(5, 11)
 	_depth = rng.randf_range(0.16, 0.36)
 	# 20-30 ticks a second. A granular automaton does not need 60: the grid IS the
 	# quantization, and a slower clock buys back the cells it costs.
 	_clock = SimClock.new(rng.randf_range(20.0, 30.0), 2)
 
-	var shape := String(CHAMBERS.keys()[rng.randi() % CHAMBERS.size()])
+	# WEIGHTED, not uniform. "ledges" was one of four shapes picked evenly, so three
+	# sessions in four were a plain box and the sand simply heaped in the bottom of it -
+	# reported, fairly, as boring. The cascading shapes are what this scene is FOR: matter
+	# that runs along a surface, reaches an edge, and pours off it.
+	var shape := String(SHAPE_BAG[rng.randi() % SHAPE_BAG.size()])
 	var ch: Dictionary = CHAMBERS[shape]
 	var thick := _rint(ch["wall"], rng)
 
@@ -200,19 +214,21 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 				sim.fill_rect(0, y, _w / 2 - half, y, stone)
 				sim.fill_rect(_w / 2 + half, y, _w - 1, y, stone)
 		"ledges":
-			var n := _rint(ch["shelves"], rng)
-			for k in n:
-				var ly := int(float(_h) * (0.26 + 0.52 * (float(k) + 0.5) / float(n)))
-				var ln := int(float(_w) * _rand(ch["shelf"], rng))
-				if (k % 2) == 0:
-					sim.fill_rect(thick, ly, thick + ln, ly + 1, stone)
-				else:
-					sim.fill_rect(_w - 1 - thick - ln, ly, _w - 1 - thick, ly + 1, stone)
+			_cascade(sim, stone, thick, _rint(ch["shelves"], rng), ch, rng)
 		"silo":
 			for k in _rint(ch["pillars"], rng):
 				var px := int(float(_w) * rng.randf_range(0.25, 0.75))
 				var py := int(float(_h) * rng.randf_range(0.35, 0.72))
 				sim.fill_rect(px, py, px + 1, py + int(float(_h) * rng.randf_range(0.08, 0.20)), stone)
+
+	# EVERY chamber gets something to spill over, not just the one named for it. A silo
+	# with a couple of shelves in it is still a silo, and it gives the pour somewhere to
+	# break; an hourglass with a shelf under its waist catches the throat's output and
+	# throws it sideways. Only the count differs by shape.
+	if shape != "ledges":
+		var extra := 1 if shape == "open" else rng.randi_range(1, 3)
+		if extra > 0:
+			_cascade(sim, stone, thick, extra, CHAMBERS["ledges"], rng)
 
 	# Strata: the wall takes its colour from an elevation ramp by row, which is the one
 	# place a [Palette] belongs here - everything else is matter, and matter has its own.
@@ -462,3 +478,40 @@ class SandJob:
 		g.paint(tb, org, float(s["cell"]), run_cap, float(s["hue_rot"]),
 			float(s["glow"]), depth)
 		return [{"pts": tb.pts, "cols": tb.cols, "idx": tb.idx}]
+
+
+## Sloped shelves, alternating sides, for the material to run along and pour off.
+##
+## A FLAT shelf is a shelf: sand lands on it, heaps at its angle of repose, and eventually
+## spills off both ends at once. That is what the old ledges did and it reads as a pile
+## with a step in it. A SLOPED one is a chute - the grains keep taking the downhill
+## sideways step the automaton already offers them, so the material travels the length of
+## the shelf and leaves it at one known edge, in a stream. That stream falling to the next
+## shelf down is the waterfall this scene was missing.
+##
+## The slope is one cell of drop per `run` cells of length, built as a staircase because
+## the grid has no other way to express a slope - and a staircase is right anyway, since
+## each step is a tiny lip that keeps the stream lively instead of laminar.
+func _cascade(sim, stone: int, thick: int, count: int, ch: Dictionary,
+		rng: RandomNumberGenerator) -> void:
+	if count <= 0:
+		return
+	for k in count:
+		# Spread down the chamber, avoiding the very top (nothing has fallen yet) and the
+		# floor (the bottom pile wants room to build).
+		var ly := int(float(_h) * (0.24 + 0.54 * (float(k) + 0.5) / float(count)))
+		var ln := maxi(6, int(float(_w) * _rand(ch["shelf"], rng)))
+		var left := (k % 2) == 0
+		# A shallow slope only: steep enough that the sand runs, shallow enough that it
+		# still piles a little on the way, which is what makes the stream pulse rather
+		# than pour evenly.
+		var run := rng.randi_range(4, 9)
+		var thickness := rng.randi_range(1, 2)
+		for i in ln:
+			var x := (thick + i) if left else (_w - 1 - thick - i)
+			if x < thick or x > _w - 1 - thick:
+				continue
+			var y := ly + int(i / run)
+			if y >= _h - thick - 2:
+				break
+			sim.fill_rect(x, y, x, y + thickness, stone)

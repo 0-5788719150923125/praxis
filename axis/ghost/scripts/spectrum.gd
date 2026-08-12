@@ -108,11 +108,24 @@ var bookend_baked := false
 ## the sound.
 var fade_audio := true
 
+## SCRUB HOOKS, for a session whose audio is not a seekable file.
+##
+## The synthesis path pushes PCM into a generator a chunk at a time, so there is no file to
+## seek and the player's own position is meaningless across a restart. But the editor
+## driving it holds the decoded take and can re-push it from any offset, which is a
+## perfectly good seek - it just cannot be expressed through an AudioStreamPlayer. A
+## session that can do this registers these three; anything else leaves them empty and the
+## file path above applies.
+var scrub_pos := Callable()      # () -> float, seconds into the content
+var scrub_len := Callable()      # () -> float, total seconds currently known
+var scrub_seek := Callable()     # (float) -> void
+
 var _hold := 0.0                # counts up through the lead-in
 var _held := false              # lead-in running: the player has NOT been started yet
 var _tail_t := 0.0              # counts up through the tail
 var _tailing := false           # audio has ended; running out the tail before signalling
 var _bus_db := 0.0              # master trim we applied, so it can be put back exactly
+var _last_time := 0.0           # last published clock, held when the player stops mid-session
 
 var _has_audio := false
 var _idle_time := 0.0
@@ -312,6 +325,71 @@ func restart_stream() -> AudioStreamGeneratorPlayback:
 	return _player.get_stream_playback()
 
 
+## Can this session be scrubbed at all?
+##
+## A file can be seeked; a GENERATOR cannot. In synthesis the audio is being pushed into a
+## ring buffer a chunk at a time and nothing behind the playhead still exists, so there is
+## no position to seek to - which is also why the scrubber hides itself rather than
+## offering a control that would silently do nothing.
+func seekable() -> bool:
+	if scrub_seek.is_valid():
+		return true
+	return _has_audio and not _streaming and _content_length() > 0.0
+
+
+## Where the scrub bar should sit, and how long the thing is. A STREAM cannot answer
+## either from the player: restarting a generator resets its playback position to zero, so
+## after one seek the player's own clock says nothing about where the content is. The
+## session that owns the audio answers instead when it can (see [member scrub_seek]).
+func scrub_position() -> float:
+	return float(scrub_pos.call()) if scrub_pos.is_valid() else current.time
+
+
+func scrub_length() -> float:
+	return float(scrub_len.call()) if scrub_len.is_valid() else song_length()
+
+
+## Move the playhead to [param t] on the SESSION clock - the same clock
+## [member current].time runs on, bookend included, so a caller can hand back a position
+## it read from there without knowing whether the silence is held or baked.
+##
+## WHAT THIS DOES NOT DO is re-derive the visuals. Everything that READS the clock follows
+## correctly and immediately: the baked spectrum is a timeline lookup, the karaoke reads
+## `current.time - time_base`, the bookend fade is a function of position. But the
+## [Director] is a SIMULATION, not a function of t - its scene choice, its hold schedule
+## and its RNG stream evolve from the sequence of events it has actually seen. So after a
+## seek the show carries on from the scene that is up, rather than jumping to the scene a
+## from-the-start playthrough would have been showing. ([Echo] then pulls it back toward
+## the content on its own, since it re-localizes against the harmonic signature rather
+## than against elapsed time - but that is a drift back into alignment, not a guarantee.)
+##
+## Reproducing the exact visual state of an arbitrary t would mean replaying the Director
+## from zero with drawing off. That is a real thing this architecture could do, and it is
+## not what a scrub bar is for.
+func seek(t: float) -> void:
+	if scrub_seek.is_valid():
+		scrub_seek.call(t)
+		return
+	if not seekable():
+		return
+	var content := _content_length()
+	var want := clampf(t, 0.0, lead_in + content + tail)
+	_tailing = false
+	_tail_t = 0.0
+	if not bookend_baked and want < lead_in:
+		# Landed inside the held silence: hold there rather than starting the audio early.
+		_held = true
+		_hold = want
+		_player.stop()
+		return
+	_held = false
+	var pos := clampf(want - _clock_offset(), 0.0, maxf(0.0, content - 0.05))
+	if not _player.playing:
+		_player.play(pos)
+	else:
+		_player.seek(pos)
+
+
 ## Restart the loaded song from the top WITHOUT touching any session state - no
 ## reseed, no reload, the fingerprint and analyzers carry straight on. Manual mode
 ## loops the audio endlessly with this; whether the VISUALS restart is the
@@ -329,6 +407,7 @@ func stop() -> void:
 		_player.volume_db = 0.0      # a mid-fade session end must not mute the next
 	_has_audio = false
 	_idle_time = 0.0
+	_last_time = 0.0
 	_override_path = ""
 	_streaming = false
 	_stream_length = 0.0
@@ -586,10 +665,20 @@ func _process(delta: float) -> void:
 		# Bookend silence: the clock is continuous with the playing branch above, so
 		# nothing downstream can tell the difference except that it is quiet.
 		f.time = _hold if _held else lead_in + _content_length() + _tail_t
+	elif _has_audio:
+		# A LOADED SESSION NEVER FALLS BACK TO THE IDLE CLOCK. The player can be stopped
+		# while audio is still loaded - it has run past the end, or a seek landed on the
+		# last fraction of a second - and reverting to `_idle_time` there restarts the
+		# session clock from zero, which reads downstream as the whole show jumping back
+		# to its first frame. Caught by seek_check: a seek past the end reported 0.01 s.
+		# Hold the last position instead; the tail and the finish signal own what happens
+		# next, and neither of them wants the clock moving backwards first.
+		f.time = _last_time
 	else:
 		_idle_time += delta
 		f.time = _idle_time
 		# bands stay zero; scenes idle-animate on f.time
+	_last_time = f.time
 	if fade_audio:
 		_apply_bookend_gain(f.time)
 

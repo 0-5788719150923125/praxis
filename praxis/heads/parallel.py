@@ -63,8 +63,12 @@ class ParallelHead(BaseHead):
     @property
     def causal_readout(self) -> bool:
         """A gated combination is causal only if every branch is: one
-        sequence-pooling branch contaminates the combined logits."""
-        return all(getattr(b, "causal_readout", False) for b in self.branches)
+        sequence-pooling branch contaminates the combined logits. A stem feeds
+        every branch that does not read the trunk, so it counts too."""
+        parts = list(self.branches)
+        if self.stem is not None:
+            parts.append(self.stem)
+        return all(getattr(b, "causal_readout", False) for b in parts)
 
     def __init__(
         self,
@@ -73,7 +77,27 @@ class ParallelHead(BaseHead):
         *,
         branches: List[HeadSpec],
         gate_repulsion: float = 0.0,
+        stem: Optional[HeadSpec] = None,
     ) -> None:
+        """``stem`` is an optional transform applied ONCE and shared by every
+        branch, instead of each branch carrying its own copy.
+
+        prismatic2 through prismatic5 give each arm its own ``HarmonicField``,
+        which is why three arms cost three field evaluations - measured at ~30%
+        of total compute in ``abstractinator-j``, against 53-69% dormant
+        capacity per field. A stem computes the field once and lets the arms
+        differ only in how they READ it, which is the distinction the gate
+        actually rewarded there (arm 1 field->crystal at 0.736, arm 2
+        field->linear at 0.234, against the separate-bias arm at 0.029).
+
+        A branch may opt out with ``reads_trunk = True`` and receive the raw
+        hidden states instead. HaloHead sets it: HALOLoss scores the trunk
+        embeddings, so putting a transform in front would train one feature
+        space and score another. The GATE always reads the trunk, so its
+        decision stays a judgement about the arms rather than about the stem.
+
+        Default None, so every existing prismatic profile is unchanged.
+        """
         super().__init__(config, encoder)
         if not branches:
             raise ValueError("ParallelHead needs at least one branch.")
@@ -82,6 +106,11 @@ class ParallelHead(BaseHead):
             for b in branches
         ]
         self.branches = nn.ModuleList(built)
+        self.stem: Optional[BaseHead] = (
+            None
+            if stem is None
+            else (stem if isinstance(stem, BaseHead) else stem(config, encoder=encoder))
+        )
         self._gate_mean: Optional[Tensor] = None
         self._gate_entropy: Optional[float] = None
         self._gate_min_gap: Optional[float] = None
@@ -106,7 +135,10 @@ class ParallelHead(BaseHead):
             self.gate = nn.Linear(feature_dim, len(self.branches), bias=False)
 
     def compose_repr(self) -> str:
-        return "Parallel(" + ", ".join(b.compose_repr() for b in self.branches) + ")"
+        arms = ", ".join(b.compose_repr() for b in self.branches)
+        if self.stem is None:
+            return f"Parallel({arms})"
+        return f"Parallel({self.stem.compose_repr()} -> [{arms}])"
 
     def __repr__(self) -> str:
         return self.compose_repr()
@@ -180,12 +212,30 @@ class ParallelHead(BaseHead):
                 )
                 self._gate_min_gap = float(d[iu[0], iu[1]].min().item())
 
+    def _stem_out(self, hidden_states: Tensor) -> Tensor:
+        """The shared stem transform, computed ONCE per call (the whole point:
+        one field evaluation instead of one per arm). Identity when no stem."""
+        if self.stem is None:
+            return hidden_states
+        return self.stem.transform(hidden_states)
+
+    def _branch_input(
+        self, branch: BaseHead, stemmed: Tensor, trunk: Tensor
+    ) -> Tensor:
+        """Stem output, unless the branch declares it must score trunk features
+        (``reads_trunk``, set by HaloHead - see __init__)."""
+        return trunk if getattr(branch, "reads_trunk", False) else stemmed
+
     def transform(self, hidden_states: Tensor) -> Tensor:
         """The gated mixture of branch transforms - this head's contribution as
         a non-terminal SequentialHead stage."""
         if self.gate is None:
             return hidden_states
-        outs = [b.transform(hidden_states) for b in self.branches]
+        stemmed = self._stem_out(hidden_states)
+        outs = [
+            b.transform(self._branch_input(b, stemmed, hidden_states))
+            for b in self.branches
+        ]
         return self._gate_combine(outs, self.gate(hidden_states))
 
     def forward(self, hidden_states: Tensor, **kwargs: Any) -> Tensor:
@@ -196,6 +246,7 @@ class ParallelHead(BaseHead):
         ``transform``/``_gate_combine`` instead."""
         if self.gate is None:
             return hidden_states
+        stemmed = self._stem_out(hidden_states)
         # A branch marked detach_in_blend (the HALO arm) contributes its
         # distribution to the mixture but no gradient flows into it from the
         # blended CE: the gate still learns how much to trust the arm (its
@@ -204,9 +255,9 @@ class ParallelHead(BaseHead):
         # terms). Keeps the gate share an uncontaminated verdict on the arm.
         outs = [
             (
-                b(hidden_states, **kwargs).detach()
+                b(self._branch_input(b, stemmed, hidden_states), **kwargs).detach()
                 if getattr(b, "detach_in_blend", False) and self.training
-                else b(hidden_states, **kwargs)
+                else b(self._branch_input(b, stemmed, hidden_states), **kwargs)
             )
             for b in self.branches
         ]
@@ -242,6 +293,12 @@ class ParallelHead(BaseHead):
         for b in self.branches:
             if hasattr(b, "set_downstream"):
                 b.set_downstream(classifier)
+        # The stem feeds a MIXTURE of readouts, so no single classifier is "the"
+        # downstream one. Lend it the same target the branches got; the
+        # grad-ratio it reports is then a ratio against that readout, not
+        # against the blend. Read it as a trend, not an absolute.
+        if self.stem is not None and hasattr(self.stem, "set_downstream"):
+            self.stem.set_downstream(classifier)
 
     # ── Namespaced diagnostics ──────────────────────────────────────────────
 
@@ -250,6 +307,12 @@ class ParallelHead(BaseHead):
         for i, b in enumerate(self.branches):
             for k, v in b.aux_losses().items():
                 out[f"p{i}_{k}"] = v
+        # The stem is not an arm, so it gets its own namespace rather than a
+        # p{i}_ slot - otherwise its series would collide with an arm's the
+        # moment the arm count changes.
+        if self.stem is not None:
+            for k, v in self.stem.aux_losses().items():
+                out[f"stem_{k}"] = v
         # Pre-scaled, mirroring crystal's convention; omitted when off.
         if self._repulsion_lambda > 0.0 and self._gate_repulsion is not None:
             out["gate_repulsion"] = self._repulsion_lambda * self._gate_repulsion
@@ -260,6 +323,9 @@ class ParallelHead(BaseHead):
         for i, b in enumerate(self.branches):
             for k, v in b.training_metrics().items():
                 out[f"p{i}_{k}"] = v
+        if self.stem is not None:
+            for k, v in self.stem.training_metrics().items():
+                out[f"stem_{k}"] = v
         if self._gate_mean is not None:
             for i in range(len(self.branches)):
                 out[f"gate_weight_{i}"] = float(self._gate_mean[i].item())
@@ -273,6 +339,9 @@ class ParallelHead(BaseHead):
         for i, b in enumerate(self.branches):
             for k, v in b.dashboard_snapshots().items():
                 out[f"p{i}_{k}"] = v
+        if self.stem is not None:
+            for k, v in self.stem.dashboard_snapshots().items():
+                out[f"stem_{k}"] = v
         return out
 
     def all_metric_descriptions(self) -> dict:
@@ -282,13 +351,23 @@ class ParallelHead(BaseHead):
         for i, b in enumerate(self.branches):
             callers = resolve_callers(b)
             for k, v in b.all_metric_descriptions().items():
-                out[f"p{i}_{k}"] = self._namespace_entry(v, i, callers.get(k))
+                out[f"p{i}_{k}"] = self._namespace_entry(v, f"p{i}", f"#{i}", callers.get(k))
+        if self.stem is not None:
+            callers = resolve_callers(self.stem)
+            for k, v in self.stem.all_metric_descriptions().items():
+                out[f"stem_{k}"] = self._namespace_entry(
+                    v, "stem", "(shared)", callers.get(k)
+                )
         out.update(self._gate_descriptions())
         return out
 
-    def _namespace_entry(self, value: Any, i: int, caller: Optional[str]) -> Any:
-        """Tag a branch's description with its index (title ``#i``, namespaced
-        series group) and pin the producing leaf class as its caller."""
+    def _namespace_entry(
+        self, value: Any, prefix: str, label: str, caller: Optional[str]
+    ) -> Any:
+        """Tag a part's description with its slot (title suffix ``label``,
+        ``prefix``-namespaced series group) and pin the producing leaf class as
+        its caller. ``prefix`` is ``p{i}`` for an arm and ``stem`` for the
+        shared stem, matching the keys the metrics dicts emit."""
         if isinstance(value, str):
             entry: dict = {"description": value}
             if caller:
@@ -300,10 +379,10 @@ class ParallelHead(BaseHead):
         for hint_key in ("chart", "snapshot"):
             hint = entry.get(hint_key)
             if isinstance(hint, dict) and isinstance(hint.get("title"), str):
-                hint["title"] = f"{hint['title']} #{i}"
+                hint["title"] = f"{hint['title']} {label}"
         chart = entry.get("chart")
         if isinstance(chart, dict) and isinstance(chart.get("series_group"), str):
-            chart["series_group"] = f"p{i}_{chart['series_group']}"
+            chart["series_group"] = f"{prefix}_{chart['series_group']}"
         if caller:
             entry["caller"] = caller
         return entry

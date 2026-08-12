@@ -109,6 +109,9 @@ var _ramp := 0.45
 var _damping := 1.0
 var _descent := 0.24
 var _jitter := 0.14
+var _tremor := 0.18       # threshold-free agitation, scaled by local |w| (see build)
+var _creep_floor := 0.16  # fraction of the descent that survives at a node
+var _shake_floor := 0.28  # fraction of the tremor that survives at a node
 var _tau := 1.0
 var _min_dwell := 8.0
 var _w2 := 0.2
@@ -270,6 +273,29 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	# Twitch is expressed as a FRACTION of the creep rather than independently: a grain that
 	# wanders faster than it descends never arrives, and the figure stays a haze forever.
 	_jitter = _descent * rng.randf_range(0.25, 1.10)
+	# How much of the creep and the tremor survive at a true node. Both are needed and
+	# they are needed TOGETHER: a tremor with no restoring force lets the sand random-walk
+	# off the line and the figure dissolves into haze, and a restoring force with no tremor
+	# is the frozen plate this replaces. Held in balance they give a DYNAMIC equilibrium -
+	# a line of finite width that is always being shaken apart and always being pulled back
+	# together, which is what a driven plate actually looks like.
+	_creep_floor = rng.randf_range(0.18, 0.34)
+	_shake_floor = rng.randf_range(0.45, 0.85)
+	# THE TREMOR - the plate is VIBRATING, not switching between moving and still.
+	#
+	# Everything above governs a grain's DIRECTED transport: it creeps down the gradient of
+	# |w| toward a node, and stops once the local amplitude drops under its threshold. On
+	# its own that is a one-way trip to stillness, and it looked like one - the figure
+	# assembled, every grain fell under threshold, and the plate froze until the music
+	# happened to change mode. Which is not what a driven plate does. A real one is in
+	# continuous motion everywhere the amplitude is non-zero; the figure is not the only
+	# part that moves, it is the part that moves LEAST.
+	#
+	# So this is an agitation floor with no threshold at all, scaled by the local |w| and
+	# the drive. At a true node it is zero, so the lines stay sharp and the sand still
+	# packs into them. Everywhere else the surface shimmers, which is both what the
+	# phenomenon looks like and what makes the nodal figure legible as an absence.
+	_tremor = _descent * rng.randf_range(0.35, 0.95)
 	_damping = rng.randf_range(0.6, 2.4)
 	_w2 = rng.randf_range(0.10, 0.40)
 	_tau = rng.randf_range(0.4, 2.0)
@@ -334,6 +360,9 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 		"ramp": _ramp,
 		"descent": _descent,
 		"jitter": _jitter,
+		"tremor": _tremor,
+		"creep_floor": _creep_floor,
+		"shake_floor": _shake_floor,
 		"damping": _damping,
 		"second_weight": _w2,
 		"mode_tau": _tau,
@@ -454,6 +483,9 @@ func _walk(dt: float) -> void:
 	var damp := _damping
 	var desc := _descent
 	var jit := _jitter
+	var tremor := _tremor
+	var creep_fl := _creep_floor
+	var shake_fl := _shake_floor
 	var lx := _lx
 	var ly := _ly
 	var rk := _rake_k
@@ -476,19 +508,26 @@ func _walk(dt: float) -> void:
 		_amp[i] = a
 		var thr := settle * _sens[i]
 		var mob := clampf((a * drive - thr) / ramp, 0.0, 1.0)
-		if mob <= 0.0:
-			continue
-		# The mobility exponent is the grain character: below 1 the whole plate twitches
-		# (loose dry sand), above 1 only the most violent regions move at all (heavy filings).
-		mob = pow(mob, damp)
+		if mob > 0.0:
+			# The mobility exponent is the grain character: below 1 the whole plate twitches
+			# (loose dry sand), above 1 only the most violent regions move at all (heavy filings).
+			mob = pow(mob, damp)
+		# Both channels keep a FLOOR at a node instead of going to zero there, and that
+		# floor is the fix. Scaling the agitation by the local |w| alone was still a frozen
+		# plate in disguise: the sand's whole job is to migrate to where |w| is smallest, so
+		# an |w|-scaled tremor is nearest to nothing exactly where all the sand has ended
+		# up. Measured, the field settled to 0.0003 plate-widths of motion per half second -
+		# about a third of a pixel, which is indistinguishable from stopped.
+		var pull := maxf(mob, creep_fl)
+		var trem := tremor * (shake_fl + a * drive)
 		# Symmetry-breaking jitter from an integer hash of (grain, generation) rather than an
 		# rng draw: a SimClock's tick count is wall-clock derived, so drawing from the seeded
 		# stream here would desynchronise the export from the preview.
 		var h := _hash2(i, gen)
 		var jx := float(h & 2047) * 0.00097704 - 1.0
 		var jy := float((h >> 11) & 2047) * 0.00097704 - 1.0
-		var nx := x + (ux * desc + jx * jit) * mob * dte
-		var ny := y + (uy * desc + jy * jit) * mob * dte
+		var nx := x + (ux * desc * pull + jx * (jit * mob + trem)) * dte
+		var ny := y + (uy * desc * pull + jy * (jit * mob + trem)) * dte
 		if _field.inside(nx, ny):
 			_px[i] = nx
 			_py[i] = ny

@@ -377,26 +377,6 @@ Source: [scripts/scenes/terrain_city.gd](../scripts/scenes/terrain_city.gd) (ext
 
 depth, standing waves.
 
-### `canopy` (scene3d, drift)
-
-Canopy - trees growing on real terrain, from taproot to leaf, through one season.
-
-A wooded slope under a low raking sun. Thirty to a hundred and ten trees stand on a real `Terrain` heightfield - not a decal, not a sprite: each one is a genuine 3D branching structure grown by `Branch3D`, a tapered trunk lofted as a closed 6-sided tube with limbs forking away at species-specific angles, a divergence roll between successive whorls, and twigs thinning into soft leaf masses. Trunks and crowns rasterize into a `ShadowField`, so the hillside is striped with the wood's own shadows, and the whole thing merges into [method Terrain.collect_surface]'s quad list before the depth sort - which is what makes a hill occlude the trees standing behind it instead of the wood floating over the land.
-
-THE FOREST IS INSTANCED, and that is the only reason it fits. A handful of MODELS (five to nine) are grown once in [method build_params]; every tree is one of them, yawed, scaled and BENT at draw time. That is furry's trick - grow once in local space, re-lean at draw - lifted into three dimensions, and it turns a hundred L-systems into eight.
-
-WIND IS A TRAVELLING FRONT, not a global multiplier. A gust has a real position, a real crossing speed and a gaussian width, so it sweeps the hillside as a visible wave and the far trees answer LATE. That delay is physical - it falls out of the geometry rather than being scheduled - and it is the single detail that stops a field of trees reading as one object jiggling. The two frequencies of wind are separated the way real wind separates them: `f.bass` drives the long-period trunk sway as an ANGULAR cantilever displacement (never a scale - a tree that grows and shrinks on the beat is a joke), while `f.high` plus `f.treble` drive the fast small flutter of the leaf clusters alone.
-
-THE SEASON is the first thing the seed chooses, and everything is read off it - the mood on offer, the climate the terrain may take, leaf density, how hard the foliage turns from base to tip, whether the saturation is drained out, and what is in the air. Leaves come off over the scene, but shedding is NOT an rng draw: each leaf carries a fixed release threshold set at build and detaches when the running peak of an EMA of `f.beat` crosses it. That matters because the live analyzer and the offline export bake do not produce identical feature streams - anything that rolled dice on an audio event would render a different wood in the video than in the preview. Being a pure function of (threshold, shed level) it also costs no per-leaf state at all: sixty trees share eight models and the bare ones are computed, not stored.
-
-THE BUDGET IS THE DESIGN. Sixty trees at ~200 segments lofted six-sided is ninety thousand quads, which is not a frame. So LOD is structural: the nearest dozen get full tubes on the heavy wood and screen-space ribbons on the twigs, the middle band drops the finest order and thins its foliage, and everything beyond collapses to three to six crown puffs over a single trunk ribbon - a silhouette on the ridge. The whole frame is built off the main thread through `FrameForge`, because under `--export` that builder runs synchronously and the LOD budget IS the render wall time.
-
-What the seed decides: the season and its mood; the landform and a climate that suits both; the sun's elevation (8-35 degrees, kept low for long shadows) and its drift direction; one species rule table (fork angle, divergence roll, length/width ratios, depth, children, crown fraction, buttress flare, trunk lean, leaf size); how many models and how many trees; the distribution law the trees scatter under; the slope they refuse to root on; the gust's speed, width and strength; and the LOD distances.
-
-layers: `bed`, `rays`, `veil`
-
-Source: [scripts/scenes/canopy.gd](../scripts/scenes/canopy.gd) (extends `Scene3D`)
-
 ### `chladni` (particles, drift, static)
 
 Chladni - grains walking to the places a plate is not moving.
@@ -418,6 +398,30 @@ WHAT THE SEED DECIDES: the plate (square, circular, hexagonal - each with its ow
 layers: `bed`, `dust`
 
 Source: [scripts/scenes/chladni.gd](../scripts/scenes/chladni.gd) (extends `GhostScene`)
+
+## That should be done where it can actually be looked at, which is what --scene is for
+
+that should be done where it can actually be looked at, which is what --scene is for.
+
+### `canopy` (scene3d, drift)
+
+Canopy - trees growing on real terrain, from taproot to leaf, through one season.
+
+A wooded slope under a low raking sun. Thirty to a hundred and ten trees stand on a real `Terrain` heightfield - not a decal, not a sprite: each one is a genuine 3D branching structure grown by `Branch3D`, a tapered trunk lofted as a closed 6-sided tube with limbs forking away at species-specific angles, a divergence roll between successive whorls, and twigs thinning into soft leaf masses. Trunks and crowns rasterize into a `ShadowField`, so the hillside is striped with the wood's own shadows, and the whole thing merges into [method Terrain.collect_surface]'s quad list before the depth sort - which is what makes a hill occlude the trees standing behind it instead of the wood floating over the land.
+
+THE FOREST IS INSTANCED, and that is the only reason it fits. A handful of MODELS (five to nine) are grown once in [method build_params]; every tree is one of them, yawed, scaled and BENT at draw time. That is furry's trick - grow once in local space, re-lean at draw - lifted into three dimensions, and it turns a hundred L-systems into eight.
+
+WIND IS A TRAVELLING FRONT, not a global multiplier. A gust has a real position, a real crossing speed and a gaussian width, so it sweeps the hillside as a visible wave and the far trees answer LATE. That delay is physical - it falls out of the geometry rather than being scheduled - and it is the single detail that stops a field of trees reading as one object jiggling. The two frequencies of wind are separated the way real wind separates them: `f.bass` drives the long-period trunk sway as an ANGULAR cantilever displacement (never a scale - a tree that grows and shrinks on the beat is a joke), while `f.high` plus `f.treble` drive the fast small flutter of the leaf clusters alone.
+
+THE SEASON is the first thing the seed chooses, and everything is read off it - the mood on offer, the climate the terrain may take, leaf density, how hard the foliage turns from base to tip, whether the saturation is drained out, and what is in the air. Leaves come off over the scene, but shedding is NOT an rng draw: each leaf carries a fixed release threshold set at build and detaches when the running peak of an EMA of `f.beat` crosses it. That matters because the live analyzer and the offline export bake do not produce identical feature streams - anything that rolled dice on an audio event would render a different wood in the video than in the preview. Being a pure function of (threshold, shed level) it also costs no per-leaf state at all: sixty trees share eight models and the bare ones are computed, not stored.
+
+THE BUDGET IS THE DESIGN. Sixty trees at ~200 segments lofted six-sided is ninety thousand quads, which is not a frame. So LOD is structural: the nearest dozen get full tubes on the heavy wood and screen-space ribbons on the twigs, the middle band drops the finest order and thins its foliage, and everything beyond collapses to three to six crown puffs over a single trunk ribbon - a silhouette on the ridge. The whole frame is built off the main thread through `FrameForge`, because under `--export` that builder runs synchronously and the LOD budget IS the render wall time.
+
+What the seed decides: the season and its mood; the landform and a climate that suits both; the sun's elevation (8-35 degrees, kept low for long shadows) and its drift direction; one species rule table (fork angle, divergence roll, length/width ratios, depth, children, crown fraction, buttress flare, trunk lean, leaf size); how many models and how many trees; the distribution law the trees scatter under; the slope they refuse to root on; the gust's speed, width and strength; and the LOD distances.
+
+layers: `bed`, `rays`, `veil`
+
+Source: [scripts/scenes/canopy.gd](../scripts/scenes/canopy.gd) (extends `Scene3D`)
 
 ### `cloth` (canvas, drift)
 
@@ -585,24 +589,6 @@ layers: `dust`
 
 Source: [scripts/scenes/tidepool.gd](../scripts/scenes/tidepool.gd) (extends `GhostScene`)
 
-### `wallpaper` (canvas, drift, static)
-
-wallpaper - one motif, one symmetry group, and the whole plane follows.
-
-A flat printed pattern, edge to edge: three to five solid inks, thin keylines, and no glow, no gradient and no soft edge anywhere. This is the catalogue's first flat-vector poster surface, and it is deliberately set against a project whose whole vocabulary is soft blobs, glow fringes and vignetted beds - the drama here has to come from drawing, not from light. One small motif - a couple of bars, a wedge, a disc, an arc - is repeated by an ACTUAL plane symmetry group, so the mirrors, glides and rotation centres in the picture are real rather than suggested: under p6m the frame maps onto itself exactly at sixty degrees. The group table, its closure and the lattice walk live in `WallpaperGroup`.
-
-NOTHING MOVES AS A PARTICLE, which is the other half of the idea. There is no drift, no sway, no per-element wobble. What the music does instead is RE-INK the pattern. Every motif element is bound at build to a pitch class; a few times a second the twelve chroma bins of [method Spectrum.harmonic_signature] are ranked, and each element takes the ink its own pitch class's RANK points at. Because every copy of the motif is the same motif, one chord change repaints six hundred of them on the same tick and the whole surface flips character in a beat. That is "sound drives colour, not scale" taken to its limit - a large, perfectly synchronized change with zero motion, which is a kind of drama nothing else here does.
-
-Two smaller audio channels. `f.beat` starts a LATTICE GLIDE: the tiling translates by exactly one lattice vector over a fraction of the beat period and lands back in register, so it reads as a step rather than a scroll - at the end of the move the picture is identical to the one before it. `f.movement` cross-fades the motif between two seeded vertex sets (a straight radial lerp with matched counts), so a section change morphs the pattern continuously while it stays inside its group. `f.energy` moves the keyline alpha and nothing else, inside a narrow sampled band.
-
-WHAT THE SEED DECIDES: which of the seventeen groups (weighted - the richer ones come up more), the lattice aspect and, for the oblique groups, its angle; how many motif elements and what each one is (bar / wedge / disc / arc), its vertex count, size, rotation and place in the fundamental domain; the morph target's per-vertex jitter; the `Scheme` mood and how many inks are drawn from it; whether the ground is high-key or near-black; the keyline's width and its alpha band; how often the inks are re-ranked; which lattice vectors the glide walks, on which beats, over how much of the beat period.
-
-THE ONE GUARD THIS SCENE NEEDS is multiplicative, and it is why the cell size is derived rather than sampled: cells x group order x elements is the polygon count, and 18x18 cells of a five-element motif under p6m (order 12) would be 19,440 polygons. So a total motif budget is sampled first, the element count is capped against the group's order, and the cell length is solved backwards from the budget - then clamped so cells-across-frame still lands in [5, 18], because a pattern with three cells in it is not a pattern and one with forty is a texture.
-
-HOW IT DRAWS. The motif is identical in every cell, so the frame is built ONCE per cell - every coset, every element, fills then keylines, a few thousand triangles - and that single triangle array is then submitted per cell under a shifted transform. The cost is two RenderingServer calls per cell instead of the tens of thousands of GDScript vertex appends a naive full-plane batch would need; measured against the budget, that is the difference between about a millisecond and about twenty.
-
-Source: [scripts/scenes/wallpaper.gd](../scripts/scenes/wallpaper.gd) (extends `GhostScene`)
-
 ## The-point scenes
 
 "the-point" scenes (camera holds, per the brief).
@@ -722,3 +708,21 @@ Continuity: a stage declares `morph_out = morph_in = "stage"`, so when two stage
 morph in: `stage` · morph out: `stage`
 
 Source: [scripts/scenes/stage.gd](../scripts/scenes/stage.gd) (extends `Scene3D`)
+
+### `wallpaper` (canvas)
+
+wallpaper - one motif, one symmetry group, and the whole plane follows.
+
+A flat printed pattern, edge to edge: three to five solid inks, thin keylines, and no glow, no gradient and no soft edge anywhere. This is the catalogue's first flat-vector poster surface, and it is deliberately set against a project whose whole vocabulary is soft blobs, glow fringes and vignetted beds - the drama here has to come from drawing, not from light. One small motif - a couple of bars, a wedge, a disc, an arc - is repeated by an ACTUAL plane symmetry group, so the mirrors, glides and rotation centres in the picture are real rather than suggested: under p6m the frame maps onto itself exactly at sixty degrees. The group table, its closure and the lattice walk live in `WallpaperGroup`.
+
+NOTHING MOVES AS A PARTICLE, which is the other half of the idea. There is no drift, no sway, no per-element wobble. What the music does instead is RE-INK the pattern. Every motif element is bound at build to a pitch class; a few times a second the twelve chroma bins of [method Spectrum.harmonic_signature] are ranked, and each element takes the ink its own pitch class's RANK points at. Because every copy of the motif is the same motif, one chord change repaints six hundred of them on the same tick and the whole surface flips character in a beat. That is "sound drives colour, not scale" taken to its limit - a large, perfectly synchronized change with zero motion, which is a kind of drama nothing else here does.
+
+Two smaller audio channels. `f.beat` starts a LATTICE GLIDE: the tiling translates by exactly one lattice vector over a fraction of the beat period and lands back in register, so it reads as a step rather than a scroll - at the end of the move the picture is identical to the one before it. `f.movement` cross-fades the motif between two seeded vertex sets (a straight radial lerp with matched counts), so a section change morphs the pattern continuously while it stays inside its group. `f.energy` moves the keyline alpha and nothing else, inside a narrow sampled band.
+
+WHAT THE SEED DECIDES: which of the seventeen groups (weighted - the richer ones come up more), the lattice aspect and, for the oblique groups, its angle; how many motif elements and what each one is (bar / wedge / disc / arc), its vertex count, size, rotation and place in the fundamental domain; the morph target's per-vertex jitter; the `Scheme` mood and how many inks are drawn from it; whether the ground is high-key or near-black; the keyline's width and its alpha band; how often the inks are re-ranked; which lattice vectors the glide walks, on which beats, over how much of the beat period.
+
+THE ONE GUARD THIS SCENE NEEDS is multiplicative, and it is why the cell size is derived rather than sampled: cells x group order x elements is the polygon count, and 18x18 cells of a five-element motif under p6m (order 12) would be 19,440 polygons. So a total motif budget is sampled first, the element count is capped against the group's order, and the cell length is solved backwards from the budget - then clamped so cells-across-frame still lands in [5, 18], because a pattern with three cells in it is not a pattern and one with forty is a texture.
+
+HOW IT DRAWS. The motif is identical in every cell, so the frame is built ONCE per cell - every coset, every element, fills then keylines, a few thousand triangles - and that single triangle array is then submitted per cell under a shifted transform. The cost is two RenderingServer calls per cell instead of the tens of thousands of GDScript vertex appends a naive full-plane batch would need; measured against the budget, that is the difference between about a millisecond and about twenty.
+
+Source: [scripts/scenes/wallpaper.gd](../scripts/scenes/wallpaper.gd) (extends `GhostScene`)

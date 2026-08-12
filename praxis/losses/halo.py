@@ -36,9 +36,13 @@ class HALOLoss(nn.Module):
        The classifier owns centroids/gamma/abstain; the loss delegates to it
        so training and inference share ONE scoring function. The total loss
        is composite: standard CE on the model's emitted logits (training the
-       gate and the non-HALO arms - the HALO arm's logits are detached in
-       the blend) PLUS the HALO geometric objective on the trunk embeddings
-       (the arm's sole training signal). No relative weight knob: 1:1.
+       gate and the non-HALO arms) PLUS the HALO geometric objective on the
+       trunk embeddings. No relative weight knob: 1:1. Whether the CE term
+       also reaches the HALO arm is set by ``HaloHead.detach_in_blend`` -
+       detached, the geometric term is that arm's sole teacher and its gate
+       share is an uncontaminated verdict on HALO's scoring; attached, the
+       arm trains under both and the verdict is traded for the chance that
+       the arm becomes useful.
 
     2. **Legacy side-loss mode** (any other centroid matrix: a Linear head's
        ``weight``, a crystal head's ``centers`` - e.g. CALM's geometric
@@ -213,10 +217,14 @@ class HALOLoss(nn.Module):
             return halo_loss
 
         # Honest-mode composite: standard CE on the model's emitted logits.
-        # This is the gate's and the non-HALO arms' training signal (the HALO
-        # arm's logits are detached in the parallel blend, so the geometric
-        # term above remains that arm's only teacher). Excludes -100 positions
-        # from the denominator; per-token task weights pass through.
+        # This is the gate's and the non-HALO arms' training signal. Whether it
+        # ALSO reaches the HALO arm is the arm's own choice, not this loss's:
+        # HaloHead.detach_in_blend decides, and the two settings ask different
+        # questions (see that class). Detached (prismatic5) the geometric term
+        # above is the arm's only teacher and its gate share is a clean verdict
+        # on HALO's scoring; attached (prismatic6) the arm trains under both.
+        # Either way the geometric term runs. Excludes -100 positions from the
+        # denominator; per-token task weights pass through.
         flat_logits = logits.contiguous().view(-1, logits.shape[-1]).float()
         ce_per_token = F.cross_entropy(
             flat_logits, flat_labels, reduction="none", ignore_index=-100

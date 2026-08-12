@@ -94,6 +94,17 @@ const BEAT_ON := 0.55
 ## How far every hue is pulled toward the live tonal centre, scaled by how tonal the moment is.
 const CHROMA_PULL := 0.35
 
+## Below this the material counts as SILENCE and the drive reference stops learning, so a held
+## pause can never divide a tiny number by a tinier one and light the slab up. Same value and
+## same role as [member Director.silence_floor], which is already the "nothing is playing" line
+## the cut logic trusts.
+const SILENCE_FLOOR := 0.03
+
+## Where the material's OWN AVERAGE lands on the 0..1 drive dial. Half, so an ordinary passage
+## sits mid-scale and a passage that leans in has somewhere to go. This is a normalisation
+## convention, not a look knob - the look knobs are all sampled.
+const DRIVE_MID := 0.5
+
 # How each topology scales a sheet's row/column counts along the slab.
 const TOPOLOGIES := ["slab", "funnel", "bottleneck", "fan_out"]
 
@@ -123,7 +134,7 @@ var _routes: Array = []               # pre-rolled packet paths (PackedInt32Arra
 # --- the state ---
 var _level := PackedFloat32Array()    # per-neuron firing envelope 0..1
 var _acts: Array = []                 # one Activation per sheet (the route gate)
-var _gain := PackedFloat32Array()     # sheet-to-sheet propagation gain
+var _gain := PackedFloat32Array()     # sheet-to-sheet transmission (see _step)
 var _packets: Array = []
 var _glow := 0.0
 var _prev_beat := 0.0
@@ -131,6 +142,11 @@ var _last_launch := -10.0
 var _last_reframe := 0.0
 var _route_i := 0
 var _yaw_i := 0
+
+# The material's own recent level, which every drive here is measured against (see _step).
+var _e_ref := 0.0                     # EMA of f.energy
+var _b_ref := 0.0                     # EMA of the loudest band this frame
+var _ref_seeded := false
 
 # --- sampled definition kept as typed members (hot in the per-frame path) ---
 var _layers := 4
@@ -150,15 +166,23 @@ var _packets_on := true
 var _burst := 2
 var _hops := 1
 var _move_thresh := 0.45
-var _reframe_gap := 6.0
-var _dist := 3.0
+var _reframe_gap := 24.0
+var _dist := 1.7
+var _push := 0.0
 var _pitch := 0.1
 var _yaw_center := 0.65
 var _yaw_goal := 0.65
-var _yaw_amp := 0.15
-var _yaw_rate := 0.05
+var _yaw_amp := 0.08
+var _yaw_rate := 0.02
 var _yaw_phase := 0.0
+var _yaw_ease := 0.1
 var _yaw_bag := PackedFloat32Array()
+var _ref_tau := 25.0
+var _a_floor := 0.20
+var _bleach := 0.85
+var _ghost_sat := 0.45
+var _edge_gamma := 0.5
+var _node_gamma := 0.6
 
 
 func build_params(rng: RandomNumberGenerator) -> Dictionary:
@@ -188,7 +212,26 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_burst = rng.randi_range(1, 4)
 	_hops = rng.randi_range(1, 3)
 	_move_thresh = rng.randf_range(0.35, 0.60)
-	_reframe_gap = rng.randf_range(5.0, 9.0)
+	# Seconds the framing must hold before a section change may re-aim it at all. Was 5-9, which
+	# on narration (where `movement` spikes at nearly every sentence) meant the camera re-aimed at
+	# almost every opportunity - see the yaw block below for what that did.
+	_reframe_gap = rng.randf_range(18.0, 32.0)
+	# How long the drive reference takes to forget, in seconds. Short = the slab tracks each
+	# sentence's own loudness; long = it tracks the passage.
+	_ref_tau = rng.randf_range(15.0, 40.0)
+	# The lit/unlit mapping (see NeuralJob.run). `bleach` is how completely a firing route burns
+	# out to white, `ghost_sat` how much colour the unlit graph keeps, `a_floor` how present the
+	# unlit graph is at all, and the gammas how sharply firing translates into light.
+	# The gammas are ABOVE one, which is the opposite of the 0.75 that shipped - and that is the
+	# tell that the old exponent was compensating for a signal that was not there. With the drive
+	# starved, only a gamma below one lifted anything off the floor at all, and it lifted the
+	# whole graph together. With the drive restored, levels reach 1 on their own and the exponent
+	# can do its actual job: hold the unlit majority down so a genuinely hot pair stands out.
+	_a_floor = rng.randf_range(0.14, 0.26)
+	_bleach = rng.randf_range(0.75, 0.95)
+	_ghost_sat = rng.randf_range(0.35, 0.60)
+	_edge_gamma = rng.randf_range(1.30, 2.10)
+	_node_gamma = rng.randf_range(1.50, 2.40)
 	var sparsity := rng.randf_range(0.25, 0.70)
 	var attack := rng.randf_range(4.0, 9.0)
 	var decay := rng.randf_range(0.8, 1.8)
@@ -282,10 +325,17 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 				_ehue.append(opp if neg else fposmod(hue_a + dh * 0.5, 1.0))
 			_ecnt[i] = _esrc.size() - int(_eoff[i])
 
-	# --- per-sheet activation + propagation gain ---
+	# --- per-sheet activation + propagation transmission ---
+	# TRANSMISSION, not amplification. The old 1.1-1.9 gain existed to fight the collapse of the
+	# whole-sheet MEAN: a sparse sheet's mean is dominated by the neurons that are off, so each hop
+	# multiplied the drive by roughly the sparsity and the far sheets went dead (measured on this
+	# project's own narration bake: sheet levels 0.33 / 0.17 / 0.026 / 0.007 / 0.0002 / 0.000 -
+	# the sixth sheet was EXACTLY zero, every frame, every seed). _step now propagates what
+	# actually FIRED instead of the mean, which does not collapse, so this becomes a per-sheet
+	# transmission a shade either side of unity and depth attenuates gently rather than geometrically.
 	for l in _layers:
 		_acts.append(Activation.new(int(_count[l]), rng, sparsity, attack, decay))
-		_gain.append(rng.randf_range(1.1, 1.9))
+		_gain.append(rng.randf_range(0.72, 0.92))
 
 	# --- pre-rolled packet routes and lens angles ---
 	# Both are drawn HERE, never at the moment of the audio event that uses them: a live
@@ -304,18 +354,36 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 			chain.append(cur)
 		if chain.size() >= 2:
 			_routes.append(chain)
+	# THE CAMERA IS ESSENTIALLY FIXED. The side of the slab is chosen ONCE, here, and never
+	# changes: the old bag drew an independent sign per entry, so two consecutive framings could
+	# be +0.95 and -0.95 - a 109-degree swing, eased at 0.7/s (a peak of 77 DEGREES PER SECOND),
+	# re-triggered every 5-9 seconds, and passing straight through yaw = 0 where the sheets stack
+	# on top of each other and the depth the whole scene exists to show collapses. It read exactly
+	# as reported: the array spinning wildly back and forth. Same side, narrow band, slow ease -
+	# the framing now drifts at about a degree per second and never crosses zero.
+	var side := 1.0 if rng.randf() < 0.5 else -1.0
 	for _b in 8:
-		var side := 1.0 if rng.randf() < 0.5 else -1.0
-		_yaw_bag.append(side * rng.randf_range(0.45, 0.95))
+		_yaw_bag.append(side * rng.randf_range(0.55, 0.85))
 	_yaw_center = _yaw_bag[0]
 	_yaw_goal = _yaw_center
-	_yaw_amp = rng.randf_range(0.10, 0.22)
-	_yaw_rate = rng.randf_range(0.02, 0.09)
+	_yaw_amp = rng.randf_range(0.04, 0.10)
+	_yaw_rate = rng.randf_range(0.012, 0.035)
 	_yaw_phase = rng.randf() * TAU
+	# Seconds-ish to close a re-aim. At the widest gap the bag allows (0.30 rad) this is a peak of
+	# ~1.7 deg/s; the breath on top adds at most ~1.3 deg/s.
+	_yaw_ease = rng.randf_range(0.07, 0.14)
 	_yaw_i = 1
-	_dist = rng.randf_range(2.2, 4.0)
-	_pitch = rng.randf_range(-0.35, 0.35)
-	lens.fov = rng.randf_range(44.0, 58.0)
+	# CLOSE. At the old 2.2-4.0 the whole slab sat in the middle of the frame as a small object -
+	# on a unit-radius slab at distance 3 with a 50 degree lens, a neuron disc projects to a ~14 px
+	# radius with ~135 px between neighbours, which is a diagram seen from across the room. Halving
+	# the distance doubles both, so the near sheet overruns the frame and the far ones recede: you
+	# are inside the fan rather than looking at the whole graph. The near sheet still clears the
+	# 0.05 near plane by a wide margin (worst case ~0.7 world units in front of the eye).
+	_dist = rng.randf_range(1.35, 2.10)
+	# A slow cinematic push, in world units over the scene's whole life - at most ~0.01/s.
+	_push = rng.randf_range(0.08, 0.26)
+	_pitch = rng.randf_range(-0.24, 0.24)
+	lens.fov = rng.randf_range(48.0, 62.0)
 
 	# A faint wash behind the slab, on the mood: a network in a pure black void reads as a
 	# diagram rather than as a place.
@@ -402,13 +470,17 @@ func update(f: AudioFeatures, delta: float) -> void:
 		_last_reframe = _life
 		_yaw_goal = _yaw_bag[_yaw_i % _yaw_bag.size()]
 		_yaw_i += 1
-	_yaw_center = lerpf(_yaw_center, _yaw_goal, 1.0 - exp(-0.7 * delta))
+	_yaw_center = lerpf(_yaw_center, _yaw_goal, 1.0 - exp(-_yaw_ease * delta))
 	_yaw_phase += delta * _yaw_rate * TAU
-	# The yaw SWAYS inside a three-quarter band instead of turning freely: at zero the sheets
-	# stack exactly on top of each other and the depth vanishes, and near a quarter turn they
-	# collapse to lines. Neither is the picture.
+	# The yaw BREATHES inside a narrow three-quarter band on ONE side of the slab (the side is
+	# fixed at build). Head-on the sheets stack exactly on top of each other and the depth
+	# vanishes; near a quarter turn they collapse to lines. Neither is the picture, and the band
+	# is now narrow enough that neither is ever approached.
 	var yaw := _yaw_center + _yaw_amp * sin(_yaw_phase)
-	lens.orbit(Vector3.ZERO, _dist, yaw, _pitch + 0.06 * mod.value("tilt"))
+	# The push-in is on the scene's OWN clock, not the audio: a cinematic move should be one
+	# unhurried gesture across the whole shot, not something that restarts on every loud sentence.
+	var dist := _dist - _push * smoothstep(0.0, 1.0, clampf(_life / 40.0, 0.0, 1.0))
+	lens.orbit(Vector3.ZERO, maxf(dist, 0.9), yaw, _pitch + 0.02 * mod.value("tilt"))
 
 	for _i in _sim.ticks(delta):
 		_step(_sim.dt)
@@ -439,6 +511,11 @@ func update(f: AudioFeatures, delta: float) -> void:
 	job.sat = _sch.sat
 	job.val = _sch.val
 	job.dark = _dark
+	job.a_floor = _a_floor
+	job.bleach = _bleach
+	job.ghost_sat = _ghost_sat
+	job.edge_gamma = _edge_gamma
+	job.node_gamma = _node_gamma
 	job.segs = _segs
 	job.sides = _sides
 	job.disc_r = _disc_r
@@ -459,28 +536,66 @@ func _draw() -> void:
 # from SimClock.ticks(), never once per update - see the class doc.
 func _step(dt: float) -> void:
 	var f := _f
-	var prev_mean := 0.0
+	# THE DRIVE IS CONTENT-RELATIVE, NOT ABSOLUTE. `f.energy` documents itself as "roughly 0..1"
+	# and for a mastered track it is; for SPEECH it is not. Measured over this project's own
+	# narration bake (686 s, 20581 frames): median 0.047, p90 0.072, max 0.108 - against the ~0.4
+	# a mastered track sits at even at rest. Fed in raw it left every Activation threshold
+	# unreachable, so `min(level_a, level_b)` peaked at 0.045 across the whole take and the
+	# brightest edge in eleven minutes reached 20/255 on black. That is the reported "impossible
+	# to see them", and no amount of remapping the colour can recover a signal that is not there.
+	#
+	# Director._lean() already learned this exact lesson one layer up ("a ratio has no genre baked
+	# into it: it fires on the passage where THIS material leans in, whatever this material
+	# happens to be"), and its comment records the same measurement for the cut logic. This is
+	# that lesson in the scene: the moment is judged against the material's own recent level.
+	var bmax := 0.0
+	for v in f.bands:
+		bmax = maxf(bmax, v)
+	if not _ref_seeded:
+		_ref_seeded = true
+		_e_ref = f.energy
+		_b_ref = bmax
+	elif f.energy > SILENCE_FLOOR:
+		# Silence does not teach the reference anything - it would only drag it down until the
+		# next syllable read as a climax.
+		var k := 1.0 - exp(-dt / _ref_tau)
+		_e_ref = lerpf(_e_ref, f.energy, k)
+		_b_ref = lerpf(_b_ref, bmax, k)
+	var drive := clampf(f.energy / maxf(_e_ref, SILENCE_FLOOR) * DRIVE_MID, 0.0, 1.0)
+	var bgain := 1.0 / maxf(_b_ref, SILENCE_FLOOR)
+
+	var prev_fire := 0.0
+	var agg_in := 0.0                     # sheet 0's aggregate, the yardstick for every sheet after
+	var fire_in := 0.0                    # ...and how hard sheet 0 actually fired under it
 	for l in _layers:
 		var s := int(_start[l])
 		var n := int(_count[l])
 		var act: Activation = _acts[l]
 		# The sheet's AGGREGATE drives the gate: which neurons are eligible this passage.
-		# f.energy is the mean over all 64 bands and rarely passes ~0.5, so it is scaled here
-		# rather than used as if it reached 1.
+		#
+		# SELF-NORMALISED, so that transmission alone decides how far activity reaches. Each
+		# Activation is a soft THRESHOLD, not a scale: once a sheet's aggregate falls under the
+		# thresholds its gates collapse to `gate_floor` and everything past it is dead - a cliff,
+		# not a slope. Handing sheet L+1 the raw firing measure walked straight off that cliff
+		# (measured levels by sheet: 0.34 / 0.17 / 0.02 / 0.005 / 0.001 / 0.000). Expressing it
+		# as a FRACTION of what sheet 0 managed under its own aggregate keeps every sheet in the
+		# same working range, and `_gain` - now a shade under unity - is what makes depth fade.
 		var agg: float
 		if l == 0:
-			agg = clampf(1.8 * f.energy + 0.6 * f.beat, 0.0, 1.0)
+			agg = clampf(1.8 * drive + 0.6 * f.beat, 0.0, 1.0)
+			agg_in = agg
 		else:
-			agg = clampf(prev_mean * float(_gain[l]), 0.0, 1.0)
+			agg = clampf(agg_in * (prev_fire / maxf(fire_in, 1e-3)) * float(_gain[l]), 0.0, 1.0)
 		act.update(agg, dt)
 		var sum := 0.0
+		var sum_sq := 0.0
 		for j in n:
 			var i := s + j
 			var raw: float
 			if l == 0:
-				raw = f.sample(_cx[i]) * _band_mix
+				raw = clampf(f.sample(_cx[i]) * bgain, 0.0, 1.0) * _band_mix
 			else:
-				raw = clampf(prev_mean * float(_gain[l]), 0.0, 1.0)
+				raw = agg
 			# The harmony decides WHO, the level decides HOW MUCH. On the input sheet the
 			# chroma channel adds to the band drive; deeper in it scales what arrived, so a
 			# chord change re-routes the slab without the loudness moving at all.
@@ -495,7 +610,16 @@ func _step(dt: float) -> void:
 			var cur := _level[i]
 			_level[i] = cur + (target - cur) * (_w_att if target > cur else _w_dec)
 			sum += _level[i]
-		prev_mean = sum / float(maxi(1, n))
+			sum_sq += _level[i] * _level[i]
+		# WHAT FIRED, not what is there. The level-weighted mean level (sum of squares over sum)
+		# is the plain mean when the sheet is uniform and the MAX when a single neuron carries it,
+		# which is the statistic this propagation always wanted. A sparse sheet's plain mean is
+		# mostly its dark majority, so passing THAT on multiplied the drive by roughly the sparsity
+		# at every hop and the far sheets died (the measured collapse is in build_params, at the
+		# transmission ranges). One extra multiply-add per neuron, no sort.
+		prev_fire = sum_sq / maxf(sum, 1e-6)
+		if l == 0:
+			fire_in = prev_fire
 
 	var pi := _packets.size() - 1
 	while pi >= 0:
@@ -573,6 +697,11 @@ class NeuralJob:
 	var sat := 0.6
 	var val := 0.9
 	var dark := 0.12
+	var a_floor := 0.20
+	var bleach := 0.85
+	var ghost_sat := 0.45
+	var edge_gamma := 1.7
+	var node_gamma := 1.9
 	var segs := 4
 	var sides := 8
 	var disc_r := 0.03
@@ -601,7 +730,10 @@ class NeuralJob:
 		# EDGES. Every one is emitted, every frame - the geometry is immutable and only the
 		# colour moves. `min(level_a, level_b) * |weight|` is the discipline of the scene: an
 		# edge is bright only when BOTH ends are hot, so what lights up is a route, not a mood.
-		var lit_val := val * (0.75 + 0.45 * glow)
+		# A FIRING ROUTE RUNS TO WHITE. The background is black, so the only way a lit edge reads
+		# as lit is to leave the mood's colour behind on its way up: the hue carries the middle of
+		# the range and burns out at the top. `lit_val` is therefore ~1, not the mood's own value.
+		var lit_val := lerpf(val, 1.0, 0.72 + 0.24 * glow)
 		for e in esrc.size():
 			var a := int(esrc[e])
 			var b := int(edst[e])
@@ -609,17 +741,24 @@ class NeuralJob:
 			var db := dp[b]
 			if da <= near or db <= near:
 				continue
-			var inten := minf(level[a], level[b]) * absf(ew[e])
-			var v := dark + maxf(0.0, lit_val - dark) * pow(inten, 0.75)
+			# ONE pow, and the weight rides in the EXPONENT rather than scaling the intensity. A
+			# strong edge lights on a modest pair, a weak one needs both ends genuinely hot - the
+			# same "a route, not a mood" discipline, but it can now reach the top of the range
+			# instead of being multiplied away from it before the curve is ever applied.
+			var sh := pow(minf(level[a], level[b]), edge_gamma * (1.6 - 0.8 * minf(absf(ew[e]), 1.0)))
+			var v := dark + maxf(0.0, lit_val - dark) * sh
 			var h := _tonal(ehue[e])
-			var col := Color.from_hsv(h, clampf(sat * (1.0 - 0.45 * inten), 0.0, 1.0),
-				clampf(v, 0.0, 1.0), reveal * clampf(0.30 + 0.75 * inten, 0.0, 1.0))
+			# Colour in the middle, white at the top: hold most of the mood's saturation until the
+			# edge is genuinely lit, then bleach it out.
+			var csat := sat * (ghost_sat + (1.0 - ghost_sat) * minf(sh * 3.0, 1.0)) * (1.0 - bleach * sh)
+			var col := Color.from_hsv(h, clampf(csat, 0.0, 1.0),
+				clampf(v, 0.0, 1.0), reveal * clampf(a_floor + (1.0 - a_floor) * sh, 0.0, 1.0))
 			# Split the edge so the painter's sort can INTERLEAVE it with the discs it passes.
 			# An edge crossing a whole sheet gap otherwise wins or loses against every neuron
 			# along it as a single block, which is exactly wrong for a scene about routes.
 			var pa := sp[a]
 			var pb := sp[b]
-			var soft := inten > 0.18
+			var soft := sh > 0.30
 			for s in segs:
 				var t0 := float(s) * inv
 				var t1 := float(s + 1) * inv
@@ -654,9 +793,11 @@ class NeuralJob:
 			for k in sides:
 				poly[k] = Vector2(c.x + cs[k] * r, c.y + sn[k] * r)
 			var h := _tonal(hues[layer_of[i]] + hjit[i])
-			var v := node_floor + maxf(0.0, val + 0.3 * glow - node_floor) * pow(fire, 0.7)
+			var shn := pow(fire, node_gamma)
+			var v := node_floor + maxf(0.0, 1.0 - node_floor) * shn
+			var nsat := sat * (ghost_sat + (1.0 - ghost_sat) * minf(shn * 3.0, 1.0)) * (1.0 - bleach * shn)
 			items.append({"d": d, "poly": poly,
-				"flat": Color.from_hsv(h, clampf(sat * (1.0 - 0.6 * fire), 0.0, 1.0),
+				"flat": Color.from_hsv(h, clampf(nsat, 0.0, 1.0),
 					clampf(v, 0.0, 1.0), reveal)})
 
 		# PACKETS - the one thing in the frame allowed to be white.

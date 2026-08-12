@@ -47,6 +47,7 @@ var _pending_retain: RefCounted = null   # a Callable holds only an object ID -
                                          # alive (measured: null::run) - so the
                                          # forge retains the job explicitly
                                          # until its build has run
+var _fails := 0                          # consecutive builds that returned no packet
 
 # resolved lazily on first kick (a static initializer proved unreliable for
 # this): exports MUST build synchronously or the movie records stale packets
@@ -87,18 +88,45 @@ func _launch(scene: CanvasItem) -> void:
 	_has_pending = false
 	var wr: WeakRef = weakref(scene)
 	WorkerThreadPool.add_task(func() -> void:
-		var out: Array = builder.call(snapshot)
+		# UNTYPED, then checked. A builder that aborts - any runtime error anywhere inside it -
+		# returns null, and `var out: Array = <null>` raises a SECOND error that kills this lambda
+		# before it can schedule `fin`. `_busy` would then stay true forever, kick() would never
+		# relaunch, and the scene would show its last packet for the rest of its life - or, for a
+		# scene whose _draw is only `begin_draw(); _forge.submit(self)` with no ground or layers of
+		# its own (metropolis, spires, terrain_city), NOTHING AT ALL. Silently, and for the whole
+		# hold. A latched failure has to degrade to a stale frame and a warning, never to a
+		# permanently black stage.
+		var built: Variant = builder.call(snapshot)
 		if retain != null:
 			pass                     # (referenced so the capture is retained)
+		var ok: bool = built is Array
+		var out: Array = built if ok else []
 		var fin := func() -> void:
 			_busy = false
-			_packet = out
+			if ok:
+				_packet = out
+				_fails = 0
+			else:
+				_note_failure()      # keep the last good packet rather than blanking the stage
 			var sc: Object = wr.get_ref()
 			if sc != null:
 				(sc as CanvasItem).queue_redraw()
 				if _has_pending:
 					_launch(sc as CanvasItem)   # pipeline: newest inputs next
 		fin.call_deferred())
+
+
+## A build produced no packet - the builder aborted on a runtime error. SAY SO. The failure mode
+## this replaces was invisible: a scene that draws only what the forge gives it went black for its
+## whole hold with nothing in the log, which is precisely how a 29-second black stretch shipped in
+## a finished render and was found by measuring the video afterwards rather than by any gate. Loud
+## on the first failure and on every hundredth after, so a persistently broken builder is a line in
+## the log and not a mystery.
+func _note_failure() -> void:
+	_fails += 1
+	if _fails == 1 or _fails % 100 == 0:
+		push_warning("ghost: FrameForge build returned no packet (%d in a row) - " % _fails
+			+ "the scene is showing its last good frame; look above for the builder's own error")
 
 
 ## Emit the latest packet onto `ci`'s canvas. Call from _draw(). In sync
@@ -123,10 +151,19 @@ func submit(ci: CanvasItem) -> void:
 	# on the frame a worker is already busy producing the real thing.
 	if _has_pending and (_sync or (_packet.is_empty() and not _busy)):
 		var t0 := Time.get_ticks_usec()
-		_packet = _pending_builder.call(_pending_snapshot)
+		var built: Variant = _pending_builder.call(_pending_snapshot)
+		# Cleared BEFORE the check, so a builder that fails every frame does not also re-run every
+		# frame off a pending flag that never clears. In sync (export) mode this is the whole
+		# render path, and the old `_packet = <null>` assignment aborted submit() itself - past
+		# the point of no return, so not one canvas_item call below ever ran.
 		_pending_snapshot = {}
 		_pending_retain = null
 		_has_pending = false
+		if built is Array:
+			_packet = built
+			_fails = 0
+		else:
+			_note_failure()
 		if not OS.get_environment("GHOST_PROFILE").is_empty():
 			print("forge sync build: %d us" % (Time.get_ticks_usec() - t0))
 	var item := ci.get_canvas_item()
