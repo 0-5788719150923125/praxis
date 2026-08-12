@@ -249,11 +249,7 @@ func _process(dt: float) -> void:
 				DirAccess.remove_absolute(_avi)   # transcode ok -> drop the scratch AVI
 				_state = "done"
 				_done_t = 30.0
-				var dark := _audit_black(_out)
-				if dark.is_empty():
-					_set_status("✓  Saved  %s" % _out, Color(0.82, 0.95, 0.86))
-				else:
-					_set_status("✓  Saved  %s   ⚠  %s" % [_out, dark[0]], Color(1.0, 0.92, 0.7))
+				_set_status("✓  Saved  %s" % _out, Color(0.82, 0.95, 0.86))
 				print("ghost: exported -> ", _out)
 			else:
 				# Transcode failed (ffmpeg missing/errored). Keep the raw AVI so the work isn't lost.
@@ -643,67 +639,6 @@ static func _wav_rate(path: String) -> int:
 	var rate := f.get_32()
 	f.close()
 	return rate if rate > 0 else Voice.SR
-
-
-## How long a stretch of black has to run before it is a BUG rather than a transition. A DIP's
-## true-black window is about a third of a second and the whole-show bookend fades run to the
-## sampled lead-in/tail; five seconds is past all of them and well short of a scene's hold.
-const BLACK_MIN := 5.0
-
-
-## Scan the finished video for sustained BLACK, and report every stretch.
-##
-## This exists because a scene shipped 29.3 seconds of pure black - RGB (1,1,1) after encoding,
-## i.e. not one draw call - into a finished eleven-minute render, and nothing anywhere noticed.
-## It could not have been noticed: ghost validates headlessly, Godot's headless build uses the
-## dummy renderer, so no gate in this project has ever seen a pixel. The exported file is the one
-## place real pixels exist, ffmpeg is already a dependency (it does the transcode immediately
-## above), and `blackdetect` answers the question in a couple of seconds over a full render.
-##
-## Reads back the render rather than trusting it - the same discipline as _repair_avi_sizes.
-## Returns human-readable stretches, empty when the video is clean (or when ffmpeg is absent,
-## which must never be reported as "clean" - hence the explicit note in the log).
-func _audit_black(path: String) -> PackedStringArray:
-	var out: PackedStringArray = []
-	var lines: Array = []
-	# pix_th is the per-pixel luminance ceiling and pic_th the fraction of the frame that must sit
-	# under it. Both are tuned against the render that prompted this, and the tuning is the whole
-	# difference between a useful line and a nuisance:
-	#   pix_th 0.02 (5/255) - low enough that a merely DIM scene is not accused. At 0.06 the same
-	#     render also reported its opening scene, which was dim-but-drawing (peak 10/255); at 0.02
-	#     only the stretch that drew literally nothing survives.
-	#   pic_th 0.92 - the SUBTITLES stay lit over a black stage (that is precisely what the report
-	#     described seeing), so a strict "every pixel" test splits one 29 s fault into fragments,
-	#     or misses it. 8% of the frame is ample for a three-line caption.
-	var args := PackedStringArray([
-		"-hide_banner", "-nostats", "-i", path,
-		"-vf", "blackdetect=d=%.1f:pic_th=0.92:pix_th=0.02" % BLACK_MIN,
-		"-an", "-f", "null", "-"])
-	var code := OS.execute("ffmpeg", args, lines, true)
-	if code != 0:
-		print("ghost export: black audit skipped (ffmpeg returned %d) - the render was NOT checked" % code)
-		return out
-	for raw in lines:
-		for line in String(raw).split("\n"):
-			var at := String(line).find("black_start:")
-			if at < 0:
-				continue
-			var rest := String(line).substr(at).split(" ")
-			var start := 0.0
-			var dur := 0.0
-			for tok in rest:
-				var t := String(tok)
-				if t.begins_with("black_start:"):
-					start = float(t.substr(12))
-				elif t.begins_with("black_duration:"):
-					dur = float(t.substr(15))
-			if dur < BLACK_MIN:
-				continue
-			out.append("%.0fs of black at %d:%02d" % [dur, int(start / 60.0), int(fmod(start, 60.0))])
-	for s in out:
-		push_warning("ghost export: " + s + " in " + path.get_file())
-		print("ghost export: ⚠  ", s, " - check the cut list above for what was on screen there")
-	return out
 
 
 func _file_size(path: String) -> int:

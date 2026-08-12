@@ -120,6 +120,170 @@ def _pause_for(mark: str, params: dict) -> float:
     return PAUSE_AFTER.get(str(mark), 0.0) * _pause_scale(params)
 
 
+def _discourse_plan(groups: list, params: dict) -> list[dict]:
+    """Per-sentence rate and pitch from DISCOURSE STRUCTURE, not from a clock.
+
+    Piper is a sentence-level model. It declines pitch across a phrase, lengthens
+    finally, and handles a question - all of it well. What it cannot know is that
+    this is the fourth sentence of a paragraph, because it never sees the
+    paragraph. So every sentence starts from the same register and runs at the
+    same rate, and a chapter is several hundred identical arcs laid end to end.
+    That is the whole of "the delivery remains more or less constant": before
+    this, `length_scale` / `noise_w` were set once per take and every sentence in
+    a forty-minute chapter got the same three numbers.
+
+    The rules here are the documented ones, not invented shape:
+
+      PARATONE (the intonational paragraph). Speakers reset F0 upward at the
+      start of a discourse unit and let it decline across it, and the size of the
+      reset scales with the depth of the boundary. Lehiste (1975) named the
+      intonational paragraph; 't Hart/Collier/Cohen (1990) is the standard
+      treatment of declination; Sluijter & Terken (1993) and Nakajima & Allen
+      (1993) tie reset size to boundary depth. This is why a slow undulation is
+      the right instinct and a slow SINE is not: the wave is real, but its period
+      is the paragraph, so it has to be phase-locked to the text. A fixed-period
+      oscillator drifts against the prose and lands its peaks on whatever happens
+      to be there, which is the one thing a real speaker never does.
+
+      FINAL LENGTHENING. Material before a prosodic boundary is lengthened, and
+      the amount indexes the strength of that boundary (Klatt 1975; Wightman,
+      Shattuck-Hufnagel, Ostendorf & Price 1992). So the slowing is progressive
+      into the end of the unit rather than a flat rate for every sentence.
+
+      LENGTH-CONDITIONED RATE. The longer the utterance, the shorter its
+      segments - speakers compress long stretches and dwell on short ones
+      (Lindblom's anticipatory shortening). A one-clause sentence after a long
+      one genuinely lands harder, which is free emphasis from structure alone.
+
+      VOCAL EFFORT, which is not volume. A louder voice has a FLATTER source
+      spectrum - more high-frequency energy, because the glottal pulse is sharper
+      - and a quieter one a steeper tilt. That is why turning a level down reads
+      as "further away" rather than "speaking softly": distance is a filter, and
+      effort is a different filter. Coupling the tilt to the level is what makes
+      the difference read as the speaker easing off rather than the fader moving,
+      and effort declines across a paragraph for the same reason pitch does (both
+      follow subglottal pressure), so it rides the same contour as the arc.
+
+    `dynamics` (0..1) scales the whole timing half, `prosody_arc` is the paragraph
+    pitch arc in SEMITONES peak-to-peak, and `effort` scales the tilt/level
+    contour. All default to 0, so an untouched session synthesizes exactly what it
+    did before.
+    """
+    depth = max(0.0, float(params.get("dynamics", 0.0)))
+    arc = max(0.0, float(params.get("prosody_arc", 0.0)))
+    effort = max(0.0, float(params.get("effort", 0.0)))
+    n = len(groups)
+    lens = [max(1, len(g)) for g in groups]
+    typical = sum(lens) / float(n) if n else 1.0
+    # THE CALLER'S PLACE IN THE READING, when it knows it. A request is one sentence
+    # (generative_editor.CHUNK_SENTENCES = 1), so deriving position from `groups` makes
+    # every sentence the first and last of its own unit at once - u = 0 forever, no final
+    # lengthening ever, and the arc flattened to a constant offset. Only the caller has
+    # the paragraph structure, so it sends the position and this shapes it.
+    u_in = params.get("plan_u")
+    v_in = float(params.get("plan_v", 0.0) or 0.0)
+    plan = []
+    for i, g in enumerate(groups):
+        # 0 at the top of the unit, 1 at its last sentence.
+        if u_in is not None:
+            u = min(max(float(u_in), 0.0), 1.0)
+        else:
+            u = 0.0 if n <= 1 else i / (n - 1.0)
+        # Reset high, decline across the unit. Squared so most of the fall happens
+        # late, which is the shape declination actually has.
+        # NESTED ARCS. The paragraph's own decline, plus the slower one its SECTION is
+        # making - so a run of one-sentence paragraphs, where the fast arc has no room to
+        # move at all, still travels. Weighted toward the local shape where there is one:
+        # the section is a swell under the writing, not the writing.
+        semis = (arc * (0.5 - u * u * 0.5 - u * 0.5) * 0.62
+                 + arc * (0.5 - v_in * v_in * 0.5 - v_in * 0.5) * 0.38)
+        # Progressive final lengthening into the unit's boundary, strongest at the
+        # end. 18% at full depth: a real pre-boundary rime lengthens far more than
+        # that, but this is applied to the WHOLE sentence, not just its last rime.
+        rate = 1.0 - depth * 0.18 * (u * u) - depth * 0.07 * (v_in * v_in)
+        # Long sentences run a little faster, short ones a little slower.
+        rel = lens[i] / typical if typical > 0 else 1.0
+        rate *= 1.0 + depth * 0.10 * (1.0 - min(max(rel, 0.5), 2.0)) * 0.5
+        mark = ""
+        for t in reversed(g):
+            mark = str(t.get("punct", ""))
+            if mark:
+                break
+        if mark == "?":
+            rate *= 1.0 + depth * 0.04       # questions run slightly quicker...
+            semis += arc * 0.20              # ...and end higher
+        elif mark == "!":
+            rate *= 1.0 + depth * 0.06
+            semis += arc * 0.12
+        # Rhythmic variety: the duration predictor's own noise, varied per sentence
+        # instead of pinned for the take. Alternating rather than random so a
+        # re-render is identical - an export must not be a different performance.
+        nw = 1.0 + depth * 0.25 * (1.0 if i % 2 == 0 else -1.0)
+        # +1 at the top of the unit, -1 at its end: the effort contour, shared by
+        # the tilt and the level so they can never disagree about which way is
+        # louder. Squared-ish like the pitch decline, for the same reason.
+        e = (1.0 - 2.0 * ((u * u * 0.5 + u * 0.5) * 0.62
+                          + (v_in * v_in * 0.5 + v_in * 0.5) * 0.38)) * effort
+        plan.append({"rate": max(0.55, rate), "semis": semis,
+                     "noise_w_mul": min(1.6, max(0.5, nw)),
+                     "tilt": 0.45 * e, "gain_db": 2.6 * e})
+    return plan
+
+
+def _effort(a, sr: int, tilt: float, gain_db: float):
+    """Vocal effort: spectral TILT first, level second.
+
+    The high band is what changes with effort, so it is what gets moved - a boxcar
+    moving average is the low band and the residual is the high one, which is a
+    crude filter and exactly the right amount of crude for a gentle shelf. It is
+    also O(n) via a cumulative sum, which matters: this runs over every sentence
+    and a per-sample IIR loop in Python would cost more than the model does.
+    """
+    import numpy as np
+    if abs(tilt) < 1e-3 and abs(gain_db) < 1e-3:
+        return a
+    if abs(tilt) >= 1e-3 and a.size > 8:
+        # ~1.2 kHz corner: below the speech formants that carry effort, above the
+        # fundamental, so the tilt moves brightness and not the voice's weight.
+        n = max(2, int(round(sr / 1200.0)))
+        pad = np.concatenate([np.full(n, a[0], dtype=np.float32), a,
+                              np.full(n, a[-1], dtype=np.float32)])
+        c = np.cumsum(pad, dtype=np.float64)
+        lo = ((c[n:] - c[:-n]) / n).astype(np.float32)[: a.size]
+        # A TILT, so the low band is cut by as much as the high band is lifted -
+        # `a + tilt*(a - lo)` only ADDS treble, which is a level change wearing a
+        # filter's clothes (measured +5.7 dB where +2.6 was asked for, and the two
+        # controls stop being independent). Then renormalise to the level the
+        # sentence came in at, so `gain_db` below is the ONLY thing that sets level
+        # and the number in the tooltip is the number you get.
+        rms0 = float(np.sqrt(np.mean(a.astype(np.float64) ** 2)))
+        a = a + tilt * (a - 2.0 * lo)
+        rms1 = float(np.sqrt(np.mean(a.astype(np.float64) ** 2)))
+        if rms1 > 1e-9 and rms0 > 1e-9:
+            a = (a * (rms0 / rms1)).astype(np.float32)
+    if abs(gain_db) >= 1e-3:
+        a = a * float(10.0 ** (gain_db / 20.0))
+    return np.clip(a, -1.0, 1.0).astype(np.float32)
+
+
+def _resample(a, ratio: float):
+    """Play `a` back `ratio` times faster - the same trick the Tone pitch shift uses.
+
+    Linear is enough: the arc is a couple of semitones, well inside where a
+    higher-order kernel would be audible (the editor's own resampler says the
+    same thing for the same reason).
+    """
+    import numpy as np
+    if abs(ratio - 1.0) < 1e-4 or a.size < 2:
+        return a
+    n = max(1, int(round(a.size / ratio)))
+    idx = np.linspace(0.0, a.size - 1.0, n)
+    lo = np.floor(idx).astype(np.int64)
+    hi = np.minimum(lo + 1, a.size - 1)
+    frac = (idx - lo).astype(np.float32)
+    return (a[lo] * (1.0 - frac) + a[hi] * frac).astype(np.float32)
+
+
 def _gap_for(mark: str, params: dict) -> float:
     """Seconds between two sentences, for a sentence ending in `mark`.
 
@@ -859,8 +1023,25 @@ class PiperBackend(Backend):
         times: list = []
         cursor = 0.0
         base = 0
+        plan = _discourse_plan(groups, params)
         for gi, group in enumerate(groups):
-            audio, per_token = self._run(group, voice, params, cfg, sess, phonemizer)
+            # THE SENTENCE'S OWN PROSODY. A pitch move is bought exactly the way the
+            # Tone shift buys one: render `pr` times slower, then play back `pr`
+            # times faster - so the sentence lands at its nominal duration and a
+            # higher register, and the two halves of the plan stay independent.
+            step = plan[gi]
+            pr = 2.0 ** (float(step["semis"]) / 12.0)
+            gp = dict(params)
+            gp["length_scale"] = float(params.get(
+                "length_scale", cfg.get("inference", {}).get("length_scale", 1.0))) * pr / float(step["rate"])
+            gp["noise_w"] = float(params.get(
+                "noise_w", cfg.get("inference", {}).get("noise_w", 0.333))) * float(step["noise_w_mul"])
+            audio, per_token = self._run(group, voice, gp, cfg, sess, phonemizer)
+            audio = _effort(audio, sr, float(step["tilt"]), float(step["gain_db"]))
+            if abs(pr - 1.0) > 1e-4:
+                audio = _resample(audio, pr)
+                # the alignment was measured before the resample, so it moves with it
+                per_token = {k: (v[0] / pr, v[1] / pr) for k, v in per_token.items()}
             # mid-sentence marks: splice their silence into this group's audio
             points, unplaceable = [], []
             for ti, tok in enumerate(group):

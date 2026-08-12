@@ -139,6 +139,10 @@ var _pushed := 0               # frames handed to the ring, for the played-time 
 var _ring_capacity := 0        # measured, never computed - see _drain_ready
 var _fx := VoiceFX.new()
 var _fx_echo: HSlider
+var _dynamics: HSlider
+var _arc: HSlider
+var _effort: HSlider
+
 var _fx_res: HSlider
 var _fx_presence: HSlider
 var _fx_pad: HSlider
@@ -272,6 +276,7 @@ func _build_panel() -> void:
 	_text.custom_minimum_size = Vector2(360, 180)
 	_text.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
 	_text.placeholder_text = "Once upon a time..."
+	_text.tooltip_text = "The script to read. Paste a whole chapter - it is cut into sentences and only a couple are ever synthesized ahead, so the first words play within seconds however long it is. Square brackets pin a pronunciation: [B IY1 UW0 K S]."
 	_text.text_changed.connect(func() -> void:
 		_dirty = true
 		_last_edit_ms = Time.get_ticks_msec()
@@ -285,6 +290,7 @@ func _build_panel() -> void:
 	box.add_child(vrow)
 	_voices = OptionButton.new()
 	_voices.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_voices.tooltip_text = "Which Piper model reads. Each is a different person with its own accent, recording and licence - the licence appears under the panel when you pick one. Changing this regenerates whatever has not been played yet."
 	_voices.item_selected.connect(func(_i: int) -> void:
 		_show_voice_license()
 		# A voice change is not a re-pace. _repace keeps the stream and appends
@@ -299,6 +305,7 @@ func _build_panel() -> void:
 	vrow.add_child(_voices)
 	_go = Button.new()
 	_go.text = "Speak"
+	_go.tooltip_text = "Read the script aloud and drive the visuals from it. Press again while it is running to stop. The scenes react to the narration exactly as they would to music."
 	_go.disabled = true
 	_go.pressed.connect(_on_speak)
 	vrow.add_child(_go)
@@ -319,6 +326,7 @@ func _build_panel() -> void:
 	_speaker = SpinBox.new()
 	_speaker.min_value = 0
 	_speaker.step = 1
+	_speaker.tooltip_text = "Which reader, on a model that holds more than one (libritts carries 904). Same model and same accent, a different person - so it changes WHO is reading, not how. Greyed out on single-speaker voices. Regenerates the un-played chunks."
 	_speaker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_speaker.value_changed.connect(func(_v: float) -> void:
 		# same model, different reader: only the un-played chunks need redoing
@@ -338,6 +346,7 @@ func _build_panel() -> void:
 	trow.add_child(tl)
 	_tone = OptionButton.new()
 	_tone.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_tone.tooltip_text = "The reading's overall manner: pace, pitch, and how much the model varies itself, moved together. The pitch shift moves the formants with it, so the reader reads as a different SIZE - which is what makes Spooky larger and lower, Excited smaller and higher. Regenerates the un-played chunks."
 	for k in TONE_PRESETS:
 		_tone.add_item(String(k))
 	_tone.item_selected.connect(func(_i: int) -> void:
@@ -412,10 +421,47 @@ func _build_panel() -> void:
 
 	# Ambience: the same effects Synthesis has, over any PCM. Off by default -
 	# a narration take should sound like a reading unless asked otherwise.
-	_fx_echo = _fx_slider(box, "Echo", 0.0)
-	_fx_res = _fx_slider(box, "Resonance", 0.0)
-	_fx_presence = _fx_slider(box, "Presence", 1.0)
-	_fx_pad = _fx_slider(box, "Ambience", 0.0)
+	# DELIVERY, not effect. These two are the discourse layer Piper structurally
+	# cannot supply: it never sees the paragraph, so every sentence starts from the
+	# same register at the same rate. See piper._discourse_plan for the rules.
+	_dynamics = _fx_slider(box, "Dynamics", 0.5,
+		"How much the delivery varies from sentence to sentence. The model reads every sentence "
+		+ "the same way because it never sees the paragraph, so this supplies what it cannot: "
+		+ "sentences slow as they approach the end of a paragraph, long ones run a little quicker "
+		+ "and short ones dwell, and the rhythm shifts between neighbours. 0 is the flat delivery; "
+		+ "0.4 is about a fifth slower by the last sentence of a paragraph, and the top of the "
+		+ "dial is roughly two and a half times that - far enough to be too much for some "
+		+ "material, which is the point of having the range.")
+	_effort = _fx_slider(box, "Effort", 0.35,
+		"Vocal effort across a paragraph - which is not the same as volume. A louder voice has a "
+		+ "brighter source spectrum, not just a higher level, so this moves the two together: "
+		+ "opening a paragraph with a little more push and easing off toward the end. Level "
+		+ "alone reads as the reader standing further away; the brightness is what makes it read "
+		+ "as them easing off instead. 0 is off, 1 is about 6dB and a firm tilt top to bottom.")
+	_arc = _fx_slider(box, "Arc", 0.4,
+		"Pitch shape ACROSS a paragraph, in semitones. A speaker opens a new paragraph in a higher "
+		+ "register and settles as it goes, then resets on the next - it is what makes a paragraph "
+		+ "land rather than just stop. 0 is off, 0.4 is three semitones top to bottom and 1 is "
+		+ "seven and a half. Past about 0.5 the resampling audibly moves the formants too, so the "
+		+ "reader starts changing SIZE between paragraphs - which is either the effect you want "
+		+ "or the reason to back off.")
+	_fx_echo = _fx_slider(box, "Echo", 0.0,
+		"The room the voice is in. Low settings are a small close room - the repeat is short enough "
+		+ "to fuse with the voice rather than be heard as a separate sound. It opens out into a "
+		+ "distinct slapback with a long tail as you raise it, so this changes the SIZE of the "
+		+ "space, not just how loud it is.")
+	_fx_res = _fx_slider(box, "Resonance", 0.0,
+		"Sympathetic tones tuned to the reader's own pitch, ringing when the voice rings and dying "
+		+ "when it stops - the room answering, rather than a chord played over the top. It follows "
+		+ "the speaking register, so it moves with the voice instead of fighting it.")
+	_fx_presence = _fx_slider(box, "Presence", 1.0,
+		"How close the reader is. 1 is right here; lower moves them away, dulling the high end "
+		+ "first the way air does and only then dropping the level. Distance is a filter before it "
+		+ "is a volume, which is why this is not a master gain.")
+	_fx_pad = _fx_slider(box, "Ambience", 0.0,
+		"A sustained ambient bed underneath, in the reader's own key - long tones that keep "
+		+ "sounding through the pauses, rather than reverb of the voice. It ducks under speech and "
+		+ "swells in the gaps, and it is what plays alone through the Intro hold.")
 
 	# --- THE PICTURE, not the voice ------------------------------------------
 	# These two live here, with every other option, rather than off in the shared
@@ -481,6 +527,9 @@ func _persist() -> void:
 	cfg.set_value("generative", "pace", _rate.value)
 	cfg.set_value("generative", "pause", _pause.value)
 	cfg.set_value("generative", "echo", _fx_echo.value)
+	cfg.set_value("generative", "dynamics", _dynamics.value)
+	cfg.set_value("generative", "arc", _arc.value)
+	cfg.set_value("generative", "effort", _effort.value)
 	cfg.set_value("generative", "resonance", _fx_res.value)
 	cfg.set_value("generative", "presence", _fx_presence.value)
 	cfg.set_value("generative", "ambience", _fx_pad.value)
@@ -498,6 +547,9 @@ func _load_persisted() -> void:
 	_pause.value = float(cfg.get_value("generative", "pause", 1.0))
 	_want_voice = str(cfg.get_value("generative", "voice", ""))
 	_fx_echo.value = float(cfg.get_value("generative", "echo", 0.0))
+	_dynamics.value = float(cfg.get_value("generative", "dynamics", 0.5))
+	_arc.value = float(cfg.get_value("generative", "arc", 0.4))
+	_effort.value = float(cfg.get_value("generative", "effort", 0.35))
 	_fx_res.value = float(cfg.get_value("generative", "resonance", 0.0))
 	_fx_presence.value = float(cfg.get_value("generative", "presence", 1.0))
 	_fx.echo_wet = _fx_echo.value
@@ -506,7 +558,7 @@ func _load_persisted() -> void:
 	_tone.select(clampi(int(cfg.get_value("generative", "tone", 0)), 0, TONE_PRESETS.size() - 1))
 	_speaker.value = float(cfg.get_value("generative", "speaker", 0))
 	_fx.presence = _fx_presence.value
-	_fx.pad = _fx_pad.value
+	_fx.pad = _pad_level()
 
 
 func _selected_voice_id() -> String:
@@ -553,16 +605,85 @@ func _director_slider(box: VBoxContainer, name: String, lo: float, hi: float, st
 	return sl
 
 
-func _fx_slider(box: VBoxContainer, name: String, initial: float) -> HSlider:
+## A voice/delivery slider. `tip` is not optional in practice: an unlabelled dial
+## is a dial nobody touches, and every other slider in this panel carries one.
+## Give every chunk its place in the reading, so the delivery plan can be a plan.
+##
+## THE BUG THIS FIXES. `_discourse_plan` shapes a sentence by where it sits in the unit
+## it was handed - and the unit it is handed is one REQUEST, which is one sentence
+## (CHUNK_SENTENCES = 1). So every sentence was simultaneously the first and last of its
+## own unit: position 0 of 1, every time. Final lengthening never once fired, and the
+## "arc" resolved to the same constant offset on every sentence in the chapter - a
+## transposition wearing an arc's name. It measured correctly when I tested it, because I
+## tested it by handing the whole paragraph over in one call, which is a path the editor
+## never takes. The audible difference between Arc 0 and Arc 1 was real; it just was not
+## an arc.
+##
+## TWO NESTED LEVELS, because discourse structure is nested and so are its pitch resets -
+## the size of a reset scales with the depth of the boundary it follows (Grosz & Sidner;
+## Hirschberg & Nakatani). `u` is the sentence's place in its paragraph and `v` its
+## paragraph's place in a run of them. That second level is what a chapter of one-sentence
+## paragraphs needs: at `u` the paragraph collapses to a point and every one of them would
+## otherwise be handed the identical contour, which is exactly the flatness reported.
+## Sections are runs of SECTION_PARAS paragraphs, so the slow movement is phase-locked to
+## the prose the same way the fast one is.
+const SECTION_PARAS := 5
+
+func _place_chunks(out: Array, body: String) -> void:
+	# Paragraph boundaries come from the SOURCE text (a blank line), which is the only place
+	# they exist - Phonemes.parse hands back a flat run of sentences and knows nothing about
+	# them. Counting sentence-final marks per paragraph maps one onto the other without
+	# parsing the body twice.
+	var per_para: Array = []
+	for para in body.split("\n\n", false):
+		var t := String(para).strip_edges()
+		if t.is_empty():
+			continue
+		var c := 0
+		for ch in t:
+			if ch == "." or ch == "!" or ch == "?":
+				c += 1
+		per_para.append(maxi(1, c))
+	if per_para.is_empty():
+		per_para = [maxi(1, out.size())]
+	# sentence index -> (paragraph index, position within it)
+	var pi := 0
+	var within := 0
+	for i in out.size():
+		if within >= int(per_para[mini(pi, per_para.size() - 1)]) and pi < per_para.size() - 1:
+			pi += 1
+			within = 0
+		var n := int(per_para[mini(pi, per_para.size() - 1)])
+		# A ONE-SENTENCE PARAGRAPH SITS IN THE MIDDLE OF ITS OWN ARC, not at the start
+		# of it. Placing it at 0 hands it the opening register of a paragraph it also
+		# ends, so a run of them takes a constant lift - measured +2.3 semitones at Arc 1,
+		# which is a transposition again, just a subtler one. The midpoint makes the
+		# paragraph term neutral where the paragraph has no extent, and leaves the section
+		# to supply all of the movement, which is the whole point of having one.
+		out[i]["plan_u"] = 0.5 if n <= 1 else float(within) / float(n - 1)
+		# ...and the paragraph's place in its section. A one-paragraph section would put
+		# every paragraph at 0 again, which is the same trap one level up.
+		var sp := pi % SECTION_PARAS
+		out[i]["plan_v"] = float(sp) / float(maxi(1, SECTION_PARAS - 1))
+		within += 1
+
+
+func _fx_slider(box: VBoxContainer, name: String, initial: float, tip := "") -> HSlider:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
+	row.tooltip_text = tip          # the gap between the label and the slider
 	box.add_child(row)
 	var l := Label.new()
 	l.text = name
 	l.custom_minimum_size = Vector2(72, 0)
 	l.add_theme_font_size_override("font_size", 12)
+	# A Label ignores the mouse by default, so pointing at the NAME - which is
+	# what anyone actually does - would otherwise show nothing.
+	l.mouse_filter = Control.MOUSE_FILTER_STOP
+	l.tooltip_text = tip
 	row.add_child(l)
 	var sl := HSlider.new()
+	sl.tooltip_text = tip
 	sl.min_value = 0.0
 	sl.max_value = 1.0
 	sl.step = 0.01
@@ -572,7 +693,7 @@ func _fx_slider(box: VBoxContainer, name: String, initial: float) -> HSlider:
 		_fx.echo_wet = _fx_echo.value
 		_fx.resonance = _fx_res.value
 		_fx.presence = _fx_presence.value
-		_fx.pad = _fx_pad.value
+		_fx.pad = _pad_level()
 		_dirty = true
 		_last_edit_ms = Time.get_ticks_msec())
 	row.add_child(sl)
@@ -822,6 +943,7 @@ func _build_chunks(body: String) -> Array:
 			sentences = 0
 	if not toks.is_empty():
 		out.append({"tokens": toks, "words": words})
+	_place_chunks(out, body)
 	return out
 
 
@@ -840,6 +962,51 @@ func _pitch_ratio() -> float:
 ## export_take and _pump are both reachable from outside this editor's own
 ## lifecycle, and a missing slider should read as "the default rests", never as
 ## zero - silently deleting every pause would be the worst possible failure.
+## The delivery settings, as the host expects them. Null-guarded like _pause_scale:
+## export_take and _pump are both reachable from outside this editor's lifecycle,
+## and a missing slider must read as "the old constant delivery", never as a
+## half-strength one nobody asked for.
+func _delivery() -> Dictionary:
+	return {
+		"dynamics": _open_up(_dynamics.value if _dynamics != null else 0.0),
+		# ARC IN SEMITONES peak-to-peak. 3 was the old ceiling and is an ordinary
+		# paragraph reset; the curve below takes the top of the dial past it.
+		"prosody_arc": _open_up(_arc.value if _arc != null else 0.0) * 3.0,
+		"effort": _open_up(_effort.value if _effort != null else 0.0),
+	}
+
+
+## The top of a delivery dial, opened up - identity at the bottom, 2.5x at the top.
+##
+## The first ceilings were set where I thought the results stopped being good, which
+## is not my call to make: at full travel Dynamics only slowed the last sentence of a
+## paragraph by 18% and Arc reached 3 semitones, so the upper half of both dials was
+## doing almost nothing and the reported symptom was exactly that. Rescaling linearly
+## would have been wrong too, because the LOW half is where the settings that already
+## sound right live - moving those to make room at the top would break what works to
+## fix what doesn't. Cubic keeps the bottom of the travel where it was (0.25 moves by
+## 9%) and opens the top (1.0 goes to 2.5x), so the far end is now genuinely too much
+## for some material, and choosing that is the reader's business.
+func _open_up(k: float) -> float:
+	return k * (1.0 + 1.5 * k * k)
+
+
+## The ambience bed's level: the slider PLUS the Tone preset's own nudge.
+##
+## ONE definition, because there were three and they disagreed. The stream-open path and
+## the export both added the preset's `amb`; the config-load and slider-change paths set
+## the bare slider value. So moving the Ambience slider during a reading silently dropped
+## the preset's contribution and the export then put it back - live and render disagreeing
+## about the bed by the whole of that nudge. This is NOT the reported symptom (it makes the
+## export louder, not quieter, and the take WAV and the finished MP4 measure within a
+## decibel of each other on the pad band), but the two paths have to agree about this or
+## nothing measured on one says anything about the other.
+func _pad_level() -> float:
+	if _fx_pad == null:
+		return 0.0
+	return clampf(_fx_pad.value + float(_tone_preset()["amb"]), 0.0, 1.0)
+
+
 func _pause_scale() -> float:
 	if _pause == null:
 		return 1.0
@@ -884,6 +1051,11 @@ func _pump() -> void:
 			 "noise_scale": float(t["noise"]), "noise_w": float(t["noise_w"]),
 			 "speaker": int(_speaker.value),
 			 "sentence_gap": SENTENCE_GAP, "pause_scale": _pause_scale(),
+			 "dynamics": _delivery()["dynamics"],
+			 "prosody_arc": _delivery()["prosody_arc"],
+			 "effort": _delivery()["effort"],
+			 "plan_u": float(_chunks[idx].get("plan_u", 0.0)),
+			 "plan_v": float(_chunks[idx].get("plan_v", 0.0)),
 			 "tokens": _chunks[idx]["tokens"]}, null)
 		_req_chunk[id] = {"idx": idx, "epoch": _epoch}
 
@@ -953,7 +1125,7 @@ func _drain_ready() -> void:
 			_fx.pad_seed = hash(_text.text)
 			# the preset nudges the bed: a mood is carried by the room as much
 			# as by the reading
-			_fx.pad = clampf(_fx_pad.value + float(_tone_preset()["amb"]), 0.0, 1.0)
+			_fx.pad = _pad_level()
 			_fx.setup(_sr)
 			# the session opens on the FIRST chunk and never again - that is the
 			# whole point: one unbroken take, so the Director does not re-cut
@@ -1094,6 +1266,14 @@ func export_take() -> String:
 			 "noise_scale": float(t["noise"]), "noise_w": float(t["noise_w"]),
 			 "speaker": int(_speaker.value),
 			 "sentence_gap": SENTENCE_GAP, "pause_scale": _pause_scale(),
+			 # The SAME delivery the preview used. An export that re-derived its own
+			 # would be a different performance from the one that was auditioned,
+			 # which is the one thing the render must never be.
+			 "dynamics": _delivery()["dynamics"],
+			 "prosody_arc": _delivery()["prosody_arc"],
+			 "effort": _delivery()["effort"],
+			 "plan_u": float(chunks[i].get("plan_u", 0.0)),
+			 "plan_v": float(chunks[i].get("plan_v", 0.0)),
 			 "tokens": chunks[i]["tokens"]}, null)
 		var res: Array = []
 		while true:
@@ -1156,7 +1336,7 @@ func export_take() -> String:
 	fx.echo_wet = _fx_echo.value
 	fx.resonance = _fx_res.value
 	fx.presence = _fx_presence.value
-	fx.pad = clampf(_fx_pad.value + float(t["amb"]), 0.0, 1.0)
+	fx.pad = _pad_level()
 	# SEED THE KEY, or the intro is silent anyway. The pad picks its tonic from the
 	# tracked pitch of the voice, and the tracker returns 0 on silence - so during a
 	# leading pad of pure zeros `_tonic` never rises off 0, `_start_tone` refuses to
