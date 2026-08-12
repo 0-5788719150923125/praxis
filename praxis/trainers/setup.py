@@ -58,7 +58,7 @@ def setup_environment(no_docs: bool = False):
     logging.getLogger("pytorch").setLevel(logging.ERROR)
 
     # Silence HTTP-download / compile chatter that otherwise buries the CLI.
-    from praxis.log_noise import quiet_noisy_loggers
+    from praxis.utils.log_noise import quiet_noisy_loggers
 
     quiet_noisy_loggers()
 

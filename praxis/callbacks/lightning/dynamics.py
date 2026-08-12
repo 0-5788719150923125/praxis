@@ -99,6 +99,10 @@ class DynamicsLoggerCallback(Callback):
             # Arc per-depth bias specialization, averaged across Arc modules.
             dynamics.update(self._extract_arc_dynamics(model))
 
+            # Activation diagnostics (e.g. Servant's chirp coupling), averaged
+            # across activation modules. Empty unless the activation opts in.
+            dynamics.update(self._extract_activation_dynamics(model))
+
             # Loss-owning encoder diagnostics (e.g. CALM: latent stats, KL β,
             # energy loss). Encoders opt in via training_metrics().
             dynamics.update(self._extract_encoder_dynamics(model))
@@ -437,6 +441,21 @@ class DynamicsLoggerCallback(Callback):
             return collect_arc_metrics(model)
         except Exception as e:
             print(f"[DynamicsLogger] arc training_metrics failed: {e}")
+            return {}
+
+    def _extract_activation_dynamics(self, model) -> dict:
+        """Collect activation diagnostics, averaged across activation modules.
+
+        Activations have no loss hook, so they opt in via ``training_metrics()``
+        and are reached by a module walk; wrapped in try/except so one bad
+        metric doesn't kill the dynamics log.
+        """
+        from praxis.metrics.specialization import collect_activation_metrics
+
+        try:
+            return collect_activation_metrics(model)
+        except Exception as e:
+            print(f"[DynamicsLogger] activation training_metrics failed: {e}")
             return {}
 
     def _extract_memory_dynamics(self, model) -> dict:

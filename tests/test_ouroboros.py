@@ -201,6 +201,35 @@ def test_spread_detects_a_deep_shallow_split():
     assert metrics["ouroboros_exit_3"] > 0.4
 
 
+def test_token_spread_is_independent_of_feature_spread():
+    """Depth can vary across features or across tokens, and they mean different
+    things - specialization versus per-token adaptive compute. Averaging over
+    tokens before recording made the second invisible, which mattered: read at
+    ~2.0 steps, only ~1.5% of the total depth variance was between features.
+
+    Here the gate coupling to token energy is uniform across features and the
+    batch carries wildly different per-token energies, so the feature axis must
+    read flat while the token axis does not.
+    """
+    torch.manual_seed(0)
+    energies = torch.linspace(0.05, 20.0, 16).view(1, 16, 1)
+    x = torch.randn(4, 16, 32) * energies
+
+    regularizer = REGULARIZER_REGISTRY["ouroboros_budget"]()
+    activation = _built(Ouroboros, x).train()
+    with torch.no_grad():
+        activation.p.fill_(3.0)  # same energy coupling for every feature
+        activation.u[1].fill_(0.0)  # unsaturate two steps so depth can move
+        activation.u[2].fill_(0.0)
+    drain_step_counts()
+
+    regularizer(activation(x), torch.zeros(4, 16, dtype=torch.long))
+    metrics = regularizer.training_metrics()
+
+    assert metrics["ouroboros_steps_std"] < 1e-4
+    assert metrics["ouroboros_token_std"] > 0.5
+
+
 def test_accounting_drains_and_skips_eval():
     torch.manual_seed(0)
     x = torch.randn(2, 5, 16)
@@ -215,7 +244,7 @@ def test_accounting_drains_and_skips_eval():
     assert len(recorded) == 2
     survival, spread = recorded[0]
     assert survival.shape == (MAX_STEPS,)
-    assert spread.shape == (6,)
+    assert spread.shape == (9,)
     assert not drain_step_counts(), "drain must clear the stack"
 
     # Eval must not retain graphs, and an empty stack must not blow up.

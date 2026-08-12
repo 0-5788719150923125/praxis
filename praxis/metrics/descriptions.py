@@ -28,7 +28,10 @@ the frontend always sees ``{description, chart}`` per entry.
 from typing import Any, Dict, Iterable, Optional
 
 from praxis.memory.surfacings import MemoryBase
-from praxis.metrics.specialization import collect_arc_descriptions
+from praxis.metrics.specialization import (
+    collect_activation_descriptions,
+    collect_arc_descriptions,
+)
 
 
 def _normalize(value: Any) -> Optional[Dict[str, Any]]:
@@ -92,6 +95,11 @@ def _candidates(model: Any) -> Iterable[Dict[str, Any]]:
         arc_descs = collect_arc_descriptions(model)
         if arc_descs:
             yield arc_descs
+
+        # Activations that publish diagnostics (e.g. Servant's chirp).
+        activation_descs = collect_activation_descriptions(model)
+        if activation_descs:
+            yield activation_descs
 
     # The decoder's sorting slot, when it holds a learnable positional field
     # (decay_bias / amplitude_field); the stateless sorts declare nothing.

@@ -65,7 +65,84 @@ class Servant(Serpent):
         s = x.detach().square().mean(dim=-1, keepdim=True).clamp_min(ENERGY_EPS).sqrt()
         m = torch.tanh(s.log() - self.log_s_ref)
         # Frequency breathes with the signal: a learnable chirp. v=0 -> a_eff == a.
-        return a * (1.0 + MOD_MAX * torch.tanh(v) * m)
+        swing = MOD_MAX * torch.tanh(v) * m
+        if self.training:
+            # Realized fractional frequency swing, stashed ON-DEVICE (no host
+            # sync in the hot path) and read on the logging cadence. A plain
+            # detached tensor, so it holds no graph and cannot go stale across
+            # iterations the way an accumulated one would.
+            self._swing = swing.detach().abs().mean()
+        return a * (1.0 + swing)
+
+    # -- diagnostics -------------------------------------------------------
+
+    metric_descriptions = {
+        "servant_coupling": {
+            "description": (
+                "Mean |tanh(v)| across features - how strongly the frequency is "
+                "allowed to follow the signal. Zero-init by construction, so "
+                "this IS the gate on the whole mechanism: flat at 0 means the "
+                "model declined the chirp and Servant is still exactly Serpent."
+            ),
+            "chart": {
+                "title": "Servant Chirp Coupling",
+                "y_label": "|tanh(v)|",
+                "y_scale": "linear",
+                "group": "servant",
+                "group_order": 93,
+                "order": 10,
+            },
+        },
+        "servant_coupling_std": {
+            "description": (
+                "Spread of the coupling ACROSS features. Distinguishes 'every "
+                "feature chirps a little' from 'some features chirp and others "
+                "stay static' - the latter is per-feature specialization, the "
+                "former is a uniform change of activation shape."
+            ),
+            "chart": {
+                "title": "Servant Coupling Spread",
+                "y_label": "Std |tanh(v)|",
+                "y_scale": "linear",
+                "group": "servant",
+                "order": 20,
+            },
+        },
+        "servant_chirp": {
+            "description": (
+                "Mean REALIZED fractional frequency swing on live data, "
+                "|a_eff/a - 1|, bounded by MOD_MAX. Differs from the coupling "
+                "when the energy signal itself is flat: a feature can be fully "
+                "coupled and still barely chirp if every token carries the same "
+                "energy, which would say the measurement, not the mechanism, is "
+                "the thing that failed."
+            ),
+            "chart": {
+                "title": "Servant Realized Chirp",
+                "y_label": "|a_eff/a - 1|",
+                "y_scale": "linear",
+                "group": "servant",
+                "order": 30,
+            },
+        },
+    }
+
+    _swing = None
+
+    def training_metrics(self) -> dict:
+        if self.has_uninitialized_params():
+            return {}
+        with torch.no_grad():
+            coupling = torch.tanh(self.v.detach())
+            out = {
+                "servant_coupling": float(coupling.abs().mean()),
+                "servant_coupling_std": (
+                    float(coupling.std()) if coupling.numel() > 1 else 0.0
+                ),
+            }
+            if self._swing is not None:
+                out["servant_chirp"] = float(self._swing)
+        return out
 
     def extra_repr(self) -> str:
         return (

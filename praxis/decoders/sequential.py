@@ -73,6 +73,9 @@ class SequentialDecoder(BaseDecoder):
         # Mono-forward: reset per-forward state and stash the goodness target
         # (labels for token models, the input stream for latent models).
         self.mono.begin(hidden_states, labels)
+        # Density probe: the pre-loop state is the trajectory's origin, so the
+        # first executed depth already yields one transition to measure.
+        self.density.begin(hidden_states)
 
         current_route: List[int] = []
         realized_widths: List[float] = []  # active width fraction per executed step
@@ -170,6 +173,10 @@ class SequentialDecoder(BaseDecoder):
             # from its local loss in the same backward pass.
             hidden_states = self.mono.cut(hidden_states, losses, current_depth)
 
+            # Density: record this boundary's per-position deviation BEFORE the
+            # halting check, so the step that triggers the exit is still counted.
+            self.density.observe(hidden_states)
+
             # Check halting strategy at loop boundaries
             if self.halting.check(hidden_states, current_depth):
                 break
@@ -222,6 +229,10 @@ class SequentialDecoder(BaseDecoder):
 
         # Mono-forward: the "final" schedule cuts here (one goodness at the
         # top of the stack); every schedule lands its mean score as "mono".
+        # Turn the recorded per-boundary profiles into the four readings. Kept
+        # from the last forward, so get_metrics() can run on the logging cadence.
+        self.density.finalize()
+
         hidden_states = self.mono.finalize(hidden_states, losses)
 
         hidden_states = self.compressor.expand_sequence(hidden_states, seq_len)

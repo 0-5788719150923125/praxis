@@ -144,7 +144,32 @@ class OuroborosBudget(BaseRegularizer):
                 "y_label": "Std. steps",
                 "y_scale": "linear",
                 "group": "ouroboros",
-                "order": 25,
+                # Same chart as the token-axis spread: the comparison between
+                # the two IS the reading, so they have to share an axis.
+                "series_group": "ouroboros_spread",
+                "series_label": "across features",
+                "order": 23,
+            },
+        },
+        "ouroboros_token_std": {
+            "description": (
+                "Spread of expected depth ACROSS TOKENS, the companion to "
+                "steps_std's spread across features. Depth can vary on either "
+                "axis and they mean different things: across features is the "
+                "per-feature specialization this run set out to test, across "
+                "tokens is adaptive compute per position. Read at ~2.0 steps, "
+                "only ~1.5% of the total depth variance was between features, "
+                "so this is where the rest has to be - either real per-token "
+                "allocation, or hard-concrete gate noise dressed up as one."
+            ),
+            "chart": {
+                "title": "Ouroboros Depth Spread",
+                "y_label": "Std. steps",
+                "y_scale": "linear",
+                "group": "ouroboros",
+                "series_group": "ouroboros_spread",
+                "series_label": "across tokens",
+                "order": 24,
             },
         },
         "ouroboros_lambda": {
@@ -277,7 +302,17 @@ class OuroborosBudget(BaseRegularizer):
         Summed (not averaged) moments, so sites of different width combine by
         feature count rather than each getting an equal vote."""
         pooled = torch.stack([stats for _, stats in entries]).sum(dim=0)
-        sum_s, sum_s2, sum_g, sum_g2, sum_sg, count = pooled.unbind()
+        (
+            sum_s,
+            sum_s2,
+            sum_g,
+            sum_g2,
+            sum_sg,
+            count,
+            sum_t,
+            sum_t2,
+            token_count,
+        ) = pooled.unbind()
         if float(count) <= 0:
             return {}
 
@@ -293,11 +328,16 @@ class OuroborosBudget(BaseRegularizer):
         denom = var_s.sqrt() * var_g.sqrt()
         corr = float(cov / denom) if float(denom) > 1e-12 else 0.0
 
-        return {
+        out = {
             "ouroboros_steps_std": float(var_s.sqrt()),
             "ouroboros_gain": float(mean_g),
             "ouroboros_depth_gain_corr": max(-1.0, min(1.0, corr)),
         }
+        if float(token_count) > 0:
+            mean_t = sum_t / token_count
+            var_t = (sum_t2 / token_count - mean_t * mean_t).clamp_min(0.0)
+            out["ouroboros_token_std"] = float(var_t.sqrt())
+        return out
 
     def training_metrics(self) -> dict:
         return dict(self._metrics)

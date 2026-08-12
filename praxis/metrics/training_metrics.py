@@ -23,6 +23,79 @@ head-side metrics. Each entry's ``chart`` hint may carry:
 from typing import Any, Dict
 
 TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
+    # ── Information density at the rim (see praxis/metrics/density.py) ───────
+    # The paper's conjecture states its own falsifier: deviation must rise from
+    # head to tip AND that rise must steepen with recurrent depth, in norm and
+    # in occupancy alike. These four keys are that falsifier, nothing else.
+    "density_norm_slope": {
+        "description": (
+            "Positional gradient of hidden-state deviation, in NORM: how much "
+            "more the tip of the window moves per depth step than the head, "
+            "relative to the mean. Positive = density pushed toward the rim, "
+            "the paper's conjecture. Flat at 0 in both coordinates falsifies it."
+        ),
+        "chart": {
+            "title": "Density Gradient (norm)",
+            "y_label": "Rise head to tip",
+            "y_scale": "linear",
+            "group": "density",
+            "group_order": 92,
+            "series_group": "density_slope",
+            "series_label": "norm",
+            "order": 10,
+        },
+    },
+    "density_hop_slope": {
+        "description": (
+            "The same positional gradient read in symbol OCCUPANCY - the rate "
+            "positions cross a partition boundary between depth steps. Present "
+            "because a silent bit flip can change the geometry without moving "
+            "the norm, so a norm-only reading is escapable."
+        ),
+        "chart": {
+            "title": "Density Gradient (norm)",
+            "y_label": "Rise head to tip",
+            "y_scale": "linear",
+            "group": "density",
+            "series_group": "density_slope",
+            "series_label": "occupancy",
+            "order": 11,
+        },
+    },
+    "density_norm_steepening": {
+        "description": (
+            "Whether the norm gradient STEEPENS as the recurrence deepens - "
+            "the second half of the falsifier. Early positions should settle "
+            "toward a fixed point while the tip stays live, so the profile "
+            "tilts further with every pass. Zero or negative kills the reading "
+            "even if the slope itself is positive."
+        ),
+        "chart": {
+            "title": "Density Steepening across Depth",
+            "y_label": "Slope change per pass",
+            "y_scale": "linear",
+            "group": "density",
+            "series_group": "density_steepening",
+            "series_label": "norm",
+            "order": 20,
+        },
+    },
+    "density_hop_steepening": {
+        "description": (
+            "Steepening across depth in occupancy coordinates. The prediction "
+            "is that the hop rate between symbols rises from head to tip and "
+            "steepens as the loop deepens."
+        ),
+        "chart": {
+            "title": "Density Steepening across Depth",
+            "y_label": "Slope change per pass",
+            "y_scale": "linear",
+            "group": "density",
+            "series_group": "density_steepening",
+            "series_label": "occupancy",
+            "order": 21,
+        },
+    },
     "loss": {
         "description": "Per-step training cross-entropy loss.",
         "chart": {
@@ -688,6 +761,39 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
 # * ``stepped``: draw as a step plot (cumulative counts).
 # * ``order``: ordering within the Research tab, after the scalars above.
 COMPOSITE_METRIC_REGISTRY: list = [
+    {
+        "key": "density_profile_norm",
+        "type": "multi_expert_line",
+        "title": "Information Density Profile (norm)",
+        "y_label": "Deviation / mean",
+        "description": (
+            "Per-position hidden-state deviation, averaged over depth steps and "
+            "normalized by its own mean, in 8 buckets from the head of the "
+            "window (b0) to the tip (b7). The conjecture predicts these fan "
+            "out with b7 above b0; all eight sitting on top of each other is "
+            "the flat profile that falsifies it. Schematic figure fig:density "
+            "in the paper is this curve, promised - this is it measured."
+        ),
+        "key_pattern": r"^density_norm_b\d+$",
+        "legend": True,
+        "order": 205,
+    },
+    {
+        "key": "density_profile_hop",
+        "type": "multi_expert_line",
+        "title": "Information Density Profile (occupancy)",
+        "y_label": "Hop rate / mean",
+        "description": (
+            "The same profile read in symbol occupancy: the rate at which each "
+            "position crosses a partition boundary between depth steps, head "
+            "(b0) to tip (b7). Catches the decision-boundary flips a norm "
+            "reading is blind to - a state can change which basin it expresses "
+            "while barely moving in magnitude."
+        ),
+        "key_pattern": r"^density_hop_b\d+$",
+        "legend": True,
+        "order": 206,
+    },
     {
         # Repo-level, not per-run: the framework's own git-churn evolution.
         # source "standalone" -> the card fetches its own data (/api/evolution),

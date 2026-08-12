@@ -13,6 +13,7 @@ from praxis.controllers import CONTROLLER_REGISTRY
 from praxis.experimental.evolution import GenomicBottleneck
 from praxis.halting import HALTING_REGISTRY
 from praxis.layers import LocalLayer, RemoteLayer
+from praxis.metrics.density import DensityProbe
 from praxis.orchestration import EXPERT_REGISTRY
 from praxis.sorting import SORTING_REGISTRY
 from praxis.width import WIDTH_REGISTRY
@@ -73,6 +74,11 @@ class BaseDecoder(nn.Module):
         from praxis.decoders.mono import build_mono
 
         self.mono = build_mono(config)
+        # Per-position, per-depth-step deviation profile - the instrument for
+        # the paper's information-density conjecture. Holds no parameters and no
+        # persistent buffers, so it cannot touch a checkpoint; decoders without
+        # a depth loop simply never drive it and it emits nothing.
+        self.density = DensityProbe()
         self.locals = nn.ModuleList()
         self.remotes: List[nn.Module] = []
 
@@ -311,6 +317,10 @@ class BaseDecoder(nn.Module):
         halting = getattr(self, "halting", None)
         if halting is not None and hasattr(halting, "get_metrics"):
             extras.update(halting.get_metrics())
+
+        density = getattr(self, "density", None)
+        if density is not None:
+            extras.update(density.get_metrics())
 
         # Mixture-of-widths: the per-depth active-width arch (inflate early,
         # decay through the tail). One key per depth so the dashboard can plot

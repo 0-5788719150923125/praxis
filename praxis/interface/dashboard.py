@@ -91,7 +91,7 @@ class TerminalDashboard:
         # Store original logging class to restore later if needed
         self._original_logger_class = logging.getLoggerClass()
 
-        from praxis.log_noise import is_noisy
+        from praxis.utils.log_noise import is_noisy
 
         # Create a custom logger class that automatically uses our handler
         class DashboardLogger(logging.Logger):

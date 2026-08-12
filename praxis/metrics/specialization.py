@@ -79,6 +79,46 @@ def collect_arc_metrics(root) -> Dict[str, float]:
     return {key: sums[key] / counts[key] for key in sums}
 
 
+def _activation_modules(root) -> Iterator:
+    """Yield activation modules under ``root`` that publish diagnostics.
+
+    Activations are called as a bare ``act(x)`` and have no loss hook, so a
+    module walk is the only way to reach them. ``nn.Module`` defines no
+    ``training_metrics``, so the attribute check alone selects the opted-in
+    ones (currently Servant); the rest of the registry is skipped.
+    """
+    from praxis.activations import ACT2CLS
+
+    classes = tuple({v[0] if isinstance(v, tuple) else v for v in ACT2CLS.values()})
+    for module in root.modules():
+        if isinstance(module, classes) and hasattr(module, "training_metrics"):
+            yield module
+
+
+def collect_activation_metrics(root) -> Dict[str, float]:
+    """Average each activation diagnostic across the activation modules under
+    ``root`` (empty when none opt in)."""
+    sums: Dict[str, float] = {}
+    counts: Dict[str, int] = {}
+    for module in _activation_modules(root):
+        for key, value in module.training_metrics().items():
+            if value is None:
+                continue
+            sums[key] = sums.get(key, 0.0) + value
+            counts[key] = counts.get(key, 0) + 1
+    return {key: sums[key] / counts[key] for key in sums}
+
+
+def collect_activation_descriptions(root) -> Dict[str, dict]:
+    """Gather ``metric_descriptions`` from the activation modules under ``root``."""
+    out: Dict[str, dict] = {}
+    for module in _activation_modules(root):
+        descs = getattr(type(module), "metric_descriptions", None)
+        if isinstance(descs, dict):
+            out.update(descs)
+    return out
+
+
 def collect_arc_descriptions(root) -> Dict[str, dict]:
     """Gather ``metric_descriptions`` from the Arc modules under ``root``."""
     out: Dict[str, dict] = {}

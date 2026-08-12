@@ -248,6 +248,7 @@ class Ouroboros(Serpent):
         steps_open = torch.zeros_like(state)  # realized step count, carries grad
         reach = torch.ones_like(state)  # P(still open through step k)
         per_step: List[Tensor] = []
+        per_token: List[Tensor] = []
 
         for step in range(MAX_STEPS):
             # The expensive part - the nonlinearity and its trajectory - is
@@ -273,9 +274,16 @@ class Ouroboros(Serpent):
 
             reach = reach * torch.sigmoid(logit + HC_OFFSET)
             per_step.append(_feature_mean(reach))
+            # Same survival mass reduced on the OTHER axis: over features,
+            # keeping tokens. Depth can vary between features (specialization,
+            # the original hypothesis) or between tokens (adaptive compute per
+            # position), and averaging over tokens before recording made the
+            # second invisible - most of the observed depth variance lives
+            # there, so it needs its own reduction rather than an inference.
+            per_token.append(reach.mean(dim=-1))
 
         if _ACCOUNTING and self.training:
-            self._record(torch.stack(per_step), x, state)
+            self._record(torch.stack(per_step), torch.stack(per_token), x, state)
 
         # One differentiable step, at the live input and at the frequency the
         # trajectory settled into. `h` is detached (it always was - it is built
@@ -288,7 +296,9 @@ class Ouroboros(Serpent):
         surrogate = x + steps_open * (self._serpent_step(x, a_eff, b, g) - x)
         return state + (surrogate - surrogate.detach())
 
-    def _record(self, curve: Tensor, x: Tensor, state: Tensor) -> None:
+    def _record(
+        self, curve: Tensor, token_curve: Tensor, x: Tensor, state: Tensor
+    ) -> None:
         """Push this call's survival curve. ``curve`` is [MAX_STEPS, D]: row k
         is each feature's probability of still being open at step k, averaged
         over tokens. Keeping the feature axis this long is what makes the exit
@@ -308,8 +318,13 @@ class Ouroboros(Serpent):
         steps = curve.sum(dim=0).detach()  # [D] expected steps per feature
         gain = _feature_rms(state) / _feature_rms(x)  # [D]
         count = torch.full_like(steps.sum(), steps.numel())
+        # Same quantity along the token axis: expected depth per token, feature-
+        # averaged. Its spread answers a different question from `steps`' spread.
+        token_steps = token_curve.sum(dim=0).detach()  # [B, T]
+        token_count = torch.full_like(steps.sum(), token_steps.numel())
         # Summed moments (not means) so call sites of different width pool by
-        # feature count: [sum s, sum s^2, sum g, sum g^2, sum s*g, count].
+        # count: [sum s, sum s^2, sum g, sum g^2, sum s*g, n_features,
+        #         sum t, sum t^2, n_tokens].
         spread = torch.stack(
             [
                 steps.sum(),
@@ -318,6 +333,9 @@ class Ouroboros(Serpent):
                 gain.square().sum(),
                 (steps * gain).sum(),
                 count,
+                token_steps.sum(),
+                token_steps.square().sum(),
+                token_count,
             ]
         )
         _STEP_COUNTS.append((curve.mean(dim=1), spread))
