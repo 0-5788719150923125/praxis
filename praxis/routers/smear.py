@@ -1,179 +1,573 @@
-import copy
+"""SMEAR at the granularity the paper actually uses.
+
+This is NOT a new method. It is Soft Merging of Experts with Adaptive Routing
+(https://arxiv.org/abs/2306.03745) applied the way the paper applies it, because
+``praxis/routers/smear.py`` does not. That file is the same algorithm pointed at
+the wrong object, and every difference here is a step back TOWARD the paper
+rather than past it:
+
+                     paper                    smear.py / vear.py      here
+  merged unit        adapters, inserted       an entire decoder       per-module
+                     after self-attention,    block                   targets
+                     FFN and cross-attention
+  coefficients       one router per adapter   one scalar for the      one row per
+                                              whole block             target
+  routing            per example              batch mean              per example
+                                                                      (Linears)
+  balancing          expert dropout           expert dropout 0.1      same, 0.1
+
+The consequences of that drift were measured, not theorized. Merging a whole
+block under one scalar leaves the router injecting ``num_experts - 1`` free
+numbers per forward - three, at N=4 - while paying for N copies of everything,
+including the ``ffn_type: peer`` feedforward, which is the largest module in the
+model and ALREADY a per-token mixture over its own product-key bank. And the
+batch mean is worse than merely coarse: the loss reaches the routing only
+through ``probs.mean(0)``, so every example receives the identical routing
+gradient ``dL/dw / B``. A constant router is that design's fixed point, which is
+what ``routing_input_dependence`` decaying to ~1e-5 on abstractinator-g, and to
+exactly 0 on the first cut of this file, both were.
+
+Two things here are not in the paper, and neither is novel:
+
+  * BASE PLUS DEVIATIONS instead of N independent expert copies. With
+    ``P_e = base + delta_e`` and coefficients summing to one,
+    ``base + sum_e w_e delta_e == sum_e w_e P_e``, so this is the paper's merge
+    written in a different basis. It buys exact identity at initialization and a
+    shared trunk that receives full gradient whatever the routing does
+    (``d(merged)/d(base) = sum_e w_e = 1``), so a starved deviation now costs its
+    rank rather than a whole block. Large deviations are additionally
+    rank-constrained, which is LoRA.
+  * PEFT-STYLE TARGET DISCOVERY (praxis/routers/targeting.py), so the merge sites
+    are found by walking the module tree instead of being hand-placed. Plumbing.
+
+Honest limit. Routing is per EXAMPLE, never per TOKEN. Associativity buys the
+former for Linear targets - see ``MergedLinear`` - but a per-token merge would
+need a distinct geometry per position, which remains the province of the
+fast-weights work in praxis/routers/prismatic.py. Elementwise and indexed
+targets (norms, residual gates, the per-depth table) stay on the batch mean,
+which is also what the paper does: it trains layernorm parameters but never
+treats them as experts.
+
+Sharpening is OFF by default, unlike VEAR - ``p**4`` drives the losing deviations
+to zero gradient, which is the mechanism behind abstractinator-g's dead experts.
+``ModularVEAR`` re-enables it for the comparison.
+
+Companion: praxis/routers/targeting.py, praxis/routers/smear.py.
+"""
+
+from __future__ import annotations
+
 import math
-from collections import defaultdict
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
+from contextlib import contextmanager
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch import Tensor
 
-ConfigType = TypeVar("ConfigType", bound="AutoConfig")
+from praxis.routers.targeting import (
+    DENSE_DELTA_MAX_NUMEL,
+    TARGET_PROFILES,
+    TargetGroup,
+    describe,
+    discover_targets,
+)
 
-# Merges between refreshes of the routing diagnostics, counted per depth. The
-# diagnostics cost ~10 host-device syncs and the merge runs once per recurrent
-# depth per step, so computing them every time paid ~60 syncs a step for numbers
-# the dashboard samples every 10. Matches DynamicsLoggerCallback's log_freq.
-ROUTING_METRICS_INTERVAL: int = 10
+# Merges between refreshes of the routing diagnostics. Matches SMEAR's cadence
+# and DynamicsLoggerCallback's log_freq; the diagnostics cost host-device syncs
+# and the merge runs once per recurrent pass.
+METRICS_INTERVAL: int = 10
+
+# How far the routing decision is shared before the merge.
+#
+#   "token"   - every position routes itself. Beyond the paper, and possible
+#               only on the Linear targets, where associativity means the merged
+#               weight is never materialized (see MergedLinear). Costs nothing
+#               extra: the coefficient tensor gains a sequence axis the einsum
+#               was already broadcasting over.
+#   "example" - one routing per sequence, the paper's granularity. Default.
+#   "batch"   - one routing for the whole batch, which is what this repo's old
+#               whole-block SMEAR did. Kept for the controlled comparison ONLY.
+#               It is very likely never the right choice: under a batch mean the
+#               loss reaches the routing only through ``probs.mean(0)``, so every
+#               example receives the identical routing gradient and a CONSTANT
+#               router is the fixed point. Measured on abstractinator-m, where
+#               input dependence decayed to exactly 0.
+#
+# Elementwise and indexed targets (norms, residual gates, the per-depth table)
+# always reduce to one geometry per forward regardless: their merged parameter
+# would have to vary per position, which needs a rewritten forward, not a
+# reassociated one.
+REDUCTIONS = ("token", "example", "batch")
+
+# Rank of a factored deviation, as a divisor of the smaller weight dimension.
+# Config-derived rather than a flag, the same way PEER sizes its bank against
+# the dense FFN it replaces (praxis/dense/peer.py).
+RANK_DIVISOR: int = 8
+MIN_RANK: int = 4
+
+# Probability of dropping an entire deviation from a routing decision. This is
+# SMEAR's OWN load-balancing mechanism (the paper uses expert dropout, not an
+# auxiliary balance loss or a DeepSeek-style bias), at the paper's rate, and it
+# is what the first cut of this router was missing: nothing stopped one deviation per
+# target from monopolizing its coefficient, and on abstractinator-m every one of
+# the twelve targets duly saturated to near one-hot.
+#
+# Safe here in a way it is not under the original SMEAR. When every expert is
+# dropped, the renormalized coefficients are all zero, and a base-plus-deviation
+# merge then falls back to ``base`` EXACTLY. SMEAR's ``sum_e w_e P_e`` under the
+# same draw yields an all-zero parameter block.
+MODULAR_EXPERT_DROPOUT: float = 0.1
 
 
-@dataclass
-class SMEARConfig:
-    """Configuration class for SMEAR module"""
+def _set_submodule(root: nn.Module, dotted: str, replacement: nn.Module) -> None:
+    """Rebind ``root.<dotted>`` to ``replacement``, tolerating list indices."""
+    parts = dotted.split(".")
+    parent: Any = root
+    for part in parts[:-1]:
+        parent = parent[int(part)] if part.isdigit() else getattr(parent, part)
+    last = parts[-1]
+    if last.isdigit():
+        parent[int(last)] = replacement
+    else:
+        setattr(parent, last, replacement)
 
-    hidden_size: int
-    num_experts: int
-    expert_dropout: float = 0.1
+
+class MergedLinear(nn.Module):
+    """A routed ``nn.Linear``: base weight plus N low-rank deviations, merged
+    PER EXAMPLE.
+
+    This is the module that lets the modular router leave the batch mean behind, and the
+    reason it can is associativity. Merging first and applying second needs one
+    weight tensor per distinct coefficient vector, so per-example routing would
+    mean a whole ``[B, out, in]`` stack. Applying first and merging second does
+    not::
+
+        y_b = (W + sum_e c_be B_e A_e) x_b
+            = W x_b + sum_e c_be * B_e (A_e x_b)
+
+    The right-hand form never materializes a merged weight. Cost per token is
+    ``N * r * (in + out)`` against the base's ``in * out``; at ``r = min/8`` and
+    ``N = 4`` that is roughly one extra base projection, and the only new
+    activation is ``[B, T, N, r]``.
+
+    WHY PER EXAMPLE IS THE POINT. Under a batch mean the loss reaches the
+    routing only through ``probs.mean(0)``, so every example in the batch
+    receives the SAME routing gradient, ``dL/dw / B``. No gradient path can
+    express "example 1 wanted deviation 2 while example 5 wanted deviation 3",
+    which makes a constant router the design's fixed point rather than a
+    training failure - and ``smear_input_dependence`` decaying to exactly 0 is
+    that fixed point being reached. Per-example merging restores the signal.
+
+    The base ``weight`` and ``bias`` are the ORIGINAL Parameter objects, held
+    directly rather than behind a nested Linear, so qualified names and any
+    checkpoint written before this wrapper existed both still resolve
+    (``attn.qkv.weight`` stays ``attn.qkv.weight``) and anything introspecting
+    ``.weight`` / ``.in_features`` keeps working.
+    """
+
+    def __init__(self, base: nn.Linear, num_experts: int, rank: int) -> None:
+        super().__init__()
+        self.in_features = base.in_features
+        self.out_features = base.out_features
+        # From the config, like every other sizing decision in this repo. The
+        # registry carries one entry per router, not one per expert count.
+        self.num_experts = int(
+            num_experts if num_experts is not None else getattr(config, "num_experts", 4)
+        )
+        self.rank = int(rank)
+
+        self.weight = base.weight
+        self.bias = base.bias
+
+        # LoRA's initialization: A random, B zero, so every deviation is exactly
+        # zero at step 0 and the wrapper is bit-identical to the Linear it
+        # replaced. A config swap stays a clean A/B rather than a reroll.
+        self.lora_a = nn.Parameter(torch.empty(self.num_experts, rank, self.in_features))
+        nn.init.normal_(self.lora_a, mean=0.0, std=0.02)
+        self.lora_b = nn.Parameter(
+            torch.zeros(self.num_experts, self.out_features, rank)
+        )
+
+        # Set for the duration of one block forward by the router's coefficient
+        # scope; None means "run as a plain Linear", which is what inference
+        # paths and any caller that bypasses the router get.
+        self._coeff: Optional[Tensor] = None
+
+    def extra_repr(self) -> str:
+        return (
+            f"in_features={self.in_features}, out_features={self.out_features}, "
+            f"num_experts={self.num_experts}, rank={self.rank}"
+        )
+
+    @property
+    def delta_numel(self) -> int:
+        return self.lora_a.numel() + self.lora_b.numel()
+
+    def forward(self, x: Tensor) -> Tensor:
+        y = F.linear(x, self.weight, self.bias)
+        coeff = self._coeff
+        # Fall back to the base whenever the coefficients cannot apply: no scope
+        # is open, or the batch was reshaped between routing and here (cached
+        # decode). Silently misaligning a coefficient with an example would be
+        # far worse than routing nothing.
+        # Leading axes must line up: [B, N] against [B, ..., in] for
+        # per-example routing, [B, S, N] against [B, S, in] for per-token.
+        if coeff is None or tuple(coeff.shape[:-1]) != tuple(x.shape[: coeff.dim() - 1]):
+            return y
+        # [B, ..., N, r] - each deviation's low-rank projection of the input.
+        u = torch.einsum("...i,eri->...er", x, self.lora_a.to(x.dtype))
+        # Insert whatever sequence-ish axes the coefficients do not already
+        # carry, so per-example coefficients broadcast across positions and
+        # per-token ones align with them.
+        missing = (x.dim() - 1) - (coeff.dim() - 1)
+        shape = coeff.shape[:1] + (1,) * missing + coeff.shape[1:] + (1,)
+        u = u * coeff.to(u.dtype).view(shape)
+        return y + torch.einsum("...er,eor->...o", u, self.lora_b.to(x.dtype))
+
+
+def _get_param(module: nn.Module, dotted: str) -> Optional[Tensor]:
+    """Fetch a parameter by fully-qualified name (``attn.qkv.weight``)."""
+    parts = dotted.split(".")
+    obj: Any = module
+    for part in parts[:-1]:
+        obj = getattr(obj, part, None)
+        if obj is None:
+            return None
+    return getattr(obj, parts[-1], None)
 
 
 class SMEAR(nn.Module):
-    """
-    This module implements Soft-Merging of Experts with Adaptive Routing (SMEAR):
-    https://arxiv.org/abs/2306.03745
+    """Soft-merging of experts, at the granularity the paper uses."""
 
-    SMEAR dynamically merges expert parameters based on routing probabilities,
-    rather than routing inputs to multiple experts. This enables more efficient
-    parameter sharing and adaptation to input patterns.
-    """
+    # How the decoder should build the layer stack for this router. "shared"
+    # means ONE block, reused at every layer position - the same topology the
+    # SMEAR bank produced, minus the replication. Read by
+    # praxis/decoders/base.py::_router_layout.
+    LAYER_LAYOUT: str = "shared"
+
+    # Exponent applied to the coefficients before merging. 1.0 is a no-op; see
+    # the module docstring for why this is not VEAR's 4.0.
+    SHARPEN: float = 1.0
+
+    # Whole-deviation dropout, SMEAR's own balancing mechanism. See
+    # MODULAR_EXPERT_DROPOUT.
+    EXPERT_DROPOUT: float = MODULAR_EXPERT_DROPOUT
 
     def __init__(
-        self, config: Any, layout: str = "standard", *args: Any, **kwargs: Any
-    ):
-        """
-        Initialize the SMEAR module.
-
-        Args:
-            config: Configuration object
-            layout: Layout type (not used by SMEAR, kept for interface compatibility)
-            *args: Additional arguments
-            **kwargs: Additional keyword arguments including 'experts' list
-        """
+        self,
+        config: Any,
+        block: Optional[nn.Module] = None,
+        num_experts: Optional[int] = None,
+        target_profile: str = "all",
+        reduction: str = "example",
+        verbose: bool = True,
+        **kwargs: Any,
+    ) -> None:
         super().__init__()
-
-        self.num_experts = config.num_experts
-        self.hidden_size = config.hidden_size
-        self.dropout_rate = getattr(
-            config, "expert_dropout", 0.1
-        )  # Probability of dropping entire experts (default 0.1 per SMEAR paper)
-
-        # Get experts from kwargs - required for SMEAR
-        self.experts = kwargs.get("experts", None)
-        if self.experts is None:
+        if reduction not in REDUCTIONS:
             raise ValueError(
-                "SMEAR router requires 'experts' to be provided during initialization"
+                f"Unknown reduction {reduction!r}; known: {sorted(REDUCTIONS)}"
             )
-        self.experts = nn.ModuleList(self.experts)
+        self.reduction = reduction
+        if block is None:
+            raise ValueError(
+                "SMEAR routers merge deviations against a concrete block; pass "
+                "block=... at construction (see praxis/decoders/base.py)."
+            )
+        if target_profile not in TARGET_PROFILES:
+            raise ValueError(
+                f"Unknown target profile {target_profile!r}; "
+                f"known: {sorted(TARGET_PROFILES)}"
+            )
 
-        self.parameter_names: List[str] = []
+        # From the config, like every other sizing decision in this repo. The
+        # registry carries one entry per router, not one per expert count.
+        self.num_experts = int(
+            num_experts if num_experts is not None else getattr(config, "num_experts", 4)
+        )
+        self.hidden_size = config.hidden_size
+        self.profile_name = target_profile
 
-        # Router network with layer normalization as per paper
-        # Use actual number of experts, not config.num_experts
-        self.router_norm = nn.LayerNorm(self.hidden_size)
-        self.router = nn.Linear(self.hidden_size, len(self.experts))
-        # Load-balancing state. Registered up front - registering a buffer
-        # inside the forward mutates the module while a compiled graph holds
-        # saved tensors, which is how this first surfaced.
-        self._expert_bias = [0.0] * len(self.experts)
-        self._usage_accum = None
-        self.register_buffer(
-            "_expert_bias_buf", torch.zeros(len(self.experts)), persistent=True
+        spec = TARGET_PROFILES[target_profile]
+        self.targets, skipped = discover_targets(block, spec)
+        if not self.targets:
+            raise ValueError(
+                f"Target profile {target_profile!r} matched nothing in "
+                f"{type(block).__name__}. Skips: {skipped}"
+            )
+        self._skipped = skipped
+
+        # Targets split by HOW they are merged, not by what they are:
+        #
+        #   per-example - the target is an nn.Linear, so associativity lets each
+        #     example carry its own coefficients at low-rank cost (MergedLinear).
+        #     These are the adapter-shaped modules, which is exactly what the
+        #     SMEAR paper routes: adapters inserted after self-attention, the
+        #     feed-forward and cross-attention.
+        #   batch-mean - norms, residual gates, kappa/mu, the per-depth table.
+        #     Elementwise or indexed rather than matmuls, so the associativity
+        #     trick does not apply, and the paper does not treat them as experts
+        #     either (it trains layernorm parameters but never routes them).
+        self.wrappers = nn.ModuleDict()  # metric label -> MergedLinear
+        self._wrapper_row: Dict[str, int] = {}  # metric label -> router row
+        self.deltas = nn.ParameterDict()
+        self._factored: Dict[str, bool] = {}
+        self._param_row: Dict[str, int] = {}
+        merged_numel = 0
+
+        for row, group in enumerate(self.targets):
+            module = block.get_submodule(group.name) if group.name else block
+            merged_numel += sum(
+                _get_param(block, p).numel() for p in group.params
+            )
+            if isinstance(module, nn.Linear):
+                # Rank is forced here regardless of size: a DENSE per-example
+                # deviation would cost N * in * out per token (four base
+                # projections at N=4) where the factored form costs about one,
+                # and a small matrix's rank-r bank is cheap anyway.
+                rank = max(
+                    MIN_RANK,
+                    min(module.in_features, module.out_features) // RANK_DIVISOR,
+                )
+                wrapper = MergedLinear(module, self.num_experts, rank)
+                _set_submodule(block, group.name, wrapper)
+                self.wrappers[group.label] = wrapper
+                self._wrapper_row[group.label] = row
+                continue
+            for pname in group.params:
+                self._param_row[pname] = row
+                self._build_delta(pname, _get_param(block, pname))
+
+        self.merged_numel = merged_numel
+        self.delta_numel = sum(p.numel() for p in self.deltas.values()) + sum(
+            w.delta_numel for w in self.wrappers.values()
         )
 
-        # Metrics storage for convergence tracking
-        self._metrics = {}
-        # Per-depth tick counters for the routing-diagnostics cadence. Keyed by
-        # depth, not global: the metrics carry a layer prefix, so a single
-        # counter would refresh some depths and starve others.
-        self._metric_ticks: Dict[int, int] = {}
+        # One router head for every (target, expert) pair. LayerNorm on the
+        # pooled input, weight-normalized projection: SMEAR's arrangement, only
+        # wider in the output.
+        self.router_norm = nn.LayerNorm(self.hidden_size)
+        self.router = nn.Linear(self.hidden_size, len(self.targets) * self.num_experts)
+
+        # Per-recurrent-pass additive bias on the per-target logits - the
+        # ArcAttention idiom (praxis/attention/arc.py), widened to
+        # ``targets * experts`` so each pass can move each module
+        # independently. Zero-init, so it is exactly absent until it learns
+        # otherwise; that is why it is unconditional rather than a separate
+        # class, which is what `arc_smear` / `arc_vear` used to be.
+        self.depth = getattr(config, "depth", 1) or 1
+        self.depth_bias = nn.Embedding(self.depth, len(self.targets) * self.num_experts)
+        nn.init.zeros_(self.depth_bias.weight)
+
+        self._metrics: Dict[str, float] = {}
+        self._tick: int = 0
+
+        if verbose:
+            print(describe(self.targets, skipped))
+            print(
+                f"[SMEAR] {len(self.targets)} targets x {self.num_experts} experts; "
+                f"deviations hold {self.delta_numel:,} parameters "
+                f"({self.delta_numel / max(1, merged_numel):.2f}x the merged base)"
+            )
+            print(
+                f"[SMEAR] {len(self.wrappers)} target(s) routed PER EXAMPLE "
+                f"({', '.join(self.wrappers) or 'none'}); "
+                f"{len(self._param_row)} parameter(s) on the batch-mean path; "
+                f"expert dropout {self.EXPERT_DROPOUT}"
+            )
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}(num_experts={len(self.experts)})"
-
-    def forward(
-        self,
-        *args,
-        **kwargs,
-    ) -> Union[
-        Tuple[torch.Tensor, Optional[torch.Tensor], float],  # Direct mode
-        Tuple[
-            torch.Tensor,
-            Optional[Union[torch.Tensor, List, Dict]],
-            Optional[torch.Tensor],
-            float,
-        ],  # Router mode
-    ]:
-        """
-        Forward pass with SMEAR routing.
-
-        Supports two modes:
-        1. Direct mode: Used by RecurrentBlock with (inputs, current_state)
-        2. Router mode: Used as a router in LocalLayer with full signature
-
-        Returns:
-            Appropriate tuple based on the mode
-        """
-        # Determine which mode we're in based on arguments
-        if self._is_router_mode(args, kwargs):
-            # Extract router mode arguments
-            router_args = self._parse_router_args(args, kwargs)
-            return self._router_forward(*router_args)
-        else:
-            # Extract direct mode arguments
-            inputs, current_state = self._parse_direct_args(args, kwargs)
-            return self._direct_forward(inputs, current_state)
-
-    def _router_forward(
-        self,
-        layer: nn.Module,
-        inputs: torch.Tensor,
-        attention_mask: Optional[torch.Tensor],
-        past_key_values: Optional[Union[torch.Tensor, List, Dict]],
-        current_state: Optional[torch.Tensor],
-        current_depth: int,
-        block_ids: Optional[torch.Tensor],
-        positions: Optional[torch.Tensor] = None,
-    ) -> Tuple[
-        torch.Tensor,
-        Optional[Union[torch.Tensor, List, Dict]],
-        Optional[torch.Tensor],
-        float,
-    ]:
-        """Router mode forward pass."""
-        # Get routing probabilities with proper normalization
-        router_input = inputs.mean(dim=1)  # Average across sequence length
-        router_input = self.router_norm(router_input)  # Layer norm on input
-
-        logits = self._route_logits(router_input, current_depth)
-
-        routing_probs = F.softmax(logits, dim=-1)  # [batch_size, num_experts]
-
-        # The router's OWN opinion, captured before expert dropout and before any
-        # subclass transform. This is what the routing diagnostics are computed
-        # on; see _log_routing_metrics for why that distinction matters.
-        router_probs = routing_probs
-        self._observe_usage(router_probs)
-
-        # Apply expert dropout during training (drop entire experts)
-        if self.training and self.dropout_rate > 0:
-            # Create dropout mask for experts
-            expert_mask = torch.bernoulli(
-                torch.ones_like(routing_probs) * (1 - self.dropout_rate)
-            )
-            routing_probs = routing_probs * expert_mask
-            # Renormalize to ensure probabilities sum to 1
-            routing_probs = routing_probs / (
-                routing_probs.sum(dim=-1, keepdim=True) + 1e-8
-            )
-
-        # Merge expert parameters based on routing probabilities
-        merged_state_dict = self._merge_expert_parameters(
-            routing_probs, current_depth, router_probs=router_probs
+        return (
+            f"{self.__class__.__name__}(targets={len(self.targets)}, "
+            f"num_experts={self.num_experts}, profile={self.profile_name})"
         )
 
-        # Use the first expert as the base module structure
-        base_module = self.experts[0]
+    # --- construction ---------------------------------------------------------
 
-        # Create args tuple for functional_call
+    @staticmethod
+    def _key(pname: str) -> str:
+        return pname.replace(".", "__")
+
+    def _build_delta(self, pname: str, base: Tensor) -> int:
+        """Allocate this parameter's deviation bank. Returns the base's numel.
+
+        Large 2-D weights factor to rank r; everything else - biases, norm
+        scales, residual gates, embeddings small enough not to care - takes a
+        dense deviation. The choice is made from the shape alone, so there is
+        nothing to tune and nothing to configure per experiment.
+        """
+        key = self._key(pname)
+        n = self.num_experts
+        if base.dim() == 2 and base.numel() > DENSE_DELTA_MAX_NUMEL:
+            out_dim, in_dim = base.shape
+            rank = max(MIN_RANK, min(out_dim, in_dim) // RANK_DIVISOR)
+            # LoRA's initialization: A random, B zero, so the product - and
+            # therefore the whole merge - is EXACTLY zero at step 0.
+            a = nn.Parameter(torch.empty(n, rank, in_dim))
+            nn.init.normal_(a, mean=0.0, std=0.02)
+            self.deltas[key + "__a"] = a
+            self.deltas[key + "__b"] = nn.Parameter(torch.zeros(n, out_dim, rank))
+            self._factored[pname] = True
+        else:
+            self.deltas[key] = nn.Parameter(torch.zeros(n, *base.shape))
+            self._factored[pname] = False
+        return base.numel()
+
+    # --- routing --------------------------------------------------------------
+
+    def _route_logits(self, router_input: Tensor, current_depth: int) -> Tensor:
+        """Per-target routing logits, shape [batch, targets, experts].
+
+        Weight-normalized like SMEAR's, and the single place routing is decided
+        so the depth-aware subclass overrides here and nowhere else.
+        """
+        normalized = F.normalize(self.router.weight, dim=1)
+        logits = F.linear(router_input, normalized, self.router.bias)
+        logits = logits.view(*router_input.shape[:-1], len(self.targets), self.num_experts)
+        # The decoder can loop past `depth` when halting samples deeper than the
+        # table; wrap rather than raise, so a pass reuses an existing row.
+        bias = self.depth_bias(
+            torch.tensor(int(current_depth) % self.depth, device=logits.device)
+        )
+        return logits + bias.view(len(self.targets), self.num_experts)
+
+    def _coefficients(self, inputs: Tensor, current_depth: int) -> Tuple[Tensor, Tensor]:
+        """Merge coefficients ``[B, targets, experts]`` and the router's own probs.
+
+        Returns the FULL per-example tensor, not a batch mean. Callers that
+        cannot use per-example coefficients (the elementwise targets) take the
+        mean themselves, which keeps the mean an explicit, local decision rather
+        than something baked into every path.
+
+        Pooling is ``inputs.mean(dim=1)`` - averaged over the sequence, which is
+        what the SMEAR paper's router reads too. Per-TOKEN routing remains out
+        of reach: it would need a distinct merged geometry per position, and the
+        associativity trick buys per-example, not per-token.
+        """
+        # Per-token routing reads every position; the coarser reductions pool
+        # over the sequence first, which is what the paper's router does.
+        routed_input = inputs if self.reduction == "token" else inputs.mean(dim=1)
+        logits = self._route_logits(self.router_norm(routed_input), current_depth)
+        probs = F.softmax(logits, dim=-1)  # [..., T, N] - the router's own opinion
+
+        merge = probs
+        # Expert dropout: SMEAR's own load-balancing mechanism, drawn
+        # independently per (example, target) so a deviation that would
+        # otherwise monopolize a target keeps being made to share. Under
+        # gradient checkpointing the forward re-runs during backward, and
+        # torch.utils.checkpoint is called with use_reentrant=False and the
+        # default preserve_rng_state=True (praxis/decoders/checkpoint.py), so
+        # the recomputed pass draws the SAME mask the original did.
+        if self.training and self.EXPERT_DROPOUT > 0:
+            keep = torch.bernoulli(torch.full_like(merge, 1.0 - self.EXPERT_DROPOUT))
+            merge = merge * keep
+            # An all-dropped row renormalizes to zeros rather than NaN, and zero
+            # coefficients mean "use the base unchanged" - see MODULAR_EXPERT_DROPOUT.
+            merge = merge / merge.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+
+        if self.SHARPEN != 1.0:
+            merge = merge.pow(self.SHARPEN)
+            merge = merge / merge.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+
+        if self.reduction == "batch":
+            # Every example shares one geometry. This is what `smear` and `vear`
+            # used to do unconditionally, kept ONLY so the per-example claim can
+            # be A/B'd against it - see REDUCTIONS for why it is not a default.
+            merge = merge.mean(dim=0, keepdim=True).expand_as(merge)
+        return merge, probs
+
+    @staticmethod
+    def _flatten(merge: Tensor) -> Tensor:
+        """``[..., targets, experts]`` -> ``[targets, experts]``.
+
+        The elementwise targets always merge to one geometry per forward, so
+        they need every leading axis collapsed - one under "example", two under
+        "token".
+        """
+        return merge.reshape(-1, merge.shape[-2], merge.shape[-1]).mean(dim=0)
+
+    @contextmanager
+    def _coefficient_scope(self, merge: Tensor) -> Iterator[None]:
+        """Hand each per-example target its ``[B, N]`` coefficients for one
+        block forward, then take them back.
+
+        Scoped rather than passed as an argument because the coefficients have
+        to reach modules several levels inside the block whose forward
+        signatures know nothing about routing. This mirrors the width policy's
+        ``scope`` (praxis/width), which live-patches the same block from the
+        same place in the decoder loop. Restoring on exit matters: a wrapper
+        left holding a stale coefficient would silently route the next forward
+        with the previous one's routing.
+        """
+        try:
+            for label, row in self._wrapper_row.items():
+                self.wrappers[label]._coeff = merge[..., row, :]
+            yield
+        finally:
+            for label in self._wrapper_row:
+                self.wrappers[label]._coeff = None
+
+    # --- merging --------------------------------------------------------------
+
+    def _delta_for(self, pname: str, w: Tensor, dtype: torch.dtype) -> Tensor:
+        """``sum_e w_e * delta_e`` for one parameter."""
+        key = self._key(pname)
+        if self._factored[pname]:
+            a = self.deltas[key + "__a"]  # [N, r, in]
+            b = self.deltas[key + "__b"]  # [N, out, r]
+            scaled = b * w.to(b.dtype).view(-1, 1, 1)
+            return torch.einsum("nor,nri->oi", scaled, a).to(dtype)
+        bank = self.deltas[key]  # [N, *shape]
+        return torch.tensordot(w.to(bank.dtype), bank, dims=([0], [0])).to(dtype)
+
+    def _merged_state_dict(self, layer: nn.Module, w: Tensor) -> Dict[str, Tensor]:
+        """Base parameters plus their routed deviations.
+
+        Only targeted names appear. ``functional_call`` leaves every absent name
+        bound to the module's own parameter, so untargeted modules - PEER, the
+        shared long-term memory, anything lazy - run exactly as they would
+        without a router, at no cost.
+        """
+        merged: Dict[str, Tensor] = {}
+        for pname, row in self._param_row.items():
+            base = _get_param(layer, pname)
+            if base is None:
+                raise ValueError(f"Target parameter {pname!r} vanished from the block.")
+            merged[pname] = base + self._delta_for(pname, w[row], base.dtype)
+        return merged
+
+    # --- forward --------------------------------------------------------------
+
+    def forward(self, *args: Any, **kwargs: Any):
+        """Router-mode forward.
+
+        Arity handling mirrors SMEAR's deliberately rather than sharing it: the
+        legacy router is frozen for backward compatibility, so the two are kept
+        independent. Seven positional arguments, or eight when an encoder
+        supplies a byte timeline (praxis/layers/local.py).
+        """
+        if len(args) not in (7, 8):
+            raise NotImplementedError(
+                "SMEAR routers support router mode only (7 or 8 positional args "
+                f"from LocalLayer); got {len(args)}."
+            )
+        layer, inputs, attention_mask, past_key_values = args[:4]
+        current_state, current_depth, block_ids = args[4:7]
+        positions = args[7] if len(args) == 8 else None
+
+        merge, probs = self._coefficients(inputs, current_depth)
+
+        if self._tick % METRICS_INTERVAL == 0:
+            with torch.no_grad():
+                self._log_metrics(merge, probs)
+        self._tick += 1
+
+        # Elementwise and indexed targets still merge on the batch mean; the
+        # Linear targets take their per-example rows through the scope below.
+        merged = self._merged_state_dict(layer, self._flatten(merge))
+
         forward_args = (
             inputs,
             attention_mask,
@@ -182,611 +576,102 @@ class SMEAR(nn.Module):
             current_depth,
             block_ids,
         )
-        # By KEYWORD, not position: the block's 7th positional slot is
-        # router_weights, and only when present so blocks predating the
-        # positions channel keep their exact previous call.
+        # By KEYWORD: the block's 7th positional slot is router_weights, so
+        # passing positions there would feed it to the FFN gate.
         forward_kwargs = {} if positions is None else {"positions": positions}
 
-        # Apply the merged parameters using functional_call. tie_weights=False is
-        # REQUIRED. This is functional_call's OWN arg (not model weight-tying - the
-        # model need not tie anything): with the default (True), its param-aliasing
-        # machinery corrupts the merged-param graph when the SAME expert module is
-        # reparametrized repeatedly across recurrent depths, so the next step's
-        # backward re-enters a freed graph ("backward through the graph a second
-        # time"). Verified on a model with zero tied weights. Only bites under the
-        # smear/vear shared-expert recurrent reuse.
-        result = torch.func.functional_call(
-            base_module,
-            merged_state_dict,
-            forward_args,
-            forward_kwargs,
-            tie_weights=False,
-        )
+        # tie_weights=False for the same reason SMEAR needs it: the same module
+        # is reparametrized once per recurrent pass, and functional_call's
+        # parameter-aliasing machinery corrupts the merged graph across those
+        # reuses, surfacing as a double-backward on a freed graph.
+        with self._coefficient_scope(merge):
+            result = torch.func.functional_call(
+                layer, merged, forward_args, forward_kwargs, tie_weights=False
+            )
 
-        # Handle different return formats
         if isinstance(result, tuple) and len(result) == 4:
             return result
-        elif isinstance(result, tuple) and len(result) == 3:
-            # Add zero aux loss if not provided
+        if isinstance(result, tuple) and len(result) == 3:
             return result[0], result[1], result[2], 0.0
-        else:
-            # Fallback for unexpected return format
-            return result, past_key_values, current_state, 0.0
+        return result, past_key_values, current_state, 0.0
 
-    def _collect_parameter_names(
-        self, module: nn.Module, prefix: str = ""
-    ) -> List[str]:
-        """
-        Recursively collect all parameter names from a module.
+    # --- auxiliary loss -------------------------------------------------------
 
-        Args:
-            module: Module to collect parameter names from
-            prefix: Prefix for nested parameter names
-
-        Returns:
-            List of parameter names with full path
-        """
-        parameter_names = []
-        for name, submodule in module.named_children():
-            parameter_names.extend(
-                self._collect_parameter_names(submodule, prefix + name + ".")
-            )
-        for name, _ in module.named_parameters(recurse=False):
-            parameter_names.append(prefix + name)
-        return parameter_names
-
-    # --- across-batch load balancing (opt-in; SMEAR itself leaves it off) ------
-    # Rate at which the per-expert routing bias corrects usage imbalance. Zero
-    # disables the mechanism entirely, which is SMEAR's default.
-    balance_rate: float = 0.0
-
-    def _balance_bias(self, logits: torch.Tensor) -> torch.Tensor:
-        """Add the load-balancing bias to the router logits.
-
-        Built as a FRESH tensor from Python floats every call rather than read
-        from a mutated buffer. A buffer that is both read into the autograd
-        graph and mutated in place has its version counter bumped between the
-        point AOTAutograd saves tensors and the point backward replays them,
-        which aborts the step under torch.compile. Python state cannot alias
-        anything autograd saved.
-        """
-        if self.balance_rate <= 0.0:
-            return logits
-        bias = torch.tensor(self._expert_bias, device=logits.device, dtype=logits.dtype)
-        return logits + bias
-
-    @torch._dynamo.disable
-    @torch.no_grad()
-    def _observe_usage(self, router_probs: torch.Tensor) -> None:
-        """Stash this forward's expert usage for the once-per-step balance step.
-
-        Recording only - it must not change what the forward returns, because a
-        gradient-checkpointed forward is recomputed during backward and the
-        recomputation has to match the original exactly. Stepping the bias here
-        would break that (the second pass would see a different bias), which is
-        the same hazard VEAR documents for its repulsion loss.
-        """
-        if self.balance_rate <= 0.0 or not self.training:
-            return
-        u = router_probs.detach().float().mean(dim=0)
-        if torch.isfinite(u).all():
-            self._usage_accum = [float(x) for x in u]
-
-    @torch.no_grad()
-    def step_balance(self) -> None:
-        """Nudge the per-expert bias toward equal usage ACROSS batches.
-
-        This is the aux-loss-free load-balancing rule (DeepSeek-V3): the bias on
-        an under-used expert rises and on an over-used one falls, by a fixed
-        step, until usage evens out. No gradient, so it cannot double-backward
-        through the checkpointed forward or accumulate once per recurrent depth -
-        the two reasons VEAR keeps its repulsion parameter-only.
-
-        The granularity is deliberate. The merge is ``routing_probs.mean(dim=0)``,
-        one geometry per batch, so WITHIN-batch agreement is the design (it is
-        what makes the merge discrete) and only ACROSS-batch diversity is left to
-        balance. Correcting usage here therefore does not fight VEAR's ``p**4``
-        sharpening: it changes which expert a batch commits to, never how hard it
-        commits. The failure it targets is the one that follows from the merge:
-        an expert whose weight sits near zero receives near-zero gradient, stops
-        improving, and so is never worth routing to again - rich-get-richer with
-        no floor. The bias is that floor.
-        """
-        usage = getattr(self, "_usage_accum", None)
-        if self.balance_rate <= 0.0 or not self.training or not usage:
-            return
-        n = len(usage)
-        if len(self._expert_bias) != n:
-            self._expert_bias = [0.0] * n
-        self._usage_accum = None
-        target = 1.0 / n
-        step = self.balance_rate
-        # Sign rule, not proportional: the correction is rate-limited, so a
-        # single pathological batch cannot slam the bias, and the equilibrium is
-        # set by how often an expert is over- or under-used rather than by how
-        # badly it was on any one step.
-        for k in range(n):
-            self._expert_bias[k] += step if usage[k] < target else -step
-        # Re-center so the bias expresses only a RELATIVE preference; without
-        # this the whole vector can drift and swamp the router's own logits.
-        mean_b = sum(self._expert_bias) / n
-        self._expert_bias = [b - mean_b for b in self._expert_bias]
-
-    def _save_to_state_dict(self, destination, prefix, keep_vars):
-        """Carry the routing bias into the checkpoint, so a resumed run keeps the
-        balance it had reached instead of re-deriving it over a few thousand
-        steps."""
-        if self._expert_bias:
-            self._expert_bias_buf.copy_(
-                torch.tensor(self._expert_bias, dtype=self._expert_bias_buf.dtype)
-            )
-        super()._save_to_state_dict(destination, prefix, keep_vars)
-
-    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
-        """Restore the routing bias, tolerating checkpoints written before it
-        existed.
-
-        Lightning loads with ``strict=True``, so a buffer added after a
-        checkpoint was written aborts the resume on a missing key. Seeding the
-        default into ``state_dict`` before delegating means the key is present,
-        the load is clean, and an older checkpoint simply starts the balancer
-        from zero - which is its cold-start value anyway. Any new persistent
-        buffer needs this, or it silently makes every prior checkpoint
-        unloadable."""
-        key = prefix + "_expert_bias_buf"
-        if key not in state_dict:
-            state_dict[key] = self._expert_bias_buf.detach().clone()
-        super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
-        self._expert_bias = [float(x) for x in self._expert_bias_buf]
-
-    def _merge_expert_parameters(
-        self,
-        routing_probs: torch.Tensor,
-        current_depth: int = 0,
-        router_probs: Optional[torch.Tensor] = None,
-    ) -> Dict[str, torch.Tensor]:
-        """
-        Merge expert parameters based on routing probabilities.
-
-        Args:
-            routing_probs: Probabilities the merge actually uses, shape
-                [batch_size, num_experts]. Subclasses may transform these
-                (VEAR sharpens by ``p**4``), so they are NOT the router's output.
-            current_depth: Current layer depth for per-layer metric tracking
-            router_probs: The router's own pre-transform, pre-dropout output.
-                Defaults to ``routing_probs`` (correct for plain SMEAR, where the
-                merge uses exactly what the router emitted). Subclasses that
-                transform the probabilities MUST forward the original here or the
-                diagnostics describe the transform instead of the router.
-
-        Returns:
-            Dictionary of merged parameters
-
-        Raises:
-            ValueError: If a parameter is not found in an expert
-        """
-        # Initialize a dictionary to hold the merged parameters
-        merged_state_dict: Dict[str, torch.Tensor] = {}
-
-        # Compute the mean routing probability across the batch for each expert
-        expert_weights = routing_probs.mean(dim=0)  # [num_experts]
-
-        # Log expert convergence metrics for visualization (with layer prefix).
-        # Sampled, not every merge: the diagnostics carry ~10 `.item()` calls,
-        # each a host-device sync that stalls the pipeline, and the merge runs
-        # once per recurrent depth (again during the checkpointed backward). The
-        # dashboard reads these on a 10-step cadence anyway, so refreshing them
-        # every merge bought nothing. `self._metrics` keeps the last value, so
-        # `get_metrics()` still reports between refreshes - a step function, the
-        # same shape as the RLCT and governor telemetry.
-        if self._should_log_metrics(current_depth):
-            # Under no_grad: every quantity in here is read out with `.item()`
-            # into a plain dict and never reaches the loss, so tracking grads
-            # through it only built graph nodes nothing would ever traverse.
-            with torch.no_grad():
-                self._log_routing_metrics(
-                    expert_weights,
-                    routing_probs if router_probs is None else router_probs,
-                    current_depth,
-                    merge_weights=expert_weights,
-                )
-
-        # The expert structure is fixed once the experts exist, so this walk is
-        # done once rather than on every merge. It used to be rebuilt here on
-        # each call - the assignment reads like a cache but was recomputed.
-        if not self.parameter_names:
-            names = self._collect_parameter_names(self.experts[0])
-            # Drop anything the bank SHARES by reference (today: the long-term
-            # memory, tied across experts in praxis/decoders/base.py). Merging a
-            # tensor with itself under weights that sum to 1 is the identity, so
-            # this is arithmetic-free - it just stops paying the stack, the
-            # tensordot and the python attribute walk for a parameter no routing
-            # decision can move. functional_call leaves an absent name bound to
-            # the module's own parameter, which is that same shared tensor.
-            self.parameter_names = [
-                name
-                for name in names
-                if any(
-                    self._get_module_parameter(expert, name)
-                    is not self._get_module_parameter(self.experts[0], name)
-                    for expert in self.experts[1:]
-                )
-            ]
-
-        for param_name in self.parameter_names:
-            params = []
-            for expert_idx, expert in enumerate(self.experts):
-                param = self._get_module_parameter(expert, param_name)
-
-                if param is None:
-                    raise ValueError(
-                        f"Parameter '{param_name}' not found in expert {expert_idx}."
-                    )
-
-                # Ensure param is on the same device as expert_weights before multiplication
-                if param.device != expert_weights.device:
-                    param = param.to(expert_weights.device)
-
-                params.append(param)
-
-            # One stack + one contraction per parameter, instead of a python
-            # loop issuing 2*E elementwise kernels. Same arithmetic
-            # (sum_e w_e * p_e) and the same autograd graph.
-            #
-            # The merge is launch-bound, not FLOP-bound: measured 880 aten ops
-            # per forward (320 select, 320 mul, 240 add) to do 2.66 MFLOP, ~250x
-            # over the bandwidth floor. This rewrite is worth 1.4x on the merge
-            # forward and 1.9x fwd+bwd - NOT the 4x an isolated loop benchmark
-            # suggested, because it leaves untouched the ~1.9ms of pure-python
-            # `_get_module_parameter` attribute walks (320 getattr chains).
-            # End to end that is ~5% of step time on abstractinator-g, and it is
-            # a small-model eager effect: at greater width, or under
-            # torch.compile, the launches would fuse and this would not matter.
-            stacked = torch.stack(params)  # [num_experts, *param_shape]
-            merged_state_dict[param_name] = torch.tensordot(
-                expert_weights.to(stacked.dtype), stacked, dims=([0], [0])
-            )
-
-        return merged_state_dict
-
-    def _route_logits(
-        self, router_input: torch.Tensor, current_depth: int
-    ) -> torch.Tensor:
-        """Routing logits for this input, before softmax.
-
-        The single place routing is decided, so depth-aware subclasses override
-        here instead of duplicating either forward. Base SMEAR ignores
-        ``current_depth``: one router serves every recurrent pass, which is why
-        the merged geometry is identical at every depth (see ArcSMEAR).
-        """
-        # Weight normalization, applied without modifying in-place.
-        normalized_weight = F.normalize(self.router.weight, dim=1)
-        logits = F.linear(router_input, normalized_weight, self.router.bias)
-        return self._balance_bias(logits)
-
-    def _should_log_metrics(self, current_depth: int) -> bool:
-        """Whether to recompute the routing diagnostics for this depth now.
-
-        Counted per depth so every depth refreshes on the same cadence. Under
-        gradient checkpointing the forward re-runs during backward and ticks
-        this a second time, which only halves the effective period - the
-        diagnostics write to a plain dict and never enter the autograd graph,
-        so the recomputed pass taking a different branch is harmless.
-        """
-        seen = self._metric_ticks.get(current_depth, 0)
-        self._metric_ticks[current_depth] = seen + 1
-        return (seen % ROUTING_METRICS_INTERVAL) == 0
-
-    def _get_module_parameter(
-        self, module: nn.Module, param_name: str
-    ) -> Optional[torch.Tensor]:
-        """
-        Retrieve a parameter from a module using a fully qualified parameter name.
-
-        Args:
-            module: Module to get parameter from
-            param_name: Fully qualified parameter name (e.g., "layer1.weight")
-
-        Returns:
-            Parameter tensor if found, None otherwise
-        """
-        parts = param_name.split(".")
-        submodule = module
-        for part in parts[:-1]:
-            if hasattr(submodule, part):
-                submodule = getattr(submodule, part)
-            else:
-                return None
-        return getattr(submodule, parts[-1], None)
+    # --- diagnostics ----------------------------------------------------------
 
     @staticmethod
-    def _entropy(probs: torch.Tensor, dim: int = -1) -> torch.Tensor:
-        """Shannon entropy in nats, numerically safe.
-
-        ``clamp_min``, NOT ``+ eps``. Adding an epsilon pushes a weight of exactly
-        1.0 above 1, which makes ``log`` positive and the resulting "entropy"
-        slightly NEGATIVE. That artifact is how the old routing_entropy reported
-        ``-0.00000`` under VEAR, and a negative entropy is also the tell that the
-        distribution had saturated to one-hot in float.
-        """
+    def _entropy(probs: Tensor, dim: int = -1) -> Tensor:
+        """Shannon entropy in nats. ``clamp_min``, never ``+ eps``: an epsilon
+        pushes a weight of exactly 1.0 above 1 and makes the entropy negative."""
         p = probs.clamp_min(1e-12)
-        # clamp_min(0) on the result too: a single-expert router gives
-        # -(1.0 * log(1.0)) = -0.0, and a negative zero is noise on a log axis.
         return (-(p * p.log()).sum(dim=dim)).clamp_min(0.0)
 
-    def _log_routing_metrics(
-        self,
-        expert_weights: torch.Tensor,
-        routing_probs: torch.Tensor,
-        current_depth: int = 0,
-        merge_weights: Optional[torch.Tensor] = None,
-    ) -> None:
-        """
-        Store routing metrics for expert convergence tracking.
+    def _log_metrics(self, merge: Tensor, probs: Tensor) -> None:
+        """Four scalars and one heatmap, deliberately.
 
-        WHAT IS MEASURED ON WHAT. Every diagnostic here describes the ROUTER, so
-        it is computed on ``routing_probs`` = the router's own pre-transform,
-        pre-dropout output. The single exception is
-        ``expert_{i}_routing_weight`` / ``routing_merge_entropy``, which describe
-        the MERGE and therefore use the post-transform weights.
-
-        That split exists because VEAR sharpens by ``p**4`` before merging
-        (praxis/routers/vear.py). Measuring the router's diagnostics on the
-        sharpened probabilities made every one of them report VEAR's own
-        exponent rather than anything the router learned: entropy saturated to
-        float-exact one-hot and became insensitive to the weights entirely -
-        bit-identical across models whose losses differed by 5%. A metric that
-        cannot vary with the thing it claims to measure is worse than absent,
-        because it reads as a finding.
-
-        Metrics are stored with layer prefixes to support per-layer visualization
-        when the same router is called at multiple layer positions.
-
-        Metrics flow: SMEAR router → Decoder.get_metrics() → Model.get_metrics() →
-                     BackpropagationTrainer.log_dict() → MetricsLoggerCallback →
-                     SQLite → API → Web dashboard
-
-        Args:
-            expert_weights: Mean routing probability per expert [num_experts]
-            routing_probs: The ROUTER's probabilities [batch_size, num_experts],
-                before any subclass transform and before expert dropout
-            current_depth: Current layer depth for per-layer metric tracking
-            merge_weights: Batch-mean weights the merge actually used. Differs
-                from the router's own mean whenever a subclass transforms them.
+        SMEAR emitted nine chart families keyed by ``layer_{depth}_``, which at
+        depth 6 rendered 54 lines - every one of them the SAME router sampled at
+        a different recurrent pass, since one router serves every depth. Nothing
+        here carries a depth prefix: each pass overwrites the last, so what
+        surfaces is the most recent pass, the same convention
+        ``ArcSingleAttention._record_gate`` uses. The per-pass story is told by
+        ``router_depth_specialization`` on the arc subclass, which is the only
+        place it is actually a different object.
         """
         try:
-            layer_prefix = f"layer_{current_depth}_"
+            n = self.num_experts
+            w = self._flatten(merge)  # [T, N] - what the heatmap reports either way
+            # The heatmap: every target's merge weights, one card.
+            for t, group in enumerate(self.targets):
+                for e in range(n):
+                    self._metrics[f"smear_coeff_{group.label}_{e}"] = w[t, e].item()
 
-            # Per-expert weights the MERGE used - individual expert convergence
-            # trajectories, i.e. which experts are actually being applied.
-            for i, weight in enumerate(expert_weights):
-                self._metrics[f"{layer_prefix}expert_{i}_routing_weight"] = (
-                    weight.item()
-                )
-
-            n = routing_probs.size(-1)
-            router_mean = routing_probs.mean(dim=0)  # [num_experts]
-
-            # Entropy of the router's batch-mean: aggregate expert LOAD BALANCE.
-            # High = the batch spreads across experts; low = the whole batch is
-            # landing on one expert.
-            h_mean = self._entropy(router_mean)
-            self._metrics[f"{layer_prefix}routing_entropy"] = h_mean.item()
-
-            # Concentration: max batch-mean weight (1/N balanced .. 1.0 hogging).
-            self._metrics[f"{layer_prefix}routing_concentration"] = (
-                router_mean.max().item()
-            )
-
-            # Variance of the batch-mean, NORMALIZED to [0, 1]. Raw variance maxes
-            # at (N-1)/N^2 (~0.19 for N=4), so the raw number reads misleadingly
-            # small; here 0 = perfectly balanced load, 1 = collapsed onto one expert.
-            max_var = (n - 1) / (n * n) if n > 1 else 1.0
-            self._metrics[f"{layer_prefix}routing_variance"] = (
-                router_mean.var(unbiased=False) / max_var
+            # Are the deviations being USED, or has each target picked one and
+            # abandoned the rest? Fraction of (target, expert) pairs carrying
+            # more than half their fair share, averaged over targets: 1.0 at
+            # perfect balance, 1/N at total collapse. This is the number expert
+            # dropout is there to hold up, so it is the direct read on whether
+            # the paper's balancing mechanism is working.
+            self._metrics["smear_expert_utilization"] = (
+                (w > (0.5 / n)).float().sum(dim=-1).mean() / n
             ).item()
 
-            # --- Specialization, computed PER SEQUENCE (before the batch-mean) ---
-            # This is what VEAR's sharpening/repulsion actually move: how committed
-            # each sequence's routing is. The batch-mean metrics above CANNOT show
-            # it - different sequences picking different experts average back to
-            # uniform, so routing_variance/entropy plateau low even at perfect
-            # per-sequence specialization.
-            # routing_peak: mean per-sequence top weight (1/N uniform .. 1.0 committed).
-            peak = routing_probs.max(dim=-1).values.mean()
-            self._metrics[f"{layer_prefix}routing_peak"] = peak.item()
-            # Mean per-sequence entropy: how undecided a TYPICAL routing decision
-            # is, as opposed to how balanced the aggregate load is.
-            h_seq = self._entropy(routing_probs, dim=-1).mean()
-            self._metrics[f"{layer_prefix}routing_entropy_seq"] = h_seq.item()
-
             if n > 1:
-                # routing_specialization: peak rescaled to [0, 1] - 0 = uniform
-                # routing, 1 = every sequence commits to a single expert.
-                self._metrics[f"{layer_prefix}routing_specialization"] = (
-                    (n * peak - 1.0) / (n - 1)
-                ).item()
+                # Does the router read its input? I(input; expert) per target,
+                # normalized to [0, 1], then averaged. Zero means every sequence
+                # in the batch got the same coefficients, i.e. the router is a
+                # constant and the whole mechanism is a reparametrized base.
+                flat = probs.reshape(-1, probs.shape[-2], probs.shape[-1])
+                mean_p = flat.mean(dim=0)  # [T, N]
+                h_mean = self._entropy(mean_p, dim=-1)  # [T]
+                h_seq = self._entropy(flat, dim=-1).mean(dim=0)  # [T]
+                mi = ((h_mean - h_seq) / math.log(n)).clamp(0.0, 1.0)
+                self._metrics["smear_input_dependence"] = mi.mean().item()
+                self._metrics["smear_input_dependence_max"] = mi.max().item()
 
-                # INPUT DEPENDENCE: I(input; expert) = H(mean p) - mean H(p),
-                # normalized by log(N) to [0, 1]. This is the number that answers
-                # "is the router reading its input at all". Zero means every
-                # sequence in the batch got the same routing distribution, so the
-                # router is a constant; one means each sequence commits to a
-                # different expert. Neither load balance nor specialization can
-                # distinguish those cases on its own - a router that sends the
-                # WHOLE batch to one expert scores maximum specialization.
-                mi = (h_mean - h_seq) / math.log(n)
-                self._metrics[f"{layer_prefix}routing_input_dependence"] = mi.clamp(
-                    0.0, 1.0
-                ).item()
-
-            # How hard the load balancer is working. Zero = the router balances
-            # itself and the bias is inert; growing = it is holding open a door
-            # the router keeps trying to close.
-            if self.balance_rate > 0.0 and getattr(self, "_expert_bias", None):
-                self._metrics[f"{layer_prefix}routing_balance_bias"] = float(
-                    max(self._expert_bias) - min(self._expert_bias)
-                )
-
-            # Entropy of the weights the MERGE used. For plain SMEAR this equals
-            # routing_entropy; under VEAR the gap between them IS the sharpening,
-            # so reading the two together shows how much p**4 is doing.
-            if merge_weights is not None:
-                self._metrics[f"{layer_prefix}routing_merge_entropy"] = self._entropy(
-                    merge_weights
-                ).item()
+                # THE number this design exists to produce. Mean pairwise L1
+                # distance between different targets' coefficient rows, over its
+                # maximum of 2. Zero means every module chose the same mixture,
+                # so per-module granularity bought nothing and the block is back
+                # to one scalar; high means the modules genuinely disagree, which
+                # is the only thing that justifies the extra rows.
+                if len(self.targets) > 1:
+                    d = (w.unsqueeze(0) - w.unsqueeze(1)).abs().sum(-1)  # [T, T]
+                    t_count = len(self.targets)
+                    self._metrics["smear_target_dispersion"] = (
+                        d.sum() / (t_count * (t_count - 1) * 2.0)
+                    ).item()
         except Exception:
-            # Silently fail if metric computation fails - don't break training
+            # Diagnostics never break a step; they write to a plain dict and
+            # never reach the loss.
             pass
 
     def get_metrics(self) -> dict:
-        """Return collected metrics for logging."""
-        return self._metrics.copy()
+        from praxis.metrics.specialization import depth_dispersion
 
-    def log_gradient_dynamics(self) -> Optional[Dict[str, float]]:
-        """Log gradient statistics for all experts.
-
-        Returns flat dict with per-expert gradient norms and variance.
-
-        Returns:
-            {
-                "expert_0_grad_norm": 0.12,
-                "expert_0_grad_var": 0.003,
-                "expert_1_grad_norm": 0.08,
-                "expert_1_grad_var": 0.002,
-                ...
-            }
-        """
-        if not hasattr(self, "experts") or len(self.experts) == 0:
-            return None
-
-        metrics = {}
-
-        for expert_idx, expert in enumerate(self.experts):
-            grad_norms = []
-            grad_vars = []
-
-            for param in expert.parameters():
-                if param.grad is None:
-                    continue
-
-                grad_norm = param.grad.norm().item()
-                grad_norms.append(grad_norm)
-
-                grad_var = param.grad.var().item()
-                grad_vars.append(grad_var)
-
-            # Aggregate across all parameters
-            if grad_norms:
-                metrics[f"expert_{expert_idx}_grad_norm"] = (
-                    sum(g**2 for g in grad_norms) ** 0.5
-                )
-            if grad_vars:
-                metrics[f"expert_{expert_idx}_grad_var"] = sum(grad_vars) / len(
-                    grad_vars
-                )
-
-        return metrics if metrics else None
-
-    def _is_router_mode(self, args: tuple, kwargs: dict) -> bool:
-        """Check if we're in router mode based on arguments."""
-        # Router mode if we have 7 positional args or 'layer' in kwargs. 8 when
-        # LocalLayer appends the byte-timeline positions - miscounting there
-        # falls through to direct mode, which reads the BLOCK as the input
-        # tensor and dies inside the residual with a bare AttributeError.
-        return len(args) in (7, 8) or "layer" in kwargs
-
-    def _parse_router_args(self, args: tuple, kwargs: dict) -> tuple:
-        """Parse arguments for router mode."""
-        if len(args) in (7, 8):
-            # Positional arguments (8 when the byte-timeline positions are
-            # threaded through; see PraxisModel.forward).
-            return args
-        else:
-            # Keyword arguments
-            return (
-                kwargs["layer"],
-                kwargs["inputs"],
-                kwargs.get("attention_mask"),
-                kwargs.get("past_key_values"),
-                kwargs.get("current_state"),
-                kwargs.get("current_depth", 0),
-                kwargs.get("block_ids"),
-            )
-
-    def _parse_direct_args(
-        self, args: tuple, kwargs: dict
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        """Parse arguments for direct mode."""
-        if len(args) >= 2:
-            # Positional args: (inputs, current_state)
-            return args[0], args[1]
-        elif len(args) == 1:
-            # Only inputs provided
-            return args[0], None
-        else:
-            # Try kwargs
-            inputs = kwargs.get("inputs")
-            if inputs is None:
-                raise ValueError(f"No inputs provided. Args: {args}, Kwargs: {kwargs}")
-            return inputs, kwargs.get("current_state")
-
-    def _direct_forward(
-        self,
-        inputs: torch.Tensor,
-        current_state: Optional[torch.Tensor],
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], float]:
-        """Direct mode forward pass for RecurrentBlock usage."""
-        # Get routing probabilities with proper normalization
-        router_input = inputs.mean(dim=1)  # Average across sequence length
-        router_input = self.router_norm(router_input)  # Layer norm on input
-
-        # Direct mode has no recurrent depth of its own; depth 0 keeps
-        # depth-aware subclasses well-defined here.
-        logits = self._route_logits(router_input, 0)
-
-        routing_probs = F.softmax(logits, dim=-1)  # [batch_size, num_experts]
-
-        # Router's own opinion, before dropout and before any subclass transform.
-        router_probs = routing_probs
-        self._observe_usage(router_probs)
-
-        # Apply expert dropout during training (drop entire experts)
-        if self.training and self.dropout_rate > 0:
-            # Create dropout mask for experts
-            expert_mask = torch.bernoulli(
-                torch.ones_like(routing_probs) * (1 - self.dropout_rate)
-            )
-            routing_probs = routing_probs * expert_mask
-            # Renormalize to ensure probabilities sum to 1
-            routing_probs = routing_probs / (
-                routing_probs.sum(dim=-1, keepdim=True) + 1e-8
-            )
-
-        # Merge expert parameters based on routing probabilities
-        merged_state_dict = self._merge_expert_parameters(
-            routing_probs, router_probs=router_probs
-        )
-
-        # Use the first expert as the base module structure
-        base_module = self.experts[0]
-
-        # Apply the merged parameters using functional_call (tie_weights=False:
-        # see _router_forward - avoids the shared-expert recurrent double-backward).
-        result = torch.func.functional_call(
-            base_module,
-            merged_state_dict,
-            (inputs, current_state),
-            {},
-            tie_weights=False,
-        )
-
-        # Handle different return formats
-        if isinstance(result, tuple) and len(result) == 3:
-            return result
-        elif isinstance(result, tuple) and len(result) == 2:
-            # Add zero aux loss if not provided
-            return result[0], result[1], 0.0
-        else:
-            # Fallback
-            return result, current_state, 0.0
+        out = self._metrics.copy()
+        stats = depth_dispersion(self.depth_bias.weight)
+        if stats is not None:
+            out["router_depth_specialization"] = stats["specialization"]
+            out["router_depth_similarity"] = stats["similarity"]
+        return out

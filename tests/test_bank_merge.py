@@ -1,10 +1,12 @@
-"""Depth-aware routing (ArcSMEAR/ArcVEAR) and the SMEAR merge fast path.
+"""The bank merge's fused fast path (praxis/routers/bank.py).
 
-Two things are pinned here:
-  * the fused merge must be NUMERICALLY IDENTICAL to the per-parameter loop it
-    replaced - it is a performance change, not a behaviour change;
-  * the depth bias must be identity at init, so swapping smear -> arc_smear is a
-    clean A/B rather than a different model.
+Pins that the fused merge is NUMERICALLY IDENTICAL to the per-parameter loop it
+replaced - a performance change, not a behaviour change.
+
+The depth-bias half of this file is gone: ArcSMEAR/ArcVEAR no longer exist as
+separate classes, because the per-recurrent-pass bias folded into SMEAR itself
+(zero-init, so it is identity until it learns otherwise). Its coverage moved to
+tests/test_smear.py::test_depth_bias_is_identity_at_init.
 """
 
 import pytest
@@ -12,9 +14,9 @@ import torch
 import torch.nn as nn
 
 from praxis.routers import ROUTER_REGISTRY
-from praxis.routers.arc_smear import ArcSMEAR, ArcVEAR, DepthBiasedRouting
-from praxis.routers.smear import ROUTING_METRICS_INTERVAL, SMEAR
-from praxis.routers.vear import VEAR
+from praxis.routers.bank import ROUTING_METRICS_INTERVAL
+from praxis.routers.bank import ExpertBank as SMEAR
+from praxis.routers.bank import SharpenedExpertBank as VEAR
 
 
 class Expert(nn.Module):
@@ -60,7 +62,7 @@ def reference_merge(router, expert_weights):
 # ── the merge is a performance change only ──────────────────────────────────
 
 
-@pytest.mark.parametrize("router_cls", [SMEAR, VEAR, ArcSMEAR, ArcVEAR])
+@pytest.mark.parametrize("router_cls", [SMEAR, VEAR])
 def test_fused_merge_matches_the_reference_loop(router_cls):
     torch.manual_seed(0)
     r = make(router_cls)
@@ -163,98 +165,3 @@ def test_vear_latches_the_expert_init_check():
 
 
 # ── depth-aware routing ─────────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize("arc_cls,base_cls", [(ArcSMEAR, SMEAR), (ArcVEAR, VEAR)])
-def test_identity_at_init(arc_cls, base_cls):
-    """Zero-init bias => the depth-aware router IS its parent at step 0."""
-    torch.manual_seed(7)
-    arc = make(arc_cls)
-    torch.manual_seed(7)
-    base = make(base_cls)
-
-    assert torch.equal(arc.depth_bias.weight, torch.zeros_like(arc.depth_bias.weight))
-    x = torch.randn(3, Cfg.hidden_size)
-    for d in range(Cfg.depth):
-        assert torch.allclose(
-            arc._route_logits(x, d), base._route_logits(x, d), atol=1e-7
-        ), f"depth {d} diverged at init"
-
-
-def test_depth_bias_changes_routing_once_trained():
-    torch.manual_seed(0)
-    r = make(ArcSMEAR)
-    with torch.no_grad():
-        r.depth_bias.weight.normal_(0, 1.0)
-    x = torch.randn(3, Cfg.hidden_size)
-    logits = [r._route_logits(x, d) for d in range(Cfg.depth)]
-    for a in range(len(logits)):
-        for b in range(a + 1, len(logits)):
-            assert not torch.allclose(logits[a], logits[b]), f"depth {a} == {b}"
-
-
-def test_depth_index_wraps_past_the_table():
-    """Halting can sample deeper than `depth`; wrap rather than index-error."""
-    r = make(ArcSMEAR, depth=3)
-    with torch.no_grad():
-        r.depth_bias.weight.normal_(0, 1.0)
-    x = torch.randn(2, Cfg.hidden_size)
-    assert torch.allclose(r._route_logits(x, 0), r._route_logits(x, 3))
-    assert torch.allclose(r._route_logits(x, 1), r._route_logits(x, 4))
-
-
-def test_depth_bias_is_tiny_relative_to_the_experts():
-    r = make(ArcVEAR)
-    bias = r.depth_bias.weight.numel()
-    experts = sum(p.numel() for e in r.experts for p in e.parameters())
-    assert bias == Cfg.depth * len(r.experts)
-    assert bias < experts / 100, f"{bias} bias params vs {experts} expert params"
-
-
-def test_arc_vear_keeps_vear_behaviour():
-    r = make(ArcVEAR)
-    assert isinstance(r, VEAR)
-    assert hasattr(r, "router_aux_loss")
-    r.train()
-    aux = r.router_aux_loss()
-    assert "vear_repulsion" in aux
-
-
-def test_depth_metrics_ride_the_router_metric_channel():
-    """get_metrics is what BaseDecoder collects; training_metrics is not."""
-    r = make(ArcVEAR)
-    probs = torch.softmax(torch.randn(2, len(r.experts)), dim=-1)
-    r._merge_expert_parameters(probs, 0)  # populate the base routing metrics
-
-    m = r.get_metrics()
-    assert "router_depth_specialization" in m
-    assert "router_depth_similarity" in m
-    # the base router's own metrics must survive the override
-    assert any(k.endswith("routing_entropy") for k in m), sorted(m)[:6]
-    # zero-init => nothing has specialized yet
-    assert m["router_depth_specialization"] == pytest.approx(0.0, abs=1e-6)
-
-
-def test_plain_routers_emit_no_depth_metrics():
-    r = make(VEAR)
-    probs = torch.softmax(torch.randn(2, len(r.experts)), dim=-1)
-    r._merge_expert_parameters(probs, 0)
-    assert not [k for k in r.get_metrics() if k.startswith("router_depth_")]
-
-
-def test_depth_metric_chart_is_registered():
-    from praxis.metrics import COMPOSITE_METRIC_REGISTRY
-    import re
-
-    entry = next(
-        e for e in COMPOSITE_METRIC_REGISTRY if e["key"] == "router_depth_bias"
-    )
-    pattern = re.compile(entry["key_pattern"])
-    assert pattern.match("router_depth_specialization")
-    assert pattern.match("router_depth_similarity")
-    assert not pattern.match("router_depth_other")
-
-
-def test_registered_under_both_names():
-    assert ROUTER_REGISTRY["arc_smear"] is ArcSMEAR
-    assert ROUTER_REGISTRY["arc_vear"] is ArcVEAR

@@ -22,21 +22,21 @@ from praxis.width import WIDTH_REGISTRY
 def _wants_expert_bank(router_type: Optional[str]) -> bool:
     """Whether this router is built with a BANK of experts to merge.
 
-    Asks the registered class, not a hardcoded name list: SMEAR-family routers
-    raise at construction without ``experts=``, so a new subclass (arc_smear,
-    arc_vear) that was not in the list silently got the single-block branch and
-    then failed to build. Distance is not a SMEAR subclass but takes the same
-    bank, so it stays named.
+    Asks the registered class, not a hardcoded name list: bank routers raise at
+    construction without ``experts=``, so a subclass that was not in the list
+    silently got the single-block branch and then failed to build. Distance is
+    the only such router left (praxis/routers/bank.py); the SMEAR/VEAR routers
+    moved to the targeted merge and build one block, not a bank.
     """
     if not router_type:
         return False
     from praxis.routers import ROUTER_REGISTRY
-    from praxis.routers.smear import SMEAR
+    from praxis.routers.bank import ExpertBank
 
     cls = ROUTER_REGISTRY.get(router_type)
     cls = getattr(cls, "func", cls)  # unwrap functools.partial entries
     return router_type == "distance" or (
-        isinstance(cls, type) and issubclass(cls, SMEAR)
+        isinstance(cls, type) and issubclass(cls, ExpertBank)
     )
 
 

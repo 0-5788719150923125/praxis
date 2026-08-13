@@ -438,7 +438,11 @@ class CrystalVearHead(BaseHead):
                 "loss_func='cut_cross_entropy' (cut-CE assumes a dot-product head)"
             )
         # Deferred import: routers/ -> heads/ would otherwise risk an import cycle.
-        from praxis.routers.vear import VEAR, VEAR_REPULSION, VEAR_SHARPEN
+        from praxis.routers.bank import (
+            VEAR_REPULSION,
+            VEAR_SHARPEN,
+            SharpenedExpertBank,
+        )
 
         self._rep_scale = float(VEAR_REPULSION)
         self._sharpen = float(VEAR_SHARPEN if sharpen is None else sharpen)
@@ -479,7 +483,7 @@ class CrystalVearHead(BaseHead):
         vcfg = SimpleNamespace(
             num_experts=self.n_experts, hidden_size=center_dim, expert_dropout=0.1
         )
-        self.bank = VEAR(vcfg, experts=experts)
+        self.bank = SharpenedExpertBank(vcfg, experts=experts)
 
     def _route(self, hidden_states: Tensor, mask: Optional[Tensor] = None) -> Tensor:
         """Per-sequence routing probs ``[B, N]`` (mirrors SMEAR's routing).

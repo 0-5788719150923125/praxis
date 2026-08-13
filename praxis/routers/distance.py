@@ -15,10 +15,10 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 
-from praxis.routers.smear import SMEAR
+from praxis.routers.bank import ExpertBank
 
 
-class Distance(SMEAR):
+class Distance(ExpertBank):
     """
     Distance Router: SMEAR with Parameter Diversity Loss.
 

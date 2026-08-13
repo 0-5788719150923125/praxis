@@ -1093,7 +1093,7 @@ COMPOSITE_METRIC_REGISTRY: list = [
     # different object exists. Auto-hide for the other routers, which emit none
     # of these keys.
     {
-        "key": "smear_modular_coefficients",
+        "key": "smear_coefficients",
         "type": "expert_routing_heatmap",
         "title": "SMEAR Merge Coefficients (per target module)",
         "y_label": "Merge weight",
@@ -1105,12 +1105,12 @@ COMPOSITE_METRIC_REGISTRY: list = [
             "state at once. A row pinned at 1/N means that module declined to "
             "specialize; a row at 1.0 means it committed."
         ),
-        "key_pattern": r"^smear_modular_coeff_.+_\d+$",
+        "key_pattern": r"^smear_coeff_.+_\d+$",
         "stepped": True,
         "order": 260,
     },
     {
-        "key": "smear_modular_target_dispersion",
+        "key": "smear_target_dispersion",
         "type": "multi_expert_line",
         "title": "SMEAR Target Dispersion (did per-module granularity earn it?)",
         "y_label": "Mean pairwise row distance",
@@ -1124,13 +1124,13 @@ COMPOSITE_METRIC_REGISTRY: list = [
             "extra rows. Zero at init by construction, so early flatness reads "
             "as 'nothing learned yet', not as collapse."
         ),
-        "key_pattern": r"^smear_modular_target_dispersion$",
+        "key_pattern": r"^smear_target_dispersion$",
         "order": 261,
     },
     {
-        "key": "smear_modular_input_dependence",
+        "key": "smear_input_dependence",
         "type": "multi_expert_line",
-        "title": "SMEAR Routing Input Dependence (modular)",
+        "title": "SMEAR Routing Input Dependence",
         "y_label": "I(input; expert) / log N",
         "description": (
             "Normalized mutual information between the input and the expert "
@@ -1140,13 +1140,13 @@ COMPOSITE_METRIC_REGISTRY: list = [
             "constant and the merge is a reparametrized base. This is the "
             "measurement that decayed to ~1e-5 under VEAR on abstractinator-g."
         ),
-        "key_pattern": r"^smear_modular_input_dependence(_max)?$",
+        "key_pattern": r"^smear_input_dependence(_max)?$",
         "order": 262,
     },
     {
-        "key": "smear_modular_expert_utilization",
+        "key": "smear_expert_utilization",
         "type": "multi_expert_line",
-        "title": "SMEAR Deviation Utilization (modular)",
+        "title": "SMEAR Deviation Utilization",
         "y_label": "Fraction in use",
         "description": (
             "Fraction of deviations carrying more than half their fair share of "
@@ -1157,7 +1157,7 @@ COMPOSITE_METRIC_REGISTRY: list = [
             "SMEAR paper's own load-balancing mechanism, and the one the first "
             "cut of this router omitted."
         ),
-        "key_pattern": r"^smear_modular_expert_utilization$",
+        "key_pattern": r"^smear_expert_utilization$",
         "order": 263,
     },
     {

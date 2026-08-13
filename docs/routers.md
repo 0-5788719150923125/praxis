@@ -17,22 +17,6 @@ specializes per pass. Zero-init coefficients mean the model starts identical to 
 
 Source: [praxis/routers/arc.py:48](../praxis/routers/arc.py#L48)
 
-## `arc_smear` - ArcSMEAR
-
-SMEAR with a per-recurrent-pass routing bias.
-
-Source: [praxis/routers/arc_smear.py:84](../praxis/routers/arc_smear.py#L84)
-
-## `arc_vear` - ArcVEAR
-
-VEAR with a per-recurrent-pass routing bias.
-
-Keeps VEAR's sharpening, repulsion and balancing; the bias is applied to the logits
-beforehand, so it changes which expert a pass concentrates on rather than how sharply it
-concentrates.
-
-Source: [praxis/routers/arc_smear.py:92](../praxis/routers/arc_smear.py#L92)
-
 ## `distance` - Distance
 
 Distance Router: SMEAR with Parameter Diversity Loss.
@@ -86,16 +70,16 @@ Key design: Clean ...
 
 Source: [praxis/routers/prismatic.py:29](../praxis/routers/prismatic.py#L29)
 
-## `smear` - SMEAR
+## `smear`, `smear_batch`, `smear_token` - SMEAR
 
-This module implements Soft-Merging of Experts with Adaptive Routing (SMEAR):
-https://arxiv.org/abs/2306.03745
+Soft-merging of experts, at the granularity the paper uses.
 
-SMEAR dynamically merges expert parameters based on routing probabilities, rather than
-routing inputs to multiple experts. This enables more efficient parameter sharing and
-adaptation to input patterns.
+Source: [praxis/routers/smear.py:241](../praxis/routers/smear.py#L241)
 
-Source: [praxis/routers/smear.py:29](../praxis/routers/smear.py#L29)
+Presets:
+- `smear` - class defaults
+- `smear_batch` - `reduction='batch'`
+- `smear_token` - `reduction='token'`
 
 ## `taxus`
 
@@ -111,6 +95,6 @@ Value: `functools.partial(<function praxis.routers.create_taxus_with_dynamic_bud
 
 ## `vear` - VEAR
 
-Variance-driven Experts with Adaptive Routing (sharpened, repelled SMEAR).
+SMEAR with sharpened routing and repelled experts.
 
-Source: [praxis/routers/vear.py:61](../praxis/routers/vear.py#L61)
+Source: [praxis/routers/vear.py:46](../praxis/routers/vear.py#L46)

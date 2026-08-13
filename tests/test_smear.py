@@ -24,13 +24,8 @@ import torch
 import torch.nn as nn
 
 from praxis.routers import ROUTER_REGISTRY
-from praxis.routers.modular import (
-    ArcModularSMEAR,
-    MergedLinear,
-    ModularSMEAR,
-    ModularVEAR,
-    _get_param,
-)
+from praxis.routers.smear import SMEAR, MergedLinear, _get_param
+from praxis.routers.vear import VEAR
 from praxis.routers.targeting import TARGET_PROFILES, discover_targets
 
 
@@ -83,7 +78,7 @@ class Cfg:
     num_experts = 1
 
 
-def make(cls=ModularSMEAR, n=4, profile="unrouted", depth=6, dropout=0.0):
+def make(cls=SMEAR, n=4, profile="all", depth=6, dropout=0.0):
     cfg = Cfg()
     cfg.depth = depth
     block = Block(cfg.hidden_size)
@@ -103,7 +98,7 @@ def router_args(block, x, depth=0):
 
 def test_opaque_subtree_is_never_targeted():
     _, block = make()
-    groups, skipped = discover_targets(block, TARGET_PROFILES["unrouted"])
+    groups, skipped = discover_targets(block, TARGET_PROFILES["all"])
     names = {g.name for g in groups}
     assert not any(n.startswith("ffn.") or n == "ffn" for n in names)
     assert skipped["opaque"] == 2  # Opaque.big weight + bias
@@ -112,7 +107,7 @@ def test_opaque_subtree_is_never_targeted():
 def test_tied_parameters_are_merged_at_most_once():
     _, block = make()
     block.attn.output.weight = block.attn.qkv.weight  # tie by reference
-    groups, skipped = discover_targets(block, TARGET_PROFILES["unrouted"])
+    groups, skipped = discover_targets(block, TARGET_PROFILES["all"])
     flat = [p for g in groups for p in g.params]
     assert flat.count("attn.qkv.weight") + flat.count("attn.output.weight") == 1
     assert skipped["shared"] == 1
@@ -121,7 +116,7 @@ def test_tied_parameters_are_merged_at_most_once():
 def test_frozen_parameters_are_skipped():
     _, block = make()
     block.attn_norm.weight.requires_grad_(False)
-    _, skipped = discover_targets(block, TARGET_PROFILES["unrouted"])
+    _, skipped = discover_targets(block, TARGET_PROFILES["all"])
     assert skipped["frozen"] == 1
 
 
@@ -164,7 +159,7 @@ def test_forward_matches_bare_block_at_init():
     torch.testing.assert_close(got, want)
 
 
-@pytest.mark.parametrize("cls", [ArcModularSMEAR])
+@pytest.mark.parametrize("cls", [SMEAR])
 def test_depth_bias_is_identity_at_init(cls):
     router, block = make(cls)
     assert torch.all(router.depth_bias.weight == 0)
@@ -175,7 +170,7 @@ def test_depth_bias_is_identity_at_init(cls):
 
 
 def test_depth_bias_wraps_past_the_table():
-    router, block = make(ArcModularSMEAR, depth=6)
+    router, block = make(SMEAR, depth=6)
     x = torch.randn(2, 5, Cfg.hidden_size)
     router(*router_args(block, x, depth=9))  # must not raise
 
@@ -214,8 +209,8 @@ def test_coefficients_sum_to_one_per_target():
 
 
 def test_sharpening_concentrates_without_changing_shape():
-    sharp, _ = make(ModularVEAR)
-    plain, _ = make(ModularSMEAR)
+    sharp, _ = make(VEAR)
+    plain, _ = make(SMEAR)
     sharp.router.load_state_dict(plain.router.state_dict())
     sharp.router_norm.load_state_dict(plain.router_norm.state_dict())
     x = torch.randn(8, 6, Cfg.hidden_size)
@@ -264,10 +259,13 @@ def test_deviations_receive_gradient():
 
 
 def test_repulsion_is_a_scalar_and_training_only():
-    router, _ = make()
+    """Repulsion is VEAR's, not SMEAR's - the paper's SMEAR has neither it nor
+    sharpening."""
+    assert not hasattr(SMEAR, "router_aux_loss")
+    router, _ = make(VEAR)
     router.train()
     aux = router.router_aux_loss()
-    assert "smear_modular_repulsion" in aux and aux["smear_modular_repulsion"].dim() == 0
+    assert "vear_repulsion" in aux and aux["vear_repulsion"].dim() == 0
     router.eval()
     assert router.router_aux_loss() == {}
 
@@ -400,9 +398,9 @@ def test_metrics_carry_no_depth_prefix():
     m = router.get_metrics()
     assert m, "no metrics emitted"
     assert not any(k.startswith("layer_") for k in m)
-    assert "smear_modular_target_dispersion" in m
-    assert "smear_modular_input_dependence" in m
-    assert sum(k.startswith("smear_modular_coeff_") for k in m) == len(router.targets) * 4
+    assert "smear_target_dispersion" in m
+    assert "smear_input_dependence" in m
+    assert sum(k.startswith("smear_coeff_") for k in m) == len(router.targets) * 4
 
 
 def test_dispersion_is_zero_when_targets_agree():
@@ -412,19 +410,17 @@ def test_dispersion_is_zero_when_targets_agree():
         router.router.bias.zero_()
     x = torch.randn(4, 5, Cfg.hidden_size)
     router(*router_args(block, x))
-    assert router.get_metrics()["smear_modular_target_dispersion"] == pytest.approx(0.0, abs=1e-6)
+    assert router.get_metrics()["smear_target_dispersion"] == pytest.approx(0.0, abs=1e-6)
 
 
 # --- registry -----------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "key", ["smear_modular_4", "smear_modular_2", "arc_smear_modular_4", "arc_smear_modular_8", "arc_smear_modular_4_attn",
-            "arc_smear_modular_4_gates", "arc_vear_modular_4"]
-)
+@pytest.mark.parametrize("key", ["smear", "vear", "smear_batch", "smear_token"])
 def test_registry_entries_build(key):
     cfg = Cfg()
     block = Block(cfg.hidden_size)
+    cfg.num_experts = 4
     router = ROUTER_REGISTRY[key](cfg, block=block, verbose=False)
     x = torch.randn(2, 5, cfg.hidden_size)
     out = router(*router_args(block, x))
@@ -432,12 +428,12 @@ def test_registry_entries_build(key):
 
 
 def test_state_dict_round_trips():
-    router, block = make(ArcModularSMEAR)
+    router, block = make(SMEAR)
     for p in router.deltas.values():
         nn.init.normal_(p, std=0.05)
     nn.init.normal_(router.depth_bias.weight, std=0.05)
 
-    fresh, _ = make(ArcModularSMEAR)
+    fresh, _ = make(SMEAR)
     fresh.load_state_dict(router.state_dict())
 
     x = torch.randn(2, 5, Cfg.hidden_size)
@@ -450,16 +446,18 @@ def test_state_dict_round_trips():
 def test_layout_is_shared_so_the_decoder_builds_one_block():
     from praxis.decoders.base import _router_layout, _wants_expert_bank
 
-    assert _router_layout("arc_smear_modular_4") == "shared"
-    assert not _wants_expert_bank("arc_smear_modular_4")
-    assert _router_layout("arc_vear") == "bank"  # legacy path unchanged
+    assert _router_layout("smear") == "shared"
+    assert _router_layout("vear") == "shared"
+    assert not _wants_expert_bank("smear")
+    # Distance is the only bank router left (praxis/routers/bank.py).
+    assert _router_layout("distance") == "bank"
 
 
 # --- expert dropout (the paper's load-balancing mechanism) --------------------
 
 
 def test_expert_dropout_defaults_to_the_paper_rate():
-    assert ModularSMEAR.EXPERT_DROPOUT == pytest.approx(0.1)
+    assert SMEAR.EXPERT_DROPOUT == pytest.approx(0.1)
 
 
 def test_dropout_perturbs_coefficients_only_while_training():
@@ -524,10 +522,94 @@ def test_utilization_metric_spans_collapse_to_balance():
         router.router.weight.zero_()
         router.router.bias.zero_()
     router(*router_args(block, x))
-    assert router.get_metrics()["smear_modular_expert_utilization"] == pytest.approx(1.0)
+    assert router.get_metrics()["smear_expert_utilization"] == pytest.approx(1.0)
 
     router._tick = 0
     with torch.no_grad():  # collapsed routing -> one of four in use
         router.router.bias.view(len(router.targets), 4)[:, 0] = 50.0
     router(*router_args(block, x))
-    assert router.get_metrics()["smear_modular_expert_utilization"] == pytest.approx(0.25)
+    assert router.get_metrics()["smear_expert_utilization"] == pytest.approx(0.25)
+
+
+# --- reduction: how far a routing decision is shared -------------------------
+
+
+def test_reduction_shapes():
+    """Each reduction changes what the coefficients are indexed by."""
+    x = torch.randn(4, 6, Cfg.hidden_size)
+    for reduction, want in (
+        ("example", (4, None, 4)),
+        ("token", (4, 6, None, 4)),
+        ("batch", (4, None, 4)),
+    ):
+        cfg = Cfg()
+        block = Block(cfg.hidden_size)
+        r = SMEAR(cfg, block=block, num_experts=4, reduction=reduction, verbose=False)
+        r.EXPERT_DROPOUT = 0.0
+        merge, _ = r._coefficients(x, 0)
+        expected = tuple(len(r.targets) if d is None else d for d in want)
+        assert merge.shape == expected, f"{reduction}: {merge.shape} != {expected}"
+        # Elementwise targets always collapse to one geometry per forward.
+        assert r._flatten(merge).shape == (len(r.targets), 4)
+
+
+def test_batch_reduction_gives_every_example_the_same_routing():
+    """The legacy behaviour, and the reason a constant router was its fixed
+    point: no gradient path can distinguish two examples."""
+    cfg = Cfg()
+    block = Block(cfg.hidden_size)
+    r = SMEAR(cfg, block=block, num_experts=4, reduction="batch", verbose=False)
+    r.EXPERT_DROPOUT = 0.0
+    merge, _ = r._coefficients(torch.randn(8, 5, Cfg.hidden_size), 0)
+    for b in range(1, 8):
+        torch.testing.assert_close(merge[b], merge[0])
+
+
+def test_example_reduction_does_not(): 
+    cfg = Cfg()
+    block = Block(cfg.hidden_size)
+    r = SMEAR(cfg, block=block, num_experts=4, reduction="example", verbose=False)
+    r.EXPERT_DROPOUT = 0.0
+    with torch.no_grad():  # make the router actually read its input
+        nn.init.normal_(r.router.weight, std=1.0)
+    merge, _ = r._coefficients(torch.randn(8, 5, Cfg.hidden_size), 0)
+    assert not torch.allclose(merge[0], merge[1])
+
+
+def test_token_reduction_routes_positions_independently():
+    """Beyond the paper, and only possible because MergedLinear never
+    materializes the merged weight."""
+    cfg = Cfg()
+    block = Block(cfg.hidden_size)
+    r = SMEAR(cfg, block=block, num_experts=4, reduction="token", verbose=False)
+    r.EXPERT_DROPOUT = 0.0
+    with torch.no_grad():
+        nn.init.normal_(r.router.weight, std=1.0)
+    merge, _ = r._coefficients(torch.randn(2, 6, Cfg.hidden_size), 0)
+    assert not torch.allclose(merge[0, 0], merge[0, 1]), "positions routed alike"
+
+
+@pytest.mark.parametrize("reduction", ["token", "example", "batch"])
+def test_every_reduction_runs_forward_and_backward(reduction):
+    cfg = Cfg()
+    block = Block(cfg.hidden_size)
+    r = SMEAR(cfg, block=block, num_experts=4, reduction=reduction, verbose=False)
+    x = torch.randn(3, 5, Cfg.hidden_size)
+    r(*router_args(block, x))[0].sum().backward()
+    assert block.attn.qkv.weight.grad.abs().sum() > 0
+    assert r.wrappers["attn_qkv"].lora_b.grad is not None
+
+
+def test_unknown_reduction_is_rejected():
+    cfg = Cfg()
+    with pytest.raises(ValueError, match="Unknown reduction"):
+        SMEAR(cfg, block=Block(cfg.hidden_size), reduction="sequence", verbose=False)
+
+
+def test_num_experts_comes_from_the_config():
+    """One registry entry per router; the count is config, not a key suffix."""
+    cfg = Cfg()
+    cfg.num_experts = 7
+    r = SMEAR(cfg, block=Block(cfg.hidden_size), verbose=False)
+    assert r.num_experts == 7
+    assert r.router.out_features == len(r.targets) * 7

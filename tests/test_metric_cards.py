@@ -108,9 +108,9 @@ def test_composite_orders_do_not_collide():
     # Pre-existing ties are grandfathered; the point is that new cards do not
     # silently join them. Assert only that the ones we placed are clean.
     for key in ("density_gradient", "density_steepening",
-                "smear_modular_coefficients", "smear_modular_target_dispersion",
-                "smear_modular_input_dependence",
-                "smear_modular_expert_utilization"):
+                "smear_coefficients", "smear_target_dispersion",
+                "smear_input_dependence",
+                "smear_expert_utilization"):
         entry = next(e for e in COMPOSITE_METRIC_REGISTRY if e["key"] == key)
         assert entry["order"] not in dupes, (
             f"{key} at order {entry['order']} ties with another card"

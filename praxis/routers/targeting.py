@@ -91,12 +91,13 @@ class TargetGroup:
         return (self.name or "root").replace(".", "_")
 
 
-# Named profiles, registry-style. ``unrouted`` is the principled default: merge
+# Named profiles, registry-style. ``all`` is the principled default: merge
 # everything that carries a geometry and does not already route itself. The
 # narrower profiles exist to isolate where the gain (if any) comes from.
 TARGET_PROFILES: Dict[str, TargetSpec] = {
-    # Everything parameter-bearing that survives the structural exclusions.
-    "unrouted": TargetSpec(),
+    # Everything parameter-bearing that survives the structural exclusions
+    # above - i.e. every module that does not already route itself. The default.
+    "all": TargetSpec(),
     # Attention only - the sublayer the standard MoE literature does NOT make
     # sparse, so this is the honest test of whether it should be.
     "attn": TargetSpec(include=(r"attn(\..*)?",)),
@@ -189,7 +190,7 @@ def discover_targets(
 def describe(groups: List[TargetGroup], skipped: Dict[str, int]) -> str:
     """One-line-per-target summary, for the build log and for tests."""
     total = sum(g.numel for g in groups)
-    lines = [f"[SMEAR/modular] {len(groups)} targets, {total:,} merged parameters"]
+    lines = [f"[SMEAR] {len(groups)} targets, {total:,} merged parameters"]
     for g in groups:
         lines.append(f"  {g.label:<24} {g.numel:>10,}  ({', '.join(g.params)})")
     drops = ", ".join(f"{k}={v}" for k, v in skipped.items() if v)

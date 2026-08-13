@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch import Tensor
 
 from praxis.recurrent import RECURRENT_REGISTRY
-from praxis.routers.smear import SMEAR
+from praxis.routers.bank import ExpertBank
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
@@ -28,7 +28,7 @@ class RecurrentBlock(nn.Module):
         num_experts_for_smear = getattr(config, "num_experts", 3)
 
         self.norm = nn.RMSNorm(config.hidden_size, eps=config.epsilon)
-        self.experts = SMEAR(
+        self.experts = ExpertBank(
             config,
             experts=nn.ModuleList(
                 [

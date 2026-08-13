@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch import Tensor
 
 from praxis.recurrent import RECURRENT_REGISTRY
-from praxis.routers.smear import SMEAR
+from praxis.routers.bank import ExpertBank
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
@@ -29,7 +29,7 @@ class GRUBlock(nn.Module):
 
         self.norm = nn.RMSNorm(config.hidden_size, eps=config.epsilon)
         self.dropout = nn.Dropout(config.dropout)
-        self.experts = SMEAR(
+        self.experts = ExpertBank(
             config,
             experts=nn.ModuleList(
                 [

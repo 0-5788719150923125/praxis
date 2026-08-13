@@ -101,32 +101,40 @@ class TestSMEARIntegration:
         assert len(decoder.locals) == config.num_experts
 
     def test_smear_expert_merging(self):
-        """Test that SMEAR properly merges expert parameters."""
+        """SMEAR emits one coefficient distribution PER TARGET, per example.
+
+        This used to assert ``[batch, num_experts]`` - one distribution for a
+        whole block. The router now discovers per-module targets and emits
+        ``[batch, targets, num_experts]``; the old shape was the coarseness the
+        rewrite removed.
+        """
         config = MockConfig(num_experts=3, num_layers=3)
         decoder = DECODER_REGISTRY["sequential"](config)
+        router = decoder.locals[0].router
 
-        # Get the SMEAR router
-        smear_router = decoder.locals[0].router
+        # One shared block, `num_experts` deviations per target - not N blocks.
+        assert len(decoder.locals) == config.num_layers
+        assert all(layer is decoder.locals[0] for layer in decoder.locals)
+        assert router.num_experts == config.num_experts
+        assert router.targets, "no merge targets discovered"
 
-        # Verify it has the correct number of experts
-        assert len(smear_router.experts) == config.num_experts
-
-        # Test parameter merging
-        batch_size = 2
-        seq_len = 10
+        batch_size, seq_len = 2, 10
         hidden_states = torch.randn(batch_size, seq_len, config.hidden_size)
+        merge, probs = router._coefficients(hidden_states, 0)
 
-        # Get routing probabilities
-        router_input = hidden_states.mean(dim=1)
-        router_input = smear_router.router_norm(router_input)
-        logits = smear_router.router(router_input)
-        routing_probs = torch.nn.functional.softmax(logits, dim=-1)
+        assert probs.shape == (batch_size, len(router.targets), config.num_experts)
+        assert torch.allclose(
+            probs.sum(dim=-1), torch.ones(batch_size, len(router.targets))
+        )
 
-        # Verify routing probabilities shape
-        assert routing_probs.shape == (batch_size, config.num_experts)
+        # A nested ExpertBank must not be re-routed: it already routes itself.
+        from praxis.routers.bank import ExpertBank
 
-        # Test that probabilities sum to 1
-        assert torch.allclose(routing_probs.sum(dim=-1), torch.ones(batch_size))
+        assert not any(
+            isinstance(decoder.locals[0].block.get_submodule(t.name), ExpertBank)
+            for t in router.targets
+            if t.name
+        )
 
     def test_different_block_types_with_smear(self):
         """Test SMEAR with different block types."""

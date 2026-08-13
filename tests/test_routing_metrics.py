@@ -13,8 +13,11 @@ import pytest
 import torch
 
 from praxis.metrics import COMPOSITE_METRIC_REGISTRY
-from praxis.routers.smear import SMEAR
-from praxis.routers.vear import VEAR, VEAR_SHARPEN
+# These pin the BANK merge's diagnostics (praxis/routers/bank.py). The
+# targeted router's own metrics live in tests/test_smear.py.
+from praxis.routers.bank import ExpertBank as SMEAR
+from praxis.routers.bank import VEAR_SHARPEN
+from praxis.routers.bank import SharpenedExpertBank as VEAR
 
 N_EXPERTS = 8
 
