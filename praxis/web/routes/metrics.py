@@ -21,15 +21,60 @@ from praxis.web.app import api_logger
 
 metrics_bp = Blueprint("metrics", __name__)
 
-# Build SQL fragments once at import time so the SELECT statements and
-# validation-preserve clauses stay in sync with the registry without any
-# per-request work.
+# The registry's column list, in order. The SELECT fragments themselves are NOT
+# built here: they used to be, once at import time, which is precisely what
+# broke historical runs - see _projection_for.
 _METRIC_COLS = metric_names()
-_METRIC_COLS_SQL = ", ".join(_METRIC_COLS)
-_BASE_SELECT_SQL = f"step, ts, {_METRIC_COLS_SQL}, extra_metrics"
-_VAL_PRESERVE_SQL = " OR ".join(
-    f"{col} IS NOT NULL" for col in validation_metric_names()
-)
+
+# Per-database SELECT fragments, keyed by (path, mtime, size). A run's schema is
+# frozen the day it was written, so the projection only has to be recomputed
+# when the file changes.
+_SCHEMA_CACHE: Dict[tuple, tuple] = {}
+
+
+def _projection_for(conn: sqlite3.Connection, cache_key: tuple) -> tuple:
+    """SELECT list and validation-preserve clause for THIS database's schema.
+
+    Every run directory carries the column set the registry had on the day that
+    run started, and the registry only grows. Naming all of today's columns in
+    one import-time SELECT therefore breaks on every historical run the moment a
+    metric is added: SQLite raises ``no such column``, ``_read_metrics_file``
+    swallows it and returns ``[]``, and the caller's ``if not raw_metrics:
+    continue`` drops the run from the response entirely. The symptom is that
+    only the CURRENT run is comparable, because it is the only one whose
+    database was created from the current registry - which is what the four
+    ``density_*`` columns did to all 65 prior runs.
+
+    Missing columns are projected as ``NULL AS <name>`` so the row-to-dict walk
+    below needs no per-run special-casing: a NULL reads exactly like a step that
+    never logged that metric, which is what it is. Nothing is written back - a
+    read path must not migrate historical runs, and this also covers databases
+    on read-only media and ones holding columns the registry has since dropped.
+    """
+    cached = _SCHEMA_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    have = {row[1] for row in conn.execute("PRAGMA table_info(metrics)")}
+    missing = [c for c in _METRIC_COLS if c not in have]
+    if missing:
+        api_logger.debug(
+            f"metrics.db predates {len(missing)} registry column(s), reading them "
+            f"as NULL: {', '.join(sorted(missing)[:6])}"
+            f"{'...' if len(missing) > 6 else ''}"
+        )
+
+    cols = [c if c in have else f"NULL AS {c}" for c in _METRIC_COLS]
+    extra = "extra_metrics" if "extra_metrics" in have else "NULL AS extra_metrics"
+    base = f"step, ts, {', '.join(cols)}, {extra}"
+
+    # A run with none of today's validation columns would otherwise emit an
+    # empty OR-clause, which is a syntax error rather than a no-op.
+    preserved = [c for c in validation_metric_names() if c in have]
+    val = " OR ".join(f"{c} IS NOT NULL" for c in preserved) if preserved else "0"
+
+    _SCHEMA_CACHE[cache_key] = (base, val)
+    return base, val
 
 
 def _sanitize_for_json(obj):
@@ -245,6 +290,13 @@ def _read_metrics_file(
         conn.row_factory = sqlite3.Row  # Access columns by name
         cursor = conn.cursor()
 
+        # Project against THIS database's columns, not the current registry's -
+        # historical runs predate metrics added since they were written.
+        stat = db_path.stat()
+        base_select, val_preserve = _projection_for(
+            conn, (str(db_path), stat.st_mtime, stat.st_size)
+        )
+
         # If max_rows specified, check total count and sample intelligently.
         # Uniform modulo sampling spans the full step range; rows carrying
         # validation metrics are always kept so sparse val points survive.
@@ -259,18 +311,18 @@ def _read_metrics_file(
             if total_count > max_rows * 2:
                 sample_interval = max(1, total_count // max_rows)
                 cursor.execute(
-                    f"""SELECT {_BASE_SELECT_SQL}
+                    f"""SELECT {base_select}
                         FROM metrics
                         WHERE step >= ?
                           AND ((rowid % ?) = 0
-                               OR {_VAL_PRESERVE_SQL}
+                               OR {val_preserve}
                                OR step = (SELECT MAX(step) FROM metrics WHERE step >= ?))
                         ORDER BY step""",
                     (since_step, sample_interval, since_step),
                 )
             else:
                 cursor.execute(
-                    f"""SELECT {_BASE_SELECT_SQL}
+                    f"""SELECT {base_select}
                         FROM metrics
                         WHERE step >= ?
                         ORDER BY step""",
@@ -278,7 +330,7 @@ def _read_metrics_file(
                 )
         else:
             cursor.execute(
-                f"""SELECT {_BASE_SELECT_SQL}
+                f"""SELECT {base_select}
                     FROM metrics
                     WHERE step >= ?
                     ORDER BY step""",

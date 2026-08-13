@@ -198,11 +198,32 @@ func count() -> int:
 ## same character every time it comes round, and the page becomes a transcription of
 ## the progression rather than a random walk. A seeded permutation stands between
 ## the key and the alphabet, so which shape a chord means is per-session.
-func pick(sig: PackedFloat32Array) -> int:
+##
+## [param step] is how many characters have already been written under THIS key; it walks the
+## permutation on by a stride coprime with its 36 entries, so a run of tens of characters goes
+## by before any shape comes round again. Without it the hand wrote ONE character over and
+## over: [HarmonicSignature] is an EMA over 2.5 s of context and this pen writes up to twelve
+## characters a second, so its argmax holds still for tens of characters at a stretch - which
+## is exactly "hundreds of the exact same glyph in a row, then a hundred of the next one". A
+## chord now names a WORD rather than a letter, and because the key still fixes where that
+## word STARTS, the same chord in the same register still writes the same thing every time it
+## comes round - the transcription this mapping exists for survives intact.
+func pick(sig: PackedFloat32Array, step := 0) -> int:
 	if glyphs.is_empty():
 		return 0
-	if sig.size() < 16 or _perm.is_empty():
+	var k := key(sig)
+	if k < 0 or _perm.is_empty():
 		return 0
+	return _perm[posmod(k + step * 7, _perm.size())]
+
+
+## The 36-wide harmonic key this moment of music lands on, or -1 if there is no signature yet.
+## Exposed separately from [method pick] so a caller can notice the key CHANGING - which is
+## where one word ends and the next begins - without comparing characters, since a short
+## alphabet maps several keys onto the same shape.
+func key(sig: PackedFloat32Array) -> int:
+	if sig.size() < 16:
+		return -1
 	var pc := 0
 	for k in 12:
 		if sig[k] > sig[pc]:
@@ -212,7 +233,7 @@ func pick(sig: PackedFloat32Array) -> int:
 		tilt = 1
 	if sig[14] > sig[12 + tilt]:
 		tilt = 2
-	return _perm[(pc * 3 + tilt) % _perm.size()]
+	return pc * 3 + tilt
 
 
 ## The i-th punctuation mark, or -1 if this hand does not punctuate.

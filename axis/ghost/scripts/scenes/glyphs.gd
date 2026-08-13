@@ -81,14 +81,17 @@ var _ch := Vector2.ZERO
 var _placed: Array = []
 var _cur: Dictionary = {}
 var _reveal := 0.0
-var _hold := 0.0
-var _beats := 0
+var _hold := 0.0                  # the pen's rest before the next character (seconds)
+var _written := 0                 # characters the cursor has stepped past, ever
 var _words := 0
 var _pending_word := false
 var _cur_mark := false
 var _joined_now := false
-var _beat_prev := 0.0
 var _mv_prev := 0.0
+# The music's current 36-wide harmonic key (see GlyphSet.key), and how many characters have
+# been written under it. A held key walks the alphabet on rather than repeating one shape.
+var _key := -1
+var _run := 0
 
 # The layout cursor.
 var _cx := 0.0
@@ -136,7 +139,11 @@ var _margin := 0.08
 var _col_frac := 0.48
 var _line_h := 1.6
 var _bpg := 2
-var _char_beats := 0.5    # fraction of a beat one character takes to write
+var _char_beats := 0.5    # fraction of a beat one NOMINAL character takes to write
+var _mean_ink := 0.0      # the hand's mean glyph ink length, the divisor in _len_scale
+var _rest_char := 0.12    # the pen's rest after a character / a word / a line, as a
+var _rest_word := 0.55    # fraction of one nominal character's span
+var _rest_line := 1.1
 var _break_thr := 0.35
 var _press_lvl := 0.0             # smoothed nib pressure, 0..1
 var _ease := 0.6                  # how much the stroke reveal is eased
@@ -177,6 +184,12 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	framing = "plane"                     # a page is square-on; PLANE_BAG keeps it there
 	_prng.seed = rng.randi()
 	_gs = GlyphSet.new(rng)
+	# The hand's mean ink length, so a character's duration can be its OWN length against it
+	# (see _len_scale) without changing the page's average pace.
+	_mean_ink = 0.0
+	for g in _gs.glyphs:
+		_mean_ink += (g as GlyphSet.Glyph).total
+	_mean_ink /= maxf(1.0, float(_gs.count()))
 	_sch = Scheme.pick(rng)
 	_layout = String(LAYOUTS[rng.randi() % LAYOUTS.size()])
 	_centred = _layout == "banner"
@@ -187,6 +200,13 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	# 0.25 to 0.8 of a beat per character: at a 120 bpm estimate that is 2.5 to 8 a
 	# second, which spans a quick scribble and a deliberate hand.
 	_char_beats = rng.randf_range(0.25, 0.80)
+	# THE HAND RESTS, and not evenly. A pen lifts for a moment between characters, waits
+	# longer between words, and longest at the turn of a line - and that uneven rhythm is
+	# most of what separates writing from a teleprinter. Fractions of one nominal character's
+	# span, so they ride the tempo like everything else here.
+	_rest_char = rng.randf_range(0.05, 0.22)
+	_rest_word = rng.randf_range(0.35, 0.95)
+	_rest_line = rng.randf_range(0.70, 1.80)
 	# How far into the text the camera sits. At 1.0 the whole page is in frame, which is
 	# the old look; past 2 the writing runs off both edges and the eye has to follow it.
 	_zoom_in = rng.randf_range(2.1, 3.4)
@@ -239,6 +259,7 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	d["line_height"] = _line_h
 	d["beats_per_glyph"] = _bpg
 	d["char_beats"] = _char_beats
+	d["rest_word"] = _rest_word
 	d["break_threshold"] = _break_thr
 	d["reveal_ease"] = _ease
 	d["prefill"] = _prefill
@@ -282,7 +303,6 @@ func update(f: AudioFeatures, delta: float) -> void:
 	# The tempo still sets the SPEED (see _span), which is the part worth keeping; it no
 	# longer gates the handover. A finished character commits immediately and the next one
 	# starts in the same frame, so the writing is continuous - which is what writing is.
-	_beat_prev = f.beat
 	if f.movement > _break_thr and _mv_prev <= _break_thr:
 		_pending_word = true
 	_mv_prev = f.movement
@@ -294,40 +314,67 @@ func update(f: AudioFeatures, delta: float) -> void:
 # Director substeps, pre-warms twelve frames deep and lets Echo fast-forward, and a
 # reveal that advanced once per update() call would write a whole line in one frame.
 func _step(dt: float) -> void:
-	var span := _span()
 	# Nib pressure. Flux runs about 0.01 to 0.05 in practice, so it takes a gain near 20
 	# to reach a full press at all, and an asymmetric follower to keep the hand from
 	# strobing between hairline and heavy on consecutive frames.
 	_press_lvl = Nonlinear.flare(_press_lvl, clampf(_f.flux * 20.0, 0.0, 1.0), dt, 6.0, 1.8)
-	if _f.energy >= Director.silence_floor:
-		_reveal = minf(1.0, _reveal + dt / span)
-	else:
+	if _f.energy < Director.silence_floor:
 		return                          # silence: the nib rests where it is, mid-stroke
-	while _reveal >= 1.0:
-		# Commit and carry the OVERSHOOT into the next character rather than discarding it,
-		# so a fast hand does not lose a fraction of a character's worth of progress at
-		# every handover - which would reintroduce a small stutter in place of the large
-		# one. A while loop because a long substep can span more than one character.
-		var over := (_reveal - 1.0) * span
-		_commit()
-		_reveal = minf(0.999, over / maxf(0.0001, _span()))
-		if over <= 0.0:
+	# Spend this substep across rests and characters in order, carrying the OVERSHOOT rather
+	# than discarding it, so a fast hand loses no fraction of a character's progress at a
+	# handover - which would put a small stutter back in place of the large one the beat gate
+	# used to cause. A loop, because one substep can span a rest and more than one character.
+	var left := dt
+	var guard := 0
+	while left > 0.0 and guard < 64:
+		guard += 1
+		if _hold > 0.0:
+			var used := minf(_hold, left)
+			_hold -= used
+			left -= used
+			continue
+		var span := _span()
+		var need := (1.0 - _reveal) * span
+		if left < need:
+			_reveal += left / span
 			break
+		left -= need
+		_reveal = 1.0
+		_commit()                       # _start resets the reveal, _advance sets the next rest
 	_scroll = lerpf(_scroll, _scroll_to, 1.0 - exp(-9.0 * dt))
 	_sshift = lerpf(_sshift, _sshift_to, 1.0 - exp(-6.0 * dt))
 
 
-# How long one character has to be written: its share of the beat, clamped so a
-# missing or absurd tempo estimate cannot stall or sprint the hand. 0.82 leaves the
-# nib a breath at the end of each character rather than arriving exactly on the cut.
+# How long the character under the nib has to be written.
+#
+# A pen moves at a roughly constant NIB SPEED, so a character's duration is its own ink
+# length, not a fixed slice of the clock. Every character used to take exactly
+# `_char_beats * beat_period` however many strokes it had - and with `_char_beats` fixed per
+# session and `beat_period` near-constant over speech, that is ONE cadence for the whole
+# page, which is what "all of that writing was at a more or less constant speed" was. The
+# alphabet runs 2 to 7 strokes a character (GlyphSet.strokes_lo/hi), so ink lengths already
+# differ by more than a factor of two; dividing by the hand's own mean leaves the average
+# pace exactly where it was and only redistributes it.
 func _span() -> float:
-	# A FRACTION of a beat, not a whole number of them. `_bpg` was an integer count of
-	# beats per character because a character was committed ON a beat - with that gate gone
-	# it is only a speed, and the integer floor made the slowest hands write at roughly one
-	# character a second, which is sedate even for careful handwriting. A real hand runs
-	# two to six a second. The 0.82 breath is gone too: it existed to land the reveal just
-	# before the beat that would commit it, and there is no such beat now.
-	return maxf(0.08, _char_beats * clampf(_f.beat_period, 0.25, 1.6))
+	return maxf(0.05, _base_span() * _len_scale(int(_cur.get("g", -1))))
+
+
+# The tempo's share of one NOMINAL character, before that character's length and the hand's
+# rests are applied. Clamped so a missing or absurd tempo estimate cannot stall or sprint the
+# hand. A FRACTION of a beat, not a whole number of them: `_bpg` was an integer count because
+# a character was committed ON a beat, and with that gate gone the integer floor made the
+# slowest hands write at roughly one character a second. A real hand runs two to six.
+func _base_span() -> float:
+	return _char_beats * clampf(_f.beat_period, 0.25, 1.6)
+
+
+# This character's ink length against the hand's mean. Bounded, so the shortest character is
+# still visibly drawn rather than flicked out, and the longest does not stall the page.
+func _len_scale(gi: int) -> float:
+	if gi < 0 or _mean_ink <= 0.0 or _gs == null or gi >= _gs.glyphs.size():
+		return 1.0
+	var g: GlyphSet.Glyph = _gs.glyphs[gi]
+	return clampf(g.total / _mean_ink, 0.55, 1.75)
 
 
 # ---------------------------------------------------------------------------------
@@ -419,6 +466,8 @@ func _advance(gi: int) -> void:
 	var w := _adv * (0.62 if _cur_mark else 1.0)
 	var gap := 0.0
 	var was_mark := _cur_mark
+	var line0 := _line
+	_written += 1
 	var next_mark := false
 	if _pending_word and not was_mark and _gs.reserve > 0:
 		next_mark = true                # the mark closes the word; the gap follows it
@@ -441,14 +490,40 @@ func _advance(gi: int) -> void:
 	if next_mark:
 		idx = _gs.mark(_words)
 	elif idx < 0:
-		if _sig.size() >= 16 and _ch.y > 0.0005:
-			idx = _gs.pick(_sig)
+		var k := _gs.key(_sig)
+		if k >= 0 and _ch.y > 0.0005:
+			# A NEW key opens a new word at that chord's own character; a HELD key walks the
+			# alphabet on instead of repeating. The signature is a 2.5 s EMA, so its argmax
+			# sits still for tens of characters - see GlyphSet.pick for the measurement.
+			if k != _key:
+				_key = k
+				_run = 0
+			else:
+				_run += 1
+			idx = _gs.pick(_sig, _run)
 		else:
 			# No tonal content to read (a session booted with no audio at all): step the
 			# alphabet on the counters instead. Still a function of the feature stream,
 			# so it stays reproducible - an rng here would diverge in the export.
-			idx = (_beats * 7 + _words * 5) % maxi(1, _gs.count())
+			#
+			# `_written`, not the old `_beats`. That counter belonged to the beat gate and was
+			# left behind when the gate was removed, never incremented again, so the expression
+			# was frozen on `_words`. It is NOT what the repetition report was: this branch is
+			# very nearly unreachable, since `_sig.size()` is always 16 (HarmonicSignature.DIM)
+			# and reaching it needs `_ch.y <= 0.0005` while the energy is above the silence
+			# floor, which is the 12 chroma channels cancelling to one part in three thousand.
+			# A latent bug found while reading, fixed while here - the repetition itself came
+			# from the tonal branch above.
+			idx = (_written * 7 + _words * 5) % maxi(1, _gs.count())
 	_start(idx)
+	# The rest that FOLLOWS the character just finished, before the next is written. Set after
+	# _start, which clears it along with the reveal.
+	var rest := _rest_char
+	if gap > 0.0 or was_mark:
+		rest = _rest_word
+	if _line != line0:
+		rest = _rest_line
+	_hold = rest * _base_span()
 
 
 func _newline() -> void:

@@ -262,10 +262,9 @@ static func fill_aa_on(ci: CanvasItem, pts: PackedVector2Array, col: Color, widt
 ## strength - a bright scene reacts by shifting temperature, not by dimming, because
 ## dimming a high-key frame just makes it look broken.
 func paint_ground(hue: float, sat := 0.06, val := 0.94, tint := 0.0, tint_hue := 0.0) -> void:
-	var h := hue
-	if tint > 0.001:
-		var d := tint_hue - hue
-		h = fposmod(hue + (d - round(d)) * clampf(tint, 0.0, 1.0) * 0.5, 1.0)
+	# Blended on the wheel, not along the shortest arc - see blend_hue. This quad is FULL BLEED,
+	# so it was the largest surface in the frame flipping across the antipodal boundary.
+	var h := blend_hue(hue, tint_hue, clampf(tint, 0.0, 1.0) * 0.5)
 	var col := Color.from_hsv(fposmod(h, 1.0), clampf(sat, 0.0, 1.0), clampf(val, 0.0, 1.0))
 	var x := size.x * 0.5 * 1.15 / maxf(0.001, view.zoom_actual())
 	var y := size.y * 0.5 * 1.15 / maxf(0.001, view.zoom_actual())
@@ -276,6 +275,32 @@ func paint_ground(hue: float, sat := 0.06, val := 0.94, tint := 0.0, tint_hue :=
 ## The shorter screen axis - use it to size geometry independent of aspect.
 func unit() -> float:
 	return minf(size.x, size.y)
+
+
+## Pull [param base] a fraction [param k] of the way toward [param toward], both hues in turns.
+##
+## USE THIS INSTEAD OF THE SHORTEST-ARC FORM. Every audio-driven tint in this project was written
+## as `base + (fposmod(toward - base + 0.5, 1.0) - 0.5) * k`, which takes the short way round the
+## wheel - and that expression is DISCONTINUOUS at the antipode, where it flips between +0.5 and
+## -0.5. A tonal centre drifting onto the point opposite a scene's own hue therefore made the
+## colour jump by `k` of a whole turn from one frame to the next, and a tonal centre parked ON
+## that point dithered between the two: "the color is unstable, and will often flicker between
+## two colors at random, then stabilize upon ONE of those colors". It is not a rate problem, so
+## slowing the drive does not fix it - the jump is the same size however slowly the input moves.
+##
+## Blending the two hues as VECTORS on the colour wheel has no such boundary. As `toward` sweeps
+## through the antipode the resultant swings smoothly through `base` instead of leaping across
+## it, and its length shrinks - which is the honest reading anyway, since a hue exactly opposite
+## the base is not evidence for either direction. For k < 0.5 the resultant can never be
+## degenerate (its length is at least 1 - 2k), so the angle is always well defined.
+static func blend_hue(base: float, toward: float, k: float) -> float:
+	var w := clampf(k, 0.0, 0.49)
+	if w <= 0.0005:
+		return fposmod(base, 1.0)
+	var a := base * TAU
+	var b := toward * TAU
+	var v := Vector2(cos(a), sin(a)) * (1.0 - w) + Vector2(cos(b), sin(b)) * w
+	return fposmod(v.angle() / TAU, 1.0)
 
 
 ## Set the camera framing for this scene (called once by the Director).

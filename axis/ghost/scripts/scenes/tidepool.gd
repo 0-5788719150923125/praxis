@@ -149,7 +149,9 @@ var _drip_gap := 0.5
 
 var _t_sim := 0.0
 var _kicked := false
-var _ch := Vector2.ZERO
+var _ch := Vector2.ZERO           # the SMOOTHED tonal centre, as (hue, strength)
+var _ch_vec := Vector2.ZERO       # ... carried in CARTESIAN form, which is what makes it smooth
+var _glare_e := 0.0               # enveloped energy behind the glare threshold
 
 var _hue := 0.55
 var _sky_hue := 0.58
@@ -296,7 +298,14 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_job.org = _org
 	_job.step = _step
 	_job.eta = 1.0 / ior
-	_job.blur_n = rng.randi_range(1, 2)
+	# Two to four [1 2 1] passes, up from one to two. The accumulation buffer is at NODE
+	# resolution, so a caustic rib is one or two cells wide - 18 to 28 screen pixels - and a
+	# single blur pass leaves its shoulder inside one cell, which is a hard-edged wedge however
+	# smoothly the surface underneath is moving. Widening the kernel spreads the shoulder across
+	# two or three cells, which is both what the report asked for and what the sun's half-degree
+	# of angular width actually does. Each pass is separable and O(nodes), the cheapest term in
+	# the frame by some way.
+	_job.blur_n = rng.randi_range(2, 4)
 	_job.shine_sq = shine_sq
 	_job.wet_band = depth * rng.randf_range(0.10, 0.30)
 	_job.dry_lift = rng.randf_range(1.02, 1.14)
@@ -337,7 +346,6 @@ func update(f: AudioFeatures, delta: float) -> void:
 	# someone standing over a rock.
 	drift_view(f, 0.012, 0.018)
 	update_layers(f, delta)
-	_ch = chroma_hue()
 
 	var steps := _sim.ticks(delta)
 	for _i in steps:
@@ -350,11 +358,18 @@ func update(f: AudioFeatures, delta: float) -> void:
 	# The water's own colour, dragged a little toward the music's tonal centre - a wash,
 	# not a repaint, since a bright scene reacts by shifting temperature rather than by
 	# changing what it is.
-	var wh := fposmod(_hue + (fposmod(_ch.x - _hue + 0.5, 1.0) - 0.5) * 0.3 * _ch.y, 1.0)
-	var sh := fposmod(_sky_hue + (fposmod(_ch.x - _sky_hue + 0.5, 1.0) - 0.5) * 0.45 * _ch.y, 1.0)
+	# Blended on the wheel rather than along the shortest arc (GhostScene.blend_hue): the arc form
+	# flips sign at the antipode, which put a jump of 0.30 of a turn in the water and 0.45 in the
+	# sky between two consecutive frames whenever the tonal centre drifted opposite this pool's
+	# own hue - the other half of the reported colour flicker, and the half that easing alone
+	# cannot reach, since the jump is the same size however slowly the input crosses the boundary.
+	var wh := blend_hue(_hue, _ch.x, 0.3 * _ch.y)
+	var sh := blend_hue(_sky_hue, _ch.x, 0.45 * _ch.y)
 	# Glare threshold is the ONLY thing energy touches: a loud passage lowers the bar the
-	# specular lobe has to clear, so highlights bloom shut over the bed and open again.
-	var thr := lerpf(_glare_hi, _glare_lo, clampf(f.energy * 2.0, 0.0, 1.0))
+	# specular lobe has to clear, so highlights bloom shut over the bed and open again. It reads
+	# the ENVELOPED energy (see _advance) rather than the raw frame value - the glare it gates
+	# lays the sky's whole colour over the pool, and on a jumpy source that strobed.
+	var thr := lerpf(_glare_hi, _glare_lo, _glare_e)
 
 	var rings: Array = []
 	for entry in _rings:
@@ -394,6 +409,23 @@ func _advance(dt: float, f: AudioFeatures) -> void:
 	# Movement is a section change, and a section change roughens water. Steepness pinches
 	# the ribs; it moves nothing and resizes nothing.
 	_steep = Nonlinear.flare(_steep, 1.0 + _move_gain * f.movement, dt, 1.6, 0.7)
+
+	# THE TONAL CENTRE, EASED IN CARTESIAN FORM. chroma_hue() hands back an ANGLE, and an angle is
+	# exactly the wrong quantity to use raw: when two tonal centres a tritone apart trade dominance
+	# the resultant passes near the origin and its angle flips half a turn between one frame and
+	# the next, so the water's tint and the ground's wash snapped between two hues and then settled
+	# on whichever won - "the color is unstable, and will often flicker between two colors at
+	# random, then stabilize upon ONE of those colors". Easing the VECTOR routes that flip through
+	# the middle instead: an ambiguous tonality reads as low STRENGTH and the tint simply fades
+	# out rather than choosing a side, and a genuine key change arrives as a gentle sweep. A 1.2 s
+	# constant, matched to the 2.5 s window the harmonic signature already integrates.
+	var raw := chroma_hue()
+	var want := Vector2(cos(raw.x * TAU), sin(raw.x * TAU)) * raw.y
+	_ch_vec = _ch_vec.lerp(want, 1.0 - exp(-0.85 * dt))
+	_ch = Vector2(fposmod(_ch_vec.angle() / TAU, 1.0), clampf(_ch_vec.length(), 0.0, 1.0))
+
+	# Same discipline for the glare drive - fast to bloom, slow to fall, like the amplitudes.
+	_glare_e = Nonlinear.flare(_glare_e, clampf(f.energy * 2.0, 0.0, 1.0), dt, 3.5, 1.2)
 
 	_beat_arm += dt
 	var rising := f.beat > 0.55 and _beat_prev <= 0.55
@@ -682,8 +714,9 @@ class PoolJob:
 		if cell != pts_cell:
 			_build_mesh(cell)
 		var cols := PackedColorArray()
-		cols.resize(n)
+		cols.resize(n + (gw - 1) * (gh - 1))     # nodes, then the cross-split cell centres
 		_shade(s, norm, cols)
+		_centres(cols)
 		return [{"pts": pts, "cols": cols, "idx": idx}]
 
 
@@ -907,9 +940,30 @@ class PoolJob:
 	## Vertex positions and the index buffer for the node mesh. Built once per frame SIZE,
 	## never per frame, and always as new arrays - the previous ones may still be on the
 	## main thread inside a packet being drawn.
+	## CROSS-SPLIT, four triangles about a centre vertex, not two about a diagonal.
+	##
+	## This is the fix for "the waves are blocky and jagged... even though their behavior is
+	## smooth". A cell is 18 to 28 screen pixels across at 1920x1080 (the grid is
+	## SWEEP_BUDGET / components nodes, so 76x43 at fourteen components and 117x65 at six), and
+	## splitting each one along a single diagonal makes the Gouraud interpolation directional:
+	## every cell shades along the SAME 45-degree line, so a smooth caustic rib comes out as a
+	## herringbone of straight creases all leaning one way. That reads as jagged even where
+	## nothing about the light is.
+	##
+	## Fanning from the centre is symmetric, so the artifact has no direction left to have, and
+	## the centre's colour is the mean of the four corners - which is exactly the value bilinear
+	## interpolation gives there, i.e. the one point the two old triangles disagreed about most.
+	## Cost: one extra vertex and two extra triangles per cell, 12.6k triangles against 6.3k on
+	## the coarse grid, still one draw call - and the positions and indices are built once per
+	## frame SIZE, so a frame only pays for the extra colours (about 3.2k cheap averages).
+	##
+	## What it does NOT do is raise the sampling rate: the caustic buffer is still accumulated at
+	## node resolution, so a rib is still one to two cells wide. That is why the blur passes were
+	## widened alongside this - see blur_n.
 	func _build_mesh(cell: float) -> void:
+		var cells := (gw - 1) * (gh - 1)
 		var p := PackedVector2Array()
-		p.resize(gw * gh)
+		p.resize(gw * gh + cells)
 		var ox := -float(gw - 1) * cell * 0.5
 		var oy := -float(gh - 1) * cell * 0.5
 		var i := 0
@@ -918,21 +972,55 @@ class PoolJob:
 			for ix in gw:
 				p[i] = Vector2(ox + float(ix) * cell, y)
 				i += 1
+		for iy in gh - 1:                      # the cell centres, appended after the nodes
+			var y := oy + (float(iy) + 0.5) * cell
+			for ix in gw - 1:
+				p[i] = Vector2(ox + (float(ix) + 0.5) * cell, y)
+				i += 1
 		if idx.is_empty():
 			var q := PackedInt32Array()
-			q.resize((gw - 1) * (gh - 1) * 6)
+			q.resize(cells * 12)
 			var j := 0
+			var m := gw * gh
 			for iy in gh - 1:
 				var row := iy * gw
+				var crow := m + iy * (gw - 1)
 				for ix in gw - 1:
 					var a := row + ix
+					var b := a + 1
+					var c := a + gw
+					var d := c + 1
+					var e := crow + ix
 					q[j] = a
-					q[j + 1] = a + 1
-					q[j + 2] = a + gw + 1
-					q[j + 3] = a
-					q[j + 4] = a + gw + 1
-					q[j + 5] = a + gw
-					j += 6
+					q[j + 1] = b
+					q[j + 2] = e
+					q[j + 3] = b
+					q[j + 4] = d
+					q[j + 5] = e
+					q[j + 6] = d
+					q[j + 7] = c
+					q[j + 8] = e
+					q[j + 9] = c
+					q[j + 10] = a
+					q[j + 11] = e
+					j += 12
 			idx = q
 		pts = p
 		pts_cell = cell
+
+
+	## The cell-centre colours, filled after _shade has written the node colours.
+	func _centres(cols: PackedColorArray) -> void:
+		var j := gw * gh
+		for iy in gh - 1:
+			var row := iy * gw
+			for ix in gw - 1:
+				var a := row + ix
+				var b := a + 1
+				var c := a + gw
+				var d := c + 1
+				cols[j] = Color(
+					(cols[a].r + cols[b].r + cols[c].r + cols[d].r) * 0.25,
+					(cols[a].g + cols[b].g + cols[c].g + cols[d].g) * 0.25,
+					(cols[a].b + cols[b].b + cols[c].b + cols[d].b) * 0.25)
+				j += 1

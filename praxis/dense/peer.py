@@ -54,6 +54,13 @@ class ParameterEfficientExpertRetrieval(BaseDense):
     registry profiles; nothing here needs a per-experiment knob.
     """
 
+    # Opt out of parameter-merging routers (praxis/routers/targeting.py). PEER
+    # already routes per TOKEN, over its own bank of thousands of tiny experts;
+    # wrapping a per-batch merge around that adds strictly coarser routing at
+    # the cost of replicating the largest module in the model. Nothing to gain,
+    # everything to pay.
+    MERGE_OPAQUE: bool = True
+
     def __init__(
         self,
         config: ConfigType,

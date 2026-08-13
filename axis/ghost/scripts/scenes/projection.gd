@@ -16,8 +16,14 @@ extends GhostScene
 
 ## How the binning reads. The paper bins to 64x64 and that was the only resolution
 ## this scene ever used, so the map always had the same grain; coarse bins read as
-## blocky cells, fine ones as a smooth density cloud.
+## blocky cells, fine ones as a smooth density cloud. The number is the count across
+## the SHORT screen axis; the long axis gets proportionally more of them (see _fit).
 const BINS := {"coarse": 40, "paper": 64, "fine": 96}
+
+## Object half-extent mapped onto one bin-count's worth of grid. Fixed, not sampled:
+## it is the projection's scale contract, not a look tunable - the sampled geometry
+## (elongation, iris radius, pupil spread) is what varies the picture.
+const SPAN := 2.4
 
 ## The latent's own structure. It is one eye every time - that is the scene - but a
 ## latent geometry is not obliged to be a single iris ring around a single nucleus.
@@ -27,7 +33,10 @@ var _f: AudioFeatures = AudioFeatures.new()
 var _rng := RandomNumberGenerator.new()
 var _pts := PackedVector3Array()    # base cloud (object space)
 var _grid := PackedFloat32Array()
-var _g := 64                        # density-grid resolution (sampled per scene)
+var _g := 64                        # bins across the SHORT screen axis (sampled per scene)
+var _gx := 64                       # grid columns ...
+var _gy := 64                       # ... and rows - the LONG axis gets MORE bins, not bigger ones
+var _win := Rect2i(0, 0, 0, 0)      # bins written last frame: the only ones that need clearing
 var _n := 2600                      # points in the latent cloud
 var _pose := Vector3.ZERO           # current pose euler (the projection angle)
 var _spin := Vector3.ZERO
@@ -48,6 +57,10 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	var bname := String(BINS.keys()[rng.randi() % BINS.size()])
 	_g = int(BINS[bname])
 	_n = rng.randi_range(1500, 4200)
+	# A placeholder shape only: the frame's size is not known until the node is in the tree,
+	# so the real grid is sized on the first draw (see _fit).
+	_gx = _g
+	_gy = _g
 	_grid.resize(_g * _g)
 	# A dramatic starting angle and a slow tumble.
 	_pose = Vector3(rng.randf_range(-0.6, 0.6), rng.randf() * TAU, rng.randf_range(-0.4, 0.4))
@@ -120,41 +133,89 @@ func update(f: AudioFeatures, delta: float) -> void:
 	queue_redraw()
 
 
+## Size the density grid to the FRAME rather than to a square, and hand back the bin size
+## in pixels.
+##
+## THE 4:3 BUG. The grid was `_g` x `_g` bins drawn over a `unit() * 1.25` box, and unit() is
+## the SHORTER screen axis - so on the 2880x1620 export the map only ever covered a 2025 px
+## square in the middle of the frame and left 427 px of untouched ground down each side. Black
+## on black while the cloud was small, and a hard vertical cut straight through it the moment
+## the cloud was large: "the left and right sides were truncated by black... as if it were 4:3".
+## The covered region measured 2025x1620, which is 1.25:1 - a hair off 4:3 inside a 16:9 frame.
+##
+## The BIN keeps the size it had, so the paper's grain and the eye's size on screen are both
+## unchanged; the long axis simply gets more bins. The 1.25 overdraw is the original and stays:
+## the view drifts and zooms, so the map has to reach past every edge.
+func _fit() -> float:
+	var cell := maxf(1.0, minf(size.x, size.y)) * 1.25 / float(_g)
+	var gx := maxi(2, ceili(size.x * 1.25 / cell))
+	var gy := maxi(2, ceili(size.y * 1.25 / cell))
+	if gx != _gx or gy != _gy:
+		_gx = gx
+		_gy = gy
+		_grid.resize(_gx * _gy)
+		_grid.fill(0.0)
+		_win = Rect2i(0, 0, 0, 0)      # nothing of the new grid has been written yet
+	return cell
+
+
 func _draw() -> void:
 	begin_draw()
-	var u := unit()
-	# Reset the density grid.
-	for i in _g * _g:
-		_grid[i] = 0.0
+	var cell := _fit()
+	# Clear only the window written last frame. The grid now spans the whole frame (16416 bins
+	# at 1920x1080 on the fine setting, against 9216 before), and clearing and re-scanning all
+	# of it every frame would cost more than the few thousand bins the cloud actually lands in.
+	for wy in range(_win.position.y, _win.end.y):
+		var row := wy * _gx
+		for wx in range(_win.position.x, _win.end.x):
+			_grid[row + wx] = 0.0
 	# Project the posed, audio-shaped cloud into the grid.
 	var basis := Basis.from_euler(_pose)
-	var span := 2.4                          # object half-extent mapped to the grid
+	var per := 2.0 * SPAN / float(_g)         # object units per bin - the SAME on both axes
 	var dscale := 1.0 + 0.25 * _dilate        # dilation spreads the whole cloud a touch
+	var hx := float(_gx) * 0.5
+	var hy := float(_gy) * 0.5
+	var x0 := _gx
+	var x1 := -1
+	var y0 := _gy
+	var y1 := -1
 	for k in _n:
 		var p: Vector3 = _pts[k]
 		var sp := Vector3(p.x * _stretch, p.y, p.z) * dscale
 		var r := basis * sp
-		var gx := int((r.x / span * 0.5 + 0.5) * _g)
-		var gy := int((r.y / span * 0.5 + 0.5) * _g)
-		if gx >= 0 and gx < _g and gy >= 0 and gy < _g:
-			_grid[gy * _g + gx] += 1.0
+		# floori, not int(): int() truncates TOWARD ZERO, so a point just off the left or top
+		# edge landed on bin 0 instead of being rejected and drew a false bright rank there.
+		var gx := floori(r.x / per + hx)
+		var gy := floori(r.y / per + hy)
+		if gx < 0 or gx >= _gx or gy < 0 or gy >= _gy:
+			continue
+		_grid[gy * _gx + gx] += 1.0
+		x0 = mini(x0, gx)
+		x1 = maxi(x1, gx)
+		y0 = mini(y0, gy)
+		y1 = maxi(y1, gy)
+	if x1 < x0 or y1 < y0:
+		_win = Rect2i(0, 0, 0, 0)
+		return
+	_win = Rect2i(x0, y0, x1 - x0 + 1, y1 - y0 + 1)
 	# Log-normalise.
 	var maxd := 1.0
-	for i in _g * _g:
-		maxd = maxf(maxd, _grid[i])
+	for wy in range(y0, y1 + 1):
+		var row := wy * _gx
+		for wx in range(x0, x1 + 1):
+			maxd = maxf(maxd, _grid[row + wx])
 	var lmax := log(1.0 + maxd)
-	# Render the grid as a heatmap centred in the frame.
-	var grid_px := u * 1.25
-	var cell := grid_px / float(_g)
-	var origin := Vector2(-grid_px * 0.5, -grid_px * 0.5)
+	# Render the grid as a heatmap, centred on the frame and covering the whole of it.
+	var origin := Vector2(-float(_gx) * cell * 0.5, -float(_gy) * cell * 0.5)
 	var glow: float = 0.3 + 0.7 * _f.energy
-	for gy in _g:
-		for gx in _g:
-			var d: float = _grid[gy * _g + gx]
+	for wy in range(y0, y1 + 1):
+		var row := wy * _gx
+		for wx in range(x0, x1 + 1):
+			var d: float = _grid[row + wx]
 			if d <= 0.0:
 				continue
 			var ti := log(1.0 + d) / lmax
-			var pos := origin + Vector2(gx, gy) * cell
+			var pos := origin + Vector2(wx, wy) * cell
 			draw_rect(Rect2(pos, Vector2(cell, cell) * 1.04), _cmap(ti, glow))
 
 

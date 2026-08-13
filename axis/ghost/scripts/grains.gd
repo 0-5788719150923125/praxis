@@ -474,11 +474,35 @@ func step() -> void:
 						moved_it = true
 						break
 			# Sideways, for fluids only: the search that makes a liquid find its level.
+			#
+			# SYMMETRY-AWARE, and that is the whole of the "vibrating pixels" fix. The two
+			# directions used to be tried in the order `rb, -rb` - and `rb` flips with the
+			# generation, so a fluid cell with passable space on BOTH sides simply took the first
+			# option every tick and walked right, left, right, left for ever. Measured on a
+			# SETTLED chamber with nothing pouring into it (tests/sand_flicker_probe.gd): a
+			# water-only pool had 40 cells changing occupancy 40 times in 40 ticks, every one a
+			# clean two-tick oscillation, while a powder-only chamber had exactly zero - powders
+			# have no `spread` and never enter this branch. Each of those swaps empties the cell
+			# it leaves, so what the eye gets is grains blinking between their colour and the
+			# background: "almost every single grain is flickering between black and color, as if
+			# the pixels were vibrating".
+			#
+			# Both sides are measured now and the cell moves only toward a STRICTLY better one.
+			# A hole wins outright and is worth jumping to - that is a fluid pouring into a gap,
+			# and it should be quick. With no hole either way there is nothing to do but level,
+			# so it steps ONE cell and only when the two runs differ by more than one: the same
+			# commit-band idea as contour_map's _pick_index, for the same reason, that a choice
+			# made on a value sitting exactly on its boundary chatters across it for ever.
 			if not moved_it and _spr[m] > 0:
 				var sp := int(_spr[m])
+				var run_l := 0
+				var run_r := 0
+				var hole_l := 0
+				var hole_r := 0
 				for s in 2:
-					var dd := rb if s == 0 else -rb
-					var best := 0
+					var dd := 1 if s == 0 else -1
+					var reach := 0
+					var hole := 0
 					for step_k in range(1, sp + 1):
 						var sx := x + dd * step_k
 						if sx < 0 or sx >= w:
@@ -486,17 +510,44 @@ func step() -> void:
 						var ti := i + dd * step_k
 						if (_pup[pt + int(_cells[ti])] if rising else _pdn[pt + int(_cells[ti])]) == 0:
 							break
-						best = step_k
+						reach = step_k
 						# A hole under (or over) the path is worth more than distance.
 						var hi2 := ti + vs
 						if (_pup[pt + int(_cells[hi2])] if rising else _pdn[pt + int(_cells[hi2])]) != 0:
+							hole = step_k
 							break
-					if best != 0:
-						var li := i + dd * best
-						_swap(i, li, m, int(_cells[li]))
-						_touch(y)
-						moved_it = true
-						break
+					if dd > 0:
+						run_r = reach
+						hole_r = hole
+					else:
+						run_l = reach
+						hole_l = hole
+				var dd2 := 0
+				var dist := 0
+				if hole_l > 0 or hole_r > 0:
+					if hole_r > 0 and (hole_l == 0 or hole_r < hole_l):
+						dd2 = 1
+						dist = hole_r
+					elif hole_l > 0 and (hole_r == 0 or hole_l < hole_r):
+						dd2 = -1
+						dist = hole_l
+					else:
+						# Two holes exactly as far off. Broken on the CELL, never on the parity of
+						# the generation - and it is safe to break at all, because the cell falls
+						# through whichever hole it took on the next tick and cannot come back.
+						dd2 = 1 if ((i * 2654435761 + _salt) & 1) == 0 else -1
+						dist = hole_r
+				elif run_r > run_l + 1:
+					dd2 = 1
+					dist = 1
+				elif run_l > run_r + 1:
+					dd2 = -1
+					dist = 1
+				if dd2 != 0:
+					var li := i + dd2 * dist
+					_swap(i, li, m, int(_cells[li]))
+					_touch(y)
+					moved_it = true
 			# The ambient draft, with its lee shadow. Powder only, and only where the grain
 			# is actually exposed to the air - a buried grain feels no wind.
 			if not moved_it and wnd > 0.001 and kind == POWDER and _lft[m] > 0.0 and up:
@@ -605,8 +656,19 @@ func paint(tb: TriBatch, org: Vector2, cell: float, run_cap: int, hue_rot: float
 				x += 1
 				continue
 			var exposed := 1 if (y == 0 or int(_cells[base + x - w]) == 0) else 0
+			# RUNS BREAK ON A FIXED LATTICE, and the jitter is keyed to the lattice block rather
+			# than to wherever the run happened to start. Both used to float with the content: a
+			# run began at the first occupied cell and ran up to `cap`, so ONE cell appearing or
+			# leaving at the left of a row re-partitioned every run behind it and re-rolled every
+			# one of their shades. That is why a single moving grain read as the whole row
+			# shimmering, and why the sim's two-tick oscillation (see step's fluid note) looked
+			# like "almost every single grain" rather than the few dozen cells it actually was.
+			# Anchoring to `cap`-wide blocks costs nothing - a solid stretch still collapses to
+			# one quad per block, the same count as before - and makes a settled pile's colours
+			# genuinely static.
+			var stop := mini(w, (x / cap + 1) * cap)
 			var run := 1
-			while run < cap and x + run < w:
+			while x + run < stop:
 				var j := base + x + run
 				if int(_cells[j]) != m:
 					break
@@ -618,7 +680,7 @@ func paint(tb: TriBatch, org: Vector2, cell: float, run_cap: int, hue_rot: float
 			if banded and m == wall_id:
 				col = wall_band[y]
 			else:
-				var hsh := (base + x) * 1103515245 + _salt
+				var hsh := (base + x - (x % cap)) * 1103515245 + _salt
 				var jit := (_nz[hsh & NMASK] - 0.5) * _grn[m]
 				var v := _val[m] * shade + jit
 				var s := _sat[m]

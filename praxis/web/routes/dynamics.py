@@ -721,6 +721,24 @@ def _sample_activation(
     Activations with feature-dim params (e.g. Snake) need a 2D input so
     parameters broadcast; we tile across the param's feature size and average
     over features to get a single representative curve per module.
+
+    Sampled against a PRIVATE SNAPSHOT of the module's tensors, never the live
+    ones. This runs on the API thread while the trainer is mid-step, and reading
+    a training parameter directly loses that race two ways:
+
+      * The optimizer mutates the parameter in place between our forward and our
+        ``autograd.grad``, bumping its version counter, and backward aborts with
+        "one of the variables needed for gradient computation has been modified
+        by an inplace operation ... expected version N-1".
+      * A parameter observed while another thread is inside ``torch.func.vmap``
+        is a BatchedTensor, and touching it here raises "your tensor may have
+        escaped from inside a function being vmapped".
+
+    Both were live on abstractinator-m (Servant and Serpent respectively), and
+    both are transient - the module would reappear on a later poll - so they
+    read as a flickering chart rather than a hard failure. Cloning the tensors
+    first removes the first failure outright and turns the second into a clean
+    skip, because the clone raises before any graph exists.
     """
     # Size the probe by the FEATURE axis, not by numel. Activation parameters
     # broadcast against the last dim, and an activation may carry a parameter
@@ -741,6 +759,19 @@ def _sample_activation(
             param_dim = size
 
     try:
+        # Snapshot first, so a mid-step optimizer write or an in-flight vmap
+        # fails HERE - before any graph exists - instead of inside backward.
+        # detach() drops the training graph, clone() gives a tensor whose
+        # version counter only we can bump.
+        snapshot = {
+            name: tensor.detach().clone()
+            for name, tensor in [
+                *module.named_parameters(),
+                *module.named_buffers(),
+            ]
+            if tensor is not None
+        }
+
         x_base = torch.linspace(
             x_min, x_max, num_points, device=device, dtype=dtype, requires_grad=True
         )
@@ -751,7 +782,9 @@ def _sample_activation(
             x = x_base
 
         with torch.enable_grad():
-            y = module(x)
+            # tie_weights=False: an activation has no tied tensors, and the
+            # aliasing pass is pure overhead on a per-poll probe.
+            y = torch.func.functional_call(module, snapshot, (x,), tie_weights=False)
             if y.shape != x.shape:
                 return None
             grad = torch.autograd.grad(y.sum(), x, create_graph=False)[0]
@@ -795,8 +828,9 @@ def _sample_activation(
         if key not in _SAMPLE_FAILURES:
             _SAMPLE_FAILURES.add(key)
             api_logger.warning(
-                f"[activation_curves] cannot sample {key}, omitting it from the "
-                f"chart: {type(e).__name__}: {e}"
+                f"[activation_curves] skipped {key} on this poll "
+                f"({type(e).__name__}: {e}). The chart drops it for this sample "
+                f"only and picks it up again on the next successful one."
             )
         return None
 

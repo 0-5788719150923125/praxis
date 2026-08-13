@@ -36,7 +36,17 @@ class LocalLayer(nn.Module):
         super().__init__()
         self.router: Union[nn.Module, bool] = router
         if config.router_type is not None and not self.router:
-            router_cls = ROUTER_REGISTRY.get(config.router_type, "mixture_of_depths")
+            # Raise on an unknown name rather than falling back. The old default
+            # was the STRING "mixture_of_depths", which was then called - so a
+            # typo or a renamed registry key surfaced as
+            # ``TypeError: 'str' object is not callable`` from inside the
+            # constructor, naming neither the key nor the registry.
+            if config.router_type not in ROUTER_REGISTRY:
+                raise KeyError(
+                    f"Unknown router_type {config.router_type!r}. "
+                    f"Known: {sorted(ROUTER_REGISTRY)}"
+                )
+            router_cls = ROUTER_REGISTRY[config.router_type]
             self.router = router_cls(config, experts=expert_blocks)
         self.block: Union[nn.Module, bool] = block
 

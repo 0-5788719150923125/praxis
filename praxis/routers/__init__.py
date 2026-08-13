@@ -5,6 +5,12 @@ from praxis.routers.arc import ArcMixture
 from praxis.routers.arc_smear import ArcSMEAR, ArcVEAR
 from praxis.routers.distance import Distance
 from praxis.routers.mixture_of_depths import MixtureOfDepths
+from praxis.routers.modular import (
+    ArcModularSMEAR,
+    ArcModularVEAR,
+    ModularSMEAR,
+    ModularVEAR,
+)
 from praxis.routers.prismatic import Prismatic
 from praxis.routers.smear import SMEAR
 from praxis.routers.taxus import Taxus
@@ -113,6 +119,29 @@ ROUTER_REGISTRY = dict(
     # sharing one routing (praxis/routers/arc_smear.py). Identity at init.
     arc_smear=ArcSMEAR,
     arc_vear=ArcVEAR,
+    # Modular SMEAR (praxis/routers/modular.py): the SAME method as `smear`
+    # above, applied at the granularity the paper uses. ONE shared block
+    # plus N zero-init deviations per DISCOVERED TARGET, with a coefficient row
+    # each - instead of N copies of the whole block under a single scalar. The
+    # expert count lives in the registry key rather than in `num_experts`,
+    # because the config field means "how many blocks does the decoder build"
+    # and these build one; setting `num_experts: 1` alongside them is what
+    # switches the legacy bank off.
+    smear_modular_4=partial(ModularSMEAR, num_experts=4),
+    smear_modular_2=partial(ModularSMEAR, num_experts=2),
+    # Depth-aware: a zero-init per-recurrent-pass bias on the per-target logits,
+    # so each pass can move each module independently. Identity at init.
+    arc_smear_modular_4=partial(ArcModularSMEAR, num_experts=4),
+    arc_smear_modular_2=partial(ArcModularSMEAR, num_experts=2),
+    arc_smear_modular_8=partial(ArcModularSMEAR, num_experts=8),
+    # Narrower target profiles, for isolating where any gain comes from.
+    arc_smear_modular_4_attn=partial(ArcModularSMEAR, num_experts=4, target_profile="attn"),
+    arc_smear_modular_4_gates=partial(ArcModularSMEAR, num_experts=4, target_profile="gates"),
+    # VEAR's p**4 sharpening on top, for the controlled comparison. Off in the
+    # plain entries: sharpening a batch-averaged coefficient cannot add
+    # per-input discreteness, it only starves the losing deviations.
+    arc_vear_modular_4=partial(ArcModularVEAR, num_experts=4),
+    vear_modular_4=partial(ModularVEAR, num_experts=4),
     distance=Distance,
     prismatic=Prismatic,
     taxus=create_taxus_with_dynamic_budget,

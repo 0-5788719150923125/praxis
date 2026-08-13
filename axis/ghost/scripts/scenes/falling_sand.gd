@@ -420,7 +420,11 @@ func update(f: AudioFeatures, delta: float) -> void:
 	# The floor sits one cell inside the bottom edge so the drain is visible; the ceiling
 	# and the side walls run off the frame, which is what makes it read as an interior.
 	_org = Vector2(-float(_w) * _cell * 0.5, size.y * 0.5 - _cell - float(_h) * _cell)
-	var drag := fposmod(_ch.x - _hue_base + 0.5, 1.0) - 0.5
+	# Blended on the wheel, not along the shortest arc (GhostScene.blend_hue). The arc form flips
+	# sign at the antipode, so a tonal centre drifting opposite this chamber's base hue swung every
+	# material's colour by a quarter turn between two consecutive frames - a second, slower colour
+	# instability in the same scene as the grain flicker, and one the sim fix does not touch.
+	var hue_rot := blend_hue(_hue_base, _ch.x, 0.25 * _ch.y)
 
 	# Everything the audio decides travels in a FRESH snapshot dictionary each frame; only
 	# the grid and the tick debt live on the job. Mutating a field on the job while the
@@ -435,7 +439,7 @@ func update(f: AudioFeatures, delta: float) -> void:
 		"wind": _wind * (0.7 + 0.45 * mod.unit("draft")),
 		"ignite": clampf(_ignite * (0.35 + 8.0 * f.flux), 0.0, 1.0),
 		"glow": _glow,
-		"hue_rot": fposmod(_hue_base + drag * 0.25 * _ch.y, 1.0),
+		"hue_rot": hue_rot,
 		"drain_x0": _drain_x0,
 		"drain_x1": _drain_x1,
 		"org": _org,

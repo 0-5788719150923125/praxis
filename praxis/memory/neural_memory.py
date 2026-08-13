@@ -102,6 +102,17 @@ def mem_state_detach(state: Optional[NeuralMemState]) -> Optional[NeuralMemState
 class NeuralMemory(nn.Module):
     """Test-time-learned associative memory (Titans, Behrouz et al. 2024)."""
 
+    # Opt out of parameter-merging routers (praxis/routers/targeting.py). These
+    # weights are meta-learned INITIAL CONDITIONS for a test-time update rule,
+    # not a geometry a router should be choosing between: the object that
+    # actually processes a sequence is the one this decays into after the
+    # in-context updates, and the per-forward state that governs those updates
+    # (a depth bank's occupancy, a band smear's reward EMA) lives in buffers,
+    # which no parameter merge carries anyway. The expert-bank path reached the
+    # same conclusion by sharing one memory across the copies
+    # (praxis/decoders/base.py); this states it once, on the class.
+    MERGE_OPAQUE: bool = True
+
     def __init__(
         self,
         dim: int,

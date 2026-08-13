@@ -27,6 +27,20 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     # The paper's conjecture states its own falsifier: deviation must rise from
     # head to tip AND that rise must steepen with recurrent depth, in norm and
     # in occupancy alike. These four keys are that falsifier, nothing else.
+    #
+    # CHARTLESS, deliberately - like the val_brier_* columns below. Each pair is
+    # meant to be READ TOGETHER (a norm-only reading is escapable, which is the
+    # entire reason the occupancy coordinate exists), so they render as two
+    # two-series composites, "Density Gradient across Position" and "Density
+    # Steepening across Depth", declared in COMPOSITE_METRIC_REGISTRY.
+    #
+    # They used to carry `chart` blocks with `series_group`/`group_order`, which
+    # do nothing here: buildScalarConfigsFromRegistry (praxis/web/src/js/charts.js)
+    # sorts this registry flat by `order` and emits one card per key, ignoring
+    # grouping entirely - that is the Dynamics tab's manifest builder, not this
+    # one. The result was four cards, two titled "Density Gradient (norm)" and
+    # two titled "Density Steepening across Depth", sorted to the very front of
+    # the deck because `order: 10` tied with `loss` and these are declared first.
     "density_norm_slope": {
         "description": (
             "Positional gradient of hidden-state deviation, in NORM: how much "
@@ -34,16 +48,6 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
             "relative to the mean. Positive = density pushed toward the rim, "
             "the paper's conjecture. Flat at 0 in both coordinates falsifies it."
         ),
-        "chart": {
-            "title": "Density Gradient (norm)",
-            "y_label": "Rise head to tip",
-            "y_scale": "linear",
-            "group": "density",
-            "group_order": 92,
-            "series_group": "density_slope",
-            "series_label": "norm",
-            "order": 10,
-        },
     },
     "density_hop_slope": {
         "description": (
@@ -52,15 +56,6 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
             "because a silent bit flip can change the geometry without moving "
             "the norm, so a norm-only reading is escapable."
         ),
-        "chart": {
-            "title": "Density Gradient (norm)",
-            "y_label": "Rise head to tip",
-            "y_scale": "linear",
-            "group": "density",
-            "series_group": "density_slope",
-            "series_label": "occupancy",
-            "order": 11,
-        },
     },
     "density_norm_steepening": {
         "description": (
@@ -70,15 +65,6 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
             "tilts further with every pass. Zero or negative kills the reading "
             "even if the slope itself is positive."
         ),
-        "chart": {
-            "title": "Density Steepening across Depth",
-            "y_label": "Slope change per pass",
-            "y_scale": "linear",
-            "group": "density",
-            "series_group": "density_steepening",
-            "series_label": "norm",
-            "order": 20,
-        },
     },
     "density_hop_steepening": {
         "description": (
@@ -86,15 +72,6 @@ TRAINING_METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
             "is that the hop rate between symbols rises from head to tip and "
             "steepens as the loop deepens."
         ),
-        "chart": {
-            "title": "Density Steepening across Depth",
-            "y_label": "Slope change per pass",
-            "y_scale": "linear",
-            "group": "density",
-            "series_group": "density_steepening",
-            "series_label": "occupancy",
-            "order": 21,
-        },
     },
     "loss": {
         "description": "Per-step training cross-entropy loss.",
@@ -794,6 +771,51 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "legend": True,
         "order": 206,
     },
+    # The two halves of the conjecture's falsifier, each read in BOTH
+    # coordinates on one card. Norm and occupancy are companions by design - a
+    # norm-only reading is escapable, since a state can flip which basin it
+    # expresses while barely moving in magnitude - so they belong on the same
+    # axes rather than on two cards a reader has to hold side by side. Sorted
+    # here beside the profiles they summarize, which also puts them behind the
+    # scalar cards (training loss, val loss) where they belong: this tab
+    # concatenates all scalars before all composites.
+    {
+        "key": "density_gradient",
+        "type": "multi_expert_line",
+        "title": "Density Gradient across Position",
+        "y_label": "Rise head to tip",
+        "description": (
+            "Positional gradient of hidden-state deviation: how much more the "
+            "tip of the window moves per depth step than the head, relative to "
+            "the mean. Positive = density pushed toward the rim, the paper's "
+            "conjecture. One line per coordinate - NORM is magnitude, "
+            "OCCUPANCY is the rate positions cross a partition boundary "
+            "between depth steps. Flat at 0 in BOTH falsifies the conjecture; "
+            "the occupancy line is here because a silent basin flip moves the "
+            "geometry without moving the norm."
+        ),
+        "key_pattern": r"^density_(norm|hop)_slope$",
+        "legend": True,
+        "order": 207,
+    },
+    {
+        "key": "density_steepening",
+        "type": "multi_expert_line",
+        "title": "Density Steepening across Depth",
+        "y_label": "Slope change per pass",
+        "description": (
+            "Whether the positional gradient STEEPENS as the recurrence "
+            "deepens - the second half of the falsifier. Early positions "
+            "should settle toward a fixed point while the tip stays live, so "
+            "the profile tilts further with every pass. Zero or negative kills "
+            "the reading even if the gradient itself is positive. One line per "
+            "coordinate, norm and occupancy, read together for the same reason "
+            "as the gradient card above."
+        ),
+        "key_pattern": r"^density_(norm|hop)_steepening$",
+        "legend": True,
+        "order": 208,
+    },
     {
         # Repo-level, not per-run: the framework's own git-churn evolution.
         # source "standalone" -> the card fetches its own data (/api/evolution),
@@ -1060,6 +1082,83 @@ COMPOSITE_METRIC_REGISTRY: list = [
         ),
         "key_pattern": r"^layer_\d+_routing_peak$",
         "order": 240,
+    },
+    # --- Modular SMEAR (praxis/routers/modular.py) --------------------------
+    # Three cards, not nine. SMEAR emitted nine chart families each keyed by
+    # `layer_{depth}_`, which at depth 6 drew 54 lines - all of them the SAME
+    # router sampled at different recurrent passes, since one router serves
+    # every depth. These keys carry no depth prefix (each pass overwrites the
+    # last, so what surfaces is the most recent), and the per-pass story is told
+    # by Router Depth Specialization, which is the only place a genuinely
+    # different object exists. Auto-hide for the other routers, which emit none
+    # of these keys.
+    {
+        "key": "smear_modular_coefficients",
+        "type": "expert_routing_heatmap",
+        "title": "SMEAR Merge Coefficients (per target module)",
+        "y_label": "Merge weight",
+        "description": (
+            "One row per DISCOVERED TARGET, one column per expert deviation: "
+            "the weights the parameter merge actually used. Where SMEAR had a "
+            "single scalar deciding the whole block's geometry, each module "
+            "here routes independently, so this card shows the entire routing "
+            "state at once. A row pinned at 1/N means that module declined to "
+            "specialize; a row at 1.0 means it committed."
+        ),
+        "key_pattern": r"^smear_modular_coeff_.+_\d+$",
+        "stepped": True,
+        "order": 260,
+    },
+    {
+        "key": "smear_modular_target_dispersion",
+        "type": "multi_expert_line",
+        "title": "SMEAR Target Dispersion (did per-module granularity earn it?)",
+        "y_label": "Mean pairwise row distance",
+        "description": (
+            "THE gauge on this design. Mean pairwise L1 distance between "
+            "different target modules' coefficient rows, normalized to [0, 1]. "
+            "Zero means every module chose the same mixture - per-module "
+            "granularity bought nothing and the block is behaviourally back to "
+            "SMEAR's single scalar. Rising means the modules genuinely want "
+            "different geometries, which is the only thing that justifies the "
+            "extra rows. Zero at init by construction, so early flatness reads "
+            "as 'nothing learned yet', not as collapse."
+        ),
+        "key_pattern": r"^smear_modular_target_dispersion$",
+        "order": 261,
+    },
+    {
+        "key": "smear_modular_input_dependence",
+        "type": "multi_expert_line",
+        "title": "SMEAR Routing Input Dependence (modular)",
+        "y_label": "I(input; expert) / log N",
+        "description": (
+            "Normalized mutual information between the input and the expert "
+            "choice, H(mean p) - mean H(p) over log(N), averaged over targets "
+            "(and the per-target maximum alongside). Zero means every sequence "
+            "in the batch received the same coefficients, so the router is a "
+            "constant and the merge is a reparametrized base. This is the "
+            "measurement that decayed to ~1e-5 under VEAR on abstractinator-g."
+        ),
+        "key_pattern": r"^smear_modular_input_dependence(_max)?$",
+        "order": 262,
+    },
+    {
+        "key": "smear_modular_expert_utilization",
+        "type": "multi_expert_line",
+        "title": "SMEAR Deviation Utilization (modular)",
+        "y_label": "Fraction in use",
+        "description": (
+            "Fraction of deviations carrying more than half their fair share of "
+            "a target's coefficient, averaged over targets. 1.0 = every "
+            "deviation is being used; 1/num_experts = each target has picked one "
+            "and abandoned the rest, which is what the deviations' gradient then "
+            "reflects. This is the number expert dropout exists to hold up - the "
+            "SMEAR paper's own load-balancing mechanism, and the one the first "
+            "cut of this router omitted."
+        ),
+        "key_pattern": r"^smear_modular_expert_utilization$",
+        "order": 263,
     },
     {
         "key": "depth_step",

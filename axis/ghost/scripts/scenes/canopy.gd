@@ -531,7 +531,21 @@ class CanopyJob:
 
 	const SIDES := 6                 # facets around a lofted limb
 	const LEAF_SIDES := 5            # rim points on a leaf-mass billboard
-	const SHADOW_TREES := 64         # how many trunks rasterize into the shadow map
+	## Shadow-map resolution, and it goes DOWN, which is the opposite of the instinct.
+	##
+	## The map is only ever READ at terrain vertices - Terrain.collect_surface calls
+	## shadow.factor() once per vertex of a 112x112 lattice over 2 * half world units, so the
+	## samples sit 0.054 world units apart and the result is Gouraud-interpolated across each
+	## quad. The ShadowField default of 220 puts a texel at 0.043 units: FINER than the lattice
+	## that reads it. A shadow map sampled below its own resolution can only alias, and that is
+	## the blockiness - a trunk 0.042 to 0.059 units wide sits right at the lattice's Nyquist
+	## limit and pops in and out of single vertices as the sun drifts.
+	##
+	## 128 puts a texel at 0.074 units, about 1.4 vertex spacings, so ShadowField's bilinear tap
+	## has something to interpolate BETWEEN and a shadow edge feathers over roughly two quads
+	## instead of snapping between them. It also costs a quarter of the memory: 16k floats
+	## against 48k, cleared once per built frame.
+	const SHADOW_RES := 128
 
 	var f: AudioFeatures
 	var lens: Lens3D
@@ -594,12 +608,17 @@ class CanopyJob:
 		# standing behind another is shaded by it.
 		var shadow := ShadowField.new()
 		shadow.build(ldir, Vector3(-terrain.half, -terrain.relief, -terrain.half),
-			Vector3(terrain.half, terrain.relief + 1.4, terrain.half))
+			Vector3(terrain.half, terrain.relief + 1.4, terrain.half), SHADOW_RES)
 		if reveal >= 0.02:
-			var sn := mini(order.size(), SHADOW_TREES)
-			for oi in sn:
-				var it: Dictionary = order[oi]
-				var tr: Dictionary = trees[int(it["i"])]
+			# EVERY tree casts. This used to take the 64 nearest the CAMERA off the painter order,
+			# which is a set that changes as the camera moves - so a tree's shadow blinked out of
+			# the hillside the moment it fell to 65th and back in when it rose again, with nothing
+			# about the tree or the light having changed. That was the other half of "the shadows
+			# aren't stable". A wood is 30 to 110 trees and add_box only fills a small rect, so
+			# rasterizing all of them costs less than the map's own clear - spires.gd already
+			# rasterizes its whole cast for the same reason.
+			for i in trees.size():
+				var tr: Dictionary = trees[i]
 				var g := _grown(tr)
 				if g < 0.1:
 					continue

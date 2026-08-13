@@ -40,6 +40,33 @@ def _wants_expert_bank(router_type: Optional[str]) -> bool:
     )
 
 
+def _router_layout(router_type: Optional[str]) -> str:
+    """How the layer stack should be built for this router.
+
+    ``"bank"``      - N whole-block copies under one shared LocalLayer, for the
+                      SMEAR/VEAR/Distance parameter-merging routers.
+    ``"shared"``    - ONE block, reused at every layer position, with the router
+                      constructed against it. The modular SMEAR routers need this: they merge
+                      deviations onto a single block, so replicating the block
+                      would be exactly the waste it exists to remove.
+    ``"per_position"`` - a distinct block and router per position (the default).
+
+    Asked of the registered class via ``LAYER_LAYOUT`` rather than a name list,
+    for the same reason ``_wants_expert_bank`` asks: a new subclass that is not
+    in the list silently gets the wrong construction and then fails to build.
+    """
+    if not router_type:
+        return "per_position"
+    if _wants_expert_bank(router_type):
+        return "bank"
+
+    from praxis.routers import ROUTER_REGISTRY
+
+    cls = ROUTER_REGISTRY.get(router_type)
+    cls = getattr(cls, "func", cls)  # unwrap functools.partial entries
+    return getattr(cls, "LAYER_LAYOUT", "per_position")
+
+
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
@@ -143,6 +170,28 @@ class BaseDecoder(nn.Module):
                 config, block=expert_blocks[0], expert_blocks=expert_blocks
             )
             # Reuse the same expert for all layer positions
+            for i in range(self.num_layers):
+                self.locals.append(expert)
+        elif _router_layout(config.router_type) == "shared":
+            # Modular SMEAR (praxis/routers/modular.py): ONE block, reused at every layer
+            # position exactly as the bank's shared LocalLayer was, with the
+            # router holding per-target deviations instead of the decoder
+            # holding block copies.
+            #
+            # The router is constructed HERE and passed in, rather than left to
+            # LocalLayer's default construction, because it has to walk this
+            # block's module tree to discover its merge targets and size their
+            # deviations. It keeps no reference to the block afterwards - the
+            # block arrives as the first forward argument - so nothing is
+            # double-registered in the state dict.
+            from praxis.routers import ROUTER_REGISTRY
+
+            if self.manager:
+                block = self.manager.register_expert(config)
+            else:
+                block = BLOCK_REGISTRY[config.block_type](config)
+            router = ROUTER_REGISTRY[config.router_type](config, block=block)
+            expert = LocalLayer(config, block=block, router=router)
             for i in range(self.num_layers):
                 self.locals.append(expert)
         elif config.router_type == "prismatic":
