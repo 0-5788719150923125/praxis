@@ -698,3 +698,131 @@ def test_routing_does_not_rename_module_classes():
         assert not type(module).__name__.startswith(
             "Parametrized"
         ), f"{name} was renamed to {type(module).__name__} by a parametrization"
+
+
+# --- selection diagnostics ---------------------------------------------------
+#
+# `smear_expert_utilization` averages the coefficients over the batch BEFORE
+# scoring them, so on its own it cannot say why a target is concentrated. VEAR
+# exists to make routing discrete, so "one deviation dominates" is its INTENDED
+# outcome when different examples pick different deviations, and its documented
+# failure (abstractinator-g's dead experts) when they do not. Sharpness and
+# diversity separate those two, which is what makes a vear-vs-smear run legible.
+
+
+class _Probe(SMEAR):
+    """Just the diagnostics, with no block to build against."""
+
+    def __init__(self, num_experts=4, targets=3, sharpen=1.0):
+        nn.Module.__init__(self)
+        self.num_experts = num_experts
+        self.targets = [type("G", (), {"label": f"t{i}"})() for i in range(targets)]
+        self.SHARPEN = sharpen
+        self._metrics = {}
+
+    def score(self, probs):
+        self._log_metrics(probs, probs)
+        return self._metrics
+
+
+def _one_hot(idx, n):
+    """Near-one-hot rows, kept off exactly 1.0 so entropy stays well defined."""
+    return torch.nn.functional.one_hot(idx, n).float() * 0.97 + 0.01
+
+
+def test_sharpness_separates_a_blend_from_a_choice():
+    n = 4
+    blend = _Probe(n).score(torch.full((256, 3, n), 1.0 / n))["smear_selection_sharpness"]
+    choice = _Probe(n).score(_one_hot(torch.randint(0, n, (256, 3)), n))[
+        "smear_selection_sharpness"
+    ]
+    assert blend == pytest.approx(0.0, abs=1e-5)
+    assert choice > 0.8
+
+
+def test_diversity_separates_specialization_from_collapse():
+    """The distinction utilization alone cannot draw: both of these are equally
+    sharp, and only one of them is using the bank."""
+    n = 4
+    spread = _Probe(n).score(_one_hot(torch.randint(0, n, (256, 3)), n))
+    same = _Probe(n).score(_one_hot(torch.ones(256, 3, dtype=torch.long), n))
+
+    assert spread["smear_selection_sharpness"] == pytest.approx(
+        same["smear_selection_sharpness"], abs=1e-5
+    ), "the two cases must be indistinguishable by sharpness, or the test is vacuous"
+    assert spread["smear_selection_diversity"] > 0.9
+    assert same["smear_selection_diversity"] == pytest.approx(0.0, abs=1e-5)
+
+
+def test_sharpening_raises_sharpness_without_touching_diversity():
+    """What VEAR's p**4 is supposed to do, and the reason -n is worth running:
+    it should peak each decision, not narrow which deviations get chosen."""
+    torch.manual_seed(0)
+    n = 4
+    probs = torch.softmax(torch.randn(256, 3, n) * 0.8, dim=-1)
+    soft = _Probe(n, sharpen=1.0).score(probs)
+    sharp = _Probe(n, sharpen=4.0).score(probs)
+
+    assert sharp["smear_selection_sharpness"] > soft["smear_selection_sharpness"] + 0.3
+    assert sharp["smear_selection_diversity"] == pytest.approx(
+        soft["smear_selection_diversity"], abs=0.05
+    )
+
+
+def test_selection_metrics_are_measured_before_expert_dropout():
+    """Dropout zeroes a tenth of the coefficients and renormalizes, which reads
+    as peakedness the router did not choose. If it leaked into these numbers, a
+    smear run would look more discrete than it is and the vear comparison would
+    be biased before it started."""
+    torch.manual_seed(0)
+    router, block = make(dropout=0.5)  # exaggerated, so a leak is unmistakable
+    assert router.EXPERT_DROPOUT > 0 and router.training
+
+    x = torch.randn(8, 6, router.hidden_size)
+    inputs = router.router_norm(x.mean(dim=1))
+    probs = torch.softmax(router._route_logits(inputs, 0), dim=-1)
+
+    merge, reported = router._coefficients(x, 0)
+    torch.testing.assert_close(reported, probs)
+    assert not torch.allclose(merge, probs), "dropout did not fire; test is vacuous"
+
+    router._log_metrics(merge, reported)
+    from_probs = dict(router._metrics)
+    router._metrics = {}
+    router._log_metrics(merge, merge)  # what leaking dropout in would produce
+    from_merge = dict(router._metrics)
+
+    assert (
+        from_probs["smear_selection_sharpness"]
+        != from_merge["smear_selection_sharpness"]
+    ), "the dropout-free path is not actually distinguishable here"
+
+
+@pytest.mark.parametrize("cls", [SMEAR, VEAR])
+def test_a_real_forward_emits_the_selection_metrics(cls):
+    """The -n card has to have data in it. get_metrics() is what the dashboard
+    drains, so pin the whole path rather than _log_metrics in isolation."""
+    router, block = make(cls)
+    router(*router_args(block, torch.randn(8, 6, router.hidden_size)))
+    metrics = router.get_metrics()
+    for key in ("smear_selection_sharpness", "smear_selection_diversity"):
+        assert key in metrics, f"{cls.__name__} never emitted {key}"
+        assert 0.0 <= metrics[key] <= 1.0, f"{key}={metrics[key]} out of range"
+
+
+def test_vear_sharpens_a_real_forward_relative_to_smear():
+    """Same block, same weights, same input: the only difference is SHARPEN, so
+    -n's sharpness must exceed -m's or the exponent is not reaching the merge."""
+    torch.manual_seed(0)
+    x = torch.randn(16, 6, 32)
+
+    def run(cls):
+        torch.manual_seed(0)
+        router, block = make(cls)
+        router(*router_args(block, x))
+        return router.get_metrics()
+
+    soft, sharp = run(SMEAR), run(VEAR)
+    assert (
+        sharp["smear_selection_sharpness"] > soft["smear_selection_sharpness"]
+    ), "vear did not peak the routing relative to smear"

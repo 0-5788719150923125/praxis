@@ -659,6 +659,47 @@ class SMEAR(nn.Module):
                 self._metrics["smear_input_dependence"] = mi.mean().item()
                 self._metrics["smear_input_dependence_max"] = mi.max().item()
 
+                # Utilization above is computed on the batch-MEAN coefficients,
+                # so it cannot tell "every example picked deviation 2" from
+                # "each example picked a different one" - the first is collapse,
+                # the second is specialization, and VEAR is built to produce the
+                # second. These two separate them:
+                #
+                #   sharpness high + diversity high  specialization (VEAR's aim)
+                #   sharpness high + diversity low   collapse to one deviation
+                #   sharpness low  + diversity low   a soft blend, near-constant
+                #
+                # Measured on `probs`, i.e. the router's own opinion re-sharpened
+                # but WITHOUT expert dropout: dropout zeroes a tenth of the
+                # coefficients and renormalizes, which reads as peakedness the
+                # router did not choose and would bias smear against vear.
+                sel = probs
+                if self.SHARPEN != 1.0:
+                    sel = sel.pow(self.SHARPEN)
+                    sel = sel / sel.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+                sel = sel.reshape(-1, sel.shape[-2], sel.shape[-1])  # [D, T, N]
+
+                # How peaked ONE routing decision is. 0 = uniform blend over the
+                # deviations, 1 = a single deviation chosen outright.
+                self._metrics["smear_selection_sharpness"] = (
+                    (1.0 - self._entropy(sel, dim=-1).mean() / math.log(n))
+                    .clamp(0.0, 1.0)
+                    .item()
+                )
+
+                # Do different decisions land on different deviations? Entropy of
+                # the argmax distribution, normalized. 0 = every example picks the
+                # SAME deviation (so a sharp router is just a collapsed one);
+                # 1 = the selections spread evenly across the bank. Exactly 0 by
+                # construction under reduction="batch", which is the honest
+                # reading of that mode.
+                picks = F.one_hot(sel.argmax(dim=-1), n).to(sel.dtype)  # [D, T, N]
+                self._metrics["smear_selection_diversity"] = (
+                    (self._entropy(picks.mean(dim=0), dim=-1) / math.log(n))
+                    .mean()
+                    .item()
+                )
+
                 # THE number this design exists to produce. Mean pairwise L1
                 # distance between different targets' coefficient rows, over its
                 # maximum of 2. Zero means every module chose the same mixture,

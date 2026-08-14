@@ -1161,6 +1161,26 @@ COMPOSITE_METRIC_REGISTRY: list = [
         "order": 263,
     },
     {
+        "key": "smear_selection",
+        "type": "multi_expert_line",
+        "title": "SMEAR Selection: Sharpness vs Diversity",
+        "y_label": "Normalized",
+        "description": (
+            "Two numbers that must be read together, because utilization above "
+            "averages over the batch first and so cannot tell collapse from "
+            "specialization. Sharpness is how peaked ONE routing decision is "
+            "(0 = uniform blend, 1 = a single deviation chosen outright). "
+            "Diversity is whether different decisions land on different "
+            "deviations (0 = everyone picks the same one, 1 = spread evenly). "
+            "Sharp AND diverse is what VEAR's p**4 is built to produce; sharp "
+            "but not diverse is the dead-expert failure of abstractinator-g. "
+            "Both are measured before expert dropout, so smear and vear runs "
+            "are directly comparable."
+        ),
+        "key_pattern": r"^smear_selection_(sharpness|diversity)$",
+        "order": 264,
+    },
+    {
         "key": "depth_step",
         "type": "multi_expert_line",
         "title": "Depth Trajectory: Step Size (spectral-attractor probe)",
