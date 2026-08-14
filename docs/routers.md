@@ -74,7 +74,7 @@ Source: [praxis/routers/prismatic.py:29](../praxis/routers/prismatic.py#L29)
 
 Soft-merging of experts, at the granularity the paper uses.
 
-Source: [praxis/routers/smear.py:241](../praxis/routers/smear.py#L241)
+Source: [praxis/routers/smear.py:247](../praxis/routers/smear.py#L247)
 
 Presets:
 - `smear` - class defaults
