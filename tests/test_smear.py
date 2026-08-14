@@ -613,3 +613,79 @@ def test_num_experts_comes_from_the_config():
     r = SMEAR(cfg, block=Block(cfg.hidden_size), verbose=False)
     assert r.num_experts == 7
     assert r.router.out_features == len(r.targets) * 7
+
+
+# --- functorch compatibility --------------------------------------------------
+
+
+def test_routes_a_block_containing_functorch_transforms():
+    """A module that runs vmap + grad + its own functional_call must survive
+    being routed, across several recurrent depths.
+
+    This is the Titans memory's shape (praxis/memory/neural_memory.py). Three
+    crashes on abstractinator-m were once blamed on nesting the router's
+    ``functional_call`` around it, and this router was rewritten onto
+    ``torch.nn.utils.parametrize`` to avoid the nesting. That diagnosis was
+    WRONG - the cause was a web probe calling ``functional_call`` on live
+    modules from the API thread (praxis/web/routes/dynamics.py) - and the
+    parametrization cost more in attribute-interception overhead than the whole
+    merge did. So the nesting is back, and this pins that it is in fact fine.
+    """
+    from torch.func import functional_call, grad, vmap
+
+    inner = nn.Linear(Cfg.hidden_size, Cfg.hidden_size)
+
+    class Memoryish(nn.Module):
+        """Reparametrizes ITSELF inside a vmap, like NeuralMemory does."""
+
+        MERGE_OPAQUE = True
+
+        def forward(s, x):
+            w = {
+                n: p.unsqueeze(0).expand(x.shape[0], *p.shape)
+                for n, p in inner.named_parameters()
+            }
+
+            def loss(wi, xi):
+                return functional_call(inner, wi, (xi,)).sum()
+
+            vmap(grad(loss))(w, x.mean(dim=1))
+            return x
+
+    class Blk(Block):
+        def __init__(s, d):
+            super().__init__(d)
+            s.memory = Memoryish()
+
+        def forward(s, inputs, *a, **kw):
+            out = super().forward(inputs, *a, **kw)
+            return (s.memory(out[0]),) + out[1:]
+
+    cfg = Cfg()
+    block = Blk(cfg.hidden_size)
+    router = SMEAR(cfg, block=block, num_experts=4, verbose=False)
+    x = torch.randn(2, 8, Cfg.hidden_size)
+
+    for depth in range(cfg.depth):
+        assert router(*router_args(block, x, depth=depth))[0].shape == x.shape
+
+    # The parameters the transform touched must still be ordinary tensors - a
+    # BatchedTensor left installed is what took the run down at teardown.
+    for p in inner.parameters():
+        p.unsqueeze(0)
+        p.detach().cpu()
+
+    router(*router_args(block, x))[0].sum().backward()
+    assert block.attn.qkv.weight.grad is not None
+
+
+def test_routing_does_not_rename_module_classes():
+    """torch.nn.utils.parametrize swaps a module's __class__ for a synthetic
+    ``ParametrizedX`` subclass, which leaks into the blueprint and into the
+    compute profiler's per-module attribution (attention read as 40% of step
+    time largely because the interception was billed to it)."""
+    router, block = make()
+    for name, module in block.named_modules():
+        assert not type(module).__name__.startswith("Parametrized"), (
+            f"{name} was renamed to {type(module).__name__} by a parametrization"
+        )

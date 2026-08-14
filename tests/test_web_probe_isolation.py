@@ -92,3 +92,55 @@ def test_probe_does_not_reparametrize(monkeypatch):
 
     monkeypatch.setattr(torch.func, "functional_call", boom)
     assert _probe(Activation()) is not None
+
+
+def test_probe_skips_a_module_that_is_mid_transform():
+    """Several activations live inside memory_model, which the Titans memory
+    drives under vmap. Sampling one then raises "tensor escaped from inside a
+    function being vmapped" - true, transient, and not worth a traceback every
+    poll. The probe checks first and skips on purpose."""
+    import torch.func as F
+    from torch.func import vmap
+
+    from praxis.web.routes.dynamics import _inside_a_transform
+
+    module = Activation()
+    assert not _inside_a_transform(module)
+
+    # Observed from INSIDE the reparametrized scope, which is where the real
+    # collision happens: functional_call swaps the module's _parameters
+    # process-wide for the duration of the call, so the API thread sees batched
+    # tensors exactly here. A pre-hook is the faithful vantage point.
+    seen = {}
+    handle = module.register_forward_pre_hook(
+        lambda m, inp: seen.update(
+            mid=_inside_a_transform(m), skipped=_probe(m) is None
+        )
+    )
+    try:
+        params = {
+            n: p.unsqueeze(0).expand(3, *p.shape) for n, p in module.named_parameters()
+        }
+        vmap(lambda w, row: F.functional_call(module, w, (row,)).sum())(
+            params, torch.randn(3, 8)
+        )
+    finally:
+        handle.remove()
+
+    assert seen["mid"] is True, "mid-transform state was not detected"
+    assert seen["skipped"] is True, "probe sampled a module that was mid-transform"
+
+    # ...and once the transform is done, sampling works again by itself.
+    assert not _inside_a_transform(module)
+    assert _probe(module) is not None
+
+
+def test_mid_transform_skip_is_not_logged_as_a_failure():
+    """The skip must not poison _SAMPLE_FAILURES, or a transient collision would
+    suppress the genuine warning for that class forever after."""
+    from praxis.web.routes import dynamics
+
+    before = set(dynamics._SAMPLE_FAILURES)
+    module = Activation()
+    assert _probe(module) is not None
+    assert set(dynamics._SAMPLE_FAILURES) == before

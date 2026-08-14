@@ -652,6 +652,36 @@ def get_activation_curves():
 _SAMPLE_FAILURES: set = set()
 
 
+def _inside_a_transform(module) -> bool:
+    """True if this module's parameters are currently functorch BatchedTensors.
+
+    The probe runs on the API thread while training runs on another, and several
+    activations live inside ``memory_model``, which the Titans memory drives
+    under ``vmap`` (praxis/memory/neural_memory.py). For the width of that
+    transform the module's parameters ARE batched tensors, and touching one from
+    outside its vmap level raises "tensor escaped from inside a function being
+    vmapped".
+
+    Checking first turns that from an exception into a deliberate skip. It does
+    NOT close the race - the transform can begin between this check and the
+    forward below - so the handler still catches the escape; this just makes the
+    common case quiet and intentional rather than alarming.
+
+    The race is inherent to reading live modules from another thread. Closing it
+    properly means the training thread publishing an activation snapshot at a
+    safe point and this endpoint serving that, the stash-and-drain pattern the
+    compute profiler and RLCT probe already use.
+    """
+    try:
+        from torch._C._functorch import is_batchedtensor
+    except ImportError:  # private API; absence just means we skip the fast path
+        return False
+    try:
+        return any(is_batchedtensor(p) for p in module.parameters(recurse=True))
+    except Exception:
+        return False
+
+
 def _activation_classes() -> tuple:
     """Module subclasses we treat as activations when walking a model.
 
@@ -745,6 +775,12 @@ def _sample_activation(
     # with extra leading axes - Ouroboros' per-step gate bias is [MAX_STEPS, D].
     # Using numel there asks for MAX_STEPS * D features, the forward cannot
     # broadcast, and the module silently vanishes from the chart.
+    # Cheap, deliberate skip while the module is mid-transform on the training
+    # thread. Sampling it would raise, and a sample is worth nothing next to a
+    # scary traceback in the log every poll.
+    if _inside_a_transform(module):
+        return None
+
     param_dim = 1
     for p in module.parameters(recurse=False):
         if p is None:
@@ -823,10 +859,18 @@ def _sample_activation(
         return {"x": xs, "forward": forward, "backward": backward, **band}
 
     except Exception as e:
-        # Never silently. A sampling failure used to drop the module from the
-        # chart with no trace anywhere, which reads as "this activation is not
-        # in the model" - the hardest kind of bug to notice. Warn once per
-        # class so the polled endpoint cannot spam the log.
+        # A transform that STARTED after the check above lands here. It is
+        # expected, transient and self-healing, so it is not news - debug only.
+        if "vmapped" in str(e) or "gen_vmap_plumbing" in str(e):
+            api_logger.debug(
+                f"[activation_curves] {type(module).__name__} was mid-transform; "
+                f"skipping this sample"
+            )
+            return None
+        # Anything else is worth saying out loud. A sampling failure used to drop
+        # the module from the chart with no trace anywhere, which reads as "this
+        # activation is not in the model" - the hardest kind of bug to notice.
+        # Warn once per class so the polled endpoint cannot spam the log.
         key = type(module).__name__
         if key not in _SAMPLE_FAILURES:
             _SAMPLE_FAILURES.add(key)
