@@ -108,6 +108,7 @@ var _scroll_to := 0.0
 # creep so the frame is never quite still even while a single character is being drawn.
 var _cam := Vector2.ZERO          # eased camera centre, in the same unit space as _cx/_cy
 var _cam_drift := 0.0             # seconds, for the bounded breath (see _track_pen)
+var _chasing := false             # the nib is out of shot: close fast, not loosely (see _track_pen)
 var _zoom_in := 2.6               # how far the framing is pushed past whole-page
 var _drift_rate := 0.006
 
@@ -209,7 +210,13 @@ func build_params(rng: RandomNumberGenerator) -> Dictionary:
 	_rest_line = rng.randf_range(0.70, 1.80)
 	# How far into the text the camera sits. At 1.0 the whole page is in frame, which is
 	# the old look; past 2 the writing runs off both edges and the eye has to follow it.
-	_zoom_in = rng.randf_range(2.1, 3.4)
+	#
+	# A SPIRAL IS THE EXCEPTION and is framed whole. The zoom exists so the eye has lines to
+	# read along; a coil has none, its nib orbits rather than travels (see _pen_at), and at a
+	# page's zoom the frame lands inside the coil's own empty hub - the hole at the centre is
+	# `_line_step` across, which at 2.1x to 3.4x is the size of the visible height. So the
+	# composition is shown as a composition, with just enough push to crop its outermost turn.
+	_zoom_in = rng.randf_range(1.02, 1.30) if _layout == "spiral" else rng.randf_range(2.1, 3.4)
 	# Slow enough to be felt rather than watched - a few percent of a line height a second.
 	_drift_rate = rng.randf_range(0.004, 0.011)
 	# Movement is a 0..1 section-change score that spends most of a track low, so a
@@ -280,7 +287,6 @@ func update(f: AudioFeatures, delta: float) -> void:
 	_f = f
 	tick(f, delta)
 	drift_view(f, 0.02, 0.03)           # a page barely moves; it is being read
-	_track_pen(delta)
 	update_layers(f, delta)
 	queue_redraw()
 	if size.x < 4.0:
@@ -289,6 +295,14 @@ func update(f: AudioFeatures, delta: float) -> void:
 	if not _open:
 		_open = true
 		_write_opening()
+		# The page arrives already part written (see _write_opening), so it should arrive
+		# already FRAMED. Easing in from the centre would have the opening seconds of every
+		# session drift across whatever the prefill happened to leave under the middle.
+		_cam = _clamp_cam(_pen_at())
+	# AFTER _metrics and the opening, never before: the tracker reads `_left` / `_right` /
+	# `_bottom` / `_line_step` for its bound and the cursor for its target, and on the first
+	# frame none of those exist yet - it would aim at, and clamp against, the declared defaults.
+	_track_pen(delta)
 	_ch = chroma_hue()
 	_sig = Spectrum.harmonic_signature()
 	# A character is COMMITTED on the beat, every _bpg beats. Event, not integration -
@@ -604,6 +618,10 @@ func _draw() -> void:
 	# motion blur, so at any size it is a floating arrowhead. The ink arriving IS the
 	# indication that something is writing, and it is a better one.
 	if not _paper:
+		# Back to the SCREEN's transform first. The dust is atmosphere in the room, not ink on
+		# the page: left under _frame's matrix it was magnified by _zoom_in (2.1x to 3.4x) and
+		# pinned to the paper, so it slid with the writing instead of hanging in front of it.
+		draw_set_transform_matrix(view.matrix(size))
 		draw_layers("front")
 
 
@@ -638,21 +656,96 @@ func _track_pen(delta: float) -> void:
 	# holding a character - is a bounded breath instead.
 	_cam_drift += delta
 	var breath := sin(_cam_drift * _drift_rate * TAU * 12.0) * _line_step * 0.18
-	# THE PEN'S DRAWN POSITION, not its page position. `_cy` is an absolute coordinate on an
-	# endless page: it only ever increases, and when it passes `_bottom` the page answers by
-	# scrolling (`_scroll_to += _line_step`) rather than by resetting it - so every glyph is
-	# actually drawn at `p.y - _scroll` (see _pose). Aiming the camera at the raw `_cy` walked it
-	# downward by exactly one line per line written, off the bottom of the page, and the writing
-	# left the frame for good - which is the unbounded-accumulator catastrophe this function's own
-	# comment above was written to avoid, arriving through the other door.
-	var target := Vector2(_cx + _adv * 0.5, _cy - _scroll - _line_step * 0.25 + breath)
-	_cam = _cam.lerp(target, 1.0 - exp(-0.7 * delta))
+	# THE SACCADE. Loose tracking is the whole feel of this scene, but a line break is not a
+	# drift - it is a CARRIAGE RETURN, and an eye does not glide back across a page, it jumps.
+	# Measured with the loose constant alone (tests/glyph_frame_check.gd): after every newline the
+	# frame spent 1.47 s sailing over blank paper while the hand wrote at the start of the new
+	# line, and the nib was out of shot for 32% of the hold. So the rate is loose while the nib
+	# is IN frame and fast while it is not - ONE rule, which also covers every other jump (the
+	# opening frames, a page scroll landing) without having to name them.
+	#
+	# The two thresholds are a commit band, the same shape as contour_map's _pick_index: it
+	# starts chasing at the frame edge but does not stop until the nib is comfortably back
+	# inside, so a nib hovering ON the boundary cannot chatter between the two rates.
+	var target := _pen_at() + Vector2(0.0, breath)
+	var h := _half / maxf(0.001, _zoom_in)
+	var off := target - _cam
+	if absf(off.x) > h.x or absf(off.y) > h.y:
+		_chasing = true
+	elif absf(off.x) < h.x * 0.7 and absf(off.y) < h.y * 0.7:
+		_chasing = false
+	_cam = _clamp_cam(_cam.lerp(target, 1.0 - exp((-9.0 if _chasing else -0.7) * delta)))
 	# NOTE the camera is NOT written into `view`. Doing that compounds: `view.zoom` and
 	# `view.offset` are only re-set each frame by the assigned SHOT, and a scene running
 	# without one - the catalogue smoke gate builds every scene shotless - multiplies its
 	# own zoom by _zoom_in every frame. Measured before it was caught: zoom reached 3.9e13
 	# after one second and inf within half a minute. The framing is applied as its own
 	# transform at draw time instead, which is idempotent by construction.
+
+
+## Where the nib actually IS on screen, in the unit-fraction space [member _cam] lives in.
+##
+## NOT `_cx` / `_cy`. Those are the page cursor, and only three of the six layouts write at it:
+##
+##   SPIRAL advances `_s` along its coil and never touches `_cx` / `_cy` at all, so they keep
+##   whatever _write_opening left them - the top-left corner of the page - for the entire hold.
+##   The camera therefore sat on that corner watching blank paper while the writing went round
+##   the middle of the frame.
+##
+##   BANNER recentres its live line, so a glyph is drawn at `p.x + _shift_cur` (see _pose and
+##   _ink). At the start of a line that shift is nearly half the measure - about 0.5 in unit
+##   fractions against a visible half-width of 0.26 to 0.42 at this zoom - so aiming at the raw
+##   cursor put the pen entirely outside the frame and only walked back into it as the line
+##   filled.
+##
+## `_cy` also needs its scroll taken off: it is an absolute coordinate on an endless page that
+## only ever increases, and when it passes `_bottom` the page scrolls (`_scroll_to +=
+## _line_step`) instead of resetting it, so every glyph is drawn at `p.y - _scroll`.
+func _pen_at() -> Vector2:
+	if _layout == "spiral":
+		# A COIL IS NOT TRACKED, it is framed. The nib runs along the spiral, so its angle
+		# advances as `sqrt(s)` - measured on a mid-size coil, about 0.14 rad per character at
+		# eight characters a second, which is 0.44 unit-fractions a second of tangential travel.
+		# The tracker's own 1.4 s constant means a camera aimed at it lags by more than half a
+		# unit, i.e. further than the whole visible width, so it can only ever chase and never
+		# arrive: measured at 1.3% of frames with the nib in shot, which is WORSE than the old
+		# rule's parked corner. The coil re-centres itself instead (`_sshift` pulls it inward
+		# and _drop_spiral retires the middle), so the composition is already where it needs to
+		# be and the frame simply holds still on it - which is why `_zoom_in` is sampled low for
+		# this layout in build_params, so the whole coil is in shot rather than its empty hub.
+		return Vector2.ZERO
+	var sh := -(_cx + _adv + _left) * 0.5 if _centred else 0.0
+	return Vector2(_cx + _adv * 0.5 + sh, _cy - _scroll - _line_step * 0.25)
+
+
+## Keep the frame ON the writing.
+##
+## The tracking above is eased over about 1.4 s, which is what makes it read as an eye following
+## a hand rather than as a rig bolted to it - but a lag that long crosses a lot of blank paper
+## whenever the pen jumps, and a mis-aimed target (the two layouts above) parks there for good.
+## Bounding the camera is what turns "the writing should stay in frame" from a hope into a
+## property: the visible rectangle is held inside the region the writing occupies, so the frame
+## can neither sit on empty ground nor travel far enough to bring the sheet's own edge into view.
+##
+## The bound is exactly tight, not conservative - at the limit the pen sits ON the frame edge
+## rather than inside it - because pulling it in any further would stop the camera before the
+## end of a line and the hand would appear to write off the side of its own frame.
+func _clamp_cam(c: Vector2) -> Vector2:
+	var h := _half / maxf(0.001, _zoom_in)          # visible half-extent, in unit fractions
+	if _layout == "spiral":
+		# A coil is written outward from its centre, so the written DISC is the bound, and it
+		# grows with `_s` - which is also why the opening frame stays centred: at `_s_min` the
+		# whole coil is smaller than the view and there is nowhere to go.
+		var s := maxf(_s - _sshift, _s_min)
+		var r := _coil * sqrt(2.0 * s / maxf(0.000001, _coil))
+		return c.limit_length(maxf(0.0, r - minf(h.x, h.y)))
+	# A page narrower or shorter than the view (a column, mostly) has no pan to do on that axis,
+	# so it centres instead of clamping to an inverted range.
+	var x1 := _right - h.x
+	var y1 := _bottom - h.y
+	return Vector2(
+		clampf(c.x, -x1, x1) if x1 > 0.0 else 0.0,
+		clampf(c.y, -y1, y1) if y1 > 0.0 else 0.0)
 
 
 # Faint ruling under the writing. Cheap (a dozen antialiased lines) and it is what

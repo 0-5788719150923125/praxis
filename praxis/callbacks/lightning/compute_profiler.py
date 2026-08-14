@@ -26,6 +26,24 @@ from lightning.pytorch.callbacks import Callback
 
 from praxis.metrics.compute import COMPUTE_DEFAULTS, ComputeProfiler
 
+
+def _log_quietly(message: str) -> None:
+    """Emit a diagnostic without ever being able to raise.
+
+    Every message this callback produces is optional telemetry commentary, and
+    ``print`` is not safe for it: another thread can swap the process-global
+    ``sys.stdout`` for a buffer of its own and close it (see
+    praxis/web/spec_data.py), after which ``print`` raises ``ValueError: I/O
+    operation on closed file``. Inside an ``except`` block that re-raises out of
+    the handler and kills the run - which is precisely what happened on
+    abstractinator-m, where a profiler that had already failed safely was made
+    fatal by its own error message.
+    """
+    try:
+        print(message)
+    except Exception:
+        pass
+
 # Retained as a tripwire only: the window now closes after one microbatch, so
 # this should never be reached. If it ever is, something stopped delivering
 # on_train_batch_end and the profiler would otherwise record unboundedly.
@@ -75,11 +93,11 @@ class ComputeProfilerCallback(Callback):
             ok = self.profiler.install(model, device=device, max_depth=depth)
         except Exception as e:
             self._disabled = True
-            print(f"[ComputeProfiler] disabled: hook install failed: {e}")
+            _log_quietly(f"[ComputeProfiler] disabled: hook install failed: {e}")
             return
         if not ok:
             self._disabled = True
-            print("[ComputeProfiler] disabled: no submodules to instrument.")
+            _log_quietly("[ComputeProfiler] disabled: no submodules to instrument.")
             return
         self._installed = True
         scope = (
@@ -89,7 +107,7 @@ class ComputeProfilerCallback(Callback):
             if compiled
             else "every module, forward+backward"
         )
-        print(
+        _log_quietly(
             f"[ComputeProfiler] {scope}; sampling one step every "
             f"{self.cfg['interval']} after step {self.cfg['warmup_steps']} "
             f"(EMA alpha={self.cfg['ema_alpha']})"
@@ -119,7 +137,13 @@ class ComputeProfilerCallback(Callback):
         except Exception as e:
             self._active = None
             self._disabled = True
-            print(f"[ComputeProfiler] disabled: could not start profiler: {e}")
+            # Report through logging, not print. This handler exists to make a
+            # profiler failure survivable, and the failure it most needs to
+            # survive is stdout being unusable - in which case ``print`` raises
+            # the SAME exception from inside the handler, escapes the ``except``
+            # entirely, and takes the training run down. That is exactly how
+            # optional telemetry killed abstractinator-m.
+            _log_quietly(f"[ComputeProfiler] disabled: could not start profiler: {e}")
 
     def on_before_optimizer_step(self, trainer, pl_module, optimizer):
         # Fires only on the accumulation boundary. Without accumulation this is
@@ -152,12 +176,12 @@ class ComputeProfilerCallback(Callback):
         try:
             ok = self.profiler.stop(prof)
         except Exception as e:
-            print(f"[ComputeProfiler] sample failed: {e}")
+            _log_quietly(f"[ComputeProfiler] sample failed: {e}")
             return
         if not ok:
             if self.profiler.hooks_fired() == 0 and not self._disabled:
                 self._disabled = True
-                print(
+                _log_quietly(
                     "[ComputeProfiler] disabled: hooks never fired. They must "
                     "be attached before the first forward - Dynamo installs no "
                     "guard on _forward_hooks, so anything added later is "
@@ -174,7 +198,7 @@ class ComputeProfilerCallback(Callback):
             metrics = self.profiler.metrics()
             snapshot = self.profiler.snapshot()
         except Exception as e:
-            print(f"[ComputeProfiler] rollup failed: {e}")
+            _log_quietly(f"[ComputeProfiler] rollup failed: {e}")
             return
         if metrics:
             core._compute_metrics = metrics
@@ -182,4 +206,4 @@ class ComputeProfilerCallback(Callback):
             core._compute_profile = snapshot
         if not self._announced and snapshot:
             self._announced = True
-            print(self.profiler.summary())
+            _log_quietly(self.profiler.summary())

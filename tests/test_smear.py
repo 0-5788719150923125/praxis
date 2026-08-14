@@ -24,7 +24,9 @@ import torch
 import torch.nn as nn
 
 from praxis.routers import ROUTER_REGISTRY
-from praxis.routers.smear import SMEAR, MergedLinear, _get_param
+import torch.nn.utils.parametrize as parametrize
+
+from praxis.routers.smear import SMEAR, Deviation, MergedLinear, _get_param
 from praxis.routers.vear import VEAR
 from praxis.routers.targeting import TARGET_PROFILES, discover_targets
 
@@ -131,23 +133,26 @@ def test_granularity_is_per_module_not_per_block():
 
 
 def test_merge_is_exactly_identity_at_init():
-    """Both merge paths must be exact no-ops at step 0."""
+    """Both mechanisms must be exact no-ops at step 0."""
     router, block = make()
     x = torch.randn(3, 7, Cfg.hidden_size)
     merge, _ = router._coefficients(x, 0)
 
-    # Batch-mean path: every merged tensor is bit-identical to its base.
-    merged = router._merged_state_dict(block, merge.mean(dim=0))
-    for name, tensor in merged.items():
-        assert torch.equal(tensor, _get_param(block, name)), f"{name} moved at init"
-
-    # Per-example path: each wrapper reduces to the Linear it replaced.
+    base = {n: p.detach().clone() for n, p in block.named_parameters()}
     with router._coefficient_scope(merge):
+        # Parametrized reads return the base exactly (banks are zero).
+        for dev in router.deviations:
+            assert torch.all(dev.bank == 0)
+        assert torch.equal(block.attn_norm.weight, base["attn_norm.parametrizations.weight.original"])
+        assert torch.equal(block.attn.kappa, base["attn.parametrizations.kappa.original"])
+        # Wrapped Linears reduce to the Linear they replaced.
         for label, wrapper in router.wrappers.items():
             probe = torch.randn(3, 7, wrapper.in_features)
-            got = wrapper(probe)
-            want = torch.nn.functional.linear(probe, wrapper.weight, wrapper.bias)
-            torch.testing.assert_close(got, want, msg=f"{label} moved at init")
+            torch.testing.assert_close(
+                wrapper(probe),
+                torch.nn.functional.linear(probe, wrapper.weight, wrapper.bias),
+                msg=f"{label} moved at init",
+            )
 
 
 def test_forward_matches_bare_block_at_init():
@@ -179,25 +184,19 @@ def test_depth_bias_wraps_past_the_table():
 
 
 def test_merge_equals_convex_combination_of_implied_experts():
-    """base + sum_e w_e delta_e == sum_e w_e (base + delta_e), on the batch-mean path."""
+    """base + sum_e w_e delta_e == sum_e w_e (base + delta_e), on a Deviation."""
     router, block = make()
-    for param in router.deltas.values():
-        nn.init.normal_(param, std=0.05)
-    x = torch.randn(4, 6, Cfg.hidden_size)
-    merge, _ = router._coefficients(x, 0)
-    w = merge.mean(dim=0)
-    merged = router._merged_state_dict(block, w)
+    dev = router.deviations[0]
+    nn.init.normal_(dev.bank, std=0.05)
+    base = torch.randn_like(dev.bank[0])
+    w = torch.softmax(torch.randn(router.num_experts), dim=-1)
 
-    for name, row in router._param_row.items():
-        base = _get_param(block, name)
-        coeffs = w[row]
-        experts = []
-        for e in range(router.num_experts):
-            onehot = torch.zeros_like(coeffs)
-            onehot[e] = 1.0
-            experts.append(base + router._delta_for(name, onehot, base.dtype))
-        want = sum(c * p for c, p in zip(coeffs, experts))
-        torch.testing.assert_close(merged[name], want, rtol=1e-4, atol=1e-6)
+    dev._coeff = w
+    got = dev(base)
+    dev._coeff = None
+
+    want = sum(w[e] * (base + dev.bank[e]) for e in range(router.num_experts))
+    torch.testing.assert_close(got, want, rtol=1e-4, atol=1e-6)
 
 
 def test_coefficients_sum_to_one_per_target():
@@ -224,38 +223,32 @@ def test_sharpening_concentrates_without_changing_shape():
 
 
 def test_shared_trunk_gets_full_gradient_under_collapsed_routing():
-    """The property SMEAR lacked: whatever the routing does, the base learns.
-
-    Under SMEAR an expert at weight ~0 received ~0 gradient AND held the only
-    copy of its geometry. Here a collapsed coefficient starves one deviation
-    while the trunk keeps its full gradient path.
-    """
+    """Whatever the routing does, the shared base learns."""
     router, block = make()
-    with torch.no_grad():  # force a near one-hot routing onto expert 0
+    with torch.no_grad():  # force near one-hot onto expert 0
         router.router.bias.zero_()
         router.router.bias.view(len(router.targets), 4)[:, 0] = 50.0
     x = torch.randn(2, 5, Cfg.hidden_size)
     router(*router_args(block, x))[0].sum().backward()
 
-    assert block.attn.qkv.weight.grad is not None
-    assert block.attn.qkv.weight.grad.abs().sum() > 0
-
+    assert block.attn.qkv.weight.grad.abs().sum() > 0        # wrapped base
     lora_b = router.wrappers["attn_qkv"].lora_b
-    assert lora_b.grad[0].abs().sum() > 0  # the selected deviation learns
-    assert lora_b.grad[3].abs().sum() < lora_b.grad[0].abs().sum()  # a starved one does not
+    assert lora_b.grad[0].abs().sum() > 0                     # selected deviation
+    assert lora_b.grad[3].abs().sum() < lora_b.grad[0].abs().sum()
 
-    # ...and a batch-mean target behaves the same way.
-    bank = router.deltas[router._key("attn_norm.weight")]
-    assert bank.grad[0].abs().sum() > 0
-    assert block.attn_norm.weight.grad.abs().sum() > 0
+    # ...and the parametrized path behaves the same way.
+    orig = block.attn_norm.parametrizations.weight.original
+    assert orig.grad is not None and orig.grad.abs().sum() > 0
 
 
 def test_deviations_receive_gradient():
     router, block = make()
     x = torch.randn(2, 5, Cfg.hidden_size)
     router(*router_args(block, x))[0].sum().backward()
-    grads = [p.grad for p in router.deltas.values() if p.grad is not None]
-    assert grads and any(g.abs().sum() > 0 for g in grads)
+    banks = [d.bank for d in router.deviations if d.bank.grad is not None]
+    loras = [w.lora_b for w in router.wrappers.values() if w.lora_b.grad is not None]
+    assert banks and any(b.grad.abs().sum() > 0 for b in banks)
+    assert loras and any(l.grad.abs().sum() > 0 for l in loras)
 
 
 def test_repulsion_is_a_scalar_and_training_only():
@@ -283,15 +276,30 @@ def test_factored_deviations_are_cheaper_than_whole_copies():
 
 
 def test_linear_targets_are_wrapped_and_the_rest_are_not():
-    """Linear targets route per example via MergedLinear; the rest merge on the
-    batch mean. That split is the paper's: it routes adapters, not layernorms."""
+    """Linear targets route per example via MergedLinear; everything else is
+    reached by a parametrization - so nothing is dropped for being awkward."""
     router, block = make()
     assert set(router.wrappers) == {"attn_qkv", "attn_output"}
     assert isinstance(block.attn.qkv, MergedLinear)
-    assert isinstance(block.attn.output, MergedLinear)
-    # Wrapped Linears leave the batch-mean bookkeeping entirely.
-    assert not any(n.startswith("attn.qkv.") for n in router._param_row)
-    assert "attn_norm.weight" in router._param_row
+    # Raw parameters on a module nobody edited are still covered.
+    assert parametrize.is_parametrized(block.attn, "kappa")
+    assert parametrize.is_parametrized(block.attn_norm, "weight")
+    assert len(router.deviations) == len(router._deviation_row)
+    assert all(isinstance(d, Deviation) for d in router.deviations)
+
+
+def test_every_targeted_parameter_is_covered():
+    """Full coverage: each target is either wrapped or parametrized. A target
+    that is silently uncovered is the failure mode this replaced."""
+    router, block = make()
+    wrapped = set(router.wrappers)
+    for group in router.targets:
+        if group.label in wrapped:
+            continue
+        for pname in group.params:
+            owner_name, _, leaf = pname.rpartition(".")
+            owner = block.get_submodule(owner_name) if owner_name else block
+            assert parametrize.is_parametrized(owner, leaf), f"{pname} uncovered"
 
 
 def test_wrapper_preserves_parameter_identity_and_names():
@@ -305,17 +313,26 @@ def test_wrapper_preserves_parameter_identity_and_names():
     assert block.attn.qkv.in_features == Cfg.hidden_size
 
 
-def test_batch_mean_parametrization_is_chosen_by_shape():
-    """On the batch-mean path, big 2-D tensors factor and small ones stay dense.
-    Shape-derived, so there is nothing to configure per experiment."""
-    from praxis.routers.targeting import DENSE_DELTA_MAX_NUMEL
+def test_router_never_reparametrizes_the_block():
+    """THE structural guarantee. functional_call swaps entries in _parameters,
+    and the block contains the Titans memory, which runs vmap + grad + its own
+    nested functional_call. Nesting those produced three separate failures on
+    abstractinator-m. The router must call the block plainly."""
+    from praxis.routers import smear as smear_mod
+
+    # Names actually referenced by the compiled forward - comments and the
+    # docstring (which explain why it must not) do not count.
+    names = smear_mod.SMEAR.forward.__code__.co_names
+    consts = smear_mod.SMEAR.forward.__code__.co_consts
+    assert "functional_call" not in names, "SMEAR.forward reparametrizes again"
+    assert not any(isinstance(c, str) and c == "functional_call" for c in consts)
 
     router, block = make()
-    assert router._factored["attn_norm.weight"] is False  # 1-D
-    assert router._factored["attn.kappa"] is False
-    assert all(
-        _get_param(block, n).numel() <= DENSE_DELTA_MAX_NUMEL or router._factored[n]
-        for n in router._param_row
+    x = torch.randn(2, 5, Cfg.hidden_size)
+    before = {id(p) for p in block.parameters()}
+    router(*router_args(block, x))
+    assert {id(p) for p in block.parameters()} == before, (
+        "block parameter objects were swapped during the forward"
     )
 
 
@@ -381,11 +398,11 @@ def test_coefficient_scope_is_released():
 
 
 def test_untargeted_parameters_are_absent_from_the_merge():
+    """MERGE_OPAQUE subtrees carry no parametrization at all."""
     router, block = make()
-    x = torch.randn(2, 5, Cfg.hidden_size)
-    merge, _ = router._coefficients(x, 0)
-    merged = router._merged_state_dict(block, merge.mean(dim=0))
-    assert not any(k.startswith("ffn.") for k in merged)
+    for name, module in block.ffn.named_modules():
+        for pname, _ in module.named_parameters(recurse=False):
+            assert not parametrize.is_parametrized(module, pname)
 
 
 def test_metrics_carry_no_depth_prefix():
@@ -429,17 +446,21 @@ def test_registry_entries_build(key):
 
 def test_state_dict_round_trips():
     router, block = make(SMEAR)
-    for p in router.deltas.values():
-        nn.init.normal_(p, std=0.05)
+    for dev in router.deviations:
+        nn.init.normal_(dev.bank, std=0.05)
     nn.init.normal_(router.depth_bias.weight, std=0.05)
 
-    fresh, _ = make(SMEAR)
+    # The router and its block are one unit now: the deviations are registered
+    # ON the block by parametrize, and the wrapped Linears ARE block modules. So
+    # a round trip has to carry both and be replayed against the fresh block.
+    fresh, fresh_block = make(SMEAR)
     fresh.load_state_dict(router.state_dict())
+    fresh_block.load_state_dict(block.state_dict())
 
     x = torch.randn(2, 5, Cfg.hidden_size)
     with torch.no_grad():
         torch.testing.assert_close(
-            fresh(*router_args(block, x))[0], router(*router_args(block, x))[0]
+            fresh(*router_args(fresh_block, x))[0], router(*router_args(block, x))[0]
         )
 
 
@@ -477,19 +498,20 @@ def test_dropout_perturbs_coefficients_only_while_training():
 
 
 def test_all_dropped_falls_back_to_base_rather_than_zeroing_the_block():
-    """The safety property base-plus-deviation has and SMEAR does not: an
-    all-dropped draw yields zero coefficients, and zero coefficients mean the
-    base runs unchanged. SMEAR's sum_e w_e P_e would give an all-zero block."""
+    """An all-dropped draw yields zero coefficients, and zero coefficients mean
+    the base runs unchanged. SMEAR's sum_e w_e P_e would give an all-zero block."""
     router, block = make()
-    router.EXPERT_DROPOUT = 1.0  # drop everything, every time
+    router.EXPERT_DROPOUT = 1.0
     router.train()
     x = torch.randn(8, 5, Cfg.hidden_size)
     merge, _ = router._coefficients(x, 0)
     assert torch.all(merge == 0)
 
-    merged = router._merged_state_dict(block, merge.mean(dim=0))
-    for name, tensor in merged.items():
-        assert torch.equal(tensor, _get_param(block, name))
+    for dev in router.deviations:
+        nn.init.normal_(dev.bank, std=0.2)
+    base = block.attn_norm.parametrizations.weight.original.detach().clone()
+    with router._coefficient_scope(merge):
+        torch.testing.assert_close(block.attn_norm.weight, base)
 
     w = router.wrappers["attn_qkv"]
     nn.init.normal_(w.lora_b, std=0.2)
@@ -613,3 +635,65 @@ def test_num_experts_comes_from_the_config():
     r = SMEAR(cfg, block=Block(cfg.hidden_size), verbose=False)
     assert r.num_experts == 7
     assert r.router.out_features == len(r.targets) * 7
+
+
+# --- the failure this design exists to prevent -------------------------------
+
+
+def test_routes_a_block_containing_functorch_transforms():
+    """A module that runs vmap + grad + its own functional_call must survive
+    being routed, across several recurrent depths.
+
+    This is the Titans memory's shape (praxis/memory/neural_memory.py), and
+    routing it under the old ``functional_call`` design failed three different
+    ways on abstractinator-m - a lost requires_grad, and a BatchedTensor that
+    escaped its vmap and was still installed on a parameter at teardown.
+    """
+    from torch.func import functional_call, grad, vmap
+
+    inner = nn.Linear(Cfg.hidden_size, Cfg.hidden_size)
+
+    class Memoryish(nn.Module):
+        """Stands in for NeuralMemory: reparametrizes ITSELF inside a vmap."""
+
+        MERGE_OPAQUE = True
+
+        def forward(s, x):
+            w = {
+                n: p.unsqueeze(0).expand(x.shape[0], *p.shape)
+                for n, p in inner.named_parameters()
+            }
+
+            def loss(wi, xi):
+                return functional_call(inner, wi, (xi,)).sum()
+
+            vmap(grad(loss))(w, x.mean(dim=1))
+            return x
+
+    class Blk(Block):
+        def __init__(s, d):
+            super().__init__(d)
+            s.memory = Memoryish()
+
+        def forward(s, inputs, *a, **kw):
+            out = super().forward(inputs, *a, **kw)
+            return (s.memory(out[0]),) + out[1:]
+
+    cfg = Cfg()
+    block = Blk(cfg.hidden_size)
+    router = SMEAR(cfg, block=block, num_experts=4, verbose=False)
+    x = torch.randn(2, 8, Cfg.hidden_size)
+
+    for depth in range(cfg.depth):
+        out = router(*router_args(block, x, depth=depth))
+        assert out[0].shape == x.shape
+
+    # The parameters the transform touched must still be ordinary tensors -
+    # a BatchedTensor left installed is what took the run down at teardown.
+    for p in inner.parameters():
+        p.unsqueeze(0)          # raises if it escaped a vmap
+        p.detach().cpu()        # what Lightning's teardown does
+
+    out = router(*router_args(block, x))
+    out[0].sum().backward()
+    assert block.attn.qkv.weight.grad is not None

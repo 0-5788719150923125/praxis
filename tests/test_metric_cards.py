@@ -115,3 +115,95 @@ def test_composite_orders_do_not_collide():
         assert entry["order"] not in dupes, (
             f"{key} at order {entry['order']} ties with another card"
         )
+
+
+# --- run comparison ----------------------------------------------------------
+
+
+def _payload(run_hash, limit=1000):
+    """The exact per-run payload /api/metrics builds for the Research tab."""
+    import pathlib
+
+    from praxis.web.routes.metrics import (
+        _downsample_metrics,
+        _read_metrics_file,
+        _transform_metrics,
+    )
+
+    db = pathlib.Path("build/runs") / run_hash / "metrics.db"
+    if not db.exists():
+        return None
+    rows = _read_metrics_file(db, 0, max_rows=limit * 3)
+    if not rows:
+        return None
+    if len(rows) > limit:
+        rows = _downsample_metrics(rows, limit, "lttb")
+    return _transform_metrics(rows)
+
+
+def _has(payload, key):
+    values = payload.get(key)
+    return bool(values) and any(v is not None for v in values)
+
+
+def test_no_run_loses_a_series_it_actually_recorded():
+    """A run must surface every charted metric it genuinely has data for.
+
+    Older runs used to vanish from the Research tab entirely: the SELECT named
+    every registry column, so any run predating one raised ``no such column``,
+    ``_read_metrics_file`` swallowed it, and the caller dropped the run - taking
+    its loss curve with it. The projection is per-database now
+    (``_projection_for``), and this pins the property that guarantees: what the
+    database holds is what the payload serves.
+
+    Deliberately NOT "every run draws every card". A run that stopped before its
+    first validation step has no val_loss, and that is correct, not a defect.
+    """
+    import pathlib
+    import sqlite3
+
+    checked = 0
+    for path in sorted(pathlib.Path("build/runs").iterdir())[:6]:
+        db = path / "metrics.db"
+        if not db.exists():
+            continue
+        payload = _payload(path.name, limit=200)
+        if payload is None:
+            continue
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+        try:
+            columns = {r[1] for r in conn.execute("PRAGMA table_info(metrics)")}
+            for key, entry in TRAINING_METRIC_REGISTRY.items():
+                if not entry.get("chart") or key not in columns:
+                    continue
+                recorded = conn.execute(
+                    f"SELECT COUNT(*) FROM metrics WHERE {key} IS NOT NULL"
+                ).fetchone()[0]
+                if recorded:
+                    assert _has(payload, key), (
+                        f"{path.name}: {key!r} has {recorded} recorded values "
+                        f"but was dropped from the payload"
+                    )
+        finally:
+            conn.close()
+        checked += 1
+    if checked == 0:
+        pytest.skip("no runs on disk")
+
+
+def test_core_metrics_survive_in_every_run_on_disk():
+    """loss / val_loss are the comparison baseline - they must never drop out."""
+    import pathlib
+
+    checked = 0
+    for path in sorted(pathlib.Path("build/runs").iterdir()):
+        if not (path / "metrics.db").exists():
+            continue
+        payload = _payload(path.name, limit=200)
+        if payload is None:
+            continue
+        checked += 1
+        assert "steps" in payload, f"{path.name}: no step axis"
+        assert _has(payload, "loss"), f"{path.name}: lost its loss series"
+    if checked == 0:
+        pytest.skip("no runs on disk")

@@ -202,6 +202,25 @@ func sweep(t: float, org: Vector2, step: float, gw: int, gh: int,
 ## its derivative is a polynomial, so a ring costs no exp() anywhere. The carrier phase
 ## advances faster than the front, which is what makes crests appear at the back of the
 ## packet and die at its leading edge - the actual look of a drip ring.
+##
+## THE RINGS RIDE THE SWELL. Call this AFTER [method sweep] and the four buffers already hold
+## the travelling field, so a ring can read the water it is spreading across instead of ignoring
+## it. Two couplings, both from data already in the buffers and costing a handful of flops per
+## point:
+##
+##   WARP (`warp` on the ring) displaces the packet's front and its carrier by the local swell
+##   height, so a ring crossing a crest runs ahead there and lags in the trough. It stops being
+##   a circle stamped over the water and becomes a front travelling THROUGH it - which is what
+##   "droplets create a circular ripple effect which does not interact with the other waves at
+##   all" was asking for. Physically it is the leading-order term of a shallow-water celerity
+##   c = sqrt(g(d + h)) accumulating differently over crest and trough; the second-order piece
+##   (the front's own gradient picking up the swell's) is dropped, which is worth a few percent
+##   on the normal and nothing on the silhouette.
+##
+##   DAMP (`damp`) kills the packet where the swell is already steep. Ripples do not survive on
+##   choppy water, and a drip that dies in the rough while spreading clean across glass is most
+##   of what makes the two systems look like one body of water. Read off the squared gradient,
+##   so no square root enters the inner loop.
 static func sweep_rings(rings: Array, org: Vector2, step: float, gw: int, gh: int,
 		hh: PackedFloat32Array, gx: PackedFloat32Array,
 		gy: PackedFloat32Array, jz: PackedFloat32Array) -> void:
@@ -220,8 +239,14 @@ static func sweep_rings(rings: Array, org: Vector2, step: float, gw: int, gh: in
 		var phi: float = rd["phi"]
 		var ph: float = rd["ph"]
 		var qk: float = float(rd["q"]) * a * kk
-		var r_out := rad + wdt
-		var r_in := rad - wdt
+		var wrp: float = float(rd.get("warp", 0.0))
+		var dmp: float = float(rd.get("damp", 0.0))
+		# The warp displaces the front by `wrp` times the LOCAL swell height, so the row spans
+		# have to widen by the largest that can be, or the packet is clipped exactly where it
+		# rides a crest. The caller knows the live amplitude sum and hands the bound in.
+		var slack := absf(float(rd.get("warp_max", 0.0)))
+		var r_out := rad + wdt + slack
+		var r_in := rad - wdt - slack
 		var iy0 := maxi(0, int(ceil((cy - r_out - org.y) / step)))
 		var iy1 := mini(gh - 1, int(floor((cy + r_out - org.y) / step)))
 		for iy in range(iy0, iy1 + 1):
@@ -255,14 +280,22 @@ static func sweep_rings(rings: Array, org: Vector2, step: float, gw: int, gh: in
 					if rr < 0.00001:
 						i += 1
 						continue
-					var u := (rr - rad) / wdt
+					# The swell as it stands at this node - sweep() has already run, so these are
+					# the travelling field's own height and gradient, not the ring's.
+					var swell := hh[i]
+					var rw := rr - wrp * swell            # the front, carried by the water
+					var u := (rw - rad) / wdt
 					if u <= -1.0 or u >= 1.0:
 						i += 1
 						continue
 					var b := 1.0 - u * u
 					var env := b * b
+					if dmp > 0.0:
+						var sgx := gx[i]
+						var sgy := gy[i]
+						env /= 1.0 + dmp * (sgx * sgx + sgy * sgy)   # chop eats ripples
 					var denv := -4.0 * u * b / wdt
-					var th := kk * rr - phi + ph
+					var th := kk * rw - phi + ph
 					var s := sin(th)
 					var co := cos(th)
 					var dhdr := a * (denv * co - env * kk * s)

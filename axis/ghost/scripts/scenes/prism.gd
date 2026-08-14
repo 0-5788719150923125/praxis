@@ -9,9 +9,12 @@ extends GhostScene
 ##
 ## Colour is a [Scheme] mood rather than the old blue-or-red coin flip. Only the hue
 ## reaches the body (it draws its own saturation from the browser's palette), and
-## every hue is a plausible crystal, so nothing is excluded. The shell - tetra,
-## spire, slab, bipyramid, octa - is rolled by [PrismBody] itself; the liberty this
-## scene takes on top is PRESENCE.
+## every hue is a plausible crystal, so nothing is excluded.
+##
+## THE SHELL DOES NOT VARY. It is the browser tetrahedron, every time - see [PrismBody]'s
+## `form` for the five-way shell roll that briefly lived there and why it was taken out. A
+## prism is a tetrahedron; the variety belongs in its colour and its framing, not in its
+## solid. The liberty this scene takes on top is PRESENCE.
 
 ## How much of the frame the prism claims. A solitary body has no count and no
 ## arrangement to vary, so scale IS its silhouette: a mote lost in the void and a

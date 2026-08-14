@@ -759,35 +759,38 @@ def _sample_activation(
             param_dim = size
 
     try:
-        # Snapshot first, so a mid-step optimizer write or an in-flight vmap
-        # fails HERE - before any graph exists - instead of inside backward.
-        # detach() drops the training graph, clone() gives a tensor whose
-        # version counter only we can bump.
-        snapshot = {
-            name: tensor.detach().clone()
-            for name, tensor in [
-                *module.named_parameters(),
-                *module.named_buffers(),
-            ]
-            if tensor is not None
-        }
-
-        x_base = torch.linspace(
-            x_min, x_max, num_points, device=device, dtype=dtype, requires_grad=True
-        )
+        x_base = torch.linspace(x_min, x_max, num_points, device=device, dtype=dtype)
         if param_dim > 1:
             x = x_base.unsqueeze(-1).expand(num_points, param_dim).contiguous()
-            x = x.detach().requires_grad_(True)
         else:
             x = x_base
 
-        with torch.enable_grad():
-            # tie_weights=False: an activation has no tied tensors, and the
-            # aliasing pass is pure overhead on a per-poll probe.
-            y = torch.func.functional_call(module, snapshot, (x,), tie_weights=False)
+        # STRICTLY READ-ONLY, and no autograd. This runs on the API thread while
+        # training runs on another, so it must not touch a single byte of shared
+        # state:
+        #
+        #   * No ``functional_call``. It swaps entries in the module's
+        #     ``_parameters`` dict and is not thread-safe. These activations sit
+        #     INSIDE ``memory_model`` (NeuralMemory(model=..., activation=serpent)),
+        #     so a swap here is visible to the training thread mid-step - which
+        #     read the swapped, detached tensors and died either with "One of the
+        #     differentiated Tensors does not require grad" or, when it collided
+        #     with the memory's own vmap, "tensor escaped from inside a function
+        #     being vmapped". Both, hundreds of steps in, only under ./launch.
+        #   * No autograd. Building a graph through live parameters lets the
+        #     optimizer bump a version counter between forward and backward,
+        #     which is the failure the functional_call was meant to dodge in the
+        #     first place. A central difference needs no graph at all.
+        #
+        # What remains is a plain read of the parameters, which is what this did
+        # before and never once broke a run: a torn read costs one wrong sample
+        # on one poll, and the next poll fixes it.
+        step = (x_max - x_min) / max(1, num_points - 1) * 0.5
+        with torch.no_grad():
+            y = module(x)
             if y.shape != x.shape:
                 return None
-            grad = torch.autograd.grad(y.sum(), x, create_graph=False)[0]
+            grad = (module(x + step) - module(x - step)) / (2.0 * step)
 
         y_d = y.detach()
         g_d = grad.detach()

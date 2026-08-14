@@ -5,11 +5,9 @@ runs we snapshot the same payload to build/runs/<hash>/spec.json at startup
 so it can be loaded later without re-instantiating the model.
 """
 
-import io
 import json
 import os
 import subprocess
-from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any, Optional
 
@@ -42,10 +40,22 @@ def _capture_model_architecture(generator) -> Optional[str]:
     if not generator or not hasattr(generator, "model"):
         return None
     try:
-        f = io.StringIO()
-        with redirect_stdout(f):
-            print(generator.model)
-        return f.getvalue()
+        # NEVER redirect stdout for this. ``redirect_stdout`` swaps the
+        # PROCESS-GLOBAL ``sys.stdout``, and this runs on the Flask API thread
+        # while training runs on another: for the width of the swap, every
+        # thread's stdout is this StringIO, and the moment the block exits and
+        # the buffer is closed, anything mid-write on another thread fails with
+        # ``ValueError: I/O operation on closed file``.
+        #
+        # That is not hypothetical. The compute profiler calls
+        # ``sys.stdout.flush()`` from ``_quiet_native_logs``
+        # (praxis/metrics/compute.py) on the training thread, and the snapshot
+        # publisher requests this payload at startup - the two collided on
+        # abstractinator-m and killed the run before its first step.
+        #
+        # ``print(x)`` into a buffer is just ``str(x)`` with a newline, so the
+        # redirect bought nothing to begin with.
+        return f"{generator.model}\n"
     except Exception as e:
         return f"Error getting model architecture: {e}"
 

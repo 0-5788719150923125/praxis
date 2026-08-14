@@ -438,6 +438,23 @@ export function chartLineColor(index) {
     return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
 }
 
+/** CSS custom properties for the i-th chart-line color.
+ *
+ *  Same palette slot as `chartLineColor`, expressed as an offset from the
+ *  reference hue so CSS can add `--accent-hue` itself. An element styled with
+ *  these follows a theme switch LIVE; a baked hex string cannot, which is why
+ *  the run-selector swatches stayed green after switching to the blue hue
+ *  (charts retint via the MutationObserver in charts.js, plain HTML does not).
+ */
+export function chartLineColorVars(index) {
+    const n = CHART_PALETTE_BASE.length;
+    const [h, s, l] = CHART_PALETTE_BASE[((index % n) + n) % n];
+    // UNITLESS hue: --accent-hue is a bare number (variables.css), and
+    // calc() refuses to add a <number> to an <angle> - the whole hsl() is then
+    // invalid and the swatch renders with no background at all.
+    return `--run-hue:${h - CHART_PALETTE_REF_HUE};--run-sat:${s}%;--run-lum:${l}%`;
+}
+
 /** RGB (0-255) to HSL ([h degrees, s 0-1, l 0-1]). */
 export function rgbToHsl(r, g, b) {
     r /= 255; g /= 255; b /= 255;

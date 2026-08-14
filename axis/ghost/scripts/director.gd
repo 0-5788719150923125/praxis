@@ -1460,18 +1460,47 @@ func _scene_key(i: int) -> int:
 	return hash(String(e.script.resource_path).get_file().get_basename() + "|" + String(e.behavior))
 
 
+## How many cuts back the novelty term can see. Past this a kind is simply DUE, and no more due
+## than any other kind that is also due - which is the whole difference between sampling the
+## catalogue and queueing it. Chosen by measuring the first-repeat statistic, not by taste; see
+## tests/scene_mix_check.gd.
+const NOVELTY_SPAN := 5.0
+
+## How sharply novelty rises inside that span. 1.0 is linear in cuts-since-last-seen.
+const NOVELTY_EXP := 1.0
+
+
 # Selection weight for one catalogue entry: 0 for the entry on screen (never an
 # immediate repeat), tiny for another behavior of the *same* scene (so we don't
-# show two of one kind back to back), and otherwise rising with the number of
-# swaps since that kind was last seen - long-unseen kinds dominate the draw.
+# show two of one kind back to back), and otherwise a MILD preference for kinds that
+# have not been seen lately.
+#
+# THE ROTATION. This used to be `pow(age, 1.6)` over an UNBOUNDED age, with a kind that had
+# never been shown handed `age = _swaps + 1000` by the dictionary default - a weight of about
+# 251,000 against 40 for a kind last seen ten cuts ago, or 6,300 to 1. At odds like that the
+# scheduler could not repeat anything until it had shown EVERYTHING, so the running order was a
+# rotation through the catalogue wearing the clothes of a weighted random draw, and the function
+# above promised "a soft priority queue, not a hard rotation" while delivering the opposite.
+#
+# Measured before the change (tests/scene_mix_check.gd, 40 sessions x 140 cuts over 52 kinds):
+# the first repeated kind arrived at cut 50.0, where a genuine random draw over 52 kinds repeats
+# at about cut 9.0 and a complete sweep would be cut 53. A video therefore played very nearly
+# the whole catalogue once through before it ever came back to anything, which is what "the
+# variety of generated scenes is not truly random" was describing.
+#
+# Novelty is BOUNDED now, so the tail cannot dominate. What it still buys is the thing it was
+# added for: two behaviors of one scene do not follow each other, and a kind shown a moment ago
+# is unlikely to return immediately. What it no longer does is decide the whole running order.
 func _novelty_weight(i: int) -> float:
 	if i == _index:
 		return 0.0
 	var kind := String(SCENES[i].script.resource_path)
 	if _index >= 0 and kind == String(SCENES[_index].script.resource_path):
 		return 0.05
+	# An unseen kind is MAXIMALLY due, not infinitely due. The -1000 sentinel is unchanged and
+	# harmless now that the clamp is what decides how far novelty reaches.
 	var age := float(_swaps - int(_kind_last.get(kind, -1000)))
-	return pow(maxf(1.0, age), 1.6)
+	return pow(clampf(age, 1.0, NOVELTY_SPAN), NOVELTY_EXP)
 
 
 # Resolve the next scene to build: from the novelty scheduler (auto mode) or the

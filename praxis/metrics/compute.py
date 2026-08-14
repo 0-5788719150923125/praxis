@@ -111,8 +111,16 @@ def _quiet_native_logs():
         return
     devnull = os.open(os.devnull, os.O_WRONLY)
     try:
-        sys.stdout.flush()
-        sys.stderr.flush()
+        # Best-effort: another thread can have swapped sys.stdout for a buffer
+        # of its own and closed it (contextlib.redirect_stdout mutates a
+        # process-global), and optional telemetry must not be the thing that
+        # notices. The fd-level redirect below is what actually matters here;
+        # flushing is only so buffered Python output does not land in devnull.
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                stream.flush()
+            except (ValueError, OSError):
+                pass
         os.dup2(devnull, 1)
         os.dup2(devnull, 2)
         yield

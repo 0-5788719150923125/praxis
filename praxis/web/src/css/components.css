@@ -2016,6 +2016,20 @@
     height: 0.75rem;
     border-radius: 50%;
     flex-shrink: 0;
+    /* Composed HERE, from --accent-hue, so the swatch follows a theme switch
+       without a re-render. The per-run offset/sat/lum come from
+       chartLineColorVars() and name the same palette slot the chart line uses. */
+    background: hsl(
+        calc(var(--accent-hue) + var(--run-hue, 0))
+        var(--run-sat, 68%)
+        var(--run-lum, 42%)
+    );
+}
+
+/* A run that is not selected draws no line, so its swatch shows no hue. */
+.run-color-indicator--idle {
+    background: var(--text-muted, #586072);
+    opacity: 0.35;
 }
 
 .run-label {

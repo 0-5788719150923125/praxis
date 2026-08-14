@@ -3,7 +3,7 @@
  * Full Chart.js implementation for Research tab
  */
 
-import { state, CONSTANTS, chartLineColor, currentAccentHue, rotateHexHue, accentRgb } from './state.js';
+import { state, CONSTANTS, chartLineColor, chartLineColorVars, currentAccentHue, rotateHexHue, accentRgb } from './state.js';
 import { fetchAPI } from './api.js';
 import { createTabHeader, pdfButton } from './components.js';
 import { hasRealContent } from './prefetch.js';
@@ -110,9 +110,21 @@ export function setupAccentRetint() {
 function runColorIndex(run) {
     const runs = state.research.historicalRuns || [];
     const entry = runs.find(r => r.hash === run.hash);
-    if (entry && entry.is_current) return 0;
-    const i = runs.filter(r => !r.is_current).findIndex(r => r.hash === run.hash);
-    return i >= 0 ? i + 1 : 0;
+    if ((entry && entry.is_current) || run.is_current) return 0;
+    // Index within the SELECTED runs, not the full history. The palette is ten
+    // hues spread around the wheel, so slots 1-3 (blue, amber, magenta) are
+    // maximally distinct from the accent - but indexing on all 71 historical
+    // runs handed the second comparison run slot 7 ("leaf green"), which sits
+    // right next to the accent green. On Training Loss the curves are noisy
+    // enough to separate anyway; on Validation Loss they nearly coincide, and
+    // two greens read as a single line - which is what "the older run does not
+    // show up" actually was.
+    const selected = (state.research.selectedHistoricalRuns || []).filter(h => {
+        const e = runs.find(r => r.hash === h);
+        return !(e && e.is_current);
+    });
+    const i = selected.indexOf(run.hash);
+    return i >= 0 ? i + 1 : -1;   // -1: not plotted, so it has no line colour
 }
 
 // Layer selection state for per-layer metrics
@@ -125,7 +137,12 @@ const stepSliderData = {};
 
 // ETag caches for the metrics endpoints so a 304 Not Modified on a manual
 // refresh can short-circuit re-render.
+// Keyed to the run set it was issued for. An ETag describes ONE selection, so
+// sending it after the user picks a different set can earn a 304 whose cached
+// payload does not contain the newly-selected run - which is how comparison
+// runs silently failed to appear.
 let lastMetricsEtag = null;
+let lastMetricsEtagRuns = null;
 let lastDataMetricsEtag = null;
 
 /**
@@ -344,20 +361,30 @@ async function fetchSelectedRunMetrics() {
     if (localHashes.length > 0) {
         try {
             const runsParam = localHashes.join(',');
-            const headers = lastMetricsEtag ? { 'If-None-Match': lastMetricsEtag } : {};
+            // Only revalidate against an ETag issued for THIS selection.
+            const headers = (lastMetricsEtag && lastMetricsEtagRuns === runsParam)
+                ? { 'If-None-Match': lastMetricsEtag }
+                : {};
             const response = await fetch(
                 `/api/metrics?since=0&limit=1000&downsample=lttb&runs=${runsParam}`,
                 { headers, cache: 'no-cache' }
             );
             if (response.status === 304) {
-                localUnchanged = true;
                 const previousLocal = (state.research.lastRuns || []).filter(
                     r => localHashes.includes(r.hash)
                 );
+                // A 304 is only reusable if the cache actually covers every run
+                // we asked for. If the selection grew, the cache cannot contain
+                // the new one, and claiming "unchanged" would render the old
+                // list and drop it - so fall through to a full render instead.
+                localUnchanged = previousLocal.length === localHashes.length;
                 results.push(...previousLocal);
             } else if (response.ok) {
                 const newEtag = response.headers.get('ETag');
-                if (newEtag) lastMetricsEtag = newEtag;
+                if (newEtag) {
+                    lastMetricsEtag = newEtag;
+                    lastMetricsEtagRuns = runsParam;
+                }
                 const data = await response.json();
                 if (data.runs) {
                     data.runs.forEach(run => {
@@ -2231,7 +2258,11 @@ function renderMetricsHeader(container, runs) {
                     <div class="run-selector-list">
                         ${state.research.historicalRuns.map((run, idx) => {
                             const isSelected = state.research.selectedHistoricalRuns.includes(run.hash);
-                            const color = chartLineColor(idx);
+                            const slot = runColorIndex(run);
+                            // Unselected rows draw no line, so they get no hue -
+                            // the swatch is the legend for the chart, not decoration.
+                            const colorVars = slot >= 0 ? chartLineColorVars(slot) : '';
+                            const idleClass = slot >= 0 ? '' : ' run-color-indicator--idle';
                             const timeLabel = formatRelativeTime(run.metrics_updated);
                             const badges = [];
                             if (run.is_current) badges.push('active');
@@ -2246,7 +2277,7 @@ function renderMetricsHeader(container, runs) {
                             return `
                                 <label class="run-selector-item">
                                     <input type="checkbox" ${isSelected ? 'checked' : ''} data-run-hash="${run.hash}">
-                                    <span class="run-color-indicator" style="background: ${color};"></span>
+                                    <span class="run-color-indicator${idleClass}" style="${colorVars}"></span>
                                     <span class="run-label">${run.hash}${badgeHTML}</span>
                                     <span class="run-steps">${stepsLabel}</span>
                                 </label>
