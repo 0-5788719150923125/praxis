@@ -64,7 +64,6 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.nn.utils.parametrize as parametrize
 from torch import Tensor
 
 from praxis.routers.targeting import (
@@ -228,50 +227,6 @@ class MergedLinear(nn.Module):
         return y + torch.einsum("...er,eor->...o", u, self.lora_b.to(x.dtype))
 
 
-class Deviation(nn.Module):
-    """A parametrization that adds ``sum_e c_e * bank_e`` to one parameter.
-
-    Registered with ``torch.nn.utils.parametrize``, so the owning module keeps
-    reading ``self.kappa`` (or ``.weight``, or whatever) exactly as before and
-    the routed value is produced on access. That is the point: no module has to
-    be edited to accept an injected parameter, and - critically - the block is
-    never REPARAMETRIZED.
-
-    That last part is not stylistic. The previous design merged by wrapping the
-    whole block in ``torch.func.functional_call``, which swaps entries in
-    ``_parameters`` for the duration of the forward. The block contains the
-    Titans memory, which runs ``vmap`` + ``grad_and_value`` + its OWN nested
-    ``functional_call`` over ``memory_model`` (praxis/memory/neural_memory.py).
-    Nesting those two reparametrizations produced three distinct failures on
-    abstractinator-m, every one of them inside the memory: a lost
-    ``requires_grad``, a stdout collision while it ran, and a ``BatchedTensor``
-    that escaped its vmap and was still installed on a parameter at teardown.
-    A parametrization touches nothing but the single attribute it owns, so the
-    memory runs in exactly the module tree it ran in before any of this.
-
-    Batch-mean only: the value returned here is ONE tensor, so it cannot vary
-    per example. Linear targets get per-example routing via ``MergedLinear``,
-    where associativity makes it nearly free.
-    """
-
-    def __init__(self, shape: Tuple[int, ...], num_experts: int) -> None:
-        super().__init__()
-        self.bank = nn.Parameter(torch.zeros(num_experts, *shape))
-        # None means no scope is open, and the parametrization is then the
-        # identity - which is what anything outside the router must see.
-        self._coeff: Optional[Tensor] = None
-
-    def extra_repr(self) -> str:
-        return f"num_experts={self.bank.shape[0]}, shape={tuple(self.bank.shape[1:])}"
-
-    def forward(self, base: Tensor) -> Tensor:
-        coeff = self._coeff
-        if coeff is None:
-            return base
-        delta = torch.tensordot(coeff.to(self.bank.dtype), self.bank, dims=([0], [0]))
-        return base + delta.to(base.dtype)
-
-
 def _get_param(module: nn.Module, dotted: str) -> Optional[Tensor]:
     """Fetch a parameter by fully-qualified name (``attn.qkv.weight``)."""
     parts = dotted.split(".")
@@ -357,13 +312,9 @@ class SMEAR(nn.Module):
         #     either (it trains layernorm parameters but never routes them).
         self.wrappers = nn.ModuleDict()  # metric label -> MergedLinear
         self._wrapper_row: Dict[str, int] = {}  # metric label -> router row
-        # PLAIN list, not a ModuleList. register_parametrization already makes
-        # the block the owner of each Deviation, and registering them here too
-        # would put every bank in the state dict twice (state_dict walks paths,
-        # it does not dedupe by identity) - so the router keeps references only,
-        # for pushing coefficients.
-        self.deviations: List["Deviation"] = []
-        self._deviation_row: List[int] = []  # parallel: router row per deviation
+        self.deltas = nn.ParameterDict()
+        self._factored: Dict[str, bool] = {}
+        self._param_row: Dict[str, int] = {}
         merged_numel = 0
 
         for row, group in enumerate(self.targets):
@@ -385,20 +336,12 @@ class SMEAR(nn.Module):
                 self.wrappers[group.label] = wrapper
                 self._wrapper_row[group.label] = row
                 continue
-            # Everything else - norms, the per-depth table, raw parameters like
-            # kappa/mu/betas, the residual gates - gets a parametrization on each
-            # parameter. Nothing is dropped for being awkward to reach: a
-            # parametrization needs no cooperation from the module that owns it.
             for pname in group.params:
-                owner_name, _, leaf = pname.rpartition(".")
-                owner = block.get_submodule(owner_name) if owner_name else block
-                dev = Deviation(tuple(_get_param(block, pname).shape), self.num_experts)
-                parametrize.register_parametrization(owner, leaf, dev)
-                self.deviations.append(dev)
-                self._deviation_row.append(row)
+                self._param_row[pname] = row
+                self._build_delta(pname, _get_param(block, pname))
 
         self.merged_numel = merged_numel
-        self.delta_numel = sum(d.bank.numel() for d in self.deviations) + sum(
+        self.delta_numel = sum(p.numel() for p in self.deltas.values()) + sum(
             w.delta_numel for w in self.wrappers.values()
         )
 
@@ -431,7 +374,7 @@ class SMEAR(nn.Module):
             print(
                 f"[SMEAR] {len(self.wrappers)} target(s) routed PER EXAMPLE "
                 f"({', '.join(self.wrappers) or 'none'}); "
-                f"{len(self.deviations)} parameter(s) on the batch-mean path; "
+                f"{len(self._param_row)} parameter(s) on the batch-mean path; "
                 f"expert dropout {self.EXPERT_DROPOUT}"
             )
 
@@ -442,6 +385,37 @@ class SMEAR(nn.Module):
         )
 
     # --- construction ---------------------------------------------------------
+
+    @staticmethod
+    def _key(pname: str) -> str:
+        return pname.replace(".", "__")
+
+    def _build_delta(self, pname: str, base: Tensor) -> int:
+        """Allocate this parameter's deviation bank. Returns the base's numel.
+
+        Large 2-D weights factor to rank r; everything else - biases, norm
+        scales, residual gates, embeddings small enough not to care - takes a
+        dense deviation. The choice is made from the shape alone, so there is
+        nothing to tune and nothing to configure per experiment.
+        """
+        key = self._key(pname)
+        n = self.num_experts
+        if base.dim() == 2 and base.numel() > DENSE_DELTA_MAX_NUMEL:
+            out_dim, in_dim = base.shape
+            rank = max(MIN_RANK, min(out_dim, in_dim) // RANK_DIVISOR)
+            # LoRA's initialization: A random, B zero, so the product - and
+            # therefore the whole merge - is EXACTLY zero at step 0.
+            a = nn.Parameter(torch.empty(n, rank, in_dim))
+            nn.init.normal_(a, mean=0.0, std=0.02)
+            self.deltas[key + "__a"] = a
+            self.deltas[key + "__b"] = nn.Parameter(torch.zeros(n, out_dim, rank))
+            self._factored[pname] = True
+        else:
+            self.deltas[key] = nn.Parameter(torch.zeros(n, *base.shape))
+            self._factored[pname] = False
+        return base.numel()
+
+    # --- routing --------------------------------------------------------------
 
     def _route_logits(self, router_input: Tensor, current_depth: int) -> Tensor:
         """Per-target routing logits, shape [batch, targets, experts].
@@ -516,31 +490,55 @@ class SMEAR(nn.Module):
 
     @contextmanager
     def _coefficient_scope(self, merge: Tensor) -> Iterator[None]:
-        """Hand every target its coefficients for one block forward, then take
-        them back.
+        """Hand each per-example target its ``[B, N]`` coefficients for one
+        block forward, then take them back.
 
-        Two mechanisms, one scope. ``MergedLinear`` takes its ``[B, N]`` (or
-        ``[B, S, N]``) slice and routes per example; every ``Deviation`` takes
-        the batch-mean ``[N]`` row for its target and is applied on attribute
-        access by ``torch.nn.utils.parametrize``.
-
-        Restoring on exit matters twice over: a stale coefficient would route
-        the next forward with the previous one's routing, and anything touching
-        the block OUTSIDE the router - the web probes, a checkpoint save,
-        ``.to()`` - must see unrouted parameters.
+        Scoped rather than passed as an argument because the coefficients have
+        to reach modules several levels inside the block whose forward
+        signatures know nothing about routing. This mirrors the width policy's
+        ``scope`` (praxis/width), which live-patches the same block from the
+        same place in the decoder loop. Restoring on exit matters: a wrapper
+        left holding a stale coefficient would silently route the next forward
+        with the previous one's routing.
         """
-        mean = self._flatten(merge)
         try:
             for label, row in self._wrapper_row.items():
                 self.wrappers[label]._coeff = merge[..., row, :]
-            for dev, row in zip(self.deviations, self._deviation_row):
-                dev._coeff = mean[row]
             yield
         finally:
             for label in self._wrapper_row:
                 self.wrappers[label]._coeff = None
-            for dev in self.deviations:
-                dev._coeff = None
+
+    # --- merging --------------------------------------------------------------
+
+    def _delta_for(self, pname: str, w: Tensor, dtype: torch.dtype) -> Tensor:
+        """``sum_e w_e * delta_e`` for one parameter."""
+        key = self._key(pname)
+        if self._factored[pname]:
+            a = self.deltas[key + "__a"]  # [N, r, in]
+            b = self.deltas[key + "__b"]  # [N, out, r]
+            scaled = b * w.to(b.dtype).view(-1, 1, 1)
+            return torch.einsum("nor,nri->oi", scaled, a).to(dtype)
+        bank = self.deltas[key]  # [N, *shape]
+        return torch.tensordot(w.to(bank.dtype), bank, dims=([0], [0])).to(dtype)
+
+    def _merged_state_dict(self, layer: nn.Module, w: Tensor) -> Dict[str, Tensor]:
+        """Base parameters plus their routed deviations.
+
+        Only targeted names appear. ``functional_call`` leaves every absent name
+        bound to the module's own parameter, so untargeted modules - PEER, the
+        shared long-term memory, anything lazy - run exactly as they would
+        without a router, at no cost.
+        """
+        merged: Dict[str, Tensor] = {}
+        for pname, row in self._param_row.items():
+            base = _get_param(layer, pname)
+            if base is None:
+                raise ValueError(f"Target parameter {pname!r} vanished from the block.")
+            merged[pname] = base + self._delta_for(pname, w[row], base.dtype)
+        return merged
+
+    # --- forward --------------------------------------------------------------
 
     def forward(self, *args: Any, **kwargs: Any):
         """Router-mode forward.
@@ -567,6 +565,9 @@ class SMEAR(nn.Module):
         self._tick += 1
 
         # Elementwise and indexed targets still merge on the batch mean; the
+        # Linear targets take their per-example rows through the scope below.
+        merged = self._merged_state_dict(layer, self._flatten(merge))
+
         forward_args = (
             inputs,
             attention_mask,
@@ -579,19 +580,22 @@ class SMEAR(nn.Module):
         # passing positions there would feed it to the FFN gate.
         forward_kwargs = {} if positions is None else {"positions": positions}
 
-        # A PLAIN call. No ``functional_call``, no reparametrization: the
-        # deviations reach their parameters through wrappers and
-        # parametrizations, both of which are ordinary module machinery. The
-        # block - and in particular the Titans memory inside it, with its vmap /
-        # grad / nested functional_call - runs in an untouched module tree.
+        # tie_weights=False for the same reason SMEAR needs it: the same module
+        # is reparametrized once per recurrent pass, and functional_call's
+        # parameter-aliasing machinery corrupts the merged graph across those
+        # reuses, surfacing as a double-backward on a freed graph.
         with self._coefficient_scope(merge):
-            result = layer(*forward_args, **forward_kwargs)
+            result = torch.func.functional_call(
+                layer, merged, forward_args, forward_kwargs, tie_weights=False
+            )
 
         if isinstance(result, tuple) and len(result) == 4:
             return result
         if isinstance(result, tuple) and len(result) == 3:
             return result[0], result[1], result[2], 0.0
         return result, past_key_values, current_state, 0.0
+
+    # --- auxiliary loss -------------------------------------------------------
 
     # --- diagnostics ----------------------------------------------------------
 
