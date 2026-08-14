@@ -219,9 +219,7 @@ class ParallelHead(BaseHead):
             return hidden_states
         return self.stem.transform(hidden_states)
 
-    def _branch_input(
-        self, branch: BaseHead, stemmed: Tensor, trunk: Tensor
-    ) -> Tensor:
+    def _branch_input(self, branch: BaseHead, stemmed: Tensor, trunk: Tensor) -> Tensor:
         """Stem output, unless the branch declares it must score trunk features
         (``reads_trunk``, set by HaloHead - see __init__)."""
         return trunk if getattr(branch, "reads_trunk", False) else stemmed
@@ -351,7 +349,9 @@ class ParallelHead(BaseHead):
         for i, b in enumerate(self.branches):
             callers = resolve_callers(b)
             for k, v in b.all_metric_descriptions().items():
-                out[f"p{i}_{k}"] = self._namespace_entry(v, f"p{i}", f"#{i}", callers.get(k))
+                out[f"p{i}_{k}"] = self._namespace_entry(
+                    v, f"p{i}", f"#{i}", callers.get(k)
+                )
         if self.stem is not None:
             callers = resolve_callers(self.stem)
             for k, v in self.stem.all_metric_descriptions().items():

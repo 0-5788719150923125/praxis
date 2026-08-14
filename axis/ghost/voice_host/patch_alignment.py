@@ -43,18 +43,21 @@ def patch(path: Path) -> str:
     if len(ceil_nodes) > 1:
         # Never seen in Piper's exports, but if it happens, guessing is worse
         # than stopping: the wrong tensor would give plausible nonsense timings.
-        return (f"{path.name}: {len(ceil_nodes)} Ceil nodes, expected 1 - "
-                "skipped rather than guess")
+        return (
+            f"{path.name}: {len(ceil_nodes)} Ceil nodes, expected 1 - "
+            "skipped rather than guess"
+        )
 
     tensor = ceil_nodes[0].output[0]
     if tensor in existing:
         return f"{path.name}: already patched"
 
-    graph.output.append(onnx.helper.make_tensor_value_info(
-        tensor, onnx.TensorProto.FLOAT, None))
+    graph.output.append(
+        onnx.helper.make_tensor_value_info(tensor, onnx.TensorProto.FLOAT, None)
+    )
     tmp = path.with_suffix(path.suffix + ".part")
     onnx.save(model, str(tmp))
-    tmp.replace(path)          # atomic, so a reader never sees a half-written graph
+    tmp.replace(path)  # atomic, so a reader never sees a half-written graph
     return f"{path.name}: patched, exposing '{tensor}'"
 
 

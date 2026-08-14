@@ -80,8 +80,13 @@ class Host:
         self._out.flush()
 
     def run(self) -> int:
-        self.send({"event": "ready", "protocol": PROTOCOL_VERSION,
-                   "backends": sorted(REGISTRY.keys())})
+        self.send(
+            {
+                "event": "ready",
+                "protocol": PROTOCOL_VERSION,
+                "backends": sorted(REGISTRY.keys()),
+            }
+        )
         for line in sys.stdin:
             line = line.strip()
             if not line:
@@ -100,18 +105,21 @@ class Host:
                 self.send({"id": rid, "ok": True, **self.dispatch(op, req)})
             except BackendError as exc:
                 self.send({"id": rid, "ok": False, "error": str(exc)})
-            except Exception as exc:                              # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 traceback.print_exc()
-                self.send({"id": rid, "ok": False,
-                           "error": f"{type(exc).__name__}: {exc}"})
+                self.send(
+                    {"id": rid, "ok": False, "error": f"{type(exc).__name__}: {exc}"}
+                )
         return 0
 
     # -- operations --------------------------------------------------------
 
     def dispatch(self, op: str, req: dict) -> dict:
         if op == "capabilities":
-            return {"protocol": PROTOCOL_VERSION,
-                    "backends": {name: cls.describe() for name, cls in REGISTRY.items()}}
+            return {
+                "protocol": PROTOCOL_VERSION,
+                "backends": {name: cls.describe() for name, cls in REGISTRY.items()},
+            }
         if op == "voices":
             voices = []
             for name in REGISTRY:
@@ -120,8 +128,13 @@ class Host:
                 except BackendError as exc:
                     # one unavailable backend must not hide the others: a missing
                     # dependency is a reportable state, not a fatal one
-                    self.send({"event": "backend_unavailable", "backend": name,
-                               "error": str(exc)})
+                    self.send(
+                        {
+                            "event": "backend_unavailable",
+                            "backend": name,
+                            "error": str(exc),
+                        }
+                    )
             return {"voices": voices}
         if op == "synthesize":
             voice = req.get("voice") or ""
@@ -137,8 +150,9 @@ class Host:
         if op == "ensure":
             # download/prepare a voice without synthesizing, so a UI can show
             # progress before the user is waiting on audio
-            return self.backend(req.get("backend") or self.backend_for(req.get("voice", ""))) \
-                .ensure(req.get("voice", ""))
+            return self.backend(
+                req.get("backend") or self.backend_for(req.get("voice", ""))
+            ).ensure(req.get("voice", ""))
         raise BackendError(f"unknown op '{op}'")
 
     # -- backend management ------------------------------------------------
@@ -147,7 +161,7 @@ class Host:
         if name not in REGISTRY:
             raise BackendError(f"unknown backend '{name}'")
         if name not in self._backends:
-            self._backends[name] = REGISTRY[name]()          # loads lazily; stays warm
+            self._backends[name] = REGISTRY[name]()  # loads lazily; stays warm
         return self._backends[name]
 
     def backend_for(self, voice: str) -> str:

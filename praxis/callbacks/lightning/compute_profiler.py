@@ -44,6 +44,7 @@ def _log_quietly(message: str) -> None:
     except Exception:
         pass
 
+
 # Retained as a tripwire only: the window now closes after one microbatch, so
 # this should never be reached. If it ever is, something stopped delivering
 # on_train_batch_end and the profiler would otherwise record unboundedly.

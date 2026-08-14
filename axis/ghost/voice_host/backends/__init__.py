@@ -41,12 +41,12 @@ class Backend:
         """
         return {
             "name": cls.name,
-            "streaming": False,        # incremental synthesis, or utterance-at-a-time
-            "phoneme_input": False,    # accepts pre-computed phonemes (ghost's own G2P)
+            "streaming": False,  # incremental synthesis, or utterance-at-a-time
+            "phoneme_input": False,  # accepts pre-computed phonemes (ghost's own G2P)
             "duration_control": False,  # global rate, at minimum
             "pitch_control": False,
-            "reference_audio": False,   # voice cloning / style transfer
-            "timings": False,           # returns word or phone boundaries
+            "reference_audio": False,  # voice cloning / style transfer
+            "timings": False,  # returns word or phone boundaries
             "singing": False,
         }
 
@@ -70,8 +70,14 @@ class Backend:
         show progress before the user is sitting waiting on audio."""
         raise NotImplementedError
 
-    def synthesize(self, text: str, voice: str, out_path: str,
-                   params: dict[str, Any], phonemes: Any = None) -> dict:
+    def synthesize(
+        self,
+        text: str,
+        voice: str,
+        out_path: str,
+        params: dict[str, Any],
+        phonemes: Any = None,
+    ) -> dict:
         """Write a WAV to out_path and return metadata.
 
         Must return: {"wav", "sample_rate", "duration"} and, where the model can

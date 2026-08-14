@@ -204,7 +204,11 @@ def test_coefficients_sum_to_one_per_target():
     router, _ = make()
     x = torch.randn(4, 6, Cfg.hidden_size)
     merge, _ = router._coefficients(x, 0)
-    assert merge.shape == (4, len(router.targets), 4), "coefficients must stay per-example"
+    assert merge.shape == (
+        4,
+        len(router.targets),
+        4,
+    ), "coefficients must stay per-example"
     torch.testing.assert_close(merge.sum(dim=-1), torch.ones(4, len(router.targets)))
 
 
@@ -242,7 +246,9 @@ def test_shared_trunk_gets_full_gradient_under_collapsed_routing():
 
     lora_b = router.wrappers["attn_qkv"].lora_b
     assert lora_b.grad[0].abs().sum() > 0  # the selected deviation learns
-    assert lora_b.grad[3].abs().sum() < lora_b.grad[0].abs().sum()  # a starved one does not
+    assert (
+        lora_b.grad[3].abs().sum() < lora_b.grad[0].abs().sum()
+    )  # a starved one does not
 
     # ...and a batch-mean target behaves the same way.
     bank = router.deltas[router._key("attn_norm.weight")]
@@ -331,15 +337,20 @@ def test_merged_linear_equals_the_explicit_merged_weight():
     got = w(x)
     w._coeff = None
 
-    want = torch.stack([
-        torch.nn.functional.linear(
-            x[b],
-            w.weight + sum(coeff[b, e] * (w.lora_b[e] @ w.lora_a[e])
-                           for e in range(w.num_experts)),
-            w.bias,
-        )
-        for b in range(3)
-    ])
+    want = torch.stack(
+        [
+            torch.nn.functional.linear(
+                x[b],
+                w.weight
+                + sum(
+                    coeff[b, e] * (w.lora_b[e] @ w.lora_a[e])
+                    for e in range(w.num_experts)
+                ),
+                w.bias,
+            )
+            for b in range(3)
+        ]
+    )
     torch.testing.assert_close(got, want, rtol=1e-4, atol=1e-5)
 
 
@@ -366,9 +377,7 @@ def test_wrapper_falls_back_to_base_when_no_scope_is_open():
     nn.init.normal_(w.lora_b, std=0.2)
     x = torch.randn(2, 4, w.in_features)
     assert w._coeff is None
-    torch.testing.assert_close(
-        w(x), torch.nn.functional.linear(x, w.weight, w.bias)
-    )
+    torch.testing.assert_close(w(x), torch.nn.functional.linear(x, w.weight, w.bias))
 
 
 def test_coefficient_scope_is_released():
@@ -410,7 +419,9 @@ def test_dispersion_is_zero_when_targets_agree():
         router.router.bias.zero_()
     x = torch.randn(4, 5, Cfg.hidden_size)
     router(*router_args(block, x))
-    assert router.get_metrics()["smear_target_dispersion"] == pytest.approx(0.0, abs=1e-6)
+    assert router.get_metrics()["smear_target_dispersion"] == pytest.approx(
+        0.0, abs=1e-6
+    )
 
 
 # --- registry -----------------------------------------------------------------
@@ -508,9 +519,7 @@ def test_diagnostics_are_computed_before_dropout():
     router.train()
     x = torch.randn(64, 5, Cfg.hidden_size)
     _, probs = router._coefficients(x, 0)
-    torch.testing.assert_close(
-        probs.sum(dim=-1), torch.ones(64, len(router.targets))
-    )
+    torch.testing.assert_close(probs.sum(dim=-1), torch.ones(64, len(router.targets)))
     assert (probs > 0).all(), "diagnostics saw a post-dropout distribution"
 
 
@@ -565,7 +574,7 @@ def test_batch_reduction_gives_every_example_the_same_routing():
         torch.testing.assert_close(merge[b], merge[0])
 
 
-def test_example_reduction_does_not(): 
+def test_example_reduction_does_not():
     cfg = Cfg()
     block = Block(cfg.hidden_size)
     r = SMEAR(cfg, block=block, num_experts=4, reduction="example", verbose=False)
@@ -686,6 +695,6 @@ def test_routing_does_not_rename_module_classes():
     time largely because the interception was billed to it)."""
     router, block = make()
     for name, module in block.named_modules():
-        assert not type(module).__name__.startswith("Parametrized"), (
-            f"{name} was renamed to {type(module).__name__} by a parametrization"
-        )
+        assert not type(module).__name__.startswith(
+            "Parametrized"
+        ), f"{name} was renamed to {type(module).__name__} by a parametrization"

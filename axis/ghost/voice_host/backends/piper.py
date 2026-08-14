@@ -87,11 +87,11 @@ PAUSE_AFTER: dict[str, float] = {
 SEAM_CEILING = 1.2
 
 # Click avoidance for spliced silence - see _splice_pauses.
-SPLICE_SEARCH_MS = 3.0     # how far the cut may move to find a quieter sample
-SPLICE_FADE_MS = 2.0       # raised-cosine ramp into and out of the silence
-SPLICE_ENV_MS = 4.0        # moving-average window used to find the quiet PLACE
-SPLICE_REACH_MS = 70.0     # how far forward the cut may look for the real gap
-SPLICE_BACK_MS = 0.0       # ...and how far back: none, see _quiet_point
+SPLICE_SEARCH_MS = 3.0  # how far the cut may move to find a quieter sample
+SPLICE_FADE_MS = 2.0  # raised-cosine ramp into and out of the silence
+SPLICE_ENV_MS = 4.0  # moving-average window used to find the quiet PLACE
+SPLICE_REACH_MS = 70.0  # how far forward the cut may look for the real gap
+SPLICE_BACK_MS = 0.0  # ...and how far back: none, see _quiet_point
 
 
 def _split_sentences(phones: list) -> list[list]:
@@ -195,8 +195,10 @@ def _discourse_plan(groups: list, params: dict) -> list[dict]:
         # making - so a run of one-sentence paragraphs, where the fast arc has no room to
         # move at all, still travels. Weighted toward the local shape where there is one:
         # the section is a swell under the writing, not the writing.
-        semis = (arc * (0.5 - u * u * 0.5 - u * 0.5) * 0.62
-                 + arc * (0.5 - v_in * v_in * 0.5 - v_in * 0.5) * 0.38)
+        semis = (
+            arc * (0.5 - u * u * 0.5 - u * 0.5) * 0.62
+            + arc * (0.5 - v_in * v_in * 0.5 - v_in * 0.5) * 0.38
+        )
         # Progressive final lengthening into the unit's boundary, strongest at the
         # end. 18% at full depth: a real pre-boundary rime lengthens far more than
         # that, but this is applied to the WHOLE sentence, not just its last rime.
@@ -210,8 +212,8 @@ def _discourse_plan(groups: list, params: dict) -> list[dict]:
             if mark:
                 break
         if mark == "?":
-            rate *= 1.0 + depth * 0.04       # questions run slightly quicker...
-            semis += arc * 0.20              # ...and end higher
+            rate *= 1.0 + depth * 0.04  # questions run slightly quicker...
+            semis += arc * 0.20  # ...and end higher
         elif mark == "!":
             rate *= 1.0 + depth * 0.06
             semis += arc * 0.12
@@ -222,11 +224,20 @@ def _discourse_plan(groups: list, params: dict) -> list[dict]:
         # +1 at the top of the unit, -1 at its end: the effort contour, shared by
         # the tilt and the level so they can never disagree about which way is
         # louder. Squared-ish like the pitch decline, for the same reason.
-        e = (1.0 - 2.0 * ((u * u * 0.5 + u * 0.5) * 0.62
-                          + (v_in * v_in * 0.5 + v_in * 0.5) * 0.38)) * effort
-        plan.append({"rate": max(0.55, rate), "semis": semis,
-                     "noise_w_mul": min(1.6, max(0.5, nw)),
-                     "tilt": 0.45 * e, "gain_db": 2.6 * e})
+        e = (
+            1.0
+            - 2.0
+            * ((u * u * 0.5 + u * 0.5) * 0.62 + (v_in * v_in * 0.5 + v_in * 0.5) * 0.38)
+        ) * effort
+        plan.append(
+            {
+                "rate": max(0.55, rate),
+                "semis": semis,
+                "noise_w_mul": min(1.6, max(0.5, nw)),
+                "tilt": 0.45 * e,
+                "gain_db": 2.6 * e,
+            }
+        )
     return plan
 
 
@@ -240,14 +251,16 @@ def _effort(a, sr: int, tilt: float, gain_db: float):
     and a per-sample IIR loop in Python would cost more than the model does.
     """
     import numpy as np
+
     if abs(tilt) < 1e-3 and abs(gain_db) < 1e-3:
         return a
     if abs(tilt) >= 1e-3 and a.size > 8:
         # ~1.2 kHz corner: below the speech formants that carry effort, above the
         # fundamental, so the tilt moves brightness and not the voice's weight.
         n = max(2, int(round(sr / 1200.0)))
-        pad = np.concatenate([np.full(n, a[0], dtype=np.float32), a,
-                              np.full(n, a[-1], dtype=np.float32)])
+        pad = np.concatenate(
+            [np.full(n, a[0], dtype=np.float32), a, np.full(n, a[-1], dtype=np.float32)]
+        )
         c = np.cumsum(pad, dtype=np.float64)
         lo = ((c[n:] - c[:-n]) / n).astype(np.float32)[: a.size]
         # A TILT, so the low band is cut by as much as the high band is lifted -
@@ -274,6 +287,7 @@ def _resample(a, ratio: float):
     same thing for the same reason).
     """
     import numpy as np
+
     if abs(ratio - 1.0) < 1e-4 or a.size < 2:
         return a
     n = max(1, int(round(a.size / ratio)))
@@ -304,8 +318,9 @@ def _gap_for(mark: str, params: dict) -> float:
     return min(max(0.0, base * _pause_scale(params)), SEAM_CEILING)
 
 
-def _quiet_point(audio, want: int, search: int, lo: int, hi: int,
-                 env: int, reach: int, back: int) -> int:
+def _quiet_point(
+    audio, want: int, search: int, lo: int, hi: int, env: int, reach: int, back: int
+) -> int:
     """The best sample to cut at: the quietest PLACE near `want`, not merely the
     quietest sample.
 
@@ -327,6 +342,7 @@ def _quiet_point(audio, want: int, search: int, lo: int, hi: int,
     migrate into the following word.
     """
     import numpy as np
+
     n = int(audio.size)
     want = min(max(int(want), 0), n)
     lo = max(0, min(int(lo), n))
@@ -371,6 +387,7 @@ def _quiet_point(audio, want: int, search: int, lo: int, hi: int,
 def _ramp(seg, n: int, fade_in: bool, fade_out: bool) -> None:
     """Raised-cosine fade at the edges of `seg`, in place."""
     import numpy as np
+
     k = min(int(n), int(seg.size))
     if k <= 0:
         return
@@ -378,7 +395,7 @@ def _ramp(seg, n: int, fade_in: bool, fade_out: bool) -> None:
     if fade_in:
         seg[:k] *= w
     if fade_out:
-        seg[seg.size - k:] *= w[::-1]
+        seg[seg.size - k :] *= w[::-1]
 
 
 def _splice_pauses(audio, points, sr: int):
@@ -409,11 +426,15 @@ def _splice_pauses(audio, points, sr: int):
     2 ms of ramp on a loud sample is itself faintly audible, hence both.
     """
     import numpy as np
+
     # A point may carry a third field: the time of the next token, which bounds how far
     # the cut may slide forward. Two-field points (the older form, and the tests) mean
     # 'no bound'.
-    pts = [(float(p[0]), float(p[1]), (float(p[2]) if len(p) > 2 else 0.0))
-           for p in points if float(p[1]) > 0.0]
+    pts = [
+        (float(p[0]), float(p[1]), (float(p[2]) if len(p) > 2 else 0.0))
+        for p in points
+        if float(p[1]) > 0.0
+    ]
     if not pts:
         return audio, []
     pts.sort(key=lambda p: p[0])
@@ -432,8 +453,10 @@ def _splice_pauses(audio, points, sr: int):
         if pad <= 0:
             continue
         hi = int(round(limit * sr)) if limit > 0.0 else 0
-        cut = max(prev, _quiet_point(audio, int(round(t * sr)), search, prev,
-                                     hi, env, reach, back))
+        cut = max(
+            prev,
+            _quiet_point(audio, int(round(t * sr)), search, prev, hi, env, reach, back),
+        )
         seg = np.array(audio[prev:cut], dtype=audio.dtype, copy=True)
         _ramp(seg, fade, need_in, True)
         pieces.append(seg)
@@ -482,9 +505,12 @@ def _warn_unaligned(marks) -> None:
     if _warned_unaligned or not marks:
         return
     _warned_unaligned = True
-    print("ghost/voice: no alignment output from this voice, so pauses after "
-          + " ".join(sorted(set(marks)))
-          + " cannot be placed (sentence pauses are unaffected)", file=sys.stderr)
+    print(
+        "ghost/voice: no alignment output from this voice, so pauses after "
+        + " ".join(sorted(set(marks)))
+        + " cannot be placed (sentence pauses are unaffected)",
+        file=sys.stderr,
+    )
 
 
 def _shift(t: float, inserted, inclusive: bool) -> float:
@@ -500,6 +526,7 @@ def _shift(t: float, inserted, inclusive: bool) -> float:
         if at < t or (inclusive and at <= t):
             add += dur
     return t + add
+
 
 # Phoneme id stream shape, from piper1-gpl docs/ALIGNMENTS.md:
 #   [BOS, PAD, id, PAD, id, PAD, ..., EOS]
@@ -544,8 +571,8 @@ VOICES: dict[str, dict] = {
         "chain": "trained from scratch",
         "speakers": 904,
         "notes": "904 speakers under one checkpoint. The natural analogue of the "
-                 "fishing game's genome: identity becomes a speaker id you can "
-                 "throw, catch and interpolate.",
+        "fishing game's genome: identity becomes a speaker id you can "
+        "throw, catch and interpolate.",
     },
     "en_US-kristin-medium": {
         "path": "en/en_US/kristin/medium/en_US-kristin-medium",
@@ -575,15 +602,17 @@ class PiperBackend(Backend):
     @classmethod
     def describe(cls) -> dict:
         d = super().describe()
-        d.update({
-            "streaming": False,        # per-sentence today; sub-utterance is possible
-            "phoneme_input": True,     # the point of this backend
-            "duration_control": True,  # length_scale
-            "pitch_control": False,    # VITS has no direct f0 handle
-            "timings": True,           # exact, from the duration predictor
-            "reference_audio": False,
-            "singing": False,
-        })
+        d.update(
+            {
+                "streaming": False,  # per-sentence today; sub-utterance is possible
+                "phoneme_input": True,  # the point of this backend
+                "duration_control": True,  # length_scale
+                "pitch_control": False,  # VITS has no direct f0 handle
+                "timings": True,  # exact, from the duration predictor
+                "reference_audio": False,
+                "singing": False,
+            }
+        )
         return d
 
     @classmethod
@@ -619,16 +648,18 @@ class PiperBackend(Backend):
         out = []
         for vid, meta in VOICES.items():
             onnx, cfg = self._files(vid)
-            out.append({
-                "id": vid,
-                "name": vid.replace("en_US-", "").replace("-", " "),
-                "backend": self.name,
-                "license": meta["license"],
-                "derivation": meta["chain"],
-                "speakers": meta["speakers"],
-                "installed": onnx.exists() and cfg.exists(),
-                "notes": meta.get("notes", ""),
-            })
+            out.append(
+                {
+                    "id": vid,
+                    "name": vid.replace("en_US-", "").replace("-", " "),
+                    "backend": self.name,
+                    "license": meta["license"],
+                    "derivation": meta["chain"],
+                    "speakers": meta["speakers"],
+                    "installed": onnx.exists() and cfg.exists(),
+                    "notes": meta.get("notes", ""),
+                }
+            )
         return out
 
     def ensure(self, voice: str) -> dict:
@@ -642,12 +673,16 @@ class PiperBackend(Backend):
             tmp = dest.with_suffix(dest.suffix + ".part")
             try:
                 urllib.request.urlretrieve(url, tmp)
-            except Exception as exc:                             # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 tmp.unlink(missing_ok=True)
                 raise BackendError(f"could not fetch {url}: {exc}") from exc
-            tmp.replace(dest)     # atomic: a reader sees whole file or none
-        return {"voice": voice, "installed": True, "downloaded": True,
-                "bytes": onnx.stat().st_size + cfg.stat().st_size}
+            tmp.replace(dest)  # atomic: a reader sees whole file or none
+        return {
+            "voice": voice,
+            "installed": True,
+            "downloaded": True,
+            "bytes": onnx.stat().st_size + cfg.stat().st_size,
+        }
 
     # -- model -------------------------------------------------------------
 
@@ -656,13 +691,15 @@ class PiperBackend(Backend):
             return self._sessions[voice], self._configs[voice]
         self.ensure(voice)
         import onnxruntime as ort
+
         onnx, cfgp = self._files(voice)
         self._ensure_aligned(onnx)
         cfg = json.loads(cfgp.read_text())
         opts = ort.SessionOptions()
-        opts.log_severity_level = 3               # the protocol owns stdout
-        sess = ort.InferenceSession(str(onnx), sess_options=opts,
-                                    providers=["CPUExecutionProvider"])
+        opts.log_severity_level = 3  # the protocol owns stdout
+        sess = ort.InferenceSession(
+            str(onnx), sess_options=opts, providers=["CPUExecutionProvider"]
+        )
         self._sessions[voice] = sess
         self._configs[voice] = cfg
         return sess, cfg
@@ -682,10 +719,12 @@ class PiperBackend(Backend):
         is left alone.
         """
         import onnxruntime as ort
+
         opts = ort.SessionOptions()
         opts.log_severity_level = 3
-        probe = ort.InferenceSession(str(onnx), sess_options=opts,
-                                     providers=["CPUExecutionProvider"])
+        probe = ort.InferenceSession(
+            str(onnx), sess_options=opts, providers=["CPUExecutionProvider"]
+        )
         if len(probe.get_outputs()) > 1:
             return
         del probe
@@ -693,22 +732,30 @@ class PiperBackend(Backend):
             import onnx as onnx_mod
         except ImportError:
             # no `onnx` package: synthesis still works, subtitles do not
-            print(f"ghost/voice: {onnx.name} has no alignment output and the "
-                  "`onnx` package is missing - subtitles unavailable",
-                  file=sys.stderr)
+            print(
+                f"ghost/voice: {onnx.name} has no alignment output and the "
+                "`onnx` package is missing - subtitles unavailable",
+                file=sys.stderr,
+            )
             return
         model = onnx_mod.load(str(onnx))
         ceil_nodes = [n for n in model.graph.node if n.op_type == "Ceil"]
         if len(ceil_nodes) != 1:
-            print(f"ghost/voice: {onnx.name} has {len(ceil_nodes)} Ceil nodes, "
-                  "expected 1 - not patching", file=sys.stderr)
+            print(
+                f"ghost/voice: {onnx.name} has {len(ceil_nodes)} Ceil nodes, "
+                "expected 1 - not patching",
+                file=sys.stderr,
+            )
             return
         tensor = ceil_nodes[0].output[0]
-        model.graph.output.append(onnx_mod.helper.make_tensor_value_info(
-            tensor, onnx_mod.TensorProto.FLOAT, None))
+        model.graph.output.append(
+            onnx_mod.helper.make_tensor_value_info(
+                tensor, onnx_mod.TensorProto.FLOAT, None
+            )
+        )
         tmp = onnx.with_suffix(onnx.suffix + ".part")
         onnx_mod.save(model, str(tmp))
-        tmp.replace(onnx)      # atomic: a reader sees whole graph or old graph
+        tmp.replace(onnx)  # atomic: a reader sees whole graph or old graph
         print(f"ghost/voice: patched {onnx.name} for alignment", file=sys.stderr)
 
     # -- synthesis ---------------------------------------------------------
@@ -739,16 +786,18 @@ class PiperBackend(Backend):
             try:
                 import espeakng_loader
                 from phonemizer.backend.espeak.wrapper import EspeakWrapper
+
                 EspeakWrapper.set_library(espeakng_loader.get_library_path())
                 EspeakWrapper.set_data_path(espeakng_loader.get_data_path())
             except ImportError as exc:
                 raise BackendError(
-                    "eSpeak phonemizer unavailable; set phonemizer=\"ghost\" to "
+                    'eSpeak phonemizer unavailable; set phonemizer="ghost" to '
                     "use ghost's own ARPAbet front end instead"
                 ) from exc
             cls._espeak_ready = True
         from phonemizer import phonemize
         from phonemizer.separator import Separator
+
         # phonemizer validates against its own language list, which does not
         # include eSpeak's bare "en" - and "en" IS British in eSpeak, which is
         # the whole point of reading it from the config.
@@ -758,12 +807,20 @@ class PiperBackend(Backend):
         # "live" as laɪv in isolation and lɪv in "where they live", and ghost was
         # getting the isolated reading for every occurrence. Passing whole
         # sentences and splitting on the word separator gets both.
-        out = phonemize(words, language=lang, backend="espeak", strip=True,
-                        with_stress=True, njobs=1,
-                        separator=Separator(word=" ", phone=""))
+        out = phonemize(
+            words,
+            language=lang,
+            backend="espeak",
+            strip=True,
+            with_stress=True,
+            njobs=1,
+            separator=Separator(word=" ", phone=""),
+        )
         return [o.strip() for o in out]
 
-    def _symbols(self, tokens: list, phonemizer: str, espeak_voice: str = "en-us") -> list:
+    def _symbols(
+        self, tokens: list, phonemizer: str, espeak_voice: str = "en-us"
+    ) -> list:
         """(codepoint, token index) pairs for a chunk.
 
         A token carries its source text AND, optionally, ghost's own ARPAbet.
@@ -772,6 +829,7 @@ class PiperBackend(Backend):
         stay pronounceable whichever phonemizer is in use.
         """
         import arpabet
+
         # A token whose text is only whitespace must never reach the batch, and the
         # result must be checked rather than trusted. phonemizer DROPS an empty or
         # whitespace-only input instead of returning "" for it - measured, [" ", "the"]
@@ -781,8 +839,11 @@ class PiperBackend(Backend):
         # spoken one word out of step, and the one word that reached the fallback would
         # take CMUdict's reading, which for a homograph is not the same reading eSpeak
         # would have given.
-        need = [i for i, t in enumerate(tokens)
-                if not t.get("arpa") and str(t.get("text", "")).strip()]
+        need = [
+            i
+            for i, t in enumerate(tokens)
+            if not t.get("arpa") and str(t.get("text", "")).strip()
+        ]
         espoke: dict[int, str] = {}
         if need and phonemizer == "espeak":
             words = [str(tokens[i]["text"]).strip() for i in need]
@@ -792,9 +853,12 @@ class PiperBackend(Backend):
                 # know WHICH one was dropped - so redo it one word at a time. Slower,
                 # and it happens on approximately no sentences, but a wrong-by-one
                 # sentence is not something to ship for the sake of one call.
-                print("ghost/voice: phonemizer returned %d results for %d words; "
-                      "re-running individually to keep alignment"
-                      % (len(got), len(words)), file=sys.stderr)
+                print(
+                    "ghost/voice: phonemizer returned %d results for %d words; "
+                    "re-running individually to keep alignment"
+                    % (len(got), len(words)),
+                    file=sys.stderr,
+                )
                 got = [(self._espeak([w], espeak_voice) or [""])[0] for w in words]
             espoke = dict(zip(need, got))
 
@@ -832,15 +896,23 @@ class PiperBackend(Backend):
                     out.append((ch, i))
             elif t.get("text"):
                 # no eSpeak: fall back to ghost's ARPAbet if it sent any
-                for ch, _ in arpabet.to_symbols([str(x) for x in t.get("fallback", [])]):
+                for ch, _ in arpabet.to_symbols(
+                    [str(x) for x in t.get("fallback", [])]
+                ):
                     out.append((ch, i))
             for ch in str(t.get("punct", "")):
                 out.append((ch, i))
             out.append((" ", i))
         return out
 
-    def synthesize(self, text: str, voice: str, out_path: str,
-                   params: dict[str, Any], phonemes: Any = None) -> dict:
+    def synthesize(
+        self,
+        text: str,
+        voice: str,
+        out_path: str,
+        params: dict[str, Any],
+        phonemes: Any = None,
+    ) -> dict:
         """Synthesize SENTENCE BY SENTENCE, joined with real silence.
 
         A whole paragraph handed over as one utterance comes back rushed: the
@@ -851,6 +923,7 @@ class PiperBackend(Backend):
         streaming path possible later.
         """
         import numpy as np
+
         sess, cfg = self._load(voice)
         pmap: dict = cfg["phoneme_id_map"]
         sample_rate = int(cfg["audio"]["sample_rate"])
@@ -862,20 +935,38 @@ class PiperBackend(Backend):
         if len(sentences) > 1:
             chunks, phones_all, cursor = [], [], 0.0
             for si, sent in enumerate(sentences):
-                sub = self.synthesize(text, voice, out_path + f".s{si}",
-                                      {**params, "_no_split": True}, sent)
+                sub = self.synthesize(
+                    text,
+                    voice,
+                    out_path + f".s{si}",
+                    {**params, "_no_split": True},
+                    sent,
+                )
                 import wave as _w
+
                 with _w.open(sub["wav"]) as fh:
                     import numpy as _np
-                    a = _np.frombuffer(fh.readframes(fh.getnframes()), "<i2").astype(_np.float32) / 32768.0
+
+                    a = (
+                        _np.frombuffer(fh.readframes(fh.getnframes()), "<i2").astype(
+                            _np.float32
+                        )
+                        / 32768.0
+                    )
                 Path(sub["wav"]).unlink(missing_ok=True)
                 for ph in sub.get("phones", []):
-                    phones_all.append({"p": ph["p"], "t0": round(ph["t0"] + cursor, 4),
-                                       "t1": round(ph["t1"] + cursor, 4)})
+                    phones_all.append(
+                        {
+                            "p": ph["p"],
+                            "t0": round(ph["t0"] + cursor, 4),
+                            "t1": round(ph["t1"] + cursor, 4),
+                        }
+                    )
                 chunks.append(a)
                 cursor += len(a) / sub["sample_rate"]
                 if si < len(sentences) - 1:
                     import numpy as _np
+
                     # the mark this sentence ended on decides its own pause
                     gap = _gap_for(str(sent[-1]).strip() if sent else "", params)
                     pad = int(round(gap * sub["sample_rate"]))
@@ -883,13 +974,20 @@ class PiperBackend(Backend):
                         chunks.append(_np.zeros(pad, dtype=_np.float32))
                         cursor += pad / sub["sample_rate"]
             import numpy as _np
-            joined = _np.concatenate(chunks) if chunks else _np.zeros(1, dtype=_np.float32)
+
+            joined = (
+                _np.concatenate(chunks) if chunks else _np.zeros(1, dtype=_np.float32)
+            )
             sr = int(cfg["audio"]["sample_rate"])
             self._write_wav(out_path, joined, sr)
-            return {"wav": out_path, "sample_rate": sr,
-                    "duration": float(joined.size) / sr,
-                    "phones": phones_all, "aligned": bool(phones_all),
-                    "sentences": len(sentences)}
+            return {
+                "wav": out_path,
+                "sample_rate": sr,
+                "duration": float(joined.size) / sr,
+                "phones": phones_all,
+                "aligned": bool(phones_all),
+                "sentences": len(sentences),
+            }
 
         if not phonemes:
             raise BackendError(
@@ -903,6 +1001,7 @@ class PiperBackend(Backend):
         # keeps the [K AE T] override working on this path and keeps eSpeak-NG
         # out of the build entirely - see arpabet.py.
         import arpabet
+
         symbols = arpabet.to_symbols(list(phonemes))
 
         # [BOS, PAD, id, PAD, id, PAD, ..., EOS] - the pad comes BEFORE each id
@@ -944,11 +1043,14 @@ class PiperBackend(Backend):
         feeds = {
             "input": np.array([ids], dtype=np.int64),
             "input_lengths": np.array([len(ids)], dtype=np.int64),
-            "scales": np.array([
-                float(params.get("noise_scale", inf.get("noise_scale", 0.667))),
-                float(params.get("length_scale", inf.get("length_scale", 1.0))),
-                float(params.get("noise_w", inf.get("noise_w", 0.333))),
-            ], dtype=np.float32),
+            "scales": np.array(
+                [
+                    float(params.get("noise_scale", inf.get("noise_scale", 0.667))),
+                    float(params.get("length_scale", inf.get("length_scale", 1.0))),
+                    float(params.get("noise_w", inf.get("noise_w", 0.333))),
+                ],
+                dtype=np.float32,
+            ),
         }
         if int(cfg.get("num_speakers", 1)) > 1:
             feeds["sid"] = np.array([int(params.get("speaker", 0))], dtype=np.int64)
@@ -968,11 +1070,12 @@ class PiperBackend(Backend):
         for i, sym in enumerate(phonemes):
             mark = str(sym).strip()
             if mark in SENTENCE_END or _pause_for(mark, params) <= 0.0:
-                continue          # . ! ? are the gap between sentences, above
+                continue  # . ! ? are the gap between sentences, above
             if i < len(phone_times):
                 nxt = phone_times[i + 1]["t0"] if i + 1 < len(phone_times) else 0.0
-                points.append((float(phone_times[i]["t1"]), _pause_for(mark, params),
-                               float(nxt)))
+                points.append(
+                    (float(phone_times[i]["t1"]), _pause_for(mark, params), float(nxt))
+                )
             else:
                 unplaceable.append(mark)
         _warn_unaligned(unplaceable)
@@ -991,8 +1094,9 @@ class PiperBackend(Backend):
             "aligned": bool(phone_times),
         }
 
-    def _synth_tokens(self, tokens: list, voice: str, out_path: str,
-                      params: dict, cfg: dict, sess) -> dict:
+    def _synth_tokens(
+        self, tokens: list, voice: str, out_path: str, params: dict, cfg: dict, sess
+    ) -> dict:
         """Token path: sentence-split, phonemize, synthesize, join.
 
         Tokens carry their own text, so the sentence split happens HERE on the
@@ -1007,6 +1111,7 @@ class PiperBackend(Backend):
         times `pause_scale`.
         """
         import numpy as np
+
         phonemizer = str(params.get("phonemizer", "espeak"))
         groups: list[list] = []
         cur: list = []
@@ -1032,10 +1137,19 @@ class PiperBackend(Backend):
             step = plan[gi]
             pr = 2.0 ** (float(step["semis"]) / 12.0)
             gp = dict(params)
-            gp["length_scale"] = float(params.get(
-                "length_scale", cfg.get("inference", {}).get("length_scale", 1.0))) * pr / float(step["rate"])
-            gp["noise_w"] = float(params.get(
-                "noise_w", cfg.get("inference", {}).get("noise_w", 0.333))) * float(step["noise_w_mul"])
+            gp["length_scale"] = (
+                float(
+                    params.get(
+                        "length_scale",
+                        cfg.get("inference", {}).get("length_scale", 1.0),
+                    )
+                )
+                * pr
+                / float(step["rate"])
+            )
+            gp["noise_w"] = float(
+                params.get("noise_w", cfg.get("inference", {}).get("noise_w", 0.333))
+            ) * float(step["noise_w_mul"])
             audio, per_token = self._run(group, voice, gp, cfg, sess, phonemizer)
             audio = _effort(audio, sr, float(step["tilt"]), float(step["gain_db"]))
             if abs(pr - 1.0) > 1e-4:
@@ -1047,13 +1161,18 @@ class PiperBackend(Backend):
             for ti, tok in enumerate(group):
                 mark = str(tok.get("punct", ""))
                 if mark in SENTENCE_END or _pause_for(mark, params) <= 0.0:
-                    continue          # . ! ? are the gap between groups, below
+                    continue  # . ! ? are the gap between groups, below
                 if ti in per_token:
                     # The third field bounds how far the cut may slide forward: the next
                     # token's start, so a pause can never end up inside the word after it.
                     nxt = per_token.get(ti + 1)
-                    points.append((float(per_token[ti][1]), _pause_for(mark, params),
-                                   float(nxt[0]) if nxt is not None else 0.0))
+                    points.append(
+                        (
+                            float(per_token[ti][1]),
+                            _pause_for(mark, params),
+                            float(nxt[0]) if nxt is not None else 0.0,
+                        )
+                    )
                 else:
                     unplaceable.append(mark)
             _warn_unaligned(unplaceable)
@@ -1061,9 +1180,15 @@ class PiperBackend(Backend):
             for ti, span in per_token.items():
                 # float(): numpy scalars are not JSON-serializable and the
                 # protocol is JSON
-                times.append({"index": base + ti,
-                              "t0": round(_shift(float(span[0]), inserted, True) + cursor, 4),
-                              "t1": round(_shift(float(span[1]), inserted, False) + cursor, 4)})
+                times.append(
+                    {
+                        "index": base + ti,
+                        "t0": round(_shift(float(span[0]), inserted, True) + cursor, 4),
+                        "t1": round(
+                            _shift(float(span[1]), inserted, False) + cursor, 4
+                        ),
+                    }
+                )
             chunks.append(audio)
             cursor += len(audio) / sr
             base += len(group)
@@ -1075,11 +1200,14 @@ class PiperBackend(Backend):
                     cursor += pad / sr
         joined = np.concatenate(chunks) if chunks else np.zeros(1, dtype=np.float32)
         self._write_wav(out_path, joined, sr)
-        return {"wav": out_path, "sample_rate": sr,
-                "duration": float(joined.size) / sr,
-                "tokens": times, "aligned": bool(times),
-                "sentences": len(groups)}
-
+        return {
+            "wav": out_path,
+            "sample_rate": sr,
+            "duration": float(joined.size) / sr,
+            "tokens": times,
+            "aligned": bool(times),
+            "sentences": len(groups),
+        }
 
     @staticmethod
     def _fold_syllabic(symbols: list, pmap: dict) -> tuple[list, bool]:
@@ -1119,14 +1247,16 @@ class PiperBackend(Backend):
             out.append((sym, src))
         return out, folded
 
-
-    def _run(self, group: list, voice: str, params: dict, cfg: dict, sess,
-             phonemizer: str):
+    def _run(
+        self, group: list, voice: str, params: dict, cfg: dict, sess, phonemizer: str
+    ):
         """One sentence: symbols -> ids -> audio, plus per-token time spans."""
         import numpy as np
+
         pmap: dict = cfg["phoneme_id_map"]
-        symbols = self._symbols(group, phonemizer,
-                                str(cfg.get("espeak", {}).get("voice", "en-us")))
+        symbols = self._symbols(
+            group, phonemizer, str(cfg.get("espeak", {}).get("voice", "en-us"))
+        )
         # eSpeak is where U+0329 comes from, so this is the call that matters.
         symbols, folded = self._fold_syllabic(symbols, pmap)
         ids: list[int] = [BOS]
@@ -1148,8 +1278,11 @@ class PiperBackend(Backend):
         owner.append(-1)
         if folded and SYLLABIC not in self._warned_symbols:
             self._warned_symbols.add(SYLLABIC)
-            print("ghost/voice: this voice has no U+0329 (syllabic); writing it as a "
-                  "schwa before the consonant instead", file=sys.stderr)
+            print(
+                "ghost/voice: this voice has no U+0329 (syllabic); writing it as a "
+                "schwa before the consonant instead",
+                file=sys.stderr,
+            )
         if missing:
             # DROP, do not fail. eSpeak emits marks that a given voice's map may
             # not carry, and raising costs the whole request - which is how a
@@ -1166,18 +1299,24 @@ class PiperBackend(Backend):
                 if sym in self._warned_symbols:
                     continue
                 self._warned_symbols.add(sym)
-                print("ghost/voice: dropping U+%04X (%r), absent from this "
-                      "voice's phoneme_id_map" % (ord(sym), sym), file=sys.stderr)
+                print(
+                    "ghost/voice: dropping U+%04X (%r), absent from this "
+                    "voice's phoneme_id_map" % (ord(sym), sym),
+                    file=sys.stderr,
+                )
 
         inf = cfg.get("inference", {})
         feeds = {
             "input": np.array([ids], dtype=np.int64),
             "input_lengths": np.array([len(ids)], dtype=np.int64),
-            "scales": np.array([
-                float(params.get("noise_scale", inf.get("noise_scale", 0.667))),
-                float(params.get("length_scale", inf.get("length_scale", 1.0))),
-                float(params.get("noise_w", inf.get("noise_w", 0.333))),
-            ], dtype=np.float32),
+            "scales": np.array(
+                [
+                    float(params.get("noise_scale", inf.get("noise_scale", 0.667))),
+                    float(params.get("length_scale", inf.get("length_scale", 1.0))),
+                    float(params.get("noise_w", inf.get("noise_w", 0.333))),
+                ],
+                dtype=np.float32,
+            ),
         }
         if int(cfg.get("num_speakers", 1)) > 1:
             feeds["sid"] = np.array([int(params.get("speaker", 0))], dtype=np.int64)
@@ -1189,8 +1328,9 @@ class PiperBackend(Backend):
             frames = np.asarray(out[1]).squeeze().astype(np.float64)
             if frames.ndim == 1 and frames.size == len(owner):
                 t = 0.0
-                for dur, who in zip(frames * HOP_LENGTH / float(cfg["audio"]["sample_rate"]),
-                                    owner):
+                for dur, who in zip(
+                    frames * HOP_LENGTH / float(cfg["audio"]["sample_rate"]), owner
+                ):
                     if who >= 0:
                         if who not in spans:
                             spans[who] = [t, t + dur]
@@ -1199,9 +1339,10 @@ class PiperBackend(Backend):
                     t += dur
         return audio, spans
 
-
     @staticmethod
-    def _durations(w_ceil, owner: list[int], phonemes: list, sample_rate: int) -> list[dict]:
+    def _durations(
+        w_ceil, owner: list[int], phonemes: list, sample_rate: int
+    ) -> list[dict]:
         """Per-phoneme boundaries from the VITS duration predictor.
 
         `w_ceil` is the ceiling of the stochastic duration predictor, one entry
@@ -1214,6 +1355,7 @@ class PiperBackend(Backend):
         patch_alignment.py). Absent is fine; timings are then unavailable.
         """
         import numpy as np
+
         frames = np.asarray(w_ceil).squeeze().astype(np.float64)
         if frames.ndim != 1 or frames.size != len(owner):
             return []
@@ -1227,8 +1369,9 @@ class PiperBackend(Backend):
         out, cursor = [], 0.0
         for i, sym in enumerate(phonemes):
             dur = spans.get(i, 0.0) / sample_rate
-            out.append({"p": str(sym), "t0": round(cursor, 4),
-                        "t1": round(cursor + dur, 4)})
+            out.append(
+                {"p": str(sym), "t0": round(cursor, 4), "t1": round(cursor + dur, 4)}
+            )
             cursor += dur
         return out
 
@@ -1236,6 +1379,7 @@ class PiperBackend(Backend):
     def _write_wav(path: str, audio, sample_rate: int) -> None:
         import wave
         import numpy as np
+
         pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype("<i2")
         tmp = path + ".part"
         with wave.open(tmp, "wb") as w:
@@ -1243,4 +1387,4 @@ class PiperBackend(Backend):
             w.setsampwidth(2)
             w.setframerate(sample_rate)
             w.writeframes(pcm.tobytes())
-        Path(tmp).replace(path)   # atomic, same discipline as Voice.write_wav
+        Path(tmp).replace(path)  # atomic, same discipline as Voice.write_wav

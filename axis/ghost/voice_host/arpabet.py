@@ -43,33 +43,51 @@ from __future__ import annotations
 # symbols were wrong: AA, AO, ER, IY, UW.
 ARPA_TO_IPA: dict[str, str] = {
     # monophthongs
-    "AA": "ɑː",    # odd, father
-    "AE": "æ",    # at, bat
-    "AH": "ʌ",    # hut  (unstressed AH0 is schwa - see to_ipa)
-    "AO": "ɔː",    # ought, story
-    "EH": "ɛ",    # Ed, bed
-    "ER": "ɜː",    # hurt  (r-coloured; some corpora use "ɜː" + "ɹ")
-    "IH": "ɪ",    # it, bit
-    "IY": "iː",    # eat, bee
-    "UH": "ʊ",    # hood
-    "UW": "uː",    # two, boot
+    "AA": "ɑː",  # odd, father
+    "AE": "æ",  # at, bat
+    "AH": "ʌ",  # hut  (unstressed AH0 is schwa - see to_ipa)
+    "AO": "ɔː",  # ought, story
+    "EH": "ɛ",  # Ed, bed
+    "ER": "ɜː",  # hurt  (r-coloured; some corpora use "ɜː" + "ɹ")
+    "IH": "ɪ",  # it, bit
+    "IY": "iː",  # eat, bee
+    "UH": "ʊ",  # hood
+    "UW": "uː",  # two, boot
     # diphthongs
-    "AW": "aʊ",   # cow
-    "AY": "aɪ",   # hide
-    "EY": "eɪ",   # ate
-    "OW": "oʊ",   # oat
-    "OY": "ɔɪ",   # toy
+    "AW": "aʊ",  # cow
+    "AY": "aɪ",  # hide
+    "EY": "eɪ",  # ate
+    "OW": "oʊ",  # oat
+    "OY": "ɔɪ",  # toy
     # stops
-    "P": "p", "B": "b", "T": "t", "D": "d", "K": "k", "G": "ɡ",
+    "P": "p",
+    "B": "b",
+    "T": "t",
+    "D": "d",
+    "K": "k",
+    "G": "ɡ",
     # affricates
-    "CH": "tʃ", "JH": "dʒ",
+    "CH": "tʃ",
+    "JH": "dʒ",
     # fricatives
-    "F": "f", "V": "v", "TH": "θ", "DH": "ð",
-    "S": "s", "Z": "z", "SH": "ʃ", "ZH": "ʒ", "HH": "h",
+    "F": "f",
+    "V": "v",
+    "TH": "θ",
+    "DH": "ð",
+    "S": "s",
+    "Z": "z",
+    "SH": "ʃ",
+    "ZH": "ʒ",
+    "HH": "h",
     # nasals
-    "M": "m", "N": "n", "NG": "ŋ",
+    "M": "m",
+    "N": "n",
+    "NG": "ŋ",
     # liquids and glides
-    "L": "l", "R": "ɹ", "W": "w", "Y": "j",
+    "L": "l",
+    "R": "ɹ",
+    "W": "w",
+    "Y": "j",
 }
 
 # Unstressed AH is schwa in every American corpus, and conflating the two is
@@ -83,7 +101,23 @@ SCHWA_R = "ɚ"
 # the ɹ is spelled out when another vowel follows. Without it the word came back
 # as "suh-endered", which is the mispronunciation that was reported.
 RHOTIC_LINK = "ɹ"
-_VOWELS = {"AA","AE","AH","AO","AW","AY","EH","ER","EY","IH","IY","OW","OY","UH","UW"}
+_VOWELS = {
+    "AA",
+    "AE",
+    "AH",
+    "AO",
+    "AW",
+    "AY",
+    "EH",
+    "ER",
+    "EY",
+    "IH",
+    "IY",
+    "OW",
+    "OY",
+    "UH",
+    "UW",
+}
 
 # Punctuation ghost's front end preserves, and which the models use as prosodic
 # boundaries rather than as sounds.
@@ -151,7 +185,11 @@ def to_symbols(phones: list[str], stress: bool = True) -> list[tuple[str, int]]:
             out.append((ch, i))
         # spell the linking /r/ that ARPAbet hides inside ER when a vowel follows
         if base == "ER":
-            nxt, _ = strip_stress(str(phones[i + 1]).strip().upper()) if i + 1 < len(phones) else ("", -1)
+            nxt, _ = (
+                strip_stress(str(phones[i + 1]).strip().upper())
+                if i + 1 < len(phones)
+                else ("", -1)
+            )
             if nxt in _VOWELS:
                 out.append((RHOTIC_LINK, i))
     return out

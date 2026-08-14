@@ -56,11 +56,13 @@ def test_run_hue_is_emitted_without_a_unit():
 def test_css_default_for_run_hue_is_unitless():
     """The fallback has to be unitless too, or an un-styled swatch drops out."""
     css = COMPONENTS_CSS.read_text()
-    calc = re.search(r"calc\(var\(--accent-hue\)\s*\+\s*var\(--run-hue,\s*([^)]*)\)\)", css)
-    assert calc, "the swatch no longer composes its hue from --accent-hue"
-    assert re.fullmatch(r"-?[\d.]+", calc.group(1).strip()), (
-        f"--run-hue fallback {calc.group(1)!r} carries a unit"
+    calc = re.search(
+        r"calc\(var\(--accent-hue\)\s*\+\s*var\(--run-hue,\s*([^)]*)\)\)", css
     )
+    assert calc, "the swatch no longer composes its hue from --accent-hue"
+    assert re.fullmatch(
+        r"-?[\d.]+", calc.group(1).strip()
+    ), f"--run-hue fallback {calc.group(1)!r} carries a unit"
 
 
 def test_swatch_has_no_baked_colour():
@@ -68,9 +70,9 @@ def test_swatch_has_no_baked_colour():
     charts = CHARTS_JS.read_text()
     swatch = re.search(r'<span class="run-color-indicator[^"]*"[^>]*>', charts)
     assert swatch, "run-color-indicator markup not found"
-    assert "background:" not in swatch.group(0), (
-        "swatch bakes a colour inline; it must inherit from --accent-hue"
-    )
+    assert "background:" not in swatch.group(
+        0
+    ), "swatch bakes a colour inline; it must inherit from --accent-hue"
 
 
 def test_swatch_uses_the_same_palette_slot_as_the_chart_line():
@@ -78,12 +80,12 @@ def test_swatch_uses_the_same_palette_slot_as_the_chart_line():
     while the charts use runColorIndex(run), so they disagreed once any run was
     filtered or reordered."""
     charts = CHARTS_JS.read_text()
-    assert re.search(r"slot\s*=\s*runColorIndex\(run\)", charts), (
-        "selector swatch is not keyed by runColorIndex(run)"
-    )
-    assert re.search(r"chartLineColorVars\(\s*slot\s*\)", charts), (
-        "selector swatch no longer derives its hue from the palette slot"
-    )
+    assert re.search(
+        r"slot\s*=\s*runColorIndex\(run\)", charts
+    ), "selector swatch is not keyed by runColorIndex(run)"
+    assert re.search(
+        r"chartLineColorVars\(\s*slot\s*\)", charts
+    ), "selector swatch no longer derives its hue from the palette slot"
 
 
 def test_colours_are_assigned_by_selection_not_history():

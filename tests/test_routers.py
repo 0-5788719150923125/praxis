@@ -8,6 +8,7 @@ from praxis.blocks.transformer import TransformerBlock
 from praxis.configuration import PraxisConfig
 from praxis.containers.loss import LossContainer
 from praxis.layers import LocalLayer
+
 # The bank merge kept its old semantics; only its name and scope changed.
 from praxis.routers.bank import ExpertBank as SMEAR
 from praxis.routers.taxus import Taxus

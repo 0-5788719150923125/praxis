@@ -35,19 +35,45 @@ from __future__ import annotations
 # be read off unambiguously. These are the conventional CMU example words.
 PROBES: list[tuple[str, str, str]] = [
     # (ARPAbet, word, the rest of the word's phones, for stripping)
-    ("AA", "odd", "d"), ("AE", "at", "t"), ("AH", "hut", "h|t"),
-    ("AO", "ought", "t"), ("AW", "cow", "k"), ("AY", "hide", "h|d"),
-    ("EH", "ed", "d"), ("ER", "hurt", "h|t"), ("EY", "ate", "t"),
-    ("IH", "it", "t"), ("IY", "eat", "t"), ("OW", "oat", "t"),
-    ("OY", "toy", "t"), ("UH", "hood", "h|d"), ("UW", "two", "t"),
-    ("B", "be", ""), ("CH", "cheese", ""), ("D", "dee", ""),
-    ("DH", "thee", ""), ("F", "fee", ""), ("G", "green", ""),
-    ("HH", "he", ""), ("JH", "gee", ""), ("K", "key", ""),
-    ("L", "lee", ""), ("M", "me", ""), ("N", "knee", ""),
-    ("NG", "ping", ""), ("P", "pee", ""), ("R", "read", ""),
-    ("S", "sea", ""), ("SH", "she", ""), ("T", "tea", ""),
-    ("TH", "theta", ""), ("V", "vee", ""), ("W", "we", ""),
-    ("Y", "yield", ""), ("Z", "zee", ""), ("ZH", "seizure", ""),
+    ("AA", "odd", "d"),
+    ("AE", "at", "t"),
+    ("AH", "hut", "h|t"),
+    ("AO", "ought", "t"),
+    ("AW", "cow", "k"),
+    ("AY", "hide", "h|d"),
+    ("EH", "ed", "d"),
+    ("ER", "hurt", "h|t"),
+    ("EY", "ate", "t"),
+    ("IH", "it", "t"),
+    ("IY", "eat", "t"),
+    ("OW", "oat", "t"),
+    ("OY", "toy", "t"),
+    ("UH", "hood", "h|d"),
+    ("UW", "two", "t"),
+    ("B", "be", ""),
+    ("CH", "cheese", ""),
+    ("D", "dee", ""),
+    ("DH", "thee", ""),
+    ("F", "fee", ""),
+    ("G", "green", ""),
+    ("HH", "he", ""),
+    ("JH", "gee", ""),
+    ("K", "key", ""),
+    ("L", "lee", ""),
+    ("M", "me", ""),
+    ("N", "knee", ""),
+    ("NG", "ping", ""),
+    ("P", "pee", ""),
+    ("R", "read", ""),
+    ("S", "sea", ""),
+    ("SH", "she", ""),
+    ("T", "tea", ""),
+    ("TH", "theta", ""),
+    ("V", "vee", ""),
+    ("W", "we", ""),
+    ("Y", "yield", ""),
+    ("Z", "zee", ""),
+    ("ZH", "seizure", ""),
 ]
 
 STRESS_MARKS = "ˈˌ"
@@ -56,11 +82,14 @@ STRESS_MARKS = "ˈˌ"
 def espeak(word: str) -> str:
     import espeakng_loader
     from phonemizer.backend.espeak.wrapper import EspeakWrapper
+
     EspeakWrapper.set_library(espeakng_loader.get_library_path())
     EspeakWrapper.set_data_path(espeakng_loader.get_data_path())
     from phonemizer import phonemize
-    out = phonemize([word], language="en-us", backend="espeak",
-                    strip=True, with_stress=True)[0]
+
+    out = phonemize(
+        [word], language="en-us", backend="espeak", strip=True, with_stress=True
+    )[0]
     return "".join(c for c in out if c not in STRESS_MARKS)
 
 
@@ -70,7 +99,7 @@ def main() -> int:
     print("ARPA_TO_IPA = {")
     for arpa, word, _ in PROBES:
         ipa = espeak(word)
-        print('    %-6s %-14s # %s' % ('"%s":' % arpa, '"%s",' % ipa, word))
+        print("    %-6s %-14s # %s" % ('"%s":' % arpa, '"%s",' % ipa, word))
     print("}")
     print()
     print("# Sanity probes - these must round-trip correctly:")

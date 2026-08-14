@@ -142,8 +142,14 @@ def discover_targets(
     opaque = _opaque_prefixes(root)
     seen_ids: set = set()
     groups: List[TargetGroup] = []
-    skipped: Dict[str, int] = {"opaque": 0, "lazy": 0, "shared": 0, "frozen": 0,
-                               "oversized": 0, "unmatched": 0}
+    skipped: Dict[str, int] = {
+        "opaque": 0,
+        "lazy": 0,
+        "shared": 0,
+        "frozen": 0,
+        "oversized": 0,
+        "unmatched": 0,
+    }
 
     for mod_name, module in root.named_modules():
         direct = list(module.named_parameters(recurse=False))

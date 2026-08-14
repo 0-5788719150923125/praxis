@@ -174,7 +174,9 @@ class MergedLinear(nn.Module):
         # From the config, like every other sizing decision in this repo. The
         # registry carries one entry per router, not one per expert count.
         self.num_experts = int(
-            num_experts if num_experts is not None else getattr(config, "num_experts", 4)
+            num_experts
+            if num_experts is not None
+            else getattr(config, "num_experts", 4)
         )
         self.rank = int(rank)
 
@@ -184,7 +186,9 @@ class MergedLinear(nn.Module):
         # LoRA's initialization: A random, B zero, so every deviation is exactly
         # zero at step 0 and the wrapper is bit-identical to the Linear it
         # replaced. A config swap stays a clean A/B rather than a reroll.
-        self.lora_a = nn.Parameter(torch.empty(self.num_experts, rank, self.in_features))
+        self.lora_a = nn.Parameter(
+            torch.empty(self.num_experts, rank, self.in_features)
+        )
         nn.init.normal_(self.lora_a, mean=0.0, std=0.02)
         self.lora_b = nn.Parameter(
             torch.zeros(self.num_experts, self.out_features, rank)
@@ -214,7 +218,9 @@ class MergedLinear(nn.Module):
         # far worse than routing nothing.
         # Leading axes must line up: [B, N] against [B, ..., in] for
         # per-example routing, [B, S, N] against [B, S, in] for per-token.
-        if coeff is None or tuple(coeff.shape[:-1]) != tuple(x.shape[: coeff.dim() - 1]):
+        if coeff is None or tuple(coeff.shape[:-1]) != tuple(
+            x.shape[: coeff.dim() - 1]
+        ):
             return y
         # [B, ..., N, r] - each deviation's low-rank projection of the input.
         u = torch.einsum("...i,eri->...er", x, self.lora_a.to(x.dtype))
@@ -285,7 +291,9 @@ class SMEAR(nn.Module):
         # From the config, like every other sizing decision in this repo. The
         # registry carries one entry per router, not one per expert count.
         self.num_experts = int(
-            num_experts if num_experts is not None else getattr(config, "num_experts", 4)
+            num_experts
+            if num_experts is not None
+            else getattr(config, "num_experts", 4)
         )
         self.hidden_size = config.hidden_size
         self.profile_name = target_profile
@@ -319,9 +327,7 @@ class SMEAR(nn.Module):
 
         for row, group in enumerate(self.targets):
             module = block.get_submodule(group.name) if group.name else block
-            merged_numel += sum(
-                _get_param(block, p).numel() for p in group.params
-            )
+            merged_numel += sum(_get_param(block, p).numel() for p in group.params)
             if isinstance(module, nn.Linear):
                 # Rank is forced here regardless of size: a DENSE per-example
                 # deviation would cost N * in * out per token (four base
@@ -425,7 +431,9 @@ class SMEAR(nn.Module):
         """
         normalized = F.normalize(self.router.weight, dim=1)
         logits = F.linear(router_input, normalized, self.router.bias)
-        logits = logits.view(*router_input.shape[:-1], len(self.targets), self.num_experts)
+        logits = logits.view(
+            *router_input.shape[:-1], len(self.targets), self.num_experts
+        )
         # The decoder can loop past `depth` when halting samples deeper than the
         # table; wrap rather than raise, so a pass reuses an existing row.
         bias = self.depth_bias(
@@ -433,7 +441,9 @@ class SMEAR(nn.Module):
         )
         return logits + bias.view(len(self.targets), self.num_experts)
 
-    def _coefficients(self, inputs: Tensor, current_depth: int) -> Tuple[Tensor, Tensor]:
+    def _coefficients(
+        self, inputs: Tensor, current_depth: int
+    ) -> Tuple[Tensor, Tensor]:
         """Merge coefficients ``[B, targets, experts]`` and the router's own probs.
 
         Returns the FULL per-example tensor, not a batch mean. Callers that

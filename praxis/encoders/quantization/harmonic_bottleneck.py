@@ -58,13 +58,9 @@ class GDN(nn.Module):
         super().__init__()
         self.beta_min = beta_min
         # beta^2 + beta_min == 1e-5 at init, matching the old epsilon.
-        self.beta_sqrt = nn.Parameter(
-            torch.full((dim,), (1e-5 - beta_min) ** 0.5)
-        )
+        self.beta_sqrt = nn.Parameter(torch.full((dim,), (1e-5 - beta_min) ** 0.5))
         # gamma_ij = 1/dim at init -> the sum below IS the mean over features.
-        self.gamma_sqrt = nn.Parameter(
-            torch.full((dim, dim), (1.0 / dim) ** 0.5)
-        )
+        self.gamma_sqrt = nn.Parameter(torch.full((dim, dim), (1.0 / dim) ** 0.5))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         beta = self.beta_sqrt.pow(2) + self.beta_min

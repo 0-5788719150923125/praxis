@@ -53,8 +53,23 @@ OUT = GHOST / "build" / "voice"
 # Phoneme classes. Grouped by what the LISTENER has to tell apart, which is not
 # always how the synthesizer groups them.
 
-VOWELS = ["IY", "IH", "EH", "AE", "AA", "AO", "UH", "UW", "AH", "ER",
-          "AY", "EY", "OY", "AW", "OW"]
+VOWELS = [
+    "IY",
+    "IH",
+    "EH",
+    "AE",
+    "AA",
+    "AO",
+    "UH",
+    "UW",
+    "AH",
+    "ER",
+    "AY",
+    "EY",
+    "OY",
+    "AW",
+    "OW",
+]
 SIBILANTS = ["S", "SH", "Z", "ZH"]
 WEAK_FRIC = ["F", "TH", "V", "DH"]
 STOPS_VL = ["P", "T", "K"]
@@ -64,22 +79,27 @@ LIQUIDS = ["L", "R"]
 GLIDES = ["W", "Y"]
 
 CLASSES = [
-    ("vowel", VOWELS), ("sibilant", SIBILANTS), ("weak_fric", WEAK_FRIC),
-    ("stop_voiceless", STOPS_VL), ("stop_voiced", STOPS_VD),
-    ("nasal", NASALS), ("liquid", LIQUIDS), ("glide", GLIDES),
+    ("vowel", VOWELS),
+    ("sibilant", SIBILANTS),
+    ("weak_fric", WEAK_FRIC),
+    ("stop_voiceless", STOPS_VL),
+    ("stop_voiced", STOPS_VD),
+    ("nasal", NASALS),
+    ("liquid", LIQUIDS),
+    ("glide", GLIDES),
 ]
 
 # Acceptance bands, dB relative to the mean vowel level. From the connected
 # speech literature (Klatt 1980; Stevens, Acoustic Phonetics). A class outside
 # its band is not a matter of taste - it is a class the listener will lose.
 LEVEL_TARGETS = {
-    "sibilant":       (-8.0,   2.0),   # /s/ and /sh/ sit near vowel level
-    "weak_fric":      (-25.0, -10.0),  # quiet, but audible by band contrast
-    "stop_voiceless": (-15.0,  -5.0),  # measured over the RELEASE, not closure
-    "stop_voiced":    (-20.0,  -6.0),
-    "nasal":          (-12.0,  -2.0),
-    "liquid":         (-8.0,    1.0),
-    "glide":          (-8.0,    1.0),
+    "sibilant": (-8.0, 2.0),  # /s/ and /sh/ sit near vowel level
+    "weak_fric": (-25.0, -10.0),  # quiet, but audible by band contrast
+    "stop_voiceless": (-15.0, -5.0),  # measured over the RELEASE, not closure
+    "stop_voiced": (-20.0, -6.0),
+    "nasal": (-12.0, -2.0),
+    "liquid": (-8.0, 1.0),
+    "glide": (-8.0, 1.0),
 }
 
 # A word boundary has to produce an actual trough or the listener cannot find
@@ -110,6 +130,7 @@ LPC_ORDER = 12
 # Audio helpers (stdlib + numpy only - scipy and librosa are not installed and
 # adding them for four functions is not worth the dependency).
 
+
 def read_wav(path: Path) -> tuple[np.ndarray, int]:
     with wave.open(str(path), "rb") as w:
         sr = w.getframerate()
@@ -132,7 +153,7 @@ def decimate(x: np.ndarray, sr: int, target: int) -> tuple[np.ndarray, int]:
     factor = max(1, int(round(sr / target)))
     if factor == 1:
         return x, sr
-    cutoff = 0.9 / (2.0 * factor)                       # cycles/sample
+    cutoff = 0.9 / (2.0 * factor)  # cycles/sample
     n = 64 * factor + 1
     t = np.arange(n) - (n - 1) / 2.0
     h = np.sinc(2 * cutoff * t) * np.hamming(n)
@@ -144,17 +165,17 @@ def lpc(x: np.ndarray, order: int) -> np.ndarray | None:
     """Levinson-Durbin on the autocorrelation. Returns [1, a1..ap]."""
     if x.size <= order:
         return None
-    r = np.correlate(x, x, mode="full")[x.size - 1: x.size + order]
+    r = np.correlate(x, x, mode="full")[x.size - 1 : x.size + order]
     if r[0] <= 0 or not np.all(np.isfinite(r)):
         return None
     a = np.zeros(order + 1)
     a[0] = 1.0
     e = r[0]
     for i in range(1, order + 1):
-        acc = r[i] + np.dot(a[1:i], r[i - 1:0:-1]) if i > 1 else r[i]
+        acc = r[i] + np.dot(a[1:i], r[i - 1 : 0 : -1]) if i > 1 else r[i]
         k = -acc / e
-        a[1:i + 1] = a[1:i + 1] + k * a[i - 1::-1][:i]
-        e *= (1.0 - k * k)
+        a[1 : i + 1] = a[1 : i + 1] + k * a[i - 1 :: -1][:i]
+        e *= 1.0 - k * k
         if e <= 0:
             return None
     return a
@@ -165,7 +186,7 @@ def formants(seg: np.ndarray, sr: int) -> list[float]:
     y, fs = decimate(seg, sr, LPC_SR)
     if y.size < 128:
         return []
-    y = np.append(y[0], y[1:] - 0.97 * y[:-1])          # pre-emphasis
+    y = np.append(y[0], y[1:] - 0.97 * y[:-1])  # pre-emphasis
     y = y * np.hamming(y.size)
     a = lpc(y, LPC_ORDER)
     if a is None:
@@ -213,6 +234,7 @@ def hull_area(points: list[tuple[float, float]]) -> float:
 # ---------------------------------------------------------------------------
 # Metrics
 
+
 def measure_levels(x: np.ndarray, sr: int, phones: list[dict]) -> dict:
     """Delivered level per phoneme class, dB relative to the mean vowel.
 
@@ -229,7 +251,7 @@ def measure_levels(x: np.ndarray, sr: int, phones: list[dict]) -> dict:
             continue
         seg = x[i0:i1]
         if p in STOPS_VL or p in STOPS_VD:
-            seg = seg[-int(0.030 * sr):] if seg.size > int(0.030 * sr) else seg
+            seg = seg[-int(0.030 * sr) :] if seg.size > int(0.030 * sr) else seg
         v = rms(seg)
         if v <= 0:
             continue
@@ -256,8 +278,10 @@ def measure_levels(x: np.ndarray, sr: int, phones: list[dict]) -> dict:
             entry["pass"] = bool(lo <= rel <= hi)
         out["classes"][name] = entry
     for p, vals in sorted(per_phone.items()):
-        out["phones"][p] = {"n": len(vals),
-                            "db_re_vowel": round(db(float(np.mean(vals)) / ref), 2)}
+        out["phones"][p] = {
+            "n": len(vals),
+            "db_re_vowel": round(db(float(np.mean(vals)) / ref), 2),
+        }
     return out
 
 
@@ -276,7 +300,7 @@ def measure_vowel_space(x: np.ndarray, sr: int, phones: list[dict]) -> dict:
         if i1 - i0 < int(0.020 * sr) or i1 > x.size:
             continue
         mid, span = (i0 + i1) // 2, int((i1 - i0) * 0.2)
-        f = formants(x[mid - span:mid + span], sr)
+        f = formants(x[mid - span : mid + span], sr)
         if len(f) < 2:
             continue
         pt = (bark(f[0]), bark(f[1]))
@@ -296,8 +320,11 @@ def measure_vowel_space(x: np.ndarray, sr: int, phones: list[dict]) -> dict:
     res["n_sufficient"] = bool(min(res["stressed"]["n"], res["reduced"]["n"]) >= 12)
     res["pass"] = bool(not res["n_sufficient"] or res["ratio"] >= VOWEL_HULL_RATIO_MIN)
     res["per_vowel_hz"] = {
-        p: [round(float(np.median([t[0] for t in v]))),
-            round(float(np.median([t[1] for t in v]))), len(v)]
+        p: [
+            round(float(np.median([t[0] for t in v]))),
+            round(float(np.median([t[1] for t in v]))),
+            len(v),
+        ]
         for p, v in sorted(tokens.items())
     }
     return res
@@ -321,8 +348,10 @@ def measure_boundaries(x: np.ndarray, sr: int, words: list[dict]) -> dict:
         win = max(1, int(0.005 * sr))
         seg = x[i0:i1]
         n = seg.size // win
-        floor = min((rms(seg[k * win:(k + 1) * win]) for k in range(max(n, 1))),
-                    default=rms(seg))
+        floor = min(
+            (rms(seg[k * win : (k + 1) * win]) for k in range(max(n, 1))),
+            default=rms(seg),
+        )
         troughs.append((gap, db(floor / speech) if speech > 0 else 0.0))
 
     if not troughs:
@@ -331,10 +360,14 @@ def measure_boundaries(x: np.ndarray, sr: int, words: list[dict]) -> dict:
     for gap, d in troughs:
         key = "<15ms" if gap < 0.015 else "15-40ms" if gap < 0.040 else ">=40ms"
         buckets.setdefault(key, []).append(d)
-    med_long = float(np.median(buckets.get(">=40ms") or buckets.get("15-40ms") or [0.0]))
+    med_long = float(
+        np.median(buckets.get(">=40ms") or buckets.get("15-40ms") or [0.0])
+    )
     return {
         "n_gaps": len(troughs),
-        "median_trough_db": {k: round(float(np.median(v)), 2) for k, v in buckets.items()},
+        "median_trough_db": {
+            k: round(float(np.median(v)), 2) for k, v in buckets.items()
+        },
         "counts": {k: len(v) for k, v in buckets.items()},
         "threshold_db": BOUNDARY_TROUGH_MAX_DB,
         "pass": bool(med_long <= BOUNDARY_TROUGH_MAX_DB),
@@ -349,16 +382,30 @@ def measure_bands(x: np.ndarray, sr: int) -> dict:
     acc = np.zeros(n // 2 + 1)
     frames = 0
     for i in range(0, max(x.size - n, 1), n // 2):
-        acc += np.abs(np.fft.rfft(x[i:i + n] * np.hanning(n), n)) ** 2
+        acc += np.abs(np.fft.rfft(x[i : i + n] * np.hanning(n), n)) ** 2
         frames += 1
     if frames:
         acc /= frames
     freqs = np.fft.rfftfreq(n, 1.0 / sr)
-    edges = [(0, 300), (300, 800), (800, 1500), (1500, 2500),
-             (2500, 4000), (4000, 6000), (6000, 8000), (8000, 14000)]
+    edges = [
+        (0, 300),
+        (300, 800),
+        (800, 1500),
+        (1500, 2500),
+        (2500, 4000),
+        (4000, 6000),
+        (6000, 8000),
+        (8000, 14000),
+    ]
     total = acc.sum() or 1.0
-    return {f"{lo}-{hi}": round(10 * math.log10(max(acc[(freqs >= lo) & (freqs < hi)].sum() / total, 1e-12)), 2)
-            for lo, hi in edges}
+    return {
+        f"{lo}-{hi}": round(
+            10
+            * math.log10(max(acc[(freqs >= lo) & (freqs < hi)].sum() / total, 1e-12)),
+            2,
+        )
+        for lo, hi in edges
+    }
 
 
 def measure_artifacts(x: np.ndarray, sr: int) -> dict:
@@ -386,7 +433,7 @@ def measure_artifacts(x: np.ndarray, sr: int) -> dict:
     hits = np.flatnonzero(d > thresh)
 
     events = 0
-    last = -(10 ** 9)
+    last = -(10**9)
     guard = int(0.005 * sr)
     for i in hits:
         if i - last > guard:
@@ -404,8 +451,10 @@ def measure_artifacts(x: np.ndarray, sr: int) -> dict:
         "pct_above_limit_0p85": round(100.0 * float(np.mean(np.abs(x) > 0.85)), 3),
         "peak": round(peak, 4),
         "clicks_per_sec_max": CLICKS_PER_SEC_MAX,
-        "pass": bool(events / max(dur, 0.001) <= CLICKS_PER_SEC_MAX
-                     and float(np.mean(np.abs(x) > 0.85)) < 0.0005),
+        "pass": bool(
+            events / max(dur, 0.001) <= CLICKS_PER_SEC_MAX
+            and float(np.mean(np.abs(x) > 0.85)) < 0.0005
+        ),
     }
 
 
@@ -421,7 +470,7 @@ def measure_tilt(x: np.ndarray, sr: int) -> dict:
     acc = np.zeros(n // 2 + 1)
     frames = 0
     for i in range(0, max(x.size - n, 1), n // 2):
-        acc += np.abs(np.fft.rfft(x[i:i + n] * np.hanning(n), n)) ** 2
+        acc += np.abs(np.fft.rfft(x[i : i + n] * np.hanning(n), n)) ** 2
         frames += 1
     if frames:
         acc /= frames
@@ -449,8 +498,10 @@ def measure_tilt_by_class(x, sr, phones):
     this file's own muffle threshold. Never gate on the mixed number again.
     """
     out = {}
-    for name, members in (("vowel", VOWELS),
-                          ("obstruent", SIBILANTS + WEAK_FRIC + STOPS_VL + STOPS_VD)):
+    for name, members in (
+        ("vowel", VOWELS),
+        ("obstruent", SIBILANTS + WEAK_FRIC + STOPS_VL + STOPS_VD),
+    ):
         chunks = []
         for ph in phones:
             if ph["p"] not in members:
@@ -466,7 +517,7 @@ def measure_tilt_by_class(x, sr, phones):
         frames = 0
         for seg in chunks:
             for i in range(0, max(seg.size - n, 1), n // 2):
-                w = seg[i:i + n]
+                w = seg[i : i + n]
                 if w.size < n:
                     break
                 acc += np.abs(np.fft.rfft(w * np.hanning(n), n)) ** 2
@@ -515,7 +566,7 @@ def measure_wer(wavs: list[tuple[str, Path, str]]) -> dict:
     model = "openai/whisper-small.en"
     try:
         asr = pipeline("automatic-speech-recognition", model=model, device=-1)
-    except Exception as exc:                                  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         return {"error": f"could not load {model}: {exc}"}
 
     def norm(s: str) -> list[str]:
@@ -559,9 +610,18 @@ def measure_wer(wavs: list[tuple[str, Path, str]]) -> dict:
 
 # ---------------------------------------------------------------------------
 
+
 def render(out_dir: Path) -> None:
-    cmd = ["godot", "--headless", "--path", str(GHOST),
-           "--script", "tests/render_fixtures.gd", "--", str(out_dir)]
+    cmd = [
+        "godot",
+        "--headless",
+        "--path",
+        str(GHOST),
+        "--script",
+        "tests/render_fixtures.gd",
+        "--",
+        str(out_dir),
+    ]
     print("$ " + " ".join(cmd))
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
     for line in r.stdout.splitlines():
@@ -574,8 +634,10 @@ def render(out_dir: Path) -> None:
 
 def analyze(out_dir: Path, want_wer: bool) -> dict:
     manifest = json.loads((out_dir / "manifest.json").read_text())
-    report: dict = {"engine": {k: v for k, v in manifest.items() if k != "fixtures"},
-                    "fixtures": {}}
+    report: dict = {
+        "engine": {k: v for k, v in manifest.items() if k != "fixtures"},
+        "fixtures": {},
+    }
     wav_refs: list[tuple[str, Path, str]] = []
 
     for f in manifest["fixtures"]:
@@ -620,7 +682,9 @@ def summarize(report: dict, baseline: dict | None) -> bool:
     print("\nengine: " + ", ".join(f"{k}={v}" for k, v in report["engine"].items()))
     ok = True
     for name, fx in report["fixtures"].items():
-        print(f"\n=== {name}  {fx['dur']}s  peak {fx['peak_db']} dB  rms {fx['rms_db']} dB")
+        print(
+            f"\n=== {name}  {fx['dur']}s  peak {fx['peak_db']} dB  rms {fx['rms_db']} dB"
+        )
 
         print("  level by class (dB re mean vowel)")
         for cls, e in fx["levels"].get("classes", {}).items():
@@ -630,44 +694,65 @@ def summarize(report: dict, baseline: dict | None) -> bool:
             mark = "ok  " if e["pass"] else "FAIL"
             ok &= e["pass"]
             lo, hi = e["target"]
-            print(f"    {cls:<15} {e['db_re_vowel']:>7.2f}   target [{lo:g}, {hi:g}]  {mark}"
-                  + delta(e["db_re_vowel"], ["fixtures", name, "levels", "classes", cls, "db_re_vowel"]))
+            print(
+                f"    {cls:<15} {e['db_re_vowel']:>7.2f}   target [{lo:g}, {hi:g}]  {mark}"
+                + delta(
+                    e["db_re_vowel"],
+                    ["fixtures", name, "levels", "classes", cls, "db_re_vowel"],
+                )
+            )
 
         vs = fx["vowel_space"]
         mark = "ok" if vs.get("pass") else "FAIL"
         ok &= bool(vs.get("pass"))
-        print(f"  vowel space  stressed {vs['stressed']['hull_bark2']} Bark^2 (n={vs['stressed']['n']})"
-              f"  reduced {vs['reduced']['hull_bark2']} (n={vs['reduced']['n']})"
-              f"  ratio {vs['ratio']} >= {vs['ratio_min']}  {mark}"
-              + delta(vs["ratio"], ["fixtures", name, "vowel_space", "ratio"]))
+        print(
+            f"  vowel space  stressed {vs['stressed']['hull_bark2']} Bark^2 (n={vs['stressed']['n']})"
+            f"  reduced {vs['reduced']['hull_bark2']} (n={vs['reduced']['n']})"
+            f"  ratio {vs['ratio']} >= {vs['ratio_min']}  {mark}"
+            + delta(vs["ratio"], ["fixtures", name, "vowel_space", "ratio"])
+        )
 
         b = fx["boundaries"]
         if "error" not in b:
             mark = "ok" if b["pass"] else "FAIL"
             ok &= b["pass"]
-            print(f"  boundaries   {b['median_trough_db']}  counts {b['counts']}"
-                  f"  threshold {b['threshold_db']}  {mark}")
+            print(
+                f"  boundaries   {b['median_trough_db']}  counts {b['counts']}"
+                f"  threshold {b['threshold_db']}  {mark}"
+            )
 
         a = fx["artifacts"]
         ok &= a["pass"]
-        print(f"  artifacts    {a['clicks_per_sec']}/s (max {a['clicks_per_sec_max']})  "
-              f"max step {a['max_step']}  peak {a['peak']}  "
-              f">knee {a['pct_above_knee_0p7']}%  >limit {a['pct_above_limit_0p85']}%  "
-              + ("ok" if a["pass"] else "FAIL"))
+        print(
+            f"  artifacts    {a['clicks_per_sec']}/s (max {a['clicks_per_sec_max']})  "
+            f"max step {a['max_step']}  peak {a['peak']}  "
+            f">knee {a['pct_above_knee_0p7']}%  >limit {a['pct_above_limit_0p85']}%  "
+            + ("ok" if a["pass"] else "FAIL")
+        )
         t = fx["tilt"]
         if "error" not in t:
             ok &= t["pass"]
-            print(f"  tilt         {t['db_per_octave']} dB/oct  target {t['target']}  "
-                  + ("ok" if t["pass"] else "FAIL")
-                  + delta(t["db_per_octave"], ["fixtures", name, "tilt", "db_per_octave"]))
+            print(
+                f"  tilt         {t['db_per_octave']} dB/oct  target {t['target']}  "
+                + ("ok" if t["pass"] else "FAIL")
+                + delta(t["db_per_octave"], ["fixtures", name, "tilt", "db_per_octave"])
+            )
         for cls, e in fx["tilt_by_class"].items():
             if "error" in e:
                 continue
             ok &= e["pass"]
-            print(f"  tilt/{cls:<9} {e['db_per_octave']:>7.2f} dB/oct  target {e['target']}  "
-                  + ("ok" if e["pass"] else "FAIL")
-                  + delta(e["db_per_octave"], ["fixtures", name, "tilt_by_class", cls, "db_per_octave"]))
-        print("  bands (dB re total): " + "  ".join(f"{k}:{v}" for k, v in fx["bands_db"].items()))
+            print(
+                f"  tilt/{cls:<9} {e['db_per_octave']:>7.2f} dB/oct  target {e['target']}  "
+                + ("ok" if e["pass"] else "FAIL")
+                + delta(
+                    e["db_per_octave"],
+                    ["fixtures", name, "tilt_by_class", cls, "db_per_octave"],
+                )
+            )
+        print(
+            "  bands (dB re total): "
+            + "  ".join(f"{k}:{v}" for k, v in fx["bands_db"].items())
+        )
 
     if "wer" in report:
         w = report["wer"]
@@ -676,15 +761,18 @@ def summarize(report: dict, baseline: dict | None) -> bool:
         else:
             print(f"\nWER ({w['model']}), mean {w['mean_wer']:.1%}")
             for name, f in w["fixtures"].items():
-                print(f"  {name:<11} {f['wer']:.1%}  ({f['ref_words']} words)"
-                      + delta(f["wer"], ["wer", "fixtures", name, "wer"]))
+                print(
+                    f"  {name:<11} {f['wer']:.1%}  ({f['ref_words']} words)"
+                    + delta(f["wer"], ["wer", "fixtures", name, "wer"])
+                )
                 print(f"      heard: {f['hypothesis'][:160]}")
     return ok
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--no-render", action="store_true", help="measure existing WAVs")
     ap.add_argument("--wer", action="store_true", help="add ASR word error rate")
     ap.add_argument("--out", type=Path, default=OUT)
@@ -696,7 +784,11 @@ def main() -> int:
         render(args.out)
     report = analyze(args.out, args.wer)
 
-    baseline = json.loads(args.against.read_text()) if args.against and args.against.exists() else None
+    baseline = (
+        json.loads(args.against.read_text())
+        if args.against and args.against.exists()
+        else None
+    )
     ok = summarize(report, baseline)
 
     (args.out / "report.json").write_text(json.dumps(report, indent=1))
