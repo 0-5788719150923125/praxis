@@ -528,6 +528,53 @@ def _shift(t: float, inserted, inclusive: bool) -> float:
     return t + add
 
 
+def _espeak_word(text: str) -> str:
+    """A token as eSpeak should SEE it: an internal hyphen is a word boundary.
+
+    A HYPHEN INSIDE A WORD IS NOT PUNCTUATION AND IT IS NOT SILENT EITHER - it is
+    the boundary between two words that are spelled as one, and a reader says
+    "ten-forty" exactly the way they say "ten forty". ghost keeps the hyphen all
+    the way here on purpose (the karaoke line shows the source spelling, so
+    "twenty-five" must not become "twenty five" on screen - see
+    TextNorm._expand_core), which left this the one place that has to turn the
+    spelling back into a boundary.
+
+    Handing the hyphenated spelling straight to the phonemizer did not, because
+    eSpeak returns the SAME PHONES either way and only the word space differs:
+
+        ten-forty     -> tˈɛnfˈɔːɹɾi        ten forty     -> tˈɛn fˈɔːɹɾi
+        forty-second  -> fˈɔːɹɾisˈɛkənd     forty second  -> fˈɔːɹɾi sˈɛkənd
+        self-report   -> sˈɛlfɹᵻpˈɔːɹt      self report   -> sˈɛlf ɹᵻpˈɔːɹt
+
+    so this changes no pronunciation anywhere - it restores a boundary that was
+    being dropped. And the model does not ignore that boundary. Two primary
+    stresses welded together with no space between them is a shape the training
+    data does not contain, and en_US-libritts-high answers it by opening a hole
+    in the middle of the word. Measured, longest near-silence INSIDE the token,
+    averaged over three renders, glued vs spaced:
+
+        forty-second  0.40 s -> 0.07 s      x-ray        0.30 s -> 0.06 s
+        twenty-five   0.25 s -> 0.07 s      night-light  0.23 s -> 0.03 s
+
+    which is the reported "the hyphen forces a pause between each word". The
+    other four installed voices never opened the hole, so this had been sitting
+    under whichever voice was selected.
+
+    A compound eSpeak already reads with ONE primary ("re-enter" -> ɹˌiːˈɛntɚ)
+    was never affected and is unaffected by this: it gets the same phones and
+    one more space.
+
+    Only the ASCII hyphen, because that is the only one that survives TextNorm -
+    it folds the typographic hyphens to it and an em dash to a comma. A token
+    that is nothing BUT dashes never arrives (phonemes.gd turns a spaced dash
+    into punctuation) but is returned untouched if one ever does, since handing
+    the phonemizer an empty string drops the item and takes the alignment of
+    every later word with it.
+    """
+    spoken = " ".join(text.replace("-", " ").split())
+    return spoken or text.strip()
+
+
 # Phoneme id stream shape, from piper1-gpl docs/ALIGNMENTS.md:
 #   [BOS, PAD, id, PAD, id, PAD, ..., EOS]
 BOS, EOS, PAD = 1, 2, 0
@@ -846,7 +893,7 @@ class PiperBackend(Backend):
         ]
         espoke: dict[int, str] = {}
         if need and phonemizer == "espeak":
-            words = [str(tokens[i]["text"]).strip() for i in need]
+            words = [_espeak_word(str(tokens[i]["text"])) for i in need]
             got = self._espeak(words, espeak_voice)
             if len(got) != len(words):
                 # Alignment is not recoverable from a short batch - there is no way to

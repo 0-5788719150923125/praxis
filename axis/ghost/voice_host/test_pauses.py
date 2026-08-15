@@ -622,6 +622,62 @@ def check_syllabic_fold():
     )
 
 
+@check
+def check_hyphen_is_a_word_boundary():
+    """A hyphen INSIDE a word reaches the phonemizer as a word space.
+
+    The reported symptom was a rest in the middle of "ten-forty" and
+    "eleven-thirty". eSpeak returns the same phones for the hyphenated spelling
+    and the spaced one and differs only in the word space, so the boundary was
+    being dropped on the way in - and en_US-libritts-high answers two primary
+    stresses welded together with a hole where the boundary should be (measured
+    on "forty-second": 0.40 s of near-silence inside one word, 0.07 s once the
+    space is sent). See _espeak_word.
+
+    The two HOLDS matter as much as the switch. The hyphen must survive in the
+    token's own text, because the karaoke draws the source spelling, and a token
+    must never be handed to the phonemizer as an empty string - phonemizer drops
+    an empty input instead of returning "" for it, which pairs every later word
+    with its neighbour's phonemes.
+    """
+    from backends.piper import LEAD_IN_SPACES, PiperBackend, _espeak_word
+
+    eq(_espeak_word("ten-forty"), "ten forty", "an internal hyphen becomes a space")
+    eq(_espeak_word("mother-in-law"), "mother in law", "and every hyphen does")
+    eq(_espeak_word("ordinary"), "ordinary", "a word without one is untouched")
+    eq(_espeak_word("ten-"), "ten", "a trailing dash contributes no empty word")
+    eq(_espeak_word("-"), "-", "a token that is ONLY a dash is left alone")
+    eq(_espeak_word("  spaced  "), "spaced", "the strip the old code did still happens")
+
+    seen: list = []
+    orig = PiperBackend._espeak
+
+    def fake(cls, words, voice="en-us"):
+        seen.extend(words)
+        return ["ab" if " " not in w else "a b" for w in words]
+
+    PiperBackend._espeak = classmethod(fake)
+    try:
+        be = PiperBackend()
+        tokens = [
+            {"text": "ten-forty", "punct": ",", "fallback": []},
+            {"text": "now", "punct": ".", "fallback": []},
+        ]
+        out = be._symbols(tokens, "espeak", "en-us")
+    finally:
+        PiperBackend._espeak = orig
+
+    eq(seen, ["ten forty", "now"], "the phonemizer is asked for the spaced spelling")
+    eq(tokens[0]["text"], "ten-forty", "the token keeps its spelling for the karaoke")
+    body = out[LEAD_IN_SPACES:]
+    first = [c for c, i in body if i == 0]
+    eq(first, ["a", " ", "b", ",", " "], "the boundary reaches the model as a space")
+    ok(
+        all(i in (0, 1) for _, i in body),
+        "every symbol still belongs to a real token (alignment intact)",
+    )
+
+
 def main() -> int:
     if "--reference" in sys.argv:
         print(
